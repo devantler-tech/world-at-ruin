@@ -5,11 +5,20 @@ class_name DevLog
 ## development progress by playing. Every change that a player could notice
 ## gets an entry here, newest first — open it in-game with F1.
 
-const VERSION := "0.1.0"
+const VERSION := "0.1.1"
 const CODENAME := "Ashfall Reach"
 
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
+	{
+		"version": "0.1.1",
+		"date": "2026-07-16",
+		"title": "The ground no longer swallows wanderers",
+		"notes": [
+			"Fixed getting wedged inside the terrain after a hard fall (the first player-reported bug — reported minutes after the world first existed).",
+			"Falls now cap at a survivable-feeling terminal speed, and the Reach pops you back onto the surface if the ground ever claims you.",
+		],
+	},
 	{
 		"version": "0.1.0",
 		"date": "2026-07-16",

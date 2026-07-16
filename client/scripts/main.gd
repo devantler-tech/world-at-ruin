@@ -23,6 +23,7 @@ func _ready() -> void:
 	var spawn := Vector3(11.0, world.height_at(11.0, 14.0) + 1.2, 14.0)
 	player.spawn_point = spawn
 	player.position = spawn
+	player.ground_height_provider = world.height_at
 	add_child(player)
 	player.face_toward(Vector3.ZERO)
 

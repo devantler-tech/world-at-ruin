@@ -13,12 +13,20 @@ const ACCEL := 42.0
 const AIR_CONTROL := 0.25
 const JUMP_VELOCITY := 7.2
 const GRAVITY := 19.6
+## Terminal velocity, kept under capsule_radius (0.4 m) × physics rate (60 Hz)
+## so a falling capsule can never advance a full radius in one tick and tunnel
+## into the terrain trimesh.
+const MAX_FALL_SPEED := 20.0
 const MOUSE_SENS := 0.0028
 const PITCH_MIN := -1.1
 const PITCH_MAX := 0.5
 const FALL_LIMIT_Y := -40.0
 
 var spawn_point := Vector3.ZERO
+## Analytic terrain height lookup (set by main.gd to WorldGen.height_at). The
+## terrain is a pure heightfield, so a body below it is always an invalid
+## physics state — used to self-heal embedding/tunneling instead of wedging.
+var ground_height_provider: Callable
 ## Emitted when the world reclaims the wanderer (for HUD flavour text).
 signal respawned
 
@@ -121,7 +129,7 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _physics_process(delta: float) -> void:
 	if not is_on_floor():
-		velocity.y -= GRAVITY * delta
+		velocity.y = maxf(velocity.y - GRAVITY * delta, -MAX_FALL_SPEED)
 	elif Input.is_action_just_pressed("jump"):
 		velocity.y = JUMP_VELOCITY
 
@@ -149,8 +157,21 @@ func _physics_process(delta: float) -> void:
 	# Sprint widens the view slightly.
 	_camera.fov = lerpf(_camera.fov, 78.0 if sprinting else 70.0, 6.0 * delta)
 
+	_unstick_from_ground()
+
 	if global_position.y < FALL_LIMIT_Y:
 		respawn()
+
+## Self-heal terrain embedding: the body origin sits at the capsule's base, so
+## an origin meaningfully below the analytic terrain height means the capsule
+## is inside the ground (tunneled or wedged) — pop it back onto the surface.
+func _unstick_from_ground() -> void:
+	if not ground_height_provider.is_valid():
+		return
+	var ground: float = ground_height_provider.call(global_position.x, global_position.z)
+	if global_position.y < ground - 0.2:
+		global_position.y = ground + 0.3
+		velocity.y = 0.0
 
 func respawn() -> void:
 	global_position = spawn_point
