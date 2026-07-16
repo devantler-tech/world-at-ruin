@@ -1,0 +1,10 @@
+# Godot generated caches — never commit.
+client/.godot/
+
+# Export artifacts.
+build/
+*.dmg
+*.zip
+
+# OS noise.
+.DS_Store

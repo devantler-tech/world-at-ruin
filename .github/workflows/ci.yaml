@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  pull_request:
+  merge_group:
+
+permissions:
+  contents: read
+
+env:
+  GODOT_VERSION: 4.7.1
+  GODOT_SHA512: 4ccdab7a48eeccbe8819a2fc1f6262f8d72065d98601bcb3743fcbd7ebd39f373758a788ee3293a05ec5b2c48538266c437404312e372225cd2df273945a2de9
+
+jobs:
+  client-smoke:
+    name: Client smoke boot
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Install Godot (pinned, checksum-verified)
+        run: |
+          curl -fsSL -o godot.zip "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          echo "${GODOT_SHA512}  godot.zip" | sha512sum -c -
+          unzip -q godot.zip
+          sudo mv "Godot_v${GODOT_VERSION}-stable_linux.x86_64" /usr/local/bin/godot
+      - name: Headless import
+        run: godot --headless --import client 2>&1 | tee import.log
+      - name: Smoke boot (120 frames)
+        run: |
+          godot --headless --quit-after 120 client 2>&1 | tee smoke.log
+          if grep -qE "SCRIPT ERROR|^ERROR" smoke.log import.log; then
+            echo "::error::Errors during headless boot"; exit 1
+          fi
+
+  license-guard:
+    name: License guard (no GPL/AGPL in tree)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Reject GPL/AGPL-licensed content
+        run: |
+          # The shipped tree must stay proprietary-compatible: no GPL/AGPL
+          # licence texts or SPDX identifiers may enter it (AGENTS.md,
+          # Licensing). Matches licence declarations, not prose mentions.
+          if grep -rniE "SPDX-License-Identifier: (A?GPL|LGPL)|GNU (Affero )?General Public License" \
+              --exclude-dir=.git --exclude-dir=.github --exclude=AGENTS.md .; then
+            echo "::error::GPL/AGPL-licensed content detected — forbidden in the shipped tree"; exit 1
+          fi
+
+  ci-required-checks:
+    name: CI - Required Checks
+    runs-on: ubuntu-latest
+    needs: [client-smoke, license-guard]
+    if: ${{ always() }}
+    steps:
+      - uses: devantler-tech/actions/aggregate-job-checks@0f27c13a9785608e0bbf9998777d27761b4de617 # v10.0.2
+        with:
+          job-results: >-
+            ${{ needs.client-smoke.result }}
+            ${{ needs.license-guard.result }}
