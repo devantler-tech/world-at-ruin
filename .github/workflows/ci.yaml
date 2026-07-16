@@ -23,14 +23,32 @@ jobs:
           echo "${GODOT_SHA512}  godot.zip" | sha512sum -c -
           unzip -q godot.zip
           sudo mv "Godot_v${GODOT_VERSION}-stable_linux.x86_64" /usr/local/bin/godot
-      - name: Headless import
-        run: godot --headless --import client 2>&1 | tee import.log
+      - name: Headless import + class-name scan
+        # --import alone never writes global_script_class_cache.cfg, so scene-arg
+        # runs (the regression tests) fail to resolve class_name types and hang.
+        # The headless editor pass performs the full scan, imports, and writes it.
+        run: godot --headless --editor --quit --path client 2>&1 | tee import.log
       - name: Smoke boot (120 frames)
         run: |
           godot --headless --quit-after 120 client 2>&1 | tee smoke.log
           if grep -qE "SCRIPT ERROR|^ERROR" smoke.log import.log; then
             echo "::error::Errors during headless boot"; exit 1
           fi
+      - name: Regression tests
+        run: |
+          set -o pipefail
+          for t in unstick_test surface_consistency_test; do
+            if ! timeout 180 godot --headless --path client "res://tests/${t}.tscn" 2>&1 | tee "${t}.log"; then
+              echo "::error::${t} failed or timed out (180s)"
+              tail -40 "${t}.log"
+              exit 1
+            fi
+            if ! grep -q "TEST PASS" "${t}.log"; then
+              echo "::error::${t} exited 0 without reporting PASS"
+              tail -40 "${t}.log"
+              exit 1
+            fi
+          done
 
   license-guard:
     name: License guard (no GPL/AGPL in tree)
