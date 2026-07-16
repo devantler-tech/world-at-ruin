@@ -26,7 +26,9 @@ is the *premise* and every other preference — engine, fidelity — yields to i
   Nanite/Lumen).
 - **Art: generated as code, all OSS/CC0 — never commercial assets.** Headless Blender (`bpy`) →
   glTF; **MPFB2 + Rigify** for characters (core assets CC0, explicitly closed-source-safe); Poly
-  Haven / ambientCG (CC0) materials; WFC interiors, grammar towns, SDF caves, erosion terrain.
+  Haven / ambientCG (CC0) materials; **Material Maker** / text `.gdshader` for procedural
+  materials (MIT/output-yours); **Sapling Tree Gen** for foliage; WFC interiors, grammar towns,
+  SDF/marching-cubes caves, noise + hydraulic-erosion terrain.
   **Blender's GPL covers the tool, never the output.** Target is **stylised-realistic ("a more
   realistic WoW")** — that style is *parametric*, which is exactly why it is expressible as code.
   Photorealism is unreachable in any engine without a human sculptor; do not re-attempt it.
@@ -49,6 +51,15 @@ is the *premise* and every other preference — engine, fidelity — yields to i
   screens, no pop-in, ever.
 - **Physics stays OUT of the authoritative path** — capsules/navmesh only. This is what makes a Go
   authority cheap, deterministic and latency-tolerant.
+
+### Platforms — deliberately last
+
+Every platform added early multiplies the cost of every change made after it, so platforms are the
+**final roadmap phase**: **macOS/Windows/Linux first** (same tier, cheap); **consoles via W4
+Games** — Godot's only console path, paid/commercial middleware, deliberately deferred, but
+**platform-holder applications start early** because approval is slow and independent of code;
+**iOS/iPadOS last and optional** — reduced tier, **controller required** (no virtual sticks for a
+game about standing in the right place).
 
 ### Licensing
 
@@ -164,10 +175,13 @@ can be watched by playing; every *further* art/game system waits on Phase 0.)
 - **Licensing hygiene:** no GPL/AGPL code or assets in the shipped tree; no commercial assets;
   CC0/OSS-permissive only, with licence verified per asset dataset. External PRs cannot be merged
   until the EULA/CLA exists (see `LICENSE.md`).
-- **Roadmap:** GitHub Issues on this repo (`roadmap` label for epics). Keep issues **agent-shaped**
-  — small, specified, testable, art-free. **The project stalls the moment the next task is "make
-  the combat feel good"**: that is a taste judgement, route it to the maintainer rather than
-  guessing.
+- **Roadmap:** GitHub Issues on this repo (`roadmap` label for epics). The plan is **phase-gated**
+  — Phase 0 (art-pipeline taste gate, #1) through Phase 8 (platforms, #15), each phase's exit
+  criteria unlocking the next, plus the standing risk register (#16). Keep issues **agent-shaped**
+  — small, specified, testable, art-free; every issue should be agent-completable without a human
+  (testable, independently shippable, Go-and-tests-heavy). **The project stalls the moment the
+  next task is "make the combat feel good"**: that is a taste judgement, route it to the
+  maintainer rather than guessing.
 - **Merge queue:** not enabled (org default rulesets only — PR required, signed commits,
   `CI - Required Checks` status).
 
