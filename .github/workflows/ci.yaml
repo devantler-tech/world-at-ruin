@@ -33,8 +33,19 @@ jobs:
           fi
       - name: Regression tests
         run: |
-          godot --headless --path client res://tests/unstick_test.tscn
-          godot --headless --path client res://tests/surface_consistency_test.tscn
+          set -o pipefail
+          for t in unstick_test surface_consistency_test; do
+            if ! timeout 180 godot --headless --path client "res://tests/${t}.tscn" 2>&1 | tee "${t}.log"; then
+              echo "::error::${t} failed or timed out (180s)"
+              tail -40 "${t}.log"
+              exit 1
+            fi
+            if ! grep -q "TEST PASS" "${t}.log"; then
+              echo "::error::${t} exited 0 without reporting PASS"
+              tail -40 "${t}.log"
+              exit 1
+            fi
+          done
 
   license-guard:
     name: License guard (no GPL/AGPL in tree)
