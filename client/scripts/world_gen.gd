@@ -22,9 +22,13 @@ const COL_SCORCH := Color(0.16, 0.14, 0.13)
 const COL_STONE := Color(0.42, 0.39, 0.35)
 const COL_EMBER := Color(1.0, 0.55, 0.18)
 
+## Returned by surface_height_at outside the terrain grid: "no ground here".
+const NO_GROUND := -1.0e6
+
 var _noise := FastNoiseLite.new()
 var _detail := FastNoiseLite.new()
 var _tint := FastNoiseLite.new()
+var _heights := PackedFloat32Array()
 var _brazier_light: OmniLight3D
 var _brazier_mesh: MeshInstance3D
 var _time := 0.0
@@ -63,15 +67,43 @@ func height_at(x: float, z: float) -> float:
 	var keep := smoothstep(0.35, 1.0, clampf(d / SHRINE_CLEAR_RADIUS, 0.0, 1.0))
 	return lerpf(h * 0.12, h, keep)
 
+## Height of the actual walkable terrain MESH at world (x, z): the same
+## piecewise-linear interpolation of the height grid the collision trimesh is
+## built from, including the quad→triangle split. This — not the smooth
+## height_at noise — is what physics stands on; anything comparing a body to
+## the ground must use it (mid-triangle the two can differ by tens of cm).
+## Returns NO_GROUND outside the terrain bounds.
+func surface_height_at(x: float, z: float) -> float:
+	var step := SIZE / QUADS
+	var half := SIZE / 2.0
+	var gx := (x + half) / step
+	var gz := (z + half) / step
+	if gx < 0.0 or gz < 0.0 or gx > QUADS or gz > QUADS or _heights.is_empty():
+		return NO_GROUND
+	var ix := mini(int(gx), QUADS - 1)
+	var iz := mini(int(gz), QUADS - 1)
+	var fx := gx - ix
+	var fz := gz - iz
+	var w := QUADS + 1
+	var h00 := _heights[iz * w + ix]
+	var h10 := _heights[iz * w + ix + 1]
+	var h01 := _heights[(iz + 1) * w + ix]
+	var h11 := _heights[(iz + 1) * w + ix + 1]
+	# Quads split along the v00→v11 diagonal (see _build_terrain): the
+	# (v00, v11, v10) triangle covers fx >= fz, (v00, v01, v11) the rest.
+	if fx >= fz:
+		return h00 + (h10 - h00) * fx + (h11 - h10) * fz
+	return h00 + (h11 - h01) * fx + (h01 - h00) * fz
+
 func _build_terrain() -> void:
 	var step := SIZE / QUADS
 	var half := SIZE / 2.0
-	# Precompute the height grid once.
-	var heights: Array[float] = []
-	heights.resize((QUADS + 1) * (QUADS + 1))
+	# Precompute the height grid once; kept for surface_height_at lookups.
+	_heights.resize((QUADS + 1) * (QUADS + 1))
 	for iz in QUADS + 1:
 		for ix in QUADS + 1:
-			heights[iz * (QUADS + 1) + ix] = height_at(ix * step - half, iz * step - half)
+			_heights[iz * (QUADS + 1) + ix] = height_at(ix * step - half, iz * step - half)
+	var heights := _heights
 
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
@@ -108,14 +140,22 @@ func _build_terrain() -> void:
 	var body := StaticBody3D.new()
 	body.name = "TerrainBody"
 	var shape := CollisionShape3D.new()
-	shape.shape = mesh.create_trimesh_shape()
+	var trimesh := mesh.create_trimesh_shape() as ConcavePolygonShape3D
+	# The ground must be solid from BOTH sides: one-sided collision turns any
+	# winding or tunneling slip into a fall through the world.
+	trimesh.backface_collision = true
+	shape.shape = trimesh
 	body.add_child(shape)
 	add_child(body)
 
 func _add_tri(st: SurfaceTool, a: Vector3, b: Vector3, c: Vector3) -> void:
 	var centre := (a + b + c) / 3.0
 	st.set_color(_ground_color(centre))
-	for v: Vector3 in [a, b, c]:
+	# Godot front faces wind CLOCKWISE (not the right-hand-rule order the
+	# args are given in) — emit a, c, b so the face points UP. Downward faces
+	# render inside-out and are pass-through for raycasts and half-solid for
+	# bodies (the v0.1.x sink/bump bugs).
+	for v: Vector3 in [a, c, b]:
 		st.add_vertex(v)
 
 func _ground_color(at: Vector3) -> Color:

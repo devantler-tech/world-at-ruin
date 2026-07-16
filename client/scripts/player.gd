@@ -34,6 +34,7 @@ var _cam_yaw: Node3D
 var _spring: SpringArm3D
 var _camera: Camera3D
 var _visual: Node3D
+var _embedded_ticks := 0
 
 static func ensure_input_actions() -> void:
 	var bindings := {
@@ -162,16 +163,44 @@ func _physics_process(delta: float) -> void:
 	if global_position.y < FALL_LIMIT_Y:
 		respawn()
 
-## Self-heal terrain embedding: the body origin sits at the capsule's base, so
-## an origin meaningfully below the analytic terrain height means the capsule
-## is inside the ground (tunneled or wedged) — pop it back onto the surface.
+## How far below the vertical surface height the origin must sit before we
+## call it embedded. On a slope of angle θ the capsule's bottom tip
+## legitimately sits r·(1 − cos2θ/cosθ) below the surface measured at its
+## (x, z) — ≈ 0.4 m at 45° for r = 0.4 — so anything under that is normal
+## contact, not embedding. A genuinely wedged/tunneled capsule is far deeper.
+const EMBED_THRESHOLD := 0.55
+## Sentinel from WorldGen.surface_height_at: no terrain at this (x, z).
+const NO_GROUND_BELOW := -1.0e5
+## Embedding must persist this many consecutive physics ticks before the
+## clamp fires (~0.17 s at 60 Hz). Real wedging is a steady state; legitimate
+## contact depth fluctuates tick to tick (ridge overhangs, crease crossings),
+## so a persistence gate removes false positives no fixed threshold can.
+const EMBED_TICKS_TO_FIRE := 10
+
+## Self-heal terrain embedding: the terrain is a pure heightfield, so an
+## origin deeper than EMBED_THRESHOLD below the walkable mesh surface is
+## always an invalid state (tunneled or wedged) — pop back onto the surface.
+## Must compare against the MESH surface (piecewise-linear), never the smooth
+## noise height: mid-triangle they diverge enough to false-positive.
 func _unstick_from_ground() -> void:
 	if not ground_height_provider.is_valid():
 		return
 	var ground: float = ground_height_provider.call(global_position.x, global_position.z)
-	if global_position.y < ground - 0.2:
-		global_position.y = ground + 0.3
-		velocity.y = 0.0
+	if ground < NO_GROUND_BELOW:
+		_embedded_ticks = 0
+		return  # Off the terrain edge — the fall-limit respawn handles this.
+	if global_position.y < ground - EMBED_THRESHOLD:
+		_embedded_ticks += 1
+	else:
+		_embedded_ticks = 0
+		return
+	if _embedded_ticks < EMBED_TICKS_TO_FIRE:
+		return
+	print("[unstick] recovered wanderer from y=%.2f to surface %.2f at (%.1f, %.1f)" %
+		[global_position.y, ground, global_position.x, global_position.z])
+	global_position.y = ground + 0.1
+	velocity.y = 0.0
+	_embedded_ticks = 0
 
 func respawn() -> void:
 	global_position = spawn_point

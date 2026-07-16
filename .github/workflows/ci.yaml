@@ -32,7 +32,9 @@ jobs:
             echo "::error::Errors during headless boot"; exit 1
           fi
       - name: Regression tests
-        run: godot --headless --path client res://tests/unstick_test.tscn
+        run: |
+          godot --headless --path client res://tests/unstick_test.tscn
+          godot --headless --path client res://tests/surface_consistency_test.tscn
 
   license-guard:
     name: License guard (no GPL/AGPL in tree)

@@ -20,10 +20,10 @@ func _ready() -> void:
 	player.name = "Wanderer"
 	# Spawn outside the monolith ring, facing the shrine, so the first frame
 	# frames the landmark instead of collapsing the camera against a stone.
-	var spawn := Vector3(11.0, world.height_at(11.0, 14.0) + 1.2, 14.0)
+	var spawn := Vector3(11.0, world.surface_height_at(11.0, 14.0) + 1.2, 14.0)
 	player.spawn_point = spawn
 	player.position = spawn
-	player.ground_height_provider = world.height_at
+	player.ground_height_provider = world.surface_height_at
 	add_child(player)
 	player.face_toward(Vector3.ZERO)
 

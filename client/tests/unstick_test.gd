@@ -1,15 +1,23 @@
 extends Node
-## Regression test for the first player-reported bug: after a hard fall the
-## wanderer could tunnel into the terrain trimesh and wedge there, unable to
-## move. The fix is an analytic ground clamp (the terrain is a pure
-## heightfield, so below-ground is always invalid). This test buries the
-## wanderer and asserts the clamp returns him to the surface within ticks.
+## Regression tests for the ground self-heal (first two player-reported bugs):
+##  1. v0.1.1 — after a hard fall the wanderer tunneled into the terrain
+##     trimesh and wedged there (stuck in the ground, unable to move).
+##  2. v0.1.2 — the first fix compared against the smooth noise height and
+##     used a slope-blind threshold, so normal walking rhythmically
+##     false-positived and popped the wanderer upward ("bumping").
+## Asserts BOTH directions: an embedded wanderer surfaces, and legitimate
+## slope contact (origin slightly below the vertical surface height) is
+## left alone.
 ##
 ## Run: godot --headless --path client res://tests/unstick_test.tscn
 
-const BURY_TICK := 20
-const ASSERT_TICK := 40
-const BURY_AT := Vector2(30.0, 30.0)
+const UNIT_TICK := 20
+const BURY_TICK := 25
+const ASSERT_TICK := 60
+const AT := Vector2(30.0, 30.0)
+## Legit slope contact: a 0.4 m capsule on a ~45° slope puts its bottom tip
+## ≈ 0.4 m below the vertical surface height. Must NOT trigger the clamp.
+const SLOPE_CONTACT_DEPTH := 0.35
 
 var _ticks := 0
 var _main: Node
@@ -26,17 +34,38 @@ func _physics_process(_delta: float) -> void:
 		if _ticks > 10:
 			_fail("main scene did not build a Wanderer and World")
 		return
-	if _ticks == BURY_TICK:
-		var ground := world.height_at(BURY_AT.x, BURY_AT.y)
-		player.global_position = Vector3(BURY_AT.x, ground - 2.0, BURY_AT.y)
+	var ground := world.surface_height_at(AT.x, AT.y)
+	if _ticks == UNIT_TICK:
+		# 1. Slope-contact must be tolerated (the v0.1.2 bumping bug) — even
+		# when it persists well past the debounce window.
+		player.global_position = Vector3(AT.x, ground - SLOPE_CONTACT_DEPTH, AT.y)
+		for i in Player.EMBED_TICKS_TO_FIRE + 5:
+			player._unstick_from_ground()
+		if not is_equal_approx(player.global_position.y, ground - SLOPE_CONTACT_DEPTH):
+			_fail("clamp fired on legitimate slope contact (%.2f below surface)" % SLOPE_CONTACT_DEPTH)
+			return
+		# 2. A deeply embedded wanderer must surface once embedding persists
+		# past the debounce window.
+		player.global_position = Vector3(AT.x, ground - 2.0, AT.y)
+		for i in Player.EMBED_TICKS_TO_FIRE:
+			player._unstick_from_ground()
+		if not is_equal_approx(player.global_position.y, ground + 0.1):
+			_fail("embedded wanderer not surfaced (y=%.2f, surface=%.2f)" % [player.global_position.y, ground])
+			return
+		# Reset for the integration pass below.
+		player.global_position = Vector3(AT.x, ground + 1.0, AT.y)
+		player.velocity = Vector3.ZERO
+	elif _ticks == BURY_TICK:
+		# 3. Integration: bury mid-simulation, the physics loop must recover.
+		player.global_position = Vector3(AT.x, ground - 2.0, AT.y)
 		player.velocity = Vector3.ZERO
 	elif _ticks == ASSERT_TICK:
-		var ground := world.height_at(player.global_position.x, player.global_position.z)
-		if player.global_position.y >= ground - 0.2:
-			print("UNSTICK-TEST PASS (y=%.2f ground=%.2f)" % [player.global_position.y, ground])
+		var here := world.surface_height_at(player.global_position.x, player.global_position.z)
+		if player.global_position.y >= here - 0.55:
+			print("UNSTICK-TEST PASS (y=%.2f surface=%.2f)" % [player.global_position.y, here])
 			get_tree().quit(0)
 		else:
-			_fail("wanderer still buried: y=%.2f ground=%.2f" % [player.global_position.y, ground])
+			_fail("wanderer still buried: y=%.2f surface=%.2f" % [player.global_position.y, here])
 
 func _fail(message: String) -> void:
 	push_error("UNSTICK-TEST FAIL: " + message)
