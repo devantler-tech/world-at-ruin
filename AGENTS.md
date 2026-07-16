@@ -148,9 +148,12 @@ can be watched by playing; every *further* art/game system waits on Phase 0.)
   (platform manifests) arrive later per the roadmap.
 - **Run:** `godot client` (macOS: `/Applications/Godot.app/Contents/MacOS/Godot client`).
 - **Validate before every PR:**
-  `godot --headless --import client && godot --headless --quit-after 120 client` — the import must
-  succeed and the smoke boot must print no `SCRIPT ERROR`/`ERROR`. CI (`ci.yaml`) runs exactly
-  this, plus the `license-guard` job (no GPL/AGPL texts in the tree).
+  `godot --headless --editor --quit --path client && godot --headless --quit-after 120 client` —
+  the editor pass imports AND writes the global class-name cache (`--import` alone never writes
+  it, and scene-arg runs hang without it); the smoke boot must print no `SCRIPT ERROR`/`ERROR`.
+  Then run the regression tests: `godot --headless --path client res://tests/<name>.tscn` for each
+  scene under `client/tests/`. CI (`ci.yaml`) runs exactly this, plus the `license-guard` job (no
+  GPL/AGPL texts in the tree).
 - **Determinism:** world generation is seeded (`WorldGen.WORLD_SEED`) — the same world every boot.
   Never introduce wall-clock or unseeded randomness into generation; differences between builds
   must be attributable to code.
