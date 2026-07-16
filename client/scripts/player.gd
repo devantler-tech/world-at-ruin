@@ -140,7 +140,9 @@ func _physics_process(delta: float) -> void:
 	wish.y = 0.0
 	wish = wish.normalized() * input_dir.length()
 
-	var sprinting := Input.is_action_pressed("sprint") and is_on_floor() and wish.length() > 0.1
+	# No floor check: sprint momentum carries through jumps instead of the
+	# target speed braking to walk mid-air.
+	var sprinting := Input.is_action_pressed("sprint") and wish.length() > 0.1
 	var target_speed := SPRINT_SPEED if sprinting else WALK_SPEED
 	var control := 1.0 if is_on_floor() else AIR_CONTROL
 	var horizontal := Vector3(velocity.x, 0, velocity.z)

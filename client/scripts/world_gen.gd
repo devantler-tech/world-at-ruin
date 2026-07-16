@@ -53,7 +53,7 @@ func _process(delta: float) -> void:
 		# Slow ember breathing, with a faint flicker on top.
 		var pulse := 2.2 + 0.5 * sin(_time * 1.4) + 0.15 * sin(_time * 9.7)
 		_brazier_light.light_energy = pulse
-		var mat: StandardMaterial3D = _brazier_mesh.get_surface_override_material(0)
+		var mat := _brazier_mesh.get_surface_override_material(0) as StandardMaterial3D
 		mat.emission_energy_multiplier = 1.6 + 0.4 * sin(_time * 1.4)
 
 ## Terrain height at world (x, z). Shared by generation, collision, and

@@ -21,11 +21,12 @@ func _ready() -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("toggle_devlog"):
 		_devlog_panel.visible = not _devlog_panel.visible
+		get_viewport().set_input_as_handled()
 
 func toast(message: String) -> void:
 	_toast.text = message
 	_toast.modulate.a = 1.0
-	if _toast_tween:
+	if _toast_tween and _toast_tween.is_valid():
 		_toast_tween.kill()
 	_toast_tween = create_tween()
 	_toast_tween.tween_interval(2.8)
@@ -72,12 +73,10 @@ func _build_devlog() -> void:
 	_devlog_panel.visible = false
 	_devlog_panel.set_anchors_preset(Control.PRESET_CENTER)
 	_devlog_panel.custom_minimum_size = Vector2(640, 480)
-	# Anchor preset puts the panel's top-left at screen centre; shift the
-	# offsets so the panel itself is centred.
-	_devlog_panel.offset_left = -320
-	_devlog_panel.offset_top = -240
-	_devlog_panel.offset_right = 320
-	_devlog_panel.offset_bottom = 240
+	# Grow out from the centre anchor in both directions, so the panel stays
+	# centred whatever size it takes.
+	_devlog_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_devlog_panel.grow_vertical = Control.GROW_DIRECTION_BOTH
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.07, 0.06, 0.055, 0.94)
 	style.border_color = Color(0.55, 0.35, 0.18)

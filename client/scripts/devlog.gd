@@ -19,6 +19,7 @@ const ENTRIES: Array[Dictionary] = [
 			"A side effect of the same bug: the sun was lighting the underside of the world. The Reach is noticeably less murky now that its ground faces the sky.",
 			"The safeguard also measures against the exact walkable surface (not the smooth mathematical curve), tolerates how a rounded body rests on slopes, and only intervenes when embedding persists.",
 			"Two new always-run tests pin all of this: one buries a wanderer and demands the world give him back; one raycasts the whole Reach and demands the math and the physics agree exactly.",
+			"Sprint momentum now carries through jumps instead of braking mid-air.",
 		],
 	},
 	{
