@@ -5,11 +5,21 @@ class_name DevLog
 ## development progress by playing. Every change that a player could notice
 ## gets an entry here, newest first — open it in-game with F1.
 
-const VERSION := "0.1.2"
+const VERSION := "0.1.3"
 const CODENAME := "Ashfall Reach"
 
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
+	{
+		"version": "0.1.3",
+		"date": "2026-07-17",
+		"title": "The first cave",
+		"notes": [
+			"A procedural cave chamber now exists — carved entirely from code, like everything else in the Reach: a seeded, rough-walled hollow with a flattened floor and a mouth you could walk in through.",
+			"It lives in its own scene for now (the taste gate — judge it in the editor viewport, lit by embers and the light spilling through the mouth). It is not connected to the overworld yet.",
+			"Same seed, same cave, every time — a regression test fingerprints the rock so it can never silently change shape.",
+		],
+	},
 	{
 		"version": "0.1.2",
 		"date": "2026-07-16",

@@ -1,0 +1,42 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scripts/cave_gen.gd" id="1_cavegen"]
+
+[sub_resource type="Environment" id="Environment_cave"]
+background_mode = 1
+background_color = Color(0.01, 0.008, 0.008, 1)
+ambient_light_source = 2
+ambient_light_color = Color(0.25, 0.22, 0.2, 1)
+ambient_light_energy = 0.15
+sdfgi_enabled = true
+sdfgi_use_occlusion = true
+
+[sub_resource type="CameraAttributesPractical" id="CameraAttributes_cave"]
+
+[node name="Cave" type="Node3D"]
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_cave")
+camera_attributes = SubResource("CameraAttributes_cave")
+
+[node name="CaveGen" type="Node3D" parent="."]
+script = ExtResource("1_cavegen")
+seed_value = 42
+radius = 8.0
+
+[node name="EntranceLight" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.323, -0.35, 0.88, 0.0, 0.929, 0.37, -0.946, -0.119, 0.3, 12.0, 3.0, 0.0)
+light_color = Color(1.0, 0.85, 0.65, 1)
+light_energy = 1.6
+shadow_enabled = true
+
+[node name="EmberGlow" type="OmniLight3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2.0, -3.2, 1.5)
+light_color = Color(1.0, 0.55, 0.18, 1)
+light_energy = 0.8
+omni_range = 9.0
+shadow_enabled = true
+
+[node name="Camera3D" type="Camera3D" parent="."]
+transform = Transform3D(0.468, 0.091, -0.879, 0.0, 0.995, 0.103, 0.884, -0.048, 0.465, -4.5, -2.5, 4.5)
+current = true

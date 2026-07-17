@@ -37,7 +37,7 @@ jobs:
       - name: Regression tests
         run: |
           set -o pipefail
-          for t in unstick_test surface_consistency_test; do
+          for t in unstick_test surface_consistency_test cave_determinism_test; do
             if ! timeout 180 godot --headless --path client "res://tests/${t}.tscn" 2>&1 | tee "${t}.log"; then
               echo "::error::${t} failed or timed out (180s)"
               tail -40 "${t}.log"
@@ -64,6 +64,7 @@ jobs:
               --exclude-dir=.git --exclude-dir=.github --exclude=AGENTS.md .; then
             echo "::error::GPL/AGPL-licensed content detected — forbidden in the shipped tree"; exit 1
           fi
+
 
   ci-required-checks:
     name: CI - Required Checks
