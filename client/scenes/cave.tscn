@@ -38,5 +38,5 @@ omni_range = 9.0
 shadow_enabled = true
 
 [node name="Camera3D" type="Camera3D" parent="."]
-transform = Transform3D(-0.7071, 0.1228, -0.6963, 0.0, 0.9848, 0.1736, 0.7071, 0.1228, -0.6963, -4.5, -2.5, 4.5)
+transform = Transform3D(0.468, 0.091, -0.879, 0.0, 0.995, 0.103, 0.884, -0.048, 0.465, -4.5, -2.5, 4.5)
 current = true
