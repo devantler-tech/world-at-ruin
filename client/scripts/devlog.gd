@@ -5,11 +5,20 @@ class_name DevLog
 ## development progress by playing. Every change that a player could notice
 ## gets an entry here, newest first — open it in-game with F1.
 
-const VERSION := "0.1.14"
+const VERSION := "0.1.15"
 const CODENAME := "Ashfall Reach"
 
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
+	{
+		"version": "0.1.15",
+		"date": "2026-07-17",
+		"title": "Your character is safe",
+		"notes": [
+			"An older build's own self-tests briefly borrowed your saved character while they ran; a crash at the wrong moment could leave it set aside instead of put back. The game now restores it for you automatically the next time you play.",
+			"And if it ever cannot (a locked file, say), it will tell you and refuse to start a fresh character over the top — your original is never overwritten. Nothing you have made is thrown away.",
+		],
+	},
 	{
 		"version": "0.1.14",
 		"date": "2026-07-17",
