@@ -15,108 +15,135 @@ func horizDist2(a, b Vec3) int64 {
 	return dx*dx + dz*dz
 }
 
-// TestSweepPreventsTunneling is the #66 success signal: an actor driven at more
-// than a combined-radius per tick straight at another must not pass through it.
-// Without the swept pass it would teleport out the far side (proved by the
-// no-obstacle control); with it, it stops on the near side, never closer than
-// the contact surface.
-func TestSweepPreventsTunneling(t *testing.T) {
+// TestSweptFlagGatesBehaviour is the feature-flag contract: with the flag OFF
+// (the default, under which every settled golden is pinned) a fast mover tunnels
+// clean through a stationary actor — the discrete-collision gap #66 exists to
+// close — and with the flag ON the same mover is stopped on the near side.
+func TestSweptFlagGatesBehaviour(t *testing.T) {
 	const (
-		rA, rB   = int64(300), int64(300)
-		rEff     = rA + rB - separationSlopMM // 592: the depth separation would act at
-		bx       = int64(2_500)               // stationary target sits here on +X
-		maxSpeed = int64(150_000)             // 150 m/s ⇒ 5 000 mm per 30 Hz tick
+		r        = int64(300)
+		bx       = int64(2_500) // stationary obstacle
+		maxSpeed = int64(150_000)
 	)
-
-	// Control: with no obstacle the charger reaches its full 5 000 mm step, so
-	// absent the sweep it would indeed cross clean past bx=2 500.
-	free := NewWorld(wideBounds)
-	free.Add(Entity{ID: 1, Pos: Vec3{}, MaxSpeed: maxSpeed, Radius: rA})
-	free.SetIntent(1, Vec3{X: maxSpeed})
-	free.Step()
-	if got := free.Get(1).Pos.X; got != 5_000 {
-		t.Fatalf("control: unobstructed charger moved to X=%d, want 5000 (per-tick step)", got)
+	build := func(swept bool) *World {
+		w := NewWorld(wideBounds)
+		w.SweptCollision = swept
+		w.Add(Entity{ID: 1, Pos: Vec3{}, MaxSpeed: maxSpeed, Radius: r})
+		w.Add(Entity{ID: 2, Pos: Vec3{X: bx}, MaxSpeed: 0, Radius: r})
+		w.SetIntent(1, Vec3{X: maxSpeed}) // 5 000 mm/tick, well past the obstacle
+		w.Step()
+		return w
 	}
 
-	w := NewWorld(wideBounds)
-	w.Add(Entity{ID: 1, Pos: Vec3{}, MaxSpeed: maxSpeed, Radius: rA})
-	w.Add(Entity{ID: 2, Pos: Vec3{X: bx}, MaxSpeed: 0, Radius: rB}) // stationary wall
-	w.SetIntent(1, Vec3{X: maxSpeed})
-	w.Step()
+	off := build(false)
+	if x := off.Get(1).Pos.X; x <= bx {
+		t.Fatalf("flag OFF should reproduce the tunnel: charger at X=%d, expected past the obstacle at %d", x, bx)
+	}
 
-	a, b := w.Get(1).Pos, w.Get(2).Pos
+	on := build(true)
+	a, b := on.Get(1).Pos, on.Get(2).Pos
 	if a.X >= b.X {
-		t.Fatalf("charger tunneled: ended at X=%d, at/past the obstacle at X=%d", a.X, b.X)
+		t.Fatalf("flag ON tunneled: charger at X=%d, at/past the obstacle at X=%d", a.X, b.X)
 	}
-	// Never crossed into the contact surface: the ground-plane gap stayed at or
-	// beyond rEff (the sweep stops at a lower bound on true contact, so the gap is
-	// rEff or a touch more, never less).
-	if got, min := horizDist2(a, b), rEff*rEff; got < min {
-		t.Fatalf("charger crossed the contact surface: gap²=%d < rEff²=%d (a=%v b=%v)", got, min, a, b)
+	const rsum = 2 * 300
+	if got := horizDist2(a, b); got < rsum*rsum-2*rsum { // allow the ~mm of integer slack
+		t.Fatalf("flag ON crossed the contact surface: gap²=%d, want ≈ rsum²=%d (a=%v b=%v)", got, rsum*rsum, a, b)
 	}
-	// And it genuinely stopped short of the free-run target, i.e. the sweep fired.
-	if a.X > b.X-rEff {
-		t.Fatalf("charger not stopped outside the contact surface: X=%d, want ≤ %d", a.X, b.X-rEff)
-	}
-	// The obstacle never moved (the stop is at ≈slop penetration, which separation
-	// treats as resolved).
 	if b.X != bx {
 		t.Fatalf("stationary obstacle moved to X=%d, want %d", b.X, bx)
 	}
 }
 
-// TestSweepStopsAtFirstOfManyObstacles: a charger crossing a line of obstacles
-// must stop at the nearest one, regardless of the order they were added.
-func TestSweepStopsAtFirstOfManyObstacles(t *testing.T) {
-	const maxSpeed = int64(300_000) // 10 000 mm/tick
-	build := func(addOrder []EntityID) *World {
-		w := NewWorld(wideBounds)
-		pos := map[EntityID]Vec3{
-			1: {X: 0},     // charger
-			2: {X: 6_000}, // far obstacle
-			3: {X: 3_000}, // near obstacle — the one it should hit first
-		}
-		for _, id := range addOrder {
-			e := Entity{ID: id, Pos: pos[id], Radius: 300}
-			if id == 1 {
-				e.MaxSpeed = maxSpeed
-			}
-			w.Add(e)
-		}
-		return w
+// TestSweptMutualApproach covers Codex finding #1: when BOTH actors move, a
+// static-obstacle sweep would let them swap places (each target sits where the
+// other started). Relative motion must catch it — they meet at contact, mid-way,
+// and never cross.
+func TestSweptMutualApproach(t *testing.T) {
+	w := NewWorld(wideBounds)
+	w.SweptCollision = true
+	w.Add(Entity{ID: 1, Pos: Vec3{X: 0}, MaxSpeed: 150_000, Radius: 300})
+	w.Add(Entity{ID: 2, Pos: Vec3{X: 5_000}, MaxSpeed: 150_000, Radius: 300})
+	w.SetIntent(1, Vec3{X: 150_000})  // →
+	w.SetIntent(2, Vec3{X: -150_000}) // ←
+	w.Step()
+	a, b := w.Get(1).Pos, w.Get(2).Pos
+	if a.X >= b.X {
+		t.Fatalf("actors passed through each other: 1 at X=%d, 2 at X=%d", a.X, b.X)
 	}
-	a := build([]EntityID{1, 2, 3})
-	b := build([]EntityID{3, 2, 1}) // reverse insertion order
-	for _, w := range []*World{a, b} {
-		w.SetIntent(1, Vec3{X: maxSpeed})
-		w.Step()
-	}
-	if a.Hash() != b.Hash() {
-		t.Fatalf("swept stop depended on insertion order: %#016x != %#016x", a.Hash(), b.Hash())
-	}
-	// Stopped just outside the NEAR obstacle at X=3000, not the far one at 6000.
-	const rEff = 300 + 300 - separationSlopMM
-	if x := a.Get(1).Pos.X; x >= 3_000 || x < 3_000-rEff-16 {
-		t.Fatalf("charger did not stop at the near obstacle: X=%d, want just below %d", x, 3_000-rEff)
+	const rsum = 600
+	if got := horizDist2(a, b); got < rsum*rsum-2*rsum {
+		t.Fatalf("mutual approach crossed contact: gap²=%d, want ≈ %d (a=%v b=%v)", got, rsum*rsum, a, b)
 	}
 }
 
-// TestSweepDeterministicAndRepeatable: two identical worlds stay bit-identical,
-// tick after tick, with a fast mover crossing traffic — the determinism law.
-func TestSweepDeterministicAndRepeatable(t *testing.T) {
-	build := func() *World {
+// TestSweptCrossedCentreEndpointInside covers Codex finding #6: a fast mover
+// whose target lies *inside* the obstacle but *beyond its centre* must be caught
+// at first contact on the near side — not waved through to be pushed out the far
+// side by separation.
+func TestSweptCrossedCentreEndpointInside(t *testing.T) {
+	w := NewWorld(wideBounds)
+	w.SweptCollision = true
+	w.Add(Entity{ID: 1, Pos: Vec3{X: 0}, MaxSpeed: 90_000, Radius: 300}) // 3 000 mm/tick
+	w.Add(Entity{ID: 2, Pos: Vec3{X: 2_500}, MaxSpeed: 0, Radius: 300})
+	w.SetIntent(1, Vec3{X: 90_000}) // target X=3000: past the centre at 2500, still inside rsum
+	w.Step()
+	if x := w.Get(1).Pos.X; x >= 2_500 {
+		t.Fatalf("mover crossed the obstacle centre: X=%d, want stopped on the near side (< 2500)", x)
+	}
+}
+
+// TestSweptInitialOverlapDirectional covers Codex finding #5: an actor that
+// begins overlapping another may move *apart* freely, but a fast move *through*
+// it must be blocked (it would otherwise exit the far side before separation
+// runs).
+func TestSweptInitialOverlapDirectional(t *testing.T) {
+	// Start overlapping: gap 400 < rsum 600.
+	build := func(intentX int64) *World {
 		w := NewWorld(wideBounds)
-		w.Add(Entity{ID: 1, Pos: Vec3{X: -8_000}, MaxSpeed: 300_000, Radius: 300})
-		w.Add(Entity{ID: 2, Pos: Vec3{X: 0}, MaxSpeed: 2_000, Radius: 400})
-		w.Add(Entity{ID: 3, Pos: Vec3{X: 0, Z: 1_500}, MaxSpeed: 2_000, Radius: 400})
+		w.SweptCollision = true
+		w.Add(Entity{ID: 1, Pos: Vec3{X: 0}, MaxSpeed: 150_000, Radius: 300})
+		w.Add(Entity{ID: 2, Pos: Vec3{X: 400}, MaxSpeed: 0, Radius: 300})
+		w.SetIntent(1, Vec3{X: intentX})
+		w.Step()
 		return w
 	}
-	a, b := build(), build()
-	for i := range 300 {
+	// Moving away (−X): allowed — the mover reaches its full step.
+	away := build(-150_000)
+	if x := away.Get(1).Pos.X; x != -5_000 {
+		t.Fatalf("overlapped mover moving apart was blocked: X=%d, want -5000", x)
+	}
+	// Moving through (+X, toward and past the obstacle): blocked — must not exit
+	// the far side.
+	through := build(150_000)
+	if x := through.Get(1).Pos.X; x >= 400 {
+		t.Fatalf("overlapped mover tunneled through: X=%d, want held on the near side (< 400)", x)
+	}
+}
+
+// TestSweptDeterministicAndOrderIndependent: with the flag on, the result is
+// bit-identical across runs and independent of insertion order — the
+// determinism law.
+func TestSweptDeterministicAndOrderIndependent(t *testing.T) {
+	build := func(order []EntityID) *World {
+		w := NewWorld(wideBounds)
+		w.SweptCollision = true
+		pos := map[EntityID]Vec3{
+			1: {X: -8_000}, 2: {X: 0}, 3: {X: 0, Z: 1_500}, 4: {X: 3_000, Z: -800},
+		}
+		spd := map[EntityID]int64{1: 300_000, 2: 2_000, 3: 2_000, 4: 120_000}
+		for _, id := range order {
+			w.Add(Entity{ID: id, Pos: pos[id], MaxSpeed: spd[id], Radius: 300})
+		}
+		return w
+	}
+	a := build([]EntityID{1, 2, 3, 4})
+	b := build([]EntityID{4, 2, 1, 3})
+	for i := range 200 {
 		for _, w := range []*World{a, b} {
 			w.SetIntent(1, Vec3{X: 300_000})
 			w.SetIntent(2, Vec3{Z: 2_000})
 			w.SetIntent(3, Vec3{Z: -2_000})
+			w.SetIntent(4, Vec3{X: -120_000})
 			w.Step()
 		}
 		if a.Hash() != b.Hash() {
@@ -125,67 +152,99 @@ func TestSweepDeterministicAndRepeatable(t *testing.T) {
 	}
 }
 
-// TestFirstContactFrac exercises the swept narrow phase directly, covering the
-// crossing/no-crossing boundary the golden-preservation relies on.
+// TestSweptGoldenHash pins a deterministic swept scenario cross-platform, the
+// same discipline as the demo and AoI goldens: integer-only arithmetic makes the
+// hash identical on every architecture, so a change to swept behaviour must be a
+// deliberate, reviewed act.
+func TestSweptGoldenHash(t *testing.T) {
+	const ticks = 400
+	const want uint64 = 0x5e7555d35e293f6f
+	run := func(swept bool) *World {
+		w := NewWorld(wideBounds)
+		w.SweptCollision = swept
+		// A fast shuttling charger crossing a slow line of actors.
+		w.Add(Entity{ID: 1, Pos: Vec3{X: -9_000}, MaxSpeed: 240_000, Radius: 300})
+		w.Add(Entity{ID: 2, Pos: Vec3{X: 0}, MaxSpeed: 3_000, Radius: 350})
+		w.Add(Entity{ID: 3, Pos: Vec3{X: 1_200, Z: 900}, MaxSpeed: 3_000, Radius: 350})
+		w.Add(Entity{ID: 4, Pos: Vec3{X: 2_400, Z: -900}, MaxSpeed: 3_000, Radius: 400})
+		for i := range ticks {
+			dir := int64(240_000)
+			if (i/60)%2 == 1 {
+				dir = -dir // reverse the charger every 60 ticks so it recrosses the line
+			}
+			w.SetIntent(1, Vec3{X: dir})
+			w.SetIntent(2, Vec3{Z: 3_000})
+			w.SetIntent(3, Vec3{Z: -3_000})
+			w.SetIntent(4, Vec3{X: 3_000})
+			w.Step()
+		}
+		return w
+	}
+	got := run(true).Hash()
+	if got != want {
+		t.Fatalf("swept scenario hash after %d ticks = %#016x, want %#016x\n"+
+			"if this change to swept behaviour is intentional, update the golden", ticks, got, want)
+	}
+	// The golden is only meaningful if swept collision actually shapes the run:
+	// the same scenario with the flag off must land somewhere different.
+	if off := run(false).Hash(); off == want {
+		t.Fatalf("swept and non-swept runs are identical (%#016x) — the golden scenario does not exercise the sweep", off)
+	}
+}
+
+// TestFirstContactFrac exercises the swept narrow phase directly, in the pair's
+// relative frame.
 func TestFirstContactFrac(t *testing.T) {
-	const ra, rb = int64(300), int64(300)
-	const rEff = ra + rb - separationSlopMM // 592
-	from := Vec3{}
-	target := Vec3{X: 5_000} // a 5 m eastward step
+	const r = int64(300)
+	fast := Vec3{X: 5_000} // a 5 m eastward step for the mover
+	stay := Vec3{}         // a stationary obstacle displacement
 
 	tests := []struct {
-		name    string
-		from    Vec3
-		target  Vec3
-		center  Vec3
-		wantHit bool
+		name                   string
+		iFrom, iTo, jFrom, jTo Vec3
+		wantHit                bool
+		wantHold               bool // hit whose expected clamp is t=0 (hold at start)
 	}{
-		{"head-on tunnel", from, target, Vec3{X: 2_500}, true},
-		{"ends inside contact distance", from, target, Vec3{X: 4_800}, false},
-		{"starts inside contact distance", Vec3{X: 2_400}, target, Vec3{X: 2_500}, false},
-		{"moving away from centre", from, Vec3{X: -5_000}, Vec3{X: 2_500}, false},
-		{"parallel miss", from, target, Vec3{X: 2_500, Z: 2_000}, false},
-		{"graze within the slop (below rEff depth)", from, target, Vec3{X: 2_500, Z: 596}, false},
-		{"graze past rEff depth", from, target, Vec3{X: 2_500, Z: 580}, true},
-		{"zero-length segment", from, from, Vec3{X: 2_500}, false},
+		{name: "head-on, obstacle static", iFrom: Vec3{}, iTo: fast, jFrom: Vec3{X: 2_500}, jTo: Vec3{X: 2_500}, wantHit: true},
+		{name: "mutual approach", iFrom: Vec3{}, iTo: fast, jFrom: Vec3{X: 5_000}, jTo: Vec3{}, wantHit: true},
+		{name: "moving away", iFrom: Vec3{X: 1_000}, iTo: Vec3{X: 6_000}, jFrom: Vec3{}, jTo: Vec3{}, wantHit: false},
+		{name: "parallel miss", iFrom: Vec3{}, iTo: fast, jFrom: Vec3{X: 2_500, Z: 2_000}, jTo: Vec3{X: 2_500, Z: 2_000}, wantHit: false},
+		{name: "no relative motion (same velocity)", iFrom: Vec3{}, iTo: fast, jFrom: Vec3{X: 700}, jTo: Vec3{X: 5_700}, wantHit: false},
+		{name: "start overlapped, closing", iFrom: Vec3{}, iTo: fast, jFrom: Vec3{X: 400}, jTo: stay, wantHit: true, wantHold: true},
+		{name: "start overlapped, separating", iFrom: Vec3{X: 3_200}, iTo: Vec3{X: 8_000}, jFrom: Vec3{X: 2_800}, jTo: Vec3{X: 2_800}, wantHit: false},
+		{name: "contact only next tick", iFrom: Vec3{}, iTo: Vec3{X: 500}, jFrom: Vec3{X: 5_000}, jTo: Vec3{X: 5_000}, wantHit: false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			frac := firstContactFrac(tc.from, tc.target, ra, tc.center, rb)
+			frac := firstContactFrac(tc.iFrom, tc.iTo, r, tc.jFrom, tc.jTo, r)
 			if (frac != nil) != tc.wantHit {
 				t.Fatalf("firstContactFrac hit=%v, want %v (frac=%v)", frac != nil, tc.wantHit, frac)
 			}
 			if frac == nil {
 				return
 			}
-			// A hit's stop position must sit outside the contact surface (never
-			// having crossed it) and at or before the true entry point.
-			dx := tc.target.X - tc.from.X
-			dz := tc.target.Z - tc.from.Z
-			stop := Vec3{
-				X: tc.from.X + fracMulTrunc(frac, dx),
-				Z: tc.from.Z + fracMulTrunc(frac, dz),
+			if tc.wantHold {
+				// An actor already overlapping and closing holds at t=0 — separation
+				// then resolves the pre-existing overlap; the sweep only forbids it
+				// from closing further this tick.
+				if frac.Sign() != 0 {
+					t.Fatalf("expected a hold (t=0) for an overlapped closing mover, got %v", frac)
+				}
+				return
 			}
-			if got := horizDist2(stop, tc.center); got < rEff*rEff {
-				t.Fatalf("stop is inside the contact surface: gap²=%d < rEff²=%d (stop=%v)", got, rEff*rEff, stop)
+			// Otherwise the clamped mover must be at or before true contact: the
+			// relative gap at the clamp fraction is not inside the contact surface by
+			// more than the few mm of integer slack.
+			dix := tc.iTo.X - tc.iFrom.X
+			diz := tc.iTo.Z - tc.iFrom.Z
+			djx := tc.jTo.X - tc.jFrom.X
+			djz := tc.jTo.Z - tc.jFrom.Z
+			iAt := Vec3{X: tc.iFrom.X + fracMulTrunc(frac, dix), Z: tc.iFrom.Z + fracMulTrunc(frac, diz)}
+			jAt := Vec3{X: tc.jFrom.X + fracMulTrunc(frac, djx), Z: tc.jFrom.Z + fracMulTrunc(frac, djz)}
+			const rsum = 2 * 300
+			if got := horizDist2(iAt, jAt); got < rsum*rsum-4*rsum {
+				t.Fatalf("clamp is inside the contact surface: gap²=%d, want ≈ %d", got, rsum*rsum)
 			}
 		})
-	}
-}
-
-// TestSweepNoOpForSlowApproach: an actor stepping less than a capsule toward
-// another is left entirely to separation — the sweep does not clamp it, so it
-// integrates to its full target (which separation then de-overlaps). This is the
-// property that keeps the sweep inert for realistic movement.
-func TestSweepNoOpForSlowApproach(t *testing.T) {
-	// A single slow mover with an obstacle out of its one-tick reach: it must
-	// land exactly on its integrated target, untouched by the sweep.
-	w := NewWorld(wideBounds)
-	w.Add(Entity{ID: 1, Pos: Vec3{}, MaxSpeed: 6_000, Radius: 300}) // 200 mm/tick
-	w.Add(Entity{ID: 2, Pos: Vec3{X: 5_000}, MaxSpeed: 0, Radius: 300})
-	w.SetIntent(1, Vec3{X: 6_000})
-	w.Step()
-	if got := w.Get(1).Pos.X; got != 200 {
-		t.Fatalf("slow mover clamped by the sweep: X=%d, want 200 (its full integrated step)", got)
 	}
 }

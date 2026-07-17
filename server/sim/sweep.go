@@ -7,83 +7,93 @@ import "math/big"
 // Separation (separation.go) resolves the overlap of *post-movement* positions:
 // it looks at where actors ended up this tick and pushes any overlapping pair
 // apart. It is therefore blind to an actor that moves fast enough to pass
-// entirely through another between two ticks — neither the actor's start nor its
-// end position overlaps the other, so the overlap pass never fires. That is the
-// classic discrete-collision *tunneling* gap (flagged by Codex review on #56,
-// tracked as #66).
+// entirely through another between two ticks — neither its start nor its end
+// position overlaps the other, so the overlap pass never fires — and worse,
+// separation can *complete* such a crossing: an actor that stepped past another's
+// centre in one tick is pushed further along its travel, out the far side,
+// rather than back. That is the classic discrete-collision *tunneling* gap
+// (flagged by Codex review on #56, tracked as #66).
 //
-// The fix lives here, in Step's integration rather than in the de-overlap pass:
-// before an actor is committed to its post-step position, its straight-line
-// path this tick is swept against the other actors, and if that path would cross
-// through one, the actor is stopped at first contact instead of teleporting out
-// the far side.
+// The fix is a swept pass in Step's integration: a mover is stopped at the first
+// moment its capsule would touch another while the two are approaching, instead
+// of being committed to a destination it could only reach by passing through.
 //
-// It is a strict no-op at every movement speed the game has today. An actor
-// whose per-tick step is shorter than the chord it would have to cut through a
-// capsule cannot tunnel it — it can at most enter and be caught by separation —
-// so the sweep never fires for realistic walking speed, and it changes neither
-// the demo movement golden nor the separation golden (asserted by
-// sweep_test.go). It engages only for the high-speed movement (a dash/charge)
-// that a later Phase 2 combat child will add. #66 exists to put this guard in
-// place *before* that movement does, because the product law has no undo: an
-// actor must never be able to skip a collision by moving quickly.
+// Feature-flag-first (World.SweptCollision, default off). Stopping an actor at
+// first contact is a genuine change to how contact resolves — stop-at-contact
+// rather than overlap-then-separate — so it ships behind a default-off flag and
+// is validated in both states (sweep_test.go). With the flag off the movement
+// pass is byte-identical to the original, so every settled golden is unchanged.
+// No actor in the game moves fast enough to tunnel today (#66 exists to arm the
+// guard *before* the high-speed movement — a dash/charge — that a later Phase 2
+// combat child adds); that child flips the flag on after validating it, the
+// standard decouple-deploy-from-release step. The product law has no undo, so
+// the guard must exist before the movement that needs it.
 //
 // Design constraints, identical to the rest of the sim:
 //
-//   - Integer-only and host-independent. The geometry is exact-integer. The few
-//     intermediate quantities that can exceed int64 (a squared dot product, the
-//     discriminant, the final interpolation) are computed with math/big, which
-//     is exact integer arithmetic — never floating point — so the stop position
-//     is bit-identical on every architecture, exactly as isqrt replaces
-//     math.Sqrt elsewhere. math/big is stdlib, so this adds no dependency.
-//   - Deterministic and order-independent. Every actor is swept against a single
-//     immutable snapshot of the pre-step positions, taken before any actor
-//     moves, so the clamp each mover receives is a pure function of that
-//     snapshot — independent of the order actors are integrated in, and of Go
-//     map iteration order (obstacles are visited in ascending EntityID order).
-//   - Sweep-vs-static, then separate. An obstacle is treated as stationary at
-//     its snapshot position for the sweep. The mover is thereby guaranteed not to
-//     pass *through* an obstacle's snapshot capsule; any residual overlap once
-//     both have actually moved is left to the deterministic separation pass. So
-//     a fast actor can never tunnel another, which is the whole guarantee, and
-//     the settled de-overlap behaviour is unchanged.
-//   - Conservative. The stop is a lower bound on the true first contact,
-//     truncated toward the start, so the actor always halts at or before the
-//     capsule surface (within separationSlopMM — the same touching tolerance
-//     separation itself treats as resolved), never having crossed it.
+//   - Integer-only and host-independent. The geometry is exact-integer; the few
+//     intermediate quantities that can exceed int64 (the discriminant, the final
+//     interpolation) use math/big, which is exact integer arithmetic — never
+//     floating point — so the result is bit-identical on every architecture,
+//     exactly as isqrt replaces math.Sqrt elsewhere. math/big is stdlib, so this
+//     adds no dependency.
+//   - Relative motion, so it is correct when BOTH actors move. Each mover is
+//     tested against the other actors' actual travel this tick (start→target),
+//     not a static snapshot — two actors swapping places at speed are caught and
+//     meet at contact rather than passing through each other.
+//   - Deterministic and order-independent. Every clamp is a pure function of one
+//     immutable snapshot of the whole field's start and target positions, taken
+//     before any actor is committed, and obstacles are visited in ascending
+//     EntityID order.
+//   - Never-cross, residual to separation. A mover is stopped at or before first
+//     contact (a conservative lower bound on the contact time, truncated toward
+//     the start), so it never passes through another; any small residual overlap
+//     once every actor has been placed is left to the deterministic separation
+//     pass, exactly as before.
 
-// sweptStop returns the position to which the mover id's integrated target for
-// this tick is shortened so that its straight-line ground-plane path does not
-// pass through any other actor's snapshot capsule. from is the mover's pre-step
-// position (snap[id]); target is its bounds-clamped integrated destination; ra
-// is its capsule radius; earlyOut2 is the squared per-tick displacement at or
-// below which no actor present can tunnel (see Step). It returns target
-// unchanged whenever no crossing would occur — which is the case at every speed
-// the game has today.
-func (w *World) sweptStop(id EntityID, snap map[EntityID]Vec3, target Vec3, ra, earlyOut2 int64) Vec3 {
-	from := snap[id]
-	dx := target.X - from.X
-	dz := target.Z - from.Z
-	if dx == 0 && dz == 0 {
-		return target // no ground-plane movement — nothing horizontal to sweep
+// integrateSwept is the movement pass used when World.SweptCollision is on. It
+// integrates every actor's clamped intent into a target, then places each actor
+// at the first point along its path where it would contact another — so a fast
+// actor stops at a wall of bodies instead of tunneling through them.
+func (w *World) integrateSwept() {
+	n := len(w.order)
+	// Snapshot every actor's start and integrated target up front. Each mover's
+	// clamp then depends only on this immutable snapshot of the whole field's
+	// motion — never on the order actors are placed in, and never on a position
+	// already mutated this tick.
+	starts := make(map[EntityID]Vec3, n)
+	targets := make(map[EntityID]Vec3, n)
+	for _, id := range w.order {
+		e := w.ents[id]
+		starts[id] = e.Pos
+		v := clampSpeed(e.Intent, e.MaxSpeed)
+		// mm/s / (ticks/s) = mm/tick.
+		disp := Vec3{X: v.X / TickHz, Y: v.Y / TickHz, Z: v.Z / TickHz}
+		targets[id] = w.bounds.clamp(e.Pos.Add(disp))
 	}
-	if dx*dx+dz*dz <= earlyOut2 {
-		return target // step too short to tunnel any capsule present (the case today)
+	for _, id := range w.order {
+		w.ents[id].Pos = w.sweptClamp(id, starts, targets)
 	}
+}
 
-	// A genuine fast mover. Sweep its path against every other actor's snapshot
-	// capsule, in ascending-ID order, and keep the earliest contact. Scanning all
-	// other actors is O(n); it runs only for a mover whose step exceeds earlyOut2,
-	// of which there are none until a high-speed ability lands, so it is off the
-	// hot path today. Grid-accelerating this query for a zone full of
-	// simultaneously-dashing actors is a later refinement, tied to the separation
-	// broad phase (#64); it is deliberately not done here.
+// sweptClamp returns where mover id should be placed this tick: its integrated
+// target, shortened along its own path to the earliest contact with any other
+// actor's swept capsule. It scans the other actors in ascending-ID order and
+// keeps the earliest contact.
+//
+// The scan is O(n) per mover. That is acceptable while swept collision is armed
+// only for the rare high-speed mover; grid-accelerating it (via the separation
+// broad phase, broadphase.go) for a zone full of simultaneously-dashing actors
+// is a later refinement tied to #64, deliberately not done here.
+func (w *World) sweptClamp(id EntityID, starts, targets map[EntityID]Vec3) Vec3 {
+	from, to := starts[id], targets[id]
+	ri := w.ents[id].Radius
 	var best *big.Rat // earliest contact fraction in [0,1]; nil ⇒ no contact
 	for _, oid := range w.order {
 		if oid == id {
 			continue
 		}
-		t := firstContactFrac(from, target, ra, snap[oid], w.ents[oid].Radius)
+		t := firstContactFrac(from, to, ri, starts[oid], targets[oid], w.ents[oid].Radius)
 		if t == nil {
 			continue
 		}
@@ -92,125 +102,110 @@ func (w *World) sweptStop(id EntityID, snap map[EntityID]Vec3, target Vec3, ra, 
 		}
 	}
 	if best == nil {
-		return target
+		return to
 	}
-
-	// Stop at from + best·(target-from) on the ground plane, truncating the
-	// displacement toward the start so the actor halts on the outside of the
-	// capsule. Vertical motion is unaffected: capsules are vertical, so overlap —
-	// and therefore tunneling — is purely a ground-plane question.
+	// Place the mover at from + best·(to−from) on the ground plane, truncating the
+	// displacement toward the start so it halts at or before contact — never
+	// having crossed. Vertical motion is unaffected: capsules are vertical, so
+	// contact is a ground-plane question.
 	return Vec3{
-		X: from.X + fracMulTrunc(best, dx),
-		Y: target.Y,
-		Z: from.Z + fracMulTrunc(best, dz),
+		X: from.X + fracMulTrunc(best, to.X-from.X),
+		Y: to.Y,
+		Z: from.Z + fracMulTrunc(best, to.Z-from.Z),
 	}
 }
 
-// firstContactFrac returns the fraction t ∈ [0,1] of the ground-plane segment
-// from→target at which a mover of radius ra first makes meaningful contact with
-// a stationary capsule (centre, rb), or nil if the segment does not pass through
-// that capsule (so the mover should move freely to target).
+// firstContactFrac returns the fraction t ∈ [0,1] of mover i's path (iFrom→iTo,
+// radius ri) at which i first makes *closing* contact with actor j (jFrom→jTo,
+// radius rj) — the earliest instant during the tick that the two capsules touch
+// while approaching. It returns nil when they do not touch while approaching
+// this tick, so i may move freely.
 //
-// "Meaningful contact" is defined against the effective radius rEff = ra+rb −
-// separationSlopMM: the depth at which separation itself would act. A path that
-// only grazes to within the slop is not a collision separation would resolve, so
-// it is not a tunnel to prevent — and treating it as one would perturb the
-// settled goldens. The mover is caught only when its path enters the rEff disk
-// having started and ended outside it — i.e. it would cross clean through — and
-// is then stopped at the rEff surface (penetration ≈ slop, which separation
-// treats as already resolved).
-func firstContactFrac(from, target Vec3, ra int64, center Vec3, rb int64) *big.Rat {
-	rEff := ra + rb - separationSlopMM
-	if rEff <= 0 {
-		return nil // combined radius within the slop — no overlap separation would ever resolve
+// It works in the pair's relative frame, so it is correct when both actors move:
+// with A = i−j at the tick's start and B their relative displacement over the
+// tick, the squared gap |A + t·B|² is a parabola in t, and contact is where it
+// meets rsum². The smaller (entry) root is always the closing one. An actor that
+// begins already overlapping (|A| ≤ rsum) is allowed to move apart but not to
+// close further — otherwise it is delegated to separation, as before.
+func firstContactFrac(iFrom, iTo Vec3, ri int64, jFrom, jTo Vec3, rj int64) *big.Rat {
+	rsum := ri + rj
+	if rsum <= 0 {
+		return nil // no combined extent — nothing to collide
 	}
-	rEff2 := rEff * rEff
+	// A = relative position at t=0 (i − j); B = relative displacement over the tick.
+	ax := iFrom.X - jFrom.X
+	az := iFrom.Z - jFrom.Z
+	bx := (iTo.X - iFrom.X) - (jTo.X - jFrom.X)
+	bz := (iTo.Z - iFrom.Z) - (jTo.Z - jFrom.Z)
+	a := bx*bx + bz*bz             // |B|² — relative speed², squared mm per tick
+	ab := ax*bx + az*bz            // A·B — negative iff the pair is closing at t=0
+	c := ax*ax + az*az - rsum*rsum // |A|² − rsum²
 
-	dx := target.X - from.X
-	dz := target.Z - from.Z
-	a0 := dx*dx + dz*dz // path length² on the ground plane
-	if a0 == 0 {
-		return nil // no ground-plane movement — no path to sweep (also guards the a0 divisor below)
+	if c <= 0 {
+		// Already in contact at the tick's start. Let it move apart (or tangent);
+		// block only a move that closes further, which would drive it through.
+		if ab >= 0 {
+			return nil
+		}
+		return big.NewRat(0, 1) // closing while overlapped ⇒ hold position this tick
 	}
-
-	// f = from − centre. The path is P(t) = from + t·(dx,dz), t ∈ [0,1].
-	fx := from.X - center.X
-	fz := from.Z - center.Z
-	c0 := fx*fx + fz*fz // |P(0) − centre|²
-	if c0 <= rEff2 {
-		return nil // already within contact distance at the start — separation's job, not a tunnel
+	if a == 0 {
+		return nil // no relative motion ⇒ gap is constant ⇒ no new contact
 	}
-	tx := target.X - center.X
-	tz := target.Z - center.Z
-	e0 := tx*tx + tz*tz // |P(1) − centre|²
-	if e0 <= rEff2 {
-		return nil // ends within contact distance — a plain approach, resolved by separation
-	}
-
-	// The squared distance |P(t) − centre|² = a0·t² + 2·fd·t + c0 is minimised at
-	// t* = −fd/a0. A crossing with both endpoints outside requires the closest
-	// approach to fall strictly inside the segment, i.e. 0 < t* < 1 ⟺ −a0 < fd < 0.
-	fd := fx*dx + fz*dz // f·d
-	if fd >= 0 {
-		return nil // moving away from the centre — closest approach is the (outside) start
-	}
-	if fd <= -a0 {
-		return nil // closest approach at/after the end — nearest point in [0,1] is the (outside) end
+	if ab >= 0 {
+		return nil // separating (or tangent) at the start ⇒ closest approach is at t≤0
 	}
 
-	// Contact solves a0·t² + 2·fd·t + (c0 − rEff²) = 0, whose entry (smaller) root
-	// is t = (−fd − √(fd² − a0·(c0 − rEff²))) / a0. Both fd² and a0·(c0−rEff²) can
-	// exceed int64, so the discriminant is formed with exact big-integer
-	// arithmetic (never float — determinism).
-	cc := c0 - rEff2 // > 0
-	fdBig := big.NewInt(fd)
-	disc := new(big.Int).Mul(fdBig, fdBig)                           // fd²
-	disc.Sub(disc, new(big.Int).Mul(big.NewInt(a0), big.NewInt(cc))) // fd² − a0·cc
-	if disc.Sign() <= 0 {
-		return nil // the path stays outside the rEff disk (tangent or miss) — no crossing
+	// |A + t·B|² − rsum² = a·t² + 2·ab·t + c. Contact is a root of that quadratic;
+	// the discriminant/4 is ab² − a·c (which can exceed int64, so use big).
+	discQ := new(big.Int).Sub(
+		new(big.Int).Mul(big.NewInt(ab), big.NewInt(ab)),
+		new(big.Int).Mul(big.NewInt(a), big.NewInt(c)),
+	)
+	if discQ.Sign() <= 0 {
+		return nil // the relative path stays outside rsum (tangent or miss)
+	}
+	// Contact falls within THIS tick only if the parabola reaches ≤ 0 for some
+	// t ∈ (0,1]: either the endpoint is in contact (q(1) ≤ 0) or the closest
+	// approach is before t=1 (t* = −ab/a < 1 ⇔ a+ab > 0).
+	q1 := a + 2*ab + c
+	if q1 > 0 && a+ab <= 0 {
+		return nil // closest approach is at/after t=1 and the endpoint is clear
 	}
 
-	// Use ⌈√disc⌉ so the numerator −fd−⌈√disc⌉ is no larger than the true
-	// −fd−√disc: the resulting fraction is a lower bound on the true entry, so the
-	// mover stops at or before first contact — on the outside.
-	s := new(big.Int).Sqrt(disc) // ⌊√disc⌋
-	if new(big.Int).Mul(s, s).Cmp(disc) != 0 {
-		s.Add(s, big.NewInt(1)) // ⌈√disc⌉
-	}
-	sc := s.Int64() // fits int64: disc ≤ ~6.4e25 ⇒ √disc ≤ ~8e12
-	num := -fd - sc // −fd > 0 (fd < 0)
+	// Entry (closing) root: t = (−ab − √discQ)/a. Using ⌈√discQ⌉ makes the
+	// numerator no larger than the true one, so t is a lower bound on true
+	// contact — the mover stops at or before it, on the near side.
+	num := -ab - ceilSqrt(discQ) // −ab > 0 (ab < 0 here)
 	if num <= 0 {
-		// The conservative entry rounds to at/behind the start: the mover begins
-		// essentially at the contact surface, so it is blocked outright this tick.
-		// Stopping at the start is safe (definitely outside) — return t = 0.
-		return big.NewRat(0, 1)
+		return big.NewRat(0, 1) // contact rounds to at/behind the start ⇒ hold
 	}
-	return big.NewRat(num, a0) // a0 > 0
+	if num > a {
+		num = a // clamp the conservative rounding to t ≤ 1
+	}
+	return big.NewRat(num, a)
+}
+
+// ceilSqrt returns ⌈√n⌉ for n ≥ 0 as an int64, using math/big's exact integer
+// square root (⌊√n⌋) and rounding up when n is not a perfect square. It is exact
+// and host-independent — the discriminant it takes is bounded well within an
+// int64 square root, so the result fits an int64.
+func ceilSqrt(n *big.Int) int64 {
+	s := new(big.Int).Sqrt(n) // ⌊√n⌋
+	if new(big.Int).Mul(s, s).Cmp(n) != 0 {
+		s.Add(s, big.NewInt(1))
+	}
+	return s.Int64()
 }
 
 // fracMulTrunc returns ⌊r·delta⌋ truncated toward zero, as an int64. r is a
 // contact fraction in [0,1] and delta a ground-plane displacement bounded to
-// ±2·maxWorldExtentMM, so the product fits an int64 after the division; the
-// intermediate numerator can exceed int64, so the multiply/divide is done with
-// math/big. Truncating toward zero shortens the displacement, which keeps the
-// stopped position on the start side of true contact.
+// ±2·maxWorldExtentMM, so the quotient fits an int64; the intermediate numerator
+// can exceed int64, so the multiply/divide uses math/big. Truncating toward zero
+// shortens the displacement, keeping the placed position on the start side of
+// true contact.
 func fracMulTrunc(r *big.Rat, delta int64) int64 {
 	n := new(big.Int).Mul(r.Num(), big.NewInt(delta))
 	n.Quo(n, r.Denom()) // toward zero
 	return n.Int64()
-}
-
-// minPositiveRadius returns the smallest strictly-positive capsule radius in the
-// world, or 0 if no actor has extent. It is a lower bound on the combined radius
-// of any pair that can collide (a pair's r_a+r_b is at least the smaller of the
-// two, and at least this when one side is a point capsule), which is what the
-// swept early-out is sized against.
-func minPositiveRadius(w *World) int64 {
-	var m int64
-	for _, id := range w.order {
-		if r := w.ents[id].Radius; r > 0 && (m == 0 || r < m) {
-			m = r
-		}
-	}
-	return m
 }
