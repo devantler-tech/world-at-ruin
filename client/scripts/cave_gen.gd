@@ -50,39 +50,10 @@ func rebuild() -> void:
 
 ## Pure mesh construction — static so tests can call it without a scene tree.
 static func build_mesh(p_seed: int, p_radius: float) -> ArrayMesh:
-	var noise := FastNoiseLite.new()
-	noise.seed = p_seed
-	noise.noise_type = FastNoiseLite.TYPE_SIMPLEX
-	noise.fractal_type = FastNoiseLite.FRACTAL_FBM
-	noise.fractal_octaves = 4
-	noise.frequency = 1.6 / p_radius
-
-	var rng := RandomNumberGenerator.new()
-	rng.seed = p_seed
-	var roughness := rng.randf_range(0.16, 0.24)
-	var floor_y := FLOOR_FRACTION * p_radius
-
-	var sphere := _icosphere(SUBDIVISIONS)
-	var verts: PackedVector3Array = sphere[0]
-	var tris: PackedInt32Array = sphere[1]
-
-	# Carve: displace along the normal by fractal noise, flatten a floor band.
-	# The floor is flattened along Y — Godot's elevation axis (WorldGen emits
-	# Vector3(x, height, z) and player gravity acts on velocity.y), so the
-	# walkable plane must be a constant-Y band, not constant-Z. Flattened
-	# vertices are tracked so the entrance cut below can tell floor triangles
-	# from wall shell exactly, with no normal/height threshold tuning.
-	var is_floor := PackedByteArray()
-	is_floor.resize(verts.size())
-	for i in verts.size():
-		var pos := verts[i] * p_radius
-		var d := noise.get_noise_3dv(pos)
-		pos += verts[i] * (d * roughness * p_radius)
-		if pos.y < floor_y:
-			var rumple := 0.08 * p_radius * noise.get_noise_3d(pos.x * 3.0 / p_radius, pos.z * 3.0 / p_radius, 7.31)
-			pos.y = floor_y + rumple
-			is_floor[i] = 1
-		verts[i] = pos
+	var carved := _carve(p_seed, p_radius)
+	var verts: PackedVector3Array = carved[0]
+	var tris: PackedInt32Array = carved[1]
+	var is_floor: PackedByteArray = carved[2]
 
 	# Entrance: drop triangles inside the mouth corridor toward +X. The
 	# corridor is judged on the HORIZONTAL direction (Y projected out) — a
@@ -118,6 +89,86 @@ static func build_mesh(p_seed: int, p_radius: float) -> ArrayMesh:
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = COL_ROCK_DARK.lerp(COL_ROCK_WARM, 0.35)
 	mat.roughness = 0.95
+	st.set_material(mat)
+	return st.commit()
+
+
+## The carved chamber shape shared by the interior and shell meshes:
+## displace an icosphere along its normals by fractal noise, flatten a floor
+## band. The floor is flattened along Y — Godot's elevation axis (WorldGen
+## emits Vector3(x, height, z) and player gravity acts on velocity.y), so the
+## walkable plane must be a constant-Y band, not constant-Z. Flattened
+## vertices are tracked so the entrance cut can tell floor triangles from
+## wall shell exactly, with no normal/height threshold tuning.
+## Returns [PackedVector3Array verts, PackedInt32Array tris, PackedByteArray is_floor].
+static func _carve(p_seed: int, p_radius: float) -> Array:
+	var noise := FastNoiseLite.new()
+	noise.seed = p_seed
+	noise.noise_type = FastNoiseLite.TYPE_SIMPLEX
+	noise.fractal_type = FastNoiseLite.FRACTAL_FBM
+	noise.fractal_octaves = 4
+	noise.frequency = 1.6 / p_radius
+
+	var rng := RandomNumberGenerator.new()
+	rng.seed = p_seed
+	var roughness := rng.randf_range(0.16, 0.24)
+	var floor_y := FLOOR_FRACTION * p_radius
+
+	var sphere := _icosphere(SUBDIVISIONS)
+	var verts: PackedVector3Array = sphere[0]
+	var tris: PackedInt32Array = sphere[1]
+
+	var is_floor := PackedByteArray()
+	is_floor.resize(verts.size())
+	for i in verts.size():
+		var pos := verts[i] * p_radius
+		var d := noise.get_noise_3dv(pos)
+		pos += verts[i] * (d * roughness * p_radius)
+		if pos.y < floor_y:
+			var rumple := 0.08 * p_radius * noise.get_noise_3d(pos.x * 3.0 / p_radius, pos.z * 3.0 / p_radius, 7.31)
+			pos.y = floor_y + rumple
+			is_floor[i] = 1
+		verts[i] = pos
+	return [verts, tris, is_floor]
+
+
+## The chamber's OUTSIDE: the same carved shape pushed outward a little and
+## wound so the exterior is the visible side — the rock dome the cave lives
+## inside when it stands in the open world. The same entrance corridor is cut
+## so the mouth opens through both meshes.
+static func build_shell_mesh(p_seed: int, p_radius: float, p_thickness := 0.4) -> ArrayMesh:
+	var carved := _carve(p_seed, p_radius)
+	var verts: PackedVector3Array = carved[0]
+	var tris: PackedInt32Array = carved[1]
+	var is_floor: PackedByteArray = carved[2]
+	var grow := 1.0 + p_thickness / p_radius
+
+	var cone := cos(deg_to_rad(ENTRANCE_DEG))
+	var mouth_top := p_radius * sin(deg_to_rad(ENTRANCE_DEG))
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for t in range(0, tris.size(), 3):
+		var a := verts[tris[t]]
+		var b := verts[tris[t + 1]]
+		var c := verts[tris[t + 2]]
+		var all_floor := is_floor[tris[t]] == 1 \
+			and is_floor[tris[t + 1]] == 1 and is_floor[tris[t + 2]] == 1
+		if all_floor:
+			continue  # The shell has no outside floor — terrain is the ground.
+		var center := (a + b + c) / 3.0
+		var flat := Vector3(center.x, 0.0, center.z)
+		if center.y < mouth_top and flat.length() > 0.001 \
+			and (flat / flat.length()).dot(Vector3(1, 0, 0)) > cone:
+			continue
+		# Winding NOT flipped: the visible side faces outward.
+		st.add_vertex(a * grow)
+		st.add_vertex(b * grow)
+		st.add_vertex(c * grow)
+	st.generate_normals()
+
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = COL_ROCK_DARK.lerp(COL_ROCK_WARM, 0.2)
+	mat.roughness = 0.97
 	st.set_material(mat)
 	return st.commit()
 

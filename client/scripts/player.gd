@@ -27,6 +27,10 @@ var spawn_point := Vector3.ZERO
 ## terrain is a pure heightfield, so a body below it is always an invalid
 ## physics state — used to self-heal embedding/tunneling instead of wedging.
 var ground_height_provider: Callable
+## False while the character creator owns the screen: movement input and
+## mouse capture are ignored, but gravity, sliding and the anti-embed
+## safety net keep running (the body must stay honest while being reshaped).
+var control_enabled := true
 ## Emitted when the world reclaims the wanderer (for HUD flavour text).
 signal respawned
 
@@ -34,6 +38,8 @@ var _cam_yaw: Node3D
 var _spring: SpringArm3D
 var _camera: Camera3D
 var _visual: Node3D
+var _character_body: Node3D
+var _placeholder: Array[Node] = []
 var _embedded_ticks := 0
 
 static func ensure_input_actions() -> void:
@@ -45,6 +51,7 @@ static func ensure_input_actions() -> void:
 		"jump": [KEY_SPACE],
 		"sprint": [KEY_SHIFT],
 		"toggle_devlog": [KEY_F1, KEY_L],
+		"character_editor": [KEY_C],
 	}
 	for action: String in bindings:
 		if not InputMap.has_action(action):
@@ -84,6 +91,7 @@ func _build_body() -> void:
 	cloth.roughness = 0.85
 	body_mesh.set_surface_override_material(0, cloth)
 	_visual.add_child(body_mesh)
+	_placeholder.append(body_mesh)
 
 	# A hood/visor block so facing reads at a glance.
 	var visor := MeshInstance3D.new()
@@ -98,6 +106,30 @@ func _build_body() -> void:
 	visor_mat.emission_energy_multiplier = 0.6
 	visor.set_surface_override_material(0, visor_mat)
 	_visual.add_child(visor)
+	_placeholder.append(visor)
+
+## Dress the wanderer in a recipe-built body (the capsule placeholder goes
+## away the moment a real character exists). Collision stays the capsule —
+## physics never depends on the body's shape (product law: capsules only).
+func set_character(recipe: Dictionary) -> void:
+	var body := CharacterFactory.build(recipe)
+	if body == null:
+		return
+	for node in _placeholder:
+		node.queue_free()
+	_placeholder.clear()
+	if _character_body != null:
+		_character_body.queue_free()
+	body.rotation.y = PI  # The kit body faces +Z; the visual's forward is -Z.
+	_visual.add_child(body)
+	_character_body = body
+
+## The current body's skinned mesh — the character creator drives blend-shape
+## weights on it live while sliders move.
+func character_mesh() -> MeshInstance3D:
+	if _character_body == null:
+		return null
+	return CharacterFactory.find_skinned_mesh(CharacterFactory.find_skeleton(_character_body))
 
 func _build_camera_rig() -> void:
 	_cam_yaw = Node3D.new()
@@ -119,6 +151,8 @@ func _build_camera_rig() -> void:
 	_camera.make_current()
 
 func _unhandled_input(event: InputEvent) -> void:
+	if not control_enabled:
+		return
 	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		var motion := event as InputEventMouseMotion
 		_cam_yaw.rotation.y -= motion.relative.x * MOUSE_SENS
@@ -131,10 +165,11 @@ func _unhandled_input(event: InputEvent) -> void:
 func _physics_process(delta: float) -> void:
 	if not is_on_floor():
 		velocity.y = maxf(velocity.y - GRAVITY * delta, -MAX_FALL_SPEED)
-	elif Input.is_action_just_pressed("jump"):
+	elif control_enabled and Input.is_action_just_pressed("jump"):
 		velocity.y = JUMP_VELOCITY
 
-	var input_dir := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
+	var input_dir := Input.get_vector("move_left", "move_right", "move_forward", "move_back") \
+		if control_enabled else Vector2.ZERO
 	var basis := _cam_yaw.global_transform.basis
 	var wish := (basis.x * input_dir.x + basis.z * input_dir.y)
 	wish.y = 0.0

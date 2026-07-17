@@ -5,20 +5,20 @@ class_name DevLog
 ## development progress by playing. Every change that a player could notice
 ## gets an entry here, newest first — open it in-game with F1.
 
-const VERSION := "0.1.6"
+const VERSION := "0.1.7"
 const CODENAME := "Ashfall Reach"
 
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
-		"version": "0.1.6",
+		"version": "0.1.7",
 		"date": "2026-07-17",
-		"title": "Bodies from recipes",
+		"title": "You wake in the starter cave",
 		"notes": [
-			"The character system exists. One canonical human body is now baked entirely by committed code — and every person in this world will be a RECIPE: a small text file of named sliders (broader shoulders, heavier gut, squarer jaw...) that reshapes that one body.",
-			"Three first recipes stand in the gallery (scenes/recipes.tscn — the taste gate): a wanderer, a villager, and a brute. Same skeleton, same mesh, three different people.",
-			"Recipes are forever: a golden recipe exercising every slider is locked into the tests — if a future change would break a character someone made, the build fails before it can.",
-			"Clay-grey for now, and standing in a sculptor's pose: skin, hair and clothes are later stages of the system.",
+			"The cave is no longer a museum piece: it stands in the open world, a minute's walk from the shrine — and every wanderer now wakes inside it, by a handful of dying embers, with the mouth glowing ahead. Walk out; there is no loading screen, and there never will be.",
+			"The first time you wake, the world asks who you are: a character creation screen shapes your body — build sliders, frame sliders, three starting presets — live on the body standing in the cave. Your shape is saved and kept.",
+			"Press C any time to reshape yourself (an early-build courtesy while the character system grows: skin, hair and clothes are still to come, and the body still stands in the sculptor's pose).",
+			"The capsule placeholder is gone; the wanderer wears a recipe-built body from the character system.",
 		],
 	},
 	{
