@@ -5,11 +5,22 @@ class_name DevLog
 ## development progress by playing. Every change that a player could notice
 ## gets an entry here, newest first — open it in-game with F1.
 
-const VERSION := "0.1.11"
+const VERSION := "0.1.12"
 const CODENAME := "Ashfall Reach"
 
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
+	{
+		"version": "0.1.12",
+		"date": "2026-07-17",
+		"title": "The Reach is inhabited",
+		"notes": [
+			"Walk out of the cave and you are no longer alone: a small settlement rings the shrine, and lone drifters dot the open land — two dozen people, every one of them different.",
+			"Each person is grown from their name: body, face, age, phenotype, outfit and skin all come from a seeded generator, so Maren stands in the same place with the same face on every machine, every boot, forever.",
+			"Everyone finally stands like a person, arms at their sides — the T-pose era ends for you and them alike (real animation comes later; today they hold still and watch the light).",
+			"Walk close and a name fades in over each head. They cannot speak yet. They are waiting for the world to give them something to say.",
+		],
+	},
 	{
 		"version": "0.1.11",
 		"date": "2026-07-17",

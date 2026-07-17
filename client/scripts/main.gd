@@ -33,6 +33,14 @@ func _ready() -> void:
 	# The mouth faces the shrine, so facing the shrine faces the light.
 	_player.face_toward(Vector3.ZERO)
 
+	# The Reach is inhabited: a seeded settlement rings the shrine and lone
+	# drifters dot the open land — the same people in the same places every
+	# boot (stage 6 of the character system).
+	var npcs := NpcSpawner.new()
+	npcs.name = "Npcs"
+	add_child(npcs)
+	npcs.populate(world)
+
 	_hud = Hud.new()
 	_hud.name = "Hud"
 	add_child(_hud)
@@ -45,6 +53,11 @@ func _ready() -> void:
 	else:
 		# First time in the world: shape a character before setting out.
 		_open_creator.call_deferred(true)
+
+	# The smoke boot's POSITIVE marker: CI greps for this line, not merely
+	# for the absence of errors — a boot that never mounted the project must
+	# fail the check, not slip past it (the silent-no-op incident, 0.1.12).
+	print("BOOT_OK v%s — world built, %d people in the Reach" % [DevLog.VERSION, npcs.npc_names.size()])
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("character_editor") and _creator == null:

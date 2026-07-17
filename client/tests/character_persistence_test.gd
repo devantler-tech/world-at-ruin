@@ -11,7 +11,9 @@ extends Node
 
 
 func _ready() -> void:
-	_backup_live_save()
+	if not _backup_live_save():
+		_fail("could not back up the live character save — refusing to touch it")
+		return
 	CharacterStore.clear()
 	if CharacterStore.load_saved() != null:
 		_fail("missing save did not read as null")
@@ -67,15 +69,25 @@ func _fail(message: String) -> void:
 	get_tree().quit(1)
 ## The tests exercise first-run flows by clearing the save — but a LIVE
 ## character save is player state (no-resets law): back it up first and put
-## it back whatever happens.
+## it back whatever happens. CRASH-SAFE: a stale backup from a killed run is
+## restored (never clobbered) before a new backup is taken, the copy is
+## verified before anything destructive runs, and tree teardown restores too.
 const BACKUP := "user://character.json.test-backup"
 
 
-func _backup_live_save() -> void:
-	if FileAccess.file_exists(CharacterStore.PATH):
-		DirAccess.copy_absolute(
-			ProjectSettings.globalize_path(CharacterStore.PATH),
-			ProjectSettings.globalize_path(BACKUP))
+func _exit_tree() -> void:
+	_restore_live_save()
+
+
+func _backup_live_save() -> bool:
+	if FileAccess.file_exists(BACKUP):
+		# A previous run died before restoring: put the original back first.
+		_restore_live_save()
+	if not FileAccess.file_exists(CharacterStore.PATH):
+		return true
+	return DirAccess.copy_absolute(
+		ProjectSettings.globalize_path(CharacterStore.PATH),
+		ProjectSettings.globalize_path(BACKUP)) == OK
 
 
 func _restore_live_save() -> void:
