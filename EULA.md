@@ -21,12 +21,12 @@ entertainment. The Game is licensed, not sold.
 
 - Characters, mastery, items, and other in-game data are records in the Service. They are not
   Your property, have no monetary value, and cannot be sold, traded, or transferred for value.
-- The world is designed to **evolve without taking your progress from you**: the Operator intends
-  never to wipe or reset persistent characters, and changes to the world are made either without
-  breaking your existing characters or through a deprecation notice that tells you, ahead of time,
-  what is changing or being removed. Experimental features are opt-in. This is a design commitment,
-  not a warranty — the Service is an evolving work and no specific content, feature, or
-  availability is promised.
+- The world is designed to **change in the open, never taking your progress by surprise**: the
+  Operator intends never to wipe or reset persistent characters, and any change that would alter or
+  remove something you have earned is either non-breaking or announced ahead of time through a
+  deprecation notice — nothing is taken from you silently. Experimental features are opt-in. This is
+  a design commitment, not a warranty — the Service is an evolving work and no specific content,
+  feature, or availability is promised.
 - The Service keeps the records (including audit logs) needed to run Your account, preserve
   world integrity, and investigate defects and abuse.
 - Names and other content You enter may be stored and shown to other players as part of the
