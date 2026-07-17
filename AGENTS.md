@@ -68,10 +68,12 @@ game about standing in the right place).
 **Source-available and proprietary — NEVER call it "open source"** (free redistribution is clause 1
 of the OSD). Copying/redistribution prohibited. The legal set is in place: `LICENSE.md` (bespoke
 source-available licence), `EULA.md` (governs playing distributed builds), and `CLA.md` (**copyright
-assignment**, EU: with a fallback exclusive licence). The `CLA` workflow (contributor-assistant)
-blocks an external PR until its author signs; signatures are ledgered on the **permanent
-`cla-signatures` branch — never delete it**. **No GPL/AGPL in the shipped tree** — enforced in CI
-(`license-guard` job), not remembered.
+assignment**, EU: with a fallback exclusive licence). The first-party, dependency-free `CLA`
+workflow blocks an external PR until its author signs; signatures are ledgered on the **permanent
+`cla-signatures` branch — never delete it**, and an external PR that touches
+`.github/workflows/cla.yaml` is inherently suspect (it can repaint its own check, never the
+ledger). **No GPL/AGPL in the shipped tree** — enforced in CI (`license-guard` job), not
+remembered.
 
 ### Product law — the two constraints that outrank the design
 

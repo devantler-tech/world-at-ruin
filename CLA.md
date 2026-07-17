@@ -66,8 +66,11 @@ Contributions are provided "as is"; You owe no support for them.
 
 ## 7. Signing and scope
 
-You sign by posting the sentence the CLA workflow requests on Your pull request; the signature is
-recorded in the repository's signature ledger. Signing covers Your past and future Contributions
+You sign by posting this exact sentence as a comment on Your pull request:
+
+> I have read the CLA Document and I hereby sign the CLA
+
+The signature is recorded in the repository's signature ledger. Signing covers Your past and future Contributions
 to this repository until You revoke Your agreement in writing (via an issue on this repository).
 Revocation has no effect on Contributions submitted before it — the rights in sections 1–5 are
 already granted and survive.

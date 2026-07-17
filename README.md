@@ -56,7 +56,7 @@ newest first — replaying after each build shows exactly what the agents grew.
 - **Source-available, not open source** — see [LICENSE.md](LICENSE.md). Reading is welcome;
   copying and redistribution are not permitted. Playing a distributed build is governed by the
   [EULA](EULA.md), and contributing requires signing the [CLA](CLA.md) (copyright assignment) —
-  the CLA workflow will ask on your first pull request.
+  the CLA check on your first pull request explains how to sign.
 
 The full settled design — engine choice, art pipeline, server architecture, economy laws, and
 combat design — lives in [AGENTS.md](AGENTS.md).

@@ -1,40 +1,145 @@
 name: CLA
 
-# The CLA gate (AGENTS.md, Licensing): external contributions can only be merged once their
-# author has signed CLA.md — copyright assignment with an exclusive-licence fallback. Trusted
-# first-party authors are allowlisted below. contributor-assistant never checks out or executes
-# PR code, which is what makes pull_request_target safe here — never add a checkout of the PR
-# head to this workflow. Signatures are recorded on the `cla-signatures` branch: that branch is
-# a permanent legal ledger — never delete it.
+# First-party CLA gate (AGENTS.md, Licensing): external contributions can only be merged once
+# their author has signed CLA.md — copyright assignment with an exclusive-licence fallback.
+# Deliberately dependency-free (bash + gh only, no third-party actions, nothing checked out;
+# the once-standard contributor-assistant action is archived/unmaintained, and an archived
+# dependency has no place in a legal enforcement path):
+# - `cla-check` runs on plain `pull_request` — fork-safe: the token is read-only and PR code is
+#   never checked out or executed. It fails until the author is allowlisted or in the ledger.
+#   Because `pull_request` runs the workflow from the PR's merge ref, an external PR editing
+#   THIS FILE can game its own check colour — the diff shows it, so treat any external PR that
+#   touches this workflow as hostile; the signature ledger stays authoritative regardless.
+# - `cla-sign` runs on `issue_comment` in base-repo context: when the PR author posts the exact
+#   sign sentence, it appends them to the ledger and re-runs the gate ("recheck" only re-runs).
+# The ledger lives on the `cla-signatures` branch — a permanent legal record, never delete it.
+# Comment bodies and logins only enter the scripts via environment variables (never template-
+# interpolated into shell), so a crafted comment cannot inject commands.
 
 on:
+  pull_request:
   issue_comment:
     types: [created]
-  pull_request_target:
-    types: [opened, closed, synchronize]
 
-permissions:
-  actions: write
-  contents: write
-  pull-requests: write
-  statuses: write
+# One run per PR at a time; never cancel a sign run mid-ledger-write.
+concurrency:
+  group: cla-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: false
+
+permissions: {}
+
+env:
+  LEDGER_PATH: signatures/version1/cla.json
+  LEDGER_BRANCH: cla-signatures
+  ALLOWLIST: devantler dependabot[bot] renovate[bot] github-actions[bot] coderabbitai[bot]
 
 jobs:
-  cla-gate:
+  cla-check:
     name: CLA gate
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    if: >-
-      (github.event_name == 'issue_comment' &&
-        (github.event.comment.body == 'recheck' ||
-         github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA')) ||
-      github.event_name == 'pull_request_target'
+    permissions:
+      contents: read # read the signature ledger from the cla-signatures branch
     steps:
       - name: Require a signed CLA from external authors
-        uses: contributor-assistant/github-action@ca4a40a7d1004f18d9960b404b97e5f30a505a08 # v2.6.1
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          path-to-signatures: signatures/version1/cla.json
-          path-to-document: https://github.com/devantler-tech/world-at-ruin/blob/main/CLA.md
-          branch: cla-signatures
-          allowlist: devantler,dependabot[bot],renovate[bot],github-actions[bot],coderabbitai[bot]
+          GH_TOKEN: ${{ github.token }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          for trusted in $ALLOWLIST; do
+            if [ "$AUTHOR" = "$trusted" ]; then
+              echo "'$AUTHOR' is a trusted first-party author — no CLA needed." \
+                | tee -a "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+          done
+          ledger=$(gh api "repos/$REPO/contents/$LEDGER_PATH?ref=$LEDGER_BRANCH" \
+            --jq '.content' 2>/dev/null | base64 -d) || ledger='{"signedContributors":[]}'
+          if printf '%s' "$ledger" \
+            | jq -e --arg login "$AUTHOR" \
+                '.signedContributors[] | select(.name == $login)' >/dev/null; then
+            echo "'$AUTHOR' has signed the CLA." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          {
+            echo "## CLA signature required"
+            echo
+            echo "Thank you for contributing! Before this pull request can be merged, its"
+            echo "author must sign the Contributor Licence Agreement — copyright assignment"
+            echo "with an exclusive-licence fallback; read it first:"
+            echo "https://github.com/$REPO/blob/main/CLA.md"
+            echo
+            echo "Sign by posting this exact sentence as a comment on this pull request:"
+            echo
+            echo '> I have read the CLA Document and I hereby sign the CLA'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error::$AUTHOR has not signed the CLA (the job summary explains how to sign)"
+          exit 1
+
+  cla-sign:
+    name: Record CLA signature
+    if: >-
+      github.event_name == 'issue_comment' && github.event.issue.pull_request &&
+      (github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA' ||
+       github.event.comment.body == 'recheck')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # append the signature to the ledger on the cla-signatures branch
+      actions: write # re-run the failed CLA gate after a signature lands
+    steps:
+      - name: Record the signature and re-run the gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          COMMENTER: ${{ github.event.comment.user.login }}
+          COMMENTER_ID: ${{ github.event.comment.user.id }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          pr=$(gh api "repos/$REPO/pulls/$PR_NUMBER")
+          author=$(printf '%s' "$pr" | jq -r '.user.login')
+          head_sha=$(printf '%s' "$pr" | jq -r '.head.sha')
+          if [ "$COMMENT_BODY" != "recheck" ]; then
+            if [ "$COMMENTER" != "$author" ]; then
+              echo "::notice::only the pull request author's signature is recorded" \
+                "(comment by $COMMENTER, author is $author)"
+              exit 0
+            fi
+            sha=""
+            ledger='{"signedContributors":[]}'
+            if resp=$(gh api "repos/$REPO/contents/$LEDGER_PATH?ref=$LEDGER_BRANCH" 2>/dev/null); then
+              sha=$(printf '%s' "$resp" | jq -r '.sha')
+              ledger=$(printf '%s' "$resp" | jq -r '.content' | base64 -d)
+            fi
+            if printf '%s' "$ledger" \
+              | jq -e --arg login "$COMMENTER" \
+                  '.signedContributors[] | select(.name == $login)' >/dev/null; then
+              echo "$COMMENTER has already signed."
+            else
+              updated=$(printf '%s' "$ledger" | jq \
+                --arg login "$COMMENTER" \
+                --argjson id "$COMMENTER_ID" \
+                --argjson pr "$PR_NUMBER" \
+                --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                '.signedContributors += [{name: $login, id: $id, pullRequestNo: $pr, created_at: $at}]')
+              args=(
+                -f message="chore(cla): record CLA signature (#$PR_NUMBER)"
+                -f content="$(printf '%s' "$updated" | base64 | tr -d '\n')"
+                -f branch="$LEDGER_BRANCH"
+              )
+              if [ -n "$sha" ]; then
+                args+=(-f sha="$sha")
+              fi
+              gh api -X PUT "repos/$REPO/contents/$LEDGER_PATH" "${args[@]}" >/dev/null
+              echo "recorded $COMMENTER in $LEDGER_PATH on $LEDGER_BRANCH"
+            fi
+          fi
+          run_id=$(gh api "repos/$REPO/actions/runs?event=pull_request&head_sha=$head_sha" \
+            --jq '[.workflow_runs[] | select(.name == "CLA")] | first | .id // empty')
+          if [ -n "$run_id" ]; then
+            gh run rerun "$run_id" --repo "$REPO" --failed \
+              || gh run rerun "$run_id" --repo "$REPO" || true
+          fi
