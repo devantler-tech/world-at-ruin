@@ -21,6 +21,21 @@ class_name CharacterFactory
 const RECIPE_VERSION := 1
 const KIT_SCENE_PATH := "res://assets/characters/humanoid_kit/humanoid_base.glb"
 
+## The recipe format, exhaustively: any other top-level field is REJECTED —
+## a recipe carrying data this client cannot render must fail loudly, never
+## render a half-truth (no-resets law). New fields ship with a version bump.
+const RECIPE_FIELDS := ["version", "comment", "shapes", "bone_girth", "bone_scale", "joint_push"]
+## The GUARDED bone keys per field — exactly the set the golden recipe
+## exercises forever. Persisted recipes may only touch these; anything else
+## would dodge the forward-compat guarantee (a future rig rename could break
+## it silently). Extending this list means extending the golden recipe in the
+## same change.
+const GUARDED_BONE_KEYS := {
+	"bone_girth": ["neck_01", "spine_03", "upperarm", "lowerarm", "thigh", "calf"],
+	"bone_scale": ["head", "hand", "foot"],
+	"joint_push": ["upperarm", "hand"],
+}
+
 
 ## Builds a character instance from a recipe, or returns null after
 ## push_error when the recipe is invalid. The caller owns the instance.
@@ -74,11 +89,16 @@ static func validate(recipe: Dictionary, skeleton: Skeleton3D, mesh_instance: Me
 		return "recipe version %d is not positive" % int(version)
 	if int(version) > RECIPE_VERSION:
 		return "recipe version %d is newer than this client understands (%d)" % [int(version), RECIPE_VERSION]
+	for field: String in recipe:
+		if field not in RECIPE_FIELDS:
+			return "unknown recipe field '%s' — this client cannot render it, refusing a half-truth" % field
 	for shape_name: String in recipe.get("shapes", {}):
 		if mesh_instance.find_blend_shape_by_name(shape_name) < 0:
 			return "unknown blend shape '%s' — shipped kit shapes may never be removed" % shape_name
-	for field in ["bone_girth", "bone_scale", "joint_push"]:
+	for field: String in GUARDED_BONE_KEYS:
 		for key: String in recipe.get(field, {}):
+			if key not in (GUARDED_BONE_KEYS[field] as Array):
+				return "bone key '%s' in %s is outside the guarded set — only golden-guarded keys may persist" % [key, field]
 			if _bones_for(skeleton, key).is_empty():
 				return "unknown bone '%s' in %s" % [key, field]
 	return ""
