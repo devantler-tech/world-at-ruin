@@ -28,6 +28,7 @@ func _ready() -> void:
 	_player.spawn_point = spawn
 	_player.position = spawn
 	_player.ground_height_provider = world.surface_height_at
+	_player.underground_provider = world.cave_protects
 	add_child(_player)
 	# The mouth faces the shrine, so facing the shrine faces the light.
 	_player.face_toward(Vector3.ZERO)
@@ -91,6 +92,9 @@ func _build_environment() -> void:
 	env.sky = sky
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
 	env.ambient_light_energy = 0.9
+	# SDFGI: sky ambient must not reach underground — cave systems get their
+	# darkness from occlusion and their light from torches.
+	env.sdfgi_enabled = true
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 	env.fog_enabled = true
 	env.fog_light_color = FOG_COLOR

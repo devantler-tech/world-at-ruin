@@ -5,11 +5,22 @@ class_name DevLog
 ## development progress by playing. Every change that a player could notice
 ## gets an entry here, newest first — open it in-game with F1.
 
-const VERSION := "0.1.7"
+const VERSION := "0.1.8"
 const CODENAME := "Ashfall Reach"
 
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
+	{
+		"version": "0.1.8",
+		"date": "2026-07-17",
+		"title": "The cave becomes a cave",
+		"notes": [
+			"The starter cave was reborn (the owner's verdict on the old one: tinfoil in brown). It is now a SYSTEM: wake in a deep chamber, follow torchlight up a winding tunnel past a side passage that promises deeper dark, and step out through a stone doorway in a rock outcrop.",
+			"The rock itself is new: smooth, flowing walls with warm sandstone strata (a procedural shader — still no textures, only arithmetic), floors silted with sediment, torches flickering along the spine.",
+			"The mouth is dressed the way old caves are: an arch of rock, leaning jamb stones, fallen slabs — and the land dips into a hollow at the doorway so cave and overworld meet honestly, with no loading screen and no seams that lie.",
+			"The generator behind it can grow more systems — deeper, branchier, elsewhere — from a seed. This one is only the first.",
+		],
+	},
 	{
 		"version": "0.1.7",
 		"date": "2026-07-17",
@@ -19,6 +30,36 @@ const ENTRIES: Array[Dictionary] = [
 			"The first time you wake, the world asks who you are: a character creation screen shapes your body — build sliders, frame sliders, three starting presets — live on the body standing in the cave. Your shape is saved and kept.",
 			"Press C any time to reshape yourself (an early-build courtesy while the character system grows: skin, hair and clothes are still to come, and the body still stands in the sculptor's pose).",
 			"The capsule placeholder is gone; the wanderer wears a recipe-built body from the character system.",
+		],
+	},
+	{
+		"version": "0.1.6",
+		"date": "2026-07-17",
+		"title": "Bodies from recipes",
+		"notes": [
+			"The character system exists. One canonical human body is now baked entirely by committed code — and every person in this world will be a RECIPE: a small text file of named sliders (broader shoulders, heavier gut, squarer jaw...) that reshapes that one body.",
+			"Three first recipes stand in the gallery (scenes/recipes.tscn — the taste gate): a wanderer, a villager, and a brute. Same skeleton, same mesh, three different people.",
+			"Recipes are forever: a golden recipe exercising every slider is locked into the tests — if a future change would break a character someone made, the build fails before it can.",
+			"Clay-grey for now, and standing in a sculptor's pose: skin, hair and clothes are later stages of the system.",
+		],
+	},
+	{
+		"version": "0.1.5",
+		"date": "2026-07-17",
+		"title": "The first wanderer takes shape",
+		"notes": [
+			"A human figure now stands in the cave — the first character. The body is a CC0 base mesh; everything about how he stands is code: his proportions are reshaped bone by bone (broader chest, heavier forearms, larger hands) and his arms are lowered from the sculptor's T-pose into a relaxed stance, all by a script.",
+			"A second taste-gate scene (scenes/character.tscn) lines up three builds of the same body — grounded, hero, base — so the proportion range can be judged side by side.",
+			"Same parameters, same body, every time: a regression test fingerprints the skeleton and the deformed skin so the figure can never silently change shape.",
+		],
+	},
+	{
+		"version": "0.1.4",
+		"date": "2026-07-17",
+		"title": "Play it without the editor",
+		"notes": [
+			"World at Ruin is now a real, double-clickable Mac app: every build exports a signed universal .app you can download from the project's build page — no Godot editor required.",
+			"The build machinery smoke-boots the exported app itself before publishing it, so a download that would not start never ships.",
 		],
 	},
 	{

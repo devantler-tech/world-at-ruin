@@ -15,13 +15,15 @@ const HEIGHT_AMP := 7.0
 const RUIN_SITES := 44
 const SHRINE_CLEAR_RADIUS := 14.0 ## Kept nearly flat and free of ruins.
 
-## The starter cave: the chamber every wanderer wakes in, seamlessly part of
-## the open world (no loading screens, ever) — a rock dome on a flattened
-## clearing, mouth facing the shrine, roughly a minute's walk away.
+## The starter cave: the system every wanderer wakes in, seamlessly part of
+## the open world (no loading screens, ever) — a winding multi-chamber cave
+## inside a rock massif (CaveSystemGen), mouth facing the shrine roughly a
+## minute's walk away. The terrain DIPS below the system's floors in its
+## footprint (a heightfield cannot have holes; the massif is the
+## above-ground rock), and the anti-embed net stands down inside.
 const CAVE_SITE := Vector2(-56.0, -20.0)
-const CAVE_SEED := 42 ## Same chamber as the taste-gate scene.
-const CAVE_RADIUS := 8.0
-const CAVE_CLEAR_RADIUS := 15.0 ## Terrain flattened so the dome sits clean.
+const CAVE_SEED := 42
+const CAVE_FLOOR_SKIRT := 0.55 ## How far terrain dips under cave floors.
 
 ## Palette — ash, rock, bone, ember.
 const COL_ASH := Color(0.38, 0.345, 0.31)
@@ -40,8 +42,16 @@ var _heights := PackedFloat32Array()
 var _brazier_light: OmniLight3D
 var _brazier_mesh: MeshInstance3D
 var _time := 0.0
-var _cave_clearing_h := 0.0
 var _cave_spawn := Vector3.ZERO
+var _cave_transform := Transform3D.IDENTITY
+var _cave_inverse := Transform3D.IDENTITY
+## World-space footprint circles [Vector2 xz, xz_radius, dip_target_y] — one
+## per cave shape; they dip the terrain under the massif and drive the
+## unstick exemption and the ruin keep-out.
+var _cave_cover: Array = []
+## The doorway apron [Vector2 xz, radius, grade_y]: terrain outside the mouth
+## pinned to walk-out grade.
+var _cave_apron: Array = []
 
 func _ready() -> void:
 	_noise.seed = WORLD_SEED
@@ -53,9 +63,9 @@ func _ready() -> void:
 	_detail.frequency = 0.09
 	_tint.seed = WORLD_SEED + 2
 	_tint.frequency = 0.05
-	# The cave clearing level is the UNFLATTENED height at the site centre;
-	# it must be fixed before any height_at call (height_at flattens toward it).
-	_cave_clearing_h = _raw_height(CAVE_SITE.x, CAVE_SITE.y)
+	# The cave layout and cover circles must exist before ANY height_at call:
+	# the terrain grid bakes the cover knoll in.
+	_prepare_starter_cave()
 	_build_terrain()
 	_build_starter_cave()
 	_scatter_ruins()
@@ -79,13 +89,25 @@ func height_at(x: float, z: float) -> float:
 	var d := Vector2(x, z).length()
 	var keep := smoothstep(0.35, 1.0, clampf(d / SHRINE_CLEAR_RADIUS, 0.0, 1.0))
 	h = lerpf(h * 0.12, h, keep)
-	# Flatten the starter-cave clearing to one level: the cave floor sits just
-	# above it, so the chamber never clips terrain and the anti-embed safety
-	# net (which treats "below the heightfield" as invalid) stays honest
-	# inside the cave.
-	var cave_d := Vector2(x - CAVE_SITE.x, z - CAVE_SITE.y).length()
-	var cave_keep := smoothstep(0.5, 1.0, clampf(cave_d / CAVE_CLEAR_RADIUS, 0.0, 1.0))
-	return lerpf(_cave_clearing_h, h, cave_keep)
+	# The massif's ground: the heightfield cannot have holes, so the terrain
+	# DIPS below every cave floor inside the system's footprint — the rock
+	# massif (CaveSystemGen's hull) is the above-ground presence, and the
+	# terrain meets it at a buried skirt. The dip also gives the mouth its
+	# hollow: you walk slightly down into the doorway.
+	for dip: Array in _cave_cover:
+		var dip_d: float = (Vector2(x, z) - (dip[0] as Vector2)).length()
+		var influence := 1.0 - smoothstep(0.4, 1.0, dip_d / ((dip[1] as float) + 4.0))
+		if influence > 0.0:
+			h = lerpf(h, minf(h, dip[2] as float), influence)
+	# The doorway apron: ground OUTSIDE the mouth is pinned to mouth-floor
+	# grade (raised or lowered), so stepping out of the cave is a step, not a
+	# cliff, whatever the natural slope wanted to do here.
+	if not _cave_apron.is_empty():
+		var apron_d: float = (Vector2(x, z) - (_cave_apron[0] as Vector2)).length()
+		var apron_influence := 1.0 - smoothstep(0.35, 1.0, apron_d / (_cave_apron[1] as float))
+		if apron_influence > 0.0:
+			h = lerpf(h, _cave_apron[2] as float, apron_influence)
+	return h
 
 ## The undisturbed noise height — no clearings applied.
 func _raw_height(x: float, z: float) -> float:
@@ -191,111 +213,78 @@ func _ground_color(at: Vector3) -> Color:
 		c = c.lerp(COL_SCORCH, clampf((scorch - 0.35) * 2.5, 0.0, 0.8))
 	return c
 
-## Where a new wanderer wakes: on the starter cave's floor, deep enough in
-## that the mouth is a doorway of light ahead.
+## Where a new wanderer wakes: on the main chamber's floor, deep in the
+## system, torches leading up toward the mouth.
 func cave_spawn_point() -> Vector3:
 	return _cave_spawn
 
-func _build_starter_cave() -> void:
-	var cave := Node3D.new()
-	cave.name = "StarterCave"
+## The starter system's local→world transform (tests trace the spine with it).
+func cave_to_world() -> Transform3D:
+	return _cave_transform
+
+func _prepare_starter_cave() -> void:
 	# Mouth (+X in cave space) faces the shrine at the origin.
 	var mouth_dir := (Vector2.ZERO - CAVE_SITE).normalized()
 	var yaw := atan2(-mouth_dir.y, mouth_dir.x)
+	var lay := CaveSystemGen.layout(CAVE_SEED)
+	# Seat the system so the mouth FLOOR (local y = 0) meets the natural
+	# ground at the mouth's world position: you step out onto the Reach.
+	var basis := Basis(Vector3.UP, yaw)
+	var mouth_local: Vector3 = lay["mouth"]
+	var mouth_flat := basis * Vector3(mouth_local.x, 0.0, mouth_local.z)
+	var origin_y := _raw_height(CAVE_SITE.x + mouth_flat.x, CAVE_SITE.y + mouth_flat.z)
+	_cave_transform = Transform3D(basis, Vector3(CAVE_SITE.x, origin_y, CAVE_SITE.y))
+	_cave_inverse = _cave_transform.affine_inverse()
+
+	# Footprint circles: [xz, hull footprint radius, terrain dip target] —
+	# one per room and tunnel sample; terrain dips below that shape's floor.
+	_cave_cover.clear()
+	for room: Dictionary in lay["rooms"]:
+		var w: Vector3 = _cave_transform * (room["center"] as Vector3)
+		var dip_y: float = origin_y + (room["floor"] as float) - CAVE_FLOOR_SKIRT
+		_cave_cover.append([Vector2(w.x, w.z), (room["r"] as float) + CaveSystemGen.HULL_ROCK, dip_y])
+	for t: Dictionary in lay["tunnels"]:
+		for u: float in [0.0, 0.5, 1.0]:
+			var point: Vector3 = (t["a"] as Vector3).lerp(t["b"] as Vector3, u)
+			var w: Vector3 = _cave_transform * point
+			var dip_y: float = origin_y + lerpf(t["floor_a"] as float, t["floor_b"] as float, u) - CAVE_FLOOR_SKIRT
+			_cave_cover.append([Vector2(w.x, w.z), (t["r"] as float) + CaveSystemGen.HULL_ROCK, dip_y])
+
+	var apron_local: Vector3 = (lay["mouth"] as Vector3) + Vector3(6.5, 0.0, 0.0)
+	var apron_world: Vector3 = _cave_transform * apron_local
+	_cave_apron = [Vector2(apron_world.x, apron_world.z), 9.0, origin_y - 0.45]
+
+	# Provisional spawn; _build_starter_cave refines it with the field-probed
+	# actual floor once the system is meshed.
+	var spawn_local: Vector3 = lay["spawn"]
+	spawn_local.y = (lay["spawn_floor"] as float) + 1.2
+	_cave_spawn = _cave_transform * spawn_local
+
+func _build_starter_cave() -> void:
+	var cave := CaveSystemGen.new()
+	cave.name = "StarterCave"
+	cave.seed_value = CAVE_SEED
+	cave.transform = _cave_transform
 	add_child(cave)
+	# The generator carves against LOCAL terrain heights so the mouth zone
+	# blends the cave into the real hillside.
+	var to_world := _cave_transform
+	cave.rebuild(func(lx: float, lz: float) -> float:
+		var w := to_world * Vector3(lx, 0.0, lz)
+		return height_at(w.x, w.z) - to_world.origin.y)
+	# The wanderer wakes STANDING: the field-probed floor, not the nominal one.
+	var lay: Dictionary = cave.last_layout
+	var spawn_local: Vector3 = lay["spawn"]
+	spawn_local.y = (lay.get("spawn_floor_actual", lay["spawn_floor"]) as float) + 1.15
+	_cave_spawn = _cave_transform * spawn_local
 
-	var interior := CaveGen.build_mesh(CAVE_SEED, CAVE_RADIUS)
-	var shell := CaveGen.build_shell_mesh(CAVE_SEED, CAVE_RADIUS)
-
-	# Seat the chamber so its LOWEST floor vertex sits just above the flat
-	# clearing — the floor never dips into terrain, and every floor point is
-	# above the heightfield (anti-embed safe). Deterministic: derived from the
-	# seeded mesh itself.
-	var floor_band := -0.55 * CAVE_RADIUS + 0.08 * CAVE_RADIUS + 0.001
-	var min_floor := 0.0
-	var mouth_edge := -10.0
-	var verts: PackedVector3Array = interior.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
-	for v in verts:
-		if v.y < floor_band:
-			min_floor = minf(min_floor, v.y)
-			if v.x > CAVE_RADIUS * 0.82:
-				mouth_edge = maxf(mouth_edge, v.y)
-	var origin_y := _cave_clearing_h + 0.25 - min_floor
-	cave.position = Vector3(CAVE_SITE.x, origin_y, CAVE_SITE.y)
-	cave.rotation.y = yaw
-
-	_add_cave_mesh(cave, interior)
-	_add_cave_mesh(cave, shell)
-
-	# A rock threshold ramps the mouth edge down to the clearing so walking
-	# in and out is a slope, not a step.
-	var mouth_world_y := origin_y + mouth_edge
-	var drop := mouth_world_y - _cave_clearing_h
-	var ramp_len := 3.2
-	var ramp_mesh := BoxMesh.new()
-	ramp_mesh.size = Vector3(ramp_len, 0.3, 5.0)
-	var ramp_mat := StandardMaterial3D.new()
-	ramp_mat.albedo_color = COL_ROCK
-	ramp_mat.roughness = 0.97
-	var ramp := StaticBody3D.new()
-	var ramp_mi := MeshInstance3D.new()
-	ramp_mi.mesh = ramp_mesh
-	ramp_mi.set_surface_override_material(0, ramp_mat)
-	ramp.add_child(ramp_mi)
-	var ramp_col := CollisionShape3D.new()
-	ramp_col.shape = ramp_mesh.create_convex_shape()
-	ramp.add_child(ramp_col)
-	ramp.position = Vector3(CAVE_RADIUS + ramp_len * 0.42, mouth_world_y - origin_y - drop * 0.5 - 0.12, 0.0)
-	ramp.rotation.z = -atan2(drop, ramp_len)  # Descend going outward (+X).
-	cave.add_child(ramp)
-
-	# Dying embers by the spawn — the first light a wanderer ever sees.
-	var ember_mat := StandardMaterial3D.new()
-	ember_mat.albedo_color = COL_EMBER
-	ember_mat.emission_enabled = true
-	ember_mat.emission = COL_EMBER
-	ember_mat.emission_energy_multiplier = 1.4
-	var ember_mesh := SphereMesh.new()
-	ember_mesh.radius = 0.22
-	ember_mesh.height = 0.3
-	var embers := MeshInstance3D.new()
-	embers.mesh = ember_mesh
-	embers.set_surface_override_material(0, ember_mat)
-	var spawn_floor_local := _floor_height_near(verts, floor_band, Vector2(-2.5, 0.0))
-	embers.position = Vector3(-1.2, spawn_floor_local + 0.12, 1.4)
-	cave.add_child(embers)
-	var glow := OmniLight3D.new()
-	glow.light_color = COL_EMBER
-	glow.light_energy = 1.8
-	glow.omni_range = 11.0
-	glow.shadow_enabled = true
-	glow.position = embers.position + Vector3(0, 0.5, 0)
-	cave.add_child(glow)
-
-	_cave_spawn = cave.to_global(Vector3(-2.5, spawn_floor_local + 1.0, 0.0))
-
-## Highest floor vertex within 0.8 m of a local (x, z) spot — where something
-## can stand on the rumpled floor.
-func _floor_height_near(verts: PackedVector3Array, floor_band: float, spot: Vector2) -> float:
-	var best := -0.55 * CAVE_RADIUS
-	for v in verts:
-		if v.y < floor_band and Vector2(v.x, v.z).distance_to(spot) < 0.8:
-			best = maxf(best, v.y)
-	return best
-
-func _add_cave_mesh(parent: Node3D, mesh: ArrayMesh) -> void:
-	var mi := MeshInstance3D.new()
-	mi.mesh = mesh
-	parent.add_child(mi)
-	var body := StaticBody3D.new()
-	var shape := CollisionShape3D.new()
-	var trimesh := mesh.create_trimesh_shape() as ConcavePolygonShape3D
-	# Solid from both sides — the interior winds inward, the shell outward,
-	# and the wanderer must be able to stand on either.
-	trimesh.backface_collision = true
-	shape.shape = trimesh
-	body.add_child(shape)
-	parent.add_child(body)
+## True inside the starter system's footprint: the anti-embed net stands
+## down here (being under the heightfield is the POINT of a cave).
+func cave_protects(x: float, z: float) -> bool:
+	for cover: Array in _cave_cover:
+		if (Vector2(x, z) - (cover[0] as Vector2)).length() < (cover[1] as float) + 3.0:
+			return true
+	return false
 
 func _scatter_ruins() -> void:
 	var rng := RandomNumberGenerator.new()
@@ -310,8 +299,8 @@ func _scatter_ruins() -> void:
 		var z := rng.randf_range(-SIZE / 2.0 + margin, SIZE / 2.0 - margin)
 		if Vector2(x, z).length() < SHRINE_CLEAR_RADIUS + 6.0:
 			continue
-		if Vector2(x, z).distance_to(CAVE_SITE) < CAVE_CLEAR_RADIUS + 6.0:
-			continue  # Keep the starter cave's clearing free of ruins.
+		if cave_protects(x, z):
+			continue  # Keep the starter cave's ground free of ruins.
 		_build_ruin_site(rng, Vector3(x, 0, z), stone)
 		placed += 1
 

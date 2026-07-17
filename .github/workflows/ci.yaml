@@ -45,7 +45,7 @@ jobs:
       - name: Regression tests
         run: |
           set -o pipefail
-          for t in unstick_test surface_consistency_test cave_determinism_test character_determinism_test humanoid_kit_test character_factory_test character_persistence_test starter_cave_test; do
+          for t in unstick_test surface_consistency_test cave_system_determinism_test character_determinism_test humanoid_kit_test character_factory_test character_persistence_test starter_cave_test; do
             if ! timeout 180 godot --headless --path client "res://tests/${t}.tscn" 2>&1 | tee "${t}.log"; then
               echo "::error::${t} failed or timed out (180s)"
               tail -40 "${t}.log"
