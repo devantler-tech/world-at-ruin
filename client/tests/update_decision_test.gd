@@ -44,6 +44,8 @@ func _ready() -> void:
 	_test_blocked_when_unresolvable()
 	_test_incompatible_but_updatable_steers_to_update()
 	_test_client_ahead_of_server_is_tolerated()
+	_test_save_too_old_always_blocks()
+	_test_channel_mismatch_refused()
 	_test_schema_too_new_updates_shell()
 	_test_future_schema_without_newer_shell_refused()
 	_test_pack_needs_shell_beyond_advertised_refused()
@@ -150,6 +152,31 @@ func _test_client_ahead_of_server_is_tolerated() -> void:
 	var inst := _installed_current()
 	inst["protocol"] = 2 # ahead of the server's max
 	_expect(inst, m, UpdateDecision.UP_TO_DATE, "client ahead of a lagging server is tolerated")
+
+
+func _test_save_too_old_always_blocks() -> void:
+	# A save below the lowest schema the current build can read cannot be read by
+	# ANY advertised update, so even with a newer pack available it is a loud block,
+	# never routed to an update that cannot read the save.
+	var m := _base_manifest()
+	m["save_schema"] = {"min": 2, "writes": 2} # current builds read >= schema 2
+	m["pack"]["version"] = "0.1.15" # a newer pack IS available
+	var inst := _installed_current() # save_schema 1 — below the read floor
+	_expect(inst, m, UpdateDecision.BLOCKED_INCOMPATIBLE, "a save below the read floor blocks even with an update available")
+
+
+func _test_channel_mismatch_refused() -> void:
+	# A validly-signed manifest for a different channel must never enroll the player
+	# (default-off opt-in). A mismatch is refused; an unpinned installed channel accepts.
+	var m := _base_manifest() # channel "live"
+	m["pack"]["version"] = "0.1.15"
+	var inst := _installed_current()
+	inst["channel"] = "beta" # player is on beta, manifest is live
+	_expect(inst, m, UpdateDecision.INVALID_MANIFEST, "a manifest from a different channel is refused")
+	# Matching channel proceeds normally.
+	var inst2 := _installed_current()
+	inst2["channel"] = "live"
+	_expect(inst2, m, UpdateDecision.PACK_UPDATE, "a matching channel proceeds")
 
 
 func _test_schema_too_new_updates_shell() -> void:

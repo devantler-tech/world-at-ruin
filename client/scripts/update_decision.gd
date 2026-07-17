@@ -56,6 +56,17 @@ static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 	if env_err != "":
 		return _result(INVALID_MANIFEST, env_err)
 
+	# Channel guard: a validly-signed manifest for a DIFFERENT channel (e.g. a
+	# beta/experimental build) must never enroll a player on another channel.
+	# Signature proves authenticity, not channel membership, so a cache/endpoint
+	# mix-up could otherwise opt a `live` player into an unfinished experience —
+	# the default-off opt-in product law. Refuse a mismatch. (An installed state
+	# that names no channel accepts any, for a first run before one is pinned.)
+	var want_channel := str(installed.get("channel", ""))
+	if want_channel != "" and want_channel != str(manifest["channel"]):
+		return _result(INVALID_MANIFEST, "manifest channel '%s' does not match the installed channel '%s'" % [
+			str(manifest["channel"]), want_channel])
+
 	if int(manifest["schema"]) > SUPPORTED_MANIFEST_SCHEMA:
 		# The manifest format is newer than we understand. Route to a shell update
 		# through the always-readable envelope — but ONLY if that shell is actually
@@ -98,25 +109,30 @@ static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 	var shell_newer := _cmp(str(m_shell["current"]), shell) > 0
 	var pack_needs_newer_shell := _cmp(str(m_pack["min_shell"]), shell) > 0
 
-	# "Incompatible with the live world" = the running build is BELOW what the
-	# server needs. A protocol ABOVE the accepted range means the client is ahead
-	# of a mid-rollout server — a transient the client simply tolerates (it never
-	# blocks and is never "fixed" by updating further ahead), so it is not here.
+	# A save OLDER than the lowest schema the current builds can read
+	# (`save_schema.min`) is unreadable by EVERY advertised update — proposing any
+	# update would send the player to a build that cannot read their save. So this
+	# is ALWAYS a loud block, never routed to an update. Under expand-before-write
+	# (the read floor only rises after old saves migrate forward) it is unreachable;
+	# reaching it is a product-law alarm.
+	if save_schema < int(m_save["min"]):
+		return _result(BLOCKED_INCOMPATIBLE, "installed save schema %d is below the lowest schema the current build can read (%d) — no update can read this save" % [
+			save_schema, int(m_save["min"])])
+
+	# A protocol BELOW the accepted range is fixable by updating (a newer build
+	# speaks the newer protocol); a protocol ABOVE it means the client is ahead of a
+	# mid-rollout server — a transient the client tolerates, so it is not here.
 	var protocol_too_old := protocol < int(m_protocol["min"])
-	var save_too_old := save_schema < int(m_save["min"])
-	var incompatible := protocol_too_old or save_too_old
 
 	# There is something newer to move to.
 	var update_available := shell_below_floor or pack_newer or shell_newer
 
-	if incompatible and not update_available:
-		# Already on the newest build the manifest offers, yet still below what the
-		# live world needs, and nothing resolves it. This must never happen under
-		# the product law — surface it loudly, never strand silently.
-		return _result(BLOCKED_INCOMPATIBLE, (
-			"running build is incompatible with the live world and no update resolves it "
-			+ "(protocol %d < min %d, or save schema %d < min %d)") % [
-				protocol, int(m_protocol["min"]), save_schema, int(m_save["min"])])
+	if protocol_too_old and not update_available:
+		# On the newest build the manifest offers, yet its protocol is still below
+		# what the live world accepts, and nothing resolves it. Must never happen
+		# under the two-phase protocol rollout — surface it loudly, never strand.
+		return _result(BLOCKED_INCOMPATIBLE, "protocol %d is below the accepted minimum %d and no update resolves it" % [
+			protocol, int(m_protocol["min"])])
 
 	# A shell update is required when the running shell is below the supported
 	# floor, when the newest pack needs a newer shell than is installed, or when
@@ -181,6 +197,8 @@ static func _cmp(a: String, b: String) -> int:
 ## of any schema can read it to learn it needs a newer shell — never stranded.
 ## Returns "" if valid, else a short reason.
 static func _envelope_error(m: Dictionary) -> String:
+	if not (m.get("channel") is String) or (m["channel"] as String).is_empty():
+		return "channel is missing or not a non-empty string"
 	if not (m.has("shell") and m["shell"] is Dictionary):
 		return "missing 'shell' object"
 	var sh: Dictionary = m["shell"]
