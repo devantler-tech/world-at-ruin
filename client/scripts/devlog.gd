@@ -5,11 +5,22 @@ class_name DevLog
 ## development progress by playing. Every change that a player could notice
 ## gets an entry here, newest first — open it in-game with F1.
 
-const VERSION := "0.1.8"
+const VERSION := "0.1.9"
 const CODENAME := "Ashfall Reach"
 
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
+	{
+		"version": "0.1.9",
+		"date": "2026-07-17",
+		"title": "The ragged clothes the Ruin left you",
+		"notes": [
+			"The wanderer no longer wakes bare: a crude shirt, wool pants and cloth shoes — the ragged clothes the story always promised — now dress the body, fitted to it and following every slider as you reshape yourself.",
+			"The character screen grew an OUTFIT section: each slot (torso, legs, feet) can wear any baked piece or stay bare. Villagers dress like villagers; the brute goes bare-chested in scavenged boots, as a brute should.",
+			"Under the hood this is the equipment system arriving: clothes are baked from CC0 MakeHuman pieces onto the one canonical skeleton, so every garment fits every body — and every future humanoid. Weapon sockets now wait on both hands for the first weapon to exist.",
+			"Old saved characters keep working untouched (they always will); dressing them is one visit to the character screen (C).",
+		],
+	},
 	{
 		"version": "0.1.8",
 		"date": "2026-07-17",

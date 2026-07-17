@@ -14,6 +14,7 @@ extends Node
 ## Run: godot --headless --path client res://tests/character_factory_test.tscn
 
 const GOLDEN := "res://tests/data/golden_recipe_v1.json"
+const GOLDEN_V2 := "res://tests/data/golden_recipe_v2.json"
 const PRESETS := ["res://recipes/wanderer.json", "res://recipes/villager.json", "res://recipes/brute.json"]
 
 
@@ -31,6 +32,22 @@ func _ready() -> void:
 	if fp_golden_a != CharacterFactory.fingerprint(golden_b):
 		_fail("same recipe produced different characters")
 		return
+
+	# The v2 golden guards the version-2 format (equipment) the same way.
+	var golden_v2 = CharacterFactory.load_recipe(GOLDEN_V2)
+	if golden_v2 == null:
+		_fail("golden v2 recipe unreadable")
+		return
+	var golden_v2_a := CharacterFactory.build(golden_v2)
+	var golden_v2_b := CharacterFactory.build(golden_v2)
+	if golden_v2_a == null or golden_v2_b == null:
+		_fail("THE GOLDEN V2 RECIPE NO LONGER BUILDS — a shipped shape, bone, slot or piece was removed (no-resets law)")
+		return
+	if CharacterFactory.fingerprint(golden_v2_a) != CharacterFactory.fingerprint(golden_v2_b):
+		_fail("same v2 recipe produced different characters")
+		return
+	golden_v2_a.free()
+	golden_v2_b.free()
 
 	var preset_fingerprints := {}
 	for path in PRESETS:
@@ -74,8 +91,9 @@ func _ready() -> void:
 		# A real bone OUTSIDE the guarded set — accepting it would dodge the
 		# golden recipe's forward-compat guarantee.
 		{ "version": 1, "bone_girth": { "index_01_l": 1.1 } },
-		# An unknown field — a client that cannot render everything a recipe
-		# says must refuse, never render a half-truth.
+		# equipment entered the format at v2; a v1 recipe carrying it was
+		# always invalid and must stay invalid forever (a client that cannot
+		# render everything a recipe says refuses, never a half-truth).
 		{ "version": 1, "equipment": { "head": "hood" } },
 	]:
 		var built := CharacterFactory.build(bad)

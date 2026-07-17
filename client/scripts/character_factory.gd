@@ -1,13 +1,16 @@
 class_name CharacterFactory
-## Runtime composition layer of the character system (issue #24, stage 2):
+## Runtime composition layer of the character system (issue #24, stages 2+3):
 ## builds a character from a RECIPE — a versioned, name-keyed parameter
-## dictionary — on top of the baked humanoid kit.
+## dictionary — on top of the baked humanoid kit, and dresses it from the
+## baked equipment registry (skinned pieces on the one canonical skeleton).
 ##
 ## Recipes are the persistence format for every humanoid (players, NPCs,
 ## humanoid enemies), so they obey the no-resets product law:
-##  - keyed by stable STRING names (blend shapes, bones) — never indices;
+##  - keyed by stable STRING names (blend shapes, bones, slots, pieces) —
+##    never indices;
 ##  - forward-only: a name that ever shipped keeps working forever (the kit
-##    may only ADD shapes; the golden-recipe regression test enforces it);
+##    may only ADD shapes/pieces; the golden-recipe and shipped-equipment
+##    regression tests enforce it);
 ##  - versioned: `version` <= RECIPE_VERSION is accepted forever, a NEWER
 ##    version is rejected loudly (an old client must never half-apply a
 ##    recipe it does not fully understand).
@@ -18,13 +21,26 @@ class_name CharacterFactory
 ## scaling for joint pushes, and no engine global reads between rest edits
 ## (Godot 4.7 desyncs its rest/pose caches).
 
-const RECIPE_VERSION := 1
+const RECIPE_VERSION := 2
 const KIT_SCENE_PATH := "res://assets/characters/humanoid_kit/humanoid_base.glb"
+const EQUIPMENT_DIR := "res://assets/characters/humanoid_kit/equipment/"
+const EQUIPMENT_REGISTRY_PATH := EQUIPMENT_DIR + "equipment.json"
+## Equipment mesh nodes get this name prefix so the body's skinned mesh stays
+## unambiguous (find_skinned_mesh skips them).
+const EQUIP_PREFIX := "Equip_"
+## Blend shapes with this prefix are composition plumbing (skin tucked under a
+## worn piece), never a body slider.
+const HIDE_SHAPE_PREFIX := "equip_hide_"
 
 ## The recipe format, exhaustively: any other top-level field is REJECTED —
 ## a recipe carrying data this client cannot render must fail loudly, never
-## render a half-truth (no-resets law). New fields ship with a version bump.
+## render a half-truth (no-resets law). New fields ship with a version bump:
+## `equipment` (slot -> piece name) exists from version 2 — a version-1
+## recipe carrying it stays invalid forever, exactly as v1 clients ruled.
 const RECIPE_FIELDS := ["version", "comment", "shapes", "bone_girth", "bone_scale", "joint_push"]
+const RECIPE_FIELDS_V2 := ["equipment"]
+
+static var _equipment_registry: Dictionary = {}
 ## The GUARDED bone keys per field — exactly the set the golden recipe
 ## exercises forever. Persisted recipes may only touch these; anything else
 ## would dodge the forward-compat guarantee (a future rig rename could break
@@ -74,7 +90,93 @@ static func build(recipe: Dictionary) -> Node3D:
 	for shape_name: String in recipe.get("shapes", {}):
 		var idx := mesh_instance.find_blend_shape_by_name(shape_name)
 		mesh_instance.set_blend_shape_value(idx, recipe["shapes"][shape_name])
+
+	for slot: String in recipe.get("equipment", {}):
+		_equip_piece(skeleton, mesh_instance, String(recipe["equipment"][slot]), recipe.get("shapes", {}))
 	return instance
+
+
+## Attaches one baked equipment piece to the kit skeleton: its skinned mesh
+## (bind-by-name onto the shared bones) plus the recipe's shape weights, so
+## the garment follows the body's morphs; the piece's equip_hide_* shape
+## tucks the covered skin inward. Validation has already vouched for the
+## piece name.
+static func _equip_piece(skeleton: Skeleton3D, body_mesh: MeshInstance3D, piece_name: String, shapes: Dictionary) -> void:
+	var piece: Dictionary = equipment_registry()["pieces"][piece_name]
+	var packed: PackedScene = load(EQUIPMENT_DIR + String(piece["scene"]))
+	if packed == null:
+		push_error("CharacterFactory: equipment scene missing: %s" % piece["scene"])
+		return
+	var scene := packed.instantiate() as Node3D
+	var piece_mesh := find_skinned_mesh(find_skeleton(scene))
+	if piece_mesh == null:
+		push_error("CharacterFactory: no skinned mesh in equipment scene %s" % piece["scene"])
+		scene.free()
+		return
+	piece_mesh.get_parent().remove_child(piece_mesh)
+	piece_mesh.owner = null
+	piece_mesh.name = EQUIP_PREFIX + piece_name
+	skeleton.add_child(piece_mesh)
+	scene.free()
+	for shape_name: String in shapes:
+		var idx := piece_mesh.find_blend_shape_by_name(shape_name)
+		if idx >= 0:
+			piece_mesh.set_blend_shape_value(idx, shapes[shape_name])
+	if piece.has("hide_shape"):
+		var hide_idx := body_mesh.find_blend_shape_by_name(String(piece["hide_shape"]))
+		if hide_idx >= 0:
+			body_mesh.set_blend_shape_value(hide_idx, 1.0)
+
+
+## The baked equipment registry (equipment/equipment.json): slots and pieces
+## are stable forward-only names, exactly like blend shapes. Cached — the
+## registry only changes with the committed kit.
+static func equipment_registry() -> Dictionary:
+	if not _equipment_registry.is_empty():
+		return _equipment_registry
+	var file := FileAccess.open(EQUIPMENT_REGISTRY_PATH, FileAccess.READ)
+	if file == null:
+		push_error("CharacterFactory: equipment registry missing: %s" % EQUIPMENT_REGISTRY_PATH)
+		return { "slots": [], "pieces": {} }
+	var parsed = JSON.parse_string(file.get_as_text())
+	if parsed is not Dictionary:
+		push_error("CharacterFactory: equipment registry is not a JSON object")
+		return { "slots": [], "pieces": {} }
+	_equipment_registry = parsed
+	return _equipment_registry
+
+
+## Drives one blend shape across the body AND every equipped piece that
+## carries it — the character creator's live sliders go through here.
+static func set_shape_weight(instance: Node3D, shape_name: String, value: float) -> void:
+	var skeleton := find_skeleton(instance)
+	if skeleton == null:
+		return
+	for child in skeleton.get_children():
+		if child is not MeshInstance3D:
+			continue
+		var idx := (child as MeshInstance3D).find_blend_shape_by_name(shape_name)
+		if idx >= 0:
+			(child as MeshInstance3D).set_blend_shape_value(idx, value)
+
+
+## The weapon socket on a hand bone ("hand_l"/"hand_r"): a BoneAttachment3D
+## that follows the bone — weapons and tools parent under it. Created on
+## first use, stable and reusable after.
+static func weapon_socket(instance: Node3D, hand_bone: String) -> BoneAttachment3D:
+	var skeleton := find_skeleton(instance)
+	if skeleton == null or skeleton.find_bone(hand_bone) < 0:
+		push_error("CharacterFactory: no bone '%s' for a weapon socket" % hand_bone)
+		return null
+	var socket_name := "Socket_" + hand_bone
+	var existing := skeleton.get_node_or_null(NodePath(socket_name))
+	if existing is BoneAttachment3D:
+		return existing
+	var socket := BoneAttachment3D.new()
+	socket.name = socket_name
+	skeleton.add_child(socket)
+	socket.bone_name = hand_bone
+	return socket
 
 
 ## Full validation against the kit: "" when the recipe is applicable, else a
@@ -90,17 +192,34 @@ static func validate(recipe: Dictionary, skeleton: Skeleton3D, mesh_instance: Me
 	if int(version) > RECIPE_VERSION:
 		return "recipe version %d is newer than this client understands (%d)" % [int(version), RECIPE_VERSION]
 	for field: String in recipe:
-		if field not in RECIPE_FIELDS:
-			return "unknown recipe field '%s' — this client cannot render it, refusing a half-truth" % field
+		if field in RECIPE_FIELDS:
+			continue
+		if field in RECIPE_FIELDS_V2 and int(version) >= 2:
+			continue
+		return "unknown recipe field '%s' — this client cannot render it, refusing a half-truth" % field
 	for shape_name: String in recipe.get("shapes", {}):
 		if mesh_instance.find_blend_shape_by_name(shape_name) < 0:
 			return "unknown blend shape '%s' — shipped kit shapes may never be removed" % shape_name
+		if shape_name.begins_with(HIDE_SHAPE_PREFIX):
+			return "shape '%s' is composition plumbing, not a recipe shape" % shape_name
 	for field: String in GUARDED_BONE_KEYS:
 		for key: String in recipe.get(field, {}):
 			if key not in (GUARDED_BONE_KEYS[field] as Array):
 				return "bone key '%s' in %s is outside the guarded set — only golden-guarded keys may persist" % [key, field]
 			if _bones_for(skeleton, key).is_empty():
 				return "unknown bone '%s' in %s" % [key, field]
+	if recipe.has("equipment"):
+		if recipe["equipment"] is not Dictionary:
+			return "equipment must be a dictionary of slot -> piece name"
+		var registry := equipment_registry()
+		for slot: String in recipe["equipment"]:
+			if slot not in (registry["slots"] as Array):
+				return "unknown equipment slot '%s' — shipped slots may never be removed" % slot
+			var piece_name := String(recipe["equipment"][slot])
+			if piece_name not in (registry["pieces"] as Dictionary):
+				return "unknown equipment piece '%s' — shipped pieces may never be removed" % piece_name
+			if String(registry["pieces"][piece_name]["slot"]) != slot:
+				return "piece '%s' does not go in slot '%s'" % [piece_name, slot]
 	return ""
 
 
@@ -118,19 +237,37 @@ static func load_recipe(path: String) -> Variant:
 
 
 ## Order-stable fingerprint of a built character: skeleton global rests plus
-## the CPU-evaluated morph mix under the instance's current weights. Headless
-## CI has no GPU, so the mix (base + sum of w * delta) is reproduced from the
-## imported blend-shape arrays; NORMALIZED mode stores absolute targets.
+## the CPU-evaluated morph mix of EVERY skinned mesh under the skeleton (body
+## and equipped pieces, name-sorted). Headless CI has no GPU, so the mix
+## (base + sum of w * delta) is reproduced from the imported blend-shape
+## arrays; NORMALIZED mode stores absolute targets.
 static func fingerprint(instance: Node3D) -> String:
 	var skeleton := find_skeleton(instance)
-	var mesh_instance := find_skinned_mesh(skeleton)
-	if skeleton == null or mesh_instance == null:
+	if skeleton == null or find_skinned_mesh(skeleton) == null:
 		return "no-skeleton-or-mesh"
 	skeleton.force_update_all_bone_transforms()
 	var ctx := HashingContext.new()
 	ctx.start(HashingContext.HASH_SHA256)
 	for i in skeleton.get_bone_count():
 		ctx.update(var_to_bytes(skeleton.get_bone_global_rest(i)))
+	var names := PackedStringArray()
+	var meshes := {}
+	for child in skeleton.get_children():
+		if child is MeshInstance3D and (child as MeshInstance3D).skin != null:
+			names.append(String(child.name))
+			meshes[String(child.name)] = child
+	names.sort()
+	var total_verts := 0
+	for mesh_name in names:
+		ctx.update(mesh_name.to_utf8_buffer())
+		var mixed := _mixed_vertices(meshes[mesh_name])
+		total_verts += mixed.size()
+		ctx.update(mixed.to_byte_array())
+	return "bones=%d meshes=%d verts=%d sha256=%s" % [
+		skeleton.get_bone_count(), names.size(), total_verts, ctx.finish().hex_encode()]
+
+
+static func _mixed_vertices(mesh_instance: MeshInstance3D) -> PackedVector3Array:
 	var mesh := mesh_instance.mesh
 	var base: PackedVector3Array = mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
 	var mixed := PackedVector3Array(base)
@@ -145,9 +282,7 @@ static func fingerprint(instance: Node3D) -> String:
 		for v in mixed.size():
 			var delta := targets[v] - base[v] if normalized else targets[v]
 			mixed[v] += delta * weight
-	ctx.update(mixed.to_byte_array())
-	return "bones=%d verts=%d sha256=%s" % [
-		skeleton.get_bone_count(), mixed.size(), ctx.finish().hex_encode()]
+	return mixed
 
 
 static func find_skeleton(node: Node) -> Skeleton3D:
@@ -160,11 +295,13 @@ static func find_skeleton(node: Node) -> Skeleton3D:
 	return null
 
 
+## The BODY mesh — equipment meshes (Equip_ prefix) are deliberately skipped.
 static func find_skinned_mesh(skeleton: Skeleton3D) -> MeshInstance3D:
 	if skeleton == null:
 		return null
 	for child in skeleton.get_children():
-		if child is MeshInstance3D and (child as MeshInstance3D).skin != null:
+		if child is MeshInstance3D and (child as MeshInstance3D).skin != null \
+				and not String(child.name).begins_with(EQUIP_PREFIX):
 			return child
 	return null
 
