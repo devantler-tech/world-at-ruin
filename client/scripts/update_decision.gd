@@ -77,7 +77,10 @@ static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 		# Do NOT validate the (possibly restructured) schema-specific body.
 		var env_shell: Dictionary = manifest["shell"]
 		if _cmp(str(env_shell["current"]), str(installed.get("shell_version", "0.0.0"))) > 0:
-			return _result(SHELL_UPDATE, "manifest schema %d is newer than this client understands (%d); update to shell %s" % [
+			# The stable envelope carries the shell's save read floor, so even a
+			# schema we cannot parse is checked: block if the newer shell cannot read
+			# the installed save (updating to it would strand the save).
+			return _shell_or_block(int(installed.get("save_schema", 0)), env_shell, "manifest schema %d is newer than this client understands (%d); update to shell %s" % [
 				int(manifest["schema"]), SUPPORTED_MANIFEST_SCHEMA, str(env_shell["current"])])
 		return _result(INVALID_MANIFEST, "manifest schema %d exceeds understood (%d) but advertises no newer shell (%s <= installed %s) — stale/incoherent" % [
 			int(manifest["schema"]), SUPPORTED_MANIFEST_SCHEMA, str(env_shell["current"]), str(installed.get("shell_version", "0.0.0"))])
@@ -148,10 +151,10 @@ static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 	# the only thing newer is the shell itself. (When incompatible-but-updatable,
 	# this same chain routes to whichever update carries the fix.)
 	if shell_below_floor:
-		return _result(SHELL_UPDATE, "installed shell %s is below the supported floor %s" % [
+		return _shell_or_block(save_schema, m_shell, "installed shell %s is below the supported floor %s" % [
 			shell, str(m_shell["min_supported"])])
 	if pack_newer and pack_needs_newer_shell:
-		return _result(SHELL_UPDATE, "content pack %s needs shell >= %s but %s is installed" % [
+		return _shell_or_block(save_schema, m_shell, "content pack %s needs shell >= %s but %s is installed" % [
 			str(m_pack["version"]), str(m_pack["min_shell"]), shell])
 	if pack_newer:
 		# Rollback safety: a pack update is offered only when the rollback target
@@ -165,14 +168,14 @@ static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 		var reads_max := int(installed.get("save_reads_max", installed.get("save_schema", 0)))
 		if int(m_save["writes"]) > reads_max:
 			if shell_newer:
-				return _result(SHELL_UPDATE, "content pack %s writes save schema %d beyond the rollback target's read ceiling %d — routing to the newer shell %s" % [
+				return _shell_or_block(save_schema, m_shell, "content pack %s writes save schema %d beyond the rollback target's read ceiling %d — routing to the newer shell %s" % [
 					str(m_pack["version"]), int(m_save["writes"]), reads_max, str(m_shell["current"])])
 			return _result(INVALID_MANIFEST, "content pack %s writes save schema %d beyond the read ceiling %d but the manifest offers no newer shell — refusing (no safe route)" % [
 				str(m_pack["version"]), int(m_save["writes"]), reads_max])
 		return _result(PACK_UPDATE, "content pack %s available (installed %s)" % [
 			str(m_pack["version"]), pack])
 	if shell_newer:
-		return _result(SHELL_UPDATE, "shell %s available (installed %s)" % [
+		return _shell_or_block(save_schema, m_shell, "shell %s available (installed %s)" % [
 			str(m_shell["current"]), shell])
 
 	# Nothing newer, and (per the guard above) not incompatible: current.
@@ -208,12 +211,28 @@ static func _envelope_error(m: Dictionary) -> String:
 		return "shell.current is not a version string"
 	if not _is_version(sh.get("min_supported")):
 		return "shell.min_supported is not a version string"
+	# reads_min lives in the STABLE envelope (the save schema the advertised shell
+	# reads down to) so a shell update can be checked for save-strand safety even on
+	# a manifest whose schema-specific body this client cannot parse.
+	if not _is_int_id(sh.get("reads_min")):
+		return "shell.reads_min is missing or not an integer"
 	# A coherent manifest never advertises a current shell below its own floor;
 	# such a manifest could otherwise steer a shell update to a DOWNGRADE.
 	if _cmp(str(sh["current"]), str(sh["min_supported"])) < 0:
 		return "shell.current %s is below its own min_supported %s (incoherent manifest)" % [
 			str(sh["current"]), str(sh["min_supported"])]
 	return ""
+
+
+## SHELL_UPDATE to `m_shell.current`, unless that shell's save read floor
+## (`reads_min`) is above the installed save — in which case updating to it would
+## strand the save, so it is a loud block instead. Every shell-update path routes
+## through here so the check can never be forgotten.
+static func _shell_or_block(installed_save: int, m_shell: Dictionary, why: String) -> Dictionary:
+	if installed_save < int(m_shell["reads_min"]):
+		return _result(BLOCKED_INCOMPATIBLE, "shell update (%s) targets a build reading saves only from schema %d, but the installed save is %d — updating would strand it" % [
+			why, int(m_shell["reads_min"]), installed_save])
+	return _result(SHELL_UPDATE, why)
 
 
 ## Validate the schema-specific body (pack / protocol / save_schema) — only ever

@@ -21,7 +21,7 @@ func _base_manifest() -> Dictionary:
 	return {
 		"schema": 1,
 		"channel": "live",
-		"shell": {"current": "0.1.14", "min_supported": "0.1.0"},
+		"shell": {"current": "0.1.14", "min_supported": "0.1.0", "reads_min": 1},
 		"pack": {"version": "0.1.14", "min_shell": "0.1.14", "url": "x", "sha256": "y", "size": 0},
 		"protocol": {"min": 1, "max": 1},
 		"save_schema": {"min": 1, "writes": 1},
@@ -48,6 +48,8 @@ func _ready() -> void:
 	_test_channel_mismatch_refused()
 	_test_unpinned_channel_defaults_to_live()
 	_test_shell_only_update_write_regression_refused()
+	_test_shell_update_blocked_when_target_cant_read_save()
+	_test_future_schema_shell_blocked_when_cant_read_save()
 	_test_schema_too_new_updates_shell()
 	_test_future_schema_without_newer_shell_refused()
 	_test_pack_needs_shell_beyond_advertised_refused()
@@ -181,6 +183,27 @@ func _test_channel_mismatch_refused() -> void:
 	_expect(inst2, m, UpdateDecision.PACK_UPDATE, "a matching channel proceeds")
 
 
+func _test_shell_update_blocked_when_target_cant_read_save() -> void:
+	# A shell update whose target build reads saves only from a schema ABOVE the
+	# installed save would strand it — block, never propose the update.
+	var m := _base_manifest()
+	m["shell"]["current"] = "0.2.0" # a newer shell...
+	m["shell"]["reads_min"] = 2 # ...that reads saves only from schema 2
+	# installed save is schema 1 — the newer shell cannot read it.
+	_expect(_installed_current(), m, UpdateDecision.BLOCKED_INCOMPATIBLE, "a shell update that can't read the installed save is blocked")
+
+
+func _test_future_schema_shell_blocked_when_cant_read_save() -> void:
+	# The same guard holds for a schema we cannot parse: reads_min in the stable
+	# envelope lets us block a stranding future-schema shell update.
+	var m := {
+		"schema": 2,
+		"channel": "live",
+		"shell": {"current": "0.2.0", "min_supported": "0.1.0", "reads_min": 2},
+	}
+	_expect(_installed_current(), m, UpdateDecision.BLOCKED_INCOMPATIBLE, "a future-schema shell update that can't read the installed save is blocked")
+
+
 func _test_unpinned_channel_defaults_to_live() -> void:
 	# A fresh install with no pinned channel must fail closed to `live`: it accepts
 	# a live manifest but refuses a beta one (default-off opt-in).
@@ -274,7 +297,7 @@ func _test_schema_too_new_ignores_broken_body() -> void:
 	var m := {
 		"schema": 2,
 		"channel": "live",
-		"shell": {"current": "0.2.0", "min_supported": "0.1.0"},
+		"shell": {"current": "0.2.0", "min_supported": "0.1.0", "reads_min": 1},
 		"future_field": {"restructured": true}, # no schema-1 pack/protocol/save at all
 	}
 	_expect(_installed_current(), m, UpdateDecision.SHELL_UPDATE, "newer schema with a valid envelope still routes to a shell update")
@@ -300,7 +323,7 @@ func _test_incoherent_shell_floor_refused() -> void:
 	# An incoherent manifest whose advertised shell is below its own floor must be
 	# refused, not followed to a downgrade. (Codex P0.)
 	var m := _base_manifest()
-	m["shell"] = {"current": "1.0.0", "min_supported": "3.0.0"} # current below its own floor
+	m["shell"] = {"current": "1.0.0", "min_supported": "3.0.0", "reads_min": 1} # current below its own floor
 	var inst := _installed_current()
 	inst["shell_version"] = "2.0.0"
 	_expect(inst, m, UpdateDecision.INVALID_MANIFEST, "shell.current below its own floor is refused, never a downgrade")
