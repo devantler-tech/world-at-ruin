@@ -215,8 +215,10 @@ can be watched by playing; every *further* art/game system waits on Phase 0.)
   bakes must be deterministic (the artgen workflow re-bakes and byte-compares). Characters are
   composed at runtime by `CharacterFactory` from **recipes** (`client/recipes/*.json`, versioned
   and name-keyed — names are forward-only per the no-resets law; the golden-recipe test enforces
-  it). `server/` (Agones realtime tier, Go meta services) and `deploy/` (platform manifests)
-  arrive later per the roadmap.
+  it). `server/` is the Go authoritative tier — its **zone tick core** has landed (`server/sim/`,
+  the deterministic fixed-timestep simulation; `server/cmd/zone/`, the runnable skeleton), with the
+  Agones/Nakama/networking layers arriving as later children of the server-foundation epic (#4);
+  `deploy/` (platform manifests) arrives later per the roadmap.
 - **Run:** `godot client` (macOS: `/Applications/Godot.app/Contents/MacOS/Godot client`).
 - **Validate before every PR:**
   `godot --headless --editor --quit --path client && godot --headless --quit-after 120 --path client` —
@@ -227,7 +229,13 @@ can be watched by playing; every *further* art/game system waits on Phase 0.)
   project mount) and every absence-of-error check then passes vacuously.
   Then run the regression tests: `godot --headless --path client res://tests/<name>.tscn` for each
   scene under `client/tests/`. CI (`ci.yaml`) runs exactly this, plus the `license-guard` job (no
-  GPL/AGPL texts in the tree).
+  GPL/AGPL texts in the tree) and the `Server CI (Go)` job (below).
+- **Validate the server before every PR:** from `server/`, `gofmt -l .` (must print nothing),
+  `go vet ./...`, `go test -race ./...` (includes the tick-determinism and golden-hash tests), and
+  `go build ./...`. The `Server CI (Go)` job runs exactly this and feeds the `CI - Required Checks`
+  aggregate. Simulation determinism is a product-law requirement: the sim is integer-only with no
+  wall-clock or unseeded randomness in the authoritative path, and changing the committed golden
+  hash (`server/sim`) is a deliberate, reviewed act — never a rubber-stamp.
 - **Determinism:** world generation is seeded (`WorldGen.WORLD_SEED`) — the same world every boot.
   Never introduce wall-clock or unseeded randomness into generation; differences between builds
   must be attributable to code.
