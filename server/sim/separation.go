@@ -50,23 +50,36 @@ const separationIterations = 8
 // emergent rounding artefact.
 const separationSlopMM = 8
 
-// separate resolves capsule overlap. Each pass walks every pair once in
-// ascending-ID order and pushes overlapping pairs apart (see resolvePair),
-// applying each fix immediately so later pairs in the same pass see it. Because
-// the traversal order is fixed by entity ID — never insertion or map order —
-// two worlds fed identical inputs settle to identical state, which the
-// determinism law requires.
+// separate resolves capsule overlap. Each pass walks the actors in ascending-ID
+// order and pushes overlapping pairs apart (see resolvePair), applying each fix
+// immediately so later pairs in the same pass see it. Because the traversal
+// order is fixed by entity ID — never insertion or map order — two worlds fed
+// identical inputs settle to identical state, which the determinism law requires.
+//
+// Rather than scan all n·(n-1)/2 pairs each pass, it consults a spatial-hash
+// broad phase (broadphase.go): for each actor a, only the actors in a's 3×3 cell
+// neighbourhood with a greater ID are offered to resolvePair, in ascending-ID
+// order. The cell is sized so any pair overlapping when the grid is built is
+// always a candidate — the pruned pairs are exactly the ones resolvePair would
+// leave untouched — so separation stays deterministic, insertion-order
+// independent and convergent at ~O(n) instead of O(n²) cost for a realistic
+// actor density (see broadphase.go for what is and is not preserved versus a
+// naive full scan).
 func (w *World) separate() {
 	n := len(w.order)
 	if n < 2 {
 		return
 	}
+	cell := separationCellMM(w)
+	var candidates []EntityID
 	for range separationIterations {
 		moved := false
+		grid := newSepGrid(w, cell)
 		for i := range n {
 			a := w.ents[w.order[i]]
-			for j := i + 1; j < n; j++ {
-				if w.resolvePair(a, w.ents[w.order[j]]) {
+			candidates = grid.neighbours(a, candidates)
+			for _, bID := range candidates {
+				if w.resolvePair(a, w.ents[bID]) {
 					moved = true
 				}
 			}

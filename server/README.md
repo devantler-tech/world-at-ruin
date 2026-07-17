@@ -24,7 +24,10 @@ zone/dungeon server:
     cannot be trusted to make. It is a positional de-overlap (each overlapping
     pair pushed apart by half its penetration) solved by integer-only,
     order-independent relaxation — no impulses, no physics engine — with its own
-    committed golden hash pinning the settled state across architectures.
+    committed golden hash pinning the settled state across architectures. A
+    spatial-hash **broad phase** offers only the pairs that can actually touch,
+    so the pass costs ~O(n) instead of O(n²) as a zone's actor count grows,
+    without changing that deterministic settled state.
   - `FixedLoop` — a fixed-timestep accumulator that runs the sim at exactly
     `TickHz` regardless of wall-clock jitter, with a catch-up cap so a stalled
     process can never spiral.
