@@ -19,9 +19,11 @@
 // no two occupying the same space (capsule-vs-capsule separation, see
 // separation.go), with a state hash that makes determinism testable.
 // Area-of-interest — which entities each observer is told about — is its
-// read-only companion query in aoi.go. Networking and client
-// prediction/reconciliation, the Agones SDK, and real navmesh geometry are later
-// children of the server-foundation epic and deliberately absent here.
+// read-only companion query in aoi.go, and the replication snapshot built on it
+// — the per-observer state payload and its spawn/update/despawn delta — lives in
+// snapshot.go. The networking transport and client prediction/reconciliation,
+// the Agones SDK, and real navmesh geometry are later children of the
+// server-foundation epic and deliberately absent here.
 package sim
 
 import (
