@@ -36,10 +36,43 @@ const FACE_SHAPES := [
 	"jaw_wide", "nose_strong", "nose_hump",
 ]
 
+## First lines the Reach's people give the wanderer. Kept short, atmospheric,
+## and true to the settled setting (medieval-futuristic world at rebirth — see
+## docs/design/story-and-progression.md); they make no lore claims a later
+## quest could not honour. Villagers are the settlement that rebuilds; drifters
+## roam the open land. A FIRST bark only — real dialogue trees and the errands
+## they carry arrive with Phase 6 (#13).
+const VILLAGER_BARKS := [
+	"The Ruin took the sky. It didn't take the harvest — help, or move along.",
+	"You woke, then. Most who crawl out of that cave don't.",
+	"Careful past the stones. The old lights still walk out there at night.",
+	"We rebuild. It's all there is left to do.",
+	"Bare hands and rags — the Ruin leaves everyone the same, at the start.",
+	"Warm yourself at the shrine. The Wardens still keep the flame.",
+]
+const DRIFTER_BARKS := [
+	"Keep moving, ashborn. Nothing that stays out here stays whole.",
+	"I've seen the far zones green again. Easy to believe, hard to reach alive.",
+	"Salvage's honest work. The old world left plenty worth carrying.",
+	"Don't trust anything that hums. Not all the relics went quiet.",
+	"The road's long and the Ruin's patient. Walk anyway.",
+	"You've the look of someone just out of the dark. It fades, in time.",
+]
+
 
 static func forge_name(rng: RandomNumberGenerator) -> String:
 	return NAME_HEADS[rng.randi_range(0, NAME_HEADS.size() - 1)] \
 		+ NAME_TAILS[rng.randi_range(0, NAME_TAILS.size() - 1)]
+
+
+## A short, seeded line for a person — deterministic per name (determinism
+## law): Maren gives the same line on every machine, every boot. Seeded off the
+## name with a distinct salt so it is independent of the body roll in
+## recipe_for (two people with different faces can still share a line).
+static func bark_for(npc_name: String, archetype: String) -> String:
+	var pool: Array = VILLAGER_BARKS if archetype == ARCHETYPE_VILLAGER else DRIFTER_BARKS
+	var idx := absi(hash(npc_name) ^ 0x5BD1E995) % pool.size()
+	return pool[idx]
 
 
 ## The whole person, from a name: body, face, age, outfit, skin.

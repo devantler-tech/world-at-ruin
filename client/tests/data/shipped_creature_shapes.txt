@@ -1,0 +1,9 @@
+# Every creature-kit morph shape that has ever shipped. The no-resets law:
+# a shipped shape name may NEVER be removed (a saved recipe keys on it forever).
+# This file may only ever GAIN lines. The creature_kit_test enforces it.
+body_heavy
+body_gaunt
+legs_long
+snout_long
+ears_alert
+tail_high

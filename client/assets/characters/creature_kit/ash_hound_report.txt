@@ -1,0 +1,6 @@
+kit_version=1
+archetype=ash_hound
+verts=2534
+bones=20
+shapes=body_heavy,body_gaunt,legs_long,snout_long,ears_alert,tail_high
+tints=ash,dust,char,bone

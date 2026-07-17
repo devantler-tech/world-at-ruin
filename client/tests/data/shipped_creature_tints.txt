@@ -1,0 +1,7 @@
+# Every creature-kit tint that has ever shipped. The no-resets law: a shipped
+# tint name may NEVER be removed (a saved recipe keys on it forever). This file
+# may only ever GAIN lines. The creature_factory_test enforces it.
+ash
+dust
+char
+bone

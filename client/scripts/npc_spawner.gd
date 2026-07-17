@@ -34,6 +34,10 @@ const PLACEMENT_ATTEMPTS := 40
 
 var npc_names: PackedStringArray = []
 
+## A person spoke: their name and the seeded line they gave. main.gd surfaces it
+## as a toast. (A first bark only — real dialogue and quests come with #13.)
+signal npc_spoke(npc_name: String, line: String)
+
 
 ## Builds and places everyone. `world` is the live WorldGen node.
 func populate(world: Node) -> void:
@@ -73,6 +77,21 @@ func _scatter(world: Node, count: int, inner: float, outer: float,
 			root.rotation.y = yaw_rng.randf_range(-PI, PI)
 		root.add_child(body)
 		root.add_child(_nameplate(npc_name))
+		# The people can finally answer: walk up and face someone and "Speak"
+		# offers their one seeded line. Chest-height handle, small reach, must
+		# be faced — so you address the person you look at, not the crowd.
+		var talk := Interactable.new()
+		talk.name = "Talk"
+		talk.prompt = "Speak"
+		talk.interact_range = 3.0
+		talk.facing_min = 0.35
+		talk.position = Vector3(0, 1.4, 0)
+		root.add_child(talk)
+		talk.interacted.connect(_on_npc_talk.bind(npc_name, archetype))
+
+
+func _on_npc_talk(_by: Node, npc_name: String, archetype: String) -> void:
+	npc_spoke.emit(npc_name, NpcGen.bark_for(npc_name, archetype))
 
 
 ## Deterministic ground spots: rejection-sampled ring positions honouring
