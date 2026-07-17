@@ -7,16 +7,42 @@ class_name CharacterStore
 ## to CharacterFactory's validation (a newer-versioned recipe is refused
 ## loudly, never half-applied).
 ##
-## The public methods act on the player's real save (PATH); the path-taking
-## variants (save_to/load_from) exist so tests can exercise the exact save
-## and load logic against a throwaway file WITHOUT ever touching the
-## player's character — the no-resets law forbids a test stranding a save.
+## Two seams keep tests off the player's real save (the no-resets law forbids a
+## test stranding a character):
+##  - save_to/load_from take an explicit path, so a test can exercise the exact
+##    save/load logic against a throwaway file (character_persistence_test).
+##  - save_path() resolves the location the whole-game path (save_recipe /
+##    load_saved / exists / clear) reads, so a BOOT test that must go through
+##    the game's own first-run path can point the game at a throwaway file by
+##    setting WAR_SAVE_PATH before the scene loads. Shipped, the override is
+##    unset and the path is the default below — the seam is inert in production.
 
-const PATH := "user://character.json"
+const DEFAULT_PATH := "user://character.json"
+
+## Environment override for the active save path. Empty/unset means "use the
+## shipped default" — production never sets it; boot tests and a developer
+## running the suite on a machine with a played save point it at a temp file.
+const SAVE_PATH_ENV := "WAR_SAVE_PATH"
+
+## Where an OLDER client's boot tests parked the real save while exercising the
+## first-run creator. Those tests cleared user://character.json and restored it
+## from here on the next run — so a run killed in between left the only copy
+## here. This client's tests no longer do that (they redirect via the seam
+## above), which means nothing would ever restore a copy stranded before the
+## upgrade. recover_legacy_backup() closes that one-time migration gap.
+const LEGACY_TEST_BACKUP := "user://character.json.test-backup"
+
+
+## The active save path: the WAR_SAVE_PATH override when set, else the shipped
+## default. Resolved fresh each call so a test can redirect the game before it
+## boots; inert (returns DEFAULT_PATH) whenever the override is empty.
+static func save_path() -> String:
+	var override := OS.get_environment(SAVE_PATH_ENV)
+	return override if not override.is_empty() else DEFAULT_PATH
 
 
 static func exists() -> bool:
-	return FileAccess.file_exists(PATH)
+	return FileAccess.file_exists(save_path())
 
 
 ## Atomic: write a sibling temp file, then rename over the target. A crash
@@ -46,13 +72,45 @@ static func load_from(path: String) -> Variant:
 
 
 static func save_recipe(recipe: Dictionary) -> bool:
-	return save_to(PATH, recipe)
+	return save_to(save_path(), recipe)
 
 
 static func load_saved() -> Variant:
-	return load_from(PATH)
+	return load_from(save_path())
 
 
 static func clear() -> void:
 	if exists():
-		DirAccess.remove_absolute(ProjectSettings.globalize_path(PATH))
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(save_path()))
+
+
+## Move a character stranded at `backup` back to `target`, but ONLY when
+## `target` is absent — never clobber a live save (no-resets law). Returns true
+## when a recovery happened. Pure in its paths so it is testable against
+## throwaway files without touching the player's real save.
+static func recover_backup_into(target: String, backup: String) -> bool:
+	if FileAccess.file_exists(target) or not FileAccess.file_exists(backup):
+		return false
+	return DirAccess.rename_absolute(
+		ProjectSettings.globalize_path(backup),
+		ProjectSettings.globalize_path(target)) == OK
+
+
+## Production one-time migration: restore a character an OLDER client's boot
+## test stranded at LEGACY_TEST_BACKUP. Runs only when no override is active — a
+## redirected test must never touch the real default — and never overwrites an
+## existing save. Idempotent (the backup is consumed) and inert on a normal
+## install where neither file exists. Call at boot before load_saved().
+##
+## Returns TRUE when it is safe to proceed with a normal boot (nothing stranded,
+## a live save already exists, an override is active, or the backup was
+## recovered). Returns FALSE only when a character IS stranded and could not be
+## moved back (e.g. a transient file lock): the caller MUST NOT then open the
+## writable first-run creator, or a new character would overwrite the default
+## and orphan the stranded one forever (no-resets law) — retry on next boot.
+static func recover_legacy_backup() -> bool:
+	if save_path() != DEFAULT_PATH:
+		return true
+	if FileAccess.file_exists(DEFAULT_PATH) or not FileAccess.file_exists(LEGACY_TEST_BACKUP):
+		return true
+	return recover_backup_into(DEFAULT_PATH, LEGACY_TEST_BACKUP)
