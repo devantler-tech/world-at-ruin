@@ -70,8 +70,15 @@ static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 		return _result(INVALID_MANIFEST, "manifest schema %d exceeds understood (%d) but advertises no newer shell (%s <= installed %s) — stale/incoherent" % [
 			int(manifest["schema"]), SUPPORTED_MANIFEST_SCHEMA, str(env_shell["current"]), str(installed.get("shell_version", "0.0.0"))])
 
-	# The schema-specific body is validated only against the schema this client
-	# understands.
+	if int(manifest["schema"]) < SUPPORTED_MANIFEST_SCHEMA:
+		# A schema older than the one this client understands is stale or malformed.
+		# Refuse it rather than mis-parse it with the wrong (schema-1) field
+		# semantics — a signed-but-stale manifest must never drive a real update.
+		return _result(INVALID_MANIFEST, "manifest schema %d is below the schema this client understands (%d)" % [
+			int(manifest["schema"]), SUPPORTED_MANIFEST_SCHEMA])
+
+	# The schema-specific body is validated only against the exact schema this
+	# client understands.
 	var body_err := _body_error(manifest)
 	if body_err != "":
 		return _result(INVALID_MANIFEST, body_err)
@@ -129,7 +136,7 @@ static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 		# schema), a later rollback would strand a save the old build cannot read —
 		# so this update rides the SHELL tier, which manages the migration safely.
 		var reads_max := int(installed.get("save_reads_max", installed.get("save_schema", 0)))
-		if m_save.has("writes") and int(m_save["writes"]) > reads_max:
+		if int(m_save["writes"]) > reads_max:
 			return _result(SHELL_UPDATE, "content pack %s writes save schema %d beyond the rollback target's read ceiling %d — routing to the shell tier" % [
 				str(m_pack["version"]), int(m_save["writes"]), reads_max])
 		return _result(PACK_UPDATE, "content pack %s available (installed %s)" % [
@@ -206,14 +213,14 @@ static func _body_error(m: Dictionary) -> String:
 	var sv: Dictionary = m["save_schema"]
 	if not _is_int_id(sv.get("min")):
 		return "save_schema.min is not an integer"
-	# `writes` (the candidate's write-schema) is optional, but if present it must be
-	# an integer and at least the read floor — it drives the rollback-safety routing.
-	if sv.has("writes"):
-		if not _is_int_id(sv["writes"]):
-			return "save_schema.writes is not an integer"
-		if int(sv["writes"]) < int(sv["min"]):
-			return "save_schema.writes %d is below save_schema.min %d (incoherent)" % [
-				int(sv["writes"]), int(sv["min"])]
+	# `writes` (the candidate's write-schema) is REQUIRED: it drives the
+	# rollback-safety routing, so a manifest that omits it must be refused (fail
+	# closed) rather than silently allow a pack update that could strand a save.
+	if not _is_int_id(sv.get("writes")):
+		return "save_schema.writes is missing or not an integer"
+	if int(sv["writes"]) < int(sv["min"]):
+		return "save_schema.writes %d is below save_schema.min %d (incoherent)" % [
+			int(sv["writes"]), int(sv["min"])]
 	return ""
 
 

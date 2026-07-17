@@ -24,7 +24,7 @@ func _base_manifest() -> Dictionary:
 		"shell": {"current": "0.1.14", "min_supported": "0.1.0"},
 		"pack": {"version": "0.1.14", "min_shell": "0.1.14", "url": "x", "sha256": "y", "size": 0},
 		"protocol": {"min": 1, "max": 1},
-		"save_schema": {"min": 1},
+		"save_schema": {"min": 1, "writes": 1},
 		"signature": "sig",
 	}
 
@@ -49,6 +49,8 @@ func _ready() -> void:
 	_test_pack_needs_shell_beyond_advertised_refused()
 	_test_pack_write_schema_hazard_routes_to_shell()
 	_test_schema_too_new_ignores_broken_body()
+	_test_schema_below_supported_refused()
+	_test_pack_update_requires_write_schema()
 	_test_incoherent_shell_floor_refused()
 	_test_fractional_identifiers_refused()
 	_test_malformed_manifests_refuse_cleanly()
@@ -126,7 +128,7 @@ func _test_blocked_when_unresolvable() -> void:
 	_expect(inst, m, UpdateDecision.BLOCKED_INCOMPATIBLE, "protocol too old and nothing to update to")
 
 	var m2 := _base_manifest()
-	m2["save_schema"] = {"min": 2} # server needs save schema >= 2
+	m2["save_schema"] = {"min": 2, "writes": 2} # server needs save schema >= 2
 	_expect(_installed_current(), m2, UpdateDecision.BLOCKED_INCOMPATIBLE, "save schema too old and nothing to update to")
 
 
@@ -204,6 +206,22 @@ func _test_schema_too_new_ignores_broken_body() -> void:
 		"future_field": {"restructured": true}, # no schema-1 pack/protocol/save at all
 	}
 	_expect(_installed_current(), m, UpdateDecision.SHELL_UPDATE, "newer schema with a valid envelope still routes to a shell update")
+
+
+func _test_schema_below_supported_refused() -> void:
+	# A schema below the one this client understands (0, negative) is stale/malformed
+	# and must be refused, never parsed with the wrong schema-1 field semantics.
+	_expect(_installed_current(), _with(_base_manifest(), "schema", 0), UpdateDecision.INVALID_MANIFEST, "schema 0 is refused")
+	_expect(_installed_current(), _with(_base_manifest(), "schema", -1), UpdateDecision.INVALID_MANIFEST, "negative schema is refused")
+
+
+func _test_pack_update_requires_write_schema() -> void:
+	# `save_schema.writes` drives rollback-safety routing, so a manifest that omits
+	# it must fail closed (invalid), never silently allow a possibly-stranding pack.
+	var m := _base_manifest()
+	m["pack"]["version"] = "0.1.15" # a pack update would otherwise apply
+	m["save_schema"] = {"min": 1} # writes omitted
+	_expect(_installed_current(), m, UpdateDecision.INVALID_MANIFEST, "a manifest omitting save_schema.writes fails closed")
 
 
 func _test_incoherent_shell_floor_refused() -> void:
