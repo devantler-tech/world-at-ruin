@@ -32,3 +32,5 @@ common/physics_ticks_per_second=60
 
 renderer/rendering_method="forward_plus"
 anti_aliasing/quality/msaa_3d=2
+; Required for universal/arm64 macOS export (the exporter refuses without it).
+textures/vram_compression/import_etc2_astc=true
