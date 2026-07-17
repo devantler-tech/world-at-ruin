@@ -129,12 +129,15 @@ func _ready() -> void:
 	if CharacterStore.recover_backup_into(RTARGET, RBACKUP):
 		_fail("recovery reported success with no backup present")
 		return
-	# (d) the production wrapper is inert while an override is active — a
-	#     redirected test must never let it touch the real default.
+	# (d) the production wrapper reports "safe to proceed" and is inert while an
+	#     override is active — a redirected test must never let it touch the real
+	#     default, nor tell the caller to refuse the creator.
 	OS.set_environment(ENV, PROBE)
 	var d_exists := FileAccess.file_exists(CharacterStore.DEFAULT_PATH)
 	var d_sha := _sha(CharacterStore.DEFAULT_PATH)
-	CharacterStore.recover_legacy_backup()
+	if not CharacterStore.recover_legacy_backup():
+		_fail("recover_legacy_backup falsely reported failure under an active override")
+		return
 	if FileAccess.file_exists(CharacterStore.DEFAULT_PATH) != d_exists \
 			or _sha(CharacterStore.DEFAULT_PATH) != d_sha:
 		_fail("recover_legacy_backup touched the real default under an active override")

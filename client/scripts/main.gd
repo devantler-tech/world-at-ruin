@@ -75,14 +75,20 @@ func _ready() -> void:
 		_hud.toast("%s:  “%s”" % [npc_name, line]))
 
 	# One-time migration: an older client's boot test could strand the real save
-	# at a .test-backup and die before restoring it. Put it back before loading.
-	CharacterStore.recover_legacy_backup()
-	var saved = CharacterStore.load_saved()
-	if saved is Dictionary:
-		_player.set_character(saved)
+	# at a .test-backup and die before restoring it. Restore it before loading.
+	if not CharacterStore.recover_legacy_backup():
+		# A stranded character could not be moved back (e.g. a transient file
+		# lock). Refuse to open the writable first-run creator — a new character
+		# would overwrite the default and orphan the original forever (no-resets
+		# law). Say so; the next launch retries the recovery.
+		_hud.toast("A saved character couldn't be restored — please restart. Your character is safe.")
 	else:
-		# First time in the world: shape a character before setting out.
-		_open_creator.call_deferred(true)
+		var saved = CharacterStore.load_saved()
+		if saved is Dictionary:
+			_player.set_character(saved)
+		else:
+			# First time in the world: shape a character before setting out.
+			_open_creator.call_deferred(true)
 
 	# The smoke boot's POSITIVE marker: CI greps for this line, not merely
 	# for the absence of errors — a boot that never mounted the project must

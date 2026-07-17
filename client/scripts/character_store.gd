@@ -101,7 +101,16 @@ static func recover_backup_into(target: String, backup: String) -> bool:
 ## redirected test must never touch the real default — and never overwrites an
 ## existing save. Idempotent (the backup is consumed) and inert on a normal
 ## install where neither file exists. Call at boot before load_saved().
-static func recover_legacy_backup() -> void:
+##
+## Returns TRUE when it is safe to proceed with a normal boot (nothing stranded,
+## a live save already exists, an override is active, or the backup was
+## recovered). Returns FALSE only when a character IS stranded and could not be
+## moved back (e.g. a transient file lock): the caller MUST NOT then open the
+## writable first-run creator, or a new character would overwrite the default
+## and orphan the stranded one forever (no-resets law) — retry on next boot.
+static func recover_legacy_backup() -> bool:
 	if save_path() != DEFAULT_PATH:
-		return
-	recover_backup_into(DEFAULT_PATH, LEGACY_TEST_BACKUP)
+		return true
+	if FileAccess.file_exists(DEFAULT_PATH) or not FileAccess.file_exists(LEGACY_TEST_BACKUP):
+		return true
+	return recover_backup_into(DEFAULT_PATH, LEGACY_TEST_BACKUP)
