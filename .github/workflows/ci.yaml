@@ -124,6 +124,38 @@ jobs:
             echo "::error::Shipped ability id(s) removed from $LEDGER ($(echo "$removed" | tr '\n' ' ')) — a mastered ability is never disposable (no-resets law)"
             exit 1
           fi
+      - name: Class power budgets are frozen (no-power-inflation law)
+        # "Mastery unlocks new arsenals, never more damage." The registry test
+        # checks each ability's power against the CURRENT ledger, so raising an
+        # ability AND its class budget together would pass green — the arsenal's
+        # power ceiling would creep up with no undo. CI is the anchor: against
+        # the BASE commit, a class=power line may only ever be ADDED — never
+        # changed or removed (the comment prose is exempt).
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          LEDGER=client/tests/data/shipped_class_power.txt
+          if [ ! -f "$LEDGER" ]; then
+            echo "::error::$LEDGER was deleted — the frozen power-budget ledger must exist"
+            exit 1
+          fi
+          if ! git cat-file -e "$BASE_SHA" 2>/dev/null; then
+            echo "::error::base commit $BASE_SHA not present in the checkout — cannot verify the power-budget ledger"
+            exit 1
+          fi
+          # Compare the set of non-comment, whitespace-stripped class=power pairs.
+          # A CHANGED value (e.g. sword...=100 -> =130) leaves the base pair
+          # absent from head, and a removed line likewise — both are caught;
+          # a genuinely new class appears only in head and is allowed.
+          budgets() { grep -v '^[[:space:]]*#' | tr -d '[:space:]' | grep -v '^$' | sort -u; }
+          git show "$BASE_SHA:$LEDGER" 2>/dev/null | budgets > /tmp/budget-base
+          budgets < "$LEDGER" > /tmp/budget-head
+          changed=$(comm -23 /tmp/budget-base /tmp/budget-head)
+          if [ -n "$changed" ]; then
+            echo "::error::Class power budget(s) changed or removed in $LEDGER ($(echo "$changed" | tr '\n' ' ')) — the open-world arsenal never gains raw power (no-power-inflation law)"
+            exit 1
+          fi
       - name: Install Godot (pinned, checksum-verified)
         run: |
           curl -fsSL -o godot.zip "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"

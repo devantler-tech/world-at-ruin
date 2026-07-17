@@ -22,6 +22,7 @@ extends Node
 ## Run: godot --headless --path client res://tests/ability_registry_test.tscn
 
 const SHIPPED := "res://tests/data/shipped_abilities.txt"
+const BUDGETS := "res://tests/data/shipped_class_power.txt"
 
 var _failed := false
 
@@ -57,7 +58,12 @@ func _ready() -> void:
 		return
 
 	# --- the two law-guards are clean on the real seed ---
-	var infl := Ability.find_power_inflation(abilities)
+	# Power budgets are anchored in a committed, append-only, value-immutable
+	# ledger (CI enforces that against the base revision) — not derived from the
+	# mutable ability set — so raising a whole class can never pass unseen.
+	var budgets := Ability.load_class_budgets(BUDGETS)
+	_check(not budgets.is_empty(), "class power-budget ledger loads")
+	var infl := Ability.find_power_inflation(abilities, budgets)
 	_check(infl.is_empty(), "seed holds the no-power-inflation law: %s" % str(infl))
 	var dom := Ability.find_strict_dominance(abilities)
 	_check(dom.is_empty(), "seed holds the sidegrade law (no strict dominance): %s" % str(dom))
@@ -85,7 +91,7 @@ func _ready() -> void:
 	with_upgrade.append(upgrade_ab)
 	_check(not Ability.find_strict_dominance(with_upgrade).is_empty(),
 		"dominance guard catches a strict-upgrade ability (teeth)")
-	_check(Ability.find_power_inflation(with_upgrade).is_empty(),
+	_check(Ability.find_power_inflation(with_upgrade, budgets).is_empty(),
 		"the strict-upgrade control does not also trip the power guard (isolation)")
 
 	# NEGATIVE CONTROL 2 — same situational axes as cleave but more power MUST
@@ -98,7 +104,7 @@ func _ready() -> void:
 	_check(inflated_ab != null, "power control parses")
 	var with_inflated := abilities.duplicate()
 	with_inflated.append(inflated_ab)
-	_check(not Ability.find_power_inflation(with_inflated).is_empty(),
+	_check(not Ability.find_power_inflation(with_inflated, budgets).is_empty(),
 		"power guard catches a power-inflated ability (teeth)")
 	_check(Ability.find_strict_dominance(with_inflated).is_empty(),
 		"the power-inflated control does not also trip the dominance guard (isolation)")
@@ -122,6 +128,8 @@ func _ready() -> void:
 	_expect_rejected(_with(base, "cast_time_ms", -1), "a negative cost")
 	_expect_rejected(_with(base, "cooldown_ms", 1.5), "a fractional integer")
 	_expect_rejected(_with(base, "range_m", "far"), "a wrong-typed range")
+	_expect_rejected(_with(base, "range_m", INF), "an infinite range")
+	_expect_rejected(_with(base, "cooldown_ms", INF), "an infinite cost")
 	_expect_rejected(_with(base, "version", 0), "a version below 1")
 	_expect_rejected(_with(base, "id", ""), "an empty id")
 	_expect_rejected([], "a non-object")

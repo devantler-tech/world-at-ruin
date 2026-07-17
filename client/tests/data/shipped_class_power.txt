@@ -1,0 +1,11 @@
+# Frozen power budget per comparable class: weapon|role|effect|telegraph=power.
+# The open-world arsenal never gains raw power ("mastery unlocks new arsenals,
+# never more damage"), and there is no undo. So a class budget, once shipped, is
+# PERMANENT: CI (against the base revision) forbids CHANGING or REMOVING a line;
+# you may only ADD a new class. The ability registry test asserts every ability
+# matches its class budget here, so raising an ability — or raising the ledger —
+# is caught. Only ever ADD lines; never edit a value.
+staff|healer|heal|circle=80
+staff|tank|shield|ring=60
+sword|damage|damage|cone=100
+sword|damage|damage|rect=100

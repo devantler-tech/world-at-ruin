@@ -155,22 +155,56 @@ static func dominates(a: Dictionary, b: Dictionary) -> bool:
 	return strictly_better
 
 
-## Guard 1 — no power inflation. Returns a human-readable violation per
-## comparable class whose abilities do not all share one power budget. Empty ⇒
-## the "never more damage" law holds across `abilities`.
-static func find_power_inflation(abilities: Array) -> Array:
-	var by_class := _group_by_class(abilities)
+## Guard 1 — no power inflation. Every ability's power must equal the FROZEN
+## budget recorded for its comparable class in `budgets` (a class_key -> power
+## map, loaded from the committed ledger). Returns a human-readable violation for
+## every ability whose class has no frozen budget or whose power differs from it.
+## Empty ⇒ the "never more damage" law holds across `abilities`.
+##
+## The budget is anchored OUTSIDE the mutable ability set on purpose: deriving it
+## from the current abilities (e.g. the first member of each class) would let a
+## change that raises EVERY member of a class — or a lone singleton — pass
+## unseen, since CI only ever evaluates the resulting checkout. The committed
+## ledger — append-only, with values immutable against the base revision, both
+## enforced in CI — is the anchor that makes the ceiling real over time.
+static func find_power_inflation(abilities: Array, budgets: Dictionary) -> Array:
 	var violations: Array = []
-	for key in by_class:
-		var group: Array = by_class[key]
-		var budget = group[0]["power"]
-		for ab in group:
-			if ab["power"] != budget:
-				violations.append(
-					"power inflation in class [%s]: '%s' has power %d but the class budget is %d"
-					% [key, ab["id"], ab["power"], budget])
-				break
+	for ab in abilities:
+		var key := class_key(ab)
+		if not budgets.has(key):
+			violations.append(
+				"class [%s] ('%s') has no frozen power budget — register it in the ledger" % [key, ab["id"]])
+		elif ab["power"] != budgets[key]:
+			violations.append(
+				"power inflation: '%s' has power %d but the frozen budget for class [%s] is %d"
+				% [ab["id"], ab["power"], key, budgets[key]])
 	return violations
+
+
+## Load the frozen class power-budget ledger: `weapon|role|effect|telegraph=power`
+## lines (comment/blank lines ignored), returned as a class_key -> int map. A
+## malformed or non-integer line is reported and skipped. Reads res:// only.
+static func load_class_budgets(path: String) -> Dictionary:
+	var out := {}
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		push_error("Ability: cannot open power-budget ledger %s" % path)
+		return out
+	while not file.eof_reached():
+		var line := file.get_line().strip_edges()
+		if line == "" or line.begins_with("#"):
+			continue
+		var eq := line.find("=")
+		if eq < 0:
+			push_error("Ability: malformed budget line '%s'" % line)
+			continue
+		var key := line.substr(0, eq).strip_edges()
+		var value := line.substr(eq + 1).strip_edges()
+		if not value.is_valid_int():
+			push_error("Ability: non-integer budget in '%s'" % line)
+			continue
+		out[key] = value.to_int()
+	return out
 
 
 ## Guard 2 — no strict dominance (the sidegrade law). Returns a human-readable
@@ -253,6 +287,9 @@ static func _require_nonneg_int(d: Dictionary, field: String, id: String) -> int
 		push_error("Ability '%s': '%s' must be a number" % [id, field])
 		return -1
 	var f := float(v)
+	if not is_finite(f):
+		push_error("Ability '%s': '%s' must be finite" % [id, field])
+		return -1
 	if f < 0.0:
 		push_error("Ability '%s': '%s' must be >= 0" % [id, field])
 		return -1
@@ -273,6 +310,9 @@ static func _require_nonneg_number(d: Dictionary, field: String, id: String) -> 
 		push_error("Ability '%s': '%s' must be a number" % [id, field])
 		return NAN
 	var f := float(v)
+	if not is_finite(f):
+		push_error("Ability '%s': '%s' must be finite" % [id, field])
+		return NAN
 	if f < 0.0:
 		push_error("Ability '%s': '%s' must be >= 0" % [id, field])
 		return NAN
