@@ -147,6 +147,7 @@ func TestFirstContactFrac(t *testing.T) {
 		{"parallel miss", from, target, Vec3{X: 2_500, Z: 2_000}, false},
 		{"graze within the slop (below rEff depth)", from, target, Vec3{X: 2_500, Z: 596}, false},
 		{"graze past rEff depth", from, target, Vec3{X: 2_500, Z: 580}, true},
+		{"zero-length segment", from, from, Vec3{X: 2_500}, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

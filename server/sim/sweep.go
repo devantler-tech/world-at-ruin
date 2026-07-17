@@ -128,7 +128,10 @@ func firstContactFrac(from, target Vec3, ra int64, center Vec3, rb int64) *big.R
 
 	dx := target.X - from.X
 	dz := target.Z - from.Z
-	a0 := dx*dx + dz*dz // path length², > 0 (the caller only sweeps a moving actor)
+	a0 := dx*dx + dz*dz // path length² on the ground plane
+	if a0 == 0 {
+		return nil // no ground-plane movement — no path to sweep (also guards the a0 divisor below)
+	}
 
 	// f = from − centre. The path is P(t) = from + t·(dx,dz), t ∈ [0,1].
 	fx := from.X - center.X
