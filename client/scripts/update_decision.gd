@@ -46,15 +46,28 @@ const INVALID_MANIFEST := "invalid_manifest"
 ## signature). Returns { action: String, reason: String } where action is one of
 ## the constants above. It never crashes on a malformed manifest.
 static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
-	var err := _manifest_error(manifest)
-	if err != "":
-		return _result(INVALID_MANIFEST, err)
+	# Envelope first: `schema` and the `shell` block keep a stable, backward-
+	# compatible shape across every schema bump, so a client of ANY schema can
+	# always at least learn it needs a newer shell — it is never stranded by a
+	# manifest whose newer body it cannot fully parse.
+	if not (manifest.has("schema") and _is_int_id(manifest["schema"])):
+		return _result(INVALID_MANIFEST, "missing or non-integer 'schema'")
+	var env_err := _envelope_error(manifest)
+	if env_err != "":
+		return _result(INVALID_MANIFEST, env_err)
 
 	if int(manifest["schema"]) > SUPPORTED_MANIFEST_SCHEMA:
-		# The manifest format is newer than we understand; a newer shell can read
-		# it. Don't guess at unknown fields.
+		# The manifest format is newer than we understand. Route to a shell update
+		# through the always-readable envelope; do NOT validate (or guess at) the
+		# schema-specific body, which a newer schema may have restructured.
 		return _result(SHELL_UPDATE, "manifest schema %d is newer than this client understands (%d)" % [
 			int(manifest["schema"]), SUPPORTED_MANIFEST_SCHEMA])
+
+	# The schema-specific body is validated only against the schema this client
+	# understands.
+	var body_err := _body_error(manifest)
+	if body_err != "":
+		return _result(INVALID_MANIFEST, body_err)
 
 	var shell := str(installed.get("shell_version", "0.0.0"))
 	var pack := str(installed.get("pack_version", "0.0.0"))
@@ -127,12 +140,11 @@ static func _cmp(a: String, b: String) -> int:
 	return 0
 
 
-## Return "" if the manifest carries every field decide() reads with the right
-## type, else a short reason. Delivery-only fields (url/sha256/size/signature)
-## are the updater's concern and are deliberately not required here.
-static func _manifest_error(m: Dictionary) -> String:
-	if not (m.has("schema") and _is_num(m["schema"])):
-		return "missing or non-numeric 'schema'"
+## The always-readable envelope: `schema` (checked by the caller) plus a coherent
+## `shell` block. Its shape is guaranteed stable across schema bumps, so a client
+## of any schema can read it to learn it needs a newer shell — never stranded.
+## Returns "" if valid, else a short reason.
+static func _envelope_error(m: Dictionary) -> String:
 	if not (m.has("shell") and m["shell"] is Dictionary):
 		return "missing 'shell' object"
 	var sh: Dictionary = m["shell"]
@@ -140,6 +152,18 @@ static func _manifest_error(m: Dictionary) -> String:
 		return "shell.current is not a version string"
 	if not _is_version(sh.get("min_supported")):
 		return "shell.min_supported is not a version string"
+	# A coherent manifest never advertises a current shell below its own floor;
+	# such a manifest could otherwise steer a shell update to a DOWNGRADE.
+	if _cmp(str(sh["current"]), str(sh["min_supported"])) < 0:
+		return "shell.current %s is below its own min_supported %s (incoherent manifest)" % [
+			str(sh["current"]), str(sh["min_supported"])]
+	return ""
+
+
+## Validate the schema-specific body (pack / protocol / save_schema) — only ever
+## called for the schema THIS client understands. Delivery-only fields
+## (url/sha256/size/signature/key) are the updater's concern, not required here.
+static func _body_error(m: Dictionary) -> String:
 	if not (m.has("pack") and m["pack"] is Dictionary):
 		return "missing 'pack' object"
 	var pk: Dictionary = m["pack"]
@@ -150,20 +174,26 @@ static func _manifest_error(m: Dictionary) -> String:
 	if not (m.has("protocol") and m["protocol"] is Dictionary):
 		return "missing 'protocol' object"
 	var pr: Dictionary = m["protocol"]
-	if not (_is_num(pr.get("min")) and _is_num(pr.get("max"))):
-		return "protocol.min/max are not numeric"
+	if not (_is_int_id(pr.get("min")) and _is_int_id(pr.get("max"))):
+		return "protocol.min/max are not integers"
 	if int(pr["min"]) > int(pr["max"]):
 		return "protocol.min > protocol.max"
 	if not (m.has("save_schema") and m["save_schema"] is Dictionary):
 		return "missing 'save_schema' object"
-	if not _is_num((m["save_schema"] as Dictionary).get("min")):
-		return "save_schema.min is not numeric"
+	if not _is_int_id((m["save_schema"] as Dictionary).get("min")):
+		return "save_schema.min is not an integer"
 	return ""
 
 
-## True if v is a JSON number (int, or a float such as JSON parsing may yield).
-static func _is_num(v: Variant) -> bool:
-	return v is int or v is float
+## True only for a discrete integer identifier: an int, or an integral, finite
+## JSON float (1.0). A fractional value (1.5) or non-finite value is rejected, so
+## it can never be silently truncated by a later int() into a wrong decision.
+static func _is_int_id(v: Variant) -> bool:
+	if v is int:
+		return true
+	if v is float:
+		return is_finite(v) and v == floor(v)
+	return false
 
 
 ## True if v is a non-empty dotted-integer version string ("0.1.14").

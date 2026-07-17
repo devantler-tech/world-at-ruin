@@ -45,6 +45,9 @@ func _ready() -> void:
 	_test_incompatible_but_updatable_steers_to_update()
 	_test_client_ahead_of_server_is_tolerated()
 	_test_schema_too_new_updates_shell()
+	_test_schema_too_new_ignores_broken_body()
+	_test_incoherent_shell_floor_refused()
+	_test_fractional_identifiers_refused()
 	_test_malformed_manifests_refuse_cleanly()
 	if _failed:
 		return
@@ -147,6 +150,40 @@ func _test_schema_too_new_updates_shell() -> void:
 	var m := _base_manifest()
 	m["schema"] = 2 # newer than SUPPORTED_MANIFEST_SCHEMA
 	_expect(_installed_current(), m, UpdateDecision.SHELL_UPDATE, "a newer manifest schema needs a newer shell")
+
+
+func _test_schema_too_new_ignores_broken_body() -> void:
+	# The envelope (schema + shell) must be read BEFORE the schema-specific body.
+	# A schema-2 manifest that restructured/removed body fields must still route an
+	# old client to a shell update via the envelope — never invalid_manifest, which
+	# would strand it. (Codex P0.)
+	var m := {
+		"schema": 2,
+		"channel": "live",
+		"shell": {"current": "0.2.0", "min_supported": "0.1.0"},
+		"future_field": {"restructured": true}, # no schema-1 pack/protocol/save at all
+	}
+	_expect(_installed_current(), m, UpdateDecision.SHELL_UPDATE, "newer schema with a valid envelope still routes to a shell update")
+
+
+func _test_incoherent_shell_floor_refused() -> void:
+	# An incoherent manifest whose advertised shell is below its own floor must be
+	# refused, not followed to a downgrade. (Codex P0.)
+	var m := _base_manifest()
+	m["shell"] = {"current": "1.0.0", "min_supported": "3.0.0"} # current below its own floor
+	var inst := _installed_current()
+	inst["shell_version"] = "2.0.0"
+	_expect(inst, m, UpdateDecision.INVALID_MANIFEST, "shell.current below its own floor is refused, never a downgrade")
+
+
+func _test_fractional_identifiers_refused() -> void:
+	# Discrete identifiers must reject fractional values so int() never silently
+	# truncates a wrong decision; an integral float (1.0) is still accepted. (Codex P1.)
+	_expect(_installed_current(), _with(_base_manifest(), "schema", 1.5), UpdateDecision.INVALID_MANIFEST, "fractional schema 1.5 is refused")
+	_expect(_installed_current(), _with(_base_manifest(), "protocol", {"min": 1.9, "max": 3}), UpdateDecision.INVALID_MANIFEST, "fractional protocol.min 1.9 is refused")
+	_expect(_installed_current(), _with(_base_manifest(), "save_schema", {"min": 2.5}), UpdateDecision.INVALID_MANIFEST, "fractional save_schema.min 2.5 is refused")
+	# An integral JSON float must still be accepted (JSON parsing may yield 1.0).
+	_expect(_installed_current(), _with(_base_manifest(), "schema", 1.0), UpdateDecision.UP_TO_DATE, "integral float schema 1.0 is accepted")
 
 
 func _test_malformed_manifests_refuse_cleanly() -> void:
