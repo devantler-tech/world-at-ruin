@@ -14,12 +14,22 @@ static func exists() -> bool:
 	return FileAccess.file_exists(PATH)
 
 
+## Atomic: write a sibling temp file, then rename over the save. A crash
+## mid-write must never corrupt the only copy of a character (no-resets law
+## — there is no wipe to recover WITH).
 static func save_recipe(recipe: Dictionary) -> bool:
-	var file := FileAccess.open(PATH, FileAccess.WRITE)
+	var tmp_path := PATH + ".tmp"
+	var file := FileAccess.open(tmp_path, FileAccess.WRITE)
 	if file == null:
-		push_error("CharacterStore: cannot write %s" % PATH)
+		push_error("CharacterStore: cannot write %s" % tmp_path)
 		return false
 	file.store_string(JSON.stringify(recipe, "  "))
+	file.close()
+	var err := DirAccess.rename_absolute(
+		ProjectSettings.globalize_path(tmp_path), ProjectSettings.globalize_path(PATH))
+	if err != OK:
+		push_error("CharacterStore: atomic replace failed (%d)" % err)
+		return false
 	return true
 
 

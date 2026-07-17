@@ -22,6 +22,7 @@ var _spawn := Vector3.ZERO
 func _ready() -> void:
 	# Hermetic: the first-run character creator must be exercised too, so the
 	# test always boots without a saved character.
+	_backup_live_save()
 	CharacterStore.clear()
 	_main = (load("res://scenes/main.tscn") as PackedScene).instantiate()
 	add_child(_main)
@@ -91,6 +92,7 @@ func _physics_process(_delta: float) -> void:
 		_fail("mouth threshold is a %.2f m cliff" % step)
 		return
 
+	_restore_live_save()
 	print("TEST PASS — spawn %s, floor %.2f, terrain %.2f, dome %.2f, mouth step %.2f" %
 		[spawn, floor_y, terrain, dome_y, step])
 	get_tree().quit(0)
@@ -101,6 +103,26 @@ func _ray(space: PhysicsDirectSpaceState3D, from: Vector3, to: Vector3) -> Dicti
 
 
 func _fail(message: String) -> void:
+	_restore_live_save()
 	push_error(message)
 	print("TEST FAIL — %s" % message)
 	get_tree().quit(1)
+
+## The test exercises the first-run creator by clearing the save — but a
+## LIVE character save is player state (no-resets law): back it up first and
+## put it back whatever happens.
+const BACKUP := "user://character.json.test-backup"
+
+
+func _backup_live_save() -> void:
+	if FileAccess.file_exists(CharacterStore.PATH):
+		DirAccess.copy_absolute(
+			ProjectSettings.globalize_path(CharacterStore.PATH),
+			ProjectSettings.globalize_path(BACKUP))
+
+
+func _restore_live_save() -> void:
+	if FileAccess.file_exists(BACKUP):
+		DirAccess.rename_absolute(
+			ProjectSettings.globalize_path(BACKUP),
+			ProjectSettings.globalize_path(CharacterStore.PATH))

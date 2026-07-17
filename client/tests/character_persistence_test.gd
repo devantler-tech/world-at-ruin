@@ -11,6 +11,7 @@ extends Node
 
 
 func _ready() -> void:
+	_backup_live_save()
 	CharacterStore.clear()
 	if CharacterStore.load_saved() != null:
 		_fail("missing save did not read as null")
@@ -54,11 +55,32 @@ func _ready() -> void:
 			return
 
 	CharacterStore.clear()
+	_restore_live_save()
 	print("TEST PASS — %s" % fp_direct)
 	get_tree().quit(0)
 
 
 func _fail(message: String) -> void:
+	_restore_live_save()
 	push_error(message)
 	print("TEST FAIL — %s" % message)
 	get_tree().quit(1)
+## The tests exercise first-run flows by clearing the save — but a LIVE
+## character save is player state (no-resets law): back it up first and put
+## it back whatever happens.
+const BACKUP := "user://character.json.test-backup"
+
+
+func _backup_live_save() -> void:
+	if FileAccess.file_exists(CharacterStore.PATH):
+		DirAccess.copy_absolute(
+			ProjectSettings.globalize_path(CharacterStore.PATH),
+			ProjectSettings.globalize_path(BACKUP))
+
+
+func _restore_live_save() -> void:
+	if FileAccess.file_exists(BACKUP):
+		DirAccess.rename_absolute(
+			ProjectSettings.globalize_path(BACKUP),
+			ProjectSettings.globalize_path(CharacterStore.PATH))
+
