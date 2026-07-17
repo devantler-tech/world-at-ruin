@@ -1,11 +1,12 @@
-# Frozen power budget per comparable class: weapon|role|effect|telegraph=power.
+# Frozen per-cast power budget per role|effect category. Power depends on the
+# trifecta role and the effect, NOT the weapon or telegraph — so a new weapon or
+# telegraph can never introduce a higher-power version of an existing category.
 # The open-world arsenal never gains raw power ("mastery unlocks new arsenals,
-# never more damage"), and there is no undo. So a class budget, once shipped, is
-# PERMANENT: CI (against the base revision) forbids CHANGING or REMOVING a line;
-# you may only ADD a new class. The ability registry test asserts every ability
-# matches its class budget here, so raising an ability — or raising the ledger —
-# is caught. Only ever ADD lines; never edit a value.
-staff|healer|heal|circle=80
-staff|tank|shield|ring=60
-sword|damage|damage|cone=100
-sword|damage|damage|rect=100
+# never more damage"), and there is no undo. So a category budget, once shipped,
+# is PERMANENT: CI (against the base revision) forbids CHANGING or REMOVING a
+# line, and rejects a duplicate key; you may only ADD a new category. The
+# registry test asserts every ability matches its category budget here.
+# Only ever ADD lines; never edit a value.
+damage|damage=100
+healer|heal=80
+tank|shield=60

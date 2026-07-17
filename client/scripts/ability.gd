@@ -16,10 +16,14 @@ extends RefCounted
 ## this game, so — like the save-fixture guard that landed before the first
 ## player — these exist BEFORE the first ability content does:
 ##
-##   1. NO POWER INFLATION — "Mastery unlocks new arsenals, never more damage."
-##      The open-world arsenal grows in options, never in raw power, and a value
-##      leak is irreversible. So every ability in a comparable class shares ONE
-##      power budget: adding an ability can never raise the ceiling.
+##   1. NO PER-CAST POWER INFLATION — "Mastery unlocks new arsenals, never more
+##      damage." Every ability of a (role|effect) category shares ONE frozen
+##      per-cast power budget, so a new weapon or telegraph can never introduce a
+##      higher-power version of an existing category. (Effective THROUGHPUT — power
+##      per second, which also depends on cast time and cooldown — is held
+##      separately by the CI "no strict self-buff over base" anchor: a rebalance of
+##      a shipped ability must be a sidegrade, never a strict buff. The initial
+##      power scale of a genuinely NEW category is a tracked balance decision.)
 ##
 ##   2. NO STRICT DOMINANCE (the sidegrade law) — "Every new arsenal ability must
 ##      be a SIDEGRADE, never a strict upgrade." Within a comparable class no
@@ -34,8 +38,9 @@ extends RefCounted
 ##
 ## The seed abilities in res://abilities are illustrative scaffolding that
 ## exercises the guards; the numbers are NOT balance-tuned content. The
-## INVARIANTS (equal power within a class, no Pareto dominance) are the settled
-## laws — the values are placeholders combat content will replace.
+## INVARIANTS (one per-cast power per role|effect category, no Pareto dominance,
+## no strict self-buff over base) are the settled laws — the values are
+## placeholders combat content will replace.
 
 ## Where per-ability JSON lives, one file per ability (stem == id by convention).
 const DIR := "res://abilities"
@@ -131,10 +136,19 @@ static func load_all(dir: String = DIR) -> Array:
 	return out
 
 
-## The comparable-class key: two abilities compete for the same choice only when
-## they are the same kind of tool.
+## The comparable-class key (for the sidegrade guard): two abilities compete for
+## the same choice only when they are the same KIND of tool.
 static func class_key(a: Dictionary) -> String:
 	return "%s|%s|%s|%s" % [a["weapon"], a["role"], a["effect"], a["telegraph"]]
+
+
+## The power-budget key (for the no-inflation guard): per-cast power depends on
+## the trifecta role and the effect, NOT on the weapon or telegraph — a sword and
+## a bow that both deal a damage-role hit share one power ceiling, so a new weapon
+## or telegraph can never introduce a higher-power version of an existing
+## category. It is deliberately COARSER than `class_key`.
+static func budget_key(a: Dictionary) -> String:
+	return "%s|%s" % [a["role"], a["effect"]]
 
 
 ## True when `a` strictly dominates `b`: no worse on any situational axis and
@@ -155,28 +169,35 @@ static func dominates(a: Dictionary, b: Dictionary) -> bool:
 	return strictly_better
 
 
-## Guard 1 — no power inflation. Every ability's power must equal the FROZEN
-## budget recorded for its comparable class in `budgets` (a class_key -> power
-## map, loaded from the committed ledger). Returns a human-readable violation for
-## every ability whose class has no frozen budget or whose power differs from it.
-## Empty ⇒ the "never more damage" law holds across `abilities`.
+## Guard 1 — no per-cast power inflation. Every ability's power must equal the
+## FROZEN budget recorded for its (role|effect) category in `budgets` (loaded
+## from the committed ledger). Returns a violation for every ability whose
+## category has no frozen budget or whose power differs from it.
 ##
 ## The budget is anchored OUTSIDE the mutable ability set on purpose: deriving it
-## from the current abilities (e.g. the first member of each class) would let a
-## change that raises EVERY member of a class — or a lone singleton — pass
-## unseen, since CI only ever evaluates the resulting checkout. The committed
-## ledger — append-only, with values immutable against the base revision, both
-## enforced in CI — is the anchor that makes the ceiling real over time.
+## from the current abilities would let a change that raises EVERY member of a
+## category pass unseen, since CI only ever evaluates the resulting checkout. The
+## committed ledger — append-only, with values immutable against the base
+## revision, both enforced in CI — is the anchor that makes the per-cast ceiling
+## real over time, and keying it on (role|effect) stops a new weapon or telegraph
+## from introducing a higher-power version of an existing category.
+##
+## This is NECESSARY but not SUFFICIENT for "never more power": per-cast power is
+## not effective throughput (power per second also depends on cast time and
+## cooldown), and the initial budget of a genuinely NEW (role|effect) category is
+## a balance decision. Throughput is held by the CI "no strict self-buff over
+## base" anchor (a rebalance of a shipped ability must be a sidegrade); the
+## new-category scale is tracked as follow-up balance work.
 static func find_power_inflation(abilities: Array, budgets: Dictionary) -> Array:
 	var violations: Array = []
 	for ab in abilities:
-		var key := class_key(ab)
+		var key := budget_key(ab)
 		if not budgets.has(key):
 			violations.append(
-				"class [%s] ('%s') has no frozen power budget — register it in the ledger" % [key, ab["id"]])
+				"category [%s] ('%s') has no frozen power budget — register it in the ledger" % [key, ab["id"]])
 		elif ab["power"] != budgets[key]:
 			violations.append(
-				"power inflation: '%s' has power %d but the frozen budget for class [%s] is %d"
+				"power inflation: '%s' has power %d but the frozen budget for category [%s] is %d"
 				% [ab["id"], ab["power"], key, budgets[key]])
 	return violations
 
