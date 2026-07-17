@@ -21,8 +21,10 @@ entertainment. The Game is licensed, not sold.
 
 - Characters, mastery, items, and other in-game data are records in the Service. They are not
   Your property, have no monetary value, and cannot be sold, traded, or transferred for value.
-- The world is designed to evolve **forward-only**: content is added and improved over time, and
-  the Operator intends never to wipe or reset persistent characters. This is a design commitment,
+- The world is designed to **evolve without taking your progress from you**: the Operator intends
+  never to wipe or reset persistent characters, and changes to the world are made either without
+  breaking your existing characters or through a deprecation notice that tells you, ahead of time,
+  what is changing or being removed. Experimental features are opt-in. This is a design commitment,
   not a warranty — the Service is an evolving work and no specific content, feature, or
   availability is promised.
 - The Service keeps the records (including audit logs) needed to run Your account, preserve
@@ -45,7 +47,7 @@ The economy and progression are designed to stay fair for everyone, permanently.
 If a defect, exploit, or unauthorised action creates or alters records illegitimately, the
 Operator may correct **those records** — narrowly, guided by the audit trail, and only to remove
 what the abuse itself created. This is not a rollback power: it never touches legitimately earned
-progression, and the forward-only commitment in section 2 stands.
+progression, and the commitment in section 2 stands.
 
 ## 4. Enforcement and termination
 

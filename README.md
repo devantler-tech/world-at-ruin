@@ -50,9 +50,10 @@ newest first — replaying after each build shows exactly what the agents grew.
 
 - **Everything is text-authored** — scenes, world generation, materials, and characters are code,
   built headlessly in CI. If an agent can't author it in a diff, it doesn't get built.
-- **Forward-only, no resets** — the design forbids wipes, seasons, and stat squishes. An early
-  character keeps playing as the world evolves. The CI guards for this exist before the first
-  player does.
+- **No resets, no silent loss** — the design forbids wipes, seasons, and stat squishes. An early
+  character keeps playing as the world evolves: the game can be migrated, but only without breaking
+  your character, or through a deprecation that tells you first what is changing or going away.
+  Unfinished features are opt-in. The CI guards for this exist before the first player does.
 - **Source-available, not open source** — see [LICENSE.md](LICENSE.md). Reading is welcome;
   copying and redistribution are not permitted. Playing a distributed build is governed by the
   [EULA](EULA.md), and contributing requires signing the [CLA](CLA.md) (copyright assignment) —
