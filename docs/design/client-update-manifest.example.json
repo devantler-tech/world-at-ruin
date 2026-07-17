@@ -7,6 +7,7 @@
   "shell": {
     "current": "0.1.14",
     "min_supported": "0.1.0",
+    "reads_min": 1,
     "download": {
       "macos-universal": {
         "url": "https://updates.worldatruin.example/live/shell/0.1.14/WorldAtRuin-macos-universal.zip",
