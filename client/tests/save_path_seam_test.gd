@@ -8,7 +8,10 @@ extends Node
 ##  3. Routing: the whole-game save/load path (save_recipe/load_saved/exists/
 ##     clear) goes to the override, and the shipped default file is never
 ##     created or changed by it.
-##  4. Cleared override goes inert again.
+##  4. Legacy-backup recovery restores a save an older client's boot test could
+##     have stranded, never clobbers a live save, and the production wrapper is
+##     inert while an override is active.
+##  5. Cleared override goes inert again.
 ##
 ## FAIL-CLOSED: every write is gated on save_path() already equalling the probe,
 ## and the default file's bytes are snapshotted read-only and asserted unchanged.
@@ -18,6 +21,8 @@ extends Node
 ## Run: godot --headless --path client res://tests/save_path_seam_test.tscn
 
 const PROBE := "user://save_path_seam_probe.json"
+const RTARGET := "user://recover_target_probe.json"
+const RBACKUP := "user://recover_backup_probe.json"
 const ENV := CharacterStore.SAVE_PATH_ENV
 
 var _default_before_exists: bool
@@ -88,7 +93,54 @@ func _ready() -> void:
 		_fail("clear() did not remove the override save")
 		return
 
-	# 4. Cleared override goes inert again.
+	# 4. Legacy-backup recovery: an older client's boot test could strand the
+	#    real save at a .test-backup and die before restoring it. The migration
+	#    must put it back, but only when no live save exists (never clobber).
+	#    Exercised on throwaway probes so the player's real save is never touched.
+	_cleanup_probe()
+	var stranded = CharacterFactory.load_recipe("res://recipes/wanderer.json")
+	if not CharacterStore.save_to(RBACKUP, stranded):
+		_fail("could not stage a stranded backup probe")
+		return
+	var backup_sha := FileAccess.get_sha256(RBACKUP)
+	# (a) target absent + backup present -> recovered, backup consumed.
+	if not CharacterStore.recover_backup_into(RTARGET, RBACKUP):
+		_fail("recover_backup_into did not recover a stranded save")
+		return
+	if not FileAccess.file_exists(RTARGET) or FileAccess.file_exists(RBACKUP):
+		_fail("recovery should MOVE the backup onto the target")
+		return
+	if FileAccess.get_sha256(RTARGET) != backup_sha:
+		_fail("recovered save is not byte-identical to the stranded backup")
+		return
+	# (b) target present -> no clobber (no-resets law: never overwrite a save).
+	if not CharacterStore.save_to(RBACKUP, stranded):
+		_fail("could not stage a second stranded backup probe")
+		return
+	var target_sha := FileAccess.get_sha256(RTARGET)
+	if CharacterStore.recover_backup_into(RTARGET, RBACKUP):
+		_fail("recovery clobbered an existing save")
+		return
+	if FileAccess.get_sha256(RTARGET) != target_sha or not FileAccess.file_exists(RBACKUP):
+		_fail("no-clobber recovery must leave both files untouched")
+		return
+	# (c) no backup -> no-op.
+	_cleanup_probe()
+	if CharacterStore.recover_backup_into(RTARGET, RBACKUP):
+		_fail("recovery reported success with no backup present")
+		return
+	# (d) the production wrapper is inert while an override is active — a
+	#     redirected test must never let it touch the real default.
+	OS.set_environment(ENV, PROBE)
+	var d_exists := FileAccess.file_exists(CharacterStore.DEFAULT_PATH)
+	var d_sha := _sha(CharacterStore.DEFAULT_PATH)
+	CharacterStore.recover_legacy_backup()
+	if FileAccess.file_exists(CharacterStore.DEFAULT_PATH) != d_exists \
+			or _sha(CharacterStore.DEFAULT_PATH) != d_sha:
+		_fail("recover_legacy_backup touched the real default under an active override")
+		return
+
+	# 5. Cleared override goes inert again.
 	OS.set_environment(ENV, "")
 	if CharacterStore.save_path() != CharacterStore.DEFAULT_PATH:
 		_fail("clearing the override did not restore the default")
@@ -119,8 +171,9 @@ func _exit_tree() -> void:
 
 
 func _cleanup_probe() -> void:
-	if FileAccess.file_exists(PROBE):
-		DirAccess.remove_absolute(ProjectSettings.globalize_path(PROBE))
+	for p in [PROBE, RTARGET, RBACKUP]:
+		if FileAccess.file_exists(p):
+			DirAccess.remove_absolute(ProjectSettings.globalize_path(p))
 
 
 func _sha(path: String) -> String:

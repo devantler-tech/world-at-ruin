@@ -24,6 +24,14 @@ const DEFAULT_PATH := "user://character.json"
 ## running the suite on a machine with a played save point it at a temp file.
 const SAVE_PATH_ENV := "WAR_SAVE_PATH"
 
+## Where an OLDER client's boot tests parked the real save while exercising the
+## first-run creator. Those tests cleared user://character.json and restored it
+## from here on the next run — so a run killed in between left the only copy
+## here. This client's tests no longer do that (they redirect via the seam
+## above), which means nothing would ever restore a copy stranded before the
+## upgrade. recover_legacy_backup() closes that one-time migration gap.
+const LEGACY_TEST_BACKUP := "user://character.json.test-backup"
+
 
 ## The active save path: the WAR_SAVE_PATH override when set, else the shipped
 ## default. Resolved fresh each call so a test can redirect the game before it
@@ -74,3 +82,26 @@ static func load_saved() -> Variant:
 static func clear() -> void:
 	if exists():
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(save_path()))
+
+
+## Move a character stranded at `backup` back to `target`, but ONLY when
+## `target` is absent — never clobber a live save (no-resets law). Returns true
+## when a recovery happened. Pure in its paths so it is testable against
+## throwaway files without touching the player's real save.
+static func recover_backup_into(target: String, backup: String) -> bool:
+	if FileAccess.file_exists(target) or not FileAccess.file_exists(backup):
+		return false
+	return DirAccess.rename_absolute(
+		ProjectSettings.globalize_path(backup),
+		ProjectSettings.globalize_path(target)) == OK
+
+
+## Production one-time migration: restore a character an OLDER client's boot
+## test stranded at LEGACY_TEST_BACKUP. Runs only when no override is active — a
+## redirected test must never touch the real default — and never overwrites an
+## existing save. Idempotent (the backup is consumed) and inert on a normal
+## install where neither file exists. Call at boot before load_saved().
+static func recover_legacy_backup() -> void:
+	if save_path() != DEFAULT_PATH:
+		return
+	recover_backup_into(DEFAULT_PATH, LEGACY_TEST_BACKUP)

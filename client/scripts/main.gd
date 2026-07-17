@@ -74,6 +74,9 @@ func _ready() -> void:
 	npcs.npc_spoke.connect(func(npc_name: String, line: String) -> void:
 		_hud.toast("%s:  “%s”" % [npc_name, line]))
 
+	# One-time migration: an older client's boot test could strand the real save
+	# at a .test-backup and die before restoring it. Put it back before loading.
+	CharacterStore.recover_legacy_backup()
 	var saved = CharacterStore.load_saved()
 	if saved is Dictionary:
 		_player.set_character(saved)
