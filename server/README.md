@@ -28,6 +28,14 @@ zone/dungeon server:
     spatial-hash **broad phase** offers only the pairs that can actually touch,
     so the pass costs ~O(n) instead of O(n²) as a zone's actor count grows,
     without changing that deterministic settled state.
+  - **Swept (continuous) collision** — separation only sees where actors *end
+    up*, so an actor moving faster than a capsule per tick could pass clean
+    through another between two ticks. `Step` now sweeps each mover's
+    straight-line path against the others and stops it at first contact, closing
+    that tunneling gap before the high-speed movement (a dash/charge) that would
+    trigger it exists — the product law has no undo. It is exact-integer
+    (`math/big` for the few over-`int64` intermediates, never floating point) and
+    a strict no-op at every speed the game has today, so it moves neither golden.
   - `FixedLoop` — a fixed-timestep accumulator that runs the sim at exactly
     `TickHz` regardless of wall-clock jitter, with a catch-up cap so a stalled
     process can never spiral.

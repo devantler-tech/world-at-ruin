@@ -221,16 +221,53 @@ func sanitizeIntent(v Vec3) Vec3 {
 // the per-second velocity into a per-tick displacement by integer division, and
 // clamps the new position into the navmesh bounds. Integer division truncates
 // toward zero — deterministically — so the same inputs always yield the same
-// positions. It then resolves capsule overlap (see separate), driving the
-// tick's final state toward no two actors sharing the same space — exactly for
-// an isolated pair, and convergently (within a few ticks) for a dense pile-up.
+// positions. A fast mover's straight-line path is then swept against the other
+// actors so it stops at first contact rather than tunneling through one (see
+// sweep.go); this is a strict no-op at every speed the game has today, so it
+// changes neither golden. Finally it resolves capsule overlap (see separate),
+// driving the tick's final state toward no two actors sharing the same space —
+// exactly for an isolated pair, and convergently (within a few ticks) for a
+// dense pile-up.
 func (w *World) Step() {
+	// The swept-collision pass treats every other actor as a stationary obstacle
+	// at the position it holds at the *start* of the tick, so each mover's clamp
+	// is a pure function of one immutable snapshot — independent of the order
+	// actors are integrated in. Build it only when a sweep can matter: at least
+	// two actors, and a combined radius large enough that separation would ever
+	// act on an overlap (a smaller radius has nothing to tunnel).
+	var (
+		snap      map[EntityID]Vec3
+		earlyOut2 int64
+		sweep     bool
+	)
+	if len(w.order) >= 2 {
+		if rsumFloor := minPositiveRadius(w); rsumFloor > separationSlopMM {
+			// The shortest chord a straight path can cut through a capsule while
+			// still penetrating deeper than the slop is 2·√(2·rsum·slop − slop²)
+			// (the chord at penetration depth = slop). A per-tick step no longer
+			// than that can enter a capsule but never leave the far side, so it
+			// cannot tunnel; rsumFloor is the smallest combined radius any pair can
+			// have, so a step within this bound cannot tunnel *any* pair. Comparing
+			// squared lengths keeps the per-mover early-out an integer multiply.
+			earlyOut2 = 4 * (2*rsumFloor*separationSlopMM - separationSlopMM*separationSlopMM)
+			snap = make(map[EntityID]Vec3, len(w.order))
+			for _, id := range w.order {
+				snap[id] = w.ents[id].Pos
+			}
+			sweep = true
+		}
+	}
+
 	for _, id := range w.order {
 		e := w.ents[id]
 		v := clampSpeed(e.Intent, e.MaxSpeed)
 		// mm/s / (ticks/s) = mm/tick.
 		disp := Vec3{X: v.X / TickHz, Y: v.Y / TickHz, Z: v.Z / TickHz}
-		e.Pos = w.bounds.clamp(e.Pos.Add(disp))
+		target := w.bounds.clamp(e.Pos.Add(disp))
+		if sweep {
+			target = w.sweptStop(id, snap, target, e.Radius, earlyOut2)
+		}
+		e.Pos = target
 	}
 	w.separate()
 	w.Tick++
