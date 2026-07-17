@@ -75,16 +75,28 @@ workflow blocks an external PR until its author signs; signatures are ledgered o
 ledger). **No GPL/AGPL in the shipped tree** — enforced in CI (`license-guard` job), not
 remembered.
 
-### Product law — the two constraints that outrank the design
+### Product law — the constraints that outrank the design
 
-1. **No hard resets, ever.** An early player keeps playing as it evolves: no wipes, no seasons, no
-   stat squishes. Every change is **forward-only and non-destructive** (expand/contract migrations,
-   versioned save data, backward-compatible protocols, feature-flag-first). **CI-enforceable, and
-   the guard must exist before the first player does** — an agent must not be able to merge a
-   change that strands a character.
-2. **No power/wealth inflation, no ecosystem corruption.** **There is no undo**: a dupe, a runaway
-   drop rate or a bad migration is permanent. Transactional integrity, idempotency and an audit
-   trail are day-one requirements.
+1. **No hard resets, and nothing is taken from a player silently.** An early player keeps playing
+   as the game evolves: no wipes, no seasons, no stat squishes. **The world may be migrated — that
+   is expected and healthy** — but every migration is either **non-breaking** (expand/contract
+   migrations, versioned save data, backward-compatible protocols; the player never notices) **or
+   goes through a visible deprecation** that tells the player, in-game and ahead of time, exactly
+   what is being changed, removed, or destroyed and when. Nothing a player earned disappears
+   without that notice. **CI-enforceable, and the guard must exist before the first player does** —
+   an agent must not be able to merge a change that strands a character or removes something from a
+   player without an announced deprecation.
+2. **Experimental features are opt-in behind a feature flag.** Anything not yet settled ships
+   **default-off** behind a flag; a player must **opt in** to use it, it is validated in that
+   opt-in state, and only once proven does it flip to default-on and the short-lived release flag
+   is retired. A player is never silently enrolled into an unfinished experience, and turning an
+   experiment off never destroys what they did while it was on. (This is the game-facing edge of
+   the portfolio-wide **feature-flag-first delivery** rule.)
+3. **No power/wealth inflation, no ecosystem corruption.** A dupe, a runaway drop rate, or a
+   botched economy change does damage that cannot be un-printed without the very reset the game
+   forbids — so economic integrity is engineered at the root, not patched after the fact:
+   transactional integrity, idempotency and an audit trail are day-one requirements. Migrating
+   *content and data* forward is expected; letting *value* leak is the thing that is never allowed.
 
 **The collision to keep front of mind: WoW/Diablo-4's answer to inflation IS the reset** (D4 wipes
 seasonally; WoW squishes stats). Both are forbidden, so economics come from **Guild Wars 2**
@@ -148,7 +160,8 @@ Settled with the maintainer 2026-07-17. This is the fiction every zone, asset an
 ### Design guards — the traps in the above, and how to hold them
 
 These are the non-obvious failure modes. Treat them as laws, and prefer designing them out over
-policing them (there is no undo).
+policing them after the fact — economic corruption, once loose, cannot be recalled without the
+reset the game forbids.
 
 - **🔴 The endgame ladder is the one place power grows — it MUST be bounded and inert outside
   itself.** "Gear upgraded to take on harder and harder content" *is* vertical progression, i.e.
@@ -272,9 +285,11 @@ can be watched by playing; every *further* art/game system waits on Phase 0.)
 
 Reviewers (Codex/CodeRabbit) flag **P0/P1 only**:
 
-- **P0 — product law:** any change that could wipe/strand/devalue player state (destructive
-  migration, save-format break, non-backward-compatible protocol change), introduce power/wealth
-  inflation, or add GPL/AGPL/commercial-licensed content.
+- **P0 — product law:** any change that could wipe/strand/devalue player state — a destructive
+  migration, save-format break, or non-backward-compatible protocol change **not gated behind an
+  announced, player-visible deprecation** — or that introduces power/wealth inflation, ships an
+  unsettled/experimental feature **not default-off behind an opt-in flag**, or adds
+  GPL/AGPL/commercial-licensed content.
 - **P1 — correctness:** unseeded/non-deterministic world generation, client-authoritative gameplay
   state (once networking exists), physics entering the authoritative path, or a player-visible
   change with no dev-log entry.
