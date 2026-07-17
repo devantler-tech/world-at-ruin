@@ -7,15 +7,18 @@ extends Node
 ##     rather than half-applying (CharacterFactory validation through the
 ##     store path).
 ##
+## The store's real save/load logic is exercised through a throwaway probe
+## file (save_to/load_from), so the player's own user://character.json is
+## never touched — a test can never strand a character (no-resets law).
+##
 ## Run: godot --headless --path client res://tests/character_persistence_test.tscn
+
+const PROBE := "user://persistence_probe.json"
 
 
 func _ready() -> void:
-	if not CharacterStore.begin_maintenance():
-		_fail("could not back up the live character save — refusing to touch it")
-		return
-	CharacterStore.clear()
-	if CharacterStore.load_saved() != null:
+	_cleanup_probe()
+	if CharacterStore.load_from(PROBE) != null:
 		_fail("missing save did not read as null")
 		return
 
@@ -23,10 +26,10 @@ func _ready() -> void:
 	if recipe is not Dictionary:
 		_fail("wanderer preset unreadable")
 		return
-	if not CharacterStore.save_recipe(recipe):
+	if not CharacterStore.save_to(PROBE, recipe):
 		_fail("save failed")
 		return
-	var loaded = CharacterStore.load_saved()
+	var loaded = CharacterStore.load_from(PROBE)
 	if loaded is not Dictionary:
 		_fail("saved recipe did not load")
 		return
@@ -47,8 +50,8 @@ func _ready() -> void:
 	# A future-version recipe must be refused, not half-applied.
 	var future: Dictionary = recipe.duplicate(true)
 	future["version"] = CharacterFactory.RECIPE_VERSION + 1
-	CharacterStore.save_recipe(future)
-	var reloaded = CharacterStore.load_saved()
+	CharacterStore.save_to(PROBE, future)
+	var reloaded = CharacterStore.load_from(PROBE)
 	if reloaded is Dictionary:
 		var built := CharacterFactory.build(reloaded)
 		if built != null:
@@ -56,25 +59,22 @@ func _ready() -> void:
 			_fail("a future-version recipe built on an old client")
 			return
 
-	CharacterStore.clear()
-	if not CharacterStore.end_maintenance():
-		_fail("the live character save could not be restored — refusing to report success")
-		return
+	_cleanup_probe()
 	print("TEST PASS — %s" % fp_direct)
 	get_tree().quit(0)
 
 
 func _fail(message: String) -> void:
-	if not CharacterStore.end_maintenance():
-		push_error("additionally: the live save is still parked at its backup path")
+	_cleanup_probe()
 	push_error(message)
 	print("TEST FAIL — %s" % message)
 	get_tree().quit(1)
 
 
-# The tests exercise first-run flows by clearing the save — the live-save
-# protection is CharacterStore's own maintenance protocol (crash-safe, with
-# production-side recovery), and tree teardown releases it too.
 func _exit_tree() -> void:
-	CharacterStore.end_maintenance()
+	_cleanup_probe()
 
+
+func _cleanup_probe() -> void:
+	if FileAccess.file_exists(PROBE):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(PROBE))

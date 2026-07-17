@@ -13,9 +13,9 @@ extends Node
 ## Per fixture:
 ##  1. Its declared "version" matches its filename (a stale copy cannot
 ##     stand in for a new version's coverage).
-##  2. The raw bytes are placed at the real save path, exactly as the
-##     historical client wrote them.
-##  3. CharacterStore.load_saved() returns a Dictionary that deep-equals the
+##  2. The raw bytes are written to a throwaway probe file, exactly as a
+##     historical client wrote them — the player's own save is never touched.
+##  3. CharacterStore.load_from() returns a Dictionary that deep-equals the
 ##     fixture — zero field loss, no silent normalisation.
 ##  4. It builds, twice, with identical fingerprints (a shipped save must
 ##     keep producing the same character within one build).
@@ -27,18 +27,13 @@ extends Node
 
 const DATA_DIR := "res://tests/data/"
 const SHIPPED_VERSIONS := DATA_DIR + "shipped_recipe_versions.txt"
-
-# _fail() may only touch the save path once the live save is safely backed
-# up; before that, failing must leave the player's file exactly as found.
-var _live_save_protected := false
+# A throwaway save file: the fixtures are loaded through the store's real
+# load path via this probe, so the player's user://character.json is never
+# read or written (no test can strand a character — no-resets law).
+const PROBE := "user://fixture_guard_probe.json"
 
 
 func _ready() -> void:
-	if not CharacterStore.begin_maintenance():
-		_fail("could not back up the live character save — refusing to touch it")
-		return
-	_live_save_protected = true
-
 	var discovered = _discover_fixtures()
 	if discovered is String:
 		_fail(discovered)
@@ -83,17 +78,19 @@ func _ready() -> void:
 			_fail("golden_recipe_v%d.json: %s" % [version, reason])
 			return
 
-	CharacterStore.clear()
-	if not CharacterStore.end_maintenance():
-		_fail("the live character save could not be restored — refusing to report success")
-		return
+	_cleanup_probe()
 	print("TEST PASS — %d historical saves (v1..v%d) load with zero loss" % [
 		versions.size(), CharacterFactory.RECIPE_VERSION])
 	get_tree().quit(0)
 
 
 func _exit_tree() -> void:
-	CharacterStore.end_maintenance()
+	_cleanup_probe()
+
+
+func _cleanup_probe() -> void:
+	if FileAccess.file_exists(PROBE):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(PROBE))
 
 
 ## "" when the fixture survives the full write→load→build path, else why not.
@@ -109,14 +106,15 @@ func _check_fixture(version: int, path: String) -> String:
 		return "declares version %s but its filename says v%d — a stale copy cannot stand in for v%d coverage" % [
 			str(expected.get("version", "none")), version, version]
 
-	# The fixture's raw bytes ARE the save a historical client left on disk.
-	var save := FileAccess.open(CharacterStore.PATH, FileAccess.WRITE)
+	# The fixture's raw bytes ARE the save a historical client wrote — placed
+	# at the throwaway probe, never the player's own save.
+	var save := FileAccess.open(PROBE, FileAccess.WRITE)
 	if save == null:
-		return "could not write the save path"
+		return "could not write the probe path"
 	save.store_string(raw)
 	save.close()
 
-	var loaded = CharacterStore.load_saved()
+	var loaded = CharacterStore.load_from(PROBE)
 	if loaded is not Dictionary:
 		return "HISTORICAL SAVE REFUSED TO LOAD (no-resets law)"
 	var lost := _diff(expected, loaded, "recipe")
@@ -223,10 +221,7 @@ func _shipped_versions() -> PackedInt32Array:
 
 
 func _fail(message: String) -> void:
-	if _live_save_protected:
-		CharacterStore.clear()
-		if not CharacterStore.end_maintenance():
-			push_error("additionally: the live save is still parked at its backup path")
+	_cleanup_probe()
 	push_error(message)
 	print("TEST FAIL — %s" % message)
 	get_tree().quit(1)
