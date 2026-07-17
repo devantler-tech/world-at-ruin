@@ -49,8 +49,15 @@ jobs:
             echo "::error::base commit $BASE_SHA not present in the checkout — cannot verify the ledger"
             exit 1
           fi
-          if git diff "$BASE_SHA" HEAD -- "$LEDGER" | grep -E '^-[0-9]'; then
-            echo "::error::A shipped version was removed from $LEDGER — shipped saves are never disposable (no-resets law)"
+          # Compare PARSED integer sets, not raw diff lines: the runtime
+          # guard strips whitespace, so an indented entry is a valid version
+          # whose deletion a line-anchored grep would miss.
+          extract='s/^[[:space:]]*\([0-9][0-9]*\)[[:space:]]*$/\1/p'
+          git show "$BASE_SHA:$LEDGER" 2>/dev/null | sed -n "$extract" | sort -un > /tmp/ledger-base
+          sed -n "$extract" "$LEDGER" | sort -un > /tmp/ledger-head
+          removed=$(comm -23 /tmp/ledger-base /tmp/ledger-head)
+          if [ -n "$removed" ]; then
+            echo "::error::Shipped version(s) removed from $LEDGER ($(echo $removed | tr '\n' ' ')) — shipped saves are never disposable (no-resets law)"
             exit 1
           fi
       - name: Install Godot (pinned, checksum-verified)

@@ -11,7 +11,7 @@ extends Node
 
 
 func _ready() -> void:
-	if not TestSaveBackup.backup():
+	if not CharacterStore.begin_maintenance():
 		_fail("could not back up the live character save — refusing to touch it")
 		return
 	CharacterStore.clear()
@@ -57,7 +57,7 @@ func _ready() -> void:
 			return
 
 	CharacterStore.clear()
-	if not TestSaveBackup.restore():
+	if not CharacterStore.end_maintenance():
 		_fail("the live character save could not be restored — refusing to report success")
 		return
 	print("TEST PASS — %s" % fp_direct)
@@ -65,7 +65,7 @@ func _ready() -> void:
 
 
 func _fail(message: String) -> void:
-	if not TestSaveBackup.restore():
+	if not CharacterStore.end_maintenance():
 		push_error("additionally: the live save is still parked at its backup path")
 	push_error(message)
 	print("TEST FAIL — %s" % message)
@@ -73,8 +73,8 @@ func _fail(message: String) -> void:
 
 
 # The tests exercise first-run flows by clearing the save — the live-save
-# protection itself lives in TestSaveBackup (crash-safe), and tree teardown
-# restores too.
+# protection is CharacterStore's own maintenance protocol (crash-safe, with
+# production-side recovery), and tree teardown releases it too.
 func _exit_tree() -> void:
-	TestSaveBackup.restore()
+	CharacterStore.end_maintenance()
 

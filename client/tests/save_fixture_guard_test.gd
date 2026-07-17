@@ -34,7 +34,7 @@ var _live_save_protected := false
 
 
 func _ready() -> void:
-	if not TestSaveBackup.backup():
+	if not CharacterStore.begin_maintenance():
 		_fail("could not back up the live character save — refusing to touch it")
 		return
 	_live_save_protected = true
@@ -84,7 +84,7 @@ func _ready() -> void:
 			return
 
 	CharacterStore.clear()
-	if not TestSaveBackup.restore():
+	if not CharacterStore.end_maintenance():
 		_fail("the live character save could not be restored — refusing to report success")
 		return
 	print("TEST PASS — %d historical saves (v1..v%d) load with zero loss" % [
@@ -93,7 +93,7 @@ func _ready() -> void:
 
 
 func _exit_tree() -> void:
-	TestSaveBackup.restore()
+	CharacterStore.end_maintenance()
 
 
 ## "" when the fixture survives the full write→load→build path, else why not.
@@ -225,7 +225,7 @@ func _shipped_versions() -> PackedInt32Array:
 func _fail(message: String) -> void:
 	if _live_save_protected:
 		CharacterStore.clear()
-		if not TestSaveBackup.restore():
+		if not CharacterStore.end_maintenance():
 			push_error("additionally: the live save is still parked at its backup path")
 	push_error(message)
 	print("TEST FAIL — %s" % message)
