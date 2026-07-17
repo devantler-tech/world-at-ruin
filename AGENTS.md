@@ -66,9 +66,12 @@ game about standing in the right place).
 ### Licensing
 
 **Source-available and proprietary — NEVER call it "open source"** (free redistribution is clause 1
-of the OSD). Copying/redistribution prohibited. Needs a **bespoke EULA** and a **CLA with copyright
-assignment** (EU: assignment plus fallback exclusive licence) gating the first external PR. **No
-GPL/AGPL in the shipped tree** — enforced in CI (`license-guard` job), not remembered.
+of the OSD). Copying/redistribution prohibited. The legal set is in place: `LICENSE.md` (bespoke
+source-available licence), `EULA.md` (governs playing distributed builds), and `CLA.md` (**copyright
+assignment**, EU: with a fallback exclusive licence). The `CLA` workflow (contributor-assistant)
+blocks an external PR until its author signs; signatures are ledgered on the **permanent
+`cla-signatures` branch — never delete it**. **No GPL/AGPL in the shipped tree** — enforced in CI
+(`license-guard` job), not remembered.
 
 ### Product law — the two constraints that outrank the design
 
@@ -235,7 +238,8 @@ can be watched by playing; every *further* art/game system waits on Phase 0.)
   (`bpy` is Python by nature); keep it isolated under `tools/artgen/` when it lands.
 - **Licensing hygiene:** no GPL/AGPL code or assets in the shipped tree; no commercial assets;
   CC0/OSS-permissive only, with licence verified per asset dataset. External PRs cannot be merged
-  until the EULA/CLA exists (see `LICENSE.md`).
+  until their author signs the CLA (`CLA.md`; the `CLA` workflow enforces this, with the ledger on
+  the permanent `cla-signatures` branch).
 - **Roadmap:** GitHub Issues on this repo (`roadmap` label for epics). The plan is **phase-gated**
   — Phase 0 (art-pipeline taste gate, #1) through Phase 8 (platforms, #15), each phase's exit
   criteria unlocking the next, plus the standing risk register (#16). Keep issues **agent-shaped**
