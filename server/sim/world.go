@@ -14,12 +14,14 @@
 //     whole simulation is integer-only and every per-tick iteration runs in a
 //     fixed, insertion-order-independent order.
 //
-// The fixed-timestep tick core lives here: capsule actors integrating a clamped
-// intent on a bounded flat navmesh, with a state hash that makes determinism
-// testable. Area-of-interest — which entities each observer is told about — is
-// its read-only companion query in aoi.go. Networking and client
-// prediction/reconciliation, the Agones SDK, and capsule-vs-capsule resolution
-// are later children of the server-foundation epic and deliberately absent here.
+// The fixed-timestep tick core lives here: capsule actors integrate a clamped
+// intent on a bounded flat navmesh and are then de-overlapped, converging toward
+// no two occupying the same space (capsule-vs-capsule separation, see
+// separation.go), with a state hash that makes determinism testable.
+// Area-of-interest — which entities each observer is told about — is its
+// read-only companion query in aoi.go. Networking and client
+// prediction/reconciliation, the Agones SDK, and real navmesh geometry are later
+// children of the server-foundation epic and deliberately absent here.
 package sim
 
 import (
@@ -55,6 +57,14 @@ const maxWorldExtentMM = 1_000_000
 // this bound never touches legitimate motion — it only defuses garbage input.
 const maxIntentComponentMM = 1_000_000_000
 
+// maxRadiusMM bounds a capsule radius (100 m — far larger than any real actor,
+// small enough to keep the separation arithmetic overflow-free). Radius feeds
+// the separation push, so like intent it is clamped on ingestion (see Add):
+// the radius sum stays <=2e5 and the scale product position*radius stays
+// <=4e11, both far below the int64 ceiling, so no crafted or buggy spawn can
+// overflow the single authoritative tick loop.
+const maxRadiusMM = 100_000
+
 // EntityID identifies a simulated actor. The step iterates entities in
 // ascending EntityID order (never Go map order, which is randomised), so the
 // tick result is independent of the order entities were added — a determinism
@@ -77,9 +87,9 @@ type Entity struct {
 	// MaxSpeed caps ground speed in mm/s. Zero pins the actor in place.
 	MaxSpeed int64
 
-	// Radius is the capsule radius in mm. It is carried now so entity data is
-	// forward-compatible; capsule-vs-capsule separation is a later child and
-	// does not read it yet.
+	// Radius is the capsule radius in mm, bounded to maxRadiusMM on ingestion.
+	// The separation pass reads it to keep actors from overlapping; a zero (or
+	// negative, clamped to zero) radius is a point capsule that never separates.
 	Radius int64
 
 	// InterestRadius is the horizontal (ground-plane) distance in mm within
@@ -159,6 +169,7 @@ func (w *World) Add(e Entity) *Entity {
 	stored := e
 	stored.Pos = w.bounds.clamp(stored.Pos)
 	stored.Intent = sanitizeIntent(stored.Intent)
+	stored.Radius = clampAxis(stored.Radius, 0, maxRadiusMM)
 	stored.InterestRadius = clampAxis(stored.InterestRadius, 0, maxInterestRadiusMM)
 	w.ents[e.ID] = &stored
 	w.order = append(w.order, e.ID)
@@ -210,7 +221,9 @@ func sanitizeIntent(v Vec3) Vec3 {
 // the per-second velocity into a per-tick displacement by integer division, and
 // clamps the new position into the navmesh bounds. Integer division truncates
 // toward zero — deterministically — so the same inputs always yield the same
-// positions.
+// positions. It then resolves capsule overlap (see separate), driving the
+// tick's final state toward no two actors sharing the same space — exactly for
+// an isolated pair, and convergently (within a few ticks) for a dense pile-up.
 func (w *World) Step() {
 	for _, id := range w.order {
 		e := w.ents[id]
@@ -219,6 +232,7 @@ func (w *World) Step() {
 		disp := Vec3{X: v.X / TickHz, Y: v.Y / TickHz, Z: v.Z / TickHz}
 		e.Pos = w.bounds.clamp(e.Pos.Add(disp))
 	}
+	w.separate()
 	w.Tick++
 }
 
