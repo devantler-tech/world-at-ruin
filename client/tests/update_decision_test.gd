@@ -46,6 +46,8 @@ func _ready() -> void:
 	_test_client_ahead_of_server_is_tolerated()
 	_test_save_too_old_always_blocks()
 	_test_channel_mismatch_refused()
+	_test_unpinned_channel_defaults_to_live()
+	_test_shell_only_update_write_regression_refused()
 	_test_schema_too_new_updates_shell()
 	_test_future_schema_without_newer_shell_refused()
 	_test_pack_needs_shell_beyond_advertised_refused()
@@ -177,6 +179,29 @@ func _test_channel_mismatch_refused() -> void:
 	var inst2 := _installed_current()
 	inst2["channel"] = "live"
 	_expect(inst2, m, UpdateDecision.PACK_UPDATE, "a matching channel proceeds")
+
+
+func _test_unpinned_channel_defaults_to_live() -> void:
+	# A fresh install with no pinned channel must fail closed to `live`: it accepts
+	# a live manifest but refuses a beta one (default-off opt-in).
+	var beta := _base_manifest()
+	beta["channel"] = "beta"
+	beta["pack"]["version"] = "0.1.15"
+	_expect(_installed_current(), beta, UpdateDecision.INVALID_MANIFEST, "unpinned channel refuses a beta manifest (defaults to live)")
+	# The same unpinned install accepts a live manifest.
+	_expect(_installed_current(), _base_manifest(), UpdateDecision.UP_TO_DATE, "unpinned channel accepts the live manifest")
+
+
+func _test_shell_only_update_write_regression_refused() -> void:
+	# The save-write-regression guard applies to a shell-only update too, not just a
+	# pack: a newer shell that writes an older save schema than installed is refused.
+	var m := _base_manifest()
+	m["shell"]["current"] = "0.2.0" # only the shell is newer
+	m["save_schema"] = {"min": 1, "writes": 2}
+	var inst := _installed_current()
+	inst["save_schema"] = 4
+	inst["save_reads_max"] = 4
+	_expect(inst, m, UpdateDecision.INVALID_MANIFEST, "a shell-only update writing below the installed save schema is refused")
 
 
 func _test_schema_too_new_updates_shell() -> void:

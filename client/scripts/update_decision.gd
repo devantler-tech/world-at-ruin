@@ -59,11 +59,12 @@ static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 	# Channel guard: a validly-signed manifest for a DIFFERENT channel (e.g. a
 	# beta/experimental build) must never enroll a player on another channel.
 	# Signature proves authenticity, not channel membership, so a cache/endpoint
-	# mix-up could otherwise opt a `live` player into an unfinished experience —
-	# the default-off opt-in product law. Refuse a mismatch. (An installed state
-	# that names no channel accepts any, for a first run before one is pinned.)
-	var want_channel := str(installed.get("channel", ""))
-	if want_channel != "" and want_channel != str(manifest["channel"]):
+	# mix-up could otherwise opt a player into an unfinished experience — the
+	# default-off opt-in product law. An UNPINNED installed channel FAILS CLOSED to
+	# `live` (the stable channel): a fresh install accepts only `live`, never beta.
+	# Opting into another channel is an explicit installed-state choice.
+	var want_channel := str(installed.get("channel", "live"))
+	if want_channel != str(manifest["channel"]):
 		return _result(INVALID_MANIFEST, "manifest channel '%s' does not match the installed channel '%s'" % [
 			str(manifest["channel"]), want_channel])
 
@@ -134,6 +135,14 @@ static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 		return _result(BLOCKED_INCOMPATIBLE, "protocol %d is below the accepted minimum %d and no update resolves it" % [
 			protocol, int(m_protocol["min"])])
 
+	# Forward-only (ANY tier): a candidate that WRITES a save schema OLDER than the
+	# installed build would regress the save format and drop the intervening state —
+	# whether it arrives as a pack OR a shell update. Refuse it before routing to any
+	# update tier.
+	if int(m_save["writes"]) < save_schema:
+		return _result(INVALID_MANIFEST, "candidate writes save schema %d below the installed build's %d — would regress the save (forward-only)" % [
+			int(m_save["writes"]), save_schema])
+
 	# A shell update is required when the running shell is below the supported
 	# floor, when the newest pack needs a newer shell than is installed, or when
 	# the only thing newer is the shell itself. (When incompatible-but-updatable,
@@ -145,13 +154,6 @@ static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 		return _result(SHELL_UPDATE, "content pack %s needs shell >= %s but %s is installed" % [
 			str(m_pack["version"]), str(m_pack["min_shell"]), shell])
 	if pack_newer:
-		# Forward-only: a "newer" pack that WRITES an older save schema than the
-		# installed build would regress the save format and silently drop state
-		# introduced by the intervening schemas — refuse it; this client keeps its
-		# current, richer build.
-		if int(m_save["writes"]) < save_schema:
-			return _result(INVALID_MANIFEST, "content pack %s writes save schema %d below the installed build's %d — would regress the save (forward-only)" % [
-				str(m_pack["version"]), int(m_save["writes"]), save_schema])
 		# Rollback safety: a pack update is offered only when the rollback target
 		# (the installed build) could still READ what the candidate WRITES. If the
 		# candidate's write-schema (`save_schema.writes`) exceeds how high the
