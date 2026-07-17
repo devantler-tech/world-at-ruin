@@ -252,12 +252,16 @@ static func validate(recipe: Dictionary, skeleton: Skeleton3D, mesh_instance: Me
 		if field in RECIPE_FIELDS_V3 and int(version) >= 3:
 			continue
 		return "unknown recipe field '%s' — this client cannot render it, refusing a half-truth" % field
+	if recipe.has("shapes") and recipe["shapes"] is not Dictionary:
+		return "shapes must be a dictionary of shape name -> weight"
 	for shape_name: String in recipe.get("shapes", {}):
 		if mesh_instance.find_blend_shape_by_name(shape_name) < 0:
 			return "unknown blend shape '%s' — shipped kit shapes may never be removed" % shape_name
 		if shape_name.begins_with(HIDE_SHAPE_PREFIX):
 			return "shape '%s' is composition plumbing, not a recipe shape" % shape_name
 	for field: String in GUARDED_BONE_KEYS:
+		if recipe.has(field) and recipe[field] is not Dictionary:
+			return "%s must be a dictionary of bone name -> factor" % field
 		for key: String in recipe.get(field, {}):
 			if key not in (GUARDED_BONE_KEYS[field] as Array):
 				return "bone key '%s' in %s is outside the guarded set — only golden-guarded keys may persist" % [key, field]
