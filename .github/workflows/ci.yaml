@@ -144,10 +144,44 @@ jobs:
           fi
 
 
+  server-ci:
+    name: Server CI (Go)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # The job only builds and tests local Go code — it never needs the
+          # checkout token, so don't persist it into .git/config (zizmor
+          # artipacked).
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: server/go.mod
+          # The zone tick core is stdlib-only, so there is nothing to cache and
+          # no go.sum; the module-cache path is enabled by a later child once
+          # real dependencies (Agones SDK, gRPC) arrive.
+          cache: false
+      - name: Format check (gofmt)
+        working-directory: server
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "${unformatted}" ]; then
+            echo "::error::gofmt found unformatted files:"; echo "${unformatted}"; exit 1
+          fi
+      - name: Vet
+        working-directory: server
+        run: go vet ./...
+      - name: Test (race detector + tick-determinism)
+        working-directory: server
+        run: go test -race -count=1 ./...
+      - name: Build
+        working-directory: server
+        run: go build ./...
+
   ci-required-checks:
     name: CI - Required Checks
     runs-on: ubuntu-latest
-    needs: [client-smoke, client-export-macos, license-guard]
+    needs: [client-smoke, client-export-macos, license-guard, server-ci]
     if: ${{ always() }}
     steps:
       - uses: devantler-tech/actions/aggregate-job-checks@0f27c13a9785608e0bbf9998777d27761b4de617 # v10.0.2
@@ -156,3 +190,4 @@ jobs:
             ${{ needs.client-smoke.result }}
             ${{ needs.client-export-macos.result }}
             ${{ needs.license-guard.result }}
+            ${{ needs.server-ci.result }}
