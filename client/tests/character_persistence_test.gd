@@ -57,13 +57,16 @@ func _ready() -> void:
 			return
 
 	CharacterStore.clear()
-	TestSaveBackup.restore()
+	if not TestSaveBackup.restore():
+		_fail("the live character save could not be restored — refusing to report success")
+		return
 	print("TEST PASS — %s" % fp_direct)
 	get_tree().quit(0)
 
 
 func _fail(message: String) -> void:
-	TestSaveBackup.restore()
+	if not TestSaveBackup.restore():
+		push_error("additionally: the live save is still parked at its backup path")
 	push_error(message)
 	print("TEST FAIL — %s" % message)
 	get_tree().quit(1)

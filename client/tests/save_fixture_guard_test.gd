@@ -19,6 +19,9 @@ extends Node
 ##     fixture — zero field loss, no silent normalisation.
 ##  4. It builds, twice, with identical fingerprints (a shipped save must
 ##     keep producing the same character within one build).
+##  5. Every persisted field group still has an EFFECT: building the recipe
+##     without it changes the fingerprint (determinism alone cannot see a
+##     deleted application path silently ignoring saved customization).
 ##
 ## Run: godot --headless --path client res://tests/save_fixture_guard_test.tscn
 
@@ -81,7 +84,9 @@ func _ready() -> void:
 			return
 
 	CharacterStore.clear()
-	TestSaveBackup.restore()
+	if not TestSaveBackup.restore():
+		_fail("the live character save could not be restored — refusing to report success")
+		return
 	print("TEST PASS — %d historical saves (v1..v%d) load with zero loss" % [
 		versions.size(), CharacterFactory.RECIPE_VERSION])
 	get_tree().quit(0)
@@ -131,6 +136,27 @@ func _check_fixture(version: int, path: String) -> String:
 	built_b.free()
 	if fp_a != fp_b:
 		return "same save produced different characters:\n  %s\n  %s" % [fp_a, fp_b]
+
+	# Determinism alone cannot see application-layer loss: if a field's
+	# apply code is deleted, both builds ignore it identically. So every
+	# persisted field group must still have an EFFECT — building the recipe
+	# WITHOUT it must change the fingerprint.
+	for field: String in expected:
+		if field == "version" or field == "comment":
+			continue
+		var value: Variant = expected[field]
+		if (value is Dictionary and (value as Dictionary).is_empty()) \
+			or (value is Array and (value as Array).is_empty()):
+			continue
+		var ablated: Dictionary = (expected as Dictionary).duplicate(true)
+		ablated.erase(field)
+		var without := CharacterFactory.build(ablated)
+		if without == null:
+			return "recipe without '%s' failed to build" % field
+		var fp_without := CharacterFactory.fingerprint(without)
+		without.free()
+		if fp_without == fp_a:
+			return "FIELD '%s' HAS NO EFFECT — saved customization is silently ignored (no-resets law)" % field
 	return ""
 
 
@@ -199,7 +225,8 @@ func _shipped_versions() -> PackedInt32Array:
 func _fail(message: String) -> void:
 	if _live_save_protected:
 		CharacterStore.clear()
-		TestSaveBackup.restore()
+		if not TestSaveBackup.restore():
+			push_error("additionally: the live save is still parked at its backup path")
 	push_error(message)
 	print("TEST FAIL — %s" % message)
 	get_tree().quit(1)

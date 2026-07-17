@@ -25,6 +25,34 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # Full history: the ledger append-only check diffs against the base
+          # commit, which a depth-1 checkout cannot reach.
+          fetch-depth: 0
+      - name: Version ledger is append-only (no-resets law)
+        # The in-game guard anchors the required fixture range to
+        # tests/data/shipped_recipe_versions.txt, but a checkout-local file
+        # can be edited in the same change that lowers RECIPE_VERSION. CI is
+        # the immutable anchor: against the BASE commit, ledger lines may
+        # only ever be added — removing one is declaring shipped saves
+        # disposable, which the product law forbids.
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          LEDGER=client/tests/data/shipped_recipe_versions.txt
+          if [ ! -f "$LEDGER" ]; then
+            echo "::error::$LEDGER was deleted — the forward-only version ledger must exist"
+            exit 1
+          fi
+          if ! git cat-file -e "$BASE_SHA" 2>/dev/null; then
+            echo "::error::base commit $BASE_SHA not present in the checkout — cannot verify the ledger"
+            exit 1
+          fi
+          if git diff "$BASE_SHA" HEAD -- "$LEDGER" | grep -E '^-[0-9]'; then
+            echo "::error::A shipped version was removed from $LEDGER — shipped saves are never disposable (no-resets law)"
+            exit 1
+          fi
       - name: Install Godot (pinned, checksum-verified)
         run: |
           curl -fsSL -o godot.zip "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
