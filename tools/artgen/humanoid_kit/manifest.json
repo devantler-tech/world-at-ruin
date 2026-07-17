@@ -1,6 +1,6 @@
 {
-  "kit_version": 1,
-  "comment": "Humanoid kit bake manifest — the single source of truth for what the kit contains. Changing this file (or bake.py) is the ONLY sanctioned way the kit changes; the artgen CI workflow re-bakes and compares. Shape names are the stable, forward-only public API consumed by recipes (no-resets law: never rename or remove a shipped shape, only add).",
+  "kit_version": 2,
+  "comment": "Humanoid kit bake manifest — the single source of truth for what the kit contains. Changing this file (or bake.py) is the ONLY sanctioned way the kit changes; the artgen CI workflow re-bakes and compares. Shape, slot and equipment-piece names are the stable, forward-only public API consumed by recipes (no-resets law: never rename or remove a shipped name, only add).",
   "tools": {
     "blender": "5.2.0",
     "mpfb": "2.0.16"
@@ -37,5 +37,62 @@
     { "name": "jaw_wide", "targets": ["chin/chin-width-incr.target.gz"] },
     { "name": "nose_strong", "targets": ["nose/nose-volume-incr.target.gz"] },
     { "name": "nose_hump", "targets": ["nose/nose-hump-incr.target.gz"] }
+  ],
+  "equipment_comment": "Equipment pieces are CC0 MHCLO assets from the official MakeHuman 01-series CC0 packs (the _cc0.zip variants — the CC-BY variants are policy-excluded). Packs are downloaded pinned+checksummed by bootstrap.sh, never committed; each piece bakes to its own skinned GLB sharing the one canonical skeleton, with a clothes blend shape per kit shape (refit under that morph) so equipment follows the body. delete_verts become an equip_hide_<name> shape on the BODY that tucks covered skin inward.",
+  "equipment_packs": {
+    "shirts01": {
+      "url": "https://files.makehumancommunity.org/asset_packs/shirts01/shirts01_cc0.zip",
+      "mirror": "https://files2.makehumancommunity.org/asset_packs/shirts01/shirts01_cc0.zip",
+      "sha256": "a5a723b0e84a109bb190fcfeac7f1de4138d875da3e30fe5b3340eac9f38bcd3"
+    },
+    "pants01": {
+      "url": "https://files.makehumancommunity.org/asset_packs/pants01/pants01_cc0.zip",
+      "mirror": "https://files2.makehumancommunity.org/asset_packs/pants01/pants01_cc0.zip",
+      "sha256": "e4e0ec60db34f279be291a83cfd7b342a7c5cf09bb7676682a5f39f4f6ac4ad9"
+    },
+    "shoes01": {
+      "url": "https://files.makehumancommunity.org/asset_packs/shoes01/shoes01_cc0.zip",
+      "mirror": "https://files2.makehumancommunity.org/asset_packs/shoes01/shoes01_cc0.zip",
+      "sha256": "ded3f70428505eabbf1f6d7b5f61196a7366ef20757103d276ad0ed336c35ada"
+    }
+  },
+  "equipment_slots": ["torso", "legs", "feet"],
+  "equipment": [
+    {
+      "name": "shirt_ragged",
+      "slot": "torso",
+      "pack": "shirts01",
+      "mhclo": "clothes/elvs_crude_t-shirt_male/elvs_crude_t-shirt_male.mhclo",
+      "author": "MakeHuman team, edited by Elvaerwyn",
+      "license": "CC0",
+      "color": [0.55, 0.48, 0.38]
+    },
+    {
+      "name": "pants_wool",
+      "slot": "legs",
+      "pack": "pants01",
+      "mhclo": "clothes/toigo_wool_pants/toigo_wool_pants.mhclo",
+      "author": "MRT",
+      "license": "CC0",
+      "color": [0.35, 0.29, 0.22]
+    },
+    {
+      "name": "shoes_cloth",
+      "slot": "feet",
+      "pack": "shoes01",
+      "mhclo": "clothes/toigo_mj_cloth_shoes/toigo_mj_cloth_shoes.mhclo",
+      "author": "MRT",
+      "license": "CC0",
+      "color": [0.3, 0.24, 0.18]
+    },
+    {
+      "name": "boots_worn",
+      "slot": "feet",
+      "pack": "shoes01",
+      "mhclo": "clothes/culturalibre_male_boots/culturalibre_male_boots.mhclo",
+      "author": "culturalibre",
+      "license": "CC0",
+      "color": [0.23, 0.18, 0.14]
+    }
   ]
 }

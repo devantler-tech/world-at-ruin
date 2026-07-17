@@ -1,6 +1,10 @@
 # Godot generated caches — never commit.
 client/.godot/
 
+# Downloaded bake inputs (pinned + checksummed by bootstrap.sh) — tools and
+# source packs never enter the tree, only baked output does.
+tools/artgen/humanoid_kit/packs/
+
 # Export artifacts.
 build/
 *.dmg

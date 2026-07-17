@@ -1,0 +1,29 @@
+{
+  "kit_version": 2,
+  "pieces": {
+    "boots_worn": {
+      "hide_shape": "equip_hide_boots_worn",
+      "scene": "boots_worn.glb",
+      "slot": "feet"
+    },
+    "pants_wool": {
+      "scene": "pants_wool.glb",
+      "slot": "legs"
+    },
+    "shirt_ragged": {
+      "hide_shape": "equip_hide_shirt_ragged",
+      "scene": "shirt_ragged.glb",
+      "slot": "torso"
+    },
+    "shoes_cloth": {
+      "hide_shape": "equip_hide_shoes_cloth",
+      "scene": "shoes_cloth.glb",
+      "slot": "feet"
+    }
+  },
+  "slots": [
+    "torso",
+    "legs",
+    "feet"
+  ]
+}

@@ -1,5 +1,10 @@
-kit_version=1
+kit_version=2
 verts=13380
 stripped=5778
 bones=53
-shapes=torso_vshape,torso_muscle,torso_broad,shoulders_broad,waist_slim,belly,hips_wide,buttocks_full,neck_thick,arms_muscle,arms_heavy,legs_muscle,legs_heavy,head_round,head_square,head_aged,head_heavy,chin_prominent,jaw_wide,nose_strong,nose_hump
+shapes=torso_vshape,torso_muscle,torso_broad,shoulders_broad,waist_slim,belly,hips_wide,buttocks_full,neck_thick,arms_muscle,arms_heavy,legs_muscle,legs_heavy,head_round,head_square,head_aged,head_heavy,chin_prominent,jaw_wide,nose_strong,nose_hump,equip_hide_shirt_ragged,equip_hide_shoes_cloth,equip_hide_boots_worn
+equipment=shirt_ragged,pants_wool,shoes_cloth,boots_worn
+equip_shirt_ragged=slot:torso,verts:1095,hidden:649,shapes:21
+equip_pants_wool=slot:legs,verts:1372,hidden:0,shapes:21
+equip_shoes_cloth=slot:feet,verts:556,hidden:1500,shapes:21
+equip_boots_worn=slot:feet,verts:15308,hidden:2366,shapes:21

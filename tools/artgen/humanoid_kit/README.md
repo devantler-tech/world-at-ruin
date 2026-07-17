@@ -1,10 +1,14 @@
-# Humanoid kit bake — character system stage 1
+# Humanoid kit bake — character system stages 1+3
 
 The offline half of the character system ([#24](https://github.com/devantler-tech/world-at-ruin/issues/24)):
 headless Blender + MPFB bakes the **canonical humanoid** — one base body, the `game_engine` rig
-(53 deform bones) and the manifest's morph shapes as named glTF blend shapes — from MakeHuman's
-CC0 data. The committed artifact lives at `client/assets/characters/humanoid_kit/` and is consumed
-by the in-engine composition layer (stage 2+).
+(53 deform bones) and the manifest's morph shapes as named glTF blend shapes — plus the
+**equipment pieces**: CC0 MHCLO clothes fitted to the body, skinned to the same rig, re-fitted
+under every kit shape so each garment carries matching morphs, and exported one GLB per piece
+with a runtime registry (`equipment/equipment.json`). MHCLO `delete_verts` become `equip_hide_*`
+body shapes that tuck covered skin inward (no runtime mesh surgery, shared-mesh friendly). The
+committed artifact lives at `client/assets/characters/humanoid_kit/` and is consumed by the
+in-engine composition layer (stage 2+).
 
 This directory is the repo's **sanctioned Python/bpy exception** (AGENTS.md → Scripting): Python
 exists here and nowhere else, because Blender's only scripting surface is Python.

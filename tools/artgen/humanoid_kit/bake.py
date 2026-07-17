@@ -1,14 +1,17 @@
-"""Humanoid kit bake — character system stage 1 (issue #24).
+"""Humanoid kit bake — character system stages 1+3 (issue #24).
 
 Runs inside headless Blender with the MPFB extension installed (see
-bootstrap.sh for the pinned install):
+bootstrap.sh for the pinned install AND the pinned CC0 asset-pack downloads):
 
     blender --background --python bake.py -- /abs/output/humanoid_base.glb
 
 Bakes the canonical humanoid from CC0 MakeHuman data (via MPFB, GPL tool —
 tool never ships, output is ours per MPFB LICENSE.md sections C/D):
 base body -> manifest shapes merged into named shape keys -> game_engine rig
--> helper geometry stripped -> one GLB with named morph targets.
+-> equipment pieces (CC0 MHCLO) fitted, skinned to the same rig, refit under
+every kit shape so clothes carry matching morphs -> helper geometry stripped
+-> equip_hide_* body shapes from MHCLO delete_verts -> one body GLB plus one
+GLB per equipment piece, and equipment/equipment.json for the runtime layer.
 
 Deterministic by construction: everything is driven by manifest.json and the
 pinned tool versions; the artgen workflow bakes twice and byte-compares, then
@@ -27,6 +30,11 @@ import traceback
 import bpy
 
 KIT_DIR = os.path.dirname(os.path.abspath(__file__))
+PACKS_DIR = os.path.join(KIT_DIR, "packs")
+# How far (metres) an equip_hide_* shape tucks covered body vertices inward
+# along their normals — deep enough that animation never pokes skin through
+# the garment, shallow enough to stay inside it.
+HIDE_INSET = 0.012
 
 
 def dynamic_import(package_suffix: str, key: str):
@@ -56,6 +64,133 @@ def merge_targets_into_shape(mesh_obj, shape_name: str, target_paths, targets_ro
     for kb in loaded:
         mesh_obj.shape_key_remove(kb)
     return merged
+
+
+def srgb_to_linear(c):
+    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+
+def parse_mhmat_diffuse(mhmat_path):
+    """The piece's flat colour from its .mhmat (`diffuseColor r g b`). The
+    full texture layer is a later stage; a flat albedo keeps the GLB small
+    and the bake byte-deterministic."""
+    if mhmat_path and os.path.isfile(mhmat_path):
+        with open(mhmat_path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) == 4 and parts[0] == "diffuseColor":
+                    return tuple(float(p) for p in parts[1:])
+    return (0.8, 0.8, 0.8)
+
+
+def capture_coords(clothes_obj):
+    return [tuple(v.co) for v in clothes_obj.data.vertices]
+
+
+def bake_equipment_piece(piece, mesh_obj, shape_names, services):
+    """Fit one MHCLO piece to the body (helpers still present), skin it to
+    the shared rig, and give it a blend shape per kit shape by refitting the
+    garment under each morph — the runtime drives body and clothes with the
+    same weights, so equipment follows the body."""
+    HumanService, ClothesService, Mhclo = services
+    mhclo_path = os.path.join(PACKS_DIR, piece["pack"], piece["mhclo"])
+    if not os.path.isfile(mhclo_path):
+        raise RuntimeError(f"{piece['name']}: {mhclo_path} missing — run bootstrap.sh")
+
+    # material_type="NONE": strips the pack's MakeSkin material (textures are
+    # a later stage); a flat principled material from the mhmat colour instead.
+    clothes = HumanService.add_mhclo_asset(
+        mhclo_path, mesh_obj, asset_type="Clothes", subdiv_levels=0, material_type="NONE")
+    clothes.name = piece["name"]
+    clothes.data.name = piece["name"]
+
+    mhclo = Mhclo()
+    mhclo.load(mhclo_path)
+    mhclo.clothes = clothes
+
+    # Manifest colour wins: pack mhmats mostly say white (their colour lives
+    # in textures, which are a later stage) — the flat palette is authored
+    # here, in the manifest, like everything else about the kit. Manifest
+    # values are sRGB (what a colour picker shows); the BSDF wants linear.
+    rgb = tuple(piece["color"]) if "color" in piece else parse_mhmat_diffuse(mhclo.material)
+    rgb = tuple(srgb_to_linear(c) for c in rgb)
+    mat = bpy.data.materials.new("equip_" + piece["name"])
+    mat.use_nodes = True
+    bsdf = mat.node_tree.nodes.get("Principled BSDF")
+    bsdf.inputs["Base Color"].default_value = (rgb[0], rgb[1], rgb[2], 1.0)
+    bsdf.inputs["Roughness"].default_value = 0.85
+    clothes.data.materials.append(mat)
+
+    # Refit under each kit shape ONE at a time and capture the fitted verts;
+    # shape keys are added only after every capture (fit_clothes_to_human
+    # takes a slower edit-mode path once the garment has keys).
+    key_blocks = mesh_obj.data.shape_keys.key_blocks
+    captured = {}
+    for shape_name in shape_names:
+        key_blocks[shape_name].value = 1.0
+        ClothesService.fit_clothes_to_human(clothes, mesh_obj, mhclo)
+        captured[shape_name] = capture_coords(clothes)
+        key_blocks[shape_name].value = 0.0
+    ClothesService.fit_clothes_to_human(clothes, mesh_obj, mhclo)  # back to basis
+
+    clothes.shape_key_add(name="Basis")
+    for shape_name in shape_names:
+        kb = clothes.shape_key_add(name=shape_name, from_mix=False)
+        for i, co in enumerate(captured[shape_name]):
+            kb.data[i].co = co
+        kb.value = 0.0
+
+    # Subdiv modifiers etc. would double geometry at export; keep armature only.
+    for mod in list(clothes.modifiers):
+        if mod.type != "ARMATURE":
+            clothes.modifiers.remove(mod)
+    return clothes
+
+
+def delete_group_name(piece):
+    """Replicates add_mhclo_asset's naming for the delete group it leaves on
+    the basemesh (the MHCLO delete_verts — body vertices the piece covers)."""
+    base = os.path.basename(piece["mhclo"])
+    return "Delete." + base.replace(".mhclo", "").replace(".MHCLO", "").replace(" ", "_")
+
+
+def add_hide_shape(mesh_obj, group_name, shape_name):
+    """Bake a body shape key that tucks every vertex of the delete group
+    inward along its normal: setting it to 1.0 hides the skin the equipped
+    piece covers (same shared-mesh trick as the morphs — per-instance weights,
+    no runtime mesh surgery). Returns the number of vertices moved."""
+    if group_name not in mesh_obj.vertex_groups:
+        return 0
+    group_index = mesh_obj.vertex_groups[group_name].index
+    kb = mesh_obj.shape_key_add(name=shape_name, from_mix=False)
+    kb.value = 0.0
+    moved = 0
+    for v in mesh_obj.data.vertices:
+        if any(ge.group == group_index and ge.weight > 0.0 for ge in v.groups):
+            kb.data[v.index].co = v.co - v.normal * HIDE_INSET
+            moved += 1
+    if moved == 0:
+        mesh_obj.shape_key_remove(kb)
+    return moved
+
+
+def export_glb(out_path, objects):
+    bpy.ops.object.select_all(action="DESELECT")
+    for obj in objects:
+        obj.select_set(True)
+    # No baked tangents: Blender's mikktspace pass is threaded and jitters a
+    # couple of mantissa bits between runs, breaking byte-determinism. Godot's
+    # importer generates tangents itself (ensure_tangents default), same for
+    # base and morph geometry.
+    bpy.ops.export_scene.gltf(
+        filepath=out_path,
+        use_selection=True,
+        export_format="GLB",
+        export_morph=True,
+        export_morph_normal=True,
+        export_skins=True,
+        export_yup=True,
+    )
 
 
 def strip_vertex_groups(mesh_obj, group_names):
@@ -123,34 +258,57 @@ def main() -> None:
 
     rig_obj = HumanService.add_builtin_rig(mesh_obj, manifest["rig"])
 
+    # Equipment fits against the body WITH helpers (MHCLO vertex matching
+    # references the clothes-helper geometry), so pieces come before the strip.
+    Mhclo = dynamic_import("mpfb.entities.clothes.mhclo", "Mhclo")
+    ClothesService = dynamic_import("mpfb.services.clothesservice", "ClothesService")
+    manifest_shape_names = [shape["name"] for shape in manifest["shapes"]]
+    pieces = []
+    for piece in manifest.get("equipment", []):
+        clothes = bake_equipment_piece(
+            piece, mesh_obj, manifest_shape_names, (HumanService, ClothesService, Mhclo))
+        pieces.append((piece, clothes))
+
     stripped = strip_vertex_groups(mesh_obj, manifest["strip_vertex_groups"])
 
-    # The helper mask modifier is moot once helper vertices are gone; drop
+    # The helper mask modifier is moot once helper vertices are gone, and
+    # add_mhclo_asset leaves per-piece delete-group MASK modifiers; drop
     # every modifier except the armature so the export is exactly the skin.
     for mod in list(mesh_obj.modifiers):
         if mod.type != "ARMATURE":
             mesh_obj.modifiers.remove(mod)
 
+    # equip_hide_* body shapes from the pieces' delete groups (post-strip so
+    # vertex indices are final; group membership survives the delete).
+    hidden_counts = {}
+    for piece, _clothes in pieces:
+        hidden_counts[piece["name"]] = add_hide_shape(
+            mesh_obj, delete_group_name(piece), "equip_hide_" + piece["name"])
+
     for kb in mesh_obj.data.shape_keys.key_blocks:
         kb.value = 0.0
     mesh_obj.show_only_shape_key = False
 
-    bpy.ops.object.select_all(action="DESELECT")
-    mesh_obj.select_set(True)
-    rig_obj.select_set(True)
-    # No baked tangents: Blender's mikktspace pass is threaded and jitters a
-    # couple of mantissa bits between runs, breaking byte-determinism. Godot's
-    # importer generates tangents itself (ensure_tangents default), same for
-    # base and morph geometry.
-    bpy.ops.export_scene.gltf(
-        filepath=out_path,
-        use_selection=True,
-        export_format="GLB",
-        export_morph=True,
-        export_morph_normal=True,
-        export_skins=True,
-        export_yup=True,
-    )
+    export_glb(out_path, [mesh_obj, rig_obj])
+
+    equip_dir = os.path.join(os.path.dirname(os.path.abspath(out_path)), "equipment")
+    os.makedirs(equip_dir, exist_ok=True)
+    equipment_index = {}
+    for piece, clothes in pieces:
+        export_glb(os.path.join(equip_dir, piece["name"] + ".glb"), [clothes, rig_obj])
+        entry = {"slot": piece["slot"], "scene": piece["name"] + ".glb"}
+        if hidden_counts[piece["name"]] > 0:
+            entry["hide_shape"] = "equip_hide_" + piece["name"]
+        equipment_index[piece["name"]] = entry
+    # The runtime registry: CharacterFactory composes from this, so its keys
+    # are as forward-only as the shape names.
+    with open(os.path.join(equip_dir, "equipment.json"), "w", encoding="utf-8") as f:
+        json.dump({
+            "kit_version": manifest["kit_version"],
+            "slots": manifest.get("equipment_slots", []),
+            "pieces": equipment_index,
+        }, f, indent=2, sort_keys=True)
+        f.write("\n")
 
     shape_names = [kb.name for kb in mesh_obj.data.shape_keys.key_blocks[1:]]
     sha = hashlib.sha256(open(out_path, "rb").read()).hexdigest()
@@ -164,7 +322,13 @@ def main() -> None:
         "stripped=%d" % stripped,
         "bones=%d" % len(rig_obj.data.bones),
         "shapes=%s" % ",".join(shape_names),
+        "equipment=%s" % ",".join(piece["name"] for piece, _ in pieces),
     ]
+    for piece, clothes in pieces:
+        report_lines.append("equip_%s=slot:%s,verts:%d,hidden:%d,shapes:%d" % (
+            piece["name"], piece["slot"], len(clothes.data.vertices),
+            hidden_counts[piece["name"]],
+            len(clothes.data.shape_keys.key_blocks) - 1))
     with open(os.path.splitext(out_path)[0] + "_report.txt", "w", encoding="utf-8") as f:
         f.write("\n".join(report_lines) + "\n")
     for line in report_lines:

@@ -1,0 +1,6 @@
+# Every equipment piece name that has EVER shipped (no-resets law): each must
+# stay in the baked registry and keep building forever. Only ever ADD lines.
+shirt_ragged
+pants_wool
+shoes_cloth
+boots_worn

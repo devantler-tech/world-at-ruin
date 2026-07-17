@@ -37,6 +37,7 @@ var _player: Player
 var _recipe: Dictionary
 var _shape_sliders := {}
 var _bone_sliders := {}
+var _outfit_pickers := {}
 var _camera: Camera3D
 var _light: DirectionalLight3D
 var _syncing := false
@@ -148,6 +149,9 @@ func _build_panel() -> void:
 	_add_heading(sliders, "FRAME")
 	for spec: Array in BONE_SLIDERS:
 		_add_bone_slider(sliders, spec)
+	_add_heading(sliders, "OUTFIT")
+	for slot: String in CharacterFactory.equipment_registry().get("slots", []):
+		_add_outfit_picker(sliders, slot)
 
 	var buttons := HBoxContainer.new()
 	buttons.add_theme_constant_override("separation", 8)
@@ -177,12 +181,42 @@ func _add_shape_slider(into: Container, shape_name: String) -> void:
 		if _syncing:
 			return
 		_set_recipe_shape(shape_name, v)
-		var mesh := _player.character_mesh()
-		if mesh != null:
-			var idx := mesh.find_blend_shape_by_name(shape_name)
-			if idx >= 0:
-				mesh.set_blend_shape_value(idx, v))
+		# Through the factory, not the body mesh directly: equipped pieces
+		# carry the same shape names and must follow the slider live.
+		if _player._character_body != null:
+			CharacterFactory.set_shape_weight(_player._character_body, shape_name, v))
 	_shape_sliders[shape_name] = slider
+
+
+## One OptionButton per slot: "bare hands" plus every baked piece that goes
+## there. Changing it rebuilds the body (equipping is composition, not a
+## per-frame knob — same contract as the bone sliders).
+func _add_outfit_picker(into: Container, slot: String) -> void:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	into.add_child(row)
+	var label := Label.new()
+	label.text = slot
+	label.custom_minimum_size = Vector2(130, 0)
+	label.add_theme_font_size_override("font_size", 12)
+	label.add_theme_color_override("font_color", COL_BONE)
+	row.add_child(label)
+	var picker := OptionButton.new()
+	picker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	picker.add_item("bare")
+	var pieces: Dictionary = CharacterFactory.equipment_registry().get("pieces", {})
+	var names := pieces.keys()
+	names.sort()
+	for piece_name: String in names:
+		if String(pieces[piece_name]["slot"]) == slot:
+			picker.add_item(piece_name)
+	picker.item_selected.connect(func(index: int) -> void:
+		if _syncing:
+			return
+		_set_recipe_equipment(slot, "" if index == 0 else picker.get_item_text(index))
+		_player.set_character(_recipe))
+	row.add_child(picker)
+	_outfit_pickers[slot] = picker
 
 
 func _add_bone_slider(into: Container, spec: Array) -> void:
@@ -214,13 +248,16 @@ func _labeled_slider(into: Container, text: String, minimum: float, maximum: flo
 
 
 ## The kit's shape list, straight from the live mesh — the creator never goes
-## stale when the kit gains shapes.
+## stale when the kit gains shapes. equip_hide_* shapes are composition
+## plumbing (skin tucked under a worn piece), never a slider.
 func _shape_names() -> PackedStringArray:
 	var names := PackedStringArray()
 	var mesh := _player.character_mesh()
 	if mesh != null:
 		for i in mesh.mesh.get_blend_shape_count():
-			names.append(String(mesh.mesh.get_blend_shape_name(i)))
+			var shape_name := String(mesh.mesh.get_blend_shape_name(i))
+			if not shape_name.begins_with(CharacterFactory.HIDE_SHAPE_PREFIX):
+				names.append(shape_name)
 	return names
 
 
@@ -242,6 +279,20 @@ func _set_recipe_bone(field: String, key: String, value: float) -> void:
 		_recipe[field][key] = value
 
 
+## Equipment entered the recipe format at version 2, so a recipe only claims
+## v2 when it actually wears something — older saves stay untouched v1.
+func _set_recipe_equipment(slot: String, piece_name: String) -> void:
+	if not _recipe.has("equipment"):
+		_recipe["equipment"] = {}
+	if piece_name == "":
+		_recipe["equipment"].erase(slot)
+	else:
+		_recipe["equipment"][slot] = piece_name
+	if _recipe["equipment"].is_empty():
+		_recipe.erase("equipment")
+	_recipe["version"] = 2 if _recipe.has("equipment") else 1
+
+
 func _on_preset(preset_name: String) -> void:
 	var recipe = CharacterFactory.load_recipe(PRESET_DIR + preset_name + ".json")
 	if recipe == null:
@@ -259,6 +310,13 @@ func _sync_sliders_from_recipe() -> void:
 		(_shape_sliders[shape_name] as HSlider).value = shapes.get(shape_name, 0.0)
 	for spec: Array in BONE_SLIDERS:
 		(_bone_sliders[spec[0]] as HSlider).value = _recipe.get(spec[1], {}).get(spec[2], 1.0)
+	var equipment: Dictionary = _recipe.get("equipment", {})
+	for slot: String in _outfit_pickers:
+		var picker: OptionButton = _outfit_pickers[slot]
+		picker.select(0)
+		for i in picker.item_count:
+			if picker.get_item_text(i) == String(equipment.get(slot, "")):
+				picker.select(i)
 	_syncing = false
 
 

@@ -1,6 +1,10 @@
 {
-  "version": 1,
-  "comment": "A brute — the first enemy silhouette: mass, reach, and a head built for headbutting.",
+  "version": 2,
+  "comment": "A brute — the first enemy silhouette: mass, reach, and a head built for headbutting. Bare-chested on purpose; only worn boots survived it.",
+  "equipment": {
+    "legs": "pants_wool",
+    "feet": "boots_worn"
+  },
   "shapes": {
     "torso_vshape": 1.0,
     "torso_muscle": 1.0,
