@@ -5,11 +5,21 @@ class_name DevLog
 ## development progress by playing. Every change that a player could notice
 ## gets an entry here, newest first — open it in-game with F1.
 
-const VERSION := "0.1.3"
+const VERSION := "0.1.4"
 const CODENAME := "Ashfall Reach"
 
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
+	{
+		"version": "0.1.4",
+		"date": "2026-07-17",
+		"title": "The first wanderer takes shape",
+		"notes": [
+			"A human figure now stands in the cave — the first character. The body is a CC0 base mesh; everything about how he stands is code: his proportions are reshaped bone by bone (broader chest, heavier forearms, larger hands) and his arms are lowered from the sculptor's T-pose into a relaxed stance, all by a script.",
+			"A second taste-gate scene (scenes/character.tscn) lines up three builds of the same body — grounded, hero, base — so the proportion range can be judged side by side.",
+			"Same parameters, same body, every time: a regression test fingerprints the skeleton and the deformed skin so the figure can never silently change shape.",
+		],
+	},
 	{
 		"version": "0.1.3",
 		"date": "2026-07-17",

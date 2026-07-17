@@ -166,9 +166,11 @@ can be watched by playing; every *further* art/game system waits on Phase 0.)
 
 ## Maintenance
 
-- **Structure:** `client/` is the Godot 4 project (all scenes built in GDScript from engine
-  primitives — no binary assets). `server/` (Agones realtime tier, Go meta services) and `deploy/`
-  (platform manifests) arrive later per the roadmap.
+- **Structure:** `client/` is the Godot 4 project (scenes built in GDScript from engine
+  primitives). The one sanctioned exception to "no binary assets" is `client/assets/` — committed
+  CC0 base meshes that generators reshape in code (maintainer direction on #20, stage 2); every
+  asset directory carries a `PROVENANCE.md` with licence, source and checksums. `server/` (Agones
+  realtime tier, Go meta services) and `deploy/` (platform manifests) arrive later per the roadmap.
 - **Run:** `godot client` (macOS: `/Applications/Godot.app/Contents/MacOS/Godot client`).
 - **Validate before every PR:**
   `godot --headless --editor --quit --path client && godot --headless --quit-after 120 client` —
