@@ -60,37 +60,55 @@ static func build_mesh(p_seed: int, p_radius: float) -> ArrayMesh:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = p_seed
 	var roughness := rng.randf_range(0.16, 0.24)
-	var floor_z := FLOOR_FRACTION * p_radius
+	var floor_y := FLOOR_FRACTION * p_radius
 
 	var sphere := _icosphere(SUBDIVISIONS)
 	var verts: PackedVector3Array = sphere[0]
 	var tris: PackedInt32Array = sphere[1]
 
 	# Carve: displace along the normal by fractal noise, flatten a floor band.
+	# The floor is flattened along Y — Godot's elevation axis (WorldGen emits
+	# Vector3(x, height, z) and player gravity acts on velocity.y), so the
+	# walkable plane must be a constant-Y band, not constant-Z. Flattened
+	# vertices are tracked so the entrance cut below can tell floor triangles
+	# from wall shell exactly, with no normal/height threshold tuning.
+	var is_floor := PackedByteArray()
+	is_floor.resize(verts.size())
 	for i in verts.size():
 		var pos := verts[i] * p_radius
 		var d := noise.get_noise_3dv(pos)
 		pos += verts[i] * (d * roughness * p_radius)
-		if pos.z < floor_z:
-			var rumple := 0.08 * p_radius * noise.get_noise_3d(pos.x * 3.0 / p_radius, pos.y * 3.0 / p_radius, 7.31)
-			pos.z = floor_z + rumple
+		if pos.y < floor_y:
+			var rumple := 0.08 * p_radius * noise.get_noise_3d(pos.x * 3.0 / p_radius, pos.z * 3.0 / p_radius, 7.31)
+			pos.y = floor_y + rumple
+			is_floor[i] = 1
 		verts[i] = pos
 
-	# Entrance: drop triangles whose outward direction is within the cone
-	# toward +X, all the way DOWN TO the floor band (cutting only above
-	# floor_z/2 left a ~2 m lip of shell the player had to climb — review
-	# finding carried over from the Go prototype); flip windings so the
-	# interior is the visible side (the camera lives inside). Floor triangles
-	# themselves stay: at floor depth their direction leaves the 22° cone.
+	# Entrance: drop triangles inside the mouth corridor toward +X. The
+	# corridor is judged on the HORIZONTAL direction (Y projected out) — a
+	# radial cone stops at -radius*sin(22°), ~1.4 m above the floor band,
+	# which left a shell lip the player had to climb (codex review, twice:
+	# first the Go prototype, then the radial port of this cut). Pure floor
+	# triangles (all three vertices flattened) stay, so the opening reaches
+	# exactly down to the walkable surface; mixed floor/wall stitching rows
+	# in the corridor are cut with the wall. The cone's top edge bounds the
+	# mouth height so it stays a doorway, not a full-height slice. Windings
+	# are flipped so the interior is the visible side (the camera lives
+	# inside).
 	var cone := cos(deg_to_rad(ENTRANCE_DEG))
+	var mouth_top := p_radius * sin(deg_to_rad(ENTRANCE_DEG))
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	for t in range(0, tris.size(), 3):
 		var a := verts[tris[t]]
 		var b := verts[tris[t + 1]]
 		var c := verts[tris[t + 2]]
+		var all_floor := is_floor[tris[t]] == 1 \
+			and is_floor[tris[t + 1]] == 1 and is_floor[tris[t + 2]] == 1
 		var center := (a + b + c) / 3.0
-		if center.normalized().dot(Vector3(1, 0, 0)) > cone and center.z > floor_z:
+		var flat := Vector3(center.x, 0.0, center.z)
+		if not all_floor and center.y < mouth_top and flat.length() > 0.001 \
+			and (flat / flat.length()).dot(Vector3(1, 0, 0)) > cone:
 			continue
 		st.add_vertex(a)
 		st.add_vertex(c)
