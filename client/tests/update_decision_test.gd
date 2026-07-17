@@ -45,6 +45,9 @@ func _ready() -> void:
 	_test_incompatible_but_updatable_steers_to_update()
 	_test_client_ahead_of_server_is_tolerated()
 	_test_schema_too_new_updates_shell()
+	_test_future_schema_without_newer_shell_refused()
+	_test_pack_needs_shell_beyond_advertised_refused()
+	_test_pack_write_schema_hazard_routes_to_shell()
 	_test_schema_too_new_ignores_broken_body()
 	_test_incoherent_shell_floor_refused()
 	_test_fractional_identifiers_refused()
@@ -149,7 +152,44 @@ func _test_client_ahead_of_server_is_tolerated() -> void:
 func _test_schema_too_new_updates_shell() -> void:
 	var m := _base_manifest()
 	m["schema"] = 2 # newer than SUPPORTED_MANIFEST_SCHEMA
-	_expect(_installed_current(), m, UpdateDecision.SHELL_UPDATE, "a newer manifest schema needs a newer shell")
+	m["shell"]["current"] = "0.2.0" # advertises a shell newer than the installed 0.1.14
+	_expect(_installed_current(), m, UpdateDecision.SHELL_UPDATE, "a newer schema with a newer shell updates the shell")
+
+
+func _test_future_schema_without_newer_shell_refused() -> void:
+	# A stale/cross-channel future-schema manifest advertising an equal-or-older
+	# shell must be refused, never followed to a downgrade or an endless reinstall.
+	var m := _base_manifest()
+	m["schema"] = 2
+	m["shell"]["current"] = "0.1.14" # NOT newer than installed 0.1.14
+	_expect(_installed_current(), m, UpdateDecision.INVALID_MANIFEST, "future schema with no newer shell is refused, not a downgrade")
+
+
+func _test_pack_needs_shell_beyond_advertised_refused() -> void:
+	# A manifest whose pack needs a shell newer than the newest shell it offers
+	# would loop a client through shell updates forever — refuse it.
+	var m := _base_manifest()
+	m["pack"]["version"] = "0.2.0"
+	m["pack"]["min_shell"] = "0.3.0" # beyond the advertised shell.current 0.1.14
+	_expect(_installed_current(), m, UpdateDecision.INVALID_MANIFEST, "pack needing a shell beyond the advertised one is refused (no loop)")
+
+
+func _test_pack_write_schema_hazard_routes_to_shell() -> void:
+	# A newer pack that WRITES a save schema the rollback target cannot READ must
+	# ride the shell tier, so a later rollback never strands the save.
+	var m := _base_manifest()
+	m["pack"]["version"] = "0.1.15" # newer pack, runs on the current shell
+	m["save_schema"] = {"min": 1, "writes": 4} # writes v4
+	var inst := _installed_current()
+	inst["save_reads_max"] = 3 # installed build reads only up to v3
+	_expect(inst, m, UpdateDecision.SHELL_UPDATE, "a pack writing beyond the rollback target's read ceiling rides the shell")
+	# Safe case: writes within the read ceiling → a plain pack update.
+	var m2 := _base_manifest()
+	m2["pack"]["version"] = "0.1.15"
+	m2["save_schema"] = {"min": 1, "writes": 3}
+	var inst2 := _installed_current()
+	inst2["save_reads_max"] = 3
+	_expect(inst2, m2, UpdateDecision.PACK_UPDATE, "a pack writing within the read ceiling is a plain pack update")
 
 
 func _test_schema_too_new_ignores_broken_body() -> void:

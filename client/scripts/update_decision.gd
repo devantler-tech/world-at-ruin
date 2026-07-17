@@ -58,10 +58,17 @@ static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 
 	if int(manifest["schema"]) > SUPPORTED_MANIFEST_SCHEMA:
 		# The manifest format is newer than we understand. Route to a shell update
-		# through the always-readable envelope; do NOT validate (or guess at) the
-		# schema-specific body, which a newer schema may have restructured.
-		return _result(SHELL_UPDATE, "manifest schema %d is newer than this client understands (%d)" % [
-			int(manifest["schema"]), SUPPORTED_MANIFEST_SCHEMA])
+		# through the always-readable envelope — but ONLY if that shell is actually
+		# newer than the installed one. A stale or cross-channel future-schema
+		# manifest that advertises an equal/older shell must never trigger a
+		# downgrade or an endless reinstall; refuse it and keep the running build.
+		# Do NOT validate the (possibly restructured) schema-specific body.
+		var env_shell: Dictionary = manifest["shell"]
+		if _cmp(str(env_shell["current"]), str(installed.get("shell_version", "0.0.0"))) > 0:
+			return _result(SHELL_UPDATE, "manifest schema %d is newer than this client understands (%d); update to shell %s" % [
+				int(manifest["schema"]), SUPPORTED_MANIFEST_SCHEMA, str(env_shell["current"])])
+		return _result(INVALID_MANIFEST, "manifest schema %d exceeds understood (%d) but advertises no newer shell (%s <= installed %s) — stale/incoherent" % [
+			int(manifest["schema"]), SUPPORTED_MANIFEST_SCHEMA, str(env_shell["current"]), str(installed.get("shell_version", "0.0.0"))])
 
 	# The schema-specific body is validated only against the schema this client
 	# understands.
@@ -115,6 +122,16 @@ static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 		return _result(SHELL_UPDATE, "content pack %s needs shell >= %s but %s is installed" % [
 			str(m_pack["version"]), str(m_pack["min_shell"]), shell])
 	if pack_newer:
+		# Rollback safety: a pack update is offered only when the rollback target
+		# (the installed build) could still READ what the candidate WRITES. If the
+		# candidate's write-schema (`save_schema.writes`) exceeds how high the
+		# installed build can read (`save_reads_max`, defaulting to its own
+		# schema), a later rollback would strand a save the old build cannot read —
+		# so this update rides the SHELL tier, which manages the migration safely.
+		var reads_max := int(installed.get("save_reads_max", installed.get("save_schema", 0)))
+		if m_save.has("writes") and int(m_save["writes"]) > reads_max:
+			return _result(SHELL_UPDATE, "content pack %s writes save schema %d beyond the rollback target's read ceiling %d — routing to the shell tier" % [
+				str(m_pack["version"]), int(m_save["writes"]), reads_max])
 		return _result(PACK_UPDATE, "content pack %s available (installed %s)" % [
 			str(m_pack["version"]), pack])
 	if shell_newer:
@@ -171,6 +188,12 @@ static func _body_error(m: Dictionary) -> String:
 		return "pack.version is not a version string"
 	if not _is_version(pk.get("min_shell")):
 		return "pack.min_shell is not a version string"
+	# A coherent manifest never advertises a pack that needs a shell newer than the
+	# newest shell it offers — otherwise a client would be sent to a shell update
+	# that still cannot run the pack, and loop forever.
+	if _cmp(str(pk["min_shell"]), str((m["shell"] as Dictionary)["current"])) > 0:
+		return "pack.min_shell %s exceeds the advertised shell.current %s (incoherent manifest)" % [
+			str(pk["min_shell"]), str((m["shell"] as Dictionary)["current"])]
 	if not (m.has("protocol") and m["protocol"] is Dictionary):
 		return "missing 'protocol' object"
 	var pr: Dictionary = m["protocol"]
@@ -180,8 +203,17 @@ static func _body_error(m: Dictionary) -> String:
 		return "protocol.min > protocol.max"
 	if not (m.has("save_schema") and m["save_schema"] is Dictionary):
 		return "missing 'save_schema' object"
-	if not _is_int_id((m["save_schema"] as Dictionary).get("min")):
+	var sv: Dictionary = m["save_schema"]
+	if not _is_int_id(sv.get("min")):
 		return "save_schema.min is not an integer"
+	# `writes` (the candidate's write-schema) is optional, but if present it must be
+	# an integer and at least the read floor — it drives the rollback-safety routing.
+	if sv.has("writes"):
+		if not _is_int_id(sv["writes"]):
+			return "save_schema.writes is not an integer"
+		if int(sv["writes"]) < int(sv["min"]):
+			return "save_schema.writes %d is below save_schema.min %d (incoherent)" % [
+				int(sv["writes"]), int(sv["min"])]
 	return ""
 
 
