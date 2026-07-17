@@ -251,6 +251,16 @@ can be watched by playing; every *further* art/game system waits on Phase 0.)
   Then run the regression tests: `godot --headless --path client res://tests/<name>.tscn` for each
   scene under `client/tests/`. CI (`ci.yaml`) runs exactly this, plus the `license-guard` job (no
   GPL/AGPL texts in the tree) and the `Server CI (Go)` job (below).
+- **Boot tests isolate the save via `WAR_SAVE_PATH`:** a test that boots `main.tscn` to exercise the
+  first-run character creator would otherwise run against the player's real `user://character.json`.
+  It must NOT clear-and-restore that file (a run killed mid-test strands the only copy — no-resets
+  law). Instead the game resolves its save location through `CharacterStore.save_path()`, which
+  honours the `WAR_SAVE_PATH` env override (unset in production — the seam is inert). Boot tests use
+  the `SaveIsolation` helper (`tests/save_isolation.gd`) to point the game at a throwaway
+  `user://*_boot_probe.json` before instantiating the scene, then assert the real save stayed
+  byte-identical; `tests/save_path_seam_test` pins the seam contract itself. A developer running the
+  suite on a machine with a played save can also `export WAR_SAVE_PATH=/tmp/probe.json` to keep it
+  fully out of reach.
 - **Validate the server before every PR:** from `server/`, `gofmt -l .` (must print nothing),
   `go vet ./...`, `go test -race ./...` (includes the tick-determinism and golden-hash tests), and
   `go build ./...`. The `Server CI (Go)` job runs exactly this and feeds the `CI - Required Checks`

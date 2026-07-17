@@ -18,6 +18,7 @@ const EPS := 0.001
 
 var _ticks := 0
 var _main: Node
+var _save: SaveIsolation
 
 
 func _ready() -> void:
@@ -28,13 +29,13 @@ func _ready() -> void:
 	if not _test_bark_determinism():
 		return
 
-	# The integration boot exercises the first-run creator path, so a LIVE
-	# character save is player state (no-resets law): back it up and restore it
-	# whatever happens.
-	if not _backup_live_save():
-		_fail("could not back up the live character save — refusing to touch it")
+	# The integration boot exercises the first-run creator — point the game at a
+	# throwaway probe so it never touches the player's real character (no-resets
+	# law). Fail closed if the redirect does not take hold.
+	_save = SaveIsolation.new("user://interaction_boot_probe.json")
+	if not _save.begin():
+		_fail("save isolation did not take — refusing to boot into the real save")
 		return
-	CharacterStore.clear()
 	_main = (load("res://scenes/main.tscn") as PackedScene).instantiate()
 	add_child(_main)
 
@@ -196,40 +197,25 @@ func _physics_process(_delta: float) -> void:
 			% [nm, heard["name"], heard["line"], nm, expected])
 		return
 
-	_restore_live_save()
+	if not _save.real_save_untouched():
+		_fail("the boot test touched the player's real save")
+		return
 	print("TEST PASS — interaction verb drives shrine attunement and NPC speech")
 	get_tree().quit(0)
 
 
 func _fail(message: String) -> bool:
-	_restore_live_save()
+	if _save != null:
+		_save.end()
 	push_error(message)
 	print("TEST FAIL — %s" % message)
 	get_tree().quit(1)
 	return false
 
 
-# --- live-save guard (crash-safe backup/restore, as in npc_population_test) --
-
-const BACKUP := "user://character.json.test-backup"
-
-
+## Clearing the seam on teardown covers the process being killed after the scene
+## loaded but before an exit path ran — the redirect never outlives the test.
+## Idempotent with the end() the exit paths already call.
 func _exit_tree() -> void:
-	_restore_live_save()
-
-
-func _backup_live_save() -> bool:
-	if FileAccess.file_exists(BACKUP):
-		_restore_live_save()
-	if not FileAccess.file_exists(CharacterStore.PATH):
-		return true
-	return DirAccess.copy_absolute(
-		ProjectSettings.globalize_path(CharacterStore.PATH),
-		ProjectSettings.globalize_path(BACKUP)) == OK
-
-
-func _restore_live_save() -> void:
-	if FileAccess.file_exists(BACKUP):
-		DirAccess.rename_absolute(
-			ProjectSettings.globalize_path(BACKUP),
-			ProjectSettings.globalize_path(CharacterStore.PATH))
+	if _save != null:
+		_save.end()
