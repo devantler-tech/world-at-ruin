@@ -1,10 +1,9 @@
 # World at Ruin
 
 A **source-available, cloud-native MMORPG built almost entirely by AI agents** — authored as code,
-built headlessly, and grown in public over years. This is the newest and lowest-priority product of
-[devantler-tech](https://github.com/devantler-tech): agents pick it up when nothing else demands
-attention, and every visible change lands in the in-game dev log so progress can be watched by
-*playing*.
+built headlessly, and grown in public over years. This is the newest product of
+[devantler-tech](https://github.com/devantler-tech), a first-class member of the portfolio, and
+every visible change lands in the in-game dev log so progress can be watched by *playing*.
 
 **The fiction:** a far-future world laid waste by a mystical disaster, now at rebirth. You wake in
 a cave with nothing but ragged clothes and bare hands, fight your way to the surface, and step into
@@ -12,10 +11,12 @@ a barren world coming back to life — wasteland beside lush zones, new lifeform
 humanoids and aliens, iron swords beside laser blades. Medieval-futuristic, and the medieval feel
 wins.
 
-> **Status: pre-alpha `v0.1.0` — "Ashfall Reach".** A first walkable slice: a procedurally
-> generated ruin field, the Wardens' shrine, and a wanderer with third-person movement. No combat,
-> no networking, no persistence yet — those arrive issue by issue via the
-> [roadmap](https://github.com/devantler-tech/world-at-ruin/issues?q=label%3Aroadmap).
+> **Status: pre-alpha — "Ashfall Reach".** You wake in the starter cave, shape your character
+> (body, face, equipment, skin — all persisted forward-only per the product law), and step out
+> into a procedurally generated ruin field: the Wardens' shrine, a seeded settlement, and
+> drifters in the open land. No combat, no networking yet — those arrive issue by issue via the
+> [roadmap](https://github.com/devantler-tech/world-at-ruin/issues?q=label%3Aroadmap); the
+> in-game dev log (`L`) is the precise changelog.
 
 ## Play it
 
@@ -47,9 +48,8 @@ newest first — replaying after each build shows exactly what the agents grew.
 
 ## What this is (and isn't)
 
-- **Everything is text-authored** — scenes, world generation, materials, and (eventually)
-  characters are code, built headlessly in CI. If an agent can't author it in a diff, it doesn't
-  get built.
+- **Everything is text-authored** — scenes, world generation, materials, and characters are code,
+  built headlessly in CI. If an agent can't author it in a diff, it doesn't get built.
 - **Forward-only, no resets** — the design forbids wipes, seasons, and stat squishes. An early
   character keeps playing as the world evolves. The CI guards for this exist before the first
   player does.
