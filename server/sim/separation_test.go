@@ -159,14 +159,69 @@ func TestSeparationConvergesCluster(t *testing.T) {
 	for range 60 {
 		w.Step()
 	}
-	// Every pair must now be at least the radius sum apart (minus scaling slack).
+	// Every pair must now be apart to within the penetration tolerance.
 	ids := []EntityID{1, 2, 3, 4, 5}
 	for i := range ids {
 		for j := i + 1; j < len(ids); j++ {
-			if gap := horizontalGap(w.Get(ids[i]), w.Get(ids[j])); gap < 2*r-3 {
-				t.Fatalf("pair (%d,%d) never separated: gap=%d, want >= %d", ids[i], ids[j], gap, 2*r-3)
+			if gap := horizontalGap(w.Get(ids[i]), w.Get(ids[j])); gap < 2*r-separationSlopMM {
+				t.Fatalf("pair (%d,%d) never separated: gap=%d, want >= %d", ids[i], ids[j], gap, 2*r-separationSlopMM)
 			}
 		}
+	}
+}
+
+// TestSeparationDenseCrowdConverges is the regression guard for the dense-crowd
+// P1: a tight pile-up does not fully separate in a single tick, but it must
+// converge — over a few ticks — to within the penetration tolerance, and once
+// settled it must stay settled. Codex's case: 50 radius-500 actors packed into
+// a 5×10 grid at 10 mm spacing (every actor overlapping many neighbours).
+func TestSeparationDenseCrowdConverges(t *testing.T) {
+	const r = 500
+	build := func() *World {
+		w := NewWorld(bigBounds)
+		id := EntityID(1)
+		for row := 0; row < 5; row++ {
+			for col := 0; col < 10; col++ {
+				w.Add(Entity{ID: id, Pos: Vec3{X: int64(col) * 10, Z: int64(row) * 10}, MaxSpeed: 0, Radius: r})
+				id++
+			}
+		}
+		return w
+	}
+	minGap := func(w *World) int64 {
+		m := int64(1) << 60
+		for i := range w.order {
+			for j := i + 1; j < len(w.order); j++ {
+				if g := w.Get(w.order[i]).Pos.Sub(w.Get(w.order[j]).Pos).HorizontalLen(); g < m {
+					m = g
+				}
+			}
+		}
+		return m
+	}
+
+	// A single tick does NOT fully resolve the pile — that is expected and is
+	// what makes this a convergent relaxation, not an unbounded single-tick solve.
+	one := build()
+	one.Step()
+	if minGap(one) >= 2*r-separationSlopMM {
+		t.Fatal("dense pile fully resolved in one tick — the convergent-relaxation premise changed; revisit the docs")
+	}
+
+	// Within a handful of ticks it converges to within tolerance, and stays there.
+	w := build()
+	for range 20 {
+		w.Step()
+	}
+	if got := minGap(w); got < 2*r-separationSlopMM {
+		t.Fatalf("dense crowd did not converge: minGap=%d, want >= %d", got, 2*r-separationSlopMM)
+	}
+	settled := minGap(w)
+	for range 20 {
+		w.Step()
+	}
+	if got := minGap(w); got < settled {
+		t.Fatalf("dense crowd regressed after settling: %d -> %d", settled, got)
 	}
 }
 
@@ -237,7 +292,7 @@ func TestSeparationHostileRadiusNoOverflow(t *testing.T) {
 // separation axis, integer push scaling), not just for movement. Changing it is
 // a deliberate, reviewed act.
 const separationGoldenTicks = 300
-const separationGoldenHash uint64 = 0x162fb0407ebbb4c5
+const separationGoldenHash uint64 = 0x2988c8ccaf02e984
 
 // buildSeparationGoldenWorld seeds eight radius-700 actors packed so every one
 // overlaps its neighbours (MaxSpeed 0, no intent — only the separation pass
@@ -273,7 +328,7 @@ func TestSeparationGoldenHash(t *testing.T) {
 	ids := []EntityID{1, 2, 3, 4, 5, 6, 7, 8}
 	for i := range ids {
 		for j := i + 1; j < len(ids); j++ {
-			if gap := horizontalGap(w.Get(ids[i]), w.Get(ids[j])); gap < 2*r-3 {
+			if gap := horizontalGap(w.Get(ids[i]), w.Get(ids[j])); gap < 2*r-separationSlopMM {
 				t.Fatalf("golden cluster still overlaps at pair (%d,%d): gap=%d", ids[i], ids[j], gap)
 			}
 		}

@@ -12,22 +12,43 @@ package sim
 //     of the separation axis, so it is bit-identical on every host.
 //   - No physics engine. This is positional de-overlap (a geometric constraint
 //     solve), not impulse-based rigid-body dynamics: each overlapping pair is
-//     pushed apart until it no longer overlaps. Capsule kinematics only.
+//     pushed apart until its penetration is within separationSlopMM. Capsule
+//     kinematics only.
 //   - Order-independent and deterministic. Pairs are resolved in ascending-ID
 //     order every pass, and entities are stored and iterated by ID, so the
 //     result never depends on entity insertion order or Go map iteration order
 //     — the determinism law's requirement — even though each resolve is applied
 //     immediately (Gauss-Seidel), which converges faster than a simultaneous
 //     pass and lets a blocked push transfer to the movable side within the pair.
+//
+// Separation is a *convergent relaxation*, not a hard single-tick guarantee for
+// arbitrary crowd density. An isolated pair (including a pair against a wall) is
+// resolved within one tick; a dense pile-up — many actors packed inside one
+// body's radius — spreads out over a few ticks, because bounded per-tick effort
+// is the price of never stalling the single authoritative loop. Fully unpacking
+// an arbitrarily dense crowd in one tick would need an unbounded number of
+// passes, which is neither affordable nor necessary: a transient overlap in a
+// pile-up is self-correcting and imperceptible.
 
-// separationIterations bounds the relaxation passes run per tick. A pair with
-// at least one movable side is resolved exactly in a single pass; extra passes
-// let a dense cluster — where resolving one pair nudges an actor into another —
-// converge within one tick, while the fixed cap keeps the step's cost, and its
-// result, deterministic. A pass that moves nothing ends the loop early, so the
-// common case (nothing overlapping) costs one pair scan and no writes, which is
-// what keeps separation a true no-op when actors are already apart.
+// separationIterations bounds the relaxation passes run per tick, keeping the
+// step's cost — and its result — deterministic and independent of how bad a
+// pile-up is. A pass that moves nothing ends the loop early, so the common case
+// (nothing overlapping) costs one pair scan and no writes, which is what keeps
+// separation a true no-op when actors are already apart. Eight passes clears a
+// moderate crowd within one tick and a dense one within a few (see the crowd
+// convergence test).
 const separationIterations = 8
+
+// separationSlopMM is the penetration tolerance: a pair overlapping by no more
+// than this is treated as resolved and left alone. A small positive slop is
+// standard in positional solvers (e.g. Box2D's b2_linearSlop ≈ 5 mm) — it stops
+// an integer solver from chasing the last sub-perceptible millimetre of a
+// diagonal or multi-contact overlap forever (integer scaling truncates each
+// push slightly short, so a packed equilibrium otherwise settles a few mm
+// overlapped and never quite closes). At 8 mm it is under 1% of a typical actor
+// diameter — invisible in play, and a bounded, named quantity rather than an
+// emergent rounding artefact.
+const separationSlopMM = 8
 
 // separate resolves capsule overlap. Each pass walks every pair once in
 // ascending-ID order and pushes overlapping pairs apart (see resolvePair),
@@ -83,10 +104,10 @@ func (w *World) resolvePair(a, b *Entity) bool {
 	}
 	d := Vec3{X: a.Pos.X - b.Pos.X, Z: a.Pos.Z - b.Pos.Z}
 	dist := d.HorizontalLen()
-	if dist >= rsum {
-		return false // not overlapping (touching is allowed)
-	}
 	pen := rsum - dist
+	if pen <= separationSlopMM {
+		return false // apart, touching, or within the penetration tolerance
+	}
 	half := pen / 2        // floor half → the lower-ID side
 	ceilHalf := pen - half // ceil half (the odd mm) → the higher-ID side
 

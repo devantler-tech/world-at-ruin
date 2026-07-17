@@ -198,8 +198,9 @@ func sanitizeIntent(v Vec3) Vec3 {
 // the per-second velocity into a per-tick displacement by integer division, and
 // clamps the new position into the navmesh bounds. Integer division truncates
 // toward zero — deterministically — so the same inputs always yield the same
-// positions. It then resolves capsule overlap (see separate) so the tick's
-// final state never has two actors sharing the same space.
+// positions. It then resolves capsule overlap (see separate), driving the
+// tick's final state toward no two actors sharing the same space — exactly for
+// an isolated pair, and convergently (within a few ticks) for a dense pile-up.
 func (w *World) Step() {
 	for _, id := range w.order {
 		e := w.ents[id]
