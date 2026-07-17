@@ -93,6 +93,37 @@ jobs:
             fi
           done
           [ "$fail" = 0 ]
+      - name: Ability ledger is append-only (no-resets law)
+        # A mastered ability can never vanish from a player. The in-repo test
+        # checks the ledger against the CURRENT build, so a PR that deletes an
+        # ability file AND its ledger line together would pass green while
+        # stranding a save that referenced it. CI is the anchor: against the
+        # BASE commit, ability ids in shipped_abilities.txt may only ever be
+        # ADDED — never removed (the comment prose is exempt).
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          LEDGER=client/tests/data/shipped_abilities.txt
+          if [ ! -f "$LEDGER" ]; then
+            echo "::error::$LEDGER was deleted — the forward-only ability ledger must exist"
+            exit 1
+          fi
+          if ! git cat-file -e "$BASE_SHA" 2>/dev/null; then
+            echo "::error::base commit $BASE_SHA not present in the checkout — cannot verify the ability ledger"
+            exit 1
+          fi
+          # Compare the set of non-comment, whitespace-stripped ids: the runtime
+          # reader strips whitespace, so an indented id is a valid entry whose
+          # deletion a raw line diff would miss.
+          ids() { grep -v '^[[:space:]]*#' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -v '^$' | sort -u; }
+          git show "$BASE_SHA:$LEDGER" 2>/dev/null | ids > /tmp/ability-base
+          ids < "$LEDGER" > /tmp/ability-head
+          removed=$(comm -23 /tmp/ability-base /tmp/ability-head)
+          if [ -n "$removed" ]; then
+            echo "::error::Shipped ability id(s) removed from $LEDGER ($(echo "$removed" | tr '\n' ' ')) — a mastered ability is never disposable (no-resets law)"
+            exit 1
+          fi
       - name: Install Godot (pinned, checksum-verified)
         run: |
           curl -fsSL -o godot.zip "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
@@ -141,7 +172,7 @@ jobs:
       - name: Regression tests
         run: |
           set -o pipefail
-          for t in unstick_test surface_consistency_test cave_system_determinism_test world_gen_determinism_test character_determinism_test humanoid_kit_test character_factory_test character_persistence_test equipment_composition_test skin_layer_test npc_recipe_gen_test npc_population_test starter_cave_test creature_kit_test creature_factory_test creature_population_test interaction_test recipe_type_guard_test telegraph_shapes_test; do
+          for t in unstick_test surface_consistency_test cave_system_determinism_test world_gen_determinism_test character_determinism_test humanoid_kit_test character_factory_test character_persistence_test equipment_composition_test skin_layer_test npc_recipe_gen_test npc_population_test starter_cave_test creature_kit_test creature_factory_test creature_population_test interaction_test recipe_type_guard_test telegraph_shapes_test ability_registry_test; do
             if ! timeout 180 godot --headless --path client "res://tests/${t}.tscn" 2>&1 | tee "${t}.log"; then
               echo "::error::${t} failed or timed out (180s)"
               tail -40 "${t}.log"

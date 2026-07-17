@@ -1,0 +1,8 @@
+# Every ability id that has EVER shipped (no-resets law): each must stay in the
+# res://abilities registry and keep loading + validating forever. A mastered
+# ability can never vanish from a player. Only ever ADD lines.
+staff_mend
+staff_ward
+sword_cleave
+sword_lunge
+sword_riposte
