@@ -35,13 +35,18 @@ jobs:
         # --import alone never writes global_script_class_cache.cfg, so scene-arg
         # runs (the regression tests) fail to resolve class_name types and hang.
         # The headless editor pass performs the full scan, imports, and writes it.
-        run: godot --headless --editor --quit --path client 2>&1 | tee import.log
+        # pipefail: without it, `| tee` masks a crashing godot behind tee's 0.
+        run: |
+          set -o pipefail
+          godot --headless --editor --quit --path client 2>&1 | tee import.log
       - name: Smoke boot (120 frames)
         run: |
+          set -o pipefail
           # --path is REQUIRED: the bare positional form silently boots NO
-          # project (verified on 4.7.1 — ~1 s, no project.godot mount) and
-          # the error grep then passes vacuously. The BOOT_OK marker printed
-          # by main.gd is the positive proof the world actually built.
+          # project (verified on 4.7.1 — project manager instead, zero res://
+          # loads) and the error grep then passes vacuously. The BOOT_OK
+          # marker printed by main.gd is the positive proof the world
+          # actually built; pipefail keeps a crash from hiding behind tee.
           godot --headless --quit-after 120 --path client 2>&1 | tee smoke.log
           if ! grep -q "BOOT_OK" smoke.log; then
             echo "::error::Smoke boot never reached BOOT_OK — the project did not actually boot"; exit 1
