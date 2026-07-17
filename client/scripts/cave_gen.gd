@@ -77,8 +77,11 @@ static func build_mesh(p_seed: int, p_radius: float) -> ArrayMesh:
 		verts[i] = pos
 
 	# Entrance: drop triangles whose outward direction is within the cone
-	# toward +X and above the floor band; flip windings so the interior is
-	# the visible side (the camera lives inside).
+	# toward +X, all the way DOWN TO the floor band (cutting only above
+	# floor_z/2 left a ~2 m lip of shell the player had to climb — review
+	# finding carried over from the Go prototype); flip windings so the
+	# interior is the visible side (the camera lives inside). Floor triangles
+	# themselves stay: at floor depth their direction leaves the 22° cone.
 	var cone := cos(deg_to_rad(ENTRANCE_DEG))
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
@@ -87,7 +90,7 @@ static func build_mesh(p_seed: int, p_radius: float) -> ArrayMesh:
 		var b := verts[tris[t + 1]]
 		var c := verts[tris[t + 2]]
 		var center := (a + b + c) / 3.0
-		if center.normalized().dot(Vector3(1, 0, 0)) > cone and center.z > floor_z * 0.5:
+		if center.normalized().dot(Vector3(1, 0, 0)) > cone and center.z > floor_z:
 			continue
 		st.add_vertex(a)
 		st.add_vertex(c)
