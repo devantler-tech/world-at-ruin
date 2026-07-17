@@ -45,11 +45,15 @@
     "max": 1
   },
   "save_schema": {
-    "min": 1
+    "min": 1,
+    "writes": 1
   },
   "key": {
     "id": "signing-2026-07",
-    "certificate": "BASE64_SIGNING_KEY_CERT_SIGNED_BY_THE_OFFLINE_ROOT_KEY"
+    "epoch": 1,
+    "not_after": "2026-10-01T00:00:00Z",
+    "certificate": "BASE64_SIGNING_KEY_CERT_SIGNED_BY_THE_OFFLINE_ROOT_KEY",
+    "revoked_ids": []
   },
   "signature": "BASE64_ED25519_SIGNATURE_OVER_THE_CANONICAL_JSON_WITH_signature_EXCLUDED"
 }

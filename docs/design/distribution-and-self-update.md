@@ -145,8 +145,11 @@ A small **signed JSON** document per channel, published by CI beside the artifac
   for several releases is never stranded on a broken update chain.
 - `protocol` — `{min, max}`: the client protocol range the **live server tier accepts right now**,
   raised only via the two-phase rollout below so no connected or not-yet-updated client is kicked.
-- `save_schema` — `{min}`: the lowest save schema the current client must support (forward-only; ties
-  to #3). A bump here rides the **shell** tier (see the decision core), never a bare pack overlay.
+- `save_schema` — `{min}` (the lowest save schema the current client must **read** — forward-only; ties
+  to #3) **and** `writes` (the schema the candidate build **writes**). These are deliberately distinct:
+  a backward-compatible pack can keep `min` low while raising `writes`. The decision core routes any
+  pack whose `writes` exceeds the rollback target's read ceiling to the **shell** tier, so a rollback
+  can never face a save it cannot read. A bare pack overlay never advances `writes` past that ceiling.
 - `key` — the id/certificate of the current signing key, signed by the offline **root** key baked into
   the shell (see Signing) — this is what lets a signing key rotate without a reinstall.
 - `signature` — a detached signature over the manifest. The signing bytes are **pinned** (see Signing):
@@ -178,6 +181,12 @@ inside the pack) — so a pack-only release never masquerades as a phantom shell
   with the root — **no reinstall**, even while shell updates are deferred. Only root-key compromise needs
   an out-of-band shell update, so the root is guarded hardest (host least-privilege, child 6). This
   reuses the CI trust model that already runs `license-guard` and the CLA gate.
+  - **Rotation must also revoke — not just re-sign.** Re-signing with the root does not by itself stop an
+    attacker who kept a compromised *signing* key. So each signing-key certificate carries a **validity
+    window** and a **monotonic key epoch**, the client **persists the highest epoch it has seen and
+    refuses any manifest signed below it** (anti-rollback), and revoked-key ids are carried forward in a
+    root-signed revocation list. A stolen old key therefore cannot sign a "newer" manifest a client will
+    accept — the rotation is effective, not cosmetic.
 
 ## How this upholds the product law
 
@@ -230,19 +239,26 @@ inside the pack) — so a pack-only release never masquerades as a phantom shell
 
 1. **Update-decision core + manifest schema** — the pure, testable brain and the signed-manifest
    contract (this doc's `.example.json`). No network, no art. *First.*
-2. **Pack build & publish pipeline** — CI exports a signed `.pck` overlay + manifest to the origin;
-   base+overlay split; a committed pack-overlay load-order test (the live-verified piece).
-3. **In-client updater** — fetch → verify signature/sha → stage → mount / restart-to-apply →
-   last-good rollback.
-4. **Protocol-version handshake** — client negotiates its protocol with the meta tier and
-   refuses-and-prompts-update before it can become incompatible (the server half is a server-tier
-   child).
-5. **Desktop launcher / shell auto-update (Tier 2) — deferred** (maintainer direction 2026-07-17):
-   swap the native binary; pick the desktop mechanism (self-hosted updater / Butler / Steam) per
-   target, later.
-6. **Signing key custody + verification** — offline release key, public key baked into the shell,
-   scoped CI secret, documented rotation.
-7. **(Phase 8) Console/iOS store-delivery fallback** — store-delivered Tier 1+2; Tier 0 stays live.
+2. **Immutable boot/rollback bootstrap** — a **non-replaceable** shell component (this is **not** the
+   deferred storefront launcher below) that owns the boot-attempt marker, the health check, and the
+   last-good pack selection. It **must ship before the first overlay can be delivered**, because a pack
+   that crashes at startup cannot recover itself; without this in place a single bad overlay would
+   strand every client that received it.
+3. **Pack build & publish pipeline** — CI exports a signed `full` + `deltas` `.pck` set + manifest to
+   the origin; base+overlay split; a committed pack-overlay load-order test (the live-verified piece).
+4. **In-client updater** — fetch → verify signature/sha → stage → hand promotion/rollback to the
+   bootstrap (child 2). Never promotes a pack that raises the save write-schema beyond the rollback
+   target's read ceiling (that routes to the shell tier).
+5. **Protocol-version handshake (two-phase)** — client negotiates its protocol with the meta tier and
+   refuses-and-prompts-update before it can become incompatible; the server rolls out
+   expand-then-contract so no session is kicked (the server half is a server-tier child).
+6. **Signing key custody + rotation** — offline **root** key, rotatable short-lived signing keys, a
+   client-remembered **key epoch** (anti-rollback) plus certificate validity/revocation, scoped CI
+   secret. Guards the immutable bootstrap's root of trust.
+7. **Desktop storefront / native-app auto-update (Tier 2) — deferred** (maintainer direction
+   2026-07-17): the *distribution/storefront* channel — self-hosted updater / itch.io Butler / Steam —
+   picked later. Distinct from child 2, which is the minimal always-present recovery bootstrap.
+8. **(Phase 8) Console/iOS store-delivery fallback** — store-delivered Tier 1+2; Tier 0 stays live.
 
 ## Decisions
 
