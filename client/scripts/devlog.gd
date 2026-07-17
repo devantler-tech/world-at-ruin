@@ -5,11 +5,22 @@ class_name DevLog
 ## development progress by playing. Every change that a player could notice
 ## gets an entry here, newest first — open it in-game with F1.
 
-const VERSION := "0.1.10"
+const VERSION := "0.1.11"
 const CODENAME := "Ashfall Reach"
 
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
+	{
+		"version": "0.1.11",
+		"date": "2026-07-17",
+		"title": "Skin, at last",
+		"notes": [
+			"The clay era ends: bodies now wear real skin. Six painted skins — light, mid and deep tones, young and old, male and female — sit in a new SKIN section of the character screen, live on your body as you browse them.",
+			"Faces finally have faces: brows, lips and years arrive with the texture, not just the sculpt.",
+			"Every preset dressed for it: the wanderer wakes bronzed by the sun outside, the villager and elder wear lived-in faces, the brute's hide is old leather.",
+			"Clay is still there — as a choice — and old saves are, as always, untouched until you visit the character screen (C).",
+		],
+	},
 	{
 		"version": "0.1.10",
 		"date": "2026-07-17",

@@ -64,9 +64,9 @@ func _recipe_names() -> PackedStringArray:
 	return names
 
 
-## Matte warm clay on the BODY so the taste gate judges FORM; skins arrive in
-## stage 4. Equipped pieces keep their baked flat colours — garment-vs-skin
-## separation is part of the silhouette being judged.
+## Matte warm clay on any UNSKINNED body so form still reads; a recipe that
+## chose a skin shows it (that texture is now part of what the taste gate
+## judges). Equipped pieces keep their baked flat colours.
 func _apply_clay(instance: Node3D) -> void:
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = CLAY
@@ -74,7 +74,8 @@ func _apply_clay(instance: Node3D) -> void:
 	var stack: Array[Node] = [instance]
 	while not stack.is_empty():
 		var node: Node = stack.pop_back()
-		if node is MeshInstance3D and not String(node.name).begins_with(CharacterFactory.EQUIP_PREFIX):
+		if node is MeshInstance3D and not String(node.name).begins_with(CharacterFactory.EQUIP_PREFIX) \
+				and (node as MeshInstance3D).get_surface_override_material(0) == null:
 			(node as MeshInstance3D).material_override = mat
 		for child in node.get_children():
 			stack.push_back(child)

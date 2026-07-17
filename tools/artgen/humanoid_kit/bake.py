@@ -178,6 +178,49 @@ def bake_equipment_piece(piece, mesh_obj, shape_names, services):
     return clothes
 
 
+def parse_mhmat_texture(mhmat_path):
+    """The diffuse texture file referenced by a .mhmat, resolved next to it."""
+    with open(mhmat_path, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            parts = line.split(None, 1)
+            if len(parts) == 2 and parts[0] == "diffuseTexture":
+                return os.path.join(os.path.dirname(mhmat_path), parts[1].strip())
+    raise RuntimeError(f"{mhmat_path}: no diffuseTexture line")
+
+
+def bake_skins(manifest, out_dir):
+    """Downscale each manifest skin's diffuse texture (painted on the shared
+    MakeHuman body UV) to the manifest size and write it plus the runtime
+    registry. The runtime assigns skins per recipe; textures stay OUT of the
+    body GLB so N skins do not mean N bodies."""
+    skins = manifest.get("skins", [])
+    if not skins:
+        return {}
+    skins_dir = os.path.join(out_dir, "skins")
+    os.makedirs(skins_dir, exist_ok=True)
+    size = manifest.get("skin_texture_size", 1024)
+    index = {}
+    for skin in skins:
+        mhmat_path = os.path.join(PACKS_DIR, skin["pack"], skin["mhmat"])
+        if not os.path.isfile(mhmat_path):
+            raise RuntimeError(f"{skin['name']}: {mhmat_path} missing — run bootstrap.sh")
+        image = bpy.data.images.load(parse_mhmat_texture(mhmat_path))
+        image.scale(size, size)
+        image.filepath_raw = os.path.join(skins_dir, skin["name"] + ".png")
+        image.file_format = "PNG"
+        image.save()
+        bpy.data.images.remove(image)
+        index[skin["name"]] = {"texture": skin["name"] + ".png"}
+    with open(os.path.join(skins_dir, "skins.json"), "w", encoding="utf-8") as f:
+        json.dump({
+            "kit_version": manifest["kit_version"],
+            "size": size,
+            "skins": index,
+        }, f, indent=2, sort_keys=True)
+        f.write("\n")
+    return index
+
+
 def delete_group_name(piece):
     """Replicates add_mhclo_asset's naming for the delete group it leaves on
     the basemesh (the MHCLO delete_verts — body vertices the piece covers)."""
@@ -348,6 +391,8 @@ def main() -> None:
         }, f, indent=2, sort_keys=True)
         f.write("\n")
 
+    bake_skins(manifest, os.path.dirname(os.path.abspath(out_path)))
+
     shape_names = [kb.name for kb in mesh_obj.data.shape_keys.key_blocks[1:]]
     sha = hashlib.sha256(open(out_path, "rb").read()).hexdigest()
     # The structural report is the committed contract the Godot regression
@@ -361,6 +406,7 @@ def main() -> None:
         "bones=%d" % len(rig_obj.data.bones),
         "shapes=%s" % ",".join(shape_names),
         "equipment=%s" % ",".join(piece["name"] for piece, _ in pieces),
+        "skins=%s" % ",".join(skin["name"] for skin in manifest.get("skins", [])),
     ]
     for piece, clothes in pieces:
         report_lines.append("equip_%s=slot:%s,verts:%d,hidden:%d,shapes:%d" % (

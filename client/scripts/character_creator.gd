@@ -38,6 +38,7 @@ var _recipe: Dictionary
 var _shape_sliders := {}
 var _bone_sliders := {}
 var _outfit_pickers := {}
+var _skin_picker: OptionButton
 var _camera: Camera3D
 var _light: DirectionalLight3D
 var _syncing := false
@@ -152,6 +153,8 @@ func _build_panel() -> void:
 	_add_heading(sliders, "OUTFIT")
 	for slot: String in CharacterFactory.equipment_registry().get("slots", []):
 		_add_outfit_picker(sliders, slot)
+	_add_heading(sliders, "SKIN")
+	_add_skin_picker(sliders)
 
 	var buttons := HBoxContainer.new()
 	buttons.add_theme_constant_override("separation", 8)
@@ -219,6 +222,36 @@ func _add_outfit_picker(into: Container, slot: String) -> void:
 	_outfit_pickers[slot] = picker
 
 
+## Which skin the body wears — "clay" is the untextured kit body.
+func _add_skin_picker(into: Container) -> void:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	into.add_child(row)
+	var label := Label.new()
+	label.text = "skin"
+	label.custom_minimum_size = Vector2(130, 0)
+	label.add_theme_font_size_override("font_size", 12)
+	label.add_theme_color_override("font_color", COL_BONE)
+	row.add_child(label)
+	_skin_picker = OptionButton.new()
+	_skin_picker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_skin_picker.add_item("clay")
+	var names = CharacterFactory.skins_registry().get("skins", {}).keys()
+	names.sort()
+	for skin_name: String in names:
+		_skin_picker.add_item(skin_name)
+	_skin_picker.item_selected.connect(func(index: int) -> void:
+		if _syncing:
+			return
+		if index == 0:
+			_recipe.erase("skin")
+		else:
+			_recipe["skin"] = _skin_picker.get_item_text(index)
+		_restamp_version()
+		_player.set_character(_recipe))
+	row.add_child(_skin_picker)
+
+
 func _add_bone_slider(into: Container, spec: Array) -> void:
 	var slider := _labeled_slider(into, spec[0], spec[3], spec[4])
 	slider.drag_ended.connect(func(changed: bool) -> void:
@@ -279,8 +312,9 @@ func _set_recipe_bone(field: String, key: String, value: float) -> void:
 		_recipe[field][key] = value
 
 
-## Equipment entered the recipe format at version 2, so a recipe only claims
-## v2 when it actually wears something — older saves stay untouched v1.
+## Equipment entered the recipe format at version 2 and skin at version 3, so
+## a recipe only claims the newest version its fields need — older saves stay
+## untouched at their own version.
 func _set_recipe_equipment(slot: String, piece_name: String) -> void:
 	if not _recipe.has("equipment"):
 		_recipe["equipment"] = {}
@@ -290,7 +324,16 @@ func _set_recipe_equipment(slot: String, piece_name: String) -> void:
 		_recipe["equipment"][slot] = piece_name
 	if _recipe["equipment"].is_empty():
 		_recipe.erase("equipment")
-	_recipe["version"] = 2 if _recipe.has("equipment") else 1
+	_restamp_version()
+
+
+func _restamp_version() -> void:
+	if _recipe.has("skin"):
+		_recipe["version"] = 3
+	elif _recipe.has("equipment"):
+		_recipe["version"] = 2
+	else:
+		_recipe["version"] = 1
 
 
 func _on_preset(preset_name: String) -> void:
@@ -317,6 +360,11 @@ func _sync_sliders_from_recipe() -> void:
 		for i in picker.item_count:
 			if picker.get_item_text(i) == String(equipment.get(slot, "")):
 				picker.select(i)
+	if _skin_picker != null:
+		_skin_picker.select(0)
+		for i in _skin_picker.item_count:
+			if _skin_picker.get_item_text(i) == String(_recipe.get("skin", "")):
+				_skin_picker.select(i)
 	_syncing = false
 
 

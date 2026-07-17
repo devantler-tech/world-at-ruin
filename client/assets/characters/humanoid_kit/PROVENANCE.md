@@ -29,6 +29,24 @@ runtime registry `CharacterFactory` composes from.
   licence chain. The phenotype axes are whole-body morphs (the macro grid is full-body), each
   re-grounded at the feet.
 
+## Skins (`skins/*.png`)
+
+Diffuse body textures from the **official CC0 skins packs** (release note 2023-05-20: "New CC0
+skins packs", the `_cc0.zip` variants), painted on the shared MakeHuman body UV, downscaled to
+1024² by the bake and registered in `skins/skins.json`. Makeup/tattoo/anatomical variants are
+deliberately excluded. Source packs: `skins01_cc0.zip` (sha256
+`7495ab99287053bd19ff1636114e64b608994d9f7437fea6cc75ea387f96dba9`), `skins02_cc0.zip` (sha256
+`1613f1ef3afca53094511d26620ed7cf1d2dedc29ed3d384d60bdebe250698ae`).
+
+| skin | source | author | licence |
+|---|---|---|---|
+| `skin_female_light` | skins01 `bobby_03_young_female_hairless` | bobby_03 | CC0 |
+| `skin_female_mid` | skins01 `callharvey3d_midtoned_female` | callharvey3d | CC0 |
+| `skin_female_aged` | skins01 `onlytheghosts_old_eurasian_female` | onlytheghosts | CC0 |
+| `skin_male_light` | skins02 `toigo_light_skin_male_bronze` | toigo | CC0 |
+| `skin_male_deep` | skins02 `mindfront_skin_male_african_middleage` | mindfront | CC0 |
+| `skin_male_aged` | skins02 `onlytheghosts_old_eurasian_male` | onlytheghosts | CC0 |
+
 ## Equipment pieces (`equipment/*.glb`)
 
 MHCLO clothes from the **official MakeHuman 01-series CC0 asset packs** — the `_cc0.zip`

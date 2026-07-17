@@ -1,0 +1,58 @@
+{
+  "version": 3,
+  "comment": "GOLDEN RECIPE v3 — the forward-compatibility contract for the version-3 format (no-resets law). Everything golden_recipe_v2.json guards, plus a skin. If this recipe ever fails to build, a shipped character has been broken. Only ever ADD to this file.",
+  "skin": "skin_male_light",
+  "equipment": {
+    "torso": "shirt_ragged",
+    "legs": "pants_wool",
+    "feet": "shoes_cloth"
+  },
+  "shapes": {
+    "torso_vshape": 0.4,
+    "torso_muscle": 0.4,
+    "torso_broad": 0.3,
+    "shoulders_broad": 0.3,
+    "waist_slim": 0.3,
+    "belly": 0.2,
+    "hips_wide": 0.2,
+    "buttocks_full": 0.2,
+    "neck_thick": 0.3,
+    "arms_muscle": 0.3,
+    "arms_heavy": 0.2,
+    "legs_muscle": 0.3,
+    "legs_heavy": 0.2,
+    "head_round": 0.2,
+    "head_square": 0.2,
+    "head_aged": 0.2,
+    "head_heavy": 0.2,
+    "chin_prominent": 0.2,
+    "jaw_wide": 0.2,
+    "nose_strong": 0.2,
+    "nose_hump": 0.2,
+    "body_female": 0.3,
+    "body_male": 0.2,
+    "body_aged": 0.2,
+    "body_heavy": 0.2,
+    "body_slim": 0.1,
+    "phenotype_african": 0.3,
+    "phenotype_asian": 0.3,
+    "phenotype_caucasian": 0.3
+  },
+  "bone_girth": {
+    "neck_01": 1.05,
+    "spine_03": 1.04,
+    "upperarm": 1.05,
+    "lowerarm": 1.05,
+    "thigh": 1.04,
+    "calf": 1.04
+  },
+  "bone_scale": {
+    "head": 1.03,
+    "hand": 1.08,
+    "foot": 1.04
+  },
+  "joint_push": {
+    "upperarm": 1.04,
+    "hand": 1.03
+  }
+}

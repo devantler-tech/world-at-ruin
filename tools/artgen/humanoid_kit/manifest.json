@@ -1,5 +1,5 @@
 {
-  "kit_version": 3,
+  "kit_version": 4,
   "comment": "Humanoid kit bake manifest — the single source of truth for what the kit contains. Changing this file (or bake.py) is the ONLY sanctioned way the kit changes; the artgen CI workflow re-bakes and compares. Shape, slot and equipment-piece names are the stable, forward-only public API consumed by recipes (no-resets law: never rename or remove a shipped name, only add).",
   "tools": {
     "blender": "5.2.0",
@@ -49,8 +49,28 @@
     { "name": "phenotype_asian", "macro": { "race": { "asian": 1.0, "caucasian": 0.0, "african": 0.0 } } },
     { "name": "phenotype_caucasian", "macro": { "race": { "caucasian": 1.0, "asian": 0.0, "african": 0.0 } } }
   ],
+  "skins_comment": "Skins are diffuse textures from the official CC0 skins packs (release 2023-05-20: 'New CC0 skins packs'), painted on the shared MakeHuman body UV. The bake downscales each to skin_texture_size and commits it with a registry; the runtime assigns it per recipe. Names cover gender x tone x age; 'with genitals'/makeup/tattoo variants are deliberately excluded.",
+  "skin_texture_size": 1024,
+  "skins": [
+    { "name": "skin_female_light", "pack": "skins01", "mhmat": "skins/bobby_03_young_female_hairless/bobby_03_young_female_hairless.mhmat", "author": "bobby_03", "license": "CC0" },
+    { "name": "skin_female_mid", "pack": "skins01", "mhmat": "skins/callharvey3d_midtoned_female/callharvey3d_midtoned_female.mhmat", "author": "callharvey3d", "license": "CC0" },
+    { "name": "skin_female_aged", "pack": "skins01", "mhmat": "skins/onlytheghosts_old_eurasian_female/onlytheghosts_old_eurasian_female.mhmat", "author": "onlytheghosts", "license": "CC0" },
+    { "name": "skin_male_light", "pack": "skins02", "mhmat": "skins/toigo_light_skin_male_bronze/toigo_light_skin_male_bronze.mhmat", "author": "toigo", "license": "CC0" },
+    { "name": "skin_male_deep", "pack": "skins02", "mhmat": "skins/mindfront_skin_male_african_middleage/mindfront_skin_male_african_middleage.mhmat", "author": "mindfront", "license": "CC0" },
+    { "name": "skin_male_aged", "pack": "skins02", "mhmat": "skins/onlytheghosts_old_eurasian_male/onlytheghosts_old_eurasian_male.mhmat", "author": "onlytheghosts", "license": "CC0" }
+  ],
   "equipment_comment": "Equipment pieces are CC0 MHCLO assets from the official MakeHuman 01-series CC0 packs (the _cc0.zip variants — the CC-BY variants are policy-excluded). Packs are downloaded pinned+checksummed by bootstrap.sh, never committed; each piece bakes to its own skinned GLB sharing the one canonical skeleton, with a clothes blend shape per kit shape (refit under that morph) so equipment follows the body. delete_verts become an equip_hide_<name> shape on the BODY that tucks covered skin inward.",
-  "equipment_packs": {
+  "asset_packs": {
+    "skins01": {
+      "url": "https://files.makehumancommunity.org/asset_packs/skins01/skins01_cc0.zip",
+      "mirror": "https://files2.makehumancommunity.org/asset_packs/skins01/skins01_cc0.zip",
+      "sha256": "7495ab99287053bd19ff1636114e64b608994d9f7437fea6cc75ea387f96dba9"
+    },
+    "skins02": {
+      "url": "https://files.makehumancommunity.org/asset_packs/skins02/skins02_cc0.zip",
+      "mirror": "https://files2.makehumancommunity.org/asset_packs/skins02/skins02_cc0.zip",
+      "sha256": "1613f1ef3afca53094511d26620ed7cf1d2dedc29ed3d384d60bdebe250698ae"
+    },
     "shirts01": {
       "url": "https://files.makehumancommunity.org/asset_packs/shirts01/shirts01_cc0.zip",
       "mirror": "https://files2.makehumancommunity.org/asset_packs/shirts01/shirts01_cc0.zip",
