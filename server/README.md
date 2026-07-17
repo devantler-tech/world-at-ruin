@@ -19,6 +19,12 @@ zone/dungeon server:
     entity order so the result never depends on map iteration order. **No physics
     engine runs in the authoritative path** — capsule kinematics only, which is
     what keeps the Go authority cheap, deterministic and latency-tolerant.
+  - **Capsule-vs-capsule separation** — after movement, each tick resolves
+    overlap so no two actors share the same space, the one spatial rule a client
+    cannot be trusted to make. It is a positional de-overlap (each overlapping
+    pair pushed apart by half its penetration) solved by integer-only,
+    order-independent relaxation — no impulses, no physics engine — with its own
+    committed golden hash pinning the settled state across architectures.
   - `FixedLoop` — a fixed-timestep accumulator that runs the sim at exactly
     `TickHz` regardless of wall-clock jitter, with a catch-up cap so a stalled
     process can never spiral.
@@ -48,9 +54,9 @@ Later children of the server-foundation epic
 ([#4](https://github.com/devantler-tech/world-at-ruin/issues/4), the first child
 of the Phase 1 epic [#8](https://github.com/devantler-tech/world-at-ruin/issues/8)):
 networking and client prediction/reconciliation (the layer that will consume the
-area-of-interest deltas above), capsule-vs-capsule resolution, real navmesh
-geometry, the Agones SDK integration and GameServer health, the Nakama meta tier,
-and Postgres/CNPG persistence. The tick core and its area-of-interest query land
+area-of-interest deltas above), real navmesh geometry, the Agones SDK integration
+and GameServer health, the Nakama meta tier, and Postgres/CNPG persistence. The
+tick core, its capsule-vs-capsule separation, and its area-of-interest query land
 first because everything else is built on top of a simulation that is already
 proven deterministic.
 
