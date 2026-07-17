@@ -168,13 +168,14 @@ can be watched by playing; every *further* art/game system waits on Phase 0.)
 
 - **Structure:** `client/` is the Godot 4 project (scenes built in GDScript from engine
   primitives). The one sanctioned exception to "no binary assets" is `client/assets/` — artifacts
-  BAKED BY COMMITTED CODE (`tools/artgen/`, the Python/bpy exception) from CC0 data; every asset
-  directory carries a `PROVENANCE.md` with licence chain and checksums, and bakes must be
-  deterministic (the artgen workflow re-bakes and byte-compares). Characters are composed at
-  runtime by `CharacterFactory` from **recipes** (`client/recipes/*.json`, versioned and
-  name-keyed — names are forward-only per the no-resets law; the golden-recipe test enforces it).
-  `server/` (Agones realtime tier, Go meta services) and `deploy/` (platform manifests) arrive
-  later per the roadmap.
+  BAKED BY COMMITTED CODE (`tools/artgen/`, the Python/bpy exception) from CC0 data, plus the
+  sanctioned committed CC0 base meshes that generators reshape in code (maintainer direction on
+  #20); every asset directory carries a `PROVENANCE.md` with licence chain and checksums, and
+  bakes must be deterministic (the artgen workflow re-bakes and byte-compares). Characters are
+  composed at runtime by `CharacterFactory` from **recipes** (`client/recipes/*.json`, versioned
+  and name-keyed — names are forward-only per the no-resets law; the golden-recipe test enforces
+  it). `server/` (Agones realtime tier, Go meta services) and `deploy/` (platform manifests)
+  arrive later per the roadmap.
 - **Run:** `godot client` (macOS: `/Applications/Godot.app/Contents/MacOS/Godot client`).
 - **Validate before every PR:**
   `godot --headless --editor --quit --path client && godot --headless --quit-after 120 client` —

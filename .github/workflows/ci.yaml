@@ -3,6 +3,10 @@ name: CI
 on:
   pull_request:
   merge_group:
+  # Push runs exist so every merge leaves a canonical, findable macOS .app
+  # artifact on main (merge_group artifacts are buried in queue runs).
+  push:
+    branches: [main]
 
 permissions:
   contents: read
@@ -10,6 +14,10 @@ permissions:
 env:
   GODOT_VERSION: 4.7.1
   GODOT_SHA512: 4ccdab7a48eeccbe8819a2fc1f6262f8d72065d98601bcb3743fcbd7ebd39f373758a788ee3293a05ec5b2c48538266c437404312e372225cd2df273945a2de9
+  # macOS universal editor + export templates, same SHA512-SUMS.txt provenance
+  # as GODOT_SHA512 above.
+  GODOT_MACOS_SHA512: a5c6443e193829de9a3237b57ef5e01c23839888900e241543da0dd4bac1050125e19469f0cca9a9958ac346070d98cab8e5d6aee16b181c6d06cda86bd07224
+  GODOT_TEMPLATES_SHA512: afcc83d8d3d298038f19c58744a0d660fa75dd4baa33cb55d1011bb2565a2a8c2381728924564cb909e37c205a23f21b521b23bd057993afd43ae4da0b2f9d47
 
 jobs:
   client-smoke:
@@ -37,7 +45,7 @@ jobs:
       - name: Regression tests
         run: |
           set -o pipefail
-          for t in unstick_test surface_consistency_test cave_determinism_test humanoid_kit_test character_factory_test character_persistence_test starter_cave_test; do
+          for t in unstick_test surface_consistency_test cave_determinism_test character_determinism_test humanoid_kit_test character_factory_test character_persistence_test starter_cave_test; do
             if ! timeout 180 godot --headless --path client "res://tests/${t}.tscn" 2>&1 | tee "${t}.log"; then
               echo "::error::${t} failed or timed out (180s)"
               tail -40 "${t}.log"
@@ -49,6 +57,64 @@ jobs:
               exit 1
             fi
           done
+
+  client-export-macos:
+    name: Client export (macOS)
+    # macOS runner on purpose: Godot's built-in AD-HOC codesign only works on a
+    # macOS host, and an unsigned arm64 .app is killed by macOS before it can
+    # launch — a Linux-exported unsigned zip would be dead on arrival on the
+    # maintainer's Apple-Silicon machine.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # This job uploads an artifact — never let the checked-out token
+          # ride along in it (zizmor artipacked).
+          persist-credentials: false
+      - name: Install Godot (pinned, checksum-verified)
+        run: |
+          curl -fsSL -o godot.zip "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_macos.universal.zip"
+          echo "${GODOT_MACOS_SHA512}  godot.zip" | shasum -a 512 -c -
+          unzip -q godot.zip
+          printf '#!/bin/sh\nexec "%s/Godot.app/Contents/MacOS/Godot" "$@"\n' "${PWD}" | sudo tee /usr/local/bin/godot >/dev/null
+          sudo chmod +x /usr/local/bin/godot
+      - name: Install export templates (pinned, checksum-verified)
+        run: |
+          curl -fsSL -o templates.tpz "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+          echo "${GODOT_TEMPLATES_SHA512}  templates.tpz" | shasum -a 512 -c -
+          unzip -q templates.tpz
+          mkdir -p "${HOME}/Library/Application Support/Godot/export_templates/${GODOT_VERSION}.stable"
+          mv templates/* "${HOME}/Library/Application Support/Godot/export_templates/${GODOT_VERSION}.stable/"
+      - name: Headless import + class-name scan
+        # Same rule as the smoke job: only the headless editor pass writes
+        # global_script_class_cache.cfg; exporting without it breaks class_name
+        # resolution in the packed scripts.
+        run: godot --headless --editor --quit --path client 2>&1 | tee import.log
+      - name: Export .app (release, ad-hoc signed)
+        run: |
+          mkdir -p build
+          godot --headless --export-release "macOS" "${PWD}/build/WorldAtRuin.zip" --path client 2>&1 | tee export.log
+          if grep -qE "SCRIPT ERROR|^ERROR" export.log import.log; then
+            echo "::error::Errors during export"; exit 1
+          fi
+          test -s build/WorldAtRuin.zip
+      - name: Smoke boot the EXPORTED app (60 frames)
+        # Boot the artifact itself, not the editor build — proves the shipped
+        # .app actually starts (packed resources resolve, signature is valid).
+        # pipefail: without it, tee masks a nonzero exit from the app itself
+        # (a crash with no matching error line would upload a broken artifact).
+        run: |
+          set -o pipefail
+          unzip -q build/WorldAtRuin.zip -d build/app
+          "build/app/World at Ruin.app/Contents/MacOS/World at Ruin" --headless --quit-after 60 2>&1 | tee exported-smoke.log
+          if grep -qE "SCRIPT ERROR|^ERROR" exported-smoke.log; then
+            echo "::error::Errors booting the exported app"; exit 1
+          fi
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: WorldAtRuin-macOS-universal
+          path: build/WorldAtRuin.zip
+          if-no-files-found: error
 
   license-guard:
     name: License guard (no GPL/AGPL in tree)
@@ -69,11 +135,12 @@ jobs:
   ci-required-checks:
     name: CI - Required Checks
     runs-on: ubuntu-latest
-    needs: [client-smoke, license-guard]
+    needs: [client-smoke, client-export-macos, license-guard]
     if: ${{ always() }}
     steps:
       - uses: devantler-tech/actions/aggregate-job-checks@0f27c13a9785608e0bbf9998777d27761b4de617 # v10.0.2
         with:
           job-results: >-
             ${{ needs.client-smoke.result }}
+            ${{ needs.client-export-macos.result }}
             ${{ needs.license-guard.result }}
