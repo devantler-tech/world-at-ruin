@@ -14,11 +14,12 @@
 //     whole simulation is integer-only and every per-tick iteration runs in a
 //     fixed, insertion-order-independent order.
 //
-// This first slice is the fixed-timestep tick core: capsule actors integrating
-// a clamped intent on a bounded flat navmesh, with a state hash that makes
-// determinism testable. Networking, the Agones SDK, area-of-interest, and
-// capsule-vs-capsule resolution are later children of the server-foundation
-// epic and deliberately absent here.
+// The fixed-timestep tick core lives here: capsule actors integrating a clamped
+// intent on a bounded flat navmesh, with a state hash that makes determinism
+// testable. Area-of-interest — which entities each observer is told about — is
+// its read-only companion query in aoi.go. Networking and client
+// prediction/reconciliation, the Agones SDK, and capsule-vs-capsule resolution
+// are later children of the server-foundation epic and deliberately absent here.
 package sim
 
 import (
@@ -80,6 +81,16 @@ type Entity struct {
 	// forward-compatible; capsule-vs-capsule separation is a later child and
 	// does not read it yet.
 	Radius int64
+
+	// InterestRadius is the horizontal (ground-plane) distance in mm within
+	// which this entity, as an observer, is told about other entities — its
+	// area-of-interest (see aoi.go). It is server-configured, not untrusted
+	// client input, but it is still clamped into [0, maxInterestRadiusMM] on
+	// ingestion so the squared-distance comparison in World.Interest can never
+	// overflow. Zero means the observer sees nothing. It is not part of the
+	// hashed state (Hash captures step results, not query configuration), so a
+	// world's movement golden is unaffected by an entity's interest radius.
+	InterestRadius int64
 }
 
 // Bounds is the axis-aligned navmesh extent. Positions are clamped inside it
@@ -148,6 +159,7 @@ func (w *World) Add(e Entity) *Entity {
 	stored := e
 	stored.Pos = w.bounds.clamp(stored.Pos)
 	stored.Intent = sanitizeIntent(stored.Intent)
+	stored.InterestRadius = clampAxis(stored.InterestRadius, 0, maxInterestRadiusMM)
 	w.ents[e.ID] = &stored
 	w.order = append(w.order, e.ID)
 	sort.Slice(w.order, func(i, j int) bool { return w.order[i] < w.order[j] })
@@ -167,6 +179,16 @@ func (w *World) Count() int { return len(w.order) }
 func (w *World) SetIntent(id EntityID, intent Vec3) {
 	if e := w.ents[id]; e != nil {
 		e.Intent = sanitizeIntent(intent)
+	}
+}
+
+// SetInterestRadius sets an entity's area-of-interest radius (mm), clamped into
+// [0, maxInterestRadiusMM] so World.Interest stays overflow-safe. It is a no-op
+// for an unknown ID. Interest radius is server-configured, so this is an
+// operator/AI knob, not an untrusted-client surface.
+func (w *World) SetInterestRadius(id EntityID, radius int64) {
+	if e := w.ents[id]; e != nil {
+		e.InterestRadius = clampAxis(radius, 0, maxInterestRadiusMM)
 	}
 }
 

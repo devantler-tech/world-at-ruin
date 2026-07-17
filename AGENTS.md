@@ -223,7 +223,9 @@ can be watched by playing; every *further* art/game system waits on Phase 0.)
   pilot archetype) from versioned, name-keyed, forward-only recipes, one canonical skeleton per
   archetype. `server/` is the Go authoritative tier — its **zone tick core** has landed
   (`server/sim/`, the deterministic fixed-timestep simulation; `server/cmd/zone/`, the runnable
-  skeleton), with the Agones/Nakama/networking layers arriving as later children of the
+  skeleton), plus its **area-of-interest** query and enter/leave tracker (`server/sim/aoi.go` —
+  the seam the replication layer will consume, with its own cross-platform golden), with the
+  Agones/Nakama/networking layers arriving as later children of the
   server-foundation epic (#4); `deploy/` (platform manifests) arrives later per the roadmap.
 - **Run:** `godot client` (macOS: `/Applications/Godot.app/Contents/MacOS/Godot client`).
 - **Validate before every PR:**
