@@ -208,6 +208,41 @@ inside the pack) — so a pack-only release never masquerades as a phantom shell
     root-signed revocation list. A stolen old key therefore cannot sign a "newer" manifest a client will
     accept — the rotation is effective, not cosmetic.
 
+## Trust & recovery hardening (contract obligations the children implement)
+
+A signed-update system has a few more sharp edges the contract closes, so no *single* key compromise,
+stale cache, or engine change can strand or subvert a client:
+
+- **Anti-replay / freshness.** Every manifest carries a **monotonic, root-anchored `sequence`** and an
+  expiry; the client persists the highest sequence it has accepted and **refuses any older or expired
+  manifest**. A correctly-signed but stale manifest (CDN cache or replay) therefore can never
+  re-assert a retired protocol window and strand a returning player — no key compromise required.
+- **Root-authenticated revocation.** The revocation list and the signing-key certificate are **signed by
+  the offline root and monotonically versioned**, and validated *before* the manifest's own signature —
+  so an attacker holding a compromised signing key cannot simply omit its own id to keep issuing
+  accepted same-epoch manifests.
+- **Shell replacement is root-authorized.** A `shell.download` is authorized by the **offline root (or
+  platform code-signing)** and verified by the existing bootstrap — never by the short-lived signing
+  key. Otherwise a compromised signing key could install a hostile shell that replaces the baked root
+  itself, which no later rotation could recover; this is what keeps "signing-key compromise ≠ root
+  compromise" actually true.
+- **A rollback target must be runnable AND reachable, not merely retained.** A retained build is an
+  eligible rollback target only if it (a) **runs on the installed shell** — so a shell/pack pair that
+  changed engine/bindings incompatibly **rolls back atomically together**, or the pack declares a
+  shell-compat range (an upper bound, not just `min_shell`); (b) can **read** the candidate's writes —
+  its **authenticated read-ceiling** is published per retained target, distinct from `writes`, since an
+  expand release that *reads* v2 while still *writing* v1 is otherwise indistinguishable from one that
+  cannot read v2; and (c) **speaks a protocol the server still accepts** — a signed, server-compatible
+  **recovery artifact** is always published for dormant clients, or the candidate is applied only after
+  a verified intermediate promotion.
+- **Canonicalization pinned to a standard.** The signed bytes use **JCS (RFC 8785)** with shared test
+  vectors both CI and the client consume, so two conforming implementations never derive different bytes
+  and reject every otherwise-valid update.
+
+These are contract-level obligations; the pack pipeline (child 3), the updater (child 4), the protocol
+handshake (child 5), and key custody (child 6) implement them, and the manifest schema carries the
+`sequence`, per-target read-ceiling/compat, and root-signed revocation fields they need.
+
 ## How this upholds the product law
 
 - **No reset / no reinstall:** updates never wipe; the save is versioned/forward-only (#3); the flow

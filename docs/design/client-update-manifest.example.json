@@ -1,7 +1,9 @@
 {
   "schema": 1,
   "channel": "live",
+  "sequence": 42,
   "generated_at": "2026-07-17T20:00:00Z",
+  "not_after": "2026-07-18T20:00:00Z",
   "shell": {
     "current": "0.1.14",
     "min_supported": "0.1.0",
@@ -29,7 +31,9 @@
     "full": {
       "url": "https://updates.worldatruin.example/live/pack/worldatruin-0.1.14.full.pck",
       "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
-      "size": 0
+      "size": 0,
+      "read_ceiling": 1,
+      "shell_compat": { "min": "0.1.14", "max": "0.1.999" }
     },
     "deltas": [
       {
@@ -52,8 +56,13 @@
     "id": "signing-2026-07",
     "epoch": 1,
     "not_after": "2026-10-01T00:00:00Z",
-    "certificate": "BASE64_SIGNING_KEY_CERT_SIGNED_BY_THE_OFFLINE_ROOT_KEY",
-    "revoked_ids": []
+    "certificate": "BASE64_SIGNING_KEY_CERT_SIGNED_BY_THE_OFFLINE_ROOT_KEY"
   },
-  "signature": "BASE64_ED25519_SIGNATURE_OVER_THE_CANONICAL_JSON_WITH_signature_EXCLUDED"
+  "revocation": {
+    "version": 3,
+    "revoked_ids": [],
+    "root_signature": "BASE64_ED25519_ROOT_SIGNATURE_OVER_THE_REVOCATION_BLOCK"
+  },
+  "shell_authorization": "BASE64_ROOT_OR_PLATFORM_CODESIGN_AUTH_FOR_shell.download",
+  "signature": "BASE64_ED25519_JCS_RFC8785_SIGNATURE_OVER_THE_MANIFEST_WITH_signature_EXCLUDED"
 }
