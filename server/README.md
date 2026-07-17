@@ -24,6 +24,13 @@ zone/dungeon server:
     process can never spiral.
   - `World.Hash` — an order-stable digest that makes determinism testable, and
     a committed golden hash that pins the demo scenario's exact behaviour.
+  - `World.Interest` + `InterestTracker` — **area-of-interest**: which entities
+    each observer is told about (a horizontal-radius query, ascending-ID and
+    integer-only) and the per-tick **enter/leave** deltas a replication layer
+    needs. This is what upholds "nothing appears from nowhere" and keeps
+    replication tractable as zone density grows; a second committed golden pins
+    the demo scenario's event stream, proving AoI is cross-platform too. It is a
+    read-only query — never part of `Step`, so it cannot move the movement golden.
 - **`cmd/zone/`** — a runnable skeleton server. It boots the demo zone and either
   runs a fixed number of deterministic ticks (printing the state hash) or drives
   the loop from the wall clock.
@@ -40,9 +47,10 @@ go run ./cmd/zone -realtime -duration 3s   # drive the fixed loop from real time
 Later children of the server-foundation epic
 ([#4](https://github.com/devantler-tech/world-at-ruin/issues/4), the first child
 of the Phase 1 epic [#8](https://github.com/devantler-tech/world-at-ruin/issues/8)):
-networking and client prediction/reconciliation, area-of-interest, capsule-vs-capsule
-resolution, real navmesh geometry, the Agones SDK integration and GameServer
-health, the Nakama meta tier, and Postgres/CNPG persistence. The tick core lands
+networking and client prediction/reconciliation (the layer that will consume the
+area-of-interest deltas above), capsule-vs-capsule resolution, real navmesh
+geometry, the Agones SDK integration and GameServer health, the Nakama meta tier,
+and Postgres/CNPG persistence. The tick core and its area-of-interest query land
 first because everything else is built on top of a simulation that is already
 proven deterministic.
 
