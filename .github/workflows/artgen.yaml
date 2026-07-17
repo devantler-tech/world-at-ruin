@@ -5,6 +5,7 @@ on:
     paths:
       - "tools/artgen/**"
       - "client/assets/characters/humanoid_kit/**"
+      - "client/assets/characters/creature_kit/**"
       - ".github/workflows/artgen.yaml"
   workflow_dispatch:
 
@@ -63,4 +64,49 @@ jobs:
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: humanoid-kit
+          path: bake_a/
+
+  creature-kit:
+    name: Creature kit bake (determinism + contract)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # Artifacts are uploaded from this workspace — never persist the
+          # checkout token into it (zizmor: artipacked).
+          persist-credentials: false
+      - name: Install Blender (pinned, checksum-verified)
+        run: |
+          curl -fsSL -o blender.tar.xz "https://download.blender.org/release/Blender5.2/blender-${BLENDER_VERSION}-linux-x64.tar.xz"
+          echo "${BLENDER_SHA256}  blender.tar.xz" | sha256sum -c -
+          mkdir -p "${HOME}/blender"
+          tar -xJf blender.tar.xz -C "${HOME}/blender" --strip-components=1
+          echo "${HOME}/blender" >> "${GITHUB_PATH}"
+      - name: Bake twice — byte determinism
+        # The creature kit is authored ENTIRELY from Blender primitives (no MPFB,
+        # no downloaded asset packs), so it needs no bootstrap — just Blender.
+        run: |
+          mkdir -p bake_a bake_b
+          blender --background --python tools/artgen/creature_kit/bake.py -- "${PWD}/bake_a/ash_hound.glb" | tee bake_a.log
+          grep -q "RESULT: SUCCESS" bake_a.log
+          blender --background --python tools/artgen/creature_kit/bake.py -- "${PWD}/bake_b/ash_hound.glb" | tee bake_b.log
+          grep -q "RESULT: SUCCESS" bake_b.log
+          if ! diff -r bake_a bake_b; then
+            echo "::error::Two bakes of the same manifest differ — the creature kit is not deterministic"
+            exit 1
+          fi
+      - name: Fresh bake matches the committed structural contract
+        run: |
+          if ! diff -u client/assets/characters/creature_kit/ash_hound_report.txt bake_a/ash_hound_report.txt; then
+            echo "::error::Baked creature structure differs from the committed ash_hound_report.txt — re-bake and commit the kit with the manifest change"
+            exit 1
+          fi
+          if ! diff -u client/assets/characters/creature_kit/tints.json bake_a/tints.json; then
+            echo "::error::Baked tints registry differs from the committed tints.json — re-bake and commit the kit with the manifest change"
+            exit 1
+          fi
+      - name: Upload kit artifact (taste-gate input)
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: creature-kit
           path: bake_a/

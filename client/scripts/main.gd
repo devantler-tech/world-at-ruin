@@ -41,6 +41,14 @@ func _ready() -> void:
 	add_child(npcs)
 	npcs.populate(world)
 
+	# The first non-humanoid life: a seeded pack of ash hounds haunts the wild
+	# edges of the Reach (creature system pilot). Same seed, same pack, every
+	# boot — they cannot hunt yet; today they watch the treeline.
+	var hounds := CreatureSpawner.new()
+	hounds.name = "Creatures"
+	add_child(hounds)
+	hounds.populate(world)
+
 	_hud = Hud.new()
 	_hud.name = "Hud"
 	add_child(_hud)
@@ -57,7 +65,8 @@ func _ready() -> void:
 	# The smoke boot's POSITIVE marker: CI greps for this line, not merely
 	# for the absence of errors — a boot that never mounted the project must
 	# fail the check, not slip past it (the silent-no-op incident, 0.1.12).
-	print("BOOT_OK v%s — world built, %d people in the Reach" % [DevLog.VERSION, npcs.npc_names.size()])
+	print("BOOT_OK v%s — world built, %d people and %d hounds in the Reach" % [
+		DevLog.VERSION, npcs.npc_names.size(), hounds.creature_names.size()])
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("character_editor") and _creator == null:
