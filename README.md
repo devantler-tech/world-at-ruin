@@ -6,6 +6,12 @@ built headlessly, and grown in public over years. This is the newest and lowest-
 attention, and every visible change lands in the in-game dev log so progress can be watched by
 *playing*.
 
+**The fiction:** a far-future world laid waste by a mystical disaster, now at rebirth. You wake in
+a cave with nothing but ragged clothes and bare hands, fight your way to the surface, and step into
+a barren world coming back to life — wasteland beside lush zones, new lifeforms and monsters,
+humanoids and aliens, iron swords beside laser blades. Medieval-futuristic, and the medieval feel
+wins.
+
 > **Status: pre-alpha `v0.1.0` — "Ashfall Reach".** A first walkable slice: a procedurally
 > generated ruin field, the Wardens' shrine, and a wanderer with third-person movement. No combat,
 > no networking, no persistence yet — those arrive issue by issue via the
