@@ -203,6 +203,11 @@ static func load_class_budgets(path: String) -> Dictionary:
 		if not value.is_valid_int():
 			push_error("Ability: non-integer budget in '%s'" % line)
 			continue
+		if out.has(key):
+			# A duplicate key must NEVER silently raise a frozen budget: keep the
+			# first value, refuse the rest loudly. CI also rejects duplicate keys.
+			push_error("Ability: duplicate class budget key '%s' in %s" % [key, path])
+			continue
 		out[key] = value.to_int()
 	return out
 

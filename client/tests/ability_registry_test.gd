@@ -63,6 +63,10 @@ func _ready() -> void:
 	# mutable ability set — so raising a whole class can never pass unseen.
 	var budgets := Ability.load_class_budgets(BUDGETS)
 	_check(not budgets.is_empty(), "class power-budget ledger loads")
+	# One frozen budget per class: a duplicate key would let a later, higher line
+	# silently raise a class ceiling (CI enforces this against the base too).
+	_check(_ledger_keys(BUDGETS).size() == budgets.size(),
+		"class power-budget ledger has no duplicate class keys")
 	var infl := Ability.find_power_inflation(abilities, budgets)
 	_check(infl.is_empty(), "seed holds the no-power-inflation law: %s" % str(infl))
 	var dom := Ability.find_strict_dominance(abilities)
@@ -158,6 +162,23 @@ func _by_id(abilities: Array, id: String) -> Variant:
 
 func sid_shipped(shipped: PackedStringArray, id: String) -> bool:
 	return id in shipped
+
+
+## Every budget-line key (duplicates included), so the caller can compare its
+## count against the deduped Dictionary size to catch a repeated class key.
+func _ledger_keys(path: String) -> Array:
+	var out: Array = []
+	var f := FileAccess.open(path, FileAccess.READ)
+	if f == null:
+		return out
+	while not f.eof_reached():
+		var line := f.get_line().strip_edges()
+		if line == "" or line.begins_with("#"):
+			continue
+		var eq := line.find("=")
+		if eq >= 0:
+			out.append(line.substr(0, eq).strip_edges())
+	return out
 
 
 func _shipped_ids() -> PackedStringArray:

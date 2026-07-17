@@ -144,18 +144,59 @@ jobs:
             echo "::error::base commit $BASE_SHA not present in the checkout — cannot verify the power-budget ledger"
             exit 1
           fi
+          pairs() { grep -v '^[[:space:]]*#' | tr -d '[:space:]' | grep -v '^$'; }
+          # A duplicate key would let a second `class=130` line sit beside the
+          # frozen `class=100` (the base pair still present, so the change check
+          # below misses it) while the runtime loader takes the last value —
+          # silent inflation. One budget per class, always.
+          dupes=$(pairs < "$LEDGER" | cut -d= -f1 | sort | uniq -d)
+          if [ -n "$dupes" ]; then
+            echo "::error::Duplicate class budget key(s) in $LEDGER ($(echo "$dupes" | tr '\n' ' ')) — each class has exactly one frozen power budget"
+            exit 1
+          fi
           # Compare the set of non-comment, whitespace-stripped class=power pairs.
           # A CHANGED value (e.g. sword...=100 -> =130) leaves the base pair
           # absent from head, and a removed line likewise — both are caught;
           # a genuinely new class appears only in head and is allowed.
-          budgets() { grep -v '^[[:space:]]*#' | tr -d '[:space:]' | grep -v '^$' | sort -u; }
-          git show "$BASE_SHA:$LEDGER" 2>/dev/null | budgets > /tmp/budget-base
-          budgets < "$LEDGER" > /tmp/budget-head
+          pairs < "$LEDGER" | sort -u > /tmp/budget-head
+          git show "$BASE_SHA:$LEDGER" 2>/dev/null | pairs | sort -u > /tmp/budget-base
           changed=$(comm -23 /tmp/budget-base /tmp/budget-head)
           if [ -n "$changed" ]; then
             echo "::error::Class power budget(s) changed or removed in $LEDGER ($(echo "$changed" | tr '\n' ' ')) — the open-world arsenal never gains raw power (no-power-inflation law)"
             exit 1
           fi
+      - name: Shipped ability identity is frozen (migration transparency)
+        # shipped_abilities.txt anchors only the ID SET. But a later PR could keep
+        # an ID while rewriting its JSON's weapon/role/effect/telegraph — silently
+        # changing WHAT a mastered ability is (e.g. moving sword_cleave to another
+        # weapon), which the product law forbids without an announced, player-
+        # visible deprecation. CI is the anchor: for every ability file present at
+        # the BASE commit, its identity fields must be byte-identical at head.
+        # Numeric tuning (cast/cooldown/cost/range/power) stays mutable, governed
+        # by the sidegrade + frozen-budget guards.
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          if ! git cat-file -e "$BASE_SHA" 2>/dev/null; then
+            echo "::error::base commit $BASE_SHA not present — cannot verify ability identity"
+            exit 1
+          fi
+          identity() { jq -S -c '{id,weapon,role,effect,telegraph}'; }
+          fail=0
+          for f in $(git ls-tree -r --name-only "$BASE_SHA" -- client/abilities | grep -E '\.json$'); do
+            if [ ! -f "$f" ]; then
+              echo "::error::shipped ability file $f was removed — a mastered ability is never taken away (no-resets law); ship a new ability or an announced deprecation"
+              fail=1; continue
+            fi
+            base_id=$(git show "$BASE_SHA:$f" | identity)
+            head_id=$(identity < "$f")
+            if [ "$base_id" != "$head_id" ]; then
+              echo "::error::$f changed a shipped ability's identity (id/weapon/role/effect/telegraph): $base_id -> $head_id — identity is frozen; ship a new ability or an announced deprecation"
+              fail=1
+            fi
+          done
+          [ "$fail" = 0 ]
       - name: Install Godot (pinned, checksum-verified)
         run: |
           curl -fsSL -o godot.zip "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
