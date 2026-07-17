@@ -71,6 +71,12 @@ func _ready() -> void:
 		{},
 		{ "version": 1, "shapes": { "no_such_shape": 1.0 } },
 		{ "version": 1, "bone_girth": { "no_such_bone": 1.1 } },
+		# A real bone OUTSIDE the guarded set — accepting it would dodge the
+		# golden recipe's forward-compat guarantee.
+		{ "version": 1, "bone_girth": { "index_01_l": 1.1 } },
+		# An unknown field — a client that cannot render everything a recipe
+		# says must refuse, never render a half-truth.
+		{ "version": 1, "equipment": { "head": "hood" } },
 	]:
 		var built := CharacterFactory.build(bad)
 		if built != null:
