@@ -101,7 +101,10 @@ jobs:
       - name: Smoke boot the EXPORTED app (60 frames)
         # Boot the artifact itself, not the editor build — proves the shipped
         # .app actually starts (packed resources resolve, signature is valid).
+        # pipefail: without it, tee masks a nonzero exit from the app itself
+        # (a crash with no matching error line would upload a broken artifact).
         run: |
+          set -o pipefail
           unzip -q build/WorldAtRuin.zip -d build/app
           "build/app/World at Ruin.app/Contents/MacOS/World at Ruin" --headless --quit-after 60 2>&1 | tee exported-smoke.log
           if grep -qE "SCRIPT ERROR|^ERROR" exported-smoke.log; then

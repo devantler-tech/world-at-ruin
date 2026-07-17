@@ -5,11 +5,20 @@ class_name DevLog
 ## development progress by playing. Every change that a player could notice
 ## gets an entry here, newest first — open it in-game with F1.
 
-const VERSION := "0.1.3"
+const VERSION := "0.1.4"
 const CODENAME := "Ashfall Reach"
 
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
+	{
+		"version": "0.1.4",
+		"date": "2026-07-17",
+		"title": "Play it without the editor",
+		"notes": [
+			"World at Ruin is now a real, double-clickable Mac app: every build exports a signed universal .app you can download from the project's build page — no Godot editor required.",
+			"The build machinery smoke-boots the exported app itself before publishing it, so a download that would not start never ships.",
+		],
+	},
 	{
 		"version": "0.1.3",
 		"date": "2026-07-17",
