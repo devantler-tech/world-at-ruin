@@ -37,6 +37,23 @@ const TickHz = 30
 // a zone a tractable size. NewWorld rejects bounds outside it.
 const maxWorldExtentMM = 1_000_000
 
+// maxIntentComponentMM bounds each component of a stored movement intent.
+// Intent is the one untrusted, client-supplied field on an entity, so it is
+// sanitised the moment it enters the world (SetIntent, Add). The bound is
+// astronomically above any legitimate speed (1e9 mm/s = 1000 km/s) yet small
+// enough that:
+//   - HorizontalLen's X*X + Z*Z cannot overflow int64 (2e18 < 9.2e18), so a
+//     hostile client can neither crash the single authoritative zone loop via
+//     an isqrt panic on a wrapped-negative sum, nor slip past the speed cap via
+//     a wrapped-small positive length; and
+//   - clampSpeed's directional rescale v*maxSpeed/speed cannot overflow either
+//     (that multiply only runs when speed > maxSpeed, so both factors are then
+//     below ~1.41e9, product < 2e18).
+//
+// clampSpeed still caps the sanitised intent to the entity's real MaxSpeed, so
+// this bound never touches legitimate motion — it only defuses garbage input.
+const maxIntentComponentMM = 1_000_000_000
+
 // EntityID identifies a simulated actor. The step iterates entities in
 // ascending EntityID order (never Go map order, which is randomised), so the
 // tick result is independent of the order entities were added — a determinism
@@ -130,6 +147,7 @@ func (w *World) Add(e Entity) *Entity {
 	}
 	stored := e
 	stored.Pos = w.bounds.clamp(stored.Pos)
+	stored.Intent = sanitizeIntent(stored.Intent)
 	w.ents[e.ID] = &stored
 	w.order = append(w.order, e.ID)
 	sort.Slice(w.order, func(i, j int) bool { return w.order[i] < w.order[j] })
@@ -142,11 +160,26 @@ func (w *World) Get(id EntityID) *Entity { return w.ents[id] }
 // Count returns the number of entities in the world.
 func (w *World) Count() int { return len(w.order) }
 
-// SetIntent sets an entity's desired velocity (mm/s) for the next step. It is a
-// no-op for an unknown ID.
+// SetIntent sets an entity's desired velocity (mm/s) for the next step. The
+// intent is untrusted client input, so it is sanitised on the way in (see
+// sanitizeIntent) — a hostile or buggy client can never feed the simulation a
+// value that overflows the tick arithmetic. It is a no-op for an unknown ID.
 func (w *World) SetIntent(id EntityID, intent Vec3) {
 	if e := w.ents[id]; e != nil {
-		e.Intent = intent
+		e.Intent = sanitizeIntent(intent)
+	}
+}
+
+// sanitizeIntent clamps every component of an untrusted intent into
+// [-maxIntentComponentMM, maxIntentComponentMM], upholding the world invariant
+// that stored intent can never overflow HorizontalLen or clampSpeed. Direction
+// is preserved for any realistic value (all far below the bound); only
+// pathological garbage is trimmed, and clampSpeed then enforces the real speed.
+func sanitizeIntent(v Vec3) Vec3 {
+	return Vec3{
+		X: clampAxis(v.X, -maxIntentComponentMM, maxIntentComponentMM),
+		Y: clampAxis(v.Y, -maxIntentComponentMM, maxIntentComponentMM),
+		Z: clampAxis(v.Z, -maxIntentComponentMM, maxIntentComponentMM),
 	}
 }
 

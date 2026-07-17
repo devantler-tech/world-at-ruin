@@ -26,10 +26,13 @@ func (a Vec3) Sub(b Vec3) Vec3 { return Vec3{a.X - b.X, a.Y - b.Y, a.Z - b.Z} }
 // millimetres, floored to an integer. Vertical extent is ignored — movement
 // speed on the navmesh is a ground-plane quantity.
 //
-// Callers must keep |X| and |Z| within the world bounds (see maxWorldExtentMM):
-// X*X + Z*Z must not overflow int64. At the 1 km bound the largest squared sum
-// is 2e12, four million times below the int64 ceiling, so the invariant holds
-// with a wide margin.
+// It requires |X| and |Z| to be small enough that X*X + Z*Z fits in int64. The
+// simulation upholds that for every value it feeds here: positions are bounded
+// to ±maxWorldExtentMM and untrusted intent is clamped to ±maxIntentComponentMM
+// on ingestion (see sanitizeIntent), whose squared sum (2e18) stays four times
+// below the int64 ceiling. An unsanitised caller passing a near-MaxInt64
+// component would overflow — which is exactly why intent is sanitised at the
+// boundary rather than trusted here.
 func (a Vec3) HorizontalLen() int64 { return isqrt(a.X*a.X + a.Z*a.Z) }
 
 // isqrt returns floor(sqrt(n)) for n >= 0 using integer-only Newton iteration.

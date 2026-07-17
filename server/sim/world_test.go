@@ -1,6 +1,9 @@
 package sim
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 // demoGoldenHash pins the exact end state of the shared demo scenario after
 // demoGoldenTicks fixed steps. Because the whole simulation is integer-only,
@@ -131,6 +134,44 @@ func TestZeroMaxSpeedPins(t *testing.T) {
 	}
 	if got := w.Get(1).Pos; got != (Vec3{X: 100, Z: 200}) {
 		t.Fatalf("pinned entity moved to %+v", got)
+	}
+}
+
+// TestSetIntentSanitizesHostileInput is the regression guard for the untrusted-
+// intent overflow (Codex P1): a near-MaxInt64 intent component must neither
+// panic the single authoritative zone loop (an isqrt panic on an overflowed,
+// wrapped-negative X*X+Z*Z) nor bypass the speed cap (a wrapped-small positive
+// length). Every hostile value must be clamped so the entity still moves at most
+// its per-tick speed budget.
+func TestSetIntentSanitizesHostileInput(t *testing.T) {
+	perTick := int64(4000/TickHz) + 1 // 4 m/s cap, one mm of truncation slack
+	hostiles := []Vec3{
+		{X: math.MaxInt64},
+		{X: math.MaxInt64, Z: math.MaxInt64},
+		{X: math.MinInt64, Z: math.MinInt64},
+		{X: 9_000_000_000}, // 9e9: 9e9*9e9 alone overflows int64
+		{Y: math.MaxInt64},
+	}
+	for _, hostile := range hostiles {
+		w := NewWorld(DemoBounds)
+		w.Add(Entity{ID: 1, Pos: Vec3{}, MaxSpeed: 4000})
+		w.SetIntent(1, hostile)
+		w.Step() // must not panic
+		if got := w.Get(1).Pos.HorizontalLen(); got > perTick {
+			t.Fatalf("hostile intent %+v bypassed the speed cap: moved %d mm/tick, budget %d",
+				hostile, got, perTick)
+		}
+	}
+}
+
+// TestAddSanitizesHostileIntent covers the same overflow through the Add path
+// (an entity spawned with a hostile Intent field), not only SetIntent.
+func TestAddSanitizesHostileIntent(t *testing.T) {
+	w := NewWorld(DemoBounds)
+	w.Add(Entity{ID: 1, Pos: Vec3{}, Intent: Vec3{X: math.MaxInt64, Z: math.MaxInt64}, MaxSpeed: 4000})
+	w.Step() // must not panic
+	if got := w.Get(1).Pos.HorizontalLen(); got > int64(4000/TickHz)+1 {
+		t.Fatalf("Add did not sanitise a hostile intent: moved %d mm/tick", got)
 	}
 }
 
