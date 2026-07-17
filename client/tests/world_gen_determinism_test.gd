@@ -2,23 +2,27 @@ extends Node
 ## Regression test for the WorldGen procedural foundation (issue #58).
 ##
 ## Pins the product laws world_gen.gd states only in comments:
-##  1. DETERMINISM — "the same world every boot". A comprehensive world
-##     fingerprint (the FULL baked terrain grid + every ruin/shrine piece's
-##     placement, rotation and dimensions) is asserted three ways:
+##  1. DETERMINISM — "the same world every boot". A fingerprint of the WHOLE
+##     generated world (the full baked terrain grid + every terrain, ruin,
+##     shrine and cave node's placement, rotation and mesh dimensions) is
+##     asserted two ways:
 ##       (a) equal between two builds whose process-global RNG was seeded to
 ##           DIFFERENT values — proving generation ignores the global RNG (the
-##           realistic process-scoped source; Dictionaries iterate in insertion
-##           order and hash() is unsalted in Godot 4);
-##       (b) equal to a COMMITTED golden — a fresh boot each CI run must
-##           reproduce it, so any once-per-process source (a clock-seeded
-##           static, entropy) or an intentional world change turns it red. The
-##           generator has no such source today (WORLD_SEED/CAVE_SEED constants
-##           only), exactly as the server tier pins demoGoldenHash.
-##  2. RUIN KEEP-OUTS — every ruin piece, expanded by a conservative bounding
-##     radius (a colonnade spreads ~12 m from its site origin, and a piece's
-##     own mesh adds a few metres), stays clear of the shrine clearing AND the
-##     starter cave; sites lie within world bounds and number exactly
-##     RUIN_SITES.
+##           realistic process-scoped source; Godot 4 Dictionaries iterate in
+##           insertion order and hash() is unsalted);
+##       (b) equal to a COMMITTED golden — each CI run is a fresh boot, so any
+##           once-per-process source (a clock-seeded static, entropy) affecting
+##           ANY generated state, or an intentional world change, turns it red.
+##           Like the server sim's demoGoldenHash, a change here is a reviewed
+##           act. The whole fingerprint is millimetre / 1e-4-rad quantised, so
+##           it is stable across boots AND runners (the generator has no
+##           transcendental-heavy or FMA-sensitive path; placement even runs
+##           through cos/sin and still matches the Linux CI runner bit-for-bit).
+##  2. RUIN KEEP-OUTS — every ruin piece stays clear of the shrine clearing
+##     (checked against its true radius, since the clearing has no built-in
+##     margin) AND the starter cave (a centre test against cave_protects, whose
+##     3 m hull padding exceeds every piece's radius — a precondition the test
+##     asserts); sites lie within world bounds and number exactly RUIN_SITES.
 ##  3. surface_height_at CONTRACT — the NO_GROUND sentinel outside the terrain,
 ##     a FINITE value inside (a NaN would defeat both the sentinel and the
 ##     tolerance test), and node-exactness against the baked grid (height_at).
@@ -30,12 +34,17 @@ extends Node
 ## Run: godot --headless --path client res://tests/world_gen_determinism_test.tscn
 
 const HALF := WorldGen.SIZE / 2.0
-## The same world every boot — a golden over the RNG-derived ruin/shrine
-## placement (see _placement_fingerprint). Captured from a headless build;
-## regenerate deliberately (the test prints it in record mode) only when the
-## world is intentionally changed — like the server sim's demoGoldenHash, a
-## change here is a reviewed act.
-const GOLDEN_FINGERPRINT := "5f1dc3ab"
+## The same world every boot — a golden over ALL generated state (see
+## _world_fingerprint). Captured from a headless build; regenerate deliberately
+## (the test prints it in record mode) only when the world is intentionally
+## changed — like the server sim's demoGoldenHash, a change here is a reviewed
+## act.
+const GOLDEN_FINGERPRINT := "b99cc4ea"
+## world_gen's cave_protects pads the cave hull by this many metres. A piece
+## whose bounding radius is within that padding cannot reach the hull when its
+## centre is outside cave_protects, which makes the cheap centre test a SOUND
+## keep-out guard (the assertion below keeps that precondition true).
+const CAVE_KEEPOUT_PADDING := 3.0
 
 func _ready() -> void:
 	# Perturb the process-global RNG to DIFFERENT states before each build: a
@@ -44,27 +53,19 @@ func _ready() -> void:
 	var w1 := _build_world(0x5f3759df)
 	var w2 := _build_world(0x1eb54a3d)
 
-	# 1a. DETERMINISM — two builds agree on the WHOLE world (terrain + geometry).
+	# 1a. DETERMINISM — two builds agree on the WHOLE world.
 	var fp1 := _world_fingerprint(w1)
 	var fp2 := _world_fingerprint(w2)
 	if fp1 != fp2:
 		_fail("two builds disagree — determinism broken (%s vs %s)" % [fp1, fp2])
 		return
 
-	# 1b. DETERMINISM — placement matches the committed golden (cross-boot).
-	# The golden fingerprints only the seeded-RNG-derived placement (ruin/shrine
-	# x,z and rotations), NOT the noise-derived heights or generated mesh AABBs:
-	# RNG placement is bit-identical across platforms (PCG integers + IEEE
-	# add/mul, mm-quantised), so one committed value holds on every boot AND
-	# every runner, whereas a noise/mesh golden could diverge between the
-	# macOS capture and the Linux-only test runner (the float-determinism trap
-	# the server tier avoids by going integer-only).
-	var pf1 := _placement_fingerprint(w1)
+	# 1b. DETERMINISM — the whole world matches the committed golden (cross-boot).
 	if GOLDEN_FINGERPRINT == "__RECORD__":
-		print("RECORD placement golden: %s (full-world fp %s)" % [pf1, fp1])
-	elif pf1 != GOLDEN_FINGERPRINT:
-		_fail("placement fingerprint %s != golden %s — placement changed (intended? update the golden) or a boot-varying source crept in" %
-			[pf1, GOLDEN_FINGERPRINT])
+		print("RECORD world golden: %s" % fp1)
+	elif fp1 != GOLDEN_FINGERPRINT:
+		_fail("world fingerprint %s != golden %s — the world changed (intended? update the golden) or a boot-varying source crept in" %
+			[fp1, GOLDEN_FINGERPRINT])
 		return
 
 	# 2. RUIN KEEP-OUTS and exact count.
@@ -82,8 +83,8 @@ func _ready() -> void:
 		if absf(c.x) > HALF or absf(c.y) > HALF:
 			_fail("ruin site at (%.1f, %.1f) is outside the world bounds (+/-%.1f)" % [c.x, c.y, HALF])
 			return
-		# Each PIECE expanded by its bounding radius, not just its origin: a
-		# wall/fallen column can extend metres past its centre into the flat
+		# Each PIECE expanded by its bounding radius, against BOTH keep-outs: a
+		# wall/fallen column can reach metres past its centre into the flat
 		# shrine clearing or onto the cave mouth.
 		for piece: Node in site.get_children():
 			if not (piece is Node3D):
@@ -94,6 +95,14 @@ func _ready() -> void:
 			if pd - r < WorldGen.SHRINE_CLEAR_RADIUS:
 				_fail("a ruin piece near (%.1f, %.1f) reaches into the shrine clearing (%.1f - %.1f < %.1f)" %
 					[wp.x, wp.z, pd, r, WorldGen.SHRINE_CLEAR_RADIUS])
+				return
+			# cave_protects is the cave hull padded by CAVE_KEEPOUT_PADDING, so a
+			# piece whose centre is outside it cannot reach the hull as long as
+			# the piece's radius is within that padding — the centre test is then
+			# exact (no false positive on a piece resting in the safety buffer).
+			if r > CAVE_KEEPOUT_PADDING:
+				_fail("ruin piece radius %.1f m exceeds the cave keep-out padding %.1f m — the centre-based cave guard is no longer sound; widen it" %
+					[r, CAVE_KEEPOUT_PADDING])
 				return
 			if w1.cave_protects(wp.x, wp.z):
 				_fail("a ruin piece near (%.1f, %.1f) sits on the starter cave (cave_protects)" % [wp.x, wp.z])
@@ -143,23 +152,20 @@ func _build_world(salt: int) -> WorldGen:
 	return w
 
 
-## A comprehensive fingerprint of the whole generated world: the FULL baked
-## terrain grid (all (QUADS+1)^2 nodes), then every ruin and shrine piece's
-## world placement, rotation and mesh dimensions — so a leak that changes a
-## single unsampled vertex, a ruin's kind/offset/rotation, or a piece's size is
-## caught, not only a shifted site centre. Millimetre / 1e-4-rad quantisation
-## keeps it robust to platform float noise while catching any real drift.
+## A fingerprint of the WHOLE generated world: the full baked terrain grid
+## (all (QUADS+1)^2 nodes), then every direct child's subtree (terrain, ruins,
+## shrine AND the starter cave) captured as node placement, rotation and mesh
+## dimensions. Millimetre / 1e-4-rad quantised so it is robust to platform
+## float noise while catching any real drift (a shifted vertex, a changed ruin
+## kind/offset/rotation/size, or altered cave geometry).
 func _world_fingerprint(w: WorldGen) -> String:
 	var acc := PackedInt32Array()
 	var step := WorldGen.SIZE / WorldGen.QUADS
 	for iz in WorldGen.QUADS + 1:
 		for ix in WorldGen.QUADS + 1:
 			acc.append(roundi(w.surface_height_at(ix * step - HALF, iz * step - HALF) * 1000.0))
-	for site: Node3D in _ruin_sites(w):
-		_fingerprint_subtree(site, acc)
-	var shrine := w.get_node_or_null("WardensShrine")
-	if shrine != null:
-		_fingerprint_subtree(shrine, acc)
+	for child in w.get_children():
+		_fingerprint_subtree(child, acc)
 	return "%x" % hash(acc)
 
 
@@ -180,36 +186,6 @@ func _fingerprint_subtree(node: Node, acc: PackedInt32Array) -> void:
 		acc.append(roundi(s.z * 1000.0))
 	for child in node.get_children():
 		_fingerprint_subtree(child, acc)
-
-
-## The cross-platform-stable placement fingerprint used for the committed
-## golden: every ruin and shrine piece's world x, z and rotation — all derived
-## from the seeded RNGs (PCG integers + IEEE add/mul) and mm/1e-4-quantised, so
-## it is identical on every boot and every runner. Deliberately omits the
-## noise-derived y height and generated mesh AABBs, whose float math could
-## differ between the capture host and the Linux CI runner.
-func _placement_fingerprint(w: WorldGen) -> String:
-	var acc := PackedInt32Array()
-	var nodes: Array = _ruin_sites(w)
-	var shrine := w.get_node_or_null("WardensShrine")
-	if shrine != null:
-		nodes.append(shrine)
-	for n: Node in nodes:
-		_placement_of(n, acc)
-	return "%x" % hash(acc)
-
-
-## Appends the x, z and rotation of a node's whole Node3D subtree to `acc`.
-func _placement_of(node: Node, acc: PackedInt32Array) -> void:
-	if node is Node3D:
-		var n3 := node as Node3D
-		acc.append(roundi(n3.position.x * 1000.0))
-		acc.append(roundi(n3.position.z * 1000.0))
-		acc.append(roundi(n3.rotation.x * 10000.0))
-		acc.append(roundi(n3.rotation.y * 10000.0))
-		acc.append(roundi(n3.rotation.z * 10000.0))
-	for child in node.get_children():
-		_placement_of(child, acc)
 
 
 ## A conservative, rotation-invariant bounding radius for a ruin piece: half
