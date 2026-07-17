@@ -5,11 +5,21 @@ class_name DevLog
 ## development progress by playing. Every change that a player could notice
 ## gets an entry here, newest first — open it in-game with F1.
 
-const VERSION := "0.1.13"
+const VERSION := "0.1.14"
 const CODENAME := "Ashfall Reach"
 
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
+	{
+		"version": "0.1.14",
+		"date": "2026-07-17",
+		"title": "The world answers",
+		"notes": [
+			"The Reach is no longer a diorama you only walk through: look at something close and a prompt appears — press E (or a gamepad button) to act on it.",
+			"The Wardens' Shrine can be attuned: stand at its flame, attune it, and the Reach will return you there when you fall — instead of waking you back in the dark of the cave. (For now this lasts the session; it will remember across logouts once the save vault is sealed.)",
+			"The people finally speak: walk up to anyone and they have a first word for you — the same word, from the same person, every boot. It is a first line only; real conversations, and the errands they will carry, come later.",
+		],
+	},
 	{
 		"version": "0.1.13",
 		"date": "2026-07-17",

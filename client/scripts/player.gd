@@ -55,6 +55,7 @@ static func ensure_input_actions() -> void:
 		"sprint": [KEY_SHIFT],
 		"toggle_devlog": [KEY_F1, KEY_L],
 		"character_editor": [KEY_C],
+		"interact": [KEY_E],
 	}
 	for action: String in bindings:
 		if not InputMap.has_action(action):
@@ -63,6 +64,13 @@ static func ensure_input_actions() -> void:
 				var ev := InputEventKey.new()
 				ev.physical_keycode = key
 				InputMap.action_add_event(action, ev)
+			# The interaction verb is also on a gamepad face button — the
+			# controller path Phase 1 needs. Movement on the sticks is a
+			# later slice; reserving the one button now is cheap.
+			if action == "interact":
+				var joy := InputEventJoypadButton.new()
+				joy.button_index = JOY_BUTTON_X
+				InputMap.action_add_event(action, joy)
 
 func _ready() -> void:
 	ensure_input_actions()
@@ -250,6 +258,21 @@ func respawn() -> void:
 	velocity = Vector3.ZERO
 	face_toward(Vector3.ZERO)
 	respawned.emit()
+
+## Move where the wanderer wakes after a fall — attuning a respawn point (the
+## Wardens' Shrine) calls this. Until the save vault is sealed this lasts the
+## session; persistence rides on the forward-only save guard (#3).
+func set_respawn_point(point: Vector3) -> void:
+	spawn_point = point
+
+## The direction the wanderer is aiming, flattened to the ground plane — the
+## camera's look direction. The interaction controller uses it to decide what
+## the wanderer is facing.
+func aim_forward() -> Vector3:
+	var source := _cam_yaw if _cam_yaw != null else self
+	var f := -source.global_transform.basis.z
+	f.y = 0.0
+	return f.normalized() if f.length() > 0.0001 else Vector3(0, 0, -1)
 
 ## Point the camera (and body) toward a world position — used at spawn so the
 ## opening frame shows the shrine.

@@ -41,6 +41,7 @@ var _tint := FastNoiseLite.new()
 var _heights := PackedFloat32Array()
 var _brazier_light: OmniLight3D
 var _brazier_mesh: MeshInstance3D
+var _shrine_interactable: Interactable
 var _time := 0.0
 var _cave_spawn := Vector3.ZERO
 var _cave_transform := Transform3D.IDENTITY
@@ -435,3 +436,26 @@ func _build_shrine() -> void:
 	_brazier_light.shadow_enabled = true
 	_brazier_light.position = Vector3(0, ground + 1.8, 0)
 	shrine.add_child(_brazier_light)
+
+	# The shrine is the wanderer's first respawn point: attune it and the Reach
+	# returns you here when you fall. A wide, lenient reach — it is a landmark
+	# you stand at, not a fiddly prop you must line up on. main.gd wires the
+	# effect so the world stays free of Player knowledge.
+	_shrine_interactable = Interactable.new()
+	_shrine_interactable.name = "ShrineInteract"
+	_shrine_interactable.prompt = "Attune to the Wardens' Shrine"
+	_shrine_interactable.interact_range = 6.0
+	_shrine_interactable.facing_min = -0.35
+	_shrine_interactable.position = Vector3(0, ground + 1.0, 0)
+	shrine.add_child(_shrine_interactable)
+
+
+## The shrine's interaction handle — main.gd connects `interacted` to attunement.
+func shrine_interactable() -> Interactable:
+	return _shrine_interactable
+
+
+## A standable spot at the foot of the shrine to wake at once attuned; respawn
+## faces the flame (Player.face_toward(ZERO)), so you come to looking at it.
+func shrine_respawn_point() -> Vector3:
+	return Vector3(0, height_at(0, 5.0) + 0.1, 5.0)
