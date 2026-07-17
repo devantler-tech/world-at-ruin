@@ -12,45 +12,40 @@ package sim
 //     of the separation axis, so it is bit-identical on every host.
 //   - No physics engine. This is positional de-overlap (a geometric constraint
 //     solve), not impulse-based rigid-body dynamics: each overlapping pair is
-//     pushed apart by half its penetration. Capsule kinematics only.
-//   - Order-independent and deterministic. Each relaxation pass reads the
-//     positions frozen at the start of the pass and writes the accumulated
-//     displacements at the end, iterating pairs in ascending-ID order, so the
-//     result never depends on entity insertion order or Go map iteration order.
+//     pushed apart until it no longer overlaps. Capsule kinematics only.
+//   - Order-independent and deterministic. Pairs are resolved in ascending-ID
+//     order every pass, and entities are stored and iterated by ID, so the
+//     result never depends on entity insertion order or Go map iteration order
+//     — the determinism law's requirement — even though each resolve is applied
+//     immediately (Gauss-Seidel), which converges faster than a simultaneous
+//     pass and lets a blocked push transfer to the movable side within the pair.
 
-// separationIterations bounds the relaxation passes run per tick. A single pass
-// fully resolves any isolated pair; extra passes let a dense cluster converge
-// within one tick, while the fixed cap keeps the step's cost — and its result —
-// deterministic. A pass that moves nothing ends the loop early, so the common
-// case (nothing overlapping) costs one pair scan and no position writes, which
-// is what keeps separation a true no-op when actors are already apart.
-const separationIterations = 4
+// separationIterations bounds the relaxation passes run per tick. A pair with
+// at least one movable side is resolved exactly in a single pass; extra passes
+// let a dense cluster — where resolving one pair nudges an actor into another —
+// converge within one tick, while the fixed cap keeps the step's cost, and its
+// result, deterministic. A pass that moves nothing ends the loop early, so the
+// common case (nothing overlapping) costs one pair scan and no writes, which is
+// what keeps separation a true no-op when actors are already apart.
+const separationIterations = 8
 
-// separate resolves capsule overlap by simultaneous relaxation. Each pass
-// accumulates every overlapping pair's half-penetration push into a per-entity
-// displacement, then applies them all at once and re-clamps into the navmesh
-// bounds. Reading start-of-pass positions and writing end-of-pass makes the
-// result independent of the order pairs are visited (hence of insertion order),
-// which the determinism law requires.
+// separate resolves capsule overlap. Each pass walks every pair once in
+// ascending-ID order and pushes overlapping pairs apart (see resolvePair),
+// applying each fix immediately so later pairs in the same pass see it. Because
+// the traversal order is fixed by entity ID — never insertion or map order —
+// two worlds fed identical inputs settle to identical state, which the
+// determinism law requires.
 func (w *World) separate() {
 	n := len(w.order)
 	if n < 2 {
 		return
 	}
-	delta := make([]Vec3, n)
 	for range separationIterations {
-		for i := range delta {
-			delta[i] = Vec3{}
-		}
 		moved := false
 		for i := range n {
 			a := w.ents[w.order[i]]
 			for j := i + 1; j < n; j++ {
-				b := w.ents[w.order[j]]
-				pa, pb := separationPush(a, b)
-				if pa != (Vec3{}) || pb != (Vec3{}) {
-					delta[i] = delta[i].Add(pa)
-					delta[j] = delta[j].Add(pb)
+				if w.resolvePair(a, w.ents[w.order[j]]) {
 					moved = true
 				}
 			}
@@ -58,18 +53,16 @@ func (w *World) separate() {
 		if !moved {
 			return
 		}
-		for i, id := range w.order {
-			e := w.ents[id]
-			e.Pos = w.bounds.clamp(e.Pos.Add(delta[i]))
-		}
 	}
 }
 
-// separationPush returns the horizontal displacement to move a and b apart so
-// their capsules no longer overlap, split as half the penetration each. It
-// reads only the ground-plane (XZ) distance — capsules are vertical, so overlap
-// is a horizontal question — and never touches the vertical axis. The returned
-// vectors are zero when the pair is not overlapping (touching is allowed).
+// resolvePair pushes a and b apart so their capsules no longer overlap, and
+// reports whether it moved anything. It splits the penetration half to each
+// side, but — and this is the invariant that ordinary wall collisions depend on
+// — when one side's push is blocked by the navmesh bounds, the blocked part is
+// transferred to the other side, so a capsule pinned against a zone edge does
+// not leave its partner overlapping it. Overlap is a ground-plane (XZ) question
+// (capsules are vertical), so the vertical axis is never moved.
 //
 // Determinism details that matter:
 //   - The odd millimetre of an odd penetration is given to the higher-ID
@@ -83,36 +76,59 @@ func (w *World) separate() {
 // to maxWorldExtentMM, so the radius sum (<=2e5) and the scale product
 // d.component*magnitude (<=2e6 * 2e5 = 4e11) both stay far below the int64
 // ceiling.
-func separationPush(a, b *Entity) (Vec3, Vec3) {
+func (w *World) resolvePair(a, b *Entity) bool {
 	rsum := a.Radius + b.Radius
 	if rsum <= 0 {
-		return Vec3{}, Vec3{} // point capsules have no extent to separate
+		return false // point capsules have no extent to separate
 	}
 	d := Vec3{X: a.Pos.X - b.Pos.X, Z: a.Pos.Z - b.Pos.Z}
 	dist := d.HorizontalLen()
 	if dist >= rsum {
-		return Vec3{}, Vec3{} // not overlapping
+		return false // not overlapping (touching is allowed)
 	}
 	pen := rsum - dist
-	half := pen / 2
-	extra := pen - 2*half // 0 or 1, awarded to the higher-ID entity
+	half := pen / 2        // floor half → the lower-ID side
+	ceilHalf := pen - half // ceil half (the odd mm) → the higher-ID side
 
-	aMag, bMag := half, half
-	if a.ID > b.ID {
-		aMag += extra
-	} else {
-		bMag += extra
-	}
-
+	// ua, ub are the intended (pre-clamp) moves: a along +d, b along -d.
+	var ua, ub Vec3
 	if dist == 0 {
 		// Coincident: pick the axis from the IDs so the result is stable.
 		if a.ID > b.ID {
-			return Vec3{X: aMag}, Vec3{X: -bMag}
+			ua, ub = Vec3{X: ceilHalf}, Vec3{X: -half}
+		} else {
+			ua, ub = Vec3{X: -half}, Vec3{X: ceilHalf}
 		}
-		return Vec3{X: -aMag}, Vec3{X: bMag}
+	} else {
+		aMag, bMag := half, ceilHalf
+		if a.ID > b.ID {
+			aMag, bMag = ceilHalf, half
+		}
+		ua = scaleHorizontal(d, aMag, dist)
+		ub = scaleHorizontal(d, -bMag, dist)
 	}
-	// a moves along +d, b along -d, each scaled to its own magnitude.
-	return scaleHorizontal(d, aMag, dist), scaleHorizontal(d, -bMag, dist)
+
+	// Apply with bounds clamping, transferring any push a bound blocks to the
+	// other side so the pair still fully separates against a wall.
+	wantA := a.Pos.Add(ua)
+	newA := w.bounds.clamp(wantA)
+	blockedA := wantA.Sub(newA) // the part of a's move the bound rejected
+
+	// b takes its own push plus whatever a could not move (subtracting a's
+	// blocked +d displacement pushes b further along -d).
+	wantB := b.Pos.Add(ub).Sub(blockedA)
+	newB := w.bounds.clamp(wantB)
+	blockedB := wantB.Sub(newB)
+
+	// If b is also blocked (both pinned, e.g. a corner narrower than the pair),
+	// hand the remainder back to a. Anything still unresolved is a genuinely
+	// impossible placement and is left for the next pass / tick.
+	if blockedB != (Vec3{}) {
+		newA = w.bounds.clamp(newA.Sub(blockedB))
+	}
+
+	a.Pos, b.Pos = newA, newB
+	return true
 }
 
 // scaleHorizontal returns the ground-plane vector d/|d| * mag in integer

@@ -39,6 +39,51 @@ func TestSeparationPushesOverlappingApart(t *testing.T) {
 	}
 }
 
+// TestSeparationResolvesAgainstWall is the regression guard for the wall-clamp
+// invariant break (Codex P1): when one capsule is pinned against a zone bound,
+// its half of the separation push is otherwise discarded by the bounds clamp
+// and the pair stays overlapping. The movable side must absorb the blocked
+// push so the pair still fully separates, with the pinned actor left on the
+// wall. Codex's exact counterexample: east bound X=1000, radius-500 actors at
+// X=500 and X=1000.
+func TestSeparationResolvesAgainstWall(t *testing.T) {
+	b := Bounds{Min: Vec3{X: -3000, Y: 0, Z: -2000}, Max: Vec3{X: 1000, Y: 0, Z: 2000}}
+	w := NewWorld(b)
+	w.Add(Entity{ID: 1, Pos: Vec3{X: 500}, MaxSpeed: 0, Radius: 500})
+	w.Add(Entity{ID: 2, Pos: Vec3{X: 1000}, MaxSpeed: 0, Radius: 500}) // pinned at the east wall
+	w.Step()
+	if gap := horizontalGap(w.Get(1), w.Get(2)); gap < 1000 {
+		t.Fatalf("wall-pinned pair still overlaps: gap=%d, want >= 1000", gap)
+	}
+	if x := w.Get(2).Pos.X; x != 1000 {
+		t.Fatalf("wall-pinned entity moved off the wall: X=%d, want 1000", x)
+	}
+	if x := w.Get(1).Pos.X; x != 0 {
+		t.Fatalf("movable entity did not absorb the full push: X=%d, want 0", x)
+	}
+}
+
+// TestSeparationHoldsInvariantAgainstWallWhilePushed is the dynamic half of the
+// same P1: an actor continually driving into a wall-pinned actor must never
+// sustain an overlap — every tick ends with the pair at least the radius sum
+// apart, and the pinned actor never leaves the wall.
+func TestSeparationHoldsInvariantAgainstWallWhilePushed(t *testing.T) {
+	b := Bounds{Min: Vec3{X: -3000, Y: 0, Z: -1000}, Max: Vec3{X: 1000, Y: 0, Z: 1000}}
+	w := NewWorld(b)
+	w.Add(Entity{ID: 1, Pos: Vec3{X: -200}, MaxSpeed: 6000, Radius: 500})
+	w.Add(Entity{ID: 2, Pos: Vec3{X: 1000}, MaxSpeed: 0, Radius: 500}) // pinned at the east wall
+	for i := range 200 {
+		w.SetIntent(1, Vec3{X: 500000}) // slam east into the pinned actor every tick
+		w.Step()
+		if gap := horizontalGap(w.Get(1), w.Get(2)); gap < 1000 {
+			t.Fatalf("invariant broke against the wall at tick %d: gap=%d, want >= 1000", i+1, gap)
+		}
+		if x := w.Get(2).Pos.X; x != 1000 {
+			t.Fatalf("pinned actor pushed off the wall at tick %d: X=%d", i+1, x)
+		}
+	}
+}
+
 // TestSeparationExactOverlapDeterministic covers the degenerate case where two
 // actors share the exact same millimetre: the separation axis is undefined, so
 // it must be chosen from the IDs (higher ID east) and the two must end apart.
@@ -192,7 +237,7 @@ func TestSeparationHostileRadiusNoOverflow(t *testing.T) {
 // separation axis, integer push scaling), not just for movement. Changing it is
 // a deliberate, reviewed act.
 const separationGoldenTicks = 300
-const separationGoldenHash uint64 = 0x8b5546de5dada48a
+const separationGoldenHash uint64 = 0x162fb0407ebbb4c5
 
 // buildSeparationGoldenWorld seeds eight radius-700 actors packed so every one
 // overlaps its neighbours (MaxSpeed 0, no intent — only the separation pass
