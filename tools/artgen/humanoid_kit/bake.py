@@ -84,7 +84,17 @@ def main() -> None:
     with open(os.path.join(KIT_DIR, "manifest.json"), encoding="utf-8") as f:
         manifest = json.load(f)
 
-    bpy.ops.preferences.addon_enable(module="bl_ext.blender_org.mpfb")
+    # The module path depends on which extension repo MPFB was installed
+    # into: extensions.blender.org installs land in blender_org, the pinned
+    # bootstrap.sh install-file lands in user_default (CI).
+    for module in ("bl_ext.user_default.mpfb", "bl_ext.blender_org.mpfb"):
+        try:
+            bpy.ops.preferences.addon_enable(module=module)
+            break
+        except Exception:
+            continue
+    else:
+        raise RuntimeError("MPFB is not installed in any known extension repo — run bootstrap.sh")
     HumanService = dynamic_import("mpfb.services.humanservice", "HumanService")
     TargetService = dynamic_import("mpfb.services.targetservice", "TargetService")
     LocationService = dynamic_import("mpfb.services.locationservice", "LocationService")
