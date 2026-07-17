@@ -9,6 +9,7 @@ const COL_DIM := Color(0.88, 0.84, 0.76, 0.55)
 const COL_EMBER := Color(1.0, 0.62, 0.25)
 
 var _toast: Label
+var _prompt: Label
 var _devlog_panel: PanelContainer
 var _toast_tween: Tween
 
@@ -16,6 +17,7 @@ func _ready() -> void:
 	_build_title()
 	_build_hints()
 	_build_toast()
+	_build_prompt()
 	_build_devlog()
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -49,7 +51,7 @@ func _build_title() -> void:
 
 func _build_hints() -> void:
 	var hints := Label.new()
-	hints.text = "WASD move · Shift sprint · Space jump · mouse look · C reshape character · L or F1 dev log · Esc release mouse"
+	hints.text = "WASD move · Shift sprint · Space jump · E interact · mouse look · C reshape character · L or F1 dev log · Esc release mouse"
 	hints.add_theme_font_size_override("font_size", 12)
 	hints.add_theme_color_override("font_color", COL_DIM)
 	hints.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
@@ -67,6 +69,36 @@ func _build_toast() -> void:
 	_toast.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_toast.position.y = 120
 	add_child(_toast)
+
+## The interaction prompt: what pressing E would do right now, shown just above
+## the control hints while something is in reach. The InteractionController
+## drives it via show_prompt/hide_prompt.
+func _build_prompt() -> void:
+	_prompt = Label.new()
+	_prompt.text = ""
+	_prompt.visible = false
+	_prompt.add_theme_font_size_override("font_size", 15)
+	_prompt.add_theme_color_override("font_color", COL_EMBER)
+	_prompt.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	_prompt.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_prompt.position.y -= 64
+	add_child(_prompt)
+
+func show_prompt(text: String) -> void:
+	_prompt.text = text
+	_prompt.visible = true
+
+func hide_prompt() -> void:
+	_prompt.text = ""
+	_prompt.visible = false
+
+## Read-only inspection of the interaction prompt (used by the regression test
+## to confirm the on-screen prompt actually appears).
+func prompt_text() -> String:
+	return _prompt.text if _prompt != null else ""
+
+func prompt_shown() -> bool:
+	return _prompt != null and _prompt.visible
 
 func _build_devlog() -> void:
 	_devlog_panel = PanelContainer.new()
