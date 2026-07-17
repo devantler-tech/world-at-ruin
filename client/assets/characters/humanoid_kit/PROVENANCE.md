@@ -2,8 +2,9 @@
 
 The canonical humanoid for the character system
 ([#24](https://github.com/devantler-tech/world-at-ruin/issues/24)): base body, `game_engine` rig
-(53 deform bones), 21 named morph shapes + 3 `equip_hide_*` shapes, and four skinned equipment
-pieces under `equipment/`, **baked entirely by committed code** —
+(53 deform bones), 29 named morph shapes (21 targets + 8 gender/phenotype macro axes) + 3
+`equip_hide_*` shapes, and four skinned equipment pieces under `equipment/`, **baked entirely by
+committed code** —
 `tools/artgen/humanoid_kit/bake.py` driven by `manifest.json`, reproducible byte-for-byte with
 the pinned toolchain. `kit_report.txt` is the structural contract checked by the
 `humanoid_kit_test` regression test and the artgen workflow; `equipment/equipment.json` is the
@@ -20,8 +21,13 @@ runtime registry `CharacterFactory` composes from.
   whatsoever over output … We regard these things as your data." The GPL covers the tools
   (Blender, MPFB), which are downloaded at bake time and never enter this tree.
 - **Baked:** 2026-07-17 on macOS; body GLB sha256
-  `09e0bad05461213c8dd59badbb40bc41221f18e73ddc3be03bb3ea49aa9f473f` (2 780 372 bytes).
+  `677fa03fcf09b467985ac4cfbf19e51b2a870f8a1e5c674f956fc877e33cdfcd` (5 181 888 bytes).
   Regenerate with the commands in `tools/artgen/humanoid_kit/README.md`.
+- **Macro axes** (`body_female`, `body_male`, `body_aged`, `body_heavy`, `body_slim`,
+  `phenotype_african`, `phenotype_asian`, `phenotype_caucasian`) are diffed from second MPFB
+  humans with one macro pushed off the defaults — same CC0 MakeHuman macro-target data, same
+  licence chain. The phenotype axes are whole-body morphs (the macro grid is full-body), each
+  re-grounded at the feet.
 
 ## Equipment pieces (`equipment/*.glb`)
 

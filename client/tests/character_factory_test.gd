@@ -15,7 +15,7 @@ extends Node
 
 const GOLDEN := "res://tests/data/golden_recipe_v1.json"
 const GOLDEN_V2 := "res://tests/data/golden_recipe_v2.json"
-const PRESETS := ["res://recipes/wanderer.json", "res://recipes/villager.json", "res://recipes/brute.json"]
+const PRESETS := ["res://recipes/wanderer.json", "res://recipes/villager.json", "res://recipes/elder.json", "res://recipes/brute.json"]
 
 
 func _ready() -> void:

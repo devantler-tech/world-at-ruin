@@ -1,5 +1,5 @@
 {
-  "kit_version": 2,
+  "kit_version": 3,
   "comment": "Humanoid kit bake manifest — the single source of truth for what the kit contains. Changing this file (or bake.py) is the ONLY sanctioned way the kit changes; the artgen CI workflow re-bakes and compares. Shape, slot and equipment-piece names are the stable, forward-only public API consumed by recipes (no-resets law: never rename or remove a shipped name, only add).",
   "tools": {
     "blender": "5.2.0",
@@ -37,6 +37,17 @@
     { "name": "jaw_wide", "targets": ["chin/chin-width-incr.target.gz"] },
     { "name": "nose_strong", "targets": ["nose/nose-volume-incr.target.gz"] },
     { "name": "nose_hump", "targets": ["nose/nose-hump-incr.target.gz"] }
+  ],
+  "macro_shapes_comment": "Gender/phenotype axes: whole-body shapes baked by DIFFING a second MPFB human (one macro pushed off its 0.5/equal-mix default) against the committed base. MakeHuman's macro system is an interpolation grid, not single targets, so the diff uses MPFB's own macro math and stays exact. Height/proportions are deliberately absent (frame is bone-scale territory, PR #23 laws); age only goes UP from the adult base.",
+  "macro_shapes": [
+    { "name": "body_female", "macro": { "gender": 1.0 } },
+    { "name": "body_male", "macro": { "gender": 0.0 } },
+    { "name": "body_aged", "macro": { "age": 0.9 } },
+    { "name": "body_heavy", "macro": { "weight": 1.0 } },
+    { "name": "body_slim", "macro": { "weight": 0.0 } },
+    { "name": "phenotype_african", "macro": { "race": { "african": 1.0, "asian": 0.0, "caucasian": 0.0 } } },
+    { "name": "phenotype_asian", "macro": { "race": { "asian": 1.0, "caucasian": 0.0, "african": 0.0 } } },
+    { "name": "phenotype_caucasian", "macro": { "race": { "caucasian": 1.0, "asian": 0.0, "african": 0.0 } } }
   ],
   "equipment_comment": "Equipment pieces are CC0 MHCLO assets from the official MakeHuman 01-series CC0 packs (the _cc0.zip variants — the CC-BY variants are policy-excluded). Packs are downloaded pinned+checksummed by bootstrap.sh, never committed; each piece bakes to its own skinned GLB sharing the one canonical skeleton, with a clothes blend shape per kit shape (refit under that morph) so equipment follows the body. delete_verts become an equip_hide_<name> shape on the BODY that tucks covered skin inward.",
   "equipment_packs": {
