@@ -1,20 +1,17 @@
 extends Node
 ## Regression test for CharacterFactory (character system stage 2, issue #24).
-##  1. THE GOLDEN RECIPE BUILDS (the no-resets guard): tests/data/
-##     golden_recipe_v1.json uses every kit shape and every bone-op field
-##     that has ever shipped — if it fails to build, a shipped character
-##     recipe has been broken. It may only ever gain entries.
-##  2. Determinism: same recipe twice ⇒ identical fingerprint; the three
-##     res://recipes/ presets are pairwise distinct.
-##  3. TRS law: after bone ops, global pose == global rest on both hands
+##  1. Distinctness: the res://recipes/ presets are pairwise distinct.
+##  2. TRS law: after bone ops, global pose == global rest on both hands
 ##     (shear in a rest decomposes lossily and the skin silently lies).
-##  4. Validation fails loudly: future version, missing version, unknown
+##  3. Validation fails loudly: future version, missing version, unknown
 ##     shape, unknown bone.
+## The golden-fixture build/zero-loss/determinism law lives in
+## save_fixture_guard_test (#36); the v1 golden is used here only as the
+## heaviest bone-op input for the TRS check.
 ##
 ## Run: godot --headless --path client res://tests/character_factory_test.tscn
 
 const GOLDEN := "res://tests/data/golden_recipe_v1.json"
-const GOLDEN_V2 := "res://tests/data/golden_recipe_v2.json"
 const PRESETS := ["res://recipes/wanderer.json", "res://recipes/villager.json", "res://recipes/elder.json", "res://recipes/brute.json"]
 
 
@@ -24,30 +21,9 @@ func _ready() -> void:
 		_fail("golden recipe unreadable")
 		return
 	var golden_a := CharacterFactory.build(golden)
-	var golden_b := CharacterFactory.build(golden)
-	if golden_a == null or golden_b == null:
-		_fail("THE GOLDEN RECIPE NO LONGER BUILDS — a shipped shape or bone name was removed (no-resets law)")
+	if golden_a == null:
+		_fail("golden recipe failed to build (the build law itself is save_fixture_guard_test's)")
 		return
-	var fp_golden_a := CharacterFactory.fingerprint(golden_a)
-	if fp_golden_a != CharacterFactory.fingerprint(golden_b):
-		_fail("same recipe produced different characters")
-		return
-
-	# The v2 golden guards the version-2 format (equipment) the same way.
-	var golden_v2 = CharacterFactory.load_recipe(GOLDEN_V2)
-	if golden_v2 == null:
-		_fail("golden v2 recipe unreadable")
-		return
-	var golden_v2_a := CharacterFactory.build(golden_v2)
-	var golden_v2_b := CharacterFactory.build(golden_v2)
-	if golden_v2_a == null or golden_v2_b == null:
-		_fail("THE GOLDEN V2 RECIPE NO LONGER BUILDS — a shipped shape, bone, slot or piece was removed (no-resets law)")
-		return
-	if CharacterFactory.fingerprint(golden_v2_a) != CharacterFactory.fingerprint(golden_v2_b):
-		_fail("same v2 recipe produced different characters")
-		return
-	golden_v2_a.free()
-	golden_v2_b.free()
 
 	var preset_fingerprints := {}
 	for path in PRESETS:
@@ -103,8 +79,7 @@ func _ready() -> void:
 			return
 
 	golden_a.free()
-	golden_b.free()
-	print("TEST PASS — golden holds, %d presets distinct, %s" % [PRESETS.size(), fp_golden_a])
+	print("TEST PASS — %d presets distinct, TRS law holds, validation refuses" % PRESETS.size())
 	get_tree().quit(0)
 
 

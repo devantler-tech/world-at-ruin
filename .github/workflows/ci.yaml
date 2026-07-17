@@ -54,6 +54,22 @@ jobs:
           if grep -qE "SCRIPT ERROR|^ERROR" smoke.log import.log; then
             echo "::error::Errors during headless boot"; exit 1
           fi
+      - name: Save-fixture guard (every historical save loads with zero loss)
+        # THE product-law surface (no-resets law, issue #36): its own named
+        # step so a stranded save fails loudly here, never buried in the
+        # per-stage loop below.
+        run: |
+          set -o pipefail
+          if ! timeout 180 godot --headless --path client "res://tests/save_fixture_guard_test.tscn" 2>&1 | tee save_fixture_guard_test.log; then
+            echo "::error::save_fixture_guard_test failed or timed out (180s) — a historical save no longer loads with zero loss"
+            tail -40 save_fixture_guard_test.log
+            exit 1
+          fi
+          if ! grep -q "TEST PASS" save_fixture_guard_test.log; then
+            echo "::error::save_fixture_guard_test exited 0 without reporting PASS"
+            tail -40 save_fixture_guard_test.log
+            exit 1
+          fi
       - name: Regression tests
         run: |
           set -o pipefail
