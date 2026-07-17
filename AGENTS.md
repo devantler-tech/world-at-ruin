@@ -237,8 +237,10 @@ can be watched by playing; every *further* art/game system waits on Phase 0.)
   archetype. `server/` is the Go authoritative tier — its **zone tick core** has landed
   (`server/sim/`, the deterministic fixed-timestep simulation; `server/cmd/zone/`, the runnable
   skeleton), plus its **area-of-interest** query and enter/leave tracker (`server/sim/aoi.go` —
-  the seam the replication layer will consume, with its own cross-platform golden), with the
-  Agones/Nakama/networking layers arriving as later children of the
+  the seam the replication layer consumes, with its own cross-platform golden) and the
+  **replication snapshot** built on it (`server/sim/snapshot.go` — per-observer state plus the
+  minimal spawn/update/despawn delta, its own golden pinning the state stream), with the
+  networking transport and the Agones/Nakama layers arriving as later children of the
   server-foundation epic (#4); `deploy/` (platform manifests) arrives later per the roadmap.
 - **Run:** `godot client` (macOS: `/Applications/Godot.app/Contents/MacOS/Godot client`).
 - **Validate before every PR:**

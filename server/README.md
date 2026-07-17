@@ -40,6 +40,14 @@ zone/dungeon server:
     replication tractable as zone density grows; a second committed golden pins
     the demo scenario's event stream, proving AoI is cross-platform too. It is a
     read-only query — never part of `Step`, so it cannot move the movement golden.
+  - `World.Snapshot` + `SnapshotTracker` — the **replication payload** built on
+    AoI: a per-observer snapshot is the state (id, position, radius) of every
+    in-interest entity, and the tracker diffs consecutive snapshots into the
+    minimal per-tick **spawn / update / despawn** delta, so a client's bandwidth
+    scales with change, not with zone population. A third committed golden pins
+    the demo scenario's delta stream — folding in moved-entity state, so it pins
+    the replicated *state*, not just membership — proving it is cross-platform.
+    Read-only, never part of `Step`.
 - **`cmd/zone/`** — a runnable skeleton server. It boots the demo zone and either
   runs a fixed number of deterministic ticks (printing the state hash) or drives
   the loop from the wall clock.
@@ -56,12 +64,13 @@ go run ./cmd/zone -realtime -duration 3s   # drive the fixed loop from real time
 Later children of the server-foundation epic
 ([#4](https://github.com/devantler-tech/world-at-ruin/issues/4), the first child
 of the Phase 1 epic [#8](https://github.com/devantler-tech/world-at-ruin/issues/8)):
-networking and client prediction/reconciliation (the layer that will consume the
-area-of-interest deltas above), real navmesh geometry, the Agones SDK integration
-and GameServer health, the Nakama meta tier, and Postgres/CNPG persistence. The
-tick core, its capsule-vs-capsule separation, and its area-of-interest query land
-first because everything else is built on top of a simulation that is already
-proven deterministic.
+the networking **transport** and client prediction/reconciliation (the snapshot
+*payload* above is ready; the wire encoding, sockets, and the client-side apply
+of the spawn/update/despawn deltas are the next layer), real navmesh geometry,
+the Agones SDK integration and GameServer health, the Nakama meta tier, and
+Postgres/CNPG persistence. The tick core, its capsule-vs-capsule separation, and
+its area-of-interest and snapshot queries land first because everything else is
+built on top of a simulation that is already proven deterministic.
 
 ## Validate
 
