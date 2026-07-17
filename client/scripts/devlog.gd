@@ -5,11 +5,22 @@ class_name DevLog
 ## development progress by playing. Every change that a player could notice
 ## gets an entry here, newest first — open it in-game with F1.
 
-const VERSION := "0.1.3"
+const VERSION := "0.1.4"
 const CODENAME := "Ashfall Reach"
 
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
+	{
+		"version": "0.1.4",
+		"date": "2026-07-17",
+		"title": "Bodies from recipes",
+		"notes": [
+			"The character system exists. One canonical human body is now baked entirely by committed code — and every person in this world will be a RECIPE: a small text file of named sliders (broader shoulders, heavier gut, squarer jaw...) that reshapes that one body.",
+			"Three first recipes stand in the gallery (scenes/recipes.tscn — the taste gate): a wanderer, a villager, and a brute. Same skeleton, same mesh, three different people.",
+			"Recipes are forever: a golden recipe exercising every slider is locked into the tests — if a future change would break a character someone made, the build fails before it can.",
+			"Clay-grey for now, and standing in a sculptor's pose: skin, hair and clothes are later stages of the system.",
+		],
+	},
 	{
 		"version": "0.1.3",
 		"date": "2026-07-17",
