@@ -5,11 +5,22 @@ class_name DevLog
 ## development progress by playing. Every change that a player could notice
 ## gets an entry here, newest first — open it in-game with F1.
 
-const VERSION := "0.1.5"
+const VERSION := "0.1.6"
 const CODENAME := "Ashfall Reach"
 
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
+	{
+		"version": "0.1.6",
+		"date": "2026-07-17",
+		"title": "The cave becomes a cave",
+		"notes": [
+			"The starter cave was reborn (the owner's verdict on the old one: tinfoil in brown). It is now a SYSTEM: wake in a deep chamber, follow torchlight up a winding tunnel past a side passage that promises deeper dark, and step out through a stone doorway in a rock outcrop.",
+			"The rock itself is new: smooth, flowing walls with warm sandstone strata (a procedural shader — still no textures, only arithmetic), floors silted with sediment, torches flickering along the spine.",
+			"The mouth is dressed the way old caves are: an arch of rock, leaning jamb stones, fallen slabs — and the land dips into a hollow at the doorway so cave and overworld meet honestly, with no loading screen and no seams that lie.",
+			"The generator behind it can grow more systems — deeper, branchier, elsewhere — from a seed. This one is only the first.",
+		],
+	},
 	{
 		"version": "0.1.5",
 		"date": "2026-07-17",

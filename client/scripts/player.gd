@@ -31,6 +31,9 @@ var ground_height_provider: Callable
 ## mouse capture are ignored, but gravity, sliding and the anti-embed
 ## safety net keep running (the body must stay honest while being reshaped).
 var control_enabled := true
+## Where being below the heightfield is legitimate (inside cave systems) —
+## set by main.gd to WorldGen.cave_protects; the anti-embed net stands down.
+var underground_provider: Callable
 ## Emitted when the world reclaims the wanderer (for HUD flavour text).
 signal respawned
 
@@ -222,6 +225,9 @@ const EMBED_TICKS_TO_FIRE := 10
 func _unstick_from_ground() -> void:
 	if not ground_height_provider.is_valid():
 		return
+	if underground_provider.is_valid() and underground_provider.call(global_position.x, global_position.z):
+		_embedded_ticks = 0
+		return  # Inside a cave system: below-the-heightfield is the point.
 	var ground: float = ground_height_provider.call(global_position.x, global_position.z)
 	if ground < NO_GROUND_BELOW:
 		_embedded_ticks = 0
