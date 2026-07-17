@@ -14,6 +14,12 @@ var _player: Player
 var _hud: Hud
 var _creator: CharacterCreator
 var _interaction: InteractionController
+## Set when legacy save recovery could not restore a stranded character. While
+## true, ALL character-creator entry is locked (auto first-run AND the manual
+## editor key): applying a new character would write the default save and orphan
+## the stranded backup forever (no-resets law). Cleared only by a boot that
+## recovers or needs no recovery.
+var _save_blocked := false
 
 func _ready() -> void:
 	_build_environment()
@@ -78,9 +84,11 @@ func _ready() -> void:
 	# at a .test-backup and die before restoring it. Restore it before loading.
 	if not CharacterStore.recover_legacy_backup():
 		# A stranded character could not be moved back (e.g. a transient file
-		# lock). Refuse to open the writable first-run creator — a new character
-		# would overwrite the default and orphan the original forever (no-resets
-		# law). Say so; the next launch retries the recovery.
+		# lock). Lock the creator entirely — opening it (auto OR via the editor
+		# key) and applying would write a new default save and orphan the
+		# stranded backup forever (no-resets law). Say so; the next launch
+		# retries the recovery.
+		_save_blocked = true
 		_hud.toast("A saved character couldn't be restored — please restart. Your character is safe.")
 	else:
 		var saved = CharacterStore.load_saved()
@@ -102,6 +110,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 
 func _open_creator(first_run: bool) -> void:
+	# Single chokepoint: while a stranded save is unrecovered, applying a new
+	# character would overwrite the default and orphan it forever (no-resets
+	# law) — refuse every entry, auto and manual editor-key alike.
+	if _save_blocked:
+		return
 	var initial = CharacterStore.load_saved()
 	if initial is not Dictionary:
 		initial = CharacterFactory.load_recipe("res://recipes/wanderer.json")

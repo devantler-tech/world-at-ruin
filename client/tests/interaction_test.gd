@@ -197,6 +197,19 @@ func _physics_process(_delta: float) -> void:
 			% [nm, heard["name"], heard["line"], nm, expected])
 		return
 
+	# Recovery-failure lockout (#41, codex P0): while a stranded save is
+	# unrecovered, NO character-creator entry may open — applying one would write
+	# the default and orphan the stranded backup. Assert _open_creator is a no-op
+	# in that state (the creator reference does not change), covering the manual
+	# editor-key door as well as the auto first-run one.
+	var creator_before = _main.get("_creator")
+	_main.set("_save_blocked", true)
+	_main.call("_open_creator", false)
+	if _main.get("_creator") != creator_before:
+		_fail("the creator opened while the save was blocked — it could overwrite a stranded character")
+		return
+	_main.set("_save_blocked", false)
+
 	if not _save.real_save_untouched():
 		_fail("the boot test touched the player's real save")
 		return
