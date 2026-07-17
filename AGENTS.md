@@ -86,6 +86,28 @@ seasonally; WoW squishes stats). Both are forbidden, so economics come from **Gu
 instead: horizontal progression, a ceiling that never rises, bound loot, no trading/auction house
 (kills RMT, botting and dupe *value* at the root), hard sinks. WoW/D4 texture, GW2 economics.
 
+### Setting & story — a medieval-futuristic world at rebirth
+
+Settled with the maintainer 2026-07-17. This is the fiction every zone, asset and system renders.
+
+- **The arc.** In a far-future era, a mystical disaster — working name **the Ruin** (agent-proposed
+  from the title; redirect if wrong) — left the world a wasteland. The wanderer wakes in a cave
+  with nothing but ragged clothes and bare hands, fights their way to the surface, and emerges
+  into a barren world. The journey starts there. **This opening IS Phase 1's vertical slice**
+  ("unarmed and lightly clothed in an abandoned cave", #8) — the intro and the engineering slice
+  are the same artefact, and the Phase-0 cave is its stage.
+- **A world at rebirth.** Barren, but coming back to life: a deliberate mix of wasteland and lush,
+  vibrant zones. New lifeforms, monsters, and mystical, evil and criminal humanoids **and aliens**
+  populate it. Aliens are strange peoples of this world's rebirth, not a starfleet — they must
+  never drag the setting toward hard sci-fi.
+- **Tone: medieval-futuristic, and the medieval feel wins.** Anything from iron swords to laser
+  swords and blasters exists, but it must *still feel medieval*. Style references: **World of
+  Warcraft and WildStar** — and WildStar is the sci-fi *ceiling*, never the baseline. When in
+  doubt, technology reads as relic, salvage or artefact — forged, scavenged, half-understood —
+  never as clean manufactured sci-fi.
+- **World shape: open and horizontal** (consistent with the progression law), with **oceans that
+  can be travelled** and **swimming down to undersea areas and caves**.
+
 ### Design — classless weapon mastery (The Secret World-shaped)
 
 - **Classless.** Playstyle is defined by which weapons you master. **Two weapons equipped, or one
@@ -154,6 +176,20 @@ policing them (there is no undo).
 - **Classless + account-bound unlocks make alts near-pointless** — especially with full appearance
   freedom. Consider **one character per account**: it simplifies the data model and identity, and
   removes mule characters as an economy vector.
+- **"Still feels medieval" is a taste judgement — give it an enforceable proxy.** Silhouettes,
+  materials and architecture stay medieval; energy and tech are the *accent*, never the baseline.
+  An asset or zone that would look at home in a pure sci-fi game has crossed the line — route edge
+  cases to the maintainer rather than drifting there one blaster at a time.
+- **Blasters must not smuggle in a different genre of combat.** A blaster or laser sword is a
+  weapon mastery inside the same telegraph/trifecta design — same telegraphs, same roles, same
+  sidegrade law — never a cover-shooter bolted onto an MMO. If ranged energy weapons start
+  demanding their own combat rules, that is drift.
+- **Oceans and undersea zones are settled destiny, not an early deliverable.** They slot into the
+  world/game phases (#10, #13). The known trap is underwater combat legibility (WoW's Vashj'ir
+  bled players here): telegraphs put the signal on the *ground*, and 3D swimming has no ground.
+  Undersea areas ship exploration-first and gain combat only once telegraphs have an underwater
+  grammar that keeps fights fair. Reserve a swim state in server-authoritative movement early — a
+  third movement mode is cheap to reserve and expensive to retrofit.
 
 ### Phase 0 — before further game systems
 
