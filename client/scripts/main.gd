@@ -10,28 +10,63 @@ const SKY_HORIZON := Color(0.55, 0.35, 0.24)
 const GROUND_BOTTOM := Color(0.1, 0.09, 0.09)
 const FOG_COLOR := Color(0.35, 0.28, 0.24)
 
+var _player: Player
+var _hud: Hud
+var _creator: CharacterCreator
+
 func _ready() -> void:
 	_build_environment()
 	var world := WorldGen.new()
 	world.name = "World"
 	add_child(world)
 
-	var player := Player.new()
-	player.name = "Wanderer"
-	# Spawn outside the monolith ring, facing the shrine, so the first frame
-	# frames the landmark instead of collapsing the camera against a stone.
-	var spawn := Vector3(11.0, world.surface_height_at(11.0, 14.0) + 1.2, 14.0)
-	player.spawn_point = spawn
-	player.position = spawn
-	player.ground_height_provider = world.surface_height_at
-	add_child(player)
-	player.face_toward(Vector3.ZERO)
+	_player = Player.new()
+	_player.name = "Wanderer"
+	# Every wanderer wakes in the starter cave — part of the open world, so
+	# walking out of the mouth into the Reach is seamless (no loading screen).
+	var spawn := world.cave_spawn_point()
+	_player.spawn_point = spawn
+	_player.position = spawn
+	_player.ground_height_provider = world.surface_height_at
+	add_child(_player)
+	# The mouth faces the shrine, so facing the shrine faces the light.
+	_player.face_toward(Vector3.ZERO)
 
-	var hud := Hud.new()
-	hud.name = "Hud"
-	add_child(hud)
-	player.respawned.connect(func() -> void:
-		hud.toast("The Reach reclaims you. The shrine calls you back."))
+	_hud = Hud.new()
+	_hud.name = "Hud"
+	add_child(_hud)
+	_player.respawned.connect(func() -> void:
+		_hud.toast("The Reach reclaims you. You wake again in the dark."))
+
+	var saved = CharacterStore.load_saved()
+	if saved is Dictionary:
+		_player.set_character(saved)
+	else:
+		# First time in the world: shape a character before setting out.
+		_open_creator.call_deferred(true)
+
+func _unhandled_input(event: InputEvent) -> void:
+	if event.is_action_pressed("character_editor") and _creator == null:
+		_open_creator(false)
+		get_viewport().set_input_as_handled()
+
+func _open_creator(first_run: bool) -> void:
+	var initial = CharacterStore.load_saved()
+	if initial is not Dictionary:
+		initial = CharacterFactory.load_recipe("res://recipes/wanderer.json")
+		if initial is Dictionary:
+			initial.erase("comment")
+		else:
+			initial = { "version": 1 }
+	_creator = CharacterCreator.new()
+	add_child(_creator)
+	_creator.applied.connect(func(recipe: Dictionary) -> void:
+		CharacterStore.save_recipe(recipe)
+		_player.set_character(recipe)
+		_hud.toast("The body remembers its new shape." if not first_run
+			else "You wake in the dark. Embers, and a mouth of light ahead."))
+	_creator.closed.connect(func() -> void: _creator = null)
+	_creator.open(_player, initial, first_run)
 
 func _build_environment() -> void:
 	var sun := DirectionalLight3D.new()

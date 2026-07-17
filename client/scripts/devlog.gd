@@ -5,11 +5,22 @@ class_name DevLog
 ## development progress by playing. Every change that a player could notice
 ## gets an entry here, newest first — open it in-game with F1.
 
-const VERSION := "0.1.4"
+const VERSION := "0.1.5"
 const CODENAME := "Ashfall Reach"
 
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
+	{
+		"version": "0.1.5",
+		"date": "2026-07-17",
+		"title": "You wake in the starter cave",
+		"notes": [
+			"The cave is no longer a museum piece: it stands in the open world under a dome of rock, a minute's walk from the shrine — and every wanderer now wakes inside it, by a handful of dying embers, with the mouth glowing ahead. Walk out; there is no loading screen, and there never will be.",
+			"The first time you wake, the world asks who you are: a character creation screen shapes your body — build sliders, frame sliders, three starting presets — live on the body standing in the cave. Your shape is saved and kept.",
+			"Press C any time to reshape yourself (an early-build courtesy while the character system grows: skin, hair and clothes are still to come, and the body still stands in the sculptor's pose).",
+			"The capsule placeholder is gone; the wanderer wears a recipe-built body from the character system.",
+		],
+	},
 	{
 		"version": "0.1.4",
 		"date": "2026-07-17",
