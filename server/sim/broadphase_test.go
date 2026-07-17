@@ -3,6 +3,7 @@ package sim
 import (
 	"fmt"
 	"math"
+	"slices"
 	"testing"
 )
 
@@ -89,6 +90,7 @@ func TestBroadPhaseMatchesFullScan(t *testing.T) {
 	}{
 		"goldenCluster": {goldenClusterSeed, 300},
 		"sparseField":   {packedGrid(10, 3000, 500), 5}, // 2500 mm gaps → nothing overlaps
+		"moderate8x8":   {packedGrid(8, 400, 300), 60},  // overlapping but no mid-pass chaining
 	}
 	for name, cfg := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -107,10 +109,14 @@ func TestBroadPhaseMatchesFullScan(t *testing.T) {
 	}
 }
 
-// denseSeeds are pile-ups too dense for a byte-match with the naive scan (a
-// chained push crosses cell boundaries mid-pass), where the broad phase's
-// contract is instead the sim's real guarantees: deterministic, insertion-order
-// independent, and convergent to a non-overlapping arrangement.
+// denseSeeds are pile-ups too dense for a byte-match with the naive scan: a
+// chained push carries a third actor into a pair that was *not* overlapping when
+// the grid was built, which the full scan (re-testing every pair against live
+// positions) catches the same pass but the grid picks up on the next pass's
+// fresh grid. Here the broad phase's contract is the sim's real guarantees —
+// deterministic, insertion-order independent, convergent to a non-overlapping
+// arrangement — not a byte-match. (Moderately-overlapping layouts with no such
+// mid-pass chaining *do* byte-match; see moderate8x8 in TestBroadPhaseMatchesFullScan.)
 func denseSeeds() map[string]struct {
 	seed  []Entity
 	ticks int
@@ -121,8 +127,7 @@ func denseSeeds() map[string]struct {
 	}{
 		"crowd5x10": {packedGrid5x10(), 60},
 		"packed12":  {packedGrid(12, 10, 500), 120}, // 144 actors inside one radius
-		"packed8":   {packedGrid(8, 400, 300), 60},
-		"packed6":   {packedGrid(6, 700, 500), 60}, // radius > spacing → chains
+		"packed6":   {packedGrid(6, 700, 500), 60},  // radius > spacing → chains
 	}
 }
 
@@ -237,6 +242,32 @@ func TestBroadPhaseNeverPrunesAnOverlappingPair(t *testing.T) {
 				t.Fatalf("overlapping pair (%d,%d) was pruned by the broad phase", a.ID, b.ID)
 			}
 		}
+	}
+}
+
+// TestBroadPhaseQueriesSnapshotCell is the regression guard for the P1 Codex
+// caught: a neighbourhood query must key off the actor's cell *at grid-build
+// time*, not its live Pos. Within a Gauss-Seidel pass an actor can be pushed
+// across a cell boundary (as an earlier pair's partner) before its own turn; if
+// the lookup used the moved Pos it would query the wrong cell against the
+// build-time buckets and could prune a partner that overlapped it at build time
+// and still overlaps it — violating the no-prune invariant and changing the
+// bounded-pass result. So moving an actor after the grid is built must NOT
+// change the candidates its lookup returns.
+func TestBroadPhaseQueriesSnapshotCell(t *testing.T) {
+	w := buildFrom(bigBounds, packedGrid(6, 700, 500))
+	cell := separationCellMM(w)
+	grid := newSepGrid(w, cell)
+	a := w.ents[w.order[0]]
+	before := slices.Clone(grid.neighbours(a, nil))
+	if len(before) == 0 {
+		t.Fatal("test setup: expected the lowest-ID actor to have neighbourhood candidates")
+	}
+	// Simulate a being shoved several cells away before its own turn.
+	a.Pos = a.Pos.Add(Vec3{X: 12 * cell, Z: 9 * cell})
+	after := slices.Clone(grid.neighbours(a, nil))
+	if !slices.Equal(before, after) {
+		t.Fatalf("neighbours changed after the actor moved — the lookup used the live position, not the snapshot cell\nbefore=%v\nafter =%v", before, after)
 	}
 }
 

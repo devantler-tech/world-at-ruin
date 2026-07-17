@@ -53,10 +53,13 @@ type cellKey struct{ x, z int64 }
 
 // sepGrid buckets entities into square cells of width cell (mm). Each bucket
 // lists its members in ascending EntityID, because it is built by walking the
-// world's ascending-ID order.
+// world's ascending-ID order. cellOf records the cell each entity was placed in
+// at build time, so a neighbourhood query keys off an actor's *snapshot* cell
+// even after separation has moved it this pass (see neighbours).
 type sepGrid struct {
 	cell    int64
 	buckets map[cellKey][]EntityID
+	cellOf  map[EntityID]cellKey
 }
 
 // newSepGrid builds the spatial hash for the world's current positions with the
@@ -69,11 +72,16 @@ func newSepGrid(w *World, cell int64) *sepGrid {
 	// the per-tick O(n) allocation entirely, is a natural follow-up if profiling
 	// a real dense zone shows GC pressure — the algorithmic win here is the
 	// O(n²)→~O(n) pair count, not allocation tuning.
-	g := &sepGrid{cell: cell, buckets: make(map[cellKey][]EntityID, len(w.order))}
+	g := &sepGrid{
+		cell:    cell,
+		buckets: make(map[cellKey][]EntityID, len(w.order)),
+		cellOf:  make(map[EntityID]cellKey, len(w.order)),
+	}
 	for _, id := range w.order {
 		p := w.ents[id].Pos
 		k := cellKey{x: floorDiv(p.X, cell), z: floorDiv(p.Z, cell)}
 		g.buckets[k] = append(g.buckets[k], id)
+		g.cellOf[id] = k
 	}
 	return g
 }
@@ -84,10 +92,19 @@ func newSepGrid(w *World, cell int64) *sepGrid {
 // merges the (already-ascending) neighbourhood buckets, so the cost is linear in
 // the candidate count with a fixed nine-way fan-in: no per-entity sort, so even
 // the pathological all-in-one-cell case stays O(n²), never O(n² log n).
+//
+// It keys off a's *snapshot* cell (cellOf), not its current Pos. That matters
+// because a Gauss-Seidel pass moves actors as it goes: if a was pushed across a
+// cell boundary as an earlier pair's partner before its own turn, its live Pos
+// would query the wrong cell against buckets that still hold everyone at their
+// build-time cells — and could miss a partner that overlapped a at build time
+// and still overlaps it now. Querying the snapshot cell keeps the lookup
+// consistent with the buckets, so every pair overlapping when the grid was built
+// is offered (the no-prune invariant), regardless of intra-pass movement.
 func (g *sepGrid) neighbours(a *Entity, buf []EntityID) []EntityID {
 	buf = buf[:0]
-	kx := floorDiv(a.Pos.X, g.cell)
-	kz := floorDiv(a.Pos.Z, g.cell)
+	k := g.cellOf[a.ID]
+	kx, kz := k.x, k.z
 
 	// Gather the up-to-nine non-empty neighbourhood buckets, each advanced past
 	// IDs ≤ a's (buckets are ascending, so a prefix skip suffices — this drops a
