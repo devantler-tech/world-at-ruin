@@ -106,8 +106,17 @@ instead: horizontal progression, a ceiling that never rises, bound loot, no trad
   visual variety so players find the look they want **without touching balance**. **Armour is the
   exception** — real mitigation/lightness trade-offs: light = agile, heavy = takes a hit.
 - **Endgame**: mythic-like dungeons, regular dungeons, raids, endless dungeons. **Loot-based
-  progression here only** — gear upgraded and specialised to take on harder content. **Outside the
-  endgame, loot is visual only**, so the open world stays relevant.
+  progression here only** — vertical, **with a real loft**: gear upgraded and specialised to take
+  on harder content, a climb worth making. **In the open world, endgame gear gives a cosmetic edge
+  ONLY** (maintainer direction 2026-07-17): the open world is a **fair challenge for everyone**,
+  and an experienced player's edge there is their **arsenal of abilities and weapon skills** —
+  never stats.
+- **All endgame stays relevant — keys and scaling everywhere** (maintainer direction 2026-07-17):
+  every endgame activity (mythic-like, regular dungeons, raids, endless) carries **keys and
+  scaling** that keep it engaging and replayable at the current loft — no endgame content is ever
+  outleveled into irrelevance. **Expanding the endgame means BOTH improving what exists and
+  building more content**; neither the endgame nor the open world is ever allowed to go stale or
+  irrelevant.
 
 ### Design guards — the traps in the above, and how to hold them
 
@@ -116,12 +125,13 @@ policing them (there is no undo).
 
 - **🔴 The endgame ladder is the one place power grows — it MUST be bounded and inert outside
   itself.** "Gear upgraded to take on harder and harder content" *is* vertical progression, i.e.
-  the exact inflation the product law forbids. It is only coherent if: (a) endgame gear is
-  **stat-normalised or inert outside endgame instances** (GW2 downscaling / WoW Timewalking), or it
-  trivialises the open world and breaks "all areas relevant"; and (b) the ladder has a **ceiling**
-  — beyond it, **difficulty scales, not power** (endless dungeons, mythic keys), and rewards become
-  **score and cosmetics**. That is how "harder and harder" runs forever with no inflation and no
-  reset.
+  the exact inflation the product law forbids. **SETTLED by maintainer direction 2026-07-17:**
+  (a) endgame gear is **cosmetic-edge-only in the open world** (stat-normalised/inert outside
+  endgame instances — GW2 downscaling / WoW Timewalking are the reference mechanics), so the open
+  world stays a fair challenge for everyone; and (b) the vertical has a **loft but a bounded one**
+  — beyond it, **difficulty scales, not power**, via the keys-and-scaling law above, and rewards
+  become **score and cosmetics**. That is how "harder and harder" runs forever with no inflation
+  and no reset.
 - **🔴 Usage-based progression's classic exploit is AFK/dummy grinding** (UO, Skyrim, ESO all bled
   here). With no wipe available this is permanent. **Mastery accrues only from meaningful contested
   combat** — appropriate-level hostile targets, server-authoritative, diminishing returns, and
