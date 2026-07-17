@@ -135,26 +135,42 @@ func _check_fixture(version: int, path: String) -> String:
 	if fp_a != fp_b:
 		return "same save produced different characters:\n  %s\n  %s" % [fp_a, fp_b]
 
-	# Determinism alone cannot see application-layer loss: if a field's
-	# apply code is deleted, both builds ignore it identically. So every
-	# persisted field group must still have an EFFECT — building the recipe
-	# WITHOUT it must change the fingerprint.
+	# Determinism alone cannot see application-layer loss: if a field's apply
+	# code is deleted, both builds ignore it identically. So every persisted
+	# LEAF must still have an EFFECT — building the recipe without it must
+	# change the fingerprint. Leaf granularity (each dict entry, not just the
+	# whole group) catches a change that stops applying one saved entry while
+	# its siblings still move the fingerprint.
 	for field: String in expected:
 		if field == "version" or field == "comment":
 			continue
 		var value: Variant = expected[field]
-		if (value is Dictionary and (value as Dictionary).is_empty()) \
-			or (value is Array and (value as Array).is_empty()):
-			continue
-		var ablated: Dictionary = (expected as Dictionary).duplicate(true)
-		ablated.erase(field)
-		var without := CharacterFactory.build(ablated)
-		if without == null:
-			return "recipe without '%s' failed to build" % field
-		var fp_without := CharacterFactory.fingerprint(without)
-		without.free()
-		if fp_without == fp_a:
-			return "FIELD '%s' HAS NO EFFECT — saved customization is silently ignored (no-resets law)" % field
+		if value is Dictionary:
+			for key: String in value:
+				var ablated: Dictionary = (expected as Dictionary).duplicate(true)
+				(ablated[field] as Dictionary).erase(key)
+				var reason := _ablation_reason(ablated, fp_a, "%s.%s" % [field, key])
+				if reason != "":
+					return reason
+		else:
+			var ablated: Dictionary = (expected as Dictionary).duplicate(true)
+			ablated.erase(field)
+			var reason := _ablation_reason(ablated, fp_a, field)
+			if reason != "":
+				return reason
+	return ""
+
+
+## "" when the ablated recipe builds AND differs from the full one (the
+## removed leaf had an effect); else why the leaf is silently ignored.
+func _ablation_reason(ablated: Dictionary, full_fp: String, label: String) -> String:
+	var without := CharacterFactory.build(ablated)
+	if without == null:
+		return "recipe without '%s' failed to build" % label
+	var fp := CharacterFactory.fingerprint(without)
+	without.free()
+	if fp == full_fp:
+		return "LEAF '%s' HAS NO EFFECT — saved customization is silently ignored (no-resets law)" % label
 	return ""
 
 
@@ -202,8 +218,11 @@ func _diff(expected: Variant, actual: Variant, path: String) -> String:
 	return ""
 
 
-## The version ledger: every line is a shipped version int; # and blanks
-## skipped; ascending-sorted on return. Empty on any malformed line.
+## The version ledger: every line is a shipped version int in CANONICAL form
+## (unsigned, no sign or leading zeros); # and blanks skipped; ascending-
+## sorted on return. Empty on any malformed line. Canonical-only keeps this
+## parser and the CI append-only check in lockstep — is_valid_int() would
+## accept "+4", which a digit-only CI grep omits, opening a deletion bypass.
 func _shipped_versions() -> PackedInt32Array:
 	var out := PackedInt32Array()
 	var f := FileAccess.open(SHIPPED_VERSIONS, FileAccess.READ)
@@ -213,7 +232,7 @@ func _shipped_versions() -> PackedInt32Array:
 		var line := f.get_line().strip_edges()
 		if line == "" or line.begins_with("#"):
 			continue
-		if not line.is_valid_int() or int(line) < 1:
+		if not line.is_valid_int() or int(line) < 1 or line != str(int(line)):
 			return PackedInt32Array()
 		out.append(int(line))
 	out.sort()
