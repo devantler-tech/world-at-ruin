@@ -21,6 +21,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # Artifacts are uploaded from this workspace — never persist the
+          # checkout token into it (zizmor: artipacked).
+          persist-credentials: false
       - name: Install Blender (pinned, checksum-verified)
         run: |
           curl -fsSL -o blender.tar.xz "https://download.blender.org/release/Blender5.2/blender-${BLENDER_VERSION}-linux-x64.tar.xz"
