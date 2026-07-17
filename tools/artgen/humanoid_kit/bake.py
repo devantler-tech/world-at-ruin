@@ -70,6 +70,37 @@ def srgb_to_linear(c):
     return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
 
 
+def merge_macro_into_shape(mesh_obj, shape_name, macro_overrides, base, services):
+    """Bake one gender/phenotype macro axis as a shape key: create a second
+    human with that one macro pushed off the defaults, capture its vertices
+    as an absolute-target key on the kit body, delete it. MakeHuman's macro
+    system is an interpolation grid (gender x age x race x ...), not single
+    target files — diffing whole humans uses MPFB's own macro math exactly."""
+    HumanService, TargetService = services
+    macro = TargetService.get_default_macro_info_dict()
+    for key, value in macro_overrides.items():
+        macro[key] = dict(value) if isinstance(value, dict) else value
+    ref = HumanService.create_human(
+        mask_helpers=base["mask_helpers"],
+        detailed_helpers=base["detailed_helpers"],
+        extra_vertex_groups=base["extra_vertex_groups"],
+        feet_on_ground=base["feet_on_ground"],
+        scale=base["scale"],
+        macro_detail_dict=macro,
+    )
+    if ref.data.shape_keys is not None:
+        TargetService.bake_targets(ref)
+    if len(ref.data.vertices) != len(mesh_obj.data.vertices):
+        raise RuntimeError(f"{shape_name}: macro reference has {len(ref.data.vertices)} verts, base has {len(mesh_obj.data.vertices)}")
+    coords = [tuple(v.co) for v in ref.data.vertices]
+    bpy.data.objects.remove(ref, do_unlink=True)
+    kb = mesh_obj.shape_key_add(name=shape_name, from_mix=False)
+    for i, co in enumerate(coords):
+        kb.data[i].co = co
+    kb.value = 0.0
+    return kb
+
+
 def parse_mhmat_diffuse(mhmat_path):
     """The piece's flat colour from its .mhmat (`diffuseColor r g b`). The
     full texture layer is a later stage; a flat albedo keeps the GLB small
@@ -256,13 +287,20 @@ def main() -> None:
     for shape in manifest["shapes"]:
         merge_targets_into_shape(mesh_obj, shape["name"], shape["targets"], targets_root, TargetService)
 
+    # Gender/phenotype axes append after the target shapes (names are the
+    # forward-only API; order within the kit may shift between kit versions).
+    for macro_shape in manifest.get("macro_shapes", []):
+        merge_macro_into_shape(
+            mesh_obj, macro_shape["name"], macro_shape["macro"], base, (HumanService, TargetService))
+
     rig_obj = HumanService.add_builtin_rig(mesh_obj, manifest["rig"])
 
     # Equipment fits against the body WITH helpers (MHCLO vertex matching
     # references the clothes-helper geometry), so pieces come before the strip.
     Mhclo = dynamic_import("mpfb.entities.clothes.mhclo", "Mhclo")
     ClothesService = dynamic_import("mpfb.services.clothesservice", "ClothesService")
-    manifest_shape_names = [shape["name"] for shape in manifest["shapes"]]
+    manifest_shape_names = [shape["name"] for shape in manifest["shapes"]] \
+        + [macro_shape["name"] for macro_shape in manifest.get("macro_shapes", [])]
     pieces = []
     for piece in manifest.get("equipment", []):
         clothes = bake_equipment_piece(

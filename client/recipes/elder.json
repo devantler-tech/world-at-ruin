@@ -1,0 +1,22 @@
+{
+  "version": 2,
+  "comment": "An elder — the village matriarch silhouette: a woman the Ruin could not kill. First recipe on the gender/phenotype axes.",
+  "equipment": {
+    "torso": "shirt_ragged",
+    "legs": "pants_wool",
+    "feet": "shoes_cloth"
+  },
+  "shapes": {
+    "body_female": 1.0,
+    "body_aged": 0.85,
+    "body_slim": 0.3,
+    "head_aged": 0.6,
+    "nose_strong": 0.25
+  },
+  "bone_girth": {
+    "calf": 0.95
+  },
+  "bone_scale": {
+    "hand": 0.96
+  }
+}

@@ -27,7 +27,15 @@
     "chin_prominent": 0.2,
     "jaw_wide": 0.2,
     "nose_strong": 0.2,
-    "nose_hump": 0.2
+    "nose_hump": 0.2,
+    "body_female": 0.3,
+    "body_male": 0.2,
+    "body_aged": 0.2,
+    "body_heavy": 0.2,
+    "body_slim": 0.1,
+    "phenotype_african": 0.3,
+    "phenotype_asian": 0.3,
+    "phenotype_caucasian": 0.3
   },
   "bone_girth": {
     "neck_01": 1.05,

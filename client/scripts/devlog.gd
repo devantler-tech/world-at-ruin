@@ -5,11 +5,22 @@ class_name DevLog
 ## development progress by playing. Every change that a player could notice
 ## gets an entry here, newest first — open it in-game with F1.
 
-const VERSION := "0.1.9"
+const VERSION := "0.1.10"
 const CODENAME := "Ashfall Reach"
 
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
+	{
+		"version": "0.1.10",
+		"date": "2026-07-17",
+		"title": "Every body the world will need",
+		"notes": [
+			"The character screen learned gender and phenotype: new whole-body sliders — female, male, aged, heavy, slim — and three facial-structure axes, all live on the body as you drag them. The one androgynous base is now every body the world will need.",
+			"Your clothes follow: every garment was rebaked to track the new axes, so a shirt fits an elder the same way it fits a brute.",
+			"A fourth preset joined the character screen: the elder — a village matriarch the Ruin could not kill, and the first face of the new axes.",
+			"As always, nothing you saved is touched: old characters load exactly as they were, and the new sliders simply sit at zero until you move them.",
+		],
+	},
 	{
 		"version": "0.1.9",
 		"date": "2026-07-17",

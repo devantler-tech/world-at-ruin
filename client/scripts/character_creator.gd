@@ -18,7 +18,7 @@ const COL_DIM := Color(0.88, 0.84, 0.76, 0.55)
 const COL_EMBER := Color(1.0, 0.62, 0.25)
 
 const PRESET_DIR := "res://recipes/"
-const PRESETS := ["wanderer", "villager", "brute"]
+const PRESETS := ["wanderer", "villager", "elder", "brute"]
 
 ## Bone sliders: label, recipe field, bone key, range. Kept deliberately
 ## short — the interesting range of each op before skinning artifacts.
