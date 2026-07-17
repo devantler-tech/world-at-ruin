@@ -65,10 +65,49 @@ jobs:
             echo "::error::GPL/AGPL-licensed content detected — forbidden in the shipped tree"; exit 1
           fi
 
+
+  artgen:
+    name: Art pipeline (cave)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: tools/artgen/go.mod
+          cache-dependency-path: tools/artgen/go.sum
+      - name: Generate the cave (twice — byte-identical determinism gate)
+        working-directory: tools/artgen
+        run: |
+          go vet ./... && go test ./...
+          go run ./cmd/cave -seed 42 -out ../../client/assets/generated/cave.glb | tee ../../gen1.log
+          go run ./cmd/cave -seed 42 -out /tmp/cave2.glb | tee ../../gen2.log
+          grep -q '^MANIFEST' ../../gen1.log
+          cmp ../../client/assets/generated/cave.glb /tmp/cave2.glb || {
+            echo "::error::cave generator is nondeterministic — same seed produced different bytes"; exit 1; }
+      - name: Install Godot (pinned, checksum-verified)
+        run: |
+          curl -fsSL -o godot.zip "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          echo "${GODOT_SHA512}  godot.zip" | sha512sum -c -
+          unzip -q godot.zip
+          sudo mv "Godot_v${GODOT_VERSION}-stable_linux.x86_64" /usr/local/bin/godot
+      - name: Godot headless import of the generated cave
+        run: |
+          godot --headless --editor --quit --path client 2>&1 | tee artgen-import.log
+          if grep -qE "SCRIPT ERROR|^ERROR" artgen-import.log; then
+            echo "::error::Errors importing the generated cave"; exit 1
+          fi
+          test -f client/assets/generated/cave.glb.import
+          ls client/.godot/imported/ | grep -qi "cave" || { echo "::error::cave not imported"; exit 1; }
+      - name: Upload the cave for human eyes (the taste gate is a judgement)
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: cave-glb
+          path: client/assets/generated/cave.glb
+
   ci-required-checks:
     name: CI - Required Checks
     runs-on: ubuntu-latest
-    needs: [client-smoke, license-guard]
+    needs: [client-smoke, license-guard, artgen]
     if: ${{ always() }}
     steps:
       - uses: devantler-tech/actions/aggregate-job-checks@0f27c13a9785608e0bbf9998777d27761b4de617 # v10.0.2
@@ -76,3 +115,4 @@ jobs:
           job-results: >-
             ${{ needs.client-smoke.result }}
             ${{ needs.license-guard.result }}
+            ${{ needs.artgen.result }}

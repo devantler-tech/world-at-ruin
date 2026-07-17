@@ -8,3 +8,6 @@ build/
 
 # OS noise.
 .DS_Store
+
+# Generated art — CI regenerates it; never commit.
+client/assets/generated/
