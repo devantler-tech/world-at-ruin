@@ -5,11 +5,31 @@ class_name DevLog
 ## development progress by playing. Every change that a player could notice
 ## gets an entry here, newest first — open it in-game with F1.
 
-const VERSION := "0.1.12"
+const VERSION := "0.1.14"
 const CODENAME := "Ashfall Reach"
 
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
+	{
+		"version": "0.1.14",
+		"date": "2026-07-17",
+		"title": "The world answers",
+		"notes": [
+			"The Reach is no longer a diorama you only walk through: look at something close and a prompt appears — press E (or a gamepad button) to act on it.",
+			"The Wardens' Shrine can be attuned: stand at its flame, attune it, and the Reach will return you there when you fall — instead of waking you back in the dark of the cave. (For now this lasts the session; it will remember across logouts once the save vault is sealed.)",
+			"The people finally speak: walk up to anyone and they have a first word for you — the same word, from the same person, every boot. It is a first line only; real conversations, and the errands they will carry, come later.",
+		],
+	},
+	{
+		"version": "0.1.13",
+		"date": "2026-07-17",
+		"title": "Something else lives here",
+		"notes": [
+			"You are no longer the only kind of thing in the Reach: a pack of ash hounds — lean four-legged scavengers — now haunts the wild edges of the land, well beyond the settlement. Walk out far enough and you will find them watching.",
+			"Every hound is grown from its name, like the people are: build, legs, snout, ears, tail, size and hide-colour all come from a seeded generator, so Ashfang is the same beast in the same place on every machine, every boot, forever.",
+			"They cannot hunt yet — no teeth, no chase, one still pose. That comes with combat. Today they are the proof that the world can make creatures, not just people: the same machinery that shapes a wanderer now shapes a beast that was never human-shaped to begin with.",
+		],
+	},
 	{
 		"version": "0.1.12",
 		"date": "2026-07-17",

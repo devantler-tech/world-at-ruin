@@ -66,9 +66,14 @@ game about standing in the right place).
 ### Licensing
 
 **Source-available and proprietary — NEVER call it "open source"** (free redistribution is clause 1
-of the OSD). Copying/redistribution prohibited. Needs a **bespoke EULA** and a **CLA with copyright
-assignment** (EU: assignment plus fallback exclusive licence) gating the first external PR. **No
-GPL/AGPL in the shipped tree** — enforced in CI (`license-guard` job), not remembered.
+of the OSD). Copying/redistribution prohibited. The legal set is in place: `LICENSE.md` (bespoke
+source-available licence), `EULA.md` (governs playing distributed builds), and `CLA.md` (**copyright
+assignment**, EU: with a fallback exclusive licence). The first-party, dependency-free `CLA`
+workflow blocks an external PR until its author signs; signatures are ledgered on the **permanent
+`cla-signatures` branch — never delete it**, and an external PR that touches
+`.github/workflows/cla.yaml` is inherently suspect (it can repaint its own check, never the
+ledger). **No GPL/AGPL in the shipped tree** — enforced in CI (`license-guard` job), not
+remembered.
 
 ### Product law — the two constraints that outrank the design
 
@@ -213,8 +218,13 @@ can be watched by playing; every *further* art/game system waits on Phase 0.)
   enforces it: every historical golden fixture must load with zero loss, every recipe version up
   to `RECIPE_VERSION` must have one, and `tests/data/shipped_recipe_versions.txt` is the
   append-only ledger anchoring that range — bumping `RECIPE_VERSION` means appending the ledger
-  line AND committing the version's golden fixture in the same PR). `server/` (Agones realtime tier, Go meta services) and `deploy/` (platform manifests)
-  arrive later per the roadmap.
+  line AND committing the version's golden fixture in the same PR); non-humanoid **creatures**
+  follow the same shape — `CreatureFactory` composes a baked creature kit (the ash hound is the
+  pilot archetype) from versioned, name-keyed, forward-only recipes, one canonical skeleton per
+  archetype. `server/` is the Go authoritative tier — its **zone tick core** has landed
+  (`server/sim/`, the deterministic fixed-timestep simulation; `server/cmd/zone/`, the runnable
+  skeleton), with the Agones/Nakama/networking layers arriving as later children of the
+  server-foundation epic (#4); `deploy/` (platform manifests) arrives later per the roadmap.
 - **Run:** `godot client` (macOS: `/Applications/Godot.app/Contents/MacOS/Godot client`).
 - **Validate before every PR:**
   `godot --headless --editor --quit --path client && godot --headless --quit-after 120 --path client` —
@@ -225,7 +235,13 @@ can be watched by playing; every *further* art/game system waits on Phase 0.)
   project mount) and every absence-of-error check then passes vacuously.
   Then run the regression tests: `godot --headless --path client res://tests/<name>.tscn` for each
   scene under `client/tests/`. CI (`ci.yaml`) runs exactly this, plus the `license-guard` job (no
-  GPL/AGPL texts in the tree).
+  GPL/AGPL texts in the tree) and the `Server CI (Go)` job (below).
+- **Validate the server before every PR:** from `server/`, `gofmt -l .` (must print nothing),
+  `go vet ./...`, `go test -race ./...` (includes the tick-determinism and golden-hash tests), and
+  `go build ./...`. The `Server CI (Go)` job runs exactly this and feeds the `CI - Required Checks`
+  aggregate. Simulation determinism is a product-law requirement: the sim is integer-only with no
+  wall-clock or unseeded randomness in the authoritative path, and changing the committed golden
+  hash (`server/sim`) is a deliberate, reviewed act — never a rubber-stamp.
 - **Determinism:** world generation is seeded (`WorldGen.WORLD_SEED`) — the same world every boot.
   Never introduce wall-clock or unseeded randomness into generation; differences between builds
   must be attributable to code.
@@ -238,7 +254,8 @@ can be watched by playing; every *further* art/game system waits on Phase 0.)
   (`bpy` is Python by nature); keep it isolated under `tools/artgen/` when it lands.
 - **Licensing hygiene:** no GPL/AGPL code or assets in the shipped tree; no commercial assets;
   CC0/OSS-permissive only, with licence verified per asset dataset. External PRs cannot be merged
-  until the EULA/CLA exists (see `LICENSE.md`).
+  until their author signs the CLA (`CLA.md`; the `CLA` workflow enforces this, with the ledger on
+  the permanent `cla-signatures` branch).
 - **Roadmap:** GitHub Issues on this repo (`roadmap` label for epics). The plan is **phase-gated**
   — Phase 0 (art-pipeline taste gate, #1) through Phase 8 (platforms, #15), each phase's exit
   criteria unlocking the next, plus the standing risk register (#16). Keep issues **agent-shaped**

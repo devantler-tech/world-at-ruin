@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "comment": "Forward-only guard: every creature morph shape, every guarded bone_scale key, and a tint that has ever shipped. If this recipe stops building, a shipped creature recipe has been broken (no-resets law). It may only ever GAIN entries.",
+  "shapes": {
+    "body_heavy": 0.5,
+    "body_gaunt": 0.2,
+    "legs_long": 0.4,
+    "snout_long": 0.6,
+    "ears_alert": 0.7,
+    "tail_high": 0.5
+  },
+  "bone_scale": {
+    "root": 1.1,
+    "head": 1.05,
+    "tail_01": 1.15
+  },
+  "tint": "ash"
+}
