@@ -33,6 +33,12 @@ const EQUIP_PREFIX := "Equip_"
 ## Blend shapes with this prefix are composition plumbing (skin tucked under a
 ## worn piece), never a body slider.
 const HIDE_SHAPE_PREFIX := "equip_hide_"
+## The standing pose: degrees the arms hang from the baked T-pose, with a
+## slight elbow and wrist curl so it reads relaxed, not scarecrow (angles
+## proven in Phase 0 stage 2).
+const ARM_HANG_DEG := 62.0
+const FOREARM_RELAX_DEG := 10.0
+const HAND_RELAX_DEG := 8.0
 
 ## The recipe format, exhaustively: any other top-level field is REJECTED —
 ## a recipe carrying data this client cannot render must fail loudly, never
@@ -90,6 +96,14 @@ static func build(recipe: Dictionary) -> Node3D:
 	for key: String in recipe.get("joint_push", {}):
 		for bone in _bones_for(skeleton, key):
 			_scale_joint_origin(skeleton, bone, recipe["joint_push"][key])
+	# Arms down from the bake's T-pose — the standing pose every body wears
+	# until real animation arrives (rotation-only rest edits: TRS-safe).
+	for arm in ["upperarm_l", "upperarm_r"]:
+		_hang_toward_down(skeleton, skeleton.find_bone(arm), ARM_HANG_DEG)
+	for forearm in ["lowerarm_l", "lowerarm_r"]:
+		_hang_toward_down(skeleton, skeleton.find_bone(forearm), FOREARM_RELAX_DEG)
+	for hand in ["hand_l", "hand_r"]:
+		_hang_toward_down(skeleton, skeleton.find_bone(hand), HAND_RELAX_DEG)
 	skeleton.reset_bone_poses()
 	skeleton.force_update_all_bone_transforms()
 
@@ -393,3 +407,32 @@ static func _apply_uniform_subtree(skeleton: Skeleton3D, bone: int, factor: floa
 static func _scale_joint_origin(skeleton: Skeleton3D, bone: int, factor: float) -> void:
 	var rest := skeleton.get_bone_rest(bone)
 	skeleton.set_bone_rest(bone, Transform3D(rest.basis, rest.origin * factor))
+
+
+## Rotates a bone's rest so its +Y (the bone direction) swings toward world
+##-Y by `deg` — a world-space rotation conjugated into bone space. Pure
+## rotation: no shear can enter the rest (the TRS law). The global rest is
+## composed manually — reading engine globals mid-edit desyncs the caches
+## (Godot 4.7, proven in Phase 0 stage 2).
+static func _hang_toward_down(skeleton: Skeleton3D, bone: int, deg: float) -> void:
+	if bone < 0:
+		push_error("CharacterFactory: arm bone not found")
+		return
+	var global_rest := _composed_global_rest(skeleton, bone)
+	var dir := global_rest.basis.y.normalized()
+	var axis := dir.cross(Vector3.DOWN)
+	if axis.length_squared() < 0.000001:
+		return
+	var world_rot := Basis(axis.normalized(), deg_to_rad(deg))
+	var local_rot := global_rest.basis.inverse() * (world_rot * global_rest.basis)
+	var rest := skeleton.get_bone_rest(bone)
+	skeleton.set_bone_rest(bone, Transform3D(rest.basis * local_rot, rest.origin))
+
+
+static func _composed_global_rest(skeleton: Skeleton3D, bone: int) -> Transform3D:
+	var out := skeleton.get_bone_rest(bone)
+	var parent := skeleton.get_bone_parent(bone)
+	while parent >= 0:
+		out = skeleton.get_bone_rest(parent) * out
+		parent = skeleton.get_bone_parent(parent)
+	return out

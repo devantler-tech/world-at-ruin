@@ -214,9 +214,12 @@ can be watched by playing; every *further* art/game system waits on Phase 0.)
   arrive later per the roadmap.
 - **Run:** `godot client` (macOS: `/Applications/Godot.app/Contents/MacOS/Godot client`).
 - **Validate before every PR:**
-  `godot --headless --editor --quit --path client && godot --headless --quit-after 120 client` —
+  `godot --headless --editor --quit --path client && godot --headless --quit-after 120 --path client` —
   the editor pass imports AND writes the global class-name cache (`--import` alone never writes
-  it, and scene-arg runs hang without it); the smoke boot must print no `SCRIPT ERROR`/`ERROR`.
+  it, and scene-arg runs hang without it); the smoke boot must print the `BOOT_OK` marker AND no
+  `SCRIPT ERROR`/`ERROR`. **`--path` is required on the smoke boot too** — the bare positional
+  form (`godot ... client`) silently boots no project at all (verified on 4.7.1: ~1 s, no
+  project mount) and every absence-of-error check then passes vacuously.
   Then run the regression tests: `godot --headless --path client res://tests/<name>.tscn` for each
   scene under `client/tests/`. CI (`ci.yaml`) runs exactly this, plus the `license-guard` job (no
   GPL/AGPL texts in the tree).
