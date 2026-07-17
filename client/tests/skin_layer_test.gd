@@ -9,12 +9,12 @@ extends Node
 ##  3. Fingerprints: same recipe twice ⇒ identical; same body in two skins ⇒
 ##     different (the skin is part of the character's identity).
 ##  4. Validation refuses loudly: skin on a v2 recipe, unknown skin name.
-##  5. The v3 golden recipe builds and is deterministic.
+## The v3 golden's build/zero-loss/determinism law lives in
+## save_fixture_guard_test (#36).
 ##
 ## Run: godot --headless --path client res://tests/skin_layer_test.tscn
 
 const SHIPPED := "res://tests/data/shipped_skins.txt"
-const GOLDEN_V3 := "res://tests/data/golden_recipe_v3.json"
 
 
 func _ready() -> void:
@@ -90,22 +90,6 @@ func _ready() -> void:
 			built.free()
 			_fail("invalid recipe was accepted: %s" % JSON.stringify(bad))
 			return
-
-	# 5. The v3 golden holds.
-	var golden = CharacterFactory.load_recipe(GOLDEN_V3)
-	if golden == null:
-		_fail("golden v3 recipe unreadable")
-		return
-	var golden_a := CharacterFactory.build(golden)
-	var golden_b := CharacterFactory.build(golden)
-	if golden_a == null or golden_b == null:
-		_fail("THE GOLDEN V3 RECIPE NO LONGER BUILDS — a shipped name was removed (no-resets law)")
-		return
-	if CharacterFactory.fingerprint(golden_a) != CharacterFactory.fingerprint(golden_b):
-		_fail("same v3 golden produced different characters")
-		return
-	golden_a.free()
-	golden_b.free()
 
 	print("TEST PASS — %d shipped skins hold, %s" % [_shipped_skins().size(), fp_a])
 	get_tree().quit(0)

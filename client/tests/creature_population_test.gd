@@ -10,6 +10,10 @@ extends Node
 ##     the same seeds (scatter_spots is a pure function of the world).
 ##  4. Every hound actually built (has a skeleton).
 ##  5. Generated recipes are deterministic and valid per the name.
+##  6. Determinism-law sweep: across 128 forged names every recipe builds and
+##     honours the generator's invariants (opposing morphs never co-occur,
+##     every value quantized) — the drift three hand-picked names miss.
+##  7. Every hound's node name is unique — the name-keyed recipe stays 1:1.
 ##
 ## Run: godot --headless --path client res://tests/creature_population_test.tscn
 
@@ -39,6 +43,37 @@ func _ready() -> void:
 	if fingerprints["Ashfang"] == fingerprints["Grimmaw"]:
 		_fail("distinct names produced identical hounds — the seed is not name-keyed")
 		return
+
+	# 6. Determinism-law sweep. The forge can emit any HEAD+TAIL name; a name
+	#    that yields an unbuildable recipe is a hound that would silently vanish
+	#    on some machine's seed, and a recipe carrying opposing morphs
+	#    (body_heavy AND body_gaunt) or an unquantized value drifts under float
+	#    printing. Three hand-picked names above cannot catch either — sweep the
+	#    forge from a fixed seed so the sweep itself is deterministic.
+	var forge := RandomNumberGenerator.new()
+	forge.seed = 0xC0FFEE
+	for _i in 128:
+		var forged := CreatureGen.forge_name(forge)
+		var recipe := CreatureGen.recipe_for(forged)
+		var shapes: Dictionary = recipe.get("shapes", {})
+		if shapes.has("body_heavy") and shapes.has("body_gaunt"):
+			_fail("'%s' carries both body_heavy and body_gaunt — opposing morphs" % forged)
+			return
+		for key in shapes:
+			var value: float = shapes[key]
+			if value != snappedf(value, 0.01):
+				_fail("'%s' shape %s=%f is not quantized to 0.01" % [forged, key, value])
+				return
+		for key in (recipe.get("bone_scale", {}) as Dictionary):
+			var scale: float = recipe["bone_scale"][key]
+			if scale != snappedf(scale, 0.01):
+				_fail("'%s' bone_scale %s=%f is not quantized to 0.01" % [forged, key, scale])
+				return
+		var built := CreatureFactory.build(recipe)
+		if built == null:
+			_fail("forged name '%s' produced an unbuildable recipe: %s" % [forged, JSON.stringify(recipe)])
+			return
+		built.free()
 
 	if not _backup_live_save():
 		_fail("could not back up the live character save — refusing to touch it")
@@ -71,6 +106,17 @@ func _physics_process(_delta: float) -> void:
 	if roots.size() != CreatureSpawner.PACK_COUNT:
 		_fail("census %d != promised %d — the sampler lost hounds" % [roots.size(), CreatureSpawner.PACK_COUNT])
 		return
+
+	# 7. Forged names can collide; the spawner suffixes until unique so the
+	#    name-keyed recipe stays 1:1 with the hound standing there. Two hounds
+	#    sharing a node name would mean two identical recipes — assert unique.
+	var seen_names := {}
+	for hound_node in roots:
+		var node_name := String(hound_node.name)
+		if seen_names.has(node_name):
+			_fail("two hounds share the name %s — collision suffixing failed" % node_name)
+			return
+		seen_names[node_name] = true
 
 	var expected := NpcSpawner.scatter_spots(world, CreatureSpawner.PACK_COUNT,
 		CreatureSpawner.WILD_INNER, CreatureSpawner.WILD_OUTER, CreatureSpawner.PACK_POS_SEED)
