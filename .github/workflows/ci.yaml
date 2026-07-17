@@ -25,6 +25,74 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # Full history: the ledger append-only check diffs against the base
+          # commit, which a depth-1 checkout cannot reach.
+          fetch-depth: 0
+      - name: Version ledger is append-only (no-resets law)
+        # The in-game guard anchors the required fixture range to
+        # tests/data/shipped_recipe_versions.txt, but a checkout-local file
+        # can be edited in the same change that lowers RECIPE_VERSION. CI is
+        # the immutable anchor: against the BASE commit, ledger lines may
+        # only ever be added — removing one is declaring shipped saves
+        # disposable, which the product law forbids.
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          LEDGER=client/tests/data/shipped_recipe_versions.txt
+          if [ ! -f "$LEDGER" ]; then
+            echo "::error::$LEDGER was deleted — the forward-only version ledger must exist"
+            exit 1
+          fi
+          if ! git cat-file -e "$BASE_SHA" 2>/dev/null; then
+            echo "::error::base commit $BASE_SHA not present in the checkout — cannot verify the ledger"
+            exit 1
+          fi
+          # Compare PARSED integer sets, not raw diff lines: the runtime
+          # guard strips whitespace, so an indented entry is a valid version
+          # whose deletion a line-anchored grep would miss.
+          extract='s/^[[:space:]]*\([0-9][0-9]*\)[[:space:]]*$/\1/p'
+          git show "$BASE_SHA:$LEDGER" 2>/dev/null | sed -n "$extract" | sort -un > /tmp/ledger-base
+          sed -n "$extract" "$LEDGER" | sort -un > /tmp/ledger-head
+          removed=$(comm -23 /tmp/ledger-base /tmp/ledger-head)
+          if [ -n "$removed" ]; then
+            echo "::error::Shipped version(s) removed from $LEDGER ($(echo "$removed" | tr '\n' ' ')) — shipped saves are never disposable (no-resets law)"
+            exit 1
+          fi
+      - name: Golden fixture contents are append-only (no-resets law)
+        # The in-game guard validates each golden against the CURRENT build, so
+        # a PR that removes a shipped shape/bone/name from a golden AND from the
+        # code together passes green while stranding a real save that used it.
+        # CI is the anchor: against the BASE commit, a golden's data leaves may
+        # only ever be ADDED to — never removed or changed (the comment prose is
+        # exempt). New shapes append to a golden; shipped ones are permanent.
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          if ! git cat-file -e "$BASE_SHA" 2>/dev/null; then
+            echo "::error::base commit $BASE_SHA not present — cannot verify golden fixtures"
+            exit 1
+          fi
+          # Scalar leaves as sorted "path=value" lines, minus the prose comment.
+          leaves() { jq -S -r 'paths(scalars) as $p | select($p[0] != "comment") | "\($p|map(tostring)|join("."))=\(getpath($p)|tostring)"' | sort; }
+          fail=0
+          for f in $(git ls-tree -r --name-only "$BASE_SHA" -- client/tests/data \
+              | grep -E 'golden_recipe_v[0-9]+\.json$'); do
+            if [ ! -f "$f" ]; then
+              echo "::error::$f was deleted — a shipped historical save is never removed (no-resets law)"
+              fail=1; continue
+            fi
+            git show "$BASE_SHA:$f" | leaves > /tmp/gold-base
+            leaves < "$f" > /tmp/gold-head
+            removed=$(comm -23 /tmp/gold-base /tmp/gold-head)
+            if [ -n "$removed" ]; then
+              echo "::error::$f removed or changed shipped entries (no-resets law): $(echo "$removed" | tr '\n' ' ')"
+              fail=1
+            fi
+          done
+          [ "$fail" = 0 ]
       - name: Install Godot (pinned, checksum-verified)
         run: |
           curl -fsSL -o godot.zip "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
@@ -53,6 +121,22 @@ jobs:
           fi
           if grep -qE "SCRIPT ERROR|^ERROR" smoke.log import.log; then
             echo "::error::Errors during headless boot"; exit 1
+          fi
+      - name: Save-fixture guard (every historical save loads with zero loss)
+        # THE product-law surface (no-resets law, issue #36): its own named
+        # step so a stranded save fails loudly here, never buried in the
+        # per-stage loop below.
+        run: |
+          set -o pipefail
+          if ! timeout 180 godot --headless --path client "res://tests/save_fixture_guard_test.tscn" 2>&1 | tee save_fixture_guard_test.log; then
+            echo "::error::save_fixture_guard_test failed or timed out (180s) — a historical save no longer loads with zero loss"
+            tail -40 save_fixture_guard_test.log
+            exit 1
+          fi
+          if ! grep -q "TEST PASS" save_fixture_guard_test.log; then
+            echo "::error::save_fixture_guard_test exited 0 without reporting PASS"
+            tail -40 save_fixture_guard_test.log
+            exit 1
           fi
       - name: Regression tests
         run: |

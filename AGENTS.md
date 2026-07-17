@@ -214,14 +214,17 @@ can be watched by playing; every *further* art/game system waits on Phase 0.)
   #20); every asset directory carries a `PROVENANCE.md` with licence chain and checksums, and
   bakes must be deterministic (the artgen workflow re-bakes and byte-compares). Characters are
   composed at runtime by `CharacterFactory` from **recipes** (`client/recipes/*.json`, versioned
-  and name-keyed — names are forward-only per the no-resets law; the golden-recipe test enforces
-  it); non-humanoid **creatures** follow the same shape — `CreatureFactory` composes a baked
-  creature kit (the ash hound is the pilot archetype) from versioned, name-keyed, forward-only
-  recipes, one canonical skeleton per archetype. `server/` is the Go authoritative tier — its
-  **zone tick core** has landed (`server/sim/`, the deterministic fixed-timestep simulation;
-  `server/cmd/zone/`, the runnable skeleton), with the Agones/Nakama/networking layers arriving as
-  later children of the server-foundation epic (#4); `deploy/` (platform manifests) arrives later
-  per the roadmap.
+  and name-keyed — names are forward-only per the no-resets law; `tests/save_fixture_guard_test`
+  enforces it: every historical golden fixture must load with zero loss, every recipe version up
+  to `RECIPE_VERSION` must have one, and `tests/data/shipped_recipe_versions.txt` is the
+  append-only ledger anchoring that range — bumping `RECIPE_VERSION` means appending the ledger
+  line AND committing the version's golden fixture in the same PR); non-humanoid **creatures**
+  follow the same shape — `CreatureFactory` composes a baked creature kit (the ash hound is the
+  pilot archetype) from versioned, name-keyed, forward-only recipes, one canonical skeleton per
+  archetype. `server/` is the Go authoritative tier — its **zone tick core** has landed
+  (`server/sim/`, the deterministic fixed-timestep simulation; `server/cmd/zone/`, the runnable
+  skeleton), with the Agones/Nakama/networking layers arriving as later children of the
+  server-foundation epic (#4); `deploy/` (platform manifests) arrives later per the roadmap.
 - **Run:** `godot client` (macOS: `/Applications/Godot.app/Contents/MacOS/Godot client`).
 - **Validate before every PR:**
   `godot --headless --editor --quit --path client && godot --headless --quit-after 120 --path client` —

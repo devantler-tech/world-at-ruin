@@ -7,15 +7,18 @@ extends Node
 ##     rather than half-applying (CharacterFactory validation through the
 ##     store path).
 ##
+## The store's real save/load logic is exercised through a throwaway probe
+## file (save_to/load_from), so the player's own user://character.json is
+## never touched — a test can never strand a character (no-resets law).
+##
 ## Run: godot --headless --path client res://tests/character_persistence_test.tscn
+
+const PROBE := "user://persistence_probe.json"
 
 
 func _ready() -> void:
-	if not _backup_live_save():
-		_fail("could not back up the live character save — refusing to touch it")
-		return
-	CharacterStore.clear()
-	if CharacterStore.load_saved() != null:
+	_cleanup_probe()
+	if CharacterStore.load_from(PROBE) != null:
 		_fail("missing save did not read as null")
 		return
 
@@ -23,10 +26,10 @@ func _ready() -> void:
 	if recipe is not Dictionary:
 		_fail("wanderer preset unreadable")
 		return
-	if not CharacterStore.save_recipe(recipe):
+	if not CharacterStore.save_to(PROBE, recipe):
 		_fail("save failed")
 		return
-	var loaded = CharacterStore.load_saved()
+	var loaded = CharacterStore.load_from(PROBE)
 	if loaded is not Dictionary:
 		_fail("saved recipe did not load")
 		return
@@ -47,8 +50,8 @@ func _ready() -> void:
 	# A future-version recipe must be refused, not half-applied.
 	var future: Dictionary = recipe.duplicate(true)
 	future["version"] = CharacterFactory.RECIPE_VERSION + 1
-	CharacterStore.save_recipe(future)
-	var reloaded = CharacterStore.load_saved()
+	CharacterStore.save_to(PROBE, future)
+	var reloaded = CharacterStore.load_from(PROBE)
 	if reloaded is Dictionary:
 		var built := CharacterFactory.build(reloaded)
 		if built != null:
@@ -56,43 +59,22 @@ func _ready() -> void:
 			_fail("a future-version recipe built on an old client")
 			return
 
-	CharacterStore.clear()
-	_restore_live_save()
+	_cleanup_probe()
 	print("TEST PASS — %s" % fp_direct)
 	get_tree().quit(0)
 
 
 func _fail(message: String) -> void:
-	_restore_live_save()
+	_cleanup_probe()
 	push_error(message)
 	print("TEST FAIL — %s" % message)
 	get_tree().quit(1)
-## The tests exercise first-run flows by clearing the save — but a LIVE
-## character save is player state (no-resets law): back it up first and put
-## it back whatever happens. CRASH-SAFE: a stale backup from a killed run is
-## restored (never clobbered) before a new backup is taken, the copy is
-## verified before anything destructive runs, and tree teardown restores too.
-const BACKUP := "user://character.json.test-backup"
 
 
 func _exit_tree() -> void:
-	_restore_live_save()
+	_cleanup_probe()
 
 
-func _backup_live_save() -> bool:
-	if FileAccess.file_exists(BACKUP):
-		# A previous run died before restoring: put the original back first.
-		_restore_live_save()
-	if not FileAccess.file_exists(CharacterStore.PATH):
-		return true
-	return DirAccess.copy_absolute(
-		ProjectSettings.globalize_path(CharacterStore.PATH),
-		ProjectSettings.globalize_path(BACKUP)) == OK
-
-
-func _restore_live_save() -> void:
-	if FileAccess.file_exists(BACKUP):
-		DirAccess.rename_absolute(
-			ProjectSettings.globalize_path(BACKUP),
-			ProjectSettings.globalize_path(CharacterStore.PATH))
-
+func _cleanup_probe() -> void:
+	if FileAccess.file_exists(PROBE):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(PROBE))
