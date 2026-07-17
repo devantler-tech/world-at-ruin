@@ -5,23 +5,36 @@ extends Node
 ## Discovers every tests/data/golden_recipe_v<N>.json by listing the
 ## directory — never a hardcoded list — so a fixture cannot silently fall out
 ## of coverage, and FAILS when any version 1..RECIPE_VERSION has no fixture,
-## so a recipe-version bump cannot ship without its golden. Per fixture:
-##  1. The raw bytes are placed at the real save path, exactly as the
+## so a recipe-version bump cannot ship without its golden. The required
+## range is anchored by tests/data/shipped_recipe_versions.txt, an
+## APPEND-ONLY ledger of every version that ever shipped — lowering
+## RECIPE_VERSION or deleting a fixture cannot pass without also editing the
+## ledger, which is the explicit, reviewable act of breaking the law.
+## Per fixture:
+##  1. Its declared "version" matches its filename (a stale copy cannot
+##     stand in for a new version's coverage).
+##  2. The raw bytes are placed at the real save path, exactly as the
 ##     historical client wrote them.
-##  2. CharacterStore.load_saved() returns a Dictionary that deep-equals the
+##  3. CharacterStore.load_saved() returns a Dictionary that deep-equals the
 ##     fixture — zero field loss, no silent normalisation.
-##  3. It builds, twice, with identical fingerprints (a shipped save must
+##  4. It builds, twice, with identical fingerprints (a shipped save must
 ##     keep producing the same character within one build).
 ##
 ## Run: godot --headless --path client res://tests/save_fixture_guard_test.tscn
 
 const DATA_DIR := "res://tests/data/"
+const SHIPPED_VERSIONS := DATA_DIR + "shipped_recipe_versions.txt"
+
+# _fail() may only touch the save path once the live save is safely backed
+# up; before that, failing must leave the player's file exactly as found.
+var _live_save_protected := false
 
 
 func _ready() -> void:
 	if not TestSaveBackup.backup():
 		_fail("could not back up the live character save — refusing to touch it")
 		return
+	_live_save_protected = true
 
 	var discovered = _discover_fixtures()
 	if discovered is String:
@@ -31,7 +44,24 @@ func _ready() -> void:
 	if fixtures.is_empty():
 		_fail("no golden_recipe_v*.json fixtures found in %s" % DATA_DIR)
 		return
+
+	var shipped := _shipped_versions()
+	if shipped.is_empty():
+		_fail("shipped_recipe_versions.txt is missing, empty, or malformed — the forward-only ledger must exist")
+		return
+	var max_shipped: int = shipped[shipped.size() - 1]
+	if CharacterFactory.RECIPE_VERSION < max_shipped:
+		_fail("RECIPE VERSION ROLLBACK (no-resets law): RECIPE_VERSION is %d but v%d already shipped per the ledger" % [
+			CharacterFactory.RECIPE_VERSION, max_shipped])
+		return
+	if CharacterFactory.RECIPE_VERSION > max_shipped:
+		_fail("RECIPE_VERSION is %d but the ledger stops at v%d — append the new version to shipped_recipe_versions.txt with its fixture" % [
+			CharacterFactory.RECIPE_VERSION, max_shipped])
+		return
 	for version in range(1, CharacterFactory.RECIPE_VERSION + 1):
+		if version not in shipped:
+			_fail("the ledger has a hole: v%d is missing from shipped_recipe_versions.txt" % version)
+			return
 		if version not in fixtures:
 			_fail("RECIPE_VERSION is %d but golden_recipe_v%d.json does not exist — a recipe version may not ship without its fixture" % [
 				CharacterFactory.RECIPE_VERSION, version])
@@ -45,7 +75,7 @@ func _ready() -> void:
 	var versions := fixtures.keys()
 	versions.sort()
 	for version: int in versions:
-		var reason := _check_fixture(fixtures[version])
+		var reason := _check_fixture(version, fixtures[version])
 		if reason != "":
 			_fail("golden_recipe_v%d.json: %s" % [version, reason])
 			return
@@ -62,7 +92,7 @@ func _exit_tree() -> void:
 
 
 ## "" when the fixture survives the full write→load→build path, else why not.
-func _check_fixture(path: String) -> String:
+func _check_fixture(version: int, path: String) -> String:
 	var file := FileAccess.open(path, FileAccess.READ)
 	if file == null:
 		return "unreadable"
@@ -70,6 +100,9 @@ func _check_fixture(path: String) -> String:
 	var expected = JSON.parse_string(raw)
 	if expected is not Dictionary:
 		return "not a JSON object"
+	if int(expected.get("version", -1)) != version:
+		return "declares version %s but its filename says v%d — a stale copy cannot stand in for v%d coverage" % [
+			str(expected.get("version", "none")), version, version]
 
 	# The fixture's raw bytes ARE the save a historical client left on disk.
 	var save := FileAccess.open(CharacterStore.PATH, FileAccess.WRITE)
@@ -145,9 +178,28 @@ func _diff(expected: Variant, actual: Variant, path: String) -> String:
 	return ""
 
 
+## The version ledger: every line is a shipped version int; # and blanks
+## skipped; ascending-sorted on return. Empty on any malformed line.
+func _shipped_versions() -> PackedInt32Array:
+	var out := PackedInt32Array()
+	var f := FileAccess.open(SHIPPED_VERSIONS, FileAccess.READ)
+	if f == null:
+		return out
+	while not f.eof_reached():
+		var line := f.get_line().strip_edges()
+		if line == "" or line.begins_with("#"):
+			continue
+		if not line.is_valid_int() or int(line) < 1:
+			return PackedInt32Array()
+		out.append(int(line))
+	out.sort()
+	return out
+
+
 func _fail(message: String) -> void:
-	CharacterStore.clear()
-	TestSaveBackup.restore()
+	if _live_save_protected:
+		CharacterStore.clear()
+		TestSaveBackup.restore()
 	push_error(message)
 	print("TEST FAIL — %s" % message)
 	get_tree().quit(1)

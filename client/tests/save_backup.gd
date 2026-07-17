@@ -15,9 +15,16 @@ static func backup() -> bool:
 		restore()
 	if not FileAccess.file_exists(CharacterStore.PATH):
 		return true
-	return DirAccess.copy_absolute(
+	var err := DirAccess.copy_absolute(
 		ProjectSettings.globalize_path(CharacterStore.PATH),
-		ProjectSettings.globalize_path(BACKUP)) == OK
+		ProjectSettings.globalize_path(BACKUP))
+	# Byte-verify the copy: a partial backup left on disk would let a later
+	# restore() clobber the live save with a truncated file.
+	var ok := err == OK and FileAccess.get_file_as_bytes(BACKUP) == \
+		FileAccess.get_file_as_bytes(CharacterStore.PATH)
+	if not ok and FileAccess.file_exists(BACKUP):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(BACKUP))
+	return ok
 
 
 static func restore() -> void:

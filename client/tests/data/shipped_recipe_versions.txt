@@ -1,0 +1,7 @@
+# Every recipe version that has EVER shipped — the independent forward-only
+# floor for save_fixture_guard_test (no-resets law). APPEND-ONLY: bumping
+# RECIPE_VERSION means adding its line here AND its golden_recipe_v<N>.json;
+# removing a line is declaring shipped saves disposable, which is forbidden.
+1
+2
+3

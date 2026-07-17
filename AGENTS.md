@@ -210,8 +210,10 @@ can be watched by playing; every *further* art/game system waits on Phase 0.)
   bakes must be deterministic (the artgen workflow re-bakes and byte-compares). Characters are
   composed at runtime by `CharacterFactory` from **recipes** (`client/recipes/*.json`, versioned
   and name-keyed — names are forward-only per the no-resets law; `tests/save_fixture_guard_test`
-  enforces it: every historical golden fixture must load with zero loss, and every recipe version
-  up to `RECIPE_VERSION` must have one). `server/` (Agones realtime tier, Go meta services) and `deploy/` (platform manifests)
+  enforces it: every historical golden fixture must load with zero loss, every recipe version up
+  to `RECIPE_VERSION` must have one, and `tests/data/shipped_recipe_versions.txt` is the
+  append-only ledger anchoring that range — bumping `RECIPE_VERSION` means appending the ledger
+  line AND committing the version's golden fixture in the same PR). `server/` (Agones realtime tier, Go meta services) and `deploy/` (platform manifests)
   arrive later per the roadmap.
 - **Run:** `godot client` (macOS: `/Applications/Godot.app/Contents/MacOS/Godot client`).
 - **Validate before every PR:**
