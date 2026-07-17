@@ -114,11 +114,22 @@ func (w *World) resolvePair(a, b *Entity) bool {
 	// ua, ub are the intended (pre-clamp) moves: a along +d, b along -d.
 	var ua, ub Vec3
 	if dist == 0 {
-		// Coincident: pick the axis from the IDs so the result is stable.
+		// Coincident: the separation axis is undefined, so choose it
+		// deterministically. Prefer the roomier bounds axis — two actors
+		// coincident in a thin corridor must separate along its long axis, not
+		// into the near walls (picking the cramped axis would leave them stuck
+		// even with the blocked-push transfer). Direction is set by ID (higher
+		// ID positive, lower ID negative — opposite ways) so the result never
+		// depends on iteration order; the transfer handles any remaining wall on
+		// the chosen axis.
+		aMag, bMag := -half, ceilHalf // a is the lower ID (ascending pairs)
 		if a.ID > b.ID {
-			ua, ub = Vec3{X: ceilHalf}, Vec3{X: -half}
+			aMag, bMag = ceilHalf, -half
+		}
+		if w.bounds.Max.X-w.bounds.Min.X >= w.bounds.Max.Z-w.bounds.Min.Z {
+			ua, ub = Vec3{X: aMag}, Vec3{X: bMag}
 		} else {
-			ua, ub = Vec3{X: -half}, Vec3{X: ceilHalf}
+			ua, ub = Vec3{Z: aMag}, Vec3{Z: bMag}
 		}
 	} else {
 		aMag, bMag := half, ceilHalf

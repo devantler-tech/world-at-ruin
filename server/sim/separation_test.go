@@ -114,6 +114,29 @@ func TestSeparationExactOverlapDeterministic(t *testing.T) {
 	}
 }
 
+// TestSeparationCoincidentPicksRoomyAxis is the regression guard for the
+// coincident-axis P1: two exactly-coincident actors in a corridor too narrow on
+// X to fit them must separate along the roomy Z axis instead of jamming into the
+// near X walls.
+func TestSeparationCoincidentPicksRoomyAxis(t *testing.T) {
+	// X span 600 (< the 1000 mm radius sum); Z span 10 000 (roomy).
+	b := Bounds{Min: Vec3{X: -300, Y: 0, Z: -5000}, Max: Vec3{X: 300, Y: 0, Z: 5000}}
+	w := NewWorld(b)
+	w.Add(Entity{ID: 1, Pos: Vec3{X: 0, Z: 0}, MaxSpeed: 0, Radius: 500})
+	w.Add(Entity{ID: 2, Pos: Vec3{X: 0, Z: 0}, MaxSpeed: 0, Radius: 500})
+	w.Step()
+	if gap := horizontalGap(w.Get(1), w.Get(2)); gap < 1000-separationSlopMM {
+		t.Fatalf("coincident pair in a thin-X corridor not separated: gap=%d, want >= %d", gap, 1000-separationSlopMM)
+	}
+	// Separation happened along Z (the roomy axis), not the cramped X.
+	if w.Get(1).Pos.Z == 0 && w.Get(2).Pos.Z == 0 {
+		t.Fatal("coincident pair jammed on the cramped X axis instead of using Z")
+	}
+	if w.Get(2).Pos.Z <= w.Get(1).Pos.Z {
+		t.Fatal("higher-ID actor should take the positive Z direction (deterministic)")
+	}
+}
+
 // TestSeparationInsertionOrderIndependent extends the determinism law to the
 // separation path: two worlds seeded with the same overlapping actors in a
 // different Add order must hold an identical hash at every tick.
