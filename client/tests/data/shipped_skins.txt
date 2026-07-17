@@ -1,0 +1,8 @@
+# Every skin name that has EVER shipped (no-resets law): each must stay in
+# the baked registry and keep building forever. Only ever ADD lines.
+skin_female_light
+skin_female_mid
+skin_female_aged
+skin_male_light
+skin_male_deep
+skin_male_aged

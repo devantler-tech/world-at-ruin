@@ -55,6 +55,10 @@ jobs:
             echo "::error::Baked equipment registry differs from the committed equipment.json — re-bake and commit the kit with the manifest change"
             exit 1
           fi
+          if ! diff -u client/assets/characters/humanoid_kit/skins/skins.json bake_a/skins/skins.json; then
+            echo "::error::Baked skins registry differs from the committed skins.json — re-bake and commit the kit with the manifest change"
+            exit 1
+          fi
       - name: Upload kit artifact (taste-gate input)
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:

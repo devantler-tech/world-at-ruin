@@ -31,9 +31,10 @@ check_sha "${MPFB_SHA256}" "${tmp}/mpfb.zip"
 "${BLENDER}" --background --command extension install-file -r user_default "${tmp}/mpfb.zip"
 echo "MPFB ${MPFB_VERSION} installed."
 
-# CC0 asset packs (equipment sources), pinned by sha256 in manifest.json —
-# the manifest stays the single source of truth for what the kit is made of.
-jq -r '.equipment_packs | to_entries[] | "\(.key) \(.value.sha256) \(.value.url) \(.value.mirror)"' \
+# CC0 asset packs (equipment + skin sources), pinned by sha256 in
+# manifest.json — the manifest stays the single source of truth for what the
+# kit is made of.
+jq -r '.asset_packs | to_entries[] | "\(.key) \(.value.sha256) \(.value.url) \(.value.mirror)"' \
     "${KIT_DIR}/manifest.json" | while read -r name sha url mirror; do
   dest="${KIT_DIR}/packs/${name}"
   marker="${dest}/.sha256"

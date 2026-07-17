@@ -1,6 +1,7 @@
 {
-  "version": 2,
+  "version": 3,
   "comment": "The wanderer — the player's default body: heroic but human, waking in the ragged clothes the Ruin left them. Recipes are forward-only: names used here may never disappear from the kit.",
+  "skin": "skin_male_light",
   "equipment": {
     "torso": "shirt_ragged",
     "legs": "pants_wool",

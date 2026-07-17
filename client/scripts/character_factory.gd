@@ -21,10 +21,12 @@ class_name CharacterFactory
 ## scaling for joint pushes, and no engine global reads between rest edits
 ## (Godot 4.7 desyncs its rest/pose caches).
 
-const RECIPE_VERSION := 2
+const RECIPE_VERSION := 3
 const KIT_SCENE_PATH := "res://assets/characters/humanoid_kit/humanoid_base.glb"
 const EQUIPMENT_DIR := "res://assets/characters/humanoid_kit/equipment/"
 const EQUIPMENT_REGISTRY_PATH := EQUIPMENT_DIR + "equipment.json"
+const SKINS_DIR := "res://assets/characters/humanoid_kit/skins/"
+const SKINS_REGISTRY_PATH := SKINS_DIR + "skins.json"
 ## Equipment mesh nodes get this name prefix so the body's skinned mesh stays
 ## unambiguous (find_skinned_mesh skips them).
 const EQUIP_PREFIX := "Equip_"
@@ -35,12 +37,16 @@ const HIDE_SHAPE_PREFIX := "equip_hide_"
 ## The recipe format, exhaustively: any other top-level field is REJECTED —
 ## a recipe carrying data this client cannot render must fail loudly, never
 ## render a half-truth (no-resets law). New fields ship with a version bump:
-## `equipment` (slot -> piece name) exists from version 2 — a version-1
-## recipe carrying it stays invalid forever, exactly as v1 clients ruled.
+## `equipment` (slot -> piece name) exists from version 2, `skin` (a skins
+## registry name) from version 3 — an older recipe carrying either stays
+## invalid forever, exactly as the older clients ruled.
 const RECIPE_FIELDS := ["version", "comment", "shapes", "bone_girth", "bone_scale", "joint_push"]
 const RECIPE_FIELDS_V2 := ["equipment"]
+const RECIPE_FIELDS_V3 := ["skin"]
 
 static var _equipment_registry: Dictionary = {}
+static var _skins_registry: Dictionary = {}
+static var _skin_materials: Dictionary = {}
 ## The GUARDED bone keys per field — exactly the set the golden recipe
 ## exercises forever. Persisted recipes may only touch these; anything else
 ## would dodge the forward-compat guarantee (a future rig rename could break
@@ -93,7 +99,40 @@ static func build(recipe: Dictionary) -> Node3D:
 
 	for slot: String in recipe.get("equipment", {}):
 		_equip_piece(skeleton, mesh_instance, String(recipe["equipment"][slot]), recipe.get("shapes", {}))
+
+	if recipe.has("skin"):
+		mesh_instance.set_surface_override_material(0, _skin_material(String(recipe["skin"])))
+		instance.set_meta("skin", recipe["skin"])
 	return instance
+
+
+## One shared material per skin: N villagers with the same skin are one
+## texture and one material, not N.
+static func _skin_material(skin_name: String) -> StandardMaterial3D:
+	if skin_name in _skin_materials:
+		return _skin_materials[skin_name]
+	var material := StandardMaterial3D.new()
+	material.albedo_texture = load(SKINS_DIR + String(skins_registry()["skins"][skin_name]["texture"]))
+	material.roughness = 0.75
+	_skin_materials[skin_name] = material
+	return material
+
+
+## The baked skins registry (skins/skins.json): names are forward-only,
+## exactly like blend shapes and equipment pieces.
+static func skins_registry() -> Dictionary:
+	if not _skins_registry.is_empty():
+		return _skins_registry
+	var file := FileAccess.open(SKINS_REGISTRY_PATH, FileAccess.READ)
+	if file == null:
+		push_error("CharacterFactory: skins registry missing: %s" % SKINS_REGISTRY_PATH)
+		return { "skins": {} }
+	var parsed = JSON.parse_string(file.get_as_text())
+	if parsed is not Dictionary:
+		push_error("CharacterFactory: skins registry is not a JSON object")
+		return { "skins": {} }
+	_skins_registry = parsed
+	return _skins_registry
 
 
 ## Attaches one baked equipment piece to the kit skeleton: its skinned mesh
@@ -196,6 +235,8 @@ static func validate(recipe: Dictionary, skeleton: Skeleton3D, mesh_instance: Me
 			continue
 		if field in RECIPE_FIELDS_V2 and int(version) >= 2:
 			continue
+		if field in RECIPE_FIELDS_V3 and int(version) >= 3:
+			continue
 		return "unknown recipe field '%s' — this client cannot render it, refusing a half-truth" % field
 	for shape_name: String in recipe.get("shapes", {}):
 		if mesh_instance.find_blend_shape_by_name(shape_name) < 0:
@@ -220,6 +261,11 @@ static func validate(recipe: Dictionary, skeleton: Skeleton3D, mesh_instance: Me
 				return "unknown equipment piece '%s' — shipped pieces may never be removed" % piece_name
 			if String(registry["pieces"][piece_name]["slot"]) != slot:
 				return "piece '%s' does not go in slot '%s'" % [piece_name, slot]
+	if recipe.has("skin"):
+		if recipe["skin"] is not String:
+			return "skin must be a skins-registry name"
+		if String(recipe["skin"]) not in (skins_registry()["skins"] as Dictionary):
+			return "unknown skin '%s' — shipped skins may never be removed" % recipe["skin"]
 	return ""
 
 
@@ -263,6 +309,8 @@ static func fingerprint(instance: Node3D) -> String:
 		var mixed := _mixed_vertices(meshes[mesh_name])
 		total_verts += mixed.size()
 		ctx.update(mixed.to_byte_array())
+	# The skin changes no geometry but IS the character's identity too.
+	ctx.update(String(instance.get_meta("skin", "")).to_utf8_buffer())
 	return "bones=%d meshes=%d verts=%d sha256=%s" % [
 		skeleton.get_bone_count(), names.size(), total_verts, ctx.finish().hex_encode()]
 

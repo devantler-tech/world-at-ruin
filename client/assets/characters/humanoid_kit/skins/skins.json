@@ -1,0 +1,24 @@
+{
+  "kit_version": 4,
+  "size": 1024,
+  "skins": {
+    "skin_female_aged": {
+      "texture": "skin_female_aged.png"
+    },
+    "skin_female_light": {
+      "texture": "skin_female_light.png"
+    },
+    "skin_female_mid": {
+      "texture": "skin_female_mid.png"
+    },
+    "skin_male_aged": {
+      "texture": "skin_male_aged.png"
+    },
+    "skin_male_deep": {
+      "texture": "skin_male_deep.png"
+    },
+    "skin_male_light": {
+      "texture": "skin_male_light.png"
+    }
+  }
+}

@@ -1,5 +1,5 @@
 {
-  "kit_version": 3,
+  "kit_version": 4,
   "pieces": {
     "boots_worn": {
       "hide_shape": "equip_hide_boots_worn",

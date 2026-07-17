@@ -1,6 +1,7 @@
 {
-  "version": 2,
+  "version": 3,
   "comment": "A villager — an ordinary body for ordinary people; the open world is mostly these.",
+  "skin": "skin_male_deep",
   "equipment": {
     "torso": "shirt_ragged",
     "legs": "pants_wool",
