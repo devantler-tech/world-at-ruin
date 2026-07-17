@@ -129,15 +129,27 @@ static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 		return _result(SHELL_UPDATE, "content pack %s needs shell >= %s but %s is installed" % [
 			str(m_pack["version"]), str(m_pack["min_shell"]), shell])
 	if pack_newer:
+		# Forward-only: a "newer" pack that WRITES an older save schema than the
+		# installed build would regress the save format and silently drop state
+		# introduced by the intervening schemas — refuse it; this client keeps its
+		# current, richer build.
+		if int(m_save["writes"]) < save_schema:
+			return _result(INVALID_MANIFEST, "content pack %s writes save schema %d below the installed build's %d — would regress the save (forward-only)" % [
+				str(m_pack["version"]), int(m_save["writes"]), save_schema])
 		# Rollback safety: a pack update is offered only when the rollback target
 		# (the installed build) could still READ what the candidate WRITES. If the
 		# candidate's write-schema (`save_schema.writes`) exceeds how high the
-		# installed build can read (`save_reads_max`, defaulting to its own
-		# schema), a later rollback would strand a save the old build cannot read —
-		# so this update rides the SHELL tier, which manages the migration safely.
+		# installed build can read (`save_reads_max`, defaulting to its own schema),
+		# a later rollback would strand a save the old build cannot read — so it
+		# rides the SHELL tier. But route there only if the manifest actually offers
+		# a NEWER shell; a stale/cross-channel manifest advertising an older shell is
+		# refused, never followed to a downgrade.
 		var reads_max := int(installed.get("save_reads_max", installed.get("save_schema", 0)))
 		if int(m_save["writes"]) > reads_max:
-			return _result(SHELL_UPDATE, "content pack %s writes save schema %d beyond the rollback target's read ceiling %d — routing to the shell tier" % [
+			if shell_newer:
+				return _result(SHELL_UPDATE, "content pack %s writes save schema %d beyond the rollback target's read ceiling %d — routing to the newer shell %s" % [
+					str(m_pack["version"]), int(m_save["writes"]), reads_max, str(m_shell["current"])])
+			return _result(INVALID_MANIFEST, "content pack %s writes save schema %d beyond the read ceiling %d but the manifest offers no newer shell — refusing (no safe route)" % [
 				str(m_pack["version"]), int(m_save["writes"]), reads_max])
 		return _result(PACK_UPDATE, "content pack %s available (installed %s)" % [
 			str(m_pack["version"]), pack])

@@ -48,6 +48,7 @@ func _ready() -> void:
 	_test_future_schema_without_newer_shell_refused()
 	_test_pack_needs_shell_beyond_advertised_refused()
 	_test_pack_write_schema_hazard_routes_to_shell()
+	_test_pack_write_schema_regression_refused()
 	_test_schema_too_new_ignores_broken_body()
 	_test_schema_below_supported_refused()
 	_test_pack_update_requires_write_schema()
@@ -177,14 +178,21 @@ func _test_pack_needs_shell_beyond_advertised_refused() -> void:
 
 
 func _test_pack_write_schema_hazard_routes_to_shell() -> void:
-	# A newer pack that WRITES a save schema the rollback target cannot READ must
-	# ride the shell tier, so a later rollback never strands the save.
+	# Hazard + a genuinely newer shell → route to the shell tier.
 	var m := _base_manifest()
-	m["pack"]["version"] = "0.1.15" # newer pack, runs on the current shell
+	m["pack"]["version"] = "0.1.15"
+	m["shell"]["current"] = "0.2.0" # a genuinely newer shell to route to
 	m["save_schema"] = {"min": 1, "writes": 4} # writes v4
 	var inst := _installed_current()
 	inst["save_reads_max"] = 3 # installed build reads only up to v3
-	_expect(inst, m, UpdateDecision.SHELL_UPDATE, "a pack writing beyond the rollback target's read ceiling rides the shell")
+	_expect(inst, m, UpdateDecision.SHELL_UPDATE, "a pack writing beyond the read ceiling rides the newer shell")
+	# Hazard but NO newer shell advertised → refuse, never follow to a downgrade.
+	var m3 := _base_manifest()
+	m3["pack"]["version"] = "0.1.15" # shell.current stays 0.1.14 == installed
+	m3["save_schema"] = {"min": 1, "writes": 4}
+	var inst3 := _installed_current()
+	inst3["save_reads_max"] = 3
+	_expect(inst3, m3, UpdateDecision.INVALID_MANIFEST, "a write-hazard with no newer shell is refused, not a downgrade")
 	# Safe case: writes within the read ceiling → a plain pack update.
 	var m2 := _base_manifest()
 	m2["pack"]["version"] = "0.1.15"
@@ -192,6 +200,18 @@ func _test_pack_write_schema_hazard_routes_to_shell() -> void:
 	var inst2 := _installed_current()
 	inst2["save_reads_max"] = 3
 	_expect(inst2, m2, UpdateDecision.PACK_UPDATE, "a pack writing within the read ceiling is a plain pack update")
+
+
+func _test_pack_write_schema_regression_refused() -> void:
+	# A newer pack that WRITES an older save schema than the installed build must be
+	# refused — applying it would regress the save format and drop intervening state.
+	var m := _base_manifest()
+	m["pack"]["version"] = "0.1.15"
+	m["save_schema"] = {"min": 1, "writes": 2}
+	var inst := _installed_current()
+	inst["save_schema"] = 4
+	inst["save_reads_max"] = 4
+	_expect(inst, m, UpdateDecision.INVALID_MANIFEST, "a pack writing below the installed save schema is refused (no regression)")
 
 
 func _test_schema_too_new_ignores_broken_body() -> void:
