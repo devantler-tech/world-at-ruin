@@ -8,6 +8,12 @@
 > (consoles/iOS stay [deliberately last](../../AGENTS.md), Phase 8 / #15) — it establishes the
 > **update mechanism** for the desktop tier we ship first. Mechanism-early is not platforms-early.
 
+> **Maintainer direction (2026-07-17):** *ship the self-applied content-pack update (Tier 1) now;
+> **defer** the storefront / native-shell (Tier 2) channel decision.* So the near-term build is the
+> **pack-overlay self-update** and its decision core (children 1–3); the launcher/storefront choice
+> (child 5) is parked until later — the pack overlay is what makes "update the client from the client"
+> real, and it stands on its own.
+
 ## Why this is a day-one problem, not a Phase-8 one
 
 The product law says **no hard resets, ever** — an early player keeps playing as the game evolves,
@@ -72,12 +78,15 @@ over `res://`. New scenes, scripts, shaders, assets, and client-side tuning arri
 store round-trip, no manual reinstall**. This is "update the client from the client." Apply is at most
 a *restart-to-apply*; hot-mount is a later refinement where it is safe.
 
-### Tier 2 — Shell/native update (executable + engine)
+### Tier 2 — Shell/native update (executable + engine) — deferred
 
 Rare — only when the engine version, native bindings, or export template change, which a pack cannot
 replace. Handled by a thin **desktop launcher/bootstrapper** (or the desktop packaging channel) that
 swaps the native binary. On desktop this is fully automatable; the launcher acts when the current pack
-requires a newer shell than the one installed.
+requires a newer shell than the one installed. **The launcher/storefront mechanism is deferred by
+maintainer direction (2026-07-17)** — it is a commercial/storefront call (self-hosted vs itch.io vs
+Steam) that does not block the pack overlay, so the manifest already carries the `shell` fields the
+future launcher will read, but the launcher itself is child 5, built later.
 
 ## The update-decision core — where the no-stranding guarantee lives
 
@@ -192,19 +201,22 @@ the pack version tracks the release the dev-log already announces.
 4. **Protocol-version handshake** — client negotiates its protocol with the meta tier and
    refuses-and-prompts-update before it can become incompatible (the server half is a server-tier
    child).
-5. **Desktop launcher / shell auto-update (Tier 2)** — swap the native binary; pick the desktop
-   mechanism (self-hosted updater / Butler / Steam) per target.
+5. **Desktop launcher / shell auto-update (Tier 2) — deferred** (maintainer direction 2026-07-17):
+   swap the native binary; pick the desktop mechanism (self-hosted updater / Butler / Steam) per
+   target, later.
 6. **Signing key custody + verification** — offline release key, public key baked into the shell,
    scoped CI secret, documented rotation.
 7. **(Phase 8) Console/iOS store-delivery fallback** — store-delivered Tier 1+2; Tier 0 stays live.
 
-## Decisions open to your steer
+## Decisions
 
-These are made defensibly above from the settled stack, but are the forks most worth a redirect:
+- ✅ **Desktop shell-update / storefront (Tier 2) mechanism — DEFERRED** (maintainer direction
+  2026-07-17). Ship the pack-overlay self-update first; decide self-hosted launcher vs itch.io Butler
+  vs Steam later. The manifest already carries the `shell` fields the future launcher will read.
 
-1. **Origin:** platform-hosted OCI/object store (interim: GitHub Releases). Or do you want a specific
-   CDN/host from the start?
-2. **Channel model:** a single rolling `live` channel (schema allows future `canary`). Or stable/beta
-   split now?
-3. **Desktop shell-update (Tier 2) mechanism:** self-hosted launcher vs itch.io Butler vs Steam — a
-   commercial/store decision that also touches the source-available boundary.
+Still made defensibly above from the settled stack, open to redirect on this PR:
+
+1. **Origin:** platform-hosted OCI/object store (interim: GitHub Releases). Or a specific CDN/host from
+   the start?
+2. **Channel model:** a single rolling `live` channel (schema allows a future `canary`). Or a
+   stable/beta split now?
