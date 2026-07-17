@@ -42,8 +42,10 @@ The economy and progression are designed to stay fair for everyone, permanently.
 - cheat, or tamper with the Game client, its data, or its network traffic to gain advantage; or
 - harass other players or disrupt the Service.
 
-If a defect, exploit, or unauthorised action corrupts records, the Operator may apply corrective
-adjustments **limited to the affected accounts and records** to restore integrity.
+If a defect, exploit, or unauthorised action creates or alters records illegitimately, the
+Operator may correct **those records** — narrowly, guided by the audit trail, and only to remove
+what the abuse itself created. This is not a rollback power: it never touches legitimately earned
+progression, and the forward-only commitment in section 2 stands.
 
 ## 4. Enforcement and termination
 

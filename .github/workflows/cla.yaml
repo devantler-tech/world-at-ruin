@@ -45,6 +45,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           AUTHOR: ${{ github.event.pull_request.user.login }}
+          AUTHOR_ID: ${{ github.event.pull_request.user.id }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
@@ -57,9 +58,11 @@ jobs:
           done
           ledger=$(gh api "repos/$REPO/contents/$LEDGER_PATH?ref=$LEDGER_BRANCH" \
             --jq '.content' 2>/dev/null | base64 -d) || ledger='{"signedContributors":[]}'
+          # Match by immutable account ID, never by login: logins can be renamed and
+          # re-claimed by someone else, so a name match could pass a stranger.
           if printf '%s' "$ledger" \
-            | jq -e --arg login "$AUTHOR" \
-                '.signedContributors[] | select(.name == $login)' >/dev/null; then
+            | jq -e --argjson id "$AUTHOR_ID" \
+                '.signedContributors[] | select(.id == $id)' >/dev/null; then
             echo "'$AUTHOR' has signed the CLA." | tee -a "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
@@ -108,6 +111,16 @@ jobs:
                 "(comment by $COMMENTER, author is $author)"
               exit 0
             fi
+            # Self-provision the ledger branch: the Contents API cannot create a file on
+            # a branch that does not exist, so a missing/lost ledger branch would strand
+            # the first signer forever.
+            if ! gh api "repos/$REPO/git/ref/heads/$LEDGER_BRANCH" >/dev/null 2>&1; then
+              default_branch=$(gh api "repos/$REPO" --jq '.default_branch')
+              base_sha=$(gh api "repos/$REPO/git/ref/heads/$default_branch" --jq '.object.sha')
+              gh api -X POST "repos/$REPO/git/refs" \
+                -f ref="refs/heads/$LEDGER_BRANCH" -f sha="$base_sha" >/dev/null
+              echo "provisioned missing ledger branch $LEDGER_BRANCH from $default_branch"
+            fi
             sha=""
             ledger='{"signedContributors":[]}'
             if resp=$(gh api "repos/$REPO/contents/$LEDGER_PATH?ref=$LEDGER_BRANCH" 2>/dev/null); then
@@ -115,8 +128,8 @@ jobs:
               ledger=$(printf '%s' "$resp" | jq -r '.content' | base64 -d)
             fi
             if printf '%s' "$ledger" \
-              | jq -e --arg login "$COMMENTER" \
-                  '.signedContributors[] | select(.name == $login)' >/dev/null; then
+              | jq -e --argjson id "$COMMENTER_ID" \
+                  '.signedContributors[] | select(.id == $id)' >/dev/null; then
               echo "$COMMENTER has already signed."
             else
               updated=$(printf '%s' "$ledger" | jq \
