@@ -13,6 +13,7 @@ const FOG_COLOR := Color(0.35, 0.28, 0.24)
 var _player: Player
 var _hud: Hud
 var _creator: CharacterCreator
+var _interaction: InteractionController
 
 func _ready() -> void:
 	_build_environment()
@@ -54,6 +55,24 @@ func _ready() -> void:
 	add_child(_hud)
 	_player.respawned.connect(func() -> void:
 		_hud.toast("The Reach reclaims you. You wake again in the dark."))
+
+	# The one interaction verb: look at something near, press E, act on it.
+	_interaction = InteractionController.new()
+	_interaction.name = "Interaction"
+	_interaction.player = _player
+	_interaction.hud = _hud
+	add_child(_interaction)
+
+	# Attuning the shrine makes it the wanderer's respawn point (settled death
+	# design: wake at the nearest attuned point). World stays Player-agnostic;
+	# the effect is wired here. Session-only until the save vault is sealed (#3).
+	world.shrine_interactable().interacted.connect(func(_by: Node) -> void:
+		_player.set_respawn_point(world.shrine_respawn_point())
+		_hud.toast("The Wardens' flame knows you now. The Reach will return you here."))
+
+	# The people speak: a person's seeded line surfaces as a toast.
+	npcs.npc_spoke.connect(func(npc_name: String, line: String) -> void:
+		_hud.toast("%s:  “%s”" % [npc_name, line]))
 
 	var saved = CharacterStore.load_saved()
 	if saved is Dictionary:

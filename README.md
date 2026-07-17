@@ -40,8 +40,8 @@ cd world-at-ruin
 godot client   # or: /Applications/Godot.app/Contents/MacOS/Godot client
 ```
 
-**Controls:** `WASD` move · `Shift` sprint · `Space` jump · mouse look · `L`/`F1` dev log ·
-`Esc` release mouse.
+**Controls:** `WASD` move · `Shift` sprint · `Space` jump · `E` interact · mouse look ·
+`C` reshape character · `L`/`F1` dev log · `Esc` release mouse.
 
 **Watch the world grow:** press `L` in-game. Every player-visible change is a dev-log entry,
 newest first — replaying after each build shows exactly what the agents grew.
