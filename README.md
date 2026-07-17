@@ -13,7 +13,19 @@ attention, and every visible change lands in the in-game dev log so progress can
 
 ## Play it
 
-Requires [Godot 4.7+](https://godotengine.org) (macOS: `brew install --cask godot`).
+**Without the editor (macOS):** every `main` build exports an ad-hoc-signed
+universal `World at Ruin.app` — grab the `WorldAtRuin-macOS-universal` artifact
+from the latest
+[`main` CI run](https://github.com/devantler-tech/world-at-ruin/actions/workflows/ci.yaml?query=branch%3Amain+event%3Apush)
+(use that filtered list, not a PR run — PR artifacts carry unmerged code).
+Unzip the download **twice** (GitHub wraps the artifact in an outer ZIP; inside
+it is `WorldAtRuin.zip`, which contains the app), then right-click → **Open**
+the first time (the app is ad-hoc signed, not notarized, so Gatekeeper asks
+once). Or export it yourself with the `macOS` preset in
+`client/export_presets.cfg` (needs the 4.7.1 export templates installed in the
+Godot editor).
+
+**From the project** — requires [Godot 4.7+](https://godotengine.org) (macOS: `brew install --cask godot`):
 
 ```sh
 git clone https://github.com/devantler-tech/world-at-ruin.git
