@@ -124,6 +124,26 @@ This decision core is **pure, deterministic, and unit-testable** with no network
 and no-stranding guarantee lives here and can be proven in the Godot test harness before a single byte
 is downloaded.
 
+### Rollback eligibility — the one law that makes last-known-good actually safe
+
+Retaining the previous bytes is not enough; a rollback target is only *safe* if the player can keep
+playing on it. A previous build is an **eligible rollback target only if it can (a) READ every save the
+candidate can WRITE** — including a **same-schema** addition such as a new equipment/skin registry name,
+not merely a schema-number bump — **and (b) SPEAK a protocol the live server still accepts.** A
+schema-number check alone misses both (a same-schema new name, and a retired protocol).
+
+The single law that guarantees both is **expand-before-write / expand-before-contract**: every change
+that makes something new *persistable* or advertises a new *protocol* first ships its **read/accept**
+support in a release, and only once that read-capable release is the **standing rollback target** does
+the new thing become writable (or the old protocol get retired). A save-schema bump, a new savable
+registry name, and a protocol raise are three instances of the same shape — *expand (add read/accept,
+no writes) → bake → contract (start writing / retire the old)*. The `save_schema.writes` field, the
+two-phase protocol rollout, and the existing append-only recipe ledger + golden-fixture CI guards are
+all facets of this one law, and the immutable bootstrap (child 2) only ever selects a rollback target
+that satisfies (a) and (b). Routing a save-schema bump "to the shell tier" is therefore necessary but
+**not sufficient on its own** — the shell change must itself be expand-before-write, or its own rollback
+strands the same way.
+
 ## The manifest — the contract between CI and the client
 
 A small **signed JSON** document per channel, published by CI beside the artifacts. See
