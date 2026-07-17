@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "comment": "A villager — an ordinary body for ordinary people; the open world is mostly these.",
+  "shapes": {
+    "belly": 0.3,
+    "arms_heavy": 0.2,
+    "legs_heavy": 0.25,
+    "head_round": 0.4,
+    "head_aged": 0.35,
+    "nose_strong": 0.3
+  }
+}

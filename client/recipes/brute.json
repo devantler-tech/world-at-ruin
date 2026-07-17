@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "comment": "A brute — the first enemy silhouette: mass, reach, and a head built for headbutting.",
+  "shapes": {
+    "torso_vshape": 1.0,
+    "torso_muscle": 1.0,
+    "torso_broad": 0.6,
+    "shoulders_broad": 0.9,
+    "arms_muscle": 1.0,
+    "arms_heavy": 0.4,
+    "legs_muscle": 0.9,
+    "neck_thick": 1.0,
+    "jaw_wide": 0.8,
+    "chin_prominent": 0.6,
+    "nose_hump": 0.5,
+    "head_square": 0.6
+  },
+  "bone_girth": {
+    "lowerarm": 1.12,
+    "upperarm": 1.08,
+    "calf": 1.1,
+    "neck_01": 1.08
+  },
+  "bone_scale": {
+    "hand": 1.22,
+    "foot": 1.12
+  },
+  "joint_push": {
+    "upperarm": 1.1
+  }
+}

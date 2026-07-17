@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "comment": "The wanderer — the player's default body: heroic but human. Recipes are forward-only: names used here may never disappear from the kit.",
+  "shapes": {
+    "torso_vshape": 0.7,
+    "torso_muscle": 0.6,
+    "shoulders_broad": 0.5,
+    "waist_slim": 0.35,
+    "arms_muscle": 0.55,
+    "legs_muscle": 0.45,
+    "neck_thick": 0.3,
+    "chin_prominent": 0.3,
+    "jaw_wide": 0.25
+  },
+  "bone_girth": {
+    "lowerarm": 1.06,
+    "calf": 1.05
+  },
+  "bone_scale": {
+    "hand": 1.1,
+    "foot": 1.05
+  },
+  "joint_push": {
+    "upperarm": 1.05
+  }
+}
