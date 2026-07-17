@@ -1,0 +1,5 @@
+kit_version=1
+verts=13380
+stripped=5778
+bones=53
+shapes=torso_vshape,torso_muscle,torso_broad,shoulders_broad,waist_slim,belly,hips_wide,buttocks_full,neck_thick,arms_muscle,arms_heavy,legs_muscle,legs_heavy,head_round,head_square,head_aged,head_heavy,chin_prominent,jaw_wide,nose_strong,nose_hump

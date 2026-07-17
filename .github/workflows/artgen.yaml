@@ -1,0 +1,59 @@
+name: Artgen
+
+on:
+  pull_request:
+    paths:
+      - "tools/artgen/**"
+      - "client/assets/characters/humanoid_kit/**"
+      - ".github/workflows/artgen.yaml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  BLENDER_VERSION: 5.2.0
+  BLENDER_SHA256: 96f6c181a30f4950607839dc84d42a354b250d8a0231b098b59b7bc69c351c48
+
+jobs:
+  humanoid-kit:
+    name: Humanoid kit bake (determinism + contract)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # Artifacts are uploaded from this workspace — never persist the
+          # checkout token into it (zizmor: artipacked).
+          persist-credentials: false
+      - name: Install Blender (pinned, checksum-verified)
+        run: |
+          curl -fsSL -o blender.tar.xz "https://download.blender.org/release/Blender5.2/blender-${BLENDER_VERSION}-linux-x64.tar.xz"
+          echo "${BLENDER_SHA256}  blender.tar.xz" | sha256sum -c -
+          mkdir -p "${HOME}/blender"
+          tar -xJf blender.tar.xz -C "${HOME}/blender" --strip-components=1
+          echo "${HOME}/blender" >> "${GITHUB_PATH}"
+      - name: Install MPFB (pinned, checksum-verified — tool only, never committed)
+        run: tools/artgen/humanoid_kit/bootstrap.sh
+      - name: Bake twice — byte determinism
+        run: |
+          blender --background --python tools/artgen/humanoid_kit/bake.py -- "${PWD}/bake_a.glb" | tee bake_a.log
+          grep -q "RESULT: SUCCESS" bake_a.log
+          blender --background --python tools/artgen/humanoid_kit/bake.py -- "${PWD}/bake_b.glb" | tee bake_b.log
+          grep -q "RESULT: SUCCESS" bake_b.log
+          if ! cmp -s bake_a.glb bake_b.glb; then
+            echo "::error::Two bakes of the same manifest differ — the kit is not deterministic"
+            exit 1
+          fi
+      - name: Fresh bake matches the committed structural contract
+        run: |
+          if ! diff -u client/assets/characters/humanoid_kit/kit_report.txt bake_a_report.txt; then
+            echo "::error::Baked kit structure differs from the committed kit_report.txt — re-bake and commit the kit with the manifest change"
+            exit 1
+          fi
+      - name: Upload kit artifact (taste-gate input)
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: humanoid-kit
+          path: |
+            bake_a.glb
+            bake_a_report.txt
