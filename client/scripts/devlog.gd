@@ -22,36 +22,6 @@ const ENTRIES: Array[Dictionary] = [
 		],
 	},
 	{
-		"version": "0.1.6",
-		"date": "2026-07-17",
-		"title": "Bodies from recipes",
-		"notes": [
-			"The character system exists. One canonical human body is now baked entirely by committed code — and every person in this world will be a RECIPE: a small text file of named sliders (broader shoulders, heavier gut, squarer jaw...) that reshapes that one body.",
-			"Three first recipes stand in the gallery (scenes/recipes.tscn — the taste gate): a wanderer, a villager, and a brute. Same skeleton, same mesh, three different people.",
-			"Recipes are forever: a golden recipe exercising every slider is locked into the tests — if a future change would break a character someone made, the build fails before it can.",
-			"Clay-grey for now, and standing in a sculptor's pose: skin, hair and clothes are later stages of the system.",
-		],
-	},
-	{
-		"version": "0.1.5",
-		"date": "2026-07-17",
-		"title": "The first wanderer takes shape",
-		"notes": [
-			"A human figure now stands in the cave — the first character. The body is a CC0 base mesh; everything about how he stands is code: his proportions are reshaped bone by bone (broader chest, heavier forearms, larger hands) and his arms are lowered from the sculptor's T-pose into a relaxed stance, all by a script.",
-			"A second taste-gate scene (scenes/character.tscn) lines up three builds of the same body — grounded, hero, base — so the proportion range can be judged side by side.",
-			"Same parameters, same body, every time: a regression test fingerprints the skeleton and the deformed skin so the figure can never silently change shape.",
-		],
-	},
-	{
-		"version": "0.1.4",
-		"date": "2026-07-17",
-		"title": "Play it without the editor",
-		"notes": [
-			"World at Ruin is now a real, double-clickable Mac app: every build exports a signed universal .app you can download from the project's build page — no Godot editor required.",
-			"The build machinery smoke-boots the exported app itself before publishing it, so a download that would not start never ships.",
-		],
-	},
-	{
 		"version": "0.1.5",
 		"date": "2026-07-17",
 		"title": "The first wanderer takes shape",
