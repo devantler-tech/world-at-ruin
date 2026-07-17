@@ -26,10 +26,19 @@
   "pack": {
     "version": "0.1.14",
     "min_shell": "0.1.14",
-    "url": "https://updates.worldatruin.example/live/pack/worldatruin-0.1.14.pck",
-    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
-    "size": 0,
-    "base_version": null
+    "full": {
+      "url": "https://updates.worldatruin.example/live/pack/worldatruin-0.1.14.full.pck",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "size": 0
+    },
+    "deltas": [
+      {
+        "base_version": "0.1.13",
+        "url": "https://updates.worldatruin.example/live/pack/worldatruin-0.1.13-to-0.1.14.delta.pck",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "size": 0
+      }
+    ]
   },
   "protocol": {
     "min": 1,
@@ -38,5 +47,9 @@
   "save_schema": {
     "min": 1
   },
-  "signature": "BASE64_DETACHED_SIGNATURE_OVER_THE_CANONICALISED_MANIFEST_BODY"
+  "key": {
+    "id": "signing-2026-07",
+    "certificate": "BASE64_SIGNING_KEY_CERT_SIGNED_BY_THE_OFFLINE_ROOT_KEY"
+  },
+  "signature": "BASE64_ED25519_SIGNATURE_OVER_THE_CANONICAL_JSON_WITH_signature_EXCLUDED"
 }

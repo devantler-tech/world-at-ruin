@@ -98,13 +98,26 @@ A client-side **update manager** that, at boot and periodically:
    `{shell_version, pack_version, save_schema, negotiated_protocol}` against the manifest:
    - `up_to_date` → play.
    - `pack_update` → download + verify + stage + mount (automatic, low-friction).
-   - `shell_update` → hand off to the launcher (installed shell too old for the current pack).
+   - `shell_update` → hand off to the launcher (installed shell too old for the current pack, **or** the
+     candidate pack would raise the save schema — see below).
    - `blocked_incompatible` → **should be impossible by construction** under the product law
      (backward-compatible protocols + forward-only saves). If it ever occurs it is a **loud product-law
      violation surfaced to the player**, never a silent strand or a corrupted save.
-4. **Forward-only + last-known-good:** a staged pack is promoted only after signature+hash pass; the
-   previous good pack is retained, so a failed apply **rolls back to the last playable build**. The
-   flow never downgrades below the save's schema and never deletes the save.
+4. **Forward-only + last-known-good, and the two rules that make rollback actually safe:**
+   - **Rollback is owned by the immutable shell, never by the overlay.** A pack that crashes *at
+     startup* cannot roll itself back — the recovery code would be inside the broken pack. So the
+     **shell/bootstrap** (outside the replaceable tree) writes a *boot-attempt marker* before mounting a
+     staged pack and only promotes it once the boot reaches a success checkpoint; if a launch does not
+     reach it, the next launch **selects the previous good pack**. The shell, not the overlay, is the
+     root of recovery — which is why a trustworthy shell must exist before the first player (child 6).
+   - **A pack never advances the save schema; a save-schema bump rides the shell.** If a pack raised the
+     persisted save/recipe version and the player then saved, a later rollback would mount older code
+     against newer data — and the older pack, which rejects versions above its own `RECIPE_VERSION`,
+     would refuse or discard it: a strand. So the decision core routes any pack that would raise the save
+     schema to `shell_update`, and **rollback is offered only when the previous build can read every
+     state the candidate build can write** (else the step is shell-tier or an expand-contract migration
+     where the old pack already reads the new data). The flow never downgrades below the save's schema
+     and never deletes the save.
 
 This decision core is **pure, deterministic, and unit-testable** with no network or art — exactly like
 `Telegraph`/`Interactable`. It is the **first implementation increment**, because every correctness
@@ -116,20 +129,33 @@ is downloaded.
 A small **signed JSON** document per channel, published by CI beside the artifacts. See
 [`client-update-manifest.example.json`](./client-update-manifest.example.json). Shape:
 
-- `schema` — manifest schema version (forward-only; the client understands `>= its own`).
+- `schema` — manifest schema version. A **stable, backward-compatible envelope** — `schema`, `channel`,
+  and the `shell.current`/`shell.min_supported`/`shell.download` fields — keeps its shape across *every*
+  schema bump, so a client of any schema can always at least read "you need this shell." Bumps are
+  additive within that envelope; a client processes only the schema it understands and, on a higher
+  schema, follows the envelope to a `shell_update` rather than guessing at (or rejecting on) new fields.
 - `channel` — `live` by default; the field exists so `canary` can be added later without a redesign.
 - `shell` — `current`, `min_supported` (shells older are refused — the forward-only floor), and
-  per-target signed `download` entries (`url`, `sha256`, `size`).
-- `pack` — `version`, `min_shell` (the shell this pack needs), `url`, `sha256`, `size`, and
-  `base_version` (`null` = full/cumulative pack; a version = delta from that base).
-- `protocol` — `{min, max}`: the client protocol range the **live server tier accepts right now**.
-  The client updates before it falls outside this window, so it is never kicked mid-evolution.
+  per-target signed `download` entries (`url`, `sha256`, `size`). The **shell version is independent of
+  the pack version**: the executable and the content advance on their own clocks.
+- `pack` — `version`, `min_shell` (the shell this pack needs), and **two artifacts**: a `full` cumulative
+  pack (`url`/`sha256`/`size`) that any in-range shell can apply **from any prior state**, plus an
+  optional ordered `deltas` list (each with its `base_version`). A client applies the smallest delta
+  chain it has and **always falls back to the `full` pack** when it lacks a base — so a player offline
+  for several releases is never stranded on a broken update chain.
+- `protocol` — `{min, max}`: the client protocol range the **live server tier accepts right now**,
+  raised only via the two-phase rollout below so no connected or not-yet-updated client is kicked.
 - `save_schema` — `{min}`: the lowest save schema the current client must support (forward-only; ties
-  to #3).
-- `signature` — a detached signature over the canonicalised manifest body.
+  to #3). A bump here rides the **shell** tier (see the decision core), never a bare pack overlay.
+- `key` — the id/certificate of the current signing key, signed by the offline **root** key baked into
+  the shell (see Signing) — this is what lets a signing key rotate without a reinstall.
+- `signature` — a detached signature over the manifest. The signing bytes are **pinned** (see Signing):
+  a canonical JSON profile with the `signature` field excluded, a named algorithm, and a fixed encoding,
+  so CI and the Godot client sign and verify exactly the same bytes.
 
-Version strings reuse the existing scheme (`config/version` in `project.godot` == `DevLog.VERSION`);
-the pack version tracks the release the dev-log already announces.
+Versions: the **pack** version tracks the release the dev-log announces (`DevLog.VERSION`); the **shell**
+version is stored and bumped independently with the native build (**not** `config/version`, which ships
+inside the pack) — so a pack-only release never masquerades as a phantom shell change or vice-versa.
 
 ## Delivery substrate (decided; open to steer)
 
@@ -142,10 +168,16 @@ the pack version tracks the release the dev-log already announces.
   *channel URL*, so the origin can migrate from Releases → platform without a client change.
 - **Channel model:** one rolling **`live`** channel by default — one world, continuously delivered,
   consistent with no-seasons/no-resets. The schema permits named channels for a future `canary`.
-- **Signing:** packs and manifests are signed in CI with an **offline release key**; the **public key
-  is baked into the shell**. The client verifies signature + `sha256` before mounting. This upholds
-  proprietary integrity and is the anti-tamper foundation, reusing the CI trust model that already
-  runs `license-guard` and the CLA gate. Key custody is host-least-privilege (a scoped CI secret).
+- **Signing & a rotatable root of trust.** Packs and manifests are signed in CI; the client verifies the
+  signature + `sha256` before mounting. The signing bytes are **pinned** — a canonical JSON profile
+  (sorted keys, UTF-8, the `signature` field excluded), an **Ed25519** signature, base64 encoding — so CI
+  and the client never disagree on what was signed. Critically the first shell bakes in a **rotatable
+  root of trust, not a single signing key**: a long-lived **root key** (offline; only its public half is
+  in the shell) signs short-lived **signing keys**, and the manifest's `key` field carries the current
+  signing key's certificate. A compromised or lost *signing* key is then rotated by signing a new one
+  with the root — **no reinstall**, even while shell updates are deferred. Only root-key compromise needs
+  an out-of-band shell update, so the root is guarded hardest (host least-privilege, child 6). This
+  reuses the CI trust model that already runs `license-guard` and the CLA gate.
 
 ## How this upholds the product law
 
@@ -155,8 +187,12 @@ the pack version tracks the release the dev-log already announces.
 - **Play while it evolves:** Tier 0 gives realtime, server-driven evolution with zero client change;
   Tier 1 auto-delivers client changes with at most a restart; Tier 2 is rare and launcher-automated.
   The player is never told to go re-download the game.
-- **Forward-only, backward-compatible:** the `protocol {min,max}` window plus the shell/pack version
-  floors force the client forward **before** it can become incompatible — nudged, never stranded.
+- **Forward-only, backward-compatible, two-phase.** A protocol change rolls out **expand-then-contract**:
+  the server first *adds* support for the new protocol while still accepting the old range (expand), the
+  manifest advertises the update, clients adopt it, and only *then* does the server raise `protocol.min`
+  (contract) — with existing sessions kept on their negotiated protocol until they reconnect. So a client
+  is always nudged forward **before** compatibility is removed, and no connected session is kicked
+  mid-evolution. The `protocol {min,max}` window plus the shell/pack version floors enforce this.
 - **Must exist before the first player:** like the save guard, the update mechanism and its
   no-stranding invariant are a day-one requirement; retrofitting them later would need a reset.
 
