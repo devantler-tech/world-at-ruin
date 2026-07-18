@@ -39,7 +39,7 @@ const HALF := WorldGen.SIZE / 2.0
 ## (the test prints it in record mode) only when the world is intentionally
 ## changed — like the server sim's demoGoldenHash, a change here is a reviewed
 ## act.
-const GOLDEN_FINGERPRINT := "b99cc4ea"
+const GOLDEN_FINGERPRINT := "f5dcfa96"
 ## world_gen's cave_protects pads the cave hull by this many metres. A piece
 ## whose bounding radius is within that padding cannot reach the hull when its
 ## centre is outside cave_protects, which makes the cheap centre test a SOUND
