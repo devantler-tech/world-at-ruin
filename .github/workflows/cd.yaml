@@ -627,27 +627,54 @@ jobs:
             gh api "repos/${tap}/git/refs" -X POST -f ref="refs/heads/${branch}" -f sha="${base_sha}" >/dev/null
           fi
 
-          # MONOTONIC GUARD. The workflow concurrency group is per TAG, so two CD
-          # runs for different releases do not serialise against each other, and
-          # nothing else locks this shared tap branch. Without this, a slower run
-          # for an older tag (or a workflow_dispatch re-run) would overwrite a
-          # newer cask and silently DOWNGRADE the tap. Releases here are frequent
-          # enough for that to be a real race, not a theoretical one.
-          current="$(gh api "repos/${tap}/contents/Casks/world-at-ruin.rb?ref=${branch}" --jq '.content' 2>/dev/null \
-                     | base64 -d 2>/dev/null | sed -n 's/^  version "\(.*\)"$/\1/p' | head -1 || true)"
-          if [ -n "${current}" ] && [ "${current}" != "${VERSION}" ]; then
-            newest="$(printf '%s\n%s\n' "${current}" "${VERSION}" | sort -V | tail -1)"
-            if [ "${newest}" = "${current}" ]; then
-              echo "::notice::tap already carries ${current}, which is newer than ${VERSION} — leaving it alone"
-              exit 0
+          # MONOTONIC GUARD, as a COMPARE-AND-SWAP. The workflow concurrency
+          # group is per TAG, so two CD runs for different releases do not
+          # serialise, and nothing else locks this shared tap branch. Releases
+          # here are frequent enough for that to be a real race.
+          #
+          # Version and blob SHA must come from the SAME read: reading them
+          # separately leaves a window where a newer run writes in between, so
+          # this run sees the OLD version but the NEW sha and its PUT succeeds,
+          # downgrading the tap. Taking both from one response makes the PUT a
+          # compare-and-swap — if the branch moved, the sha is stale and GitHub
+          # rejects the write, and we re-read and re-decide.
+          for attempt in 1 2 3 4 5; do
+            resp="$(gh api "repos/${tap}/contents/Casks/world-at-ruin.rb?ref=${branch}" 2>/dev/null || true)"
+            if [ -n "${resp}" ]; then
+              existing="$(printf '%s' "${resp}" | jq -r '.sha')"
+              current="$(printf '%s' "${resp}" | jq -r '.content' | base64 -d \
+                         | sed -n 's/^  version "\(.*\)"$/\1/p' | head -1)"
+            else
+              existing=""
+              current=""
             fi
-          fi
-          existing="$(gh api "repos/${tap}/contents/Casks/world-at-ruin.rb?ref=${branch}" --jq '.sha' 2>/dev/null || true)"
-          if [ -n "${existing}" ]; then
-            gh api "repos/${tap}/contents/Casks/world-at-ruin.rb" -X PUT               -f message="feat: world-at-ruin ${VERSION}" -f content="${content}"               -f branch="${branch}" -f sha="${existing}" >/dev/null
-          else
-            gh api "repos/${tap}/contents/Casks/world-at-ruin.rb" -X PUT               -f message="feat: world-at-ruin ${VERSION}" -f content="${content}"               -f branch="${branch}" >/dev/null
-          fi
+
+            if [ -n "${current}" ] && [ "${current}" != "${VERSION}" ]; then
+              newest="$(printf '%s\n%s\n' "${current}" "${VERSION}" | sort -V | tail -1)"
+              if [ "${newest}" = "${current}" ]; then
+                echo "::notice::tap already carries ${current}, which is newer than ${VERSION} — leaving it alone"
+                exit 0
+              fi
+            fi
+
+            if [ -n "${existing}" ]; then
+              args=(-f "sha=${existing}")
+            else
+              args=()
+            fi
+            if gh api "repos/${tap}/contents/Casks/world-at-ruin.rb" -X PUT \
+                 -f message="feat: world-at-ruin ${VERSION}" -f content="${content}" \
+                 -f branch="${branch}" "${args[@]}" >/dev/null 2>&1; then
+              echo "wrote world-at-ruin ${VERSION} to ${branch}"
+              break
+            fi
+            if [ "${attempt}" = "5" ]; then
+              echo "::error::could not update the cask on ${branch} after 5 attempts — the branch kept moving under us"
+              exit 1
+            fi
+            echo "::notice::${branch} moved while writing; re-reading and re-deciding (attempt ${attempt})"
+            sleep 3
+          done
 
           if ! gh pr list --repo "${tap}" --head "${branch}" --state open --json number --jq '.[0].number' | grep -q .; then
             gh pr create --repo "${tap}" --base main --head "${branch}"               --title "feat: world-at-ruin ${VERSION}"               --body "Automated cask update for World at Ruin ${VERSION}."
