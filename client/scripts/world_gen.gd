@@ -360,12 +360,22 @@ func _add_column(rng: RandomNumberGenerator, parent: Node3D, off: Vector3, stone
 	var ground := height_at(wx, wz)
 	var r := rng.randf_range(0.35, 0.55)
 	var h := rng.randf_range(1.6, 5.5)
-	var mesh := _broken_column_mesh(rng, r, r * 0.9, h)
+	# ONE draw from the placement stream seeds a separate stream for mesh
+	# detail, so changing how a break is shaped can never shift where the ruins
+	# stand (same discipline as FOLIAGE_SEED_OFFSET).
+	var detail := RandomNumberGenerator.new()
+	detail.seed = rng.randi()
+	var mesh := _broken_column_mesh(detail, r, r * 0.9, h)
 	var fallen := rng.randf() < 0.3
 	var body := _solid(mesh, stone)
 	if fallen:
-		body.position = Vector3(off.x, ground + r, off.z)
+		# The mesh runs base->top from y=0, not around its centre, so rotating
+		# about the origin would swing the piece off its spot. Rotate first,
+		# then place the BASE such that the column's midpoint lands where it
+		# was meant to lie.
 		body.rotation = Vector3(PI / 2.0, rng.randf_range(0.0, TAU), 0)
+		var lying_centre := Vector3(off.x, ground + r, off.z)
+		body.position = lying_centre + body.transform.basis * Vector3(0.0, -h * 0.5, 0.0)
 	else:
 		# The mesh is built from its base at y=0, so it is seated on the ground
 		# rather than centred on it like the old CylinderMesh.
@@ -378,8 +388,13 @@ func _add_wall(rng: RandomNumberGenerator, parent: Node3D, off: Vector3, stone: 
 	var wz := parent.position.z + off.z
 	var ground := height_at(wx, wz)
 	var wall_size := Vector3(rng.randf_range(2.0, 5.0), rng.randf_range(1.0, 3.2), 0.45)
-	var mesh := _broken_wall_mesh(rng, wall_size.x, wall_size.y, wall_size.z)
-	var body := _solid(mesh, stone)
+	var wall_detail := RandomNumberGenerator.new()
+	wall_detail.seed = rng.randi()
+	var mesh := _broken_wall_mesh(wall_detail, wall_size.x, wall_size.y, wall_size.z)
+	# CONCAVE on purpose: a wall with collapsed steps and missing courses has
+	# gaps, and one convex hull would fill them with invisible collision — the
+	# player would be stopped by a hole they can see straight through.
+	var body := _solid(mesh, stone, true)
 	# Built from its base at y=0, so seat it on the ground.
 	body.position = Vector3(off.x, ground - 0.3, off.z)
 	body.rotation.y = rng.randf_range(0.0, TAU)
@@ -391,7 +406,9 @@ func _add_rubble(rng: RandomNumberGenerator, parent: Node3D, off: Vector3, stone
 	var ground := height_at(wx, wz)
 	var s := rng.randf_range(0.3, 0.9)
 	var chunk := Vector3(s, s * rng.randf_range(0.5, 1.0), s * rng.randf_range(0.6, 1.2))
-	var mesh := _rubble_chunk_mesh(rng, chunk)
+	var rubble_detail := RandomNumberGenerator.new()
+	rubble_detail.seed = rng.randi()
+	var mesh := _rubble_chunk_mesh(rubble_detail, chunk)
 	var body := _solid(mesh, stone)
 	body.position = Vector3(off.x, ground + chunk.y * 0.25, off.z)
 	body.rotation = Vector3(rng.randf_range(-0.3, 0.3), rng.randf_range(0.0, TAU), rng.randf_range(-0.3, 0.3))
@@ -522,14 +539,16 @@ func _add_box(st: SurfaceTool, lo: Vector3, hi: Vector3) -> void:
 
 ## A mesh with a matching static collision body, so ruins are climbable cover
 ## rather than ghosts.
-func _solid(mesh: Mesh, mat: Material) -> StaticBody3D:
+func _solid(mesh: Mesh, mat: Material, concave: bool = false) -> StaticBody3D:
 	var body := StaticBody3D.new()
 	var mi := MeshInstance3D.new()
 	mi.mesh = mesh
 	mi.set_surface_override_material(0, mat)
 	body.add_child(mi)
 	var shape := CollisionShape3D.new()
-	shape.shape = mesh.create_convex_shape()
+	# A convex hull is right for solid masonry; anything with real gaps needs a
+	# trimesh or the holes become invisible walls.
+	shape.shape = mesh.create_trimesh_shape() if concave else mesh.create_convex_shape()
 	body.add_child(shape)
 	return body
 
