@@ -293,7 +293,14 @@ can be watched by playing; every *further* art/game system waits on Phase 0.)
   - `release.yaml` (`push` to `main`) calls the shared
     `devantler-tech/actions/.github/workflows/create-release.yaml`, which runs **semantic-release**
     against the root `.releaserc`. Conventional-Commit types decide the bump (`fix:` → patch,
-    `feat:` → minor, `!`/`BREAKING CHANGE` → major; `chore:`/`docs:`/`ci:` cut nothing). It tags
+    `feat:` → minor, `type!:` or a `BREAKING CHANGE:` footer → major; `chore:`/`docs:`/`ci:` cut
+    nothing). **The `type!:` form only works because `.releaserc` configures it**
+    (`parserOpts.breakingHeaderPattern` + a `breaking: true` release rule): semantic-release's
+    default Angular preset recognises only the `BREAKING CHANGE:` footer, and a bare config gives
+    `feat!:` **no release at all** — a breaking change would ship silently unversioned. Do not
+    "simplify" that block away. The `conventionalcommits` preset would handle `!` natively but is
+    **not** an option: it needs `conventional-changelog-conventionalcommits`, which the shared
+    `create-release.yaml` (`npx semantic-release@25.0.3`, no install step) does not provide. It tags
     `vX.Y.Z` **and** publishes a GitHub Release. It runs under a GitHub App token, not
     `GITHUB_TOKEN` — that is what lets the release trigger a downstream workflow at all.
   - `cd.yaml` (`release: published`) production-builds the macOS client, **stamps the release
