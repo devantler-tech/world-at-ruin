@@ -178,19 +178,24 @@ static func select(catalog: Array, state: Dictionary) -> Dictionary:
 ## unreadable ledger for the same reason; the write side must not disagree with the
 ## read side. Recovering from a corrupt ledger is a policy decision for the
 ## bootstrap, not a silent repair here.
-static func quarantine(quarantined: Array, version: String) -> Dictionary:
+## `version` is deliberately untyped: the boot-attempt marker is read from disk and
+## may come back as `null` or a number after a bad write. A `String` parameter would
+## make the caller error before reaching the refusal below — turning the fail-closed
+## result the bootstrap needs into a crash, in exactly the situation it is needed.
+static func quarantine(quarantined: Array, version: Variant) -> Dictionary:
 	if not UpdateDecision.is_version(version):
 		return {"ok": false, "ledger": quarantined, "reason": "refusing to record a failure for an unreadable version — the boot-attempt marker is malformed"}
+	var failed: String = version
 	var out: Array[String] = []
 	for raw: Variant in quarantined:
 		if not UpdateDecision.is_version(raw):
 			return {"ok": false, "ledger": quarantined, "reason": "refusing to rewrite a ledger holding an unreadable entry — persisting it would erase a recorded failure"}
 		if not is_quarantined(out, str(raw)):
 			out.append(str(raw))
-	if not is_quarantined(out, version):
-		out.append(version)
+	if not is_quarantined(out, failed):
+		out.append(failed)
 	out.sort()
-	return {"ok": true, "ledger": out, "reason": "recorded %s as failed" % version}
+	return {"ok": true, "ledger": out, "reason": "recorded %s as failed" % failed}
 
 
 ## Whether `version` has been quarantined. Safe (false) for an unknown version.

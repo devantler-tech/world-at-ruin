@@ -157,6 +157,14 @@ func _ready() -> void:
 	var bad_ver := RollbackSelection.quarantine(["0.1.1"], "")
 	_check(bad_ver["ok"], false, "quarantine: an unreadable FAILED version refuses, never a silent no-op")
 	_check(RollbackSelection.quarantine(["0.1.1"], "not-a-version")["ok"], false, "quarantine: a malformed boot-attempt marker refuses")
+	# The marker is read from disk and can come back as a NON-STRING after a bad
+	# write. A typed String parameter would make the caller error before reaching the
+	# refusal — turning the fail-closed result the bootstrap needs into a crash, in
+	# exactly the situation it is needed. It must refuse, not throw.
+	for junk_marker: Variant in [null, 42, 1.5, [], {}, true]:
+		var r := RollbackSelection.quarantine(["0.1.1"], junk_marker)
+		_check(r["ok"], false, "quarantine: a non-string boot marker refuses cleanly rather than erroring")
+		_check((r["ledger"] as Array).size() == 1, true, "quarantine: the existing record survives a junk marker")
 	_check((bad_ver["ledger"] as Array).size() == 1, true, "quarantine: the existing record survives the refusal")
 	if _failed:
 		return
