@@ -655,8 +655,13 @@ jobs:
           # itself must trigger a capture, because running it IS how the tool is
           # validated. Omitting it meant the PR that introduced this job skipped
           # its own job and proved nothing.
+          #
+          # project.godot counts too: it carries the RENDERING configuration
+          # (renderer, MSAA, shadow and global-illumination quality, window
+          # size), so a change to it can alter every frame while touching no
+          # script or asset at all.
           if git diff --name-only "$BASE_SHA"...HEAD \
-              | grep -qE '^client/(scripts|shaders|assets|scenes|recipes|abilities|tools)/'; then
+              | grep -qE '^client/(scripts|shaders|assets|scenes|recipes|abilities|tools)/|^client/project\.godot$'; then
             echo "visual=true" >> "$GITHUB_OUTPUT"
           else
             echo "visual=false" >> "$GITHUB_OUTPUT"

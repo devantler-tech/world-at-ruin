@@ -42,6 +42,17 @@ const SETTLE_FRAMES := 120
 ## success — this is the guard against that silent failure.
 const MIN_LUMA_SPREAD := 0.02
 
+## The guard samples only this central box (fractions of width/height), because
+## the HUD is drawn OVER the 3D view: the title sits top-left and the control
+## hints run along the bottom. Sampling the whole frame would let those few
+## bright text pixels satisfy the spread check while the 3D view behind them is
+## entirely blank — the guard would then pass on exactly the failure it exists to
+## catch. This box excludes both HUD bands, so the check measures the WORLD.
+const SAMPLE_X0 := 0.12
+const SAMPLE_X1 := 0.88
+const SAMPLE_Y0 := 0.22
+const SAMPLE_Y1 := 0.86
+
 
 func _ready() -> void:
 	var dir := OS.get_environment("WAR_SHOT_DIR")
@@ -100,16 +111,21 @@ func _ready() -> void:
 	get_tree().quit(0)
 
 
-## Luminance spread over a sampled grid. Cheap, and enough to tell a rendered
-## world from a flat clear-colour fill.
+## Luminance spread over a grid sampled from the central box only — enough to
+## tell a rendered world from a flat clear-colour fill, while ignoring the HUD
+## text that would otherwise vouch for a blank 3D view (see SAMPLE_* above).
 func _luma_spread(img: Image) -> float:
 	var lo := 2.0
 	var hi := -1.0
+	var x0 := SAMPLE_X0 * img.get_width()
+	var y0 := SAMPLE_Y0 * img.get_height()
+	var span_x := (SAMPLE_X1 - SAMPLE_X0) * img.get_width()
+	var span_y := (SAMPLE_Y1 - SAMPLE_Y0) * img.get_height()
 	for gy in 12:
 		for gx in 16:
 			var sample := img.get_pixel(
-				int((gx + 0.5) * img.get_width() / 16.0),
-				int((gy + 0.5) * img.get_height() / 12.0))
+				int(x0 + (gx + 0.5) * span_x / 16.0),
+				int(y0 + (gy + 0.5) * span_y / 12.0))
 			var lum := sample.get_luminance()
 			lo = minf(lo, lum)
 			hi = maxf(hi, lum)
