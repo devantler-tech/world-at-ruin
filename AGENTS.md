@@ -133,7 +133,11 @@ Locally the same tool works windowed (`WAR_SHOT_DIR=… WAR_SAVE_PATH=… godot 
 res://tools/frame_capture.tscn`); a **headless run renders nothing**, and the tool refuses to run
 headless rather than emit a blank frame. Its vantages are fixed on purpose: evidence is only
 comparable across commits if the camera does not move, and one flattering angle hides a regression
-that another exposes.
+that another exposes. The outdoor vantages are fixed as committed constants; the cave vantages are
+fixed **per committed seed** — derived deterministically from the cave layout, bit-identical run
+over run, moving only when the world itself moves (which `cave_capture_vantage_test` turns into a
+named failure and the capture log declares as a `CAVE VANTAGE` coordinate delta, never a quietly
+different frame).
 
 **The tells that the bar is being missed** — all four were true of the first foliage pass, and are
 the concrete evidence behind this section:
@@ -292,11 +296,14 @@ everything shipped afterwards is held to.
 
 ## Maintenance
 
-- **Editor-only scenes are NOT dead code.** Two scenes are deliberately unreferenced by the running
+- **Editor-only scenes are NOT dead code.** Three scenes are deliberately unreferenced by the running
   game and exist as **editor surfaces**: `client/scenes/recipes.tscn` (the character taste gate,
-  documented in `recipe_gallery.gd`) and `client/scenes/cave.tscn` (the cave-generation preview
+  documented in `recipe_gallery.gd`), `client/scenes/cave.tscn` (the cave-generation preview
   harness, documented in `cave_system_gen.gd` — a `@tool` rig for judging cave interior/exterior work
-  by eye, #124). A repo-wide "no references, therefore dead" sweep will flag both; check the owning
+  by eye, #124), and `client/scenes/telegraph.tscn` (the telegraph readability preview harness,
+  documented in `telegraph_preview.gd` — looping circle/cone casts under the shipping overworld
+  lighting for judging the ground read by eye, #175). A repo-wide "no references, therefore dead"
+  sweep will flag all three; check the owning
   script's docstring before proposing a deletion, and retire such a scene only when the work it
   supports is finished — saying so in the same change. Anything unreferenced **without** such a
   marker is genuine scaffolding and should go (as `scenes/character.tscn` did in #116).
@@ -322,9 +329,17 @@ everything shipped afterwards is held to.
   minimal spawn/update/despawn delta, its own golden pinning the state stream) and the
   **versioned wire codec** that frames that payload (`server/wire/` — transport-agnostic binary
   encoding, fail-closed decode, committed hex goldens pinning the byte layout for the future
-  client-side decoder), with the socket transport settled by ADR as **WebSocket over TLS**
-  (`docs/design/zone-transport.md` — one codec message per binary frame) and the Agones/Nakama
-  layers arriving as later children of the server-foundation epic (#4); `deploy/` (platform manifests) arrives later per the roadmap.
+  client-side decoder), and the **zone socket** implementing the transport ADR
+  (`server/zonesock/` — WebSocket over TLS per `docs/design/zone-transport.md`, one codec message
+  per binary frame: token-gated fail-closed admission, bounded send queue with snapshot resync on
+  overflow, write/idle deadlines, hard inbound size cap; opt-in via `zone -listen`, off by
+  default), and the **combat first slice** (`server/sim/combat.go` — the telegraph cast
+  lifecycle: painted at cast start, resolved once after a tick-counted cast time against
+  positions at resolution, plus a stationary mob AI that aggros the nearest entity in range and
+  casts a dodgeable circle; hit records only — damage/health, threat, chase AI and cast
+  replication are later children — with its own cross-platform golden), with the Agones/Nakama
+  layers arriving as later children of the server-foundation
+  epic (#4); `deploy/` (platform manifests) arrives later per the roadmap.
 - **Run:** `godot client` (macOS: `/Applications/Godot.app/Contents/MacOS/Godot client`).
 - **Validate before every PR:**
   `godot --headless --editor --quit --path client && godot --headless --quit-after 120 --path client` —

@@ -1,0 +1,33 @@
+{
+  "_comment": "Shared cross-tier wire-protocol goldens (issue #178, layout pinned by server wire codec #166). Both tiers assert this ONE file: server/wire/crosstier_wire_test.go proves the shipped Go codec encodes these values to exactly these bytes (and decodes them back), and client/tests/wire_codec_test.gd proves the GDScript decoder reads the same bytes to the same values — so neither tier can drift from the pinned layout without both tests moving together. Positions and radii are integer millimetres (int64, two's complement on the wire); tick/observer/id are unsigned 64-bit. Keep every value within +/-2^53 so JSON doubles carry it exactly on the GDScript side.",
+  "messages": [
+    {
+      "name": "snapshot_golden",
+      "kind": "snapshot",
+      "hex": "0100015802000000000000010000000000000002000000020000000000000078ecffffffffffff000000000000000039300000000000002c0100000000000003000000000000000000000000000000a00f000000000000e0b1ffffffffffff9001000000000000",
+      "snapshot": {
+        "tick": 600,
+        "observer": 1,
+        "entities": [
+          { "id": 2, "x": -5000, "y": 0, "z": 12345, "radius": 300 },
+          { "id": 3, "x": 0, "y": 4000, "z": -20000, "radius": 400 }
+        ]
+      }
+    },
+    {
+      "name": "delta_golden",
+      "kind": "delta",
+      "hex": "01000259020000000000000100000004000000000000000100000000000000feffffffffffffff0300000000000000f40100000000000001000000020000000000000014ecffffffffffff000000000000000070300000000000002c010000000000000200000003000000000000000700000000000000",
+      "delta": {
+        "tick": 601,
+        "entered": [
+          { "id": 4, "x": 1, "y": -2, "z": 3, "radius": 500 }
+        ],
+        "moved": [
+          { "id": 2, "x": -5100, "y": 0, "z": 12400, "radius": 300 }
+        ],
+        "left": [3, 7]
+      }
+    }
+  ]
+}

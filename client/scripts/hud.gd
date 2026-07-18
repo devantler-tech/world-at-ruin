@@ -51,12 +51,13 @@ func _build_title() -> void:
 
 func _build_hints() -> void:
 	var hints := Label.new()
-	hints.text = "WASD move · Shift sprint · Space jump · E interact · mouse look · C reshape character · L or F1 dev log · Esc release mouse"
+	hints.text = "WASD move · Shift sprint · Space jump · E interact · mouse look · C reshape character · L or F1 dev log · Esc release mouse" \
+		+ "\nPad: left stick move · right stick look · A jump · L3 sprint · X interact · Y reshape · Back dev log"
 	hints.add_theme_font_size_override("font_size", 12)
 	hints.add_theme_color_override("font_color", COL_DIM)
 	hints.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
 	hints.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	hints.position.y -= 30
+	hints.position.y -= 46
 	add_child(hints)
 
 func _build_toast() -> void:
