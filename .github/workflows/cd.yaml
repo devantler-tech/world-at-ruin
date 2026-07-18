@@ -610,7 +610,7 @@ jobs:
           echo "--- rendered cask ---"
           cat Casks/world-at-ruin.rb
 
-      - name: 📤 Open or update the tap PR
+      - name: 📤 Open, update, and arm the tap PR
         env:
           GH_TOKEN: ${{ secrets.HOMEBREW_GITHUB_API_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
@@ -699,8 +699,13 @@ jobs:
                 [ -z "${newest}" ] && newest="${current}"
               fi
               if [ "${newest}" = "${current}" ]; then
-                echo "::notice::tap already carries ${current}, which is newer than ${VERSION} — leaving it alone"
-                exit 0
+                # A newer release already owns the branch content. Do NOT exit
+                # the step: the PR-open/title/auto-merge block below must still
+                # run — the newer run can have died between its content write
+                # and its PR step, and every path must leave the PR open and
+                # armed. `break` skips only the PUT.
+                echo "::notice::tap already carries ${current}, which is newer than ${VERSION} — leaving its content alone"
+                break
               fi
             fi
 
@@ -710,7 +715,7 @@ jobs:
               args=()
             fi
             if gh api "repos/${tap}/contents/Casks/world-at-ruin.rb" -X PUT \
-                 -f message="feat: world-at-ruin ${VERSION}" -f content="${content}" \
+                 -f message="chore(cask): update world-at-ruin to v${VERSION}" -f content="${content}" \
                  -f branch="${branch}" "${args[@]}" >/dev/null 2>&1; then
               echo "wrote world-at-ruin ${VERSION} to ${branch}"
               break
@@ -733,14 +738,98 @@ jobs:
           # Tolerate the loss, then re-check so a genuine failure still errors.
           if ! gh pr list --repo "${tap}" --head "${branch}" --state open --json number --jq '.[0].number // empty' | grep -q .; then
             gh pr create --repo "${tap}" --base main --head "${branch}" \
-              --title "feat: world-at-ruin ${VERSION}" \
-              --body "Automated cask update for World at Ruin ${VERSION}." || true
+              --title "chore(cask): update world-at-ruin to v${VERSION}" \
+              --body "Automated cask update for World at Ruin. Programmed release path: check-gated auto-merge, no review needed." || true
             if ! gh pr list --repo "${tap}" --head "${branch}" --state open --json number --jq '.[0].number // empty' | grep -q .; then
               echo "::error::no open cask PR on ${tap} for ${branch} after attempting to create one"
               exit 1
             fi
           fi
-          echo "cask PR is open on ${tap} (${branch})"
+          pr="$(gh pr list --repo "${tap}" --head "${branch}" --state open --json number --jq '.[0].number')"
+          echo "cask PR is open on ${tap} (#${pr}, ${branch})"
+
+          # The title must state the version the branch CONTENT actually
+          # carries, never this run's ${VERSION}: a concurrent newer release
+          # can win the compare-and-swap above (or this run is the stale one
+          # that skipped its write), and the tap squash-merges on the PR title
+          # — a stale title ships a changelog entry for a version the diff
+          # does not deliver (live case: tap#1213 titled 0.16.0 while its
+          # branch carried 0.21.0). Re-deriving the title from the branch on
+          # every run keeps title == content convergent; a lost sub-second
+          # race is repaired by the next run, and the required checks re-run
+          # on every push, so auto-merge cannot fire before it settles.
+          branch_version="$(gh api "repos/${tap}/contents/Casks/world-at-ruin.rb?ref=${branch}" \
+            | jq -r '.content' | base64 -d \
+            | sed -n 's/^  version "\(.*\)"$/\1/p' | head -1)"
+          if [ -z "${branch_version}" ]; then
+            echo "::error::could not read the cask version back from ${branch}"
+            exit 1
+          fi
+          title="chore(cask): update world-at-ruin to v${branch_version}"
+
+          # Arm auto-merge so the PR merges the moment the tap's required
+          # checks (audit + style + script tests) pass — no agent or human in
+          # the loop (maintainer direction 2026-07-18; #169). This is the same
+          # check-gated flow the tap already runs for dependency bots; the org
+          # enable-auto-merge workflow cannot arm these PRs because its
+          # eligibility keys on allowlisted BOT authors and this PR is
+          # authored by the tap token. Arming is deliberately not head-bound:
+          # the content is monotonic (compare-and-swap above), auto-merge
+          # survives follow-up pushes, and the checks always gate the final
+          # head. Failures are LOUD — a cask PR that silently never merges is
+          # exactly how the tap fell six releases behind (#169).
+          armed=false
+          for attempt in 1 2 3; do
+            pr_state="$(gh api "repos/${tap}/pulls/${pr}")"
+            if [ "$(printf '%s' "${pr_state}" | jq -r '.title')" != "${title}" ]; then
+              gh api -X PATCH "repos/${tap}/pulls/${pr}" -f title="${title}" >/dev/null
+              echo "retitled ${tap}#${pr}: ${title}"
+            fi
+            if [ "$(printf '%s' "${pr_state}" | jq -r '.merged')" = "true" ]; then
+              echo "${tap}#${pr} already merged"
+              armed=true
+              break
+            fi
+            if [ "$(printf '%s' "${pr_state}" | jq -r '.auto_merge != null')" = "true" ]; then
+              echo "auto-merge already armed on ${tap}#${pr}"
+              armed=true
+              break
+            fi
+            pr_node="$(printf '%s' "${pr_state}" | jq -r '.node_id')"
+            # `\$id` is escaped so the shell leaves it literal: it is a
+            # GraphQL variable, not a shell one. GraphQL directly (not
+            # `gh pr merge --auto`): the gh subcommand resolves the viewer's
+            # `login`, a scope the tap token lacks — the same trap that
+            # stranded ksail's cask PRs as drafts (ksail#6134).
+            mutation="mutation(\$id: ID!) { enablePullRequestAutoMerge(input: { pullRequestId: \$id, mergeMethod: SQUASH }) { pullRequest { number } } }"
+            if out="$(gh api graphql -f query="${mutation}" -F id="${pr_node}" 2>&1)"; then
+              echo "auto-merge armed on ${tap}#${pr}"
+              armed=true
+              break
+            elif printf '%s' "${out}" | grep -qi 'clean status'; then
+              # Every required check is already green, so GitHub refuses to
+              # arm (nothing left to wait for) — merge directly instead. If a
+              # concurrent push lands in between and this merge is refused,
+              # loop: the re-read sees the new state and arms normally.
+              if gh api -X PUT "repos/${tap}/pulls/${pr}/merge" -f merge_method=squash >/dev/null 2>&1; then
+                echo "checks were already green — merged ${tap}#${pr} directly"
+                armed=true
+                break
+              fi
+            elif printf '%s' "${out}" | grep -qi 'already.*enabled'; then
+              echo "auto-merge already armed on ${tap}#${pr}"
+              armed=true
+              break
+            else
+              echo "::error::could not arm auto-merge on ${tap}#${pr}: ${out}"
+              exit 1
+            fi
+            sleep 2
+          done
+          if [ "${armed}" != "true" ]; then
+            echo "::error::could not arm auto-merge or merge ${tap}#${pr} after 3 attempts"
+            exit 1
+          fi
 
   cd-required-checks:
     name: CD - Required Checks
