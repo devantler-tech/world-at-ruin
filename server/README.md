@@ -60,6 +60,19 @@ zone/dungeon server:
     the demo scenario's delta stream — folding in moved-entity state, so it pins
     the replicated *state*, not just membership — proving it is cross-platform.
     Read-only, never part of `Step`.
+  - `Telegraph` + `World.Caught` — **authoritative telegraph resolution**: who is
+    standing in a shape painted on the ground (circle, ring, cone, beam) when it
+    resolves. Every semantic mirrors the client's `Telegraph` predicates
+    deliberately — planar XZ, inclusive edges, apex-inside, degenerate-safe —
+    because the client predicts with the same question and the two answers must
+    agree, or the player dodges on screen and is hit on the server. The maths is
+    exact and integer-only: circle and ring are `int64` squared-distance
+    comparisons, while the cone's angular test and the beam's projection use
+    `math/big` for the intermediates that outgrow `int64`, so there is no float
+    and no `isqrt` truncation; a cone carries a **precomputed scaled cosine**, so
+    the authoritative path never calls a trig function. A fourth committed golden
+    pins the demo scenario's resolution stream. Ascending-ID and read-only —
+    never part of `Step`, so it cannot move the movement golden.
 - **`cmd/zone/`** — a runnable skeleton server. It boots the demo zone and either
   runs a fixed number of deterministic ticks (printing the state hash) or drives
   the loop from the wall clock.
