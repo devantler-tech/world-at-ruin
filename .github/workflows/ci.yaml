@@ -444,6 +444,19 @@ jobs:
               fail=1
               continue
             fi
+            # Fail closed on a non-integer. `[ x -lt y ]` errors with "integer
+            # expression expected" and returns 2 — and because that sits in an
+            # `if` CONDITION, `bash -e` does NOT abort on it, so the comparison
+            # would be silently skipped and this guard would quietly stop
+            # guarding. The schema already refuses a fractional threshold, which
+            # is precisely why the failure would go unnoticed here.
+            for v in "$base_cos" "$head_cos"; do
+              case "$v" in
+                ''|*[!0-9-]*|-|*-*-*)
+                  echo "::error::$f has a non-integer cos_half_scaled ('$v') — refusing rather than skipping the comparison"
+                  fail=1; continue 2 ;;
+              esac
+            done
             if [ "$head_cos" -lt "$base_cos" ]; then
               echo "::error::$f WIDENED its cone: cos_half_scaled $base_cos -> $head_cos. A lower scaled cosine is a wider wedge, so this catches more targets per cast at the same frozen power and cycle. Narrowing is allowed; widening is not (see #82 for the unbounded multi-target economy)"
               fail=1
