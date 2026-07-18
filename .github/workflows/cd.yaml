@@ -513,6 +513,23 @@ jobs:
     needs: [publish-release]
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Serialize the tap handoff ACROSS tags. The workflow-level concurrency
+    # group is per-tag so release builds can overlap, but this job mutates
+    # shared tap state (the evergreen branch, ONE PR, its title, its
+    # auto-merge arm), and every cross-run interleaving of
+    # disarm→write→retitle→arm is a race: a preflight disarm check is a
+    # TOCTOU the moment a sibling run can arm between the check and the
+    # content PUT (Codex round 4 on #197; rounds 1–3 each found one more
+    # such interleaving). One tap job at a time makes the sequence atomic
+    # with respect to sibling releases and kills the family at the root; the
+    # in-job convergence/disarm logic stays as defense against manual
+    # actors. Trade-off, so a red run here is not misdiagnosed: if THREE
+    # releases stack inside one tap-job runtime (~seconds), GitHub cancels
+    # the middle PENDING job — that cancellation means "superseded", and the
+    # newest run delivers its content via the monotonic compare-and-swap.
+    concurrency:
+      group: homebrew-tap-cask-world-at-ruin
+      cancel-in-progress: false
     permissions:
       contents: read # read the published release asset
     steps:
@@ -610,7 +627,7 @@ jobs:
           echo "--- rendered cask ---"
           cat Casks/world-at-ruin.rb
 
-      - name: 📤 Open or update the tap PR
+      - name: 📤 Open, update, and arm the tap PR
         env:
           GH_TOKEN: ${{ secrets.HOMEBREW_GITHUB_API_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
@@ -632,6 +649,29 @@ jobs:
             if ! gh api "repos/${tap}/git/ref/heads/${branch}" >/dev/null 2>&1; then
               echo "::error::could not create or find ${branch} on ${tap}"
               exit 1
+            fi
+          fi
+
+          # DISARM before touching the branch. Auto-merge armed by a previous
+          # release survives pushes, so if this job died between the content
+          # PUT below and the title-convergence loop, GitHub would finish the
+          # new head's checks and squash-merge it under the PREVIOUS
+          # version's title — with no process left to repair the changelog.
+          # Disarmed, a crash merely leaves the PR unmerged until the next
+          # run's convergence loop re-arms it (the recovery path below).
+          # Fail-closed: writing new content while the PR stays armed is the
+          # hazard, so a failed disarm aborts the job.
+          pre_pr="$(gh pr list --repo "${tap}" --head "${branch}" --state open --json number --jq '.[0].number // empty')"
+          if [ -n "${pre_pr}" ]; then
+            pre_state="$(gh api "repos/${tap}/pulls/${pre_pr}")"
+            if [ "$(printf '%s' "${pre_state}" | jq -r '.auto_merge != null')" = "true" ]; then
+              pre_node="$(printf '%s' "${pre_state}" | jq -r '.node_id')"
+              disarm_mutation="mutation(\$id: ID!) { disablePullRequestAutoMerge(input: { pullRequestId: \$id }) { pullRequest { number } } }"
+              if ! gh api graphql -f query="${disarm_mutation}" -F id="${pre_node}" >/dev/null; then
+                echo "::error::could not disarm auto-merge on ${tap}#${pre_pr} before updating ${branch}"
+                exit 1
+              fi
+              echo "disarmed auto-merge on ${tap}#${pre_pr} before updating ${branch}"
             fi
           fi
 
@@ -699,8 +739,13 @@ jobs:
                 [ -z "${newest}" ] && newest="${current}"
               fi
               if [ "${newest}" = "${current}" ]; then
-                echo "::notice::tap already carries ${current}, which is newer than ${VERSION} — leaving it alone"
-                exit 0
+                # A newer release already owns the branch content. Do NOT exit
+                # the step: the PR-open/title/auto-merge block below must still
+                # run — the newer run can have died between its content write
+                # and its PR step, and every path must leave the PR open and
+                # armed. `break` skips only the PUT.
+                echo "::notice::tap already carries ${current}, which is newer than ${VERSION} — leaving its content alone"
+                break
               fi
             fi
 
@@ -710,7 +755,7 @@ jobs:
               args=()
             fi
             if gh api "repos/${tap}/contents/Casks/world-at-ruin.rb" -X PUT \
-                 -f message="feat: world-at-ruin ${VERSION}" -f content="${content}" \
+                 -f message="chore(cask): update world-at-ruin to v${VERSION}" -f content="${content}" \
                  -f branch="${branch}" "${args[@]}" >/dev/null 2>&1; then
               echo "wrote world-at-ruin ${VERSION} to ${branch}"
               break
@@ -731,16 +776,145 @@ jobs:
           # Racy too: two runs can both see no open PR, and `gh pr create` errors
           # if one already exists — failing this job over a benign overlap.
           # Tolerate the loss, then re-check so a genuine failure still errors.
+          # Helper: the cask version carried by a ref, empty when the file or
+          # ref is missing.
+          cask_version_at() {
+            gh api "repos/${tap}/contents/Casks/world-at-ruin.rb?ref=${1}" 2>/dev/null \
+              | jq -r '.content // empty' | base64 -d 2>/dev/null \
+              | sed -n 's/^  version "\(.*\)"$/\1/p' | head -1 || true
+          }
+
           if ! gh pr list --repo "${tap}" --head "${branch}" --state open --json number --jq '.[0].number // empty' | grep -q .; then
+            # ALREADY DELIVERED is success, not a missing PR: a stale rerun
+            # (an older tag re-run after the newer release's PR merged) finds
+            # the branch content already on main and no open PR. GitHub
+            # refuses a PR from a fully-merged branch ("no commits between"),
+            # so without this check a valid no-op rerun would die on the
+            # ensure-PR error below.
+            branch_now="$(cask_version_at "${branch}")"
+            main_now="$(cask_version_at main)"
+            if [ -n "${branch_now}" ] && [ "${branch_now}" = "${main_now}" ]; then
+              echo "::notice::${tap} main already carries v${main_now} and no cask PR is open — nothing to deliver"
+              exit 0
+            fi
             gh pr create --repo "${tap}" --base main --head "${branch}" \
-              --title "feat: world-at-ruin ${VERSION}" \
-              --body "Automated cask update for World at Ruin ${VERSION}." || true
+              --title "chore(cask): update world-at-ruin to v${VERSION}" \
+              --body "Automated cask update for World at Ruin. Programmed release path: check-gated auto-merge, no review needed." || true
             if ! gh pr list --repo "${tap}" --head "${branch}" --state open --json number --jq '.[0].number // empty' | grep -q .; then
               echo "::error::no open cask PR on ${tap} for ${branch} after attempting to create one"
               exit 1
             fi
           fi
-          echo "cask PR is open on ${tap} (${branch})"
+          pr="$(gh pr list --repo "${tap}" --head "${branch}" --state open --json number --jq '.[0].number')"
+          echo "cask PR is open on ${tap} (#${pr}, ${branch})"
+
+          # Title convergence + arming. The title must state the version the
+          # branch CONTENT actually carries, never this run's ${VERSION}: a
+          # concurrent newer release can win the compare-and-swap above (or
+          # this run is the stale one that skipped its write), and the tap
+          # squash-merges on the PR title — a stale title ships a changelog
+          # entry for a version the diff does not deliver (live case:
+          # tap#1213 titled 0.16.0 while its branch carried 0.21.0). The
+          # version is re-derived INSIDE the loop and re-verified after the
+          # retitle: without that, a stale run's PATCH could be the LAST
+          # title write after a newer run already armed auto-merge — the
+          # lying-title merge this exists to prevent. When the re-read shows
+          # the branch moved, loop and re-derive.
+          #
+          # Arm auto-merge so the PR merges the moment the tap's required
+          # checks (audit + style + script tests) pass — no agent or human in
+          # the loop (maintainer direction 2026-07-18; #169). This is the same
+          # check-gated flow the tap already runs for dependency bots; the org
+          # enable-auto-merge workflow cannot arm these PRs because its
+          # eligibility keys on allowlisted BOT authors and this PR is
+          # authored by the tap token. Arming is deliberately not head-bound:
+          # the content is monotonic (compare-and-swap above), auto-merge
+          # survives follow-up pushes, and the checks always gate the final
+          # head. Failures are LOUD — a cask PR that silently never merges is
+          # exactly how the tap fell six releases behind (#169).
+          armed=false
+          for attempt in 1 2 3 4 5; do
+            branch_version="$(cask_version_at "${branch}")"
+            if [ -z "${branch_version}" ]; then
+              echo "::error::could not read the cask version back from ${branch}"
+              exit 1
+            fi
+            title="chore(cask): update world-at-ruin to v${branch_version}"
+            pr_state="$(gh api "repos/${tap}/pulls/${pr}")"
+            if [ "$(printf '%s' "${pr_state}" | jq -r '.title')" != "${title}" ]; then
+              gh api -X PATCH "repos/${tap}/pulls/${pr}" -f title="${title}" >/dev/null
+              echo "retitled ${tap}#${pr}: ${title}"
+            fi
+            # Verify the content the title was derived from is still current;
+            # a moved branch means a newer run is writing — re-derive rather
+            # than leave its title stale-overwritten.
+            if [ "$(cask_version_at "${branch}")" != "${branch_version}" ]; then
+              echo "::notice::${branch} moved during retitle; re-deriving (attempt ${attempt})"
+              sleep 2
+              continue
+            fi
+            if [ "$(printf '%s' "${pr_state}" | jq -r '.merged')" = "true" ]; then
+              echo "${tap}#${pr} already merged"
+              armed=true
+              break
+            fi
+            if [ "$(printf '%s' "${pr_state}" | jq -r '.auto_merge != null')" = "true" ]; then
+              echo "auto-merge already armed on ${tap}#${pr}"
+              armed=true
+              break
+            fi
+            pr_node="$(printf '%s' "${pr_state}" | jq -r '.node_id')"
+            # `\$id` is escaped so the shell leaves it literal: it is a
+            # GraphQL variable, not a shell one. GraphQL directly (not
+            # `gh pr merge --auto`): the gh subcommand resolves the viewer's
+            # `login`, a scope the tap token lacks — the same trap that
+            # stranded ksail's cask PRs as drafts (ksail#6134).
+            mutation="mutation(\$id: ID!) { enablePullRequestAutoMerge(input: { pullRequestId: \$id, mergeMethod: SQUASH }) { pullRequest { number } } }"
+            if out="$(gh api graphql -f query="${mutation}" -F id="${pr_node}" 2>&1)"; then
+              echo "auto-merge armed on ${tap}#${pr}"
+            elif printf '%s' "${out}" | grep -qi 'clean status'; then
+              # Every required check is already green, so GitHub refuses to
+              # arm (nothing left to wait for) — merge directly instead,
+              # BOUND to the head this iteration read (`sha` is the REST
+              # merge endpoint's head-must-match guard): without it, a newer
+              # head pushed after the clean-status result would merge before
+              # its checks run — the tap token can bypass rulesets, so the
+              # endpoint would not stop it. A moved head is refused and
+              # re-enters the loop.
+              if gh api -X PUT "repos/${tap}/pulls/${pr}/merge" \
+                   -f merge_method=squash \
+                   -f sha="$(printf '%s' "${pr_state}" | jq -r '.head.sha')" >/dev/null 2>&1; then
+                echo "checks were already green — merged ${tap}#${pr} directly"
+                armed=true
+                break
+              fi
+              sleep 2
+              continue
+            elif printf '%s' "${out}" | grep -qi 'already.*enabled'; then
+              echo "auto-merge already armed on ${tap}#${pr}"
+            else
+              echo "::error::could not arm auto-merge on ${tap}#${pr}: ${out}"
+              exit 1
+            fi
+            # Armed — but the mutation is not content-bound: a newer run can
+            # push between this iteration's verify and the arming, so the arm
+            # now covers content the verified title was NOT derived from. If
+            # that newer run dies before its own retitle (exactly the crash
+            # window the fall-through above exists for), checks eventually
+            # pass and auto-merge ships the stale title. Re-read; when the
+            # branch moved, loop — the next iteration re-derives the title
+            # and exits through the already-armed path.
+            if [ "$(cask_version_at "${branch}")" = "${branch_version}" ]; then
+              armed=true
+              break
+            fi
+            echo "::notice::${branch} moved while arming; re-deriving the title (attempt ${attempt})"
+            sleep 2
+          done
+          if [ "${armed}" != "true" ]; then
+            echo "::error::could not arm auto-merge or merge ${tap}#${pr} after 5 attempts"
+            exit 1
+          fi
 
   cd-required-checks:
     name: CD - Required Checks

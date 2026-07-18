@@ -460,6 +460,15 @@ everything shipped afterwards is held to.
   - **Homebrew cask** — CD renders `Casks/world-at-ruin.rb` and opens/updates ONE evergreen PR on
     `devantler-tech/homebrew-tap`. It runs **after** `publish-release`, because the cask's `url`
     points at the release asset and a draft release's asset URL 404s for `brew install`.
+    **The job arms the PR's auto-merge itself** (squash, GraphQL off the node id — the `gh`
+    subcommand needs a `login` scope the tap token lacks), so the tap's required checks alone gate
+    the merge with no agent in the loop; nothing else would ever arm it (the org auto-merge
+    workflow classifies on allowlisted bot authors, and this PR is authored by the tap token). The
+    PR title is **re-derived from the branch's cask content every run** (`chore(cask): update
+    world-at-ruin to vX.Y.Z`) — the evergreen branch absorbs releases faster than PRs merge, and
+    the tap squash-merges on the title, so a creation-time title would ship lying changelog
+    entries. Arming failures fail the job loudly: a cask PR that silently never merges is how the
+    tap once fell six releases behind (#169).
     **`auto_updates` is deliberately ABSENT**: it tells Homebrew "this app updates itself, do not
     upgrade it", and there is no working in-client updater yet (`update_decision.gd` is pure
     decision logic). Declaring it now would make `brew upgrade` skip the cask and strand players on
