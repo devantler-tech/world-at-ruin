@@ -133,16 +133,31 @@ func _ready() -> void:
 
 	# --- quarantine is forward-only and never mutates its input ---
 	var q0: Array = []
-	var q1 := RollbackSelection.quarantine(q0, "0.1.10")
+	var r1 := RollbackSelection.quarantine(q0, "0.1.10")
+	_check(r1["ok"], true, "quarantine: a well-formed failure is recorded")
+	var q1: Array = r1["ledger"]
 	_check(q0.is_empty(), true, "quarantine: the input set is not mutated")
 	_check(RollbackSelection.is_quarantined(q1, "0.1.10"), true, "quarantine: the broken build is recorded")
-	var q2 := RollbackSelection.quarantine(q1, "0.1.9")
+	var q2: Array = RollbackSelection.quarantine(q1, "0.1.9")["ledger"]
 	_check(q2.size() == 2, true, "quarantine: a second failure is added")
 	_check(RollbackSelection.is_quarantined(q2, "0.1.10"), true, "quarantine: FORWARD-ONLY — an earlier entry is never dropped")
-	var q3 := RollbackSelection.quarantine(q2, "0.1.10")
-	_check(q3.size() == 2, true, "quarantine: re-quarantining is idempotent")
-	_check(RollbackSelection.quarantine(q2, "").size() == 2, true, "quarantine: an empty version is ignored")
+	_check(RollbackSelection.quarantine(q2, "0.1.10")["ledger"].size() == 2, true, "quarantine: re-quarantining is idempotent")
 	_check(RollbackSelection.is_quarantined(q2, "9.9.9"), false, "quarantine: an unknown version is not quarantined")
+	if _failed:
+		return
+
+	# --- quarantine REFUSES rather than silently erasing failure evidence ---
+	# The write side must not disagree with the read side: select() refuses on an
+	# unreadable ledger, so quarantine() must not hand back a "cleaned" one. A caller
+	# persisting that would erase the only record a build failed, and the next
+	# select() would choose the known-broken build again.
+	var bad_in := RollbackSelection.quarantine([42, "0.1.1"], "0.1.2")
+	_check(bad_in["ok"], false, "quarantine: an unreadable EXISTING entry refuses, never silently dropped")
+	_check((bad_in["ledger"] as Array).size() == 2, true, "quarantine: the refused ledger is returned unchanged, losing nothing")
+	var bad_ver := RollbackSelection.quarantine(["0.1.1"], "")
+	_check(bad_ver["ok"], false, "quarantine: an unreadable FAILED version refuses, never a silent no-op")
+	_check(RollbackSelection.quarantine(["0.1.1"], "not-a-version")["ok"], false, "quarantine: a malformed boot-attempt marker refuses")
+	_check((bad_ver["ledger"] as Array).size() == 1, true, "quarantine: the existing record survives the refusal")
 	if _failed:
 		return
 
@@ -263,7 +278,7 @@ func _ready() -> void:
 		st_alias["quarantined"] = ["0.1.10"]
 		_check(RollbackSelection.select(aliased, st_alias)["action"] == RollbackSelection.NO_ELIGIBLE_TARGET, true, "alias: '%s' is still the quarantined 0.1.10 and is never re-selected" % alias)
 	_check(RollbackSelection.is_quarantined(["0.1.10"], "0.1.010"), true, "alias: is_quarantined matches numerically, not by string")
-	_check(RollbackSelection.quarantine(["0.1.10"], "0.1.010").size() == 1, true, "alias: quarantine does not accumulate aliases of one build")
+	_check((RollbackSelection.quarantine(["0.1.10"], "0.1.010")["ledger"] as Array).size() == 1, true, "alias: quarantine does not accumulate aliases of one build")
 	if _failed:
 		return
 
@@ -275,6 +290,8 @@ func _ready() -> void:
 	# floor every shell clears.
 	var undeployable: Array = [
 		["url", ""], ["url", 42],
+		["url", "   "], ["url", "not-a-url"], ["url", "ftp://x/y.pck"],
+		["url", "https://"], ["url", " https://x/y.pck"], ["url", "https://x/y .pck"],
 		["sha256", "abc"], ["sha256", "z".repeat(64)], ["sha256", 42],
 		["sha256", "-" + "a".repeat(63)], ["sha256", "+" + "a".repeat(63)],
 		["size", -1], ["size", "big"],
@@ -290,7 +307,7 @@ func _ready() -> void:
 
 	# --- total function: junk input never crashes it ---
 	_check(RollbackSelection.select([], {})["action"] == RollbackSelection.NO_ELIGIBLE_TARGET, true, "total: an empty state refuses cleanly")
-	_check(RollbackSelection.quarantine([42, "0.1.1", 42], "0.1.1").size() == 1, true, "total: junk in the quarantine set is dropped and duplicates collapse")
+	_check(RollbackSelection.quarantine([42, "0.1.1", 42], "0.1.1")["ok"], false, "total: junk in the quarantine set refuses rather than collapsing silently")
 	if _failed:
 		return
 

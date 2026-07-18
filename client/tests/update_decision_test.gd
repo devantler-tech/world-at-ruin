@@ -61,6 +61,7 @@ func _ready() -> void:
 	_test_incoherent_shell_floor_refused()
 	_test_fractional_identifiers_refused()
 	_test_malformed_manifests_refuse_cleanly()
+	_test_capability_bump_routes_off_the_pack_path()
 	if _failed:
 		return
 	print("TEST PASS — update-decision core upholds forward-only, no-stranding, clean-refusal laws")
@@ -359,6 +360,38 @@ func _test_malformed_manifests_refuse_cleanly() -> void:
 
 
 # --- helpers ---
+
+## The same-schema capability strand (#120, found reviewing PR #98): a content-only
+## release keeps `writes` within the rollback target's read ceiling but raises
+## `save_schema.capability`. The writes/reads_max gate cannot see that, so the pack
+## would be offered, save the added shapes, and — if it then failed its boot check —
+## leave RollbackSelection with no target whose `save_capability` covers the save.
+## The forward path must not admit a state the recovery path cannot undo.
+func _test_capability_bump_routes_off_the_pack_path() -> void:
+	var installed := _installed_current()
+	installed["pack_version"] = "0.1.13" # a newer pack is available
+	installed["save_capability"] = 7 # this build reports what it can read
+	var m := _base_manifest()
+	m["save_schema"] = {"min": 1, "writes": 1, "capability": 9} # same schema, richer content
+	m["shell"] = {"current": "0.1.15", "min_supported": "0.1.0", "reads_min": 1}
+	_expect(installed, m, UpdateDecision.SHELL_UPDATE, "a capability bump beyond the rollback target routes to the shell tier")
+
+	# With no newer shell to carry it, there is no safe route at all.
+	var m_no_shell := _base_manifest()
+	m_no_shell["save_schema"] = {"min": 1, "writes": 1, "capability": 9}
+	_expect(installed, m_no_shell, UpdateDecision.INVALID_MANIFEST, "a capability bump with no newer shell is refused, never offered as a pack")
+
+	# ISOLATION: the identical manifest is a normal pack update once the installed
+	# build reports a capability that covers it, so the gate is narrow.
+	var ok_installed := _installed_current()
+	ok_installed["pack_version"] = "0.1.13"
+	ok_installed["save_capability"] = 9
+	_expect(ok_installed, m_no_shell, UpdateDecision.PACK_UPDATE, "the same manifest is a normal pack update when the capability fits")
+
+	# A malformed capability fails closed rather than being ignored.
+	_expect(installed, _with(_base_manifest(), "save_schema", {"min": 1, "writes": 1, "capability": "nine"}),
+		UpdateDecision.INVALID_MANIFEST, "a non-numeric save capability is refused")
+
 
 func _with(base: Dictionary, key: String, value: Variant) -> Dictionary:
 	var m := base.duplicate(true)

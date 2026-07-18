@@ -165,18 +165,32 @@ static func select(catalog: Array, state: Dictionary) -> Dictionary:
 ## quarantine set. FORWARD-ONLY: this only ever adds, so a build proven broken is
 ## never silently trusted again — that is what breaks the boot loop. The input array
 ## is not mutated; the caller persists the result.
-## Only genuine versions are kept, and deduplication is NUMERIC (see
-## [method is_quarantined]), so the ledger cannot accumulate aliases of one build or
-## unreadable entries that would later force a refusal.
-static func quarantine(quarantined: Array, version: String) -> Array[String]:
+## Deduplication is NUMERIC (see [method is_quarantined]), so the ledger cannot
+## accumulate aliases of one build.
+##
+## Returns `{ ok: bool, ledger: Array[String], reason: String }`. It REFUSES rather
+## than sanitises: if the existing ledger holds an unreadable entry, or `version` is
+## not a version, `ok` is false and `ledger` is unchanged. Silently dropping either
+## would be the most dangerous thing this file could do — a caller persisting a
+## "cleaned" ledger would erase the only record that a build failed its boot check,
+## and the next [method select] would happily choose that known-broken build again,
+## reopening the very loop this exists to break. [method select] refuses on an
+## unreadable ledger for the same reason; the write side must not disagree with the
+## read side. Recovering from a corrupt ledger is a policy decision for the
+## bootstrap, not a silent repair here.
+static func quarantine(quarantined: Array, version: String) -> Dictionary:
+	if not UpdateDecision.is_version(version):
+		return {"ok": false, "ledger": quarantined, "reason": "refusing to record a failure for an unreadable version — the boot-attempt marker is malformed"}
 	var out: Array[String] = []
 	for raw: Variant in quarantined:
-		if UpdateDecision.is_version(raw) and not is_quarantined(out, str(raw)):
+		if not UpdateDecision.is_version(raw):
+			return {"ok": false, "ledger": quarantined, "reason": "refusing to rewrite a ledger holding an unreadable entry — persisting it would erase a recorded failure"}
+		if not is_quarantined(out, str(raw)):
 			out.append(str(raw))
-	if UpdateDecision.is_version(version) and not is_quarantined(out, version):
+	if not is_quarantined(out, version):
 		out.append(version)
 	out.sort()
-	return out
+	return {"ok": true, "ledger": out, "reason": "recorded %s as failed" % version}
 
 
 ## Whether `version` has been quarantined. Safe (false) for an unknown version.
@@ -261,13 +275,37 @@ static func _is_wellformed(target: Dictionary) -> bool:
 	# without a fetchable, verifiable artifact is undeployable, and because it can
 	# still carry the highest version it would win the ordering and deny a recovery a
 	# lower, complete entry could have provided.
-	var url: Variant = target.get("url")
-	if url is not String or (url as String).is_empty():
+	# Non-emptiness is not fetchability: whitespace, or any string without a real
+	# scheme, is unusable to the bootstrap, and such an entry can still carry the
+	# highest version and displace a complete lower one.
+	if not _is_fetchable_url(target.get("url")):
 		return false
 	if not _is_sha256(target.get("sha256")):
 		return false
 	if not UpdateDecision.is_int_id(target.get("size")):
 		return false
+	return true
+
+
+## Whether `v` is a usable artifact URL: a whitespace-free `https://` address with
+## something after the scheme. HTTPS only, because an update artifact is fetched
+## before its signature can be checked, so the transport is part of the trust story.
+## This is a SHAPE check — reachability is the updater's problem, not the selector's.
+static func _is_fetchable_url(v: Variant) -> bool:
+	if v is not String:
+		return false
+	var url: String = v
+	# Reject rather than trim: a signed field with stray whitespace is malformed
+	# metadata, and silently repairing signed data is not this library's business.
+	if url != url.strip_edges():
+		return false
+	const SCHEME := "https://"
+	if not url.begins_with(SCHEME) or url.length() <= SCHEME.length():
+		return false
+	for i in url.length():
+		var c := url.unicode_at(i)
+		if c <= 32 or c == 127: # control characters and spaces
+			return false
 	return true
 
 

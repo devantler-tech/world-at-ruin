@@ -172,6 +172,26 @@ static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 					str(m_pack["version"]), int(m_save["writes"]), reads_max, str(m_shell["current"])])
 			return _result(INVALID_MANIFEST, "content pack %s writes save schema %d beyond the read ceiling %d but the manifest offers no newer shell — refusing (no safe route)" % [
 				str(m_pack["version"]), int(m_save["writes"]), reads_max])
+
+		# The SAME rollback-safety rule, one counter over. A same-schema content
+		# expansion raises `save_schema.capability` while leaving `writes` untouched,
+		# so the gate above cannot see it — yet the pack would then save shapes the
+		# rollback target cannot read, and [RollbackSelection] would correctly find no
+		# eligible target after a failed boot. That is the strand this closes.
+		#
+		# Enforceable only when BOTH sides report a capability. `capability` is not
+		# yet required of a manifest and a build predating capability tracking does
+		# not report one, so this cannot be a blanket gate without redefining the
+		# manifest contract — that remainder (making it required, and having the
+		# bootstrap supply the installed value) is tracked in #120.
+		if m_save.has("capability") and (installed.has("save_capability") or installed.has("save_capability_max")):
+			var capability_max := int(installed.get("save_capability_max", installed.get("save_capability", 0)))
+			if int(m_save["capability"]) > capability_max:
+				if shell_newer:
+					return _shell_or_block(save_schema, m_shell, "content pack %s raises save capability to %d beyond the rollback target's %d — routing to the newer shell %s" % [
+						str(m_pack["version"]), int(m_save["capability"]), capability_max, str(m_shell["current"])])
+				return _result(INVALID_MANIFEST, "content pack %s raises save capability to %d beyond the rollback target's %d but the manifest offers no newer shell — refusing (no safe route)" % [
+					str(m_pack["version"]), int(m_save["capability"]), capability_max])
 		return _result(PACK_UPDATE, "content pack %s available (installed %s)" % [
 			str(m_pack["version"]), pack])
 	if shell_newer:
@@ -272,6 +292,11 @@ static func _body_error(m: Dictionary) -> String:
 	if int(sv["writes"]) < int(sv["min"]):
 		return "save_schema.writes %d is below save_schema.min %d (incoherent)" % [
 			int(sv["writes"]), int(sv["min"])]
+	# `capability` is validated WHEN PRESENT rather than required: it drives the
+	# same-schema rollback gate in decide(), so a malformed value must fail closed,
+	# but making it mandatory would redefine the manifest contract (see #120).
+	if sv.has("capability") and not is_int_id(sv["capability"]):
+		return "save_schema.capability is present but not a whole number"
 	return ""
 
 
