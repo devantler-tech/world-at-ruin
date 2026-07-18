@@ -74,6 +74,11 @@ func _malformed_definitions_refused() -> bool:
 		"zero count": [{"id": "a", "tag": "x", "count": 0}],
 		"negative count": [{"id": "a", "tag": "x", "count": -2}],
 		"non-int count": [{"id": "a", "tag": "x", "count": "three"}],
+		# Unexpected keys are refused so a field this library does not understand
+		# can never be silently ignored — and so an objective cannot smuggle a grant.
+		"unexpected extra key": [{"id": "a", "tag": "x", "count": 1, "power": 99}],
+		"typo'd key alongside the real ones": [{"id": "a", "tag": "x", "count": 1, "counts": 5}],
+		"missing count but padded to three keys": [{"id": "a", "tag": "x", "reward": "gold"}],
 	}
 	for label: String in bad:
 		var objectives: Array = bad[label]

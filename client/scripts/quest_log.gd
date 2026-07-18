@@ -192,6 +192,13 @@ func _objectives_valid(objectives: Array) -> bool:
 		if raw is not Dictionary:
 			return false
 		var obj: Dictionary = raw
+		# EXACTLY id/tag/count — no more, no fewer. Refusing unexpected keys is
+		# what stops a field this library does not understand (a `reward`, a
+		# `power`, a typo'd `counts`) from being SILENTLY IGNORED: the author
+		# would believe it took effect. It also keeps an objective incapable of
+		# carrying a grant, mirroring `ExplorationRewards`' exact-key guard.
+		if obj.size() != 3:
+			return false
 		var id: Variant = obj.get("id")
 		if id is not String or (id as String).is_empty() or seen.has(id):
 			return false
