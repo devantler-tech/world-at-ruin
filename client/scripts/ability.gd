@@ -30,9 +30,12 @@ extends RefCounted
 ##
 ##      SCOPE, stated honestly: this bounds PER-TARGET throughput. Telegraph AREA
 ##      is not in the model, so a wider cone at the same budget and cycle reaches
-##      more targets for more total damage. That multi-target economy is a real
-##      balance decision and is tracked in devantler-tech/world-at-ruin#82 — it is
-##      not claimed as enforced here.
+##      more targets for more total damage. Half of that is now held: a SHIPPED
+##      cone's wedge may never widen (the CI "cone wedge may never widen" anchor,
+##      comparing `cos_half_scaled` against the base revision). What is still
+##      unbounded is a NEW cone's opening width, which needs an area-vs-magnitude
+##      exchange rate — the one value here with no already-shipped anchor, and a
+##      real balance decision tracked in devantler-tech/world-at-ruin#82.
 ##
 ##   2. NO STRICT DOMINANCE (the sidegrade law) — "Every new arsenal ability must
 ##      be a SIDEGRADE, never a strict upgrade." Within a comparable class no
@@ -326,10 +329,14 @@ static func dominates(a: Dictionary, b: Dictionary) -> bool:
 ## damage per second. The initial scale of a genuinely NEW (role|effect) category
 ## is bounded in CI against the categories already shipped.
 ##
-## Still NOT bounded, and a genuine balance decision tracked in
-## devantler-tech/world-at-ruin#82: multi-target reach. Throughput here is
-## per-target — telegraph AREA is not in the model, so a wider cone at the same
-## cycle and budget hits more targets for more total damage.
+## Multi-target reach is only PARTLY bounded. Throughput here is per-target, and
+## telegraph AREA is not in the model, so a wider cone at the same cycle and
+## budget hits more targets for more total damage. CI now refuses to WIDEN a
+## cone that already shipped (`cos_half_scaled` may never decrease against the
+## base revision), which closes the drift half without inventing a number. The
+## opening width of a NEW cone is still unbounded: bounding it needs an
+## area-vs-magnitude exchange rate, a genuine balance decision tracked in
+## devantler-tech/world-at-ruin#82.
 static func find_power_inflation(abilities: Array, budgets: Dictionary) -> Array:
 	var violations: Array = []
 	for ab in abilities:

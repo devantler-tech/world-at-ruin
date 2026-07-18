@@ -360,9 +360,10 @@ jobs:
         # nominal sidegrade (a token range nerf paying for a large cooldown cut)
         # passes here, and a brand-new ability is never compared at all — which is
         # why throughput is bounded absolutely by the frozen cycle floor above
-        # rather than relying on this step. What remains unbounded is the
-        # multi-target economy (telegraph AREA is not in the model), a balance
-        # decision tracked in #82.
+        # rather than relying on this step. The multi-target economy (telegraph
+        # AREA) is not in this step's model either; the widening half of it is
+        # held by the cone-wedge step below, and a NEW cone's opening width
+        # remains the balance decision in #82.
         # CI is the anchor (the in-tree test cannot see the base revision).
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         env:
