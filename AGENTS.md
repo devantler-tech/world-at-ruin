@@ -319,8 +319,11 @@ everything shipped afterwards is held to.
   skeleton), plus its **area-of-interest** query and enter/leave tracker (`server/sim/aoi.go` —
   the seam the replication layer consumes, with its own cross-platform golden) and the
   **replication snapshot** built on it (`server/sim/snapshot.go` — per-observer state plus the
-  minimal spawn/update/despawn delta, its own golden pinning the state stream), with the
-  networking transport and the Agones/Nakama layers arriving as later children of the
+  minimal spawn/update/despawn delta, its own golden pinning the state stream) and the
+  **versioned wire codec** that frames that payload (`server/wire/` — transport-agnostic binary
+  encoding, fail-closed decode, committed hex goldens pinning the byte layout for the future
+  client-side decoder), with the socket transport (its selection is a deliberate ADR-shaped
+  decision, not settled here) and the Agones/Nakama layers arriving as later children of the
   server-foundation epic (#4); `deploy/` (platform manifests) arrives later per the roadmap.
 - **Run:** `godot client` (macOS: `/Applications/Godot.app/Contents/MacOS/Godot client`).
 - **Validate before every PR:**
