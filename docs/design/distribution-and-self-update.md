@@ -155,9 +155,15 @@ A small **signed JSON** document per channel, published by CI beside the artifac
   additive within that envelope; a client processes only the schema it understands and, on a higher
   schema, follows the envelope to a `shell_update` rather than guessing at (or rejecting on) new fields.
 - `channel` — `live` by default; the field exists so `canary` can be added later without a redesign.
-- `shell` — `current`, `min_supported` (shells older are refused — the forward-only floor), and
-  per-target signed `download` entries (`url`, `sha256`, `size`). The **shell version is independent of
-  the pack version**: the executable and the content advance on their own clocks.
+- `shell` — `current`, `min_supported` (shells older are refused — the forward-only floor),
+  `reads_min` and `reads_capability_min` (the lowest save **schema** and **capability** the advertised
+  shell can read), and per-target signed `download` entries (`url`, `sha256`, `size`). The **shell
+  version is independent of the pack version**: the executable and the content advance on their own
+  clocks. Both read floors live in the **stable envelope** rather than the schema-specific body for the
+  same reason: a future-schema manifest is followed to a `shell_update` from the envelope ALONE, so a
+  save-strand check placed in the body would be missing on precisely the route where the client
+  understands least. `reads_capability_min` exists because the schema floor does not cover the
+  capability axis — a shell can read a save's schema while lacking the same-schema shapes it holds.
 - `pack` — `version`, `min_shell` (the shell this pack needs), and **two artifacts**: a `full` cumulative
   pack (`url`/`sha256`/`size`) that any in-range shell can apply **from any prior state**, plus an
   optional ordered `deltas` list (each with its `base_version`). A client applies the smallest delta
