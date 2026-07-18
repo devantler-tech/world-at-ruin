@@ -1,0 +1,24 @@
+# Frozen MINIMUM cast+cooldown cycle (ms) per role|effect category.
+#
+# The per-cast power budget in shipped_class_power.txt freezes how much one cast
+# does — it does NOT freeze how OFTEN it lands. Effective throughput is
+# power / (cast_time_ms + cooldown_ms), so shortening the cycle inflates damage
+# per second while per-cast power still matches its frozen budget. The sidegrade
+# (no-strict-dominance) guard does not catch that either: trading a shorter
+# cooldown for a shorter range is not a Pareto win, so it passes as a
+# "sidegrade" while roughly doubling throughput.
+#
+# Because power is already pinned per category, freezing a FLOOR on the cycle
+# bounds throughput exactly: throughput <= budget / cycle_floor. That closes the
+# "mastery unlocks new arsenals, never more damage" law over time.
+#
+# Same permanence rules as the power ledger, and there is no undo: CI (against
+# the base revision) forbids CHANGING or REMOVING a line and rejects a duplicate
+# key; you may only ADD a new category. A newly added floor may not be lower
+# than the lowest floor already shipped, so a new category cannot smuggle in a
+# faster cycle than the established scale.
+#
+# Only ever ADD lines; never edit a value.
+damage|damage=4300
+healer|heal=9500
+tank|shield=10700
