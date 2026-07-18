@@ -65,6 +65,8 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: write # upload the built asset onto the release
+    outputs:
+      sha256: ${{ steps.sha.outputs.sha256 }}
     steps:
       - name: 🛡️ Harden runner
         uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
@@ -223,6 +225,33 @@ jobs:
             "build/WorldAtRuin-${VERSION}-macOS-universal.zip" \
             --repo "${GITHUB_REPOSITORY}" --clobber
 
+      - name: 🧾 Record the artifact checksum
+        id: sha
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          SHA=$(shasum -a 256 "build/WorldAtRuin-${VERSION}-macOS-universal.zip" | cut -d' ' -f1)
+          echo "sha256=${SHA}" >> "$GITHUB_OUTPUT"
+          echo "sha256=${SHA}"
+
+      - name: 📎 Hand the build to the GHCR job
+        # The GHCR job cannot read the release: it is still a DRAFT at that
+        # point, and GitHub only exposes draft releases to tokens with PUSH
+        # access ("Only users with push access will receive listings for draft
+        # releases"; get-by-tag is documented as returning a *published*
+        # release). Passing the file as a workflow artifact keeps that job on
+        # `contents: read` instead of widening it to write purely to read back
+        # what we just built — and it is the same file object, so byte-identity
+        # with the release asset holds by construction rather than by a
+        # round-trip that could itself go wrong.
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: client-macos-universal
+          path: build/WorldAtRuin-${{ steps.version.outputs.version }}-macOS-universal.zip
+          if-no-files-found: error
+          retention-days: 1
+
   publish-ghcr:
     name: 📦 Publish OCI artifact to GHCR
     # The ORIGIN OF RECORD for the in-client updater (docs/design/
@@ -265,22 +294,37 @@ jobs:
           echo "tag=${RAW_TAG}" >> "$GITHUB_OUTPUT"
           echo "version=${RAW_TAG#v}" >> "$GITHUB_OUTPUT"
 
-      - name: ⬇️ Download the release asset
-        # The release is still a DRAFT at this point (it is published only after
-        # this job succeeds), so this downloads the draft's asset — the same
-        # bytes a player will get, just not public yet.
+      - name: ⬇️ Fetch the build from the macOS job
+        # Deliberately NOT `gh release download`: the release is still a draft
+        # here, and draft releases are only visible to tokens with push access —
+        # this job has `contents: read` by design and should not be widened to
+        # write just to read back a file we already built.
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: client-macos-universal
+          path: oci
+
+      - name: 🧾 Confirm the build matches what was attached to the release
+        # The upstream job's checksum, asserted across the job boundary — so a
+        # truncated or swapped artifact transfer fails here rather than silently
+        # publishing different bytes to GHCR than the release carries.
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.version.outputs.tag }}
           VERSION: ${{ steps.version.outputs.version }}
+          EXPECTED: ${{ needs.publish-macos.outputs.sha256 }}
         run: |
           set -euo pipefail
-          mkdir -p oci && cd oci
-          gh release download "${TAG}" --repo "${GITHUB_REPOSITORY}" \
-            --pattern "WorldAtRuin-${VERSION}-macOS-universal.zip"
-          # Record the checksum of what the player would get, so the push can be
-          # proven byte-identical rather than assumed.
-          sha256sum "WorldAtRuin-${VERSION}-macOS-universal.zip" | tee ../release-asset.sha256
+          cd oci
+          ACTUAL=$(sha256sum "WorldAtRuin-${VERSION}-macOS-universal.zip" | cut -d' ' -f1)
+          if [ -z "${EXPECTED}" ]; then
+            echo "::error::no checksum was published by the build job — cannot prove the artifact is the released build"
+            exit 1
+          fi
+          if [ "${ACTUAL}" != "${EXPECTED}" ]; then
+            echo "::error::artifact checksum mismatch — build job produced ${EXPECTED}, this job received ${ACTUAL}"
+            exit 1
+          fi
+          echo "${ACTUAL}  WorldAtRuin-${VERSION}-macOS-universal.zip" > ../release-asset.sha256
+          echo "checksum matches the build attached to the release: ${ACTUAL}"
 
       - name: 🔧 Set up ORAS
         uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2.0.1
