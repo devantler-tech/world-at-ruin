@@ -97,7 +97,11 @@ func record(tag: String, amount: int = 1) -> Array[String]:
 			var current: int = progress[obj_id]
 			if current >= required:
 				continue
-			progress[obj_id] = min(current + amount, required)
+			# Add only the room that is actually left, never `current + amount`:
+			# a colossal amount would overflow int64 and wrap NEGATIVE, driving
+			# progress backwards through the very forward-only law this upholds.
+			# `required > current` here, so the addend is positive and bounded.
+			progress[obj_id] = current + min(amount, required - current)
 			advanced = true
 		if advanced and _is_all_complete(quest_id):
 			_complete[quest_id] = true

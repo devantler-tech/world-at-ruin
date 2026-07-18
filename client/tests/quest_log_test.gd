@@ -99,6 +99,14 @@ func _advance_and_clamp() -> bool:
 	# A huge amount clamps to the required count — never overshoots.
 	_eq_list(q.record("defeat:ash_hound", 100), "hunt", "record: overshooting still completes the quest")
 	_check(q.progress_of("hunt", "hounds") == 3, true, "record: progress clamped to the required count")
+
+	# An int64-max amount must clamp like any other — never wrap negative and
+	# drive progress BACKWARDS through the forward-only law.
+	var big := QuestLog.new()
+	big.add("huge", [{"id": "step", "tag": "surge", "count": 5}])
+	big.record("surge", 1)
+	_eq_list(big.record("surge", 9223372036854775807), "huge", "record: an int64-max amount still completes")
+	_check(big.progress_of("huge", "step") == 5, true, "record: an int64-max amount cannot overflow progress negative")
 	return not _failed
 
 
