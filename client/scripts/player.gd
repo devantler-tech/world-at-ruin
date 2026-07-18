@@ -21,6 +21,15 @@ const MOUSE_SENS := 0.0028
 const PITCH_MIN := -1.1
 const PITCH_MAX := 0.5
 const FALL_LIMIT_Y := -40.0
+## Full-deflection right-stick camera speed, radians per second. Applied per
+## rendered frame (not per physics tick) so stick look stays smooth at any
+## frame rate; the mouse path stays event-driven and untouched.
+const STICK_LOOK_SPEED_YAW := 2.6
+const STICK_LOOK_SPEED_PITCH := 1.6
+## Deadzone for stick-driven actions. Godot's 0.5 add_action default is a
+## digital-button threshold; an analog stick needs far less or walking feels
+## like a switch.
+const STICK_DEADZONE := 0.2
 
 var spawn_point := Vector3.ZERO
 ## Analytic terrain height lookup (set by main.gd to WorldGen.height_at). The
@@ -46,7 +55,7 @@ var _placeholder: Array[Node] = []
 var _embedded_ticks := 0
 
 static func ensure_input_actions() -> void:
-	var bindings := {
+	var key_bindings := {
 		"move_forward": [KEY_W, KEY_UP],
 		"move_back": [KEY_S, KEY_DOWN],
 		"move_left": [KEY_A, KEY_LEFT],
@@ -56,21 +65,51 @@ static func ensure_input_actions() -> void:
 		"toggle_devlog": [KEY_F1, KEY_L],
 		"character_editor": [KEY_C],
 		"interact": [KEY_E],
+		# The look_* actions are gamepad-only: the mouse drives the camera
+		# directly through InputEventMouseMotion, not through actions.
+		"look_left": [],
+		"look_right": [],
+		"look_up": [],
+		"look_down": [],
 	}
-	for action: String in bindings:
-		if not InputMap.has_action(action):
-			InputMap.add_action(action)
-			for key: Key in bindings[action]:
-				var ev := InputEventKey.new()
-				ev.physical_keycode = key
-				InputMap.action_add_event(action, ev)
-			# The interaction verb is also on a gamepad face button — the
-			# controller path Phase 1 needs. Movement on the sticks is a
-			# later slice; reserving the one button now is cheap.
-			if action == "interact":
-				var joy := InputEventJoypadButton.new()
-				joy.button_index = JOY_BUTTON_X
-				InputMap.action_add_event(action, joy)
+	# The controller path Phase 1's exit gate requires: every player-facing
+	# verb on a pad button…
+	var joy_buttons := {
+		"jump": JOY_BUTTON_A,
+		"sprint": JOY_BUTTON_LEFT_STICK,
+		"interact": JOY_BUTTON_X,
+		"toggle_devlog": JOY_BUTTON_BACK,
+		"character_editor": JOY_BUTTON_Y,
+	}
+	# …and both sticks live: [axis, full-deflection sign] per direction.
+	var joy_axes := {
+		"move_left": [JOY_AXIS_LEFT_X, -1.0],
+		"move_right": [JOY_AXIS_LEFT_X, 1.0],
+		"move_forward": [JOY_AXIS_LEFT_Y, -1.0],
+		"move_back": [JOY_AXIS_LEFT_Y, 1.0],
+		"look_left": [JOY_AXIS_RIGHT_X, -1.0],
+		"look_right": [JOY_AXIS_RIGHT_X, 1.0],
+		"look_up": [JOY_AXIS_RIGHT_Y, -1.0],
+		"look_down": [JOY_AXIS_RIGHT_Y, 1.0],
+	}
+	for action: String in key_bindings:
+		if InputMap.has_action(action):
+			continue
+		InputMap.add_action(action, STICK_DEADZONE if joy_axes.has(action) else 0.5)
+		for key: Key in key_bindings[action]:
+			var ev := InputEventKey.new()
+			ev.physical_keycode = key
+			InputMap.action_add_event(action, ev)
+		if joy_buttons.has(action):
+			var joy := InputEventJoypadButton.new()
+			joy.button_index = joy_buttons[action]
+			InputMap.action_add_event(action, joy)
+		if joy_axes.has(action):
+			var spec: Array = joy_axes[action]
+			var motion := InputEventJoypadMotion.new()
+			motion.axis = spec[0]
+			motion.axis_value = spec[1]
+			InputMap.action_add_event(action, motion)
 
 func _ready() -> void:
 	ensure_input_actions()
@@ -160,6 +199,18 @@ func _build_camera_rig() -> void:
 	_camera.far = 400.0
 	_spring.add_child(_camera)
 	_camera.make_current()
+
+## Right-stick camera look, polled per rendered frame (a held stick generates
+## no event stream, so the mouse path's event handler cannot serve it). Same
+## clamps, same control_enabled gate as the mouse.
+func _process(delta: float) -> void:
+	if not control_enabled:
+		return
+	var look := Input.get_vector("look_left", "look_right", "look_up", "look_down")
+	if look == Vector2.ZERO:
+		return
+	_cam_yaw.rotation.y -= look.x * STICK_LOOK_SPEED_YAW * delta
+	_spring.rotation.x = clampf(_spring.rotation.x - look.y * STICK_LOOK_SPEED_PITCH * delta, PITCH_MIN, PITCH_MAX)
 
 func _unhandled_input(event: InputEvent) -> void:
 	if not control_enabled:
