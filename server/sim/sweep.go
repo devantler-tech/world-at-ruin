@@ -51,31 +51,36 @@ import "math/big"
 //     once every actor has been placed is left to the deterministic separation
 //     pass, exactly as before.
 
-// sweptIterations bounds the propagation passes run per tick. One pass is not
-// enough for a multi-body interaction: when a mover is stopped short, everyone
-// sweeping against it must be re-tested against its *shortened* trajectory —
-// otherwise a follower computes its clamp against a leader that "kept going" and
-// overruns where the leader actually stopped. Each pass re-solves every mover
-// against the current trajectories and can only ever shorten a path further, so
-// the passes settle; a pass that shortens nothing ends the loop early, which is
-// the common case after one or two. Like separation's relaxation this is a
-// bounded, convergent solve rather than an unbounded one: bounded per-tick
-// effort is the price of never stalling the single authoritative loop, and a
-// pathological chain of many simultaneous high-speed movers settles over the
-// following ticks.
-const sweptIterations = 8
-
 // integrateSwept is the movement pass used when World.SweptCollision is on. It
-// integrates every actor's clamped intent into a target, then shortens each
-// actor's path to the first point at which it would contact another — so a fast
-// actor stops at a wall of bodies instead of tunneling through them.
+// integrates every actor's clamped intent into a target, then solves for how far
+// along its own path each actor may travel before it would touch another — so a
+// fast actor stops at a wall of bodies instead of tunneling through them.
+//
+// The solve is earliest-impact-first. Each round finds the single earliest
+// unresolved contact in the tick and stops both actors involved at that instant;
+// the round repeats until no contact remains unresolved.
+//
+// Why that terminates, and why the result is the real solution rather than a
+// truncated approximation: stopping an actor at time T leaves every position
+// before T untouched, so no new contact can appear earlier than one already
+// resolved — the resolved contact times are non-decreasing. An actor stopped at
+// T is therefore already stationary at every later contact, so it is never
+// clamped a second time, and each round stops at least one still-moving actor.
+// The actor count bounds the rounds, and the loop always exits because nothing
+// is left unresolved — never because a budget ran out. That matters more here
+// than in separation's relaxation: a residual overlap is transient and
+// self-correcting, but a residual *crossing* is permanent, so this solve cannot
+// be allowed to stop early.
+//
+// Cost is a pair scan per round, and rounds only happen where contacts actually
+// occur (none at all in the common case, which exits after the first scan).
+// Grid-accelerating the pair scan via the separation broad phase (broadphase.go)
+// is a later refinement tied to #64.
 func (w *World) integrateSwept() {
 	n := len(w.order)
-	// Snapshot every actor's start and full integrated target up front, then
-	// solve for how far along its own path each may travel. Every clamp is a pure
-	// function of this immutable snapshot plus the current fractions — never of
-	// the order actors are visited in, and never of a position already mutated
-	// this tick.
+	// Snapshot every actor's start and full integrated target up front. The solve
+	// is a pure function of this immutable snapshot plus the stop times, so it
+	// never depends on the order actors are visited in.
 	starts := make(map[EntityID]Vec3, n)
 	full := make(map[EntityID]Vec3, n)
 	for _, id := range w.order {
@@ -87,52 +92,95 @@ func (w *World) integrateSwept() {
 		full[id] = w.bounds.clamp(e.Pos.Add(disp))
 	}
 
-	// frac[id] is the fraction of its full path actor id may travel; end[id] is
-	// where that puts it. Both start unrestricted and only ever shorten.
-	frac := make(map[EntityID]*big.Rat, n)
-	end := make(map[EntityID]Vec3, n)
+	// stopAt[id] is the instant in the tick at which the actor stops; 1 means it
+	// travels its whole path. Until then it moves at its full speed — an actor
+	// halted by a collision keeps its original velocity up to the impact and is
+	// stationary afterwards, rather than crawling along a shortened path.
+	stopAt := make(map[EntityID]*big.Rat, n)
 	for _, id := range w.order {
-		frac[id] = big.NewRat(1, 1)
-		end[id] = full[id]
+		stopAt[id] = oneRat
 	}
 
-	for range sweptIterations {
-		// Re-solve every mover against the *current* trajectories. The whole pass
-		// reads one consistent set of endpoints and writes the next, so the result
-		// never depends on the order within a pass.
-		next := make(map[EntityID]*big.Rat, n)
-		shortened := false
-		for _, id := range w.order {
-			best := frac[id]
-			ri := w.ents[id].Radius
-			for _, oid := range w.order {
-				if oid == id {
+	for range n {
+		var bestT *big.Rat
+		var bi, bj EntityID
+		for x, id := range w.order {
+			for _, oid := range w.order[x+1:] {
+				t := w.pairContactTime(starts, full, stopAt, id, oid)
+				if t == nil {
 					continue
 				}
-				// The mover's own full path, against the obstacle's trajectory as
-				// currently shortened.
-				t := firstContactFrac(starts[id], full[id], ri, starts[oid], end[oid], w.ents[oid].Radius)
-				if t != nil && t.Cmp(best) < 0 {
-					best = t
+				// Only a contact that at least one of the pair is still moving
+				// through is unresolved; one where both have already stopped is a
+				// static overlap, which is separation's job.
+				if t.Cmp(stopAt[id]) >= 0 && t.Cmp(stopAt[oid]) >= 0 {
+					continue
+				}
+				if bestT == nil || t.Cmp(bestT) < 0 {
+					bestT, bi, bj = t, id, oid
 				}
 			}
-			next[id] = best
-			if best.Cmp(frac[id]) < 0 {
-				shortened = true
-			}
 		}
-		frac = next
-		for _, id := range w.order {
-			end[id] = alongPath(starts[id], full[id], frac[id])
+		if bestT == nil {
+			break // nothing left unresolved — the solve is complete
 		}
-		if !shortened {
-			break
+		if bestT.Cmp(stopAt[bi]) < 0 {
+			stopAt[bi] = bestT
+		}
+		if bestT.Cmp(stopAt[bj]) < 0 {
+			stopAt[bj] = bestT
 		}
 	}
 
 	for _, id := range w.order {
-		w.ents[id].Pos = end[id]
+		w.ents[id].Pos = alongPath(starts[id], full[id], stopAt[id])
 	}
+}
+
+// pairContactTime returns the earliest instant in [0,1] at which i and j touch
+// while approaching, given their current move-then-stop trajectories, or nil if
+// they never do this tick.
+//
+// Each actor travels at full speed until its own stop time and is stationary
+// after it, so the pair's relative motion is piecewise linear with a breakpoint
+// at each stop time. The tick is therefore split at those breakpoints and each
+// piece — over which both actors move linearly — is handed to the straight-line
+// solver, earliest piece first.
+func (w *World) pairContactTime(starts, full map[EntityID]Vec3, stopAt map[EntityID]*big.Rat, i, j EntityID) *big.Rat {
+	ti, tj := stopAt[i], stopAt[j]
+	ri, rj := w.ents[i].Radius, w.ents[j].Radius
+	bounds := [4]*big.Rat{new(big.Rat), ratMin(ti, tj), ratMax(ti, tj), oneRat}
+	for k := 0; k+1 < len(bounds); k++ {
+		u, v := bounds[k], bounds[k+1]
+		if u.Cmp(v) >= 0 {
+			continue // empty piece (the two stop times coincide, or one is the tick end)
+		}
+		iu := alongPath(starts[i], full[i], ratMin(u, ti))
+		iv := alongPath(starts[i], full[i], ratMin(v, ti))
+		ju := alongPath(starts[j], full[j], ratMin(u, tj))
+		jv := alongPath(starts[j], full[j], ratMin(v, tj))
+		if f := firstContactFrac(iu, iv, ri, ju, jv, rj); f != nil {
+			// Map the within-piece fraction back onto the tick: u + f·(v−u).
+			t := new(big.Rat).Sub(v, u)
+			t.Mul(t, f)
+			return t.Add(t, u)
+		}
+	}
+	return nil
+}
+
+func ratMin(a, b *big.Rat) *big.Rat {
+	if a.Cmp(b) <= 0 {
+		return a
+	}
+	return b
+}
+
+func ratMax(a, b *big.Rat) *big.Rat {
+	if a.Cmp(b) >= 0 {
+		return a
+	}
+	return b
 }
 
 // alongPath returns the point a fraction of the way from start to full on the

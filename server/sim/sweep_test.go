@@ -156,6 +156,65 @@ func TestSweptMultiBodyPropagation(t *testing.T) {
 	}
 }
 
+// TestSweptDeepChainFullyResolves covers the "must actually converge" finding: a
+// dependency chain far longer than any fixed pass budget must still be resolved
+// completely. A crossing left behind here is permanent — the endpoints do not
+// overlap, so separation can never repair it.
+func TestSweptDeepChainFullyResolves(t *testing.T) {
+	const (
+		chain = 24 // far more links than any fixed iteration budget
+		r     = int64(300)
+		speed = int64(150_000) // 5 000 mm/tick — each actor alone would fly past many others
+	)
+	w := NewWorld(wideBounds)
+	w.SweptCollision = true
+	// A static wall at the origin, with a queue charging east into it. The leader
+	// reaches the wall inside the tick and stops; every follower must then stop
+	// behind the actor ahead of it. Each link is a *separate* contact resolved at
+	// a later instant, so the queue is a genuine chain-length dependency: the
+	// solve needs one round per link, far more than any fixed budget.
+	w.Add(Entity{ID: 1, Pos: Vec3{}, MaxSpeed: 0, Radius: r})
+	for k := range chain {
+		id := EntityID(k + 2)
+		w.Add(Entity{ID: id, Pos: Vec3{X: -1_000 - int64(k)*700}, MaxSpeed: speed, Radius: r})
+	}
+	for k := range chain {
+		w.SetIntent(EntityID(k+2), Vec3{X: speed})
+	}
+	w.Step()
+
+	// The leader must have been stopped by the wall, not driven through it.
+	if x := w.Get(EntityID(2)).Pos.X; x >= 0 {
+		t.Fatalf("leader tunneled the wall: X=%d", x)
+	}
+
+	// No pair may overlap beyond the separation slop after the solve, and — the
+	// real point — the queue must not have reordered, which is what a crossing
+	// would look like.
+	ids := make([]EntityID, 0, chain+1)
+	for k := range chain {
+		ids = append(ids, EntityID(k+2))
+	}
+	for a := range ids {
+		for b := a + 1; b < len(ids); b++ {
+			pa, pb := w.Get(ids[a]).Pos, w.Get(ids[b]).Pos
+			if got := horizDist2(pa, pb); got < (2*r)*(2*r)-8*(2*r) {
+				t.Fatalf("actors %d and %d overlap after the swept solve: gap²=%d (want ≈ %d)",
+					ids[a], ids[b], got, (2*r)*(2*r))
+			}
+		}
+	}
+	// Original west-to-east order (ids ascending were placed further west) must be
+	// preserved: actor k+2 starts west of actor k+1, so it must still be west.
+	for k := 1; k < chain; k++ {
+		west, east := w.Get(EntityID(k+2)).Pos, w.Get(EntityID(k+1)).Pos
+		if west.X >= east.X {
+			t.Fatalf("queue reordered — actor %d (started west) ended at X=%d, at/past actor %d at X=%d",
+				k+2, west.X, k+1, east.X)
+		}
+	}
+}
+
 // TestSweptDeterministicAndOrderIndependent: with the flag on, the result is
 // bit-identical across runs and independent of insertion order — the
 // determinism law.
@@ -194,7 +253,7 @@ func TestSweptDeterministicAndOrderIndependent(t *testing.T) {
 // deliberate, reviewed act.
 func TestSweptGoldenHash(t *testing.T) {
 	const ticks = 400
-	const want uint64 = 0x5e7555d35e293f6f
+	const want uint64 = 0xc0704bb67b124ea9
 	run := func(swept bool) *World {
 		w := NewWorld(wideBounds)
 		w.SweptCollision = swept
