@@ -103,6 +103,51 @@ seasonally; WoW squishes stats). Both are forbidden, so economics come from **Gu
 instead: horizontal progression, a ceiling that never rises, bound loot, no trading/auction house
 (kills RMT, botting and dupe *value* at the root), hard sinks. WoW/D4 texture, GW2 economics.
 
+### Quality bar — it has to resemble a AAA game
+
+**Maintainer direction (2026-07-18)**, given after the first foliage pass shipped as untextured
+engine primitives in flat colours: *"This needs to resemble a AAA game, so that is unacceptable.
+Same goes for all other parts of the game and design."* This is a standing constraint of the same
+rank as the product law above, and it outranks velocity, convenience, and an agent's own sense of
+"done".
+
+**The bar.** Every player-facing surface — models, materials and texturing, lighting, VFX,
+animation, audio, UI/UX, world and level composition, camera, game feel — **and the design behind
+it** must look and play like it belongs in a shipped AAA title. **"Functional but basic" is a
+defect, not a milestone.** A system that demonstrably works while looking like programmer art has
+not met the bar; it has only earned the right to be finished.
+
+**Green tests are not the bar.** Machine verification proves a thing is *correct*; it can never
+prove it is *good*. So a player-visible change is judged on the **rendered frame and the felt
+experience**, not on the suite: look at it, play it, and compare it against a named AAA reference.
+**Attach the frame.** A PR carries an inspectable screenshot, captured frame or short clip of the
+actual change, the reference it is judged against, and the remaining gap — because a written claim
+that "I looked at it and it's fine" is self-attestation, and self-attestation is exactly what let a
+field of grey primitives ship. A green suite plus a frame that reads as placeholder is a PR that is
+**not ready**.
+
+**The tells that the bar is being missed** — all four were true of the first foliage pass, and are
+the concrete evidence behind this section:
+
+1. **Engine primitives standing in for art** — a sphere as a shrub, a box as a bone pile.
+2. **Flat single-colour materials** — one `albedo_color`, no texture, normal, roughness or
+   alpha-cutout detail.
+3. **Uniform random scatter** where a real world has clustering, ecotones, variation and
+   deliberate composition.
+4. **No second-order life** — no wind or sway, no wear, decals, LOD, or silhouette interest.
+
+**Scaffolding is still allowed; it just may not pose as finished.** A deterministic library, a
+server system, or a data schema may land while its art matures — that is how this project is built,
+and it stays correct. But **player-visible placeholder art does not ship default-on**: it stays
+behind a default-off flag (product law 2) or stays out of the world until it clears the bar, and the
+PR says plainly that it is below bar and what is missing. Shipping it quietly as though it were done
+is the specific failure this section exists to stop.
+
+**Taste is the maintainer's call — and that is not licence to aim low.** Phase 0 is his taste gate
+and agents do not self-certify taste. Agents are nonetheless expected to *aim at* the AAA bar, to
+judge their own output honestly against it, and to say when they know it falls short — rather than
+shipping the first thing that renders and leaving the judgement entirely to him.
+
 ### Setting & story — a medieval-futuristic world at rebirth
 
 Settled with the maintainer 2026-07-17. This is the fiction every zone, asset and system renders.
@@ -218,6 +263,10 @@ clear his bar, the premise fails — cheap to learn now, ruinous to learn later.
 walkable slice predates this gate by the maintainer's direct instruction — it exists so progress
 can be watched by playing; every *further* art/game system waits on Phase 0.)
 
+The standard this gate judges against is the **[Quality bar](#quality-bar--it-has-to-resemble-a-aaa-game)**
+— AAA resemblance. Phase 0 asks whether *generated* art can reach it; the quality bar is what
+everything shipped afterwards is held to.
+
 ## Maintenance
 
 - **Structure:** `client/` is the Godot 4 project (scenes built in GDScript from engine
@@ -280,6 +329,13 @@ can be watched by playing; every *further* art/game system waits on Phase 0.)
 - **Determinism:** world generation is seeded (`WorldGen.WORLD_SEED`) — the same world every boot.
   Never introduce wall-clock or unseeded randomness into generation; differences between builds
   must be attributable to code.
+- **Player-visible work is judged on the frame, not the suite:** before calling a player-visible
+  change ready, render or play it, look at it, and judge it against the
+  **[Quality bar](#quality-bar--it-has-to-resemble-a-aaa-game)** (AAA resemblance). The PR must
+  carry **evidence a reviewer can inspect** — an attached screenshot, captured frame or short clip
+  of the actual change — together with the **named AAA reference** and the **remaining gap**. A
+  claim with no attached frame is self-attestation, not evidence, and does not satisfy this.
+  Below-bar player-facing work does not ship default-on.
 - **Dev log is a contract:** every player-visible change adds a `DevLog.ENTRIES` entry (newest
   first) in the same PR — the maintainer watches progress by playing, and the dev log is that
   surface. Write the entry's `version` as the version the change will ship in (the next
@@ -327,6 +383,31 @@ can be watched by playing; every *further* art/game system waits on Phase 0.)
     boots reporting `BOOT_OK v<version>` (the proof the stamp reached the shipped binary), and
     attaches the zip to the Release. `workflow_dispatch` with a `tag` input re-runs it for an
     existing release.
+  - **GHCR is the origin of record for updates** (maintainer direction 2026-07-18, closing the open
+    host decision in `docs/design/distribution-and-self-update.md`). CD publishes the released
+    client to `ghcr.io/devantler-tech/world-at-ruin/client` as an **OCI artifact**, tagged with the
+    bare version plus `latest`, and **cosign-signs it by digest** (keyless, GitHub OIDC). The
+    **digest** is what the updater pins — never the mutable tag. OCI is required rather than merely
+    preferred: GitHub Packages has no generic/raw-file registry, so an OCI artifact is the only way
+    a `.app` zip enters it. The GitHub Release asset remains the *install* download; GHCR is the
+    *update* origin.
+  - **The release publishes LAST, after the artifact jobs.** `publish-release` depends on both
+    `publish-macos` and `publish-ghcr`, so the draft goes public only once the build is attached
+    *and* the GHCR origin exists and is signed. Publishing earlier would leave a public, immutable
+    release whose update origin does not exist — unrepairable, since releases are immutable. If an
+    artifact job fails the release simply stays a draft, which is the safe state; fix the cause and
+    re-run CD via `workflow_dispatch` with the tag.
+  - **GHCR packages are private by default**, and that failure is invisible from the publishing
+    side — the push succeeds and only the *player* gets a 401. `verify-ghcr-public` therefore checks
+    reachability with a **credential-free** request (no `docker login`, no token, `permissions: {}`):
+    every step in `publish-ghcr` runs authenticated and so proves nothing about public access.
+    **Never "fix" a failure here by making the check authenticated** — that restores a guard that
+    passes vacuously.
+    It is deliberately **non-blocking**: it is not a dependency of `publish-release` (maintainer
+    direction 2026-07-18), because nothing consumes GHCR yet — the in-client updater is not wired to
+    it — so a private package harms no player today while blocking every release on it would. The
+    job going red is the signal; the release still ships. **Make it blocking the moment the updater
+    actually resolves against GHCR**, at which point an unreachable origin is a real defect (tracked as #141).
   - The version is therefore **derived, never maintained**. The in-tree constants are dev values;
     only a released build carries a real version.
   - **`CI - Required Checks` is the repo's single required status context.** Renaming or removing
@@ -334,6 +415,26 @@ can be watched by playing; every *further* art/game system waits on Phase 0.)
 - **Scripting:** GDScript in the Godot project; **bash or Go everywhere else — never Python**
   (portfolio constitution). The Phase-0 Blender pipeline is the sole, explicitly-settled exception
   (`bpy` is Python by nature); keep it isolated under `tools/artgen/` when it lands.
+- **Security scanning — GDScript is NOT CodeQL-analysable, and no configuration changes that.**
+  CodeQL supports a fixed extractor set (C/C++, C#, Go, Java/Kotlin, JS/TS, Python, Ruby, Rust,
+  Swift, GitHub Actions). GDScript is not in it, and language support is a property of the
+  extractors, not of configuration — an advanced setup cannot add one that does not exist. So the
+  repo's dominant language is permanently outside CodeQL's reach; this is **not** a
+  misconfiguration, and it does not need re-researching. What *is* covered: the repo runs CodeQL
+  **default setup** over `actions`, `go` and `python` (`tools/artgen`), extended suite. **Prefer
+  default setup over an advanced-setup workflow here** — the two are mutually exclusive, and
+  default setup emits both code-scanning *and* code-quality results, which this repo's rulesets
+  both require; replicating that from advanced setup needs `analysis-kinds`, an input
+  `codeql-action` documents as internal and subject to change.
+  **Before adding a language, scan it locally first.** `Require code quality results` is set to
+  `severity: all` and `Require code scanning results` to `alerts_threshold: all`, so a *single*
+  finding of any severity blocks every open PR in the repo. Preview with
+  `codeql database create <db> --language=<lang> --source-root=<dir>` then
+  `codeql database analyze <db> ... codeql/<lang>-queries:codeql-suites/<lang>-code-quality.qls`
+  (and `-security-extended.qls`), fix what it finds, and only then enable. Enabling `python`
+  without this would have frozen the repo on three `tools/artgen` findings. Note also that
+  adding a language leaves existing PRs blocked until each re-runs with the new analysis — that is
+  expected, and a push (or a merge of `main`) clears it.
 - **Licensing hygiene:** no GPL/AGPL code or assets in the shipped tree; no commercial assets;
   CC0/OSS-permissive only, with licence verified per asset dataset. External PRs cannot be merged
   until their author signs the CLA (`CLA.md`; the `CLA` workflow enforces this, with the ledger on
@@ -360,3 +461,10 @@ Reviewers (Codex/CodeRabbit) flag **P0/P1 only**:
 - **P1 — correctness:** unseeded/non-deterministic world generation, client-authoritative gameplay
   state (once networking exists), physics entering the authoritative path, or a player-visible
   change with no dev-log entry.
+- **P1 — quality bar:** any **player-facing** surface — art, world composition, lighting, VFX,
+  animation, audio, UI/UX, camera, game feel, or the design itself — that ships **default-on** while
+  still reading as placeholder (engine primitives as art, flat untextured materials, uniform
+  scatter, no second-order life, and the equivalents of those outside art). **Separately P1 on its
+  own:** a player-visible PR carrying **no inspectable frame evidence, or no named AAA reference and
+  stated gap** — including one that simply *omits* any readiness judgement, not only one that argues
+  from green tests. See **[Quality bar](#quality-bar--it-has-to-resemble-a-aaa-game)**.

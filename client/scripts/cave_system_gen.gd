@@ -219,25 +219,12 @@ static func build_geometry(p_seed: int) -> Dictionary:
 	var lay := layout(p_seed)
 	var noise := make_noise(p_seed)
 
-	var lo := Vector3(1e6, 1e6, 1e6)
-	var hi := Vector3(-1e6, -1e6, -1e6)
-	for room: Dictionary in lay["rooms"]:
-		lo = lo.min(room["center"] - Vector3.ONE * (room["r"] + HULL_ROCK + 2.5))
-		hi = hi.max(room["center"] + Vector3.ONE * (room["r"] + HULL_ROCK + 2.5))
-	lo = lo.min(lay["mouth"] + Vector3(-2.0, -6.0, -8.0))
-	hi = hi.max(lay["mouth"] + Vector3(9.0, 6.0, 8.0))
-
-	var nx := int(ceilf((hi.x - lo.x) / CELL)) + 1
-	var ny := int(ceilf((hi.y - lo.y) / CELL)) + 1
-	var nz := int(ceilf((hi.z - lo.z) / CELL)) + 1
-
-	# Corner density field.
-	var field := PackedFloat32Array()
-	field.resize(nx * ny * nz)
-	for ix in nx:
-		for iy in ny:
-			for iz in nz:
-				field[(ix * ny + iy) * nz + iz] = density(lo + Vector3(ix, iy, iz) * CELL, lay, noise)
+	var sampled := _sample_field(lay, noise)
+	var field: PackedFloat32Array = sampled["field"]
+	var lo: Vector3 = sampled["lo"]
+	var nx: int = sampled["nx"]
+	var ny: int = sampled["ny"]
+	var nz: int = sampled["nz"]
 
 	# The ACTUAL floor under the spawn: smin blending and wall noise carve
 	# deeper than the room's nominal floor — probe the field column so the
@@ -377,6 +364,177 @@ static func fingerprint(mesh: ArrayMesh) -> String:
 	var arrays := mesh.surface_get_arrays(0)
 	var v: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
 	return "verts=%d hash=%d" % [v.size(), hash(v.to_byte_array())]
+
+
+## Samples the corner density field over the massif's bounds, returning the
+## packed field plus its origin and dimensions, so the mesher and the
+## connectivity audit share one sampling rather than two drifting copies.
+##
+## `pad` grows the sampled box outward. The mesher passes 0 (its bounds decide
+## the mesh, so they must never move); the connectivity audit pads so the box
+## certainly extends past the massif into genuine open air — that is what lets
+## "escaped to the boundary" mean "walked out of the cave" without trusting any
+## hand-picked exterior probe point.
+static func _sample_field(lay: Dictionary, noise: FastNoiseLite, pad: float = 0.0) -> Dictionary:
+	var lo := Vector3(1e6, 1e6, 1e6)
+	var hi := Vector3(-1e6, -1e6, -1e6)
+	for room: Dictionary in lay["rooms"]:
+		lo = lo.min(room["center"] - Vector3.ONE * (room["r"] + HULL_ROCK + 2.5))
+		hi = hi.max(room["center"] + Vector3.ONE * (room["r"] + HULL_ROCK + 2.5))
+	lo = lo.min(lay["mouth"] + Vector3(-2.0, -6.0, -8.0))
+	hi = hi.max(lay["mouth"] + Vector3(9.0, 6.0, 8.0))
+	lo -= Vector3.ONE * pad
+	hi += Vector3.ONE * pad
+
+	var nx := int(ceilf((hi.x - lo.x) / CELL)) + 1
+	var ny := int(ceilf((hi.y - lo.y) / CELL)) + 1
+	var nz := int(ceilf((hi.z - lo.z) / CELL)) + 1
+
+	# Corner density field.
+	var field := PackedFloat32Array()
+	field.resize(nx * ny * nz)
+	for ix in nx:
+		for iy in ny:
+			for iz in nz:
+				field[(ix * ny + iy) * nz + iz] = density(lo + Vector3(ix, iy, iz) * CELL, lay, noise)
+	return { "field": field, "lo": lo, "nx": nx, "ny": ny, "nz": nz }
+
+
+const _NEIGHBOURS: Array[Vector3i] = [
+	Vector3i(1, 0, 0), Vector3i(-1, 0, 0),
+	Vector3i(0, 1, 0), Vector3i(0, -1, 0),
+	Vector3i(0, 0, 1), Vector3i(0, 0, -1),
+]
+const _WAKE_ROOM := 2 ## rooms[2] is the main chamber the wanderer wakes in.
+const AUDIT_PAD := 4.0 ## Audit-only sampling margin, so the box reaches open air.
+
+
+## Flat field index of a corner cell — multiplication only, no integer division
+## (this repo treats an integer-division warning as an error).
+static func _fi(c: Vector3i, ny: int, nz: int) -> int:
+	return (c.x * ny + c.y) * nz + c.z
+
+
+## Is this cell void? Out of range counts as void: the audit pads its sampled box
+## past the massif, so anything outside it is open air by construction.
+static func _void_at(field: PackedFloat32Array, nx: int, ny: int, nz: int, c: Vector3i) -> bool:
+	if c.x < 0 or c.x >= nx or c.y < 0 or c.y >= ny or c.z < 0 or c.z >= nz:
+		return true
+	return field[_fi(c, ny, nz)] < 0.0
+
+
+## Can a body actually occupy this cell? The cell and all six axis neighbours
+## must be void, which erodes the void by one cell — CELL (0.65 m) of clearance,
+## comfortably past the player capsule's 0.4 m radius (see player.gd). This is
+## what stops a ceiling crack or pinhole narrower than the wanderer from reading
+## as a connection.
+##
+## HONEST LIMIT: a one-cell erosion rejects sub-cell gaps; it is NOT a capsule
+## traversal proof and does not model the 1.8 m standing height or floor support.
+## A true capsule/navmesh traversal check is issue #107.
+static func passable(field: PackedFloat32Array, nx: int, ny: int, nz: int, c: Vector3i) -> bool:
+	if c.x < 0 or c.x >= nx or c.y < 0 or c.y >= ny or c.z < 0 or c.z >= nz:
+		return false
+	if not _void_at(field, nx, ny, nz, c):
+		return false
+	for step: Vector3i in _NEIGHBOURS:
+		if not _void_at(field, nx, ny, nz, c + step):
+			return false
+	return true
+
+
+## Flood-fills PASSABLE space 6-connected from `start`, returning a byte mask
+## (1 = reachable). Empty when the start cell itself is not passable — a region
+## is defined by what a body can actually move through, not by bare void.
+static func flood_passable(field: PackedFloat32Array, nx: int, ny: int, nz: int, start: Vector3i) -> PackedByteArray:
+	var seen := PackedByteArray()
+	seen.resize(field.size())
+	seen.fill(0)
+	if not passable(field, nx, ny, nz, start):
+		return seen
+	var stack: Array[Vector3i] = [start]
+	seen[_fi(start, ny, nz)] = 1
+	while not stack.is_empty():
+		var c := stack.pop_back() as Vector3i
+		for step: Vector3i in _NEIGHBOURS:
+			var j := c + step
+			if j.x < 0 or j.x >= nx or j.y < 0 or j.y >= ny or j.z < 0 or j.z >= nz:
+				continue
+			var n := _fi(j, ny, nz)
+			if seen[n] == 0 and passable(field, nx, ny, nz, j):
+				seen[n] = 1
+				stack.append(j)
+	return seen
+
+
+## The corner cell a world point actually falls in — no projection onto a nearby
+## void cell. An audited point that lands in rock must FAIL the audit, never
+## silently borrow the verdict of a neighbouring cavity.
+static func cell_of(point: Vector3, lo: Vector3, nx: int, ny: int, nz: int) -> Vector3i:
+	return Vector3i(
+		clampi(int(round((point.x - lo.x) / CELL)), 0, nx - 1),
+		clampi(int(round((point.y - lo.y) / CELL)), 0, ny - 1),
+		clampi(int(round((point.z - lo.z) / CELL)), 0, nz - 1))
+
+
+## Is this exact point reachable? Two conditions, both required:
+##  1. the point's OWN density is void — sampled at the point, not at a corner,
+##     because `cell_of` rounds and would otherwise let a point sitting in rock
+##     within CELL/2 of a reachable corner borrow that corner's verdict (the
+##     thin-wall case this guard exists to catch);
+##  2. the cell it falls in was reached by the clearance-eroded flood.
+static func point_reached(point: Vector3, lay: Dictionary, noise: FastNoiseLite,
+		seen: PackedByteArray, lo: Vector3, nx: int, ny: int, nz: int) -> bool:
+	if density(point, lay, noise) >= 0.0:
+		return false
+	return seen[_fi(cell_of(point, lo, nx, ny, nz), ny, nz)] == 1
+
+
+## Connectivity audit of the carved cave: floods the space a body can move
+## through, starting from the waking chamber, and reports whether the spawn and
+## every room centre are reachable and whether the flood ESCAPES the padded box
+## (i.e. reaches open air — the way out). This is the no-resets law in code: a
+## seed or layout change that sealed a player into an unreachable pocket flips
+## one of these false, and CI catches it before a player ever could.
+static func reachability(p_seed: int) -> Dictionary:
+	var lay := layout(p_seed)
+	var noise := make_noise(p_seed)
+	var sampled := _sample_field(lay, noise, AUDIT_PAD)
+	var field: PackedFloat32Array = sampled["field"]
+	var lo: Vector3 = sampled["lo"]
+	var nx: int = sampled["nx"]
+	var ny: int = sampled["ny"]
+	var nz: int = sampled["nz"]
+	var rooms: Array = lay["rooms"]
+	var wake := (rooms[_WAKE_ROOM] as Dictionary)["center"] as Vector3
+	var start := cell_of(wake, lo, nx, ny, nz)
+	var seen := flood_passable(field, nx, ny, nz, start)
+
+	# One pass: count what was reached, and detect whether the flood escaped to
+	# the boundary of the padded box, which is open air outside the massif.
+	var reached := 0
+	var escaped := false
+	for ix in nx:
+		for iy in ny:
+			for iz in nz:
+				if seen[(ix * ny + iy) * nz + iz] == 0:
+					continue
+				reached += 1
+				if ix == 0 or ix == nx - 1 or iy == 0 or iy == ny - 1 or iz == 0 or iz == nz - 1:
+					escaped = true
+
+	var rooms_reachable: Array[bool] = []
+	for room: Dictionary in rooms:
+		rooms_reachable.append(
+			point_reached(room["center"] as Vector3, lay, noise, seen, lo, nx, ny, nz))
+	return {
+		"reached": reached,
+		"total": field.size(),
+		"start_passable": passable(field, nx, ny, nz, start),
+		"spawn_reachable": point_reached(lay["spawn"] as Vector3, lay, noise, seen, lo, nx, ny, nz),
+		"mouth_open": escaped,
+		"rooms_reachable": rooms_reachable,
+	}
 
 
 ## In-scene build: mesh + collision + torches + mouth boulders. The terrain

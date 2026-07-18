@@ -10,6 +10,13 @@ extends Node
 ## refuse cleanly (a non-positive award is never a debit, an unknown weapon reads
 ## zero). This pins each of those.
 ##
+## It also pins the death → bloodstain → reclaim loop (#129), where value MOVES
+## between pools and every transition is a potential dupe or leak: a death never
+## reaches the banked floor, die → reclaim conserves `total` exactly, dying again
+## destroys the standing stain exactly once (it can never be reclaimed after),
+## reclaiming twice mints nothing, and the handed-out stain is a copy that cannot
+## be edited into a dupe.
+##
 ## Pure logic only — no scene, no save, no boot — so it is safe to run locally and
 ## deterministic in CI.
 ##
@@ -85,9 +92,158 @@ func _ready() -> void:
 		return
 	if not _deterministic_replay():
 		return
+	if not _death_spares_the_banked_floor():
+		return
+	if not _death_then_reclaim_conserves():
+		return
+	if not _second_death_destroys_the_standing_stain():
+		return
+	if not _reclaim_happens_at_most_once():
+		return
+	if not _a_death_that_drops_nothing_preserves_the_stain():
+		return
+	if not _death_is_degenerate_safe():
+		return
 
-	print("TEST PASS — mastery ledger holds (forward-only, conservation, banking, per-weapon, deterministic, degenerate-safe)")
+	print("TEST PASS — mastery ledger holds (forward-only, conservation, banking, per-weapon, deterministic, death/bloodstain, degenerate-safe)")
 	get_tree().quit(0)
+
+
+## Death may only ever reach the current bar: the banked floor is unlosable by
+## law, so no sequence of deaths can lower it, and the points that leave unbanked
+## are exactly the ones the bloodstain receives.
+func _death_spares_the_banked_floor() -> bool:
+	var m := Mastery.new()
+	m.accrue("sword", 250)  # 2 bars banked, 50 on the current bar
+	var banked_before := m.banked("sword")
+	var stain := m.die(50)
+	_check(m.banked("sword") == banked_before, true, "death: banked floor untouched")
+	_check(m.unbanked("sword") == 25, true, "death: half the at-risk pool remains")
+	_check(int(stain.get("sword", 0)) == 25, true, "death: the stain holds exactly what left unbanked")
+	# Repeated deaths keep eroding only the bar, never the floor.
+	for i in 6:
+		m.die(50)
+		if m.banked("sword") != banked_before:
+			_fail("death: banked floor moved after repeated deaths")
+			return false
+	_check(m.unbanked("sword") >= 0, true, "death: the at-risk pool never goes negative")
+	return not _failed
+
+
+## A die → reclaim round trip restores `total` EXACTLY — the points are moved,
+## never minted or leaked. Dying alone costs exactly what the stain holds.
+func _death_then_reclaim_conserves() -> bool:
+	var m := Mastery.new()
+	m.accrue("sword", 250)
+	m.accrue("staff", 90)
+	var before := m.total("sword") + m.total("staff")
+
+	var stain := m.die(50)
+	var dropped := _stain_sum(stain)
+	var after_death := m.total("sword") + m.total("staff")
+	_check(after_death == before - dropped, true, "death costs exactly the stain, no more")
+
+	var recovered := m.reclaim()
+	_check(recovered == dropped, true, "reclaim returns exactly what was dropped")
+	_check(m.total("sword") + m.total("staff") == before, true, "die → reclaim conserves total exactly")
+	_check(m.bloodstain().is_empty(), true, "reclaim consumes the stain")
+	return not _failed
+
+
+## Dying again while a stain still stands destroys the old one — "reclaim it or
+## lose it forever". Those points are gone, not moved: they can neither be
+## reclaimed afterwards nor counted twice.
+func _second_death_destroys_the_standing_stain() -> bool:
+	var m := Mastery.new()
+	m.accrue("sword", 99)
+	var first := m.die(100)
+	_check(_stain_sum(first) == 99, true, "first death takes the whole at-risk pool at 100%")
+	var after_first := m.total("sword")
+
+	m.accrue("sword", 40)
+	var second := m.die(50)
+	_check(_stain_sum(second) == 20, true, "second death takes half of the new pool")
+	_check(_stain_sum(m.bloodstain()) == _stain_sum(second), true, "only the newest stain stands")
+
+	var recovered := m.reclaim()
+	_check(recovered == 20, true, "reclaim returns only the newest stain — the first is lost forever")
+	_check(m.total("sword") == after_first + 40, true, "the destroyed points never come back")
+	return not _failed
+
+
+## Reclaiming twice is the obvious dupe vector; the second call must be a no-op.
+func _reclaim_happens_at_most_once() -> bool:
+	var m := Mastery.new()
+	m.accrue("sword", 180)
+	m.die(50)
+	var first := m.reclaim()
+	var total_after := m.total("sword")
+	var second := m.reclaim()
+	_check(first > 0, true, "reclaim: the first call returns the stain")
+	_check(second == 0, true, "reclaim: a second call returns nothing")
+	_check(m.total("sword") == total_after, true, "reclaim: a second call mints no points")
+
+	# Handing out a copy matters: mutating it must not re-arm a reclaim.
+	m.die(50)
+	var handle := m.bloodstain()
+	handle["sword"] = 999_999
+	_check(m.reclaim() < 999_999, true, "the bloodstain() copy cannot be edited into a dupe")
+	return not _failed
+
+
+## A death that puts nothing at risk must not destroy the stain still standing.
+## This is the softened-penalty path the design calls for in group content, so
+## getting it wrong would make leniency HARSHER than full risk: the gentle death
+## would silently bin mastery a full-risk death would have left reclaimable.
+func _a_death_that_drops_nothing_preserves_the_stain() -> bool:
+	var m := Mastery.new()
+	m.accrue("sword", 180)  # 1 bar banked, 80 at risk
+	var dropped := _stain_sum(m.die(50))
+	_check(dropped == 40, true, "no-op death setup: the first death drops half the pool")
+
+	var recoverable_before := m.total("sword") + _stain_sum(m.bloodstain())
+	var nothing := m.die(0)
+	_check(nothing.is_empty(), true, "a zero-share death drops nothing")
+	_check(_stain_sum(m.bloodstain()) == dropped, true, "a zero-share death leaves the standing stain intact")
+	_check(m.total("sword") + _stain_sum(m.bloodstain()) == recoverable_before, true,
+		"a zero-share death destroys nothing recoverable")
+	_check(m.reclaim() == dropped, true, "the stain is still reclaimable after a zero-share death")
+
+	# Same when the share is real but the pool is too small to floor above zero.
+	var tiny := Mastery.new()
+	tiny.accrue("sword", 1)
+	_check(_stain_sum(tiny.die(100)) == 1, true, "tiny pool: a full-risk death drops the single point")
+	tiny.accrue("sword", 1)
+	_check(tiny.die(50).is_empty(), true, "a share that floors to zero drops nothing")
+	_check(_stain_sum(tiny.bloodstain()) == 1, true, "a floored-to-zero death leaves the earlier stain standing")
+	return not _failed
+
+
+## Degenerate shares and empty ledgers refuse cleanly rather than inventing or
+## destroying value.
+func _death_is_degenerate_safe() -> bool:
+	var fresh := Mastery.new()
+	_check(fresh.die(50).is_empty(), true, "death on a fresh ledger yields no stain")
+
+	var m := Mastery.new()
+	m.accrue("sword", 150)  # 1 bar banked, 50 at risk
+	_check(m.die(0).is_empty(), true, "a 0% death takes nothing")
+	_check(m.unbanked("sword") == 50, true, "a 0% death leaves the pool intact")
+	_check(m.die(-50).is_empty(), true, "a negative share clamps to 0 and takes nothing")
+
+	var all := m.die(500)  # clamps to 100%
+	_check(_stain_sum(all) == 50, true, "a share above 100 clamps to the whole pool")
+	_check(m.unbanked("sword") == 0, true, "a 100% death empties the bar")
+	_check(m.banked("sword") == Mastery.BANK_STEP, true, "even a 100% death spares the floor")
+	return not _failed
+
+
+## Total points held in a bloodstain.
+func _stain_sum(stain: Dictionary) -> int:
+	var sum := 0
+	for weapon: String in stain:
+		sum += int(stain[weapon])
+	return sum
 
 
 ## Drives a long, varied accrual sequence and asserts the banked floor never
