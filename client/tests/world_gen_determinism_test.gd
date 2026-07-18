@@ -39,7 +39,11 @@ const HALF := WorldGen.SIZE / 2.0
 ## (the test prints it in record mode) only when the world is intentionally
 ## changed — like the server sim's demoGoldenHash, a change here is a reviewed
 ## act.
-const GOLDEN_FINGERPRINT := "b99cc4ea"
+## v0.1.16: torches became wall-anchored and gained bracket/head/flame parts,
+## which moves and re-shapes their nodes. The rock mesh itself is BYTE-IDENTICAL
+## across seeds 42/7/1234 (verified against the previous build), so this
+## regeneration is torch-only, not a terrain change.
+const GOLDEN_FINGERPRINT := "d9d69c2e"
 ## world_gen's cave_protects pads the cave hull by this many metres. A piece
 ## whose bounding radius is within that padding cannot reach the hull when its
 ## centre is outside cave_protects, which makes the cheap centre test a SOUND
