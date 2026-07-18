@@ -168,6 +168,10 @@ func TestAgonesRefusesReadyWhenCertExpired(t *testing.T) {
 
 	cmd := exec.Command(zoneBin,
 		"-listen", "127.0.0.1:0", "-tls-cert", certFile, "-tls-key", keyFile,
+		// The gate refuses before serving, so the deadline never matters on
+		// the intended path — it exists so a REGRESSION (gate gone, process
+		// serving) fails this test quickly instead of hanging it.
+		"-duration", "300ms",
 		"-agones",
 	)
 	cmd.Env = append(os.Environ(),
