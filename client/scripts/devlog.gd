@@ -11,6 +11,17 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
+		"version": "0.2.0",
+		"date": "2026-07-18",
+		"title": "The ground is made of something",
+		"notes": [
+			"The Reach was a smooth surface you walked across. Now it is ground: ash drifted into banks and swept thin elsewhere, with a grain fine enough to see underfoot and coarse enough to catch the low sun.",
+			"The land changes with its own shape. Ash settles where the ground lies flat and washes off the steeper faces, so slopes show the harder rock beneath instead of everything wearing the same colour.",
+			"Nothing about the world itself moved — the same hills, the same ruins, the same scrub in the same places. Only what it is made of changed.",
+			"The ruins, the scrub and the people are still plain shapes and still look it. The ground went first because you see more of it than anything else.",
+		],
+	},
+	{
 		"version": "0.1.17",
 		"date": "2026-07-18",
 		"title": "The torches hang on the walls",
