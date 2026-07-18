@@ -17,6 +17,21 @@ extends Node3D
 ## Local space: +X runs OUT of the mouth; the mouth floor sits at local
 ## y = 0 (WorldGen seats that at terrain grade). Everything is
 ## deterministic from seed_value.
+##
+## PREVIEW HARNESS — `scenes/cave.tscn` (issue #124). The running game never
+## loads that scene: `world_gen.gd` instantiates this generator directly into the
+## overworld, so the cave is part of the world rather than a museum piece. The
+## scene is kept deliberately, as the editor-only rig for looking at cave
+## generation in isolation — a dark cave environment, a mouth light, a framed
+## camera, and this node at `seed_value = 42`. Open it in the editor and, because
+## this is a `@tool` script, edits to the constants below re-generate live, which
+## is how the exterior/interior work (#149, #156) is judged by eye.
+##
+## It is intentionally unreferenced, exactly like `scenes/recipes.tscn` — the
+## character taste gate documented in `recipe_gallery.gd`. Treat neither as dead
+## code: an unreferenced scene here means "editor surface", and this comment is
+## the marker that says so. Retire `cave.tscn` only when cave generation stops
+## being tuned visually, and say so in the same change.
 
 const CELL := 0.65 ## Surface-net grid resolution in metres.
 const SMIN_K := 2.4 ## Chamber/tunnel blend radius.
