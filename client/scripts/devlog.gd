@@ -16,7 +16,8 @@ const ENTRIES: Array[Dictionary] = [
 		"title": "Pick up a controller",
 		"notes": [
 			"The Reach now plays from the couch. The left stick walks — tilt gently for a stroll, push it all the way to hurry — and the right stick looks around, with the same limits the mouse has always had, so the camera can't flip or spin.",
-			"Jumping, sprinting, interacting, the character editor and this very log all sit on the pad's buttons too. Nothing about keyboard and mouse play changed: same keys, same feel.",
+			"Jumping, sprinting, interacting, the character editor and this very log all sit on the pad's buttons too. Waking for the first time works pad-in-hand as well: the character shaper opens ready to steer with the D-pad.",
+			"The hints at the bottom of the screen now tell both stories — keys and pad — and prompts on things you can touch show both buttons. Nothing about keyboard and mouse play changed: same keys, same feel.",
 		],
 	},
 	{

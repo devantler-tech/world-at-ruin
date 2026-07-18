@@ -42,8 +42,11 @@ func _ready() -> void:
 	_check_keyboard_regression()
 	if _failed:
 		return
+	_check_creator_focus()
+	if _failed:
+		return
 
-	print("TEST PASS — controller support: sticks move and look (analog, deadzoned, pitch-clamped), verbs on pad buttons, keyboard untouched")
+	print("TEST PASS — controller support: sticks move and look (analog, deadzoned, pitch-clamped), verbs on pad buttons, creator pad-navigable, keyboard untouched")
 	get_tree().quit(0)
 
 
@@ -198,6 +201,30 @@ func _find_spring(node: Node) -> SpringArm3D:
 		if found != null:
 			return found
 	return null
+
+
+# --- outcome: the first-run creator is drivable by pad ----------------------
+
+## A pad has no pointer: unless opening the creator assigns an initial focus
+## owner, ui_* navigation has nothing to act on and a first-run controller
+## player can never reach the mandatory Wake button.
+func _check_creator_focus() -> void:
+	var player := Player.new()
+	add_child(player)
+	var creator := CharacterCreator.new()
+	add_child(creator)
+	var initial = CharacterFactory.load_recipe("res://recipes/wanderer.json")
+	if initial is not Dictionary:
+		_fail("wanderer preset recipe failed to load")
+		return
+	initial.erase("comment")
+	creator.open(player, initial, true)
+	var focus := get_viewport().gui_get_focus_owner()
+	_check(focus != null, "opening the creator assigns a focus owner for pad navigation")
+	if not _failed:
+		_check(creator.is_ancestor_of(focus), "the initial focus owner sits inside the creator panel")
+	creator.queue_free()
+	player.queue_free()
 
 
 # --- regression: the keyboard path is untouched -----------------------------

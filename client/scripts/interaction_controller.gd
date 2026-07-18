@@ -17,7 +17,7 @@ var _target: Interactable
 func _process(_delta: float) -> void:
 	_target = scan()
 	if _target != null:
-		hud.show_prompt("[E] %s" % _target.prompt)
+		hud.show_prompt("[E · pad X] %s" % _target.prompt)
 	else:
 		hud.hide_prompt()
 
