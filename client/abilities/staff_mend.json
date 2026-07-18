@@ -1,0 +1,13 @@
+{
+  "id": "staff_mend",
+  "version": 1,
+  "weapon": "staff",
+  "role": "healer",
+  "effect": "heal",
+  "telegraph": "circle",
+  "cast_time_ms": 1500,
+  "cooldown_ms": 8000,
+  "resource_cost": 30,
+  "range_m": 6.0,
+  "power": 80
+}
