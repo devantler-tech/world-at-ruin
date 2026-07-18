@@ -668,46 +668,23 @@ func _build_foliage_batch(kind: int, items: Array) -> void:
 	add_child(mmi)
 
 
-## The placeholder look of each cosmetic kind — primitives in the same spirit as
-## the ruin pieces. Art depth is a later phase (#14); these read as ground cover
-## at a glance without pretending to be final art.
+## The look of each cosmetic kind, delegated WHOLE to [FoliageArt] — the same
+## split this file already makes for placement, where [FoliageGen] owns where a
+## prop goes and this file only assembles the result.
+##
+## These used to be engine primitives in flat single colours (a sphere shrub, a
+## box rubble pile), which the quality bar names as placeholder art (#146,
+## #123). They are now generated cutout cards and jittered debris clusters.
+## Prop meshes stay centred on their own origin, so the AABB-based ground lift
+## in [method _build_foliage_batch] is unchanged.
 func _foliage_mesh(kind: int) -> Mesh:
-	match kind:
-		FoliageGen.Kind.ASH_SHRUB:
-			var bush := SphereMesh.new()
-			bush.radius = 0.34
-			bush.height = 0.62
-			bush.radial_segments = 6
-			bush.rings = 3
-			return bush
-		FoliageGen.Kind.DEAD_GRASS:
-			var tuft := PrismMesh.new()
-			tuft.size = Vector3(0.34, 0.5, 0.06)
-			return tuft
-		FoliageGen.Kind.BONE_PILE:
-			var bones := BoxMesh.new()
-			bones.size = Vector3(0.5, 0.14, 0.36)
-			return bones
-		_:
-			var stone := BoxMesh.new()
-			stone.size = Vector3(0.42, 0.24, 0.34)
-			return stone
+	return FoliageArt.mesh_for(kind)
 
 
-## Ash-bleached scenery colours, drawn from the world's existing palette.
-func _foliage_material(kind: int) -> StandardMaterial3D:
-	var mat := StandardMaterial3D.new()
-	mat.roughness = 0.95
-	match kind:
-		FoliageGen.Kind.ASH_SHRUB:
-			mat.albedo_color = Color(0.27, 0.26, 0.21)
-		FoliageGen.Kind.DEAD_GRASS:
-			mat.albedo_color = Color(0.44, 0.40, 0.27)
-		FoliageGen.Kind.BONE_PILE:
-			mat.albedo_color = Color(0.72, 0.70, 0.62)
-		_:
-			mat.albedo_color = COL_ROCK
-	return mat
+## The generated material for a cosmetic kind: a cutout albedo texture, a
+## per-instance tint band and (for vegetation) wind. See [FoliageArt].
+func _foliage_material(kind: int) -> Material:
+	return FoliageArt.material_for(kind)
 
 
 func _build_shrine() -> void:
