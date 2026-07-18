@@ -321,7 +321,7 @@ func _ready() -> void:
 		["url", ""], ["url", 42],
 		["url", "   "], ["url", "not-a-url"], ["url", "ftp://x/y.pck"],
 		["url", "https://"], ["url", " https://x/y.pck"], ["url", "https://x/y .pck"],
-		["url", "https:///bad.pck"],
+		["url", "https:///bad.pck"], ["url", "https://?bad.pck"], ["url", "https://#bad.pck"],
 		["sha256", "abc"], ["sha256", "z".repeat(64)], ["sha256", 42],
 		["sha256", "-" + "a".repeat(63)], ["sha256", "+" + "a".repeat(63)],
 		["size", -1], ["size", "big"],
@@ -337,6 +337,12 @@ func _ready() -> void:
 
 	# --- total function: junk input never crashes it ---
 	_check(RollbackSelection.select([], {})["action"] == RollbackSelection.NO_ELIGIBLE_TARGET, true, "total: an empty state refuses cleanly")
+	# The CATALOGUE itself may be missing or not a list in a parsed manifest. A typed
+	# Array parameter would reject the call before the refusal could be returned —
+	# the THIRD instance of that trap in this file (after the boot marker and the
+	# ledger), which is why it is now a shape to look for rather than a one-off.
+	for junk_catalog: Variant in [null, 42, "targets", {}, true]:
+		_check(RollbackSelection.select(junk_catalog, _state())["action"] == RollbackSelection.NO_ELIGIBLE_TARGET, true, "total: a non-list rollback catalogue refuses cleanly rather than erroring")
 	_check(RollbackSelection.quarantine([42, "0.1.1", 42], "0.1.1")["ok"], false, "total: junk in the quarantine set refuses rather than collapsing silently")
 	if _failed:
 		return

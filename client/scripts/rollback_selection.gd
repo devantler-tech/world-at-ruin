@@ -74,7 +74,18 @@ const NO_ELIGIBLE_TARGET := "no_eligible_target"
 ## Malformed entries are SKIPPED rather than fatal: one bad catalogue entry must not
 ## deny the player a recovery that other entries can provide. If that leaves nothing
 ## eligible, the result is still a reasoned [constant NO_ELIGIBLE_TARGET].
-static func select(catalog: Array, state: Dictionary) -> Dictionary:
+static func select(catalog: Variant, state: Dictionary) -> Dictionary:
+	# `catalog` is untyped for the third time in this file, and for the same reason:
+	# it arrives from a parsed manifest whose `rollback_targets` may be missing or
+	# not a list, and a typed Array parameter would make GDScript reject the call
+	# before this fail-closed body could return the promised refusal — a runtime error
+	# in the recovery path instead of a loud, reasoned one.
+	if catalog is not Array:
+		return _refuse("the rollback catalogue is missing or is not a list")
+	return _select_verified(catalog as Array, state)
+
+
+static func _select_verified(catalog: Array, state: Dictionary) -> Dictionary:
 	# EVERY eligibility input must be VERIFIED before any target is considered.
 	# There is no "conservative default" available here: defaulting unknown state to
 	# a permissive value (save schema 0, shell "0.0.0", an open protocol range) does
@@ -323,12 +334,17 @@ static func _is_fetchable_url(v: Variant) -> bool:
 	const SCHEME := "https://"
 	if not url.begins_with(SCHEME) or url.length() <= SCHEME.length():
 		return false
-	# There must be an actual HOST: `https:///bad.pck` clears "something after the
-	# scheme" while being unfetchable by any HTTP client, and such an entry can still
-	# carry the highest version and displace a usable one.
+	# There must be an actual AUTHORITY. `https:///bad.pck` clears "something after
+	# the scheme", and so do `https://?x` and `https://#x` if the authority is only
+	# taken up to the first `/` — a query or fragment delimiter ends it too. Such an
+	# entry is unfetchable yet can carry the highest version and displace a usable one.
 	var rest: String = url.substr(SCHEME.length())
-	var host: String = rest.split("/")[0]
-	if host.is_empty():
+	var authority: String = rest
+	for delimiter: String in ["/", "?", "#"]:
+		var at: int = authority.find(delimiter)
+		if at >= 0:
+			authority = authority.substr(0, at)
+	if authority.is_empty():
 		return false
 	for i in url.length():
 		var c := url.unicode_at(i)
