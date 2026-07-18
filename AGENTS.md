@@ -335,19 +335,23 @@ can be watched by playing; every *further* art/game system waits on Phase 0.)
     preferred: GitHub Packages has no generic/raw-file registry, so an OCI artifact is the only way
     a `.app` zip enters it. The GitHub Release asset remains the *install* download; GHCR is the
     *update* origin.
-  - **The release publishes LAST, after every artifact job.** `publish-release` depends on both
+  - **The release publishes LAST, after the artifact jobs.** `publish-release` depends on both
     `publish-macos` and `publish-ghcr`, so the draft goes public only once the build is attached
-    *and* the GHCR origin exists, is signed, and is **anonymously** reachable. Publishing earlier
-    would leave a public, immutable release whose update origin does not exist — unrepairable,
-    since releases are immutable. If any artifact job fails the release simply stays a draft, which
-    is the safe state; fix the cause and re-run CD via `workflow_dispatch` with the tag.
+    *and* the GHCR origin exists and is signed. Publishing earlier would leave a public, immutable
+    release whose update origin does not exist — unrepairable, since releases are immutable. If an
+    artifact job fails the release simply stays a draft, which is the safe state; fix the cause and
+    re-run CD via `workflow_dispatch` with the tag.
   - **GHCR packages are private by default**, and that failure is invisible from the publishing
-    side — the push succeeds and only the *player* gets a 401. CD therefore verifies reachability
-    with a **credential-free** request (no `docker login`, no token): every other step in that job
-    runs authenticated and so proves nothing about public access. On the first publish this check
-    is expected to fail until the package is made public (GitHub → Packages → `world-at-ruin/client`
-    → Package settings → Change visibility → Public). **Never "fix" it by making the check
-    authenticated** — that restores a guard that passes vacuously.
+    side — the push succeeds and only the *player* gets a 401. `verify-ghcr-public` therefore checks
+    reachability with a **credential-free** request (no `docker login`, no token, `permissions: {}`):
+    every step in `publish-ghcr` runs authenticated and so proves nothing about public access.
+    **Never "fix" a failure here by making the check authenticated** — that restores a guard that
+    passes vacuously.
+    It is deliberately **non-blocking**: it is not a dependency of `publish-release` (maintainer
+    direction 2026-07-18), because nothing consumes GHCR yet — the in-client updater is not wired to
+    it — so a private package harms no player today while blocking every release on it would. The
+    job going red is the signal; the release still ships. **Make it blocking the moment the updater
+    actually resolves against GHCR**, at which point an unreachable origin is a real defect.
   - The version is therefore **derived, never maintained**. The in-tree constants are dev values;
     only a released build carries a real version.
   - **`CI - Required Checks` is the repo's single required status context.** Renaming or removing
