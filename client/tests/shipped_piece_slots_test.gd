@@ -1,0 +1,162 @@
+extends Node
+## Regression test for the shipped piece→slot mapping ledger (issue #122).
+##
+## #96 reconciled the armour and art-layer slot VOCABULARIES, and `armor_axis_test`
+## pins that every art-layer slot is a legal `Armor.SLOTS` value. That is
+## MEMBERSHIP — "is this a real slot?". This test pins the MAPPING — "is this
+## piece still where players' saves say it is?" — which is a separate promise and
+## the one that strands characters when it breaks.
+##
+## Why it matters: a recipe persists equipment as `slot -> piece`, and
+## `CharacterFactory.validate()` refuses a recipe whose slot disagrees with the
+## baked registry:
+##
+##     if String(registry["pieces"][piece_name]["slot"]) != slot:
+##         return "piece '%s' does not go in slot '%s'" % [piece_name, slot]
+##
+## So moving `boots_worn` from `feet` to `legs` — both legal slots, so every
+## existing guard stays green — would fail validation for every character whose
+## recipe recorded `feet: boots_worn`. That is the no-resets law broken through
+## the one door the vocabulary guard does not cover.
+##
+## The ledger is APPEND-ONLY: a newly baked piece adds a line; changing an
+## existing line is the deprecation-bearing act the product law requires, not a
+## quiet edit. This test also cross-checks the ledger against
+## `shipped_equipment.txt`, so the two ledgers can never drift apart (two lists
+## of the same pieces disagreeing is the very failure class being guarded here).
+##
+## Pure logic + the baked registry — no scene, no save, no boot — so it is safe
+## to run locally and deterministic in CI.
+##
+## Run: godot --headless --path client res://tests/shipped_piece_slots_test.tscn
+
+const LEDGER := "res://tests/data/shipped_piece_slots.txt"
+const SHIPPED_PIECES := "res://tests/data/shipped_equipment.txt"
+
+var _failed := false
+
+
+func _ready() -> void:
+	var registry := CharacterFactory.equipment_registry()
+	var pieces: Dictionary = registry.get("pieces", {})
+	# Non-vacuity: an unreadable registry would make every assertion below pass
+	# without comparing anything — "a broken scanner reads like a clean one".
+	if pieces.is_empty():
+		_fail("the baked equipment registry is empty or unreadable — every check below would pass vacuously")
+		return
+
+	var ledger := _ledger()
+	if ledger.is_empty():
+		_fail("the piece→slot ledger at %s is missing or empty — every check below would pass vacuously" % LEDGER)
+		return
+
+	# 1. THE MAPPING: every ledgered piece still sits where it shipped.
+	for piece_name: String in ledger:
+		if piece_name not in pieces:
+			_fail("SHIPPED PIECE '%s' VANISHED from the registry (no-resets law)" % piece_name)
+			return
+		var piece: Dictionary = pieces[piece_name]
+		var actual := String(piece.get("slot", ""))
+		var promised: String = ledger[piece_name]
+		if actual != promised:
+			_fail(("SHIPPED PIECE '%s' MOVED SLOT: ledgered '%s', registry now '%s'. " +
+				"A recipe persists equipment as slot->piece and CharacterFactory.validate() " +
+				"rejects a mismatch, so every save recording '%s: %s' is now stranded. " +
+				"Moving a shipped piece needs a player-visible deprecation, never a quiet re-bake.")
+				% [piece_name, promised, actual, promised, piece_name])
+			return
+
+	# 2. THE LEDGER CANNOT FALL BEHIND: every baked piece is recorded, so a newly
+	#    added piece must be ledgered rather than silently entering unguarded.
+	for piece_name: String in pieces:
+		if piece_name not in ledger:
+			_fail(("baked piece '%s' is not in %s — every shipped piece must record the slot it is worn on, " +
+				"or its slot is free to change and strand saves later")
+				% [piece_name, LEDGER])
+			return
+
+	# 3. NO DRIFT BETWEEN THE TWO LEDGERS: shipped_equipment.txt pins that a piece
+	#    still exists, this one pins where it sits. Two lists of the same pieces
+	#    that can disagree is the exact failure class this test exists to prevent.
+	var shipped := _shipped_piece_names()
+	if shipped.is_empty():
+		_fail("%s is missing or empty — the cross-ledger check would pass vacuously" % SHIPPED_PIECES)
+		return
+	for piece_name: String in shipped:
+		if piece_name not in ledger:
+			_fail("piece '%s' is in %s but has no slot recorded in %s — the ledgers have drifted"
+				% [piece_name, SHIPPED_PIECES, LEDGER])
+			return
+	# ...and the other way. Checking one direction only would let a new baked piece
+	# satisfy this ledger (forced above) while never reaching shipped_equipment.txt,
+	# leaving the existing forward-only guard blind to a piece players can save.
+	for piece_name: String in ledger:
+		if piece_name not in shipped:
+			_fail(("piece '%s' has a slot recorded in %s but is missing from %s — the ledgers have drifted; " +
+				"a player-saveable piece must be covered by BOTH guards")
+				% [piece_name, LEDGER, SHIPPED_PIECES])
+			return
+
+	# 4. Every ledgered slot is a legal armour slot, so this ledger can never
+	#    disagree with the vocabulary #96 reconciled.
+	for piece_name: String in ledger:
+		var slot: String = ledger[piece_name]
+		if slot not in Armor.SLOTS:
+			_fail("ledgered slot '%s' (piece '%s') is not a legal armour slot %s"
+				% [slot, piece_name, str(Armor.SLOTS)])
+			return
+
+	print("TEST PASS — shipped piece→slot mapping holds (%d ledgered pieces, %d baked, cross-checked against %s; a legal slot move would strand saves and now turns CI red)"
+		% [ledger.size(), pieces.size(), SHIPPED_PIECES])
+	get_tree().quit(0)
+
+
+## The ledger as `piece -> slot`. Blank lines and `#` comments are ignored; a
+## malformed line fails loudly rather than being skipped, so a typo can never
+## quietly drop a piece out of the guard.
+func _ledger() -> Dictionary:
+	var out: Dictionary = {}
+	var f := FileAccess.open(LEDGER, FileAccess.READ)
+	if f == null:
+		return out
+	while not f.eof_reached():
+		var line := f.get_line().strip_edges()
+		if line == "" or line.begins_with("#"):
+			continue
+		var parts := line.split(" ", false)
+		if parts.size() != 2:
+			_fail("malformed ledger line in %s: '%s' (expected '<piece> <slot>')" % [LEDGER, line])
+			return {}
+		# A DUPLICATE piece is refused, not last-write-wins. Appending a second row
+		# (`boots_worn legs` under an existing `boots_worn feet`) looks append-only
+		# but silently re-points the promise: the mapping check would then pin the
+		# duplicate and pass against a moved registry, while saves holding the
+		# ORIGINAL slot still fail validation. The first shipped slot is immutable.
+		if parts[0] in out:
+			_fail(("duplicate piece '%s' in %s (already promised slot '%s', row says '%s') — " +
+				"a second row silently re-points a shipped promise; the first shipped slot is immutable, " +
+				"so moving a piece needs a player-visible deprecation, not an extra line")
+				% [parts[0], LEDGER, out[parts[0]], parts[1]])
+			return {}
+		out[parts[0]] = parts[1]
+	return out
+
+
+## Every piece name from the existing shipped-pieces ledger.
+func _shipped_piece_names() -> PackedStringArray:
+	var out := PackedStringArray()
+	var f := FileAccess.open(SHIPPED_PIECES, FileAccess.READ)
+	if f == null:
+		return out
+	while not f.eof_reached():
+		var line := f.get_line().strip_edges()
+		if line != "" and not line.begins_with("#"):
+			out.append(line)
+	return out
+
+
+func _fail(message: String) -> void:
+	_failed = true
+	push_error(message)
+	print("TEST FAIL — %s" % message)
+	get_tree().quit(1)

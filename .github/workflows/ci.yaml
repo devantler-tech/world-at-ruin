@@ -61,6 +61,37 @@ jobs:
             echo "::error::Shipped version(s) removed from $LEDGER ($(echo "$removed" | tr '\n' ' ')) — shipped saves are never disposable (no-resets law)"
             exit 1
           fi
+      - name: Piece-slot ledger is append-only (no-resets law)
+        # shipped_piece_slots_test compares the registry to the ledger in the
+        # SAME checkout, so a change that edits equipment.json and the ledger
+        # row together passes green while stranding every save holding the old
+        # slot. CI is the immutable anchor: against the BASE commit a
+        # "<piece> <slot>" promise may only ever be ADDED. Because a moved slot
+        # yields a different pair, one comm catches removals AND changes.
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          LEDGER=client/tests/data/shipped_piece_slots.txt
+          if [ ! -f "$LEDGER" ]; then
+            echo "::error::$LEDGER was deleted — the forward-only piece-slot ledger must exist"
+            exit 1
+          fi
+          if ! git cat-file -e "$BASE_SHA" 2>/dev/null; then
+            echo "::error::base commit $BASE_SHA not present in the checkout — cannot verify the ledger"
+            exit 1
+          fi
+          # Parse to normalised "<piece> <slot>" pairs so indentation or extra
+          # spacing can never hide a dropped or re-pointed promise. A ledger
+          # absent from the base (this PR introduces it) yields an empty set.
+          extract='s/^[[:space:]]*\([^#[:space:]][^[:space:]]*\)[[:space:]][[:space:]]*\([^[:space:]][^[:space:]]*\)[[:space:]]*$/\1 \2/p'
+          git show "$BASE_SHA:$LEDGER" 2>/dev/null | sed -n "$extract" | sort -u > /tmp/pieceslots-base || : > /tmp/pieceslots-base
+          sed -n "$extract" "$LEDGER" | sort -u > /tmp/pieceslots-head
+          changed=$(comm -23 /tmp/pieceslots-base /tmp/pieceslots-head)
+          if [ -n "$changed" ]; then
+            echo "::error::Shipped piece-slot promise(s) removed or re-pointed in $LEDGER ($(echo "$changed" | tr '\n' '; ')) — a recipe persists equipment as slot->piece, so moving a shipped piece strands saves and needs a player-visible deprecation (no-resets law)"
+            exit 1
+          fi
       - name: Golden fixture contents are append-only (no-resets law)
         # The in-game guard validates each golden against the CURRENT build, so
         # a PR that removes a shipped shape/bone/name from a golden AND from the
