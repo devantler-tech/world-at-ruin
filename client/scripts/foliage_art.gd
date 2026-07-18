@@ -31,7 +31,11 @@ extends RefCounted
 ## each prop by a fraction of its mesh AABB height, so every mesh here is
 ## modelled CENTRED ON ITS OWN ORIGIN, exactly as the primitives were.
 
+## Cutout + wind, for the vegetation kinds.
 const SHADER: Shader = preload("res://shaders/foliage.gdshader")
+## Plain opaque, back-face culled, for the debris kinds. Solid stone has no
+## business on the alpha-scissor path (review finding on #147).
+const DEBRIS_SHADER: Shader = preload("res://shaders/debris.gdshader")
 
 ## Texture edge in pixels. Small on purpose: these are ground props seen at a
 ## distance, and mipmaps matter far more than resolution for keeping a field of
@@ -59,11 +63,14 @@ static func mesh_for(kind: int) -> Mesh:
 			return rubble_cluster(SEED_RUBBLE)
 
 
-## The material for `kind`. All four share [constant SHADER] and differ only in
-## uniforms — vegetation sways and lifts its normals skyward, debris does not.
+## The material for `kind`.
+##
+## Two shaders, by what the surface IS: vegetation is a cutout that sways and
+## catches light through its leaves; debris is solid stone that neither moves
+## nor needs an alpha channel, and gets back-face culling as a result.
 static func material_for(kind: int) -> ShaderMaterial:
 	var mat := ShaderMaterial.new()
-	mat.shader = SHADER
+	mat.shader = DEBRIS_SHADER if is_debris(kind) else SHADER
 	match kind:
 		FoliageGen.Kind.ASH_SHRUB:
 			mat.set_shader_parameter("albedo_tex", leaf_texture(SEED_SHRUB, 84))
@@ -88,18 +95,21 @@ static func material_for(kind: int) -> ShaderMaterial:
 				stone_texture(SEED_BONE, Color(0.53, 0.51, 0.45), Color(0.86, 0.84, 0.76), 7.0))
 			mat.set_shader_parameter("tint_low", Color(0.86, 0.86, 0.84))
 			mat.set_shader_parameter("tint_high", Color(1.08, 1.06, 1.00))
-			mat.set_shader_parameter("wind_strength", 0.0)
-			mat.set_shader_parameter("normal_lift", 0.0)
 			mat.set_shader_parameter("roughness_value", 0.78)
 		_:
 			mat.set_shader_parameter("albedo_tex",
 				stone_texture(SEED_RUBBLE, Color(0.24, 0.23, 0.22), Color(0.52, 0.50, 0.47), 5.0))
 			mat.set_shader_parameter("tint_low", Color(0.80, 0.80, 0.80))
 			mat.set_shader_parameter("tint_high", Color(1.14, 1.10, 1.04))
-			mat.set_shader_parameter("wind_strength", 0.0)
-			mat.set_shader_parameter("normal_lift", 0.0)
 			mat.set_shader_parameter("roughness_value", 0.88)
 	return mat
+
+
+## Whether `kind` is solid debris (bone, rubble) rather than vegetation. The
+## split decides shader, wind and culling, so it is named once here instead of
+## being re-derived at each site.
+static func is_debris(kind: int) -> bool:
+	return kind == FoliageGen.Kind.BONE_PILE or kind == FoliageGen.Kind.RUBBLE
 
 
 ## Crossed alpha-cutout cards: the standard way vegetation gets a real
@@ -212,6 +222,7 @@ static func leaf_texture(rng_seed: int, leaves: int) -> ImageTexture:
 		# floor keeps even the shaded interior off black.
 		var lit := clampf(0.38 + (1.0 - cy) * 0.62, 0.0, 1.0) * rng.randf_range(0.78, 1.0)
 		_stamp_ellipse(img, cx, cy, ra, rb, angle, deep.lerp(pale, lit))
+	_bleed_alpha(img)
 	img.generate_mipmaps()
 	return ImageTexture.create_from_image(img)
 
@@ -233,6 +244,7 @@ static func blade_texture(rng_seed: int, blades: int) -> ImageTexture:
 		var half_w := rng.randf_range(0.010, 0.026)
 		var bright := rng.randf_range(0.55, 1.0)
 		_stamp_blade(img, root, lean, tip_v, half_w, deep, pale, bright)
+	_bleed_alpha(img)
 	img.generate_mipmaps()
 	return ImageTexture.create_from_image(img)
 
@@ -257,6 +269,48 @@ static func stone_texture(rng_seed: int, dark: Color, light: Color, frequency: f
 			img.set_pixel(x, y, dark.lerp(light, clampf(n * 0.5 + 0.5, 0.0, 1.0)))
 	img.generate_mipmaps()
 	return ImageTexture.create_from_image(img)
+
+
+## Pushes the colour of the artwork outward into the surrounding transparent
+## pixels, leaving their alpha at zero.
+##
+## Without this, a cutout mask fringes black at distance. The transparent
+## background is (0,0,0,0), so every mip level averages leaf colour against
+## black; with linear-mipmap sampling, the edge texels that survive the alpha
+## scissor still carry that darkened RGB. Bleeding the colour out first means
+## the average is leaf-against-leaf, and only the ALPHA fades — which is exactly
+## what the scissor is reading. Standard practice for alpha-tested foliage, and
+## the reason distant scrub keeps its colour instead of turning to soot.
+## (Raised by review on #147.)
+static func _bleed_alpha(img: Image, passes: int = 3) -> void:
+	var w := img.get_width()
+	var h := img.get_height()
+	for _pass in passes:
+		# Snapshot per pass so a freshly-bled pixel cannot seed the same pass and
+		# smear the colour further than one ring at a time.
+		var source := img.duplicate() as Image
+		for y in h:
+			for x in w:
+				if source.get_pixel(x, y).a > 0.0:
+					continue
+				var acc := Color(0.0, 0.0, 0.0, 0.0)
+				var found := 0
+				for dy in [-1, 0, 1]:
+					for dx in [-1, 0, 1]:
+						var nx: int = x + (dx as int)
+						var ny: int = y + (dy as int)
+						if nx < 0 or ny < 0 or nx >= w or ny >= h:
+							continue
+						var n := source.get_pixel(nx, ny)
+						if n.a <= 0.0:
+							continue
+						acc += Color(n.r, n.g, n.b, 0.0)
+						found += 1
+				if found == 0:
+					continue
+				# Colour only — the pixel stays fully transparent, so the
+				# silhouette the scissor cuts is unchanged.
+				img.set_pixel(x, y, Color(acc.r / found, acc.g / found, acc.b / found, 0.0))
 
 
 ## Paints one rotated ellipse into `img`, in UV space. Alpha feathers over the
@@ -351,6 +405,23 @@ class MeshBuilder extends RefCounted:
 			_push_tri(a, b, c, centre)
 			_push_tri(a, c, d, centre)
 
+	## How many texture repeats a metre of debris surface spans. The mottling is
+	## isotropic, so only the scale matters, not the orientation.
+	const UV_SCALE := 3.0
+
+	## Projects a vertex onto the plane of the face's dominant axis. A vertex
+	## shared by two triangles of the same face gets the same UV from both,
+	## which is what removes the diagonal seam.
+	func _planar_uv(v: Vector3, n: Vector3) -> Vector2:
+		var ax := absf(n.x)
+		var ay := absf(n.y)
+		var az := absf(n.z)
+		if ax >= ay and ax >= az:
+			return Vector2(v.z, v.y) * UV_SCALE
+		if ay >= az:
+			return Vector2(v.x, v.z) * UV_SCALE
+		return Vector2(v.x, v.y) * UV_SCALE
+
 	func _push_tri(a: Vector3, b: Vector3, c: Vector3, centre: Vector3) -> void:
 		var n := (b - a).cross(c - a)
 		if n.length_squared() <= 0.0:
@@ -363,11 +434,18 @@ class MeshBuilder extends RefCounted:
 		verts.push_back(c)
 		for _i in 3:
 			normals.push_back(n)
-		# Planar UVs are enough: the debris texture is isotropic mottling, and
-		# these kinds do not sway, so nothing keys on UV orientation.
-		uvs.push_back(Vector2(0.0, 0.0))
-		uvs.push_back(Vector2(1.0, 0.0))
-		uvs.push_back(Vector2(1.0, 1.0))
+		# Object-space planar UVs, projected along the face's dominant axis.
+		#
+		# The first version gave EVERY triangle the same (0,0)/(1,0)/(1,1)
+		# triplet. That looks harmless but is not: the two triangles of one
+		# quad then disagree about the UVs at the vertices they share, so the
+		# texture restarts along each diagonal and the chunk shows triangular
+		# patches instead of one continuous surface. Deriving the UV from the
+		# vertex POSITION makes shared vertices agree by construction — the
+		# same fix a box/planar map has always been. (Review finding on #147.)
+		uvs.push_back(_planar_uv(a, n))
+		uvs.push_back(_planar_uv(b, n))
+		uvs.push_back(_planar_uv(c, n))
 
 	func commit() -> ArrayMesh:
 		var arrays := []

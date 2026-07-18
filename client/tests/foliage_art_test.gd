@@ -119,7 +119,30 @@ func _ready() -> void:
 			_fail("kind %d encloses %.5f m³ inside a %.5f m³ bounding box — the normals are inconsistent" % [kind, volume, box])
 			return
 
-	# 6. WIRED — every kind resolves to a shader material, and only vegetation moves.
+	# 6. SEAMLESS DEBRIS UVS — vertices sharing a position within a chunk must
+	# share a UV. Emitting a fixed UV triplet per triangle (the first version of
+	# this code) makes the two triangles of one face disagree along their shared
+	# diagonal, so the texture restarts and the chunk shows triangular patches.
+	for kind: int in [FoliageGen.Kind.BONE_PILE, FoliageGen.Kind.RUBBLE]:
+		var clashes := _uv_discontinuities(FoliageArt.mesh_for(kind))
+		if clashes > 0:
+			_fail("kind %d has %d vertex positions carrying more than one UV — the debris texture would seam along shared edges" % [kind, clashes])
+			return
+
+	# 7. BLED CUTOUT MASKS — the transparent margin around the artwork must carry
+	# the artwork's colour, not black. Mipmapping averages RGB across the alpha
+	# edge, so an unbled mask fringes black on distant props even though its
+	# silhouette is correct.
+	for label: String in masks:
+		var fringe := _darkest_transparent_neighbour(masks[label] as ImageTexture)
+		if fringe < 0.0:
+			_fail("the %s mask has no transparent pixel bordering the artwork — this check is vacuous" % label)
+			return
+		if fringe < 0.02:
+			_fail("the %s mask borders the artwork with near-black transparent pixels (luma %.3f) — mipmapping would fringe distant props black" % [label, fringe])
+			return
+
+	# 8. WIRED — every kind resolves to the right shader, and only vegetation moves.
 	var swaying := 0
 	for kind: int in kinds:
 		var mat := FoliageArt.material_for(kind)
@@ -129,21 +152,23 @@ func _ready() -> void:
 		if mat.get_shader_parameter("albedo_tex") == null:
 			_fail("kind %d has no albedo texture — it would render untextured" % kind)
 			return
-		var wind := float(mat.get_shader_parameter("wind_strength"))
-		var vegetation := kind == FoliageGen.Kind.ASH_SHRUB or kind == FoliageGen.Kind.DEAD_GRASS
-		if vegetation and wind <= 0.0:
+		if FoliageArt.is_debris(kind):
+			if mat.shader != FoliageArt.DEBRIS_SHADER:
+				_fail("kind %d is solid debris but is not on the opaque debris shader" % kind)
+				return
+			continue
+		if mat.shader != FoliageArt.SHADER:
+			_fail("kind %d is vegetation but is not on the cutout foliage shader" % kind)
+			return
+		if float(mat.get_shader_parameter("wind_strength")) <= 0.0:
 			_fail("kind %d is vegetation but does not sway" % kind)
 			return
-		if not vegetation and wind != 0.0:
-			_fail("kind %d is debris but sways — stone should not move in the wind" % kind)
-			return
-		if wind > 0.0:
-			swaying += 1
+		swaying += 1
 	if swaying == 0:
 		_fail("nothing in the world sways — the wind assertion above is vacuous")
 		return
 
-	print("TEST PASS — foliage art (%d kinds): deterministic, origin-centred, genuine cutout silhouettes, tonally varied stone, outward-facing debris normals, %d swaying kinds" %
+	print("TEST PASS — foliage art (%d kinds): deterministic, origin-centred, genuine cutout silhouettes, tonally varied stone, outward-facing debris normals, seam-free debris UVs, colour-bled cutout margins, %d swaying kinds on the cutout shader and the rest opaque" %
 		[FoliageGen.KIND_COUNT, swaying])
 	get_tree().quit(0)
 
@@ -222,6 +247,67 @@ func _normal_signed_volume(mesh: Mesh) -> float:
 			var area := (b - a).cross(c - a).length() * 0.5
 			total += normals[t * 3].dot((a + b + c) / 3.0) * area / 3.0
 	return total
+
+
+## Counts vertices that share BOTH a position and a normal — i.e. sit on the
+## same face — yet carry different UVs. That is precisely the diagonal seam:
+## the two triangles of one quad disagreeing about the texture at the vertices
+## they share.
+##
+## Keyed on position AND normal on purpose. A planar/box map deliberately gives
+## a shared CORNER different UVs on each of its faces, and that is correct — a
+## first version of this check keyed on position alone and flagged 110 such
+## corners as defects. The seam that matters is the one within a single face.
+func _uv_discontinuities(mesh: Mesh) -> int:
+	var seen := {}
+	var clashes := 0
+	for surface in mesh.get_surface_count():
+		var arrays := mesh.surface_get_arrays(surface)
+		var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+		var normals: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
+		var uvs: PackedVector2Array = arrays[Mesh.ARRAY_TEX_UV]
+		for i in verts.size():
+			var v := verts[i]
+			var n := normals[i]
+			var key := "%d,%d,%d|%d,%d,%d" % [
+				roundi(v.x * 1000.0), roundi(v.y * 1000.0), roundi(v.z * 1000.0),
+				roundi(n.x * 1000.0), roundi(n.y * 1000.0), roundi(n.z * 1000.0)]
+			var stamp := "%d,%d" % [roundi(uvs[i].x * 1000.0), roundi(uvs[i].y * 1000.0)]
+			if seen.has(key):
+				if seen[key] != stamp:
+					clashes += 1
+			else:
+				seen[key] = stamp
+	return clashes
+
+
+## The dimmest luminance among fully-transparent pixels that touch an opaque
+## one — i.e. the colour mipmapping will blend across the silhouette edge.
+## Returns -1.0 when no such pixel exists, so the caller can reject a vacuous
+## pass rather than read "no dark fringe" from "nothing to check".
+func _darkest_transparent_neighbour(tex: ImageTexture) -> float:
+	var img := tex.get_image()
+	var worst := -1.0
+	for y in img.get_height():
+		for x in img.get_width():
+			if img.get_pixel(x, y).a > 0.0:
+				continue
+			var touches := false
+			for dy: int in [-1, 0, 1]:
+				for dx: int in [-1, 0, 1]:
+					var nx := x + dx
+					var ny := y + dy
+					if nx < 0 or ny < 0 or nx >= img.get_width() or ny >= img.get_height():
+						continue
+					if img.get_pixel(nx, ny).a > 0.0:
+						touches = true
+			if not touches:
+				continue
+			var c := img.get_pixel(x, y)
+			var luma := 0.299 * c.r + 0.587 * c.g + 0.114 * c.b
+			if worst < 0.0 or luma < worst:
+				worst = luma
+	return worst
 
 
 func _fail(message: String) -> void:

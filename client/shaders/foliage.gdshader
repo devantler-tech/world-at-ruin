@@ -20,9 +20,17 @@ uniform sampler2D albedo_tex : source_color, filter_linear_mipmap;
 // widening the band is how a kind gets more tonal variety.
 uniform vec3 tint_low : source_color = vec3(1.0, 1.0, 1.0);
 uniform vec3 tint_high : source_color = vec3(1.0, 1.0, 1.0);
-// Metres of horizontal sway at the tip. 0 = static (the debris kinds).
+// Metres of horizontal sway at the tip.
 uniform float wind_strength = 0.0;
 uniform float wind_speed = 1.0;
+// The wind's direction in WORLD space, shared by every prop.
+//
+// This has to be resolved per instance rather than baked into the offset.
+// WorldGen gives each prop a random yaw, and a displacement written straight
+// into VERTEX is in MODEL space — so the instance transform would rotate the
+// sway with it and every clump would bend a different way. That is a field of
+// props twitching independently, not one wind crossing the Reach.
+uniform vec3 wind_dir = vec3(1.0, 0.0, 0.35);
 uniform float roughness_value : hint_range(0.0, 1.0) = 0.95;
 // Blends the true surface normal toward straight up. Real foliage cards look
 // harsh lit by their flat geometric normal; leaning the normal skyward is the
@@ -57,8 +65,13 @@ void vertex() {
 	float influence = 1.0 - UV.y;
 	float phase = hash11(id) * 6.2831853;
 	float sway = sin(TIME * wind_speed + phase) * wind_strength * influence;
-	VERTEX.x += sway;
-	VERTEX.z += sway * 0.6;
+
+	// Rotate the shared world-space wind into this instance's model space, so
+	// every prop leans the SAME way regardless of the yaw it was planted with.
+	// The instance basis is a Y rotation with uniform scale, so its transpose is
+	// the inverse rotation up to that scale — which normalising removes.
+	vec3 local_wind = normalize(transpose(mat3(MODEL_MATRIX)) * normalize(wind_dir));
+	VERTEX += local_wind * sway;
 
 	NORMAL = normalize(mix(NORMAL, vec3(0.0, 1.0, 0.0), normal_lift));
 }
