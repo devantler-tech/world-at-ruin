@@ -76,7 +76,7 @@ static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 		# downgrade or an endless reinstall; refuse it and keep the running build.
 		# Do NOT validate the (possibly restructured) schema-specific body.
 		var env_shell: Dictionary = manifest["shell"]
-		if _cmp(str(env_shell["current"]), str(installed.get("shell_version", "0.0.0"))) > 0:
+		if compare_versions(str(env_shell["current"]), str(installed.get("shell_version", "0.0.0"))) > 0:
 			# The stable envelope carries the shell's save read floor, so even a
 			# schema we cannot parse is checked: block if the newer shell cannot read
 			# the installed save (updating to it would strand the save).
@@ -108,10 +108,10 @@ static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 	var m_protocol: Dictionary = manifest["protocol"]
 	var m_save: Dictionary = manifest["save_schema"]
 
-	var shell_below_floor := _cmp(shell, str(m_shell["min_supported"])) < 0
-	var pack_newer := _cmp(str(m_pack["version"]), pack) > 0
-	var shell_newer := _cmp(str(m_shell["current"]), shell) > 0
-	var pack_needs_newer_shell := _cmp(str(m_pack["min_shell"]), shell) > 0
+	var shell_below_floor := compare_versions(shell, str(m_shell["min_supported"])) < 0
+	var pack_newer := compare_versions(str(m_pack["version"]), pack) > 0
+	var shell_newer := compare_versions(str(m_shell["current"]), shell) > 0
+	var pack_needs_newer_shell := compare_versions(str(m_pack["min_shell"]), shell) > 0
 
 	# A save OLDER than the lowest schema the current builds can read
 	# (`save_schema.min`) is unreadable by EVERY advertised update — proposing any
@@ -185,7 +185,7 @@ static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 ## Compare two dotted-integer version strings ("0.1.14"). Returns -1 / 0 / 1.
 ## Comparison is numeric per component (so "0.1.9" < "0.1.10", the classic
 ## lexical trap), and a shorter version is zero-padded ("1.2" == "1.2.0").
-static func _cmp(a: String, b: String) -> int:
+static func compare_versions(a: String, b: String) -> int:
 	var pa := a.split(".")
 	var pb := b.split(".")
 	var n := maxi(pa.size(), pb.size())
@@ -218,7 +218,7 @@ static func _envelope_error(m: Dictionary) -> String:
 		return "shell.reads_min is missing or not an integer"
 	# A coherent manifest never advertises a current shell below its own floor;
 	# such a manifest could otherwise steer a shell update to a DOWNGRADE.
-	if _cmp(str(sh["current"]), str(sh["min_supported"])) < 0:
+	if compare_versions(str(sh["current"]), str(sh["min_supported"])) < 0:
 		return "shell.current %s is below its own min_supported %s (incoherent manifest)" % [
 			str(sh["current"]), str(sh["min_supported"])]
 	return ""
@@ -249,7 +249,7 @@ static func _body_error(m: Dictionary) -> String:
 	# A coherent manifest never advertises a pack that needs a shell newer than the
 	# newest shell it offers — otherwise a client would be sent to a shell update
 	# that still cannot run the pack, and loop forever.
-	if _cmp(str(pk["min_shell"]), str((m["shell"] as Dictionary)["current"])) > 0:
+	if compare_versions(str(pk["min_shell"]), str((m["shell"] as Dictionary)["current"])) > 0:
 		return "pack.min_shell %s exceeds the advertised shell.current %s (incoherent manifest)" % [
 			str(pk["min_shell"]), str((m["shell"] as Dictionary)["current"])]
 	if not (m.has("protocol") and m["protocol"] is Dictionary):
