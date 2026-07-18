@@ -30,7 +30,8 @@ extends RefCounted
 ##
 ##      SCOPE, stated honestly: this bounds PER-TARGET throughput. Telegraph AREA
 ##      is not in the model. Today that is latent rather than live: `telegraph` is
-##      a KIND only (part of the budget key) and an ability carries no shape
+##      a KIND only (part of `class_key`, the comparable-class key — the power
+##      budget is keyed on `(role|effect)` alone) and an ability carries no shape
 ##      magnitude — no half-angle, no radius — so there is nothing to widen yet
 ##      (`range_m` does exist, and trades on the dominance axes). The gap opens
 ##      when ability data carries real shape magnitudes: two abilities on the same
@@ -256,8 +257,10 @@ static func dominates(a: Dictionary, b: Dictionary) -> bool:
 ## is bounded in CI against the categories already shipped.
 ##
 ## Still NOT bounded, and deliberately so: multi-target reach. Throughput here is
-## per-target — telegraph AREA is not in the model, so a wider cone at the same
-## cycle and budget hits more targets for more total damage.
+## per-target — telegraph AREA is not in the model. No shape magnitude is
+## expressible today, so nothing can be widened yet; but ONCE ability data carries
+## shape magnitudes, a wider cone at the same cycle and budget would hit more
+## targets for more total damage, and no guard would see it.
 ## devantler-tech/world-at-ruin#82 SETTLED this (maintainer direction 2026-07-18,
 ## option C): it stays a reviewed balance decision, not a CI guard, because the
 ## area-vs-power exchange rate is game balance and freezing one would be permanent

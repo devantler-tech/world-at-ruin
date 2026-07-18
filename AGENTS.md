@@ -243,8 +243,10 @@ reset the game forbids.
   categories already shipped**; plus no-strict-dominance, no-strict-self-buff-over-base, and the
   append-only ledgers.
   **What is deliberately NOT modelled is telegraph AREA — the multi-target economy.** Be precise
-  about when this bites: today `telegraph` is only a **kind** (`circle`/`ring`/`cone`/`rect`) used as
-  part of the budget key, and an ability carries **no shape magnitude at all** — no cone half-angle,
+  about when this bites: today `telegraph` is only a **kind** (`circle`/`ring`/`cone`/`rect`), used in
+  `class_key` (which decides what is *comparable* for dominance) — the power budget itself is keyed on
+  `(role|effect)` alone, so a cone and a circle of the same role and effect already share one power
+  ceiling. An ability carries **no shape magnitude at all** — no cone half-angle,
   no radius, no width. `range_m` exists and *is* a dominance benefit axis, so pure distance already
   trades against the cost axes within a comparable class. So area is not currently *expressible*, and
   there is nothing to widen yet.
