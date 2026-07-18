@@ -172,6 +172,29 @@ static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 					str(m_pack["version"]), int(m_save["writes"]), reads_max, str(m_shell["current"])])
 			return _result(INVALID_MANIFEST, "content pack %s writes save schema %d beyond the read ceiling %d but the manifest offers no newer shell — refusing (no safe route)" % [
 				str(m_pack["version"]), int(m_save["writes"]), reads_max])
+		# Rollback safety, the CAPABILITY half. The check above proves some build
+		# could still read the candidate's save SCHEMA; it says nothing about a
+		# same-schema content expansion, which keeps `writes` inside the read
+		# ceiling while raising `capability`. That is the stranding case: the pack
+		# applies, writes the higher capability, fails its boot health check, and
+		# then no retained target is reachable because every one of them reports a
+		# `save_capability` below what the save now carries.
+		#
+		# So a pack may only raise the capability when SOME retained rollback target
+		# can still read the result — the same question `RollbackSelection` asks on
+		# the recovery side, asked here BEFORE the write instead of after it.
+		var cand_capability := int(m_save["capability"])
+		var installed_capability := int(installed.get("save_capability", 0))
+		if cand_capability > installed_capability and not _capability_covered(manifest, cand_capability):
+			# No retained target can read what this pack would write. Route it to the
+			# shell tier (the ADR's stated behaviour) — and only if a newer shell is
+			# actually offered, mirroring the read-ceiling branch above so a stale
+			# manifest can never be followed into a downgrade.
+			if shell_newer:
+				return _shell_or_block(save_schema, m_shell, "content pack %s raises the save capability to %d, which no retained rollback target can read — routing to the newer shell %s" % [
+					str(m_pack["version"]), cand_capability, str(m_shell["current"])])
+			return _result(INVALID_MANIFEST, "content pack %s raises the save capability to %d beyond every retained rollback target, and the manifest offers no newer shell — refusing (no safe route)" % [
+				str(m_pack["version"]), cand_capability])
 		return _result(PACK_UPDATE, "content pack %s available (installed %s)" % [
 			str(m_pack["version"]), pack])
 	if shell_newer:
@@ -180,6 +203,31 @@ static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 
 	# Nothing newer, and (per the guard above) not incompatible: current.
 	return _result(UP_TO_DATE, "on the latest build for channel %s" % str(manifest.get("channel", "?")))
+
+
+## True when the manifest retains at least one rollback target that could still
+## READ a save written at `capability`. Fail-closed by construction: a missing,
+## non-array or empty catalogue, a malformed entry, or an entry whose
+## `save_capability` cannot be validated all count as NOT covered, so an
+## unprovable catalogue blocks the pack rather than admitting it.
+##
+## Only the capability axis is judged here. Whether a target is otherwise runnable
+## (protocol, shell compatibility, schema read ceiling) is [RollbackSelection]'s
+## question at recovery time; duplicating it would couple the forward path to the
+## whole eligibility model for no extra safety on this axis.
+static func _capability_covered(m: Dictionary, capability: int) -> bool:
+	var targets: Variant = m.get("rollback_targets")
+	if not (targets is Array):
+		return false
+	for entry: Variant in (targets as Array):
+		if not (entry is Dictionary):
+			continue
+		var t: Dictionary = entry
+		if not is_int_id(t.get("save_capability")):
+			continue
+		if int(t["save_capability"]) >= capability:
+			return true
+	return false
 
 
 ## Compare two dotted-integer version strings ("0.1.14"). Returns -1 / 0 / 1.
@@ -272,6 +320,14 @@ static func _body_error(m: Dictionary) -> String:
 	if int(sv["writes"]) < int(sv["min"]):
 		return "save_schema.writes %d is below save_schema.min %d (incoherent)" % [
 			int(sv["writes"]), int(sv["min"])]
+	# `capability` (what the candidate WRITES within its schema) is REQUIRED for the
+	# same fail-closed reason as `writes`: a same-schema content expansion raises
+	# only the capability, so a manifest that omits it would let exactly the
+	# stranding case below slip through the gate unnoticed. Absent it, there is no
+	# way to prove a rollback target could still read what the candidate writes, and
+	# this library never assumes — it refuses.
+	if not is_int_id(sv.get("capability")):
+		return "save_schema.capability is missing or not an integer"
 	return ""
 
 
