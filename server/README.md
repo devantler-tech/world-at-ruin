@@ -102,18 +102,32 @@ zone/dungeon server:
   against), and a stream golden pins the codec over the live demo scenario.
   It exists as a pinned contract *before* transport selection, so the socket
   child builds against a settled format instead of inventing one.
+- **`agones/`** — the **Agones GameServer lifecycle**: what makes the zone
+  binary deployable on the fleet. Agones's contract is hard — a GameServer that
+  never calls `Ready` is never allocated, and one that stops calling `Health`
+  is killed as unhealthy — so this package speaks exactly that contract through
+  the official Agones Go SDK (the server's first dependency): Ready once the
+  serving loop is up, Health on a fixed cadence, Shutdown on every exit path.
+  It is **opt-in behind the `-agones` flag, default off** — flag off means no
+  SDK dial at all, and the lifecycle never touches `sim/`, so no golden can
+  move. An unreachable sidecar with the flag on fails loudly, never silently.
+  Tests drive the real SDK client against an in-process fake sidecar
+  (`agones/agonestest`), at package level and against the built binary in both
+  flag states.
 - **`cmd/zone/`** — a runnable skeleton server. It boots the demo zone and either
   runs a fixed number of deterministic ticks (printing the state hash) or drives
   the loop from the wall clock. With `-replicate` it also runs the full
   replication pipeline a transport will carry — per-tick tracker delta →
   wire-encode → decode → verify — and prints the payload sizes (the baseline for
-  future bandwidth evidence).
+  future bandwidth evidence). With `-agones` (realtime only) it registers with
+  the local Agones sidecar for its lifetime.
 
 ```sh
 cd server
 go run ./cmd/zone                     # 600 deterministic ticks, then the state hash
 go run ./cmd/zone -ticks 1800         # a different fixed count
 go run ./cmd/zone -realtime -duration 3s   # drive the fixed loop from real time
+go run ./cmd/zone -realtime -agones   # ...and register with the local Agones sidecar
 go run ./cmd/zone -replicate 1        # also wire-encode observer 1's delta stream
 ```
 
@@ -125,8 +139,7 @@ of the Phase 1 epic [#8](https://github.com/devantler-tech/world-at-ruin/issues/
 the socket **transport** and client prediction/reconciliation (the snapshot
 *payload* and its wire encoding above are ready; transport selection, sockets,
 and the client-side apply of the spawn/update/despawn deltas are the next
-layer), real navmesh geometry,
-the Agones SDK integration and GameServer health, the Nakama meta tier, and
+layer), real navmesh geometry, the Nakama meta tier, and
 Postgres/CNPG persistence. The tick core, its capsule-vs-capsule separation, and
 its area-of-interest and snapshot queries land first because everything else is
 built on top of a simulation that is already proven deterministic.

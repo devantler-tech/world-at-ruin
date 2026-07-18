@@ -681,10 +681,10 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: server/go.mod
-          # The zone tick core is stdlib-only, so there is nothing to cache and
-          # no go.sum; the module-cache path is enabled by a later child once
-          # real dependencies (Agones SDK, gRPC) arrive.
-          cache: false
+          # Real dependencies exist now (the Agones SDK and its gRPC stack),
+          # so cache the module downloads keyed on go.sum.
+          cache: true
+          cache-dependency-path: server/go.sum
       - name: Format check (gofmt)
         working-directory: server
         run: |
