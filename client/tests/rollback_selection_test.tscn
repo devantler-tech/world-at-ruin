@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tests/rollback_selection_test.gd" id="1_rollback"]
+
+[node name="RollbackSelectionTest" type="Node"]
+script = ExtResource("1_rollback")
