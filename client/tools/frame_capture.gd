@@ -8,6 +8,18 @@ extends Node
 ## rule is meant to replace. CI runs this and uploads the frames as a build
 ## artifact.
 ##
+## Two scenarios, chosen with WAR_SCENARIO:
+##
+##   world (default) — the shipped world from fixed vantages. Needs a seeded
+##     save, or the first-run creator opens over the shot.
+##   first_run       — the character creator as a new player meets it. Needs the
+##     save to be ABSENT, which is what makes the creator open.
+##
+## The second exists because a PR changing first-run UI otherwise gets no
+## evidence of the surface it changed: the world scenario seeds a save precisely
+## so the creator is not in frame, so it photographs everything except the thing
+## under review and still passes.
+##
 ## Run (must be WINDOWED — a headless run renders nothing at all):
 ##   WAR_SHOT_DIR=/tmp/shots WAR_SAVE_PATH=/tmp/probe_save.json \
 ##     godot --path client --resolution 1600x900 res://tools/frame_capture.tscn
@@ -53,6 +65,21 @@ const SAMPLE_X1 := 0.88
 const SAMPLE_Y0 := 0.22
 const SAMPLE_Y1 := 0.86
 
+## The first-run scenario samples the LEFT band instead, because that is where
+## the creator's panel is anchored (PRESET_LEFT_WIDE). Sampling the world box
+## would measure the 3D view BEHIND the panel — so a run where the creator never
+## opened would pass on the scenery, which is the whole failure this scenario
+## exists to catch.
+const UI_SAMPLE_X0 := 0.02
+const UI_SAMPLE_X1 := 0.30
+const UI_SAMPLE_Y0 := 0.10
+const UI_SAMPLE_Y1 := 0.90
+
+## The creator is 2D and needs no shadow/SDFGI convergence, so it settles far
+## sooner than a world vantage. Kept separate so adding this scenario does not
+## lengthen the world capture, per #145.
+const UI_WARMUP_FRAMES := 60
+
 
 func _ready() -> void:
 	var dir := OS.get_environment("WAR_SHOT_DIR")
@@ -80,6 +107,16 @@ func _ready() -> void:
 	await get_tree().process_frame
 	if not main.is_inside_tree():
 		_fail("the main scene never attached — nothing would have been rendered")
+		return
+
+	var scenario := OS.get_environment("WAR_SCENARIO")
+	if scenario.is_empty():
+		scenario = "world"
+	if scenario == "first_run":
+		await _capture_first_run(dir, main)
+		return
+	if scenario != "world":
+		_fail("unknown WAR_SCENARIO '%s' — expected 'world' or 'first_run'" % scenario)
 		return
 
 	for i in WARMUP_FRAMES:
@@ -154,6 +191,51 @@ func _ready() -> void:
 	get_tree().quit(0)
 
 
+## The character creator as a new player meets it — the surface a first-run UI
+## change actually alters, and the one the world scenario deliberately seeds away.
+func _capture_first_run(dir: String, main: Node) -> void:
+	for i in UI_WARMUP_FRAMES:
+		await get_tree().process_frame
+
+	# The creator must have OPENED. Without this the scenario degrades into an
+	# ordinary world shot the moment a save leaks into the run — and a world shot
+	# passes the luminance guard perfectly well, so nothing would complain while
+	# the evidence stopped depicting the reviewed surface entirely.
+	var creator := _find_creator(main)
+	if creator == null:
+		_fail("the character creator never opened — a save is present, so this is a world shot, not first-run evidence")
+		return
+	if not creator.visible:
+		_fail("the character creator opened but is not visible — the frame would not show it")
+		return
+
+	await RenderingServer.frame_post_draw
+	var img := get_viewport().get_texture().get_image()
+	var spread := _luma_spread_box(img, UI_SAMPLE_X0, UI_SAMPLE_X1, UI_SAMPLE_Y0, UI_SAMPLE_Y1)
+	if spread < MIN_LUMA_SPREAD:
+		_fail("the creator panel band is a uniform frame (luma spread %.4f) — the UI did not draw" % spread)
+		return
+	var out := "%s/first_run.png" % dir
+	var err := img.save_png(out)
+	if err != OK:
+		_fail("could not write %s (error %d)" % [out, err])
+		return
+	print("CAPTURED first_run -> %s (%dx%d, luma spread %.3f)" %
+		[out, img.get_width(), img.get_height(), spread])
+	print("CAPTURE PASS — 1 first-run vantage written to %s" % dir)
+	get_tree().quit(0)
+
+
+## The open CharacterCreator, if any. Found by TYPE rather than by node name:
+## main.gd constructs it with `CharacterCreator.new()` and never names it, so a
+## name lookup would silently find nothing and report the creator missing.
+func _find_creator(main: Node) -> CanvasLayer:
+	for child in main.get_children():
+		if child is CharacterCreator:
+			return child as CanvasLayer
+	return null
+
+
 ## Whether the generated world is actually present in the tree: a WorldGen node
 ## carrying its baked Terrain mesh. Structural rather than visual on purpose —
 ## it answers "did the world build?" directly, instead of inferring it from
@@ -205,12 +287,18 @@ func _sees_geometry(cam: Camera3D, target: Vector3) -> bool:
 ## tell a rendered world from a flat clear-colour fill, while ignoring the HUD
 ## text that would otherwise vouch for a blank 3D view (see SAMPLE_* above).
 func _luma_spread(img: Image) -> float:
+	return _luma_spread_box(img, SAMPLE_X0, SAMPLE_X1, SAMPLE_Y0, SAMPLE_Y1)
+
+
+## Luminance spread over a grid sampled from an arbitrary box, so each scenario
+## can measure the part of the frame its own subject occupies.
+func _luma_spread_box(img: Image, fx0: float, fx1: float, fy0: float, fy1: float) -> float:
 	var lo := 2.0
 	var hi := -1.0
-	var x0 := SAMPLE_X0 * img.get_width()
-	var y0 := SAMPLE_Y0 * img.get_height()
-	var span_x := (SAMPLE_X1 - SAMPLE_X0) * img.get_width()
-	var span_y := (SAMPLE_Y1 - SAMPLE_Y0) * img.get_height()
+	var x0 := fx0 * img.get_width()
+	var y0 := fy0 * img.get_height()
+	var span_x := (fx1 - fx0) * img.get_width()
+	var span_y := (fy1 - fy0) * img.get_height()
 	for gy in 12:
 		for gx in 16:
 			var sample := img.get_pixel(
