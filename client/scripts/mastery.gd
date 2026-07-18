@@ -27,12 +27,24 @@ extends RefCounted
 ##     mints points), and a negative amount is refused: accrual is an award, never
 ##     a debit. `total` therefore rises by exactly what was accrued and by nothing
 ##     else.
+##   - **Conservation across the death loop.** `die` is the only way value leaves,
+##     and it moves points rather than deleting them: what leaves `unbanked` is
+##     exactly what the bloodstain receives. `reclaim` returns them through
+##     `accrue`, once, so a die → reclaim round trip restores `total` exactly. The
+##     single deliberate destruction — a new death replacing a standing bloodstain
+##     — discards those points outright, so they can neither be reclaimed nor
+##     duplicated.
 ##
 ## This library is PURE — no scene tree, no engine state, no clock, no `user://`
 ## — so it is deterministic and unit-testable, exactly like `Discovery`,
-## `Telegraph`, and the server sim. Deliberately out of scope (each a follow-up
-## child of #76): the death → bloodstain → reclaim-or-lose-forever loop (which
-## touches only `unbanked`); meaningful-combat **source gating** and diminishing
+## `Telegraph`, and the server sim.
+##
+## The death → bloodstain → reclaim-or-lose-forever loop lives here too (#129):
+## it moves value only within `unbanked`, so it is the same ledger's business,
+## and holding the bloodstain here is what makes "reclaim at most once" a
+## structural property rather than a caller's obligation. Still deliberately out
+## of scope (each a follow-up
+## child of #76): meaningful-combat **source gating** and diminishing
 ## returns (server-authoritative — the anti-AFK-grind guard, so `accrue` here
 ## trusts its already-gated award and never judges where a point came from);
 ## serialization + persistence (gated on the save schema); and the sidegrade
@@ -47,6 +59,13 @@ const BANK_STEP := 100
 ## weapon id (String) -> {"banked": int, "unbanked": int}. A weapon appears here
 ## only once it has been accrued to; an untracked weapon reads as all-zero.
 var _tracks: Dictionary = {}
+
+## The one standing bloodstain: weapon id (String) -> points (int), empty when
+## none stands. Held HERE rather than by the caller so "there is exactly one, a
+## new death replaces it, and it can be reclaimed at most once" are properties of
+## the ledger instead of rules a caller has to remember — the dupe vectors are
+## designed out, which is the only safe posture in a game with no undo.
+var _bloodstain: Dictionary = {}
 
 
 ## Award `amount` mastery points to `weapon`, then lock every whole bar the
@@ -98,6 +117,71 @@ func weapons() -> Array[String]:
 		out.append(weapon)
 	out.sort()
 	return out
+
+
+## Share of the at-risk pool a death takes, as a whole percent. This is a POLICY
+## placeholder, not a settled number: the design flags that organised group
+## content should carry a SOFTENED penalty ("full risk in open world/solo …
+## softened in organised group content — flag it as a decision, not a detail"),
+## so `die` takes the share as an argument and this is only its default. Tuning
+## it — or handing group content a smaller one — never touches the mechanism.
+const DEATH_LOSS_PERCENT := 50
+
+
+## Die: move `percent` of every weapon's UNBANKED mastery into a bloodstain, and
+## return a copy of it ({weapon: points}, empty when nothing was at risk).
+##
+## The banked floor is never read or written here — it is unlosable by law, so a
+## death can only ever reach the current bar. `percent` is clamped to 0..100 and
+## the share is integer-floored, so no fraction of a point is invented or lost.
+##
+## Dying again while a bloodstain is still unreclaimed DESTROYS the old one: the
+## Souls rule, "reclaim it or lose it forever". That destruction is the only way
+## this ledger can lose value, it happens exactly once, and the lost points are
+## gone rather than moved — nothing can reclaim them afterwards.
+func die(percent: int = DEATH_LOSS_PERCENT) -> Dictionary:
+	var share := clampi(percent, 0, 100)
+	var stain := {}
+	# Sorted, so the stain is built in a stable order regardless of accrual order.
+	for weapon: String in weapons():
+		var track: Dictionary = _tracks[weapon]
+		# Integer floor: unbanked is always below one bar, so this cannot overflow
+		# and cannot take more than was at risk.
+		var at_risk: int = track["unbanked"] * share / 100
+		if at_risk <= 0:
+			continue
+		track["unbanked"] -= at_risk
+		_tracks[weapon] = track
+		stain[weapon] = at_risk
+	# Replaces (and thereby destroys) any bloodstain still standing.
+	_bloodstain = stain
+	return stain.duplicate()
+
+
+## Reclaim the standing bloodstain: its points return to the unbanked pool, and
+## any bar they fill banks as normal. Returns how many points came back.
+##
+## The bloodstain is consumed, so a second call returns 0 — reclaiming twice is
+## the obvious dupe vector and is designed out rather than policed. Because the
+## points re-enter through `accrue`, they are added exactly once and by exactly
+## the amount dropped: a die → reclaim round trip conserves `total` precisely.
+## (`accrue` documents that awards are gated by a server-authoritative caller;
+## these points need no such gate — they are the player's own, being returned.)
+func reclaim() -> int:
+	var recovered := 0
+	for weapon: String in _bloodstain:
+		var amount: int = _bloodstain[weapon]
+		recovered += amount
+		accrue(weapon, amount)
+	_bloodstain = {}
+	return recovered
+
+
+## A copy of the standing bloodstain ({weapon: points}), empty when none stands.
+## A copy on purpose: handing out the live dictionary would let a caller mutate
+## or re-bank the pending points, which is the same dupe vector `reclaim` closes.
+func bloodstain() -> Dictionary:
+	return _bloodstain.duplicate()
 
 
 func _track_field(weapon: String, field: String) -> int:
