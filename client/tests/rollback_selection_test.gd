@@ -322,6 +322,7 @@ func _ready() -> void:
 		["url", "   "], ["url", "not-a-url"], ["url", "ftp://x/y.pck"],
 		["url", "https://"], ["url", " https://x/y.pck"], ["url", "https://x/y .pck"],
 		["url", "https:///bad.pck"], ["url", "https://?bad.pck"], ["url", "https://#bad.pck"],
+		["url", "https://:443/bad.pck"], ["url", "https://@/bad.pck"], ["url", "https://user@:443/bad.pck"],
 		["sha256", "abc"], ["sha256", "z".repeat(64)], ["sha256", 42],
 		["sha256", "-" + "a".repeat(63)], ["sha256", "+" + "a".repeat(63)],
 		["size", -1], ["size", "big"],
@@ -343,6 +344,47 @@ func _ready() -> void:
 	# ledger), which is why it is now a shape to look for rather than a one-off.
 	for junk_catalog: Variant in [null, 42, "targets", {}, true]:
 		_check(RollbackSelection.select(junk_catalog, _state())["action"] == RollbackSelection.NO_ELIGIBLE_TARGET, true, "total: a non-list rollback catalogue refuses cleanly rather than erroring")
+	# ...and the STATE, the sibling parameter in the same signature. I fixed catalog
+	# and missed this one, which is the fourth occurrence of the trap in this file.
+	for junk_state: Variant in [null, 42, "state", [], true]:
+		_check(RollbackSelection.select(catalog, junk_state)["action"] == RollbackSelection.NO_ELIGIBLE_TARGET, true, "total: a non-dictionary recovery state refuses cleanly rather than erroring")
+	if _failed:
+		return
+
+	# --- schema 0 is not a proof, even when explicitly supplied ---
+	# Refusing an ABSENT save while accepting an explicit `{schema: 0}` would let the
+	# exact value named as the dangerous default buy what a missing value cannot: with
+	# schema 0 every target with a positive read_ceiling looks able to read the save.
+	var zeroed := _state()
+	zeroed["save"] = {"schema": 0, "capability": 0}
+	_check(RollbackSelection.select(catalog, zeroed)["action"] == RollbackSelection.NO_ELIGIBLE_TARGET, true, "zero: an explicit schema 0 is refused, not treated as verified")
+	# ISOLATION: schema 1 with the same zero capability is a real save and selects.
+	var lowest := _state()
+	lowest["save"] = {"schema": 1, "capability": 0}
+	_check(RollbackSelection.select(catalog, lowest)["action"] == RollbackSelection.ROLLBACK, true, "zero is ISOLATED: schema 1 with capability 0 is a real save and still selects")
+	if _failed:
+		return
+
+	# --- the corrupt-ledger DEADLOCK has an explicit way out ---
+	# select() refuses a torn ledger and quarantine() refuses to rewrite it; both are
+	# right alone, but together they leave the bootstrap unable to record the current
+	# failure OR pick a target. recover_ledger is the deliberate escape.
+	var torn: Array = [42, "0.1.1"]
+	_check(RollbackSelection.quarantine(torn, "0.1.10")["ok"], false, "deadlock: quarantine still refuses to rewrite a torn ledger")
+	var stuck := _state()
+	stuck["quarantined"] = torn
+	_check(RollbackSelection.select(catalog, stuck)["action"] == RollbackSelection.NO_ELIGIBLE_TARGET, true, "deadlock: select still refuses on a torn ledger")
+	var recovered := RollbackSelection.recover_ledger("0.1.10")
+	_check(recovered["ok"], true, "deadlock: recover_ledger provides the explicit way out")
+	_check((recovered["ledger"] as Array).size() == 1, true, "deadlock: the fresh ledger holds only the current failure")
+	_check(recovered["reason"].contains("DISCARDED"), true, "deadlock: the loss of history is stated loudly, never silent")
+	# and the fresh ledger actually unsticks selection, still skipping the failed build
+	var unstuck := _state()
+	unstuck["quarantined"] = recovered["ledger"]
+	var after := RollbackSelection.select(catalog, unstuck)
+	_check(after["action"] == RollbackSelection.ROLLBACK, true, "deadlock: recovery lets selection proceed")
+	_check(after["version"] == "0.1.9", true, "deadlock: the build that just failed is STILL skipped after recovery")
+	_check(RollbackSelection.recover_ledger(42)["ok"], false, "deadlock: recovery from an unreadable marker is itself refused")
 	_check(RollbackSelection.quarantine([42, "0.1.1", 42], "0.1.1")["ok"], false, "total: junk in the quarantine set refuses rather than collapsing silently")
 	if _failed:
 		return

@@ -74,15 +74,18 @@ const NO_ELIGIBLE_TARGET := "no_eligible_target"
 ## Malformed entries are SKIPPED rather than fatal: one bad catalogue entry must not
 ## deny the player a recovery that other entries can provide. If that leaves nothing
 ## eligible, the result is still a reasoned [constant NO_ELIGIBLE_TARGET].
-static func select(catalog: Variant, state: Dictionary) -> Dictionary:
-	# `catalog` is untyped for the third time in this file, and for the same reason:
-	# it arrives from a parsed manifest whose `rollback_targets` may be missing or
-	# not a list, and a typed Array parameter would make GDScript reject the call
-	# before this fail-closed body could return the promised refusal — a runtime error
-	# in the recovery path instead of a loud, reasoned one.
+static func select(catalog: Variant, state: Variant) -> Dictionary:
+	# BOTH parameters are untyped, and that is a rule in this file rather than a
+	# case-by-case choice: every input to a fail-closed function arrives from disk or
+	# a parsed manifest, so a typed parameter lets GDScript reject the call before the
+	# body can return the promised refusal — a runtime error in the recovery path
+	# instead of a loud, reasoned one. This trap has now been found four times here
+	# (`version`, `quarantined`, `catalog`, `state`); it is the shape, not the field.
 	if catalog is not Array:
 		return _refuse("the rollback catalogue is missing or is not a list")
-	return _select_verified(catalog as Array, state)
+	if state is not Dictionary:
+		return _refuse("the recovery state is missing or is not a dictionary")
+	return _select_verified(catalog as Array, state as Dictionary)
 
 
 static func _select_verified(catalog: Array, state: Dictionary) -> Dictionary:
@@ -100,6 +103,13 @@ static func _select_verified(catalog: Array, state: Dictionary) -> Dictionary:
 		return _refuse("save schema/capability are missing or not whole numbers — cannot prove any target can read the installed save")
 	var save_schema: int = int(save_dict["schema"])
 	var save_capability: int = int(save_dict["capability"])
+	# Schema 0 is NOT a proof. Shipped save schemas start at 1, so a zero is a
+	# defaulted or torn read, not a real save — and accepting it makes every target
+	# with a normal positive read_ceiling look able to read the player's save, which
+	# is exactly the permissive failure this function refuses to make for an ABSENT
+	# save. An explicitly-supplied 0 must not buy what a missing value cannot.
+	if save_schema < 1:
+		return _refuse("the installed save reports schema 0, which is a defaulted or corrupt read rather than a real save — refusing rather than treat every target as able to read it")
 
 	var protocol: Variant = state.get("protocol")
 	if protocol is not Dictionary:
@@ -225,6 +235,33 @@ static func quarantine(quarantined: Variant, version: Variant) -> Dictionary:
 	return {"ok": true, "ledger": out, "reason": "recorded %s as failed" % failed}
 
 
+## Start a FRESH ledger recording only `version`, deliberately discarding a previous
+## ledger that could not be read.
+##
+## This is the escape hatch from an otherwise closed loop: [method select] refuses on
+## a corrupt ledger (reading it as "nothing quarantined" would re-select the build
+## that just failed), and [method quarantine] refuses to rewrite one (silently
+## dropping entries would erase recorded failures). Both refusals are right on their
+## own, but together they leave a bootstrap with a torn ledger unable to record the
+## current failure OR select a target — consistent, and permanently stuck.
+##
+## So the recovery is EXPLICIT rather than automatic. The caller must choose it
+## knowingly, and the trade is stated plainly: the history of older failures is lost,
+## so a build that failed long ago may be selected again. What is preserved is the
+## thing that matters most — the failure happening RIGHT NOW is recorded, so the
+## immediate boot loop is broken. Never call this as a fallback from a refusal; it is
+## for a bootstrap that has decided a torn ledger is unrecoverable.
+static func recover_ledger(version: Variant) -> Dictionary:
+	if not UpdateDecision.is_version(version):
+		return {"ok": false, "ledger": [], "reason": "cannot start a recovery ledger from an unreadable version — the boot-attempt marker is malformed too"}
+	var fresh: Array[String] = [str(version)]
+	return {
+		"ok": true,
+		"ledger": fresh,
+		"reason": "started a fresh quarantine ledger recording %s — PREVIOUS FAILURE HISTORY WAS DISCARDED as unreadable" % str(version),
+	}
+
+
 ## Whether `version` has been quarantined. Safe (false) for an unknown version.
 ##
 ## Matching is NUMERIC, not string equality: `compare_versions` treats `0.1.10`,
@@ -344,6 +381,16 @@ static func _is_fetchable_url(v: Variant) -> bool:
 		var at: int = authority.find(delimiter)
 		if at >= 0:
 			authority = authority.substr(0, at)
+	if authority.is_empty():
+		return false
+	# An authority is not a host: `https://@/x` is userinfo with no host, and
+	# `https://:443/x` is a port with no host. Strip both and require what remains.
+	var at_sign: int = authority.rfind("@")
+	if at_sign >= 0:
+		authority = authority.substr(at_sign + 1)
+	var colon: int = authority.rfind(":")
+	if colon >= 0:
+		authority = authority.substr(0, colon)
 	if authority.is_empty():
 		return false
 	for i in url.length():
