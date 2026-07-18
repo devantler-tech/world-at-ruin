@@ -402,7 +402,8 @@ def main() -> None:
     write_tints(manifest, out_dir)
 
     shape_names = [kb.name for kb in body.data.shape_keys.key_blocks[1:]]
-    sha = hashlib.sha256(open(out_path, "rb").read()).hexdigest()
+    with open(out_path, "rb") as glb:
+        sha = hashlib.sha256(glb.read()).hexdigest()
     # The structural report is the committed contract the Godot regression
     # test and the artgen workflow both check against; the GLB sha is printed
     # for run-to-run determinism checks but kept out of the report file (float

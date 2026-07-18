@@ -5,11 +5,30 @@ class_name DevLog
 ## development progress by playing. Every change that a player could notice
 ## gets an entry here, newest first — open it in-game with F1.
 
-const VERSION := "0.1.15"
+const VERSION := "0.1.17"
 const CODENAME := "Ashfall Reach"
 
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
+	{
+		"version": "0.1.17",
+		"date": "2026-07-18",
+		"title": "The torches hang on the walls",
+		"notes": [
+			"The torches lighting the starter cave were hanging in mid-air — some of them stranded several metres from the nearest rock, out in the middle of the chamber. Each one now finds its own patch of wall and is bracketed to it.",
+			"They also look like torches now: an iron bracket bolted to the rock, a shaft leaning up out of it, a pitch-soaked wrapped head, and a flame that tapers to a point and rises straight up however the shaft is angled. Before, each was a plain stick with a ball stuck on the end.",
+			"The flame breathes with its own light as it flickers, and the way down is lit a little more evenly.",
+		],
+	},
+	{
+		"version": "0.1.16",
+		"date": "2026-07-18",
+		"title": "The ground is strewn",
+		"notes": [
+			"The Reach is no longer bare between its landmarks. Ashen scrub, dead grass, bone piles and broken rubble are now scattered across the Reach, so the ground between the ruins reads like somewhere a disaster happened rather than an empty plain.",
+			"It is scenery and nothing more — there is nothing to pick up, it changes nothing about how you play, and you walk straight through it. The shrine's clearing, the ruins themselves and the cave mouth all stay clear, and the same world grows the same scrub every time you load it.",
+		],
+	},
 	{
 		"version": "0.1.15",
 		"date": "2026-07-17",

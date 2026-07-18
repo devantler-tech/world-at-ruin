@@ -27,6 +27,16 @@ const COL_ROCK_LIGHT := Color(0.56, 0.42, 0.27)
 const COL_ROCK_DARK := Color(0.33, 0.24, 0.16)
 const COL_SEDIMENT := Color(0.52, 0.44, 0.33)
 const COL_EMBER := Color(1.0, 0.55, 0.18)
+const COL_FLAME_CORE := Color(1.0, 0.87, 0.48) ## Hotter inner cone.
+const COL_IRON := Color(0.16, 0.15, 0.15) ## Bracket, collar.
+const COL_WOOD := Color(0.2, 0.13, 0.08) ## Shaft.
+const COL_PITCH := Color(0.09, 0.07, 0.06) ## Soaked head wrapping.
+
+const TORCH_SPACING := 5.0 ## Target metres between torches along the spine.
+const TORCH_MOUNT_H := 1.7 ## Bracket height above the local floor.
+const TORCH_LEAN := 0.55 ## Shaft lean out of the wall, radians (~31°).
+const TORCH_SHAFT := 0.72 ## Shaft length in metres.
+const TORCH_MIN_WALL := 1.0 ## Nearer than this the torch would block the spine.
 
 @export var seed_value: int = 42:
 	set(v):
@@ -36,6 +46,7 @@ const COL_EMBER := Color(1.0, 0.55, 0.18)
 
 var _built: Array[Node] = []
 var _torch_lights: Array[OmniLight3D] = []
+var _torch_flames: Array[MeshInstance3D] = []
 var _torch_phases := PackedFloat32Array()
 var _time := 0.0
 ## The layout of the last rebuild, including "spawn_floor_actual" (the
@@ -51,10 +62,16 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	_time += delta
 	for i in _torch_lights.size():
+		var phase := _torch_phases[i]
+		var flick := sin(_time * 5.1 + phase) + 0.44 * sin(_time * 13.7 + phase * 2.0)
 		var l := _torch_lights[i]
 		if is_instance_valid(l):
-			l.light_energy = 2.1 + 0.5 * sin(_time * 5.1 + _torch_phases[i]) \
-				+ 0.22 * sin(_time * 13.7 + _torch_phases[i] * 2.0)
+			l.light_energy = 2.1 + 0.5 * flick
+		# The flame body breathes with its own light, so the flicker reads as
+		# fire rather than as a lamp being dimmed.
+		if i < _torch_flames.size() and is_instance_valid(_torch_flames[i]):
+			var f := _torch_flames[i]
+			f.scale = Vector3(1.0 + 0.06 * flick, 1.0 + 0.13 * flick, 1.0 + 0.06 * flick)
 
 
 ## The starter-system layout: entrance room, a bending descending tunnel, a
@@ -141,12 +158,66 @@ static func _smin(a: float, b: float, k: float) -> float:
 	return lerpf(b, a, h) - k * h * (1.0 - h)
 
 
+## The wall-undulation noise for a seed. ONE definition, shared by the mesher
+## and by every field probe — a probe that built its own noise could disagree
+## with the meshed rock and anchor fixtures into thin air.
+static func make_noise(p_seed: int) -> FastNoiseLite:
+	var noise := FastNoiseLite.new()
+	noise.seed = p_seed
+	noise.noise_type = FastNoiseLite.TYPE_SIMPLEX
+	noise.fractal_type = FastNoiseLite.FRACTAL_FBM
+	noise.fractal_octaves = 3
+	noise.frequency = 0.055
+	return noise
+
+
+## Distance from a point in the void to the first rock surface along
+## [param dir], or -1.0 if the ray reaches [param max_dist] still in void (or
+## started inside rock). Coarse march to the first sign change, then bisection.
+##
+## Anything MOUNTED on a cave wall must find the wall this way. A nominal
+## tunnel radius is not where the rock is: smooth-min blending and WALL_NOISE
+## move the meshed surface, and the spine runs through room centres where the
+## wall is a whole room-radius away.
+static func wall_distance(from: Vector3, dir: Vector3, lay: Dictionary, noise: FastNoiseLite,
+		max_dist: float = 9.0) -> float:
+	if density(from, lay, noise) >= 0.0:
+		return -1.0
+	var ray := dir.normalized()
+	var step := 0.12
+	var prev := 0.0
+	var t := step
+	while t <= max_dist:
+		if density(from + ray * t, lay, noise) >= 0.0:
+			var lo := prev
+			var hi := t
+			for _i in 12:
+				var mid := 0.5 * (lo + hi)
+				if density(from + ray * mid, lay, noise) >= 0.0:
+					hi = mid
+				else:
+					lo = mid
+			return 0.5 * (lo + hi)
+		prev = t
+		t += step
+	return -1.0
+
+
+## A basis whose local +Y runs along [param dir]. Godot's primitives (cylinder,
+## cone, torus) are all +Y-aligned, so this is how a torch part gets aimed.
+static func _aim(dir: Vector3) -> Basis:
+	var y := dir.normalized()
+	var ref := Vector3.UP if absf(y.dot(Vector3.UP)) < 0.95 else Vector3.RIGHT
+	var x := ref.cross(y).normalized()
+	return Basis(x, y, x.cross(y))
+
+
 ## Meshes the system with naive surface nets and bakes strata/sediment vertex
 ## colors. Self-contained: the massif needs no terrain input — WorldGen
 ## shapes the ground around it instead.
 static func build_geometry(p_seed: int) -> Dictionary:
 	var lay := layout(p_seed)
-	var noise := _make_noise(p_seed)
+	var noise := make_noise(p_seed)
 
 	var sampled := _sample_field(lay, noise)
 	var field: PackedFloat32Array = sampled["field"]
@@ -295,18 +366,6 @@ static func fingerprint(mesh: ArrayMesh) -> String:
 	return "verts=%d hash=%d" % [v.size(), hash(v.to_byte_array())]
 
 
-## The FastNoiseLite the density field is carved with — defined once so the mesh
-## build and the connectivity audit sample the identical field.
-static func _make_noise(p_seed: int) -> FastNoiseLite:
-	var noise := FastNoiseLite.new()
-	noise.seed = p_seed
-	noise.noise_type = FastNoiseLite.TYPE_SIMPLEX
-	noise.fractal_type = FastNoiseLite.FRACTAL_FBM
-	noise.fractal_octaves = 3
-	noise.frequency = 0.055
-	return noise
-
-
 ## Samples the corner density field over the massif's bounds, returning the
 ## packed field plus its origin and dimensions, so the mesher and the
 ## connectivity audit share one sampling rather than two drifting copies.
@@ -439,7 +498,7 @@ static func point_reached(point: Vector3, lay: Dictionary, noise: FastNoiseLite,
 ## one of these false, and CI catches it before a player ever could.
 static func reachability(p_seed: int) -> Dictionary:
 	var lay := layout(p_seed)
-	var noise := _make_noise(p_seed)
+	var noise := make_noise(p_seed)
 	var sampled := _sample_field(lay, noise, AUDIT_PAD)
 	var field: PackedFloat32Array = sampled["field"]
 	var lo: Vector3 = sampled["lo"]
@@ -486,6 +545,7 @@ func rebuild(terrain_h: Callable = func(_x: float, _z: float) -> float: return 0
 		node.queue_free()
 	_built.clear()
 	_torch_lights.clear()
+	_torch_flames.clear()
 	_torch_phases = PackedFloat32Array()
 
 	var built := CaveSystemGen.build_geometry(seed_value)
@@ -514,65 +574,139 @@ func rebuild(terrain_h: Callable = func(_x: float, _z: float) -> float: return 0
 	_place_boulders(lay, terrain_h)
 
 
-## Torches every few metres along the spine, offset toward the wall — the
-## light that pulls a wanderer through the dark (and the WoW cave signature).
+## Torches along the spine, each BRACKETED TO THE ROCK — the light that pulls a
+## wanderer through the dark (and the WoW cave signature).
+##
+## Every torch finds its own wall by probing the density field outward from the
+## spine at mounting height. The old fixed 1.5 m sideways offset is exactly
+## what left them hanging in mid-air: tunnels are r≈2.15–2.6 m before wall
+## noise, and the spine's waypoints ARE room centres, where the nearest rock is
+## a room radius (up to 5.6 m) away — so a 1.5 m offset put the torch in open
+## space nearly everywhere, and in the middle of a chamber at worst.
+## A torch that finds no wall within reach is skipped rather than floated.
 func _place_torches(lay: Dictionary) -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = seed_value + 3
+	var noise := CaveSystemGen.make_noise(seed_value)
 	var path: Array = lay["path"]
 	var floors: PackedFloat32Array = lay["floors"]
+	var mats := {
+		"iron": _flat(COL_IRON, 0.55),
+		"wood": _flat(COL_WOOD, 0.9),
+		"pitch": _flat(COL_PITCH, 1.0),
+		"flame": _glow(COL_EMBER, 2.4),
+		"core": _glow(COL_FLAME_CORE, 4.0),
+	}
 	var side := 1.0
 	for i in path.size() - 1:
 		var a: Vector3 = path[i]
 		var b: Vector3 = path[i + 1]
-		var length := (b - a).length()
-		var steps := maxi(1, int(length / 7.0))
+		var steps := maxi(1, roundi((b - a).length() / TORCH_SPACING))
 		for s in steps:
-			var u := (s + 0.55) / steps
+			var u := (s + 0.5) / steps
 			var at := a.lerp(b, u)
 			var floor_y := lerpf(floors[i], floors[i + 1], u)
 			var wall_dir := (b - a).cross(Vector3.UP).normalized() * side
 			side = -side
-			var torch := Node3D.new()
-			torch.position = at + wall_dir * 1.5 + Vector3(0, 0, 0)
-			torch.position.y = floor_y + 1.65
+			# Probe from the spine at mounting height out to the rock.
+			var from := Vector3(at.x, floor_y + TORCH_MOUNT_H, at.z)
+			var dist := CaveSystemGen.wall_distance(from, wall_dir, lay, noise)
+			if dist < TORCH_MIN_WALL:
+				continue
+			# Seat the backplate a hair inside the void so it beds into the
+			# wall instead of z-fighting the meshed surface.
+			var torch := _make_torch(from + wall_dir * (dist - 0.04), -wall_dir, mats)
 			add_child(torch)
 			_built.append(torch)
-
-			var stick := MeshInstance3D.new()
-			var stick_mesh := CylinderMesh.new()
-			stick_mesh.top_radius = 0.035
-			stick_mesh.bottom_radius = 0.05
-			stick_mesh.height = 0.55
-			stick.mesh = stick_mesh
-			stick.position.y = -0.25
-			var wood := StandardMaterial3D.new()
-			wood.albedo_color = Color(0.2, 0.13, 0.08)
-			stick.set_surface_override_material(0, wood)
-			torch.add_child(stick)
-
-			var flame := MeshInstance3D.new()
-			var flame_mesh := SphereMesh.new()
-			flame_mesh.radius = 0.09
-			flame_mesh.height = 0.22
-			flame.mesh = flame_mesh
-			var fire := StandardMaterial3D.new()
-			fire.albedo_color = COL_EMBER
-			fire.emission_enabled = true
-			fire.emission = COL_EMBER
-			fire.emission_energy_multiplier = 2.4
-			flame.set_surface_override_material(0, fire)
-			torch.add_child(flame)
-
-			var light := OmniLight3D.new()
-			light.light_color = COL_EMBER
-			light.omni_range = 9.0
-			light.light_energy = 2.1
-			light.shadow_enabled = true
-			light.position.y = 0.25
-			torch.add_child(light)
-			_torch_lights.append(light)
 			_torch_phases.append(rng.randf_range(0.0, TAU))
+
+
+## One wall torch, built at [param mount] on the rock with [param into] facing
+## the open cave: an iron backplate and arm biting the wall, a collar, a shaft
+## leaning up and out of it, a pitch-soaked wrapped head, and a two-cone flame.
+##
+## The old torch was a bare vertical cylinder with a sphere sitting at its top —
+## a lollipop, with nothing tying it to anything. The bracket is what makes it
+## read as MOUNTED, and the lean plus the tapered flame are what make it read as
+## a TORCH. The flame is aimed at world up, not along the shaft: fire rises
+## whatever angle it burns on.
+func _make_torch(mount: Vector3, into: Vector3, mats: Dictionary) -> Node3D:
+	var torch := Node3D.new()
+	torch.position = mount
+	var lean := (Vector3.UP * cos(TORCH_LEAN) + into * sin(TORCH_LEAN)).normalized()
+	var base := into * 0.07 + Vector3.DOWN * 0.10
+	var collar_at := base + lean * 0.30
+	var head_at := base + lean * TORCH_SHAFT
+	var tip := head_at + lean * 0.06
+
+	# Backplate flat against the rock, and the arm out to the collar.
+	_part(torch, _cyl(0.12, 0.12, 0.07), mats["iron"], into * 0.035, into)
+	var arm := collar_at - into * 0.07
+	_part(torch, _cyl(0.022, 0.022, arm.length()), mats["iron"],
+		into * 0.07 + arm * 0.5, arm)
+	var collar := TorusMesh.new()
+	collar.inner_radius = 0.045
+	collar.outer_radius = 0.078
+	_part(torch, collar, mats["iron"], collar_at, lean)
+
+	# Shaft, then the soaked wrapping flaring at the head.
+	_part(torch, _cyl(0.034, 0.055, TORCH_SHAFT), mats["wood"],
+		base + lean * (TORCH_SHAFT * 0.5), lean)
+	_part(torch, _cyl(0.070, 0.058, 0.17), mats["pitch"], head_at, lean)
+
+	# Flame: an outer cone with a hotter core inside, both rising vertically.
+	# Their bases sit BELOW the head's top so they socket into the wrapping —
+	# a vertical cone meeting an angled head leaves a visible notch otherwise,
+	# and a flame that hovers off its own torch is the bug in miniature.
+	# The outer cone's base is WIDER than the head's flare, so its skirt covers
+	# the wrapping instead of letting a dark wedge poke through the flame.
+	var flame := _part(torch, _cyl(0.0, 0.098, 0.40), mats["flame"],
+		tip + Vector3.UP * 0.145, Vector3.UP)
+	_part(torch, _cyl(0.0, 0.048, 0.26), mats["core"], tip + Vector3.UP * 0.075, Vector3.UP)
+	_torch_flames.append(flame)
+
+	var light := OmniLight3D.new()
+	light.light_color = COL_EMBER
+	light.omni_range = 9.0
+	light.light_energy = 2.1
+	light.shadow_enabled = true
+	light.position = tip + Vector3.UP * 0.16
+	torch.add_child(light)
+	_torch_lights.append(light)
+	return torch
+
+
+func _part(parent: Node3D, mesh: Mesh, mat: Material, pos: Vector3, aim: Vector3) -> MeshInstance3D:
+	var mi := MeshInstance3D.new()
+	mi.mesh = mesh
+	mi.set_surface_override_material(0, mat)
+	mi.transform = Transform3D(CaveSystemGen._aim(aim), pos)
+	parent.add_child(mi)
+	return mi
+
+
+static func _cyl(top: float, bottom: float, height: float) -> CylinderMesh:
+	var m := CylinderMesh.new()
+	m.top_radius = top
+	m.bottom_radius = bottom
+	m.height = height
+	return m
+
+
+static func _flat(color: Color, roughness: float) -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.albedo_color = color
+	m.roughness = roughness
+	return m
+
+
+static func _glow(color: Color, energy: float) -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.albedo_color = color
+	m.emission_enabled = true
+	m.emission = color
+	m.emission_energy_multiplier = energy
+	return m
 
 
 ## Big leaning slabs framing the mouth — the WoW cave-entrance grammar; they
