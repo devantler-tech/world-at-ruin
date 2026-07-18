@@ -73,6 +73,21 @@ zone/dungeon server:
     the authoritative path never calls a trig function. A fourth committed golden
     pins the demo scenario's resolution stream. Ascending-ID and read-only —
     never part of `Step`, so it cannot move the movement golden.
+  - `MobController` — the **mob combat core**: the smallest brain that makes
+    "step out of the circle" real. An idle mob acquires the nearest entity
+    within an inclusive aggro radius (ties broken to the lowest ID, iterated in
+    stable order), telegraphs a circle **anchored where the target stood at
+    cast start** — ground-anchored, never tracking, which is exactly what makes
+    the attack winnable by moving well and losable by standing still — and
+    resolves it through `World.Caught` (excluding itself; caster filtering is
+    this layer's job) into an event stream the future damage, replication and
+    presentation children consume. A wind-up of zero is refused at construction:
+    an instant telegraph cannot be dodged, and dodgeability is product law. A
+    fifth committed golden pins a scripted encounter's event stream. It is a
+    controller in the tracker mould — stepped by the caller after `Step`,
+    read-only, so it cannot move the movement golden (a test pins that).
+    Damage/health, chase movement, factions and interruption are deliberate
+    later children (#188 lists them).
 - **`wire/`** — the **versioned wire codec**: the transport-agnostic binary
   encoding of the replication payload (the full join snapshot and the per-tick
   delta stream). Every message opens with an explicit protocol version — product
