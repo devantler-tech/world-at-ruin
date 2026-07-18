@@ -66,20 +66,22 @@ static func material_for(kind: int) -> ShaderMaterial:
 	mat.shader = SHADER
 	match kind:
 		FoliageGen.Kind.ASH_SHRUB:
-			mat.set_shader_parameter("albedo_tex", leaf_texture(SEED_SHRUB, 46))
-			mat.set_shader_parameter("tint_low", Color(0.62, 0.60, 0.52))
+			mat.set_shader_parameter("albedo_tex", leaf_texture(SEED_SHRUB, 84))
+			mat.set_shader_parameter("tint_low", Color(0.82, 0.79, 0.70))
 			mat.set_shader_parameter("tint_high", Color(1.06, 1.02, 0.88))
 			mat.set_shader_parameter("wind_strength", 0.055)
 			mat.set_shader_parameter("wind_speed", 1.35)
-			mat.set_shader_parameter("normal_lift", 0.55)
+			mat.set_shader_parameter("normal_lift", 0.22)
+			mat.set_shader_parameter("backlight_tint", Color(0.30, 0.22, 0.13))
 			mat.set_shader_parameter("roughness_value", 0.92)
 		FoliageGen.Kind.DEAD_GRASS:
-			mat.set_shader_parameter("albedo_tex", blade_texture(SEED_GRASS, 22))
-			mat.set_shader_parameter("tint_low", Color(0.66, 0.62, 0.46))
+			mat.set_shader_parameter("albedo_tex", blade_texture(SEED_GRASS, 30))
+			mat.set_shader_parameter("tint_low", Color(0.84, 0.80, 0.66))
 			mat.set_shader_parameter("tint_high", Color(1.10, 1.05, 0.82))
 			mat.set_shader_parameter("wind_strength", 0.075)
 			mat.set_shader_parameter("wind_speed", 1.9)
-			mat.set_shader_parameter("normal_lift", 0.45)
+			mat.set_shader_parameter("normal_lift", 0.18)
+			mat.set_shader_parameter("backlight_tint", Color(0.34, 0.26, 0.14))
 			mat.set_shader_parameter("roughness_value", 0.95)
 		FoliageGen.Kind.BONE_PILE:
 			mat.set_shader_parameter("albedo_tex",
@@ -192,16 +194,23 @@ static func leaf_texture(rng_seed: int, leaves: int) -> ImageTexture:
 	img.fill(Color(0.0, 0.0, 0.0, 0.0))
 	var rng := RandomNumberGenerator.new()
 	rng.seed = rng_seed
-	var deep := Color(0.16, 0.16, 0.13)
-	var pale := Color(0.55, 0.52, 0.40)
+	# Ash-bleached scrub, NOT dark green. The first render of this pass had the
+	# leaves far too dark: against pale ash ground a field of props read as black
+	# specks on white paper. Desolate scrub sits close to the ground in value,
+	# separated by hue and texture rather than by a huge tonal gap.
+	var deep := Color(0.34, 0.32, 0.25)
+	var pale := Color(0.68, 0.64, 0.49)
 	for _i in maxi(leaves, 1):
 		var cx := rng.randf_range(0.16, 0.84)
 		var cy := rng.randf_range(0.08, 0.88)
-		var ra := rng.randf_range(0.075, 0.135)
-		var rb := rng.randf_range(0.026, 0.052)
+		# Small and many, so the card reads as fine scrub. Large ellipses made it
+		# look like a succulent.
+		var ra := rng.randf_range(0.040, 0.078)
+		var rb := rng.randf_range(0.015, 0.031)
 		var angle := rng.randf_range(0.0, PI)
-		# cy is 0 at the tip and 1 at the base, so this brightens upward.
-		var lit := clampf(1.0 - cy, 0.0, 1.0) * rng.randf_range(0.55, 1.0)
+		# cy is 0 at the tip and 1 at the base, so this brightens upward. The
+		# floor keeps even the shaded interior off black.
+		var lit := clampf(0.38 + (1.0 - cy) * 0.62, 0.0, 1.0) * rng.randf_range(0.78, 1.0)
 		_stamp_ellipse(img, cx, cy, ra, rb, angle, deep.lerp(pale, lit))
 	img.generate_mipmaps()
 	return ImageTexture.create_from_image(img)
@@ -214,14 +223,15 @@ static func blade_texture(rng_seed: int, blades: int) -> ImageTexture:
 	img.fill(Color(0.0, 0.0, 0.0, 0.0))
 	var rng := RandomNumberGenerator.new()
 	rng.seed = rng_seed
-	var deep := Color(0.21, 0.18, 0.12)
-	var pale := Color(0.62, 0.57, 0.36)
+	# Same value correction as the leaf mask: dead grass is straw, not charcoal.
+	var deep := Color(0.40, 0.36, 0.25)
+	var pale := Color(0.76, 0.70, 0.48)
 	for _i in maxi(blades, 1):
 		var root := rng.randf_range(0.14, 0.86)
 		var lean := rng.randf_range(-0.20, 0.20)
 		var tip_v := rng.randf_range(0.10, 0.52)
 		var half_w := rng.randf_range(0.010, 0.026)
-		var bright := rng.randf_range(0.6, 1.0)
+		var bright := rng.randf_range(0.55, 1.0)
 		_stamp_blade(img, root, lean, tip_v, half_w, deep, pale, bright)
 	img.generate_mipmaps()
 	return ImageTexture.create_from_image(img)

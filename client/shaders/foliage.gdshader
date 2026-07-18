@@ -27,7 +27,16 @@ uniform float roughness_value : hint_range(0.0, 1.0) = 0.95;
 // Blends the true surface normal toward straight up. Real foliage cards look
 // harsh lit by their flat geometric normal; leaning the normal skyward is the
 // standard trick that makes a card read as a soft leafy volume.
+//
+// Keep this LOW here. The Ashfall Reach's sun sits at about -19° elevation, so
+// a skyward normal only ever catches grazing light: the first render of this
+// pass used 0.55 and the scrub went nearly black under the real dusk sky.
 uniform float normal_lift : hint_range(0.0, 1.0) = 0.0;
+// Cheap stand-in for the subsurface scattering that makes real leaves glow when
+// the sun is behind them. Under a low sun this is what stops thin vegetation
+// reading as a flat black cutout, and it is the single biggest reason the scrub
+// looks lit rather than stencilled.
+uniform vec3 backlight_tint : source_color = vec3(0.0, 0.0, 0.0);
 
 varying vec3 inst_tint;
 
@@ -63,4 +72,5 @@ void fragment() {
 	ALPHA_SCISSOR_THRESHOLD = 0.5;
 	ROUGHNESS = roughness_value;
 	SPECULAR = 0.15;
+	BACKLIGHT = backlight_tint;
 }

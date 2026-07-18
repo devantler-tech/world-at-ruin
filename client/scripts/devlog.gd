@@ -11,6 +11,17 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
+		"version": "0.5.0",
+		"date": "2026-07-18",
+		"title": "Scrub, straw and bone",
+		"notes": [
+			"The ground cover was standing in for itself — a ball for a bush, a flat wedge for grass, a box for a pile of bones. It is now built as the thing it is: scrub you can pick individual leaves out of, grass that reads as separate blades, and heaps of broken stone and bone with uneven, weathered surfaces instead of one flat colour.",
+			"The low sun now shines through the thin stuff. Dry grass lights up from behind when you look toward the horizon, and no two clumps are quite the same shade, so a stretch of ground reads as a place rather than as a pattern.",
+			"And it moves. A dry wind crosses the Reach in gusts, and the scrub and grass lean downwind together as each gust passes, while the stone and bone stay exactly where they fell.",
+			"They are still scattered evenly across the land, though, where real scrub would gather in thickets and leave bare patches between. That is the next thing to fix.",
+		],
+	},
+	{
 		"version": "0.4.0",
 		"date": "2026-07-18",
 		"title": "The ruins look broken",
