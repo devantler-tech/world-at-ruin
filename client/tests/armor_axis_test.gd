@@ -1,5 +1,5 @@
 extends Node
-## Regression test for the armour axis guards (issue #86).
+## Regression test for the armour axis guards (issues #86, #96).
 ##
 ## Armour is the ONE place the design lets power grow ("Armour = your role/
 ## agility axis, and the bounded endgame vertical"), so it is the most likely
@@ -15,6 +15,12 @@ extends Node
 ##     mitigation, agility} from closed sets, both axes inside their caps, ids
 ##     unique. No offence field is accepted at all, which is "keep them [the
 ##     weapon and armour axes] from blurring" made mechanical.
+##  4. ONE SLOT VOCABULARY (#96) — the armour model and the baked equipment
+##     registry describe the same body regions, so every art-layer slot (and
+##     every shipped piece's slot) must be a legal Armor.SLOTS value. Read from
+##     the REAL registry, so the two vocabularies can never silently drift.
+##     Model-only slots are allowed and deliberate (see armor.gd's SCOPE note);
+##     an art-layer slot the model rejects is the defect.
 ##
 ## Every negative control is ISOLATED: a strictly-dominant piece trips dominance
 ## ONLY, a mislabelled piece trips inversion ONLY, and a malformed/over-cap piece
@@ -52,9 +58,9 @@ func _ready() -> void:
 
 	# --- 1. DOMINANCE control: a same-class piece that is simply better ---
 	# Same weight class as warden_hauberk, better on both axes: creep, not a trade.
-	# Deliberately still class-honest (between the light and heavy chest pieces),
+	# Deliberately still class-honest (between the light and heavy torso pieces),
 	# so it trips dominance ALONE.
-	var creep := {"id": "creep_vest", "slot": "chest", "weight_class": "medium", "mitigation": 50.0, "agility": 60.0}
+	var creep := {"id": "creep_vest", "slot": "torso", "weight_class": "medium", "mitigation": 50.0, "agility": 60.0}
 	var with_creep: Array = seeds.duplicate()
 	with_creep.append(creep)
 	_flags(Armor.find_strict_dominance(with_creep), "dominance guard catches a strictly-better piece")
@@ -76,11 +82,11 @@ func _ready() -> void:
 	# --- 3. SCHEMA controls, each isolated from the pairwise guards ---
 	# (a) a smuggled offence field — the axis-blur the design forbids
 	_isolated_schema_case(seeds,
-		{"id": "blade_mail", "slot": "chest", "weight_class": "heavy", "mitigation": 60.0, "agility": 30.0, "damage": 25.0},
+		{"id": "blade_mail", "slot": "torso", "weight_class": "heavy", "mitigation": 60.0, "agility": 30.0, "damage": 25.0},
 		"schema guard catches a smuggled offence field (axis blur)")
 	# (b) over the bounded ceiling — would dominate everything if it were let in
 	_isolated_schema_case(seeds,
-		{"id": "godplate", "slot": "chest", "weight_class": "heavy", "mitigation": 250.0, "agility": 95.0},
+		{"id": "godplate", "slot": "torso", "weight_class": "heavy", "mitigation": 250.0, "agility": 95.0},
 		"schema guard catches mitigation past the bounded ceiling")
 	# (c) a slot outside the closed set
 	_isolated_schema_case(seeds,
@@ -144,7 +150,34 @@ func _ready() -> void:
 	if _failed:
 		return
 
-	print("TEST PASS — armour axis holds (%d seed pieces: trade-off, class-honest, closed schema within the bounded ceiling; all three guards proven with isolated negative controls)" % seeds.size())
+	# --- CROSS-LAYER: the art layer's slot vocabulary must be legal here (#96) ---
+	# The armour model and the baked equipment registry describe the same body
+	# regions and MUST share one vocabulary; the art layer is the incumbent (its
+	# slot strings are baked into shipped pieces and reachable from persisted
+	# recipes), so every art slot has to be a legal armour slot. Read the REAL
+	# registry, never a hardcoded copy, so drift in either direction turns CI red.
+	var registry := CharacterFactory.equipment_registry()
+	var art_slots: Array = registry.get("slots", [])
+	# A missing/unreadable registry would make every check below pass VACUOUSLY —
+	# the "a broken scanner reads exactly like a clean one" trap. Assert it loaded.
+	_check(art_slots.is_empty(), false, "cross-layer: the baked equipment registry actually loaded (an empty one would pass vacuously)")
+	if _failed:
+		return
+	for slot: Variant in art_slots:
+		_check(str(slot) in Armor.SLOTS, true,
+			"cross-layer: art-layer slot '%s' is a legal armour slot (Armor.SLOTS=%s)" % [str(slot), Armor.SLOTS])
+	# Every shipped PIECE's slot too: the registry's own slot list and its pieces
+	# could themselves disagree, and it is the pieces that actually get worn.
+	var piece_slots := _piece_slots(registry)
+	_check(piece_slots.is_empty(), false, "cross-layer: the registry actually declares pieces (an empty one would pass vacuously)")
+	if _failed:
+		return
+	for slot: String in piece_slots:
+		_check(slot in Armor.SLOTS, true, "cross-layer: shipped piece slot '%s' is a legal armour slot" % slot)
+	if _failed:
+		return
+
+	print("TEST PASS — armour axis holds (%d seed pieces: trade-off, class-honest, closed schema within the bounded ceiling; all three guards proven with isolated negative controls) + slot vocabulary agrees with the art layer (%d art slots, %d shipped pieces)" % [seeds.size(), art_slots.size(), piece_slots.size()])
 	get_tree().quit(0)
 
 
@@ -158,6 +191,26 @@ func _isolated_schema_case(seeds: Array, bad: Dictionary, label: String) -> void
 	_flags(Armor.find_schema_violations(candidate), label)
 	_clean(Armor.find_strict_dominance(candidate), "%s — and it is excluded from the dominance guard" % label)
 	_clean(Armor.find_class_inversions(candidate), "%s — and from the inversion guard" % label)
+
+
+## Every shipped piece's slot, from the baked registry. Handles both plausible
+## bake shapes (an id-keyed dictionary, which is what ships today, or an array of
+## piece records) — the bake FORMAT is the art layer's concern, but the slot
+## VOCABULARY is shared, and that is what this test pins.
+func _piece_slots(registry: Dictionary) -> Array[String]:
+	var out: Array[String] = []
+	var pieces: Variant = registry.get("pieces", null)
+	if pieces is Dictionary:
+		for key: Variant in (pieces as Dictionary):
+			var p: Variant = (pieces as Dictionary)[key]
+			if p is Dictionary and (p as Dictionary).has("slot"):
+				out.append(str((p as Dictionary)["slot"]))
+	elif pieces is Array:
+		for p: Variant in (pieces as Array):
+			if p is Dictionary and (p as Dictionary).has("slot"):
+				out.append(str((p as Dictionary)["slot"]))
+	out.sort()
+	return out
 
 
 func _clean(problems: Array[String], label: String) -> void:
