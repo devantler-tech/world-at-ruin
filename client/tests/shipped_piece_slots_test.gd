@@ -87,6 +87,15 @@ func _ready() -> void:
 			_fail("piece '%s' is in %s but has no slot recorded in %s — the ledgers have drifted"
 				% [piece_name, SHIPPED_PIECES, LEDGER])
 			return
+	# ...and the other way. Checking one direction only would let a new baked piece
+	# satisfy this ledger (forced above) while never reaching shipped_equipment.txt,
+	# leaving the existing forward-only guard blind to a piece players can save.
+	for piece_name: String in ledger:
+		if piece_name not in shipped:
+			_fail(("piece '%s' has a slot recorded in %s but is missing from %s — the ledgers have drifted; " +
+				"a player-saveable piece must be covered by BOTH guards")
+				% [piece_name, LEDGER, SHIPPED_PIECES])
+			return
 
 	# 4. Every ledgered slot is a legal armour slot, so this ledger can never
 	#    disagree with the vocabulary #96 reconciled.
@@ -117,6 +126,17 @@ func _ledger() -> Dictionary:
 		var parts := line.split(" ", false)
 		if parts.size() != 2:
 			_fail("malformed ledger line in %s: '%s' (expected '<piece> <slot>')" % [LEDGER, line])
+			return {}
+		# A DUPLICATE piece is refused, not last-write-wins. Appending a second row
+		# (`boots_worn legs` under an existing `boots_worn feet`) looks append-only
+		# but silently re-points the promise: the mapping check would then pin the
+		# duplicate and pass against a moved registry, while saves holding the
+		# ORIGINAL slot still fail validation. The first shipped slot is immutable.
+		if parts[0] in out:
+			_fail(("duplicate piece '%s' in %s (already promised slot '%s', row says '%s') — " +
+				"a second row silently re-points a shipped promise; the first shipped slot is immutable, " +
+				"so moving a piece needs a player-visible deprecation, not an extra line")
+				% [parts[0], LEDGER, out[parts[0]], parts[1]])
 			return {}
 		out[parts[0]] = parts[1]
 	return out
