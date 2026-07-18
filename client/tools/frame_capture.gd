@@ -79,6 +79,9 @@ const UI_SAMPLE_Y1 := 0.90
 ## sooner than a world vantage. Kept separate so adding this scenario does not
 ## lengthen the world capture, per #145.
 const UI_WARMUP_FRAMES := 60
+## Frames to settle after a preset switch: it rebuilds the portrait rig, so an
+## immediate shot photographs the previous body.
+const UI_SETTLE_FRAMES := 30
 
 
 func _ready() -> void:
@@ -221,33 +224,79 @@ func _capture_first_run(dir: String, main: Node) -> void:
 		_fail("the creator has no visible panel — the frame would be the world behind a transparent layer")
 		return
 
+	# One frame is not enough for what the gate triggers on. The panel places 29
+	# shape sliders and six bone sliders above its outfit and skin sections, so
+	# those controls sit BELOW THE FOLD; and the gate fires on any recipe, while
+	# a single shot shows only the default one. Without these, a PR changing
+	# brute.json or the skin picker gets a green capture whose frame does not
+	# contain the surface it changed.
+	if not await _shoot(dir, "first_run", creator):
+		return
+	var shots := 1
+
+	var scroll := _find_scroll(creator)
+	if scroll == null:
+		_fail("the creator has no scroll container — the controls below the fold would go unphotographed")
+		return
+	scroll.scroll_vertical = int(scroll.get_v_scroll_bar().max_value)
+	await get_tree().process_frame
+	if scroll.scroll_vertical <= 0:
+		_fail("the creator's control list did not scroll — its lower sections would go unphotographed")
+		return
+	if not await _shoot(dir, "first_run_lower", creator):
+		return
+	shots += 1
+	scroll.scroll_vertical = 0
+
+	# Every preset the creator offers, because the gate fires on any recipe
+	# change while only the default one is otherwise on screen.
+	for preset: String in CharacterCreator.PRESETS:
+		creator.call("_on_preset", preset)
+		for i in UI_SETTLE_FRAMES:
+			await get_tree().process_frame
+		if not await _shoot(dir, "first_run_%s" % preset, creator):
+			return
+		shots += 1
+
+	print("CAPTURE PASS — %d first-run vantages written to %s" % [shots, dir])
+	get_tree().quit(0)
+
+
+## Captures one creator frame, re-checking the panel is really on screen first:
+## a preset switch rebuilds the portrait and could take the panel with it, and a
+## frame of bare world would otherwise be saved under a first-run name.
+func _shoot(dir: String, frame: String, creator: CanvasLayer) -> bool:
+	if _visible_panel_area(creator) <= 0.0:
+		_fail("%s: the creator has no visible panel — the frame would be the world behind a transparent layer" % frame)
+		return false
 	await RenderingServer.frame_post_draw
 	var img := get_viewport().get_texture().get_image()
 	var spread := _luma_spread_box(img, UI_SAMPLE_X0, UI_SAMPLE_X1, UI_SAMPLE_Y0, UI_SAMPLE_Y1)
 	if spread < MIN_LUMA_SPREAD:
-		_fail("the creator panel band is a uniform frame (luma spread %.4f) — the UI did not draw" % spread)
-		return
-	var out := "%s/first_run.png" % dir
+		_fail("%s: the creator panel band is a uniform frame (luma spread %.4f) — the UI did not draw" % [frame, spread])
+		return false
+	var out := "%s/%s.png" % [dir, frame]
 	var err := img.save_png(out)
 	if err != OK:
 		_fail("could not write %s (error %d)" % [out, err])
-		return
-	# The clamp note matters MORE here than for a world vantage. A hosted runner
-	# often cannot realise the shipped window size, and the creator's panel is a
-	# fixed-height column: at a shorter viewport it clips, which reads exactly
-	# like a layout bug in the change under review. Say so on the frame rather
-	# than let a reviewer draw that conclusion.
+		return false
 	var note := _size_note(img)
-	print("CAPTURED first_run -> %s (%dx%d, luma spread %.3f)%s" %
-		[out, img.get_width(), img.get_height(), spread, note])
-	# The note has to travel WITH the frame. A reviewer opens the PNG from the
-	# build artifact and never sees this job log, so a clamped capture would
-	# otherwise show a clipped panel with nothing to say why — which reads as a
-	# layout regression in the change under review. Written beside the frame and
-	# uploaded with it.
-	_write_note(dir, "first_run", img, note)
-	print("CAPTURE PASS — 1 first-run vantage written to %s" % dir)
-	get_tree().quit(0)
+	print("CAPTURED %s -> %s (%dx%d, luma spread %.3f)%s" %
+		[frame, out, img.get_width(), img.get_height(), spread, note])
+	_write_note(dir, frame, img, note)
+	return true
+
+
+## The creator's scrolling control list.
+func _find_scroll(node: Node) -> ScrollContainer:
+	for child in node.get_children():
+		if child is ScrollContainer:
+			return child as ScrollContainer
+		var found := _find_scroll(child)
+		if found != null:
+			return found
+	return null
+
 
 
 ## Writes the frame's own provenance next to it, so the artifact carries what
