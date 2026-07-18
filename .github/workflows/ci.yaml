@@ -318,16 +318,20 @@ jobs:
             fi
           done
           [ "$fail" = 0 ]
-      - name: Rebalances are sidegrades (no strict self-buff over base)
-        # Freezing per-cast `power` does NOT freeze effective throughput: halving
-        # a class's cooldowns would leave every ability at its frozen power and
-        # preserve pairwise dominance, yet ~double its damage-per-second — raw
-        # power inflation with no undo. A rebalance IS allowed, but a shipped
-        # ability may never become a STRICT UPGRADE of its own base version: an
-        # improvement on one axis (lower cast/cooldown/cost, higher range/power)
-        # must be paid for by a regression on another. Nerfs and true sidegrades
-        # pass; only a free buff fails. CI is the anchor (the in-tree test cannot
-        # see the base revision).
+      - name: No strict self-buff over base (partial anti-inflation guard)
+        # A rebalance IS allowed, but a shipped ability may never become a STRICT
+        # UPGRADE of its own base version: an improvement on one axis (lower
+        # cast/cooldown/cost, higher range/power) with nothing given back is a
+        # free buff, and there is no undo. Nerfs and true sidegrades pass.
+        #
+        # SCOPE (deliberately partial): this catches the BLATANT case only. A
+        # nominal sidegrade (a token range nerf paying for a large cooldown cut)
+        # passes here, and a brand-new ability is never compared at all — which is
+        # why throughput is bounded absolutely by the frozen cycle floor above
+        # rather than relying on this step. What remains unbounded is the
+        # multi-target economy (telegraph AREA is not in the model), a balance
+        # decision tracked in #82.
+        # CI is the anchor (the in-tree test cannot see the base revision).
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}

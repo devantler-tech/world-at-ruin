@@ -16,14 +16,23 @@ extends RefCounted
 ## this game, so — like the save-fixture guard that landed before the first
 ## player — these exist BEFORE the first ability content does:
 ##
-##   1. NO PER-CAST POWER INFLATION — "Mastery unlocks new arsenals, never more
-##      damage." Every ability of a (role|effect) category shares ONE frozen
-##      per-cast power budget, so a new weapon or telegraph can never introduce a
-##      higher-power version of an existing category. (Effective THROUGHPUT — power
-##      per second, which also depends on cast time and cooldown — is held
-##      separately by the CI "no strict self-buff over base" anchor: a rebalance of
-##      a shipped ability must be a sidegrade, never a strict buff. The initial
-##      power scale of a genuinely NEW category is a tracked balance decision.)
+##   1. NO POWER INFLATION — "Mastery unlocks new arsenals, never more damage."
+##      Three anchors, each closing what the previous one leaves open. Every
+##      ability of a (role|effect) category shares ONE frozen per-cast power
+##      budget, so a new weapon or telegraph cannot introduce a stronger version
+##      of an existing category. Because that bounds only how much a cast does,
+##      every ability must also meet a frozen cast+cooldown CYCLE FLOOR, which
+##      bounds how often it lands — together capping per-target throughput at
+##      budget/floor. And because a brand-new category could otherwise claim any
+##      opening value permanently, CI bounds an added category against the scale
+##      already shipped. A shipped ability additionally may never become a STRICT
+##      upgrade of its own base version (the CI "no strict self-buff" anchor).
+##
+##      SCOPE, stated honestly: this bounds PER-TARGET throughput. Telegraph AREA
+##      is not in the model, so a wider cone at the same budget and cycle reaches
+##      more targets for more total damage. That multi-target economy is a real
+##      balance decision and is tracked in devantler-tech/world-at-ruin#82 — it is
+##      not claimed as enforced here.
 ##
 ##   2. NO STRICT DOMINANCE (the sidegrade law) — "Every new arsenal ability must
 ##      be a SIDEGRADE, never a strict upgrade." Within a comparable class no
@@ -185,11 +194,16 @@ static func dominates(a: Dictionary, b: Dictionary) -> bool:
 ## This is NECESSARY but not SUFFICIENT for "never more power": per-cast power is
 ## not effective throughput, which also depends on cast time and cooldown. That
 ## remainder is held by `find_throughput_inflation` and its frozen cycle-floor
-## ledger — NOT, as this note previously claimed, by the "no strict self-buff
-## over base" sidegrade anchor, which cannot see it: trading a shorter cooldown
-## for a shorter range is not a Pareto win, so it passes as a sidegrade while
-## roughly doubling throughput. The initial scale of a genuinely NEW (role|effect)
-## category is bounded in CI against the categories already shipped.
+## ledger — NOT, as this note once claimed, by the CI "no strict self-buff over
+## base" anchor, which cannot see it: trading a shorter cooldown for a shorter
+## range is no Pareto win, so it passes as a sidegrade while roughly doubling
+## damage per second. The initial scale of a genuinely NEW (role|effect) category
+## is bounded in CI against the categories already shipped.
+##
+## Still NOT bounded, and a genuine balance decision tracked in
+## devantler-tech/world-at-ruin#82: multi-target reach. Throughput here is
+## per-target — telegraph AREA is not in the model, so a wider cone at the same
+## cycle and budget hits more targets for more total damage.
 static func find_power_inflation(abilities: Array, budgets: Dictionary) -> Array:
 	var violations: Array = []
 	for ab in abilities:
