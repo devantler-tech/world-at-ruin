@@ -408,6 +408,38 @@ const _NEIGHBOURS: Array[Vector3i] = [
 const _WAKE_ROOM := 2 ## rooms[2] is the main chamber the wanderer wakes in.
 const AUDIT_PAD := 4.0 ## Audit-only sampling margin, so the box reaches open air.
 
+## --- The wanderer's body, as the connectivity audit models it ---
+## Mirrors the capsule in player.gd. A connectivity guard that does not model
+## the body it is clearing space for is only guessing, so these are pinned
+## against player.gd by cave_connectivity_test.
+const BODY_RADIUS := 0.4 ## Capsule radius, metres (player.gd).
+const BODY_HEIGHT := 1.8 ## Capsule total height, metres (player.gd).
+## Cell counts derived from the body above at CELL resolution. GDScript cannot
+## compute these in a const expression, so they are written out and the test
+## re-derives them — if CELL or the capsule ever changes, that check fails
+## rather than the audit silently clearing the wrong volume.
+const BODY_CELLS := 3 ## ceil(BODY_HEIGHT / CELL) — 1.95 m of headroom.
+const LATERAL_CELLS := 1 ## ceil(BODY_RADIUS / CELL) — 0.65 m of side clearance.
+const STEP_CELLS := 1 ## Rise the wanderer can step up or down, in cells.
+
+## Sideways clearance offsets, applied at every level of the body's column.
+const _LATERAL: Array[Vector3i] = [
+	Vector3i(1, 0, 0), Vector3i(-1, 0, 0),
+	Vector3i(0, 0, 1), Vector3i(0, 0, -1),
+]
+
+## How a walking body moves between cells: a lateral step on the level, or the
+## same step while rising or dropping one cell. Never straight up or down —
+## the wanderer walks and steps, it does not climb shafts or fly.
+const _WALK_STEPS: Array[Vector3i] = [
+	Vector3i(1, 0, 0), Vector3i(-1, 0, 0),
+	Vector3i(0, 0, 1), Vector3i(0, 0, -1),
+	Vector3i(1, 1, 0), Vector3i(-1, 1, 0),
+	Vector3i(0, 1, 1), Vector3i(0, 1, -1),
+	Vector3i(1, -1, 0), Vector3i(-1, -1, 0),
+	Vector3i(0, -1, 1), Vector3i(0, -1, -1),
+]
+
 
 ## Flat field index of a corner cell — multiplication only, no integer division
 ## (this repo treats an integer-division warning as an error).
@@ -423,48 +455,86 @@ static func _void_at(field: PackedFloat32Array, nx: int, ny: int, nz: int, c: Ve
 	return field[_fi(c, ny, nz)] < 0.0
 
 
-## Can a body actually occupy this cell? The cell and all six axis neighbours
-## must be void, which erodes the void by one cell — CELL (0.65 m) of clearance,
-## comfortably past the player capsule's 0.4 m radius (see player.gd). This is
-## what stops a ceiling crack or pinhole narrower than the wanderer from reading
-## as a connection.
+## Does the player's BODY fit here, standing upright? [param c] is the FOOT
+## cell. The capsule is 0.4 m in radius and 1.8 m tall (player.gd), so the whole
+## column of BODY_CELLS cells from the feet up must be void, and every one of
+## those levels must also be void one cell out sideways.
 ##
-## HONEST LIMIT: a one-cell erosion rejects sub-cell gaps; it is NOT a capsule
-## traversal proof and does not model the 1.8 m standing height or floor support.
-## A true capsule/navmesh traversal check is issue #107.
-static func passable(field: PackedFloat32Array, nx: int, ny: int, nz: int, c: Vector3i) -> bool:
+## This is a volume test, not a floor test: it says the body would not be inside
+## rock here, and nothing about whether anything holds it up. That is what
+## [method standing] adds. Together they are what turn the old one-cell erosion —
+## which rejected sub-cell pinholes but happily routed the wanderer through a
+## crawlspace or across thin air — into a body the audit can actually walk.
+static func body_fits(field: PackedFloat32Array, nx: int, ny: int, nz: int, c: Vector3i) -> bool:
 	if c.x < 0 or c.x >= nx or c.y < 0 or c.y >= ny or c.z < 0 or c.z >= nz:
 		return false
-	if not _void_at(field, nx, ny, nz, c):
-		return false
-	for step: Vector3i in _NEIGHBOURS:
-		if not _void_at(field, nx, ny, nz, c + step):
+	for dy in BODY_CELLS:
+		var level := c + Vector3i(0, dy, 0)
+		if not _void_at(field, nx, ny, nz, level):
 			return false
+		for step: Vector3i in _LATERAL:
+			if not _void_at(field, nx, ny, nz, level + step):
+				return false
 	return true
 
 
-## Flood-fills PASSABLE space 6-connected from `start`, returning a byte mask
-## (1 = reachable). Empty when the start cell itself is not passable — a region
-## is defined by what a body can actually move through, not by bare void.
+## Backwards-compatible name for the free-space (volume-only) test.
+static func passable(field: PackedFloat32Array, nx: int, ny: int, nz: int, c: Vector3i) -> bool:
+	return body_fits(field, nx, ny, nz, c)
+
+
+## Can the wanderer STAND here — the body fits AND there is rock directly under
+## its feet to carry it? Open space below fails: a route through mid-air is not
+## a route a walking body can take, and treating it as one is exactly how a
+## connectivity audit certifies a cave the player cannot actually cross.
+##
+## Unsampled space below the box counts as no floor, not as rock — the audit
+## only vouches for what it measured.
+static func standing(field: PackedFloat32Array, nx: int, ny: int, nz: int, c: Vector3i) -> bool:
+	if not body_fits(field, nx, ny, nz, c):
+		return false
+	return not _void_at(field, nx, ny, nz, c + Vector3i(0, -1, 0))
+
+
+## Flood-fills free space the BODY fits through, 6-connected from `start`.
+## Used for open air outside the massif, where there is no sampled floor to
+## stand on — for anywhere the wanderer must WALK, use [method flood_walkable].
 static func flood_passable(field: PackedFloat32Array, nx: int, ny: int, nz: int, start: Vector3i) -> PackedByteArray:
+	return _flood(field, nx, ny, nz, start, _NEIGHBOURS, false)
+
+
+## Flood-fills the cells the wanderer can WALK between: standing cells joined by
+## a lateral step, or a step up/down of one cell (STEP_CELLS × CELL of rise,
+## which the character controller climbs). This is the traversal proof — a
+## region here is somewhere a body on its feet can actually get to.
+static func flood_walkable(field: PackedFloat32Array, nx: int, ny: int, nz: int, start: Vector3i) -> PackedByteArray:
+	return _flood(field, nx, ny, nz, start, _WALK_STEPS, true)
+
+
+static func _flood(field: PackedFloat32Array, nx: int, ny: int, nz: int, start: Vector3i,
+		steps: Array[Vector3i], grounded: bool) -> PackedByteArray:
 	var seen := PackedByteArray()
 	seen.resize(field.size())
 	seen.fill(0)
-	if not passable(field, nx, ny, nz, start):
+	if not _ok(field, nx, ny, nz, start, grounded):
 		return seen
 	var stack: Array[Vector3i] = [start]
 	seen[_fi(start, ny, nz)] = 1
 	while not stack.is_empty():
 		var c := stack.pop_back() as Vector3i
-		for step: Vector3i in _NEIGHBOURS:
+		for step: Vector3i in steps:
 			var j := c + step
 			if j.x < 0 or j.x >= nx or j.y < 0 or j.y >= ny or j.z < 0 or j.z >= nz:
 				continue
 			var n := _fi(j, ny, nz)
-			if seen[n] == 0 and passable(field, nx, ny, nz, j):
+			if seen[n] == 0 and _ok(field, nx, ny, nz, j, grounded):
 				seen[n] = 1
 				stack.append(j)
 	return seen
+
+
+static func _ok(field: PackedFloat32Array, nx: int, ny: int, nz: int, c: Vector3i, grounded: bool) -> bool:
+	return standing(field, nx, ny, nz, c) if grounded else body_fits(field, nx, ny, nz, c)
 
 
 ## The corner cell a world point actually falls in — no projection onto a nearby
@@ -506,35 +576,119 @@ static func reachability(p_seed: int) -> Dictionary:
 	var ny: int = sampled["ny"]
 	var nz: int = sampled["nz"]
 	var rooms: Array = lay["rooms"]
-	var wake := (rooms[_WAKE_ROOM] as Dictionary)["center"] as Vector3
-	var start := cell_of(wake, lo, nx, ny, nz)
-	var seen := flood_passable(field, nx, ny, nz, start)
 
-	# One pass: count what was reached, and detect whether the flood escaped to
-	# the boundary of the padded box, which is open air outside the massif.
+	# Audited points are authored at chamber CENTRES — mid-air, a body-height or
+	# more above the floor. The wanderer stands on the floor, so every audited
+	# point drops to the ground under it before being judged; asking whether a
+	# point hanging in space is walkable would fail every seed for the wrong
+	# reason.
+	var wake := (rooms[_WAKE_ROOM] as Dictionary)["center"] as Vector3
+	var start := ground_cell(field, nx, ny, nz, cell_of(wake, lo, nx, ny, nz))
+	var seen := flood_walkable(field, nx, ny, nz, start)
+
 	var reached := 0
-	var escaped := false
+	for i in seen.size():
+		reached += seen[i]
+
+	var rooms_reachable: Array[bool] = []
+	for room: Dictionary in rooms:
+		rooms_reachable.append(walk_reached(room["center"] as Vector3, seen, field, lo, nx, ny, nz))
+	return {
+		"reached": reached,
+		"total": field.size(),
+		"start_passable": standing(field, nx, ny, nz, start),
+		"spawn_reachable": walk_reached(lay["spawn"] as Vector3, seen, field, lo, nx, ny, nz),
+		"mouth_open": _walks_out(field, nx, ny, nz, seen),
+		"rooms_reachable": rooms_reachable,
+	}
+
+
+## The cell a body dropped at [param c] comes to rest in: the first cell at or
+## below it that the wanderer can stand in. Falls back to [param c] so callers
+## always get a cell to judge (an unstandable one simply floods nothing).
+static func ground_cell(field: PackedFloat32Array, nx: int, ny: int, nz: int, c: Vector3i,
+		span: int = 8) -> Vector3i:
+	for dy in range(0, span + 1):
+		var below := c - Vector3i(0, dy, 0)
+		if below.y < 0:
+			break
+		if standing(field, nx, ny, nz, below):
+			return below
+	# Authored a touch under the floor (rounding, or a sloped chamber base):
+	# look up a little too before giving up.
+	for dy in range(1, span + 1):
+		var above := c + Vector3i(0, dy, 0)
+		if above.y >= ny:
+			break
+		if standing(field, nx, ny, nz, above):
+			return above
+	return c
+
+
+## Can the wanderer walk to [param point] — dropped to the ground beneath it, is
+## that cell in the walkable region?
+static func walk_reached(point: Vector3, seen: PackedByteArray, field: PackedFloat32Array,
+		lo: Vector3, nx: int, ny: int, nz: int) -> bool:
+	var c := ground_cell(field, nx, ny, nz, cell_of(point, lo, nx, ny, nz))
+	return seen[_fi(c, ny, nz)] == 1
+
+
+## Is there a way OUT — can the wanderer walk to somewhere open air is one step
+## away? The audit box is padded past the massif, so "open air" is the free
+## space connected to its boundary.
+##
+## The walkable flood cannot itself leave the massif: outside it there is no
+## sampled floor to stand on, because the audit models the mountain and not the
+## world's terrain, which takes over at the mouth. So a walk-out is the wanderer
+## reaching the threshold — a standing cell with open air adjacent — rather than
+## the flood escaping the box, which no grounded flood ever could.
+static func _walks_out(field: PackedFloat32Array, nx: int, ny: int, nz: int,
+		seen: PackedByteArray) -> bool:
+	var air := _open_air(field, nx, ny, nz)
+	if air.is_empty():
+		return false
 	for ix in nx:
 		for iy in ny:
 			for iz in nz:
 				if seen[(ix * ny + iy) * nz + iz] == 0:
 					continue
-				reached += 1
-				if ix == 0 or ix == nx - 1 or iy == 0 or iy == ny - 1 or iz == 0 or iz == nz - 1:
-					escaped = true
+				for step: Vector3i in _WALK_STEPS:
+					var j := Vector3i(ix, iy, iz) + step
+					if j.x < 0 or j.x >= nx or j.y < 0 or j.y >= ny or j.z < 0 or j.z >= nz:
+						continue
+					if air[_fi(j, ny, nz)] == 1:
+						return true
+	return false
 
-	var rooms_reachable: Array[bool] = []
-	for room: Dictionary in rooms:
-		rooms_reachable.append(
-			point_reached(room["center"] as Vector3, lay, noise, seen, lo, nx, ny, nz))
-	return {
-		"reached": reached,
-		"total": field.size(),
-		"start_passable": passable(field, nx, ny, nz, start),
-		"spawn_reachable": point_reached(lay["spawn"] as Vector3, lay, noise, seen, lo, nx, ny, nz),
-		"mouth_open": escaped,
-		"rooms_reachable": rooms_reachable,
-	}
+
+## Free space the body fits through that is connected to the padded box's
+## boundary — everything outside the massif.
+static func _open_air(field: PackedFloat32Array, nx: int, ny: int, nz: int) -> PackedByteArray:
+	var air := PackedByteArray()
+	air.resize(field.size())
+	air.fill(0)
+	var stack: Array[Vector3i] = []
+	for ix in nx:
+		for iy in ny:
+			for iz in nz:
+				if ix != 0 and ix != nx - 1 and iy != 0 and iy != ny - 1 and iz != 0 and iz != nz - 1:
+					continue
+				var c := Vector3i(ix, iy, iz)
+				var n := _fi(c, ny, nz)
+				if air[n] == 0 and body_fits(field, nx, ny, nz, c):
+					air[n] = 1
+					stack.append(c)
+	while not stack.is_empty():
+		var c := stack.pop_back() as Vector3i
+		for step: Vector3i in _NEIGHBOURS:
+			var j := c + step
+			if j.x < 0 or j.x >= nx or j.y < 0 or j.y >= ny or j.z < 0 or j.z >= nz:
+				continue
+			var n := _fi(j, ny, nz)
+			if air[n] == 0 and body_fits(field, nx, ny, nz, j):
+				air[n] = 1
+				stack.append(j)
+	return air
 
 
 ## In-scene build: mesh + collision + torches + mouth boulders. The terrain
