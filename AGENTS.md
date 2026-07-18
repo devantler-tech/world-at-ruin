@@ -282,8 +282,36 @@ can be watched by playing; every *further* art/game system waits on Phase 0.)
   must be attributable to code.
 - **Dev log is a contract:** every player-visible change adds a `DevLog.ENTRIES` entry (newest
   first) in the same PR — the maintainer watches progress by playing, and the dev log is that
-  surface. Bump `DevLog.VERSION` (and `config/version` in `project.godot`) per release-worthy
-  change.
+  surface. Write the entry's `version` as the version the change will ship in (the next
+  semantic-release bump implied by your commit type). **Do NOT hand-edit `DevLog.VERSION` or
+  `config/version` in `project.godot`** — release builds are stamped from the release tag (below),
+  so a hand-bump only drifts from the real version.
+- **CI, CD and releases:**
+  - `ci.yaml` (`pull_request` + `merge_group`) lints, tests and analyses. It is the gate on a
+    change. Its macOS export job is **build verification** — proof the project still exports and
+    the exported app boots — not a distribution channel; that artifact has no version identity.
+  - `release.yaml` (`push` to `main`) calls the shared
+    `devantler-tech/actions/.github/workflows/create-release.yaml`, which runs **semantic-release**
+    against the root `.releaserc`. Conventional-Commit types decide the bump (`fix:` → patch,
+    `feat:` → minor, `type!:` or a `BREAKING CHANGE:` footer → major; `chore:`/`docs:`/`ci:` cut
+    nothing). **The `type!:` form only works because `.releaserc` configures it**
+    (`parserOpts.breakingHeaderPattern` + a `breaking: true` release rule): semantic-release's
+    default Angular preset recognises only the `BREAKING CHANGE:` footer, and a bare config gives
+    `feat!:` **no release at all** — a breaking change would ship silently unversioned. Do not
+    "simplify" that block away. The `conventionalcommits` preset would handle `!` natively but is
+    **not** an option: it needs `conventional-changelog-conventionalcommits`, which the shared
+    `create-release.yaml` (`npx semantic-release@25.0.3`, no install step) does not provide. It tags
+    `vX.Y.Z` **and** publishes a GitHub Release. It runs under a GitHub App token, not
+    `GITHUB_TOKEN` — that is what lets the release trigger a downstream workflow at all.
+  - `cd.yaml` (`release: published`) production-builds the macOS client, **stamps the release
+    version** into `config/version` and `DevLog.VERSION` at build time, verifies the exported app
+    boots reporting `BOOT_OK v<version>` (the proof the stamp reached the shipped binary), and
+    attaches the zip to the Release. `workflow_dispatch` with a `tag` input re-runs it for an
+    existing release.
+  - The version is therefore **derived, never maintained**. The in-tree constants are dev values;
+    only a released build carries a real version.
+  - **`CI - Required Checks` is the repo's single required status context.** Renaming or removing
+    that job wedges every PR in the repo — treat its name as load-bearing.
 - **Scripting:** GDScript in the Godot project; **bash or Go everywhere else — never Python**
   (portfolio constitution). The Phase-0 Blender pipeline is the sole, explicitly-settled exception
   (`bpy` is Python by nature); keep it isolated under `tools/artgen/` when it lands.
