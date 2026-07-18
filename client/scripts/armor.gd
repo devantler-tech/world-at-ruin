@@ -37,7 +37,26 @@ extends RefCounted
 ##    the axis-non-blur law made mechanical.
 
 ## The closed slot set — where a piece is worn.
-const SLOTS: Array[String] = ["head", "chest", "hands", "legs", "feet"]
+##
+## VOCABULARY: these strings are the SAME vocabulary the art layer uses in the
+## baked equipment registry (`equipment.json`), not a parallel one. The art layer
+## is the incumbent — its slot strings are baked into shipped pieces and are
+## reachable from persisted recipes (`CharacterFactory` reads
+## `recipe["equipment"][slot]`) — so where the two ever disagree, the model
+## yields. That is why the torso slot is `torso` and not `chest`: renaming a
+## shipped slot string later would be a repurpose of an existing value, which the
+## forward-only law forbids, while this model has no persisted data yet.
+##
+## SCOPE (deliberate): this set is a SUPERSET of the art layer's shipped slots.
+## Every art-layer slot must be a legal armour slot — `armor_axis_test` asserts
+## that containment against the real registry, so the two can never drift apart
+## again. The reverse does NOT hold: `head` and `hands` are legal here while no
+## piece for them is baked yet, because helmets and gauntlets are clearly
+## intended (the seed table already models them) and appending a slot later is
+## forward-only, whereas narrowing now and re-widening later is churn. A
+## model-only slot is therefore expected, not a defect — an art-layer slot
+## missing from this set IS one.
+const SLOTS: Array[String] = ["head", "torso", "hands", "legs", "feet"]
 
 ## The closed weight-class set, lightest first. Index IS the class rank, so
 ## "heavier than" is a comparison, not a lookup table.
@@ -64,9 +83,9 @@ const SEED_PIECES: Array[Dictionary] = [
 	{"id": "ashen_hood", "slot": "head", "weight_class": "light", "mitigation": 8.0, "agility": 88.0},
 	{"id": "warden_coif", "slot": "head", "weight_class": "medium", "mitigation": 18.0, "agility": 62.0},
 	{"id": "cinder_helm", "slot": "head", "weight_class": "heavy", "mitigation": 28.0, "agility": 40.0},
-	{"id": "ashen_wrap", "slot": "chest", "weight_class": "light", "mitigation": 20.0, "agility": 85.0},
-	{"id": "warden_hauberk", "slot": "chest", "weight_class": "medium", "mitigation": 42.0, "agility": 58.0},
-	{"id": "cinder_plate", "slot": "chest", "weight_class": "heavy", "mitigation": 64.0, "agility": 32.0},
+	{"id": "ashen_wrap", "slot": "torso", "weight_class": "light", "mitigation": 20.0, "agility": 85.0},
+	{"id": "warden_hauberk", "slot": "torso", "weight_class": "medium", "mitigation": 42.0, "agility": 58.0},
+	{"id": "cinder_plate", "slot": "torso", "weight_class": "heavy", "mitigation": 64.0, "agility": 32.0},
 	{"id": "ashen_bindings", "slot": "hands", "weight_class": "light", "mitigation": 6.0, "agility": 90.0},
 	{"id": "warden_gloves", "slot": "hands", "weight_class": "medium", "mitigation": 13.0, "agility": 66.0},
 	{"id": "cinder_gauntlets", "slot": "hands", "weight_class": "heavy", "mitigation": 20.0, "agility": 44.0},
