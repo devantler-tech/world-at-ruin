@@ -27,12 +27,14 @@ newer. Windows and Linux builds aren't exported yet.
 
 ```sh
 brew tap devantler-tech/tap
-brew trust devantler-tech/tap
+brew trust --cask devantler-tech/tap/world-at-ruin
 brew install --cask world-at-ruin
 ```
 
 From then on `brew upgrade --cask world-at-ruin` pulls each new release. (`brew trust` matters only
-if your Homebrew is set to require trusting third-party taps — running it either way is harmless.)
+if your Homebrew is set to require trusting third-party taps — running it either way is harmless.
+It's scoped to this one cask on purpose: trusting the whole tap would also cover everything else
+it ships, now and in future.)
 
 **Or download the app yourself:** take `WorldAtRuin-<version>-macOS-universal.zip` from the
 [latest release](https://github.com/devantler-tech/world-at-ruin/releases/latest), unzip it, and
