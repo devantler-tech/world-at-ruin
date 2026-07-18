@@ -219,7 +219,12 @@ static func quarantine(quarantined: Variant, version: Variant) -> Dictionary:
 	# parameter would make GDScript reject the call before this fail-closed body
 	# could return — denying the bootstrap its result in the one case it is for.
 	if quarantined is not Array:
-		return {"ok": false, "ledger": [], "reason": "refusing to rewrite an unreadable quarantine ledger — it is not a list"}
+		# Return the UNREADABLE value, not an empty list. An empty list is a readable
+		# ledger, so a bootstrap following this payload into recover_ledger() would be
+		# told there is no deadlock to escape — and the deadlock would close again.
+		# A refusal must hand back what it was given, or the next function in the
+		# chain reasons about a value that was never there.
+		return {"ok": false, "ledger": quarantined, "reason": "refusing to rewrite an unreadable quarantine ledger — it is not a list"}
 	if not UpdateDecision.is_version(version):
 		return {"ok": false, "ledger": quarantined, "reason": "refusing to record a failure for an unreadable version — the boot-attempt marker is malformed"}
 	var failed: String = version
@@ -429,8 +434,14 @@ static func _is_fetchable_url(v: Variant) -> bool:
 	# Optional port, which must actually be a port.
 	var colon: int = authority.rfind(":")
 	if colon >= 0:
+		# Digits of a sane length is the SHAPE; a port also has a RANGE. `99999` is
+		# five digits and not a port. Bounding the form and not the value is the same
+		# shape-versus-contents gap this grammar was written to close, so close it here.
 		var port: String = authority.substr(colon + 1)
 		if not UpdateDecision.is_unsigned_digits(port) or port.length() > 5:
+			return false
+		var port_number: int = port.to_int()
+		if port_number < 1 or port_number > 65535:
 			return false
 		authority = authority.substr(0, colon)
 	return _is_host(authority)

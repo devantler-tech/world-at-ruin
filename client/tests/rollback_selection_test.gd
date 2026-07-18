@@ -326,7 +326,7 @@ func _ready() -> void:
 		["url", "https://updates.example:bad/x.pck"], ["url", "https://updates.example:/x.pck"],
 		["url", "https://updates..example/x.pck"], ["url", "https://-bad.example/x.pck"], ["url", "https://bad-.example/x.pck"],
 		["url", "https://under_score.example/x.pck"], ["url", "https://exa mple.org/x.pck"], ["url", "https://exämple.org/x.pck"],
-		["url", "https://updates.example:999999/x.pck"],
+		["url", "https://updates.example:999999/x.pck"], ["url", "https://updates.example:99999/x.pck"], ["url", "https://updates.example:0/x.pck"],
 		["sha256", "abc"], ["sha256", "z".repeat(64)], ["sha256", 42],
 		["sha256", "-" + "a".repeat(63)], ["sha256", "+" + "a".repeat(63)],
 		["size", -1], ["size", "big"],
@@ -401,6 +401,17 @@ func _ready() -> void:
 	# ISOLATION: a ledger that merely LOOKS similar but holds a torn entry still
 	# recovers, so the guard keys on readability and not on size or content.
 	_check(RollbackSelection.recover_ledger(["0.1.9", 42], "0.1.10")["ok"], true, "escape hatch is ISOLATED: a torn ledger still recovers")
+
+	# --- the two refusals must CHAIN, not close the trap again ---
+	# A bootstrap follows quarantine()'s refusal payload into recover_ledger(). If the
+	# refusal substituted an empty list for the unreadable value, that empty list is
+	# READABLE, so recovery would answer "no deadlock to escape" and the deadlock
+	# would close again. A refusal has to hand back what it was given.
+	for unreadable: Variant in [null, 42, "corrupt", {}, true]:
+		var refusal := RollbackSelection.quarantine(unreadable, "0.1.10")
+		_check(refusal["ok"], false, "chain: an unreadable ledger is refused")
+		var escape := RollbackSelection.recover_ledger(refusal["ledger"], "0.1.10")
+		_check(escape["ok"], true, "chain: following the refusal payload into recovery still escapes the deadlock")
 	if _failed:
 		return
 
