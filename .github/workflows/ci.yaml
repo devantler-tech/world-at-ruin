@@ -363,7 +363,12 @@ jobs:
         # rather than relying on this step. The multi-target economy (telegraph
         # AREA) is not in this step's model either; the widening half of it is
         # held by the cone-wedge step below, and a NEW cone's opening width
-        # remains the balance decision in #82.
+        # remains the balance decision in #82 — now SETTLED rather than pending:
+        # maintainer direction 2026-07-18 (option C) keeps it a reviewed balance
+        # decision, not a future CI guard, because an opening width has no
+        # already-shipped anchor and picking one freezes an area-vs-magnitude
+        # exchange rate permanently under the no-resets law. See AGENTS.md; do
+        # not add that guard without fresh direction superseding it.
         # CI is the anchor (the in-tree test cannot see the base revision).
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         env:

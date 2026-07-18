@@ -34,8 +34,14 @@ extends RefCounted
 ##      cone's wedge may never widen (the CI "cone wedge may never widen" anchor,
 ##      comparing `cos_half_scaled` against the base revision). What is still
 ##      unbounded is a NEW cone's opening width, which needs an area-vs-magnitude
-##      exchange rate — the one value here with no already-shipped anchor, and a
-##      real balance decision tracked in devantler-tech/world-at-ruin#82.
+##      exchange rate — the one value here with no already-shipped anchor.
+##      devantler-tech/world-at-ruin#82 has now SETTLED that remainder rather than
+##      merely tracking it: maintainer direction 2026-07-18 (option C) keeps a new
+##      cone's opening width a REVIEWED BALANCE DECISION, not a future CI guard,
+##      because picking an exchange rate freezes it permanently under the
+##      no-resets law. Choosing that width is a balance review the maintainer
+##      approves (see AGENTS.md); do not add a mechanical guard for it here
+##      without fresh direction superseding that.
 ##
 ##   2. NO STRICT DOMINANCE (the sidegrade law) — "Every new arsenal ability must
 ##      be a SIDEGRADE, never a strict upgrade." Within a comparable class no
@@ -335,8 +341,11 @@ static func dominates(a: Dictionary, b: Dictionary) -> bool:
 ## cone that already shipped (`cos_half_scaled` may never decrease against the
 ## base revision), which closes the drift half without inventing a number. The
 ## opening width of a NEW cone is still unbounded: bounding it needs an
-## area-vs-magnitude exchange rate, a genuine balance decision tracked in
-## devantler-tech/world-at-ruin#82.
+## area-vs-magnitude exchange rate. devantler-tech/world-at-ruin#82 has SETTLED
+## that remainder rather than merely tracking it — maintainer direction
+## 2026-07-18 (option C) keeps it a reviewed balance decision, not a future CI
+## guard, because an opening width has no already-shipped anchor and picking one
+## freezes the exchange rate permanently under the no-resets law. See AGENTS.md.
 static func find_power_inflation(abilities: Array, budgets: Dictionary) -> Array:
 	var violations: Array = []
 	for ab in abilities:
@@ -387,9 +396,15 @@ static func find_throughput_inflation(abilities: Array, floors: Dictionary) -> A
 	return violations
 
 
-## Load the frozen class power-budget ledger: `weapon|role|effect|telegraph=power`
-## lines (comment/blank lines ignored), returned as a class_key -> int map. A
-## malformed or non-integer line is reported and skipped. Reads res:// only.
+## Load a frozen per-category ledger: `role|effect=<int>` lines (comment/blank
+## lines ignored), returned as a **budget_key** -> int map — NOT class_key, and
+## not keyed on weapon or telegraph (see `budget_key`, which is deliberately
+## coarser than `class_key`). It loads BOTH frozen ledgers, because they share
+## that key shape: the per-cast power budget (`shipped_class_power.txt`) and the
+## cast+cooldown cycle floor (`shipped_class_cycle_floor.txt`). The `class_` in
+## the name is legacy and predates the budget/class key split; the behaviour is
+## the map above. A malformed or non-integer line is reported and skipped. Reads
+## res:// only.
 static func load_class_budgets(path: String) -> Dictionary:
 	var out := {}
 	var file := FileAccess.open(path, FileAccess.READ)

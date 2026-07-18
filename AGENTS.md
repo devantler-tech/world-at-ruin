@@ -234,6 +234,20 @@ reset the game forbids.
   throughput in effect — that is precisely how power creep enters a game that claims to have none.
   Situational-by-design is the law, and **"no strict dominance" is simulatable**, so it is an
   agent-ownable CI guard rather than a matter of taste.
+- **🔴 The MULTI-TARGET (telegraph area) economy is a BALANCE REVIEW, never a CI guard** (maintainer
+  direction 2026-07-18, #82 option C). `ability.gd` bounds the *single-target* economy mechanically —
+  frozen per-cast power budget per `(role|effect)`, a frozen cast+cooldown cycle floor (so throughput
+  is capped at budget/floor), a new category's opening scale bounded against those already shipped,
+  plus no-strict-dominance and the append-only ledgers. A cone's wedge became authorable data in #159
+  (`cos_half_scaled`), and #163 holds **half** the area problem: a **shipped** cone's wedge may never
+  widen (CI compares it against the base revision, and monotonicity composes).
+  **What is left unbounded is a NEW cone's opening width** — the one value with no already-shipped
+  anchor to measure against. Bounding it means inventing an area-vs-magnitude exchange rate and
+  freezing it permanently under the no-resets law, so it stays a **balance review**: choosing a new
+  cone's width, or otherwise increasing how many targets one cast reaches, means stating the reach in
+  the PR and letting the maintainer approve it. Choosing a new category's scale is his too. **Green CI
+  proves only that you did not widen something already shipped — never that a new number is balanced**;
+  do not build a guard for the opening width without fresh direction superseding this.
 - **Tune content against the *banked floor*, not peak mastery.** Unlosable progress is the only
   power level every player is guaranteed to have; everything above it is skill expression.
 - **Death penalty in group content breeds blame.** A bloodstain is fine solo; "you cost me my
