@@ -117,6 +117,12 @@ func _ready() -> void:
 		if not _sees_geometry(cam, vantage[2]):
 			_fail("vantage '%s' sees no world geometry — the shot is sky only" % vantage_name)
 			return
+		# A collider hit proves geometry is THERE, not that this camera DRAWS
+		# it: moving the terrain to a render layer outside the camera's cull
+		# mask would leave the ray hitting while the frame shows only sky.
+		if not _camera_draws_world(cam, main):
+			_fail("vantage '%s': the terrain's render layers are outside the camera's cull mask — it would not be drawn" % vantage_name)
+			return
 
 		await RenderingServer.frame_post_draw
 		var img := get_viewport().get_texture().get_image()
@@ -153,6 +159,21 @@ func _has_world(main: Node) -> bool:
 			# still hits) while the camera sees only sky — which the luminance
 			# check happily accepts.
 			return (child as MeshInstance3D).is_visible_in_tree()
+	return false
+
+
+## Whether this camera would actually DRAW the terrain: its cull mask must share
+## at least one render layer with the terrain mesh. Separate from both
+## _has_world (does it exist and is it visible) and _sees_geometry (is it in
+## front of us) — a mesh can be present, visible and directly ahead while still
+## being excluded from this camera's render pass.
+func _camera_draws_world(cam: Camera3D, main: Node) -> bool:
+	var world := main.get_node_or_null("World")
+	if world == null:
+		return false
+	for child in world.get_children():
+		if child is MeshInstance3D and str(child.name) == "Terrain":
+			return ((child as MeshInstance3D).layers & cam.cull_mask) != 0
 	return false
 
 
