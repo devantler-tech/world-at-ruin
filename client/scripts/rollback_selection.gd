@@ -281,7 +281,17 @@ static func _is_sha256(v: Variant) -> bool:
 	var digest: String = v
 	if digest.length() != 64:
 		return false
-	return digest.is_valid_hex_number(false)
+	# NOT is_valid_hex_number(): it accepts a leading sign, so "-" plus 63 hex
+	# characters is 64 long and "valid", i.e. an impossible digest treated as a
+	# deployable artifact. Every character must be a hex digit.
+	for i in digest.length():
+		var c := digest.unicode_at(i)
+		var is_digit := c >= 48 and c <= 57 # '0'..'9'
+		var is_lower := c >= 97 and c <= 102 # 'a'..'f'
+		var is_upper := c >= 65 and c <= 70 # 'A'..'F'
+		if not (is_digit or is_lower or is_upper):
+			return false
+	return true
 
 
 ## A loud refusal carrying WHY nothing was selected — never a silent strand.

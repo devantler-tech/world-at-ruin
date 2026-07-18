@@ -306,7 +306,23 @@ static func is_version(v: Variant) -> bool:
 	if not (v is String) or (v as String).is_empty():
 		return false
 	for part in (v as String).split("."):
-		if part.is_empty() or not part.is_valid_int():
+		# NOT is_valid_int(): that accepts a SIGNED component, so "-1.0.0" would
+		# pass as a version and compare as a floor of -1 that every shell clears.
+		# A version component is an unsigned ordinal.
+		if not is_unsigned_digits(part):
+			return false
+	return true
+
+
+## True if `s` is a non-empty run of ASCII digits only. Unlike `String.is_valid_int`
+## it rejects a leading `+`/`-`, which matters wherever a signed value would be a
+## malformed ordinal rather than a small negative number.
+static func is_unsigned_digits(s: String) -> bool:
+	if s.is_empty():
+		return false
+	for i in s.length():
+		var c := s.unicode_at(i)
+		if c < 48 or c > 57: # '0'..'9'
 			return false
 	return true
 

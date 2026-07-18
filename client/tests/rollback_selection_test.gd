@@ -218,6 +218,8 @@ func _ready() -> void:
 		[_bad_version_target(), "a non-version target version (\"99.bad\")"],
 		[_bad_compat_target(), "a non-version shell_compat bound (\"garbage\")"],
 		[_inverted_compat_target(), "an inverted shell_compat window"],
+		[_signed_compat_target(), "a SIGNED shell_compat floor (\"-1.0.0\") that every shell would clear"],
+		[_signed_version_target(), "a SIGNED target version (\"-1.0.0\")"],
 	]
 	for case: Array in bad_meta:
 		var entry: Dictionary = case[0]
@@ -267,9 +269,14 @@ func _ready() -> void:
 
 	# (4) Eligibility is not enough — the bootstrap must be able to MOUNT it. Each of
 	# these carries the highest version, so it would win the ordering if not skipped.
+	# The signed cases are Godot API traps, verified empirically: a leading sign is
+	# accepted by is_valid_hex_number() and is_valid_int(), so "-" plus 63 hex
+	# characters is a 64-long "valid" digest, and "-1.0.0" is a "valid" version whose
+	# floor every shell clears.
 	var undeployable: Array = [
 		["url", ""], ["url", 42],
 		["sha256", "abc"], ["sha256", "z".repeat(64)], ["sha256", 42],
+		["sha256", "-" + "a".repeat(63)], ["sha256", "+" + "a".repeat(63)],
 		["size", -1], ["size", "big"],
 	]
 	for case: Array in undeployable:
@@ -329,6 +336,24 @@ func _bad_compat_target() -> Dictionary:
 func _inverted_compat_target() -> Dictionary:
 	var t := _target("0.9.8", 1, 7, 1, 1, "0.1.0", "0.1.999")
 	t["shell_compat"] = {"min": "0.2.0", "max": "0.1.0"}
+	return t
+
+
+## A target whose shell_compat FLOOR is signed. `is_valid_int` accepts "-1", so this
+## would pass as a version and compare as a floor of -1 that every installed shell
+## clears, turning an unproven target into a "runnable" one.
+func _signed_compat_target() -> Dictionary:
+	var t := _target("0.9.7", 1, 7, 1, 1, "0.1.0", "0.1.999")
+	t["shell_compat"] = {"min": "-1.0.0", "max": "9.9.9"}
+	return t
+
+
+## A target with a SIGNED version component. The leading component is high so it
+## WINS the ordering — a "-1.0.0" would sort below the good target and make this
+## control vacuous, proving nothing about the guard.
+func _signed_version_target() -> Dictionary:
+	var t := _target("0.1.2", 1, 7, 1, 1, "0.1.0", "0.1.999")
+	t["version"] = "9.-1.0"
 	return t
 
 
