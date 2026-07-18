@@ -139,6 +139,13 @@ const DEATH_LOSS_PERCENT := 50
 ## Souls rule, "reclaim it or lose it forever". That destruction is the only way
 ## this ledger can lose value, it happens exactly once, and the lost points are
 ## gone rather than moved — nothing can reclaim them afterwards.
+##
+## It is a death that DROPS SOMETHING that replaces the standing stain. A death
+## which puts nothing at risk (a zero share, or a pool too small to floor above
+## zero) leaves the standing stain reclaimable and returns an empty dictionary —
+## otherwise a softened penalty would destroy more than a full-risk one, which is
+## backwards. The return value is what THIS death dropped; use `bloodstain()` to
+## read whatever currently stands.
 func die(percent: int = DEATH_LOSS_PERCENT) -> Dictionary:
 	var share := clampi(percent, 0, 100)
 	var stain := {}
@@ -153,7 +160,16 @@ func die(percent: int = DEATH_LOSS_PERCENT) -> Dictionary:
 		track["unbanked"] -= at_risk
 		_tracks[weapon] = track
 		stain[weapon] = at_risk
-	# Replaces (and thereby destroys) any bloodstain still standing.
+	if stain.is_empty():
+		# A death that puts NOTHING at risk destroys nothing. Replacing the
+		# standing stain here would make a no-penalty death strictly harsher than
+		# a full-risk one — and the softened group-content penalty the design
+		# calls for is exactly this path, so it would quietly destroy reclaimable
+		# mastery precisely where the player was promised leniency. A smaller
+		# penalty must never cost more than a larger one.
+		return {}
+	# Only a death that actually drops a stain replaces (and thereby destroys)
+	# the one still standing.
 	_bloodstain = stain
 	return stain.duplicate()
 

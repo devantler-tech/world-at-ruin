@@ -100,6 +100,8 @@ func _ready() -> void:
 		return
 	if not _reclaim_happens_at_most_once():
 		return
+	if not _a_death_that_drops_nothing_preserves_the_stain():
+		return
 	if not _death_is_degenerate_safe():
 		return
 
@@ -186,6 +188,34 @@ func _reclaim_happens_at_most_once() -> bool:
 	var handle := m.bloodstain()
 	handle["sword"] = 999_999
 	_check(m.reclaim() < 999_999, true, "the bloodstain() copy cannot be edited into a dupe")
+	return not _failed
+
+
+## A death that puts nothing at risk must not destroy the stain still standing.
+## This is the softened-penalty path the design calls for in group content, so
+## getting it wrong would make leniency HARSHER than full risk: the gentle death
+## would silently bin mastery a full-risk death would have left reclaimable.
+func _a_death_that_drops_nothing_preserves_the_stain() -> bool:
+	var m := Mastery.new()
+	m.accrue("sword", 180)  # 1 bar banked, 80 at risk
+	var dropped := _stain_sum(m.die(50))
+	_check(dropped == 40, true, "no-op death setup: the first death drops half the pool")
+
+	var recoverable_before := m.total("sword") + _stain_sum(m.bloodstain())
+	var nothing := m.die(0)
+	_check(nothing.is_empty(), true, "a zero-share death drops nothing")
+	_check(_stain_sum(m.bloodstain()) == dropped, true, "a zero-share death leaves the standing stain intact")
+	_check(m.total("sword") + _stain_sum(m.bloodstain()) == recoverable_before, true,
+		"a zero-share death destroys nothing recoverable")
+	_check(m.reclaim() == dropped, true, "the stain is still reclaimable after a zero-share death")
+
+	# Same when the share is real but the pool is too small to floor above zero.
+	var tiny := Mastery.new()
+	tiny.accrue("sword", 1)
+	_check(_stain_sum(tiny.die(100)) == 1, true, "tiny pool: a full-risk death drops the single point")
+	tiny.accrue("sword", 1)
+	_check(tiny.die(50).is_empty(), true, "a share that floors to zero drops nothing")
+	_check(_stain_sum(tiny.bloodstain()) == 1, true, "a floored-to-zero death leaves the earlier stain standing")
 	return not _failed
 
 
