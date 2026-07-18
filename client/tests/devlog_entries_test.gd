@@ -20,8 +20,11 @@ extends Node
 ##     real inversion once the patch number reaches double digits).
 ##  3. WELL-FORMED — every entry carries version/date/title/notes, notes are
 ##     non-empty strings, so a half-written entry cannot ship silently.
-##  4. THE HEADLINE MATCHES — DevLog.VERSION is the newest entry's version, so
-##     the version the game reports and the log's top entry can never disagree.
+##
+## It deliberately does NOT tie the entries to `DevLog.VERSION`: an entry carries
+## the version its change will SHIP in, while `DevLog.VERSION` is a dev
+## placeholder stamped from the release tag by `cd.yaml`, so the top entry is
+## expected to run ahead of it (see the note at the end of `_ready`).
 ##
 ## Pure data inspection — no scene, no save, no boot — so it is safe to run
 ## locally and deterministic in CI.
@@ -88,14 +91,18 @@ func _ready() -> void:
 				"string sort gets backwards).") % [newer, older])
 			return
 
-	# --- 4. THE HEADLINE MATCHES the newest entry ---
-	var newest: String = entries[0]["version"]
-	if DevLog.VERSION != newest:
-		_fail("DevLog.VERSION is '%s' but the newest entry is '%s' — the version the game reports and the log's top entry must agree"
-			% [DevLog.VERSION, newest])
-		return
+	# NOTE — deliberately NOT asserted: that `DevLog.VERSION` equals the newest
+	# entry. They are meant to differ. `AGENTS.md` has an entry carry "the version
+	# the change will ship in (the next semantic-release bump implied by your
+	# commit type)" and says **do NOT hand-edit `DevLog.VERSION`**, because
+	# `cd.yaml` stamps it from the release tag at build time — the in-tree value is
+	# only a dev placeholder. So the top entry legitimately runs AHEAD of it, and a
+	# guard demanding equality would pass today by coincidence and then fail the
+	# next player-visible PR that follows the documented workflow, pushing authors
+	# to hand-edit exactly the constant the contract forbids touching.
 
-	print("TEST PASS — dev log holds (%d entries, %s down to %s: unique versions, strictly newest-first by numeric compare, all well-formed, headline matches)"
+	var newest: String = entries[0]["version"]
+	print("TEST PASS — dev log holds (%d entries, %s down to %s: unique versions, strictly newest-first by numeric compare, all well-formed)"
 		% [entries.size(), newest, entries[entries.size() - 1]["version"]])
 	get_tree().quit(0)
 

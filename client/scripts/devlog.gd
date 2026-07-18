@@ -11,6 +11,15 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
+		"version": "0.1.18",
+		"date": "2026-07-18",
+		"title": "The dev log reads true",
+		"notes": [
+			"This log was listing two releases twice over, which read like a display fault and made it harder to trust as a record of what actually shipped. Every version now appears exactly once, newest first.",
+			"A check keeps it that way. Every change you can see adds an entry to the top of this same list, so two changes landing near each other is precisely how a block gets copied twice — that now stops the build instead of reaching you.",
+		],
+	},
+	{
 		"version": "0.1.17",
 		"date": "2026-07-18",
 		"title": "The torches hang on the walls",
