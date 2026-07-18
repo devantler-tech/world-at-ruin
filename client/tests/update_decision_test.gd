@@ -358,21 +358,54 @@ func _test_capability_raise_needs_a_readable_rollback_target() -> void:
 
 	# A catalogue that cannot read the raised capability is no better than none.
 	var short_target: Dictionary = raising.call()
-	short_target["rollback_targets"] = [{"save_capability": 4, "read_ceiling": 9}]
+	short_target["rollback_targets"] = [{"version": "0.1.14", "save_capability": 4, "read_ceiling": 9}]
 	_expect(_installed_current(), short_target, UpdateDecision.SHELL_UPDATE, "a rollback target one capability short still routes to the shell tier")
 
 	# A malformed entry must not be counted as cover (fail closed).
 	var malformed: Dictionary = raising.call()
-	malformed["rollback_targets"] = [{"save_capability": "lots"}, {"read_ceiling": 9}]
+	malformed["rollback_targets"] = [{"version": "0.1.14", "save_capability": "lots"}, {"read_ceiling": 9}]
 	_expect(_installed_current(), malformed, UpdateDecision.SHELL_UPDATE, "a malformed rollback entry never counts as capability cover")
 
-	# POSITIVE CONTROL: one target that CAN read it makes the pack safe again.
-	# This is what proves the gate is discriminating rather than simply blocking
-	# every capability raise — without it, the three cases above would also pass
-	# against a gate that refused unconditionally.
+	# CODEX P0: ample capability but a read ceiling BELOW the save's schema is NOT
+	# cover. RollbackSelection._is_reachable requires read_ceiling >= save_schema
+	# AND save_capability >= the save's, so judging capability alone would count an
+	# entry that recovery itself would reject. An entry missing read_ceiling
+	# entirely is equally unprovable.
+	var low_ceiling: Dictionary = raising.call()
+	low_ceiling["rollback_targets"] = [{"version": "0.1.14", "save_capability": 9, "read_ceiling": 0}]
+	_expect(_installed_current(), low_ceiling, UpdateDecision.SHELL_UPDATE, "capability cover with a read ceiling below the save schema is not cover")
+	var no_ceiling: Dictionary = raising.call()
+	no_ceiling["rollback_targets"] = [{"version": "0.1.14", "save_capability": 9}]
+	_expect(_installed_current(), no_ceiling, UpdateDecision.SHELL_UPDATE, "a target without a verifiable read_ceiling is not cover")
+
+	# CODEX P0: the candidate cannot be its own rollback cover — after a failed boot
+	# that version is quarantined, so recovery will skip it. A numeric ALIAS of the
+	# candidate ("0.1.15.0") must be excluded on the same grounds.
+	var self_cover: Dictionary = raising.call()
+	self_cover["rollback_targets"] = [{"version": "0.1.15", "save_capability": 9, "read_ceiling": 9}]
+	_expect(_installed_current(), self_cover, UpdateDecision.SHELL_UPDATE, "the candidate pack is not its own rollback cover")
+	var alias_cover: Dictionary = raising.call()
+	alias_cover["rollback_targets"] = [{"version": "0.1.15.0", "save_capability": 9, "read_ceiling": 9}]
+	_expect(_installed_current(), alias_cover, UpdateDecision.SHELL_UPDATE, "a numeric alias of the candidate is not rollback cover either")
+	var newer_cover: Dictionary = raising.call()
+	newer_cover["rollback_targets"] = [{"version": "0.1.16", "save_capability": 9, "read_ceiling": 9}]
+	_expect(_installed_current(), newer_cover, UpdateDecision.SHELL_UPDATE, "a target NEWER than the candidate is not a rollback either")
+
+	# An unidentifiable target cannot be proven distinct from the candidate.
+	var no_version: Dictionary = raising.call()
+	no_version["rollback_targets"] = [{"save_capability": 9, "read_ceiling": 9}]
+	_expect(_installed_current(), no_version, UpdateDecision.SHELL_UPDATE, "a target without a verifiable version is not cover")
+
+	# POSITIVE CONTROL: one strictly-older target reachable on BOTH axes makes the
+	# pack safe again. This is what proves the gate discriminates rather than simply
+	# blocking every capability raise — without it, every case above would pass
+	# equally against a gate that refused unconditionally.
 	var covered: Dictionary = raising.call()
-	covered["rollback_targets"] = [{"save_capability": 4}, {"save_capability": 5, "read_ceiling": 9}]
-	_expect(_installed_current(), covered, UpdateDecision.PACK_UPDATE, "a retained target that can read the raised capability admits the pack")
+	covered["rollback_targets"] = [
+		{"version": "0.1.13", "save_capability": 4, "read_ceiling": 9},
+		{"version": "0.1.14", "save_capability": 5, "read_ceiling": 9},
+	]
+	_expect(_installed_current(), covered, UpdateDecision.PACK_UPDATE, "a strictly-older target reachable on both axes admits the pack")
 
 	# A pack that does NOT raise the capability is untouched by this gate — the
 	# installed build is its own rollback target on this axis.
@@ -385,6 +418,22 @@ func _test_capability_raise_needs_a_readable_rollback_target() -> void:
 	var no_shell: Dictionary = raising.call()
 	no_shell["shell"]["current"] = "0.1.14" # == installed, nothing newer
 	_expect(_installed_current(), no_shell, UpdateDecision.INVALID_MANIFEST, "a capability-raising pack with no newer shell is refused, never downgraded")
+
+	# CODEX P0: forward-only applies to the capability axis in BOTH directions. A
+	# candidate writing a capability BELOW the installed build's cannot read the
+	# shapes the save already holds, so it is refused before routing to any tier —
+	# the exact rule the `writes < save_schema` check already enforces on the
+	# schema axis. Without this it fell straight through to pack_update.
+	var regress: Dictionary = raising.call()
+	regress["save_schema"] = {"min": 1, "writes": 1, "capability": 4}
+	var inst_high := _installed_current()
+	inst_high["save_capability"] = 5 # the save already holds capability-5 shapes
+	_expect(inst_high, regress, UpdateDecision.INVALID_MANIFEST, "a candidate writing a capability below the installed build's is refused (forward-only)")
+	# ...and it is refused on the SHELL path too, not just the pack path.
+	var regress_shell: Dictionary = raising.call()
+	regress_shell["pack"]["version"] = "0.1.14" # no pack update; only the shell is newer
+	regress_shell["save_schema"] = {"min": 1, "writes": 1, "capability": 4}
+	_expect(inst_high, regress_shell, UpdateDecision.INVALID_MANIFEST, "a capability regression is refused on the shell path too")
 
 
 func _test_incoherent_shell_floor_refused() -> void:

@@ -101,6 +101,7 @@ static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 	var shell := str(installed.get("shell_version", "0.0.0"))
 	var pack := str(installed.get("pack_version", "0.0.0"))
 	var save_schema := int(installed.get("save_schema", 0))
+	var save_capability := int(installed.get("save_capability", 0))
 	var protocol := int(installed.get("protocol", 0))
 
 	var m_shell: Dictionary = manifest["shell"]
@@ -146,6 +147,16 @@ static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 		return _result(INVALID_MANIFEST, "candidate writes save schema %d below the installed build's %d — would regress the save (forward-only)" % [
 			int(m_save["writes"]), save_schema])
 
+	# Forward-only, the CAPABILITY axis (same rule, second axis). A candidate that
+	# writes a capability BELOW the installed build's cannot read the shapes the
+	# save already holds — `RollbackSelection` treats exactly that relation
+	# (`save_capability` < the save's) as unable to read it. Applying such a
+	# candidate would drop or strand persisted state just as a schema regression
+	# would, so it is refused before routing to ANY tier, not just the pack tier.
+	if int(m_save["capability"]) < save_capability:
+		return _result(INVALID_MANIFEST, "candidate writes save capability %d below the installed build's %d — would regress the save (forward-only)" % [
+			int(m_save["capability"]), save_capability])
+
 	# A shell update is required when the running shell is below the supported
 	# floor, when the newest pack needs a newer shell than is installed, or when
 	# the only thing newer is the shell itself. (When incompatible-but-updatable,
@@ -184,8 +195,8 @@ static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 		# can still read the result — the same question `RollbackSelection` asks on
 		# the recovery side, asked here BEFORE the write instead of after it.
 		var cand_capability := int(m_save["capability"])
-		var installed_capability := int(installed.get("save_capability", 0))
-		if cand_capability > installed_capability and not _capability_covered(manifest, cand_capability):
+		if cand_capability > save_capability and not _capability_covered(
+				manifest, cand_capability, save_schema, str(m_pack["version"])):
 			# No retained target can read what this pack would write. Route it to the
 			# shell tier (the ADR's stated behaviour) — and only if a newer shell is
 			# actually offered, mirroring the read-ceiling branch above so a stale
@@ -206,16 +217,27 @@ static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 
 
 ## True when the manifest retains at least one rollback target that could still
-## READ a save written at `capability`. Fail-closed by construction: a missing,
-## non-array or empty catalogue, a malformed entry, or an entry whose
-## `save_capability` cannot be validated all count as NOT covered, so an
-## unprovable catalogue blocks the pack rather than admitting it.
+## READ the save a candidate at `capability`/`save_schema` would leave behind, and
+## that is a target recovery could actually reach.
 ##
-## Only the capability axis is judged here. Whether a target is otherwise runnable
-## (protocol, shell compatibility, schema read ceiling) is [RollbackSelection]'s
-## question at recovery time; duplicating it would couple the forward path to the
-## whole eligibility model for no extra safety on this axis.
-static func _capability_covered(m: Dictionary, capability: int) -> bool:
+## It applies [RollbackSelection]'s OWN reachability rule — `read_ceiling >=
+## save_schema` AND `save_capability >= capability`, BOTH axes. Judging capability
+## alone was not a safe simplification: a target can carry ample capability while
+## its read ceiling sits below the save's schema, and recovery would then reject
+## the very entry this gate counted as cover.
+##
+## The candidate is excluded from its own cover. After a failed boot the candidate
+## version is quarantined, so recovery will skip it — counting it here would admit
+## a pack with no retained earlier build to fall back to. Only a STRICTLY OLDER
+## target qualifies; because [method compare_versions] is numeric, an alias of the
+## candidate ("0.1.15" vs "0.1.15.0") compares equal and is excluded too.
+##
+## Fail-closed throughout: a missing, non-array or empty catalogue, an entry that
+## is not a dictionary, an unverifiable version, or an unverifiable `read_ceiling`
+## / `save_capability` all count as NOT covered, so an unprovable catalogue blocks
+## the pack rather than admitting it.
+static func _capability_covered(m: Dictionary, capability: int, save_schema: int,
+		candidate_version: String) -> bool:
 	var targets: Variant = m.get("rollback_targets")
 	if not (targets is Array):
 		return false
@@ -223,9 +245,14 @@ static func _capability_covered(m: Dictionary, capability: int) -> bool:
 		if not (entry is Dictionary):
 			continue
 		var t: Dictionary = entry
-		if not is_int_id(t.get("save_capability")):
+		# An unidentifiable target cannot be proven distinct from the candidate.
+		if not is_version(t.get("version")):
 			continue
-		if int(t["save_capability"]) >= capability:
+		if compare_versions(str(t["version"]), candidate_version) >= 0:
+			continue
+		if not (is_int_id(t.get("read_ceiling")) and is_int_id(t.get("save_capability"))):
+			continue
+		if int(t["read_ceiling"]) >= save_schema and int(t["save_capability"]) >= capability:
 			return true
 	return false
 
