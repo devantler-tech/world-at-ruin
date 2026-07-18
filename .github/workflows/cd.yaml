@@ -623,8 +623,16 @@ jobs:
           content="$(base64 -w0 < Casks/world-at-ruin.rb)"
 
           base_sha="$(gh api "repos/${tap}/git/ref/heads/main" --jq '.object.sha')"
+          # Tolerate a concurrent creator: two runs can both see the branch
+          # missing and race this POST; the loser gets 422 and must NOT die
+          # under `set -e` before reaching the compare-and-swap below.
           if ! gh api "repos/${tap}/git/ref/heads/${branch}" >/dev/null 2>&1; then
-            gh api "repos/${tap}/git/refs" -X POST -f ref="refs/heads/${branch}" -f sha="${base_sha}" >/dev/null
+            gh api "repos/${tap}/git/refs" -X POST -f ref="refs/heads/${branch}" \
+              -f sha="${base_sha}" >/dev/null 2>&1 || true
+            if ! gh api "repos/${tap}/git/ref/heads/${branch}" >/dev/null 2>&1; then
+              echo "::error::could not create or find ${branch} on ${tap}"
+              exit 1
+            fi
           fi
 
           # MONOTONIC GUARD, as a COMPARE-AND-SWAP. The workflow concurrency
@@ -650,7 +658,20 @@ jobs:
             fi
 
             if [ -n "${current}" ] && [ "${current}" != "${VERSION}" ]; then
-              newest="$(printf '%s\n%s\n' "${current}" "${VERSION}" | sort -V | tail -1)"
+              # SemVer precedence, NOT `sort -V`: the tag pattern accepts
+              # prereleases, and `sort -V` orders 1.0.0-rc.1 ABOVE 1.0.0, so a
+              # late prerelease run would downgrade a final release. Under
+              # SemVer a prerelease precedes its own final release.
+              core_a="${current%%-*}"; core_b="${VERSION%%-*}"
+              case "${current}" in *-*) pre_a="${current#*-}";; *) pre_a="";; esac
+              case "${VERSION}" in *-*) pre_b="${VERSION#*-}";; *) pre_b="";; esac
+              if [ "${core_a}" != "${core_b}" ]; then
+                if [ "$(printf '%s\n%s\n' "${core_a}" "${core_b}" | sort -V | tail -1)" = "${core_a}" ]; then
+                  newest="${current}"; else newest="${VERSION}"; fi
+              elif [ -z "${pre_a}" ]; then newest="${current}"
+              elif [ -z "${pre_b}" ]; then newest="${VERSION}"
+              elif [ "$(printf '%s\n%s\n' "${pre_a}" "${pre_b}" | sort -V | tail -1)" = "${pre_a}" ]; then
+                newest="${current}"; else newest="${VERSION}"; fi
               if [ "${newest}" = "${current}" ]; then
                 echo "::notice::tap already carries ${current}, which is newer than ${VERSION} — leaving it alone"
                 exit 0
