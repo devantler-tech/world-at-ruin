@@ -316,9 +316,15 @@ static func find_throughput_inflation(abilities: Array, floors: Dictionary) -> A
 	return violations
 
 
-## Load the frozen class power-budget ledger: `weapon|role|effect|telegraph=power`
-## lines (comment/blank lines ignored), returned as a class_key -> int map. A
-## malformed or non-integer line is reported and skipped. Reads res:// only.
+## Load a frozen per-category ledger: `role|effect=<int>` lines (comment/blank
+## lines ignored), returned as a **budget_key** -> int map — NOT class_key, and
+## not keyed on weapon or telegraph (see `budget_key`, which is deliberately
+## coarser than `class_key`). It loads BOTH frozen ledgers, because they share
+## that key shape: the per-cast power budget (`shipped_class_power.txt`) and the
+## cast+cooldown cycle floor (`shipped_class_cycle_floor.txt`). The `class_` in
+## the name is legacy and predates the budget/class key split; the behaviour is
+## the map above. A malformed or non-integer line is reported and skipped. Reads
+## res:// only.
 static func load_class_budgets(path: String) -> Dictionary:
 	var out := {}
 	var file := FileAccess.open(path, FileAccess.READ)
