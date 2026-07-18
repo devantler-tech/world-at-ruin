@@ -119,9 +119,12 @@ not met the bar; it has only earned the right to be finished.
 
 **Green tests are not the bar.** Machine verification proves a thing is *correct*; it can never
 prove it is *good*. So a player-visible change is judged on the **rendered frame and the felt
-experience**, not on the suite: look at it, play it, compare it against a named AAA reference, and
-state that reference and the remaining gap in the PR. A green suite plus a screenshot that reads as
-placeholder is a PR that is **not ready**.
+experience**, not on the suite: look at it, play it, and compare it against a named AAA reference.
+**Attach the frame.** A PR carries an inspectable screenshot, captured frame or short clip of the
+actual change, the reference it is judged against, and the remaining gap — because a written claim
+that "I looked at it and it's fine" is self-attestation, and self-attestation is exactly what let a
+field of grey primitives ship. A green suite plus a frame that reads as placeholder is a PR that is
+**not ready**.
 
 **The tells that the bar is being missed** — all four were true of the first foliage pass, and are
 the concrete evidence behind this section:
@@ -328,8 +331,11 @@ everything shipped afterwards is held to.
   must be attributable to code.
 - **Player-visible work is judged on the frame, not the suite:** before calling a player-visible
   change ready, render or play it, look at it, and judge it against the
-  **[Quality bar](#quality-bar--it-has-to-resemble-a-aaa-game)** (AAA resemblance) — naming the
-  reference and any remaining gap in the PR. Below-bar art does not ship default-on.
+  **[Quality bar](#quality-bar--it-has-to-resemble-a-aaa-game)** (AAA resemblance). The PR must
+  carry **evidence a reviewer can inspect** — an attached screenshot, captured frame or short clip
+  of the actual change — together with the **named AAA reference** and the **remaining gap**. A
+  claim with no attached frame is self-attestation, not evidence, and does not satisfy this.
+  Below-bar player-facing work does not ship default-on.
 - **Dev log is a contract:** every player-visible change adds a `DevLog.ENTRIES` entry (newest
   first) in the same PR — the maintainer watches progress by playing, and the dev log is that
   surface. Bump `DevLog.VERSION` (and `config/version` in `project.godot`) per release-worthy
@@ -363,8 +369,10 @@ Reviewers (Codex/CodeRabbit) flag **P0/P1 only**:
 - **P1 — correctness:** unseeded/non-deterministic world generation, client-authoritative gameplay
   state (once networking exists), physics entering the authoritative path, or a player-visible
   change with no dev-log entry.
-- **P1 — quality bar:** player-visible art that ships **default-on** while still reading as
-  placeholder (engine primitives as art, flat untextured materials, uniform scatter, no
-  second-order life), or a player-visible PR that argues readiness from green tests alone with no
-  judgement of the rendered frame against a named AAA reference. See
-  **[Quality bar](#quality-bar--it-has-to-resemble-a-aaa-game)**.
+- **P1 — quality bar:** any **player-facing** surface — art, world composition, lighting, VFX,
+  animation, audio, UI/UX, camera, game feel, or the design itself — that ships **default-on** while
+  still reading as placeholder (engine primitives as art, flat untextured materials, uniform
+  scatter, no second-order life, and the equivalents of those outside art). **Separately P1 on its
+  own:** a player-visible PR carrying **no inspectable frame evidence, or no named AAA reference and
+  stated gap** — including one that simply *omits* any readiness judgement, not only one that argues
+  from green tests. See **[Quality bar](#quality-bar--it-has-to-resemble-a-aaa-game)**.
