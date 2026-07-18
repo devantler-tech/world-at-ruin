@@ -832,26 +832,43 @@ jobs:
             mutation="mutation(\$id: ID!) { enablePullRequestAutoMerge(input: { pullRequestId: \$id, mergeMethod: SQUASH }) { pullRequest { number } } }"
             if out="$(gh api graphql -f query="${mutation}" -F id="${pr_node}" 2>&1)"; then
               echo "auto-merge armed on ${tap}#${pr}"
-              armed=true
-              break
             elif printf '%s' "${out}" | grep -qi 'clean status'; then
               # Every required check is already green, so GitHub refuses to
-              # arm (nothing left to wait for) — merge directly instead. If a
-              # concurrent push lands in between and this merge is refused,
-              # loop: the re-read sees the new state and arms normally.
-              if gh api -X PUT "repos/${tap}/pulls/${pr}/merge" -f merge_method=squash >/dev/null 2>&1; then
+              # arm (nothing left to wait for) — merge directly instead,
+              # BOUND to the head this iteration read (`sha` is the REST
+              # merge endpoint's head-must-match guard): without it, a newer
+              # head pushed after the clean-status result would merge before
+              # its checks run — the tap token can bypass rulesets, so the
+              # endpoint would not stop it. A moved head is refused and
+              # re-enters the loop.
+              if gh api -X PUT "repos/${tap}/pulls/${pr}/merge" \
+                   -f merge_method=squash \
+                   -f sha="$(printf '%s' "${pr_state}" | jq -r '.head.sha')" >/dev/null 2>&1; then
                 echo "checks were already green — merged ${tap}#${pr} directly"
                 armed=true
                 break
               fi
+              sleep 2
+              continue
             elif printf '%s' "${out}" | grep -qi 'already.*enabled'; then
               echo "auto-merge already armed on ${tap}#${pr}"
-              armed=true
-              break
             else
               echo "::error::could not arm auto-merge on ${tap}#${pr}: ${out}"
               exit 1
             fi
+            # Armed — but the mutation is not content-bound: a newer run can
+            # push between this iteration's verify and the arming, so the arm
+            # now covers content the verified title was NOT derived from. If
+            # that newer run dies before its own retitle (exactly the crash
+            # window the fall-through above exists for), checks eventually
+            # pass and auto-merge ships the stale title. Re-read; when the
+            # branch moved, loop — the next iteration re-derives the title
+            # and exits through the already-armed path.
+            if [ "$(cask_version_at "${branch}")" = "${branch_version}" ]; then
+              armed=true
+              break
+            fi
+            echo "::notice::${branch} moved while arming; re-deriving the title (attempt ${attempt})"
             sleep 2
           done
           if [ "${armed}" != "true" ]; then
