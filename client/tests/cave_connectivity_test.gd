@@ -18,7 +18,7 @@ extends Node
 ##     - a rock wall severs the flood, and flooding from rock reaches nothing;
 ##     - a gap narrower than the player capsule does NOT count as a connection,
 ##       while an otherwise identical wide channel DOES (both states);
-##     - audited points use their OWN cell, so a point in rock fails rather than
+##     - audited points are checked at their OWN SDF location, so a point in rock fails rather than
 ##       borrowing a neighbouring cavity's verdict.
 ##
 ## Pure logic only — no scene, no save, no boot — safe to run locally.
@@ -29,8 +29,15 @@ var _failed := false
 
 
 func _ready() -> void:
-	# --- the shipped world is traversable, on more than one seed ---
-	for s: int in [42, 43]:
+	# --- the SHIPPED cave is traversable, plus extra seeds for breadth ---
+	# WorldGen.CAVE_SEED is the cave the player actually wakes in: audit it by
+	# reference, never by a literal, or changing the production seed would leave
+	# CI certifying a cave nobody plays. The extra seeds are only samples.
+	var seeds: Array[int] = [WorldGen.CAVE_SEED]
+	for extra: int in [42, 43, 44]:
+		if not seeds.has(extra):
+			seeds.append(extra)
+	for s: int in seeds:
 		var r := CaveSystemGen.reachability(s)
 		_check(r["start_passable"], true, "seed %d: the waking chamber has body-clearance" % s)
 		_check(r["spawn_reachable"], true, "seed %d: the spawn is reachable" % s)

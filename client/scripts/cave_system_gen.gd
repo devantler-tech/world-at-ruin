@@ -418,6 +418,19 @@ static func cell_of(point: Vector3, lo: Vector3, nx: int, ny: int, nz: int) -> V
 		clampi(int(round((point.z - lo.z) / CELL)), 0, nz - 1))
 
 
+## Is this exact point reachable? Two conditions, both required:
+##  1. the point's OWN density is void — sampled at the point, not at a corner,
+##     because `cell_of` rounds and would otherwise let a point sitting in rock
+##     within CELL/2 of a reachable corner borrow that corner's verdict (the
+##     thin-wall case this guard exists to catch);
+##  2. the cell it falls in was reached by the clearance-eroded flood.
+static func point_reached(point: Vector3, lay: Dictionary, noise: FastNoiseLite,
+		seen: PackedByteArray, lo: Vector3, nx: int, ny: int, nz: int) -> bool:
+	if density(point, lay, noise) >= 0.0:
+		return false
+	return seen[_fi(cell_of(point, lo, nx, ny, nz), ny, nz)] == 1
+
+
 ## Connectivity audit of the carved cave: floods the space a body can move
 ## through, starting from the waking chamber, and reports whether the spawn and
 ## every room centre are reachable and whether the flood ESCAPES the padded box
@@ -453,14 +466,13 @@ static func reachability(p_seed: int) -> Dictionary:
 
 	var rooms_reachable: Array[bool] = []
 	for room: Dictionary in rooms:
-		var rc := cell_of(room["center"] as Vector3, lo, nx, ny, nz)
-		rooms_reachable.append(seen[_fi(rc, ny, nz)] == 1)
-	var spawn_c := cell_of(lay["spawn"] as Vector3, lo, nx, ny, nz)
+		rooms_reachable.append(
+			point_reached(room["center"] as Vector3, lay, noise, seen, lo, nx, ny, nz))
 	return {
 		"reached": reached,
 		"total": field.size(),
 		"start_passable": passable(field, nx, ny, nz, start),
-		"spawn_reachable": seen[_fi(spawn_c, ny, nz)] == 1,
+		"spawn_reachable": point_reached(lay["spawn"] as Vector3, lay, noise, seen, lo, nx, ny, nz),
 		"mouth_open": escaped,
 		"rooms_reachable": rooms_reachable,
 	}
