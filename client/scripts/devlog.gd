@@ -11,6 +11,19 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
+		"version": "0.2.0",
+		"date": "2026-07-18",
+		"title": "The Reach holds the light",
+		"notes": [
+			"The air in the Reach is thick with ash now. Light travels through it instead of past it, so distance reads as distance — a ruin far off sits behind something, rather than merely being smaller.",
+			"The ash settles the way ash should: heavier down in the hollows, thinner as you climb out of them.",
+			"Things sit ON the ground now. Every rock, bone pile and scrap of scrub darkens where it meets the earth, instead of looking pasted onto it.",
+			"The braziers and the cave torches finally give off light rather than just being orange. Their glow carries into the air around them.",
+			"Shadows soften as they stretch away from what casts them, instead of staying knife-edged all the way out.",
+			"This is a pass on the light, not on the world itself. The ground, the ruins and the scrub are still made of plain shapes, and they still look it — that work is coming.",
+		],
+	},
+	{
 		"version": "0.1.17",
 		"date": "2026-07-18",
 		"title": "The torches hang on the walls",

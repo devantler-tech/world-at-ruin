@@ -197,11 +197,11 @@ func _build_environment() -> void:
 	# instead of the whole frame going soft (the usual over-bloom mistake).
 	env.glow_enabled = true
 	env.glow_normalized = true
-	env.glow_intensity = 0.55
+	env.glow_intensity = 0.32
 	env.glow_strength = 1.0
 	env.glow_bloom = 0.05
 	env.glow_blend_mode = Environment.GLOW_BLEND_MODE_SOFTLIGHT
-	env.glow_hdr_threshold = 1.15
+	env.glow_hdr_threshold = 1.45
 	env.glow_hdr_scale = 2.0
 
 	# Depth fog, now with a height falloff: ash does not hang at uniform density,
@@ -210,9 +210,9 @@ func _build_environment() -> void:
 	env.fog_enabled = true
 	env.fog_light_color = FOG_COLOR
 	env.fog_light_energy = 0.9
-	env.fog_sun_scatter = 0.25
+	env.fog_sun_scatter = 0.06
 	env.fog_density = 0.010
-	env.fog_aerial_perspective = 0.55
+	env.fog_aerial_perspective = 0.35
 	env.fog_sky_affect = 0.4
 	env.fog_height = 6.0
 	env.fog_height_density = 0.06
@@ -224,15 +224,15 @@ func _build_environment() -> void:
 	# NOT carry sky light underground and undo the cave's darkness (the same law
 	# the SDFGI note above protects).
 	env.volumetric_fog_enabled = true
-	env.volumetric_fog_density = 0.012
+	env.volumetric_fog_density = 0.005
 	env.volumetric_fog_albedo = FOG_COLOR
 	env.volumetric_fog_emission = Color(0.10, 0.06, 0.05)
 	env.volumetric_fog_emission_energy = 0.35
-	env.volumetric_fog_anisotropy = 0.35
+	env.volumetric_fog_anisotropy = 0.10
 	env.volumetric_fog_length = 160.0
 	env.volumetric_fog_detail_spread = 2.0
 	env.volumetric_fog_gi_inject = 0.6
-	env.volumetric_fog_ambient_inject = 0.12
+	env.volumetric_fog_ambient_inject = 0.08
 	env.volumetric_fog_sky_affect = 0.4
 
 	# A restrained grading pass so the palette reads as a deliberate choice
