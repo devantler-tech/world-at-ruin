@@ -11,6 +11,16 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
+		"version": "0.7.0",
+		"date": "2026-07-18",
+		"title": "The scrub gathers",
+		"notes": [
+			"Ground cover no longer sprinkles itself evenly across the Reach like confetti. Scrub and dead grass now gather into thickets in the hollows and thin away on exposed ground, leaving genuinely bare stretches between — so one patch of the Reach finally looks different from the next, and a distant band of growth is something to steer by.",
+			"What grows where now follows the land: grasses and shrubs keep to the flatter, sheltered ground, while bones and rubble collect on the slopes and in their own scattered fields — places where something happened.",
+			"The amount of cover hasn't changed. It is the same scenery budget, spent with intent instead of spread thin everywhere.",
+		],
+	},
+	{
 		"version": "0.6.0",
 		"date": "2026-07-18",
 		"title": "Pick up a controller",

@@ -82,6 +82,25 @@ const NO_GROUND := -1.0e6
 ##   kind_weights:   Array[float] — length KIND_COUNT relative weights for kind
 ##                            selection (default uniform); non-positive/short arrays
 ##                            fall back to uniform.
+##   density_field:  Callable(x, z) -> float — local acceptance density in [0, 1]
+##                            (values are clamped): a candidate that passed every
+##                            other test is kept with this probability, so cover
+##                            gathers where the field is high and the low field is
+##                            left genuinely bare (a density of 0 places NOTHING
+##                            there, structurally — no draw is below 0). Costs one
+##                            extra draw per candidate that reaches it, always,
+##                            so the stream stays a pure function of seed+params.
+##                            A NON-FINITE density REJECTS — a broken field reads
+##                            as a bare world, loud in every frame, never as
+##                            silent uniform confetti. A non-Callable is ignored:
+##                            the legacy uniform scatter, byte-identical output.
+##   kind_weights_field: Callable(x, z) -> Array — per-location kind weights
+##                            (length KIND_COUNT, same rules as kind_weights),
+##                            sampled for each ACCEPTED candidate so the mix can
+##                            shift with the terrain (scrub on flats, rubble on
+##                            slopes); a malformed return falls back to the static
+##                            kind_weights for that candidate. Kind selection
+##                            consumes exactly one draw either way.
 ##
 ## Returns placements in placement order (itself deterministic), each a Dictionary
 ## {kind:int, pos:Vector3, yaw:float, scale:float}. Height is dropped from every
@@ -109,6 +128,17 @@ static func scatter(params: Dictionary) -> Array[Dictionary]:
 	if raw_sampler is Callable:
 		sampler = raw_sampler
 	var no_ground := float(params.get("no_ground", NO_GROUND))
+	# Malformed (non-Callable) fields are ignored, never a crash — the scatter
+	# then behaves exactly as if the param was omitted (the legacy uniform path,
+	# byte-identical output), matching the sampler's forgiveness above.
+	var density_field := Callable()
+	var raw_density: Variant = params.get("density_field", null)
+	if raw_density is Callable:
+		density_field = raw_density
+	var kind_field := Callable()
+	var raw_kind_field: Variant = params.get("kind_weights_field", null)
+	if raw_kind_field is Callable:
+		kind_field = raw_kind_field
 
 	var rng := RandomNumberGenerator.new()
 	rng.seed = int(params.get("seed", 0))
@@ -124,8 +154,10 @@ static func scatter(params: Dictionary) -> Array[Dictionary]:
 	while out.size() < count and attempts < max_attempts:
 		attempts += 1
 		# Draw the candidate FIRST and reject before consuming any style RNG, so
-		# the stream advances by exactly 2 per rejection — placement stays a pure
-		# function of the seed regardless of how crowded the region is.
+		# the stream advances by exactly 2 per geometric rejection (keep-out,
+		# spacing, ground) and exactly 3 when the density field rejects —
+		# placement stays a pure function of the seed regardless of how crowded
+		# the region is.
 		var x := rng.randf_range(lo, hi)
 		var z := rng.randf_range(lo, hi)
 		if _inside_any_keep_out(x, z, keep_outs):
@@ -144,7 +176,29 @@ static func scatter(params: Dictionary) -> Array[Dictionary]:
 			y = float(sampler.call(x, z))
 			if not is_finite(y) or y <= no_ground:
 				continue
-		var kind := _pick_kind(rng, weights)
+		# Density is the LAST rejection test, and it ALWAYS consumes exactly one
+		# draw when a field is supplied — even for a non-finite density — so the
+		# stream advances by a fixed amount per candidate that reaches it and
+		# placement stays a pure function of seed+params. `draw < density` keeps
+		# a zero density structurally bare (no draw is below 0); a non-finite
+		# density rejects (fail-loud: a broken field empties the world rather
+		# than quietly reverting to confetti). A density of 1.0 keeps every
+		# candidate except the measure-zero draw of exactly 1.0.
+		if density_field.is_valid():
+			var density := float(density_field.call(x, z))
+			var density_draw := rng.randf()
+			if not is_finite(density) or density_draw >= clampf(density, 0.0, 1.0):
+				continue
+		# The kind mix may shift with the terrain: an accepted candidate samples
+		# the kind field (falling back to the static weights when the return is
+		# malformed), so scrub can favour flats while debris tolerates slopes —
+		# without the kinds all clustering identically.
+		var cum := weights
+		if kind_field.is_valid():
+			var local := _sanitize_weights(kind_field.call(x, z))
+			if not local.is_empty():
+				cum = local
+		var kind := _pick_kind(rng, cum)
 		var yaw := rng.randf_range(0.0, TAU)
 		var scale := rng.randf_range(SCALE_MIN, SCALE_MAX)
 		out.append({"kind": kind, "pos": Vector3(x, y, z), "yaw": yaw, "scale": scale})
