@@ -46,6 +46,15 @@ const PLACEMENT_KEYS: Array[String] = ["kind", "pos", "yaw", "scale"]
 const SCALE_MIN := 0.7
 const SCALE_MAX := 1.5
 
+## Default "there is no ground here" threshold: a sampled height at or below
+## this means the candidate has no surface to stand on (a hole, or off the
+## terrain grid) and is REJECTED rather than placed. Numerically matches
+## `WorldGen.NO_GROUND` (-1e6, what `surface_height_at` returns outside the
+## grid) WITHOUT importing it, so this library keeps its deliberate
+## independence from WorldGen; callers with a different sentinel override it
+## via `params.no_ground`.
+const NO_GROUND := -1.0e6
+
 
 ## Scatter `count` cosmetic props across the square region
 ## [-half_extent, half_extent]² (inset by `margin`), avoiding every keep-out
@@ -62,6 +71,11 @@ const SCALE_MAX := 1.5
 ##   min_sep:        float  — minimum planar spacing between placed props (0 = off).
 ##   max_attempts:   int    — hard cap on rejection draws so a crowded region always
 ##                            terminates (default count * 32).
+##   no_ground:      float  — sampled heights at or below this (and any
+##                            non-finite height) mean "no surface here", so the
+##                            candidate is REJECTED rather than placed at a
+##                            sentinel depth (default NO_GROUND = -1e6, matching
+##                            WorldGen.surface_height_at's off-grid return).
 ##   height_sampler: Callable(x, z) -> float — ground height for the prop's y
 ##                            (default 0.0); decouples the lib from WorldGen so it
 ##                            stays unit-testable with an analytic surface.
@@ -94,6 +108,7 @@ static func scatter(params: Dictionary) -> Array[Dictionary]:
 	var raw_sampler: Variant = params.get("height_sampler", null)
 	if raw_sampler is Callable:
 		sampler = raw_sampler
+	var no_ground := float(params.get("no_ground", NO_GROUND))
 
 	var rng := RandomNumberGenerator.new()
 	rng.seed = int(params.get("seed", 0))
@@ -117,12 +132,21 @@ static func scatter(params: Dictionary) -> Array[Dictionary]:
 			continue
 		if min_sep_sq > 0.0 and _too_close(x, z, grid, cell, min_sep_sq):
 			continue
-		var kind := _pick_kind(rng, weights)
-		var yaw := rng.randf_range(0.0, TAU)
-		var scale := rng.randf_range(SCALE_MIN, SCALE_MAX)
+		# Ground BEFORE style: a candidate with no surface under it is rejected
+		# like any other, so it too costs exactly 2 draws and the stream
+		# invariant above still holds. Sampling here (rather than at the end)
+		# also means the sampler is never called for an already-rejected
+		# candidate — and because reading a height consumes no RNG, moving this
+		# up leaves every accepted placement, and the committed golden, byte
+		# identical.
 		var y := 0.0
 		if sampler.is_valid():
 			y = float(sampler.call(x, z))
+			if not is_finite(y) or y <= no_ground:
+				continue
+		var kind := _pick_kind(rng, weights)
+		var yaw := rng.randf_range(0.0, TAU)
+		var scale := rng.randf_range(SCALE_MIN, SCALE_MAX)
 		out.append({"kind": kind, "pos": Vector3(x, y, z), "yaw": yaw, "scale": scale})
 		if min_sep_sq > 0.0:
 			_grid_insert(grid, x, z, cell)

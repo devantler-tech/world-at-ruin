@@ -163,18 +163,73 @@ func _ready() -> void:
 			_fail("without a height sampler, prop y should be 0")
 			return
 
-	# --- the spatial hash is an EXACT acceleration (#109) ---
-	# The committed golden above only covers GOLDEN_COUNT props; the acceleration
-	# exists for the dense scatters the world actually builds, so prove
-	# equivalence THERE — against a reference full scan, at densities where the
-	# grid and the scan could plausibly disagree.
+	# 6. NO GROUND (issue #97) — a sampler reporting "there is no surface here"
+	# must REJECT the candidate, never place it at the sentinel depth. This is
+	# the contract WorldGen.surface_height_at actually has (it returns
+	# NO_GROUND = -1e6 off the terrain grid), so without this the obvious
+	# wiring would bury props a thousand kilometres down.
+	var holed_params := {
+		"seed": 4242, "count": 120, "half_extent": 100.0,
+		"height_sampler": Callable(self, "_holed_surface"),
+	}
+	var holed := FoliageGen.scatter(holed_params)
+	for p: Dictionary in holed:
+		var pos: Vector3 = p["pos"]
+		if pos.x < 0.0:
+			_fail("a prop landed at (%.2f, %.2f) where the sampler reports NO_GROUND" % [pos.x, pos.z])
+			return
+		if pos.y != 2.0:
+			_fail("a prop on solid ground has y %.3f, expected the sampler's 2.0" % pos.y)
+			return
+	# Teeth: the SAME scatter over solid ground DOES populate the hole's half,
+	# so the emptiness above is the rejection at work and not a vacuous pass.
+	var solid_params := holed_params.duplicate()
+	solid_params["height_sampler"] = Callable(self, "_solid_surface")
+	var solid := FoliageGen.scatter(solid_params)
+	var solid_left := 0
+	for p: Dictionary in solid:
+		if (p["pos"] as Vector3).x < 0.0:
+			solid_left += 1
+	if solid_left == 0:
+		_fail("no-ground check is vacuous: over solid ground nothing landed in the tested half either")
+		return
+	if holed.is_empty():
+		_fail("no-ground check is vacuous: the holed scatter placed nothing at all")
+		return
+
+	# 6b. A non-finite height is never a coordinate — a NaN or INF sampler
+	# places nothing rather than poisoning a prop's position (and the golden).
+	for sampler_name: String in ["_nan_surface", "_inf_surface"]:
+		var poisoned := FoliageGen.scatter({
+			"seed": 11, "count": 40, "half_extent": 100.0,
+			"height_sampler": Callable(self, sampler_name),
+		})
+		if not poisoned.is_empty():
+			_fail("a %s sampler placed %d props — a non-finite height must reject, not propagate" % [sampler_name, poisoned.size()])
+			return
+
+	# 6c. The sentinel is caller-overridable, so a caller whose "no ground" value
+	# differs from WorldGen's is served too.
+	var raised := FoliageGen.scatter({
+		"seed": 11, "count": 40, "half_extent": 100.0, "no_ground": 5.0,
+		"height_sampler": Callable(self, "_solid_surface"),
+	})
+	if not raised.is_empty():
+		_fail("with no_ground raised above the sampled height, every candidate should be rejected (placed %d)" % raised.size())
+		return
+
+	# 7. THE SPATIAL HASH IS AN EXACT ACCELERATION (issue #109). The committed
+	# golden above only covers GOLDEN_COUNT props; the acceleration exists for
+	# the dense scatters the world actually builds, so prove equivalence THERE —
+	# against a reference full scan, at densities where the grid and the scan
+	# could plausibly disagree.
 	if not _grid_matches_full_scan():
 		return
 	if not _no_overlapping_pair():
 		return
 	_report_scatter_cost()
 
-	print("TEST PASS — foliage deterministic (%s, global-RNG-invariant, golden-matched), %d props clear of %d keep-outs + bounds, min_sep + horizontal-only + degenerate guards hold; spatial hash matches a full scan bit-for-bit and admits no overlapping pair" % [fa, a.size(), keep_outs.size()])
+	print("TEST PASS — foliage deterministic (%s, global-RNG-invariant, golden-matched), %d props clear of %d keep-outs + bounds, min_sep + horizontal-only + no-ground + degenerate guards hold; spatial hash matches a full scan bit-for-bit and admits no overlapping pair" % [fa, a.size(), keep_outs.size()])
 	get_tree().quit(0)
 
 
@@ -221,10 +276,15 @@ func _scatter_full_scan(params: Dictionary) -> Array[Dictionary]:
 	var hi := half_extent - margin
 	var keep_outs: Array = params.get("keep_outs", [])
 	var sampler: Callable = params.get("height_sampler", Callable())
+	var no_ground := float(params.get("no_ground", FoliageGen.NO_GROUND))
 	var rng := RandomNumberGenerator.new()
 	rng.seed = int(params.get("seed", 0))
 	var attempts := 0
 	var max_attempts := int(params.get("max_attempts", count * 32))
+	# The loop below mirrors FoliageGen.scatter step for step — including the
+	# ground sample sitting BEFORE the style draws (#97) — so the ONLY difference
+	# is the separation test. Any divergence is then attributable to the grid and
+	# to nothing else.
 	while out.size() < count and attempts < max_attempts:
 		attempts += 1
 		var x := rng.randf_range(lo, hi)
@@ -233,12 +293,14 @@ func _scatter_full_scan(params: Dictionary) -> Array[Dictionary]:
 			continue
 		if min_sep_sq > 0.0 and _full_scan_too_close(x, z, out, min_sep_sq):
 			continue
-		var kind := FoliageGen._pick_kind(rng, [])
-		var yaw := rng.randf_range(0.0, TAU)
-		var scale := rng.randf_range(FoliageGen.SCALE_MIN, FoliageGen.SCALE_MAX)
 		var y := 0.0
 		if sampler.is_valid():
 			y = float(sampler.call(x, z))
+			if not is_finite(y) or y <= no_ground:
+				continue
+		var kind := FoliageGen._pick_kind(rng, [])
+		var yaw := rng.randf_range(0.0, TAU)
+		var scale := rng.randf_range(FoliageGen.SCALE_MIN, FoliageGen.SCALE_MAX)
 		out.append({"kind": kind, "pos": Vector3(x, y, z), "yaw": yaw, "scale": scale})
 	return out
 
@@ -329,6 +391,28 @@ func _golden_keep_outs() -> Array:
 ## the golden's y column is stable on every runner.
 func _linear_surface(x: float, z: float) -> float:
 	return 0.25 * x - 0.15 * z + 1.0
+
+
+## A surface with a HOLE over the -X half: solid ground at y = 2 on the +X side,
+## and WorldGen's "no ground here" sentinel on the other — what
+## surface_height_at actually returns off the terrain grid.
+func _holed_surface(x: float, _z: float) -> float:
+	return FoliageGen.NO_GROUND if x < 0.0 else 2.0
+
+
+## The same surface with the hole filled in — the control that proves the
+## holed scatter's empty half is the rejection working, not an accident.
+func _solid_surface(_x: float, _z: float) -> float:
+	return 2.0
+
+
+## Degenerate samplers: a height that is not a number at all.
+func _nan_surface(_x: float, _z: float) -> float:
+	return NAN
+
+
+func _inf_surface(_x: float, _z: float) -> float:
+	return INF
 
 
 ## A fingerprint of the whole scatter: count, then every prop's kind and
