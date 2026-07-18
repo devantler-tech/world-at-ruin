@@ -163,6 +163,61 @@ func _ready() -> void:
 			_fail("without a height sampler, prop y should be 0")
 			return
 
+	# 6. NO GROUND (issue #97) — a sampler reporting "there is no surface here"
+	# must REJECT the candidate, never place it at the sentinel depth. This is
+	# the contract WorldGen.surface_height_at actually has (it returns
+	# NO_GROUND = -1e6 off the terrain grid), so without this the obvious
+	# wiring would bury props a thousand kilometres down.
+	var holed_params := {
+		"seed": 4242, "count": 120, "half_extent": 100.0,
+		"height_sampler": Callable(self, "_holed_surface"),
+	}
+	var holed := FoliageGen.scatter(holed_params)
+	for p: Dictionary in holed:
+		var pos: Vector3 = p["pos"]
+		if pos.x < 0.0:
+			_fail("a prop landed at (%.2f, %.2f) where the sampler reports NO_GROUND" % [pos.x, pos.z])
+			return
+		if pos.y != 2.0:
+			_fail("a prop on solid ground has y %.3f, expected the sampler's 2.0" % pos.y)
+			return
+	# Teeth: the SAME scatter over solid ground DOES populate the hole's half,
+	# so the emptiness above is the rejection at work and not a vacuous pass.
+	var solid_params := holed_params.duplicate()
+	solid_params["height_sampler"] = Callable(self, "_solid_surface")
+	var solid := FoliageGen.scatter(solid_params)
+	var solid_left := 0
+	for p: Dictionary in solid:
+		if (p["pos"] as Vector3).x < 0.0:
+			solid_left += 1
+	if solid_left == 0:
+		_fail("no-ground check is vacuous: over solid ground nothing landed in the tested half either")
+		return
+	if holed.is_empty():
+		_fail("no-ground check is vacuous: the holed scatter placed nothing at all")
+		return
+
+	# 6b. A non-finite height is never a coordinate — a NaN or INF sampler
+	# places nothing rather than poisoning a prop's position (and the golden).
+	for sampler_name: String in ["_nan_surface", "_inf_surface"]:
+		var poisoned := FoliageGen.scatter({
+			"seed": 11, "count": 40, "half_extent": 100.0,
+			"height_sampler": Callable(self, sampler_name),
+		})
+		if not poisoned.is_empty():
+			_fail("a %s sampler placed %d props — a non-finite height must reject, not propagate" % [sampler_name, poisoned.size()])
+			return
+
+	# 6c. The sentinel is caller-overridable, so a caller whose "no ground" value
+	# differs from WorldGen's is served too.
+	var raised := FoliageGen.scatter({
+		"seed": 11, "count": 40, "half_extent": 100.0, "no_ground": 5.0,
+		"height_sampler": Callable(self, "_solid_surface"),
+	})
+	if not raised.is_empty():
+		_fail("with no_ground raised above the sampled height, every candidate should be rejected (placed %d)" % raised.size())
+		return
+
 	print("TEST PASS — foliage deterministic (%s, global-RNG-invariant, golden-matched), %d props clear of %d keep-outs + bounds, min_sep + horizontal-only + degenerate guards hold" % [fa, a.size(), keep_outs.size()])
 	get_tree().quit(0)
 
@@ -192,6 +247,28 @@ func _golden_keep_outs() -> Array:
 ## the golden's y column is stable on every runner.
 func _linear_surface(x: float, z: float) -> float:
 	return 0.25 * x - 0.15 * z + 1.0
+
+
+## A surface with a HOLE over the -X half: solid ground at y = 2 on the +X side,
+## and WorldGen's "no ground here" sentinel on the other — what
+## surface_height_at actually returns off the terrain grid.
+func _holed_surface(x: float, _z: float) -> float:
+	return FoliageGen.NO_GROUND if x < 0.0 else 2.0
+
+
+## The same surface with the hole filled in — the control that proves the
+## holed scatter's empty half is the rejection working, not an accident.
+func _solid_surface(_x: float, _z: float) -> float:
+	return 2.0
+
+
+## Degenerate samplers: a height that is not a number at all.
+func _nan_surface(_x: float, _z: float) -> float:
+	return NAN
+
+
+func _inf_surface(_x: float, _z: float) -> float:
+	return INF
 
 
 ## A fingerprint of the whole scatter: count, then every prop's kind and
