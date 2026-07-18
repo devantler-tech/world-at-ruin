@@ -30,9 +30,14 @@ extends RefCounted
 ##
 ##      SCOPE, stated honestly: this bounds PER-TARGET throughput. Telegraph AREA
 ##      is not in the model, so a wider cone at the same budget and cycle reaches
-##      more targets for more total damage. That multi-target economy is a real
-##      balance decision and is tracked in devantler-tech/world-at-ruin#82 — it is
-##      not claimed as enforced here.
+##      more targets for more total damage. That multi-target economy is DECIDED,
+##      not pending: devantler-tech/world-at-ruin#82 settled it (maintainer
+##      direction 2026-07-18, option C) as a REVIEWED BALANCE DECISION rather than
+##      a future CI guard, because bounding it means inventing an area-vs-power
+##      exchange rate and freezing it permanently under the no-resets law. So
+##      widening a telegraph is a balance review the maintainer approves (see
+##      AGENTS.md); do not add a mechanical area guard here without fresh
+##      direction superseding that.
 ##
 ##   2. NO STRICT DOMINANCE (the sidegrade law) — "Every new arsenal ability must
 ##      be a SIDEGRADE, never a strict upgrade." Within a comparable class no
@@ -245,10 +250,14 @@ static func dominates(a: Dictionary, b: Dictionary) -> bool:
 ## damage per second. The initial scale of a genuinely NEW (role|effect) category
 ## is bounded in CI against the categories already shipped.
 ##
-## Still NOT bounded, and a genuine balance decision tracked in
-## devantler-tech/world-at-ruin#82: multi-target reach. Throughput here is
+## Still NOT bounded, and deliberately so: multi-target reach. Throughput here is
 ## per-target — telegraph AREA is not in the model, so a wider cone at the same
 ## cycle and budget hits more targets for more total damage.
+## devantler-tech/world-at-ruin#82 SETTLED this (maintainer direction 2026-07-18,
+## option C): it stays a reviewed balance decision, not a CI guard, because the
+## area-vs-power exchange rate is game balance and freezing one would be permanent
+## under the no-resets law. Widening a telegraph is a maintainer-approved balance
+## review (AGENTS.md), never something green CI grants.
 static func find_power_inflation(abilities: Array, budgets: Dictionary) -> Array:
 	var violations: Array = []
 	for ab in abilities:

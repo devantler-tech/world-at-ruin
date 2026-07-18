@@ -361,8 +361,13 @@ jobs:
         # passes here, and a brand-new ability is never compared at all — which is
         # why throughput is bounded absolutely by the frozen cycle floor above
         # rather than relying on this step. What remains unbounded is the
-        # multi-target economy (telegraph AREA is not in the model), a balance
-        # decision tracked in #82.
+        # multi-target economy (telegraph AREA is not in the model). That is
+        # SETTLED, not pending: #82 decided (maintainer direction 2026-07-18,
+        # option C) that it stays a reviewed balance decision rather than a CI
+        # guard, because bounding area means freezing an area-vs-power exchange
+        # rate permanently under the no-resets law. Widening a telegraph is a
+        # maintainer-approved balance review (AGENTS.md) — never something a
+        # green run here grants.
         # CI is the anchor (the in-tree test cannot see the base revision).
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         env:

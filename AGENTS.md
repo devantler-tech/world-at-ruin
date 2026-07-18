@@ -234,26 +234,26 @@ reset the game forbids.
   throughput in effect — that is precisely how power creep enters a game that claims to have none.
   Situational-by-design is the law, and **"no strict dominance" is simulatable**, so it is an
   agent-ownable CI guard rather than a matter of taste.
-- **🔴 THROUGHPUT AND ABSOLUTE POWER ARE A BALANCE REVIEW, NOT A CI GUARD — an agent must NOT decide
-  them alone** (maintainer direction 2026-07-18, issue #82, option C). The CI guards in
-  `client/scripts/ability.gd` are deliberately **structural only**: append-only identity, no-vanish,
-  frozen per-`(role|effect)` per-cast power budget, and no strict dominance. They are honestly
-  incomplete, and the gap is known:
-  - **Throughput is unbounded.** Per-cast `power` is frozen, but effective power also depends on
-    `cast_time_ms` and `cooldown_ms`. A *nominal* sidegrade passes every guard while multiplying
-    damage-per-second — e.g. halving a cooldown while shaving 0.1 m of range is not a strict
-    self-buff, yet every target in range takes roughly twice the damage.
-  - **A new `(role|effect)` category's absolute scale is unconstrained.** Its first ledger line sets
-    the ceiling, and the ledger is append-only, so an inflated ceiling is **permanent**.
-  Closing these mechanically would mean an agent inventing exchange rates (is range worth cooldown?
-  at what rate?) and freezing them forever under the no-resets law. **That trade is game balance, and
-  it is the maintainer's call.** So the binding rule for every future agent:
-  **introducing a new `(role|effect)` category, or any change that raises an ability's throughput
-  (`power` up, or `cast_time_ms`/`cooldown_ms` down), is a BALANCE REVIEW.** State the throughput
-  before/after and the category's absolute scale plainly in the PR body, and let the maintainer
-  approve the number. Never infer permission from green CI: **the guards prove you did not commit a
-  blatant upgrade, never that the balance is right.** Do not add a mechanical throughput/absolute-scale
-  guard without fresh maintainer direction that supersedes this decision.
+- **🔴 THE MULTI-TARGET (TELEGRAPH AREA) ECONOMY IS A BALANCE REVIEW, NOT A CI GUARD — an agent must
+  NOT decide it alone** (maintainer direction 2026-07-18, issue #82, option C). `ability.gd` already
+  bounds the *single-target* economy mechanically, and those guards stand: one frozen per-cast
+  **power budget** per `(role|effect)`; a frozen **cast+cooldown cycle floor** (so per-target
+  throughput is capped at budget/floor — this is what stops "shorter cooldown for shorter range"
+  passing as a sidegrade while doubling DPS); a **new category's opening scale bounded against the
+  categories already shipped**; plus no-strict-dominance, no-strict-self-buff-over-base, and the
+  append-only ledgers.
+  **What is deliberately NOT modelled is telegraph AREA.** A wider cone at the same budget and the
+  same cycle hits *more targets*, so total damage rises with no guard firing. Closing that
+  mechanically means inventing an exchange rate between area, target count and power — and freezing
+  it permanently under the no-resets law. **That exchange rate IS game balance, and it is the
+  maintainer's call, not an agent's.** So the binding rule:
+  **widening a telegraph, adding a larger-area shape, or otherwise increasing how many targets one
+  cast reaches is a BALANCE REVIEW.** State the area/reach before → after plainly in the PR body and
+  let the maintainer approve it. The same applies to introducing a new `(role|effect)` category:
+  the CI bound keeps its opening scale in family, but the *choice* of scale is still his.
+  **Never infer permission from green CI — the guards prove you did not commit a blatant
+  single-target upgrade, never that the balance is right.** Do not add a mechanical area/multi-target
+  guard without fresh maintainer direction superseding this decision.
 - **Tune content against the *banked floor*, not peak mastery.** Unlosable progress is the only
   power level every player is guaranteed to have; everything above it is skill expression.
 - **Death penalty in group content breeds blame.** A bloodstain is fine solo; "you cost me my
