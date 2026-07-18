@@ -740,7 +740,9 @@ jobs:
           # would otherwise get no picture of the surface it changed. player.gd
           # likewise: the creator builds its portrait from the player's own body
           # and camera rig, so a change there can break the portrait while the
-          # world vantages — which never frame the player — stay identical. Omitting it meant the PR that introduced this job skipped
+          # world vantages — which never frame the player — stay identical. And
+          # scenes/main.tscn, which project.godot names as the boot scene: it can
+          # change the script or children that decide the absent-save flow. Omitting it meant the PR that introduced this job skipped
           # its own job and proved nothing.
           #
           # project.godot counts too: it carries the RENDERING configuration
@@ -782,7 +784,7 @@ jobs:
           # the world capture deliberately hides the creator while its fixed
           # cameras never frame a character up close — so a change to the kit
           # would otherwise get no picture of the surface it changed.
-          if grep -qE '^client/scripts/(character_creator|character_factory|character_store|main|player)\.gd$|^client/(recipes|tools)/|^client/assets/characters/humanoid_kit/|^client/project\.godot$' changed.txt; then
+          if grep -qE '^client/scripts/(character_creator|character_factory|character_store|main|player)\.gd$|^client/scenes/main\.tscn$|^client/(recipes|tools)/|^client/assets/characters/humanoid_kit/|^client/project\.godot$' changed.txt; then
             echo "first_run=true" >> "$GITHUB_OUTPUT"
           else
             echo "first_run=false" >> "$GITHUB_OUTPUT"
@@ -904,9 +906,35 @@ jobs:
           if ! grep -qE "[0-9]+ first-run vantages? written" first-run.log; then
             echo "::error::first-run capture did not report a first-run vantage — see log"; tail -40 first-run.log; exit 1
           fi
-          if [ ! -s "${RUNNER_TEMP}/shots/first_run.png" ]; then
-            echo "::error::no first_run.png was written"; ls -la "${RUNNER_TEMP}/shots" || true; exit 1
+          # Require the FULL expected set, not merely a plausible count. A
+          # capture-tool change that dropped the lower-panel shot or the preset
+          # loop would still report some number and still write first_run.png —
+          # and since tools/ is gated in here precisely so tool changes validate
+          # themselves, accepting any count would let the tool quietly stop
+          # photographing most of what the gate fires on.
+          #
+          # The preset list is read from the creator itself rather than repeated
+          # here, so adding a preset cannot leave CI silently checking the old
+          # set. Fail loudly if it cannot be parsed: an empty list would turn
+          # this whole check into a no-op.
+          presets=$(grep -oE 'const PRESETS := \[[^]]*\]' client/scripts/character_creator.gd \
+            | grep -oE '"[a-z_]+"' | tr -d '"')
+          if [ -z "$presets" ]; then
+            echo "::error::could not read PRESETS from client/scripts/character_creator.gd — cannot tell which frames to require"
+            exit 1
           fi
+          expected="first_run first_run_lower"
+          for p in $presets; do expected="$expected first_run_$p"; done
+          missing=""
+          for f in $expected; do
+            [ -s "${RUNNER_TEMP}/shots/$f.png" ] || missing="$missing $f.png"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::first-run frames missing:$missing"
+            ls -la "${RUNNER_TEMP}/shots" || true
+            exit 1
+          fi
+          echo "first-run frames present:$expected"
           # Same reasoning as the seeded capture: the tool proves the creator is
           # up, but a path returning early before main.gd finishes booting would
           # still satisfy that, and the frame would depict a half-started game.
