@@ -64,6 +64,50 @@ const SAMPLE_X1 := 0.88
 const SAMPLE_Y0 := 0.22
 const SAMPLE_Y1 := 0.86
 
+## ── Terrain-contribution control (#150) ──────────────────────────────────
+## The guard chain above proves the terrain EXISTS, is VISIBLE, is in FRONT of
+## the camera and would be DRAWN — none of it proves its material lands pixels.
+## A material made fully transparent, or a shader discarding every fragment,
+## passes every one of those while the frame shows only sky. The control
+## measures the contribution directly: hide the terrain mesh and the frame must
+## CHANGE where bare terrain was. One vantage on purpose — the property belongs
+## to the shared terrain MATERIAL, not to a camera position, so one honest
+## measurement proves it, and every extra control frame adds wall-time and
+## flake surface to the job #142 wants promoted to required. Crossfield,
+## specifically, because it frames the widest expanse of bare ground without
+## the sunward glare.
+const CONTRIB_VANTAGE := "crossfield"
+## Frames between each pair of control captures. The same gap for the live
+## pair (the noise reference) and the hidden pair, so the reference measures
+## exactly the drift — wind-swayed foliage, fog reprojection, GI convergence —
+## the verdict has to see past.
+const CONTRIB_GAP_FRAMES := 15
+## The floor on bare-terrain samples: fewer means the vantage frames too
+## little open ground for the verdict to mean anything, which is itself a
+## failure — a control that silently measured three pixels would be the same
+## self-attestation this tool exists to replace.
+const CONTRIB_MIN_POINTS := 40
+## A sample is QUIET when the live pair differs by no more than this at it.
+## Only quiet samples may vouch: a point a grass card sways across changes
+## between ANY two frames, terrain or no terrain.
+const CONTRIB_QUIET_NOISE := 0.02
+## What hiding the terrain must do to a quiet sample for it to count as
+## contribution. Bare ground turning into sky moves channels by whole tenths;
+## this floor only needs to clear the noise band with margin.
+const CONTRIB_MIN_CHANGE := 0.08
+## The floor on quiet samples: if wind or temporal effects touch nearly every
+## sample, the measurement is impossible and must say so rather than pass.
+const CONTRIB_MIN_QUIET := 24
+## The fraction of quiet samples that must change when the terrain hides.
+## Well under the measured healthy value on purpose: height fog compresses the
+## far field toward the sky colour, so distant ground can change less than
+## CONTRIB_MIN_CHANGE when hidden, and a wanderer strolling into a sample holds
+## a pixel steady — neither refutes contribution. Calibration (macOS, 1600x900,
+## shipped lighting): healthy crossfield measured 0.88 contributing with median
+## change 0.122; the discard-everything ablation measured 0.00. This floor
+## splits that gap with wide margin on both sides.
+const CONTRIB_MIN_FRACTION := 0.5
+
 ## The first-run scenario samples the LEFT band instead, because that is where
 ## the creator's panel is anchored (PRESET_LEFT_WIDE). Sampling the world box
 ## would measure the 3D view BEHIND the panel — so a run where the creator never
@@ -185,6 +229,14 @@ func _ready() -> void:
 		print("CAPTURED %s -> %s (%dx%d, luma spread %.3f)%s" %
 			[vantage_name, out, img.get_width(), img.get_height(), spread, note])
 		_write_note(dir, vantage_name, img, note)
+
+		# The frame is saved; now prove the terrain actually CONTRIBUTED to it
+		# rather than merely being present, visible, ahead and drawable — the
+		# gap #150 names (a transparent or discard-everything material passes
+		# every structural guard while the frame shows only sky).
+		if vantage_name == CONTRIB_VANTAGE:
+			if not await _prove_terrain_contribution(cam, main):
+				return
 
 	var cave_count := await _capture_cave(cam, dir, main)
 	if cave_count < 0:
@@ -569,6 +621,161 @@ func _camera_draws_world(cam: Camera3D, main: Node) -> bool:
 		if child is MeshInstance3D and str(child.name) == "Terrain":
 			return ((child as MeshInstance3D).layers & cam.cull_mask) != 0
 	return false
+
+
+## Proves the terrain contributes PIXELS to the frame. Three captures at the
+## already-settled vantage: two live frames CONTRIB_GAP_FRAMES apart — the
+## noise reference, because wind-swayed foliage and temporal effects move
+## between ANY two frames and a point they touch may vouch for nothing — then
+## the same view with the terrain mesh hidden. At samples whose camera ray
+## hits bare terrain, hiding the terrain must change the pixel: ground becomes
+## sky. A fully transparent material, or a shader discarding every fragment,
+## leaves the hidden frame identical to the live one and fails here. The
+## TerrainBody collider is a SIBLING of the mesh, so hiding the mesh cannot
+## disturb the designation or the physics under the wanderers.
+func _prove_terrain_contribution(cam: Camera3D, main: Node) -> bool:
+	var world := main.get_node_or_null("World")
+	var terrain := _terrain_mesh(world)
+	if terrain == null:
+		_fail("no Terrain mesh under World — cannot run the terrain-contribution control")
+		return false
+	var pts := designate_terrain_points(cam, world, get_viewport().get_visible_rect().size)
+	if pts.size() < CONTRIB_MIN_POINTS:
+		_fail("vantage '%s' frames only %d bare-terrain samples (floor %d) — too little open ground to prove the terrain renders" %
+			[CONTRIB_VANTAGE, pts.size(), CONTRIB_MIN_POINTS])
+		return false
+	var live_a := await _grab_frame()
+	for i in CONTRIB_GAP_FRAMES:
+		await get_tree().process_frame
+	var live_b := await _grab_frame()
+	terrain.visible = false
+	for i in CONTRIB_GAP_FRAMES:
+		await get_tree().process_frame
+	var hidden := await _grab_frame()
+	terrain.visible = true
+	if not terrain.is_visible_in_tree():
+		_fail("the terrain did not come back visible after the contribution control — every later frame would photograph a world with no ground")
+		return false
+	var verdict := terrain_contribution_verdict(pts, live_a, live_b, hidden)
+	print("TERRAIN CONTRIBUTION %s: %d terrain samples, %d quiet (noise p95 %.4f), %d contributing (fraction %.2f, median change %.3f)" %
+		[CONTRIB_VANTAGE, pts.size(), int(verdict["quiet"]), float(verdict["noise_p95"]),
+			int(verdict["contributing"]), float(verdict["fraction"]), float(verdict["median_change"])])
+	if not bool(verdict["ok"]):
+		_fail("vantage '%s': %s" % [CONTRIB_VANTAGE, str(verdict["reason"])])
+		return false
+	return true
+
+
+## The baked Terrain mesh under World, or null.
+func _terrain_mesh(world: Node) -> MeshInstance3D:
+	if world == null:
+		return null
+	for child in world.get_children():
+		if child is MeshInstance3D and str(child.name) == "Terrain":
+			return child as MeshInstance3D
+	return null
+
+
+## One settled frame as an Image.
+func _grab_frame() -> Image:
+	await RenderingServer.frame_post_draw
+	return get_viewport().get_texture().get_image()
+
+
+## The sample points whose camera ray lands on BARE TERRAIN: the same grid the
+## luminance guard walks, kept only where the first collider hit is the
+## terrain's own TerrainBody. First hit, deliberately: a ray whose first hit is
+## a ruin, the shrine or a wanderer is a pixel that shows THAT, and letting it
+## vouch for the terrain would re-open the gap this control closes. Static and
+## side-effect-free so terrain_contribution_test.gd can pin the designation
+## against the real generated world, headlessly.
+static func designate_terrain_points(cam: Camera3D, world: Node, vp_size: Vector2) -> Array[Vector2i]:
+	var space := cam.get_world_3d().direct_space_state
+	var out: Array[Vector2i] = []
+	var x0 := SAMPLE_X0 * vp_size.x
+	var y0 := SAMPLE_Y0 * vp_size.y
+	var span_x := (SAMPLE_X1 - SAMPLE_X0) * vp_size.x
+	var span_y := (SAMPLE_Y1 - SAMPLE_Y0) * vp_size.y
+	for gy in 12:
+		for gx in 16:
+			var px := Vector2(x0 + (gx + 0.5) * span_x / 16.0, y0 + (gy + 0.5) * span_y / 12.0)
+			var from := cam.project_ray_origin(px)
+			var to := from + cam.project_ray_normal(px) * 500.0
+			var query := PhysicsRayQueryParameters3D.create(from, to)
+			query.collide_with_areas = false
+			var hit := space.intersect_ray(query)
+			if hit.is_empty():
+				continue
+			var collider: Object = hit["collider"]
+			if collider is StaticBody3D and str((collider as Node).name) == "TerrainBody" \
+					and (collider as Node).get_parent() == world:
+				out.append(Vector2i(px))
+	return out
+
+
+## The pure verdict over one designation and three frames — static so the test
+## can drive it with synthetic images. Returns ok/reason plus the counts the
+## capture log prints; every non-ok reason names what failed and why it damns.
+static func terrain_contribution_verdict(points: Array[Vector2i], live_a: Image, live_b: Image, hidden: Image) -> Dictionary:
+	var verdict := {
+		"ok": false, "reason": "", "quiet": 0, "contributing": 0,
+		"fraction": 0.0, "noise_p95": 0.0, "median_change": 0.0,
+	}
+	if points.size() < CONTRIB_MIN_POINTS:
+		verdict["reason"] = "only %d bare-terrain samples (floor %d) — too few to measure contribution" % [points.size(), CONTRIB_MIN_POINTS]
+		return verdict
+	if live_a.get_size() != live_b.get_size() or live_a.get_size() != hidden.get_size():
+		verdict["reason"] = "control frames differ in size — the captures are not comparable"
+		return verdict
+	var noises: Array[float] = []
+	var changes: Array[float] = []
+	var quiet := 0
+	var contributing := 0
+	for pt in points:
+		if pt.x < 0 or pt.x >= live_a.get_width() or pt.y < 0 or pt.y >= live_a.get_height():
+			verdict["reason"] = "sample (%d, %d) is outside the %dx%d frame — designation and capture disagree about the viewport" % [pt.x, pt.y, live_a.get_width(), live_a.get_height()]
+			return verdict
+		var noise := _pixel_delta(live_a.get_pixel(pt.x, pt.y), live_b.get_pixel(pt.x, pt.y))
+		noises.append(noise)
+		if noise > CONTRIB_QUIET_NOISE:
+			continue
+		quiet += 1
+		var change := _pixel_delta(live_b.get_pixel(pt.x, pt.y), hidden.get_pixel(pt.x, pt.y))
+		changes.append(change)
+		if change >= CONTRIB_MIN_CHANGE:
+			contributing += 1
+	verdict["quiet"] = quiet
+	verdict["contributing"] = contributing
+	verdict["noise_p95"] = _percentile(noises, 0.95)
+	verdict["median_change"] = _percentile(changes, 0.5)
+	if quiet < CONTRIB_MIN_QUIET:
+		verdict["reason"] = "only %d of %d terrain samples were quiet across the live pair (floor %d) — too much frame motion to measure the terrain's contribution" % [quiet, points.size(), CONTRIB_MIN_QUIET]
+		return verdict
+	var fraction := float(contributing) / float(quiet)
+	verdict["fraction"] = fraction
+	if fraction < CONTRIB_MIN_FRACTION:
+		verdict["reason"] = "hiding the terrain changed only %d of %d quiet terrain samples (%.0f%%, floor %.0f%%) — the terrain contributes no pixels, exactly what a transparent or discard-everything material renders" % [contributing, quiet, fraction * 100.0, CONTRIB_MIN_FRACTION * 100.0]
+		return verdict
+	verdict["ok"] = true
+	return verdict
+
+
+## The largest per-channel difference between two pixels. Channels rather than
+## luminance on purpose: a ground/sky pair can share brightness while differing
+## wildly in hue, and luminance would read that as "no change".
+static func _pixel_delta(a: Color, b: Color) -> float:
+	return maxf(maxf(absf(a.r - b.r), absf(a.g - b.g)), absf(a.b - b.b))
+
+
+## The q-th percentile of a sample list (0 on an empty list — callers print it,
+## they never gate on it).
+static func _percentile(values: Array[float], q: float) -> float:
+	if values.is_empty():
+		return 0.0
+	var sorted: Array[float] = []
+	sorted.assign(values)
+	sorted.sort()
+	return sorted[clampi(int(q * (sorted.size() - 1)), 0, sorted.size() - 1)]
 
 
 ## Whether the camera has world geometry in front of it, by raycasting from the
