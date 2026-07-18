@@ -408,6 +408,17 @@ everything shipped afterwards is held to.
     it — so a private package harms no player today while blocking every release on it would. The
     job going red is the signal; the release still ships. **Make it blocking the moment the updater
     actually resolves against GHCR**, at which point an unreachable origin is a real defect (tracked as #141).
+  - **Homebrew cask** — CD renders `Casks/world-at-ruin.rb` and opens/updates ONE evergreen PR on
+    `devantler-tech/homebrew-tap`. It runs **after** `publish-release`, because the cask's `url`
+    points at the release asset and a draft release's asset URL 404s for `brew install`.
+    **`auto_updates` is deliberately ABSENT**: it tells Homebrew "this app updates itself, do not
+    upgrade it", and there is no working in-client updater yet (`update_decision.gd` is pure
+    decision logic). Declaring it now would make `brew upgrade` skip the cask and strand players on
+    the version they installed. Add it only once the self-updater ships (#106). The `postflight`
+    quarantine strip is **mandatory, not cosmetic** — the build is ad-hoc signed
+    (`codesign/codesign=1` with an empty identity), so Gatekeeper blocks it otherwise.
+    No `verified:` on the `url`: `brew audit --strict` rejects it when the download and homepage
+    domains match, which they do here.
   - The version is therefore **derived, never maintained**. The in-tree constants are dev values;
     only a released build carries a real version.
   - **`CI - Required Checks` is the repo's single required status context.** Renaming or removing
