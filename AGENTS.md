@@ -334,6 +334,26 @@ can be watched by playing; every *further* art/game system waits on Phase 0.)
 - **Scripting:** GDScript in the Godot project; **bash or Go everywhere else — never Python**
   (portfolio constitution). The Phase-0 Blender pipeline is the sole, explicitly-settled exception
   (`bpy` is Python by nature); keep it isolated under `tools/artgen/` when it lands.
+- **Security scanning — GDScript is NOT CodeQL-analysable, and no configuration changes that.**
+  CodeQL supports a fixed extractor set (C/C++, C#, Go, Java/Kotlin, JS/TS, Python, Ruby, Rust,
+  Swift, GitHub Actions). GDScript is not in it, and language support is a property of the
+  extractors, not of configuration — an advanced setup cannot add one that does not exist. So the
+  repo's dominant language is permanently outside CodeQL's reach; this is **not** a
+  misconfiguration, and it does not need re-researching. What *is* covered: the repo runs CodeQL
+  **default setup** over `actions`, `go` and `python` (`tools/artgen`), extended suite. **Prefer
+  default setup over an advanced-setup workflow here** — the two are mutually exclusive, and
+  default setup emits both code-scanning *and* code-quality results, which this repo's rulesets
+  both require; replicating that from advanced setup needs `analysis-kinds`, an input
+  `codeql-action` documents as internal and subject to change.
+  **Before adding a language, scan it locally first.** `Require code quality results` is set to
+  `severity: all` and `Require code scanning results` to `alerts_threshold: all`, so a *single*
+  finding of any severity blocks every open PR in the repo. Preview with
+  `codeql database create <db> --language=<lang> --source-root=<dir>` then
+  `codeql database analyze <db> ... codeql/<lang>-queries:codeql-suites/<lang>-code-quality.qls`
+  (and `-security-extended.qls`), fix what it finds, and only then enable. Enabling `python`
+  without this would have frozen the repo on three `tools/artgen` findings. Note also that
+  adding a language leaves existing PRs blocked until each re-runs with the new analysis — that is
+  expected, and a push (or a merge of `main`) clears it.
 - **Licensing hygiene:** no GPL/AGPL code or assets in the shipped tree; no commercial assets;
   CC0/OSS-permissive only, with licence verified per asset dataset. External PRs cannot be merged
   until their author signs the CLA (`CLA.md`; the `CLA` workflow enforces this, with the ledger on
