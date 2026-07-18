@@ -37,7 +37,7 @@ extends RefCounted
 ##    the axis-non-blur law made mechanical.
 
 ## The closed slot set — where a piece is worn.
-const SLOTS: Array[String] = ["head", "chest", "hands", "legs", "feet"]
+const SLOTS: Array[String] = ["head", "torso", "hands", "legs", "feet"]
 
 ## The closed weight-class set, lightest first. Index IS the class rank, so
 ## "heavier than" is a comparison, not a lookup table.
@@ -64,9 +64,9 @@ const SEED_PIECES: Array[Dictionary] = [
 	{"id": "ashen_hood", "slot": "head", "weight_class": "light", "mitigation": 8.0, "agility": 88.0},
 	{"id": "warden_coif", "slot": "head", "weight_class": "medium", "mitigation": 18.0, "agility": 62.0},
 	{"id": "cinder_helm", "slot": "head", "weight_class": "heavy", "mitigation": 28.0, "agility": 40.0},
-	{"id": "ashen_wrap", "slot": "chest", "weight_class": "light", "mitigation": 20.0, "agility": 85.0},
-	{"id": "warden_hauberk", "slot": "chest", "weight_class": "medium", "mitigation": 42.0, "agility": 58.0},
-	{"id": "cinder_plate", "slot": "chest", "weight_class": "heavy", "mitigation": 64.0, "agility": 32.0},
+	{"id": "ashen_wrap", "slot": "torso", "weight_class": "light", "mitigation": 20.0, "agility": 85.0},
+	{"id": "warden_hauberk", "slot": "torso", "weight_class": "medium", "mitigation": 42.0, "agility": 58.0},
+	{"id": "cinder_plate", "slot": "torso", "weight_class": "heavy", "mitigation": 64.0, "agility": 32.0},
 	{"id": "ashen_bindings", "slot": "hands", "weight_class": "light", "mitigation": 6.0, "agility": 90.0},
 	{"id": "warden_gloves", "slot": "hands", "weight_class": "medium", "mitigation": 13.0, "agility": 66.0},
 	{"id": "cinder_gauntlets", "slot": "hands", "weight_class": "heavy", "mitigation": 20.0, "agility": 44.0},
