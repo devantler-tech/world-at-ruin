@@ -176,8 +176,12 @@ static func reconcile(state: Variant) -> Dictionary:
 ## every downstream consumer fails closed ([method begin_attempt] refuses
 ## candidates, [method RollbackSelection.select] refuses, [method save_state]
 ## refuses to overwrite the evidence) — per the torn-state policy in the class
-## doc. A parseable file loads its three keys AS THEY ARE: per-value trust is
-## judged by the fail-closed consumers, not sanitised away at load time.
+## doc. A parseable file must carry ALL THREE keys — [method save_state] never
+## writes less, so a file missing one was torn or foreign, and defaulting the gap
+## (an absent ledger to "nothing failed", an absent marker to "nothing pending")
+## would erase recorded evidence; such a file loads as corrupt. Present VALUES
+## load as they are: per-value trust is judged by the fail-closed consumers, not
+## sanitised away at load time.
 static func load_state(path: String) -> Dictionary:
 	if not FileAccess.file_exists(path):
 		return {"ok": true, "state": fresh_state(), "reason": "no recovery file at %s — first boot" % path}
@@ -190,11 +194,17 @@ static func load_state(path: String) -> Dictionary:
 			"reason": "recovery file at %s is unreadable — quarantine history is unverifiable, so update candidates will be refused until a new failure is recorded or the shell is reinstalled" % path,
 		}
 	var p := parsed as Dictionary
+	if not (p.has("marker") and p.has("quarantined") and p.has("last_good")):
+		return {
+			"ok": false,
+			"state": {"marker": null, "quarantined": null, "last_good": null},
+			"reason": "recovery file at %s is missing required keys — treated as corrupt, never as an empty history: update candidates will be refused until a new failure is recorded or the shell is reinstalled" % path,
+		}
 	return {
 		"ok": true,
 		"state": {
 			"marker": p.get("marker"),
-			"quarantined": p.get("quarantined", []),
+			"quarantined": p.get("quarantined"),
 			"last_good": p.get("last_good"),
 		},
 		"reason": "recovery state loaded from %s" % path,
@@ -231,12 +241,19 @@ static func save_state(path: String, state: Variant) -> Dictionary:
 		"quarantined": entries,
 		"last_good": null if last_good == null else str(last_good),
 	}
+	var payload := JSON.stringify(to_write, "  ")
 	var tmp_path := path + ".tmp"
 	var file := FileAccess.open(tmp_path, FileAccess.WRITE)
 	if file == null:
 		return {"ok": false, "reason": "cannot write %s" % tmp_path}
-	file.store_string(JSON.stringify(to_write, "  "))
+	file.store_string(payload)
 	file.close()
+	# Verify the bytes actually landed BEFORE they replace the only copy of the
+	# failure history: a short write (full disk, I/O error) would otherwise rename
+	# a truncated file over valid state and report success.
+	if FileAccess.get_file_as_string(tmp_path) != payload:
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(tmp_path))
+		return {"ok": false, "reason": "read-back of %s did not match what was written — refusing to replace the recovery state with a torn file" % tmp_path}
 	var err := DirAccess.rename_absolute(
 		ProjectSettings.globalize_path(tmp_path), ProjectSettings.globalize_path(path))
 	if err != OK:

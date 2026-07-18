@@ -138,6 +138,19 @@ func _ready() -> void:
 	_check(BootRecovery.begin_attempt(corrupt["state"], "0.5.0")["ok"] as bool, false, "persistence: after a corrupt load, candidates are refused")
 	_check(BootRecovery.save_state(PROBE, corrupt["state"])["ok"] as bool, false, "persistence: the corrupt evidence is never overwritten with a well-formed lie")
 	_check(BootRecovery.save_state(PROBE, {"marker": 42, "quarantined": [], "last_good": null})["ok"] as bool, false, "persistence: a junk marker is refused at write time")
+	# A PARSEABLE file missing keys is torn, not "empty": save_state never writes
+	# less than all three, so defaulting an absent ledger to [] (or an absent
+	# marker to "nothing pending") would erase recorded evidence (Codex P2, #191).
+	raw = FileAccess.open(PROBE, FileAccess.WRITE)
+	raw.store_string("{}")
+	raw.close()
+	var keyless := BootRecovery.load_state(PROBE)
+	_check(keyless["ok"] as bool, false, "persistence: a parseable file missing its keys loads as corrupt, never as an empty history")
+	_check(BootRecovery.begin_attempt(keyless["state"], "0.5.0")["ok"] as bool, false, "persistence: candidates stay refused after a keyless load")
+	raw = FileAccess.open(PROBE, FileAccess.WRITE)
+	raw.store_string(JSON.stringify({"marker": null, "last_good": null}))
+	raw.close()
+	_check(BootRecovery.load_state(PROBE)["ok"] as bool, false, "persistence: a file missing only the ledger key is corrupt — absent history is not empty history")
 	if _failed:
 		return
 
