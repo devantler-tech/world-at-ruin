@@ -198,9 +198,12 @@ func _build_terrain() -> void:
 	st.generate_normals()
 	var mesh := st.commit()
 
-	var mat := StandardMaterial3D.new()
-	mat.vertex_color_use_as_albedo = true
-	mat.roughness = 1.0
+	# The baked vertex tint is only one value per quad — far too coarse to read
+	# as a surface underfoot. The shader keeps that tint as its base layer and
+	# adds the grain, drift and slope-aware ash/rock the vertex density cannot
+	# carry (procedural, no textures — same approach as the cave rock).
+	var mat := ShaderMaterial.new()
+	mat.shader = load("res://shaders/terrain.gdshader")
 	mesh.surface_set_material(0, mat)
 
 	var mi := MeshInstance3D.new()
