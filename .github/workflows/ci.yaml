@@ -725,7 +725,9 @@ jobs:
           fi
           # `tools` is in the list on purpose: a change to the capture tool
           # itself must trigger a capture, because running it IS how the tool is
-          # validated. Omitting it meant the PR that introduced this job skipped
+          # validated. project.godot is here too: it carries the viewport size
+          # and stretch mode, which decide whether the creator's fixed-height
+          # panel clips — the very thing the capture's clamp note warns about. Omitting it meant the PR that introduced this job skipped
           # its own job and proved nothing.
           #
           # project.godot counts too: it carries the RENDERING configuration
@@ -735,8 +737,15 @@ jobs:
           # export_presets.cfg counts too: high-res flags, export filters and
           # feature tags change what the SHIPPED build looks like while touching
           # no script, scene or asset at all.
-          if git diff --name-only "$BASE_SHA"...HEAD \
-              | grep -qE '^client/(scripts|shaders|assets|scenes|recipes|abilities|tools)/|^client/(project\.godot|export_presets\.cfg)$'; then
+          # Materialise the changed paths ONCE and grep the file. Piping
+          # `git diff` straight into `grep -q` is a real hazard under this
+          # runner's `-o pipefail` shell: grep exits the moment it matches, git
+          # diff takes SIGPIPE, and the pipeline reports failure — which reads
+          # here as "no match" and silently turns the gate OFF on exactly the
+          # large PRs most likely to need it. Same hazard the capture-log check
+          # below already avoids by writing to a file.
+          git diff --name-only "$BASE_SHA"...HEAD > changed.txt
+          if grep -qE '^client/(scripts|shaders|assets|scenes|recipes|abilities|tools)/|^client/(project\.godot|export_presets\.cfg)$' changed.txt; then
             echo "visual=true" >> "$GITHUB_OUTPUT"
           else
             echo "visual=false" >> "$GITHUB_OUTPUT"
@@ -752,9 +761,10 @@ jobs:
           # character_store.gd because main.gd asks IT whether a save exists (a
           # save-routing regression could make new players skip the creator
           # entirely), and tools/ because running the capture tool is how it is
-          # validated.
-          if git diff --name-only "$BASE_SHA"...HEAD \
-              | grep -qE '^client/scripts/(character_creator|character_factory|character_store|main)\.gd$|^client/(recipes|tools)/'; then
+          # validated. project.godot is here too: it carries the viewport size
+          # and stretch mode, which decide whether the creator's fixed-height
+          # panel clips — the very thing the capture's clamp note warns about.
+          if grep -qE '^client/scripts/(character_creator|character_factory|character_store|main)\.gd$|^client/(recipes|tools)/|^client/project\.godot$' changed.txt; then
             echo "first_run=true" >> "$GITHUB_OUTPUT"
           else
             echo "first_run=false" >> "$GITHUB_OUTPUT"
@@ -907,7 +917,12 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: frames-${{ github.event.pull_request.head.sha }}
-          path: ${{ runner.temp }}/shots/*.png
+          # .txt too: each frame's note travels with it, so a reviewer opening
+          # a clamped capture can see it was the runner's display and not the
+          # change under review that clipped the layout.
+          path: |
+            ${{ runner.temp }}/shots/*.png
+            ${{ runner.temp }}/shots/*.txt
           if-no-files-found: error
 
   ci-required-checks:

@@ -235,10 +235,34 @@ func _capture_first_run(dir: String, main: Node) -> void:
 	# fixed-height column: at a shorter viewport it clips, which reads exactly
 	# like a layout bug in the change under review. Say so on the frame rather
 	# than let a reviewer draw that conclusion.
+	var note := _size_note(img)
 	print("CAPTURED first_run -> %s (%dx%d, luma spread %.3f)%s" %
-		[out, img.get_width(), img.get_height(), spread, _size_note(img)])
+		[out, img.get_width(), img.get_height(), spread, note])
+	# The note has to travel WITH the frame. A reviewer opens the PNG from the
+	# build artifact and never sees this job log, so a clamped capture would
+	# otherwise show a clipped panel with nothing to say why — which reads as a
+	# layout regression in the change under review. Written beside the frame and
+	# uploaded with it.
+	_write_note(dir, "first_run", img, note)
 	print("CAPTURE PASS — 1 first-run vantage written to %s" % dir)
 	get_tree().quit(0)
+
+
+## Writes the frame's own provenance next to it, so the artifact carries what
+## the log knows. Best-effort: failing to write a note must never fail a capture
+## that succeeded.
+func _write_note(dir: String, frame: String, img: Image, note: String) -> void:
+	var f := FileAccess.open("%s/%s.txt" % [dir, frame], FileAccess.WRITE)
+	if f == null:
+		push_warning("could not write the note for %s" % frame)
+		return
+	f.store_line("frame: %s.png" % frame)
+	f.store_line("captured: %dx%d" % [img.get_width(), img.get_height()])
+	if note.is_empty():
+		f.store_line("size: as shipped")
+	else:
+		f.store_line("size:%s" % note)
+	f.close()
 
 
 ## Reports the captured size against the size the project actually ships. A
@@ -254,15 +278,19 @@ func _size_note(img: Image) -> String:
 	return ""
 
 
-## Total on-screen area of the creator's visible Control children. Zero means
-## the layer is present but draws nothing, which is indistinguishable from the
-## creator being absent once the shot is taken.
+## On-screen area of the creator's visible Control children that actually falls
+## INSIDE the viewport. Measured as an intersection, not as the control's own
+## size: a layout regression that pushes the panel off the edge leaves it
+## visible and full-sized, so counting its bare area would accept a frame the
+## panel does not appear in — and the luminance check behind it would then pass
+## on the 3D world, which is the failure this whole scenario exists to catch.
 func _visible_panel_area(creator: CanvasLayer) -> float:
+	var screen := Rect2(Vector2.ZERO, Vector2(get_viewport().get_visible_rect().size))
 	var area := 0.0
 	for child in creator.get_children():
 		if child is Control and (child as Control).is_visible_in_tree():
-			var size := (child as Control).get_rect().size
-			area += size.x * size.y
+			var on_screen := screen.intersection((child as Control).get_global_rect())
+			area += on_screen.size.x * on_screen.size.y
 	return area
 
 
