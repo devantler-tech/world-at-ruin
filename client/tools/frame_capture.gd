@@ -179,13 +179,8 @@ func _ready() -> void:
 		# fine detail (material grain especially) changes with it. Silently
 		# accepting the clamped size would let a reviewer judge a material at a
 		# resolution no player uses, so the mismatch is stated on every frame.
-		var want_w: int = ProjectSettings.get_setting("display/window/size/viewport_width", 0)
-		var want_h: int = ProjectSettings.get_setting("display/window/size/viewport_height", 0)
-		var size_note := ""
-		if want_w > 0 and (img.get_width() != want_w or img.get_height() != want_h):
-			size_note = " [CLAMPED from the shipped %dx%d — fine detail reads at a different scale here]" % [want_w, want_h]
 		print("CAPTURED %s -> %s (%dx%d, luma spread %.3f)%s" %
-			[vantage_name, out, img.get_width(), img.get_height(), spread, size_note])
+			[vantage_name, out, img.get_width(), img.get_height(), spread, _size_note(img)])
 
 	print("CAPTURE PASS — %d vantages written to %s" % [VANTAGES.size(), dir])
 	get_tree().quit(0)
@@ -220,10 +215,28 @@ func _capture_first_run(dir: String, main: Node) -> void:
 	if err != OK:
 		_fail("could not write %s (error %d)" % [out, err])
 		return
-	print("CAPTURED first_run -> %s (%dx%d, luma spread %.3f)" %
-		[out, img.get_width(), img.get_height(), spread])
+	# The clamp note matters MORE here than for a world vantage. A hosted runner
+	# often cannot realise the shipped window size, and the creator's panel is a
+	# fixed-height column: at a shorter viewport it clips, which reads exactly
+	# like a layout bug in the change under review. Say so on the frame rather
+	# than let a reviewer draw that conclusion.
+	print("CAPTURED first_run -> %s (%dx%d, luma spread %.3f)%s" %
+		[out, img.get_width(), img.get_height(), spread, _size_note(img)])
 	print("CAPTURE PASS — 1 first-run vantage written to %s" % dir)
 	get_tree().quit(0)
+
+
+## Reports the captured size against the size the project actually ships. A
+## hosted runner's display often cannot realise the configured window, so frames
+## arrive smaller than the game does — and both fine material detail and UI
+## layout read differently at that size. Silently accepting the clamp would let a
+## reviewer judge a surface at a resolution no player uses.
+func _size_note(img: Image) -> String:
+	var want_w: int = ProjectSettings.get_setting("display/window/size/viewport_width", 0)
+	var want_h: int = ProjectSettings.get_setting("display/window/size/viewport_height", 0)
+	if want_w > 0 and (img.get_width() != want_w or img.get_height() != want_h):
+		return " [CLAMPED from the shipped %dx%d — detail and UI layout read at a different scale here]" % [want_w, want_h]
+	return ""
 
 
 ## The open CharacterCreator, if any. Found by TYPE rather than by node name:
