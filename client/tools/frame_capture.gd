@@ -64,6 +64,24 @@ const SAMPLE_X1 := 0.88
 const SAMPLE_Y0 := 0.22
 const SAMPLE_Y1 := 0.86
 
+## The first-run scenario samples the LEFT band instead, because that is where
+## the creator's panel is anchored (PRESET_LEFT_WIDE). Sampling the world box
+## would measure the 3D view BEHIND the panel — so a run where the creator never
+## opened would pass on the scenery, which is the whole failure this scenario
+## exists to catch.
+const UI_SAMPLE_X0 := 0.02
+const UI_SAMPLE_X1 := 0.30
+const UI_SAMPLE_Y0 := 0.10
+const UI_SAMPLE_Y1 := 0.90
+
+## The creator is 2D and needs no shadow/SDFGI convergence, so it settles far
+## sooner than a world vantage. Kept separate so adding this scenario does not
+## lengthen the world capture, per #145.
+const UI_WARMUP_FRAMES := 60
+## Frames to settle after a preset switch: it rebuilds the portrait rig, so an
+## immediate shot photographs the previous body.
+const UI_SETTLE_FRAMES := 30
+
 
 func _ready() -> void:
 	var dir := OS.get_environment("WAR_SHOT_DIR")
@@ -91,6 +109,16 @@ func _ready() -> void:
 	await get_tree().process_frame
 	if not main.is_inside_tree():
 		_fail("the main scene never attached — nothing would have been rendered")
+		return
+
+	var scenario := OS.get_environment("WAR_SCENARIO")
+	if scenario.is_empty():
+		scenario = "world"
+	if scenario == "first_run":
+		await _capture_first_run(dir, main)
+		return
+	if scenario != "world":
+		_fail("unknown WAR_SCENARIO '%s' — expected 'world' or 'first_run'" % scenario)
 		return
 
 	for i in WARMUP_FRAMES:
@@ -153,8 +181,10 @@ func _ready() -> void:
 		# fine detail (material grain especially) changes with it. Silently
 		# accepting the clamped size would let a reviewer judge a material at a
 		# resolution no player uses, so the mismatch is stated on every frame.
+		var note := _size_note(img)
 		print("CAPTURED %s -> %s (%dx%d, luma spread %.3f)%s" %
-			[vantage_name, out, img.get_width(), img.get_height(), spread, _size_note(img)])
+			[vantage_name, out, img.get_width(), img.get_height(), spread, note])
+		_write_note(dir, vantage_name, img, note)
 
 	var cave_count := await _capture_cave(cam, dir, main)
 	if cave_count < 0:
@@ -308,8 +338,10 @@ func _capture_cave(cam: Camera3D, dir: String, main: Node) -> int:
 		if err != OK:
 			_fail("could not write %s (error %d)" % [out, err])
 			return -1
+		var cave_note := _size_note(img)
 		print("CAPTURED %s -> %s (%dx%d, luma spread %.3f)%s" %
-			[vantage_name, out, img.get_width(), img.get_height(), spread, _size_note(img)])
+			[vantage_name, out, img.get_width(), img.get_height(), spread, cave_note])
+		_write_note(dir, vantage_name, img, cave_note)
 		captured += 1
 	return captured
 
@@ -352,6 +384,157 @@ func _under_rock(cam: Camera3D) -> bool:
 	var query := PhysicsRayQueryParameters3D.create(from, from + Vector3.UP * 60.0)
 	query.collide_with_areas = false
 	return not space.intersect_ray(query).is_empty()
+
+
+## The character creator as a new player meets it — the surface a first-run UI
+## change actually alters, and the one the world scenario deliberately seeds away.
+func _capture_first_run(dir: String, main: Node) -> void:
+	for i in UI_WARMUP_FRAMES:
+		await get_tree().process_frame
+
+	# The creator must have OPENED. Without this the scenario degrades into an
+	# ordinary world shot the moment a save leaks into the run — and a world shot
+	# passes the luminance guard perfectly well, so nothing would complain while
+	# the evidence stopped depicting the reviewed surface entirely.
+	var creator := _find_creator(main)
+	if creator == null:
+		_fail("the character creator never opened — a save is present, so this is a world shot, not first-run evidence")
+		return
+	if not creator.visible:
+		_fail("the character creator opened but is not visible — the frame would not show it")
+		return
+	# It must be the FIRST-RUN creator, not the manual reshape UI. main.gd opens
+	# the same scene either way; the flag is the only thing that distinguishes
+	# the forced new-player flow (no Cancel, no Esc) from the one a settled
+	# player opens with C. Capturing the latter and calling it first-run
+	# evidence would depict a screen no new player ever sees.
+	if not (creator as CharacterCreator).first_run:
+		_fail("the creator opened in reshape mode, not first-run mode — that is not the new-player screen")
+		return
+	# And its PANEL must be there and drawn. The creator is a CanvasLayer over
+	# the live 3D scene, so a change that leaves the layer alive while removing
+	# or hiding its controls yields a frame that is pure world — which sails
+	# through the luminance check below on the scenery alone.
+	if _visible_panel_area(creator) <= 0.0:
+		_fail("the creator has no visible panel — the frame would be the world behind a transparent layer")
+		return
+
+	# One frame is not enough for what the gate triggers on. The panel places 29
+	# shape sliders and six bone sliders above its outfit and skin sections, so
+	# those controls sit BELOW THE FOLD; and the gate fires on any recipe, while
+	# a single shot shows only the default one. Without these, a PR changing
+	# brute.json or the skin picker gets a green capture whose frame does not
+	# contain the surface it changed.
+	if not await _shoot(dir, "first_run", creator):
+		return
+	var shots := 1
+
+	var scroll := _find_scroll(creator)
+	if scroll == null:
+		_fail("the creator has no scroll container — the controls below the fold would go unphotographed")
+		return
+	scroll.scroll_vertical = int(scroll.get_v_scroll_bar().max_value)
+	await get_tree().process_frame
+	if scroll.scroll_vertical <= 0:
+		_fail("the creator's control list did not scroll — its lower sections would go unphotographed")
+		return
+	if not await _shoot(dir, "first_run_lower", creator):
+		return
+	shots += 1
+	scroll.scroll_vertical = 0
+
+	# Every preset the creator offers, because the gate fires on any recipe
+	# change while only the default one is otherwise on screen.
+	for preset: String in CharacterCreator.PRESETS:
+		creator.call("_on_preset", preset)
+		for i in UI_SETTLE_FRAMES:
+			await get_tree().process_frame
+		if not await _shoot(dir, "first_run_%s" % preset, creator):
+			return
+		shots += 1
+
+	print("CAPTURE PASS — %d first-run vantages written to %s" % [shots, dir])
+	get_tree().quit(0)
+
+
+## Captures one creator frame, re-checking the panel is really on screen first:
+## a preset switch rebuilds the portrait and could take the panel with it, and a
+## frame of bare world would otherwise be saved under a first-run name.
+func _shoot(dir: String, frame: String, creator: CanvasLayer) -> bool:
+	if _visible_panel_area(creator) <= 0.0:
+		_fail("%s: the creator has no visible panel — the frame would be the world behind a transparent layer" % frame)
+		return false
+	await RenderingServer.frame_post_draw
+	var img := get_viewport().get_texture().get_image()
+	var spread := _luma_spread_box(img, UI_SAMPLE_X0, UI_SAMPLE_X1, UI_SAMPLE_Y0, UI_SAMPLE_Y1)
+	if spread < MIN_LUMA_SPREAD:
+		_fail("%s: the creator panel band is a uniform frame (luma spread %.4f) — the UI did not draw" % [frame, spread])
+		return false
+	var out := "%s/%s.png" % [dir, frame]
+	var err := img.save_png(out)
+	if err != OK:
+		_fail("could not write %s (error %d)" % [out, err])
+		return false
+	var note := _size_note(img)
+	print("CAPTURED %s -> %s (%dx%d, luma spread %.3f)%s" %
+		[frame, out, img.get_width(), img.get_height(), spread, note])
+	_write_note(dir, frame, img, note)
+	return true
+
+
+## The creator's scrolling control list.
+func _find_scroll(node: Node) -> ScrollContainer:
+	for child in node.get_children():
+		if child is ScrollContainer:
+			return child as ScrollContainer
+		var found := _find_scroll(child)
+		if found != null:
+			return found
+	return null
+
+
+
+## Writes the frame's own provenance next to it, so the artifact carries what
+## the log knows. Best-effort: failing to write a note must never fail a capture
+## that succeeded.
+func _write_note(dir: String, frame: String, img: Image, note: String) -> void:
+	var f := FileAccess.open("%s/%s.txt" % [dir, frame], FileAccess.WRITE)
+	if f == null:
+		push_warning("could not write the note for %s" % frame)
+		return
+	f.store_line("frame: %s.png" % frame)
+	f.store_line("captured: %dx%d" % [img.get_width(), img.get_height()])
+	if note.is_empty():
+		f.store_line("size: as shipped")
+	else:
+		f.store_line("size:%s" % note)
+	f.close()
+
+
+## On-screen area of the creator's visible Control children that actually falls
+## INSIDE the viewport. Measured as an intersection, not as the control's own
+## size: a layout regression that pushes the panel off the edge leaves it
+## visible and full-sized, so counting its bare area would accept a frame the
+## panel does not appear in — and the luminance check behind it would then pass
+## on the 3D world, which is the failure this whole scenario exists to catch.
+func _visible_panel_area(creator: CanvasLayer) -> float:
+	var screen := Rect2(Vector2.ZERO, Vector2(get_viewport().get_visible_rect().size))
+	var area := 0.0
+	for child in creator.get_children():
+		if child is Control and (child as Control).is_visible_in_tree():
+			var on_screen := screen.intersection((child as Control).get_global_rect())
+			area += on_screen.size.x * on_screen.size.y
+	return area
+
+
+## The open CharacterCreator, if any. Found by TYPE rather than by node name:
+## main.gd constructs it with `CharacterCreator.new()` and never names it, so a
+## name lookup would silently find nothing and report the creator missing.
+func _find_creator(main: Node) -> CanvasLayer:
+	for child in main.get_children():
+		if child is CharacterCreator:
+			return child as CanvasLayer
+	return null
 
 
 ## Whether the generated world is actually present in the tree: a WorldGen node
@@ -417,12 +600,18 @@ func _sees_geometry(cam: Camera3D, target: Vector3) -> bool:
 ## tell a rendered world from a flat clear-colour fill, while ignoring the HUD
 ## text that would otherwise vouch for a blank 3D view (see SAMPLE_* above).
 func _luma_spread(img: Image) -> float:
+	return _luma_spread_box(img, SAMPLE_X0, SAMPLE_X1, SAMPLE_Y0, SAMPLE_Y1)
+
+
+## Luminance spread over a grid sampled from an arbitrary box, so each scenario
+## can measure the part of the frame its own subject occupies.
+func _luma_spread_box(img: Image, fx0: float, fx1: float, fy0: float, fy1: float) -> float:
 	var lo := 2.0
 	var hi := -1.0
-	var x0 := SAMPLE_X0 * img.get_width()
-	var y0 := SAMPLE_Y0 * img.get_height()
-	var span_x := (SAMPLE_X1 - SAMPLE_X0) * img.get_width()
-	var span_y := (SAMPLE_Y1 - SAMPLE_Y0) * img.get_height()
+	var x0 := fx0 * img.get_width()
+	var y0 := fy0 * img.get_height()
+	var span_x := (fx1 - fx0) * img.get_width()
+	var span_y := (fy1 - fy0) * img.get_height()
 	for gy in 12:
 		for gx in 16:
 			var sample := img.get_pixel(
