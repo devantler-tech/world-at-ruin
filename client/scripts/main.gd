@@ -139,6 +139,20 @@ func _build_environment() -> void:
 	sun.light_energy = 1.1
 	sun.shadow_enabled = true
 	sun.rotation_degrees = Vector3(-19.0, 38.0, 0.0)
+	# A low sun through ash is not a point source: give it a real angular size so
+	# shadow edges soften with distance from the caster (a razor-sharp edge on
+	# every rock is the tell of a default directional light). Parallel splits with
+	# blending keep that softness stable as the wanderer walks, instead of popping
+	# at each cascade boundary.
+	sun.light_angular_distance = 1.6
+	sun.shadow_blur = 1.2
+	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
+	sun.directional_shadow_blend_splits = true
+	sun.directional_shadow_max_distance = 180.0
+	# Grazing light across a noisy heightfield is the classic acne case; bias
+	# along the normal rather than raising depth bias, which would detach contact
+	# shadows exactly where SSAO is trying to seat props on the ground.
+	sun.shadow_normal_bias = 1.5
 	add_child(sun)
 
 	var sky_mat := ProceduralSkyMaterial.new()
@@ -159,10 +173,76 @@ func _build_environment() -> void:
 	# darkness from occlusion and their light from torches.
 	env.sdfgi_enabled = true
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+	env.tonemap_exposure = 1.05
+	env.tonemap_white = 6.0
+
+	# Contact occlusion. Without it nothing darkens where geometry meets
+	# geometry, so props read as pasted onto the terrain rather than sitting in
+	# it — the single biggest reason untextured shapes look flat. Kept tight
+	# (small radius, moderate intensity) so it seats objects without painting
+	# grey haloes; `light_affect` at 0 keeps direct sunlight clean and lets the
+	# occlusion live in the ambient term where it belongs.
+	env.ssao_enabled = true
+	env.ssao_radius = 1.4
+	env.ssao_intensity = 2.4
+	env.ssao_power = 1.7
+	env.ssao_detail = 0.6
+	env.ssao_light_affect = 0.0
+	env.ssao_ao_channel_affect = 0.35
+
+	# Emissive bloom. The world is lit by embers — brazier flames and the cave
+	# torches — and without glow they are merely orange pixels rather than things
+	# giving off light. The HDR threshold is above 1.0 on purpose: only genuinely
+	# over-bright emissive surfaces bloom, so the ashen mid-tones stay crisp
+	# instead of the whole frame going soft (the usual over-bloom mistake).
+	env.glow_enabled = true
+	env.glow_normalized = true
+	env.glow_intensity = 0.55
+	env.glow_strength = 1.0
+	env.glow_bloom = 0.05
+	env.glow_blend_mode = Environment.GLOW_BLEND_MODE_SOFTLIGHT
+	env.glow_hdr_threshold = 1.15
+	env.glow_hdr_scale = 2.0
+
+	# Depth fog, now with a height falloff: ash does not hang at uniform density,
+	# it pools in the hollows and thins as you climb. Aerial perspective bleeds
+	# the fog colour into distant geometry so far ruins separate from near ones.
 	env.fog_enabled = true
 	env.fog_light_color = FOG_COLOR
-	env.fog_density = 0.012
+	env.fog_light_energy = 0.9
+	env.fog_sun_scatter = 0.25
+	env.fog_density = 0.010
+	env.fog_aerial_perspective = 0.55
 	env.fog_sky_affect = 0.4
+	env.fog_height = 6.0
+	env.fog_height_density = 0.06
+
+	# Volumetric fog is what turns "a distance haze" into air the light travels
+	# through — shafts off the low sun, glow around the braziers, real depth
+	# between ruin sites. Density is deliberately low: this is thin ash on the
+	# wind, not a smoke machine. `ambient_inject` stays small so the volume does
+	# NOT carry sky light underground and undo the cave's darkness (the same law
+	# the SDFGI note above protects).
+	env.volumetric_fog_enabled = true
+	env.volumetric_fog_density = 0.012
+	env.volumetric_fog_albedo = FOG_COLOR
+	env.volumetric_fog_emission = Color(0.10, 0.06, 0.05)
+	env.volumetric_fog_emission_energy = 0.35
+	env.volumetric_fog_anisotropy = 0.35
+	env.volumetric_fog_length = 160.0
+	env.volumetric_fog_detail_spread = 2.0
+	env.volumetric_fog_gi_inject = 0.6
+	env.volumetric_fog_ambient_inject = 0.12
+	env.volumetric_fog_sky_affect = 0.4
+
+	# A restrained grading pass so the palette reads as a deliberate choice
+	# rather than whatever the tonemapper returned: a little more contrast to
+	# keep the ash from going milky, a little less saturation so the ember
+	# highlights are the only truly warm thing in frame.
+	env.adjustment_enabled = true
+	env.adjustment_brightness = 1.0
+	env.adjustment_contrast = 1.08
+	env.adjustment_saturation = 0.94
 
 	var world_env := WorldEnvironment.new()
 	world_env.name = "WorldEnvironment"
