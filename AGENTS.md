@@ -126,6 +126,15 @@ that "I looked at it and it's fine" is self-attestation, and self-attestation is
 field of grey primitives ship. A green suite plus a frame that reads as placeholder is a PR that is
 **not ready**.
 
+**How to produce that frame.** CI runs `client/tools/frame_capture.tscn` on player-visible PRs and
+publishes the rendered vantages as a **build artifact** — so the evidence is reproducible on a known
+machine rather than dependent on whoever happened to run the game. Point a reviewer at that artifact.
+Locally the same tool works windowed (`WAR_SHOT_DIR=… WAR_SAVE_PATH=… godot --path client
+res://tools/frame_capture.tscn`); a **headless run renders nothing**, and the tool refuses to run
+headless rather than emit a blank frame. Its vantages are fixed on purpose: evidence is only
+comparable across commits if the camera does not move, and one flattering angle hides a regression
+that another exposes.
+
 **The tells that the bar is being missed** — all four were true of the first foliage pass, and are
 the concrete evidence behind this section:
 
@@ -269,6 +278,14 @@ everything shipped afterwards is held to.
 
 ## Maintenance
 
+- **Editor-only scenes are NOT dead code.** Two scenes are deliberately unreferenced by the running
+  game and exist as **editor surfaces**: `client/scenes/recipes.tscn` (the character taste gate,
+  documented in `recipe_gallery.gd`) and `client/scenes/cave.tscn` (the cave-generation preview
+  harness, documented in `cave_system_gen.gd` — a `@tool` rig for judging cave interior/exterior work
+  by eye, #124). A repo-wide "no references, therefore dead" sweep will flag both; check the owning
+  script's docstring before proposing a deletion, and retire such a scene only when the work it
+  supports is finished — saying so in the same change. Anything unreferenced **without** such a
+  marker is genuine scaffolding and should go (as `scenes/character.tscn` did in #116).
 - **Structure:** `client/` is the Godot 4 project (scenes built in GDScript from engine
   primitives). The one sanctioned exception to "no binary assets" is `client/assets/` — artifacts
   BAKED BY COMMITTED CODE (`tools/artgen/`, the Python/bpy exception) from CC0 data, plus the

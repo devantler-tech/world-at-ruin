@@ -54,25 +54,33 @@ const (
 // never evaluates a trigonometric function (which is neither integer nor
 // reliably identical across platform math libraries).
 //
-// QUANTIZATION CONTRACT. The client compares against cos(deg_to_rad(half)) in
-// floating point, so the two tiers agree exactly only when the SAME quantized
-// cosine is the single source of truth — the ability data must carry this
-// integer and the client must consume it, rather than each tier deriving a
-// threshold from degrees independently. Wiring that shared value through the
-// ability layer is tracked in issue #118 (it is blocked on the ability data of
-// #70 actually carrying telegraph shape to both tiers); until then two
-// properties keep the difference harmless:
+// QUANTIZATION CONTRACT (wired in issue #118). This integer IS the single
+// source of truth for a cone's wedge: ability data carries it as
+// `cos_half_scaled` and BOTH tiers compare against it —
+// `Telegraph.in_cone_scaled` on the client, catchesCone here. Neither tier
+// derives a threshold from degrees at resolution time, so the two wedges
+// coincide by construction rather than by convention. Degrees survive only as
+// an authoring input, converted once by `Telegraph.cos_half_scaled_from_deg`.
+//
+// The shared fixture client/tests/data/cross_tier_cone.json pins that agreement
+// from both sides (crosstier_cone_test.go and client/tests/cross_tier_cone_test.gd),
+// with expectations from an independent high-precision oracle rather than from
+// either implementation.
+//
+// Two properties make the remaining quantization harmless:
 //
 //   - Magnitude. One quantum is 1e-6 of cosine, i.e. an angular error of about
 //     1e-6/sin(half) rad. For a 45° half-angle that is ~1.4e-6 rad — about
 //     0.04 mm of lateral error at a 30 m telegraph, and ~5.7 mm even at the 4 km
 //     extent cap. At realistic telegraph sizes it is below the world's own 1 mm
 //     resolution, so it cannot move a hit by a representable distance.
-//   - Direction of the bias. Authors must round the scaled cosine UP (toward
-//     +1), which makes the server's wedge never WIDER than the client's. The
-//     residual disagreement then only ever spares a player the client drew as
-//     hit, never hits one the client drew as safe — the failure direction a
-//     dodge-based game should prefer.
+//   - Direction of the bias. The conversion rounds UP (toward +1), which is now
+//     MECHANICAL rather than a rule authors are asked to follow: a larger cosine
+//     is a NARROWER wedge, so the shared threshold can never describe a wedge
+//     wider than the exact angle an author wrote. The residual sub-quantum
+//     disagreement with the true angle can then only ever spare a player the
+//     telegraph drew as hit, never hit one it drew as safe — the failure
+//     direction a dodge-based game should prefer.
 const CosScale = 1_000_000
 
 // maxTelegraphExtentMM bounds a telegraph's linear extents (radius, range,
