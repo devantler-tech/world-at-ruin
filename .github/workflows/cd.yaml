@@ -379,7 +379,7 @@ jobs:
     # wired to it — so a private package harms no player today, whereas blocking
     # every release on it would. This job going red is the loud signal; the
     # release still ships. **Make this blocking the moment the updater actually
-    # resolves against GHCR** (tracked as a follow-up on #105): from then on, a
+    # resolves against GHCR** (tracked as #141): from then on, a
     # release whose update origin is unreachable is a real defect.
     needs: [publish-ghcr]
     runs-on: ubuntu-latest

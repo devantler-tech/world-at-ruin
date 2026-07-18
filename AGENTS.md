@@ -351,7 +351,7 @@ can be watched by playing; every *further* art/game system waits on Phase 0.)
     direction 2026-07-18), because nothing consumes GHCR yet — the in-client updater is not wired to
     it — so a private package harms no player today while blocking every release on it would. The
     job going red is the signal; the release still ships. **Make it blocking the moment the updater
-    actually resolves against GHCR**, at which point an unreachable origin is a real defect.
+    actually resolves against GHCR**, at which point an unreachable origin is a real defect (tracked as #141).
   - The version is therefore **derived, never maintained**. The in-tree constants are dev values;
     only a released build carries a real version.
   - **`CI - Required Checks` is the repo's single required status context.** Renaming or removing
