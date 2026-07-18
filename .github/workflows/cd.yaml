@@ -244,13 +244,148 @@ jobs:
             *) echo "::error::${TAG} did not publish"; exit 1 ;;
           esac
 
+  publish-ghcr:
+    name: 📦 Publish OCI artifact to GHCR
+    # The ORIGIN OF RECORD for the in-client updater (docs/design/
+    # distribution-and-self-update.md, #62). The GitHub Release asset is a plain
+    # HTTP download with no content addressing; the updater pins a DIGEST, which
+    # is what an OCI registry gives us.
+    #
+    # Why OCI and not some other GitHub Packages registry: there isn't one.
+    # GitHub Packages' registries (npm, NuGet, Maven, RubyGems) are all
+    # ecosystem-specific and none accepts an arbitrary binary, so an OCI
+    # artifact via ghcr.io is the only way a .app zip enters GitHub Packages.
+    #
+    # Runs on ubuntu (not the macOS runner that built it) and re-downloads the
+    # published asset: this job needs no Godot toolchain, and pulling the
+    # RELEASE asset — rather than a runner-local file — proves we publish
+    # exactly the bytes a player would download.
+    needs: [publish-macos]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read # download the published release asset
+      packages: write # push the OCI artifact
+      id-token: write # keyless cosign signing via GitHub OIDC
+    steps:
+      - name: 🛡️ Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      - name: 🏷️ Resolve the release version
+        id: version
+        env:
+          RAW_TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+        run: |
+          set -euo pipefail
+          if ! printf '%s' "${RAW_TAG}" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-.+)?$'; then
+            echo "::error::'${RAW_TAG}' is not a vX.Y.Z release tag"
+            exit 1
+          fi
+          echo "tag=${RAW_TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${RAW_TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: ⬇️ Download the published release asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p oci && cd oci
+          gh release download "${TAG}" --repo "${GITHUB_REPOSITORY}" \
+            --pattern "WorldAtRuin-${VERSION}-macOS-universal.zip"
+          # Record the checksum of what the player would get, so the push can be
+          # proven byte-identical rather than assumed.
+          sha256sum "WorldAtRuin-${VERSION}-macOS-universal.zip" | tee ../release-asset.sha256
+
+      - name: 🔧 Set up ORAS
+        uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2.0.1
+
+      - name: 🔏 Set up cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: 🔐 Log in to GHCR
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ env.GH_TOKEN }}
+
+      - name: 📦 Push the OCI artifact
+        id: push
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # Registry paths must be lowercase. `tr` rather than bash's ${VAR@L}
+          # so this does not silently depend on bash >= 4.4.
+          ARTIFACT="$(printf 'ghcr.io/%s/client' "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
+          cd oci
+          # Bare version (v stripped) plus `latest`, mirroring the convention in
+          # devantler-tech/actions' publish-manifests.
+          oras push "${ARTIFACT}:${VERSION}" \
+            --artifact-type application/vnd.devantler.worldatruin.client.v1+zip \
+            --annotation "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --annotation "org.opencontainers.image.version=${VERSION}" \
+            --annotation "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            "WorldAtRuin-${VERSION}-macOS-universal.zip:application/zip"
+          oras tag "${ARTIFACT}:${VERSION}" latest
+          # `oras manifest fetch --descriptor` rather than `oras resolve`: the
+          # latter is marked [Preview] and `--format` is [Experimental], so both
+          # can change under us. This form is stable.
+          DIGEST=$(oras manifest fetch --descriptor "${ARTIFACT}:${VERSION}" | jq -r '.digest')
+          if ! printf '%s' "${DIGEST}" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+            echo "::error::could not resolve a digest for ${ARTIFACT}:${VERSION} (got '${DIGEST}')"
+            exit 1
+          fi
+          echo "artifact=${ARTIFACT}" >> "$GITHUB_OUTPUT"
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "pushed ${ARTIFACT}:${VERSION} @ ${DIGEST}"
+
+      - name: 🔏 Sign the artifact by digest
+        env:
+          ARTIFACT: ${{ steps.push.outputs.artifact }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          # Sign the DIGEST, never the mutable tag — the digest is what the
+          # updater pins, so it is what the signature must cover.
+          cosign sign --yes "${ARTIFACT}@${DIGEST}"
+
+      - name: ✅ Verify signature and byte-identity
+        env:
+          ARTIFACT: ${{ steps.push.outputs.artifact }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          cosign verify "${ARTIFACT}@${DIGEST}" \
+            --certificate-identity-regexp "^${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            > /dev/null
+          echo "signature verified for ${ARTIFACT}@${DIGEST}"
+          # Pull the artifact back and prove the stored bytes match the release
+          # asset exactly. A push that silently truncated or re-encoded would
+          # otherwise ship a build nobody had checked.
+          mkdir -p pulled && cd pulled
+          oras pull "${ARTIFACT}@${DIGEST}"
+          sha256sum -c <(sed "s#  .*#  WorldAtRuin-${VERSION}-macOS-universal.zip#" ../release-asset.sha256)
+          echo "pulled bytes are identical to the published release asset"
+
   cd-required-checks:
     name: CD - Required Checks
     runs-on: ubuntu-latest
-    needs: [publish-macos]
+    needs: [publish-macos, publish-ghcr]
     if: ${{ always() }}
     steps:
       - uses: devantler-tech/actions/aggregate-job-checks@0f27c13a9785608e0bbf9998777d27761b4de617 # v10.0.2
         with:
-          job-results: ${{ needs.publish-macos.result }}
+          job-results: >-
+            ${{ needs.publish-macos.result }}
+            ${{ needs.publish-ghcr.result }}
           check-name: "CD - Required Checks"

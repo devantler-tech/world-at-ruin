@@ -327,6 +327,16 @@ can be watched by playing; every *further* art/game system waits on Phase 0.)
     boots reporting `BOOT_OK v<version>` (the proof the stamp reached the shipped binary), and
     attaches the zip to the Release. `workflow_dispatch` with a `tag` input re-runs it for an
     existing release.
+  - **GHCR is the origin of record for updates** (maintainer direction 2026-07-18, closing the open
+    host decision in `docs/design/distribution-and-self-update.md`). CD publishes the released
+    client to `ghcr.io/devantler-tech/world-at-ruin/client` as an **OCI artifact**, tagged with the
+    bare version plus `latest`, and **cosign-signs it by digest** (keyless, GitHub OIDC). The
+    **digest** is what the updater pins — never the mutable tag. OCI is required rather than merely
+    preferred: GitHub Packages has no generic/raw-file registry, so an OCI artifact is the only way
+    a `.app` zip enters it. The GitHub Release asset remains the *install* download; GHCR is the
+    *update* origin. **GHCR packages are private by default** — a new package must be made public or
+    players cannot pull it, and that failure is invisible from the publishing side (the push
+    succeeds; only the consumer gets a 401).
   - The version is therefore **derived, never maintained**. The in-tree constants are dev values;
     only a released build carries a real version.
   - **`CI - Required Checks` is the repo's single required status context.** Renaming or removing
