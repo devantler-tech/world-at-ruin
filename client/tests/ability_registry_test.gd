@@ -142,6 +142,28 @@ func _ready() -> void:
 		"the throughput control slips past the power guard (why the cycle floor is needed)")
 	_check(Ability.find_strict_dominance(with_faster).is_empty(),
 		"the throughput control slips past the sidegrade guard (why the cycle floor is needed)")
+
+	# NEGATIVE CONTROL 4 — weapons are the HORIZONTAL axis, so mastering a new one
+	# must never hand you a better version of what you had. A bow cone with the
+	# same role/effect/telegraph, the frozen budget and the frozen cycle as
+	# sword_cleave, but cheaper and longer-ranged, is a strict upgrade ACROSS
+	# weapons. It meets both ledgers, so only the sidegrade guard can catch it —
+	# and it does only because `class_key` deliberately excludes weapon.
+	var bow := base.duplicate()
+	bow["id"] = "bow_volley"
+	bow["weapon"] = "bow"
+	bow["resource_cost"] = 10
+	bow["range_m"] = 5.0
+	var bow_ab: Variant = Ability.parse(bow)
+	_check(bow_ab != null, "cross-weapon control parses")
+	var with_bow := abilities.duplicate()
+	with_bow.append(bow_ab)
+	_check(not Ability.find_strict_dominance(with_bow).is_empty(),
+		"sidegrade guard catches a strict upgrade across weapons (weapons are horizontal)")
+	_check(Ability.find_power_inflation(with_bow, budgets).is_empty(),
+		"the cross-weapon control meets the frozen power budget (isolation)")
+	_check(Ability.find_throughput_inflation(with_bow, floors).is_empty(),
+		"the cross-weapon control meets the frozen cycle floor (isolation)")
 	if _failed:
 		return
 

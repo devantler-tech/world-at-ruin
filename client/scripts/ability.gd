@@ -39,11 +39,14 @@ extends RefCounted
 ##      ability may Pareto-dominate another across the situational trade-off axes,
 ##      so every ability is a real choice and none is dead on arrival.
 ##
-## A "comparable class" is (weapon, role, effect, telegraph): two abilities are
-## only strict-upgrade-comparable when they are the SAME KIND of tool. A frontal
-## cone and a point-blank circle are different tactical tools — neither is an
-## upgrade of the other by definition — so they are not compared. The guards bite
-## precisely where a real upgrade could hide: same kind of tool, one just better.
+## A "comparable class" is (role, effect, telegraph): two abilities are only
+## strict-upgrade-comparable when they are the SAME KIND of tool. A frontal cone
+## and a point-blank circle are different tactical tools — neither is an upgrade
+## of the other by definition — so they are not compared. WEAPON is deliberately
+## excluded: the design puts weapons on the HORIZONTAL axis, so a bow's cone and a
+## sword's cone are competing choices that must trade off, never one strictly
+## better. The guards bite precisely where a real upgrade could hide: same kind of
+## tool, one just better.
 ##
 ## The seed abilities in res://abilities are illustrative scaffolding that
 ## exercises the guards; the numbers are NOT balance-tuned content. The
@@ -178,9 +181,19 @@ static func load_all(dir: String = DIR) -> Array:
 
 
 ## The comparable-class key (for the sidegrade guard): two abilities compete for
-## the same choice only when they are the same KIND of tool.
+## the same choice when they are the same KIND of tool — same role, same effect,
+## same telegraph shape.
+##
+## WEAPON is deliberately NOT part of this key. AGENTS.md's axis map puts weapons
+## on the HORIZONTAL axis ("a sword is a sword"): mastering a different weapon
+## must widen your options, never hand you a better version of what you had. So a
+## bow's damage cone and a sword's damage cone ARE competing choices and must be
+## mutual sidegrades — if the bow reaches further it has to pay for it somewhere.
+## Keying on weapon would put them in separate groups and let weapon mastery ship
+## as a strict upgrade, permanently inflating the arsenal along the one axis the
+## design declares flat.
 static func class_key(a: Dictionary) -> String:
-	return "%s|%s|%s|%s" % [a["weapon"], a["role"], a["effect"], a["telegraph"]]
+	return "%s|%s|%s" % [a["role"], a["effect"], a["telegraph"]]
 
 
 ## The power-budget key (for the no-inflation guard): per-cast power depends on
