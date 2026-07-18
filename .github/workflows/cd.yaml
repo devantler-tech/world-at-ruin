@@ -723,14 +723,19 @@ jobs:
             sleep 3
           done
 
-          # Racy: two runs can both see no open PR, and `gh pr create` errors if
-          # one already exists — failing this job over a benign overlap. Tolerate
-          # the loss, then re-check so a genuine failure still errors.
-          if ! gh pr list --repo "${tap}" --head "${branch}" --state open --json number --jq '.[0].number' | grep -q .; then
+          # `// empty` is load-bearing: with no open PR, `jq '.[0].number'`
+          # prints the literal `null`, which `grep -q .` MATCHES — so the check
+          # would conclude a PR already exists and never create one, leaving the
+          # job green with no tap PR at all on the very first run.
+          #
+          # Racy too: two runs can both see no open PR, and `gh pr create` errors
+          # if one already exists — failing this job over a benign overlap.
+          # Tolerate the loss, then re-check so a genuine failure still errors.
+          if ! gh pr list --repo "${tap}" --head "${branch}" --state open --json number --jq '.[0].number // empty' | grep -q .; then
             gh pr create --repo "${tap}" --base main --head "${branch}" \
               --title "feat: world-at-ruin ${VERSION}" \
               --body "Automated cask update for World at Ruin ${VERSION}." || true
-            if ! gh pr list --repo "${tap}" --head "${branch}" --state open --json number --jq '.[0].number' | grep -q .; then
+            if ! gh pr list --repo "${tap}" --head "${branch}" --state open --json number --jq '.[0].number // empty' | grep -q .; then
               echo "::error::no open cask PR on ${tap} for ${branch} after attempting to create one"
               exit 1
             fi
