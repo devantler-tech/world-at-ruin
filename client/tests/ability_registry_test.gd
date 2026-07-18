@@ -165,6 +165,11 @@ func _ready() -> void:
 	_expect_rejected(_with(base, "range_m", INF), "an infinite range")
 	_expect_rejected(_with(base, "cooldown_ms", INF), "an infinite cost")
 	_expect_rejected(_with(base, "version", 0), "a version below 1")
+	# Forward compatibility is a REFUSAL, not a silent skip: an older build must
+	# gate content from a newer schema rather than run it with dropped semantics.
+	_expect_rejected(_with(base, "version", Ability.SCHEMA_VERSION + 1),
+		"a schema version newer than this build understands")
+	_expect_rejected(_with(base, "targeting", "smart"), "an unknown field")
 	_expect_rejected(_with(base, "id", ""), "an empty id")
 	_expect_rejected([], "a non-object")
 	if _failed:

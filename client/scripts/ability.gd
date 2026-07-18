@@ -74,13 +74,36 @@ const BENEFIT_AXES := ["range_m"]
 ## Integer fields (milliseconds and unit costs are whole numbers).
 const _INT_FIELDS := ["version", "cast_time_ms", "cooldown_ms", "resource_cost", "power"]
 
+## The highest ability schema this build fully understands. A file declaring a
+## HIGHER version is refused outright rather than half-applied: a newer schema
+## may add targeting or cost semantics this build would silently ignore, and a
+## mastered ability behaving with missing constraints is exactly the permanent,
+## un-undoable harm the product law forbids. Bump this in the same change that
+## teaches the parser the new version's fields.
+const SCHEMA_VERSION := 1
+
+## Every field this schema defines. An unrecognised key is refused rather than
+## ignored: within a known version there is nothing legitimate for it to mean, so
+## it is either a typo or content from a schema this build cannot honour — and a
+## silent skip is how a half-understood ability reaches a player. Genuinely new
+## fields arrive with a SCHEMA_VERSION bump, which is what the ceiling above
+## gates on.
+const _KNOWN_FIELDS := [
+	"id", "version", "weapon", "role", "effect", "telegraph",
+	"cast_time_ms", "cooldown_ms", "resource_cost", "range_m", "power",
+]
+
 
 ## Validate one decoded ability object and return a normalised, typed Dictionary,
 ## or null (loudly) on ANY malformed field. Every field is type- and
 ## range-guarded (the recipe_type_guard lesson, #47): a wrong-typed persisted
 ## field must produce a clean refusal, never a crash or a silent mis-read.
-## Unknown keys are ignored on purpose, so a newer data file stays loadable by an
-## older client (forward-only compatibility).
+##
+## Forward compatibility is handled by REFUSING, not by ignoring: a file whose
+## `version` exceeds SCHEMA_VERSION, or which carries a field this schema does
+## not define, is rejected loudly so an older build gates incompatible content
+## instead of half-applying it (a mastered ability must never run with semantics
+## its binary silently dropped).
 static func parse(data: Variant) -> Variant:
 	if data is not Dictionary:
 		push_error("Ability: not a JSON object")
@@ -92,6 +115,11 @@ static func parse(data: Variant) -> Variant:
 	if id.is_empty():
 		return null
 	out["id"] = id
+
+	for key: String in d.keys():
+		if key not in _KNOWN_FIELDS:
+			push_error("Ability '%s': unknown field '%s' — refusing rather than half-applying" % [id, key])
+			return null
 
 	for field in ["weapon", "role", "effect", "telegraph"]:
 		var allowed: Array = _allowed_for(field)
@@ -107,6 +135,10 @@ static func parse(data: Variant) -> Variant:
 		out[field] = n
 	if out["version"] < 1:
 		push_error("Ability '%s': version must be >= 1" % id)
+		return null
+	if out["version"] > SCHEMA_VERSION:
+		push_error("Ability '%s': schema version %d is newer than this build understands (%d) — refusing rather than half-applying"
+			% [id, out["version"], SCHEMA_VERSION])
 		return null
 
 	var reach := _require_nonneg_number(d, "range_m", id)
