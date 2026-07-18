@@ -670,8 +670,34 @@ jobs:
                   newest="${current}"; else newest="${VERSION}"; fi
               elif [ -z "${pre_a}" ]; then newest="${current}"
               elif [ -z "${pre_b}" ]; then newest="${VERSION}"
-              elif [ "$(printf '%s\n%s\n' "${pre_a}" "${pre_b}" | sort -V | tail -1)" = "${pre_a}" ]; then
-                newest="${current}"; else newest="${VERSION}"; fi
+              else
+                # SemVer item 11: compare dot-separated identifiers left to
+                # right. Numeric identifiers compare numerically; non-numeric
+                # compare ASCII; a NUMERIC identifier has LOWER precedence than
+                # a non-numeric one (so alpha.1 < alpha.beta, which `sort -V`
+                # gets backwards); if all shared identifiers are equal, the
+                # version with MORE identifiers wins.
+                newest=""
+                IFS='.' read -r -a ids_a <<< "${pre_a}"
+                IFS='.' read -r -a ids_b <<< "${pre_b}"
+                n=$(( ${#ids_a[@]} > ${#ids_b[@]} ? ${#ids_a[@]} : ${#ids_b[@]} ))
+                for ((k=0; k<n; k++)); do
+                  ia="${ids_a[k]-}"; ib="${ids_b[k]-}"
+                  if [ -z "${ia}" ]; then newest="${VERSION}"; break; fi
+                  if [ -z "${ib}" ]; then newest="${current}"; break; fi
+                  [ "${ia}" = "${ib}" ] && continue
+                  if [[ "${ia}" =~ ^[0-9]+$ ]] && [[ "${ib}" =~ ^[0-9]+$ ]]; then
+                    if [ "${ia}" -gt "${ib}" ]; then newest="${current}"; else newest="${VERSION}"; fi
+                  elif [[ "${ia}" =~ ^[0-9]+$ ]]; then
+                    newest="${VERSION}"   # numeric < non-numeric
+                  elif [[ "${ib}" =~ ^[0-9]+$ ]]; then
+                    newest="${current}"
+                  elif [[ "${ia}" > "${ib}" ]]; then newest="${current}"
+                  else newest="${VERSION}"; fi
+                  break
+                done
+                [ -z "${newest}" ] && newest="${current}"
+              fi
               if [ "${newest}" = "${current}" ]; then
                 echo "::notice::tap already carries ${current}, which is newer than ${VERSION} — leaving it alone"
                 exit 0
@@ -697,8 +723,17 @@ jobs:
             sleep 3
           done
 
+          # Racy: two runs can both see no open PR, and `gh pr create` errors if
+          # one already exists — failing this job over a benign overlap. Tolerate
+          # the loss, then re-check so a genuine failure still errors.
           if ! gh pr list --repo "${tap}" --head "${branch}" --state open --json number --jq '.[0].number' | grep -q .; then
-            gh pr create --repo "${tap}" --base main --head "${branch}"               --title "feat: world-at-ruin ${VERSION}"               --body "Automated cask update for World at Ruin ${VERSION}."
+            gh pr create --repo "${tap}" --base main --head "${branch}" \
+              --title "feat: world-at-ruin ${VERSION}" \
+              --body "Automated cask update for World at Ruin ${VERSION}." || true
+            if ! gh pr list --repo "${tap}" --head "${branch}" --state open --json number --jq '.[0].number' | grep -q .; then
+              echo "::error::no open cask PR on ${tap} for ${branch} after attempting to create one"
+              exit 1
+            fi
           fi
           echo "cask PR is open on ${tap} (${branch})"
 
