@@ -15,8 +15,10 @@ class_name CharacterFactory
 ##    version is rejected loudly (an old client must never half-apply a
 ##    recipe it does not fully understand).
 ##
-## Bone edits follow the laws proven in Phase 0 stage 2 (see the test's
-## pose==rest guard): rests must stay TRS-representable — only UNIFORM bone
+## Bone edits follow the laws first proven during the Phase 0 art-pipeline
+## work and now guarded by character_factory_test's pose==rest check (that
+## scaffolding itself is gone — this is where the laws live now):
+## rests must stay TRS-representable — only UNIFORM bone
 ## scales (with exact child compensation: basis x 1/g, origin / g), origin
 ## scaling for joint pushes, and no engine global reads between rest edits
 ## (Godot 4.7 desyncs its rest/pose caches).
@@ -35,7 +37,7 @@ const EQUIP_PREFIX := "Equip_"
 const HIDE_SHAPE_PREFIX := "equip_hide_"
 ## The standing pose: degrees the arms hang from the baked T-pose, with a
 ## slight elbow and wrist curl so it reads relaxed, not scarecrow (angles
-## proven in Phase 0 stage 2).
+## proven during the Phase 0 art-pipeline work).
 const ARM_HANG_DEG := 62.0
 const FOREARM_RELAX_DEG := 10.0
 const HAND_RELAX_DEG := 8.0
@@ -351,6 +353,43 @@ static func _mixed_vertices(mesh_instance: MeshInstance3D) -> PackedVector3Array
 	return mixed
 
 
+## CPU linear-blend skinning of a MeshInstance3D against its skeleton's
+## current global poses. Returns the deformed vertex stream, surface-ordered.
+## `_mixed_vertices` above answers "what shape is this mesh in its own space";
+## this answers "where does that shape actually land once the skeleton moves"
+## — which is what an equipment piece has to agree with to sit on the body.
+static func cpu_skin(skel: Skeleton3D, mi: MeshInstance3D) -> PackedVector3Array:
+	var out := PackedVector3Array()
+	var skin := mi.skin
+	if skin == null:
+		return out
+	# Per-bind deform matrix: global pose composed with the original inverse
+	# bind (never regenerate the binds — that would cancel the rest edits).
+	var deform: Array[Transform3D] = []
+	for b in skin.get_bind_count():
+		var bone := skin.get_bind_bone(b)
+		if bone < 0:
+			bone = skel.find_bone(skin.get_bind_name(b))
+		deform.append(skel.get_bone_global_pose(bone) * skin.get_bind_pose(b))
+	for s in mi.mesh.get_surface_count():
+		var arrays := mi.mesh.surface_get_arrays(s)
+		var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+		var bones: PackedInt32Array = arrays[Mesh.ARRAY_BONES]
+		var weights: PackedFloat32Array = arrays[Mesh.ARRAY_WEIGHTS]
+		if bones.is_empty() or weights.is_empty():
+			out.append_array(verts)
+			continue
+		var influences := bones.size() / verts.size()
+		for v in verts.size():
+			var p := Vector3.ZERO
+			for k in influences:
+				var wgt := weights[v * influences + k]
+				if wgt > 0.0:
+					p += deform[bones[v * influences + k]] * verts[v] * wgt
+			out.append(p)
+	return out
+
+
 static func find_skeleton(node: Node) -> Skeleton3D:
 	if node == null or node is Skeleton3D:
 		return node
@@ -417,7 +456,7 @@ static func _scale_joint_origin(skeleton: Skeleton3D, bone: int, factor: float) 
 ##-Y by `deg` — a world-space rotation conjugated into bone space. Pure
 ## rotation: no shear can enter the rest (the TRS law). The global rest is
 ## composed manually — reading engine globals mid-edit desyncs the caches
-## (Godot 4.7, proven in Phase 0 stage 2).
+## (Godot 4.7, proven during the Phase 0 art-pipeline work).
 static func _hang_toward_down(skeleton: Skeleton3D, bone: int, deg: float) -> void:
 	if bone < 0:
 		push_error("CharacterFactory: arm bone not found")

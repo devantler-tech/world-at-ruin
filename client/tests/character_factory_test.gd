@@ -13,6 +13,12 @@ extends Node
 
 const GOLDEN := "res://tests/data/golden_recipe_v1.json"
 const PRESETS := ["res://recipes/wanderer.json", "res://recipes/villager.json", "res://recipes/elder.json", "res://recipes/brute.json"]
+## Metres a built hand must sit below the same hand in the kit's BAKED T-pose
+## before we believe the arms actually hung. Measured on the golden recipe:
+## the 62-degree hang drops the hand 0.123 m, while the recipe's own bone
+## edits (girth/scale/joint push) drop it 0.039 m all by themselves. The
+## threshold sits between the two, so bone edits alone can never fake a hang.
+const MIN_ARM_DROP := 0.08
 
 
 func _ready() -> void:
@@ -42,6 +48,17 @@ func _ready() -> void:
 		preset_fingerprints[fp] = path
 		built.free()
 
+	# The kit's BAKED T-pose, straight off disk with no factory edits — the
+	# reference the hang is measured against. Reading it here (rather than
+	# hardcoding a height) keeps the check honest across a kit rebake.
+	var baked_hand_y := {}
+	var raw_kit := (load(CharacterFactory.KIT_SCENE_PATH) as PackedScene).instantiate() as Node3D
+	var raw_skeleton := CharacterFactory.find_skeleton(raw_kit)
+	raw_skeleton.force_update_all_bone_transforms()
+	for hand_name in ["hand_l", "hand_r"]:
+		baked_hand_y[hand_name] = raw_skeleton.get_bone_global_rest(raw_skeleton.find_bone(hand_name)).origin.y
+	raw_kit.free()
+
 	# TRS law on the heaviest bone-op recipe (the golden one).
 	var skeleton := CharacterFactory.find_skeleton(golden_a)
 	skeleton.force_update_all_bone_transforms()
@@ -51,6 +68,13 @@ func _ready() -> void:
 		var pose_origin := skeleton.get_bone_global_pose(hand).origin
 		if rest_origin.distance_to(pose_origin) > 0.001:
 			_fail("%s pose diverged from rest (non-TRS rest?): pose=%s rest=%s" % [hand_name, pose_origin, rest_origin])
+			return
+		# pose == rest alone is satisfied by doing NOTHING: an untouched T-pose
+		# is perfectly self-consistent. Assert the arm actually came down, or a
+		# regression that silently drops the hang would still pass above.
+		var drop: float = baked_hand_y[hand_name] - pose_origin.y
+		if drop < MIN_ARM_DROP:
+			_fail("%s never hung: only %f m below the baked T-pose (need %f)" % [hand_name, drop, MIN_ARM_DROP])
 			return
 
 	# Validation must fail loudly, not half-apply.

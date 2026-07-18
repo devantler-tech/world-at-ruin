@@ -141,7 +141,7 @@ const ENTRIES: Array[Dictionary] = [
 		"title": "The first wanderer takes shape",
 		"notes": [
 			"A human figure now stands in the cave — the first character. The body is a CC0 base mesh; everything about how he stands is code: his proportions are reshaped bone by bone (broader chest, heavier forearms, larger hands) and his arms are lowered from the sculptor's T-pose into a relaxed stance, all by a script.",
-			"A second taste-gate scene (scenes/character.tscn) lines up three builds of the same body — grounded, hero, base — so the proportion range can be judged side by side.",
+			"A second taste-gate scene lines up three builds of the same body — grounded, hero, base — so the proportion range can be judged side by side.",
 			"Same parameters, same body, every time: a regression test fingerprints the skeleton and the deformed skin so the figure can never silently change shape.",
 		],
 	},
@@ -160,7 +160,7 @@ const ENTRIES: Array[Dictionary] = [
 		"title": "The first wanderer takes shape",
 		"notes": [
 			"A human figure now stands in the cave — the first character. The body is a CC0 base mesh; everything about how he stands is code: his proportions are reshaped bone by bone (broader chest, heavier forearms, larger hands) and his arms are lowered from the sculptor's T-pose into a relaxed stance, all by a script.",
-			"A second taste-gate scene (scenes/character.tscn) lines up three builds of the same body — grounded, hero, base — so the proportion range can be judged side by side.",
+			"A second taste-gate scene lines up three builds of the same body — grounded, hero, base — so the proportion range can be judged side by side.",
 			"Same parameters, same body, every time: a regression test fingerprints the skeleton and the deformed skin so the figure can never silently change shape.",
 		],
 	},
