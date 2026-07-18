@@ -1,12 +1,11 @@
 name: CI
 
+# CI lints, tests and analyses the product on proposed changes. Production
+# builds, publishing and distribution live in cd.yaml, which runs on the
+# GitHub Release that release.yaml cuts.
 on:
   pull_request:
   merge_group:
-  # Push runs exist so every merge leaves a canonical, findable macOS .app
-  # artifact on main (merge_group artifacts are buried in queue runs).
-  push:
-    branches: [main]
 
 permissions:
   contents: read
@@ -189,6 +188,12 @@ jobs:
 
   client-export-macos:
     name: Client export (macOS)
+    # BUILD VERIFICATION, not distribution: this proves a change still exports
+    # and that the exported .app actually boots, so a broken export is caught on
+    # the PR rather than at release time. The shipped, version-stamped build is
+    # cd.yaml's job — the artifact uploaded here is a debugging convenience with
+    # no version identity, and is never an install source.
+    #
     # macOS runner on purpose: Godot's built-in AD-HOC codesign only works on a
     # macOS host, and an unsigned arm64 .app is killed by macOS before it can
     # launch — a Linux-exported unsigned zip would be dead on arrival on the

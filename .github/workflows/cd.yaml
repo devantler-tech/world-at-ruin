@@ -1,0 +1,181 @@
+---
+name: CD
+
+# Production build + publish. Triggered by the GitHub Release that release.yaml's
+# semantic-release run publishes.
+#
+# Why `release: published` and not `push: tags: v*` (the org's Go-repo shape):
+# in those repos GoReleaser CREATES the release, so the tag is the only thing
+# that exists when CD must start. Here .releaserc loads
+# @semantic-release/github, so the Release already exists — and CD's job is to
+# attach assets to it. Hanging off the release event means the release is
+# guaranteed to exist when the upload runs, instead of racing the tag push.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to (re)build and attach assets to, e.g. v0.2.0"
+        required: true
+        type: string
+
+concurrency:
+  group: "CD-${{ github.event.release.tag_name || inputs.tag }}"
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  GODOT_VERSION: 4.7.1
+  # macOS universal editor + export templates, same SHA512-SUMS.txt provenance
+  # as ci.yaml's pins.
+  GODOT_MACOS_SHA512: a5c6443e193829de9a3237b57ef5e01c23839888900e241543da0dd4bac1050125e19469f0cca9a9958ac346070d98cab8e5d6aee16b181c6d06cda86bd07224
+  GODOT_TEMPLATES_SHA512: afcc83d8d3d298038f19c58744a0d660fa75dd4baa33cb55d1011bb2565a2a8c2381728924564cb909e37c205a23f21b521b23bd057993afd43ae4da0b2f9d47
+
+jobs:
+  publish-macos:
+    name: 🍎 Publish macOS build
+    # macOS runner on purpose: Godot's built-in AD-HOC codesign only works on a
+    # macOS host, and an unsigned arm64 .app is killed by macOS before it can
+    # launch — a Linux-exported unsigned zip would be dead on arrival on an
+    # Apple-Silicon machine.
+    runs-on: macos-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write # upload the built asset onto the release
+    steps:
+      - name: 🛡️ Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      - name: 📑 Checkout the released tag
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # Check out the TAG explicitly. On a release event github.sha is not
+          # guaranteed to be the tagged commit, and shipping a build from any
+          # other commit would silently mislabel the release.
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+          # This job publishes an artifact — never let the checkout token ride
+          # along in it (zizmor artipacked).
+          persist-credentials: false
+
+      - name: 🏷️ Resolve the release version
+        id: version
+        env:
+          RAW_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          set -euo pipefail
+          # The repo's "Protect release tags" ruleset pins tags to
+          # ^v\d+\.\d+\.\d+(-.+)?$ — re-assert it here so a hand-typed
+          # workflow_dispatch value cannot produce a mislabelled build.
+          if ! printf '%s' "${RAW_TAG}" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-.+)?$'; then
+            echo "::error::'${RAW_TAG}' is not a vX.Y.Z release tag"
+            exit 1
+          fi
+          echo "tag=${RAW_TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${RAW_TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: ✍️ Stamp the release version into the build
+        # The version is derived from the release tag, never hand-maintained.
+        # Stamping happens HERE rather than as a commit back to main: a
+        # commit-back would need write access to a protected branch and would
+        # re-trigger release.yaml in a loop. The in-tree values stay the dev
+        # values; only the shipped build carries the release version.
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          perl -pi -e 's{^config/version=".*"$}{config/version="$ENV{VERSION}"}' client/project.godot
+          perl -pi -e 's{^const VERSION := ".*"$}{const VERSION := "$ENV{VERSION}"}' client/scripts/devlog.gd
+          # Fail loudly if either substitution missed — a silently unstamped
+          # build would ship claiming the wrong version.
+          grep -qxF "config/version=\"${VERSION}\"" client/project.godot \
+            || { echo "::error::failed to stamp config/version in client/project.godot"; exit 1; }
+          grep -qxF "const VERSION := \"${VERSION}\"" client/scripts/devlog.gd \
+            || { echo "::error::failed to stamp VERSION in client/scripts/devlog.gd"; exit 1; }
+
+      - name: ⬇️ Install Godot (pinned, checksum-verified)
+        run: |
+          set -euo pipefail
+          curl -fsSL -o godot.zip "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_macos.universal.zip"
+          echo "${GODOT_MACOS_SHA512}  godot.zip" | shasum -a 512 -c -
+          unzip -q godot.zip
+          printf '#!/bin/sh\nexec "%s/Godot.app/Contents/MacOS/Godot" "$@"\n' "${PWD}" | sudo tee /usr/local/bin/godot >/dev/null
+          sudo chmod +x /usr/local/bin/godot
+
+      - name: ⬇️ Install export templates (pinned, checksum-verified)
+        run: |
+          set -euo pipefail
+          curl -fsSL -o templates.tpz "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+          echo "${GODOT_TEMPLATES_SHA512}  templates.tpz" | shasum -a 512 -c -
+          unzip -q templates.tpz
+          mkdir -p "${HOME}/Library/Application Support/Godot/export_templates/${GODOT_VERSION}.stable"
+          mv templates/* "${HOME}/Library/Application Support/Godot/export_templates/${GODOT_VERSION}.stable/"
+
+      - name: 🧩 Headless import + class-name scan
+        # Only the headless editor pass writes global_script_class_cache.cfg;
+        # exporting without it breaks class_name resolution in packed scripts.
+        run: |
+          set -o pipefail
+          godot --headless --editor --quit --path client 2>&1 | tee import.log
+
+      - name: 🏗️ Export .app (release, ad-hoc signed)
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          set -o pipefail
+          mkdir -p build
+          godot --headless --export-release "macOS" "${PWD}/build/WorldAtRuin-${VERSION}-macOS-universal.zip" --path client 2>&1 | tee export.log
+          if grep -qE "SCRIPT ERROR|^ERROR" export.log import.log; then
+            echo "::error::Errors during export"; exit 1
+          fi
+          test -s "build/WorldAtRuin-${VERSION}-macOS-universal.zip"
+
+      - name: 🚦 Verify the EXPORTED app boots AND reports the release version
+        # Boot the shipped artifact, not the editor build. BOOT_OK is main.gd's
+        # positive marker that the world actually built; asserting the version
+        # in that same line is what proves the stamp above reached the packed
+        # binary rather than merely the working tree.
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          set -o pipefail
+          unzip -q "build/WorldAtRuin-${VERSION}-macOS-universal.zip" -d build/app
+          "build/app/World at Ruin.app/Contents/MacOS/World at Ruin" --headless --quit-after 60 2>&1 | tee exported-smoke.log
+          if grep -qE "SCRIPT ERROR|^ERROR" exported-smoke.log; then
+            echo "::error::Errors booting the exported app"; exit 1
+          fi
+          if ! grep -q "BOOT_OK v${VERSION} " exported-smoke.log; then
+            echo "::error::exported app did not report BOOT_OK v${VERSION} — the release version did not reach the shipped build"
+            tail -20 exported-smoke.log
+            exit 1
+          fi
+
+      - name: 📤 Attach the build to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          # --clobber so a re-run (workflow_dispatch) replaces the asset rather
+          # than failing on an existing name.
+          gh release upload "${TAG}" \
+            "build/WorldAtRuin-${VERSION}-macOS-universal.zip" \
+            --repo "${GITHUB_REPOSITORY}" --clobber
+
+  cd-required-checks:
+    name: CD - Required Checks
+    runs-on: ubuntu-latest
+    needs: [publish-macos]
+    if: ${{ always() }}
+    steps:
+      - uses: devantler-tech/actions/aggregate-job-checks@0f27c13a9785608e0bbf9998777d27761b4de617 # v10.0.2
+        with:
+          job-results: ${{ needs.publish-macos.result }}
+          check-name: "CD - Required Checks"
