@@ -131,7 +131,10 @@ publishes the rendered vantages as a **build artifact** — so the evidence is r
 machine rather than dependent on whoever happened to run the game. Point a reviewer at that artifact.
 Locally the same tool works windowed (`WAR_SHOT_DIR=… WAR_SAVE_PATH=… godot --path client
 res://tools/frame_capture.tscn`); a **headless run renders nothing**, and the tool refuses to run
-headless rather than emit a blank frame. Its vantages are fixed on purpose: evidence is only
+headless rather than emit a blank frame. It also proves the terrain actually landed pixels: at one
+designated vantage it hides the terrain mesh and fails unless the frame changes where bare ground
+was, so a fully transparent or discard-everything material cannot pass off a sky photograph as
+evidence. Its vantages are fixed on purpose: evidence is only
 comparable across commits if the camera does not move, and one flattering angle hides a regression
 that another exposes. The outdoor vantages are fixed as committed constants; the cave vantages are
 fixed **per committed seed** — derived deterministically from the cave layout, bit-identical run
