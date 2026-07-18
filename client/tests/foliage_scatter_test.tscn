@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tests/foliage_scatter_test.gd" id="1_foliage"]
+
+[node name="FoliageScatterTest" type="Node"]
+script = ExtResource("1_foliage")
