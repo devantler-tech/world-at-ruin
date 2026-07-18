@@ -98,8 +98,10 @@ func _ready() -> void:
 		return
 	if not _support_rejects_thin_air():
 		return
+	if not _a_sealed_cave_has_no_way_out():
+		return
 
-	print("TEST PASS — cave is walkable by the player's capsule (spawn, every room, and out to open air), deterministic; the walk stops at rock, at gaps narrower than the wanderer, at passages too low to stand in, and at spans with nothing underneath")
+	print("TEST PASS — cave is walkable by the player's capsule (spawn, every room, and out to open air), deterministic; the walk stops at rock, at gaps narrower than the wanderer, at passages too low to stand in, and at spans with nothing underneath, and a sealed cave reports no way out")
 	get_tree().quit(0)
 
 
@@ -186,6 +188,31 @@ func _support_rejects_thin_air() -> bool:
 	var air := CaveSystemGen.flood_passable(chasm, _FX.x, _FX.y, _FX.z, _floor_cell(3))
 	_check(_reached(air, _floor_cell(9)), true,
 		"support: the chasm IS connected as free space — only the walk rejects it")
+	return not _failed
+
+
+## Both states of the WAY OUT — without this the way-out check could simply
+## always say yes, and every seed above would pass while proving nothing. A
+## cave with no opening must report no way out; boring a full-height shaft from
+## the hall to the edge of the box must make one appear.
+##
+## The escape is checked from the wanderer's own walkable region, so this also
+## pins that reaching open air means WALKING to the threshold rather than the
+## flood leaving the box — which, being grounded, it never can.
+func _a_sealed_cave_has_no_way_out() -> bool:
+	var sealed := _halls(_sealed())
+	var seen := CaveSystemGen.flood_walkable(sealed, _FX.x, _FX.y, _FX.z, _floor_cell(3))
+	_check(CaveSystemGen._walks_out(sealed, _FX.x, _FX.y, _FX.z, seen), false,
+		"way out: a cave sealed in rock reports NO way out")
+
+	var bored := _halls(_sealed())
+	for x in range(_MARGIN, _FX.x):
+		for y in range(_MARGIN, _MARGIN + CaveSystemGen.BODY_CELLS + 1):
+			for z in range(_FX.z - _MARGIN, _FX.z):
+				_put(bored, Vector3i(x, y, z), -1.0)
+	var out_seen := CaveSystemGen.flood_walkable(bored, _FX.x, _FX.y, _FX.z, _floor_cell(3))
+	_check(CaveSystemGen._walks_out(bored, _FX.x, _FX.y, _FX.z, out_seen), true,
+		"way out: boring a passage to the edge of the box DOES open one")
 	return not _failed
 
 

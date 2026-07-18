@@ -466,6 +466,21 @@ static func _void_at(field: PackedFloat32Array, nx: int, ny: int, nz: int, c: Ve
 ## [method standing] adds. Together they are what turn the old one-cell erosion —
 ## which rejected sub-cell pinholes but happily routed the wanderer through a
 ## crawlspace or across thin air — into a body the audit can actually walk.
+##
+## WHAT THIS IS AND IS NOT. It is a discrete model of the capsule on a 0.65 m
+## grid, not a continuous sweep, and it is deliberately CONSERVATIVE: a route it
+## clears is one the player can take, but it may refuse a route they could
+## actually squeeze through. Three places that shows:
+##   - sideways clearance is counted in whole cells, so it asks for 1.95 m of
+##     width where the body needs 0.8 m;
+##   - support is accepted anywhere within SUPPORT_CELLS below the feet, which
+##     tolerates a floor crossing a cell diagonally at the cost of allowing the
+##     walk one step-height of slack;
+##   - the walk moves on axes and single steps, so it does not model diagonal
+##     movement, jumping, or falling any distance.
+## Erring toward refusing a real route is the safe direction here: the guard
+## exists to catch a cave the player cannot cross, and a false alarm is a
+## reviewed test failure while a miss is a player sealed in forever.
 static func body_fits(field: PackedFloat32Array, nx: int, ny: int, nz: int, c: Vector3i) -> bool:
 	if c.x < 0 or c.x >= nx or c.y < 0 or c.y >= ny or c.z < 0 or c.z >= nz:
 		return false
