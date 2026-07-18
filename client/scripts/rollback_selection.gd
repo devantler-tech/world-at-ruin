@@ -264,7 +264,7 @@ static func recover_ledger(quarantined: Variant, version: Variant) -> Dictionary
 	# and make those known-broken builds selectable again — turning a recovery tool
 	# into a way to lose the very evidence the ledger exists to keep. A readable
 	# ledger is not a deadlock: append to it with [method quarantine] instead.
-	if _is_readable_ledger(quarantined):
+	if is_readable_ledger(quarantined):
 		return {
 			"ok": false,
 			"ledger": quarantined,
@@ -296,7 +296,7 @@ static func recover_ledger(quarantined: Variant, version: Variant) -> Dictionary
 static func is_quarantined(quarantined: Variant, version: Variant) -> bool:
 	if not UpdateDecision.is_version(version):
 		return true
-	if not _is_readable_ledger(quarantined):
+	if not is_readable_ledger(quarantined):
 		return true
 	for raw: Variant in (quarantined as Array):
 		if UpdateDecision.compare_versions(str(raw), str(version)) == 0:
@@ -309,7 +309,12 @@ static func is_quarantined(quarantined: Variant, version: Variant) -> bool:
 ## not readable — skipping the bad entry and answering from the rest treats corrupt
 ## evidence as absence, which is the container-versus-entries mistake that also
 ## produced a bug in [method select].
-static func _is_readable_ledger(v: Variant) -> bool:
+##
+## Public because [BootRecovery]'s persistence layer must refuse to write a state
+## whose ledger this file would refuse to read — a well-formed file holding junk
+## would launder corruption into "evidence". One owner for the predicate keeps the
+## write side and the read side from ever diverging.
+static func is_readable_ledger(v: Variant) -> bool:
 	if v is not Array:
 		return false
 	for raw: Variant in (v as Array):
