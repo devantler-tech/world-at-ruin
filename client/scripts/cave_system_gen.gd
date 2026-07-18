@@ -372,7 +372,7 @@ static func _void_at(field: PackedFloat32Array, nx: int, ny: int, nz: int, c: Ve
 ##
 ## HONEST LIMIT: a one-cell erosion rejects sub-cell gaps; it is NOT a capsule
 ## traversal proof and does not model the 1.8 m standing height or floor support.
-## A true capsule/navmesh traversal check is tracked separately.
+## A true capsule/navmesh traversal check is issue #107.
 static func passable(field: PackedFloat32Array, nx: int, ny: int, nz: int, c: Vector3i) -> bool:
 	if c.x < 0 or c.x >= nx or c.y < 0 or c.y >= ny or c.z < 0 or c.z >= nz:
 		return false
