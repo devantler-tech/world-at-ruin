@@ -129,11 +129,14 @@ func _build_panel() -> void:
 	var presets_row := HBoxContainer.new()
 	presets_row.add_theme_constant_override("separation", 8)
 	column.add_child(presets_row)
+	var first_preset: Button = null
 	for preset_name in PRESETS:
 		var b := Button.new()
 		b.text = preset_name
 		b.pressed.connect(_on_preset.bind(preset_name))
 		presets_row.add_child(b)
+		if first_preset == null:
+			first_preset = b
 
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -168,6 +171,14 @@ func _build_panel() -> void:
 		cancel.text = "Cancel (Esc)"
 		cancel.pressed.connect(func() -> void: _close(false))
 		buttons.add_child(cancel)
+
+	# A pad has no pointer: without an initial focus owner the D-pad and
+	# ui_accept have nothing to act on, so a first-run controller player could
+	# never reach the mandatory Wake button. Focus the panel's first control —
+	# the container layout gives every slider and button automatic focus
+	# neighbours from there. (open() adds this node to the tree before calling
+	# _build_panel, so the control is focusable here.)
+	first_preset.grab_focus()
 
 
 func _add_heading(into: Container, text: String) -> void:
