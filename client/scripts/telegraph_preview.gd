@@ -80,28 +80,34 @@ func _process(delta: float) -> void:
 	_clock += delta
 	if not _shot_side_done and _clock >= 1.5:
 		_shot_side_done = true
-		_save_shot("telegraph-side.png")
+		if not _save_shot("telegraph-side.png"):
+			return
 		_side_cam.current = false
 		_sun_cam.current = true
 	elif not _shot_sun_done and _clock >= 1.7:
 		_shot_sun_done = true
-		_save_shot("telegraph-sun.png")
-		get_tree().quit(0)
+		# Only a SUCCESSFUL second shot may exit with status 0 — a later
+		# quit(0) would overwrite the failure status _save_shot just set.
+		if _save_shot("telegraph-sun.png"):
+			get_tree().quit(0)
 
 
-func _save_shot(file_name: String) -> void:
+## Save the current frame; on any failure, request a failing exit and return
+## false so no caller follows up with a success exit.
+func _save_shot(file_name: String) -> bool:
 	var img := get_viewport().get_texture().get_image()
 	var path := _shots_dir.path_join(file_name)
 	if img == null or img.is_empty():
 		push_error("telegraph_preview: viewport gave no image for %s — evidence run failed" % file_name)
 		get_tree().quit(1)
-		return
+		return false
 	var err := img.save_png(path)
 	if err != OK:
 		push_error("telegraph_preview: could not save %s (error %d) — evidence run failed" % [path, err])
 		get_tree().quit(1)
-		return
+		return false
 	print("telegraph_preview: shot %s -> %s" % [file_name, path])
+	return true
 
 
 func _unhandled_key_input(event: InputEvent) -> void:

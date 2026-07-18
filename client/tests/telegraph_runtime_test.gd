@@ -44,10 +44,16 @@ func _ready() -> void:
 	_shared_cast_and_cache()
 	if _failed:
 		return
+	_spec_safety()
+	if _failed:
+		return
 	_dodge_law_and_presentation()
 	if _failed:
 		return
 	_full_disc_seam()
+	if _failed:
+		return
+	_moving_parent()
 	if _failed:
 		return
 	await _physics_order()
@@ -95,6 +101,65 @@ func _shared_cast_and_cache() -> void:
 	a.queue_free()
 	b.queue_free()
 	c.queue_free()
+
+
+## GDScript cannot make cast fields immutable, so `begin` re-validates the
+## factory laws (a hand-built cast is refused) and runs on a PRIVATE spec
+## copy — mutating the caller's instance after begin must change nothing.
+func _spec_safety() -> void:
+	print("telegraph_runtime_test: the next ERROR line is the expected hand-built-cast refusal.")
+	var r := TelegraphRuntime.new()
+	r.auto_advance = false
+	add_child(r)
+	var bad := TelegraphCast.new()
+	bad.shape = TelegraphCast.Shape.CIRCLE
+	bad.radius = 0.0
+	bad.cast_time = 1.0
+	if r.begin(bad):
+		_fail("a hand-built cast violating the factory laws must be refused")
+		return
+	var spec := TelegraphCast.circle(CENTRE, RADIUS, 0.5)
+	if not r.begin(spec):
+		_fail("a valid spec was refused")
+		return
+	var target := _target("SpecTarget", Vector3(2, 0, 0))
+	# Sabotage the caller's instance: shrink it and move it away entirely.
+	spec.radius = 0.5
+	spec.origin_point = Vector3(50, 0, 50)
+	# Capture through member state — a GDScript lambda captures LOCALS by
+	# value, so a `got = hits` into a local would write the closure's copy.
+	_resolutions = 0
+	_last_hits.clear()
+	r.resolved.connect(func(hits: Array[Node3D]) -> void:
+		_resolutions += 1
+		_last_hits = hits)
+	r.advance(0.5)
+	if _resolutions != 1 or not _last_hits.has(target):
+		_fail("SNAPSHOT LAW BROKEN: mutating the caller's cast after begin changed the resolved shape")
+		return
+	target.remove_from_group(TelegraphRuntime.TARGET_GROUP)
+	target.queue_free()
+	r.queue_free()
+
+
+## A cast is world-anchored even when a caster parents the runtime under its
+## own moving transform (`top_level`) — the painted zone must not drag.
+func _moving_parent() -> void:
+	var carrier := Node3D.new()
+	add_child(carrier)
+	var r := TelegraphRuntime.new()
+	r.auto_advance = false
+	carrier.add_child(r)
+	if not r.begin(TelegraphCast.circle(CENTRE, RADIUS, CAST_TIME)):
+		_fail("a runtime parented under a caster must still begin")
+		return
+	var zone := r.get_node("Zone") as Decal
+	var before := zone.global_position
+	carrier.global_position = Vector3(50, 0, 0)
+	if not zone.global_position.is_equal_approx(before):
+		_fail("WORLD ANCHOR BROKEN: moving the caster parent dragged the painted zone")
+		return
+	carrier.queue_free()
 
 
 ## The legal full-disc cone (cos_half_scaled == -COS_SCALE) has no angular
@@ -206,6 +271,8 @@ func _begin_refusals() -> void:
 
 
 func _dodge_law_and_presentation() -> void:
+	_resolutions = 0
+	_last_hits.clear()
 	# Fixture preconditions straight from the shared geometry lib: the test is
 	# meaningless if a position is not where the scenario says it is.
 	if not Telegraph.in_circle(CENTRE, RADIUS, INSIDE_A) \

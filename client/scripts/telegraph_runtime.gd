@@ -54,8 +54,13 @@ const TEX_MAX := 256
 ## Border band thickness as a fraction of the shape extent, clamped to
 ## [0.2 m, 0.5 m] so small casts keep a visible rim and huge ones stay a line.
 const BORDER_WIDTH_FRACTION := 0.045
-## Decal projection depth (m): covers this much slope/step under the origin.
-const PROJECTION_DEPTH := 8.0
+## Decal projection depth (m), centred on the cast origin. Resolution
+## deliberately ignores height (a telegraph is a mark on the ground, #57), so
+## any ground the projection volume misses would be resolved-but-unpainted —
+## the unfair direction. 32 m (±16 m) comfortably covers the worldgen's ~±7 m
+## relief plus interior floors; if terrain ever grows taller than that within
+## one cast's footprint, size this from the covered ground bounds instead.
+const PROJECTION_DEPTH := 32.0
 ## Seconds the resolved flash stays before the node frees itself.
 const LINGER := 0.12
 ## Emission drive for the decals — enough to glow in dark interiors without
@@ -92,6 +97,11 @@ var _after := 0.0
 
 func _ready() -> void:
 	process_physics_priority = RESOLUTION_PHYSICS_PRIORITY
+	# A cast is WORLD-anchored. A caster will naturally add this node as its
+	# own child; without top_level the decals would ride the caster's
+	# transform while resolution stayed at the fixed origin — players could
+	# stand outside the visible mark and still be hit.
+	top_level = true
 	set_physics_process(auto_advance)
 
 
@@ -120,8 +130,15 @@ func begin(cast: TelegraphCast) -> bool:
 	if not is_inside_tree():
 		push_error("TelegraphRuntime.begin: add the node to the tree before beginning a cast")
 		return false
+	if not cast.is_valid() or cast.elapsed != 0.0:
+		push_error("TelegraphRuntime.begin: refusing a cast that violates the factory laws (hand-built, mutated, or pre-advanced) — construct casts through the TelegraphCast factories")
+		return false
+	# Arm the caller's instance (the share-guard) but run on a PRIVATE copy of
+	# the spec: a caller mutating their cast after begin can then never desync
+	# the painted shape from the resolved one.
 	cast.armed = true
-	_cast = cast
+	_cast = cast.duplicate_spec()
+	_cast.armed = true
 	_extent = (2.0 * cast.radius) if cast.shape == TelegraphCast.Shape.CIRCLE else (2.0 * cast.range_m)
 	_build_decals()
 	_update_fill()

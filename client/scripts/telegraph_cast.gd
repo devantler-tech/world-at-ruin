@@ -130,6 +130,41 @@ static func cone(apex: Vector3, cone_facing: Vector3, reach_m: float,
 	return c
 
 
+## Do this cast's fields satisfy every law the factories enforce? The
+## factories guarantee it at creation, but GDScript cannot make the fields
+## immutable — a hand-rolled `TelegraphCast.new()` or a post-factory field
+## write can carry illegal state. `TelegraphRuntime.begin` re-checks through
+## this before trusting a cast it did not construct.
+func is_valid() -> bool:
+	if not origin_point.is_finite() or not is_finite(cast_time) or cast_time <= 0.0:
+		return false
+	if not is_finite(elapsed) or elapsed < 0.0:
+		return false
+	match shape:
+		Shape.CIRCLE:
+			return is_finite(radius) and radius > 0.0 and radius <= MAX_EXTENT_M
+		Shape.CONE:
+			if not facing.is_finite() or Vector2(facing.x, facing.z).length() <= MIN_FACING:
+				return false
+			if cos_half_scaled < -Telegraph.COS_SCALE or cos_half_scaled > Telegraph.COS_SCALE:
+				return false
+			return is_finite(range_m) and range_m > 0.0 and range_m <= MAX_EXTENT_M
+	return false
+
+
+## A fresh, factory-built copy of this cast's SPEC (shape + timing, clock at
+## zero). The runtime arms a private copy so a caller mutating their instance
+## after `begin` can never desync the painted shape from the resolved one.
+## Only meaningful on a valid cast (`is_valid`).
+func duplicate_spec() -> TelegraphCast:
+	match shape:
+		Shape.CIRCLE:
+			return TelegraphCast.circle(origin_point, radius, cast_time)
+		Shape.CONE:
+			return TelegraphCast.cone(origin_point, facing, range_m, cos_half_scaled, cast_time)
+	return null
+
+
 ## Consume `dt` seconds of cast. Returns true exactly once: on the call that
 ## crossed `cast_time` (the resolution instant). A negative or non-finite dt
 ## is refused loudly with no state change; advancing a resolved cast is a
