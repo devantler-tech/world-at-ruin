@@ -1,18 +1,38 @@
 ---
 name: CD
 
-# Production build + publish. Triggered by the GitHub Release that release.yaml's
-# semantic-release run publishes.
+# Production build + publish, triggered by the tag that release.yaml's
+# semantic-release run pushes.
 #
-# Why `release: published` and not `push: tags: v*` (the org's Go-repo shape):
-# in those repos GoReleaser CREATES the release, so the tag is the only thing
-# that exists when CD must start. Here .releaserc loads
-# @semantic-release/github, so the Release already exists — and CD's job is to
-# attach assets to it. Hanging off the release event means the release is
-# guaranteed to exist when the upload runs, instead of racing the tag push.
+# TWO CONSTRAINTS FORCE THIS SHAPE — both learned the hard way, so do not
+# "simplify" the trigger back to a release event:
+#
+# 1. IMMUTABLE RELEASES. Once a release is published its assets are frozen and
+#    `gh release upload` fails with `HTTP 422: Cannot upload assets to an
+#    immutable release`. The order must be build -> attach -> publish, so the
+#    release has to still be a DRAFT while this workflow runs. That is why
+#    `.releaserc` sets `draftRelease: true`.
+#
+# 2. ACTIONS IGNORES DRAFT RELEASE EVENTS. `on: release: types: [created]`
+#    looks like the natural pairing for (1), but the GitHub Actions docs state:
+#    "Workflows are not triggered for the `created`, `edited`, or `deleted`
+#    activity types for draft releases." A draft would therefore sit
+#    unpublished forever. (This is an Actions-specific restriction — the
+#    underlying *webhook* does fire for drafts, which makes it an easy thing to
+#    get wrong from the webhook docs alone.)
+#
+# `push: tags` is the only trigger that both fires and leaves the release a
+# draft — which is exactly why every other repo in the org uses it. The tag
+# push triggers workflows because semantic-release runs under a GitHub App
+# token, not GITHUB_TOKEN.
+#
+# Ordering note: semantic-release pushes the tag BEFORE its github plugin
+# creates the draft release, so this workflow can start before the draft
+# exists. The "wait for the draft" step below closes that race.
 on:
-  release:
-    types: [published]
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
     inputs:
       tag:
@@ -21,7 +41,7 @@ on:
         type: string
 
 concurrency:
-  group: "CD-${{ github.event.release.tag_name || inputs.tag }}"
+  group: "CD-${{ github.ref_name || inputs.tag }}"
   cancel-in-progress: false
 
 permissions:
@@ -63,7 +83,7 @@ jobs:
           # repo's branch-name rule permits e.g. a literal `v0.2.0` branch)
           # CD would build the BRANCH while attaching the asset to the tag's
           # release.
-          ref: refs/tags/${{ github.event.release.tag_name || inputs.tag }}
+          ref: refs/tags/${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
           # This job publishes an artifact — never let the checkout token ride
           # along in it (zizmor artipacked).
           persist-credentials: false
@@ -71,7 +91,7 @@ jobs:
       - name: 🏷️ Resolve the release version
         id: version
         env:
-          RAW_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          RAW_TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
         run: |
           set -euo pipefail
           # The repo's "Protect release tags" ruleset pins tags to
@@ -162,6 +182,27 @@ jobs:
             exit 1
           fi
 
+      - name: ⏳ Wait for the draft release to exist
+        # semantic-release pushes the tag (which triggered this run) BEFORE its
+        # github plugin creates the draft release, so the draft can lag this
+        # workflow by a few seconds. Poll rather than assume; fail closed with a
+        # clear message if it never appears, so a missing draft can never be
+        # mistaken for a successful publish.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 30); do
+            if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json tagName >/dev/null 2>&1; then
+              echo "release ${TAG} is present"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::no release found for ${TAG} after 5 minutes — semantic-release should have created it as a draft (.releaserc draftRelease). Nothing was published."
+          exit 1
+
       - name: 📤 Attach the build to the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -169,11 +210,39 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
+          # Fail loudly and EARLY if the release is already published: under
+          # immutable releases the upload below cannot succeed, and a clear
+          # message here beats a bare `HTTP 422` from the upload.
+          if [ "$(gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json isDraft --jq '.isDraft')" != "true" ]; then
+            echo "::error::${TAG} is already published — assets cannot be attached to an immutable release. The release must still be a draft when CD runs (see .releaserc draftRelease)."
+            exit 1
+          fi
           # --clobber so a re-run (workflow_dispatch) replaces the asset rather
           # than failing on an existing name.
           gh release upload "${TAG}" \
             "build/WorldAtRuin-${VERSION}-macOS-universal.zip" \
             --repo "${GITHUB_REPOSITORY}" --clobber
+
+      - name: 🚀 Publish the release
+        # The draft becomes public only now, once the build is verified and
+        # attached — so a released version never exists without its artifact.
+        # This emits `published`, which is deliberately NOT a trigger above, so
+        # it cannot re-enter CD.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release edit "${TAG}" --repo "${GITHUB_REPOSITORY}" --draft=false
+          # Verify rather than trust the command's exit code.
+          state=$(gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json isDraft,assets \
+            --jq '"draft=\(.isDraft) assets=\(.assets|length)"')
+          echo "${TAG}: ${state}"
+          case "${state}" in
+            "draft=false assets=0") echo "::error::${TAG} published with NO assets"; exit 1 ;;
+            "draft=false assets="*) ;;
+            *) echo "::error::${TAG} did not publish"; exit 1 ;;
+          esac
 
   cd-required-checks:
     name: CD - Required Checks
