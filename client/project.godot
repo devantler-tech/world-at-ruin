@@ -32,5 +32,8 @@ common/physics_ticks_per_second=60
 
 renderer/rendering_method="forward_plus"
 anti_aliasing/quality/msaa_3d=2
+; Telegraph ground marks are runtime-baked decal textures; without linear
+; filtering their distance-ramped edges render as texel stair-steps.
+textures/decals/filter=5
 ; Required for universal/arm64 macOS export (the exporter refuses without it).
 textures/vram_compression/import_etc2_astc=true

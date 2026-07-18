@@ -296,11 +296,14 @@ everything shipped afterwards is held to.
 
 ## Maintenance
 
-- **Editor-only scenes are NOT dead code.** Two scenes are deliberately unreferenced by the running
+- **Editor-only scenes are NOT dead code.** Three scenes are deliberately unreferenced by the running
   game and exist as **editor surfaces**: `client/scenes/recipes.tscn` (the character taste gate,
-  documented in `recipe_gallery.gd`) and `client/scenes/cave.tscn` (the cave-generation preview
+  documented in `recipe_gallery.gd`), `client/scenes/cave.tscn` (the cave-generation preview
   harness, documented in `cave_system_gen.gd` — a `@tool` rig for judging cave interior/exterior work
-  by eye, #124). A repo-wide "no references, therefore dead" sweep will flag both; check the owning
+  by eye, #124), and `client/scenes/telegraph.tscn` (the telegraph readability preview harness,
+  documented in `telegraph_preview.gd` — looping circle/cone casts under the shipping overworld
+  lighting for judging the ground read by eye, #175). A repo-wide "no references, therefore dead"
+  sweep will flag all three; check the owning
   script's docstring before proposing a deletion, and retire such a scene only when the work it
   supports is finished — saying so in the same change. Anything unreferenced **without** such a
   marker is genuine scaffolding and should go (as `scenes/character.tscn` did in #116).
