@@ -1,10 +1,10 @@
-// How every cosmetic ground prop is shaded. One shader serves all four kinds;
-// a kind differs only by its uniforms, so vegetation and debris share a single
-// code path (and a single test surface) rather than drifting apart.
+// How VEGETATION is shaded — the ash scrub and dead grass. Solid debris has its
+// own opaque shader (`debris.gdshader`); the two were one file until review
+// pointed out that stone has no business on a cutout path.
 //
 // Three jobs, each answering one of the quality bar's "tells":
-//   1. ALPHA CUTOUT so a prop reads by its silhouette — leaves against the sky
-//      — instead of as a solid primitive.
+//   1. CUTOUT so a prop reads by its silhouette — leaves against the sky —
+//      instead of as a solid primitive.
 //   2. PER-INSTANCE TINT so a field of props is not one flat hue. The variation
 //      is derived from INSTANCE_ID, NOT from an RNG or a per-instance colour
 //      buffer: it costs nothing, needs no MultiMesh change, and is identical
@@ -13,7 +13,7 @@
 //      card (base anchored, tip free), which is what stops it looking like the
 //      whole prop sliding.
 shader_type spatial;
-render_mode cull_disabled, depth_prepass_alpha;
+render_mode cull_disabled;
 
 uniform sampler2D albedo_tex : source_color, filter_linear_mipmap;
 // The tint band. Every instance lands somewhere between these two colours, so
@@ -97,11 +97,21 @@ void vertex() {
 
 void fragment() {
 	vec4 tex = texture(albedo_tex, UV);
+
+	// Cut the silhouette with an explicit discard, and NEVER write ALPHA.
+	//
+	// The visual result is identical to an alpha-scissor threshold, but the
+	// pipeline choice is unambiguous: a shader that never writes ALPHA is not a
+	// transparency candidate under any reading of the rules, so these cards
+	// cannot land in the transparent queue, cannot sort against each other, and
+	// keep ordinary opaque shadow behaviour. Reviewers read the alpha-scissor
+	// form as "transparent with a discard bolted on" (twice), and the intent is
+	// worth more than the two characters saved. `depth_prepass_alpha` came off
+	// the render mode with it — that mode exists to serve an ALPHA write.
+	if (tex.a < 0.5) {
+		discard;
+	}
 	ALBEDO = tex.rgb * inst_tint;
-	ALPHA = tex.a;
-	// Cutout, not blending: vegetation stays in the opaque pass, so it sorts
-	// correctly against itself and costs no transparency overdraw.
-	ALPHA_SCISSOR_THRESHOLD = 0.5;
 	ROUGHNESS = roughness_value;
 	SPECULAR = 0.15;
 	BACKLIGHT = backlight_tint;
