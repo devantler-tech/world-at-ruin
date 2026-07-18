@@ -103,6 +103,48 @@ seasonally; WoW squishes stats). Both are forbidden, so economics come from **Gu
 instead: horizontal progression, a ceiling that never rises, bound loot, no trading/auction house
 (kills RMT, botting and dupe *value* at the root), hard sinks. WoW/D4 texture, GW2 economics.
 
+### Quality bar — it has to resemble a AAA game
+
+**Maintainer direction (2026-07-18)**, given after the first foliage pass shipped as untextured
+engine primitives in flat colours: *"This needs to resemble a AAA game, so that is unacceptable.
+Same goes for all other parts of the game and design."* This is a standing constraint of the same
+rank as the product law above, and it outranks velocity, convenience, and an agent's own sense of
+"done".
+
+**The bar.** Every player-facing surface — models, materials and texturing, lighting, VFX,
+animation, audio, UI/UX, world and level composition, camera, game feel — **and the design behind
+it** must look and play like it belongs in a shipped AAA title. **"Functional but basic" is a
+defect, not a milestone.** A system that demonstrably works while looking like programmer art has
+not met the bar; it has only earned the right to be finished.
+
+**Green tests are not the bar.** Machine verification proves a thing is *correct*; it can never
+prove it is *good*. So a player-visible change is judged on the **rendered frame and the felt
+experience**, not on the suite: look at it, play it, compare it against a named AAA reference, and
+state that reference and the remaining gap in the PR. A green suite plus a screenshot that reads as
+placeholder is a PR that is **not ready**.
+
+**The tells that the bar is being missed** — all four were true of the first foliage pass, and are
+the concrete evidence behind this section:
+
+1. **Engine primitives standing in for art** — a sphere as a shrub, a box as a bone pile.
+2. **Flat single-colour materials** — one `albedo_color`, no texture, normal, roughness or
+   alpha-cutout detail.
+3. **Uniform random scatter** where a real world has clustering, ecotones, variation and
+   deliberate composition.
+4. **No second-order life** — no wind or sway, no wear, decals, LOD, or silhouette interest.
+
+**Scaffolding is still allowed; it just may not pose as finished.** A deterministic library, a
+server system, or a data schema may land while its art matures — that is how this project is built,
+and it stays correct. But **player-visible placeholder art does not ship default-on**: it stays
+behind a default-off flag (product law 2) or stays out of the world until it clears the bar, and the
+PR says plainly that it is below bar and what is missing. Shipping it quietly as though it were done
+is the specific failure this section exists to stop.
+
+**Taste is the maintainer's call — and that is not licence to aim low.** Phase 0 is his taste gate
+and agents do not self-certify taste. Agents are nonetheless expected to *aim at* the AAA bar, to
+judge their own output honestly against it, and to say when they know it falls short — rather than
+shipping the first thing that renders and leaving the judgement entirely to him.
+
 ### Setting & story — a medieval-futuristic world at rebirth
 
 Settled with the maintainer 2026-07-17. This is the fiction every zone, asset and system renders.
@@ -218,6 +260,10 @@ clear his bar, the premise fails — cheap to learn now, ruinous to learn later.
 walkable slice predates this gate by the maintainer's direct instruction — it exists so progress
 can be watched by playing; every *further* art/game system waits on Phase 0.)
 
+The standard this gate judges against is the **[Quality bar](#quality-bar--it-has-to-resemble-a-aaa-game)**
+— AAA resemblance. Phase 0 asks whether *generated* art can reach it; the quality bar is what
+everything shipped afterwards is held to.
+
 ## Maintenance
 
 - **Structure:** `client/` is the Godot 4 project (scenes built in GDScript from engine
@@ -280,6 +326,10 @@ can be watched by playing; every *further* art/game system waits on Phase 0.)
 - **Determinism:** world generation is seeded (`WorldGen.WORLD_SEED`) — the same world every boot.
   Never introduce wall-clock or unseeded randomness into generation; differences between builds
   must be attributable to code.
+- **Player-visible work is judged on the frame, not the suite:** before calling a player-visible
+  change ready, render or play it, look at it, and judge it against the
+  **[Quality bar](#quality-bar--it-has-to-resemble-a-aaa-game)** (AAA resemblance) — naming the
+  reference and any remaining gap in the PR. Below-bar art does not ship default-on.
 - **Dev log is a contract:** every player-visible change adds a `DevLog.ENTRIES` entry (newest
   first) in the same PR — the maintainer watches progress by playing, and the dev log is that
   surface. Bump `DevLog.VERSION` (and `config/version` in `project.godot`) per release-worthy
@@ -313,3 +363,8 @@ Reviewers (Codex/CodeRabbit) flag **P0/P1 only**:
 - **P1 — correctness:** unseeded/non-deterministic world generation, client-authoritative gameplay
   state (once networking exists), physics entering the authoritative path, or a player-visible
   change with no dev-log entry.
+- **P1 — quality bar:** player-visible art that ships **default-on** while still reading as
+  placeholder (engine primitives as art, flat untextured materials, uniform scatter, no
+  second-order life), or a player-visible PR that argues readiness from green tests alone with no
+  judgement of the rendered frame against a named AAA reference. See
+  **[Quality bar](#quality-bar--it-has-to-resemble-a-aaa-game)**.
