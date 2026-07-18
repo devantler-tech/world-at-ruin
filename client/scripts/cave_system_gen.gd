@@ -421,6 +421,7 @@ const BODY_HEIGHT := 1.8 ## Capsule total height, metres (player.gd).
 const BODY_CELLS := 3 ## ceil(BODY_HEIGHT / CELL) — 1.95 m of headroom.
 const LATERAL_CELLS := 1 ## ceil(BODY_RADIUS / CELL) — 0.65 m of side clearance.
 const STEP_CELLS := 1 ## Rise the wanderer can step up or down, in cells.
+const SUPPORT_CELLS := 2 ## How far below the feet rock must be found to carry the body.
 
 ## Sideways clearance offsets, applied at every level of the body's column.
 const _LATERAL: Array[Vector3i] = [
@@ -472,15 +473,19 @@ static func body_fits(field: PackedFloat32Array, nx: int, ny: int, nz: int, c: V
 		var level := c + Vector3i(0, dy, 0)
 		if not _void_at(field, nx, ny, nz, level):
 			return false
+		# Sideways clearance is measured over the body's TRUNK, not at the feet.
+		# A tunnel is round: 0.65 m out from where a wanderer's boots rest, the
+		# floor has already curved up into wall. Demanding side clearance at foot
+		# level therefore rejects the middle of a perfectly walkable tunnel — the
+		# cell is the contact surface, and the space the body needs is above it.
+		# A slit too narrow to squeeze through is still caught, because a gap
+		# that pinches the trunk pinches it at trunk height too.
+		if dy == 0:
+			continue
 		for step: Vector3i in _LATERAL:
 			if not _void_at(field, nx, ny, nz, level + step):
 				return false
 	return true
-
-
-## Backwards-compatible name for the free-space (volume-only) test.
-static func passable(field: PackedFloat32Array, nx: int, ny: int, nz: int, c: Vector3i) -> bool:
-	return body_fits(field, nx, ny, nz, c)
 
 
 ## Can the wanderer STAND here — the body fits AND there is rock directly under
@@ -490,10 +495,20 @@ static func passable(field: PackedFloat32Array, nx: int, ny: int, nz: int, c: Ve
 ##
 ## Unsampled space below the box counts as no floor, not as rock — the audit
 ## only vouches for what it measured.
+## Support is measured over SUPPORT_CELLS below the feet rather than the single
+## cell underneath, because a carved floor does not land on cell boundaries: on
+## a slope the rock surface crosses a cell diagonally, so the cell under a
+## perfectly solid footing is often still void. That tolerance is one step of
+## rise — the same drop the wanderer can walk down — and it is far short of the
+## body-heights of clear air over a chamber floor, so genuine mid-air still
+## fails.
 static func standing(field: PackedFloat32Array, nx: int, ny: int, nz: int, c: Vector3i) -> bool:
 	if not body_fits(field, nx, ny, nz, c):
 		return false
-	return not _void_at(field, nx, ny, nz, c + Vector3i(0, -1, 0))
+	for dy in range(1, SUPPORT_CELLS + 1):
+		if not _void_at(field, nx, ny, nz, c - Vector3i(0, dy, 0)):
+			return true
+	return false
 
 
 ## Flood-fills free space the BODY fits through, 6-connected from `start`.
@@ -553,12 +568,6 @@ static func cell_of(point: Vector3, lo: Vector3, nx: int, ny: int, nz: int) -> V
 ##     within CELL/2 of a reachable corner borrow that corner's verdict (the
 ##     thin-wall case this guard exists to catch);
 ##  2. the cell it falls in was reached by the clearance-eroded flood.
-static func point_reached(point: Vector3, lay: Dictionary, noise: FastNoiseLite,
-		seen: PackedByteArray, lo: Vector3, nx: int, ny: int, nz: int) -> bool:
-	if density(point, lay, noise) >= 0.0:
-		return false
-	return seen[_fi(cell_of(point, lo, nx, ny, nz), ny, nz)] == 1
-
 
 ## Connectivity audit of the carved cave: floods the space a body can move
 ## through, starting from the waking chamber, and reports whether the spawn and

@@ -1,6 +1,6 @@
 extends Node
-## Regression test for cave-system CONNECTIVITY (issue #84) — the traversability
-## guard the determinism test does not cover.
+## Regression test for cave-system CONNECTIVITY (issues #84, #107) — the
+## traversability guard the determinism test does not cover.
 ##
 ## The cave is the player's waking place. Its walkable void is carved as an SDF
 ## from rooms + tunnels, blended with a smooth-min and perturbed by wall noise.
@@ -10,16 +10,28 @@ extends Node
 ## no-resets law a player sealed into an unreachable pocket is trapped forever,
 ## so this must hold before the first player ever exists.
 ##
+## #107 replaced the old one-cell grid erosion with the player's actual BODY.
+## The erosion could only reject a gap narrower than the wanderer; it happily
+## routed them through a crawlspace or across open air. The audit now walks a
+## 0.4 m × 1.8 m capsule along floors that carry it, so what it certifies is a
+## route the player can really take.
+##
 ## What it proves:
-##  1. On the shipped seeds, the flood from the waking chamber reaches the spawn
-##     and every room centre, and ESCAPES the padded sampling box (= open air).
+##  1. On the shipped seeds, the walk from the waking chamber reaches the spawn
+##     and every room, and finds a way out to open air.
 ##  2. The audit is deterministic (same seed ⇒ identical reachability).
-##  3. It has teeth, and is not vacuous in three specific ways:
-##     - a rock wall severs the flood, and flooding from rock reaches nothing;
-##     - a gap narrower than the player capsule does NOT count as a connection,
-##       while an otherwise identical wide channel DOES (both states);
-##     - audited points are checked at their OWN SDF location, so a point in rock fails rather than
-##       borrowing a neighbouring cavity's verdict.
+##  3. The body it clears space for is the body the player actually has, and
+##     the cell counts really follow from that body at this grid resolution.
+##  4. It has teeth, in four independent both-states controls — each isolating
+##     ONE law, so a pass means the rule discriminates rather than the fixture
+##     being unreachable for some unrelated reason:
+##     - a rock wall severs the walk, and walking from inside rock reaches
+##       nothing;
+##     - a slit narrower than the wanderer does NOT connect, a wide channel does;
+##     - a passage too LOW to stand up in does NOT connect, an otherwise
+##       identical full-height one does;                          [#107: headroom]
+##     - a span with nothing underneath does NOT connect, the same span with a
+##       floor does.                                              [#107: support]
 ##
 ## Pure logic only — no scene, no save, no boot — safe to run locally.
 ##
@@ -27,9 +39,16 @@ extends Node
 
 var _failed := false
 
+## Synthetic-fixture dimensions. The rock margin matters: out-of-range reads as
+## VOID by design (the real audit pads its box into open air), so a fixture
+## without a solid border would leak free headroom and support in from outside
+## and quietly defeat the very controls below.
+const _FX := Vector3i(13, 9, 7)
+const _MARGIN := 2
+
 
 func _ready() -> void:
-	# --- the SHIPPED cave is traversable, plus extra seeds for breadth ---
+	# --- the SHIPPED cave is walkable, plus extra seeds for breadth ---
 	# WorldGen.CAVE_SEED is the cave the player actually wakes in: audit it by
 	# reference, never by a literal, or changing the production seed would leave
 	# CI certifying a cave nobody plays. The extra seeds are only samples.
@@ -39,101 +58,212 @@ func _ready() -> void:
 			seeds.append(extra)
 	for s: int in seeds:
 		var r := CaveSystemGen.reachability(s)
-		_check(r["start_passable"], true, "seed %d: the waking chamber has body-clearance" % s)
-		_check(r["spawn_reachable"], true, "seed %d: the spawn is reachable" % s)
-		_check(r["mouth_open"], true, "seed %d: the flood escapes to open air (there is a way out)" % s)
+		_check(r["start_passable"], true, "seed %d: the wanderer can stand where they wake" % s)
+		_check(r["spawn_reachable"], true, "seed %d: the spawn is reachable on foot" % s)
+		_check(r["mouth_open"], true, "seed %d: the wanderer can walk out to open air" % s)
 		var rooms: Array = r["rooms_reachable"]
 		_check(rooms.size() >= 3, true, "seed %d: it is a multi-room system" % s)
 		for i in rooms.size():
-			_check(rooms[i], true, "seed %d: room %d is reachable" % [s, i])
-		# Non-vacuous: real space was flooded, and rock exists.
+			_check(rooms[i], true, "seed %d: room %d is reachable on foot" % [s, i])
+		# Non-vacuous: a real walkable region exists, and it is a floor-hugging
+		# shell rather than the whole cavity — if this ever approached `total`
+		# the body model would have stopped constraining anything.
 		var reached: int = r["reached"]
 		var total: int = r["total"]
-		_check(reached > 1000, true, "seed %d: substantial space flooded (%d cells)" % [s, reached])
-		_check(reached < total, true, "seed %d: rock is present (flood did not cover the field)" % s)
+		_check(reached > 500, true, "seed %d: a substantial floor is walkable (%d cells)" % [s, reached])
+		_check(reached * 10 < total, true,
+			"seed %d: the walkable set is a floor, not the whole cavity (%d of %d)" % [s, reached, total])
 		if _failed:
 			return
 
 	# --- determinism: the same seed audits identically ---
 	var a := CaveSystemGen.reachability(42)
 	var b := CaveSystemGen.reachability(42)
-	_check(a["reached"] == b["reached"], true, "determinism: the reachable-cell count is stable")
+	_check(a["reached"] == b["reached"], true, "determinism: the walkable-cell count is stable")
 	_check(a["mouth_open"] == b["mouth_open"] and a["rooms_reachable"] == b["rooms_reachable"], true,
 		"determinism: the reachability flags are stable")
 	if _failed:
 		return
 
-	# --- teeth ---
-	if not _rock_wall_severs_the_flood():
-		return
-	if not _clearance_rejects_a_pinhole():
+	# --- the modelled body is the real one ---
+	if not _body_matches_the_player():
 		return
 
-	print("TEST PASS — cave is traversable (spawn, every room, and out to open air), deterministic; flood stops at rock and at gaps narrower than the player")
+	# --- teeth ---
+	if not _rock_wall_severs_the_walk():
+		return
+	if not _clearance_rejects_a_slit():
+		return
+	if not _headroom_rejects_a_crawlspace():
+		return
+	if not _support_rejects_thin_air():
+		return
+
+	print("TEST PASS — cave is walkable by the player's capsule (spawn, every room, and out to open air), deterministic; the walk stops at rock, at gaps narrower than the wanderer, at passages too low to stand in, and at spans with nothing underneath")
 	get_tree().quit(0)
 
 
-## A synthetic 9×1×5 field: two void pockets (x∈{0..3}, x∈{5..8}) split by a
-## rock wall at x=4. Flooding from pocket A must stay in A, and flooding from
-## the wall itself must reach nothing.
-func _rock_wall_severs_the_flood() -> bool:
-	var nx := 9
-	var ny := 1
-	var nz := 5
-	var f := PackedFloat32Array()
-	f.resize(nx * ny * nz)
-	for ix in nx:
-		for iz in nz:
-			f[ix * nz + iz] = 1.0 if ix == 4 else -1.0
+## The audit's body constants must BE the player's capsule, and the cell counts
+## must really follow from that capsule at CELL resolution. Both halves matter:
+## the first stops the audit drifting away from the character it is clearing
+## space for, the second stops CELL or the capsule changing without the derived
+## cell counts following. GDScript cannot compute the counts in a const
+## expression, so this is where that derivation is actually enforced.
+func _body_matches_the_player() -> bool:
+	var src := FileAccess.get_file_as_string("res://scripts/player.gd")
+	_check(src.is_empty(), false, "body: player.gd is readable (the capsule's source of truth)")
+	if _failed:
+		return false
+	_check(src.contains("capsule.radius = %s" % CaveSystemGen.BODY_RADIUS), true,
+		"body: player.gd's capsule radius is %s, as the audit assumes" % CaveSystemGen.BODY_RADIUS)
+	_check(src.contains("capsule.height = %s" % CaveSystemGen.BODY_HEIGHT), true,
+		"body: player.gd's capsule height is %s, as the audit assumes" % CaveSystemGen.BODY_HEIGHT)
 
-	var seen := CaveSystemGen.flood_passable(f, nx, ny, nz, Vector3i(0, 0, 0))
-	# Cells at x=3 touch the wall, so clearance erodes them: pocket A's passable
-	# core is x∈{0,1,2} — 15 cells.
-	var reached := 0
-	for i in seen.size():
-		reached += seen[i]
-	_check(reached == 15, true, "teeth: pocket A's passable core is 15 cells (got %d)" % reached)
-	_check(seen[CaveSystemGen._fi(Vector3i(2, 0, 4), ny, nz)] == 1, true, "teeth: pocket A's far corner is reached")
-	_check(seen[CaveSystemGen._fi(Vector3i(6, 0, 0), ny, nz)] == 0, true, "teeth: pocket B across the wall is NOT reached")
-	_check(seen[CaveSystemGen._fi(Vector3i(3, 0, 0), ny, nz)] == 0, true, "teeth: a void cell hard against the wall lacks clearance")
-
-	var from_rock := CaveSystemGen.flood_passable(f, nx, ny, nz, Vector3i(4, 0, 0))
-	var rr := 0
-	for i in from_rock.size():
-		rr += from_rock[i]
-	_check(rr == 0, true, "teeth: flooding from rock reaches nothing (got %d)" % rr)
+	_check(CaveSystemGen.BODY_CELLS == int(ceil(CaveSystemGen.BODY_HEIGHT / CaveSystemGen.CELL)), true,
+		"body: BODY_CELLS is ceil(%s / %s)" % [CaveSystemGen.BODY_HEIGHT, CaveSystemGen.CELL])
+	_check(CaveSystemGen.LATERAL_CELLS == int(ceil(CaveSystemGen.BODY_RADIUS / CaveSystemGen.CELL)), true,
+		"body: LATERAL_CELLS is ceil(%s / %s)" % [CaveSystemGen.BODY_RADIUS, CaveSystemGen.CELL])
 	return not _failed
 
 
-## Both states of the clearance rule, on identical 7×1×5 geometry: two chambers
-## joined through the x=3 wall by either a ONE-CELL pinhole (narrower than the
-## player capsule ⇒ must NOT connect) or a three-cell channel (⇒ must connect).
-## Same field, same flood, only the gap width differs — so a pass proves the rule
-## discriminates rather than simply blocking everything.
-func _clearance_rejects_a_pinhole() -> bool:
-	var far := Vector3i(5, 0, 2)
-	var pinhole := _two_chambers([2])
-	var wide := _two_chambers([1, 2, 3])
+## Two void halls split by a rock wall. Walking from hall A must stay in A, and
+## walking from inside the wall itself must reach nothing.
+func _rock_wall_severs_the_walk() -> bool:
+	var f := _halls(_sealed())
+	var from_a := CaveSystemGen.flood_walkable(f, _FX.x, _FX.y, _FX.z, _floor_cell(3))
+	_check(_reached(from_a, _floor_cell(3)), true, "teeth: hall A's own floor is walkable")
+	_check(_reached(from_a, _floor_cell(9)), false, "teeth: hall B across the wall is NOT reached")
 
-	var via_pinhole := CaveSystemGen.flood_passable(pinhole, 7, 1, 5, Vector3i(0, 0, 0))
-	var via_wide := CaveSystemGen.flood_passable(wide, 7, 1, 5, Vector3i(0, 0, 0))
-	_check(via_pinhole[CaveSystemGen._fi(far, 1, 5)] == 0, true,
-		"clearance: a one-cell pinhole does NOT connect the chambers")
-	_check(via_wide[CaveSystemGen._fi(far, 1, 5)] == 1, true,
-		"clearance: a wide channel DOES connect them (the rule is not blocking everything)")
+	var inside_rock := Vector3i(6, _MARGIN, 3)
+	var from_rock := CaveSystemGen.flood_walkable(f, _FX.x, _FX.y, _FX.z, inside_rock)
+	_check(_count(from_rock) == 0, true,
+		"teeth: walking from inside rock reaches nothing (got %d)" % _count(from_rock))
 	return not _failed
 
 
-## A 7×1×5 field: rock wall at x=3, opened only at the given z rows.
-func _two_chambers(gap_rows: Array) -> PackedFloat32Array:
-	var nz := 5
+## Both states of the SIDEWAYS clearance rule on identical geometry: the halls
+## are joined through the wall by either a one-cell slit (narrower than the
+## wanderer ⇒ must NOT connect) or a three-cell channel (⇒ must connect).
+func _clearance_rejects_a_slit() -> bool:
+	var slit := _halls(_gap([3]))
+	var wide := _halls(_gap([2, 3, 4]))
+	_check(_walks_between(slit), false, "clearance: a one-cell slit does NOT connect the halls")
+	_check(_walks_between(wide), true,
+		"clearance: a three-cell channel DOES connect them (the rule is not blocking everything)")
+	return not _failed
+
+
+## Both states of the HEADROOM rule — the capability the old erosion lacked.
+## The passage is full width in both, and differs only in ceiling height: one
+## cell short of the wanderer's 1.8 m (a crawlspace ⇒ must NOT connect) versus
+## exactly enough to stand up in (⇒ must connect). The old one-cell erosion
+## passed BOTH of these, which is precisely why #107 exists.
+func _headroom_rejects_a_crawlspace() -> bool:
+	var low := _halls(_gap([2, 3, 4], CaveSystemGen.BODY_CELLS - 1))
+	var tall := _halls(_gap([2, 3, 4], CaveSystemGen.BODY_CELLS))
+	_check(_walks_between(low), false,
+		"headroom: a passage one cell too low to stand in does NOT connect the halls")
+	_check(_walks_between(tall), true,
+		"headroom: the same passage at full standing height DOES connect them")
+	return not _failed
+
+
+## Both states of the FLOOR SUPPORT rule — the other capability the old erosion
+## lacked. Identical full-height, full-width passages; the only difference is
+## whether the rock beneath the passage is there. A span over nothing is free
+## space a body fits in, so it still floods as OPEN SPACE — that contrast is the
+## point: the walk rejects it, the volume test does not.
+func _support_rejects_thin_air() -> bool:
+	var floored := _halls(_gap([2, 3, 4]))
+	var chasm := _halls(_gap([2, 3, 4]), true)
+	_check(_walks_between(chasm), false,
+		"support: a span with nothing underneath does NOT connect the halls")
+	_check(_walks_between(floored), true,
+		"support: the same span with a floor DOES connect them")
+
+	# The controlling difference really is support, not some accident of shape:
+	# as pure free space the chasm span is still an open corridor.
+	var air := CaveSystemGen.flood_passable(chasm, _FX.x, _FX.y, _FX.z, _floor_cell(3))
+	_check(_reached(air, _floor_cell(9)), true,
+		"support: the chasm IS connected as free space — only the walk rejects it")
+	return not _failed
+
+
+## Solid rock everywhere.
+func _rock() -> PackedFloat32Array:
 	var f := PackedFloat32Array()
-	f.resize(7 * 1 * nz)
-	for ix in 7:
-		for iz in nz:
-			var rock := ix == 3 and not gap_rows.has(iz)
-			f[ix * nz + iz] = 1.0 if rock else -1.0
+	f.resize(_FX.x * _FX.y * _FX.z)
+	f.fill(1.0)
 	return f
+
+
+## Carves the two halls into a solid block and applies [param link], which
+## decides what (if anything) joins them through the wall at x = 6.
+## When [param hollow_below] is set, the rock under the linking passage is
+## removed as well, leaving the span hanging over a chasm.
+func _halls(link: Callable, hollow_below: bool = false) -> PackedFloat32Array:
+	var f := _rock()
+	for x in range(_MARGIN, 6):
+		_carve_column(f, x)
+	for x in range(7, _FX.x - _MARGIN):
+		_carve_column(f, x)
+	link.call(f, hollow_below)
+	return f
+
+
+## A hall column: full standing height above the floor, full width.
+func _carve_column(f: PackedFloat32Array, x: int) -> void:
+	for y in range(_MARGIN, _MARGIN + CaveSystemGen.BODY_CELLS + 1):
+		for z in range(_MARGIN, _FX.z - _MARGIN + 1):
+			_put(f, Vector3i(x, y, z), -1.0)
+
+
+## No link at all: the wall at x = 6 stays solid.
+func _sealed() -> Callable:
+	return func(_f: PackedFloat32Array, _hollow: bool) -> void: pass
+
+
+## A link through the wall at x = 6 over the given z rows, [param height] cells
+## tall from the floor up. Defaults to exactly enough to stand in.
+func _gap(z_rows: Array, height: int = CaveSystemGen.BODY_CELLS) -> Callable:
+	return func(f: PackedFloat32Array, hollow: bool) -> void:
+		for z: int in z_rows:
+			for y in range(_MARGIN, _MARGIN + height):
+				_put(f, Vector3i(6, y, z), -1.0)
+			if not hollow:
+				continue
+			# Take the floor out from under the whole span — including the hall
+			# cells either side of the wall, so the wanderer cannot simply stand
+			# at the lip and step across.
+			for x: int in [5, 6, 7]:
+				for y in range(_MARGIN - CaveSystemGen.SUPPORT_CELLS, _MARGIN):
+					_put(f, Vector3i(x, y, z), -1.0)
+
+
+## Can the wanderer walk from deep in hall A to deep in hall B?
+func _walks_between(f: PackedFloat32Array) -> bool:
+	var seen := CaveSystemGen.flood_walkable(f, _FX.x, _FX.y, _FX.z, _floor_cell(3))
+	return _reached(seen, _floor_cell(9))
+
+
+## A cell on the hall floor at the given x, in the middle row.
+func _floor_cell(x: int) -> Vector3i:
+	return Vector3i(x, _MARGIN, 3)
+
+
+func _reached(seen: PackedByteArray, c: Vector3i) -> bool:
+	return seen[CaveSystemGen._fi(c, _FX.y, _FX.z)] == 1
+
+
+func _count(seen: PackedByteArray) -> int:
+	var n := 0
+	for i in seen.size():
+		n += seen[i]
+	return n
+
+
+func _put(f: PackedFloat32Array, c: Vector3i, v: float) -> void:
+	f[CaveSystemGen._fi(c, _FX.y, _FX.z)] = v
 
 
 func _check(actual: bool, expected: bool, label: String) -> void:
