@@ -217,23 +217,19 @@ func _build_environment() -> void:
 	env.fog_height = 6.0
 	env.fog_height_density = 0.06
 
-	# Volumetric fog is what turns "a distance haze" into air the light travels
-	# through — shafts off the low sun, glow around the braziers, real depth
-	# between ruin sites. Density is deliberately low: this is thin ash on the
-	# wind, not a smoke machine. `ambient_inject` stays small so the volume does
-	# NOT carry sky light underground and undo the cave's darkness (the same law
-	# the SDFGI note above protects).
-	env.volumetric_fog_enabled = true
-	env.volumetric_fog_density = 0.005
-	env.volumetric_fog_albedo = FOG_COLOR
-	env.volumetric_fog_emission = Color(0.10, 0.06, 0.05)
-	env.volumetric_fog_emission_energy = 0.35
-	env.volumetric_fog_anisotropy = 0.10
-	env.volumetric_fog_length = 160.0
-	env.volumetric_fog_detail_spread = 2.0
-	env.volumetric_fog_gi_inject = 0.6
-	env.volumetric_fog_ambient_inject = 0.08
-	env.volumetric_fog_sky_affect = 0.4
+	# Volumetric fog is DEFAULT-OFF, and this is a hardware fact rather than a
+	# taste call. Godot's froxel volumetrics need an R32_Uint atomic storage
+	# image, which some GPUs do not support — the CI runner's virtualised Apple
+	# adapter reports "Format 'R32_Uint' does not support usage as atomic storage
+	# image" and the frame then fails to render at all. That is not a CI quirk:
+	# any player on comparable hardware would get the same broken render, so
+	# shipping it on by default would trade a little atmosphere for a black
+	# screen on an unknown share of machines.
+	#
+	# The rest of this pass (contact occlusion, bloom, height fog, soft shadows,
+	# grading) is broadly supported and carries most of the visible gain anyway.
+	# Turning volumetrics on needs a capability probe first — tracked separately.
+	env.volumetric_fog_enabled = false
 
 	# A restrained grading pass so the palette reads as a deliberate choice
 	# rather than whatever the tonemapper returned: a little more contrast to
