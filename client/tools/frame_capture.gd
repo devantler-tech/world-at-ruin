@@ -203,6 +203,21 @@ func _capture_first_run(dir: String, main: Node) -> void:
 	if not creator.visible:
 		_fail("the character creator opened but is not visible — the frame would not show it")
 		return
+	# It must be the FIRST-RUN creator, not the manual reshape UI. main.gd opens
+	# the same scene either way; the flag is the only thing that distinguishes
+	# the forced new-player flow (no Cancel, no Esc) from the one a settled
+	# player opens with C. Capturing the latter and calling it first-run
+	# evidence would depict a screen no new player ever sees.
+	if not (creator as CharacterCreator).first_run:
+		_fail("the creator opened in reshape mode, not first-run mode — that is not the new-player screen")
+		return
+	# And its PANEL must be there and drawn. The creator is a CanvasLayer over
+	# the live 3D scene, so a change that leaves the layer alive while removing
+	# or hiding its controls yields a frame that is pure world — which sails
+	# through the luminance check below on the scenery alone.
+	if _visible_panel_area(creator) <= 0.0:
+		_fail("the creator has no visible panel — the frame would be the world behind a transparent layer")
+		return
 
 	await RenderingServer.frame_post_draw
 	var img := get_viewport().get_texture().get_image()
@@ -237,6 +252,18 @@ func _size_note(img: Image) -> String:
 	if want_w > 0 and (img.get_width() != want_w or img.get_height() != want_h):
 		return " [CLAMPED from the shipped %dx%d — detail and UI layout read at a different scale here]" % [want_w, want_h]
 	return ""
+
+
+## Total on-screen area of the creator's visible Control children. Zero means
+## the layer is present but draws nothing, which is indistinguishable from the
+## creator being absent once the shot is taken.
+func _visible_panel_area(creator: CanvasLayer) -> float:
+	var area := 0.0
+	for child in creator.get_children():
+		if child is Control and (child as Control).is_visible_in_tree():
+			var size := (child as Control).get_rect().size
+			area += size.x * size.y
+	return area
 
 
 ## The open CharacterCreator, if any. Found by TYPE rather than by node name:
