@@ -301,18 +301,28 @@ can be watched by playing; every *further* art/game system waits on Phase 0.)
     "simplify" that block away. The `conventionalcommits` preset would handle `!` natively but is
     **not** an option: it needs `conventional-changelog-conventionalcommits`, which the shared
     `create-release.yaml` (`npx semantic-release@25.0.3`, no install step) does not provide. It tags
-    `vX.Y.Z` **and** publishes a GitHub Release. It runs under a GitHub App token, not
-    `GITHUB_TOKEN` — that is what lets the release trigger a downstream workflow at all.
-  - **Releases are cut as DRAFTS and published by CD — this ordering is forced, not stylistic.**
-    This org has **immutable releases**: once a release is published its assets are frozen and
-    `gh release upload` fails with `HTTP 422: Cannot upload assets to an immutable release`. So the
-    order must be build → attach → publish. `.releaserc` therefore sets `draftRelease: true`, and
-    `cd.yaml` listens on `release: created` (which fires when a draft is saved; `published` and
-    `released` do **not** fire for drafts). CD publishes the draft as its last step, which emits
-    `published` — deliberately not a CD trigger, so it cannot loop. A released version therefore
-    never exists without its artifact. Do not "simplify" this to `release: published`; that was the
-    original design and it failed on the very first release (v0.2.0 shipped asset-less as a result).
-  - `cd.yaml` (`release: created`) production-builds the macOS client, **stamps the release
+    `vX.Y.Z` **and** creates a GitHub Release (as a draft — see below). It runs under a GitHub App
+    token, not `GITHUB_TOKEN` — that is what lets the pushed tag trigger a downstream workflow at
+    all; a `GITHUB_TOKEN` push never starts another workflow run.
+  - **Releases are cut as DRAFTS, and CD is triggered by the TAG — both forced, not stylistic.**
+    Two independent constraints pin this down, and each was learned by getting it wrong:
+    1. **Immutable releases.** Once a release is published its assets are frozen and
+       `gh release upload` fails with `HTTP 422: Cannot upload assets to an immutable release`. So
+       the order must be build → attach → publish, and the release must still be a **draft** while
+       CD runs — hence `.releaserc`'s `draftRelease: true`. The original `release: published` →
+       attach design failed on the very first release (v0.2.0 shipped asset-less as a result).
+    2. **Actions ignores draft release events.** `on: release: types: [created]` is the obvious
+       pairing for (1), but the GitHub Actions docs state: *"Workflows are not triggered for the
+       `created`, `edited`, or `deleted` activity types for draft releases."* A draft would sit
+       unpublished forever. Note this is an **Actions-specific** restriction — the underlying
+       *webhook* does fire for drafts, so the webhook docs alone will mislead you here.
+
+    `push: tags` is the only trigger that both fires and leaves the release a draft, which is
+    exactly why every other repo in the org uses it. **Do not "simplify" the trigger to a release
+    event.** CD publishes the draft as its final step. Because semantic-release pushes the tag
+    *before* creating the draft, CD polls for the draft (after the build, so it has normally
+    appeared long since) and fails closed if it never does.
+  - `cd.yaml` (`push: tags: v*`) production-builds the macOS client, **stamps the release
     version** into `config/version` and `DevLog.VERSION` at build time, verifies the exported app
     boots reporting `BOOT_OK v<version>` (the proof the stamp reached the shipped binary), and
     attaches the zip to the Release. `workflow_dispatch` with a `tag` input re-runs it for an

@@ -5,8 +5,10 @@ name: Release
 # Its commit-analyzer cuts a new vX.Y.Z tag only when the merged commits warrant
 # one (fix: -> patch, feat: -> minor, BREAKING CHANGE/! -> major) and no-ops
 # otherwise (chore:/docs:/ci:). Because .releaserc also loads
-# @semantic-release/github, the same run publishes a GitHub Release, and THAT
-# release event triggers cd.yaml.
+# @semantic-release/github with `draftRelease: true`, the same run creates a
+# GitHub Release as a DRAFT. The pushed TAG is what triggers cd.yaml, which
+# builds, attaches the artifact, and only then publishes the draft — the order
+# forced by this org's immutable releases (see cd.yaml's header).
 #
 # The shared workflow runs semantic-release under a GitHub App token rather than
 # GITHUB_TOKEN, which is what allows the resulting release to trigger cd.yaml at

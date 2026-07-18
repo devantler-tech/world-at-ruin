@@ -1,27 +1,38 @@
 ---
 name: CD
 
-# Production build + publish. Triggered by the GitHub Release that release.yaml's
-# semantic-release run publishes.
+# Production build + publish, triggered by the tag that release.yaml's
+# semantic-release run pushes.
 #
-# THE RELEASE MUST STILL BE A DRAFT WHEN CD RUNS. This org has **immutable
-# releases** enabled: once a release is published its assets are frozen, and
-# `gh release upload` fails with `HTTP 422: Cannot upload assets to an immutable
-# release`. So the order is necessarily build -> attach -> publish, never
-# publish -> attach.
+# TWO CONSTRAINTS FORCE THIS SHAPE — both learned the hard way, so do not
+# "simplify" the trigger back to a release event:
 #
-# That is why `.releaserc` sets `draftRelease: true` and why this listens on
-# `created` rather than `published`: `created` fires when a draft is saved,
-# whereas `published`/`released` do not fire for drafts. Publishing the draft at
-# the end of this job cannot re-trigger CD, because that emits `published`,
-# which is not in this list.
+# 1. IMMUTABLE RELEASES. Once a release is published its assets are frozen and
+#    `gh release upload` fails with `HTTP 422: Cannot upload assets to an
+#    immutable release`. The order must be build -> attach -> publish, so the
+#    release has to still be a DRAFT while this workflow runs. That is why
+#    `.releaserc` sets `draftRelease: true`.
 #
-# It is also why the org's Go repos hang CD off `push: tags: v*` — there
-# GoReleaser creates the release itself, as a draft, and publishes it only after
-# every asset job succeeds. Same constraint, different mechanism.
+# 2. ACTIONS IGNORES DRAFT RELEASE EVENTS. `on: release: types: [created]`
+#    looks like the natural pairing for (1), but the GitHub Actions docs state:
+#    "Workflows are not triggered for the `created`, `edited`, or `deleted`
+#    activity types for draft releases." A draft would therefore sit
+#    unpublished forever. (This is an Actions-specific restriction — the
+#    underlying *webhook* does fire for drafts, which makes it an easy thing to
+#    get wrong from the webhook docs alone.)
+#
+# `push: tags` is the only trigger that both fires and leaves the release a
+# draft — which is exactly why every other repo in the org uses it. The tag
+# push triggers workflows because semantic-release runs under a GitHub App
+# token, not GITHUB_TOKEN.
+#
+# Ordering note: semantic-release pushes the tag BEFORE its github plugin
+# creates the draft release, so this workflow can start before the draft
+# exists. The "wait for the draft" step below closes that race.
 on:
-  release:
-    types: [created]
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
     inputs:
       tag:
@@ -30,7 +41,7 @@ on:
         type: string
 
 concurrency:
-  group: "CD-${{ github.event.release.tag_name || inputs.tag }}"
+  group: "CD-${{ github.ref_name || inputs.tag }}"
   cancel-in-progress: false
 
 permissions:
@@ -72,7 +83,7 @@ jobs:
           # repo's branch-name rule permits e.g. a literal `v0.2.0` branch)
           # CD would build the BRANCH while attaching the asset to the tag's
           # release.
-          ref: refs/tags/${{ github.event.release.tag_name || inputs.tag }}
+          ref: refs/tags/${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
           # This job publishes an artifact — never let the checkout token ride
           # along in it (zizmor artipacked).
           persist-credentials: false
@@ -80,7 +91,7 @@ jobs:
       - name: 🏷️ Resolve the release version
         id: version
         env:
-          RAW_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          RAW_TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
         run: |
           set -euo pipefail
           # The repo's "Protect release tags" ruleset pins tags to
@@ -170,6 +181,27 @@ jobs:
             tail -20 exported-smoke.log
             exit 1
           fi
+
+      - name: ⏳ Wait for the draft release to exist
+        # semantic-release pushes the tag (which triggered this run) BEFORE its
+        # github plugin creates the draft release, so the draft can lag this
+        # workflow by a few seconds. Poll rather than assume; fail closed with a
+        # clear message if it never appears, so a missing draft can never be
+        # mistaken for a successful publish.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 30); do
+            if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json tagName >/dev/null 2>&1; then
+              echo "release ${TAG} is present"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::no release found for ${TAG} after 5 minutes — semantic-release should have created it as a draft (.releaserc draftRelease). Nothing was published."
+          exit 1
 
       - name: 📤 Attach the build to the release
         env:
