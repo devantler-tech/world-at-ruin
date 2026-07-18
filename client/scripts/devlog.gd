@@ -5,11 +5,20 @@ class_name DevLog
 ## development progress by playing. Every change that a player could notice
 ## gets an entry here, newest first — open it in-game with F1.
 
-const VERSION := "0.1.15"
+const VERSION := "0.1.16"
 const CODENAME := "Ashfall Reach"
 
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
+	{
+		"version": "0.1.16",
+		"date": "2026-07-18",
+		"title": "The ground is strewn",
+		"notes": [
+			"The Reach is no longer bare between its landmarks. Ashen scrub, dead grass, bone piles and broken rubble are now scattered across the Reach, so the ground between the ruins reads like somewhere a disaster happened rather than an empty plain.",
+			"It is scenery and nothing more — there is nothing to pick up, it changes nothing about how you play, and you walk straight through it. The shrine's clearing, the ruins themselves and the cave mouth all stay clear, and the same world grows the same scrub every time you load it.",
+		],
+	},
 	{
 		"version": "0.1.15",
 		"date": "2026-07-17",

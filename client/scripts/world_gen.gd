@@ -23,9 +23,9 @@ const SHRINE_CLEAR_RADIUS := 14.0 ## Kept nearly flat and free of ruins.
 ## above-ground rock), and the anti-embed net stands down inside.
 ## Cosmetic ground cover strewn between the landmarks (see _scatter_foliage).
 ## Placement comes from [FoliageGen]; these are only HOW MUCH and HOW SPARSE.
-const FOLIAGE_COUNT := 900
+const FOLIAGE_COUNT := 2400
 const FOLIAGE_MARGIN := 6.0 ## Inset from the world edge, like the ruin scatter.
-const FOLIAGE_MIN_SEP := 1.6 ## Metres between props, so scenery never stacks.
+const FOLIAGE_MIN_SEP := 1.1 ## Metres between props, so scenery never stacks.
 ## Cleared around each ruin site's centre, so a prop never sits inside a
 ## structure's immediate footprint. Deliberately smaller than a colonnade's full
 ## reach: scrub growing AMONG distant fallen columns is wanted, not a bald ring.
@@ -66,6 +66,14 @@ var _cave_cover: Array = []
 ## The doorway apron [Vector2 xz, radius, grade_y]: terrain outside the mouth
 ## pinned to walk-out grade.
 var _cave_apron: Array = []
+
+## Every cosmetic prop this world scattered, as [FoliageGen] produced them.
+## Retained because a MultiMesh's instance transforms live in the RenderingServer
+## and are NOT readable under `--headless` (they read back as identity, and its
+## `buffer` is empty), so this placement list is the only headless-verifiable
+## record of where scenery actually went — and it is the record that carries the
+## laws worth pinning (determinism, keep-outs, resting on the ground).
+var _foliage: Array[Dictionary] = []
 
 func _ready() -> void:
 	_noise.seed = WORLD_SEED
@@ -428,7 +436,23 @@ func _scatter_foliage() -> void:
 		if FoliageGen.is_valid_kind(kind):
 			(by_kind[kind] as Array).append(placement)
 	for kind in FoliageGen.KIND_COUNT:
-		_build_foliage_batch(kind, by_kind[kind] as Array)
+		var batch := by_kind[kind] as Array
+		_build_foliage_batch(kind, batch)
+		# Record what was actually rendered, in the same batch/instance order the
+		# MultiMeshes were filled, so the placement list mirrors the world.
+		for placement: Dictionary in batch:
+			_foliage.append(placement)
+
+
+## Every cosmetic prop in this world, in render order — a copy, so a caller can
+## never disturb the generated world. Each entry is a [FoliageGen] placement
+## (`kind`, `pos`, `yaw`, `scale`), with `pos.y` the height the prop was lifted
+## to so it rests on the surface.
+func foliage_placements() -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for placement: Dictionary in _foliage:
+		out.append(placement.duplicate(true))
+	return out
 
 
 ## Every circle foliage must stay out of: the shrine clearing, each ruin site's
@@ -469,7 +493,11 @@ func _build_foliage_batch(kind: int, items: Array) -> void:
 		var pos: Vector3 = placement["pos"]
 		var prop_scale := float(placement["scale"])
 		var basis := Basis(Vector3.UP, float(placement["yaw"])).scaled(Vector3.ONE * prop_scale)
-		mm.set_instance_transform(i, Transform3D(basis, Vector3(pos.x, pos.y + lift * prop_scale, pos.z)))
+		var rendered := Vector3(pos.x, pos.y + lift * prop_scale, pos.z)
+		mm.set_instance_transform(i, Transform3D(basis, rendered))
+		# Keep the record in step with what was actually rendered — the MultiMesh
+		# itself cannot be read back headlessly (see _foliage).
+		placement["pos"] = rendered
 	var mmi := MultiMeshInstance3D.new()
 	mmi.name = "Foliage_%d" % kind
 	mmi.multimesh = mm
