@@ -249,18 +249,27 @@ func _normal_signed_volume(mesh: Mesh) -> float:
 	return total
 
 
-## Counts vertices that share BOTH a position and a normal — i.e. sit on the
-## same face — yet carry different UVs. That is precisely the diagonal seam:
-## the two triangles of one quad disagreeing about the texture at the vertices
-## they share.
+## Counts vertices that sit at the same position on what is physically the same
+## face, yet carry different UVs. That is the diagonal seam: the two triangles
+## of one quad disagreeing about the texture at the vertices they share.
 ##
-## Keyed on position AND normal on purpose. A planar/box map deliberately gives
-## a shared CORNER different UVs on each of its faces, and that is correct — a
-## first version of this check keyed on position alone and flagged 110 such
-## corners as defects. The seam that matters is the one within a single face.
+## "Same face" is judged by NEAR-coplanarity, and the threshold was calibrated
+## against the actual defect rather than guessed:
+##   * keying on position ALONE is wrong in one direction — a box map is
+##     SUPPOSED to give a shared corner different UVs on its different faces
+##     (that version flagged 110 correct corners as defects);
+##   * keying on an EXACT normal match is wrong in the other — corner jitter
+##     leaves the two triangles of a quad slightly non-coplanar, so that version
+##     caught only 1 seam of roughly 30;
+##   * at 30° it reported 6 residual pairs on correct code, which turned out to
+##     be genuinely DIFFERENT faces 11-30° apart, where a texture change across
+##     the edge is expected and invisible in isotropic mottling.
+## At ~11° the guard is clean on correct code and still reports 19 seams when
+## the per-triangle UV triplet is restored.
+const COPLANAR_COS := 0.98  # ~11 degrees
+
 func _uv_discontinuities(mesh: Mesh) -> int:
-	var seen := {}
-	var clashes := 0
+	var by_position := {}
 	for surface in mesh.get_surface_count():
 		var arrays := mesh.surface_get_arrays(surface)
 		var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
@@ -268,16 +277,25 @@ func _uv_discontinuities(mesh: Mesh) -> int:
 		var uvs: PackedVector2Array = arrays[Mesh.ARRAY_TEX_UV]
 		for i in verts.size():
 			var v := verts[i]
-			var n := normals[i]
-			var key := "%d,%d,%d|%d,%d,%d" % [
-				roundi(v.x * 1000.0), roundi(v.y * 1000.0), roundi(v.z * 1000.0),
-				roundi(n.x * 1000.0), roundi(n.y * 1000.0), roundi(n.z * 1000.0)]
-			var stamp := "%d,%d" % [roundi(uvs[i].x * 1000.0), roundi(uvs[i].y * 1000.0)]
-			if seen.has(key):
-				if seen[key] != stamp:
+			var key := "%d,%d,%d" % [
+				roundi(v.x * 1000.0), roundi(v.y * 1000.0), roundi(v.z * 1000.0)]
+			if not by_position.has(key):
+				by_position[key] = []
+			(by_position[key] as Array).append([normals[i], uvs[i]])
+
+	var clashes := 0
+	for key: String in by_position:
+		var entries: Array = by_position[key]
+		for i in entries.size():
+			for j in range(i + 1, entries.size()):
+				var na: Vector3 = entries[i][0]
+				var nb: Vector3 = entries[j][0]
+				if na.dot(nb) < COPLANAR_COS:
+					continue
+				var ua: Vector2 = entries[i][1]
+				var ub: Vector2 = entries[j][1]
+				if ua.distance_to(ub) > 0.001:
 					clashes += 1
-			else:
-				seen[key] = stamp
 	return clashes
 
 
