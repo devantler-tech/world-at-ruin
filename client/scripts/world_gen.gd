@@ -49,6 +49,14 @@ const FOLIAGE_FULL_ABOVE := 0.62
 ## grass thin away on grades, while the KIND mix (not just the density)
 ## shifts toward rubble there — debris tolerates slopes.
 const FOLIAGE_STEEP_GRADE := 0.5
+## Exposure by ELEVATION: cover gathers in the low ground and thins on high,
+## open ground — a flat hollow and a flat ridge-top must not read the same.
+## Ground at or below LOW is sheltered (full density); by HIGH it is fully
+## exposed and keeps only (1 - EXPOSURE_THIN) of its cover. The terrain band
+## is roughly ±7.6 m (HEIGHT_AMP + detail), so 0→6 spans the upper half.
+const FOLIAGE_LOW_GROUND := 0.0
+const FOLIAGE_HIGH_GROUND := 6.0
+const FOLIAGE_EXPOSURE_THIN := 0.55
 
 const CAVE_SITE := Vector2(-56.0, -20.0)
 const CAVE_SEED := 42
@@ -104,9 +112,12 @@ func _ready() -> void:
 	_tint.frequency = 0.05
 	# Single-octave simplex: smooth, blobby thickets and clearings — fractal
 	# detail here would read as speckle, the exact confetti #152 removes.
+	# FRACTAL_NONE is load-bearing: FastNoiseLite DEFAULTS to FBM with several
+	# octaves, which would punch small holes inside the broad thickets.
 	_foliage_density.seed = WORLD_SEED + FOLIAGE_DENSITY_SEED_OFFSET
 	_foliage_density.noise_type = FastNoiseLite.TYPE_SIMPLEX
 	_foliage_density.frequency = FOLIAGE_DENSITY_FREQUENCY
+	_foliage_density.fractal_type = FastNoiseLite.FRACTAL_NONE
 	# The cave layout and cover circles must exist before ANY height_at call:
 	# the terrain grid bakes the cover knoll in.
 	_prepare_starter_cave()
@@ -644,13 +655,19 @@ func foliage_placements() -> Array[Dictionary]:
 
 ## Local ground-cover density in [0, 1] (#152): the low-frequency field carves
 ## thickets where it is high and genuinely bare clearings where its smoothstep
-## band bottoms out, and steep ground thins further — real cover gathers in
-## hollows and thins on exposed grades. Deterministic (an own seeded
-## FastNoiseLite over world coordinates) and pure of the scene tree, so "the
-## same world every boot" holds for the composition too.
+## band bottoms out; ELEVATION thins the high, open ground so growth gathers
+## in the sheltered hollows; and steep ground thins further. Deterministic
+## (an own seeded FastNoiseLite over world coordinates, plus the baked height
+## grid) and pure of the scene tree, so "the same world every boot" holds for
+## the composition too.
 func _foliage_density_at(x: float, z: float) -> float:
+	var h := surface_height_at(x, z)
+	if h <= NO_GROUND:
+		return 0.0
 	var n01 := _foliage_density.get_noise_2d(x, z) * 0.5 + 0.5
 	var d := smoothstep(FOLIAGE_BARE_BELOW, FOLIAGE_FULL_ABOVE, n01)
+	var exposure := smoothstep(FOLIAGE_LOW_GROUND, FOLIAGE_HIGH_GROUND, h)
+	d *= 1.0 - FOLIAGE_EXPOSURE_THIN * exposure
 	return d * (1.0 - 0.65 * _foliage_slope01(x, z))
 
 

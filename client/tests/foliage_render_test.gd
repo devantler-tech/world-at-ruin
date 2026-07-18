@@ -38,7 +38,7 @@ const HALF := WorldGen.SIZE / 2.0
 ## _fingerprint). Regenerate deliberately (record mode prints it) only when
 ## placement is intentionally changed; like the #58 world golden, a change
 ## here is a reviewed act.
-const GOLDEN_FINGERPRINT := "49489cf9"
+const GOLDEN_FINGERPRINT := "75dc1a3"
 
 
 func _ready() -> void:
@@ -92,12 +92,57 @@ func _ready() -> void:
 	# 7. COMPOSED, NOT CONFETTI (#152) — the acceptance criterion made a law:
 	# per-cell dispersion (count variance / mean, 10×10 grid) of the real
 	# composition must sit well above the uniform wiring's. Measured: 1.70
-	# with the density field ablated (keep-outs alone clump a little), 6.77
+	# with the density field ablated (keep-outs alone clump a little), 8.99
 	# with it live — the 2.0 floor splits them, and the world is
 	# deterministic, so this number is a constant, not a flake surface.
 	var vmr := _dispersion(props1)
 	if vmr < 2.0:
 		_fail("foliage dispersion %.2f — the composition reads as uniform confetti, not thickets and clearings" % vmr)
+		return
+
+	# 8. SHELTER (#152 review) — cover must prefer the low ground: on
+	# comparably FLAT terrain, the density field responds to ELEVATION, so a
+	# flat ridge-top and a flat hollow never read the same. The raw class
+	# means are confounded: the few flat hilltops sit under whatever the
+	# independent thicket-noise happens to be (measured live: it cancelled a
+	# real 0.66× exposure factor), so divide the noise term OUT — it is
+	# public spec (the field's own noise object + the BARE/FULL band) — and
+	# compare the residual height-and-slope response between the classes.
+	var low_sum := 0.0
+	var low_n := 0
+	var high_sum := 0.0
+	var high_n := 0
+	# High ground is rarely dead-flat (peaks curve), so the "comparably flat"
+	# cap is generous (slope01 < 0.45, identical for both classes) and the
+	# probe pitch fine (2 m) — otherwise the high class is too small to mean
+	# anything, which is exactly what the vacuity floor below guards.
+	var probe := -104.0
+	while probe <= 104.0:
+		var pz := -104.0
+		while pz <= 104.0:
+			var h := w1.surface_height_at(probe, pz)
+			if h > WorldGen.NO_GROUND and w1._foliage_slope01(probe, pz) < 0.45:
+				var n01: float = w1._foliage_density.get_noise_2d(probe, pz) * 0.5 + 0.5
+				var noise_term := smoothstep(WorldGen.FOLIAGE_BARE_BELOW, WorldGen.FOLIAGE_FULL_ABOVE, n01)
+				# In the bare band the density is 0 whatever the height says —
+				# nothing to divide, nothing to learn about elevation there.
+				if noise_term >= 0.1:
+					var residual: float = w1._foliage_density_at(probe, pz) / noise_term
+					if h < 0.0:
+						low_sum += residual
+						low_n += 1
+					elif h > 3.5:
+						high_sum += residual
+						high_n += 1
+			pz += 2.0
+		probe += 2.0
+	if low_n < 40 or high_n < 40:
+		_fail("shelter check is vacuous: only %d low-flat and %d high-flat samples" % [low_n, high_n])
+		return
+	var low_mean := low_sum / float(low_n)
+	var high_mean := high_sum / float(high_n)
+	if low_mean < high_mean * 1.15:
+		_fail("noise-normalised density response on flat low ground (%.3f) is not materially above flat high ground (%.3f) — elevation is not sheltering the hollows" % [low_mean, high_mean])
 		return
 
 	# 3. CLEAR OF EVERY LANDMARK.
