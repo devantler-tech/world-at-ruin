@@ -253,6 +253,14 @@ can be watched by playing; every *further* art/game system waits on Phase 0.)
   Then run the regression tests: `godot --headless --path client res://tests/<name>.tscn` for each
   scene under `client/tests/`. CI (`ci.yaml`) runs exactly this, plus the `license-guard` job (no
   GPL/AGPL texts in the tree) and the `Server CI (Go)` job (below).
+- **Adding a test needs NO `ci.yaml` edit:** name the scene `<name>_test.tscn` and put it directly
+  under `client/tests/` — CI's "Regression tests" step auto-discovers `client/tests/*_test.tscn`
+  (issue #50; the old hardcoded list forced every parallel test-adding PR to collide on one line).
+  Each scene must print a `TEST PASS` marker on success and run within the 180 s per-test timeout.
+  Two exclusions: `save_fixture_guard_test` runs in its own dedicated named step (the product-law
+  surface, kept loud/separate), and a test can be temporarily skipped by adding its basename (no
+  `.tscn`) on its own line in the optional `client/tests/ci-skip.txt` (blank/`#`-comment lines
+  ignored) — a rarely-edited escape hatch, so the run line itself stops changing per-test.
 - **Boot tests isolate the save via `WAR_SAVE_PATH`:** a test that boots `main.tscn` to exercise the
   first-run character creator would otherwise run against the player's real `user://character.json`.
   It must NOT clear-and-restore that file (a run killed mid-test strands the only copy — no-resets
