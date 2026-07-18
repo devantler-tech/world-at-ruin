@@ -1,0 +1,13 @@
+{
+  "id": "sword_lunge",
+  "version": 1,
+  "weapon": "sword",
+  "role": "damage",
+  "effect": "damage",
+  "telegraph": "rect",
+  "cast_time_ms": 500,
+  "cooldown_ms": 4000,
+  "resource_cost": 15,
+  "range_m": 8.0,
+  "power": 100
+}

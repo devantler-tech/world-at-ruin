@@ -1,0 +1,13 @@
+{
+  "id": "staff_ward",
+  "version": 1,
+  "weapon": "staff",
+  "role": "tank",
+  "effect": "shield",
+  "telegraph": "ring",
+  "cast_time_ms": 700,
+  "cooldown_ms": 10000,
+  "resource_cost": 25,
+  "range_m": 5.0,
+  "power": 60
+}

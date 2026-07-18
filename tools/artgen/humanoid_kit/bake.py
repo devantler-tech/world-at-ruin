@@ -50,7 +50,6 @@ def dynamic_import(package_suffix: str, key: str):
 def merge_targets_into_shape(mesh_obj, shape_name: str, target_paths, targets_root, target_service):
     """Load one or more MakeHuman .target files and collapse them into a
     single named shape key (l/r pairs and muscle groups become one axis)."""
-    basis = mesh_obj.data.shape_keys.key_blocks[0]
     before = {kb.name for kb in mesh_obj.data.shape_keys.key_blocks}
     for rel in target_paths:
         target_service.load_target(mesh_obj, os.path.join(targets_root, rel), weight=1.0)
@@ -394,7 +393,8 @@ def main() -> None:
     bake_skins(manifest, os.path.dirname(os.path.abspath(out_path)))
 
     shape_names = [kb.name for kb in mesh_obj.data.shape_keys.key_blocks[1:]]
-    sha = hashlib.sha256(open(out_path, "rb").read()).hexdigest()
+    with open(out_path, "rb") as glb:
+        sha = hashlib.sha256(glb.read()).hexdigest()
     # The structural report is the committed contract the Godot regression
     # test and the artgen workflow both check against. The GLB sha is printed
     # for run-to-run determinism checks but kept out of the report file:

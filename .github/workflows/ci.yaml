@@ -1,12 +1,11 @@
 name: CI
 
+# CI lints, tests and analyses the product on proposed changes. Production
+# builds, publishing and distribution live in cd.yaml, which runs on the
+# GitHub Release that release.yaml cuts.
 on:
   pull_request:
   merge_group:
-  # Push runs exist so every merge leaves a canonical, findable macOS .app
-  # artifact on main (merge_group artifacts are buried in queue runs).
-  push:
-    branches: [main]
 
 permissions:
   contents: read
@@ -93,6 +92,278 @@ jobs:
             fi
           done
           [ "$fail" = 0 ]
+      - name: Ability ledger is append-only (no-resets law)
+        # A mastered ability can never vanish from a player. The in-repo test
+        # checks the ledger against the CURRENT build, so a PR that deletes an
+        # ability file AND its ledger line together would pass green while
+        # stranding a save that referenced it. CI is the anchor: against the
+        # BASE commit, ability ids in shipped_abilities.txt may only ever be
+        # ADDED — never removed (the comment prose is exempt).
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          LEDGER=client/tests/data/shipped_abilities.txt
+          if [ ! -f "$LEDGER" ]; then
+            echo "::error::$LEDGER was deleted — the forward-only ability ledger must exist"
+            exit 1
+          fi
+          if ! git cat-file -e "$BASE_SHA" 2>/dev/null; then
+            echo "::error::base commit $BASE_SHA not present in the checkout — cannot verify the ability ledger"
+            exit 1
+          fi
+          # Compare the set of non-comment, whitespace-stripped ids: the runtime
+          # reader strips whitespace, so an indented id is a valid entry whose
+          # deletion a raw line diff would miss.
+          ids() { grep -v '^[[:space:]]*#' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -v '^$' | sort -u; }
+          # A ledger absent from the base revision (the PR that introduces it) is
+          # an EMPTY base, not an error — otherwise the introducing PR could never
+          # merge. Guard the read so it is intentional, not shell-strictness luck.
+          if git cat-file -e "$BASE_SHA:$LEDGER" 2>/dev/null; then
+            git show "$BASE_SHA:$LEDGER" | ids > /tmp/ability-base
+          else
+            : > /tmp/ability-base
+          fi
+          ids < "$LEDGER" > /tmp/ability-head
+          removed=$(comm -23 /tmp/ability-base /tmp/ability-head)
+          if [ -n "$removed" ]; then
+            echo "::error::Shipped ability id(s) removed from $LEDGER ($(echo "$removed" | tr '\n' ' ')) — a mastered ability is never disposable (no-resets law)"
+            exit 1
+          fi
+      - name: Category power budgets are frozen (no-power-inflation law)
+        # "Mastery unlocks new arsenals, never more damage." The registry test
+        # checks each ability's power against the CURRENT ledger, so raising an
+        # ability AND its category budget together would pass green — the arsenal's
+        # power ceiling would creep up with no undo. CI is the anchor: against
+        # the BASE commit, a role|effect=power line may only ever be ADDED — never
+        # changed or removed (the comment prose is exempt).
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          LEDGER=client/tests/data/shipped_class_power.txt
+          if [ ! -f "$LEDGER" ]; then
+            echo "::error::$LEDGER was deleted — the frozen power-budget ledger must exist"
+            exit 1
+          fi
+          if ! git cat-file -e "$BASE_SHA" 2>/dev/null; then
+            echo "::error::base commit $BASE_SHA not present in the checkout — cannot verify the power-budget ledger"
+            exit 1
+          fi
+          # sed strips whitespace WITHIN each line; `tr -d` would delete the
+          # newlines too and collapse the whole ledger into one blob, which
+          # silently disables the duplicate-key check and makes a legitimate
+          # new-category ADD look like a changed line.
+          # `|| true`: grep exits 1 on no-match, and under `set -o pipefail` a
+          # ledger that is empty or comments-only would abort the step with no
+          # diagnostic. As a pure filter, "no pairs" is a valid result.
+          pairs() { grep -v '^[[:space:]]*#' | sed 's/[[:space:]]//g' | grep -v '^$' || true; }
+          # A duplicate key would let a second `damage|damage=130` line sit beside
+          # the frozen `=100` (the base pair still present, so the change check
+          # below misses it) while the runtime loader takes the last value —
+          # silent inflation. One budget per category, always.
+          dupes=$(pairs < "$LEDGER" | cut -d= -f1 | sort | uniq -d)
+          if [ -n "$dupes" ]; then
+            echo "::error::Duplicate category budget key(s) in $LEDGER ($(echo "$dupes" | tr '\n' ' ')) — each category has exactly one frozen power budget"
+            exit 1
+          fi
+          # Compare the set of non-comment, whitespace-stripped category=power
+          # pairs. A CHANGED value (e.g. damage|damage=100 -> =130) leaves the
+          # base pair absent from head, and a removed line likewise — both are
+          # caught; a genuinely new category appears only in head and is allowed.
+          # A ledger absent from base (the introducing PR) is an empty base.
+          pairs < "$LEDGER" | sort -u > /tmp/budget-head
+          if git cat-file -e "$BASE_SHA:$LEDGER" 2>/dev/null; then
+            git show "$BASE_SHA:$LEDGER" | pairs | sort -u > /tmp/budget-base
+          else
+            : > /tmp/budget-base
+          fi
+          changed=$(comm -23 /tmp/budget-base /tmp/budget-head)
+          if [ -n "$changed" ]; then
+            echo "::error::Category power budget(s) changed or removed in $LEDGER ($(echo "$changed" | tr '\n' ' ')) — the open-world arsenal never gains raw power (no-power-inflation law)"
+            exit 1
+          fi
+      - name: Category cycle floors are frozen (no-throughput-inflation law)
+        # The power ledger freezes how much a cast does, not how OFTEN it lands:
+        # throughput is power / (cast_time_ms + cooldown_ms). Shortening the cycle
+        # inflates damage per second on an unchanged frozen budget, and the
+        # sidegrade guard misses it (a shorter cooldown traded against a shorter
+        # range is no Pareto win). The cycle floor is the other half of the law,
+        # so it gets the same permanence anchor: against the BASE commit a
+        # role|effect=floor line may only ever be ADDED — never changed or removed.
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          LEDGER=client/tests/data/shipped_class_cycle_floor.txt
+          if [ ! -f "$LEDGER" ]; then
+            echo "::error::$LEDGER was deleted — the frozen cycle-floor ledger must exist"
+            exit 1
+          fi
+          if ! git cat-file -e "$BASE_SHA" 2>/dev/null; then
+            echo "::error::base commit $BASE_SHA not present in the checkout — cannot verify the cycle-floor ledger"
+            exit 1
+          fi
+          # sed strips whitespace WITHIN each line; `tr -d` would delete the
+          # newlines too and collapse the whole ledger into one blob, which
+          # silently disables the duplicate-key check and makes a legitimate
+          # new-category ADD look like a changed line.
+          # `|| true`: grep exits 1 on no-match, and under `set -o pipefail` a
+          # ledger that is empty or comments-only would abort the step with no
+          # diagnostic. As a pure filter, "no pairs" is a valid result.
+          pairs() { grep -v '^[[:space:]]*#' | sed 's/[[:space:]]//g' | grep -v '^$' || true; }
+          dupes=$(pairs < "$LEDGER" | cut -d= -f1 | sort | uniq -d)
+          if [ -n "$dupes" ]; then
+            echo "::error::Duplicate category floor key(s) in $LEDGER ($(echo "$dupes" | tr '\n' ' ')) — each category has exactly one frozen cycle floor"
+            exit 1
+          fi
+          pairs < "$LEDGER" | sort -u > /tmp/floor-head
+          if git cat-file -e "$BASE_SHA:$LEDGER" 2>/dev/null; then
+            git show "$BASE_SHA:$LEDGER" | pairs | sort -u > /tmp/floor-base
+          else
+            : > /tmp/floor-base
+          fi
+          changed=$(comm -23 /tmp/floor-base /tmp/floor-head)
+          if [ -n "$changed" ]; then
+            echo "::error::Category cycle floor(s) changed or removed in $LEDGER ($(echo "$changed" | tr '\n' ' ')) — a shipped category never gains throughput (no-power-inflation law)"
+            exit 1
+          fi
+      - name: New categories stay within the shipped scale
+        # A brand-new role|effect category is the remaining way to inflate power
+        # permanently: `tank|damage=1000000` with a matching ability satisfies the
+        # append-only ledgers, the registry's equality check and the dominance
+        # check, and — because the ledgers are immutable — that ceiling could never
+        # be corrected afterwards. So a category added in this PR must sit within
+        # the scale already shipped: no budget above the highest shipped budget,
+        # no cycle floor below the fastest shipped floor. Widening the scale itself
+        # is a deliberate balance decision, not something a PR does in passing.
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          BUDGETS=client/tests/data/shipped_class_power.txt
+          FLOORS=client/tests/data/shipped_class_cycle_floor.txt
+          # sed strips whitespace WITHIN each line; `tr -d` would delete the
+          # newlines too and collapse the whole ledger into one blob, which
+          # silently disables the duplicate-key check and makes a legitimate
+          # new-category ADD look like a changed line.
+          # `|| true`: grep exits 1 on no-match, and under `set -o pipefail` a
+          # ledger that is empty or comments-only would abort the step with no
+          # diagnostic. As a pure filter, "no pairs" is a valid result.
+          pairs() { grep -v '^[[:space:]]*#' | sed 's/[[:space:]]//g' | grep -v '^$' || true; }
+          base_of() {
+            if git cat-file -e "$BASE_SHA:$1" 2>/dev/null; then
+              git show "$BASE_SHA:$1" | pairs
+            fi
+          }
+          # The PR that INTRODUCES a ledger has an empty base and therefore no
+          # established scale to measure against — that bootstrap is allowed, and
+          # every later addition is bounded by it.
+          base_of "$BUDGETS" > /tmp/scale-budget-base
+          pairs < "$BUDGETS" > /tmp/scale-budget-head
+          if [ -s /tmp/scale-budget-base ]; then
+            max_budget=$(cut -d= -f2 /tmp/scale-budget-base | sort -n | tail -1)
+            while IFS= read -r line; do
+              key=${line%%=*}; value=${line#*=}
+              if grep -q "^${key}=" /tmp/scale-budget-base; then continue; fi
+              if [ "$value" -gt "$max_budget" ]; then
+                echo "::error::New category [$key] claims power budget $value, above the highest shipped budget ($max_budget) — a new category may not widen the power scale"
+                exit 1
+              fi
+            done < /tmp/scale-budget-head
+          fi
+          base_of "$FLOORS" > /tmp/scale-floor-base
+          pairs < "$FLOORS" > /tmp/scale-floor-head
+          if [ -s /tmp/scale-floor-base ]; then
+            min_floor=$(cut -d= -f2 /tmp/scale-floor-base | sort -n | head -1)
+            while IFS= read -r line; do
+              key=${line%%=*}; value=${line#*=}
+              if grep -q "^${key}=" /tmp/scale-floor-base; then continue; fi
+              if [ "$value" -lt "$min_floor" ]; then
+                echo "::error::New category [$key] claims cycle floor ${value}ms, below the fastest shipped floor (${min_floor}ms) — a new category may not widen the throughput scale"
+                exit 1
+              fi
+            done < /tmp/scale-floor-head
+          fi
+      - name: Shipped ability identity is frozen (migration transparency)
+        # shipped_abilities.txt anchors only the ID SET. But a later PR could keep
+        # an ID while rewriting its JSON's weapon/role/effect/telegraph — silently
+        # changing WHAT a mastered ability is (e.g. moving sword_cleave to another
+        # weapon), which the product law forbids without an announced, player-
+        # visible deprecation. CI is the anchor: for every ability file present at
+        # the BASE commit, its identity fields must be byte-identical at head.
+        # Numeric tuning (cast/cooldown/cost/range/power) stays mutable, governed
+        # by the sidegrade + frozen-budget guards.
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          if ! git cat-file -e "$BASE_SHA" 2>/dev/null; then
+            echo "::error::base commit $BASE_SHA not present — cannot verify ability identity"
+            exit 1
+          fi
+          identity() { jq -S -c '{id,weapon,role,effect,telegraph}'; }
+          fail=0
+          for f in $(git ls-tree -r --name-only "$BASE_SHA" -- client/abilities | grep -E '\.json$'); do
+            if [ ! -f "$f" ]; then
+              echo "::error::shipped ability file $f was removed — a mastered ability is never taken away (no-resets law); ship a new ability or an announced deprecation"
+              fail=1; continue
+            fi
+            base_id=$(git show "$BASE_SHA:$f" | identity)
+            head_id=$(identity < "$f")
+            if [ "$base_id" != "$head_id" ]; then
+              echo "::error::$f changed a shipped ability's identity (id/weapon/role/effect/telegraph): $base_id -> $head_id — identity is frozen; ship a new ability or an announced deprecation"
+              fail=1
+            fi
+          done
+          [ "$fail" = 0 ]
+      - name: No strict self-buff over base (partial anti-inflation guard)
+        # A rebalance IS allowed, but a shipped ability may never become a STRICT
+        # UPGRADE of its own base version: an improvement on one axis (lower
+        # cast/cooldown/cost, higher range/power) with nothing given back is a
+        # free buff, and there is no undo. Nerfs and true sidegrades pass.
+        #
+        # SCOPE (deliberately partial): this catches the BLATANT case only. A
+        # nominal sidegrade (a token range nerf paying for a large cooldown cut)
+        # passes here, and a brand-new ability is never compared at all — which is
+        # why throughput is bounded absolutely by the frozen cycle floor above
+        # rather than relying on this step. What remains unbounded is the
+        # multi-target economy (telegraph AREA is not in the model), a balance
+        # decision tracked in #82.
+        # CI is the anchor (the in-tree test cannot see the base revision).
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          if ! git cat-file -e "$BASE_SHA" 2>/dev/null; then
+            echo "::error::base commit $BASE_SHA not present — cannot verify rebalances"
+            exit 1
+          fi
+          fail=0
+          for f in $(git ls-tree -r --name-only "$BASE_SHA" -- client/abilities | grep -E '\.json$'); do
+            # Removed files are handled by the identity step above.
+            [ -f "$f" ] || continue
+            # true iff head Pareto-dominates base: no worse on any axis (cost axes
+            # lower-better, benefit axes higher-better) and strictly better on one.
+            buff=$(jq -n \
+              --argjson b "$(git show "$BASE_SHA:$f")" \
+              --argjson h "$(cat "$f")" '
+              ($h.cast_time_ms <= $b.cast_time_ms
+                and $h.cooldown_ms <= $b.cooldown_ms
+                and $h.resource_cost <= $b.resource_cost
+                and $h.range_m >= $b.range_m
+                and $h.power >= $b.power)
+              and ($h.cast_time_ms < $b.cast_time_ms
+                or $h.cooldown_ms < $b.cooldown_ms
+                or $h.resource_cost < $b.resource_cost
+                or $h.range_m > $b.range_m
+                or $h.power > $b.power)')
+            if [ "$buff" = "true" ]; then
+              echo "::error::$f is a STRICT BUFF of its base version — a rebalance must be a sidegrade (never more power); pay for the improvement on another axis"
+              fail=1
+            fi
+          done
+          [ "$fail" = 0 ]
       - name: Install Godot (pinned, checksum-verified)
         run: |
           curl -fsSL -o godot.zip "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
@@ -138,14 +409,36 @@ jobs:
             tail -40 save_fixture_guard_test.log
             exit 1
           fi
+      - name: Ability law guard (sidegrade + no power/throughput inflation)
+        # THE combat product-law surface (#70), and the ONLY place the sidegrade
+        # and budget/cycle-floor matching actually run — the ledger steps above
+        # anchor the ledgers against the base revision, but they never call
+        # find_strict_dominance or match an ability to its budget. Kept in its own
+        # named step, deliberately OUTSIDE the auto-discovered loop, because that
+        # loop honours client/tests/ci-skip.txt: a later PR could otherwise skip
+        # this scene and merge a same-class strict upgrade. Power inflation is
+        # permanent, so this guard must not be skippable.
+        run: |
+          set -o pipefail
+          if ! timeout 180 godot --headless --path client "res://tests/ability_registry_test.tscn" 2>&1 | tee ability_registry_test.log; then
+            echo "::error::ability_registry_test failed or timed out (180s) — a combat product law is broken"
+            tail -40 ability_registry_test.log
+            exit 1
+          fi
+          if ! grep -q "TEST PASS" ability_registry_test.log; then
+            echo "::error::ability_registry_test exited 0 without reporting PASS"
+            tail -40 ability_registry_test.log
+            exit 1
+          fi
       - name: Regression tests
         # Auto-discover every client/tests/*_test.tscn scene, so adding a test
         # needs ZERO ci.yaml edits (issue #50 — the hardcoded list forced every
         # parallel test-adding PR to collide on this one line). Each scene runs
         # with the same per-test timeout + PASS-marker guard as before.
-        #   - save_fixture_guard_test is deliberately excluded: it runs in its
-        #     own named step above (the product-law surface, kept loud/separate),
-        #     so discovering it here would run it twice.
+        #   - save_fixture_guard_test and ability_registry_test are deliberately
+        #     excluded: each runs in its own named step above (the product-law
+        #     surfaces, kept loud, separate and NON-SKIPPABLE), so discovering
+        #     them here would both run them twice and expose them to ci-skip.
         #   - A test can be temporarily excluded by adding its basename (no
         #     .tscn) on its own line in client/tests/ci-skip.txt (edited rarely;
         #     the RUN line stops changing per-test). Blank/`#`-comment lines are
@@ -161,8 +454,9 @@ jobs:
           ran=0
           for scene in $(printf '%s\n' client/tests/*_test.tscn | sort); do
             t=$(basename "$scene" .tscn)
-            # Runs in its own dedicated step above — never twice.
-            [ "$t" = save_fixture_guard_test ] && continue
+            # Run in their own dedicated steps above — never twice, and never
+            # skippable via ci-skip.txt (they are the product-law surfaces).
+            case "$t" in save_fixture_guard_test|ability_registry_test) continue ;; esac
             if is_skipped "$t"; then
               echo "::notice::skipping ${t} (listed in ${skip_file})"
               continue
@@ -189,6 +483,12 @@ jobs:
 
   client-export-macos:
     name: Client export (macOS)
+    # BUILD VERIFICATION, not distribution: this proves a change still exports
+    # and that the exported .app actually boots, so a broken export is caught on
+    # the PR rather than at release time. The shipped, version-stamped build is
+    # cd.yaml's job — the artifact uploaded here is a debugging convenience with
+    # no version identity, and is never an install source.
+    #
     # macOS runner on purpose: Godot's built-in AD-HOC codesign only works on a
     # macOS host, and an unsigned arm64 .app is killed by macOS before it can
     # launch — a Linux-exported unsigned zip would be dead on arrival on the
