@@ -28,6 +28,18 @@ zone/dungeon server:
     spatial-hash **broad phase** offers only the pairs that can actually touch,
     so the pass costs ~O(n) instead of O(n²) as a zone's actor count grows,
     without changing that deterministic settled state.
+  - **Swept (continuous) collision** (`World.SweptCollision`, a **feature flag,
+    default off**) — separation only sees where actors *end up*, so an actor
+    moving faster than a capsule per tick could pass clean through another
+    between two ticks (and separation would then push it out the far side, not
+    back). With the flag on, `Step` integrates continuously — a mover is stopped
+    at first contact, computed in the pair's relative frame so it is correct when
+    both actors move. It is exact-integer (`math/big` for the few over-`int64`
+    intermediates, never floating point). It ships off because stop-at-contact is
+    a genuine behaviour change; the flag is armed before the high-speed movement
+    (a dash/charge) that needs it, and flipped on after validation — the product
+    law has no undo. With it off the movement pass is byte-identical to the plain
+    integration, so every settled golden is unchanged.
   - `FixedLoop` — a fixed-timestep accumulator that runs the sim at exactly
     `TickHz` regardless of wall-clock jitter, with a catch-up cap so a stalled
     process can never spiral.
