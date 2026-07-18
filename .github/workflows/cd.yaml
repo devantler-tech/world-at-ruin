@@ -639,6 +639,16 @@ jobs:
           tap="devantler-tech/homebrew-tap"
           content="$(base64 -w0 < Casks/world-at-ruin.rb)"
 
+          # A fork can use the same branch name, so never select a PR by ref
+          # alone. Ask GitHub for the tap owner's head and then fail closed by
+          # checking the returned PR's head repository and ref ourselves.
+          trusted_open_pr() {
+            gh api --method GET "repos/${tap}/pulls" \
+              -f state=open -f "head=devantler-tech:${branch}" -f per_page=100 \
+              | jq -r --arg tap "${tap}" --arg branch "${branch}" \
+                '[.[] | select(.head.repo.full_name == $tap and .head.ref == $branch)] | .[0].number // empty'
+          }
+
           base_sha="$(gh api "repos/${tap}/git/ref/heads/main" --jq '.object.sha')"
           # Tolerate a concurrent creator: two runs can both see the branch
           # missing and race this POST; the loser gets 422 and must NOT die
@@ -661,7 +671,7 @@ jobs:
           # run's convergence loop re-arms it (the recovery path below).
           # Fail-closed: writing new content while the PR stays armed is the
           # hazard, so a failed disarm aborts the job.
-          pre_pr="$(gh pr list --repo "${tap}" --head "${branch}" --state open --json number --jq '.[0].number // empty')"
+          pre_pr="$(trusted_open_pr)"
           if [ -n "${pre_pr}" ]; then
             pre_state="$(gh api "repos/${tap}/pulls/${pre_pr}")"
             if [ "$(printf '%s' "${pre_state}" | jq -r '.auto_merge != null')" = "true" ]; then
@@ -784,7 +794,7 @@ jobs:
               | sed -n 's/^  version "\(.*\)"$/\1/p' | head -1 || true
           }
 
-          if ! gh pr list --repo "${tap}" --head "${branch}" --state open --json number --jq '.[0].number // empty' | grep -q .; then
+          if ! trusted_open_pr | grep -q .; then
             # ALREADY DELIVERED is success, not a missing PR: a stale rerun
             # (an older tag re-run after the newer release's PR merged) finds
             # the branch content already on main and no open PR. GitHub
@@ -800,12 +810,12 @@ jobs:
             gh pr create --repo "${tap}" --base main --head "${branch}" \
               --title "chore(cask): update world-at-ruin to v${VERSION}" \
               --body "Automated cask update for World at Ruin. Programmed release path: check-gated auto-merge, no review needed." || true
-            if ! gh pr list --repo "${tap}" --head "${branch}" --state open --json number --jq '.[0].number // empty' | grep -q .; then
+            if ! trusted_open_pr | grep -q .; then
               echo "::error::no open cask PR on ${tap} for ${branch} after attempting to create one"
               exit 1
             fi
           fi
-          pr="$(gh pr list --repo "${tap}" --head "${branch}" --state open --json number --jq '.[0].number')"
+          pr="$(trusted_open_pr)"
           echo "cask PR is open on ${tap} (#${pr}, ${branch})"
 
           # Title convergence + arming. The title must state the version the
