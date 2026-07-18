@@ -78,6 +78,76 @@ func TestNegativeExtentCatchesNothing(t *testing.T) {
 	}
 }
 
+// --- Overflow and direction safety (review findings on #94) ---------------
+
+// TestOutOfWorldOriginDoesNotOverflow pins the fix for an int64 wrap found in
+// review: with the origin stored verbatim, `dx*dx` for a far-flung origin wrapped
+// mod 2⁶⁴ into a value below r², so a ONE MILLIMETRE circle 10 000 km away caught
+// the world centre. Bounding the origin restores horizontalDist2's documented
+// "in-bounds positions" precondition. The second case is the giveaway that the
+// old behaviour was wrap-dependent rather than a coincidence: a different wild
+// coordinate wrapped the other way.
+func TestOutOfWorldOriginDoesNotOverflow(t *testing.T) {
+	for _, x := range []int64{10_000_000_000_000, 4_611_686_018_427_387_903, -10_000_000_000_000} {
+		if CircleTelegraph(Vec3{X: x}, 1).Catches(Vec3{}) {
+			t.Errorf("a 1 mm circle at x=%d must not catch the world centre", x)
+		}
+	}
+	// The clamp must not disturb an origin that is already legal.
+	if !CircleTelegraph(Vec3{X: 5_000}, 1_000).Catches(Vec3{X: 5_500}) {
+		t.Error("bounding the origin must leave an in-world telegraph unchanged")
+	}
+}
+
+// TestOutOfWorldQueryPointIsNeverCaught pins the other half of the overflow
+// closure: a point outside the legal world box gets a correct false rather than
+// wrapped arithmetic. Entity positions are always clamped, so this never fires
+// for a real query.
+func TestOutOfWorldQueryPointIsNeverCaught(t *testing.T) {
+	huge := Vec3{X: 4_611_686_018_427_387_903, Z: 4_611_686_018_427_387_903}
+	for _, tg := range []Telegraph{
+		CircleTelegraph(Vec3{}, maxTelegraphExtentMM),
+		RingTelegraph(Vec3{}, 0, maxTelegraphExtentMM),
+		ConeTelegraph(Vec3{}, Vec3{X: 1_000}, maxTelegraphExtentMM, cos180Scaled),
+		RectTelegraph(Vec3{}, Vec3{X: 1_000}, maxTelegraphExtentMM, maxTelegraphExtentMM),
+	} {
+		if tg.Catches(huge) {
+			t.Errorf("kind %d must not catch a point outside the legal world", tg.Kind)
+		}
+	}
+}
+
+// TestOversizedFacingPreservesDirection pins the fix for a rotation bug found in
+// review: clipping a facing's components INDEPENDENTLY changes its heading —
+// (4e6, 0, 1e6) clipped to (2e6, 0, 1e6) points elsewhere — so the authoritative
+// shape would diverge from the client's normalised one, the exact desync this
+// file exists to prevent. The facing is now used verbatim, so an oversized
+// facing must resolve identically to its proportionally smaller twin.
+func TestOversizedFacingPreservesDirection(t *testing.T) {
+	// Same 4:1 heading, wildly different magnitudes (the large one would have
+	// been clipped to a 2:1 heading before the fix).
+	small := ConeTelegraph(Vec3{}, Vec3{X: 4_000, Z: 1_000}, 20_000, cos45Scaled)
+	huge := ConeTelegraph(Vec3{}, Vec3{X: 4_000_000_000, Z: 1_000_000_000}, 20_000, cos45Scaled)
+	probes := []Vec3{
+		{X: 10_000, Z: 2_500}, {X: 10_000}, {Z: 10_000}, {X: -10_000},
+		{X: 7_000, Z: 7_000}, {X: 5_000, Z: -5_000},
+	}
+	for _, p := range probes {
+		if small.Catches(p) != huge.Catches(p) {
+			t.Errorf("cone: an oversized facing rotated the shape at %v (small=%v, huge=%v)",
+				p, small.Catches(p), huge.Catches(p))
+		}
+	}
+	smallBeam := RectTelegraph(Vec3{}, Vec3{X: 4_000, Z: 1_000}, 20_000, 3_000)
+	hugeBeam := RectTelegraph(Vec3{}, Vec3{X: 4_000_000_000, Z: 1_000_000_000}, 20_000, 3_000)
+	for _, p := range probes {
+		if smallBeam.Catches(p) != hugeBeam.Catches(p) {
+			t.Errorf("beam: an oversized facing rotated the shape at %v (small=%v, huge=%v)",
+				p, smallBeam.Catches(p), hugeBeam.Catches(p))
+		}
+	}
+}
+
 // --- Ring -----------------------------------------------------------------
 
 func TestRingHasASafeHoleAndInclusiveBand(t *testing.T) {
