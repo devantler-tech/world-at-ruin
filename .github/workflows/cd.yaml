@@ -513,6 +513,23 @@ jobs:
     needs: [publish-release]
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Serialize the tap handoff ACROSS tags. The workflow-level concurrency
+    # group is per-tag so release builds can overlap, but this job mutates
+    # shared tap state (the evergreen branch, ONE PR, its title, its
+    # auto-merge arm), and every cross-run interleaving of
+    # disarm→write→retitle→arm is a race: a preflight disarm check is a
+    # TOCTOU the moment a sibling run can arm between the check and the
+    # content PUT (Codex round 4 on #197; rounds 1–3 each found one more
+    # such interleaving). One tap job at a time makes the sequence atomic
+    # with respect to sibling releases and kills the family at the root; the
+    # in-job convergence/disarm logic stays as defense against manual
+    # actors. Trade-off, so a red run here is not misdiagnosed: if THREE
+    # releases stack inside one tap-job runtime (~seconds), GitHub cancels
+    # the middle PENDING job — that cancellation means "superseded", and the
+    # newest run delivers its content via the monotonic compare-and-swap.
+    concurrency:
+      group: homebrew-tap-cask-world-at-ruin
+      cancel-in-progress: false
     permissions:
       contents: read # read the published release asset
     steps:
