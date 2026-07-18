@@ -103,14 +103,33 @@ Consequences:
 - **No channels — the kind byte discriminates.** Control and replication multiplex on the single
   ordered stream; `KindSnapshot` vs `KindSnapshotDelta` (and future kinds) is the demultiplexer.
   The codec already refuses unknown kinds, fail-closed.
+- **The transport enforces a hard inbound message-size limit.** WebSocket libraries assemble a
+  complete message before the codec sees a byte, so `wire.Decode`'s entity-count caps run too late
+  to bound memory on their own. The socket child sets a read limit at the WebSocket layer, sized
+  to the largest *valid* wire message for the direction — client→server messages (control/input
+  kinds) are small, so the server's inbound cap is kilobytes, never the codec's multi-megabyte
+  server→client ceiling.
 - **The loss-tolerance design maps onto backpressure.** On TCP, deltas are never *lost* — but a
-  slow or stalled client backs the stream up. The rule the socket child implements: the
-  per-observer send queue is **bounded**; on overflow the server drops the queued deltas and
-  replaces them with one fresh `KindSnapshot` resync. Never unbounded buffering in the zone
-  process, and never a mid-session kick for slowness (the distribution ADR's
-  never-kicked-mid-session law).
-- **Auth rides the upgrade.** The Nakama session ticket accompanies the WebSocket upgrade request
-  (the meta tier authenticates; the zone server verifies the ticket before admitting the observer).
+  slow or stalled client backs the stream up. The rules the socket child implements: the
+  per-observer send queue is **bounded** — on overflow the server drops the queued deltas and
+  replaces them with one fresh `KindSnapshot` resync — and the socket carries **write and idle
+  deadlines**: a peer that does not drain within its deadline is **disconnected**, releasing the
+  fd, kernel buffers and per-observer state. Never unbounded buffering in the zone process. (The
+  distribution ADR's never-kicked-mid-session law forbids update/protocol-*compatibility* kicks;
+  it does not oblige the server to host a non-draining socket. A dropped client loses nothing —
+  state is server-authoritative, and reconnecting lands on the normal join/`KindSnapshot` path.)
+- **TLS identity is by DNS name, never by raw address.** Certificates bind hostnames — a
+  dynamically allocated *port* never touches certificate identity, but a raw node IP would. The
+  handoff therefore always hands the client a **DNS name plus port**: nodes carry stable names
+  under a zone-edge domain, covered by a certificate the platform's existing issuance
+  (cert-manager) provisions and mounts into the GameServer. Certificate verification stays **on** —
+  an implementation pressured toward `verify=false` is a defect, and this provisioning plan is a
+  prerequisite the socket/deploy children build, not an afterthought.
+- **Admission requires an allocation-scoped token, not just a session.** A Nakama session ticket
+  proves an account, not that *this* account was allocated to *this* GameServer — with directly
+  reachable ports, session-only admission would let any signed-in user connect to arbitrary
+  instances. The upgrade therefore carries a **short-lived allocation token** minted at the
+  Agones-allocation/handoff step and verified by the zone server before the observer is admitted.
   Mechanism detail belongs to the socket child and the Nakama child.
 - **One transport discipline across tiers.** Nakama's own realtime API is WebSocket; client
   networking, platform ingress, and TLS handling follow a single pattern instead of two.
