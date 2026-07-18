@@ -651,8 +651,12 @@ jobs:
             # Cannot diff — assume visual so evidence is never silently skipped.
             echo "visual=true" >> "$GITHUB_OUTPUT"; exit 0
           fi
+          # `tools` is in the list on purpose: a change to the capture tool
+          # itself must trigger a capture, because running it IS how the tool is
+          # validated. Omitting it meant the PR that introduced this job skipped
+          # its own job and proved nothing.
           if git diff --name-only "$BASE_SHA"...HEAD \
-              | grep -qE '^client/(scripts|shaders|assets|scenes|recipes|abilities)/'; then
+              | grep -qE '^client/(scripts|shaders|assets|scenes|recipes|abilities|tools)/'; then
             echo "visual=true" >> "$GITHUB_OUTPUT"
           else
             echo "visual=false" >> "$GITHUB_OUTPUT"
