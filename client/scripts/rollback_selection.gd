@@ -408,37 +408,59 @@ static func _is_fetchable_url(v: Variant) -> bool:
 	const SCHEME := "https://"
 	if not url.begins_with(SCHEME) or url.length() <= SCHEME.length():
 		return false
-	# There must be an actual AUTHORITY. `https:///bad.pck` clears "something after
-	# the scheme", and so do `https://?x` and `https://#x` if the authority is only
-	# taken up to the first `/` — a query or fragment delimiter ends it too. Such an
-	# entry is unfetchable yet can carry the highest version and displace a usable one.
+	# Everything must be printable ASCII: control characters and spaces cannot appear
+	# in a URL, and a non-ASCII host would need IDNA encoding the publisher should
+	# have done.
+	for i in url.length():
+		var c := url.unicode_at(i)
+		if c <= 32 or c >= 127:
+			return false
 	var rest: String = url.substr(SCHEME.length())
+	# The authority ends at the first path, query or fragment delimiter.
 	var authority: String = rest
 	for delimiter: String in ["/", "?", "#"]:
 		var at: int = authority.find(delimiter)
 		if at >= 0:
 			authority = authority.substr(0, at)
-	if authority.is_empty():
-		return false
-	# An authority is not a host: `https://@/x` is userinfo with no host, and
-	# `https://:443/x` is a port with no host. Strip both and require what remains.
+	# Optional userinfo.
 	var at_sign: int = authority.rfind("@")
 	if at_sign >= 0:
 		authority = authority.substr(at_sign + 1)
+	# Optional port, which must actually be a port.
 	var colon: int = authority.rfind(":")
 	if colon >= 0:
-		# A colon promises a PORT, so it must actually be one: `host:bad` and `host:`
-		# are unfetchable, and stripping the suffix would leave a plausible-looking
-		# host and let the entry displace a usable target.
-		if not UpdateDecision.is_unsigned_digits(authority.substr(colon + 1)):
+		var port: String = authority.substr(colon + 1)
+		if not UpdateDecision.is_unsigned_digits(port) or port.length() > 5:
 			return false
 		authority = authority.substr(0, colon)
-	if authority.is_empty():
+	return _is_host(authority)
+
+
+## Whether `host` is a plausible registered name or IPv4 literal: a non-empty,
+## dot-separated set of labels, each of which is alphanumerics and hyphens only and
+## neither starts nor ends with a hyphen.
+##
+## This is a POSITIVE grammar — what a host may be — rather than a list of the
+## malformed shapes seen so far. That distinction is the point: this check was found
+## one notch too permissive in four consecutive review rounds (empty, then
+## `https:///`, then `https://:443` and `https://@/`, then `host:bad`), because each
+## fix rejected the reported counterexample and left the next layer unconsidered.
+## Enumerating what is ALLOWED terminates; enumerating what is forbidden does not.
+static func _is_host(host: String) -> bool:
+	if host.is_empty() or host.length() > 253:
 		return false
-	for i in url.length():
-		var c := url.unicode_at(i)
-		if c <= 32 or c == 127: # control characters and spaces
+	for label: String in host.split("."):
+		if label.is_empty() or label.length() > 63:
 			return false
+		if label.begins_with("-") or label.ends_with("-"):
+			return false
+		for i in label.length():
+			var c := label.unicode_at(i)
+			var is_digit := c >= 48 and c <= 57
+			var is_lower := c >= 97 and c <= 122
+			var is_upper := c >= 65 and c <= 90
+			if not (is_digit or is_lower or is_upper or c == 45): # 45 == '-'
+				return false
 	return true
 
 
