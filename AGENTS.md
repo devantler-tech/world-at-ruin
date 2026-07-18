@@ -322,9 +322,9 @@ everything shipped afterwards is held to.
   minimal spawn/update/despawn delta, its own golden pinning the state stream) and the
   **versioned wire codec** that frames that payload (`server/wire/` — transport-agnostic binary
   encoding, fail-closed decode, committed hex goldens pinning the byte layout for the future
-  client-side decoder), with the socket transport (its selection is a deliberate ADR-shaped
-  decision, not settled here) and the Agones/Nakama layers arriving as later children of the
-  server-foundation epic (#4); `deploy/` (platform manifests) arrives later per the roadmap.
+  client-side decoder), with the socket transport settled by ADR as **WebSocket over TLS**
+  (`docs/design/zone-transport.md` — one codec message per binary frame) and the Agones/Nakama
+  layers arriving as later children of the server-foundation epic (#4); `deploy/` (platform manifests) arrives later per the roadmap.
 - **Run:** `godot client` (macOS: `/Applications/Godot.app/Contents/MacOS/Godot client`).
 - **Validate before every PR:**
   `godot --headless --editor --quit --path client && godot --headless --quit-after 120 --path client` —
