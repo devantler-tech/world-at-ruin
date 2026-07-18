@@ -21,6 +21,19 @@ const SHRINE_CLEAR_RADIUS := 14.0 ## Kept nearly flat and free of ruins.
 ## minute's walk away. The terrain DIPS below the system's floors in its
 ## footprint (a heightfield cannot have holes; the massif is the
 ## above-ground rock), and the anti-embed net stands down inside.
+## Cosmetic ground cover strewn between the landmarks (see _scatter_foliage).
+## Placement comes from [FoliageGen]; these are only HOW MUCH and HOW SPARSE.
+const FOLIAGE_COUNT := 900
+const FOLIAGE_MARGIN := 6.0 ## Inset from the world edge, like the ruin scatter.
+const FOLIAGE_MIN_SEP := 1.6 ## Metres between props, so scenery never stacks.
+## Cleared around each ruin site's centre, so a prop never sits inside a
+## structure's immediate footprint. Deliberately smaller than a colonnade's full
+## reach: scrub growing AMONG distant fallen columns is wanted, not a bald ring.
+const FOLIAGE_RUIN_CLEARANCE := 5.0
+## Offset from WORLD_SEED so foliage has its own deterministic stream and never
+## disturbs the ruin/cave/terrain draws.
+const FOLIAGE_SEED_OFFSET := 7
+
 const CAVE_SITE := Vector2(-56.0, -20.0)
 const CAVE_SEED := 42
 const CAVE_FLOOR_SKIRT := 0.55 ## How far terrain dips under cave floors.
@@ -71,6 +84,9 @@ func _ready() -> void:
 	_build_starter_cave()
 	_scatter_ruins()
 	_build_shrine()
+	# LAST: foliage keeps out of every landmark, so it needs the ruin sites and
+	# the shrine to already exist in the tree.
+	_scatter_foliage()
 
 func _process(delta: float) -> void:
 	_time += delta
@@ -382,6 +398,126 @@ func _solid(mesh: Mesh, mat: Material) -> StaticBody3D:
 	shape.shape = mesh.create_convex_shape()
 	body.add_child(shape)
 	return body
+
+## Strew cosmetic ground cover between the landmarks, so the Ashfall Reach reads
+## as a ruined, strewn place rather than bare terrain between monuments.
+## Placement is delegated WHOLE to [FoliageGen]: deterministic from a fixed seed,
+## keep-out aware, and horizontal-only by construction (a prop carries a look and
+## nothing else), so the same world grows the same scrub every boot exactly as it
+## raises the same ruins.
+##
+## Rendered as ONE MultiMesh per kind, with NO collision: hundreds of props cost
+## a handful of draw calls, and a wanderer walks through scrub instead of being
+## snagged on it. It also keeps foliage clear of the ruin structural scan — a
+## MultiMeshInstance3D is not a scriptless Node3D.
+func _scatter_foliage() -> void:
+	var placements := FoliageGen.scatter({
+		"seed": WORLD_SEED + FOLIAGE_SEED_OFFSET,
+		"count": FOLIAGE_COUNT,
+		"half_extent": SIZE / 2.0,
+		"margin": FOLIAGE_MARGIN,
+		"min_sep": FOLIAGE_MIN_SEP,
+		"keep_outs": _foliage_keep_outs(),
+		"height_sampler": surface_height_at,
+	})
+	var by_kind: Array = []
+	for _slot in FoliageGen.KIND_COUNT:
+		by_kind.append([])
+	for placement: Dictionary in placements:
+		var kind: int = placement["kind"]
+		if FoliageGen.is_valid_kind(kind):
+			(by_kind[kind] as Array).append(placement)
+	for kind in FoliageGen.KIND_COUNT:
+		_build_foliage_batch(kind, by_kind[kind] as Array)
+
+
+## Every circle foliage must stay out of: the shrine clearing, each ruin site's
+## immediate footprint, and the starter cave's cover discs padded EXACTLY as
+## [method cave_protects] pads them — so scenery never buries a landmark, and
+## never grows over the cave mouth.
+func _foliage_keep_outs() -> Array:
+	var circles: Array = [[Vector2.ZERO, SHRINE_CLEAR_RADIUS + 2.0]]
+	for child in get_children():
+		# Ruin sites are the scriptless native Node3Ds (Godot uniquifies their
+		# duplicate names by CLASS), so match structurally — the same rule the
+		# world regression test uses to find them.
+		if child.get_class() != "Node3D" or child.get_script() != null:
+			continue
+		if str(child.name) == "WardensShrine":
+			continue
+		var site := child as Node3D
+		circles.append([Vector2(site.position.x, site.position.z), FOLIAGE_RUIN_CLEARANCE])
+	for cover: Array in _cave_cover:
+		circles.append([cover[0] as Vector2, (cover[1] as float) + 3.0])
+	return circles
+
+
+## One MultiMesh holding every prop of `kind`, instanced at its placement.
+func _build_foliage_batch(kind: int, items: Array) -> void:
+	if items.is_empty():
+		return
+	var mesh := _foliage_mesh(kind)
+	# Props are modelled centred on their own origin, so lift each one to rest ON
+	# the sampled ground — slightly sunk, so nothing appears to hover.
+	var lift := mesh.get_aabb().size.y * 0.4
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.mesh = mesh
+	mm.instance_count = items.size()
+	for i in items.size():
+		var placement: Dictionary = items[i]
+		var pos: Vector3 = placement["pos"]
+		var prop_scale := float(placement["scale"])
+		var basis := Basis(Vector3.UP, float(placement["yaw"])).scaled(Vector3.ONE * prop_scale)
+		mm.set_instance_transform(i, Transform3D(basis, Vector3(pos.x, pos.y + lift * prop_scale, pos.z)))
+	var mmi := MultiMeshInstance3D.new()
+	mmi.name = "Foliage_%d" % kind
+	mmi.multimesh = mm
+	mmi.material_override = _foliage_material(kind)
+	add_child(mmi)
+
+
+## The placeholder look of each cosmetic kind — primitives in the same spirit as
+## the ruin pieces. Art depth is a later phase (#14); these read as ground cover
+## at a glance without pretending to be final art.
+func _foliage_mesh(kind: int) -> Mesh:
+	match kind:
+		FoliageGen.Kind.ASH_SHRUB:
+			var bush := SphereMesh.new()
+			bush.radius = 0.34
+			bush.height = 0.62
+			bush.radial_segments = 6
+			bush.rings = 3
+			return bush
+		FoliageGen.Kind.DEAD_GRASS:
+			var tuft := PrismMesh.new()
+			tuft.size = Vector3(0.34, 0.5, 0.06)
+			return tuft
+		FoliageGen.Kind.BONE_PILE:
+			var bones := BoxMesh.new()
+			bones.size = Vector3(0.5, 0.14, 0.36)
+			return bones
+		_:
+			var stone := BoxMesh.new()
+			stone.size = Vector3(0.42, 0.24, 0.34)
+			return stone
+
+
+## Ash-bleached scenery colours, drawn from the world's existing palette.
+func _foliage_material(kind: int) -> StandardMaterial3D:
+	var mat := StandardMaterial3D.new()
+	mat.roughness = 0.95
+	match kind:
+		FoliageGen.Kind.ASH_SHRUB:
+			mat.albedo_color = Color(0.27, 0.26, 0.21)
+		FoliageGen.Kind.DEAD_GRASS:
+			mat.albedo_color = Color(0.44, 0.40, 0.27)
+		FoliageGen.Kind.BONE_PILE:
+			mat.albedo_color = Color(0.72, 0.70, 0.62)
+		_:
+			mat.albedo_color = COL_ROCK
+	return mat
+
 
 func _build_shrine() -> void:
 	var shrine := Node3D.new()
