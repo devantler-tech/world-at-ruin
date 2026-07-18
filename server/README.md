@@ -73,15 +73,33 @@ zone/dungeon server:
     the authoritative path never calls a trig function. A fourth committed golden
     pins the demo scenario's resolution stream. Ascending-ID and read-only —
     never part of `Step`, so it cannot move the movement golden.
+- **`wire/`** — the **versioned wire codec**: the transport-agnostic binary
+  encoding of the replication payload (the full join snapshot and the per-tick
+  delta stream). Every message opens with an explicit protocol version — product
+  law requires backward-compatible protocols, so the format is born versioned and
+  the decoder refuses anything it does not speak. The layout is canonical
+  (fixed-width little-endian, one byte encoding per message value) and the
+  decoder fails closed on untrusted bytes: counts are capped before any
+  allocation, every read is bounds-checked, truncated or trailing bytes are
+  refused, and the sim's ascending-ID list contract is enforced — never
+  silently repaired — on both encode and decode. Committed hex goldens pin the
+  exact byte layout (the fixture the client-side decoder will be written
+  against), and a stream golden pins the codec over the live demo scenario.
+  It exists as a pinned contract *before* transport selection, so the socket
+  child builds against a settled format instead of inventing one.
 - **`cmd/zone/`** — a runnable skeleton server. It boots the demo zone and either
   runs a fixed number of deterministic ticks (printing the state hash) or drives
-  the loop from the wall clock.
+  the loop from the wall clock. With `-replicate` it also runs the full
+  replication pipeline a transport will carry — per-tick tracker delta →
+  wire-encode → decode → verify — and prints the payload sizes (the baseline for
+  future bandwidth evidence).
 
 ```sh
 cd server
 go run ./cmd/zone                     # 600 deterministic ticks, then the state hash
 go run ./cmd/zone -ticks 1800         # a different fixed count
 go run ./cmd/zone -realtime -duration 3s   # drive the fixed loop from real time
+go run ./cmd/zone -replicate 1        # also wire-encode observer 1's delta stream
 ```
 
 ## What is deliberately not here yet
@@ -89,9 +107,10 @@ go run ./cmd/zone -realtime -duration 3s   # drive the fixed loop from real time
 Later children of the server-foundation epic
 ([#4](https://github.com/devantler-tech/world-at-ruin/issues/4), the first child
 of the Phase 1 epic [#8](https://github.com/devantler-tech/world-at-ruin/issues/8)):
-the networking **transport** and client prediction/reconciliation (the snapshot
-*payload* above is ready; the wire encoding, sockets, and the client-side apply
-of the spawn/update/despawn deltas are the next layer), real navmesh geometry,
+the socket **transport** and client prediction/reconciliation (the snapshot
+*payload* and its wire encoding above are ready; transport selection, sockets,
+and the client-side apply of the spawn/update/despawn deltas are the next
+layer), real navmesh geometry,
 the Agones SDK integration and GameServer health, the Nakama meta tier, and
 Postgres/CNPG persistence. The tick core, its capsule-vs-capsule separation, and
 its area-of-interest and snapshot queries land first because everything else is
