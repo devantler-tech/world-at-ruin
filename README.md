@@ -20,25 +20,43 @@ wins.
 
 ## Play it
 
-**Without the editor (macOS):** every `main` build exports an ad-hoc-signed
-universal `World at Ruin.app` — grab the `WorldAtRuin-macOS-universal` artifact
-from the latest
-[`main` CI run](https://github.com/devantler-tech/world-at-ruin/actions/workflows/ci.yaml?query=branch%3Amain+event%3Apush)
-(use that filtered list, not a PR run — PR artifacts carry unmerged code).
-Unzip the download **twice** (GitHub wraps the artifact in an outer ZIP; inside
-it is `WorldAtRuin.zip`, which contains the app), then right-click → **Open**
-the first time (the app is ad-hoc signed, not notarized, so Gatekeeper asks
-once). Or export it yourself with the `macOS` preset in
-`client/export_presets.cfg` (needs the 4.7.1 export templates installed in the
-Godot editor).
+**macOS only for now** — one universal build covers Apple Silicon and Intel, and needs macOS 11 or
+newer. Windows and Linux builds aren't exported yet.
 
-**From the project** — requires [Godot 4.7+](https://godotengine.org) (macOS: `brew install --cask godot`):
+**Homebrew** is the easiest way in, and the only one that keeps you on the newest build:
+
+```sh
+brew tap devantler-tech/tap
+brew trust devantler-tech/tap
+brew install --cask world-at-ruin
+```
+
+From then on `brew upgrade --cask world-at-ruin` pulls each new release. (`brew trust` matters only
+if your Homebrew is set to require trusting third-party taps — running it either way is harmless.)
+
+**Or download the app yourself:** take `WorldAtRuin-<version>-macOS-universal.zip` from the
+[latest release](https://github.com/devantler-tech/world-at-ruin/releases/latest), unzip it, and
+move `World at Ruin.app` into `/Applications`. The build is ad-hoc signed rather than notarized,
+so macOS quarantines the download and refuses to open it — clear that flag once and it starts
+normally:
+
+```sh
+xattr -dr com.apple.quarantine "/Applications/World at Ruin.app"
+```
+
+The Homebrew cask runs exactly that for you, which is why it needs no extra step.
+
+**Or run it from source** — requires [Godot 4.7+](https://godotengine.org)
+(macOS: `brew install --cask godot`):
 
 ```sh
 git clone https://github.com/devantler-tech/world-at-ruin.git
 cd world-at-ruin
 godot client   # or: /Applications/Godot.app/Contents/MacOS/Godot client
 ```
+
+To build your own `.app` instead, export with the `macOS` preset in `client/export_presets.cfg`
+(needs the 4.7.1 export templates installed in the Godot editor).
 
 **Controls:** `WASD` move · `Shift` sprint · `Space` jump · `E` interact · mouse look ·
 `C` reshape character · `L`/`F1` dev log · `Esc` release mouse.
