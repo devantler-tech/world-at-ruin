@@ -708,6 +708,7 @@ jobs:
     if: github.event_name == 'pull_request'
     outputs:
       visual: ${{ steps.check.outputs.visual }}
+      first_run: ${{ steps.check.outputs.first_run }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -739,6 +740,21 @@ jobs:
             echo "visual=true" >> "$GITHUB_OUTPUT"
           else
             echo "visual=false" >> "$GITHUB_OUTPUT"
+          fi
+          # First-run UI is judged separately, because the ordinary capture
+          # SEEDS A SAVE so the creator is not in shot — which means a PR
+          # changing the creator gets frames of everything except the surface it
+          # changed, and passes. This narrower set decides whether the extra
+          # first-run pass is worth its minute; keeping it narrow is what stops
+          # the default player-visible PR paying for it (#145).
+          #
+          # main.gd is in the list because it decides WHEN the creator opens,
+          # and tools/ because running the capture tool is how it is validated.
+          if git diff --name-only "$BASE_SHA"...HEAD \
+              | grep -qE '^client/scripts/(character_creator|character_factory|main)\.gd$|^client/(recipes|tools)/'; then
+            echo "first_run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "first_run=false" >> "$GITHUB_OUTPUT"
           fi
 
   frame-capture:
@@ -830,6 +846,31 @@ jobs:
           if grep -qE "SCRIPT ERROR|^ERROR" capture.filtered.log; then
             echo "::error::errors during capture — frames may not depict a healthy world"
             grep -nE "SCRIPT ERROR|^ERROR" capture.filtered.log | head -20
+            exit 1
+          fi
+      - name: Capture the first-run UI
+        # Only when the PR touches it. The ordinary capture deliberately seeds a
+        # save so the creator is NOT in frame, so without this a creator change
+        # ships with evidence that does not depict it (#145).
+        if: needs.detect-visual-changes.outputs.first_run == 'true'
+        run: |
+          set -o pipefail
+          # The save must be ABSENT here — its absence is precisely what makes
+          # the creator open. Point at a path inside the run's temp dir that was
+          # never created; the tool fails closed if the creator does not appear,
+          # so a stray save cannot silently turn this back into a world shot.
+          WAR_SHOT_DIR="${RUNNER_TEMP}/shots" \
+          WAR_SCENARIO=first_run \
+          WAR_SAVE_PATH="${RUNNER_TEMP}/no_such_save.json" \
+            godot --path client res://tools/frame_capture.tscn 2>&1 | tee first-run.log
+          if ! grep -q "CAPTURE PASS" first-run.log; then
+            echo "::error::first-run capture did not report PASS — see log"; tail -40 first-run.log; exit 1
+          fi
+          grep -vE "timeout waiting for fence|drivers/metal/rendering_device_driver_metal" \
+            first-run.log > first-run.filtered.log || true
+          if grep -qE "SCRIPT ERROR|^ERROR" first-run.filtered.log; then
+            echo "::error::errors during the first-run capture"
+            grep -nE "SCRIPT ERROR|^ERROR" first-run.filtered.log | head -20
             exit 1
           fi
       - name: Frames actually exist
