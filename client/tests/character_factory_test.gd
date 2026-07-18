@@ -52,6 +52,12 @@ func _ready() -> void:
 		if rest_origin.distance_to(pose_origin) > 0.001:
 			_fail("%s pose diverged from rest (non-TRS rest?): pose=%s rest=%s" % [hand_name, pose_origin, rest_origin])
 			return
+		# pose == rest alone is satisfied by doing NOTHING: an untouched T-pose
+		# is perfectly self-consistent. Assert the arm actually came down, or a
+		# regression that silently drops the hang would still pass above.
+		if pose_origin.y > 1.0:
+			_fail("%s still in T-pose (arm never hung): y=%f" % [hand_name, pose_origin.y])
+			return
 
 	# Validation must fail loudly, not half-apply.
 	var kit_probe := CharacterFactory.build({ "version": 1 })

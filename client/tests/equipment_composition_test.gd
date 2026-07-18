@@ -89,8 +89,8 @@ func _ready() -> void:
 	var pants_girthy := _equipped_mesh(girthy, "pants_wool")
 	CharacterFactory.find_skeleton(plain).force_update_all_bone_transforms()
 	CharacterFactory.find_skeleton(girthy).force_update_all_bone_transforms()
-	var skin_plain := CharacterGen._cpu_skin(CharacterFactory.find_skeleton(plain), pants_plain)
-	var skin_girthy := CharacterGen._cpu_skin(CharacterFactory.find_skeleton(girthy), pants_girthy)
+	var skin_plain := CharacterFactory.cpu_skin(CharacterFactory.find_skeleton(plain), pants_plain)
+	var skin_girthy := CharacterFactory.cpu_skin(CharacterFactory.find_skeleton(girthy), pants_girthy)
 	if skin_plain == skin_girthy:
 		_fail("thigh girth did not deform the pants — equipment skin is not following the skeleton")
 		return
