@@ -159,7 +159,7 @@ static func _select_verified(catalog: Array, state: Dictionary) -> Dictionary:
 			skipped += 1
 			continue
 		var target: Dictionary = raw
-		if not _is_wellformed(target):
+		if not is_wellformed(target):
 			skipped += 1
 			continue
 		considered += 1
@@ -349,6 +349,15 @@ static func _is_runnable(target: Dictionary, server_min: int, server_max: int, s
 ## Whether a catalogue entry carries every field eligibility is decided from, each
 ## well-typed. Entries failing this are skipped, never trusted: an entry missing its
 ## capability data cannot be shown to be safe, and this library never assumes.
+##
+## PUBLIC because the FORWARD path needs the identical question. [UpdateDecision]
+## must not count a target as rollback cover that this selector would later skip,
+## and every field checked here is STATIC manifest data — knowable when the update
+## decision is made, unlike the time-varying runnability in [method _is_runnable].
+## Sharing the predicate rather than mirroring it is what stops the two paths
+## drifting apart, the same reason this file validates fields with
+## [UpdateDecision]'s own [method UpdateDecision.is_int_id] / [method
+## UpdateDecision.is_version] rules instead of its own copies.
 ## Every field is validated with the SAME rules the forward path uses
 ## ([method UpdateDecision.is_int_id], [method UpdateDecision.is_version]), so a real
 ## signed manifest can never be readable by the updater and unreadable by recovery.
@@ -359,7 +368,7 @@ static func _is_runnable(target: Dictionary, server_min: int, server_max: int, s
 ##   * A version must be a genuine dotted-integer version. `compare_versions` coerces
 ##     unparseable components to 0, so accepting `"99.bad"` would let a nonsense entry
 ##     win the ordering and be handed to the bootstrap as a recovery target.
-static func _is_wellformed(target: Dictionary) -> bool:
+static func is_wellformed(target: Dictionary) -> bool:
 	if not UpdateDecision.is_version(target.get("version")):
 		return false
 	if not (UpdateDecision.is_int_id(target.get("read_ceiling")) and UpdateDecision.is_int_id(target.get("save_capability"))):

@@ -258,13 +258,18 @@ static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 ## quarantined versions before it ever tests reachability, so counting one as cover
 ## admits a pack whose only fallback is a build already proven broken.
 ##
-## SCOPE, stated honestly. This proves REACHABILITY (can a retained target read the
-## save the candidate will write) and excludes what is known-bad NOW. It does not
-## prove RUNNABILITY — `RollbackSelection` also requires a target to speak the live
-## protocol range and fit the installed shell, and those are recovery-TIME facts
-## that can change between this decision and a failed boot, so no forward check can
-## settle them. The guarantee here is therefore "never knowingly admit a pack with
-## no readable fallback", not "recovery is guaranteed to succeed later".
+## SCOPE, stated honestly — the line is STATIC vs TIME-VARYING, not
+## reachability vs everything else. Everything knowable from the manifest when the
+## decision is made is checked here, via the selector's own predicates:
+## well-formedness (artifact metadata, `speaks_protocol`/`shell_compat` SHAPE),
+## reachability on both axes, distinctness from the candidate, and the quarantine
+## ledger. What is NOT checked is the time-varying half of
+## `RollbackSelection._is_runnable`: whether a target's protocol range still
+## overlaps the LIVE server's, and whether it fits the shell installed at recovery
+## time. Both can change between this decision and a failed boot, so a forward
+## check would assert something it cannot know. The guarantee is therefore "never
+## admit a pack whose fallback is already unselectable or unreadable", not
+## "recovery is guaranteed to succeed later".
 ##
 ## Fail-closed throughout: a missing, non-array or empty catalogue, an entry that
 ## is not a dictionary, an unverifiable version, an unverifiable `read_ceiling` /
@@ -290,15 +295,17 @@ static func _capability_covered(m: Dictionary, capability: int, save_schema: int
 		if not (entry is Dictionary):
 			continue
 		var t: Dictionary = entry
-		# An unidentifiable target cannot be proven distinct from the candidate.
-		if not is_version(t.get("version")):
+		# SELECTABILITY first, using RollbackSelection's OWN predicate rather than a
+		# copy of it. An entry lacking artifact metadata, `speaks_protocol` or
+		# `shell_compat` is one the selector will skip whenever recovery runs, so
+		# counting it here would admit a pack whose only fallback is unselectable.
+		# Sharing the predicate is what keeps the two paths from drifting apart.
+		if not RollbackSelection.is_wellformed(t):
 			continue
 		var version := str(t["version"])
 		if compare_versions(version, candidate_version) >= 0:
 			continue
 		if _in_ledger(ledger, version):
-			continue
-		if not (is_int_id(t.get("read_ceiling")) and is_int_id(t.get("save_capability"))):
 			continue
 		if int(t["read_ceiling"]) >= save_schema and int(t["save_capability"]) >= capability:
 			return true
@@ -308,9 +315,11 @@ static func _capability_covered(m: Dictionary, capability: int, save_schema: int
 ## Whether `version` appears in a verified quarantine ledger. Comparison is NUMERIC
 ## (via [method compare_versions]) so an alias such as "0.1.15.0" matches the
 ## quarantined "0.1.15" — mirroring `RollbackSelection.is_quarantined`'s own
-## numeric dedup. Implemented here rather than delegating, because
-## `RollbackSelection` already depends on this class and a mutual reference between
-## two load-bearing libraries is not worth the four lines it would save.
+## numeric dedup. Kept local rather than delegating only because the ledger has
+## already been verified above, so the shared entry point's fail-closed
+## revalidation would be redundant work on every entry — not to avoid depending on
+## `RollbackSelection`, which this file now does deliberately for
+## [method RollbackSelection.is_wellformed].
 static func _in_ledger(ledger: Array, version: String) -> bool:
 	for raw: Variant in ledger:
 		if compare_versions(str(raw), version) == 0:

@@ -29,6 +29,23 @@ func _base_manifest() -> Dictionary:
 	}
 
 
+# A WELL-FORMED rollback catalogue entry, carrying every field
+# RollbackSelection.is_wellformed requires — the forward gate shares that exact
+# predicate, so a shorthand fixture would be skipped as unselectable rather than
+# testing what it looks like it tests.
+func _target(version: String, capability: int, read_ceiling: int) -> Dictionary:
+	return {
+		"version": version,
+		"url": "https://updates.example/pack-%s.pck" % version,
+		"sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+		"size": 0,
+		"read_ceiling": read_ceiling,
+		"save_capability": capability,
+		"speaks_protocol": {"min": 1, "max": 1},
+		"shell_compat": {"min": "0.1.0", "max": "0.1.999"},
+	}
+
+
 func _installed_current() -> Dictionary:
 	return {"shell_version": "0.1.14", "pack_version": "0.1.14", "save_schema": 1, "save_capability": 1, "protocol": 1}
 
@@ -358,7 +375,7 @@ func _test_capability_raise_needs_a_readable_rollback_target() -> void:
 
 	# A catalogue that cannot read the raised capability is no better than none.
 	var short_target: Dictionary = raising.call()
-	short_target["rollback_targets"] = [{"version": "0.1.14", "save_capability": 4, "read_ceiling": 9}]
+	short_target["rollback_targets"] = [_target("0.1.14", 4, 9)]
 	_expect(_installed_current(), short_target, UpdateDecision.SHELL_UPDATE, "a rollback target one capability short still routes to the shell tier")
 
 	# A malformed entry must not be counted as cover (fail closed).
@@ -372,7 +389,7 @@ func _test_capability_raise_needs_a_readable_rollback_target() -> void:
 	# entry that recovery itself would reject. An entry missing read_ceiling
 	# entirely is equally unprovable.
 	var low_ceiling: Dictionary = raising.call()
-	low_ceiling["rollback_targets"] = [{"version": "0.1.14", "save_capability": 9, "read_ceiling": 0}]
+	low_ceiling["rollback_targets"] = [_target("0.1.14", 9, 0)]
 	_expect(_installed_current(), low_ceiling, UpdateDecision.SHELL_UPDATE, "capability cover with a read ceiling below the save schema is not cover")
 	var no_ceiling: Dictionary = raising.call()
 	no_ceiling["rollback_targets"] = [{"version": "0.1.14", "save_capability": 9}]
@@ -382,13 +399,13 @@ func _test_capability_raise_needs_a_readable_rollback_target() -> void:
 	# that version is quarantined, so recovery will skip it. A numeric ALIAS of the
 	# candidate ("0.1.15.0") must be excluded on the same grounds.
 	var self_cover: Dictionary = raising.call()
-	self_cover["rollback_targets"] = [{"version": "0.1.15", "save_capability": 9, "read_ceiling": 9}]
+	self_cover["rollback_targets"] = [_target("0.1.15", 9, 9)]
 	_expect(_installed_current(), self_cover, UpdateDecision.SHELL_UPDATE, "the candidate pack is not its own rollback cover")
 	var alias_cover: Dictionary = raising.call()
-	alias_cover["rollback_targets"] = [{"version": "0.1.15.0", "save_capability": 9, "read_ceiling": 9}]
+	alias_cover["rollback_targets"] = [_target("0.1.15.0", 9, 9)]
 	_expect(_installed_current(), alias_cover, UpdateDecision.SHELL_UPDATE, "a numeric alias of the candidate is not rollback cover either")
 	var newer_cover: Dictionary = raising.call()
-	newer_cover["rollback_targets"] = [{"version": "0.1.16", "save_capability": 9, "read_ceiling": 9}]
+	newer_cover["rollback_targets"] = [_target("0.1.16", 9, 9)]
 	_expect(_installed_current(), newer_cover, UpdateDecision.SHELL_UPDATE, "a target NEWER than the candidate is not a rollback either")
 
 	# An unidentifiable target cannot be proven distinct from the candidate.
@@ -404,19 +421,19 @@ func _test_capability_raise_needs_a_readable_rollback_target() -> void:
 	raises_writes["save_schema"] = {"min": 1, "writes": 3, "capability": 5}
 	var inst_wide := _installed_current()
 	inst_wide["save_reads_max"] = 9 # writes 3 stays inside the installed ceiling
-	raises_writes["rollback_targets"] = [{"version": "0.1.14", "save_capability": 9, "read_ceiling": 2}]
+	raises_writes["rollback_targets"] = [_target("0.1.14", 9, 2)]
 	_expect(inst_wide, raises_writes, UpdateDecision.SHELL_UPDATE, "cover is judged against the candidate's write schema, not the installed one")
 	# ...and a ceiling that DOES cover the new write schema is cover.
 	var raises_ok: Dictionary = raising.call()
 	raises_ok["save_schema"] = {"min": 1, "writes": 3, "capability": 5}
-	raises_ok["rollback_targets"] = [{"version": "0.1.14", "save_capability": 9, "read_ceiling": 3}]
+	raises_ok["rollback_targets"] = [_target("0.1.14", 9, 3)]
 	_expect(inst_wide, raises_ok, UpdateDecision.PACK_UPDATE, "a ceiling covering the candidate's write schema is cover")
 
 	# CODEX P1: a target already in the local quarantine ledger is not cover —
 	# recovery skips quarantined versions before testing reachability, so its only
 	# fallback would be a build already proven broken.
 	var quarantined: Dictionary = raising.call()
-	quarantined["rollback_targets"] = [{"version": "0.1.14", "save_capability": 9, "read_ceiling": 9}]
+	quarantined["rollback_targets"] = [_target("0.1.14", 9, 9)]
 	var inst_q := _installed_current()
 	inst_q["quarantined"] = ["0.1.14"]
 	_expect(inst_q, quarantined, UpdateDecision.SHELL_UPDATE, "a quarantined target is not rollback cover")
@@ -439,15 +456,31 @@ func _test_capability_raise_needs_a_readable_rollback_target() -> void:
 	inst_badcap["save_capability"] = "lots"
 	_expect(inst_badcap, _base_manifest(), UpdateDecision.BLOCKED_INCOMPATIBLE, "a malformed installed save_capability blocks loudly")
 
+	# CODEX P1 (round 3): a target reachable on both axes is still not cover if the
+	# SELECTOR would skip it. RollbackSelection.is_wellformed also requires artifact
+	# metadata and the shape of speaks_protocol / shell_compat — all static manifest
+	# data, so it is decidable here. Each case strips exactly one required field from
+	# an otherwise-covering target, so a failure can only mean that field.
+	for missing: String in ["url", "sha256", "size", "speaks_protocol", "shell_compat"]:
+		var unselectable: Dictionary = raising.call()
+		var t := _target("0.1.14", 9, 9)
+		t.erase(missing)
+		unselectable["rollback_targets"] = [t]
+		_expect(_installed_current(), unselectable, UpdateDecision.SHELL_UPDATE,
+			"a target missing '%s' is not selectable, so it is not cover" % missing)
+	# A malformed (not merely absent) sub-shape is equally unselectable.
+	var bad_shape: Dictionary = raising.call()
+	var t_bad := _target("0.1.14", 9, 9)
+	t_bad["speaks_protocol"] = {"min": 5, "max": 1} # inverted range
+	bad_shape["rollback_targets"] = [t_bad]
+	_expect(_installed_current(), bad_shape, UpdateDecision.SHELL_UPDATE, "a target with an inverted protocol range is not cover")
+
 	# POSITIVE CONTROL: one strictly-older target reachable on BOTH axes makes the
 	# pack safe again. This is what proves the gate discriminates rather than simply
 	# blocking every capability raise — without it, every case above would pass
 	# equally against a gate that refused unconditionally.
 	var covered: Dictionary = raising.call()
-	covered["rollback_targets"] = [
-		{"version": "0.1.13", "save_capability": 4, "read_ceiling": 9},
-		{"version": "0.1.14", "save_capability": 5, "read_ceiling": 9},
-	]
+	covered["rollback_targets"] = [_target("0.1.13", 4, 9), _target("0.1.14", 5, 9)]
 	_expect(_installed_current(), covered, UpdateDecision.PACK_UPDATE, "a strictly-older target reachable on both axes admits the pack")
 
 	# A pack that does NOT raise the capability is untouched by this gate — the
