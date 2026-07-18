@@ -51,69 +51,108 @@ import "math/big"
 //     once every actor has been placed is left to the deterministic separation
 //     pass, exactly as before.
 
+// sweptIterations bounds the propagation passes run per tick. One pass is not
+// enough for a multi-body interaction: when a mover is stopped short, everyone
+// sweeping against it must be re-tested against its *shortened* trajectory —
+// otherwise a follower computes its clamp against a leader that "kept going" and
+// overruns where the leader actually stopped. Each pass re-solves every mover
+// against the current trajectories and can only ever shorten a path further, so
+// the passes settle; a pass that shortens nothing ends the loop early, which is
+// the common case after one or two. Like separation's relaxation this is a
+// bounded, convergent solve rather than an unbounded one: bounded per-tick
+// effort is the price of never stalling the single authoritative loop, and a
+// pathological chain of many simultaneous high-speed movers settles over the
+// following ticks.
+const sweptIterations = 8
+
 // integrateSwept is the movement pass used when World.SweptCollision is on. It
-// integrates every actor's clamped intent into a target, then places each actor
-// at the first point along its path where it would contact another — so a fast
+// integrates every actor's clamped intent into a target, then shortens each
+// actor's path to the first point at which it would contact another — so a fast
 // actor stops at a wall of bodies instead of tunneling through them.
 func (w *World) integrateSwept() {
 	n := len(w.order)
-	// Snapshot every actor's start and integrated target up front. Each mover's
-	// clamp then depends only on this immutable snapshot of the whole field's
-	// motion — never on the order actors are placed in, and never on a position
-	// already mutated this tick.
+	// Snapshot every actor's start and full integrated target up front, then
+	// solve for how far along its own path each may travel. Every clamp is a pure
+	// function of this immutable snapshot plus the current fractions — never of
+	// the order actors are visited in, and never of a position already mutated
+	// this tick.
 	starts := make(map[EntityID]Vec3, n)
-	targets := make(map[EntityID]Vec3, n)
+	full := make(map[EntityID]Vec3, n)
 	for _, id := range w.order {
 		e := w.ents[id]
 		starts[id] = e.Pos
 		v := clampSpeed(e.Intent, e.MaxSpeed)
 		// mm/s / (ticks/s) = mm/tick.
 		disp := Vec3{X: v.X / TickHz, Y: v.Y / TickHz, Z: v.Z / TickHz}
-		targets[id] = w.bounds.clamp(e.Pos.Add(disp))
+		full[id] = w.bounds.clamp(e.Pos.Add(disp))
 	}
+
+	// frac[id] is the fraction of its full path actor id may travel; end[id] is
+	// where that puts it. Both start unrestricted and only ever shorten.
+	frac := make(map[EntityID]*big.Rat, n)
+	end := make(map[EntityID]Vec3, n)
 	for _, id := range w.order {
-		w.ents[id].Pos = w.sweptClamp(id, starts, targets)
+		frac[id] = big.NewRat(1, 1)
+		end[id] = full[id]
+	}
+
+	for range sweptIterations {
+		// Re-solve every mover against the *current* trajectories. The whole pass
+		// reads one consistent set of endpoints and writes the next, so the result
+		// never depends on the order within a pass.
+		next := make(map[EntityID]*big.Rat, n)
+		shortened := false
+		for _, id := range w.order {
+			best := frac[id]
+			ri := w.ents[id].Radius
+			for _, oid := range w.order {
+				if oid == id {
+					continue
+				}
+				// The mover's own full path, against the obstacle's trajectory as
+				// currently shortened.
+				t := firstContactFrac(starts[id], full[id], ri, starts[oid], end[oid], w.ents[oid].Radius)
+				if t != nil && t.Cmp(best) < 0 {
+					best = t
+				}
+			}
+			next[id] = best
+			if best.Cmp(frac[id]) < 0 {
+				shortened = true
+			}
+		}
+		frac = next
+		for _, id := range w.order {
+			end[id] = alongPath(starts[id], full[id], frac[id])
+		}
+		if !shortened {
+			break
+		}
+	}
+
+	for _, id := range w.order {
+		w.ents[id].Pos = end[id]
 	}
 }
 
-// sweptClamp returns where mover id should be placed this tick: its integrated
-// target, shortened along its own path to the earliest contact with any other
-// actor's swept capsule. It scans the other actors in ascending-ID order and
-// keeps the earliest contact.
-//
-// The scan is O(n) per mover. That is acceptable while swept collision is armed
-// only for the rare high-speed mover; grid-accelerating it (via the separation
-// broad phase, broadphase.go) for a zone full of simultaneously-dashing actors
-// is a later refinement tied to #64, deliberately not done here.
-func (w *World) sweptClamp(id EntityID, starts, targets map[EntityID]Vec3) Vec3 {
-	from, to := starts[id], targets[id]
-	ri := w.ents[id].Radius
-	var best *big.Rat // earliest contact fraction in [0,1]; nil ⇒ no contact
-	for _, oid := range w.order {
-		if oid == id {
-			continue
-		}
-		t := firstContactFrac(from, to, ri, starts[oid], targets[oid], w.ents[oid].Radius)
-		if t == nil {
-			continue
-		}
-		if best == nil || t.Cmp(best) < 0 {
-			best = t
-		}
+// alongPath returns the point a fraction of the way from start to full on the
+// ground plane, truncating the displacement toward the start so a clamped actor
+// halts at or before contact — never having crossed. Vertical motion is
+// unaffected: capsules are vertical, so contact is a ground-plane question.
+func alongPath(start, full Vec3, frac *big.Rat) Vec3 {
+	if frac.Cmp(oneRat) >= 0 {
+		return full // unrestricted — keep the integrated target exactly
 	}
-	if best == nil {
-		return to
-	}
-	// Place the mover at from + best·(to−from) on the ground plane, truncating the
-	// displacement toward the start so it halts at or before contact — never
-	// having crossed. Vertical motion is unaffected: capsules are vertical, so
-	// contact is a ground-plane question.
 	return Vec3{
-		X: from.X + fracMulTrunc(best, to.X-from.X),
-		Y: to.Y,
-		Z: from.Z + fracMulTrunc(best, to.Z-from.Z),
+		X: start.X + fracMulTrunc(frac, full.X-start.X),
+		Y: full.Y,
+		Z: start.Z + fracMulTrunc(frac, full.Z-start.Z),
 	}
 }
+
+// oneRat is the unrestricted travel fraction, hoisted so alongPath does not
+// allocate one per actor per pass.
+var oneRat = big.NewRat(1, 1)
 
 // firstContactFrac returns the fraction t ∈ [0,1] of mover i's path (iFrom→iTo,
 // radius ri) at which i first makes *closing* contact with actor j (jFrom→jTo,

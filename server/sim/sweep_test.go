@@ -120,6 +120,42 @@ func TestSweptInitialOverlapDirectional(t *testing.T) {
 	}
 }
 
+// TestSweptMultiBodyPropagation covers the multi-body propagation finding: when
+// one mover is stopped short, a follower swept against that mover must be
+// re-tested against its *shortened* trajectory. A single pass would clamp the
+// follower against a leader that "kept going" and place it beyond where the
+// leader actually stopped — a crossing separation cannot repair, because the
+// final endpoints do not overlap.
+func TestSweptMultiBodyPropagation(t *testing.T) {
+	w := NewWorld(wideBounds)
+	w.SweptCollision = true
+	// Leader: big and fast, stopped early by the small static post.
+	w.Add(Entity{ID: 1, Pos: Vec3{X: 0}, MaxSpeed: 150_000, Radius: 500})
+	// Follower: comes from far west along a parallel lane, misses the post but
+	// must not overrun the leader.
+	w.Add(Entity{ID: 2, Pos: Vec3{X: -5_000, Z: 500}, MaxSpeed: 300_000, Radius: 100})
+	// Static post: stops the leader at X ≈ 2500-600 = 1900.
+	w.Add(Entity{ID: 3, Pos: Vec3{X: 2_500}, MaxSpeed: 0, Radius: 100})
+	w.SetIntent(1, Vec3{X: 150_000})
+	w.SetIntent(2, Vec3{X: 300_000})
+	w.Step()
+
+	leader, follower := w.Get(1).Pos, w.Get(2).Pos
+	if leader.X >= 2_500 {
+		t.Fatalf("leader was not stopped by the post: X=%d", leader.X)
+	}
+	// The follower must be stopped behind the leader's ACTUAL stop, not swept
+	// against the leader's original 5 000 mm target.
+	if follower.X > leader.X {
+		t.Fatalf("follower overran the stopped leader: follower X=%d, leader X=%d", follower.X, leader.X)
+	}
+	const rsum = 500 + 100
+	if got := horizDist2(leader, follower); got < rsum*rsum-8*rsum {
+		t.Fatalf("follower crossed into the leader: gap²=%d, want ≈ %d (leader=%v follower=%v)",
+			got, rsum*rsum, leader, follower)
+	}
+}
+
 // TestSweptDeterministicAndOrderIndependent: with the flag on, the result is
 // bit-identical across runs and independent of insertion order — the
 // determinism law.
