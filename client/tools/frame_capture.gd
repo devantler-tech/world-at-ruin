@@ -63,7 +63,15 @@ func _ready() -> void:
 		_fail("running headless — a headless run renders nothing; use a windowed run")
 		return
 
-	var main: Node = load("res://scenes/main.tscn").instantiate()
+	# Load the scene the PROJECT actually boots, not a hardcoded path: the
+	# capture gate treats project.godot as a visual trigger, so a PR that
+	# repoints application/run/main_scene must be captured as the shipped game
+	# rather than as whatever this tool used to assume.
+	var main_scene: String = ProjectSettings.get_setting("application/run/main_scene", "")
+	if main_scene.is_empty():
+		_fail("application/run/main_scene is unset — cannot capture the shipped game")
+		return
+	var main: Node = load(main_scene).instantiate()
 	# The root is still setting up children while our _ready runs, so a direct
 	# add_child() is REFUSED — and the capture would then photograph an empty
 	# viewport while still reporting success. Defer, then prove it attached.
@@ -140,7 +148,11 @@ func _has_world(main: Node) -> bool:
 	for child in world.get_children():
 		if child is MeshInstance3D and str(child.name) == "Terrain" \
 				and (child as MeshInstance3D).mesh != null:
-			return true
+			# Present is not the same as VISIBLE. A regression that hides or
+			# culls the terrain leaves the mesh (and its collider, so the ray
+			# still hits) while the camera sees only sky — which the luminance
+			# check happily accepts.
+			return (child as MeshInstance3D).is_visible_in_tree()
 	return false
 
 
