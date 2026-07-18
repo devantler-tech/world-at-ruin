@@ -17,9 +17,9 @@
 //	zone -ticks 1800         # a different fixed count
 //	zone -realtime -duration 3s   # drive the fixed loop from real time for 3s
 //	zone -replicate 1        # also track observer 1, wire-encode its delta stream
-//	zone -listen :8443 -tls-cert cert.pem -tls-key key.pem  # serve the zone socket (wss)
-//	zone -listen :8443 -tls-cert cert.pem -tls-key key.pem -agones  # ...as a fleet GameServer
-//	zone -mint-token 1       # developer helper: mint an admission token, print it, exit
+//	zone -allocation-id gs-123 -listen :8443 -tls-cert cert.pem -tls-key key.pem  # serve the zone socket (wss)
+//	zone -allocation-id gs-123 -listen :8443 -tls-cert cert.pem -tls-key key.pem -agones  # ...as a fleet GameServer
+//	zone -allocation-id gs-123 -mint-token 1  # developer helper: mint an admission token, print it, exit
 //
 // The admission-token secret is read from the environment variable named by
 // -admission-secret-env (hex-encoded, at least 32 bytes decoded); the flag
@@ -58,6 +58,7 @@ func main() {
 	tlsKey := flag.String("tls-key", "", "PEM private key file for -listen")
 	insecurePlaintext := flag.Bool("insecure-plaintext", false, "LOCAL DEVELOPMENT ONLY: serve -listen without TLS (ws://)")
 	secretEnv := flag.String("admission-secret-env", "WAR_ZONE_ADMISSION_SECRET", "NAME of the environment variable holding the hex-encoded admission-token secret")
+	allocation := flag.String("allocation-id", "", "allocation/GameServer ID this process admits (required with -listen or -mint-token)")
 	mintObserver := flag.Uint64("mint-token", 0, "developer helper: mint an admission token for this observer entity ID using the admission secret, print it, and exit")
 	mintTTL := flag.Duration("mint-ttl", 5*time.Minute, "expiry window for -mint-token")
 	withAgones := flag.Bool("agones", false, "register with the local Agones SDK sidecar (Ready/Health/Shutdown); requires -listen, since Ready must mean a connectable endpoint")
@@ -72,7 +73,7 @@ func main() {
 	})
 
 	if *mintObserver != 0 {
-		runMint(*secretEnv, sim.EntityID(*mintObserver), *mintTTL)
+		runMint(*secretEnv, *allocation, sim.EntityID(*mintObserver), *mintTTL)
 		return
 	}
 	if *listen != "" && *replicate != 0 {
@@ -89,7 +90,7 @@ func main() {
 		if durationSet {
 			d = *duration
 		}
-		if err := runListen(w, *listen, *tlsCert, *tlsKey, *secretEnv, *insecurePlaintext, *interest, d, *withAgones, *healthInterval); err != nil {
+		if err := runListen(w, *listen, *tlsCert, *tlsKey, *secretEnv, *allocation, *insecurePlaintext, *interest, d, *withAgones, *healthInterval); err != nil {
 			fatalf("%v", err)
 		}
 	case *realtime:
@@ -124,8 +125,8 @@ func admissionSecret(envName string) []byte {
 // admission token for the given observer. Real minting belongs to the
 // allocation/handoff step (a later child of the server epic) — this exists so
 // the socket can be used and evaluated before that child lands.
-func runMint(secretEnv string, observer sim.EntityID, ttl time.Duration) {
-	token, err := zonesock.MintToken(admissionSecret(secretEnv), observer, time.Now().Add(ttl))
+func runMint(secretEnv, allocation string, observer sim.EntityID, ttl time.Duration) {
+	token, err := zonesock.MintToken(admissionSecret(secretEnv), allocation, observer, time.Now().Add(ttl))
 	if err != nil {
 		fatalf("mint token: %v", err)
 	}
@@ -138,14 +139,14 @@ func runMint(secretEnv string, observer sim.EntityID, ttl time.Duration) {
 // is signalled. It returns errors instead of exiting so every exit path runs
 // the deferred cleanup — with -agones that includes telling the sidecar to
 // recycle the GameServer, which os.Exit would silently skip.
-func runListen(w *sim.World, addr, certFile, keyFile, secretEnv string, insecurePlaintext bool, interestMM int64, d time.Duration, withAgones bool, healthInterval time.Duration) error {
+func runListen(w *sim.World, addr, certFile, keyFile, secretEnv, allocation string, insecurePlaintext bool, interestMM int64, d time.Duration, withAgones bool, healthInterval time.Duration) error {
 	if insecurePlaintext && (certFile != "" || keyFile != "") {
 		return fmt.Errorf("-insecure-plaintext contradicts -tls-cert/-tls-key: choose one")
 	}
 	if !insecurePlaintext && (certFile == "" || keyFile == "") {
 		return fmt.Errorf("-listen requires -tls-cert and -tls-key (or the explicit -insecure-plaintext local-development opt-in)")
 	}
-	verifier, err := zonesock.NewHMACVerifier(admissionSecret(secretEnv))
+	verifier, err := zonesock.NewHMACVerifier(admissionSecret(secretEnv), allocation)
 	if err != nil {
 		return err
 	}

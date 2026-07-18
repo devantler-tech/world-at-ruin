@@ -36,21 +36,24 @@ var (
 // tokenPrefix versions the token layout, so a future mechanism can change the
 // format without ambiguity. Independent of wire.Version — tokens and frames
 // evolve separately.
-const tokenPrefix = "v1"
+const tokenPrefix = "v2"
 
 // minSecretBytes is the minimum admission-secret length. 32 bytes matches the
 // HMAC-SHA256 output size, below which the MAC's strength degrades; a shorter
 // secret is refused outright rather than silently accepted.
 const minSecretBytes = 32
 
-// MintToken mints an admission token binding one observer to one allocation
-// window: "v1.<observer>.<unix expiry>.<hex hmac-sha256>". Exported for the
+// MintToken mints an admission token binding one observer to one allocation:
+// "v2.<allocation>.<observer>.<unix expiry>.<hex hmac-sha256>". Exported for the
 // allocation/handoff step and for tests; the zone server itself never mints.
-func MintToken(secret []byte, observer sim.EntityID, expiry time.Time) (string, error) {
+func MintToken(secret []byte, allocation string, observer sim.EntityID, expiry time.Time) (string, error) {
 	if len(secret) < minSecretBytes {
 		return "", fmt.Errorf("zonesock: admission secret is %d bytes, need at least %d", len(secret), minSecretBytes)
 	}
-	payload := fmt.Sprintf("%s.%d.%d", tokenPrefix, uint64(observer), expiry.Unix())
+	if allocation == "" || strings.Contains(allocation, ".") {
+		return "", fmt.Errorf("zonesock: allocation must be non-empty and contain no dots")
+	}
+	payload := fmt.Sprintf("%s.%s.%d.%d", tokenPrefix, allocation, uint64(observer), expiry.Unix())
 	mac := hmac.New(sha256.New, secret)
 	mac.Write([]byte(payload))
 	return payload + "." + hex.EncodeToString(mac.Sum(nil)), nil
@@ -61,17 +64,21 @@ func MintToken(secret []byte, observer sim.EntityID, expiry time.Time) (string, 
 // server. It verifies integrity before trusting any field, so a forged token
 // reports forged even when its expiry also lies.
 type HMACVerifier struct {
-	secret []byte
-	now    func() time.Time
+	secret     []byte
+	allocation string
+	now        func() time.Time
 }
 
 // NewHMACVerifier builds a verifier from the shared secret, refusing one too
 // short to carry HMAC-SHA256's strength.
-func NewHMACVerifier(secret []byte) (*HMACVerifier, error) {
+func NewHMACVerifier(secret []byte, allocation string) (*HMACVerifier, error) {
 	if len(secret) < minSecretBytes {
 		return nil, fmt.Errorf("zonesock: admission secret is %d bytes, need at least %d", len(secret), minSecretBytes)
 	}
-	return &HMACVerifier{secret: append([]byte(nil), secret...), now: time.Now}, nil
+	if allocation == "" || strings.Contains(allocation, ".") {
+		return nil, fmt.Errorf("zonesock: allocation must be non-empty and contain no dots")
+	}
+	return &HMACVerifier{secret: append([]byte(nil), secret...), allocation: allocation, now: time.Now}, nil
 }
 
 // Verify checks token and returns the observer it admits. Order matters: the
@@ -79,25 +86,28 @@ func NewHMACVerifier(secret []byte) (*HMACVerifier, error) {
 // controls every unverified field.
 func (v *HMACVerifier) Verify(token string) (sim.EntityID, error) {
 	parts := strings.Split(token, ".")
-	if len(parts) != 4 || parts[0] != tokenPrefix {
+	if len(parts) != 5 || parts[0] != tokenPrefix {
 		return 0, ErrTokenFormat
 	}
-	observer, err := strconv.ParseUint(parts[1], 10, 64)
+	observer, err := strconv.ParseUint(parts[2], 10, 64)
 	if err != nil {
 		return 0, ErrTokenFormat
 	}
-	expiry, err := strconv.ParseInt(parts[2], 10, 64)
+	expiry, err := strconv.ParseInt(parts[3], 10, 64)
 	if err != nil {
 		return 0, ErrTokenFormat
 	}
-	sig, err := hex.DecodeString(parts[3])
+	sig, err := hex.DecodeString(parts[4])
 	if err != nil {
 		return 0, ErrTokenFormat
 	}
-	payload := parts[0] + "." + parts[1] + "." + parts[2]
+	payload := strings.Join(parts[:4], ".")
 	mac := hmac.New(sha256.New, v.secret)
 	mac.Write([]byte(payload))
 	if !hmac.Equal(sig, mac.Sum(nil)) {
+		return 0, ErrTokenForged
+	}
+	if parts[1] != v.allocation {
 		return 0, ErrTokenForged
 	}
 	if !v.now().Before(time.Unix(expiry, 0)) {
