@@ -234,36 +234,23 @@ reset the game forbids.
   throughput in effect — that is precisely how power creep enters a game that claims to have none.
   Situational-by-design is the law, and **"no strict dominance" is simulatable**, so it is an
   agent-ownable CI guard rather than a matter of taste.
-- **🔴 THE MULTI-TARGET (TELEGRAPH AREA) ECONOMY IS A BALANCE REVIEW, NOT A CI GUARD — an agent must
-  NOT decide it alone** (maintainer direction 2026-07-18, issue #82, option C). `ability.gd` already
-  bounds the *single-target* economy mechanically, and those guards stand: one frozen per-cast
-  **power budget** per `(role|effect)`; a frozen **cast+cooldown cycle floor** (so per-target
-  throughput is capped at budget/floor — this is what stops "shorter cooldown for shorter range"
-  passing as a sidegrade while doubling DPS); a **new category's opening scale bounded against the
-  categories already shipped**; plus no-strict-dominance, no-strict-self-buff-over-base, and the
-  append-only ledgers.
-  **What is deliberately NOT modelled is telegraph AREA — the multi-target economy.** Be precise
-  about when this bites: today `telegraph` is only a **kind** (`circle`/`ring`/`cone`/`rect`), used in
-  `class_key` (which decides what is *comparable* for dominance) — the power budget itself is keyed on
-  `(role|effect)` alone, so a cone and a circle of the same role and effect already share one power
-  ceiling. An ability carries **no shape magnitude at all** — no cone half-angle,
-  no radius, no width. `range_m` exists and *is* a dominance benefit axis, so pure distance already
-  trades against the cost axes within a comparable class. So area is not currently *expressible*, and
-  there is nothing to widen yet.
-  **The gap opens the moment ability data carries real shape magnitudes** (a cone's half-angle, a
-  circle's radius — the plumbing #118 describes). At that point two abilities on the same budget and
-  the same cycle can differ in how many targets one cast reaches, and **no guard sees it**: area is in
-  neither the budget, the cycle floor, nor the dominance axes. Closing it mechanically means inventing
-  an exchange rate between area, target count and power — and freezing it permanently under the
-  no-resets law. **That exchange rate IS game balance, and it is the maintainer's call, not an
-  agent's.** So the binding rule:
-  **adding a shape-magnitude field, widening one, or otherwise increasing how many targets a single
-  cast reaches is a BALANCE REVIEW.** State the reach before → after plainly in the PR body and let
-  the maintainer approve it. The same applies to introducing a new `(role|effect)` category: the CI
-  bound keeps its opening scale in family, but the *choice* of scale is still his.
-  **Never infer permission from green CI — the guards prove you did not commit a blatant
-  single-target upgrade, never that the balance is right.** Do not add a mechanical area/multi-target
-  guard without fresh maintainer direction superseding this decision.
+- **🔴 The MULTI-TARGET (telegraph area) economy is a BALANCE REVIEW, never a CI guard** (maintainer
+  direction 2026-07-18, #82 option C). `ability.gd` bounds the *single-target* economy mechanically —
+  frozen per-cast power budget per `(role|effect)`, a frozen cast+cooldown cycle floor (so throughput
+  is capped at budget/floor), a new category's opening scale bounded against those already shipped,
+  plus no-strict-dominance and the append-only ledgers. **Telegraph AREA is deliberately outside that
+  model**, so more targets per cast means more total damage with nothing firing. Bounding it means
+  inventing an area-vs-power exchange rate and freezing it permanently under the no-resets law — that
+  is game balance, and it is the maintainer's call.
+  **When it bites:** not yet. `telegraph` is only a *kind* (used in `class_key`, which decides what is
+  comparable; the budget is keyed on `(role|effect)` alone), and an ability carries **no shape
+  magnitude at all** — no half-angle, no radius, no width — so nothing can be widened today.
+  **The gap opens the moment ability data carries shape magnitudes** (the plumbing #118 describes).
+  **The rule:** adding a shape-magnitude field, widening one, or otherwise increasing how many targets
+  one cast reaches is a balance review — state the reach before → after in the PR and let the
+  maintainer approve it. Choosing a new category's scale is his too. Green CI proves only that you did
+  not commit a blatant single-target upgrade, never that the balance is right; do not build an area
+  guard without fresh direction superseding this.
 - **Tune content against the *banked floor*, not peak mastery.** Unlosable progress is the only
   power level every player is guaranteed to have; everything above it is skill expression.
 - **Death penalty in group content breeds blame.** A bloodstain is fine solo; "you cost me my
