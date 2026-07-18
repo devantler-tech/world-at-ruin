@@ -360,9 +360,10 @@ jobs:
         # nominal sidegrade (a token range nerf paying for a large cooldown cut)
         # passes here, and a brand-new ability is never compared at all — which is
         # why throughput is bounded absolutely by the frozen cycle floor above
-        # rather than relying on this step. What remains unbounded is the
-        # multi-target economy (telegraph AREA is not in the model), a balance
-        # decision tracked in #82.
+        # rather than relying on this step. The multi-target economy (telegraph
+        # AREA) is not in this step's model either; the widening half of it is
+        # held by the cone-wedge step below, and a NEW cone's opening width
+        # remains the balance decision in #82.
         # CI is the anchor (the in-tree test cannot see the base revision).
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         env:
@@ -393,6 +394,71 @@ jobs:
                 or $h.power > $b.power)')
             if [ "$buff" = "true" ]; then
               echo "::error::$f is a STRICT BUFF of its base version — a rebalance must be a sidegrade (never more power); pay for the improvement on another axis"
+              fail=1
+            fi
+          done
+          [ "$fail" = 0 ]
+      - name: Shipped cone wedge may never widen (multi-target anti-inflation)
+        # A cone's wedge became authorable data in #159 (`cos_half_scaled`). None
+        # of the other guards can see it: the identity step freezes the telegraph
+        # KIND but not its size, the sidegrade axes do not include it, and the
+        # frozen power/cycle ledgers bound magnitude and rate rather than reach.
+        # So a shipped cone could be widened later — strictly more targets caught
+        # per cast, at the same frozen power and cycle — with every other check
+        # green.
+        #
+        # A LOWER scaled cosine is a WIDER wedge, so the promise is that the value
+        # may never DECREASE for an ability that already shipped. Narrowing is a
+        # nerf and passes; a brand-new cone is never compared, so it bootstraps
+        # freely (same shape as the self-buff step above).
+        #
+        # SCOPE: this bounds the DIRECTION of change for cones already shipped. It
+        # does NOT bound a new cone's opening width against the ones already out
+        # there — that needs an area-vs-magnitude exchange rate, which has no
+        # already-shipped value to anchor to and remains the balance decision in
+        # #82. Monotonicity composes, so enforcing it per-PR forbids widening
+        # across any sequence of PRs.
+        #
+        # CI is the anchor: an in-tree test reading the current checkout is
+        # self-consistent and could not catch a PR that edits the ability and its
+        # record together.
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          if ! git cat-file -e "$BASE_SHA" 2>/dev/null; then
+            echo "::error::base commit $BASE_SHA not present — cannot verify cone wedges"
+            exit 1
+          fi
+          fail=0
+          for f in $(git ls-tree -r --name-only "$BASE_SHA" -- client/abilities | grep -E '\.json$'); do
+            # Removed files are handled by the identity step above.
+            [ -f "$f" ] || continue
+            base_cos=$(git show "$BASE_SHA:$f" | jq -r '.cos_half_scaled // empty')
+            # No threshold at base means this ability predates the field; there is
+            # no prior promise to keep, so it is the introduction, not a widening.
+            [ -n "$base_cos" ] || continue
+            head_cos=$(jq -r '.cos_half_scaled // empty' "$f")
+            if [ -z "$head_cos" ]; then
+              echo "::error::$f dropped 'cos_half_scaled' — a shipped cone's wedge must stay data both tiers read, never a per-tier default"
+              fail=1
+              continue
+            fi
+            # Fail closed on a non-integer. `[ x -lt y ]` errors with "integer
+            # expression expected" and returns 2 — and because that sits in an
+            # `if` CONDITION, `bash -e` does NOT abort on it, so the comparison
+            # would be silently skipped and this guard would quietly stop
+            # guarding. The schema already refuses a fractional threshold, which
+            # is precisely why the failure would go unnoticed here.
+            for v in "$base_cos" "$head_cos"; do
+              case "$v" in
+                ''|*[!0-9-]*|-|*-*-*)
+                  echo "::error::$f has a non-integer cos_half_scaled ('$v') — refusing rather than skipping the comparison"
+                  fail=1; continue 2 ;;
+              esac
+            done
+            if [ "$head_cos" -lt "$base_cos" ]; then
+              echo "::error::$f WIDENED its cone: cos_half_scaled $base_cos -> $head_cos. A lower scaled cosine is a wider wedge, so this catches more targets per cast at the same frozen power and cycle. Narrowing is allowed; widening is not (see #82 for the unbounded multi-target economy)"
               fail=1
             fi
           done
