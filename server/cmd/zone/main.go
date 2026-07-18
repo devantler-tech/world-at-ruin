@@ -6,11 +6,12 @@
 // reports the payload sizes. With -listen it serves the real zone socket per
 // the transport ADR (docs/design/zone-transport.md): a WebSocket-over-TLS
 // endpoint at /zone carrying one wire-codec message per binary frame, with
-// token-gated admission. With -agones (default off) a realtime run
-// additionally speaks the Agones GameServer lifecycle through the official
-// SDK, which is what makes the binary deployable on the fleet. The Nakama
-// layer remains a later child of the server-foundation epic. The socket is
-// opt-in: without -listen the command behaves exactly as before.
+// token-gated admission. With -agones (default off) a serving run — -realtime
+// or -listen — additionally speaks the Agones GameServer lifecycle through the
+// official SDK, which is what makes the binary deployable on the fleet: Ready
+// once it can actually take a connection, Health on a cadence, Shutdown on
+// exit. The Nakama layer remains a later child of the server-foundation epic.
+// The socket is opt-in: without -listen the command behaves exactly as before.
 //
 //	zone                     # 600 deterministic ticks, then print the state hash
 //	zone -ticks 1800         # a different fixed count
@@ -18,6 +19,7 @@
 //	zone -realtime -agones   # ...and register with the local Agones sidecar
 //	zone -replicate 1        # also track observer 1, wire-encode its delta stream
 //	zone -listen :8443 -tls-cert cert.pem -tls-key key.pem  # serve the zone socket (wss)
+//	zone -listen :8443 -tls-cert cert.pem -tls-key key.pem -agones  # ...as a fleet GameServer
 //	zone -mint-token 1       # developer helper: mint an admission token, print it, exit
 //
 // The admission-token secret is read from the environment variable named by
@@ -58,7 +60,7 @@ func main() {
 	secretEnv := flag.String("admission-secret-env", "WAR_ZONE_ADMISSION_SECRET", "NAME of the environment variable holding the hex-encoded admission-token secret")
 	mintObserver := flag.Uint64("mint-token", 0, "developer helper: mint an admission token for this observer entity ID using the admission secret, print it, and exit")
 	mintTTL := flag.Duration("mint-ttl", 5*time.Minute, "expiry window for -mint-token")
-	withAgones := flag.Bool("agones", false, "register with the local Agones SDK sidecar (Ready/Health/Shutdown); requires -realtime")
+	withAgones := flag.Bool("agones", false, "register with the local Agones SDK sidecar (Ready/Health/Shutdown); requires a serving mode (-realtime or -listen)")
 	healthInterval := flag.Duration("agones-health-interval", agones.DefaultHealthInterval, "heartbeat cadence for -agones; keep it under half the fleet's health periodSeconds")
 	flag.Parse()
 
@@ -76,8 +78,8 @@ func main() {
 	if *listen != "" && *replicate != 0 {
 		fatalf("-listen and -replicate are mutually exclusive")
 	}
-	if *withAgones && !*realtime {
-		fatalf("-agones requires -realtime: the SDK lifecycle only makes sense on a serving process")
+	if *withAgones && !*realtime && *listen == "" {
+		fatalf("-agones requires a serving mode (-realtime or -listen): the SDK lifecycle only makes sense on a serving process")
 	}
 
 	w := sim.NewDemoWorld()
@@ -87,7 +89,7 @@ func main() {
 		if durationSet {
 			d = *duration
 		}
-		runListen(w, *listen, *tlsCert, *tlsKey, *secretEnv, *insecurePlaintext, *interest, d)
+		runListen(w, *listen, *tlsCert, *tlsKey, *secretEnv, *insecurePlaintext, *interest, d, *withAgones, *healthInterval)
 	case *realtime:
 		runRealtime(w, *duration, *withAgones, *healthInterval)
 	case *replicate != 0:
@@ -132,7 +134,7 @@ func runMint(secretEnv string, observer sim.EntityID, ttl time.Duration) {
 // clock, per the transport ADR: TLS is the default and plaintext exists only
 // behind the explicit local-development opt-in. d <= 0 runs until the process
 // is signalled.
-func runListen(w *sim.World, addr, certFile, keyFile, secretEnv string, insecurePlaintext bool, interestMM int64, d time.Duration) {
+func runListen(w *sim.World, addr, certFile, keyFile, secretEnv string, insecurePlaintext bool, interestMM int64, d time.Duration, withAgones bool, healthInterval time.Duration) {
 	if insecurePlaintext && (certFile != "" || keyFile != "") {
 		fatalf("-insecure-plaintext contradicts -tls-cert/-tls-key: choose one")
 	}
@@ -178,6 +180,21 @@ func runListen(w *sim.World, addr, certFile, keyFile, secretEnv string, insecure
 		serveFailed(err)
 	}()
 	defer srv.Close() // also severs hijacked WebSocket connections
+
+	// Agones Ready fires only now — the listener is bound and the serve
+	// goroutine is up, so "ready to be allocated" is true in the one sense
+	// that matters: a player the fleet routes here can actually connect.
+	if withAgones {
+		lc, err := agones.Start(ctx, agones.Config{HealthInterval: healthInterval})
+		if err != nil {
+			fatalf("%v", err)
+		}
+		defer func() {
+			if err := lc.Shutdown(); err != nil {
+				fmt.Fprintf(os.Stderr, "zone: %v\n", err)
+			}
+		}()
+	}
 
 	runLoop(serveCtx, w, d, func() {
 		sim.DriveDemoTick(w)

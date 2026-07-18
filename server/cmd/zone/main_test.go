@@ -146,15 +146,55 @@ func TestAgonesSigtermShutsDownCleanly(t *testing.T) {
 	}
 }
 
-// TestAgonesRequiresRealtime pins the loud refusal: the lifecycle on a
-// fixed-tick CI run would be meaningless, so the flag without -realtime is a
-// usage error, never a silent ignore.
-func TestAgonesRequiresRealtime(t *testing.T) {
+// TestAgonesRequiresServingMode pins the loud refusal: the lifecycle on a
+// fixed-tick CI run would be meaningless, so the flag without -realtime or
+// -listen is a usage error, never a silent ignore.
+func TestAgonesRequiresServingMode(t *testing.T) {
 	out, err := exec.Command(zoneBin, "-agones").CombinedOutput()
 	if err == nil {
-		t.Fatalf("-agones without -realtime succeeded; want a usage error\n%s", out)
+		t.Fatalf("-agones without a serving mode succeeded; want a usage error\n%s", out)
 	}
-	if !strings.Contains(string(out), "-agones requires -realtime") {
+	if !strings.Contains(string(out), "-agones requires a serving mode") {
 		t.Fatalf("refusal did not explain itself:\n%s", out)
+	}
+}
+
+// TestAgonesComposesWithListen runs the deployment shape a fleet GameServer
+// actually has — the zone socket serving plus the Agones lifecycle — and
+// requires Ready, live heartbeats, and a Shutdown on the deadline exit. This
+// is the test that makes silently ignoring -agones in -listen mode
+// impossible: with the wiring absent, ReadyCalls stays 0 and this fails.
+func TestAgonesComposesWithListen(t *testing.T) {
+	f, err := agonestest.Start(nil)
+	if err != nil {
+		t.Fatalf("start fake sidecar: %v", err)
+	}
+	t.Cleanup(f.Stop)
+
+	cmd := exec.Command(zoneBin,
+		"-listen", "127.0.0.1:0", "-insecure-plaintext",
+		"-duration", "400ms",
+		"-agones", "-agones-health-interval", "50ms",
+	)
+	cmd.Env = append(os.Environ(),
+		"AGONES_SDK_GRPC_HOST=127.0.0.1",
+		"AGONES_SDK_GRPC_PORT="+f.PortString(),
+		"WAR_ZONE_ADMISSION_SECRET="+strings.Repeat("ab", 32),
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("listen+agones run failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "zone: listening on ws://") {
+		t.Fatalf("socket never came up:\n%s", out)
+	}
+	if got := f.ReadyCalls(); got != 1 {
+		t.Fatalf("Ready calls = %d, want exactly 1", got)
+	}
+	if got := f.HealthBeats(); got < 3 {
+		t.Fatalf("health beats = %d, want at least 3", got)
+	}
+	if got := f.ShutdownCalls(); got != 1 {
+		t.Fatalf("Shutdown calls = %d, want exactly 1", got)
 	}
 }

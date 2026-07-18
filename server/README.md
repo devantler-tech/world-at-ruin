@@ -119,8 +119,10 @@ zone/dungeon server:
   the loop from the wall clock. With `-replicate` it also runs the full
   replication pipeline a transport will carry — per-tick tracker delta →
   wire-encode → decode → verify — and prints the payload sizes (the baseline for
-  future bandwidth evidence). With `-agones` (realtime only) it registers with
-  the local Agones sidecar for its lifetime.
+  future bandwidth evidence). With `-agones` (serving modes only — `-realtime`
+  or `-listen`) it registers with the local Agones sidecar for its lifetime,
+  so the socket-serving shape a fleet GameServer runs is `-listen` +
+  `-agones`.
 
 ```sh
 cd server
