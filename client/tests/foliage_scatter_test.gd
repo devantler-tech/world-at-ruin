@@ -13,9 +13,13 @@ extends Node
 ##           server sim's demoGoldenHash, a change here is a reviewed act. The
 ##           fingerprint is millimetre / 1e-4-rad quantised so it is stable
 ##           across boots AND runners (the golden scenario uses keep-out-only
-##           rejection over randf_range candidates and a LINEAR height sampler —
-##           no cross-prop float-compare branch, no transcendental — exactly the
-##           path #58 proved reproduces bit-for-bit on the Linux CI runner).
+##           rejection over randf_range candidates, a LINEAR height sampler,
+##           a clamped-ramp density field and sliding kind weights — pure
+##           multiply/add, no cross-prop float-compare branch, no
+##           transcendental — exactly the path #58 proved reproduces
+##           bit-for-bit on the Linux CI runner. Since #152 the golden
+##           EXERCISES the density and kind-field paths, so a drift in
+##           either is a red golden, not a blind spot).
 ##  2. KEEP-OUTS — every prop lands strictly outside every supplied circle and
 ##     within the inset bounds; a circle covering the whole region yields zero
 ##     props (the keep-out has teeth); and min_sep, when set, is respected
@@ -36,7 +40,7 @@ extends Node
 ## Captured from a headless build; regenerate deliberately (the test prints it in
 ## record mode, GOLDEN == "__RECORD__") only when the scatter is intentionally
 ## changed — like WorldGen's determinism golden, a change here is a reviewed act.
-const GOLDEN := "861bdfef"
+const GOLDEN := "f02f5d39"
 
 ## Half the world edge (matches WorldGen.SIZE / 2) and the shrine/cave keep-outs
 ## the real world would supply, so the golden scenario resembles a real scatter.
@@ -229,7 +233,17 @@ func _ready() -> void:
 		return
 	_report_scatter_cost()
 
-	print("TEST PASS — foliage deterministic (%s, global-RNG-invariant, golden-matched), %d props clear of %d keep-outs + bounds, min_sep + horizontal-only + no-ground + degenerate guards hold; spatial hash matches a full scan bit-for-bit and admits no overlapping pair" % [fa, a.size(), keep_outs.size()])
+	# 8. DENSITY FIELD (issue #152) — acceptance follows an injected density
+	# field, so thickets and genuinely bare clearings are law, not luck.
+	if not _density_laws_hold():
+		return
+
+	# 9. KIND FIELD (issue #152) — the kind mix can shift with the terrain, and
+	# a malformed field return falls back to the static weights.
+	if not _kind_field_laws_hold():
+		return
+
+	print("TEST PASS — foliage deterministic (%s, global-RNG-invariant, golden-matched), %d props clear of %d keep-outs + bounds, min_sep + horizontal-only + no-ground + degenerate guards hold; spatial hash matches a full scan bit-for-bit (with and without a density field) and admits no overlapping pair; density-field laws (bare zeros, proportionality, clustering, guard composition, malformed/non-finite handling) and kind-field steering hold" % [fa, a.size(), keep_outs.size()])
 	get_tree().quit(0)
 
 
@@ -240,13 +254,19 @@ func _ready() -> void:
 ## a neighbourhood bug only shows up once props are dense enough to sit in
 ## adjacent cells.
 func _grid_matches_full_scan() -> bool:
-	for spec: Array in [[400, 2.0], [1200, 1.4], [2400, 1.1]]:
+	# The last spec runs WITH a density field and a kind field active, so the
+	# equivalence proof covers the production-shaped path (#152), not only the
+	# legacy uniform one.
+	for spec: Array in [[400, 2.0, false], [1200, 1.4, false], [2400, 1.1, false], [1200, 1.4, true]]:
 		var n: int = spec[0]
 		var sep: float = spec[1]
 		var params := {
 			"seed": 20260718, "count": n, "half_extent": 110.0, "margin": 6.0,
 			"min_sep": sep, "keep_outs": _golden_keep_outs(), "height_sampler": _linear_surface,
 		}
+		if spec[2]:
+			params["density_field"] = Callable(self, "_bumpy_density")
+			params["kind_weights_field"] = Callable(self, "_side_kind_weights")
 		var fast := FoliageGen.scatter(params)
 		var reference := _scatter_full_scan(params)
 		if _fingerprint(fast) != _fingerprint(reference):
@@ -277,14 +297,17 @@ func _scatter_full_scan(params: Dictionary) -> Array[Dictionary]:
 	var keep_outs: Array = params.get("keep_outs", [])
 	var sampler: Callable = params.get("height_sampler", Callable())
 	var no_ground := float(params.get("no_ground", FoliageGen.NO_GROUND))
+	var density_field: Callable = params.get("density_field", Callable())
+	var kind_field: Callable = params.get("kind_weights_field", Callable())
 	var rng := RandomNumberGenerator.new()
 	rng.seed = int(params.get("seed", 0))
 	var attempts := 0
 	var max_attempts := int(params.get("max_attempts", count * 32))
 	# The loop below mirrors FoliageGen.scatter step for step — including the
-	# ground sample sitting BEFORE the style draws (#97) — so the ONLY difference
-	# is the separation test. Any divergence is then attributable to the grid and
-	# to nothing else.
+	# ground sample sitting BEFORE the style draws (#97) and the density draw
+	# sitting AFTER the ground test (#152, always exactly one draw when a field
+	# is present) — so the ONLY difference is the separation test. Any
+	# divergence is then attributable to the grid and to nothing else.
 	while out.size() < count and attempts < max_attempts:
 		attempts += 1
 		var x := rng.randf_range(lo, hi)
@@ -298,7 +321,17 @@ func _scatter_full_scan(params: Dictionary) -> Array[Dictionary]:
 			y = float(sampler.call(x, z))
 			if not is_finite(y) or y <= no_ground:
 				continue
-		var kind := FoliageGen._pick_kind(rng, [])
+		if density_field.is_valid():
+			var density := float(density_field.call(x, z))
+			var density_draw := rng.randf()
+			if not is_finite(density) or density_draw >= clampf(density, 0.0, 1.0):
+				continue
+		var cum: Array = []
+		if kind_field.is_valid():
+			var local := FoliageGen._sanitize_weights(kind_field.call(x, z))
+			if not local.is_empty():
+				cum = local
+		var kind := FoliageGen._pick_kind(rng, cum)
 		var yaw := rng.randf_range(0.0, TAU)
 		var scale := rng.randf_range(FoliageGen.SCALE_MIN, FoliageGen.SCALE_MAX)
 		out.append({"kind": kind, "pos": Vector3(x, y, z), "yaw": yaw, "scale": scale})
@@ -366,6 +399,226 @@ func _report_scatter_cost() -> void:
 	print("SCATTER COST — %s" % line)
 
 
+## Every law the density field promises (#152), each with teeth.
+func _density_laws_hold() -> bool:
+	# 8a. A zero-density zone is GENUINELY bare — across more than one seed
+	# (the bore-pinch lesson: a single seed can pass by accident).
+	for s: int in [111, 222]:
+		var halved := FoliageGen.scatter({
+			"seed": s, "count": 300, "half_extent": 100.0,
+			"density_field": Callable(self, "_left_bare_density"),
+		})
+		if halved.size() < 150:
+			_fail("with the right half at density 1, only %d/300 props placed (seed %d) — the field starves the scatter" % [halved.size(), s])
+			return false
+		for p: Dictionary in halved:
+			if (p["pos"] as Vector3).x < 0.0:
+				_fail("a prop landed at x=%.2f where the density field is 0 (seed %d) — zero density must be structurally bare" % [(p["pos"] as Vector3).x, s])
+				return false
+
+	# 8b. Placement PROPORTION follows the field, not just its zeros: with the
+	# left half at 0.25 and the right at 1.0, candidates are uniform, so the
+	# expected left share is 0.25/1.25 = 20% — assert a generous band around
+	# it, across two seeds.
+	for s: int in [333, 444]:
+		var graded := FoliageGen.scatter({
+			"seed": s, "count": 400, "half_extent": 100.0,
+			"density_field": Callable(self, "_left_quarter_density"),
+		})
+		if graded.size() < 350:
+			_fail("graded-density scatter placed only %d/400 (seed %d) — too sparse to measure the proportion" % [graded.size(), s])
+			return false
+		var left := 0
+		for p: Dictionary in graded:
+			if (p["pos"] as Vector3).x < 0.0:
+				left += 1
+		var share := float(left) / float(graded.size())
+		if share < 0.10 or share > 0.30:
+			_fail("left (density 0.25) share is %.1f%%, expected ~20%% (seed %d) — acceptance is not proportional to the field" % [share * 100.0, s])
+			return false
+
+	# 8c. CLUSTERING is measurable (the #152 acceptance criterion): the same
+	# count under a patchy field must be far more clumped than uniform. Index
+	# of dispersion (per-cell count variance / mean, 10×10 grid): ~1 for the
+	# uniform scatter, several times that once thickets and clearings exist.
+	var uniform_props := FoliageGen.scatter({"seed": 555, "count": 600, "half_extent": 100.0})
+	var patchy_props := FoliageGen.scatter({
+		"seed": 555, "count": 600, "half_extent": 100.0,
+		"density_field": Callable(self, "_bumpy_density"),
+	})
+	if patchy_props.size() < 500:
+		_fail("patchy scatter placed only %d/600 — too sparse to measure clustering" % patchy_props.size())
+		return false
+	var vmr_uniform := _dispersion(uniform_props, 100.0)
+	var vmr_patchy := _dispersion(patchy_props, 100.0)
+	if vmr_uniform > 1.6:
+		_fail("uniform baseline dispersion %.2f is itself clumped — the clustering comparison would prove nothing" % vmr_uniform)
+		return false
+	if vmr_patchy < vmr_uniform * 2.5:
+		_fail("patchy dispersion %.2f is not well above the uniform baseline %.2f — density variance across the region is missing" % [vmr_patchy, vmr_uniform])
+		return false
+
+	# 8d. The field COMPOSES with every existing guard: keep-outs, spacing and
+	# the no-ground rejection all still hold while a density field is active.
+	var composed := FoliageGen.scatter({
+		"seed": 666, "count": 250, "half_extent": 100.0, "min_sep": 3.0,
+		"keep_outs": [[Vector2(30.0, 30.0), 12.0]],
+		"density_field": Callable(self, "_left_quarter_density"),
+		"height_sampler": Callable(self, "_holed_surface"),
+	})
+	if composed.size() < 60:
+		_fail("composed scatter placed only %d props — the guard-composition test is vacuous" % composed.size())
+		return false
+	for i in composed.size():
+		var pos: Vector3 = composed[i]["pos"]
+		if pos.x < 0.0:
+			_fail("composed: a prop sits on the holed half at x=%.2f — no-ground lost to the density field" % pos.x)
+			return false
+		if Vector2(pos.x, pos.z).distance_to(Vector2(30.0, 30.0)) < 12.0:
+			_fail("composed: a prop intrudes on the keep-out while a density field is active")
+			return false
+		for j in range(i + 1, composed.size()):
+			var q: Vector3 = composed[j]["pos"]
+			if Vector2(pos.x, pos.z).distance_to(Vector2(q.x, q.z)) < 3.0 - 0.001:
+				_fail("composed: two props are under min_sep while a density field is active")
+				return false
+
+	# 8e. A malformed (non-Callable) field is IGNORED — output byte-identical
+	# to the legacy uniform scatter, exactly like a malformed height sampler.
+	var legacy := FoliageGen.scatter({"seed": 777, "count": 200, "half_extent": 100.0})
+	var mistyped := FoliageGen.scatter({
+		"seed": 777, "count": 200, "half_extent": 100.0, "density_field": "garbage",
+	})
+	if _fingerprint(legacy) != _fingerprint(mistyped):
+		_fail("a non-Callable density field changed the scatter (%s vs %s) — it must be ignored, byte-identically" % [_fingerprint(legacy), _fingerprint(mistyped)])
+		return false
+
+	# 8f. A NON-FINITE density REJECTS — a broken field must read as a bare
+	# world (loud in every frame), never as silent confetti, and never poison
+	# a position.
+	if not FoliageGen.scatter({
+		"seed": 888, "count": 100, "half_extent": 100.0,
+		"density_field": Callable(self, "_nan_density"),
+	}).is_empty():
+		_fail("a NaN density field still placed props — non-finite must reject")
+		return false
+
+	# 8g. A saturated field is not a tax: density 1.0 everywhere still fills
+	# the whole count (the always-consumed draw must not starve the scatter).
+	var saturated := FoliageGen.scatter({
+		"seed": 999, "count": 150, "half_extent": 100.0,
+		"density_field": Callable(self, "_full_density"),
+	})
+	if saturated.size() != 150:
+		_fail("density 1.0 everywhere placed %d/150 — the density draw starves a saturated field" % saturated.size())
+		return false
+	return true
+
+
+## The kind-field laws (#152): steering with teeth, and a safe fallback.
+func _kind_field_laws_hold() -> bool:
+	# 9a. The mix follows the field: shrub-only weights on the left half,
+	# rubble-only on the right — every prop's kind matches its side, and both
+	# sides are populated (so the law is not proven on an empty half).
+	var steered := FoliageGen.scatter({
+		"seed": 1212, "count": 240, "half_extent": 100.0,
+		"kind_weights_field": Callable(self, "_side_kind_weights"),
+	})
+	var left_n := 0
+	var right_n := 0
+	for p: Dictionary in steered:
+		var pos: Vector3 = p["pos"]
+		var kind := int(p["kind"])
+		if pos.x < 0.0:
+			left_n += 1
+			if kind != FoliageGen.Kind.ASH_SHRUB:
+				_fail("kind %d landed on the shrub-only half — the kind field is not steering" % kind)
+				return false
+		else:
+			right_n += 1
+			if kind != FoliageGen.Kind.RUBBLE:
+				_fail("kind %d landed on the rubble-only half — the kind field is not steering" % kind)
+				return false
+	if left_n == 0 or right_n == 0:
+		_fail("kind-field test is vacuous: a half is empty (left %d, right %d)" % [left_n, right_n])
+		return false
+
+	# 9b. A malformed field return falls back to the STATIC weights for that
+	# candidate — never to a silent uniform draw.
+	var fallback := FoliageGen.scatter({
+		"seed": 1313, "count": 120, "half_extent": 100.0,
+		"kind_weights": [0.0, 1.0, 0.0, 0.0],
+		"kind_weights_field": Callable(self, "_short_kind_weights"),
+	})
+	if fallback.size() < 60:
+		_fail("fallback scatter placed only %d props — too sparse to prove the fallback" % fallback.size())
+		return false
+	for p: Dictionary in fallback:
+		if int(p["kind"]) != FoliageGen.Kind.DEAD_GRASS:
+			_fail("with a malformed kind field and DEAD_GRASS-only static weights, kind %d appeared — the fallback is not the static weights" % int(p["kind"]))
+			return false
+	return true
+
+
+## Index of dispersion (variance-to-mean) of per-cell prop counts over a 10×10
+## grid covering [-half_extent, half_extent]² — ~1 for a uniform scatter of a
+## fixed count, several times that once props clump. Cell keys clamp to the
+## grid so a prop at the exact edge is counted, never dropped.
+func _dispersion(props: Array[Dictionary], half_extent: float) -> float:
+	var cells := {}
+	var cell_size := half_extent * 2.0 / 10.0
+	for p: Dictionary in props:
+		var pos: Vector3 = p["pos"]
+		var gx := clampi(floori((pos.x + half_extent) / cell_size), 0, 9)
+		var gz := clampi(floori((pos.z + half_extent) / cell_size), 0, 9)
+		var key := Vector2i(gx, gz)
+		cells[key] = int(cells.get(key, 0)) + 1
+	var mean := float(props.size()) / 100.0
+	if mean <= 0.0:
+		return 0.0
+	var var_acc := 0.0
+	for gx in 10:
+		for gz in 10:
+			var c := float(cells.get(Vector2i(gx, gz), 0))
+			var_acc += (c - mean) * (c - mean)
+	return (var_acc / 100.0) / mean
+
+
+## Density fields for the law tests. All pure multiply/add/compare.
+func _left_bare_density(x: float, _z: float) -> float:
+	return 0.0 if x < 0.0 else 1.0
+
+
+func _left_quarter_density(x: float, _z: float) -> float:
+	return 0.25 if x < 0.0 else 1.0
+
+
+## A 20 m checkerboard: saturated blocks beside near-bare ones — the synthetic
+## stand-in for thickets and clearings. Blocks share the dispersion grid's
+## origin and pitch (-100 + k·20), so each measurement cell is wholly dense or
+## wholly bare and the metric sees the pattern instead of averaging across a
+## block boundary (posmod keeps negative cells correct).
+func _bumpy_density(x: float, z: float) -> float:
+	return 1.0 if posmod(floori((x + 100.0) / 20.0) + floori((z + 100.0) / 20.0), 2) == 0 else 0.05
+
+
+func _full_density(_x: float, _z: float) -> float:
+	return 1.0
+
+
+func _nan_density(_x: float, _z: float) -> float:
+	return NAN
+
+
+## Kind-weight fields: a hard west/east split, and a malformed (short) return.
+func _side_kind_weights(x: float, _z: float) -> Array:
+	return [1.0, 0.0, 0.0, 0.0] if x < 0.0 else [0.0, 0.0, 0.0, 1.0]
+
+
+func _short_kind_weights(_x: float, _z: float) -> Array:
+	return [1.0]
+
+
 ## The committed golden scenario: a realistic scatter with the shrine + cave
 ## keep-outs the world would supply and a LINEAR (transcendental-free) ground
 ## sampler, min_sep off — the cross-platform-stable path #58 proved.
@@ -377,7 +630,25 @@ func _golden_params() -> Dictionary:
 		"margin": MARGIN,
 		"keep_outs": _golden_keep_outs(),
 		"height_sampler": Callable(self, "_linear_surface"),
+		"density_field": Callable(self, "_golden_density"),
+		"kind_weights_field": Callable(self, "_golden_kind_weights"),
 	}
+
+
+## The golden scenario's density field: a clamped diagonal ramp — genuinely
+## ZERO past one corner (so the golden pins the bare-zone behaviour, clamping
+## included) and saturated toward the other. Pure multiply/add, so the golden
+## stays cross-platform-stable.
+func _golden_density(x: float, z: float) -> float:
+	return clampf((x + z) / 150.0 + 0.5, 0.0, 1.0)
+
+
+## The golden scenario's kind-weight field: the mix slides west→east
+## (shrub-heavy to rubble-heavy), pinning the per-location weighted-kind path.
+## Pure multiply/add; always a valid length-KIND_COUNT weight set.
+func _golden_kind_weights(x: float, _z: float) -> Array:
+	var t := clampf((x + HALF_EXTENT) / (HALF_EXTENT * 2.0), 0.0, 1.0)
+	return [1.5 - t, 1.0, 0.5, 0.5 + t]
 
 
 ## Shrine clearing at the origin and the starter-cave footprint, mirroring the

@@ -33,6 +33,30 @@ const FOLIAGE_RUIN_CLEARANCE := 5.0
 ## Offset from WORLD_SEED so foliage has its own deterministic stream and never
 ## disturbs the ruin/cave/terrain draws.
 const FOLIAGE_SEED_OFFSET := 7
+## WHERE cover gathers (#152): a second, independent low-frequency noise field
+## drives per-candidate acceptance, so scrub gathers into thickets and leaves
+## genuinely bare clearings instead of uniform confetti. Wavelength ≈ 1/freq
+## ≈ 45 m — a handful of distinct thickets and clearings across the 220 m
+## Reach, big enough to steer by.
+const FOLIAGE_DENSITY_SEED_OFFSET := 13
+const FOLIAGE_DENSITY_FREQUENCY := 0.022
+## The smoothstep band mapping that noise (remapped to 0..1) to density:
+## below BARE_BELOW the ground is genuinely bare (density 0 — the scatter
+## places NOTHING there), above FULL_ABOVE a thicket saturates.
+const FOLIAGE_BARE_BELOW := 0.38
+const FOLIAGE_FULL_ABOVE := 0.62
+## Rise-over-run at which ground reads as fully steep for cover: scrub and
+## grass thin away on grades, while the KIND mix (not just the density)
+## shifts toward rubble there — debris tolerates slopes.
+const FOLIAGE_STEEP_GRADE := 0.5
+## Exposure by ELEVATION: cover gathers in the low ground and thins on high,
+## open ground — a flat hollow and a flat ridge-top must not read the same.
+## Ground at or below LOW is sheltered (full density); by HIGH it is fully
+## exposed and keeps only (1 - EXPOSURE_THIN) of its cover. The terrain band
+## is roughly ±7.6 m (HEIGHT_AMP + detail), so 0→6 spans the upper half.
+const FOLIAGE_LOW_GROUND := 0.0
+const FOLIAGE_HIGH_GROUND := 6.0
+const FOLIAGE_EXPOSURE_THIN := 0.55
 
 const CAVE_SITE := Vector2(-56.0, -20.0)
 const CAVE_SEED := 42
@@ -51,6 +75,7 @@ const NO_GROUND := -1.0e6
 var _noise := FastNoiseLite.new()
 var _detail := FastNoiseLite.new()
 var _tint := FastNoiseLite.new()
+var _foliage_density := FastNoiseLite.new()
 var _heights := PackedFloat32Array()
 var _brazier_light: OmniLight3D
 var _brazier_mesh: MeshInstance3D
@@ -85,6 +110,14 @@ func _ready() -> void:
 	_detail.frequency = 0.09
 	_tint.seed = WORLD_SEED + 2
 	_tint.frequency = 0.05
+	# Single-octave simplex: smooth, blobby thickets and clearings — fractal
+	# detail here would read as speckle, the exact confetti #152 removes.
+	# FRACTAL_NONE is load-bearing: FastNoiseLite DEFAULTS to FBM with several
+	# octaves, which would punch small holes inside the broad thickets.
+	_foliage_density.seed = WORLD_SEED + FOLIAGE_DENSITY_SEED_OFFSET
+	_foliage_density.noise_type = FastNoiseLite.TYPE_SIMPLEX
+	_foliage_density.frequency = FOLIAGE_DENSITY_FREQUENCY
+	_foliage_density.fractal_type = FastNoiseLite.FRACTAL_NONE
 	# The cave layout and cover circles must exist before ANY height_at call:
 	# the terrain grid bakes the cover knoll in.
 	_prepare_starter_cave()
@@ -590,6 +623,8 @@ func _scatter_foliage() -> void:
 		"min_sep": FOLIAGE_MIN_SEP,
 		"keep_outs": _foliage_keep_outs(),
 		"height_sampler": surface_height_at,
+		"density_field": _foliage_density_at,
+		"kind_weights_field": _foliage_kind_weights_at,
 	})
 	var by_kind: Array = []
 	for _slot in FoliageGen.KIND_COUNT:
@@ -616,6 +651,59 @@ func foliage_placements() -> Array[Dictionary]:
 	for placement: Dictionary in _foliage:
 		out.append(placement.duplicate(true))
 	return out
+
+
+## Local ground-cover density in [0, 1] (#152): the low-frequency field carves
+## thickets where it is high and genuinely bare clearings where its smoothstep
+## band bottoms out; ELEVATION thins the high, open ground so growth gathers
+## in the sheltered hollows; and steep ground thins further. Deterministic
+## (an own seeded FastNoiseLite over world coordinates, plus the baked height
+## grid) and pure of the scene tree, so "the same world every boot" holds for
+## the composition too.
+func _foliage_density_at(x: float, z: float) -> float:
+	var h := surface_height_at(x, z)
+	if h <= NO_GROUND:
+		return 0.0
+	var n01 := _foliage_density.get_noise_2d(x, z) * 0.5 + 0.5
+	var d := smoothstep(FOLIAGE_BARE_BELOW, FOLIAGE_FULL_ABOVE, n01)
+	var exposure := smoothstep(FOLIAGE_LOW_GROUND, FOLIAGE_HIGH_GROUND, h)
+	d *= 1.0 - FOLIAGE_EXPOSURE_THIN * exposure
+	return d * (1.0 - 0.65 * _foliage_slope01(x, z))
+
+
+## Terrain grade at (x, z) mapped to [0, 1]: 0 on the flat, 1 at or past
+## FOLIAGE_STEEP_GRADE rise-over-run. Finite-differenced from the same baked
+## surface the props stand on. A NO_GROUND neighbour (off the grid) reads as
+## fully steep, so cover thins to nothing at the world's edges instead of
+## crowding them.
+func _foliage_slope01(x: float, z: float) -> float:
+	var step := 1.0
+	var hx0 := surface_height_at(x - step, z)
+	var hx1 := surface_height_at(x + step, z)
+	var hz0 := surface_height_at(x, z - step)
+	var hz1 := surface_height_at(x, z + step)
+	if hx0 <= NO_GROUND or hx1 <= NO_GROUND or hz0 <= NO_GROUND or hz1 <= NO_GROUND:
+		return 1.0
+	var gx := (hx1 - hx0) / (2.0 * step)
+	var gz := (hz1 - hz0) / (2.0 * step)
+	return clampf(sqrt(gx * gx + gz * gz) / FOLIAGE_STEEP_GRADE, 0.0, 1.0)
+
+
+## Per-location kind weights (#152): scrub and grass favour flat sheltered
+## ground; bone and rubble tolerate slopes, and debris gathers where its own
+## pattern is high — where something HAPPENED — rather than evenly across the
+## plain. The debris pattern reuses the density noise on a far-offset domain:
+## an independent field with zero extra state. Always length-KIND_COUNT with a
+## positive total, so the weighted draw never degenerates.
+func _foliage_kind_weights_at(x: float, z: float) -> Array:
+	var s := _foliage_slope01(x, z)
+	var debris01 := _foliage_density.get_noise_2d(x + 512.0, z - 512.0) * 0.5 + 0.5
+	return [
+		(1.0 - 0.75 * s) * (0.6 + 0.8 * (1.0 - debris01)), # ASH_SHRUB — flats, clear of debris fields
+		1.0 - 0.55 * s,                                    # DEAD_GRASS — broad, thinning on grades
+		0.2 + 0.9 * debris01,                              # BONE_PILE — where something happened
+		0.25 + 0.75 * s + 0.5 * debris01,                  # RUBBLE — slopes and debris fields
+	]
 
 
 ## Every circle foliage must stay out of: the shrine clearing, each ruin site's
