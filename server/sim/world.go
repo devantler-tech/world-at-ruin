@@ -137,6 +137,17 @@ type World struct {
 	// the hashed state so a divergence in tick count is caught too.
 	Tick uint64
 
+	// SweptCollision selects continuous collision on the movement path: when
+	// true, Step stops a mover at first contact rather than integrating it to a
+	// destination it could only reach by passing through another actor (see
+	// sweep.go). It is a server-configured feature flag, default off — the
+	// decouple-deploy-from-release switch armed before the high-speed movement
+	// that needs it exists (#66). It is not part of the hashed state (Hash
+	// captures step results, not configuration), and with it off Step is
+	// byte-identical to the original discrete integration, so every settled
+	// golden is unchanged.
+	SweptCollision bool
+
 	bounds Bounds
 	ents   map[EntityID]*Entity
 	order  []EntityID // ascending EntityID; rebuilt when the membership changes
@@ -218,15 +229,31 @@ func sanitizeIntent(v Vec3) Vec3 {
 	}
 }
 
-// Step advances the world by exactly one fixed tick. For each entity, in
-// ascending-ID order, it clamps the intent to the entity's max speed, converts
-// the per-second velocity into a per-tick displacement by integer division, and
-// clamps the new position into the navmesh bounds. Integer division truncates
-// toward zero — deterministically — so the same inputs always yield the same
-// positions. It then resolves capsule overlap (see separate), driving the
-// tick's final state toward no two actors sharing the same space — exactly for
-// an isolated pair, and convergently (within a few ticks) for a dense pile-up.
+// Step advances the world by exactly one fixed tick: it integrates every
+// actor's clamped movement intent, then resolves capsule overlap (see separate),
+// driving the tick's final state toward no two actors sharing the same space —
+// exactly for an isolated pair, and convergently (within a few ticks) for a
+// dense pile-up. When SweptCollision is on the integration is continuous, so a
+// fast actor stops at first contact instead of tunneling through another (see
+// sweep.go); with it off the integration is the plain per-actor step below.
 func (w *World) Step() {
+	if w.SweptCollision {
+		w.integrateSwept()
+	} else {
+		w.integrate()
+	}
+	w.separate()
+	w.Tick++
+}
+
+// integrate is the plain movement pass. For each entity, in ascending-ID order,
+// it clamps the intent to the entity's max speed, converts the per-second
+// velocity into a per-tick displacement by integer division, and clamps the new
+// position into the navmesh bounds. Integer division truncates toward zero —
+// deterministically — so the same inputs always yield the same positions. This
+// is discrete collision: overlap is resolved only afterwards by separate, which
+// a fast enough mover can skip (the tunneling gap SweptCollision closes).
+func (w *World) integrate() {
 	for _, id := range w.order {
 		e := w.ents[id]
 		v := clampSpeed(e.Intent, e.MaxSpeed)
@@ -234,8 +261,6 @@ func (w *World) Step() {
 		disp := Vec3{X: v.X / TickHz, Y: v.Y / TickHz, Z: v.Z / TickHz}
 		e.Pos = w.bounds.clamp(e.Pos.Add(disp))
 	}
-	w.separate()
-	w.Tick++
 }
 
 // clampSpeed limits the horizontal (ground-plane) speed of v to maxSpeed mm/s,
