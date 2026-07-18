@@ -1,6 +1,13 @@
 package main
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"math/big"
 	"net"
 	"os"
 	"os/exec"
@@ -69,27 +76,71 @@ func TestRealtimeWithoutAgonesNeverDials(t *testing.T) {
 	}
 }
 
-// TestAgonesLifecycleEndToEnd runs the real binary, flag on, against the
-// fake sidecar: the process must come up Ready, sustain heartbeats at the
-// configured cadence, and Shutdown when its deadline exit fires.
-func TestAgonesLifecycleEndToEnd(t *testing.T) {
+// writeSelfSignedCert generates an ECDSA key pair and a self-signed
+// certificate valid between notBefore and notAfter, writes both as PEM
+// files, and returns their paths — the fixture for the TLS-validity gates.
+func writeSelfSignedCert(t *testing.T, notBefore, notAfter time.Time) (certFile, keyFile string) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "zone.test"},
+		DNSNames:     []string{"zone.test"},
+		NotBefore:    notBefore,
+		NotAfter:     notAfter,
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("create certificate: %v", err)
+	}
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		t.Fatalf("marshal key: %v", err)
+	}
+	dir := t.TempDir()
+	certFile = filepath.Join(dir, "cert.pem")
+	keyFile = filepath.Join(dir, "key.pem")
+	if err := os.WriteFile(certFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600); err != nil {
+		t.Fatalf("write cert: %v", err)
+	}
+	if err := os.WriteFile(keyFile, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}), 0o600); err != nil {
+		t.Fatalf("write key: %v", err)
+	}
+	return certFile, keyFile
+}
+
+// TestAgonesServesRealTLSWhenCertValid is the fleet shape end-to-end with
+// nothing faked but the sidecar: a valid certificate, the real wss listener,
+// Ready exactly once, live heartbeats, and a Shutdown on the deadline exit.
+func TestAgonesServesRealTLSWhenCertValid(t *testing.T) {
 	f, err := agonestest.Start(nil)
 	if err != nil {
 		t.Fatalf("start fake sidecar: %v", err)
 	}
 	t.Cleanup(f.Stop)
+	certFile, keyFile := writeSelfSignedCert(t, time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
 
 	cmd := exec.Command(zoneBin,
-		"-realtime", "-duration", "400ms",
+		"-listen", "127.0.0.1:0", "-tls-cert", certFile, "-tls-key", keyFile,
+		"-duration", "400ms",
 		"-agones", "-agones-health-interval", "50ms",
 	)
 	cmd.Env = append(os.Environ(),
 		"AGONES_SDK_GRPC_HOST=127.0.0.1",
 		"AGONES_SDK_GRPC_PORT="+f.PortString(),
+		"WAR_ZONE_ADMISSION_SECRET="+strings.Repeat("ab", 32),
 	)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("flag-on realtime run failed: %v\n%s", err, out)
+		t.Fatalf("valid-cert wss run failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "zone: listening on wss://") {
+		t.Fatalf("wss listener never came up:\n%s", out)
 	}
 	if got := f.ReadyCalls(); got != 1 {
 		t.Fatalf("Ready calls = %d, want exactly 1", got)
@@ -104,6 +155,38 @@ func TestAgonesLifecycleEndToEnd(t *testing.T) {
 	}
 }
 
+// TestAgonesRefusesReadyWhenCertExpired pins the validity-window gate: a
+// parseable but expired certificate is an endpoint no client will accept, so
+// the process must die loudly with Ready never sent.
+func TestAgonesRefusesReadyWhenCertExpired(t *testing.T) {
+	f, err := agonestest.Start(nil)
+	if err != nil {
+		t.Fatalf("start fake sidecar: %v", err)
+	}
+	t.Cleanup(f.Stop)
+	certFile, keyFile := writeSelfSignedCert(t, time.Now().Add(-2*time.Hour), time.Now().Add(-time.Hour))
+
+	cmd := exec.Command(zoneBin,
+		"-listen", "127.0.0.1:0", "-tls-cert", certFile, "-tls-key", keyFile,
+		"-agones",
+	)
+	cmd.Env = append(os.Environ(),
+		"AGONES_SDK_GRPC_HOST=127.0.0.1",
+		"AGONES_SDK_GRPC_PORT="+f.PortString(),
+		"WAR_ZONE_ADMISSION_SECRET="+strings.Repeat("ab", 32),
+	)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expired-cert run succeeded; want a loud failure\n%s", out)
+	}
+	if !strings.Contains(string(out), "validity window") {
+		t.Fatalf("failure did not name the validity window:\n%s", out)
+	}
+	if got := f.ReadyCalls(); got != 0 {
+		t.Fatalf("Ready calls = %d, want 0: an unusable endpoint must never declare Ready", got)
+	}
+}
+
 // TestAgonesSigtermShutsDownCleanly sends the signal Agones actually sends
 // (SIGTERM) mid-run and requires a clean exit that still informed the
 // sidecar — the drain path an operator's fleet depends on.
@@ -115,12 +198,14 @@ func TestAgonesSigtermShutsDownCleanly(t *testing.T) {
 	t.Cleanup(f.Stop)
 
 	cmd := exec.Command(zoneBin,
-		"-realtime", "-duration", "30s",
+		"-listen", "127.0.0.1:0", "-insecure-plaintext",
+		"-duration", "30s",
 		"-agones", "-agones-health-interval", "50ms",
 	)
 	cmd.Env = append(os.Environ(),
 		"AGONES_SDK_GRPC_HOST=127.0.0.1",
 		"AGONES_SDK_GRPC_PORT="+f.PortString(),
+		"WAR_ZONE_ADMISSION_SECRET="+strings.Repeat("ab", 32),
 	)
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start zone: %v", err)
@@ -177,16 +262,22 @@ func TestAgonesRefusesReadyWhenTLSBroken(t *testing.T) {
 	}
 }
 
-// TestAgonesRequiresServingMode pins the loud refusal: the lifecycle on a
-// fixed-tick CI run would be meaningless, so the flag without -realtime or
-// -listen is a usage error, never a silent ignore.
-func TestAgonesRequiresServingMode(t *testing.T) {
-	out, err := exec.Command(zoneBin, "-agones").CombinedOutput()
-	if err == nil {
-		t.Fatalf("-agones without a serving mode succeeded; want a usage error\n%s", out)
-	}
-	if !strings.Contains(string(out), "-agones requires a serving mode") {
-		t.Fatalf("refusal did not explain itself:\n%s", out)
+// TestAgonesRequiresListen pins the loud refusal: Ready must mean a
+// connectable endpoint, so -agones without the socket — bare, or with the
+// listener-less -realtime harness — is a usage error, never a silent ignore
+// and never a Ready the fleet would trust.
+func TestAgonesRequiresListen(t *testing.T) {
+	for _, args := range [][]string{
+		{"-agones"},
+		{"-agones", "-realtime", "-duration", "100ms"},
+	} {
+		out, err := exec.Command(zoneBin, args...).CombinedOutput()
+		if err == nil {
+			t.Fatalf("%v succeeded; want a usage error\n%s", args, out)
+		}
+		if !strings.Contains(string(out), "-agones requires -listen") {
+			t.Fatalf("refusal for %v did not explain itself:\n%s", args, out)
+		}
 	}
 }
 

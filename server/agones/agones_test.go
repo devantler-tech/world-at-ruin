@@ -3,6 +3,7 @@ package agones
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -144,6 +145,50 @@ func TestStartFailsLoudWhenReadyRefused(t *testing.T) {
 	}
 	if got := f.ReadyCalls(); got != 1 {
 		t.Fatalf("Ready attempts = %d, want 1", got)
+	}
+}
+
+// TestShutdownNotBlockedByHungRedial pins the termination-grace contract:
+// the SDK's dial blocks up to ~30s, so when a health failure triggers a
+// re-dial against an unreachable sidecar and SIGTERM arrives mid-dial,
+// Shutdown must abandon the dial and return promptly instead of burning the
+// pod's grace period behind it.
+func TestShutdownNotBlockedByHungRedial(t *testing.T) {
+	f := startFake(t, nil)
+	f.KillHealthStreamAt(1)
+
+	// First dial (Start) is real; every later dial (the recovery path)
+	// hangs until the test ends — the unreachable-sidecar shape.
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	orig := dial
+	var dials atomic.Int32
+	dial = func() (sidecar, error) {
+		if dials.Add(1) == 1 {
+			return orig()
+		}
+		<-release
+		return nil, errors.New("hung dial released by test teardown")
+	}
+	t.Cleanup(func() { dial = orig })
+
+	l, err := Start(context.Background(), Config{HealthInterval: 20 * time.Millisecond, Logf: t.Logf})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	// One beat lands, the fake kills the stream, the next beat fails and
+	// the loop enters the hung re-dial.
+	waitFor(t, 5*time.Second, func() bool { return dials.Load() >= 2 }, "the health loop to enter the recovery dial")
+
+	done := make(chan error, 1)
+	go func() { done <- l.Shutdown() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Shutdown: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Shutdown blocked behind the hung re-dial; want a prompt return")
 	}
 }
 

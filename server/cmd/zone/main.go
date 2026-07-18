@@ -6,17 +6,16 @@
 // reports the payload sizes. With -listen it serves the real zone socket per
 // the transport ADR (docs/design/zone-transport.md): a WebSocket-over-TLS
 // endpoint at /zone carrying one wire-codec message per binary frame, with
-// token-gated admission. With -agones (default off) a serving run — -realtime
-// or -listen — additionally speaks the Agones GameServer lifecycle through the
+// token-gated admission. With -agones (default off, -listen only) the socket
+// server additionally speaks the Agones GameServer lifecycle through the
 // official SDK, which is what makes the binary deployable on the fleet: Ready
-// once it can actually take a connection, Health on a cadence, Shutdown on
+// once a player could actually connect, Health on a cadence, Shutdown on
 // exit. The Nakama layer remains a later child of the server-foundation epic.
 // The socket is opt-in: without -listen the command behaves exactly as before.
 //
 //	zone                     # 600 deterministic ticks, then print the state hash
 //	zone -ticks 1800         # a different fixed count
 //	zone -realtime -duration 3s   # drive the fixed loop from real time for 3s
-//	zone -realtime -agones   # ...and register with the local Agones sidecar
 //	zone -replicate 1        # also track observer 1, wire-encode its delta stream
 //	zone -listen :8443 -tls-cert cert.pem -tls-key key.pem  # serve the zone socket (wss)
 //	zone -listen :8443 -tls-cert cert.pem -tls-key key.pem -agones  # ...as a fleet GameServer
@@ -30,6 +29,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"flag"
 	"fmt"
@@ -60,7 +60,7 @@ func main() {
 	secretEnv := flag.String("admission-secret-env", "WAR_ZONE_ADMISSION_SECRET", "NAME of the environment variable holding the hex-encoded admission-token secret")
 	mintObserver := flag.Uint64("mint-token", 0, "developer helper: mint an admission token for this observer entity ID using the admission secret, print it, and exit")
 	mintTTL := flag.Duration("mint-ttl", 5*time.Minute, "expiry window for -mint-token")
-	withAgones := flag.Bool("agones", false, "register with the local Agones SDK sidecar (Ready/Health/Shutdown); requires a serving mode (-realtime or -listen)")
+	withAgones := flag.Bool("agones", false, "register with the local Agones SDK sidecar (Ready/Health/Shutdown); requires -listen, since Ready must mean a connectable endpoint")
 	healthInterval := flag.Duration("agones-health-interval", agones.DefaultHealthInterval, "heartbeat cadence for -agones; keep it under half the fleet's health periodSeconds")
 	flag.Parse()
 
@@ -78,8 +78,8 @@ func main() {
 	if *listen != "" && *replicate != 0 {
 		fatalf("-listen and -replicate are mutually exclusive")
 	}
-	if *withAgones && !*realtime && *listen == "" {
-		fatalf("-agones requires a serving mode (-realtime or -listen): the SDK lifecycle only makes sense on a serving process")
+	if *withAgones && *listen == "" {
+		fatalf("-agones requires -listen: Agones Ready must mean a player can actually connect, and only -listen opens the zone socket")
 	}
 
 	w := sim.NewDemoWorld()
@@ -93,7 +93,7 @@ func main() {
 			fatalf("%v", err)
 		}
 	case *realtime:
-		runRealtime(w, *duration, *withAgones, *healthInterval)
+		runRealtime(w, *duration)
 	case *replicate != 0:
 		runReplicate(w, *ticks, sim.EntityID(*replicate), *interest)
 	default:
@@ -170,6 +170,18 @@ func runListen(w *sim.World, addr, certFile, keyFile, secretEnv string, insecure
 		if err != nil {
 			return fmt.Errorf("load TLS key pair: %w", err)
 		}
+		// A parseable pair can still be unusable: outside its validity
+		// window every client rejects the handshake, which to the fleet is
+		// indistinguishable from a dead endpoint. (Identity/DNS-name checks
+		// stay with the deployment side, which knows the served name; the
+		// process only knows the files it was handed.)
+		leaf, err := x509.ParseCertificate(cert.Certificate[0])
+		if err != nil {
+			return fmt.Errorf("parse TLS leaf certificate: %w", err)
+		}
+		if now := time.Now(); now.Before(leaf.NotBefore) || now.After(leaf.NotAfter) {
+			return fmt.Errorf("TLS certificate is outside its validity window (NotBefore %s, NotAfter %s): no client would accept the handshake", leaf.NotBefore.Format(time.RFC3339), leaf.NotAfter.Format(time.RFC3339))
+		}
 		srv.TLSConfig.Certificates = []tls.Certificate{cert}
 	}
 	ln, err := net.Listen("tcp", addr)
@@ -218,7 +230,12 @@ func runListen(w *sim.World, addr, certFile, keyFile, secretEnv string, insecure
 		w.Step()
 		hub.Tick(w)
 	})
-	if err := context.Cause(serveCtx); err != nil && err != context.Canceled {
+	// A canceled serveCtx has two possible authors, and only one is an
+	// error: the serve goroutine (a real serve failure) or the parent
+	// signal context (a clean SIGINT/SIGTERM — whose cause under Go 1.26+
+	// NAMES the signal, so comparing against context.Canceled would misread
+	// a clean shutdown as a failure and exit non-zero).
+	if err := context.Cause(serveCtx); err != nil && ctx.Err() == nil {
 		return fmt.Errorf("serve: %w", err)
 	}
 	return nil
@@ -285,27 +302,13 @@ func fatalf(format string, args ...any) {
 // runRealtime drives the world through a FixedLoop off the monotonic clock
 // until d elapses or the process is asked to stop. Timing jitter changes how
 // many ticks run, but never what a given tick computes — that is the point of
-// decoupling the sim rate from the wall clock.
-//
-// With withAgones set it also speaks the Agones GameServer lifecycle: Ready
-// before the first tick, Health on healthInterval, and Shutdown on every
-// exit path — deadline, SIGINT or SIGTERM — so the fleet reaps the process
-// instead of waiting out a health timeout.
-func runRealtime(w *sim.World, d time.Duration, withAgones bool, healthInterval time.Duration) {
+// decoupling the sim rate from the wall clock. It deliberately has no Agones
+// wiring: with no listener there is nothing a player could connect to, so
+// declaring Ready here would hand the fleet a dead allocation (-agones is
+// therefore -listen-only).
+func runRealtime(w *sim.World, d time.Duration) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-
-	if withAgones {
-		lc, err := agones.Start(ctx, agones.Config{HealthInterval: healthInterval})
-		if err != nil {
-			fatalf("%v", err)
-		}
-		defer func() {
-			if err := lc.Shutdown(); err != nil {
-				fmt.Fprintf(os.Stderr, "zone: %v\n", err)
-			}
-		}()
-	}
 
 	runLoop(ctx, w, d, func() {
 		sim.DriveDemoTick(w)

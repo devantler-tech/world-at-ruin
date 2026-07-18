@@ -131,10 +131,10 @@ func (l *Lifecycle) healthLoop(ctx context.Context, interval time.Duration) {
 	for {
 		if err := l.getSDK().Health(); err != nil {
 			l.logf("agones: health beat failed (%v) — re-dialling the sidecar", err)
-			if s, derr := dial(); derr != nil {
-				l.logf("agones: re-dial failed, retrying on the next beat: %v", derr)
-			} else {
+			if s, ok := l.redial(ctx); ok {
 				l.setSDK(s)
+			} else if ctx.Err() != nil {
+				return
 			}
 		}
 		select {
@@ -142,6 +142,36 @@ func (l *Lifecycle) healthLoop(ctx context.Context, interval time.Duration) {
 			return
 		case <-t.C:
 		}
+	}
+}
+
+// redial runs the blocking SDK dial without letting it hold up shutdown: the
+// dial itself is not cancellable (the SDK blocks up to ~30s), so it runs in
+// its own goroutine and this select abandons it the moment ctx dies —
+// otherwise a SIGTERM arriving while the sidecar is unreachable would pin
+// Shutdown behind the full dial timeout and burn the pod's termination grace
+// period. An abandoned dial's late result is discarded via the buffered
+// channel. Returns ok=false on dial failure or cancellation.
+func (l *Lifecycle) redial(ctx context.Context) (sidecar, bool) {
+	type res struct {
+		s   sidecar
+		err error
+	}
+	ch := make(chan res, 1)
+	go func() {
+		s, err := dial()
+		ch <- res{s, err}
+	}()
+	select {
+	case <-ctx.Done():
+		l.logf("agones: abandoning sidecar re-dial: shutting down")
+		return nil, false
+	case r := <-ch:
+		if r.err != nil {
+			l.logf("agones: re-dial failed, retrying on the next beat: %v", r.err)
+			return nil, false
+		}
+		return r.s, true
 	}
 }
 

@@ -119,18 +119,18 @@ zone/dungeon server:
   the loop from the wall clock. With `-replicate` it also runs the full
   replication pipeline a transport will carry — per-tick tracker delta →
   wire-encode → decode → verify — and prints the payload sizes (the baseline for
-  future bandwidth evidence). With `-agones` (serving modes only — `-realtime`
-  or `-listen`) it registers with the local Agones sidecar for its lifetime,
-  so the socket-serving shape a fleet GameServer runs is `-listen` +
-  `-agones`.
+  future bandwidth evidence). With `-agones` (`-listen` only — Ready must
+  mean a connectable endpoint, and only `-listen` opens one) it registers
+  with the local Agones sidecar for its lifetime, so the shape a fleet
+  GameServer runs is `-listen` + `-agones`.
 
 ```sh
 cd server
 go run ./cmd/zone                     # 600 deterministic ticks, then the state hash
 go run ./cmd/zone -ticks 1800         # a different fixed count
 go run ./cmd/zone -realtime -duration 3s   # drive the fixed loop from real time
-go run ./cmd/zone -realtime -agones   # ...and register with the local Agones sidecar
 go run ./cmd/zone -replicate 1        # also wire-encode observer 1's delta stream
+go run ./cmd/zone -listen :8443 -tls-cert cert.pem -tls-key key.pem -agones  # fleet GameServer shape
 ```
 
 ## What is deliberately not here yet
