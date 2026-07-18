@@ -146,6 +146,15 @@ static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 		return _result(INVALID_MANIFEST, "candidate writes save schema %d below the installed build's %d — would regress the save (forward-only)" % [
 			int(m_save["writes"]), save_schema])
 
+	# The same forward-only rule for the CAPABILITY counter, which the schema check
+	# above cannot see: a same-schema candidate advertising a capability BELOW the
+	# installed one would move the player onto a build that cannot read shapes they
+	# have already saved. Monotonic in both directions, on every tier.
+	var installed_capability := int(installed.get("save_capability", 0))
+	if int(m_save["capability"]) < installed_capability:
+		return _result(INVALID_MANIFEST, "candidate advertises save capability %d below the installed build's %d — would regress the save (forward-only)" % [
+			int(m_save["capability"]), installed_capability])
+
 	# A shell update is required when the running shell is below the supported
 	# floor, when the newest pack needs a newer shell than is installed, or when
 	# the only thing newer is the shell itself. (When incompatible-but-updatable,
@@ -179,19 +188,19 @@ static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 		# rollback target cannot read, and [RollbackSelection] would correctly find no
 		# eligible target after a failed boot. That is the strand this closes.
 		#
-		# Enforceable only when BOTH sides report a capability. `capability` is not
-		# yet required of a manifest and a build predating capability tracking does
-		# not report one, so this cannot be a blanket gate without redefining the
-		# manifest contract — that remainder (making it required, and having the
-		# bootstrap supply the installed value) is tracked in #120.
-		if m_save.has("capability") and (installed.has("save_capability") or installed.has("save_capability_max")):
-			var capability_max := int(installed.get("save_capability_max", installed.get("save_capability", 0)))
-			if int(m_save["capability"]) > capability_max:
-				if shell_newer:
-					return _shell_or_block(save_schema, m_shell, "content pack %s raises save capability to %d beyond the rollback target's %d — routing to the newer shell %s" % [
-						str(m_pack["version"]), int(m_save["capability"]), capability_max, str(m_shell["current"])])
-				return _result(INVALID_MANIFEST, "content pack %s raises save capability to %d beyond the rollback target's %d but the manifest offers no newer shell — refusing (no safe route)" % [
-					str(m_pack["version"]), int(m_save["capability"]), capability_max])
+		# The gate is UNCONDITIONAL: `capability` is a required manifest field, and an
+		# installed build that does not report one is treated as capability 0. Both
+		# defaults fail closed — an unproven pack routes to the shell tier rather than
+		# being offered. An earlier version engaged only when both sides declared a
+		# capability, which meant omitting the field silently bypassed it; a gate with
+		# an opt-out is not a gate.
+		var capability_max := int(installed.get("save_capability_max", installed.get("save_capability", 0)))
+		if int(m_save["capability"]) > capability_max:
+			if shell_newer:
+				return _shell_or_block(save_schema, m_shell, "content pack %s raises save capability to %d beyond the rollback target's %d — routing to the newer shell %s" % [
+					str(m_pack["version"]), int(m_save["capability"]), capability_max, str(m_shell["current"])])
+			return _result(INVALID_MANIFEST, "content pack %s raises save capability to %d beyond the rollback target's %d but the manifest offers no newer shell — refusing (no safe route)" % [
+				str(m_pack["version"]), int(m_save["capability"]), capability_max])
 		return _result(PACK_UPDATE, "content pack %s available (installed %s)" % [
 			str(m_pack["version"]), pack])
 	if shell_newer:
@@ -292,11 +301,12 @@ static func _body_error(m: Dictionary) -> String:
 	if int(sv["writes"]) < int(sv["min"]):
 		return "save_schema.writes %d is below save_schema.min %d (incoherent)" % [
 			int(sv["writes"]), int(sv["min"])]
-	# `capability` is validated WHEN PRESENT rather than required: it drives the
-	# same-schema rollback gate in decide(), so a malformed value must fail closed,
-	# but making it mandatory would redefine the manifest contract (see #120).
-	if sv.has("capability") and not is_int_id(sv["capability"]):
-		return "save_schema.capability is present but not a whole number"
+	# `capability` is REQUIRED, for the same reason `writes` is: it drives the
+	# same-schema rollback gate in decide(). A gate that can be bypassed by omitting
+	# the field is not a gate, so an absent capability is a refusal rather than an
+	# unproven pass.
+	if not is_int_id(sv.get("capability")):
+		return "save_schema.capability is missing or not a whole number"
 	return ""
 
 
