@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tests/quest_log_test.gd" id="1_quest_log"]
+
+[node name="QuestLogTest" type="Node"]
+script = ExtResource("1_quest_log")
