@@ -48,7 +48,7 @@ const HALF := WorldGen.SIZE / 2.0
 ## golden (f5dcfa96) rather than taking either side of the merge — both changes
 ## are in this value. The cave rock mesh itself is BYTE-IDENTICAL across seeds
 ## 42/7/1234, so the torch contribution is fixtures-only, not terrain.
-const GOLDEN_FINGERPRINT := "8d3d739c"
+const GOLDEN_FINGERPRINT := "eaaba576"
 ## world_gen's cave_protects pads the cave hull by this many metres. A piece
 ## whose bounding radius is within that padding cannot reach the hull when its
 ## centre is outside cave_protects, which makes the cheap centre test a SOUND

@@ -360,22 +360,22 @@ func _add_column(rng: RandomNumberGenerator, parent: Node3D, off: Vector3, stone
 	var ground := height_at(wx, wz)
 	var r := rng.randf_range(0.35, 0.55)
 	var h := rng.randf_range(1.6, 5.5)
-	# ONE draw from the placement stream seeds a separate stream for mesh
-	# detail, so changing how a break is shaped can never shift where the ruins
-	# stand (same discipline as FOLIAGE_SEED_OFFSET).
+	# Derived from the piece's own position, NOT drawn from the placement
+	# stream — even a single draw would advance it, so changing how a break is
+	# shaped would still shift every ruin placed afterwards.
 	var detail := RandomNumberGenerator.new()
-	detail.seed = rng.randi()
+	detail.seed = _detail_seed(wx, wz, 1)
 	var mesh := _broken_column_mesh(detail, r, r * 0.9, h)
 	var fallen := rng.randf() < 0.3
 	var body := _solid(mesh, stone)
 	if fallen:
-		# The mesh runs base->top from y=0, not around its centre, so rotating
-		# about the origin would swing the piece off its spot. Rotate first,
-		# then place the BASE such that the column's midpoint lands where it
-		# was meant to lie.
+		# The node origin must stay the piece CENTRE: the keep-out guard measures
+		# global_position +/- a radius, so a base-anchored origin would let a
+		# fallen column reach into the shrine clearing unnoticed. Shift the mesh
+		# and its collider INSIDE the body instead of moving the body.
+		_offset_children(body, Vector3(0.0, -h * 0.5, 0.0))
+		body.position = Vector3(off.x, ground + r, off.z)
 		body.rotation = Vector3(PI / 2.0, rng.randf_range(0.0, TAU), 0)
-		var lying_centre := Vector3(off.x, ground + r, off.z)
-		body.position = lying_centre + body.transform.basis * Vector3(0.0, -h * 0.5, 0.0)
 	else:
 		# The mesh is built from its base at y=0, so it is seated on the ground
 		# rather than centred on it like the old CylinderMesh.
@@ -389,7 +389,7 @@ func _add_wall(rng: RandomNumberGenerator, parent: Node3D, off: Vector3, stone: 
 	var ground := height_at(wx, wz)
 	var wall_size := Vector3(rng.randf_range(2.0, 5.0), rng.randf_range(1.0, 3.2), 0.45)
 	var wall_detail := RandomNumberGenerator.new()
-	wall_detail.seed = rng.randi()
+	wall_detail.seed = _detail_seed(wx, wz, 2)
 	var mesh := _broken_wall_mesh(wall_detail, wall_size.x, wall_size.y, wall_size.z)
 	# CONCAVE on purpose: a wall with collapsed steps and missing courses has
 	# gaps, and one convex hull would fill them with invisible collision — the
@@ -407,12 +407,26 @@ func _add_rubble(rng: RandomNumberGenerator, parent: Node3D, off: Vector3, stone
 	var s := rng.randf_range(0.3, 0.9)
 	var chunk := Vector3(s, s * rng.randf_range(0.5, 1.0), s * rng.randf_range(0.6, 1.2))
 	var rubble_detail := RandomNumberGenerator.new()
-	rubble_detail.seed = rng.randi()
+	rubble_detail.seed = _detail_seed(wx, wz, 3)
 	var mesh := _rubble_chunk_mesh(rubble_detail, chunk)
 	var body := _solid(mesh, stone)
 	body.position = Vector3(off.x, ground + chunk.y * 0.25, off.z)
 	body.rotation = Vector3(rng.randf_range(-0.3, 0.3), rng.randf_range(0.0, TAU), rng.randf_range(-0.3, 0.3))
 	parent.add_child(body)
+
+## A deterministic per-piece seed from world position, so mesh detail never
+## consumes the placement stream (changing a break must not move the ruins).
+func _detail_seed(wx: float, wz: float, salt: int) -> int:
+	return WORLD_SEED * 1000003 + roundi(wx * 100.0) * 9176 + roundi(wz * 100.0) * 31 + salt
+
+
+## Shifts a body's mesh/collision children, so the body origin can stay the
+## conceptual centre while the geometry sits elsewhere.
+func _offset_children(body: StaticBody3D, delta: Vector3) -> void:
+	for child in body.get_children():
+		if child is Node3D:
+			(child as Node3D).position += delta
+
 
 ## A column with a SHEARED, JAGGED top rather than a flat cap. A clean cylinder
 ## reads as a pillar prop; stone that snapped reads as a ruin — and at the
@@ -445,11 +459,11 @@ func _broken_column_mesh(rng: RandomNumberGenerator, r_bottom: float, r_top: flo
 
 	for i in segs:
 		var j := (i + 1) % segs
-		# Sides.
-		st.add_vertex(ring_bottom[i]); st.add_vertex(ring_top[i]); st.add_vertex(ring_top[j])
-		st.add_vertex(ring_bottom[i]); st.add_vertex(ring_top[j]); st.add_vertex(ring_bottom[j])
-		# Base cap (centre fan), wound the opposite way so it faces down.
-		st.add_vertex(Vector3.ZERO); st.add_vertex(ring_bottom[j]); st.add_vertex(ring_bottom[i])
+		# Sides, wound CLOCKWISE so they face outward (see _add_tri).
+		st.add_vertex(ring_bottom[i]); st.add_vertex(ring_top[j]); st.add_vertex(ring_top[i])
+		st.add_vertex(ring_bottom[i]); st.add_vertex(ring_bottom[j]); st.add_vertex(ring_top[j])
+		# Base cap, wound the other way so it faces down.
+		st.add_vertex(Vector3.ZERO); st.add_vertex(ring_bottom[i]); st.add_vertex(ring_bottom[j])
 
 	# The broken face itself: a fan to the mean break height, so the top is a
 	# ragged surface rather than a lid.
@@ -460,7 +474,7 @@ func _broken_column_mesh(rng: RandomNumberGenerator, r_bottom: float, r_top: flo
 	var apex := Vector3(0.0, mean_top, 0.0)
 	for i in segs:
 		var j := (i + 1) % segs
-		st.add_vertex(apex); st.add_vertex(ring_top[i]); st.add_vertex(ring_top[j])
+		st.add_vertex(apex); st.add_vertex(ring_top[j]); st.add_vertex(ring_top[i])
 
 	st.generate_normals()
 	return st.commit()
@@ -513,9 +527,12 @@ func _rubble_chunk_mesh(rng: RandomNumberGenerator, size: Vector3) -> ArrayMesh:
 		[0, 1, 2, 3], [7, 6, 5, 4], [4, 5, 1, 0],
 		[6, 7, 3, 2], [5, 6, 2, 1], [7, 4, 0, 3],
 	]
+	# Godot front faces wind CLOCKWISE (see _add_tri): emit each triangle
+	# reversed, or the chunk is inside-out — pass-through for raycasts and
+	# half-solid for bodies, the v0.1.x sink/bump bug class.
 	for f: Array in faces:
-		st.add_vertex(corners[f[0]]); st.add_vertex(corners[f[1]]); st.add_vertex(corners[f[2]])
-		st.add_vertex(corners[f[0]]); st.add_vertex(corners[f[2]]); st.add_vertex(corners[f[3]])
+		st.add_vertex(corners[f[0]]); st.add_vertex(corners[f[2]]); st.add_vertex(corners[f[1]])
+		st.add_vertex(corners[f[0]]); st.add_vertex(corners[f[3]]); st.add_vertex(corners[f[2]])
 	st.generate_normals()
 	return st.commit()
 
@@ -532,9 +549,10 @@ func _add_box(st: SurfaceTool, lo: Vector3, hi: Vector3) -> void:
 		[0, 1, 2, 3], [7, 6, 5, 4], [4, 5, 1, 0],
 		[6, 7, 3, 2], [5, 6, 2, 1], [7, 4, 0, 3],
 	]
+	# Clockwise, per _add_tri's convention.
 	for f: Array in faces:
-		st.add_vertex(c[f[0]]); st.add_vertex(c[f[1]]); st.add_vertex(c[f[2]])
-		st.add_vertex(c[f[0]]); st.add_vertex(c[f[2]]); st.add_vertex(c[f[3]])
+		st.add_vertex(c[f[0]]); st.add_vertex(c[f[2]]); st.add_vertex(c[f[1]])
+		st.add_vertex(c[f[0]]); st.add_vertex(c[f[3]]); st.add_vertex(c[f[2]])
 
 
 ## A mesh with a matching static collision body, so ruins are climbable cover
