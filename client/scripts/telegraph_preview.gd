@@ -57,6 +57,13 @@ func _ready() -> void:
 	_build_cameras()
 	_build_scale_marker()
 	_shots_dir = OS.get_environment("WAR_PREVIEW_SHOTS")
+	# Evidence mode must fail LOUD: a headless run renders nothing, and a
+	# silent save failure would let automation report a two-vantage evidence
+	# run that produced no usable frames.
+	if not _shots_dir.is_empty() and DisplayServer.get_name() == "headless":
+		push_error("telegraph_preview: WAR_PREVIEW_SHOTS needs a real renderer — run windowed, not --headless")
+		get_tree().quit(1)
+		return
 	print("telegraph_preview: V toggles side / into-the-sun vantage")
 
 
@@ -85,8 +92,16 @@ func _process(delta: float) -> void:
 func _save_shot(file_name: String) -> void:
 	var img := get_viewport().get_texture().get_image()
 	var path := _shots_dir.path_join(file_name)
+	if img == null or img.is_empty():
+		push_error("telegraph_preview: viewport gave no image for %s — evidence run failed" % file_name)
+		get_tree().quit(1)
+		return
 	var err := img.save_png(path)
-	print("telegraph_preview: shot %s -> %s (err=%d)" % [file_name, path, err])
+	if err != OK:
+		push_error("telegraph_preview: could not save %s (error %d) — evidence run failed" % [path, err])
+		get_tree().quit(1)
+		return
+	print("telegraph_preview: shot %s -> %s" % [file_name, path])
 
 
 func _unhandled_key_input(event: InputEvent) -> void:
@@ -201,6 +216,13 @@ func _build_lighting() -> void:
 	env.fog_sky_affect = 0.4
 	env.fog_height = 6.0
 	env.fog_height_density = 0.06
+	# The grading pass is part of the shipping look too — judging telegraph
+	# contrast without it grades under a different image than players get
+	# (its omission here was a real review catch).
+	env.adjustment_enabled = true
+	env.adjustment_brightness = 1.0
+	env.adjustment_contrast = 1.08
+	env.adjustment_saturation = 0.94
 	var we := WorldEnvironment.new()
 	we.name = "WorldEnvironment"
 	we.environment = env

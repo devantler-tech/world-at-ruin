@@ -39,6 +39,15 @@ enum Shape { CIRCLE, CONE }
 ## Mirrors `Telegraph._MIN_FACING`.
 const MIN_FACING := 0.0001
 
+## The authoritative tier bounds every telegraph's linear extent —
+## `maxTelegraphExtentMM` (4e6 mm) in server/sim/telegraph.go — by CLAMPING,
+## not refusing. The factories mirror that clamp with the same value and the
+## same semantics: an over-cap authored extent paints exactly the shape the
+## authority resolves. Refusing here instead would be the catastrophic
+## direction — a client that declines to paint a cast the authority still
+## resolves leaves the danger invisible.
+const MAX_EXTENT_M := 4000.0
+
 var shape: Shape
 ## Circle centre or cone apex, world space. Ground telegraphs are
 ## world-anchored: a moving caster re-begins a new cast, it never drags one.
@@ -59,6 +68,11 @@ var cast_time: float
 var elapsed := 0.0
 ## True exactly from the `advance` call that crossed `cast_time` onward.
 var is_resolved := false
+## Set by the `TelegraphRuntime` that arms this cast. One cast is one
+## telegraph: a second runtime sharing the instance would advance the same
+## clock twice (an early resolve on one node, a silently swallowed `resolved`
+## on the other), so `begin` refuses an already-armed cast.
+var armed := false
 
 
 ## A circular ground telegraph — "the mob casts a circle you must step out
@@ -76,7 +90,7 @@ static func circle(centre: Vector3, circle_radius: float, time: float) -> Telegr
 	var c := TelegraphCast.new()
 	c.shape = Shape.CIRCLE
 	c.origin_point = centre
-	c.radius = circle_radius
+	c.radius = minf(circle_radius, MAX_EXTENT_M)
 	c.cast_time = time
 	return c
 
@@ -110,7 +124,7 @@ static func cone(apex: Vector3, cone_facing: Vector3, reach_m: float,
 	c.shape = Shape.CONE
 	c.origin_point = apex
 	c.facing = cone_facing
-	c.range_m = reach_m
+	c.range_m = minf(reach_m, MAX_EXTENT_M)
 	c.cos_half_scaled = threshold_scaled
 	c.cast_time = time
 	return c

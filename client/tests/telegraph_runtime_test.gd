@@ -41,10 +41,128 @@ func _ready() -> void:
 	_begin_refusals()
 	if _failed:
 		return
+	_shared_cast_and_cache()
+	if _failed:
+		return
 	_dodge_law_and_presentation()
+	if _failed:
+		return
+	_full_disc_seam()
+	if _failed:
+		return
+	await _physics_order()
 	if not _failed:
 		print("TEST PASS — telegraph runtime dodge law and presentation structure hold")
 		get_tree().quit(0)
+
+
+## One cast is one telegraph: a second runtime must refuse an armed cast
+## (a shared clock would advance twice). And identical shape parameters must
+## reuse the cached mask textures (repeated casts must not re-bake), while a
+## different shape must not.
+func _shared_cast_and_cache() -> void:
+	print("telegraph_runtime_test: the next ERROR line is the expected shared-cast refusal.")
+	var a := TelegraphRuntime.new()
+	a.auto_advance = false
+	add_child(a)
+	var b := TelegraphRuntime.new()
+	b.auto_advance = false
+	add_child(b)
+	var shared := TelegraphCast.circle(CENTRE, RADIUS, CAST_TIME)
+	if not a.begin(shared):
+		_fail("the first runtime must arm a fresh cast")
+		return
+	if b.begin(shared):
+		_fail("a cast armed by one runtime must be refused by another")
+		return
+	if not b.begin(TelegraphCast.circle(CENTRE, RADIUS, CAST_TIME)):
+		_fail("an identical fresh cast must begin")
+		return
+	var zone_a := (a.get_node("Zone") as Decal).texture_albedo
+	var zone_b := (b.get_node("Zone") as Decal).texture_albedo
+	if zone_a != zone_b:
+		_fail("identical shape parameters must reuse the cached textures (a re-bake per cast is the hitch the cache removes)")
+		return
+	var c := TelegraphRuntime.new()
+	c.auto_advance = false
+	add_child(c)
+	if not c.begin(TelegraphCast.circle(CENTRE, RADIUS + 1.0, CAST_TIME)):
+		_fail("a different-radius cast must begin")
+		return
+	if (c.get_node("Zone") as Decal).texture_albedo == zone_a:
+		_fail("a different shape must not reuse another shape's textures")
+		return
+	a.queue_free()
+	b.queue_free()
+	c.queue_free()
+
+
+## The legal full-disc cone (cos_half_scaled == -COS_SCALE) has no angular
+## boundary, so its zone texture must show interior wash along the +Z axis —
+## the phantom radial border seam the SDF special-case removes.
+func _full_disc_seam() -> void:
+	var r := TelegraphRuntime.new()
+	r.auto_advance = false
+	add_child(r)
+	if not r.begin(TelegraphCast.cone(Vector3.ZERO, Vector3(0, 0, -1), 4.0, -Telegraph.COS_SCALE, 1.0)):
+		_fail("a full-disc cone cast must be accepted")
+		return
+	var img := ((r.get_node("Zone") as Decal).texture_albedo as ImageTexture).get_image()
+	var ts := img.get_width()
+	# Just off the +Z axis, halfway to the rim: deep inside the disc.
+	var px := img.get_pixel(ts / 2, (ts * 3) / 4)
+	if px.a > 0.5:
+		_fail("full-disc cone paints a radial border seam along +Z (alpha %f)" % px.a)
+		return
+	r.queue_free()
+
+
+## Resolution must sample positions AFTER same-tick target movement. The
+## runtime is added to the tree BEFORE the mover — the adversarial insertion
+## order: at equal physics priority the runtime's callback would run first on
+## the crossing tick and sample the mover's previous-tick position, so a
+## last-instant dodge would depend on tree order. RESOLUTION_PHYSICS_PRIORITY
+## is what makes this pass.
+func _physics_order() -> void:
+	for n: Node in get_tree().get_nodes_in_group(TelegraphRuntime.TARGET_GROUP):
+		n.remove_from_group(TelegraphRuntime.TARGET_GROUP)
+	_resolutions = 0
+	_last_hits.clear()
+	var runtime := TelegraphRuntime.new()
+	add_child(runtime)
+	runtime.resolved.connect(func(hits: Array[Node3D]) -> void:
+		_resolutions += 1
+		_last_hits = hits)
+	var mover := Mover.new()
+	add_child(mover)
+	mover.add_to_group(TelegraphRuntime.TARGET_GROUP)
+	mover.global_position = INSIDE_A
+	var dt := 1.0 / float(Engine.physics_ticks_per_second)
+	# Crosses on the 3rd physics tick — the same tick the mover steps out.
+	if not runtime.begin(TelegraphCast.circle(CENTRE, RADIUS, 2.5 * dt)):
+		_fail("the physics-order cast failed to begin")
+		return
+	for i in 6:
+		await get_tree().physics_frame
+	if _resolutions != 1:
+		_fail("the physics-order cast must resolve exactly once (fired %d times)" % _resolutions)
+		return
+	if _last_hits.has(mover):
+		_fail("PHYSICS ORDER BROKEN: resolution sampled the mover before its same-tick move — the dodge depended on tree insertion order")
+		return
+	mover.queue_free()
+
+
+## A target that steps out of the zone on its third physics tick — the same
+## tick the physics-order cast resolves.
+class Mover:
+	extends Node3D
+	var calls := 0
+
+	func _physics_process(_delta: float) -> void:
+		calls += 1
+		if calls == 3:
+			global_position = Vector3(9, 0, 0)
 
 
 func _begin_refusals() -> void:

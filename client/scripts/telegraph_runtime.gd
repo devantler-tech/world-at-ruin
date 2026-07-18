@@ -62,6 +62,20 @@ const LINGER := 0.12
 ## hazing daylight (the border alpha stays under the bloom threshold).
 const EMISSION_ENERGY := 1.3
 
+## Resolution must sample positions AFTER every target has moved this tick,
+## or a last-instant dodge would depend on scene-tree insertion order instead
+## of the promised resolution-instant state. Targets move at the default
+## physics priority (0); the runtime advances later in the same tick.
+const RESOLUTION_PHYSICS_PRIORITY := 100
+
+## Baked mask textures cached by immutable shape parameters, so repeated
+## casts of one shape (a mob spamming its circle) reuse the textures instead
+## of re-baking tens of thousands of texels on the main thread per cast.
+## Bounded crudely: combat uses a handful of distinct shapes, so on overflow
+## the cache is simply cleared rather than tracking recency.
+static var _mask_cache: Dictionary = {}
+const _MASK_CACHE_MAX := 32
+
 ## When true (the default), the cast advances with the physics clock. Tests
 ## and replay-driven callers set this false and drive `advance` directly.
 var auto_advance := true
@@ -77,6 +91,7 @@ var _after := 0.0
 
 
 func _ready() -> void:
+	process_physics_priority = RESOLUTION_PHYSICS_PRIORITY
 	set_physics_process(auto_advance)
 
 
@@ -96,12 +111,16 @@ func begin(cast: TelegraphCast) -> bool:
 	if cast.is_resolved:
 		push_error("TelegraphRuntime.begin: refusing an already-resolved cast")
 		return false
+	if cast.armed:
+		push_error("TelegraphRuntime.begin: refusing a cast another runtime already armed — one cast, one telegraph (a shared clock would advance twice)")
+		return false
 	if _cast != null:
 		push_error("TelegraphRuntime.begin: this runtime already carries a cast — one node, one telegraph")
 		return false
 	if not is_inside_tree():
 		push_error("TelegraphRuntime.begin: add the node to the tree before beginning a cast")
 		return false
+	cast.armed = true
 	_cast = cast
 	_extent = (2.0 * cast.radius) if cast.shape == TelegraphCast.Shape.CIRCLE else (2.0 * cast.range_m)
 	_build_decals()
@@ -153,7 +172,13 @@ func _update_fill() -> void:
 
 
 func _build_decals() -> void:
-	var masks := _bake_masks()
+	var key := ("c|%.4f" % _cast.radius) if _cast.shape == TelegraphCast.Shape.CIRCLE \
+			else ("k|%.4f|%d" % [_cast.range_m, _cast.cos_half_scaled])
+	if not _mask_cache.has(key):
+		if _mask_cache.size() >= _MASK_CACHE_MAX:
+			_mask_cache.clear()
+		_mask_cache[key] = _bake_masks()
+	var masks: Array[ImageTexture] = _mask_cache[key]
 	_zone = _make_decal("Zone", masks[0], Vector3(_extent, PROJECTION_DEPTH, _extent))
 	_fill = _make_decal("Fill", masks[1], Vector3(0.01, PROJECTION_DEPTH, 0.01))
 	# The fill renders above the zone wash where they overlap.
@@ -242,6 +267,11 @@ func _edge_sdf(x: float, z: float) -> float:
 	var d := p.length()
 	if _cast.shape == TelegraphCast.Shape.CIRCLE:
 		return _cast.radius - d
+	# A full-disc cone (the legal -COS_SCALE extreme) has NO angular boundary:
+	# its 180° "bounding ray" lies inside the disc and would paint a phantom
+	# radial seam, so it renders exactly like a circle of range_m.
+	if _cast.cos_half_scaled == -Telegraph.COS_SCALE:
+		return _cast.range_m - d
 	var inside := Telegraph.in_cone_scaled(Vector3.ZERO, Vector3(0, 0, -1), _cast.range_m,
 			_cast.cos_half_scaled, Vector3(x, 0.0, z))
 	var half_angle := acos(clampf(float(_cast.cos_half_scaled) / float(Telegraph.COS_SCALE), -1.0, 1.0))

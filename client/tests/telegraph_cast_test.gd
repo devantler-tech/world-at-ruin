@@ -73,6 +73,26 @@ func _factory_accepts() -> void:
 	if TelegraphCast.cone(Vector3.ZERO, Vector3(1, 0, 0), 8.0, -Telegraph.COS_SCALE, 1.0) == null:
 		_fail("cos_half_scaled == -COS_SCALE must be accepted")
 		return
+	# Over-cap extents CLAMP to the authoritative limit (the server's
+	# maxTelegraphExtentMM clamps, never refuses — refusing here would leave
+	# an authority-resolved cast unpainted, the catastrophic direction).
+	var capped_circle := TelegraphCast.circle(Vector3.ZERO, 5000.0, 1.0)
+	if capped_circle == null:
+		_fail("an over-cap radius must clamp, not be refused")
+		return
+	if capped_circle.radius != TelegraphCast.MAX_EXTENT_M:
+		_fail("over-cap radius clamped to %f, expected %f" % [capped_circle.radius, TelegraphCast.MAX_EXTENT_M])
+		return
+	var capped_cone := TelegraphCast.cone(Vector3.ZERO, Vector3(1, 0, 0), 9000.0, 500_000, 1.0)
+	if capped_cone == null:
+		_fail("an over-cap range must clamp, not be refused")
+		return
+	if capped_cone.range_m != TelegraphCast.MAX_EXTENT_M:
+		_fail("over-cap range clamped to %f, expected %f" % [capped_cone.range_m, TelegraphCast.MAX_EXTENT_M])
+		return
+	if TelegraphCast.circle(Vector3.ZERO, TelegraphCast.MAX_EXTENT_M, 1.0) == null:
+		_fail("the exact cap value must be accepted unchanged")
+		return
 
 
 func _clock_laws() -> void:
