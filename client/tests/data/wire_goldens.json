@@ -29,5 +29,43 @@
         "left": [3, 7]
       }
     }
-  ]
+  ],
+  "_stream_comment": "Cross-tier STREAM golden (issue #198): the frame sequence a client receives across a join snapshot, per-tick deltas and a mid-stream resync, produced by the shipped tracker + encoder from the scripted scenario in server/wire/crosstier_stream_test.go (which asserts these exact bytes and that end_state is the server's authoritative view). The client replica store test folds these frames and must land on end_state exactly. Unlike the message goldens above, these frames COMPOSE as a valid stream: entered ids are absent, moved/left ids are present, ticks strictly ascend, and the second snapshot is the resync path. Regenerate only as a deliberate reviewed act: WAR_RECORD_STREAM=1 go test ./wire/ -run TestCrossTierStreamFixture -v.",
+  "stream": {
+    "observer": 1,
+    "frames": [
+      {
+        "kind": "snapshot",
+        "hex": "010001000000000000000001000000000000000200000002000000000000008813000000000000000000000000000000000000000000002c0100000000000003000000000000002823000000000000000000000000000000000000000000005e01000000000000"
+      },
+      {
+        "kind": "delta",
+        "hex": "010002010000000000000000000000020000000200000000000000ec13000000000000000000000000000000000000000000002c0100000000000003000000000000001027000000000000000000000000000000000000000000005e0100000000000000000000"
+      },
+      {
+        "kind": "delta",
+        "hex": "0100020200000000000000000000000100000002000000000000005014000000000000000000000000000000000000000000002c01000000000000010000000300000000000000"
+      },
+      {
+        "kind": "delta",
+        "hex": "0100020300000000000000010000000400000000000000f0d8ffffffffffff00000000000000000000000000000000f401000000000000010000000200000000000000b414000000000000000000000000000000000000000000002c0100000000000000000000"
+      },
+      {
+        "kind": "snapshot",
+        "hex": "010001040000000000000001000000000000000200000002000000000000001815000000000000000000000000000000000000000000002c010000000000000400000000000000d8dcffffffffffff00000000000000000000000000000000f401000000000000"
+      },
+      {
+        "kind": "delta",
+        "hex": "010002050000000000000000000000010000000400000000000000c0e0ffffffffffff00000000000000000000000000000000f40100000000000000000000"
+      }
+    ],
+    "end_state": {
+      "tick": 5,
+      "observer": 1,
+      "entities": [
+        { "id": 2, "x": 5400, "y": 0, "z": 0, "radius": 300 },
+        { "id": 4, "x": -8000, "y": 0, "z": 0, "radius": 500 }
+      ]
+    }
+  }
 }
