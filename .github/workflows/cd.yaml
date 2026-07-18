@@ -54,10 +54,16 @@ jobs:
       - name: 📑 Checkout the released tag
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          # Check out the TAG explicitly. On a release event github.sha is not
-          # guaranteed to be the tagged commit, and shipping a build from any
-          # other commit would silently mislabel the release.
-          ref: ${{ github.event.release.tag_name || inputs.tag }}
+          # Check out the TAG explicitly, and FULLY QUALIFIED as refs/tags/*.
+          # On a release event github.sha is not guaranteed to be the tagged
+          # commit, and shipping a build from any other commit would silently
+          # mislabel the release. The refs/tags/ prefix is load-bearing: for an
+          # unqualified ref actions/checkout resolves origin/<ref> BEFORE
+          # refs/tags/<ref>, so if a branch ever shared the tag's name (the
+          # repo's branch-name rule permits e.g. a literal `v0.2.0` branch)
+          # CD would build the BRANCH while attaching the asset to the tag's
+          # release.
+          ref: refs/tags/${{ github.event.release.tag_name || inputs.tag }}
           # This job publishes an artifact — never let the checkout token ride
           # along in it (zizmor artipacked).
           persist-credentials: false
