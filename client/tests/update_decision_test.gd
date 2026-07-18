@@ -21,7 +21,7 @@ func _base_manifest() -> Dictionary:
 	return {
 		"schema": 1,
 		"channel": "live",
-		"shell": {"current": "0.1.14", "min_supported": "0.1.0", "reads_min": 1, "reads_capability_min": 0},
+		"shell": {"current": "0.1.14", "min_supported": "0.1.0", "reads_min": 1, "reads_capability_max": 99},
 		"pack": {"version": "0.1.14", "min_shell": "0.1.14", "url": "x", "sha256": "y", "size": 0},
 		"protocol": {"min": 1, "max": 1},
 		"save_schema": {"min": 1, "writes": 1, "capability": 1},
@@ -201,7 +201,7 @@ func _test_future_schema_shell_blocked_when_cant_read_save() -> void:
 	var m := {
 		"schema": 2,
 		"channel": "live",
-		"shell": {"current": "0.2.0", "min_supported": "0.1.0", "reads_min": 2, "reads_capability_min": 0},
+		"shell": {"current": "0.2.0", "min_supported": "0.1.0", "reads_min": 2, "reads_capability_max": 99},
 	}
 	_expect(_installed_current(), m, UpdateDecision.BLOCKED_INCOMPATIBLE, "a future-schema shell update that can't read the installed save is blocked")
 
@@ -299,7 +299,7 @@ func _test_schema_too_new_ignores_broken_body() -> void:
 	var m := {
 		"schema": 2,
 		"channel": "live",
-		"shell": {"current": "0.2.0", "min_supported": "0.1.0", "reads_min": 1, "reads_capability_min": 0},
+		"shell": {"current": "0.2.0", "min_supported": "0.1.0", "reads_min": 1, "reads_capability_max": 99},
 		"future_field": {"restructured": true}, # no schema-1 pack/protocol/save at all
 	}
 	_expect(_installed_current(), m, UpdateDecision.SHELL_UPDATE, "newer schema with a valid envelope still routes to a shell update")
@@ -325,7 +325,7 @@ func _test_incoherent_shell_floor_refused() -> void:
 	# An incoherent manifest whose advertised shell is below its own floor must be
 	# refused, not followed to a downgrade. (Codex P0.)
 	var m := _base_manifest()
-	m["shell"] = {"current": "1.0.0", "min_supported": "3.0.0", "reads_min": 1, "reads_capability_min": 0} # current below its own floor
+	m["shell"] = {"current": "1.0.0", "min_supported": "3.0.0", "reads_min": 1, "reads_capability_max": 99} # current below its own floor
 	var inst := _installed_current()
 	inst["shell_version"] = "2.0.0"
 	_expect(inst, m, UpdateDecision.INVALID_MANIFEST, "shell.current below its own floor is refused, never a downgrade")
@@ -374,7 +374,7 @@ func _test_capability_bump_routes_off_the_pack_path() -> void:
 	installed["save_capability"] = 7 # this build reports what it can read
 	var m := _base_manifest()
 	m["save_schema"] = {"min": 1, "writes": 1, "capability": 9} # same schema, richer content
-	m["shell"] = {"current": "0.1.15", "min_supported": "0.1.0", "reads_min": 1, "reads_capability_min": 0}
+	m["shell"] = {"current": "0.1.15", "min_supported": "0.1.0", "reads_min": 1, "reads_capability_max": 99}
 	_expect(installed, m, UpdateDecision.SHELL_UPDATE, "a capability bump beyond the rollback target routes to the shell tier")
 
 	# With no newer shell to carry it, there is no safe route at all.
@@ -422,21 +422,30 @@ func _test_future_schema_shell_blocked_when_cant_read_capability() -> void:
 	var m := {
 		"schema": UpdateDecision.SUPPORTED_MANIFEST_SCHEMA + 1, # body deliberately unparseable
 		"channel": "live",
-		"shell": {"current": "0.2.0", "min_supported": "0.1.0", "reads_min": 1, "reads_capability_min": 12},
+		"shell": {"current": "0.2.0", "min_supported": "0.1.0", "reads_min": 1, "reads_capability_max": 7},
 		"signature": "sig",
 	}
 	_expect(inst, m, UpdateDecision.BLOCKED_INCOMPATIBLE, "a future-schema shell that cannot read the save CAPABILITY blocks, never routes")
 
-	# ISOLATION: the identical manifest is a normal shell update once the floor is
-	# one the installed capability satisfies — so the guard is narrow, not blanket.
+	# ISOLATION: the identical manifest is a normal shell update once the ceiling
+	# covers the installed capability — so the guard is narrow, not blanket. Equal is
+	# sufficient: a build reading up to 9 reads a capability-9 save.
 	var ok := m.duplicate(true)
-	(ok["shell"] as Dictionary)["reads_capability_min"] = 9
-	_expect(inst, ok, UpdateDecision.SHELL_UPDATE, "the same future-schema shell updates when it can read the capability")
+	(ok["shell"] as Dictionary)["reads_capability_max"] = 9
+	_expect(inst, ok, UpdateDecision.SHELL_UPDATE, "the same future-schema shell updates when its ceiling covers the capability")
 
-	# And the envelope must REQUIRE the floor: omitting it cannot bypass the proof.
+	# And the envelope must REQUIRE the proof: omitting it cannot bypass the check.
 	var missing := m.duplicate(true)
-	(missing["shell"] as Dictionary).erase("reads_capability_min")
-	_expect(inst, missing, UpdateDecision.INVALID_MANIFEST, "an envelope omitting reads_capability_min fails closed")
+	(missing["shell"] as Dictionary).erase("reads_capability_max")
+	_expect(inst, missing, UpdateDecision.INVALID_MANIFEST, "an envelope omitting reads_capability_max fails closed")
+
+	# DIRECTION: the check is a CEILING, not a floor. Capability is cumulative, so a
+	# build reading up to 99 reads a capability-1 save; a floor-shaped check would
+	# have wrongly blocked here, and (worse) passed the capability-9 case above.
+	var low := _installed_current() # capability 1
+	var generous := m.duplicate(true)
+	(generous["shell"] as Dictionary)["reads_capability_max"] = 99
+	_expect(low, generous, UpdateDecision.SHELL_UPDATE, "a low installed capability is never blocked by a generous ceiling")
 
 
 func _with(base: Dictionary, key: String, value: Variant) -> Dictionary:

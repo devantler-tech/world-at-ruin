@@ -38,6 +38,21 @@ func _ready() -> void:
 	var picked := RollbackSelection.select(catalog, _state())
 	_check(picked["action"] == RollbackSelection.ROLLBACK, true, "select: an eligible target is chosen")
 	_check(picked["version"] == "0.1.10", true, "select: the NEWEST eligible target wins (0.1.9 < 0.1.10 numerically)")
+	# The VERIFIED entry comes back, not just its version: a catalogue can hold
+	# same-version duplicates with different artifact metadata, and re-resolving by
+	# version could hand the bootstrap a different one than the one checked here.
+	_check((picked["target"] as Dictionary)["version"] == "0.1.10", true, "select: the verified target itself is returned")
+	_check((picked["target"] as Dictionary)["url"] == "https://updates.example/0.1.10.pck", true, "select: the returned target carries the verified artifact")
+	(picked["target"] as Dictionary)["url"] = "https://tampered/x.pck"
+	_check((RollbackSelection.select(catalog, _state())["target"] as Dictionary)["url"] == "https://updates.example/0.1.10.pck", true, "select: the returned target is a copy, not the catalogue entry")
+	# A duplicate version carrying DIFFERENT metadata: whichever is chosen, the
+	# returned tuple must be the one that was actually validated.
+	var dupes: Array = [_target("0.1.10", 1, 7, 1, 1, "0.1.0", "0.1.999"), _target("0.1.10", 1, 7, 1, 1, "0.1.0", "0.1.999")]
+	(dupes[1] as Dictionary)["url"] = "https://other.example/dupe.pck"
+	var dup_pick := RollbackSelection.select(dupes, _state())
+	_check(dup_pick["action"] == RollbackSelection.ROLLBACK, true, "select: a duplicated version still resolves")
+	_check((dup_pick["target"] as Dictionary)["url"] in ["https://updates.example/0.1.10.pck", "https://other.example/dupe.pck"], true, "select: the returned artifact is one of the catalogue entries, named explicitly")
+	_check(RollbackSelection.select([], _state()).has("target"), true, "select: a refusal carries the same shape (empty target)")
 	if _failed:
 		return
 
@@ -165,6 +180,12 @@ func _ready() -> void:
 		var r := RollbackSelection.quarantine(["0.1.1"], junk_marker)
 		_check(r["ok"], false, "quarantine: a non-string boot marker refuses cleanly rather than erroring")
 		_check((r["ledger"] as Array).size() == 1, true, "quarantine: the existing record survives a junk marker")
+	# The LEDGER itself has the same problem: read back from disk it can be null or
+	# an object. A typed Array parameter would reject the call before the fail-closed
+	# body could run — the same trap as the marker, one parameter over.
+	for junk_ledger: Variant in [null, 42, "corrupt", {}, true]:
+		var r := RollbackSelection.quarantine(junk_ledger, "0.1.2")
+		_check(r["ok"], false, "quarantine: a non-Array ledger refuses cleanly rather than erroring")
 	_check((bad_ver["ledger"] as Array).size() == 1, true, "quarantine: the existing record survives the refusal")
 	if _failed:
 		return
@@ -300,6 +321,7 @@ func _ready() -> void:
 		["url", ""], ["url", 42],
 		["url", "   "], ["url", "not-a-url"], ["url", "ftp://x/y.pck"],
 		["url", "https://"], ["url", " https://x/y.pck"], ["url", "https://x/y .pck"],
+		["url", "https:///bad.pck"],
 		["sha256", "abc"], ["sha256", "z".repeat(64)], ["sha256", 42],
 		["sha256", "-" + "a".repeat(63)], ["sha256", "+" + "a".repeat(63)],
 		["size", -1], ["size", "big"],

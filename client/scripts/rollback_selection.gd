@@ -66,7 +66,10 @@ const NO_ELIGIBLE_TARGET := "no_eligible_target"
 ## compatibility window — so this never guesses. (`quarantined` is the one key that
 ## may be absent: that is the legitimate first-boot state, nothing has failed yet.
 ## Present-but-malformed is still refused.) Returns
-## `{ action: String, version: String, reason: String }`.
+## `{ action: String, version: String, target: Dictionary, reason: String }`, where
+## `target` is the VERIFIED catalogue entry itself (empty on a refusal) so the
+## bootstrap fetches exactly the artifact whose url/sha256/compatibility was checked,
+## never a same-version duplicate carrying different metadata.
 ##
 ## Malformed entries are SKIPPED rather than fatal: one bad catalogue entry must not
 ## deny the player a recovery that other entries can provide. If that leaves nothing
@@ -157,6 +160,13 @@ static func select(catalog: Array, state: Dictionary) -> Dictionary:
 	return {
 		"action": ROLLBACK,
 		"version": best_version,
+		# The VERIFIED entry itself, not just its version. A catalogue can hold
+		# duplicate or aliased entries for one version carrying different artifact
+		# metadata; returning only the version would let the bootstrap re-resolve it
+		# and fetch a DIFFERENT duplicate than the one whose url/sha256/compatibility
+		# was actually validated here. A copy, so the caller cannot mutate the
+		# catalogue through it.
+		"target": best.duplicate(true),
 		"reason": "newest retained target that can run on shell %s, speak protocol %d..%d and read save schema %d" % [shell_version, server_min, server_max, save_schema],
 	}
 
@@ -182,12 +192,18 @@ static func select(catalog: Array, state: Dictionary) -> Dictionary:
 ## may come back as `null` or a number after a bad write. A `String` parameter would
 ## make the caller error before reaching the refusal below — turning the fail-closed
 ## result the bootstrap needs into a crash, in exactly the situation it is needed.
-static func quarantine(quarantined: Array, version: Variant) -> Dictionary:
+static func quarantine(quarantined: Variant, version: Variant) -> Dictionary:
+	# `quarantined` is untyped for the same reason as `version`: a ledger read back
+	# from disk can be null or an object after a bad write, and a typed Array
+	# parameter would make GDScript reject the call before this fail-closed body
+	# could return — denying the bootstrap its result in the one case it is for.
+	if quarantined is not Array:
+		return {"ok": false, "ledger": [], "reason": "refusing to rewrite an unreadable quarantine ledger — it is not a list"}
 	if not UpdateDecision.is_version(version):
 		return {"ok": false, "ledger": quarantined, "reason": "refusing to record a failure for an unreadable version — the boot-attempt marker is malformed"}
 	var failed: String = version
 	var out: Array[String] = []
-	for raw: Variant in quarantined:
+	for raw: Variant in (quarantined as Array):
 		if not UpdateDecision.is_version(raw):
 			return {"ok": false, "ledger": quarantined, "reason": "refusing to rewrite a ledger holding an unreadable entry — persisting it would erase a recorded failure"}
 		if not is_quarantined(out, str(raw)):
@@ -307,6 +323,13 @@ static func _is_fetchable_url(v: Variant) -> bool:
 	const SCHEME := "https://"
 	if not url.begins_with(SCHEME) or url.length() <= SCHEME.length():
 		return false
+	# There must be an actual HOST: `https:///bad.pck` clears "something after the
+	# scheme" while being unfetchable by any HTTP client, and such an entry can still
+	# carry the highest version and displace a usable one.
+	var rest: String = url.substr(SCHEME.length())
+	var host: String = rest.split("/")[0]
+	if host.is_empty():
+		return false
 	for i in url.length():
 		var c := url.unicode_at(i)
 		if c <= 32 or c == 127: # control characters and spaces
@@ -339,4 +362,4 @@ static func _is_sha256(v: Variant) -> bool:
 
 ## A loud refusal carrying WHY nothing was selected — never a silent strand.
 static func _refuse(reason: String) -> Dictionary:
-	return {"action": NO_ELIGIBLE_TARGET, "version": "", "reason": reason}
+	return {"action": NO_ELIGIBLE_TARGET, "version": "", "target": {}, "reason": reason}

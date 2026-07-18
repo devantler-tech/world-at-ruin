@@ -245,11 +245,17 @@ static func _envelope_error(m: Dictionary) -> String:
 	# a manifest whose schema-specific body this client cannot parse.
 	if not is_int_id(sh.get("reads_min")):
 		return "shell.reads_min is missing or not an integer"
-	# The capability floor lives in the STABLE envelope for exactly the same reason
-	# as reads_min: the future-schema path routes a shell update on the envelope
-	# alone, so without this the capability proof is simply absent on that path.
-	if not is_int_id(sh.get("reads_capability_min")):
-		return "shell.reads_capability_min is missing or not an integer"
+	# The capability proof lives in the STABLE envelope for the same reason as
+	# reads_min: the future-schema path routes a shell update on the envelope alone.
+	#
+	# It is a CEILING, not a floor, and that asymmetry is the point. Save schema is
+	# a format version, so an old save can fall BELOW what a build still reads
+	# (reads_min). Capability is a cumulative counter of persistable shapes, so a
+	# build supporting capability N reads everything up to N: nothing strands by
+	# being too low. The hazard is the opposite one — a save carrying shapes ABOVE
+	# what the target understands.
+	if not is_int_id(sh.get("reads_capability_max")):
+		return "shell.reads_capability_max is missing or not an integer"
 	# A coherent manifest never advertises a current shell below its own floor;
 	# such a manifest could otherwise steer a shell update to a DOWNGRADE.
 	if compare_versions(str(sh["current"]), str(sh["min_supported"])) < 0:
@@ -266,14 +272,16 @@ static func _shell_or_block(installed_save: int, installed_capability: int, m_sh
 	if installed_save < int(m_shell["reads_min"]):
 		return _result(BLOCKED_INCOMPATIBLE, "shell update (%s) targets a build reading saves only from schema %d, but the installed save is %d — updating would strand it" % [
 			why, int(m_shell["reads_min"]), installed_save])
-	# The capability floor, checked here for the same reason as the schema floor and
-	# in the same place: a save can carry same-schema shapes the target shell does
-	# not understand, and the FUTURE-SCHEMA path routes through here on the envelope
-	# alone. Without this, a manifest whose body this client cannot parse could send
-	# a capability-9 save to a shell that only reads capability 7.
-	if installed_capability < int(m_shell["reads_capability_min"]):
-		return _result(BLOCKED_INCOMPATIBLE, "shell update (%s) targets a build reading save capability only from %d, but the installed save is %d — updating would strand it" % [
-			why, int(m_shell["reads_capability_min"]), installed_capability])
+	# The capability CEILING, checked in the same place as the schema floor because
+	# the FUTURE-SCHEMA path routes through here on the envelope alone. The direction
+	# is deliberately opposite to reads_min: capability is cumulative, so a save
+	# strands by carrying shapes ABOVE what the target understands, never by being
+	# too low. An earlier version of this check was a floor, which passed a
+	# capability-9 save to a shell proving only that it reads "from 0" — no proof at
+	# all against the actual hazard.
+	if installed_capability > int(m_shell["reads_capability_max"]):
+		return _result(BLOCKED_INCOMPATIBLE, "shell update (%s) targets a build reading save capability only up to %d, but the installed save is %d — updating would strand it" % [
+			why, int(m_shell["reads_capability_max"]), installed_capability])
 	return _result(SHELL_UPDATE, why)
 
 
