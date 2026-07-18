@@ -11,6 +11,16 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
+		"version": "0.3.0",
+		"date": "2026-07-18",
+		"title": "The ruins look broken",
+		"notes": [
+			"The standing stones out in the Reach were smooth pillars and tidy boxes — they read as something someone put there, not something that fell down. Now they are broken: columns shear off at an angle with a ragged snap, walls collapse away toward one end with courses missing, and rubble is irregular lumps instead of crates.",
+			"Every ruin is still in exactly the same place it always was. Only their shapes changed, and the same world still grows the same ruins every time you load it.",
+			"They are honestly still rough — a cluster of broken shapes rather than a building you could read the plan of. Arches, lintels and foundations come later.",
+		],
+	},
+	{
 		"version": "0.2.0",
 		"date": "2026-07-18",
 		"title": "The ground is made of something",

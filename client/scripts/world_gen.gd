@@ -360,17 +360,16 @@ func _add_column(rng: RandomNumberGenerator, parent: Node3D, off: Vector3, stone
 	var ground := height_at(wx, wz)
 	var r := rng.randf_range(0.35, 0.55)
 	var h := rng.randf_range(1.6, 5.5)
-	var mesh := CylinderMesh.new()
-	mesh.top_radius = r * 0.9
-	mesh.bottom_radius = r
-	mesh.height = h
+	var mesh := _broken_column_mesh(rng, r, r * 0.9, h)
 	var fallen := rng.randf() < 0.3
 	var body := _solid(mesh, stone)
 	if fallen:
 		body.position = Vector3(off.x, ground + r, off.z)
 		body.rotation = Vector3(PI / 2.0, rng.randf_range(0.0, TAU), 0)
 	else:
-		body.position = Vector3(off.x, ground + h / 2.0 - 0.15, off.z)
+		# The mesh is built from its base at y=0, so it is seated on the ground
+		# rather than centred on it like the old CylinderMesh.
+		body.position = Vector3(off.x, ground - 0.15, off.z)
 		body.rotation = Vector3(rng.randf_range(-0.08, 0.08), 0, rng.randf_range(-0.08, 0.08))
 	parent.add_child(body)
 
@@ -378,10 +377,11 @@ func _add_wall(rng: RandomNumberGenerator, parent: Node3D, off: Vector3, stone: 
 	var wx := parent.position.x + off.x
 	var wz := parent.position.z + off.z
 	var ground := height_at(wx, wz)
-	var mesh := BoxMesh.new()
-	mesh.size = Vector3(rng.randf_range(2.0, 5.0), rng.randf_range(1.0, 3.2), 0.45)
+	var wall_size := Vector3(rng.randf_range(2.0, 5.0), rng.randf_range(1.0, 3.2), 0.45)
+	var mesh := _broken_wall_mesh(rng, wall_size.x, wall_size.y, wall_size.z)
 	var body := _solid(mesh, stone)
-	body.position = Vector3(off.x, ground + mesh.size.y / 2.0 - 0.3, off.z)
+	# Built from its base at y=0, so seat it on the ground.
+	body.position = Vector3(off.x, ground - 0.3, off.z)
 	body.rotation.y = rng.randf_range(0.0, TAU)
 	parent.add_child(body)
 
@@ -389,13 +389,136 @@ func _add_rubble(rng: RandomNumberGenerator, parent: Node3D, off: Vector3, stone
 	var wx := parent.position.x + off.x
 	var wz := parent.position.z + off.z
 	var ground := height_at(wx, wz)
-	var mesh := BoxMesh.new()
 	var s := rng.randf_range(0.3, 0.9)
-	mesh.size = Vector3(s, s * rng.randf_range(0.5, 1.0), s * rng.randf_range(0.6, 1.2))
+	var chunk := Vector3(s, s * rng.randf_range(0.5, 1.0), s * rng.randf_range(0.6, 1.2))
+	var mesh := _rubble_chunk_mesh(rng, chunk)
 	var body := _solid(mesh, stone)
-	body.position = Vector3(off.x, ground + mesh.size.y * 0.25, off.z)
+	body.position = Vector3(off.x, ground + chunk.y * 0.25, off.z)
 	body.rotation = Vector3(rng.randf_range(-0.3, 0.3), rng.randf_range(0.0, TAU), rng.randf_range(-0.3, 0.3))
 	parent.add_child(body)
+
+## A column with a SHEARED, JAGGED top rather than a flat cap. A clean cylinder
+## reads as a pillar prop; stone that snapped reads as a ruin — and at the
+## distance these are usually seen, the outline is all the eye gets, so the
+## break matters more than any surface treatment could.
+##
+## Built as a radial ring whose per-segment top height falls away along one
+## shear direction (the way a column gives out on one side) with per-segment
+## jag on top of it, so no two breaks repeat.
+func _broken_column_mesh(rng: RandomNumberGenerator, r_bottom: float, r_top: float, h: float) -> ArrayMesh:
+	var segs := 12
+	var shear_dir := rng.randf_range(0.0, TAU)
+	var shear := rng.randf_range(0.10, 0.40) * h
+	var jag := rng.randf_range(0.03, 0.14) * h
+	var tops := PackedFloat32Array()
+	for i in segs:
+		var a := TAU * i / float(segs)
+		# 0 on the standing side, 1 on the side that gave way.
+		var lean := 0.5 - 0.5 * cos(a - shear_dir)
+		tops.append(maxf(h * 0.25, h - shear * lean - rng.randf_range(0.0, jag)))
+
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var ring_bottom: Array[Vector3] = []
+	var ring_top: Array[Vector3] = []
+	for i in segs:
+		var a := TAU * i / float(segs)
+		ring_bottom.append(Vector3(cos(a) * r_bottom, 0.0, sin(a) * r_bottom))
+		ring_top.append(Vector3(cos(a) * r_top, tops[i], sin(a) * r_top))
+
+	for i in segs:
+		var j := (i + 1) % segs
+		# Sides.
+		st.add_vertex(ring_bottom[i]); st.add_vertex(ring_top[i]); st.add_vertex(ring_top[j])
+		st.add_vertex(ring_bottom[i]); st.add_vertex(ring_top[j]); st.add_vertex(ring_bottom[j])
+		# Base cap (centre fan), wound the opposite way so it faces down.
+		st.add_vertex(Vector3.ZERO); st.add_vertex(ring_bottom[j]); st.add_vertex(ring_bottom[i])
+
+	# The broken face itself: a fan to the mean break height, so the top is a
+	# ragged surface rather than a lid.
+	var mean_top := 0.0
+	for t in tops:
+		mean_top += t
+	mean_top /= float(segs)
+	var apex := Vector3(0.0, mean_top, 0.0)
+	for i in segs:
+		var j := (i + 1) % segs
+		st.add_vertex(apex); st.add_vertex(ring_top[i]); st.add_vertex(ring_top[j])
+
+	st.generate_normals()
+	return st.commit()
+
+
+## A wall fragment whose top edge has COLLAPSED — stepped and eroded, with the
+## occasional missing tooth — instead of the clean rectangle a BoxMesh gives.
+func _broken_wall_mesh(rng: RandomNumberGenerator, w: float, h: float, d: float) -> ArrayMesh:
+	var cols := maxi(3, int(w / 0.55))
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	# The wall falls away toward one end, so it reads as a structure that
+	# collapsed rather than a fence that was trimmed.
+	var fall_from_left := rng.randf() < 0.5
+	var step := w / float(cols)
+	for c in cols:
+		var t := float(c) / float(cols - 1)
+		var along := t if fall_from_left else 1.0 - t
+		var col_h := h * (1.0 - 0.55 * along) - rng.randf_range(0.0, h * 0.18)
+		col_h = maxf(col_h, h * 0.18)
+		# An occasional gap where the courses have fallen out entirely.
+		if c > 0 and c < cols - 1 and rng.randf() < 0.12:
+			continue
+		var x0 := -w / 2.0 + c * step
+		var x1 := x0 + step
+		_add_box(st, Vector3(x0, 0.0, -d / 2.0), Vector3(x1, col_h, d / 2.0))
+	st.generate_normals()
+	return st.commit()
+
+
+## An irregular rubble chunk: a box whose corners are pulled about, so broken
+## masonry does not read as a crate.
+func _rubble_chunk_mesh(rng: RandomNumberGenerator, size: Vector3) -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var jitter := func() -> Vector3:
+		return Vector3(
+			rng.randf_range(-0.22, 0.22) * size.x,
+			rng.randf_range(-0.22, 0.22) * size.y,
+			rng.randf_range(-0.22, 0.22) * size.z)
+	var lo := -size / 2.0
+	var hi := size / 2.0
+	var corners: Array[Vector3] = [
+		Vector3(lo.x, lo.y, lo.z) + jitter.call(), Vector3(hi.x, lo.y, lo.z) + jitter.call(),
+		Vector3(hi.x, lo.y, hi.z) + jitter.call(), Vector3(lo.x, lo.y, hi.z) + jitter.call(),
+		Vector3(lo.x, hi.y, lo.z) + jitter.call(), Vector3(hi.x, hi.y, lo.z) + jitter.call(),
+		Vector3(hi.x, hi.y, hi.z) + jitter.call(), Vector3(lo.x, hi.y, hi.z) + jitter.call(),
+	]
+	var faces := [
+		[0, 1, 2, 3], [7, 6, 5, 4], [4, 5, 1, 0],
+		[6, 7, 3, 2], [5, 6, 2, 1], [7, 4, 0, 3],
+	]
+	for f: Array in faces:
+		st.add_vertex(corners[f[0]]); st.add_vertex(corners[f[1]]); st.add_vertex(corners[f[2]])
+		st.add_vertex(corners[f[0]]); st.add_vertex(corners[f[2]]); st.add_vertex(corners[f[3]])
+	st.generate_normals()
+	return st.commit()
+
+
+## Appends an axis-aligned box spanning `lo`..`hi` to `st`.
+func _add_box(st: SurfaceTool, lo: Vector3, hi: Vector3) -> void:
+	var c: Array[Vector3] = [
+		Vector3(lo.x, lo.y, lo.z), Vector3(hi.x, lo.y, lo.z),
+		Vector3(hi.x, lo.y, hi.z), Vector3(lo.x, lo.y, hi.z),
+		Vector3(lo.x, hi.y, lo.z), Vector3(hi.x, hi.y, lo.z),
+		Vector3(hi.x, hi.y, hi.z), Vector3(lo.x, hi.y, hi.z),
+	]
+	var faces := [
+		[0, 1, 2, 3], [7, 6, 5, 4], [4, 5, 1, 0],
+		[6, 7, 3, 2], [5, 6, 2, 1], [7, 4, 0, 3],
+	]
+	for f: Array in faces:
+		st.add_vertex(c[f[0]]); st.add_vertex(c[f[1]]); st.add_vertex(c[f[2]])
+		st.add_vertex(c[f[0]]); st.add_vertex(c[f[2]]); st.add_vertex(c[f[3]])
+
 
 ## A mesh with a matching static collision body, so ruins are climbable cover
 ## rather than ghosts.
