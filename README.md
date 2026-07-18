@@ -1,6 +1,6 @@
 # World at Ruin
 
-<img width="650" alt="image" src="https://github.com/user-attachments/assets/c637c97e-bf1c-4c2c-89f6-193943af4292" />
+<img width="750" alt="image" src="https://github.com/user-attachments/assets/c637c97e-bf1c-4c2c-89f6-193943af4292" />
 
 A **source-available, cloud-native MMORPG built almost entirely by AI agents** — authored as code,
 built headlessly, and grown in public over years. This is the newest product of
