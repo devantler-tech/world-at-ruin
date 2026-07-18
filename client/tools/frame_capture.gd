@@ -136,8 +136,19 @@ func _ready() -> void:
 		if err != OK:
 			_fail("could not write %s (error %d)" % [out, err])
 			return
-		print("CAPTURED %s -> %s (%dx%d, luma spread %.3f)" %
-			[vantage_name, out, img.get_width(), img.get_height(), spread])
+		# Report the captured size against the size the project actually ships.
+		# A hosted runner's display often cannot realise the configured window,
+		# so frames arrive smaller than the game does — and apparent scale of
+		# fine detail (material grain especially) changes with it. Silently
+		# accepting the clamped size would let a reviewer judge a material at a
+		# resolution no player uses, so the mismatch is stated on every frame.
+		var want_w: int = ProjectSettings.get_setting("display/window/size/viewport_width", 0)
+		var want_h: int = ProjectSettings.get_setting("display/window/size/viewport_height", 0)
+		var size_note := ""
+		if want_w > 0 and (img.get_width() != want_w or img.get_height() != want_h):
+			size_note = " [CLAMPED from the shipped %dx%d — fine detail reads at a different scale here]" % [want_w, want_h]
+		print("CAPTURED %s -> %s (%dx%d, luma spread %.3f)%s" %
+			[vantage_name, out, img.get_width(), img.get_height(), spread, size_note])
 
 	print("CAPTURE PASS — %d vantages written to %s" % [VANTAGES.size(), dir])
 	get_tree().quit(0)

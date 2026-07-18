@@ -660,8 +660,11 @@ jobs:
           # (renderer, MSAA, shadow and global-illumination quality, window
           # size), so a change to it can alter every frame while touching no
           # script or asset at all.
+          # export_presets.cfg counts too: high-res flags, export filters and
+          # feature tags change what the SHIPPED build looks like while touching
+          # no script, scene or asset at all.
           if git diff --name-only "$BASE_SHA"...HEAD \
-              | grep -qE '^client/(scripts|shaders|assets|scenes|recipes|abilities|tools)/|^client/project\.godot$'; then
+              | grep -qE '^client/(scripts|shaders|assets|scenes|recipes|abilities|tools)/|^client/(project\.godot|export_presets\.cfg)$'; then
             echo "visual=true" >> "$GITHUB_OUTPUT"
           else
             echo "visual=false" >> "$GITHUB_OUTPUT"
