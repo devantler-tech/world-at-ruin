@@ -146,32 +146,14 @@ static func _smin(a: float, b: float, k: float) -> float:
 ## shapes the ground around it instead.
 static func build_geometry(p_seed: int) -> Dictionary:
 	var lay := layout(p_seed)
-	var noise := FastNoiseLite.new()
-	noise.seed = p_seed
-	noise.noise_type = FastNoiseLite.TYPE_SIMPLEX
-	noise.fractal_type = FastNoiseLite.FRACTAL_FBM
-	noise.fractal_octaves = 3
-	noise.frequency = 0.055
+	var noise := _make_noise(p_seed)
 
-	var lo := Vector3(1e6, 1e6, 1e6)
-	var hi := Vector3(-1e6, -1e6, -1e6)
-	for room: Dictionary in lay["rooms"]:
-		lo = lo.min(room["center"] - Vector3.ONE * (room["r"] + HULL_ROCK + 2.5))
-		hi = hi.max(room["center"] + Vector3.ONE * (room["r"] + HULL_ROCK + 2.5))
-	lo = lo.min(lay["mouth"] + Vector3(-2.0, -6.0, -8.0))
-	hi = hi.max(lay["mouth"] + Vector3(9.0, 6.0, 8.0))
-
-	var nx := int(ceilf((hi.x - lo.x) / CELL)) + 1
-	var ny := int(ceilf((hi.y - lo.y) / CELL)) + 1
-	var nz := int(ceilf((hi.z - lo.z) / CELL)) + 1
-
-	# Corner density field.
-	var field := PackedFloat32Array()
-	field.resize(nx * ny * nz)
-	for ix in nx:
-		for iy in ny:
-			for iz in nz:
-				field[(ix * ny + iy) * nz + iz] = density(lo + Vector3(ix, iy, iz) * CELL, lay, noise)
+	var sampled := _sample_field(lay, noise)
+	var field: PackedFloat32Array = sampled["field"]
+	var lo: Vector3 = sampled["lo"]
+	var nx: int = sampled["nx"]
+	var ny: int = sampled["ny"]
+	var nz: int = sampled["nz"]
 
 	# The ACTUAL floor under the spawn: smin blending and wall noise carve
 	# deeper than the room's nominal floor — probe the field column so the
@@ -311,6 +293,154 @@ static func fingerprint(mesh: ArrayMesh) -> String:
 	var arrays := mesh.surface_get_arrays(0)
 	var v: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
 	return "verts=%d hash=%d" % [v.size(), hash(v.to_byte_array())]
+
+
+## The FastNoiseLite the density field is carved with — defined once so the mesh
+## build and the connectivity audit sample the identical field.
+static func _make_noise(p_seed: int) -> FastNoiseLite:
+	var noise := FastNoiseLite.new()
+	noise.seed = p_seed
+	noise.noise_type = FastNoiseLite.TYPE_SIMPLEX
+	noise.fractal_type = FastNoiseLite.FRACTAL_FBM
+	noise.fractal_octaves = 3
+	noise.frequency = 0.055
+	return noise
+
+
+## Samples the corner density field over the massif's bounds, returning the
+## packed field plus its origin and dimensions, so the mesher and the
+## connectivity audit share one sampling rather than two drifting copies.
+static func _sample_field(lay: Dictionary, noise: FastNoiseLite) -> Dictionary:
+	var lo := Vector3(1e6, 1e6, 1e6)
+	var hi := Vector3(-1e6, -1e6, -1e6)
+	for room: Dictionary in lay["rooms"]:
+		lo = lo.min(room["center"] - Vector3.ONE * (room["r"] + HULL_ROCK + 2.5))
+		hi = hi.max(room["center"] + Vector3.ONE * (room["r"] + HULL_ROCK + 2.5))
+	lo = lo.min(lay["mouth"] + Vector3(-2.0, -6.0, -8.0))
+	hi = hi.max(lay["mouth"] + Vector3(9.0, 6.0, 8.0))
+
+	var nx := int(ceilf((hi.x - lo.x) / CELL)) + 1
+	var ny := int(ceilf((hi.y - lo.y) / CELL)) + 1
+	var nz := int(ceilf((hi.z - lo.z) / CELL)) + 1
+
+	# Corner density field.
+	var field := PackedFloat32Array()
+	field.resize(nx * ny * nz)
+	for ix in nx:
+		for iy in ny:
+			for iz in nz:
+				field[(ix * ny + iy) * nz + iz] = density(lo + Vector3(ix, iy, iz) * CELL, lay, noise)
+	return { "field": field, "lo": lo, "nx": nx, "ny": ny, "nz": nz }
+
+
+const _NEIGHBOURS: Array[Vector3i] = [
+	Vector3i(1, 0, 0), Vector3i(-1, 0, 0),
+	Vector3i(0, 1, 0), Vector3i(0, -1, 0),
+	Vector3i(0, 0, 1), Vector3i(0, 0, -1),
+]
+const _WAKE_ROOM := 2 ## rooms[2] is the main chamber the wanderer wakes in.
+
+
+## Flat field index of a corner cell — multiplication only, no integer division
+## (this repo treats an integer-division warning as an error).
+static func _fi(c: Vector3i, ny: int, nz: int) -> int:
+	return (c.x * ny + c.y) * nz + c.z
+
+
+## Flood-fills the void (density < 0) 6-connected from `start`, returning a byte
+## mask (1 = a void corner reachable from the start). Empty when the start cell
+## is out of range or itself rock — a walkable region is what actually connects.
+static func flood_void(field: PackedFloat32Array, nx: int, ny: int, nz: int, start: Vector3i) -> PackedByteArray:
+	var seen := PackedByteArray()
+	seen.resize(field.size())
+	seen.fill(0)
+	if start.x < 0 or start.x >= nx or start.y < 0 or start.y >= ny or start.z < 0 or start.z >= nz:
+		return seen
+	if field[_fi(start, ny, nz)] >= 0.0:
+		return seen
+	var stack: Array[Vector3i] = [start]
+	seen[_fi(start, ny, nz)] = 1
+	while not stack.is_empty():
+		var c := stack.pop_back() as Vector3i
+		for step: Vector3i in _NEIGHBOURS:
+			var j := c + step
+			if j.x < 0 or j.x >= nx or j.y < 0 or j.y >= ny or j.z < 0 or j.z >= nz:
+				continue
+			var n := _fi(j, ny, nz)
+			if seen[n] == 0 and field[n] < 0.0:
+				seen[n] = 1
+				stack.append(j)
+	return seen
+
+
+## The nearest void corner cell to a world point, searched within `radius` cells
+## of its nearest corner. Vector3i(-1, -1, -1) when the neighbourhood is rock.
+static func nearest_void_cell(point: Vector3, field: PackedFloat32Array, lo: Vector3, nx: int, ny: int, nz: int, radius: int = 3) -> Vector3i:
+	var bx := clampi(int(round((point.x - lo.x) / CELL)), 0, nx - 1)
+	var by := clampi(int(round((point.y - lo.y) / CELL)), 0, ny - 1)
+	var bz := clampi(int(round((point.z - lo.z) / CELL)), 0, nz - 1)
+	var best := Vector3i(-1, -1, -1)
+	var best_d := INF
+	for dx in range(-radius, radius + 1):
+		for dy in range(-radius, radius + 1):
+			for dz in range(-radius, radius + 1):
+				var c := Vector3i(bx + dx, by + dy, bz + dz)
+				if c.x < 0 or c.x >= nx or c.y < 0 or c.y >= ny or c.z < 0 or c.z >= nz:
+					continue
+				if field[_fi(c, ny, nz)] >= 0.0:
+					continue
+				var d := (lo + Vector3(c) * CELL).distance_squared_to(point)
+				if d < best_d:
+					best_d = d
+					best = c
+	return best
+
+
+## Was a nearest-void-cell result found AND reached by the flood? A
+## Vector3i(-1, …) sentinel means there was no void corner near the point.
+static func _cell_seen(c: Vector3i, seen: PackedByteArray, ny: int, nz: int) -> bool:
+	if c.x < 0:
+		return false
+	return seen[_fi(c, ny, nz)] == 1
+
+
+## Connectivity audit of the carved cave void: floods the void from the waking
+## chamber and reports whether the spawn, every room centre and open air beyond
+## the mouth are reachable through the void. This is the no-resets law in code —
+## a seed or layout change that sealed a player into an unreachable pocket would
+## flip one of these to false, and CI would catch it before a player ever could.
+static func reachability(p_seed: int) -> Dictionary:
+	var lay := layout(p_seed)
+	var noise := _make_noise(p_seed)
+	var sampled := _sample_field(lay, noise)
+	var field: PackedFloat32Array = sampled["field"]
+	var lo: Vector3 = sampled["lo"]
+	var nx: int = sampled["nx"]
+	var ny: int = sampled["ny"]
+	var nz: int = sampled["nz"]
+	var rooms: Array = lay["rooms"]
+	var wake := (rooms[_WAKE_ROOM] as Dictionary)["center"] as Vector3
+	var start := nearest_void_cell(wake, field, lo, nx, ny, nz)
+	var seen := flood_void(field, nx, ny, nz, start)
+	var reached := 0
+	for i in seen.size():
+		reached += seen[i]
+	var rooms_reachable: Array[bool] = []
+	for room: Dictionary in rooms:
+		var rc := nearest_void_cell(room["center"] as Vector3, field, lo, nx, ny, nz)
+		rooms_reachable.append(_cell_seen(rc, seen, ny, nz))
+	var spawn_c := nearest_void_cell(lay["spawn"] as Vector3, field, lo, nx, ny, nz)
+	# Open air well beyond the mouth: reachable through the bored breach only.
+	var out_probe := (lay["mouth"] as Vector3) + Vector3(8.0, 0.0, 0.0)
+	var out_c := nearest_void_cell(out_probe, field, lo, nx, ny, nz)
+	return {
+		"reached": reached,
+		"total": field.size(),
+		"start_found": start.x >= 0,
+		"spawn_reachable": _cell_seen(spawn_c, seen, ny, nz),
+		"mouth_open": _cell_seen(out_c, seen, ny, nz),
+		"rooms_reachable": rooms_reachable,
+	}
 
 
 ## In-scene build: mesh + collision + torches + mouth boulders. The terrain
