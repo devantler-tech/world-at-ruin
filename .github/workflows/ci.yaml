@@ -301,9 +301,34 @@ jobs:
             exit 1
           fi
       - name: Regression tests
+        # Auto-discover every client/tests/*_test.tscn scene, so adding a test
+        # needs ZERO ci.yaml edits (issue #50 — the hardcoded list forced every
+        # parallel test-adding PR to collide on this one line). Each scene runs
+        # with the same per-test timeout + PASS-marker guard as before.
+        #   - save_fixture_guard_test is deliberately excluded: it runs in its
+        #     own named step above (the product-law surface, kept loud/separate),
+        #     so discovering it here would run it twice.
+        #   - A test can be temporarily excluded by adding its basename (no
+        #     .tscn) on its own line in client/tests/ci-skip.txt (edited rarely;
+        #     the RUN line stops changing per-test). Blank/`#`-comment lines are
+        #     ignored. The file is optional — absent means nothing is skipped.
         run: |
           set -o pipefail
-          for t in unstick_test surface_consistency_test cave_system_determinism_test world_gen_determinism_test character_determinism_test humanoid_kit_test character_factory_test character_persistence_test save_path_seam_test equipment_composition_test skin_layer_test npc_recipe_gen_test npc_population_test starter_cave_test creature_kit_test creature_factory_test creature_population_test interaction_test recipe_type_guard_test telegraph_shapes_test update_decision_test discovery_test ability_registry_test; do
+          shopt -s nullglob
+          skip_file=client/tests/ci-skip.txt
+          is_skipped() {
+            [ -f "$skip_file" ] || return 1
+            grep -vE '^[[:space:]]*(#|$)' "$skip_file" | grep -qxF "$1"
+          }
+          ran=0
+          for scene in $(printf '%s\n' client/tests/*_test.tscn | sort); do
+            t=$(basename "$scene" .tscn)
+            # Runs in its own dedicated step above — never twice.
+            [ "$t" = save_fixture_guard_test ] && continue
+            if is_skipped "$t"; then
+              echo "::notice::skipping ${t} (listed in ${skip_file})"
+              continue
+            fi
             if ! timeout 180 godot --headless --path client "res://tests/${t}.tscn" 2>&1 | tee "${t}.log"; then
               echo "::error::${t} failed or timed out (180s)"
               tail -40 "${t}.log"
@@ -314,7 +339,15 @@ jobs:
               tail -40 "${t}.log"
               exit 1
             fi
+            ran=$((ran + 1))
           done
+          # A glob that silently matches nothing would let this step pass
+          # vacuously (the same trap the smoke-boot BOOT_OK marker guards against).
+          if [ "$ran" -eq 0 ]; then
+            echo "::error::no regression test scenes discovered under client/tests/*_test.tscn"
+            exit 1
+          fi
+          echo "Ran ${ran} discovered regression test scene(s)."
 
   client-export-macos:
     name: Client export (macOS)
