@@ -559,9 +559,17 @@ static func _flood(field: PackedFloat32Array, nx: int, ny: int, nz: int, start: 
 			if j.x < 0 or j.x >= nx or j.y < 0 or j.y >= ny or j.z < 0 or j.z >= nz:
 				continue
 			var n := _fi(j, ny, nz)
-			if seen[n] == 0 and _ok(field, nx, ny, nz, j, grounded):
-				seen[n] = 1
-				stack.append(j)
+			if seen[n] != 0 or not _ok(field, nx, ny, nz, j, grounded):
+				continue
+			# Rising a cell is a JUMP — the controller has no mantle logic, only
+			# a 7.2 m/s hop (player.gd), which clears 1.32 m and so easily clears
+			# one cell. What it needs is somewhere to put the body while rising:
+			# under a ceiling at bare standing height the wanderer would strike
+			# their head and never reach the ledge. Falling needs no such room.
+			if grounded and step.y > 0 and not body_fits(field, nx, ny, nz, c + Vector3i(0, 1, 0)):
+				continue
+			seen[n] = 1
+			stack.append(j)
 	return seen
 
 
@@ -645,17 +653,21 @@ static func reachability(p_seed: int) -> Dictionary:
 ## always get a cell to judge (an unstandable one simply floods nothing).
 static func ground_cell(field: PackedFloat32Array, nx: int, ny: int, nz: int, c: Vector3i,
 		span: int = 8) -> Vector3i:
+	# The descent stops at rock. Scanning past a slab would let a sealed pocket
+	# be certified by the walkable corridor beneath it — the point would "fall"
+	# through solid stone to a floor it has no way of reaching.
 	for dy in range(0, span + 1):
 		var below := c - Vector3i(0, dy, 0)
-		if below.y < 0:
+		if below.y < 0 or not _void_at(field, nx, ny, nz, below):
 			break
 		if standing(field, nx, ny, nz, below):
 			return below
 	# Authored a touch under the floor (rounding, or a sloped chamber base):
-	# look up a little too before giving up.
+	# look up a little too before giving up — through open space only, for the
+	# same reason.
 	for dy in range(1, span + 1):
 		var above := c + Vector3i(0, dy, 0)
-		if above.y >= ny:
+		if above.y >= ny or not _void_at(field, nx, ny, nz, above):
 			break
 		if standing(field, nx, ny, nz, above):
 			return above
@@ -717,14 +729,26 @@ static func _sees_daylight(field: PackedFloat32Array, nx: int, ny: int, nz: int,
 		while true:
 			at += dir
 			if at.x < 0 or at.x >= nx or at.z < 0 or at.z >= nz:
-				break # Left the box without meeting rock: daylight.
-			for dy in range(0, BODY_CELLS + 1):
-				if not _void_at(field, nx, ny, nz, at + Vector3i(0, dy, 0)):
-					clear = false
-					break
-			if not clear:
+				break # Walked off the edge of the box: daylight.
+			if not _has_rock_below(field, nx, ny, nz, at):
+				break # Past the mountain — the world's terrain carries on here.
+			# Still inside the massif, so the wanderer has to WALK it: a
+			# body-sized hole is not an exit if there is no floor under it.
+			if not standing(field, nx, ny, nz, at):
+				clear = false
 				break
 		if clear:
+			return true
+	return false
+
+
+## Is there any rock beneath this column inside the sampled box? While there is,
+## we are still in the mountain and the audit is answerable for the floor. Once
+## there is none, we have passed the massif and the overworld heightfield — which
+## this field deliberately does not model — takes over.
+static func _has_rock_below(field: PackedFloat32Array, nx: int, ny: int, nz: int, c: Vector3i) -> bool:
+	for y in range(c.y - 1, -1, -1):
+		if not _void_at(field, nx, ny, nz, Vector3i(c.x, y, c.z)):
 			return true
 	return false
 

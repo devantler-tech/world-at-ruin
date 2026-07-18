@@ -37,7 +37,11 @@ extends Node
 ##     - a cave sealed in rock reports no way out, and boring a passage to the
 ##       edge of the box opens one;                               [#107: way out]
 ##     - a point buried in rock is not reachable even though rounding alone
-##       would have certified it.                               [#107: borrowing]
+##       would have certified it;                               [#107: borrowing]
+##     - a pocket sealed above a corridor does not drop through the slab; [#107]
+##     - a breach with no floor under it is not a way out;          [#107: exit]
+##     - a ledge is not climbable with the ceiling low over the take-off.
+##                                                                  [#107: rise]
 ##
 ## Pure logic only — no scene, no save, no boot — safe to run locally.
 ##
@@ -49,7 +53,7 @@ var _failed := false
 ## VOID by design (the real audit pads its box into open air), so a fixture
 ## without a solid border would leak free headroom and support in from outside
 ## and quietly defeat the very controls below.
-const _FX := Vector3i(13, 10, 9)
+const _FX := Vector3i(13, 14, 9)
 const _MARGIN := 3
 
 
@@ -109,6 +113,12 @@ func _ready() -> void:
 	if not _a_sealed_cave_has_no_way_out():
 		return
 	if not _a_point_in_rock_cannot_borrow_next_doors_floor():
+		return
+	if not _a_pocket_above_a_slab_does_not_fall_through_it():
+		return
+	if not _a_breach_with_no_floor_is_not_a_way_out():
+		return
+	if not _a_ledge_under_a_low_ceiling_cannot_be_climbed():
 		return
 
 	print("TEST PASS — cave is walkable by the player's capsule (spawn, every room, and out to open air), deterministic; the walk stops at rock, at gaps narrower than the wanderer, at passages too low to stand in, and at spans with nothing underneath, and a sealed cave reports no way out")
@@ -302,6 +312,115 @@ func _a_point_in_rock_cannot_borrow_next_doors_floor() -> bool:
 	_check(CaveSystemGen.walk_reached(buried, lay, noise, seen, field, lo, nx, ny, nz), false,
 		"borrowing: a point inside rock is NOT reachable, though rounding alone would say it is")
 	return not _failed
+
+
+
+## A void pocket sealed above a walkable corridor by a rock slab must NOT drop
+## through it. Dropping an audited point to the ground beneath it is what makes
+## chamber centres judgeable, but a scan that passes through stone would certify
+## a sealed pocket on the strength of the cave below it.
+##
+## The pocket is deliberately too SHORT to stand up in. That is what makes the
+## control bite: a pocket the body fits in has a standing cell of its own, so
+## the scan stops at once and never reaches the slab at all.
+func _a_pocket_above_a_slab_does_not_fall_through_it() -> bool:
+	var slab_y := _MARGIN + CaveSystemGen.BODY_CELLS + 1
+	var pocket_y := slab_y + 1
+
+	var f := _halls(_sealed())
+	# Two levels only, with rock above: a pocket open to the top of the box would
+	# borrow headroom from outside it and be standable after all.
+	for x in range(_MARGIN, 6):
+		for y in range(pocket_y, pocket_y + 2):
+			for z in range(_MARGIN, _FX.z - _MARGIN + 1):
+				_put(f, Vector3i(x, y, z), -1.0)
+	var in_pocket := Vector3i(4, pocket_y + 1, 4)
+	_check(CaveSystemGen.standing(f, _FX.x, _FX.y, _FX.z, Vector3i(4, pocket_y, 4)), false,
+		"slab: the pocket really is too short to stand in (or the scan never runs)")
+	_check(CaveSystemGen.ground_cell(f, _FX.x, _FX.y, _FX.z, in_pocket) == _floor_cell(4), false,
+		"slab: a sealed pocket does NOT drop through the slab onto the hall floor")
+
+	# The other state: carve the slab out and the same point DOES drop to the
+	# hall floor — so the guard stops at rock rather than never dropping at all.
+	for x in range(_MARGIN, 6):
+		for y in range(_MARGIN, pocket_y):
+			for z in range(_MARGIN, _FX.z - _MARGIN + 1):
+				_put(f, Vector3i(x, y, z), -1.0)
+	_check(CaveSystemGen.ground_cell(f, _FX.x, _FX.y, _FX.z, in_pocket) == _floor_cell(4), true,
+		"slab: with the rock removed the same point DOES drop to the hall floor")
+	return not _failed
+
+
+## A body-sized breach through the mountain wall is only a way out if the
+## wanderer can WALK it. A hole at head height over a missing floor is a view,
+## not an exit — and the no-resets law cares about the difference.
+func _a_breach_with_no_floor_is_not_a_way_out() -> bool:
+	_check(_walks_out_of(_mountain(true)), true,
+		"exit: a breach with a floor under it IS a way out")
+	_check(_walks_out_of(_mountain(false)), false,
+		"exit: the same breach with the floor carved away is NOT")
+	return not _failed
+
+
+## A hall, and a corridor breaching the +x wall to the edge of the box. When
+## [param floored] is false the rock under the corridor is carved away, leaving
+## the breach hanging — with rock still deeper down, so the audit knows it is
+## inside the mountain and answerable for the floor.
+func _mountain(floored: bool) -> PackedFloat32Array:
+	var f := _rock()
+	for x in range(_MARGIN, _FX.x):
+		_carve_column(f, x, 0)
+	if not floored:
+		for x in range(6, _FX.x):
+			for y in range(1, _MARGIN):
+				for z in range(_MARGIN, _FX.z - _MARGIN + 1):
+					_put(f, Vector3i(x, y, z), -1.0)
+	return f
+
+
+func _walks_out_of(f: PackedFloat32Array) -> bool:
+	var seen := CaveSystemGen.flood_walkable(f, _FX.x, _FX.y, _FX.z, _floor_cell(4))
+	return CaveSystemGen._walks_out(f, _FX.x, _FX.y, _FX.z, seen)
+
+
+## Both states of the RISE rule. The controller has no mantle logic, only a hop
+## (player.gd: 7.2 m/s against 19.6 gravity clears 1.32 m, so one cell is easy).
+## What a hop needs is somewhere to put the body on the way up.
+##
+## The low ceiling has to sit BEHIND the wanderer, over the cell they jump from.
+## Putting it at the junction instead makes the ledge fail the ordinary sideways
+## clearance rule, and the control then passes without the rise rule doing any
+## work at all — which is exactly how the first version of this control fooled
+## me.
+func _a_ledge_under_a_low_ceiling_cannot_be_climbed() -> bool:
+	_check(_climbs_the_ledge(false), false,
+		"rise: a ledge is NOT climbable with the ceiling low over the take-off")
+	_check(_climbs_the_ledge(true), true,
+		"rise: the same ledge IS climbable once there is room to rise")
+	return not _failed
+
+
+## A lower hall and a ledge one cell up. The cell at the foot of the ledge is
+## always full height; [param room_to_rise] decides whether the hall BEHIND it
+## is, which is the only thing the rise rule can see.
+func _climbs_the_ledge(room_to_rise: bool) -> bool:
+	var f := _rock()
+	var top := _MARGIN + CaveSystemGen.BODY_CELLS + 1
+	var back_top := top + 1 if room_to_rise else top
+	for x in range(_MARGIN, 6):
+		_carve(f, x, _MARGIN, back_top)
+	_carve(f, 6, _MARGIN, top + 1)
+	for x in range(7, _FX.x - _MARGIN):
+		_carve(f, x, _MARGIN + 1, top + 1)
+	var seen := CaveSystemGen.flood_walkable(f, _FX.x, _FX.y, _FX.z, _floor_cell(4))
+	return _reached(seen, Vector3i(8, _MARGIN + 1, 4))
+
+
+## Carve one column of cells over [param y0, y1) at full hall width.
+func _carve(f: PackedFloat32Array, x: int, y0: int, y1: int) -> void:
+	for y in range(y0, y1):
+		for z in range(_MARGIN, _FX.z - _MARGIN + 1):
+			_put(f, Vector3i(x, y, z), -1.0)
 
 
 ## Solid rock everywhere.
