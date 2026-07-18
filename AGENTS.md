@@ -133,7 +133,11 @@ Locally the same tool works windowed (`WAR_SHOT_DIR=… WAR_SAVE_PATH=… godot 
 res://tools/frame_capture.tscn`); a **headless run renders nothing**, and the tool refuses to run
 headless rather than emit a blank frame. Its vantages are fixed on purpose: evidence is only
 comparable across commits if the camera does not move, and one flattering angle hides a regression
-that another exposes.
+that another exposes. The outdoor vantages are fixed as committed constants; the cave vantages are
+fixed **per committed seed** — derived deterministically from the cave layout, bit-identical run
+over run, moving only when the world itself moves (which `cave_capture_vantage_test` turns into a
+named failure and the capture log declares as a `CAVE VANTAGE` coordinate delta, never a quietly
+different frame).
 
 **The tells that the bar is being missed** — all four were true of the first foliage pass, and are
 the concrete evidence behind this section:

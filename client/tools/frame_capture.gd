@@ -179,12 +179,17 @@ func _size_note(img: Image) -> String:
 
 
 ## The cave vantages, in CAVE-LOCAL space, derived from the layout rather than
-## committed as constants: the cave is procedural, so a hardcoded eye would sit
-## inside rock the day the seed or the generator moves a wall — and the capture
-## must fail loudly at derivation time, not silently photograph the inside of a
-## hull. Static and pure so cave_capture_vantage_test.gd can pin every derived
-## point against the generator's own density field — the same truth the mesh is
-## marched from. Each entry is [name, eye, target]; callers map through
+## committed as constants. This HONOURS the fixed-vantage rule rather than
+## bending it: the layout is a pure function of the committed seed, so these
+## cameras are bit-identical run over run and move ONLY when the world itself
+## moves — exactly the moment a hardcoded eye would silently end up inside
+## rock (or photographing a wall that used to be a chamber) and the before/
+## after comparison is already void because the subject changed. A layout
+## change surfaces as a NAMED density-test failure plus a visible camera
+## delta in the evidence log, never as a quietly different frame. Static and
+## pure so cave_capture_vantage_test.gd can pin every derived point against
+## the generator's own density field — the same truth the mesh is marched
+## from. Each entry is [name, eye, target]; callers map through
 ## WorldGen.cave_to_world().
 static func cave_vantages(lay: Dictionary) -> Array:
 	var rooms: Array = lay["rooms"]
@@ -204,10 +209,19 @@ static func cave_vantages(lay: Dictionary) -> Array:
 	var chamber_eye := Vector3(edge.x, chamber_floor + 1.7, edge.z)
 	var chamber_look := Vector3(chamber_c.x, chamber_floor + 1.1, chamber_c.z)
 
-	# The walk-out as the player makes it: a step behind the wake spot, looking
-	# across the chamber toward the bend the exit path climbs into.
+	# The walk-out as the player makes it: over the wanderer's shoulder, looking
+	# across the chamber toward the bend the exit path climbs into. The lateral
+	# step matters: the avatar idles AT the spawn, so a camera dead behind it
+	# would frame mostly avatar and let its collider satisfy the geometry ray.
+	# The side is picked toward the chamber's roomy half, so the offset cannot
+	# push the eye into the near wall whatever the seed's wobble did.
 	var back := spawn - out_dir * 1.3
-	var walkout_eye := Vector3(back.x, chamber_floor + 1.8, back.z)
+	var shoulder := Vector3(-out_dir.z, 0.0, out_dir.x)
+	var to_center := (chamber_c - back) * Vector3(1.0, 0.0, 1.0)
+	if to_center.dot(shoulder) < 0.0:
+		shoulder = -shoulder
+	var side := back + shoulder * 1.15
+	var walkout_eye := Vector3(side.x, chamber_floor + 1.8, side.z)
 	var walkout_look := Vector3(bend_c.x, (bend["floor"] as float) + 1.3, bend_c.z)
 
 	return [
@@ -244,6 +258,14 @@ func _capture_cave(cam: Camera3D, dir: String, main: Node) -> int:
 
 	var to_world := world.cave_to_world()
 	var lay: Dictionary = cave.last_layout
+	# Declare the derived cameras in the evidence log: fixed per committed
+	# seed, so a coordinate delta between two runs means the WORLD moved — a
+	# fact a reviewer should read off the log diff, not have to infer.
+	for vantage: Array in cave_vantages(lay):
+		var e := to_world * (vantage[1] as Vector3)
+		var t := to_world * (vantage[2] as Vector3)
+		print("CAVE VANTAGE %s: eye (%.2f, %.2f, %.2f) -> target (%.2f, %.2f, %.2f)" %
+			[vantage[0], e.x, e.y, e.z, t.x, t.y, t.z])
 	var captured := 0
 	for vantage: Array in cave_vantages(lay):
 		var vantage_name: String = vantage[0]
@@ -369,14 +391,26 @@ func _camera_draws_world(cam: Camera3D, main: Node) -> bool:
 ## Whether the camera has world geometry in front of it, by raycasting from the
 ## eye toward the vantage's target against the terrain/ruin colliders. Distinct
 ## from _has_world: the world can exist while the camera frames only sky.
+## Characters — the wanderer, the Reach's people, hounds — are NOT world
+## geometry: a shot validated by an avatar strolling through the ray would pass
+## while framing nothing, so character bodies are stepped over rather than
+## counted.
 func _sees_geometry(cam: Camera3D, target: Vector3) -> bool:
 	var space := cam.get_world_3d().direct_space_state
 	var from := cam.global_position
 	var to := from + (target - from).normalized() * 500.0
-	var query := PhysicsRayQueryParameters3D.create(from, to)
-	query.collide_with_areas = false
-	var hit := space.intersect_ray(query)
-	return not hit.is_empty()
+	var exclude: Array[RID] = []
+	for i in 4:
+		var query := PhysicsRayQueryParameters3D.create(from, to)
+		query.collide_with_areas = false
+		query.exclude = exclude
+		var hit := space.intersect_ray(query)
+		if hit.is_empty():
+			return false
+		if not (hit["collider"] is CharacterBody3D):
+			return true
+		exclude.append((hit["collider"] as CollisionObject3D).get_rid())
+	return false
 
 
 ## Luminance spread over a grid sampled from the central box only — enough to
