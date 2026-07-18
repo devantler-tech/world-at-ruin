@@ -24,6 +24,44 @@ extends RefCounted
 ## near-zero facing yields a deterministic shape rather than a NaN.
 const _MIN_FACING := 0.0001
 
+## The fixed-point scale for a cone's half-angle cosine, mirroring
+## `sim.CosScale` in server/sim/telegraph.go EXACTLY.
+##
+## A cone's angular threshold is carried between the tiers as the INTEGER
+## `cos(half_angle)·COS_SCALE`, and both tiers compare against that one number.
+## This is the single source of truth the two tiers share: previously the server
+## held a precomputed scaled cosine while this file called
+## `cos(deg_to_rad(half))` at resolution time, so each tier derived its own
+## threshold and they agreed only up to quantization. A cone whose angle is not
+## exactly representable at this scale then gives the two tiers slightly
+## different wedges — and the failure mode is a player-visible desync (dodged on
+## screen, hit on the server), the exact class telegraph geometry exists to
+## prevent. Consuming one shared integer removes the divergence BY
+## CONSTRUCTION rather than by convention.
+const COS_SCALE := 1_000_000
+
+
+## Convert an author's half-angle in degrees to the integer scaled cosine both
+## tiers consume. This is an AUTHORING/INGESTION-time conversion — it is the one
+## place a trigonometric function may be called, deliberately outside the
+## resolution path so the authoritative tick core stays trig-free and
+## integer-only (platform math libraries are not bit-identical).
+##
+## Rounding is CEIL (toward +1) rather than nearest, and that direction is
+## load-bearing, not incidental. A larger cosine is a NARROWER wedge, so
+## rounding up guarantees the shared threshold is never WIDER than the exact
+## angle an author wrote. The residual sub-quantum disagreement can then only
+## ever spare a player the client drew as hit, never hit one the client drew as
+## safe — the failure direction a dodge-based game should prefer. The server's
+## `CosScale` doc states this as a rule authors must follow; here it is
+## MECHANICAL, so an author cannot round the other way.
+##
+## `half_angle_deg` is clamped to [0, 180] to match `in_cone`, so 180 yields
+## -COS_SCALE (a full disc) and 0 yields +COS_SCALE (a degenerate ray).
+static func cos_half_scaled_from_deg(half_angle_deg: float) -> int:
+	var half := clampf(half_angle_deg, 0.0, 180.0)
+	return int(ceil(cos(deg_to_rad(half)) * COS_SCALE))
+
 
 ## The point projected onto the XZ plane. Height is deliberately dropped: a
 ## telegraph is a mark on the ground, so a tall target standing in it is caught
@@ -63,14 +101,21 @@ static func in_ring(center: Vector3, inner: float, outer: float, point: Vector3)
 
 
 ## Inside a sector ("cone") with its apex at `apex`, opening toward planar
-## `facing`, reaching `range_m` metres, and spanning `half_angle_deg` to EACH
-## side of the facing (so the full opening is twice that). The apex itself
-## counts as inside; a negative range catches nothing; `half_angle_deg` is
-## clamped to [0, 180], so 180 degenerates to a full disc of `range_m`. Both
-## the range edge and the angular edge are inclusive. This is the "one
-## telegraph you cast (a cone)" telegraph.
-static func in_cone(apex: Vector3, facing: Vector3, range_m: float,
-		half_angle_deg: float, point: Vector3) -> bool:
+## `facing`, reaching `range_m` metres, and whose angular threshold is the
+## INTEGER scaled cosine `cos_half_scaled` (see `COS_SCALE`) — the same number
+## the authoritative server compares against, carried by ability data rather
+## than derived independently by each tier.
+##
+## The apex itself counts as inside; a negative range catches nothing;
+## `cos_half_scaled` is clamped to [-COS_SCALE, +COS_SCALE], so -COS_SCALE
+## degenerates to a full disc of `range_m`. Both the range edge and the angular
+## edge are inclusive. This is the "one telegraph you cast (a cone)" telegraph.
+##
+## This is the RESOLUTION-path entry point and it calls no trigonometric
+## function: the threshold arrives already quantized, so the client's wedge is
+## the server's wedge by construction.
+static func in_cone_scaled(apex: Vector3, facing: Vector3, range_m: float,
+		cos_half_scaled: int, point: Vector3) -> bool:
 	if range_m < 0.0:
 		return false
 	var to := _xz(point) - _xz(apex)
@@ -80,9 +125,24 @@ static func in_cone(apex: Vector3, facing: Vector3, range_m: float,
 	# On the apex: fully inside rather than dividing by ~0 for the facing test.
 	if dist < _MIN_FACING:
 		return true
-	var half := clampf(half_angle_deg, 0.0, 180.0)
+	var threshold := clampi(cos_half_scaled, -COS_SCALE, COS_SCALE)
 	var faced := _planar_dir(facing).dot(to / dist)
-	return faced >= cos(deg_to_rad(half))
+	return faced >= float(threshold) / float(COS_SCALE)
+
+
+## Inside a sector ("cone") given the half-angle in DEGREES — an authoring and
+## presentation convenience that quantizes through `cos_half_scaled_from_deg`
+## and then defers to `in_cone_scaled`.
+##
+## Prefer `in_cone_scaled` wherever a resolution answer must match the server:
+## this overload re-derives the threshold from degrees, which is exactly the
+## independent derivation the shared integer exists to eliminate. It is safe
+## here only because it quantizes through the SAME ceil-rounded conversion the
+## authoritative value uses, so it can never be WIDER than the shared wedge.
+static func in_cone(apex: Vector3, facing: Vector3, range_m: float,
+		half_angle_deg: float, point: Vector3) -> bool:
+	return in_cone_scaled(
+		apex, facing, range_m, cos_half_scaled_from_deg(half_angle_deg), point)
 
 
 ## Inside an oriented rectangle ("beam") whose near edge sits at `origin` and
