@@ -238,19 +238,16 @@ reset the game forbids.
   direction 2026-07-18, #82 option C). `ability.gd` bounds the *single-target* economy mechanically —
   frozen per-cast power budget per `(role|effect)`, a frozen cast+cooldown cycle floor (so throughput
   is capped at budget/floor), a new category's opening scale bounded against those already shipped,
-  plus no-strict-dominance and the append-only ledgers. **Telegraph AREA is deliberately outside that
-  model**, so more targets per cast means more total damage with nothing firing. Bounding it means
-  inventing an area-vs-power exchange rate and freezing it permanently under the no-resets law — that
-  is game balance, and it is the maintainer's call.
-  **When it bites:** not yet. `telegraph` is only a *kind* (used in `class_key`, which decides what is
-  comparable; the budget is keyed on `(role|effect)` alone), and an ability carries **no shape
-  magnitude at all** — no half-angle, no radius, no width — so nothing can be widened today.
-  **The gap opens the moment ability data carries shape magnitudes** (the plumbing #118 describes).
-  **The rule:** adding a shape-magnitude field, widening one, or otherwise increasing how many targets
-  one cast reaches is a balance review — state the reach before → after in the PR and let the
-  maintainer approve it. Choosing a new category's scale is his too. Green CI proves only that you did
-  not commit a blatant single-target upgrade, never that the balance is right; do not build an area
-  guard without fresh direction superseding this.
+  plus no-strict-dominance and the append-only ledgers. A cone's wedge became authorable data in #159
+  (`cos_half_scaled`), and #163 holds **half** the area problem: a **shipped** cone's wedge may never
+  widen (CI compares it against the base revision, and monotonicity composes).
+  **What is left unbounded is a NEW cone's opening width** — the one value with no already-shipped
+  anchor to measure against. Bounding it means inventing an area-vs-magnitude exchange rate and
+  freezing it permanently under the no-resets law, so it stays a **balance review**: choosing a new
+  cone's width, or otherwise increasing how many targets one cast reaches, means stating the reach in
+  the PR and letting the maintainer approve it. Choosing a new category's scale is his too. **Green CI
+  proves only that you did not widen something already shipped — never that a new number is balanced**;
+  do not build a guard for the opening width without fresh direction superseding this.
 - **Tune content against the *banked floor*, not peak mastery.** Unlosable progress is the only
   power level every player is guaranteed to have; everything above it is skill expression.
 - **Death penalty in group content breeds blame.** A bloodstain is fine solo; "you cost me my
@@ -295,6 +292,14 @@ everything shipped afterwards is held to.
 
 ## Maintenance
 
+- **Editor-only scenes are NOT dead code.** Two scenes are deliberately unreferenced by the running
+  game and exist as **editor surfaces**: `client/scenes/recipes.tscn` (the character taste gate,
+  documented in `recipe_gallery.gd`) and `client/scenes/cave.tscn` (the cave-generation preview
+  harness, documented in `cave_system_gen.gd` — a `@tool` rig for judging cave interior/exterior work
+  by eye, #124). A repo-wide "no references, therefore dead" sweep will flag both; check the owning
+  script's docstring before proposing a deletion, and retire such a scene only when the work it
+  supports is finished — saying so in the same change. Anything unreferenced **without** such a
+  marker is genuine scaffolding and should go (as `scenes/character.tscn` did in #116).
 - **Structure:** `client/` is the Godot 4 project (scenes built in GDScript from engine
   primitives). The one sanctioned exception to "no binary assets" is `client/assets/` — artifacts
   BAKED BY COMMITTED CODE (`tools/artgen/`, the Python/bpy exception) from CC0 data, plus the
@@ -434,6 +439,17 @@ everything shipped afterwards is held to.
     it — so a private package harms no player today while blocking every release on it would. The
     job going red is the signal; the release still ships. **Make it blocking the moment the updater
     actually resolves against GHCR**, at which point an unreachable origin is a real defect (tracked as #141).
+  - **Homebrew cask** — CD renders `Casks/world-at-ruin.rb` and opens/updates ONE evergreen PR on
+    `devantler-tech/homebrew-tap`. It runs **after** `publish-release`, because the cask's `url`
+    points at the release asset and a draft release's asset URL 404s for `brew install`.
+    **`auto_updates` is deliberately ABSENT**: it tells Homebrew "this app updates itself, do not
+    upgrade it", and there is no working in-client updater yet (`update_decision.gd` is pure
+    decision logic). Declaring it now would make `brew upgrade` skip the cask and strand players on
+    the version they installed. Add it only once the self-updater ships (#106). The `postflight`
+    quarantine strip is **mandatory, not cosmetic** — the build is ad-hoc signed
+    (`codesign/codesign=1` with an empty identity), so Gatekeeper blocks it otherwise.
+    No `verified:` on the `url`: `brew audit --strict` rejects it when the download and homepage
+    domains match, which they do here.
   - The version is therefore **derived, never maintained**. The in-tree constants are dev values;
     only a released build carries a real version.
   - **`CI - Required Checks` is the repo's single required status context.** Renaming or removing

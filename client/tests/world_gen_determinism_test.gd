@@ -39,12 +39,16 @@ const HALF := WorldGen.SIZE / 2.0
 ## (the test prints it in record mode) only when the world is intentionally
 ## changed — like the server sim's demoGoldenHash, a change here is a reviewed
 ## act.
+## Ruin silhouettes (#151): columns, walls and rubble are generated meshes with
+## broken profiles rather than primitives, and this fingerprint now hashes mesh
+## VERTICES as well as AABB size — a bounding box cannot see a changed break, so
+## without that the golden would bless a reshaped ruin silently.
 ## v0.1.17: torches became wall-anchored and gained bracket/head/flame parts,
 ## which moves and re-shapes their nodes. Regenerated ON TOP of main's foliage
 ## golden (f5dcfa96) rather than taking either side of the merge — both changes
 ## are in this value. The cave rock mesh itself is BYTE-IDENTICAL across seeds
 ## 42/7/1234, so the torch contribution is fixtures-only, not terrain.
-const GOLDEN_FINGERPRINT := "7045669c"
+const GOLDEN_FINGERPRINT := "eaaba576"
 ## world_gen's cave_protects pads the cave hull by this many metres. A piece
 ## whose bounding radius is within that padding cannot reach the hull when its
 ## centre is outside cave_protects, which makes the cheap centre test a SOUND
@@ -185,10 +189,24 @@ func _fingerprint_subtree(node: Node, acc: PackedInt32Array) -> void:
 		acc.append(roundi(n3.rotation.y * 10000.0))
 		acc.append(roundi(n3.rotation.z * 10000.0))
 	if node is MeshInstance3D and (node as MeshInstance3D).mesh != null:
-		var s := (node as MeshInstance3D).mesh.get_aabb().size
+		var mesh := (node as MeshInstance3D).mesh
+		var s := mesh.get_aabb().size
 		acc.append(roundi(s.x * 1000.0))
 		acc.append(roundi(s.y * 1000.0))
 		acc.append(roundi(s.z * 1000.0))
+		# The AABB alone cannot see SHAPE: the ruins are now generated meshes
+		# whose breaks and jags can change completely while the bounding box
+		# stays put, and the golden would bless that silently. Hash the actual
+		# vertices (millimetre-quantised, like everything else here) so a
+		# changed break is a reviewed act rather than an invisible one.
+		for surface in mesh.get_surface_count():
+			var arrays := mesh.surface_get_arrays(surface)
+			if arrays.size() > Mesh.ARRAY_VERTEX:
+				var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+				for v in verts:
+					acc.append(roundi(v.x * 1000.0))
+					acc.append(roundi(v.y * 1000.0))
+					acc.append(roundi(v.z * 1000.0))
 	for child in node.get_children():
 		_fingerprint_subtree(child, acc)
 

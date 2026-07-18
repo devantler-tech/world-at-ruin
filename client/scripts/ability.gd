@@ -29,21 +29,19 @@ extends RefCounted
 ##      upgrade of its own base version (the CI "no strict self-buff" anchor).
 ##
 ##      SCOPE, stated honestly: this bounds PER-TARGET throughput. Telegraph AREA
-##      is not in the model. Today that is latent rather than live: `telegraph` is
-##      a KIND only (part of `class_key`, the comparable-class key — the power
-##      budget is keyed on `(role|effect)` alone) and an ability carries no shape
-##      magnitude — no half-angle, no radius — so there is nothing to widen yet
-##      (`range_m` does exist, and trades on the dominance axes). The gap opens
-##      when ability data carries real shape magnitudes: two abilities on the same
-##      budget and cycle then differ in how many targets one cast reaches, and no
-##      guard sees it. That multi-target economy is DECIDED,
-##      not pending: devantler-tech/world-at-ruin#82 settled it (maintainer
-##      direction 2026-07-18, option C) as a REVIEWED BALANCE DECISION rather than
-##      a future CI guard, because bounding it means inventing an area-vs-power
-##      exchange rate and freezing it permanently under the no-resets law. So
-##      widening a telegraph is a balance review the maintainer approves (see
-##      AGENTS.md); do not add a mechanical area guard here without fresh
-##      direction superseding that.
+##      is not in the model, so a wider cone at the same budget and cycle reaches
+##      more targets for more total damage. Half of that is now held: a SHIPPED
+##      cone's wedge may never widen (the CI "cone wedge may never widen" anchor,
+##      comparing `cos_half_scaled` against the base revision). What is still
+##      unbounded is a NEW cone's opening width, which needs an area-vs-magnitude
+##      exchange rate — the one value here with no already-shipped anchor.
+##      devantler-tech/world-at-ruin#82 has now SETTLED that remainder rather than
+##      merely tracking it: maintainer direction 2026-07-18 (option C) keeps a new
+##      cone's opening width a REVIEWED BALANCE DECISION, not a future CI guard,
+##      because picking an exchange rate freezes it permanently under the
+##      no-resets law. Choosing that width is a balance review the maintainer
+##      approves (see AGENTS.md); do not add a mechanical guard for it here
+##      without fresh direction superseding that.
 ##
 ##   2. NO STRICT DOMINANCE (the sidegrade law) — "Every new arsenal ability must
 ##      be a SIDEGRADE, never a strict upgrade." Within a comparable class no
@@ -94,7 +92,14 @@ const _INT_FIELDS := ["version", "cast_time_ms", "cooldown_ms", "resource_cost",
 ## mastered ability behaving with missing constraints is exactly the permanent,
 ## un-undoable harm the product law forbids. Bump this in the same change that
 ## teaches the parser the new version's fields.
-const SCHEMA_VERSION := 1
+## Version 2 added `cos_half_scaled` — a cone ability's angular threshold as the
+## integer scaled cosine BOTH TIERS consume (see `Telegraph.COS_SCALE`). Before
+## it, the server held a precomputed scaled cosine while the client recomputed
+## one from degrees, so the two tiers derived the same wedge independently and
+## agreed only up to quantization; carrying it as data makes the shared value the
+## single source of truth. Presentational degrees, if ever needed, are derived
+## from this field and never the reverse.
+const SCHEMA_VERSION := 2
 
 ## Every field this schema defines. An unrecognised key is refused rather than
 ## ignored: within a known version there is nothing legitimate for it to mean, so
@@ -105,7 +110,34 @@ const SCHEMA_VERSION := 1
 const _KNOWN_FIELDS := [
 	"id", "version", "weapon", "role", "effect", "telegraph",
 	"cast_time_ms", "cooldown_ms", "resource_cost", "range_m", "power",
+	"cos_half_scaled",
 ]
+
+## The telegraph shape that carries an angular threshold. `cos_half_scaled` is
+## REQUIRED for it and FORBIDDEN for every other shape — the closed-schema idiom
+## this file already uses for enums, applied to a conditional field.
+##
+## Both halves matter. A cone WITHOUT the field would have to fall back to some
+## default angle, which is exactly the independent per-tier derivation this field
+## exists to abolish; a circle WITH one carries a threshold nothing reads, so a
+## later change could start honouring it and silently alter a shipped shape.
+## Making both states unrepresentable means a cone's wedge is always data and
+## never a convention.
+const _ANGULAR_TELEGRAPH := "cone"
+
+## The schema version that introduced `cos_half_scaled`. A file carrying the
+## field must declare AT LEAST this version.
+##
+## Without the check the version contract leaks in the one direction that
+## matters: a cone could declare `"version": 1` while carrying a v2 field and
+## still parse here, so v2 semantics would travel mislabelled as v1. The
+## SCHEMA_VERSION ceiling only refuses versions that are too NEW — it cannot
+## notice a file understating its own. Then an older v1 build, which would
+## rightly refuse this content, is never given the chance to: it sees a version
+## it trusts, ignores nothing it knows about, and resolves the cone with a
+## threshold it does not understand. Declaring the version is what makes the
+## ceiling a real gate rather than an honour system.
+const _COS_HALF_SCALED_SINCE_VERSION := 2
 
 
 ## Validate one decoded ability object and return a normalised, typed Dictionary,
@@ -160,7 +192,54 @@ static func parse(data: Variant) -> Variant:
 		return null
 	out["range_m"] = reach
 
+	if not _apply_cos_half_scaled(d, out, id):
+		return null
+
 	return out
+
+
+## Validate the conditional angular threshold: required for a cone, forbidden
+## otherwise, and in [-COS_SCALE, +COS_SCALE] when present (the range a cosine
+## can occupy at all). Returns false, loudly, on any violation.
+##
+## The bound is REFUSED rather than clamped. `Telegraph.in_cone_scaled` clamps
+## defensively at resolution time, but ability data is authored content: a value
+## outside the representable range means the author's intent was lost in
+## conversion, and silently clamping it to a full disc or a degenerate ray would
+## ship a shape nobody wrote.
+static func _apply_cos_half_scaled(d: Dictionary, out: Dictionary, id: String) -> bool:
+	var is_cone: bool = out["telegraph"] == _ANGULAR_TELEGRAPH
+	if not d.has("cos_half_scaled"):
+		if is_cone:
+			push_error("Ability '%s': telegraph '%s' requires 'cos_half_scaled' — a cone's wedge must be data both tiers read, never a per-tier default"
+				% [id, _ANGULAR_TELEGRAPH])
+			return false
+		return true
+	if not is_cone:
+		push_error("Ability '%s': 'cos_half_scaled' is only meaningful for telegraph '%s', not '%s' — refusing rather than carrying a threshold nothing reads"
+			% [id, _ANGULAR_TELEGRAPH, out["telegraph"]])
+		return false
+
+	if int(out["version"]) < _COS_HALF_SCALED_SINCE_VERSION:
+		push_error("Ability '%s': 'cos_half_scaled' arrived in schema version %d but this file declares version %d — a file must not carry a field from a schema it does not claim"
+			% [id, _COS_HALF_SCALED_SINCE_VERSION, out["version"]])
+		return false
+
+	var v = d["cos_half_scaled"]
+	if v is not int and v is not float:
+		push_error("Ability '%s': 'cos_half_scaled' must be a number" % id)
+		return false
+	var f := float(v)
+	if not is_finite(f) or f != floor(f):
+		push_error("Ability '%s': 'cos_half_scaled' must be a whole number (it is a fixed-point integer at Telegraph.COS_SCALE)" % id)
+		return false
+	var n := int(f)
+	if n < -Telegraph.COS_SCALE or n > Telegraph.COS_SCALE:
+		push_error("Ability '%s': 'cos_half_scaled' %d is outside [%d, %d] — not a representable cosine"
+			% [id, n, -Telegraph.COS_SCALE, Telegraph.COS_SCALE])
+		return false
+	out["cos_half_scaled"] = n
+	return true
 
 
 ## Load every ability under `dir`, sorted by filename so the registry is
@@ -256,16 +335,17 @@ static func dominates(a: Dictionary, b: Dictionary) -> bool:
 ## damage per second. The initial scale of a genuinely NEW (role|effect) category
 ## is bounded in CI against the categories already shipped.
 ##
-## Still NOT bounded, and deliberately so: multi-target reach. Throughput here is
-## per-target — telegraph AREA is not in the model. No shape magnitude is
-## expressible today, so nothing can be widened yet; but ONCE ability data carries
-## shape magnitudes, a wider cone at the same cycle and budget would hit more
-## targets for more total damage, and no guard would see it.
-## devantler-tech/world-at-ruin#82 SETTLED this (maintainer direction 2026-07-18,
-## option C): it stays a reviewed balance decision, not a CI guard, because the
-## area-vs-power exchange rate is game balance and freezing one would be permanent
-## under the no-resets law. Widening a telegraph is a maintainer-approved balance
-## review (AGENTS.md), never something green CI grants.
+## Multi-target reach is only PARTLY bounded. Throughput here is per-target, and
+## telegraph AREA is not in the model, so a wider cone at the same cycle and
+## budget hits more targets for more total damage. CI now refuses to WIDEN a
+## cone that already shipped (`cos_half_scaled` may never decrease against the
+## base revision), which closes the drift half without inventing a number. The
+## opening width of a NEW cone is still unbounded: bounding it needs an
+## area-vs-magnitude exchange rate. devantler-tech/world-at-ruin#82 has SETTLED
+## that remainder rather than merely tracking it — maintainer direction
+## 2026-07-18 (option C) keeps it a reviewed balance decision, not a future CI
+## guard, because an opening width has no already-shipped anchor and picking one
+## freezes the exchange rate permanently under the no-resets law. See AGENTS.md.
 static func find_power_inflation(abilities: Array, budgets: Dictionary) -> Array:
 	var violations: Array = []
 	for ab in abilities:

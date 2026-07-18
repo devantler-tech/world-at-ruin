@@ -159,7 +159,7 @@ static func _select_verified(catalog: Array, state: Dictionary) -> Dictionary:
 			skipped += 1
 			continue
 		var target: Dictionary = raw
-		if not _is_wellformed(target):
+		if not is_wellformed(target):
 			skipped += 1
 			continue
 		considered += 1
@@ -168,7 +168,7 @@ static func _select_verified(catalog: Array, state: Dictionary) -> Dictionary:
 			continue
 		if not _is_reachable(target, save_schema, save_capability):
 			continue
-		if not _is_runnable(target, server_min, server_max, shell_version):
+		if not is_runnable(target, server_min, server_max, shell_version):
 			continue
 		if best_version.is_empty() or UpdateDecision.compare_versions(version, best_version) > 0:
 			best = target
@@ -331,7 +331,14 @@ static func _is_reachable(target: Dictionary, save_schema: int, save_capability:
 ## Whether the target can actually RUN and CONNECT: the protocol range it speaks
 ## overlaps the range the live tier accepts, and the installed shell is inside its
 ## compatibility window.
-static func _is_runnable(target: Dictionary, server_min: int, server_max: int, shell_version: String) -> bool:
+## PUBLIC for the same reason as [method is_wellformed]: the forward path must not
+## count a target as rollback cover that this selector would skip. These inputs are
+## the CURRENT protocol range and installed shell, so this answers "can it run
+## NOW". It cannot answer "will it run at recovery time" — both facts can move —
+## but a target that already cannot run is known-bad now, exactly like a
+## quarantined one, and must never be counted as cover.
+## Assumes [method is_wellformed] has already passed for `target`.
+static func is_runnable(target: Dictionary, server_min: int, server_max: int, shell_version: String) -> bool:
 	var speaks: Dictionary = target["speaks_protocol"]
 	var speaks_min: int = int(speaks["min"])
 	var speaks_max: int = int(speaks["max"])
@@ -349,6 +356,15 @@ static func _is_runnable(target: Dictionary, server_min: int, server_max: int, s
 ## Whether a catalogue entry carries every field eligibility is decided from, each
 ## well-typed. Entries failing this are skipped, never trusted: an entry missing its
 ## capability data cannot be shown to be safe, and this library never assumes.
+##
+## PUBLIC because the FORWARD path needs the identical question. [UpdateDecision]
+## must not count a target as rollback cover that this selector would later skip,
+## and every field checked here is STATIC manifest data — knowable when the update
+## decision is made, unlike the time-varying runnability in [method _is_runnable].
+## Sharing the predicate rather than mirroring it is what stops the two paths
+## drifting apart, the same reason this file validates fields with
+## [UpdateDecision]'s own [method UpdateDecision.is_int_id] / [method
+## UpdateDecision.is_version] rules instead of its own copies.
 ## Every field is validated with the SAME rules the forward path uses
 ## ([method UpdateDecision.is_int_id], [method UpdateDecision.is_version]), so a real
 ## signed manifest can never be readable by the updater and unreadable by recovery.
@@ -359,7 +375,7 @@ static func _is_runnable(target: Dictionary, server_min: int, server_max: int, s
 ##   * A version must be a genuine dotted-integer version. `compare_versions` coerces
 ##     unparseable components to 0, so accepting `"99.bad"` would let a nonsense entry
 ##     win the ordering and be handed to the bootstrap as a recovery target.
-static func _is_wellformed(target: Dictionary) -> bool:
+static func is_wellformed(target: Dictionary) -> bool:
 	if not UpdateDecision.is_version(target.get("version")):
 		return false
 	if not (UpdateDecision.is_int_id(target.get("read_ceiling")) and UpdateDecision.is_int_id(target.get("save_capability"))):

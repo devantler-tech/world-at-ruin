@@ -1,0 +1,258 @@
+{
+  "_comment": "Shared cross-tier cone fixture. Expectations come from an independent high-precision oracle, not from either tier. Lengths are millimetres (the server's integer unit); the client divides by 1000 to get metres.",
+  "cones": [
+    {
+      "name": "forty_five_degree_forward",
+      "apex_mm": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "facing_mm": {
+        "x": 0,
+        "y": 0,
+        "z": -1000
+      },
+      "range_mm": 30000,
+      "cos_half_scaled": 707107,
+      "half_angle_deg_presentational": 45,
+      "probes": [
+        {
+          "point_mm": {
+            "x": 0,
+            "y": 0,
+            "z": -20000
+          },
+          "expect_caught": true,
+          "note": "on the axis, well inside range"
+        },
+        {
+          "point_mm": {
+            "x": 0,
+            "y": 0,
+            "z": -29000
+          },
+          "expect_caught": true,
+          "note": "on the axis, 1 m inside the range edge"
+        },
+        {
+          "point_mm": {
+            "x": 0,
+            "y": 0,
+            "z": -31000
+          },
+          "expect_caught": false,
+          "note": "on the axis, 1 m beyond the range edge"
+        },
+        {
+          "point_mm": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "expect_caught": true,
+          "note": "the apex itself"
+        },
+        {
+          "point_mm": {
+            "x": 0,
+            "y": 0,
+            "z": 15000
+          },
+          "expect_caught": false,
+          "note": "directly behind the facing"
+        },
+        {
+          "point_mm": {
+            "x": 12000,
+            "y": 0,
+            "z": -20000
+          },
+          "expect_caught": true,
+          "note": "~31 deg off axis, comfortably inside the wedge"
+        },
+        {
+          "point_mm": {
+            "x": -12000,
+            "y": 0,
+            "z": -20000
+          },
+          "expect_caught": true,
+          "note": "mirrored ~31 deg off axis"
+        },
+        {
+          "point_mm": {
+            "x": 20000,
+            "y": 0,
+            "z": -12000
+          },
+          "expect_caught": false,
+          "note": "~59 deg off axis, comfortably outside the wedge"
+        },
+        {
+          "point_mm": {
+            "x": -20000,
+            "y": 0,
+            "z": -12000
+          },
+          "expect_caught": false,
+          "note": "mirrored ~59 deg off axis"
+        },
+        {
+          "point_mm": {
+            "x": 0,
+            "y": 9000,
+            "z": -20000
+          },
+          "expect_caught": true,
+          "note": "height is ignored: same footprint as the inside probe"
+        }
+      ]
+    },
+    {
+      "name": "full_disc_180_degree",
+      "apex_mm": {
+        "x": 5000,
+        "y": 0,
+        "z": 5000
+      },
+      "facing_mm": {
+        "x": 0,
+        "y": 0,
+        "z": -1000
+      },
+      "range_mm": 10000,
+      "cos_half_scaled": -1000000,
+      "half_angle_deg_presentational": 180,
+      "probes": [
+        {
+          "point_mm": {
+            "x": 5000,
+            "y": 0,
+            "z": 14000
+          },
+          "expect_caught": true,
+          "note": "directly behind, inside range: a full disc catches it"
+        },
+        {
+          "point_mm": {
+            "x": 5000,
+            "y": 0,
+            "z": 16000
+          },
+          "expect_caught": false,
+          "note": "directly behind, beyond range"
+        },
+        {
+          "point_mm": {
+            "x": 5000,
+            "y": 0,
+            "z": -4000
+          },
+          "expect_caught": true,
+          "note": "straight ahead, inside range"
+        }
+      ]
+    },
+    {
+      "name": "narrow_fifteen_degree_plus_x",
+      "apex_mm": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "facing_mm": {
+        "x": 1000,
+        "y": 0,
+        "z": 0
+      },
+      "range_mm": 20000,
+      "cos_half_scaled": 965926,
+      "half_angle_deg_presentational": 15,
+      "probes": [
+        {
+          "point_mm": {
+            "x": 10000,
+            "y": 0,
+            "z": 0
+          },
+          "expect_caught": true,
+          "note": "on the axis"
+        },
+        {
+          "point_mm": {
+            "x": 10000,
+            "y": 0,
+            "z": 1000
+          },
+          "expect_caught": true,
+          "note": "~5.7 deg off axis, inside the narrow wedge"
+        },
+        {
+          "point_mm": {
+            "x": 10000,
+            "y": 0,
+            "z": 4000
+          },
+          "expect_caught": false,
+          "note": "~21.8 deg off axis, outside the narrow wedge"
+        },
+        {
+          "point_mm": {
+            "x": 19000,
+            "y": 0,
+            "z": 0
+          },
+          "expect_caught": true,
+          "note": "on the axis, 1 m inside the range edge"
+        }
+      ]
+    },
+    {
+      "name": "tightest_reachable_edge_band",
+      "apex_mm": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "facing_mm": {
+        "x": 0,
+        "y": 0,
+        "z": -1000
+      },
+      "range_mm": 4000000,
+      "cos_half_scaled": 707107,
+      "half_angle_deg_presentational": 45,
+      "probes": [
+        {
+          "point_mm": {
+            "x": -999998,
+            "y": 0,
+            "z": -999999
+          },
+          "expect_caught": true,
+          "note": "tightest reachable server-catch margin (~1.3e-7 of cosine) at the world corner"
+        },
+        {
+          "point_mm": {
+            "x": -999999,
+            "y": 0,
+            "z": -900000
+          },
+          "expect_caught": false,
+          "note": "clearly outside the wedge at the same scale"
+        },
+        {
+          "point_mm": {
+            "x": -900000,
+            "y": 0,
+            "z": -999999
+          },
+          "expect_caught": true,
+          "note": "clearly inside the wedge at the same scale"
+        }
+      ]
+    }
+  ],
+  "cos_scale": 1000000
+}

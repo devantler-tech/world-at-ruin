@@ -40,8 +40,13 @@ const INVALID_MANIFEST := "invalid_manifest"
 
 
 ## Decide what the client should do. `installed` describes the running build:
-##   { shell_version: String, pack_version: String, save_schema: int, protocol: int }
-## Missing keys default to the lowest value, so a partial state is never a crash.
+##   { shell_version: String, pack_version: String, save_schema: int,
+##     save_capability: int, protocol: int, quarantined: Array[String] (optional) }
+## Missing keys default to the lowest value, so a partial state is never a crash —
+## with ONE deliberate exception: `save_capability` must be present and whole, or
+## the decision is a loud block. A defaulted capability does not fail safe (see the
+## check itself), and the forward path must not be more permissive than
+## [RollbackSelection] about the very same fact.
 ## `manifest` is the parsed update manifest (the caller has already verified its
 ## signature). Returns { action: String, reason: String } where action is one of
 ## the constants above. It never crashes on a malformed manifest.
@@ -55,6 +60,24 @@ static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 	var env_err := _envelope_error(manifest)
 	if env_err != "":
 		return _result(INVALID_MANIFEST, env_err)
+
+	# The installed save capability is the ONE installed field that is not defaulted
+	# to the lowest value (see the note on this function). Defaulting it to 0 does
+	# not fail safe: a save written before this field existed carries a REAL
+	# capability, and reading it as 0 would let a candidate writing a LOWER
+	# capability pass the forward-only check below and drop persisted state. That is
+	# the same reasoning `RollbackSelection` gives for refusing an unverifiable save
+	# capability rather than assuming one, and the forward path must not be more
+	# permissive than the recovery path about the same fact.
+	#
+	# It sits BEFORE the schema branching deliberately. The future-schema path routes
+	# to a shell update from the stable envelope alone, and that envelope carries no
+	# capability proof — so without this check here, an unverifiable capability would
+	# still be routed to a shell whose preservation of the save's already-persisted
+	# shapes cannot be shown. Unknown is a loud block on EVERY route, not just the
+	# ones that parse the body.
+	if not is_int_id(installed.get("save_capability")):
+		return _result(BLOCKED_INCOMPATIBLE, "the installed save capability is missing or not a whole number — cannot prove any update preserves what this save already holds")
 
 	# Channel guard: a validly-signed manifest for a DIFFERENT channel (e.g. a
 	# beta/experimental build) must never enroll a player on another channel.
@@ -80,7 +103,7 @@ static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 			# The stable envelope carries the shell's save read floor, so even a
 			# schema we cannot parse is checked: block if the newer shell cannot read
 			# the installed save (updating to it would strand the save).
-			return _shell_or_block(int(installed.get("save_schema", 0)), env_shell, "manifest schema %d is newer than this client understands (%d); update to shell %s" % [
+			return _shell_or_block(int(installed.get("save_schema", 0)), int(installed["save_capability"]), env_shell, "manifest schema %d is newer than this client understands (%d); update to shell %s" % [
 				int(manifest["schema"]), SUPPORTED_MANIFEST_SCHEMA, str(env_shell["current"])])
 		return _result(INVALID_MANIFEST, "manifest schema %d exceeds understood (%d) but advertises no newer shell (%s <= installed %s) — stale/incoherent" % [
 			int(manifest["schema"]), SUPPORTED_MANIFEST_SCHEMA, str(env_shell["current"]), str(installed.get("shell_version", "0.0.0"))])
@@ -102,6 +125,8 @@ static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 	var pack := str(installed.get("pack_version", "0.0.0"))
 	var save_schema := int(installed.get("save_schema", 0))
 	var protocol := int(installed.get("protocol", 0))
+
+	var save_capability := int(installed["save_capability"])
 
 	var m_shell: Dictionary = manifest["shell"]
 	var m_pack: Dictionary = manifest["pack"]
@@ -146,15 +171,25 @@ static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 		return _result(INVALID_MANIFEST, "candidate writes save schema %d below the installed build's %d — would regress the save (forward-only)" % [
 			int(m_save["writes"]), save_schema])
 
+	# Forward-only, the CAPABILITY axis (same rule, second axis). A candidate that
+	# writes a capability BELOW the installed build's cannot read the shapes the
+	# save already holds — `RollbackSelection` treats exactly that relation
+	# (`save_capability` < the save's) as unable to read it. Applying such a
+	# candidate would drop or strand persisted state just as a schema regression
+	# would, so it is refused before routing to ANY tier, not just the pack tier.
+	if int(m_save["capability"]) < save_capability:
+		return _result(INVALID_MANIFEST, "candidate writes save capability %d below the installed build's %d — would regress the save (forward-only)" % [
+			int(m_save["capability"]), save_capability])
+
 	# A shell update is required when the running shell is below the supported
 	# floor, when the newest pack needs a newer shell than is installed, or when
 	# the only thing newer is the shell itself. (When incompatible-but-updatable,
 	# this same chain routes to whichever update carries the fix.)
 	if shell_below_floor:
-		return _shell_or_block(save_schema, m_shell, "installed shell %s is below the supported floor %s" % [
+		return _shell_or_block(save_schema, save_capability, m_shell, "installed shell %s is below the supported floor %s" % [
 			shell, str(m_shell["min_supported"])])
 	if pack_newer and pack_needs_newer_shell:
-		return _shell_or_block(save_schema, m_shell, "content pack %s needs shell >= %s but %s is installed" % [
+		return _shell_or_block(save_schema, save_capability, m_shell, "content pack %s needs shell >= %s but %s is installed" % [
 			str(m_pack["version"]), str(m_pack["min_shell"]), shell])
 	if pack_newer:
 		# Rollback safety: a pack update is offered only when the rollback target
@@ -168,18 +203,153 @@ static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 		var reads_max := int(installed.get("save_reads_max", installed.get("save_schema", 0)))
 		if int(m_save["writes"]) > reads_max:
 			if shell_newer:
-				return _shell_or_block(save_schema, m_shell, "content pack %s writes save schema %d beyond the rollback target's read ceiling %d — routing to the newer shell %s" % [
+				return _shell_or_block(save_schema, save_capability, m_shell, "content pack %s writes save schema %d beyond the rollback target's read ceiling %d — routing to the newer shell %s" % [
 					str(m_pack["version"]), int(m_save["writes"]), reads_max, str(m_shell["current"])])
 			return _result(INVALID_MANIFEST, "content pack %s writes save schema %d beyond the read ceiling %d but the manifest offers no newer shell — refusing (no safe route)" % [
 				str(m_pack["version"]), int(m_save["writes"]), reads_max])
+		# Rollback safety, the CAPABILITY half. The check above proves some build
+		# could still read the candidate's save SCHEMA; it says nothing about a
+		# same-schema content expansion, which keeps `writes` inside the read
+		# ceiling while raising `capability`. That is the stranding case: the pack
+		# applies, writes the higher capability, fails its boot health check, and
+		# then no retained target is reachable because every one of them reports a
+		# `save_capability` below what the save now carries.
+		#
+		# So a pack may only raise the capability when SOME retained rollback target
+		# can still read the result — the same question `RollbackSelection` asks on
+		# the recovery side, asked here BEFORE the write instead of after it.
+		var cand_capability := int(m_save["capability"])
+		# Cover is judged against the schema the CANDIDATE WILL WRITE, not the one
+		# installed today: after the pack applies, the save sits at `writes`, and a
+		# target whose read ceiling covers only the old schema would be rejected by
+		# recovery at exactly the moment it is needed.
+		if cand_capability > save_capability and not _capability_covered(
+				manifest, cand_capability, int(m_save["writes"]),
+				str(m_pack["version"]), installed, m_protocol):
+			# No retained target can read what this pack would write. Route it to the
+			# shell tier (the ADR's stated behaviour) — and only if a newer shell is
+			# actually offered, mirroring the read-ceiling branch above so a stale
+			# manifest can never be followed into a downgrade.
+			if shell_newer:
+				return _shell_or_block(save_schema, save_capability, m_shell, "content pack %s raises the save capability to %d, which no retained rollback target can read — routing to the newer shell %s" % [
+					str(m_pack["version"]), cand_capability, str(m_shell["current"])])
+			return _result(INVALID_MANIFEST, "content pack %s raises the save capability to %d beyond every retained rollback target, and the manifest offers no newer shell — refusing (no safe route)" % [
+				str(m_pack["version"]), cand_capability])
 		return _result(PACK_UPDATE, "content pack %s available (installed %s)" % [
 			str(m_pack["version"]), pack])
 	if shell_newer:
-		return _shell_or_block(save_schema, m_shell, "shell %s available (installed %s)" % [
+		return _shell_or_block(save_schema, save_capability, m_shell, "shell %s available (installed %s)" % [
 			str(m_shell["current"]), shell])
 
 	# Nothing newer, and (per the guard above) not incompatible: current.
 	return _result(UP_TO_DATE, "on the latest build for channel %s" % str(manifest.get("channel", "?")))
+
+
+## True when the manifest retains at least one rollback target that could still
+## READ the save a candidate at `capability`/`save_schema` would leave behind, and
+## that is a target recovery could actually reach.
+##
+## It applies [RollbackSelection]'s OWN reachability rule — `read_ceiling >=
+## save_schema` AND `save_capability >= capability`, BOTH axes. Judging capability
+## alone was not a safe simplification: a target can carry ample capability while
+## its read ceiling sits below the save's schema, and recovery would then reject
+## the very entry this gate counted as cover.
+##
+## The candidate is excluded from its own cover. After a failed boot the candidate
+## version is quarantined, so recovery will skip it — counting it here would admit
+## a pack with no retained earlier build to fall back to. Only a STRICTLY OLDER
+## target qualifies; because [method compare_versions] is numeric, an alias of the
+## candidate ("0.1.15" vs "0.1.15.0") compares equal and is excluded too.
+##
+## A target already in the local quarantine ledger is excluded: recovery skips
+## quarantined versions before it ever tests reachability, so counting one as cover
+## admits a pack whose only fallback is a build already proven broken.
+##
+## SCOPE. Every eligibility test `RollbackSelection` applies is applied here too,
+## through the selector's OWN predicates rather than copies: well-formedness
+## ([method RollbackSelection.is_wellformed]), runnability against the current
+## protocol range and installed shell ([method RollbackSelection.is_runnable]),
+## reachability on both save axes, distinctness from the candidate, and the
+## quarantine ledger.
+##
+## What this still cannot promise is that recovery will SUCCEED later: the live
+## protocol range and the installed shell can both move between this decision and a
+## failed boot. But "cannot guarantee the future" was never a licence to ignore the
+## PRESENT — a target that already cannot run is known-bad now, exactly like a
+## quarantined one. So the guarantee is "never admit a pack whose fallback is
+## already unselectable, unrunnable or unreadable", and only genuine future drift
+## is out of reach.
+##
+## Fail-closed throughout: a missing, non-array or empty catalogue, an entry that
+## is not a dictionary, an unverifiable version, an unverifiable `read_ceiling` /
+## `save_capability`, or an unreadable quarantine ledger all count as NOT covered,
+## so an unprovable catalogue blocks the pack rather than admitting it.
+static func _capability_covered(m: Dictionary, capability: int, save_schema: int,
+		candidate_version: String, installed: Dictionary, m_protocol: Dictionary) -> bool:
+	var targets: Variant = m.get("rollback_targets")
+	if not (targets is Array):
+		return false
+	# A ledger that is PRESENT but unreadable must not be read as "nothing is
+	# quarantined" — that is the container-versus-entries mistake, and it would count
+	# a known-broken build as cover. Keyed on `has`, NOT on a null check: a corrupt
+	# `"quarantined": null` is PRESENT-and-malformed, and `RollbackSelection` refuses
+	# it on exactly that basis. Only an ABSENT key is the legitimate first-boot state.
+	var ledger: Array = []
+	if installed.has("quarantined"):
+		var quarantined: Variant = installed["quarantined"]
+		if not (quarantined is Array):
+			return false
+		for raw: Variant in (quarantined as Array):
+			if not is_version(raw):
+				return false
+		ledger = quarantined
+	# Runnability needs a real installed shell. A coerced "0.0.0" would silently
+	# match any `shell_compat` window opening at 0.0.0 — the same permissive failure
+	# `RollbackSelection` refuses to make.
+	if not is_version(installed.get("shell_version")):
+		return false
+	var shell_version := str(installed["shell_version"])
+	var server_min := int(m_protocol["min"])
+	var server_max := int(m_protocol["max"])
+	for entry: Variant in (targets as Array):
+		if not (entry is Dictionary):
+			continue
+		var t: Dictionary = entry
+		# SELECTABILITY first, using RollbackSelection's OWN predicate rather than a
+		# copy of it. An entry lacking artifact metadata, `speaks_protocol` or
+		# `shell_compat` is one the selector will skip whenever recovery runs, so
+		# counting it here would admit a pack whose only fallback is unselectable.
+		# Sharing the predicate is what keeps the two paths from drifting apart.
+		if not RollbackSelection.is_wellformed(t):
+			continue
+		var version := str(t["version"])
+		if compare_versions(version, candidate_version) >= 0:
+			continue
+		if _in_ledger(ledger, version):
+			continue
+		# Known-bad NOW is excluded, the same way a quarantined target is: a build
+		# that cannot speak the accepted protocol range or does not fit the installed
+		# shell is one recovery would skip if it were needed this moment.
+		if not RollbackSelection.is_runnable(t, server_min, server_max, shell_version):
+			continue
+		if int(t["read_ceiling"]) >= save_schema and int(t["save_capability"]) >= capability:
+			return true
+	return false
+
+
+## Whether `version` appears in a verified quarantine ledger. Comparison is NUMERIC
+## (via [method compare_versions]) so an alias such as "0.1.15.0" matches the
+## quarantined "0.1.15" — mirroring `RollbackSelection.is_quarantined`'s own
+## numeric dedup. Kept local rather than delegating only because the ledger has
+## already been verified above, so the shared entry point's fail-closed
+## revalidation would be redundant work on every entry — not to avoid depending on
+## `RollbackSelection`, which this file now does deliberately for
+## [method RollbackSelection.is_wellformed].
+static func _in_ledger(ledger: Array, version: String) -> bool:
+	for raw: Variant in ledger:
+		if compare_versions(str(raw), version) == 0:
+			return true
+	return false
 
 
 ## Compare two dotted-integer version strings ("0.1.14"). Returns -1 / 0 / 1.
@@ -216,6 +386,13 @@ static func _envelope_error(m: Dictionary) -> String:
 	# a manifest whose schema-specific body this client cannot parse.
 	if not is_int_id(sh.get("reads_min")):
 		return "shell.reads_min is missing or not an integer"
+	# The capability floor lives in the STABLE envelope for exactly the reason
+	# `reads_min` does: the future-schema route decides from this block alone, so a
+	# save-strand check that exists only in the parseable body is absent precisely
+	# where the client understands least. Required, not optional — an absent floor
+	# would read as 0 and clear every save.
+	if not is_int_id(sh.get("reads_capability_max")):
+		return "shell.reads_capability_max is missing or not an integer"
 	# A coherent manifest never advertises a current shell below its own floor;
 	# such a manifest could otherwise steer a shell update to a DOWNGRADE.
 	if compare_versions(str(sh["current"]), str(sh["min_supported"])) < 0:
@@ -228,10 +405,20 @@ static func _envelope_error(m: Dictionary) -> String:
 ## (`reads_min`) is above the installed save — in which case updating to it would
 ## strand the save, so it is a loud block instead. Every shell-update path routes
 ## through here so the check can never be forgotten.
-static func _shell_or_block(installed_save: int, m_shell: Dictionary, why: String) -> Dictionary:
+static func _shell_or_block(installed_save: int, installed_capability: int,
+		m_shell: Dictionary, why: String) -> Dictionary:
 	if installed_save < int(m_shell["reads_min"]):
 		return _result(BLOCKED_INCOMPATIBLE, "shell update (%s) targets a build reading saves only from schema %d, but the installed save is %d — updating would strand it" % [
 			why, int(m_shell["reads_min"]), installed_save])
+	# The CAPABILITY floor, checked here for the same reason `reads_min` is: a shell
+	# that cannot read the shapes this save already holds strands it just as surely
+	# as one whose schema floor is too high. It matters most on the route that has
+	# the least evidence — a future-schema manifest is decided from this envelope
+	# ALONE, with no parsed body to carry a capability, so without a capability floor
+	# in the stable envelope that route could install a shell which regresses it.
+	if installed_capability > int(m_shell["reads_capability_max"]):
+		return _result(BLOCKED_INCOMPATIBLE, "shell update (%s) targets a build understanding save shapes only up to capability %d, but the installed save is %d — updating would strand it" % [
+			why, int(m_shell["reads_capability_max"]), installed_capability])
 	return _result(SHELL_UPDATE, why)
 
 
@@ -272,6 +459,14 @@ static func _body_error(m: Dictionary) -> String:
 	if int(sv["writes"]) < int(sv["min"]):
 		return "save_schema.writes %d is below save_schema.min %d (incoherent)" % [
 			int(sv["writes"]), int(sv["min"])]
+	# `capability` (what the candidate WRITES within its schema) is REQUIRED for the
+	# same fail-closed reason as `writes`: a same-schema content expansion raises
+	# only the capability, so a manifest that omits it would let exactly the
+	# stranding case below slip through the gate unnoticed. Absent it, there is no
+	# way to prove a rollback target could still read what the candidate writes, and
+	# this library never assumes — it refuses.
+	if not is_int_id(sv.get("capability")):
+		return "save_schema.capability is missing or not an integer"
 	return ""
 
 
