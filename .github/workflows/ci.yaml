@@ -737,7 +737,10 @@ jobs:
           # portrait rig is built from those meshes, textures and equipment, and
           # the world capture deliberately hides the creator while its fixed
           # cameras never frame a character up close — so a change to the kit
-          # would otherwise get no picture of the surface it changed. Omitting it meant the PR that introduced this job skipped
+          # would otherwise get no picture of the surface it changed. player.gd
+          # likewise: the creator builds its portrait from the player's own body
+          # and camera rig, so a change there can break the portrait while the
+          # world vantages — which never frame the player — stay identical. Omitting it meant the PR that introduced this job skipped
           # its own job and proved nothing.
           #
           # project.godot counts too: it carries the RENDERING configuration
@@ -779,7 +782,7 @@ jobs:
           # the world capture deliberately hides the creator while its fixed
           # cameras never frame a character up close — so a change to the kit
           # would otherwise get no picture of the surface it changed.
-          if grep -qE '^client/scripts/(character_creator|character_factory|character_store|main)\.gd$|^client/(recipes|tools)/|^client/assets/characters/humanoid_kit/|^client/project\.godot$' changed.txt; then
+          if grep -qE '^client/scripts/(character_creator|character_factory|character_store|main|player)\.gd$|^client/(recipes|tools)/|^client/assets/characters/humanoid_kit/|^client/project\.godot$' changed.txt; then
             echo "first_run=true" >> "$GITHUB_OUTPUT"
           else
             echo "first_run=false" >> "$GITHUB_OUTPUT"
@@ -898,7 +901,7 @@ jobs:
           # world PNGs sitting in the same directory. Since tools/ changes are
           # gated in here precisely so the tool validates itself, that hole
           # would let the tool stop working and still go green.
-          if ! grep -q "1 first-run vantage" first-run.log; then
+          if ! grep -qE "[0-9]+ first-run vantages? written" first-run.log; then
             echo "::error::first-run capture did not report a first-run vantage — see log"; tail -40 first-run.log; exit 1
           fi
           if [ ! -s "${RUNNER_TEMP}/shots/first_run.png" ]; then
