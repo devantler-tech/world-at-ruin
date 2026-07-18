@@ -391,8 +391,8 @@ static func _envelope_error(m: Dictionary) -> String:
 	# save-strand check that exists only in the parseable body is absent precisely
 	# where the client understands least. Required, not optional — an absent floor
 	# would read as 0 and clear every save.
-	if not is_int_id(sh.get("reads_capability_min")):
-		return "shell.reads_capability_min is missing or not an integer"
+	if not is_int_id(sh.get("reads_capability_max")):
+		return "shell.reads_capability_max is missing or not an integer"
 	# A coherent manifest never advertises a current shell below its own floor;
 	# such a manifest could otherwise steer a shell update to a DOWNGRADE.
 	if compare_versions(str(sh["current"]), str(sh["min_supported"])) < 0:
@@ -416,9 +416,9 @@ static func _shell_or_block(installed_save: int, installed_capability: int,
 	# the least evidence — a future-schema manifest is decided from this envelope
 	# ALONE, with no parsed body to carry a capability, so without a capability floor
 	# in the stable envelope that route could install a shell which regresses it.
-	if installed_capability < int(m_shell["reads_capability_min"]):
-		return _result(BLOCKED_INCOMPATIBLE, "shell update (%s) targets a build reading saves only from capability %d, but the installed save is %d — updating would strand it" % [
-			why, int(m_shell["reads_capability_min"]), installed_capability])
+	if installed_capability > int(m_shell["reads_capability_max"]):
+		return _result(BLOCKED_INCOMPATIBLE, "shell update (%s) targets a build understanding save shapes only up to capability %d, but the installed save is %d — updating would strand it" % [
+			why, int(m_shell["reads_capability_max"]), installed_capability])
 	return _result(SHELL_UPDATE, why)
 
 

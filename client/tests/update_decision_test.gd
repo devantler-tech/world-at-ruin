@@ -21,7 +21,7 @@ func _base_manifest() -> Dictionary:
 	return {
 		"schema": 1,
 		"channel": "live",
-		"shell": {"current": "0.1.14", "min_supported": "0.1.0", "reads_min": 1, "reads_capability_min": 0},
+		"shell": {"current": "0.1.14", "min_supported": "0.1.0", "reads_min": 1, "reads_capability_max": 9},
 		"pack": {"version": "0.1.14", "min_shell": "0.1.14", "url": "x", "sha256": "y", "size": 0},
 		"protocol": {"min": 1, "max": 1},
 		"save_schema": {"min": 1, "writes": 1, "capability": 1},
@@ -218,7 +218,7 @@ func _test_future_schema_shell_blocked_when_cant_read_save() -> void:
 	var m := {
 		"schema": 2,
 		"channel": "live",
-		"shell": {"current": "0.2.0", "min_supported": "0.1.0", "reads_min": 2, "reads_capability_min": 0},
+		"shell": {"current": "0.2.0", "min_supported": "0.1.0", "reads_min": 2, "reads_capability_max": 9},
 	}
 	_expect(_installed_current(), m, UpdateDecision.BLOCKED_INCOMPATIBLE, "a future-schema shell update that can't read the installed save is blocked")
 
@@ -316,7 +316,7 @@ func _test_schema_too_new_ignores_broken_body() -> void:
 	var m := {
 		"schema": 2,
 		"channel": "live",
-		"shell": {"current": "0.2.0", "min_supported": "0.1.0", "reads_min": 1, "reads_capability_min": 0},
+		"shell": {"current": "0.2.0", "min_supported": "0.1.0", "reads_min": 1, "reads_capability_max": 9},
 		"future_field": {"restructured": true}, # no schema-1 pack/protocol/save at all
 	}
 	_expect(_installed_current(), m, UpdateDecision.SHELL_UPDATE, "newer schema with a valid envelope still routes to a shell update")
@@ -464,34 +464,37 @@ func _test_capability_raise_needs_a_readable_rollback_target() -> void:
 	_expect(_installed_current(), future, UpdateDecision.SHELL_UPDATE, "sanity: a future-schema manifest with a newer shell still routes to a shell update")
 	_expect(inst_nocap, future, UpdateDecision.BLOCKED_INCOMPATIBLE, "an unverifiable capability blocks the future-schema shell route too")
 
-	# CODEX P0 (round 5): the envelope needs a CAPABILITY read floor, not just a
-	# schema one. A shell can read this save's schema while lacking the same-schema
-	# shapes it already holds — and the future-schema route decides from the envelope
-	# ALONE, so a floor living only in the parseable body would be absent exactly
-	# where the client understands least.
+	# CODEX P0 (rounds 5-6): the envelope needs a CAPABILITY bound, and it is a
+	# CEILING, not a floor. Capability counts shapes PRESENT in the save, so the
+	# hazard is a save holding a shape the build does not understand — mirroring
+	# RollbackSelection._is_reachable, which accepts a target only when its
+	# save_capability is at least the save's. (reads_min is genuinely a floor; the
+	# two axes are not interchangeable, which is the error round 6 caught.) The
+	# future-schema route decides from the envelope ALONE, so a bound living only in
+	# the parseable body would be absent exactly where the client understands least.
 	var inst_cap5 := _installed_current()
 	inst_cap5["save_capability"] = 5
 	var high_floor := _base_manifest()
 	high_floor["shell"]["current"] = "0.1.15"
 	high_floor["save_schema"] = {"min": 1, "writes": 1, "capability": 5} # no regression: clears the forward-only check
-	high_floor["shell"]["reads_capability_min"] = 9 # newer shell reads only capability >= 9
-	_expect(inst_cap5, high_floor, UpdateDecision.BLOCKED_INCOMPATIBLE, "a shell whose capability floor exceeds the installed save blocks rather than stranding it")
+	high_floor["shell"]["reads_capability_max"] = 4 # shell understands shapes only up to capability 4
+	_expect(inst_cap5, high_floor, UpdateDecision.BLOCKED_INCOMPATIBLE, "a shell understanding fewer shapes than the save holds blocks rather than stranding it")
 	# ...on the future-schema (envelope-only) route as well, which is the whole point.
 	var future_high := _base_manifest()
 	future_high["schema"] = UpdateDecision.SUPPORTED_MANIFEST_SCHEMA + 1
 	future_high["shell"]["current"] = "0.2.0"
-	future_high["shell"]["reads_capability_min"] = 9
-	_expect(inst_cap5, future_high, UpdateDecision.BLOCKED_INCOMPATIBLE, "the capability floor is enforced on the envelope-only future-schema route")
+	future_high["shell"]["reads_capability_max"] = 4
+	_expect(inst_cap5, future_high, UpdateDecision.BLOCKED_INCOMPATIBLE, "the capability ceiling is enforced on the envelope-only future-schema route")
 	# A floor the save clears is fine — proving the guard discriminates.
 	var ok_floor := _base_manifest()
 	ok_floor["shell"]["current"] = "0.1.15"
 	ok_floor["save_schema"] = {"min": 1, "writes": 1, "capability": 5}
-	ok_floor["shell"]["reads_capability_min"] = 5
-	_expect(inst_cap5, ok_floor, UpdateDecision.SHELL_UPDATE, "a shell whose capability floor the save clears is a normal shell update")
+	ok_floor["shell"]["reads_capability_max"] = 5 # understands exactly what the save holds — inclusive boundary
+	_expect(inst_cap5, ok_floor, UpdateDecision.SHELL_UPDATE, "a shell understanding every shape the save holds is a normal shell update")
 	# The envelope field is REQUIRED: absent would read as 0 and clear every save.
 	var no_floor := _base_manifest()
-	no_floor["shell"].erase("reads_capability_min")
-	_expect(_installed_current(), no_floor, UpdateDecision.INVALID_MANIFEST, "a manifest without shell.reads_capability_min fails closed")
+	no_floor["shell"].erase("reads_capability_max")
+	_expect(_installed_current(), no_floor, UpdateDecision.INVALID_MANIFEST, "a manifest without shell.reads_capability_max fails closed")
 
 	# CODEX P1 (round 3): a target reachable on both axes is still not cover if the
 	# SELECTOR would skip it. RollbackSelection.is_wellformed also requires artifact
@@ -582,7 +585,7 @@ func _test_incoherent_shell_floor_refused() -> void:
 	# An incoherent manifest whose advertised shell is below its own floor must be
 	# refused, not followed to a downgrade. (Codex P0.)
 	var m := _base_manifest()
-	m["shell"] = {"current": "1.0.0", "min_supported": "3.0.0", "reads_min": 1, "reads_capability_min": 0} # current below its own floor
+	m["shell"] = {"current": "1.0.0", "min_supported": "3.0.0", "reads_min": 1, "reads_capability_max": 9} # current below its own floor
 	var inst := _installed_current()
 	inst["shell_version"] = "2.0.0"
 	_expect(inst, m, UpdateDecision.INVALID_MANIFEST, "shell.current below its own floor is refused, never a downgrade")
