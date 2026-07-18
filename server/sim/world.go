@@ -151,6 +151,18 @@ type World struct {
 	bounds Bounds
 	ents   map[EntityID]*Entity
 	order  []EntityID // ascending EntityID; rebuilt when the membership changes
+
+	// Combat-layer state (combat.go). All of it is empty until AddMob or a
+	// cast exists, and the combat phase early-returns on empty state, so a
+	// world that never registers a mob behaves byte-identically to one built
+	// before the combat layer existed. None of it is part of the hashed
+	// state: Hash captures step results (tick + positions), and the combat
+	// outcome stream is pinned by its own golden instead.
+	mobs        map[EntityID]*mobState
+	mobOrder    []EntityID // ascending EntityID
+	casts       []ActiveCast
+	hits        []TelegraphHit
+	droppedHits uint64
 }
 
 // NewWorld creates an empty world with the given navmesh bounds. It panics if
@@ -236,6 +248,9 @@ func sanitizeIntent(v Vec3) Vec3 {
 // dense pile-up. When SweptCollision is on the integration is continuous, so a
 // fast actor stops at first contact instead of tunneling through another (see
 // sweep.go); with it off the integration is the plain per-actor step below.
+// The combat phase (combat.go) runs last, against the tick's final positions,
+// so the moves an actor made this very tick count toward dodging a telegraph;
+// it is a no-op for a world with no mobs and no casts.
 func (w *World) Step() {
 	if w.SweptCollision {
 		w.integrateSwept()
@@ -243,6 +258,7 @@ func (w *World) Step() {
 		w.integrate()
 	}
 	w.separate()
+	w.combatStep()
 	w.Tick++
 }
 
