@@ -251,9 +251,20 @@ static func quarantine(quarantined: Variant, version: Variant) -> Dictionary:
 ## thing that matters most — the failure happening RIGHT NOW is recorded, so the
 ## immediate boot loop is broken. Never call this as a fallback from a refusal; it is
 ## for a bootstrap that has decided a torn ledger is unrecoverable.
-static func recover_ledger(version: Variant) -> Dictionary:
+static func recover_ledger(quarantined: Variant, version: Variant) -> Dictionary:
 	if not UpdateDecision.is_version(version):
 		return {"ok": false, "ledger": [], "reason": "cannot start a recovery ledger from an unreadable version — the boot-attempt marker is malformed too"}
+	# The escape hatch must PROVE the escape is needed. Without seeing the ledger it
+	# discards, this would happily throw away a perfectly readable history of failures
+	# and make those known-broken builds selectable again — turning a recovery tool
+	# into a way to lose the very evidence the ledger exists to keep. A readable
+	# ledger is not a deadlock: append to it with [method quarantine] instead.
+	if _is_readable_ledger(quarantined):
+		return {
+			"ok": false,
+			"ledger": quarantined,
+			"reason": "refusing to reset a READABLE ledger — there is no deadlock to escape here, and discarding it would make known-failed builds selectable again; use quarantine() to append",
+		}
 	var fresh: Array[String] = [str(version)]
 	return {
 		"ok": true,
@@ -278,12 +289,28 @@ static func recover_ledger(version: Variant) -> Dictionary:
 ## way the rest of the file does. Callers wanting to distinguish the two cases should
 ## validate the ledger themselves, as [method select] does.
 static func is_quarantined(quarantined: Variant, version: Variant) -> bool:
-	if quarantined is not Array or not UpdateDecision.is_version(version):
+	if not UpdateDecision.is_version(version):
+		return true
+	if not _is_readable_ledger(quarantined):
 		return true
 	for raw: Variant in (quarantined as Array):
-		if UpdateDecision.is_version(raw) and UpdateDecision.compare_versions(str(raw), str(version)) == 0:
+		if UpdateDecision.compare_versions(str(raw), str(version)) == 0:
 			return true
 	return false
+
+
+## Whether `v` is a ledger that can be trusted to answer questions: a list in which
+## EVERY entry is a real version. A well-typed list holding one unreadable entry is
+## not readable — skipping the bad entry and answering from the rest treats corrupt
+## evidence as absence, which is the container-versus-entries mistake that also
+## produced a bug in [method select].
+static func _is_readable_ledger(v: Variant) -> bool:
+	if v is not Array:
+		return false
+	for raw: Variant in (v as Array):
+		if not UpdateDecision.is_version(raw):
+			return false
+	return true
 
 
 ## Whether the target can READ the installed save without loss: its published read
@@ -400,6 +427,11 @@ static func _is_fetchable_url(v: Variant) -> bool:
 		authority = authority.substr(at_sign + 1)
 	var colon: int = authority.rfind(":")
 	if colon >= 0:
+		# A colon promises a PORT, so it must actually be one: `host:bad` and `host:`
+		# are unfetchable, and stripping the suffix would leave a plausible-looking
+		# host and let the entry displace a usable target.
+		if not UpdateDecision.is_unsigned_digits(authority.substr(colon + 1)):
+			return false
 		authority = authority.substr(0, colon)
 	if authority.is_empty():
 		return false

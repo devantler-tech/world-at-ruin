@@ -323,6 +323,7 @@ func _ready() -> void:
 		["url", "https://"], ["url", " https://x/y.pck"], ["url", "https://x/y .pck"],
 		["url", "https:///bad.pck"], ["url", "https://?bad.pck"], ["url", "https://#bad.pck"],
 		["url", "https://:443/bad.pck"], ["url", "https://@/bad.pck"], ["url", "https://user@:443/bad.pck"],
+		["url", "https://updates.example:bad/x.pck"], ["url", "https://updates.example:/x.pck"],
 		["sha256", "abc"], ["sha256", "z".repeat(64)], ["sha256", 42],
 		["sha256", "-" + "a".repeat(63)], ["sha256", "+" + "a".repeat(63)],
 		["size", -1], ["size", "big"],
@@ -374,7 +375,7 @@ func _ready() -> void:
 	var stuck := _state()
 	stuck["quarantined"] = torn
 	_check(RollbackSelection.select(catalog, stuck)["action"] == RollbackSelection.NO_ELIGIBLE_TARGET, true, "deadlock: select still refuses on a torn ledger")
-	var recovered := RollbackSelection.recover_ledger("0.1.10")
+	var recovered := RollbackSelection.recover_ledger(torn, "0.1.10")
 	_check(recovered["ok"], true, "deadlock: recover_ledger provides the explicit way out")
 	_check((recovered["ledger"] as Array).size() == 1, true, "deadlock: the fresh ledger holds only the current failure")
 	_check(recovered["reason"].contains("DISCARDED"), true, "deadlock: the loss of history is stated loudly, never silent")
@@ -384,7 +385,19 @@ func _ready() -> void:
 	var after := RollbackSelection.select(catalog, unstuck)
 	_check(after["action"] == RollbackSelection.ROLLBACK, true, "deadlock: recovery lets selection proceed")
 	_check(after["version"] == "0.1.9", true, "deadlock: the build that just failed is STILL skipped after recovery")
-	_check(RollbackSelection.recover_ledger(42)["ok"], false, "deadlock: recovery from an unreadable marker is itself refused")
+	_check(RollbackSelection.recover_ledger(torn, 42)["ok"], false, "deadlock: recovery from an unreadable marker is itself refused")
+	# The escape hatch must PROVE the escape is needed. On a READABLE ledger there is
+	# no deadlock, and resetting would discard real failure history — making
+	# known-broken builds selectable again. That is a recovery tool turned into an
+	# evidence-loss tool, so it refuses and points at quarantine() instead.
+	var readable: Array = ["0.1.9", "0.1.2"]
+	var refused_reset := RollbackSelection.recover_ledger(readable, "0.1.10")
+	_check(refused_reset["ok"], false, "escape hatch: resetting a READABLE ledger is refused — no deadlock to escape")
+	_check((refused_reset["ledger"] as Array).size() == 2, true, "escape hatch: the readable history is returned intact, not discarded")
+	_check(refused_reset["reason"].contains("quarantine()"), true, "escape hatch: the refusal names the correct tool")
+	# ISOLATION: a ledger that merely LOOKS similar but holds a torn entry still
+	# recovers, so the guard keys on readability and not on size or content.
+	_check(RollbackSelection.recover_ledger(["0.1.9", 42], "0.1.10")["ok"], true, "escape hatch is ISOLATED: a torn ledger still recovers")
 	if _failed:
 		return
 
@@ -400,6 +413,11 @@ func _ready() -> void:
 	# ISOLATION: a readable ledger still answers honestly in both directions.
 	_check(RollbackSelection.is_quarantined(["0.1.10"], "0.1.10"), true, "is_quarantined: a readable ledger still reports a real hit")
 	_check(RollbackSelection.is_quarantined(["0.1.10"], "0.1.9"), false, "is_quarantined: a readable ledger still reports a real miss")
+	# A well-typed list holding ONE torn entry is not readable: skipping the bad entry
+	# and answering from the rest treats corrupt evidence as absence. Same
+	# container-versus-entries mistake as select() had.
+	_check(RollbackSelection.is_quarantined([42], "0.1.9"), true, "is_quarantined: a torn ENTRY fails closed, never skipped to answer false")
+	_check(RollbackSelection.is_quarantined(["0.1.10", 42], "0.1.9"), true, "is_quarantined: one torn entry taints the whole ledger")
 	_check(RollbackSelection.quarantine([42, "0.1.1", 42], "0.1.1")["ok"], false, "total: junk in the quarantine set refuses rather than collapsing silently")
 	if _failed:
 		return
