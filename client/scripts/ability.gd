@@ -16,14 +16,17 @@ extends RefCounted
 ## this game, so — like the save-fixture guard that landed before the first
 ## player — these exist BEFORE the first ability content does:
 ##
-##   1. NO PER-CAST POWER INFLATION — "Mastery unlocks new arsenals, never more
-##      damage." Every ability of a (role|effect) category shares ONE frozen
-##      per-cast power budget, so a new weapon or telegraph can never introduce a
-##      higher-power version of an existing category. (Effective THROUGHPUT — power
-##      per second, which also depends on cast time and cooldown — is held
-##      separately by the CI "no strict self-buff over base" anchor: a rebalance of
-##      a shipped ability must be a sidegrade, never a strict buff. The initial
-##      power scale of a genuinely NEW category is a tracked balance decision.)
+##   1. NO PER-CAST POWER INFLATION (partial — structural, not a full economic
+##      guard) — "Mastery unlocks new arsenals, never more damage." Every ability
+##      of a (role|effect) category shares ONE frozen per-cast power budget, and a
+##      shipped ability may never become a STRICT upgrade of its own base version
+##      (the CI "no strict self-buff" anchor). These catch the BLATANT inflation
+##      vectors. They do NOT fully bound effective THROUGHPUT (a nominal sidegrade
+##      — e.g. a tiny range nerf paying for a large cooldown cut — can still raise
+##      damage-per-second), and they do NOT fix the absolute power SCALE of a
+##      genuinely new category. A quantified throughput bound + an absolute power
+##      reference need a balance decision and are tracked in
+##      devantler-tech/world-at-ruin#82, not claimed as enforced here.
 ##
 ##   2. NO STRICT DOMINANCE (the sidegrade law) — "Every new arsenal ability must
 ##      be a SIDEGRADE, never a strict upgrade." Within a comparable class no
@@ -185,9 +188,10 @@ static func dominates(a: Dictionary, b: Dictionary) -> bool:
 ## This is NECESSARY but not SUFFICIENT for "never more power": per-cast power is
 ## not effective throughput (power per second also depends on cast time and
 ## cooldown), and the initial budget of a genuinely NEW (role|effect) category is
-## a balance decision. Throughput is held by the CI "no strict self-buff over
-## base" anchor (a rebalance of a shipped ability must be a sidegrade); the
-## new-category scale is tracked as follow-up balance work.
+## a balance decision. The CI "no strict self-buff" anchor catches an ability that
+## becomes a STRICT upgrade of its own base version, but a nominal sidegrade can
+## still raise throughput. A quantified throughput bound and an absolute power
+## reference are a balance decision, tracked in #82 — not enforced here.
 static func find_power_inflation(abilities: Array, budgets: Dictionary) -> Array:
 	var violations: Array = []
 	for ab in abilities:
