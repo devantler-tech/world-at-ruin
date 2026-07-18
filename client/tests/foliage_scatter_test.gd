@@ -163,8 +163,145 @@ func _ready() -> void:
 			_fail("without a height sampler, prop y should be 0")
 			return
 
-	print("TEST PASS — foliage deterministic (%s, global-RNG-invariant, golden-matched), %d props clear of %d keep-outs + bounds, min_sep + horizontal-only + degenerate guards hold" % [fa, a.size(), keep_outs.size()])
+	# --- the spatial hash is an EXACT acceleration (#109) ---
+	# The committed golden above only covers GOLDEN_COUNT props; the acceleration
+	# exists for the dense scatters the world actually builds, so prove
+	# equivalence THERE — against a reference full scan, at densities where the
+	# grid and the scan could plausibly disagree.
+	if not _grid_matches_full_scan():
+		return
+	if not _no_overlapping_pair():
+		return
+	_report_scatter_cost()
+
+	print("TEST PASS — foliage deterministic (%s, global-RNG-invariant, golden-matched), %d props clear of %d keep-outs + bounds, min_sep + horizontal-only + degenerate guards hold; spatial hash matches a full scan bit-for-bit and admits no overlapping pair" % [fa, a.size(), keep_outs.size()])
 	get_tree().quit(0)
+
+
+## The spatial-hash separation test must produce EXACTLY what the O(n²) scan it
+## replaced produced — same accepts, same rejects, same order — so this replays
+## the scatter with a reference full-scan predicate and compares fingerprints.
+## Run at several densities including ones far past the committed golden, because
+## a neighbourhood bug only shows up once props are dense enough to sit in
+## adjacent cells.
+func _grid_matches_full_scan() -> bool:
+	for spec: Array in [[400, 2.0], [1200, 1.4], [2400, 1.1]]:
+		var n: int = spec[0]
+		var sep: float = spec[1]
+		var params := {
+			"seed": 20260718, "count": n, "half_extent": 110.0, "margin": 6.0,
+			"min_sep": sep, "keep_outs": _golden_keep_outs(), "height_sampler": _linear_surface,
+		}
+		var fast := FoliageGen.scatter(params)
+		var reference := _scatter_full_scan(params)
+		if _fingerprint(fast) != _fingerprint(reference):
+			_fail(("spatial hash diverged from the full scan at %d props / min_sep %.1f: %s vs %s — " +
+				"the acceleration must be exact, not approximate")
+				% [n, sep, _fingerprint(fast), _fingerprint(reference)])
+			return false
+		if fast.size() != reference.size():
+			_fail("spatial hash placed %d props, full scan placed %d" % [fast.size(), reference.size()])
+			return false
+	return true
+
+
+## A reference scatter using an O(n²) separation scan — the implementation the
+## spatial hash replaced. Mirrors FoliageGen.scatter's RNG order exactly (draw
+## x, z, reject before consuming any style RNG), so any difference in output is
+## attributable to the separation test alone. Kept here rather than in the
+## library so the shipped code carries no dead full-scan path.
+func _scatter_full_scan(params: Dictionary) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	var count := int(params["count"])
+	var half_extent := float(params["half_extent"])
+	var margin := float(params.get("margin", 0.0))
+	var min_sep := float(params.get("min_sep", 0.0))
+	var min_sep_sq := min_sep * min_sep
+	var lo := -half_extent + margin
+	var hi := half_extent - margin
+	var keep_outs: Array = params.get("keep_outs", [])
+	var sampler: Callable = params.get("height_sampler", Callable())
+	var rng := RandomNumberGenerator.new()
+	rng.seed = int(params.get("seed", 0))
+	var attempts := 0
+	var max_attempts := int(params.get("max_attempts", count * 32))
+	while out.size() < count and attempts < max_attempts:
+		attempts += 1
+		var x := rng.randf_range(lo, hi)
+		var z := rng.randf_range(lo, hi)
+		if _inside_keep_outs(x, z, keep_outs):
+			continue
+		if min_sep_sq > 0.0 and _full_scan_too_close(x, z, out, min_sep_sq):
+			continue
+		var kind := FoliageGen._pick_kind(rng, [])
+		var yaw := rng.randf_range(0.0, TAU)
+		var scale := rng.randf_range(FoliageGen.SCALE_MIN, FoliageGen.SCALE_MAX)
+		var y := 0.0
+		if sampler.is_valid():
+			y = float(sampler.call(x, z))
+		out.append({"kind": kind, "pos": Vector3(x, y, z), "yaw": yaw, "scale": scale})
+	return out
+
+
+## The full scan the grid replaced: compare against EVERY placed prop.
+func _full_scan_too_close(x: float, z: float, placed: Array[Dictionary], min_sep_sq: float) -> bool:
+	var here := Vector2(x, z)
+	for p: Dictionary in placed:
+		var pos: Vector3 = p["pos"]
+		if here.distance_squared_to(Vector2(pos.x, pos.z)) < min_sep_sq:
+			return true
+	return false
+
+
+## Keep-out membership, matching the library's `[centre, radius]` entry shape.
+func _inside_keep_outs(x: float, z: float, keep_outs: Array) -> bool:
+	var here := Vector2(x, z)
+	for c: Array in keep_outs:
+		var centre: Vector2 = c[0]
+		var r: float = c[1]
+		if r > 0.0 and here.distance_squared_to(centre) < r * r:
+			return true
+	return false
+
+
+## The invariant the acceleration must never break: no two placed props are
+## closer than the requested spacing. A broad phase that pruned a genuinely
+## too-close pair would still look plausible in a fingerprint diff, so assert the
+## geometric property directly, at a density where cells are crowded.
+func _no_overlapping_pair() -> bool:
+	var sep := 1.1
+	var props := FoliageGen.scatter({
+		"seed": 4242, "count": 2400, "half_extent": 110.0, "margin": 6.0, "min_sep": sep,
+	})
+	var sep_sq := sep * sep
+	for i in props.size():
+		var a: Vector3 = props[i]["pos"]
+		var pa := Vector2(a.x, a.z)
+		for j in range(i + 1, props.size()):
+			var b: Vector3 = props[j]["pos"]
+			if pa.distance_squared_to(Vector2(b.x, b.z)) < sep_sq:
+				_fail("spatial hash admitted an overlapping pair: (%.3f, %.3f) and (%.3f, %.3f) are %.3f m apart, under min_sep %.1f"
+					% [a.x, a.z, b.x, b.z, pa.distance_to(Vector2(b.x, b.z)), sep])
+				return false
+	return true
+
+
+## Record scatter cost across densities (#109's before/after evidence). Timings
+## are PRINTED, never asserted: wall-clock on a shared CI runner is far too noisy
+## to gate a build on, and a flaky perf assertion would be worse than none. The
+## correctness of the acceleration is pinned by the oracle and overlap checks
+## above; this is the number a human reads.
+func _report_scatter_cost() -> void:
+	var line := ""
+	for spec: Array in [[900, 1.6], [2400, 1.1], [4000, 0.9], [6000, 0.8]]:
+		var n: int = spec[0]
+		var sep: float = spec[1]
+		var t0 := Time.get_ticks_msec()
+		var got := FoliageGen.scatter({
+			"seed": 7, "count": n, "half_extent": 110.0, "margin": 6.0, "min_sep": sep,
+		})
+		line += "%d props/%.1fm: %d ms (placed %d)  " % [n, sep, Time.get_ticks_msec() - t0, got.size()]
+	print("SCATTER COST — %s" % line)
 
 
 ## The committed golden scenario: a realistic scatter with the shrine + cave
