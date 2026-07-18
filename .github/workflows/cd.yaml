@@ -635,6 +635,29 @@ jobs:
             fi
           fi
 
+          # DISARM before touching the branch. Auto-merge armed by a previous
+          # release survives pushes, so if this job died between the content
+          # PUT below and the title-convergence loop, GitHub would finish the
+          # new head's checks and squash-merge it under the PREVIOUS
+          # version's title — with no process left to repair the changelog.
+          # Disarmed, a crash merely leaves the PR unmerged until the next
+          # run's convergence loop re-arms it (the recovery path below).
+          # Fail-closed: writing new content while the PR stays armed is the
+          # hazard, so a failed disarm aborts the job.
+          pre_pr="$(gh pr list --repo "${tap}" --head "${branch}" --state open --json number --jq '.[0].number // empty')"
+          if [ -n "${pre_pr}" ]; then
+            pre_state="$(gh api "repos/${tap}/pulls/${pre_pr}")"
+            if [ "$(printf '%s' "${pre_state}" | jq -r '.auto_merge != null')" = "true" ]; then
+              pre_node="$(printf '%s' "${pre_state}" | jq -r '.node_id')"
+              disarm_mutation="mutation(\$id: ID!) { disablePullRequestAutoMerge(input: { pullRequestId: \$id }) { pullRequest { number } } }"
+              if ! gh api graphql -f query="${disarm_mutation}" -F id="${pre_node}" >/dev/null; then
+                echo "::error::could not disarm auto-merge on ${tap}#${pre_pr} before updating ${branch}"
+                exit 1
+              fi
+              echo "disarmed auto-merge on ${tap}#${pre_pr} before updating ${branch}"
+            fi
+          fi
+
           # MONOTONIC GUARD, as a COMPARE-AND-SWAP. The workflow concurrency
           # group is per TAG, so two CD runs for different releases do not
           # serialise, and nothing else locks this shared tap branch. Releases
