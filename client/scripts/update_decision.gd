@@ -40,8 +40,13 @@ const INVALID_MANIFEST := "invalid_manifest"
 
 
 ## Decide what the client should do. `installed` describes the running build:
-##   { shell_version: String, pack_version: String, save_schema: int, protocol: int }
-## Missing keys default to the lowest value, so a partial state is never a crash.
+##   { shell_version: String, pack_version: String, save_schema: int,
+##     save_capability: int, protocol: int, quarantined: Array[String] (optional) }
+## Missing keys default to the lowest value, so a partial state is never a crash —
+## with ONE deliberate exception: `save_capability` must be present and whole, or
+## the decision is a loud block. A defaulted capability does not fail safe (see the
+## check itself), and the forward path must not be more permissive than
+## [RollbackSelection] about the very same fact.
 ## `manifest` is the parsed update manifest (the caller has already verified its
 ## signature). Returns { action: String, reason: String } where action is one of
 ## the constants above. It never crashes on a malformed manifest.
@@ -101,8 +106,20 @@ static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 	var shell := str(installed.get("shell_version", "0.0.0"))
 	var pack := str(installed.get("pack_version", "0.0.0"))
 	var save_schema := int(installed.get("save_schema", 0))
-	var save_capability := int(installed.get("save_capability", 0))
 	var protocol := int(installed.get("protocol", 0))
+
+	# The installed save capability is the ONE installed field that is not defaulted
+	# to the lowest value (see the note on this function). Defaulting it to 0 does
+	# not fail safe: a save written before this field existed carries a REAL
+	# capability, and reading it as 0 would let a candidate writing a LOWER
+	# capability pass the forward-only check below and drop persisted state. That is
+	# the same reasoning `RollbackSelection` gives for refusing an unverifiable save
+	# capability rather than assuming one, and the forward path must not be more
+	# permissive than the recovery path about the same fact. Unknown is a loud
+	# block, never an assumption.
+	if not is_int_id(installed.get("save_capability")):
+		return _result(BLOCKED_INCOMPATIBLE, "the installed save capability is missing or not a whole number — cannot prove any update preserves what this save already holds")
+	var save_capability := int(installed["save_capability"])
 
 	var m_shell: Dictionary = manifest["shell"]
 	var m_pack: Dictionary = manifest["pack"]
@@ -195,8 +212,13 @@ static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 		# can still read the result — the same question `RollbackSelection` asks on
 		# the recovery side, asked here BEFORE the write instead of after it.
 		var cand_capability := int(m_save["capability"])
+		# Cover is judged against the schema the CANDIDATE WILL WRITE, not the one
+		# installed today: after the pack applies, the save sits at `writes`, and a
+		# target whose read ceiling covers only the old schema would be rejected by
+		# recovery at exactly the moment it is needed.
 		if cand_capability > save_capability and not _capability_covered(
-				manifest, cand_capability, save_schema, str(m_pack["version"])):
+				manifest, cand_capability, int(m_save["writes"]),
+				str(m_pack["version"]), installed.get("quarantined")):
 			# No retained target can read what this pack would write. Route it to the
 			# shell tier (the ADR's stated behaviour) — and only if a newer shell is
 			# actually offered, mirroring the read-ceiling branch above so a stale
@@ -232,15 +254,38 @@ static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 ## target qualifies; because [method compare_versions] is numeric, an alias of the
 ## candidate ("0.1.15" vs "0.1.15.0") compares equal and is excluded too.
 ##
+## A target already in the local quarantine ledger is excluded: recovery skips
+## quarantined versions before it ever tests reachability, so counting one as cover
+## admits a pack whose only fallback is a build already proven broken.
+##
+## SCOPE, stated honestly. This proves REACHABILITY (can a retained target read the
+## save the candidate will write) and excludes what is known-bad NOW. It does not
+## prove RUNNABILITY — `RollbackSelection` also requires a target to speak the live
+## protocol range and fit the installed shell, and those are recovery-TIME facts
+## that can change between this decision and a failed boot, so no forward check can
+## settle them. The guarantee here is therefore "never knowingly admit a pack with
+## no readable fallback", not "recovery is guaranteed to succeed later".
+##
 ## Fail-closed throughout: a missing, non-array or empty catalogue, an entry that
-## is not a dictionary, an unverifiable version, or an unverifiable `read_ceiling`
-## / `save_capability` all count as NOT covered, so an unprovable catalogue blocks
-## the pack rather than admitting it.
+## is not a dictionary, an unverifiable version, an unverifiable `read_ceiling` /
+## `save_capability`, or an unreadable quarantine ledger all count as NOT covered,
+## so an unprovable catalogue blocks the pack rather than admitting it.
 static func _capability_covered(m: Dictionary, capability: int, save_schema: int,
-		candidate_version: String) -> bool:
+		candidate_version: String, quarantined: Variant) -> bool:
 	var targets: Variant = m.get("rollback_targets")
 	if not (targets is Array):
 		return false
+	# A ledger that is PRESENT but unreadable must not be read as "nothing is
+	# quarantined" — that is the container-versus-entries mistake, and it would
+	# count a known-broken build as cover. Absent is legitimate (first boot).
+	var ledger: Array = []
+	if quarantined != null:
+		if not (quarantined is Array):
+			return false
+		for raw: Variant in (quarantined as Array):
+			if not is_version(raw):
+				return false
+		ledger = quarantined
 	for entry: Variant in (targets as Array):
 		if not (entry is Dictionary):
 			continue
@@ -248,11 +293,27 @@ static func _capability_covered(m: Dictionary, capability: int, save_schema: int
 		# An unidentifiable target cannot be proven distinct from the candidate.
 		if not is_version(t.get("version")):
 			continue
-		if compare_versions(str(t["version"]), candidate_version) >= 0:
+		var version := str(t["version"])
+		if compare_versions(version, candidate_version) >= 0:
+			continue
+		if _in_ledger(ledger, version):
 			continue
 		if not (is_int_id(t.get("read_ceiling")) and is_int_id(t.get("save_capability"))):
 			continue
 		if int(t["read_ceiling"]) >= save_schema and int(t["save_capability"]) >= capability:
+			return true
+	return false
+
+
+## Whether `version` appears in a verified quarantine ledger. Comparison is NUMERIC
+## (via [method compare_versions]) so an alias such as "0.1.15.0" matches the
+## quarantined "0.1.15" — mirroring `RollbackSelection.is_quarantined`'s own
+## numeric dedup. Implemented here rather than delegating, because
+## `RollbackSelection` already depends on this class and a mutual reference between
+## two load-bearing libraries is not worth the four lines it would save.
+static func _in_ledger(ledger: Array, version: String) -> bool:
+	for raw: Variant in ledger:
+		if compare_versions(str(raw), version) == 0:
 			return true
 	return false
 

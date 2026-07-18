@@ -396,6 +396,49 @@ func _test_capability_raise_needs_a_readable_rollback_target() -> void:
 	no_version["rollback_targets"] = [{"save_capability": 9, "read_ceiling": 9}]
 	_expect(_installed_current(), no_version, UpdateDecision.SHELL_UPDATE, "a target without a verifiable version is not cover")
 
+	# CODEX P1: cover must be judged against the schema the CANDIDATE WILL WRITE, not
+	# the installed one. A pack raising writes 1 -> 3 (still inside the installed
+	# read ceiling) plus capability leaves the save at schema 3; a target whose
+	# read_ceiling is 2 covers the OLD schema but would be rejected by recovery.
+	var raises_writes: Dictionary = raising.call()
+	raises_writes["save_schema"] = {"min": 1, "writes": 3, "capability": 5}
+	var inst_wide := _installed_current()
+	inst_wide["save_reads_max"] = 9 # writes 3 stays inside the installed ceiling
+	raises_writes["rollback_targets"] = [{"version": "0.1.14", "save_capability": 9, "read_ceiling": 2}]
+	_expect(inst_wide, raises_writes, UpdateDecision.SHELL_UPDATE, "cover is judged against the candidate's write schema, not the installed one")
+	# ...and a ceiling that DOES cover the new write schema is cover.
+	var raises_ok: Dictionary = raising.call()
+	raises_ok["save_schema"] = {"min": 1, "writes": 3, "capability": 5}
+	raises_ok["rollback_targets"] = [{"version": "0.1.14", "save_capability": 9, "read_ceiling": 3}]
+	_expect(inst_wide, raises_ok, UpdateDecision.PACK_UPDATE, "a ceiling covering the candidate's write schema is cover")
+
+	# CODEX P1: a target already in the local quarantine ledger is not cover —
+	# recovery skips quarantined versions before testing reachability, so its only
+	# fallback would be a build already proven broken.
+	var quarantined: Dictionary = raising.call()
+	quarantined["rollback_targets"] = [{"version": "0.1.14", "save_capability": 9, "read_ceiling": 9}]
+	var inst_q := _installed_current()
+	inst_q["quarantined"] = ["0.1.14"]
+	_expect(inst_q, quarantined, UpdateDecision.SHELL_UPDATE, "a quarantined target is not rollback cover")
+	# The ledger match is NUMERIC, so an alias of the quarantined build is excluded.
+	var inst_alias := _installed_current()
+	inst_alias["quarantined"] = ["0.1.14.0"]
+	_expect(inst_alias, quarantined, UpdateDecision.SHELL_UPDATE, "a numeric alias of a quarantined version is excluded too")
+	# A present-but-unreadable ledger must not read as "nothing is quarantined".
+	var inst_bad := _installed_current()
+	inst_bad["quarantined"] = [42]
+	_expect(inst_bad, quarantined, UpdateDecision.SHELL_UPDATE, "an unreadable quarantine ledger blocks rather than counting cover")
+
+	# CODEX P2: an unverifiable installed capability is a loud block, never a
+	# defaulted 0 — a pre-field save carries a REAL capability, and reading it as 0
+	# would let a lower-capability candidate through the forward-only check.
+	var inst_nocap := _installed_current()
+	inst_nocap.erase("save_capability")
+	_expect(inst_nocap, _base_manifest(), UpdateDecision.BLOCKED_INCOMPATIBLE, "a missing installed save_capability blocks loudly rather than defaulting to 0")
+	var inst_badcap := _installed_current()
+	inst_badcap["save_capability"] = "lots"
+	_expect(inst_badcap, _base_manifest(), UpdateDecision.BLOCKED_INCOMPATIBLE, "a malformed installed save_capability blocks loudly")
+
 	# POSITIVE CONTROL: one strictly-older target reachable on BOTH axes makes the
 	# pack safe again. This is what proves the gate discriminates rather than simply
 	# blocking every capability raise — without it, every case above would pass
