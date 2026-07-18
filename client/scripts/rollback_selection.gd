@@ -269,9 +269,19 @@ static func recover_ledger(version: Variant) -> Dictionary:
 ## catalogue that spells a quarantined version differently re-select the build that
 ## just failed its boot check, under an alias. Any spelling of a quarantined version
 ## stays quarantined.
-static func is_quarantined(quarantined: Array, version: String) -> bool:
-	for raw: Variant in quarantined:
-		if raw is String and UpdateDecision.compare_versions(raw, version) == 0:
+## Both parameters are untyped for the reason established across this file, and this
+## one needs a further decision: it returns a bool, so it cannot refuse. Answering
+## `false` for an unreadable ledger would be the permissive LIE — "this build is not
+## quarantined" asserted from evidence that could not be read, which is precisely how
+## a known-broken build gets re-selected. So unverifiable input answers TRUE: not
+## "this is quarantined" but "this cannot be shown to be safe", which fails closed the
+## way the rest of the file does. Callers wanting to distinguish the two cases should
+## validate the ledger themselves, as [method select] does.
+static func is_quarantined(quarantined: Variant, version: Variant) -> bool:
+	if quarantined is not Array or not UpdateDecision.is_version(version):
+		return true
+	for raw: Variant in (quarantined as Array):
+		if UpdateDecision.is_version(raw) and UpdateDecision.compare_versions(str(raw), str(version)) == 0:
 			return true
 	return false
 

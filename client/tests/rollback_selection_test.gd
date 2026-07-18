@@ -385,6 +385,21 @@ func _ready() -> void:
 	_check(after["action"] == RollbackSelection.ROLLBACK, true, "deadlock: recovery lets selection proceed")
 	_check(after["version"] == "0.1.9", true, "deadlock: the build that just failed is STILL skipped after recovery")
 	_check(RollbackSelection.recover_ledger(42)["ok"], false, "deadlock: recovery from an unreadable marker is itself refused")
+	if _failed:
+		return
+
+	# --- is_quarantined cannot refuse (it returns a bool), so it fails CLOSED ---
+	# Found by actually sweeping every signature after claiming I had: this public
+	# helper had BOTH parameters typed, the fifth instance of the trap. Answering
+	# "false" for an unreadable ledger would assert "not quarantined" from evidence
+	# that could not be read — the permissive lie that re-selects a broken build.
+	for junk_ledger: Variant in [null, 42, "corrupt", {}, true]:
+		_check(RollbackSelection.is_quarantined(junk_ledger, "0.1.10"), true, "is_quarantined: an unreadable ledger answers 'cannot be shown safe', never 'not quarantined'")
+	for junk_version: Variant in [null, 42, "not-a-version", [], true]:
+		_check(RollbackSelection.is_quarantined(["0.1.10"], junk_version), true, "is_quarantined: an unreadable version answers 'cannot be shown safe'")
+	# ISOLATION: a readable ledger still answers honestly in both directions.
+	_check(RollbackSelection.is_quarantined(["0.1.10"], "0.1.10"), true, "is_quarantined: a readable ledger still reports a real hit")
+	_check(RollbackSelection.is_quarantined(["0.1.10"], "0.1.9"), false, "is_quarantined: a readable ledger still reports a real miss")
 	_check(RollbackSelection.quarantine([42, "0.1.1", 42], "0.1.1")["ok"], false, "total: junk in the quarantine set refuses rather than collapsing silently")
 	if _failed:
 		return
