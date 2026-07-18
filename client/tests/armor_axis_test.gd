@@ -52,9 +52,9 @@ func _ready() -> void:
 
 	# --- 1. DOMINANCE control: a same-class piece that is simply better ---
 	# Same weight class as warden_hauberk, better on both axes: creep, not a trade.
-	# Deliberately still class-honest (between the light and heavy chest pieces),
+	# Deliberately still class-honest (between the light and heavy torso pieces),
 	# so it trips dominance ALONE.
-	var creep := {"id": "creep_vest", "slot": "chest", "weight_class": "medium", "mitigation": 50.0, "agility": 60.0}
+	var creep := {"id": "creep_vest", "slot": "torso", "weight_class": "medium", "mitigation": 50.0, "agility": 60.0}
 	var with_creep: Array = seeds.duplicate()
 	with_creep.append(creep)
 	_flags(Armor.find_strict_dominance(with_creep), "dominance guard catches a strictly-better piece")
@@ -76,11 +76,11 @@ func _ready() -> void:
 	# --- 3. SCHEMA controls, each isolated from the pairwise guards ---
 	# (a) a smuggled offence field — the axis-blur the design forbids
 	_isolated_schema_case(seeds,
-		{"id": "blade_mail", "slot": "chest", "weight_class": "heavy", "mitigation": 60.0, "agility": 30.0, "damage": 25.0},
+		{"id": "blade_mail", "slot": "torso", "weight_class": "heavy", "mitigation": 60.0, "agility": 30.0, "damage": 25.0},
 		"schema guard catches a smuggled offence field (axis blur)")
 	# (b) over the bounded ceiling — would dominate everything if it were let in
 	_isolated_schema_case(seeds,
-		{"id": "godplate", "slot": "chest", "weight_class": "heavy", "mitigation": 250.0, "agility": 95.0},
+		{"id": "godplate", "slot": "torso", "weight_class": "heavy", "mitigation": 250.0, "agility": 95.0},
 		"schema guard catches mitigation past the bounded ceiling")
 	# (c) a slot outside the closed set
 	_isolated_schema_case(seeds,
@@ -144,8 +144,85 @@ func _ready() -> void:
 	if _failed:
 		return
 
-	print("TEST PASS — armour axis holds (%d seed pieces: trade-off, class-honest, closed schema within the bounded ceiling; all three guards proven with isolated negative controls)" % seeds.size())
+	# --- CROSS-LAYER: the shipped art vocabulary and this model must agree ---
+	if not _art_layer_slots_agree():
+		return
+
+	print("TEST PASS — armour axis holds (%d seed pieces: trade-off, class-honest, closed schema within the bounded ceiling; all three guards proven with isolated negative controls; art-layer slot vocabulary reconciled)" % seeds.size())
 	get_tree().quit(0)
+
+
+## The shipped art layer and this model must name the same body region the same
+## way. The baked equipment registry is the INCUMBENT — its slot strings are
+## baked into shipped pieces and reachable from persisted character recipes
+## (`CharacterFactory` reads `recipe["equipment"][slot]`) — so every slot it
+## declares, and every slot a shipped piece is worn on, must be a legal
+## [constant Armor.SLOTS] value.
+##
+## The relation is deliberately one-way: `Armor.SLOTS` may be WIDER than the art
+## layer (head and hands carry stats before a piece is baked for them), but the
+## art layer may never name a slot the model rejects — that is the direction that
+## would make a shipped piece unable to receive stats at all. Without this check
+## the two vocabularies drift silently until armour is wired to real clothing,
+## and by then renaming a slot is a migration with a player-visible deprecation
+## rather than a free edit (issue #96).
+func _art_layer_slots_agree() -> bool:
+	var path := "res://assets/characters/humanoid_kit/equipment/equipment.json"
+	if not FileAccess.file_exists(path):
+		_fail("the baked equipment registry is missing at %s" % path)
+		return false
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+	if parsed is not Dictionary:
+		_fail("the equipment registry at %s did not parse as a JSON object" % path)
+		return false
+	var registry: Dictionary = parsed
+
+	var declared: Variant = registry.get("slots")
+	if declared is not Array:
+		_fail("the equipment registry declares no 'slots' array")
+		return false
+	var slots: Array = declared
+	# Non-vacuity: an empty registry would let this check pass without comparing
+	# anything at all.
+	if slots.is_empty():
+		_fail("the equipment registry declares zero slots — the cross-layer check would pass vacuously")
+		return false
+	for raw: Variant in slots:
+		if raw is not String:
+			_fail("the equipment registry declares a non-string slot (%s)" % raw)
+			return false
+		var slot_name: String = raw
+		if not Armor.SLOTS.has(slot_name):
+			_fail("art-layer slot '%s' is not a legal armour slot %s — the vocabularies have drifted (issue #96)"
+				% [slot_name, str(Armor.SLOTS)])
+			return false
+
+	# Every SHIPPED piece too, not just the declared list: a piece could name a
+	# slot the registry's own array forgot to declare.
+	var raw_pieces: Variant = registry.get("pieces")
+	if raw_pieces is not Dictionary:
+		_fail("the equipment registry declares no 'pieces' object")
+		return false
+	var pieces: Dictionary = raw_pieces
+	var checked := 0
+	for piece_id: String in pieces:
+		var raw_piece: Variant = pieces[piece_id]
+		if raw_piece is not Dictionary:
+			continue
+		var raw_slot: Variant = (raw_piece as Dictionary).get("slot")
+		if raw_slot is not String:
+			_fail("shipped piece '%s' has no string slot" % piece_id)
+			return false
+		var worn_on: String = raw_slot
+		if not Armor.SLOTS.has(worn_on):
+			_fail("shipped piece '%s' is worn on '%s', which is not a legal armour slot %s (issue #96)"
+				% [piece_id, worn_on, str(Armor.SLOTS)])
+			return false
+		checked += 1
+	if checked == 0:
+		_fail("the equipment registry ships zero pieces — the cross-layer check would pass vacuously")
+		return false
+	return not _failed
 
 
 ## A malformed/out-of-range piece must trip the SCHEMA guard and leave both

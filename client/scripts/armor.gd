@@ -37,6 +37,21 @@ extends RefCounted
 ##    the axis-non-blur law made mechanical.
 
 ## The closed slot set — where a piece is worn.
+##
+## The names come from the ART LAYER, which is the incumbent: the baked
+## equipment registry (`assets/characters/humanoid_kit/equipment/equipment.json`)
+## declares `torso`/`legs`/`feet`, those strings are baked into every shipped
+## piece, and they are reachable from persisted character recipes
+## (`CharacterFactory` reads `recipe["equipment"][slot]`). This model has no
+## persisted data and no player surface yet, so it yields to those names — a
+## rename here is free today and would be a migration with a player-visible
+## deprecation once armour is wired to real clothing (issue #96).
+##
+## The set is deliberately WIDER than the art layer: `head` and `hands` are
+## model-only for now, so armour for them can be designed and guarded before a
+## piece is baked. That direction is safe. The reverse — the art layer naming a
+## slot this set rejects — is the defect, because a shipped piece could then
+## never be given stats at all, and `armor_axis_test` asserts it can't happen.
 const SLOTS: Array[String] = ["head", "torso", "hands", "legs", "feet"]
 
 ## The closed weight-class set, lightest first. Index IS the class rank, so
