@@ -6,13 +6,16 @@
 // reports the payload sizes. With -listen it serves the real zone socket per
 // the transport ADR (docs/design/zone-transport.md): a WebSocket-over-TLS
 // endpoint at /zone carrying one wire-codec message per binary frame, with
-// token-gated admission. The Agones SDK and Nakama layers remain later
-// children of the server-foundation epic. The socket is opt-in: without
-// -listen the command behaves exactly as before.
+// token-gated admission. With -agones (default off) a realtime run
+// additionally speaks the Agones GameServer lifecycle through the official
+// SDK, which is what makes the binary deployable on the fleet. The Nakama
+// layer remains a later child of the server-foundation epic. The socket is
+// opt-in: without -listen the command behaves exactly as before.
 //
 //	zone                     # 600 deterministic ticks, then print the state hash
 //	zone -ticks 1800         # a different fixed count
 //	zone -realtime -duration 3s   # drive the fixed loop from real time for 3s
+//	zone -realtime -agones   # ...and register with the local Agones sidecar
 //	zone -replicate 1        # also track observer 1, wire-encode its delta stream
 //	zone -listen :8443 -tls-cert cert.pem -tls-key key.pem  # serve the zone socket (wss)
 //	zone -mint-token 1       # developer helper: mint an admission token, print it, exit
@@ -36,6 +39,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/devantler-tech/world-at-ruin/server/agones"
 	"github.com/devantler-tech/world-at-ruin/server/sim"
 	"github.com/devantler-tech/world-at-ruin/server/wire"
 	"github.com/devantler-tech/world-at-ruin/server/zonesock"
@@ -54,6 +58,8 @@ func main() {
 	secretEnv := flag.String("admission-secret-env", "WAR_ZONE_ADMISSION_SECRET", "NAME of the environment variable holding the hex-encoded admission-token secret")
 	mintObserver := flag.Uint64("mint-token", 0, "developer helper: mint an admission token for this observer entity ID using the admission secret, print it, and exit")
 	mintTTL := flag.Duration("mint-ttl", 5*time.Minute, "expiry window for -mint-token")
+	withAgones := flag.Bool("agones", false, "register with the local Agones SDK sidecar (Ready/Health/Shutdown); requires -realtime")
+	healthInterval := flag.Duration("agones-health-interval", agones.DefaultHealthInterval, "heartbeat cadence for -agones; keep it under half the fleet's health periodSeconds")
 	flag.Parse()
 
 	durationSet := false
@@ -70,6 +76,9 @@ func main() {
 	if *listen != "" && *replicate != 0 {
 		fatalf("-listen and -replicate are mutually exclusive")
 	}
+	if *withAgones && !*realtime {
+		fatalf("-agones requires -realtime: the SDK lifecycle only makes sense on a serving process")
+	}
 
 	w := sim.NewDemoWorld()
 	switch {
@@ -80,7 +89,7 @@ func main() {
 		}
 		runListen(w, *listen, *tlsCert, *tlsKey, *secretEnv, *insecurePlaintext, *interest, d)
 	case *realtime:
-		runRealtime(w, *duration)
+		runRealtime(w, *duration, *withAgones, *healthInterval)
 	case *replicate != 0:
 		runReplicate(w, *ticks, sim.EntityID(*replicate), *interest)
 	default:
@@ -242,9 +251,27 @@ func fatalf(format string, args ...any) {
 // until d elapses or the process is asked to stop. Timing jitter changes how
 // many ticks run, but never what a given tick computes — that is the point of
 // decoupling the sim rate from the wall clock.
-func runRealtime(w *sim.World, d time.Duration) {
+//
+// With withAgones set it also speaks the Agones GameServer lifecycle: Ready
+// before the first tick, Health on healthInterval, and Shutdown on every
+// exit path — deadline, SIGINT or SIGTERM — so the fleet reaps the process
+// instead of waiting out a health timeout.
+func runRealtime(w *sim.World, d time.Duration, withAgones bool, healthInterval time.Duration) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	if withAgones {
+		lc, err := agones.Start(ctx, agones.Config{HealthInterval: healthInterval})
+		if err != nil {
+			fatalf("%v", err)
+		}
+		defer func() {
+			if err := lc.Shutdown(); err != nil {
+				fmt.Fprintf(os.Stderr, "zone: %v\n", err)
+			}
+		}()
+	}
+
 	runLoop(ctx, w, d, func() {
 		sim.DriveDemoTick(w)
 		w.Step()
