@@ -29,8 +29,13 @@ extends RefCounted
 ##      upgrade of its own base version (the CI "no strict self-buff" anchor).
 ##
 ##      SCOPE, stated honestly: this bounds PER-TARGET throughput. Telegraph AREA
-##      is not in the model, so a wider cone at the same budget and cycle reaches
-##      more targets for more total damage. That multi-target economy is DECIDED,
+##      is not in the model. Today that is latent rather than live: `telegraph` is
+##      a KIND only (part of the budget key) and an ability carries no shape
+##      magnitude — no half-angle, no radius — so there is nothing to widen yet
+##      (`range_m` does exist, and trades on the dominance axes). The gap opens
+##      when ability data carries real shape magnitudes: two abilities on the same
+##      budget and cycle then differ in how many targets one cast reaches, and no
+##      guard sees it. That multi-target economy is DECIDED,
 ##      not pending: devantler-tech/world-at-ruin#82 settled it (maintainer
 ##      direction 2026-07-18, option C) as a REVIEWED BALANCE DECISION rather than
 ##      a future CI guard, because bounding it means inventing an area-vs-power

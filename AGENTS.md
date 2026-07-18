@@ -242,15 +242,23 @@ reset the game forbids.
   passing as a sidegrade while doubling DPS); a **new category's opening scale bounded against the
   categories already shipped**; plus no-strict-dominance, no-strict-self-buff-over-base, and the
   append-only ledgers.
-  **What is deliberately NOT modelled is telegraph AREA.** A wider cone at the same budget and the
-  same cycle hits *more targets*, so total damage rises with no guard firing. Closing that
-  mechanically means inventing an exchange rate between area, target count and power — and freezing
-  it permanently under the no-resets law. **That exchange rate IS game balance, and it is the
-  maintainer's call, not an agent's.** So the binding rule:
-  **widening a telegraph, adding a larger-area shape, or otherwise increasing how many targets one
-  cast reaches is a BALANCE REVIEW.** State the area/reach before → after plainly in the PR body and
-  let the maintainer approve it. The same applies to introducing a new `(role|effect)` category:
-  the CI bound keeps its opening scale in family, but the *choice* of scale is still his.
+  **What is deliberately NOT modelled is telegraph AREA — the multi-target economy.** Be precise
+  about when this bites: today `telegraph` is only a **kind** (`circle`/`ring`/`cone`/`rect`) used as
+  part of the budget key, and an ability carries **no shape magnitude at all** — no cone half-angle,
+  no radius, no width. `range_m` exists and *is* a dominance benefit axis, so pure distance already
+  trades against the cost axes within a comparable class. So area is not currently *expressible*, and
+  there is nothing to widen yet.
+  **The gap opens the moment ability data carries real shape magnitudes** (a cone's half-angle, a
+  circle's radius — the plumbing #118 describes). At that point two abilities on the same budget and
+  the same cycle can differ in how many targets one cast reaches, and **no guard sees it**: area is in
+  neither the budget, the cycle floor, nor the dominance axes. Closing it mechanically means inventing
+  an exchange rate between area, target count and power — and freezing it permanently under the
+  no-resets law. **That exchange rate IS game balance, and it is the maintainer's call, not an
+  agent's.** So the binding rule:
+  **adding a shape-magnitude field, widening one, or otherwise increasing how many targets a single
+  cast reaches is a BALANCE REVIEW.** State the reach before → after plainly in the PR body and let
+  the maintainer approve it. The same applies to introducing a new `(role|effect)` category: the CI
+  bound keeps its opening scale in family, but the *choice* of scale is still his.
   **Never infer permission from green CI — the guards prove you did not commit a blatant
   single-target upgrade, never that the balance is right.** Do not add a mechanical area/multi-target
   guard without fresh maintainer direction superseding this decision.
