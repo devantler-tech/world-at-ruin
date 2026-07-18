@@ -183,11 +183,13 @@ static func dominates(a: Dictionary, b: Dictionary) -> bool:
 ## from introducing a higher-power version of an existing category.
 ##
 ## This is NECESSARY but not SUFFICIENT for "never more power": per-cast power is
-## not effective throughput (power per second also depends on cast time and
-## cooldown), and the initial budget of a genuinely NEW (role|effect) category is
-## a balance decision. Throughput is held by the CI "no strict self-buff over
-## base" anchor (a rebalance of a shipped ability must be a sidegrade); the
-## new-category scale is tracked as follow-up balance work.
+## not effective throughput, which also depends on cast time and cooldown. That
+## remainder is held by `find_throughput_inflation` and its frozen cycle-floor
+## ledger — NOT, as this note previously claimed, by the "no strict self-buff
+## over base" sidegrade anchor, which cannot see it: trading a shorter cooldown
+## for a shorter range is not a Pareto win, so it passes as a sidegrade while
+## roughly doubling throughput. The initial scale of a genuinely NEW (role|effect)
+## category is bounded in CI against the categories already shipped.
 static func find_power_inflation(abilities: Array, budgets: Dictionary) -> Array:
 	var violations: Array = []
 	for ab in abilities:
@@ -199,6 +201,42 @@ static func find_power_inflation(abilities: Array, budgets: Dictionary) -> Array
 			violations.append(
 				"power inflation: '%s' has power %d but the frozen budget for category [%s] is %d"
 				% [ab["id"], ab["power"], key, budgets[key]])
+	return violations
+
+
+## The full cycle one cast occupies: casting it, then waiting out its cooldown.
+## This is the denominator of effective throughput (power per cycle), so both
+## halves must count — shaving cast time inflates throughput exactly as shortening
+## the cooldown does.
+static func cycle_ms(a: Dictionary) -> int:
+	return a["cast_time_ms"] + a["cooldown_ms"]
+
+
+## Guard 3 — no THROUGHPUT inflation. Per-cast power is frozen by
+## `find_power_inflation`, so what remains free is how often a cast lands: an
+## ability whose cast+cooldown cycle shrinks does strictly more damage per second
+## on the same frozen budget. Neither of the other guards sees it — the power
+## guard only reads `power`, and the sidegrade guard reads a shorter cooldown
+## traded against a shorter range as a legitimate sidegrade rather than a Pareto
+## win. So every ability's cycle must be at least the FROZEN floor recorded for
+## its (role|effect) category, which bounds throughput at `budget / floor`.
+##
+## Like the power budget the floor is anchored OUTSIDE the mutable ability set,
+## in a committed append-only ledger whose values CI holds immutable against the
+## base revision — otherwise a change that shortened EVERY member of a category
+## would pass unseen.
+static func find_throughput_inflation(abilities: Array, floors: Dictionary) -> Array:
+	var violations: Array = []
+	for ab in abilities:
+		var key := budget_key(ab)
+		var cycle := cycle_ms(ab)
+		if not floors.has(key):
+			violations.append(
+				"category [%s] ('%s') has no frozen cycle floor — register it in the ledger" % [key, ab["id"]])
+		elif cycle < floors[key]:
+			violations.append(
+				"throughput inflation: '%s' has a %d ms cast+cooldown cycle but the frozen floor for category [%s] is %d ms"
+				% [ab["id"], cycle, key, floors[key]])
 	return violations
 
 

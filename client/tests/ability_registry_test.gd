@@ -23,6 +23,7 @@ extends Node
 
 const SHIPPED := "res://tests/data/shipped_abilities.txt"
 const BUDGETS := "res://tests/data/shipped_class_power.txt"
+const CYCLE_FLOORS := "res://tests/data/shipped_class_cycle_floor.txt"
 
 var _failed := false
 
@@ -71,6 +72,15 @@ func _ready() -> void:
 	_check(infl.is_empty(), "seed holds the no-power-inflation law: %s" % str(infl))
 	var dom := Ability.find_strict_dominance(abilities)
 	_check(dom.is_empty(), "seed holds the sidegrade law (no strict dominance): %s" % str(dom))
+	# Freezing per-cast power bounds how much a cast does, not how often it lands.
+	# The cycle floor is the other half of "never more damage": same ledger
+	# permanence rules, same CI immutability against the base revision.
+	var floors := Ability.load_class_budgets(CYCLE_FLOORS)
+	_check(not floors.is_empty(), "class cycle-floor ledger loads")
+	_check(_ledger_keys(CYCLE_FLOORS).size() == floors.size(),
+		"class cycle-floor ledger has no duplicate class keys")
+	var thr := Ability.find_throughput_inflation(abilities, floors)
+	_check(thr.is_empty(), "seed holds the no-throughput-inflation law: %s" % str(thr))
 	if _failed:
 		return
 
@@ -112,6 +122,26 @@ func _ready() -> void:
 		"power guard catches a power-inflated ability (teeth)")
 	_check(Ability.find_strict_dominance(with_inflated).is_empty(),
 		"the power-inflated control does not also trip the dominance guard (isolation)")
+
+	# NEGATIVE CONTROL 3 — the throughput bypass: halve the cooldown while giving
+	# up a sliver of range. Power still equals the frozen budget and the range
+	# regression means it is no Pareto win, so BOTH other guards pass it — yet it
+	# lands roughly twice as often for ~2x damage per second. Only the cycle floor
+	# catches it, which is precisely why that ledger exists.
+	var faster := base.duplicate()
+	faster["id"] = "sword_flurry"
+	faster["cooldown_ms"] = 2000
+	faster["range_m"] = 3.9
+	var faster_ab: Variant = Ability.parse(faster)
+	_check(faster_ab != null, "throughput control parses")
+	var with_faster := abilities.duplicate()
+	with_faster.append(faster_ab)
+	_check(not Ability.find_throughput_inflation(with_faster, floors).is_empty(),
+		"throughput guard catches a shortened-cycle ability (teeth)")
+	_check(Ability.find_power_inflation(with_faster, budgets).is_empty(),
+		"the throughput control slips past the power guard (why the cycle floor is needed)")
+	_check(Ability.find_strict_dominance(with_faster).is_empty(),
+		"the throughput control slips past the sidegrade guard (why the cycle floor is needed)")
 	if _failed:
 		return
 
@@ -140,7 +170,7 @@ func _ready() -> void:
 	if _failed:
 		return
 
-	print("TEST PASS — ability registry: %d shipped abilities, sidegrade + no-power-inflation laws hold" % ids.size())
+	print("TEST PASS — ability registry: %d shipped abilities, sidegrade + no-power-inflation + no-throughput-inflation laws hold" % ids.size())
 	get_tree().quit(0)
 
 

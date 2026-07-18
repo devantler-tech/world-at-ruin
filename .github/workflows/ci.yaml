@@ -151,7 +151,14 @@ jobs:
             echo "::error::base commit $BASE_SHA not present in the checkout — cannot verify the power-budget ledger"
             exit 1
           fi
-          pairs() { grep -v '^[[:space:]]*#' | tr -d '[:space:]' | grep -v '^$'; }
+          # sed strips whitespace WITHIN each line; `tr -d` would delete the
+          # newlines too and collapse the whole ledger into one blob, which
+          # silently disables the duplicate-key check and makes a legitimate
+          # new-category ADD look like a changed line.
+          # `|| true`: grep exits 1 on no-match, and under `set -o pipefail` a
+          # ledger that is empty or comments-only would abort the step with no
+          # diagnostic. As a pure filter, "no pairs" is a valid result.
+          pairs() { grep -v '^[[:space:]]*#' | sed 's/[[:space:]]//g' | grep -v '^$' || true; }
           # A duplicate key would let a second `damage|damage=130` line sit beside
           # the frozen `=100` (the base pair still present, so the change check
           # below misses it) while the runtime loader takes the last value —
@@ -176,6 +183,108 @@ jobs:
           if [ -n "$changed" ]; then
             echo "::error::Category power budget(s) changed or removed in $LEDGER ($(echo "$changed" | tr '\n' ' ')) — the open-world arsenal never gains raw power (no-power-inflation law)"
             exit 1
+          fi
+      - name: Category cycle floors are frozen (no-throughput-inflation law)
+        # The power ledger freezes how much a cast does, not how OFTEN it lands:
+        # throughput is power / (cast_time_ms + cooldown_ms). Shortening the cycle
+        # inflates damage per second on an unchanged frozen budget, and the
+        # sidegrade guard misses it (a shorter cooldown traded against a shorter
+        # range is no Pareto win). The cycle floor is the other half of the law,
+        # so it gets the same permanence anchor: against the BASE commit a
+        # role|effect=floor line may only ever be ADDED — never changed or removed.
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          LEDGER=client/tests/data/shipped_class_cycle_floor.txt
+          if [ ! -f "$LEDGER" ]; then
+            echo "::error::$LEDGER was deleted — the frozen cycle-floor ledger must exist"
+            exit 1
+          fi
+          if ! git cat-file -e "$BASE_SHA" 2>/dev/null; then
+            echo "::error::base commit $BASE_SHA not present in the checkout — cannot verify the cycle-floor ledger"
+            exit 1
+          fi
+          # sed strips whitespace WITHIN each line; `tr -d` would delete the
+          # newlines too and collapse the whole ledger into one blob, which
+          # silently disables the duplicate-key check and makes a legitimate
+          # new-category ADD look like a changed line.
+          # `|| true`: grep exits 1 on no-match, and under `set -o pipefail` a
+          # ledger that is empty or comments-only would abort the step with no
+          # diagnostic. As a pure filter, "no pairs" is a valid result.
+          pairs() { grep -v '^[[:space:]]*#' | sed 's/[[:space:]]//g' | grep -v '^$' || true; }
+          dupes=$(pairs < "$LEDGER" | cut -d= -f1 | sort | uniq -d)
+          if [ -n "$dupes" ]; then
+            echo "::error::Duplicate category floor key(s) in $LEDGER ($(echo "$dupes" | tr '\n' ' ')) — each category has exactly one frozen cycle floor"
+            exit 1
+          fi
+          pairs < "$LEDGER" | sort -u > /tmp/floor-head
+          if git cat-file -e "$BASE_SHA:$LEDGER" 2>/dev/null; then
+            git show "$BASE_SHA:$LEDGER" | pairs | sort -u > /tmp/floor-base
+          else
+            : > /tmp/floor-base
+          fi
+          changed=$(comm -23 /tmp/floor-base /tmp/floor-head)
+          if [ -n "$changed" ]; then
+            echo "::error::Category cycle floor(s) changed or removed in $LEDGER ($(echo "$changed" | tr '\n' ' ')) — a shipped category never gains throughput (no-power-inflation law)"
+            exit 1
+          fi
+      - name: New categories stay within the shipped scale
+        # A brand-new role|effect category is the remaining way to inflate power
+        # permanently: `tank|damage=1000000` with a matching ability satisfies the
+        # append-only ledgers, the registry's equality check and the dominance
+        # check, and — because the ledgers are immutable — that ceiling could never
+        # be corrected afterwards. So a category added in this PR must sit within
+        # the scale already shipped: no budget above the highest shipped budget,
+        # no cycle floor below the fastest shipped floor. Widening the scale itself
+        # is a deliberate balance decision, not something a PR does in passing.
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          BUDGETS=client/tests/data/shipped_class_power.txt
+          FLOORS=client/tests/data/shipped_class_cycle_floor.txt
+          # sed strips whitespace WITHIN each line; `tr -d` would delete the
+          # newlines too and collapse the whole ledger into one blob, which
+          # silently disables the duplicate-key check and makes a legitimate
+          # new-category ADD look like a changed line.
+          # `|| true`: grep exits 1 on no-match, and under `set -o pipefail` a
+          # ledger that is empty or comments-only would abort the step with no
+          # diagnostic. As a pure filter, "no pairs" is a valid result.
+          pairs() { grep -v '^[[:space:]]*#' | sed 's/[[:space:]]//g' | grep -v '^$' || true; }
+          base_of() {
+            if git cat-file -e "$BASE_SHA:$1" 2>/dev/null; then
+              git show "$BASE_SHA:$1" | pairs
+            fi
+          }
+          # The PR that INTRODUCES a ledger has an empty base and therefore no
+          # established scale to measure against — that bootstrap is allowed, and
+          # every later addition is bounded by it.
+          base_of "$BUDGETS" > /tmp/scale-budget-base
+          pairs < "$BUDGETS" > /tmp/scale-budget-head
+          if [ -s /tmp/scale-budget-base ]; then
+            max_budget=$(cut -d= -f2 /tmp/scale-budget-base | sort -n | tail -1)
+            while IFS= read -r line; do
+              key=${line%%=*}; value=${line#*=}
+              if grep -q "^${key}=" /tmp/scale-budget-base; then continue; fi
+              if [ "$value" -gt "$max_budget" ]; then
+                echo "::error::New category [$key] claims power budget $value, above the highest shipped budget ($max_budget) — a new category may not widen the power scale"
+                exit 1
+              fi
+            done < /tmp/scale-budget-head
+          fi
+          base_of "$FLOORS" > /tmp/scale-floor-base
+          pairs < "$FLOORS" > /tmp/scale-floor-head
+          if [ -s /tmp/scale-floor-base ]; then
+            min_floor=$(cut -d= -f2 /tmp/scale-floor-base | sort -n | head -1)
+            while IFS= read -r line; do
+              key=${line%%=*}; value=${line#*=}
+              if grep -q "^${key}=" /tmp/scale-floor-base; then continue; fi
+              if [ "$value" -lt "$min_floor" ]; then
+                echo "::error::New category [$key] claims cycle floor ${value}ms, below the fastest shipped floor (${min_floor}ms) — a new category may not widen the throughput scale"
+                exit 1
+              fi
+            done < /tmp/scale-floor-head
           fi
       - name: Shipped ability identity is frozen (migration transparency)
         # shipped_abilities.txt anchors only the ID SET. But a later PR could keep
