@@ -1,6 +1,6 @@
 {
   "id": "sword_cleave",
-  "version": 1,
+  "version": 2,
   "weapon": "sword",
   "role": "damage",
   "effect": "damage",
@@ -9,5 +9,6 @@
   "cooldown_ms": 4000,
   "resource_cost": 15,
   "range_m": 4.0,
-  "power": 100
+  "power": 100,
+  "cos_half_scaled": 707107
 }

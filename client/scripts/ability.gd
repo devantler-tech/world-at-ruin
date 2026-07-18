@@ -83,7 +83,14 @@ const _INT_FIELDS := ["version", "cast_time_ms", "cooldown_ms", "resource_cost",
 ## mastered ability behaving with missing constraints is exactly the permanent,
 ## un-undoable harm the product law forbids. Bump this in the same change that
 ## teaches the parser the new version's fields.
-const SCHEMA_VERSION := 1
+## Version 2 added `cos_half_scaled` — a cone ability's angular threshold as the
+## integer scaled cosine BOTH TIERS consume (see `Telegraph.COS_SCALE`). Before
+## it, the server held a precomputed scaled cosine while the client recomputed
+## one from degrees, so the two tiers derived the same wedge independently and
+## agreed only up to quantization; carrying it as data makes the shared value the
+## single source of truth. Presentational degrees, if ever needed, are derived
+## from this field and never the reverse.
+const SCHEMA_VERSION := 2
 
 ## Every field this schema defines. An unrecognised key is refused rather than
 ## ignored: within a known version there is nothing legitimate for it to mean, so
@@ -94,7 +101,34 @@ const SCHEMA_VERSION := 1
 const _KNOWN_FIELDS := [
 	"id", "version", "weapon", "role", "effect", "telegraph",
 	"cast_time_ms", "cooldown_ms", "resource_cost", "range_m", "power",
+	"cos_half_scaled",
 ]
+
+## The telegraph shape that carries an angular threshold. `cos_half_scaled` is
+## REQUIRED for it and FORBIDDEN for every other shape — the closed-schema idiom
+## this file already uses for enums, applied to a conditional field.
+##
+## Both halves matter. A cone WITHOUT the field would have to fall back to some
+## default angle, which is exactly the independent per-tier derivation this field
+## exists to abolish; a circle WITH one carries a threshold nothing reads, so a
+## later change could start honouring it and silently alter a shipped shape.
+## Making both states unrepresentable means a cone's wedge is always data and
+## never a convention.
+const _ANGULAR_TELEGRAPH := "cone"
+
+## The schema version that introduced `cos_half_scaled`. A file carrying the
+## field must declare AT LEAST this version.
+##
+## Without the check the version contract leaks in the one direction that
+## matters: a cone could declare `"version": 1` while carrying a v2 field and
+## still parse here, so v2 semantics would travel mislabelled as v1. The
+## SCHEMA_VERSION ceiling only refuses versions that are too NEW — it cannot
+## notice a file understating its own. Then an older v1 build, which would
+## rightly refuse this content, is never given the chance to: it sees a version
+## it trusts, ignores nothing it knows about, and resolves the cone with a
+## threshold it does not understand. Declaring the version is what makes the
+## ceiling a real gate rather than an honour system.
+const _COS_HALF_SCALED_SINCE_VERSION := 2
 
 
 ## Validate one decoded ability object and return a normalised, typed Dictionary,
@@ -149,7 +183,54 @@ static func parse(data: Variant) -> Variant:
 		return null
 	out["range_m"] = reach
 
+	if not _apply_cos_half_scaled(d, out, id):
+		return null
+
 	return out
+
+
+## Validate the conditional angular threshold: required for a cone, forbidden
+## otherwise, and in [-COS_SCALE, +COS_SCALE] when present (the range a cosine
+## can occupy at all). Returns false, loudly, on any violation.
+##
+## The bound is REFUSED rather than clamped. `Telegraph.in_cone_scaled` clamps
+## defensively at resolution time, but ability data is authored content: a value
+## outside the representable range means the author's intent was lost in
+## conversion, and silently clamping it to a full disc or a degenerate ray would
+## ship a shape nobody wrote.
+static func _apply_cos_half_scaled(d: Dictionary, out: Dictionary, id: String) -> bool:
+	var is_cone: bool = out["telegraph"] == _ANGULAR_TELEGRAPH
+	if not d.has("cos_half_scaled"):
+		if is_cone:
+			push_error("Ability '%s': telegraph '%s' requires 'cos_half_scaled' — a cone's wedge must be data both tiers read, never a per-tier default"
+				% [id, _ANGULAR_TELEGRAPH])
+			return false
+		return true
+	if not is_cone:
+		push_error("Ability '%s': 'cos_half_scaled' is only meaningful for telegraph '%s', not '%s' — refusing rather than carrying a threshold nothing reads"
+			% [id, _ANGULAR_TELEGRAPH, out["telegraph"]])
+		return false
+
+	if int(out["version"]) < _COS_HALF_SCALED_SINCE_VERSION:
+		push_error("Ability '%s': 'cos_half_scaled' arrived in schema version %d but this file declares version %d — a file must not carry a field from a schema it does not claim"
+			% [id, _COS_HALF_SCALED_SINCE_VERSION, out["version"]])
+		return false
+
+	var v = d["cos_half_scaled"]
+	if v is not int and v is not float:
+		push_error("Ability '%s': 'cos_half_scaled' must be a number" % id)
+		return false
+	var f := float(v)
+	if not is_finite(f) or f != floor(f):
+		push_error("Ability '%s': 'cos_half_scaled' must be a whole number (it is a fixed-point integer at Telegraph.COS_SCALE)" % id)
+		return false
+	var n := int(f)
+	if n < -Telegraph.COS_SCALE or n > Telegraph.COS_SCALE:
+		push_error("Ability '%s': 'cos_half_scaled' %d is outside [%d, %d] — not a representable cosine"
+			% [id, n, -Telegraph.COS_SCALE, Telegraph.COS_SCALE])
+		return false
+	out["cos_half_scaled"] = n
+	return true
 
 
 ## Load every ability under `dir`, sorted by filename so the registry is
