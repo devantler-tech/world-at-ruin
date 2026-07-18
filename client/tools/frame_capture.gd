@@ -179,8 +179,10 @@ func _ready() -> void:
 		# fine detail (material grain especially) changes with it. Silently
 		# accepting the clamped size would let a reviewer judge a material at a
 		# resolution no player uses, so the mismatch is stated on every frame.
+		var note := _size_note(img)
 		print("CAPTURED %s -> %s (%dx%d, luma spread %.3f)%s" %
-			[vantage_name, out, img.get_width(), img.get_height(), spread, _size_note(img)])
+			[vantage_name, out, img.get_width(), img.get_height(), spread, note])
+		_write_note(dir, vantage_name, img, note)
 
 	print("CAPTURE PASS — %d vantages written to %s" % [VANTAGES.size(), dir])
 	get_tree().quit(0)

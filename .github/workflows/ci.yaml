@@ -720,14 +720,24 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           if ! git cat-file -e "$BASE_SHA" 2>/dev/null; then
-            # Cannot diff — assume visual so evidence is never silently skipped.
-            echo "visual=true" >> "$GITHUB_OUTPUT"; exit 0
+            # Cannot diff — assume BOTH, so evidence is never silently skipped.
+            # first_run must be set here too: leaving it empty reads as false,
+            # which would quietly drop first-run evidence in precisely the case
+            # where the changed paths cannot be classified at all.
+            echo "visual=true" >> "$GITHUB_OUTPUT"
+            echo "first_run=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
           # `tools` is in the list on purpose: a change to the capture tool
           # itself must trigger a capture, because running it IS how the tool is
           # validated. project.godot is here too: it carries the viewport size
           # and stretch mode, which decide whether the creator's fixed-height
-          # panel clips — the very thing the capture's clamp note warns about. Omitting it meant the PR that introduced this job skipped
+          # panel clips — the very thing the capture's clamp note warns about.
+          # The humanoid kit is here because the creator DISPLAYS it: the
+          # portrait rig is built from those meshes, textures and equipment, and
+          # the world capture deliberately hides the creator while its fixed
+          # cameras never frame a character up close — so a change to the kit
+          # would otherwise get no picture of the surface it changed. Omitting it meant the PR that introduced this job skipped
           # its own job and proved nothing.
           #
           # project.godot counts too: it carries the RENDERING configuration
@@ -764,7 +774,12 @@ jobs:
           # validated. project.godot is here too: it carries the viewport size
           # and stretch mode, which decide whether the creator's fixed-height
           # panel clips — the very thing the capture's clamp note warns about.
-          if grep -qE '^client/scripts/(character_creator|character_factory|character_store|main)\.gd$|^client/(recipes|tools)/|^client/project\.godot$' changed.txt; then
+          # The humanoid kit is here because the creator DISPLAYS it: the
+          # portrait rig is built from those meshes, textures and equipment, and
+          # the world capture deliberately hides the creator while its fixed
+          # cameras never frame a character up close — so a change to the kit
+          # would otherwise get no picture of the surface it changed.
+          if grep -qE '^client/scripts/(character_creator|character_factory|character_store|main)\.gd$|^client/(recipes|tools)/|^client/assets/characters/humanoid_kit/|^client/project\.godot$' changed.txt; then
             echo "first_run=true" >> "$GITHUB_OUTPUT"
           else
             echo "first_run=false" >> "$GITHUB_OUTPUT"
