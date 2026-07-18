@@ -109,6 +109,33 @@ func TestContextCancelStopsHeartbeatsButShutdownStillWorks(t *testing.T) {
 	}
 }
 
+// TestHealthBeatsSurviveSidecarStreamLoss pins the recovery contract: when
+// the sidecar drops the health stream (a sidecar restart), the lifecycle
+// re-dials and beats resume — it never voluntarily goes silent while its
+// context lives. A dead gRPC client stream can never carry another send, so
+// recovery MUST be a re-dial; blind retries on the old stream fail forever.
+func TestHealthBeatsSurviveSidecarStreamLoss(t *testing.T) {
+	f := startFake(t, nil)
+	f.KillHealthStreamAt(2)
+
+	l, err := Start(context.Background(), Config{HealthInterval: 20 * time.Millisecond, Logf: t.Logf})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() {
+		if err := l.Shutdown(); err != nil {
+			t.Errorf("Shutdown: %v", err)
+		}
+	}()
+
+	// Beats 1–2 arrive on the first stream, which the fake then kills; any
+	// count beyond 2 can only come from a re-established conversation.
+	waitFor(t, 10*time.Second, func() bool { return f.HealthBeats() >= 5 }, "beats resuming past the killed stream")
+	if got := f.ReadyCalls(); got != 1 {
+		t.Fatalf("Ready calls after re-dial = %d, want exactly 1 (re-dial must NOT re-send Ready: it could regress an Allocated GameServer)", got)
+	}
+}
+
 func TestStartFailsLoudWhenReadyRefused(t *testing.T) {
 	f := startFake(t, errors.New("no capacity"))
 

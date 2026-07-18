@@ -146,6 +146,37 @@ func TestAgonesSigtermShutsDownCleanly(t *testing.T) {
 	}
 }
 
+// TestAgonesRefusesReadyWhenTLSBroken pins Ready-means-servable: with an
+// unloadable certificate, the process must die loudly WITHOUT ever telling
+// Agones it is Ready — otherwise the fleet allocates a GameServer whose TLS
+// endpoint never came up.
+func TestAgonesRefusesReadyWhenTLSBroken(t *testing.T) {
+	f, err := agonestest.Start(nil)
+	if err != nil {
+		t.Fatalf("start fake sidecar: %v", err)
+	}
+	t.Cleanup(f.Stop)
+
+	cmd := exec.Command(zoneBin,
+		"-listen", "127.0.0.1:0",
+		"-tls-cert", filepath.Join(t.TempDir(), "missing-cert.pem"),
+		"-tls-key", filepath.Join(t.TempDir(), "missing-key.pem"),
+		"-agones",
+	)
+	cmd.Env = append(os.Environ(),
+		"AGONES_SDK_GRPC_HOST=127.0.0.1",
+		"AGONES_SDK_GRPC_PORT="+f.PortString(),
+		"WAR_ZONE_ADMISSION_SECRET="+strings.Repeat("ab", 32),
+	)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("broken-TLS run succeeded; want a loud failure\n%s", out)
+	}
+	if got := f.ReadyCalls(); got != 0 {
+		t.Fatalf("Ready calls = %d, want 0: a GameServer whose endpoint cannot start must never declare Ready", got)
+	}
+}
+
 // TestAgonesRequiresServingMode pins the loud refusal: the lifecycle on a
 // fixed-tick CI run would be meaningless, so the flag without -realtime or
 // -listen is a usage error, never a silent ignore.

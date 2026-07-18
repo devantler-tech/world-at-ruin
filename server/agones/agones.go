@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	gosdk "agones.dev/agones/sdks/go"
@@ -61,10 +62,23 @@ type Config struct {
 // Lifecycle is a started conversation with the sidecar: Ready has been
 // sent and the health loop is beating. Stop it with Shutdown, exactly once.
 type Lifecycle struct {
+	mu   sync.Mutex // guards sdk: the health loop re-dials on stream loss
 	sdk  sidecar
 	logf func(format string, args ...any)
 	stop context.CancelFunc
 	done chan struct{}
+}
+
+func (l *Lifecycle) getSDK() sidecar {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.sdk
+}
+
+func (l *Lifecycle) setSDK(s sidecar) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.sdk = s
 }
 
 // Start dials the local sidecar, marks the GameServer Ready, and begins
@@ -102,18 +116,26 @@ func Start(ctx context.Context, cfg Config) (*Lifecycle, error) {
 }
 
 // healthLoop beats immediately and then on every interval tick, so a
-// short-lived process still reports at least one beat. A send error ends the
-// loop: the SDK's health stream never heals once broken, and the liveness
-// verdict belongs to the sidecar — the loop's job is only to say loudly that
-// it stopped.
+// short-lived process still reports at least one beat. On a send error it
+// RE-DIALS the sidecar and keeps beating: the SDK's health stream never
+// heals once broken, so blind retries on the old handle would fail forever —
+// while a fresh dial survives a sidecar restart and lets a healthy allocated
+// zone keep its players. It never voluntarily goes silent while ctx lives.
+// The re-dial deliberately does NOT re-send Ready: allocation state lives in
+// the GameServer resource, and a fresh Ready could regress an Allocated
+// server back to the Ready pool.
 func (l *Lifecycle) healthLoop(ctx context.Context, interval time.Duration) {
 	defer close(l.done)
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
-		if err := l.sdk.Health(); err != nil {
-			l.logf("agones: health beat failed, stopping heartbeats (the sidecar now owns the liveness verdict): %v", err)
-			return
+		if err := l.getSDK().Health(); err != nil {
+			l.logf("agones: health beat failed (%v) — re-dialling the sidecar", err)
+			if s, derr := dial(); derr != nil {
+				l.logf("agones: re-dial failed, retrying on the next beat: %v", derr)
+			} else {
+				l.setSDK(s)
+			}
 		}
 		select {
 		case <-ctx.Done():
@@ -129,7 +151,7 @@ func (l *Lifecycle) healthLoop(ctx context.Context, interval time.Duration) {
 func (l *Lifecycle) Shutdown() error {
 	l.stop()
 	<-l.done
-	if err := l.sdk.Shutdown(); err != nil {
+	if err := l.getSDK().Shutdown(); err != nil {
 		return fmt.Errorf("agones: shutdown: %w", err)
 	}
 	return nil

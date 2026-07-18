@@ -89,7 +89,9 @@ func main() {
 		if durationSet {
 			d = *duration
 		}
-		runListen(w, *listen, *tlsCert, *tlsKey, *secretEnv, *insecurePlaintext, *interest, d, *withAgones, *healthInterval)
+		if err := runListen(w, *listen, *tlsCert, *tlsKey, *secretEnv, *insecurePlaintext, *interest, d, *withAgones, *healthInterval); err != nil {
+			fatalf("%v", err)
+		}
 	case *realtime:
 		runRealtime(w, *duration, *withAgones, *healthInterval)
 	case *replicate != 0:
@@ -133,21 +135,23 @@ func runMint(secretEnv string, observer sim.EntityID, ttl time.Duration) {
 // runListen serves the zone socket while driving the fixed loop from the wall
 // clock, per the transport ADR: TLS is the default and plaintext exists only
 // behind the explicit local-development opt-in. d <= 0 runs until the process
-// is signalled.
-func runListen(w *sim.World, addr, certFile, keyFile, secretEnv string, insecurePlaintext bool, interestMM int64, d time.Duration, withAgones bool, healthInterval time.Duration) {
+// is signalled. It returns errors instead of exiting so every exit path runs
+// the deferred cleanup — with -agones that includes telling the sidecar to
+// recycle the GameServer, which os.Exit would silently skip.
+func runListen(w *sim.World, addr, certFile, keyFile, secretEnv string, insecurePlaintext bool, interestMM int64, d time.Duration, withAgones bool, healthInterval time.Duration) error {
 	if insecurePlaintext && (certFile != "" || keyFile != "") {
-		fatalf("-insecure-plaintext contradicts -tls-cert/-tls-key: choose one")
+		return fmt.Errorf("-insecure-plaintext contradicts -tls-cert/-tls-key: choose one")
 	}
 	if !insecurePlaintext && (certFile == "" || keyFile == "") {
-		fatalf("-listen requires -tls-cert and -tls-key (or the explicit -insecure-plaintext local-development opt-in)")
+		return fmt.Errorf("-listen requires -tls-cert and -tls-key (or the explicit -insecure-plaintext local-development opt-in)")
 	}
 	verifier, err := zonesock.NewHMACVerifier(admissionSecret(secretEnv))
 	if err != nil {
-		fatalf("%v", err)
+		return err
 	}
 	hub, err := zonesock.NewHub(zonesock.Config{Verifier: verifier, InterestMM: interestMM})
 	if err != nil {
-		fatalf("%v", err)
+		return err
 	}
 
 	mux := http.NewServeMux()
@@ -157,9 +161,20 @@ func runListen(w *sim.World, addr, certFile, keyFile, secretEnv string, insecure
 		TLSConfig:         &tls.Config{MinVersion: tls.VersionTLS12},
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+	if !insecurePlaintext {
+		// Load and validate the key pair BEFORE listening or declaring any
+		// readiness: ServeTLS would otherwise discover a broken cert inside
+		// the serve goroutine, after Agones was already told Ready — and the
+		// fleet would allocate a GameServer whose endpoint never came up.
+		cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+		if err != nil {
+			return fmt.Errorf("load TLS key pair: %w", err)
+		}
+		srv.TLSConfig.Certificates = []tls.Certificate{cert}
+	}
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
-		fatalf("listen %s: %v", addr, err)
+		return fmt.Errorf("listen %s: %v", addr, err)
 	}
 	scheme := "wss"
 	if insecurePlaintext {
@@ -175,7 +190,9 @@ func runListen(w *sim.World, addr, certFile, keyFile, secretEnv string, insecure
 		if insecurePlaintext {
 			err = srv.Serve(ln)
 		} else {
-			err = srv.ServeTLS(ln, certFile, keyFile)
+			// The key pair is already loaded into TLSConfig.Certificates,
+			// so the file arguments stay empty.
+			err = srv.ServeTLS(ln, "", "")
 		}
 		serveFailed(err)
 	}()
@@ -187,7 +204,7 @@ func runListen(w *sim.World, addr, certFile, keyFile, secretEnv string, insecure
 	if withAgones {
 		lc, err := agones.Start(ctx, agones.Config{HealthInterval: healthInterval})
 		if err != nil {
-			fatalf("%v", err)
+			return err
 		}
 		defer func() {
 			if err := lc.Shutdown(); err != nil {
@@ -202,8 +219,9 @@ func runListen(w *sim.World, addr, certFile, keyFile, secretEnv string, insecure
 		hub.Tick(w)
 	})
 	if err := context.Cause(serveCtx); err != nil && err != context.Canceled {
-		fatalf("serve: %v", err)
+		return fmt.Errorf("serve: %w", err)
 	}
+	return nil
 }
 
 // runReplicate drives the fixed demo ticks while tracking one observer's

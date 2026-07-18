@@ -12,6 +12,8 @@ import (
 
 	sdkproto "agones.dev/agones/pkg/sdk"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // Sidecar is a fake Agones SDK server. It records how the lifecycle drove
@@ -19,11 +21,13 @@ import (
 type Sidecar struct {
 	sdkproto.UnimplementedSDKServer
 
-	mu       sync.Mutex
-	ready    int
-	health   int
-	shutdown int
-	readyErr error
+	mu           sync.Mutex
+	ready        int
+	health       int
+	shutdown     int
+	readyErr     error
+	killStreamAt int
+	killed       bool
 
 	// Port the fake listens on (loopback only).
 	Port int
@@ -73,6 +77,15 @@ func (f *Sidecar) Shutdown(_ context.Context, _ *sdkproto.Empty) (*sdkproto.Empt
 	return &sdkproto.Empty{}, nil
 }
 
+// KillHealthStreamAt makes the fake terminate the health stream with an
+// error once n beats have arrived — the shape of a sidecar restart. It fires
+// once; a re-dialled stream counts on undisturbed.
+func (f *Sidecar) KillHealthStreamAt(n int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.killStreamAt = n
+}
+
 // Health counts every beat the client streams until the stream ends.
 func (f *Sidecar) Health(stream sdkproto.SDK_HealthServer) error {
 	for {
@@ -81,7 +94,14 @@ func (f *Sidecar) Health(stream sdkproto.SDK_HealthServer) error {
 		}
 		f.mu.Lock()
 		f.health++
+		kill := !f.killed && f.killStreamAt > 0 && f.health >= f.killStreamAt
+		if kill {
+			f.killed = true
+		}
 		f.mu.Unlock()
+		if kill {
+			return status.Error(codes.Unavailable, "agonestest: health stream killed (simulated sidecar restart)")
+		}
 	}
 }
 
