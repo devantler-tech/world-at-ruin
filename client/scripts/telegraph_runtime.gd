@@ -45,11 +45,15 @@ const DANGER_COLOR := Color(1.0, 0.30, 0.08)
 const INTERIOR_ALPHA := 0.22
 const BORDER_ALPHA := 0.95
 const FILL_ALPHA := 0.5
-## Baked texture resolution per axis. 128 keeps the once-per-begin bake cheap
-## while the decal filter keeps edges clean at gameplay scale.
-const TEX_SIZE := 128
-## Border thickness in texels (world thickness scales with the shape extent).
-const BORDER_PX := 3
+## Baked texture resolution per axis scales with the shape so texels stay
+## near `TEXEL_TARGET_M` — a big cone at 128 rendered visible scalloping at
+## grazing angles — bounded so the once-per-begin bake stays cheap.
+const TEXEL_TARGET_M := 0.07
+const TEX_MIN := 128
+const TEX_MAX := 256
+## Border band thickness as a fraction of the shape extent, clamped to
+## [0.2 m, 0.5 m] so small casts keep a visible rim and huge ones stay a line.
+const BORDER_WIDTH_FRACTION := 0.045
 ## Decal projection depth (m): covers this much slope/step under the origin.
 const PROJECTION_DEPTH := 8.0
 ## Seconds the resolved flash stays before the node frees itself.
@@ -174,59 +178,86 @@ func _make_decal(node_name: String, tex: ImageTexture, size3: Vector3) -> Decal:
 	return d
 
 
-## Bake the zone and fill textures for the armed cast. Membership per texel
-## goes through the SAME shared geometry predicate the resolution uses —
-## origin-local, facing texture-up — so the painted shape IS the resolved
-## shape; the border is then the inside texels with an outside texel within
-## `BORDER_PX`. Returns [zone_texture, fill_texture].
+## Bake the zone and fill textures for the armed cast. Per texel, WHETHER the
+## point is inside goes through the SAME shared geometry predicate the
+## resolution uses — origin-local, facing texture-up — so the painted shape
+## IS the resolved shape by construction. HOW FAR the point sits from the
+## boundary is then exact planar distance math, and the alphas ramp on that
+## distance: a one-texel feather at the rim (anti-aliasing — the first
+## capture pass failed the at-a-glance bar on binary stair-steps) and a
+## `BORDER_WIDTH_FRACTION` bright band feathering into the interior wash.
+## The bake runs once per begin; casters that spam one shape should cache
+## and reuse textures — a follow-up for the first caster child.
+## Returns [zone_texture, fill_texture].
 func _bake_masks() -> Array[ImageTexture]:
 	var half := _extent * 0.5
-	var inside := PackedByteArray()
-	inside.resize(TEX_SIZE * TEX_SIZE)
-	var probe_facing := Vector3(0, 0, -1)
-	for j in TEX_SIZE:
-		for i in TEX_SIZE:
-			var x := ((float(i) + 0.5) / float(TEX_SIZE) * 2.0 - 1.0) * half
-			var z := ((float(j) + 0.5) / float(TEX_SIZE) * 2.0 - 1.0) * half
-			var p := Vector3(x, 0.0, z)
-			var hit := false
-			if _cast.shape == TelegraphCast.Shape.CIRCLE:
-				hit = Telegraph.in_circle(Vector3.ZERO, _cast.radius, p)
-			else:
-				hit = Telegraph.in_cone_scaled(Vector3.ZERO, probe_facing, _cast.range_m,
-						_cast.cos_half_scaled, p)
-			inside[j * TEX_SIZE + i] = 1 if hit else 0
-
-	var zone_img := Image.create(TEX_SIZE, TEX_SIZE, false, Image.FORMAT_RGBA8)
-	var fill_img := Image.create(TEX_SIZE, TEX_SIZE, false, Image.FORMAT_RGBA8)
+	var tex_size := clampi(int(ceil(_extent / TEXEL_TARGET_M)), TEX_MIN, TEX_MAX)
+	var texel_w := _extent / float(tex_size)
+	var band_w := clampf(_extent * BORDER_WIDTH_FRACTION, 0.2, 0.5)
+	var zone_img := Image.create(tex_size, tex_size, false, Image.FORMAT_RGBA8)
+	var fill_img := Image.create(tex_size, tex_size, false, Image.FORMAT_RGBA8)
 	var clear := Color(0, 0, 0, 0)
-	var interior := Color(DANGER_COLOR.r, DANGER_COLOR.g, DANGER_COLOR.b, INTERIOR_ALPHA)
-	var border := Color(DANGER_COLOR.r, DANGER_COLOR.g, DANGER_COLOR.b, BORDER_ALPHA)
-	var fill := Color(DANGER_COLOR.r, DANGER_COLOR.g, DANGER_COLOR.b, FILL_ALPHA)
-	for j in TEX_SIZE:
-		for i in TEX_SIZE:
-			if inside[j * TEX_SIZE + i] == 0:
+	for j in tex_size:
+		for i in tex_size:
+			var x := ((float(i) + 0.5) / float(tex_size) * 2.0 - 1.0) * half
+			var z := ((float(j) + 0.5) / float(tex_size) * 2.0 - 1.0) * half
+			var sdf := _edge_sdf(x, z)
+			# Outer-rim coverage: 0 outside, 1 inside, feathered ~2.5 texels
+			# each side of the true edge (alpha 0.5 exactly on the boundary) —
+			# wide enough that the ramp spans several texels and the edge
+			# reads smooth even where the decal sampler resolves nearest.
+			var c := smoothstep(-2.5 * texel_w, 2.5 * texel_w, sdf)
+			if c <= 0.0:
 				zone_img.set_pixel(i, j, clear)
 				fill_img.set_pixel(i, j, clear)
 				continue
-			fill_img.set_pixel(i, j, fill)
-			zone_img.set_pixel(i, j, border if _is_border(inside, i, j) else interior)
+			fill_img.set_pixel(i, j, _danger(FILL_ALPHA * c))
+			# Bright border band just inside the boundary, feathered into the wash.
+			var band := 1.0 - smoothstep(band_w, band_w + texel_w, sdf)
+			zone_img.set_pixel(i, j, _danger(lerpf(INTERIOR_ALPHA, BORDER_ALPHA, band) * c))
+	# Mipmaps matter twice: the decal filter's mipmap modes expect them, and
+	# without them the marks shimmer under minification at distance.
+	zone_img.generate_mipmaps()
+	fill_img.generate_mipmaps()
 	var out: Array[ImageTexture] = []
 	out.append(ImageTexture.create_from_image(zone_img))
 	out.append(ImageTexture.create_from_image(fill_img))
 	return out
 
 
-## An inside texel with any outside texel within BORDER_PX along an axis
-## (texels past the texture edge count as outside, so a shape cropped by its
-## own footprint still shows a rim).
-func _is_border(inside: PackedByteArray, i: int, j: int) -> bool:
-	for d in range(1, BORDER_PX + 1):
-		for off: Vector2i in [Vector2i(d, 0), Vector2i(-d, 0), Vector2i(0, d), Vector2i(0, -d)]:
-			var ni := i + off.x
-			var nj := j + off.y
-			if ni < 0 or ni >= TEX_SIZE or nj < 0 or nj >= TEX_SIZE:
-				return true
-			if inside[nj * TEX_SIZE + ni] == 0:
-				return true
-	return false
+func _danger(alpha: float) -> Color:
+	return Color(DANGER_COLOR.r, DANGER_COLOR.g, DANGER_COLOR.b, alpha)
+
+
+## Signed distance from an origin-local point (cone opening toward -Z, the
+## texture-up frame) to the shape boundary: positive inside, negative
+## outside. The SIGN is the shared geometry predicate's verdict — presentation
+## can never disagree with resolution about what is inside — and only the
+## MAGNITUDE (how far from the edge, for the alpha ramps) is computed here:
+## exact distance to the arc and, for the cone, to the mirrored bounding ray
+## segment (clamping to the apex handles wide cones where the nearest
+## boundary of an on-axis point is the apex itself).
+func _edge_sdf(x: float, z: float) -> float:
+	var p := Vector2(x, z)
+	var d := p.length()
+	if _cast.shape == TelegraphCast.Shape.CIRCLE:
+		return _cast.radius - d
+	var inside := Telegraph.in_cone_scaled(Vector3.ZERO, Vector3(0, 0, -1), _cast.range_m,
+			_cast.cos_half_scaled, Vector3(x, 0.0, z))
+	var half_angle := acos(clampf(float(_cast.cos_half_scaled) / float(Telegraph.COS_SCALE), -1.0, 1.0))
+	# Mirror to one side; the bounding ray leaves the apex at half_angle from -Z.
+	var q := Vector2(absf(x), z)
+	var ray_dir := Vector2(sin(half_angle), -cos(half_angle))
+	var t := clampf(q.dot(ray_dir), 0.0, _cast.range_m)
+	var to_ray := (q - ray_dir * t).length()
+	if inside:
+		return minf(_cast.range_m - d, to_ray)
+	# Outside, the nearest wedge point lies on a bounding ray segment — or,
+	# ONLY for points beyond the arc that are still angularly within the
+	# wedge, radially back on the arc. Measuring the arc for angularly-outside
+	# points would paint a phantom ring at `range_m` all the way around (the
+	# arc is not a boundary where the wedge does not reach).
+	var magnitude := to_ray
+	if d > _cast.range_m and d > 0.0 and (-z / d) >= cos(half_angle):
+		magnitude = minf(magnitude, d - _cast.range_m)
+	return -magnitude

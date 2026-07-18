@@ -15,6 +15,12 @@ extends Node3D
 ## Run windowed:  godot --path client res://scenes/telegraph.tscn
 ##   V — toggle side vantage / into-the-sun vantage (regressions hide in the
 ##       vantage you did not check; judge BOTH).
+##
+## Evidence mode: set WAR_PREVIEW_SHOTS to a writable directory and the
+## harness saves one mid-cast frame per vantage (telegraph-side.png,
+## telegraph-sun.png) and quits — the capture-both-vantages rule from the
+## atmosphere work, automated so a judgement always has frames. Needs a real
+## renderer (a windowed run); --headless renders nothing to capture.
 
 const GROUND_SIZE := 60.0
 const GROUND_STEPS := 48
@@ -39,6 +45,10 @@ var _circle_runtime: TelegraphRuntime
 var _cone_runtime: TelegraphRuntime
 var _side_cam: Camera3D
 var _sun_cam: Camera3D
+var _shots_dir := ""
+var _clock := 0.0
+var _shot_side_done := false
+var _shot_sun_done := false
 
 
 func _ready() -> void:
@@ -46,16 +56,37 @@ func _ready() -> void:
 	_build_lighting()
 	_build_cameras()
 	_build_scale_marker()
+	_shots_dir = OS.get_environment("WAR_PREVIEW_SHOTS")
 	print("telegraph_preview: V toggles side / into-the-sun vantage")
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	# Loop the casts forever: each runtime frees itself after resolving.
 	if not is_instance_valid(_circle_runtime):
 		_circle_runtime = _spawn(TelegraphCast.circle(CIRCLE_CENTRE, CIRCLE_RADIUS, CIRCLE_TIME))
 	if not is_instance_valid(_cone_runtime):
 		_cone_runtime = _spawn(TelegraphCast.cone(CONE_APEX, CONE_FACING, CONE_RANGE,
 				Telegraph.cos_half_scaled_from_deg(CONE_HALF_DEG), CONE_TIME))
+	if _shots_dir.is_empty():
+		return
+	# Evidence mode: both mid-cast shots (fills well grown, border up), then quit.
+	_clock += delta
+	if not _shot_side_done and _clock >= 1.5:
+		_shot_side_done = true
+		_save_shot("telegraph-side.png")
+		_side_cam.current = false
+		_sun_cam.current = true
+	elif not _shot_sun_done and _clock >= 1.7:
+		_shot_sun_done = true
+		_save_shot("telegraph-sun.png")
+		get_tree().quit(0)
+
+
+func _save_shot(file_name: String) -> void:
+	var img := get_viewport().get_texture().get_image()
+	var path := _shots_dir.path_join(file_name)
+	var err := img.save_png(path)
+	print("telegraph_preview: shot %s -> %s (err=%d)" % [file_name, path, err])
 
 
 func _unhandled_key_input(event: InputEvent) -> void:
