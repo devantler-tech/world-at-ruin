@@ -126,6 +126,15 @@ that "I looked at it and it's fine" is self-attestation, and self-attestation is
 field of grey primitives ship. A green suite plus a frame that reads as placeholder is a PR that is
 **not ready**.
 
+**How to produce that frame.** CI runs `client/tools/frame_capture.tscn` on player-visible PRs and
+publishes the rendered vantages as a **build artifact** — so the evidence is reproducible on a known
+machine rather than dependent on whoever happened to run the game. Point a reviewer at that artifact.
+Locally the same tool works windowed (`WAR_SHOT_DIR=… WAR_SAVE_PATH=… godot --path client
+res://tools/frame_capture.tscn`); a **headless run renders nothing**, and the tool refuses to run
+headless rather than emit a blank frame. Its vantages are fixed on purpose: evidence is only
+comparable across commits if the camera does not move, and one flattering angle hides a regression
+that another exposes.
+
 **The tells that the bar is being missed** — all four were true of the first foliage pass, and are
 the concrete evidence behind this section:
 
