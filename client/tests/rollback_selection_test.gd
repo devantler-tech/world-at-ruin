@@ -199,18 +199,15 @@ func _ready() -> void:
 	# --- a real signed manifest may carry whole numbers as JSON floats ---
 	# Rejecting 1.0 would degrade recovery to no_eligible_target while a perfectly
 	# good target sits in the catalogue — a broken pack with no way back.
-	var json_floats: Array = [{
-		"version": "0.1.10", "read_ceiling": 1.0, "save_capability": 7.0,
-		"speaks_protocol": {"min": 1.0, "max": 1.0},
-		"shell_compat": {"min": "0.1.0", "max": "0.1.999"},
-	}]
-	_check(RollbackSelection.select(json_floats, _state())["action"] == RollbackSelection.ROLLBACK, true, "json: integral floats (1.0) are accepted — a real manifest shape must stay recoverable")
-	var fractional: Array = [{
-		"version": "0.1.10", "read_ceiling": 1.5, "save_capability": 7,
-		"speaks_protocol": {"min": 1, "max": 1},
-		"shell_compat": {"min": "0.1.0", "max": "0.1.999"},
-	}]
-	_check(RollbackSelection.select(fractional, _state())["action"] == RollbackSelection.NO_ELIGIBLE_TARGET, true, "json: a FRACTIONAL eligibility number is not a proof and is skipped")
+	var json_floats := _target("0.1.10", 1, 7, 1, 1, "0.1.0", "0.1.999")
+	json_floats["read_ceiling"] = 1.0
+	json_floats["save_capability"] = 7.0
+	json_floats["speaks_protocol"] = {"min": 1.0, "max": 1.0}
+	json_floats["size"] = 4096.0
+	_check(RollbackSelection.select([json_floats], _state())["action"] == RollbackSelection.ROLLBACK, true, "json: integral floats (1.0) are accepted — a real manifest shape must stay recoverable")
+	var fractional := _target("0.1.10", 1, 7, 1, 1, "0.1.0", "0.1.999")
+	fractional["read_ceiling"] = 1.5
+	_check(RollbackSelection.select([fractional], _state())["action"] == RollbackSelection.NO_ELIGIBLE_TARGET, true, "json: a FRACTIONAL eligibility number is not a proof and is skipped")
 	if _failed:
 		return
 
@@ -228,6 +225,59 @@ func _ready() -> void:
 		var probe: Array = [entry, _target("0.1.2", 1, 7, 1, 1, "0.1.0", "0.1.999")]
 		var got := RollbackSelection.select(probe, _state())
 		_check(got["version"] == "0.1.2", true, "metadata: %s is skipped for the verifiable target" % what)
+	if _failed:
+		return
+
+	# --- ROUND 2 (Codex, PR #98): the proofs I only half-verified ---
+
+	# (1) A well-typed Array with MALFORMED ENTRIES is as dangerous as a malformed
+	# container: every lookup misses, so the build that just failed is selected again.
+	for bad_ledger: Variant in [[42], [{}], ["not-a-version"], [null]]:
+		var st := _state()
+		st["quarantined"] = bad_ledger
+		_check(RollbackSelection.select(catalog, st)["action"] == RollbackSelection.NO_ELIGIBLE_TARGET, true, "ledger: an unreadable ENTRY refuses, never reads as 'nothing quarantined'")
+	if _failed:
+		return
+
+	# (2) Negative identifiers are malformed, not merely unusual: schema -1 makes
+	# every target look able to read the save.
+	var neg_save := _state()
+	neg_save["save"] = {"schema": -1, "capability": 7}
+	_check(RollbackSelection.select(catalog, neg_save)["action"] == RollbackSelection.NO_ELIGIBLE_TARGET, true, "negative: a negative save schema is refused, not treated as verified")
+	var neg_proto := _state()
+	neg_proto["protocol"] = {"min": -5, "max": 9}
+	_check(RollbackSelection.select(catalog, neg_proto)["action"] == RollbackSelection.NO_ELIGIBLE_TARGET, true, "negative: a negative protocol bound is refused, not used to widen the range")
+	var neg_target: Array = [_target("0.9.9", -1, 7, 1, 1, "0.1.0", "0.1.999"), _target("0.1.2", 1, 7, 1, 1, "0.1.0", "0.1.999")]
+	_check(RollbackSelection.select(neg_target, _state())["version"] == "0.1.2", true, "negative: a target with a negative read_ceiling is skipped despite the higher version")
+	if _failed:
+		return
+
+	# (3) Version ALIASING: the ledger and the catalogue may spell one build
+	# differently. compare_versions calls these equal, so an exact-string check would
+	# re-select the failed build under an alias.
+	for alias: String in ["0.1.010", "0.1.10.0"]:
+		var aliased: Array = [_target(alias, 1, 7, 1, 1, "0.1.0", "0.1.999")]
+		var st_alias := _state()
+		st_alias["quarantined"] = ["0.1.10"]
+		_check(RollbackSelection.select(aliased, st_alias)["action"] == RollbackSelection.NO_ELIGIBLE_TARGET, true, "alias: '%s' is still the quarantined 0.1.10 and is never re-selected" % alias)
+	_check(RollbackSelection.is_quarantined(["0.1.10"], "0.1.010"), true, "alias: is_quarantined matches numerically, not by string")
+	_check(RollbackSelection.quarantine(["0.1.10"], "0.1.010").size() == 1, true, "alias: quarantine does not accumulate aliases of one build")
+	if _failed:
+		return
+
+	# (4) Eligibility is not enough — the bootstrap must be able to MOUNT it. Each of
+	# these carries the highest version, so it would win the ordering if not skipped.
+	var undeployable: Array = [
+		["url", ""], ["url", 42],
+		["sha256", "abc"], ["sha256", "z".repeat(64)], ["sha256", 42],
+		["size", -1], ["size", "big"],
+	]
+	for case: Array in undeployable:
+		var field: String = case[0]
+		var bad_target := _target("0.9.9", 1, 7, 1, 1, "0.1.0", "0.1.999")
+		bad_target[field] = case[1]
+		var probe: Array = [bad_target, _target("0.1.2", 1, 7, 1, 1, "0.1.0", "0.1.999")]
+		_check(RollbackSelection.select(probe, _state())["version"] == "0.1.2", true, "artifact: a bad '%s' makes the target undeployable and it is skipped" % field)
 	if _failed:
 		return
 

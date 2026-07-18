@@ -111,8 +111,16 @@ static func select(catalog: Array, state: Dictionary) -> Dictionary:
 	# "nothing is quarantined" — that would re-select the build that just failed its
 	# boot check and reopen the very loop this breaks. Absent is different and
 	# legitimate: it is the first-boot state, where nothing has failed yet.
-	if state.has("quarantined") and state["quarantined"] is not Array:
-		return _refuse("the quarantine ledger is malformed — refusing rather than risk re-selecting a known-broken build")
+	if state.has("quarantined"):
+		if state["quarantined"] is not Array:
+			return _refuse("the quarantine ledger is malformed — refusing rather than risk re-selecting a known-broken build")
+		# A well-typed Array whose ENTRIES are malformed (e.g. `[42]` after a bad
+		# write) is just as dangerous as a malformed container: every lookup misses,
+		# so the build that just failed its boot check is selected again. Only an
+		# ABSENT key means first boot.
+		for raw: Variant in (state["quarantined"] as Array):
+			if not UpdateDecision.is_version(raw):
+				return _refuse("the quarantine ledger holds an unreadable entry — refusing rather than risk re-selecting a known-broken build")
 	var quarantined: Array = state.get("quarantined", [])
 
 	var best: Dictionary = {}
@@ -132,7 +140,7 @@ static func select(catalog: Array, state: Dictionary) -> Dictionary:
 			continue
 		considered += 1
 		var version: String = target["version"]
-		if quarantined.has(version):
+		if is_quarantined(quarantined, version):
 			continue
 		if not _is_reachable(target, save_schema, save_capability):
 			continue
@@ -157,20 +165,32 @@ static func select(catalog: Array, state: Dictionary) -> Dictionary:
 ## quarantine set. FORWARD-ONLY: this only ever adds, so a build proven broken is
 ## never silently trusted again — that is what breaks the boot loop. The input array
 ## is not mutated; the caller persists the result.
+## Only genuine versions are kept, and deduplication is NUMERIC (see
+## [method is_quarantined]), so the ledger cannot accumulate aliases of one build or
+## unreadable entries that would later force a refusal.
 static func quarantine(quarantined: Array, version: String) -> Array[String]:
 	var out: Array[String] = []
 	for raw: Variant in quarantined:
-		if raw is String and not out.has(raw):
-			out.append(raw)
-	if not version.is_empty() and not out.has(version):
+		if UpdateDecision.is_version(raw) and not is_quarantined(out, str(raw)):
+			out.append(str(raw))
+	if UpdateDecision.is_version(version) and not is_quarantined(out, version):
 		out.append(version)
 	out.sort()
 	return out
 
 
 ## Whether `version` has been quarantined. Safe (false) for an unknown version.
+##
+## Matching is NUMERIC, not string equality: `compare_versions` treats `0.1.10`,
+## `0.1.010` and `0.1.10.0` as the same build, so an exact-string check would let a
+## catalogue that spells a quarantined version differently re-select the build that
+## just failed its boot check, under an alias. Any spelling of a quarantined version
+## stays quarantined.
 static func is_quarantined(quarantined: Array, version: String) -> bool:
-	return quarantined.has(version)
+	for raw: Variant in quarantined:
+		if raw is String and UpdateDecision.compare_versions(raw, version) == 0:
+			return true
+	return false
 
 
 ## Whether the target can READ the installed save without loss: its published read
@@ -237,7 +257,31 @@ static func _is_wellformed(target: Dictionary) -> bool:
 		return false
 	if UpdateDecision.compare_versions(str(compat_dict["min"]), str(compat_dict["max"])) > 0:
 		return false
+	# Eligibility is not enough: the bootstrap has to MOUNT this build. An entry
+	# without a fetchable, verifiable artifact is undeployable, and because it can
+	# still carry the highest version it would win the ordering and deny a recovery a
+	# lower, complete entry could have provided.
+	var url: Variant = target.get("url")
+	if url is not String or (url as String).is_empty():
+		return false
+	if not _is_sha256(target.get("sha256")):
+		return false
+	if not UpdateDecision.is_int_id(target.get("size")):
+		return false
 	return true
+
+
+## Whether `v` is a syntactically valid SHA-256 digest: exactly 64 hex characters.
+## The digest is the artifact's integrity proof, so a truncated or non-hex value is
+## no proof at all. (Its correctness is verified against the downloaded bytes by the
+## updater; this only rejects a value that could never be a digest.)
+static func _is_sha256(v: Variant) -> bool:
+	if v is not String:
+		return false
+	var digest: String = v
+	if digest.length() != 64:
+		return false
+	return digest.is_valid_hex_number(false)
 
 
 ## A loud refusal carrying WHY nothing was selected — never a silent strand.

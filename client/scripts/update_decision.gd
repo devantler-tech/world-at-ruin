@@ -275,18 +275,27 @@ static func _body_error(m: Dictionary) -> String:
 	return ""
 
 
-## True only for a discrete integer identifier: an int, or an integral, finite
-## JSON float (1.0). A fractional value (1.5) or non-finite value is rejected, so
-## it can never be silently truncated by a later int() into a wrong decision.
+## True only for a discrete integer identifier: a NON-NEGATIVE int, or an integral,
+## finite, non-negative JSON float (1.0). Fractional (1.5), non-finite and bool
+## values are rejected, so one can never be silently truncated or coerced by a later
+## int() into a wrong decision.
+##
+## Negative is rejected because every field validated with this is a COUNTER or
+## ORDINAL (a schema, a protocol bound, a save capability), for which a negative is
+## malformed rather than merely unusual. Accepting one is an eligibility hole on
+## BOTH paths: a save schema of -1 makes every rollback target look able to read it,
+## and a negative protocol bound widens the accepted range.
 ## Public because a signed manifest parsed from JSON may present whole numbers as
 ## floats: [RollbackSelection] validates the rollback catalogue with the SAME rule,
 ## so a real manifest shape can never be readable by the forward path and
 ## unreadable by the recovery path.
 static func is_int_id(v: Variant) -> bool:
+	if v is bool:
+		return false
 	if v is int:
-		return true
+		return v >= 0
 	if v is float:
-		return is_finite(v) and v == floor(v)
+		return is_finite(v) and v == floor(v) and v >= 0.0
 	return false
 
 
