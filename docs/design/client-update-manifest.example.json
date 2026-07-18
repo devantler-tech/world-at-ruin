@@ -34,6 +34,8 @@
       "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
       "size": 0,
       "read_ceiling": 1,
+      "save_capability": 7,
+      "speaks_protocol": { "min": 1, "max": 1 },
       "shell_compat": { "min": "0.1.14", "max": "0.1.999" }
     },
     "deltas": [
@@ -45,13 +47,26 @@
       }
     ]
   },
+  "rollback_targets": [
+    {
+      "version": "0.1.13",
+      "url": "https://updates.worldatruin.example/live/pack/worldatruin-0.1.13.full.pck",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "size": 0,
+      "read_ceiling": 1,
+      "save_capability": 7,
+      "speaks_protocol": { "min": 1, "max": 1 },
+      "shell_compat": { "min": "0.1.10", "max": "0.1.999" }
+    }
+  ],
   "protocol": {
     "min": 1,
     "max": 1
   },
   "save_schema": {
     "min": 1,
-    "writes": 1
+    "writes": 1,
+    "capability": 7
   },
   "key": {
     "id": "signing-2026-07",
@@ -62,7 +77,8 @@
   "revocation": {
     "version": 3,
     "revoked_ids": [],
-    "root_signature": "BASE64_ED25519_ROOT_SIGNATURE_OVER_THE_REVOCATION_BLOCK"
+    "root_signature": "BASE64_ED25519_ROOT_SIGNATURE_OVER_THE_REVOCATION_BLOCK",
+    "head_url": "https://updates.worldatruin.example/live/revocation-head.json"
   },
   "shell_authorization": "BASE64_ROOT_OR_PLATFORM_CODESIGN_AUTH_FOR_shell.download",
   "signature": "BASE64_ED25519_JCS_RFC8785_SIGNATURE_OVER_THE_MANIFEST_WITH_signature_EXCLUDED"

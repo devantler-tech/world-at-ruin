@@ -162,16 +162,25 @@ A small **signed JSON** document per channel, published by CI beside the artifac
   pack (`url`/`sha256`/`size`) that any in-range shell can apply **from any prior state**, plus an
   optional ordered `deltas` list (each with its `base_version`). A client applies the smallest delta
   chain it has and **always falls back to the `full` pack** when it lacks a base — so a player offline
-  for several releases is never stranded on a broken update chain.
-- `protocol` — `{min, max}`: the client protocol range the **live server tier accepts right now**,
-  raised only via the two-phase rollout below so no connected or not-yet-updated client is kicked.
+  for several releases is never stranded on a broken update chain. Every artifact also carries its own
+  `read_ceiling`, `save_capability`, `speaks_protocol` and `shell_compat` (see the eligibility rules).
+- `rollback_targets` — the signed catalogue of **retained standing rollback targets**, each with the
+  same per-artifact fields. The bootstrap picks a recovery build from here, so eligibility is decided on
+  *published, signed* capability data rather than inferred from the candidate's numbers.
+- `protocol` — `{min, max}`: the client protocol range the **live server tier accepts right now** (not
+  what any given build speaks — that is each artifact's `speaks_protocol`), raised only via the
+  two-phase rollout below, and only once every manifest advertising the old range has expired.
 - `save_schema` — `{min}` (the lowest save schema the current client must **read** — forward-only; ties
-  to #3) **and** `writes` (the schema the candidate build **writes**). These are deliberately distinct:
-  a backward-compatible pack can keep `min` low while raising `writes`. The decision core routes any
-  pack whose `writes` exceeds the rollback target's read ceiling to the **shell** tier, so a rollback
-  can never face a save it cannot read. A bare pack overlay never advances `writes` past that ceiling.
+  to #3), `writes` (the schema the candidate build **writes**), and `capability` (the monotonic
+  **save-capability** counter). These are deliberately distinct: a backward-compatible pack can keep
+  `min` low while raising `writes`, and a *same-schema* expansion raises only `capability`. The decision
+  core routes any pack whose `writes` exceeds the rollback target's read ceiling — or whose `capability`
+  exceeds the target's — to the **shell** tier, so a rollback can never face a save it cannot read.
 - `key` — the id/certificate of the current signing key, signed by the offline **root** key baked into
   the shell (see Signing) — this is what lets a signing key rotate without a reinstall.
+- `revocation` — the root-signed, monotonically versioned revoked-key list **plus `head_url`**, the
+  independently fetched root-signed **revocation head** whose version acts as a floor (see Signing), so
+  a stale embedded block cannot be masked by a freshly signed manifest.
 - `signature` — a detached signature over the manifest. The signing bytes are **pinned** (see Signing):
   a canonical JSON profile with the `signature` field excluded, a named algorithm, and a fixed encoding,
   so CI and the Godot client sign and verify exactly the same bytes.
@@ -214,13 +223,29 @@ A signed-update system has a few more sharp edges the contract closes, so no *si
 stale cache, or engine change can strand or subvert a client:
 
 - **Anti-replay / freshness.** Every manifest carries a **monotonic, root-anchored `sequence`** and an
-  expiry; the client persists the highest sequence it has accepted and **refuses any older or expired
-  manifest**. A correctly-signed but stale manifest (CDN cache or replay) therefore can never
-  re-assert a retired protocol window and strand a returning player — no key compromise required.
-- **Root-authenticated revocation.** The revocation list and the signing-key certificate are **signed by
-  the offline root and monotonically versioned**, and validated *before* the manifest's own signature —
-  so an attacker holding a compromised signing key cannot simply omit its own id to keep issuing
-  accepted same-epoch manifests.
+  expiry (`not_after`); the client persists the highest sequence it has accepted and **refuses any older
+  or expired manifest**.
+  - **The persisted sequence alone is NOT enough, so contraction waits out the TTL.** A returning or
+    freshly-installed client has no high-water mark, so an unexpired cached manifest at sequence `N`
+    looks perfectly valid to it even after the server contracted per `N+1` — every signature and expiry
+    check passes while the client sits on a pack that can no longer reach the world. Therefore
+    **the server may only contract (raise `protocol.min`) after every manifest advertising the old
+    range has EXPIRED**: the contraction is scheduled at least `manifest_ttl + margin` after the expand
+    step. `not_after` is what bounds how long a cached manifest can be believed, so it is the clock the
+    contraction schedule is derived from — never an assumption that clients have seen a newer sequence.
+- **Root-authenticated revocation, with an INDEPENDENT freshness head.** The revocation list and the
+  signing-key certificate are **signed by the offline root and monotonically versioned**, and validated
+  *before* the manifest's own signature — so an attacker holding a compromised signing key cannot omit
+  its own id to keep issuing accepted same-epoch manifests.
+  - **Embedded-only revocation is still forgeable against an offline client.** A stolen key can sign a
+    fresh, higher-sequence manifest that embeds an **older but still validly root-signed** revocation
+    block which does not list the stolen key; a client that was offline during the revocation has never
+    seen the newer version, so a monotonic counter alone does not save it. The contract therefore
+    requires an **independently fetched, root-signed revocation head** (its own endpoint, its own
+    freshness/`not_after`) carrying the **current revocation version floor**. The client fetches the
+    head separately and **refuses any manifest whose embedded revocation version is below that floor**,
+    so a stale embedded block cannot be masked by a fresh manifest. A head that cannot be fetched is
+    fail-closed for *new* installs/updates (the client keeps playing its current build).
 - **Shell replacement is root-authorized.** A `shell.download` is authorized by the **offline root (or
   platform code-signing)** and verified by the existing bootstrap — never by the short-lived signing
   key. Otherwise a compromised signing key could install a hostile shell that replaces the baked root
@@ -229,12 +254,24 @@ stale cache, or engine change can strand or subvert a client:
 - **A rollback target must be runnable AND reachable, not merely retained.** A retained build is an
   eligible rollback target only if it (a) **runs on the installed shell** — so a shell/pack pair that
   changed engine/bindings incompatibly **rolls back atomically together**, or the pack declares a
-  shell-compat range (an upper bound, not just `min_shell`); (b) can **read** the candidate's writes —
-  its **authenticated read-ceiling** is published per retained target, distinct from `writes`, since an
-  expand release that *reads* v2 while still *writing* v1 is otherwise indistinguishable from one that
-  cannot read v2; and (c) **speaks a protocol the server still accepts** — a signed, server-compatible
-  **recovery artifact** is always published for dormant clients, or the candidate is applied only after
-  a verified intermediate promotion.
+  shell-compat range (an upper bound, not just `min_shell`); (b) can **read** the candidate's writes;
+  and (c) **speaks a protocol the live server still accepts**. Schema integers alone prove neither (b)
+  nor (c), so each artifact carries two more signed fields:
+  - **`save_capability` — a monotonic counter that advances for EVERY newly persistable shape**, not
+    only for a schema bump. A same-schema expansion (a new equipment/skin registry name) leaves `writes`
+    and `read_ceiling` identical while still making the older pack reject the new save, so the decision
+    is made on capability: a target is read-eligible only when its `save_capability` is **>= the
+    candidate's**. (The existing golden-fixture guard checks the *current* build against *historical*
+    data — the opposite direction — so it cannot cover this.) Equivalently, a release may bump the
+    schema instead; the capability counter simply makes the cheap same-schema case expressible.
+  - **a per-artifact `protocol` range — what that build SPEAKS**, distinct from the manifest's top-level
+    `protocol`, which is only what the **server accepts right now**. During an expansion the server may
+    advertise `[1,2]` while an old pack speaks only `1`; after contraction to `[2,2]` that pack is
+    unreachable, and top-level metadata alone would wrongly make it look eligible. The bootstrap selects
+    a target whose *speaks* range intersects the server's *accepts* range.
+
+  A signed, server-compatible **recovery artifact** is always published for dormant clients, or the
+  candidate is applied only after a verified intermediate promotion.
 - **Canonicalization pinned to a standard.** The signed bytes use **JCS (RFC 8785)** with shared test
   vectors both CI and the client consume, so two conforming implementations never derive different bytes
   and reject every otherwise-valid update.
@@ -254,9 +291,11 @@ handshake (child 5), and key custody (child 6) implement them, and the manifest 
 - **Forward-only, backward-compatible, two-phase.** A protocol change rolls out **expand-then-contract**:
   the server first *adds* support for the new protocol while still accepting the old range (expand), the
   manifest advertises the update, clients adopt it, and only *then* does the server raise `protocol.min`
-  (contract) — with existing sessions kept on their negotiated protocol until they reconnect. So a client
-  is always nudged forward **before** compatibility is removed, and no connected session is kicked
-  mid-evolution. The `protocol {min,max}` window plus the shell/pack version floors enforce this.
+  (contract) — with existing sessions kept on their negotiated protocol until they reconnect, and the
+  contraction held until **every manifest advertising the old range has expired**, so a returning client
+  holding an unexpired cached manifest is never stranded. So a client is always nudged forward **before**
+  compatibility is removed, and no connected session is kicked mid-evolution. The `protocol {min,max}`
+  window, each artifact's own `speaks_protocol`, and the shell/pack version floors enforce this.
 - **Must exist before the first player:** like the save guard, the update mechanism and its
   no-stranding invariant are a day-one requirement; retrofitting them later would need a reset.
 
