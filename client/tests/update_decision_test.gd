@@ -455,6 +455,14 @@ func _test_capability_raise_needs_a_readable_rollback_target() -> void:
 	var inst_badcap := _installed_current()
 	inst_badcap["save_capability"] = "lots"
 	_expect(inst_badcap, _base_manifest(), UpdateDecision.BLOCKED_INCOMPATIBLE, "a malformed installed save_capability blocks loudly")
+	# CODEX P0 (round 4): and it blocks on EVERY route, including the future-schema
+	# path, which routes to a shell update from the stable envelope alone — an
+	# envelope that carries no capability proof at all.
+	var future := _base_manifest()
+	future["schema"] = UpdateDecision.SUPPORTED_MANIFEST_SCHEMA + 1
+	future["shell"]["current"] = "0.2.0" # a newer shell IS offered
+	_expect(_installed_current(), future, UpdateDecision.SHELL_UPDATE, "sanity: a future-schema manifest with a newer shell still routes to a shell update")
+	_expect(inst_nocap, future, UpdateDecision.BLOCKED_INCOMPATIBLE, "an unverifiable capability blocks the future-schema shell route too")
 
 	# CODEX P1 (round 3): a target reachable on both axes is still not cover if the
 	# SELECTOR would skip it. RollbackSelection.is_wellformed also requires artifact
@@ -474,6 +482,35 @@ func _test_capability_raise_needs_a_readable_rollback_target() -> void:
 	t_bad["speaks_protocol"] = {"min": 5, "max": 1} # inverted range
 	bad_shape["rollback_targets"] = [t_bad]
 	_expect(_installed_current(), bad_shape, UpdateDecision.SHELL_UPDATE, "a target with an inverted protocol range is not cover")
+
+	# CODEX P0 (round 4): a target that cannot RUN right now is known-bad now, just
+	# like a quarantined one, so it is not cover — even though future runnability
+	# cannot be guaranteed. Both halves of is_runnable are covered.
+	var no_overlap: Dictionary = raising.call()
+	var t_proto := _target("0.1.14", 9, 9)
+	t_proto["speaks_protocol"] = {"min": 7, "max": 9} # manifest protocol is 1..1
+	no_overlap["rollback_targets"] = [t_proto]
+	_expect(_installed_current(), no_overlap, UpdateDecision.SHELL_UPDATE, "a target whose protocol range misses the accepted one is not cover")
+	var bad_shell: Dictionary = raising.call()
+	var t_shell := _target("0.1.14", 9, 9)
+	t_shell["shell_compat"] = {"min": "0.9.0", "max": "0.9.9"} # installed shell is 0.1.14
+	bad_shell["rollback_targets"] = [t_shell]
+	_expect(_installed_current(), bad_shell, UpdateDecision.SHELL_UPDATE, "a target excluding the installed shell is not cover")
+
+	# CODEX P0 (round 4): a PRESENT-but-corrupt `quarantined: null` is malformed, not
+	# first boot. RollbackSelection keys on `has`, so the forward path must too.
+	var null_ledger: Dictionary = raising.call()
+	null_ledger["rollback_targets"] = [_target("0.1.14", 9, 9)]
+	var inst_null := _installed_current()
+	inst_null["quarantined"] = null
+	_expect(inst_null, null_ledger, UpdateDecision.SHELL_UPDATE, "a present-but-null quarantine ledger is malformed, not first boot")
+
+	# An unverifiable installed shell cannot prove runnability, so it is not cover.
+	var no_shell_ver: Dictionary = raising.call()
+	no_shell_ver["rollback_targets"] = [_target("0.1.14", 9, 9)]
+	var inst_noshell := _installed_current()
+	inst_noshell["shell_version"] = "garbage"
+	_expect(inst_noshell, no_shell_ver, UpdateDecision.SHELL_UPDATE, "an unverifiable installed shell means no target can be proven runnable")
 
 	# POSITIVE CONTROL: one strictly-older target reachable on BOTH axes makes the
 	# pack safe again. This is what proves the gate discriminates rather than simply

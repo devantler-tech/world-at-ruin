@@ -168,7 +168,7 @@ static func _select_verified(catalog: Array, state: Dictionary) -> Dictionary:
 			continue
 		if not _is_reachable(target, save_schema, save_capability):
 			continue
-		if not _is_runnable(target, server_min, server_max, shell_version):
+		if not is_runnable(target, server_min, server_max, shell_version):
 			continue
 		if best_version.is_empty() or UpdateDecision.compare_versions(version, best_version) > 0:
 			best = target
@@ -331,7 +331,14 @@ static func _is_reachable(target: Dictionary, save_schema: int, save_capability:
 ## Whether the target can actually RUN and CONNECT: the protocol range it speaks
 ## overlaps the range the live tier accepts, and the installed shell is inside its
 ## compatibility window.
-static func _is_runnable(target: Dictionary, server_min: int, server_max: int, shell_version: String) -> bool:
+## PUBLIC for the same reason as [method is_wellformed]: the forward path must not
+## count a target as rollback cover that this selector would skip. These inputs are
+## the CURRENT protocol range and installed shell, so this answers "can it run
+## NOW". It cannot answer "will it run at recovery time" — both facts can move —
+## but a target that already cannot run is known-bad now, exactly like a
+## quarantined one, and must never be counted as cover.
+## Assumes [method is_wellformed] has already passed for `target`.
+static func is_runnable(target: Dictionary, server_min: int, server_max: int, shell_version: String) -> bool:
 	var speaks: Dictionary = target["speaks_protocol"]
 	var speaks_min: int = int(speaks["min"])
 	var speaks_max: int = int(speaks["max"])
