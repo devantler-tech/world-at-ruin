@@ -29,6 +29,8 @@ jobs:
           # Full history: the ledger append-only check diffs against the base
           # commit, which a depth-1 checkout cannot reach.
           fetch-depth: 0
+          # Read-only job: no push, so the token must not linger in .git/config.
+          persist-credentials: false
       - name: Version ledger is append-only (no-resets law)
         # The in-game guard anchors the required fixture range to
         # tests/data/shipped_recipe_versions.txt, but a checkout-local file
@@ -250,6 +252,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # Read-only job: no push, so the token must not linger in .git/config.
+          persist-credentials: false
       - name: Reject GPL/AGPL-licensed content
         run: |
           # The shipped tree must stay proprietary-compatible: no GPL/AGPL
