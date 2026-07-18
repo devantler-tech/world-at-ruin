@@ -334,9 +334,20 @@ can be watched by playing; every *further* art/game system waits on Phase 0.)
     **digest** is what the updater pins — never the mutable tag. OCI is required rather than merely
     preferred: GitHub Packages has no generic/raw-file registry, so an OCI artifact is the only way
     a `.app` zip enters it. The GitHub Release asset remains the *install* download; GHCR is the
-    *update* origin. **GHCR packages are private by default** — a new package must be made public or
-    players cannot pull it, and that failure is invisible from the publishing side (the push
-    succeeds; only the consumer gets a 401).
+    *update* origin.
+  - **The release publishes LAST, after every artifact job.** `publish-release` depends on both
+    `publish-macos` and `publish-ghcr`, so the draft goes public only once the build is attached
+    *and* the GHCR origin exists, is signed, and is **anonymously** reachable. Publishing earlier
+    would leave a public, immutable release whose update origin does not exist — unrepairable,
+    since releases are immutable. If any artifact job fails the release simply stays a draft, which
+    is the safe state; fix the cause and re-run CD via `workflow_dispatch` with the tag.
+  - **GHCR packages are private by default**, and that failure is invisible from the publishing
+    side — the push succeeds and only the *player* gets a 401. CD therefore verifies reachability
+    with a **credential-free** request (no `docker login`, no token): every other step in that job
+    runs authenticated and so proves nothing about public access. On the first publish this check
+    is expected to fail until the package is made public (GitHub → Packages → `world-at-ruin/client`
+    → Package settings → Change visibility → Public). **Never "fix" it by making the check
+    authenticated** — that restores a guard that passes vacuously.
   - The version is therefore **derived, never maintained**. The in-tree constants are dev values;
     only a released build carries a real version.
   - **`CI - Required Checks` is the repo's single required status context.** Renaming or removing

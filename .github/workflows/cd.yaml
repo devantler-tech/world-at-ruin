@@ -223,27 +223,6 @@ jobs:
             "build/WorldAtRuin-${VERSION}-macOS-universal.zip" \
             --repo "${GITHUB_REPOSITORY}" --clobber
 
-      - name: 🚀 Publish the release
-        # The draft becomes public only now, once the build is verified and
-        # attached — so a released version never exists without its artifact.
-        # This emits `published`, which is deliberately NOT a trigger above, so
-        # it cannot re-enter CD.
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.version.outputs.tag }}
-        run: |
-          set -euo pipefail
-          gh release edit "${TAG}" --repo "${GITHUB_REPOSITORY}" --draft=false
-          # Verify rather than trust the command's exit code.
-          state=$(gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json isDraft,assets \
-            --jq '"draft=\(.isDraft) assets=\(.assets|length)"')
-          echo "${TAG}: ${state}"
-          case "${state}" in
-            "draft=false assets=0") echo "::error::${TAG} published with NO assets"; exit 1 ;;
-            "draft=false assets="*) ;;
-            *) echo "::error::${TAG} did not publish"; exit 1 ;;
-          esac
-
   publish-ghcr:
     name: 📦 Publish OCI artifact to GHCR
     # The ORIGIN OF RECORD for the in-client updater (docs/design/
@@ -286,7 +265,10 @@ jobs:
           echo "tag=${RAW_TAG}" >> "$GITHUB_OUTPUT"
           echo "version=${RAW_TAG#v}" >> "$GITHUB_OUTPUT"
 
-      - name: ⬇️ Download the published release asset
+      - name: ⬇️ Download the release asset
+        # The release is still a DRAFT at this point (it is published only after
+        # this job succeeds), so this downloads the draft's asset — the same
+        # bytes a player will get, just not public yet.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.version.outputs.tag }}
@@ -375,12 +357,78 @@ jobs:
           mkdir -p pulled && cd pulled
           oras pull "${ARTIFACT}@${DIGEST}"
           sha256sum -c <(sed "s#  .*#  WorldAtRuin-${VERSION}-macOS-universal.zip#" ../release-asset.sha256)
-          echo "pulled bytes are identical to the published release asset"
+          echo "pulled bytes are identical to the release asset"
+
+      - name: 🌍 Verify an ANONYMOUS client can pull it
+        # THE check that matters for a player-facing origin, and the one that is
+        # easiest to fake: every step above ran authenticated (docker/login-action
+        # + GITHUB_TOKEN), so they prove nothing about public reachability. GHCR
+        # creates packages PRIVATE by default, and that failure is invisible from
+        # the publishing side — the push succeeds and only the player gets a 401.
+        # So this deliberately uses NO credentials at all.
+        env:
+          ARTIFACT: ${{ steps.push.outputs.artifact }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          # Strip the registry host to get the repository path for the token/v2 API.
+          REPO_PATH="${ARTIFACT#ghcr.io/}"
+          # Anonymous pull token — no Authorization header, no docker config.
+          TOKEN=$(curl -fsS "https://ghcr.io/token?scope=repository:${REPO_PATH}:pull&service=ghcr.io" | jq -r '.token')
+          CODE=$(curl -sS -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer ${TOKEN}" \
+            -H "Accept: application/vnd.oci.image.manifest.v1+json,application/vnd.oci.image.index.v1+json" \
+            "https://ghcr.io/v2/${REPO_PATH}/manifests/${DIGEST}")
+          echo "anonymous manifest fetch: HTTP ${CODE}"
+          if [ "${CODE}" != "200" ]; then
+            echo "::error::${ARTIFACT} is NOT anonymously pullable (HTTP ${CODE}). GHCR packages are private by default, so players cannot fetch updates from it. Fix: make the package public — GitHub → Packages → world-at-ruin/client → Package settings → Change visibility → Public — then re-run this workflow (workflow_dispatch with the tag). The release stays a draft until this passes, so nothing broken has been published."
+            exit 1
+          fi
+
+  publish-release:
+    name: 🚀 Publish the release
+    # SEPARATE, LAST, AND DEPENDENT ON EVERY ARTIFACT JOB. The draft becomes
+    # public only once the build is attached AND the GHCR origin exists, is
+    # signed, and is anonymously reachable. Publishing earlier would leave a
+    # public, immutable release whose update origin does not exist — and since
+    # releases are immutable, that is not repairable afterwards.
+    #
+    # This is the same shape the org's Go repos get from GoReleaser
+    # (`release: draft: true` + publish only after every asset job succeeds).
+    needs: [publish-macos, publish-ghcr]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # flip the release out of draft
+    steps:
+      - name: 🛡️ Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      - name: 🚀 Publish the release
+        # Emits `published`, which is deliberately not a CD trigger, so this
+        # cannot re-enter the workflow.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release edit "${TAG}" --repo "${GITHUB_REPOSITORY}" --draft=false
+          # Verify rather than trust the command's exit code.
+          state=$(gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json isDraft,assets \
+            --jq '"draft=\(.isDraft) assets=\(.assets|length)"')
+          echo "${TAG}: ${state}"
+          case "${state}" in
+            "draft=false assets=0") echo "::error::${TAG} published with NO assets"; exit 1 ;;
+            "draft=false assets="*) ;;
+            *) echo "::error::${TAG} did not publish"; exit 1 ;;
+          esac
 
   cd-required-checks:
     name: CD - Required Checks
     runs-on: ubuntu-latest
-    needs: [publish-macos, publish-ghcr]
+    needs: [publish-macos, publish-ghcr, publish-release]
     if: ${{ always() }}
     steps:
       - uses: devantler-tech/actions/aggregate-job-checks@0f27c13a9785608e0bbf9998777d27761b4de617 # v10.0.2
@@ -388,4 +436,5 @@ jobs:
           job-results: >-
             ${{ needs.publish-macos.result }}
             ${{ needs.publish-ghcr.result }}
+            ${{ needs.publish-release.result }}
           check-name: "CD - Required Checks"
