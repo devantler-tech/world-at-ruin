@@ -736,7 +736,27 @@ jobs:
           # Racy too: two runs can both see no open PR, and `gh pr create` errors
           # if one already exists — failing this job over a benign overlap.
           # Tolerate the loss, then re-check so a genuine failure still errors.
+          # Helper: the cask version carried by a ref, empty when the file or
+          # ref is missing.
+          cask_version_at() {
+            gh api "repos/${tap}/contents/Casks/world-at-ruin.rb?ref=${1}" 2>/dev/null \
+              | jq -r '.content // empty' | base64 -d 2>/dev/null \
+              | sed -n 's/^  version "\(.*\)"$/\1/p' | head -1 || true
+          }
+
           if ! gh pr list --repo "${tap}" --head "${branch}" --state open --json number --jq '.[0].number // empty' | grep -q .; then
+            # ALREADY DELIVERED is success, not a missing PR: a stale rerun
+            # (an older tag re-run after the newer release's PR merged) finds
+            # the branch content already on main and no open PR. GitHub
+            # refuses a PR from a fully-merged branch ("no commits between"),
+            # so without this check a valid no-op rerun would die on the
+            # ensure-PR error below.
+            branch_now="$(cask_version_at "${branch}")"
+            main_now="$(cask_version_at main)"
+            if [ -n "${branch_now}" ] && [ "${branch_now}" = "${main_now}" ]; then
+              echo "::notice::${tap} main already carries v${main_now} and no cask PR is open — nothing to deliver"
+              exit 0
+            fi
             gh pr create --repo "${tap}" --base main --head "${branch}" \
               --title "chore(cask): update world-at-ruin to v${VERSION}" \
               --body "Automated cask update for World at Ruin. Programmed release path: check-gated auto-merge, no review needed." || true
@@ -748,25 +768,19 @@ jobs:
           pr="$(gh pr list --repo "${tap}" --head "${branch}" --state open --json number --jq '.[0].number')"
           echo "cask PR is open on ${tap} (#${pr}, ${branch})"
 
-          # The title must state the version the branch CONTENT actually
-          # carries, never this run's ${VERSION}: a concurrent newer release
-          # can win the compare-and-swap above (or this run is the stale one
-          # that skipped its write), and the tap squash-merges on the PR title
-          # — a stale title ships a changelog entry for a version the diff
-          # does not deliver (live case: tap#1213 titled 0.16.0 while its
-          # branch carried 0.21.0). Re-deriving the title from the branch on
-          # every run keeps title == content convergent; a lost sub-second
-          # race is repaired by the next run, and the required checks re-run
-          # on every push, so auto-merge cannot fire before it settles.
-          branch_version="$(gh api "repos/${tap}/contents/Casks/world-at-ruin.rb?ref=${branch}" \
-            | jq -r '.content' | base64 -d \
-            | sed -n 's/^  version "\(.*\)"$/\1/p' | head -1)"
-          if [ -z "${branch_version}" ]; then
-            echo "::error::could not read the cask version back from ${branch}"
-            exit 1
-          fi
-          title="chore(cask): update world-at-ruin to v${branch_version}"
-
+          # Title convergence + arming. The title must state the version the
+          # branch CONTENT actually carries, never this run's ${VERSION}: a
+          # concurrent newer release can win the compare-and-swap above (or
+          # this run is the stale one that skipped its write), and the tap
+          # squash-merges on the PR title — a stale title ships a changelog
+          # entry for a version the diff does not deliver (live case:
+          # tap#1213 titled 0.16.0 while its branch carried 0.21.0). The
+          # version is re-derived INSIDE the loop and re-verified after the
+          # retitle: without that, a stale run's PATCH could be the LAST
+          # title write after a newer run already armed auto-merge — the
+          # lying-title merge this exists to prevent. When the re-read shows
+          # the branch moved, loop and re-derive.
+          #
           # Arm auto-merge so the PR merges the moment the tap's required
           # checks (audit + style + script tests) pass — no agent or human in
           # the loop (maintainer direction 2026-07-18; #169). This is the same
@@ -779,11 +793,25 @@ jobs:
           # head. Failures are LOUD — a cask PR that silently never merges is
           # exactly how the tap fell six releases behind (#169).
           armed=false
-          for attempt in 1 2 3; do
+          for attempt in 1 2 3 4 5; do
+            branch_version="$(cask_version_at "${branch}")"
+            if [ -z "${branch_version}" ]; then
+              echo "::error::could not read the cask version back from ${branch}"
+              exit 1
+            fi
+            title="chore(cask): update world-at-ruin to v${branch_version}"
             pr_state="$(gh api "repos/${tap}/pulls/${pr}")"
             if [ "$(printf '%s' "${pr_state}" | jq -r '.title')" != "${title}" ]; then
               gh api -X PATCH "repos/${tap}/pulls/${pr}" -f title="${title}" >/dev/null
               echo "retitled ${tap}#${pr}: ${title}"
+            fi
+            # Verify the content the title was derived from is still current;
+            # a moved branch means a newer run is writing — re-derive rather
+            # than leave its title stale-overwritten.
+            if [ "$(cask_version_at "${branch}")" != "${branch_version}" ]; then
+              echo "::notice::${branch} moved during retitle; re-deriving (attempt ${attempt})"
+              sleep 2
+              continue
             fi
             if [ "$(printf '%s' "${pr_state}" | jq -r '.merged')" = "true" ]; then
               echo "${tap}#${pr} already merged"
@@ -827,7 +855,7 @@ jobs:
             sleep 2
           done
           if [ "${armed}" != "true" ]; then
-            echo "::error::could not arm auto-merge or merge ${tap}#${pr} after 3 attempts"
+            echo "::error::could not arm auto-merge or merge ${tap}#${pr} after 5 attempts"
             exit 1
           fi
 
