@@ -1,0 +1,17 @@
+# Where every shipped equipment piece is WORN — the forward-only mapping ledger
+# (no-resets law, issue #122).
+#
+# shipped_equipment.txt pins that a shipped piece still EXISTS. This pins where
+# it SITS, which is a separate promise: a recipe persists equipment as
+# `slot -> piece`, and CharacterFactory.validate() refuses a recipe whose slot
+# disagrees with the registry ("piece '%s' does not go in slot '%s'"). So moving
+# a shipped piece between two otherwise-legal slots strands every save that
+# recorded the old one.
+#
+# Format: "<piece> <slot>", one per line. APPEND-ONLY: a new baked piece adds a
+# line. CHANGING an existing line is declaring shipped characters disposable and
+# is the deprecation-bearing act the product law requires — never a quiet edit.
+shirt_ragged torso
+pants_wool legs
+shoes_cloth feet
+boots_worn feet
