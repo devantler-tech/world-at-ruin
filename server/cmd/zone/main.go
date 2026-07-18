@@ -6,15 +6,19 @@
 // reports the payload sizes. With -listen it serves the real zone socket per
 // the transport ADR (docs/design/zone-transport.md): a WebSocket-over-TLS
 // endpoint at /zone carrying one wire-codec message per binary frame, with
-// token-gated admission. The Agones SDK and Nakama layers remain later
-// children of the server-foundation epic. The socket is opt-in: without
-// -listen the command behaves exactly as before.
+// token-gated admission. With -agones (default off, -listen only) the socket
+// server additionally speaks the Agones GameServer lifecycle through the
+// official SDK, which is what makes the binary deployable on the fleet: Ready
+// once a player could actually connect, Health on a cadence, Shutdown on
+// exit. The Nakama layer remains a later child of the server-foundation epic.
+// The socket is opt-in: without -listen the command behaves exactly as before.
 //
 //	zone                     # 600 deterministic ticks, then print the state hash
 //	zone -ticks 1800         # a different fixed count
 //	zone -realtime -duration 3s   # drive the fixed loop from real time for 3s
 //	zone -replicate 1        # also track observer 1, wire-encode its delta stream
 //	zone -listen :8443 -tls-cert cert.pem -tls-key key.pem  # serve the zone socket (wss)
+//	zone -listen :8443 -tls-cert cert.pem -tls-key key.pem -agones  # ...as a fleet GameServer
 //	zone -mint-token 1       # developer helper: mint an admission token, print it, exit
 //
 // The admission-token secret is read from the environment variable named by
@@ -25,6 +29,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"flag"
 	"fmt"
@@ -36,6 +41,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/devantler-tech/world-at-ruin/server/agones"
 	"github.com/devantler-tech/world-at-ruin/server/sim"
 	"github.com/devantler-tech/world-at-ruin/server/wire"
 	"github.com/devantler-tech/world-at-ruin/server/zonesock"
@@ -54,6 +60,8 @@ func main() {
 	secretEnv := flag.String("admission-secret-env", "WAR_ZONE_ADMISSION_SECRET", "NAME of the environment variable holding the hex-encoded admission-token secret")
 	mintObserver := flag.Uint64("mint-token", 0, "developer helper: mint an admission token for this observer entity ID using the admission secret, print it, and exit")
 	mintTTL := flag.Duration("mint-ttl", 5*time.Minute, "expiry window for -mint-token")
+	withAgones := flag.Bool("agones", false, "register with the local Agones SDK sidecar (Ready/Health/Shutdown); requires -listen, since Ready must mean a connectable endpoint")
+	healthInterval := flag.Duration("agones-health-interval", agones.DefaultHealthInterval, "heartbeat cadence for -agones; keep it under half the fleet's health periodSeconds")
 	flag.Parse()
 
 	durationSet := false
@@ -70,6 +78,9 @@ func main() {
 	if *listen != "" && *replicate != 0 {
 		fatalf("-listen and -replicate are mutually exclusive")
 	}
+	if *withAgones && *listen == "" {
+		fatalf("-agones requires -listen: Agones Ready must mean a player can actually connect, and only -listen opens the zone socket")
+	}
 
 	w := sim.NewDemoWorld()
 	switch {
@@ -78,7 +89,9 @@ func main() {
 		if durationSet {
 			d = *duration
 		}
-		runListen(w, *listen, *tlsCert, *tlsKey, *secretEnv, *insecurePlaintext, *interest, d)
+		if err := runListen(w, *listen, *tlsCert, *tlsKey, *secretEnv, *insecurePlaintext, *interest, d, *withAgones, *healthInterval); err != nil {
+			fatalf("%v", err)
+		}
 	case *realtime:
 		runRealtime(w, *duration)
 	case *replicate != 0:
@@ -122,21 +135,23 @@ func runMint(secretEnv string, observer sim.EntityID, ttl time.Duration) {
 // runListen serves the zone socket while driving the fixed loop from the wall
 // clock, per the transport ADR: TLS is the default and plaintext exists only
 // behind the explicit local-development opt-in. d <= 0 runs until the process
-// is signalled.
-func runListen(w *sim.World, addr, certFile, keyFile, secretEnv string, insecurePlaintext bool, interestMM int64, d time.Duration) {
+// is signalled. It returns errors instead of exiting so every exit path runs
+// the deferred cleanup — with -agones that includes telling the sidecar to
+// recycle the GameServer, which os.Exit would silently skip.
+func runListen(w *sim.World, addr, certFile, keyFile, secretEnv string, insecurePlaintext bool, interestMM int64, d time.Duration, withAgones bool, healthInterval time.Duration) error {
 	if insecurePlaintext && (certFile != "" || keyFile != "") {
-		fatalf("-insecure-plaintext contradicts -tls-cert/-tls-key: choose one")
+		return fmt.Errorf("-insecure-plaintext contradicts -tls-cert/-tls-key: choose one")
 	}
 	if !insecurePlaintext && (certFile == "" || keyFile == "") {
-		fatalf("-listen requires -tls-cert and -tls-key (or the explicit -insecure-plaintext local-development opt-in)")
+		return fmt.Errorf("-listen requires -tls-cert and -tls-key (or the explicit -insecure-plaintext local-development opt-in)")
 	}
 	verifier, err := zonesock.NewHMACVerifier(admissionSecret(secretEnv))
 	if err != nil {
-		fatalf("%v", err)
+		return err
 	}
 	hub, err := zonesock.NewHub(zonesock.Config{Verifier: verifier, InterestMM: interestMM})
 	if err != nil {
-		fatalf("%v", err)
+		return err
 	}
 
 	mux := http.NewServeMux()
@@ -146,9 +161,32 @@ func runListen(w *sim.World, addr, certFile, keyFile, secretEnv string, insecure
 		TLSConfig:         &tls.Config{MinVersion: tls.VersionTLS12},
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+	if !insecurePlaintext {
+		// Load and validate the key pair BEFORE listening or declaring any
+		// readiness: ServeTLS would otherwise discover a broken cert inside
+		// the serve goroutine, after Agones was already told Ready — and the
+		// fleet would allocate a GameServer whose endpoint never came up.
+		cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+		if err != nil {
+			return fmt.Errorf("load TLS key pair: %w", err)
+		}
+		// A parseable pair can still be unusable: outside its validity
+		// window every client rejects the handshake, which to the fleet is
+		// indistinguishable from a dead endpoint. (Identity/DNS-name checks
+		// stay with the deployment side, which knows the served name; the
+		// process only knows the files it was handed.)
+		leaf, err := x509.ParseCertificate(cert.Certificate[0])
+		if err != nil {
+			return fmt.Errorf("parse TLS leaf certificate: %w", err)
+		}
+		if now := time.Now(); now.Before(leaf.NotBefore) || now.After(leaf.NotAfter) {
+			return fmt.Errorf("TLS certificate is outside its validity window (NotBefore %s, NotAfter %s): no client would accept the handshake", leaf.NotBefore.Format(time.RFC3339), leaf.NotAfter.Format(time.RFC3339))
+		}
+		srv.TLSConfig.Certificates = []tls.Certificate{cert}
+	}
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
-		fatalf("listen %s: %v", addr, err)
+		return fmt.Errorf("listen %s: %v", addr, err)
 	}
 	scheme := "wss"
 	if insecurePlaintext {
@@ -164,20 +202,43 @@ func runListen(w *sim.World, addr, certFile, keyFile, secretEnv string, insecure
 		if insecurePlaintext {
 			err = srv.Serve(ln)
 		} else {
-			err = srv.ServeTLS(ln, certFile, keyFile)
+			// The key pair is already loaded into TLSConfig.Certificates,
+			// so the file arguments stay empty.
+			err = srv.ServeTLS(ln, "", "")
 		}
 		serveFailed(err)
 	}()
 	defer srv.Close() // also severs hijacked WebSocket connections
+
+	// Agones Ready fires only now — the listener is bound and the serve
+	// goroutine is up, so "ready to be allocated" is true in the one sense
+	// that matters: a player the fleet routes here can actually connect.
+	if withAgones {
+		lc, err := agones.Start(ctx, agones.Config{HealthInterval: healthInterval})
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if err := lc.Shutdown(); err != nil {
+				fmt.Fprintf(os.Stderr, "zone: %v\n", err)
+			}
+		}()
+	}
 
 	runLoop(serveCtx, w, d, func() {
 		sim.DriveDemoTick(w)
 		w.Step()
 		hub.Tick(w)
 	})
-	if err := context.Cause(serveCtx); err != nil && err != context.Canceled {
-		fatalf("serve: %v", err)
+	// A canceled serveCtx has two possible authors, and only one is an
+	// error: the serve goroutine (a real serve failure) or the parent
+	// signal context (a clean SIGINT/SIGTERM — whose cause under Go 1.26+
+	// NAMES the signal, so comparing against context.Canceled would misread
+	// a clean shutdown as a failure and exit non-zero).
+	if err := context.Cause(serveCtx); err != nil && ctx.Err() == nil {
+		return fmt.Errorf("serve: %w", err)
 	}
+	return nil
 }
 
 // runReplicate drives the fixed demo ticks while tracking one observer's
@@ -241,10 +302,14 @@ func fatalf(format string, args ...any) {
 // runRealtime drives the world through a FixedLoop off the monotonic clock
 // until d elapses or the process is asked to stop. Timing jitter changes how
 // many ticks run, but never what a given tick computes — that is the point of
-// decoupling the sim rate from the wall clock.
+// decoupling the sim rate from the wall clock. It deliberately has no Agones
+// wiring: with no listener there is nothing a player could connect to, so
+// declaring Ready here would hand the fleet a dead allocation (-agones is
+// therefore -listen-only).
 func runRealtime(w *sim.World, d time.Duration) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
 	runLoop(ctx, w, d, func() {
 		sim.DriveDemoTick(w)
 		w.Step()
