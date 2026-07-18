@@ -626,6 +626,22 @@ jobs:
           if ! gh api "repos/${tap}/git/ref/heads/${branch}" >/dev/null 2>&1; then
             gh api "repos/${tap}/git/refs" -X POST -f ref="refs/heads/${branch}" -f sha="${base_sha}" >/dev/null
           fi
+
+          # MONOTONIC GUARD. The workflow concurrency group is per TAG, so two CD
+          # runs for different releases do not serialise against each other, and
+          # nothing else locks this shared tap branch. Without this, a slower run
+          # for an older tag (or a workflow_dispatch re-run) would overwrite a
+          # newer cask and silently DOWNGRADE the tap. Releases here are frequent
+          # enough for that to be a real race, not a theoretical one.
+          current="$(gh api "repos/${tap}/contents/Casks/world-at-ruin.rb?ref=${branch}" --jq '.content' 2>/dev/null \
+                     | base64 -d 2>/dev/null | sed -n 's/^  version "\(.*\)"$/\1/p' | head -1 || true)"
+          if [ -n "${current}" ] && [ "${current}" != "${VERSION}" ]; then
+            newest="$(printf '%s\n%s\n' "${current}" "${VERSION}" | sort -V | tail -1)"
+            if [ "${newest}" = "${current}" ]; then
+              echo "::notice::tap already carries ${current}, which is newer than ${VERSION} — leaving it alone"
+              exit 0
+            fi
+          fi
           existing="$(gh api "repos/${tap}/contents/Casks/world-at-ruin.rb?ref=${branch}" --jq '.sha' 2>/dev/null || true)"
           if [ -n "${existing}" ]; then
             gh api "repos/${tap}/contents/Casks/world-at-ruin.rb" -X PUT               -f message="feat: world-at-ruin ${VERSION}" -f content="${content}"               -f branch="${branch}" -f sha="${existing}" >/dev/null
