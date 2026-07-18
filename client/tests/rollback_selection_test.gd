@@ -146,12 +146,93 @@ func _ready() -> void:
 	if _failed:
 		return
 
+	# --- UNVERIFIABLE STATE FAILS CLOSED (Codex review, PR #98) ---
+	# Every input below is a PROOF of eligibility. The tempting "conservative
+	# default" for each is in fact maximally PERMISSIVE — an unknown save reads as
+	# schema 0 so every target looks reachable; an unknown shell reads as "0.0.0" so
+	# any window matches; an absent protocol range makes any target look connectable.
+	# Each must therefore refuse, naming what could not be verified.
+	var unverifiable: Array = [
+		[{"protocol": {"min": 1, "max": 1}, "shell_version": "0.1.14"}, "an absent save block"],
+		[{"save": "nonsense", "protocol": {"min": 1, "max": 1}, "shell_version": "0.1.14"}, "a non-Dictionary save block"],
+		[{"save": {"capability": 7}, "protocol": {"min": 1, "max": 1}, "shell_version": "0.1.14"}, "a save with no schema"],
+		[{"save": {"schema": 1}, "protocol": {"min": 1, "max": 1}, "shell_version": "0.1.14"}, "a save with no capability"],
+		[{"save": {"schema": 1.5, "capability": 7}, "protocol": {"min": 1, "max": 1}, "shell_version": "0.1.14"}, "a fractional save schema"],
+		[{"save": {"schema": 1, "capability": 7}, "protocol": {"min": 1, "max": 1}}, "an absent shell version"],
+		[{"save": {"schema": 1, "capability": 7}, "protocol": {"min": 1, "max": 1}, "shell_version": "garbage"}, "a non-version shell version"],
+		[{"save": {"schema": 1, "capability": 7}, "shell_version": "0.1.14"}, "an absent live protocol range"],
+		[{"save": {"schema": 1, "capability": 7}, "protocol": {"min": 5, "max": 1}, "shell_version": "0.1.14"}, "an INVERTED live protocol range"],
+		[{"save": {"schema": 1, "capability": 7}, "protocol": {"min": 1, "max": 1}, "shell_version": "0.1.14", "quarantined": "corrupt"}, "a malformed quarantine ledger"],
+	]
+	for case: Array in unverifiable:
+		var st: Dictionary = case[0]
+		var what: String = case[1]
+		_check(RollbackSelection.select(catalog, st)["action"] == RollbackSelection.NO_ELIGIBLE_TARGET, true, "fail-closed: %s is refused, never assumed" % what)
+	if _failed:
+		return
+
+	# The inverted-range guard must be LOAD-BEARING, so this case needs a target
+	# whose range is broad enough to spuriously "overlap" an inverted one: 0..9
+	# against a malformed 5..1 satisfies the interval test in both directions and
+	# would be selected on unverifiable connectivity data. (A narrow 1..1 target
+	# fails the overlap test anyway, which would make this control vacuous.)
+	var broad: Array = [_target("0.1.10", 1, 7, 0, 9, "0.1.0", "0.1.999")]
+	var inverted := _state()
+	inverted["protocol"] = {"min": 5, "max": 1}
+	_check(RollbackSelection.select(broad, inverted)["action"] == RollbackSelection.NO_ELIGIBLE_TARGET, true, "fail-closed: an inverted live range is refused even when a broad target range would 'overlap' it")
+	_check(RollbackSelection.select(broad, _state())["action"] == RollbackSelection.ROLLBACK, true, "fail-closed is ISOLATED: that same broad target is eligible under a coherent range")
+	if _failed:
+		return
+
+	# A malformed quarantine ledger must refuse even when a target would otherwise
+	# qualify — reading it as "nothing quarantined" would reopen the boot loop.
+	var corrupt_q := _state()
+	corrupt_q["quarantined"] = {"0.1.10": true}
+	_check(RollbackSelection.select(catalog, corrupt_q)["reason"].contains("quarantine"), true, "fail-closed: the refusal names the unreadable quarantine ledger")
+	# ...while an ABSENT ledger is the legitimate first-boot state and still selects.
+	var first_boot := _state()
+	first_boot.erase("quarantined")
+	_check(RollbackSelection.select(catalog, first_boot)["action"] == RollbackSelection.ROLLBACK, true, "fail-closed is ISOLATED: an absent ledger is first-boot, not corruption")
+	if _failed:
+		return
+
+	# --- a real signed manifest may carry whole numbers as JSON floats ---
+	# Rejecting 1.0 would degrade recovery to no_eligible_target while a perfectly
+	# good target sits in the catalogue — a broken pack with no way back.
+	var json_floats: Array = [{
+		"version": "0.1.10", "read_ceiling": 1.0, "save_capability": 7.0,
+		"speaks_protocol": {"min": 1.0, "max": 1.0},
+		"shell_compat": {"min": "0.1.0", "max": "0.1.999"},
+	}]
+	_check(RollbackSelection.select(json_floats, _state())["action"] == RollbackSelection.ROLLBACK, true, "json: integral floats (1.0) are accepted — a real manifest shape must stay recoverable")
+	var fractional: Array = [{
+		"version": "0.1.10", "read_ceiling": 1.5, "save_capability": 7,
+		"speaks_protocol": {"min": 1, "max": 1},
+		"shell_compat": {"min": "0.1.0", "max": "0.1.999"},
+	}]
+	_check(RollbackSelection.select(fractional, _state())["action"] == RollbackSelection.NO_ELIGIBLE_TARGET, true, "json: a FRACTIONAL eligibility number is not a proof and is skipped")
+	if _failed:
+		return
+
+	# --- unverifiable per-target metadata is skipped, never selected ---
+	# Each of these would otherwise WIN the ordering (the version sorts highest) and
+	# be handed to the bootstrap as a recovery target.
+	var bad_meta: Array = [
+		[_bad_version_target(), "a non-version target version (\"99.bad\")"],
+		[_bad_compat_target(), "a non-version shell_compat bound (\"garbage\")"],
+		[_inverted_compat_target(), "an inverted shell_compat window"],
+	]
+	for case: Array in bad_meta:
+		var entry: Dictionary = case[0]
+		var what: String = case[1]
+		var probe: Array = [entry, _target("0.1.2", 1, 7, 1, 1, "0.1.0", "0.1.999")]
+		var got := RollbackSelection.select(probe, _state())
+		_check(got["version"] == "0.1.2", true, "metadata: %s is skipped for the verifiable target" % what)
+	if _failed:
+		return
+
 	# --- total function: junk input never crashes it ---
 	_check(RollbackSelection.select([], {})["action"] == RollbackSelection.NO_ELIGIBLE_TARGET, true, "total: an empty state refuses cleanly")
-	_check(RollbackSelection.select(catalog, {"save": "nonsense", "protocol": {"min": 1, "max": 1}, "shell_version": "0.1.14"})["action"] == RollbackSelection.ROLLBACK, true, "total: a nonsense save block falls back to the most conservative save (schema 0), never a crash")
-	# An ABSENT shell version is the conservative "0.0.0", which fails every real
-	# shell_compat window — an unverifiable shell is never assumed compatible.
-	_check(RollbackSelection.select(catalog, {"save": {"schema": 1, "capability": 7}, "protocol": {"min": 1, "max": 1}})["action"] == RollbackSelection.NO_ELIGIBLE_TARGET, true, "total: an absent shell version is never assumed compatible")
 	_check(RollbackSelection.quarantine([42, "0.1.1", 42], "0.1.1").size() == 1, true, "total: junk in the quarantine set is dropped and duplicates collapse")
 	if _failed:
 		return
@@ -173,6 +254,32 @@ func _target(version: String, read_ceiling: int, save_capability: int, speaks_mi
 		"speaks_protocol": {"min": speaks_min, "max": speaks_max},
 		"shell_compat": {"min": shell_min, "max": shell_max},
 	}
+
+
+## A target whose VERSION is not a version. `compare_versions` coerces "99.bad" to
+## 99, so if it were not skipped it would win the ordering outright and hand the
+## bootstrap a nonsense recovery name.
+func _bad_version_target() -> Dictionary:
+	var t := _target("0.1.2", 1, 7, 1, 1, "0.1.0", "0.1.999")
+	t["version"] = "99.bad"
+	return t
+
+
+## A target whose shell_compat lower bound is not a version. It would compare as
+## 0.0.0 — widening the very window it is supposed to prove — and its high version
+## would win the ordering.
+func _bad_compat_target() -> Dictionary:
+	var t := _target("0.9.9", 1, 7, 1, 1, "0.1.0", "0.1.999")
+	t["shell_compat"] = {"min": "garbage", "max": "0.1.999"}
+	return t
+
+
+## A target whose shell_compat window is inverted (min > max) — incoherent signed
+## metadata, so it proves nothing and must be skipped rather than won on version.
+func _inverted_compat_target() -> Dictionary:
+	var t := _target("0.9.8", 1, 7, 1, 1, "0.1.0", "0.1.999")
+	t["shell_compat"] = {"min": "0.2.0", "max": "0.1.0"}
+	return t
 
 
 ## The baseline client/world state: save schema 1 capability 7, live tier accepts

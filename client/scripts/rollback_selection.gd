@@ -59,27 +59,61 @@ const NO_ELIGIBLE_TARGET := "no_eligible_target"
 ##     quarantined: Array,                       # versions that failed a boot check
 ## }
 ## [/codeblock]
-## Missing keys take the most conservative default, so a partial state never crashes
-## and never widens eligibility. Returns
+## Every one of those inputs is a PROOF of eligibility, so each must be present and
+## well-typed: unverifiable state yields [constant NO_ELIGIBLE_TARGET] naming what
+## could not be verified. There is no safe permissive default — an unknown save
+## would make every target look reachable, and an unknown shell would match any
+## compatibility window — so this never guesses. (`quarantined` is the one key that
+## may be absent: that is the legitimate first-boot state, nothing has failed yet.
+## Present-but-malformed is still refused.) Returns
 ## `{ action: String, version: String, reason: String }`.
 ##
 ## Malformed entries are SKIPPED rather than fatal: one bad catalogue entry must not
 ## deny the player a recovery that other entries can provide. If that leaves nothing
 ## eligible, the result is still a reasoned [constant NO_ELIGIBLE_TARGET].
 static func select(catalog: Array, state: Dictionary) -> Dictionary:
-	var save: Dictionary = state.get("save", {}) if state.get("save") is Dictionary else {}
-	var save_schema: int = _as_int(save.get("schema"), 0)
-	var save_capability: int = _as_int(save.get("capability"), 0)
-	var protocol: Dictionary = state.get("protocol", {}) if state.get("protocol") is Dictionary else {}
-	var shell_version: String = str(state.get("shell_version", "0.0.0"))
-	var quarantined: Array = state.get("quarantined", []) if state.get("quarantined") is Array else []
+	# EVERY eligibility input must be VERIFIED before any target is considered.
+	# There is no "conservative default" available here: defaulting unknown state to
+	# a permissive value (save schema 0, shell "0.0.0", an open protocol range) does
+	# not fail safe — it makes targets look reachable/runnable that may not be, which
+	# is precisely the stranding this library exists to prevent. So unverifiable
+	# state is a loud refusal, never an assumption.
+	var save: Variant = state.get("save")
+	if save is not Dictionary:
+		return _refuse("save metadata is missing or malformed — cannot prove any target can read the installed save")
+	var save_dict: Dictionary = save
+	if not (UpdateDecision.is_int_id(save_dict.get("schema")) and UpdateDecision.is_int_id(save_dict.get("capability"))):
+		return _refuse("save schema/capability are missing or not whole numbers — cannot prove any target can read the installed save")
+	var save_schema: int = int(save_dict["schema"])
+	var save_capability: int = int(save_dict["capability"])
 
-	# An absent/!malformed accepted-protocol range cannot be treated as "anything
-	# goes" — that would let an unrunnable build through. Refuse loudly instead.
-	if not (protocol.get("min") is int and protocol.get("max") is int):
+	var protocol: Variant = state.get("protocol")
+	if protocol is not Dictionary:
 		return _refuse("the live protocol range is missing or malformed")
-	var server_min: int = protocol["min"]
-	var server_max: int = protocol["max"]
+	var protocol_dict: Dictionary = protocol
+	if not (UpdateDecision.is_int_id(protocol_dict.get("min")) and UpdateDecision.is_int_id(protocol_dict.get("max"))):
+		return _refuse("the live protocol range is missing or malformed")
+	var server_min: int = int(protocol_dict["min"])
+	var server_max: int = int(protocol_dict["max"])
+	# An inverted range (5..1) is incoherent, and a broad target range would appear
+	# to "overlap" it under the interval test — the same fail-closed rule as above.
+	if server_min > server_max:
+		return _refuse("the live protocol range is inverted (%d..%d)" % [server_min, server_max])
+
+	# The installed shell is a runnability PROOF: without a real version there is
+	# nothing to check shell_compat against, and a coerced "0.0.0" would silently
+	# match any target whose window opens at 0.0.0.
+	if not UpdateDecision.is_version(state.get("shell_version")):
+		return _refuse("the installed shell version is missing or not a valid version — cannot prove any target runs on it")
+	var shell_version: String = str(state["shell_version"])
+
+	# A quarantine ledger that is present but unreadable must NOT be read as
+	# "nothing is quarantined" — that would re-select the build that just failed its
+	# boot check and reopen the very loop this breaks. Absent is different and
+	# legitimate: it is the first-boot state, where nothing has failed yet.
+	if state.has("quarantined") and state["quarantined"] is not Array:
+		return _refuse("the quarantine ledger is malformed — refusing rather than risk re-selecting a known-broken build")
+	var quarantined: Array = state.get("quarantined", [])
 
 	var best: Dictionary = {}
 	var best_version := ""
@@ -144,8 +178,8 @@ static func is_quarantined(quarantined: Array, version: String) -> bool:
 ## are required — a same-schema content expansion raises only `capability`, so
 ## checking the schema alone would still strand the player.
 static func _is_reachable(target: Dictionary, save_schema: int, save_capability: int) -> bool:
-	var read_ceiling: int = target["read_ceiling"]
-	var capability: int = target["save_capability"]
+	var read_ceiling: int = int(target["read_ceiling"])
+	var capability: int = int(target["save_capability"])
 	return read_ceiling >= save_schema and capability >= save_capability
 
 
@@ -154,8 +188,8 @@ static func _is_reachable(target: Dictionary, save_schema: int, save_capability:
 ## compatibility window.
 static func _is_runnable(target: Dictionary, server_min: int, server_max: int, shell_version: String) -> bool:
 	var speaks: Dictionary = target["speaks_protocol"]
-	var speaks_min: int = speaks["min"]
-	var speaks_max: int = speaks["max"]
+	var speaks_min: int = int(speaks["min"])
+	var speaks_max: int = int(speaks["max"])
 	# Two ranges overlap iff each starts no later than the other ends.
 	if speaks_min > server_max or speaks_max < server_min:
 		return false
@@ -170,38 +204,40 @@ static func _is_runnable(target: Dictionary, server_min: int, server_max: int, s
 ## Whether a catalogue entry carries every field eligibility is decided from, each
 ## well-typed. Entries failing this are skipped, never trusted: an entry missing its
 ## capability data cannot be shown to be safe, and this library never assumes.
+## Every field is validated with the SAME rules the forward path uses
+## ([method UpdateDecision.is_int_id], [method UpdateDecision.is_version]), so a real
+## signed manifest can never be readable by the updater and unreadable by recovery.
+## Two consequences worth stating:
+##   * Whole numbers may arrive as JSON floats (`1.0`); those are accepted, while a
+##     fractional value is not — an eligibility number that would be truncated into a
+##     different decision is not a proof.
+##   * A version must be a genuine dotted-integer version. `compare_versions` coerces
+##     unparseable components to 0, so accepting `"99.bad"` would let a nonsense entry
+##     win the ordering and be handed to the bootstrap as a recovery target.
 static func _is_wellformed(target: Dictionary) -> bool:
-	var version: Variant = target.get("version")
-	if version is not String or (version as String).is_empty():
+	if not UpdateDecision.is_version(target.get("version")):
 		return false
-	if not (target.get("read_ceiling") is int and target.get("save_capability") is int):
+	if not (UpdateDecision.is_int_id(target.get("read_ceiling")) and UpdateDecision.is_int_id(target.get("save_capability"))):
 		return false
 	var speaks: Variant = target.get("speaks_protocol")
-	if speaks is not Dictionary or not (_dict_of(speaks, "min") is int and _dict_of(speaks, "max") is int):
+	if speaks is not Dictionary:
 		return false
-	if (speaks as Dictionary)["min"] > (speaks as Dictionary)["max"]:
+	var speaks_dict: Dictionary = speaks
+	if not (UpdateDecision.is_int_id(speaks_dict.get("min")) and UpdateDecision.is_int_id(speaks_dict.get("max"))):
+		return false
+	if int(speaks_dict["min"]) > int(speaks_dict["max"]):
 		return false
 	var compat: Variant = target.get("shell_compat")
 	if compat is not Dictionary:
 		return false
-	var compat_min: Variant = _dict_of(compat, "min")
-	var compat_max: Variant = _dict_of(compat, "max")
-	if compat_min is not String or compat_max is not String:
+	var compat_dict: Dictionary = compat
+	# Both bounds must be real versions: a bound like "garbage" would compare as
+	# 0.0.0 and silently widen the window it is supposed to prove.
+	if not (UpdateDecision.is_version(compat_dict.get("min")) and UpdateDecision.is_version(compat_dict.get("max"))):
+		return false
+	if UpdateDecision.compare_versions(str(compat_dict["min"]), str(compat_dict["max"])) > 0:
 		return false
 	return true
-
-
-## A key's value from `source`, or null when absent — keeps the guards above readable.
-static func _dict_of(source: Variant, key: String) -> Variant:
-	return (source as Dictionary).get(key)
-
-
-## `value` as an int when it genuinely is one, else `fallback`. `bool` is excluded so
-## `true` can never stand in for 1.
-static func _as_int(value: Variant, fallback: int) -> int:
-	if value is bool or value is not int:
-		return fallback
-	return value
 
 
 ## A loud refusal carrying WHY nothing was selected — never a silent strand.

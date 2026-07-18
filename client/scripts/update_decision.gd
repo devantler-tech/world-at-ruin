@@ -50,7 +50,7 @@ static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 	# compatible shape across every schema bump, so a client of ANY schema can
 	# always at least learn it needs a newer shell — it is never stranded by a
 	# manifest whose newer body it cannot fully parse.
-	if not (manifest.has("schema") and _is_int_id(manifest["schema"])):
+	if not (manifest.has("schema") and is_int_id(manifest["schema"])):
 		return _result(INVALID_MANIFEST, "missing or non-integer 'schema'")
 	var env_err := _envelope_error(manifest)
 	if env_err != "":
@@ -207,14 +207,14 @@ static func _envelope_error(m: Dictionary) -> String:
 	if not (m.has("shell") and m["shell"] is Dictionary):
 		return "missing 'shell' object"
 	var sh: Dictionary = m["shell"]
-	if not _is_version(sh.get("current")):
+	if not is_version(sh.get("current")):
 		return "shell.current is not a version string"
-	if not _is_version(sh.get("min_supported")):
+	if not is_version(sh.get("min_supported")):
 		return "shell.min_supported is not a version string"
 	# reads_min lives in the STABLE envelope (the save schema the advertised shell
 	# reads down to) so a shell update can be checked for save-strand safety even on
 	# a manifest whose schema-specific body this client cannot parse.
-	if not _is_int_id(sh.get("reads_min")):
+	if not is_int_id(sh.get("reads_min")):
 		return "shell.reads_min is missing or not an integer"
 	# A coherent manifest never advertises a current shell below its own floor;
 	# such a manifest could otherwise steer a shell update to a DOWNGRADE.
@@ -242,9 +242,9 @@ static func _body_error(m: Dictionary) -> String:
 	if not (m.has("pack") and m["pack"] is Dictionary):
 		return "missing 'pack' object"
 	var pk: Dictionary = m["pack"]
-	if not _is_version(pk.get("version")):
+	if not is_version(pk.get("version")):
 		return "pack.version is not a version string"
-	if not _is_version(pk.get("min_shell")):
+	if not is_version(pk.get("min_shell")):
 		return "pack.min_shell is not a version string"
 	# A coherent manifest never advertises a pack that needs a shell newer than the
 	# newest shell it offers — otherwise a client would be sent to a shell update
@@ -255,19 +255,19 @@ static func _body_error(m: Dictionary) -> String:
 	if not (m.has("protocol") and m["protocol"] is Dictionary):
 		return "missing 'protocol' object"
 	var pr: Dictionary = m["protocol"]
-	if not (_is_int_id(pr.get("min")) and _is_int_id(pr.get("max"))):
+	if not (is_int_id(pr.get("min")) and is_int_id(pr.get("max"))):
 		return "protocol.min/max are not integers"
 	if int(pr["min"]) > int(pr["max"]):
 		return "protocol.min > protocol.max"
 	if not (m.has("save_schema") and m["save_schema"] is Dictionary):
 		return "missing 'save_schema' object"
 	var sv: Dictionary = m["save_schema"]
-	if not _is_int_id(sv.get("min")):
+	if not is_int_id(sv.get("min")):
 		return "save_schema.min is not an integer"
 	# `writes` (the candidate's write-schema) is REQUIRED: it drives the
 	# rollback-safety routing, so a manifest that omits it must be refused (fail
 	# closed) rather than silently allow a pack update that could strand a save.
-	if not _is_int_id(sv.get("writes")):
+	if not is_int_id(sv.get("writes")):
 		return "save_schema.writes is missing or not an integer"
 	if int(sv["writes"]) < int(sv["min"]):
 		return "save_schema.writes %d is below save_schema.min %d (incoherent)" % [
@@ -278,7 +278,11 @@ static func _body_error(m: Dictionary) -> String:
 ## True only for a discrete integer identifier: an int, or an integral, finite
 ## JSON float (1.0). A fractional value (1.5) or non-finite value is rejected, so
 ## it can never be silently truncated by a later int() into a wrong decision.
-static func _is_int_id(v: Variant) -> bool:
+## Public because a signed manifest parsed from JSON may present whole numbers as
+## floats: [RollbackSelection] validates the rollback catalogue with the SAME rule,
+## so a real manifest shape can never be readable by the forward path and
+## unreadable by the recovery path.
+static func is_int_id(v: Variant) -> bool:
 	if v is int:
 		return true
 	if v is float:
@@ -286,8 +290,10 @@ static func _is_int_id(v: Variant) -> bool:
 	return false
 
 
-## True if v is a non-empty dotted-integer version string ("0.1.14").
-static func _is_version(v: Variant) -> bool:
+## True if v is a non-empty dotted-integer version string ("0.1.14"). Public for
+## the same reason as [method is_int_id]: [RollbackSelection] must reject an
+## unverifiable version rather than let [method compare_versions] coerce it to 0.
+static func is_version(v: Variant) -> bool:
 	if not (v is String) or (v as String).is_empty():
 		return false
 	for part in (v as String).split("."):
