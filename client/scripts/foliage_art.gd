@@ -282,35 +282,51 @@ static func stone_texture(rng_seed: int, dark: Color, light: Color, frequency: f
 ## what the scissor is reading. Standard practice for alpha-tested foliage, and
 ## the reason distant scrub keeps its colour instead of turning to soot.
 ## (Raised by review on #147.)
-static func _bleed_alpha(img: Image, passes: int = 3) -> void:
+static func _bleed_alpha(img: Image, passes: int = 4) -> void:
 	var w := img.get_width()
 	var h := img.get_height()
+
+	# Which pixels currently carry usable colour. This has to be tracked
+	# SEPARATELY from alpha, and that is the whole subtlety: a bled pixel keeps
+	# alpha 0, so a later pass testing `alpha > 0` would refuse to read it and
+	# every pass after the first would be a no-op — a one-pixel ring wearing the
+	# name of a four-pass dilation. Lower mip levels reach well beyond one pixel,
+	# so those deeper rings are exactly what stops the fringe at distance.
+	# (Review finding on #147.)
+	var filled := []
+	filled.resize(w * h)
+	for y in h:
+		for x in w:
+			filled[y * w + x] = img.get_pixel(x, y).a > 0.0
+
 	for _pass in passes:
-		# Snapshot per pass so a freshly-bled pixel cannot seed the same pass and
-		# smear the colour further than one ring at a time.
+		# Snapshot so a pixel filled during this pass cannot seed the same pass
+		# and smear colour further than one ring at a time.
 		var source := img.duplicate() as Image
+		var was_filled := filled.duplicate()
 		for y in h:
 			for x in w:
-				if source.get_pixel(x, y).a > 0.0:
+				if was_filled[y * w + x]:
 					continue
 				var acc := Color(0.0, 0.0, 0.0, 0.0)
 				var found := 0
-				for dy in [-1, 0, 1]:
-					for dx in [-1, 0, 1]:
-						var nx: int = x + (dx as int)
-						var ny: int = y + (dy as int)
+				for dy: int in [-1, 0, 1]:
+					for dx: int in [-1, 0, 1]:
+						var nx := x + dx
+						var ny := y + dy
 						if nx < 0 or ny < 0 or nx >= w or ny >= h:
 							continue
-						var n := source.get_pixel(nx, ny)
-						if n.a <= 0.0:
+						if not was_filled[ny * w + nx]:
 							continue
+						var n := source.get_pixel(nx, ny)
 						acc += Color(n.r, n.g, n.b, 0.0)
 						found += 1
 				if found == 0:
 					continue
 				# Colour only — the pixel stays fully transparent, so the
-				# silhouette the scissor cuts is unchanged.
+				# silhouette the scissor cuts is byte-for-byte unchanged.
 				img.set_pixel(x, y, Color(acc.r / found, acc.g / found, acc.b / found, 0.0))
+				filled[y * w + x] = true
 
 
 ## Paints one rotated ellipse into `img`, in UV space. Alpha feathers over the

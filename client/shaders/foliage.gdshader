@@ -31,6 +31,8 @@ uniform float wind_speed = 1.0;
 // sway with it and every clump would bend a different way. That is a field of
 // props twitching independently, not one wind crossing the Reach.
 uniform vec3 wind_dir = vec3(1.0, 0.0, 0.35);
+// Metres per radian of gust phase — how long a gust is as it crosses the Reach.
+uniform float wind_wavelength = 9.0;
 uniform float roughness_value : hint_range(0.0, 1.0) = 0.95;
 // Blends the true surface normal toward straight up. Real foliage cards look
 // harsh lit by their flat geometric normal; leaning the normal skyward is the
@@ -63,8 +65,25 @@ void vertex() {
 	// UV.y is 1 at the prop's base and 0 at its tip, so this is 0 where the prop
 	// meets the ground and 1 at the top: the base stays planted.
 	float influence = 1.0 - UV.y;
-	float phase = hash11(id) * 6.2831853;
-	float sway = sin(TIME * wind_speed + phase) * wind_strength * influence;
+
+	// Gust phase comes from the prop's WORLD POSITION along the wind, not from
+	// its instance id, so a gust travels across the Reach and neighbours move
+	// together. A per-instance phase makes every clump independent: at any
+	// instant half the field bends upwind, which reads as twitching rather than
+	// as weather. A small id-derived jitter keeps it from looking mechanical.
+	vec3 wind_axis = normalize(wind_dir);
+	vec3 world_pos = MODEL_MATRIX[3].xyz;
+	// Note the MINUS on the time term: with a plus, points of constant phase
+	// travel against wind_dir and the gusts visibly roll upwind.
+	float phase = dot(world_pos, wind_axis) / max(wind_wavelength, 0.001)
+		- TIME * wind_speed
+		+ hash11(id) * 0.6;
+
+	// Biased so the sway is always DOWNWIND: a gust varies how hard the
+	// vegetation leans, never which way. Symmetric oscillation around neutral
+	// would mean the field spends half its time bending into the wind.
+	float gust = 0.62 + 0.38 * sin(phase);
+	float sway = gust * wind_strength * influence;
 
 	// Rotate the shared world-space wind into this instance's model space, so
 	// every prop leans the SAME way regardless of the yaw it was planted with.

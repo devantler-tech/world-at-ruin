@@ -141,6 +141,15 @@ func _ready() -> void:
 		if fringe < 0.02:
 			_fail("the %s mask borders the artwork with near-black transparent pixels (luma %.3f) — mipmapping would fringe distant props black" % [label, fringe])
 			return
+		# The bleed must reach BEYOND the first ring. Lower mip levels average
+		# over a wide footprint, so a one-pixel dilation still leaves them
+		# pulling in untouched black. A version of the bleed that read its
+		# neighbours' ALPHA could never propagate past pass one — bled pixels
+		# keep alpha 0 — and the border check above passed straight through it.
+		var depth := _bleed_depth(masks[label] as ImageTexture)
+		if depth < 3:
+			_fail("the %s mask's colour bleed reaches only %d pixel(s) past the silhouette — deeper mip levels would still average against black" % [label, depth])
+			return
 
 	# 8. WIRED — every kind resolves to the right shader, and only vegetation moves.
 	var swaying := 0
@@ -326,6 +335,49 @@ func _darkest_transparent_neighbour(tex: ImageTexture) -> float:
 			if worst < 0.0 or luma < worst:
 				worst = luma
 	return worst
+
+
+## How many pixel rings of transparent margin carry bled colour, measured as a
+## breadth-first distance from the opaque silhouette. A transparent pixel counts
+## as reached when its RGB is not black.
+func _bleed_depth(tex: ImageTexture) -> int:
+	var img := tex.get_image()
+	var w := img.get_width()
+	var h := img.get_height()
+	var dist := []
+	dist.resize(w * h)
+	var frontier: Array[Vector2i] = []
+	for y in h:
+		for x in w:
+			if img.get_pixel(x, y).a > 0.0:
+				dist[y * w + x] = 0
+				frontier.append(Vector2i(x, y))
+			else:
+				dist[y * w + x] = -1
+
+	var deepest := 0
+	while not frontier.is_empty():
+		var next: Array[Vector2i] = []
+		for p: Vector2i in frontier:
+			for dy: int in [-1, 0, 1]:
+				for dx: int in [-1, 0, 1]:
+					var nx := p.x + dx
+					var ny := p.y + dy
+					if nx < 0 or ny < 0 or nx >= w or ny >= h:
+						continue
+					if dist[ny * w + nx] != -1:
+						continue
+					var c := img.get_pixel(nx, ny)
+					# Untouched margin is pure transparent black; a bled pixel
+					# carries the artwork's colour at alpha 0.
+					if c.r <= 0.0 and c.g <= 0.0 and c.b <= 0.0:
+						continue
+					var d: int = dist[p.y * w + p.x] + 1
+					dist[ny * w + nx] = d
+					deepest = maxi(deepest, d)
+					next.append(Vector2i(nx, ny))
+		frontier = next
+	return deepest
 
 
 func _fail(message: String) -> void:
