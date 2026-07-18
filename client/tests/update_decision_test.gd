@@ -24,13 +24,13 @@ func _base_manifest() -> Dictionary:
 		"shell": {"current": "0.1.14", "min_supported": "0.1.0", "reads_min": 1},
 		"pack": {"version": "0.1.14", "min_shell": "0.1.14", "url": "x", "sha256": "y", "size": 0},
 		"protocol": {"min": 1, "max": 1},
-		"save_schema": {"min": 1, "writes": 1},
+		"save_schema": {"min": 1, "writes": 1, "capability": 1},
 		"signature": "sig",
 	}
 
 
 func _installed_current() -> Dictionary:
-	return {"shell_version": "0.1.14", "pack_version": "0.1.14", "save_schema": 1, "protocol": 1}
+	return {"shell_version": "0.1.14", "pack_version": "0.1.14", "save_schema": 1, "save_capability": 1, "protocol": 1}
 
 
 func _ready() -> void:
@@ -58,6 +58,8 @@ func _ready() -> void:
 	_test_schema_too_new_ignores_broken_body()
 	_test_schema_below_supported_refused()
 	_test_pack_update_requires_write_schema()
+	_test_pack_update_requires_capability()
+	_test_capability_raise_needs_a_readable_rollback_target()
 	_test_incoherent_shell_floor_refused()
 	_test_fractional_identifiers_refused()
 	_test_malformed_manifests_refuse_cleanly()
@@ -135,7 +137,7 @@ func _test_blocked_when_unresolvable() -> void:
 	_expect(inst, m, UpdateDecision.BLOCKED_INCOMPATIBLE, "protocol too old and nothing to update to")
 
 	var m2 := _base_manifest()
-	m2["save_schema"] = {"min": 2, "writes": 2} # server needs save schema >= 2
+	m2["save_schema"] = {"min": 2, "writes": 2, "capability": 1} # server needs save schema >= 2
 	_expect(_installed_current(), m2, UpdateDecision.BLOCKED_INCOMPATIBLE, "save schema too old and nothing to update to")
 
 
@@ -163,7 +165,7 @@ func _test_save_too_old_always_blocks() -> void:
 	# ANY advertised update, so even with a newer pack available it is a loud block,
 	# never routed to an update that cannot read the save.
 	var m := _base_manifest()
-	m["save_schema"] = {"min": 2, "writes": 2} # current builds read >= schema 2
+	m["save_schema"] = {"min": 2, "writes": 2, "capability": 1} # current builds read >= schema 2
 	m["pack"]["version"] = "0.1.15" # a newer pack IS available
 	var inst := _installed_current() # save_schema 1 — below the read floor
 	_expect(inst, m, UpdateDecision.BLOCKED_INCOMPATIBLE, "a save below the read floor blocks even with an update available")
@@ -220,7 +222,7 @@ func _test_shell_only_update_write_regression_refused() -> void:
 	# pack: a newer shell that writes an older save schema than installed is refused.
 	var m := _base_manifest()
 	m["shell"]["current"] = "0.2.0" # only the shell is newer
-	m["save_schema"] = {"min": 1, "writes": 2}
+	m["save_schema"] = {"min": 1, "writes": 2, "capability": 1}
 	var inst := _installed_current()
 	inst["save_schema"] = 4
 	inst["save_reads_max"] = 4
@@ -257,21 +259,21 @@ func _test_pack_write_schema_hazard_routes_to_shell() -> void:
 	var m := _base_manifest()
 	m["pack"]["version"] = "0.1.15"
 	m["shell"]["current"] = "0.2.0" # a genuinely newer shell to route to
-	m["save_schema"] = {"min": 1, "writes": 4} # writes v4
+	m["save_schema"] = {"min": 1, "writes": 4, "capability": 1} # writes v4
 	var inst := _installed_current()
 	inst["save_reads_max"] = 3 # installed build reads only up to v3
 	_expect(inst, m, UpdateDecision.SHELL_UPDATE, "a pack writing beyond the read ceiling rides the newer shell")
 	# Hazard but NO newer shell advertised → refuse, never follow to a downgrade.
 	var m3 := _base_manifest()
 	m3["pack"]["version"] = "0.1.15" # shell.current stays 0.1.14 == installed
-	m3["save_schema"] = {"min": 1, "writes": 4}
+	m3["save_schema"] = {"min": 1, "writes": 4, "capability": 1}
 	var inst3 := _installed_current()
 	inst3["save_reads_max"] = 3
 	_expect(inst3, m3, UpdateDecision.INVALID_MANIFEST, "a write-hazard with no newer shell is refused, not a downgrade")
 	# Safe case: writes within the read ceiling → a plain pack update.
 	var m2 := _base_manifest()
 	m2["pack"]["version"] = "0.1.15"
-	m2["save_schema"] = {"min": 1, "writes": 3}
+	m2["save_schema"] = {"min": 1, "writes": 3, "capability": 1}
 	var inst2 := _installed_current()
 	inst2["save_reads_max"] = 3
 	_expect(inst2, m2, UpdateDecision.PACK_UPDATE, "a pack writing within the read ceiling is a plain pack update")
@@ -282,7 +284,7 @@ func _test_pack_write_schema_regression_refused() -> void:
 	# refused — applying it would regress the save format and drop intervening state.
 	var m := _base_manifest()
 	m["pack"]["version"] = "0.1.15"
-	m["save_schema"] = {"min": 1, "writes": 2}
+	m["save_schema"] = {"min": 1, "writes": 2, "capability": 1}
 	var inst := _installed_current()
 	inst["save_schema"] = 4
 	inst["save_reads_max"] = 4
@@ -317,6 +319,72 @@ func _test_pack_update_requires_write_schema() -> void:
 	m["pack"]["version"] = "0.1.15" # a pack update would otherwise apply
 	m["save_schema"] = {"min": 1} # writes omitted
 	_expect(_installed_current(), m, UpdateDecision.INVALID_MANIFEST, "a manifest omitting save_schema.writes fails closed")
+
+
+func _test_pack_update_requires_capability() -> void:
+	# `save_schema.capability` drives the same-schema stranding gate below, so a
+	# manifest omitting it must fail closed exactly like one omitting `writes`.
+	# Without it there is no way to prove a rollback target could read what the
+	# candidate writes, and an assumed-safe default is how a player gets stranded.
+	var m := _base_manifest()
+	m["pack"]["version"] = "0.1.15" # a pack update would otherwise apply
+	m["save_schema"] = {"min": 1, "writes": 1} # capability omitted
+	_expect(_installed_current(), m, UpdateDecision.INVALID_MANIFEST, "a manifest omitting save_schema.capability fails closed")
+	# A malformed capability is refused on the same grounds as a missing one.
+	m["save_schema"] = {"min": 1, "writes": 1, "capability": -1}
+	_expect(_installed_current(), m, UpdateDecision.INVALID_MANIFEST, "a negative save_schema.capability is refused")
+	m["save_schema"] = {"min": 1, "writes": 1, "capability": 2.5}
+	_expect(_installed_current(), m, UpdateDecision.INVALID_MANIFEST, "a fractional save_schema.capability is refused")
+
+
+func _test_capability_raise_needs_a_readable_rollback_target() -> void:
+	# THE STRANDING CASE (#120). A same-schema content expansion keeps `writes`
+	# inside the rollback target's read ceiling while raising `capability`. The
+	# writes/reads_max check therefore passes it, and if the pack then fails its
+	# boot health check, RollbackSelection finds no target whose `save_capability`
+	# covers the save the pack already wrote — the forward path admitted a state
+	# the recovery path cannot undo.
+	var raising := func() -> Dictionary:
+		var m := _base_manifest()
+		m["pack"]["version"] = "0.1.15" # a pack update is on offer
+		m["shell"]["current"] = "0.1.15" # ...and a newer shell exists to route to
+		# Same schema (writes 1 == installed, well inside the read ceiling), but the
+		# capability rises 1 -> 5. Only the capability axis moves.
+		m["save_schema"] = {"min": 1, "writes": 1, "capability": 5}
+		return m
+
+	# No catalogue at all: unprovable, so it must not ride the pack tier.
+	_expect(_installed_current(), raising.call(), UpdateDecision.SHELL_UPDATE, "a capability-raising pack with no rollback catalogue routes to the shell tier")
+
+	# A catalogue that cannot read the raised capability is no better than none.
+	var short_target: Dictionary = raising.call()
+	short_target["rollback_targets"] = [{"save_capability": 4, "read_ceiling": 9}]
+	_expect(_installed_current(), short_target, UpdateDecision.SHELL_UPDATE, "a rollback target one capability short still routes to the shell tier")
+
+	# A malformed entry must not be counted as cover (fail closed).
+	var malformed: Dictionary = raising.call()
+	malformed["rollback_targets"] = [{"save_capability": "lots"}, {"read_ceiling": 9}]
+	_expect(_installed_current(), malformed, UpdateDecision.SHELL_UPDATE, "a malformed rollback entry never counts as capability cover")
+
+	# POSITIVE CONTROL: one target that CAN read it makes the pack safe again.
+	# This is what proves the gate is discriminating rather than simply blocking
+	# every capability raise — without it, the three cases above would also pass
+	# against a gate that refused unconditionally.
+	var covered: Dictionary = raising.call()
+	covered["rollback_targets"] = [{"save_capability": 4}, {"save_capability": 5, "read_ceiling": 9}]
+	_expect(_installed_current(), covered, UpdateDecision.PACK_UPDATE, "a retained target that can read the raised capability admits the pack")
+
+	# A pack that does NOT raise the capability is untouched by this gate — the
+	# installed build is its own rollback target on this axis.
+	var level: Dictionary = raising.call()
+	level["save_schema"] = {"min": 1, "writes": 1, "capability": 1}
+	_expect(_installed_current(), level, UpdateDecision.PACK_UPDATE, "a pack holding the capability level still applies without a catalogue")
+
+	# With no newer shell to route to, refuse rather than follow a stale manifest
+	# into a downgrade — mirroring the read-ceiling branch.
+	var no_shell: Dictionary = raising.call()
+	no_shell["shell"]["current"] = "0.1.14" # == installed, nothing newer
+	_expect(_installed_current(), no_shell, UpdateDecision.INVALID_MANIFEST, "a capability-raising pack with no newer shell is refused, never downgraded")
 
 
 func _test_incoherent_shell_floor_refused() -> void:
