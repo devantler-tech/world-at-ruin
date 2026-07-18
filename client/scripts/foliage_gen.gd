@@ -113,6 +113,13 @@ static func scatter(params: Dictionary) -> Array[Dictionary]:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = int(params.get("seed", 0))
 
+	# Spatial hash for the separation test, cell-sized to min_sep so the 3×3
+	# neighbourhood provably covers every prop that could be too close (see
+	# _too_close). Sparse — only occupied cells exist — and unused when
+	# separation is off.
+	var grid := {}
+	var cell := min_sep
+
 	var attempts := 0
 	while out.size() < count and attempts < max_attempts:
 		attempts += 1
@@ -123,7 +130,7 @@ static func scatter(params: Dictionary) -> Array[Dictionary]:
 		var z := rng.randf_range(lo, hi)
 		if _inside_any_keep_out(x, z, keep_outs):
 			continue
-		if min_sep_sq > 0.0 and _too_close(x, z, out, min_sep_sq):
+		if min_sep_sq > 0.0 and _too_close(x, z, grid, cell, min_sep_sq):
 			continue
 		# Ground BEFORE style: a candidate with no surface under it is rejected
 		# like any other, so it too costs exactly 2 draws and the stream
@@ -141,6 +148,8 @@ static func scatter(params: Dictionary) -> Array[Dictionary]:
 		var yaw := rng.randf_range(0.0, TAU)
 		var scale := rng.randf_range(SCALE_MIN, SCALE_MAX)
 		out.append({"kind": kind, "pos": Vector3(x, y, z), "yaw": yaw, "scale": scale})
+		if min_sep_sq > 0.0:
+			_grid_insert(grid, x, z, cell)
 	return out
 
 
@@ -238,11 +247,43 @@ static func _inside_any_keep_out(x: float, z: float, keep_outs: Array) -> bool:
 	return false
 
 
-## Within `min_sep` (squared) of an already-placed prop on the XZ plane.
-static func _too_close(x: float, z: float, placed: Array[Dictionary], min_sep_sq: float) -> bool:
+## Within `min_sep` (squared) of an already-placed prop on the XZ plane, tested
+## against a uniform spatial hash instead of every prop placed so far.
+##
+## The acceleration is EXACT, not approximate, so the scatter it produces is
+## bit-identical to the full scan it replaces. With the cell size set to
+## `min_sep`, two points closer than `min_sep` differ by at most one cell on each
+## axis — `|dx| < cell` forces `floor(x₁/cell)` and `floor(x₂/cell)` to differ by
+## at most 1 — so the 3×3 neighbourhood provably contains every prop that could
+## be too close. Nothing outside it needs testing, and nothing inside it is
+## skipped, which turns the O(n²) scan into ~O(n) without changing a single
+## accept/reject decision.
+##
+## Props are bucketed by the position they were INSERTED with and never move
+## afterwards, so a bucket key can never go stale. That is the server's hard-won
+## broad-phase lesson (#64/#68): there, querying a live-mutated position against
+## a grid built from an earlier one pruned a still-overlapping pair. Here the
+## scatter only ever appends, so the same discipline is satisfied by construction
+## — but keep it that way if props ever become movable.
+static func _too_close(x: float, z: float, grid: Dictionary, cell: float, min_sep_sq: float) -> bool:
 	var here := Vector2(x, z)
-	for p: Dictionary in placed:
-		var pos: Vector3 = p["pos"]
-		if here.distance_squared_to(Vector2(pos.x, pos.z)) < min_sep_sq:
-			return true
+	var cx := floori(x / cell)
+	var cz := floori(z / cell)
+	for ox in range(-1, 2):
+		for oz in range(-1, 2):
+			var bucket: Variant = grid.get(Vector2i(cx + ox, cz + oz))
+			if bucket == null:
+				continue
+			for q: Vector2 in (bucket as Array):
+				if here.distance_squared_to(q) < min_sep_sq:
+					return true
 	return false
+
+
+## Record an accepted prop in the spatial hash, under the cell of the position it
+## was placed at.
+static func _grid_insert(grid: Dictionary, x: float, z: float, cell: float) -> void:
+	var key := Vector2i(floori(x / cell), floori(z / cell))
+	var bucket: Array = grid.get(key, [])
+	bucket.append(Vector2(x, z))
+	grid[key] = bucket
