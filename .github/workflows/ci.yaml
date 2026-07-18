@@ -714,6 +714,14 @@ jobs:
           if ! grep -q "CAPTURE PASS" capture.log; then
             echo "::error::frame capture did not report PASS — see log"; tail -40 capture.log; exit 1
           fi
+          # A runtime failure AFTER the world builds can still leave a
+          # renderable scene, so PASS alone is not proof the frames depict a
+          # healthy game. Treat any script error during capture as a failure.
+          if grep -qE "SCRIPT ERROR|^ERROR" capture.log; then
+            echo "::error::errors during capture — frames may not depict a healthy world"
+            grep -nE "SCRIPT ERROR|^ERROR" capture.log | head -20
+            exit 1
+          fi
       - name: Frames actually exist
         # The tool fails closed on a uniform frame, but never trust a single
         # signal: confirm real files landed before advertising an artifact.

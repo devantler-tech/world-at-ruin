@@ -77,6 +77,15 @@ func _ready() -> void:
 	for i in WARMUP_FRAMES:
 		await get_tree().process_frame
 
+	# The world must actually EXIST. A luminance check alone cannot tell a
+	# rendered world from a bare sky: main.gd builds the environment BEFORE
+	# WorldGen, so a failure in or after world setup still leaves a procedural
+	# sky gradient — which has plenty of luminance variation — and the capture
+	# would publish that as proof of a world that never rendered.
+	if not _has_world(main):
+		_fail("the world did not build (no Terrain under World) — a sky-only frame is not evidence")
+		return
+
 	var cam := Camera3D.new()
 	cam.far = 400.0
 	cam.fov = 68.0
@@ -91,6 +100,15 @@ func _ready() -> void:
 		for i in SETTLE_FRAMES:
 			cam.current = true
 			await get_tree().process_frame
+
+		# And the camera must actually be LOOKING at that world. The terrain
+		# carries a collider, so a ray along the view direction hits geometry
+		# whenever the shot contains ground — and misses when the camera is
+		# framing nothing but sky, which is the case a luminance check happily
+		# passes.
+		if not _sees_geometry(cam, vantage[2]):
+			_fail("vantage '%s' sees no world geometry — the shot is sky only" % vantage_name)
+			return
 
 		await RenderingServer.frame_post_draw
 		var img := get_viewport().get_texture().get_image()
@@ -109,6 +127,34 @@ func _ready() -> void:
 
 	print("CAPTURE PASS — %d vantages written to %s" % [VANTAGES.size(), dir])
 	get_tree().quit(0)
+
+
+## Whether the generated world is actually present in the tree: a WorldGen node
+## carrying its baked Terrain mesh. Structural rather than visual on purpose —
+## it answers "did the world build?" directly, instead of inferring it from
+## pixels that a sky alone can produce.
+func _has_world(main: Node) -> bool:
+	var world := main.get_node_or_null("World")
+	if world == null:
+		return false
+	for child in world.get_children():
+		if child is MeshInstance3D and str(child.name) == "Terrain" \
+				and (child as MeshInstance3D).mesh != null:
+			return true
+	return false
+
+
+## Whether the camera has world geometry in front of it, by raycasting from the
+## eye toward the vantage's target against the terrain/ruin colliders. Distinct
+## from _has_world: the world can exist while the camera frames only sky.
+func _sees_geometry(cam: Camera3D, target: Vector3) -> bool:
+	var space := cam.get_world_3d().direct_space_state
+	var from := cam.global_position
+	var to := from + (target - from).normalized() * 500.0
+	var query := PhysicsRayQueryParameters3D.create(from, to)
+	query.collide_with_areas = false
+	var hit := space.intersect_ray(query)
+	return not hit.is_empty()
 
 
 ## Luminance spread over a grid sampled from the central box only — enough to
