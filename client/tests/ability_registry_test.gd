@@ -85,11 +85,13 @@ func _ready() -> void:
 		return
 
 	# --- a valid ability parses (sanity), then build the negative controls ---
+	# A cone declares its wedge as the shared integer cosine (schema v2): the same
+	# number the server compares against, so neither tier derives one from degrees.
 	var base := {
-		"id": "sword_probe", "version": 1,
+		"id": "sword_probe", "version": 2,
 		"weapon": "sword", "role": "damage", "effect": "damage", "telegraph": "cone",
 		"cast_time_ms": 300, "cooldown_ms": 4000, "resource_cost": 15,
-		"range_m": 4.0, "power": 100,
+		"range_m": 4.0, "power": 100, "cos_half_scaled": 707107,
 	}
 	_check(Ability.parse(base) != null, "a valid ability parses")
 
@@ -194,6 +196,50 @@ func _ready() -> void:
 	_expect_rejected(_with(base, "targeting", "smart"), "an unknown field")
 	_expect_rejected(_with(base, "id", ""), "an empty id")
 	_expect_rejected([], "a non-object")
+	if _failed:
+		return
+
+	# --- the cone's angular threshold is DATA, in both directions (#118) ---
+	# A cone's wedge must arrive as the shared integer both tiers read. The two
+	# illegal states are made unrepresentable rather than defaulted: a cone with
+	# no threshold would force each tier back to deriving its own (the exact
+	# divergence this field abolishes), and a non-cone carrying one would ship a
+	# number nothing reads, which a later change could start honouring and
+	# silently alter a shipped shape.
+	_expect_rejected(_drop(base, "cos_half_scaled"),
+		"a cone with no angular threshold")
+	var circle_probe := _with(base, "telegraph", "circle")
+	_expect_rejected(circle_probe,
+		"a non-cone carrying an angular threshold")
+	_check(Ability.parse(_drop(circle_probe, "cos_half_scaled")) != null,
+		"the same non-cone parses once the threshold is removed")
+
+	# It is a fixed-point integer, so only a whole number inside the range a
+	# cosine can occupy is representable. Out-of-range is REFUSED, not clamped:
+	# ability data is authored content, and silently clamping to a full disc or a
+	# degenerate ray would ship a shape nobody wrote.
+	_expect_rejected(_with(base, "cos_half_scaled", "wide"), "a wrong-typed threshold")
+	_expect_rejected(_with(base, "cos_half_scaled", 707107.5), "a fractional threshold")
+	_expect_rejected(_with(base, "cos_half_scaled", Telegraph.COS_SCALE + 1), "a threshold above +COS_SCALE")
+	_expect_rejected(_with(base, "cos_half_scaled", -Telegraph.COS_SCALE - 1), "a threshold below -COS_SCALE")
+	_check(Ability.parse(_with(base, "cos_half_scaled", Telegraph.COS_SCALE)) != null,
+		"exactly +COS_SCALE (a degenerate ray) is representable")
+	_check(Ability.parse(_with(base, "cos_half_scaled", -Telegraph.COS_SCALE)) != null,
+		"exactly -COS_SCALE (a full disc) is representable")
+
+	# Every SHIPPED cone must carry it — the guard is worthless if the registry
+	# itself is exempt, and this is what pins the field on real content rather
+	# than only on a synthetic probe.
+	var cones := 0
+	for ab: Dictionary in abilities:
+		if ab["telegraph"] != "cone":
+			_check(not ab.has("cos_half_scaled"),
+				"shipped non-cone '%s' carries no angular threshold" % ab["id"])
+			continue
+		cones += 1
+		_check(ab.has("cos_half_scaled"),
+			"shipped cone '%s' carries its angular threshold" % ab["id"])
+	_check(cones > 0, "the registry ships at least one cone (else this guard is vacuous)")
 	if _failed:
 		return
 
