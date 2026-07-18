@@ -207,6 +207,51 @@
           "note": "on the axis, 1 m inside the range edge"
         }
       ]
+    },
+    {
+      "name": "tightest_reachable_edge_band",
+      "apex_mm": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "facing_mm": {
+        "x": 0,
+        "y": 0,
+        "z": -1000
+      },
+      "range_mm": 4000000,
+      "cos_half_scaled": 707107,
+      "half_angle_deg_presentational": 45,
+      "probes": [
+        {
+          "point_mm": {
+            "x": -999998,
+            "y": 0,
+            "z": -999999
+          },
+          "expect_caught": true,
+          "note": "tightest reachable server-catch margin (~1.3e-7 of cosine) at the world corner"
+        },
+        {
+          "point_mm": {
+            "x": -999999,
+            "y": 0,
+            "z": -900000
+          },
+          "expect_caught": false,
+          "note": "clearly outside the wedge at the same scale"
+        },
+        {
+          "point_mm": {
+            "x": -900000,
+            "y": 0,
+            "z": -999999
+          },
+          "expect_caught": true,
+          "note": "clearly inside the wedge at the same scale"
+        }
+      ]
     }
   ],
   "cos_scale": 1000000

@@ -55,6 +55,8 @@ func _ready() -> void:
 		return
 	if not _check_threshold_is_consumed_not_derived():
 		return
+	if not _check_client_wedge_is_a_superset():
+		return
 
 	print("TEST PASS — client cone resolution matches the shared cross-tier fixture (consumed threshold, ceil bias, no per-tier derivation)")
 	get_tree().quit(0)
@@ -180,6 +182,39 @@ func _check_threshold_is_consumed_not_derived() -> bool:
 	if Telegraph.in_cone_scaled(apex, fwd, 30.0, 965926, probe):
 		_fail("the 15 deg wedge must NOT catch a point ~31 deg off axis — the threshold is being ignored")
 		return false
+	return true
+
+
+## The two tiers can still disagree for a point inside the quantized edge band,
+## because the authoritative predicate is exact integer math while this tier is
+## float32. The two possible disagreements are NOT equally bad:
+##
+##   - this tier says INSIDE, server says safe → a wasted dodge. Harmless.
+##   - this tier says SAFE, server says hit → the player dodged on screen and was
+##     hit anyway. The desync telegraphs exist to prevent.
+##
+## So the residual error must not be free to land on either side. This asserts
+## the one-directional guarantee that makes the second case unreachable: for a
+## point the server catches, this tier must catch it too.
+##
+## Asserted by walking OUTWARD from the threshold in sub-quantum steps — the band
+## where the disagreement would live — rather than at one hand-picked point.
+func _check_client_wedge_is_a_superset() -> bool:
+	var apex := Vector3.ZERO
+	var fwd := Vector3(0, 0, -1)
+	for scaled: int in [707107, 965926, 500000, 258819]:
+		var threshold := float(scaled) / float(Telegraph.COS_SCALE)
+		# Angles fractionally INSIDE the exact wedge: the server catches every one
+		# of these, so this tier must never paint one safe.
+		for step: float in [0.0, 1e-7, 5e-7, 1e-6, 2e-6]:
+			var target := minf(1.0, threshold + step)
+			var ang := acos(clampf(target, -1.0, 1.0))
+			for dist: float in [4.0, 30.0, 1000.0]:
+				var p := Vector3(sin(ang) * dist, 0, -cos(ang) * dist)
+				if not Telegraph.in_cone_scaled(apex, fwd, dist * 2.0, scaled, p):
+					_fail("superset broken: threshold %d, %s inside it, at %s m — the server catches this and the client painted it SAFE"
+						% [scaled, step, dist])
+					return false
 	return true
 
 

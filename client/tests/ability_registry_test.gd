@@ -218,6 +218,14 @@ func _ready() -> void:
 	# cosine can occupy is representable. Out-of-range is REFUSED, not clamped:
 	# ability data is authored content, and silently clamping to a full disc or a
 	# degenerate ray would ship a shape nobody wrote.
+	# A file must not carry a field from a schema version it does not claim. The
+	# SCHEMA_VERSION ceiling only catches versions that are too NEW, so without
+	# this a cone could declare v1 while carrying the v2 threshold — and an older
+	# v1 build, which ought to refuse that content, would never be given the
+	# chance to.
+	_expect_rejected(_with(base, "version", 1),
+		"a v1 cone carrying the v2 angular threshold")
+
 	_expect_rejected(_with(base, "cos_half_scaled", "wide"), "a wrong-typed threshold")
 	_expect_rejected(_with(base, "cos_half_scaled", 707107.5), "a fractional threshold")
 	_expect_rejected(_with(base, "cos_half_scaled", Telegraph.COS_SCALE + 1), "a threshold above +COS_SCALE")

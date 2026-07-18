@@ -116,6 +116,20 @@ const _KNOWN_FIELDS := [
 ## never a convention.
 const _ANGULAR_TELEGRAPH := "cone"
 
+## The schema version that introduced `cos_half_scaled`. A file carrying the
+## field must declare AT LEAST this version.
+##
+## Without the check the version contract leaks in the one direction that
+## matters: a cone could declare `"version": 1` while carrying a v2 field and
+## still parse here, so v2 semantics would travel mislabelled as v1. The
+## SCHEMA_VERSION ceiling only refuses versions that are too NEW — it cannot
+## notice a file understating its own. Then an older v1 build, which would
+## rightly refuse this content, is never given the chance to: it sees a version
+## it trusts, ignores nothing it knows about, and resolves the cone with a
+## threshold it does not understand. Declaring the version is what makes the
+## ceiling a real gate rather than an honour system.
+const _COS_HALF_SCALED_SINCE_VERSION := 2
+
 
 ## Validate one decoded ability object and return a normalised, typed Dictionary,
 ## or null (loudly) on ANY malformed field. Every field is type- and
@@ -195,6 +209,11 @@ static func _apply_cos_half_scaled(d: Dictionary, out: Dictionary, id: String) -
 	if not is_cone:
 		push_error("Ability '%s': 'cos_half_scaled' is only meaningful for telegraph '%s', not '%s' — refusing rather than carrying a threshold nothing reads"
 			% [id, _ANGULAR_TELEGRAPH, out["telegraph"]])
+		return false
+
+	if int(out["version"]) < _COS_HALF_SCALED_SINCE_VERSION:
+		push_error("Ability '%s': 'cos_half_scaled' arrived in schema version %d but this file declares version %d — a file must not carry a field from a schema it does not claim"
+			% [id, _COS_HALF_SCALED_SINCE_VERSION, out["version"]])
 		return false
 
 	var v = d["cos_half_scaled"]

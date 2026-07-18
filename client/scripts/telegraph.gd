@@ -40,6 +40,34 @@ const _MIN_FACING := 0.0001
 ## CONSTRUCTION rather than by convention.
 const COS_SCALE := 1_000_000
 
+## How far the client's angular test leans OUTWARD, in cosine units, so its wedge
+## is always a SUPERSET of the server's.
+##
+## Sharing one integer threshold removes the systematic divergence, but not the
+## substrate difference: the authoritative predicate is exact integer math on
+## millimetres, while Godot's vectors are 32-bit floats. For a point inside the
+## resulting edge band the two can still disagree — and one of the two possible
+## disagreements is much worse than the other:
+##
+##   - client says INSIDE, server says safe → the player steps out of something
+##     harmless. A wasted dodge, and nothing more.
+##   - client says SAFE, server says hit → the player dodged on screen and was
+##     hit anyway. This is the desync telegraphs exist to prevent.
+##
+## Those are not symmetric, so the residual error must not be allowed to land on
+## whichever side it happens to fall. Biasing the client's threshold DOWN (a
+## lower cosine is a WIDER wedge) makes the second case unreachable: anything the
+## server catches, the client has already painted as dangerous.
+##
+## Sizing: the error is dominated by float32 arithmetic in `normalized()` and
+## `dot()` — a few ULP at magnitude ~0.7, where 1 ULP is ~6e-8, so ~5e-7 in the
+## worst case. Position representation adds ~4e-8 even at the 4 km extent cap.
+## 4e-6 is roughly eight times that bound, while costing only four quantization
+## steps of angular slop — about 0.02 mm of lateral error at 4 km, and far less
+## at any realistic telegraph size. Widening it further would start to matter to
+## a player; narrowing it would stop covering the arithmetic.
+const _CLIENT_INCLUSION_BIAS := 0.000004
+
 
 ## Convert an author's half-angle in degrees to the integer scaled cosine both
 ## tiers consume. This is an AUTHORING/INGESTION-time conversion — it is the one
@@ -127,7 +155,9 @@ static func in_cone_scaled(apex: Vector3, facing: Vector3, range_m: float,
 		return true
 	var threshold := clampi(cos_half_scaled, -COS_SCALE, COS_SCALE)
 	var faced := _planar_dir(facing).dot(to / dist)
-	return faced >= float(threshold) / float(COS_SCALE)
+	# Lean outward so this tier can never paint safe something the authoritative
+	# tier catches (see `_CLIENT_INCLUSION_BIAS`).
+	return faced >= float(threshold) / float(COS_SCALE) - _CLIENT_INCLUSION_BIAS
 
 
 ## Inside a sector ("cone") given the half-angle in DEGREES — an authoring and
