@@ -26,9 +26,11 @@ const FALL_LIMIT_Y := -40.0
 ## frame rate; the mouse path stays event-driven and untouched.
 const STICK_LOOK_SPEED_YAW := 2.6
 const STICK_LOOK_SPEED_PITCH := 1.6
-## Deadzone for stick-driven actions. Godot's 0.5 add_action default is a
-## digital-button threshold; an analog stick needs far less or walking feels
-## like a switch.
+## Deadzone for the actions, pinned explicitly (it equals Godot 4.7's
+## add_action default) so stick feel survives an engine-default change: a
+## deadzone near the 0.5 digital-press threshold would turn analog walking
+## into a switch. Keys and buttons report strength 0 or 1, so the value only
+## matters to the sticks.
 const STICK_DEADZONE := 0.2
 
 var spawn_point := Vector3.ZERO
@@ -95,7 +97,7 @@ static func ensure_input_actions() -> void:
 	for action: String in key_bindings:
 		if InputMap.has_action(action):
 			continue
-		InputMap.add_action(action, STICK_DEADZONE if joy_axes.has(action) else 0.5)
+		InputMap.add_action(action, STICK_DEADZONE)
 		for key: Key in key_bindings[action]:
 			var ev := InputEventKey.new()
 			ev.physical_keycode = key

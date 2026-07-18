@@ -19,7 +19,8 @@ extends Node
 
 ## Independent literal on purpose: asserting against Player.STICK_DEADZONE
 ## would let the test and the code share one wrong value. Sticks need a
-## deadzone well under Godot's 0.5 digital-button default.
+## deadzone well under the 0.5 digital-press threshold or analog walking
+## degrades into a switch.
 const MAX_STICK_DEADZONE := 0.25
 const EPS := 0.001
 
@@ -74,7 +75,7 @@ func _check_bindings() -> void:
 				found = true
 		_check(found, "action '%s' is bound to joypad axis %d (sign %+.0f)" % [action, expected[0], expected[1]])
 		_check(InputMap.action_get_deadzone(action) <= MAX_STICK_DEADZONE,
-			"stick action '%s' has an analog deadzone (<= %.2f), not the digital default" % [action, MAX_STICK_DEADZONE])
+			"stick action '%s' keeps an analog deadzone (<= %.2f)" % [action, MAX_STICK_DEADZONE])
 
 	# Verbs sit on pad buttons.
 	var buttons := {
