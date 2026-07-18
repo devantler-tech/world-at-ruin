@@ -4,15 +4,24 @@ name: CD
 # Production build + publish. Triggered by the GitHub Release that release.yaml's
 # semantic-release run publishes.
 #
-# Why `release: published` and not `push: tags: v*` (the org's Go-repo shape):
-# in those repos GoReleaser CREATES the release, so the tag is the only thing
-# that exists when CD must start. Here .releaserc loads
-# @semantic-release/github, so the Release already exists — and CD's job is to
-# attach assets to it. Hanging off the release event means the release is
-# guaranteed to exist when the upload runs, instead of racing the tag push.
+# THE RELEASE MUST STILL BE A DRAFT WHEN CD RUNS. This org has **immutable
+# releases** enabled: once a release is published its assets are frozen, and
+# `gh release upload` fails with `HTTP 422: Cannot upload assets to an immutable
+# release`. So the order is necessarily build -> attach -> publish, never
+# publish -> attach.
+#
+# That is why `.releaserc` sets `draftRelease: true` and why this listens on
+# `created` rather than `published`: `created` fires when a draft is saved,
+# whereas `published`/`released` do not fire for drafts. Publishing the draft at
+# the end of this job cannot re-trigger CD, because that emits `published`,
+# which is not in this list.
+#
+# It is also why the org's Go repos hang CD off `push: tags: v*` — there
+# GoReleaser creates the release itself, as a draft, and publishes it only after
+# every asset job succeeds. Same constraint, different mechanism.
 on:
   release:
-    types: [published]
+    types: [created]
   workflow_dispatch:
     inputs:
       tag:
@@ -169,11 +178,39 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
+          # Fail loudly and EARLY if the release is already published: under
+          # immutable releases the upload below cannot succeed, and a clear
+          # message here beats a bare `HTTP 422` from the upload.
+          if [ "$(gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json isDraft --jq '.isDraft')" != "true" ]; then
+            echo "::error::${TAG} is already published — assets cannot be attached to an immutable release. The release must still be a draft when CD runs (see .releaserc draftRelease)."
+            exit 1
+          fi
           # --clobber so a re-run (workflow_dispatch) replaces the asset rather
           # than failing on an existing name.
           gh release upload "${TAG}" \
             "build/WorldAtRuin-${VERSION}-macOS-universal.zip" \
             --repo "${GITHUB_REPOSITORY}" --clobber
+
+      - name: 🚀 Publish the release
+        # The draft becomes public only now, once the build is verified and
+        # attached — so a released version never exists without its artifact.
+        # This emits `published`, which is deliberately NOT a trigger above, so
+        # it cannot re-enter CD.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release edit "${TAG}" --repo "${GITHUB_REPOSITORY}" --draft=false
+          # Verify rather than trust the command's exit code.
+          state=$(gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json isDraft,assets \
+            --jq '"draft=\(.isDraft) assets=\(.assets|length)"')
+          echo "${TAG}: ${state}"
+          case "${state}" in
+            "draft=false assets=0") echo "::error::${TAG} published with NO assets"; exit 1 ;;
+            "draft=false assets="*) ;;
+            *) echo "::error::${TAG} did not publish"; exit 1 ;;
+          esac
 
   cd-required-checks:
     name: CD - Required Checks

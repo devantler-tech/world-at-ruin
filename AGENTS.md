@@ -303,7 +303,16 @@ can be watched by playing; every *further* art/game system waits on Phase 0.)
     `create-release.yaml` (`npx semantic-release@25.0.3`, no install step) does not provide. It tags
     `vX.Y.Z` **and** publishes a GitHub Release. It runs under a GitHub App token, not
     `GITHUB_TOKEN` — that is what lets the release trigger a downstream workflow at all.
-  - `cd.yaml` (`release: published`) production-builds the macOS client, **stamps the release
+  - **Releases are cut as DRAFTS and published by CD — this ordering is forced, not stylistic.**
+    This org has **immutable releases**: once a release is published its assets are frozen and
+    `gh release upload` fails with `HTTP 422: Cannot upload assets to an immutable release`. So the
+    order must be build → attach → publish. `.releaserc` therefore sets `draftRelease: true`, and
+    `cd.yaml` listens on `release: created` (which fires when a draft is saved; `published` and
+    `released` do **not** fire for drafts). CD publishes the draft as its last step, which emits
+    `published` — deliberately not a CD trigger, so it cannot loop. A released version therefore
+    never exists without its artifact. Do not "simplify" this to `release: published`; that was the
+    original design and it failed on the very first release (v0.2.0 shipped asset-less as a result).
+  - `cd.yaml` (`release: created`) production-builds the macOS client, **stamps the release
     version** into `config/version` and `DevLog.VERSION` at build time, verifies the exported app
     boots reporting `BOOT_OK v<version>` (the proof the stamp reached the shipped binary), and
     attaches the zip to the Release. `workflow_dispatch` with a `tag` input re-runs it for an
