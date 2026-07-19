@@ -129,10 +129,21 @@ not met the bar; it has only earned the right to be finished.
 
 **Green tests are not the bar.** Machine verification proves a thing is *correct*; it can never
 prove it is *good*. So a player-visible change is judged on the **rendered frame and the felt
-experience**, not on the suite: look at it, play it, and compare it against a named AAA reference.
+experience**, not on the suite: look at it, play it, and compare it against a named reference.
 **The reference set is [`docs/art-direction/`](docs/art-direction/README.md)** — it names the target
 per surface, states the fidelity ceiling, and carries the frame-judging checklist. Pick your
 reference there before building, and cite that specific one in the PR.
+
+**"AAA" is the bar for OUR OUTPUT — it is not a filter on which references may be cited.** The
+distinction is load-bearing, because reading it the other way made the rule impossible to satisfy.
+AAA is an informal *budget and publisher-scale* category with no certifying body (2024–25 greenlights
+averaged ~$200M) — it describes how a game was funded, not how it looks. **None of the three anchors
+the maintainer chose is AAA by that measure**: Numenera is a tabletop RPG, Kingmakers is
+indie-published and still unreleased, and Fatekeeper is a **13-person** studio's debut. They were
+chosen for **style**, and they are the target regardless of anyone's budget. So a citation is valid
+when it is the *right look*, never because of the studio behind it — while our own output must still
+look like it belongs in a shipped AAA title. Resolved on
+[#234](https://github.com/devantler-tech/world-at-ruin/issues/234).
 **Attach the frame.** A PR carries an inspectable screenshot, captured frame or short clip of the
 actual change, the reference it is judged against, and the remaining gap — because a written claim
 that "I looked at it and it's fine" is self-attestation, and self-attestation is exactly what let a
@@ -398,7 +409,7 @@ everything shipped afterwards is held to.
   change ready, render or play it, look at it, and judge it against the
   **[Quality bar](#quality-bar--it-has-to-resemble-a-aaa-game)** (AAA resemblance). The PR must
   carry **evidence a reviewer can inspect** — an attached screenshot, captured frame or short clip
-  of the actual change — together with the **named AAA reference** (from
+  of the actual change — together with the **named reference** (from
   [`docs/art-direction/`](docs/art-direction/README.md)) and the **remaining gap**. A
   claim with no attached frame is self-attestation, not evidence, and does not satisfy this.
   Below-bar player-facing work does not ship default-on.
@@ -551,7 +562,7 @@ Reviewers (Codex/CodeRabbit) flag **P0/P1 only**:
   animation, audio, UI/UX, camera, game feel, or the design itself — that ships **default-on** while
   still reading as placeholder (engine primitives as art, flat untextured materials, uniform
   scatter, no second-order life, and the equivalents of those outside art). **Separately P1 on its
-  own:** a player-visible PR carrying **no inspectable frame evidence, or no named AAA reference and
+  own:** a player-visible PR carrying **no inspectable frame evidence, or no named reference and
   stated gap** — including one that simply *omits* any readiness judgement, not only one that argues
   from green tests. See **[Quality bar](#quality-bar--it-has-to-resemble-a-aaa-game)** and the
   reference set in **[`docs/art-direction/`](docs/art-direction/README.md)**.
