@@ -59,30 +59,6 @@ uniform float interior_relief: hint_range(0.0, 2.0) = 0.50;
 // coord is the CONTINUOUS coordinate, not its fract: fwidth() of a fract()
 // spikes to ~1 at every wrap, which is exactly where the seam is, so measuring
 // the footprint there would erase each line precisely along its own centre.
-// One bed's substance, resolved from its id alone so a neighbouring bed can be
-// evaluated too and the pair filtered across their contact. rgb = colour,
-// a = roughness.
-vec4 substance(float id) {
-	float pick = hash3(vec3(id * 3.1, 5.0, 11.0));
-	// step() rather than smoothstep(): a bed IS sandstone or IS shale. Chained
-	// mixes mean each later threshold overrides the earlier one exactly.
-	vec3 c = mix(rock_sandstone, rock_shale, step(0.34, pick));
-	c = mix(c, rock_pale, step(0.61, pick));
-	c = mix(c, rock_iron, step(0.85, pick));
-	float r = mix(0.97, 0.88, step(0.34, pick));
-	r = mix(r, 0.93, step(0.61, pick));
-	r = mix(r, 0.99, step(0.85, pick));
-	return vec4(c, r);
-}
-
-// Surface-tangent gradient of a height field, from its screen derivatives.
-// The caller must pass a height built ONLY from fixed-width terms: anything
-// carrying fwidth() would make this a second derivative, which is undefined.
-vec3 surface_gradient(float h, vec3 nrm, vec3 r1, vec3 r2, float safe_det) {
-	vec3 g = (dFdx(h) * r1 + dFdy(h) * r2) / safe_det;
-	return g - nrm * dot(g, nrm);
-}
-
 float edge_line(float coord, float half_width) {
 	float fw = fwidth(coord);
 	float f = fract(coord);
@@ -149,6 +125,31 @@ float fbm(vec3 p) {
 	}
 	return sum;
 }
+
+// One bed's substance, resolved from its id alone so a neighbouring bed can be
+// evaluated too and the pair filtered across their contact. rgb = colour,
+// a = roughness.
+vec4 substance(float id) {
+	float pick = hash3(vec3(id * 3.1, 5.0, 11.0));
+	// step() rather than smoothstep(): a bed IS sandstone or IS shale. Chained
+	// mixes mean each later threshold overrides the earlier one exactly.
+	vec3 c = mix(rock_sandstone, rock_shale, step(0.34, pick));
+	c = mix(c, rock_pale, step(0.61, pick));
+	c = mix(c, rock_iron, step(0.85, pick));
+	float r = mix(0.97, 0.88, step(0.34, pick));
+	r = mix(r, 0.93, step(0.61, pick));
+	r = mix(r, 0.99, step(0.85, pick));
+	return vec4(c, r);
+}
+
+// Surface-tangent gradient of a height field, from its screen derivatives.
+// The caller must pass a height built ONLY from fixed-width terms: anything
+// carrying fwidth() would make this a second derivative, which is undefined.
+vec3 surface_gradient(float h, vec3 nrm, vec3 r1, vec3 r2, float safe_det) {
+	vec3 g = (dFdx(h) * r1 + dFdy(h) * r2) / safe_det;
+	return g - nrm * dot(g, nrm);
+}
+
 
 void vertex() {
 	world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
