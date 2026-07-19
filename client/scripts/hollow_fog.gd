@@ -75,11 +75,32 @@ const POOL_LIFT_FRACTION := 0.38
 ## the left basin's mean luminance moves 0.0025, while the near-field debris,
 ## pillars and character stay fully legible — and it remains ~16x subtler than
 ## the materialless default it replaces.
-const POOL_DENSITY := 0.05
+
+## Density at a pool's core, at full depth.
+##
+## ⚠️ FogMaterial.density is NOT the same unit as
+## Environment.volumetric_fog_density (0.005 there). It is a multiplier applied
+## within the volume and Godot's own default is 1.0, so a value picked on the
+## environment's scale renders as nothing at all. Tuned by rendering the same
+## vantage and judging the frames: 0.005 / 0.02 / 0.05 / 0.12 are all
+## indistinguishable from no pools at all (0.05 measured a 0.00025 mean
+## luminance delta, against 0.00118 here), 0.7 is readable but very faint, and
+## the near field stays crisp well past this value.
+const POOL_DENSITY := 1.2
 ## Relief at which a pool reaches full POOL_DENSITY, in metres. Shallower
 ## hollows scale down proportionally, so depth reads as density instead of
 ## every basin looking identically thick.
-const FULL_DENSITY_RELIEF := 3.0
+
+## Relief at which a pool reaches full POOL_DENSITY, in metres. Shallower
+## hollows scale down proportionally, so depth reads as density instead of
+## every basin looking identically thick.
+##
+## Set ABOVE the shipped terrain's deepest hollow (~7.6 m), not below it. At
+## 3.0 every hollow deeper than 3 m clamped to the maximum, so the six shipped
+## pools spanned 0.0433-0.0500 — a 15% spread across hollows whose depth
+## varies nearly threefold. The gradient the dev log promises the player
+## ("deeper hollows hold more") existed only in the constant.
+const FULL_DENSITY_RELIEF := 8.0
 
 
 ## Every ash pool this terrain calls for, deepest hollow first.

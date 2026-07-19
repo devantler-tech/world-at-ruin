@@ -188,8 +188,29 @@ func _ready() -> void:
 			_fail("pool %d built at density %.4f — non-positive density is invisible air" % [i, mat.density])
 			return
 
-	print("TEST PASS — %d ash pools, shallowest clears its surroundings by %.2f m, %.2f m below world median, %s, every built volume carries its density" % [
-		pools.size(), worst_relief, drop, "4 controls held"
+	# 10. DEPTH READS AS DENSITY — the dev log tells the player that deeper
+	# hollows hold more ash, so that has to be true of the shipped world and
+	# not merely of the formula.
+	#
+	# It is easy to satisfy law 9 and still fail this: if FULL_DENSITY_RELIEF
+	# sits below the terrain's deepest hollow, every hollow past it clamps to
+	# the maximum and the gradient collapses. At 3.0 the six shipped pools
+	# spanned 0.0433-0.0500 — a 15% spread across hollows whose depth varies
+	# nearly threefold — which is a flat set of pools wearing a gradient's
+	# clothing. Only assert it where the terrain actually offers the range.
+	var deep: Dictionary = pools[0]
+	var shallow: Dictionary = pools[pools.size() - 1]
+	if float(deep["relief"]) >= float(shallow["relief"]) * 2.0:
+		var ratio := float(deep["density"]) / maxf(float(shallow["density"]), 1e-9)
+		if ratio < 1.5:
+			_fail("deepest hollow (%.2f m) is only %.2fx denser than the shallowest (%.2f m) — depth is not reading as density; FULL_DENSITY_RELIEF (%.1f m) is probably clamping below the terrain's real depth range" % [
+				deep["relief"], ratio, shallow["relief"], HollowFog.FULL_DENSITY_RELIEF
+			])
+			return
+
+	print("TEST PASS — %d ash pools, shallowest clears its surroundings by %.2f m, %.2f m below world median, %s, every built volume carries its density, deepest %.2fx denser than shallowest" % [
+		pools.size(), worst_relief, drop, "4 controls held",
+		float(deep["density"]) / maxf(float(shallow["density"]), 1e-9)
 	])
 	get_tree().quit(0)
 
