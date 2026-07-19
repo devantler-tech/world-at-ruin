@@ -189,8 +189,12 @@ void fragment() {
 	// Footprint-widened for the same reason as the bedding.
 	float jf = fbm(world_pos * vec3(joint_scale, joint_scale * 0.18, joint_scale)
 		+ vec3(31.0));
-	float jw = max(joint_width, fwidth(jf) * 1.2);
+	float jf_fw = fwidth(jf);
+	float jw = max(joint_width, jf_fw * 1.2);
 	float joint = 1.0 - smoothstep(0.0, jw, abs(jf - 0.5));
+	// How well a joint is still resolved, in the field's own units: once one
+	// pixel spans several times the joint's width there is no line left to draw.
+	float joint_resolved = 1.0 - smoothstep(joint_width, joint_width * 4.0, jf_fw);
 
 	// Floors silt over: blend toward the baked sediment color from below. The
 	// bedding is near-parallel to a floor, so it would wash out into flat
@@ -233,7 +237,15 @@ void fragment() {
 	float h_lam = (1.0 - smoothstep(0.0, seam_width * 1.4,
 		min(lam_f, 1.0 - lam_f))) * laminated;
 	float h_joint = 1.0 - smoothstep(0.0, joint_width, abs(jf - 0.5));
-	float h_recess = max(h_seam, max(h_lam * 0.55, h_joint * 0.45));
+	// Each term fades by ITS OWN footprint resolution before it reaches the
+	// derivative. Fading only the shaded colour and seam was half the job: an
+	// unfiltered height field still feeding dFdx/dFdy means that once a pixel
+	// spans several beds the derivatives sample arbitrary sides of the
+	// discontinuities and swim as the camera moves, so detail that has visibly
+	// dissolved comes back as shimmer and quad-shaped lighting. Detail must
+	// leave the LIGHTING on the same schedule it leaves the albedo.
+	float h_recess = max(h_seam * bed_resolved,
+		max(h_lam * 0.55 * bed_resolved, h_joint * 0.45 * joint_resolved));
 	float relief_h = 0.10 * sediment * floor_mix - h_recess;
 	vec3 dpx = dFdx(world_pos);
 	vec3 dpy = dFdy(world_pos);
