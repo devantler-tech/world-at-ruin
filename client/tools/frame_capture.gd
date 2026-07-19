@@ -145,6 +145,26 @@ const UI_SAMPLE_X1 := 0.30
 const UI_SAMPLE_Y0 := 0.10
 const UI_SAMPLE_Y1 := 0.90
 
+## Phases of one breath the `breath` scenario photographs. Six is enough to
+## read the shape of the cycle — inhale, hold, exhale — without turning the
+## evidence into a flipbook nobody scrolls through.
+const BREATH_PHASES := 6
+## Frames to settle after posing a phase. The body is already lit and in view,
+## so only the skin needs to re-deform; no shadow/SDFGI convergence is involved.
+const BREATH_SETTLE_FRAMES := 4
+## Camera offset from the framed chest, in metres: three-quarter front, slightly
+## above the chest, close enough that ~10 mm of shoulder travel is not sub-pixel.
+const BREATH_CAM_SIDE := 1.15
+const BREATH_CAM_RISE := 0.22
+const BREATH_CAM_FRONT := 1.55
+## Grid step for the frame-difference guard, in pixels.
+const BREATH_SAMPLE_STEP := 4
+## The smallest max-pixel change between opposite phases of the breath that
+## counts as motion. Well above sampling noise on a static scene and far below
+## what ~10 mm of shoulder travel produces at this framing — a sequence that
+## cannot clear it is photographing a body that is not moving.
+const BREATH_MIN_PIXEL_CHANGE := 0.02
+
 ## The creator is 2D and needs no shadow/SDFGI convergence, so it settles far
 ## sooner than a world vantage. Kept separate so adding this scenario does not
 ## lengthen the world capture, per #145.
@@ -188,8 +208,11 @@ func _ready() -> void:
 	if scenario == "first_run":
 		await _capture_first_run(dir, main)
 		return
+	if scenario == "breath":
+		await _capture_breath(dir, main)
+		return
 	if scenario != "world":
-		_fail("unknown WAR_SCENARIO '%s' — expected 'world' or 'first_run'" % scenario)
+		_fail("unknown WAR_SCENARIO '%s' — expected 'world', 'first_run' or 'breath'" % scenario)
 		return
 
 	for i in WARMUP_FRAMES:
@@ -588,6 +611,135 @@ func _capture_first_run(dir: String, main: Node) -> void:
 
 	print("CAPTURE PASS — %d first-run vantages written to %s" % [shots, dir])
 	get_tree().quit(0)
+
+
+## The `breath` scenario: a phase sequence of one standing body, because a
+## STILL CANNOT SHOW AN IDLE (#243).
+##
+## The world scenario photographs one instant, which is the right evidence for
+## a material or a composition and useless for motion — a reviewer looking at
+## it cannot tell a breathing character from a frozen one. This walks one body
+## through fixed phases of the breath and writes a frame at each, so the
+## sequence itself is the evidence.
+##
+## Phases are DRIVEN, never observed: the idle node is stopped and
+## `BreathingIdle.apply_at` is called at chosen times. Watching the node's own
+## clock would make the frames depend on how fast the runner happened to render,
+## so two runs would photograph different moments and nothing would be
+## comparable across PRs — the property the fixed VANTAGES exist to protect.
+##
+## A NPC by the shrine is framed rather than the wanderer, who wakes in the
+## cave where torchlight and deep shadow would hide millimetre movement.
+func _capture_breath(dir: String, main: Node) -> void:
+	for i in WARMUP_FRAMES:
+		await get_tree().process_frame
+	if not _has_world(main):
+		_fail("the world did not build — a sky-only frame is not evidence")
+		return
+
+	var body := _first_breathing_body(main)
+	if body == null:
+		_fail("no character with a BreathingIdle was found in the shipped scene — either nothing breathes, or the idle is not attached where a player would see it")
+		return
+	var skeleton: Skeleton3D = CharacterFactory.find_skeleton(body)
+	var idle: Node = body.get_node_or_null("BreathingIdle")
+	# Stop the node driving itself, or the next frame overwrites every phase we
+	# set and the sequence photographs the runner's clock instead.
+	idle.set_process(false)
+
+	var chest := skeleton.find_bone("spine_03")
+	var focus: Vector3 = skeleton.get_bone_global_pose(chest).origin
+	focus = skeleton.global_transform * focus
+	var cam := Camera3D.new()
+	cam.far = 400.0
+	cam.fov = 40.0
+	get_tree().root.add_child(cam)
+	# Three-quarter front, chest height, close: the breath is ~10 mm of
+	# shoulder travel, so a wide world vantage would render it sub-pixel.
+	cam.global_position = focus + Vector3(BREATH_CAM_SIDE, BREATH_CAM_RISE, BREATH_CAM_FRONT)
+	cam.look_at(focus, Vector3.UP)
+
+	var frames: Array[Image] = []
+	for i in BREATH_PHASES:
+		var t := BreathingIdle.BREATH_PERIOD * float(i) / float(BREATH_PHASES)
+		BreathingIdle.apply_at(skeleton, t)
+		skeleton.force_update_all_bone_transforms()
+		for _s in BREATH_SETTLE_FRAMES:
+			cam.current = true
+			await get_tree().process_frame
+		var img := await _grab_frame()
+		var spread := _luma_spread(img)
+		if spread < MIN_LUMA_SPREAD:
+			_fail("breath phase %d is a uniform frame (luma spread %.4f) — nothing rendered" % [i, spread])
+			return
+		var frame_name := "breath_%02d" % i
+		var err := img.save_png("%s/%s.png" % [dir, frame_name])
+		if err != OK:
+			_fail("could not write %s (error %d)" % [frame_name, err])
+			return
+		_write_note(dir, frame_name, img, _size_note(img))
+		frames.append(img)
+		print("CAPTURED %s (phase %.2fs of %.2fs)" % [frame_name, t, BreathingIdle.BREATH_PERIOD])
+
+	# 🔑 THE GUARD THAT MAKES THIS EVIDENCE RATHER THAN DECORATION.
+	#
+	# Every check above passes a sequence of IDENTICAL frames: a body whose
+	# idle silently stopped still renders, still has luma spread, still writes
+	# N files. That is exactly the shape #231 describes — an evidence job going
+	# green while the thing it evidences is absent. So the sequence must
+	# actually MOVE, measured between the extremes of the breath.
+	var moved := _max_pixel_change(frames[0], frames[BREATH_PHASES / 2])
+	if moved < BREATH_MIN_PIXEL_CHANGE:
+		_fail("the breath sequence is static (max pixel change %.4f between opposite phases) — the frames prove nothing moved" % moved)
+		return
+
+	print("CAPTURE PASS — %d breath phases written to %s (max pixel change %.3f)" % [BREATH_PHASES, dir, moved])
+	get_tree().quit(0)
+
+
+## A character in the shipped scene that actually carries an idle, preferring
+## one of the settlement's people.
+##
+## The preference is about EVIDENCE, not correctness: the wanderer wakes in the
+## starter cave, where torchlight and deep shadow swallow the ~10 mm of
+## shoulder travel this scenario exists to show, while the people by the shrine
+## stand in daylight. Falls back to any breathing body — including the
+## wanderer — so the scenario still produces evidence if the settlement is ever
+## absent, rather than failing for a reason unrelated to the idle.
+##
+## Searched rather than assumed: the point is to photograph what a PLAYER would
+## see, so a scene where the factory attached no idle at all must surface as a
+## failure instead of being quietly skipped.
+func _first_breathing_body(main: Node) -> Node3D:
+	var npcs := main.get_node_or_null("Npcs")
+	if npcs != null:
+		var from_settlement := _search_breathing_body(npcs)
+		if from_settlement != null:
+			return from_settlement
+	return _search_breathing_body(main)
+
+
+func _search_breathing_body(node: Node) -> Node3D:
+	if node.get_node_or_null("BreathingIdle") != null and CharacterFactory.find_skeleton(node) != null:
+		return node as Node3D
+	for child in node.get_children():
+		var found := _search_breathing_body(child)
+		if found != null:
+			return found
+	return null
+
+
+## The largest per-pixel change between two frames, sampled on a grid. Max
+## rather than mean: a breath moves a small part of the frame a lot, and a mean
+## over mostly-static scenery would wash it out to nothing.
+func _max_pixel_change(a: Image, b: Image) -> float:
+	if a.get_width() != b.get_width() or a.get_height() != b.get_height():
+		return 0.0
+	var worst := 0.0
+	for x in range(0, a.get_width(), BREATH_SAMPLE_STEP):
+		for y in range(0, a.get_height(), BREATH_SAMPLE_STEP):
+			worst = maxf(worst, _pixel_delta(a.get_pixel(x, y), b.get_pixel(x, y)))
+	return worst
 
 
 ## Captures one creator frame, re-checking the panel is really on screen first:
