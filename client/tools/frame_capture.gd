@@ -12,6 +12,13 @@ extends Node
 ##   WAR_SHOT_DIR=/tmp/shots WAR_SAVE_PATH=/tmp/probe_save.json \
 ##     godot --path client --resolution 1600x900 res://tools/frame_capture.tscn
 ##
+## Against the EXPORTED client the scene argument is unavailable — the official
+## export template refuses positional scene paths (compiled with
+## disable_path_overrides) — so main.gd carries a WAR_CAPTURE=1 boot redirect
+## into this scene instead:
+##   WAR_CAPTURE=1 WAR_SHOT_DIR=/tmp/shots WAR_SAVE_PATH=/tmp/probe_save.json \
+##     "World at Ruin.app/Contents/MacOS/World at Ruin"
+##
 ## Point WAR_SAVE_PATH at a throwaway COPY of a character recipe: with no save
 ## present the first-run creator opens and its panel covers a third of the frame,
 ## and with the real path a capture would touch the player's own save.
