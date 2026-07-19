@@ -42,6 +42,47 @@ const ARM_HANG_DEG := 62.0
 const FOREARM_RELAX_DEG := 10.0
 const HAND_RELAX_DEG := 8.0
 
+## Contrapposto — the rest stance (#237, first slice of #224).
+##
+## Arms hanging from a T-pose fixed the arms and left the rest symmetric, and
+## perfect bilateral symmetry is what reads as "a rig at rest" rather than a
+## person standing: real weight goes onto ONE leg. The classical answer is
+## contrapposto — the weight-bearing hip rides HIGH while the shoulder above it
+## drops, so hip and shoulder lines tilt in OPPOSITE directions and the spine
+## takes a gentle S between them.
+##
+## Weight sits on the character's LEFT leg, so `_l` is the engaged side and
+## `_r` is the free one throughout. All angles are small: the goal is a stance
+## that reads as deliberate, not a contortion, and every one of these is a
+## rotation-only rest edit (the TRS law — a non-TRS rest is silently dropped at
+## reset_bone_poses() and the skin then lies about where the body is).
+##
+## This is a STATIC pose. There is no idle motion, no weight shift over time,
+## no walk cycle — those stay with the parent #224.
+
+## Pelvis roll that lifts the engaged (left) hip.
+const HIP_HIKE_DEG := 4.0
+## Counter-roll applied to BOTH thighs, cancelling the pelvis roll so the legs
+## hang plumb instead of splaying with the hips. Without it the whole lower
+## body leans and the feet leave the ground.
+const THIGH_PLUMB_DEG := -4.0
+## The free (right) leg takes no weight: it swings very slightly outward and
+## bends at the knee, which is what stops the two legs reading as a pair of
+## identical columns.
+const FREE_LEG_ABDUCT_DEG := 2.5
+const FREE_KNEE_BEND_DEG := 7.0
+## Spine counter-roll, applied per spine bone. Larger in total than the hip
+## hike so the shoulder line ends up tilted the OTHER way rather than merely
+## level — that opposition IS contrapposto; a torso that only returns to
+## vertical just undoes the hips.
+const SPINE_COUNTER_DEG := -3.5
+## Brings the head back level over the tilted shoulders. A head that rides the
+## shoulder tilt reads as a slump.
+const NECK_LEVEL_DEG := 2.5
+## The free-side arm hangs a touch further from the body than the engaged one,
+## because the ribcage on that side is no longer lifted into it.
+const FREE_ARM_EXTRA_HANG_DEG := 4.0
+
 ## The recipe format, exhaustively: any other top-level field is REJECTED —
 ## a recipe carrying data this client cannot render must fail loudly, never
 ## render a half-truth (no-resets law). New fields ship with a version bump:
@@ -106,6 +147,7 @@ static func build(recipe: Dictionary) -> Node3D:
 		_hang_toward_down(skeleton, skeleton.find_bone(forearm), FOREARM_RELAX_DEG)
 	for hand in ["hand_l", "hand_r"]:
 		_hang_toward_down(skeleton, skeleton.find_bone(hand), HAND_RELAX_DEG)
+	_apply_contrapposto(skeleton)
 	skeleton.reset_bone_poses()
 	skeleton.force_update_all_bone_transforms()
 
@@ -467,6 +509,53 @@ static func _hang_toward_down(skeleton: Skeleton3D, bone: int, deg: float) -> vo
 	if axis.length_squared() < 0.000001:
 		return
 	var world_rot := Basis(axis.normalized(), deg_to_rad(deg))
+	var local_rot := global_rest.basis.inverse() * (world_rot * global_rest.basis)
+	var rest := skeleton.get_bone_rest(bone)
+	skeleton.set_bone_rest(bone, Transform3D(rest.basis * local_rot, rest.origin))
+
+
+## Shifts the body's weight onto one leg (#237). Runs AFTER the arm hang and
+## after every recipe bone edit, so it composes on top of whatever girth,
+## scale and joint push this particular body carries — each rotation is
+## applied relative to the bone's CURRENT rest, never as an absolute basis,
+## which is what keeps it correct across the extreme morph sliders.
+##
+## Bone order matters only in that every edit here is relative; the pelvis
+## roll is cancelled at the thighs rather than at the feet, so the legs stay
+## plumb while the hips tilt.
+static func _apply_contrapposto(skeleton: Skeleton3D) -> void:
+	# Hips tilt, legs stay plumb.
+	_rotate_rest_world(skeleton, skeleton.find_bone("pelvis"), Vector3.FORWARD, HIP_HIKE_DEG)
+	for thigh in ["thigh_l", "thigh_r"]:
+		_rotate_rest_world(skeleton, skeleton.find_bone(thigh), Vector3.FORWARD, THIGH_PLUMB_DEG)
+	# The free leg carries nothing: slightly out, slightly bent.
+	_rotate_rest_world(skeleton, skeleton.find_bone("thigh_r"), Vector3.FORWARD, -FREE_LEG_ABDUCT_DEG)
+	_rotate_rest_world(skeleton, skeleton.find_bone("calf_r"), Vector3.RIGHT, FREE_KNEE_BEND_DEG)
+	# Torso counter-curves so the shoulder line opposes the hip line.
+	for spine in ["spine_01", "spine_02", "spine_03"]:
+		_rotate_rest_world(skeleton, skeleton.find_bone(spine), Vector3.FORWARD, SPINE_COUNTER_DEG)
+	# Head back to level over the tilted shoulders.
+	_rotate_rest_world(skeleton, skeleton.find_bone("neck_01"), Vector3.FORWARD, NECK_LEVEL_DEG)
+	# The unweighted side's arm hangs a little freer.
+	_hang_toward_down(skeleton, skeleton.find_bone("upperarm_r"), FREE_ARM_EXTRA_HANG_DEG)
+
+
+## Rotates a bone's rest by `deg` about a WORLD axis, conjugated into bone
+## space — the same manoeuvre as [method _hang_toward_down], but about an axis
+## the caller chooses rather than always swinging toward world-down. Pure
+## rotation, so no shear can enter the rest (the TRS law), and the global rest
+## is composed manually because reading engine globals mid-edit desyncs Godot
+## 4.7's caches.
+static func _rotate_rest_world(
+	skeleton: Skeleton3D, bone: int, world_axis: Vector3, deg: float
+) -> void:
+	if bone < 0:
+		push_error("CharacterFactory: stance bone not found")
+		return
+	if is_zero_approx(deg):
+		return
+	var global_rest := _composed_global_rest(skeleton, bone)
+	var world_rot := Basis(world_axis.normalized(), deg_to_rad(deg))
 	var local_rot := global_rest.basis.inverse() * (world_rot * global_rest.basis)
 	var rest := skeleton.get_bone_rest(bone)
 	skeleton.set_bone_rest(bone, Transform3D(rest.basis * local_rot, rest.origin))
