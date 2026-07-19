@@ -118,6 +118,20 @@ const ERR_TOKEN := "token"          # no allocation token to present at admissio
 const ERR_STATE := "state"          # connect_to while already busy or still closing
 const ERR_OPEN := "open"            # transport refused to open the url
 const ERR_HANDSHAKE := "handshake"  # peer closed before the socket ever opened
+const ERR_TEXT := "text"            # a TEXT message; the ADR settles binary
+
+## Worst-case size of one frame the decoder would ACCEPT, derived from the
+## codec's own caps so the two cannot drift apart. A delta carries three
+## independently-capped lists: `entered` and `moved` at `ENTITY_STATE_SIZE`
+## bytes each, and `left` at one 8-byte id each. The trailing allowance covers
+## the fixed header (version, kind, tick, observer and the three counts).
+##
+## This governs whether a legal frame can be received at all. Godot's default
+## inbound buffer is 65,535 bytes — under a fortieth of this — so a large join
+## or resync snapshot would be dropped by the transport before `WireCodec` ever
+## saw it, and a correct server talking to a correct client would fail to
+## converge with nothing in either log to say why.
+const MAX_FRAME_BYTES := WireCodec.MAX_ENTITIES * (WireCodec.ENTITY_STATE_SIZE * 2 + 8) + 64
 
 ## The transport contract: exactly the `WebSocketPeer` methods used below.
 const REQUIRED_TRANSPORT_METHODS: Array[String] = [
@@ -126,6 +140,8 @@ const REQUIRED_TRANSPORT_METHODS: Array[String] = [
 	"get_ready_state",
 	"get_available_packet_count",
 	"get_packet",
+	"was_string_packet",
+	"set_inbound_buffer_size",
 	"close",
 	"set_handshake_headers",
 ]
@@ -221,6 +237,12 @@ func connect_to(url: String) -> bool:
 	# Admission runs before the upgrade, so the credential has to ride along
 	# with the handshake itself; there is no post-connect place to present it.
 	_transport.call("set_handshake_headers", PackedStringArray(["Authorization: Bearer %s" % token]))
+
+	# Both of these have to be set BEFORE the connection is opened: they size
+	# the peer's buffers for the socket it is about to create. A frame the
+	# decoder would accept must be receivable, or the transport silently
+	# becomes a second, stricter and undocumented limit on the wire contract.
+	_transport.call("set_inbound_buffer_size", MAX_FRAME_BYTES)
 
 	var result: int = _transport.call("connect_to_url", target)
 	if result != OK:
@@ -337,6 +359,14 @@ func _drain() -> void:
 		if available <= 0:
 			return
 		var bytes: PackedByteArray = _transport.call("get_packet")
+		# The ADR settles one codec payload per BINARY message. A text message
+		# is a server or proxy protocol violation, and it must not be laundered
+		# into state just because its bytes happen to parse — the control and
+		# NUL bytes of a small snapshot are valid UTF-8, so a text frame can
+		# decode perfectly well. Refusing it keeps the violation visible.
+		if _transport.call("was_string_packet"):
+			_fail_stream({"error": ERR_TEXT, "detail": "TEXT message; the wire contract is binary-only"}, "transport")
+			return
 		var decoded: Dictionary = WireCodec.decode(bytes)
 		if decoded.get("ok") != true:
 			_fail_stream(decoded, "decode")

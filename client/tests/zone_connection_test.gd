@@ -70,9 +70,15 @@ class FakeTransport:
 
 	var ready_state: int = WebSocketPeer.STATE_CONNECTING
 	var packets: Array[PackedByteArray] = []
+	## Parallel to `packets`: whether each arrived as a TEXT message. A real
+	## peer answers `was_string_packet()` about the packet just read, so the
+	## flag has to travel per packet rather than per connection.
+	var packet_is_text: Array[bool] = []
 	var open_result: int = OK
 	var connected_url := ""
 	var handshake_headers: PackedStringArray = PackedStringArray()
+	## Whatever the connection sized the peer's receive buffer to.
+	var inbound_buffer_size := 0
 	var polls := 0
 	var closes := 0
 	## Polls the close handshake takes to complete, as a real peer's does.
@@ -83,6 +89,7 @@ class FakeTransport:
 	var closes_instantly := false
 
 	var _closing_left := 0
+	var _last_was_text := false
 
 	func connect_to_url(url: String) -> int:
 		connected_url = url
@@ -102,7 +109,14 @@ class FakeTransport:
 		return packets.size()
 
 	func get_packet() -> PackedByteArray:
+		_last_was_text = not packet_is_text.is_empty() and packet_is_text.pop_front()
 		return packets.pop_front()
+
+	func was_string_packet() -> bool:
+		return _last_was_text
+
+	func set_inbound_buffer_size(size: int) -> void:
+		inbound_buffer_size = size
 
 	func set_handshake_headers(headers: PackedStringArray) -> void:
 		handshake_headers = headers
@@ -132,6 +146,12 @@ class IncompleteTransport:
 
 	func get_available_packet_count() -> int:
 		return 0
+
+	func was_string_packet() -> bool:
+		return false
+
+	func set_inbound_buffer_size(_size: int) -> void:
+		pass
 
 	func set_handshake_headers(_headers: PackedStringArray) -> void:
 		pass
@@ -168,6 +188,10 @@ func _ready() -> void:
 	if not _check_open_refusal_law():
 		return
 	if not _check_decode_refusal_law():
+		return
+	if not _check_text_message_is_refused(stream):
+		return
+	if not _check_inbound_buffer_fits_a_legal_frame():
 		return
 	if not _check_fold_refusal_is_fail_closed(stream):
 		return
@@ -534,6 +558,78 @@ func _check_decode_refusal_law() -> bool:
 		return false
 	if transport.closes != 1:
 		_fail("socket was closed %d time(s) after a refusal, expected exactly 1" % transport.closes)
+		return false
+	return true
+
+
+## A TEXT message is refused even when its bytes are a PERFECTLY VALID frame.
+## That is what makes this control isolated: the frame is one the pump has
+## already been proven to accept, so the only thing left to refuse it for is
+## the message type. Decoding it instead would hide a server or proxy protocol
+## violation behind a correct-looking fold — and the control and NUL bytes of a
+## small snapshot really are valid UTF-8, so this is reachable, not theoretical.
+func _check_text_message_is_refused(stream: Dictionary) -> bool:
+	var frames := _frame_bytes(stream)
+	var transport := FakeTransport.new()
+	var conn := ZoneConnection.new(transport)
+	conn.connect_to(URL)
+	transport.ready_state = WebSocketPeer.STATE_OPEN
+	transport.packets = [frames[0]]
+	transport.packet_is_text = [true]
+	conn.poll()
+
+	if conn.error() != ZoneConnection.ERR_TEXT:
+		_fail("a TEXT message carrying a valid frame reported %s, expected %s" % [conn.error(), ZoneConnection.ERR_TEXT])
+		return false
+	if conn.frames_applied() != 0:
+		_fail("folded %d frame(s) delivered as TEXT" % conn.frames_applied())
+		return false
+	if conn.store().has_base():
+		_fail("a TEXT message mutated the table")
+		return false
+	if conn.state() != ZoneConnection.State.FAILED:
+		_fail("state is %d after a TEXT message, expected FAILED" % conn.state())
+		return false
+
+	# The same bytes as BINARY must fold, or this control proves only that the
+	# frame was bad — the distinction under test would be unproven.
+	var ok_transport := FakeTransport.new()
+	var ok_conn := ZoneConnection.new(ok_transport)
+	ok_conn.connect_to(URL)
+	ok_transport.ready_state = WebSocketPeer.STATE_OPEN
+	ok_transport.packets = [frames[0]]
+	ok_conn.poll()
+	if ok_conn.frames_applied() != 1 or ok_conn.error() != "":
+		_fail("the SAME bytes as a binary message did not fold (applied=%d error=%s) — the TEXT control proves nothing" % [ok_conn.frames_applied(), ok_conn.error()])
+		return false
+	return true
+
+
+## The peer's receive buffer must fit any frame the DECODER would accept, or
+## the transport quietly becomes a second, stricter limit on the wire contract
+## and a correct server cannot converge with a correct client.
+func _check_inbound_buffer_fits_a_legal_frame() -> bool:
+	var transport := FakeTransport.new()
+	var conn := ZoneConnection.new(transport)
+	if not conn.connect_to(URL):
+		_fail("connect refused while checking the buffer size: %s" % conn.error())
+		return false
+
+	# Non-vacuity floor: the bound must actually exceed Godot's 65,535-byte
+	# default, else "we set it" would be true and meaningless.
+	const GODOT_DEFAULT_INBOUND := 65535
+	if ZoneConnection.MAX_FRAME_BYTES <= GODOT_DEFAULT_INBOUND:
+		_fail("MAX_FRAME_BYTES is %d, no larger than the engine default %d — sizing the buffer buys nothing" % [ZoneConnection.MAX_FRAME_BYTES, GODOT_DEFAULT_INBOUND])
+		return false
+
+	# The bound is derived from the codec's caps; re-derive it here from those
+	# same constants so a change to either side has to be deliberate.
+	var worst_case := WireCodec.MAX_ENTITIES * (WireCodec.ENTITY_STATE_SIZE * 2 + 8)
+	if ZoneConnection.MAX_FRAME_BYTES < worst_case:
+		_fail("MAX_FRAME_BYTES is %d but a legal frame reaches %d — a valid snapshot would be dropped by the transport" % [ZoneConnection.MAX_FRAME_BYTES, worst_case])
+		return false
+	if transport.inbound_buffer_size < ZoneConnection.MAX_FRAME_BYTES:
+		_fail("peer buffer was sized %d, expected at least %d — it must be set BEFORE the socket opens" % [transport.inbound_buffer_size, ZoneConnection.MAX_FRAME_BYTES])
 		return false
 	return true
 
