@@ -8,12 +8,13 @@ shader_type spatial;
 // carry. Bands run along world Y so they read as geological layers whatever
 // the wall's shape.
 
-uniform vec3 band_a: source_color = vec3(0.62, 0.45, 0.28);
-uniform vec3 band_b: source_color = vec3(0.42, 0.28, 0.17);
-uniform vec3 band_c: source_color = vec3(0.72, 0.58, 0.40);
+// band_a/b/c and roughness_value are gone with the interpolated interior they
+// fed: the interior now names its substances below and derives roughness per
+// bed. (`roughness_value` still exists in foliage.gdshader and debris.gdshader,
+// which have their own copies — this removes only cave rock's, which nothing
+// sets: cave_system_gen.gd loads the shader and uses its defaults.)
 uniform float band_frequency = 1.1;
 uniform float warp_strength = 1.6;
-uniform float roughness_value: hint_range(0.0, 1.0) = 0.96;
 
 // ---- Decided bedding (#235) ---------------------------------------------
 // The interior used to be two smoothsteps of noise, one constant roughness and
