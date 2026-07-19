@@ -11,6 +11,16 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
+		"version": "0.12.0",
+		"date": "2026-07-19",
+		"title": "The cave is made of layers now",
+		"notes": [
+			"The rock around you is no longer one smooth wash of colour. It is laid down in beds, one on top of the next, and each bed is its own stone — some pale, some almost black, some rust-red. You can see where one layer ends and the next begins, and fractures cut down across them. Stand next to a wall and the layers are about knee-to-waist apart, so the cave finally gives you something to judge your own size against.",
+			"The layers also catch the light now. Before, every surface in the cave reflected exactly the same way, so torchlight slid over it without finding anything; now the bedding and the cracks pick it up.",
+			"The cave still has a way to go before it looks the way we want it to: it is very orange, the seams are drawn at one width however far away you stand, and the floor stays flatter than the walls. What is here now is a straight improvement on what was here before, and those three are what we are going after next.",
+		],
+	},
+	{
 		"version": "0.11.0",
 		"date": "2026-07-19",
 		"title": "The ash knows where the low ground is",
