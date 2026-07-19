@@ -94,7 +94,7 @@ func TestApplyDamageSanitizesDamage(t *testing.T) {
 
 func TestApplyDamageSkipsPoollessAndUnknown(t *testing.T) {
 	w := NewWorld(mobTestBounds)
-	w.Add(Entity{ID: 1})                 // poolless — cannot be damaged
+	w.Add(Entity{ID: 1})                // poolless — cannot be damaged
 	w.Add(Entity{ID: 2, MaxHealth: 10}) // pooled
 
 	deaths := w.ApplyDamage([]EntityID{1, 99, 2}, 10)
@@ -134,8 +134,8 @@ func damageScenarioConfig() MobConfig {
 func runDamageScenario(t *testing.T, cfg MobConfig, n int, apply bool) (w *World, resolves []MobEvent, deaths []DeathEvent) {
 	t.Helper()
 	w = NewWorld(mobTestBounds)
-	w.Add(Entity{ID: 1})                                                   // the mob, pinned at the origin
-	w.Add(Entity{ID: 2, Pos: Vec3{X: 1_000}, MaxHealth: 25})               // stands at the future anchor
+	w.Add(Entity{ID: 1})                                                      // the mob, pinned at the origin
+	w.Add(Entity{ID: 2, Pos: Vec3{X: 1_000}, MaxHealth: 25})                  // stands at the future anchor
 	w.Add(Entity{ID: 3, Pos: Vec3{X: 1_500}, MaxSpeed: 6_000, MaxHealth: 25}) // starts inside the circle
 	m, err := NewMobController(1, cfg)
 	if err != nil {
