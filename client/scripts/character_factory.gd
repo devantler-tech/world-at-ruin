@@ -73,7 +73,7 @@ const HAND_RELAX_DEG := 8.0
 ## OLDER symmetric pose, the one the art-direction doc calls out as reading
 ## "as a rig at rest, because that is what it is". Gating therefore ships the
 ## worse of two poses by default. That trade is deliberate and maintainer-
-## reversible (one constant), and #241 tracks the flip once the idle lands.
+## reversible (one constant), and #243 tracks the flip once the idle lands.
 const REST_STANCE_ENV := "WAR_REST_STANCE"
 
 
