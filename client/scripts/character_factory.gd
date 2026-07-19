@@ -23,7 +23,7 @@ class_name CharacterFactory
 ## scaling for joint pushes, and no engine global reads between rest edits
 ## (Godot 4.7 desyncs its rest/pose caches).
 
-const RECIPE_VERSION := 3
+const RECIPE_VERSION := 4
 const KIT_SCENE_PATH := "res://assets/characters/humanoid_kit/humanoid_base.glb"
 const EQUIPMENT_DIR := "res://assets/characters/humanoid_kit/equipment/"
 const EQUIPMENT_REGISTRY_PATH := EQUIPMENT_DIR + "equipment.json"
@@ -121,14 +121,26 @@ const FREE_ARM_EXTRA_HANG_DEG := 4.0
 ## registry name) from version 3 — an older recipe carrying either stays
 ## invalid forever, exactly as the older clients ruled.
 ##
-## Since #246 a slot's value may ALSO be a list of piece names — one per layer,
-## so a region can carry clothing with armour over it. This needs no version
-## bump and never will: the single-name form every shipped recipe uses stays
-## valid forever, and the list adds no new persisted vocabulary (layers are
-## read from the kit, never written into a save).
+## Version 4 (#246) lets a slot's value be a LIST of piece names — one per
+## layer, so a region can carry clothing with armour over it.
+##
+## It is a version bump even though it adds no new field and no new persisted
+## vocabulary, because the SHAPE of an existing value widened: `String` became
+## `String | Array`. A version-3 client reads that array through
+## `String(recipe["equipment"][slot])`, gets `["shoes_cloth", "boots_worn"]`,
+## and rejects the whole recipe as an unknown piece — so an unversioned array
+## would strand the character on exactly the rollback the distribution design
+## covers. Stamped as 4 ONLY when a list is actually present, so single-piece
+## recipes stay at their own version and are never churned upward, and a
+## recipe below 4 carrying a list is refused: a save must never claim an older
+## version than the shape it uses.
 const RECIPE_FIELDS := ["version", "comment", "shapes", "bone_girth", "bone_scale", "joint_push"]
 const RECIPE_FIELDS_V2 := ["equipment"]
 const RECIPE_FIELDS_V3 := ["skin"]
+## The version at which a slot's value may be a LIST of pieces. Named rather
+## than written as a bare 4, so the gate below and the creator's stamping can
+## never drift apart.
+const LAYERED_EQUIPMENT_VERSION := 4
 
 ## The wearable layers, innermost first — this array IS the render order
 ## (#246, first slice of #222).
@@ -266,7 +278,7 @@ static func skins_registry() -> Dictionary:
 ## per layer. Both stay valid forever.
 ##
 ## Returns { "problem": String, "by_region": { region: { layer: piece_name } } }.
-static func _resolve_equipment(equipment: Dictionary) -> Dictionary:
+static func _resolve_equipment(equipment: Dictionary, version: int = RECIPE_VERSION) -> Dictionary:
 	var out := { "problem": "", "by_region": {} }
 	var registry := equipment_registry()
 	var slots: Array = registry.get("slots", [])
@@ -276,6 +288,14 @@ static func _resolve_equipment(equipment: Dictionary) -> Dictionary:
 			out["problem"] = "unknown equipment slot '%s' — shipped slots may never be removed" % region
 			return out
 		var value: Variant = equipment[region]
+		# The list form is version 4. A recipe claiming an older version must
+		# not use it: a version-3 client would read the array as one string and
+		# strand the character, so a save may never understate the shape it uses.
+		if value is Array and version < LAYERED_EQUIPMENT_VERSION:
+			out["problem"] = ("slot '%s' uses the layered list form, which is recipe version %d, "
+				+ "but this recipe claims version %d — a save may never understate its own shape"
+				) % [region, LAYERED_EQUIPMENT_VERSION, version]
+			return out
 		var names: Array = value if value is Array else [value]
 		if names.is_empty():
 			out["problem"] = "equipment slot '%s' lists no pieces — omit the slot to wear nothing there" % region
@@ -468,7 +488,7 @@ static func validate(recipe: Dictionary, skeleton: Skeleton3D, mesh_instance: Me
 	if recipe.has("equipment"):
 		if recipe["equipment"] is not Dictionary:
 			return "equipment must be a dictionary of slot -> piece name"
-		var problem := String(_resolve_equipment(recipe["equipment"])["problem"])
+		var problem := String(_resolve_equipment(recipe["equipment"], int(version))["problem"])
 		if problem != "":
 			return problem
 	if recipe.has("skin"):

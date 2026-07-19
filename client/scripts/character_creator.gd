@@ -334,15 +334,13 @@ func _set_recipe_equipment(slot: String, piece_name: String) -> void:
 		# clears every layer there — the one picker speaks for the whole region.
 		_recipe["equipment"].erase(slot)
 	else:
-		# Replace only the layer this piece belongs to and KEEP the others
-		# (#246). This panel has one picker per region, so without the merge,
-		# editing a region on a character wearing boots over cloth shoes would
-		# drop the layer the picker cannot show — silently removing something
-		# the player is wearing.
-		var worn := _worn_by_layer(slot)
-		var pieces: Dictionary = CharacterFactory.equipment_registry().get("pieces", {})
-		worn[String((pieces[piece_name] as Dictionary).get("layer", ""))] = piece_name
-		_recipe["equipment"][slot] = _collapse(worn)
+		# One picker per region means this panel can only ever express ONE piece
+		# there, so it only edits regions that hold one (a multi-piece region's
+		# picker is disabled — see _add_outfit_row). Merging instead would let a
+		# player build a layered region they could never take apart again:
+		# picking the shoes would keep the boots and picking "bare" would remove
+		# both, with no way back to shoes alone. Layer-specific controls are #253.
+		_recipe["equipment"][slot] = piece_name
 	if _recipe["equipment"].is_empty():
 		_recipe.erase("equipment")
 	_restamp_version()
@@ -364,24 +362,40 @@ func _worn_by_layer(slot: String) -> Dictionary:
 	return out
 
 
-## Writes a layer -> piece map back in the narrowest form that expresses it, so
-## a single-piece region keeps the plain-name shape every shipped recipe uses
-## rather than churning into a one-element list.
-func _collapse(worn: Dictionary) -> Variant:
-	var out: Array = []
+## The outermost piece worn on a region — what the character actually shows
+## there, and so what the single picker displays.
+func _outermost(slot: String) -> String:
+	var worn := _worn_by_layer(slot)
+	var shown := ""
 	for layer: String in CharacterFactory.LAYERS:
 		if layer in worn:
-			out.append(worn[layer])
-	return out[0] if out.size() == 1 else out
+			shown = worn[layer]
+	return shown
 
 
 func _restamp_version() -> void:
-	if _recipe.has("skin"):
+	# The layered list form is version 4 and is checked FIRST: a recipe that
+	# uses it must never be stamped 3, or the save would understate its own
+	# shape and a version-3 client would read the list as one piece name and
+	# refuse to load the character (#246).
+	if _uses_layered_equipment():
+		_recipe["version"] = CharacterFactory.LAYERED_EQUIPMENT_VERSION
+	elif _recipe.has("skin"):
 		_recipe["version"] = 3
 	elif _recipe.has("equipment"):
 		_recipe["version"] = 2
 	else:
 		_recipe["version"] = 1
+
+
+## Does any region hold more than one piece? This panel never creates that
+## state, but it can LOAD a recipe that has it, and saving must not downgrade
+## the version out from under it.
+func _uses_layered_equipment() -> bool:
+	for slot: String in (_recipe.get("equipment", {}) as Dictionary):
+		if _recipe["equipment"][slot] is Array:
+			return true
+	return false
 
 
 func _on_preset(preset_name: String) -> void:
@@ -408,14 +422,14 @@ func _sync_sliders_from_recipe() -> void:
 		# on the character. Reading the raw value here would stringify a layered
 		# region's list into something no picker entry matches, so the slot would
 		# read "bare" while the character plainly wears something (#246).
-		var worn := _worn_by_layer(slot)
-		var shown := ""
-		for layer: String in CharacterFactory.LAYERS:
-			if layer in worn:
-				shown = worn[layer]
+		var shown := _outermost(slot)
 		for i in picker.item_count:
 			if picker.get_item_text(i) == shown:
 				picker.select(i)
+		# A region wearing more than one layer cannot be expressed by one picker,
+		# so it is shown read-only rather than edited into a state the player
+		# could not undo. Explicit limitation, never a silent rewrite (#253).
+		picker.disabled = _worn_by_layer(slot).size() > 1
 	if _skin_picker != null:
 		_skin_picker.select(0)
 		for i in _skin_picker.item_count:

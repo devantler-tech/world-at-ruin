@@ -18,7 +18,11 @@ extends Node
 ##     it — otherwise removing the boots would reveal a dent where the shoes were.
 ##  6. The single-name form every shipped recipe uses is identical to a
 ##     one-element list, forever.
-##  7. Each law has its own negative control, failing for its own reason.
+##  7. The list form is version 4 — a recipe claiming an older version may not
+##     use it, or a rollback would strand the character.
+##  8. The editor reads both layers, shows the outermost, and never downgrades
+##     a layered recipe on save.
+##  9. Each law has its own negative control, failing for its own reason.
 ##
 ## Pure logic + the baked registry for most of it; one real build for 5.
 ##
@@ -111,7 +115,7 @@ func _ready() -> void:
 	# 5. An occluded piece is not built, and — the part a mesh check alone would
 	#    miss — does not set its equip_hide_* shape either. A hidden piece that
 	#    still tucked the skin would leave a dent when the boots came off.
-	var built := CharacterFactory.build({ "version": 2,
+	var built := CharacterFactory.build({ "version": 4,
 		"equipment": { "torso": "shirt_ragged", "feet": ["shoes_cloth", "boots_worn"] } })
 	if built == null:
 		_fail("a character wearing boots over cloth shoes failed to build")
@@ -142,7 +146,7 @@ func _ready() -> void:
 	# 6. FORWARD-ONLY: the single-name form is exactly a one-element list. Every
 	#    shipped recipe uses the single-name form, so this may never diverge.
 	var single := CharacterFactory.build({ "version": 2, "equipment": { "legs": "pants_wool" } })
-	var listed := CharacterFactory.build({ "version": 2, "equipment": { "legs": ["pants_wool"] } })
+	var listed := CharacterFactory.build({ "version": 4, "equipment": { "legs": ["pants_wool"] } })
 	if single == null or listed == null:
 		_fail("the single-name and one-element-list forms do not both build")
 		return
@@ -156,15 +160,20 @@ func _ready() -> void:
 	#    can only be for the reason named.
 	for bad: Dictionary in [
 		# two clothing pieces on one region: the second would silently win
-		{ "version": 2, "equipment": { "feet": ["shoes_cloth", "shoes_cloth"] } },
+		{ "version": 4, "equipment": { "feet": ["shoes_cloth", "shoes_cloth"] } },
 		# an empty list is not "wear nothing" — omit the slot instead
-		{ "version": 2, "equipment": { "feet": [] } },
+		{ "version": 4, "equipment": { "feet": [] } },
 		# a non-name entry
-		{ "version": 2, "equipment": { "feet": [42] } },
+		{ "version": 4, "equipment": { "feet": [42] } },
 		# a piece that belongs to another region
-		{ "version": 2, "equipment": { "feet": ["shirt_ragged", "boots_worn"] } },
+		{ "version": 4, "equipment": { "feet": ["shirt_ragged", "boots_worn"] } },
 		# an unknown piece hiding inside an otherwise-valid list
-		{ "version": 2, "equipment": { "feet": ["no_such_piece", "boots_worn"] } },
+		{ "version": 4, "equipment": { "feet": ["no_such_piece", "boots_worn"] } },
+		# THE VERSION GATE: the list form is version 4, so a recipe claiming an
+		# older version may not use it — a version-3 client would read the array
+		# as one piece name and strand the character.
+		{ "version": 3, "equipment": { "feet": ["shoes_cloth", "boots_worn"] } },
+		{ "version": 2, "equipment": { "feet": ["shoes_cloth", "boots_worn"] } },
 	]:
 		var rejected := CharacterFactory.build(bad)
 		if rejected != null:
@@ -178,33 +187,39 @@ func _ready() -> void:
 	#    Nothing produces a layered recipe yet, but THIS change is what makes the
 	#    array a valid persisted value, so the guard belongs with it.
 	var creator := preload("res://scripts/character_creator.gd").new()
-	creator._recipe = { "version": 2, "equipment": { "feet": ["shoes_cloth", "boots_worn"] } }
-	# Selecting the OTHER clothing piece for the region must keep the armour on.
-	creator._set_recipe_equipment("feet", "shoes_cloth")
-	var after: Variant = creator._recipe["equipment"]["feet"]
-	if not (after is Array) or "boots_worn" not in (after as Array):
-		_fail("editing a layered region dropped the armour layer: %s" % str(after))
-		creator.free()
-		return
-	# A region wearing ONE piece keeps the plain-name shape every shipped recipe
-	# uses — the merge must not churn saves into one-element lists.
-	creator._recipe = { "version": 2, "equipment": { "legs": "pants_wool" } }
-	creator._set_recipe_equipment("legs", "pants_wool")
-	if creator._recipe["equipment"]["legs"] is not String:
-		_fail("a single-piece region was rewritten as a list: %s" % str(creator._recipe["equipment"]["legs"]))
-		creator.free()
-		return
-	# The picker shows the OUTERMOST worn piece, not "bare", for a layered region.
-	creator._recipe = { "version": 2, "equipment": { "feet": ["shoes_cloth", "boots_worn"] } }
+	creator._recipe = { "version": 4, "equipment": { "feet": ["shoes_cloth", "boots_worn"] } }
+	# It reads BOTH layers rather than stringifying the list — that misread is
+	# what made a layered region display as "bare".
 	var worn_feet := creator._worn_by_layer("feet")
 	if String(worn_feet.get("armor", "")) != "boots_worn" or String(worn_feet.get("clothing", "")) != "shoes_cloth":
 		_fail("the editor misread a layered region: %s" % str(worn_feet))
 		creator.free()
 		return
+	# ...and shows the OUTERMOST piece, which is what the character displays.
+	if creator._outermost("feet") != "boots_worn":
+		_fail("the editor shows '%s' for a region wearing boots over shoes" % creator._outermost("feet"))
+		creator.free()
+		return
+	# 9. SAVING MUST NOT DOWNGRADE A LAYERED RECIPE. The panel never creates the
+	#    layered state, but it can LOAD one; stamping it 3 would make the save
+	#    understate its own shape and a version-3 client would refuse to load it.
+	creator._restamp_version()
+	if int(creator._recipe["version"]) != CharacterFactory.LAYERED_EQUIPMENT_VERSION:
+		_fail("a layered recipe was stamped version %s, not %d"
+			% [str(creator._recipe["version"]), CharacterFactory.LAYERED_EQUIPMENT_VERSION])
+		creator.free()
+		return
+	# A single-piece recipe is NOT churned upward — it keeps its own version.
+	creator._recipe = { "version": 2, "equipment": { "legs": "pants_wool" } }
+	creator._restamp_version()
+	if int(creator._recipe["version"]) != 2:
+		_fail("a single-piece recipe was churned to version %s" % str(creator._recipe["version"]))
+		creator.free()
+		return
 	creator.free()
 
-	print("TEST PASS — layered equipment holds (%d baked pieces, layers %s; occlusion proven data-driven by ablation, order proven kit-driven, occluded pieces neither build nor tuck, editor preserves unedited layers)"
-		% [pieces.size(), str(CharacterFactory.LAYERS)])
+	print("TEST PASS — layered equipment holds (%d baked pieces, layers %s; occlusion proven data-driven by ablation, order proven kit-driven, occluded pieces neither build nor tuck; list form gated at version %d; editor reads both layers and never downgrades)"
+		% [pieces.size(), str(CharacterFactory.LAYERS), CharacterFactory.LAYERED_EQUIPMENT_VERSION])
 	get_tree().quit(0)
 
 
