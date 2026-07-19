@@ -22,6 +22,19 @@ var _interaction: InteractionController
 var _save_blocked := false
 
 func _ready() -> void:
+	# Capture-harness entry for the EXPORTED client: the official export
+	# template refuses positional scene paths (compiled with
+	# disable_path_overrides), so CI's exported-client capture cannot launch
+	# res://tools/frame_capture.tscn directly the way the editor run does — it
+	# boots the shipped scene and redirects here instead. The current_scene
+	# check makes the redirect one-shot: the capture tool instantiates this
+	# scene itself under root WITHOUT making it the current scene, so the
+	# capture-internal boot can never redirect back even though the variable
+	# is still set. Players never take this branch — the variable is absent
+	# outside the capture harness — and it runs before any world work begins.
+	if OS.get_environment("WAR_CAPTURE") == "1" and get_tree().current_scene == self:
+		get_tree().change_scene_to_file.call_deferred("res://tools/frame_capture.tscn")
+		return
 	_build_environment()
 	var world := WorldGen.new()
 	world.name = "World"

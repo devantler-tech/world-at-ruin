@@ -1005,15 +1005,16 @@ jobs:
     # only when export-affecting paths changed, so the default player-visible
     # PR pays nothing for it.
     #
-    # The exported binary accepts the same positional scene argument the editor
-    # run uses — Godot's runtime resolves res://tools/frame_capture.tscn from
-    # the packed resources (export_filter is "all_resources", so the capture
-    # scene ships in the pck). Settled empirically against the 4.7.1 export
-    # template before this job landed, because a silent fallback to the main
-    # scene would hang a windowed app with no quit path — which is also why
-    # this job carries a timeout: the editor capture's import-cache hazard does
-    # not exist here, but a hang class this job cannot rule out must cost
-    # minutes, not the runner's 6-hour default.
+    # The exported binary CANNOT take the positional scene argument the editor
+    # run uses: the official export template is compiled with
+    # disable_path_overrides and aborts on any scene path (settled empirically
+    # against the 4.7.1 template before this job landed). Entry is therefore
+    # WAR_CAPTURE=1, which main.gd answers by redirecting its own boot into
+    # the capture scene — shipped in the pck, since export_filter is
+    # "all_resources". The timeout exists because a windowed game that reaches
+    # its normal boot instead of the capture tool has no quit path, and a hang
+    # class this job cannot fully rule out must cost minutes, not the runner's
+    # 6-hour default.
     #
     # macOS runner + windowed run for the same reason as frame-capture: the
     # capture tool refuses a headless run rather than photograph nothing.
@@ -1050,9 +1051,10 @@ jobs:
             echo "::error::could not seed the capture save from client/recipes/wanderer.json — frames would show the first-run creator instead of the world"
             exit 1
           fi
+          WAR_CAPTURE=1 \
           WAR_SHOT_DIR="${RUNNER_TEMP}/exported-shots" \
           WAR_SAVE_PATH="${RUNNER_TEMP}/probe_save.json" \
-            "build/app/World at Ruin.app/Contents/MacOS/World at Ruin" res://tools/frame_capture.tscn 2>&1 | tee exported-capture.log
+            "build/app/World at Ruin.app/Contents/MacOS/World at Ruin" 2>&1 | tee exported-capture.log
           if ! grep -q "CAPTURE PASS" exported-capture.log; then
             echo "::error::exported-client capture did not report PASS — see log"; tail -40 exported-capture.log; exit 1
           fi
