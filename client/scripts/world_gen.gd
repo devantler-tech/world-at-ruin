@@ -62,10 +62,10 @@ const CAVE_SITE := Vector2(-56.0, -20.0)
 const CAVE_SEED := 42
 const CAVE_FLOOR_SKIRT := 0.55 ## How far terrain dips under cave floors.
 
-## Palette — ash, rock, bone, ember.
-const COL_ASH := Color(0.38, 0.345, 0.31)
-const COL_ROCK := Color(0.24, 0.22, 0.21)
-const COL_SCORCH := Color(0.16, 0.14, 0.13)
+## Palette — built stone and ember. The GROUND's colours are no longer one
+## palette held here: they belong to whichever region a place falls in, and
+## live in [GroundRegions] (the old ash/rock/scorch triple is now its
+## `ashflats` region, unchanged).
 const COL_STONE := Color(0.42, 0.39, 0.35)
 const COL_EMBER := Color(1.0, 0.55, 0.18)
 
@@ -77,6 +77,9 @@ var _detail := FastNoiseLite.new()
 var _tint := FastNoiseLite.new()
 var _foliage_density := FastNoiseLite.new()
 var _heights := PackedFloat32Array()
+## The ground regions this world was dealt, built once at generation and read
+## for every terrain vertex. See [GroundRegions].
+var _region_sites: Array[GroundRegions.Site] = []
 var _brazier_light: OmniLight3D
 var _brazier_mesh: MeshInstance3D
 var _shrine_interactable: Interactable
@@ -101,6 +104,8 @@ var _cave_apron: Array = []
 var _foliage: Array[Dictionary] = []
 
 func _ready() -> void:
+	# Dealt before anything is baked: the terrain colour bake reads them.
+	_region_sites = GroundRegions.sites(WORLD_SEED, SIZE)
 	_noise.seed = WORLD_SEED
 	_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX
 	_noise.frequency = 0.011
@@ -266,13 +271,26 @@ func _add_tri(st: SurfaceTool, a: Vector3, b: Vector3, c: Vector3) -> void:
 		st.add_vertex(v)
 
 func _ground_color(at: Vector3) -> Color:
-	# Height blend ash -> rock, scorched patches from tint noise.
+	# WHICH ground this is comes first; the layering within it is unchanged —
+	# height blends ash -> rock, tint noise scorches the sheltered lows.
+	var pal := GroundRegions.palette_for(_region_sites, at.x, at.z)
+	var ash: Color = pal[&"ash"]
+	var rock: Color = pal[&"rock"]
 	var t := clampf(inverse_lerp(-HEIGHT_AMP, HEIGHT_AMP, at.y), 0.0, 1.0)
-	var c := COL_ASH.lerp(COL_ROCK, t)
+	var c := ash.lerp(rock, t)
 	var scorch := _tint.get_noise_2d(at.x, at.z)
 	if scorch > 0.35:
-		c = c.lerp(COL_SCORCH, clampf((scorch - 0.35) * 2.5, 0.0, 0.8))
+		var col_scorch: Color = pal[&"scorch"]
+		c = c.lerp(col_scorch, clampf((scorch - 0.35) * 2.5, 0.0, 0.8))
 	return c
+
+
+## The name of the region a place stands on. The dev log and the frame-capture
+## evidence use it to say WHICH ground a vantage is looking at.
+func region_name_at(x: float, z: float) -> StringName:
+	var at := GroundRegions.region_for(_region_sites, x, z)
+	var region: Dictionary = GroundRegions.REGIONS[at[&"region"]]
+	return region[&"name"]
 
 ## Where a new wanderer wakes: on the main chamber's floor, deep in the
 ## system, torches leading up toward the mouth.
