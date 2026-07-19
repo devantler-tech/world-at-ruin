@@ -20,18 +20,27 @@ camera and game feel. This page covers the **visual** ones, because that is what
 about and what the maintainer's verdict specified. Audio, camera and game-feel targets are **not
 written yet**; setting them means inventing direction that has not been given.
 
-**That leaves a real enforcement gap, so here is how to comply until it closes.** `AGENTS.md` makes a
+**That leaves a real enforcement gap, and this page does NOT waive it.** `AGENTS.md` makes a
 player-visible PR that names no reference a P1 — which, taken literally, is unsatisfiable for a PR
-touching audio, camera or game feel, because this page has nothing for it to cite. Closing that by
-inventing targets would be worse than the gap: it would launder one agent's taste into the document
-every later agent is judged against, which is the exact failure #221 exists to end.
+touching audio, camera or game feel, because this page has nothing for it to cite. Two bad
+resolutions were considered and rejected:
 
-Until the maintainer sets those targets, a PR on an unreferenced surface complies by **saying so
-explicitly** — name the surface, state that no agreed reference exists yet, describe the target it
-aimed at and why, and flag it for his steer. A reviewer treats that as satisfying the rule; what
-stays P1 is a silent omission. Tracked in
-[#234](https://github.com/devantler-tech/world-at-ruin/issues/234), which resolves the gap properly
-by either extending this page or narrowing the rule — his call, not one to settle here.
+- **Inventing targets** would launder one agent's taste into the document every later agent is judged
+  against — the exact failure #221 exists to end.
+- **Granting a pass here** would be worse still. This page is *subordinate* to `AGENTS.md` and cannot
+  waive its rule. A reviewer reading the canonical rule and a reviewer reading this page would get
+  opposite instructions, and a contradicted gate is an unenforceable one — which would let through
+  precisely the unreferenced work the gate exists to stop.
+
+**So the rule stands as written, and the consequence is stated plainly: a change to what the player
+hears or feels is gated until a target for that surface exists.**
+[#234](https://github.com/devantler-tech/world-at-ruin/issues/234) is the unblocking path — the
+maintainer either names anchors for those surfaces or narrows the canonical rule. Get the target
+agreed there *before* building, rather than building and asking a reviewer to overlook the citation.
+
+The gate is narrower than it first sounds: it binds changes that alter the **player-facing result**.
+Refactors, infrastructure, tooling and tests on those subsystems are untouched, because they are not
+player-visible changes in the first place.
 
 ---
 
@@ -452,9 +461,19 @@ gamut precisely when it is at its flattest. The linear form fails *open*, which 
 direction for a diagnostic.
 
 So the contract #230 implements is the **minimum circular arc containing 90% of the coloured
-samples**: sort the hues, find the largest angular gap between adjacent samples, unwrap the circle at
-that gap, and only then take the percentile spread. Equivalently — the shortest arc that still covers
-the population.
+samples**, computed as a **sliding window**, not as a percentile:
+
+1. Sort the `n` hues ascending.
+2. Append a second copy with `+360°` added to each, giving a doubled sequence that can wrap.
+3. Let `k = ceil(0.9 * n)`. Take the **smallest** value of `h[i + k - 1] - h[i]` over every start
+   index `i` in `0 .. n-1`. That width is the span.
+
+**A percentile spread is not a substitute for this, even after unwrapping at the largest gap** — a
+tempting shortcut that is wrong when the outliers are asymmetric. With 90% of samples inside 10° and
+the remaining 10% near 100°, unwrapping at the largest gap and taking p5→p95 keeps about half those
+outliers and reports ~100°, while the true minimum arc holding 90% is 10°. It fails **open**, which
+is the same direction as the original bug and in the same diagnostic this section exists to protect.
+Take the sliding-window minimum directly.
 
 **The two recorded numbers survive this correction, for a stated reason rather than by assumption.**
 Both were taken with the linear form, and the linear and circular forms agree exactly when the
