@@ -40,13 +40,23 @@ extends Node
 
 const FIXTURE := "res://tests/data/wire_goldens.json"
 const URL := "wss://zone.example/replicate"
+## A stand-in allocation token. Not a credential — no server verifies it; it
+## exists so the header the real hub demands can be asserted.
+const TOKEN := "test-allocation-token"
 
 var _failed := false
 
 
-## A scripted stand-in for WebSocketPeer implementing exactly the six methods
+## A scripted stand-in for WebSocketPeer implementing exactly the methods
 ## ZoneConnection uses. Ready-states and packets are queued by the test, so
 ## every ordering below is chosen rather than raced.
+##
+## `close()` models the REAL close handshake instead of snapping straight to
+## STATE_CLOSED: a `WebSocketPeer` enters STATE_CLOSING and only reaches
+## STATE_CLOSED under further polls. A fake that closed instantly could not
+## tell a connection that keeps polling a closing socket apart from one that
+## abandons the handshake and reconnects onto a transport still in use — so it
+## would let exactly that bug through green.
 class FakeTransport:
 	extends RefCounted
 
@@ -54,8 +64,13 @@ class FakeTransport:
 	var packets: Array[PackedByteArray] = []
 	var open_result: int = OK
 	var connected_url := ""
+	var handshake_headers: PackedStringArray = PackedStringArray()
 	var polls := 0
 	var closes := 0
+	## Polls the close handshake takes to complete, as a real peer's does.
+	var closing_polls := 1
+
+	var _closing_left := 0
 
 	func connect_to_url(url: String) -> int:
 		connected_url = url
@@ -63,6 +78,10 @@ class FakeTransport:
 
 	func poll() -> void:
 		polls += 1
+		if ready_state == WebSocketPeer.STATE_CLOSING:
+			_closing_left -= 1
+			if _closing_left <= 0:
+				ready_state = WebSocketPeer.STATE_CLOSED
 
 	func get_ready_state() -> int:
 		return ready_state
@@ -73,9 +92,13 @@ class FakeTransport:
 	func get_packet() -> PackedByteArray:
 		return packets.pop_front()
 
+	func set_handshake_headers(headers: PackedStringArray) -> void:
+		handshake_headers = headers
+
 	func close() -> void:
 		closes += 1
-		ready_state = WebSocketPeer.STATE_CLOSED
+		ready_state = WebSocketPeer.STATE_CLOSING
+		_closing_left = closing_polls
 
 
 ## A transport missing get_packet — every other method present, so the control
@@ -95,11 +118,19 @@ class IncompleteTransport:
 	func get_available_packet_count() -> int:
 		return 0
 
+	func set_handshake_headers(_headers: PackedStringArray) -> void:
+		pass
+
 	func close() -> void:
 		pass
 
 
 func _ready() -> void:
+	# Admission is mandatory, so every connect below needs a token; the token
+	# law itself clears it deliberately and restores it.
+	var original_token := OS.get_environment(ZoneConnection.ZONE_TOKEN_ENV)
+	OS.set_environment(ZoneConnection.ZONE_TOKEN_ENV, TOKEN)
+
 	var stream := _load_stream()
 	if _failed:
 		return
@@ -113,17 +144,25 @@ func _ready() -> void:
 		return
 	if not _check_url_and_state_laws():
 		return
+	if not _check_scheme_law():
+		return
+	if not _check_admission_token_law():
+		return
 	if not _check_open_refusal_law():
 		return
 	if not _check_decode_refusal_law():
 		return
 	if not _check_fold_refusal_is_fail_closed(stream):
 		return
+	if not _check_close_completes_its_handshake():
+		return
 	if not _check_reconnect_is_not_wedged(stream):
 		return
 	if not _check_default_off():
 		return
-	print("TEST PASS — zone connection pumps the cross-tier stream golden to the server's authoritative end state, and every refusal is terminal, classified and fail-closed")
+
+	OS.set_environment(ZoneConnection.ZONE_TOKEN_ENV, original_token)
+	print("TEST PASS — zone connection pumps the cross-tier stream golden to the server's authoritative end state, presents its admission token over TLS, completes its close handshake, and every refusal is terminal, classified and fail-closed")
 	get_tree().quit(0)
 
 
@@ -335,6 +374,77 @@ func _check_url_and_state_laws() -> bool:
 	if conn.error() != ZoneConnection.ERR_STATE:
 		_fail("double connect reported %s, expected %s" % [conn.error(), ZoneConnection.ERR_STATE])
 		return false
+	# Refusing the CALL is not enough: the socket that was live is now
+	# unreferenced, and an unreferenced open socket leaves the zone server
+	# holding an observer and buffering for a client that will never read
+	# again. Refusing must also hang up.
+	if transport.closes != 1:
+		_fail("a refused duplicate connect left the live socket open (closes=%d) — the zone server would hold its observer until timeout" % transport.closes)
+		return false
+	return true
+
+
+## Only `wss://` is a legal zone url. A plaintext endpoint would carry the
+## admission token and the whole authoritative stream in clear.
+func _check_scheme_law() -> bool:
+	var transport := FakeTransport.new()
+	var conn := ZoneConnection.new(transport)
+	if conn.connect_to("ws://zone.example/replicate"):
+		_fail("a plaintext ws:// zone url was accepted — the transport ADR settles TLS")
+		return false
+	if conn.error() != ZoneConnection.ERR_SCHEME:
+		_fail("plaintext url reported %s, expected %s" % [conn.error(), ZoneConnection.ERR_SCHEME])
+		return false
+	if transport.connected_url != "":
+		_fail("the transport was asked to open a plaintext url (%s)" % transport.connected_url)
+		return false
+	# The refusal must not leak the url it rejected: a zone url may carry
+	# userinfo, and error details are printed.
+	if conn.error_detail().contains("zone.example"):
+		_fail("the scheme refusal echoed the url into its detail: %s" % conn.error_detail())
+		return false
+	return true
+
+
+## `server/zonesock/hub.go` refuses any upgrade without a bearer token, so a
+## connection without one can never reach LIVE. Refuse it here, at the point
+## of the mistake, and present it as a handshake header when it is there.
+func _check_admission_token_law() -> bool:
+	var original := OS.get_environment(ZoneConnection.ZONE_TOKEN_ENV)
+
+	OS.set_environment(ZoneConnection.ZONE_TOKEN_ENV, "")
+	var bare := FakeTransport.new()
+	var without := ZoneConnection.new(bare)
+	if without.connect_to(URL):
+		_fail("connect_to succeeded with no allocation token — zone admission answers 401, so this can never reach LIVE")
+		OS.set_environment(ZoneConnection.ZONE_TOKEN_ENV, original)
+		return false
+	if without.error() != ZoneConnection.ERR_TOKEN:
+		_fail("missing token reported %s, expected %s" % [without.error(), ZoneConnection.ERR_TOKEN])
+		OS.set_environment(ZoneConnection.ZONE_TOKEN_ENV, original)
+		return false
+	if bare.connected_url != "":
+		_fail("the transport was asked to open a url with no token to present")
+		OS.set_environment(ZoneConnection.ZONE_TOKEN_ENV, original)
+		return false
+
+	OS.set_environment(ZoneConnection.ZONE_TOKEN_ENV, TOKEN)
+	var transport := FakeTransport.new()
+	var conn := ZoneConnection.new(transport)
+	if not conn.connect_to(URL):
+		_fail("connect_to refused a good url with a token present: %s" % conn.error())
+		OS.set_environment(ZoneConnection.ZONE_TOKEN_ENV, original)
+		return false
+
+	# The exact header the hub parses — `bearerToken(r.Header.Get(...))`.
+	var want := "Authorization: Bearer %s" % TOKEN
+	var got := Array(transport.handshake_headers)
+	if not got.has(want):
+		_fail("handshake headers %s carry no %s — the hub refuses the upgrade with 401" % [str(got), want])
+		OS.set_environment(ZoneConnection.ZONE_TOKEN_ENV, original)
+		return false
+
+	OS.set_environment(ZoneConnection.ZONE_TOKEN_ENV, original)
 	return true
 
 
@@ -415,6 +525,57 @@ func _check_fold_refusal_is_fail_closed(stream: Dictionary) -> bool:
 	return true
 
 
+## Closing is a HANDSHAKE, not an instant. `WebSocketPeer.close()` leaves the
+## peer in STATE_CLOSING, and only further polls carry it to STATE_CLOSED — so
+## a connection that declares itself CLOSED and stops polling abandons the
+## socket mid-hangup, and a reconnect would then call connect_to_url on a
+## transport still in use.
+func _check_close_completes_its_handshake() -> bool:
+	var transport := FakeTransport.new()
+	transport.closing_polls = 2  # >1, so a single courtesy poll cannot pass this
+	var conn := ZoneConnection.new(transport)
+	conn.connect_to(URL)
+	transport.ready_state = WebSocketPeer.STATE_OPEN
+	conn.poll()
+	if not conn.is_live():
+		_fail("connection did not go live before the close-handshake control")
+		return false
+
+	conn.close()
+	if conn.state() != ZoneConnection.State.CLOSING:
+		_fail("state is %d immediately after close(), expected CLOSING — the peer's handshake has not finished" % conn.state())
+		return false
+
+	# A reconnect now would reuse a transport that is still hanging up.
+	if conn.connect_to(URL):
+		_fail("reconnect was allowed while the close handshake was still in flight")
+		return false
+	if conn.error() != ZoneConnection.ERR_STATE:
+		_fail("reconnect during close reported %s, expected %s" % [conn.error(), ZoneConnection.ERR_STATE])
+		return false
+
+	# Only polling advances it, and it takes as many polls as the peer wants.
+	var polls_before := transport.polls
+	conn.poll()
+	if transport.polls == polls_before:
+		_fail("poll() did not pump a closing transport — its handshake can never complete")
+		return false
+	if conn.state() == ZoneConnection.State.CLOSED:
+		_fail("state reached CLOSED after one poll, but the peer needed two — the wrapper is not tracking the peer's real ready state")
+		return false
+	conn.poll()
+	if conn.state() != ZoneConnection.State.CLOSED:
+		_fail("state is %d after the peer finished closing, expected CLOSED" % conn.state())
+		return false
+
+	# And a closed socket is free again.
+	transport.ready_state = WebSocketPeer.STATE_CONNECTING
+	if not conn.connect_to(URL):
+		_fail("reconnect after a COMPLETED close was refused (%s: %s)" % [conn.error(), conn.error_detail()])
+		return false
+	return true
+
+
 ## Terminal must not mean wedged: a failed connection reconnects, and onto a
 ## FRESH store — resuming a stale table across a desync is exactly the bug
 ## fail-closed exists to prevent.
@@ -436,6 +597,16 @@ func _check_reconnect_is_not_wedged(stream: Dictionary) -> bool:
 	conn.poll()
 	if conn.state() != ZoneConnection.State.FAILED:
 		_fail("connection did not fail on the corrupt frame; reconnect control is void")
+		return false
+
+	# The refusal hung the socket up, so the same close handshake has to
+	# finish before the transport is free — a failure does not exempt it.
+	if conn.connect_to(URL):
+		_fail("reconnect was allowed while the socket closed by the refusal was still hanging up")
+		return false
+	conn.poll()
+	if conn.state() != ZoneConnection.State.FAILED:
+		_fail("completing the close handshake changed a FAILED connection to %d — the failure is what the caller needs to see" % conn.state())
 		return false
 
 	transport.ready_state = WebSocketPeer.STATE_CONNECTING

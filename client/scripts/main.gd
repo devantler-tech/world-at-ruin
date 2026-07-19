@@ -30,6 +30,8 @@ var _volumetrics_on := false
 ## readable pixels under `--headless`, so this list is the only headless-
 ## verifiable record of where the air was thickened (the foliage lesson).
 var _hollow_fog: Array[Dictionary] = []
+## The live replication link, or null when no zone was named (#244).
+var _zone: ZoneConnection = null
 
 func _ready() -> void:
 	# Capture-harness entry for the EXPORTED client: the official export
@@ -127,11 +129,40 @@ func _ready() -> void:
 			# First time in the world: shape a character before setting out.
 			_open_creator.call_deferred(true)
 
+	# The live replication link, when a zone was named (#244). Default-off, so
+	# the shipped single-player boot is unchanged.
+	_connect_zone()
+
 	# The smoke boot's POSITIVE marker: CI greps for this line, not merely
 	# for the absence of errors — a boot that never mounted the project must
 	# fail the check, not slip past it (the silent-no-op incident, 0.1.12).
 	print("BOOT_OK v%s — world built, %d people and %d hounds in the Reach" % [
 		DevLog.VERSION, npcs.npc_names.size(), hounds.creature_names.size()])
+
+
+## Open the live zone connection when one was configured. This call is what
+## makes `ZoneConnection` part of the running game rather than a library only
+## its own test can reach: without it, setting WAR_ZONE_URL does nothing and
+## the replication tier stays dead code from the player's point of view.
+##
+## A refusal is reported and then left alone. The Reach is playable
+## single-player, so failing to reach a zone must never cost a player their
+## session.
+func _connect_zone() -> void:
+	if not ZoneConnection.is_enabled():
+		return
+	_zone = ZoneConnection.new()
+	if not _zone.connect_to(ZoneConnection.zone_url()):
+		# error_detail() names a misconfigured variable, never its value.
+		push_warning("zone connection refused (%s): %s" % [_zone.error(), _zone.error_detail()])
+
+
+## Drive the connection. Cheap and safe every frame: poll() is a no-op unless
+## the socket is connecting, live, or finishing a close handshake.
+func _process(_delta: float) -> void:
+	if _zone != null:
+		_zone.poll()
+
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("character_editor") and _creator == null:
