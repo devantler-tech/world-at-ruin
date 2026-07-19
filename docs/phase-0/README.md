@@ -63,6 +63,20 @@ resemble the geared figures the reference search returns.
 Photorealism remains out of scope — unreachable in Godot without a human sculptor. The target is
 stylised-realistic, and the gap is fidelity within that style, not a change of style.
 
+Each gap is tracked as an issue. **#221 comes first** — every other item is chasing a look nobody
+has written down, which is how the frames above got shipped as "good enough" in the first place:
+
+| Gap | Issue |
+|---|---|
+| Name the futuristic-medieval AAA target | [#221](https://github.com/devantler-tech/world-at-ruin/issues/221) (spike — blocks the rest) |
+| Ragged start, layered clothing + armour slots | [#222](https://github.com/devantler-tech/world-at-ruin/issues/222) |
+| Better textures — the game has none | [#223](https://github.com/devantler-tech/world-at-ruin/issues/223) |
+| Animations and correct stances | [#224](https://github.com/devantler-tech/world-at-ruin/issues/224) |
+| Blend structures and caves into terrain | [#225](https://github.com/devantler-tech/world-at-ruin/issues/225) |
+| A more varied and believable world | [#226](https://github.com/devantler-tech/world-at-ruin/issues/226) |
+| Better UI/UX | [#227](https://github.com/devantler-tech/world-at-ruin/issues/227) |
+| Multiple playable races | [#228](https://github.com/devantler-tech/world-at-ruin/issues/228) |
+
 ## What is deliberately not being judged here
 
 Controller glyph art, and combat, which does not exist yet. Animation *is* in scope per the verdict
