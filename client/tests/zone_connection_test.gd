@@ -109,6 +109,8 @@ func _ready() -> void:
 		return
 	if not _check_transport_contract_law():
 		return
+	if not _check_shipped_transport_satisfies_the_contract():
+		return
 	if not _check_url_and_state_laws():
 		return
 	if not _check_open_refusal_law():
@@ -286,6 +288,27 @@ func _check_transport_contract_law() -> bool:
 	if conn.error() != ZoneConnection.ERR_TRANSPORT:
 		_fail("retrying an unusable transport relabelled the error as %s" % conn.error())
 		return false
+	return true
+
+
+## The control every other test here cannot give: each one injects a FAKE, so
+## the SHIPPED transport is otherwise never checked against the contract list.
+## If `WebSocketPeer` ever loses or renames one of those six methods, the
+## default constructor would fail on the player's machine while every fake
+## kept passing. Constructing a peer opens nothing, so this is headless-safe.
+##
+## RED-proven by adding to the contract a method the fake HAS and the real peer
+## does not: every fake-driven check above stays green and only this one fails.
+func _check_shipped_transport_satisfies_the_contract() -> bool:
+	var conn := ZoneConnection.new()
+	if conn.state() == ZoneConnection.State.FAILED:
+		_fail("the real WebSocketPeer does not satisfy the transport contract: %s — every fake-driven test above is testing a seam the shipped client cannot use" % conn.error_detail())
+		return false
+	var peer := WebSocketPeer.new()
+	for method: String in ZoneConnection.REQUIRED_TRANSPORT_METHODS:
+		if not peer.has_method(method):
+			_fail("WebSocketPeer has no %s — the contract list has drifted from the engine" % method)
+			return false
 	return true
 
 
