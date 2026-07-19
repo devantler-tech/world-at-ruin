@@ -1053,11 +1053,12 @@ jobs:
     # macOS runner + windowed run for the same reason as frame-capture: the
     # capture tool refuses a headless run rather than photograph nothing.
     #
-    # DELIBERATELY NOT in ci-required-checks, even though frame-capture was
-    # promoted by #142: this job is much younger and has run 3 times. Promoting
-    # it on that would repeat exactly the mistake #142 exists to prevent —
-    # requiring a job whose reliability is unmeasured. It earns promotion on its
-    # own window, under the same trigger, tracked by #142's follow-up.
+    # REQUIRED since #214, on its own measured window rather than by borrowing
+    # frame-capture's: 13 consecutive successes, the single failure before them
+    # root-caused as a real defect this job caught (the export template refuses
+    # a positional scene path, fixed inside #210 by the WAR_CAPTURE=1 entry) —
+    # not a flake. That is the same trigger #142 used, measured independently
+    # because this job runs a different entry path and a different scene.
     needs: [detect-visual-changes, client-export-macos]
     if: needs.detect-visual-changes.outputs.export_affecting == 'true'
     runs-on: macos-latest
@@ -1213,15 +1214,20 @@ jobs:
         server-ci,
         detect-visual-changes,
         frame-capture,
+        frame-capture-exported,
       ]
     if: ${{ always() }}
     steps:
       - uses: devantler-tech/actions/aggregate-job-checks@0f27c13a9785608e0bbf9998777d27761b4de617 # v10.0.2
         with:
-          # frame-capture and detect-visual-changes are conditional and report
-          # `skipped` on PRs with no player-visible change (and on merge_group).
-          # aggregate-job-checks treats skipped as acceptable, so this does not
-          # block unrelated PRs — see the note on ci-required-checks' needs.
+          # frame-capture, frame-capture-exported and detect-visual-changes are
+          # conditional and report `skipped` on PRs with no player-visible
+          # change (and on merge_group). aggregate-job-checks treats skipped as
+          # acceptable, so this does not block unrelated PRs — see the note on
+          # ci-required-checks' needs. The two capture jobs are gated on
+          # DIFFERENT outputs of that one gate (visual vs export_affecting), so
+          # each can skip while the other runs; requiring the shared gate is
+          # what keeps a broken gate from silently dropping either.
           job-results: >-
             ${{ needs.client-smoke.result }}
             ${{ needs.client-export-macos.result }}
@@ -1229,3 +1235,4 @@ jobs:
             ${{ needs.server-ci.result }}
             ${{ needs.detect-visual-changes.result }}
             ${{ needs.frame-capture.result }}
+            ${{ needs.frame-capture-exported.result }}
