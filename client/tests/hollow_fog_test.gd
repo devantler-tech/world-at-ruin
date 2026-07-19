@@ -56,6 +56,17 @@ const VERIFY_SAMPLES := 16
 ## How far below the world median the pools' mean ground must sit, in metres.
 ## A placer scattering pools at random elevations lands near 0.0.
 const MIN_MEDIAN_DROP := 1.0
+## The synthetic depression used by the BASIN and ISLAND controls. Off-origin
+## so "found the hollow" cannot pass by defaulting to the world centre; deep
+## and tight enough that its relief clears HollowFog.MIN_RELIEF with margin,
+## so a control failure means the placer missed the hollow rather than the
+## hollow being too shallow to qualify.
+const BASIN_AT := Vector2(40.0, -25.0)
+const BASIN_DEPTH := 10.0
+const BASIN_SIGMA := 20.0
+## Half-extent of the ISLAND control's terrain, sized so a candidate at the
+## depression's centre has its ring cross the edge.
+const ISLAND_HALF := HollowFog.RING_RADIUS * 0.5
 
 var _world: WorldGen
 
@@ -168,37 +179,47 @@ func _run_controls() -> String:
 	if not dome.is_empty():
 		return "control DOME: placed %d pools on a hill, where every point stands above its surroundings" % dome.size()
 
-	# BOWL — exactly one hollow, at a known place. Proves the placer finds the
-	# RIGHT low ground, not merely some low ground.
-	var bowl := HollowFog.place(
-		func(x: float, z: float) -> float:
-			if absf(x) > HALF or absf(z) > HALF:
-				return WorldGen.NO_GROUND
-			return 0.004 * (x * x + z * z),
-		WorldGen.SIZE, WorldGen.NO_GROUND
+	# BASIN — one localised depression, deliberately OFF the origin. Proves the
+	# placer finds the RIGHT low ground rather than merely some low ground, and
+	# that "found it" cannot pass by defaulting to the world centre.
+	#
+	# A paraboloid is the wrong shape for this control and was the first
+	# version's bug: over k(x²+z²) the ring mean sits k·R² above the centre at
+	# EVERY point, so relief is uniform, nothing distinguishes the basin, and
+	# the control fails for a reason unrelated to its law. A Gaussian
+	# depression on flat ground has relief that genuinely peaks at its centre.
+	var basin := HollowFog.place(
+		_depression(BASIN_AT, HALF), WorldGen.SIZE, WorldGen.NO_GROUND
 	)
-	if bowl.size() != 1:
-		return "control BOWL: a terrain with exactly one basin produced %d pools, expected 1" % bowl.size()
-	var at: Vector3 = bowl[0]["pos"]
-	if Vector2(at.x, at.z).length() > HollowFog.CANDIDATE_STEP:
-		return "control BOWL: the one pool landed %.1f m from the basin's centre" % Vector2(at.x, at.z).length()
+	if basin.size() != 1:
+		return "control BASIN: a terrain with exactly one depression produced %d pools, expected 1" % basin.size()
+	var at: Vector3 = basin[0]["pos"]
+	var miss := Vector2(at.x - BASIN_AT.x, at.z - BASIN_AT.y).length()
+	if miss > HollowFog.CANDIDATE_STEP:
+		return "control BASIN: the one pool landed %.1f m from the depression's centre" % miss
 
-	# ISLAND — a bowl whose terrain stops well inside the ring radius. Every
-	# candidate's ring leaves the world, so a placer that clamps or skips
-	# missing samples would still place, measuring the void as if it were high
-	# ground. Refusing is the only correct answer.
-	var island_half := HollowFog.EDGE_INSET + HollowFog.RING_RADIUS * 0.5
+	# ISLAND — the SAME depression, on terrain that stops inside the ring
+	# radius, so every candidate's ring leaves the world. The shape is proven
+	# placeable by the BASIN control immediately above, so a refusal here can
+	# only be the ring-clipping rule: a placer that skipped or clamped missing
+	# samples would measure the void as ground and place anyway.
 	var island := HollowFog.place(
-		func(x: float, z: float) -> float:
-			if absf(x) > island_half or absf(z) > island_half:
-				return WorldGen.NO_GROUND
-			return 0.004 * (x * x + z * z),
-		WorldGen.SIZE, WorldGen.NO_GROUND
+		_depression(BASIN_AT, ISLAND_HALF), WorldGen.SIZE, WorldGen.NO_GROUND
 	)
 	if not island.is_empty():
 		return "control ISLAND: placed %d pools where every candidate's ring leaves the terrain — the void was measured as ground" % island.size()
 
 	return ""
+
+
+## A single Gaussian depression of BASIN_DEPTH metres centred at `at`, on
+## otherwise flat ground, clipped to a square of half-extent `bound`.
+func _depression(at: Vector2, bound: float) -> Callable:
+	return func(x: float, z: float) -> float:
+		if absf(x - at.x) > bound or absf(z - at.y) > bound:
+			return WorldGen.NO_GROUND
+		var d2 := (x - at.x) * (x - at.x) + (z - at.y) * (z - at.y)
+		return -BASIN_DEPTH * exp(-d2 / (2.0 * BASIN_SIGMA * BASIN_SIGMA))
 
 
 ## Mean surface height on a ring around (x, z) at the VERIFY radius/sample
