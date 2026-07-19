@@ -17,7 +17,7 @@ const ENTRIES: Array[Dictionary] = [
 		"notes": [
 			"Your wanderer used to stand square: both feet planted the same, both legs straight, shoulders dead level. It read like a figure waiting to be posed. Now the weight rests on one leg — that hip rides up, the shoulder above it drops to answer it, and the other knee softens with the foot turned slightly out.",
 			"Every body stands this way, whatever you do with the sliders, and it holds through the whole build so a heavy frame and a slight one both carry it.",
-			"Honestly: this is a pose, not animation. Nothing breathes, shifts weight or moves yet — that is the next piece of work, and it is the bigger half.",
+			"This is switched OFF unless you ask for it, with WAR_REST_STANCE=1. It is a pose, not animation: nothing breathes, shifts weight or moves yet, and until it does we would rather you chose it than woke up in it. That idle is the next piece of work and the bigger half.",
 		],
 	},
 	{

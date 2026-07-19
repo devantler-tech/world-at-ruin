@@ -60,6 +60,28 @@ const HAND_RELAX_DEG := 8.0
 ## This is a STATIC pose. There is no idle motion, no weight shift over time,
 ## no walk cycle — those stay with the parent #224.
 
+## Opt-in flag for the rest stance (product law 2 — experimental / below-bar
+## player-facing work does not ship default-on).
+##
+## The stance is static: no breathing idle, no weight shift over time, nothing
+## that responds to the player. `docs/art-direction/README.md` names all three
+## ("weight on one leg, asymmetric arms, a breathing idle") and this delivers
+## only the first, so it does not yet clear the character-stance target.
+##
+## ⚠️ Note honestly what OFF means here, because it is NOT the usual case: a
+## character must stand somehow, so the off path is not "no stance" — it is the
+## OLDER symmetric pose, the one the art-direction doc calls out as reading
+## "as a rig at rest, because that is what it is". Gating therefore ships the
+## worse of two poses by default. That trade is deliberate and maintainer-
+## reversible (one constant), and #241 tracks the flip once the idle lands.
+const REST_STANCE_ENV := "WAR_REST_STANCE"
+
+
+## Whether the player opted into the unfinished rest stance.
+static func rest_stance_enabled() -> bool:
+	return OS.get_environment(REST_STANCE_ENV) == "1"
+
+
 ## 🔑 RIG FACT, measured on the shipped kit rather than assumed: `thigh_l`
 ## sits at +X and `thigh_r` at -X, and a POSITIVE rotation about
 ## Vector3.FORWARD (-Z) LOWERS the left side. Every sign below is written
@@ -156,7 +178,8 @@ static func build(recipe: Dictionary) -> Node3D:
 		_hang_toward_down(skeleton, skeleton.find_bone(forearm), FOREARM_RELAX_DEG)
 	for hand in ["hand_l", "hand_r"]:
 		_hang_toward_down(skeleton, skeleton.find_bone(hand), HAND_RELAX_DEG)
-	_apply_contrapposto(skeleton)
+	if rest_stance_enabled():
+		_apply_contrapposto(skeleton)
 	skeleton.reset_bone_poses()
 	skeleton.force_update_all_bone_transforms()
 
