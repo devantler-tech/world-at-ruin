@@ -11,6 +11,16 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
+		"version": "0.13.0",
+		"date": "2026-07-19",
+		"title": "Standing like someone who has been standing a while",
+		"notes": [
+			"Your wanderer used to stand square: both feet planted the same, both legs straight, shoulders dead level. It read like a figure waiting to be posed. Now the weight rests on one leg — that hip rides up, the shoulder above it drops to answer it, and the other knee softens with the foot turned slightly out.",
+			"Every body stands this way, whatever you do with the sliders, and it holds through the whole build so a heavy frame and a slight one both carry it.",
+			"Honestly: this is a pose, not animation. Nothing breathes, shifts weight or moves yet — that is the next piece of work, and it is the bigger half.",
+		],
+	},
+	{
 		"version": "0.12.0",
 		"date": "2026-07-19",
 		"title": "The cave is made of layers now",
