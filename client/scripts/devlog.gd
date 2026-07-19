@@ -11,6 +11,15 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
+		"version": "0.10.0",
+		"date": "2026-07-19",
+		"title": "It knows what you are holding",
+		"notes": [
+			"The hints along the bottom of the screen, and the prompt that appears when something is within reach, now name only the device actually in your hands. Pick up a controller and they become controller prompts; touch the keyboard and they turn back, before the next thing you walk up to.",
+			"They used to say both at once — a keyboard line and a controller line stacked together, and prompts that read \"E · pad X\" whichever one you were using. Half of that was always about a device you had put down.",
+		],
+	},
+	{
 		"version": "0.9.0",
 		"date": "2026-07-19",
 		"title": "Light through the ash",

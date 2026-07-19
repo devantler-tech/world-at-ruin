@@ -10,15 +10,39 @@ const COL_EMBER := Color(1.0, 0.62, 0.25)
 
 var _toast: Label
 var _prompt: Label
+var _hints: Label
 var _devlog_panel: PanelContainer
 var _toast_tween: Tween
+var _device: InputDevice
 
 func _ready() -> void:
+	# The hint bar is derived from the live input map, so make sure the map
+	# exists before reading it: HUD and Player are siblings and this must not
+	# depend on which of them reaches _ready first. The call is idempotent.
+	Player.ensure_input_actions()
+	_device = InputDevice.new()
+	_device.name = "InputDevice"
+	_device.device_changed.connect(_on_device_changed)
+	add_child(_device)
+
 	_build_title()
 	_build_hints()
 	_build_toast()
 	_build_prompt()
 	_build_devlog()
+
+
+## Which device class the player last used. The InteractionController reads it
+## to format its prompt for the same device the hint bar is showing.
+func active_device() -> int:
+	return _device.active() if _device != null else InputDevice.KEYBOARD
+
+
+func _on_device_changed(device: int) -> void:
+	# The interaction prompt re-renders itself every frame from the controller,
+	# so only the static hint bar needs redrawing here.
+	if _hints != null:
+		_hints.text = InputDevice.hint_line(device)
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("toggle_devlog"):
@@ -50,15 +74,19 @@ func _build_title() -> void:
 	add_child(build)
 
 func _build_hints() -> void:
-	var hints := Label.new()
-	hints.text = "WASD move · Shift sprint · Space jump · E interact · mouse look · C reshape character · L or F1 dev log · Esc release mouse" \
-		+ "\nPad: left stick move · right stick look · A jump · L3 sprint · X interact · Y reshape · Back dev log"
-	hints.add_theme_font_size_override("font_size", 12)
-	hints.add_theme_color_override("font_color", COL_DIM)
-	hints.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
-	hints.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	hints.position.y -= 46
-	add_child(hints)
+	_hints = Label.new()
+	_hints.text = InputDevice.hint_line(active_device())
+	_hints.add_theme_font_size_override("font_size", 12)
+	_hints.add_theme_color_override("font_color", COL_DIM)
+	_hints.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	_hints.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_hints.position.y -= 46
+	add_child(_hints)
+
+
+## Read-only inspection of the hint bar, for the regression test.
+func hint_text() -> String:
+	return _hints.text if _hints != null else ""
 
 func _build_toast() -> void:
 	_toast = Label.new()
