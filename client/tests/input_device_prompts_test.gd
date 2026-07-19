@@ -67,6 +67,10 @@ func _ready() -> void:
 	if _failed:
 		return
 
+	# Print what a player actually reads, so a reviewer can judge the wording
+	# from the CI log without booting the game.
+	print("  keyboard: %s" % InputDevice.hint_line(InputDevice.KEYBOARD))
+	print("  pad:      %s" % InputDevice.hint_line(InputDevice.PAD))
 	print("TEST PASS — prompts follow the active device: derived from the live input map, exclusive per device, and swapped end to end on the real HUD and InteractionController")
 	get_tree().quit(0)
 
@@ -163,6 +167,21 @@ func _test_labels_derived() -> void:
 		"actions": ["move_forward", "move_left", "move_back", "move_right"]}
 	_check(InputDevice.row_label(move_row, InputDevice.PAD) == "left stick",
 		"four actions on one stick render as one label")
+
+	# Readability, and the reason the composite rule exists: rendering every
+	# alternate for a four-action verb produces "W / Up A / Left S / Down D /
+	# Right", which is the noise this change is meant to remove. A composite
+	# verb shows primaries only.
+	_check(InputDevice.row_label(move_row, InputDevice.KEYBOARD) == "W A S D",
+		"a composite verb shows one key per direction (was '%s')"
+			% InputDevice.row_label(move_row, InputDevice.KEYBOARD))
+
+	# …but a single-action verb keeps its alternates, and this one has to:
+	# F1 is fn-gated on Mac keyboards, so dropping L would strand the dev log
+	# behind a chord the hint bar never mentions.
+	var devlog_row := {"verb": "dev log", "actions": ["toggle_devlog"]}
+	_check(InputDevice.row_label(devlog_row, InputDevice.KEYBOARD).contains("L"),
+		"the dev log keeps its second binding (F1 is fn-gated on Mac)")
 
 	# An action nothing is bound to on this device yields nothing, not a blank
 	# bracket — that is what lets the pad hint line be genuinely shorter.
