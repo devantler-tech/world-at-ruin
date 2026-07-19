@@ -257,15 +257,19 @@ func poll() -> void:
 ## Close the connection. Idempotent, and never turns a FAILED connection into
 ## a clean CLOSED one — the failure is what the caller needs to see.
 ##
-## Closing a live socket lands in `CLOSING`, not `CLOSED`: the peer's close
-## handshake completes under `poll()`.
+## Closing a live socket usually lands in `CLOSING`, not `CLOSED`: the peer's
+## close handshake completes under `poll()`. But a peer whose connection is
+## already gone — hung up by the server, or closed while still CONNECTING —
+## reports `STATE_CLOSED` the moment it is asked to close, and then there is
+## no handshake left to wait for. Reading the outcome from the transport
+## instead of assuming one keeps `CLOSING` honest: it means "still hanging
+## up", so nothing can sit in it with no handshake in flight to leave it.
 func close() -> void:
 	if _state == State.FAILED:
 		return
 	if _state == State.CONNECTING or _state == State.LIVE:
 		_close_transport()
-		# Not CLOSED yet: the peer is still handshaking. poll() finishes it.
-		_state = State.CLOSING
+		_state = State.CLOSING if _transport_closing else State.CLOSED
 		return
 	if _state == State.CLOSING:
 		return  # idempotent; the handshake is already in flight

@@ -69,6 +69,10 @@ class FakeTransport:
 	var closes := 0
 	## Polls the close handshake takes to complete, as a real peer's does.
 	var closing_polls := 1
+	## Whether close() finishes instantly instead of handshaking — what a real
+	## peer does when the connection is already gone (the server hung up, or we
+	## closed while still CONNECTING and no socket was ever open).
+	var closes_instantly := false
 
 	var _closing_left := 0
 
@@ -97,6 +101,9 @@ class FakeTransport:
 
 	func close() -> void:
 		closes += 1
+		if closes_instantly:
+			ready_state = WebSocketPeer.STATE_CLOSED
+			return
 		ready_state = WebSocketPeer.STATE_CLOSING
 		_closing_left = closing_polls
 
@@ -155,6 +162,8 @@ func _ready() -> void:
 	if not _check_fold_refusal_is_fail_closed(stream):
 		return
 	if not _check_close_completes_its_handshake():
+		return
+	if not _check_close_of_an_already_gone_peer_completes():
 		return
 	if not _check_reconnect_is_not_wedged(stream):
 		return
@@ -572,6 +581,38 @@ func _check_close_completes_its_handshake() -> bool:
 	transport.ready_state = WebSocketPeer.STATE_CONNECTING
 	if not conn.connect_to(URL):
 		_fail("reconnect after a COMPLETED close was refused (%s: %s)" % [conn.error(), conn.error_detail()])
+		return false
+	return true
+
+
+## The OTHER close: a peer whose connection is already gone reports CLOSED the
+## moment it is asked to close, so there is no handshake to wait for. `CLOSING`
+## has to mean "still hanging up" — if the wrapper assumes a handshake that
+## never happens, nothing polls it back out (poll() only pumps a transport it
+## believes is closing) and the connection reports CLOSING forever. A caller
+## following this class's own advice — "poll() until CLOSED, then reconnect" —
+## would spin without end.
+func _check_close_of_an_already_gone_peer_completes() -> bool:
+	var transport := FakeTransport.new()
+	transport.closes_instantly = true
+	var conn := ZoneConnection.new(transport)
+	conn.connect_to(URL)
+	transport.ready_state = WebSocketPeer.STATE_OPEN
+	conn.poll()
+	if not conn.is_live():
+		_fail("connection did not go live before the instant-close control")
+		return false
+
+	conn.close()
+	if conn.state() != ZoneConnection.State.CLOSED:
+		_fail("state is %d after closing an already-gone peer, expected CLOSED — there was no handshake to wait for, so nothing will ever poll it out of CLOSING" % conn.state())
+		return false
+
+	# Polling must not undo that, and must not resurrect a closing state.
+	conn.poll()
+	conn.poll()
+	if conn.state() != ZoneConnection.State.CLOSED:
+		_fail("state drifted to %d after polling a fully closed peer, expected CLOSED" % conn.state())
 		return false
 	return true
 
