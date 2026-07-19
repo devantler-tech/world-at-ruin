@@ -34,7 +34,7 @@ func TestHealthIngestion(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			w := NewWorld(mobTestBounds)
+			w := NewWorld(combatBounds)
 			e := w.Add(tc.spawn)
 			if e.MaxHealth != tc.wantMax || e.Health != tc.wantH {
 				t.Fatalf("stored MaxHealth/Health = %d/%d, want %d/%d",
@@ -45,7 +45,7 @@ func TestHealthIngestion(t *testing.T) {
 }
 
 func TestApplyDamageFloorsAtZeroAndDiesOnce(t *testing.T) {
-	w := NewWorld(mobTestBounds)
+	w := NewWorld(combatBounds)
 	w.Add(Entity{ID: 1, MaxHealth: 100})
 
 	if deaths := w.ApplyDamage([]EntityID{1}, 30); len(deaths) != 0 {
@@ -74,7 +74,7 @@ func TestApplyDamageFloorsAtZeroAndDiesOnce(t *testing.T) {
 }
 
 func TestApplyDamageSanitizesDamage(t *testing.T) {
-	w := NewWorld(mobTestBounds)
+	w := NewWorld(combatBounds)
 	w.Add(Entity{ID: 1, MaxHealth: 100})
 
 	// Negative damage is not healing: clamped to zero, a full no-op.
@@ -93,7 +93,7 @@ func TestApplyDamageSanitizesDamage(t *testing.T) {
 }
 
 func TestApplyDamageSkipsPoollessAndUnknown(t *testing.T) {
-	w := NewWorld(mobTestBounds)
+	w := NewWorld(combatBounds)
 	w.Add(Entity{ID: 1})                // poolless — cannot be damaged
 	w.Add(Entity{ID: 2, MaxHealth: 10}) // pooled
 
@@ -107,7 +107,7 @@ func TestApplyDamageSkipsPoollessAndUnknown(t *testing.T) {
 }
 
 func TestApplyDamageDeathsFollowCallerOrder(t *testing.T) {
-	w := NewWorld(mobTestBounds)
+	w := NewWorld(combatBounds)
 	w.Add(Entity{ID: 2, MaxHealth: 5})
 	w.Add(Entity{ID: 3, MaxHealth: 5})
 
@@ -117,44 +117,43 @@ func TestApplyDamageDeathsFollowCallerOrder(t *testing.T) {
 	}
 }
 
-// damageScenarioConfig is the shared encounter shape for the scenario and its
-// golden: the proven escapable loop (see mobTestConfig) plus a damage amount
-// that kills the 25-point standing target on the third resolve.
-func damageScenarioConfig() MobConfig {
-	cfg := mobTestConfig()
-	cfg.Damage = 10
-	return cfg
+// damageScenarioParams is the shared encounter shape for the scenario and its
+// golden: an escapable loop (a 10-tick wind-up covers 2 000 mm at the
+// walker's 6 000 mm/s — comfortably past the 1 500 mm circle) plus a damage
+// amount that kills the 25-point standing target on the third resolution.
+func damageScenarioParams() MobParams {
+	return MobParams{
+		AggroRadiusMM:  5_000,
+		CastTicks:      10,
+		CooldownTicks:  5,
+		CircleRadiusMM: 1_500,
+		Damage:         10,
+	}
 }
 
 // runDamageScenario drives the scripted encounter for n ticks: a stationary
-// mob, a standing pooled target at the anchor, and a pooled walker who starts
-// inside the circle and runs for the exit. Every MobResolve is landed with
-// ApplyDamage exactly as the future zone-loop wiring will — unless apply is
-// false, the golden's ablated twin, which proves the hash pins application.
-func runDamageScenario(t *testing.T, cfg MobConfig, n int, apply bool) (w *World, resolves []MobEvent, deaths []DeathEvent) {
-	t.Helper()
-	w = NewWorld(mobTestBounds)
+// registered mob, a standing pooled target at the anchor, and a pooled walker
+// who starts inside the circle and runs for the exit. Every drained hit is
+// landed with ApplyDamage exactly as the future zone-loop wiring will —
+// unless apply is false, the golden's ablated twin, which proves the hash
+// pins application.
+func runDamageScenario(p MobParams, n int, apply bool) (w *World, hits []TelegraphHit, deaths []DeathEvent) {
+	w = NewWorld(combatBounds)
 	w.Add(Entity{ID: 1})                                                      // the mob, pinned at the origin
 	w.Add(Entity{ID: 2, Pos: Vec3{X: 1_000}, MaxHealth: 25})                  // stands at the future anchor
 	w.Add(Entity{ID: 3, Pos: Vec3{X: 1_500}, MaxSpeed: 6_000, MaxHealth: 25}) // starts inside the circle
-	m, err := NewMobController(1, cfg)
-	if err != nil {
-		t.Fatalf("NewMobController: %v", err)
-	}
+	w.AddMob(1, p)
 	w.SetIntent(3, Vec3{X: 6_000}) // the walker runs for the exit from tick one
 	for range n {
 		w.Step()
-		for _, e := range m.Step(w) {
-			if e.Kind != MobResolve {
-				continue
-			}
-			resolves = append(resolves, e)
+		for _, h := range w.DrainHits() {
+			hits = append(hits, h)
 			if apply {
-				deaths = append(deaths, w.ApplyDamage(e.Caught, e.Damage)...)
+				deaths = append(deaths, w.ApplyDamage(h.Targets, h.Damage)...)
 			}
 		}
 	}
-	return w, resolves, deaths
+	return w, hits, deaths
 }
 
 // TestDamageScenarioStandingDiesMovingLives is the issue's success signal end
@@ -162,23 +161,25 @@ func runDamageScenario(t *testing.T, cfg MobConfig, n int, apply bool) (w *World
 // the moving target alive — and keeps running past the death to prove the
 // corpse (still standing in every later circle) never dies twice.
 func TestDamageScenarioStandingDiesMovingLives(t *testing.T) {
-	w, resolves, deaths := runDamageScenario(t, damageScenarioConfig(), 80, true)
+	w, hits, deaths := runDamageScenario(damageScenarioParams(), 80, true)
 
-	if len(resolves) < 4 {
-		t.Fatalf("scenario too short to prove anything: %d resolves", len(resolves))
+	if len(hits) < 4 {
+		t.Fatalf("scenario too short to prove anything: %d resolutions", len(hits))
 	}
-	for _, r := range resolves {
-		for _, id := range r.Caught {
+	for _, h := range hits {
+		for _, id := range h.Targets {
 			if id == 3 {
-				t.Fatalf("the walker must escape every cast, but was caught at tick %d", r.Tick)
+				t.Fatalf("the walker must escape every cast, but was caught at tick %d", h.Tick)
 			}
 		}
 	}
 	if len(deaths) != 1 || deaths[0].Entity != 2 {
 		t.Fatalf("want exactly one death, of the standing target, got %v", deaths)
 	}
-	if got := deaths[0].Tick; got != resolves[2].Tick {
-		t.Fatalf("death must land on the third resolve (25 hp / 10 dmg), tick %d, got %d", resolves[2].Tick, got)
+	// A hit records the step it resolved DURING; the death records the world
+	// clock at application, one step later (see DeathEvent.Tick).
+	if got := deaths[0].Tick; got != hits[2].Tick+1 {
+		t.Fatalf("death must land applying the third resolution (25 hp / 10 dmg), tick %d, got %d", hits[2].Tick+1, got)
 	}
 	if got := w.Get(2).Health; got != 0 {
 		t.Fatalf("standing target must end dead, health %d", got)
@@ -194,9 +195,9 @@ func TestDamageScenarioStandingDiesMovingLives(t *testing.T) {
 // earned by distance over the window — the harness demonstrably damages
 // walkers who fail to escape.
 func TestDamageScenarioEscapeIsEarned(t *testing.T) {
-	cfg := damageScenarioConfig()
-	cfg.CastTicks = 2 // 2 ticks * 200 mm cannot clear the 1 500 mm circle from 500 mm in
-	w, _, _ := runDamageScenario(t, cfg, 10, true)
+	p := damageScenarioParams()
+	p.CastTicks = 2 // 2 ticks * 200 mm cannot clear the 1 500 mm circle from 500 mm in
+	w, _, _ := runDamageScenario(p, 10, true)
 	if got := w.Get(3).Health; got >= 25 {
 		t.Fatalf("under a too-short wind-up the walker must lose health, still at %d", got)
 	}
@@ -208,11 +209,14 @@ func TestDamageScenarioEscapeIsEarned(t *testing.T) {
 // health — the scripted damage scenario ends in. The pre-health goldens prove
 // damage-free worlds are untouched (they run unchanged in this suite); this
 // one pins the damaged half. Changing it is a deliberate, reviewed act.
+// (The value survived the #207 engine convergence unchanged: the hash pins
+// the FINAL state, and both engines end the same encounter in the same state
+// — standing target dead, walker unharmed, identical positions and tick.)
 const damageGoldenTicks = 80
 const damageGoldenHash uint64 = 0x9ff5c8c5edc81a09
 
 func TestDamagedWorldGolden(t *testing.T) {
-	w, _, deaths := runDamageScenario(t, damageScenarioConfig(), damageGoldenTicks, true)
+	w, _, deaths := runDamageScenario(damageScenarioParams(), damageGoldenTicks, true)
 	if len(deaths) == 0 {
 		t.Fatal("the golden scenario must contain a death — the golden would be vacuous")
 	}
@@ -223,7 +227,7 @@ func TestDamagedWorldGolden(t *testing.T) {
 	}
 
 	// Determinism: an identical run lands on the identical state.
-	w2, _, _ := runDamageScenario(t, damageScenarioConfig(), damageGoldenTicks, true)
+	w2, _, _ := runDamageScenario(damageScenarioParams(), damageGoldenTicks, true)
 	if got := w2.Hash(); got != damageGoldenHash {
 		t.Fatalf("two identical runs hashed differently: %#016x != %#016x", got, damageGoldenHash)
 	}
@@ -231,7 +235,7 @@ func TestDamagedWorldGolden(t *testing.T) {
 	// The ablated twin — same encounter, application skipped — must hash
 	// differently: health is genuinely part of the hashed state, and the
 	// golden pins the application, not just the movement underneath it.
-	w3, _, _ := runDamageScenario(t, damageScenarioConfig(), damageGoldenTicks, false)
+	w3, _, _ := runDamageScenario(damageScenarioParams(), damageGoldenTicks, false)
 	if got := w3.Hash(); got == damageGoldenHash {
 		t.Fatal("skipping damage application left the golden hash unchanged — the golden is blind to health")
 	}

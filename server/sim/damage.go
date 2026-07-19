@@ -1,14 +1,14 @@
 package sim
 
 // Damage application: the consequence layer that makes a resolved telegraph
-// COST something (#195; the follow-up #190's mob core named). A resolve —
-// MobController's MobResolve event or combat.go's TelegraphHit record —
-// reports who was standing in the shape; this file is the one place that fact
-// is turned into lost health, and death is health reaching zero here.
+// COST something (#195). A resolution — combat.go's TelegraphHit record —
+// reports who was standing in the shape and how much they should lose; this
+// file is the one place that fact is turned into lost health, and death is
+// health reaching zero here.
 //
 // Application is an explicit call, not a hidden phase of Step: the zone loop
-// owns the ordering between stepping controllers, applying their hits and
-// replicating the outcome — the same latent-landing shape the mob core chose,
+// owns the ordering between stepping the world, draining its hits, applying
+// them and replicating the outcome — the latent-landing shape #195 settled —
 // so wiring stays a later child and nothing changes for a world that never
 // calls it.
 //
@@ -23,9 +23,10 @@ package sim
 // nothing.
 type DeathEvent struct {
 	// Tick is World.Tick at application time. In the settled consumption
-	// order (World.Step, then controller steps, then application) that is the
-	// post-increment tick — the same clock MobEvent.Tick reads, so a death
-	// carries the same tick as the MobResolve that caused it.
+	// order (World.Step, then drain the hits, then apply them) that is the
+	// post-increment tick, so a death reads one above the TelegraphHit.Tick
+	// that caused it — the hit records the step index it resolved DURING,
+	// the death records the world clock the caller applied it AT.
 	Tick uint64
 	// Entity is who died.
 	Entity EntityID
@@ -33,8 +34,8 @@ type DeathEvent struct {
 
 // ApplyDamage subtracts damage from each target's health, in the order given,
 // and returns the deaths it caused, in that same order. The caller owns the
-// ordering — targets come straight from a resolve's ascending-ID list, and
-// applying one resolve is one call.
+// ordering — targets come straight from a drained hit's ascending-ID list,
+// and applying one hit is one call: ApplyDamage(hit.Targets, hit.Damage).
 //
 // Sanitized at ingestion, like every input to the tick core: damage is
 // clamped into [0, maxHealth], so with health in the same bound the

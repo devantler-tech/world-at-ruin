@@ -73,36 +73,40 @@ zone/dungeon server:
     the authoritative path never calls a trig function. A fourth committed golden
     pins the demo scenario's resolution stream. Ascending-ID and read-only —
     never part of `Step`, so it cannot move the movement golden.
-  - `MobController` — the **mob combat core**: the smallest brain that makes
-    "step out of the circle" real. An idle mob acquires the nearest entity
-    within an inclusive aggro radius (ties broken to the lowest ID, iterated in
-    stable order), telegraphs a circle **anchored where the target stood at
-    cast start** — ground-anchored, never tracking, which is exactly what makes
-    the attack winnable by moving well and losable by standing still — and
-    resolves it through `World.Caught` (excluding itself; caster filtering is
-    this layer's job) into an event stream the future damage, replication and
-    presentation children consume. A wind-up of zero is refused at construction:
-    an instant telegraph cannot be dodged, and dodgeability is product law. A
-    fifth committed golden pins a scripted encounter's event stream. It is a
-    controller in the tracker mould — stepped by the caller after `Step`,
-    read-only, so it cannot move the movement golden (a test pins that).
-    Chase movement, factions and interruption are deliberate later children
-    (#188 lists them).
+  - `World.AddMob` + the cast lifecycle — the **mob combat AI** (the single
+    implementation by decision, #207): a registered stationary caster acquires
+    the nearest non-mob entity within an inclusive aggro radius (ties broken
+    to the lowest ID, iterated in stable order) and paints a circle **anchored
+    where the target stood at cast start** — ground-anchored, never tracking,
+    which is exactly what makes the attack winnable by moving well and losable
+    by standing still. The cast resolves a fixed number of ticks later against
+    where everyone is standing **at resolution** (leave and wander back in and
+    you are still hit), excluding the caster, into a bounded `TelegraphHit`
+    record log the consumer drains every tick. A zero wind-up is clamped to a
+    full tick: an instant telegraph cannot be dodged, and dodgeability is
+    product law. `ActiveCasts` exposes the painted, unresolved marks — the
+    read seam the future replication child consumes, because a client must SEE
+    the mark to step out of it. Runs inside `Step` (one tick loop, resolution
+    before decision), decides in ascending-ID order, and never touches a
+    position — a test pins that a mob-bearing world ends every entity exactly
+    where its mob-free twin does. Its own committed golden pins a scripted
+    scenario's resolution stream. Threat, chase movement, factions and
+    interruption are deliberate later children.
   - `Entity.Health` + `World.ApplyDamage` — the **consequence layer**: a
     resolved telegraph finally costs something. Health is part of the hashed
     world state for entities with a pool (`MaxHealth > 0`) — a divergence in
     health is a desync like any other — while poolless entities hash exactly
     as before, so every pre-health golden is unchanged by construction. A
-    resolve carries its mob's configured damage, and the zone loop lands it
-    with one explicit `ApplyDamage(caught, damage)` call — application is
-    caller-owned ordering, not a hidden phase of `Step`. Damage is clamped at
-    ingestion (never negative, never overflowing), a dead entity is skipped
-    (which makes each `DeathEvent` observable exactly once), and what death
-    *does* — despawn, respawn, loot — is deliberately the next child: the
-    world cannot even remove entities yet. A sixth committed golden pins a
-    scripted encounter in which the standing target dies and the escaping
-    walker ends unharmed, with an application-ablated twin proving the golden
-    is not blind to health.
+    `TelegraphHit` carries its mob's configured damage, and the zone loop
+    lands each drained hit with one explicit `ApplyDamage(hit.Targets,
+    hit.Damage)` call — application is caller-owned ordering, not a hidden
+    phase of `Step`. Damage is clamped at ingestion (never negative, never
+    overflowing), a dead entity is skipped (which makes each `DeathEvent`
+    observable exactly once), and what death *does* — despawn, respawn, loot —
+    is deliberately the next child: the world cannot even remove entities yet.
+    A committed damaged-world golden pins a scripted encounter in which the
+    standing target dies and the escaping walker ends unharmed, with an
+    application-ablated twin proving the golden is not blind to health.
 - **`wire/`** — the **versioned wire codec**: the transport-agnostic binary
   encoding of the replication payload (the full join snapshot and the per-tick
   delta stream). Every message opens with an explicit protocol version — product

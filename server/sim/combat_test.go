@@ -125,6 +125,132 @@ func TestAnchorCatchesBystanderNotEscapedTarget(t *testing.T) {
 	}
 }
 
+// TestEscapeNeedsTheWindow is the negative control for the walk-out escape:
+// the identical run under a wind-up too short to cover the circle's edge
+// distance ends in a catch. This proves the escape above is earned by
+// distance over the window, not handed out by the harness. (Ported from the
+// converged MobController suite, #207.)
+func TestEscapeNeedsTheWindow(t *testing.T) {
+	// 2 ticks at 1000 mm/tick = 2000 mm from x=1000: at resolution the target
+	// is 2000 mm from the anchor — exactly ON the 2000 mm circle's inclusive
+	// edge, so it is caught where the 4-tick run above escapes cleanly.
+	w := newCombatWorld(MobParams{AggroRadiusMM: 10_000, CastTicks: 2, CooldownTicks: 600, CircleRadiusMM: 2_000})
+	w.Add(Entity{ID: 1, Pos: Vec3{X: 1_000}, MaxSpeed: 30_000})
+
+	w.Step()
+	w.SetIntent(1, Vec3{X: 30_000})
+	steps(w, 2)
+	hits := w.DrainHits()
+	if len(hits) != 1 || len(hits[0].Targets) != 1 || hits[0].Targets[0] != 1 {
+		t.Fatalf("under a too-short wind-up the same run must end in a catch, got %+v", hits)
+	}
+}
+
+// TestAggroNearestWinsOverLowerID pins distance-first acquisition: the nearer
+// entity wins even when a lower ID sits farther away. (Ported, #207.)
+func TestAggroNearestWinsOverLowerID(t *testing.T) {
+	w := newCombatWorld(MobParams{AggroRadiusMM: 10_000, CastTicks: 3, CooldownTicks: 600, CircleRadiusMM: 1_000})
+	w.Add(Entity{ID: 1, Pos: Vec3{X: 4_000}, MaxSpeed: 0})
+	w.Add(Entity{ID: 2, Pos: Vec3{X: -2_000}, MaxSpeed: 0})
+
+	w.Step()
+	casts := w.ActiveCasts()
+	if len(casts) != 1 || casts[0].Shape.Origin != (Vec3{X: -2_000}) {
+		t.Fatalf("want the nearer entity 2 acquired over the lower ID, got %+v", casts)
+	}
+}
+
+// TestAggroEdgeInclusive pins the boundary convention: exactly on the aggro
+// radius aggros (the same inclusive edge every telegraph shape uses), one
+// millimetre beyond does not. (Ported, #207.)
+func TestAggroEdgeInclusive(t *testing.T) {
+	w := newCombatWorld(MobParams{AggroRadiusMM: 5_000, CastTicks: 3, CooldownTicks: 600, CircleRadiusMM: 1_000})
+	w.Add(Entity{ID: 1, Pos: Vec3{X: 5_000}, MaxSpeed: 0})
+	w.Step()
+	if casts := w.ActiveCasts(); len(casts) != 1 {
+		t.Fatalf("a target exactly on the aggro radius must be acquired, got %+v", casts)
+	}
+
+	w2 := newCombatWorld(MobParams{AggroRadiusMM: 5_000, CastTicks: 3, CooldownTicks: 600, CircleRadiusMM: 1_000})
+	w2.Add(Entity{ID: 1, Pos: Vec3{X: 5_001}, MaxSpeed: 0})
+	steps(w2, 5)
+	if casts := w2.ActiveCasts(); len(casts) != 0 {
+		t.Fatalf("a target one mm beyond the radius must not be acquired, got %+v", casts)
+	}
+}
+
+// TestHitCarriesDamage pins the latent-landing seam ported from #195: a
+// resolution carries its caster's configured damage on the record, so the
+// consumer lands it with ApplyDamage(hit.Targets, hit.Damage) and needs no
+// access to the mob registry. An unconfigured mob carries zero.
+func TestHitCarriesDamage(t *testing.T) {
+	w := newCombatWorld(MobParams{AggroRadiusMM: 10_000, CastTicks: 2, CooldownTicks: 600, CircleRadiusMM: 2_000, Damage: 7})
+	w.Add(Entity{ID: 1, Pos: Vec3{X: 1_000}, MaxSpeed: 0})
+	steps(w, 3)
+	hits := w.DrainHits()
+	if len(hits) != 1 || hits[0].Damage != 7 {
+		t.Fatalf("a resolution must carry the configured damage 7, got %+v", hits)
+	}
+
+	w2 := newCombatWorld(MobParams{AggroRadiusMM: 10_000, CastTicks: 2, CooldownTicks: 600, CircleRadiusMM: 2_000})
+	w2.Add(Entity{ID: 1, Pos: Vec3{X: 1_000}, MaxSpeed: 0})
+	steps(w2, 3)
+	hits = w2.DrainHits()
+	if len(hits) != 1 || hits[0].Damage != 0 {
+		t.Fatalf("an unconfigured mob's resolution must carry zero damage, got %+v", hits)
+	}
+}
+
+// TestNegativeDamageIsClampedInert pins damage's ingestion clamp at the mob
+// registry: a negative configured amount survives as zero (a telegraph that
+// marks but never heals), mirroring every other MobParams bound.
+func TestNegativeDamageIsClampedInert(t *testing.T) {
+	w := newCombatWorld(MobParams{AggroRadiusMM: 10_000, CastTicks: 2, CooldownTicks: 600, CircleRadiusMM: 2_000, Damage: -10})
+	w.Add(Entity{ID: 1, Pos: Vec3{X: 1_000}, MaxSpeed: 0, MaxHealth: 50})
+	steps(w, 3)
+	hits := w.DrainHits()
+	if len(hits) != 1 || hits[0].Damage != 0 {
+		t.Fatalf("negative configured damage must clamp to zero, got %+v", hits)
+	}
+	if deaths := w.ApplyDamage(hits[0].Targets, hits[0].Damage); len(deaths) != 0 || w.Get(1).Health != 50 {
+		t.Fatalf("landing a zero-damage hit must change nothing, got health %d", w.Get(1).Health)
+	}
+}
+
+// TestCombatNeverMovesAnyone pins the record-only contract the converged
+// controller suite used to pin against the movement golden: the combat layer
+// records hits and paints casts but never touches a position, so a world
+// with a registered mob ends every entity exactly where the identical world
+// without one does. A future chase-movement change must break this test
+// consciously.
+func TestCombatNeverMovesAnyone(t *testing.T) {
+	build := func(withMob bool) *World {
+		w := NewWorld(combatBounds)
+		w.Add(Entity{ID: 9, Pos: Vec3{}, MaxSpeed: 0, Radius: 300})
+		w.Add(Entity{ID: 1, Pos: Vec3{X: -6_000, Z: -6_000}, MaxSpeed: 4_000, Radius: 300})
+		if withMob {
+			w.AddMob(9, MobParams{AggroRadiusMM: 15_000, CastTicks: 5, CooldownTicks: 10, CircleRadiusMM: 2_500, Damage: 3})
+		}
+		return w
+	}
+	a, b := build(true), build(false)
+	for i := range 120 {
+		for _, w := range []*World{a, b} {
+			w.SetIntent(1, Vec3{X: int64(1_000 * (i%3 - 1)), Z: 2_000})
+		}
+		a.Step()
+		b.Step()
+	}
+	if a.DroppedHits() == 0 && len(a.DrainHits()) == 0 {
+		t.Fatal("the mob-bearing twin never resolved a cast — the comparison would be vacuous")
+	}
+	for _, id := range []EntityID{9, 1} {
+		if pa, pb := a.Get(id).Pos, b.Get(id).Pos; pa != pb {
+			t.Fatalf("combat moved entity %d: %+v vs %+v", id, pa, pb)
+		}
+	}
+}
+
 func TestCasterIsNeverCaughtByItsOwnCircle(t *testing.T) {
 	// The circle is painted 500 mm from the mob with a 2000 mm radius, so the
 	// mob is standing deep inside its own mark at resolution.
