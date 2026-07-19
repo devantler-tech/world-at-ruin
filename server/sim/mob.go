@@ -14,8 +14,11 @@ import "fmt"
 // consciously.
 //
 // Deliberate limits of this first slice (each a named follow-up on #188):
-//   - No damage or health exist yet, so a resolve reports who was caught and
-//     nothing more; applying the hit is the next child.
+//   - Damage and health exist now (#195): a resolve carries the configured
+//     Damage and the zone loop applies it with World.ApplyDamage (damage.go).
+//     The wiring itself is still a later child; acquisition remains
+//     health-blind, so a mob will keep casting at a dead target until the
+//     eligibility child teaches it better.
 //   - The mob does not move. Chase and leash need navmesh-aware movement.
 //   - Target eligibility is "any other entity". That is correct for the
 //     vertical slice's single mob, but two controllers would aggro each
@@ -72,6 +75,12 @@ type MobEvent struct {
 	// filtering is this layer's job (World.Caught is pure geometry and tests
 	// everyone).
 	Caught []EntityID
+	// Damage is, on MobResolve only, the configured amount each caught entity
+	// should lose (MobConfig.Damage). The controller never applies it — it
+	// only reads the world — so the event carries the amount and the zone
+	// loop lands it with World.ApplyDamage(Caught, Damage), keeping the
+	// caller the owner of ordering.
+	Damage int64
 }
 
 // MobConfig sizes one mob's combat loop. All fields are validated once at
@@ -94,6 +103,13 @@ type MobConfig struct {
 	// acquire again. Zero is legal: recovery ends immediately and the mob
 	// re-acquires on the next step.
 	CooldownTicks uint64
+	// Damage is how much health each caught entity loses when the cast
+	// resolves, bounded to maxHealth so application can never overflow. Zero
+	// is legal — a telegraph that marks but does not yet hurt, which is every
+	// mob configured before damage existed. How much a hit HURTS, like how
+	// generous the wind-up is, remains a reviewed balance decision (#153's
+	// lesson), not a library constraint.
+	Damage int64
 }
 
 func (c MobConfig) validate() error {
@@ -111,6 +127,12 @@ func (c MobConfig) validate() error {
 	}
 	if c.CastTicks == 0 {
 		return fmt.Errorf("sim: mob cast wind-up must be at least 1 tick — an instant telegraph cannot be dodged")
+	}
+	if c.Damage < 0 {
+		return fmt.Errorf("sim: mob damage %d must not be negative — healing is not a telegraph outcome", c.Damage)
+	}
+	if c.Damage > maxHealth {
+		return fmt.Errorf("sim: mob damage %d exceeds the maximum %d", c.Damage, int64(maxHealth))
 	}
 	return nil
 }
@@ -186,7 +208,7 @@ func (m *MobController) Step(w *World) []MobEvent {
 				break
 			}
 		}
-		ev := MobEvent{Kind: MobResolve, Tick: w.Tick, Anchor: m.anchor, Caught: caught}
+		ev := MobEvent{Kind: MobResolve, Tick: w.Tick, Anchor: m.anchor, Caught: caught, Damage: m.cfg.Damage}
 		m.target = 0
 		if m.cfg.CooldownTicks == 0 {
 			m.phase = MobIdle

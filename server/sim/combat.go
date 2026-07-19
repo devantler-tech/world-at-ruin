@@ -19,10 +19,13 @@ package sim
 // no casts takes a single early return and behaves byte-identically to one
 // built before this file existed, so every shipped golden is unchanged.
 //
-// Deliberately absent (later children of #9/#4): damage and health (a hit is
-// recorded, not yet applied), threat from damage, chase/movement AI (this
-// slice's mobs never set intent), and replication of casts to clients (needs
-// a wire schema bump once the v1 client decoder lands).
+// Deliberately absent (later children of #9/#4): threat from damage,
+// chase/movement AI (this slice's mobs never set intent), and replication of
+// casts to clients (needs a wire schema bump once the v1 client decoder
+// lands). Health and application now exist (#195, damage.go): a drained
+// TelegraphHit's Targets can be landed with World.ApplyDamage exactly like a
+// MobResolve's Caught — this layer still only records, and a per-mob damage
+// amount for ITS params is the wiring child's question.
 
 import "sort"
 

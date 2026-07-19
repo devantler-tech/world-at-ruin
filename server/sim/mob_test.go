@@ -95,6 +95,8 @@ func TestMobConfigValidation(t *testing.T) {
 		{"negative telegraph radius", func(c *MobConfig) { c.TelegraphRadiusMM = -1 }, "telegraph radius"},
 		{"telegraph radius over bound", func(c *MobConfig) { c.TelegraphRadiusMM = maxTelegraphExtentMM + 1 }, "exceeds"},
 		{"zero cast ticks", func(c *MobConfig) { c.CastTicks = 0 }, "cannot be dodged"},
+		{"negative damage", func(c *MobConfig) { c.Damage = -1 }, "damage"},
+		{"damage over bound", func(c *MobConfig) { c.Damage = maxHealth + 1 }, "exceeds"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -122,6 +124,28 @@ func TestMobStandStillIsCaught(t *testing.T) {
 	}
 	if got := resolves[0].Caught; len(got) != 1 || got[0] != 2 {
 		t.Fatalf("standing target must be caught: got %v", got)
+	}
+}
+
+// TestMobResolveCarriesDamage pins the latent-landing seam: a resolve carries
+// the configured damage amount (and only a resolve — the controller itself
+// never applies anything, so the amount must travel on the event for the zone
+// loop to land).
+func TestMobResolveCarriesDamage(t *testing.T) {
+	cfg := mobTestConfig()
+	cfg.Damage = 7
+	w, m := newMobWorld(t, cfg, Entity{ID: 2, Pos: Vec3{X: 3_000}, MaxSpeed: 6_000})
+	events := stepFor(w, m, 12)
+	for _, e := range events {
+		if e.Kind == MobResolve && e.Damage != 7 {
+			t.Fatalf("resolve must carry the configured damage 7, got %d", e.Damage)
+		}
+		if e.Kind != MobResolve && e.Damage != 0 {
+			t.Fatalf("only a resolve carries damage, got %d on kind %d", e.Damage, e.Kind)
+		}
+	}
+	if len(eventsOfKind(events, MobResolve)) != 1 {
+		t.Fatalf("want exactly 1 resolve, got %v", events)
 	}
 }
 
