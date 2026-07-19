@@ -40,6 +40,43 @@ A frame passes the setting test when a stranger reads it as fantasy-medieval fir
 technology in it as something this world *inherited* — older than its people and imperfectly
 understood — rather than as something this world builds.
 
+## The maintainer's named references — these three anchor everything below
+
+Given directly on #221, one per surface. **These outrank any reference an agent picks**, including
+the per-surface comparables further down this page, which are supporting analogues rather than the
+target itself.
+
+| Reference | Anchors | Why it is the right anchor |
+|---|---|---|
+| **[Numenera](https://numenera.com/)** — Monte Cook's Ninth World | **the world** | A far-future Earth whose people live medievally amid the incomprehensible remnants of prior civilisations, treated exactly as magic is treated in a fantasy setting. That *is* the one-line style above, already written down by someone else and illustrated. Its native tech level is medieval and its technology is inherited, never manufactured — which is the setting test, verbatim. |
+| **[Kingmakers](https://store.steampowered.com/app/2109770/Kingmakers/)** | **character look** | Its knights carry a **legible armour tier ladder** — steel, hardened steel, then a gold titanium alloy — where the tier is readable from the surface itself rather than from a stat sheet. That is precisely what #222's equipment slots need, and its futuristic-against-medieval juxtaposition on a single figure is the clash this game has to sell. |
+| **[Fatekeeper](https://fatekeeper.thqnordic.com/)** (THQ Nordic, 2026) | **the visual target** | Dark-fantasy art direction carried by materials and light: damp stone, weathered wood, rusted armour, dramatic key lighting, and magic that acts as a real light source rather than an overlay. Its gear reads Viking-derived amid statuary from other cultures, so the world feels mythically layered rather than one consistent period — the same "many prior ages" read the Ninth World needs. |
+
+**Read Numenera as concept art, not as screenshots.** It is a tabletop game, so its references are
+illustration plates and art-book spreads. That makes it the right anchor for *what the world is* —
+silhouette, scale, the strangeness of the relic — and the wrong one for real-time material or
+lighting technique, which is Fatekeeper's job.
+
+**Take Kingmakers' armour, not its protagonist.** Its player character is a modern military
+operator, which is emphatically not this game's look. What transfers is the knights: tiered plate,
+material-readable rank, and the sight of hard technology beside hand-forged steel.
+
+### ⚠️ Fatekeeper sits above the fidelity ceiling this page argues for — say so in PRs
+
+This is a genuine, unresolved tension and it should not be quietly averaged away. The ceiling below
+argues for stylised-realistic (WoW / Guild Wars 2 with Diablo IV's grime) on the grounds that Godot
+4.7 Forward+ has no Nanite, no Lumen and no photoscan library. Fatekeeper is benchmark-grade PBR
+realism — nearer to the Horizon end that the ceiling explicitly rules out.
+
+Both cannot be literally true at once, so treat Fatekeeper as a **direction-of-travel target for art
+direction and material behaviour** — dark-fantasy composition, weathered named substances, light
+doing the dramatic work — and **not** as a fidelity-parity target for texel density or surface
+detail. A PR's gap statement should be written against Fatekeeper's *direction*, not its budget.
+
+**This split is an agent's judgement call, not maintainer direction** — he named the reference and
+did not rule on the ceiling. If the intent is that the ceiling itself should move, that is his call
+to make and this section should be rewritten to match.
+
 ## The fidelity ceiling — stylised, and that is an advantage
 
 We render in Godot 4.7 Forward+. There is no Nanite, no Lumen, no photoscan library and no art
@@ -121,9 +158,15 @@ leather, coarse woven cloth. Substance shows up in three separable channels:
 - **Roughness variation** — polished where hands and boots touch, matte where dust settles. Uniform
   roughness is what makes two different materials light identically.
 
-**Reference.** WoW's **Outland / Hellfire Peninsula** is the closest painted analogue to Ashfall
-Reach — a shattered orange wasteland that still separates rock from ground from sky. Diablo IV's
-**Dry Steppes** for how far to push grime, rust and wear without losing readability.
+**Reference — primary: [Fatekeeper](https://fatekeeper.thqnordic.com/).** This gap is exactly what
+it is the named target *for*. Look at its damp stone, weathered wood and rusted metal: each is a
+named substance carrying colour pattern, multi-scale grain and varying roughness, which is the
+three-channel test above. Aim at that behaviour, not at its texel budget (see the ceiling note
+above).
+
+Supporting analogues: WoW's **Outland / Hellfire Peninsula** is the closest painted analogue to
+Ashfall Reach — a shattered orange wasteland that still separates rock from ground from sky; Diablo
+IV's **Dry Steppes** for how far to push grime, rust and wear without losing readability.
 
 **⚠️ The channels are not simply missing — check before you file that as the gap.**
 `terrain.gdshader` already perturbs `NORMAL` (line 131) and varies `ROUGHNESS` by slope and grain
@@ -158,10 +201,17 @@ fractal blended everywhere. At least one landmark readable from most of the zone
 The settled fiction demands this directly: a world at rebirth is *"a deliberate mix of wasteland and
 lush, vibrant zones."* One monochrome orange biome contradicts the setting, not just the art bar.
 
-**Reference.** WoW's **Elwynn Forest → Duskwood** boundary for how two adjacent zones announce
-themselves by palette alone; Guild Wars 2's **Path of Fire / Crystal Desert** for composed painterly
-distance in an arid setting; Elden Ring's **Caelid** for a hostile red-orange region that still
-reads varied rather than monochrome — the closest comparable to the failure mode measured below.
+**Reference — primary: [Numenera](https://numenera.com/).** The Ninth World is the named anchor for
+what this world *is*: regions defined by the colossal inherited object sitting in them — a chasm, a
+continent-spanning machine, a slab — rather than by terrain noise alone. That is the strongest
+available answer to "at least one landmark readable from most of the zone", and it makes the
+landmark carry the setting at the same time.
+
+Supporting analogues: WoW's **Elwynn Forest → Duskwood** boundary for how two adjacent zones
+announce themselves by palette alone; Guild Wars 2's **Path of Fire / Crystal Desert** for composed
+painterly distance in an arid setting; Elden Ring's **Caelid** for a hostile red-orange region that
+still reads varied rather than monochrome — the closest comparable to the failure mode measured
+below.
 
 **Checkable tells.** From one screenshot, can you say where you are and point toward somewhere
 else? Can you tell two locations apart at all?
@@ -218,12 +268,24 @@ fields, or ships a versioned zero-loss migration that renders historical recipes
 changes only what the player is offered. Flagged for the maintainer's steer rather than decided
 here — but the compatibility constraint is not a matter of taste, and holds whichever way he steers.
 
-**Reference.** [Elden Ring](https://en.bandainamcoent.eu/elden-ring/elden-ring)'s **starting-class
-loadouts** (Wretch through Vagabond) for the ragged end of the range and how armour layers over it;
-WoW's **playable race roster** for identity and silhouette exaggeration across bodies;
+**Reference — primary: [Kingmakers](https://store.steampowered.com/app/2109770/Kingmakers/).** The
+named character-look anchor, and it answers the hardest half of this gap: its knights wear a **tier
+ladder you can read off the armour itself** — steel, hardened steel, gold titanium alloy — so rank
+is visible in the material rather than in a tooltip. That is what makes layered equipment slots
+worth having. Take the knights, not the protagonist: he is a modern military operator, which is not
+this game's look.
+
+Supporting analogues: [Elden Ring](https://en.bandainamcoent.eu/elden-ring/elden-ring)'s
+**starting-class loadouts** (Wretch through Vagabond) for the ragged end of the range and how armour
+layers over it — the maintainer named From Software directly for the near-naked start; WoW's
+**playable race roster** for identity and silhouette exaggeration across bodies;
 [Horizon Zero Dawn](https://www.playstation.com/en-us/games/horizon-zero-dawn/)'s **Nora tribal
 gear** for the exact look of *machine salvage worn as ornament by a pre-industrial culture* — the
 closest existing match to our brief, though its surface fidelity sits above our ceiling.
+
+**The two anchors bracket the progression.** Elden Ring's Wretch is where a player *starts*;
+Kingmakers' gold-titanium tier is the far end they earn. Both ends are now named, which is what
+#222's ragged-start rule needs to be checkable rather than a matter of taste.
 
 ### Lighting and atmosphere
 
