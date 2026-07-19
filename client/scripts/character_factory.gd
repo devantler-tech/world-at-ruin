@@ -120,9 +120,35 @@ const FREE_ARM_EXTRA_HANG_DEG := 4.0
 ## `equipment` (slot -> piece name) exists from version 2, `skin` (a skins
 ## registry name) from version 3 — an older recipe carrying either stays
 ## invalid forever, exactly as the older clients ruled.
+##
+## Since #246 a slot's value may ALSO be a list of piece names — one per layer,
+## so a region can carry clothing with armour over it. This needs no version
+## bump and never will: the single-name form every shipped recipe uses stays
+## valid forever, and the list adds no new persisted vocabulary (layers are
+## read from the kit, never written into a save).
 const RECIPE_FIELDS := ["version", "comment", "shapes", "bone_girth", "bone_scale", "joint_push"]
 const RECIPE_FIELDS_V2 := ["equipment"]
 const RECIPE_FIELDS_V3 := ["skin"]
+
+## The wearable layers, innermost first — this array IS the render order
+## (#246, first slice of #222).
+##
+## A registry `slot` is a body REGION; a `layer` is what sits over what within
+## it. Before this split a region held exactly one piece, so the kit's own data
+## contradicted itself: `shoes_cloth` and `boots_worn` both claim `feet`, and
+## putting boots on a character silently took their shoes off. The specified
+## wardrobe — socks/underpants/pants/shirt/eyewear, with boots/leg/chest/head
+## armour, belt, gloves and jewellery over it — needs both worn at once.
+##
+## Closed set, on purpose (the same law shape as Armor.SLOTS): a piece whose
+## layer is not one of these cannot be placed at all, so "a third layer" is a
+## deliberate, reviewed act rather than a typo in the manifest.
+##
+## LAYER IS NEVER PERSISTED. A recipe records piece NAMES against a region;
+## which layer each name belongs to is read from the kit. That keeps the
+## persisted vocabulary exactly as wide as it was before this change — one
+## already-ledgered promise (`<piece> <slot>`) instead of two.
+const LAYERS := ["clothing", "armor"]
 
 static var _equipment_registry: Dictionary = {}
 static var _skins_registry: Dictionary = {}
@@ -187,8 +213,8 @@ static func build(recipe: Dictionary) -> Node3D:
 		var idx := mesh_instance.find_blend_shape_by_name(shape_name)
 		mesh_instance.set_blend_shape_value(idx, recipe["shapes"][shape_name])
 
-	for slot: String in recipe.get("equipment", {}):
-		_equip_piece(skeleton, mesh_instance, String(recipe["equipment"][slot]), recipe.get("shapes", {}))
+	for piece_name in pieces_to_wear(recipe.get("equipment", {})):
+		_equip_piece(skeleton, mesh_instance, piece_name, recipe.get("shapes", {}))
 
 	if recipe.has("skin"):
 		mesh_instance.set_surface_override_material(0, _skin_material(String(recipe["skin"])))
@@ -230,6 +256,102 @@ static func skins_registry() -> Dictionary:
 ## the garment follows the body's morphs; the piece's equip_hide_* shape
 ## tucks the covered skin inward. Validation has already vouched for the
 ## piece name.
+## Resolves a recipe's `equipment` into what is worn where, or names the first
+## problem it finds. ONE function, called by both validate() and build(), so a
+## recipe can never be accepted by one and rendered differently by the other —
+## that divergence is exactly the "half-truth" the no-resets law forbids.
+##
+## A region's value is either a single piece name (the shape every shipped
+## recipe uses, and the only shape before #246) or a list of them, at most one
+## per layer. Both stay valid forever.
+##
+## Returns { "problem": String, "by_region": { region: { layer: piece_name } } }.
+static func _resolve_equipment(equipment: Dictionary) -> Dictionary:
+	var out := { "problem": "", "by_region": {} }
+	var registry := equipment_registry()
+	var slots: Array = registry.get("slots", [])
+	var pieces: Dictionary = registry.get("pieces", {})
+	for region: String in equipment:
+		if region not in slots:
+			out["problem"] = "unknown equipment slot '%s' — shipped slots may never be removed" % region
+			return out
+		var value: Variant = equipment[region]
+		var names: Array = value if value is Array else [value]
+		if names.is_empty():
+			out["problem"] = "equipment slot '%s' lists no pieces — omit the slot to wear nothing there" % region
+			return out
+		var worn := {}
+		for entry: Variant in names:
+			if entry is not String:
+				out["problem"] = "equipment slot '%s' must hold a piece name, or a list of piece names" % region
+				return out
+			var piece_name := String(entry)
+			if piece_name not in pieces:
+				out["problem"] = "unknown equipment piece '%s' — shipped pieces may never be removed" % piece_name
+				return out
+			var piece: Dictionary = pieces[piece_name]
+			if String(piece.get("slot", "")) != region:
+				out["problem"] = "piece '%s' does not go in slot '%s'" % [piece_name, region]
+				return out
+			var layer := String(piece.get("layer", ""))
+			if layer not in LAYERS:
+				out["problem"] = ("piece '%s' has layer '%s', which is outside the closed set %s — "
+					+ "the kit cannot place it") % [piece_name, layer, str(LAYERS)]
+				return out
+			if layer in worn:
+				out["problem"] = ("slot '%s' holds two '%s' pieces ('%s' and '%s') — a layer covers a "
+					+ "region once, so the second would silently win") % [region, layer, worn[layer], piece_name]
+				return out
+			worn[layer] = piece_name
+		out["by_region"][region] = worn
+	return out
+
+
+## The pieces to actually build, in render order: every clothing piece first,
+## then the armour worn over it, and within a layer the KIT's own slot order.
+## Order therefore depends on the kit, never on the order a save happened to
+## serialise its keys in — two saves of the same outfit build identically.
+##
+## Occluded pieces are dropped here rather than built and hidden: a piece that
+## is not visible must not tuck the body's skin inward under it either, or
+## taking the boots off would reveal a dent where the shoes were.
+static func pieces_to_wear(equipment: Dictionary) -> PackedStringArray:
+	var out := PackedStringArray()
+	var resolved := _resolve_equipment(equipment)
+	if String(resolved["problem"]) != "":
+		return out
+	var by_region: Dictionary = resolved["by_region"]
+	var registry := equipment_registry()
+	var pieces: Dictionary = registry.get("pieces", {})
+	for layer: String in LAYERS:
+		for region: String in registry.get("slots", []):
+			if region not in by_region:
+				continue
+			var worn: Dictionary = by_region[region]
+			if layer not in worn:
+				continue
+			var piece_name := String(worn[layer])
+			if not _is_occluded(piece_name, worn, pieces):
+				out.append(piece_name)
+	return out
+
+
+## Is this piece hidden by something else worn in the SAME region? The rule is
+## kit DATA (`occluded_by` names layers), never a per-asset special case: cloth
+## shoes name the armour layer, so boots hide them — and eyewear will name it
+## the same way, so a helm hides it without a line of this code changing.
+static func _is_occluded(piece_name: String, worn_in_region: Dictionary, pieces: Dictionary) -> bool:
+	var piece: Dictionary = pieces[piece_name]
+	var occluders: Array = piece.get("occluded_by", [])
+	if occluders.is_empty():
+		return false
+	var own_layer := String(piece.get("layer", ""))
+	for other_layer: String in worn_in_region:
+		if other_layer != own_layer and other_layer in occluders:
+			return true
+	return false
+
+
 static func _equip_piece(skeleton: Skeleton3D, body_mesh: MeshInstance3D, piece_name: String, shapes: Dictionary) -> void:
 	var piece: Dictionary = equipment_registry()["pieces"][piece_name]
 	var packed: PackedScene = load(EQUIPMENT_DIR + String(piece["scene"]))
@@ -346,15 +468,9 @@ static func validate(recipe: Dictionary, skeleton: Skeleton3D, mesh_instance: Me
 	if recipe.has("equipment"):
 		if recipe["equipment"] is not Dictionary:
 			return "equipment must be a dictionary of slot -> piece name"
-		var registry := equipment_registry()
-		for slot: String in recipe["equipment"]:
-			if slot not in (registry["slots"] as Array):
-				return "unknown equipment slot '%s' — shipped slots may never be removed" % slot
-			var piece_name := String(recipe["equipment"][slot])
-			if piece_name not in (registry["pieces"] as Dictionary):
-				return "unknown equipment piece '%s' — shipped pieces may never be removed" % piece_name
-			if String(registry["pieces"][piece_name]["slot"]) != slot:
-				return "piece '%s' does not go in slot '%s'" % [piece_name, slot]
+		var problem := String(_resolve_equipment(recipe["equipment"])["problem"])
+		if problem != "":
+			return problem
 	if recipe.has("skin"):
 		if recipe["skin"] is not String:
 			return "skin must be a skins-registry name"

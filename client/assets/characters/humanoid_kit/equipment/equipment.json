@@ -1,22 +1,33 @@
 {
-  "kit_version": 4,
+  "kit_version": 5,
+  "layers": [
+    "clothing",
+    "armor"
+  ],
   "pieces": {
     "boots_worn": {
       "hide_shape": "equip_hide_boots_worn",
+      "layer": "armor",
       "scene": "boots_worn.glb",
       "slot": "feet"
     },
     "pants_wool": {
+      "layer": "clothing",
       "scene": "pants_wool.glb",
       "slot": "legs"
     },
     "shirt_ragged": {
       "hide_shape": "equip_hide_shirt_ragged",
+      "layer": "clothing",
       "scene": "shirt_ragged.glb",
       "slot": "torso"
     },
     "shoes_cloth": {
       "hide_shape": "equip_hide_shoes_cloth",
+      "layer": "clothing",
+      "occluded_by": [
+        "armor"
+      ],
       "scene": "shoes_cloth.glb",
       "slot": "feet"
     }
