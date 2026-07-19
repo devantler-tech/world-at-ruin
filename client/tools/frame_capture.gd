@@ -157,13 +157,11 @@ const BREATH_SETTLE_FRAMES := 4
 const BREATH_CAM_SIDE := 1.15
 const BREATH_CAM_RISE := 0.22
 const BREATH_CAM_FRONT := 1.55
-## Grid step for the frame-difference guard, in pixels.
-const BREATH_SAMPLE_STEP := 4
-## The smallest max-pixel change between opposite phases of the breath that
-## counts as motion. Well above sampling noise on a static scene and far below
-## what ~10 mm of shoulder travel produces at this framing — a sequence that
-## cannot clear it is photographing a body that is not moving.
-const BREATH_MIN_PIXEL_CHANGE := 0.02
+## The least shoulder travel between opposite phases that counts as a moving
+## body, in metres. The shipped idle produces ~19 mm here; a stopped one
+## produces exactly 0. The floor sits far below the former and far above the
+## latter, so it gates the failure without pinning the tuning.
+const BREATH_MIN_TRAVEL_M := 0.003
 
 ## The creator is 2D and needs no shadow/SDFGI convergence, so it settles far
 ## sooner than a world vantage. Kept separate so adding this scenario does not
@@ -659,11 +657,14 @@ func _capture_breath(dir: String, main: Node) -> void:
 	cam.global_position = focus + Vector3(BREATH_CAM_SIDE, BREATH_CAM_RISE, BREATH_CAM_FRONT)
 	cam.look_at(focus, Vector3.UP)
 
+	var shoulder := skeleton.find_bone("upperarm_l")
+	var poses: Array[Vector3] = []
 	var frames: Array[Image] = []
 	for i in BREATH_PHASES:
 		var t := BreathingIdle.BREATH_PERIOD * float(i) / float(BREATH_PHASES)
 		BreathingIdle.apply_at(skeleton, t)
 		skeleton.force_update_all_bone_transforms()
+		poses.append(skeleton.get_bone_global_pose(shoulder).origin)
 		for _s in BREATH_SETTLE_FRAMES:
 			cam.current = true
 			await get_tree().process_frame
@@ -684,16 +685,36 @@ func _capture_breath(dir: String, main: Node) -> void:
 	# 🔑 THE GUARD THAT MAKES THIS EVIDENCE RATHER THAN DECORATION.
 	#
 	# Every check above passes a sequence of IDENTICAL frames: a body whose
-	# idle silently stopped still renders, still has luma spread, still writes
-	# N files. That is exactly the shape #231 describes — an evidence job going
-	# green while the thing it evidences is absent. So the sequence must
-	# actually MOVE, measured between the extremes of the breath.
-	var moved := _max_pixel_change(frames[0], frames[BREATH_PHASES / 2])
-	if moved < BREATH_MIN_PIXEL_CHANGE:
-		_fail("the breath sequence is static (max pixel change %.4f between opposite phases) — the frames prove nothing moved" % moved)
+	# idle silently stopped still renders, still has luma spread, and still
+	# writes N files — #231's shape exactly, an evidence job going green while
+	# the thing it evidences is absent. So the sequence must be shown to depict
+	# genuinely different poses.
+	#
+	# ⚠️ IT IS NOT A PIXEL COMPARISON, AND THAT IS A MEASURED DECISION, not a
+	# shortcut. The obvious guard — "opposite phases must differ" — was built
+	# first and PROVED VACUOUS: with the idle forced to produce no motion at
+	# all, opposite phases still differed by a max pixel delta of 0.32, because
+	# this scene is never still (temporal antialiasing jitters every edge,
+	# foliage sways, fog drifts, torches flicker). Adding a same-phase control
+	# frame and counting changed pixels instead of taking a max narrowed it but
+	# did not save it: the real idle scored 2534 changed pixels against 1926
+	# for two shots of the SAME pose — a 1.3x margin, far too thin to gate on.
+	# Any threshold that passed the real idle would also have passed a frozen
+	# body, so tuning one would have been fitting the guard to the answer.
+	#
+	# What IS reliable is the pose the frames were taken at. If the idle stops,
+	# every phase renders the same skeleton, and that is exactly detectable.
+	# The frames remain the human-inspectable evidence; this is the machine
+	# guard that they depict a body in different positions.
+	var travel := (poses[0] - poses[BREATH_PHASES / 2]).length()
+	if travel < BREATH_MIN_TRAVEL_M:
+		_fail(("the breath sequence photographs one pose: the shoulder moved %.5f m between opposite " +
+			"phases, under the %.5f m floor. The frames would show a frozen body.") %
+			[travel, BREATH_MIN_TRAVEL_M])
 		return
 
-	print("CAPTURE PASS — %d breath phases written to %s (max pixel change %.3f)" % [BREATH_PHASES, dir, moved])
+	print("CAPTURE PASS — %d breath phases written to %s (shoulder travel %.1f mm between opposite phases)" %
+		[BREATH_PHASES, dir, travel * 1000.0])
 	get_tree().quit(0)
 
 
@@ -727,19 +748,6 @@ func _search_breathing_body(node: Node) -> Node3D:
 		if found != null:
 			return found
 	return null
-
-
-## The largest per-pixel change between two frames, sampled on a grid. Max
-## rather than mean: a breath moves a small part of the frame a lot, and a mean
-## over mostly-static scenery would wash it out to nothing.
-func _max_pixel_change(a: Image, b: Image) -> float:
-	if a.get_width() != b.get_width() or a.get_height() != b.get_height():
-		return 0.0
-	var worst := 0.0
-	for x in range(0, a.get_width(), BREATH_SAMPLE_STEP):
-		for y in range(0, a.get_height(), BREATH_SAMPLE_STEP):
-			worst = maxf(worst, _pixel_delta(a.get_pixel(x, y), b.get_pixel(x, y)))
-	return worst
 
 
 ## Captures one creator frame, re-checking the panel is really on screen first:
