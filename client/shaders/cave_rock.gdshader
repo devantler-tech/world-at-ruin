@@ -59,6 +59,30 @@ uniform float interior_relief: hint_range(0.0, 2.0) = 0.50;
 // coord is the CONTINUOUS coordinate, not its fract: fwidth() of a fract()
 // spikes to ~1 at every wrap, which is exactly where the seam is, so measuring
 // the footprint there would erase each line precisely along its own centre.
+// One bed's substance, resolved from its id alone so a neighbouring bed can be
+// evaluated too and the pair filtered across their contact. rgb = colour,
+// a = roughness.
+vec4 substance(float id) {
+	float pick = hash3(vec3(id * 3.1, 5.0, 11.0));
+	// step() rather than smoothstep(): a bed IS sandstone or IS shale. Chained
+	// mixes mean each later threshold overrides the earlier one exactly.
+	vec3 c = mix(rock_sandstone, rock_shale, step(0.34, pick));
+	c = mix(c, rock_pale, step(0.61, pick));
+	c = mix(c, rock_iron, step(0.85, pick));
+	float r = mix(0.97, 0.88, step(0.34, pick));
+	r = mix(r, 0.93, step(0.61, pick));
+	r = mix(r, 0.99, step(0.85, pick));
+	return vec4(c, r);
+}
+
+// Surface-tangent gradient of a height field, from its screen derivatives.
+// The caller must pass a height built ONLY from fixed-width terms: anything
+// carrying fwidth() would make this a second derivative, which is undefined.
+vec3 surface_gradient(float h, vec3 nrm, vec3 r1, vec3 r2, float safe_det) {
+	vec3 g = (dFdx(h) * r1 + dFdy(h) * r2) / safe_det;
+	return g - nrm * dot(g, nrm);
+}
+
 float edge_line(float coord, float half_width) {
 	float fw = fwidth(coord);
 	float f = fract(coord);
@@ -146,32 +170,34 @@ void fragment() {
 	float bed_coord = layer * bed_frequency;
 	float bed_id = floor(bed_coord);
 	float bed_f = fract(bed_coord);
-	float pick = hash3(vec3(bed_id * 3.1, 5.0, 11.0));
-
-	// step() rather than smoothstep(): a bed IS sandstone or IS shale. Chained
-	// mixes mean each later threshold overrides the earlier one exactly.
-	vec3 sub_col = mix(rock_sandstone, rock_shale, step(0.34, pick));
-	sub_col = mix(sub_col, rock_pale, step(0.61, pick));
-	sub_col = mix(sub_col, rock_iron, step(0.85, pick));
-	float sub_rough = mix(0.97, 0.88, step(0.34, pick));
-	sub_rough = mix(sub_rough, 0.93, step(0.61, pick));
-	sub_rough = mix(sub_rough, 0.99, step(0.85, pick));
-
-	// The SUBSTANCE needs the same footprint filtering the seams get, not just
-	// the seams. Fading the contact line while still picking a colour from a
-	// discontinuous per-bed hash leaves neighbouring pixels — and one pixel as
-	// the camera moves — sampling unrelated rock, which is moire and temporal
-	// popping arriving by the other door. Once a pixel spans a bed there is no
-	// per-bed answer left to give, so converge on what a mip would: the mean of
-	// the distribution, weighted by each substance's actual selection width
-	// (0.34 / 0.27 / 0.24 / 0.15).
+	// The SUBSTANCE needs filtering in its own right, and fading its amplitude
+	// is not filtering: scaling one bed's colour toward a mean still leaves
+	// every fragment choosing exactly one bed, so crossing a contact remains an
+	// abrupt jump — the stair-step and temporal popping this block exists to
+	// remove — right up until the fade completes.
+	//
+	// So filter in two stages, the way a mip chain does. FIRST, box-filter
+	// across the contact: a pixel whose footprint straddles a boundary gets the
+	// neighbouring bed blended in by the fraction of the pixel that actually
+	// falls there. SECOND, once a pixel spans a whole bed there is no per-bed
+	// answer left to give, so converge on the mean of the distribution weighted
+	// by each substance's real selection width (0.34 / 0.27 / 0.24 / 0.15) —
+	// a flat average would converge on a colour no bed has.
 	float bed_fw = fwidth(bed_coord);
 	float bed_resolved = 1.0 - smoothstep(0.30, 0.85, bed_fw);
+
+	float dist_to_edge = min(bed_f, 1.0 - bed_f);
+	float neighbour_frac = clamp((bed_fw * 0.5 - dist_to_edge)
+		/ max(bed_fw, 1e-5), 0.0, 0.5);
+	float neighbour_id = bed_f < 0.5 ? bed_id - 1.0 : bed_id + 1.0;
+	vec4 sub = mix(substance(bed_id), substance(neighbour_id), neighbour_frac);
+
 	vec3 mean_col = rock_sandstone * 0.34 + rock_shale * 0.27
 		+ rock_pale * 0.24 + rock_iron * 0.15;
 	float mean_rough = 0.97 * 0.34 + 0.88 * 0.27 + 0.93 * 0.24 + 0.99 * 0.15;
-	sub_col = mix(mean_col, sub_col, bed_resolved);
-	sub_rough = mix(mean_rough, sub_rough, bed_resolved);
+	sub = mix(vec4(mean_col, mean_rough), sub, bed_resolved);
+	vec3 sub_col = sub.rgb;
+	float sub_rough = sub.a;
 
 	// Some beds are laminated into finer plates, some are massive. One hash per
 	// bed decides which — a bed is never half of each. Two plates, not four:
@@ -237,24 +263,31 @@ void fragment() {
 	float h_lam = (1.0 - smoothstep(0.0, seam_width * 1.4,
 		min(lam_f, 1.0 - lam_f))) * laminated;
 	float h_joint = 1.0 - smoothstep(0.0, joint_width, abs(jf - 0.5));
-	// Each term fades by ITS OWN footprint resolution before it reaches the
-	// derivative. Fading only the shaded colour and seam was half the job: an
-	// unfiltered height field still feeding dFdx/dFdy means that once a pixel
-	// spans several beds the derivatives sample arbitrary sides of the
-	// discontinuities and swim as the camera moves, so detail that has visibly
-	// dissolved comes back as shimmer and quad-shaped lighting. Detail must
-	// leave the LIGHTING on the same schedule it leaves the albedo.
-	float h_recess = max(h_seam * bed_resolved,
-		max(h_lam * 0.55 * bed_resolved, h_joint * 0.45 * joint_resolved));
-	float relief_h = 0.10 * sediment * floor_mix - h_recess;
+	// Detail must leave the LIGHTING on the same schedule it leaves the albedo,
+	// or dissolved detail returns as shimmer. But the fade factors themselves
+	// carry fwidth(), so multiplying them INTO the height before differentiating
+	// would recreate the very second-order derivative this block forbids.
+	//
+	// So: differentiate each fixed-width field on its own, then fade each
+	// resulting GRADIENT by its own footprint factor. Bedding and joints fade on
+	// different schedules — a joint stops being resolvable at a different
+	// distance than a bed does — which is exactly why they cannot share one
+	// height field. Silt carries no fwidth and needs no fade.
 	vec3 dpx = dFdx(world_pos);
 	vec3 dpy = dFdy(world_pos);
 	vec3 r1 = cross(dpy, n);
 	vec3 r2 = cross(n, dpx);
 	float det = dot(dpx, r1);
 	float safe_det = max(abs(det), 1e-9) * (det < 0.0 ? -1.0 : 1.0);
-	vec3 relief_grad = (dFdx(relief_h) * r1 + dFdy(relief_h) * r2) / safe_det;
-	relief_grad -= n * dot(relief_grad, n);
+
+	float h_bed = max(h_seam, h_lam * 0.55);
+	float h_jnt = h_joint * 0.45;
+	float h_silt = 0.10 * sediment * floor_mix;
+	vec3 g_bed = surface_gradient(h_bed, n, r1, r2, safe_det) * bed_resolved;
+	vec3 g_jnt = surface_gradient(h_jnt, n, r1, r2, safe_det) * joint_resolved;
+	vec3 g_silt = surface_gradient(h_silt, n, r1, r2, safe_det);
+	// Recesses subtract height, silt adds it.
+	vec3 relief_grad = g_silt - (g_bed + g_jnt);
 	if (length(relief_grad) > 4.0) {
 		relief_grad = normalize(relief_grad) * 4.0;
 	}
