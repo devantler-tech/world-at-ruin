@@ -104,16 +104,25 @@ illustration plates and art-book spreads. That makes it the right anchor for *wh
 silhouette, scale, the strangeness of the relic — and the wrong one for real-time material or
 lighting technique, which is Fatekeeper's job.
 
-**🔴 A conceptual anchor does not by itself satisfy the AAA rule — cite an execution reference too.**
-`AGENTS.md` requires a named **AAA** reference, and Numenera is a tabletop product, not a shipped
-real-time game. A world PR citing only a Numenera plate therefore still fails that rule, however
-correctly it captures the intent. So where the primary anchor is conceptual, the PR cites **two**
-references: the conceptual anchor for *what to build*, and an **AAA real-time comparable for how it
-must be executed** — from that section's supporting analogues (for the world: WoW's Outland, Guild
-Wars 2's Crystal Desert, Elden Ring's Caelid), or another shipped AAA title if it fits better.
+**🔴 Cite an execution reference alongside any conceptual anchor.** Numenera is a tabletop product,
+so a Numenera plate can show *what the world is* but cannot show how it must look rendered in real
+time. Where the primary anchor is conceptual, the PR therefore cites **two** references: the
+conceptual anchor for *what to build*, and a **shipped real-time comparable for how it must be
+executed** — from that section's supporting analogues (for the world: WoW's Outland, Guild Wars 2's
+Crystal Desert, Elden Ring's Caelid), or another shipped title that fits better.
 
-Kingmakers and Fatekeeper are both shipped real-time games, so they satisfy the rule on their own;
-this applies to Numenera and to any future conceptual anchor.
+**This page does not certify any title's production tier, and does not claim to.** `AGENTS.md`'s rule
+says "AAA reference", but these three anchors were chosen by the maintainer for **style**, not for
+production budget — and whether a given studio's output counts as AAA is a judgement about budget and
+scale that no agent here can substantiate and that this document has no standing to settle. Asserting
+it either way would be exactly the unevidenced claim this page exists to stop.
+
+So the requirement above rests on a **capability** argument, which is checkable: concept art cannot
+demonstrate real-time execution, so something that can must be cited beside it. The separate
+definitional question — *what "AAA reference" should require, given the anchors the maintainer
+actually chose* — is his to answer, and is now part of
+[#234](https://github.com/devantler-tech/world-at-ruin/issues/234) rather than something this page
+resolves by assertion.
 
 **Take Kingmakers' armour, not its protagonist.** Its player character is a modern military
 operator, which is emphatically not this game's look. What transfers is the knights: tiered plate,
@@ -462,13 +471,23 @@ Neither number licenses the other. The control — a synthetic full hue sweep ov
 confirms the measurement can tell the difference, so these describe the frame rather than the method.
 
 **Provenance, so the numbers are checkable rather than asserted.** Source frame is
-`docs/phase-0/cave-chamber.png`, which lands via [#219](https://github.com/devantler-tech/world-at-ruin/pull/219)
-— until that merges, the frame is inspectable on that PR, not in this tree. Method: downscale to
-320px wide, convert to Rec. 709 luminance for the value figure; for hue, drop pixels with
-saturation ≤ 0.05 or luminance outside 0.05–0.95, then take the 5th-to-95th percentile spread. The
-tool that does this is **not committed** — #230 lands it in GDScript beside `frame_capture`. Until
-both land, treat these as **a recorded observation with its method stated, not a reproducible
-in-repo measurement**, and re-derive them from #230 once it exists.
+`docs/phase-0/cave-chamber.png`, in the tree since
+[#219](https://github.com/devantler-tech/world-at-ruin/pull/219) merged.
+
+Shared by both passes: sample down to ~320px wide, convert to Rec. 709 luminance for the value
+figure; for hue, keep only pixels with saturation > 0.05 and luminance in 0.05–0.95.
+
+They differ in the step that matters, and **only the second is the contract**:
+
+- **Original pass (SUPERSEDED — do not implement this):** took the 5th-to-95th percentile spread of
+  the hues. Wrong on wrapped *and* on asymmetric populations; kept here only so the older 14.3% /
+  6° figures are traceable.
+- **Corrected pass (what #230 implements):** the **minimum 90% circular sliding window** specified
+  immediately below.
+
+The tool is still **not committed** — #230 lands it in GDScript beside `frame_capture`, and the
+recomputation quoted above was a throwaway. So treat every figure here as **an observation with its
+method stated, not yet a reproducible in-repo measurement**, and let #230 settle it.
 
 **🔴 Hue is circular — #230 must not implement the percentile subtraction literally.** Hue wraps at
 360°, so a plain p5→p95 subtraction is invalid in general: a nearly monochrome red scene with samples
