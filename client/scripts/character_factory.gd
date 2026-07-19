@@ -57,29 +57,15 @@ const HAND_RELAX_DEG := 8.0
 ## rotation-only rest edit (the TRS law — a non-TRS rest is silently dropped at
 ## reset_bone_poses() and the skin then lies about where the body is).
 ##
-## This is a STATIC pose. There is no idle motion, no weight shift over time,
-## no walk cycle — those stay with the parent #224.
-
-## Opt-in flag for the rest stance (product law 2 — experimental / below-bar
-## player-facing work does not ship default-on).
+## The pose is the still half. `BreathingIdle` supplies the motion on top of it
+## as bone POSES, leaving every rest edit here untouched — so the stance is what
+## the body IS and the idle is what it is DOING. Locomotion (walk, run, jump)
+## is still absent and stays with the parent #224.
 ##
-## The stance is static: no breathing idle, no weight shift over time, nothing
-## that responds to the player. `docs/art-direction/README.md` names all three
-## ("weight on one leg, asymmetric arms, a breathing idle") and this delivers
-## only the first, so it does not yet clear the character-stance target.
-##
-## ⚠️ Note honestly what OFF means here, because it is NOT the usual case: a
-## character must stand somehow, so the off path is not "no stance" — it is the
-## OLDER symmetric pose, the one the art-direction doc calls out as reading
-## "as a rig at rest, because that is what it is". Gating therefore ships the
-## worse of two poses by default. That trade is deliberate and maintainer-
-## reversible (one constant), and #243 tracks the flip once the idle lands.
-const REST_STANCE_ENV := "WAR_REST_STANCE"
-
-
-## Whether the player opted into the unfinished rest stance.
-static func rest_stance_enabled() -> bool:
-	return OS.get_environment(REST_STANCE_ENV) == "1"
+## This shipped opt-in (`WAR_REST_STANCE`) while the pose stood still, because a
+## motionless stance was only half of what the art direction asks for. #243
+## added the idle and retired the flag: the stance is now simply how a body
+## stands, which is the point the gate existed to defer.
 
 
 ## 🔑 RIG FACT, measured on the shipped kit rather than assumed: `thigh_l`
@@ -216,8 +202,7 @@ static func build(recipe: Dictionary) -> Node3D:
 		_hang_toward_down(skeleton, skeleton.find_bone(forearm), FOREARM_RELAX_DEG)
 	for hand in ["hand_l", "hand_r"]:
 		_hang_toward_down(skeleton, skeleton.find_bone(hand), HAND_RELAX_DEG)
-	if rest_stance_enabled():
-		_apply_contrapposto(skeleton)
+	_apply_contrapposto(skeleton)
 	skeleton.reset_bone_poses()
 	skeleton.force_update_all_bone_transforms()
 
@@ -231,7 +216,30 @@ static func build(recipe: Dictionary) -> Node3D:
 	if recipe.has("skin"):
 		mesh_instance.set_surface_override_material(0, _skin_material(String(recipe["skin"])))
 		instance.set_meta("skin", recipe["skin"])
+
+	# The body breathes. Attached here rather than by each caller so that every
+	# character is alive by construction — the player, the settlement, the
+	# drifters and the creator's preview — instead of the wanderer moving while
+	# a village of statues watches.
+	#
+	# The phase comes from the RECIPE, so it is stable for a given character
+	# across runs (determinism, #58) while different people are still out of
+	# step with each other. A crowd inhaling in unison reads as a machine.
+	var idle := BreathingIdle.new()
+	idle.name = "BreathingIdle"
+	idle.phase_offset = _idle_phase_for(recipe)
+	instance.add_child(idle)
 	return instance
+
+
+## A stable phase offset in [0, BREATH_PERIOD) for this recipe.
+##
+## Hashed from the serialised recipe rather than from a counter or the clock:
+## the same character must breathe identically on every boot, and two different
+## people must not.
+static func _idle_phase_for(recipe: Dictionary) -> float:
+	var key := JSON.stringify(recipe)
+	return float(key.hash() % 1000) / 1000.0 * BreathingIdle.BREATH_PERIOD
 
 
 ## One shared material per skin: N villagers with the same skin are one

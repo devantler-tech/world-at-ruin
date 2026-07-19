@@ -11,6 +11,17 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
+		"version": "0.18.0",
+		"date": "2026-07-20",
+		"title": "Your wanderer breathes",
+		"notes": [
+			"Stand still and watch: the chest rises and falls, the shoulders ride with it, and the weight drifts slowly from one leg to the other and back. It is deliberately small — you should notice a person standing there, not a body performing a breath.",
+			"Everyone breathes, not just you. The people around the shrine and the drifters out in the open all do, and each is on their own rhythm, so a crowd never inhales in unison the way a row of machines would.",
+			"The standing pose from last time is no longer something you have to ask for — it is simply how a body stands now. It waited because a pose that never moves reads as a mannequin, and the movement was the missing half.",
+			"Walking, running and jumping still slide the body along without moving its legs. That is the next piece of work.",
+		],
+	},
+	{
 		"version": "0.17.0",
 		"date": "2026-07-20",
 		"title": "Someone cut these stones",
@@ -60,7 +71,7 @@ const ENTRIES: Array[Dictionary] = [
 		"notes": [
 			"Your wanderer used to stand square: both feet planted the same, both legs straight, shoulders dead level. It read like a figure waiting to be posed. Now the weight rests on one leg — that hip rides up, the shoulder above it drops to answer it, and the other knee softens with the foot turned slightly out.",
 			"Every body stands this way, whatever you do with the sliders, and it holds through the whole build so a heavy frame and a slight one both carry it.",
-			"This is switched OFF unless you ask for it, with WAR_REST_STANCE=1. It is a pose, not animation: nothing breathes, shifts weight or moves yet, and until it does we would rather you chose it than woke up in it. That idle is the next piece of work and the bigger half.",
+			"This arrived switched off, as something you had to ask for: it was a pose and nothing more — nothing breathed, shifted weight or moved — and we would rather you chose that than woke up in it. The breathing landed in 0.18.0 and it is on for everyone now.",
 		],
 	},
 	{

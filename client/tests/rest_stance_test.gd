@@ -9,9 +9,11 @@ extends Node
 ## built skeleton, not that a function was called.
 ##
 ## What it holds:
-##  0. DEFAULT-OFF — with the opt-in flag unset the body stands as it did
-##     before, pinned in BOTH states (product law 2: the stance is static, so
-##     it must not reach a player who did not ask for it).
+##  0. IT IS THE DEFAULT — a plain build with nothing opted into already
+##     stands in contrapposto. This inverted at #243: while the pose stood
+##     still it shipped behind `WAR_REST_STANCE` and both states were pinned;
+##     the breathing idle retired the flag, so the law is now that the stance
+##     arrives unasked.
 ##  1. HIPS TILT — the ENGAGED hip rides higher, and the FREE foot stands
 ##     outside the engaged one. Both are DIRECTION laws: an inverted stance
 ##     and a crossed-over one are asymmetric too, so magnitude proves nothing.
@@ -54,35 +56,14 @@ const MAX_HEAD_ROLL_DEG := 1.0
 
 
 func _ready() -> void:
-	# 0. DEFAULT-OFF, BOTH STATES (product law 2).
+	# 0. IT IS THE DEFAULT (#243).
 	#
-	# The stance is static — no breathing idle — so it must not reach a player
-	# who did not ask for it. Checked FIRST and with the flag genuinely unset,
-	# because a flag nobody tested in the off state is not a flag.
-	OS.set_environment(CharacterFactory.REST_STANCE_ENV, "")
-	if CharacterFactory.rest_stance_enabled():
-		_fail("the stance reads as opted-in with the flag unset")
-		return
-	var plain_off := CharacterFactory.build({ "version": 1 })
-	if plain_off == null:
-		_fail("plain v1 recipe should build with the stance off")
-		return
-	var off_skel := CharacterFactory.find_skeleton(plain_off)
-	off_skel.force_update_all_bone_transforms()
-	var off_tilt: float = absf(
-		off_skel.get_bone_global_rest(off_skel.find_bone("thigh_l")).origin.y
-		- off_skel.get_bone_global_rest(off_skel.find_bone("thigh_r")).origin.y
-	)
-	plain_off.free()
-	if off_tilt >= MIN_HIP_TILT:
-		_fail("the stance applied itself without the opt-in: hips tilt %.4f m by default" % off_tilt)
-		return
-
-	OS.set_environment(CharacterFactory.REST_STANCE_ENV, "1")
-	if not CharacterFactory.rest_stance_enabled():
-		_fail("the opt-in flag does not read back as enabled")
-		return
-
+	# This law used to be its inverse: while the stance stood still it shipped
+	# behind `WAR_REST_STANCE` and the test pinned BOTH states. #243 gave it a
+	# breathing idle and retired the flag, so what needs holding now is that a
+	# plain build — no flag, no opt-in, nothing asked for — already stands in
+	# contrapposto. A release flag is short-lived by contract, and the arm that
+	# tested its off state went with it.
 	var golden = CharacterFactory.load_recipe(GOLDEN)
 	if golden == null:
 		_fail("golden recipe unreadable")
