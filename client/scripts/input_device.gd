@@ -129,7 +129,9 @@ static func classify(event: InputEvent) -> int:
 ## The on-screen name of whatever `action` is bound to on `device`, or "" when
 ## that device has no binding for it. Read straight out of `InputMap`, so it is
 ## the live map that is described and never a copy of it.
-static func binding_label(action: StringName, device: int) -> String:
+## With `primary_only`, just the first binding — see `_row_label` for why a
+## composite verb needs that.
+static func binding_label(action: StringName, device: int, primary_only: bool = false) -> String:
 	if not InputMap.has_action(action):
 		return ""
 	var labels := PackedStringArray()
@@ -137,6 +139,8 @@ static func binding_label(action: StringName, device: int) -> String:
 		var label := _event_label(event, device)
 		if label != "" and not labels.has(label):
 			labels.append(label)
+			if primary_only:
+				break
 	return " / ".join(labels)
 
 
@@ -164,9 +168,17 @@ static func row_label(row: Dictionary, device: int) -> String:
 
 
 static func _row_label(row: Dictionary, device: int) -> String:
+	var actions: Array = row.get("actions", [] as Array)
+	# A composite verb — the four move directions — shows each action's PRIMARY
+	# binding only. Listing every alternate renders "W / Up A / Left S / Down
+	# D / Right move", which is exactly the noise this change exists to remove.
+	# A single-action verb can afford its alternates, and one of them earns its
+	# place: F1 is fn-gated on this platform's keyboards, so "F1 / L dev log"
+	# must keep naming L.
+	var primary_only := actions.size() > 1
 	var labels := PackedStringArray()
-	for action: String in row.get("actions", [] as Array):
-		var label := binding_label(action, device)
+	for action: String in actions:
+		var label := binding_label(action, device, primary_only)
 		if label != "" and not labels.has(label):
 			labels.append(label)
 	if labels.is_empty() and device == KEYBOARD:
@@ -177,7 +189,14 @@ static func _row_label(row: Dictionary, device: int) -> String:
 static func _event_label(event: InputEvent, device: int) -> String:
 	if device == KEYBOARD:
 		var key := event as InputEventKey
-		return "" if key == null else OS.get_keycode_string(key.physical_keycode)
+		if key == null:
+			return ""
+		# The game's own actions bind by physical position (so WASD stays where
+		# the fingers are on any layout); Godot's built-in UI actions bind by
+		# keycode instead. Read whichever the event actually carries, or a
+		# built-in row like "Escape release mouse" renders blank.
+		var code := key.physical_keycode if key.physical_keycode != KEY_NONE else key.keycode
+		return "" if code == KEY_NONE else OS.get_keycode_string(code)
 	var button := event as InputEventJoypadButton
 	if button != null:
 		return String(PAD_BUTTON_NAMES.get(button.button_index, ""))
