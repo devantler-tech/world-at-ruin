@@ -104,6 +104,17 @@ illustration plates and art-book spreads. That makes it the right anchor for *wh
 silhouette, scale, the strangeness of the relic — and the wrong one for real-time material or
 lighting technique, which is Fatekeeper's job.
 
+**🔴 A conceptual anchor does not by itself satisfy the AAA rule — cite an execution reference too.**
+`AGENTS.md` requires a named **AAA** reference, and Numenera is a tabletop product, not a shipped
+real-time game. A world PR citing only a Numenera plate therefore still fails that rule, however
+correctly it captures the intent. So where the primary anchor is conceptual, the PR cites **two**
+references: the conceptual anchor for *what to build*, and an **AAA real-time comparable for how it
+must be executed** — from that section's supporting analogues (for the world: WoW's Outland, Guild
+Wars 2's Crystal Desert, Elden Ring's Caelid), or another shipped AAA title if it fits better.
+
+Kingmakers and Fatekeeper are both shipped real-time games, so they satisfy the rule on their own;
+this applies to Numenera and to any future conceptual anchor.
+
 **Take Kingmakers' armour, not its protagonist.** Its player character is a modern military
 operator, which is emphatically not this game's look. What transfers is the knights: tiered plate,
 material-readable rank, and the sight of hard technology beside hand-forged steel.
@@ -367,7 +378,7 @@ Kingmakers' gold-titanium tier is the far end they earn. Both ends are now named
 relationship and a real value range.
 
 **The specific current failure, stated as what was measured rather than as a palette rule:** the
-captured cave separates its content on **neither** axis — 14.3% of the value range and 6° of hue (see
+captured cave separates its content on **neither** axis — ~13% of the value range and 6.3° of hue (see
 the baseline below). That is the defect to fix, and it can be fixed on *either* axis.
 
 Constant hue is **not** by itself a fault: intensity, direction, occlusion and value separation model
@@ -436,8 +447,13 @@ or by **hue**, and both are countable. Measured on the rejected Phase 0 cave fra
 
 | Metric | Cave frame | Wide-gamut control |
 |---|---|---|
-| Luminance range (p1→p99) | **14.3%** of 0..1 | 93.5% |
-| Hue span of 90% of coloured pixels | **6°** | 324° |
+| Luminance range (p1→p99) | **13.1–14.3%** of 0..1 | 93.5–99% |
+| Hue span of 90% of coloured pixels (min-90% window) | **6.3°** | 323° |
+
+Each row carries two independent passes — the original and the recomputation under the corrected hue
+metric described below. The hue figures agree; the luminance and control ranges differ by the
+resampling filter each pass used. Ranges are shown rather than a false single value, and **#230
+settles them** by committing one tool.
 
 Read each statistic as exactly what it measures, because they cover different populations: **98% of
 all pixels** fall between luminance 0.125 and 0.268 (that is what p1→p99 means), while the six-degree
@@ -475,12 +491,25 @@ outliers and reports ~100°, while the true minimum arc holding 90% is 10°. It 
 is the same direction as the original bug and in the same diagnostic this section exists to protect.
 Take the sliding-window minimum directly.
 
-**The two recorded numbers survive this correction, for a stated reason rather than by assumption.**
-Both were taken with the linear form, and the linear and circular forms agree exactly when the
-samples do not straddle 0°. The cave frame's population is orange (roughly 20–40°), nowhere near the
-wrap point, and the control is a deliberate full sweep whose largest gap is ~0 either way. Re-derive
-both under #230 regardless — this reasoning explains why they are not expected to move, and is not a
-substitute for the measurement.
+**The recorded numbers were re-measured under the new metric — because the obvious argument for
+keeping them is wrong.** It is tempting to say the two forms agree whenever the samples do not
+straddle 0°. They do not: "no wrap" removes only the *wrap* problem, while the percentile form also
+discards 10% from the two tails symmetrically instead of finding the *tightest* 90%. Those diverge on
+any asymmetric population, wrap or no wrap — the counter-example above sits entirely inside 0–110°
+and still reads **96.0° linear against 9.0° windowed**.
+
+So both frames were recomputed rather than argued about:
+
+| Population | Linear p5→p95 (superseded) | **Min-90% window (the metric)** |
+|---|---|---|
+| Cave frame | 6.4° | **6.3°** |
+| Wide-gamut control | 324.0° | **323.0°** |
+
+The hue figures survive — but by measurement, not by the reasoning that would have justified keeping
+them. The luminance figure came back **13.1%** against the recorded 14.3%; the gap is the resampling
+filter (this pass subsamples, the original downscaled), not a disagreement about the frame. Treat
+every number here as **provisional until #230 lands the committed tool** and re-derives them one way,
+which is the point at which they become baselines rather than observations.
 
 Read them as **diagnostics with a recorded baseline to beat, not a pass/fail gate.** A deliberately
 monochrome scene is a legitimate choice — a sandstorm, a night interior — but then *value* has to
@@ -501,7 +530,7 @@ Measured against the above, from the Phase 0 frames the maintainer rejected on 2
 | Surface | State | Issue |
 |---|---|---|
 | Texture | Ground and cave rock are arithmetic-only; skins, foliage and debris **do** have textures | #223 |
-| World | One biome of smooth Simplex FBM; 90% of coloured cave pixels within 6° of hue | #226 |
+| World | One biome of smooth Simplex FBM; 90% of coloured cave pixels within 6.3° of hue | #226 |
 | Rock and blending | Smooth-min SDF blobs; structures sit on terrain | #225 |
 | Character | Mannequin silhouette, shared cloth/skin response | #222 |
 | Animation and stance | Static symmetric rig pose | #224 |
