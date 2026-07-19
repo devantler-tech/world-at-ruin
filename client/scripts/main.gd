@@ -100,10 +100,28 @@ func _ready() -> void:
 
 	# Attuning the shrine makes it the wanderer's respawn point (settled death
 	# design: wake at the nearest attuned point). World stays Player-agnostic;
-	# the effect is wired here. Session-only until the save vault is sealed (#3).
+	# the effect is wired here. The attunement now PERSISTS through the save
+	# vault (#249): what is stored is the shrine's NAME, never its coordinates
+	# — the Reach is generated, so a saved position would strand a returning
+	# player underground the moment world generation shifts. The live world
+	# re-derives the point below.
 	world.shrine_interactable().interacted.connect(func(_by: Node) -> void:
 		_player.set_respawn_point(world.shrine_respawn_point())
-		_hud.toast("The Wardens' flame knows you now. The Reach will return you here."))
+		# A vault that refuses the write (present but unreadable — typically a
+		# newer client's) still leaves the attunement live for THIS session:
+		# progression degrading is never allowed to interrupt play.
+		var stored := SaveVault.persist_attunement(SaveVault.SHRINE_WARDENS)
+		_hud.toast("The Wardens' flame knows you now. The Reach will return you here."
+			if stored else
+			"The Wardens' flame knows you now — though it may not remember past this waking."))
+
+	# Restore a previously attuned respawn point. A missing, unreadable or
+	# newer-versioned vault simply leaves the wanderer waking in the cave, as
+	# before the vault existed — progression state may never block a boot, and
+	# it never touches the character save (no-resets law).
+	var vault = SaveVault.load_saved()
+	if vault is Dictionary and SaveVault.is_attuned(vault, SaveVault.SHRINE_WARDENS):
+		_player.set_respawn_point(world.shrine_respawn_point())
 
 	# The people speak: a person's seeded line surfaces as a toast.
 	npcs.npc_spoke.connect(func(npc_name: String, line: String) -> void:

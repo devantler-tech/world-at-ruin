@@ -1,0 +1,219 @@
+class_name SaveVault
+## The save vault (issue #249, parent #3): the player's PROGRESSION state, in
+## its own versioned file alongside the character recipe.
+##
+## Why a separate file and not a bigger character.json — this is the whole
+## design, and it is forced, not chosen:
+##
+## CharacterFactory.validate() treats the recipe as a CLOSED format: any
+## top-level field it does not know is rejected outright ("refusing a
+## half-truth"). That rule is correct for the recipe and it is already baked
+## into every client that ever shipped, so it cannot be relaxed retroactively.
+## It leaves no room to grow the save in place:
+##  - a sibling key (`"progress": {...}`) inside character.json makes every
+##    shipped client reject the WHOLE file;
+##  - wrapping the recipe in an envelope is worse — an older client finds no
+##    integer `version`, CharacterStore.load_saved() returns null, and main.gd
+##    treats that as "first time in the world" and opens the WRITABLE creator,
+##    which overwrites the save and strands the character (no-resets law).
+##
+## A separate file is the only shape an already-shipped client handles safely:
+## it never looks at a file it does not know, so it neither rejects it nor
+## deletes it. The character still loads on an old client; the vault simply
+## sits untouched until a client that understands it runs again.
+##
+## The vault obeys the same forward-only laws as the recipe:
+##  - keyed by stable STRINGS (respawn points are named, never indices or
+##    coordinates), so a name that ever shipped keeps working forever;
+##  - versioned, with `version` <= VAULT_VERSION accepted forever and a NEWER
+##    version refused rather than half-applied;
+##  - additive-only: a shipped field is never removed or repurposed, and every
+##    shipped version keeps a golden fixture (save_vault_guard_test).
+##
+## Two rules differ from CharacterStore, both deliberate:
+##
+##  1. A missing or refused vault DEGRADES to session-only behaviour and must
+##     never block character load or open the creator. Losing a respawn point
+##     costs the player one walk back to the shrine; losing the character is
+##     unrecoverable. The vault is never allowed to become a way to strand one.
+##
+##  2. A vault that EXISTS but could not be read is READ-ONLY for the session
+##     (see [method can_write]). Refusing to read it and then writing over it
+##     would destroy progression a NEWER client wrote — the downgrade path the
+##     separate-file design exists to survive. Refuse-to-read implies
+##     refuse-to-write, always.
+
+const DEFAULT_PATH := "user://vault.json"
+
+## Environment override for the active vault path, mirroring CharacterStore's
+## WAR_SAVE_PATH seam. Empty/unset means the shipped default — production never
+## sets it; tests point it at a throwaway file so no test can damage a real
+## player's progression.
+const VAULT_PATH_ENV := "WAR_VAULT_PATH"
+
+const VAULT_VERSION := 1
+
+## The vault format, exhaustively. Unknown top-level fields are refused for the
+## same reason the recipe refuses them: a client that silently ignored a field
+## would present a progression state that is not what the file says. New fields
+## ship with a version bump and are listed in a VAULT_FIELDS_V<N> constant.
+const VAULT_FIELDS := ["version", "comment", "attuned"]
+
+## The Wardens' Shrine, the first attunable respawn point. Names are forward-only
+## (no-resets law): this string is shipped save data now and may never change
+## meaning — only new names may be added.
+const SHRINE_WARDENS := "wardens_shrine"
+
+
+## The active vault path: the WAR_VAULT_PATH override when set, else the shipped
+## default. Resolved fresh each call so a test can redirect before the game
+## boots; inert in production.
+static func vault_path() -> String:
+	var override := OS.get_environment(VAULT_PATH_ENV)
+	return override if not override.is_empty() else DEFAULT_PATH
+
+
+static func exists() -> bool:
+	return FileAccess.file_exists(vault_path())
+
+
+## "" when the document is a vault this client fully understands, else a
+## human-readable reason. Shape only: the ATTUNED NAMES are deliberately not
+## checked against a known vocabulary, because an unrecognised name must be
+## PRESERVED (see [method attune]) rather than treated as corruption — dropping
+## it would silently discard progression on a round-trip.
+static func validate(doc: Dictionary) -> String:
+	var version = doc.get("version")
+	if not (version is int or (version is float and version == floorf(version))):
+		return "vault has no integer version"
+	if int(version) < 1:
+		return "vault version %d is not positive" % int(version)
+	if int(version) > VAULT_VERSION:
+		return "vault version %d is newer than this client understands (%d)" % [int(version), VAULT_VERSION]
+	for field: String in doc:
+		if field not in VAULT_FIELDS:
+			return "unknown vault field '%s' — this client cannot apply it, refusing a half-truth" % field
+	if doc.has("attuned"):
+		if doc["attuned"] is not Array:
+			return "attuned must be an array of respawn-point names"
+		for name in (doc["attuned"] as Array):
+			if name is not String:
+				return "attuned entries must be strings (names are forward-only, never indices)"
+	return ""
+
+
+## The vault stored at path, or null when none exists, it cannot be parsed, or
+## it fails validation. Null is a normal, non-fatal outcome: the caller runs
+## session-only. Every rejection is pushed as an error so a broken vault is
+## loud in logs rather than a silent progression loss.
+static func load_from(path: String) -> Variant:
+	if not FileAccess.file_exists(path):
+		return null
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		push_error("SaveVault: cannot read %s" % path)
+		return null
+	var parsed = JSON.parse_string(file.get_as_text())
+	file.close()
+	if parsed is not Dictionary:
+		push_error("SaveVault: %s is not a JSON object" % path)
+		return null
+	var reason := validate(parsed)
+	if reason != "":
+		push_error("SaveVault: refusing %s — %s" % [path, reason])
+		return null
+	return parsed
+
+
+## Atomic: write a sibling temp file, then rename over the target — the same
+## crash-safety the character save has. A half-written vault would read as
+## corrupt on the next boot and (correctly) lock itself read-only, so the
+## rename matters here too.
+static func save_to(path: String, doc: Dictionary) -> bool:
+	var reason := validate(doc)
+	if reason != "":
+		push_error("SaveVault: refusing to write an invalid vault — %s" % reason)
+		return false
+	var tmp_path := path + ".tmp"
+	var file := FileAccess.open(tmp_path, FileAccess.WRITE)
+	if file == null:
+		push_error("SaveVault: cannot write %s" % tmp_path)
+		return false
+	file.store_string(JSON.stringify(doc, "  "))
+	file.close()
+	var err := DirAccess.rename_absolute(
+		ProjectSettings.globalize_path(tmp_path), ProjectSettings.globalize_path(path))
+	if err != OK:
+		push_error("SaveVault: atomic replace failed (%d)" % err)
+		return false
+	return true
+
+
+## Whether it is safe to write the vault at `path`. False exactly when a file
+## is present but unreadable — a vault from a NEWER client, or a corrupt one.
+## Writing then would replace progression this build cannot even read, which is
+## the one way the separate-file design could still lose player state. Absent is
+## writable: that is a first attunement, not a loss.
+static func can_write(path: String) -> bool:
+	if not FileAccess.file_exists(path):
+		return true
+	return load_from(path) != null
+
+
+## An empty vault at the current version — the starting document for a player
+## who has never attuned anything.
+static func empty() -> Dictionary:
+	return { "version": VAULT_VERSION, "attuned": [] }
+
+
+## The attuned respawn-point names in `doc`, in shipped order.
+static func attuned(doc: Dictionary) -> Array:
+	var names := []
+	for name in doc.get("attuned", []):
+		names.append(String(name))
+	return names
+
+
+static func is_attuned(doc: Dictionary, name: String) -> bool:
+	return name in attuned(doc)
+
+
+## `doc` with `name` attuned. Returns a COPY with every other field carried
+## through untouched, including any field or name this build does not itself
+## use — a round-trip may never be a way to quietly drop progression. Attuning
+## something already attuned is a no-op, so the list stays append-only and
+## cannot accumulate duplicates.
+static func attune(doc: Dictionary, name: String) -> Dictionary:
+	var next: Dictionary = doc.duplicate(true)
+	if not next.has("attuned"):
+		next["attuned"] = []
+	if name not in (next["attuned"] as Array):
+		(next["attuned"] as Array).append(name)
+	return next
+
+
+static func load_saved() -> Variant:
+	return load_from(vault_path())
+
+
+## Load the vault, or start an empty one when there is none. Returns null ONLY
+## when a vault exists and could not be read — the read-only case, where the
+## caller must run session-only and never write.
+static func load_or_empty() -> Variant:
+	if not exists():
+		return empty()
+	return load_saved()
+
+
+## Attune `name` and persist it, at the active vault path. Returns true when the
+## vault on disk now records it. False means the session keeps the attunement
+## but the disk does not — the caller should carry on rather than fail the boot.
+static func persist_attunement(name: String) -> bool:
+	var path := vault_path()
+	if not can_write(path):
+		push_error("SaveVault: %s exists but is unreadable — refusing to overwrite it" % path)
+		return false
+	var current = load_or_empty()
+	if current is not Dictionary:
+		return false
+	return save_to(path, attune(current, name))
