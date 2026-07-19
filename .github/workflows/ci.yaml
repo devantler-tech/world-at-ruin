@@ -764,7 +764,15 @@ jobs:
           # large PRs most likely to need it. Same hazard the capture-log check
           # below already avoids by writing to a file.
           git diff --name-only "$BASE_SHA"...HEAD > changed.txt
-          if grep -qE '^client/(scripts|shaders|assets|scenes|recipes|abilities|tools)/|^client/(project\.godot|export_presets\.cfg)$' changed.txt; then
+          # ci.yaml is in the visual list for the same reason it is in the
+          # export-affecting list below, and the reason is now sharper: since
+          # #142 the capture is a REQUIRED check, and a required job that its
+          # own gate skips fails OPEN. A PR editing frame-capture's runner,
+          # steps or guards would otherwise never run the job it changed, and
+          # the aggregate accepts the skip — so a broken capture workflow could
+          # merge green. Running the capture IS how a change to it is validated
+          # (the #145/#170 lesson, applied to the editor job).
+          if grep -qE '^client/(scripts|shaders|assets|scenes|recipes|abilities|tools)/|^client/(project\.godot|export_presets\.cfg)$|^\.github/workflows/ci\.yaml$' changed.txt; then
             echo "visual=true" >> "$GITHUB_OUTPUT"
           else
             echo "visual=false" >> "$GITHUB_OUTPUT"
@@ -838,6 +846,12 @@ jobs:
     needs: [detect-visual-changes]
     if: needs.detect-visual-changes.outputs.visual == 'true'
     runs-on: macos-latest
+    # Bounded because the aggregate now WAITS for this job. A GDScript compile
+    # error makes a Godot scene hang instead of reaching quit() (a failure mode
+    # this repo has hit), and without a timeout the default 360 minutes would
+    # leave `CI - Required Checks` pending for six hours rather than failing.
+    # Same bound as the exported capture, which already carries one.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
