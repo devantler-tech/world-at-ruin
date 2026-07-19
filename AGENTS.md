@@ -27,10 +27,20 @@ is the *premise* and every other preference — engine, fidelity — yields to i
   levels or materials. This knowingly costs the graphics ceiling (Godot ≈ semi-realistic PBR; no
   Nanite/Lumen).
 - **Art: generated as code, all OSS/CC0 — never commercial assets.** Headless Blender (`bpy`) →
-  glTF; **MPFB2 + Rigify** for characters (core assets CC0, explicitly closed-source-safe); Poly
-  Haven / ambientCG (CC0) materials; **Material Maker** / text `.gdshader` for procedural
-  materials (MIT/output-yours); **Sapling Tree Gen** for foliage; WFC interiors, grammar towns,
-  SDF/marching-cubes caves, noise + hydraulic-erosion terrain.
+  glTF. **Built today:** **MPFB2** for characters (core assets CC0, explicitly closed-source-safe),
+  rigged with MPFB's built-in `game_engine` rig (`tools/artgen/humanoid_kit`); text `.gdshader`
+  materials (`client/shaders/`), where **the ground and cave rock are arithmetic-only — no texture,
+  colour computed from noise**. Textures *do* ship elsewhere: six baked skin PNGs
+  (`client/assets/characters/humanoid_kit/skins/`) that `character_factory.gd` loads into a
+  `StandardMaterial3D`, plus runtime `ImageTexture`s from `foliage_art.gd` — leaf and blade sampled
+  by `foliage.gdshader`, bone and rubble stone by `debris.gdshader`
+  (`foliage_art.gd:73` picks between them). **SDF caves meshed with naive surface nets**
+  (`client/scripts/cave_system_gen.gd`) — *not* marching cubes; the topology and meshing constraints
+  differ. Simplex-fBm terrain (`client/scripts/world_gen.gd`); GDScript-authored foliage
+  (`client/scripts/foliage_gen.gd`).
+  **Named as intent, NOT yet adopted — do not cite any of these as an existing capability:**
+  Rigify, Poly Haven / ambientCG (CC0) material libraries, **Material Maker**, **Sapling Tree Gen**,
+  WFC interiors, grammar towns, and hydraulic erosion on the terrain.
   **Blender's GPL covers the tool, never the output.** Target is **stylised-realistic ("a more
   realistic WoW")** — that style is *parametric*, which is exactly why it is expressible as code.
   Photorealism is unreachable in any engine without a human sculptor; do not re-attempt it.
