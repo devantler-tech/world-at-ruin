@@ -76,7 +76,9 @@ var _world: WorldGen
 
 func _ready() -> void:
 	_world = _build_world(11)
-	var pools := HollowFog.place(_world.surface_height_at, WorldGen.SIZE, WorldGen.NO_GROUND)
+	var pools := HollowFog.place(
+		_world.surface_height_at, WorldGen.SIZE, WorldGen.NO_GROUND, _world.cave_protects
+	)
 
 	# 1. PRESENT
 	if pools.size() < MIN_POOLS:
@@ -85,6 +87,20 @@ func _ready() -> void:
 	if pools.size() > HollowFog.MAX_VOLUMES:
 		_fail("placed %d pools, cap is %d" % [pools.size(), HollowFog.MAX_VOLUMES])
 		return
+
+	# 6a. THE CAVE KEEPS ITS DARKNESS.
+	#
+	# The terrain height field is deliberately DEPRESSED beneath the starter-cave
+	# massif, so the buried skirt is not a landscape hollow at all — it is by far
+	# the deepest thing the sampler can see (7.63 m, against 2.90 m for the
+	# deepest real basin). Unfiltered it took the densest pool in the world and
+	# put it 6 m from the cave spawn: a slot stolen from the Reach, and outdoor
+	# fog inside an interior whose darkness is designed.
+	for p: Dictionary in pools:
+		var pos: Vector3 = p["pos"]
+		if _world.cave_protects(pos.x, pos.z):
+			_fail("pool at (%.1f, %.1f) sits on the cave's buried skirt (relief %.2f m) — that is the massif's technical depression, not a hollow, and it fogs the cave interior" % [pos.x, pos.z, p["relief"]])
+			return
 
 	# 6. IN BOUNDS (checked first — the later laws sample the ground here)
 	for p: Dictionary in pools:
@@ -148,12 +164,16 @@ func _ready() -> void:
 				return
 
 	# 7. DETERMINISTIC and RNG-FREE
-	var again := HollowFog.place(_world.surface_height_at, WorldGen.SIZE, WorldGen.NO_GROUND)
+	var again := HollowFog.place(
+		_world.surface_height_at, WorldGen.SIZE, WorldGen.NO_GROUND, _world.cave_protects
+	)
 	if not _same(pools, again):
 		_fail("two placements over the same terrain differ — placement is not deterministic")
 		return
 	var other_world := _build_world(9173)
-	var other := HollowFog.place(other_world.surface_height_at, WorldGen.SIZE, WorldGen.NO_GROUND)
+	var other := HollowFog.place(
+		other_world.surface_height_at, WorldGen.SIZE, WorldGen.NO_GROUND, other_world.cave_protects
+	)
 	if not _same(pools, other):
 		_fail("placement changed when the process-global RNG was seeded differently — the placer is drawing from a shared stream")
 		return
@@ -223,7 +243,7 @@ func _run_controls() -> String:
 	var flat := HollowFog.place(
 		func(x: float, z: float) -> float:
 			return 0.0 if absf(x) <= HALF and absf(z) <= HALF else WorldGen.NO_GROUND,
-		WorldGen.SIZE, WorldGen.NO_GROUND
+		WorldGen.SIZE, WorldGen.NO_GROUND, _never
 	)
 	if not flat.is_empty():
 		return "control FLAT: placed %d pools on perfectly flat ground, where no hollow exists" % flat.size()
@@ -235,7 +255,7 @@ func _run_controls() -> String:
 			if absf(x) > HALF or absf(z) > HALF:
 				return WorldGen.NO_GROUND
 			return 20.0 - 0.004 * (x * x + z * z),
-		WorldGen.SIZE, WorldGen.NO_GROUND
+		WorldGen.SIZE, WorldGen.NO_GROUND, _never
 	)
 	if not dome.is_empty():
 		return "control DOME: placed %d pools on a hill, where every point stands above its surroundings" % dome.size()
@@ -250,7 +270,7 @@ func _run_controls() -> String:
 	# the control fails for a reason unrelated to its law. A Gaussian
 	# depression on flat ground has relief that genuinely peaks at its centre.
 	var basin := HollowFog.place(
-		_depression(BASIN_AT, HALF), WorldGen.SIZE, WorldGen.NO_GROUND
+		_depression(BASIN_AT, HALF), WorldGen.SIZE, WorldGen.NO_GROUND, _never
 	)
 	if basin.size() != 1:
 		return "control BASIN: a terrain with exactly one depression produced %d pools, expected 1" % basin.size()
@@ -265,7 +285,7 @@ func _run_controls() -> String:
 	# only be the ring-clipping rule: a placer that skipped or clamped missing
 	# samples would measure the void as ground and place anyway.
 	var island := HollowFog.place(
-		_depression(BASIN_AT, ISLAND_HALF), WorldGen.SIZE, WorldGen.NO_GROUND
+		_depression(BASIN_AT, ISLAND_HALF), WorldGen.SIZE, WorldGen.NO_GROUND, _never
 	)
 	if not island.is_empty():
 		return "control ISLAND: placed %d pools where every candidate's ring leaves the terrain — the void was measured as ground" % island.size()
@@ -332,6 +352,11 @@ func _build_world(salt: int) -> WorldGen:
 	var w := WorldGen.new()
 	add_child(w)
 	return w
+
+
+## Keep-out for the synthetic control terrains, which have no cave.
+func _never(_x: float, _z: float) -> bool:
+	return false
 
 
 func _fail(message: String) -> void:

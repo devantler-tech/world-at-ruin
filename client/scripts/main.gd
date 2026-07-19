@@ -290,7 +290,7 @@ func _build_environment() -> void:
 ## an invisible node with a per-frame cost and no benefit.
 func _build_hollow_fog(world: WorldGen) -> void:
 	_hollow_fog = HollowFog.place(
-		world.surface_height_at, WorldGen.SIZE, WorldGen.NO_GROUND
+		world.surface_height_at, WorldGen.SIZE, WorldGen.NO_GROUND, world.cave_protects
 	)
 	if not _volumetrics_on:
 		print("HOLLOW FOG off — volumetrics unavailable (%d pools not built)" % _hollow_fog.size())

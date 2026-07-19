@@ -15,8 +15,8 @@ const ENTRIES: Array[Dictionary] = [
 		"date": "2026-07-19",
 		"title": "The ash knows where the low ground is",
 		"notes": [
-			"The haze no longer sits at one thickness across the whole Reach. Ash now gathers in the land's deepest hollows, so dropping into a basin means walking down into thicker air, and climbing back out clears it. Deeper hollows hold more of it than shallow ones.",
-			"Where the pools sit is a property of this land, not a sprinkle — the same hollows fill the same way on every machine and every time you play.",
+			"The haze no longer sits at one thickness across the whole Reach. Ash now gathers in the land's hollows, so dropping into a basin means walking down into thicker air, and climbing back out clears it.",
+			"Where the pools sit is a property of this land, not a sprinkle — the same hollows fill the same way on every machine and every time you play. The starter cave is left alone: its dark is meant to be dark.",
 			"As before, this only appears on hardware that can render the air as a volume. Everywhere else the view is unchanged.",
 		],
 	},

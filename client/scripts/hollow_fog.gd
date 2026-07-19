@@ -100,7 +100,19 @@ const POOL_DENSITY := 1.2
 ## pools spanned 0.0433-0.0500 — a 15% spread across hollows whose depth
 ## varies nearly threefold. The gradient the dev log promises the player
 ## ("deeper hollows hold more") existed only in the constant.
-const FULL_DENSITY_RELIEF := 8.0
+
+## Relief at which a pool reaches full POOL_DENSITY, in metres. Shallower
+## hollows scale down proportionally, so depth reads as density rather than
+## every basin looking identically thick.
+##
+## Matched to the REAL range of the shipped terrain's outdoor hollows, which is
+## narrow: 2.60-2.90 m. An earlier value of 8.0 was calibrated against a 7.63 m
+## "hollow" that turned out to be the cave massif's buried skirt, and once that
+## artifact was filtered out it left every real pool driven at about a third of
+## its intended density. The honest consequence is that this terrain offers
+## little depth variation to express — the scaling is real, but on Ashfall
+## Reach it separates pools by around 1.2x, not by an order of magnitude.
+const FULL_DENSITY_RELIEF := 3.0
 
 
 ## Every ash pool this terrain calls for, deepest hollow first.
@@ -110,20 +122,41 @@ const FULL_DENSITY_RELIEF := 8.0
 ## [method WorldGen.surface_height_at]. [param world_size] is the terrain edge
 ## length in metres.
 ##
+## [param keep_out] takes (x, z) and returns true where a candidate must be
+## refused — in the shipped world, [method WorldGen.cave_protects]. This is not
+## optional polish: the height field is deliberately DEPRESSED beneath the
+## starter-cave massif, so the buried skirt reads as by far the deepest hollow
+## in the world (7.6 m against 2.9 m for the deepest real basin). Without this
+## filter the densest pool in the Reach lands inside the starter cave, taking a
+## slot from the landscape and fogging an interior whose darkness is designed.
+##
 ## Each entry: `pos` (Vector3, the pool centre in world space), `extents`
 ## (Vector3, half-sizes), `density` (float, added core density), `relief`
 ## (float, metres below the surroundings — the reason it was chosen).
-static func place(height_sampler: Callable, world_size: float, no_ground: float) -> Array[Dictionary]:
-	var candidates := _survey(height_sampler, world_size, no_ground)
+static func place(
+	height_sampler: Callable, world_size: float, no_ground: float, keep_out: Callable
+) -> Array[Dictionary]:
+	var candidates := _survey(height_sampler, world_size, no_ground, keep_out)
 	# Deepest first, then a total order on position so that two candidates of
 	# equal relief can never swap between runs (float equality is reachable
 	# here: a symmetric basin yields mirrored samples).
+	# Sort on QUANTISED relief compared exactly, never is_equal_approx: an
+	# approximate equality is not transitive (a~b and b~c while a!~c), so a
+	# comparator built on it is not a total order and sort_custom may order
+	# three close candidates inconsistently — which the greedy separation pass
+	# and the six-pool cap then turn into different placements. Quantising to
+	# millimetres and comparing exactly gives a real total order while still
+	# absorbing platform float noise, the same trick the goldens use.
 	candidates.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
-		if not is_equal_approx(a["relief"], b["relief"]):
-			return a["relief"] > b["relief"]
-		if not is_equal_approx(a["x"], b["x"]):
-			return a["x"] < b["x"]
-		return a["z"] < b["z"]
+		var ra := roundi(float(a["relief"]) * 1000.0)
+		var rb := roundi(float(b["relief"]) * 1000.0)
+		if ra != rb:
+			return ra > rb
+		var ax := roundi(float(a["x"]) * 1000.0)
+		var bx := roundi(float(b["x"]) * 1000.0)
+		if ax != bx:
+			return ax < bx
+		return roundi(float(a["z"]) * 1000.0) < roundi(float(b["z"]) * 1000.0)
 	)
 	var placed: Array[Dictionary] = []
 	for cand: Dictionary in candidates:
@@ -139,13 +172,18 @@ static func place(height_sampler: Callable, world_size: float, no_ground: float)
 ## below the mean of the ring around them. Points whose ring leaves the terrain
 ## are discarded rather than clamped — a half-sampled ring measures the world
 ## edge, not a basin.
-static func _survey(height_sampler: Callable, world_size: float, no_ground: float) -> Array[Dictionary]:
+static func _survey(
+	height_sampler: Callable, world_size: float, no_ground: float, keep_out: Callable
+) -> Array[Dictionary]:
 	var out: Array[Dictionary] = []
 	var limit := world_size / 2.0 - EDGE_INSET
 	var x := -limit
 	while x <= limit:
 		var z := -limit
 		while z <= limit:
+			if keep_out.call(x, z):
+				z += CANDIDATE_STEP
+				continue
 			var centre: float = height_sampler.call(x, z)
 			if centre <= no_ground:
 				z += CANDIDATE_STEP
