@@ -16,7 +16,7 @@ class_name Volumetrics
 ## Density stays well under Godot's default (0.05): the depth fog already
 ## contributes distance attenuation, and stacking a heavy volume on top would
 ## milk out the frame the grading pass works to keep crisp.
-const DENSITY := 0.018
+const DENSITY := 0.005
 ## Scattering albedo: warm-neutral ash, slightly darker than white so the
 ## volume tints toward FOG_COLOR under the low sun instead of glowing grey.
 const ALBEDO := Color(0.80, 0.74, 0.68)
@@ -25,14 +25,14 @@ const ALBEDO := Color(0.80, 0.74, 0.68)
 const ANISOTROPY := 0.6
 ## Far edge of the froxel volume. The playable field and its landmark ruins
 ## sit well inside this; beyond it the depth fog takes over seamlessly.
-const LENGTH := 96.0
+const LENGTH := 64.0
 ## A little ambient in-scatter so fully shadowed fog reads as dim air, not a
 ## black void between the player and the terrain.
-const AMBIENT_INJECT := 0.15
+const AMBIENT_INJECT := 0.10
 ## Keep most of the sky visible through the volume — the sky gradient is a
 ## deliberate palette choice, and the depth fog already applies its own
 ## restrained sky_affect (0.4).
-const SKY_AFFECT := 0.35
+const SKY_AFFECT := 0.25
 
 
 ## True only when a rendering device exists AND it supports R32_Uint as an
