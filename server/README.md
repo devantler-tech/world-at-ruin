@@ -86,8 +86,23 @@ zone/dungeon server:
     fifth committed golden pins a scripted encounter's event stream. It is a
     controller in the tracker mould — stepped by the caller after `Step`,
     read-only, so it cannot move the movement golden (a test pins that).
-    Damage/health, chase movement, factions and interruption are deliberate
-    later children (#188 lists them).
+    Chase movement, factions and interruption are deliberate later children
+    (#188 lists them).
+  - `Entity.Health` + `World.ApplyDamage` — the **consequence layer**: a
+    resolved telegraph finally costs something. Health is part of the hashed
+    world state for entities with a pool (`MaxHealth > 0`) — a divergence in
+    health is a desync like any other — while poolless entities hash exactly
+    as before, so every pre-health golden is unchanged by construction. A
+    resolve carries its mob's configured damage, and the zone loop lands it
+    with one explicit `ApplyDamage(caught, damage)` call — application is
+    caller-owned ordering, not a hidden phase of `Step`. Damage is clamped at
+    ingestion (never negative, never overflowing), a dead entity is skipped
+    (which makes each `DeathEvent` observable exactly once), and what death
+    *does* — despawn, respawn, loot — is deliberately the next child: the
+    world cannot even remove entities yet. A sixth committed golden pins a
+    scripted encounter in which the standing target dies and the escaping
+    walker ends unharmed, with an application-ablated twin proving the golden
+    is not blind to health.
 - **`wire/`** — the **versioned wire codec**: the transport-agnostic binary
   encoding of the replication payload (the full join snapshot and the per-tick
   delta stream). Every message opens with an explicit protocol version — product
