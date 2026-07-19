@@ -62,13 +62,20 @@ const POOL_HEIGHT := 6.0
 ## POOL_HEIGHT. Slightly under half, so the densest part hugs the ground.
 const POOL_LIFT_FRACTION := 0.38
 ## Added density at the pool's core, on top of the environment's baseline
-## volumetric density (0.005). Deliberately well UNDER the baseline: the goal
-## is a visible difference between hollow and ridge, not a wall of fog that
-## costs readability. Tuned down from 0.006 after the first version erased the
-## near-field debris and pillars entirely — density that reads as "thicker air"
-## from outside a basin is much lower than it feels like it should be, because
-## the volume's depth along the view ray does most of the work.
-const POOL_DENSITY := 0.0035
+## volumetric density (0.005). An order of magnitude over that baseline, which
+## is what makes a hollow read as thicker air rather than as more of the same.
+##
+## This is the first value here ever judged on a rendered frame. Every earlier
+## one was inert: build_volume() configured a FogMaterial but never assigned it,
+## so the volumes rendered at Godot's default density instead — far heavier than
+## anything tuned here. That default is what erased the near-field pillars and
+## debris in the first version, and narrowing the pools fixed it by changing
+## their GEOMETRY; the density constant was never in play. Measured on the
+## `sunward` vantage against the same frame at 0.0035: 3.4% of pixels change and
+## the left basin's mean luminance moves 0.0025, while the near-field debris,
+## pillars and character stay fully legible — and it remains ~16x subtler than
+## the materialless default it replaces.
+const POOL_DENSITY := 0.05
 ## Relief at which a pool reaches full POOL_DENSITY, in metres. Shallower
 ## hollows scale down proportionally, so depth reads as density instead of
 ## every basin looking identically thick.
