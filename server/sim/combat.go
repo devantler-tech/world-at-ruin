@@ -1,9 +1,15 @@
 package sim
 
-// Combat, first slice: the telegraph CAST LIFECYCLE and the smallest honest
-// mob AI — a stationary caster that aggros the nearest entity in range and
-// casts a circle you must step out of (#189; the Phase 1 exit criterion's mob
-// half, and the first of Phase 2's "threat, aggro, mob AI" work items).
+// Combat: the telegraph CAST LIFECYCLE and the game's ONE mob AI — a
+// stationary caster that aggros the nearest entity in range and casts a
+// circle you must step out of (#189; the Phase 1 exit criterion's mob half,
+// and the first of Phase 2's "threat, aggro, mob AI" work items). This file
+// is the single mob-AI implementation by decision (#207): a parallel
+// controller-shaped twin (`MobController`, #190) briefly coexisted and was
+// converged into this layer — the integrated engine won on the one-tick-loop
+// design rule, the ActiveCasts replication seam, multi-mob support, and
+// non-mob target eligibility; its damage carriage (#195) was ported here as
+// MobParams.Damage / TelegraphHit.Damage.
 //
 // telegraph.go answers "who is standing in this shape RIGHT NOW"; this file
 // adds time: a cast paints its shape at cast start and resolves it once, a
@@ -22,10 +28,12 @@ package sim
 // Deliberately absent (later children of #9/#4): threat from damage,
 // chase/movement AI (this slice's mobs never set intent), and replication of
 // casts to clients (needs a wire schema bump once the v1 client decoder
-// lands). Health and application now exist (#195, damage.go): a drained
-// TelegraphHit's Targets can be landed with World.ApplyDamage exactly like a
-// MobResolve's Caught — this layer still only records, and a per-mob damage
-// amount for ITS params is the wiring child's question.
+// lands). This layer still only RECORDS outcomes: a resolution carries its
+// caster's configured damage, and the zone loop lands each drained hit with
+// one explicit World.ApplyDamage(hit.Targets, hit.Damage) call (damage.go) —
+// application stays caller-owned ordering, never a hidden phase of Step.
+// Acquisition remains health-blind, so a mob keeps casting at a dead target
+// until the eligibility child teaches it better.
 
 import "sort"
 
@@ -76,6 +84,15 @@ type MobParams struct {
 	// telegraph constructors clamp an extent; a negative radius survives as
 	// the degenerate catches-nothing circle, matching the telegraph law.
 	CircleRadiusMM int64
+
+	// Damage is how much health each caught entity loses when a cast
+	// resolves, clamped into [0, maxHealth] so application can never
+	// overflow (see damage.go). Zero — the default — is a telegraph that
+	// marks but does not hurt, which is every mob configured before damage
+	// existed. How much a hit HURTS, like how generous the wind-up is,
+	// remains a reviewed balance decision (#153's lesson), not a library
+	// constraint.
+	Damage int64
 }
 
 // mobState is one registered mob's AI state.
@@ -101,11 +118,13 @@ type ActiveCast struct {
 	ResolveTick uint64
 }
 
-// TelegraphHit is one resolved cast: who painted it, when it resolved, and
-// who was standing in it at resolution, in ascending-ID order. Targets is
-// empty when everyone stepped out — an empty resolution is still an
-// observable outcome and is recorded. Damage does not exist yet; recording
-// the hit is this slice's entire effect.
+// TelegraphHit is one resolved cast: who painted it, when it resolved, who
+// was standing in it at resolution (ascending-ID order), and how much each of
+// them should lose. Targets is empty when everyone stepped out — an empty
+// resolution is still an observable outcome and is recorded. The hit is a
+// RECORD, not an application: the zone loop lands it with one explicit
+// World.ApplyDamage(Targets, Damage) call, so the caller owns the ordering
+// between resolution, application and replication.
 type TelegraphHit struct {
 	// Tick is the step index during which the cast resolved (the value of
 	// World.Tick while that step ran; after Step returns, World.Tick reads
@@ -113,6 +132,10 @@ type TelegraphHit struct {
 	Tick    uint64
 	Caster  EntityID
 	Targets []EntityID
+	// Damage is the caster's configured per-cast damage (MobParams.Damage)
+	// at resolution time, carried on the record so the consumer needs no
+	// access to the mob registry to land the hit.
+	Damage int64
 }
 
 // AddMob registers an existing entity as a stationary caster with the given
@@ -132,6 +155,7 @@ func (w *World) AddMob(id EntityID, p MobParams) {
 	p.CastTicks = clampTicks(p.CastTicks, minCastTicks, maxCastTicks)
 	p.CooldownTicks = clampTicks(p.CooldownTicks, 0, maxCooldownTicks)
 	p.CircleRadiusMM = clampExtent(p.CircleRadiusMM)
+	p.Damage = clampAxis(p.Damage, 0, maxHealth)
 	if w.mobs == nil {
 		w.mobs = make(map[EntityID]*mobState)
 	}
@@ -217,13 +241,15 @@ func (w *World) resolveDueCasts() {
 				targets = append(targets, id)
 			}
 		}
+		var damage int64
+		if st := w.mobs[c.Caster]; st != nil {
+			damage = st.params.Damage
+			st.inFlight = false
+		}
 		if len(w.hits) >= maxHitRecords {
 			w.droppedHits++
 		} else {
-			w.hits = append(w.hits, TelegraphHit{Tick: w.Tick, Caster: c.Caster, Targets: targets})
-		}
-		if st := w.mobs[c.Caster]; st != nil {
-			st.inFlight = false
+			w.hits = append(w.hits, TelegraphHit{Tick: w.Tick, Caster: c.Caster, Targets: targets, Damage: damage})
 		}
 	}
 	w.casts = remaining
