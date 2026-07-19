@@ -28,10 +28,15 @@ is the *premise* and every other preference — engine, fidelity — yields to i
   Nanite/Lumen).
 - **Art: generated as code, all OSS/CC0 — never commercial assets.** Headless Blender (`bpy`) →
   glTF. **Built today:** **MPFB2** for characters (core assets CC0, explicitly closed-source-safe),
-  rigged with MPFB's built-in `game_engine` rig (`tools/artgen/humanoid_kit`); text `.gdshader` for
-  every material in the game — no texture files exist, the look is arithmetic (`client/shaders/`);
-  SDF/marching-cubes caves (`client/scripts/cave_system_gen.gd`); fBm noise terrain
-  (`client/scripts/world_gen.gd`); GDScript-authored foliage (`client/scripts/foliage_gen.gd`).
+  rigged with MPFB's built-in `game_engine` rig (`tools/artgen/humanoid_kit`); text `.gdshader`
+  materials (`client/shaders/`), where **the ground and cave rock are arithmetic-only — no texture,
+  colour computed from noise**. Textures *do* ship elsewhere: six baked skin PNGs
+  (`client/assets/characters/humanoid_kit/skins/`) that `character_factory.gd` loads into a
+  `StandardMaterial3D`, plus leaf, blade and stone `ImageTexture`s generated at runtime by
+  `foliage_art.gd` and sampled by `debris.gdshader`. **SDF caves meshed with naive surface nets**
+  (`client/scripts/cave_system_gen.gd`) — *not* marching cubes; the topology and meshing constraints
+  differ. Simplex-fBm terrain (`client/scripts/world_gen.gd`); GDScript-authored foliage
+  (`client/scripts/foliage_gen.gd`).
   **Named as intent, NOT yet adopted — do not cite any of these as an existing capability:**
   Rigify, Poly Haven / ambientCG (CC0) material libraries, **Material Maker**, **Sapling Tree Gen**,
   WFC interiors, grammar towns, and hydraulic erosion on the terrain.
