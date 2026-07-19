@@ -11,6 +11,16 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
+		"version": "0.14.0",
+		"date": "2026-07-20",
+		"title": "The ground is broken rock, with ash blown over it",
+		"notes": [
+			"The ground used to be one smooth sheet of colour from your boots to the horizon — you could walk a long way across the Reach and never pass anything. Now the ash only lies where it settled. Where the wind scoured it away you walk out onto bare rock: slabs about a stride across, each one its own stone — some nearly black, some rust-red, some pale — meeting one another at seams.",
+			"The ash sheets end at an edge rather than fading away, so you can see where the ash stops and the rock starts, and the low sun catches along the seams between slabs instead of sliding over everything equally.",
+			"This is nowhere near finished. The slabs still read a little like tiling when you look straight down a slope, the bare patches follow the same broad pattern everywhere in the Reach rather than belonging to particular places, and the rock does not break up into loose rubble the way real broken ground does. The cave got this treatment first and is still ahead of the outdoors.",
+		],
+	},
+	{
 		"version": "0.13.0",
 		"date": "2026-07-19",
 		"title": "Standing like someone who has been standing a while",
