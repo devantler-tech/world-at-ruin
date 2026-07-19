@@ -196,7 +196,12 @@ void fragment() {
 	// extra noise taps an offset-sampled gradient would need, which matters on
 	// a surface that fills the frame in the opening cave. It is per-quad, so
 	// the relief is clamped rather than trusted at silhouettes.
-	float relief_h = recess + 0.10 * sediment * floor_mix;
+	// `recess` is high where rock has been CUT AWAY, so it enters the height
+	// field NEGATED: a bedding plane or a joint must sit below the face. With
+	// +recess the derived normal bulges each crack outward and grazing
+	// torchlight embosses it — the exact inverse of the intent. Silt is the one
+	// term that genuinely adds material, so it keeps its positive sign.
+	float relief_h = 0.10 * sediment * floor_mix - recess;
 	vec3 dpx = dFdx(world_pos);
 	vec3 dpy = dFdy(world_pos);
 	vec3 r1 = cross(dpy, n);
@@ -267,10 +272,14 @@ void fragment() {
 		ALBEDO = mix(interior, exterior, sky);
 		ROUGHNESS = mix(interior_rough, ext_roughness - 0.08 * (g0 - 0.5) * detail, sky);
 		SPECULAR = mix(0.5, 0.2, sky);
-		// Start from the bedded interior normal rather than the flat face, so
-		// the relief fades out through the mouth instead of stepping off at the
-		// first fragment the mask calls exterior.
-		vec3 perturbed = normalize(interior_normal + grad * ext_bump_strength * sky * detail);
+		// Fade the interior relief back to the flat face as exposure rises, so
+		// it dissolves through the mouth instead of stepping off at the first
+		// fragment the mask calls exterior. It must actually reach zero at
+		// sky == 1: out there the albedo is entirely the weathered exterior
+		// material, so leaving the bedding relief at full strength would light
+		// the outer massif with seams and fractures that are not on it.
+		vec3 relief_normal = normalize(mix(interior_normal, n, sky));
+		vec3 perturbed = normalize(relief_normal + grad * ext_bump_strength * sky * detail);
 		NORMAL = normalize((VIEW_MATRIX * vec4(perturbed, 0.0)).xyz);
 	}
 }
