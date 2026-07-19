@@ -117,6 +117,7 @@ const ERR_SCHEME := "scheme"        # url is not wss://
 const ERR_TOKEN := "token"          # no allocation token to present at admission
 const ERR_STATE := "state"          # connect_to while already busy or still closing
 const ERR_OPEN := "open"            # transport refused to open the url
+const ERR_HANDSHAKE := "handshake"  # peer closed before the socket ever opened
 
 ## The transport contract: exactly the `WebSocketPeer` methods used below.
 const REQUIRED_TRANSPORT_METHODS: Array[String] = [
@@ -260,7 +261,17 @@ func poll() -> void:
 			# closing; the close handshake is not a delivery guarantee.
 			pass
 		_:
-			_state = State.CLOSED
+			# The peer is closed, but what that MEANS depends on whether it
+			# ever opened. From LIVE it is an ordinary hang-up. From
+			# CONNECTING the handshake was refused and the socket never
+			# carried a frame — admission answering 401 to a stale token
+			# looks exactly like this — so recording a clean close would
+			# leave the opt-in silently offline and indistinguishable from a
+			# deliberate stop.
+			if _state == State.CONNECTING:
+				_enter_failed(ERR_HANDSHAKE, "the zone closed the connection during the handshake — admission refused, or the zone could not be reached")
+			else:
+				_state = State.CLOSED
 
 
 ## Close the connection. Idempotent, and never turns a FAILED connection into

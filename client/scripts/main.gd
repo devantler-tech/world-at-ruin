@@ -32,6 +32,9 @@ var _volumetrics_on := false
 var _hollow_fog: Array[Dictionary] = []
 ## The live replication link, or null when no zone was named (#244).
 var _zone: ZoneConnection = null
+## Whether a lost connection has already been reported, so a failure that
+## persists is not warned about on every frame.
+var _zone_failure_reported := false
 
 func _ready() -> void:
 	# Capture-harness entry for the EXPORTED client: the official export
@@ -159,9 +162,24 @@ func _connect_zone() -> void:
 
 ## Drive the connection. Cheap and safe every frame: poll() is a no-op unless
 ## the socket is connecting, live, or finishing a close handshake.
+##
+## A connection can also die well after `connect_to()` returned true — a
+## handshake the zone refuses, or a frame the decoder or the store rejects.
+## Those surface only here, so without this check replication would stop
+## permanently and in total silence while the world went on looking fine.
+## Reported once, not once per frame.
+##
+## Reconnecting automatically is deliberately NOT done here: recovery policy
+## (when to retry, how often, and what to tell the player) belongs with the
+## child that puts remote entities on screen, and guessing at it now would
+## bake in a policy nothing yet exercises.
 func _process(_delta: float) -> void:
-	if _zone != null:
-		_zone.poll()
+	if _zone == null:
+		return
+	_zone.poll()
+	if _zone.state() == ZoneConnection.State.FAILED and not _zone_failure_reported:
+		_zone_failure_reported = true
+		push_warning("zone connection lost (%s): %s" % [_zone.error(), _zone.error_detail()])
 
 
 func _unhandled_input(event: InputEvent) -> void:

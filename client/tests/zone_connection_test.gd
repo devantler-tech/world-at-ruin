@@ -23,6 +23,8 @@ extends Node
 ##   * state      — connect_to while the transport is busy: already live, or
 ##                  still finishing a close handshake
 ##   * open       — the transport refusing to open the url
+##   * handshake  — the peer closing before the socket ever opened, which is
+##                  what a 401 from admission looks like from here
 ##   * <decoder>  — a corrupt frame, surfaced under WireCodec's OWN class
 ##   * <store>    — a delta before any base, under ReplicaStore's OWN class
 ##
@@ -160,6 +162,8 @@ func _ready() -> void:
 	if not _check_scheme_law():
 		return
 	if not _check_admission_token_law():
+		return
+	if not _check_failed_handshake_is_not_a_clean_close():
 		return
 	if not _check_open_refusal_law():
 		return
@@ -460,6 +464,39 @@ func _check_admission_token_law() -> bool:
 		return false
 
 	OS.set_environment(ZoneConnection.ZONE_TOKEN_ENV, original)
+	return true
+
+
+## A handshake can fail LONG after `connect_to()` returned true: admission
+## answers 401 to a stale token, or TLS/DNS never completes. The peer then goes
+## straight to STATE_CLOSED without ever opening. That must NOT read as a clean
+## shutdown — the opt-in would sit silently offline, and an operator could not
+## tell a refused admission from a deliberate stop.
+##
+## The isolating pair for this law is the clean close already asserted in
+## `_check_connect_lifecycle`: the SAME transport state (STATE_CLOSED) must
+## produce CLOSED-with-no-error from LIVE, and FAILED here from CONNECTING. A
+## test for either alone would pass a wrapper that ignored the distinction.
+func _check_failed_handshake_is_not_a_clean_close() -> bool:
+	var transport := FakeTransport.new()
+	var conn := ZoneConnection.new(transport)
+	if not conn.connect_to(URL):
+		_fail("connect_to refused a good url before the handshake control: %s" % conn.error())
+		return false
+
+	# Never opened: the peer closes while the handshake is still in flight.
+	transport.ready_state = WebSocketPeer.STATE_CLOSED
+	conn.poll()
+
+	if conn.state() != ZoneConnection.State.FAILED:
+		_fail("a handshake that closed before opening left state %d, expected FAILED — a refused admission would look like a clean shutdown" % conn.state())
+		return false
+	if conn.error() != ZoneConnection.ERR_HANDSHAKE:
+		_fail("failed handshake reported %s, expected %s" % [conn.error(), ZoneConnection.ERR_HANDSHAKE])
+		return false
+	if conn.frames_applied() != 0:
+		_fail("a connection that never opened folded %d frame(s)" % conn.frames_applied())
+		return false
 	return true
 
 
