@@ -157,6 +157,22 @@ void fragment() {
 	sub_rough = mix(sub_rough, 0.93, step(0.61, pick));
 	sub_rough = mix(sub_rough, 0.99, step(0.85, pick));
 
+	// The SUBSTANCE needs the same footprint filtering the seams get, not just
+	// the seams. Fading the contact line while still picking a colour from a
+	// discontinuous per-bed hash leaves neighbouring pixels — and one pixel as
+	// the camera moves — sampling unrelated rock, which is moire and temporal
+	// popping arriving by the other door. Once a pixel spans a bed there is no
+	// per-bed answer left to give, so converge on what a mip would: the mean of
+	// the distribution, weighted by each substance's actual selection width
+	// (0.34 / 0.27 / 0.24 / 0.15).
+	float bed_fw = fwidth(bed_coord);
+	float bed_resolved = 1.0 - smoothstep(0.30, 0.85, bed_fw);
+	vec3 mean_col = rock_sandstone * 0.34 + rock_shale * 0.27
+		+ rock_pale * 0.24 + rock_iron * 0.15;
+	float mean_rough = 0.97 * 0.34 + 0.88 * 0.27 + 0.93 * 0.24 + 0.99 * 0.15;
+	sub_col = mix(mean_col, sub_col, bed_resolved);
+	sub_rough = mix(mean_rough, sub_rough, bed_resolved);
+
 	// Some beds are laminated into finer plates, some are massive. One hash per
 	// bed decides which — a bed is never half of each. Two plates, not four:
 	// the finer split was the loudest source of the moire the first cut shipped.
@@ -196,12 +212,29 @@ void fragment() {
 	// extra noise taps an offset-sampled gradient would need, which matters on
 	// a surface that fills the frame in the opening cave. It is per-quad, so
 	// the relief is clamped rather than trusted at silhouettes.
+	//
+	// 🔴 The height field is rebuilt here from FIXED-WIDTH masks and must stay
+	// that way. The shaded `recess` above is footprint-widened, so it already
+	// contains fwidth() — and differentiating a value that is itself a
+	// derivative is undefined or implementation-dependent, which on another GPU
+	// shows up as unstable lighting or quad-shaped blocks across the whole
+	// starter cave. (This client already renders on at least two very different
+	// devices: this Apple GPU and CI's Paravirtual one.) These masks are only
+	// ever differentiated, never shaded, so aliasing in them does not reach the
+	// frame directly.
+	//
 	// `recess` is high where rock has been CUT AWAY, so it enters the height
 	// field NEGATED: a bedding plane or a joint must sit below the face. With
 	// +recess the derived normal bulges each crack outward and grazing
 	// torchlight embosses it — the exact inverse of the intent. Silt is the one
 	// term that genuinely adds material, so it keeps its positive sign.
-	float relief_h = 0.10 * sediment * floor_mix - recess;
+	float h_seam = 1.0 - smoothstep(0.0, seam_width, min(bed_f, 1.0 - bed_f));
+	float lam_f = fract(bed_coord * 2.0);
+	float h_lam = (1.0 - smoothstep(0.0, seam_width * 1.4,
+		min(lam_f, 1.0 - lam_f))) * laminated;
+	float h_joint = 1.0 - smoothstep(0.0, joint_width, abs(jf - 0.5));
+	float h_recess = max(h_seam, max(h_lam * 0.55, h_joint * 0.45));
+	float relief_h = 0.10 * sediment * floor_mix - h_recess;
 	vec3 dpx = dFdx(world_pos);
 	vec3 dpy = dFdy(world_pos);
 	vec3 r1 = cross(dpy, n);
