@@ -197,4 +197,8 @@ static func build_volume(placement: Dictionary) -> FogVolume:
 	# floor of the hollow and thins as it fills, which is what makes walking
 	# down into one feel like descending into it.
 	mat.height_falloff = 0.4
+	# Without this the volume renders nothing at all: a FogVolume with no
+	# material contributes no local density, so every pool would be invisible
+	# and the whole feature a silent no-op.
+	vol.material = mat
 	return vol

@@ -33,6 +33,9 @@ extends Node
 ##     discriminates: flat ground and a dome yield NOTHING, a single bowl yields
 ##     exactly one pool AT the bowl, and a terrain whose ring leaves the world
 ##     is refused rather than half-sampled.
+##  9. RENDERABLE — every placement builds into a FogVolume that actually
+##     carries its density. Laws 1–8 stop at the placement dictionary, so a
+##     materialless volume satisfies all of them while rendering nothing.
 ##
 ## Control 8 is the one that matters most. Laws 1–7 are all satisfied by a
 ## placer that simply drops pools on the lowest lattice points it can find;
@@ -161,7 +164,31 @@ func _ready() -> void:
 		_fail(control)
 		return
 
-	print("TEST PASS — %d ash pools, shallowest clears its surroundings by %.2f m, %.2f m below world median, %s" % [
+	# 9. RENDERABLE — the placement actually becomes visible air.
+	#
+	# Laws 1–8 all reason about the placement DICTIONARY. That is one step
+	# short of the promise: a perfectly-placed pool that builds into a
+	# materialless FogVolume contributes no density and renders nothing, so
+	# every law above passes while the player sees no ash at all. This law
+	# reaches through build_volume() to the node main.gd actually adds.
+	for i in pools.size():
+		var vol := HollowFog.build_volume(pools[i])
+		var mat := vol.material as FogMaterial
+		var want: float = pools[i]["density"]
+		# The volume is ours and never enters the tree, so free it before any
+		# early return — otherwise a failing law leaks every RID it built.
+		vol.free()
+		if mat == null:
+			_fail("pool %d built a FogVolume with no FogMaterial — it contributes no density and renders nothing, so the ash is invisible" % i)
+			return
+		if not is_equal_approx(mat.density, want):
+			_fail("pool %d built at density %.4f but its placement asked for %.4f — the depth-scaled density never reaches the renderer" % [i, mat.density, want])
+			return
+		if mat.density <= 0.0:
+			_fail("pool %d built at density %.4f — non-positive density is invisible air" % [i, mat.density])
+			return
+
+	print("TEST PASS — %d ash pools, shallowest clears its surroundings by %.2f m, %.2f m below world median, %s, every built volume carries its density" % [
 		pools.size(), worst_relief, drop, "4 controls held"
 	])
 	get_tree().quit(0)
