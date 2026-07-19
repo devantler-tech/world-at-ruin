@@ -12,6 +12,12 @@ gap in the PR** when you are done.
 No copyrighted image is committed here. References are named works with links to their official
 pages; go and look at them.
 
+**Scope, stated honestly.** The quality bar covers every player-facing surface — including audio,
+camera and game feel. This page covers the **visual** ones, because that is what the failed gate was
+about and what the maintainer's verdict specified. Audio, camera and game-feel targets are **not
+written yet**; setting them means inventing direction that has not been given, so an agent working
+those surfaces should get the target agreed rather than assume this page covers them.
+
 ---
 
 ## The one-line style
@@ -27,8 +33,9 @@ Two axes, from [`AGENTS.md` → Setting & story](../../AGENTS.md#setting--story-
   marks the furthest the sci-fi side may go, and it is a limit rather than a destination. Its
   servers closed in 2018, so reference material is archival.
 
-A frame passes the setting test when a stranger can tell it is fantasy-medieval first, and finds
-the technology as an intrusion into that world rather than as its native register.
+A frame passes the setting test when a stranger reads it as fantasy-medieval first, and reads any
+technology in it as something this world *inherited* — older than its people and imperfectly
+understood — rather than as something this world builds.
 
 ## The fidelity ceiling — stylised, and that is an advantage
 
@@ -206,10 +213,10 @@ stop. Run these against your own capture before opening the PR:
 Then write the reference and the gap into the PR. **Naming a real remaining gap is the expected
 outcome, not a confession** — a PR that claims no gap is usually one that did not run this list.
 
-### Two of those checks are measurable, and the baseline is recorded
+### Check 1 is measurable on both its axes, and the baseline is recorded
 
-Checks 1 and 3 do not have to stay a matter of squinting. Measured on the rejected Phase 0 cave
-frame:
+Separation does not have to stay a matter of squinting. A frame can separate its content by **value**
+or by **hue**, and both are countable. Measured on the rejected Phase 0 cave frame:
 
 | Metric | Cave frame | Wide-gamut control |
 |---|---|---|
