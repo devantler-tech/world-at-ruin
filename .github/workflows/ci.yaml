@@ -1281,8 +1281,16 @@ jobs:
         if: needs.detect-visual-changes.outputs.visual == 'true'
         run: |
           set -o pipefail
-          # Seed a save so the creator does not open over the shot, exactly as
-          # the world capture does.
+          # Seed a save, exactly as the world capture does — with NO save the
+          # first-run creator opens and its panel covers a third of the frame.
+          # This was not a hypothetical: the first version of this step merely
+          # pointed WAR_SAVE_PATH at a path it never created, and the captured
+          # evidence came back with the creator over the subject while every
+          # check still passed.
+          if ! cp client/recipes/wanderer.json "${RUNNER_TEMP}/breath_save.json"; then
+            echo "::error::could not seed the breath-capture save from client/recipes/wanderer.json — frames would show the first-run creator over the subject"
+            exit 1
+          fi
           WAR_SHOT_DIR="${RUNNER_TEMP}/shots" \
           WAR_SCENARIO=breath \
           WAR_SAVE_PATH="${RUNNER_TEMP}/breath_save.json" \

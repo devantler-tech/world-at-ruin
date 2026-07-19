@@ -635,6 +635,20 @@ func _capture_breath(dir: String, main: Node) -> void:
 		_fail("the world did not build — a sky-only frame is not evidence")
 		return
 
+	# Refuse to photograph the subject through the character creator.
+	#
+	# With no save present the first-run creator opens and its panel covers a
+	# third of the frame. That is a CALLER mistake — an unseeded WAR_SAVE_PATH —
+	# but it degrades the evidence SILENTLY: the body stays partly visible,
+	# every luma and travel guard still passes, and the artifact comes back with
+	# a UI panel across the subject. CI shipped exactly that once, and the only
+	# thing that caught it was a human opening the PNG. Fail loudly instead, and
+	# name the cause rather than the symptom.
+	var creator := _find_creator(main)
+	if creator != null and _visible_panel_area(creator) > 0.0:
+		_fail("the first-run creator is open over the subject — WAR_SAVE_PATH must point at a SEEDED save (copy client/recipes/wanderer.json), or the frames photograph the UI instead of the body")
+		return
+
 	var body := _first_breathing_body(main)
 	if body == null:
 		_fail("no character with a BreathingIdle was found in the shipped scene — either nothing breathes, or the idle is not attached where a player would see it")
