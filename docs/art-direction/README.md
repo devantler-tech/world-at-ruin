@@ -85,7 +85,8 @@ Read "stop using noise" nowhere in this page; read "stop using *only smooth inte
 Authored art has edges, named substances, deliberate contrast and a focal point. The work is making
 the generator **produce decisions**, not smoother gradients.
 
-Concretely, authored-looking output has four properties uniform noise never produces on its own:
+Concretely, authored-looking output has four properties that smooth interpolated value-noise does
+not produce on its own:
 
 1. **Edges.** Rock fractures along planes and breaks at angles. Smooth signed-distance blobbing
    reads as wet clay, which is exactly how the cave currently reads.
@@ -112,8 +113,7 @@ texture at all. That is the surface area this gap covers; say "the ground and ro
 textures", not "the game has none".
 
 **Target.** Every surface reads as a named substance: ash, fractured granite, rusted iron, tanned
-leather, coarse woven cloth. Substance shows up in three separable channels, and using only the
-first is the current defect:
+leather, coarse woven cloth. Substance shows up in three separable channels:
 
 - **Colour pattern**, not tint — veining, mineral streaks, dye unevenness, stains.
 - **Grain at two or more scales** in the normal — metre-scale form, centimetre-scale bite. Grazing
@@ -125,11 +125,18 @@ first is the current defect:
 Reach — a shattered orange wasteland that still separates rock from ground from sky. Diablo IV's
 **Dry Steppes** for how far to push grime, rust and wear without losing readability.
 
-**The trick that carries stylisation, and it is cheap.** Painted AAA art bakes light into the
-surface: crevices darken, raised and worn edges brighten. In a procedural shader that is
-**curvature-driven darkening plus convexity-driven edge wear** — two terms you can derive from the
-geometry you already have. This is most of what separates "hand-painted" from "noise-tinted", and
-we currently do neither.
+**⚠️ The channels are not simply missing — check before you file that as the gap.**
+`terrain.gdshader` already perturbs `NORMAL` (line 131) and varies `ROUGHNESS` by slope and grain
+(line 117), and mixes ash against rock by slope. All three channels are being touched, and the
+result still measures flat. So the gap is **the magnitude and character of the variation, not its
+absence** — the same trap as the torch below, where the layers exist but do not read.
+
+**What genuinely is absent, and it is the cheap win.** Painted AAA art bakes light into the surface:
+crevices darken, raised and worn edges brighten. In a procedural shader that is **curvature-driven
+darkening plus convexity-driven edge wear** — two terms derivable from geometry already available.
+A grep for curvature, cavity, occlusion or edge-wear terms across all four shaders returns nothing
+but one prose comment, so this is a real absence rather than an assumed one. It is most of what
+separates "hand-painted" from "noise-tinted".
 
 **Checkable tells — inspect the channels, do not desaturate.** Desaturation cannot tell tint from
 substance and gets it wrong in *both* directions: two albedo tints at different values survive
