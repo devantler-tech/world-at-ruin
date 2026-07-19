@@ -18,7 +18,10 @@ extends Node
 ##   * transport  — a transport missing a contract method, refused at
 ##                  construction rather than deep inside poll()
 ##   * url        — an empty/blank zone url
-##   * state      — connect_to while already live
+##   * scheme     — a plaintext ws:// url, which the transport ADR forbids
+##   * token      — no allocation token, which zone admission answers 401 to
+##   * state      — connect_to while the transport is busy: already live, or
+##                  still finishing a close handshake
 ##   * open       — the transport refusing to open the url
 ##   * <decoder>  — a corrupt frame, surfaced under WireCodec's OWN class
 ##   * <store>    — a delta before any base, under ReplicaStore's OWN class
@@ -28,7 +31,10 @@ extends Node
 ##     it held before, and the drain STOPS: a valid frame queued behind a bad
 ##     one must NOT be applied (proven by queueing exactly that).
 ##   * TERMINAL IS NOT WEDGED — a failed connection can reconnect, and does so
-##     onto a FRESH store (a stale table must never survive a desync).
+##     onto a FRESH store (a stale table must never survive a desync) — but
+##     only once the socket it hung up has finished its close handshake.
+##   * ADMISSION — the bearer header the zone hub demands is actually present,
+##     and its absence is refused here rather than as a 401 later.
 ##   * DEFAULT-OFF — with WAR_ZONE_URL unset the feature reports disabled, and
 ##     with it set it reports enabled with that url (both states, per the
 ##     feature-flag-first rule).
@@ -171,7 +177,7 @@ func _ready() -> void:
 		return
 
 	OS.set_environment(ZoneConnection.ZONE_TOKEN_ENV, original_token)
-	print("TEST PASS — zone connection pumps the cross-tier stream golden to the server's authoritative end state, presents its admission token over TLS, completes its close handshake, and every refusal is terminal, classified and fail-closed")
+	print("TEST PASS — zone connection pumps the cross-tier stream golden to the server's authoritative end state, presents its admission token over TLS, completes its close handshake before reconnecting, and every stream refusal is terminal, classified and fail-closed")
 	get_tree().quit(0)
 
 

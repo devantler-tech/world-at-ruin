@@ -33,10 +33,19 @@ extends RefCounted
 ## A refusal from either the decoder or the store means the stream and our
 ## view of the world have diverged. There is no safe way to keep folding
 ## across that: the wire contract is ordered, so every later frame is stated
-## relative to a base we no longer share. So ANY refusal is terminal for the
-## connection — the socket is closed, the error class is recorded, and the
-## table is left exactly as it was (`ReplicaStore.apply` is atomic, proven by
-## its own suite).
+## relative to a base we no longer share. So any STREAM refusal is terminal
+## for the connection — the socket is closed, the error class is recorded, and
+## the table is left exactly as it was (`ReplicaStore.apply` is atomic, proven
+## by its own suite).
+##
+## A refused START is classified by whether anything is actually wrong. A bad
+## url, a non-TLS scheme, a missing token or a transport that refused to open
+## are all misconfigurations, and land in `FAILED` under their own class. A
+## transport that is merely BUSY — still connected, or still finishing a close
+## handshake — is not a fault at all: it records `ERR_STATE`, leaves the
+## lifecycle untouched, and resolves itself under `poll()`. Failing there would
+## turn "a poll too early" into a terminal state and would overwrite the real
+## error class of a connection that had already failed for a genuine reason.
 ##
 ## Terminal is not wedged. `FAILED` and `CLOSED` are both observable, and
 ## `connect_to` may be called again from either: a reconnect starts a FRESH
