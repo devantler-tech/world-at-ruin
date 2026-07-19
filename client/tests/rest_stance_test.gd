@@ -9,14 +9,16 @@ extends Node
 ## built skeleton, not that a function was called.
 ##
 ## What it holds:
-##  1. HIPS TILT — the engaged hip rides measurably higher than the free one.
+##  1. HIPS TILT — the ENGAGED hip rides higher, and the FREE foot stands
+##     outside the engaged one. Both are DIRECTION laws: an inverted stance
+##     and a crossed-over one are asymmetric too, so magnitude proves nothing.
 ##  2. SHOULDERS OPPOSE THE HIPS — the shoulder line tilts the OTHER way. This
 ##     is the definition of contrapposto and the one law a naive "lean the
 ##     whole body sideways" implementation fails: leaning tilts hips and
 ##     shoulders the SAME way, which reads as listing, not standing.
 ##  3. THE FREE KNEE IS BENT — the unweighted leg is not a second column.
-##  4. THE HEAD STAYS LEVEL — the stance must not read as a slump; the neck
-##     returns the head over the tilted shoulders.
+##  4. THE HEAD STAYS LEVEL — in ORIENTATION as well as position; a head can
+##     sit over the pelvis and still be tilted onto its ear.
 ##  5. EVERY BODY WEARS IT — the stance survives the extreme morph sliders and
 ##     the heaviest bone-op recipe, because it is applied relative to each
 ##     bone's current rest rather than as an absolute pose.
@@ -42,6 +44,10 @@ const MIN_FREE_KNEE_BEND := 4.0
 ## side-to-side offset of the head joint from the pelvis joint. A stance that
 ## dumps the head sideways reads as a slump rather than a rest.
 const MAX_HEAD_OFFSET := 0.06
+## Degrees the head may lean sideways (frontal plane only — the rig bakes a
+## 2.69 deg forward pitch into the head bone that is none of this test's
+## business). A couple of degrees of ear-lean is clearly visible on a face.
+const MAX_HEAD_ROLL_DEG := 1.0
 
 
 func _ready() -> void:
@@ -103,18 +109,38 @@ func _check_stance(instance: Node3D, label: String) -> String:
 		return "%s: no skeleton" % label
 	skeleton.force_update_all_bone_transforms()
 
-	for required in ["thigh_l", "thigh_r", "clavicle_l", "clavicle_r", "head", "pelvis"]:
+	for required in ["thigh_l", "thigh_r", "clavicle_l", "clavicle_r", "head", "pelvis", "foot_l", "foot_r"]:
 		if skeleton.find_bone(required) < 0:
 			return "%s: rig has no bone named %s" % [label, required]
+	var pelvis_x: float = _origin(skeleton, "pelvis").x
 	var hip_l: Vector3 = _origin(skeleton, "thigh_l")
 	var hip_r: Vector3 = _origin(skeleton, "thigh_r")
 	var sho_l: Vector3 = _origin(skeleton, "clavicle_l")
 	var sho_r: Vector3 = _origin(skeleton, "clavicle_r")
 
-	# 1. HIPS TILT
+	# 1. HIPS TILT — and the ENGAGED hip is the one that rides high.
+	#
+	# Direction, not magnitude. An earlier version asserted absf(hip_tilt) and
+	# was therefore blind to a stance that raised the FREE hip instead — which
+	# is what shipped, and is anatomically backwards: the leg carrying no
+	# weight drops its hip. A magnitude check passes an exactly inverted pose.
 	var hip_tilt := hip_l.y - hip_r.y
 	if absf(hip_tilt) < MIN_HIP_TILT:
 		return "%s: hips are level (%.4f m) — the body is standing on both legs, not one" % [label, hip_tilt]
+	if hip_tilt <= 0.0:
+		return "%s: the FREE hip (right) rides %.4f m higher than the engaged one — the unweighted leg cannot carry the raised hip" % [label, -hip_tilt]
+
+	# 1b. THE FREE FOOT STANDS OUTSIDE THE ENGAGED ONE.
+	#
+	# Also direction: "the free leg swings out" and "the free leg crosses in"
+	# are both asymmetry, and only one of them is a stance. The shipped
+	# version adducted — the free foot sat closer to the midline than the
+	# planted one, which reads as a body about to trip over itself.
+	var foot_l: Vector3 = _origin(skeleton, "foot_l")
+	var foot_r: Vector3 = _origin(skeleton, "foot_r")
+	var mid := pelvis_x
+	if absf(foot_r.x - mid) <= absf(foot_l.x - mid):
+		return "%s: the free foot sits %.4f m from the midline against the engaged foot's %.4f m — it is crossing inward, not standing out" % [label, absf(foot_r.x - mid), absf(foot_l.x - mid)]
 
 	# 2. SHOULDERS OPPOSE THE HIPS
 	var shoulder_tilt := sho_l.y - sho_r.y
@@ -131,12 +157,26 @@ func _check_stance(instance: Node3D, label: String) -> String:
 	if absf(bend_r - bend_l) < MIN_FREE_KNEE_BEND:
 		return "%s: both knees are equally straight (%.2f vs %.2f deg) — the free leg is a second column" % [label, bend_l, bend_r]
 
-	# 4. THE HEAD STAYS LEVEL
-	var head: Vector3 = _origin(skeleton, "head")
-	var pelvis: Vector3 = _origin(skeleton, "pelvis")
-	var head_offset := absf(head.x - pelvis.x)
+	# 4. THE HEAD STAYS LEVEL — its ORIENTATION, not merely its position.
+	#
+	# The first version measured only the head joint's lateral offset, which a
+	# rolled head passes trivially: a head can sit directly over the pelvis and
+	# still be tilted 4 degrees onto its ear. The neck counter-roll is derived
+	# from the pelvis and spine angles precisely so this cannot drift.
+	var head_t := skeleton.get_bone_global_rest(skeleton.find_bone("head"))
+	var head_offset := absf(head_t.origin.x - pelvis_x)
 	if head_offset > MAX_HEAD_OFFSET:
 		return "%s: head sits %.4f m to the side of the pelvis — that reads as a slump, not a rest" % [label, head_offset]
+	# SIDE-roll specifically, not the total angle from vertical. The head bone
+	# is baked with a 2.69 deg FORWARD pitch (identical in the untouched kit —
+	# measured, not assumed), so a naive angle_to(UP) reports that pitch and
+	# fails for a reason that has nothing to do with this stance. What must
+	# stay near zero is the lean onto one ear, which is the frontal-plane
+	# component.
+	var head_up := head_t.basis.y.normalized()
+	var head_roll := absf(rad_to_deg(atan2(head_up.x, head_up.y)))
+	if head_roll > MAX_HEAD_ROLL_DEG:
+		return "%s: head leans %.2f deg onto its ear — the neck never answered the spine's roll" % [label, head_roll]
 
 	return ""
 

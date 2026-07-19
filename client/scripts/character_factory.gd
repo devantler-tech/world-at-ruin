@@ -60,15 +60,27 @@ const HAND_RELAX_DEG := 8.0
 ## This is a STATIC pose. There is no idle motion, no weight shift over time,
 ## no walk cycle — those stay with the parent #224.
 
+## 🔑 RIG FACT, measured on the shipped kit rather than assumed: `thigh_l`
+## sits at +X and `thigh_r` at -X, and a POSITIVE rotation about
+## Vector3.FORWARD (-Z) LOWERS the left side. Every sign below is written
+## against that measurement — an earlier version reasoned about these axes
+## instead of probing them and produced a stance whose free leg carried the
+## raised hip and crossed inward over the midline. Directions are now pinned
+## by rest_stance_test, which names the engaged side rather than checking
+## magnitudes.
+##
+## Positive STANCE_ROLL_SIGN * degrees raises the LEFT (engaged) side.
+const STANCE_ROLL_SIGN := -1.0
+
 ## Pelvis roll that lifts the engaged (left) hip.
 const HIP_HIKE_DEG := 6.0
 ## Counter-roll applied to BOTH thighs, cancelling the pelvis roll so the legs
 ## hang plumb instead of splaying with the hips. Without it the whole lower
 ## body leans and the feet leave the ground.
 const THIGH_PLUMB_DEG := -6.0
-## The free (right) leg takes no weight: it swings very slightly outward and
-## bends at the knee, which is what stops the two legs reading as a pair of
-## identical columns.
+## The free (right) leg takes no weight: it swings very slightly outward, AWAY
+## from the midline, and bends at the knee — which is what stops the two legs
+## reading as a pair of identical columns.
 const FREE_LEG_ABDUCT_DEG := 3.0
 const FREE_KNEE_BEND_DEG := 13.0
 ## Spine counter-roll, applied per spine bone. Larger in total than the hip
@@ -76,9 +88,6 @@ const FREE_KNEE_BEND_DEG := 13.0
 ## level — that opposition IS contrapposto; a torso that only returns to
 ## vertical just undoes the hips.
 const SPINE_COUNTER_DEG := -4.5
-## Brings the head back level over the tilted shoulders. A head that rides the
-## shoulder tilt reads as a slump.
-const NECK_LEVEL_DEG := 4.0
 ## The free-side arm hangs a touch further from the body than the engaged one,
 ## because the ribcage on that side is no longer lifted into it.
 const FREE_ARM_EXTRA_HANG_DEG := 4.0
@@ -524,20 +533,62 @@ static func _hang_toward_down(skeleton: Skeleton3D, bone: int, deg: float) -> vo
 ## roll is cancelled at the thighs rather than at the feet, so the legs stay
 ## plumb while the hips tilt.
 static func _apply_contrapposto(skeleton: Skeleton3D) -> void:
-	# Hips tilt, legs stay plumb.
-	_rotate_rest_world(skeleton, skeleton.find_bone("pelvis"), Vector3.FORWARD, HIP_HIKE_DEG)
+	var roll := func(bone_name: String, deg: float) -> void:
+		_rotate_rest_world(
+			skeleton, skeleton.find_bone(bone_name), Vector3.FORWARD, STANCE_ROLL_SIGN * deg
+		)
+	# Hips tilt (engaged hip UP), legs stay plumb.
+	roll.call("pelvis", HIP_HIKE_DEG)
 	for thigh in ["thigh_l", "thigh_r"]:
-		_rotate_rest_world(skeleton, skeleton.find_bone(thigh), Vector3.FORWARD, THIGH_PLUMB_DEG)
-	# The free leg carries nothing: slightly out, slightly bent.
-	_rotate_rest_world(skeleton, skeleton.find_bone("thigh_r"), Vector3.FORWARD, -FREE_LEG_ABDUCT_DEG)
-	_rotate_rest_world(skeleton, skeleton.find_bone("calf_r"), Vector3.RIGHT, FREE_KNEE_BEND_DEG)
+		roll.call(thigh, THIGH_PLUMB_DEG)
+	# The free leg carries nothing: out AWAY from the midline, and bent.
+	#
+	# NOT via `roll`: that helper encodes "raise the engaged side", and swinging
+	# the right leg outward is a different intent that happens to need the
+	# opposite sign on the same axis. Bundling the two under one sign is exactly
+	# how the first version ended up adducting the free leg across the midline.
+	_rotate_rest_world(
+		skeleton, skeleton.find_bone("thigh_r"), Vector3.FORWARD, FREE_LEG_ABDUCT_DEG
+	)
+	_rotate_rest_world(
+		skeleton, skeleton.find_bone("calf_r"), Vector3.RIGHT, FREE_KNEE_BEND_DEG
+	)
 	# Torso counter-curves so the shoulder line opposes the hip line.
 	for spine in ["spine_01", "spine_02", "spine_03"]:
-		_rotate_rest_world(skeleton, skeleton.find_bone(spine), Vector3.FORWARD, SPINE_COUNTER_DEG)
-	# Head back to level over the tilted shoulders.
-	_rotate_rest_world(skeleton, skeleton.find_bone("neck_01"), Vector3.FORWARD, NECK_LEVEL_DEG)
-	# The unweighted side's arm hangs a little freer.
-	_hang_toward_down(skeleton, skeleton.find_bone("upperarm_r"), FREE_ARM_EXTRA_HANG_DEG)
+		roll.call(spine, SPINE_COUNTER_DEG)
+	# Head back to level — MEASURED, not derived and certainly not hand-picked.
+	#
+	# Summing the pelvis and spine angles looks like it should work and does
+	# not: these are rotations about a world axis conjugated into each bone's
+	# own space, and rotations do not commute, so the accumulated roll at the
+	# head is not the sum of its parts (the arithmetic said 0, the rig said
+	# 2.7 degrees). Reading the head's actual orientation and cancelling it is
+	# correct whatever the chain above happens to do, including after a future
+	# spine change.
+	_level_head(skeleton)
+	# The unweighted side's arm hangs a little freer. _hang_toward_down rotates
+	# TOWARD vertical, so a negative angle is what moves this arm away from the
+	# torso rather than tighter into it.
+	_hang_toward_down(
+		skeleton, skeleton.find_bone("upperarm_r"), -FREE_ARM_EXTRA_HANG_DEG
+	)
+
+
+## Cancels whatever side-roll the stance chain left in the head, by rotating
+## the neck. Measures the head's real global rest orientation, so it stays
+## correct if the pelvis or spine angles ever change.
+static func _level_head(skeleton: Skeleton3D) -> void:
+	var neck := skeleton.find_bone("neck_01")
+	var head := skeleton.find_bone("head")
+	if neck < 0 or head < 0:
+		push_error("CharacterFactory: neck or head bone not found")
+		return
+	var up := _composed_global_rest(skeleton, head).basis.y.normalized()
+	# Roll is the head's lean within the frontal plane: how far its up-axis has
+	# swung toward +X off vertical. A positive rotation about FORWARD swings it
+	# further that way, so cancelling takes the negative.
+	var roll_rad := atan2(up.x, up.y)
+	_rotate_rest_world(skeleton, neck, Vector3.FORWARD, -rad_to_deg(roll_rad))
 
 
 ## Rotates a bone's rest by `deg` about a WORLD axis, conjugated into bone
