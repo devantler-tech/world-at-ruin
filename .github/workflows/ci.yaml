@@ -764,7 +764,15 @@ jobs:
           # large PRs most likely to need it. Same hazard the capture-log check
           # below already avoids by writing to a file.
           git diff --name-only "$BASE_SHA"...HEAD > changed.txt
-          if grep -qE '^client/(scripts|shaders|assets|scenes|recipes|abilities|tools)/|^client/(project\.godot|export_presets\.cfg)$' changed.txt; then
+          # ci.yaml is in the visual list for the same reason it is in the
+          # export-affecting list below, and the reason is now sharper: since
+          # #142 the capture is a REQUIRED check, and a required job that its
+          # own gate skips fails OPEN. A PR editing frame-capture's runner,
+          # steps or guards would otherwise never run the job it changed, and
+          # the aggregate accepts the skip — so a broken capture workflow could
+          # merge green. Running the capture IS how a change to it is validated
+          # (the #145/#170 lesson, applied to the editor job).
+          if grep -qE '^client/(scripts|shaders|assets|scenes|recipes|abilities|tools)/|^client/(project\.godot|export_presets\.cfg)$|^\.github/workflows/ci\.yaml$' changed.txt; then
             echo "visual=true" >> "$GITHUB_OUTPUT"
           else
             echo "visual=false" >> "$GITHUB_OUTPUT"
@@ -788,7 +796,15 @@ jobs:
           # the world capture deliberately hides the creator while its fixed
           # cameras never frame a character up close — so a change to the kit
           # would otherwise get no picture of the surface it changed.
-          if grep -qE '^client/scripts/(character_creator|character_factory|character_store|main|player)\.gd$|^client/scenes/main\.tscn$|^client/(recipes|tools)/|^client/assets/characters/humanoid_kit/|^client/project\.godot$' changed.txt; then
+          # ci.yaml is here for the same self-validation reason it is in the
+          # visual and export-affecting lists — but note the gap it closes is a
+          # STEP, not a job. The first-run pass is a step inside frame-capture
+          # gated on this output, so making the JOB run on a ci.yaml change is
+          # not enough: without this, a PR editing the first-run step's own
+          # commands or guards runs the capture and skips the step it changed.
+          # That is not hypothetical — a stale assertion in this step is exactly
+          # how the capture broke on `cc45ac5b` (see #142).
+          if grep -qE '^client/scripts/(character_creator|character_factory|character_store|main|player)\.gd$|^client/scenes/main\.tscn$|^client/(recipes|tools)/|^client/assets/characters/humanoid_kit/|^client/project\.godot$|^\.github/workflows/ci\.yaml$' changed.txt; then
             echo "first_run=true" >> "$GITHUB_OUTPUT"
           else
             echo "first_run=false" >> "$GITHUB_OUTPUT"
@@ -826,14 +842,24 @@ jobs:
     # Linux run renders NOTHING (the capture tool refuses to run headless rather
     # than emit a blank frame).
     #
-    # DELIBERATELY NOT in ci-required-checks yet: whether a hosted macOS runner
-    # gives a windowed Godot process a usable Metal surface is unproven, and a
-    # capture job that cannot render must not block every player-visible PR while
-    # we find out. Promote it into the required set once it has demonstrably
-    # produced frames on CI.
+    # REQUIRED as of #142: the hosted macOS runner has demonstrably given the
+    # windowed Godot process a usable Metal surface — 18 consecutive successful
+    # runs, and 77 of 79 overall, with both failures deterministic and diagnosed
+    # (neither was runner flake). The reliability record is on #142.
+    #
+    # This job is path-gated, so it is SKIPPED on PRs that touch nothing a player
+    # can see. That is safe here only because aggregate-job-checks treats a
+    # skipped result as acceptable — verify that before adding any other
+    # conditional job to the required set, or every unrelated PR blocks.
     needs: [detect-visual-changes]
     if: needs.detect-visual-changes.outputs.visual == 'true'
     runs-on: macos-latest
+    # Bounded because the aggregate now WAITS for this job. A GDScript compile
+    # error makes a Godot scene hang instead of reaching quit() (a failure mode
+    # this repo has hit), and without a timeout the default 360 minutes would
+    # leave `CI - Required Checks` pending for six hours rather than failing.
+    # Same bound as the exported capture, which already carries one.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -1027,9 +1053,11 @@ jobs:
     # macOS runner + windowed run for the same reason as frame-capture: the
     # capture tool refuses a headless run rather than photograph nothing.
     #
-    # DELIBERATELY NOT in ci-required-checks: same reasoning as frame-capture —
-    # evidence must not block merges while hosted-runner rendering reliability
-    # is still being demonstrated (#142 owns the promotion decision).
+    # DELIBERATELY NOT in ci-required-checks, even though frame-capture was
+    # promoted by #142: this job is much younger and has run 3 times. Promoting
+    # it on that would repeat exactly the mistake #142 exists to prevent —
+    # requiring a job whose reliability is unmeasured. It earns promotion on its
+    # own window, under the same trigger, tracked by #142's follow-up.
     needs: [detect-visual-changes, client-export-macos]
     if: needs.detect-visual-changes.outputs.export_affecting == 'true'
     runs-on: macos-latest
@@ -1172,13 +1200,32 @@ jobs:
   ci-required-checks:
     name: CI - Required Checks
     runs-on: ubuntu-latest
-    needs: [client-smoke, client-export-macos, license-guard, server-ci]
+    # detect-visual-changes is in here for a reason that is easy to miss: it is
+    # the GATE for frame-capture, so if it fails, frame-capture is skipped — and
+    # aggregate-job-checks accepts a skip. A broken gate would therefore silently
+    # drop the evidence requirement and still go green, which is the exact rot
+    # #142 exists to prevent. Requiring the gate makes that failure loud.
+    needs:
+      [
+        client-smoke,
+        client-export-macos,
+        license-guard,
+        server-ci,
+        detect-visual-changes,
+        frame-capture,
+      ]
     if: ${{ always() }}
     steps:
       - uses: devantler-tech/actions/aggregate-job-checks@0f27c13a9785608e0bbf9998777d27761b4de617 # v10.0.2
         with:
+          # frame-capture and detect-visual-changes are conditional and report
+          # `skipped` on PRs with no player-visible change (and on merge_group).
+          # aggregate-job-checks treats skipped as acceptable, so this does not
+          # block unrelated PRs — see the note on ci-required-checks' needs.
           job-results: >-
             ${{ needs.client-smoke.result }}
             ${{ needs.client-export-macos.result }}
             ${{ needs.license-guard.result }}
             ${{ needs.server-ci.result }}
+            ${{ needs.detect-visual-changes.result }}
+            ${{ needs.frame-capture.result }}
