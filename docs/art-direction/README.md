@@ -9,8 +9,11 @@ judged its own work against a private idea of the target — which is how a cave
 Use it two ways: **pick the target before you build**, and **name the specific reference plus your
 gap in the PR** when you are done.
 
-No copyrighted image is committed here. References are named works with links to their official
-pages; go and look at them.
+**How references are named.** No copyrighted image is committed here, and a link to a game's home
+page does not show you the target — those games each span many incompatible art styles. So each
+reference names a **specific zone, screen or asset set** you can find and look at (in official media
+or in the game itself), with a link to the title's official page for identification only. When you
+cite one in a PR, say which specific reference you used, not just the game.
 
 **Scope, stated honestly.** The quality bar covers every player-facing surface — including audio,
 camera and game feel. This page covers the **visual** ones, because that is what the failed gate was
@@ -53,26 +56,42 @@ affordable one. **Stylisation is a set of explicit rules; photorealism is measur
 stylisation says *darken the crevices, brighten the worn edges, keep the palette disciplined, put
 detail where the eye lands* — every one of those is arithmetic a shader can do. Photorealism asks
 what this specific granite actually reflects, and the honest answer only comes from a scan we do
-not have. Generated art can hit the stylised bar. It cannot hit the photoreal one, and pointing it
-there guarantees the uncanny middle we are currently sitting in.
+not have.
+
+**That is a bet, and it is still unproven — do not write it up as a fact.** `AGENTS.md` calls
+generated art reaching the AAA bar the project's *"one unproven bet"*, and Phase 0 exists precisely
+to test it. Nothing here settles that. What this page claims is narrower and defensible: **if**
+generated art can reach the bar at all, the stylised target is the reachable direction to aim it,
+because its rules can be written down and the photoreal ones cannot. Aiming at photorealism instead
+would guarantee the uncanny middle we are currently sitting in — which is an argument about
+*direction*, not evidence that the destination is reachable.
 
 ## Why the current output misses — the thing to actually fix
 
-The Phase 0 frames do not fail on resolution or polygon count. They fail because **every surface is
-a smooth interpolation of noise, so nothing on screen looks like anyone decided it.**
+The Phase 0 frames do not fail on resolution or polygon count. They fail because **the world in them
+— ground, rock, cave — is a smooth interpolation of noise, so nothing on screen looks like anyone
+decided it.**
 
-That is the whole diagnosis, and it reframes every gap issue below. The fix is not more noise
-octaves or another blend layer. Noise is uniform, continuous and edgeless by nature; authored art
-has edges, named substances, deliberate contrast and a focal point. The work is making the
-generator **produce decisions**, not smoother gradients.
+That is the whole diagnosis, and it reframes every gap issue below. The fix is not more octaves of
+the same thing.
+
+**To be precise about what is being blamed:** the defect is in *this* generator's smoothly
+interpolated value-noise, which is continuous and edgeless by construction — not in procedural
+generation as such. Procedural technique is the **route** here, not the problem. Cellular/Worley
+noise, thresholded fields, domain partitioning, masks, and Voronoi fracture all produce hard
+boundaries and genuinely distinct regions, and those are exactly the tools the gaps below want.
+Read "stop using noise" nowhere in this page; read "stop using *only smooth interpolated* noise".
+
+Authored art has edges, named substances, deliberate contrast and a focal point. The work is making
+the generator **produce decisions**, not smoother gradients.
 
 Concretely, authored-looking output has four properties uniform noise never produces on its own:
 
 1. **Edges.** Rock fractures along planes and breaks at angles. Smooth signed-distance blobbing
    reads as wet clay, which is exactly how the cave currently reads.
 2. **Named substances.** A viewer can point at a surface and say what it is made of. If two
-   surfaces differ only by albedo tint, they are one material in two paints — which is the current
-   state of the entire game.
+   surfaces differ only by albedo tint, they are one material in two paints — which is the state of
+   every surface in the captured cave and terrain.
 3. **Deliberate contrast.** Value and hue range are composed, not averaged. The cave frame occupies
    a narrow band of one orange, so fog and material and rock all collapse into the same wash.
 4. **Composition.** Something is the subject. Landmarks, focal lighting and silhouette give the eye
@@ -84,6 +103,14 @@ Each block names the target, the reference to look at, and tells you can check o
 
 ### Materials and texture — the highest-leverage gap (#223)
 
+**What actually ships today — the inventory, because #223's "no textures at all" is too broad.**
+Committed skin textures exist (`client/assets/characters/humanoid_kit/skins/*.png`, loaded as
+`albedo_texture` in `character_factory.gd`), and `foliage_art.gd` generates leaf, blade and stone
+`ImageTexture`s at runtime. What is arithmetic-only is **the captured cave, rock and terrain** —
+`terrain.gdshader`, `cave_rock.gdshader` and `debris.gdshader` compute colour from noise with no
+texture at all. That is the surface area this gap covers; say "the ground and rock have no
+textures", not "the game has none".
+
 **Target.** Every surface reads as a named substance: ash, fractured granite, rusted iron, tanned
 leather, coarse woven cloth. Substance shows up in three separable channels, and using only the
 first is the current defect:
@@ -94,8 +121,9 @@ first is the current defect:
 - **Roughness variation** — polished where hands and boots touch, matte where dust settles. Uniform
   roughness is what makes two different materials light identically.
 
-**Reference.** WoW for the painted idiom; Diablo IV for how far to push grime, rust and wear
-without losing readability.
+**Reference.** WoW's **Outland / Hellfire Peninsula** is the closest painted analogue to Ashfall
+Reach — a shattered orange wasteland that still separates rock from ground from sky. Diablo IV's
+**Dry Steppes** for how far to push grime, rust and wear without losing readability.
 
 **The trick that carries stylisation, and it is cheap.** Painted AAA art bakes light into the
 surface: crevices darken, raised and worn edges brighten. In a procedural shader that is
@@ -103,9 +131,16 @@ surface: crevices darken, raised and worn edges brighten. In a procedural shader
 geometry you already have. This is most of what separates "hand-painted" from "noise-tinted", and
 we currently do neither.
 
-**Checkable tells.** Desaturate the frame: real material variety survives in greyscale, tint-only
-variety collapses to one value. Then try to name every substance in the frame — anything you cannot
-name is not finished.
+**Checkable tells — inspect the channels, do not desaturate.** Desaturation cannot tell tint from
+substance and gets it wrong in *both* directions: two albedo tints at different values survive
+greyscale and look like variety, while two genuinely different materials at equal luminance collapse
+and look identical. Instead:
+
+- **View albedo, normal and roughness separately.** A surface with a flat normal and a constant
+  roughness is a tint, whatever its colour does.
+- **Or move the light.** Rotate the key through a few angles: real grain and roughness variation
+  change how the surface reads; a tint looks the same from every angle.
+- **Then name every substance in the frame.** Anything you cannot name is not finished.
 
 ### World and terrain (#226)
 
@@ -116,8 +151,10 @@ fractal blended everywhere. At least one landmark readable from most of the zone
 The settled fiction demands this directly: a world at rebirth is *"a deliberate mix of wasteland and
 lush, vibrant zones."* One monochrome orange biome contradicts the setting, not just the art bar.
 
-**Reference.** WoW zones for legibility and per-zone palette identity; Guild Wars 2 vistas for
-composed painterly distance.
+**Reference.** WoW's **Elwynn Forest → Duskwood** boundary for how two adjacent zones announce
+themselves by palette alone; Guild Wars 2's **Path of Fire / Crystal Desert** for composed painterly
+distance in an arid setting; Elden Ring's **Caelid** for a hostile red-orange region that still
+reads varied rather than monochrome — the closest comparable to the failure mode measured below.
 
 **Checkable tells.** From one screenshot, can you say where you are and point toward somewhere
 else? Can you tell two locations apart at all?
@@ -132,8 +169,9 @@ Structures **meet** the ground instead of sitting on it: rubble, drifted ash, di
 returning vegetation in the seam. A hard silhouette line where mesh meets mesh is the tell that
 nothing transitions.
 
-**Reference.** Elden Ring for ruins that have settled into terrain over centuries; Diablo IV for
-worked stone that has weathered.
+**Reference.** Elden Ring's **Limgrave** ruins and **Siofra River** cavern for stonework that has
+settled into terrain over centuries and for cave interiors that are composed rather than tubular;
+Diablo IV's **Fractured Peaks** for weathered worked stone.
 
 ### Characters, clothing and equipment (#222, #224, #228)
 
@@ -156,34 +194,64 @@ symmetric hands-clasped pose reads as a rig at rest, because that is what it is.
 
 **Races are authored identities, not sliders (#228).** WoW and WildStar give each playable race its
 own proportions, silhouette, culture and art language — a Tauren is not a tall human. Our creator
-currently exposes real-world ethnicity as numeric `phenotype african / asian / caucasian` sliders
-over one human body. That reads as a taxonomy panel rather than a character choice, and it is worth
-retiring on design grounds as well as art ones: replace it with **named peoples of this world's
-rebirth**, each art-directed, plus an ordinary appearance choice for skin tone. Flagged for the
-maintainer's steer rather than decided here.
+instead exposes real-world ethnicity as numeric `phenotype_african / phenotype_asian /
+phenotype_caucasian` sliders over one human body, which reads as a taxonomy panel rather than a
+character choice — and which is also the mechanism keeping #228's "presets, not races" true.
 
-**Reference.** [Elden Ring](https://en.bandainamcoent.eu/elden-ring/elden-ring) for the ragged
-start and layered armour; WoW for race identity and silhouette exaggeration; Horizon Zero Dawn for
-the specific look of *scavenged technology worn as gear by a pre-industrial culture* — the closest
-existing match to our salvage brief, even though its surface fidelity is above our ceiling.
+The direction worth taking to the maintainer: **named peoples of this world's rebirth**, each
+art-directed with its own proportions and silhouette, plus an ordinary skin-tone choice like any
+character creator has.
+
+**🔴 Change the choice model, never the persisted axes.** Those three phenotype names are shipped
+save data — they appear in `golden_recipe_v2.json` and `v3.json`, and `CharacterFactory.validate()`
+refuses any recipe naming a blend shape the kit no longer has: *"unknown blend shape … shipped kit
+shapes may never be removed"*. Deleting them would fail every existing character and break the
+no-resets law outright. So whoever takes #228 **keeps the axes as backward-compatible internal
+fields, or ships a versioned zero-loss migration that renders historical recipes identically**, and
+changes only what the player is offered. Flagged for the maintainer's steer rather than decided
+here — but the compatibility constraint is not a matter of taste, and holds whichever way he steers.
+
+**Reference.** [Elden Ring](https://en.bandainamcoent.eu/elden-ring/elden-ring)'s **starting-class
+loadouts** (Wretch through Vagabond) for the ragged end of the range and how armour layers over it;
+WoW's **playable race roster** for identity and silhouette exaggeration across bodies;
+[Horizon Zero Dawn](https://www.playstation.com/en-us/games/horizon-zero-dawn/)'s **Nora tribal
+gear** for the exact look of *machine salvage worn as ornament by a pre-industrial culture* — the
+closest existing match to our brief, though its surface fidelity sits above our ceiling.
 
 ### Lighting and atmosphere
 
 **Target.** Fog separates depth; it does not paint the picture. The frame needs a key/fill
 relationship and a real value range.
 
-**The specific current failure:** warm key light plus warm shadow equals no contrast. WoW's
-readability comes largely from **warm key against cool shadow** — complementary, so form separates.
-Our cave has one warm hue doing everything, so depth, material and form all wash together.
+**The specific current failure, stated as what was measured rather than as a palette rule:** the
+captured cave separates its content on **neither** axis — 14.3% of the value range and 6° of hue (see
+the baseline below). That is the defect to fix, and it can be fixed on *either* axis.
 
-**Checkable tell.** If the frame occupies a narrow band of the value range, it is flat regardless of
-how much geometry is in it.
+Constant hue is **not** by itself a fault: intensity, direction, occlusion and value separation model
+form perfectly well in a monochrome scene, and plenty of shipped night and sandstorm scenes do exactly
+that. So the target is **separation, by whichever axis you choose** — not a mandated palette.
+Warm-key-against-cool-shadow is one well-worn way to buy it cheaply, and worth trying here precisely
+because the value axis is currently doing so little; it is an option, not the rule.
+
+**Checkable tell.** If the frame separates on neither value nor hue, it is flat regardless of how
+much geometry is in it.
 
 ### VFX
 
-**Target.** Layered, not a single gradient. The torch is currently a flat triangle; a shipped torch
-is core plus falloff plus drifting embers plus flicker driving the actual light, with heat
-distortion above it.
+**Target.** Layered, not a single gradient — and the torch shows that *having* the layers is not the
+same as their **reading**.
+
+`cave_system_gen.gd` already builds a separate outer flame and hot core (`COL_FLAME_CORE`), attaches
+a ranged `OmniLight3D` per torch, and animates both light energy and flame body every frame. So core,
+falloff and light-driven flicker **already ship** — do not file them as the gap. Yet in the captured
+frame the flame still resolves as a flat opaque triangle, because the layers sit at nearly the same
+value and the shape is a hard-edged cone.
+
+So the actual targets are: **soft, non-uniform edges** (alpha falloff rather than an opaque
+silhouette), **more value separation between core and outer flame**, and the layers that genuinely do
+not exist yet — **drifting embers** and **heat distortion**. This one is worth remembering as a
+pattern: a frame can under-read a system that is already there, so check the code before naming a
+gap.
 
 ### UI and UX (#227)
 
@@ -203,10 +271,14 @@ primary surface is a developer inspector, and the frame shows exactly that.
 Replaces "I looked at it and it's fine", which is the self-attestation the Quality bar exists to
 stop. Run these against your own capture before opening the PR:
 
-1. **Greyscale** — desaturate. Material and value variety survive; tint-only variety collapses.
-2. **Silhouette** — black out the frame. Is anything still readable as what it is?
+1. **Separation** — does the frame separate its content by value, by hue, or by neither? Measurable;
+   baseline below.
+2. **Silhouette** — render the evaluated subject solid black against a contrasting background, same
+   camera and pose. Is it still recognisable as what it is? (Blacking out the *whole* frame just
+   gives you a black rectangle — the subject/background boundary is the thing being tested.)
 3. **Thumbnail** — shrink to 10%. Is there a focal point, or is it an even field?
-4. **Name the substance** — point at each surface and say what it is made of.
+4. **Name the substance** — inspect albedo, normal and roughness separately, or move the key light,
+   then point at each surface and say what it is made of.
 5. **Side by side** — open the named reference next to your frame. State the gap in words.
 6. **Three seconds** — shipped game, or tech demo?
 
@@ -223,9 +295,20 @@ or by **hue**, and both are countable. Measured on the rejected Phase 0 cave fra
 | Luminance range (p1→p99) | **14.3%** of 0..1 | 93.5% |
 | Hue span of 90% of coloured pixels | **6°** | 324° |
 
-Ninety-eight percent of that frame lives between luminance 0.125 and 0.268, in a six-degree slice of
-orange. The control — a synthetic full hue sweep over a full value ramp — confirms the measurement
-can tell the difference, so these numbers describe the frame rather than the method.
+Read each statistic as exactly what it measures, because they cover different populations: **98% of
+all pixels** fall between luminance 0.125 and 0.268 (that is what p1→p99 means), while the six-degree
+figure covers **90% of the pixels that carry any colour at all** (saturation > 0.05, mid-value).
+Neither number licenses the other. The control — a synthetic full hue sweep over a full value ramp —
+confirms the measurement can tell the difference, so these describe the frame rather than the method.
+
+**Provenance, so the numbers are checkable rather than asserted.** Source frame is
+`docs/phase-0/cave-chamber.png`, which lands via [#219](https://github.com/devantler-tech/world-at-ruin/pull/219)
+— until that merges, the frame is inspectable on that PR, not in this tree. Method: downscale to
+320px wide, convert to Rec. 709 luminance for the value figure; for hue, drop pixels with
+saturation ≤ 0.05 or luminance outside 0.05–0.95, then take the 5th-to-95th percentile spread. The
+tool that does this is **not committed** — #230 lands it in GDScript beside `frame_capture`. Until
+both land, treat these as **a recorded observation with its method stated, not a reproducible
+in-repo measurement**, and re-derive them from #230 once it exists.
 
 Read them as **diagnostics with a recorded baseline to beat, not a pass/fail gate.** A deliberately
 monochrome scene is a legitimate choice — a sandstorm, a night interior — but then *value* has to
@@ -245,13 +328,14 @@ Measured against the above, from the Phase 0 frames the maintainer rejected on 2
 
 | Surface | State | Issue |
 |---|---|---|
-| Texture | No textures exist; every surface is arithmetic tint | #223 |
-| World | One biome of uniform noise; 90% of the cave frame within 6° of hue | #226 |
+| Texture | Ground, rock and cave are arithmetic-only; skins and foliage **do** have textures | #223 |
+| World | One biome of smooth value-noise; 90% of coloured cave pixels within 6° of hue | #226 |
 | Rock and blending | Smooth SDF blobs; structures sit on terrain | #225 |
 | Character | Mannequin silhouette, shared cloth/skin response | #222 |
 | Animation and stance | Static symmetric rig pose | #224 |
-| Races | Ethnicity sliders over one body | #228 |
+| Races | Ethnicity sliders over one body (axes are shipped save data — migrate, never delete) | #228 |
 | UI | Debug slider panel | #227 |
+| VFX | Torch layers exist but under-read: opaque edges, core and outer at one value | this page |
 | Setting | Nothing on screen reads as medieval *or* salvaged tech | this page |
 
 The last row is the one no gap issue covered: the frames miss the setting itself, not merely its
