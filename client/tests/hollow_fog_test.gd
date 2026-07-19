@@ -184,6 +184,27 @@ func _ready() -> void:
 		_fail(control)
 		return
 
+	# 8b. DEFAULT-OFF, BOTH STATES (product law 2).
+	#
+	# The pooling has no drift or wind response yet, which AGENTS.md names as a
+	# placeholder tell, and its quality bar is explicit that below-bar
+	# player-facing work does not ship default-on. A capability probe is not a
+	# player opt-in: it answers "can this machine render it", never "does this
+	# player want it". Both states are pinned here because a flag nobody tested
+	# in the OFF state is not a flag.
+	if HollowFog.should_build(true, false):
+		_fail("pools build on a capable GPU without the player opting in — a hardware probe is not consent, and this pooling is not finished enough to ship default-on")
+		return
+	if HollowFog.should_build(false, true):
+		_fail("pools build where volumetrics cannot render — invisible nodes with a per-frame cost")
+		return
+	if HollowFog.should_build(false, false):
+		_fail("pools build with neither the GPU nor the player agreeing")
+		return
+	if not HollowFog.should_build(true, true):
+		_fail("pools do NOT build when the GPU can render them and the player opted in — the feature is unreachable")
+		return
+
 	# 9. RENDERABLE — the placement actually becomes visible air.
 	#
 	# Laws 1–8 all reason about the placement DICTIONARY. That is one step

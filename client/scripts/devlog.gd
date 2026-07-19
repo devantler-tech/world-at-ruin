@@ -15,9 +15,9 @@ const ENTRIES: Array[Dictionary] = [
 		"date": "2026-07-19",
 		"title": "The ash knows where the low ground is",
 		"notes": [
-			"The haze no longer sits at one thickness across the whole Reach. Ash now gathers in the land's hollows, so dropping into a basin means walking down into thicker air, and climbing back out clears it.",
-			"Where the pools sit is a property of this land, not a sprinkle — the same hollows fill the same way on every machine and every time you play. The starter cave is left alone: its dark is meant to be dark.",
-			"As before, this only appears on hardware that can render the air as a volume. Everywhere else the view is unchanged.",
+			"Ash can now gather in the land's hollows instead of hanging at one thickness everywhere, so dropping into a basin means walking down into thicker air and climbing back out clears it. Where the pools sit is a property of this land — the same hollows fill the same way every time you play. The starter cave is left alone: its dark is meant to be dark.",
+			"This is switched OFF unless you ask for it. The ash sits still: it does not drift, and it does not stir as you walk through it. Until it does, it is not finished enough to put in your world without asking, so try it with WAR_HOLLOW_FOG=1 and tell us how it reads.",
+			"It also needs hardware that can render the air as a volume. Where that is missing the view is unchanged, opted in or not.",
 		],
 	},
 	{

@@ -18,6 +18,35 @@ class_name HollowFog
 ## `--headless`, where volumetrics never initialise and a FogVolume would
 ## contribute no pixels to read back.
 
+## Opt-in flag (product law 2 — experimental features are default-off).
+##
+## The pools have no second-order life yet: no drift, no wind response, no
+## reaction to the player moving through them. AGENTS.md lists exactly that
+## ("no wind or sway") as a placeholder tell, and its quality bar is explicit
+## that below-bar player-facing work does not ship default-on. A hardware
+## capability probe is NOT a player opt-in — it answers "can this machine
+## render it", never "does this player want it" — so the probe alone would
+## silently enrol every capable player into an unfinished experience.
+##
+## Set WAR_HOLLOW_FOG=1 to opt in. Retire this flag (and this constant) when
+## drift lands and the result clears the bar — a release flag is short-lived by
+## contract, and #211's follow-up #233 tracks the flip.
+const OPT_IN_ENV := "WAR_HOLLOW_FOG"
+
+
+## Whether the player opted into the unfinished ash pooling.
+static func opted_in() -> bool:
+	return OS.get_environment(OPT_IN_ENV) == "1"
+
+
+## Whether pools should actually be BUILT this boot. Both conditions are
+## necessary and they mean different things: the probe is a hardware fact, the
+## flag is a player choice. Kept as a pure function so both states are testable
+## where neither an env var nor a GPU is available.
+static func should_build(volumetrics_on: bool, player_opted_in: bool) -> bool:
+	return volumetrics_on and player_opted_in
+
+
 ## Edge inset, in metres. Candidates never sit near the world edge, where the
 ## surrounding ring would sample outside the terrain and the relief measure
 ## would be reading absent ground rather than a hollow.

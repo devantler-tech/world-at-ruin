@@ -285,22 +285,30 @@ func _build_environment() -> void:
 ## every Node3D descendant of World, so parenting them there would move a hash
 ## that has nothing to do with what generated the ground.
 ##
-## Placement is recorded unconditionally but the nodes are built only where the
-## #158 probe passed: on a device that cannot render volumetrics a FogVolume is
-## an invisible node with a per-frame cost and no benefit.
+## Placement is recorded unconditionally but the nodes are built only when BOTH
+## the #158 probe passed AND the player opted in (product law 2 — the pooling
+## has no drift yet, so it is below the quality bar and must not ship
+## default-on). A device that cannot render volumetrics would only pay a
+## per-frame cost for invisible nodes anyway.
 func _build_hollow_fog(world: WorldGen) -> void:
 	_hollow_fog = HollowFog.place(
 		world.surface_height_at, WorldGen.SIZE, WorldGen.NO_GROUND, world.cave_protects
 	)
-	if not _volumetrics_on:
-		print("HOLLOW FOG off — volumetrics unavailable (%d pools not built)" % _hollow_fog.size())
+	if not HollowFog.should_build(_volumetrics_on, HollowFog.opted_in()):
+		print("HOLLOW FOG off — %s (%d pools placed, not built)" % [
+			"volumetrics unavailable" if not _volumetrics_on
+			else "not opted in (set %s=1)" % HollowFog.OPT_IN_ENV,
+			_hollow_fog.size(),
+		])
 		return
 	var root := Node3D.new()
 	root.name = "HollowFog"
 	add_child(root)
 	for placement: Dictionary in _hollow_fog:
 		root.add_child(HollowFog.build_volume(placement))
-	print("HOLLOW FOG on — %d ash pools" % _hollow_fog.size())
+	print("HOLLOW FOG on — %d ash pools (opted in via %s)" % [
+		_hollow_fog.size(), HollowFog.OPT_IN_ENV
+	])
 
 
 ## Where this boot pooled ash, deepest hollow first — a copy, so a caller can
