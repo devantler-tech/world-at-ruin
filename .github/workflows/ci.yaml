@@ -81,11 +81,63 @@ jobs:
             exit 1
           fi
           extract='s/^[[:space:]]*\([0-9][0-9]*\)[[:space:]]*$/\1/p'
-          git show "$BASE_SHA:$LEDGER" 2>/dev/null | sed -n "$extract" | sort -un > /tmp/vault-ledger-base
+          # Distinguish "absent on base" from "read failed". Absent is the
+          # legitimate case exactly once — the commit that INTRODUCES the ledger
+          # — and means an empty base set. A read that fails for any OTHER reason
+          # must abort: an empty base makes `comm -23` report nothing removed, so
+          # a silent failure here would wave through the very deletion this step
+          # exists to catch (fail-open). `git cat-file -e` answers existence
+          # without conflating the two.
+          if git cat-file -e "$BASE_SHA:$LEDGER" 2>/dev/null; then
+            if ! git show "$BASE_SHA:$LEDGER" | sed -n "$extract" | sort -un > /tmp/vault-ledger-base; then
+              echo "::error::could not read $LEDGER at $BASE_SHA — refusing to compare against an empty base"
+              exit 1
+            fi
+          else
+            echo "::notice::$LEDGER does not exist at the base revision — treating the base set as empty (this is the commit that introduces it)"
+            : > /tmp/vault-ledger-base
+          fi
           sed -n "$extract" "$LEDGER" | sort -un > /tmp/vault-ledger-head
           removed=$(comm -23 /tmp/vault-ledger-base /tmp/vault-ledger-head)
           if [ -n "$removed" ]; then
             echo "::error::Shipped vault version(s) removed from $LEDGER ($(echo "$removed" | tr '\n' ' ')) — shipped progression is never disposable (no-resets law)"
+            exit 1
+          fi
+      - name: Attunement ledger is append-only (no-resets law)
+        # The LIVE-NAME half of the vault law (#254 review). A golden fixture
+        # proves a shipped attunement name survives a round-trip; it cannot prove
+        # the game still ACTS on it. Renaming a name and its call site together
+        # keeps every in-game guard green while stranding players attuned to the
+        # old name. The in-game guard checks fixture+ledger names against
+        # SaveVault.KNOWN_ATTUNEMENTS; this step is the immutable anchor that
+        # stops the ledger itself being edited in the same breath.
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          LEDGER=client/tests/data/shipped_attunements.txt
+          if [ ! -f "$LEDGER" ]; then
+            echo "::error::$LEDGER was deleted — the forward-only attunement ledger must exist"
+            exit 1
+          fi
+          if ! git cat-file -e "$BASE_SHA" 2>/dev/null; then
+            echo "::error::base commit $BASE_SHA not present in the checkout — cannot verify the ledger"
+            exit 1
+          fi
+          names='/^[[:space:]]*#/d; /^[[:space:]]*$/d; s/^[[:space:]]*//; s/[[:space:]]*$//'
+          if git cat-file -e "$BASE_SHA:$LEDGER" 2>/dev/null; then
+            if ! git show "$BASE_SHA:$LEDGER" | sed -e "$names" | sort -u > /tmp/attune-base; then
+              echo "::error::could not read $LEDGER at $BASE_SHA — refusing to compare against an empty base"
+              exit 1
+            fi
+          else
+            echo "::notice::$LEDGER does not exist at the base revision — treating the base set as empty (this is the commit that introduces it)"
+            : > /tmp/attune-base
+          fi
+          sed -e "$names" "$LEDGER" | sort -u > /tmp/attune-head
+          removed=$(comm -23 /tmp/attune-base /tmp/attune-head)
+          if [ -n "$removed" ]; then
+            echo "::error::Shipped attunement name(s) removed from $LEDGER ($(echo "$removed" | tr '\n' ' ')) — players attuned there would wake in the cave forever (no-resets law)"
             exit 1
           fi
       - name: Piece-slot ledger is append-only (no-resets law)

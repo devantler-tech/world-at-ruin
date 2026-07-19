@@ -8,7 +8,9 @@ extends Node
 ##  4. attune() preserves fields this build does not use (forward-compat).
 ##  5. Save → load round-trips an attunement.
 ##  6. persist_attunement() writes through the seam and accumulates.
-##  7. Validation refuses each malformed shape, naming the reason.
+##  7. save_to() refuses to REPLACE an unreadable vault, leaves it byte-intact,
+##     and cleans up its temp file.
+##  8. Validation refuses each malformed shape, naming the reason.
 ##
 ## Everything runs against a throwaway path via the seam, so the player's own
 ## user://vault.json is never read or written (no-resets law).
@@ -105,6 +107,39 @@ func _ready() -> void:
 	if first is not Dictionary or not SaveVault.is_attuned(first, SaveVault.SHRINE_WARDENS):
 		_fail("the first attunement did not persist")
 		return
+
+	# 6b. save_to() itself refuses to REPLACE an unreadable vault, independently
+	# of whatever the caller checked earlier. A caller's can_write() is a
+	# point-in-time answer; everything between it and the rename is time in which
+	# another process can land a vault this build cannot read. The re-check
+	# immediately before the replace is what stops that write destroying it.
+	_cleanup_probe()
+	SaveVault.clear_refusals_for_test()
+	var corrupt := "{ not json at all"
+	var raw := FileAccess.open(PROBE, FileAccess.WRITE)
+	if raw == null:
+		_fail("could not stage the unreadable vault")
+		return
+	raw.store_string(corrupt)
+	raw.close()
+	if SaveVault.save_to(PROBE, SaveVault.attune(SaveVault.empty(), SaveVault.SHRINE_WARDENS)):
+		_fail("save_to() REPLACED an unreadable vault — a newer client's progression would be destroyed")
+		return
+	var reread := FileAccess.open(PROBE, FileAccess.READ)
+	if reread == null:
+		_fail("save_to() removed the unreadable vault it refused to replace")
+		return
+	var still := reread.get_as_text()
+	reread.close()
+	if still != corrupt:
+		_fail("save_to() altered the unreadable vault (%s)" % still)
+		return
+	# ...and it left no temp file behind.
+	if FileAccess.file_exists(PROBE + ".tmp"):
+		_fail("save_to() left its temp file behind after refusing")
+		return
+	_cleanup_probe()
+	SaveVault.clear_refusals_for_test()
 
 	# 7. Validation refuses each malformed shape.
 	var refusals := {

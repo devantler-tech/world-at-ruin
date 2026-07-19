@@ -24,18 +24,33 @@ extends Node
 ##     vault preserves every field and name, including ones this build does not
 ##     use. Load-only checking cannot see a save path that drops them.
 ##
+## Then the LIVE-NAME law (added after review — the gap a zero-loss guard cannot
+## see on its own):
+##  5. Every attunement name in every shipped fixture, and every name in the
+##     append-only tests/data/shipped_attunements.txt ledger, is still
+##     RECOGNISED by this build (SaveVault.KNOWN_ATTUNEMENTS). A byte round-trip
+##     proves a name survives; it does not prove the game still acts on it.
+##     Renaming a shipped name and its call site together would otherwise keep
+##     every guard green while stranding existing players.
+##
 ## Then the refusal laws, which are what make the separate-file design safe:
-##  5. A vault one version NEWER than this client is refused, not half-applied.
-##  6. A vault that exists but cannot be read is NOT writable — refuse-to-read
+##  6. A vault one version NEWER than this client is refused, not half-applied.
+##  7. A vault that exists but cannot be read is NOT writable — refuse-to-read
 ##     implies refuse-to-write, or a downgrade would overwrite progression a
 ##     newer client wrote.
-##  7. An absent vault reads as an empty vault, never as a failure — a missing
+##  8. An absent vault reads as an empty vault, never as a failure — a missing
 ##     vault must degrade to session-only, never block a boot.
+##  9. A refusal LATCHES for the session: once refused, the path stays
+##     unwritable even if the file then disappears. Cloud sync or a second
+##     client can remove an unreadable vault mid-session, and a build that
+##     re-derived writability from the file's current state would then write a
+##     v1 document that syncs back over the newer progression it just refused.
 ##
 ## Run: godot --headless --path client res://tests/save_vault_guard_test.tscn
 
 const DATA_DIR := "res://tests/data/"
 const SHIPPED_VERSIONS := DATA_DIR + "shipped_vault_versions.txt"
+const SHIPPED_ATTUNEMENTS := DATA_DIR + "shipped_attunements.txt"
 # A throwaway vault file: fixtures are loaded through the vault's real load
 # path via this probe, so the player's user://vault.json is never read or
 # written (no test can destroy progression — no-resets law).
@@ -83,6 +98,9 @@ func _ready() -> void:
 				version, SaveVault.VAULT_VERSION])
 			return
 
+	# The fixture loop writes and re-saves through PROBE; start from a clean
+	# latch so a refusal left by an earlier run of this scene cannot block it.
+	SaveVault.clear_refusals_for_test()
 	var versions := fixtures.keys()
 	versions.sort()
 	for version: int in versions:
@@ -90,6 +108,11 @@ func _ready() -> void:
 		if reason != "":
 			_fail("golden_vault_v%d.json: %s" % [version, reason])
 			return
+
+	var live := _check_live_names(fixtures)
+	if live != "":
+		_fail(live)
+		return
 
 	var refusal := _check_refusal_laws(fixtures[versions[versions.size() - 1]])
 	if refusal != "":
@@ -161,6 +184,49 @@ func _check_fixture(version: int, path: String) -> String:
 	return ""
 
 
+## Every shipped attunement name — from the fixtures AND from the append-only
+## ledger — must still be recognised by this build. "" when the law holds.
+func _check_live_names(fixtures: Dictionary) -> String:
+	var ledger := _shipped_attunements()
+	if ledger.is_empty():
+		return "shipped_attunements.txt is missing or empty — the forward-only live-name ledger must exist"
+	for name: String in ledger:
+		if not SaveVault.recognises(name):
+			return ("SHIPPED ATTUNEMENT NO LONGER RECOGNISED (no-resets law): '%s' is in "
+				+ "shipped_attunements.txt but not in SaveVault.KNOWN_ATTUNEMENTS — every player "
+				+ "attuned there would wake in the cave forever") % name
+	for version: int in fixtures:
+		var file := FileAccess.open(fixtures[version], FileAccess.READ)
+		if file == null:
+			return "golden_vault_v%d.json unreadable" % version
+		var doc = JSON.parse_string(file.get_as_text())
+		if doc is not Dictionary:
+			return "golden_vault_v%d.json is not a JSON object" % version
+		for name in SaveVault.attuned(doc):
+			if not SaveVault.recognises(name):
+				return ("SHIPPED ATTUNEMENT NO LONGER RECOGNISED (no-resets law): golden_vault_v%d.json "
+					+ "carries '%s', which this build no longer acts on") % [version, name]
+			if name not in ledger:
+				return ("golden_vault_v%d.json carries '%s' but it is missing from "
+					+ "shipped_attunements.txt — the ledger must anchor every shipped name") % [version, name]
+	return ""
+
+
+## The append-only live-name ledger as an array of names; empty when unreadable.
+func _shipped_attunements() -> Array:
+	var file := FileAccess.open(SHIPPED_ATTUNEMENTS, FileAccess.READ)
+	if file == null:
+		return []
+	var names := []
+	while not file.eof_reached():
+		var line := file.get_line().strip_edges()
+		if line.is_empty() or line.begins_with("#"):
+			continue
+		names.append(line)
+	file.close()
+	return names
+
+
 ## The refusal laws, exercised against a real fixture's bytes.
 func _check_refusal_laws(fixture_path: String) -> String:
 	var file := FileAccess.open(fixture_path, FileAccess.READ)
@@ -194,9 +260,21 @@ func _check_refusal_laws(fixture_path: String) -> String:
 	if SaveVault.can_write(PROBE):
 		return "A CORRUPT VAULT WAS WRITABLE (no-resets law): the unreadable file would be replaced"
 
-	# 7. An ABSENT vault is not a failure — it degrades to an empty vault, so a
-	# player with no progression yet still boots normally.
+	# 9. The refusal LATCHES. The probe is still latched from the checks above;
+	# deleting the file must NOT make it writable again. Checked BEFORE the latch
+	# is cleared, because this is the whole point: a vault refused once stays
+	# refused even when it vanishes (cloud sync, a second client), or a v1 build
+	# would write a document that syncs back over newer progression.
 	_cleanup_probe()
+	if SaveVault.can_write(PROBE):
+		return ("REFUSAL DID NOT LATCH (no-resets law): the vault was refused, then removed, and "
+			+ "became writable again — a v1 write here could sync over the newer progression")
+
+	# 8. An ABSENT vault is not a failure — it degrades to an empty vault, so a
+	# player with no progression yet still boots normally. Needs a clean latch:
+	# this asserts a property of the FILE's absence, not of the session's
+	# history, and the probe carries refusals from the cases above.
+	SaveVault.clear_refusals_for_test()
 	if SaveVault.load_from(PROBE) != null:
 		return "an absent vault did not read as null"
 	if not SaveVault.can_write(PROBE):

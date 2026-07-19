@@ -64,6 +64,28 @@ const VAULT_FIELDS := ["version", "comment", "attuned"]
 ## meaning — only new names may be added.
 const SHRINE_WARDENS := "wardens_shrine"
 
+## Every attunement name this build RECOGNISES — i.e. can still act on, not
+## merely preserve. This is the live half of the forward-only guarantee, and it
+## is what a golden fixture alone cannot prove.
+##
+## A byte round-trip shows a shipped name SURVIVES; it says nothing about the
+## game still doing anything with it. Rename SHRINE_WARDENS and update main.gd
+## together and every zero-loss guard stays green — the immutable golden still
+## carries `wardens_shrine`, validation deliberately preserves names it does not
+## know, and a boot test seeded from the renamed constant restores fine. Only
+## existing v1 players notice, by waking in the cave forever.
+##
+## So the guard checks fixture names against THIS list, and CI anchors
+## tests/data/shipped_attunements.txt append-only against the base revision.
+## Removing or renaming a shipped name then fails twice: once in-game, once in
+## CI. Adding a name is free; taking one away is the reviewable act.
+const KNOWN_ATTUNEMENTS := [SHRINE_WARDENS]
+
+
+## Whether this build can still act on `name` (not merely preserve it).
+static func recognises(name: String) -> bool:
+	return name in KNOWN_ATTUNEMENTS
+
 
 ## The active vault path: the WAR_VAULT_PATH override when set, else the shipped
 ## default. Resolved fresh each call so a test can redirect before the game
@@ -141,6 +163,21 @@ static func save_to(path: String, doc: Dictionary) -> bool:
 		return false
 	file.store_string(JSON.stringify(doc, "  "))
 	file.close()
+	# Re-check readability IMMEDIATELY before the replace. A caller's earlier
+	# can_write() is a point-in-time answer, and everything between it and here
+	# — building the document, serialising, writing the temp file — is time in
+	# which another process (a newer client sharing this user:// directory, or
+	# cloud sync) can land a vault this build cannot read. Replacing it then
+	# would destroy progression permanently.
+	#
+	# This NARROWS the window to the rename itself; it does not close it. Godot's
+	# FileAccess exposes no advisory lock or atomic compare-and-swap, so a true
+	# fix needs a lock file with O_EXCL semantics or an equivalent — tracked in
+	# #262 rather than approximated badly here.
+	if not can_write(path):
+		push_error("SaveVault: %s became unreadable while writing — refusing to replace it" % path)
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(tmp_path))
+		return false
 	var err := DirAccess.rename_absolute(
 		ProjectSettings.globalize_path(tmp_path), ProjectSettings.globalize_path(path))
 	if err != OK:
@@ -149,15 +186,42 @@ static func save_to(path: String, doc: Dictionary) -> bool:
 	return true
 
 
-## Whether it is safe to write the vault at `path`. False exactly when a file
-## is present but unreadable — a vault from a NEWER client, or a corrupt one.
-## Writing then would replace progression this build cannot even read, which is
-## the one way the separate-file design could still lose player state. Absent is
-## writable: that is a first attunement, not a loss.
+## Paths refused at least once this session. A refusal is LATCHED rather than
+## re-derived from the file's current state, because the file can change under
+## us: cloud sync, a second client, or the player deleting it can all make an
+## unreadable vault vanish mid-session. Re-deriving would then answer "writable"
+## and let this build write a v1 document that syncs back over the newer
+## progression it just refused to read — exactly what refusing was protecting.
+##
+## Once refused, always refused, for the life of the process. Restarting is the
+## deliberate act that re-examines the file, and by then whichever client owns
+## that vault has had its chance to run.
+static var _refused: Dictionary = {}
+
+
+## Whether it is safe to write the vault at `path`. False when the path has been
+## refused this session, or when a file is present but unreadable — a vault from
+## a NEWER client, or a corrupt one. Writing then would replace progression this
+## build cannot even read, which is the one way the separate-file design could
+## still lose player state. Absent AND never-refused is writable: that is a first
+## attunement, not a loss.
 static func can_write(path: String) -> bool:
+	if _refused.has(path):
+		return false
 	if not FileAccess.file_exists(path):
 		return true
-	return load_from(path) != null
+	if load_from(path) != null:
+		return true
+	_refused[path] = true
+	return false
+
+
+## Forget every latched refusal. FOR TESTS ONLY — a test exercises several vault
+## states through one throwaway path in a single process, and a latch that
+## outlived the case would make every later case read as refused. Production
+## never calls this: the latch is meant to outlive everything but a restart.
+static func clear_refusals_for_test() -> void:
+	_refused.clear()
 
 
 ## An empty vault at the current version — the starting document for a player
