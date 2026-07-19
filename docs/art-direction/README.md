@@ -18,8 +18,20 @@ cite one in a PR, say which specific reference you used, not just the game.
 **Scope, stated honestly.** The quality bar covers every player-facing surface — including audio,
 camera and game feel. This page covers the **visual** ones, because that is what the failed gate was
 about and what the maintainer's verdict specified. Audio, camera and game-feel targets are **not
-written yet**; setting them means inventing direction that has not been given, so an agent working
-those surfaces should get the target agreed rather than assume this page covers them.
+written yet**; setting them means inventing direction that has not been given.
+
+**That leaves a real enforcement gap, so here is how to comply until it closes.** `AGENTS.md` makes a
+player-visible PR that names no reference a P1 — which, taken literally, is unsatisfiable for a PR
+touching audio, camera or game feel, because this page has nothing for it to cite. Closing that by
+inventing targets would be worse than the gap: it would launder one agent's taste into the document
+every later agent is judged against, which is the exact failure #221 exists to end.
+
+Until the maintainer sets those targets, a PR on an unreferenced surface complies by **saying so
+explicitly** — name the surface, state that no agreed reference exists yet, describe the target it
+aimed at and why, and flag it for his steer. A reviewer treats that as satisfying the rule; what
+stays P1 is a silent omission. Tracked in
+[#234](https://github.com/devantler-tech/world-at-ruin/issues/234), which resolves the gap properly
+by either extending this page or narrowing the rule — his call, not one to settle here.
 
 ---
 
@@ -37,8 +49,15 @@ Two axes, from [`AGENTS.md` → Setting & story](../../AGENTS.md#setting--story-
   servers closed in 2018, so reference material is archival.
 
 A frame passes the setting test when a stranger reads it as fantasy-medieval first, and reads any
-technology in it as something this world *inherited* — older than its people and imperfectly
-understood — rather than as something this world builds.
+technology in it as **handcrafted or salvage-derived** — forged, scavenged, half-understood — rather
+than as clean manufactured sci-fi.
+
+**The test is how it reads, not where it came from.** `AGENTS.md` permits technology outright, up to
+laser swords and blasters, and asks only that it still feel medieval; "forged, scavenged,
+half-understood" is its when-in-doubt default. So a smith reforging inherited machinery into a relic
+weapon **passes** — the object is newly built and that is fine, because its construction reads
+hand-worked and salvage-derived. What fails is the factory finish: injection-moulded panels, seamless
+composites, machined repetition.
 
 ## The maintainer's named references — these three anchor everything below
 
@@ -46,9 +65,28 @@ Given directly on #221, one per surface. **These outrank any reference an agent 
 the per-surface comparables further down this page, which are supporting analogues rather than the
 target itself.
 
+**🔴 A title is not a reference — cite the exact image you used.** Each of these games spans many
+looks, so "judged against Fatekeeper" is very nearly as private a target as naming nothing: two
+agents can pick unrelated scenes and both believe they complied. This page deliberately does **not**
+pick one canonical frame per anchor, for a reason worth stating — no agent here has viewed this
+media, and inventing a plate number or a trailer timestamp would be fabricating evidence to satisfy a
+rule about evidence.
+
+The fix is on the citing side, and it is enforceable: **a PR names the anchor _and_ links the
+specific image it compared against** — a direct URL to one screenshot in the game's official media
+gallery, one Steam store screenshot, one illustration, or one trailer frame at a stated timestamp. A
+reviewer can then open the same image. **A citation naming only the title is incomplete and a
+reviewer should treat it as no reference at all.**
+
+Where to find each anchor's media, so the citation is easy: Numenera's illustration plates in its
+corebook and art-book spreads; Kingmakers' screenshot set on its Steam store page; Fatekeeper's
+gallery and trailers on its official site. For the character look the maintainer also pointed at a
+**Google Images search for "futuristic medieval"** as the look he wants — cite the individual image,
+not the search.
+
 | Reference | Anchors | Why it is the right anchor |
 |---|---|---|
-| **[Numenera](https://numenera.com/)** — Monte Cook's Ninth World | **the world** | A far-future Earth whose people live medievally amid the incomprehensible remnants of prior civilisations, treated exactly as magic is treated in a fantasy setting. That *is* the one-line style above, already written down by someone else and illustrated. Its native tech level is medieval and its technology is inherited, never manufactured — which is the setting test, verbatim. |
+| **[Numenera](https://numenera.com/)** — Monte Cook's Ninth World | **the world** | A far-future Earth whose people live medievally amid the incomprehensible remnants of prior civilisations, treated exactly as magic is treated in a fantasy setting. That *is* the one-line style above, already written down by someone else and illustrated. Its native tech level is medieval and its technology reads as inherited and half-understood rather than factory-made — which is the setting test above. |
 | **[Kingmakers](https://store.steampowered.com/app/2109770/Kingmakers/)** | **character look** | Its knights carry a **legible armour tier ladder** — steel, hardened steel, then a gold titanium alloy — where the tier is readable from the surface itself rather than from a stat sheet. That is precisely what #222's equipment slots need, and its futuristic-against-medieval juxtaposition on a single figure is the clash this game has to sell. |
 | **[Fatekeeper](https://fatekeeper.thqnordic.com/)** (THQ Nordic, 2026) | **the visual target** | Dark-fantasy art direction carried by materials and light: damp stone, weathered wood, rusted armour, dramatic key lighting, and magic that acts as a real light source rather than an overlay. Its gear reads Viking-derived amid statuary from other cultures, so the world feels mythically layered rather than one consistent period — the same "many prior ages" read the Ninth World needs. |
 
@@ -65,7 +103,7 @@ material-readable rank, and the sight of hard technology beside hand-forged stee
 
 This is a genuine, unresolved tension and it should not be quietly averaged away. The ceiling below
 argues for stylised-realistic (WoW / Guild Wars 2 with Diablo IV's grime) on the grounds that Godot
-4.7 Forward+ has no Nanite, no Lumen and no photoscan library. Fatekeeper is benchmark-grade PBR
+4.7 Forward+ has no Nanite, no Lumen and no commercial-scale scan library. Fatekeeper is benchmark-grade PBR
 realism — nearer to the Horizon end that the ceiling explicitly rules out.
 
 Both cannot be literally true at once, so treat Fatekeeper as a **direction-of-travel target for art
@@ -79,9 +117,16 @@ to make and this section should be rewritten to match.
 
 ## The fidelity ceiling — stylised, and that is an advantage
 
-We render in Godot 4.7 Forward+. There is no Nanite, no Lumen, no photoscan library and no art
-team. Chasing photorealism with those constraints produces a worse-looking game, not a more
-ambitious one.
+We render in Godot 4.7 Forward+. There is no Nanite, no Lumen, no commercial Megascans-scale scan
+library and no art team. Chasing photorealism with those constraints produces a worse-looking game,
+not a more ambitious one.
+
+**Be precise about the scan question, because it cuts the other way.** `AGENTS.md` sanctions the CC0
+libraries **Poly Haven** and **ambientCG** as approved inputs, so scanned source data is not
+forbidden — it is simply **not wired into the pipeline today** (those names appear nowhere in the
+tree outside `AGENTS.md`; there is no downloader, import step or provenance record). So material work
+is free to reach for them, and doing so is a legitimate route to closing #223. What we lack is the
+breadth and per-asset authoring budget of a commercial library, not permission to use scans.
 
 So the target is **stylised-realistic**: [World of Warcraft](https://worldofwarcraft.blizzard.com/)
 and [Guild Wars 2](https://www.guildwars2.com/) territory, with
@@ -112,9 +157,17 @@ decided it.**
 That is the whole diagnosis, and it reframes every gap issue below. The fix is not more octaves of
 the same thing.
 
-**To be precise about what is being blamed:** the defect is in *this* generator's smoothly
-interpolated value-noise, which is continuous and edgeless by construction — not in procedural
-generation as such. Procedural technique is the **route** here, not the problem. Cellular/Worley
+**To be precise about what is being blamed — name the real generators, or the fix aims at the wrong
+code.** The terrain is **Simplex FBM** (`world_gen.gd:105-108`: `TYPE_SIMPLEX`, `FRACTAL_FBM`, 4
+octaves), and the cave is a **smooth-minimum SDF field** with Simplex-FBM wall perturbation
+(`cave_system_gen.gd:145-151`, blended by `_smin` at 168-179). Neither is value noise — value noise
+appears only inside the material shaders, and shader breakup cannot explain the cave's wet-clay
+*geometry*.
+
+What the two share, and what is actually being blamed, is that both are **smoothly interpolated and
+therefore edgeless by construction**: gradient noise is C¹-continuous, and a smooth-min is explicitly
+designed to round away the crease where two fields meet. That is a property of the blend, not of
+procedural generation as such. Procedural technique is the **route** here, not the problem. Cellular/Worley
 noise, thresholded fields, domain partitioning, masks, and Voronoi fracture all produce hard
 boundaries and genuinely distinct regions, and those are exactly the tools the gaps below want.
 Read "stop using noise" nowhere in this page; read "stop using *only smooth interpolated* noise".
@@ -122,14 +175,16 @@ Read "stop using noise" nowhere in this page; read "stop using *only smooth inte
 Authored art has edges, named substances, deliberate contrast and a focal point. The work is making
 the generator **produce decisions**, not smoother gradients.
 
-Concretely, authored-looking output has four properties that smooth interpolated value-noise does
-not produce on its own:
+Concretely, authored-looking output has four properties that smoothly interpolated fields — gradient
+noise or smooth-min SDFs alike — do not produce on their own:
 
 1. **Edges.** Rock fractures along planes and breaks at angles. Smooth signed-distance blobbing
    reads as wet clay, which is exactly how the cave currently reads.
 2. **Named substances.** A viewer can point at a surface and say what it is made of. If two
-   surfaces differ only by albedo tint, they are one material in two paints — which is the state of
-   every surface in the captured cave and terrain.
+   surfaces differ only by albedo tint, they are one material in two paints. The captured cave and
+   terrain are **not** quite that — their shaders do vary roughness and perturb normals (see the
+   ⚠️ under Materials below) — but the variation is too small in magnitude to read, so the frame
+   lands in the same place a tint would. Fix the magnitude and character, not the absence.
 3. **Deliberate contrast.** Value and hue range are composed, not averaged. The cave frame occupies
    a narrow band of one orange, so fog and material and rock all collapse into the same wash.
 4. **Composition.** Something is the subject. Landmarks, focal lighting and silhouette give the eye
@@ -144,10 +199,13 @@ Each block names the target, the reference to look at, and tells you can check o
 **What actually ships today — the inventory, because #223's "no textures at all" is too broad.**
 Committed skin textures exist (`client/assets/characters/humanoid_kit/skins/*.png`, loaded as
 `albedo_texture` in `character_factory.gd`), and `foliage_art.gd` generates leaf, blade and stone
-`ImageTexture`s at runtime. What is arithmetic-only is **the captured cave, rock and terrain** —
-`terrain.gdshader`, `cave_rock.gdshader` and `debris.gdshader` compute colour from noise with no
-texture at all. That is the surface area this gap covers; say "the ground and rock have no
-textures", not "the game has none".
+`ImageTexture`s at runtime. **Debris is textured too** — `debris.gdshader:34` samples `albedo_tex`,
+which `foliage_art.gd:93-101` fills with generated stone textures for bone piles and rubble.
+
+What is arithmetic-only is **the ground and the cave rock** — `terrain.gdshader` and
+`cave_rock.gdshader` compute colour from noise with no texture at all. That is the surface area this
+gap covers; say "the ground and cave rock have no textures", not "the game has none", and do not
+scope #223 to include the already-textured debris.
 
 **Target.** Every surface reads as a named substance: ash, fractured granite, rusted iron, tanned
 leather, coarse woven cloth. Substance shows up in three separable channels:
@@ -199,7 +257,14 @@ mesa, the first returning greenery — placed as *regions* with transitions betw
 fractal blended everywhere. At least one landmark readable from most of the zone.
 
 The settled fiction demands this directly: a world at rebirth is *"a deliberate mix of wasteland and
-lush, vibrant zones."* One monochrome orange biome contradicts the setting, not just the art bar.
+lush, vibrant zones."*
+
+**That mix is a property of the world, not of every zone.** A deliberately barren opening wasteland
+is exactly what the settled sentence asks one half of the world to be, so do not read this as a
+licence to push greenery into Ashfall Reach. What a single wasteland zone still owes is everything in
+the target above — distinct regions, transitions, a readable landmark, composed value and hue — and
+that is what the current biome fails. Judge a zone on variation, landmarks and composition; judge the
+wasteland/lush balance across the world.
 
 **Reference — primary: [Numenera](https://numenera.com/).** The Ninth World is the named anchor for
 what this world *is*: regions defined by the colossal inherited object sitting in them — a chasm, a
@@ -348,7 +413,8 @@ stop. Run these against your own capture before opening the PR:
 3. **Thumbnail** — shrink to 10%. Is there a focal point, or is it an even field?
 4. **Name the substance** — inspect albedo, normal and roughness separately, or move the key light,
    then point at each surface and say what it is made of.
-5. **Side by side** — open the named reference next to your frame. State the gap in words.
+5. **Side by side** — open the named reference next to your frame. State the gap in words, and put
+   the **direct link to that exact image** in the PR, not just the game's name.
 6. **Three seconds** — shipped game, or tech demo?
 
 Then write the reference and the gap into the PR. **Naming a real remaining gap is the expected
@@ -379,6 +445,24 @@ tool that does this is **not committed** — #230 lands it in GDScript beside `f
 both land, treat these as **a recorded observation with its method stated, not a reproducible
 in-repo measurement**, and re-derive them from #230 once it exists.
 
+**🔴 Hue is circular — #230 must not implement the percentile subtraction literally.** Hue wraps at
+360°, so a plain p5→p95 subtraction is invalid in general: a nearly monochrome red scene with samples
+at 359° and 1° spans 2° of actual colour but reports ~358°, i.e. it would score as almost the whole
+gamut precisely when it is at its flattest. The linear form fails *open*, which is the dangerous
+direction for a diagnostic.
+
+So the contract #230 implements is the **minimum circular arc containing 90% of the coloured
+samples**: sort the hues, find the largest angular gap between adjacent samples, unwrap the circle at
+that gap, and only then take the percentile spread. Equivalently — the shortest arc that still covers
+the population.
+
+**The two recorded numbers survive this correction, for a stated reason rather than by assumption.**
+Both were taken with the linear form, and the linear and circular forms agree exactly when the
+samples do not straddle 0°. The cave frame's population is orange (roughly 20–40°), nowhere near the
+wrap point, and the control is a deliberate full sweep whose largest gap is ~0 either way. Re-derive
+both under #230 regardless — this reasoning explains why they are not expected to move, and is not a
+substitute for the measurement.
+
 Read them as **diagnostics with a recorded baseline to beat, not a pass/fail gate.** A deliberately
 monochrome scene is a legitimate choice — a sandstorm, a night interior — but then *value* has to
 carry the separation that hue is not. What condemns this frame is that **neither does**: there is no
@@ -397,9 +481,9 @@ Measured against the above, from the Phase 0 frames the maintainer rejected on 2
 
 | Surface | State | Issue |
 |---|---|---|
-| Texture | Ground, rock and cave are arithmetic-only; skins and foliage **do** have textures | #223 |
-| World | One biome of smooth value-noise; 90% of coloured cave pixels within 6° of hue | #226 |
-| Rock and blending | Smooth SDF blobs; structures sit on terrain | #225 |
+| Texture | Ground and cave rock are arithmetic-only; skins, foliage and debris **do** have textures | #223 |
+| World | One biome of smooth Simplex FBM; 90% of coloured cave pixels within 6° of hue | #226 |
+| Rock and blending | Smooth-min SDF blobs; structures sit on terrain | #225 |
 | Character | Mannequin silhouette, shared cloth/skin response | #222 |
 | Animation and stance | Static symmetric rig pose | #224 |
 | Races | Ethnicity sliders over one body (axes are shipped save data — migrate, never delete) | #228 |
