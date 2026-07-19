@@ -11,6 +11,15 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
+		"version": "0.8.0",
+		"date": "2026-07-19",
+		"title": "The mountain wears its weather",
+		"notes": [
+			"The rock you wake inside now looks like it has stood in the open for an age. Seen from the Reach, the massif's outer faces carry bleached, wind-worn layers, scour streaks running down the steep sides, and drifts of ash settling wherever the stone lies back — the same ash the ground wears, so the mountain finally belongs to the land around it instead of sitting on it like a smooth dome.",
+			"Step back inside and nothing has changed: the warm banded strata of the cave are exactly as they were. The weather stops at the mouth, the way weather does.",
+		],
+	},
+	{
 		"version": "0.7.0",
 		"date": "2026-07-18",
 		"title": "The scrub gathers",
