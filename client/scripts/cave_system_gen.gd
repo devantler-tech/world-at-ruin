@@ -143,6 +143,22 @@ static func layout(p_seed: int) -> Dictionary:
 ## meet at a buried skirt (a heightfield cannot have holes; the massif IS
 ## the above-ground rock).
 static func density(p: Vector3, lay: Dictionary, noise: FastNoiseLite) -> float:
+	var parts := _field_parts(p, lay)
+	# Rock = inside the hull and not inside a cave; undulate the walls at low
+	# frequency only — high-frequency displacement is exactly the
+	# crumpled-foil look this rewrite retires.
+	var d := minf(-(parts[0] as float), parts[1] as float)
+	return d + noise.get_noise_3dv(p * 2.2) * WALL_NOISE
+
+
+## The two signed fields the massif is composed from, before wall noise:
+## `[hull, caves]`. `hull` < 0 inside the grown rock shell; `caves` < 0 inside
+## a carved room/tunnel void. Split from `density` so the mesher's shading can
+## ask WHICH void a surface point faces (open sky vs cave interior) with the
+## same arithmetic that shaped the rock. Returned as an untyped Array on
+## purpose: a Vector2 would truncate both fields to 32-bit floats and move
+## every vertex the goldens pin.
+static func _field_parts(p: Vector3, lay: Dictionary) -> Array:
 	var caves := 1.0e6
 	var hull := 1.0e6
 	for room: Dictionary in lay["rooms"]:
@@ -161,11 +177,19 @@ static func density(p: Vector3, lay: Dictionary, noise: FastNoiseLite) -> float:
 		caves = _smin(caves, s, SMIN_K)
 		if not t.get("bore", false):
 			hull = _smin(hull, to_seg - ((t["r"] as float) + HULL_ROCK), SMIN_K * 1.6)
-	# Rock = inside the hull and not inside a cave; undulate the walls at low
-	# frequency only — high-frequency displacement is exactly the
-	# crumpled-foil look this rewrite retires.
-	var d := minf(-hull, caves)
-	return d + noise.get_noise_3dv(p * 2.2) * WALL_NOISE
+	return [hull, caves]
+
+
+## How exposed to open sky a surface point is: 1.0 on the massif's outer hull,
+## 0.0 on a carved interior wall, blending across ~3 m where the mouth bore
+## pierces the shell (the doorway genuinely is both). The margin between the
+## two fields decides: on the outer surface `hull` sits near 0 while `caves`
+## is at least the shell thickness; on a cave wall `caves` sits near 0 while
+## `hull` is that far negative. Wall noise shifts WHERE the surface lies, not
+## which field claims it, so the classification is stable under undulation.
+static func exposure(p: Vector3, lay: Dictionary) -> float:
+	var parts := _field_parts(p, lay)
+	return smoothstep(-1.5, 1.5, (parts[0] as float) + (parts[1] as float))
 
 
 static func _smin(a: float, b: float, k: float) -> float:
@@ -327,7 +351,11 @@ static func build_geometry(p_seed: int) -> Dictionary:
 			density(p + Vector3(0, 0, eps), lay, noise) - density(p - Vector3(0, 0, eps), lay, noise))
 		normals[i] = -g.normalized()  # Toward the void: the visible side.
 
-	# Baked shading: warm strata base, sediment floors, depth dimming.
+	# Baked shading: warm strata base, sediment floors, depth dimming. Alpha
+	# carries the sky-exposure mask (see `exposure`): the shader weathers the
+	# exterior by that weight, so interior walls — alpha 0 — keep today's look
+	# exactly. Colors are not part of any determinism golden (both fingerprints
+	# hash vertex POSITIONS), so the mask is free to ride here.
 	var colors := PackedColorArray()
 	colors.resize(verts.size())
 	for i in verts.size():
@@ -337,7 +365,9 @@ static func build_geometry(p_seed: int) -> Dictionary:
 		if normals[i].y > 0.5:
 			c = c.lerp(COL_SEDIMENT, (normals[i].y - 0.5) * 1.6)
 		var depth := clampf(-p.y / 8.0, 0.0, 0.55)
-		colors[i] = c.darkened(depth * 0.4)
+		c = c.darkened(depth * 0.4)
+		c.a = exposure(p, lay)
+		colors[i] = c
 
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)
