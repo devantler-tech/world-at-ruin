@@ -330,12 +330,49 @@ func _set_recipe_equipment(slot: String, piece_name: String) -> void:
 	if not _recipe.has("equipment"):
 		_recipe["equipment"] = {}
 	if piece_name == "":
+		# "bare" is an explicit choice to wear nothing on this region, so it
+		# clears every layer there — the one picker speaks for the whole region.
 		_recipe["equipment"].erase(slot)
 	else:
-		_recipe["equipment"][slot] = piece_name
+		# Replace only the layer this piece belongs to and KEEP the others
+		# (#246). This panel has one picker per region, so without the merge,
+		# editing a region on a character wearing boots over cloth shoes would
+		# drop the layer the picker cannot show — silently removing something
+		# the player is wearing.
+		var worn := _worn_by_layer(slot)
+		var pieces: Dictionary = CharacterFactory.equipment_registry().get("pieces", {})
+		worn[String((pieces[piece_name] as Dictionary).get("layer", ""))] = piece_name
+		_recipe["equipment"][slot] = _collapse(worn)
 	if _recipe["equipment"].is_empty():
 		_recipe.erase("equipment")
 	_restamp_version()
+
+
+## What is currently worn on a region, as layer -> piece. Accepts both recipe
+## forms: a bare piece name, or the list a region-with-layers uses.
+func _worn_by_layer(slot: String) -> Dictionary:
+	var out: Dictionary = {}
+	var pieces: Dictionary = CharacterFactory.equipment_registry().get("pieces", {})
+	var value: Variant = (_recipe.get("equipment", {}) as Dictionary).get(slot, null)
+	if value == null:
+		return out
+	var names: Array = value if value is Array else [value]
+	for entry: Variant in names:
+		var piece_name := String(entry)
+		if piece_name in pieces:
+			out[String((pieces[piece_name] as Dictionary).get("layer", ""))] = piece_name
+	return out
+
+
+## Writes a layer -> piece map back in the narrowest form that expresses it, so
+## a single-piece region keeps the plain-name shape every shipped recipe uses
+## rather than churning into a one-element list.
+func _collapse(worn: Dictionary) -> Variant:
+	var out: Array = []
+	for layer: String in CharacterFactory.LAYERS:
+		if layer in worn:
+			out.append(worn[layer])
+	return out[0] if out.size() == 1 else out
 
 
 func _restamp_version() -> void:
@@ -364,12 +401,20 @@ func _sync_sliders_from_recipe() -> void:
 		(_shape_sliders[shape_name] as HSlider).value = shapes.get(shape_name, 0.0)
 	for spec: Array in BONE_SLIDERS:
 		(_bone_sliders[spec[0]] as HSlider).value = _recipe.get(spec[1], {}).get(spec[2], 1.0)
-	var equipment: Dictionary = _recipe.get("equipment", {})
 	for slot: String in _outfit_pickers:
 		var picker: OptionButton = _outfit_pickers[slot]
 		picker.select(0)
+		# Show the OUTERMOST piece worn on the region — the one actually visible
+		# on the character. Reading the raw value here would stringify a layered
+		# region's list into something no picker entry matches, so the slot would
+		# read "bare" while the character plainly wears something (#246).
+		var worn := _worn_by_layer(slot)
+		var shown := ""
+		for layer: String in CharacterFactory.LAYERS:
+			if layer in worn:
+				shown = worn[layer]
 		for i in picker.item_count:
-			if picker.get_item_text(i) == String(equipment.get(slot, "")):
+			if picker.get_item_text(i) == shown:
 				picker.select(i)
 	if _skin_picker != null:
 		_skin_picker.select(0)

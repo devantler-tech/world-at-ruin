@@ -172,7 +172,38 @@ func _ready() -> void:
 			_fail("invalid layered recipe was accepted: %s" % JSON.stringify(bad))
 			return
 
-	print("TEST PASS — layered equipment holds (%d baked pieces, layers %s; occlusion proven data-driven by ablation, order proven kit-driven, occluded pieces neither build nor tuck)"
+	# 8. THE EDITOR MUST NOT SILENTLY UNDRESS ANYONE. The creator has one picker
+	#    per region, so editing a region of a layered outfit used to replace the
+	#    whole list with one name — dropping the layer the picker cannot show.
+	#    Nothing produces a layered recipe yet, but THIS change is what makes the
+	#    array a valid persisted value, so the guard belongs with it.
+	var creator := preload("res://scripts/character_creator.gd").new()
+	creator._recipe = { "version": 2, "equipment": { "feet": ["shoes_cloth", "boots_worn"] } }
+	# Selecting the OTHER clothing piece for the region must keep the armour on.
+	creator._set_recipe_equipment("feet", "shoes_cloth")
+	var after: Variant = creator._recipe["equipment"]["feet"]
+	if not (after is Array) or "boots_worn" not in (after as Array):
+		_fail("editing a layered region dropped the armour layer: %s" % str(after))
+		creator.free()
+		return
+	# A region wearing ONE piece keeps the plain-name shape every shipped recipe
+	# uses — the merge must not churn saves into one-element lists.
+	creator._recipe = { "version": 2, "equipment": { "legs": "pants_wool" } }
+	creator._set_recipe_equipment("legs", "pants_wool")
+	if creator._recipe["equipment"]["legs"] is not String:
+		_fail("a single-piece region was rewritten as a list: %s" % str(creator._recipe["equipment"]["legs"]))
+		creator.free()
+		return
+	# The picker shows the OUTERMOST worn piece, not "bare", for a layered region.
+	creator._recipe = { "version": 2, "equipment": { "feet": ["shoes_cloth", "boots_worn"] } }
+	var worn_feet := creator._worn_by_layer("feet")
+	if String(worn_feet.get("armor", "")) != "boots_worn" or String(worn_feet.get("clothing", "")) != "shoes_cloth":
+		_fail("the editor misread a layered region: %s" % str(worn_feet))
+		creator.free()
+		return
+	creator.free()
+
+	print("TEST PASS — layered equipment holds (%d baked pieces, layers %s; occlusion proven data-driven by ablation, order proven kit-driven, occluded pieces neither build nor tuck, editor preserves unedited layers)"
 		% [pieces.size(), str(CharacterFactory.LAYERS)])
 	get_tree().quit(0)
 
