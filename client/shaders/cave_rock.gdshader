@@ -37,14 +37,14 @@ uniform vec3 rock_iron: source_color = vec3(0.48, 0.22, 0.12);
 // read against their own height. Calibrated on rendered frames, not by taste:
 // 2.7 (~0.3m beds) aliased into printed corduroy, 0.38 (~2.4m) put so few
 // contacts in frame that the cave measured FLATTER than before the change.
-uniform float bed_frequency = 1.0;
+uniform float bed_frequency = 2.2;
 // Contact width as a FRACTION of a bed, so a seam stays a line at every bed
 // thickness instead of becoming a gradient on the thick ones.
 uniform float seam_width: hint_range(0.001, 0.25) = 0.055;
 uniform float seam_darkness: hint_range(0.0, 1.0) = 0.30;
 // Joints: near-vertical fractures cutting ACROSS the bedding. Squashed in Y so
 // one joint runs the height of a face rather than tiling.
-uniform float joint_scale = 0.18;
+uniform float joint_scale = 0.09;
 uniform float joint_width: hint_range(0.001, 0.2) = 0.03;
 // Relief depth for the interior. Bedding planes and joints are the only cue
 // grazing torchlight has that this rock has a surface at all.
@@ -183,7 +183,7 @@ void fragment() {
 	float floor_mix = smoothstep(0.45, 0.8, n.y);
 	float sediment = smoothstep(0.35, 0.65, jf);
 
-	float recess = max(seam, max(lam_seam * 0.55, joint * 0.85));
+	float recess = max(seam, max(lam_seam * 0.55, joint * 0.45));
 	vec3 rock = mix(sub_col, sub_col * seam_darkness, recess);
 	rock = mix(rock, mix(sub_col * 0.93, sub_col * 1.05, sediment), floor_mix * 0.5);
 	vec3 interior = mix(base * rock * 1.9, base, floor_mix * 0.45);
