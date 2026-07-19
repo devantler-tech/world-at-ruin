@@ -67,6 +67,13 @@ const maxIntentComponentMM = 1_000_000_000
 // overflow the single authoritative tick loop.
 const maxRadiusMM = 100_000
 
+// maxHealth bounds a health pool and, equally, one hit's damage (see
+// ApplyDamage). With both operands in [0, maxHealth] the subtraction in a
+// damage application can never under- or overflow int64 — the same
+// sanitize-at-ingestion reasoning every other bound in this file follows —
+// while 1e9 hit points is far beyond any real design.
+const maxHealth = 1_000_000_000
+
 // EntityID identifies a simulated actor. The step iterates entities in
 // ascending EntityID order (never Go map order, which is randomised), so the
 // tick result is independent of the order entities were added — a determinism
@@ -103,6 +110,26 @@ type Entity struct {
 	// hashed state (Hash captures step results, not query configuration), so a
 	// world's movement golden is unaffected by an entity's interest radius.
 	InterestRadius int64
+
+	// MaxHealth is the entity's health-pool ceiling, clamped into
+	// [0, maxHealth] on ingestion. Zero means the entity has no health pool at
+	// all — it cannot be damaged and cannot die — which is every entity that
+	// existed before health did, so pre-health worlds behave (and hash)
+	// exactly as they always have. Like MaxSpeed it is static configuration,
+	// not stepped state, and is excluded from Hash.
+	MaxHealth int64
+
+	// Health is the entity's current health in [0, MaxHealth]. It is part of
+	// the hashed world state for pooled entities (see Hash): health is a step
+	// result the same way position is, and a divergence in it is a desync like
+	// any other. Damage is applied only through World.ApplyDamage (damage.go),
+	// which clamps at ingestion; death is Health reaching zero there.
+	//
+	// Ingestion (Add) upholds two invariants: a poolless entity (MaxHealth 0)
+	// always carries Health 0, and a pooled entity never spawns dead — an
+	// unset (or out-of-range) Health becomes the full pool, so a dead entity
+	// is something the simulation produced, never a spawn state.
+	Health int64
 }
 
 // Bounds is the axis-aligned navmesh extent. Positions are clamped inside it
@@ -196,6 +223,17 @@ func (w *World) Add(e Entity) *Entity {
 	stored.Intent = sanitizeIntent(stored.Intent)
 	stored.Radius = clampAxis(stored.Radius, 0, maxRadiusMM)
 	stored.InterestRadius = clampAxis(stored.InterestRadius, 0, maxInterestRadiusMM)
+	stored.MaxHealth = clampAxis(stored.MaxHealth, 0, maxHealth)
+	if stored.MaxHealth == 0 {
+		// No pool, no health: a poolless entity must never carry a health
+		// value ApplyDamage or Hash could observe.
+		stored.Health = 0
+	} else if stored.Health <= 0 || stored.Health > stored.MaxHealth {
+		// A pooled entity never spawns dead or over-full: anything outside
+		// (0, MaxHealth] means "unset" and becomes the full pool. Death is a
+		// simulation outcome (see damage.go), not a representable spawn state.
+		stored.Health = stored.MaxHealth
+	}
 	w.ents[e.ID] = &stored
 	w.order = append(w.order, e.ID)
 	sort.Slice(w.order, func(i, j int) bool { return w.order[i] < w.order[j] })
@@ -299,11 +337,19 @@ func clampSpeed(v Vec3, maxSpeed int64) Vec3 {
 }
 
 // Hash returns an order-stable FNV-1a digest of the entire world state (tick
-// count plus every entity's ID and position, in ascending-ID order). Two worlds
-// that have received identical inputs must return the same hash at every tick;
-// a divergence is an immediate, testable determinism failure. Intent and the
-// static caps are excluded because Hash captures the *result* of a step, not
-// its pending inputs.
+// count plus every entity's ID, position and — for pooled entities — current
+// health, in ascending-ID order). Two worlds that have received identical
+// inputs must return the same hash at every tick; a divergence is an
+// immediate, testable determinism failure. Intent and the static caps are
+// excluded because Hash captures the *result* of a step, not its pending
+// inputs.
+//
+// Health is written only for entities with a health pool (MaxHealth > 0), so
+// every world built before health existed hashes byte-identically to before —
+// the pre-health goldens are unchanged by construction. The conditional word
+// cannot make the digest ambiguous between the runs a golden compares:
+// MaxHealth is static configuration, so the record shape per entity is
+// identical in any two runs of the same fixture.
 func (w *World) Hash() uint64 {
 	h := fnv.New64a()
 	var buf [8]byte
@@ -318,6 +364,9 @@ func (w *World) Hash() uint64 {
 		put(uint64(e.Pos.X))
 		put(uint64(e.Pos.Y))
 		put(uint64(e.Pos.Z))
+		if e.MaxHealth > 0 {
+			put(uint64(e.Health))
+		}
 	}
 	return h.Sum64()
 }
