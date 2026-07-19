@@ -11,6 +11,16 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
+		"version": "0.14.0",
+		"date": "2026-07-20",
+		"title": "Someone cut these stones",
+		"notes": [
+			"Every ruin and every stone of the shrine used to be the same flat grey — one colour, the same all over, on every column and every fallen block in the world. Two ruins an entire field apart were the same shade as each other, and the low sun did nothing to any of them however you stood.",
+			"They are made of blocks now. You can see the courses stacked up a column and the joints between them, laid in the offset pattern a wall actually goes together in, and each block is its own stone — slightly its own colour, slightly its own wear. The joints sit back in shadow, knocked-about corners catch the light, and ash gathers on anything facing the sky. Walk around a monolith at the shrine and the light rakes across the courses instead of sliding over a flat face.",
+			"This is the masonry only. The ground and the cave rock were given this treatment already; the ruins had been left behind, which is much of why they read as props set down on the world rather than as something that was built here and then fell. Still to come: the blocks are one size everywhere, so a huge lintel is coursed like a small one, and nothing is cracked or broken at its edges yet.",
+		],
+	},
+	{
 		"version": "0.13.0",
 		"date": "2026-07-19",
 		"title": "Standing like someone who has been standing a while",
