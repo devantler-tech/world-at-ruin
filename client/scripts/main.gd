@@ -33,6 +33,11 @@ func _ready() -> void:
 	# is still set. Players never take this branch — the variable is absent
 	# outside the capture harness — and it runs before any world work begins.
 	if OS.get_environment("WAR_CAPTURE") == "1" and get_tree().current_scene == self:
+		# Input can arrive during the one deferred frame before the scene
+		# swap, and this tree registers its InputMap actions only on the
+		# normal boot path below (Player does it) — go inert rather than let
+		# _unhandled_input query an action that was never registered.
+		set_process_unhandled_input(false)
 		get_tree().change_scene_to_file.call_deferred("res://tools/frame_capture.tscn")
 		return
 	_build_environment()

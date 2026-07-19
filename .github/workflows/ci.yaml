@@ -803,7 +803,15 @@ jobs:
           # for the same reason tools/ is in the visual list: running the
           # exported capture IS how a change to that job is validated, and the
           # PR that introduces the job must not skip it (the #145/#170 lesson).
-          if grep -qE '^client/(project\.godot|export_presets\.cfg)$|^\.github/workflows/ci\.yaml$' changed.txt; then
+          # main.gd and tools/ are in the list because they IMPLEMENT the
+          # exported entry: main.gd carries the WAR_CAPTURE boot redirect and
+          # tools/ is the capture harness itself, and an editor-compatible
+          # change to either (an env-var rename, a current_scene change, a
+          # harness edit that only the packed runtime resolves differently)
+          # would break the exported path while the editor capture — which
+          # enters via the scene argument and never takes the redirect —
+          # stayed green.
+          if grep -qE '^client/(project\.godot|export_presets\.cfg)$|^client/scripts/main\.gd$|^client/tools/|^\.github/workflows/ci\.yaml$' changed.txt; then
             echo "export_affecting=true" >> "$GITHUB_OUTPUT"
           else
             echo "export_affecting=false" >> "$GITHUB_OUTPUT"
@@ -1076,6 +1084,69 @@ jobs:
           if grep -qE "SCRIPT ERROR|^ERROR" exported-capture.filtered.log; then
             echo "::error::errors during the exported-client capture — frames may not depict a healthy world"
             grep -nE "SCRIPT ERROR|^ERROR" exported-capture.filtered.log | head -20
+            exit 1
+          fi
+      - name: Capture the exported first-run UI
+        # UNCONDITIONAL within this job, unlike the editor job's narrower
+        # first_run gate: the paths that fire THIS job are exactly the ones
+        # that gate does not watch — an export_presets.cfg change can filter
+        # out assets or flip feature tags that only the character creator
+        # depends on, while the seeded-save world capture above deliberately
+        # keeps the creator out of frame. One extra run of the already-built
+        # app is cheap next to the export this job already avoids repeating.
+        run: |
+          set -o pipefail
+          # The save must be ABSENT here — its absence is precisely what makes
+          # the creator open. Point at a path in the run's temp dir that was
+          # never created; the tool fails closed if the creator does not
+          # appear, so a stray save cannot silently turn this back into a
+          # world shot.
+          WAR_CAPTURE=1 \
+          WAR_SCENARIO=first_run \
+          WAR_SHOT_DIR="${RUNNER_TEMP}/exported-shots" \
+          WAR_SAVE_PATH="${RUNNER_TEMP}/no_such_save.json" \
+            "build/app/World at Ruin.app/Contents/MacOS/World at Ruin" 2>&1 | tee exported-first-run.log
+          # Require the FIRST-RUN marker, not a bare PASS — the world scenario
+          # prints "CAPTURE PASS" too, and its PNGs already sit in the same
+          # directory, so a silent fall-back to the default scenario would
+          # otherwise go green.
+          if ! grep -qE "[0-9]+ first-run vantages? written" exported-first-run.log; then
+            echo "::error::exported first-run capture did not report a first-run vantage — see log"; tail -40 exported-first-run.log; exit 1
+          fi
+          # Require the FULL expected set, for the editor job's reason: a
+          # regression that dropped the lower-panel shot or the preset loop
+          # would still report SOME number. The preset list is read from the
+          # creator itself so adding a preset cannot leave CI checking the old
+          # set; fail loudly if it cannot be parsed.
+          presets=$(grep -oE 'const PRESETS := \[[^]]*\]' client/scripts/character_creator.gd \
+            | grep -oE '"[a-z_]+"' | tr -d '"')
+          if [ -z "$presets" ]; then
+            echo "::error::could not read PRESETS from client/scripts/character_creator.gd — cannot tell which frames to require"
+            exit 1
+          fi
+          expected="first_run first_run_lower"
+          for p in $presets; do expected="$expected first_run_$p"; done
+          missing=""
+          for f in $expected; do
+            [ -s "${RUNNER_TEMP}/exported-shots/$f.png" ] || missing="$missing $f.png"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::exported first-run frames missing:$missing"
+            ls -la "${RUNNER_TEMP}/exported-shots" || true
+            exit 1
+          fi
+          echo "exported first-run frames present:$expected"
+          # This run exercises the ABSENT-save branch, which the seeded world
+          # capture never touches, so it needs its own boot proof.
+          if ! grep -q "BOOT_OK" exported-first-run.log; then
+            echo "::error::exported first-run capture never reached BOOT_OK — the frame depicts a partially booted game"
+            tail -40 exported-first-run.log; exit 1
+          fi
+          grep -vE "timeout waiting for fence|drivers/metal/rendering_device_driver_metal" \
+            exported-first-run.log > exported-first-run.filtered.log || true
+          if grep -qE "SCRIPT ERROR|^ERROR" exported-first-run.filtered.log; then
+            echo "::error::errors during the exported first-run capture"
+            grep -nE "SCRIPT ERROR|^ERROR" exported-first-run.filtered.log | head -20
             exit 1
           fi
       - name: Frames actually exist
