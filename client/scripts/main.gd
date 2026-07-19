@@ -35,6 +35,10 @@ var _zone: ZoneConnection = null
 ## Whether a lost connection has already been reported, so a failure that
 ## persists is not warned about on every frame.
 var _zone_failure_reported := false
+## Whether the link ever reached LIVE. A clean close is only worth reporting
+## once it has: before that, the close IS the failure and is already reported
+## under its own error class.
+var _zone_was_live := false
 
 func _ready() -> void:
 	# Capture-harness entry for the EXPORTED client: the official export
@@ -182,9 +186,22 @@ func _process(_delta: float) -> void:
 	if _zone == null:
 		return
 	_zone.poll()
-	if _zone.state() == ZoneConnection.State.FAILED and not _zone_failure_reported:
+	if _zone.is_live():
+		_zone_was_live = true
+	if _zone_failure_reported:
+		return
+	if _zone.state() == ZoneConnection.State.FAILED:
 		_zone_failure_reported = true
 		push_warning("zone connection lost (%s): %s" % [_zone.error(), _zone.error_detail()])
+	elif _zone.state() == ZoneConnection.State.CLOSED and _zone_was_live:
+		# A close is not an error, so the connection records none — but for a
+		# link that WAS carrying the world, an orderly server shutdown or a
+		# dropped network is indistinguishable to the player from a zone that
+		# simply stopped updating. Since reconnect is deliberately not
+		# attempted yet, silence here would strand an opted-in session offline
+		# with nothing anywhere to say why.
+		_zone_failure_reported = true
+		push_warning("zone connection closed by the zone — replication has stopped for this session")
 
 
 func _unhandled_input(event: InputEvent) -> void:
