@@ -709,6 +709,7 @@ jobs:
     outputs:
       visual: ${{ steps.check.outputs.visual }}
       first_run: ${{ steps.check.outputs.first_run }}
+      export_affecting: ${{ steps.check.outputs.export_affecting }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -724,8 +725,11 @@ jobs:
             # first_run must be set here too: leaving it empty reads as false,
             # which would quietly drop first-run evidence in precisely the case
             # where the changed paths cannot be classified at all.
-            echo "visual=true" >> "$GITHUB_OUTPUT"
-            echo "first_run=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "visual=true"
+              echo "first_run=true"
+              echo "export_affecting=true"
+            } >> "$GITHUB_OUTPUT"
             exit 0
           fi
           # `tools` is in the list on purpose: a change to the capture tool
@@ -788,6 +792,21 @@ jobs:
             echo "first_run=true" >> "$GITHUB_OUTPUT"
           else
             echo "first_run=false" >> "$GITHUB_OUTPUT"
+          fi
+          # Export-affecting paths get a THIRD, narrower gate: the ordinary
+          # capture photographs the editor project, but a change to
+          # export_presets.cfg (resource filters, feature tags, high-res flags)
+          # or project.godot (packed-resource resolution interacts with the
+          # rendering config) can change what the SHIPPED build looks like while
+          # the editor run stays identical — so those paths also get frames from
+          # the exported client (#174). The workflow file itself is in the list
+          # for the same reason tools/ is in the visual list: running the
+          # exported capture IS how a change to that job is validated, and the
+          # PR that introduces the job must not skip it (the #145/#170 lesson).
+          if grep -qE '^client/(project\.godot|export_presets\.cfg)$|^\.github/workflows/ci\.yaml$' changed.txt; then
+            echo "export_affecting=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "export_affecting=false" >> "$GITHUB_OUTPUT"
           fi
 
   frame-capture:
@@ -969,6 +988,112 @@ jobs:
           path: |
             ${{ runner.temp }}/shots/*.png
             ${{ runner.temp }}/shots/*.txt
+          if-no-files-found: error
+
+  frame-capture-exported:
+    name: Frame capture (exported client)
+    # The ordinary frame-capture job photographs the EDITOR project, but what a
+    # player installs is the separately exported .app — a change to export-only
+    # behaviour (resource filters, feature tags, packed-resource resolution,
+    # high-res flags) can pass the editor capture on settings the shipped build
+    # never uses. The export job already proves the shipped build STARTS; this
+    # one proves it still LOOKS RIGHT (#174).
+    #
+    # It REUSES the artifact client-export-macos already built — exporting is
+    # the multi-minute half, so a second export would double the slowest job in
+    # CI for a narrow class of regression (#145's cost constraint). And it runs
+    # only when export-affecting paths changed, so the default player-visible
+    # PR pays nothing for it.
+    #
+    # The exported binary accepts the same positional scene argument the editor
+    # run uses — Godot's runtime resolves res://tools/frame_capture.tscn from
+    # the packed resources (export_filter is "all_resources", so the capture
+    # scene ships in the pck). Settled empirically against the 4.7.1 export
+    # template before this job landed, because a silent fallback to the main
+    # scene would hang a windowed app with no quit path — which is also why
+    # this job carries a timeout: the editor capture's import-cache hazard does
+    # not exist here, but a hang class this job cannot rule out must cost
+    # minutes, not the runner's 6-hour default.
+    #
+    # macOS runner + windowed run for the same reason as frame-capture: the
+    # capture tool refuses a headless run rather than photograph nothing.
+    #
+    # DELIBERATELY NOT in ci-required-checks: same reasoning as frame-capture —
+    # evidence must not block merges while hosted-runner rendering reliability
+    # is still being demonstrated (#142 owns the promotion decision).
+    needs: [detect-visual-changes, client-export-macos]
+    if: needs.detect-visual-changes.outputs.export_affecting == 'true'
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        # The checkout exists only to seed the capture save from
+        # client/recipes/wanderer.json — the game itself comes exclusively from
+        # the export artifact.
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: WorldAtRuin-macOS-universal
+          path: build
+      - name: Capture frames from the exported client
+        run: |
+          set -o pipefail
+          mkdir -p "${RUNNER_TEMP}/exported-shots"
+          unzip -q build/WorldAtRuin.zip -d build/app
+          # Seed a save for the same reason the editor capture does: with none
+          # present the first-run creator opens and its panel covers a third of
+          # every frame. Checked explicitly rather than trusting errexit: a
+          # silent miss would produce frames of the character creator that
+          # still passed every downstream guard.
+          if ! cp client/recipes/wanderer.json "${RUNNER_TEMP}/probe_save.json"; then
+            echo "::error::could not seed the capture save from client/recipes/wanderer.json — frames would show the first-run creator instead of the world"
+            exit 1
+          fi
+          WAR_SHOT_DIR="${RUNNER_TEMP}/exported-shots" \
+          WAR_SAVE_PATH="${RUNNER_TEMP}/probe_save.json" \
+            "build/app/World at Ruin.app/Contents/MacOS/World at Ruin" res://tools/frame_capture.tscn 2>&1 | tee exported-capture.log
+          if ! grep -q "CAPTURE PASS" exported-capture.log; then
+            echo "::error::exported-client capture did not report PASS — see log"; tail -40 exported-capture.log; exit 1
+          fi
+          # Same boot proof as the editor capture: PASS asserts the world
+          # exists and is visible, but a path that returns early AFTER the
+          # terrain is built and BEFORE main.gd finishes booting would still
+          # satisfy it — and the frames would depict a half-initialised game.
+          if ! grep -q "BOOT_OK" exported-capture.log; then
+            echo "::error::exported-client capture never reached BOOT_OK — frames depict a partially booted game"
+            tail -40 exported-capture.log; exit 1
+          fi
+          # Same error scan as the editor capture, with the same Metal fence
+          # carve-out (a virtualised-GPU driver retry that recovers, not a
+          # render fault) and the same filter-to-a-FILE form: under pipefail a
+          # `grep -v … | grep -q` pipeline can misreport a SIGPIPE'd upstream
+          # as "no errors found".
+          grep -vE "timeout waiting for fence|drivers/metal/rendering_device_driver_metal" \
+            exported-capture.log > exported-capture.filtered.log || true
+          if grep -qE "SCRIPT ERROR|^ERROR" exported-capture.filtered.log; then
+            echo "::error::errors during the exported-client capture — frames may not depict a healthy world"
+            grep -nE "SCRIPT ERROR|^ERROR" exported-capture.filtered.log | head -20
+            exit 1
+          fi
+      - name: Frames actually exist
+        # The tool fails closed on a uniform frame, but never trust a single
+        # signal: confirm real files landed before advertising an artifact.
+        run: |
+          count=$(find "${RUNNER_TEMP}/exported-shots" -name '*.png' -size +10k | wc -l | tr -d ' ')
+          if [ "$count" -lt 1 ]; then
+            echo "::error::no non-trivial PNGs produced"; ls -la "${RUNNER_TEMP}/exported-shots" || true; exit 1
+          fi
+          echo "captured $count exported-client frame(s)"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: exported-frames-${{ github.event.pull_request.head.sha }}
+          # .txt too: each frame's note travels with it, so a reviewer opening
+          # a clamped capture can see it was the runner's display and not the
+          # change under review that clipped the layout.
+          path: |
+            ${{ runner.temp }}/exported-shots/*.png
+            ${{ runner.temp }}/exported-shots/*.txt
           if-no-files-found: error
 
   ci-required-checks:
