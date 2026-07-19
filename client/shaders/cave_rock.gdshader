@@ -31,19 +31,40 @@ uniform vec3 rock_sandstone: source_color = vec3(0.62, 0.45, 0.28);
 uniform vec3 rock_shale: source_color = vec3(0.20, 0.19, 0.20);
 uniform vec3 rock_pale: source_color = vec3(0.78, 0.72, 0.60);
 uniform vec3 rock_iron: source_color = vec3(0.48, 0.22, 0.12);
-// Beds per world unit of the warped strata coordinate.
-uniform float bed_frequency = 2.7;
+// Beds per unit of the warped strata coordinate, which already carries
+// band_frequency — so a bed is about 1 / (band_frequency * bed_frequency)
+// metres of rock, roughly 0.9m here. That is a thickness a standing player can
+// read against their own height. Calibrated on rendered frames, not by taste:
+// 2.7 (~0.3m beds) aliased into printed corduroy, 0.38 (~2.4m) put so few
+// contacts in frame that the cave measured FLATTER than before the change.
+uniform float bed_frequency = 1.0;
 // Contact width as a FRACTION of a bed, so a seam stays a line at every bed
 // thickness instead of becoming a gradient on the thick ones.
-uniform float seam_width: hint_range(0.001, 0.25) = 0.045;
-uniform float seam_darkness: hint_range(0.0, 1.0) = 0.34;
+uniform float seam_width: hint_range(0.001, 0.25) = 0.055;
+uniform float seam_darkness: hint_range(0.0, 1.0) = 0.30;
 // Joints: near-vertical fractures cutting ACROSS the bedding. Squashed in Y so
 // one joint runs the height of a face rather than tiling.
-uniform float joint_scale = 0.32;
-uniform float joint_width: hint_range(0.001, 0.2) = 0.035;
+uniform float joint_scale = 0.18;
+uniform float joint_width: hint_range(0.001, 0.2) = 0.03;
 // Relief depth for the interior. Bedding planes and joints are the only cue
 // grazing torchlight has that this rock has a surface at all.
-uniform float interior_relief: hint_range(0.0, 2.0) = 0.55;
+uniform float interior_relief: hint_range(0.0, 2.0) = 0.50;
+
+// A hard edge narrower than a pixel does not read as an edge — it aliases into
+// moire, which is what the first cut of this shader shipped. Every threshold
+// below is therefore widened to the local screen footprint (fwidth) and faded
+// out entirely once the feature it bounds is smaller than about a pixel, so
+// detail leaves the frame by dissolving rather than by shimmering.
+// coord is the CONTINUOUS coordinate, not its fract: fwidth() of a fract()
+// spikes to ~1 at every wrap, which is exactly where the seam is, so measuring
+// the footprint there would erase each line precisely along its own centre.
+float edge_line(float coord, float half_width) {
+	float fw = fwidth(coord);
+	float f = fract(coord);
+	float w = max(half_width, fw * 1.2);
+	float line = 1.0 - smoothstep(0.0, w, min(f, 1.0 - f));
+	return line * (1.0 - smoothstep(0.30, 0.85, fw));
+}
 
 // ---- Weathered exterior (#156) ------------------------------------------
 // COLOR.a carries a baked sky-exposure mask (1 = the massif's outer hull,
@@ -136,33 +157,35 @@ void fragment() {
 	sub_rough = mix(sub_rough, 0.99, step(0.85, pick));
 
 	// Some beds are laminated into finer plates, some are massive. One hash per
-	// bed decides which — a bed is never half of each.
+	// bed decides which — a bed is never half of each. Two plates, not four:
+	// the finer split was the loudest source of the moire the first cut shipped.
 	float bed_rand = hash3(vec3(bed_id, 17.0, 3.0));
-	float laminated = step(0.62, bed_rand);
-	float lam_f = fract(bed_f * mix(1.0, 4.0, laminated));
+	float laminated = step(0.68, bed_rand);
 
 	// Bedding planes recess into a dark line at each contact.
-	float seam = 1.0 - smoothstep(0.0, seam_width, min(bed_f, 1.0 - bed_f));
-	float lam_seam = (1.0 - smoothstep(0.0, seam_width * 1.6,
-		min(lam_f, 1.0 - lam_f))) * laminated;
+	float seam = edge_line(bed_coord, seam_width);
+	float lam_seam = edge_line(bed_coord * 2.0, seam_width * 1.4) * laminated;
 
 	// ---- Joints: fractures across the beds ---------------------------------
 	// Thresholding |field - 0.5| turns the field's zero crossing into a LINE
 	// with an edge, instead of the broad wash a smoothstep of the field gives.
+	// Footprint-widened for the same reason as the bedding.
 	float jf = fbm(world_pos * vec3(joint_scale, joint_scale * 0.18, joint_scale)
 		+ vec3(31.0));
-	float joint = 1.0 - smoothstep(0.0, joint_width, abs(jf - 0.5));
+	float jw = max(joint_width, fwidth(jf) * 1.2);
+	float joint = 1.0 - smoothstep(0.0, jw, abs(jf - 0.5));
 
 	// Floors silt over: blend toward the baked sediment color from below. The
 	// bedding is near-parallel to a floor, so it would wash out into flat
 	// sheets there; the same joint field doubles as a sediment mottle instead,
-	// at no extra noise tap.
+	// at no extra noise tap. Kept low-contrast — pushed harder it reads as
+	// contour lines drawn on the floor rather than as silt.
 	float floor_mix = smoothstep(0.45, 0.8, n.y);
 	float sediment = smoothstep(0.35, 0.65, jf);
 
-	float recess = max(seam, max(lam_seam * 0.6, joint * 0.9));
+	float recess = max(seam, max(lam_seam * 0.55, joint * 0.85));
 	vec3 rock = mix(sub_col, sub_col * seam_darkness, recess);
-	rock = mix(rock, mix(sub_col * 0.82, sub_col * 1.12, sediment), floor_mix * 0.6);
+	rock = mix(rock, mix(sub_col * 0.93, sub_col * 1.05, sediment), floor_mix * 0.5);
 	vec3 interior = mix(base * rock * 1.9, base, floor_mix * 0.45);
 	float interior_rough = clamp(sub_rough + 0.03 * recess, 0.0, 1.0);
 
@@ -172,7 +195,7 @@ void fragment() {
 	// extra noise taps an offset-sampled gradient would need, which matters on
 	// a surface that fills the frame in the opening cave. It is per-quad, so
 	// the relief is clamped rather than trusted at silhouettes.
-	float relief_h = recess + 0.25 * sediment * floor_mix;
+	float relief_h = recess + 0.10 * sediment * floor_mix;
 	vec3 dpx = dFdx(world_pos);
 	vec3 dpy = dFdy(world_pos);
 	vec3 r1 = cross(dpy, n);
