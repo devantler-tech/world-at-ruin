@@ -36,10 +36,21 @@ becomes the standard everyone is judged against, which is the failure #221 exist
 | **Camera** | WoW and Guild Wars 2 third-person | Framing that keeps the character readable while showing the world; predictable collision behaviour indoors and in caves; no fighting the player for control |
 | **Game feel** | Guild Wars 2 and WoW for MMO combat rhythm; Fatekeeper for melee weight | Telegraphed windups readable at a glance (already the settled combat design), committed animations with recovery, hits that land with weight rather than registering as numbers |
 
+**🔴 Naming the game is NOT a citation here either — the same rule applies.** The rows above name a
+*title and what to take from it*, exactly as the visual anchors do; they are not themselves
+references. "Judged against WoW zone ambience" spans two decades of content and puts an agent right
+back to picking privately. So an audio, camera or game-feel PR **cites a specific, inspectable
+artifact and links it**: a named track or a named zone's ambience, a specific encounter, or a clip at
+a stated timestamp. A reviewer must be able to hear or watch the same thing.
+
+This page deliberately does not pre-select those artifacts, for the same reason it does not pin
+visual plates: **no agent here has heard or played this media**, and naming a track to satisfy a rule
+about evidence would fabricate the evidence. The citing PR does the selecting, and carries the link.
+
 **Marked plainly: these three are agent-proposed, unlike the maintainer's three visual anchors.** They
 are extrapolated from titles already settled as this project's style references, and they hold until
-he says otherwise. A PR citing them is compliant today; if he redirects, this table changes and the
-PRs that cited it do not become retroactively wrong.
+he says otherwise. If he redirects, this table changes and the PRs that cited it do not become
+retroactively wrong.
 
 The rule binds changes that alter the **player-facing result**. Refactors, infrastructure, tooling and
 tests on those subsystems are untouched, being not player-visible changes in the first place.
@@ -144,8 +155,18 @@ judgement, and would reject all three of the maintainer's own choices.
 **So `AGENTS.md` now reads the way he plainly meant it:** the **AAA bar applies to our output**, and a
 citation is valid when it shows the **right look** — whatever the studio's size. That is settled
 ([#234](https://github.com/devantler-tech/world-at-ruin/issues/234)), and it is not a relaxation: the
-quality bar and the P1 blocker are untouched. What changed is that the rule became *satisfiable*,
-where before every art PR was in technical violation because no qualifying reference existed.
+quality bar and the P1 blocker are untouched.
+
+**Stated precisely, because the looser version overstates it.** A *visual* PR was never wholly stuck:
+this page has always carried supporting analogues that would pass even a strict AAA reading — WoW,
+Guild Wars 2, Diablo IV, Elden Ring, Horizon — so one of those could be cited alongside the primary
+anchor. Two narrower things were broken, and they are what changed:
+
+- **The maintainer's own three anchors did not qualify**, so citing *the actual named target* as the
+  primary reference was a violation, and compliance depended on bolting on a second title purely to
+  satisfy a funding criterion.
+- **Audio, camera and game feel had no reference at all** — genuinely unsatisfiable, and the reason
+  this issue was filed.
 
 **One practical consequence when citing.** Kingmakers is unreleased, so its only public media is
 **pre-release marketing** — trailers and store screenshots, which are lit and framed to sell. Treat it
@@ -162,20 +183,29 @@ This is a genuine tension and it should not be quietly averaged away. The ceilin
 stylised-realistic (WoW / Guild Wars 2 with Diablo IV's grime); Fatekeeper is near-photoreal PBR,
 closer to the Horizon end the ceiling rules out.
 
-**The reason for the gap is now known, and it is not the one this page used to give.** The old
-framing implied scale — big-budget fidelity we cannot match. That is false: Fatekeeper is **13
-people**. What they have that we do not is an **engine feature set**. Fatekeeper runs Unreal Engine
-5.6 leaning directly on **Nanite, Lumen and Virtual Shadow Maps**; Godot 4.7 Forward+ has no
-equivalent of any of the three. So the barrier is *technical*, not financial or organisational — a
-much more useful diagnosis, because it says exactly where effort is wasted and where it pays:
+**The gap has at least two distinct components, and conflating them misdirects work.** An earlier
+framing implied pure scale — big-budget fidelity we cannot match. That is not right either:
+Fatekeeper is **13 people**. But "so it is only the engine" over-corrects, so both parts are named:
 
-- **Not the gap:** team size, budget, studio scale. A 13-person team reached this look. "We are too
-  small" is not available as an explanation, and this page will not accept it as one.
-- **The gap:** micro-detail preserved by virtualised geometry, and bounce/indirect light resolved in
-  real time. Chasing those in Godot means fighting the engine.
-- **Where the same result is reachable anyway:** authored material response, baked and hybrid
-  lighting, deliberate composition, silhouette and value control. These are art-direction wins that
-  do not require Nanite, and they are most of what separates the Phase 0 frames from the target.
+1. **An engine gap.** Fatekeeper runs Unreal Engine 5.6 leaning directly on **Nanite, Lumen and
+   Virtual Shadow Maps**; Godot 4.7 Forward+ has no equivalent of any of the three. Micro-detail
+   preserved by virtualised geometry, and bounce light resolved in real time, are not reachable here
+   by trying harder.
+2. **An authoring-model gap, which is the project's actual bet.** Those 13 people are **human artists
+   hand-authoring assets**. Our constraint is stricter by design: `AGENTS.md` requires all art be
+   **authorable as code** — the reason Unreal was rejected at all is that its assets are binary —
+   and it says plainly that photorealism is unreachable without a human sculptor. So a hand-sculpted
+   result is not evidence that the same result is procedurally reachable. That question *is* the
+   unproven bet, and this page must not quietly answer it.
+
+**What this does rule out:** "we are too small" as a bare excuse. Team size alone does not explain the
+gap, since 13 people cleared it. What may legitimately be cited is the **authoring model** — and then
+specifically, naming which part of the look resists procedural authoring, rather than as a general
+shrug.
+
+**Where the result is reachable regardless:** authored material response, baked and hybrid lighting,
+deliberate composition, silhouette and value control. None of these need Nanite or a sculptor, and
+they are most of what separates the Phase 0 frames from the target.
 
 So treat Fatekeeper as a **direction-of-travel target for art direction and material behaviour** —
 dark-fantasy composition, weathered named substances, light doing the dramatic work — and **not** as
