@@ -17,7 +17,9 @@ var _target: Interactable
 func _process(_delta: float) -> void:
 	_target = scan()
 	if _target != null:
-		hud.show_prompt("[E · pad X] %s" % _target.prompt)
+		# Formatted for whichever device the player is actually holding — the
+		# same one the hint bar is showing.
+		hud.show_prompt(InputDevice.action_prompt("interact", hud.active_device(), _target.prompt))
 	else:
 		hud.hide_prompt()
 
