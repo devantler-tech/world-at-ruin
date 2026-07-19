@@ -222,6 +222,11 @@ func _build_lighting() -> void:
 	env.fog_sky_affect = 0.4
 	env.fog_height = 6.0
 	env.fog_height_density = 0.06
+	# Volumetrics are part of the shipping rig on supporting hardware (#158),
+	# probe-gated exactly as in main.gd — a telegraph judged without the air
+	# volume the player sees through is judged under different light (the same
+	# class of miss as the grading omission below).
+	Volumetrics.apply(env, Volumetrics.probe())
 	# The grading pass is part of the shipping look too — judging telegraph
 	# contrast without it grades under a different image than players get
 	# (its omission here was a real review catch).

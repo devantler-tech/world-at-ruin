@@ -11,6 +11,15 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
+		"version": "0.9.0",
+		"date": "2026-07-19",
+		"title": "Light through the ash",
+		"notes": [
+			"On machines whose graphics hardware can carry it, the air of the Reach is now a real volume: the low sun draws visible shafts through the drifting ash, and the haze pools thicker in the hollows around you instead of only tinting the distance.",
+			"The game checks what your hardware supports before turning this on. Machines that can't render it safely see exactly what they saw before — the same clean frame with the same distance haze — rather than a broken screen.",
+		],
+	},
+	{
 		"version": "0.8.0",
 		"date": "2026-07-19",
 		"title": "The mountain wears its weather",

@@ -235,19 +235,20 @@ func _build_environment() -> void:
 	env.fog_height = 6.0
 	env.fog_height_density = 0.06
 
-	# Volumetric fog is DEFAULT-OFF, and this is a hardware fact rather than a
-	# taste call. Godot's froxel volumetrics need an R32_Uint atomic storage
-	# image, which some GPUs do not support — the CI runner's virtualised Apple
-	# adapter reports "Format 'R32_Uint' does not support usage as atomic storage
-	# image" and the frame then fails to render at all. That is not a CI quirk:
-	# any player on comparable hardware would get the same broken render, so
-	# shipping it on by default would trade a little atmosphere for a black
-	# screen on an unknown share of machines.
-	#
-	# The rest of this pass (contact occlusion, bloom, height fog, soft shadows,
-	# grading) is broadly supported and carries most of the visible gain anyway.
-	# Turning volumetrics on needs a capability probe first — tracked separately.
-	env.volumetric_fog_enabled = false
+	# Volumetric fog is gated on a GPU capability probe. Godot's froxel
+	# volumetrics need an R32_Uint atomic storage image, which some GPUs do not
+	# support — the CI runner's virtualised Apple adapter reports "Format
+	# 'R32_Uint' does not support usage as atomic storage image" and the frame
+	# then fails to render at all. Where the device affirmatively supports the
+	# format the Reach gets a real air volume (sun shafts through the ash);
+	# everywhere else keeps the height-fog fallback above, which is broadly
+	# supported and carries most of the visible gain anyway.
+	var volumetrics_on := Volumetrics.probe()
+	Volumetrics.apply(env, volumetrics_on)
+	print("VOLUMETRICS %s" % (
+		"on — R32_Uint atomic storage image supported" if volumetrics_on
+		else "off — GPU lacks R32_Uint atomic storage image support"
+	))
 
 	# A restrained grading pass so the palette reads as a deliberate choice
 	# rather than whatever the tonemapper returned: a little more contrast to
