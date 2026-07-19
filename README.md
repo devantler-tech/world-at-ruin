@@ -20,6 +20,9 @@ wins.
 > [roadmap](https://github.com/devantler-tech/world-at-ruin/issues?q=label%3Aroadmap); the
 > in-game dev log (`L`) is the precise changelog.
 
+**Want to see it without installing anything?** [Phase 0 — the taste gate](docs/phase-0/) has
+frames of the character and the cave, rendered from the running game.
+
 ## Play it
 
 **macOS only for now** — one universal build covers Apple Silicon and Intel, and needs macOS 11 or
