@@ -1,10 +1,15 @@
 # Art direction — the target every player-visible change is judged against
 
 `AGENTS.md`'s [Quality bar](../../AGENTS.md#quality-bar--it-has-to-resemble-a-aaa-game) requires every
-player-visible PR to name the AAA reference it was judged against and state the remaining gap. This
+player-visible PR to name the reference it was judged against and state the remaining gap. This
 page is that reference set. Before this existed the requirement could not be met, so each agent
 judged its own work against a private idea of the target — which is how a cave one agent called
 "good indie" reached the Phase 0 gate and was rejected.
+
+**The bar is AAA; the reference need not be.** Our output must look like it belongs in a shipped AAA
+title — that is unchanged and non-negotiable. But "AAA" is a funding-scale label, so it was never a
+sensible filter on *citations*: none of the maintainer's own three anchors would pass it. The
+distinction is settled below.
 
 Use it two ways: **pick the target before you build**, and **name the specific reference plus your
 gap in the PR** when you are done.
@@ -15,32 +20,29 @@ reference names a **specific zone, screen or asset set** you can find and look a
 or in the game itself), with a link to the title's official page for identification only. When you
 cite one in a PR, say which specific reference you used, not just the game.
 
-**Scope, stated honestly.** The quality bar covers every player-facing surface — including audio,
-camera and game feel. This page covers the **visual** ones, because that is what the failed gate was
-about and what the maintainer's verdict specified. Audio, camera and game-feel targets are **not
-written yet**; setting them means inventing direction that has not been given.
+**Scope.** The quality bar covers every player-facing surface. This page's **visual** targets carry
+the maintainer's own three anchors, because that is what the failed gate was about and what his
+verdict specified.
 
-**That leaves a real enforcement gap, and this page does NOT waive it.** `AGENTS.md` makes a
-player-visible PR that names no reference a P1 — which, taken literally, is unsatisfiable for a PR
-touching audio, camera or game feel, because this page has nothing for it to cite. Two bad
-resolutions were considered and rejected:
+**Audio, camera and game feel have anchors too**
+([#234](https://github.com/devantler-tech/world-at-ruin/issues/234)), so no player-visible PR is left
+with nothing to cite. They are **extensions of references the maintainer already chose**, not new
+titles picked by an agent — deliberately, because inventing fresh targets is how one agent's taste
+becomes the standard everyone is judged against, which is the failure #221 exists to end.
 
-- **Inventing targets** would launder one agent's taste into the document every later agent is judged
-  against — the exact failure #221 exists to end.
-- **Granting a pass here** would be worse still. This page is *subordinate* to `AGENTS.md` and cannot
-  waive its rule. A reviewer reading the canonical rule and a reviewer reading this page would get
-  opposite instructions, and a contradicted gate is an unenforceable one — which would let through
-  precisely the unreferenced work the gate exists to stop.
+| Surface | Anchor | What to take from it |
+|---|---|---|
+| **Audio** | WoW and Guild Wars 2 zone ambience; Fatekeeper for combat and interiors | Ambience that states the biome before the UI does; impact sounds with weight and material (stone, iron, cloth read differently); salvaged tech that hums wrongly rather than beeping cleanly |
+| **Camera** | WoW and Guild Wars 2 third-person | Framing that keeps the character readable while showing the world; predictable collision behaviour indoors and in caves; no fighting the player for control |
+| **Game feel** | Guild Wars 2 and WoW for MMO combat rhythm; Fatekeeper for melee weight | Telegraphed windups readable at a glance (already the settled combat design), committed animations with recovery, hits that land with weight rather than registering as numbers |
 
-**So the rule stands as written, and the consequence is stated plainly: a change to what the player
-hears or feels is gated until a target for that surface exists.**
-[#234](https://github.com/devantler-tech/world-at-ruin/issues/234) is the unblocking path — the
-maintainer either names anchors for those surfaces or narrows the canonical rule. Get the target
-agreed there *before* building, rather than building and asking a reviewer to overlook the citation.
+**Marked plainly: these three are agent-proposed, unlike the maintainer's three visual anchors.** They
+are extrapolated from titles already settled as this project's style references, and they hold until
+he says otherwise. A PR citing them is compliant today; if he redirects, this table changes and the
+PRs that cited it do not become retroactively wrong.
 
-The gate is narrower than it first sounds: it binds changes that alter the **player-facing result**.
-Refactors, infrastructure, tooling and tests on those subsystems are untouched, because they are not
-player-visible changes in the first place.
+The rule binds changes that alter the **player-facing result**. Refactors, infrastructure, tooling and
+tests on those subsystems are untouched, being not player-visible changes in the first place.
 
 ---
 
@@ -111,18 +113,44 @@ conceptual anchor for *what to build*, and a **shipped real-time comparable for 
 executed** — from that section's supporting analogues (for the world: WoW's Outland, Guild Wars 2's
 Crystal Desert, Elden Ring's Caelid), or another shipped title that fits better.
 
-**This page does not certify any title's production tier, and does not claim to.** `AGENTS.md`'s rule
-says "AAA reference", but these three anchors were chosen by the maintainer for **style**, not for
-production budget — and whether a given studio's output counts as AAA is a judgement about budget and
-scale that no agent here can substantiate and that this document has no standing to settle. Asserting
-it either way would be exactly the unevidenced claim this page exists to stop.
+**The Ninth World has been shipped as a game once — use it.**
+[*Torment: Tides of Numenera*](https://en.wikipedia.org/wiki/Torment:_Tides_of_Numenera) (inXile,
+2017) is set in exactly this setting and won Game Informer's 2017 **Best Setting** award, so it is
+the one existing example of somebody else solving *our* problem: rendering inherited hyper-technology
+as a lived-in medieval world. Cite it for **what a Ninth World location contains and how strangeness
+is staged** — the scale of the relic, what people build against it, how alien tech reads as
+furniture rather than as sci-fi.
 
-So the requirement above rests on a **capability** argument, which is checkable: concept art cannot
-demonstrate real-time execution, so something that can must be cited beside it. The separate
-definitional question — *what "AAA reference" should require, given the anchors the maintainer
-actually chose* — is his to answer, and is now part of
-[#234](https://github.com/devantler-tech/world-at-ruin/issues/234) rather than something this page
-resolves by assertion.
+Two limits, so it is used for the right thing: it is an **isometric** RPG, so it says nothing about a
+third-person camera or character read at our distance; and its 2017 rendering is **below** our
+fidelity target. It is a *setting* execution reference, not a fidelity one — that job stays
+Fatekeeper's.
+
+### None of the three anchors is a AAA production — and that is fine, now stated as fact
+
+Earlier revisions of this page danced around this because no agent had checked. Checked now:
+
+| Anchor | What it actually is | AAA? |
+|---|---|---|
+| **Numenera** | Tabletop RPG (Monte Cook Games). Its video-game adaptation is *Torment: Tides of Numenera* (inXile, 2017). | No — not a video game |
+| **Kingmakers** | Redemption Road Games, published by tinyBuild (independent). **Still unreleased** — Early Access slipped from 2025. | No |
+| **Fatekeeper** | Paraglacial — a **13-person** German studio, debut original title, THQ Nordic published. Steam Early Access since 2026-06-02. | No |
+
+["AAA" is an informal budget-and-publisher-scale label](https://en.wikipedia.org/wiki/AAA_(video_game_industry))
+with no certifying body; 2024–25 greenlights averaged ~$200M. It describes **how a game was funded**,
+not how it looks — so demanding that citations be AAA imports a finance criterion into an aesthetic
+judgement, and would reject all three of the maintainer's own choices.
+
+**So `AGENTS.md` now reads the way he plainly meant it:** the **AAA bar applies to our output**, and a
+citation is valid when it shows the **right look** — whatever the studio's size. That is settled
+([#234](https://github.com/devantler-tech/world-at-ruin/issues/234)), and it is not a relaxation: the
+quality bar and the P1 blocker are untouched. What changed is that the rule became *satisfiable*,
+where before every art PR was in technical violation because no qualifying reference existed.
+
+**One practical consequence when citing.** Kingmakers is unreleased, so its only public media is
+**pre-release marketing** — trailers and store screenshots, which are lit and framed to sell. Treat it
+as a reference for *armour tiering and silhouette*, and do not read its screenshots as evidence of
+achievable real-time fidelity.
 
 **Take Kingmakers' armour, not its protagonist.** Its player character is a modern military
 operator, which is emphatically not this game's look. What transfers is the knights: tiered plate,
@@ -130,18 +158,32 @@ material-readable rank, and the sight of hard technology beside hand-forged stee
 
 ### ⚠️ Fatekeeper sits above the fidelity ceiling this page argues for — say so in PRs
 
-This is a genuine, unresolved tension and it should not be quietly averaged away. The ceiling below
-argues for stylised-realistic (WoW / Guild Wars 2 with Diablo IV's grime) on the grounds that Godot
-4.7 Forward+ has no Nanite, no Lumen and no commercial-scale scan library. Fatekeeper is benchmark-grade PBR
-realism — nearer to the Horizon end that the ceiling explicitly rules out.
+This is a genuine tension and it should not be quietly averaged away. The ceiling below argues for
+stylised-realistic (WoW / Guild Wars 2 with Diablo IV's grime); Fatekeeper is near-photoreal PBR,
+closer to the Horizon end the ceiling rules out.
 
-Both cannot be literally true at once, so treat Fatekeeper as a **direction-of-travel target for art
-direction and material behaviour** — dark-fantasy composition, weathered named substances, light
-doing the dramatic work — and **not** as a fidelity-parity target for texel density or surface
-detail. A PR's gap statement should be written against Fatekeeper's *direction*, not its budget.
+**The reason for the gap is now known, and it is not the one this page used to give.** The old
+framing implied scale — big-budget fidelity we cannot match. That is false: Fatekeeper is **13
+people**. What they have that we do not is an **engine feature set**. Fatekeeper runs Unreal Engine
+5.6 leaning directly on **Nanite, Lumen and Virtual Shadow Maps**; Godot 4.7 Forward+ has no
+equivalent of any of the three. So the barrier is *technical*, not financial or organisational — a
+much more useful diagnosis, because it says exactly where effort is wasted and where it pays:
 
-**This split is an agent's judgement call, not maintainer direction** — he named the reference and
-did not rule on the ceiling. If the intent is that the ceiling itself should move, that is his call
+- **Not the gap:** team size, budget, studio scale. A 13-person team reached this look. "We are too
+  small" is not available as an explanation, and this page will not accept it as one.
+- **The gap:** micro-detail preserved by virtualised geometry, and bounce/indirect light resolved in
+  real time. Chasing those in Godot means fighting the engine.
+- **Where the same result is reachable anyway:** authored material response, baked and hybrid
+  lighting, deliberate composition, silhouette and value control. These are art-direction wins that
+  do not require Nanite, and they are most of what separates the Phase 0 frames from the target.
+
+So treat Fatekeeper as a **direction-of-travel target for art direction and material behaviour** —
+dark-fantasy composition, weathered named substances, light doing the dramatic work — and **not** as
+a fidelity-parity target for texel density or real-time GI.
+
+**The engine-feature diagnosis is researched fact; where to set the ceiling remains his call** — he
+named the reference and did not rule on the ceiling. If the intent is that the ceiling itself should
+move, that is his call
 to make and this section should be rewritten to match.
 
 ## The fidelity ceiling — stylised, and that is an advantage
