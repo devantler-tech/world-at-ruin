@@ -92,6 +92,34 @@ jobs:
             echo "::error::Shipped piece-slot promise(s) removed or re-pointed in $LEDGER ($(echo "$changed" | tr '\n' '; ')) — a recipe persists equipment as slot->piece, so moving a shipped piece strands saves and needs a player-visible deprecation (no-resets law)"
             exit 1
           fi
+      - name: Piece-layer ledger is append-only (no-resets law)
+        # Same anchor as the piece-slot ledger above, for the layer a piece is
+        # worn on (#246). A region holds one piece per layer, so flipping a
+        # shipped piece's layer makes every save that recorded it alongside
+        # another piece in that region fail validation. Layer is deliberately
+        # NOT written into saves, so nothing in a save file would reveal the
+        # change — the ledger is the only place the promise is visible.
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          LEDGER=client/tests/data/shipped_piece_layers.txt
+          if [ ! -f "$LEDGER" ]; then
+            echo "::error::$LEDGER was deleted — the forward-only piece-layer ledger must exist"
+            exit 1
+          fi
+          if ! git cat-file -e "$BASE_SHA" 2>/dev/null; then
+            echo "::error::base commit $BASE_SHA not present in the checkout — cannot verify the ledger"
+            exit 1
+          fi
+          extract='s/^[[:space:]]*\([^#[:space:]][^[:space:]]*\)[[:space:]][[:space:]]*\([^[:space:]][^[:space:]]*\)[[:space:]]*$/\1 \2/p'
+          git show "$BASE_SHA:$LEDGER" 2>/dev/null | sed -n "$extract" | sort -u > /tmp/piecelayers-base || : > /tmp/piecelayers-base
+          sed -n "$extract" "$LEDGER" | sort -u > /tmp/piecelayers-head
+          changed=$(comm -23 /tmp/piecelayers-base /tmp/piecelayers-head)
+          if [ -n "$changed" ]; then
+            echo "::error::Shipped piece-layer promise(s) removed or re-pointed in $LEDGER ($(echo "$changed" | tr '\n' '; ')) — a region holds one piece per layer, so flipping a shipped piece's layer strands saves and needs a player-visible deprecation (no-resets law)"
+            exit 1
+          fi
       - name: Golden fixture contents are append-only (no-resets law)
         # The in-game guard validates each golden against the CURRENT build, so
         # a PR that removes a shipped shape/bone/name from a golden AND from the

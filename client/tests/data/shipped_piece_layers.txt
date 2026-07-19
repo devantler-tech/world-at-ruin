@@ -1,0 +1,22 @@
+# Which LAYER every shipped equipment piece is worn on — the forward-only
+# layer ledger (no-resets law, issue #246).
+#
+# shipped_piece_slots.txt pins the body REGION a piece sits on. This pins what
+# it sits OVER there, which is a separate promise with its own way of stranding
+# a save: a recipe may record several pieces on one region, and the kit refuses
+# a region holding two pieces of the SAME layer ("a layer covers a region once,
+# so the second would silently win"). So flipping `boots_worn` from armor to
+# clothing does not merely change how a character looks — it makes every save
+# that recorded boots over cloth shoes fail validation outright.
+#
+# Layer is deliberately NOT written into saves (a recipe records piece names
+# only), which is exactly why it needs an anchor here: nothing in a save file
+# would reveal the change.
+#
+# Format: "<piece> <layer>", one per line. APPEND-ONLY: a new baked piece adds a
+# line. CHANGING an existing line is declaring shipped characters disposable and
+# is the deprecation-bearing act the product law requires — never a quiet edit.
+shirt_ragged clothing
+pants_wool clothing
+shoes_cloth clothing
+boots_worn armor

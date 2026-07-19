@@ -1,5 +1,5 @@
 {
-  "kit_version": 4,
+  "kit_version": 5,
   "comment": "Humanoid kit bake manifest — the single source of truth for what the kit contains. Changing this file (or bake.py) is the ONLY sanctioned way the kit changes; the artgen CI workflow re-bakes and compares. Shape, slot and equipment-piece names are the stable, forward-only public API consumed by recipes (no-resets law: never rename or remove a shipped name, only add).",
   "tools": {
     "blender": "5.2.0",
@@ -88,10 +88,12 @@
     }
   },
   "equipment_slots": ["torso", "legs", "feet"],
+  "equipment_layers": ["clothing", "armor"],
   "equipment": [
     {
       "name": "shirt_ragged",
       "slot": "torso",
+      "layer": "clothing",
       "pack": "shirts01",
       "mhclo": "clothes/elvs_crude_t-shirt_male/elvs_crude_t-shirt_male.mhclo",
       "author": "MakeHuman team, edited by Elvaerwyn",
@@ -101,6 +103,7 @@
     {
       "name": "pants_wool",
       "slot": "legs",
+      "layer": "clothing",
       "pack": "pants01",
       "mhclo": "clothes/toigo_wool_pants/toigo_wool_pants.mhclo",
       "author": "MRT",
@@ -110,6 +113,8 @@
     {
       "name": "shoes_cloth",
       "slot": "feet",
+      "layer": "clothing",
+      "occluded_by": ["armor"],
       "pack": "shoes01",
       "mhclo": "clothes/toigo_mj_cloth_shoes/toigo_mj_cloth_shoes.mhclo",
       "author": "MRT",
@@ -119,6 +124,7 @@
     {
       "name": "boots_worn",
       "slot": "feet",
+      "layer": "armor",
       "pack": "shoes01",
       "mhclo": "clothes/culturalibre_male_boots/culturalibre_male_boots.mhclo",
       "author": "culturalibre",

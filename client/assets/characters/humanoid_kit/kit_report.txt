@@ -1,4 +1,4 @@
-kit_version=4
+kit_version=5
 verts=13380
 stripped=5778
 bones=53

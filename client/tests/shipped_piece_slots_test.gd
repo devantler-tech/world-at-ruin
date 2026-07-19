@@ -31,6 +31,7 @@ extends Node
 ## Run: godot --headless --path client res://tests/shipped_piece_slots_test.tscn
 
 const LEDGER := "res://tests/data/shipped_piece_slots.txt"
+const LAYER_LEDGER := "res://tests/data/shipped_piece_layers.txt"
 const SHIPPED_PIECES := "res://tests/data/shipped_equipment.txt"
 
 var _failed := false
@@ -45,9 +46,14 @@ func _ready() -> void:
 		_fail("the baked equipment registry is empty or unreadable — every check below would pass vacuously")
 		return
 
-	var ledger := _ledger()
+	var ledger := _ledger(LEDGER, "slot")
 	if ledger.is_empty():
 		_fail("the piece→slot ledger at %s is missing or empty — every check below would pass vacuously" % LEDGER)
+		return
+
+	var layers := _ledger(LAYER_LEDGER, "layer")
+	if layers.is_empty():
+		_fail("the piece→layer ledger at %s is missing or empty — every layer check below would pass vacuously" % LAYER_LEDGER)
 		return
 
 	# 1. THE MAPPING: every ledgered piece still sits where it shipped.
@@ -106,17 +112,68 @@ func _ready() -> void:
 				% [slot, piece_name, str(Armor.SLOTS)])
 			return
 
-	print("TEST PASS — shipped piece→slot mapping holds (%d ledgered pieces, %d baked, cross-checked against %s; a legal slot move would strand saves and now turns CI red)"
-		% [ledger.size(), pieces.size(), SHIPPED_PIECES])
+	# 5. THE LAYER MAPPING (#246): every ledgered piece is still worn on the
+	#    layer it shipped on. A flip is not cosmetic — the kit refuses a region
+	#    holding two pieces of one layer, so moving `boots_worn` to `clothing`
+	#    makes every save recording boots over cloth shoes fail validation.
+	for piece_name: String in layers:
+		if piece_name not in pieces:
+			_fail("SHIPPED PIECE '%s' VANISHED from the registry (no-resets law)" % piece_name)
+			return
+		var actual := String((pieces[piece_name] as Dictionary).get("layer", ""))
+		var promised: String = layers[piece_name]
+		if actual != promised:
+			_fail(("SHIPPED PIECE '%s' CHANGED LAYER: ledgered '%s', registry now '%s'. " +
+				"A region holds one piece per layer, so every save that recorded this piece " +
+				"alongside another in the same region now fails validation. Layer is not written " +
+				"into saves, so nothing in a save file would reveal this — changing it needs a " +
+				"player-visible deprecation, never a quiet re-bake.")
+				% [piece_name, promised, actual])
+			return
+
+	# 6. THE LAYER LEDGER CANNOT FALL BEHIND: a newly baked piece must record its
+	#    layer, or its layer is free to change unguarded.
+	for piece_name: String in pieces:
+		if piece_name not in layers:
+			_fail(("baked piece '%s' is not in %s — every shipped piece must record the layer it is " +
+				"worn on, or its layer is free to change and strand saves later")
+				% [piece_name, LAYER_LEDGER])
+			return
+
+	# 7. Every ledgered layer is one the runtime can actually place. A ledger
+	#    promising a layer outside the closed set would pin a piece the kit
+	#    refuses to build at all.
+	for piece_name: String in layers:
+		var layer: String = layers[piece_name]
+		if layer not in CharacterFactory.LAYERS:
+			_fail("ledgered layer '%s' (piece '%s') is not in the closed set %s"
+				% [layer, piece_name, str(CharacterFactory.LAYERS)])
+			return
+
+	# 8. The kit and the code agree on what the layers ARE. The registry carries
+	#    its own `layers` list; if it and CharacterFactory.LAYERS drift, render
+	#    order silently stops matching the kit's declared intent.
+	var kit_layers: Array = registry.get("layers", [])
+	if kit_layers != CharacterFactory.LAYERS:
+		_fail(("the baked registry declares layers %s but the runtime places %s — " +
+			"render order would no longer match the kit's declared intent")
+			% [str(kit_layers), str(CharacterFactory.LAYERS)])
+		return
+
+	print("TEST PASS — shipped piece→slot AND piece→layer mappings hold (%d slot-ledgered, %d layer-ledgered, %d baked, cross-checked against %s; a legal slot move or a layer flip would strand saves and now turns CI red)"
+		% [ledger.size(), layers.size(), pieces.size(), SHIPPED_PIECES])
 	get_tree().quit(0)
 
 
-## The ledger as `piece -> slot`. Blank lines and `#` comments are ignored; a
+## A `<piece> <value>` ledger as `piece -> value` — used for both the slot and
+## the layer ledger, which have identical shape and identical failure modes, so
+## they share one reader rather than two that can drift. `what` names the second
+## column for the failure messages. Blank lines and `#` comments are ignored; a
 ## malformed line fails loudly rather than being skipped, so a typo can never
 ## quietly drop a piece out of the guard.
-func _ledger() -> Dictionary:
+func _ledger(path: String, what: String) -> Dictionary:
 	var out: Dictionary = {}
-	var f := FileAccess.open(LEDGER, FileAccess.READ)
+	var f := FileAccess.open(path, FileAccess.READ)
 	if f == null:
 		return out
 	while not f.eof_reached():
@@ -125,18 +182,18 @@ func _ledger() -> Dictionary:
 			continue
 		var parts := line.split(" ", false)
 		if parts.size() != 2:
-			_fail("malformed ledger line in %s: '%s' (expected '<piece> <slot>')" % [LEDGER, line])
+			_fail("malformed ledger line in %s: '%s' (expected '<piece> <%s>')" % [path, line, what])
 			return {}
 		# A DUPLICATE piece is refused, not last-write-wins. Appending a second row
 		# (`boots_worn legs` under an existing `boots_worn feet`) looks append-only
 		# but silently re-points the promise: the mapping check would then pin the
 		# duplicate and pass against a moved registry, while saves holding the
-		# ORIGINAL slot still fail validation. The first shipped slot is immutable.
+		# ORIGINAL slot still fail validation. The first shipped value is immutable.
 		if parts[0] in out:
-			_fail(("duplicate piece '%s' in %s (already promised slot '%s', row says '%s') — " +
-				"a second row silently re-points a shipped promise; the first shipped slot is immutable, " +
+			_fail(("duplicate piece '%s' in %s (already promised %s '%s', row says '%s') — " +
+				"a second row silently re-points a shipped promise; the first shipped %s is immutable, " +
 				"so moving a piece needs a player-visible deprecation, not an extra line")
-				% [parts[0], LEDGER, out[parts[0]], parts[1]])
+				% [parts[0], path, what, out[parts[0]], parts[1], what])
 			return {}
 		out[parts[0]] = parts[1]
 	return out
