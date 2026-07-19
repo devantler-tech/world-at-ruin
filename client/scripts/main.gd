@@ -20,6 +20,16 @@ var _interaction: InteractionController
 ## the stranded backup forever (no-resets law). Cleared only by a boot that
 ## recovers or needs no recovery.
 var _save_blocked := false
+## Whether this device's GPU can render froxel volumetrics (#158). Decided in
+## [method _build_environment] and read again once the world exists, because
+## the ash pools of #211 are only worth building where the volume they thicken
+## actually renders.
+var _volumetrics_on := false
+## The ash pools placed in this world's hollows (#211), in placement order.
+## Recorded even where volumetrics are off — a FogVolume contributes no
+## readable pixels under `--headless`, so this list is the only headless-
+## verifiable record of where the air was thickened (the foliage lesson).
+var _hollow_fog: Array[Dictionary] = []
 
 func _ready() -> void:
 	# Capture-harness entry for the EXPORTED client: the official export
@@ -44,6 +54,7 @@ func _ready() -> void:
 	var world := WorldGen.new()
 	world.name = "World"
 	add_child(world)
+	_build_hollow_fog(world)
 
 	_player = Player.new()
 	_player.name = "Wanderer"
@@ -243,10 +254,10 @@ func _build_environment() -> void:
 	# format the Reach gets a real air volume (sun shafts through the ash);
 	# everywhere else keeps the height-fog fallback above, which is broadly
 	# supported and carries most of the visible gain anyway.
-	var volumetrics_on := Volumetrics.probe()
-	Volumetrics.apply(env, volumetrics_on)
+	_volumetrics_on = Volumetrics.probe()
+	Volumetrics.apply(env, _volumetrics_on)
 	print("VOLUMETRICS %s" % (
-		"on — R32_Uint atomic storage image supported" if volumetrics_on
+		"on — R32_Uint atomic storage image supported" if _volumetrics_on
 		else "off — GPU lacks R32_Uint atomic storage image support"
 	))
 
@@ -263,3 +274,40 @@ func _build_environment() -> void:
 	world_env.name = "WorldEnvironment"
 	world_env.environment = env
 	add_child(world_env)
+
+
+## Thickens the air in the terrain's hollows (#211), so ash gathers on low
+## ground instead of hanging at one density everywhere.
+##
+## The pools live under Main beside the Sun and the WorldEnvironment — the rest
+## of the atmosphere rig — rather than under World. That is deliberate on two
+## counts: they are atmosphere, not terrain; and the world golden fingerprints
+## every Node3D descendant of World, so parenting them there would move a hash
+## that has nothing to do with what generated the ground.
+##
+## Placement is recorded unconditionally but the nodes are built only where the
+## #158 probe passed: on a device that cannot render volumetrics a FogVolume is
+## an invisible node with a per-frame cost and no benefit.
+func _build_hollow_fog(world: WorldGen) -> void:
+	_hollow_fog = HollowFog.place(
+		world.surface_height_at, WorldGen.SIZE, WorldGen.NO_GROUND
+	)
+	if not _volumetrics_on:
+		print("HOLLOW FOG off — volumetrics unavailable (%d pools not built)" % _hollow_fog.size())
+		return
+	var root := Node3D.new()
+	root.name = "HollowFog"
+	add_child(root)
+	for placement: Dictionary in _hollow_fog:
+		root.add_child(HollowFog.build_volume(placement))
+	print("HOLLOW FOG on — %d ash pools" % _hollow_fog.size())
+
+
+## Where this boot pooled ash, deepest hollow first — a copy, so a caller can
+## never disturb the built world. Each entry is a [HollowFog] placement
+## (`pos`, `extents`, `density`, `relief`).
+func hollow_fog_placements() -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for placement: Dictionary in _hollow_fog:
+		out.append(placement.duplicate(true))
+	return out
