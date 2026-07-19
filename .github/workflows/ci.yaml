@@ -796,7 +796,15 @@ jobs:
           # the world capture deliberately hides the creator while its fixed
           # cameras never frame a character up close — so a change to the kit
           # would otherwise get no picture of the surface it changed.
-          if grep -qE '^client/scripts/(character_creator|character_factory|character_store|main|player)\.gd$|^client/scenes/main\.tscn$|^client/(recipes|tools)/|^client/assets/characters/humanoid_kit/|^client/project\.godot$' changed.txt; then
+          # ci.yaml is here for the same self-validation reason it is in the
+          # visual and export-affecting lists — but note the gap it closes is a
+          # STEP, not a job. The first-run pass is a step inside frame-capture
+          # gated on this output, so making the JOB run on a ci.yaml change is
+          # not enough: without this, a PR editing the first-run step's own
+          # commands or guards runs the capture and skips the step it changed.
+          # That is not hypothetical — a stale assertion in this step is exactly
+          # how the capture broke on `cc45ac5b` (see #142).
+          if grep -qE '^client/scripts/(character_creator|character_factory|character_store|main|player)\.gd$|^client/scenes/main\.tscn$|^client/(recipes|tools)/|^client/assets/characters/humanoid_kit/|^client/project\.godot$|^\.github/workflows/ci\.yaml$' changed.txt; then
             echo "first_run=true" >> "$GITHUB_OUTPUT"
           else
             echo "first_run=false" >> "$GITHUB_OUTPUT"
