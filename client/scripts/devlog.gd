@@ -11,6 +11,16 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
+		"version": "0.11.0",
+		"date": "2026-07-19",
+		"title": "The ash knows where the low ground is",
+		"notes": [
+			"The haze no longer sits at one thickness across the whole Reach. Ash now gathers in the land's deepest hollows, so dropping into a basin means walking down into thicker air, and climbing back out clears it. Deeper hollows hold more of it than shallow ones.",
+			"Where the pools sit is a property of this land, not a sprinkle — the same hollows fill the same way on every machine and every time you play.",
+			"As before, this only appears on hardware that can render the air as a volume. Everywhere else the view is unchanged.",
+		],
+	},
+	{
 		"version": "0.10.0",
 		"date": "2026-07-19",
 		"title": "It knows what you are holding",

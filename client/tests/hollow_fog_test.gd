@@ -121,7 +121,17 @@ func _ready() -> void:
 		_fail("pools average %.2f m against a world median of %.2f m (drop %.2f m, need %.2f m) — ash is not gathering low" % [pool_mean, median, drop, MIN_MEDIAN_DROP])
 		return
 
-	# 5. SPREAD
+	# 5. SPREAD — and DISJOINT, which is the load-bearing half.
+	#
+	# Fog volumes composite by ADDING optical depth, so two overlapping pools
+	# do not read as two pools: they read as one sheet at double density. The
+	# first tuning of this change placed 44 m-wide pools 30 m apart, and the
+	# rendered frame lost the near-field ruin pillars and ground debris to a
+	# flat haze — while every other law here still passed. Separation alone is
+	# not the property; separation EXCEEDING the pools' own width is.
+	if HollowFog.MIN_SEPARATION <= HollowFog.POOL_RADIUS * 2.0:
+		_fail("MIN_SEPARATION %.1f m does not exceed a pool's own width %.1f m — pools may overlap and merge into one sheet" % [HollowFog.MIN_SEPARATION, HollowFog.POOL_RADIUS * 2.0])
+		return
 	for i in pools.size():
 		for j in range(i + 1, pools.size()):
 			var a: Vector3 = pools[i]["pos"]
@@ -129,6 +139,9 @@ func _ready() -> void:
 			var d := Vector2(a.x - b.x, a.z - b.z).length()
 			if d < HollowFog.MIN_SEPARATION:
 				_fail("pools %d and %d are %.1f m apart, min separation is %.1f m" % [i, j, d, HollowFog.MIN_SEPARATION])
+				return
+			if d <= HollowFog.POOL_RADIUS * 2.0:
+				_fail("pools %d and %d overlap (%.1f m apart, each %.1f m across) — they will render as one sheet, not two pools" % [i, j, d, HollowFog.POOL_RADIUS * 2.0])
 				return
 
 	# 7. DETERMINISTIC and RNG-FREE

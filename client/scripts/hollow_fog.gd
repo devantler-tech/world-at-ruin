@@ -37,30 +37,38 @@ const RING_SAMPLES := 12
 ## and thickening the air there would just restore the uniformity #211 is
 ## about. Calibrated against HEIGHT_AMP 7.0: a real basin clears this easily.
 const MIN_RELIEF := 0.9
-## Minimum distance between two placed volumes, in metres. Without it the
-## deepest basin would take every slot and the pooling would read as one blob.
-const MIN_SEPARATION := 30.0
+## Minimum distance between two placed volumes, in metres. This MUST stay
+## comfortably above twice POOL_RADIUS, and that is not a stylistic preference:
+## fog volumes composite by adding optical depth, so two overlapping pools do
+## not read as two pools — they read as one sheet at double density. The first
+## tuning of this change had 44 m-wide pools only 30 m apart and turned the
+## whole near field into a flat haze that swallowed the ruin pillars and the
+## ground debris. Disjoint pools are what make pooling legible as pooling.
+const MIN_SEPARATION := 46.0
 ## Hard cap on placed volumes. Volumetric fog is a per-froxel cost; a handful
 ## of large pools is the visual goal anyway, and the cap keeps the cost bounded
 ## no matter what a future terrain seed does.
 const MAX_VOLUMES := 6
-## Horizontal radius of a pool, in metres. Wider than the ring it was measured
-## over, so the density gradient is felt while walking in rather than crossed
-## in one step.
-const POOL_RADIUS := 22.0
+## Horizontal radius of a pool, in metres. Wide enough that the density
+## gradient is felt while walking in rather than crossed in one step, but held
+## below MIN_SEPARATION / 2 so pools never merge (see MIN_SEPARATION).
+const POOL_RADIUS := 18.0
 ## Vertical thickness of a pool, in metres. Shallow relative to its width: ash
-## settling in a basin is a layer, not a sphere, and a tall volume would fog
-## the player's own eye level on the surrounding high ground.
-const POOL_HEIGHT := 9.0
+## settling in a basin is a layer, not a sphere. Kept low deliberately — a tall
+## volume fogs the player's own eye level instead of being something they look
+## down into, which is what made the first tuning read as a wall of haze.
+const POOL_HEIGHT := 6.0
 ## How far the pool's centre sits above the hollow floor, as a fraction of
 ## POOL_HEIGHT. Slightly under half, so the densest part hugs the ground.
-const POOL_LIFT_FRACTION := 0.42
+const POOL_LIFT_FRACTION := 0.38
 ## Added density at the pool's core, on top of the environment's baseline
-## volumetric density. Deliberately of the same order as the baseline (0.005):
-## the goal is a visible *difference* between hollow and ridge, not a wall of
-## fog that costs readability — the #150 terrain-contribution floor is a live
-## guard against exactly that.
-const POOL_DENSITY := 0.006
+## volumetric density (0.005). Deliberately well UNDER the baseline: the goal
+## is a visible difference between hollow and ridge, not a wall of fog that
+## costs readability. Tuned down from 0.006 after the first version erased the
+## near-field debris and pillars entirely — density that reads as "thicker air"
+## from outside a basin is much lower than it feels like it should be, because
+## the volume's depth along the view ray does most of the work.
+const POOL_DENSITY := 0.0035
 ## Relief at which a pool reaches full POOL_DENSITY, in metres. Shallower
 ## hollows scale down proportionally, so depth reads as density instead of
 ## every basin looking identically thick.
