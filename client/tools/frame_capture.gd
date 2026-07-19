@@ -162,6 +162,11 @@ const BREATH_CAM_FRONT := 1.55
 ## produces exactly 0. The floor sits far below the former and far above the
 ## latter, so it gates the failure without pinning the tuning.
 const BREATH_MIN_TRAVEL_M := 0.003
+## The least clavicle rotation between inhale and exhale that counts as a
+## breath. The shipped idle swings 2 * SHOULDER_RISE_DEG = 4.0 deg here; a
+## build with the breath channel deleted swings exactly 0 while its weight
+## shift still clears the travel floor above.
+const BREATH_MIN_SWING_DEG := 1.0
 
 ## The creator is 2D and needs no shadow/SDFGI convergence, so it settles far
 ## sooner than a world vantage. Kept separate so adding this scenario does not
@@ -672,13 +677,24 @@ func _capture_breath(dir: String, main: Node) -> void:
 	cam.look_at(focus, Vector3.UP)
 
 	var shoulder := skeleton.find_bone("upperarm_l")
+	var clavicle := skeleton.find_bone("clavicle_l")
 	var poses: Array[Vector3] = []
+	var breath_rotations: Array[Quaternion] = []
 	var frames: Array[Image] = []
 	for i in BREATH_PHASES:
-		var t := BreathingIdle.BREATH_PERIOD * float(i) / float(BREATH_PHASES)
+		# HALF-STEP OFFSET, and it is load-bearing. On a plain i/N sampling the
+		# breath is a sine zero-crossing at BOTH i=0 and i=N/2, so the sequence
+		# never photographs an inhale or an exhale — it samples the two moments
+		# where the chest is doing nothing. With the offset, i=N/4 is peak
+		# inhale and i=3N/4 peak exhale.
+		var t := BreathingIdle.BREATH_PERIOD * (float(i) + 0.5) / float(BREATH_PHASES)
 		BreathingIdle.apply_at(skeleton, t)
 		skeleton.force_update_all_bone_transforms()
 		poses.append(skeleton.get_bone_global_pose(shoulder).origin)
+		# The clavicle's LOCAL pose rotation is driven by the breath channel and
+		# nothing else. The pelvis shift moves the clavicle's GLOBAL transform
+		# through the chain, so only the local rotation isolates the breath.
+		breath_rotations.append(skeleton.get_bone_pose_rotation(clavicle))
 		for _s in BREATH_SETTLE_FRAMES:
 			cam.current = true
 			await get_tree().process_frame
@@ -720,15 +736,33 @@ func _capture_breath(dir: String, main: Node) -> void:
 	# every phase renders the same skeleton, and that is exactly detectable.
 	# The frames remain the human-inspectable evidence; this is the machine
 	# guard that they depict a body in different positions.
-	var travel := (poses[0] - poses[BREATH_PHASES / 2]).length()
+	var inhale := int(round(float(BREATH_PHASES) * 0.25 - 0.5))
+	var exhale := int(round(float(BREATH_PHASES) * 0.75 - 0.5))
+	var travel := (poses[inhale] - poses[exhale]).length()
 	if travel < BREATH_MIN_TRAVEL_M:
-		_fail(("the breath sequence photographs one pose: the shoulder moved %.5f m between opposite " +
-			"phases, under the %.5f m floor. The frames would show a frozen body.") %
+		_fail(("the breath sequence photographs one pose: the shoulder moved %.5f m between the inhale " +
+			"and the exhale, under the %.5f m floor. The frames would show a frozen body.") %
 			[travel, BREATH_MIN_TRAVEL_M])
 		return
 
-	print("CAPTURE PASS — %d breath phases written to %s (shoulder travel %.1f mm between opposite phases)" %
-		[BREATH_PHASES, dir, travel * 1000.0])
+	# ⚠️ AND THE BREATH SPECIFICALLY, not merely "the body moved somewhere".
+	#
+	# The idle has two independent channels, and the slow pelvis weight shift
+	# moves the shoulder several millimetres on its own. So a travel check alone
+	# passes a build whose entire breathing is deleted, as long as the weight
+	# shift survives — the sequence would advertise a breath that is not there.
+	# The clavicle's LOCAL pose rotation comes only from the breath channel, so
+	# it is the one measurement the pelvis cannot fake.
+	var breath_swing := rad_to_deg(breath_rotations[inhale].angle_to(breath_rotations[exhale]))
+	if breath_swing < BREATH_MIN_SWING_DEG:
+		_fail(("the body moves but does not BREATHE: the clavicle turned %.3f deg between inhale and " +
+			"exhale, under the %.3f deg floor. The weight shift alone can satisfy the travel check, " +
+			"so this is the measurement that proves a breath was photographed.") %
+			[breath_swing, BREATH_MIN_SWING_DEG])
+		return
+
+	print("CAPTURE PASS — %d breath phases written to %s (shoulder travel %.1f mm, breath swing %.2f deg)" %
+		[BREATH_PHASES, dir, travel * 1000.0, breath_swing])
 	get_tree().quit(0)
 
 
