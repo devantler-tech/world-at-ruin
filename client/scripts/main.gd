@@ -158,6 +158,11 @@ func _connect_zone() -> void:
 	if not _zone.connect_to(ZoneConnection.zone_url()):
 		# error_detail() names a misconfigured variable, never its value.
 		push_warning("zone connection refused (%s): %s" % [_zone.error(), _zone.error_detail()])
+		# This failure is now reported. Without claiming it, _process() sees
+		# the same FAILED state a frame later and reports it a second time as
+		# "lost" — and a connection that never opened cannot be lost. Observed
+		# on a real boot with a missing token and with a ws:// url.
+		_zone_failure_reported = true
 
 
 ## Drive the connection. Cheap and safe every frame: poll() is a no-op unless
