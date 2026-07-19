@@ -103,20 +103,21 @@ func _check_stance(instance: Node3D, label: String) -> String:
 		return "%s: no skeleton" % label
 	skeleton.force_update_all_bone_transforms()
 
-	var hip_l := _origin(skeleton, "thigh_l")
-	var hip_r := _origin(skeleton, "thigh_r")
-	var sho_l := _origin(skeleton, "clavicle_l")
-	var sho_r := _origin(skeleton, "clavicle_r")
-	if hip_l == null or hip_r == null or sho_l == null or sho_r == null:
-		return "%s: hip or shoulder bone missing from the rig" % label
+	for required in ["thigh_l", "thigh_r", "clavicle_l", "clavicle_r", "head", "pelvis"]:
+		if skeleton.find_bone(required) < 0:
+			return "%s: rig has no bone named %s" % [label, required]
+	var hip_l: Vector3 = _origin(skeleton, "thigh_l")
+	var hip_r: Vector3 = _origin(skeleton, "thigh_r")
+	var sho_l: Vector3 = _origin(skeleton, "clavicle_l")
+	var sho_r: Vector3 = _origin(skeleton, "clavicle_r")
 
 	# 1. HIPS TILT
-	var hip_tilt: float = (hip_l as Vector3).y - (hip_r as Vector3).y
+	var hip_tilt := hip_l.y - hip_r.y
 	if absf(hip_tilt) < MIN_HIP_TILT:
 		return "%s: hips are level (%.4f m) — the body is standing on both legs, not one" % [label, hip_tilt]
 
 	# 2. SHOULDERS OPPOSE THE HIPS
-	var shoulder_tilt: float = (sho_l as Vector3).y - (sho_r as Vector3).y
+	var shoulder_tilt := sho_l.y - sho_r.y
 	if absf(shoulder_tilt) < MIN_SHOULDER_TILT:
 		return "%s: shoulders are level (%.4f m) — the torso never answered the hips" % [label, shoulder_tilt]
 	if signf(shoulder_tilt) == signf(hip_tilt):
@@ -131,11 +132,9 @@ func _check_stance(instance: Node3D, label: String) -> String:
 		return "%s: both knees are equally straight (%.2f vs %.2f deg) — the free leg is a second column" % [label, bend_l, bend_r]
 
 	# 4. THE HEAD STAYS LEVEL
-	var head := _origin(skeleton, "head")
-	var pelvis := _origin(skeleton, "pelvis")
-	if head == null or pelvis == null:
-		return "%s: head or pelvis bone missing" % label
-	var head_offset: float = absf((head as Vector3).x - (pelvis as Vector3).x)
+	var head: Vector3 = _origin(skeleton, "head")
+	var pelvis: Vector3 = _origin(skeleton, "pelvis")
+	var head_offset := absf(head.x - pelvis.x)
 	if head_offset > MAX_HEAD_OFFSET:
 		return "%s: head sits %.4f m to the side of the pelvis — that reads as a slump, not a rest" % [label, head_offset]
 
@@ -154,11 +153,9 @@ func _knee_bend_deg(skeleton: Skeleton3D, side: String) -> float:
 	return rad_to_deg(t.angle_to(c))
 
 
-func _origin(skeleton: Skeleton3D, bone_name: String):
-	var bone := skeleton.find_bone(bone_name)
-	if bone < 0:
-		return null
-	return skeleton.get_bone_global_rest(bone).origin
+## Global rest origin of a named bone. Callers check the bone exists first.
+func _origin(skeleton: Skeleton3D, bone_name: String) -> Vector3:
+	return skeleton.get_bone_global_rest(skeleton.find_bone(bone_name)).origin
 
 
 ## A recipe pushed to the ends of the sliders the factory guards, so the
