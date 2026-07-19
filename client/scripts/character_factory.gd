@@ -61,24 +61,24 @@ const HAND_RELAX_DEG := 8.0
 ## no walk cycle — those stay with the parent #224.
 
 ## Pelvis roll that lifts the engaged (left) hip.
-const HIP_HIKE_DEG := 4.0
+const HIP_HIKE_DEG := 6.0
 ## Counter-roll applied to BOTH thighs, cancelling the pelvis roll so the legs
 ## hang plumb instead of splaying with the hips. Without it the whole lower
 ## body leans and the feet leave the ground.
-const THIGH_PLUMB_DEG := -4.0
+const THIGH_PLUMB_DEG := -6.0
 ## The free (right) leg takes no weight: it swings very slightly outward and
 ## bends at the knee, which is what stops the two legs reading as a pair of
 ## identical columns.
-const FREE_LEG_ABDUCT_DEG := 2.5
-const FREE_KNEE_BEND_DEG := 7.0
+const FREE_LEG_ABDUCT_DEG := 3.0
+const FREE_KNEE_BEND_DEG := 13.0
 ## Spine counter-roll, applied per spine bone. Larger in total than the hip
 ## hike so the shoulder line ends up tilted the OTHER way rather than merely
 ## level — that opposition IS contrapposto; a torso that only returns to
 ## vertical just undoes the hips.
-const SPINE_COUNTER_DEG := -3.5
+const SPINE_COUNTER_DEG := -4.5
 ## Brings the head back level over the tilted shoulders. A head that rides the
 ## shoulder tilt reads as a slump.
-const NECK_LEVEL_DEG := 2.5
+const NECK_LEVEL_DEG := 4.0
 ## The free-side arm hangs a touch further from the body than the engaged one,
 ## because the ribcage on that side is no longer lifted into it.
 const FREE_ARM_EXTRA_HANG_DEG := 4.0
