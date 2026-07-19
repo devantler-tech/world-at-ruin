@@ -32,8 +32,9 @@ is the *premise* and every other preference — engine, fidelity — yields to i
   materials (`client/shaders/`), where **the ground and cave rock are arithmetic-only — no texture,
   colour computed from noise**. Textures *do* ship elsewhere: six baked skin PNGs
   (`client/assets/characters/humanoid_kit/skins/`) that `character_factory.gd` loads into a
-  `StandardMaterial3D`, plus leaf, blade and stone `ImageTexture`s generated at runtime by
-  `foliage_art.gd` and sampled by `debris.gdshader`. **SDF caves meshed with naive surface nets**
+  `StandardMaterial3D`, plus runtime `ImageTexture`s from `foliage_art.gd` — leaf and blade sampled
+  by `foliage.gdshader`, bone and rubble stone by `debris.gdshader`
+  (`foliage_art.gd:73` picks between them). **SDF caves meshed with naive surface nets**
   (`client/scripts/cave_system_gen.gd`) — *not* marching cubes; the topology and meshing constraints
   differ. Simplex-fBm terrain (`client/scripts/world_gen.gd`); GDScript-authored foliage
   (`client/scripts/foliage_gen.gd`).
