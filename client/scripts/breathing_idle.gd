@@ -51,6 +51,16 @@ const SHIFT_PERIOD := 11.0
 
 ## Chest pitch at the peak of an inhale, in degrees. Small on purpose — the
 ## breath should be noticed as life, not as a bow.
+##
+## 🔑 MEASURED, not reasoned (the #237 lesson, re-learned the hard way in this
+## slice): a spine bone can only pitch, roll or twist — no rotation of it
+## RAISES the chest, because rotating a bone about its own origin cannot
+## lengthen the body. Rotating `spine_02` about RIGHT moves the head +25.8 mm
+## FORWARD per 3 degrees (and 3.5 mm down). So this channel is really the chest
+## OPENING and settling, and its SIGN is what decides which. Positive about
+## RIGHT tips the chest forward — a collapse — so an inhale must be NEGATIVE.
+## The first draft had it the other way round and folded the wanderer forward
+## as it breathed in; `breathing_idle_test` law 5b now fails on that.
 const CHEST_RISE_DEG := 0.75
 
 ## How much of the chest rise the upper chest adds on top of the lower. The
@@ -59,7 +69,18 @@ const CHEST_RISE_DEG := 0.75
 const UPPER_CHEST_SHARE := 0.6
 
 ## Shoulder lift at the peak of an inhale, in degrees.
-const SHOULDER_RISE_DEG := 0.55
+##
+## 🔑 ALSO MEASURED: rotating a clavicle about FORWARD moves its shoulder joint
+## 7.8 mm per 3 degrees, and the sign is MIRRORED between the sides (positive
+## lowers the LEFT and raises the RIGHT — the same convention the stance
+## measured). Lifting BOTH shoulders therefore needs opposite signs, not one
+## shared one.
+##
+## Set from that measurement rather than by feel: 2.0 degrees is ~5 mm of
+## travel per shoulder, which reads on a character a few metres away. The 0.55
+## this started at was ~1.4 mm — real, provable by a test, and invisible to a
+## player. #237 hit the same thing and retuned 4 deg to 6 deg after an A/B.
+const SHOULDER_RISE_DEG := 2.0
 
 ## Peak pelvis roll of the slow weight transfer, in degrees, in the same signed
 ## space as the stance (positive raises the ENGAGED side).
@@ -103,11 +124,13 @@ static func angles(t: float) -> Dictionary:
 	var breath := sin(TAU * t / BREATH_PERIOD)
 	var shift := sin(TAU * t / SHIFT_PERIOD)
 	return {
-		"spine_02": CHEST_RISE_DEG * breath,
-		"spine_03": CHEST_RISE_DEG * UPPER_CHEST_SHARE * breath,
-		# Negated against the chest so the shoulders rise as the ribcage opens
-		# rather than collapsing into it; FORWARD is -Z, so a positive roll
-		# lowers the left (the measured rig convention #237 established).
+		# NEGATIVE on the inhale: positive about RIGHT tips the chest forward,
+		# which is a body folding over its breath rather than opening to it.
+		"spine_02": -CHEST_RISE_DEG * breath,
+		"spine_03": -CHEST_RISE_DEG * UPPER_CHEST_SHARE * breath,
+		# OPPOSITE signs, because the clavicle roll convention is mirrored
+		# between the sides: negative raises the left, positive raises the
+		# right. One shared sign would shrug one shoulder and drop the other.
 		"clavicle_l": -SHOULDER_RISE_DEG * breath,
 		"clavicle_r": SHOULDER_RISE_DEG * breath,
 		"pelvis": CharacterFactory.STANCE_ROLL_SIGN * WEIGHT_SHIFT_DEG * shift,

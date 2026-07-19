@@ -28,6 +28,11 @@ extends Node
 ##     phase of a slow loop, and a single-instant test would very likely sample
 ##     a phase where it still looked right. Every stance direction law is
 ##     therefore re-asserted at many phases across the full loop.
+##  5b. 🔑 AN INHALE OPENS THE CHEST. Every other law here passes an exactly
+##     INVERTED breath — one that folds the body forward and drops its
+##     shoulders as it breathes in is still bounded, moving, seamless and
+##     stance-preserving. That is what the first draft of this shipped, so the
+##     direction is now asserted per side against the two extremes.
 ##  6. THE IDLE CANNOT MOVE A CHARACTER'S IDENTITY. `CharacterFactory.
 ##     fingerprint` hashes REST and mesh vertices, and the idle writes POSES —
 ##     so a fingerprint must be byte-identical before and after an arbitrary
@@ -57,6 +62,15 @@ const LOOP_EPSILON := 1e-5
 const MIN_HIP_TILT := 0.004
 const MIN_SHOULDER_TILT := 0.004
 
+## Minimum shoulder lift across one breath, in metres. Set from a measurement
+## of the rig rather than by feel — a clavicle moves its shoulder joint about
+## 7.8 mm per 3 degrees, and this floor is what stops the amplitude being
+## quietly tuned down to something a test can prove and an eye cannot see.
+const MIN_SHOULDER_RISE := 0.003
+
+## Minimum front-to-back travel of the head across one breath, in metres.
+const MIN_CHEST_TRAVEL := 0.003
+
 var _failed := false
 
 
@@ -82,6 +96,8 @@ func _ready() -> void:
 	if not _check_loop_is_seamless():
 		return
 	if not _check_stance_survives_every_phase(skeleton):
+		return
+	if not _check_inhale_opens_the_chest(skeleton):
 		return
 	if not _check_idle_cannot_move_a_fingerprint(instance, skeleton):
 		return
@@ -210,6 +226,51 @@ func _check_stance_survives_every_phase(skeleton: Skeleton3D) -> bool:
 		if shoulder_tilt >= 0.0:
 			_fail("at phase %.3f s the shoulders tilt WITH the hips (%.5f m) — the body is listing sideways, not standing in contrapposto" % [t, shoulder_tilt])
 			return false
+	return true
+
+
+## 5b. 🔑 AN INHALE OPENS THE CHEST — it does not fold the body over it.
+##
+## Every law above passes an EXACTLY INVERTED breath: a body that collapses
+## forward and drops its shoulders as it breathes in is bounded, moving,
+## seamless, and leaves the stance intact. It is also plainly wrong, and it is
+## what this file shipped in its first draft — the chest channel's sign was
+## reasoned from "positive raises" instead of measured, and rotating a spine
+## bone about RIGHT moves the head FORWARD, not up.
+##
+## So the direction is asserted against the two extremes of the breath, and
+## named per side, in the same spirit as the stance's own direction laws.
+func _check_inhale_opens_the_chest(skeleton: Skeleton3D) -> bool:
+	var pose_at := func(t: float) -> Dictionary:
+		BreathingIdle.apply_at(skeleton, t)
+		skeleton.force_update_all_bone_transforms()
+		return {
+			"shoulder_l": _posed(skeleton, "upperarm_l"),
+			"shoulder_r": _posed(skeleton, "upperarm_r"),
+			"head": _posed(skeleton, "head"),
+		}
+	# sin() troughs at 3/4 of a period and peaks at 1/4.
+	var exhaled: Dictionary = pose_at.call(BreathingIdle.BREATH_PERIOD * 0.75)
+	var inhaled: Dictionary = pose_at.call(BreathingIdle.BREATH_PERIOD * 0.25)
+
+	for side in ["shoulder_l", "shoulder_r"]:
+		var rise: float = (inhaled[side] as Vector3).y - (exhaled[side] as Vector3).y
+		if rise <= 0.0:
+			_fail("the %s DROPS %.5f m on the inhale — breathing in must lift the shoulders, not sink them (a mirrored clavicle sign does exactly this)" % [side, -rise])
+			return false
+		if rise < MIN_SHOULDER_RISE:
+			_fail("the %s rises only %.5f m on the inhale — real, provable, and invisible to a player at any normal distance" % [side, rise])
+			return false
+
+	# The kit body faces +Z, so the head drifting +Z on an inhale is the chest
+	# folding forward over the breath rather than opening.
+	var drift: float = (inhaled["head"] as Vector3).z - (exhaled["head"] as Vector3).z
+	if drift > 0.0:
+		_fail("the head moves %.5f m FORWARD on the inhale — the chest is collapsing into the breath instead of opening" % drift)
+		return false
+	if absf(drift) < MIN_CHEST_TRAVEL:
+		_fail("the chest opens by only %.5f m — the breath channel is not doing visible work" % absf(drift))
+		return false
 	return true
 
 
