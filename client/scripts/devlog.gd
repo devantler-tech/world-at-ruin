@@ -11,6 +11,16 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
+		"version": "0.11.0",
+		"date": "2026-07-19",
+		"title": "The ash knows where the low ground is",
+		"notes": [
+			"Ash can now gather in the land's hollows instead of hanging at one thickness everywhere, so dropping into a basin means walking down into thicker air and climbing back out clears it. Where the pools sit is a property of this land — the same hollows fill the same way every time you play. The starter cave is left alone: its dark is meant to be dark.",
+			"This is switched OFF unless you ask for it. The ash sits still: it does not drift, and it does not stir as you walk through it. Until it does, it is not finished enough to put in your world without asking, so try it with WAR_HOLLOW_FOG=1 and tell us how it reads.",
+			"It also needs hardware that can render the air as a volume. Where that is missing the view is unchanged, opted in or not.",
+		],
+	},
+	{
 		"version": "0.10.0",
 		"date": "2026-07-19",
 		"title": "It knows what you are holding",
