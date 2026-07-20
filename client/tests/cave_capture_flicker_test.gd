@@ -12,6 +12,11 @@ extends Node
 ## delta below it was unfalsifiable.
 ##
 ## What it holds:
+##  0. LIVE — normal `_process` ticking genuinely moves the light. Every check
+##     below reaches the flicker through `freeze_flicker`, so without this a
+##     regression that stopped applying the phase in-game would leave players
+##     under a constant lamp with this file still green — the capture would be
+##     reproducible AND wrong, pinning a flicker that no longer exists.
 ##  1. PINNED — two independently built caves, frozen the same way, agree
 ##     exactly. This is the property the evidence path actually needs.
 ##  2. PHASE-INDEPENDENT — a cave whose clock has already run agrees with a
@@ -36,6 +41,23 @@ const MIN_PHASE_SPREAD := 0.05
 
 
 func _ready() -> void:
+	# 0. LIVE — normal ticking must actually MOVE the light. Every other check
+	# here reaches `_apply_flicker` through `freeze_flicker`, so a regression in
+	# which `_process` advances `_time` but no longer applies it would leave the
+	# player's cave lit by a constant lamp while this whole file stayed green.
+	# The capture path would still be perfectly reproducible — and perfectly
+	# wrong, pinning a flicker that no longer exists in the running game.
+	var live := _build()
+	var live_before := _energies(live)
+	live._process(0.31)
+	live._process(0.29)
+	var live_spread := _max_diff(live_before, _energies(live))
+	if live_spread <= MIN_PHASE_SPREAD:
+		_fail(("ticking _process moved torch energy by only %.4f (need > %.2f) — the in-game "
+			+ "flicker is gone, and pinning it for capture would be pinning nothing")
+			% [live_spread, MIN_PHASE_SPREAD])
+		return
+
 	# 1. PINNED.
 	var a := _build()
 	var b := _build()
