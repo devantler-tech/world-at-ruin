@@ -53,6 +53,8 @@ func _ready() -> void:
 		return
 	if not _check_null_store_clears():
 		return
+	if not _check_placement_is_world_absolute():
+		return
 	print("TEST PASS — replicated entities appear, track, resize and leave the scene tree exactly as the store reports them")
 	get_tree().quit(0)
 
@@ -263,6 +265,30 @@ func _check_null_store_clears() -> bool:
 		return false
 	if view.count() != 0:
 		_fail("a null store must clear the view's index too, it still reports %d" % view.count())
+		return false
+	view.free()
+	return true
+
+
+## The wire carries ABSOLUTE world coordinates, so a marker must land at that
+## world point regardless of where its view sits. Placing them as a local
+## offset happens to be right today (the view hangs off Main at the origin),
+## which is what would keep the bug invisible — so the control gives the view
+## a non-identity transform, where local and global placement disagree.
+func _check_placement_is_world_absolute() -> bool:
+	var view := _mounted_view()
+	view.position = Vector3(10.0, 5.0, -3.0)
+	var store := ReplicaStore.new()
+	if not _apply(store, _snapshot_result(10, 1, [_entity(2, 1500, 0, -2500, 300)])):
+		return false
+	view.sync(store)
+
+	var marker := view.marker_for(2)
+	if marker == null:
+		_fail("an offset view drew no marker")
+		return false
+	if not _positions_match(marker.global_position, Vector3(1.5, 0.0, -2.5)):
+		_fail("a replicated world position must be absolute: expected global (1.5, 0, -2.5), got %s (view offset by %s)" % [str(marker.global_position), str(view.position)])
 		return false
 	view.free()
 	return true

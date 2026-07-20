@@ -83,7 +83,12 @@ func sync(store: ReplicaStore) -> void:
 			_markers[id] = marker
 		else:
 			_apply_radius(marker, radius_m)
-		marker.position = Vector3(
+		# GLOBAL, not local: the wire carries absolute world coordinates, so
+		# placing them as a local offset is correct only while every ancestor
+		# sits at identity. It does today — the view hangs off Main at the
+		# origin — which is exactly what makes the bug latent rather than
+		# visible, so pin the intent here instead of relying on that.
+		marker.global_position = Vector3(
 			float(e["x"]) / MM_PER_M,
 			float(e["y"]) / MM_PER_M,
 			float(e["z"]) / MM_PER_M,
