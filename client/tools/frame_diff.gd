@@ -6,11 +6,16 @@ extends Node
 ## Why this exists (#231): frame_capture's own guard is MIN_LUMA_SPREAD — a
 ## global min/max over a 16x12 grid of the whole frame. It answers "did
 ## anything render?" and is structurally incapable of answering "is the change
-## under review present?". Measured on #218's ash pools: the badly-broken
-## build, the invisible build and the shipped build all reported a sunward
-## spread of 0.541 to three decimals, while a per-pixel comparison against the
-## base separates them easily. The information was in the frames; the guard did
-## not look for it.
+## under review present?".
+##
+## Reproduced first-hand while building this, on three captures off one
+## checkout — fog off, fog off again, fog ON. The spread guard reported sunward
+## 0.541 and crossfield 0.235 for ALL THREE, to three decimals, including the
+## build whose fog is plainly visible in the frame. Compared against the base,
+## the same sunward frame moves 0.01% of its pixels between the two identical
+## builds and 21.01% with the fog on. The information was in the frames the
+## whole time; the guard does not look for it. (#231 reports the same shape on
+## #218's ash pools: three builds, one spread of 0.541.)
 ##
 ## REPORTING ONLY. This tool prints numbers and writes them next to each frame;
 ## it applies no threshold to them. A legitimate no-visual-change PR must not
@@ -29,16 +34,37 @@ extends Node
 
 ## |ΔLuma| at which a pixel counts as CHANGED.
 ##
-## Calibrated on this repo's own frames rather than guessed (macOS, shipped
-## lighting, the sunward/crossfield/shrine vantages). Two renders of the SAME
-## build differ slightly — temporal antialiasing, volumetric fog reprojection,
-## SDFGI convergence and wind-swayed foliage all move pixels between otherwise
-## identical runs — so the floor has to sit above that drift while staying far
-## under a real change. Measured: same-build repeat runs move 0.5%-1.6% of
-## pixels at this epsilon, while switching the hollow fog on (a LOCALIZED
-## volumetric change, the exact class #231 was filed about) moves 32%-46%. Two
-## orders of magnitude of margin, so the epsilon is not load-bearing to a
-## verdict — which matters, because this slice deliberately draws no verdict.
+## Calibrated by measurement on this repo's own frames, not chosen by taste
+## (macOS, 1600x900, shipped lighting, all five vantages). Two renders of the
+## SAME build differ a little — temporal antialiasing, volumetric fog
+## reprojection, SDFGI convergence, wind-swayed foliage and animated torches all
+## move pixels between otherwise identical runs — so the floor has to clear that
+## drift without swallowing a real change.
+##
+## Measured, same build rendered twice vs. the hollow fog switched on (a
+## LOCALIZED volumetric change — the exact class #231 was filed about):
+##
+##   vantage        repeat run    fog on
+##   sunward             0.01%    21.01%
+##   shrine              0.03%     2.69%
+##   cave-chamber        0.01%     4.19%
+##   cave-walkout        9.05%    25.02%
+##   crossfield          0.03%     0.04%   <- fog not in this view
+##
+## Two things in that table matter more than the epsilon itself.
+##
+## First, crossfield is a natural control: the fog is not in that view, so it
+## stays at the noise floor while four other vantages move. The report
+## localizes a change to the views that contain it.
+##
+## Second, cave-walkout's 9% repeat-run floor is HIGHER than shrine's 2.69%
+## real change. Its torches are animated, so a large share of that frame
+## genuinely differs run to run. This is why the slice reports rather than
+## judges: a single portfolio-wide threshold would fire on the cave every time
+## and miss a real change at the shrine. The numbers are comparable for the
+## SAME vantage across builds, which is the comparison a reviewer makes; they
+## are not comparable between vantages, and any future threshold has to be
+## per-vantage and calibrated against a floor like this one.
 const CHANGED_EPS := 0.01
 
 ## Rec. 709 luminance weights — the same ones Color.get_luminance() applies, so
