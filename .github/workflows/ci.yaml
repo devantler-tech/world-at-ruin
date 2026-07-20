@@ -1258,18 +1258,33 @@ jobs:
           # is removed outright, the degradation would become UNKNOWABLE rather
           # than merely invisible, and a green capture would go straight back to
           # reading as volumetric evidence. Unknown is a failure, not a default.
-          if ! grep -qE '^VOLUMETRICS (on|off)([[:space:]]|$)' capture.log; then
-            echo "::error::no VOLUMETRICS verdict in the capture log — cannot tell whether these frames depict the volumetric path or the fallback (see Volumetrics.marker and client/tests/volumetrics_test.gd)"
-            exit 1
-          fi
-          # SAME expression as the detection above, boundary included. Dropping
-          # the boundary here would let a line like "VOLUMETRICS onward …"
-          # yield `on` while the real verdict below it is `off` — detection
-          # would still pass (a valid line exists), head -1 would take the
-          # decoy, and the step would silently INVERT the verdict and suppress
-          # its own warning. Proven with a two-line fixture before fixing.
-          probe="$(grep -oE '^VOLUMETRICS (on|off)([[:space:]]|$)' capture.log | head -1 | awk '{print $2}')"
-          echo "volumetric fog path: ${probe}"
+          # Read each gated feature's verdict, and fail closed on ANYTHING
+          # ambiguous. `head -1` on a multi-verdict log is not a tiebreak, it is
+          # a coin toss that silently suppresses the warning — so require
+          # exactly one DISTINCT verdict per marker rather than taking the
+          # first. (A boundary alone stops "VOLUMETRICS onward …" from matching;
+          # it does not stop two genuine contradictory markers.)
+          read_verdict() {
+            marker="$1"; log="$2"
+            distinct="$(grep -oE "^${marker} (on|off)([[:space:]]|\$)" "$log" \
+              | sed -E "s/^${marker} //; s/[[:space:]]*\$//" | sort -u)"
+            # `|| true`: grep -c exits 1 on a zero count, and under `bash -e` a
+            # failing command substitution in an assignment kills the step —
+            # which would bypass the explicit no-verdict error below.
+            n="$(printf '%s\n' "$distinct" | grep -c . || true)"
+            if [ "$n" -eq 0 ]; then
+              echo "::error::no ${marker} verdict in ${log} — cannot tell what these frames depict (see the marker() helper and its pinning test)" >&2
+              return 1
+            fi
+            if [ "$n" -gt 1 ]; then
+              echo "::error::contradictory ${marker} verdicts in ${log} ($(printf '%s' "$distinct" | tr '\n' '/')) — refusing to guess which one the frames depict" >&2
+              return 1
+            fi
+            printf '%s' "$distinct"
+          }
+          probe="$(read_verdict VOLUMETRICS capture.log)" || exit 1
+          pools="$(read_verdict 'HOLLOW FOG' capture.log)" || exit 1
+          echo "volumetric fog path: ${probe}; hollow ash pools: ${pools}"
 
           # Travels INSIDE the artifact, beside the PNGs, so a reviewer who
           # downloads frames a week later still knows what they are looking at.
@@ -1278,20 +1293,28 @@ jobs:
             echo
             echo "runner: ${RUNNER_OS} (hosted)"
             echo "volumetric_fog: ${probe}"
+            echo "hollow_ash_pools: ${pools}"
             if [ "${probe}" = "off" ]; then
               echo
               echo "These frames show the HEIGHT-FOG FALLBACK, not the volumetric"
               echo "path: this runner's GPU lacks R32_Uint atomic storage image"
               echo "support, so Godot's froxel volumetrics never initialise here."
-              echo "Nothing in this artifact evidences a change to volumetric fog"
-              echo "or to the hollow ash pools built on it."
+              echo "Nothing in this artifact evidences a change to volumetric fog."
+            fi
+            if [ "${pools}" = "off" ]; then
+              echo
+              echo "This world contains ZERO ash pools. Pools need the GPU probe"
+              echo "AND the WAR_HOLLOW_FOG opt-in, and the capture sets neither"
+              echo "by default — so this is true even on a GPU that supports"
+              echo "volumetrics. Nothing in this artifact evidences a change to"
+              echo "the hollow ash pools."
             fi
           } > "${RUNNER_TEMP}/shots/capture-conditions.txt"
 
           {
             echo "### Frame capture conditions"
             echo
-            echo "Volumetric fog path: **${probe}**"
+            echo "Volumetric fog path: **${probe}** · hollow ash pools: **${pools}**"
           } >> "$GITHUB_STEP_SUMMARY"
 
           # The case #232 is actually about: a PR changing probe-gated code,
@@ -1301,14 +1324,32 @@ jobs:
           # blocking here would block the whole volumetric lane on a runner
           # limitation. The obligation it raises is the one AGENTS.md already
           # makes a P1 review blocker: attach a frame of the actual change.
-          if [ "${GPU_GATED}" = "true" ] && [ "${probe}" = "off" ]; then
-            echo "::warning::this PR touches GPU-probe-gated rendering, but the capture ran with volumetrics OFF — these frames CANNOT evidence that change. Attach a locally-rendered frame of the enabled path (AGENTS.md: a player-visible PR with no inspectable frame evidence is a P1 blocker)."
+          # Keyed on what was ACTUALLY RENDERED, not on the GPU verdict alone.
+          # Pools need the probe AND the opt-in, so keying this on `probe` would
+          # go quiet — and imply the frames show the pools — the moment a
+          # capable runner arrives (the lavapipe lane, #314) while the capture
+          # still sets no opt-in. The condition has to track every gate that can
+          # empty the frame, or it decays into a claim the frames do not support.
+          # `if` blocks, NOT `[ … ] && var=…`: this step runs under `bash -e`,
+          # where a bare test-and-assign whose test is FALSE makes the list
+          # return non-zero and kills the step. The failure would land only on
+          # runs where the feature rendered correctly — the green path — so it
+          # would look like a flake in the capture rather than a shell bug.
+          missing=""
+          if [ "${probe}" = "off" ]; then
+            missing="volumetric fog"
+          fi
+          if [ "${pools}" = "off" ]; then
+            missing="${missing:+${missing} and }hollow ash pools"
+          fi
+          if [ "${GPU_GATED}" = "true" ] && [ -n "${missing}" ]; then
+            echo "::warning::this PR touches gated rendering, but the capture rendered no ${missing} — these frames CANNOT evidence that change. Attach a locally-rendered frame of the enabled path (AGENTS.md: a player-visible PR with no inspectable frame evidence is a P1 blocker)."
             {
               echo
               echo "> [!WARNING]"
-              echo "> This PR touches GPU-probe-gated rendering, but the captured"
-              echo "> frames show the fallback path. They cannot evidence that"
-              echo "> change. Attach a locally-rendered frame of the enabled path."
+              echo "> This PR touches gated rendering, but the captured frames"
+              echo "> contain no ${missing}. They cannot evidence that change."
+              echo "> Attach a locally-rendered frame of the enabled path."
             } >> "$GITHUB_STEP_SUMMARY"
           fi
       - name: Capture the opted-in ground plates
@@ -1791,30 +1832,52 @@ jobs:
         # the same Volumetrics.marker() line into its own log.
         run: |
           set -o pipefail
-          if ! grep -qE '^VOLUMETRICS (on|off)([[:space:]]|$)' exported-capture.log; then
-            echo "::error::no VOLUMETRICS verdict in the exported capture log — cannot tell whether these frames depict the volumetric path or the fallback"
-            exit 1
-          fi
-          probe="$(grep -oE '^VOLUMETRICS (on|off)([[:space:]]|$)' exported-capture.log | head -1 | awk '{print $2}')"
-          echo "volumetric fog path: ${probe}"
+          # Same fail-closed reader as the editor-project capture: exactly one
+          # DISTINCT verdict per marker, or refuse to publish a conditions file
+          # that guesses.
+          read_verdict() {
+            marker="$1"; log="$2"
+            distinct="$(grep -oE "^${marker} (on|off)([[:space:]]|\$)" "$log" \
+              | sed -E "s/^${marker} //; s/[[:space:]]*\$//" | sort -u)"
+            n="$(printf '%s\n' "$distinct" | grep -c . || true)"
+            if [ "$n" -eq 0 ]; then
+              echo "::error::no ${marker} verdict in ${log} — cannot tell what these frames depict" >&2
+              return 1
+            fi
+            if [ "$n" -gt 1 ]; then
+              echo "::error::contradictory ${marker} verdicts in ${log} ($(printf '%s' "$distinct" | tr '\n' '/')) — refusing to guess" >&2
+              return 1
+            fi
+            printf '%s' "$distinct"
+          }
+          probe="$(read_verdict VOLUMETRICS exported-capture.log)" || exit 1
+          pools="$(read_verdict 'HOLLOW FOG' exported-capture.log)" || exit 1
+          echo "volumetric fog path: ${probe}; hollow ash pools: ${pools}"
           {
             echo "# Capture conditions (exported client)"
             echo
             echo "runner: ${RUNNER_OS} (hosted)"
             echo "volumetric_fog: ${probe}"
+            echo "hollow_ash_pools: ${pools}"
             if [ "${probe}" = "off" ]; then
               echo
               echo "These frames show the HEIGHT-FOG FALLBACK, not the volumetric"
               echo "path: this runner's GPU lacks R32_Uint atomic storage image"
               echo "support, so Godot's froxel volumetrics never initialise here."
-              echo "Nothing in this artifact evidences a change to volumetric fog"
-              echo "or to the hollow ash pools built on it."
+              echo "Nothing in this artifact evidences a change to volumetric fog."
+            fi
+            if [ "${pools}" = "off" ]; then
+              echo
+              echo "This world contains ZERO ash pools. Pools need the GPU probe"
+              echo "AND the WAR_HOLLOW_FOG opt-in, and the capture sets neither"
+              echo "by default. Nothing in this artifact evidences a change to"
+              echo "the hollow ash pools."
             fi
           } > "${RUNNER_TEMP}/exported-shots/capture-conditions.txt"
           {
             echo "### Exported-client capture conditions"
             echo
-            echo "Volumetric fog path: **${probe}**"
+            echo "Volumetric fog path: **${probe}** · hollow ash pools: **${pools}**"
           } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:

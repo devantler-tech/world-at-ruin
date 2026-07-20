@@ -249,6 +249,32 @@ func _ready() -> void:
 			])
 			return
 
+	# The capture marker is a MACHINE CONTRACT (#232). CI parses this line to
+	# record whether the published frames contain pools at all. It is a SECOND
+	# gate on top of the volumetrics verdict, and that is exactly why it must be
+	# pinned separately: pools need the GPU probe AND the opt-in, so on a runner
+	# that supports volumetrics the frames still contain none unless opted in.
+	var built_line: String = HollowFog.marker(true, true, 6)
+	var unbuilt_line: String = HollowFog.marker(false, false, 6)
+	for line: String in [built_line, unbuilt_line]:
+		if not line.begins_with(HollowFog.CAPTURE_MARKER + " "):
+			_fail("marker() must start with CAPTURE_MARKER and a space — CI greps for it")
+			return
+	# CI reads the field after the marker token as the verdict. CAPTURE_MARKER
+	# contains a space, so split off the marker prefix first rather than
+	# indexing a fixed field number.
+	if built_line.trim_prefix(HollowFog.CAPTURE_MARKER + " ").split(" ")[0] != "on":
+		_fail("marker(built) must report 'on' immediately after the marker — CI parses it")
+		return
+	if unbuilt_line.trim_prefix(HollowFog.CAPTURE_MARKER + " ").split(" ")[0] != "off":
+		_fail("marker(not built) must report 'off' immediately after the marker — CI parses it")
+		return
+	# The two unbuilt reasons are distinguishable: "no GPU" and "not opted in"
+	# are different facts and a reviewer acts on them differently.
+	if HollowFog.marker(false, true, 6) == HollowFog.marker(false, false, 6):
+		_fail("marker() must distinguish 'not opted in' from 'volumetrics unavailable'")
+		return
+
 	print("TEST PASS — %d ash pools, shallowest clears its surroundings by %.2f m, %.2f m below world median, %s, every built volume carries its density, deepest %.2fx denser than shallowest" % [
 		pools.size(), worst_relief, drop, "4 controls held",
 		float(deep["density"]) / maxf(float(shallow["density"]), 1e-9)

@@ -393,20 +393,14 @@ func _build_hollow_fog(world: WorldGen) -> void:
 		world.surface_height_at, WorldGen.SIZE, WorldGen.NO_GROUND, world.cave_protects
 	)
 	if not HollowFog.should_build(_volumetrics_on, HollowFog.opted_in()):
-		print("HOLLOW FOG off — %s (%d pools placed, not built)" % [
-			"volumetrics unavailable" if not _volumetrics_on
-			else "not opted in (set %s=1)" % HollowFog.OPT_IN_ENV,
-			_hollow_fog.size(),
-		])
+		print(HollowFog.marker(false, _volumetrics_on, _hollow_fog.size()))
 		return
 	var root := Node3D.new()
 	root.name = "HollowFog"
 	add_child(root)
 	for placement: Dictionary in _hollow_fog:
 		root.add_child(HollowFog.build_volume(placement))
-	print("HOLLOW FOG on — %d ash pools (opted in via %s)" % [
-		_hollow_fog.size(), HollowFog.OPT_IN_ENV
-	])
+	print(HollowFog.marker(true, _volumetrics_on, _hollow_fog.size()))
 
 
 ## Where this boot pooled ash, deepest hollow first — a copy, so a caller can
