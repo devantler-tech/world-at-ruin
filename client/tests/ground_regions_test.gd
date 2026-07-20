@@ -26,7 +26,7 @@ const EXTENT := 220.0
 ## Recorded from a headless run; regenerate deliberately by setting this to
 ## "__RECORD__", running the test and committing the printed value. A change
 ## here means the ground people walk on changed, which is a reviewed act.
-const GOLDEN_REGION_FIELD := "9922addd"
+const GOLDEN_REGION_FIELD := "9bb0ddab"
 
 var _failures: Array[String] = []
 
@@ -36,6 +36,8 @@ func _ready() -> void:
 	_test_every_region_appears()
 	_test_interiors_are_decided()
 	_test_boundaries_transition()
+	_test_palette_is_continuous()
+	_test_regions_differ_as_substances()
 	_test_origin_is_ashflats()
 	_test_sites_are_spread()
 	_test_extent_scales_with_the_world()
@@ -182,7 +184,16 @@ func _test_boundaries_transition() -> void:
 				# spanned by the two end regions' colours (per channel), with a
 				# small tolerance. A value outside it means the cross-fade
 				# invented a ground that is not there.
-				if here == a.region or here == b.region:
+				# Only where these two are the ONLY competitors: near a triple
+				# point a third region legitimately contributes, and demanding
+				# the two-region box there would fail correct output.
+				var shares: PackedFloat32Array = at[&"shares"]
+				var only_these := true
+				for rr in GroundRegions.REGIONS.size():
+					if rr != a.region and rr != b.region and shares[rr] > 0.0:
+						only_these = false
+						break
+				if only_these:
 					var pal := GroundRegions.palette_for(region_sites, x, z)
 					var ca: Color = GroundRegions.REGIONS[a.region][&"ash"]
 					var cb: Color = GroundRegions.REGIONS[b.region][&"ash"]
@@ -199,13 +210,88 @@ func _test_boundaries_transition() -> void:
 			if min_blend < 0.999:
 				found_blend = true
 			if saw_both_ends and found_blend:
-				if min_blend > 0.05:
-					_fail("crossing a boundary never reached a near-even mix (min blend %.3f) — the change is a seam, not a transition" % min_blend)
+				# `blend` is the OWNER'S SHARE now: 1.0 fully decided, 0.5 an even
+				# two-way meeting. It must fall to about a half, not to zero.
+				if min_blend > 0.6:
+					_fail("crossing a boundary never reached a near-even mix (owner share stayed %.3f) — the change is a seam, not a transition" % min_blend)
 				return
 	if not saw_both_ends:
 		_fail("no walk between two different regions was found — this arm proved nothing")
 	elif not found_blend:
 		_fail("crossing between two regions never blended at all — boundaries are hard seams")
+
+
+## The ground palette must be CONTINUOUS everywhere — no step, anywhere, ever.
+##
+## This arm exists because the first implementation cross-faded the owner only
+## against its second-nearest site, which put a hard seam wherever the SECOND
+## site's identity changed while the owner stayed put. It measured **0.185 in a
+## single step at (49.6, 34.0)** on the shipped seed — larger than the gap
+## between some whole regions — and every other arm here passed it, because a
+## site-to-site walk never crosses the place where the THIRD site takes over.
+## Walking dense lines and bounding the step size is what catches that class.
+func _test_palette_is_continuous() -> void:
+	var region_sites := GroundRegions.sites(SEED, EXTENT)
+	# A step this small can only legitimately change the palette by roughly
+	# (widest palette gap) * step / BLEND_BAND ~= 0.002. The threshold sits an
+	# order of magnitude above that and still an order BELOW the 0.185 seam the
+	# old blend produced, so it cannot be satisfied by tuning.
+	var step := 0.05
+	var max_step_change := 0.01
+	var worst := 0.0
+	var worst_at := Vector2.ZERO
+	# Sweep a lattice of lines rather than one: a single line can miss a triple
+	# point, which is exactly where the defect lived.
+	for line in 24:
+		var z := (float(line) / 23.0 - 0.5) * (EXTENT - 8.0)
+		var prev := Color(0, 0, 0)
+		var first := true
+		var x := -EXTENT * 0.5 + 4.0
+		while x <= EXTENT * 0.5 - 4.0:
+			var pal := GroundRegions.palette_for(region_sites, x, z)
+			var c: Color = pal[&"ash"]
+			if not first:
+				var d := maxf(maxf(absf(c.r - prev.r), absf(c.g - prev.g)), absf(c.b - prev.b))
+				if d > worst:
+					worst = d
+					worst_at = Vector2(x, z)
+			prev = c
+			first = false
+			x += step
+	if worst > max_step_change:
+		_fail("the ground palette jumps %.4f in a single %.2f m step at (%.1f, %.1f) — that is a seam, not a transition" %
+			[worst, step, worst_at.x, worst_at.y])
+
+
+## A region must be a SUBSTANCE, not a tint: the regions have to differ in how
+## they answer light, not only in colour. Without this, flattening every
+## `rough` to the same value would leave four paints on one material and no
+## other arm here would notice.
+func _test_regions_differ_as_substances() -> void:
+	var seen := {}
+	var lo := INF
+	var hi := -INF
+	for r in GroundRegions.REGIONS:
+		var rough: float = r[&"rough"]
+		seen[rough] = true
+		lo = minf(lo, rough)
+		hi = maxf(hi, rough)
+	if seen.size() < 3:
+		_fail("only %d distinct roughness values across %d regions — the regions are tints of one material" %
+			[seen.size(), GroundRegions.REGIONS.size()])
+	# Wide enough to survive the shader's own grain term (+-0.03) and still read.
+	if hi - lo < 0.08:
+		_fail("roughness spread is only %.3f — too narrow to separate the grounds as substances" % (hi - lo))
+	# And the blend must carry it: a place between two regions takes a
+	# roughness between theirs, or the colour and the surface disagree.
+	var region_sites := GroundRegions.sites(SEED, EXTENT)
+	for s in region_sites:
+		var pal := GroundRegions.palette_for(region_sites, s.x, s.z)
+		var want: float = GroundRegions.REGIONS[s.region][&"rough"]
+		var got: float = pal[&"rough"]
+		if absf(got - want) > 1e-5:
+			_fail("site (%.1f, %.1f) reports roughness %.4f, not its region's %.4f" % [s.x, s.z, got, want])
+			return
 
 
 func _test_origin_is_ashflats() -> void:

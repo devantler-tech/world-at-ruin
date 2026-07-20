@@ -282,6 +282,13 @@ func _ground_color(at: Vector3) -> Color:
 	if scorch > 0.35:
 		var col_scorch: Color = pal[&"scorch"]
 		c = c.lerp(col_scorch, clampf((scorch - 0.35) * 2.5, 0.0, 0.8))
+	# ALPHA CARRIES THE REGION'S ROUGHNESS, biased to 0.5 so the signed offset
+	# survives an unsigned channel. Colour alone would leave every region the
+	# same substance under a different tint — the ground has to answer light
+	# differently too, and the vertex stream already reaches the shader, so no
+	# second material or texture is needed. Nothing reads terrain alpha as
+	# transparency: the shader is opaque and never assigns ALPHA.
+	c.a = 0.5 + float(pal[&"rough"])
 	return c
 
 

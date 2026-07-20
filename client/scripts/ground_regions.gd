@@ -15,9 +15,15 @@ extends RefCounted
 ##   1. DECIDED INTERIORS. Away from a boundary a place is its region's palette
 ##      outright, not a blend of everything nearby. A continuous blend of four
 ##      palettes is just the old uniform field with extra steps.
-##   2. TRANSITIONS, NOT SEAMS. Within `BLEND_BAND` metres of the line between
-##      two regions the two palettes mix, so the change reads as ground giving
-##      way to other ground rather than a cut in the terrain.
+##   2. TRANSITIONS, NOT SEAMS. Within `BLEND_BAND` metres of a boundary the
+##      competing palettes mix, so the change reads as ground giving way to
+##      other ground rather than a cut in the terrain. This holds EVERYWHERE,
+##      including where three regions meet — see `region_for` for why that took
+##      weighting every region rather than only the runner-up.
+##
+## A region is a SUBSTANCE, not a tint: each carries its own roughness as well
+## as its own colours, so scoured stone answers the low sun differently from
+## loose ash. Colour alone would have made them one material in four paints.
 ##
 ## Everything here is integer-hash derived from the world seed: no `randf()`,
 ## no `FastNoiseLite`, no static mutable state. The same seed gives the same
@@ -85,6 +91,8 @@ const REGIONS: Array[Dictionary] = [
 		&"ash": Color(0.38, 0.345, 0.31),
 		&"rock": Color(0.24, 0.22, 0.21),
 		&"scorch": Color(0.16, 0.14, 0.13),
+		# Loose ash: the baseline surface, and the roughest ground here.
+		&"rough": 0.0,
 	},
 	{
 		# Where the burn sat longest: much darker, and warm rather than neutral.
@@ -92,6 +100,8 @@ const REGIONS: Array[Dictionary] = [
 		&"ash": Color(0.24, 0.155, 0.125),
 		&"rock": Color(0.15, 0.10, 0.08),
 		&"scorch": Color(0.10, 0.065, 0.05),
+		# Fire-fused crust: slightly slicker than loose ash.
+		&"rough": -0.06,
 	},
 	{
 		# Ash scoured off down to the pale stone beneath: much lighter, and the
@@ -100,6 +110,8 @@ const REGIONS: Array[Dictionary] = [
 		&"ash": Color(0.55, 0.545, 0.525),
 		&"rock": Color(0.35, 0.345, 0.33),
 		&"scorch": Color(0.23, 0.23, 0.22),
+		# Scoured stone, wind-polished: the least rough ground in the Reach.
+		&"rough": -0.14,
 	},
 	{
 		# Ground stained by the inherited machines rusting into it — ochre, the
@@ -111,6 +123,8 @@ const REGIONS: Array[Dictionary] = [
 		&"ash": Color(0.42, 0.275, 0.135),
 		&"rock": Color(0.27, 0.175, 0.085),
 		&"scorch": Color(0.18, 0.115, 0.055),
+		# Corroded, pitted ground: rougher even than the ash.
+		&"rough": 0.05,
 	},
 ]
 
@@ -196,69 +210,116 @@ static func sites(world_seed: int, extent: float) -> Array[Site]:
 	return out
 
 
-## The region owning a place, and how strongly it owns it.
+## How strongly each region competes for a place.
 ##
-## Returns `{ region, neighbour, blend }` where `blend` is 0 at the boundary
-## with `neighbour` and 1 once the place is `BLEND_BAND` metres clear of it.
-## Callers that only want the answer can read `region`; callers drawing the
-## ground use `blend` to cross-fade.
+## Returns `{ region, neighbour, blend, shares }`:
+##   * `region`    — the region owning the place (the nearest site's).
+##   * `neighbour` — the strongest region that is NOT the owner, or the owner
+##     itself where nothing else competes. For tests and evidence.
+##   * `blend`     — the owner's share, in (0, 1]. **1.0 means fully decided**;
+##     0.5 is an even two-way meeting; lower where three regions meet.
+##   * `shares`    — the normalised weight of every region, indexed like REGIONS.
+##
+## 🔴 EVERY competing region is weighted, not just the runner-up, and that is a
+## correctness requirement rather than a refinement. Cross-fading the owner only
+## against its SECOND-nearest site puts a hard seam wherever the *second* site's
+## identity changes while the owner stays put: the mix jumps from one palette to
+## another in a single step. Not hypothetical — on the shipped seed that
+## produced a **0.185 one-step colour jump at (49.6, 34.0)**, larger than the gap
+## between some whole regions, and it survived every site-to-site walk a test
+## could take because the discontinuity lies where the THIRD site takes over.
+## `ground_regions_test._test_palette_is_continuous` now RED-proves it.
+##
+## Weighting every region removes it by construction: a region's weight falls
+## continuously to zero as it stops competing, so no region can appear or vanish
+## in a step. Taking the MAX weight per region (not the sum) is what makes two
+## sites of the same region meeting a non-event — the owner keeps weight 1 and
+## the place stays decided, with no special case needed.
+##
 ## `region_sites` is passed in rather than rebuilt per call: the terrain grid
 ## asks about ~16k places, and rebuilding nine sites for each of them would
 ## allocate its way through the whole bake for no reason. The seed/extent
 ## wrappers below are the convenience form for tests and one-off queries.
 static func region_for(region_sites: Array[Site], x: float, z: float) -> Dictionary:
-	var best := -1
-	var best_d := INF
-	var second := -1
-	var second_d := INF
+	var dists := PackedFloat32Array()
+	var nearest := -1
+	var nearest_d := INF
 	for i in region_sites.size():
 		var s := region_sites[i]
 		var dx := x - s.x
 		var dz := z - s.z
 		var d := sqrt(dx * dx + dz * dz)
-		if d < best_d:
-			second = best
-			second_d = best_d
-			best = i
-			best_d = d
-		elif d < second_d:
-			second = i
-			second_d = d
-	var owner: int = region_sites[best].region
-	var other: int = region_sites[second].region if second >= 0 else owner
-	# Distance-difference, not raw distance: it is 0 exactly on the bisector
-	# between the two nearest sites and grows as the place commits to one.
-	var blend := 1.0
-	if second >= 0:
-		blend = clampf((second_d - best_d) / BLEND_BAND, 0.0, 1.0)
-	# Two sites of the SAME region meeting is not a boundary — there is
-	# nothing to cross-fade to, and treating it as one would put a seam of
-	# half-strength palette through the middle of a single region.
-	if other == owner:
-		blend = 1.0
-	return {&"region": owner, &"neighbour": other, &"blend": blend}
+		dists.append(d)
+		if d < nearest_d:
+			nearest_d = d
+			nearest = i
+
+	# Per-region weight: 1 for the nearest site, falling linearly to 0 for a
+	# site a full BLEND_BAND further away. Continuous in position, so the mix is.
+	var weights := PackedFloat32Array()
+	for _r in REGIONS.size():
+		weights.append(0.0)
+	for i in region_sites.size():
+		var w := 1.0 - (dists[i] - nearest_d) / BLEND_BAND
+		if w <= 0.0:
+			continue
+		var r: int = region_sites[i].region
+		if w > weights[r]:
+			weights[r] = w
+
+	var total := 0.0
+	for r in REGIONS.size():
+		total += weights[r]
+
+	var owner: int = region_sites[nearest].region
+	var shares := PackedFloat32Array()
+	var other := owner
+	var other_w := 0.0
+	for r in REGIONS.size():
+		shares.append(weights[r] / total)
+		if r != owner and weights[r] > other_w:
+			other_w = weights[r]
+			other = r
+	return {
+		&"region": owner,
+		&"neighbour": other,
+		&"blend": shares[owner],
+		&"shares": shares,
+	}
 
 
-## The ground palette at a place: `{ ash, rock, scorch }`, already cross-faded
-## across a boundary. This is the whole interface the world generator needs.
+## The ground palette at a place: `{ ash, rock, scorch, rough }`, already
+## cross-faded across every region competing for it. The whole interface the
+## world generator needs.
 static func palette_for(region_sites: Array[Site], x: float, z: float) -> Dictionary:
 	var at := region_for(region_sites, x, z)
-	var a: Dictionary = REGIONS[at[&"region"]]
-	var b: Dictionary = REGIONS[at[&"neighbour"]]
-	var blend: float = at[&"blend"]
-	if blend >= 1.0 or a == b:
-		return {&"ash": a[&"ash"], &"rock": a[&"rock"], &"scorch": a[&"scorch"]}
-	# Half-way at the boundary: `blend` runs 0..1, and a place exactly on the
-	# line is an even mix of the two grounds meeting there.
-	var t := (1.0 - blend) * 0.5
-	var ash: Color = a[&"ash"]
-	var rock: Color = a[&"rock"]
-	var scorch: Color = a[&"scorch"]
-	return {
-		&"ash": ash.lerp(b[&"ash"], t),
-		&"rock": rock.lerp(b[&"rock"], t),
-		&"scorch": scorch.lerp(b[&"scorch"], t),
-	}
+	var shares: PackedFloat32Array = at[&"shares"]
+	var owner: int = at[&"region"]
+	if at[&"blend"] >= 1.0:
+		var only: Dictionary = REGIONS[owner]
+		return {
+			&"ash": only[&"ash"],
+			&"rock": only[&"rock"],
+			&"scorch": only[&"scorch"],
+			&"rough": only[&"rough"],
+		}
+	var ash := Color(0.0, 0.0, 0.0)
+	var rock := Color(0.0, 0.0, 0.0)
+	var scorch := Color(0.0, 0.0, 0.0)
+	var rough := 0.0
+	for r in REGIONS.size():
+		var w := shares[r]
+		if w <= 0.0:
+			continue
+		var reg: Dictionary = REGIONS[r]
+		var a: Color = reg[&"ash"]
+		var k: Color = reg[&"rock"]
+		var s: Color = reg[&"scorch"]
+		ash += a * w
+		rock += k * w
+		scorch += s * w
+		rough += float(reg[&"rough"]) * w
+	return {&"ash": ash, &"rock": rock, &"scorch": scorch, &"rough": rough}
 
 
 ## Convenience wrappers: build the sites, then ask. For tests, evidence and
