@@ -11,7 +11,7 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
-		"version": "0.20.0",
+		"version": "0.21.0",
 		"date": "2026-07-20",
 		"title": "You can see the four bodies before you choose one",
 		"notes": [
@@ -20,6 +20,17 @@ const ENTRIES: Array[Dictionary] = [
 			"The portraits are drawn from the same recipes the buttons apply, every time the screen opens. There is no saved picture that could drift out of step with the body you would actually get.",
 			"They fill in over the first moments the screen is open rather than all at once, so opening the creator does not stall while four bodies are built.",
 			"Three things are still unfinished. The brute has no shirt in its recipe, so its portrait shows a bare chest — the wardrobe has no clothed starting state underneath yet, which is being fixed separately. The plates are a fixed small size, so the faces are smaller than they should be. And a plate does not light up when you hover it or when it is the one you have chosen; only the name beside it does.",
+		],
+	},
+	{
+		"version": "0.20.0",
+		"date": "2026-07-20",
+		"title": "You can see that other people are there",
+		"notes": [
+			"The Reach has been able to hear about other players for a while — the game knew where they were, kept track of them as they moved, and noticed when they left. It just never put any of it on screen, so you walked through a world that was technically shared and looked completely empty.",
+			"Now everyone else in your part of the world shows up as a pale standing shape, in the right place, moving as they move and gone when they walk out of range or leave.",
+			"They are deliberately plain — a blank capsule, not a person. What another player actually looks like is the character work, and putting a rough guess on screen now would mean two different answers to the same question later. This is about knowing someone is there at all.",
+			"You still need a zone to connect to before any of this appears. On your own, nothing has changed.",
 		],
 	},
 	{

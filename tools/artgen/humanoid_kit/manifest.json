@@ -16,24 +16,85 @@
   "rig": "game_engine",
   "strip_vertex_groups": ["HelperGeometry", "JointCubes"],
   "shapes": [
-    { "name": "torso_vshape", "targets": ["torso/torso-vshape-incr.target.gz"] },
-    { "name": "torso_muscle", "targets": ["torso/torso-muscle-pectoral-incr.target.gz", "torso/torso-muscle-dorsi-incr.target.gz"] },
-    { "name": "torso_broad", "targets": ["torso/torso-scale-horiz-incr.target.gz"] },
-    { "name": "shoulders_broad", "targets": ["torso/measure-shoulder-dist-incr.target.gz"] },
-    { "name": "waist_slim", "targets": ["torso/measure-waist-circ-decr.target.gz"] },
+    {
+      "name": "torso_vshape",
+      "targets": ["torso/torso-vshape-incr.target.gz"]
+    },
+    {
+      "name": "torso_muscle",
+      "targets": [
+        "torso/torso-muscle-pectoral-incr.target.gz",
+        "torso/torso-muscle-dorsi-incr.target.gz"
+      ]
+    },
+    {
+      "name": "torso_broad",
+      "targets": ["torso/torso-scale-horiz-incr.target.gz"]
+    },
+    {
+      "name": "shoulders_broad",
+      "targets": ["torso/measure-shoulder-dist-incr.target.gz"]
+    },
+    {
+      "name": "waist_slim",
+      "targets": ["torso/measure-waist-circ-decr.target.gz"]
+    },
     { "name": "belly", "targets": ["stomach/stomach-pregnant-incr.target.gz"] },
     { "name": "hips_wide", "targets": ["hip/hip-scale-horiz-incr.target.gz"] },
-    { "name": "buttocks_full", "targets": ["buttocks/buttocks-volume-incr.target.gz"] },
-    { "name": "neck_thick", "targets": ["neck/measure-neck-circ-incr.target.gz"] },
-    { "name": "arms_muscle", "targets": ["arms/l-upperarm-muscle-incr.target.gz", "arms/r-upperarm-muscle-incr.target.gz", "arms/l-lowerarm-muscle-incr.target.gz", "arms/r-lowerarm-muscle-incr.target.gz", "arms/l-upperarm-shoulder-muscle-incr.target.gz", "arms/r-upperarm-shoulder-muscle-incr.target.gz"] },
-    { "name": "arms_heavy", "targets": ["arms/l-upperarm-fat-incr.target.gz", "arms/r-upperarm-fat-incr.target.gz", "arms/l-lowerarm-fat-incr.target.gz", "arms/r-lowerarm-fat-incr.target.gz"] },
-    { "name": "legs_muscle", "targets": ["legs/l-upperleg-muscle-incr.target.gz", "legs/r-upperleg-muscle-incr.target.gz", "legs/l-lowerleg-muscle-incr.target.gz", "legs/r-lowerleg-muscle-incr.target.gz"] },
-    { "name": "legs_heavy", "targets": ["legs/l-upperleg-fat-incr.target.gz", "legs/r-upperleg-fat-incr.target.gz", "legs/l-lowerleg-fat-incr.target.gz", "legs/r-lowerleg-fat-incr.target.gz"] },
+    {
+      "name": "buttocks_full",
+      "targets": ["buttocks/buttocks-volume-incr.target.gz"]
+    },
+    {
+      "name": "neck_thick",
+      "targets": ["neck/measure-neck-circ-incr.target.gz"]
+    },
+    {
+      "name": "arms_muscle",
+      "targets": [
+        "arms/l-upperarm-muscle-incr.target.gz",
+        "arms/r-upperarm-muscle-incr.target.gz",
+        "arms/l-lowerarm-muscle-incr.target.gz",
+        "arms/r-lowerarm-muscle-incr.target.gz",
+        "arms/l-upperarm-shoulder-muscle-incr.target.gz",
+        "arms/r-upperarm-shoulder-muscle-incr.target.gz"
+      ]
+    },
+    {
+      "name": "arms_heavy",
+      "targets": [
+        "arms/l-upperarm-fat-incr.target.gz",
+        "arms/r-upperarm-fat-incr.target.gz",
+        "arms/l-lowerarm-fat-incr.target.gz",
+        "arms/r-lowerarm-fat-incr.target.gz"
+      ]
+    },
+    {
+      "name": "legs_muscle",
+      "targets": [
+        "legs/l-upperleg-muscle-incr.target.gz",
+        "legs/r-upperleg-muscle-incr.target.gz",
+        "legs/l-lowerleg-muscle-incr.target.gz",
+        "legs/r-lowerleg-muscle-incr.target.gz"
+      ]
+    },
+    {
+      "name": "legs_heavy",
+      "targets": [
+        "legs/l-upperleg-fat-incr.target.gz",
+        "legs/r-upperleg-fat-incr.target.gz",
+        "legs/l-lowerleg-fat-incr.target.gz",
+        "legs/r-lowerleg-fat-incr.target.gz"
+      ]
+    },
     { "name": "head_round", "targets": ["head/head-round.target.gz"] },
     { "name": "head_square", "targets": ["head/head-square.target.gz"] },
     { "name": "head_aged", "targets": ["head/head-age-incr.target.gz"] },
     { "name": "head_heavy", "targets": ["head/head-fat-incr.target.gz"] },
-    { "name": "chin_prominent", "targets": ["chin/chin-prominent-incr.target.gz"] },
+    {
+      "name": "chin_prominent",
+      "targets": ["chin/chin-prominent-incr.target.gz"]
+    },
     { "name": "jaw_wide", "targets": ["chin/chin-width-incr.target.gz"] },
     { "name": "nose_strong", "targets": ["nose/nose-volume-incr.target.gz"] },
     { "name": "nose_hump", "targets": ["nose/nose-hump-incr.target.gz"] }
@@ -45,19 +106,64 @@
     { "name": "body_aged", "macro": { "age": 0.9 } },
     { "name": "body_heavy", "macro": { "weight": 1.0 } },
     { "name": "body_slim", "macro": { "weight": 0.0 } },
-    { "name": "phenotype_african", "macro": { "race": { "african": 1.0, "asian": 0.0, "caucasian": 0.0 } } },
-    { "name": "phenotype_asian", "macro": { "race": { "asian": 1.0, "caucasian": 0.0, "african": 0.0 } } },
-    { "name": "phenotype_caucasian", "macro": { "race": { "caucasian": 1.0, "asian": 0.0, "african": 0.0 } } }
+    {
+      "name": "phenotype_african",
+      "macro": { "race": { "african": 1.0, "asian": 0.0, "caucasian": 0.0 } }
+    },
+    {
+      "name": "phenotype_asian",
+      "macro": { "race": { "asian": 1.0, "caucasian": 0.0, "african": 0.0 } }
+    },
+    {
+      "name": "phenotype_caucasian",
+      "macro": { "race": { "caucasian": 1.0, "asian": 0.0, "african": 0.0 } }
+    }
   ],
   "skins_comment": "Skins are diffuse textures from the official CC0 skins packs (release 2023-05-20: 'New CC0 skins packs'), painted on the shared MakeHuman body UV. The bake downscales each to skin_texture_size and commits it with a registry; the runtime assigns it per recipe. Names cover gender x tone x age; 'with genitals'/makeup/tattoo variants are deliberately excluded.",
   "skin_texture_size": 1024,
   "skins": [
-    { "name": "skin_female_light", "pack": "skins01", "mhmat": "skins/bobby_03_young_female_hairless/bobby_03_young_female_hairless.mhmat", "author": "bobby_03", "license": "CC0" },
-    { "name": "skin_female_mid", "pack": "skins01", "mhmat": "skins/callharvey3d_midtoned_female/callharvey3d_midtoned_female.mhmat", "author": "callharvey3d", "license": "CC0" },
-    { "name": "skin_female_aged", "pack": "skins01", "mhmat": "skins/onlytheghosts_old_eurasian_female/onlytheghosts_old_eurasian_female.mhmat", "author": "onlytheghosts", "license": "CC0" },
-    { "name": "skin_male_light", "pack": "skins02", "mhmat": "skins/toigo_light_skin_male_bronze/toigo_light_skin_male_bronze.mhmat", "author": "toigo", "license": "CC0" },
-    { "name": "skin_male_deep", "pack": "skins02", "mhmat": "skins/mindfront_skin_male_african_middleage/mindfront_skin_male_african_middleage.mhmat", "author": "mindfront", "license": "CC0" },
-    { "name": "skin_male_aged", "pack": "skins02", "mhmat": "skins/onlytheghosts_old_eurasian_male/onlytheghosts_old_eurasian_male.mhmat", "author": "onlytheghosts", "license": "CC0" }
+    {
+      "name": "skin_female_light",
+      "pack": "skins01",
+      "mhmat": "skins/bobby_03_young_female_hairless/bobby_03_young_female_hairless.mhmat",
+      "author": "bobby_03",
+      "license": "CC0"
+    },
+    {
+      "name": "skin_female_mid",
+      "pack": "skins01",
+      "mhmat": "skins/callharvey3d_midtoned_female/callharvey3d_midtoned_female.mhmat",
+      "author": "callharvey3d",
+      "license": "CC0"
+    },
+    {
+      "name": "skin_female_aged",
+      "pack": "skins01",
+      "mhmat": "skins/onlytheghosts_old_eurasian_female/onlytheghosts_old_eurasian_female.mhmat",
+      "author": "onlytheghosts",
+      "license": "CC0"
+    },
+    {
+      "name": "skin_male_light",
+      "pack": "skins02",
+      "mhmat": "skins/toigo_light_skin_male_bronze/toigo_light_skin_male_bronze.mhmat",
+      "author": "toigo",
+      "license": "CC0"
+    },
+    {
+      "name": "skin_male_deep",
+      "pack": "skins02",
+      "mhmat": "skins/mindfront_skin_male_african_middleage/mindfront_skin_male_african_middleage.mhmat",
+      "author": "mindfront",
+      "license": "CC0"
+    },
+    {
+      "name": "skin_male_aged",
+      "pack": "skins02",
+      "mhmat": "skins/onlytheghosts_old_eurasian_male/onlytheghosts_old_eurasian_male.mhmat",
+      "author": "onlytheghosts",
+      "license": "CC0"
+    }
   ],
   "equipment_comment": "Equipment pieces are CC0 MHCLO assets from the official MakeHuman 01-series CC0 packs (the _cc0.zip variants — the CC-BY variants are policy-excluded). Packs are downloaded pinned+checksummed by bootstrap.sh, never committed; each piece bakes to its own skinned GLB sharing the one canonical skeleton, with a clothes blend shape per kit shape (refit under that morph) so equipment follows the body. delete_verts become an equip_hide_<name> shape on the BODY that tucks covered skin inward.",
   "asset_packs": {
