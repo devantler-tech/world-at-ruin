@@ -11,6 +11,16 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
+		"version": "0.19.0",
+		"date": "2026-07-20",
+		"title": "The ground is broken rock, with ash blown over it",
+		"notes": [
+			"The ground used to be one smooth sheet of colour from your boots to the horizon — you could walk a long way across the Reach and never pass anything. Now the ash only lies where it settled. Where the wind scoured it away you walk out onto bare rock: slabs about a stride across, each one its own stone — some nearly black, some rust-red, some pale — meeting one another at seams.",
+			"The ash sheets end at an edge rather than fading away, so you can see where the ash stops and the rock starts, and the low sun catches along the seams between slabs instead of sliding over everything equally.",
+			"This is the close-up companion to the stretches of ground described below: that change decides what a part of the Reach is made of, this one decides what a single stride of it looks like. It is nowhere near finished, so you have to ask for it — start the game with WAR_GROUND_PLATES=1 and you will see it; otherwise the ground looks exactly as it did before. The slabs lie flat against the ground rather than sitting proud of the ash with real thickness, so they can read as marks on the ground instead of stone you could stub a boot on, and nothing has crumbled — there is no loose rubble or scree around a broken slab. It becomes how the ground always looks once those are fixed.",
+		],
+	},
+	{
 		"version": "0.18.0",
 		"date": "2026-07-20",
 		"title": "Your wanderer breathes",
