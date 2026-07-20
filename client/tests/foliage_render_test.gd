@@ -38,7 +38,7 @@ const HALF := WorldGen.SIZE / 2.0
 ## _fingerprint). Regenerate deliberately (record mode prints it) only when
 ## placement is intentionally changed; like the #58 world golden, a change
 ## here is a reviewed act.
-const GOLDEN_FINGERPRINT := "75dc1a3"
+const GOLDEN_FINGERPRINT := "5e2577e7"
 
 
 func _ready() -> void:
@@ -108,14 +108,30 @@ func _ready() -> void:
 	# real 0.66× exposure factor), so divide the noise term OUT — it is
 	# public spec (the field's own noise object + the BARE/FULL band) — and
 	# compare the residual height-and-slope response between the classes.
-	var low_sum := 0.0
-	var low_n := 0
-	var high_sum := 0.0
-	var high_n := 0
 	# High ground is rarely dead-flat (peaks curve), so the "comparably flat"
 	# cap is generous (slope01 < 0.45, identical for both classes) and the
-	# probe pitch fine (2 m) — otherwise the high class is too small to mean
-	# anything, which is exactly what the vacuity floor below guards.
+	# probe pitch fine (2 m).
+	#
+	# 🔴 LOW AND HIGH ARE PERCENTILES OF THIS WORLD, NOT FIXED HEIGHTS.
+	# They used to be `h < 0` and `h > 3.5`, which silently assumed the whole
+	# world was built at one amplitude. Once regions gained their own landforms
+	# (#316) three quarters of the Reach became flatter, ground above 3.5 m fell
+	# to the top ~1% of flat samples, and the high class collapsed to 20 — so the
+	# guard failed as vacuous with nothing wrong with the shelter law it tests.
+	# Lowering the constant would have been tuning a test to pass, and would have
+	# re-armed the same trap for the next landform change. The law is about
+	# RELATIVE elevation, so the classes are now the bottom and top TENTHS of the
+	# flat ground this world actually has, at whatever amplitude it is built.
+	#
+	# Tenths rather than any other split because the effect size is a function of
+	# how far apart the classes sit, and deciles reproduce the separation the 1.15
+	# threshold below was originally calibrated against — so that threshold is
+	# carried over UNCHANGED rather than re-tuned to whatever this world gives.
+	# Measured here, the response is monotonic in the gap, which is the shelter
+	# law showing up independently of any single threshold:
+	#     halves gap 0.00 m -> 1.069     fifths gap 2.75 m -> 1.140
+	#     tenths gap 4.09 m -> 1.213     5%     gap 5.28 m -> 1.325
+	var flat: Array[Vector2] = []
 	var probe := -104.0
 	while probe <= 104.0:
 		var pz := -104.0
@@ -127,18 +143,36 @@ func _ready() -> void:
 				# In the bare band the density is 0 whatever the height says —
 				# nothing to divide, nothing to learn about elevation there.
 				if noise_term >= 0.1:
-					var residual: float = w1._foliage_density_at(probe, pz) / noise_term
-					if h < 0.0:
-						low_sum += residual
-						low_n += 1
-					elif h > 3.5:
-						high_sum += residual
-						high_n += 1
+					flat.append(Vector2(h, w1._foliage_density_at(probe, pz) / noise_term))
 			pz += 2.0
 		probe += 2.0
-	if low_n < 40 or high_n < 40:
-		_fail("shelter check is vacuous: only %d low-flat and %d high-flat samples" % [low_n, high_n])
+	# A percentile split cannot produce an empty class, so it cannot inherit the
+	# old count-based vacuity floor. Two things replace it: enough flat ground to
+	# split at all, and — the arm that actually matters — the two classes must be
+	# SEPARATED IN HEIGHT. A world flattened to a plate would still yield two
+	# equal tenths, and comparing them would prove nothing at all.
+	if flat.size() < 200:
+		_fail("shelter check is vacuous: only %d flat noise-bearing samples to split" % flat.size())
 		return
+	flat.sort_custom(func(a: Vector2, b: Vector2) -> bool: return a.x < b.x)
+	var tenth := flat.size() / 10
+	var low_cut: float = flat[tenth].x
+	var high_cut: float = flat[flat.size() - 1 - tenth].x
+	if high_cut - low_cut < 1.0:
+		_fail("shelter check is vacuous: the flat ground spans only %.2f m between its bottom and top tenths (%.2f to %.2f) — this world is too flat for elevation to shelter anything" %
+			[high_cut - low_cut, low_cut, high_cut])
+		return
+	var low_sum := 0.0
+	var low_n := 0
+	var high_sum := 0.0
+	var high_n := 0
+	for s: Vector2 in flat:
+		if s.x <= low_cut:
+			low_sum += s.y
+			low_n += 1
+		elif s.x >= high_cut:
+			high_sum += s.y
+			high_n += 1
 	var low_mean := low_sum / float(low_n)
 	var high_mean := high_sum / float(high_n)
 	if low_mean < high_mean * 1.15:
