@@ -45,7 +45,6 @@ var _main: Node
 var _save: SaveIsolation
 ## Which of the four boots is running.
 var _phase := "control"
-var _control_ledger: Array = []
 
 
 func _ready() -> void:
@@ -137,7 +136,6 @@ func _assert_control() -> void:
 		_fail(("VACUOUS TEST GUARD: a clean boot quarantined %s. Nothing failed, so the "
 			+ "quarantine asserted in the next phase would prove nothing") % str(ledger))
 		return
-	_control_ledger = ledger
 	if not _save.real_save_untouched():
 		_fail("the control boot touched the player's real save, vault or recovery ledger")
 		return
