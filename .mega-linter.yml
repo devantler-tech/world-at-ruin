@@ -81,7 +81,16 @@ MARKDOWN_MARKDOWNLINT_CONFIG_FILE: .markdownlint.yaml
 #
 # The bake INPUTS (tools/artgen/**/manifest.json) are authored, are only ever parsed, and
 # stay linted — reformatting them cannot change a bake.
-FILTER_REGEX_EXCLUDE: (client/assets/characters/.*)
+#
+# client/tests/data/** is GOLDEN TEST DATA, where byte-exact form is the thing under test.
+# jcs_vectors.json holds RFC 8785 (JCS) conformance vectors whose contract is that an
+# implementation must "reproduce `expected` byte for byte"; reformatting it would corrupt
+# the very property it exists to verify. Its neighbours — golden_recipe_v1..v4,
+# golden_creature_recipe_v1, golden_vault_v1, cross_tier_cone.json, wire_goldens.json — are
+# fixtures under the forward-only save-data law, where a reformat makes the diff of a real
+# golden change unreadable. Prettier reformatted two of these on the first run that saw
+# them, which is how this was caught.
+FILTER_REGEX_EXCLUDE: (client/assets/characters/.*|client/tests/data/.*)
 
 EXCLUDED_DIRECTORIES:
   - megalinter-reports
