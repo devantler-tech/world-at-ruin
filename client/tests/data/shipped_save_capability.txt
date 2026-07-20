@@ -1,0 +1,12 @@
+# The save capabilities this project has SHIPPED, oldest first, one per line.
+#
+# The append-only ledger behind UpdateManifest.SAVE_CAPABILITY, mirroring
+# shipped_recipe_versions.txt. A capability is what a build writes WITHIN its
+# save schema: a same-schema content addition (a new savable registry name)
+# raises it without changing the save's shape.
+#
+# Append a line in the SAME PR that raises the constant. Never remove, reorder or
+# reuse a line — a capability that a player's vault already carries can never be
+# un-shipped, and a build claiming to write less than it once did is exactly the
+# stranding the no-resets law forbids.
+1

@@ -200,6 +200,32 @@ Versions: the **pack** version tracks the release the dev-log announces (`DevLog
 version is stored and bumped independently with the native build (**not** `config/version`, which ships
 inside the pack) — so a pack-only release never masquerades as a phantom shell change or vice-versa.
 
+### What the build can state about itself today (`UpdateManifest`)
+
+`client/scripts/update_manifest.gd` derives the manifest from the constants the build actually runs on,
+so it can never disagree with the build it describes. `update_manifest_test.gd` proves the generated
+manifest is accepted by the **real** `UpdateDecision.decide()`, and deletes each required field in turn
+to prove that acceptance is not vacuous.
+
+It asserts only what the repo can back, and three omissions are **deliberate and load-bearing** rather
+than unfinished:
+
+- **`signature` / `key` / `revocation`** — the root of trust is child 6, unstarted. The published OCI
+  artifact is cosign-signed by digest, which is a real but *different* integrity property.
+- **`shell.download`** — a shell replacement must be root-authorized (see Signing). Publishing a
+  download without its `shell_authorization` would offer an unauthenticated place to fetch an
+  executable from, so it is withheld until child 6 supplies that authorization. A client following the
+  envelope to a `shell_update` then finds nowhere to go and keeps playing — the safe failure.
+- **`pack.deltas` / `rollback_targets`** — empty, because no delta pipeline exists and nothing is
+  retained. Empty is the fail-closed value: it makes the decision core refuse a capability-raising pack
+  rather than ship one no player could roll back from.
+
+Two assumptions are guarded by tests rather than comments. `shell.current` is derived from the pack
+version, which is honest only while the build is a **single artifact** — the test fails the moment
+`export_presets.cfg` declares a pack split (child 3), forcing the shell to be given its own source of
+record in that same change. And `save_capability` is backed by an append-only ledger
+(`tests/data/shipped_save_capability.txt`), so it can only ever rise.
+
 ## Delivery substrate (decided; open to steer)
 
 - **Origin of record:** self-hosted on the platform — an **OCI registry / object store**, published by
