@@ -36,25 +36,30 @@ uniform vec3 joint_color: source_color = vec3(0.19, 0.17, 0.16);
 // Ash that settles on anything facing the sky, tying masonry to the ground.
 uniform vec3 ash_color: source_color = vec3(0.52, 0.48, 0.42);
 
-// Course height in metres. Blocks read as masonry at roughly this size; the
-// ruin columns are ~0.5-0.9 m across, so a course near 0.45 m gives two to
-// three courses per visible span rather than one flat face.
-uniform float course_height = 0.45;
+// Course height in metres. These are the megaliths of a civilisation that
+// fell, not a garden wall: a column ~0.9 m across wants to read as ONE stone
+// per course, a few courses tall. Tuned by eye against the shrine vantage —
+// at 0.45 the monoliths read as small modern brickwork, which is the opposite
+// of the intent.
+uniform float course_height = 0.85;
 // Block length along the course, in metres.
-uniform float block_length = 0.72;
+uniform float block_length = 1.25;
 // Width of the recessed joint, as a fraction of a block.
-uniform float joint_width: hint_range(0.0, 0.3) = 0.055;
-// How much the joints and block relief bend the normal.
-uniform float bump_strength: hint_range(0.0, 3.0) = 0.9;
-// How much each block's own draw shifts its brightness.
-uniform float block_variation: hint_range(0.0, 1.0) = 0.16;
+uniform float joint_width: hint_range(0.0, 0.3) = 0.045;
+// How much the joints and block relief bend the normal. This — not any albedo
+// trick — is what has to sell the relief: a chamfer that catches the low sun
+// does so because it FACES the sun, and only the normal can say that.
+uniform float bump_strength: hint_range(0.0, 3.0) = 1.35;
+// How much each block's own draw shifts its brightness. Kept low: enough that
+// a wall is many stones, not so much that it reads as patchwork.
+uniform float block_variation: hint_range(0.0, 1.0) = 0.09;
 // Fine grit over the whole surface, in cycles per metre.
 uniform float grain_scale = 11.0;
 uniform float stone_roughness: hint_range(0.0, 1.0) = 0.88;
 // Worn corners polish slightly; recessed joints hold dust and stay matte.
 uniform float wear_roughness: hint_range(0.0, 1.0) = 0.62;
 // How strongly ash accumulates on up-facing surfaces.
-uniform float ash_amount: hint_range(0.0, 1.0) = 0.45;
+uniform float ash_amount: hint_range(0.0, 1.0) = 0.30;
 // Distance over which fine detail fades, so the far field stays calm instead
 // of shimmering — same treatment the terrain uses.
 uniform float detail_fade_start = 40.0;
@@ -151,10 +156,16 @@ float relief(vec3 wp, vec3 n) {
 	float du = min(bc.x, 1.0 - bc.x);
 	float dv = min(bc.y, 1.0 - bc.y);
 	float d = min(du, dv);
-	// Hard-ish shoulder: the block face is flat, the joint drops away. This
-	// edge is the whole point — a smooth falloff here would put us straight
-	// back to an interpolation of noise.
-	return smoothstep(0.0, joint_width, d);
+	// Hard-ish shoulder: the block face stands proud, the joint drops away.
+	// This edge is the whole point — a smooth falloff here would put us
+	// straight back to an interpolation of noise.
+	float shoulder = smoothstep(0.0, joint_width, d);
+	// Weathered stone is not a flat plate. Each block carries a slight swell,
+	// and a slightly different one from its neighbour, so a wall catches the
+	// low sun unevenly across a course instead of as one plane.
+	float swell = hash2(bc.zw + vec2(17.3, 5.1));
+	float dome = (0.5 - abs(bc.x - 0.5)) * (0.5 - abs(bc.y - 0.5)) * 4.0;
+	return shoulder * (1.0 + dome * (0.10 + 0.20 * swell));
 }
 
 void fragment() {
@@ -184,22 +195,28 @@ void fragment() {
 	// Cavity darkening: the recessed joint is in shadow from everything.
 	vec3 surface = mix(joint_color, stone, face);
 
-	// Edge wear: the outermost band of each block face is chipped and exposed,
-	// so it catches light. Only on blocks whose draw says they are worn.
-	float edge = (1.0 - face) * face * 4.0;
-	surface = mix(surface, surface * 1.35, clamp(edge * block_wear, 0.0, 1.0) * 0.8);
+	// Edge wear is deliberately NOT an albedo brightening. The obvious version
+	// — lighten the band around each joint, "because chipped corners catch the
+	// light" — draws a pale rim on all four sides of every block whatever the
+	// sun is doing, and the stone immediately reads as an outlined cardboard
+	// box. Measured on the shrine vantage: it was the single thing making the
+	// masonry look cheaper than the flat grey it replaced. A real chamfer
+	// catches light because it FACES the light, so the relief below carries it
+	// through NORMAL, and wear only shows here as a slightly duller finish on
+	// the blocks whose draw says they are weathered.
+	float wear = clamp((1.0 - face) * block_wear, 0.0, 1.0);
 
 	// Ash settles on anything facing the sky, tying masonry into the ash field
-	// the terrain already lays down.
+	// the terrain already lays down. Vertical faces get almost none.
 	float up_facing = clamp(n.y, 0.0, 1.0);
-	float ash = smoothstep(0.35, 0.95, up_facing) * ash_amount * (0.7 + 0.6 * grain);
+	float ash = smoothstep(0.45, 0.95, up_facing) * ash_amount * (0.7 + 0.6 * grain);
 	surface = mix(surface, ash_color, clamp(ash, 0.0, 1.0));
 
 	ALBEDO = surface;
 
 	// --- Roughness ---
-	// Joints hold dust and stay matte; worn corners polish slightly.
-	float rough = mix(stone_roughness, wear_roughness, clamp(edge * block_wear, 0.0, 1.0));
+	// Joints hold dust and stay matte; weathered block faces dull slightly.
+	float rough = mix(stone_roughness, wear_roughness, wear * 0.5);
 	rough = mix(stone_roughness + 0.06, rough, face);
 	ROUGHNESS = clamp(rough - 0.05 * (grain - 0.5) * detail, 0.0, 1.0);
 	SPECULAR = 0.16;

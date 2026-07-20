@@ -29,8 +29,8 @@ is the *premise* and every other preference — engine, fidelity — yields to i
 - **Art: generated as code, all OSS/CC0 — never commercial assets.** Headless Blender (`bpy`) →
   glTF. **Built today:** **MPFB2** for characters (core assets CC0, explicitly closed-source-safe),
   rigged with MPFB's built-in `game_engine` rig (`tools/artgen/humanoid_kit`); text `.gdshader`
-  materials (`client/shaders/`), where **the ground and cave rock are arithmetic-only — no texture,
-  colour computed from noise**. Textures *do* ship elsewhere: six baked skin PNGs
+  materials (`client/shaders/`), where **the ground, cave rock and masonry are arithmetic-only — no
+  texture, colour computed from noise**. Textures *do* ship elsewhere: six baked skin PNGs
   (`client/assets/characters/humanoid_kit/skins/`) that `character_factory.gd` loads into a
   `StandardMaterial3D`, plus runtime `ImageTexture`s from `foliage_art.gd` — leaf and blade sampled
   by `foliage.gdshader`, bone and rubble stone by `debris.gdshader`
