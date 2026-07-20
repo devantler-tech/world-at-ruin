@@ -67,6 +67,13 @@ uniform vec3 plate_pale: source_color = vec3(0.54, 0.51, 0.45);
 // fine aliases into corduroy, too coarse puts so few edges on screen that the
 // frame measures flatter than before the change. 0.55 (~1.8 m) was the first
 // value here and read as floor tiles rather than as broken ground.
+// Product law 2: the plate treatment is player-visible art that still reads as
+// unfinished (flat against the ground, nothing crumbled), so it ships
+// DEFAULT-OFF and a player opts in. Off, every plate-derived term below folds
+// back to the pre-#261 ash/rock surface exactly. Set from WorldGen via
+// WAR_GROUND_PLATES=1; this flips to true, and the uniform is retired, once the
+// treatment clears the bar.
+uniform bool plates_enabled = false;
 uniform float plate_scale = 0.85;
 // Crack half-width in plate units (so a crack stays the same fraction of a
 // slab at any plate_scale): 0.032 * 1.2 m is a seam a couple of centimetres
@@ -277,12 +284,25 @@ void fragment() {
 	// Once a pixel spans a whole plate there is no per-plate answer to give,
 	// so converge on the mean coverage exactly as the substance does above.
 	float slab = mix(0.40, is_slab, plate_resolved);
-	float exposure = sheet * slab;
+	// A face too steep to hold ash exposes rock whether or not this cell drew a
+	// slab. Multiplying the binary slab mask straight into `sheet` zeroed
+	// roughly 60% of cells on steep ground and sent them back to ash_color,
+	// which contradicted the slope rule the line above establishes. The slab
+	// mask belongs to the PLATE treatment, not to the rock substrate.
+	float exposure = max(rock_mix, sheet * slab);
 
 	// The vertex tint stays the base layer (as cave_rock does with COLOR), so
 	// the world's existing ash/rock palette and its variation survive.
 	vec3 base = COLOR.rgb;
-	vec3 surface = mix(ash_color, sub.rgb, exposure);
+	// The opt-in gate. With plates off these three collapse to rock_color,
+	// rock_roughness and rock_mix — which is the pre-#261 surface term for
+	// term, so a default boot renders exactly what it rendered before.
+	float plate_gate = plates_enabled ? 1.0 : 0.0;
+	vec3 plate_rgb = mix(rock_color, sub.rgb, plate_gate);
+	float plate_rough = mix(rock_roughness, sub.a, plate_gate);
+	float eff_exposure = mix(rock_mix, exposure, plate_gate);
+	crack *= plate_gate;
+	vec3 surface = mix(ash_color, plate_rgb, eff_exposure);
 	// Scorch pools in the low, sheltered drifts — the Ruin's burn, not shadow.
 	surface = mix(surface, scorch_color, smoothstep(0.62, 0.95, drift) * 0.35 * (1.0 - rock_mix));
 	// Grain modulates brightness slightly; kept subtle so it reads as texture
@@ -292,12 +312,12 @@ void fragment() {
 	// thinning away — the cue that reads as "blown here" instead of "painted".
 	float lip = (1.0 - smoothstep(0.0, aw * 4.0, abs(ash_edge)))
 		* (1.0 - smoothstep(0.30, 0.85, fwidth(ash_edge)));
-	surface *= 1.0 + lip * lip_lift;
+	surface *= 1.0 + lip * lip_lift * plate_gate;
 	// Ash and shadow collect in the cracks: the cavity-darkening the reference
 	// set names, applied to an edge the shader decided rather than to noise.
 	// Gated by exposure with the slab it belongs to — a crack under a drift is
 	// a crack full of ash, which is to say no crack at all.
-	crack *= exposure;
+	crack *= exposure;  // (already zeroed above when plates are off)
 	surface *= 1.0 - crack * crack_darkness;
 
 	ALBEDO = base * surface * 2.0;
@@ -313,7 +333,7 @@ void fragment() {
 	// questions and compose cleanly: the REGION says how worn this part of the
 	// Reach is, the SLAB says what this particular piece of it is made of.
 	float region_rough = COLOR.a - 0.5;
-	ROUGHNESS = clamp(mix(ash_roughness, sub.a, exposure) + region_rough
+	ROUGHNESS = clamp(mix(ash_roughness, plate_rough, eff_exposure) + region_rough
 		- 0.06 * (grain - 0.5) * detail, 0.0, 1.0);
 	// Packed ash in a crack is matte, whatever the slab either side of it is.
 	ROUGHNESS = mix(ROUGHNESS, 1.0, crack * 0.5);
@@ -348,8 +368,12 @@ void fragment() {
 	float det = duvdx.x * duvdy.y - duvdx.y * duvdy.x;
 	float safe_det = abs(det) < 1e-8 ? 1e-8 : det;
 	// Gradient in plate-uv space, then into world XZ (plate_uv = xz * scale).
+	// plate_gate as well as exposure: the crack relief is a plate-derived term
+	// like the albedo ones, and leaving it ungated let the grooves keep raking
+	// the light with the treatment switched off — a default boot that measured
+	// visibly different from the previous ground.
 	vec2 grad = vec2(dcdx * duvdy.y - dcdy * duvdx.y,
-		dcdy * duvdx.x - dcdx * duvdy.x) / safe_det * plate_scale * exposure;
+		dcdy * duvdx.x - dcdx * duvdy.x) / safe_det * plate_scale * exposure * plate_gate;
 	// A screen-space gradient is UNBOUNDED as the feature it measures compresses
 	// into a pixel: at a grazing angle a seam 4 cm wide spans a fraction of one,
 	// and the raw slope runs to tens per metre — enough to swing the normal

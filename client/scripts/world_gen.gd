@@ -242,6 +242,12 @@ func _build_terrain() -> void:
 	# carry (procedural, no textures — same approach as the cave rock).
 	var mat := ShaderMaterial.new()
 	mat.shader = load("res://shaders/terrain.gdshader")
+	# The plate treatment (#261) is opt-in until it clears the quality bar:
+	# player-visible art that still reads as unfinished does not ship
+	# default-on (product law 2). With it off the shader folds every
+	# plate-derived term back to the previous ash/rock surface, so a default
+	# boot is unchanged.
+	mat.set_shader_parameter("plates_enabled", OS.get_environment("WAR_GROUND_PLATES") == "1")
 	mesh.surface_set_material(0, mat)
 
 	var mi := MeshInstance3D.new()
