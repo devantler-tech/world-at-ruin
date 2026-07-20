@@ -992,10 +992,16 @@ jobs:
             # first_run must be set here too: leaving it empty reads as false,
             # which would quietly drop first-run evidence in precisely the case
             # where the changed paths cannot be classified at all.
+            # gpu_gated belongs here for the same reason, and the omission was
+            # worse than the others: an unset output reads as false, so the
+            # probe-gated warning would be silently suppressed in exactly the
+            # case where nothing could be classified — fail-OPEN inside a guard
+            # whose whole purpose is to fail closed.
             {
               echo "visual=true"
               echo "first_run=true"
               echo "export_affecting=true"
+              echo "gpu_gated=true"
             } >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -1111,7 +1117,15 @@ jobs:
           # This flag does not block. It marks the PR so the capture job can say
           # so plainly in the artifact and the summary, turning a silent
           # degradation into a stated one that a reviewer can act on.
-          if grep -qE '^client/scripts/(volumetrics|hollow_fog)\.gd$|^\.github/workflows/ci\.yaml$' changed.txt; then
+          # main.gd is in the list because it OWNS the wiring, not just a call:
+          # _build_environment() runs the probe and applies the verdict, and
+          # _build_hollow_fog() decides whether the probe-gated FogVolume nodes
+          # are built at all. A change touching only main.gd can therefore alter
+          # the enabled path exclusively — the one the capture cannot show. It
+          # is deliberately conservative: this flag only ever adds a warning, so
+          # a false positive costs a line of log and a false negative costs the
+          # silent green this whole change exists to stop.
+          if grep -qE '^client/scripts/(volumetrics|hollow_fog|main)\.gd$|^\.github/workflows/ci\.yaml$' changed.txt; then
             echo "gpu_gated=true" >> "$GITHUB_OUTPUT"
           else
             echo "gpu_gated=false" >> "$GITHUB_OUTPUT"
@@ -1766,6 +1780,42 @@ jobs:
             echo "::error::no non-trivial PNGs produced"; ls -la "${RUNNER_TEMP}/exported-shots" || true; exit 1
           fi
           echo "captured $count exported-client frame(s)"
+      - name: Record what these frames can evidence
+        # #232, same contract as the editor-project capture. This artifact is
+        # published to reviewers exactly like the other one, and AGENTS.md now
+        # tells them to read capture-conditions.txt beside the frames — so
+        # omitting it here would make that promise half true, and the exported
+        # frames the half with no stated rendering path.
+        #
+        # The exported client boots main.gd through WAR_CAPTURE, so it prints
+        # the same Volumetrics.marker() line into its own log.
+        run: |
+          set -o pipefail
+          if ! grep -qE '^VOLUMETRICS (on|off)([[:space:]]|$)' exported-capture.log; then
+            echo "::error::no VOLUMETRICS verdict in the exported capture log — cannot tell whether these frames depict the volumetric path or the fallback"
+            exit 1
+          fi
+          probe="$(grep -oE '^VOLUMETRICS (on|off)([[:space:]]|$)' exported-capture.log | head -1 | awk '{print $2}')"
+          echo "volumetric fog path: ${probe}"
+          {
+            echo "# Capture conditions (exported client)"
+            echo
+            echo "runner: ${RUNNER_OS} (hosted)"
+            echo "volumetric_fog: ${probe}"
+            if [ "${probe}" = "off" ]; then
+              echo
+              echo "These frames show the HEIGHT-FOG FALLBACK, not the volumetric"
+              echo "path: this runner's GPU lacks R32_Uint atomic storage image"
+              echo "support, so Godot's froxel volumetrics never initialise here."
+              echo "Nothing in this artifact evidences a change to volumetric fog"
+              echo "or to the hollow ash pools built on it."
+            fi
+          } > "${RUNNER_TEMP}/exported-shots/capture-conditions.txt"
+          {
+            echo "### Exported-client capture conditions"
+            echo
+            echo "Volumetric fog path: **${probe}**"
+          } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: exported-frames-${{ github.event.pull_request.head.sha }}

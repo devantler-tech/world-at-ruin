@@ -92,7 +92,8 @@ Needed regardless of option 2, and independently of when that lands.
    being public *and* the runner is not the agent host.
 2. **Pursue the lavapipe lane** as an additive, probe-gated-only capture, in its own child issue,
    on the measurement above.
-3. **Until then, the degradation is stated rather than assumed.** The capture job now:
+3. **Until then, the degradation is stated rather than assumed.** **Both** capture jobs — the
+   editor-project `Frame capture (evidence)` and `Frame capture (exported client)` — now:
    - parses the probe verdict from the capture log and **fails closed when it is absent** — an
      unknown verdict is a failure, not a default. Before this the verdict lived only in a CI log
      nobody downloads, and removing the print would have made the degradation *unknowable* rather
@@ -100,8 +101,12 @@ Needed regardless of option 2, and independently of when that lands.
    - writes `capture-conditions.txt` **into the artifact**, beside the frames, so a reviewer
      opening them next week knows which path they show;
    - repeats the verdict in the job summary; and
-   - when a pull request touches probe-gated code **and** the capture ran with the probe off, says
-     plainly — in the log and the summary — that these frames cannot evidence that change.
+   - and, **once per run** rather than per job, when a pull request touches probe-gated code **and**
+     the capture ran with the probe off, say plainly — in the log and the summary — that these frames
+     cannot evidence that change. The warning is emitted by `Frame capture (evidence)` only: the flag
+     is a property of the pull request, not of a job, so repeating it in the exported job would add
+     noise without adding information. Both artifacts still carry their own conditions file, because
+     that one *is* per-job — the two jobs could in principle probe differently.
 
 The marker is a contract, not a log pleasantry: `Volumetrics.marker()` owns the string, `main.gd`
 prints it, and `volumetrics_test` pins its shape, so the workflow's parse cannot silently drift.
