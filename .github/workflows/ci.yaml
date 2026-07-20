@@ -719,36 +719,14 @@ jobs:
         # THE product-law surface (no-resets law, issue #36): its own named
         # step so a stranded save fails loudly here, never buried in the
         # per-stage loop below.
-        run: |
-          set -o pipefail
-          if ! timeout 180 godot --headless --path client "res://tests/save_fixture_guard_test.tscn" 2>&1 | tee save_fixture_guard_test.log; then
-            echo "::error::save_fixture_guard_test failed or timed out (180s) — a historical save no longer loads with zero loss"
-            tail -40 save_fixture_guard_test.log
-            exit 1
-          fi
-          if ! grep -q "TEST PASS" save_fixture_guard_test.log; then
-            echo "::error::save_fixture_guard_test exited 0 without reporting PASS"
-            tail -40 save_fixture_guard_test.log
-            exit 1
-          fi
+        run: ./tools/run-client-test.sh save_fixture_guard_test "a historical save no longer loads with zero loss"
       - name: Save-vault guard (every historical vault loads with zero loss)
         # THE product-law surface for PROGRESSION state (#249, parent #3), the
         # sibling of the save-fixture guard above. Its own named step, outside
         # the auto-discovered loop, so it is loud and NOT skippable via
         # ci-skip.txt: silently dropping a player's progression must never be
         # one line of config away.
-        run: |
-          set -o pipefail
-          if ! timeout 180 godot --headless --path client "res://tests/save_vault_guard_test.tscn" 2>&1 | tee save_vault_guard_test.log; then
-            echo "::error::save_vault_guard_test failed or timed out (180s) — a historical vault no longer loads with zero loss"
-            tail -40 save_vault_guard_test.log
-            exit 1
-          fi
-          if ! grep -q "TEST PASS" save_vault_guard_test.log; then
-            echo "::error::save_vault_guard_test exited 0 without reporting PASS"
-            tail -40 save_vault_guard_test.log
-            exit 1
-          fi
+        run: ./tools/run-client-test.sh save_vault_guard_test "a historical vault no longer loads with zero loss"
       - name: Vault restore guard (an attuned point still restores on boot)
         # The BEHAVIOURAL half of the vault product law (#254 review). The
         # save-vault guard above proves shipped vaults persist and their names
@@ -757,18 +735,7 @@ jobs:
         # must be as non-skippable as its siblings: left in the auto-discovered
         # loop it honours ci-skip.txt, so one line of config could disable the
         # only guard that checks a player actually wakes where they attuned.
-        run: |
-          set -o pipefail
-          if ! timeout 180 godot --headless --path client "res://tests/vault_restore_boot_test.tscn" 2>&1 | tee vault_restore_boot_test.log; then
-            echo "::error::vault_restore_boot_test failed or timed out (180s) — an attuned respawn point no longer restores on boot"
-            tail -40 vault_restore_boot_test.log
-            exit 1
-          fi
-          if ! grep -q "TEST PASS" vault_restore_boot_test.log; then
-            echo "::error::vault_restore_boot_test exited 0 without reporting PASS"
-            tail -40 vault_restore_boot_test.log
-            exit 1
-          fi
+        run: ./tools/run-client-test.sh vault_restore_boot_test "an attuned respawn point no longer restores on boot"
       - name: Ability law guard (sidegrade + no power/throughput inflation)
         # THE combat product-law surface (#70), and the ONLY place the sidegrade
         # and budget/cycle-floor matching actually run — the ledger steps above
@@ -778,23 +745,14 @@ jobs:
         # loop honours client/tests/ci-skip.txt: a later PR could otherwise skip
         # this scene and merge a same-class strict upgrade. Power inflation is
         # permanent, so this guard must not be skippable.
-        run: |
-          set -o pipefail
-          if ! timeout 180 godot --headless --path client "res://tests/ability_registry_test.tscn" 2>&1 | tee ability_registry_test.log; then
-            echo "::error::ability_registry_test failed or timed out (180s) — a combat product law is broken"
-            tail -40 ability_registry_test.log
-            exit 1
-          fi
-          if ! grep -q "TEST PASS" ability_registry_test.log; then
-            echo "::error::ability_registry_test exited 0 without reporting PASS"
-            tail -40 ability_registry_test.log
-            exit 1
-          fi
+        run: ./tools/run-client-test.sh ability_registry_test "a combat product law is broken"
       - name: Regression tests
         # Auto-discover every client/tests/*_test.tscn scene, so adding a test
         # needs ZERO ci.yaml edits (issue #50 — the hardcoded list forced every
-        # parallel test-adding PR to collide on this one line). Each scene runs
-        # with the same per-test timeout + PASS-marker guard as before.
+        # parallel test-adding PR to collide on this one line). Each scene is
+        # judged by tools/run-client-test.sh, the same runner the product-law
+        # steps above call, so the pass criterion is defined in exactly one
+        # place (issue #305).
         #   - save_fixture_guard_test, save_vault_guard_test,
         #     vault_restore_boot_test and ability_registry_test are deliberately
         #     excluded: each runs in its own named step above (the product-law
@@ -822,16 +780,10 @@ jobs:
               echo "::notice::skipping ${t} (listed in ${skip_file})"
               continue
             fi
-            if ! timeout 180 godot --headless --path client "res://tests/${t}.tscn" 2>&1 | tee "${t}.log"; then
-              echo "::error::${t} failed or timed out (180s)"
-              tail -40 "${t}.log"
-              exit 1
-            fi
-            if ! grep -q "TEST PASS" "${t}.log"; then
-              echo "::error::${t} exited 0 without reporting PASS"
-              tail -40 "${t}.log"
-              exit 1
-            fi
+            # `|| exit 1` rather than relying on the step shell's `-e`: the rest
+            # of this workflow propagates failure explicitly, and a discovered
+            # test that fails must never be counted into `ran`.
+            ./tools/run-client-test.sh "$t" || exit 1
             ran=$((ran + 1))
           done
           # A glob that silently matches nothing would let this step pass
