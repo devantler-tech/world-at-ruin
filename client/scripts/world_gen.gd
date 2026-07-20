@@ -261,24 +261,45 @@ func _build_terrain() -> void:
 	add_child(body)
 
 func _add_tri(st: SurfaceTool, a: Vector3, b: Vector3, c: Vector3) -> void:
-	var centre := (a + b + c) / 3.0
-	st.set_color(_ground_color(centre))
+	# Colour is sampled PER VERTEX, not once at the triangle centre. One sample
+	# per triangle quantises the region cross-fade to the 1.7 m grid: each
+	# triangle takes a flat step of roughly a fifth of the palette difference,
+	# so a transition that is continuous in [GroundRegions] still lands on the
+	# ground as a short flight of bands. Sampling the corners lets the
+	# rasteriser interpolate between them, and the transition arrives as one.
+	#
+	# ONLY the region palette varies per corner. The height blend and the
+	# scorch pooling still come from the triangle CENTRE, so they stay flat per
+	# face — sampling those per corner too would smooth-shade the whole
+	# terrain and quietly undo the deliberate low-poly look (measured: it took
+	# the largest within-triangle colour spread from ~0.03 to 0.20, everywhere,
+	# not just at boundaries). Inside a region all three corners resolve to the
+	# same palette AND the same shading, so those triangles stay exactly as
+	# they were; only the boundary bands gain a gradient.
+	#
 	# Godot front faces wind CLOCKWISE (not the right-hand-rule order the
 	# args are given in) — emit a, c, b so the face points UP. Downward faces
 	# render inside-out and are pass-through for raycasts and half-solid for
 	# bodies (the v0.1.x sink/bump bugs).
+	var centre := (a + b + c) / 3.0
 	for v: Vector3 in [a, c, b]:
+		st.set_color(_ground_color(centre, v))
 		st.add_vertex(v)
 
-func _ground_color(at: Vector3) -> Color:
+## `shade` decides the height blend and the scorch pooling; `palette_at` decides
+## WHICH ground's colours those are drawn from. They are separate arguments so
+## the caller can hold shading flat across a face (the low-poly look) while
+## letting the region palette vary per corner (a smooth boundary). Callers that
+## want both from one place pass the same vector twice.
+func _ground_color(shade: Vector3, palette_at: Vector3) -> Color:
 	# WHICH ground this is comes first; the layering within it is unchanged —
 	# height blends ash -> rock, tint noise scorches the sheltered lows.
-	var pal := GroundRegions.palette_for(_region_sites, at.x, at.z)
+	var pal := GroundRegions.palette_for(_region_sites, palette_at.x, palette_at.z)
 	var ash: Color = pal[&"ash"]
 	var rock: Color = pal[&"rock"]
-	var t := clampf(inverse_lerp(-HEIGHT_AMP, HEIGHT_AMP, at.y), 0.0, 1.0)
+	var t := clampf(inverse_lerp(-HEIGHT_AMP, HEIGHT_AMP, shade.y), 0.0, 1.0)
 	var c := ash.lerp(rock, t)
-	var scorch := _tint.get_noise_2d(at.x, at.z)
+	var scorch := _tint.get_noise_2d(shade.x, shade.z)
 	if scorch > 0.35:
 		var col_scorch: Color = pal[&"scorch"]
 		c = c.lerp(col_scorch, clampf((scorch - 0.35) * 2.5, 0.0, 0.8))
