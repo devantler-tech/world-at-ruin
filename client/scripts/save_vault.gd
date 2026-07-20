@@ -133,18 +133,30 @@ static func load_from(path: String) -> Variant:
 		return null
 	var file := FileAccess.open(path, FileAccess.READ)
 	if file == null:
-		push_error("SaveVault: cannot read %s" % path)
-		return null
+		return _refuse(path, "cannot read %s" % path)
 	var parsed = JSON.parse_string(file.get_as_text())
 	file.close()
 	if parsed is not Dictionary:
-		push_error("SaveVault: %s is not a JSON object" % path)
-		return null
+		return _refuse(path, "%s is not a JSON object" % path)
 	var reason := validate(parsed)
 	if reason != "":
-		push_error("SaveVault: refusing %s — %s" % [path, reason])
-		return null
+		return _refuse(path, "refusing %s — %s" % [path, reason])
 	return parsed
+
+
+## Latch `path` as refused, log why, and return null.
+##
+## EVERY rejection of an existing file latches here, not only the ones reached
+## through can_write(). The boot path calls load_saved() directly: if that
+## rejected a newer vault without latching, and cloud sync or another client
+## then removed the file, the next attunement would see an absent, never-refused
+## path and happily write a v1 document that syncs back over the newer
+## progression. The refusal has to attach to the PATH at the moment of refusal,
+## not to the file still being there when someone later asks.
+static func _refuse(path: String, message: String) -> Variant:
+	push_error("SaveVault: " + message)
+	_refused[path] = true
+	return null
 
 
 ## Atomic: write a sibling temp file, then rename over the target — the same
@@ -210,10 +222,9 @@ static func can_write(path: String) -> bool:
 		return false
 	if not FileAccess.file_exists(path):
 		return true
-	if load_from(path) != null:
-		return true
-	_refused[path] = true
-	return false
+	# load_from() latches any rejection of an existing file (see _refuse), so a
+	# failure here has already marked the path.
+	return load_from(path) != null
 
 
 ## Forget every latched refusal. FOR TESTS ONLY — a test exercises several vault

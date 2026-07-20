@@ -141,7 +141,21 @@ func _ready() -> void:
 	_cleanup_probe()
 	SaveVault.clear_refusals_for_test()
 
-	# 7. Validation refuses each malformed shape.
+	# 7b. The data layer and the behaviour layer must not drift: every name
+	# SaveVault claims to know must have a RespawnPoints branch, and vice versa.
+	# Without this, a name could be added to the ledger and KNOWN_ATTUNEMENTS
+	# while nothing ever restored it — every guard green, the attunement dead.
+	var known := SaveVault.KNOWN_ATTUNEMENTS.duplicate()
+	var resolvable := RespawnPoints.names().duplicate()
+	known.sort()
+	resolvable.sort()
+	if known != resolvable:
+		_fail(("KNOWN_ATTUNEMENTS and RespawnPoints.names() have drifted: %s vs %s — a name that "
+			+ "cannot be resolved restores nothing, however green the ledger guards are")
+			% [str(known), str(resolvable)])
+		return
+
+	# 8. Validation refuses each malformed shape.
 	var refusals := {
 		"no version": {},
 		"non-integer version": { "version": "1" },

@@ -260,11 +260,33 @@ func _check_refusal_laws(fixture_path: String) -> String:
 	if SaveVault.can_write(PROBE):
 		return "A CORRUPT VAULT WAS WRITABLE (no-resets law): the unreadable file would be replaced"
 
-	# 9. The refusal LATCHES. The probe is still latched from the checks above;
-	# deleting the file must NOT make it writable again. Checked BEFORE the latch
-	# is cleared, because this is the whole point: a vault refused once stays
-	# refused even when it vanishes (cloud sync, a second client), or a v1 build
-	# would write a document that syncs back over newer progression.
+	# 9b. A rejection on the BOOT path latches too, not only one reached through
+	# can_write(). load_saved()/load_from() is what boot actually calls; if that
+	# refused a newer vault without latching, and cloud sync then removed the
+	# file, the next attunement would see an absent, never-refused path and write
+	# a v1 document over the newer progression. Checked with load_from ALONE —
+	# calling can_write here would latch by itself and mask the gap.
+	SaveVault.clear_refusals_for_test()
+	if not _write_probe(JSON.stringify(future)):
+		return "boot-latch check: could not write the probe"
+	if SaveVault.load_from(PROBE) != null:
+		return "boot-latch check: a newer vault loaded"
+	_cleanup_probe()
+	if SaveVault.can_write(PROBE):
+		return ("BOOT REJECTION DID NOT LATCH (no-resets law): load_from() refused a newer vault, "
+			+ "the file then vanished, and the path became writable — a v1 write here could sync "
+			+ "over the newer progression")
+
+	# 9. The refusal LATCHES via the can_write path too. Re-establish an
+	# unreadable file, refuse it through can_write, then remove it: still
+	# unwritable. This is the whole point — a vault refused once stays refused
+	# even when it vanishes, or a v1 build would write a document that syncs
+	# back over newer progression.
+	SaveVault.clear_refusals_for_test()
+	if not _write_probe(JSON.stringify(future)):
+		return "latch check: could not write the probe"
+	if SaveVault.can_write(PROBE):
+		return "latch check: an unreadable vault was writable"
 	_cleanup_probe()
 	if SaveVault.can_write(PROBE):
 		return ("REFUSAL DID NOT LATCH (no-resets law): the vault was refused, then removed, and "

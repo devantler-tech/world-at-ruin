@@ -89,10 +89,16 @@ jobs:
           # exists to catch (fail-open). `git cat-file -e` answers existence
           # without conflating the two.
           if git cat-file -e "$BASE_SHA:$LEDGER" 2>/dev/null; then
-            if ! git show "$BASE_SHA:$LEDGER" | sed -n "$extract" | sort -un > /tmp/vault-ledger-base; then
+            # Materialise git show FIRST and test its own status. `if ! git show
+            # | sed | sort` would test SORT's status, not git show's — this run
+            # block has no `pipefail`, so a failing read would sail through and
+            # leave an empty base set, which is exactly the fail-open this
+            # branch exists to prevent.
+            if ! git show "$BASE_SHA:$LEDGER" > /tmp/vault-base-raw; then
               echo "::error::could not read $LEDGER at $BASE_SHA — refusing to compare against an empty base"
               exit 1
             fi
+            sed -n "$extract" /tmp/vault-base-raw | sort -un > /tmp/vault-ledger-base
           else
             echo "::notice::$LEDGER does not exist at the base revision — treating the base set as empty (this is the commit that introduces it)"
             : > /tmp/vault-ledger-base
@@ -126,10 +132,13 @@ jobs:
           fi
           names='/^[[:space:]]*#/d; /^[[:space:]]*$/d; s/^[[:space:]]*//; s/[[:space:]]*$//'
           if git cat-file -e "$BASE_SHA:$LEDGER" 2>/dev/null; then
-            if ! git show "$BASE_SHA:$LEDGER" | sed -e "$names" | sort -u > /tmp/attune-base; then
+            # Same reasoning as the vault ledger above: test git show's OWN
+            # status, not the last stage of a pipeline.
+            if ! git show "$BASE_SHA:$LEDGER" > /tmp/attune-base-raw; then
               echo "::error::could not read $LEDGER at $BASE_SHA — refusing to compare against an empty base"
               exit 1
             fi
+            sed -e "$names" /tmp/attune-base-raw | sort -u > /tmp/attune-base
           else
             echo "::notice::$LEDGER does not exist at the base revision — treating the base set as empty (this is the commit that introduces it)"
             : > /tmp/attune-base

@@ -15,8 +15,12 @@ extends Node
 ##     assertion that they match would pass against a main.gd that reads
 ##     nothing. The control proves the two differ, so the match in B can only
 ##     come from the restore.
-##  B. POSITIVE — boot with a vault that has the shrine attuned, and require
-##     the respawn point to have MOVED to the shrine's.
+##  B. POSITIVE — boot once PER SHIPPED LEDGER NAME, seeding a vault with that
+##     name attuned, and require the respawn point to have MOVED. Walking the
+##     ledger rather than one constant is the point: a name can be added to
+##     shipped_attunements.txt and to KNOWN_ATTUNEMENTS while nothing actually
+##     restores it, and every in-game ledger guard stays green. Only booting
+##     each name and watching where the wanderer wakes catches that.
 ##
 ## Both boots run behind SaveIsolation, so neither the player's character nor
 ## their real vault is ever read or written (no-resets law).
@@ -32,6 +36,11 @@ var _save: SaveIsolation
 ## false = the negative control boot, true = the restore boot.
 var _seeded := false
 var _control_spawn := Vector3.INF
+## Shipped attunement names still to exercise; the control boot fills it.
+var _pending: Array = []
+## The name the current seeded boot is exercising.
+var _current := ""
+var _restored := 0
 
 
 func _ready() -> void:
@@ -40,8 +49,9 @@ func _ready() -> void:
 
 ## Tear down any previous scene, redirect the save seams, optionally seed an
 ## attuned vault, then boot main.tscn.
-func _begin_boot(seeded: bool) -> void:
+func _begin_boot(seeded: bool, name: String = "") -> void:
 	_seeded = seeded
+	_current = name
 	_ticks = 0
 	if _main != null:
 		_main.queue_free()
@@ -53,9 +63,10 @@ func _begin_boot(seeded: bool) -> void:
 	if seeded:
 		# Written through the store's own save path, so the test seeds exactly
 		# what a real earlier session would have left behind.
-		var attuned := SaveVault.attune(SaveVault.empty(), SaveVault.SHRINE_WARDENS)
+		SaveVault.clear_refusals_for_test()
+		var attuned := SaveVault.attune(SaveVault.empty(), name)
 		if not SaveVault.save_to(SaveVault.vault_path(), attuned):
-			_fail("could not seed the vault probe")
+			_fail("could not seed the vault probe for '%s'" % name)
 			return
 	_main = (load("res://scenes/main.tscn") as PackedScene).instantiate()
 	add_child(_main)
@@ -91,26 +102,60 @@ func _physics_process(_delta: float) -> void:
 		if not _save.real_save_untouched():
 			_fail("the control boot touched the player's real save or vault")
 			return
-		_begin_boot(true)
+		_pending = _shipped_attunements()
+		if _pending.is_empty():
+			_fail("shipped_attunements.txt is missing or empty — nothing to exercise end-to-end")
+			return
+		_begin_boot(true, _pending.pop_front())
 		return
 
-	# B. Positive: the attuned shrine was restored, so waking is at the shrine
-	# and has MOVED from where the control woke.
-	if woke_at.distance_to(shrine_point) > EPS:
-		_fail(("RESTORE DID NOT HAPPEN: an attuned vault was on disk but the wanderer "
-			+ "woke at %s, not the shrine's %s — main.gd is not applying the vault")
-			% [str(woke_at), str(shrine_point)])
+	# B. Positive: this shipped name was restored, so waking has MOVED from
+	# where the control woke. Every name in the ledger gets its own boot — a
+	# name with no RespawnPoints branch fails HERE, which is the whole reason
+	# this walks the ledger instead of one constant.
+	var expected = RespawnPoints.resolve(_current, world)
+	if expected == null:
+		_fail(("SHIPPED ATTUNEMENT HAS NO RESTORE BRANCH (no-resets law): '%s' is in "
+			+ "shipped_attunements.txt but RespawnPoints cannot place it — a player attuned "
+			+ "there wakes in the cave forever, and every ledger guard stays green")
+			% _current)
+		return
+	if woke_at.distance_to(expected) > EPS:
+		_fail(("RESTORE DID NOT HAPPEN for '%s': an attuned vault was on disk but the wanderer "
+			+ "woke at %s, not %s — main.gd is not applying the vault")
+			% [_current, str(woke_at), str(expected)])
 		return
 	if woke_at.distance_to(_control_spawn) <= EPS:
-		_fail("the restore boot woke in the same place as the control — nothing changed")
+		_fail("the restore boot for '%s' woke in the same place as the control — nothing changed" % _current)
 		return
-
 	if not _save.real_save_untouched():
 		_fail("the restore boot touched the player's real save or vault")
 		return
-	print("TEST PASS — an attuned shrine survives a logout (control woke at %s, restored woke at %s)" % [
-		str(_control_spawn), str(woke_at)])
+	_restored += 1
+
+	if not _pending.is_empty():
+		_begin_boot(true, _pending.pop_front())
+		return
+
+	print("TEST PASS — %d shipped attunement(s) survive a logout (control woke at %s)" % [
+		_restored, str(_control_spawn)])
 	get_tree().quit(0)
+
+
+## The shipped live-name ledger — the same file the guard test anchors, read
+## here so this test exercises exactly the names that have shipped.
+func _shipped_attunements() -> Array:
+	var file := FileAccess.open("res://tests/data/shipped_attunements.txt", FileAccess.READ)
+	if file == null:
+		return []
+	var names := []
+	while not file.eof_reached():
+		var line := file.get_line().strip_edges()
+		if line.is_empty() or line.begins_with("#"):
+			continue
+		names.append(line)
+	file.close()
+	return names
 
 
 func _fail(message: String) -> void:

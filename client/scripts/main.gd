@@ -119,9 +119,17 @@ func _ready() -> void:
 	# newer-versioned vault simply leaves the wanderer waking in the cave, as
 	# before the vault existed — progression state may never block a boot, and
 	# it never touches the character save (no-resets law).
+	#
+	# Resolution goes through RespawnPoints rather than naming a shrine here, so
+	# every shipped attunement name has ONE place that turns it into a position
+	# and a test can walk them all end-to-end. A name this build cannot place
+	# (a newer client's) resolves to null and is skipped — never a crash.
 	var vault = SaveVault.load_saved()
-	if vault is Dictionary and SaveVault.is_attuned(vault, SaveVault.SHRINE_WARDENS):
-		_player.set_respawn_point(world.shrine_respawn_point())
+	if vault is Dictionary:
+		for name: String in SaveVault.attuned(vault):
+			var point = RespawnPoints.resolve(name, world)
+			if point != null:
+				_player.set_respawn_point(point)
 
 	# The people speak: a person's seeded line surfaces as a toast.
 	npcs.npc_spoke.connect(func(npc_name: String, line: String) -> void:
