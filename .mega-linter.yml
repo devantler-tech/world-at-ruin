@@ -12,6 +12,19 @@ REPORTERS_MARKDOWN_SUMMARY_TYPE: sections
 LINTER_RULES_PATH: .
 
 DISABLE_LINTERS:
+  # This repo already runs zizmor as its own dedicated CI check, with GitHub API auth and
+  # its own configuration. MegaLinter's bundled copy has no auth, so its online audits fail
+  # outright rather than finding anything:
+  #
+  #   fatal: no audit was performed
+  #   'artipacked' audit failed on .github/workflows/artgen.yaml
+  #     1: couldn't list tags for actions/checkout
+  #     3: HTTP status client error (401 Unauthorized)
+  #
+  # Note it passes locally, where zizmor falls back to offline mode and never attempts the
+  # tag lookup — this only appears in CI. Same call ksail made, for the same reason.
+  - ACTION_ZIZMOR
+
   # The Go module lives in server/, not at the repo root, so a root-scoped run fails with
   # "directory prefix . does not contain main module". The server-ci job already runs
   # gofmt, vet, race tests and build against the module's own toolchain — which is the
