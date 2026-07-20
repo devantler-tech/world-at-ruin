@@ -215,15 +215,74 @@ jobs:
           # Fail loudly and EARLY if the release is already published: under
           # immutable releases the upload below cannot succeed, and a clear
           # message here beats a bare `HTTP 422` from the upload.
-          if [ "$(gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json isDraft --jq '.isDraft')" != "true" ]; then
+          #
+          # Read the draft state into a variable FIRST rather than testing the
+          # command substitution inline. Inline, a failed `gh release view` —
+          # a 503 is the very failure this step is being hardened against —
+          # substitutes the empty string, which is not "true", so the guard
+          # would announce "already published" for a release that is still a
+          # perfectly good draft. That is both a false strand and a misleading
+          # error: it points whoever reads it at the immutable-release rule
+          # instead of at the transient it actually was.
+          #
+          # So this query gets the same retry treatment as the upload below,
+          # and only a definitive answer is allowed to decide anything.
+          IS_DRAFT=""
+          for attempt in 1 2 3; do
+            if IS_DRAFT="$(gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json isDraft --jq '.isDraft')"; then
+              break
+            fi
+            IS_DRAFT=""
+            [ "${attempt}" -lt 3 ] && sleep 5
+          done
+
+          if [ -z "${IS_DRAFT}" ]; then
+            echo "::error::could not read the draft state of ${TAG} after 3 attempts. Nothing was published; ${TAG} is unchanged. This is a failed API call, NOT a published release — re-run this workflow."
+            exit 1
+          fi
+
+          if [ "${IS_DRAFT}" != "true" ]; then
             echo "::error::${TAG} is already published — assets cannot be attached to an immutable release. The release must still be a draft when CD runs (see .releaserc draftRelease)."
             exit 1
           fi
-          # --clobber so a re-run (workflow_dispatch) replaces the asset rather
-          # than failing on an existing name.
-          gh release upload "${TAG}" \
-            "build/WorldAtRuin-${VERSION}-macOS-universal.zip" \
-            --repo "${GITHUB_REPOSITORY}" --clobber
+
+          ASSET="build/WorldAtRuin-${VERSION}-macOS-universal.zip"
+          # Fail fast on a missing artifact. A wrong path is a build bug, not a
+          # transient, and must not burn the retry budget below looking like one.
+          if [ ! -f "${ASSET}" ]; then
+            echo "::error::${ASSET} does not exist — the build step did not produce the artifact this step is meant to attach."
+            exit 1
+          fi
+
+          # RETRY, because this single call gates the whole release. Everything
+          # downstream (GHCR, publish, Homebrew cask) is skipped when it fails,
+          # and `.releaserc draftRelease` means the release is then stranded as a
+          # draft until a human re-runs a ~10-minute build. `uploads.github.com`
+          # is a separate endpoint from `api.github.com` and is the flakier of
+          # the two: a GitHub-side 503 there cost v0.32.0 two full runs (see #287).
+          #
+          # --clobber so a retry (or a workflow_dispatch re-run) replaces a
+          # partially-uploaded asset rather than failing on an existing name.
+          ATTEMPTS=5
+          DELAY=15
+          for attempt in $(seq 1 "${ATTEMPTS}"); do
+            if gh release upload "${TAG}" "${ASSET}" \
+              --repo "${GITHUB_REPOSITORY}" --clobber; then
+              # Say so explicitly: a retried success must not read like a clean
+              # first attempt to whoever scans this log later.
+              if [ "${attempt}" -gt 1 ]; then
+                echo "uploaded ${ASSET} to ${TAG} on attempt ${attempt}/${ATTEMPTS}"
+              fi
+              exit 0
+            fi
+            if [ "${attempt}" -lt "${ATTEMPTS}" ]; then
+              echo "attempt ${attempt}/${ATTEMPTS} to upload ${ASSET} failed; retrying in ${DELAY}s"
+              sleep "${DELAY}"
+              DELAY=$((DELAY * 2))
+            fi
+          done
+          echo "::error::failed to attach ${ASSET} to ${TAG} after ${ATTEMPTS} attempts. Nothing was published; ${TAG} is still a draft."
+          exit 1
 
       - name: 🧾 Record the artifact checksum
         id: sha

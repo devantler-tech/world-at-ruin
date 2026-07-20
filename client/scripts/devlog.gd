@@ -11,7 +11,7 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
-		"version": "0.14.0",
+		"version": "0.16.0",
 		"date": "2026-07-20",
 		"title": "The creator asks who you are, not what your numbers are",
 		"notes": [
@@ -19,6 +19,28 @@ const ENTRIES: Array[Dictionary] = [
 			"The sliders have not gone anywhere. They are folded into an 'advanced — fine shaping' section at the bottom, sorted into archetype, heritage, torso, limbs, face and frame, so if you do want to shape a jaw you get a structure instead of a wall. Nothing you could make before has been taken away.",
 			"The whole panel is also drawn on purpose now rather than in the engine's default grey: every slider shows how far along it is at a glance, and whatever you have selected carries a lit edge — which matters if you are playing on a pad and cannot point at things.",
 			"This is still a long way from where the interface needs to end up. The panel is a plain rectangle with no material to it, the type is the engine's own, and your wanderer stands in the world rather than being framed and lit for a portrait. Those are next.",
+		],
+	},
+	{
+		"version": "0.15.0",
+		"date": "2026-07-20",
+		"title": "The ground stops being the same ground",
+		"notes": [
+			"Walk far enough now and what you are walking on changes. The Reach is laid out in stretches, each made of its own material: pale ash over more of it than anything else, ground burnt darker and redder where the fire sat longest, bare cool stone where the ash has been scoured off, and ochre ground stained by the old machines rusting into it. Which stretch lies where is a fact about this land, the same on every playthrough.",
+			"One stretch gives way to the next under your feet rather than at a line you step over — for the last several paces the two grounds mix into each other.",
+			"The shrine you wake near is always on the pale ash it has always been on, so the place you already know still looks like itself.",
+			"Be warned that this reads far better underfoot than it does from a distance. Walk out onto the pale stone and the ground around you is clearly lighter than the ash you left; look at that same country from across the Reach and the haze has already flattened it back to the colour of everything else. The air between you and the view is currently doing more to the ground's colour than the ground is, and getting the distance to carry it too is a bigger job than this one.",
+			"This changes what the ground is made of, not what shape it is. The same hills and hollows are still there, and the ruins and scrub are still scattered the same way everywhere — those two are the next pieces of this.",
+		],
+	},
+	{
+		"version": "0.14.0",
+		"date": "2026-07-20",
+		"title": "The flame remembers you now",
+		"notes": [
+			"Attuning to the Wardens' Shrine used to last only until you stopped playing — come back, and you woke in the dark of the cave again. It now carries across logouts, which is what the shrine promised you in the first place.",
+			"Your character and your progress are kept in two separate files from here on. That sounds like housekeeping, but it is the reason the rest is possible: the character file cannot grow new kinds of data without older builds refusing to read it, and a refused character file is a lost character. Progress lives beside it instead, where it can grow safely.",
+			"An older build simply will not see the progress file — it leaves it alone rather than damaging it — so you can move between builds without losing your wanderer. And if the game ever meets a progress file it cannot read, it will leave that file untouched and play the session without it, rather than write over something it does not understand.",
 		],
 	},
 	{

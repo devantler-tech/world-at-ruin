@@ -313,8 +313,9 @@ func respawn() -> void:
 	respawned.emit()
 
 ## Move where the wanderer wakes after a fall — attuning a respawn point (the
-## Wardens' Shrine) calls this. Until the save vault is sealed this lasts the
-## session; persistence rides on the forward-only save guard (#3).
+## Wardens' Shrine) calls this. The attunement itself persists in the save vault
+## (SaveVault, #249); the Player stays storage-agnostic and is handed the point
+## the live world re-derives for the attuned shrine.
 func set_respawn_point(point: Vector3) -> void:
 	spawn_point = point
 

@@ -61,6 +61,94 @@ jobs:
             echo "::error::Shipped version(s) removed from $LEDGER ($(echo "$removed" | tr '\n' ' ')) — shipped saves are never disposable (no-resets law)"
             exit 1
           fi
+      - name: Vault ledger is append-only (no-resets law)
+        # The progression sibling of the recipe ledger above (#249). Same
+        # reasoning: the in-game guard anchors the required vault-fixture range
+        # to tests/data/shipped_vault_versions.txt, but that file can be edited
+        # in the same change that lowers VAULT_VERSION. CI compares against the
+        # BASE commit, where a shipped vault version can only ever be added.
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          LEDGER=client/tests/data/shipped_vault_versions.txt
+          if [ ! -f "$LEDGER" ]; then
+            echo "::error::$LEDGER was deleted — the forward-only vault ledger must exist"
+            exit 1
+          fi
+          if ! git cat-file -e "$BASE_SHA" 2>/dev/null; then
+            echo "::error::base commit $BASE_SHA not present in the checkout — cannot verify the ledger"
+            exit 1
+          fi
+          extract='s/^[[:space:]]*\([0-9][0-9]*\)[[:space:]]*$/\1/p'
+          # Distinguish "absent on base" from "read failed". Absent is the
+          # legitimate case exactly once — the commit that INTRODUCES the ledger
+          # — and means an empty base set. A read that fails for any OTHER reason
+          # must abort: an empty base makes `comm -23` report nothing removed, so
+          # a silent failure here would wave through the very deletion this step
+          # exists to catch (fail-open). `git cat-file -e` answers existence
+          # without conflating the two.
+          if git cat-file -e "$BASE_SHA:$LEDGER" 2>/dev/null; then
+            # Materialise git show FIRST and test its own status. `if ! git show
+            # | sed | sort` would test SORT's status, not git show's — this run
+            # block has no `pipefail`, so a failing read would sail through and
+            # leave an empty base set, which is exactly the fail-open this
+            # branch exists to prevent.
+            if ! git show "$BASE_SHA:$LEDGER" > /tmp/vault-base-raw; then
+              echo "::error::could not read $LEDGER at $BASE_SHA — refusing to compare against an empty base"
+              exit 1
+            fi
+            sed -n "$extract" /tmp/vault-base-raw | sort -un > /tmp/vault-ledger-base
+          else
+            echo "::notice::$LEDGER does not exist at the base revision — treating the base set as empty (this is the commit that introduces it)"
+            : > /tmp/vault-ledger-base
+          fi
+          sed -n "$extract" "$LEDGER" | sort -un > /tmp/vault-ledger-head
+          removed=$(comm -23 /tmp/vault-ledger-base /tmp/vault-ledger-head)
+          if [ -n "$removed" ]; then
+            echo "::error::Shipped vault version(s) removed from $LEDGER ($(echo "$removed" | tr '\n' ' ')) — shipped progression is never disposable (no-resets law)"
+            exit 1
+          fi
+      - name: Attunement ledger is append-only (no-resets law)
+        # The LIVE-NAME half of the vault law (#254 review). A golden fixture
+        # proves a shipped attunement name survives a round-trip; it cannot prove
+        # the game still ACTS on it. Renaming a name and its call site together
+        # keeps every in-game guard green while stranding players attuned to the
+        # old name. The in-game guard checks fixture+ledger names against
+        # SaveVault.KNOWN_ATTUNEMENTS; this step is the immutable anchor that
+        # stops the ledger itself being edited in the same breath.
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          LEDGER=client/tests/data/shipped_attunements.txt
+          if [ ! -f "$LEDGER" ]; then
+            echo "::error::$LEDGER was deleted — the forward-only attunement ledger must exist"
+            exit 1
+          fi
+          if ! git cat-file -e "$BASE_SHA" 2>/dev/null; then
+            echo "::error::base commit $BASE_SHA not present in the checkout — cannot verify the ledger"
+            exit 1
+          fi
+          names='/^[[:space:]]*#/d; /^[[:space:]]*$/d; s/^[[:space:]]*//; s/[[:space:]]*$//'
+          if git cat-file -e "$BASE_SHA:$LEDGER" 2>/dev/null; then
+            # Same reasoning as the vault ledger above: test git show's OWN
+            # status, not the last stage of a pipeline.
+            if ! git show "$BASE_SHA:$LEDGER" > /tmp/attune-base-raw; then
+              echo "::error::could not read $LEDGER at $BASE_SHA — refusing to compare against an empty base"
+              exit 1
+            fi
+            sed -e "$names" /tmp/attune-base-raw | sort -u > /tmp/attune-base
+          else
+            echo "::notice::$LEDGER does not exist at the base revision — treating the base set as empty (this is the commit that introduces it)"
+            : > /tmp/attune-base
+          fi
+          sed -e "$names" "$LEDGER" | sort -u > /tmp/attune-head
+          removed=$(comm -23 /tmp/attune-base /tmp/attune-head)
+          if [ -n "$removed" ]; then
+            echo "::error::Shipped attunement name(s) removed from $LEDGER ($(echo "$removed" | tr '\n' ' ')) — players attuned there would wake in the cave forever (no-resets law)"
+            exit 1
+          fi
       - name: Piece-slot ledger is append-only (no-resets law)
         # shipped_piece_slots_test compares the registry to the ledger in the
         # SAME checkout, so a change that edits equipment.json and the ledger
@@ -139,7 +227,7 @@ jobs:
           leaves() { jq -S -r 'paths(scalars) as $p | select($p[0] != "comment") | "\($p|map(tostring)|join("."))=\(getpath($p)|tostring)"' | sort; }
           fail=0
           for f in $(git ls-tree -r --name-only "$BASE_SHA" -- client/tests/data \
-              | grep -E 'golden_recipe_v[0-9]+\.json$'); do
+              | grep -E 'golden_(recipe|vault)_v[0-9]+\.json$'); do
             if [ ! -f "$f" ]; then
               echo "::error::$f was deleted — a shipped historical save is never removed (no-resets law)"
               fail=1; continue
@@ -541,6 +629,44 @@ jobs:
             tail -40 save_fixture_guard_test.log
             exit 1
           fi
+      - name: Save-vault guard (every historical vault loads with zero loss)
+        # THE product-law surface for PROGRESSION state (#249, parent #3), the
+        # sibling of the save-fixture guard above. Its own named step, outside
+        # the auto-discovered loop, so it is loud and NOT skippable via
+        # ci-skip.txt: silently dropping a player's progression must never be
+        # one line of config away.
+        run: |
+          set -o pipefail
+          if ! timeout 180 godot --headless --path client "res://tests/save_vault_guard_test.tscn" 2>&1 | tee save_vault_guard_test.log; then
+            echo "::error::save_vault_guard_test failed or timed out (180s) — a historical vault no longer loads with zero loss"
+            tail -40 save_vault_guard_test.log
+            exit 1
+          fi
+          if ! grep -q "TEST PASS" save_vault_guard_test.log; then
+            echo "::error::save_vault_guard_test exited 0 without reporting PASS"
+            tail -40 save_vault_guard_test.log
+            exit 1
+          fi
+      - name: Vault restore guard (an attuned point still restores on boot)
+        # The BEHAVIOURAL half of the vault product law (#254 review). The
+        # save-vault guard above proves shipped vaults persist and their names
+        # are still recognised — it never boots the game, so it cannot see a
+        # resolver branch that was removed or repointed. This one does, and it
+        # must be as non-skippable as its siblings: left in the auto-discovered
+        # loop it honours ci-skip.txt, so one line of config could disable the
+        # only guard that checks a player actually wakes where they attuned.
+        run: |
+          set -o pipefail
+          if ! timeout 180 godot --headless --path client "res://tests/vault_restore_boot_test.tscn" 2>&1 | tee vault_restore_boot_test.log; then
+            echo "::error::vault_restore_boot_test failed or timed out (180s) — an attuned respawn point no longer restores on boot"
+            tail -40 vault_restore_boot_test.log
+            exit 1
+          fi
+          if ! grep -q "TEST PASS" vault_restore_boot_test.log; then
+            echo "::error::vault_restore_boot_test exited 0 without reporting PASS"
+            tail -40 vault_restore_boot_test.log
+            exit 1
+          fi
       - name: Ability law guard (sidegrade + no power/throughput inflation)
         # THE combat product-law surface (#70), and the ONLY place the sidegrade
         # and budget/cycle-floor matching actually run — the ledger steps above
@@ -567,7 +693,8 @@ jobs:
         # needs ZERO ci.yaml edits (issue #50 — the hardcoded list forced every
         # parallel test-adding PR to collide on this one line). Each scene runs
         # with the same per-test timeout + PASS-marker guard as before.
-        #   - save_fixture_guard_test and ability_registry_test are deliberately
+        #   - save_fixture_guard_test, save_vault_guard_test,
+        #     vault_restore_boot_test and ability_registry_test are deliberately
         #     excluded: each runs in its own named step above (the product-law
         #     surfaces, kept loud, separate and NON-SKIPPABLE), so discovering
         #     them here would both run them twice and expose them to ci-skip.
@@ -588,7 +715,7 @@ jobs:
             t=$(basename "$scene" .tscn)
             # Run in their own dedicated steps above — never twice, and never
             # skippable via ci-skip.txt (they are the product-law surfaces).
-            case "$t" in save_fixture_guard_test|ability_registry_test) continue ;; esac
+            case "$t" in save_fixture_guard_test|save_vault_guard_test|vault_restore_boot_test|ability_registry_test) continue ;; esac
             if is_skipped "$t"; then
               echo "::notice::skipping ${t} (listed in ${skip_file})"
               continue
