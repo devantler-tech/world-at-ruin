@@ -1,0 +1,13 @@
+# URLs the link checker must skip. Each entry is a regex, and each needs a reason —
+# an unexplained entry here is indistinguishable from hiding a genuinely broken link.
+
+# GitHub's user-attachments assets (the README's hero image) 302-redirect to a signed
+# S3 URL, and lychee fails on it with "HTTP/2 protocol error. Server may not support
+# HTTP/2 properly". The asset is not broken — verified directly:
+#
+#   curl --http1.1 -L …/assets/c637c97e-… -> 200, image/png, 1431187 bytes
+#   curl --http2   -L …/assets/c637c97e-… -> 200
+#
+# The redirect target also carries a five-minute expiring signature, so these URLs can
+# never be checked reliably no matter how the protocol behaves.
+https://github\.com/user-attachments/
