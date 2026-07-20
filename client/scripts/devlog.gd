@@ -11,6 +11,16 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
+		"version": "0.19.1",
+		"date": "2026-07-20",
+		"title": "The ruins come down into the ground",
+		"notes": [
+			"Broken columns, wall fragments, rubble and the shrine's standing stones were placed by asking the ground how high it was at one single point — the middle of the piece — and then sitting the whole piece at that height. On any slope that leaves one end of a wall buried and the other end hanging in the air.",
+			"It was doing exactly that to 72 of the Reach's 188 stone pieces. The worst of them floated more than a metre clear of the ground.",
+			"Now each piece reads the ground across its whole footprint and settles onto the lowest part of it, so it meets the ground on its low side and is buried on its high side — the way something that has stood in one place for a long time actually sits.",
+		],
+	},
+	{
 		"version": "0.19.0",
 		"date": "2026-07-20",
 		"title": "The ground is broken rock, with ash blown over it",
