@@ -75,11 +75,21 @@ func _ready() -> void:
 	# brazier is added to the shrine directly. Reading the structure keeps this
 	# test from needing a new accessor on production code purely for its own
 	# convenience.
-	var brazier: MeshInstance3D = null
+	#
+	# Take ALL direct mesh children and require exactly one, rather than the
+	# first match. Taking the first would silently pick the wrong node the day
+	# the shrine gains a second direct mesh, and the negative control would then
+	# be exempting something that was never the brazier — a control that quietly
+	# stops controlling is worse than no control.
+	var direct_meshes: Array[MeshInstance3D] = []
 	for child in shrine.get_children():
 		if child is MeshInstance3D:
-			brazier = child as MeshInstance3D
-			break
+			direct_meshes.append(child as MeshInstance3D)
+	if direct_meshes.size() != 1:
+		_fail("expected exactly 1 direct mesh child of the shrine (the ember brazier), found %d — the negative control cannot identify its subject"
+			% direct_meshes.size())
+		return
+	var brazier: MeshInstance3D = direct_meshes[0]
 
 	# 2. NON-VACUITY, asserted BEFORE the material checks: an empty sweep would
 	#    satisfy "every mesh is masonry" trivially.
@@ -94,8 +104,13 @@ func _ready() -> void:
 
 	# 1. Every ruin and shrine mesh is shaded by the masonry shader. The brazier
 	#    is the one deliberate exception and is checked as the control below.
-	var ruin_tint := Color(0, 0, 0)
-	var shrine_tint := Color(0, 0, 0)
+	#
+	# Track the EXTREMES rather than the last value seen. Assigning a single
+	# `tint` variable inside the loop compares only whichever mesh happened to
+	# come last, so the day ruins carry per-site tints the comparison would be
+	# against an arbitrary one — an assertion that reads stronger than it is.
+	var ruin_luma_max := -1.0
+	var shrine_luma_min := INF
 
 	for mi: MeshInstance3D in ruin_meshes:
 		var tint: Variant = _masonry_tint(mi)
@@ -103,7 +118,7 @@ func _ready() -> void:
 			_fail("a ruin mesh (%s) is not shaded by masonry.gdshader — flat stone is back"
 				% mi.get_path())
 			return
-		ruin_tint = tint as Color
+		ruin_luma_max = maxf(ruin_luma_max, _luma(tint as Color))
 
 	for mi: MeshInstance3D in shrine_meshes:
 		if mi == brazier:
@@ -113,26 +128,23 @@ func _ready() -> void:
 			_fail("a shrine mesh (%s) is not shaded by masonry.gdshader — flat stone is back"
 				% mi.get_path())
 			return
-		shrine_tint = tint as Color
+		shrine_luma_min = minf(shrine_luma_min, _luma(tint as Color))
 
-	# 3. The shrine's stone stays lighter than the ruin field's.
-	var ruin_luma := ruin_tint.r + ruin_tint.g + ruin_tint.b
-	var shrine_luma := shrine_tint.r + shrine_tint.g + shrine_tint.b
-	if shrine_luma <= ruin_luma:
-		_fail("the shrine's stone (%.3f) is no lighter than the ruins' (%.3f) — the kept place reads as fallen"
-			% [shrine_luma, ruin_luma])
+	# 3. The shrine's stone stays lighter than the ruin field's — EVERY shrine
+	#    stone lighter than EVERY ruin stone, not merely one pair of them.
+	if shrine_luma_min <= ruin_luma_max:
+		_fail("the shrine's darkest stone (%.3f) is no lighter than the ruins' lightest (%.3f) — the kept place reads as fallen"
+			% [shrine_luma_min, ruin_luma_max])
 		return
 
 	# 4. NEGATIVE CONTROL — the ember brazier must NOT be masonry.
-	if brazier == null:
-		_fail("no brazier mesh — the negative control cannot run, so assertion 1 proves less")
-		return
+	#    (Its existence is already guaranteed by the exactly-one check above.)
 	if _masonry_tint(brazier) != null:
 		_fail("the ember brazier is shaded as masonry — the shader was blanket-applied")
 		return
 
-	print("TEST PASS — masonry material (%d ruin + %d shrine meshes, shrine %.3f lighter than ruins %.3f, brazier exempt)"
-		% [ruin_meshes.size(), shrine_meshes.size() - 1, shrine_luma, ruin_luma])
+	print("TEST PASS — masonry material (%d ruin + %d shrine meshes, shrine min %.3f > ruin max %.3f, brazier exempt)"
+		% [ruin_meshes.size(), shrine_meshes.size() - 1, shrine_luma_min, ruin_luma_max])
 	get_tree().quit(0)
 
 
@@ -151,6 +163,12 @@ func _masonry_tint(mi: MeshInstance3D) -> Variant:
 	if tint == null:
 		return null
 	return tint
+
+
+## Sum of channels — a cheap brightness proxy, sufficient for "is this stone
+## lighter than that one" and deliberately not a perceptual luminance.
+func _luma(c: Color) -> float:
+	return c.r + c.g + c.b
 
 
 func _collect_meshes(node: Node, into: Array[MeshInstance3D]) -> void:
