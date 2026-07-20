@@ -39,6 +39,8 @@ func _ready() -> void:
 		return
 	if not _portrait_renders_its_own_world():
 		return
+	if not _portrait_settles_then_stops():
+		return
 	print("TEST PASS — every archetype renders its own portrait, one build per frame")
 	get_tree().quit(0)
 
@@ -153,6 +155,54 @@ func _portrait_renders_its_own_world() -> bool:
 	portrait.queue_free()
 	if not own:
 		return _fail("the portrait shares the main world — it would photograph the Reach with the archetype somewhere in it")
+	return true
+
+
+## 6. A portrait keeps rendering for a SHORT window and then stops for good.
+##
+## Both halves are load-bearing and each failed in a real way:
+##
+##  - Too FEW frames photographs a body whose equipment blend shapes have not
+##    been applied yet. On CI that shipped a NUDE figure on the game's first
+##    screen while the same recipe rendered dressed on the live body in the
+##    very same capture — invisible locally, because a fast GPU settles inside
+##    one frame. That is the bug this window exists to fix, and a headless run
+##    cannot see it in pixels, so the WINDOW is what gets pinned.
+##  - Never stopping would leave four 3D viewports redrawing forever behind a
+##    screen whose subject does not move.
+func _portrait_settles_then_stops() -> bool:
+	var portrait := ArchetypePortrait.new()
+	add_child(portrait)
+	portrait.setup(CharacterCreator.PRESETS[0])
+
+	if portrait.is_settled():
+		portrait.queue_free()
+		return _fail("a portrait reported settled before it had a body — the window would be skipped entirely")
+
+	if not portrait.realize():
+		portrait.queue_free()
+		return _fail("the first realize() built nothing, so the settling window below would prove nothing")
+
+	if portrait.viewport().render_target_update_mode != SubViewport.UPDATE_ALWAYS:
+		portrait.queue_free()
+		return _fail("a freshly built portrait is not rendering — it would photograph an unsettled body")
+
+	# One frame short of the window: still rendering.
+	for i in ArchetypePortrait.SETTLE_FRAMES - 1:
+		portrait._process(0.0)
+	if portrait.is_settled():
+		portrait.queue_free()
+		return _fail("the portrait stopped rendering before its settling window elapsed")
+
+	portrait._process(0.0)
+	var settled := portrait.is_settled()
+	var stopped := portrait.viewport().render_target_update_mode == SubViewport.UPDATE_DISABLED
+	portrait.queue_free()
+
+	if not settled:
+		return _fail("the portrait never reported settled — nothing would ever stop it rendering")
+	if not stopped:
+		return _fail("the portrait kept its viewport live after settling — four 3D viewports would redraw forever")
 	return true
 
 

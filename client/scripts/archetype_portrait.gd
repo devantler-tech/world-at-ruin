@@ -15,8 +15,8 @@ extends SubViewportContainer
 ##  1. `setup()` builds only the empty viewport rig. The body — the expensive
 ##     half — is built by `realize()`, which the creator calls for at most ONE
 ##     portrait per frame (see `next_unrealized`).
-##  2. Nothing in a portrait moves, so the viewport renders a single frame and
-##     then stops. A standing thumbnail costs one frame, not one per frame.
+##  2. The viewport renders a SHORT settling window (SETTLE_FRAMES) and then
+##     stops for good, so a finished portrait costs nothing per frame.
 
 const RECIPE_DIR := "res://recipes/"
 
@@ -33,11 +33,18 @@ const SIZE := Vector2i(76, 100)
 const FOCUS_DROP := 0.17
 const CAMERA_DISTANCE := 0.62
 
+## How many frames a portrait keeps rendering after its body is built, before
+## the viewport is switched off for good. Enough for a skinned body's blend
+## shapes to be applied on a slow renderer; still a fixed, tiny budget rather
+## than a portrait that redraws forever.
+const SETTLE_FRAMES := 8
+
 var preset_name := ""
 var is_realized := false
 
 var _viewport: SubViewport
 var _body: Node3D
+var _settling := 0
 
 
 ## Where an archetype's recipe lives. The single place the roster and its
@@ -61,6 +68,8 @@ static func next_unrealized(portraits: Array) -> ArchetypePortrait:
 ## Cheap enough to run for every archetype in the frame the creator opens.
 func setup(p_preset_name: String) -> void:
 	preset_name = p_preset_name
+	# Nothing to settle until there is a body; realize() turns this back on.
+	set_process(false)
 	stretch = true
 	custom_minimum_size = Vector2(SIZE.x, SIZE.y)
 	# The button beside the portrait owns the input for this archetype. Without
@@ -74,8 +83,8 @@ func setup(p_preset_name: String) -> void:
 	# standing in it — the archetype would be somewhere in that frame rather
 	# than being the subject of it.
 	_viewport.own_world_3d = true
-	# Held disabled until there is something to photograph; realize() flips it
-	# to UPDATE_ONCE. Rendering an empty world first would spend a frame on a
+	# Held disabled until there is something to photograph; realize() starts the
+	# settling window. Rendering an empty world first would spend a frame on a
 	# picture of nothing.
 	_viewport.render_target_update_mode = SubViewport.UPDATE_DISABLED
 	add_child(_viewport)
@@ -101,8 +110,8 @@ func setup(p_preset_name: String) -> void:
 	add_child(frame)
 
 
-## Builds the archetype's body into the viewport and renders it once. Returns
-## false when the recipe could not be loaded.
+## Builds the archetype's body into the viewport and starts its settling
+## window. Returns false when the recipe could not be loaded.
 ##
 ## Marks itself realized either way: a missing recipe is a bug to see as an
 ## empty portrait, not a reason for the creator to retry the same failing build
@@ -127,10 +136,42 @@ func realize() -> bool:
 	_frame(cam, _body)
 	cam.make_current()
 
-	# One frame is the whole cost: a portrait is a standing body that never
-	# moves. UPDATE_ONCE renders the next frame and then disables itself.
-	_viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
+	# Render a SHORT settling window rather than a single frame.
+	#
+	# A portrait never moves, so one frame looks like the whole cost — but a
+	# freshly built body is not finished at the first frame. Equipment pieces
+	# are skinned meshes carrying the body's own blend shapes so they follow
+	# its shaping, and on a slow renderer those weights are not applied by the
+	# time the next frame is drawn. Grabbing that frame photographs the body
+	# with its clothing still unfitted, which on a female recipe reads as a
+	# NUDE figure on the first screen of the game.
+	#
+	# Measured on CI (PR #330): the portraits built first came out dressed and
+	# the one built later did not, while the same recipe on the live body —
+	# which has many frames to settle — was dressed in the very same capture.
+	# A local GPU settles inside one frame, which is exactly why this could not
+	# be reproduced locally at any resolution.
+	_settling = SETTLE_FRAMES
+	_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	set_process(true)
 	return true
+
+
+## Counts the settling window down and then stops the viewport for good, so a
+## finished portrait costs nothing per frame. Bounded either way: this runs at
+## most SETTLE_FRAMES times per portrait, once.
+func _process(_delta: float) -> void:
+	if _settling <= 0:
+		return
+	_settling -= 1
+	if _settling == 0:
+		_viewport.render_target_update_mode = SubViewport.UPDATE_DISABLED
+		set_process(false)
+
+
+## True once the portrait has stopped rendering — the bounded-cost property.
+func is_settled() -> bool:
+	return is_realized and _settling == 0
 
 
 ## The viewport the archetype is rendered into. Exposed so the portrait's
