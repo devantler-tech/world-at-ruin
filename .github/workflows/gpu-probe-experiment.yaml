@@ -51,30 +51,32 @@ jobs:
 
       - name: Write the throwaway probe scene
         run: |
+          # Heredoc bodies are indented to this block's level so the YAML block
+          # scalar stays valid; GDScript's own indentation is TABS after that.
           cat > client/tools/gpu_probe_experiment.gd <<'GDEOF'
-extends Node
+          extends Node
 
-func _ready() -> void:
-	print("PROBE_ADAPTER %s" % RenderingServer.get_video_adapter_name())
-	var rd := RenderingServer.get_rendering_device()
-	print("PROBE_RD_PRESENT %s" % (rd != null))
-	if rd != null:
-		print("PROBE_R32UINT_ATOMIC %s" % Volumetrics.supported(rd))
-	else:
-		print("PROBE_R32UINT_ATOMIC no-rendering-device")
-	print("PROBE_DONE")
-	get_tree().quit()
-GDEOF
+          func _ready() -> void:
+          	print("PROBE_ADAPTER %s" % RenderingServer.get_video_adapter_name())
+          	var rd := RenderingServer.get_rendering_device()
+          	print("PROBE_RD_PRESENT %s" % (rd != null))
+          	if rd != null:
+          		print("PROBE_R32UINT_ATOMIC %s" % Volumetrics.supported(rd))
+          	else:
+          		print("PROBE_R32UINT_ATOMIC no-rendering-device")
+          	print("PROBE_DONE")
+          	get_tree().quit()
+          GDEOF
           cat > client/tools/gpu_probe_experiment.tscn <<'SCNEOF'
-[gd_scene load_steps=2 format=3]
+          [gd_scene load_steps=2 format=3]
 
-[ext_resource type="Script" path="res://tools/gpu_probe_experiment.gd" id="1"]
+          [ext_resource type="Script" path="res://tools/gpu_probe_experiment.gd" id="1"]
 
-[node name="GpuProbeExperiment" type="Node"]
-script = ExtResource("1")
-SCNEOF
+          [node name="GpuProbeExperiment" type="Node"]
+          script = ExtResource("1")
+          SCNEOF
           echo "--- probe script ---"
-          cat client/tools/gpu_probe_experiment.gd
+          cat -A client/tools/gpu_probe_experiment.gd | head -5
 
       - name: Headless import (writes the global class-name cache)
         run: xvfb-run -a godot --headless --editor --quit --path client 2>&1 | tail -5
