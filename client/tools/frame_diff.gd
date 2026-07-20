@@ -34,37 +34,46 @@ extends Node
 
 ## |ΔLuma| at which a pixel counts as CHANGED.
 ##
-## Calibrated by measurement on this repo's own frames, not chosen by taste
-## (macOS, 1600x900, shipped lighting, all five vantages). Two renders of the
-## SAME build differ a little — temporal antialiasing, volumetric fog
-## reprojection, SDFGI convergence, wind-swayed foliage and animated torches all
-## move pixels between otherwise identical runs — so the floor has to clear that
-## drift without swallowing a real change.
+## Calibrated by measurement on this repo's own frames, not chosen by taste.
+## Renders drift a little even with nothing changed — temporal antialiasing,
+## volumetric fog reprojection, SDFGI convergence, wind-swayed foliage and
+## animated torches all move pixels — so the floor has to clear that drift
+## without swallowing a real change.
 ##
-## Measured, same build rendered twice vs. the hollow fog switched on (a
-## LOCALIZED volumetric change — the exact class #231 was filed about):
+## Measured three ways. "Back-to-back" is two runs in one session off one
+## checkout. "Across builds" is a base worktree vs this branch — what CI
+## actually does — taken both locally and on the runner. "Fog on" switches the
+## hollow fog on: a LOCALIZED volumetric change of the class #231 was filed
+## about.
 ##
-##   vantage        repeat run    fog on
-##   sunward             0.01%    21.01%
-##   shrine              0.03%     2.69%
-##   cave-chamber        0.01%     4.19%
-##   cave-walkout        9.05%    25.02%
-##   crossfield          0.03%     0.04%   <- fog not in this view
+##   vantage        back-to-back    across builds (local / CI)    fog on
+##   sunward               0.01%       0.02%  /  0.06%           21.01%
+##   crossfield            0.03%       0.09%  /  0.03%            0.04%  <- fog not in view
+##   shrine                0.03%       0.78%  /  0.37%            2.69%
+##   cave-chamber          0.01%       7.01%  /  5.72%            4.19%
+##   cave-walkout          9.05%      11.40%  / 25.20%           25.02%
 ##
-## Two things in that table matter more than the epsilon itself.
+## Three things in that table matter more than the epsilon itself.
 ##
 ## First, crossfield is a natural control: the fog is not in that view, so it
-## stays at the noise floor while four other vantages move. The report
-## localizes a change to the views that contain it.
+## stays at the floor while four other vantages move. The report localizes a
+## change to the views that contain it.
 ##
-## Second, cave-walkout's 9% repeat-run floor is HIGHER than shrine's 2.69%
-## real change. Its torches are animated, so a large share of that frame
-## genuinely differs run to run. This is why the slice reports rather than
-## judges: a single portfolio-wide threshold would fire on the cave every time
-## and miss a real change at the shrine. The numbers are comparable for the
-## SAME vantage across builds, which is the comparison a reviewer makes; they
-## are not comparable between vantages, and any future threshold has to be
-## per-vantage and calibrated against a floor like this one.
+## Second — and this CORRECTS a reading taken from the back-to-back column
+## alone — the torch-lit cave vantages have a floor of roughly 5%-25%, not the
+## 0.01% a back-to-back pair suggests. Two runs in one session land on the same
+## torch animation phase and understate the drift by orders of magnitude, while
+## the across-builds figures agree within their own spread on two different
+## machines. Never calibrate a floor like this from repeated runs of ONE build.
+##
+## Third, cave-chamber's across-builds floor (5.72%-7.01%) is LARGER than the
+## real change the fog makes in that same view (4.19%). A threshold there would
+## be pure noise. So: this slice reports rather than judges, and any future gate
+## has to be per-vantage, calibrated on CI rather than a workstation, and would
+## start with the daylight vantages — sunward, crossfield and shrine all sit
+## under 1% across builds. The numbers are comparable for the SAME vantage
+## across builds, which is the comparison a reviewer makes; they are not
+## comparable between vantages.
 const CHANGED_EPS := 0.01
 
 ## Rec. 709 luminance weights — the same ones Color.get_luminance() applies, so
