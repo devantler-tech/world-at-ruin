@@ -1335,20 +1335,24 @@ jobs:
           # return non-zero and kills the step. The failure would land only on
           # runs where the feature rendered correctly — the green path — so it
           # would look like a flake in the capture rather than a shell bug.
+          # Each item carries its own "no", so the joined phrase reads correctly
+          # for one item AND for both: "no volumetric fog and no hollow ash
+          # pools", never "no volumetric fog and hollow ash pools" — which
+          # scans as though the pools WERE rendered.
           missing=""
           if [ "${probe}" = "off" ]; then
-            missing="volumetric fog"
+            missing="no volumetric fog"
           fi
           if [ "${pools}" = "off" ]; then
-            missing="${missing:+${missing} and }hollow ash pools"
+            missing="${missing:+${missing} and }no hollow ash pools"
           fi
           if [ "${GPU_GATED}" = "true" ] && [ -n "${missing}" ]; then
-            echo "::warning::this PR touches gated rendering, but the capture rendered no ${missing} — these frames CANNOT evidence that change. Attach a locally-rendered frame of the enabled path (AGENTS.md: a player-visible PR with no inspectable frame evidence is a P1 blocker)."
+            echo "::warning::this PR touches gated rendering, but the capture rendered ${missing} — these frames CANNOT evidence that change. Attach a locally-rendered frame of the enabled path (AGENTS.md: a player-visible PR with no inspectable frame evidence is a P1 blocker)."
             {
               echo
               echo "> [!WARNING]"
               echo "> This PR touches gated rendering, but the captured frames"
-              echo "> contain no ${missing}. They cannot evidence that change."
+              echo "> contain ${missing}. They cannot evidence that change."
               echo "> Attach a locally-rendered frame of the enabled path."
             } >> "$GITHUB_STEP_SUMMARY"
           fi
