@@ -11,6 +11,16 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
+		"version": "0.14.0",
+		"date": "2026-07-20",
+		"title": "The flame remembers you now",
+		"notes": [
+			"Attuning to the Wardens' Shrine used to last only until you stopped playing — come back, and you woke in the dark of the cave again. It now carries across logouts, which is what the shrine promised you in the first place.",
+			"Your character and your progress are kept in two separate files from here on. That sounds like housekeeping, but it is the reason the rest is possible: the character file cannot grow new kinds of data without older builds refusing to read it, and a refused character file is a lost character. Progress lives beside it instead, where it can grow safely.",
+			"An older build simply will not see the progress file — it leaves it alone rather than damaging it — so you can move between builds without losing your wanderer. And if the game ever meets a progress file it cannot read, it will leave that file untouched and play the session without it, rather than write over something it does not understand.",
+		],
+	},
+	{
 		"version": "0.13.0",
 		"date": "2026-07-19",
 		"title": "Standing like someone who has been standing a while",
