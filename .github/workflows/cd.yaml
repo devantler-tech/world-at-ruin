@@ -219,11 +219,44 @@ jobs:
             echo "::error::${TAG} is already published — assets cannot be attached to an immutable release. The release must still be a draft when CD runs (see .releaserc draftRelease)."
             exit 1
           fi
-          # --clobber so a re-run (workflow_dispatch) replaces the asset rather
-          # than failing on an existing name.
-          gh release upload "${TAG}" \
-            "build/WorldAtRuin-${VERSION}-macOS-universal.zip" \
-            --repo "${GITHUB_REPOSITORY}" --clobber
+
+          ASSET="build/WorldAtRuin-${VERSION}-macOS-universal.zip"
+          # Fail fast on a missing artifact. A wrong path is a build bug, not a
+          # transient, and must not burn the retry budget below looking like one.
+          if [ ! -f "${ASSET}" ]; then
+            echo "::error::${ASSET} does not exist — the build step did not produce the artifact this step is meant to attach."
+            exit 1
+          fi
+
+          # RETRY, because this single call gates the whole release. Everything
+          # downstream (GHCR, publish, Homebrew cask) is skipped when it fails,
+          # and `.releaserc draftRelease` means the release is then stranded as a
+          # draft until a human re-runs a ~10-minute build. `uploads.github.com`
+          # is a separate endpoint from `api.github.com` and is the flakier of
+          # the two: a GitHub-side 503 there cost v0.32.0 two full runs (see #287).
+          #
+          # --clobber so a retry (or a workflow_dispatch re-run) replaces a
+          # partially-uploaded asset rather than failing on an existing name.
+          ATTEMPTS=5
+          DELAY=15
+          for attempt in $(seq 1 "${ATTEMPTS}"); do
+            if gh release upload "${TAG}" "${ASSET}" \
+              --repo "${GITHUB_REPOSITORY}" --clobber; then
+              # Say so explicitly: a retried success must not read like a clean
+              # first attempt to whoever scans this log later.
+              if [ "${attempt}" -gt 1 ]; then
+                echo "uploaded ${ASSET} to ${TAG} on attempt ${attempt}/${ATTEMPTS}"
+              fi
+              exit 0
+            fi
+            if [ "${attempt}" -lt "${ATTEMPTS}" ]; then
+              echo "attempt ${attempt}/${ATTEMPTS} to upload ${ASSET} failed; retrying in ${DELAY}s"
+              sleep "${DELAY}"
+              DELAY=$((DELAY * 2))
+            fi
+          done
+          echo "::error::failed to attach ${ASSET} to ${TAG} after ${ATTEMPTS} attempts. Nothing was published; ${TAG} is still a draft."
+          exit 1
 
       - name: 🧾 Record the artifact checksum
         id: sha
