@@ -38,6 +38,7 @@ static func creator_theme() -> Theme:
 
 	_style_panel(theme)
 	_style_buttons(theme)
+	_style_popup(theme)
 	_style_sliders(theme)
 	_style_labels(theme)
 	_style_scrollbar(theme)
@@ -84,6 +85,28 @@ static func _button_box(bg: Color, border: Color, width: int) -> StyleBoxFlat:
 	box.content_margin_top = 4
 	box.content_margin_bottom = 4
 	return box
+
+
+## An OptionButton opens a SEPARATE PopupMenu, which does not inherit the
+## button styling above — so without this the authored surface snapped back to
+## stock engine grey the moment a player opened the outfit or skin dropdown,
+## which is a primary first-run interaction.
+static func _style_popup(theme: Theme) -> void:
+	var panel := _flat(ASH, EMBER_DIM, 1, 2)
+	panel.set_content_margin_all(4)
+	theme.set_stylebox("panel", "PopupMenu", panel)
+	theme.set_stylebox("hover", "PopupMenu", _flat(ASH_RAISED.lightened(0.12), Color(0, 0, 0, 0), 0, 2))
+
+	var separator := _flat(EMBER_DIM, Color(0, 0, 0, 0), 0, 0)
+	separator.content_margin_top = 1
+	separator.content_margin_bottom = 1
+	theme.set_stylebox("separator", "PopupMenu", separator)
+
+	theme.set_color("font_color", "PopupMenu", BONE)
+	theme.set_color("font_hover_color", "PopupMenu", Color(1.0, 0.95, 0.86))
+	theme.set_color("font_disabled_color", "PopupMenu", BONE_DIM)
+	theme.set_color("font_separator_color", "PopupMenu", EMBER)
+	theme.set_font_size("font_size", "PopupMenu", FONT_BODY)
 
 
 ## A slider's track is a groove cut into the panel; the filled part glows ember

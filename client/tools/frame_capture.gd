@@ -44,6 +44,13 @@ const WARMUP_FRAMES := 150
 ## reprojection and SDFGI re-converges, so an immediate capture photographs a
 ## half-resolved frame.
 const SETTLE_FRAMES := 120
+## Upper bound on the viewport-by-viewport walk of the expanded advanced
+## section — a runaway guard only. The list is ~35 controls over ~3 viewports,
+## so hitting this means the scroll geometry is wrong, not that the panel grew.
+## Exceeding it FAILS the capture: a quiet stop would report success having
+## never photographed the bottom of the list.
+const MAX_ADVANCED_VIEWPORTS := 20
+
 ## Minimum luminance spread across a sampled grid for a frame to count as real.
 ## A capture that photographs nothing still writes a valid PNG and still reports
 ## success — this is the guard against that silent failure.
@@ -499,14 +506,52 @@ func _capture_first_run(dir: String, main: Node) -> void:
 	# default view folds away.
 	creator.call("expand_all_sections")
 	await get_tree().process_frame
-	scroll.scroll_vertical = int(scroll.get_v_scroll_bar().max_value)
-	await get_tree().process_frame
-	if scroll.scroll_vertical <= 0:
+	# `max_value` is the CONTENT extent, not the furthest scroll position: the bar
+	# only travels to `max_value - page`. Comparing against max_value means the
+	# walk never registers as having reached the bottom. (The old jump-to-max
+	# worked only because assigning past the limit silently clamps to it.)
+	var bar := scroll.get_v_scroll_bar()
+	var limit := maxi(0, int(bar.max_value) - int(bar.page))
+	if limit <= 0:
 		_fail("the creator's control list did not scroll — its lower sections would go unphotographed")
 		return
-	if not await _shoot(dir, "first_run_lower", creator):
+
+	# Walk the expanded list ONE VIEWPORT AT A TIME rather than jumping to the
+	# bottom. Jumping straight to the end photographs only the tail: the default
+	# frame above was taken with this section collapsed, so the controls near its
+	# start (ARCHETYPE, HERITAGE, TORSO, LIMBS) would appear in NO frame at all,
+	# and a regression to any of them would sail through this gate. The overlap
+	# keeps a row from falling between two frames.
+	var page := maxi(1, int(bar.page) - 40)
+	var offset := 0
+	var index := 0
+	var reached_bottom := false
+	while index < MAX_ADVANCED_VIEWPORTS:
+		scroll.scroll_vertical = offset
+		await get_tree().process_frame
+		var at := scroll.scroll_vertical
+		index += 1
+		# The bottom frame keeps its established name so anything reading the
+		# capture set by name still finds it.
+		var shot_name := "first_run_lower" if at >= limit else "first_run_advanced_%d" % index
+		if not await _shoot(dir, shot_name, creator):
+			return
+		shots += 1
+		if at >= limit:
+			reached_bottom = true
+			break
+		var next := at + page
+		if next <= at:
+			_fail("the creator's control list stopped advancing at %d of %d — the rest would go unphotographed" % [at, limit])
+			return
+		offset = next
+	# Running out of steps is a FAILURE, never a quiet stop. A silent cap here
+	# would report CAPTURE PASS having never photographed the bottom of the list,
+	# which is precisely the blind spot this walk exists to close.
+	if not reached_bottom:
+		_fail("the control list needed more than %d viewports to reach its end (stopped at %d of %d) — the rest would go unphotographed"
+			% [MAX_ADVANCED_VIEWPORTS, offset, limit])
 		return
-	shots += 1
 	scroll.scroll_vertical = 0
 
 	# Every preset the creator offers, because the gate fires on any recipe

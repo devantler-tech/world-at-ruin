@@ -29,6 +29,8 @@ func _ready() -> void:
 		return
 	if not _fires_on_the_real_kit():
 		return
+	if not _dropdown_popup_is_themed():
+		return
 	print("TEST PASS — creator sections place every shape exactly once")
 	get_tree().quit(0)
 
@@ -133,6 +135,32 @@ func _fires_on_the_real_kit() -> bool:
 		return _fail("%d of %d shipped shapes fell into the fallback — the declared prefixes have drifted"
 			% [fallback, names.size()])
 	print("  shipped kit: %d shapes → %d sections (%d unmatched)" % [names.size(), groups.size(), fallback])
+	return true
+
+
+## 5. An OptionButton opens a SEPARATE PopupMenu node. The creator applies its
+## theme at the panel root and relies on propagation reaching that popup — if it
+## does not, the authored surface snaps back to engine grey the moment a player
+## opens the outfit or skin dropdown, which is a primary first-run interaction.
+## Asserting the theme merely DEFINES the style would only restate what the
+## theme file says; this resolves it through the real node the player sees.
+func _dropdown_popup_is_themed() -> bool:
+	var theme := UiTheme.creator_theme()
+	var authored := theme.get_stylebox("panel", "PopupMenu")
+	if authored == null:
+		return _fail("the creator theme defines no PopupMenu panel style")
+
+	var host := PanelContainer.new()
+	host.theme = theme
+	var option := OptionButton.new()
+	host.add_child(option)
+	add_child(host)
+
+	var resolved := option.get_popup().get_theme_stylebox("panel", "PopupMenu")
+	var matched := resolved == authored
+	host.queue_free()
+	if not matched:
+		return _fail("the dropdown popup did not resolve the authored PopupMenu style — it would render in engine grey")
 	return true
 
 
