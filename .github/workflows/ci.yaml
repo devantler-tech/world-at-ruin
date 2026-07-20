@@ -1225,6 +1225,19 @@ jobs:
             echo "::error::opted-in plate capture never reached BOOT_OK"
             tail -40 capture-plates.log; exit 1
           fi
+          # Same error rejection as the default capture above: an error that
+          # only occurs on the opted-in path can still leave a renderable scene
+          # that prints PASS and BOOT_OK, so publishing a degraded plate frame
+          # and reporting success is exactly the failure this evidence exists
+          # to prevent. Same Metal fence carve-out and same file form (not a
+          # pipe) for the reasons given there.
+          grep -vE "timeout waiting for fence|drivers/metal/rendering_device_driver_metal" \
+            capture-plates.log > capture-plates.filtered.log || true
+          if grep -qE "SCRIPT ERROR|^ERROR" capture-plates.filtered.log; then
+            echo "::error::errors during the opted-in plate capture — its frames may not depict a healthy world"
+            grep -nE "SCRIPT ERROR|^ERROR" capture-plates.filtered.log | head -20
+            exit 1
+          fi
 
       - name: Capture the first-run UI
         # Only when the PR touches it. The ordinary capture deliberately seeds a
@@ -1486,6 +1499,7 @@ jobs:
             ${{ runner.temp }}/shots/*.png
             ${{ runner.temp }}/shots/*.txt
             ${{ runner.temp }}/shots/opt-in-plates/*.png
+            ${{ runner.temp }}/shots/opt-in-plates/*.txt
           if-no-files-found: error
 
   frame-capture-exported:

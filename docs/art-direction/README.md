@@ -336,8 +336,12 @@ Ashfall Reach — a shattered orange wasteland that still separates rock from gr
 IV's **Dry Steppes** for how far to push grime, rust and wear without losing readability.
 
 **⚠️ The channels are not simply missing — check before you file that as the gap.**
-`terrain.gdshader` already perturbs `NORMAL` (line 131) and varies `ROUGHNESS` by slope and grain
-(line 117), and mixes ash against rock by slope. All three channels are being touched, and the
+`terrain.gdshader` already perturbs `NORMAL` (its final `NORMAL =` assignment, at the end of
+`fragment()`) and varies `ROUGHNESS` by slope and grain (the `ROUGHNESS = clamp(mix(ash_roughness,
+…))` assignment above it), and mixes ash against rock by slope. Named by symbol rather than by line
+number on purpose: the line numbers this used to carry (117 and 131) had drifted hundreds of lines
+into the noise helpers, pointing anyone following this guidance at unrelated code. All three
+channels are being touched, and the
 result still measures flat. So the gap is **the magnitude and character of the variation, not its
 absence** — the same trap as the torch below, where the layers exist but do not read.
 
