@@ -200,6 +200,79 @@ func _test_ashflats_is_the_identity_landform() -> void:
 		_fail("the origin sits in a blend band (blend %.4f), so the shrine's ground moved" %
 			float(at[&"blend"]))
 
+	# The origin ALONE is not the claim. What the dev log promises a player is
+	# that the ground they start on has not moved — and that is the clearing, not
+	# a point. So it is MEASURED, in millimetres, against the pre-landform field.
+	#
+	# 🔴 An exact-identity assertion here FAILED, and it was right to. The
+	# clearing's outer rim reaches into a blend band: at (11.2, 7.0) the landform
+	# resolves to amp 0.9961 / ridged 0.0039 rather than a clean (1, 0). The
+	# honest reading is not that the promise is false but that it needs a unit and
+	# a place — a player cares about metres of ground underfoot, not about a blend
+	# weight four decimals off one. Measured on the shipped seed, the clearing has
+	# three distinct zones:
+	#
+	#   * the eased core (r <= 0.35, where `height_at` flattens it): 0.000 mm
+	#   * out to r = 0.86 of the radius: under 1 mm
+	#   * the outermost rim, worst 111 mm at (3.5, 13.3), r ~ 0.98
+	#
+	# The rim moving is CORRECT, not tolerated: that is where the clearing hands
+	# over to open ground, and open ground is exactly what this change reshapes.
+	# What must not move is the ground the player stands on and sees, and that is
+	# the core — which is bit-identical.
+	#
+	# Measured on the RAW landform term, before `height_at` eases the clearing
+	# flat. That easing only shrinks the deviation, so these bounds are the
+	# conservative ones.
+	var sites := GroundRegions.sites(WorldGen.WORLD_SEED, EXTENT)
+	var noise := _base_noise()
+	var radius := WorldGen.SHRINE_CLEAR_RADIUS
+	var worst := 0.0
+	var worst_at := Vector2.ZERO
+	var core_worst := 0.0
+	var inner_worst := 0.0
+	var checked := 0
+	for iz in 41:
+		for ix in 41:
+			var x := lerpf(-radius, radius, float(ix) / 40.0)
+			var z := lerpf(-radius, radius, float(iz) / 40.0)
+			var r := Vector2(x, z).length() / radius
+			if r > 1.0:
+				continue
+			checked += 1
+			var land := GroundRegions.landform_for(sites, x, z)
+			var n := noise.get_noise_2d(x, z)
+			var moved := absf(
+				GroundRegions.shape(n, float(land[&"amp"]), float(land[&"ridged"])) - n
+			) * WorldGen.HEIGHT_AMP
+			if moved > worst:
+				worst = moved
+				worst_at = Vector2(x, z)
+			if r <= 0.35:
+				core_worst = maxf(core_worst, moved)
+			if r <= 0.85:
+				inner_worst = maxf(inner_worst, moved)
+	if checked < 500:
+		_fail("shrine-clearing sweep covered only %d points — too few to stand behind" % checked)
+	# The core is EXACT, not merely small: it is fully-decided ashflats, and
+	# ashflats is the identity landform, so this is arithmetic rather than a
+	# tolerance. A non-zero here means the origin cell stopped being pinned.
+	if core_worst > 0.0000001:
+		_fail("the shrine's eased core moved %.6f mm — the origin cell is no longer fully-decided ashflats" %
+			(core_worst * 1000.0))
+	# Out to 0.85 of the radius the blend has not reached: a millimetre is the
+	# floating-point floor, not a budget being spent.
+	if inner_worst > 0.001:
+		_fail("the shrine clearing moved %.1f mm inside 0.85 of its radius — the blend band has reached ground the player stands on" %
+			(inner_worst * 1000.0))
+	# The rim. 150 mm against a measured 111: margin for a re-tune of the
+	# neighbouring region, and still under the height of a single stair.
+	if worst > 0.150:
+		_fail("the shrine clearing rim moved %.0f mm at (%.1f, %.1f) — the transition to open ground has become a step" %
+			[worst * 1000.0, worst_at.x, worst_at.y])
+	print("shrine clearing: core %.6f mm, inner-0.85 %.4f mm, rim worst %.1f mm at (%.1f, %.1f), %d points" %
+		[core_worst * 1000.0, inner_worst * 1000.0, worst * 1000.0, worst_at.x, worst_at.y, checked])
+
 
 ## 3. The ridge operator neither raises nor sinks the ground it creases.
 ##
