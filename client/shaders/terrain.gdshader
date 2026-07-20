@@ -229,7 +229,10 @@ void fragment() {
 	// the boundary is now a CONTACT, not a ramp: wind leaves an edge.
 	float ash_edge = slope + (drift - 0.5) * 0.22 - rock_slope;
 	// Clamped so a faceted normal (slope is per-face) cannot spike the width.
-	float aw = clamp(max(ash_contact, fwidth(ash_edge) * 1.2), ash_contact, 0.25);
+	// The ceiling must never fall below the floor: ash_contact ranges to 0.3,
+	// and clamp() with minVal > maxVal is UNDEFINED in GLSL, not merely odd.
+	float aw = clamp(max(ash_contact, fwidth(ash_edge) * 1.2),
+		ash_contact, max(ash_contact, 0.25));
 	float rock_mix = smoothstep(-aw, aw, ash_edge);
 
 	// How much bare rock shows through here. The ash sheet is what the wind
@@ -254,7 +257,9 @@ void fragment() {
 	// before the change; 0.47 puts a slab field in most views while keeping
 	// ash the dominant surface, which is what the fiction asks for.
 	float exposed_edge = drift - 0.47;
-	float ew = clamp(max(ash_contact, fwidth(exposed_edge) * 1.2), ash_contact, 0.25);
+	// Same undefined-clamp guard as the ash contact above.
+	float ew = clamp(max(ash_contact, fwidth(exposed_edge) * 1.2),
+		ash_contact, max(ash_contact, 0.25));
 	float sheet = clamp(smoothstep(-ew, ew, exposed_edge) + rock_mix, 0.0, 1.0);
 
 	// ---- Stones, not paving ----------------------------------------------
