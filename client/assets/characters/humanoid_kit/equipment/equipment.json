@@ -1,9 +1,6 @@
 {
   "kit_version": 5,
-  "layers": [
-    "clothing",
-    "armor"
-  ],
+  "layers": ["clothing", "armor"],
   "pieces": {
     "boots_worn": {
       "hide_shape": "equip_hide_boots_worn",
@@ -25,16 +22,10 @@
     "shoes_cloth": {
       "hide_shape": "equip_hide_shoes_cloth",
       "layer": "clothing",
-      "occluded_by": [
-        "armor"
-      ],
+      "occluded_by": ["armor"],
       "scene": "shoes_cloth.glb",
       "slot": "feet"
     }
   },
-  "slots": [
-    "torso",
-    "legs",
-    "feet"
-  ]
+  "slots": ["torso", "legs", "feet"]
 }

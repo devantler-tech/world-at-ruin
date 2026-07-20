@@ -919,7 +919,14 @@ jobs:
   cd-required-checks:
     name: CD - Required Checks
     runs-on: ubuntu-latest
-    needs: [publish-macos, publish-ghcr, verify-ghcr-public, publish-release, homebrew-cask]
+    needs:
+      [
+        publish-macos,
+        publish-ghcr,
+        verify-ghcr-public,
+        publish-release,
+        homebrew-cask,
+      ]
     if: ${{ always() }}
     steps:
       - uses: devantler-tech/actions/aggregate-job-checks@0f27c13a9785608e0bbf9998777d27761b4de617 # v10.0.2
