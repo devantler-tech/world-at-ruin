@@ -65,7 +65,19 @@ const HALF := WorldGen.SIZE / 2.0
 ## together take the worst residual float from 13 mm to 0. Only the pieces' Y
 ## moves: the placement rng stream is untouched, which the global-RNG-invariance
 ## assertion above confirms independently.
-const GOLDEN_FINGERPRINT := "b7c482e"
+## v0.19.1 (#282): ruin and shrine pieces are seated from the LOWEST walkable
+## surface under their own footprint instead of one `height_at` sample at their
+## origin, so 72 of 188 pieces that hung in the air — one by 1076 mm — come down
+## into the ground. Regenerated across three review rounds: the footprint is now
+## the piece's TRUE rotated outline (the XZ convex hull of its box) rather than
+## that outline's enclosing rectangle, which was sinking pieces a mean 83 mm and
+## up to 641 mm too deep into ground they never covered; it carries a fallen
+## column's in-body offset through the rotation; and the sweep visits the
+## quad-diagonal crossings on its edges. Worst residual float: 0 mm. Only the
+## pieces' Y moves — the placement rng stream is untouched, which the
+## global-RNG-invariance assertion above confirms independently.
+const GOLDEN_FINGERPRINT := "65f927d"
+
 
 
 ## world_gen's cave_protects pads the cave hull by this many metres. A piece

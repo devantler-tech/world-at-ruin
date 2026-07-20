@@ -73,18 +73,21 @@ func _ready() -> void:
 			# has to sit in the ground.
 			if not (piece is StaticBody3D):
 				continue
-			var box := _world_aabb(piece as Node3D)
-			if box.size == Vector3.ZERO:
+			var poly := _world_footprint(piece as Node3D)
+			if poly.size() < 3:
 				continue
-			var ground := _surface_range_under(w, box)
+			var ground := _surface_range_under_poly(w, poly)
 			if ground == Vector2.ZERO:
 				continue # entirely off-grid
+			var bottom := _lowest_point(piece as Node3D)
+			if bottom == INF:
+				continue
 			checked += 1
 			if ground.y - ground.x > SPANNING_THRESHOLD:
 				spanning += 1
 			# How far the piece's underside sits ABOVE the lowest ground beneath
 			# it. Negative means buried, which is always fine.
-			var gap := box.position.y - ground.x
+			var gap := bottom - ground.x
 			if gap > worst_float:
 				worst_float = gap
 				worst_name = "%s/%s" % [site.name, piece.name]
@@ -123,67 +126,103 @@ func _is_generated_site(n: Node) -> bool:
 
 ## A piece's real extent in world space: its mesh AABB carried through its own
 ## global transform, so rotation and any in-body child offset are included.
-func _world_aabb(piece: Node3D) -> AABB:
-	for c: Node in piece.get_children():
-		if c is MeshInstance3D:
-			var mi := c as MeshInstance3D
-			if mi.mesh != null:
-				return mi.global_transform * mi.mesh.get_aabb()
-	if piece is MeshInstance3D:
-		var self_mi := piece as MeshInstance3D
-		if self_mi.mesh != null:
-			return self_mi.global_transform * self_mi.mesh.get_aabb()
-	return AABB()
+## A piece's TRUE footprint in world XZ: the convex hull of its mesh box's eight
+## corners carried through its own global transform. NOT the enclosing rectangle
+## — a wall rotated off-axis leaves most of that rectangle covering ground the
+## wall never stands on, and taking a minimum from there would demand the piece
+## sink to meet ground it does not touch.
+##
+## Derived here from the mesh's global_transform, independently of the
+## generator's `_footprint_polygon`, so this oracle cannot inherit a wrong
+## footprint from the code it audits.
+func _world_footprint(piece: Node3D) -> PackedVector2Array:
+	var mi := _mesh_child(piece)
+	if mi == null:
+		return PackedVector2Array()
+	var local := mi.mesh.get_aabb()
+	var xf := mi.global_transform
+	var pts := PackedVector2Array()
+	for i in 8:
+		var corner := local.position + Vector3(
+			local.size.x * float(i & 1),
+			local.size.y * float((i >> 1) & 1),
+			local.size.z * float((i >> 2) & 1))
+		var v := xf * corner
+		pts.append(Vector2(v.x, v.z))
+	var hull := Geometry2D.convex_hull(pts)
+	return hull if hull.size() >= 3 else PackedVector2Array()
 
-## Lowest and highest walkable surface under a piece's footprint, as (low, high).
-## Sweeps the footprint edges plus every terrain grid line crossing them — the
-## surface is linear only within a triangle, so a grid vertex inside a footprint
-## can dip below all four of its corners.
-func _surface_range_under(w: WorldGen, box: AABB) -> Vector2:
-	var x0 := box.position.x
-	var x1 := box.position.x + box.size.x
-	var z0 := box.position.z
-	var z1 := box.position.z + box.size.z
+func _mesh_child(piece: Node3D) -> MeshInstance3D:
+	for c: Node in piece.get_children():
+		if c is MeshInstance3D and (c as MeshInstance3D).mesh != null:
+			return c as MeshInstance3D
+	if piece is MeshInstance3D and (piece as MeshInstance3D).mesh != null:
+		return piece as MeshInstance3D
+	return null
+
+## The piece's lowest world-space point.
+func _lowest_point(piece: Node3D) -> float:
+	var mi := _mesh_child(piece)
+	if mi == null:
+		return INF
+	return (mi.global_transform * mi.mesh.get_aabb()).position.y
+
+## Lowest and highest walkable surface under a footprint POLYGON, as (low, high).
+## Samples the polygon's corners, its edges wherever they cross a grid line or a
+## quad's split diagonal (`surface_height_at` splits on `fx >= fz`, i.e. along
+## the world lines x - z = k*step), and the grid vertices inside it. Enumerating
+## those independently is what stops this oracle sharing a blind spot with the
+## code it audits — structural independence is not enough if both omit the same
+## candidate.
+func _surface_range_under_poly(w: WorldGen, poly: PackedVector2Array) -> Vector2:
+	if poly.size() < 3:
+		return Vector2.ZERO
+	var step := WorldGen.SIZE / WorldGen.QUADS
+	var half := WorldGen.SIZE / 2.0
+	var pts := PackedVector2Array()
+	var min_x := INF
+	var max_x := -INF
+	var min_z := INF
+	var max_z := -INF
+	for p: Vector2 in poly:
+		pts.append(p)
+		min_x = minf(min_x, p.x); max_x = maxf(max_x, p.x)
+		min_z = minf(min_z, p.y); max_z = maxf(max_z, p.y)
+	for i in poly.size():
+		var a := poly[i]
+		var b := poly[(i + 1) % poly.size()]
+		var d := b - a
+		if not is_zero_approx(d.x):
+			for k in range(ceili((minf(a.x, b.x) + half) / step), floori((maxf(a.x, b.x) + half) / step) + 1):
+				var t := (k * step - half - a.x) / d.x
+				if t > 0.0 and t < 1.0:
+					pts.append(a + d * t)
+		if not is_zero_approx(d.y):
+			for k in range(ceili((minf(a.y, b.y) + half) / step), floori((maxf(a.y, b.y) + half) / step) + 1):
+				var t := (k * step - half - a.y) / d.y
+				if t > 0.0 and t < 1.0:
+					pts.append(a + d * t)
+		var dd := d.x - d.y
+		if not is_zero_approx(dd):
+			var s0 := a.x - a.y
+			var s1 := b.x - b.y
+			for k in range(ceili(minf(s0, s1) / step), floori(maxf(s0, s1) / step) + 1):
+				var t := (k * step - s0) / dd
+				if t > 0.0 and t < 1.0:
+					pts.append(a + d * t)
+	for ix in range(ceili((min_x + half) / step), floori((max_x + half) / step) + 1):
+		for iz in range(ceili((min_z + half) / step), floori((max_z + half) / step) + 1):
+			var pt := Vector2(ix * step - half, iz * step - half)
+			if Geometry2D.is_point_in_polygon(pt, poly):
+				pts.append(pt)
 	var lo := INF
 	var hi := -INF
-	for x: float in _axis_samples(x0, x1):
-		for z: float in _axis_samples(z0, z1):
-			var s := w.surface_height_at(x, z)
-			if s <= WorldGen.NO_GROUND + 1.0:
-				continue
-			lo = minf(lo, s)
-			hi = maxf(hi, s)
-	# The quad diagonals meeting this footprint's edges. Derived here from the
-	# triangulation's own definition rather than by calling the generator's
-	# helper: `surface_height_at` picks its triangle on `fx >= fz`, so the split
-	# runs along the world lines x - z = k*step. Enumerating them independently
-	# is what stops this oracle sharing a blind spot with the code it audits —
-	# structural independence is not enough if both omit the same candidate.
-	var step := WorldGen.SIZE / WorldGen.QUADS
-	for k in range(ceili((x0 - z1) / step), floori((x1 - z0) / step) + 1):
-		var edge_pts: Array[Vector2] = [
-			Vector2(x0, x0 - k * step), Vector2(x1, x1 - k * step),
-			Vector2(z0 + k * step, z0), Vector2(z1 + k * step, z1),
-		]
-		for p: Vector2 in edge_pts:
-			if p.x < x0 or p.x > x1 or p.y < z0 or p.y > z1:
-				continue
-			var ds := w.surface_height_at(p.x, p.y)
-			if ds <= WorldGen.NO_GROUND + 1.0:
-				continue
-			lo = minf(lo, ds)
-			hi = maxf(hi, ds)
+	for p: Vector2 in pts:
+		var s := w.surface_height_at(p.x, p.y)
+		if s <= WorldGen.NO_GROUND + 1.0:
+			continue
+		lo = minf(lo, s)
+		hi = maxf(hi, s)
 	if lo > hi:
 		return Vector2.ZERO
 	return Vector2(lo, hi)
-
-func _axis_samples(from: float, to: float) -> PackedFloat32Array:
-	var out := PackedFloat32Array([from])
-	var step := WorldGen.SIZE / WorldGen.QUADS
-	var half := WorldGen.SIZE / 2.0
-	for i in range(ceili((from + half) / step), floori((to + half) / step) + 1):
-		var at := i * step - half
-		if at > from and at < to:
-			out.append(at)
-	out.append(to)
-	return out

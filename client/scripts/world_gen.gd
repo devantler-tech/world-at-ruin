@@ -476,15 +476,15 @@ func _add_column(rng: RandomNumberGenerator, parent: Node3D, off: Vector3, stone
 		# and its collider INSIDE the body instead of moving the body.
 		var lie_down := Vector3(0.0, -h * 0.5, 0.0)
 		_offset_children(body, lie_down)
-		var fp := _footprint_bounds(mesh, rot, lie_down)
-		body.position = Vector3(off.x, _footprint_ground(wx + fp.position.x, wx + fp.end.x, wz + fp.position.y, wz + fp.end.y).x + r, off.z)
+		var fp := _world_polygon(_footprint_polygon(mesh, rot, lie_down), wx, wz)
+		body.position = Vector3(off.x, _footprint_ground(fp).x + r, off.z)
 		body.rotation = rot
 	else:
 		var rot := Vector3(rng.randf_range(-0.08, 0.08), 0, rng.randf_range(-0.08, 0.08))
 		# The mesh is built from its base at y=0, so it is seated on the ground
 		# rather than centred on it like the old CylinderMesh.
-		var fp := _footprint_bounds(mesh, rot)
-		body.position = Vector3(off.x, _footprint_ground(wx + fp.position.x, wx + fp.end.x, wz + fp.position.y, wz + fp.end.y).x - 0.15, off.z)
+		var fp := _world_polygon(_footprint_polygon(mesh, rot), wx, wz)
+		body.position = Vector3(off.x, _footprint_ground(fp).x - 0.15, off.z)
 		body.rotation = rot
 	parent.add_child(body)
 
@@ -503,9 +503,9 @@ func _add_wall(rng: RandomNumberGenerator, parent: Node3D, off: Vector3, stone: 
 	# covers — a 5 m wall turned across a grade is the worst centre-sample case.
 	# No other draw sits between, so the placement stream is unchanged.
 	var yaw := rng.randf_range(0.0, TAU)
-	var fp := _footprint_bounds(mesh, Vector3(0.0, yaw, 0.0))
+	var fp := _world_polygon(_footprint_polygon(mesh, Vector3(0.0, yaw, 0.0)), wx, wz)
 	# Built from its base at y=0, so seat it on the ground.
-	body.position = Vector3(off.x, _footprint_ground(wx + fp.position.x, wx + fp.end.x, wz + fp.position.y, wz + fp.end.y).x - 0.3, off.z)
+	body.position = Vector3(off.x, _footprint_ground(fp).x - 0.3, off.z)
 	body.rotation.y = yaw
 	parent.add_child(body)
 
@@ -521,8 +521,8 @@ func _add_rubble(rng: RandomNumberGenerator, parent: Node3D, off: Vector3, stone
 	# Same reordering as the other two: rotation first so the footprint is the
 	# rotated one, with no intervening draw, so the stream is unchanged.
 	var rot := Vector3(rng.randf_range(-0.3, 0.3), rng.randf_range(0.0, TAU), rng.randf_range(-0.3, 0.3))
-	var fp := _footprint_bounds(mesh, rot)
-	body.position = Vector3(off.x, _footprint_ground(wx + fp.position.x, wx + fp.end.x, wz + fp.position.y, wz + fp.end.y).x + chunk.y * 0.25, off.z)
+	var fp := _world_polygon(_footprint_polygon(mesh, rot), wx, wz)
+	body.position = Vector3(off.x, _footprint_ground(fp).x + chunk.y * 0.25, off.z)
 	body.rotation = rot
 	parent.add_child(body)
 
@@ -540,18 +540,38 @@ func _add_rubble(rng: RandomNumberGenerator, parent: Node3D, off: Vector3, stone
 ## that purely VERTICAL offset becomes a horizontal displacement of up to half
 ## the column's length. Rotating the bare mesh AABB about the origin would then
 ## sample ground the piece does not stand on — measured as a 735 mm float.
-func _footprint_bounds(mesh: Mesh, rot: Vector3, child_offset := Vector3.ZERO) -> Rect2:
+## Returned as the TRUE footprint POLYGON in body-local XZ — the convex hull of
+## the rotated box's eight corners, not that hull's enclosing rectangle. A 5 m
+## wall turned 45 degrees has an enclosing rectangle roughly 3.9 m square, most
+## of it ground the wall never covers; seating from the minimum of THAT
+## rectangle sinks the piece by whatever its deepest empty corner reaches.
+## Measured on the shipped seed: mean 83 mm too deep, max 641 mm, 95 of 182
+## pieces over 50 mm — enough to swallow small rubble whole.
+func _footprint_polygon(mesh: Mesh, rot: Vector3, child_offset := Vector3.ZERO) -> PackedVector2Array:
 	var local := mesh.get_aabb()
 	local.position += child_offset
-	var box := Transform3D(Basis.from_euler(rot), Vector3.ZERO) * local
-	# A floor keeps a hairline or flat mesh from collapsing to a single sample
-	# and silently reverting to the centre-sample behaviour this replaces; it is
-	# grown about the box's OWN centre so the padding cannot re-introduce a shift.
-	var w := maxf(box.size.x, 0.2)
-	var d := maxf(box.size.z, 0.2)
-	var cx := box.position.x + box.size.x * 0.5
-	var cz := box.position.z + box.size.z * 0.5
-	return Rect2(cx - w * 0.5, cz - d * 0.5, w, d)
+	var basis := Basis.from_euler(rot)
+	var pts := PackedVector2Array()
+	for i in 8:
+		var corner := local.position + Vector3(
+			local.size.x * float(i & 1),
+			local.size.y * float((i >> 1) & 1),
+			local.size.z * float((i >> 2) & 1))
+		var v := basis * corner
+		pts.append(Vector2(v.x, v.z))
+	var hull := Geometry2D.convex_hull(pts)
+	# A hairline or edge-on projection collapses to a segment and would sample
+	# almost nothing, silently reverting to the centre-sample behaviour this
+	# replaces. Fall back to a small square about its own centre instead.
+	if hull.size() < 3:
+		var c := Vector2.ZERO
+		for p: Vector2 in pts:
+			c += p
+		c /= float(maxi(1, pts.size()))
+		return PackedVector2Array([
+			c + Vector2(-0.1, -0.1), c + Vector2(0.1, -0.1),
+			c + Vector2(0.1, 0.1), c + Vector2(-0.1, 0.1)])
+	return hull
 
 ## The walkable surface under a piece's whole FOOTPRINT: (lowest, span).
 ##
@@ -564,76 +584,102 @@ func _footprint_bounds(mesh: Mesh, rot: Vector3, child_offset := Vector3.ZERO) -
 ## Measured on the shipped seed, 88% of ruin pieces stand on ground varying by
 ## more than 100 mm across their own footprint (mean 334 mm, max 2373 mm), so a
 ## single centre sample necessarily leaves one side of them in the air.
-func _footprint_ground(x0: float, x1: float, z0: float, z1: float) -> Vector2:
-	# Sample the footprint's own edges AND every terrain grid line crossing it.
-	# The surface is linear only WITHIN a triangle, so a grid vertex inside the
-	# footprint can dip below all four corners; sampling the corners alone would
-	# seat the piece above it and leave it floating over exactly that dip.
+func _footprint_ground(poly: PackedVector2Array) -> Vector2:
+	# The surface is linear only WITHIN a triangle, so its extremes over a convex
+	# polygon sit at vertices of the polygon-versus-triangulation arrangement:
+	# the polygon's own corners, the points where its EDGES cross a grid line or
+	# a quad's split diagonal, and the grid vertices INSIDE it. Sampling all
+	# three classes makes the seat exact rather than exact-to-a-tolerance —
+	# omitting the diagonal crossings alone leaves a ~34 mm residual float.
 	var lo := INF
 	var hi := -INF
-	for sx: float in _grid_span(x0, x1):
-		for sz: float in _grid_span(z0, z1):
-			var s := surface_height_at(sx, sz)
-			if s <= NO_GROUND + 1.0:
-				continue
-			lo = minf(lo, s)
-			hi = maxf(hi, s)
-	# ...and where a quad's SPLIT DIAGONAL crosses the footprint's edges. Those
-	# are the last vertices of the arrangement: without them the sweep can step
-	# over the true low point and seat the piece fractionally above it.
-	for p: Vector2 in _diagonal_edge_crossings(x0, x1, z0, z1):
-		var ds := surface_height_at(p.x, p.y)
-		if ds <= NO_GROUND + 1.0:
+	for p: Vector2 in _polygon_samples(poly):
+		var s := surface_height_at(p.x, p.y)
+		if s <= NO_GROUND + 1.0:
 			continue
-		lo = minf(lo, ds)
-		hi = maxf(hi, ds)
+		lo = minf(lo, s)
+		hi = maxf(hi, s)
 	if lo > hi:
 		# Footprint entirely off-grid: fall back to the analytic field so an
 		# edge piece still gets a finite seat rather than NO_GROUND.
-		return Vector2(height_at((x0 + x1) * 0.5, (z0 + z1) * 0.5), 0.0)
+		return Vector2(height_at(_centroid(poly).x, _centroid(poly).y), 0.0)
 	return Vector2(lo, hi - lo)
 
-## One axis of the footprint sweep: both ends, plus every terrain grid
-## coordinate strictly between them.
-func _grid_span(from: float, to: float) -> PackedFloat32Array:
-	var out := PackedFloat32Array([from])
-	var step := SIZE / QUADS
-	var half := SIZE / 2.0
-	var first := ceili((from + half) / step)
-	var last := floori((to + half) / step)
-	for i in range(first, last + 1):
-		var at := i * step - half
-		if at > from and at < to:
-			out.append(at)
-	out.append(to)
+## Body-local footprint polygon shifted onto its world position.
+func _world_polygon(poly: PackedVector2Array, wx: float, wz: float) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	for p: Vector2 in poly:
+		out.append(Vector2(p.x + wx, p.y + wz))
 	return out
 
-## Points where a terrain quad's split diagonal crosses the footprint's edges.
+func _centroid(poly: PackedVector2Array) -> Vector2:
+	var c := Vector2.ZERO
+	for p: Vector2 in poly:
+		c += p
+	return c / float(maxi(1, poly.size()))
+
+## Every candidate extreme of the terrain surface over a convex footprint.
 ##
-## Together with the footprint corners, the grid-line crossings on its edges and
-## the grid vertices inside it, these complete the set of candidate minima: the
-## surface is linear on each TRIANGLE, so its lowest point over a rectangle sits
-## at a vertex of the rectangle-versus-triangulation arrangement, and these
-## crossings are the only class the axis sweep cannot reach. With them the seat
-## is exact rather than exact-to-a-tolerance.
-##
-## `surface_height_at` splits every quad along v00 → v11, which in world space is
-## the family of lines `x - z = k * step`. So on a vertical edge (x fixed) the
-## crossings are `z = x - k * step`, and on a horizontal edge (z fixed) they are
-## `x = z + k * step`.
-func _diagonal_edge_crossings(x0: float, x1: float, z0: float, z1: float) -> Array[Vector2]:
-	var out: Array[Vector2] = []
+## `surface_height_at` is linear only inside a single triangle, so the surface's
+## min and max over a convex polygon are attained at vertices of the polygon's
+## arrangement with the triangulation. Those are exactly three classes:
+##   1. the polygon's own corners;
+##   2. where its EDGES cross a grid line (x or z = k*step - half) or a quad's
+##      split diagonal — the quads split along v00 → v11, which in world space
+##      is the family `x - z = k*step`;
+##   3. the grid VERTICES lying inside it.
+## Class 2 is easy to forget and not optional: dropping the diagonal crossings
+## alone leaves a measured ~34 mm residual float.
+func _polygon_samples(poly: PackedVector2Array) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	if poly.is_empty():
+		return out
 	var step := SIZE / QUADS
-	for ex: float in [x0, x1]:
-		for k in range(ceili((ex - z1) / step), floori((ex - z0) / step) + 1):
-			var z := ex - k * step
-			if z > z0 and z < z1:
-				out.append(Vector2(ex, z))
-	for ez: float in [z0, z1]:
-		for k in range(ceili((x0 - ez) / step), floori((x1 - ez) / step) + 1):
-			var x := ez + k * step
-			if x > x0 and x < x1:
-				out.append(Vector2(x, ez))
+	var half := SIZE / 2.0
+	var min_x := INF
+	var max_x := -INF
+	var min_z := INF
+	var max_z := -INF
+	for p: Vector2 in poly:
+		out.append(p) # class 1
+		min_x = minf(min_x, p.x)
+		max_x = maxf(max_x, p.x)
+		min_z = minf(min_z, p.y)
+		max_z = maxf(max_z, p.y)
+	# class 2 — walk each edge and cut it with the three line families
+	for i in poly.size():
+		var a := poly[i]
+		var b := poly[(i + 1) % poly.size()]
+		var d := b - a
+		# vertical grid lines x = X
+		if not is_zero_approx(d.x):
+			for k in range(ceili((minf(a.x, b.x) + half) / step), floori((maxf(a.x, b.x) + half) / step) + 1):
+				var t := (k * step - half - a.x) / d.x
+				if t > 0.0 and t < 1.0:
+					out.append(a + d * t)
+		# horizontal grid lines z = Z
+		if not is_zero_approx(d.y):
+			for k in range(ceili((minf(a.y, b.y) + half) / step), floori((maxf(a.y, b.y) + half) / step) + 1):
+				var t := (k * step - half - a.y) / d.y
+				if t > 0.0 and t < 1.0:
+					out.append(a + d * t)
+		# split diagonals x - z = k*step
+		var dd := d.x - d.y
+		if not is_zero_approx(dd):
+			var s0 := a.x - a.y
+			var s1 := b.x - b.y
+			for k in range(ceili(minf(s0, s1) / step), floori(maxf(s0, s1) / step) + 1):
+				var t := (k * step - s0) / dd
+				if t > 0.0 and t < 1.0:
+					out.append(a + d * t)
+	# class 3 — grid vertices inside the polygon
+	for ix in range(ceili((min_x + half) / step), floori((max_x + half) / step) + 1):
+		var gx := ix * step - half
+		for iz in range(ceili((min_z + half) / step), floori((max_z + half) / step) + 1):
+			var gz := iz * step - half
+			var pt := Vector2(gx, gz)
+			if Geometry2D.is_point_in_polygon(pt, poly):
+				out.append(pt)
 	return out
 
 ## A deterministic per-piece seed from world position, so mesh detail never
@@ -983,8 +1029,8 @@ func _build_shrine() -> void:
 		# rng stream untouched. The ±0.05 rad tilt is too small to move a
 		# footprint and is applied after, as before.
 		var yaw := -angle + PI / 2.0
-		var fp := _footprint_bounds(mesh, Vector3(0.0, yaw, 0.0))
-		var seat := _footprint_ground(pos.x + fp.position.x, pos.x + fp.end.x, pos.z + fp.position.y, pos.z + fp.end.y)
+		var fp := _world_polygon(_footprint_polygon(mesh, Vector3(0.0, yaw, 0.0)), pos.x, pos.z)
+		var seat := _footprint_ground(fp)
 		body.position = Vector3(pos.x, seat.x + mesh.size.y / 2.0 - 0.2, pos.z)
 		body.rotation.y = yaw
 		body.rotation.x = rng.randf_range(-0.05, 0.05)
@@ -1000,8 +1046,8 @@ func _build_shrine() -> void:
 	pedestal_mesh.top_radius = 0.7
 	pedestal_mesh.bottom_radius = 0.9
 	pedestal_mesh.height = 1.0
-	var pedestal_fp := _footprint_bounds(pedestal_mesh, Vector3.ZERO)
-	var ground := _footprint_ground(pedestal_fp.position.x, pedestal_fp.end.x, pedestal_fp.position.y, pedestal_fp.end.y).x
+	var pedestal_fp := _world_polygon(_footprint_polygon(pedestal_mesh, Vector3.ZERO), 0.0, 0.0)
+	var ground := _footprint_ground(pedestal_fp).x
 	var pedestal := _solid(pedestal_mesh, stone)
 	pedestal.position = Vector3(0, ground + 0.5, 0)
 	shrine.add_child(pedestal)
