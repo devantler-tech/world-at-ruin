@@ -1,40 +1,70 @@
 #!/usr/bin/env bash
-# Provenance guard — every asset directory must carry a PROVENANCE.md.
+# Provenance guard — asset bytes live in one place, and that place is documented.
 #
-# AGENTS.md (Structure) states the law: `client/assets/` is the one sanctioned
-# exception to "no binary assets", and "every asset directory carries a
+# AGENTS.md (Structure) states the law: `client/assets/` is "the one sanctioned
+# exception to 'no binary assets'", and "every asset directory carries a
 # PROVENANCE.md with licence chain and checksums". The risk register (#16)
-# lists licence and provenance drift as a standing risk whose mitigation is
-# enforcement in CI — "a fact to enforce, not remember". This is that
-# enforcement.
+# lists licence and provenance drift as a standing risk to enforce in CI —
+# "a fact to enforce, not remember". This is that enforcement, in two rules:
 #
-# A directory needs coverage when it holds at least one non-Markdown file:
-# Markdown is documentation, never a shipped asset, so a stray README does not
-# demand a licence chain while every binary and data file does. Coverage may
-# come from the directory itself or from any ancestor inside the asset root —
-# `humanoid_kit/skins/` is covered by the kit's own PROVENANCE.md, and
-# splitting one licence chain across a kit's subdirectories would be worse
-# documentation, not better.
+#   R1  No binary file anywhere under client/ may sit OUTSIDE client/assets/.
+#       `export_presets.cfg` ships with `export_filter="all_resources"`, so
+#       every resource under client/ reaches the player whatever directory it
+#       is in. Without this rule the guard is trivially evaded by putting an
+#       unprovenanced asset in client/models/ instead.
 #
-# The rule is stated as "what is NOT an asset" on purpose. A list of asset
-# extensions would fail open the first time a new format lands; this fails
-# closed, which is the only useful direction for a guard standing in front of
-# a proprietary claim.
+#   R2  Every directory under client/assets/ holding a non-Markdown file must
+#       be covered by a PROVENANCE.md, at itself or at an ancestor within the
+#       asset root. Markdown is documentation, never a shipped asset, so a
+#       stray README does not demand a licence chain.
 #
-# Usage: tools/provenance-guard.sh [asset-root]   (default: client/assets)
+# WHY BINARY-BY-CONTENT RATHER THAN BY EXTENSION: an extension allowlist fails
+# open the first time a new format lands, and has to be maintained forever.
+# Testing for a NUL byte needs no list and catches any future binary format on
+# the day it appears. It also keeps text sources correct without special cases —
+# `client/icon.svg` is a hand-authored 452-byte SVG, and treating it as an
+# unprovenanced asset would be a false positive.
+#
+# The documented residual: an asset encoded as TEXT (base64 in a .json, or
+# third-party SVG artwork) satisfies R1, because the law's words are "no binary
+# assets". Tightening that means judging what a text file depicts, which is a
+# different and much harder check than this one.
+#
+# Ancestor coverage in R2 is deliberate: skins/ and equipment/ inherit their
+# kit's licence chain, and splitting one chain across a kit's subdirectories
+# would be worse documentation, not better.
+#
+# Traversal is NUL-delimited throughout: git permits a newline in a directory
+# name, and a line-delimited walk would split such a name into paths that do
+# not exist, whose `find` errors read as "no assets here" — an evasion that
+# exits 0.
+#
+# Usage: tools/provenance-guard.sh [client-root]   (default: client)
 
 set -euo pipefail
 
-ASSET_ROOT="${1:-client/assets}"
+CLIENT_ROOT="${1:-client}"
+ASSET_ROOT="$CLIENT_ROOT/assets"
 
-if [ ! -d "$ASSET_ROOT" ]; then
-	echo "provenance-guard: no asset root at '$ASSET_ROOT' — nothing to check."
+if [ ! -d "$CLIENT_ROOT" ]; then
+	echo "provenance-guard: no client root at '$CLIENT_ROOT' — nothing to check."
 	exit 0
 fi
 
-# Is $1, or any ancestor up to and including the asset root, carrying a PROVENANCE.md?
-# Scoped locals: this walk must not touch the caller's loop variable, or an
-# uncovered directory gets reported as whatever the walk ended on.
+# A file is binary if it contains a NUL byte. Portable across GNU and BSD:
+# compare the byte count with and without NULs rather than relying on a grep
+# flag that differs between the two.
+is_binary() {
+	local file="$1" total stripped
+	total=$(wc -c <"$file")
+	stripped=$(LC_ALL=C tr -d '\000' <"$file" | wc -c)
+	[ "$total" -ne "$stripped" ]
+}
+
+# Is $1, or any ancestor up to and including the asset root, carrying a
+# PROVENANCE.md? Scoped locals: this walk must not touch the caller's loop
+# variable, or an uncovered directory gets reported as whatever the walk ended
+# on.
 covered_by_provenance() {
 	local candidate="$1"
 	local parent
@@ -48,26 +78,50 @@ covered_by_provenance() {
 	done
 }
 
-uncovered=""
+stray=()
+uncovered=()
 checked=0
 
-while IFS= read -r dir; do
-	# Does this directory hold anything that counts as an asset?
-	if ! find "$dir" -maxdepth 1 -type f ! -name '*.md' -print -quit | grep -q .; then
-		continue
+# R1 — binary bytes outside the sanctioned asset directory.
+while IFS= read -r -d '' file; do
+	case "$file" in
+	"$ASSET_ROOT"/*) continue ;;
+	esac
+	if is_binary "$file"; then
+		stray+=("$file")
 	fi
-	checked=$((checked + 1))
-	if ! covered_by_provenance "$dir"; then
-		uncovered="${uncovered}${dir}"$'\n'
-	fi
-done < <(find "$ASSET_ROOT" -type d | sort)
+done < <(find "$CLIENT_ROOT" -type f -print0)
 
-if [ -n "$uncovered" ]; then
+# R2 — asset directories without a covering PROVENANCE.md.
+if [ -d "$ASSET_ROOT" ]; then
+	while IFS= read -r -d '' dir; do
+		if ! find "$dir" -maxdepth 1 -type f ! -name '*.md' -print -quit | grep -q .; then
+			continue
+		fi
+		checked=$((checked + 1))
+		if ! covered_by_provenance "$dir"; then
+			uncovered+=("$dir")
+		fi
+	done < <(find "$ASSET_ROOT" -type d -print0 | sort -z)
+fi
+
+failed=0
+
+if [ ${#stray[@]} -gt 0 ]; then
+	failed=1
+	echo "::error::binary assets outside $ASSET_ROOT — the only sanctioned home for asset bytes (AGENTS.md, Structure)"
+	printf '  - %s\n' "${stray[@]}"
+	echo
+	echo "Everything under $CLIENT_ROOT ships (export_filter=\"all_resources\"), so an asset"
+	echo "outside $ASSET_ROOT reaches players with no licence chain recorded. Move it under"
+	echo "$ASSET_ROOT and give its directory a PROVENANCE.md."
+	echo
+fi
+
+if [ ${#uncovered[@]} -gt 0 ]; then
+	failed=1
 	echo "::error::asset directories without a PROVENANCE.md — every asset directory must carry one (AGENTS.md, Structure)"
-	printf '%s' "$uncovered" | while IFS= read -r dir; do
-		[ -n "$dir" ] || continue
-		echo "  - $dir"
-	done
+	printf '  - %s\n' "${uncovered[@]}"
 	echo
 	echo "Add a PROVENANCE.md to the directory (or to a parent inside $ASSET_ROOT that"
 	echo "covers it) recording the licence chain and checksums of the source data:"
@@ -75,7 +129,8 @@ if [ -n "$uncovered" ]; then
 	echo "  * the licence of that source data, and why it permits shipping here"
 	echo "  * the licence of the output, and the checksum of what was baked"
 	echo "See $ASSET_ROOT/characters/humanoid_kit/PROVENANCE.md for the shape."
-	exit 1
 fi
 
-echo "provenance-guard: OK — $checked asset director$([ "$checked" = 1 ] && echo y || echo ies) covered by a PROVENANCE.md."
+[ "$failed" -eq 0 ] || exit 1
+
+echo "provenance-guard: OK — no binary assets outside $ASSET_ROOT; $checked asset director$([ "$checked" = 1 ] && echo y || echo ies) covered by a PROVENANCE.md."
