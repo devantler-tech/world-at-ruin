@@ -35,6 +35,19 @@ const VANTAGES: Array = [
 	# Close on the shrine: near-field material and surface detail, where flat
 	# untextured materials are most obvious.
 	["shrine", Vector3(17.0, 4.5, 17.0), Vector3(0.0, 2.0, 0.0)],
+	# Standing ON the pale stone country, west of the shrine. Every other
+	# vantage was chosen before the ground had regions and none of them can
+	# evidence one: they frame mostly ashflats, and catch a second region only
+	# far off, where the haze has already flattened it.
+	#
+	# Near-field on purpose, and that is measured rather than assumed. Against
+	# the same camera on the pre-region build, a vantage looking ACROSS a
+	# boundary twenty metres out moved the frame by 0.013 luma; standing on the
+	# far ground moved it by 0.034. The ground palette survives underfoot and
+	# is largely gone by mid-distance — see [GroundRegions] for the numbers and
+	# for what swallows the rest. A frame that cannot show the thing it is
+	# evidence for is worse than no frame.
+	["bonepale", Vector3(-58.0, 5.5, 2.0), Vector3(-72.0, 1.0, -4.0)],
 ]
 
 ## Frames to let the world build before the first shot (generation is synchronous
@@ -235,7 +248,16 @@ func _ready() -> void:
 		var note := _size_note(img)
 		print("CAPTURED %s -> %s (%dx%d, luma spread %.3f)%s" %
 			[vantage_name, out, img.get_width(), img.get_height(), spread, note])
-		_write_note(dir, vantage_name, img, note)
+		# Which ground the camera stands on. The regions are a palette difference
+		# the haze flattens with distance, so a reviewer comparing two frames needs
+		# the frame itself to say which region it is, rather than reading it back
+		# off the generator by hand.
+		var ground := ""
+		var world_for_region := main.get_node_or_null("World") as WorldGen
+		if world_for_region != null:
+			ground = String(world_for_region.region_name_at(
+				cam.global_position.x, cam.global_position.z))
+		_write_note(dir, vantage_name, img, note, ground)
 
 		# The frame is saved; now prove the terrain actually CONTRIBUTED to it
 		# rather than merely being present, visible, ahead and drawable — the
@@ -556,7 +578,16 @@ func _find_scroll(node: Node) -> ScrollContainer:
 ## Writes the frame's own provenance next to it, so the artifact carries what
 ## the log knows. Best-effort: failing to write a note must never fail a capture
 ## that succeeded.
-func _write_note(dir: String, frame: String, img: Image, note: String) -> void:
+## `ground` names the region the camera stands on, where that is meaningful —
+## empty for the cave vantages, which are underground and belong to no region.
+func _write_note(dir: String, frame: String, img: Image, note: String, ground: String = "") -> void:
+	# Art-direction check 1 — value range and hue span — measured rather than
+	# eyeballed (#230). Printed AND written: the job log is where an agent
+	# judging its own PR looks, and the note travels with the uploaded frames
+	# for whoever reads the artifact later. Reporting only, never a gate; a
+	# deliberately monochrome scene is a legitimate composition.
+	var separation: String = FrameMetrics.format(FrameMetrics.measure(img))
+	print("SEPARATION %s — %s" % [frame, separation])
 	var f := FileAccess.open("%s/%s.txt" % [dir, frame], FileAccess.WRITE)
 	if f == null:
 		push_warning("could not write the note for %s" % frame)
@@ -567,6 +598,9 @@ func _write_note(dir: String, frame: String, img: Image, note: String) -> void:
 		f.store_line("size: as shipped")
 	else:
 		f.store_line("size:%s" % note)
+	f.store_line("separation: %s" % separation)
+	if not ground.is_empty():
+		f.store_line("ground: %s" % ground)
 	f.close()
 
 

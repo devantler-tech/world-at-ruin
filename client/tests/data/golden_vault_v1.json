@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "comment": "GOLDEN VAULT v1 — the forward-compatibility contract for the version-1 progression format (no-resets law). If this vault ever fails to load with zero loss, a shipped player's progression has been broken. Only ever ADD to this file.",
+  "attuned": [
+    "wardens_shrine"
+  ]
+}

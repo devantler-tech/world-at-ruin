@@ -1,0 +1,5 @@
+# Every save-vault version that has EVER shipped — the independent forward-only
+# floor for save_vault_guard_test (no-resets law). APPEND-ONLY: bumping
+# VAULT_VERSION means adding its line here AND its golden_vault_v<N>.json;
+# removing a line is declaring shipped progression disposable, which is forbidden.
+1

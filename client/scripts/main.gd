@@ -30,6 +30,15 @@ var _volumetrics_on := false
 ## readable pixels under `--headless`, so this list is the only headless-
 ## verifiable record of where the air was thickened (the foliage lesson).
 var _hollow_fog: Array[Dictionary] = []
+## The live replication link, or null when no zone was named (#244).
+var _zone: ZoneConnection = null
+## Whether a lost connection has already been reported, so a failure that
+## persists is not warned about on every frame.
+var _zone_failure_reported := false
+## Whether the link ever reached LIVE. A clean close is only worth reporting
+## once it has: before that, the close IS the failure and is already reported
+## under its own error class.
+var _zone_was_live := false
 
 func _ready() -> void:
 	# Capture-harness entry for the EXPORTED client: the official export
@@ -100,10 +109,36 @@ func _ready() -> void:
 
 	# Attuning the shrine makes it the wanderer's respawn point (settled death
 	# design: wake at the nearest attuned point). World stays Player-agnostic;
-	# the effect is wired here. Session-only until the save vault is sealed (#3).
+	# the effect is wired here. The attunement now PERSISTS through the save
+	# vault (#249): what is stored is the shrine's NAME, never its coordinates
+	# — the Reach is generated, so a saved position would strand a returning
+	# player underground the moment world generation shifts. The live world
+	# re-derives the point below.
 	world.shrine_interactable().interacted.connect(func(_by: Node) -> void:
 		_player.set_respawn_point(world.shrine_respawn_point())
-		_hud.toast("The Wardens' flame knows you now. The Reach will return you here."))
+		# A vault that refuses the write (present but unreadable — typically a
+		# newer client's) still leaves the attunement live for THIS session:
+		# progression degrading is never allowed to interrupt play.
+		var stored := SaveVault.persist_attunement(SaveVault.SHRINE_WARDENS)
+		_hud.toast("The Wardens' flame knows you now. The Reach will return you here."
+			if stored else
+			"The Wardens' flame knows you now — though it may not remember past this waking."))
+
+	# Restore a previously attuned respawn point. A missing, unreadable or
+	# newer-versioned vault simply leaves the wanderer waking in the cave, as
+	# before the vault existed — progression state may never block a boot, and
+	# it never touches the character save (no-resets law).
+	#
+	# Resolution goes through RespawnPoints rather than naming a shrine here, so
+	# every shipped attunement name has ONE place that turns it into a position
+	# and a test can walk them all end-to-end. A name this build cannot place
+	# (a newer client's) resolves to null and is skipped — never a crash.
+	var vault = SaveVault.load_saved()
+	if vault is Dictionary:
+		for name: String in SaveVault.attuned(vault):
+			var point = RespawnPoints.resolve(name, world)
+			if point != null:
+				_player.set_respawn_point(point)
 
 	# The people speak: a person's seeded line surfaces as a toast.
 	npcs.npc_spoke.connect(func(npc_name: String, line: String) -> void:
@@ -127,11 +162,73 @@ func _ready() -> void:
 			# First time in the world: shape a character before setting out.
 			_open_creator.call_deferred(true)
 
+	# The live replication link, when a zone was named (#244). Default-off, so
+	# the shipped single-player boot is unchanged.
+	_connect_zone()
+
 	# The smoke boot's POSITIVE marker: CI greps for this line, not merely
 	# for the absence of errors — a boot that never mounted the project must
 	# fail the check, not slip past it (the silent-no-op incident, 0.1.12).
 	print("BOOT_OK v%s — world built, %d people and %d hounds in the Reach" % [
 		DevLog.VERSION, npcs.npc_names.size(), hounds.creature_names.size()])
+
+
+## Open the live zone connection when one was configured. This call is what
+## makes `ZoneConnection` part of the running game rather than a library only
+## its own test can reach: without it, setting WAR_ZONE_URL does nothing and
+## the replication tier stays dead code from the player's point of view.
+##
+## A refusal is reported and then left alone. The Reach is playable
+## single-player, so failing to reach a zone must never cost a player their
+## session.
+func _connect_zone() -> void:
+	if not ZoneConnection.is_enabled():
+		return
+	_zone = ZoneConnection.new()
+	if not _zone.connect_to(ZoneConnection.zone_url()):
+		# error_detail() names a misconfigured variable, never its value.
+		push_warning("zone connection refused (%s): %s" % [_zone.error(), _zone.error_detail()])
+		# This failure is now reported. Without claiming it, _process() sees
+		# the same FAILED state a frame later and reports it a second time as
+		# "lost" — and a connection that never opened cannot be lost. Observed
+		# on a real boot with a missing token and with a ws:// url.
+		_zone_failure_reported = true
+
+
+## Drive the connection. Cheap and safe every frame: poll() is a no-op unless
+## the socket is connecting, live, or finishing a close handshake.
+##
+## A connection can also die well after `connect_to()` returned true — a
+## handshake the zone refuses, or a frame the decoder or the store rejects.
+## Those surface only here, so without this check replication would stop
+## permanently and in total silence while the world went on looking fine.
+## Reported once, not once per frame.
+##
+## Reconnecting automatically is deliberately NOT done here: recovery policy
+## (when to retry, how often, and what to tell the player) belongs with the
+## child that puts remote entities on screen, and guessing at it now would
+## bake in a policy nothing yet exercises.
+func _process(_delta: float) -> void:
+	if _zone == null:
+		return
+	_zone.poll()
+	if _zone.is_live():
+		_zone_was_live = true
+	if _zone_failure_reported:
+		return
+	if _zone.state() == ZoneConnection.State.FAILED:
+		_zone_failure_reported = true
+		push_warning("zone connection lost (%s): %s" % [_zone.error(), _zone.error_detail()])
+	elif _zone.state() == ZoneConnection.State.CLOSED and _zone_was_live:
+		# A close is not an error, so the connection records none — but for a
+		# link that WAS carrying the world, an orderly server shutdown or a
+		# dropped network is indistinguishable to the player from a zone that
+		# simply stopped updating. Since reconnect is deliberately not
+		# attempted yet, silence here would strand an opted-in session offline
+		# with nothing anywhere to say why.
+		_zone_failure_reported = true
+		push_warning("zone connection closed by the zone — replication has stopped for this session")
+
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("character_editor") and _creator == null:

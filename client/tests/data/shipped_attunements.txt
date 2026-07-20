@@ -1,0 +1,9 @@
+# Every attunement (respawn-point) name that has EVER shipped — the forward-only
+# LIVE-NAME ledger for save_vault_guard_test (no-resets law). APPEND-ONLY.
+#
+# A golden vault fixture proves a name survives a round-trip; it cannot prove the
+# game still ACTS on it. Renaming a shipped name and its call site together keeps
+# every zero-loss guard green while stranding existing players at a respawn point
+# the build no longer recognises. Every name here must appear in
+# SaveVault.KNOWN_ATTUNEMENTS, forever. Adding is free; removing is forbidden.
+wardens_shrine
