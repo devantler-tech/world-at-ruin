@@ -126,7 +126,7 @@ func TestAgonesServesRealTLSWhenCertValid(t *testing.T) {
 	certFile, keyFile := writeSelfSignedCert(t, time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
 
 	cmd := exec.Command(zoneBin,
-		"-listen", "127.0.0.1:0", "-tls-cert", certFile, "-tls-key", keyFile,
+		"-allocation-id", "allocation-a", "-listen", "127.0.0.1:0", "-tls-cert", certFile, "-tls-key", keyFile,
 		"-duration", "400ms",
 		"-agones", "-agones-health-interval", "50ms",
 	)
@@ -167,7 +167,7 @@ func TestAgonesRefusesReadyWhenCertExpired(t *testing.T) {
 	certFile, keyFile := writeSelfSignedCert(t, time.Now().Add(-2*time.Hour), time.Now().Add(-time.Hour))
 
 	cmd := exec.Command(zoneBin,
-		"-listen", "127.0.0.1:0", "-tls-cert", certFile, "-tls-key", keyFile,
+		"-allocation-id", "allocation-a", "-listen", "127.0.0.1:0", "-tls-cert", certFile, "-tls-key", keyFile,
 		// The gate refuses before serving, so the deadline never matters on
 		// the intended path — it exists so a REGRESSION (gate gone, process
 		// serving) fails this test quickly instead of hanging it.
@@ -202,7 +202,7 @@ func TestAgonesSigtermShutsDownCleanly(t *testing.T) {
 	t.Cleanup(f.Stop)
 
 	cmd := exec.Command(zoneBin,
-		"-listen", "127.0.0.1:0", "-insecure-plaintext",
+		"-allocation-id", "allocation-a", "-listen", "127.0.0.1:0", "-insecure-plaintext",
 		"-duration", "30s",
 		"-agones", "-agones-health-interval", "50ms",
 	)
@@ -247,7 +247,7 @@ func TestAgonesRefusesReadyWhenTLSBroken(t *testing.T) {
 	t.Cleanup(f.Stop)
 
 	cmd := exec.Command(zoneBin,
-		"-listen", "127.0.0.1:0",
+		"-allocation-id", "allocation-a", "-listen", "127.0.0.1:0",
 		"-tls-cert", filepath.Join(t.TempDir(), "missing-cert.pem"),
 		"-tls-key", filepath.Join(t.TempDir(), "missing-key.pem"),
 		"-agones",
@@ -298,7 +298,7 @@ func TestAgonesComposesWithListen(t *testing.T) {
 	t.Cleanup(f.Stop)
 
 	cmd := exec.Command(zoneBin,
-		"-listen", "127.0.0.1:0", "-insecure-plaintext",
+		"-allocation-id", "allocation-a", "-listen", "127.0.0.1:0", "-insecure-plaintext",
 		"-duration", "400ms",
 		"-agones", "-agones-health-interval", "50ms",
 	)

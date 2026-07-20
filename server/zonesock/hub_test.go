@@ -74,7 +74,7 @@ func newTestHub(t *testing.T, cfg Config) (*Hub, []byte) {
 	t.Helper()
 	secret := testSecret(0xA5)
 	if cfg.Verifier == nil {
-		v, err := NewHMACVerifier(secret)
+		v, err := NewHMACVerifier(secret, "allocation-a")
 		if err != nil {
 			t.Fatalf("NewHMACVerifier: %v", err)
 		}
@@ -89,7 +89,7 @@ func newTestHub(t *testing.T, cfg Config) (*Hub, []byte) {
 
 func dial(t *testing.T, ts *httptest.Server, secret []byte, observer sim.EntityID) (*websocket.Conn, *http.Response, error) {
 	t.Helper()
-	tok, err := MintToken(secret, observer, time.Now().Add(time.Minute))
+	tok, err := MintToken(secret, "allocation-a", observer, time.Now().Add(time.Minute))
 	if err != nil {
 		t.Fatalf("MintToken: %v", err)
 	}
@@ -206,11 +206,11 @@ func TestAdmissionFailClosed(t *testing.T) {
 	defer ts.Close()
 	startSim(t, hub)
 
-	expired, err := MintToken(secret, 1, time.Now().Add(-time.Minute))
+	expired, err := MintToken(secret, "allocation-a", 1, time.Now().Add(-time.Minute))
 	if err != nil {
 		t.Fatalf("MintToken(expired): %v", err)
 	}
-	forged, err := MintToken(testSecret(0x5A), 1, time.Now().Add(time.Minute))
+	forged, err := MintToken(testSecret(0x5A), "allocation-a", 1, time.Now().Add(time.Minute))
 	if err != nil {
 		t.Fatalf("MintToken(forged): %v", err)
 	}
