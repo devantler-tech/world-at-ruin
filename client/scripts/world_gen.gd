@@ -937,11 +937,15 @@ func _build_shrine() -> void:
 	# Pedestal and the ember flame. One seat for the whole assembly (pedestal,
 	# flame, light, interact handle) so they keep their fixed relative offsets;
 	# it is the pedestal's own footprint that decides it.
-	var ground := _footprint_ground(0.0, 0.0, 0.9, 0.9).x
+	# The mesh is built FIRST so the footprint is derived from it rather than
+	# hand-copied: a literal here would silently drift from bottom_radius and
+	# reintroduce, for the pedestal alone, the very defect this seating fixes.
 	var pedestal_mesh := CylinderMesh.new()
 	pedestal_mesh.top_radius = 0.7
 	pedestal_mesh.bottom_radius = 0.9
 	pedestal_mesh.height = 1.0
+	var pedestal_fh := _footprint_half(pedestal_mesh, Vector3.ZERO)
+	var ground := _footprint_ground(0.0, 0.0, pedestal_fh.x, pedestal_fh.y).x
 	var pedestal := _solid(pedestal_mesh, stone)
 	pedestal.position = Vector3(0, ground + 0.5, 0)
 	shrine.add_child(pedestal)
