@@ -87,7 +87,13 @@ jobs:
           # which strips whitespace, so an indented entry is a real capability
           # whose deletion a line-anchored grep would miss.
           extract='s/^[[:space:]]*\([0-9][0-9]*\)[[:space:]]*$/\1/p'
-          git show "$BASE_SHA:$LEDGER" 2>/dev/null | sed -n "$extract" | sort -un > /tmp/cap-base
+          # The ledger does not exist at the base of the PR that INTRODUCES it, so
+          # `git show` exits 128 and the runner's `-o pipefail` shell would abort
+          # the whole job — the introducing PR could never pass its own new guard.
+          # An absent base is an EMPTY shipped set (nothing can have been removed
+          # from it), which is what the fallback records. Same handling as the
+          # piece-slot ledger check below.
+          git show "$BASE_SHA:$LEDGER" 2>/dev/null | sed -n "$extract" | sort -un > /tmp/cap-base || : > /tmp/cap-base
           sed -n "$extract" "$LEDGER" | sort -un > /tmp/cap-head
           removed=$(comm -23 /tmp/cap-base /tmp/cap-head)
           if [ -n "$removed" ]; then
@@ -118,7 +124,11 @@ jobs:
           fi
           client_pat='s/^[[:space:]]*const VERSION[[:space:]]*:=[[:space:]]*\([0-9][0-9]*\).*$/\1/p'
           server_pat='s/^[[:space:]]*const Version uint16[[:space:]]*=[[:space:]]*\([0-9][0-9]*\).*$/\1/p'
-          read_at() { git show "$1:$2" 2>/dev/null | sed -n "$3" | head -1; }
+          # `|| true` so a missing/unreadable file yields an EMPTY value that the
+          # explicit check below reports by name, rather than aborting the job on
+          # the runner's `-o pipefail` shell with an opaque failure. Failing closed
+          # is still the outcome — just a legible one.
+          read_at() { git show "$1:$2" 2>/dev/null | sed -n "$3" | head -1 || true; }
           cb=$(read_at "$BASE_SHA" client/scripts/wire_codec.gd "$client_pat")
           sb=$(read_at "$BASE_SHA" server/wire/wire.go "$server_pat")
           ch=$(sed -n "$client_pat" client/scripts/wire_codec.gd | head -1)
