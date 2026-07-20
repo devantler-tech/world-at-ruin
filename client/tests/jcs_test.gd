@@ -45,6 +45,7 @@ func _ready() -> void:
 	_test_the_fixture_is_populated()
 	_test_every_vector_canonicalizes()
 	_test_every_refusal_is_refused()
+	_test_oversized_integer_is_refused()
 	_test_vectors_discriminate()
 	_test_utf16_order_is_not_code_point_order()
 	_test_manifest_serialises_canonically()
@@ -123,6 +124,48 @@ func _test_every_refusal_is_refused() -> void:
 		if str(result["text"]) != "":
 			_fail("refusal '%s' returned an error AND text; a refused value must yield no bytes at all, or a caller that checks only one of the two will sign the wrong thing" % name)
 			return
+
+
+## The integer path CANNOT be reached from the vector file — Godot's JSON parser
+## returns every number as a float — so the 2^53 bound on GDScript-constructed
+## integers needs its own assertion, built programmatically.
+##
+## This is not hypothetical: [UpdateManifest] assembles its manifest in code, so the
+## integer path is the one production actually uses. A GDScript `int` is 64-bit and
+## can hold values ECMAScript cannot represent, and RFC 8785 numbers follow
+## ECMAScript `Number::toString` (IEEE 754 double) — so `9007199254740993` would
+## canonicalize to `...992` in a conforming implementation and to `...993` here.
+## Different signing bytes from the same input, invisible until verification fails.
+func _test_oversized_integer_is_refused() -> void:
+	# 2^53 is the last integer with an exact double; 2^53 + 1 is not.
+	var representable := {"v": 9007199254740992}
+	var beyond := {"v": 9007199254740993}
+	if typeof(representable["v"]) != TYPE_INT or typeof(beyond["v"]) != TYPE_INT:
+		_fail("this test must exercise the INT path, but the literals were not stored as integers — it would otherwise pass by testing the float path twice")
+		return
+
+	var accepted := JCS.canonicalize(representable)
+	if str(accepted["error"]) != "":
+		_fail("2^53 has an exact double and must be accepted, but was refused: %s" % str(accepted["error"]))
+		return
+	if str(accepted["text"]) != '{"v":9007199254740992}':
+		_fail("2^53 canonicalized to %s" % str(accepted["text"]))
+		return
+
+	var refused := JCS.canonicalize(beyond)
+	if str(refused["error"]) == "":
+		_fail("the integer 2^53+1 was canonicalized to %s — no ECMAScript-based implementation can produce those bytes, because 9007199254740993 has no exact double, so the two would never agree on what was signed" % str(refused["text"]))
+		return
+
+	# The negative side must be bounded too. Guarding it with absi() would overflow
+	# on the most negative int64, whose magnitude has no positive counterpart.
+	var negative := JCS.canonicalize({"v": -9007199254740993})
+	if str(negative["error"]) == "":
+		_fail("the integer -(2^53+1) was canonicalized to %s — the bound must hold on both sides" % str(negative["text"]))
+		return
+	var extreme := JCS.canonicalize({"v": -9223372036854775808})
+	if str(extreme["error"]) == "":
+		_fail("the most negative int64 was canonicalized to %s" % str(extreme["text"]))
 
 
 ## THE ANTI-VACUITY GUARD.

@@ -33,6 +33,10 @@ class_name JCS
 ## only shows up as a rejected update in the field. So a non-integral number is an
 ## error here, not a best effort. Widening the domain means adding vectors first.
 ##
+## The same bound applies to whole numbers, from BOTH directions — a GDScript `int`
+## is 64-bit and holds values ECMAScript cannot represent, so anything past 2^53 is
+## refused however it arrived. See [method _write_integer].
+##
 ## Run the conformance suite: godot --headless --path client res://tests/jcs_test.tscn
 
 ## Integers are exact in a float only up to 2^53 — the ECMAScript safe-integer
@@ -70,7 +74,7 @@ static func _write(value: Variant, out: PackedStringArray, depth: int) -> String
 		TYPE_BOOL:
 			out.append("true" if value else "false")
 		TYPE_INT:
-			out.append(str(value))
+			return _write_integer(value, out)
 		TYPE_FLOAT:
 			return _write_number(value, out)
 		TYPE_STRING, TYPE_STRING_NAME:
@@ -81,6 +85,28 @@ static func _write(value: Variant, out: PackedStringArray, depth: int) -> String
 			return _write_object(value, out, depth)
 		_:
 			return "refusing to canonicalize a value of type '%s' — RFC 8785 covers JSON values only, and a lossy coercion here would be signed as if it were the original" % type_string(typeof(value))
+	return ""
+
+
+## A GDScript `int` is a 64-bit integer, so it can hold values ECMAScript cannot
+## represent — and RFC 8785 serialises numbers with ECMAScript `Number::toString`,
+## whose number model is IEEE 754 double. Above 2^53 there is no exact double, so a
+## conforming implementation reading the same JSON would emit the nearest
+## representable value instead: `9007199254740993` canonicalizes to
+## `...992` there and would have canonicalized to `...993` here. Two
+## implementations, different signing bytes — the exact divergence this module
+## exists to prevent, and invisible until a signature fails to verify.
+##
+## Reachable only from GDScript-constructed values: Godot's JSON parser returns
+## every number as a float, so no parsed input takes this path. That is precisely
+## why the vector file cannot cover it and the regression test builds the value
+## programmatically.
+static func _write_integer(value: int, out: PackedStringArray) -> String:
+	# Compared without absi(): the magnitude of the most negative int64 has no
+	# positive counterpart, so taking its absolute value overflows back to itself.
+	if value > MAX_SAFE_INTEGER or value < -MAX_SAFE_INTEGER:
+		return "refusing to canonicalize the integer %d — it exceeds 2^53, and RFC 8785 numbers follow ECMAScript Number::toString (IEEE 754 double), so a conforming implementation would emit the nearest representable value rather than this one and the two would never agree on the signing bytes" % value
+	out.append(str(value))
 	return ""
 
 
