@@ -557,6 +557,13 @@ func _find_scroll(node: Node) -> ScrollContainer:
 ## the log knows. Best-effort: failing to write a note must never fail a capture
 ## that succeeded.
 func _write_note(dir: String, frame: String, img: Image, note: String) -> void:
+	# Art-direction check 1 — value range and hue span — measured rather than
+	# eyeballed (#230). Printed AND written: the job log is where an agent
+	# judging its own PR looks, and the note travels with the uploaded frames
+	# for whoever reads the artifact later. Reporting only, never a gate; a
+	# deliberately monochrome scene is a legitimate composition.
+	var separation: String = FrameMetrics.format(FrameMetrics.measure(img))
+	print("SEPARATION %s — %s" % [frame, separation])
 	var f := FileAccess.open("%s/%s.txt" % [dir, frame], FileAccess.WRITE)
 	if f == null:
 		push_warning("could not write the note for %s" % frame)
@@ -567,6 +574,7 @@ func _write_note(dir: String, frame: String, img: Image, note: String) -> void:
 		f.store_line("size: as shipped")
 	else:
 		f.store_line("size:%s" % note)
+	f.store_line("separation: %s" % separation)
 	f.close()
 
 
