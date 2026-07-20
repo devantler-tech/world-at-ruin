@@ -53,8 +53,14 @@ const CAVE_HEIGHT := 900
 ## the metric changed and the recorded baseline is now a lie.
 const CAVE_LUMA_RANGE := 0.127
 const CAVE_HUE_SPAN_DEG := 6.3
-const LUMA_TOLERANCE := 0.005
-const HUE_TOLERANCE_DEG := 0.2
+## Half of the last DISPLAYED digit, not a comfortable margin. The metric is
+## deterministic, so the only drift these need to absorb is the rounding in the
+## figures written into `docs/art-direction/README.md` (12.7%, 6.3 deg). Wider
+## bands would let the measurement disagree with the published baseline while
+## the suite stayed green — e.g. 0.131 renders as "13.1%" against a documented
+## 12.7% — which defeats the point of pinning the doc to the tool.
+const LUMA_TOLERANCE := 0.0005
+const HUE_TOLERANCE_DEG := 0.05
 
 ## What the control must clear for law 3 to mean anything. Set far from both the
 ## cave figures and the control's own measured values (98.9% and 319.4 deg), so
@@ -147,9 +153,15 @@ func _ready() -> void:
 	if int(grey_m["hue_samples"]) != 0:
 		_fail("a flat grey image contributed %d hue samples — the saturation filter is not holding" %
 			grey_m["hue_samples"])
-	if grey_m["hue_span_deg"] >= 0.0:
-		_fail("a colourless image reported a %.1f deg hue span instead of 'no coloured pixels' — the tightest possible reading is exactly the wrong answer here" %
-			grey_m["hue_span_deg"])
+	# Compared against the sentinel EXACTLY, not `>= 0.0`. NaN fails every
+	# comparison, so a `>= 0.0` test would pass if the empty-population branch
+	# regressed to NaN — and `format()` reads that NaN as "no coloured pixels"
+	# too, so the regression would be silent on both surfaces. This path is the
+	# one the other finiteness guards cannot reach, since they all measure
+	# populations that DO carry colour.
+	if grey_m["hue_span_deg"] != Metrics.NO_HUE:
+		_fail("a colourless image reported %f instead of the NO_HUE sentinel (%f) — a tight span, or a NaN masquerading as one, is exactly the wrong answer here" %
+			[grey_m["hue_span_deg"], Metrics.NO_HUE])
 
 	# ── Law 6b: the filter CUTOFFS, not just the colourless case ─────────
 	# Grey alone proves saturation 0 is excluded, and nothing more: lowering
@@ -234,32 +246,48 @@ func _wide_gamut() -> Image:
 ## Each row is derived from those two formulas, NOT tuned until the test passed,
 ## which would make the fixture agree with whatever the code happened to do.
 ##
-## | band | saturation | luminance | verdict | the regression it catches |
-## |---|---|---|---|---|
-## | A | 0.04 | 0.50 | excluded | saturation floor lowered |
-## | B | 0.08 | 0.50 | included | saturation floor raised |
-## | C | 0.80 | 0.03 | excluded | lower luminance cutoff removed |
-## | D | 0.056 | 0.956 | excluded | upper luminance cutoff removed |
-## | E | 0.50 | 0.50 | included | anchors the included count |
+## Bands sit **immediately either side of each cutoff** — 0.002 away, not in the
+## middle of the admitted region. A fixture placed loosely (0.04 vs 0.08 around
+## a 0.05 floor) only brackets the threshold to a broad interval: moving the
+## floor to 0.06 would leave every verdict unchanged and the law green. Pinning
+## each cutoff to +/-0.002 is what makes a moved threshold actually fail here.
 ##
-## Band D deliberately keeps saturation just ABOVE the floor: a brighter, more
-## obvious white would be rejected for being desaturated, and would prove
-## nothing about the luminance ceiling it exists to test.
+## | band | saturation | luminance | verdict | pins |
+## |---|---|---|---|---|
+## | A | 0.048 | 0.500 | excluded | saturation floor, from below |
+## | B | 0.052 | 0.500 | included | saturation floor, from above |
+## | C | 0.500 | 0.048 | excluded | luminance minimum, from below |
+## | D | 0.500 | 0.052 | included | luminance minimum, from above |
+## | E | 0.061 | 0.952 | excluded | luminance maximum, from above |
+## | F | 0.066 | 0.948 | included | luminance maximum, from below |
+## | G | 0.500 | 0.500 | included | anchors the count, far from every edge |
+##
+## Bands E and F keep saturation just ABOVE the floor on purpose: a brighter,
+## more obvious white would be rejected for being desaturated and would prove
+## nothing about the luminance ceiling they exist to test.
+##
+## The image is FORMAT_RGBAF, not RGBA8. Eight-bit channels quantise in steps of
+## 1/255 = 0.0039 — wider than the 0.004 gaps these bands rely on — so the pairs
+## would collapse into each other and the law would silently stop discriminating.
 func _boundary_bands() -> Dictionary:
+	# Derived from saturation = (r - g) / r and luminance = 0.2126r + 0.7874g,
+	# solved per band rather than tuned until the test agreed with the code.
 	var bands: Array[Color] = [
-		Color(0.5162, 0.4956, 0.4956),  # A
-		Color(0.5336, 0.4909, 0.4909),  # B
-		Color(0.0811, 0.0162, 0.0162),  # C
-		Color(1.0, 0.944, 0.944),       # D
-		Color(0.8247, 0.4124, 0.4124),  # E
+		Color(0.51964, 0.49470, 0.49470),  # A  s=0.048  luma=0.500
+		Color(0.52134, 0.49423, 0.49423),  # B  s=0.052  luma=0.500
+		Color(0.07917, 0.03959, 0.03959),  # C  s=0.500  luma=0.048
+		Color(0.08577, 0.04289, 0.04289),  # D  s=0.500  luma=0.052
+		Color(1.0, 0.93904, 0.93904),      # E  s=0.061  luma=0.952
+		Color(1.0, 0.93396, 0.93396),      # F  s=0.066  luma=0.948
+		Color(0.82470, 0.41235, 0.41235),  # G  s=0.500  luma=0.500
 	]
 	var w := Metrics.SAMPLE_WIDTH
-	var img := Image.create(w, bands.size(), false, Image.FORMAT_RGBA8)
+	var img := Image.create(w, bands.size(), false, Image.FORMAT_RGBAF)
 	for y in bands.size():
 		for x in w:
 			img.set_pixel(x, y, bands[y])
-	# Bands B and E, one sample per column each.
-	return {"image": img, "expected": 2 * w}
+	# Bands B, D, F and G survive — one sample per column each.
+	return {"image": img, "expected": 4 * w}
 
 
 func _near(what: String, got: float, want: float, tolerance: float) -> void:
