@@ -21,12 +21,22 @@ const SLOPE_CONTACT_DEPTH := 0.35
 
 var _ticks := 0
 var _main: Node
+var _boot: IsolatedBoot
 
 func _ready() -> void:
-	_main = (load("res://scenes/main.tscn") as PackedScene).instantiate()
+	# Booting the main scene runs the real launch path, which reads — and on the
+	# first-run path writes — the player's save and vault. Go through
+	# IsolatedBoot so it can only ever reach throwaway probes (#309).
+	_boot = IsolatedBoot.new("user://unstick_boot_probe.json")
+	_main = _boot.boot()
+	if _main == null:
+		_fail("save isolation did not take — refusing to boot into the real save")
+		return
 	add_child(_main)
 
 func _physics_process(_delta: float) -> void:
+	if _main == null:
+		return  # isolation refused the boot; _fail has already been reported
 	_ticks += 1
 	var player := _main.get_node_or_null("Wanderer") as Player
 	var world := _main.get_node_or_null("World") as WorldGen
@@ -61,12 +71,17 @@ func _physics_process(_delta: float) -> void:
 		player.velocity = Vector3.ZERO
 	elif _ticks == ASSERT_TICK:
 		var here := world.surface_height_at(player.global_position.x, player.global_position.z)
-		if player.global_position.y >= here - 0.55:
-			print("UNSTICK-TEST PASS (y=%.2f surface=%.2f)" % [player.global_position.y, here])
-			get_tree().quit(0)
-		else:
+		if player.global_position.y < here - 0.55:
 			_fail("wanderer still buried: y=%.2f surface=%.2f" % [player.global_position.y, here])
+			return
+		if not _boot.real_save_untouched():
+			_fail("the boot test touched the player's real save or vault")
+			return
+		print("UNSTICK-TEST PASS (y=%.2f surface=%.2f)" % [player.global_position.y, here])
+		get_tree().quit(0)
 
 func _fail(message: String) -> void:
+	if _boot != null:
+		_boot.end()
 	push_error("UNSTICK-TEST FAIL: " + message)
 	get_tree().quit(1)
