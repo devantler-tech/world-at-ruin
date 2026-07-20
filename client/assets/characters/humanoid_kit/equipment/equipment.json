@@ -35,6 +35,15 @@
   "slots": [
     "torso",
     "legs",
-    "feet"
+    "feet",
+    "head",
+    "hands",
+    "waist",
+    "pelvis",
+    "neck",
+    "ring_l",
+    "ring_r",
+    "trinket_1",
+    "trinket_2"
   ]
 }

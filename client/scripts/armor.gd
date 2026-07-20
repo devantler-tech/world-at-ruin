@@ -47,16 +47,39 @@ extends RefCounted
 ## shipped slot string later would be a repurpose of an existing value, which the
 ## forward-only law forbids, while this model has no persisted data yet.
 ##
-## SCOPE (deliberate): this set is a SUPERSET of the art layer's shipped slots.
-## Every art-layer slot must be a legal armour slot — `armor_axis_test` asserts
-## that containment against the real registry, so the two can never drift apart
-## again. The reverse does NOT hold: `head` and `hands` are legal here while no
-## piece for them is baked yet, because helmets and gauntlets are clearly
-## intended (the seed table already models them) and appending a slot later is
-## forward-only, whereas narrowing now and re-widening later is churn. A
-## model-only slot is therefore expected, not a defect — an art-layer slot
-## missing from this set IS one.
-const SLOTS: Array[String] = ["head", "torso", "hands", "legs", "feet"]
+## SCOPE (deliberate): this set is where ARMOUR is worn, which since #251 is
+## narrower than "every region the wardrobe has". A model-only slot stays
+## expected, not a defect: `head` and `hands` were legal here before any piece
+## was baked for them, because helmets and gauntlets are clearly intended (the
+## seed table already models them) and appending a slot later is forward-only,
+## whereas narrowing now and re-widening later is churn.
+##
+## What changed in #251: the art layer gained the rest of the specified wardrobe
+## (#222), and some of those regions hold no armour at all — underwear sits in
+## `pelvis`, and jewellery sits in `neck`/`ring_l`/`ring_r`/`trinket_1`/
+## `trinket_2`. The old law read "every art-layer slot must be a legal armour
+## slot", which would have forced each of those into this set — and every entry
+## here owes `armor_axis_test` a light/medium/heavy seed piece, so satisfying it
+## would have meant inventing mitigation and agility numbers for rings and
+## underpants. That is not a naming detail: this is the ONE axis the product law
+## lets grow, so widening it is a balance decision, and nothing in the
+## maintainer's wardrobe direction asks for jewellery power. #222 lists that
+## jewellery under "armor on top of it", which is a statement about RENDER
+## ORDER — the `layer` a piece sits on — not about carrying armour stats.
+##
+## So the containment law is now stated on pieces rather than on the region
+## list: every region that HOSTS AN ARMOUR-LAYER PIECE must be a legal armour
+## slot. It still catches the drift #96 closed (a worn piece the model rejects),
+## and it forces the jewellery question at the moment a necklace is actually
+## baked — by whoever bakes it, with the piece in front of them — instead of
+## being answered now by a vocabulary edit. Regions deliberately outside this
+## set are named in `CharacterFactory.ACCESSORY_REGIONS`, so a TYPO still lands
+## in neither set and turns CI red.
+##
+## `waist` joins this set now, and only it: a belt is armour in the ordinary
+## sense and its light/medium/heavy trade-off is honest to author, so the
+## headroom argument that admitted `head` and `hands` applies to it unchanged.
+const SLOTS: Array[String] = ["head", "torso", "hands", "legs", "feet", "waist"]
 
 ## The closed weight-class set, lightest first. Index IS the class rank, so
 ## "heavier than" is a comparison, not a lookup table.
@@ -95,6 +118,9 @@ const SEED_PIECES: Array[Dictionary] = [
 	{"id": "ashen_boots", "slot": "feet", "weight_class": "light", "mitigation": 7.0, "agility": 89.0},
 	{"id": "warden_sabatons", "slot": "feet", "weight_class": "medium", "mitigation": 15.0, "agility": 64.0},
 	{"id": "cinder_stompers", "slot": "feet", "weight_class": "heavy", "mitigation": 23.0, "agility": 42.0},
+	{"id": "ashen_sash", "slot": "waist", "weight_class": "light", "mitigation": 5.0, "agility": 91.0},
+	{"id": "warden_belt", "slot": "waist", "weight_class": "medium", "mitigation": 11.0, "agility": 68.0},
+	{"id": "cinder_girdle", "slot": "waist", "weight_class": "heavy", "mitigation": 17.0, "agility": 46.0},
 ]
 
 

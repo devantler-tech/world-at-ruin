@@ -30,6 +30,12 @@ extends Node
 ##
 ## Run: godot --headless --path client res://tests/shipped_piece_slots_test.tscn
 
+## The layer whose pieces owe the armour vocabulary a legal slot (#251). Named
+## rather than written as a bare literal at each use, so the two places that
+## depend on it cannot drift apart — and so the non-vacuity check below is
+## visibly guarding THIS string.
+const ARMOUR_LAYER := "armor"
+
 const LEDGER := "res://tests/data/shipped_piece_slots.txt"
 const LAYER_LEDGER := "res://tests/data/shipped_piece_layers.txt"
 const SHIPPED_PIECES := "res://tests/data/shipped_equipment.txt"
@@ -103,13 +109,18 @@ func _ready() -> void:
 				% [piece_name, LEDGER, SHIPPED_PIECES])
 			return
 
-	# 4. Every ledgered slot is a legal armour slot, so this ledger can never
-	#    disagree with the vocabulary #96 reconciled.
+	# 4. Every ledgered slot is a region the vocabulary #96 reconciled still
+	#    knows: a legal armour slot, or one of the regions #251 declared as
+	#    deliberately armour-free (underwear, jewellery). Armour CONTAINMENT —
+	#    that an armour-LAYER piece only ever sits on an armour slot — is checked
+	#    below, once the layer ledger is in hand, because it is the layer that
+	#    decides which half of the vocabulary a piece owes.
 	for piece_name: String in ledger:
 		var slot: String = ledger[piece_name]
-		if slot not in Armor.SLOTS:
-			_fail("ledgered slot '%s' (piece '%s') is not a legal armour slot %s"
-				% [slot, piece_name, str(Armor.SLOTS)])
+		if slot not in Armor.SLOTS and slot not in CharacterFactory.ACCESSORY_REGIONS:
+			_fail(("ledgered slot '%s' (piece '%s') is neither a legal armour slot %s nor a named " +
+				"accessory region %s")
+				% [slot, piece_name, str(Armor.SLOTS), str(CharacterFactory.ACCESSORY_REGIONS)])
 			return
 
 	# 5. THE LAYER MAPPING (#246): every ledgered piece is still worn on the
@@ -148,6 +159,45 @@ func _ready() -> void:
 		if layer not in CharacterFactory.LAYERS:
 			_fail("ledgered layer '%s' (piece '%s') is not in the closed set %s"
 				% [layer, piece_name, str(CharacterFactory.LAYERS)])
+			return
+
+	# 7b. ARMOUR CONTAINMENT ON THE LEDGER (#251): a piece ledgered on the armour
+	#    layer must be ledgered into a legal armour slot. Check 4 deliberately
+	#    admits the armour-free accessory regions, so without this a ledgered
+	#    necklace could claim the armour layer and no ledger check would object.
+	#    `armor_axis_test` pins the same law against the baked registry; this pins
+	#    it against the append-only promise, which is what outlives a re-bake.
+	#
+	#    NON-VACUITY FIRST: the loop below is a filter, so with no armour-layer
+	#    piece in the ledger it would report success having checked nothing —
+	#    the same "a broken scanner reads exactly like a clean one" trap the
+	#    registry half of this law guards against. It also pins the literal
+	#    "armor" used below: if the layer vocabulary were renamed, the filter
+	#    would match nothing and this guard would go silently green rather than
+	#    failing loudly. Checks 7 and 8 pin the layer SET, but neither pins that
+	#    this particular string is still a member of it.
+	var armour_ledgered := 0
+	for piece_name: String in layers:
+		if layers[piece_name] == ARMOUR_LAYER and piece_name in ledger:
+			armour_ledgered += 1
+	if armour_ledgered == 0:
+		_fail(("no ledgered piece is on the '%s' layer, so the armour-containment check below would " +
+			"pass having verified nothing. Either the layer vocabulary moved (check %s) or the " +
+			"ledgers fell out of step — both are defects, not an empty-but-valid state")
+			% [ARMOUR_LAYER, str(CharacterFactory.LAYERS)])
+		return
+
+	for piece_name: String in layers:
+		if layers[piece_name] != ARMOUR_LAYER:
+			continue
+		if piece_name not in ledger:
+			continue
+		var armoured_slot: String = ledger[piece_name]
+		if armoured_slot not in Armor.SLOTS:
+			_fail(("piece '%s' is ledgered on the ARMOUR layer in region '%s', which is not a legal " +
+				"armour slot %s — baking armour for a region means adding it to Armor.SLOTS with its " +
+				"seed pieces, which is a balance decision, not a vocabulary edit")
+				% [piece_name, armoured_slot, str(Armor.SLOTS)])
 			return
 
 	# 8. The kit and the code agree on what the layers ARE. The registry carries
