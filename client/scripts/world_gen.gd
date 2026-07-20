@@ -285,8 +285,9 @@ func _ground_color(at: Vector3) -> Color:
 	return c
 
 
-## The name of the region a place stands on. The dev log and the frame-capture
-## evidence use it to say WHICH ground a vantage is looking at.
+## The name of the region a place stands on. The frame-capture tool writes it
+## beside every surface frame, so the evidence says WHICH ground it photographed
+## rather than leaving a reviewer to derive it.
 func region_name_at(x: float, z: float) -> StringName:
 	var at := GroundRegions.region_for(_region_sites, x, z)
 	var region: Dictionary = GroundRegions.REGIONS[at[&"region"]]

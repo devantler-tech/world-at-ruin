@@ -248,7 +248,16 @@ func _ready() -> void:
 		var note := _size_note(img)
 		print("CAPTURED %s -> %s (%dx%d, luma spread %.3f)%s" %
 			[vantage_name, out, img.get_width(), img.get_height(), spread, note])
-		_write_note(dir, vantage_name, img, note)
+		# Which ground the camera stands on. The regions are a palette difference
+		# the haze flattens with distance, so a reviewer comparing two frames needs
+		# the frame itself to say which region it is, rather than reading it back
+		# off the generator by hand.
+		var ground := ""
+		var world_for_region := main.get_node_or_null("World") as WorldGen
+		if world_for_region != null:
+			ground = String(world_for_region.region_name_at(
+				cam.global_position.x, cam.global_position.z))
+		_write_note(dir, vantage_name, img, note, ground)
 
 		# The frame is saved; now prove the terrain actually CONTRIBUTED to it
 		# rather than merely being present, visible, ahead and drawable — the
@@ -569,7 +578,9 @@ func _find_scroll(node: Node) -> ScrollContainer:
 ## Writes the frame's own provenance next to it, so the artifact carries what
 ## the log knows. Best-effort: failing to write a note must never fail a capture
 ## that succeeded.
-func _write_note(dir: String, frame: String, img: Image, note: String) -> void:
+## `ground` names the region the camera stands on, where that is meaningful —
+## empty for the cave vantages, which are underground and belong to no region.
+func _write_note(dir: String, frame: String, img: Image, note: String, ground: String = "") -> void:
 	# Art-direction check 1 — value range and hue span — measured rather than
 	# eyeballed (#230). Printed AND written: the job log is where an agent
 	# judging its own PR looks, and the note travels with the uploaded frames
@@ -588,6 +599,8 @@ func _write_note(dir: String, frame: String, img: Image, note: String) -> void:
 	else:
 		f.store_line("size:%s" % note)
 	f.store_line("separation: %s" % separation)
+	if not ground.is_empty():
+		f.store_line("ground: %s" % ground)
 	f.close()
 
 
