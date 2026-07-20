@@ -345,6 +345,20 @@ void fragment() {
 	// Gradient in plate-uv space, then into world XZ (plate_uv = xz * scale).
 	vec2 grad = vec2(dcdx * duvdy.y - dcdy * duvdx.y,
 		dcdy * duvdx.x - dcdx * duvdy.x) / safe_det * plate_scale * exposure;
+	// A screen-space gradient is UNBOUNDED as the feature it measures compresses
+	// into a pixel: at a grazing angle a seam 4 cm wide spans a fraction of one,
+	// and the raw slope runs to tens per metre — enough to swing the normal
+	// through a right angle and shimmer. Two guards, both of which the albedo
+	// crack already had and this term was missing:
+	//   - dissolve on the SAME schedule as the crack it belongs to, so relief
+	//     never outlives the mark that justifies it;
+	//   - clamp the magnitude, so a single degenerate quad cannot flip a normal.
+	// Without these the ground kept a jittering micro-relief exactly where the
+	// crack had visually vanished — detail leaving by shimmering rather than by
+	// fading, which is the failure this shader family is written to avoid.
+	grad *= 1.0 - smoothstep(0.30, 0.85, plate_fw);
+	float grad_len = length(grad);
+	grad = grad_len > 1.5 ? grad * (1.5 / grad_len) : grad;
 	// A crack is a groove, so height is -crack and the normal tilts INTO it.
 	vec3 bump = vec3(
 		(h0 - hx) * bump_strength + grad.x * crack_relief,
