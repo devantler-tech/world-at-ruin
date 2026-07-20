@@ -30,6 +30,12 @@ extends Node
 ##
 ## Run: godot --headless --path client res://tests/shipped_piece_slots_test.tscn
 
+## The layer whose pieces owe the armour vocabulary a legal slot (#251). Named
+## rather than written as a bare literal at each use, so the two places that
+## depend on it cannot drift apart — and so the non-vacuity check below is
+## visibly guarding THIS string.
+const ARMOUR_LAYER := "armor"
+
 const LEDGER := "res://tests/data/shipped_piece_slots.txt"
 const LAYER_LEDGER := "res://tests/data/shipped_piece_layers.txt"
 const SHIPPED_PIECES := "res://tests/data/shipped_equipment.txt"
@@ -161,8 +167,28 @@ func _ready() -> void:
 	#    necklace could claim the armour layer and no ledger check would object.
 	#    `armor_axis_test` pins the same law against the baked registry; this pins
 	#    it against the append-only promise, which is what outlives a re-bake.
+	#
+	#    NON-VACUITY FIRST: the loop below is a filter, so with no armour-layer
+	#    piece in the ledger it would report success having checked nothing —
+	#    the same "a broken scanner reads exactly like a clean one" trap the
+	#    registry half of this law guards against. It also pins the literal
+	#    "armor" used below: if the layer vocabulary were renamed, the filter
+	#    would match nothing and this guard would go silently green rather than
+	#    failing loudly. Checks 7 and 8 pin the layer SET, but neither pins that
+	#    this particular string is still a member of it.
+	var armour_ledgered := 0
 	for piece_name: String in layers:
-		if layers[piece_name] != "armor":
+		if layers[piece_name] == ARMOUR_LAYER and piece_name in ledger:
+			armour_ledgered += 1
+	if armour_ledgered == 0:
+		_fail(("no ledgered piece is on the '%s' layer, so the armour-containment check below would " +
+			"pass having verified nothing. Either the layer vocabulary moved (check %s) or the " +
+			"ledgers fell out of step — both are defects, not an empty-but-valid state")
+			% [ARMOUR_LAYER, str(CharacterFactory.LAYERS)])
+		return
+
+	for piece_name: String in layers:
+		if layers[piece_name] != ARMOUR_LAYER:
 			continue
 		if piece_name not in ledger:
 			continue
