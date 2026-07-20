@@ -182,11 +182,30 @@ func _build_panel() -> void:
 	# roster asks the player to imagine each option and lets them inspect only
 	# the one body currently on screen; portraits make the four comparable at a
 	# glance, which is the actual function of a character-choice surface (#293).
+	# EVERYTHING below the blurb scrolls, and the Wake/Cancel row sits outside it.
+	#
+	# The roster used to be laid out directly in the column, above a scroll region
+	# of its own. That was safe while it was four buttons; adding a portrait to
+	# each row made it ~160 px taller and pushed the Wake button off the bottom of
+	# the screen at 1600x900 — a first-run player could not start the game with
+	# the mouse. Anything that grows the roster would do it again, so the fix is
+	# structural rather than a size that happens to fit: the scroll region EXPANDS
+	# to take whatever space is left, its content scrolls, and the buttons are
+	# pinned below it at every window height.
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.custom_minimum_size = Vector2(330, 0)
+	column.add_child(scroll)
+	var sliders := VBoxContainer.new()
+	sliders.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sliders.add_theme_constant_override("separation", 2)
+	scroll.add_child(sliders)
+
 	var first_preset: Button = null
 	for preset_name in PRESETS:
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 8)
-		column.add_child(row)
+		sliders.add_child(row)
 
 		var portrait := ArchetypePortrait.new()
 		row.add_child(portrait)
@@ -219,18 +238,6 @@ func _build_panel() -> void:
 
 		if first_preset == null:
 			first_preset = choice
-
-	var scroll := ScrollContainer.new()
-	# Hugs its own height rather than expanding to fill the rail. Expanding left
-	# a large dead gap between the last control and the Wake button once the
-	# numeric sliders moved behind ADVANCED and the default view got short.
-	scroll.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-	scroll.custom_minimum_size = Vector2(330, 380)
-	column.add_child(scroll)
-	var sliders := VBoxContainer.new()
-	sliders.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	sliders.add_theme_constant_override("separation", 2)
-	scroll.add_child(sliders)
 
 	# Outfit and skin stay on the primary surface: they ARE named choices, which
 	# is what the art direction asks the creator to lead with.
