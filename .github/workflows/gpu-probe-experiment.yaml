@@ -45,9 +45,20 @@ jobs:
           sudo apt-get install -y mesa-vulkan-drivers vulkan-tools xvfb
           echo "--- installed ICDs ---"
           ls -1 /usr/share/vulkan/icd.d/ || true
-          echo "--- vulkaninfo summary (lavapipe) ---"
-          VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json \
-            xvfb-run -a vulkaninfo --summary 2>&1 | head -40 || true
+          # Resolve the lavapipe ICD by GLOB, never by a guessed filename. Run 1
+          # of this experiment hard-coded lvp_icd.x86_64.json; the package ships
+          # lvp_icd.json, the loader errored, Godot fell back to OpenGL and the
+          # probe returned false for a reason that had nothing to do with
+          # lavapipe's format support. A wrong path here does not fail — it
+          # produces a confident wrong answer.
+          LVP_ICD="$(find /usr/share/vulkan/icd.d -maxdepth 1 -name 'lvp_icd*.json' | head -1)"
+          if [ -z "${LVP_ICD}" ]; then
+            echo "::error::no lavapipe ICD found — the measurement cannot run"
+            exit 1
+          fi
+          echo "LVP_ICD=${LVP_ICD}" >> "$GITHUB_ENV"
+          echo "--- vulkaninfo summary (lavapipe at ${LVP_ICD}) ---"
+          VK_ICD_FILENAMES="${LVP_ICD}" xvfb-run -a vulkaninfo --summary 2>&1 | head -40 || true
 
       - name: Write the throwaway probe scene
         run: |
@@ -82,12 +93,23 @@ jobs:
         run: xvfb-run -a godot --headless --editor --quit --path client 2>&1 | tail -5
 
       - name: Probe under lavapipe
-        env:
-          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
         run: |
           set -o pipefail
+          export VK_ICD_FILENAMES="${LVP_ICD}"
+          # --rendering-driver vulkan is REQUIRED, not decorative. Without it
+          # Godot silently falls back to the GL Compatibility renderer, which
+          # has NO RenderingDevice at all — so the probe returns false for a
+          # reason unrelated to lavapipe and the run looks like a measurement.
+          # That is exactly what run 1 produced.
           xvfb-run -a -s "-screen 0 1280x720x24" \
-            godot --path client res://tools/gpu_probe_experiment.tscn 2>&1 | tee probe.log || true
+            godot --rendering-driver vulkan --path client \
+            res://tools/gpu_probe_experiment.tscn 2>&1 | tee probe.log || true
           echo "===================== VERDICT ====================="
           grep -E 'PROBE_|VOLUMETRICS' probe.log || echo "NO PROBE MARKERS — see full log above"
           echo "==================================================="
+          # Guard against reading a fallback as a measurement: if there is no
+          # RenderingDevice, this run measured NOTHING about lavapipe.
+          if grep -q 'PROBE_RD_PRESENT false' probe.log; then
+            echo "::error::no RenderingDevice — Godot did not run on Vulkan/lavapipe, so this run measures nothing about R32_Uint support"
+            exit 1
+          fi
