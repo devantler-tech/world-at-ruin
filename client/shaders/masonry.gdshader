@@ -119,11 +119,18 @@ vec4 block_coords(vec3 wp, vec3 n) {
 	float up = clamp(abs(n.y), 0.0, 1.0);
 
 	// --- Wall mode: courses stacked in Y, blocks running along the face. ---
-	// The horizontal tangent of the face gives a stable coordinate along it.
-	vec2 flat_n = vec2(n.x, n.z);
-	float flat_len = length(flat_n);
-	vec2 tangent = flat_len > 0.0001 ? vec2(-flat_n.y, flat_n.x) / flat_len : vec2(1.0, 0.0);
-	float along = dot(wp.xz, tangent);
+	// Box mapping: take the horizontal axis the face does NOT point along. The
+	// obvious alternative — projecting onto the face tangent, dot(wp.xz,
+	// tangent) — is wrong on any curved surface and silently so:
+	//   * on a cylinder centred at the world origin it is IDENTICALLY ZERO
+	//     (measured span 0.000000 m over a full revolution), so the shrine
+	//     pedestal gets no vertical joints at all;
+	//   * off-origin it runs away with the centre offset (span 27.8 m around a
+	//     0.8 m-radius cylinder), smearing blocks instead of tiling them.
+	// Box mapping is bounded by the geometry itself and cannot degenerate. It
+	// costs a seam at the 45-degree diagonals, which is the standard trade and
+	// is invisible against the joint pattern.
+	float along = abs(n.x) >= abs(n.z) ? wp.z : wp.x;
 
 	float course = floor(wp.y / course_height);
 	// Running bond: every other course is offset by half a block, the way a
