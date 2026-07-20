@@ -394,12 +394,24 @@ func cave_protects(x: float, z: float) -> bool:
 			return true
 	return false
 
+## Cut-stone material for ruins and the shrine.
+##
+## Every piece of masonry in the world used to share one StandardMaterial3D: a
+## single albedo_color and a single roughness scalar, so no face responded to
+## the low sun and two ruins were the same grey as each other. The shader lays
+## courses of discrete blocks with recessed joints and per-block variation —
+## procedural, no textures, same approach as the terrain and cave rock.
+static func _masonry_material(tint: Color) -> ShaderMaterial:
+	var mat := ShaderMaterial.new()
+	mat.shader = load("res://shaders/masonry.gdshader")
+	mat.set_shader_parameter("stone_color", tint)
+	return mat
+
+
 func _scatter_ruins() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = WORLD_SEED
-	var stone := StandardMaterial3D.new()
-	stone.albedo_color = COL_STONE
-	stone.roughness = 0.95
+	var stone := _masonry_material(COL_STONE)
 	var margin := 12.0
 	var placed := 0
 	while placed < RUIN_SITES:
@@ -412,7 +424,7 @@ func _scatter_ruins() -> void:
 		_build_ruin_site(rng, Vector3(x, 0, z), stone)
 		placed += 1
 
-func _build_ruin_site(rng: RandomNumberGenerator, at: Vector3, stone: StandardMaterial3D) -> void:
+func _build_ruin_site(rng: RandomNumberGenerator, at: Vector3, stone: ShaderMaterial) -> void:
 	var site := Node3D.new()
 	site.name = "Ruin"
 	site.position = Vector3(at.x, 0, at.z)
@@ -434,7 +446,7 @@ func _build_ruin_site(rng: RandomNumberGenerator, at: Vector3, stone: StandardMa
 			for i in count:
 				_add_rubble(rng, site, Vector3(rng.randf_range(-3, 3), 0, rng.randf_range(-3, 3)), stone)
 
-func _add_column(rng: RandomNumberGenerator, parent: Node3D, off: Vector3, stone: StandardMaterial3D) -> void:
+func _add_column(rng: RandomNumberGenerator, parent: Node3D, off: Vector3, stone: ShaderMaterial) -> void:
 	var wx := parent.position.x + off.x
 	var wz := parent.position.z + off.z
 	var ground := height_at(wx, wz)
@@ -463,7 +475,7 @@ func _add_column(rng: RandomNumberGenerator, parent: Node3D, off: Vector3, stone
 		body.rotation = Vector3(rng.randf_range(-0.08, 0.08), 0, rng.randf_range(-0.08, 0.08))
 	parent.add_child(body)
 
-func _add_wall(rng: RandomNumberGenerator, parent: Node3D, off: Vector3, stone: StandardMaterial3D) -> void:
+func _add_wall(rng: RandomNumberGenerator, parent: Node3D, off: Vector3, stone: ShaderMaterial) -> void:
 	var wx := parent.position.x + off.x
 	var wz := parent.position.z + off.z
 	var ground := height_at(wx, wz)
@@ -480,7 +492,7 @@ func _add_wall(rng: RandomNumberGenerator, parent: Node3D, off: Vector3, stone: 
 	body.rotation.y = rng.randf_range(0.0, TAU)
 	parent.add_child(body)
 
-func _add_rubble(rng: RandomNumberGenerator, parent: Node3D, off: Vector3, stone: StandardMaterial3D) -> void:
+func _add_rubble(rng: RandomNumberGenerator, parent: Node3D, off: Vector3, stone: ShaderMaterial) -> void:
 	var wx := parent.position.x + off.x
 	var wz := parent.position.z + off.z
 	var ground := height_at(wx, wz)
@@ -828,9 +840,7 @@ func _build_shrine() -> void:
 	add_child(shrine)
 	var rng := RandomNumberGenerator.new()
 	rng.seed = WORLD_SEED + 7
-	var stone := StandardMaterial3D.new()
-	stone.albedo_color = COL_STONE.lightened(0.08)
-	stone.roughness = 0.9
+	var stone := _masonry_material(COL_STONE.lightened(0.08))
 
 	# Ring of seven monoliths facing the flame.
 	for i in 7:

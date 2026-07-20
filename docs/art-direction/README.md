@@ -303,10 +303,18 @@ Committed skin textures exist (`client/assets/characters/humanoid_kit/skins/*.pn
 `ImageTexture`s at runtime. **Debris is textured too** — `debris.gdshader:34` samples `albedo_tex`,
 which `foliage_art.gd:93-101` fills with generated stone textures for bone piles and rubble.
 
-What is arithmetic-only is **the ground and the cave rock** — `terrain.gdshader` and
-`cave_rock.gdshader` compute colour from noise with no texture at all. That is the surface area this
-gap covers; say "the ground and cave rock have no textures", not "the game has none", and do not
-scope #223 to include the already-textured debris.
+What is arithmetic-only is **the ground, the cave rock and the masonry** — `terrain.gdshader`,
+`cave_rock.gdshader` and `masonry.gdshader` compute colour from noise with no texture at all. That
+is the surface area this gap covers; say "the ground, cave rock and masonry have no textures", not
+"the game has none", and do not scope #223 to include the already-textured debris.
+
+**The masonry was a third category until #263, and the omission mattered.** Ruins and the shrine
+were neither textured nor arithmetic: every column, lintel, monolith and pedestal shared one
+`StandardMaterial3D` with a single `albedo_color` and a single roughness scalar — a constant, not
+even noise. An inventory split only into "textured" and "arithmetic" had nowhere to put that, which
+is how the most-looked-at surfaces in the game went unlisted while #223 pointed at the two surfaces
+that had *already* been given normal and roughness. When taking a slice of this gap, check what a
+surface actually carries rather than inheriting the split above.
 
 **Target.** Every surface reads as a named substance: ash, fractured granite, rusted iron, tanned
 leather, coarse woven cloth. Substance shows up in three separable channels:
