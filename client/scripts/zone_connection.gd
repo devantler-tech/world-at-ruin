@@ -15,9 +15,10 @@ extends RefCounted
 ## ## The transport seam
 ##
 ## The transport is injected, and its contract is deliberately the subset of
-## `WebSocketPeer` this class uses — `connect_to_url`, `poll`,
-## `get_ready_state`, `get_available_packet_count`, `get_packet`, `close`,
-## `set_handshake_headers`.
+## `WebSocketPeer` this class uses: exactly the methods named in
+## `REQUIRED_TRANSPORT_METHODS`. That constant is the single statement of the
+## contract — repeating the list in prose is how it silently goes stale, which
+## it already had by the time the buffer and message-type methods were added.
 ## Because that IS the engine's own API, the shipped transport is a plain
 ## `WebSocketPeer` with no adapter in between (nothing can drift between an
 ## adapter and the real socket), while a test can pass a scripted fake that
@@ -175,9 +176,9 @@ static func zone_token() -> String:
 	return OS.get_environment(ZONE_TOKEN_ENV).strip_edges()
 
 
-## `transport` defaults to a real `WebSocketPeer`; tests inject a fake with the
-## same six methods. A transport that does not satisfy the contract puts the
-## connection straight into `FAILED` — loudly, at the point of the mistake.
+## `transport` defaults to a real `WebSocketPeer`; tests inject a fake carrying
+## the same contract. A transport that does not satisfy it puts the connection
+## straight into `FAILED` — loudly, at the point of the mistake.
 func _init(transport: Object = null) -> void:
 	_transport = transport if transport != null else WebSocketPeer.new()
 	_store = ReplicaStore.new()
@@ -202,11 +203,18 @@ func connect_to(url: String) -> bool:
 	# socket open and unreferenced: the server would hold its observer and
 	# buffer for us until it times out.
 	#
-	# Neither refusal is a FAILURE. Nothing about the connection has broken —
-	# the transport is simply not free yet — so both leave the lifecycle where
-	# it was and resolve themselves under poll(). Entering FAILED here would
-	# turn an ordinary "too early" into a terminal state and, worse, overwrite
-	# the real error class of a connection that had already failed.
+	# Neither refusal is a FAILURE: nothing has broken, the transport is simply
+	# not free yet, so neither enters FAILED. Turning an ordinary "too early"
+	# into a terminal state would also overwrite the real error class of a
+	# connection that had already failed.
+	#
+	# They differ in what they do about the socket, and deliberately so. A LIVE
+	# or CONNECTING socket is hung up here and the lifecycle follows it to
+	# CLOSING/CLOSED — leaving it open and unreferenced would strand the
+	# server holding an observer and buffering for a client that has moved on.
+	# A socket that is merely still CLOSING has no such problem: the handshake
+	# is already in flight, so that branch leaves the lifecycle untouched and
+	# lets poll() finish it.
 	if _state == State.CONNECTING or _state == State.LIVE:
 		_close_transport()
 		_state = State.CLOSING if _transport_closing else State.CLOSED

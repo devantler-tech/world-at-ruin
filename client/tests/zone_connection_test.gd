@@ -375,7 +375,7 @@ func _check_transport_contract_law() -> bool:
 
 ## The control every other test here cannot give: each one injects a FAKE, so
 ## the SHIPPED transport is otherwise never checked against the contract list.
-## If `WebSocketPeer` ever loses or renames one of those six methods, the
+## If `WebSocketPeer` ever loses or renames a contract method, the
 ## default constructor would fail on the player's machine while every fake
 ## kept passing. Constructing a peer opens nothing, so this is headless-safe.
 ##
