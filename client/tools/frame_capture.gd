@@ -198,10 +198,18 @@ func _ready() -> void:
 	# IsolatedBoot, but this tool is invoked by hand and by CI, so refuse to run
 	# rather than document a rule a caller can forget (#309). Every seam, not
 	# just the save — a half-redirect still writes the unredirected half.
-	for seam in [CharacterStore.SAVE_PATH_ENV, SaveVault.VAULT_PATH_ENV]:
-		if OS.get_environment(seam).is_empty():
-			_fail(("%s is not set — refusing to boot the game against the player's real save. "
-				+ "Point every save seam at a throwaway path before capturing.") % seam)
+	#
+	# Test the RESOLVED path, not whether the variable is set. The stores read
+	# their env override verbatim, so an UNSET seam and one pointed AT the
+	# shipped default both resolve to the player's real file — only the resolved
+	# value tells either apart from a throwaway probe.
+	for seam: Array in [
+			[CharacterStore.SAVE_PATH_ENV, CharacterStore.save_path(), CharacterStore.DEFAULT_PATH],
+			[SaveVault.VAULT_PATH_ENV, SaveVault.vault_path(), SaveVault.DEFAULT_PATH]]:
+		if String(seam[1]) == String(seam[2]):
+			_fail(("%s resolves to the player's real file (%s) — refusing to boot the game against "
+				+ "real player state. Point every save seam at a throwaway path before capturing.")
+				% [seam[0], seam[2]])
 			return
 
 	# Load the scene the PROJECT actually boots, not a hardcoded path: the
