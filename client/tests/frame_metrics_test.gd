@@ -23,7 +23,18 @@ extends Node
 ##  5. Hue is the tightest arc, not a symmetric trim — an asymmetric population
 ##     reports the minimum window and not the ~96 deg a percentile spread gives.
 ##  6. Absent colour is reported as absent, never as a perfectly tight hue.
+##  6b. The hue filter's CUTOFFS hold — a fixture straddling the saturation and
+##     luminance boundaries pins exactly which bands survive, so moving or
+##     deleting a threshold fails here rather than silently admitting unstable
+##     near-grey, crushed or blown-out hues into real measurements.
+##  6c. The percentile CONVENTION is nearest-rank, proved on a population where
+##     it differs from the truncating form no frame fixture can separate.
 ##  7. Determinism — the same frame measured twice reports the same numbers.
+##
+## Laws 6b, 6c and the finiteness guards exist because a Codex review found
+## them missing: the original suite proved each law could fail for the ONE
+## break each ablation introduced, which is not the same as proving it fails
+## for every break it claims to cover.
 ##
 ## Run: godot --headless --path client res://tests/frame_metrics_test.tscn
 
@@ -88,6 +99,11 @@ func _ready() -> void:
 
 	# ── Law 3: non-vacuity, through the same code path ───────────────────
 	var control: Dictionary = Metrics.measure(_wide_gamut())
+	# Finiteness first: `NaN < CONTROL_MIN_…` is false, so both lower bounds
+	# below would be skipped and this law would pass having measured nothing.
+	if not is_finite(control["luma_range"]) or not is_finite(control["hue_span_deg"]):
+		_fail("wide-gamut control produced a non-finite measurement (value %f, hue %f) — law 3 cannot vouch for anything" %
+			[control["luma_range"], control["hue_span_deg"]])
 	if control["luma_range"] < CONTROL_MIN_LUMA_RANGE:
 		_fail("wide-gamut control reports value range %.3f — the metric cannot report a wide frame, so the cave reading proves nothing" %
 			control["luma_range"])
@@ -118,9 +134,11 @@ func _ready() -> void:
 	for i in 10:
 		asymmetric.append(100.0 + float(i) * 0.1)
 	var asym_span: float = Metrics.hue_span_deg(asymmetric)
-	if asym_span > 12.0:
-		_fail("asymmetric population reported %.1f deg — expected the tightest 90%% arc (~10 deg), so this is a percentile trim" %
-			asym_span)
+	# Bounded on BOTH sides. An upper bound alone would accept 0 deg, which
+	# cannot contain the required 90 samples and so violates the contract just
+	# as badly as the 100 deg a percentile trim gives — it would simply fail in
+	# the flattering direction.
+	_near("asymmetric hue span", asym_span, 10.0, 0.5)
 
 	# ── Law 6: absent colour is not a tight hue ──────────────────────────
 	var grey := Image.create(64, 64, false, Image.FORMAT_RGBA8)
@@ -132,6 +150,37 @@ func _ready() -> void:
 	if grey_m["hue_span_deg"] >= 0.0:
 		_fail("a colourless image reported a %.1f deg hue span instead of 'no coloured pixels' — the tightest possible reading is exactly the wrong answer here" %
 			grey_m["hue_span_deg"])
+
+	# ── Law 6b: the filter CUTOFFS, not just the colourless case ─────────
+	# Grey alone proves saturation 0 is excluded, and nothing more: lowering
+	# the threshold to 0.001, or deleting the luminance window entirely, keeps
+	# every law above green. The cave fixture sits wholly inside the
+	# boundaries and the control sweeps every value, so neither can expose it.
+	# This fixture straddles all three cutoffs and pins the surviving count
+	# exactly — the only assertion that fails in BOTH directions.
+	var bands := _boundary_bands()
+	var band_m: Dictionary = Metrics.measure(bands["image"])
+	if int(band_m["hue_samples"]) != int(bands["expected"]):
+		_fail("boundary fixture contributed %d hue samples, expected %d — a saturation or luminance cutoff has moved (sat > %.2f, luma %.2f..%.2f)" %
+			[band_m["hue_samples"], bands["expected"],
+			Metrics.HUE_MIN_SATURATION, Metrics.HUE_MIN_LUMA, Metrics.HUE_MAX_LUMA])
+
+	# ── Law 6c: the percentile CONVENTION ────────────────────────────────
+	# Fixing the nearest-rank formula without guarding it just waits for the
+	# next rewrite to reintroduce the tempting `int(q * (n - 1))`. No frame
+	# fixture can hold this: the two formulas coincide at the 57600 samples a
+	# 1600x900 frame yields, which is why the bug survived review here in the
+	# first place. 150 is the smallest convenient population where they part —
+	# nearest-rank selects index 148, the truncating form 147.
+	var ramp := PackedFloat32Array()
+	for i in 150:
+		ramp.append(float(i))
+	var p99: float = Metrics._percentile(ramp, 0.99)
+	if p99 != 148.0:
+		_fail("p99 over 150 ascending samples is %.1f, expected 148.0 (nearest-rank, 1-based rank ceil(0.99*150)=149) — 147.0 means the truncating int(q*(n-1)) form is back" % p99)
+	var p1: float = Metrics._percentile(ramp, 0.01)
+	if p1 != 1.0:
+		_fail("p1 over 150 ascending samples is %.1f, expected 1.0 (nearest-rank, rank ceil(0.01*150)=2)" % p1)
 
 	# ── Law 7: determinism ───────────────────────────────────────────────
 	var again: Dictionary = Metrics.measure(img)
@@ -175,7 +224,51 @@ func _wide_gamut() -> Image:
 	return img
 
 
+## Five bands, each isolating ONE hue-filter cutoff, sized so the metric's grid
+## samples every pixel exactly once (320 wide = SAMPLE_WIDTH, so one column per
+## sample; one row per row).
+##
+## Colours are `Color(r, g, g)` — a red tint over grey — because that shape
+## makes both filtered quantities solvable by hand rather than by trial:
+## saturation is `(r - g) / r` and Rec. 709 luminance is `0.2126r + 0.7874g`.
+## Each row is derived from those two formulas, NOT tuned until the test passed,
+## which would make the fixture agree with whatever the code happened to do.
+##
+## | band | saturation | luminance | verdict | the regression it catches |
+## |---|---|---|---|---|
+## | A | 0.04 | 0.50 | excluded | saturation floor lowered |
+## | B | 0.08 | 0.50 | included | saturation floor raised |
+## | C | 0.80 | 0.03 | excluded | lower luminance cutoff removed |
+## | D | 0.056 | 0.956 | excluded | upper luminance cutoff removed |
+## | E | 0.50 | 0.50 | included | anchors the included count |
+##
+## Band D deliberately keeps saturation just ABOVE the floor: a brighter, more
+## obvious white would be rejected for being desaturated, and would prove
+## nothing about the luminance ceiling it exists to test.
+func _boundary_bands() -> Dictionary:
+	var bands: Array[Color] = [
+		Color(0.5162, 0.4956, 0.4956),  # A
+		Color(0.5336, 0.4909, 0.4909),  # B
+		Color(0.0811, 0.0162, 0.0162),  # C
+		Color(1.0, 0.944, 0.944),       # D
+		Color(0.8247, 0.4124, 0.4124),  # E
+	]
+	var w := Metrics.SAMPLE_WIDTH
+	var img := Image.create(w, bands.size(), false, Image.FORMAT_RGBA8)
+	for y in bands.size():
+		for x in w:
+			img.set_pixel(x, y, bands[y])
+	# Bands B and E, one sample per column each.
+	return {"image": img, "expected": 2 * w}
+
+
 func _near(what: String, got: float, want: float, tolerance: float) -> void:
+	# NaN fails every comparison, so a bare `absf(got - want) > tolerance` would
+	# PASS on a metric that returned NaN — the comparison hole is a silent
+	# fail-open in exactly the guards meant to catch silence.
+	if not is_finite(got):
+		_fail("%s is not a finite number (%f) — the metric produced no usable measurement" % [what, got])
+		return
 	if absf(got - want) > tolerance:
 		_fail("%s is %.4f, expected %.4f +/- %.4f — the recorded baseline in docs/art-direction/README.md no longer matches the tool" %
 			[what, got, want, tolerance])

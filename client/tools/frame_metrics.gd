@@ -123,12 +123,23 @@ static func _collect(img: Image, lumas: PackedFloat32Array, hues: PackedFloat32A
 				hues.append(px.h * 360.0)
 
 
-## Nearest-rank percentile over an already-sorted array.
+## Nearest-rank percentile over an already-sorted array: the smallest value at
+## or below which at least `q` of the population falls, i.e. 1-based rank
+## `ceil(q * n)`.
+##
+## Spelled out because the obvious-looking `int(q * (n - 1))` is a DIFFERENT
+## statistic — linear interpolation's index, truncated — and the two diverge by
+## one sample on most populations. They happen to coincide at the 57600 samples
+## a 1600x900 frame yields, which is exactly the fixture this file is pinned
+## against, so the baseline test could never have caught the mismatch. They do
+## NOT coincide at 64320 (the CI runner's frame) or 62686 (a creator frame), so
+## the wrong formula would have quietly reported a different statistic than the
+## name promises on the frames that actually matter.
 static func _percentile(sorted_values: PackedFloat32Array, q: float) -> float:
 	var n := sorted_values.size()
 	if n == 0:
 		return 0.0
-	return sorted_values[clampi(int(q * float(n - 1)), 0, n - 1)]
+	return sorted_values[clampi(int(ceil(q * float(n))) - 1, 0, n - 1)]
 
 
 ## The width of the smallest circular arc containing 90% of the coloured pixels.
