@@ -166,6 +166,15 @@ over run, moving only when the world itself moves (which `cave_capture_vantage_t
 named failure and the capture log declares as a `CAVE VANTAGE` coordinate delta, never a quietly
 different frame).
 
+**What that artifact cannot show you (#232).** Volumetric fog is gated on an R32_Uint atomic storage
+image, and the hosted macOS capture runner's GPU does not support it — so **every frame CI publishes
+shows the height-fog fallback**, never the volumetric path or the hollow ash pools built on it. The
+capture job now states which path it captured: read `capture-conditions.txt` in the artifact, or the
+job summary. If you changed probe-gated rendering, CI says so and the frames are not your evidence —
+**render the enabled path locally and attach that**. The reasoning, the rejected self-hosted-runner
+option and the measured software-rasteriser direction are in
+[`docs/design/gpu-gated-frame-evidence.md`](docs/design/gpu-gated-frame-evidence.md).
+
 **The tells that the bar is being missed** — all four were true of the first foliage pass, and are
 the concrete evidence behind this section:
 

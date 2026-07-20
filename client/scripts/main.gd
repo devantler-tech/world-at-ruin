@@ -353,10 +353,11 @@ func _build_environment() -> void:
 	# supported and carries most of the visible gain anyway.
 	_volumetrics_on = Volumetrics.probe()
 	Volumetrics.apply(env, _volumetrics_on)
-	print("VOLUMETRICS %s" % (
-		"on — R32_Uint atomic storage image supported" if _volumetrics_on
-		else "off — GPU lacks R32_Uint atomic storage image support"
-	))
+	# The line itself is built by Volumetrics so that CI's frame-capture job and
+	# the game agree on one string (#232): the capture job records this verdict
+	# in the evidence artifact, because a frame captured with the probe OFF
+	# depicts the height-fog fallback and cannot evidence the volumetric path.
+	print(Volumetrics.marker(_volumetrics_on))
 
 	# A restrained grading pass so the palette reads as a deliberate choice
 	# rather than whatever the tonemapper returned: a little more contrast to

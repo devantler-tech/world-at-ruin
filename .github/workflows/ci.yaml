@@ -976,6 +976,7 @@ jobs:
       visual: ${{ steps.check.outputs.visual }}
       first_run: ${{ steps.check.outputs.first_run }}
       export_affecting: ${{ steps.check.outputs.export_affecting }}
+      gpu_gated: ${{ steps.check.outputs.gpu_gated }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -1098,6 +1099,23 @@ jobs:
           else
             echo "export_affecting=false" >> "$GITHUB_OUTPUT"
           fi
+          # A FOURTH gate, for the class of change CI structurally cannot
+          # photograph (#232). Volumetric fog is gated on an R32_Uint atomic
+          # storage image, and the hosted macOS runner's virtualised Apple
+          # adapter does not support it — so every frame in every artifact
+          # depicts the height-fog FALLBACK. A change to the volumetric path
+          # therefore gets a green required capture over frames that cannot
+          # contain it, which is exactly the "green check over an unphotographable
+          # change" the evidence gate exists to prevent.
+          #
+          # This flag does not block. It marks the PR so the capture job can say
+          # so plainly in the artifact and the summary, turning a silent
+          # degradation into a stated one that a reviewer can act on.
+          if grep -qE '^client/scripts/(volumetrics|hollow_fog)\.gd$|^\.github/workflows/ci\.yaml$' changed.txt; then
+            echo "gpu_gated=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "gpu_gated=false" >> "$GITHUB_OUTPUT"
+          fi
 
   frame-capture:
     name: Frame capture (evidence)
@@ -1204,6 +1222,74 @@ jobs:
             echo "::error::errors during capture — frames may not depict a healthy world"
             grep -nE "SCRIPT ERROR|^ERROR" capture.filtered.log | head -20
             exit 1
+          fi
+      - name: Record what these frames can evidence
+        # #232. Volumetric fog is gated on an R32_Uint atomic storage image and
+        # this runner's virtualised Apple adapter does not support it, so every
+        # frame published here depicts the height-fog FALLBACK. That was true
+        # before this step existed — the difference is that it was only ever
+        # stated in a CI log nobody downloads, so the artifact was silent about
+        # which path it showed and a green required check read as evidence for
+        # a change it structurally could not contain.
+        #
+        # This step does not change what is captured. It makes the capture
+        # CONDITIONS travel with the frames, and fails when they are unknown.
+        env:
+          GPU_GATED: ${{ needs.detect-visual-changes.outputs.gpu_gated }}
+        run: |
+          set -o pipefail
+          # FAIL CLOSED on an unknown verdict. main.gd prints this line through
+          # Volumetrics.marker() and volumetrics_test pins its shape, so a drift
+          # that breaks this parse fails the unit test first — but if the print
+          # is removed outright, the degradation would become UNKNOWABLE rather
+          # than merely invisible, and a green capture would go straight back to
+          # reading as volumetric evidence. Unknown is a failure, not a default.
+          if ! grep -qE '^VOLUMETRICS (on|off)([[:space:]]|$)' capture.log; then
+            echo "::error::no VOLUMETRICS verdict in the capture log — cannot tell whether these frames depict the volumetric path or the fallback (see Volumetrics.marker and client/tests/volumetrics_test.gd)"
+            exit 1
+          fi
+          probe="$(grep -oE '^VOLUMETRICS (on|off)' capture.log | head -1 | awk '{print $2}')"
+          echo "volumetric fog path: ${probe}"
+
+          # Travels INSIDE the artifact, beside the PNGs, so a reviewer who
+          # downloads frames a week later still knows what they are looking at.
+          {
+            echo "# Capture conditions"
+            echo
+            echo "runner: ${RUNNER_OS} (hosted)"
+            echo "volumetric_fog: ${probe}"
+            if [ "${probe}" = "off" ]; then
+              echo
+              echo "These frames show the HEIGHT-FOG FALLBACK, not the volumetric"
+              echo "path: this runner's GPU lacks R32_Uint atomic storage image"
+              echo "support, so Godot's froxel volumetrics never initialise here."
+              echo "Nothing in this artifact evidences a change to volumetric fog"
+              echo "or to the hollow ash pools built on it."
+            fi
+          } > "${RUNNER_TEMP}/shots/capture-conditions.txt"
+
+          {
+            echo "### Frame capture conditions"
+            echo
+            echo "Volumetric fog path: **${probe}**"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # The case #232 is actually about: a PR changing probe-gated code,
+          # captured on a runner that cannot run it. Say so loudly rather than
+          # letting the green check imply coverage. Not a hard failure — the
+          # frames are still valid evidence for everything else in the diff, and
+          # blocking here would block the whole volumetric lane on a runner
+          # limitation. The obligation it raises is the one AGENTS.md already
+          # makes a P1 review blocker: attach a frame of the actual change.
+          if [ "${GPU_GATED}" = "true" ] && [ "${probe}" = "off" ]; then
+            echo "::warning::this PR touches GPU-probe-gated rendering, but the capture ran with volumetrics OFF — these frames CANNOT evidence that change. Attach a locally-rendered frame of the enabled path (AGENTS.md: a player-visible PR with no inspectable frame evidence is a P1 blocker)."
+            {
+              echo
+              echo "> [!WARNING]"
+              echo "> This PR touches GPU-probe-gated rendering, but the captured"
+              echo "> frames show the fallback path. They cannot evidence that"
+              echo "> change. Attach a locally-rendered frame of the enabled path."
+            } >> "$GITHUB_STEP_SUMMARY"
           fi
       - name: Capture the opted-in ground plates
         # The plate treatment (#261) ships default-off behind WAR_GROUND_PLATES,
