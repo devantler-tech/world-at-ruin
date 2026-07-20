@@ -907,7 +907,7 @@ jobs:
           if-no-files-found: error
 
   license-guard:
-    name: License guard (no GPL/AGPL in tree)
+    name: Licence guard (no GPL/AGPL in tree, provenance on every asset)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -923,6 +923,15 @@ jobs:
               --exclude-dir=.git --exclude-dir=.github --exclude=AGENTS.md .; then
             echo "::error::GPL/AGPL-licensed content detected — forbidden in the shipped tree"; exit 1
           fi
+      - name: Require a PROVENANCE.md for every asset directory
+        # The other half of licensing hygiene: a permissive licence is only
+        # worth anything if we can still say where the bytes came from.
+        # AGENTS.md (Structure) requires a PROVENANCE.md per asset directory
+        # and #16 lists provenance drift as a standing risk to enforce rather
+        # than remember — this is that enforcement. It rides in this job
+        # because it is the same concern and the job is already required, so
+        # the check costs no extra runner.
+        run: ./tools/provenance-guard.sh
 
 
   server-ci:
