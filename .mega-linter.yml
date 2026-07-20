@@ -59,6 +59,17 @@ DISABLE_ERRORS_LINTERS:
 
 MARKDOWN_MARKDOWNLINT_CONFIG_FILE: .markdownlint.yaml
 
+# client/assets/characters/** is BAKED OUTPUT, not source. tools/artgen/*/bake.py writes it
+# with json.dump(indent=2, sort_keys=True), and the artgen workflow then diffs the committed
+# files byte-for-byte against a fresh bake to prove the kit is deterministic. Any reformat
+# here breaks that gate — prettier did exactly that to tints.json and equipment.json on the
+# first run of this configuration, and the bake job caught it. Generated files are never
+# hand-edited, and a formatter is a hand-edit by proxy.
+#
+# The bake INPUTS (tools/artgen/**/manifest.json) are authored, are only ever parsed, and
+# stay linted — reformatting them cannot change a bake.
+FILTER_REGEX_EXCLUDE: (client/assets/characters/.*)
+
 EXCLUDED_DIRECTORIES:
   - megalinter-reports
 
