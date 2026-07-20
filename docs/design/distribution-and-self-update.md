@@ -207,24 +207,50 @@ so it can never disagree with the build it describes. `update_manifest_test.gd` 
 manifest is accepted by the **real** `UpdateDecision.decide()`, and deletes each required field in turn
 to prove that acceptance is not vacuous.
 
-It asserts only what the repo can back, and three omissions are **deliberate and load-bearing** rather
-than unfinished:
+It publishes a **contract, not a delivery**: what this build reads, writes and speaks. Every field that
+would tell a client where to *fetch* something is withheld, and each omission is **load-bearing**:
 
-- **`signature` / `key` / `revocation`** — the root of trust is child 6, unstarted. The published OCI
-  artifact is cosign-signed by digest, which is a real but *different* integrity property.
+- **`pack.full` / `pack.deltas`** — there is no pack. This doc defines `pack.full` as a mountable
+  cumulative `.pck`, but CD builds and publishes a macOS `.app` ZIP (one export preset, no `patches=`).
+  Recording that ZIP would make it pass `RollbackSelection.is_wellformed`, so a recovery after a failed
+  pack update could select it and hand an **application archive to the pack-mount path**, which cannot
+  restore anything. Withheld until child 3 produces a real pack artifact.
 - **`shell.download`** — a shell replacement must be root-authorized (see Signing). Publishing a
   download without its `shell_authorization` would offer an unauthenticated place to fetch an
-  executable from, so it is withheld until child 6 supplies that authorization. A client following the
-  envelope to a `shell_update` then finds nowhere to go and keeps playing — the safe failure.
-- **`pack.deltas` / `rollback_targets`** — empty, because no delta pipeline exists and nothing is
-  retained. Empty is the fail-closed value: it makes the decision core refuse a capability-raising pack
-  rather than ship one no player could roll back from.
+  executable from, so it is withheld until child 6 supplies that authorization. This is also why the
+  monolithic ZIP cannot simply be re-labelled a *shell* artifact instead of a pack: that is the same
+  unauthorized download. A client following the envelope to a `shell_update` finds nowhere to go and
+  keeps playing — the safe failure.
+- **`signature` / `key` / `revocation`** — the root of trust is child 6, unstarted. The published OCI
+  artifact is cosign-signed by digest, which is a real but *different* integrity property.
+- **`rollback_targets`** — empty, because nothing is retained. Empty is the fail-closed value: it makes
+  the decision core refuse a capability-raising pack rather than ship one no player could roll back from.
 
-Two assumptions are guarded by tests rather than comments. `shell.current` is derived from the pack
-version, which is honest only while the build is a **single artifact** — the test fails the moment
-`export_presets.cfg` declares a pack split (child 3), forcing the shell to be given its own source of
-record in that same change. And `save_capability` is backed by an append-only ledger
-(`tests/data/shipped_save_capability.txt`), so it can only ever rise.
+Publishing no delivery is the correct state while there is genuinely nothing to deliver — a client can
+learn it is out of date and say so, and can go no further.
+
+**The two save capabilities are separate constants on purpose.** `SAVE_CAPABILITY_WRITES` feeds
+`save_schema.capability`; `SAVE_CAPABILITY_READS` feeds `shell.reads_capability_max`. Collapsing them
+makes the expand-before-write rollout unrepresentable: a build that reads capability N+1 while still
+writing N could not be described, so it would either never become an eligible rollback target or would
+falsely claim to write the new shape. Writes are backed by an append-only ledger
+(`tests/data/shipped_save_capability.txt`) and reads must always cover writes.
+
+**Three assumptions are guarded by failing tests rather than comments**, because each is true today and
+will expire:
+
+1. `shell.current` is derived from the pack version — honest only while the build is a **single
+   artifact**. The test fails the moment `export_presets.cfg` declares a pack split (child 3), forcing
+   the shell to get its own source of record in that same change.
+2. The top-level `protocol` range is **what the live server accepts**, not what the client speaks.
+   Sourcing it from `WireCodec.VERSION` is valid *only* because client and server are both pinned to one
+   version, so a test asserts the server's `wire.Version` still equals the client's. When the two-phase
+   expansion begins (server accepts `[1,2]`, newest client speaks only `2`) that test fails — and the
+   range must become a CD-supplied input read from deployment state, or a retained `v1` target would be
+   rejected even though the server would still talk to it.
+3. `DevLog.VERSION` must be a dotted-integer version. `cd.yaml` accepts prerelease tags
+   (`v0.2.0-rc.1`), which `UpdateDecision.is_version` does not, so `build()` refuses to emit a manifest
+   no client could accept rather than publishing one dead on arrival.
 
 ## Delivery substrate (decided; open to steer)
 
