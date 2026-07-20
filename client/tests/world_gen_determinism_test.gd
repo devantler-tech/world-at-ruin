@@ -55,7 +55,18 @@ const HALF := WorldGen.SIZE / 2.0
 ## is untouched (the rotation draws were reordered ahead of seating with no
 ## other draw between them), which the global-RNG-invariance assertion above
 ## independently confirms.
-const GOLDEN_FINGERPRINT := "20c22889"
+## v0.15.1 (#282): ruin and shrine pieces are seated from the LOWEST walkable
+## surface under their own footprint instead of one `height_at` sample at their
+## origin, so 72 of 188 pieces that hung in the air — one by 1076 mm — come down
+## into the ground. Regenerated a second time after review: the footprint is now
+## the piece's ACTUAL rectangle (a generated mesh's AABB is not centred on its
+## origin, and a fallen column's in-body offset rotates into a horizontal shift)
+## and the sweep also visits the quad-diagonal crossings on its edges, which
+## together take the worst residual float from 13 mm to 0. Only the pieces' Y
+## moves: the placement rng stream is untouched, which the global-RNG-invariance
+## assertion above confirms independently.
+const GOLDEN_FINGERPRINT := "b7c482e"
+
 
 ## world_gen's cave_protects pads the cave hull by this many metres. A piece
 ## whose bounding radius is within that padding cannot reach the hull when its

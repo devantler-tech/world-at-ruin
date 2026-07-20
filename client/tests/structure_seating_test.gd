@@ -28,13 +28,16 @@ extends Node
 
 ## Pieces may sit BELOW the ground freely (that is the buried side, and the
 ## deliberate -0.15/-0.3 sinks). This is the tolerance in the FLOAT direction
-## only. It is not a fudge for the seating rule: the sweep visits the footprint
-## edges and every grid line crossing them, but the surface's true minimum over a
-## rectangle can also fall where a quad's split diagonal meets a footprint edge,
-## which the sweep does not enumerate. 20 mm bounds that residue. The defect this
-## test pins misses by tens of CENTIMETRES, two orders above the tolerance, so it
-## is nowhere near load-bearing — the RED-proof below reports the real margin.
-const FLOAT_TOLERANCE := 0.02
+## only, and it is float noise, NOT a modelling allowance.
+##
+## It used to be 20 mm, to absorb a real geometric gap: the sweep visited the
+## footprint edges and their grid-line crossings, but not the points where a
+## quad's SPLIT DIAGONAL meets a footprint edge — so both the seating helper and
+## this oracle could miss the same true minimum, and a piece could still float by
+## up to ~13 mm. A tolerance that hides a known failure mode is not a tolerance,
+## it is the bug with a number written next to it. Both sides now enumerate those
+## crossings, so the seat is exact and the only slack needed is arithmetic.
+const FLOAT_TOLERANCE := 0.002
 
 ## Non-vacuity floor. If the traversal stops finding pieces — a rename, a
 ## restructure, a filter that silently matches nothing — this test would pass by
@@ -137,15 +140,39 @@ func _world_aabb(piece: Node3D) -> AABB:
 ## surface is linear only within a triangle, so a grid vertex inside a footprint
 ## can dip below all four of its corners.
 func _surface_range_under(w: WorldGen, box: AABB) -> Vector2:
+	var x0 := box.position.x
+	var x1 := box.position.x + box.size.x
+	var z0 := box.position.z
+	var z1 := box.position.z + box.size.z
 	var lo := INF
 	var hi := -INF
-	for x: float in _axis_samples(box.position.x, box.position.x + box.size.x):
-		for z: float in _axis_samples(box.position.z, box.position.z + box.size.z):
+	for x: float in _axis_samples(x0, x1):
+		for z: float in _axis_samples(z0, z1):
 			var s := w.surface_height_at(x, z)
 			if s <= WorldGen.NO_GROUND + 1.0:
 				continue
 			lo = minf(lo, s)
 			hi = maxf(hi, s)
+	# The quad diagonals meeting this footprint's edges. Derived here from the
+	# triangulation's own definition rather than by calling the generator's
+	# helper: `surface_height_at` picks its triangle on `fx >= fz`, so the split
+	# runs along the world lines x - z = k*step. Enumerating them independently
+	# is what stops this oracle sharing a blind spot with the code it audits —
+	# structural independence is not enough if both omit the same candidate.
+	var step := WorldGen.SIZE / WorldGen.QUADS
+	for k in range(ceili((x0 - z1) / step), floori((x1 - z0) / step) + 1):
+		var edge_pts: Array[Vector2] = [
+			Vector2(x0, x0 - k * step), Vector2(x1, x1 - k * step),
+			Vector2(z0 + k * step, z0), Vector2(z1 + k * step, z1),
+		]
+		for p: Vector2 in edge_pts:
+			if p.x < x0 or p.x > x1 or p.y < z0 or p.y > z1:
+				continue
+			var ds := w.surface_height_at(p.x, p.y)
+			if ds <= WorldGen.NO_GROUND + 1.0:
+				continue
+			lo = minf(lo, ds)
+			hi = maxf(hi, ds)
 	if lo > hi:
 		return Vector2.ZERO
 	return Vector2(lo, hi)
