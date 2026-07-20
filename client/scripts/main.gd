@@ -353,10 +353,11 @@ func _build_environment() -> void:
 	# supported and carries most of the visible gain anyway.
 	_volumetrics_on = Volumetrics.probe()
 	Volumetrics.apply(env, _volumetrics_on)
-	print("VOLUMETRICS %s" % (
-		"on — R32_Uint atomic storage image supported" if _volumetrics_on
-		else "off — GPU lacks R32_Uint atomic storage image support"
-	))
+	# The line itself is built by Volumetrics so that CI's frame-capture job and
+	# the game agree on one string (#232): the capture job records this verdict
+	# in the evidence artifact, because a frame captured with the probe OFF
+	# depicts the height-fog fallback and cannot evidence the volumetric path.
+	print(Volumetrics.marker(_volumetrics_on))
 
 	# A restrained grading pass so the palette reads as a deliberate choice
 	# rather than whatever the tonemapper returned: a little more contrast to
@@ -392,20 +393,14 @@ func _build_hollow_fog(world: WorldGen) -> void:
 		world.surface_height_at, WorldGen.SIZE, WorldGen.NO_GROUND, world.cave_protects
 	)
 	if not HollowFog.should_build(_volumetrics_on, HollowFog.opted_in()):
-		print("HOLLOW FOG off — %s (%d pools placed, not built)" % [
-			"volumetrics unavailable" if not _volumetrics_on
-			else "not opted in (set %s=1)" % HollowFog.OPT_IN_ENV,
-			_hollow_fog.size(),
-		])
+		print(HollowFog.marker(false, _volumetrics_on, _hollow_fog.size()))
 		return
 	var root := Node3D.new()
 	root.name = "HollowFog"
 	add_child(root)
 	for placement: Dictionary in _hollow_fog:
 		root.add_child(HollowFog.build_volume(placement))
-	print("HOLLOW FOG on — %d ash pools (opted in via %s)" % [
-		_hollow_fog.size(), HollowFog.OPT_IN_ENV
-	])
+	print(HollowFog.marker(true, _volumetrics_on, _hollow_fog.size()))
 
 
 ## Where this boot pooled ash, deepest hollow first — a copy, so a caller can
