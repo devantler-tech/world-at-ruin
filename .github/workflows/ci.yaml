@@ -711,6 +711,22 @@ jobs:
       contents: write
       issues: write
       pull-requests: write
+    with:
+      # Auto-fix only on branches in this repository. GitHub withholds secrets from fork
+      # pull requests, so the App token cannot be minted there and the fixes cannot be
+      # committed back — which would fail the job for something an outside contributor
+      # has no way to resolve except by installing MegaLinter locally. This repo actively
+      # invites fork contributions (see cla.yaml, CLA.md), and lint is a required check,
+      # so that friction lands on exactly the people we least want to block.
+      #
+      # Read-only mode is genuinely non-blocking for formatting: with APPLY_FIXES=none a
+      # deliberately misformatted JSON file is reported by prettier as a warning and
+      # MegaLinter exits 0 (measured). Real lint ERRORS — invalid JSON, shellcheck
+      # failures — still fail the job, so the gate keeps its teeth on forks.
+      #
+      # merge_group events have no pull_request context, so this is false there too;
+      # nothing should be pushed to a merge queue ref anyway.
+      apply-fixes: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
     secrets:
       APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
 
