@@ -400,6 +400,16 @@ func _capture_cave(cam: Camera3D, dir: String, main: Node) -> int:
 		_fail("no visible torch light in the starter cave — every cave frame would be black")
 		return -1
 
+	# ...and because they are the only light, their FLICKER sets the exposure of
+	# every cave frame. Pin it before shooting (#321): the torches swing
+	# slightly over 2x in energy on accumulated wall-clock time, so an unpinned
+	# capture photographs whatever phase the frame pacing happened to land on.
+	# Measured on unchanged main, consecutive runs: cave-walkout 16.8% -> 20.8%
+	# of value range and cave-chamber 12.5% -> 14.1%, while every outdoor
+	# vantage repeated exactly. A cave value delta under about 4pp was therefore
+	# unfalsifiable — wider than the effects art PRs are asked to prove here.
+	cave.freeze_flicker()
+
 	var to_world := world.cave_to_world()
 	var lay: Dictionary = cave.last_layout
 	# Declare the derived cameras in the evidence log: fixed per committed
