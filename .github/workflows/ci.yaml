@@ -1060,10 +1060,19 @@ jobs:
         # already here from fetch-depth: 0, so this costs no network and cannot
         # drift from what the diff step is comparing.
         #
-        # The TRUE merge base, not github.event.pull_request.base.sha — those
-        # differ as soon as the base branch moves, and this repo merges often.
-        # base.sha would drag every sibling PR merged since into the comparison
-        # and report their art changes as this PR's.
+        # 🔑 base.sha, NOT the merge base — and the reason is the head side, not
+        # the base side. For a pull_request event actions/checkout checks out
+        # GitHub's synthetic MERGE RESULT (base tip + this PR), so the frames
+        # captured above are "base tip plus my change". The commit that pairs
+        # with that is therefore the base tip itself: merge-result minus
+        # base.sha is exactly this PR. Rendering the older branch-point merge
+        # base instead would put every sibling PR merged since the fork on the
+        # wrong side of the subtraction and report their work as this PR's.
+        #
+        # (An earlier revision here used the merge base for exactly the opposite
+        # reason and was wrong. It went unnoticed because main did not move
+        # during the run that measured it, which makes the two identical —
+        # the failure only appears on a PR whose base advanced.)
         #
         # continue-on-error: this is a REPORT, and a required check must not go
         # red because an old base fails to render. Its honesty is held up
@@ -1074,11 +1083,10 @@ jobs:
         continue-on-error: true
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -o pipefail
-          base=$(git merge-base "$BASE_SHA" "$HEAD_SHA")
-          echo "merge base: $base"
+          base="$BASE_SHA"
+          echo "base (pairs with the checked-out merge result): $base"
           git worktree add --detach "${RUNNER_TEMP}/base" "$base"
           godot --headless --editor --quit --path "${RUNNER_TEMP}/base/client" 2>&1 | tail -5
           mkdir -p "${RUNNER_TEMP}/shots-base"
@@ -1114,14 +1122,27 @@ jobs:
             echo "::warning::no base frames — the merge base did not render, so this PR's frames carry no change measurement"
             exit 0
           fi
+          # `|| true` is load-bearing, not sloppiness. The tool EXITS NONZERO
+          # when it can compare nothing, and this shell runs with -e and
+          # pipefail — so without it the step dies at the pipeline and the
+          # warning below, which is the entire point of that exit code, never
+          # runs. continue-on-error would keep the job green but leave only a
+          # failed step and no annotation saying the artifact has no comparison.
           WAR_DIFF_BASE="${RUNNER_TEMP}/shots-base" \
           WAR_DIFF_HEAD="${RUNNER_TEMP}/shots" \
-            godot --headless --path client res://tools/frame_diff.tscn 2>&1 | tee diff.log
+            godot --headless --path client res://tools/frame_diff.tscn 2>&1 | tee diff.log || true
           # The tool fails closed when it compares nothing. Surface that as a
           # warning rather than swallowing it: a silent empty report is the
           # exact self-attestation #231 was filed about.
           if ! grep -q "DIFF PASS" diff.log; then
             echo "::warning::the change report did not complete — this PR's frames carry no comparison against the base"
+          fi
+          # A vantage the base captured and the head did not is a REMOVED
+          # vantage. The tool names each one; surface it as an annotation too,
+          # since client/tools/ changes trigger this job precisely so a capture
+          # regression cannot pass quietly.
+          if grep -q "REMOVED:" diff.log; then
+            echo "::warning::a committed vantage present in the base is missing from this PR's capture — see the REMOVED lines"
           fi
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:

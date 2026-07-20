@@ -32,7 +32,7 @@ extends Node
 ## Headless is fine — unlike frame_capture this renders nothing, it only reads
 ## PNGs off disk.
 
-## |ΔLuma| at which a pixel counts as CHANGED.
+## Largest single-channel difference (0-1) at which a pixel counts as CHANGED.
 ##
 ## Calibrated by measurement on this repo's own frames, not chosen by taste.
 ## Renders drift a little even with nothing changed — temporal antialiasing,
@@ -76,11 +76,11 @@ extends Node
 ## comparable between vantages.
 const CHANGED_EPS := 0.01
 
-## Rec. 709 luminance weights — the same ones Color.get_luminance() applies, so
-## these numbers stay comparable with the spread figures frame_capture prints.
-const LUMA_R := 0.2126
-const LUMA_G := 0.7152
-const LUMA_B := 0.0722
+## NOTE: deliberately no luminance weights here. An earlier revision measured
+## Rec. 709 luma to stay comparable with the spread figures frame_capture
+## prints, and that was the wrong trade: comparability with a guard this tool
+## exists to supplement is worth less than seeing hue change at all. See the
+## per-pixel loop in compare_images() for the arithmetic and the worked example.
 
 
 func _ready() -> void:
@@ -104,6 +104,18 @@ func _ready() -> void:
 	var unmatched: Array[String] = []
 	var incomparable: Array[String] = []
 
+	# Frames the BASE has and the head does NOT are a removal, and they must be
+	# named. `client/tools/` deliberately triggers this job so the capture tool
+	# validates itself — so a tool change that drops one of the committed
+	# vantages is exactly the regression this job should catch, and iterating
+	# only the head list would let it pass silently as long as one other vantage
+	# still compared.
+	var removed: Array[String] = []
+	for base_name: String in _frames_in(base_dir):
+		if not FileAccess.file_exists("%s/%s.png" % [head_dir, base_name]):
+			removed.append(base_name)
+			print("DIFF %s — REMOVED: the base captured this vantage and the head did not" % base_name)
+
 	for frame_name: String in head_frames:
 		var base_path := "%s/%s.png" % [base_dir, frame_name]
 		var head_path := "%s/%s.png" % [head_dir, frame_name]
@@ -123,7 +135,7 @@ func _ready() -> void:
 			print("DIFF %s — %s" % [frame_name, result["reason"]])
 			continue
 		compared += 1
-		var line := "changed %.2f%% of pixels, mean |dLuma| %.4f, max %.4f" % [
+		var line := "changed %.2f%% of pixels, mean |dRGB| %.4f, max %.4f" % [
 			(result["changed_fraction"] as float) * 100.0,
 			result["mean"],
 			result["max"],
@@ -141,8 +153,8 @@ func _ready() -> void:
 			[head_frames.size(), unmatched.size(), incomparable.size()])
 		return
 
-	print("DIFF PASS — compared %d of %d frames against the base (unmatched %d, incomparable %d)" %
-		[compared, head_frames.size(), unmatched.size(), incomparable.size()])
+	print("DIFF PASS — compared %d of %d frames against the base (unmatched %d, incomparable %d, REMOVED %d)" %
+		[compared, head_frames.size(), unmatched.size(), incomparable.size(), removed.size()])
 	get_tree().quit(0)
 
 
@@ -190,9 +202,26 @@ static func compare_images(base: Image, head: Image) -> Dictionary:
 	var changed := 0
 	var i := 0
 	while i < bd.size():
-		var bl := (LUMA_R * bd[i] + LUMA_G * bd[i + 1] + LUMA_B * bd[i + 2]) / 255.0
-		var hl := (LUMA_R * hd[i] + LUMA_G * hd[i + 1] + LUMA_B * hd[i + 2]) / 255.0
-		var d := absf(hl - bl)
+		# Largest single-channel difference, NOT a luminance difference.
+		#
+		# Luminance alone is BLIND TO HUE, and not marginally: Rec. 709 weights
+		# make pure red (255,0,0) and a dark green (0,76,0) differ by 0.0006 —
+		# so recolouring an entire frame from red to green would report as
+		# UNCHANGED under a luma-only test, well below any sane epsilon. On this
+		# repo that is the common case rather than an exotic one: the open art
+		# work is about ground palette, cave hue variety and colour grading, and
+		# the art-direction reference set explicitly measures hue span alongside
+		# value range. A change report blind to colour would have quietly given
+		# every one of those PRs a confident 0%.
+		#
+		# Max-channel is deliberately NOT a perceptual metric. This reports how
+		# much the image DATA moved, which is the honest thing for evidence; a
+		# perceptual distance would additionally encode assumptions about
+		# viewing conditions that a reviewer opening a PNG does not share.
+		var dr := absf(float(hd[i]) - float(bd[i]))
+		var dg := absf(float(hd[i + 1]) - float(bd[i + 1]))
+		var db := absf(float(hd[i + 2]) - float(bd[i + 2]))
+		var d := maxf(dr, maxf(dg, db)) / 255.0
 		total += d
 		if d > worst:
 			worst = d

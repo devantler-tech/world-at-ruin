@@ -176,7 +176,36 @@ func _ready() -> void:
 		_fail("sub-epsilon drift reported a mean of 0 — the epsilon must not erase the measurement, only decline to call it a changed pixel")
 		return
 
-	# 6. A size mismatch is refused, not rescaled.
+	# 6. HUE-ONLY change is detected (Codex review of PR#286).
+	#
+	# The metric measured Rec. 709 luminance until this law existed, and pure
+	# red (255,0,0) vs dark green (0,76,0) differ in luminance by 0.0006 — so
+	# RECOLOURING AN ENTIRE FRAME reported as 0% changed, two orders of
+	# magnitude under the epsilon. That is not an exotic case here: the open art
+	# work is ground palette, cave hue variety and colour grading, and every one
+	# of those PRs would have been handed a confident 0%.
+	#
+	# The fixture asserts the trap first — these two colours really are
+	# luminance-identical — so the law cannot silently become a test of
+	# something easier if the constants are ever edited.
+	var red := _flat(Color8(255, 0, 0))
+	var green := _flat(Color8(0, 76, 0))
+	var l_red := Color8(255, 0, 0).get_luminance()
+	var l_green := Color8(0, 76, 0).get_luminance()
+	if absf(l_red - l_green) >= FrameDiff.CHANGED_EPS:
+		_fail("fixture: red and green differ in LUMINANCE by %.4f, at or above the %.4f epsilon — they are not a luma-blind pair, so this law would pass for the wrong reason" %
+			[absf(l_red - l_green), FrameDiff.CHANGED_EPS])
+		return
+	var hue: Dictionary = FrameDiff.compare_images(red, green)
+	if not hue["ok"]:
+		_fail("hue-only change did not compare (%s)" % hue["reason"])
+		return
+	var hue_changed: float = hue["changed_fraction"]
+	if hue_changed != 1.0:
+		_fail("a full-frame recolour from red to green reported %.4f of pixels changed, expected 1.0 — the metric is blind to hue" % hue_changed)
+		return
+
+	# 7. A size mismatch is refused, not rescaled.
 	var small := Image.create(W / 2, H / 2, false, Image.FORMAT_RGBA8)
 	small.fill(Color(0.30, 0.30, 0.30))
 	var mism: Dictionary = FrameDiff.compare_images(base, small)
@@ -189,7 +218,7 @@ func _ready() -> void:
 		_fail("a size mismatch was refused for the wrong reason ('%s') — the refusal must name the actual cause" % reason)
 		return
 
-	print("TEST PASS — frame_diff measures localized change the spread guard cannot sample (%.2f%% of pixels, max %.3f), separates mean from max, holds its epsilon, and refuses mismatched sizes" %
+	print("TEST PASS — frame_diff measures localized change the spread guard cannot sample (%.2f%% of pixels, max %.3f), separates mean from max, holds its epsilon, SEES HUE-ONLY change, and refuses mismatched sizes" %
 		[got_fraction * 100.0, got_max])
 	get_tree().quit(0)
 
