@@ -695,6 +695,24 @@ jobs:
             echo "::error::GPL/AGPL-licensed content detected — forbidden in the shipped tree"; exit 1
           fi
 
+  # Repo-wide linting for everything that is not GDScript: JSON, Markdown, YAML, shell,
+  # the workflows in this directory, spelling and secrets. MegaLinter ships no GDScript
+  # linter in any flavour, so client/**/*.gd is out of its reach by construction — that
+  # gap is tracked separately, not papered over here.
+  #
+  # The Go flavour is the org's shared image (ksail's validate-go-project uses it too), so
+  # it is warm on the runners. Go linting itself stays OFF here — server-ci below already
+  # runs gofmt, vet, test and build against the module's own toolchain, which the linter
+  # container's Go can lag.
+  lint:
+    name: Lint
+    uses: devantler-tech/actions/.github/workflows/lint.yaml@7d016c7d11c5b456db911daff9b733614d4e8aa0 # claude/megalinter-lint-workflow-269
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    secrets:
+      APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
 
   server-ci:
     name: Server CI (Go)
@@ -1239,6 +1257,7 @@ jobs:
         client-smoke,
         client-export-macos,
         license-guard,
+        lint,
         server-ci,
         detect-visual-changes,
         frame-capture,
@@ -1260,6 +1279,7 @@ jobs:
             ${{ needs.client-smoke.result }}
             ${{ needs.client-export-macos.result }}
             ${{ needs.license-guard.result }}
+            ${{ needs.lint.result }}
             ${{ needs.server-ci.result }}
             ${{ needs.detect-visual-changes.result }}
             ${{ needs.frame-capture.result }}

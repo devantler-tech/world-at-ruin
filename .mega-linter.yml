@@ -1,0 +1,70 @@
+# MegaLinter configuration. The gate itself is devantler-tech/actions' lint.yaml
+# reusable workflow, called from .github/workflows/ci.yaml.
+#
+# Scope note: MegaLinter ships no GDScript linter in any flavour, so client/**/*.gd,
+# *.tscn and *.gdshader — the majority of this repo — are outside its reach entirely.
+# That gap is tracked in #274 and is NOT what any setting below is about.
+
+APPLY_FIXES: all
+FLAVOR_SUGGESTIONS: false
+IGNORE_GITIGNORED_FILES: true
+REPORTERS_MARKDOWN_SUMMARY_TYPE: sections
+LINTER_RULES_PATH: .
+
+DISABLE_LINTERS:
+  # The Go module lives in server/, not at the repo root, so a root-scoped run fails with
+  # "directory prefix . does not contain main module". The server-ci job already runs
+  # gofmt, vet, race tests and build against the module's own toolchain — which is the
+  # better place for it anyway, since this container's Go can lag patched releases.
+  # Adding golangci-lint to server-ci is tracked in #279.
+  - GO_GOLANGCI_LINT
+  - GO_REVIVE
+
+  # Dependency CVE scanning belongs to dependency automation, not to a formatting gate:
+  # these download a ~100 MB vulnerability database on every run, and any newly-published
+  # transitive advisory would turn an unrelated pull request red. They found two real
+  # advisories in server/go.mod on the first scan — that finding, and this repo's total
+  # lack of dependency automation, are tracked in #277. Same call ksail made.
+  - REPOSITORY_GRYPE
+  - REPOSITORY_OSV_SCANNER
+  - REPOSITORY_TRIVY
+
+  # zizmor is this org's workflow security scanner and it passes on this repo. checkov's
+  # GitHub Actions ruleset overlaps it and disagrees on one deliberate design decision:
+  # CKV_GHA_7 forbids any workflow_dispatch input, but cd.yaml takes a `tag` input on
+  # purpose so a release build can be re-run against an existing tag. Keeping zizmor and
+  # dropping the overlapping scanner beats carrying a permanent suppression comment.
+  - REPOSITORY_CHECKOV
+
+  # A fantasy game invents most of its own nouns; cspell reports 1168 "unknown words",
+  # essentially all of them deliberate. A dictionary large enough to fix that would need
+  # constant curation to stay useful and would still miss every genuine typo in prose.
+  - SPELL_CSPELL
+
+  # Pipe-alignment padding for Markdown tables. These documents are mostly wide prose
+  # tables, so aligning them rewrites hundreds of lines to produce output that renders
+  # identically — and it still cannot satisfy markdownlint's MD060, which is off for the
+  # same reason (see .markdownlint.yaml). markdownlint itself stays on for real structure.
+  - MARKDOWN_MARKDOWN_TABLE_FORMATTER
+
+DISABLE_ERRORS_LINTERS:
+  # jscpd reports 66 pre-existing duplicated GDScript blocks, concentrated between
+  # character_factory.gd and creature_factory.gd. Clearing them is a behaviour-preserving
+  # refactor that must not ride along with this CI change, so it is tracked in #276.
+  # NOT-BLOCKING IS TEMPORARY AND DELIBERATELY VISIBLE: the linter still runs and still
+  # reports every clone on every pull request — nothing is thresholded and nothing is
+  # hidden. Remove this entry as part of #276 so duplication becomes blocking and cannot
+  # regress.
+  - COPYPASTE_JSCPD
+
+MARKDOWN_MARKDOWNLINT_CONFIG_FILE: .markdownlint.yaml
+
+EXCLUDED_DIRECTORIES:
+  - megalinter-reports
+
+# lychee extracts URLs from workflow YAML, where they are shell templates rather than
+# links — `.../Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip`, `ghcr.io/token?scope=
+# repository:${REPO_PATH}:pull`, and the OIDC audience token.actions.githubusercontent.com
+# (an identifier, not a fetchable page). All 13 "broken links" it reports are of that
+# shape. Point it at documentation, which is what it is good at.
+SPELL_LYCHEE_FILTER_REGEX_EXCLUDE: (\.github/workflows/.*)
