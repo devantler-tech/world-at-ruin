@@ -204,10 +204,7 @@ func _build_panel() -> void:
 	# all thirteen would have added nine dead rows to a screen already faulted
 	# for reading as a debug panel (#227). Each region appears the moment a piece
 	# is baked for it, with no change here.
-	var registry := CharacterFactory.equipment_registry()
-	for slot: String in registry.get("slots", []):
-		if _pieces_in_slot(registry, slot).is_empty():
-			continue
+	for slot: String in pickable_regions(CharacterFactory.equipment_registry()):
 		_add_outfit_picker(outfit, slot)
 	var skin := _add_section(sliders, "SKIN")
 	_add_skin_picker(skin)
@@ -369,12 +366,34 @@ func _add_outfit_picker(into: Container, slot: String) -> void:
 	_outfit_pickers[slot] = picker
 
 
+## The regions the OUTFIT section offers a picker for: every declared region
+## that something can actually be put in, in the kit's declared order.
+##
+## #251 declared the whole specified wardrobe (#222) up front so the vocabulary
+## is settled before the garments arrive, which means most regions have no baked
+## piece yet — and a picker whose only entry is "none" is a row the player
+## cannot use. Showing all thirteen would have added nine dead rows to a screen
+## already faulted for reading as a debug panel (#227).
+##
+## Pure and static, like `group_shape_names`, so the rule is checkable without
+## standing up the UI — and a region appears the moment a piece is baked for it,
+## with no change here.
+static func pickable_regions(registry: Dictionary) -> Array[String]:
+	var out: Array[String] = []
+	for slot: Variant in registry.get("slots", []):
+		var region := str(slot)
+		if _pieces_in_slot(registry, region).is_empty():
+			continue
+		out.append(region)
+	return out
+
+
 ## Every baked piece that can be worn in this region, sorted so the picker's
 ## order — and the decision to show the picker at all — never depends on
 ## dictionary iteration order. Shared by both callers on purpose: the row is
 ## built from exactly the list that decided the row should exist, so a region
 ## can never be shown with nothing in it, or hidden while holding something.
-func _pieces_in_slot(registry: Dictionary, slot: String) -> Array[String]:
+static func _pieces_in_slot(registry: Dictionary, slot: String) -> Array[String]:
 	var out: Array[String] = []
 	var pieces: Dictionary = registry.get("pieces", {})
 	for piece_name: String in pieces:
