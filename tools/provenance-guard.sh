@@ -57,30 +57,30 @@ if [ ! -d "$CLIENT_ROOT" ]; then
 	exit 0
 fi
 
-# A file counts as TEXT only if it is valid UTF-8 and carries no control bytes
-# beyond tab, newline and carriage return. Anything else is binary.
+# A file counts as BINARY if it is not valid UTF-8, or if it contains a NUL.
 #
-# Testing for a NUL byte alone was not enough: a binary stream that happens to
-# contain no 0x00 would pass, and R1 would be fail-open for exactly the file
-# someone motivated would choose. Two independent tests close that — a real
-# asset format has to survive BOTH to masquerade as text.
+# Testing for NUL alone was fail-open: a binary stream that happens to carry no
+# 0x00 would pass, which is exactly the file a motivated author would choose.
+# The UTF-8 test closes that — an image or mesh does not decode cleanly as
+# UTF-8 by accident.
 #
-# The control-byte check is deliberately restricted to the C0 range and DEL
-# rather than "anything not printable": under LC_ALL=C every byte of a
-# multi-byte UTF-8 character is non-printable, so the broader test would call
-# every source file in this repo binary (they are full of em dashes).
+# Deliberately NOT rejecting other control bytes. That was tried and was too
+# strict: `client/tests/data/jcs_vectors.json` is valid UTF-8 carrying two DEL
+# (0x7F) bytes, because RFC 8785 canonicalization has to handle them, and a
+# guard that calls its own test vectors binary is wrong about the repository
+# rather than right about the rule. Nor "anything not printable" — under
+# LC_ALL=C every byte of a multi-byte UTF-8 character is non-printable, so that
+# would call every source file here binary; they are full of em dashes.
 is_binary() {
-	local file="$1"
-	local total stripped
-	# Invalid UTF-8 → binary. Catches the NUL-free binary formats.
+	local file="$1" total stripped
+	# Invalid UTF-8 → binary. This is what catches the NUL-free binary formats;
+	# an image or mesh that decodes cleanly as UTF-8 is not a thing that
+	# happens by accident.
 	iconv -f UTF-8 -t UTF-8 <"$file" >/dev/null 2>&1 || return 0
-	# C0 controls (minus tab/LF/CR) and DEL → binary; catches NUL directly.
-	# Octal ranges through `tr`, NOT a grep bracket expression: BSD grep
-	# rejects \xNN ranges outright ("invalid character range"), and a
-	# [:print:] test would call every source file here binary because under
-	# LC_ALL=C each byte of a multi-byte UTF-8 character is non-printable.
+	# A NUL byte → binary. Octal range through `tr`, NOT a grep bracket
+	# expression: BSD grep rejects \xNN ranges outright.
 	total=$(wc -c <"$file")
-	stripped=$(LC_ALL=C tr -d '\000-\010\013\014\016-\037\177' <"$file" | wc -c)
+	stripped=$(LC_ALL=C tr -d '\000' <"$file" | wc -c)
 	[ "$total" -ne "$stripped" ]
 }
 
