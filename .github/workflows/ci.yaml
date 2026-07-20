@@ -1120,6 +1120,11 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          # Full history: the change report at the end of this job renders the
+          # MERGE BASE from a git worktree of this same clone, which a depth-1
+          # checkout cannot reach. The ledger jobs already take it for the same
+          # kind of reason.
+          fetch-depth: 0
           # This job uploads an artifact — never let the checked-out token ride
           # along in it (zizmor artipacked).
           persist-credentials: false
@@ -1270,6 +1275,132 @@ jobs:
             echo "::error::no non-trivial PNGs produced"; ls -la "${RUNNER_TEMP}/shots" || true; exit 1
           fi
           echo "captured $count frame(s)"
+      - name: Render the merge base for comparison
+        # #231: every guard above answers "did something render?" — none of them
+        # answers "is the change under review present?". The spread check is a
+        # min/max over a 16x12 grid, so a localized effect that lands between
+        # those 192 points is worth nothing to it. Measured on three captures
+        # off one checkout (fog off / off / ON): sunward read a spread of 0.541
+        # for ALL THREE, while a per-pixel comparison against the base moved
+        # 0.01% and 21.01%. The only way to report the CHANGE is to render what
+        # the change was made against.
+        #
+        # A git worktree of this clone, not a second checkout: the history is
+        # already here from fetch-depth: 0, so this costs no network and cannot
+        # drift from what the diff step is comparing.
+        #
+        # 🔑 base.sha, NOT the merge base — and the reason is the head side, not
+        # the base side. For a pull_request event actions/checkout checks out
+        # GitHub's synthetic MERGE RESULT (base tip + this PR), so the frames
+        # captured above are "base tip plus my change". The commit that pairs
+        # with that is therefore the base tip itself: merge-result minus
+        # base.sha is exactly this PR. Rendering the older branch-point merge
+        # base instead would put every sibling PR merged since the fork on the
+        # wrong side of the subtraction and report their work as this PR's.
+        #
+        # (An earlier revision here used the merge base for exactly the opposite
+        # reason and was wrong. It went unnoticed because main did not move
+        # during the run that measured it, which makes the two identical —
+        # the failure only appears on a PR whose base advanced.)
+        #
+        # continue-on-error: this is a REPORT, and a required check must not go
+        # red because an old base fails to render. Its honesty is held up
+        # elsewhere: frame_diff's own arithmetic is pinned by
+        # tests/frame_diff_test.gd in the gated suite, and the diff step below
+        # shouts a ::warning:: rather than passing quietly when it compares
+        # nothing.
+        continue-on-error: true
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          FIRST_RUN: ${{ needs.detect-visual-changes.outputs.first_run }}
+        run: |
+          set -o pipefail
+          base="$BASE_SHA"
+          echo "base (pairs with the checked-out merge result): $base"
+          git worktree add --detach "${RUNNER_TEMP}/base" "$base"
+          godot --headless --editor --quit --path "${RUNNER_TEMP}/base/client" 2>&1 | tail -5
+          mkdir -p "${RUNNER_TEMP}/shots-base"
+          # Seed from the BASE's own recipe, not the head's: a PR that edits the
+          # recipe would otherwise render the base world wearing the head's
+          # character, and every frame would differ for that reason alone.
+          if ! cp "${RUNNER_TEMP}/base/client/recipes/wanderer.json" "${RUNNER_TEMP}/probe_save_base.json"; then
+            echo "::warning::could not seed the base capture's save — skipping the change report"
+            exit 1
+          fi
+          WAR_SHOT_DIR="${RUNNER_TEMP}/shots-base" \
+          WAR_SAVE_PATH="${RUNNER_TEMP}/probe_save_base.json" \
+            godot --path "${RUNNER_TEMP}/base/client" res://tools/frame_capture.tscn 2>&1 | tee base-capture.log
+          if ! grep -q "CAPTURE PASS" base-capture.log; then
+            echo "::warning::the merge base did not render cleanly — the change report will be incomplete"
+            tail -20 base-capture.log
+            exit 1
+          fi
+          # The head captures the first-run UI into the SAME shots dir when the
+          # PR touches the creator, so without a matching base render every
+          # first_run*.png is reported "no base frame" — and a character-creator
+          # PR would get a change report covering only the world vantages it did
+          # NOT touch, while the UI it actually changed carries no measurement.
+          # That is the #145 shape all over again, one level up.
+          #
+          # The save must be ABSENT for the creator to open, exactly as the head
+          # step does it; point at a path that was never created.
+          #
+          # A warning rather than exit 1: the world frames above already compared
+          # successfully, and discarding their measurement because the base's
+          # creator failed to render would throw away the evidence we have.
+          if [ "$FIRST_RUN" = "true" ]; then
+            WAR_SHOT_DIR="${RUNNER_TEMP}/shots-base" \
+            WAR_SCENARIO=first_run \
+            WAR_SAVE_PATH="${RUNNER_TEMP}/no_such_save_base.json" \
+              godot --path "${RUNNER_TEMP}/base/client" res://tools/frame_capture.tscn 2>&1 \
+              | tee base-first-run.log || true
+            # The world scenario prints "CAPTURE PASS" too, so require the
+            # first-run marker: a base that silently fell back to the world path
+            # would leave first_run frames unmatched while looking like a success.
+            if ! grep -qE "[0-9]+ first-run vantages? written" base-first-run.log; then
+              echo "::warning::the base did not render the first-run UI — creator frames will carry no change measurement"
+              tail -20 base-first-run.log || true
+            fi
+          fi
+      - name: Report what changed against the base
+        # Reporting only — no threshold, by #231's own acceptance criteria. A
+        # docs or server-only PR that reaches here legitimately changes nothing
+        # visible, and picking a pass/fail band needs a measured per-vantage
+        # distribution first (the cave's animated torches already move 9% of
+        # that frame between two runs of the SAME build, which is more than a
+        # real change moves at the shrine).
+        #
+        # The numbers land in the job log AND in each frame's .txt note, so a
+        # reviewer opening the artifact sees them without the log beside them.
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          if [ ! -d "${RUNNER_TEMP}/shots-base" ]; then
+            echo "::warning::no base frames — the merge base did not render, so this PR's frames carry no change measurement"
+            exit 0
+          fi
+          # `|| true` is load-bearing, not sloppiness. The tool EXITS NONZERO
+          # when it can compare nothing, and this shell runs with -e and
+          # pipefail — so without it the step dies at the pipeline and the
+          # warning below, which is the entire point of that exit code, never
+          # runs. continue-on-error would keep the job green but leave only a
+          # failed step and no annotation saying the artifact has no comparison.
+          WAR_DIFF_BASE="${RUNNER_TEMP}/shots-base" \
+          WAR_DIFF_HEAD="${RUNNER_TEMP}/shots" \
+            godot --headless --path client res://tools/frame_diff.tscn 2>&1 | tee diff.log || true
+          # The tool fails closed when it compares nothing. Surface that as a
+          # warning rather than swallowing it: a silent empty report is the
+          # exact self-attestation #231 was filed about.
+          if ! grep -q "DIFF PASS" diff.log; then
+            echo "::warning::the change report did not complete — this PR's frames carry no comparison against the base"
+          fi
+          # A vantage the base captured and the head did not is a REMOVED
+          # vantage. The tool names each one; surface it as an annotation too,
+          # since client/tools/ changes trigger this job precisely so a capture
+          # regression cannot pass quietly.
+          if grep -q "REMOVED:" diff.log; then
+            echo "::warning::a committed vantage present in the base is missing from this PR's capture — see the REMOVED lines"
+          fi
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: frames-${{ github.event.pull_request.head.sha }}
