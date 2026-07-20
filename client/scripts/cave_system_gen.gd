@@ -74,8 +74,24 @@ func _ready() -> void:
 	rebuild()
 
 
+## The flicker phase every capture pins itself to (#321). The value is
+## arbitrary — what matters is that it is a CONSTANT, so two runs photograph the
+## same light. Zero is deliberately avoided: `flick` is at its positive peak
+## there, which would evidence the cave at its brightest rather than at a
+## representative moment.
+const FLICKER_CAPTURE_TIME := 1.0
+
+
 func _process(delta: float) -> void:
 	_time += delta
+	_apply_flicker()
+
+
+## Drives torch light and flame body from `_time`. Split out of `_process` so a
+## capture can pin the phase without re-implementing the curve — a second copy
+## of this arithmetic would drift from the one the game actually runs, and the
+## whole point is that the evidence path photographs the shipping light.
+func _apply_flicker() -> void:
 	for i in _torch_lights.size():
 		var phase := _torch_phases[i]
 		var flick := sin(_time * 5.1 + phase) + 0.44 * sin(_time * 13.7 + phase * 2.0)
@@ -87,6 +103,30 @@ func _process(delta: float) -> void:
 		if i < _torch_flames.size() and is_instance_valid(_torch_flames[i]):
 			var f := _torch_flames[i]
 			f.scale = Vector3(1.0 + 0.06 * flick, 1.0 + 0.13 * flick, 1.0 + 0.06 * flick)
+
+
+## Pin the torches to a fixed flicker phase and stop advancing them, so a
+## captured frame is reproducible.
+##
+## The torches are the cave's ONLY light (`frame_capture.gd` asserts it before
+## shooting), and their energy swings 1.38 → 2.82 — slightly over 2×. The
+## capture settles a fixed number of FRAMES while `_time` accumulates DELTA, so
+## without this the phase at the shutter depends on how fast those frames
+## happened to render, and two runs of identical code photograph different
+## illuminants. Measured on unchanged `main`: cave-walkout moved 16.8% → 20.8%
+## of value range between consecutive runs (cave-chamber 12.5% → 14.1%), while
+## every outdoor vantage was reproducible to the printed precision. That ±4pp
+## floor is wider than the effects art PRs are asked to prove through this path.
+##
+## Hue is untouched by the flicker — dimming a single-hue light changes
+## brightness, not hue — which is why only the value axis drifted.
+##
+## In-game behaviour is deliberately NOT changed: nothing calls this except the
+## capture tool, so the torches flicker for players exactly as before.
+func freeze_flicker(at_time: float = FLICKER_CAPTURE_TIME) -> void:
+	_time = at_time
+	set_process(false)
+	_apply_flicker()
 
 
 ## The starter-system layout: entrance room, a bending descending tunnel, a

@@ -1,0 +1,23 @@
+# URLs the link checker must skip. Each entry is a regex, and each needs a reason —
+# an unexplained entry here is indistinguishable from hiding a genuinely broken link.
+
+# GitHub's user-attachments assets (the README's hero image) 302-redirect to a signed
+# S3 URL, and lychee fails on it with "HTTP/2 protocol error. Server may not support
+# HTTP/2 properly". The asset is not broken — verified directly:
+#
+#   curl --http1.1 -L …/assets/c637c97e-… -> 200, image/png, 1431187 bytes
+#   curl --http2   -L …/assets/c637c97e-… -> 200
+#
+# The redirect target also carries a five-minute expiring signature, so these URLs can
+# never be checked reliably no matter how the protocol behaves.
+https://github\.com/user-attachments/
+
+# playstation.com serves 200 to ordinary clients but 403s GitHub's runner IP ranges, so the
+# art-direction anchors citing it fail in CI while passing everywhere else. Verified from a
+# normal network, with and without a browser user-agent:
+#
+#   curl -L https://www.playstation.com/en-us/games/horizon-zero-dawn/ -> 200 (both)
+#
+# This is bot-blocking, not a dead link. Scoped to the host rather than accepting 403
+# globally, which would hide genuine 403s elsewhere.
+https://www\.playstation\.com/

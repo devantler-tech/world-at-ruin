@@ -11,13 +11,24 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
-		"version": "0.20.0",
+		"version": "0.21.0",
 		"date": "2026-07-20",
 		"title": "The ash in the hollows is moving",
 		"notes": [
 			"The ash that gathers in the land's low places used to sit perfectly still, which read as stranger than no ash at all — the dead grass beside it was already leaning in the wind. It breathes now. Each pool slowly thickens and thins again over about twenty seconds, so a hollow you walk past is heavier with ash at some moments than others.",
 			"It is one wind, not an effect running in each hollow separately. A gust crosses the Reach in the direction the grass leans, so a basin on the far side of you thickens a moment after the one at your feet.",
 			"Because it moves, it is no longer something you have to switch on: every player gets it, on any machine that can render air as a volume. Where that hardware is missing the view is unchanged, as before.",
+		],
+	},
+	{
+		"version": "0.20.0",
+		"date": "2026-07-20",
+		"title": "You can see that other people are there",
+		"notes": [
+			"The Reach has been able to hear about other players for a while — the game knew where they were, kept track of them as they moved, and noticed when they left. It just never put any of it on screen, so you walked through a world that was technically shared and looked completely empty.",
+			"Now everyone else in your part of the world shows up as a pale standing shape, in the right place, moving as they move and gone when they walk out of range or leave.",
+			"They are deliberately plain — a blank capsule, not a person. What another player actually looks like is the character work, and putting a rough guess on screen now would mean two different answers to the same question later. This is about knowing someone is there at all.",
+			"You still need a zone to connect to before any of this appears. On your own, nothing has changed.",
 		],
 	},
 	{

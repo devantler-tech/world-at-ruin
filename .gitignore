@@ -12,3 +12,6 @@ build/
 
 # OS noise.
 .DS_Store
+
+# MegaLinter run output — regenerated locally, never committed.
+megalinter-reports/
