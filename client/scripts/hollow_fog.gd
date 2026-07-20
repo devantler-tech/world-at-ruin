@@ -382,7 +382,7 @@ const DRIFT_SWING := 0.22
 ## constant that turned out to be inert for exactly this reason, and a constant
 ## that does nothing is worse than no constant: it invites a future reader to
 ## tune it. Real motion WITHIN a pool needs the density field itself to move,
-## which is a fog shader sampling noise against time — tracked separately.
+## which is a fog shader sampling noise against time — tracked in #328.
 
 ## The pool's density at [param time], modulating [param placed_density].
 ##
