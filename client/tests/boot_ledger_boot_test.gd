@@ -7,15 +7,26 @@ extends Node
 ## existed, was covered, and did not run in the product. Only booting the real
 ## scene and reading what landed on disk can tell the difference.
 ##
+## SCOPE — this slice wires the RECONCILE half only (`load_state` → `reconcile`
+## → `save_state`). Marking (`begin_attempt`/`promote`) is deliberately NOT wired:
+## its only honest subject is a staged pack, and approximating it with the running
+## build is unrecoverable — an interrupted startup would quarantine the installed
+## build, and `begin_attempt` refuses quarantined versions, so no later successful
+## boot could clear it. The tests below therefore assert reconcile behaviour, and
+## the ABSENCE of marking is itself part of the contract (phase A).
+##
 ## Structure — four boots, because a single one cannot separate "the guard ran"
 ## from "the guard is absent and the file happened to look right":
-##  A. NEGATIVE CONTROL — a clean first boot. It must record an attempt and then
-##     promote it, and it must quarantine NOTHING. Without this the quarantine
-##     asserted in B is worthless: a wiring that quarantined on every launch, or
-##     a seeded file that already held the entry, would satisfy B alone.
+##  A. NEGATIVE CONTROL — a clean boot must quarantine NOTHING, and must not
+##     mark anything either. Without this the quarantine asserted in B is
+##     worthless: a wiring that quarantined on every launch would satisfy B on
+##     its own. It also pins the no-marking decision, so re-introducing
+##     `begin_attempt` here fails loudly rather than silently reviving the
+##     unrecoverable case.
 ##  B. POSITIVE — seed a marker, as a launch that died before its checkpoint
 ##     would have left, and require the NEXT boot to quarantine exactly that
-##     build and refuse to re-mount it.
+##     build and refuse to re-mount it. This is the load-bearing liveness proof:
+##     it fails against a main.gd that never calls reconcile.
 ##  C. GUARDRAIL — an unreadable ledger must still boot the game, and must NOT
 ##     be overwritten (laundering junk into a well-formed file is how a recorded
 ##     failure gets erased).
@@ -114,28 +125,29 @@ func _physics_process(_delta: float) -> void:
 			_assert_self_quarantined()
 
 
-## A. The clean boot records an attempt and promotes it, and quarantines nothing.
+## A. A clean boot quarantines nothing and marks nothing.
+##
+## With nothing pending there is nothing to record, so writing no file at all is
+## the CORRECT outcome — a launch must not rewrite the player's ledger just to
+## say "still fine". Either shape is accepted; what is refused is a spurious
+## quarantine, or a marker, which is what re-introducing begin_attempt here
+## would produce.
 func _assert_control() -> void:
 	var raw: Variant = _read_probe()
-	if raw == null:
-		_fail(("THE LEDGER IS NOT LIVE: a clean boot wrote no recovery file at all. "
-			+ "main.gd is not calling BootRecovery — the crash-loop guard is absent from "
-			+ "the product however green its unit tests are"))
-		return
-	var doc: Dictionary = raw
-	if doc.get("marker") != null:
-		_fail("the clean boot left a boot-attempt marker behind (%s) — it never reached its checkpoint, so the NEXT launch would quarantine a build that booted fine" % str(doc.get("marker")))
-		return
-	if str(doc.get("last_good")) != DevLog.VERSION:
-		_fail(("the clean boot did not promote itself: last_good is %s, expected %s. "
-			+ "A boot that records an attempt but never clears it turns every launch into a "
-			+ "recorded failure") % [str(doc.get("last_good")), DevLog.VERSION])
-		return
-	var ledger := doc.get("quarantined", []) as Array
-	if not ledger.is_empty():
-		_fail(("VACUOUS TEST GUARD: a clean boot quarantined %s. Nothing failed, so the "
-			+ "quarantine asserted in the next phase would prove nothing") % str(ledger))
-		return
+	if raw != null:
+		var doc: Dictionary = raw
+		var ledger := doc.get("quarantined", []) as Array
+		if not ledger.is_empty():
+			_fail(("VACUOUS TEST GUARD: a clean boot quarantined %s. Nothing failed, so the "
+				+ "quarantine asserted in the next phase would prove nothing") % str(ledger))
+			return
+		if doc.get("marker") != null:
+			_fail(("a clean boot left a boot-attempt marker (%s). Marking the RUNNING build is "
+				+ "unrecoverable — an interrupted startup quarantines the installed build, and "
+				+ "begin_attempt refuses quarantined versions, so no later successful boot can "
+				+ "ever clear it. Marking belongs to the pack-mount path")
+				% str(doc.get("marker")))
+			return
 	if not _save.real_save_untouched():
 		_fail("the control boot touched the player's real save, vault or recovery ledger")
 		return
@@ -169,11 +181,6 @@ func _assert_failed_previous() -> void:
 		return
 	if BootRecovery.begin_attempt(doc, FAILED_VERSION)["ok"] as bool:
 		_fail("%s was quarantined and begin_attempt STILL accepted it — the boot loop is not actually closed" % FAILED_VERSION)
-		return
-	# This boot's own attempt must still have completed normally: recording a
-	# previous failure may not cost the current launch its promotion.
-	if str(doc.get("last_good")) != DevLog.VERSION:
-		_fail("the recovering boot did not promote itself (last_good %s) — a launch that recovers is still a launch that worked" % str(doc.get("last_good")))
 		return
 	if not _save.real_save_untouched():
 		_fail("the recovering boot touched the player's real save, vault or recovery ledger")
@@ -214,9 +221,9 @@ func _assert_self_quarantined() -> void:
 	if not _save.real_save_untouched():
 		_fail("the self-quarantined boot touched the player's real save, vault or recovery ledger")
 		return
-	print(("TEST PASS — the boot-recovery ledger is live: a clean boot promotes and quarantines "
-		+ "nothing, a marker left by a dead launch quarantines %s and refuses to re-mount it, "
-		+ "and a torn or self-quarantined ledger still boots the game") % FAILED_VERSION)
+	print(("TEST PASS — reconcile is live: a clean boot quarantines and marks nothing, a marker "
+		+ "left by a dead launch quarantines %s and refuses to re-mount it, and a torn or "
+		+ "self-quarantined ledger still boots the game") % FAILED_VERSION)
 	get_tree().quit(0)
 
 

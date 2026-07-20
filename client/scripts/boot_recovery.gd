@@ -55,10 +55,16 @@ class_name BootRecovery
 ##    reinstall the ADR names.
 
 
-## Where the shipped bootstrap keeps the file. `main.gd` runs the launch half of
-## the lifecycle against this path on every boot (#301), so the ledger records
-## real boot outcomes; the MOUNT half — marking a staged pack rather than the
-## running build — is still the in-client updater child's to wire.
+## Where the shipped bootstrap keeps the file. `main.gd` runs [method load_state]
+## → [method reconcile] → [method save_state] against this path on every launch
+## (#301), so a marker is acted on by the very next boot.
+##
+## MARKING ([method begin_attempt] / [method promote]) is still unwired, and
+## deliberately so: its only honest subject is a staged pack, and approximating
+## that with the RUNNING build is unrecoverable — an interrupted startup would
+## quarantine the installed build, and since [method begin_attempt] refuses a
+## quarantined version, no later successful boot could ever clear it. Those two
+## belong to the pack-mount path in the in-client updater child.
 const DEFAULT_PATH := "user://boot_recovery.json"
 
 ## Test seam, the same discipline as [CharacterStore] and [SaveVault]: a boot
