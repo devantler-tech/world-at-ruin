@@ -13,12 +13,43 @@ extends CanvasLayer
 signal applied(recipe: Dictionary)
 signal closed
 
-const COL_BONE := Color(0.88, 0.84, 0.76)
-const COL_DIM := Color(0.88, 0.84, 0.76, 0.55)
-const COL_EMBER := Color(1.0, 0.62, 0.25)
+## One palette for the screen, owned by the theme — these are the two marks the
+## theme cannot express as a control style (a heading's colour, the blurb's).
+const COL_DIM := UiTheme.BONE_DIM
+const COL_EMBER := UiTheme.EMBER
 
 const PRESET_DIR := "res://recipes/"
 const PRESETS := ["wanderer", "villager", "elder", "brute"]
+
+## What each archetype is, in the player's terms. The recipes carry their own
+## `comment`, but those are written for whoever maintains the kit ("first recipe
+## on the gender/phenotype axes") — not for someone choosing a body.
+const PRESET_BLURBS := {
+	"wanderer": "Heroic but human. You wake in the rags the Ruin left you.",
+	"villager": "An ordinary body for ordinary people — most of the living are these.",
+	"elder": "The village matriarch's silhouette. A woman the Ruin could not kill.",
+	"brute": "Mass, reach, and a head built for headbutting.",
+}
+
+## How the kit's shape sliders are grouped in the panel, in display order:
+## section title, then the shape-name prefixes that belong to it. First match
+## wins, so a shape lands in exactly one section.
+##
+## The kit exposes 29 shape sliders and the panel used to place all of them in
+## one undifferentiated run under a single BUILD heading — the "debug panel"
+## the first screen of the game read as (#270). Grouping is keyed on the shape
+## NAMES rather than a hand-maintained list of them, for the same reason
+## `_shape_names()` reads the live mesh: the creator must not go stale when the
+## kit gains shapes. Anything unmatched falls into SHAPE_GROUP_FALLBACK, so a
+## new shape always appears somewhere — never silently vanishes.
+const SHAPE_GROUPS := [
+	["ARCHETYPE", ["body_"]],
+	["HERITAGE", ["phenotype_"]],
+	["TORSO", ["torso_", "shoulders_", "waist_", "belly", "hips_", "buttocks_", "neck_"]],
+	["LIMBS", ["arms_", "legs_"]],
+	["FACE", ["head_", "chin_", "jaw_", "nose_"]],
+]
+const SHAPE_GROUP_FALLBACK := "OTHER"
 
 ## Bone sliders: label, recipe field, bone key, range. Kept deliberately
 ## short — the interesting range of each op before skinning artifacts.
@@ -39,6 +70,7 @@ var _shape_sliders := {}
 var _bone_sliders := {}
 var _outfit_pickers := {}
 var _skin_picker: OptionButton
+var _sections: Array[Button] = []
 var _camera: Camera3D
 var _light: DirectionalLight3D
 var _syncing := false
@@ -101,12 +133,10 @@ func _build_panel() -> void:
 	var panel := PanelContainer.new()
 	panel.set_anchors_preset(Control.PRESET_LEFT_WIDE)
 	panel.custom_minimum_size = Vector2(360, 0)
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.07, 0.06, 0.055, 0.93)
-	style.border_color = Color(0.55, 0.35, 0.18)
-	style.set_border_width_all(1)
-	style.set_content_margin_all(14)
-	panel.add_theme_stylebox_override("panel", style)
+	# The authored look, applied at the panel root so every control below it
+	# inherits — this is the whole screen's styling, not per-control overrides
+	# scattered through the builders (#270).
+	panel.theme = UiTheme.creator_theme()
 	add_child(panel)
 
 	var column := VBoxContainer.new()
@@ -115,31 +145,48 @@ func _build_panel() -> void:
 
 	var title := Label.new()
 	title.text = "SHAPE YOUR WANDERER" if first_run else "RESHAPE YOUR WANDERER"
-	title.add_theme_font_size_override("font_size", 18)
+	title.add_theme_font_size_override("font_size", UiTheme.FONT_TITLE)
 	title.add_theme_color_override("font_color", COL_EMBER)
 	column.add_child(title)
 
 	var blurb := Label.new()
 	blurb.text = "This body is yours to keep — it can always be reshaped here (C)."
 	blurb.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	blurb.add_theme_font_size_override("font_size", 12)
+	blurb.add_theme_font_size_override("font_size", UiTheme.FONT_BODY)
 	blurb.add_theme_color_override("font_color", COL_DIM)
 	column.add_child(blurb)
 
-	var presets_row := HBoxContainer.new()
-	presets_row.add_theme_constant_override("separation", 8)
-	column.add_child(presets_row)
+	# The archetypes are the PRIMARY surface: named choices with a line saying
+	# what each one is, not a row of terse buttons above a parameter dump. The
+	# art direction is explicit that thirty-plus programmer-named sliders as the
+	# primary surface is a developer inspector (docs/art-direction/README.md,
+	# "UI and UX"), so the numeric controls live behind ADVANCED below.
 	var first_preset: Button = null
 	for preset_name in PRESETS:
-		var b := Button.new()
-		b.text = preset_name
-		b.pressed.connect(_on_preset.bind(preset_name))
-		presets_row.add_child(b)
+		var choice := Button.new()
+		choice.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		choice.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		choice.text = String(preset_name).to_upper()
+		choice.add_theme_font_size_override("font_size", UiTheme.FONT_SECTION)
+		choice.pressed.connect(_on_preset.bind(preset_name))
+		column.add_child(choice)
+
+		var blurb_text := String(PRESET_BLURBS.get(preset_name, ""))
+		if blurb_text != "":
+			var caption := Label.new()
+			caption.text = blurb_text
+			caption.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			caption.add_theme_color_override("font_color", COL_DIM)
+			column.add_child(caption)
+
 		if first_preset == null:
-			first_preset = b
+			first_preset = choice
 
 	var scroll := ScrollContainer.new()
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	# Hugs its own height rather than expanding to fill the rail. Expanding left
+	# a large dead gap between the last control and the Wake button once the
+	# numeric sliders moved behind ADVANCED and the default view got short.
+	scroll.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	scroll.custom_minimum_size = Vector2(330, 380)
 	column.add_child(scroll)
 	var sliders := VBoxContainer.new()
@@ -147,17 +194,24 @@ func _build_panel() -> void:
 	sliders.add_theme_constant_override("separation", 2)
 	scroll.add_child(sliders)
 
-	_add_heading(sliders, "BUILD")
-	for shape_name in _shape_names():
-		_add_shape_slider(sliders, shape_name)
-	_add_heading(sliders, "FRAME")
-	for spec: Array in BONE_SLIDERS:
-		_add_bone_slider(sliders, spec)
-	_add_heading(sliders, "OUTFIT")
+	# Outfit and skin stay on the primary surface: they ARE named choices, which
+	# is what the art direction asks the creator to lead with.
+	var outfit := _add_section(sliders, "OUTFIT")
 	for slot: String in CharacterFactory.equipment_registry().get("slots", []):
-		_add_outfit_picker(sliders, slot)
-	_add_heading(sliders, "SKIN")
-	_add_skin_picker(sliders)
+		_add_outfit_picker(outfit, slot)
+	var skin := _add_section(sliders, "SKIN")
+	_add_skin_picker(skin)
+
+	# Everything numeric, folded away by default. Grouped rather than dumped, so
+	# a player who does open it gets a structure instead of 35 identical rows.
+	var advanced := _add_section(sliders, "ADVANCED — fine shaping", false)
+	for group: Array in group_shape_names(_shape_names()):
+		_add_heading(advanced, group[0])
+		for shape_name: String in group[1]:
+			_add_shape_slider(advanced, shape_name)
+	_add_heading(advanced, "FRAME")
+	for spec: Array in BONE_SLIDERS:
+		_add_bone_slider(advanced, spec)
 
 	var buttons := HBoxContainer.new()
 	buttons.add_theme_constant_override("separation", 8)
@@ -181,10 +235,88 @@ func _build_panel() -> void:
 	first_preset.grab_focus()
 
 
+## Sorts shape names into the SHAPE_GROUPS sections, in declared order, keeping
+## each section's shapes in the order the kit reports them. Pure and static so
+## the grouping contract (every shape placed exactly once, unknown names kept)
+## is testable without booting the game — see tests/creator_sections_test.gd.
+##
+## Returns an Array of [title, PackedStringArray] pairs; empty sections are
+## dropped, so a kit that has no face shapes shows no FACE header.
+static func group_shape_names(names: PackedStringArray) -> Array:
+	# Plain Arrays, not PackedStringArrays: a PackedStringArray is a VALUE type,
+	# so `buckets[title].append(...)` would mutate a copy and silently drop every
+	# shape. Converted to packed form on the way out, where the copy is the point.
+	var buckets := {}
+	for spec: Array in SHAPE_GROUPS:
+		buckets[spec[0]] = []
+	buckets[SHAPE_GROUP_FALLBACK] = []
+
+	for shape_name: String in names:
+		var title := SHAPE_GROUP_FALLBACK
+		for spec: Array in SHAPE_GROUPS:
+			var matched := false
+			for prefix: String in spec[1]:
+				if shape_name.begins_with(prefix):
+					matched = true
+					break
+			if matched:
+				title = spec[0]
+				break
+		(buckets[title] as Array).append(shape_name)
+
+	var out: Array = []
+	var titles: Array = []
+	for spec: Array in SHAPE_GROUPS:
+		titles.append(spec[0])
+	titles.append(SHAPE_GROUP_FALLBACK)
+	for title: String in titles:
+		var bucket: Array = buckets[title]
+		if not bucket.is_empty():
+			out.append([title, PackedStringArray(bucket)])
+	return out
+
+
+## A named section the player can fold away, returning the container its rows
+## go into. `open` is the section's default state — the numeric-shaping section
+## opens CLOSED, because the art direction requires named choices as the primary
+## surface with sliders demoted to an advanced section.
+func _add_section(into: Container, text: String, open := true) -> Container:
+	var body := VBoxContainer.new()
+	body.add_theme_constant_override("separation", 2)
+	body.visible = open
+
+	var header := Button.new()
+	header.toggle_mode = true
+	header.button_pressed = open
+	header.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	header.text = ("▾  " if open else "▸  ") + text
+	header.add_theme_font_size_override("font_size", UiTheme.FONT_SECTION)
+	header.add_theme_color_override("font_color", COL_EMBER)
+	header.add_theme_color_override("font_pressed_color", COL_EMBER)
+	header.toggled.connect(func(is_open: bool) -> void:
+		body.visible = is_open
+		header.text = ("▾  " if is_open else "▸  ") + text)
+	into.add_child(header)
+
+	into.add_child(body)
+	_sections.append(header)
+	return body
+
+
+## Opens every foldable section. The first-run capture evidence photographs the
+## controls below the fold by scrolling to the bottom, and the advanced section
+## is closed by default — so without this the evidence would silently stop
+## depicting the shaping controls entirely (#231). Evidence follows the screen;
+## the screen does not stay wrong to keep the evidence convenient.
+func expand_all_sections() -> void:
+	for header: Button in _sections:
+		header.button_pressed = true
+
+
 func _add_heading(into: Container, text: String) -> void:
 	var heading := Label.new()
 	heading.text = text
-	heading.add_theme_font_size_override("font_size", 13)
+	heading.add_theme_font_size_override("font_size", UiTheme.FONT_SECTION)
 	heading.add_theme_color_override("font_color", COL_EMBER)
 	into.add_child(heading)
 
@@ -212,8 +344,6 @@ func _add_outfit_picker(into: Container, slot: String) -> void:
 	var label := Label.new()
 	label.text = slot
 	label.custom_minimum_size = Vector2(130, 0)
-	label.add_theme_font_size_override("font_size", 12)
-	label.add_theme_color_override("font_color", COL_BONE)
 	row.add_child(label)
 	var picker := OptionButton.new()
 	picker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -241,8 +371,6 @@ func _add_skin_picker(into: Container) -> void:
 	var label := Label.new()
 	label.text = "skin"
 	label.custom_minimum_size = Vector2(130, 0)
-	label.add_theme_font_size_override("font_size", 12)
-	label.add_theme_color_override("font_color", COL_BONE)
 	row.add_child(label)
 	_skin_picker = OptionButton.new()
 	_skin_picker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -279,8 +407,6 @@ func _labeled_slider(into: Container, text: String, minimum: float, maximum: flo
 	var label := Label.new()
 	label.text = text
 	label.custom_minimum_size = Vector2(130, 0)
-	label.add_theme_font_size_override("font_size", 12)
-	label.add_theme_color_override("font_color", COL_BONE)
 	row.add_child(label)
 	var slider := HSlider.new()
 	slider.min_value = minimum

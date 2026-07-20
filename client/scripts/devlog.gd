@@ -11,6 +11,17 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
+		"version": "0.16.0",
+		"date": "2026-07-20",
+		"title": "The creator asks who you are, not what your numbers are",
+		"notes": [
+			"The first screen used to open on thirty-five identical grey sliders with names like torso_vshape, and you had to work out for yourself which ones made a person. Now it opens on the four wanderers themselves — each one named, each with a line telling you what it is — and you pick the one you want to be. What you are wearing and what skin you have sit right below, as choices with names.",
+			"The sliders have not gone anywhere. They are folded into an 'advanced — fine shaping' section at the bottom, sorted into archetype, heritage, torso, limbs, face and frame, so if you do want to shape a jaw you get a structure instead of a wall. Nothing you could make before has been taken away.",
+			"The whole panel is also drawn on purpose now rather than in the engine's default grey: every slider shows how far along it is at a glance, and whatever you have selected carries a lit edge — which matters if you are playing on a pad and cannot point at things.",
+			"This is still a long way from where the interface needs to end up. The panel is a plain rectangle with no material to it, the type is the engine's own, and your wanderer stands in the world rather than being framed and lit for a portrait. Those are next.",
+		],
+	},
+	{
 		"version": "0.15.0",
 		"date": "2026-07-20",
 		"title": "The ground stops being the same ground",
