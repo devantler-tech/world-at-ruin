@@ -107,6 +107,17 @@ func _check_enter_and_units() -> bool:
 	if not is_equal_approx(mesh.radius, 0.3):
 		_fail("a 300 mm replicated radius must draw at 0.3 m, got %f" % mesh.radius)
 		return false
+	# Markers are identical in colour, so they share one material rather than
+	# allocating an equivalent resource each. Pinned so the sharing is not
+	# quietly undone — and asserted non-null, since a marker with no material
+	# renders as untextured white rather than the intended stand-in.
+	var mesh3: CapsuleMesh = m3.mesh
+	if mesh.material == null:
+		_fail("a marker must carry a material")
+		return false
+	if mesh.material != mesh3.material:
+		_fail("markers must share one material instance, got two distinct ones")
+		return false
 	view.free()
 	return true
 

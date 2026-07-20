@@ -57,6 +57,9 @@ const MARKER_COLOR := Color(0.62, 0.78, 0.9)
 ## name-based lookup silently finds one marker out of many (recorded on #282).
 var _markers: Dictionary = {}
 
+## Shared by every marker — see [method _shared_material].
+static var _marker_material: StandardMaterial3D = null
+
 
 ## Reconcile the drawn markers against `store`, which is the table
 ## `ZoneConnection` folds frames into. Safe and cheap to call every frame:
@@ -73,6 +76,10 @@ func sync(store: ReplicaStore) -> void:
 	for id: int in store.ids():
 		var e: Dictionary = store.entity(id)
 		if e.is_empty():
+			# Unreachable while `ids()` and `entity()` read the same table, which
+			# is the store's contract today. Kept as a guard against a future
+			# where they stop sharing a source, rather than as a case that can
+			# fire now — skipping beats drawing a marker at a default position.
 			continue
 		live[id] = true
 		var radius_m: float = float(e["radius"]) / MM_PER_M
@@ -117,14 +124,25 @@ func _make_marker(id: int, radius_m: float) -> MeshInstance3D:
 	# lookup goes through `_markers`.
 	marker.name = "Replica%d" % id
 	var mesh := CapsuleMesh.new()
-	mesh.height = MARKER_HEIGHT_M
 	mesh.radius = radius_m
+	# Sets the height too, so assigning MARKER_HEIGHT_M here as well would be
+	# immediately overwritten — and would invite changing one and missing the other.
 	_fit_capsule(mesh, radius_m)
-	var material := StandardMaterial3D.new()
-	material.albedo_color = MARKER_COLOR
-	mesh.material = material
+	# Every marker is the same flat colour, so they share one material rather
+	# than allocating an identical resource per replicated entity. They stop
+	# sharing the day a remote player gets a real appearance (#123).
+	mesh.material = _shared_material()
 	marker.mesh = mesh
 	return marker
+
+
+## The one material every marker uses. Built on first need rather than at load
+## so the class stays free of scene-tree and resource work at parse time.
+static func _shared_material() -> StandardMaterial3D:
+	if _marker_material == null:
+		_marker_material = StandardMaterial3D.new()
+		_marker_material.albedo_color = MARKER_COLOR
+	return _marker_material
 
 
 func _apply_radius(marker: MeshInstance3D, radius_m: float) -> void:
