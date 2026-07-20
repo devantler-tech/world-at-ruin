@@ -1,0 +1,91 @@
+name: GPU probe experiment (TEMPORARY — #232)
+
+# THROWAWAY. This workflow exists only to MEASURE whether Mesa's lavapipe
+# software Vulkan driver advertises R32_Uint as an atomic storage image — the
+# exact format+usage combination client/scripts/volumetrics.gd probes and the
+# hosted macOS runner's virtualised Apple adapter fails.
+#
+# The answer is not in any documentation (checked: Mesa's llvmpipe docs, the
+# lavapipe extension changelogs, vulkan.gpuinfo.org), so #232's "software
+# rasteriser lane" option cannot be decided from prose. This job is the
+# measuring instrument. It is DELETED in the same PR that records the result.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [claude/war-gpu-gated-capture-evidence-232]
+
+permissions:
+  contents: read
+
+env:
+  GODOT_VERSION: 4.7.1
+  GODOT_SHA512: 4ccdab7a48eeccbe8819a2fc1f6262f8d72065d98601bcb3743fcbd7ebd39f373758a788ee3293a05ec5b2c48538266c437404312e372225cd2df273945a2de9
+
+jobs:
+  lavapipe-probe:
+    name: Probe R32_Uint atomic storage under lavapipe
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Install Godot (pinned, checksum-verified)
+        run: |
+          curl -fsSL -o godot.zip "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          echo "${GODOT_SHA512}  godot.zip" | sha512sum -c -
+          unzip -q godot.zip
+          sudo mv "Godot_v${GODOT_VERSION}-stable_linux.x86_64" /usr/local/bin/godot
+
+      - name: Install Mesa lavapipe + xvfb
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mesa-vulkan-drivers vulkan-tools xvfb
+          echo "--- installed ICDs ---"
+          ls -1 /usr/share/vulkan/icd.d/ || true
+          echo "--- vulkaninfo summary (lavapipe) ---"
+          VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json \
+            xvfb-run -a vulkaninfo --summary 2>&1 | head -40 || true
+
+      - name: Write the throwaway probe scene
+        run: |
+          cat > client/tools/gpu_probe_experiment.gd <<'GDEOF'
+extends Node
+
+func _ready() -> void:
+	print("PROBE_ADAPTER %s" % RenderingServer.get_video_adapter_name())
+	var rd := RenderingServer.get_rendering_device()
+	print("PROBE_RD_PRESENT %s" % (rd != null))
+	if rd != null:
+		print("PROBE_R32UINT_ATOMIC %s" % Volumetrics.supported(rd))
+	else:
+		print("PROBE_R32UINT_ATOMIC no-rendering-device")
+	print("PROBE_DONE")
+	get_tree().quit()
+GDEOF
+          cat > client/tools/gpu_probe_experiment.tscn <<'SCNEOF'
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tools/gpu_probe_experiment.gd" id="1"]
+
+[node name="GpuProbeExperiment" type="Node"]
+script = ExtResource("1")
+SCNEOF
+          echo "--- probe script ---"
+          cat client/tools/gpu_probe_experiment.gd
+
+      - name: Headless import (writes the global class-name cache)
+        run: xvfb-run -a godot --headless --editor --quit --path client 2>&1 | tail -5
+
+      - name: Probe under lavapipe
+        env:
+          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+        run: |
+          set -o pipefail
+          xvfb-run -a -s "-screen 0 1280x720x24" \
+            godot --path client res://tools/gpu_probe_experiment.tscn 2>&1 | tee probe.log || true
+          echo "===================== VERDICT ====================="
+          grep -E 'PROBE_|VOLUMETRICS' probe.log || echo "NO PROBE MARKERS — see full log above"
+          echo "==================================================="
