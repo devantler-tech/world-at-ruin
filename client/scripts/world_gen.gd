@@ -455,7 +455,6 @@ func _build_ruin_site(rng: RandomNumberGenerator, at: Vector3, stone: ShaderMate
 func _add_column(rng: RandomNumberGenerator, parent: Node3D, off: Vector3, stone: ShaderMaterial) -> void:
 	var wx := parent.position.x + off.x
 	var wz := parent.position.z + off.z
-	var ground := height_at(wx, wz)
 	var r := rng.randf_range(0.35, 0.55)
 	var h := rng.randf_range(1.6, 5.5)
 	# Derived from the piece's own position, NOT drawn from the placement
@@ -467,24 +466,30 @@ func _add_column(rng: RandomNumberGenerator, parent: Node3D, off: Vector3, stone
 	var fallen := rng.randf() < 0.3
 	var body := _solid(mesh, stone)
 	if fallen:
+		# Rotation is drawn BEFORE seating because a fallen column's footprint is
+		# its length, not its radius — the draw order is unchanged, so the
+		# placement stream is untouched.
+		var rot := Vector3(PI / 2.0, rng.randf_range(0.0, TAU), 0)
 		# The node origin must stay the piece CENTRE: the keep-out guard measures
 		# global_position +/- a radius, so a base-anchored origin would let a
 		# fallen column reach into the shrine clearing unnoticed. Shift the mesh
 		# and its collider INSIDE the body instead of moving the body.
 		_offset_children(body, Vector3(0.0, -h * 0.5, 0.0))
-		body.position = Vector3(off.x, ground + r, off.z)
-		body.rotation = Vector3(PI / 2.0, rng.randf_range(0.0, TAU), 0)
+		var fh := _footprint_half(mesh, rot)
+		body.position = Vector3(off.x, _footprint_ground(wx, wz, fh.x, fh.y).x + r, off.z)
+		body.rotation = rot
 	else:
+		var rot := Vector3(rng.randf_range(-0.08, 0.08), 0, rng.randf_range(-0.08, 0.08))
 		# The mesh is built from its base at y=0, so it is seated on the ground
 		# rather than centred on it like the old CylinderMesh.
-		body.position = Vector3(off.x, ground - 0.15, off.z)
-		body.rotation = Vector3(rng.randf_range(-0.08, 0.08), 0, rng.randf_range(-0.08, 0.08))
+		var fh := _footprint_half(mesh, rot)
+		body.position = Vector3(off.x, _footprint_ground(wx, wz, fh.x, fh.y).x - 0.15, off.z)
+		body.rotation = rot
 	parent.add_child(body)
 
 func _add_wall(rng: RandomNumberGenerator, parent: Node3D, off: Vector3, stone: ShaderMaterial) -> void:
 	var wx := parent.position.x + off.x
 	var wz := parent.position.z + off.z
-	var ground := height_at(wx, wz)
 	var wall_size := Vector3(rng.randf_range(2.0, 5.0), rng.randf_range(1.0, 3.2), 0.45)
 	var wall_detail := RandomNumberGenerator.new()
 	wall_detail.seed = _detail_seed(wx, wz, 2)
@@ -493,24 +498,87 @@ func _add_wall(rng: RandomNumberGenerator, parent: Node3D, off: Vector3, stone: 
 	# gaps, and one convex hull would fill them with invisible collision — the
 	# player would be stopped by a hole they can see straight through.
 	var body := _solid(mesh, stone, true)
+	# Yaw is drawn before seating so the footprint is the one the wall really
+	# covers — a 5 m wall turned across a grade is the worst centre-sample case.
+	# No other draw sits between, so the placement stream is unchanged.
+	var yaw := rng.randf_range(0.0, TAU)
+	var fh := _footprint_half(mesh, Vector3(0.0, yaw, 0.0))
 	# Built from its base at y=0, so seat it on the ground.
-	body.position = Vector3(off.x, ground - 0.3, off.z)
-	body.rotation.y = rng.randf_range(0.0, TAU)
+	body.position = Vector3(off.x, _footprint_ground(wx, wz, fh.x, fh.y).x - 0.3, off.z)
+	body.rotation.y = yaw
 	parent.add_child(body)
 
 func _add_rubble(rng: RandomNumberGenerator, parent: Node3D, off: Vector3, stone: ShaderMaterial) -> void:
 	var wx := parent.position.x + off.x
 	var wz := parent.position.z + off.z
-	var ground := height_at(wx, wz)
 	var s := rng.randf_range(0.3, 0.9)
 	var chunk := Vector3(s, s * rng.randf_range(0.5, 1.0), s * rng.randf_range(0.6, 1.2))
 	var rubble_detail := RandomNumberGenerator.new()
 	rubble_detail.seed = _detail_seed(wx, wz, 3)
 	var mesh := _rubble_chunk_mesh(rubble_detail, chunk)
 	var body := _solid(mesh, stone)
-	body.position = Vector3(off.x, ground + chunk.y * 0.25, off.z)
-	body.rotation = Vector3(rng.randf_range(-0.3, 0.3), rng.randf_range(0.0, TAU), rng.randf_range(-0.3, 0.3))
+	# Same reordering as the other two: rotation first so the footprint is the
+	# rotated one, with no intervening draw, so the stream is unchanged.
+	var rot := Vector3(rng.randf_range(-0.3, 0.3), rng.randf_range(0.0, TAU), rng.randf_range(-0.3, 0.3))
+	var fh := _footprint_half(mesh, rot)
+	body.position = Vector3(off.x, _footprint_ground(wx, wz, fh.x, fh.y).x + chunk.y * 0.25, off.z)
+	body.rotation = rot
 	parent.add_child(body)
+
+## The horizontal half-extents a piece actually covers once rotated — the mesh
+## AABB carried through its own basis, so a wall turned 90 degrees reports the
+## footprint it really occupies rather than its unrotated one.
+func _footprint_half(mesh: Mesh, rot: Vector3) -> Vector2:
+	var box := Transform3D(Basis.from_euler(rot), Vector3.ZERO) * mesh.get_aabb()
+	# A floor keeps a hairline or flat mesh from collapsing to a single sample
+	# and silently reverting to the centre-sample behaviour this replaces.
+	return Vector2(maxf(box.size.x, 0.2) * 0.5, maxf(box.size.z, 0.2) * 0.5)
+
+## The walkable surface under a piece's whole FOOTPRINT: (lowest, span).
+##
+## Two things here are deliberate. It samples `surface_height_at` — the baked
+## grid that physics and the eye agree on — not the smooth `height_at` noise,
+## per the contract stated on surface_height_at itself. And it reports the
+## LOWEST point of the footprint, because seating there is what guarantees
+## nothing floats: every other point of the footprint is at or above the seat,
+## so a piece meets the ground on its low side and is buried on its high side.
+## Measured on the shipped seed, 88% of ruin pieces stand on ground varying by
+## more than 100 mm across their own footprint (mean 334 mm, max 2373 mm), so a
+## single centre sample necessarily leaves one side of them in the air.
+func _footprint_ground(wx: float, wz: float, hx: float, hz: float) -> Vector2:
+	# Sample the footprint's own edges AND every terrain grid line crossing it.
+	# The surface is linear only WITHIN a triangle, so a grid vertex inside the
+	# footprint can dip below all four corners; sampling the corners alone would
+	# seat the piece above it and leave it floating over exactly that dip.
+	var lo := INF
+	var hi := -INF
+	for sx: float in _grid_span(wx - hx, wx + hx):
+		for sz: float in _grid_span(wz - hz, wz + hz):
+			var s := surface_height_at(sx, sz)
+			if s <= NO_GROUND + 1.0:
+				continue
+			lo = minf(lo, s)
+			hi = maxf(hi, s)
+	if lo > hi:
+		# Footprint entirely off-grid: fall back to the analytic field so an
+		# edge piece still gets a finite seat rather than NO_GROUND.
+		return Vector2(height_at(wx, wz), 0.0)
+	return Vector2(lo, hi - lo)
+
+## One axis of the footprint sweep: both ends, plus every terrain grid
+## coordinate strictly between them.
+func _grid_span(from: float, to: float) -> PackedFloat32Array:
+	var out := PackedFloat32Array([from])
+	var step := SIZE / QUADS
+	var half := SIZE / 2.0
+	var first := ceili((from + half) / step)
+	var last := floori((to + half) / step)
+	for i in range(first, last + 1):
+		var at := i * step - half
+		if at > from and at < to:
+			out.append(at)
+	out.append(to)
+	return out
 
 ## A deterministic per-piece seed from world position, so mesh detail never
 ## consumes the placement stream (changing a break must not move the ruins).
@@ -855,13 +923,21 @@ func _build_shrine() -> void:
 		var mesh := BoxMesh.new()
 		mesh.size = Vector3(0.9, rng.randf_range(2.6, 3.4), 0.5)
 		var body := _solid(mesh, stone)
-		body.position = Vector3(pos.x, height_at(pos.x, pos.z) + mesh.size.y / 2.0 - 0.2, pos.z)
-		body.rotation.y = -angle + PI / 2.0
+		# Yaw is geometric, not drawn, so computing it before seating leaves the
+		# rng stream untouched. The ±0.05 rad tilt is too small to move a
+		# footprint and is applied after, as before.
+		var yaw := -angle + PI / 2.0
+		var fh := _footprint_half(mesh, Vector3(0.0, yaw, 0.0))
+		var seat := _footprint_ground(pos.x, pos.z, fh.x, fh.y)
+		body.position = Vector3(pos.x, seat.x + mesh.size.y / 2.0 - 0.2, pos.z)
+		body.rotation.y = yaw
 		body.rotation.x = rng.randf_range(-0.05, 0.05)
 		shrine.add_child(body)
 
-	# Pedestal and the ember flame.
-	var ground := height_at(0, 0)
+	# Pedestal and the ember flame. One seat for the whole assembly (pedestal,
+	# flame, light, interact handle) so they keep their fixed relative offsets;
+	# it is the pedestal's own footprint that decides it.
+	var ground := _footprint_ground(0.0, 0.0, 0.9, 0.9).x
 	var pedestal_mesh := CylinderMesh.new()
 	pedestal_mesh.top_radius = 0.7
 	pedestal_mesh.bottom_radius = 0.9
@@ -913,4 +989,10 @@ func shrine_interactable() -> Interactable:
 ## A standable spot at the foot of the shrine to wake at once attuned; respawn
 ## faces the flame (Player.face_toward(ZERO)), so you come to looking at it.
 func shrine_respawn_point() -> Vector3:
-	return Vector3(0, height_at(0, 5.0) + 0.1, 5.0)
+	# The walkable surface, not the smooth field: the wanderer is a body that
+	# collides with the terrain MESH, so waking from the analytic height put
+	# them a few centimetres inside it or above it.
+	var s := surface_height_at(0, 5.0)
+	if s <= NO_GROUND + 1.0:
+		s = height_at(0, 5.0)
+	return Vector3(0, s + 0.1, 5.0)

@@ -62,7 +62,13 @@ func _ready() -> void:
 		if not _is_generated_site(site):
 			continue
 		for piece: Node in site.get_children():
-			if not (piece is Node3D):
+			# Only BUILT pieces — the ones carrying collision. The shrine also
+			# holds an ember flame, its light and an interact handle, which hover
+			# over the pedestal by design; requiring those to meet the ground
+			# would be asserting the opposite of what they are for. Collision is
+			# the honest structural marker: if the player can walk into it, it
+			# has to sit in the ground.
+			if not (piece is StaticBody3D):
 				continue
 			var box := _world_aabb(piece as Node3D)
 			if box.size == Vector3.ZERO:
