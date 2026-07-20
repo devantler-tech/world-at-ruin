@@ -63,7 +63,7 @@ func _physics_process(_delta: float) -> void:
 	if not _boot.real_save_untouched():
 		_fail("the boot test touched the player's real save or vault")
 		return
-	print("SURFACE-TEST PASS")
+	print("TEST PASS — surface consistency")
 	get_tree().quit(0)
 
 ## |raycast hit − analytic surface| at (x, z), or -1.0 when the sample is
@@ -81,7 +81,11 @@ func _deviation_at(space: PhysicsDirectSpaceState3D, world: WorldGen, x: float, 
 	return absf(measured - world.surface_height_at(x, z))
 
 func _fail(message: String) -> void:
-	if _boot != null:
-		_boot.end()
-	push_error("SURFACE-TEST FAIL: " + message)
+	# Assert the isolation guarantee on the FAILURE path too, not just the pass:
+	# a test failing for a gameplay reason must still report an isolation breach
+	# rather than clearing the seams and hiding it. real_save_untouched() calls
+	# end() itself, so this replaces the bare end() rather than adding to it.
+	if _boot != null and not _boot.real_save_untouched():
+		message += " — AND the boot test touched the player's real save or vault"
+	push_error("TEST FAIL — surface consistency: " + message)
 	get_tree().quit(1)

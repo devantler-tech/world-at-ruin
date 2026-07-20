@@ -192,6 +192,18 @@ func _ready() -> void:
 		_fail("running headless — a headless run renders nothing; use a windowed run")
 		return
 
+	# This tool boots the shipped main scene below, which is the real launch
+	# path: unredirected, it reads and can write the player's own character save
+	# and progression vault. Boot tests get that guarantee structurally from
+	# IsolatedBoot, but this tool is invoked by hand and by CI, so refuse to run
+	# rather than document a rule a caller can forget (#309). Every seam, not
+	# just the save — a half-redirect still writes the unredirected half.
+	for seam in [CharacterStore.SAVE_PATH_ENV, SaveVault.VAULT_PATH_ENV]:
+		if OS.get_environment(seam).is_empty():
+			_fail(("%s is not set — refusing to boot the game against the player's real save. "
+				+ "Point every save seam at a throwaway path before capturing.") % seam)
+			return
+
 	# Load the scene the PROJECT actually boots, not a hardcoded path: the
 	# capture gate treats project.godot as a visual trigger, so a PR that
 	# repoints application/run/main_scene must be captured as the shipped game

@@ -1120,6 +1120,7 @@ jobs:
           # The runner clamps the window to what its display allows regardless.
           WAR_SHOT_DIR="${RUNNER_TEMP}/shots" \
           WAR_SAVE_PATH="${RUNNER_TEMP}/probe_save.json" \
+          WAR_VAULT_PATH="${RUNNER_TEMP}/probe_save_vault.json" \
             godot --path client res://tools/frame_capture.tscn 2>&1 | tee capture.log
           if ! grep -q "CAPTURE PASS" capture.log; then
             echo "::error::frame capture did not report PASS — see log"; tail -40 capture.log; exit 1
@@ -1176,6 +1177,7 @@ jobs:
           mkdir -p "${RUNNER_TEMP}/shots/opt-in-plates"
           WAR_SHOT_DIR="${RUNNER_TEMP}/shots/opt-in-plates" \
           WAR_SAVE_PATH="${RUNNER_TEMP}/probe_save.json" \
+          WAR_VAULT_PATH="${RUNNER_TEMP}/probe_save_vault.json" \
           WAR_GROUND_PLATES=1 \
             godot --path client res://tools/frame_capture.tscn 2>&1 | tee capture-plates.log
           if ! grep -q "CAPTURE PASS" capture-plates.log; then
@@ -1214,6 +1216,7 @@ jobs:
           WAR_SHOT_DIR="${RUNNER_TEMP}/shots" \
           WAR_SCENARIO=first_run \
           WAR_SAVE_PATH="${RUNNER_TEMP}/no_such_save.json" \
+          WAR_VAULT_PATH="${RUNNER_TEMP}/no_such_save_vault.json" \
             godot --path client res://tools/frame_capture.tscn 2>&1 | tee first-run.log
           # Require the FIRST-RUN marker, not a bare PASS: the world scenario
           # prints "CAPTURE PASS" too, so a regression that silently dropped
@@ -1298,6 +1301,7 @@ jobs:
           WAR_SHOT_DIR="${RUNNER_TEMP}/shots" \
           WAR_SCENARIO=breath \
           WAR_SAVE_PATH="${RUNNER_TEMP}/breath_save.json" \
+          WAR_VAULT_PATH="${RUNNER_TEMP}/breath_save_vault.json" \
             godot --path client res://tools/frame_capture.tscn 2>&1 | tee breath.log
           # Require the BREATH marker, not a bare PASS: the world scenario
           # prints "CAPTURE PASS" too, so a regression that silently fell back
@@ -1378,6 +1382,7 @@ jobs:
           fi
           WAR_SHOT_DIR="${RUNNER_TEMP}/shots-base" \
           WAR_SAVE_PATH="${RUNNER_TEMP}/probe_save_base.json" \
+          WAR_VAULT_PATH="${RUNNER_TEMP}/probe_save_base_vault.json" \
             godot --path "${RUNNER_TEMP}/base/client" res://tools/frame_capture.tscn 2>&1 | tee base-capture.log
           if ! grep -q "CAPTURE PASS" base-capture.log; then
             echo "::warning::the merge base did not render cleanly — the change report will be incomplete"
@@ -1401,6 +1406,7 @@ jobs:
             WAR_SHOT_DIR="${RUNNER_TEMP}/shots-base" \
             WAR_SCENARIO=first_run \
             WAR_SAVE_PATH="${RUNNER_TEMP}/no_such_save_base.json" \
+            WAR_VAULT_PATH="${RUNNER_TEMP}/no_such_save_base_vault.json" \
               godot --path "${RUNNER_TEMP}/base/client" res://tools/frame_capture.tscn 2>&1 \
               | tee base-first-run.log || true
             # The world scenario prints "CAPTURE PASS" too, so require the
@@ -1530,6 +1536,7 @@ jobs:
           WAR_CAPTURE=1 \
           WAR_SHOT_DIR="${RUNNER_TEMP}/exported-shots" \
           WAR_SAVE_PATH="${RUNNER_TEMP}/probe_save.json" \
+          WAR_VAULT_PATH="${RUNNER_TEMP}/probe_save_vault.json" \
             "build/app/World at Ruin.app/Contents/MacOS/World at Ruin" 2>&1 | tee exported-capture.log
           if ! grep -q "CAPTURE PASS" exported-capture.log; then
             echo "::error::exported-client capture did not report PASS — see log"; tail -40 exported-capture.log; exit 1
@@ -1573,6 +1580,7 @@ jobs:
           WAR_SCENARIO=first_run \
           WAR_SHOT_DIR="${RUNNER_TEMP}/exported-shots" \
           WAR_SAVE_PATH="${RUNNER_TEMP}/no_such_save.json" \
+          WAR_VAULT_PATH="${RUNNER_TEMP}/no_such_save_vault.json" \
             "build/app/World at Ruin.app/Contents/MacOS/World at Ruin" 2>&1 | tee exported-first-run.log
           # Require the FIRST-RUN marker, not a bare PASS — the world scenario
           # prints "CAPTURE PASS" too, and its PNGs already sit in the same

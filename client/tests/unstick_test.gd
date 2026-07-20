@@ -77,11 +77,15 @@ func _physics_process(_delta: float) -> void:
 		if not _boot.real_save_untouched():
 			_fail("the boot test touched the player's real save or vault")
 			return
-		print("UNSTICK-TEST PASS (y=%.2f surface=%.2f)" % [player.global_position.y, here])
+		print("TEST PASS — unstick (y=%.2f surface=%.2f)" % [player.global_position.y, here])
 		get_tree().quit(0)
 
 func _fail(message: String) -> void:
-	if _boot != null:
-		_boot.end()
-	push_error("UNSTICK-TEST FAIL: " + message)
+	# Assert the isolation guarantee on the FAILURE path too, not just the pass:
+	# a test failing for a gameplay reason must still report an isolation breach
+	# rather than clearing the seams and hiding it. real_save_untouched() calls
+	# end() itself, so this replaces the bare end() rather than adding to it.
+	if _boot != null and not _boot.real_save_untouched():
+		message += " — AND the boot test touched the player's real save or vault"
+	push_error("TEST FAIL — unstick: " + message)
 	get_tree().quit(1)
