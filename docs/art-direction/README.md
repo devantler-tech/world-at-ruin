@@ -536,38 +536,42 @@ or by **hue**, and both are countable. Measured on the rejected Phase 0 cave fra
 
 | Metric | Cave frame | Wide-gamut control |
 |---|---|---|
-| Luminance range (p1→p99) | **13.1–14.3%** of 0..1 | 93.5–99% |
-| Hue span of 90% of coloured pixels (min-90% window) | **6.3°** | 323° |
+| Luminance range (p1→p99) | **12.7%** of 0..1 (p1 0.125 → p99 0.252) | 98.9% |
+| Hue span of 90% of coloured pixels (min-90% window) | **6.3°** | 319.4° |
 
-Each row carries two independent passes — the original and the recomputation under the corrected hue
-metric described below. The hue figures agree; the luminance and control ranges differ by the
-resampling filter each pass used. Ranges are shown rather than a false single value, and **#230
-settles them** by committing one tool.
+**These are now measurements, not observations.** `client/tools/frame_metrics.gd` computes them and
+`client/tests/frame_metrics_test.gd` pins the cave row, so the table above is re-derivable rather
+than asserted, and it moves only when the tool does. Every capture prints the same two numbers beside
+its frame and writes them into the frame's `.txt` note, so an art PR carries its own reading.
 
 Read each statistic as exactly what it measures, because they cover different populations: **98% of
-all pixels** fall between luminance 0.125 and 0.268 (that is what p1→p99 means), while the six-degree
+all pixels** fall between luminance 0.125 and 0.252 (that is what p1→p99 means), while the six-degree
 figure covers **90% of the pixels that carry any colour at all** (saturation > 0.05, mid-value).
-Neither number licenses the other. The control — a synthetic full hue sweep over a full value ramp —
-confirms the measurement can tell the difference, so these describe the frame rather than the method.
+Neither number licenses the other. The control — a synthetic full hue sweep over a black→hue→white
+ramp, built in code by the test — confirms the measurement can tell the difference, so these describe
+the frame rather than the method.
 
 **Provenance, so the numbers are checkable rather than asserted.** Source frame is
 `docs/phase-0/cave-chamber.png`, in the tree since
-[#219](https://github.com/devantler-tech/world-at-ruin/pull/219) merged.
+[#219](https://github.com/devantler-tech/world-at-ruin/pull/219) merged. Method: point-sample to
+320px wide, Rec. 709 luminance for the value figure; for hue, keep only pixels with saturation > 0.05
+and luminance in 0.05–0.95, then take the minimum 90% circular window specified below. For a second
+reading on the same scale, `cave-walkout.png` measures **15.3%** and **10.3°**.
 
-Shared by both passes: sample down to ~320px wide, convert to Rec. 709 luminance for the value
-figure; for hue, keep only pixels with saturation > 0.05 and luminance in 0.05–0.95.
+**What the earlier passes got wrong, recorded because it was nearly repeated.** Two throwaway passes
+reported 13.1% and 14.3% of value range, and this page attributed the gap to the resampling filter —
+one subsampled, the other downscaled. That explanation did not survive being tested: swapping the
+committed tool's point sampling for a bilinear `resize` to the same width reports **12.7% either
+way**, identical to three significant figures. The filter was not the cause, and neither throwaway
+recorded what else differed. The committed tool point-samples for a different and better reason — a
+filtered downscale would make the baseline depend on the engine's interpolation, so a Godot upgrade
+could move it with no art having changed.
 
-They differ in the step that matters, and **only the second is the contract**:
+The superseded hue pass is kept only so the older figures stay traceable:
 
-- **Original pass (SUPERSEDED — do not implement this):** took the 5th-to-95th percentile spread of
-  the hues. Wrong on wrapped *and* on asymmetric populations; kept here only so the older 14.3% /
-  6° figures are traceable.
-- **Corrected pass (what #230 implements):** the **minimum 90% circular sliding window** specified
-  immediately below.
-
-The tool is still **not committed** — #230 lands it in GDScript beside `frame_capture`, and the
-recomputation quoted above was a throwaway. So treat every figure here as **an observation with its
-method stated, not yet a reproducible in-repo measurement**, and let #230 settle it.
+- **Original pass (SUPERSEDED — do not implement this):** the 5th-to-95th percentile spread of the
+  hues. Wrong on wrapped *and* on asymmetric populations, as measured below.
+- **The contract:** the **minimum 90% circular sliding window** specified immediately below.
 
 **🔴 Hue is circular — #230 must not implement the percentile subtraction literally.** Hue wraps at
 360°, so a plain p5→p95 subtraction is invalid in general: a nearly monochrome red scene with samples
@@ -597,18 +601,19 @@ discards 10% from the two tails symmetrically instead of finding the *tightest* 
 any asymmetric population, wrap or no wrap — the counter-example above sits entirely inside 0–110°
 and still reads **96.0° linear against 9.0° windowed**.
 
-So both frames were recomputed rather than argued about:
+**Both failure modes are now pinned by a test rather than argued about.**
+`client/tests/frame_metrics_test.gd` carries each counter-example as a law, and each was RED-proved
+by swapping the committed metric for the superseded subtraction and watching that law fail:
 
 | Population | Linear p5→p95 (superseded) | **Min-90% window (the metric)** |
 |---|---|---|
-| Cave frame | 6.4° | **6.3°** |
-| Wide-gamut control | 324.0° | **323.0°** |
+| Wrapped — samples at 359°, 359.5°, 0°, 0.5°, 1° | 359.0° | **2.0°** |
+| Asymmetric — 90 samples in 0–10°, 10 near 100° | 100.0° | **10.0°** |
 
-The hue figures survive — but by measurement, not by the reasoning that would have justified keeping
-them. The luminance figure came back **13.1%** against the recorded 14.3%; the gap is the resampling
-filter (this pass subsamples, the original downscaled), not a disagreement about the frame. Treat
-every number here as **provisional until #230 lands the committed tool** and re-derives them one way,
-which is the point at which they become baselines rather than observations.
+Both rows show the superseded form failing **open** — reporting a wide gamut for a population that
+has none — which is the dangerous direction for a flatness diagnostic. The earlier throwaway passes
+also reported 6.4° linear against 6.3° windowed on the cave frame itself; the two forms happen to
+agree there, which is exactly why the synthetic populations above are the ones held under test.
 
 Read them as **diagnostics with a recorded baseline to beat, not a pass/fail gate.** A deliberately
 monochrome scene is a legitimate choice — a sandstorm, a night interior — but then *value* has to
@@ -616,8 +621,10 @@ carry the separation that hue is not. What condemns this frame is that **neither
 axis along which anything separates from anything else, which is why fog, rock, character and
 distance all read as one wash.
 
-No tool for this is committed yet. It belongs in GDScript alongside `frame_capture` rather than as a
-throwaway script — filed separately so this page stays a target rather than a toolchain change.
+**Running it.** `client/tools/frame_metrics.gd` is the committed tool, and every `frame_capture` run
+already reports through it — the job log prints a `SEPARATION` line per vantage and each frame's
+`.txt` note carries the same reading, so an art PR has its numbers without running anything extra.
+To measure any other image, call `FrameMetrics.measure(img)` and `FrameMetrics.format(...)`.
 
 ## Where the output stands today
 

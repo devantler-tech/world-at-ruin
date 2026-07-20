@@ -376,9 +376,22 @@ def main() -> None:
     equipment_index = {}
     for piece, clothes in pieces:
         export_glb(os.path.join(equip_dir, piece["name"] + ".glb"), [clothes, rig_obj])
-        entry = {"slot": piece["slot"], "scene": piece["name"] + ".glb"}
+        entry = {
+            "slot": piece["slot"],
+            # Which of the two wearable layers this piece belongs to. `slot` is
+            # the body REGION; `layer` is what sits over what there, so cloth
+            # shoes and worn boots can share `feet` instead of evicting each
+            # other. Required — a piece with no layer cannot be placed.
+            "layer": piece["layer"],
+            "scene": piece["name"] + ".glb",
+        }
         if hidden_counts[piece["name"]] > 0:
             entry["hide_shape"] = "equip_hide_" + piece["name"]
+        # Layers whose presence in the SAME region hides this piece — the
+        # data-driven occlusion rule (eyewear under a helm, cloth shoes under
+        # boots). Absent means "always renders when equipped".
+        if piece.get("occluded_by"):
+            entry["occluded_by"] = list(piece["occluded_by"])
         equipment_index[piece["name"]] = entry
     # The runtime registry: CharacterFactory composes from this, so its keys
     # are as forward-only as the shape names.
@@ -386,6 +399,7 @@ def main() -> None:
         json.dump({
             "kit_version": manifest["kit_version"],
             "slots": manifest.get("equipment_slots", []),
+            "layers": manifest.get("equipment_layers", []),
             "pieces": equipment_index,
         }, f, indent=2, sort_keys=True)
         f.write("\n")

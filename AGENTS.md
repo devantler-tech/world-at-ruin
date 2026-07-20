@@ -345,7 +345,20 @@ everything shipped afterwards is held to.
   enforces it: every historical golden fixture must load with zero loss, every recipe version up
   to `RECIPE_VERSION` must have one, and `tests/data/shipped_recipe_versions.txt` is the
   append-only ledger anchoring that range — bumping `RECIPE_VERSION` means appending the ledger
-  line AND committing the version's golden fixture in the same PR); non-humanoid **creatures**
+  line AND committing the version's golden fixture in the same PR). **Progression state lives in a
+  SEPARATE versioned file** — `SaveVault` (`user://vault.json`, #249): the recipe format is closed
+  (`CharacterFactory.validate` rejects any unknown top-level field, and every shipped client already
+  enforces that), so the character save cannot grow new kinds of data without older clients refusing
+  it — and a refused character save sends `main.gd` into the *writable* first-run creator, which
+  overwrites and strands the character. A sibling file is the only shape a shipped client handles
+  safely: it never reads it, so it never rejects or deletes it. The vault obeys the same laws
+  (name-keyed, additive-only, newer versions refused) with the same enforcement shape —
+  `tests/save_vault_guard_test`, golden `tests/data/golden_vault_v<N>.json`, and the append-only
+  `tests/data/shipped_vault_versions.txt` — plus two rules of its own: a missing or unreadable vault
+  DEGRADES to session-only and may never block a boot, and a vault that exists but cannot be read is
+  READ-ONLY for that session (refuse-to-read implies refuse-to-write, or a downgrade would overwrite
+  progression a newer client wrote). Tests redirect it with `WAR_VAULT_PATH`, mirroring
+  `WAR_SAVE_PATH`. Non-humanoid **creatures**
   follow the same shape — `CreatureFactory` composes a baked creature kit (the ash hound is the
   pilot archetype) from versioned, name-keyed, forward-only recipes, one canonical skeleton per
   archetype. `server/` is the Go authoritative tier — its **zone tick core** has landed
@@ -382,8 +395,11 @@ everything shipped afterwards is held to.
   under `client/tests/` — CI's "Regression tests" step auto-discovers `client/tests/*_test.tscn`
   (issue #50; the old hardcoded list forced every parallel test-adding PR to collide on one line).
   Each scene must print a `TEST PASS` marker on success and run within the 180 s per-test timeout.
-  Two exclusions: `save_fixture_guard_test` runs in its own dedicated named step (the product-law
-  surface, kept loud/separate), and a test can be temporarily skipped by adding its basename (no
+  Two exclusions: `save_fixture_guard_test`, `save_vault_guard_test` and `vault_restore_boot_test`
+  each run in their own dedicated named step (the product-law surfaces for character and progression
+  state — the last one is the BEHAVIOURAL check that an attuned point still restores on boot, which
+  the persistence guards cannot see; all kept loud/separate and NOT skippable), and a test can be
+  temporarily skipped by adding its basename (no
   `.tscn`) on its own line in the optional `client/tests/ci-skip.txt` (blank/`#`-comment lines
   ignored) — a rarely-edited escape hatch, so the run line itself stops changing per-test.
 - **Boot tests isolate the save via `WAR_SAVE_PATH`:** a test that boots `main.tscn` to exercise the

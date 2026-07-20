@@ -11,13 +11,23 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
-		"version": "0.14.0",
+		"version": "0.15.0",
 		"date": "2026-07-20",
 		"title": "Someone cut these stones",
 		"notes": [
 			"Every ruin and every stone of the shrine used to be the same flat grey — one colour, the same all over, on every column and every fallen block in the world. Two ruins an entire field apart were the same shade as each other, and the low sun did nothing to any of them however you stood.",
 			"They are made of blocks now. You can see the courses stacked up a column and the joints between them, laid in the offset pattern a wall actually goes together in, and each block is its own stone — slightly its own colour, slightly its own wear. The joints sit back in shadow, knocked-about corners catch the light, and ash gathers on anything facing the sky. Walk around a monolith at the shrine and the light rakes across the courses instead of sliding over a flat face.",
 			"This is the masonry only. The ground and the cave rock were given this treatment already; the ruins had been left behind, which is much of why they read as props set down on the world rather than as something that was built here and then fell. Still to come: the blocks are one size everywhere, so a huge lintel is coursed like a small one, and nothing is cracked or broken at its edges yet.",
+		],
+	},
+	{
+		"version": "0.14.0",
+		"date": "2026-07-20",
+		"title": "The flame remembers you now",
+		"notes": [
+			"Attuning to the Wardens' Shrine used to last only until you stopped playing — come back, and you woke in the dark of the cave again. It now carries across logouts, which is what the shrine promised you in the first place.",
+			"Your character and your progress are kept in two separate files from here on. That sounds like housekeeping, but it is the reason the rest is possible: the character file cannot grow new kinds of data without older builds refusing to read it, and a refused character file is a lost character. Progress lives beside it instead, where it can grow safely.",
+			"An older build simply will not see the progress file — it leaves it alone rather than damaging it — so you can move between builds without losing your wanderer. And if the game ever meets a progress file it cannot read, it will leave that file untouched and play the session without it, rather than write over something it does not understand.",
 		],
 	},
 	{
