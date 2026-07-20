@@ -121,16 +121,29 @@ while IFS= read -r -d '' file; do
 done < <(git -C . ls-files -z -- "$CLIENT_ROOT")
 
 # R2 — asset directories without a covering PROVENANCE.md.
+#
+# Derived from the TRACKED file list, not from `find -type f`. A directory
+# holding only symlinks was skipped entirely by the find form, because a
+# symlink is not -type f — so an asset directory could be created with links
+# and inherit no provenance requirement at all. git tracks symlinks as files,
+# so taking the directory set from the index closes that and keeps R1 and R2
+# working from the same definition of "in the repository".
 if [ -d "$ASSET_ROOT" ]; then
+	# NUL-delimited sort -zu rather than an associative array: this has to run
+	# on the maintainer's macOS bash 3.2, which has neither `declare -A` nor
+	# `${!array[@]}` over string keys, and NUL keeps the newline-safety.
 	while IFS= read -r -d '' dir; do
-		if ! find "$dir" -maxdepth 1 -type f ! -name '*.md' -print -quit | grep -q .; then
-			continue
-		fi
 		checked=$((checked + 1))
 		if ! covered_by_provenance "$dir"; then
 			uncovered+=("$dir")
 		fi
-	done < <(find "$ASSET_ROOT" -type d -print0 | sort -z)
+	done < <(
+		git ls-files -z -- "$ASSET_ROOT" | while IFS= read -r -d '' file; do
+			if [ "${file##*.}" != "md" ]; then
+				printf '%s\0' "${file%/*}"
+			fi
+		done | sort -zu
+	)
 fi
 
 failed=0
