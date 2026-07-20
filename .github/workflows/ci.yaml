@@ -706,26 +706,24 @@ jobs:
   # container's Go can lag.
   lint:
     name: Lint
-    uses: devantler-tech/actions/.github/workflows/lint.yaml@7d016c7d11c5b456db911daff9b733614d4e8aa0 # claude/megalinter-lint-workflow-269
+    uses: devantler-tech/actions/.github/workflows/lint.yaml@5c284fdf432754a697710c336fc2c26bc99868bb # v10.2.0
     permissions:
       contents: write
       issues: write
       pull-requests: write
     with:
-      # Auto-fix only on branches in this repository. GitHub withholds secrets from fork
-      # pull requests, so the App token cannot be minted there and the fixes cannot be
-      # committed back — which would fail the job for something an outside contributor
-      # has no way to resolve except by installing MegaLinter locally. This repo actively
-      # invites fork contributions (see cla.yaml, CLA.md), and lint is a required check,
-      # so that friction lands on exactly the people we least want to block.
+      # Auto-fix only on branches in this repository.
       #
-      # Read-only mode is genuinely non-blocking for formatting: with APPLY_FIXES=none a
-      # deliberately misformatted JSON file is reported by prettier as a warning and
-      # MegaLinter exits 0 (measured). Real lint ERRORS — invalid JSON, shellcheck
-      # failures — still fail the job, so the gate keeps its teeth on forks.
+      # v10.2.0 of the shared workflow already forces read-only on fork pull requests, so
+      # the fork half of this is belt-and-braces. What this expression still does on its
+      # own is cover merge_group: there is no pull_request context there, so the shared
+      # workflow's fork check passes and MegaLinter would apply fixes that nothing can
+      # commit and nothing reports — work performed and silently discarded. Setting it
+      # false keeps merge-queue runs honest read-only checks.
       #
-      # merge_group events have no pull_request context, so this is false there too;
-      # nothing should be pushed to a merge queue ref anyway.
+      # Read-only is not a softer gate: with APPLY_FIXES=none a deliberately misformatted
+      # JSON file is a prettier warning and MegaLinter exits 0 (measured), while real lint
+      # ERRORS — invalid JSON, shellcheck failures — still fail the job.
       apply-fixes: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
     secrets:
       APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
