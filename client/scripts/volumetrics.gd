@@ -53,6 +53,27 @@ static func probe() -> bool:
 	return supported(RenderingServer.get_rendering_device())
 
 
+## Leading token of the line the game prints once the probe has run (#232).
+##
+## CI's frame-capture job greps the capture log for this to learn WHICH PATH the
+## frames it is about to publish actually depict. The token lives here, beside
+## the probe, so the string the workflow parses and the string the game prints
+## cannot drift apart — renaming it in one place alone would make the capture
+## job's verdict silently unknowable, which is the failure #232 exists to close.
+## volumetrics_test pins both states.
+const CAPTURE_MARKER := "VOLUMETRICS"
+
+## The exact line main.gd prints for a probe verdict.
+##
+## The SECOND whitespace-separated field is the machine-readable verdict — `on`
+## or `off` — and the remainder is for a human reading the log. CI parses that
+## second field, so it is a contract, not prose.
+static func marker(enabled: bool) -> String:
+	if enabled:
+		return "%s on — R32_Uint atomic storage image supported" % CAPTURE_MARKER
+	return "%s off — GPU lacks R32_Uint atomic storage image support" % CAPTURE_MARKER
+
+
 ## Applies the probe verdict to an Environment. Enabled: the tuned ash
 ## volumetrics above. Disabled: volumetric fog affirmatively off and the
 ## volumetric parameters left untouched — never a half-applied state.

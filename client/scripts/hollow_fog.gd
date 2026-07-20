@@ -47,6 +47,34 @@ static func should_build(volumetrics_on: bool, player_opted_in: bool) -> bool:
 	return volumetrics_on and player_opted_in
 
 
+## Leading token of the line main.gd prints once the build decision is made
+## (#232), parsed by CI's frame-capture job exactly like Volumetrics'.
+##
+## This marker is NOT redundant with the volumetrics one, and the difference is
+## the whole point: pools need the GPU probe AND the player opt-in, so a capture
+## on a device that fully supports volumetrics STILL contains zero pools unless
+## the run opted in. Keying the evidence warning on the GPU verdict alone would
+## therefore go quiet — and wrongly claim the frames show the pools — the moment
+## a capable runner arrives (the lavapipe lane, #314). Two gates, two markers.
+const CAPTURE_MARKER := "HOLLOW FOG"
+
+## The exact line main.gd prints for a build decision. As with Volumetrics, the
+## SECOND whitespace-separated field is the machine-readable verdict, `on` or
+## `off`; the rest is for a human reading the log.
+static func marker(built: bool, volumetrics_on: bool, pools: int) -> String:
+	if built:
+		return "%s on — %d ash pools (opted in via %s)" % [
+			CAPTURE_MARKER, pools, OPT_IN_ENV
+		]
+	var reason: String = (
+		"volumetrics unavailable" if not volumetrics_on
+		else "not opted in (set %s=1)" % OPT_IN_ENV
+	)
+	return "%s off — %s (%d pools placed, not built)" % [
+		CAPTURE_MARKER, reason, pools
+	]
+
+
 ## Edge inset, in metres. Candidates never sit near the world edge, where the
 ## surrounding ring would sample outside the terrain and the relief measure
 ## would be reading absent ground rather than a hollow.

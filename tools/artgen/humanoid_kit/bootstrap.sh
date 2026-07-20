@@ -14,11 +14,11 @@ MPFB_URL="https://extensions.blender.org/download/sha256:${MPFB_SHA256}/add-on-m
 BLENDER="${BLENDER:-blender}"
 
 check_sha() { # <sha> <file>
-  if command -v sha256sum > /dev/null; then
-    echo "$1  $2" | sha256sum -c -
-  else
-    echo "$1  $2" | shasum -a 256 -c -
-  fi
+	if command -v sha256sum >/dev/null; then
+		echo "$1  $2" | sha256sum -c -
+	else
+		echo "$1  $2" | shasum -a 256 -c -
+	fi
 }
 
 echo "Blender: $("${BLENDER}" --version | head -1)"
@@ -35,21 +35,21 @@ echo "MPFB ${MPFB_VERSION} installed."
 # manifest.json — the manifest stays the single source of truth for what the
 # kit is made of.
 jq -r '.asset_packs | to_entries[] | "\(.key) \(.value.sha256) \(.value.url) \(.value.mirror)"' \
-    "${KIT_DIR}/manifest.json" | while read -r name sha url mirror; do
-  dest="${KIT_DIR}/packs/${name}"
-  marker="${dest}/.sha256"
-  if [[ -f "${marker}" && "$(cat "${marker}")" == "${sha}" ]]; then
-    echo "pack ${name}: cached."
-    continue
-  fi
-  echo "pack ${name}: downloading..."
-  zip="${tmp}/${name}.zip"
-  curl -fsSL "${url}" -o "${zip}" || curl -fsSL "${mirror}" -o "${zip}"
-  check_sha "${sha}" "${zip}"
-  rm -rf "${dest}"
-  mkdir -p "${dest}"
-  unzip -q "${zip}" -d "${dest}"
-  echo "${sha}" > "${marker}"
-  echo "pack ${name}: installed."
+	"${KIT_DIR}/manifest.json" | while read -r name sha url mirror; do
+	dest="${KIT_DIR}/packs/${name}"
+	marker="${dest}/.sha256"
+	if [[ -f "${marker}" && "$(cat "${marker}")" == "${sha}" ]]; then
+		echo "pack ${name}: cached."
+		continue
+	fi
+	echo "pack ${name}: downloading..."
+	zip="${tmp}/${name}.zip"
+	curl -fsSL "${url}" -o "${zip}" || curl -fsSL "${mirror}" -o "${zip}"
+	check_sha "${sha}" "${zip}"
+	rm -rf "${dest}"
+	mkdir -p "${dest}"
+	unzip -q "${zip}" -d "${dest}"
+	echo "${sha}" >"${marker}"
+	echo "pack ${name}: installed."
 done
 echo "Asset packs ready."

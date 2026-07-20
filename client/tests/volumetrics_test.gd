@@ -105,6 +105,32 @@ func _ready() -> void:
 		_fail("LENGTH must be a positive volume extent")
 		return
 
+	# LAW 7 — the capture marker is a MACHINE CONTRACT, not a log pleasantry
+	# (#232). CI's frame-capture job parses this line to record, in the evidence
+	# artifact, whether the published frames depict the enabled volumetric path
+	# or the height-fog fallback. If the token or the verdict field drifts, the
+	# job can no longer tell — and a green capture over fallback frames goes
+	# back to reading as evidence of a volumetric change. Pinned here because
+	# the workflow's grep cannot defend itself.
+	var on_line: String = Volumetrics.marker(true)
+	var off_line: String = Volumetrics.marker(false)
+	for line: String in [on_line, off_line]:
+		if not line.begins_with(Volumetrics.CAPTURE_MARKER + " "):
+			_fail("marker() must start with CAPTURE_MARKER and a space — CI greps for it")
+			return
+	# The second whitespace-separated field is what CI reads as the verdict.
+	if on_line.split(" ")[1] != "on":
+		_fail("marker(true)'s second field must be exactly 'on' — CI parses it")
+		return
+	if off_line.split(" ")[1] != "off":
+		_fail("marker(false)'s second field must be exactly 'off' — CI parses it")
+		return
+	# The two states must be distinguishable, or the verdict carries no
+	# information at all.
+	if on_line == off_line:
+		_fail("marker() must report the two probe states differently")
+		return
+
 	print("TEST PASS — volumetrics enable only where the GPU supports them (gate holds)")
 	get_tree().quit(0)
 

@@ -11,7 +11,7 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
-		"version": "0.20.0",
+		"version": "0.21.0",
 		"date": "2026-07-20",
 		"title": "The stretches of the Reach are shaped differently now, not just coloured differently",
 		"notes": [
@@ -19,6 +19,17 @@ const ENTRIES: Array[Dictionary] = [
 			"Now each stretch has its own shape. The ash flats keep the long rolling rises you already know. The burnt ground has slumped into a low, calm basin. The scoured stone is the lowest and most open ground in the Reach — standing on it you can see much further than you used to, and the rock underneath breaks through as hard-edged ridges instead of dunes. The rust-stained moor sits low and broken, its hollows sunk deeper than its rises stand.",
 			"Shape survives the haze better than colour does, so the skyline and the middle distance now have somewhere for your eye to go instead of reading as one even field. Close up the difference is plain; far off the haze still softens it, and that is a separate problem still to solve.",
 			"The ground you start on has not moved. The shrine's clearing is the same ash flats it always was, unchanged to the millimetre out to the last few paces of its edge, where it hands over to the open ground this change reshapes. And nothing has become harder to walk: every stretch is either as gentle as the old ground or gentler.",
+		],
+	},
+	{
+		"version": "0.20.0",
+		"date": "2026-07-20",
+		"title": "You can see that other people are there",
+		"notes": [
+			"The Reach has been able to hear about other players for a while — the game knew where they were, kept track of them as they moved, and noticed when they left. It just never put any of it on screen, so you walked through a world that was technically shared and looked completely empty.",
+			"Now everyone else in your part of the world shows up as a pale standing shape, in the right place, moving as they move and gone when they walk out of range or leave.",
+			"They are deliberately plain — a blank capsule, not a person. What another player actually looks like is the character work, and putting a rough guess on screen now would mean two different answers to the same question later. This is about knowing someone is there at all.",
+			"You still need a zone to connect to before any of this appears. On your own, nothing has changed.",
 		],
 	},
 	{

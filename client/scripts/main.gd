@@ -39,6 +39,12 @@ var _zone_failure_reported := false
 ## once it has: before that, the close IS the failure and is already reported
 ## under its own error class.
 var _zone_was_live := false
+## Draws the replicated entity table (#248), or null when no zone was named.
+## Parented under THIS node and never under WorldGen: that subtree is
+## fingerprinted by `world_gen_determinism_test` and additionally scanned for
+## ruin sites, so a marker there would move the world golden whenever somebody
+## connected.
+var _replicas: ReplicaView = null
 
 func _ready() -> void:
 	# Capture-harness entry for the EXPORTED client: the official export
@@ -185,6 +191,13 @@ func _connect_zone() -> void:
 	if not ZoneConnection.is_enabled():
 		return
 	_zone = ZoneConnection.new()
+	# The view is built for any named zone, including one whose connection is
+	# refused below: it draws whatever the store holds, and a store that never
+	# received a frame is empty, so an unreachable zone shows nothing rather
+	# than needing a second code path to stay blank.
+	_replicas = ReplicaView.new()
+	_replicas.name = "Replicas"
+	add_child(_replicas)
 	if not _zone.connect_to(ZoneConnection.zone_url()):
 		# error_detail() names a misconfigured variable, never its value.
 		push_warning("zone connection refused (%s): %s" % [_zone.error(), _zone.error_detail()])
@@ -212,6 +225,11 @@ func _process(_delta: float) -> void:
 	if _zone == null:
 		return
 	_zone.poll()
+	# Draw whatever the poll just folded. Done before the failure reporting
+	# below so a stream that dies mid-frame still shows the last consistent
+	# table it delivered — the fold is atomic, so that table is never a
+	# half-applied one.
+	_replicas.sync(_zone.store())
 	if _zone.is_live():
 		_zone_was_live = true
 	if _zone_failure_reported:
@@ -353,10 +371,11 @@ func _build_environment() -> void:
 	# supported and carries most of the visible gain anyway.
 	_volumetrics_on = Volumetrics.probe()
 	Volumetrics.apply(env, _volumetrics_on)
-	print("VOLUMETRICS %s" % (
-		"on — R32_Uint atomic storage image supported" if _volumetrics_on
-		else "off — GPU lacks R32_Uint atomic storage image support"
-	))
+	# The line itself is built by Volumetrics so that CI's frame-capture job and
+	# the game agree on one string (#232): the capture job records this verdict
+	# in the evidence artifact, because a frame captured with the probe OFF
+	# depicts the height-fog fallback and cannot evidence the volumetric path.
+	print(Volumetrics.marker(_volumetrics_on))
 
 	# A restrained grading pass so the palette reads as a deliberate choice
 	# rather than whatever the tonemapper returned: a little more contrast to
@@ -392,20 +411,14 @@ func _build_hollow_fog(world: WorldGen) -> void:
 		world.surface_height_at, WorldGen.SIZE, WorldGen.NO_GROUND, world.cave_protects
 	)
 	if not HollowFog.should_build(_volumetrics_on, HollowFog.opted_in()):
-		print("HOLLOW FOG off — %s (%d pools placed, not built)" % [
-			"volumetrics unavailable" if not _volumetrics_on
-			else "not opted in (set %s=1)" % HollowFog.OPT_IN_ENV,
-			_hollow_fog.size(),
-		])
+		print(HollowFog.marker(false, _volumetrics_on, _hollow_fog.size()))
 		return
 	var root := Node3D.new()
 	root.name = "HollowFog"
 	add_child(root)
 	for placement: Dictionary in _hollow_fog:
 		root.add_child(HollowFog.build_volume(placement))
-	print("HOLLOW FOG on — %d ash pools (opted in via %s)" % [
-		_hollow_fog.size(), HollowFog.OPT_IN_ENV
-	])
+	print(HollowFog.marker(true, _volumetrics_on, _hollow_fog.size()))
 
 
 ## Where this boot pooled ash, deepest hollow first — a copy, so a caller can
