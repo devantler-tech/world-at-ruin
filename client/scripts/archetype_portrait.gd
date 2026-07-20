@@ -90,6 +90,16 @@ func setup(p_preset_name: String) -> void:
 	_viewport.add_child(key)
 	key.rotation_degrees = Vector3(-24.0, 36.0, 0.0)
 
+	# A drawn frame around the plate. Without it the body reads as floating on
+	# the panel rather than as a portrait, and the art direction asks this
+	# screen for framed panels rather than loose content on a background.
+	# Added after the viewport so it draws over the rendered edge.
+	var frame := Panel.new()
+	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	frame.set_anchors_preset(Control.PRESET_FULL_RECT)
+	frame.add_theme_stylebox_override("panel", _frame_style())
+	add_child(frame)
+
 
 ## Builds the archetype's body into the viewport and renders it once. Returns
 ## false when the recipe could not be loaded.
@@ -179,13 +189,28 @@ func _meshes(node: Node) -> Array[MeshInstance3D]:
 	return out
 
 
-## A flat backdrop in the panel's own darkest tone, with enough ambient fill
-## that the side away from the key light still reads as a body rather than a
-## silhouette.
+## The plate's border: a thin ember line, dimmer than the ember the headings
+## and the focused choice use, so the frames organise the roster without
+## competing with the selection for attention.
+func _frame_style() -> StyleBoxFlat:
+	var box := StyleBoxFlat.new()
+	# Border only — the rendered portrait is what fills the plate.
+	box.draw_center = false
+	box.border_color = UiTheme.EMBER_DIM
+	box.set_border_width_all(1)
+	return box
+
+
+## A flat backdrop with enough ambient fill that the side away from the key
+## light still reads as a body rather than a silhouette.
+##
+## Deliberately a shade LIGHTER than the panel behind it (ASH, not ASH_DEEP):
+## on the panel's own tone the plate had no edge of its own and the body looked
+## like it was standing on the panel rather than inside a portrait.
 func _environment() -> Environment:
 	var env := Environment.new()
 	env.background_mode = Environment.BG_COLOR
-	env.background_color = UiTheme.ASH_DEEP
+	env.background_color = UiTheme.ASH
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	env.ambient_light_color = Color(0.42, 0.44, 0.5)
 	env.ambient_light_energy = 0.7
