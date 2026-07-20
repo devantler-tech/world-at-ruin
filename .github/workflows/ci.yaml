@@ -1266,6 +1266,51 @@ jobs:
             grep -nE "SCRIPT ERROR|^ERROR" first-run.filtered.log | head -20
             exit 1
           fi
+      - name: Capture the breathing idle
+        # A STILL CANNOT SHOW AN IDLE (#243). Every other capture here
+        # photographs one instant, which is the right evidence for a material
+        # and worthless for motion — a reviewer cannot tell a breathing body
+        # from a frozen one in a single frame. This walks one character through
+        # fixed phases of the breath so the SEQUENCE is the evidence, and the
+        # tool fails when opposite phases come out identical.
+        #
+        # Run on every visual PR rather than behind its own gate: the
+        # frames-must-differ guard is also the regression test for the idle
+        # itself, so an animation that silently stops reddens a build instead
+        # of waiting for someone to notice a village of statues.
+        if: needs.detect-visual-changes.outputs.visual == 'true'
+        run: |
+          set -o pipefail
+          # Seed a save, exactly as the world capture does — with NO save the
+          # first-run creator opens and its panel covers a third of the frame.
+          # This was not a hypothetical: the first version of this step merely
+          # pointed WAR_SAVE_PATH at a path it never created, and the captured
+          # evidence came back with the creator over the subject while every
+          # check still passed.
+          if ! cp client/recipes/wanderer.json "${RUNNER_TEMP}/breath_save.json"; then
+            echo "::error::could not seed the breath-capture save from client/recipes/wanderer.json — frames would show the first-run creator over the subject"
+            exit 1
+          fi
+          WAR_SHOT_DIR="${RUNNER_TEMP}/shots" \
+          WAR_SCENARIO=breath \
+          WAR_SAVE_PATH="${RUNNER_TEMP}/breath_save.json" \
+            godot --path client res://tools/frame_capture.tscn 2>&1 | tee breath.log
+          # Require the BREATH marker, not a bare PASS: the world scenario
+          # prints "CAPTURE PASS" too, so a regression that silently fell back
+          # to the default path would satisfy a plain grep while the world PNGs
+          # already in this directory satisfied the downstream frames-exist
+          # check.
+          if ! grep -qE "[0-9]+ breath phases written" breath.log; then
+            echo "::error::breath capture did not report a phase sequence — see log"; tail -40 breath.log; exit 1
+          fi
+          # A broken shader still prints CAPTURE PASS and still writes files
+          # (#231), so compilation failures are checked separately from the
+          # tool's own verdict.
+          if grep -qE "SHADER ERROR|Shader compilation failed" breath.log; then
+            echo "::error::shader compilation failed during the breath capture — the frames show a fallback material"
+            grep -nE "SHADER ERROR|Shader compilation failed" breath.log | head -20
+            exit 1
+          fi
       - name: Frames actually exist
         # The tool fails closed on a uniform frame, but never trust a single
         # signal: confirm real files landed before advertising an artifact.

@@ -145,6 +145,29 @@ const UI_SAMPLE_X1 := 0.30
 const UI_SAMPLE_Y0 := 0.10
 const UI_SAMPLE_Y1 := 0.90
 
+## Phases of one breath the `breath` scenario photographs. Six is enough to
+## read the shape of the cycle — inhale, hold, exhale — without turning the
+## evidence into a flipbook nobody scrolls through.
+const BREATH_PHASES := 6
+## Frames to settle after posing a phase. The body is already lit and in view,
+## so only the skin needs to re-deform; no shadow/SDFGI convergence is involved.
+const BREATH_SETTLE_FRAMES := 4
+## Camera offset from the framed chest, in metres: three-quarter front, slightly
+## above the chest, close enough that ~10 mm of shoulder travel is not sub-pixel.
+const BREATH_CAM_SIDE := 1.15
+const BREATH_CAM_RISE := 0.22
+const BREATH_CAM_FRONT := 1.55
+## The least shoulder travel between opposite phases that counts as a moving
+## body, in metres. The shipped idle produces ~19 mm here; a stopped one
+## produces exactly 0. The floor sits far below the former and far above the
+## latter, so it gates the failure without pinning the tuning.
+const BREATH_MIN_TRAVEL_M := 0.003
+## The least clavicle rotation between inhale and exhale that counts as a
+## breath. The shipped idle swings 2 * SHOULDER_RISE_DEG = 4.0 deg here; a
+## build with the breath channel deleted swings exactly 0 while its weight
+## shift still clears the travel floor above.
+const BREATH_MIN_SWING_DEG := 1.0
+
 ## The creator is 2D and needs no shadow/SDFGI convergence, so it settles far
 ## sooner than a world vantage. Kept separate so adding this scenario does not
 ## lengthen the world capture, per #145.
@@ -188,8 +211,11 @@ func _ready() -> void:
 	if scenario == "first_run":
 		await _capture_first_run(dir, main)
 		return
+	if scenario == "breath":
+		await _capture_breath(dir, main)
+		return
 	if scenario != "world":
-		_fail("unknown WAR_SCENARIO '%s' — expected 'world' or 'first_run'" % scenario)
+		_fail("unknown WAR_SCENARIO '%s' — expected 'world', 'first_run' or 'breath'" % scenario)
 		return
 
 	for i in WARMUP_FRAMES:
@@ -588,6 +614,188 @@ func _capture_first_run(dir: String, main: Node) -> void:
 
 	print("CAPTURE PASS — %d first-run vantages written to %s" % [shots, dir])
 	get_tree().quit(0)
+
+
+## The `breath` scenario: a phase sequence of one standing body, because a
+## STILL CANNOT SHOW AN IDLE (#243).
+##
+## The world scenario photographs one instant, which is the right evidence for
+## a material or a composition and useless for motion — a reviewer looking at
+## it cannot tell a breathing character from a frozen one. This walks one body
+## through fixed phases of the breath and writes a frame at each, so the
+## sequence itself is the evidence.
+##
+## Phases are DRIVEN, never observed: the idle node is stopped and
+## `BreathingIdle.apply_at` is called at chosen times. Watching the node's own
+## clock would make the frames depend on how fast the runner happened to render,
+## so two runs would photograph different moments and nothing would be
+## comparable across PRs — the property the fixed VANTAGES exist to protect.
+##
+## A NPC by the shrine is framed rather than the wanderer, who wakes in the
+## cave where torchlight and deep shadow would hide millimetre movement.
+func _capture_breath(dir: String, main: Node) -> void:
+	for i in WARMUP_FRAMES:
+		await get_tree().process_frame
+	if not _has_world(main):
+		_fail("the world did not build — a sky-only frame is not evidence")
+		return
+
+	# Refuse to photograph the subject through the character creator.
+	#
+	# With no save present the first-run creator opens and its panel covers a
+	# third of the frame. That is a CALLER mistake — an unseeded WAR_SAVE_PATH —
+	# but it degrades the evidence SILENTLY: the body stays partly visible,
+	# every luma and travel guard still passes, and the artifact comes back with
+	# a UI panel across the subject. CI shipped exactly that once, and the only
+	# thing that caught it was a human opening the PNG. Fail loudly instead, and
+	# name the cause rather than the symptom.
+	var creator := _find_creator(main)
+	if creator != null and _visible_panel_area(creator) > 0.0:
+		_fail("the first-run creator is open over the subject — WAR_SAVE_PATH must point at a SEEDED save (copy client/recipes/wanderer.json), or the frames photograph the UI instead of the body")
+		return
+
+	var body := _first_breathing_body(main)
+	if body == null:
+		_fail("no character with a BreathingIdle was found in the shipped scene — either nothing breathes, or the idle is not attached where a player would see it")
+		return
+	var skeleton: Skeleton3D = CharacterFactory.find_skeleton(body)
+	var idle: Node = body.get_node_or_null("BreathingIdle")
+	# Stop the node driving itself, or the next frame overwrites every phase we
+	# set and the sequence photographs the runner's clock instead.
+	idle.set_process(false)
+
+	var chest := skeleton.find_bone("spine_03")
+	var focus: Vector3 = skeleton.get_bone_global_pose(chest).origin
+	focus = skeleton.global_transform * focus
+	var cam := Camera3D.new()
+	cam.far = 400.0
+	cam.fov = 40.0
+	get_tree().root.add_child(cam)
+	# Three-quarter front, chest height, close: the breath is ~10 mm of
+	# shoulder travel, so a wide world vantage would render it sub-pixel.
+	cam.global_position = focus + Vector3(BREATH_CAM_SIDE, BREATH_CAM_RISE, BREATH_CAM_FRONT)
+	cam.look_at(focus, Vector3.UP)
+
+	var shoulder := skeleton.find_bone("upperarm_l")
+	var clavicle := skeleton.find_bone("clavicle_l")
+	var poses: Array[Vector3] = []
+	var breath_rotations: Array[Quaternion] = []
+	var frames: Array[Image] = []
+	for i in BREATH_PHASES:
+		# HALF-STEP OFFSET, and it is load-bearing. On a plain i/N sampling the
+		# breath is a sine zero-crossing at BOTH i=0 and i=N/2, so the sequence
+		# never photographs an inhale or an exhale — it samples the two moments
+		# where the chest is doing nothing. With the offset, i=N/4 is peak
+		# inhale and i=3N/4 peak exhale.
+		var t := BreathingIdle.BREATH_PERIOD * (float(i) + 0.5) / float(BREATH_PHASES)
+		BreathingIdle.apply_at(skeleton, t)
+		skeleton.force_update_all_bone_transforms()
+		poses.append(skeleton.get_bone_global_pose(shoulder).origin)
+		# The clavicle's LOCAL pose rotation is driven by the breath channel and
+		# nothing else. The pelvis shift moves the clavicle's GLOBAL transform
+		# through the chain, so only the local rotation isolates the breath.
+		breath_rotations.append(skeleton.get_bone_pose_rotation(clavicle))
+		for _s in BREATH_SETTLE_FRAMES:
+			cam.current = true
+			await get_tree().process_frame
+		var img := await _grab_frame()
+		var spread := _luma_spread(img)
+		if spread < MIN_LUMA_SPREAD:
+			_fail("breath phase %d is a uniform frame (luma spread %.4f) — nothing rendered" % [i, spread])
+			return
+		var frame_name := "breath_%02d" % i
+		var err := img.save_png("%s/%s.png" % [dir, frame_name])
+		if err != OK:
+			_fail("could not write %s (error %d)" % [frame_name, err])
+			return
+		_write_note(dir, frame_name, img, _size_note(img))
+		frames.append(img)
+		print("CAPTURED %s (phase %.2fs of %.2fs)" % [frame_name, t, BreathingIdle.BREATH_PERIOD])
+
+	# 🔑 THE GUARD THAT MAKES THIS EVIDENCE RATHER THAN DECORATION.
+	#
+	# Every check above passes a sequence of IDENTICAL frames: a body whose
+	# idle silently stopped still renders, still has luma spread, and still
+	# writes N files — #231's shape exactly, an evidence job going green while
+	# the thing it evidences is absent. So the sequence must be shown to depict
+	# genuinely different poses.
+	#
+	# ⚠️ IT IS NOT A PIXEL COMPARISON, AND THAT IS A MEASURED DECISION, not a
+	# shortcut. The obvious guard — "opposite phases must differ" — was built
+	# first and PROVED VACUOUS: with the idle forced to produce no motion at
+	# all, opposite phases still differed by a max pixel delta of 0.32, because
+	# this scene is never still (temporal antialiasing jitters every edge,
+	# foliage sways, fog drifts, torches flicker). Adding a same-phase control
+	# frame and counting changed pixels instead of taking a max narrowed it but
+	# did not save it: the real idle scored 2534 changed pixels against 1926
+	# for two shots of the SAME pose — a 1.3x margin, far too thin to gate on.
+	# Any threshold that passed the real idle would also have passed a frozen
+	# body, so tuning one would have been fitting the guard to the answer.
+	#
+	# What IS reliable is the pose the frames were taken at. If the idle stops,
+	# every phase renders the same skeleton, and that is exactly detectable.
+	# The frames remain the human-inspectable evidence; this is the machine
+	# guard that they depict a body in different positions.
+	var inhale := int(round(float(BREATH_PHASES) * 0.25 - 0.5))
+	var exhale := int(round(float(BREATH_PHASES) * 0.75 - 0.5))
+	var travel := (poses[inhale] - poses[exhale]).length()
+	if travel < BREATH_MIN_TRAVEL_M:
+		_fail(("the breath sequence photographs one pose: the shoulder moved %.5f m between the inhale " +
+			"and the exhale, under the %.5f m floor. The frames would show a frozen body.") %
+			[travel, BREATH_MIN_TRAVEL_M])
+		return
+
+	# ⚠️ AND THE BREATH SPECIFICALLY, not merely "the body moved somewhere".
+	#
+	# The idle has two independent channels, and the slow pelvis weight shift
+	# moves the shoulder several millimetres on its own. So a travel check alone
+	# passes a build whose entire breathing is deleted, as long as the weight
+	# shift survives — the sequence would advertise a breath that is not there.
+	# The clavicle's LOCAL pose rotation comes only from the breath channel, so
+	# it is the one measurement the pelvis cannot fake.
+	var breath_swing := rad_to_deg(breath_rotations[inhale].angle_to(breath_rotations[exhale]))
+	if breath_swing < BREATH_MIN_SWING_DEG:
+		_fail(("the body moves but does not BREATHE: the clavicle turned %.3f deg between inhale and " +
+			"exhale, under the %.3f deg floor. The weight shift alone can satisfy the travel check, " +
+			"so this is the measurement that proves a breath was photographed.") %
+			[breath_swing, BREATH_MIN_SWING_DEG])
+		return
+
+	print("CAPTURE PASS — %d breath phases written to %s (shoulder travel %.1f mm, breath swing %.2f deg)" %
+		[BREATH_PHASES, dir, travel * 1000.0, breath_swing])
+	get_tree().quit(0)
+
+
+## A character in the shipped scene that actually carries an idle, preferring
+## one of the settlement's people.
+##
+## The preference is about EVIDENCE, not correctness: the wanderer wakes in the
+## starter cave, where torchlight and deep shadow swallow the ~10 mm of
+## shoulder travel this scenario exists to show, while the people by the shrine
+## stand in daylight. Falls back to any breathing body — including the
+## wanderer — so the scenario still produces evidence if the settlement is ever
+## absent, rather than failing for a reason unrelated to the idle.
+##
+## Searched rather than assumed: the point is to photograph what a PLAYER would
+## see, so a scene where the factory attached no idle at all must surface as a
+## failure instead of being quietly skipped.
+func _first_breathing_body(main: Node) -> Node3D:
+	var npcs := main.get_node_or_null("Npcs")
+	if npcs != null:
+		var from_settlement := _search_breathing_body(npcs)
+		if from_settlement != null:
+			return from_settlement
+	return _search_breathing_body(main)
+
+
+func _search_breathing_body(node: Node) -> Node3D:
+	if node.get_node_or_null("BreathingIdle") != null and CharacterFactory.find_skeleton(node) != null:
+		return node as Node3D
+	for child in node.get_children():
+		var found := _search_breathing_body(child)
+		if found != null:
+			return found
+	return null
 
 
 ## Captures one creator frame, re-checking the panel is really on screen first:
