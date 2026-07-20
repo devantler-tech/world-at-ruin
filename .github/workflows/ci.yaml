@@ -647,6 +647,26 @@ jobs:
             tail -40 save_vault_guard_test.log
             exit 1
           fi
+      - name: Vault restore guard (an attuned point still restores on boot)
+        # The BEHAVIOURAL half of the vault product law (#254 review). The
+        # save-vault guard above proves shipped vaults persist and their names
+        # are still recognised — it never boots the game, so it cannot see a
+        # resolver branch that was removed or repointed. This one does, and it
+        # must be as non-skippable as its siblings: left in the auto-discovered
+        # loop it honours ci-skip.txt, so one line of config could disable the
+        # only guard that checks a player actually wakes where they attuned.
+        run: |
+          set -o pipefail
+          if ! timeout 180 godot --headless --path client "res://tests/vault_restore_boot_test.tscn" 2>&1 | tee vault_restore_boot_test.log; then
+            echo "::error::vault_restore_boot_test failed or timed out (180s) — an attuned respawn point no longer restores on boot"
+            tail -40 vault_restore_boot_test.log
+            exit 1
+          fi
+          if ! grep -q "TEST PASS" vault_restore_boot_test.log; then
+            echo "::error::vault_restore_boot_test exited 0 without reporting PASS"
+            tail -40 vault_restore_boot_test.log
+            exit 1
+          fi
       - name: Ability law guard (sidegrade + no power/throughput inflation)
         # THE combat product-law surface (#70), and the ONLY place the sidegrade
         # and budget/cycle-floor matching actually run — the ledger steps above
@@ -673,11 +693,11 @@ jobs:
         # needs ZERO ci.yaml edits (issue #50 — the hardcoded list forced every
         # parallel test-adding PR to collide on this one line). Each scene runs
         # with the same per-test timeout + PASS-marker guard as before.
-        #   - save_fixture_guard_test, save_vault_guard_test and
-        #     ability_registry_test are deliberately excluded: each runs in its
-        #     own named step above (the product-law surfaces, kept loud,
-        #     separate and NON-SKIPPABLE), so discovering them here would both
-        #     run them twice and expose them to ci-skip.
+        #   - save_fixture_guard_test, save_vault_guard_test,
+        #     vault_restore_boot_test and ability_registry_test are deliberately
+        #     excluded: each runs in its own named step above (the product-law
+        #     surfaces, kept loud, separate and NON-SKIPPABLE), so discovering
+        #     them here would both run them twice and expose them to ci-skip.
         #   - A test can be temporarily excluded by adding its basename (no
         #     .tscn) on its own line in client/tests/ci-skip.txt (edited rarely;
         #     the RUN line stops changing per-test). Blank/`#`-comment lines are
@@ -695,7 +715,7 @@ jobs:
             t=$(basename "$scene" .tscn)
             # Run in their own dedicated steps above — never twice, and never
             # skippable via ci-skip.txt (they are the product-law surfaces).
-            case "$t" in save_fixture_guard_test|save_vault_guard_test|ability_registry_test) continue ;; esac
+            case "$t" in save_fixture_guard_test|save_vault_guard_test|vault_restore_boot_test|ability_registry_test) continue ;; esac
             if is_skipped "$t"; then
               echo "::notice::skipping ${t} (listed in ${skip_file})"
               continue

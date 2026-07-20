@@ -395,9 +395,11 @@ everything shipped afterwards is held to.
   under `client/tests/` — CI's "Regression tests" step auto-discovers `client/tests/*_test.tscn`
   (issue #50; the old hardcoded list forced every parallel test-adding PR to collide on one line).
   Each scene must print a `TEST PASS` marker on success and run within the 180 s per-test timeout.
-  Two exclusions: `save_fixture_guard_test` and `save_vault_guard_test` each run in their own
-  dedicated named step (the product-law surfaces for character and progression state, kept
-  loud/separate and NOT skippable), and a test can be temporarily skipped by adding its basename (no
+  Two exclusions: `save_fixture_guard_test`, `save_vault_guard_test` and `vault_restore_boot_test`
+  each run in their own dedicated named step (the product-law surfaces for character and progression
+  state — the last one is the BEHAVIOURAL check that an attuned point still restores on boot, which
+  the persistence guards cannot see; all kept loud/separate and NOT skippable), and a test can be
+  temporarily skipped by adding its basename (no
   `.tscn`) on its own line in the optional `client/tests/ci-skip.txt` (blank/`#`-comment lines
   ignored) — a rarely-edited escape hatch, so the run line itself stops changing per-test.
 - **Boot tests isolate the save via `WAR_SAVE_PATH`:** a test that boots `main.tscn` to exercise the

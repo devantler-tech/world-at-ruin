@@ -195,6 +195,17 @@ func _check_live_names(fixtures: Dictionary) -> String:
 			return ("SHIPPED ATTUNEMENT NO LONGER RECOGNISED (no-resets law): '%s' is in "
 				+ "shipped_attunements.txt but not in SaveVault.KNOWN_ATTUNEMENTS — every player "
 				+ "attuned there would wake in the cave forever") % name
+	# ...and the REVERSE direction. Checking only "ledger name is recognised"
+	# lets a name be added to KNOWN_ATTUNEMENTS and persisted in production
+	# without ever reaching the ledger — it then ships unanchored, and the
+	# append-only CI step (which only guards the ledger file) would not notice
+	# it later disappearing. Both directions, or the anchor has a hole.
+	for name: String in SaveVault.KNOWN_ATTUNEMENTS:
+		if name not in ledger:
+			return ("KNOWN ATTUNEMENT IS UNANCHORED (no-resets law): '%s' is in "
+				+ "SaveVault.KNOWN_ATTUNEMENTS but missing from shipped_attunements.txt — once "
+				+ "players persist it, nothing stops it being removed again") % name
+
 	for version: int in fixtures:
 		var file := FileAccess.open(fixtures[version], FileAccess.READ)
 		if file == null:

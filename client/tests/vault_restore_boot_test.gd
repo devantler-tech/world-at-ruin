@@ -30,6 +30,25 @@ extends Node
 const ASSERT_TICK := 30
 const EPS := 0.01
 
+## An INDEPENDENT expected destination per shipped attunement name.
+##
+## The obvious assertion — compare where the wanderer woke against
+## RespawnPoints.resolve(name, world) — is worthless: main.gd resolves through
+## exactly that call, so test and code read the same branch and a name wired to
+## the WRONG place agrees with itself. Combined with the control comparison it
+## would only ever prove "something moved", not "moved to the right landmark".
+##
+## So each name is anchored here to a landmark this test derives from the WORLD
+## directly, never through the resolver under test. Repointing `wardens_shrine`
+## at anything other than the Wardens' Shrine now fails, because the oracle and
+## the implementation no longer share a source.
+##
+## A new shipped name with no entry here fails too — deliberately. An
+## unanchored name is exactly the case this guards.
+const DESTINATION_ORACLE := {
+	"wardens_shrine": "shrine",
+}
+
 var _ticks := 0
 var _main: Node
 var _save: SaveIsolation
@@ -113,17 +132,26 @@ func _physics_process(_delta: float) -> void:
 	# where the control woke. Every name in the ledger gets its own boot — a
 	# name with no RespawnPoints branch fails HERE, which is the whole reason
 	# this walks the ledger instead of one constant.
-	var expected = RespawnPoints.resolve(_current, world)
-	if expected == null:
+	if RespawnPoints.resolve(_current, world) == null:
 		_fail(("SHIPPED ATTUNEMENT HAS NO RESTORE BRANCH (no-resets law): '%s' is in "
 			+ "shipped_attunements.txt but RespawnPoints cannot place it — a player attuned "
 			+ "there wakes in the cave forever, and every ledger guard stays green")
 			% _current)
 		return
+	# The destination comes from the ORACLE, not from the resolver — see
+	# DESTINATION_ORACLE. Asking RespawnPoints where it should be would let a
+	# mis-wired name agree with itself.
+	var expected = _oracle_point(_current, world)
+	if expected == null:
+		_fail(("SHIPPED ATTUNEMENT HAS NO ORACLE ENTRY: '%s' is in shipped_attunements.txt but "
+			+ "DESTINATION_ORACLE does not say where it must lead — an unanchored name could be "
+			+ "repointed anywhere and still pass") % _current)
+		return
 	if woke_at.distance_to(expected) > EPS:
-		_fail(("RESTORE DID NOT HAPPEN for '%s': an attuned vault was on disk but the wanderer "
-			+ "woke at %s, not %s — main.gd is not applying the vault")
-			% [_current, str(woke_at), str(expected)])
+		_fail(("RESTORE WENT TO THE WRONG PLACE for '%s': the wanderer woke at %s, but this name "
+			+ "must lead to %s (%s) — either the vault is not being applied, or the name has been "
+			+ "repointed away from its landmark")
+			% [_current, str(woke_at), str(expected), String(DESTINATION_ORACLE[_current])])
 		return
 	if woke_at.distance_to(_control_spawn) <= EPS:
 		_fail("the restore boot for '%s' woke in the same place as the control — nothing changed" % _current)
@@ -140,6 +168,17 @@ func _physics_process(_delta: float) -> void:
 	print("TEST PASS — %d shipped attunement(s) survive a logout (control woke at %s)" % [
 		_restored, str(_control_spawn)])
 	get_tree().quit(0)
+
+
+## The landmark a shipped name MUST lead to, derived straight from the world so
+## it is independent of RespawnPoints. Null when the name has no oracle entry.
+func _oracle_point(name: String, world: WorldGen) -> Variant:
+	if not DESTINATION_ORACLE.has(name):
+		return null
+	match String(DESTINATION_ORACLE[name]):
+		"shrine":
+			return world.shrine_respawn_point()
+	return null
 
 
 ## The shipped live-name ledger — the same file the guard test anchors, read
