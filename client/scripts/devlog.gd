@@ -11,6 +11,16 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
+		"version": "0.20.0",
+		"date": "2026-07-20",
+		"title": "The ash in the hollows is moving",
+		"notes": [
+			"The ash that gathers in the land's low places used to sit perfectly still, which read as stranger than no ash at all — the dead grass beside it was already leaning in the wind. It breathes now. Each pool slowly thickens and thins again over about twenty seconds, so a hollow you walk past is heavier with ash at some moments than others.",
+			"It is one wind, not an effect running in each hollow separately. A gust crosses the Reach in the direction the grass leans, so a basin on the far side of you thickens a moment after the one at your feet.",
+			"Because it moves, it is no longer something you have to switch on: every player gets it, on any machine that can render air as a volume. Where that hardware is missing the view is unchanged, as before.",
+		],
+	},
+	{
 		"version": "0.19.1",
 		"date": "2026-07-20",
 		"title": "The ruins come down into the ground",

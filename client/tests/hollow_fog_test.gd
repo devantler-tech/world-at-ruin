@@ -184,25 +184,18 @@ func _ready() -> void:
 		_fail(control)
 		return
 
-	# 8b. DEFAULT-OFF, BOTH STATES (product law 2).
+	# 8b. BUILDS ON CAPABLE HARDWARE, BOTH STATES.
 	#
-	# The pooling has no drift or wind response yet, which AGENTS.md names as a
-	# placeholder tell, and its quality bar is explicit that below-bar
-	# player-facing work does not ship default-on. A capability probe is not a
-	# player opt-in: it answers "can this machine render it", never "does this
-	# player want it". Both states are pinned here because a flag nobody tested
-	# in the OFF state is not a flag.
-	if HollowFog.should_build(true, false):
-		_fail("pools build on a capable GPU without the player opting in — a hardware probe is not consent, and this pooling is not finished enough to ship default-on")
+	# #211's player opt-in is retired with #233 — it existed because the ash had
+	# no drift, and the ash now drifts. What remains is the hardware fact, and
+	# both of ITS states still matter: default-on is only correct if a device
+	# that cannot render volumetrics still declines to build invisible nodes it
+	# would pay a per-frame cost for.
+	if not HollowFog.should_build(true):
+		_fail("pools do NOT build on a GPU that can render them — after #233 the ash is default-on, so this makes the feature unreachable for everyone")
 		return
-	if HollowFog.should_build(false, true):
+	if HollowFog.should_build(false):
 		_fail("pools build where volumetrics cannot render — invisible nodes with a per-frame cost")
-		return
-	if HollowFog.should_build(false, false):
-		_fail("pools build with neither the GPU nor the player agreeing")
-		return
-	if not HollowFog.should_build(true, true):
-		_fail("pools do NOT build when the GPU can render them and the player opted in — the feature is unreachable")
 		return
 
 	# 9. RENDERABLE — the placement actually becomes visible air.
@@ -250,10 +243,10 @@ func _ready() -> void:
 			return
 
 	# The capture marker is a MACHINE CONTRACT (#232). CI parses this line to
-	# record whether the published frames contain pools at all. It is a SECOND
-	# gate on top of the volumetrics verdict, and that is exactly why it must be
-	# pinned separately: pools need the GPU probe AND the opt-in, so on a runner
-	# that supports volumetrics the frames still contain none unless opted in.
+	# record whether the published frames contain pools at all. It stays a
+	# SECOND gate on top of the volumetrics verdict even now that the opt-in is
+	# gone, because the two can still disagree: a terrain offering no hollow
+	# deep enough to clear MIN_RELIEF renders volumetrics with zero pools.
 	var built_line: String = HollowFog.marker(true, true, 6)
 	var unbuilt_line: String = HollowFog.marker(false, false, 6)
 	for line: String in [built_line, unbuilt_line]:
@@ -269,17 +262,168 @@ func _ready() -> void:
 	if unbuilt_line.trim_prefix(HollowFog.CAPTURE_MARKER + " ").split(" ")[0] != "off":
 		_fail("marker(not built) must report 'off' immediately after the marker — CI parses it")
 		return
-	# The two unbuilt reasons are distinguishable: "no GPU" and "not opted in"
-	# are different facts and a reviewer acts on them differently.
+	# The two unbuilt reasons stay distinguishable: "no GPU" and "no hollow deep
+	# enough" are different facts and a reviewer acts on them differently.
 	if HollowFog.marker(false, true, 6) == HollowFog.marker(false, false, 6):
-		_fail("marker() must distinguish 'not opted in' from 'volumetrics unavailable'")
+		_fail("marker() must distinguish 'no qualifying hollow' from 'volumetrics unavailable'")
 		return
 
-	print("TEST PASS — %d ash pools, shallowest clears its surroundings by %.2f m, %.2f m below world median, %s, every built volume carries its density, deepest %.2fx denser than shallowest" % [
+	var drift := _run_drift_laws(pools)
+	if drift != "":
+		_fail(drift)
+		return
+
+	print("TEST PASS — %d ash pools, shallowest clears its surroundings by %.2f m, %.2f m below world median, %s, every built volume carries its density, deepest %.2fx denser than shallowest, drift swells +/-%.0f%% around each placed density on a %.0f s gust that stays staggered across the Reach" % [
 		pools.size(), worst_relief, drop, "4 controls held",
-		float(deep["density"]) / maxf(float(shallow["density"]), 1e-9)
+		float(deep["density"]) / maxf(float(shallow["density"]), 1e-9),
+		HollowFog.DRIFT_SWING * 100.0, TAU / HollowFog.DRIFT_SPEED
 	])
 	get_tree().quit(0)
+
+
+## How many samples one drift period is cut into. 64 lands within 0.12% of the
+## true extremes of a sinusoid, which is far inside every margin asserted below.
+const DRIFT_SAMPLES := 64
+
+
+## The drift laws (#233), or "" if they all hold.
+##
+## Everything here is a pure function of position and time, so these run with no
+## GPU and no rendering — which is the point: a FogVolume contributes no
+## readable pixels headless, so the shape of the swell is only ever verifiable
+## as arithmetic. What a frame can show (does it READ as weather) is a judgement
+## made on captures and recorded on the PR; what a test can prove is that the
+## swell exists, has the intended size and mean, varies with position, and never
+## moves the pool.
+func _run_drift_laws(pools: Array[Dictionary]) -> String:
+	# D0. NON-VACUITY FLOOR — before asserting the drift has the right SHAPE,
+	# assert there is a drift at all. Every law below is derived from the
+	# constants, so all of them would pass trivially if the constants were zero:
+	# a zero swing has a zero mean, stays in lockstep with itself, and matches
+	# its own derived amplitude exactly. This floor is what stops "the ash
+	# drifts" from being provable by a build in which it does not.
+	if HollowFog.DRIFT_SWING < 0.05:
+		return "DRIFT_SWING is %.3f — below 0.05 the density swell is not visible, and every derived law below would pass on a build with no drift" % HollowFog.DRIFT_SWING
+	if HollowFog.DRIFT_SPEED <= 0.0:
+		return "DRIFT_SPEED is %.3f — a non-positive speed freezes the phase, so nothing ever moves" % HollowFog.DRIFT_SPEED
+
+	var period := TAU / HollowFog.DRIFT_SPEED
+	var probe: Vector3 = pools[0]["pos"]
+	var placed: float = pools[0]["density"]
+
+	# D1. THE PLACEMENT IS THE RESTING STATE — drift has zero mean.
+	#
+	# Load-bearing well beyond tidiness: the world golden, the headless
+	# placement record and #211's density tuning all describe the pool AT ITS
+	# PLACEMENT. A drift with a biased mean would silently move the shipped
+	# world off the values every one of those pinned, and nothing else here
+	# would notice. Sampled over exactly one period, endpoint excluded, so a
+	# sinusoid's mean is zero to float precision.
+	var sum_density := 0.0
+	for i in DRIFT_SAMPLES:
+		var t := period * float(i) / float(DRIFT_SAMPLES)
+		sum_density += HollowFog.drift_density(placed, probe, t)
+	var mean_density := sum_density / float(DRIFT_SAMPLES)
+	if absf(mean_density - placed) > placed * 0.01:
+		return "mean drifted density is %.4f but the pool was placed at %.4f — drift must modulate around the placement, not shift it, or the tuned density is never what ships" % [mean_density, placed]
+
+	# D2. THE SWELL AND THE TRAVEL HAVE THE INTENDED SIZE.
+	#
+	# Derived from the constants rather than hard-coded, so a deliberate retune
+	# does not need this test rewritten — while D0 above keeps that derivation
+	# from collapsing to a tautology.
+	var min_density := INF
+	var max_density := -INF
+	for i in DRIFT_SAMPLES:
+		var t := period * float(i) / float(DRIFT_SAMPLES)
+		var d := HollowFog.drift_density(placed, probe, t)
+		min_density = minf(min_density, d)
+		max_density = maxf(max_density, d)
+	var want_swing := placed * HollowFog.DRIFT_SWING
+	if absf((max_density - placed) - want_swing) > want_swing * 0.05:
+		return "density peaks %.4f above the placed %.4f, but DRIFT_SWING asks for %.4f — the swell is not the size the constant claims" % [max_density - placed, placed, want_swing]
+	if absf((placed - min_density) - want_swing) > want_swing * 0.05:
+		return "density troughs %.4f below the placed %.4f, but DRIFT_SWING asks for %.4f — the swell is asymmetric" % [placed - min_density, placed, want_swing]
+	if min_density <= 0.0:
+		return "density reaches %.4f — a pool that thins to nothing blinks out instead of breathing" % min_density
+	# D3. ONE GUST CROSSING THE REACH, not every pool pulsing as one.
+	#
+	# This is the difference between weather and a global animation. Pools at
+	# different places along the wind must be at different phases, or the whole
+	# world thickens and thins in lockstep — which reads as a screen effect
+	# rather than as air.
+	#
+	# Only pools genuinely separated ALONG the wind can be staggered — two
+	# sitting side by side across it are at the same phase by definition, and
+	# reading that as lockstep would be this test failing for the wrong reason.
+	# So eligibility is tracked separately from the verdict: a terrain that
+	# offers no along-wind pair leaves this law unproven rather than failed.
+	var eligible := 0
+	var staggered := false
+	for i in pools.size():
+		for j in range(i + 1, pools.size()):
+			var a: Vector3 = pools[i]["pos"]
+			var b: Vector3 = pools[j]["pos"]
+			if absf((a - b).dot(Wind.axis())) < 1.0:
+				continue
+			eligible += 1
+			# Compared as a FRACTION of each pool's own placed density: two
+			# hollows of different depth carry different densities, so an
+			# absolute difference would report a stagger that is really just
+			# the depth gradient of law 10.
+			for s in DRIFT_SAMPLES:
+				var t := period * float(s) / float(DRIFT_SAMPLES)
+				var fa := HollowFog.drift_density(1.0, a, t)
+				var fb := HollowFog.drift_density(1.0, b, t)
+				if absf(fa - fb) > HollowFog.DRIFT_SWING * 0.05:
+					staggered = true
+					break
+			if staggered:
+				break
+		if staggered:
+			break
+	if eligible > 0 and not staggered:
+		return "%d pool pairs are separated along the wind, yet every pool swells in lockstep — the phase does not vary with position, so this reads as one global pulse rather than a gust crossing the Reach" % eligible
+
+	# D4. THE POOL DOES NOT MOVE.
+	#
+	# Asserted as a LAW rather than left implicit, because the first build of
+	# #233 did translate the volume and the translation measured as invisible
+	# (mean |dRGB| 0.0012 against a noise floor of 0.0115). Removing it is only
+	# durable if something notices when it comes back: a reintroduced offset
+	# would silently put the pool somewhere the world golden and the headless
+	# placement record both say it is not.
+	var still := HollowFog.build_volume(pools[0])
+	var placed_pos: Vector3 = pools[0]["pos"]
+	for i in DRIFT_SAMPLES:
+		var t := period * float(i) / float(DRIFT_SAMPLES)
+		HollowFog.apply_drift(still, pools[0], t)
+		if still.position.distance_to(placed_pos) > 1e-6:
+			var slipped := still.position.distance_to(placed_pos)
+			still.free()
+			return "apply_drift moved the volume %.4f m off its placement — drift is density only, and a moving pool no longer sits where the golden and the placement record say it does" % slipped
+
+	# D5. THE SWELL REACHES THE NODE.
+	#
+	# The mirror of law 9, and for the same reason: every law above reasons
+	# about pure functions, and all of them stay green if apply_drift() computes
+	# the right number and assigns it nowhere. That is a silent no-op — the
+	# exact failure mode #211 shipped when build_volume() configured a
+	# FogMaterial it never attached, leaving the whole feature invisible while
+	# its tests passed.
+	var at_rest_density: float = pools[0]["density"]
+	# A quarter period past the placement's own phase zero is where sin() is
+	# furthest from zero, so this is the sample most likely to differ. Picking
+	# it deliberately rather than trusting an arbitrary t is the #243 lesson:
+	# a periodic signal sampled at its zero-crossings proves nothing.
+	var peak_t := (probe.dot(Wind.axis()) / HollowFog.DRIFT_WAVELENGTH + PI / 2.0) / HollowFog.DRIFT_SPEED
+	HollowFog.apply_drift(still, pools[0], peak_t)
+	var redensified := absf((still.material as FogMaterial).density - at_rest_density)
+	var want_density_delta: float = placed * HollowFog.DRIFT_SWING
+	still.free()
+	if redensified < want_density_delta * 0.95:
+		return "apply_drift changed the built volume's density by %.4f at its phase peak, short of the %.4f DRIFT_SWING asks for — the computed density is not reaching the material" % [redensified, want_density_delta]
+	return ""
 
 
 ## Synthetic terrains with a known right answer. Each isolates ONE claim, so a
