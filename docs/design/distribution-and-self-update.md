@@ -339,6 +339,14 @@ stale cache, or engine change can strand or subvert a client:
   vectors both CI and the client consume, so two conforming implementations never derive different bytes
   and reject every otherwise-valid update.
 
+  **Implemented ahead of the root of trust** — `client/scripts/jcs.gd`, pinned by
+  `client/tests/data/jcs_vectors.json` (issue #298, part of #69). The vectors are the shared artifact:
+  a second implementation reproduces them or it is not conformant. The domain is deliberately narrow —
+  the manifest carries integers only, and a value outside that domain is refused rather than serialized
+  on a best effort, because bytes nobody has conformance-tested are bytes a verifier may reject.
+  Pinning them *before* key custody (child 6) is deliberate: today nothing signs anything, so correcting
+  the bytes is free; afterwards the same correction invalidates every signature already issued.
+
 These are contract-level obligations; the pack pipeline (child 3), the updater (child 4), the protocol
 handshake (child 5), and key custody (child 6) implement them, and the manifest schema carries the
 `sequence`, per-target read-ceiling/compat, and root-signed revocation fields they need.

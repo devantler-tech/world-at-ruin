@@ -267,12 +267,16 @@ func _test_json_is_stable_and_parseable() -> void:
 	var m := _manifest()
 	if _failed:
 		return
-	var text := UpdateManifest.to_json(m)
+	var serialised := UpdateManifest.to_json(m)
+	if str(serialised["error"]) != "":
+		_fail("to_json refused this build's manifest: %s" % str(serialised["error"]))
+		return
+	var text: String = serialised["text"]
 	var parsed: Variant = JSON.parse_string(text)
 	if not (parsed is Dictionary):
 		_fail("to_json did not produce a parseable JSON object")
 		return
-	if UpdateManifest.to_json(_manifest()) != text:
+	if str(UpdateManifest.to_json(_manifest())["text"]) != text:
 		_fail("two manifests built from the same build serialised differently — the signing bytes are not stable")
 		return
 	# The parsed form must still satisfy the consumer: a serialisation that quietly

@@ -1,0 +1,130 @@
+{
+  "_": [
+    "RFC 8785 (JCS) conformance vectors - the SHARED contract.",
+    "Any implementation that produces the update-manifest signing bytes must parse",
+    "`input` with its own JSON parser, canonicalize it, and reproduce `expected`",
+    "byte for byte. Consumed by client/tests/jcs_test.gd. Issue #298, part of #69.",
+    "`refusals` is part of the contract too: these inputs must be REFUSED outright,",
+    "never serialized on a best effort."
+  ],
+  "vectors": [
+    {
+      "name": "rfc8785_string_escaping",
+      "why": "RFC 8785 appendix string. Minimal escaping: the solidus and non-ASCII stay literal, control characters take a short form where one exists and lowercase u00xx otherwise.",
+      "input": {
+        "string": "€$\u000f\nA'B\"\\\\\"/"
+      },
+      "expected": "{\"string\":\"€$\\u000f\\nA'B\\\"\\\\\\\\\\\"/\"}"
+    },
+    {
+      "name": "utf16_key_order_supplementary",
+      "why": "THE case that separates JCS from a code-point sort. U+10000 is the surrogate pair D800 DC00, so by UTF-16 code unit it sorts BELOW U+FFFD - the opposite of code-point order, which is exactly what Godot's JSON.stringify(sort_keys) produces.",
+      "input": {
+        "�": 2,
+        "𐀀": 1
+      },
+      "expected": "{\"𐀀\":1,\"�\":2}"
+    },
+    {
+      "name": "key_order_basic",
+      "why": "Ordering is by code unit - not case-folded, not locale-aware. The empty name sorts first, uppercase before lowercase, a prefix before its extension.",
+      "input": {
+        "": 4,
+        "A": 3,
+        "a": 2,
+        "ab": 5,
+        "b": 1
+      },
+      "expected": "{\"\":4,\"A\":3,\"a\":2,\"ab\":5,\"b\":1}"
+    },
+    {
+      "name": "literals_and_empty_containers",
+      "why": "Literals are bare; empty containers keep their delimiters and gain no whitespace.",
+      "input": {
+        "empty_array": [],
+        "empty_object": {},
+        "literals": [
+          null,
+          true,
+          false
+        ],
+        "nested": [
+          [],
+          {},
+          [
+            []
+          ]
+        ]
+      },
+      "expected": "{\"empty_array\":[],\"empty_object\":{},\"literals\":[null,true,false],\"nested\":[[],{},[[]]]}"
+    },
+    {
+      "name": "integers",
+      "why": "The manifest's number domain. Every JSON number arrives as a float in Godot, so an integral float must render with no fractional part, and 2^53 must survive exactly.",
+      "input": {
+        "max_safe": 9007199254740992,
+        "negative": -42,
+        "zero": 0
+      },
+      "expected": "{\"max_safe\":9007199254740992,\"negative\":-42,\"zero\":0}"
+    },
+    {
+      "name": "characters_that_stay_literal",
+      "why": "JSON permits escaping these; JCS forbids it. Escaping any one of them yields valid JSON and the wrong bytes. U+007F DEL is not a C0 control and takes no escape.",
+      "input": {
+        "chars": "/~é€"
+      },
+      "expected": "{\"chars\":\"/~é€\"}"
+    },
+    {
+      "name": "all_short_form_escapes",
+      "why": "The five control characters that have a two-character form must use it; other C0 characters must use lowercase u00xx.",
+      "input": {
+        "s": "\b\t\n\f\r\u0001\u001f"
+      },
+      "expected": "{\"s\":\"\\b\\t\\n\\f\\r\\u0001\\u001f\"}"
+    },
+    {
+      "name": "manifest_shaped",
+      "why": "A structure shaped like the real update manifest, so the vectors cover the production input and not only edge cases.",
+      "input": {
+        "channel": "live",
+        "protocol": {
+          "max": 1,
+          "min": 1
+        },
+        "rollback_targets": [],
+        "schema": "1",
+        "shell": {
+          "current": "0.4.0",
+          "min_supported": "0.1.0",
+          "reads_min": 1
+        }
+      },
+      "expected": "{\"channel\":\"live\",\"protocol\":{\"max\":1,\"min\":1},\"rollback_targets\":[],\"schema\":\"1\",\"shell\":{\"current\":\"0.4.0\",\"min_supported\":\"0.1.0\",\"reads_min\":1}}"
+    }
+  ],
+  "refusals": [
+    {
+      "name": "non_integral_number",
+      "why": "RFC 8785 numbers use ECMAScript Number::toString, which this module does not implement. Guessing the bytes would sign them as if they had been verified.",
+      "input": {
+        "v": 1.5
+      }
+    },
+    {
+      "name": "beyond_safe_integer",
+      "why": "Above 2^53 an integral float is not reliably the integer it prints as, so another implementation could not reproduce the bytes.",
+      "input": {
+        "v": 9007199254740994
+      }
+    },
+    {
+      "name": "negative_beyond_safe_integer",
+      "why": "The same ceiling applies on the negative side.",
+      "input": {
+        "v": -9007199254740994
+      }
+    }
+  ]
+}

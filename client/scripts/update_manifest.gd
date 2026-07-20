@@ -182,9 +182,21 @@ static func build() -> Dictionary:
 	}
 
 
-## Serialise a built manifest. Sorted keys and no indentation because these bytes
-## are what a signature will one day cover (ADR: "the signing bytes are pinned"),
-## and a byte-stable ordering is the cheapest half of that promise to keep now
-## rather than to retrofit under a signing scheme.
-static func to_json(manifest: Dictionary) -> String:
-	return JSON.stringify(manifest, "", true, true)
+## Serialise a built manifest to the exact bytes a signature will cover.
+##
+## [JCS] canonicalizes per RFC 8785, the standard the ADR pins the signing bytes to
+## so that two conforming implementations never derive different bytes. This used
+## to be `JSON.stringify(..., sort_keys)` — byte-stable, but NOT RFC 8785: Godot
+## orders member names by code point where JCS requires UTF-16 code unit, and the
+## two disagree for every supplementary-plane name.
+##
+## Pinning the bytes before a signing scheme exists is deliberate. Today nothing
+## signs anything, so changing them costs nothing; once a key is in play the same
+## correction invalidates every signature already issued.
+##
+## Returns `{"error": String, "text": String}` — the shape [method build] uses.
+## When `error` is non-empty the manifest contains a value the canonicalizer has no
+## conformance vectors for, and `text` is empty: it must not be signed or published,
+## because bytes we cannot reproduce are bytes a verifier will reject.
+static func to_json(manifest: Dictionary) -> Dictionary:
+	return JCS.canonicalize(manifest)
