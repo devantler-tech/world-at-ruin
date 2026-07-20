@@ -19,9 +19,22 @@
     "leg_stance": 0.13
   },
   "shapes": [
-    { "name": "body_heavy", "params": { "torso_radius_scale": 1.28, "limb_radius_scale": 1.15, "belly_drop": 0.05 } },
-    { "name": "body_gaunt", "params": { "torso_radius_scale": 0.78, "limb_radius_scale": 0.85 } },
-    { "name": "legs_long", "params": { "hip_height": 0.72, "chest_height": 0.78 } },
+    {
+      "name": "body_heavy",
+      "params": {
+        "torso_radius_scale": 1.28,
+        "limb_radius_scale": 1.15,
+        "belly_drop": 0.05
+      }
+    },
+    {
+      "name": "body_gaunt",
+      "params": { "torso_radius_scale": 0.78, "limb_radius_scale": 0.85 }
+    },
+    {
+      "name": "legs_long",
+      "params": { "hip_height": 0.72, "chest_height": 0.78 }
+    },
     { "name": "snout_long", "params": { "snout_length": 0.3 } },
     { "name": "ears_alert", "params": { "ear_height": 0.19 } },
     { "name": "tail_high", "params": { "tail_lift": 0.32 } }

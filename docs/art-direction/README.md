@@ -94,7 +94,7 @@ pick one canonical frame per anchor, for a reason worth stating — no agent her
 media, and inventing a plate number or a trailer timestamp would be fabricating evidence to satisfy a
 rule about evidence.
 
-The fix is on the citing side, and it is enforceable: **a PR names the anchor _and_ links the
+The fix is on the citing side, and it is enforceable: **a PR names the anchor *and* links the
 specific image it compared against** — a direct URL to one screenshot in the game's official media
 gallery, one Steam store screenshot, one illustration, or one trailer frame at a stated timestamp. A
 reviewer can then open the same image. **A citation naming only the title is incomplete and a
