@@ -178,10 +178,6 @@ func _build_panel() -> void:
 	# art direction is explicit that thirty-plus programmer-named sliders as the
 	# primary surface is a developer inspector (docs/art-direction/README.md,
 	# "UI and UX"), so the numeric controls live behind ADVANCED below.
-	# Each archetype is a rendered portrait beside its name and blurb. A text
-	# roster asks the player to imagine each option and lets them inspect only
-	# the one body currently on screen; portraits make the four comparable at a
-	# glance, which is the actual function of a character-choice surface (#293).
 	# EVERYTHING below the blurb scrolls, and the Wake/Cancel row sits outside it.
 	#
 	# The roster used to be laid out directly in the column, above a scroll region
@@ -196,16 +192,20 @@ func _build_panel() -> void:
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.custom_minimum_size = Vector2(330, 0)
 	column.add_child(scroll)
-	var sliders := VBoxContainer.new()
-	sliders.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	sliders.add_theme_constant_override("separation", 2)
-	scroll.add_child(sliders)
+	var content := VBoxContainer.new()
+	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	content.add_theme_constant_override("separation", 2)
+	scroll.add_child(content)
 
+	# Each archetype is a rendered portrait beside its name and blurb. A text
+	# roster asks the player to imagine each option and lets them inspect only
+	# the one body currently on screen; portraits make the four comparable at a
+	# glance, which is the actual function of a character-choice surface (#293).
 	var first_preset: Button = null
 	for preset_name in PRESETS:
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 8)
-		sliders.add_child(row)
+		content.add_child(row)
 
 		var portrait := ArchetypePortrait.new()
 		row.add_child(portrait)
@@ -241,15 +241,15 @@ func _build_panel() -> void:
 
 	# Outfit and skin stay on the primary surface: they ARE named choices, which
 	# is what the art direction asks the creator to lead with.
-	var outfit := _add_section(sliders, "OUTFIT")
+	var outfit := _add_section(content, "OUTFIT")
 	for slot: String in CharacterFactory.equipment_registry().get("slots", []):
 		_add_outfit_picker(outfit, slot)
-	var skin := _add_section(sliders, "SKIN")
+	var skin := _add_section(content, "SKIN")
 	_add_skin_picker(skin)
 
 	# Everything numeric, folded away by default. Grouped rather than dumped, so
 	# a player who does open it gets a structure instead of 35 identical rows.
-	var advanced := _add_section(sliders, "ADVANCED — fine shaping", false)
+	var advanced := _add_section(content, "ADVANCED — fine shaping", false)
 	for group: Array in group_shape_names(_shape_names()):
 		_add_heading(advanced, group[0])
 		for shape_name: String in group[1]:
