@@ -55,10 +55,23 @@ class_name BootRecovery
 ##    reinstall the ADR names.
 
 
-## Where the shipped bootstrap will keep the file. Inert until the in-client
-## updater child wires the real boot flow; tests always inject probe paths, the
-## same seam discipline as [CharacterStore].
+## Where the shipped bootstrap keeps the file. `main.gd` runs the launch half of
+## the lifecycle against this path on every boot (#301), so the ledger records
+## real boot outcomes; the MOUNT half — marking a staged pack rather than the
+## running build — is still the in-client updater child's to wire.
 const DEFAULT_PATH := "user://boot_recovery.json"
+
+## Test seam, the same discipline as [CharacterStore] and [SaveVault]: a boot
+## test must never read or write the player's real recovery ledger. Empty/unset
+## means the shipped default — production never sets it.
+const RECOVERY_PATH_ENV := "WAR_BOOT_RECOVERY_PATH"
+
+
+## The active recovery-ledger path: the [constant RECOVERY_PATH_ENV] override
+## when set, else the shipped default.
+static func recovery_path() -> String:
+	var override := OS.get_environment(RECOVERY_PATH_ENV)
+	return override if not override.is_empty() else DEFAULT_PATH
 
 
 ## The legitimate first-boot state: nothing pending, nothing failed, nothing

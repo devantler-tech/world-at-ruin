@@ -39,6 +39,11 @@ var _zone_failure_reported := false
 ## once it has: before that, the close IS the failure and is already reported
 ## under its own error class.
 var _zone_was_live := false
+## The recovery state this launch durably recorded its boot attempt in, or null
+## when no attempt was recorded (first-boot refusal, a torn ledger, or a failed
+## write). Null is what makes the checkpoint a no-op rather than a lie: promote
+## may only clear a marker this launch actually wrote (#301).
+var _boot_attempt: Variant = null
 
 func _ready() -> void:
 	# Capture-harness entry for the EXPORTED client: the official export
@@ -59,6 +64,12 @@ func _ready() -> void:
 		set_process_unhandled_input(false)
 		get_tree().change_scene_to_file.call_deferred("res://tools/frame_capture.tscn")
 		return
+
+	# Recovery memory FIRST, before any world work — everything below this line
+	# is what a boot can die inside, and a boot that dies must leave a marker
+	# behind for the next launch to find (#301).
+	_begin_boot_attempt()
+
 	_build_environment()
 	var world := WorldGen.new()
 	world.name = "World"
@@ -171,6 +182,95 @@ func _ready() -> void:
 	# fail the check, not slip past it (the silent-no-op incident, 0.1.12).
 	print("BOOT_OK v%s — world built, %d people and %d hounds in the Reach" % [
 		DevLog.VERSION, npcs.npc_names.size(), hounds.creature_names.size()])
+
+	# The health checkpoint. The world stands, the wanderer is in it and the
+	# boot marker above can be cleared: this launch is not a failure. It sits
+	# beside BOOT_OK deliberately — the same statement, one durable and one for
+	# the log, so they can never disagree about whether the boot succeeded.
+	_promote_boot_attempt()
+
+
+## The launch half of the boot-recovery lifecycle (#301), and the call that makes
+## [BootRecovery] part of the running game rather than a library only its own
+## test can reach: the core, the persistence and their tests were all complete
+## and correct, and NOTHING called them — so the crash-loop guard was real in the
+## suite and absent in the product.
+##
+## Reconcile first, then mark: a marker still on disk was left by the LAST launch,
+## which means that launch never reached its checkpoint (a crash, a hang, or a
+## kill), so the build it attempted is quarantined before this one records
+## anything.
+##
+## EVERY failure here degrades to a normal boot and never blocks one — the same
+## law the vault follows. Recovery memory exists to stop a player being trapped
+## in a boot loop; a version of it that could itself refuse a launch would be the
+## very thing it guards against. So a torn ledger, a refused attempt or a failed
+## write all leave `_boot_attempt` null and the game boots exactly as it did
+## before this existed.
+##
+## What is marked is the RUNNING build, not a staged pack: the pack-mount path
+## belongs to the in-client updater child. That is enough to make the ledger
+## live — a launch that dies before the checkpoint is recorded as a real failure
+## by the next one.
+func _begin_boot_attempt() -> void:
+	var path := BootRecovery.recovery_path()
+	var loaded := BootRecovery.load_state(path)
+	# An unreadable ledger loads with ok false and a deliberately unreadable
+	# state, so the consumers below fail closed on their own. It is carried
+	# forward rather than replaced: save_state refuses to launder it, which is
+	# what preserves the evidence of whatever tore it.
+	var state: Variant = loaded["state"]
+
+	var settled := BootRecovery.reconcile(state)
+	if settled["ok"] as bool:
+		state = settled["state"]
+		var failed := str(settled["quarantined_version"])
+		if not failed.is_empty():
+			push_warning("boot recovery: the previous launch of %s never reached its checkpoint — quarantined" % failed)
+
+	# Persist whatever we settled on even if the attempt below is refused: the
+	# reconcile may have just recorded a real failure, and dropping it because
+	# the NEXT step declined would erase the evidence it exists to keep.
+	var to_persist: Variant = state
+	var begun := BootRecovery.begin_attempt(state, DevLog.VERSION)
+	if begun["ok"] as bool:
+		to_persist = begun["state"]
+	else:
+		push_warning("boot recovery: not recording a boot attempt — %s" % str(begun["reason"]))
+
+	var written := BootRecovery.save_state(path, to_persist)
+	if not (written["ok"] as bool):
+		push_warning("boot recovery: recovery state not persisted — %s" % str(written["reason"]))
+		return
+	# Only claim the attempt once it is DURABLE. Promoting a marker that never
+	# reached disk would clear a marker the next launch will never see and
+	# report a success nothing recorded.
+	if begun["ok"] as bool:
+		_boot_attempt = begun["state"]
+
+
+## The health checkpoint: this launch built its world, so the marker it wrote is
+## cleared and this build recorded as last-good. WHERE the checkpoint sits is the
+## caller's statement, and this is it — a boot that reaches the end of `_ready()`
+## with a world, a wanderer and a HUD is a boot that worked.
+##
+## A no-op when no attempt was recorded, so a degraded launch stays degraded
+## rather than promoting something it never marked.
+func _promote_boot_attempt() -> void:
+	if _boot_attempt == null:
+		return
+	var promoted := BootRecovery.promote(_boot_attempt, DevLog.VERSION)
+	if not (promoted["ok"] as bool):
+		push_warning("boot recovery: boot not promoted — %s" % str(promoted["reason"]))
+		return
+	var written := BootRecovery.save_state(BootRecovery.recovery_path(), promoted["state"])
+	if not (written["ok"] as bool):
+		# The marker stays on disk, so the next launch quarantines this build.
+		# That is the correct fail-closed direction: an unrecorded SUCCESS costs
+		# a rollback target, an unrecorded FAILURE costs the player a boot loop.
+		push_warning("boot recovery: promotion not persisted — %s" % str(written["reason"]))
+		return
+	_boot_attempt = null
 
 
 ## Open the live zone connection when one was configured. This call is what
