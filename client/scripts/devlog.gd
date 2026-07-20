@@ -11,13 +11,25 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
-		"version": "0.15.0",
+		"version": "0.16.0",
 		"date": "2026-07-20",
 		"title": "Someone cut these stones",
 		"notes": [
 			"Every ruin and every stone of the shrine used to be the same flat grey — one colour, the same all over, on every column and every fallen block in the world. Two ruins an entire field apart were the same shade as each other, and the low sun did nothing to any of them however you stood.",
 			"They are made of blocks now. You can see the courses stacked up a column and the joints between them, laid in the offset pattern a wall actually goes together in, and each block is its own stone — slightly its own colour, slightly its own wear. The joints sit back in shadow, knocked-about corners catch the light, and ash gathers on anything facing the sky. Walk around a monolith at the shrine and the light rakes across the courses instead of sliding over a flat face.",
 			"This is the masonry only. The ground and the cave rock were given this treatment already; the ruins had been left behind, which is much of why they read as props set down on the world rather than as something that was built here and then fell. Still to come: the blocks are one size everywhere, so a huge lintel is coursed like a small one, and nothing is cracked or broken at its edges yet.",
+		],
+	},
+	{
+		"version": "0.15.0",
+		"date": "2026-07-20",
+		"title": "The ground stops being the same ground",
+		"notes": [
+			"Walk far enough now and what you are walking on changes. The Reach is laid out in stretches, each made of its own material: pale ash over more of it than anything else, ground burnt darker and redder where the fire sat longest, bare cool stone where the ash has been scoured off, and ochre ground stained by the old machines rusting into it. Which stretch lies where is a fact about this land, the same on every playthrough.",
+			"One stretch gives way to the next under your feet rather than at a line you step over — for the last several paces the two grounds mix into each other.",
+			"The shrine you wake near is always on the pale ash it has always been on, so the place you already know still looks like itself.",
+			"Be warned that this reads far better underfoot than it does from a distance. Walk out onto the pale stone and the ground around you is clearly lighter than the ash you left; look at that same country from across the Reach and the haze has already flattened it back to the colour of everything else. The air between you and the view is currently doing more to the ground's colour than the ground is, and getting the distance to carry it too is a bigger job than this one.",
+			"This changes what the ground is made of, not what shape it is. The same hills and hollows are still there, and the ruins and scrub are still scattered the same way everywhere — those two are the next pieces of this.",
 		],
 	},
 	{

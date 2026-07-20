@@ -114,7 +114,14 @@ void fragment() {
 	surface *= 0.93 + 0.14 * mix(0.5, grain, detail);
 
 	ALBEDO = base * surface * 2.0;
-	ROUGHNESS = mix(ash_roughness, rock_roughness, rock_mix) - 0.06 * (grain - 0.5) * detail;
+	// The region's own roughness rides in the vertex ALPHA, biased to 0.5 (see
+	// WorldGen._ground_color). Without it every region would be one substance
+	// wearing a different tint: scoured stone would answer the low sun exactly
+	// like loose ash. Clamped because the bias plus the grain term must not
+	// leave a legal roughness.
+	float region_rough = COLOR.a - 0.5;
+	ROUGHNESS = clamp(mix(ash_roughness, rock_roughness, rock_mix) + region_rough
+		- 0.06 * (grain - 0.5) * detail, 0.0, 1.0);
 	SPECULAR = 0.18;
 
 	// Perturb the normal from the gradient of the grain field. This is what

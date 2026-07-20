@@ -62,10 +62,10 @@ const CAVE_SITE := Vector2(-56.0, -20.0)
 const CAVE_SEED := 42
 const CAVE_FLOOR_SKIRT := 0.55 ## How far terrain dips under cave floors.
 
-## Palette — ash, rock, bone, ember.
-const COL_ASH := Color(0.38, 0.345, 0.31)
-const COL_ROCK := Color(0.24, 0.22, 0.21)
-const COL_SCORCH := Color(0.16, 0.14, 0.13)
+## Palette — built stone and ember. The GROUND's colours are no longer one
+## palette held here: they belong to whichever region a place falls in, and
+## live in [GroundRegions] (the old ash/rock/scorch triple is now its
+## `ashflats` region, unchanged).
 const COL_STONE := Color(0.42, 0.39, 0.35)
 const COL_EMBER := Color(1.0, 0.55, 0.18)
 
@@ -77,6 +77,9 @@ var _detail := FastNoiseLite.new()
 var _tint := FastNoiseLite.new()
 var _foliage_density := FastNoiseLite.new()
 var _heights := PackedFloat32Array()
+## The ground regions this world was dealt, built once at generation and read
+## for every terrain vertex. See [GroundRegions].
+var _region_sites: Array[GroundRegions.Site] = []
 var _brazier_light: OmniLight3D
 var _brazier_mesh: MeshInstance3D
 var _shrine_interactable: Interactable
@@ -101,6 +104,8 @@ var _cave_apron: Array = []
 var _foliage: Array[Dictionary] = []
 
 func _ready() -> void:
+	# Dealt before anything is baked: the terrain colour bake reads them.
+	_region_sites = GroundRegions.sites(WORLD_SEED, SIZE)
 	_noise.seed = WORLD_SEED
 	_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX
 	_noise.frequency = 0.011
@@ -256,23 +261,65 @@ func _build_terrain() -> void:
 	add_child(body)
 
 func _add_tri(st: SurfaceTool, a: Vector3, b: Vector3, c: Vector3) -> void:
-	var centre := (a + b + c) / 3.0
-	st.set_color(_ground_color(centre))
+	# Colour is sampled PER VERTEX, not once at the triangle centre. One sample
+	# per triangle quantises the region cross-fade to the 1.7 m grid: each
+	# triangle takes a flat step of roughly a fifth of the palette difference,
+	# so a transition that is continuous in [GroundRegions] still lands on the
+	# ground as a short flight of bands. Sampling the corners lets the
+	# rasteriser interpolate between them, and the transition arrives as one.
+	#
+	# ONLY the region palette varies per corner. The height blend and the
+	# scorch pooling still come from the triangle CENTRE, so they stay flat per
+	# face — sampling those per corner too would smooth-shade the whole
+	# terrain and quietly undo the deliberate low-poly look (measured: it took
+	# the largest within-triangle colour spread from ~0.03 to 0.20, everywhere,
+	# not just at boundaries). Inside a region all three corners resolve to the
+	# same palette AND the same shading, so those triangles stay exactly as
+	# they were; only the boundary bands gain a gradient.
+	#
 	# Godot front faces wind CLOCKWISE (not the right-hand-rule order the
 	# args are given in) — emit a, c, b so the face points UP. Downward faces
 	# render inside-out and are pass-through for raycasts and half-solid for
 	# bodies (the v0.1.x sink/bump bugs).
+	var centre := (a + b + c) / 3.0
 	for v: Vector3 in [a, c, b]:
+		st.set_color(_ground_color(centre, v))
 		st.add_vertex(v)
 
-func _ground_color(at: Vector3) -> Color:
-	# Height blend ash -> rock, scorched patches from tint noise.
-	var t := clampf(inverse_lerp(-HEIGHT_AMP, HEIGHT_AMP, at.y), 0.0, 1.0)
-	var c := COL_ASH.lerp(COL_ROCK, t)
-	var scorch := _tint.get_noise_2d(at.x, at.z)
+## `shade` decides the height blend and the scorch pooling; `palette_at` decides
+## WHICH ground's colours those are drawn from. They are separate arguments so
+## the caller can hold shading flat across a face (the low-poly look) while
+## letting the region palette vary per corner (a smooth boundary). Callers that
+## want both from one place pass the same vector twice.
+func _ground_color(shade: Vector3, palette_at: Vector3) -> Color:
+	# WHICH ground this is comes first; the layering within it is unchanged —
+	# height blends ash -> rock, tint noise scorches the sheltered lows.
+	var pal := GroundRegions.palette_for(_region_sites, palette_at.x, palette_at.z)
+	var ash: Color = pal[&"ash"]
+	var rock: Color = pal[&"rock"]
+	var t := clampf(inverse_lerp(-HEIGHT_AMP, HEIGHT_AMP, shade.y), 0.0, 1.0)
+	var c := ash.lerp(rock, t)
+	var scorch := _tint.get_noise_2d(shade.x, shade.z)
 	if scorch > 0.35:
-		c = c.lerp(COL_SCORCH, clampf((scorch - 0.35) * 2.5, 0.0, 0.8))
+		var col_scorch: Color = pal[&"scorch"]
+		c = c.lerp(col_scorch, clampf((scorch - 0.35) * 2.5, 0.0, 0.8))
+	# ALPHA CARRIES THE REGION'S ROUGHNESS, biased to 0.5 so the signed offset
+	# survives an unsigned channel. Colour alone would leave every region the
+	# same substance under a different tint — the ground has to answer light
+	# differently too, and the vertex stream already reaches the shader, so no
+	# second material or texture is needed. Nothing reads terrain alpha as
+	# transparency: the shader is opaque and never assigns ALPHA.
+	c.a = 0.5 + float(pal[&"rough"])
 	return c
+
+
+## The name of the region a place stands on. The frame-capture tool writes it
+## beside every surface frame, so the evidence says WHICH ground it photographed
+## rather than leaving a reviewer to derive it.
+func region_name_at(x: float, z: float) -> StringName:
+	var at := GroundRegions.region_for(_region_sites, x, z)
+	var region: Dictionary = GroundRegions.REGIONS[at[&"region"]]
+	return region[&"name"]
 
 ## Where a new wanderer wakes: on the main chamber's floor, deep in the
 ## system, torches leading up toward the mouth.
