@@ -39,6 +39,12 @@
 # not exist, whose `find` errors read as "no assets here" — an evasion that
 # exits 0.
 #
+# SCOPE: files TRACKED BY GIT, not the working tree. The question this guard
+# answers is what enters the repository and ships from it, and the working tree
+# also holds Godot's local import cache (client/.godot/), which is generated,
+# ignored, and full of binary .ctex/.scn — scanning it would fail every run for
+# files that are not in the repository at all.
+#
 # Usage: tools/provenance-guard.sh [client-root]   (default: client)
 
 set -euo pipefail
@@ -51,13 +57,30 @@ if [ ! -d "$CLIENT_ROOT" ]; then
 	exit 0
 fi
 
-# A file is binary if it contains a NUL byte. Portable across GNU and BSD:
-# compare the byte count with and without NULs rather than relying on a grep
-# flag that differs between the two.
+# A file counts as TEXT only if it is valid UTF-8 and carries no control bytes
+# beyond tab, newline and carriage return. Anything else is binary.
+#
+# Testing for a NUL byte alone was not enough: a binary stream that happens to
+# contain no 0x00 would pass, and R1 would be fail-open for exactly the file
+# someone motivated would choose. Two independent tests close that — a real
+# asset format has to survive BOTH to masquerade as text.
+#
+# The control-byte check is deliberately restricted to the C0 range and DEL
+# rather than "anything not printable": under LC_ALL=C every byte of a
+# multi-byte UTF-8 character is non-printable, so the broader test would call
+# every source file in this repo binary (they are full of em dashes).
 is_binary() {
-	local file="$1" total stripped
+	local file="$1"
+	local total stripped
+	# Invalid UTF-8 → binary. Catches the NUL-free binary formats.
+	iconv -f UTF-8 -t UTF-8 <"$file" >/dev/null 2>&1 || return 0
+	# C0 controls (minus tab/LF/CR) and DEL → binary; catches NUL directly.
+	# Octal ranges through `tr`, NOT a grep bracket expression: BSD grep
+	# rejects \xNN ranges outright ("invalid character range"), and a
+	# [:print:] test would call every source file here binary because under
+	# LC_ALL=C each byte of a multi-byte UTF-8 character is non-printable.
 	total=$(wc -c <"$file")
-	stripped=$(LC_ALL=C tr -d '\000' <"$file" | wc -c)
+	stripped=$(LC_ALL=C tr -d '\000-\010\013\014\016-\037\177' <"$file" | wc -c)
 	[ "$total" -ne "$stripped" ]
 }
 
@@ -71,9 +94,14 @@ covered_by_provenance() {
 	while :; do
 		[ -f "$candidate/PROVENANCE.md" ] && return 0
 		[ "$candidate" = "$ASSET_ROOT" ] && return 1
-		parent="$(dirname "$candidate")"
+		# Parameter expansion, NOT $(dirname ...): command substitution strips
+		# trailing newlines, so an ancestor whose name ends in one would be
+		# rewritten to a DIFFERENT existing directory and its PROVENANCE.md
+		# would be credited to a path it does not cover.
+		parent="${candidate%/*}"
 		# Defensive: never walk out past the asset root.
 		[ "$parent" = "$candidate" ] && return 1
+		[ -n "$parent" ] || return 1
 		candidate="$parent"
 	done
 }
@@ -90,7 +118,7 @@ while IFS= read -r -d '' file; do
 	if is_binary "$file"; then
 		stray+=("$file")
 	fi
-done < <(find "$CLIENT_ROOT" -type f -print0)
+done < <(git -C . ls-files -z -- "$CLIENT_ROOT")
 
 # R2 — asset directories without a covering PROVENANCE.md.
 if [ -d "$ASSET_ROOT" ]; then
