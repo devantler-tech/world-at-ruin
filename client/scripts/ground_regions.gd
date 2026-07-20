@@ -45,10 +45,37 @@ const JITTER := 0.34
 ## matching the layers `_ground_color` already blends: ash on the flats, rock
 ## where height exposes it, scorch in the sheltered lows.
 ##
-## They differ in HUE and in VALUE, not just brightness — the art direction is
-## explicit that value alone separating a scene is what makes it read flat.
-## They stay inside the world's register: this is a burned world, so nothing
-## here is saturated or fresh.
+## They stay inside the world's register — this is a burned world, so nothing
+## here is saturated or fresh — but the SEPARATION between them is much wider
+## than it looks on paper, and that is measured rather than taste.
+##
+## The Reach is lit by a low orange sun through heavy haze, and both multiply
+## every surface toward the same warm value. A first pass at this used gentle,
+## tasteful differences (ash values spanning 0.26-0.44 luma) and rendered as
+## ONE uniform ochre wash: the regions were reaching the screen correctly and
+## were still invisible. A control that swapped the palettes for saturated
+## primaries proved the path was sound and the differences merely too small.
+##
+## Two consequences that will outlive these particular numbers:
+##
+##   * SEPARATE BY VALUE FIRST. Hue is what this atmosphere eats. `rustmoor`
+##     is the hardest region to read precisely because ochre sits closest to
+##     the sun's own colour, so it is pitched darker than `ashflats` rather
+##     than merely more orange.
+##   * THIS READS UNDERFOOT, NOT ACROSS THE WORLD — and the atmosphere eats
+##     most of it. Measured against the same cameras on the pre-region build:
+##     standing ON the bonepale moved the frame by 0.034 luma (a 16% relative
+##     change), while looking ACROSS a boundary twenty metres out moved it by
+##     0.013, and the original distance vantages by 0.010 with under half a
+##     degree of hue. The baked vertex colours span a 3.1x luma range
+##     (cinderreach 0.140 to bonepale 0.437), so roughly a THIRD of the
+##     difference reaches the screen; the low sun, the haze and the exposure
+##     take the rest.
+##
+##     That ceiling is not something a palette can fix — pushing the colours
+##     far enough to beat it would leave the world's register entirely. It is
+##     tracked separately, and it bounds what any ground-colour work here can
+##     deliver until it moves.
 const REGIONS: Array[Dictionary] = [
 	{
 		# The baseline Ashfall ground. Unchanged from the pre-region palette,
@@ -60,27 +87,30 @@ const REGIONS: Array[Dictionary] = [
 		&"scorch": Color(0.16, 0.14, 0.13),
 	},
 	{
-		# Where the burn sat longest: darker, and warm rather than neutral.
+		# Where the burn sat longest: much darker, and warm rather than neutral.
 		&"name": &"cinderreach",
-		&"ash": Color(0.31, 0.245, 0.205),
-		&"rock": Color(0.21, 0.165, 0.145),
-		&"scorch": Color(0.13, 0.095, 0.085),
+		&"ash": Color(0.24, 0.155, 0.125),
+		&"rock": Color(0.15, 0.10, 0.08),
+		&"scorch": Color(0.10, 0.065, 0.05),
 	},
 	{
-		# Ash scoured off down to the pale stone beneath: lighter, and cool
-		# against everything else here.
+		# Ash scoured off down to the pale stone beneath: much lighter, and the
+		# only cool ground in the Reach.
 		&"name": &"bonepale",
-		&"ash": Color(0.46, 0.445, 0.42),
-		&"rock": Color(0.33, 0.325, 0.32),
-		&"scorch": Color(0.21, 0.20, 0.20),
+		&"ash": Color(0.55, 0.545, 0.525),
+		&"rock": Color(0.35, 0.345, 0.33),
+		&"scorch": Color(0.23, 0.23, 0.22),
 	},
 	{
-		# Ground stained by the inherited machines rusting into it — ochre,
-		# the one region whose colour the world did not make itself.
+		# Ground stained by the inherited machines rusting into it — ochre, the
+		# one colour the world did not make itself. Ochre sits close to this
+		# world's sun, so hue alone cannot carry it (measured — see the note on
+		# separation below): it is pitched DARKER than the ashflats so value
+		# does the separating.
 		&"name": &"rustmoor",
-		&"ash": Color(0.40, 0.32, 0.22),
-		&"rock": Color(0.27, 0.205, 0.14),
-		&"scorch": Color(0.17, 0.13, 0.10),
+		&"ash": Color(0.42, 0.275, 0.135),
+		&"rock": Color(0.27, 0.175, 0.085),
+		&"scorch": Color(0.18, 0.115, 0.055),
 	},
 ]
 

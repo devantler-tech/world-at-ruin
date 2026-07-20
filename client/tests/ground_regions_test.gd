@@ -26,7 +26,7 @@ const EXTENT := 220.0
 ## Recorded from a headless run; regenerate deliberately by setting this to
 ## "__RECORD__", running the test and committing the printed value. A change
 ## here means the ground people walk on changed, which is a reviewed act.
-const GOLDEN_REGION_FIELD := "__RECORD__"
+const GOLDEN_REGION_FIELD := "9922addd"
 
 var _failures: Array[String] = []
 

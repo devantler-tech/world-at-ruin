@@ -35,6 +35,19 @@ const VANTAGES: Array = [
 	# Close on the shrine: near-field material and surface detail, where flat
 	# untextured materials are most obvious.
 	["shrine", Vector3(17.0, 4.5, 17.0), Vector3(0.0, 2.0, 0.0)],
+	# Standing ON the pale stone country, west of the shrine. Every other
+	# vantage was chosen before the ground had regions and none of them can
+	# evidence one: they frame mostly ashflats, and catch a second region only
+	# far off, where the haze has already flattened it.
+	#
+	# Near-field on purpose, and that is measured rather than assumed. Against
+	# the same camera on the pre-region build, a vantage looking ACROSS a
+	# boundary twenty metres out moved the frame by 0.013 luma; standing on the
+	# far ground moved it by 0.034. The ground palette survives underfoot and
+	# is largely gone by mid-distance — see [GroundRegions] for the numbers and
+	# for what swallows the rest. A frame that cannot show the thing it is
+	# evidence for is worse than no frame.
+	["bonepale", Vector3(-58.0, 5.5, 2.0), Vector3(-72.0, 1.0, -4.0)],
 ]
 
 ## Frames to let the world build before the first shot (generation is synchronous
