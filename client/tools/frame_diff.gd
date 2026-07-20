@@ -40,40 +40,45 @@ extends Node
 ## animated torches all move pixels — so the floor has to clear that drift
 ## without swallowing a real change.
 ##
-## Measured three ways. "Back-to-back" is two runs in one session off one
-## checkout. "Across builds" is a base worktree vs this branch — what CI
-## actually does — taken both locally and on the runner. "Fog on" switches the
-## hollow fog on: a LOCALIZED volumetric change of the class #231 was filed
-## about.
+## Measured three ways, ALL RE-TAKEN after the metric became chroma-aware (the
+## earlier luma-only figures are not comparable and have been dropped).
+## "Back-to-back" is two runs in one session off one checkout. "Across builds"
+## is a base worktree vs this branch — what CI actually does. "Fog on" switches
+## the hollow fog on: a LOCALIZED volumetric change of the class #231 names.
 ##
-##   vantage        back-to-back    across builds (local / CI)    fog on
-##   sunward               0.01%       0.02%  /  0.06%           21.01%
-##   crossfield            0.03%       0.09%  /  0.03%            0.04%  <- fog not in view
-##   shrine                0.03%       0.78%  /  0.37%            2.69%
-##   cave-chamber          0.01%       7.01%  /  5.72%            4.19%
-##   cave-walkout          9.05%      11.40%  / 25.20%           25.02%
+##   vantage        back-to-back    across builds    fog on
+##   sunward               0.02%           0.02%     22.57%
+##   crossfield            0.04%           0.17%      0.05%   <- fog not in view
+##   shrine                0.03%           3.03%      2.81%
+##   cave-chamber          0.58%          31.18%     25.09%
+##   cave-walkout         35.66%          33.57%     44.60%
 ##
-## Three things in that table matter more than the epsilon itself.
+## Four things in that table matter more than the epsilon itself.
 ##
 ## First, crossfield is a natural control: the fog is not in that view, so it
-## stays at the floor while four other vantages move. The report localizes a
-## change to the views that contain it.
+## holds at the floor while other vantages move. The report localizes a change
+## to the views that actually contain it.
 ##
-## Second — and this CORRECTS a reading taken from the back-to-back column
-## alone — the torch-lit cave vantages have a floor of roughly 5%-25%, not the
-## 0.01% a back-to-back pair suggests. Two runs in one session land on the same
-## torch animation phase and understate the drift by orders of magnitude, while
-## the across-builds figures agree within their own spread on two different
-## machines. Never calibrate a floor like this from repeated runs of ONE build.
+## Second, never calibrate a floor from BACK-TO-BACK runs of one build. Two runs
+## in one session land on the same torch animation phase: cave-chamber reads
+## 0.58% back-to-back and 31.18% across independent builds. Comparing separate
+## builds is the honest measurement because it is what CI performs.
 ##
-## Third, cave-chamber's across-builds floor (5.72%-7.01%) is LARGER than the
-## real change the fog makes in that same view (4.19%). A threshold there would
-## be pure noise. So: this slice reports rather than judges, and any future gate
-## has to be per-vantage, calibrated on CI rather than a workstation, and would
-## start with the daylight vantages — sunward, crossfield and shrine all sit
-## under 1% across builds. The numbers are comparable for the SAME vantage
-## across builds, which is the comparison a reviewer makes; they are not
-## comparable between vantages.
+## Third — and this is the cost of seeing hue at all — the torch-lit vantages
+## are NOISE-DOMINATED. cave-chamber's across-builds floor (31.18%) EXCEEDS the
+## real change the fog makes in that same view (25.09%), and shrine's floor
+## (3.03%) exceeds its own signal (2.81%). Animated torch light genuinely
+## recolours those frames between any two renders, and a chroma-aware metric is
+## right to say so; no metric can separate "the torch moved" from "the art
+## changed" when both recolour the same pixels. The luma-only metric looked
+## calmer here only because it was blind to the colour change it was measuring.
+##
+## Fourth, therefore: this slice REPORTS and does not judge, and only sunward
+## and crossfield are candidates for a future gate — they hold at 0.02%-0.17%
+## across builds while sunward moves 22.57% on a real change, a separation of
+## three orders of magnitude. Any gate must be per-vantage and calibrated on CI.
+## The numbers are comparable for the SAME vantage across builds, which is the
+## comparison a reviewer makes; they are not comparable between vantages.
 const CHANGED_EPS := 0.01
 
 ## NOTE: deliberately no luminance weights here. An earlier revision measured
