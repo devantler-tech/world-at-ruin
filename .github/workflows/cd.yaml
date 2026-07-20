@@ -215,7 +215,33 @@ jobs:
           # Fail loudly and EARLY if the release is already published: under
           # immutable releases the upload below cannot succeed, and a clear
           # message here beats a bare `HTTP 422` from the upload.
-          if [ "$(gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json isDraft --jq '.isDraft')" != "true" ]; then
+          #
+          # Read the draft state into a variable FIRST rather than testing the
+          # command substitution inline. Inline, a failed `gh release view` —
+          # a 503 is the very failure this step is being hardened against —
+          # substitutes the empty string, which is not "true", so the guard
+          # would announce "already published" for a release that is still a
+          # perfectly good draft. That is both a false strand and a misleading
+          # error: it points whoever reads it at the immutable-release rule
+          # instead of at the transient it actually was.
+          #
+          # So this query gets the same retry treatment as the upload below,
+          # and only a definitive answer is allowed to decide anything.
+          IS_DRAFT=""
+          for attempt in 1 2 3; do
+            if IS_DRAFT="$(gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json isDraft --jq '.isDraft')"; then
+              break
+            fi
+            IS_DRAFT=""
+            [ "${attempt}" -lt 3 ] && sleep 5
+          done
+
+          if [ -z "${IS_DRAFT}" ]; then
+            echo "::error::could not read the draft state of ${TAG} after 3 attempts. Nothing was published; ${TAG} is unchanged. This is a failed API call, NOT a published release — re-run this workflow."
+            exit 1
+          fi
+
+          if [ "${IS_DRAFT}" != "true" ]; then
             echo "::error::${TAG} is already published — assets cannot be attached to an immutable release. The release must still be a draft when CD runs (see .releaserc draftRelease)."
             exit 1
           fi
