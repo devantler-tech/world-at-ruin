@@ -45,15 +45,20 @@ const SAMPLE_STEP := 0.5
 ## unchanged: above this a surface stops being floor and becomes wall.
 const FLOOR_MAX_ANGLE_DEG := 45.0
 
-## The worst grade the open ground may reach, in degrees.
+## The worst grade the open ground may reach, in degrees. A RATCHET, not a
+## safety margin.
 ##
 ## Measured at `SAMPLE_STEP` on the shipped seed, away from the massif: the
-## PRE-landform world already reached **44.42** degrees, and this build reaches
-## **43.00** — the landform axis leaves the open ground slightly gentler than it
-## found it, because every region other than `ashflats` is flatter than the
-## baseline. The threshold sits above the current measurement and below the
-## floor limit, so it catches a regression that spends the headroom the
-## baseline never had.
+## PRE-landform world already reached **44.42** degrees against a 45 degree
+## floor limit, and this build reaches **43.00** — the landform axis leaves the
+## open ground gentler than it found it, because every region other than
+## `ashflats` is flatter than the baseline.
+##
+## The bar is therefore set just above THIS build rather than just under the
+## floor limit, and that is deliberate: the pre-landform world would NOT pass it.
+## Walkability was already a near miss here, so a threshold at 44.9 would licence
+## spending 1.9 degrees of headroom the world never had. Ratchet it down as the
+## ground gets gentler; never up to accommodate a re-tune.
 const MAX_GRADE_DEG := 44.0
 
 ## The massif's buried skirt is DELIBERATELY a cliff — the heightfield cannot

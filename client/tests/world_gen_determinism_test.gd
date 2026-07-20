@@ -76,7 +76,20 @@ const HALF := WorldGen.SIZE / 2.0
 ## quad-diagonal crossings on its edges. Worst residual float: 0 mm. Only the
 ## pieces' Y moves — the placement rng stream is untouched, which the
 ## global-RNG-invariance assertion above confirms independently.
-const GOLDEN_FINGERPRINT := "65f927d"
+## v0.20.0 (#316): the ground's four regions now differ in SHAPE as well as in
+## colour — each carries a landform (how tall its relief stands, and whether it
+## creases into spines or rolls), blended through the same weights the palette
+## already uses. The whole heightfield outside fully-decided `ashflats` moves,
+## so this is the widest golden change since the world was first built, and it
+## moves for a reason no assertion here can judge: `region_landform_test` is
+## what pins the direction, and it fails loudly if the axis is ever flattened
+## back out. What DOES belong here: `ashflats` is the identity landform, so the
+## shrine's ground is unchanged; the placement rng stream is untouched (the
+## global-RNG-invariance assertion above confirms it independently); and the
+## surface-node-exact and ruin-clearance arms still pass unchanged, which is how
+## the #282 footprint seating is shown to have followed the new ground rather
+## than been invalidated by it.
+const GOLDEN_FINGERPRINT := "7213a02a"
 
 
 
