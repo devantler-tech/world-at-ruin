@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tools/frame_diff.gd" id="1_framediff"]
+
+[node name="FrameDiff" type="Node"]
+script = ExtResource("1_framediff")
