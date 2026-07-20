@@ -11,13 +11,24 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
-		"version": "0.16.0",
+		"version": "0.17.0",
 		"date": "2026-07-20",
 		"title": "Someone cut these stones",
 		"notes": [
 			"Every ruin and every stone of the shrine used to be the same flat grey — one colour, the same all over, on every column and every fallen block in the world. Two ruins an entire field apart were the same shade as each other, and the low sun did nothing to any of them however you stood.",
 			"They are made of blocks now. You can see the courses stacked up a column and the joints between them, laid in the offset pattern a wall actually goes together in, and each block is its own stone — slightly its own colour, slightly its own wear. The joints sit back in shadow, knocked-about corners catch the light, and ash gathers on anything facing the sky. Walk around a monolith at the shrine and the light rakes across the courses instead of sliding over a flat face.",
 			"This is the masonry only. The ground and the cave rock were given this treatment already; the ruins had been left behind, which is much of why they read as props set down on the world rather than as something that was built here and then fell. Still to come: the blocks are one size everywhere, so a huge lintel is coursed like a small one, and nothing is cracked or broken at its edges yet.",
+		],
+	},
+	{
+		"version": "0.16.0",
+		"date": "2026-07-20",
+		"title": "The creator asks who you are, not what your numbers are",
+		"notes": [
+			"The first screen used to open on thirty-five identical grey sliders with names like torso_vshape, and you had to work out for yourself which ones made a person. Now it opens on the four wanderers themselves — each one named, each with a line telling you what it is — and you pick the one you want to be. What you are wearing and what skin you have sit right below, as choices with names.",
+			"The sliders have not gone anywhere. They are folded into an 'advanced — fine shaping' section at the bottom, sorted into archetype, heritage, torso, limbs, face and frame, so if you do want to shape a jaw you get a structure instead of a wall. Nothing you could make before has been taken away.",
+			"The whole panel is also drawn on purpose now rather than in the engine's default grey: every slider shows how far along it is at a glance, and whatever you have selected carries a lit edge — which matters if you are playing on a pad and cannot point at things.",
+			"This is still a long way from where the interface needs to end up. The panel is a plain rectangle with no material to it, the type is the engine's own, and your wanderer stands in the world rather than being framed and lit for a portrait. Those are next.",
 		],
 	},
 	{
