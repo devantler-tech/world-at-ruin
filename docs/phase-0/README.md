@@ -92,10 +92,14 @@ cp client/recipes/wanderer.json /tmp/probe_save.json
 # save_png if the directory is missing, which is why CI runs mkdir -p too.
 mkdir -p /tmp/shots /tmp/shots-char
 
-WAR_SHOT_DIR=/tmp/shots WAR_SAVE_PATH=/tmp/probe_save.json \
+# Redirect the vault as well as the save: the capture boots the real launch
+# path, so an unredirected run writes your played progression (#309).
+WAR_SHOT_DIR=/tmp/shots \
+  WAR_SAVE_PATH=/tmp/probe_save.json WAR_VAULT_PATH=/tmp/probe_vault.json \
   godot --path client res://tools/frame_capture.tscn          # cave-*.png
 
-WAR_SCENARIO=first_run WAR_SHOT_DIR=/tmp/shots-char WAR_SAVE_PATH=/tmp/no_such_save.json \
+WAR_SCENARIO=first_run WAR_SHOT_DIR=/tmp/shots-char \
+  WAR_SAVE_PATH=/tmp/no_such_save.json WAR_VAULT_PATH=/tmp/no_such_vault.json \
   godot --path client res://tools/frame_capture.tscn          # first_run*.png
 ```
 

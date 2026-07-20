@@ -36,6 +36,17 @@ const TESTS_DIR := "res://tests"
 ## The scene whose instantiation demands isolation.
 const MAIN_SCENE := "res://scenes/main.tscn"
 
+## What is actually matched: the BARE filename, not the full path.
+##
+## Deliberately the loosest token that still means "this file boots the scene",
+## for two reasons. It catches every spelling — `load(...)`, `preload(...)`, a
+## path assembled from a constant — where matching the full path only catches
+## the one spelling in use today. And it is what makes stripping comments
+## load-bearing: the doc comments in this repo write the bare `main.tscn`, so a
+## guard matching the full path would ignore prose by accident rather than by
+## design, and [constant COMMENT_ONLY_CONTROL] would pass while proving nothing.
+const SCENE_TOKEN := "main.tscn"
+
 ## Booting through the helper. A harness that uses it never names the scene at
 ## all — that is the point — so this is the second way a file counts as a booter.
 const HELPER := "IsolatedBoot"
@@ -80,7 +91,7 @@ func _ready() -> void:
 		# Two ways to boot: name the scene and load it yourself, or go through
 		# the helper (which names it for you). Both count; only the first can
 		# be unisolated, because the helper cannot hand back an unisolated scene.
-		var names_scene := code.contains(MAIN_SCENE)
+		var names_scene := code.contains(SCENE_TOKEN)
 		var uses_helper := code.contains(HELPER)
 		if not names_scene and not uses_helper:
 			continue
@@ -108,11 +119,11 @@ func _ready() -> void:
 			+ "distinction stops being tested") % COMMENT_ONLY_CONTROL)
 		return
 	var control := _read(TESTS_DIR + "/" + COMMENT_ONLY_CONTROL)
-	if not control.contains(MAIN_SCENE.get_file()):
+	if not control.contains(SCENE_TOKEN):
 		_fail(("the control %s no longer mentions the main scene at all, so it cannot prove the "
 			+ "guard ignores prose — repoint COMMENT_ONLY_CONTROL") % COMMENT_ONLY_CONTROL)
 		return
-	if _code_of(control).contains(MAIN_SCENE):
+	if _code_of(control).contains(SCENE_TOKEN):
 		_fail(("the control %s reads as a booter — it should mention the main scene only in a "
 			+ "comment; either it now really boots the scene, or comment stripping has regressed")
 			% COMMENT_ONLY_CONTROL)

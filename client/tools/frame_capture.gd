@@ -9,19 +9,25 @@ extends Node
 ## artifact.
 ##
 ## Run (must be WINDOWED — a headless run renders nothing at all):
-##   WAR_SHOT_DIR=/tmp/shots WAR_SAVE_PATH=/tmp/probe_save.json \
+##   WAR_SHOT_DIR=/tmp/shots \
+##     WAR_SAVE_PATH=/tmp/probe_save.json WAR_VAULT_PATH=/tmp/probe_vault.json \
 ##     godot --path client --resolution 1600x900 res://tools/frame_capture.tscn
 ##
 ## Against the EXPORTED client the scene argument is unavailable — the official
 ## export template refuses positional scene paths (compiled with
 ## disable_path_overrides) — so main.gd carries a WAR_CAPTURE=1 boot redirect
 ## into this scene instead:
-##   WAR_CAPTURE=1 WAR_SHOT_DIR=/tmp/shots WAR_SAVE_PATH=/tmp/probe_save.json \
+##   WAR_CAPTURE=1 WAR_SHOT_DIR=/tmp/shots \
+##     WAR_SAVE_PATH=/tmp/probe_save.json WAR_VAULT_PATH=/tmp/probe_vault.json \
 ##     "World at Ruin.app/Contents/MacOS/World at Ruin"
 ##
-## Point WAR_SAVE_PATH at a throwaway COPY of a character recipe: with no save
-## present the first-run creator opens and its panel covers a third of the frame,
-## and with the real path a capture would touch the player's own save.
+## Redirect EVERY save seam, not just the character file. This tool boots the
+## real launch path, so an unredirected run writes the player's own progression
+## vault as well as their save (#309) — the boot tests get this from
+## IsolatedBoot, but this tool is invoked by hand and by CI, so it is on the
+## caller. Point WAR_SAVE_PATH at a throwaway COPY of a character recipe: with
+## no save present the first-run creator opens and its panel covers a third of
+## the frame, and with the real path a capture would touch the player's own save.
 
 ## The committed vantages. Fixed on purpose — evidence is only comparable across
 ## commits if the camera does not move between them. Each is [name, eye, target].
