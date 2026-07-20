@@ -61,6 +61,56 @@ jobs:
             echo "::error::Shipped version(s) removed from $LEDGER ($(echo "$removed" | tr '\n' ' ')) — shipped saves are never disposable (no-resets law)"
             exit 1
           fi
+      - name: Save-capability ledger is append-only (no-resets law)
+        # update_manifest_test anchors SAVE_CAPABILITY_WRITES to this ledger, but
+        # both live in the same checkout: one change can lower the constant AND
+        # delete the matching lines, and every in-repo check still passes because
+        # the ledger's newest entry falls with it. That test is also in the
+        # auto-discovered suite, so `ci-skip.txt` can silence it. CI is therefore
+        # the only immutable anchor — against the BASE commit, lines may only be
+        # added. A removed capability is a build claiming to write less than it
+        # already has, which strands the vaults that hold it.
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          LEDGER=client/tests/data/shipped_save_capability.txt
+          if [ ! -f "$LEDGER" ]; then
+            echo "::error::$LEDGER was deleted — the forward-only capability ledger must exist"
+            exit 1
+          fi
+          if ! git cat-file -e "$BASE_SHA" 2>/dev/null; then
+            echo "::error::base commit $BASE_SHA not present in the checkout — cannot verify the ledger"
+            exit 1
+          fi
+          # Parsed integer sets, not raw diff lines — matching the runtime guard,
+          # which strips whitespace, so an indented entry is a real capability
+          # whose deletion a line-anchored grep would miss.
+          extract='s/^[[:space:]]*\([0-9][0-9]*\)[[:space:]]*$/\1/p'
+          # Distinguish "absent on base" from "read failed", following the vault
+          # ledger below. Absent is legitimate exactly once — the commit that
+          # INTRODUCES the ledger — and means an empty base set. Any OTHER read
+          # failure must abort: an empty base makes `comm -23` report nothing
+          # removed, so swallowing the error would wave through the very deletion
+          # this step exists to catch.
+          if git cat-file -e "$BASE_SHA:$LEDGER" 2>/dev/null; then
+            # Materialise git show FIRST and test its own status, rather than a
+            # pipeline whose status is sed's or sort's.
+            if ! git show "$BASE_SHA:$LEDGER" > /tmp/cap-base-raw; then
+              echo "::error::could not read $LEDGER at $BASE_SHA — refusing to compare against an empty base"
+              exit 1
+            fi
+            sed -n "$extract" /tmp/cap-base-raw | sort -un > /tmp/cap-base
+          else
+            echo "::notice::$LEDGER does not exist at the base revision — treating the base set as empty (this is the commit that introduces it)"
+            : > /tmp/cap-base
+          fi
+          sed -n "$extract" "$LEDGER" | sort -un > /tmp/cap-head
+          removed=$(comm -23 /tmp/cap-base /tmp/cap-head)
+          if [ -n "$removed" ]; then
+            echo "::error::Shipped capability/capabilities removed from $LEDGER ($(echo "$removed" | tr '\n' ' ')) — a build may never write less than it already has (no-resets law)"
+            exit 1
+          fi
       - name: Vault ledger is append-only (no-resets law)
         # The progression sibling of the recipe ledger above (#249). Same
         # reasoning: the in-game guard anchors the required vault-fixture range
@@ -147,6 +197,58 @@ jobs:
           removed=$(comm -23 /tmp/attune-base /tmp/attune-head)
           if [ -n "$removed" ]; then
             echo "::error::Shipped attunement name(s) removed from $LEDGER ($(echo "$removed" | tr '\n' ' ')) — players attuned there would wake in the cave forever (no-resets law)"
+            exit 1
+          fi
+      - name: Wire protocol may not move without a two-phase rollout
+        # The manifest publishes the CLIENT's protocol constant as the range the
+        # LIVE SERVER accepts, which is honest only while both sides are pinned to
+        # one version. update_manifest_test asserts the two constants are EQUAL —
+        # but equality survives bumping BOTH in one change, and that is precisely
+        # the unsafe rollout: whichever side deploys first strands the other
+        # population (a v2 client rejects the live v1 server's frames; a v2 server
+        # makes every retained v1 client unreachable).
+        #
+        # The ADR requires expand-then-contract instead, and that needs the
+        # manifest's accepted range to become a CD-supplied input read from
+        # deployment state — work that does not exist yet. So movement itself is
+        # the gate: this fails on ANY change to either constant, and the fix is to
+        # do the rollout design, not to edit this step.
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          if ! git cat-file -e "$BASE_SHA" 2>/dev/null; then
+            echo "::error::base commit $BASE_SHA not present in the checkout — cannot verify the protocol version"
+            exit 1
+          fi
+          client_pat='s/^[[:space:]]*const VERSION[[:space:]]*:=[[:space:]]*\([0-9][0-9]*\).*$/\1/p'
+          server_pat='s/^[[:space:]]*const Version uint16[[:space:]]*=[[:space:]]*\([0-9][0-9]*\).*$/\1/p'
+          # Materialise each read FIRST and test its own status, following the
+          # ledger steps above: a pipeline's status is sed's or head's, so a
+          # failed read would yield an empty value and be reported as an
+          # unparseable constant rather than the read failure it is.
+          read_at() {
+            if ! git show "$1:$2" > /tmp/proto-raw 2>/dev/null; then
+              echo "::error::could not read $2 at $1 — the guard cannot verify a rollout it cannot read"
+              exit 1
+            fi
+            sed -n "$3" /tmp/proto-raw | head -1
+          }
+          cb=$(read_at "$BASE_SHA" client/scripts/wire_codec.gd "$client_pat")
+          sb=$(read_at "$BASE_SHA" server/wire/wire.go "$server_pat")
+          ch=$(sed -n "$client_pat" client/scripts/wire_codec.gd | head -1)
+          sh=$(sed -n "$server_pat" server/wire/wire.go | head -1)
+          # Fail closed: an unreadable constant means the guard cannot prove
+          # anything, and silently passing is how a guard becomes decoration.
+          for pair in "base-client:$cb" "base-server:$sb" "head-client:$ch" "head-server:$sh"; do
+            name=${pair%%:*}; val=${pair##*:}
+            if [ -z "$val" ]; then
+              echo "::error::could not read the $name protocol version — the guard cannot verify a rollout it cannot parse"
+              exit 1
+            fi
+          done
+          if [ "$ch" != "$cb" ] || [ "$sh" != "$sb" ]; then
+            echo "::error::Wire protocol moved (client $cb→$ch, server $sb→$sh). Both codecs hard-reject every other version, so a simultaneous bump strands whichever population deploys second. The ADR requires expand-then-contract, and the manifest's accepted protocol range must first become a CD-supplied input read from deployment state — see docs/design/distribution-and-self-update.md."
             exit 1
           fi
       - name: Piece-slot ledger is append-only (no-resets law)
