@@ -1248,7 +1248,13 @@ jobs:
             echo "::error::no VOLUMETRICS verdict in the capture log — cannot tell whether these frames depict the volumetric path or the fallback (see Volumetrics.marker and client/tests/volumetrics_test.gd)"
             exit 1
           fi
-          probe="$(grep -oE '^VOLUMETRICS (on|off)' capture.log | head -1 | awk '{print $2}')"
+          # SAME expression as the detection above, boundary included. Dropping
+          # the boundary here would let a line like "VOLUMETRICS onward …"
+          # yield `on` while the real verdict below it is `off` — detection
+          # would still pass (a valid line exists), head -1 would take the
+          # decoy, and the step would silently INVERT the verdict and suppress
+          # its own warning. Proven with a two-line fixture before fixing.
+          probe="$(grep -oE '^VOLUMETRICS (on|off)([[:space:]]|$)' capture.log | head -1 | awk '{print $2}')"
           echo "volumetric fog path: ${probe}"
 
           # Travels INSIDE the artifact, beside the PNGs, so a reviewer who
