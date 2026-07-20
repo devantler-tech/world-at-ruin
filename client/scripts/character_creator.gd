@@ -71,6 +71,7 @@ var _bone_sliders := {}
 var _outfit_pickers := {}
 var _skin_picker: OptionButton
 var _sections: Array[Button] = []
+var _portraits: Array[ArchetypePortrait] = []
 var _camera: Camera3D
 var _light: DirectionalLight3D
 var _syncing := false
@@ -101,6 +102,22 @@ func _process(_delta: float) -> void:
 	if _camera != null and _player != null:
 		var eye := _player.global_position + Vector3(0, 1.0, 0)
 		_camera.look_at(eye, Vector3.UP)
+	realize_next_portrait()
+
+
+## Builds ONE archetype portrait's body, if any still needs it. Called once per
+## frame rather than building the whole roster in `open()`, because a character
+## build is the expensive part and four of them in the frame the creator opens
+## is exactly the stall the screen must not have. The roster fills in over the
+## first few frames instead; every portrait is a backdrop until its turn.
+##
+## Returns the portrait it built, or null when the roster is complete.
+func realize_next_portrait() -> ArchetypePortrait:
+	var portrait := ArchetypePortrait.next_unrealized(_portraits)
+	if portrait == null:
+		return null
+	portrait.realize()
+	return portrait
 
 
 func _build_portrait_rig() -> void:
@@ -161,15 +178,36 @@ func _build_panel() -> void:
 	# art direction is explicit that thirty-plus programmer-named sliders as the
 	# primary surface is a developer inspector (docs/art-direction/README.md,
 	# "UI and UX"), so the numeric controls live behind ADVANCED below.
+	# Each archetype is a rendered portrait beside its name and blurb. A text
+	# roster asks the player to imagine each option and lets them inspect only
+	# the one body currently on screen; portraits make the four comparable at a
+	# glance, which is the actual function of a character-choice surface (#293).
 	var first_preset: Button = null
 	for preset_name in PRESETS:
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 8)
+		column.add_child(row)
+
+		var portrait := ArchetypePortrait.new()
+		row.add_child(portrait)
+		portrait.setup(preset_name)
+		_portraits.append(portrait)
+
+		var text_column := VBoxContainer.new()
+		text_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		text_column.add_theme_constant_override("separation", 2)
+		row.add_child(text_column)
+
+		# The Button stays the focusable element and stays inside the container
+		# layout, so the automatic focus neighbours a pad depends on are
+		# unchanged by the portrait sitting next to it (controller_input_test).
 		var choice := Button.new()
 		choice.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		choice.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		choice.text = String(preset_name).to_upper()
 		choice.add_theme_font_size_override("font_size", UiTheme.FONT_SECTION)
 		choice.pressed.connect(_on_preset.bind(preset_name))
-		column.add_child(choice)
+		text_column.add_child(choice)
 
 		var blurb_text := String(PRESET_BLURBS.get(preset_name, ""))
 		if blurb_text != "":
@@ -177,7 +215,7 @@ func _build_panel() -> void:
 			caption.text = blurb_text
 			caption.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 			caption.add_theme_color_override("font_color", COL_DIM)
-			column.add_child(caption)
+			text_column.add_child(caption)
 
 		if first_preset == null:
 			first_preset = choice

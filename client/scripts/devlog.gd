@@ -11,6 +11,17 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
+		"version": "0.20.0",
+		"date": "2026-07-20",
+		"title": "You can see the four bodies before you choose one",
+		"notes": [
+			"Choosing an archetype used to mean reading four names with a line of description each, picking one, and only then seeing what you got. One body existed on screen at a time, so comparing the wanderer against the brute meant choosing one, looking, choosing the other, and trying to remember the first.",
+			"Each archetype now shows its own portrait beside its name — head and shoulders, lit and framed the same way — so the four sit side by side and you can simply look at them.",
+			"The portraits are drawn from the same recipes the buttons apply, every time the screen opens. There is no saved picture that could drift out of step with the body you would actually get.",
+			"They fill in over the first moments the screen is open rather than all at once, so opening the creator does not stall while four bodies are built.",
+		],
+	},
+	{
 		"version": "0.19.1",
 		"date": "2026-07-20",
 		"title": "The ruins come down into the ground",
