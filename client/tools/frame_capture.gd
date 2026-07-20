@@ -492,6 +492,13 @@ func _capture_first_run(dir: String, main: Node) -> void:
 	if scroll == null:
 		_fail("the creator has no scroll container — the controls below the fold would go unphotographed")
 		return
+	# The shaping controls now sit inside a section that is COLLAPSED by default
+	# (the art direction demotes them below the named choices), so scrolling
+	# alone would photograph a panel that never shows them. Open every section
+	# first: the evidence has to depict the whole surface, including what the
+	# default view folds away.
+	creator.call("expand_all_sections")
+	await get_tree().process_frame
 	scroll.scroll_vertical = int(scroll.get_v_scroll_bar().max_value)
 	await get_tree().process_frame
 	if scroll.scroll_vertical <= 0:

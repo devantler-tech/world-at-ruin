@@ -21,6 +21,16 @@ const COL_EMBER := UiTheme.EMBER
 const PRESET_DIR := "res://recipes/"
 const PRESETS := ["wanderer", "villager", "elder", "brute"]
 
+## What each archetype is, in the player's terms. The recipes carry their own
+## `comment`, but those are written for whoever maintains the kit ("first recipe
+## on the gender/phenotype axes") — not for someone choosing a body.
+const PRESET_BLURBS := {
+	"wanderer": "Heroic but human. You wake in the rags the Ruin left you.",
+	"villager": "An ordinary body for ordinary people — most of the living are these.",
+	"elder": "The village matriarch's silhouette. A woman the Ruin could not kill.",
+	"brute": "Mass, reach, and a head built for headbutting.",
+}
+
 ## How the kit's shape sliders are grouped in the panel, in display order:
 ## section title, then the shape-name prefixes that belong to it. First match
 ## wins, so a shape lands in exactly one section.
@@ -60,6 +70,7 @@ var _shape_sliders := {}
 var _bone_sliders := {}
 var _outfit_pickers := {}
 var _skin_picker: OptionButton
+var _sections: Array[Button] = []
 var _camera: Camera3D
 var _light: DirectionalLight3D
 var _syncing := false
@@ -145,20 +156,37 @@ func _build_panel() -> void:
 	blurb.add_theme_color_override("font_color", COL_DIM)
 	column.add_child(blurb)
 
-	var presets_row := HBoxContainer.new()
-	presets_row.add_theme_constant_override("separation", 8)
-	column.add_child(presets_row)
+	# The archetypes are the PRIMARY surface: named choices with a line saying
+	# what each one is, not a row of terse buttons above a parameter dump. The
+	# art direction is explicit that thirty-plus programmer-named sliders as the
+	# primary surface is a developer inspector (docs/art-direction/README.md,
+	# "UI and UX"), so the numeric controls live behind ADVANCED below.
 	var first_preset: Button = null
 	for preset_name in PRESETS:
-		var b := Button.new()
-		b.text = preset_name
-		b.pressed.connect(_on_preset.bind(preset_name))
-		presets_row.add_child(b)
+		var choice := Button.new()
+		choice.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		choice.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		choice.text = String(preset_name).to_upper()
+		choice.add_theme_font_size_override("font_size", UiTheme.FONT_SECTION)
+		choice.pressed.connect(_on_preset.bind(preset_name))
+		column.add_child(choice)
+
+		var blurb_text := String(PRESET_BLURBS.get(preset_name, ""))
+		if blurb_text != "":
+			var caption := Label.new()
+			caption.text = blurb_text
+			caption.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			caption.add_theme_color_override("font_color", COL_DIM)
+			column.add_child(caption)
+
 		if first_preset == null:
-			first_preset = b
+			first_preset = choice
 
 	var scroll := ScrollContainer.new()
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	# Hugs its own height rather than expanding to fill the rail. Expanding left
+	# a large dead gap between the last control and the Wake button once the
+	# numeric sliders moved behind ADVANCED and the default view got short.
+	scroll.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	scroll.custom_minimum_size = Vector2(330, 380)
 	column.add_child(scroll)
 	var sliders := VBoxContainer.new()
@@ -166,18 +194,24 @@ func _build_panel() -> void:
 	sliders.add_theme_constant_override("separation", 2)
 	scroll.add_child(sliders)
 
-	for group: Array in group_shape_names(_shape_names()):
-		var section := _add_section(sliders, group[0])
-		for shape_name: String in group[1]:
-			_add_shape_slider(section, shape_name)
-	var frame := _add_section(sliders, "FRAME")
-	for spec: Array in BONE_SLIDERS:
-		_add_bone_slider(frame, spec)
+	# Outfit and skin stay on the primary surface: they ARE named choices, which
+	# is what the art direction asks the creator to lead with.
 	var outfit := _add_section(sliders, "OUTFIT")
 	for slot: String in CharacterFactory.equipment_registry().get("slots", []):
 		_add_outfit_picker(outfit, slot)
 	var skin := _add_section(sliders, "SKIN")
 	_add_skin_picker(skin)
+
+	# Everything numeric, folded away by default. Grouped rather than dumped, so
+	# a player who does open it gets a structure instead of 35 identical rows.
+	var advanced := _add_section(sliders, "ADVANCED — fine shaping", false)
+	for group: Array in group_shape_names(_shape_names()):
+		_add_heading(advanced, group[0])
+		for shape_name: String in group[1]:
+			_add_shape_slider(advanced, shape_name)
+	_add_heading(advanced, "FRAME")
+	for spec: Array in BONE_SLIDERS:
+		_add_bone_slider(advanced, spec)
 
 	var buttons := HBoxContainer.new()
 	buttons.add_theme_constant_override("separation", 8)
@@ -243,29 +277,40 @@ static func group_shape_names(names: PackedStringArray) -> Array:
 
 
 ## A named section the player can fold away, returning the container its rows
-## go into. Sections start OPEN: the panel's own capture evidence photographs
-## the controls below the fold by scrolling to the bottom, and a creator that
-## opened folded would have nothing below the fold to photograph (#231). The
-## fold is a player affordance for taming 35 sliders, not a smaller default.
-func _add_section(into: Container, text: String) -> Container:
+## go into. `open` is the section's default state — the numeric-shaping section
+## opens CLOSED, because the art direction requires named choices as the primary
+## surface with sliders demoted to an advanced section.
+func _add_section(into: Container, text: String, open := true) -> Container:
 	var body := VBoxContainer.new()
 	body.add_theme_constant_override("separation", 2)
+	body.visible = open
 
 	var header := Button.new()
 	header.toggle_mode = true
-	header.button_pressed = true
+	header.button_pressed = open
 	header.alignment = HORIZONTAL_ALIGNMENT_LEFT
-	header.text = "▾  " + text
+	header.text = ("▾  " if open else "▸  ") + text
 	header.add_theme_font_size_override("font_size", UiTheme.FONT_SECTION)
 	header.add_theme_color_override("font_color", COL_EMBER)
 	header.add_theme_color_override("font_pressed_color", COL_EMBER)
-	header.toggled.connect(func(open: bool) -> void:
-		body.visible = open
-		header.text = ("▾  " if open else "▸  ") + text)
+	header.toggled.connect(func(is_open: bool) -> void:
+		body.visible = is_open
+		header.text = ("▾  " if is_open else "▸  ") + text)
 	into.add_child(header)
 
 	into.add_child(body)
+	_sections.append(header)
 	return body
+
+
+## Opens every foldable section. The first-run capture evidence photographs the
+## controls below the fold by scrolling to the bottom, and the advanced section
+## is closed by default — so without this the evidence would silently stop
+## depicting the shaping controls entirely (#231). Evidence follows the screen;
+## the screen does not stay wrong to keep the evidence convenient.
+func expand_all_sections() -> void:
+	for header: Button in _sections:
+		header.button_pressed = true
 
 
 func _add_heading(into: Container, text: String) -> void:
