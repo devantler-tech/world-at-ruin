@@ -103,13 +103,18 @@ func _ready() -> void:
 				% [piece_name, LEDGER, SHIPPED_PIECES])
 			return
 
-	# 4. Every ledgered slot is a legal armour slot, so this ledger can never
-	#    disagree with the vocabulary #96 reconciled.
+	# 4. Every ledgered slot is a region the vocabulary #96 reconciled still
+	#    knows: a legal armour slot, or one of the regions #251 declared as
+	#    deliberately armour-free (underwear, jewellery). Armour CONTAINMENT —
+	#    that an armour-LAYER piece only ever sits on an armour slot — is checked
+	#    below, once the layer ledger is in hand, because it is the layer that
+	#    decides which half of the vocabulary a piece owes.
 	for piece_name: String in ledger:
 		var slot: String = ledger[piece_name]
-		if slot not in Armor.SLOTS:
-			_fail("ledgered slot '%s' (piece '%s') is not a legal armour slot %s"
-				% [slot, piece_name, str(Armor.SLOTS)])
+		if slot not in Armor.SLOTS and slot not in CharacterFactory.ACCESSORY_REGIONS:
+			_fail(("ledgered slot '%s' (piece '%s') is neither a legal armour slot %s nor a named " +
+				"accessory region %s")
+				% [slot, piece_name, str(Armor.SLOTS), str(CharacterFactory.ACCESSORY_REGIONS)])
 			return
 
 	# 5. THE LAYER MAPPING (#246): every ledgered piece is still worn on the
@@ -148,6 +153,25 @@ func _ready() -> void:
 		if layer not in CharacterFactory.LAYERS:
 			_fail("ledgered layer '%s' (piece '%s') is not in the closed set %s"
 				% [layer, piece_name, str(CharacterFactory.LAYERS)])
+			return
+
+	# 7b. ARMOUR CONTAINMENT ON THE LEDGER (#251): a piece ledgered on the armour
+	#    layer must be ledgered into a legal armour slot. Check 4 deliberately
+	#    admits the armour-free accessory regions, so without this a ledgered
+	#    necklace could claim the armour layer and no ledger check would object.
+	#    `armor_axis_test` pins the same law against the baked registry; this pins
+	#    it against the append-only promise, which is what outlives a re-bake.
+	for piece_name: String in layers:
+		if layers[piece_name] != "armor":
+			continue
+		if piece_name not in ledger:
+			continue
+		var armoured_slot: String = ledger[piece_name]
+		if armoured_slot not in Armor.SLOTS:
+			_fail(("piece '%s' is ledgered on the ARMOUR layer in region '%s', which is not a legal " +
+				"armour slot %s — baking armour for a region means adding it to Armor.SLOTS with its " +
+				"seed pieces, which is a balance decision, not a vocabulary edit")
+				% [piece_name, armoured_slot, str(Armor.SLOTS)])
 			return
 
 	# 8. The kit and the code agree on what the layers ARE. The registry carries

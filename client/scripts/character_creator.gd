@@ -197,7 +197,17 @@ func _build_panel() -> void:
 	# Outfit and skin stay on the primary surface: they ARE named choices, which
 	# is what the art direction asks the creator to lead with.
 	var outfit := _add_section(sliders, "OUTFIT")
-	for slot: String in CharacterFactory.equipment_registry().get("slots", []):
+	# Only regions something can actually be put in. #251 declared the whole
+	# specified wardrobe (#222) up front so the vocabulary is settled before the
+	# garments arrive, which means most regions have no baked piece yet — and a
+	# picker whose only entry is "none" is a row the player cannot use. Showing
+	# all thirteen would have added nine dead rows to a screen already faulted
+	# for reading as a debug panel (#227). Each region appears the moment a piece
+	# is baked for it, with no change here.
+	var registry := CharacterFactory.equipment_registry()
+	for slot: String in registry.get("slots", []):
+		if _pieces_in_slot(registry, slot).is_empty():
+			continue
 		_add_outfit_picker(outfit, slot)
 	var skin := _add_section(sliders, "SKIN")
 	_add_skin_picker(skin)
@@ -348,12 +358,8 @@ func _add_outfit_picker(into: Container, slot: String) -> void:
 	var picker := OptionButton.new()
 	picker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	picker.add_item("bare")
-	var pieces: Dictionary = CharacterFactory.equipment_registry().get("pieces", {})
-	var names := pieces.keys()
-	names.sort()
-	for piece_name: String in names:
-		if String(pieces[piece_name]["slot"]) == slot:
-			picker.add_item(piece_name)
+	for piece_name: String in _pieces_in_slot(CharacterFactory.equipment_registry(), slot):
+		picker.add_item(piece_name)
 	picker.item_selected.connect(func(index: int) -> void:
 		if _syncing:
 			return
@@ -361,6 +367,21 @@ func _add_outfit_picker(into: Container, slot: String) -> void:
 		_player.set_character(_recipe))
 	row.add_child(picker)
 	_outfit_pickers[slot] = picker
+
+
+## Every baked piece that can be worn in this region, sorted so the picker's
+## order — and the decision to show the picker at all — never depends on
+## dictionary iteration order. Shared by both callers on purpose: the row is
+## built from exactly the list that decided the row should exist, so a region
+## can never be shown with nothing in it, or hidden while holding something.
+func _pieces_in_slot(registry: Dictionary, slot: String) -> Array[String]:
+	var out: Array[String] = []
+	var pieces: Dictionary = registry.get("pieces", {})
+	for piece_name: String in pieces:
+		if String((pieces[piece_name] as Dictionary).get("slot", "")) == slot:
+			out.append(piece_name)
+	out.sort()
+	return out
 
 
 ## Which skin the body wears — "clay" is the untextured kit body.
