@@ -19,6 +19,7 @@ const ENTRIES: Array[Dictionary] = [
 			"Each archetype now shows its own portrait beside its name — head and shoulders, lit and framed the same way — so the four sit side by side and you can simply look at them.",
 			"The portraits are drawn from the same recipes the buttons apply, every time the screen opens. There is no saved picture that could drift out of step with the body you would actually get.",
 			"They fill in over the first moments the screen is open rather than all at once, so opening the creator does not stall while four bodies are built.",
+			"Three things are still unfinished. The brute has no shirt in its recipe, so its portrait shows a bare chest — the wardrobe has no clothed starting state underneath yet, which is being fixed separately. The plates are a fixed small size, so the faces are smaller than they should be. And a plate does not light up when you hover it or when it is the one you have chosen; only the name beside it does.",
 		],
 	},
 	{

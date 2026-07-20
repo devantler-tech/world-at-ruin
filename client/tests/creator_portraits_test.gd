@@ -179,6 +179,16 @@ func _portrait_settles_then_stops() -> bool:
 		portrait.queue_free()
 		return _fail("a portrait reported settled before it had a body — the window would be skipped entirely")
 
+	# A rigged-but-bodyless portrait must not be rendering. Measured on Godot
+	# 4.7.1 the assignment in setup() survives entering the tree, so the order
+	# it is written in does not matter today — this pins the PROPERTY rather
+	# than the ordering, so an engine version that did reset it on tree entry
+	# would fail here instead of silently spending a frame per portrait on a
+	# picture of an empty world.
+	if portrait.viewport().render_target_update_mode != SubViewport.UPDATE_DISABLED:
+		portrait.queue_free()
+		return _fail("a portrait with no body is already rendering — it would photograph an empty world")
+
 	if not portrait.realize():
 		portrait.queue_free()
 		return _fail("the first realize() built nothing, so the settling window below would prove nothing")
