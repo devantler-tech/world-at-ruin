@@ -13,12 +13,33 @@ extends CanvasLayer
 signal applied(recipe: Dictionary)
 signal closed
 
-const COL_BONE := Color(0.88, 0.84, 0.76)
-const COL_DIM := Color(0.88, 0.84, 0.76, 0.55)
-const COL_EMBER := Color(1.0, 0.62, 0.25)
+## One palette for the screen, owned by the theme — these are the two marks the
+## theme cannot express as a control style (a heading's colour, the blurb's).
+const COL_DIM := UiTheme.BONE_DIM
+const COL_EMBER := UiTheme.EMBER
 
 const PRESET_DIR := "res://recipes/"
 const PRESETS := ["wanderer", "villager", "elder", "brute"]
+
+## How the kit's shape sliders are grouped in the panel, in display order:
+## section title, then the shape-name prefixes that belong to it. First match
+## wins, so a shape lands in exactly one section.
+##
+## The kit exposes 29 shape sliders and the panel used to place all of them in
+## one undifferentiated run under a single BUILD heading — the "debug panel"
+## the first screen of the game read as (#270). Grouping is keyed on the shape
+## NAMES rather than a hand-maintained list of them, for the same reason
+## `_shape_names()` reads the live mesh: the creator must not go stale when the
+## kit gains shapes. Anything unmatched falls into SHAPE_GROUP_FALLBACK, so a
+## new shape always appears somewhere — never silently vanishes.
+const SHAPE_GROUPS := [
+	["ARCHETYPE", ["body_"]],
+	["HERITAGE", ["phenotype_"]],
+	["TORSO", ["torso_", "shoulders_", "waist_", "belly", "hips_", "buttocks_", "neck_"]],
+	["LIMBS", ["arms_", "legs_"]],
+	["FACE", ["head_", "chin_", "jaw_", "nose_"]],
+]
+const SHAPE_GROUP_FALLBACK := "OTHER"
 
 ## Bone sliders: label, recipe field, bone key, range. Kept deliberately
 ## short — the interesting range of each op before skinning artifacts.
@@ -101,12 +122,10 @@ func _build_panel() -> void:
 	var panel := PanelContainer.new()
 	panel.set_anchors_preset(Control.PRESET_LEFT_WIDE)
 	panel.custom_minimum_size = Vector2(360, 0)
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.07, 0.06, 0.055, 0.93)
-	style.border_color = Color(0.55, 0.35, 0.18)
-	style.set_border_width_all(1)
-	style.set_content_margin_all(14)
-	panel.add_theme_stylebox_override("panel", style)
+	# The authored look, applied at the panel root so every control below it
+	# inherits — this is the whole screen's styling, not per-control overrides
+	# scattered through the builders (#270).
+	panel.theme = UiTheme.creator_theme()
 	add_child(panel)
 
 	var column := VBoxContainer.new()
@@ -115,14 +134,14 @@ func _build_panel() -> void:
 
 	var title := Label.new()
 	title.text = "SHAPE YOUR WANDERER" if first_run else "RESHAPE YOUR WANDERER"
-	title.add_theme_font_size_override("font_size", 18)
+	title.add_theme_font_size_override("font_size", UiTheme.FONT_TITLE)
 	title.add_theme_color_override("font_color", COL_EMBER)
 	column.add_child(title)
 
 	var blurb := Label.new()
 	blurb.text = "This body is yours to keep — it can always be reshaped here (C)."
 	blurb.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	blurb.add_theme_font_size_override("font_size", 12)
+	blurb.add_theme_font_size_override("font_size", UiTheme.FONT_BODY)
 	blurb.add_theme_color_override("font_color", COL_DIM)
 	column.add_child(blurb)
 
@@ -147,17 +166,18 @@ func _build_panel() -> void:
 	sliders.add_theme_constant_override("separation", 2)
 	scroll.add_child(sliders)
 
-	_add_heading(sliders, "BUILD")
-	for shape_name in _shape_names():
-		_add_shape_slider(sliders, shape_name)
-	_add_heading(sliders, "FRAME")
+	for group: Array in group_shape_names(_shape_names()):
+		var section := _add_section(sliders, group[0])
+		for shape_name: String in group[1]:
+			_add_shape_slider(section, shape_name)
+	var frame := _add_section(sliders, "FRAME")
 	for spec: Array in BONE_SLIDERS:
-		_add_bone_slider(sliders, spec)
-	_add_heading(sliders, "OUTFIT")
+		_add_bone_slider(frame, spec)
+	var outfit := _add_section(sliders, "OUTFIT")
 	for slot: String in CharacterFactory.equipment_registry().get("slots", []):
-		_add_outfit_picker(sliders, slot)
-	_add_heading(sliders, "SKIN")
-	_add_skin_picker(sliders)
+		_add_outfit_picker(outfit, slot)
+	var skin := _add_section(sliders, "SKIN")
+	_add_skin_picker(skin)
 
 	var buttons := HBoxContainer.new()
 	buttons.add_theme_constant_override("separation", 8)
@@ -181,10 +201,77 @@ func _build_panel() -> void:
 	first_preset.grab_focus()
 
 
+## Sorts shape names into the SHAPE_GROUPS sections, in declared order, keeping
+## each section's shapes in the order the kit reports them. Pure and static so
+## the grouping contract (every shape placed exactly once, unknown names kept)
+## is testable without booting the game — see tests/creator_sections_test.gd.
+##
+## Returns an Array of [title, PackedStringArray] pairs; empty sections are
+## dropped, so a kit that has no face shapes shows no FACE header.
+static func group_shape_names(names: PackedStringArray) -> Array:
+	# Plain Arrays, not PackedStringArrays: a PackedStringArray is a VALUE type,
+	# so `buckets[title].append(...)` would mutate a copy and silently drop every
+	# shape. Converted to packed form on the way out, where the copy is the point.
+	var buckets := {}
+	for spec: Array in SHAPE_GROUPS:
+		buckets[spec[0]] = []
+	buckets[SHAPE_GROUP_FALLBACK] = []
+
+	for shape_name: String in names:
+		var title := SHAPE_GROUP_FALLBACK
+		for spec: Array in SHAPE_GROUPS:
+			var matched := false
+			for prefix: String in spec[1]:
+				if shape_name.begins_with(prefix):
+					matched = true
+					break
+			if matched:
+				title = spec[0]
+				break
+		(buckets[title] as Array).append(shape_name)
+
+	var out: Array = []
+	var titles: Array = []
+	for spec: Array in SHAPE_GROUPS:
+		titles.append(spec[0])
+	titles.append(SHAPE_GROUP_FALLBACK)
+	for title: String in titles:
+		var bucket: Array = buckets[title]
+		if not bucket.is_empty():
+			out.append([title, PackedStringArray(bucket)])
+	return out
+
+
+## A named section the player can fold away, returning the container its rows
+## go into. Sections start OPEN: the panel's own capture evidence photographs
+## the controls below the fold by scrolling to the bottom, and a creator that
+## opened folded would have nothing below the fold to photograph (#231). The
+## fold is a player affordance for taming 35 sliders, not a smaller default.
+func _add_section(into: Container, text: String) -> Container:
+	var body := VBoxContainer.new()
+	body.add_theme_constant_override("separation", 2)
+
+	var header := Button.new()
+	header.toggle_mode = true
+	header.button_pressed = true
+	header.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	header.text = "▾  " + text
+	header.add_theme_font_size_override("font_size", UiTheme.FONT_SECTION)
+	header.add_theme_color_override("font_color", COL_EMBER)
+	header.add_theme_color_override("font_pressed_color", COL_EMBER)
+	header.toggled.connect(func(open: bool) -> void:
+		body.visible = open
+		header.text = ("▾  " if open else "▸  ") + text)
+	into.add_child(header)
+
+	into.add_child(body)
+	return body
+
+
 func _add_heading(into: Container, text: String) -> void:
 	var heading := Label.new()
 	heading.text = text
-	heading.add_theme_font_size_override("font_size", 13)
+	heading.add_theme_font_size_override("font_size", UiTheme.FONT_SECTION)
 	heading.add_theme_color_override("font_color", COL_EMBER)
 	into.add_child(heading)
 
@@ -212,8 +299,6 @@ func _add_outfit_picker(into: Container, slot: String) -> void:
 	var label := Label.new()
 	label.text = slot
 	label.custom_minimum_size = Vector2(130, 0)
-	label.add_theme_font_size_override("font_size", 12)
-	label.add_theme_color_override("font_color", COL_BONE)
 	row.add_child(label)
 	var picker := OptionButton.new()
 	picker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -241,8 +326,6 @@ func _add_skin_picker(into: Container) -> void:
 	var label := Label.new()
 	label.text = "skin"
 	label.custom_minimum_size = Vector2(130, 0)
-	label.add_theme_font_size_override("font_size", 12)
-	label.add_theme_color_override("font_color", COL_BONE)
 	row.add_child(label)
 	_skin_picker = OptionButton.new()
 	_skin_picker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -279,8 +362,6 @@ func _labeled_slider(into: Container, text: String, minimum: float, maximum: flo
 	var label := Label.new()
 	label.text = text
 	label.custom_minimum_size = Vector2(130, 0)
-	label.add_theme_font_size_override("font_size", 12)
-	label.add_theme_color_override("font_color", COL_BONE)
 	row.add_child(label)
 	var slider := HSlider.new()
 	slider.min_value = minimum
