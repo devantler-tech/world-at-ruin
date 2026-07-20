@@ -15,7 +15,7 @@ const ENTRIES: Array[Dictionary] = [
 		"date": "2026-07-20",
 		"title": "The ground stops being the same ground",
 		"notes": [
-			"Walk far enough now and what you are walking on changes. The Reach is laid out in stretches, each made of its own material: pale ash across most of it, ground burnt darker and redder where the fire sat longest, bare cool stone where the ash has been scoured off, and ochre ground stained by the old machines rusting into it. Which stretch lies where is a fact about this land, the same on every playthrough.",
+			"Walk far enough now and what you are walking on changes. The Reach is laid out in stretches, each made of its own material: pale ash over more of it than anything else, ground burnt darker and redder where the fire sat longest, bare cool stone where the ash has been scoured off, and ochre ground stained by the old machines rusting into it. Which stretch lies where is a fact about this land, the same on every playthrough.",
 			"One stretch gives way to the next under your feet rather than at a line you step over — for the last several paces the two grounds mix into each other.",
 			"The shrine you wake near is always on the pale ash it has always been on, so the place you already know still looks like itself.",
 			"Be warned that this reads far better underfoot than it does from a distance. Walk out onto the pale stone and the ground around you is clearly lighter than the ash you left; look at that same country from across the Reach and the haze has already flattened it back to the colour of everything else. The air between you and the view is currently doing more to the ground's colour than the ground is, and getting the distance to carry it too is a bigger job than this one.",
