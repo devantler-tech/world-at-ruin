@@ -25,6 +25,7 @@ extends Node
 
 const DATA_DIR := "res://tests/data"
 const CAPABILITY_LEDGER := "res://tests/data/shipped_save_capability.txt"
+const RECIPE_LEDGER := "res://tests/data/shipped_recipe_versions.txt"
 const EXPORT_PRESETS := "res://export_presets.cfg"
 const SERVER_WIRE := "res://../server/wire/wire.go"
 
@@ -158,9 +159,29 @@ func _test_read_capability_covers_what_is_written() -> void:
 			UpdateManifest.SAVE_CAPABILITY_READS, UpdateManifest.SAVE_CAPABILITY_WRITES])
 
 
-## The declared save floor must have its committed golden fixture, or "this build
-## reads down to schema N" is an unbacked claim.
+## The declared save floor must be the OLDEST SCHEMA THAT EVER SHIPPED — not
+## merely a schema that happens to have a fixture.
+##
+## Checking only for a matching fixture is too weak: raising `SAVE_SCHEMA_MIN` to
+## 2 would still pass while `shipped_recipe_versions.txt` and the fixture suite
+## still carry schema 1. The manifest would then advertise `reads_min: 2`, and
+## `UpdateDecision` would return `blocked_incompatible` for a schema-1 player whose
+## save this very build still reads — silently stranding historical state, which is
+## exactly what the no-resets law forbids.
+##
+## So the floor is pinned to the shipped ledger, and the fixture must also exist.
 func _test_save_floor_has_its_golden_fixture() -> void:
+	var shipped := _ledger_ints(RECIPE_LEDGER)
+	if _failed:
+		return
+	if shipped.is_empty():
+		_fail("%s is missing, empty or malformed — the save floor cannot be anchored" % RECIPE_LEDGER)
+		return
+	var oldest: int = shipped[0]
+	if UpdateManifest.SAVE_SCHEMA_MIN != oldest:
+		_fail("SAVE_SCHEMA_MIN is %d but the oldest schema that ever shipped is %d (%s) — advertising the higher floor makes UpdateDecision block a schema-%d player whose save this build still reads. Lower the floor, or retire that schema deliberately by removing it from the ledger." % [
+			UpdateManifest.SAVE_SCHEMA_MIN, oldest, RECIPE_LEDGER, oldest])
+		return
 	var path := "%s/golden_recipe_v%d.json" % [DATA_DIR, UpdateManifest.SAVE_SCHEMA_MIN]
 	if not FileAccess.file_exists(path):
 		_fail("SAVE_SCHEMA_MIN is %d but %s does not exist — the manifest would claim a read floor nothing proves" % [
@@ -298,9 +319,11 @@ func _erase_path(m: Dictionary, path: String) -> bool:
 	return true
 
 
-func _shipped_capabilities() -> Array[int]:
+## Parse an append-only integer ledger, sorted ascending. Shared by the capability
+## and recipe-version ledgers so the two cannot drift in how they are read.
+func _ledger_ints(path: String) -> Array[int]:
 	var out: Array[int] = []
-	var text := _read_text(CAPABILITY_LEDGER)
+	var text := _read_text(path)
 	if _failed:
 		return out
 	for line in text.split("\n"):
@@ -308,11 +331,15 @@ func _shipped_capabilities() -> Array[int]:
 		if trimmed.is_empty() or trimmed.begins_with("#"):
 			continue
 		if not trimmed.is_valid_int():
-			_fail("%s has a non-integer line: '%s'" % [CAPABILITY_LEDGER, trimmed])
+			_fail("%s has a non-integer line: '%s'" % [path, trimmed])
 			return out
 		out.append(int(trimmed))
 	out.sort()
 	return out
+
+
+func _shipped_capabilities() -> Array[int]:
+	return _ledger_ints(CAPABILITY_LEDGER)
 
 
 func _read_text(path: String) -> String:
