@@ -32,12 +32,14 @@ stages. Reading arrives before writing.
 
 ### 1. Expand the reader
 
-Teach the reader and application path to understand both the shipped shape and the proposed shape,
-but keep every production writer on the shipped shape and version.
+Teach the reader and application path to understand both the shipped shape and the proposed shape.
+Production writers must not originate the proposed shape from old state, but they must preserve it
+when an expanded document is already present; rollback safety requires both halves.
 
 - New fields are optional while the reader is expanded; absence keeps the old meaning.
 - A widened value accepts both representations. The old representation remains valid forever.
-- A new stable name is registered and actionable before any save can contain it.
+- A new stable name is registered and actionable to the reader before any production UI or writer can
+  originate it.
 - Tests include the future-shaped document and every historical golden, with zero-loss and real-effect
   checks. A parser-only assertion is not enough.
 - A schema expansion raises the read ceiling, appends the schema version to its permanent ledger and
@@ -138,12 +140,15 @@ For vault version `N`, the expansion pull request must:
 1. Teach `SaveVault` to validate versions `1..N` and preserve every accepted field and attunement name
    on write-back.
 2. Split the read ceiling from the production write version before raising it. Keep `empty()` and
-   every production write path on the baked version until the contract stage.
+   old-state writes on the baked version until the contract stage; an already-present version-`N`
+   vault must remain version `N` and preserve its accepted fields through ordinary writes.
 3. Append `N` to `client/tests/data/shipped_vault_versions.txt`.
 4. Add `client/tests/data/golden_vault_vN.json`. Preserve every older golden.
-5. Extend `save_vault_guard_test` with the new shape and its negative controls. A new live attunement
-   also enters `shipped_attunements.txt`, `SaveVault.KNOWN_ATTUNEMENTS`, the resolver, and the boot
-   restoration test in the same change.
+5. Extend `save_vault_guard_test` with the new shape and its negative controls. Prove old vaults cannot
+   originate the capability during expansion, and prove an already-present version-`N` vault
+   round-trips losslessly after an ordinary write. A new live attunement also enters
+   `shipped_attunements.txt`, `SaveVault.KNOWN_ATTUNEMENTS`, the resolver, and the boot restoration
+   test in the same change.
 6. Assign the new persistable capability and raise `UpdateManifest.SAVE_CAPABILITY_READS` to it while
    leaving `SAVE_CAPABILITY_WRITES` unchanged. The retained expansion build must advertise the read
    ceiling that makes it an eligible rollback target before the contract release can write that
