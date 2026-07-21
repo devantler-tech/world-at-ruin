@@ -108,13 +108,16 @@ The schema-version bump is the expansion pull request. For recipe version `N`, t
    shapes.
 2. Separate the read ceiling from the production write version before raising it; the reader may
    understand `N`, while `CharacterCreator` and `UpdateManifest.save_schema.writes` remain on the
-   baked version.
+   baked version. Registry entries needed to read `N` must not automatically become editor options:
+   gate every new piece, skin and other persisted name out of writable UI and production write paths
+   until the contract stage.
 3. Append `N` to `client/tests/data/shipped_recipe_versions.txt`.
 4. Add `client/tests/data/golden_recipe_vN.json`. Preserve all older goldens; the new fixture exercises
    every new persisted field group and proves it still changes the built character.
-5. Extend the focused runtime tests and keep `save_fixture_guard_test` green. If the change adds a
-   persisted piece, skin, slot, layer or other stable name, update its append-only ledger and
-   real-effect guard too.
+5. Extend the focused runtime tests and keep `save_fixture_guard_test` green. Add a negative control
+   proving that the expansion build cannot select or persist the new field, name or value through any
+   production UI or writer. If the change adds a persisted piece, skin, slot, layer or other stable
+   name, update its append-only ledger and real-effect guard too.
 6. Raise `UpdateManifest.SAVE_CAPABILITY_READS` for a new persistable capability while leaving
    `SAVE_CAPABILITY_WRITES` unchanged.
 
@@ -136,6 +139,10 @@ For vault version `N`, the expansion pull request must:
 5. Extend `save_vault_guard_test` with the new shape and its negative controls. A new live attunement
    also enters `shipped_attunements.txt`, `SaveVault.KNOWN_ATTUNEMENTS`, the resolver, and the boot
    restoration test in the same change.
+6. Assign the new persistable capability and raise `UpdateManifest.SAVE_CAPABILITY_READS` to it while
+   leaving `SAVE_CAPABILITY_WRITES` unchanged. The retained expansion build must advertise the read
+   ceiling that makes it an eligible rollback target before the contract release can write that
+   capability.
 
 After bake, the contract pull request lets new or changed vaults use version `N`, raises the global
 write capability, and appends that capability to `shipped_save_capability.txt`.
