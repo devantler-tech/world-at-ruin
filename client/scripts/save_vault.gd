@@ -11,11 +11,11 @@ class_name SaveVault
 ## into every client that ever shipped, so it cannot be relaxed retroactively.
 ## It leaves no room to grow the save in place:
 ##  - a sibling key (`"progress": {...}`) inside character.json makes every
-##    shipped client reject the WHOLE file;
-##  - wrapping the recipe in an envelope is worse — an older client finds no
-##    integer `version`, CharacterStore.load_saved() returns null, and main.gd
-##    treats that as "first time in the world" and opens the WRITABLE creator,
-##    which overwrites the save and strands the character (no-resets law).
+##    shipped CharacterFactory reject the WHOLE recipe;
+##  - wrapping the recipe in an envelope is no safer — CharacterStore still
+##    parses the JSON object, then CharacterFactory.build() finds no integer
+##    recipe `version` and refuses it. The saved body stays unbuilt while the
+##    manual editor remains a writable path (no-resets law).
 ##
 ## A separate file is the only shape an already-shipped client handles safely:
 ## it never looks at a file it does not know, so it neither rejects it nor
