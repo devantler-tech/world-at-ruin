@@ -9,19 +9,25 @@ extends Node
 ## artifact.
 ##
 ## Run (must be WINDOWED — a headless run renders nothing at all):
-##   WAR_SHOT_DIR=/tmp/shots WAR_SAVE_PATH=/tmp/probe_save.json \
+##   WAR_SHOT_DIR=/tmp/shots \
+##     WAR_SAVE_PATH=/tmp/probe_save.json WAR_VAULT_PATH=/tmp/probe_vault.json \
 ##     godot --path client --resolution 1600x900 res://tools/frame_capture.tscn
 ##
 ## Against the EXPORTED client the scene argument is unavailable — the official
 ## export template refuses positional scene paths (compiled with
 ## disable_path_overrides) — so main.gd carries a WAR_CAPTURE=1 boot redirect
 ## into this scene instead:
-##   WAR_CAPTURE=1 WAR_SHOT_DIR=/tmp/shots WAR_SAVE_PATH=/tmp/probe_save.json \
+##   WAR_CAPTURE=1 WAR_SHOT_DIR=/tmp/shots \
+##     WAR_SAVE_PATH=/tmp/probe_save.json WAR_VAULT_PATH=/tmp/probe_vault.json \
 ##     "World at Ruin.app/Contents/MacOS/World at Ruin"
 ##
-## Point WAR_SAVE_PATH at a throwaway COPY of a character recipe: with no save
-## present the first-run creator opens and its panel covers a third of the frame,
-## and with the real path a capture would touch the player's own save.
+## Redirect EVERY save seam, not just the character file. This tool boots the
+## real launch path, so an unredirected run writes the player's own progression
+## vault as well as their save (#309) — the boot tests get this from
+## IsolatedBoot, but this tool is invoked by hand and by CI, so it is on the
+## caller. Point WAR_SAVE_PATH at a throwaway COPY of a character recipe: with
+## no save present the first-run creator opens and its panel covers a third of
+## the frame, and with the real path a capture would touch the player's own save.
 
 ## The committed vantages. Fixed on purpose — evidence is only comparable across
 ## commits if the camera does not move between them. Each is [name, eye, target].
@@ -185,6 +191,32 @@ func _ready() -> void:
 	if DisplayServer.get_name() == "headless":
 		_fail("running headless — a headless run renders nothing; use a windowed run")
 		return
+
+	# This tool boots the shipped main scene below, which is the real launch
+	# path: unredirected, it reads and can write the player's own character save
+	# and progression vault. Boot tests get that guarantee structurally from
+	# IsolatedBoot, but this tool is invoked by hand and by CI, so refuse to run
+	# rather than document a rule a caller can forget (#309). Every seam, not
+	# just the save — a half-redirect still writes the unredirected half.
+	#
+	# Test the RESOLVED path, not whether the variable is set. The stores read
+	# their env override verbatim, so an UNSET seam and one pointed AT the
+	# shipped default both resolve to the player's real file — only the resolved
+	# value tells either apart from a throwaway probe.
+	#
+	# And compare the paths CANONICALLY, not as strings. `user://character.json`
+	# and the absolute OS path it globalizes to are the same file spelled two
+	# ways, so a raw `==` lets an override aimed squarely at the player's real
+	# save read as a throwaway probe — the guard would wave through exactly the
+	# case it exists to stop.
+	for seam: Array in [
+			[CharacterStore.SAVE_PATH_ENV, CharacterStore.save_path(), CharacterStore.DEFAULT_PATH],
+			[SaveVault.VAULT_PATH_ENV, SaveVault.vault_path(), SaveVault.DEFAULT_PATH]]:
+		if _same_file(String(seam[1]), String(seam[2])):
+			_fail(("%s resolves to the player's real file (%s) — refusing to boot the game against "
+				+ "real player state. Point every save seam at a throwaway path before capturing.")
+				% [seam[0], seam[2]])
+			return
 
 	# Load the scene the PROJECT actually boots, not a hardcoded path: the
 	# capture gate treats project.godot as a visual trigger, so a PR that
@@ -1139,6 +1171,20 @@ func _luma_spread_box(img: Image, fx0: float, fx1: float, fy0: float, fy1: float
 			lo = minf(lo, lum)
 			hi = maxf(hi, lum)
 	return hi - lo
+
+
+## Do these two paths name the same file? Godot accepts `user://`, `res://` and
+## plain OS paths interchangeably, so the same file has several spellings and a
+## string compare answers "different" for all but one of them.
+## [method ProjectSettings.globalize_path] collapses the schemes to absolute OS
+## paths and [method String.simplify_path] removes `.`/`..` and duplicate
+## separators, leaving one spelling per file.
+func _same_file(a: String, b: String) -> bool:
+	return _canonical(a) == _canonical(b)
+
+
+func _canonical(path: String) -> String:
+	return ProjectSettings.globalize_path(path).simplify_path()
 
 
 func _fail(message: String) -> void:

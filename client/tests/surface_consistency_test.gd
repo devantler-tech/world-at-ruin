@@ -14,12 +14,22 @@ const RAY_BOTTOM := -60.0
 
 var _ticks := 0
 var _main: Node
+var _boot: IsolatedBoot
 
 func _ready() -> void:
-	_main = (load("res://scenes/main.tscn") as PackedScene).instantiate()
+	# Booting the main scene runs the real launch path, which reads — and on the
+	# first-run path writes — the player's save and vault. Go through
+	# IsolatedBoot so it can only ever reach throwaway probes (#309).
+	_boot = IsolatedBoot.new("user://surface_consistency_boot_probe.json")
+	_main = _boot.boot()
+	if _main == null:
+		_fail("save isolation did not take — refusing to boot into the real save")
+		return
 	add_child(_main)
 
 func _physics_process(_delta: float) -> void:
+	if _main == null:
+		return  # isolation refused the boot; _fail has already been reported
 	_ticks += 1
 	if _ticks != 10:
 		return
@@ -47,11 +57,14 @@ func _physics_process(_delta: float) -> void:
 	var spawn_dev := _deviation_at(space, world, 10.7, 14.7)
 	print("surface-consistency: %d samples, worst |dev|=%.3f at (%.1f, %.1f); spawn-spot dev=%.3f" %
 		[checked, worst, worst_at.x, worst_at.y, spawn_dev])
-	if worst <= TOLERANCE and (spawn_dev < 0.0 or spawn_dev <= TOLERANCE):
-		print("SURFACE-TEST PASS")
-		get_tree().quit(0)
-	else:
+	if worst > TOLERANCE or (spawn_dev >= 0.0 and spawn_dev > TOLERANCE):
 		_fail("surface_height_at disagrees with the physics mesh (worst %.3f m)" % worst)
+		return
+	if not _boot.real_save_untouched():
+		_fail("the boot test touched the player's real save or vault")
+		return
+	print("TEST PASS — surface consistency")
+	get_tree().quit(0)
 
 ## |raycast hit − analytic surface| at (x, z), or -1.0 when the sample is
 ## unusable (no hit, or the ray hit ruin geometry above the terrain).
@@ -68,5 +81,11 @@ func _deviation_at(space: PhysicsDirectSpaceState3D, world: WorldGen, x: float, 
 	return absf(measured - world.surface_height_at(x, z))
 
 func _fail(message: String) -> void:
-	push_error("SURFACE-TEST FAIL: " + message)
+	# Assert the isolation guarantee on the FAILURE path too, not just the pass:
+	# a test failing for a gameplay reason must still report an isolation breach
+	# rather than clearing the seams and hiding it. real_save_untouched() calls
+	# end() itself, so this replaces the bare end() rather than adding to it.
+	if _boot != null and not _boot.real_save_untouched():
+		message += " — AND the boot test touched the player's real save or vault"
+	push_error("TEST FAIL — surface consistency: " + message)
 	get_tree().quit(1)
