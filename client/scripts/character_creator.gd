@@ -447,7 +447,8 @@ static func _pieces_in_slot(registry: Dictionary, slot: String) -> Array[String]
 	var out: Array[String] = []
 	var pieces: Dictionary = registry.get("pieces", {})
 	for piece_name: String in pieces:
-		if String((pieces[piece_name] as Dictionary).get("slot", "")) == slot:
+		var piece := pieces[piece_name] as Dictionary
+		if String(piece.get("slot", "")) == slot and String(piece.get("layer", "")) != "base":
 			out.append(piece_name)
 	out.sort()
 	return out

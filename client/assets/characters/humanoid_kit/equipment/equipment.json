@@ -1,6 +1,10 @@
 {
-  "kit_version": 5,
+  "base_pieces": [
+    "loincloth_ragged"
+  ],
+  "kit_version": 6,
   "layers": [
+    "base",
     "clothing",
     "armor"
   ],
@@ -10,6 +14,12 @@
       "layer": "armor",
       "scene": "boots_worn.glb",
       "slot": "feet"
+    },
+    "loincloth_ragged": {
+      "hide_shape": "equip_hide_loincloth_ragged",
+      "layer": "base",
+      "scene": "loincloth_ragged.glb",
+      "slot": "pelvis"
     },
     "pants_wool": {
       "layer": "clothing",

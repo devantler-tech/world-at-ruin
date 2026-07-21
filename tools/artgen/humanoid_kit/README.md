@@ -3,10 +3,12 @@
 The offline half of the character system ([#24](https://github.com/devantler-tech/world-at-ruin/issues/24)):
 headless Blender + MPFB bakes the **canonical humanoid** — one base body, the `game_engine` rig
 (53 deform bones) and the manifest's morph shapes as named glTF blend shapes — plus the
-**equipment pieces**: CC0 MHCLO clothes fitted to the body, skinned to the same rig, re-fitted
-under every kit shape so each garment carries matching morphs, and exported one GLB per piece
-with a runtime registry (`equipment/equipment.json`). MHCLO `delete_verts` become `equip_hide_*`
-body shapes that tuck covered skin inward (no runtime mesh surgery, shared-mesh friendly). The
+**equipment pieces**: CC0 MHCLO clothes fitted to the body plus deterministic garments generated
+from the same CC0 body, all skinned to the same rig, fitted under every kit shape, and exported one
+GLB per piece with a runtime registry (`equipment/equipment.json`). MHCLO `delete_verts` and
+generated coverage regions become `equip_hide_*` body shapes that tuck covered skin inward (no
+runtime mesh surgery, shared-mesh friendly). Generated garments may also carry deterministic
+embedded material maps; the ragged base uses woven albedo, roughness and normal maps. The
 committed artifact lives at `client/assets/characters/humanoid_kit/` and is consumed by the
 in-engine composition layer (stage 2+).
 
@@ -25,8 +27,9 @@ exists here and nowhere else, because Blender's only scripting surface is Python
 
 ## Determinism (product law)
 
-`manifest.json` is the single source of truth — base parameters, rig, strip list and the ordered
-shape list. Same manifest + pinned tools ⇒ **byte-identical GLB** (verified by baking twice in the
+`manifest.json` is the single source of truth — base parameters, rig, strip list, ordered shape
+list, and both downloaded and generated equipment. Same manifest + pinned tools ⇒ **byte-identical
+GLB** (verified by baking twice in the
 artgen workflow; exporter tangents are deliberately off because Blender's threaded mikktspace pass
 jitters mantissa bits — Godot's importer generates tangents deterministically instead). Shape
 names are the stable public API for recipes: **never rename or remove a shipped shape, only add**

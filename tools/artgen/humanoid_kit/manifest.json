@@ -1,5 +1,5 @@
 {
-  "kit_version": 5,
+  "kit_version": 6,
   "comment": "Humanoid kit bake manifest — the single source of truth for what the kit contains. Changing this file (or bake.py) is the ONLY sanctioned way the kit changes; the artgen CI workflow re-bakes and compares. Shape, slot and equipment-piece names are the stable, forward-only public API consumed by recipes (no-resets law: never rename or remove a shipped name, only add).",
   "tools": {
     "blender": "5.2.0",
@@ -165,7 +165,7 @@
       "license": "CC0"
     }
   ],
-  "equipment_comment": "Equipment pieces are CC0 MHCLO assets from the official MakeHuman 01-series CC0 packs (the _cc0.zip variants — the CC-BY variants are policy-excluded). Packs are downloaded pinned+checksummed by bootstrap.sh, never committed; each piece bakes to its own skinned GLB sharing the one canonical skeleton, with a clothes blend shape per kit shape (refit under that morph) so equipment follows the body. delete_verts become an equip_hide_<name> shape on the BODY that tucks covered skin inward.",
+  "equipment_comment": "Equipment pieces are either CC0 MHCLO assets from the official MakeHuman 01-series CC0 packs (the _cc0.zip variants — the CC-BY variants are policy-excluded), or deterministic garments generated from the same CC0 MakeHuman body inside bake.py. Packs are downloaded pinned+checksummed by bootstrap.sh, never committed; each piece bakes to its own skinned GLB sharing the one canonical skeleton, with a clothes blend shape per kit shape so equipment follows the body. Covered vertices become an equip_hide_<name> shape on the BODY that tucks skin inward.",
   "asset_packs": {
     "skins01": {
       "url": "https://files.makehumancommunity.org/asset_packs/skins01/skins01_cc0.zip",
@@ -207,8 +207,21 @@
     "trinket_1",
     "trinket_2"
   ],
-  "equipment_layers": ["clothing", "armor"],
+  "equipment_layers": ["base", "clothing", "armor"],
+  "base_pieces": ["loincloth_ragged"],
   "equipment": [
+    {
+      "name": "loincloth_ragged",
+      "slot": "pelvis",
+      "layer": "base",
+      "generator": "ragged_wrap",
+      "texture_generator": "coarse_cloth",
+      "hide_group": "Delete.loincloth_ragged",
+      "author": "devantler-tech, derived from the CC0 MakeHuman basemesh",
+      "license": "CC0",
+      "color": [0.25, 0.18, 0.12],
+      "roughness": 0.9
+    },
     {
       "name": "shirt_ragged",
       "slot": "torso",

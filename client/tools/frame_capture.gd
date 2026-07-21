@@ -664,6 +664,27 @@ func _capture_first_run(dir: String, main: Node) -> void:
 			return
 		shots += 1
 
+	# The base garment is intentionally UNDER every recipe-selected piece. The
+	# four shipped presets all wear trousers, so their frames can prove fit but
+	# cannot prove what remains when the wardrobe is emptied. Drive the same
+	# first-run creator through its real equipment-editing seam and capture that
+	# state explicitly; a hidden, missing, or removable base can no longer pass
+	# behind an opaque pair of trousers.
+	creator.call("_on_preset", "brute")
+	for slot: String in CharacterCreator.pickable_regions(CharacterFactory.equipment_registry()):
+		creator.call("_set_recipe_equipment", slot, "")
+	var capture_player := creator.get("_player") as Player
+	if capture_player == null:
+		_fail("the first-run creator lost its player — cannot render the empty-wardrobe base layer")
+		return
+	capture_player.set_character(creator.get("_recipe"))
+	creator.call("_sync_sliders_from_recipe")
+	for i in UI_SETTLE_FRAMES:
+		await get_tree().process_frame
+	if not await _shoot(dir, "first_run_base_layer", creator):
+		return
+	shots += 1
+
 	print("CAPTURE PASS — %d first-run vantages written to %s" % [shots, dir])
 	get_tree().quit(0)
 

@@ -55,8 +55,9 @@ func _ready() -> void:
 	for child in skeleton.get_children():
 		if child is MeshInstance3D and String(child.name).begins_with(CharacterFactory.EQUIP_PREFIX):
 			equipped[String(child.name).trim_prefix(CharacterFactory.EQUIP_PREFIX)] = child
-	if equipped.size() != (wanderer["equipment"] as Dictionary).size():
-		_fail("wanderer wears %d pieces, recipe says %d" % [equipped.size(), wanderer["equipment"].size()])
+	var expected_worn := CharacterFactory.pieces_to_wear(wanderer["equipment"])
+	if equipped.size() != expected_worn.size():
+		_fail("wanderer wears %d pieces, kit composition says %d" % [equipped.size(), expected_worn.size()])
 		return
 	for slot: String in wanderer["equipment"]:
 		var piece_name := String(wanderer["equipment"][slot])

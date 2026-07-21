@@ -23,6 +23,7 @@ Python appears nowhere else in the repo.
 import hashlib
 import importlib
 import json
+import math
 import os
 import sys
 import traceback
@@ -117,11 +118,277 @@ def capture_coords(clothes_obj):
     return [tuple(v.co) for v in clothes_obj.data.vertices]
 
 
-def bake_equipment_piece(piece, mesh_obj, shape_names, services):
+def generated_cloth_images(piece, rgb):
+    """Build deterministic woven albedo, roughness and normal textures.
+
+    This is intentionally tiny and arithmetic: the weave needs to read as a
+    named coarse cloth, not carry photographic detail. Packed images travel
+    inside the GLB, so the generated artifact stays one-file and reproducible.
+    """
+    size = 128
+
+    def new_image(suffix, non_color=False):
+        image = bpy.data.images.new(f"{piece['name']}_{suffix}", width=size, height=size)
+        if non_color:
+            image.colorspace_settings.name = "Non-Color"
+        return image
+
+    albedo = new_image("albedo")
+    roughness = new_image("roughness", True)
+    normal = new_image("normal", True)
+    albedo_pixels = []
+    roughness_pixels = []
+    normal_pixels = []
+    for y in range(size):
+        for x in range(size):
+            # Two differently-spaced thread directions stop the surface
+            # reading as a checkerboard. A low-frequency stain breaks the
+            # otherwise-perfect repetition without any random state.
+            warp = 0.07 if x % 8 < 2 else -0.025
+            weft = 0.045 if y % 6 < 1 else -0.018
+            stain = 0.94 + 0.04 * math.sin(x * 0.19 + y * 0.11) \
+                + 0.025 * math.sin(x * 0.047 - y * 0.071)
+            factor = max(0.72, min(1.08, stain + warp + weft))
+            albedo_pixels.extend((rgb[0] * factor, rgb[1] * factor,
+                                  rgb[2] * factor, 1.0))
+
+            rough = 0.82 + 0.12 * (0.5 + 0.5 * math.sin(x * 0.61) * math.sin(y * 0.73))
+            roughness_pixels.extend((rough, rough, rough, 1.0))
+
+            nx = 0.5 + 0.10 * math.sin(2.0 * math.pi * x / 8.0)
+            ny = 0.5 + 0.08 * math.sin(2.0 * math.pi * y / 6.0)
+            normal_pixels.extend((nx, ny, 1.0, 1.0))
+
+    albedo.pixels.foreach_set(albedo_pixels)
+    roughness.pixels.foreach_set(roughness_pixels)
+    normal.pixels.foreach_set(normal_pixels)
+    for image in (albedo, roughness, normal):
+        image.pack()
+    return albedo, roughness, normal
+
+
+def equipment_material(piece):
+    """Build the shared material seam for generated and MHCLO gear."""
+    srgb = tuple(piece["color"]) if "color" in piece else (0.8, 0.8, 0.8)
+    rgb = tuple(srgb_to_linear(c) for c in srgb)
+    mat = bpy.data.materials.new("equip_" + piece["name"])
+    mat.use_nodes = True
+    bsdf = mat.node_tree.nodes.get("Principled BSDF")
+    bsdf.inputs["Base Color"].default_value = (rgb[0], rgb[1], rgb[2], 1.0)
+    bsdf.inputs["Roughness"].default_value = float(piece.get("roughness", 0.85))
+
+    texture_generator = piece.get("texture_generator")
+    if texture_generator:
+        if texture_generator != "coarse_cloth":
+            raise RuntimeError(
+                f"{piece['name']}: unknown material generator {texture_generator}")
+        # Image pixels are authored in sRGB; the renderer performs the transfer
+        # to linear. Passing the BSDF's already-linear fallback values here
+        # would apply that transfer twice and crush the cloth nearly to black.
+        albedo, roughness, normal = generated_cloth_images(piece, srgb)
+        nodes = mat.node_tree.nodes
+        links = mat.node_tree.links
+        albedo_node = nodes.new("ShaderNodeTexImage")
+        albedo_node.name = piece["name"] + "_albedo"
+        albedo_node.image = albedo
+        links.new(albedo_node.outputs["Color"], bsdf.inputs["Base Color"])
+        roughness_node = nodes.new("ShaderNodeTexImage")
+        roughness_node.name = piece["name"] + "_roughness"
+        roughness_node.image = roughness
+        links.new(roughness_node.outputs["Color"], bsdf.inputs["Roughness"])
+        normal_node = nodes.new("ShaderNodeTexImage")
+        normal_node.name = piece["name"] + "_normal"
+        normal_node.image = normal
+        normal_map = nodes.new("ShaderNodeNormalMap")
+        normal_map.inputs["Strength"].default_value = 0.45
+        links.new(normal_node.outputs["Color"], normal_map.inputs["Color"])
+        links.new(normal_map.outputs["Normal"], bsdf.inputs["Normal"])
+    return mat
+
+
+def ragged_wrap_coords(scale=(1.0, 1.0, 1.0)):
+    """Return a closed, low-poly scrap-of-cloth wrap around the pelvis.
+
+    A thick elliptical belt holds separate front/back flaps. Coarse folds and
+    an uneven hem change the silhouette in geometry, so the wear still reads
+    at creator-portrait distance without relying on a texture.
+    """
+    sx, sy, sz = scale
+    center_y = -0.018
+    center_z = 0.86
+    vertices = []
+    faces = []
+
+    def scaled(co):
+        x, y, z = co
+        return (x * sx, center_y + (y - center_y) * sy,
+                center_z + (z - center_z) * sz)
+
+    # Four belt rings (outer bottom/top, inner bottom/top) make a closed band
+    # with visible top and bottom seams rather than an infinitely thin card.
+    segments = 20
+    for inner in (False, True):
+        inset = 0.009 if inner else 0.0
+        for z in (0.888, 0.940):
+            for i in range(segments):
+                angle = 2.0 * math.pi * i / segments
+                x = (0.158 - inset) * math.cos(angle)
+                radius_y = (0.116 if math.sin(angle) < 0.0 else 0.113) - inset
+                y = center_y + radius_y * math.sin(angle)
+                vertices.append(scaled((x, y, z)))
+    outer_bottom, outer_top = 0, segments
+    inner_bottom, inner_top = segments * 2, segments * 3
+    for i in range(segments):
+        j = (i + 1) % segments
+        faces.extend([
+            (outer_bottom + i, outer_bottom + j, outer_top + j, outer_top + i),
+            (inner_bottom + j, inner_bottom + i, inner_top + i, inner_top + j),
+            (outer_top + i, outer_top + j, inner_top + j, inner_top + i),
+            (outer_bottom + j, outer_bottom + i, inner_bottom + i, inner_bottom + j),
+        ])
+
+    def add_flap(front):
+        # Seven columns preserve three authored folds. Five rows taper from the
+        # belt to the torn hem; the back flap is deliberately shorter.
+        start = len(vertices)
+        cols, rows = 7, 5
+        top_z = 0.908
+        base_bottom = 0.685 if front else 0.735
+        top_width = 0.137 if front else 0.126
+        bottom_width = 0.097 if front else 0.088
+        hem = (0.020, -0.012, 0.009, -0.026, 0.015, -0.005, 0.024)
+        # Close to skin by construction: ordinary trousers must cover this
+        # base layer in depth as well as in registry order.
+        outer_y = -0.119 if front else 0.086
+        thickness = 0.008
+        for inside in (False, True):
+            for row in range(rows):
+                t = row / (rows - 1)
+                width = top_width * (1.0 - t) + bottom_width * t
+                z = top_z * (1.0 - t) + base_bottom * t
+                for col in range(cols):
+                    u = col / (cols - 1)
+                    x = -width + 2.0 * width * u
+                    fold = (0.006 + 0.009 * t) * math.cos(u * 3.0 * math.pi)
+                    y = outer_y + (-fold if front else fold)
+                    if inside:
+                        y += thickness if front else -thickness
+                    ragged_z = z + (hem[col] * t if front else hem[6 - col] * t * 0.65)
+                    vertices.append(scaled((x, y, ragged_z)))
+        surface = cols * rows
+        for side in (0, 1):
+            offset = start + side * surface
+            reverse = side == 1
+            for row in range(rows - 1):
+                for col in range(cols - 1):
+                    a = offset + row * cols + col
+                    b = a + 1
+                    c = a + cols + 1
+                    d = a + cols
+                    faces.append((d, c, b, a) if reverse else (a, b, c, d))
+        # Close every perimeter edge so side seams and hem have real thickness.
+        outside = start
+        inside = start + surface
+        perimeter = list(range(cols))
+        perimeter.extend(row * cols + cols - 1 for row in range(1, rows))
+        perimeter.extend((rows - 1) * cols + col for col in range(cols - 2, -1, -1))
+        perimeter.extend(row * cols for row in range(rows - 2, 0, -1))
+        for p, q in zip(perimeter, perimeter[1:] + perimeter[:1]):
+            faces.append((outside + p, outside + q, inside + q, inside + p))
+
+    add_flap(True)
+    add_flap(False)
+    return vertices, faces
+
+
+def pelvis_scale(mesh_obj, shape_name=None):
+    """Measure one body morph around the pelvis and return xyz scale."""
+    basis = mesh_obj.data.shape_keys.key_blocks["Basis"].data
+    indices = [i for i, v in enumerate(basis)
+               if 0.70 <= v.co.z <= 1.00 and abs(v.co.x) <= 0.24]
+    target = mesh_obj.data.shape_keys.key_blocks[shape_name].data if shape_name else basis
+
+    def extents(data):
+        coords = [data[i].co for i in indices]
+        return tuple(max(v[axis] for v in coords) - min(v[axis] for v in coords)
+                     for axis in range(3))
+
+    base_size = extents(basis)
+    target_size = extents(target)
+    return tuple(target_size[i] / base_size[i] if base_size[i] > 1e-9 else 1.0
+                 for i in range(3))
+
+
+def bake_ragged_wrap(piece, mesh_obj, rig_obj, shape_names):
+    """Generate the permanent CC0 base garment and bind it to the kit rig."""
+    coords, faces = ragged_wrap_coords()
+    mesh = bpy.data.meshes.new(piece["name"])
+    mesh.from_pydata(coords, [], faces)
+    mesh.update()
+    # A stable planar UV is part of the asset contract: Godot's importer
+    # generates tangents for the material maps by default, and a mesh with no
+    # UVs makes that otherwise-clean import emit an error.
+    uv_layer = mesh.uv_layers.new(name="UVMap")
+    for polygon in mesh.polygons:
+        for loop_index in polygon.loop_indices:
+            co = mesh.vertices[mesh.loops[loop_index].vertex_index].co
+            uv_layer.data[loop_index].uv = ((co.x + 0.20) / 0.40,
+                                             (co.z - 0.65) / 0.34)
+    clothes = bpy.data.objects.new(piece["name"], mesh)
+    bpy.context.collection.objects.link(clothes)
+    clothes.data.materials.append(equipment_material(piece))
+
+    # The belt follows the pelvis and its loose hem blends into both thighs.
+    # Positive X is thigh_l in this rig.
+    groups = {name: clothes.vertex_groups.new(name=name)
+              for name in ("pelvis", "thigh_l", "thigh_r")}
+    for vertex in mesh.vertices:
+        pelvis_weight = max(0.2, min(1.0, (vertex.co.z - 0.70) / 0.19))
+        groups["pelvis"].add([vertex.index], pelvis_weight, "REPLACE")
+        remaining = 1.0 - pelvis_weight
+        if remaining > 0.0:
+            left = max(0.0, min(1.0, 0.5 + vertex.co.x / 0.24))
+            groups["thigh_l"].add([vertex.index], remaining * left, "REPLACE")
+            groups["thigh_r"].add([vertex.index], remaining * (1.0 - left), "REPLACE")
+    armature = clothes.modifiers.new("Armature", "ARMATURE")
+    armature.object = rig_obj
+
+    clothes.shape_key_add(name="Basis")
+    for shape_name in shape_names:
+        shaped, shaped_faces = ragged_wrap_coords(pelvis_scale(mesh_obj, shape_name))
+        if shaped_faces != faces or len(shaped) != len(mesh.vertices):
+            raise RuntimeError(f"{piece['name']}: procedural morph changed topology")
+        kb = clothes.shape_key_add(name=shape_name, from_mix=False)
+        for i, co in enumerate(shaped):
+            kb.data[i].co = co
+        kb.value = 0.0
+
+    # Generated garments have no MHCLO delete_verts, so create the equivalent
+    # group from the exact body region the belt and flaps cover.
+    hide = mesh_obj.vertex_groups.new(name=piece["hide_group"])
+    hidden = []
+    for vertex in mesh_obj.data.vertices:
+        x, y, z = vertex.co
+        under_belt = 0.88 <= z <= 0.945 and abs(x) <= 0.20
+        under_flap = 0.68 <= z < 0.90 and abs(x) <= 0.14 and (y <= -0.075 or y >= 0.025)
+        if under_belt or under_flap:
+            hidden.append(vertex.index)
+    if not hidden:
+        raise RuntimeError(f"{piece['name']}: generated hide region selected no body vertices")
+    hide.add(hidden, 1.0, "REPLACE")
+    return clothes
+
+
+def bake_equipment_piece(piece, mesh_obj, rig_obj, shape_names, services):
     """Fit one MHCLO piece to the body (helpers still present), skin it to
     the shared rig, and give it a blend shape per kit shape by refitting the
     garment under each morph — the runtime drives body and clothes with the
     same weights, so equipment follows the body."""
+    if piece.get("generator") == "ragged_wrap":
+        return bake_ragged_wrap(piece, mesh_obj, rig_obj, shape_names)
+    if piece.get("generator"):
+        raise RuntimeError(f"{piece['name']}: unknown equipment generator {piece['generator']}")
+
     HumanService, ClothesService, Mhclo = services
     mhclo_path = os.path.join(PACKS_DIR, piece["pack"], piece["mhclo"])
     if not os.path.isfile(mhclo_path):
@@ -142,14 +409,9 @@ def bake_equipment_piece(piece, mesh_obj, shape_names, services):
     # in textures, which are a later stage) — the flat palette is authored
     # here, in the manifest, like everything else about the kit. Manifest
     # values are sRGB (what a colour picker shows); the BSDF wants linear.
-    rgb = tuple(piece["color"]) if "color" in piece else parse_mhmat_diffuse(mhclo.material)
-    rgb = tuple(srgb_to_linear(c) for c in rgb)
-    mat = bpy.data.materials.new("equip_" + piece["name"])
-    mat.use_nodes = True
-    bsdf = mat.node_tree.nodes.get("Principled BSDF")
-    bsdf.inputs["Base Color"].default_value = (rgb[0], rgb[1], rgb[2], 1.0)
-    bsdf.inputs["Roughness"].default_value = 0.85
-    clothes.data.materials.append(mat)
+    if "color" not in piece:
+        piece = dict(piece, color=parse_mhmat_diffuse(mhclo.material))
+    clothes.data.materials.append(equipment_material(piece))
 
     # Refit under each kit shape ONE at a time and capture the fitted verts;
     # shape keys are added only after every capture (fit_clothes_to_human
@@ -223,6 +485,8 @@ def bake_skins(manifest, out_dir):
 def delete_group_name(piece):
     """Replicates add_mhclo_asset's naming for the delete group it leaves on
     the basemesh (the MHCLO delete_verts — body vertices the piece covers)."""
+    if piece.get("hide_group"):
+        return piece["hide_group"]
     base = os.path.basename(piece["mhclo"])
     return "Delete." + base.replace(".mhclo", "").replace(".MHCLO", "").replace(" ", "_")
 
@@ -346,7 +610,8 @@ def main() -> None:
     pieces = []
     for piece in manifest.get("equipment", []):
         clothes = bake_equipment_piece(
-            piece, mesh_obj, manifest_shape_names, (HumanService, ClothesService, Mhclo))
+            piece, mesh_obj, rig_obj, manifest_shape_names,
+            (HumanService, ClothesService, Mhclo))
         pieces.append((piece, clothes))
 
     stripped = strip_vertex_groups(mesh_obj, manifest["strip_vertex_groups"])
@@ -400,6 +665,7 @@ def main() -> None:
             "kit_version": manifest["kit_version"],
             "slots": manifest.get("equipment_slots", []),
             "layers": manifest.get("equipment_layers", []),
+            "base_pieces": manifest.get("base_pieces", []),
             "pieces": equipment_index,
         }, f, indent=2, sort_keys=True)
         f.write("\n")

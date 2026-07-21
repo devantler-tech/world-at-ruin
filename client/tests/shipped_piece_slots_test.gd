@@ -45,7 +45,12 @@ var _failed := false
 
 func _ready() -> void:
 	var registry := CharacterFactory.equipment_registry()
-	var pieces: Dictionary = registry.get("pieces", {})
+	var pieces: Dictionary = (registry.get("pieces", {}) as Dictionary).duplicate()
+	# The append-only ledgers below describe persisted recipe vocabulary. Base
+	# pieces are kit-owned, never written into a save, and have their own
+	# unremovable contract in base_layer_test.
+	for piece_name: String in registry.get("base_pieces", []):
+		pieces.erase(piece_name)
 	# Non-vacuity: an unreadable registry would make every assertion below pass
 	# without comparing anything — "a broken scanner reads like a clean one".
 	if pieces.is_empty():
