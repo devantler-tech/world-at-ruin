@@ -123,6 +123,13 @@ func _seed(body: String) -> bool:
 
 
 func _physics_process(_delta: float) -> void:
+	# _begin_boot returns without a scene when seeding or isolation fails, and
+	# get_tree().quit() does not halt the frame (#305) — so this runs at least
+	# once more with _main still null. Dereferencing it there throws BEFORE the
+	# real failure message is printed, replacing a precise diagnosis with a null
+	# access.
+	if _main == null:
+		return
 	_ticks += 1
 	var world := _main.get_node_or_null("World") as WorldGen
 	var player := _main.get_node_or_null("Wanderer") as Player
@@ -284,9 +291,21 @@ func _read_probe() -> Variant:
 	return parsed if parsed is Dictionary else null
 
 
+## Report a failure — and NEVER let the reported one hide an isolation breach.
+##
+## `real_save_untouched()` is asked BEFORE `end()`, because ending clears the
+## seams and removes the probes: afterwards there is nothing left to compare.
+## Tearing down first meant a run that both failed an assertion and wrote the
+## player's real save reported only the assertion, and the breach — much the
+## worse of the two — went unmentioned.
 func _fail(message: String) -> void:
+	var breached := false
 	if _save != null:
+		breached = not _save.real_save_untouched()
 		_save.end()
+	if breached:
+		message += (" — AND the run touched the player's real save, vault or recovery ledger; "
+			+ "the isolation breach outranks the failure above")
 	push_error(message)
 	print("TEST FAIL — %s" % message)
 	get_tree().quit(1)

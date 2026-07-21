@@ -211,7 +211,13 @@ func _ready() -> void:
 	# case it exists to stop.
 	for seam: Array in [
 			[CharacterStore.SAVE_PATH_ENV, CharacterStore.save_path(), CharacterStore.DEFAULT_PATH],
-			[SaveVault.VAULT_PATH_ENV, SaveVault.vault_path(), SaveVault.DEFAULT_PATH]]:
+			[SaveVault.VAULT_PATH_ENV, SaveVault.vault_path(), SaveVault.DEFAULT_PATH],
+			# The recovery ledger (#301) is exactly the case the sentence above
+			# warns about. Reconcile runs on EVERY boot now, so an unredirected
+			# capture reads and rewrites the player's own ledger — and quarantine
+			# is forward-only, so a build this tool quarantined could never be
+			# cleared by a later successful launch.
+			[BootRecovery.RECOVERY_PATH_ENV, BootRecovery.recovery_path(), BootRecovery.DEFAULT_PATH]]:
 		if _same_file(String(seam[1]), String(seam[2])):
 			_fail(("%s resolves to the player's real file (%s) — refusing to boot the game against "
 				+ "real player state. Point every save seam at a throwaway path before capturing.")
