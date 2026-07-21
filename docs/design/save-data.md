@@ -106,18 +106,23 @@ The schema-version bump is the expansion pull request. For recipe version `N`, t
 
 1. Teach `CharacterFactory` to validate and apply versions `1..N`, including both the old and new
    shapes.
-2. Separate the read ceiling from the production write version before raising it; the reader may
-   understand `N`, while `CharacterCreator` and `UpdateManifest.save_schema.writes` remain on the
-   baked version. Registry entries needed to read `N` must not automatically become editor options:
-   gate every new piece, skin and other persisted name out of writable UI and production write paths
-   until the contract stage.
+2. Introduce or raise a dedicated maximum recipe-schema read ceiling, separate from the production
+   write version. Publish it in the manifest's stable shell envelope, feed the same value into each
+   retained build's rollback-target `read_ceiling`, and guard both mappings in runtime tests.
+   `shell.reads_min` is the oldest supported schema, not this maximum. The reader may understand `N`,
+   while `CharacterCreator` and `UpdateManifest.save_schema.writes` remain on the baked version.
+   Registry entries needed to read `N` must not automatically become editor options: gate every new
+   piece, skin and other persisted name out of writable UI and production write paths until the
+   contract stage.
 3. Append `N` to `client/tests/data/shipped_recipe_versions.txt`.
 4. Add `client/tests/data/golden_recipe_vN.json`. Preserve all older goldens; the new fixture exercises
    every new persisted field group and proves it still changes the built character.
-5. Extend the focused runtime tests and keep `save_fixture_guard_test` green. Add a negative control
-   proving that the expansion build cannot select or persist the new field, name or value through any
-   production UI or writer. If the change adds a persisted piece, skin, slot, layer or other stable
-   name, update its append-only ledger and real-effect guard too.
+5. Extend the focused runtime tests and keep `save_fixture_guard_test` green. Starting from an old
+   recipe, prove the expansion build cannot originate or select the new field, name or value through
+   any production UI or writer. Separately load the version-`N` fixture, make an ordinary supported
+   edit and prove the expansion writer round-trips every already-present new value without loss. If
+   the change adds a persisted piece, skin, slot, layer or other stable name, update its append-only
+   ledger and real-effect guard too.
 6. Raise `UpdateManifest.SAVE_CAPABILITY_READS` for a new persistable capability while leaving
    `SAVE_CAPABILITY_WRITES` unchanged.
 
