@@ -33,6 +33,14 @@ extends Node
 ##  D. GUARDRAIL — a boot whose own build is already quarantined must still
 ##     boot. The guard exists to stop a boot loop; one that could refuse a
 ##     launch would be the thing it guards against.
+##  E. POSITIVE — a marker that is PENDING BUT UNREADABLE must be cleared ON
+##     DISK. reconcile clears it in memory but cannot name the failed build, so
+##     it reports an empty `quarantined_version`; a caller that decides whether
+##     to save from that field alone drops the write and leaves the bad marker
+##     forever. Every later launch then repeats the condition and the pack-mount
+##     path keeps refusing new attempts because a marker is still pending. B
+##     cannot catch this — there the version IS nameable, so the save happens
+##     for the wrong reason and passes.
 ##
 ## Every boot runs behind SaveIsolation, so the player's real character, vault
 ## and recovery ledger are never read or written — quarantine is forward-only,
@@ -50,6 +58,10 @@ const ASSERT_TICK := 5
 ## Distinct on purpose: quarantining the RUNNING build would then refuse this
 ## boot's own attempt and tangle the two assertions together.
 const FAILED_VERSION := "9.9.9"
+## A marker that is present but is not a version, so reconcile can clear it yet
+## can name nothing to quarantine. A JSON number rather than a junk string: it
+## survives a parse, which is what puts it past load_state and into reconcile.
+const UNREADABLE_MARKER := "42"
 
 var _ticks := 0
 var _main: Node
@@ -85,6 +97,13 @@ func _begin_boot(phase: String) -> void:
 				return
 		"self_quarantined":
 			if not _seed('{"marker": null, "quarantined": ["%s"], "last_good": null}' % DevLog.VERSION):
+				return
+		"unreadable_marker":
+			# Well-formed JSON carrying all three keys, so the file LOADS — the
+			# marker alone is junk. That is the whole point: a torn file (phase
+			# C) never reaches reconcile, so only a loadable file with an
+			# unreadable marker exercises the clear-without-a-version path.
+			if not _seed('{"marker": %s, "quarantined": [], "last_good": null}' % UNREADABLE_MARKER):
 				return
 	_main = (load("res://scenes/main.tscn") as PackedScene).instantiate()
 	add_child(_main)
@@ -123,6 +142,8 @@ func _physics_process(_delta: float) -> void:
 			_assert_torn()
 		"self_quarantined":
 			_assert_self_quarantined()
+		"unreadable_marker":
+			_assert_unreadable_marker()
 
 
 ## A. A clean boot quarantines nothing and marks nothing.
@@ -221,9 +242,36 @@ func _assert_self_quarantined() -> void:
 	if not _save.real_save_untouched():
 		_fail("the self-quarantined boot touched the player's real save, vault or recovery ledger")
 		return
+	_begin_boot("unreadable_marker")
+
+
+## E. A pending-but-unreadable marker is cleared ON DISK, not only in memory.
+func _assert_unreadable_marker() -> void:
+	var raw: Variant = _read_probe()
+	if raw == null:
+		_fail("the unreadable-marker boot destroyed the recovery file — the ledger loaded fine, only its marker was junk, so there was nothing to preserve as evidence")
+		return
+	var doc: Dictionary = raw
+	if doc.get("marker") != null:
+		_fail(("the pending marker %s was NOT cleared on disk — reconcile clears it in memory but "
+			+ "cannot name the failed build, so a caller that decides to save from "
+			+ "quarantined_version alone drops the write. The marker then stays forever: every "
+			+ "launch repeats this, and the pack-mount path refuses new attempts while one is "
+			+ "pending") % str(doc.get("marker")))
+		return
+	var ledger := doc.get("quarantined", []) as Array
+	if not ledger.is_empty():
+		_fail(("VACUOUS TEST GUARD: an unreadable marker quarantined %s. Nothing nameable failed, "
+			+ "so a build was invented — clearing the marker must never fabricate a victim")
+			% str(ledger))
+		return
+	if not _save.real_save_untouched():
+		_fail("the unreadable-marker boot touched the player's real save, vault or recovery ledger")
+		return
 	print(("TEST PASS — reconcile is live: a clean boot quarantines and marks nothing, a marker "
-		+ "left by a dead launch quarantines %s and refuses to re-mount it, and a torn or "
-		+ "self-quarantined ledger still boots the game") % FAILED_VERSION)
+		+ "left by a dead launch quarantines %s and refuses to re-mount it, a torn or "
+		+ "self-quarantined ledger still boots the game, and a pending-but-unreadable marker is "
+		+ "cleared on disk rather than wedging every future launch") % FAILED_VERSION)
 	get_tree().quit(0)
 
 

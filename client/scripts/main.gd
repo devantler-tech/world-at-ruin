@@ -241,16 +241,32 @@ func _reconcile_boot_recovery() -> void:
 	if not (settled["ok"] as bool):
 		push_warning("boot recovery: ledger not reconciled — %s" % str(settled["reason"]))
 		return
+
+	# Whether to persist is decided by what reconcile CHANGED, never by whether
+	# it could NAME the failed build. Those differ in exactly one case and it is
+	# the wedging one: an unreadable marker (say `42`) is cleared without a
+	# version to quarantine, so `quarantined_version` comes back empty while the
+	# state on disk is now stale. Keying the write on that field alone left the
+	# bad marker on the ledger forever — every later launch repeated the
+	# condition, and the pack-mount path would keep refusing new attempts because
+	# a marker was still pending.
+	#
+	# A pending marker is the whole test: every ok-true path of reconcile clears
+	# a non-null marker, and the only path that leaves the state untouched is the
+	# one where nothing was pending. Then writing back would be a pointless
+	# rewrite of the player's file on every single launch.
+	var pending: Variant = (state as Dictionary).get("marker") if state is Dictionary else null
+	if pending == null:
+		return
+
 	var failed := str(settled["quarantined_version"])
 	if failed.is_empty():
-		# Nothing was pending, so the settled state is byte-identical to what is
-		# already on disk. Writing it back would be a pointless rewrite of the
-		# player's file on every single launch.
-		return
-	push_warning("boot recovery: the previous launch of %s never reached its checkpoint — quarantined" % failed)
+		push_warning("boot recovery: a boot-attempt marker was pending but unreadable — the failed build cannot be identified, so nothing was quarantined; clearing it so launches are not wedged forever")
+	else:
+		push_warning("boot recovery: the previous launch of %s never reached its checkpoint — quarantined" % failed)
 	var written := BootRecovery.save_state(path, settled["state"])
 	if not (written["ok"] as bool):
-		push_warning("boot recovery: quarantine of %s not persisted — %s" % [failed, str(written["reason"])])
+		push_warning("boot recovery: the reconciled ledger was not persisted — %s" % str(written["reason"]))
 
 
 ## Open the live zone connection when one was configured. This call is what
