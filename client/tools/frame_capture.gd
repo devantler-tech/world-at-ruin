@@ -203,10 +203,16 @@ func _ready() -> void:
 	# their env override verbatim, so an UNSET seam and one pointed AT the
 	# shipped default both resolve to the player's real file — only the resolved
 	# value tells either apart from a throwaway probe.
+	#
+	# And compare the paths CANONICALLY, not as strings. `user://character.json`
+	# and the absolute OS path it globalizes to are the same file spelled two
+	# ways, so a raw `==` lets an override aimed squarely at the player's real
+	# save read as a throwaway probe — the guard would wave through exactly the
+	# case it exists to stop.
 	for seam: Array in [
 			[CharacterStore.SAVE_PATH_ENV, CharacterStore.save_path(), CharacterStore.DEFAULT_PATH],
 			[SaveVault.VAULT_PATH_ENV, SaveVault.vault_path(), SaveVault.DEFAULT_PATH]]:
-		if String(seam[1]) == String(seam[2]):
+		if _same_file(String(seam[1]), String(seam[2])):
 			_fail(("%s resolves to the player's real file (%s) — refusing to boot the game against "
 				+ "real player state. Point every save seam at a throwaway path before capturing.")
 				% [seam[0], seam[2]])
@@ -1155,6 +1161,20 @@ func _luma_spread_box(img: Image, fx0: float, fx1: float, fy0: float, fy1: float
 			lo = minf(lo, lum)
 			hi = maxf(hi, lum)
 	return hi - lo
+
+
+## Do these two paths name the same file? Godot accepts `user://`, `res://` and
+## plain OS paths interchangeably, so the same file has several spellings and a
+## string compare answers "different" for all but one of them.
+## [method ProjectSettings.globalize_path] collapses the schemes to absolute OS
+## paths and [method String.simplify_path] removes `.`/`..` and duplicate
+## separators, leaving one spelling per file.
+func _same_file(a: String, b: String) -> bool:
+	return _canonical(a) == _canonical(b)
+
+
+func _canonical(path: String) -> String:
+	return ProjectSettings.globalize_path(path).simplify_path()
 
 
 func _fail(message: String) -> void:
