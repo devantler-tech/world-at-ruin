@@ -23,6 +23,17 @@ const ENTRIES: Array[Dictionary] = [
 		],
 	},
 	{
+		"version": "0.22.0",
+		"date": "2026-07-20",
+		"title": "The stretches of the Reach are shaped differently now, not just coloured differently",
+		"notes": [
+			"The Reach was already divided into stretches of ground made of different things — loose ash, burnt crust, scoured pale stone, ground stained by rusting machines. But they were all the same hills underneath wearing different colours, and from any distance they looked identical, because this world's haze and low sun wash most of the colour out of anything more than a few strides away.",
+			"Now each stretch has its own shape. The ash flats keep the long rolling rises you already know. The burnt ground has slumped into a low, calm basin. The scoured stone is the lowest and most open ground in the Reach — standing on it you can see much further than you used to, and the rock underneath breaks through as hard-edged ridges instead of dunes. The rust-stained moor sits low and broken, its hollows sunk deeper than its rises stand.",
+			"Shape survives the haze better than colour does, so the skyline and the middle distance now have somewhere for your eye to go instead of reading as one even field. Close up the difference is plain; far off the haze still softens it, and that is a separate problem still to solve.",
+			"The ground you start on has not moved. The shrine's clearing is the same ash flats it always was, unchanged to the millimetre out to the last few paces of its edge, where it hands over to the open ground this change reshapes. And nothing has become harder to walk: every stretch is either as gentle as the old ground or gentler.",
+		],
+	},
+	{
 		"version": "0.21.0",
 		"date": "2026-07-20",
 		"title": "The ash in the hollows is moving",

@@ -173,8 +173,24 @@ func height_at(x: float, z: float) -> float:
 	return h
 
 ## The undisturbed noise height — no clearings applied.
+##
+## The base field is shaped by whichever region owns the place: how tall its
+## relief stands (`amp`), and whether it creases into spines or rolls
+## (`ridged`). See [GroundRegions.landform_for] — the parameters cross-fade
+## through the same weights the palette does, so the height field stays
+## continuous across every boundary by construction.
+##
+## The DETAIL layer is left global on purpose. It is the fine break-up that
+## keeps a surface from reading as a bare interpolation, and it belongs to the
+## whole world rather than to a region; folding it under `amp` would make the
+## low regions smooth as well as low, which is the uniform-noise defect this is
+## fixing rather than a second helping of it.
 func _raw_height(x: float, z: float) -> float:
-	return _noise.get_noise_2d(x, z) * HEIGHT_AMP + _detail.get_noise_2d(x, z) * 0.6
+	var land := GroundRegions.landform_for(_region_sites, x, z)
+	var shaped := GroundRegions.shape(
+		_noise.get_noise_2d(x, z), land[&"amp"] as float, land[&"ridged"] as float
+	)
+	return shaped * HEIGHT_AMP + _detail.get_noise_2d(x, z) * 0.6
 
 ## Height of the actual walkable terrain MESH at world (x, z): the same
 ## piecewise-linear interpolation of the height grid the collision trimesh is
