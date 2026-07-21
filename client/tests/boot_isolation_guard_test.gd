@@ -47,6 +47,11 @@ const MAIN_SCENE := "res://scenes/main.tscn"
 ## design, and [constant COMMENT_ONLY_CONTROL] would pass while proving nothing.
 const SCENE_TOKEN := "main.tscn"
 
+## Reaching the main scene WITHOUT naming it: Godot hands back the configured
+## main scene, so the file never contains [constant SCENE_TOKEN] at all. Third
+## way a file counts as a booter — without it, indirection is a silent bypass.
+const SETTING_TOKEN := "application/run/main_scene"
+
 ## Booting through the helper. A harness that uses it never names the scene at
 ## all — that is the point — so this is the second way a file counts as a booter.
 const HELPER := "IsolatedBoot"
@@ -54,6 +59,17 @@ const HELPER := "IsolatedBoot"
 ## Driving the seams directly. Legitimate when a harness must act BETWEEN the
 ## redirect and the boot: `vault_restore_boot_test` seeds vault fixtures there.
 const SELF_ISOLATION := "SaveIsolation"
+
+## 🔴 NAMING A CLASS IS NOT CALLING IT. Isolation happens in [method
+## IsolatedBoot.boot] and [method SaveIsolation.begin] — constructing either and
+## then loading the scene yourself redirects nothing. Matching only the class
+## name let `IsolatedBoot.new(...)` followed by a raw `load(MAIN_SCENE)` pass as
+## isolated: the substring that was supposed to prove isolation was satisfied by
+## the very file that skipped it. So each claim requires its class AND its call.
+const ISOLATION_CLAIMS := {
+	HELPER: ".boot(",
+	SELF_ISOLATION: ".begin(",
+}
 
 ## Not harnesses. `isolated_boot.gd` names the scene because it is the helper
 ## that loads it, and this guard names it because it is the string it matches on.
@@ -88,21 +104,23 @@ func _ready() -> void:
 			_fail("could not read %s — a file the guard cannot read is a file it cannot vouch for" % file)
 			return
 		var code := _code_of(source)
-		# Two ways to boot: name the scene and load it yourself, or go through
-		# the helper (which names it for you). Both count; only the first can
-		# be unisolated, because the helper cannot hand back an unisolated scene.
-		var names_scene := code.contains(SCENE_TOKEN)
-		var uses_helper := code.contains(HELPER)
-		if not names_scene and not uses_helper:
+		# Three ways to reach the scene: name it and load it yourself, ask Godot
+		# for the configured one, or go through the helper (which names it for
+		# you). All three count as booting; none of them is self-evidently safe.
+		var reaches_scene := (code.contains(SCENE_TOKEN) or code.contains(SETTING_TOKEN)
+			or code.contains(HELPER))
+		if not reaches_scene:
 			continue
 		booters.append(file)
-		if names_scene and not uses_helper and not code.contains(SELF_ISOLATION):
+		if not _claims_isolation(code):
 			unisolated.append(file)
 
 	# --- the law ---
 	if not unisolated.is_empty():
-		_fail(("%d test(s) instantiate %s without redirecting the save seams: %s — boot through "
-			+ "IsolatedBoot so the run can never reach the player's real save or vault (#309)")
+		_fail(("%d test(s) reach %s without redirecting the save seams: %s — call IsolatedBoot.boot() "
+			+ "(or SaveIsolation.begin() when you must act between the redirect and the boot) so the "
+			+ "run can never touch the player's real save or vault. Naming the class is not enough; "
+			+ "the call is what redirects (#309)")
 			% [unisolated.size(), MAIN_SCENE, ", ".join(unisolated)])
 		return
 
@@ -136,6 +154,17 @@ func _ready() -> void:
 	print("TEST PASS — %d test(s) boot %s, all isolated; prose-only mention in %s correctly ignored"
 		% [booters.size(), MAIN_SCENE, COMMENT_ONLY_CONTROL])
 	get_tree().quit(0)
+
+
+## Does this code actually redirect the seams, rather than merely mention the
+## class that would? Requires the class AND its isolating call, because holding
+## a constructed [IsolatedBoot] while loading the scene yourself isolates
+## nothing — see [constant ISOLATION_CLAIMS].
+func _claims_isolation(code: String) -> bool:
+	for owner: String in ISOLATION_CLAIMS:
+		if code.contains(owner) and code.contains(ISOLATION_CLAIMS[owner]):
+			return true
+	return false
 
 
 ## Every `.gd` under the tests directory, sorted so a failure names the same
