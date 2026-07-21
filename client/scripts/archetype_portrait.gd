@@ -83,11 +83,14 @@ func setup(p_preset_name: String) -> void:
 	# standing in it — the archetype would be somewhere in that frame rather
 	# than being the subject of it.
 	_viewport.own_world_3d = true
+	add_child(_viewport)
 	# Held disabled until there is something to photograph; realize() starts the
 	# settling window. Rendering an empty world first would spend a frame on a
-	# picture of nothing.
+	# picture of nothing. Set AFTER add_child so the disable is applied against
+	# the viewport's final in-tree state and cannot be reordered ahead of a
+	# container tree-entry effect — the robust order for a SubViewportContainer
+	# child (#293 review).
 	_viewport.render_target_update_mode = SubViewport.UPDATE_DISABLED
-	add_child(_viewport)
 
 	var backdrop := WorldEnvironment.new()
 	backdrop.environment = _environment()

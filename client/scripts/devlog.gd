@@ -11,7 +11,7 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
-		"version": "0.21.0",
+		"version": "0.23.0",
 		"date": "2026-07-20",
 		"title": "You can see the four bodies before you choose one",
 		"notes": [
@@ -20,6 +20,16 @@ const ENTRIES: Array[Dictionary] = [
 			"The portraits are drawn from the same recipes the buttons apply, every time the screen opens. There is no saved picture that could drift out of step with the body you would actually get.",
 			"They fill in over the first moments the screen is open rather than all at once, so opening the creator does not stall while four bodies are built.",
 			"Three things are still unfinished. The brute has no shirt in its recipe, so its portrait shows a bare chest — the wardrobe has no clothed starting state underneath yet, which is being fixed separately. The plates are a fixed small size, so the faces are smaller than they should be. And a plate does not light up when you hover it or when it is the one you have chosen; only the name beside it does.",
+		],
+	},
+	{
+		"version": "0.21.0",
+		"date": "2026-07-20",
+		"title": "The ash in the hollows is moving",
+		"notes": [
+			"The ash that gathers in the land's low places used to sit perfectly still, which read as stranger than no ash at all — the dead grass beside it was already leaning in the wind. It breathes now. Each pool slowly thickens and thins again over about twenty seconds, so a hollow you walk past is heavier with ash at some moments than others.",
+			"It is one wind, not an effect running in each hollow separately. A gust crosses the Reach in the direction the grass leans, so a basin on the far side of you thickens a moment after the one at your feet.",
+			"Because it moves, it is no longer something you have to switch on: every player gets it, on any machine that can render air as a volume. Where that hardware is missing the view is unchanged, as before.",
 		],
 	},
 	{

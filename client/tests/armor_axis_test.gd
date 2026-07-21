@@ -15,12 +15,16 @@ extends Node
 ##     mitigation, agility} from closed sets, both axes inside their caps, ids
 ##     unique. No offence field is accepted at all, which is "keep them [the
 ##     weapon and armour axes] from blurring" made mechanical.
-##  4. ONE SLOT VOCABULARY (#96) — the armour model and the baked equipment
-##     registry describe the same body regions, so every art-layer slot (and
-##     every shipped piece's slot) must be a legal Armor.SLOTS value. Read from
-##     the REAL registry, so the two vocabularies can never silently drift.
-##     Model-only slots are allowed and deliberate (see armor.gd's SCOPE note);
-##     an art-layer slot the model rejects is the defect.
+##  4. ONE SLOT VOCABULARY (#96, restated by #251) — the armour model and the
+##     baked equipment registry describe the same body regions. Since the art
+##     layer gained the full wardrobe (#222) some regions hold no armour at all,
+##     so this is now two laws: the declared region set is CLOSED (every region
+##     is a legal Armor.SLOTS value or a named CharacterFactory.ACCESSORY_REGION,
+##     so a typo still reddens), and every region HOSTING AN ARMOUR-LAYER PIECE
+##     must be a legal Armor.SLOTS value. Read from the REAL registry, so the two
+##     vocabularies can never silently drift. Model-only slots remain allowed and
+##     deliberate (see armor.gd's SCOPE note); an armoured region the model
+##     rejects is the defect.
 ##
 ## Every negative control is ISOLATED: a strictly-dominant piece trips dominance
 ## ONLY, a mislabelled piece trips inversion ONLY, and a malformed/over-cap piece
@@ -150,12 +154,25 @@ func _ready() -> void:
 	if _failed:
 		return
 
-	# --- CROSS-LAYER: the art layer's slot vocabulary must be legal here (#96) ---
-	# The armour model and the baked equipment registry describe the same body
-	# regions and MUST share one vocabulary; the art layer is the incumbent (its
-	# slot strings are baked into shipped pieces and reachable from persisted
-	# recipes), so every art slot has to be a legal armour slot. Read the REAL
-	# registry, never a hardcoded copy, so drift in either direction turns CI red.
+	# --- CROSS-LAYER: the art layer and the armour model share one vocabulary ---
+	# #96 closed the drift between the baked equipment registry and this model.
+	# #251 widened the art layer to the whole specified wardrobe (#222), which
+	# added regions that hold no armour at all — underwear and jewellery — so the
+	# law is now stated on PIECES rather than on the region list:
+	#
+	#   1. VOCABULARY IS CLOSED — every declared region is a legal armour slot or
+	#      a named accessory region. A typo belongs to neither and reddens here.
+	#   2. ARMOUR CONTAINMENT — every region that HOSTS AN ARMOUR-LAYER PIECE is a
+	#      legal armour slot. This is the drift #96 actually cared about: a worn
+	#      armour piece the model cannot describe.
+	#
+	# Law 2 is deliberately layer-aware. Stating it on the region list instead
+	# would force `neck`/`ring_l`/`pelvis` into Armor.SLOTS, and every slot there
+	# owes the seed table a light/medium/heavy trade-off — i.e. inventing
+	# mitigation numbers for rings and underpants on the ONE axis the product law
+	# bounds. See the SCOPE note on `Armor.SLOTS`.
+	#
+	# Read the REAL registry, never a hardcoded copy, so drift turns CI red.
 	var registry := CharacterFactory.equipment_registry()
 	var art_slots: Array = registry.get("slots", [])
 	# A missing/unreadable registry would make every check below pass VACUOUSLY —
@@ -163,21 +180,56 @@ func _ready() -> void:
 	_check(art_slots.is_empty(), false, "cross-layer: the baked equipment registry actually loaded (an empty one would pass vacuously)")
 	if _failed:
 		return
-	for slot: Variant in art_slots:
-		_check(str(slot) in Armor.SLOTS, true,
-			"cross-layer: art-layer slot '%s' is a legal armour slot (Armor.SLOTS=%s)" % [str(slot), Armor.SLOTS])
-	# Every shipped PIECE's slot too: the registry's own slot list and its pieces
-	# could themselves disagree, and it is the pieces that actually get worn.
-	var piece_slots := _piece_slots(registry)
-	_check(piece_slots.is_empty(), false, "cross-layer: the registry actually declares pieces (an empty one would pass vacuously)")
+	# The two sets must not overlap, or a region could be armour-bearing and
+	# accessory at once and law 2 would have no meaning for it.
+	for slot: String in CharacterFactory.ACCESSORY_REGIONS:
+		_check(slot in Armor.SLOTS, false,
+			"cross-layer: accessory region '%s' is NOT also an armour slot (the two sets must be disjoint)" % slot)
 	if _failed:
 		return
-	for slot: String in piece_slots:
-		_check(slot in Armor.SLOTS, true, "cross-layer: shipped piece slot '%s' is a legal armour slot" % slot)
+	_clean(_region_vocabulary_problems(registry), "cross-layer: every declared region is a legal armour slot or a named accessory region")
+	# Law 2 is vacuous unless some piece actually sits on the armour layer, so
+	# assert that before trusting its silence.
+	var armour_piece_slots := _piece_slots(registry, "armor")
+	_check(armour_piece_slots.is_empty(), false,
+		"cross-layer: the registry actually declares an armour-layer piece (none would make the containment law vacuous)")
+	if _failed:
+		return
+	_clean(_armour_containment_problems(registry), "cross-layer: every region hosting an armour-layer piece is a legal armour slot")
+
+	# --- CROSS-LAYER negative controls, each isolated to ONE law ---
+	# a) an undeclared region name — in neither set — trips the vocabulary law only.
+	var typo_registry := {
+		"slots": ["torso", "trinket_1", "trinkett_1"],
+		"pieces": {"shirt_ragged": {"slot": "torso", "layer": "clothing"}},
+	}
+	_flags(_region_vocabulary_problems(typo_registry), "cross-layer control: a region in neither set trips the vocabulary law")
+	_clean(_armour_containment_problems(typo_registry), "cross-layer control: ... and trips the containment law alone")
+
+	# b) an ARMOUR piece worn in an accessory region trips containment only.
+	var armoured_ring := {
+		"slots": ["torso", "ring_l"],
+		"pieces": {"signet_plate": {"slot": "ring_l", "layer": "armor"}},
+	}
+	_clean(_region_vocabulary_problems(armoured_ring), "cross-layer control: an armoured accessory keeps a legal vocabulary")
+	_flags(_armour_containment_problems(armoured_ring), "cross-layer control: ... but trips the containment law")
+
+	# c) THE CONTROL THAT PROVES LAYER-AWARENESS IS LOAD-BEARING. The same
+	# accessory region holding a CLOTHING piece must stay clean. Without this,
+	# "every region hosting a piece must be an armour slot" would pass control (b)
+	# identically — so (b) alone cannot tell a layer-aware law from the blunt one
+	# this replaced, and deleting the layer filter would go unnoticed.
+	var cloth_ring := {
+		"slots": ["torso", "ring_l"],
+		"pieces": {"twine_band": {"slot": "ring_l", "layer": "clothing"}},
+	}
+	_clean(_region_vocabulary_problems(cloth_ring), "cross-layer control: a clothing accessory keeps a legal vocabulary")
+	_clean(_armour_containment_problems(cloth_ring), "cross-layer control: ... and does NOT trip containment (the law is layer-aware, not piece-presence)")
 	if _failed:
 		return
 
-	print("TEST PASS — armour axis holds (%d seed pieces: trade-off, class-honest, closed schema within the bounded ceiling; all three guards proven with isolated negative controls) + slot vocabulary agrees with the art layer (%d art slots, %d shipped pieces)" % [seeds.size(), art_slots.size(), piece_slots.size()])
+	var piece_slots := _piece_slots(registry)
+	print("TEST PASS — armour axis holds (%d seed pieces: trade-off, class-honest, closed schema within the bounded ceiling; all three guards proven with isolated negative controls) + slot vocabulary agrees with the art layer (%d art slots, %d shipped pieces, %d on the armour layer; %d accessory regions carry no armour by design)" % [seeds.size(), art_slots.size(), piece_slots.size(), armour_piece_slots.size(), CharacterFactory.ACCESSORY_REGIONS.size()])
 	get_tree().quit(0)
 
 
@@ -193,21 +245,61 @@ func _isolated_schema_case(seeds: Array, bad: Dictionary, label: String) -> void
 	_clean(Armor.find_class_inversions(candidate), "%s — and from the inversion guard" % label)
 
 
-## Every shipped piece's slot, from the baked registry. Handles both plausible
-## bake shapes (an id-keyed dictionary, which is what ships today, or an array of
-## piece records) — the bake FORMAT is the art layer's concern, but the slot
-## VOCABULARY is shared, and that is what this test pins.
-func _piece_slots(registry: Dictionary) -> Array[String]:
+## LAW 1 — the declared region vocabulary is CLOSED: every region the registry
+## declares is either a legal armour slot or a deliberately armour-free
+## accessory region. A region belonging to neither is a typo or an unreviewed
+## addition, and this is what stops #251's split from turning the region list
+## into a free-text field.
+func _region_vocabulary_problems(registry: Dictionary) -> Array[String]:
+	var problems: Array[String] = []
+	for slot: Variant in registry.get("slots", []):
+		var name := str(slot)
+		if name in Armor.SLOTS or name in CharacterFactory.ACCESSORY_REGIONS:
+			continue
+		problems.append(("region '%s' is neither a legal armour slot %s nor a named accessory region %s"
+			+ " — add it to one deliberately, or fix the typo")
+			% [name, str(Armor.SLOTS), str(CharacterFactory.ACCESSORY_REGIONS)])
+	problems.sort()
+	return problems
+
+
+## LAW 2 — every region that HOSTS AN ARMOUR-LAYER PIECE is a legal armour slot.
+## This is the containment #96 actually needed: the failure it prevents is a worn
+## armour piece whose region the model cannot describe. Stated on pieces, not on
+## the region list, so an accessory region that holds only clothing (or nothing
+## yet) is legal while an armoured one is not.
+func _armour_containment_problems(registry: Dictionary) -> Array[String]:
+	var problems: Array[String] = []
+	for slot: String in _piece_slots(registry, "armor"):
+		if slot in Armor.SLOTS:
+			continue
+		problems.append(("an armour-layer piece is worn in region '%s', which is not a legal armour slot %s"
+			+ " — baking armour for a region means adding it to Armor.SLOTS with its seed pieces")
+			% [slot, str(Armor.SLOTS)])
+	problems.sort()
+	return problems
+
+
+## Every shipped piece's slot, from the baked registry, optionally restricted to
+## one wearable layer. Handles both plausible bake shapes (an id-keyed
+## dictionary, which is what ships today, or an array of piece records) — the
+## bake FORMAT is the art layer's concern, but the slot VOCABULARY is shared, and
+## that is what this test pins. `layer_filter` empty means every layer.
+func _piece_slots(registry: Dictionary, layer_filter: String = "") -> Array[String]:
 	var out: Array[String] = []
 	var pieces: Variant = registry.get("pieces", null)
 	if pieces is Dictionary:
 		for key: Variant in (pieces as Dictionary):
 			var p: Variant = (pieces as Dictionary)[key]
 			if p is Dictionary and (p as Dictionary).has("slot"):
+				if layer_filter != "" and str((p as Dictionary).get("layer", "")) != layer_filter:
+					continue
 				out.append(str((p as Dictionary)["slot"]))
 	elif pieces is Array:
 		for p: Variant in (pieces as Array):
 			if p is Dictionary and (p as Dictionary).has("slot"):
+				if layer_filter != "" and str((p as Dictionary).get("layer", "")) != layer_filter:
+					continue
 				out.append(str((p as Dictionary)["slot"]))
 	out.sort()
 	return out

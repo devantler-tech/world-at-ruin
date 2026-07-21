@@ -191,6 +191,11 @@ func _build_panel() -> void:
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.custom_minimum_size = Vector2(330, 0)
+	# A gamepad navigates by moving focus, and a ScrollContainer does not follow
+	# focus by default — so a controller reaching the OUTFIT/SKIN/ADVANCED rows
+	# below the fold would send focus off the visible area with nothing scrolling
+	# to meet it. follow_focus keeps the focused control in view (#293 review).
+	scroll.follow_focus = true
 	column.add_child(scroll)
 	var content := VBoxContainer.new()
 	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -242,7 +247,14 @@ func _build_panel() -> void:
 	# Outfit and skin stay on the primary surface: they ARE named choices, which
 	# is what the art direction asks the creator to lead with.
 	var outfit := _add_section(content, "OUTFIT")
-	for slot: String in CharacterFactory.equipment_registry().get("slots", []):
+	# Only regions something can actually be put in. #251 declared the whole
+	# specified wardrobe (#222) up front so the vocabulary is settled before the
+	# garments arrive, which means most regions have no baked piece yet — and a
+	# picker whose only entry is "none" is a row the player cannot use. Showing
+	# all thirteen would have added nine dead rows to a screen already faulted
+	# for reading as a debug panel (#227). Each region appears the moment a piece
+	# is baked for it, with no change here.
+	for slot: String in pickable_regions(CharacterFactory.equipment_registry()):
 		_add_outfit_picker(outfit, slot)
 	var skin := _add_section(content, "SKIN")
 	_add_skin_picker(skin)
@@ -393,12 +405,8 @@ func _add_outfit_picker(into: Container, slot: String) -> void:
 	var picker := OptionButton.new()
 	picker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	picker.add_item("bare")
-	var pieces: Dictionary = CharacterFactory.equipment_registry().get("pieces", {})
-	var names := pieces.keys()
-	names.sort()
-	for piece_name: String in names:
-		if String(pieces[piece_name]["slot"]) == slot:
-			picker.add_item(piece_name)
+	for piece_name: String in _pieces_in_slot(CharacterFactory.equipment_registry(), slot):
+		picker.add_item(piece_name)
 	picker.item_selected.connect(func(index: int) -> void:
 		if _syncing:
 			return
@@ -406,6 +414,43 @@ func _add_outfit_picker(into: Container, slot: String) -> void:
 		_player.set_character(_recipe))
 	row.add_child(picker)
 	_outfit_pickers[slot] = picker
+
+
+## The regions the OUTFIT section offers a picker for: every declared region
+## that something can actually be put in, in the kit's declared order.
+##
+## #251 declared the whole specified wardrobe (#222) up front so the vocabulary
+## is settled before the garments arrive, which means most regions have no baked
+## piece yet — and a picker whose only entry is "none" is a row the player
+## cannot use. Showing all thirteen would have added nine dead rows to a screen
+## already faulted for reading as a debug panel (#227).
+##
+## Pure and static, like `group_shape_names`, so the rule is checkable without
+## standing up the UI — and a region appears the moment a piece is baked for it,
+## with no change here.
+static func pickable_regions(registry: Dictionary) -> Array[String]:
+	var out: Array[String] = []
+	for slot: Variant in registry.get("slots", []):
+		var region := str(slot)
+		if _pieces_in_slot(registry, region).is_empty():
+			continue
+		out.append(region)
+	return out
+
+
+## Every baked piece that can be worn in this region, sorted so the picker's
+## order — and the decision to show the picker at all — never depends on
+## dictionary iteration order. Shared by both callers on purpose: the row is
+## built from exactly the list that decided the row should exist, so a region
+## can never be shown with nothing in it, or hidden while holding something.
+static func _pieces_in_slot(registry: Dictionary, slot: String) -> Array[String]:
+	var out: Array[String] = []
+	var pieces: Dictionary = registry.get("pieces", {})
+	for piece_name: String in pieces:
+		if String((pieces[piece_name] as Dictionary).get("slot", "")) == slot:
+			out.append(piece_name)
+	out.sort()
+	return out
 
 
 ## Which skin the body wears — "clay" is the untextured kit body.
