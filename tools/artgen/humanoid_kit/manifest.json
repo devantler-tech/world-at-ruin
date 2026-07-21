@@ -193,7 +193,20 @@
       "sha256": "ded3f70428505eabbf1f6d7b5f61196a7366ef20757103d276ad0ed336c35ada"
     }
   },
-  "equipment_slots": ["torso", "legs", "feet", "head", "hands", "waist", "pelvis", "neck", "ring_l", "ring_r", "trinket_1", "trinket_2"],
+  "equipment_slots": [
+    "torso",
+    "legs",
+    "feet",
+    "head",
+    "hands",
+    "waist",
+    "pelvis",
+    "neck",
+    "ring_l",
+    "ring_r",
+    "trinket_1",
+    "trinket_2"
+  ],
   "equipment_layers": ["clothing", "armor"],
   "equipment": [
     {

@@ -25,6 +25,14 @@ extends RefCounted
 ## as its own colours, so scoured stone answers the low sun differently from
 ## loose ash. Colour alone would have made them one material in four paints.
 ##
+## It also carries its own LANDFORM (`amp`, `ridged`), because colour alone
+## could not carry the regions far enough. The measurements below found the
+## ceiling honestly: this world's haze and low sun eat roughly two thirds of
+## any ground-colour difference, and looking ACROSS a boundary moved a frame by
+## 0.013 luma. Shape has no such ceiling — a silhouette is still a silhouette
+## twenty metres out — so the landform axis is what makes a region read as a
+## place rather than as paint underfoot. See `landform_for`.
+##
 ## Everything here is integer-hash derived from the world seed: no `randf()`,
 ## no `FastNoiseLite`, no static mutable state. The same seed gives the same
 ## regions on every boot and every platform, which `ground_regions_test.gd`
@@ -93,6 +101,12 @@ const REGIONS: Array[Dictionary] = [
 		&"scorch": Color(0.16, 0.14, 0.13),
 		# Loose ash: the baseline surface, and the roughest ground here.
 		&"rough": 0.0,
+		# The reference landform, and the one that must not move: `amp` 1 with
+		# no ridging reproduces the pre-landform height field EXACTLY, which is
+		# what keeps the shrine — pinned to this region — and every frame
+		# already captured there reading as itself.
+		&"amp": 1.0,
+		&"ridged": 0.0,
 	},
 	{
 		# Where the burn sat longest: much darker, and warm rather than neutral.
@@ -102,6 +116,11 @@ const REGIONS: Array[Dictionary] = [
 		&"scorch": Color(0.10, 0.065, 0.05),
 		# Fire-fused crust: slightly slicker than loose ash.
 		&"rough": -0.06,
+		# Where the burn pooled it also slumped: the lowest, calmest relief in
+		# the Reach. Subdued rather than flat — a dead-level plain would read
+		# as missing terrain, not as a basin.
+		&"amp": 0.55,
+		&"ridged": 0.0,
 	},
 	{
 		# Ash scoured off down to the pale stone beneath: much lighter, and the
@@ -112,6 +131,14 @@ const REGIONS: Array[Dictionary] = [
 		&"scorch": Color(0.23, 0.23, 0.22),
 		# Scoured stone, wind-polished: the least rough ground in the Reach.
 		&"rough": -0.14,
+		# The same wind that stripped the ash off exposed what it was lying on:
+		# low ground with rock spines standing out of it, rather than dunes.
+		# The only region that creases, and — because creasing spends most of
+		# the gradient budget (see LANDFORM_GRADIENT_BUDGET) — the shortest.
+		# That is the right way round for scoured ground anyway: what the wind
+		# took away is gone, and the spines are what it could not move.
+		&"amp": 0.55,
+		&"ridged": 0.85,
 	},
 	{
 		# Ground stained by the inherited machines rusting into it — ochre, the
@@ -125,8 +152,50 @@ const REGIONS: Array[Dictionary] = [
 		&"scorch": Color(0.18, 0.115, 0.055),
 		# Corroded, pitted ground: rougher even than the ash.
 		&"rough": 0.05,
+		# A moor: low, broad and broken. Under the ashflats in height, with just
+		# enough creasing to sink its hollows without raising spines, so it
+		# reads as worked-over ground rather than as either dunes or stone.
+		# Kept well below the 1/3 inversion point (see `shape`) — at 0.30 its
+		# rises were within a whisker of flattening into plateaus.
+		&"amp": 0.80,
+		&"ridged": 0.20,
 	},
 ]
+
+## 🔴 THE GRADIENT BUDGET — what a region's landform may cost in steepness.
+##
+## The Reach's baseline ground is ALREADY at its walkability ceiling. Measured
+## on the shipped seed, away from the massif (whose buried skirt is deliberately
+## a cliff), the steepest grade in the pre-landform world is **41.9 degrees**
+## against a character floor limit of 45. There is no headroom, so a region
+## cannot be made TALLER than the baseline without producing ground the wanderer
+## cannot walk up — a region you can look at but not enter.
+##
+## Both knobs spend the same budget, and the crease spends more than it looks:
+##
+##   * `amp` scales the field's gradient directly.
+##   * `ridged` scales it by up to **2x**, because `-2|n|` is twice as steep as
+##     `n`. A crease is a doubling of slope, not a decoration on top of one.
+##
+## So a landform costs `amp * lerp(1, 2, ridged)`, capped here at the baseline.
+## A first pass ignored this and gave the scoured region `amp` 1.35 with
+## `ridged` 0.8 — a cost of 2.43 — which took the open ground to **58 degrees**
+## and made a whole region unwalkable while every other guard stayed green.
+## `region_landform_test` now pins both the arithmetic and its measured
+## consequence.
+##
+## The design consequence is worth stating, because it is not a limitation:
+## regions differ by being FLATTER and more creased than the baseline, never
+## taller. `ashflats` is the high rolling ground, and every other region is
+## something this world took away from it — which is what a burned world ought
+## to look like anyway.
+const LANDFORM_GRADIENT_BUDGET := 1.05
+
+
+## What a region's landform costs against `LANDFORM_GRADIENT_BUDGET`.
+static func landform_cost(amp: float, ridged: float) -> float:
+	return amp * lerpf(1.0, 2.0, ridged)
+
 
 ## The cell holding the world origin, which is where the shrine stands. Pinned
 ## to `ashflats` so the starting ground is the established one and a re-seed
@@ -320,6 +389,88 @@ static func palette_for(region_sites: Array[Site], x: float, z: float) -> Dictio
 		scorch += s * w
 		rough += float(reg[&"rough"]) * w
 	return {&"ash": ash, &"rock": rock, &"scorch": scorch, &"rough": rough}
+
+
+## The landform at a place: `{ amp, ridged }`, cross-faded across every region
+## competing for it exactly as `palette_for` cross-fades the colours.
+##
+## 🔴 The PARAMETERS are blended, not the finished heights. Both are continuous,
+## so either would remove seams; the difference is what a boundary looks like.
+## Blending finished heights averages a creased landform with an uncreased one,
+## which leaves a softened crease standing in the band — a ghost ridge in
+## ground that belongs to neither region. Blending the parameters applies the
+## crease operator ONCE, at a strength that falls to zero, so the ridging reads
+## as fading out. That is the transition the ground is meant to describe.
+##
+## Continuity comes free and by construction: `shares` is continuous in
+## position (see `region_for`), `amp` and `ridged` are linear in `shares`, and
+## `shape` is continuous in both. No band-specific special case exists, and
+## none is needed — including where three regions meet.
+static func landform_for(region_sites: Array[Site], x: float, z: float) -> Dictionary:
+	var at := region_for(region_sites, x, z)
+	var owner: int = at[&"region"]
+	if at[&"blend"] >= 1.0:
+		var only: Dictionary = REGIONS[owner]
+		return {&"amp": float(only[&"amp"]), &"ridged": float(only[&"ridged"])}
+	var shares: PackedFloat32Array = at[&"shares"]
+	var amp := 0.0
+	var ridged := 0.0
+	for r in REGIONS.size():
+		var w := shares[r]
+		if w <= 0.0:
+			continue
+		var reg: Dictionary = REGIONS[r]
+		amp += float(reg[&"amp"]) * w
+		ridged += float(reg[&"ridged"]) * w
+	return {&"amp": amp, &"ridged": ridged}
+
+
+## How much the ridge operator is lifted so it does not raise the ground it is
+## applied to.
+##
+## `-2|n|` creases a noise field into spines, but it is also strictly negative,
+## so applying it would sink a ridged region several metres relative to its
+## neighbours — a landform change smuggling a bulk height change in with it.
+## The lift cancels that: it is `mean(2|n|)` measured over the shipped world's
+## own base field on a 129x129 grid, which is what makes `ridge` mean-zero
+## THERE rather than for some idealised noise distribution.
+##
+## Measured, not assumed. It follows the field: change the base noise's
+## frequency, octaves or type and this must be re-measured, which
+## `region_landform_test._test_ridge_is_mean_zero` fails loudly if you forget.
+const RIDGE_LIFT := 0.5623
+
+
+## The ridge operator: creases a smooth field into spines.
+##
+## A smooth field's zero crossings become its peaks, so the rounded tops of the
+## base noise turn into sharp lines — the difference between a dune and an
+## exposed rock spine. This is the "make the generator produce DECISIONS"
+## instruction from `docs/art-direction/README.md` applied to landform: an edge
+## a shader cannot fake and more octaves cannot produce.
+static func ridge(n: float) -> float:
+	return RIDGE_LIFT - 2.0 * absf(n)
+
+
+## A region's landform applied to a sample of the world's base noise field.
+## Returns noise units — the caller scales by its own height amplitude.
+##
+## ⚠️ `ridged` IS NOT A DIAL FROM "ROLLING" TO "MORE ROLLING". Expanding it for
+## a rise (`n > 0`) gives `n * (1 - 3 * ridged) + ridged * RIDGE_LIFT`, so the
+## rises flatten as `ridged` climbs, stand FLAT at exactly **1/3**, and INVERT
+## above it — past a third, what was a hill becomes a hollow and the field's
+## zero crossings become its ridge lines. That inversion is the whole point at
+## `bonepale`'s 0.85; it is a trap anywhere else. Hollows meanwhile only ever
+## deepen (`n * (1 + ridged)`), which is why a small `ridged` reads as ground
+## that sags rather than ground that peaks.
+##
+## Measured consequence, isolated from `amp` and from the world's detail layer:
+## the second-difference ratio against the same region unridged is exactly
+## 1.0000 at `ridged` 0, **2.11** at 0.85, and DIPS BELOW 1 either side of the
+## inversion point, where the flattening rises cancel the deepening hollows.
+## `region_landform_test._test_ridging_creases_the_field` pins both ends.
+static func shape(base_noise: float, amp: float, ridged: float) -> float:
+	return lerpf(base_noise, ridge(base_noise), ridged) * amp
 
 
 ## Convenience wrappers: build the sites, then ask. For tests, evidence and
