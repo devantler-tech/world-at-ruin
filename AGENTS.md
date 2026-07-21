@@ -362,9 +362,10 @@ everything shipped afterwards is held to.
   SEPARATE versioned file** — `SaveVault` (`user://vault.json`, #249): the recipe format is closed
   (`CharacterFactory.validate` rejects any unknown top-level field, and every shipped client already
   enforces that), so the character save cannot grow new kinds of data without older clients refusing
-  it — and a refused character save sends `main.gd` into the *writable* first-run creator, which
-  overwrites and strands the character. A sibling file is the only shape a shipped client handles
-  safely: it never reads it, so it never rejects or deletes it. The vault obeys the same laws
+  it. `CharacterStore` parses the JSON object, then `CharacterFactory.build()` refuses the unknown
+  shape and leaves the saved body unbuilt; the store does not provide the vault's refusal latch, and
+  the manual editor remains a writable path. A sibling file is the only shape a shipped client
+  handles safely: it never reads it, so it never rejects or deletes it. The vault obeys the same laws
   (name-keyed, additive-only, newer versions refused) with the same enforcement shape —
   `tests/save_vault_guard_test`, golden `tests/data/golden_vault_v<N>.json`, and the append-only
   `tests/data/shipped_vault_versions.txt` — plus two rules of its own: a missing or unreadable vault
@@ -393,6 +394,11 @@ everything shipped afterwards is held to.
   replication are later children — with its own cross-platform golden), with the Agones/Nakama
   layers arriving as later children of the server-foundation
   epic (#4); `deploy/` (platform manifests) arrives later per the roadmap.
+- **Changing either save format:** follow the
+  [forward-only save-data migration contract](docs/design/save-data.md). It defines the staged
+  expand → bake → contract rollout, the version-bump checklist, and the refusal rules for both the
+  character recipe and progression vault; a green fixture guard alone does not make a one-release
+  read-and-write bump rollback-safe.
 - **Run:** `godot client` (macOS: `/Applications/Godot.app/Contents/MacOS/Godot client`).
 - **Validate before every PR:**
   `godot --headless --editor --quit --path client && godot --headless --quit-after 120 --path client` —
