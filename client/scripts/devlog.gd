@@ -11,7 +11,7 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
-		"version": "0.21.0",
+		"version": "0.22.0",
 		"date": "2026-07-20",
 		"title": "The stretches of the Reach are shaped differently now, not just coloured differently",
 		"notes": [
@@ -19,6 +19,16 @@ const ENTRIES: Array[Dictionary] = [
 			"Now each stretch has its own shape. The ash flats keep the long rolling rises you already know. The burnt ground has slumped into a low, calm basin. The scoured stone is the lowest and most open ground in the Reach — standing on it you can see much further than you used to, and the rock underneath breaks through as hard-edged ridges instead of dunes. The rust-stained moor sits low and broken, its hollows sunk deeper than its rises stand.",
 			"Shape survives the haze better than colour does, so the skyline and the middle distance now have somewhere for your eye to go instead of reading as one even field. Close up the difference is plain; far off the haze still softens it, and that is a separate problem still to solve.",
 			"The ground you start on has not moved. The shrine's clearing is the same ash flats it always was, unchanged to the millimetre out to the last few paces of its edge, where it hands over to the open ground this change reshapes. And nothing has become harder to walk: every stretch is either as gentle as the old ground or gentler.",
+		],
+	},
+	{
+		"version": "0.21.0",
+		"date": "2026-07-20",
+		"title": "The ash in the hollows is moving",
+		"notes": [
+			"The ash that gathers in the land's low places used to sit perfectly still, which read as stranger than no ash at all — the dead grass beside it was already leaning in the wind. It breathes now. Each pool slowly thickens and thins again over about twenty seconds, so a hollow you walk past is heavier with ash at some moments than others.",
+			"It is one wind, not an effect running in each hollow separately. A gust crosses the Reach in the direction the grass leans, so a basin on the far side of you thickens a moment after the one at your feet.",
+			"Because it moves, it is no longer something you have to switch on: every player gets it, on any machine that can render air as a volume. Where that hardware is missing the view is unchanged, as before.",
 		],
 	},
 	{

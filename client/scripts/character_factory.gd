@@ -148,6 +148,25 @@ const LAYERED_EQUIPMENT_VERSION := 4
 ## already-ledgered promise (`<piece> <slot>`) instead of two.
 const LAYERS := ["clothing", "armor"]
 
+## Regions that deliberately carry NO armour stats (#251).
+##
+## The wardrobe #222 specifies needs places to put underwear and jewellery, and
+## neither belongs on the armour axis: `Armor.SLOTS` is the bounded vertical the
+## product law caps, and every entry there owes `armor_axis_test` a
+## light/medium/heavy trade-off, so listing rings and underpants would have
+## meant inventing power the maintainer never asked for. #222 files jewellery
+## under "armor on top of it", but that is the render `layer`, not the stat set.
+##
+## Naming them here rather than just letting them be absent is what keeps the
+## vocabulary CLOSED: `armor_axis_test` requires every declared region to be in
+## `Armor.SLOTS` or in this set, so `trinket_l` or `neckk` lands in neither and
+## turns CI red instead of quietly becoming a legal region nothing can fill.
+##
+## A region leaves this set the day a piece with armour stats is baked for it —
+## that PR adds it to `Armor.SLOTS` with its seed pieces, which is a balance
+## decision made with the piece in hand rather than guessed at now.
+const ACCESSORY_REGIONS := ["pelvis", "neck", "ring_l", "ring_r", "trinket_1", "trinket_2"]
+
 static var _equipment_registry: Dictionary = {}
 static var _skins_registry: Dictionary = {}
 static var _skin_materials: Dictionary = {}

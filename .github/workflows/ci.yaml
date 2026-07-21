@@ -1287,11 +1287,12 @@ jobs:
             fi
             if [ "${pools}" = "off" ]; then
               echo
-              echo "This world contains ZERO ash pools. Pools need the GPU probe"
-              echo "AND the WAR_HOLLOW_FOG opt-in, and the capture sets neither"
-              echo "by default — so this is true even on a GPU that supports"
-              echo "volumetrics. Nothing in this artifact evidences a change to"
-              echo "the hollow ash pools."
+              echo "This world contains ZERO ash pools. #233 retired the opt-in"
+              echo "that used to gate them, so pools now build wherever the GPU"
+              echo "probe passes — meaning this verdict normally follows the"
+              echo "volumetric one above, and an 'off' here with the probe ON"
+              echo "would instead mean no hollow was deep enough to qualify."
+              echo "Nothing in this artifact evidences a change to the pools."
             fi
           } > "${RUNNER_TEMP}/shots/capture-conditions.txt"
 
