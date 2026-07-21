@@ -153,8 +153,9 @@ field of grey primitives ship. A green suite plus a frame that reads as placehol
 **How to produce that frame.** CI runs `client/tools/frame_capture.tscn` on player-visible PRs and
 publishes the rendered vantages as a **build artifact** — so the evidence is reproducible on a known
 machine rather than dependent on whoever happened to run the game. Point a reviewer at that artifact.
-Locally the same tool works windowed (`WAR_SHOT_DIR=… WAR_SAVE_PATH=… godot --path client
-res://tools/frame_capture.tscn`); a **headless run renders nothing**, and the tool refuses to run
+Locally the same tool works windowed (`WAR_SHOT_DIR=… WAR_SAVE_PATH=… WAR_VAULT_PATH=… godot --path
+client res://tools/frame_capture.tscn` — redirect every save seam, since the capture boots the real
+launch path); a **headless run renders nothing**, and the tool refuses to run
 headless rather than emit a blank frame. It also proves the terrain actually landed pixels: at one
 designated vantage it hides the terrain mesh and fails unless the frame changes where bare ground
 was, so a fully transparent or discard-everything material cannot pass off a sky photograph as
@@ -165,6 +166,15 @@ fixed **per committed seed** — derived deterministically from the cave layout,
 over run, moving only when the world itself moves (which `cave_capture_vantage_test` turns into a
 named failure and the capture log declares as a `CAVE VANTAGE` coordinate delta, never a quietly
 different frame).
+
+**What that artifact cannot show you (#232).** Volumetric fog is gated on an R32_Uint atomic storage
+image, and the hosted macOS capture runner's GPU does not support it — so **every frame CI publishes
+shows the height-fog fallback**, never the volumetric path or the hollow ash pools built on it. The
+capture job now states which path it captured: read `capture-conditions.txt` in the artifact, or the
+job summary. If you changed probe-gated rendering, CI says so and the frames are not your evidence —
+**render the enabled path locally and attach that**. The reasoning, the rejected self-hosted-runner
+option and the measured software-rasteriser direction are in
+[`docs/design/gpu-gated-frame-evidence.md`](docs/design/gpu-gated-frame-evidence.md).
 
 **The tells that the bar is being missed** — all four were true of the first foliage pass, and are
 the concrete evidence behind this section:
@@ -338,7 +348,9 @@ everything shipped afterwards is held to.
   primitives). The one sanctioned exception to "no binary assets" is `client/assets/` — artifacts
   BAKED BY COMMITTED CODE (`tools/artgen/`, the Python/bpy exception) from CC0 data, plus the
   sanctioned committed CC0 base meshes that generators reshape in code (maintainer direction on
-  #20); every asset directory carries a `PROVENANCE.md` with licence chain and checksums, and
+  #20); every asset directory carries a `PROVENANCE.md` with licence chain and checksums
+  (enforced by `tools/provenance-guard.sh` in the `license-guard` job — a directory holding any
+  non-Markdown file must be covered by a `PROVENANCE.md` at itself or an ancestor), and
   bakes must be deterministic (the artgen workflow re-bakes and byte-compares). Characters are
   composed at runtime by `CharacterFactory` from **recipes** (`client/recipes/*.json`, versioned
   and name-keyed — names are forward-only per the no-resets law; `tests/save_fixture_guard_test`
@@ -402,16 +414,26 @@ everything shipped afterwards is held to.
   temporarily skipped by adding its basename (no
   `.tscn`) on its own line in the optional `client/tests/ci-skip.txt` (blank/`#`-comment lines
   ignored) — a rarely-edited escape hatch, so the run line itself stops changing per-test.
-- **Boot tests isolate the save via `WAR_SAVE_PATH`:** a test that boots `main.tscn` to exercise the
-  first-run character creator would otherwise run against the player's real `user://character.json`.
-  It must NOT clear-and-restore that file (a run killed mid-test strands the only copy — no-resets
-  law). Instead the game resolves its save location through `CharacterStore.save_path()`, which
-  honours the `WAR_SAVE_PATH` env override (unset in production — the seam is inert). Boot tests use
-  the `SaveIsolation` helper (`tests/save_isolation.gd`) to point the game at a throwaway
-  `user://*_boot_probe.json` before instantiating the scene, then assert the real save stayed
-  byte-identical; `tests/save_path_seam_test` pins the seam contract itself. A developer running the
-  suite on a machine with a played save can also `export WAR_SAVE_PATH=/tmp/probe.json` to keep it
-  fully out of reach.
+- **Boot tests go through `IsolatedBoot` — booting and isolating are ONE act:** a test that
+  instantiates `main.tscn` runs the real launch path, which reads — and on the first-run path
+  writes — every file the player's state lives in: `user://character.json` and the progression
+  vault. It must NOT clear-and-restore them (a run killed mid-test strands the only copy —
+  no-resets law). Instead the game resolves each location through a seam honouring an env override
+  (unset in production — the seams are inert): `CharacterStore.save_path()` / `WAR_SAVE_PATH`, and
+  `SaveVault.vault_path()` / `WAR_VAULT_PATH`. `SaveIsolation` (`tests/save_isolation.gd`) is the
+  ONE place that lists those seams and redirects them all to throwaway `user://*_boot_probe.json`
+  probes, so a seam added there reaches every harness without a single test changing.
+  Boot with **`IsolatedBoot`** (`tests/isolated_boot.gd`): `boot()` redirects every seam and returns
+  the instantiated scene, or `null` when the redirect did not take — so a caller cannot hold a
+  booted scene and an unisolated save at the same time. Drive `SaveIsolation` directly only when the
+  harness must act BETWEEN the redirect and the boot (`vault_restore_boot_test` seeds vault fixtures
+  there). Either way, assert `real_save_untouched()` on every exit path.
+  `tests/boot_isolation_guard_test` fails the build when a test boots the scene unisolated;
+  `tests/save_path_seam_test` pins the seam contract itself. That guard matches **code, never
+  prose** — a doc comment saying a test never boots `main.tscn` is not a violation (#309 was filed
+  off a grep that made exactly that mistake and accused five correct files). A developer running the
+  suite on a machine with a played save can also `export WAR_SAVE_PATH=/tmp/probe.json
+  WAR_VAULT_PATH=/tmp/probe_vault.json` to keep both fully out of reach.
 - **Validate the server before every PR:** from `server/`, `gofmt -l .` (must print nothing),
   `go vet ./...`, `go test -race ./...` (includes the tick-determinism and golden-hash tests), and
   `go build ./...`. The `Server CI (Go)` job runs exactly this and feeds the `CI - Required Checks`

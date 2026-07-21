@@ -94,7 +94,7 @@ pick one canonical frame per anchor, for a reason worth stating — no agent her
 media, and inventing a plate number or a trailer timestamp would be fabricating evidence to satisfy a
 rule about evidence.
 
-The fix is on the citing side, and it is enforceable: **a PR names the anchor _and_ links the
+The fix is on the citing side, and it is enforceable: **a PR names the anchor *and* links the
 specific image it compared against** — a direct URL to one screenshot in the game's official media
 gallery, one Steam store screenshot, one illustration, or one trailer frame at a stated timestamp. A
 reviewer can then open the same image. **A citation naming only the title is incomplete and a
@@ -336,8 +336,12 @@ Ashfall Reach — a shattered orange wasteland that still separates rock from gr
 IV's **Dry Steppes** for how far to push grime, rust and wear without losing readability.
 
 **⚠️ The channels are not simply missing — check before you file that as the gap.**
-`terrain.gdshader` already perturbs `NORMAL` (line 131) and varies `ROUGHNESS` by slope and grain
-(line 117), and mixes ash against rock by slope. All three channels are being touched, and the
+`terrain.gdshader` already perturbs `NORMAL` (its final `NORMAL =` assignment, at the end of
+`fragment()`) and varies `ROUGHNESS` by slope and grain (the `ROUGHNESS = clamp(mix(ash_roughness,
+…))` assignment above it), and mixes ash against rock by slope. Named by symbol rather than by line
+number on purpose: the line numbers this used to carry (117 and 131) had drifted hundreds of lines
+into the noise helpers, pointing anyone following this guidance at unrelated code. All three
+channels are being touched, and the
 result still measures flat. So the gap is **the magnitude and character of the variation, not its
 absence** — the same trap as the torch below, where the layers exist but do not read.
 
@@ -566,6 +570,36 @@ way**, identical to three significant figures. The filter was not the cause, and
 recorded what else differed. The committed tool point-samples for a different and better reason — a
 filtered downscale would make the baseline depend on the engine's interpolation, so a Godot upgrade
 could move it with no art having changed.
+
+**What actually differed, found in [#321](https://github.com/devantler-tech/world-at-ruin/issues/321):
+the torch flicker.** The question the paragraph above left open — "neither throwaway recorded what
+else differed" — has an answer, and it was never the art or the tool. The torches are the cave's only
+light, and their energy swings **1.38 → 2.82, slightly over 2×**, on accumulated wall-clock time. A
+capture settles a fixed number of *frames* while that phase advances by *delta*, so each run
+photographed whatever phase the frame pacing happened to land on. Measured on unchanged `main`, two
+consecutive runs:
+
+| Vantage | run 1 | run 2 | drift |
+|---|---|---|---|
+| cave-chamber | 12.5% / 6.1° | 14.1% / 6.2° | **±1.6pp** value, ±0.1° hue |
+| cave-walkout | 16.8% / 10.3° | 20.8% / 10.2° | **±4.0pp** value, ±0.1° hue |
+| every outdoor vantage | — | — | reproducible to printed precision |
+
+Only the cave drifted, and only on **value** — dimming a single-hue light changes brightness, not
+hue, which is why the hue column held steady while the value column did not. That ±4pp floor was
+wider than the effect most cave art passes are asked to demonstrate, so **a cave value delta below
+about 4pp was unfalsifiable**, and the 13.1 / 14.3 / 12.7 spread above is that floor rather than a
+filter artefact.
+
+`frame_capture` now pins the phase (`CaveSystemGen.freeze_flicker()`) before shooting the cave, so
+consecutive runs report identical cave figures; `client/tests/cave_capture_flicker_test.gd` holds it,
+including a non-vacuity check so the guard cannot pass against a light that never flickers. In-game
+flicker is unchanged — only the evidence path is pinned.
+
+**Cave figures recorded before that fix carry this ±4pp uncertainty and should not be compared
+against post-fix ones.** Pinning also re-bases the cave numbers, because they are now read at one
+fixed phase instead of an arbitrary one — on the pinned illuminant `cave-chamber` measures **11.0% /
+6.0°** and `cave-walkout` **23.2% / 10.2°**. Those are the baseline a later cave pass beats.
 
 The superseded hue pass is kept only so the older figures stay traceable:
 

@@ -30,6 +30,15 @@ var _volumetrics_on := false
 ## readable pixels under `--headless`, so this list is the only headless-
 ## verifiable record of where the air was thickened (the foliage lesson).
 var _hollow_fog: Array[Dictionary] = []
+## The built pool nodes, index-aligned with [member _hollow_fog], and empty
+## wherever the pools were placed but not built. Held so [method _process] can
+## drift them (#233) without searching the tree every frame.
+var _hollow_fog_volumes: Array[FogVolume] = []
+## Seconds this world's ash has been drifting for. Accumulated from frame deltas
+## rather than read off a clock, so drift is a function of how long the world
+## has been running and not of when it happened to be launched — which keeps a
+## capture taken at a given world-time reproducible.
+var _hollow_fog_time := 0.0
 ## The live replication link, or null when no zone was named (#244).
 var _zone: ZoneConnection = null
 ## Whether a lost connection has already been reported, so a failure that
@@ -39,6 +48,12 @@ var _zone_failure_reported := false
 ## once it has: before that, the close IS the failure and is already reported
 ## under its own error class.
 var _zone_was_live := false
+## Draws the replicated entity table (#248), or null when no zone was named.
+## Parented under THIS node and never under WorldGen: that subtree is
+## fingerprinted by `world_gen_determinism_test` and additionally scanned for
+## ruin sites, so a marker there would move the world golden whenever somebody
+## connected.
+var _replicas: ReplicaView = null
 
 func _ready() -> void:
 	# Capture-harness entry for the EXPORTED client: the official export
@@ -250,6 +265,13 @@ func _connect_zone() -> void:
 	if not ZoneConnection.is_enabled():
 		return
 	_zone = ZoneConnection.new()
+	# The view is built for any named zone, including one whose connection is
+	# refused below: it draws whatever the store holds, and a store that never
+	# received a frame is empty, so an unreachable zone shows nothing rather
+	# than needing a second code path to stay blank.
+	_replicas = ReplicaView.new()
+	_replicas.name = "Replicas"
+	add_child(_replicas)
 	if not _zone.connect_to(ZoneConnection.zone_url()):
 		# error_detail() names a misconfigured variable, never its value.
 		push_warning("zone connection refused (%s): %s" % [_zone.error(), _zone.error_detail()])
@@ -260,8 +282,15 @@ func _connect_zone() -> void:
 		_zone_failure_reported = true
 
 
-## Drive the connection. Cheap and safe every frame: poll() is a no-op unless
-## the socket is connecting, live, or finishing a close handshake.
+## Per-frame world upkeep: drift the ash, then drive the connection.
+##
+## The ash comes FIRST and outside the zone guard on purpose. Drift belongs to
+## every session, and the common case by far is a single-player boot with no
+## zone at all — putting it after the `_zone == null` return would have left the
+## air frozen for exactly the players who see it most.
+##
+## Driving the connection is cheap and safe every frame: poll() is a no-op
+## unless the socket is connecting, live, or finishing a close handshake.
 ##
 ## A connection can also die well after `connect_to()` returned true — a
 ## handshake the zone refuses, or a frame the decoder or the store rejects.
@@ -273,10 +302,16 @@ func _connect_zone() -> void:
 ## (when to retry, how often, and what to tell the player) belongs with the
 ## child that puts remote entities on screen, and guessing at it now would
 ## bake in a policy nothing yet exercises.
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
+	_drift_hollow_fog(delta)
 	if _zone == null:
 		return
 	_zone.poll()
+	# Draw whatever the poll just folded. Done before the failure reporting
+	# below so a stream that dies mid-frame still shows the last consistent
+	# table it delivered — the fold is atomic, so that table is never a
+	# half-applied one.
+	_replicas.sync(_zone.store())
 	if _zone.is_live():
 		_zone_was_live = true
 	if _zone_failure_reported:
@@ -418,10 +453,11 @@ func _build_environment() -> void:
 	# supported and carries most of the visible gain anyway.
 	_volumetrics_on = Volumetrics.probe()
 	Volumetrics.apply(env, _volumetrics_on)
-	print("VOLUMETRICS %s" % (
-		"on — R32_Uint atomic storage image supported" if _volumetrics_on
-		else "off — GPU lacks R32_Uint atomic storage image support"
-	))
+	# The line itself is built by Volumetrics so that CI's frame-capture job and
+	# the game agree on one string (#232): the capture job records this verdict
+	# in the evidence artifact, because a frame captured with the probe OFF
+	# depicts the height-fog fallback and cannot evidence the volumetric path.
+	print(Volumetrics.marker(_volumetrics_on))
 
 	# A restrained grading pass so the palette reads as a deliberate choice
 	# rather than whatever the tonemapper returned: a little more contrast to
@@ -447,30 +483,44 @@ func _build_environment() -> void:
 ## every Node3D descendant of World, so parenting them there would move a hash
 ## that has nothing to do with what generated the ground.
 ##
-## Placement is recorded unconditionally but the nodes are built only when BOTH
-## the #158 probe passed AND the player opted in (product law 2 — the pooling
-## has no drift yet, so it is below the quality bar and must not ship
-## default-on). A device that cannot render volumetrics would only pay a
-## per-frame cost for invisible nodes anyway.
+## Placement is recorded unconditionally but the nodes are built only where the
+## #158 probe passed. A device that cannot render volumetrics would only pay a
+## per-frame cost for invisible nodes.
+##
+## The player opt-in that used to gate this as well is gone with #233: it was
+## there because the ash had no drift and so sat below the quality bar, and now
+## it drifts. The volumes are kept in [member _hollow_fog_volumes] so that
+## [method _process] can move them.
 func _build_hollow_fog(world: WorldGen) -> void:
 	_hollow_fog = HollowFog.place(
 		world.surface_height_at, WorldGen.SIZE, WorldGen.NO_GROUND, world.cave_protects
 	)
-	if not HollowFog.should_build(_volumetrics_on, HollowFog.opted_in()):
-		print("HOLLOW FOG off — %s (%d pools placed, not built)" % [
-			"volumetrics unavailable" if not _volumetrics_on
-			else "not opted in (set %s=1)" % HollowFog.OPT_IN_ENV,
-			_hollow_fog.size(),
-		])
+	if not HollowFog.should_build(_volumetrics_on):
+		print(HollowFog.marker(false, _volumetrics_on, _hollow_fog.size()))
 		return
 	var root := Node3D.new()
 	root.name = "HollowFog"
 	add_child(root)
 	for placement: Dictionary in _hollow_fog:
-		root.add_child(HollowFog.build_volume(placement))
-	print("HOLLOW FOG on — %d ash pools (opted in via %s)" % [
-		_hollow_fog.size(), HollowFog.OPT_IN_ENV
-	])
+		var volume := HollowFog.build_volume(placement)
+		_hollow_fog_volumes.append(volume)
+		root.add_child(volume)
+	print(HollowFog.marker(true, _volumetrics_on, _hollow_fog.size()))
+
+
+## Drifts the built ash pools for this frame (#233), so the air moves on the
+## same wind the scrub already answers.
+##
+## A no-op wherever the pools were placed but not built — on a device without
+## froxel volumetrics there is nothing to move, and the placement record is
+## deliberately left untouched so it keeps reporting the RESTING world that the
+## goldens and the headless tests pin.
+func _drift_hollow_fog(delta: float) -> void:
+	if _hollow_fog_volumes.is_empty():
+		return
+	_hollow_fog_time += delta
+	for i in _hollow_fog_volumes.size():
+		HollowFog.apply_drift(_hollow_fog_volumes[i], _hollow_fog[i], _hollow_fog_time)
 
 
 ## Where this boot pooled ash, deepest hollow first — a copy, so a caller can

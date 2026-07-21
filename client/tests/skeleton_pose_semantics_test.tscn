@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tests/skeleton_pose_semantics_test.gd" id="1_skeletonpose"]
+
+[node name="SkeletonPoseSemanticsTest" type="Node"]
+script = ExtResource("1_skeletonpose")

@@ -1,0 +1,51 @@
+# markdownlint rules for this repo's documentation.
+# Read by the MegaLinter gate — see .mega-linter.yml.
+#
+# Two sections. The first carries MegaLinter's own bundled defaults over verbatim; the
+# second is what this repo changes, each with the reason recorded so nobody has to
+# re-derive it. Nothing is disabled merely because it was noisy.
+
+default: true
+
+# ── MegaLinter's bundled defaults (/action/lib/.automation/.markdownlint.json) ──────────
+# Supplying any repo-level config REPLACES the image's config rather than merging with it,
+# so these must be restated. Omitting them silently re-enables rules the shared image
+# deliberately relaxes — dropping MD013 alone turns these prose docs into 1617 findings.
+MD004: false
+MD007:
+  indent: 2
+MD013:
+  line_length: 400
+MD026:
+  punctuation: ".,;:!。，；:"
+MD029: false
+MD033: false
+MD036: false
+blank_lines: false
+
+# ── This repo's changes ────────────────────────────────────────────────────────────────
+
+# MD018 (no space after hash on ATX heading) MISREADS ISSUE REFERENCES, AND ITS AUTO-FIX
+# CORRUPTS THE DOCUMENT. These docs cite issues in prose constantly, e.g.
+#
+#   #222's ragged-start rule needs to be checkable rather than a matter of taste.
+#
+# In CommonMark a `#` not followed by a space is not a heading at all — GitHub renders that
+# line as ordinary text, which is what it is. MD018 flags it anyway, and `--fix` rewrites it
+# to `# 222's ragged-start rule ...`, silently promoting a sentence to a top-level heading.
+# Observed on docs/art-direction/README.md, which then also tripped MD025, MD026 and MD001
+# as knock-on effects of the corruption.
+MD018: false
+
+# MD060 (table column style) is pipe-alignment padding. Source and rendered output are
+# identical either way, and the bundled markdown-table-formatter cannot satisfy it on these
+# tables regardless — leaving six permanent findings. Enforcing it would add several hundred
+# lines of whitespace churn to documents that are mostly wide prose tables, for no reader.
+MD060: false
+
+# MD028 (blank line inside blockquote) fires where two adjacent blockquotes are separated by
+# a blank line — a summary callout followed by a maintainer-direction callout. That is
+# deliberate and renders as two distinct quotes everywhere we publish. The sanctioned
+# workaround is an empty `<!-- -->` between them, which is invisible noise in the source for
+# no gain.
+MD028: false

@@ -18,33 +18,46 @@ class_name HollowFog
 ## `--headless`, where volumetrics never initialise and a FogVolume would
 ## contribute no pixels to read back.
 
-## Opt-in flag (product law 2 — experimental features are default-off).
+## Whether pools should actually be BUILT this boot.
 ##
-## The pools have no second-order life yet: no drift, no wind response, no
-## reaction to the player moving through them. AGENTS.md lists exactly that
-## ("no wind or sway") as a placeholder tell, and its quality bar is explicit
-## that below-bar player-facing work does not ship default-on. A hardware
-## capability probe is NOT a player opt-in — it answers "can this machine
-## render it", never "does this player want it" — so the probe alone would
-## silently enrol every capable player into an unfinished experience.
+## One condition now, and it is a hardware fact rather than a player choice.
+## #211 shipped these pools behind an opt-in flag (`WAR_HOLLOW_FOG`) for a
+## stated reason: the ash had no second-order life — it did not drift and did
+## not answer the wind — and AGENTS.md names exactly that ("no wind or sway") as
+## a placeholder tell that keeps player-facing work default-off. #233 gave it
+## drift, so the reason expired and the flag went with it. A release flag is
+## short-lived by contract; leaving one that has done its job is flag debt.
 ##
-## Set WAR_HOLLOW_FOG=1 to opt in. Retire this flag (and this constant) when
-## drift lands and the result clears the bar — a release flag is short-lived by
-## contract, and #211's follow-up #233 tracks the flip.
-const OPT_IN_ENV := "WAR_HOLLOW_FOG"
+## Kept as a pure function so both states stay testable where no GPU exists.
+static func should_build(volumetrics_on: bool) -> bool:
+	return volumetrics_on
 
 
-## Whether the player opted into the unfinished ash pooling.
-static func opted_in() -> bool:
-	return OS.get_environment(OPT_IN_ENV) == "1"
+## Leading token of the line main.gd prints once the build decision is made
+## (#232), parsed by CI's frame-capture job exactly like Volumetrics'.
+##
+## This marker survives the flag's retirement, and is still not redundant with
+## the volumetrics one. The two answer different questions: the volumetrics
+## verdict says the froxel pass is running, this says pools were actually built
+## into THIS world. They can still disagree — a terrain that offers no hollow
+## deep enough to clear [constant MIN_RELIEF] renders volumetrics with zero
+## pools — so a capture job reading only the GPU verdict would claim the frames
+## show pooling when they cannot. Two facts, two markers.
+const CAPTURE_MARKER := "HOLLOW FOG"
 
-
-## Whether pools should actually be BUILT this boot. Both conditions are
-## necessary and they mean different things: the probe is a hardware fact, the
-## flag is a player choice. Kept as a pure function so both states are testable
-## where neither an env var nor a GPU is available.
-static func should_build(volumetrics_on: bool, player_opted_in: bool) -> bool:
-	return volumetrics_on and player_opted_in
+## The exact line main.gd prints for a build decision. As with Volumetrics, the
+## SECOND whitespace-separated field is the machine-readable verdict, `on` or
+## `off`; the rest is for a human reading the log.
+static func marker(built: bool, volumetrics_on: bool, pools: int) -> String:
+	if built:
+		return "%s on — %d drifting ash pools" % [CAPTURE_MARKER, pools]
+	var reason: String = (
+		"volumetrics unavailable" if not volumetrics_on
+		else "no hollow clears the relief threshold"
+	)
+	return "%s off — %s (%d pools placed, not built)" % [
+		CAPTURE_MARKER, reason, pools
+	]
 
 
 ## Edge inset, in metres. Candidates never sit near the world edge, where the
@@ -297,3 +310,100 @@ static func build_volume(placement: Dictionary) -> FogVolume:
 	# and the whole feature a silent no-op.
 	vol.material = mat
 	return vol
+
+
+# ── Drift (#233) ──────────────────────────────────────────────────────────────
+#
+# Everything above decides WHERE ash gathers, once, at boot. Everything below
+# decides how THICK it is, every frame. The split matters: placement is what the
+# goldens and the headless tests pin, and drift must never touch it. A pool's
+# recorded placement stays its resting state, and drift is a modulation around
+# it whose mean is exactly zero — so the world a test fingerprints is the world
+# the player sees at rest.
+#
+# Drift is DENSITY ONLY. The pool never moves; see the note above
+# [method drift_density] for the measurement that settled that.
+#
+# The ash rides the SAME wind as the scrub — same direction, same phase law,
+# read through [Wind] — on its own scale. It is not the same size of thing: a
+# blade of grass answers a 9 m gust in a second, while a basin of settled ash is
+# tens of metres across and heavy. Giving it the scrub's numbers made it strobe.
+
+## Metres per radian of gust phase for the ash, against the scrub's
+## [constant Wind.WAVELENGTH] of 9 m.
+##
+## Sized to the SPACING of the pools, not to the pools themselves. At the
+## scrub's 9 m, two pools [constant MIN_SEPARATION] apart sit 5.1 radians apart
+## in phase — effectively unrelated, so each basin pulses on its own clock and
+## the Reach reads as several independent effects rather than one weather
+## system. At 120 m that same pair is 0.38 rad apart: visibly staggered,
+## unmistakably the same gust arriving a moment later.
+const DRIFT_WAVELENGTH := 120.0
+
+## Radians per second of gust phase for the ash, against the scrub's 1.35-1.9.
+##
+## A full swell every ~22 seconds. Slow on purpose, and slower than it sounds:
+## the pools are read peripherally while the player crosses the ground between
+## them, and anything quick enough to notice directly reads as the fog
+## flickering rather than as air moving.
+const DRIFT_SPEED := 0.28
+
+## Half-amplitude of the density swell, as a fraction of a pool's placed
+## density — so a pool breathes between 0.78x and 1.22x of its resting value.
+##
+## SYMMETRIC about the resting density, unlike [method Wind.gust]'s biased
+## curve. That bias exists so the scrub is only ever pushed downwind; density
+## has no direction to be biased toward, and a biased curve would mean the
+## density #211 tuned was never the density on screen. The mean here is exactly
+## the placed value.
+##
+## The magnitude is small because fog density is far more sensitive than it
+## feels — #211 found a +0.006 change to the environment baseline erased the
+## foreground entirely.
+const DRIFT_SWING := 0.22
+
+## ⚠️ THE POOL DOES NOT MOVE, AND THAT IS A MEASURED DECISION, not an omission.
+##
+## The first build of this change also translated each volume 1.6 m along the
+## wind and back, on the reasoning that a density field which TRANSLATES reads
+## as drifting while one that only varies in place reads as breathing. Rendered
+## and measured, that translation turned out to be invisible: against the
+## resting frame it moved the image by a mean |dRGB| of 0.0012, where two
+## captures of an IDENTICAL fog state differ by up to 0.0115 — eight times more.
+## It was inside the noise, so it was doing nothing a player could see.
+##
+## It could not be rescued by making it larger, either. The separation law caps
+## the excursion below 5 m (see [constant MIN_SEPARATION]: fog volumes composite
+## by ADDING optical depth, so two pools that approach each other read as one
+## sheet at double density), and a pool is 36 m wide with a faded rim — so even
+## the largest legal translation is a few percent of the shape being moved.
+##
+## It was removed rather than kept and explained away. #211 shipped a density
+## constant that turned out to be inert for exactly this reason, and a constant
+## that does nothing is worse than no constant: it invites a future reader to
+## tune it. Real motion WITHIN a pool needs the density field itself to move,
+## which is a fog shader sampling noise against time — tracked in #328.
+
+## The pool's density at [param time], modulating [param placed_density].
+##
+## Pure: a closed-form function of position and time, with no RNG and no state.
+## Two calls at the same time and place agree, which is what lets a test assert
+## the swell's shape without rendering anything.
+static func drift_density(placed_density: float, pos: Vector3, time: float) -> float:
+	var at := Wind.phase(pos, DRIFT_WAVELENGTH, DRIFT_SPEED, time)
+	return placed_density * (1.0 + DRIFT_SWING * sin(at))
+
+
+## Re-densifies one built volume for [param time]. Lives here beside
+## [method build_volume] for the same reason that does: the shape the player
+## sees and the shape the tests reason about must not drift apart.
+##
+## Note what it does NOT touch: [member Node3D.position]. The volume stays where
+## placement put it, so the resting world the goldens and the headless placement
+## record describe is the world on screen at every phase but its density.
+static func apply_drift(volume: FogVolume, placement: Dictionary, time: float) -> void:
+	var mat := volume.material as FogMaterial
+	if mat == null:
+		return
+	var placed_pos: Vector3 = placement["pos"]
+	mat.density = drift_density(float(placement["density"]), placed_pos, time)

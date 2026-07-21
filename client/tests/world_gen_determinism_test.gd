@@ -48,7 +48,51 @@ const HALF := WorldGen.SIZE / 2.0
 ## golden (f5dcfa96) rather than taking either side of the merge — both changes
 ## are in this value. The cave rock mesh itself is BYTE-IDENTICAL across seeds
 ## 42/7/1234, so the torch contribution is fixtures-only, not terrain.
-const GOLDEN_FINGERPRINT := "eaaba576"
+## v0.12.0 (#282): ruin and shrine pieces are now seated from the LOWEST
+## walkable surface under their own footprint instead of one `height_at` sample
+## at their origin, so 72 of 188 pieces that hung in the air — one by 1076 mm —
+## come down into the ground. Only the pieces' Y moves: the placement rng stream
+## is untouched (the rotation draws were reordered ahead of seating with no
+## other draw between them), which the global-RNG-invariance assertion above
+## independently confirms.
+## v0.15.1 (#282): ruin and shrine pieces are seated from the LOWEST walkable
+## surface under their own footprint instead of one `height_at` sample at their
+## origin, so 72 of 188 pieces that hung in the air — one by 1076 mm — come down
+## into the ground. Regenerated a second time after review: the footprint is now
+## the piece's ACTUAL rectangle (a generated mesh's AABB is not centred on its
+## origin, and a fallen column's in-body offset rotates into a horizontal shift)
+## and the sweep also visits the quad-diagonal crossings on its edges, which
+## together take the worst residual float from 13 mm to 0. Only the pieces' Y
+## moves: the placement rng stream is untouched, which the global-RNG-invariance
+## assertion above confirms independently.
+## v0.19.1 (#282): ruin and shrine pieces are seated from the LOWEST walkable
+## surface under their own footprint instead of one `height_at` sample at their
+## origin, so 72 of 188 pieces that hung in the air — one by 1076 mm — come down
+## into the ground. Regenerated across three review rounds: the footprint is now
+## the piece's TRUE rotated outline (the XZ convex hull of its box) rather than
+## that outline's enclosing rectangle, which was sinking pieces a mean 83 mm and
+## up to 641 mm too deep into ground they never covered; it carries a fallen
+## column's in-body offset through the rotation; and the sweep visits the
+## quad-diagonal crossings on its edges. Worst residual float: 0 mm. Only the
+## pieces' Y moves — the placement rng stream is untouched, which the
+## global-RNG-invariance assertion above confirms independently.
+## v0.20.0 (#316): the ground's four regions now differ in SHAPE as well as in
+## colour — each carries a landform (how tall its relief stands, and whether it
+## creases into spines or rolls), blended through the same weights the palette
+## already uses. The whole heightfield outside fully-decided `ashflats` moves,
+## so this is the widest golden change since the world was first built, and it
+## moves for a reason no assertion here can judge: `region_landform_test` is
+## what pins the direction, and it fails loudly if the axis is ever flattened
+## back out. What DOES belong here: `ashflats` is the identity landform, so the
+## shrine's ground is unchanged; the placement rng stream is untouched (the
+## global-RNG-invariance assertion above confirms it independently); and the
+## surface-node-exact and ruin-clearance arms still pass unchanged, which is how
+## the #282 footprint seating is shown to have followed the new ground rather
+## than been invalidated by it.
+const GOLDEN_FINGERPRINT := "7213a02a"
+
+
+
 ## world_gen's cave_protects pads the cave hull by this many metres. A piece
 ## whose bounding radius is within that padding cannot reach the hull when its
 ## centre is outside cave_protects, which makes the cheap centre test a SOUND

@@ -11,6 +11,81 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
+		"version": "0.23.0",
+		"date": "2026-07-20",
+		"title": "You can see the four bodies before you choose one",
+		"notes": [
+			"Choosing an archetype used to mean reading four names with a line of description each, picking one, and only then seeing what you got. One body existed on screen at a time, so comparing the wanderer against the brute meant choosing one, looking, choosing the other, and trying to remember the first.",
+			"Each archetype now shows its own portrait beside its name — head and shoulders, lit and framed the same way — so the four sit side by side and you can simply look at them.",
+			"The portraits are drawn from the same recipes the buttons apply, every time the screen opens. There is no saved picture that could drift out of step with the body you would actually get.",
+			"They fill in over the first moments the screen is open rather than all at once, so opening the creator does not stall while four bodies are built.",
+			"Three things are still unfinished. The brute has no shirt in its recipe, so its portrait shows a bare chest — the wardrobe has no clothed starting state underneath yet, which is being fixed separately. The plates are a fixed small size, so the faces are smaller than they should be. And a plate does not light up when you hover it or when it is the one you have chosen; only the name beside it does.",
+		],
+	},
+	{
+		"version": "0.22.0",
+		"date": "2026-07-20",
+		"title": "The stretches of the Reach are shaped differently now, not just coloured differently",
+		"notes": [
+			"The Reach was already divided into stretches of ground made of different things — loose ash, burnt crust, scoured pale stone, ground stained by rusting machines. But they were all the same hills underneath wearing different colours, and from any distance they looked identical, because this world's haze and low sun wash most of the colour out of anything more than a few strides away.",
+			"Now each stretch has its own shape. The ash flats keep the long rolling rises you already know. The burnt ground has slumped into a low, calm basin. The scoured stone is the lowest and most open ground in the Reach — standing on it you can see much further than you used to, and the rock underneath breaks through as hard-edged ridges instead of dunes. The rust-stained moor sits low and broken, its hollows sunk deeper than its rises stand.",
+			"Shape survives the haze better than colour does, so the skyline and the middle distance now have somewhere for your eye to go instead of reading as one even field. Close up the difference is plain; far off the haze still softens it, and that is a separate problem still to solve.",
+			"The ground you start on has not moved. The shrine's clearing is the same ash flats it always was, unchanged to the millimetre out to the last few paces of its edge, where it hands over to the open ground this change reshapes. And nothing has become harder to walk: every stretch is either as gentle as the old ground or gentler.",
+		],
+	},
+	{
+		"version": "0.21.0",
+		"date": "2026-07-20",
+		"title": "The ash in the hollows is moving",
+		"notes": [
+			"The ash that gathers in the land's low places used to sit perfectly still, which read as stranger than no ash at all — the dead grass beside it was already leaning in the wind. It breathes now. Each pool slowly thickens and thins again over about twenty seconds, so a hollow you walk past is heavier with ash at some moments than others.",
+			"It is one wind, not an effect running in each hollow separately. A gust crosses the Reach in the direction the grass leans, so a basin on the far side of you thickens a moment after the one at your feet.",
+			"Because it moves, it is no longer something you have to switch on: every player gets it, on any machine that can render air as a volume. Where that hardware is missing the view is unchanged, as before.",
+		],
+	},
+	{
+		"version": "0.20.0",
+		"date": "2026-07-20",
+		"title": "You can see that other people are there",
+		"notes": [
+			"The Reach has been able to hear about other players for a while — the game knew where they were, kept track of them as they moved, and noticed when they left. It just never put any of it on screen, so you walked through a world that was technically shared and looked completely empty.",
+			"Now everyone else in your part of the world shows up as a pale standing shape, in the right place, moving as they move and gone when they walk out of range or leave.",
+			"They are deliberately plain — a blank capsule, not a person. What another player actually looks like is the character work, and putting a rough guess on screen now would mean two different answers to the same question later. This is about knowing someone is there at all.",
+			"You still need a zone to connect to before any of this appears. On your own, nothing has changed.",
+		],
+	},
+	{
+		"version": "0.19.1",
+		"date": "2026-07-20",
+		"title": "The ruins come down into the ground",
+		"notes": [
+			"Broken columns, wall fragments, rubble and the shrine's standing stones were placed by asking the ground how high it was at one single point — the middle of the piece — and then sitting the whole piece at that height. On any slope that leaves one end of a wall buried and the other end hanging in the air.",
+			"It was doing exactly that to 72 of the Reach's 188 stone pieces. The worst of them floated more than a metre clear of the ground.",
+			"Now each piece reads the ground across its whole footprint and settles onto the lowest part of it, so it meets the ground on its low side and is buried on its high side — the way something that has stood in one place for a long time actually sits.",
+		],
+	},
+	{
+		"version": "0.19.0",
+		"date": "2026-07-20",
+		"title": "The ground is broken rock, with ash blown over it",
+		"notes": [
+			"The ground used to be one smooth sheet of colour from your boots to the horizon — you could walk a long way across the Reach and never pass anything. Now the ash only lies where it settled. Where the wind scoured it away you walk out onto bare rock: slabs about a stride across, each one its own stone — some nearly black, some rust-red, some pale — meeting one another at seams.",
+			"The ash sheets end at an edge rather than fading away, so you can see where the ash stops and the rock starts, and the low sun catches along the seams between slabs instead of sliding over everything equally.",
+			"This is the close-up companion to the stretches of ground described below: that change decides what a part of the Reach is made of, this one decides what a single stride of it looks like. It is nowhere near finished, so you have to ask for it — start the game with WAR_GROUND_PLATES=1 and you will see it; otherwise the ground looks exactly as it did before. The slabs lie flat against the ground rather than sitting proud of the ash with real thickness, so they can read as marks on the ground instead of stone you could stub a boot on, and nothing has crumbled — there is no loose rubble or scree around a broken slab. It becomes how the ground always looks once those are fixed.",
+		],
+	},
+	{
+		"version": "0.18.0",
+		"date": "2026-07-20",
+		"title": "Your wanderer breathes",
+		"notes": [
+			"Stand still and watch: the chest rises and falls, the shoulders ride with it, and the weight drifts slowly from one leg to the other and back. It is deliberately small — you should notice a person standing there, not a body performing a breath.",
+			"Everyone breathes, not just you. The people around the shrine and the drifters out in the open all do, and each is on their own rhythm, so a crowd never inhales in unison the way a row of machines would.",
+			"The standing pose from last time is no longer something you have to ask for — it is simply how a body stands now. It waited because a pose that never moves reads as a mannequin, and the movement was the missing half.",
+			"Walking, running and jumping still slide the body along without moving its legs. That is the next piece of work.",
+		],
+	},
+	{
 		"version": "0.17.0",
 		"date": "2026-07-20",
 		"title": "Someone cut these stones",
@@ -60,7 +135,7 @@ const ENTRIES: Array[Dictionary] = [
 		"notes": [
 			"Your wanderer used to stand square: both feet planted the same, both legs straight, shoulders dead level. It read like a figure waiting to be posed. Now the weight rests on one leg — that hip rides up, the shoulder above it drops to answer it, and the other knee softens with the foot turned slightly out.",
 			"Every body stands this way, whatever you do with the sliders, and it holds through the whole build so a heavy frame and a slight one both carry it.",
-			"This is switched OFF unless you ask for it, with WAR_REST_STANCE=1. It is a pose, not animation: nothing breathes, shifts weight or moves yet, and until it does we would rather you chose it than woke up in it. That idle is the next piece of work and the bigger half.",
+			"This arrived switched off, as something you had to ask for: it was a pose and nothing more — nothing breathed, shifted weight or moved — and we would rather you chose that than woke up in it. The breathing landed in 0.18.0 and it is on for everyone now.",
 		],
 	},
 	{
