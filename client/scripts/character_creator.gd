@@ -71,6 +71,7 @@ var _bone_sliders := {}
 var _outfit_pickers := {}
 var _skin_picker: OptionButton
 var _sections: Array[Button] = []
+var _portraits: Array[ArchetypePortrait] = []
 var _camera: Camera3D
 var _light: DirectionalLight3D
 var _syncing := false
@@ -101,6 +102,22 @@ func _process(_delta: float) -> void:
 	if _camera != null and _player != null:
 		var eye := _player.global_position + Vector3(0, 1.0, 0)
 		_camera.look_at(eye, Vector3.UP)
+	realize_next_portrait()
+
+
+## Builds ONE archetype portrait's body, if any still needs it. Called once per
+## frame rather than building the whole roster in `open()`, because a character
+## build is the expensive part and four of them in the frame the creator opens
+## is exactly the stall the screen must not have. The roster fills in over the
+## first few frames instead; every portrait is a backdrop until its turn.
+##
+## Returns the portrait it built, or null when the roster is complete.
+func realize_next_portrait() -> ArchetypePortrait:
+	var portrait := ArchetypePortrait.next_unrealized(_portraits)
+	if portrait == null:
+		return null
+	portrait.realize()
+	return portrait
 
 
 func _build_portrait_rig() -> void:
@@ -161,15 +178,60 @@ func _build_panel() -> void:
 	# art direction is explicit that thirty-plus programmer-named sliders as the
 	# primary surface is a developer inspector (docs/art-direction/README.md,
 	# "UI and UX"), so the numeric controls live behind ADVANCED below.
+	# EVERYTHING below the blurb scrolls, and the Wake/Cancel row sits outside it.
+	#
+	# The roster used to be laid out directly in the column, above a scroll region
+	# of its own. That was safe while it was four buttons; adding a portrait to
+	# each row made it ~160 px taller and pushed the Wake button off the bottom of
+	# the screen at 1600x900 — a first-run player could not start the game with
+	# the mouse. Anything that grows the roster would do it again, so the fix is
+	# structural rather than a size that happens to fit: the scroll region EXPANDS
+	# to take whatever space is left, its content scrolls, and the buttons are
+	# pinned below it at every window height.
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.custom_minimum_size = Vector2(330, 0)
+	# A gamepad navigates by moving focus, and a ScrollContainer does not follow
+	# focus by default — so a controller reaching the OUTFIT/SKIN/ADVANCED rows
+	# below the fold would send focus off the visible area with nothing scrolling
+	# to meet it. follow_focus keeps the focused control in view (#293 review).
+	scroll.follow_focus = true
+	column.add_child(scroll)
+	var content := VBoxContainer.new()
+	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	content.add_theme_constant_override("separation", 2)
+	scroll.add_child(content)
+
+	# Each archetype is a rendered portrait beside its name and blurb. A text
+	# roster asks the player to imagine each option and lets them inspect only
+	# the one body currently on screen; portraits make the four comparable at a
+	# glance, which is the actual function of a character-choice surface (#293).
 	var first_preset: Button = null
 	for preset_name in PRESETS:
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 8)
+		content.add_child(row)
+
+		var portrait := ArchetypePortrait.new()
+		row.add_child(portrait)
+		portrait.setup(preset_name)
+		_portraits.append(portrait)
+
+		var text_column := VBoxContainer.new()
+		text_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		text_column.add_theme_constant_override("separation", 2)
+		row.add_child(text_column)
+
+		# The Button stays the focusable element and stays inside the container
+		# layout, so the automatic focus neighbours a pad depends on are
+		# unchanged by the portrait sitting next to it (controller_input_test).
 		var choice := Button.new()
 		choice.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		choice.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		choice.text = String(preset_name).to_upper()
 		choice.add_theme_font_size_override("font_size", UiTheme.FONT_SECTION)
 		choice.pressed.connect(_on_preset.bind(preset_name))
-		column.add_child(choice)
+		text_column.add_child(choice)
 
 		var blurb_text := String(PRESET_BLURBS.get(preset_name, ""))
 		if blurb_text != "":
@@ -177,26 +239,14 @@ func _build_panel() -> void:
 			caption.text = blurb_text
 			caption.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 			caption.add_theme_color_override("font_color", COL_DIM)
-			column.add_child(caption)
+			text_column.add_child(caption)
 
 		if first_preset == null:
 			first_preset = choice
 
-	var scroll := ScrollContainer.new()
-	# Hugs its own height rather than expanding to fill the rail. Expanding left
-	# a large dead gap between the last control and the Wake button once the
-	# numeric sliders moved behind ADVANCED and the default view got short.
-	scroll.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-	scroll.custom_minimum_size = Vector2(330, 380)
-	column.add_child(scroll)
-	var sliders := VBoxContainer.new()
-	sliders.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	sliders.add_theme_constant_override("separation", 2)
-	scroll.add_child(sliders)
-
 	# Outfit and skin stay on the primary surface: they ARE named choices, which
 	# is what the art direction asks the creator to lead with.
-	var outfit := _add_section(sliders, "OUTFIT")
+	var outfit := _add_section(content, "OUTFIT")
 	# Only regions something can actually be put in. #251 declared the whole
 	# specified wardrobe (#222) up front so the vocabulary is settled before the
 	# garments arrive, which means most regions have no baked piece yet — and a
@@ -206,12 +256,12 @@ func _build_panel() -> void:
 	# is baked for it, with no change here.
 	for slot: String in pickable_regions(CharacterFactory.equipment_registry()):
 		_add_outfit_picker(outfit, slot)
-	var skin := _add_section(sliders, "SKIN")
+	var skin := _add_section(content, "SKIN")
 	_add_skin_picker(skin)
 
 	# Everything numeric, folded away by default. Grouped rather than dumped, so
 	# a player who does open it gets a structure instead of 35 identical rows.
-	var advanced := _add_section(sliders, "ADVANCED — fine shaping", false)
+	var advanced := _add_section(content, "ADVANCED — fine shaping", false)
 	for group: Array in group_shape_names(_shape_names()):
 		_add_heading(advanced, group[0])
 		for shape_name: String in group[1]:
