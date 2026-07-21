@@ -109,13 +109,15 @@ The schema-version bump is the expansion pull request. For recipe version `N`, t
 1. Teach `CharacterFactory` to validate and apply versions `1..N`, including both the old and new
    shapes.
 2. Introduce or raise a dedicated maximum recipe-schema read ceiling, separate from the production
-   write version. Publish it in the manifest's stable shell envelope, feed the same value into each
-   retained build's rollback-target `read_ceiling`, and guard both mappings in runtime tests.
-   `shell.reads_min` is the oldest supported schema, not this maximum. The reader may understand `N`,
-   while `CharacterCreator` and `UpdateManifest.save_schema.writes` remain on the baked version.
-   Registry entries needed to read `N` must not automatically become editor options: gate every new
-   piece, skin and other persisted name out of writable UI and production write paths until the
-   contract stage.
+   write version. Publish it as immutable metadata for that build in the manifest's stable shell
+   envelope, then populate each retained rollback target's `read_ceiling` from that target build's own
+   published value. Never stamp the current build's ceiling across the catalogue: an older target that
+   reads only `N-1` must continue to say so. Guard the manifest mapping and a mixed catalogue containing
+   both the old and expanded builds in runtime tests. `shell.reads_min` is the oldest supported schema,
+   not this maximum. The reader may understand `N`, while `CharacterCreator` and
+   `UpdateManifest.save_schema.writes` remain on the baked version. Registry entries needed to read
+   `N` must not automatically become editor options: gate every new piece, skin and other persisted
+   name out of writable UI and production write paths until the contract stage.
 3. Append `N` to `client/tests/data/shipped_recipe_versions.txt`.
 4. Add `client/tests/data/golden_recipe_vN.json`. Preserve all older goldens; the new fixture exercises
    every new persisted field group and proves it still changes the built character.
