@@ -96,10 +96,12 @@ mkdir -p /tmp/shots /tmp/shots-char
 # path, so an unredirected run writes your played progression (#309).
 WAR_SHOT_DIR=/tmp/shots \
   WAR_SAVE_PATH=/tmp/probe_save.json WAR_VAULT_PATH=/tmp/probe_vault.json \
+  WAR_BOOT_RECOVERY_PATH=/tmp/probe_recovery.json \
   godot --path client res://tools/frame_capture.tscn          # cave-*.png
 
 WAR_SCENARIO=first_run WAR_SHOT_DIR=/tmp/shots-char \
   WAR_SAVE_PATH=/tmp/no_such_save.json WAR_VAULT_PATH=/tmp/no_such_vault.json \
+  WAR_BOOT_RECOVERY_PATH=/tmp/no_such_recovery.json \
   godot --path client res://tools/frame_capture.tscn          # first_run*.png
 ```
 

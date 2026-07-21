@@ -153,7 +153,8 @@ field of grey primitives ship. A green suite plus a frame that reads as placehol
 **How to produce that frame.** CI runs `client/tools/frame_capture.tscn` on player-visible PRs and
 publishes the rendered vantages as a **build artifact** — so the evidence is reproducible on a known
 machine rather than dependent on whoever happened to run the game. Point a reviewer at that artifact.
-Locally the same tool works windowed (`WAR_SHOT_DIR=… WAR_SAVE_PATH=… WAR_VAULT_PATH=… godot --path
+Locally the same tool works windowed (`WAR_SHOT_DIR=… WAR_SAVE_PATH=… WAR_VAULT_PATH=…
+WAR_BOOT_RECOVERY_PATH=… godot --path
 client res://tools/frame_capture.tscn` — redirect every save seam, since the capture boots the real
 launch path); a **headless run renders nothing**, and the tool refuses to run
 headless rather than emit a blank frame. It also proves the terrain actually landed pixels: at one
@@ -433,7 +434,8 @@ everything shipped afterwards is held to.
   prose** — a doc comment saying a test never boots `main.tscn` is not a violation (#309 was filed
   off a grep that made exactly that mistake and accused five correct files). A developer running the
   suite on a machine with a played save can also `export WAR_SAVE_PATH=/tmp/probe.json
-  WAR_VAULT_PATH=/tmp/probe_vault.json` to keep both fully out of reach.
+  WAR_VAULT_PATH=/tmp/probe_vault.json WAR_BOOT_RECOVERY_PATH=/tmp/probe_recovery.json` to keep all
+  three fully out of reach.
 - **Validate the server before every PR:** from `server/`, `gofmt -l .` (must print nothing),
   `go vet ./...`, `go test -race ./...` (includes the tick-determinism and golden-hash tests), and
   `go build ./...`. The `Server CI (Go)` job runs exactly this and feeds the `CI - Required Checks`

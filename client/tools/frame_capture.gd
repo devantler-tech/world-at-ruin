@@ -11,6 +11,7 @@ extends Node
 ## Run (must be WINDOWED — a headless run renders nothing at all):
 ##   WAR_SHOT_DIR=/tmp/shots \
 ##     WAR_SAVE_PATH=/tmp/probe_save.json WAR_VAULT_PATH=/tmp/probe_vault.json \
+##     WAR_BOOT_RECOVERY_PATH=/tmp/probe_recovery.json \
 ##     godot --path client --resolution 1600x900 res://tools/frame_capture.tscn
 ##
 ## Against the EXPORTED client the scene argument is unavailable — the official
@@ -19,13 +20,16 @@ extends Node
 ## into this scene instead:
 ##   WAR_CAPTURE=1 WAR_SHOT_DIR=/tmp/shots \
 ##     WAR_SAVE_PATH=/tmp/probe_save.json WAR_VAULT_PATH=/tmp/probe_vault.json \
+##     WAR_BOOT_RECOVERY_PATH=/tmp/probe_recovery.json \
 ##     "World at Ruin.app/Contents/MacOS/World at Ruin"
 ##
 ## Redirect EVERY save seam, not just the character file. This tool boots the
 ## real launch path, so an unredirected run writes the player's own progression
-## vault as well as their save (#309) — the boot tests get this from
-## IsolatedBoot, but this tool is invoked by hand and by CI, so it is on the
-## caller. Point WAR_SAVE_PATH at a throwaway COPY of a character recipe: with
+## vault and their boot-recovery ledger as well as their save (#309, #301) — the
+## boot tests get this from IsolatedBoot, but this tool is invoked by hand and by
+## CI, so it is on the caller. The ledger is the worst of the three to get wrong:
+## quarantine is forward-only, so a build a capture run quarantined could never
+## be cleared by a later successful launch. Point WAR_SAVE_PATH at a throwaway COPY of a character recipe: with
 ## no save present the first-run creator opens and its panel covers a third of
 ## the frame, and with the real path a capture would touch the player's own save.
 
@@ -211,7 +215,13 @@ func _ready() -> void:
 	# case it exists to stop.
 	for seam: Array in [
 			[CharacterStore.SAVE_PATH_ENV, CharacterStore.save_path(), CharacterStore.DEFAULT_PATH],
-			[SaveVault.VAULT_PATH_ENV, SaveVault.vault_path(), SaveVault.DEFAULT_PATH]]:
+			[SaveVault.VAULT_PATH_ENV, SaveVault.vault_path(), SaveVault.DEFAULT_PATH],
+			# The recovery ledger (#301) is exactly the case the sentence above
+			# warns about. Reconcile runs on EVERY boot now, so an unredirected
+			# capture reads and rewrites the player's own ledger — and quarantine
+			# is forward-only, so a build this tool quarantined could never be
+			# cleared by a later successful launch.
+			[BootRecovery.RECOVERY_PATH_ENV, BootRecovery.recovery_path(), BootRecovery.DEFAULT_PATH]]:
 		if _same_file(String(seam[1]), String(seam[2])):
 			_fail(("%s resolves to the player's real file (%s) — refusing to boot the game against "
 				+ "real player state. Point every save seam at a throwaway path before capturing.")

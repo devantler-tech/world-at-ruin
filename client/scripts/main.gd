@@ -74,6 +74,12 @@ func _ready() -> void:
 		set_process_unhandled_input(false)
 		get_tree().change_scene_to_file.call_deferred("res://tools/frame_capture.tscn")
 		return
+
+	# Recovery memory FIRST, before any world work: a marker left by the previous
+	# launch must be acted on before this launch does anything that could itself
+	# fail (#301).
+	_reconcile_boot_recovery()
+
 	_build_environment()
 	var world := WorldGen.new()
 	world.name = "World"
@@ -186,6 +192,81 @@ func _ready() -> void:
 	# fail the check, not slip past it (the silent-no-op incident, 0.1.12).
 	print("BOOT_OK v%s — world built, %d people and %d hounds in the Reach" % [
 		DevLog.VERSION, npcs.npc_names.size(), hounds.creature_names.size()])
+
+
+## The RECONCILE half of the boot-recovery lifecycle (#301), and the call that
+## makes [BootRecovery] part of the running game rather than a library only its
+## own test can reach: the core, the persistence and their tests were all
+## complete and correct, and NOTHING called them — so the crash-loop guard was
+## real in the suite and absent in the product.
+##
+## Read the ledger, act on a marker the LAST launch left behind — that launch
+## mounted a build and never reached its checkpoint, so the build is quarantined
+## and the marker cleared — and persist the result.
+##
+## MARKING is deliberately NOT done here, and that is the whole design of this
+## slice. The only thing this scene could honestly mark is the RUNNING build,
+## and doing so is unrecoverable: a power cut or a kill during startup leaves a
+## marker, the next launch quarantines the installed build, and because
+## [method BootRecovery.begin_attempt] refuses a quarantined version, no later
+## successful boot can ever clear it. The ledger would be permanently poisoned
+## by an event that was never a real boot failure.
+##
+## So marking waits for its real subject — a staged pack, marked by the
+## pack-mount path in the in-client updater child. That leaves this half fully
+## live and useful today: any marker that path writes is reconciled by the very
+## next launch, and the behaviour is proven now rather than first exercised on
+## the day an update goes wrong.
+##
+## EVERY failure here degrades to a normal boot and never blocks one — the same
+## law the vault follows. Recovery memory exists to stop a player being trapped
+## in a boot loop; a version of it that could itself refuse a launch would be the
+## very thing it guards against.
+##
+## KNOWN LIMIT, by construction: this runs INSIDE the scene it guards, so a fault
+## that stops `main.tscn` loading at all is beyond its reach. The ADR is explicit
+## that recovery belongs in the immutable shell rather than the replaceable
+## overlay — that shell does not exist yet, and building it is the bootstrap
+## child's work, not this caller's.
+func _reconcile_boot_recovery() -> void:
+	var path := BootRecovery.recovery_path()
+	var loaded := BootRecovery.load_state(path)
+	# An unreadable ledger loads with ok false and a deliberately unreadable
+	# state, so the consumers below fail closed on their own. It is carried
+	# forward rather than replaced: save_state refuses to launder it, which is
+	# what preserves the evidence of whatever tore it.
+	var state: Variant = loaded["state"]
+
+	var settled := BootRecovery.reconcile(state)
+	if not (settled["ok"] as bool):
+		push_warning("boot recovery: ledger not reconciled — %s" % str(settled["reason"]))
+		return
+
+	# Whether to persist is decided by what reconcile CHANGED, never by whether
+	# it could NAME the failed build. Those differ in exactly one case and it is
+	# the wedging one: an unreadable marker (say `42`) is cleared without a
+	# version to quarantine, so `quarantined_version` comes back empty while the
+	# state on disk is now stale. Keying the write on that field alone left the
+	# bad marker on the ledger forever — every later launch repeated the
+	# condition, and the pack-mount path would keep refusing new attempts because
+	# a marker was still pending.
+	#
+	# A pending marker is the whole test: every ok-true path of reconcile clears
+	# a non-null marker, and the only path that leaves the state untouched is the
+	# one where nothing was pending. Then writing back would be a pointless
+	# rewrite of the player's file on every single launch.
+	var pending: Variant = (state as Dictionary).get("marker") if state is Dictionary else null
+	if pending == null:
+		return
+
+	var failed := str(settled["quarantined_version"])
+	if failed.is_empty():
+		push_warning("boot recovery: a boot-attempt marker was pending but unreadable — the failed build cannot be identified, so nothing was quarantined; clearing it so launches are not wedged forever")
+	else:
+		push_warning("boot recovery: the previous launch of %s never reached its checkpoint — quarantined" % failed)
+	var written := BootRecovery.save_state(path, settled["state"])
+	if not (written["ok"] as bool):
+		push_warning("boot recovery: the reconciled ledger was not persisted — %s" % str(written["reason"]))
 
 
 ## Open the live zone connection when one was configured. This call is what
