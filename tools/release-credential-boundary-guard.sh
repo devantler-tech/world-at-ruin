@@ -4,13 +4,13 @@ set -euo pipefail
 workflow=${1:-.github/workflows/cd.yaml}
 
 fail() {
-  printf 'release-credential-boundary: %s\n' "$1" >&2
-  exit 1
+	printf 'release-credential-boundary: %s\n' "$1" >&2
+	exit 1
 }
 
 job_block() {
-  local job=$1
-  awk -v job="$job" '
+	local job=$1
+	awk -v job="$job" '
     $0 == "  " job ":" {
       found = 1
     }
@@ -24,19 +24,19 @@ job_block() {
 }
 
 require_text() {
-  local block=$1
-  local text=$2
-  local message=$3
-  grep -Fq -- "$text" <<<"$block" || fail "$message"
+	local block=$1
+	local text=$2
+	local message=$3
+	grep -Fq -- "$text" <<<"$block" || fail "$message"
 }
 
 reject_text() {
-  local block=$1
-  local text=$2
-  local message=$3
-  if grep -Fq -- "$text" <<<"$block"; then
-    fail "$message"
-  fi
+	local block=$1
+	local text=$2
+	local message=$3
+	if grep -Fq -- "$text" <<<"$block"; then
+		fail "$message"
+	fi
 }
 
 [ -f "$workflow" ] || fail "workflow not found: $workflow"
