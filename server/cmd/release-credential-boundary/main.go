@@ -29,7 +29,7 @@ const (
 	attachReleaseAggregateExpression = "${{ needs.attach-release.result }}"
 )
 
-var secretReference = regexp.MustCompile(`(^|[^[:alnum:]_])secrets([^[:alnum:]_]|$)`)
+var secretReference = regexp.MustCompile(`(?i)(^|[^[:alnum:]_])secrets([^[:alnum:]_]|$)`)
 
 type workflow struct {
 	root map[string]any

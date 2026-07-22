@@ -73,6 +73,13 @@ func TestAliasInjectedSecretIsResolved(t *testing.T) {
 	}
 }
 
+func TestSecretContextMatchIsCaseInsensitive(t *testing.T) {
+	value := map[string]any{"TOKEN": "${{ SECRETS.RELEASE_TOKEN }}"}
+	if !containsSecretReference(value) {
+		t.Fatal("uppercase secrets context was not detected")
+	}
+}
+
 func TestDuplicateJobIDIsRejected(t *testing.T) {
 	_, err := loadFixture(t, `jobs:
   attach-release:
