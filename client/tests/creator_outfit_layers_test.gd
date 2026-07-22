@@ -13,13 +13,19 @@ extends Node
 ##  2. Opting in makes clothing and armour simultaneously visible in separate,
 ##     enabled pickers.
 ##  3. Editing either layer preserves the other layer byte-for-byte.
+##  4. A build that can originate the layered value advertises save capability
+##     2 for both reads and writes.
 ##
 ## Run: godot --headless --path client res://tests/creator_outfit_layers_test.tscn
 
 const LAYERED_OUTFIT_ENV := "WAR_LAYERED_OUTFIT_PICKERS"
 
 
+var _original_flag := ""
+
+
 func _ready() -> void:
+	_original_flag = OS.get_environment(LAYERED_OUTFIT_ENV)
 	# Product law: this text-led preview is not the shipped creator surface yet.
 	# A plain boot must keep the previously shipped honest limitation — one
 	# disabled region picker for a recipe it cannot fully represent.
@@ -94,8 +100,14 @@ func _ready() -> void:
 	if equipment.get("feet", null) != "boots_worn":
 		_fail("removing feet clothing changed the armour layer: %s" % str(equipment.get("feet", null)))
 		return
+	if UpdateManifest.SAVE_CAPABILITY_READS < 2 or UpdateManifest.SAVE_CAPABILITY_WRITES < 2:
+		_fail(("the layered writer is live but the manifest still advertises read/write "
+			+ "capabilities %d/%d instead of capability 2") % [
+			UpdateManifest.SAVE_CAPABILITY_READS,
+			UpdateManifest.SAVE_CAPABILITY_WRITES,
+		])
+		return
 
-	OS.set_environment(LAYERED_OUTFIT_ENV, "")
 	print("TEST PASS — layered outfit controls stay default-off and edit each layer independently when opted in")
 	get_tree().quit(0)
 
@@ -148,7 +160,10 @@ func _item_index(picker: OptionButton, text: String) -> int:
 
 
 func _fail(message: String) -> void:
-	OS.set_environment(LAYERED_OUTFIT_ENV, "")
 	push_error(message)
 	print("TEST FAIL — %s" % message)
 	get_tree().quit(1)
+
+
+func _exit_tree() -> void:
+	OS.set_environment(LAYERED_OUTFIT_ENV, _original_flag)

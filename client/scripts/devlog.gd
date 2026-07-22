@@ -17,7 +17,7 @@ const ENTRIES: Array[Dictionary] = [
 		"notes": [
 			"Early-build testers can launch with WAR_LAYERED_OUTFIT_PICKERS=1 to preview separate clothing and armour choices wherever both can share the same part of the body. Ordinary launches keep the existing single-region wardrobe while this presentation remains unfinished.",
 			"In the preview, taking off boots leaves the shoes underneath untouched, and changing the shoes leaves the boots untouched. A layered outfit can be inspected and reshaped without silently rewriting the layer the player did not choose.",
-			"The preview still uses the wardrobe's internal garment names and remains text-led rather than icon-led. That gap is why it stays opt-in; #253 remains open until the panel reaches the authored, world-material character-creation reference.",
+			"The preview still uses the wardrobe's internal garment names and remains text-led rather than icon-led. That gap is why it stays opt-in; #336 tracks the authored replacement and flag retirement.",
 		],
 	},
 	{

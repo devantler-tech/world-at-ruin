@@ -62,6 +62,11 @@ cd world-at-ruin
 godot client   # or: /Applications/Godot.app/Contents/MacOS/Godot client
 ```
 
+The independent clothing-and-armour editor is available for source-build
+testing with `WAR_LAYERED_OUTFIT_PICKERS=1 godot client`. It is deliberately
+default-off while its rows still use internal garment names; [#336](https://github.com/devantler-tech/world-at-ruin/issues/336)
+tracks replacing that experimental presentation and retiring the flag.
+
 To build your own `.app` instead, export with the `macOS` preset in `client/export_presets.cfg`
 (needs the 4.7.1 export templates installed in the Godot editor).
 

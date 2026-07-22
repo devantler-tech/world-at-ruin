@@ -23,8 +23,9 @@ const PRESETS := ["wanderer", "villager", "elder", "brute"]
 
 ## The layer-aware outfit rows are functionally correct but still use the
 ## creator's text-led wardrobe vocabulary. Product law keeps that unfinished
-## presentation default-off until #253 clears the authored UI bar; CI and the
-## focused integration test opt in explicitly and exercise both states.
+## presentation default-off until #227 clears the authored UI bar; CI and the
+## focused integration test opt in explicitly and exercise both states. #336
+## owns the eventual default-on flip and flag removal.
 const LAYERED_OUTFIT_PICKERS_ENV := "WAR_LAYERED_OUTFIT_PICKERS"
 
 ## What each archetype is, in the player's terms. The recipes carry their own

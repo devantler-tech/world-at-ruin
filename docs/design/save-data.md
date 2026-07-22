@@ -135,6 +135,11 @@ stamp `N` only when the new shape is present, reports the real write version in 
 `SAVE_CAPABILITY_WRITES`, and appends the capability to
 `client/tests/data/shipped_save_capability.txt`.
 
+The first completed use of that sequence is capability 2: recipe-version-4 layered equipment became
+readable in v0.32.0, baked through v0.49.0, and only then gained an opt-in production writer. The
+writer release raises both manifest ceilings to 2 and appends 2 to the capability ledger; disabling
+its UI flag stops new player edits but must never remove the reader or lower either ceiling.
+
 ### Progression vault
 
 For vault version `N`, the expansion pull request must:
