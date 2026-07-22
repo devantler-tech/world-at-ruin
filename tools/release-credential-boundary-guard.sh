@@ -10,6 +10,9 @@ fail() {
 
 job_block() {
 	local job=$1
+	local count
+	count=$(awk -v job="$job" '$0 == "  " job ":" { count++ } END { print count + 0 }' "$workflow")
+	[ "$count" = "1" ] || fail "$job must have exactly one job definition"
 	awk -v job="$job" '
     $0 == "  " job ":" {
       found = 1
@@ -18,6 +21,22 @@ job_block() {
       exit
     }
     found {
+      print
+    }
+  ' "$workflow"
+}
+
+workflow_env_block() {
+	awk '
+    /^env:/ {
+      in_env = 1
+      print
+      next
+    }
+    in_env && /^[^[:space:]#]/ {
+      in_env = 0
+    }
+    in_env {
       print
     }
   ' "$workflow"
@@ -93,8 +112,14 @@ attach_release=$(job_block attach-release)
 publish_ghcr=$(job_block publish-ghcr)
 publish_release=$(job_block publish-release)
 required_checks=$(job_block cd-required-checks)
+workflow_env=$(workflow_env_block)
 literal_dollar='$'
 aggregate_expression="${literal_dollar}{{ needs.attach-release.result }}"
+expected_attach_release_sha256=90be022a9db17ad62cee1727b31424d87903ec3091392f5050224bf1a13fc5cd
+actual_attach_release_sha256=$(printf '%s\n' "$attach_release" | shasum -a 256 | awk '{ print $1 }')
+
+reject_pattern "$workflow_env" '(^|[^[:alnum:]_])secrets([^[:alnum:]_]|$)' "workflow-level env must not expose secrets to publish-macos"
+[ "$actual_attach_release_sha256" = "$expected_attach_release_sha256" ] || fail "attach-release structure changed; audit the complete privileged job and update its checksum deliberately"
 
 [ "$(job_permission "$publish_macos" contents)" = "read" ] || fail "publish-macos must set only contents: read"
 reject_pattern "$publish_macos" '(^|[^[:alnum:]_])secrets([^[:alnum:]_]|$)' "publish-macos must not consume repository secrets"
@@ -112,14 +137,6 @@ require_text "$attach_release" "gh release upload" "attach-release must own the 
 require_text "$attach_release" "ASSET=\"build/WorldAtRuin-\${TAG#v}-macOS-universal.zip\"" "attach-release must bind the handed-off zip to the canonical asset path"
 reject_text "$attach_release" "actions/checkout@" "attach-release must never check out repository-controlled code"
 reject_text "$attach_release" "uses: ./" "attach-release must never execute a repository-local action"
-artifact_path_mentions=$(grep -v '^[[:space:]]*#' <<<"$attach_release" | grep -Fo -- "build/" | wc -l | tr -d '[:space:]')
-[ "$artifact_path_mentions" = "1" ] || fail "attach-release must reference the handed-off artifact path only in its inert asset binding"
-reject_pattern "$attach_release" "(^|[;&|[:space:]])(source|[.]|eval|bash|dash|sh|zsh|python|python3|ruby|node|perl|php)[[:space:]]+['\"]?([.]/)?build/" "attach-release must never execute or source handed-off artifact files"
-reject_pattern "$attach_release" "(^|[;&|[:space:]])(source|[.]|eval|bash|dash|sh|zsh|python|python3|ruby|node|perl|php)[[:space:]]+['\"]?[$][{]?ASSET" "attach-release must never execute or source the handed-off asset"
-reject_pattern "$attach_release" "^[[:space:]]*(run:[[:space:]]+)?['\"]?([.]/)?build/" "attach-release must never execute a handed-off artifact path directly"
-reject_pattern "$attach_release" "^[[:space:]]*(run:[[:space:]]+)?['\"]?[$][{]?ASSET" "attach-release must never execute the handed-off asset directly"
-reject_pattern "$attach_release" "(^|[;&|[:space:]])(cd|pushd)[[:space:]]+['\"]?([.]/)?build([/'\"[:space:]]|$)" "attach-release must never enter the handed-off artifact directory"
-reject_pattern "$attach_release" '(^|[;&|[:space:]])(7z|bsdtar|ditto|tar|unzip)[[:space:]]' "attach-release must never unpack handed-off artifacts"
 
 require_text "$publish_release" "    needs: [attach-release, publish-ghcr]" "publish-release must wait for both asset publication jobs"
 [ "$(job_permission "$publish_release" contents)" = "write" ] || fail "publish-release must set only contents: write"
