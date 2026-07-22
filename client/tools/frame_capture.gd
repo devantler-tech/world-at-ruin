@@ -599,6 +599,28 @@ func _capture_first_run(dir: String, main: Node) -> void:
 	if scroll == null:
 		_fail("the creator has no scroll container — the controls below the fold would go unphotographed")
 		return
+	# The hosted runner's 1024x576 viewport clips the final outfit row from the
+	# default frame. Scroll the last wardrobe control into view and name this
+	# evidence explicitly; a green capture may never omit the surface the PR
+	# activates merely because a larger local display happened to show it.
+	var bottom_outfit := _bottom_outfit_picker(creator as CharacterCreator)
+	if bottom_outfit == null:
+		_fail("the creator exposes no outfit control — the wardrobe writer has no visible evidence")
+		return
+	scroll.ensure_control_visible(bottom_outfit)
+	for i in 2:
+		await get_tree().process_frame
+	var scroll_rect := scroll.get_global_rect()
+	var outfit_rect := bottom_outfit.get_global_rect()
+	if outfit_rect.position.y < scroll_rect.position.y \
+			or outfit_rect.end.y > scroll_rect.end.y:
+		_fail("the last outfit control remains clipped after scrolling — the wardrobe frame would not depict it")
+		return
+	if not await _shoot(dir, "first_run_outfit", creator):
+		return
+	shots += 1
+	scroll.scroll_vertical = 0
+	await get_tree().process_frame
 	# The shaping controls now sit inside a section that is COLLAPSED by default
 	# (the art direction demotes them below the named choices), so scrolling
 	# alone would photograph a panel that never shows them. Open every section
@@ -908,6 +930,28 @@ func _find_scroll(node: Node) -> ScrollContainer:
 			return found
 	return null
 
+
+## The lowest real wardrobe control, regardless of whether the creator exposes
+## one picker per region or the opted-in dictionary of layer-specific pickers.
+## Choosing by rendered position rather than dictionary order keeps the capture
+## tied to what can actually fall below the viewport.
+func _bottom_outfit_picker(creator: CharacterCreator) -> Control:
+	var by_slot: Variant = creator.get("_outfit_pickers")
+	if not (by_slot is Dictionary):
+		return null
+	var bottom: Control = null
+	for slot: Variant in by_slot:
+		var controls: Variant = (by_slot as Dictionary)[slot]
+		if controls is Dictionary:
+			for layer: Variant in controls:
+				var candidate: Variant = (controls as Dictionary)[layer]
+				if candidate is Control and (bottom == null \
+						or (candidate as Control).global_position.y > bottom.global_position.y):
+					bottom = candidate as Control
+		elif controls is Control and (bottom == null \
+				or (controls as Control).global_position.y > bottom.global_position.y):
+			bottom = controls as Control
+	return bottom
 
 
 ## Writes the frame's own provenance next to it, so the artifact carries what
