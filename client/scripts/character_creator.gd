@@ -21,10 +21,9 @@ const COL_EMBER := UiTheme.EMBER
 const PRESET_DIR := "res://recipes/"
 const PRESETS := ["wanderer", "villager", "elder", "brute"]
 
-## Reserved for the contract release after capability-2 reads have baked. The
-## environment value is deliberately insufficient on its own: expansion builds
-## must not expose a production writer before a published rollback target
-## advertises that it can read the layered value (#253).
+## Capability-2 reads baked in v0.50.0, so the contract release may expose this
+## preview. It remains deliberately opt-in until #336 replaces the raw controls
+## with an authored wardrobe surface suitable for every player.
 const LAYERED_OUTFIT_PICKERS_ENV := "WAR_LAYERED_OUTFIT_PICKERS"
 const LAYERED_OUTFIT_CAPABILITY := 2
 
@@ -403,9 +402,9 @@ func _add_shape_slider(into: Container, shape_name: String) -> void:
 	_shape_sliders[shape_name] = slider
 
 
-## The future contract-stage opt-in for the independent layer controls. Empty,
-## unset and every value except literal `1` fail closed, and so does every build
-## whose published write capability is still below the layered value.
+## The contract-stage opt-in for the independent layer controls. Empty, unset
+## and every value except literal `1` fail closed; the capability check prevents
+## an older expansion build from activating the writer through the same flag.
 static func layered_outfit_pickers_enabled() -> bool:
 	return UpdateManifest.SAVE_CAPABILITY_WRITES >= LAYERED_OUTFIT_CAPABILITY \
 		and OS.get_environment(LAYERED_OUTFIT_PICKERS_ENV) == "1"
@@ -623,9 +622,9 @@ func _set_recipe_region_equipment(slot: String, piece_name: String) -> void:
 	_restamp_version()
 
 
-## Baked contract-stage mutation. The production UI cannot reach this while the
-## manifest still writes capability 1; focused tests and capture tooling exercise
-## it so the later contract flip does not discover a player-state bug.
+## Contract-stage mutation. The opt-in production controls reach this only after
+## v0.50.0 has baked capability-2 reads; the focused UI test proves each edit
+## leaves every untouched layer byte-identical.
 func _set_recipe_equipment(slot: String, layer: String, piece_name: String) -> void:
 	if not _recipe.has("equipment"):
 		_recipe["equipment"] = {}
@@ -713,8 +712,8 @@ func _restamp_version() -> void:
 
 
 ## Does any region hold more than one piece? Saving must not downgrade the
-## version out from under the layered list form the future contract-stage panel
-## will edit and the expansion panel preserves read-only.
+## version out from under the layered list form the contract-stage panel edits
+## and the default panel preserves read-only.
 func _uses_layered_equipment() -> bool:
 	for slot: String in (_recipe.get("equipment", {}) as Dictionary):
 		if _recipe["equipment"][slot] is Array:

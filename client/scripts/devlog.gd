@@ -11,6 +11,16 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
+		"version": "0.51.0",
+		"date": "2026-07-23",
+		"title": "Layered outfit editing opens as a guarded preview",
+		"notes": [
+			"The v0.50.0 reader release is now a published rollback target, so this separate build can safely write layered outfit saves for the first time.",
+			"Set WAR_LAYERED_OUTFIT_PICKERS=1 before launch to edit clothing and armour independently. Changing or removing one layer preserves the other exactly and stamps the layered recipe honestly.",
+			"The ordinary creator stays on its safe read-only region control for layered outfits. #336 tracks replacing these raw preview controls with an authored wardrobe before the flag becomes unnecessary.",
+		],
+	},
+	{
 		"version": "0.50.0",
 		"date": "2026-07-22",
 		"title": "Layered outfit saves get a rollback-safe runway",

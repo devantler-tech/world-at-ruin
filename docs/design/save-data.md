@@ -136,11 +136,12 @@ stamp `N` only when the new shape is present, reports the real write version in 
 `client/tests/data/shipped_save_capability.txt`.
 
 The first active use of that sequence is capability 2: recipe-version-4 layered equipment became
-readable in v0.32.0, but builds through v0.49.0 still published a capability-1 read ceiling. The
-expansion release must therefore publish reads 2 while writes remain 1, with every production path
-still unable to originate the layered value. Only after that exact metadata has baked in a released
-rollback target may the contract release activate the writer, raise writes to 2 and append 2 to the
-capability ledger. No environment flag may collapse those two releases into one.
+readable in v0.32.0, but builds through v0.49.0 still published a capability-1 read ceiling. v0.50.0
+is the retained expansion release: it publishes reads 2 while writes remain 1 and keeps every
+production writer unreachable. The separate contract release may now activate the opt-in writer,
+raise writes to 2 and append 2 to the capability ledger. The raw preview remains behind
+`WAR_LAYERED_OUTFIT_PICKERS=1` until #336 delivers an authored wardrobe surface; the flag controls
+exposure, not the already-completed two-release compatibility sequence.
 
 ### Progression vault
 

@@ -1399,8 +1399,11 @@ jobs:
           # the creator open. Point at a path inside the run's temp dir that was
           # never created; the tool fails closed if the creator does not appear,
           # so a stray save cannot silently turn this back into a world shot.
+          # Exercise the opted-in preview this PR actually changes. The base is
+          # still write-capability 1, so the same value cannot bypass its gate.
           WAR_SHOT_DIR="${RUNNER_TEMP}/shots" \
           WAR_SCENARIO=first_run \
+          WAR_LAYERED_OUTFIT_PICKERS=1 \
           WAR_SAVE_PATH="${RUNNER_TEMP}/no_such_save.json" \
           WAR_VAULT_PATH="${RUNNER_TEMP}/no_such_save_vault.json" \
           WAR_BOOT_RECOVERY_PATH="${RUNNER_TEMP}/no_such_save_recovery.json" \
@@ -1594,6 +1597,7 @@ jobs:
           if [ "$FIRST_RUN" = "true" ]; then
             WAR_SHOT_DIR="${RUNNER_TEMP}/shots-base" \
             WAR_SCENARIO=first_run \
+            WAR_LAYERED_OUTFIT_PICKERS=1 \
             WAR_SAVE_PATH="${RUNNER_TEMP}/no_such_save_base.json" \
             WAR_VAULT_PATH="${RUNNER_TEMP}/no_such_save_base_vault.json" \
             WAR_BOOT_RECOVERY_PATH="${RUNNER_TEMP}/no_such_save_base_recovery.json" \
@@ -1769,6 +1773,7 @@ jobs:
           # world shot.
           WAR_CAPTURE=1 \
           WAR_SCENARIO=first_run \
+          WAR_LAYERED_OUTFIT_PICKERS=1 \
           WAR_SHOT_DIR="${RUNNER_TEMP}/exported-shots" \
           WAR_SAVE_PATH="${RUNNER_TEMP}/no_such_save.json" \
           WAR_VAULT_PATH="${RUNNER_TEMP}/no_such_save_vault.json" \
