@@ -74,6 +74,10 @@ const SAVE_SCHEMA_MIN := 1
 ## `tests/data/shipped_save_capability.txt`. Raise it by one in the same PR that
 ## adds a savable field. A build claiming to write LESS than it once did is
 ## exactly the stranding the no-resets law forbids.
+##
+## Capability 2 is still in its expansion release: the reader is advertised,
+## but no production UI may originate the layered value until this metadata has
+## baked in a published rollback target.
 const SAVE_CAPABILITY_WRITES := 1
 
 ## The highest content capability this build can READ.
@@ -86,9 +90,10 @@ const SAVE_CAPABILITY_WRITES := 1
 ## already writes the new shape, and the following release gets refused or
 ## needlessly routed away from a pack update despite a valid fallback existing.
 ##
-## Must always be >= the write capability (a build must read what it writes); the
-## two are equal only because no expansion has begun.
-const SAVE_CAPABILITY_READS := 1
+## Must always be >= the write capability (a build must read what it writes).
+## Capability 2 is the layered recipe form introduced read-first in v0.32.0;
+## this release finally publishes that read ceiling while writing stays at 1.
+const SAVE_CAPABILITY_READS := 2
 
 ## The oldest shell this manifest still supports updating FROM.
 ##
