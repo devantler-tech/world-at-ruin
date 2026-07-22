@@ -504,8 +504,9 @@ everything shipped afterwards is held to.
   - `cd.yaml` (`push: tags: v*`) production-builds the macOS client, **stamps the release
     version** into `config/version` and `DevLog.VERSION` at build time, verifies the exported app
     boots reporting `BOOT_OK v<version>` (the proof the stamp reached the shipped binary), and
-    attaches the zip to the Release. `workflow_dispatch` with a `tag` input re-runs it for an
-    existing release.
+    hands the zip to a checkout-free attachment job. The build job is read-only; only that minimal
+    attachment job receives `contents: write`, so project code never shares a runner with the
+    release-write token. `workflow_dispatch` with a `tag` input re-runs it for an existing release.
   - **GHCR is the origin of record for updates** (maintainer direction 2026-07-18, closing the open
     host decision in `docs/design/distribution-and-self-update.md`). CD publishes the released
     client to `ghcr.io/devantler-tech/world-at-ruin/client` as an **OCI artifact**, tagged with the

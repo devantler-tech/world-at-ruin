@@ -884,6 +884,8 @@ jobs:
         # because it is the same concern and the job is already required, so
         # the check costs no extra runner.
         run: ./tools/provenance-guard.sh
+      - name: Keep release-write credentials out of the build job
+        run: bash ./tools/release-credential-boundary-guard.sh
 
   # Repo-wide linting for everything that is not GDScript: JSON, Markdown, YAML, shell,
   # the workflows in this directory, spelling and secrets. MegaLinter ships no GDScript

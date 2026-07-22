@@ -64,7 +64,7 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 45
     permissions:
-      contents: write # upload the built asset onto the release
+      contents: read # build and exercise repo-controlled code without a release-write token
     outputs:
       sha256: ${{ steps.sha.outputs.sha256 }}
     steps:
@@ -184,106 +184,6 @@ jobs:
             exit 1
           fi
 
-      - name: ⏳ Wait for the draft release to exist
-        # semantic-release pushes the tag (which triggered this run) BEFORE its
-        # github plugin creates the draft release, so the draft can lag this
-        # workflow by a few seconds. Poll rather than assume; fail closed with a
-        # clear message if it never appears, so a missing draft can never be
-        # mistaken for a successful publish.
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.version.outputs.tag }}
-        run: |
-          set -euo pipefail
-          for _ in $(seq 1 30); do
-            if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json tagName >/dev/null 2>&1; then
-              echo "release ${TAG} is present"
-              exit 0
-            fi
-            sleep 10
-          done
-          echo "::error::no release found for ${TAG} after 5 minutes — semantic-release should have created it as a draft (.releaserc draftRelease). Nothing was published."
-          exit 1
-
-      - name: 📤 Attach the build to the release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.version.outputs.tag }}
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          set -euo pipefail
-          # Fail loudly and EARLY if the release is already published: under
-          # immutable releases the upload below cannot succeed, and a clear
-          # message here beats a bare `HTTP 422` from the upload.
-          #
-          # Read the draft state into a variable FIRST rather than testing the
-          # command substitution inline. Inline, a failed `gh release view` —
-          # a 503 is the very failure this step is being hardened against —
-          # substitutes the empty string, which is not "true", so the guard
-          # would announce "already published" for a release that is still a
-          # perfectly good draft. That is both a false strand and a misleading
-          # error: it points whoever reads it at the immutable-release rule
-          # instead of at the transient it actually was.
-          #
-          # So this query gets the same retry treatment as the upload below,
-          # and only a definitive answer is allowed to decide anything.
-          IS_DRAFT=""
-          for attempt in 1 2 3; do
-            if IS_DRAFT="$(gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json isDraft --jq '.isDraft')"; then
-              break
-            fi
-            IS_DRAFT=""
-            [ "${attempt}" -lt 3 ] && sleep 5
-          done
-
-          if [ -z "${IS_DRAFT}" ]; then
-            echo "::error::could not read the draft state of ${TAG} after 3 attempts. Nothing was published; ${TAG} is unchanged. This is a failed API call, NOT a published release — re-run this workflow."
-            exit 1
-          fi
-
-          if [ "${IS_DRAFT}" != "true" ]; then
-            echo "::error::${TAG} is already published — assets cannot be attached to an immutable release. The release must still be a draft when CD runs (see .releaserc draftRelease)."
-            exit 1
-          fi
-
-          ASSET="build/WorldAtRuin-${VERSION}-macOS-universal.zip"
-          # Fail fast on a missing artifact. A wrong path is a build bug, not a
-          # transient, and must not burn the retry budget below looking like one.
-          if [ ! -f "${ASSET}" ]; then
-            echo "::error::${ASSET} does not exist — the build step did not produce the artifact this step is meant to attach."
-            exit 1
-          fi
-
-          # RETRY, because this single call gates the whole release. Everything
-          # downstream (GHCR, publish, Homebrew cask) is skipped when it fails,
-          # and `.releaserc draftRelease` means the release is then stranded as a
-          # draft until a human re-runs a ~10-minute build. `uploads.github.com`
-          # is a separate endpoint from `api.github.com` and is the flakier of
-          # the two: a GitHub-side 503 there cost v0.32.0 two full runs (see #287).
-          #
-          # --clobber so a retry (or a workflow_dispatch re-run) replaces a
-          # partially-uploaded asset rather than failing on an existing name.
-          ATTEMPTS=5
-          DELAY=15
-          for attempt in $(seq 1 "${ATTEMPTS}"); do
-            if gh release upload "${TAG}" "${ASSET}" \
-              --repo "${GITHUB_REPOSITORY}" --clobber; then
-              # Say so explicitly: a retried success must not read like a clean
-              # first attempt to whoever scans this log later.
-              if [ "${attempt}" -gt 1 ]; then
-                echo "uploaded ${ASSET} to ${TAG} on attempt ${attempt}/${ATTEMPTS}"
-              fi
-              exit 0
-            fi
-            if [ "${attempt}" -lt "${ATTEMPTS}" ]; then
-              echo "attempt ${attempt}/${ATTEMPTS} to upload ${ASSET} failed; retrying in ${DELAY}s"
-              sleep "${DELAY}"
-              DELAY=$((DELAY * 2))
-            fi
-          done
-          echo "::error::failed to attach ${ASSET} to ${TAG} after ${ATTEMPTS} attempts. Nothing was published; ${TAG} is still a draft."
-          exit 1
-
       - name: 🧾 Record the artifact checksum
         id: sha
         env:
@@ -310,6 +210,108 @@ jobs:
           path: build/WorldAtRuin-${{ steps.version.outputs.version }}-macOS-universal.zip
           if-no-files-found: error
           retention-days: 1
+
+  attach-release:
+    name: 📤 Attach macOS build to release
+    # This job is the credential boundary between repo-controlled build/runtime
+    # code and the release-write token. It never checks out or executes the tag;
+    # it only receives the inert build artifact and attaches it to the draft.
+    needs: [publish-macos]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write # attach the completed artifact to the draft release
+    steps:
+      - name: 🛡️ Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      - name: 📎 Receive the macOS build
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: client-macos-universal
+          path: build
+
+      - name: ⏳ Wait for the draft release to exist
+        # semantic-release pushes the tag (which triggered this run) BEFORE its
+        # github plugin creates the draft release, so the draft can lag this
+        # workflow by a few seconds. Poll rather than assume; fail closed with a
+        # clear message if it never appears, so a missing draft can never be
+        # mistaken for a successful publish.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 30); do
+            if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json tagName >/dev/null 2>&1; then
+              echo "release ${TAG} is present"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::no release found for ${TAG} after 5 minutes — semantic-release should have created it as a draft (.releaserc draftRelease). Nothing was published."
+          exit 1
+
+      - name: 📤 Attach the build to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+        run: |
+          set -euo pipefail
+          if ! printf '%s' "${TAG}" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-.+)?$'; then
+            echo "::error::'${TAG}' is not a vX.Y.Z release tag"
+            exit 1
+          fi
+
+          # Query draft state separately and retry transient API failures. A
+          # failed query must never be misreported as an immutable release.
+          IS_DRAFT=""
+          for attempt in 1 2 3; do
+            if IS_DRAFT="$(gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json isDraft --jq '.isDraft')"; then
+              break
+            fi
+            IS_DRAFT=""
+            [ "${attempt}" -lt 3 ] && sleep 5
+          done
+
+          if [ -z "${IS_DRAFT}" ]; then
+            echo "::error::could not read the draft state of ${TAG} after 3 attempts. Nothing was published; ${TAG} is unchanged. This is a failed API call, NOT a published release — re-run this workflow."
+            exit 1
+          fi
+
+          if [ "${IS_DRAFT}" != "true" ]; then
+            echo "::error::${TAG} is already published — assets cannot be attached to an immutable release. The release must still be a draft when CD runs (see .releaserc draftRelease)."
+            exit 1
+          fi
+
+          ASSET="build/WorldAtRuin-${TAG#v}-macOS-universal.zip"
+          if [ ! -f "${ASSET}" ]; then
+            echo "::error::${ASSET} does not exist — the build job did not hand off the expected artifact."
+            exit 1
+          fi
+
+          # Retain the release-upload retry budget: a transient upload failure
+          # strands an otherwise-complete immutable release as a draft.
+          ATTEMPTS=5
+          DELAY=15
+          for attempt in $(seq 1 "${ATTEMPTS}"); do
+            if gh release upload "${TAG}" "${ASSET}" \
+              --repo "${GITHUB_REPOSITORY}" --clobber; then
+              if [ "${attempt}" -gt 1 ]; then
+                echo "uploaded ${ASSET} to ${TAG} on attempt ${attempt}/${ATTEMPTS}"
+              fi
+              exit 0
+            fi
+            if [ "${attempt}" -lt "${ATTEMPTS}" ]; then
+              echo "attempt ${attempt}/${ATTEMPTS} to upload ${ASSET} failed; retrying in ${DELAY}s"
+              sleep "${DELAY}"
+              DELAY=$((DELAY * 2))
+            fi
+          done
+          echo "::error::failed to attach ${ASSET} to ${TAG} after ${ATTEMPTS} attempts. Nothing was published; ${TAG} is still a draft."
+          exit 1
 
   publish-ghcr:
     name: 📦 Publish OCI artifact to GHCR
@@ -525,7 +527,7 @@ jobs:
     #
     # This is the same shape the org's Go repos get from GoReleaser
     # (`release: draft: true` + publish only after every asset job succeeds).
-    needs: [publish-macos, publish-ghcr]
+    needs: [attach-release, publish-ghcr]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -991,6 +993,7 @@ jobs:
     needs:
       [
         publish-macos,
+        attach-release,
         publish-ghcr,
         verify-ghcr-public,
         publish-release,
@@ -1002,6 +1005,7 @@ jobs:
         with:
           job-results: >-
             ${{ needs.publish-macos.result }}
+            ${{ needs.attach-release.result }}
             ${{ needs.publish-ghcr.result }}
             ${{ needs.verify-ghcr-public.result }}
             ${{ needs.publish-release.result }}
