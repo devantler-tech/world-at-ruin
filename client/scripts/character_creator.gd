@@ -254,8 +254,10 @@ func _build_panel() -> void:
 	# all thirteen would have added nine dead rows to a screen already faulted
 	# for reading as a debug panel (#227). Each region appears the moment a piece
 	# is baked for it, with no change here.
-	for slot: String in pickable_regions(CharacterFactory.equipment_registry()):
-		_add_outfit_picker(outfit, slot)
+	var equipment_registry := CharacterFactory.equipment_registry()
+	for slot: String in pickable_regions(equipment_registry):
+		for layer: String in pickable_layers(equipment_registry, slot):
+			_add_outfit_picker(outfit, slot, layer)
 	var skin := _add_section(content, "SKIN")
 	_add_skin_picker(skin)
 
@@ -391,29 +393,37 @@ func _add_shape_slider(into: Container, shape_name: String) -> void:
 	_shape_sliders[shape_name] = slider
 
 
-## One OptionButton per slot: "bare hands" plus every baked piece that goes
-## there. Changing it rebuilds the body (equipping is composition, not a
-## per-frame knob — same contract as the bone sliders).
-func _add_outfit_picker(into: Container, slot: String) -> void:
+## One OptionButton per recipe-addressable (region, layer) pair: "bare" plus
+## every baked piece that fits there. A region may carry clothing with armour
+## over it, so collapsing the pair to one picker hides the inner piece and
+## makes a valid layered recipe impossible to edit (#253).
+##
+## Changing one picker rebuilds the body (equipping is composition, not a
+## per-frame knob — same contract as the bone sliders) while preserving every
+## other layer on the region.
+func _add_outfit_picker(into: Container, slot: String, layer: String) -> void:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 8)
 	into.add_child(row)
 	var label := Label.new()
-	label.text = slot
+	var layer_label := "armour" if layer == "armor" else layer
+	label.text = "%s · %s" % [slot.replace("_", " "), layer_label]
 	label.custom_minimum_size = Vector2(130, 0)
 	row.add_child(label)
 	var picker := OptionButton.new()
 	picker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	picker.add_item("bare")
-	for piece_name: String in _pieces_in_slot(CharacterFactory.equipment_registry(), slot):
+	for piece_name: String in _pieces_in_slot(CharacterFactory.equipment_registry(), slot, layer):
 		picker.add_item(piece_name)
 	picker.item_selected.connect(func(index: int) -> void:
 		if _syncing:
 			return
-		_set_recipe_equipment(slot, "" if index == 0 else picker.get_item_text(index))
+		_set_recipe_equipment(slot, layer, "" if index == 0 else picker.get_item_text(index))
 		_player.set_character(_recipe))
 	row.add_child(picker)
-	_outfit_pickers[slot] = picker
+	if not _outfit_pickers.has(slot):
+		_outfit_pickers[slot] = {}
+	_outfit_pickers[slot][layer] = picker
 
 
 ## The regions the OUTFIT section offers a picker for: every declared region
@@ -438,17 +448,30 @@ static func pickable_regions(registry: Dictionary) -> Array[String]:
 	return out
 
 
+## The recipe-addressable layers that have at least one baked piece in this
+## region, in the kit's render order. Base pieces are kit-owned and therefore
+## filtered by `_pieces_in_slot`; they never become removable creator controls.
+static func pickable_layers(registry: Dictionary, slot: String) -> Array[String]:
+	var out: Array[String] = []
+	for layer: String in CharacterFactory.LAYERS:
+		if not _pieces_in_slot(registry, slot, layer).is_empty():
+			out.append(layer)
+	return out
+
+
 ## Every baked piece that can be worn in this region, sorted so the picker's
 ## order — and the decision to show the picker at all — never depends on
 ## dictionary iteration order. Shared by both callers on purpose: the row is
 ## built from exactly the list that decided the row should exist, so a region
 ## can never be shown with nothing in it, or hidden while holding something.
-static func _pieces_in_slot(registry: Dictionary, slot: String) -> Array[String]:
+static func _pieces_in_slot(registry: Dictionary, slot: String, layer := "") -> Array[String]:
 	var out: Array[String] = []
 	var pieces: Dictionary = registry.get("pieces", {})
 	for piece_name: String in pieces:
 		var piece := pieces[piece_name] as Dictionary
-		if String(piece.get("slot", "")) == slot and String(piece.get("layer", "")) != "base":
+		var piece_layer := String(piece.get("layer", ""))
+		if String(piece.get("slot", "")) == slot and piece_layer != "base" \
+				and (layer == "" or piece_layer == layer):
 			out.append(piece_name)
 	out.sort()
 	return out
@@ -543,21 +566,46 @@ func _set_recipe_bone(field: String, key: String, value: float) -> void:
 ## Equipment entered the recipe format at version 2 and skin at version 3, so
 ## a recipe only claims the newest version its fields need — older saves stay
 ## untouched at their own version.
-func _set_recipe_equipment(slot: String, piece_name: String) -> void:
+func _set_recipe_equipment(slot: String, layer: String, piece_name: String) -> void:
 	if not _recipe.has("equipment"):
 		_recipe["equipment"] = {}
-	if piece_name == "":
-		# "bare" is an explicit choice to wear nothing on this region, so it
-		# clears every layer there — the one picker speaks for the whole region.
+
+	# Preserve every untouched name in its original order. Persisted list order
+	# is not render order (the kit owns that), but editing armour must not churn
+	# the clothing value underneath it — player state changes only where the
+	# player acted.
+	var registry_pieces: Dictionary = CharacterFactory.equipment_registry().get("pieces", {})
+	var current: Variant = (_recipe["equipment"] as Dictionary).get(slot, null)
+	var names: Array = current if current is Array else ([] if current == null else [current])
+	var updated: Array[String] = []
+	var replaced := false
+	for entry: Variant in names:
+		var existing_name := String(entry)
+		var existing_layer := String((registry_pieces.get(existing_name, {}) as Dictionary).get("layer", ""))
+		if existing_layer == layer:
+			if piece_name != "" and not replaced:
+				updated.append(piece_name)
+			replaced = true
+		else:
+			updated.append(existing_name)
+	if not replaced and piece_name != "":
+		# A newly occupied layer is inserted in kit order. Existing untouched
+		# names stay byte-identical and keep their relative order.
+		var target_rank := CharacterFactory.LAYERS.find(layer)
+		var insert_at := updated.size()
+		for i in updated.size():
+			var existing_layer := String((registry_pieces.get(updated[i], {}) as Dictionary).get("layer", ""))
+			if CharacterFactory.LAYERS.find(existing_layer) > target_rank:
+				insert_at = i
+				break
+		updated.insert(insert_at, piece_name)
+
+	if updated.is_empty():
 		_recipe["equipment"].erase(slot)
+	elif updated.size() == 1:
+		_recipe["equipment"][slot] = updated[0]
 	else:
-		# One picker per region means this panel can only ever express ONE piece
-		# there, so it only edits regions that hold one (a multi-piece region's
-		# picker is disabled — see _add_outfit_row). Merging instead would let a
-		# player build a layered region they could never take apart again:
-		# picking the shoes would keep the boots and picking "bare" would remove
-		# both, with no way back to shoes alone. Layer-specific controls are #253.
-		_recipe["equipment"][slot] = piece_name
+		_recipe["equipment"][slot] = updated
 	if _recipe["equipment"].is_empty():
 		_recipe.erase("equipment")
 	_restamp_version()
@@ -579,17 +627,6 @@ func _worn_by_layer(slot: String) -> Dictionary:
 	return out
 
 
-## The outermost piece worn on a region — what the character actually shows
-## there, and so what the single picker displays.
-func _outermost(slot: String) -> String:
-	var worn := _worn_by_layer(slot)
-	var shown := ""
-	for layer: String in CharacterFactory.LAYERS:
-		if layer in worn:
-			shown = worn[layer]
-	return shown
-
-
 func _restamp_version() -> void:
 	# The layered list form is version 4 and is checked FIRST: a recipe that
 	# uses it must never be stamped 3, or the save would understate its own
@@ -605,9 +642,8 @@ func _restamp_version() -> void:
 		_recipe["version"] = 1
 
 
-## Does any region hold more than one piece? This panel never creates that
-## state, but it can LOAD a recipe that has it, and saving must not downgrade
-## the version out from under it.
+## Does any region hold more than one piece? Saving must not downgrade the
+## version out from under the layered list form the panel now edits.
 func _uses_layered_equipment() -> bool:
 	for slot: String in (_recipe.get("equipment", {}) as Dictionary):
 		if _recipe["equipment"][slot] is Array:
@@ -633,20 +669,14 @@ func _sync_sliders_from_recipe() -> void:
 	for spec: Array in BONE_SLIDERS:
 		(_bone_sliders[spec[0]] as HSlider).value = _recipe.get(spec[1], {}).get(spec[2], 1.0)
 	for slot: String in _outfit_pickers:
-		var picker: OptionButton = _outfit_pickers[slot]
-		picker.select(0)
-		# Show the OUTERMOST piece worn on the region — the one actually visible
-		# on the character. Reading the raw value here would stringify a layered
-		# region's list into something no picker entry matches, so the slot would
-		# read "bare" while the character plainly wears something (#246).
-		var shown := _outermost(slot)
-		for i in picker.item_count:
-			if picker.get_item_text(i) == shown:
-				picker.select(i)
-		# A region wearing more than one layer cannot be expressed by one picker,
-		# so it is shown read-only rather than edited into a state the player
-		# could not undo. Explicit limitation, never a silent rewrite (#253).
-		picker.disabled = _worn_by_layer(slot).size() > 1
+		var worn := _worn_by_layer(slot)
+		for layer: String in (_outfit_pickers[slot] as Dictionary):
+			var picker: OptionButton = _outfit_pickers[slot][layer]
+			picker.select(0)
+			var shown := String(worn.get(layer, ""))
+			for i in picker.item_count:
+				if picker.get_item_text(i) == shown:
+					picker.select(i)
 	if _skin_picker != null:
 		_skin_picker.select(0)
 		for i in _skin_picker.item_count:

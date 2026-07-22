@@ -672,7 +672,9 @@ func _capture_first_run(dir: String, main: Node) -> void:
 	# behind an opaque pair of trousers.
 	creator.call("_on_preset", "brute")
 	for slot: String in CharacterCreator.pickable_regions(CharacterFactory.equipment_registry()):
-		creator.call("_set_recipe_equipment", slot, "")
+		for layer: String in CharacterCreator.pickable_layers(
+				CharacterFactory.equipment_registry(), slot):
+			creator.call("_set_recipe_equipment", slot, layer, "")
 	var capture_player := creator.get("_player") as Player
 	if capture_player == null:
 		_fail("the first-run creator lost its player — cannot render the empty-wardrobe base layer")

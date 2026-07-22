@@ -20,8 +20,9 @@ extends Node
 ##     one-element list, forever.
 ##  7. The list form is version 4 — a recipe claiming an older version may not
 ##     use it, or a rollback would strand the character.
-##  8. The editor reads both layers, shows the outermost, and never downgrades
-##     a layered recipe on save.
+##  8. The editor reads both layers and never downgrades a layered recipe on
+##     save. The independent player controls are pinned separately by
+##     `creator_outfit_layers_test`.
 ##  9. Each law has its own negative control, failing for its own reason.
 ##
 ## Pure logic + the baked registry for most of it; one real build for 5.
@@ -195,13 +196,8 @@ func _ready() -> void:
 		_fail("the editor misread a layered region: %s" % str(worn_feet))
 		creator.free()
 		return
-	# ...and shows the OUTERMOST piece, which is what the character displays.
-	if creator._outermost("feet") != "boots_worn":
-		_fail("the editor shows '%s' for a region wearing boots over shoes" % creator._outermost("feet"))
-		creator.free()
-		return
-	# 9. SAVING MUST NOT DOWNGRADE A LAYERED RECIPE. The panel never creates the
-	#    layered state, but it can LOAD one; stamping it 3 would make the save
+	# 9. SAVING MUST NOT DOWNGRADE A LAYERED RECIPE. The panel can now create and
+	#    edit this state; stamping it 3 would make the save
 	#    understate its own shape and a version-3 client would refuse to load it.
 	creator._restamp_version()
 	if int(creator._recipe["version"]) != CharacterFactory.LAYERED_EQUIPMENT_VERSION:

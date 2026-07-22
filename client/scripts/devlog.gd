@@ -11,6 +11,16 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
+		"version": "0.50.0",
+		"date": "2026-07-22",
+		"title": "Clothing no longer disappears behind the armour picker",
+		"notes": [
+			"The outfit screen now shows clothing and armour as separate choices wherever both can share the same part of the body. At the feet, cloth shoes and worn boots each have their own row instead of being flattened into one disabled control.",
+			"Taking off boots leaves the shoes underneath untouched, and changing the shoes leaves the boots untouched. A layered outfit can now be inspected and reshaped without silently rewriting the layer the player did not choose.",
+			"The rows still use the wardrobe's internal garment names, and the outfit section remains text-led rather than icon-led. It is functionally honest now, but it still trails the authored, world-material interface the character-creation reference calls for.",
+		],
+	},
+	{
 		"version": "0.49.0",
 		"date": "2026-07-21",
 		"title": "Taking everything off no longer means a bare body",
