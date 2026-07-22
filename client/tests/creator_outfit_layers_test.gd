@@ -8,42 +8,50 @@ extends Node
 ## underneath. This test drives the real creator controls and pins both halves
 ## of the contract:
 ##
-##  1. The clothing and armour pieces are simultaneously visible in separate,
+##  1. The unfinished layer UI is default-off: without the explicit opt-in, the
+##     existing single region picker stays read-only for a layered recipe.
+##  2. Opting in makes clothing and armour simultaneously visible in separate,
 ##     enabled pickers.
-##  2. Editing either layer preserves the other layer byte-for-byte.
+##  3. Editing either layer preserves the other layer byte-for-byte.
 ##
 ## Run: godot --headless --path client res://tests/creator_outfit_layers_test.tscn
 
+const LAYERED_OUTFIT_ENV := "WAR_LAYERED_OUTFIT_PICKERS"
+
 
 func _ready() -> void:
+	# Product law: this text-led preview is not the shipped creator surface yet.
+	# A plain boot must keep the previously shipped honest limitation — one
+	# disabled region picker for a recipe it cannot fully represent.
+	OS.set_environment(LAYERED_OUTFIT_ENV, "")
+	var default_player := Player.new()
+	add_child(default_player)
+	var default_creator := CharacterCreator.new()
+	add_child(default_creator)
+	default_creator.open(default_player, _layered_recipe(), false)
+	var default_pickers := _feet_pickers(default_creator)
+	var default_clothing := default_pickers[0] as OptionButton
+	var default_armour := default_pickers[1] as OptionButton
+	if default_clothing == null or default_armour == null:
+		_fail("the default creator no longer surfaces the worn feet region honestly")
+		return
+	if default_clothing != default_armour or not default_clothing.disabled:
+		_fail("the unfinished independent layer controls ship without the explicit opt-in")
+		return
+	default_creator.free()
+	default_player.free()
+
+	# The opt-in state is the feature under test.
+	OS.set_environment(LAYERED_OUTFIT_ENV, "1")
 	var player := Player.new()
 	add_child(player)
 	var creator := CharacterCreator.new()
 	add_child(creator)
-	creator.open(player, {
-		"version": CharacterFactory.LAYERED_EQUIPMENT_VERSION,
-		"equipment": {
-			"torso": "shirt_ragged",
-			"legs": "pants_wool",
-			"feet": ["shoes_cloth", "boots_worn"],
-		},
-	}, false)
+	creator.open(player, _layered_recipe(), false)
 
-	var clothing: OptionButton = null
-	var armour: OptionButton = null
-	for node: Node in creator.find_children("*", "OptionButton", true, false):
-		var picker := node as OptionButton
-		var names := _item_names(picker)
-		if "shoes_cloth" in names:
-			if clothing != null:
-				_fail("the creator exposes shoes_cloth in more than one picker")
-				return
-			clothing = picker
-		if "boots_worn" in names:
-			if armour != null:
-				_fail("the creator exposes boots_worn in more than one picker")
-				return
-			armour = picker
+	var pickers := _feet_pickers(creator)
+	var clothing := pickers[0] as OptionButton
+	var armour := pickers[1] as OptionButton
 
 	if clothing == null or armour == null:
 		_fail("the feet region does not expose both clothing and armour controls")
@@ -87,8 +95,42 @@ func _ready() -> void:
 		_fail("removing feet clothing changed the armour layer: %s" % str(equipment.get("feet", null)))
 		return
 
-	print("TEST PASS — creator shows and edits clothing/armour independently without flattening the outfit")
+	OS.set_environment(LAYERED_OUTFIT_ENV, "")
+	print("TEST PASS — layered outfit controls stay default-off and edit each layer independently when opted in")
 	get_tree().quit(0)
+
+
+func _layered_recipe() -> Dictionary:
+	return {
+		"version": CharacterFactory.LAYERED_EQUIPMENT_VERSION,
+		"equipment": {
+			"torso": "shirt_ragged",
+			"legs": "pants_wool",
+			"feet": ["shoes_cloth", "boots_worn"],
+		},
+	}
+
+
+## Returns [clothing picker, armour picker]. With the default single-region UI
+## both entries intentionally point at the SAME picker; under the opt-in they
+## point at two independent controls.
+func _feet_pickers(creator: CharacterCreator) -> Array:
+	var clothing: OptionButton = null
+	var armour: OptionButton = null
+	for node: Node in creator.find_children("*", "OptionButton", true, false):
+		var picker := node as OptionButton
+		var names := _item_names(picker)
+		if "shoes_cloth" in names:
+			if clothing != null:
+				_fail("the creator exposes shoes_cloth in more than one picker")
+				return [null, null]
+			clothing = picker
+		if "boots_worn" in names:
+			if armour != null:
+				_fail("the creator exposes boots_worn in more than one picker")
+				return [null, null]
+			armour = picker
+	return [clothing, armour]
 
 
 func _item_names(picker: OptionButton) -> Array[String]:
@@ -106,6 +148,7 @@ func _item_index(picker: OptionButton, text: String) -> int:
 
 
 func _fail(message: String) -> void:
+	OS.set_environment(LAYERED_OUTFIT_ENV, "")
 	push_error(message)
 	print("TEST FAIL — %s" % message)
 	get_tree().quit(1)

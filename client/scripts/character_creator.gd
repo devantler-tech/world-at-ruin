@@ -21,6 +21,12 @@ const COL_EMBER := UiTheme.EMBER
 const PRESET_DIR := "res://recipes/"
 const PRESETS := ["wanderer", "villager", "elder", "brute"]
 
+## The layer-aware outfit rows are functionally correct but still use the
+## creator's text-led wardrobe vocabulary. Product law keeps that unfinished
+## presentation default-off until #253 clears the authored UI bar; CI and the
+## focused integration test opt in explicitly and exercise both states.
+const LAYERED_OUTFIT_PICKERS_ENV := "WAR_LAYERED_OUTFIT_PICKERS"
+
 ## What each archetype is, in the player's terms. The recipes carry their own
 ## `comment`, but those are written for whoever maintains the kit ("first recipe
 ## on the gender/phenotype axes") — not for someone choosing a body.
@@ -256,8 +262,11 @@ func _build_panel() -> void:
 	# is baked for it, with no change here.
 	var equipment_registry := CharacterFactory.equipment_registry()
 	for slot: String in pickable_regions(equipment_registry):
-		for layer: String in pickable_layers(equipment_registry, slot):
-			_add_outfit_picker(outfit, slot, layer)
+		if layered_outfit_pickers_enabled():
+			for layer: String in pickable_layers(equipment_registry, slot):
+				_add_layer_outfit_picker(outfit, slot, layer)
+		else:
+			_add_region_outfit_picker(outfit, slot)
 	var skin := _add_section(content, "SKIN")
 	_add_skin_picker(skin)
 
@@ -393,15 +402,47 @@ func _add_shape_slider(into: Container, shape_name: String) -> void:
 	_shape_sliders[shape_name] = slider
 
 
-## One OptionButton per recipe-addressable (region, layer) pair: "bare" plus
-## every baked piece that fits there. A region may carry clothing with armour
-## over it, so collapsing the pair to one picker hides the inner piece and
-## makes a valid layered recipe impossible to edit (#253).
+## The explicit player opt-in for the unfinished independent layer controls.
+## Empty, unset and every value except literal `1` fail closed to the shipped
+## single-region UI.
+static func layered_outfit_pickers_enabled() -> bool:
+	return OS.get_environment(LAYERED_OUTFIT_PICKERS_ENV) == "1"
+
+
+## The shipped default: one region picker. A layered recipe is shown through
+## its outermost piece and made read-only because this control cannot honestly
+## represent both layers at once. It also cannot originate a layered list.
+func _add_region_outfit_picker(into: Container, slot: String) -> void:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	into.add_child(row)
+	var label := Label.new()
+	label.text = slot.replace("_", " ")
+	label.custom_minimum_size = Vector2(130, 0)
+	row.add_child(label)
+	var picker := OptionButton.new()
+	picker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	picker.add_item("bare")
+	for piece_name: String in _pieces_in_slot(CharacterFactory.equipment_registry(), slot):
+		picker.add_item(piece_name)
+	picker.item_selected.connect(func(index: int) -> void:
+		if _syncing:
+			return
+		_set_recipe_region_equipment(slot, "" if index == 0 else picker.get_item_text(index))
+		_player.set_character(_recipe))
+	row.add_child(picker)
+	_outfit_pickers[slot] = picker
+
+
+## Opt-in preview: one OptionButton per recipe-addressable (region, layer) pair.
+## "bare" plus every baked piece that fits there. A region may carry clothing
+## with armour over it, so collapsing the pair to one picker hides the inner
+## piece and makes a valid layered recipe impossible to edit (#253).
 ##
 ## Changing one picker rebuilds the body (equipping is composition, not a
 ## per-frame knob — same contract as the bone sliders) while preserving every
 ## other layer on the region.
-func _add_outfit_picker(into: Container, slot: String, layer: String) -> void:
+func _add_layer_outfit_picker(into: Container, slot: String, layer: String) -> void:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 8)
 	into.add_child(row)
@@ -566,6 +607,23 @@ func _set_recipe_bone(field: String, key: String, value: float) -> void:
 ## Equipment entered the recipe format at version 2 and skin at version 3, so
 ## a recipe only claims the newest version its fields need — older saves stay
 ## untouched at their own version.
+func _set_recipe_region_equipment(slot: String, piece_name: String) -> void:
+	if not _recipe.has("equipment"):
+		_recipe["equipment"] = {}
+	if piece_name == "":
+		_recipe["equipment"].erase(slot)
+	else:
+		# The default picker speaks for the whole region. It intentionally writes
+		# one plain name and is disabled whenever a layered value is loaded.
+		_recipe["equipment"][slot] = piece_name
+	if _recipe["equipment"].is_empty():
+		_recipe.erase("equipment")
+	_restamp_version()
+
+
+## Layer-specific mutation is reachable only through the explicit opt-in UI
+## (plus focused tests/capture tooling). It preserves every layer the player did
+## not touch.
 func _set_recipe_equipment(slot: String, layer: String, piece_name: String) -> void:
 	if not _recipe.has("equipment"):
 		_recipe["equipment"] = {}
@@ -627,6 +685,16 @@ func _worn_by_layer(slot: String) -> Dictionary:
 	return out
 
 
+## The outermost piece worn on a region — what the default single picker shows.
+func _outermost(slot: String) -> String:
+	var worn := _worn_by_layer(slot)
+	var shown := ""
+	for layer: String in CharacterFactory.LAYERS:
+		if layer in worn:
+			shown = worn[layer]
+	return shown
+
+
 func _restamp_version() -> void:
 	# The layered list form is version 4 and is checked FIRST: a recipe that
 	# uses it must never be stamped 3, or the save would understate its own
@@ -643,7 +711,8 @@ func _restamp_version() -> void:
 
 
 ## Does any region hold more than one piece? Saving must not downgrade the
-## version out from under the layered list form the panel now edits.
+## version out from under the layered list form the opt-in panel edits or the
+## default panel preserves read-only.
 func _uses_layered_equipment() -> bool:
 	for slot: String in (_recipe.get("equipment", {}) as Dictionary):
 		if _recipe["equipment"][slot] is Array:
@@ -670,13 +739,23 @@ func _sync_sliders_from_recipe() -> void:
 		(_bone_sliders[spec[0]] as HSlider).value = _recipe.get(spec[1], {}).get(spec[2], 1.0)
 	for slot: String in _outfit_pickers:
 		var worn := _worn_by_layer(slot)
-		for layer: String in (_outfit_pickers[slot] as Dictionary):
-			var picker: OptionButton = _outfit_pickers[slot][layer]
+		var controls: Variant = _outfit_pickers[slot]
+		if controls is Dictionary:
+			for layer: String in (controls as Dictionary):
+				var layer_picker: OptionButton = controls[layer]
+				layer_picker.select(0)
+				var shown := String(worn.get(layer, ""))
+				for i in layer_picker.item_count:
+					if layer_picker.get_item_text(i) == shown:
+						layer_picker.select(i)
+		else:
+			var picker := controls as OptionButton
 			picker.select(0)
-			var shown := String(worn.get(layer, ""))
+			var shown := _outermost(slot)
 			for i in picker.item_count:
 				if picker.get_item_text(i) == shown:
 					picker.select(i)
+			picker.disabled = worn.size() > 1
 	if _skin_picker != null:
 		_skin_picker.select(0)
 		for i in _skin_picker.item_count:
