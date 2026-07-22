@@ -11,6 +11,17 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
+		"version": "0.49.0",
+		"date": "2026-07-21",
+		"title": "Taking everything off no longer means a bare body",
+		"notes": [
+			"Every human now starts with a rough woven-cloth wrap beneath the wardrobe. It has a thick belt, folded front and back panels, and an uneven torn hem rather than the clean outline of modern underwear.",
+			"The wrap belongs to the body kit, not to a saved outfit. Empty equipment, old characters, creator portraits and people already in the world all receive it automatically, and no wardrobe choice can remove or replace it.",
+			"Clothes and armour still sit over the same regions in the same order. Existing character recipes have not been rewritten; their visible result simply gains this base layer underneath.",
+			"The torn shape reads at the creator's full-body distance, but the fine woven surface mostly resolves as one brown value there. The cloth still needs richer drape and close material detail to approach the Wretch reference; a closer creator view would make that work visible too.",
+		],
+	},
+	{
 		"version": "0.23.0",
 		"date": "2026-07-20",
 		"title": "You can see the four bodies before you choose one",

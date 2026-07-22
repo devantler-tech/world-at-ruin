@@ -2,8 +2,8 @@
 
 The canonical humanoid for the character system
 ([#24](https://github.com/devantler-tech/world-at-ruin/issues/24)): base body, `game_engine` rig
-(53 deform bones), 29 named morph shapes (21 targets + 8 gender/phenotype macro axes) + 3
-`equip_hide_*` shapes, and four skinned equipment pieces under `equipment/`, **baked entirely by
+(53 deform bones), 29 named morph shapes (21 targets + 8 gender/phenotype macro axes) + 4
+`equip_hide_*` shapes, and five skinned equipment pieces under `equipment/`, **baked entirely by
 committed code** —
 `tools/artgen/humanoid_kit/bake.py` driven by `manifest.json`, reproducible byte-for-byte with
 the pinned toolchain. `kit_report.txt` is the structural contract checked by the
@@ -20,8 +20,8 @@ runtime registry `CharacterFactory` composes from.
 - **Licence of the output:** ours. MPFB `LICENSE.md` §D: "the MakeHuman team makes no claim
   whatsoever over output … We regard these things as your data." The GPL covers the tools
   (Blender, MPFB), which are downloaded at bake time and never enter this tree.
-- **Baked:** 2026-07-17 on macOS; body GLB sha256
-  `677fa03fcf09b467985ac4cfbf19e51b2a870f8a1e5c674f956fc877e33cdfcd` (5 181 888 bytes).
+- **Baked:** 2026-07-21 on macOS; body GLB sha256
+  `51cf634de80f34f4650880ccf43eb98b83cedc14f918db17baa299a0a4ff1538` (5 234 252 bytes).
   Regenerate with the commands in `tools/artgen/humanoid_kit/README.md`.
 - **Macro axes** (`body_female`, `body_male`, `body_aged`, `body_heavy`, `body_slim`,
   `phenotype_african`, `phenotype_asian`, `phenotype_caucasian`) are diffed from second MPFB
@@ -49,7 +49,18 @@ deliberately excluded. Source packs: `skins01_cc0.zip` (sha256
 
 ## Equipment pieces (`equipment/*.glb`)
 
-MHCLO clothes from the **official MakeHuman 01-series CC0 asset packs** — the `_cc0.zip`
+`loincloth_ragged` is generated deterministically by `bake.py` from authored dimensions around the
+CC0 MakeHuman pelvis. It is a closed 220-vertex garment with a thick stitched belt, separate folded
+front/back flaps, an asymmetrical torn hem, pelvis/thigh skin weights, and one fitted shape for each
+of the kit's 29 body morphs. The bake also generates and embeds its 128² woven albedo, roughness and
+normal maps from deterministic arithmetic. Its body-tuck coverage is generated beside the mesh
+rather than coming from an MHCLO `delete_verts` declaration. The source geometry and rig remain the
+CC0 MakeHuman data covered above; no additional downloaded asset enters its licence chain. Baked GLB
+sha256: `b0bce5c38469b887bf85eaee6fba351a9c957837a0d0323d3a446964167eba39` (355 968 bytes).
+
+The remaining pieces are MHCLO clothes from the **official MakeHuman 01-series CC0 asset packs**.
+
+Those packs use the `_cc0.zip`
 variants, which contain only CC0-licensed assets (the CC-BY variants are policy-excluded;
 AGENTS.md licensing). Downloaded pinned + checksummed by `tools/artgen/humanoid_kit/bootstrap.sh`;
 each `.mhclo` header declares `license CC0` (verified per piece 2026-07-17). Fitted, skinned to
@@ -66,8 +77,9 @@ Source packs (files.makehumancommunity.org/asset_packs/):
 
 Pieces (author attributions are courtesy — CC0 requires none):
 
-| piece | source `.mhclo` | author | licence |
+| piece | source | author | licence |
 |---|---|---|---|
+| `loincloth_ragged` | generated from the MakeHuman basemesh | devantler-tech | CC0-derived |
 | `shirt_ragged` | shirts01 `elvs_crude_t-shirt_male` | MakeHuman team, edited by Elvaerwyn | CC0 |
 | `pants_wool` | pants01 `toigo_wool_pants` | MRT | CC0 |
 | `shoes_cloth` | shoes01 `toigo_mj_cloth_shoes` | MRT | CC0 |

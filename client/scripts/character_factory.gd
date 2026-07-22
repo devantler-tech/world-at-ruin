@@ -146,7 +146,7 @@ const LAYERED_EQUIPMENT_VERSION := 4
 ## which layer each name belongs to is read from the kit. That keeps the
 ## persisted vocabulary exactly as wide as it was before this change — one
 ## already-ledgered promise (`<piece> <slot>`) instead of two.
-const LAYERS := ["clothing", "armor"]
+const LAYERS := ["base", "clothing", "armor"]
 
 ## Regions that deliberately carry NO armour stats (#251).
 ##
@@ -341,6 +341,10 @@ static func _resolve_equipment(equipment: Dictionary, version: int = RECIPE_VERS
 				out["problem"] = "piece '%s' does not go in slot '%s'" % [piece_name, region]
 				return out
 			var layer := String(piece.get("layer", ""))
+			if layer == "base":
+				out["problem"] = ("piece '%s' is on the base layer, which the kit composes; "
+					+ "recipes cannot remove or override it") % piece_name
+				return out
 			if layer not in LAYERS:
 				out["problem"] = ("piece '%s' has layer '%s', which is outside the closed set %s — "
 					+ "the kit cannot place it") % [piece_name, layer, str(LAYERS)]
@@ -354,8 +358,9 @@ static func _resolve_equipment(equipment: Dictionary, version: int = RECIPE_VERS
 	return out
 
 
-## The pieces to actually build, in render order: every clothing piece first,
-## then the armour worn over it, and within a layer the KIT's own slot order.
+## The pieces to actually build, in render order: the kit's implicit base
+## garment first, then every recipe-selected clothing piece and the armour worn
+## over it, and within a layer the KIT's own slot order.
 ## Order therefore depends on the kit, never on the order a save happened to
 ## serialise its keys in — two saves of the same outfit build identically.
 ##
@@ -370,7 +375,12 @@ static func pieces_to_wear(equipment: Dictionary) -> PackedStringArray:
 	var by_region: Dictionary = resolved["by_region"]
 	var registry := equipment_registry()
 	var pieces: Dictionary = registry.get("pieces", {})
+	for piece_name: String in registry.get("base_pieces", []):
+		if piece_name in pieces:
+			out.append(piece_name)
 	for layer: String in LAYERS:
+		if layer == "base":
+			continue
 		for region: String in registry.get("slots", []):
 			if region not in by_region:
 				continue

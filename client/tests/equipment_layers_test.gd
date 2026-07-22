@@ -54,16 +54,16 @@ func _ready() -> void:
 	# 1. Clothing and armour are both accepted on ONE region — the capability
 	#    that did not exist before — and the armour layer is what renders.
 	var both := CharacterFactory.pieces_to_wear({ "feet": ["shoes_cloth", "boots_worn"] })
-	if Array(both) != ["boots_worn"]:
-		_fail("boots over cloth shoes should render the boots alone, got %s" % str(both))
+	if Array(both) != ["loincloth_ragged", "boots_worn"]:
+		_fail("boots over cloth shoes should render after the implicit base, got %s" % str(both))
 		return
 
 	# 2. The occlusion is CONDITIONAL, not a blanket hide: with no armour on the
 	#    region, the cloth shoes render. Without this the check above would also
 	#    pass if `shoes_cloth` were simply never renderable.
 	var alone := CharacterFactory.pieces_to_wear({ "feet": ["shoes_cloth"] })
-	if Array(alone) != ["shoes_cloth"]:
-		_fail("cloth shoes with no armour over them should render, got %s" % str(alone))
+	if Array(alone) != ["loincloth_ragged", "shoes_cloth"]:
+		_fail("cloth shoes with no armour should render after the implicit base, got %s" % str(alone))
 		return
 
 	# 3. THE ABLATION: occlusion comes from kit DATA. Two synthetic registries
@@ -106,7 +106,7 @@ func _ready() -> void:
 		var layer := String((pieces[forward[i]] as Dictionary)["layer"])
 		if layer == "clothing":
 			last_clothing = i
-		elif first_armor == forward.size():
+		elif layer == "armor" and first_armor == forward.size():
 			first_armor = i
 	if last_clothing > first_armor:
 		_fail("armour is not composed over clothing: order was %s" % str(forward))

@@ -162,12 +162,10 @@ func _ready() -> void:
 
 
 func _piece_count(registry: Dictionary, region: String) -> int:
-	var n := 0
-	var pieces: Dictionary = registry.get("pieces", {})
-	for piece_name: String in pieces:
-		if String((pieces[piece_name] as Dictionary).get("slot", "")) == region:
-			n += 1
-	return n
+	# Only recipe-addressable pieces make a creator row. The kit's base garment
+	# is baked in the pelvis region but deliberately cannot be selected or
+	# removed, so counting raw registry pieces would expose a dead picker.
+	return CharacterCreator._pieces_in_slot(registry, region).size()
 
 
 func _check(actual: bool, expected: bool, label: String) -> void:
