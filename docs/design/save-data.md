@@ -135,6 +135,13 @@ stamp `N` only when the new shape is present, reports the real write version in 
 `SAVE_CAPABILITY_WRITES`, and appends the capability to
 `client/tests/data/shipped_save_capability.txt`.
 
+Capability 2 applies this sequence to recipe-version-4 layered equipment. The reader has existed
+since v0.32.0, but released manifests through v0.49.0 advertised only capability 1; implementation
+support cannot substitute for published rollback metadata. The expansion release therefore
+advertises reads 2 while continuing to write capability 1, leaves the shipped-write ledger
+unchanged, and keeps every layered-equipment writer disabled. The independent-layer writer in #335
+may activate only after this expansion release has shipped and baked as an eligible rollback target.
+
 ### Progression vault
 
 For vault version `N`, the expansion pull request must:

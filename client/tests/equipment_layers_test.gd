@@ -22,7 +22,9 @@ extends Node
 ##     use it, or a rollback would strand the character.
 ##  8. The editor reads both layers, shows the outermost, and never downgrades
 ##     a layered recipe on save.
-##  9. Each law has its own negative control, failing for its own reason.
+##  9. During the capability-2 expansion release, the production editor still
+##     cannot originate the layered list form.
+## 10. Each law has its own negative control, failing for its own reason.
 ##
 ## Pure logic + the baked registry for most of it; one real build for 5.
 ##
@@ -214,6 +216,17 @@ func _ready() -> void:
 	creator._restamp_version()
 	if int(creator._recipe["version"]) != 2:
 		_fail("a single-piece recipe was churned to version %s" % str(creator._recipe["version"]))
+		creator.free()
+		return
+	# 9. EXPAND BEFORE WRITE. The current production picker speaks for one whole
+	#    region, so an ordinary edit must remain a single name and capability 1.
+	#    PR #335 may replace this assertion only after this read-2/write-1 build
+	#    has shipped and baked as a rollback target.
+	creator._recipe = { "version": 2, "equipment": { "feet": "shoes_cloth" } }
+	creator._set_recipe_equipment("feet", "boots_worn")
+	var edited_feet: Variant = creator._recipe.get("equipment", {}).get("feet", null)
+	if edited_feet is Array or int(creator._recipe.get("version", 0)) >= CharacterFactory.LAYERED_EQUIPMENT_VERSION:
+		_fail("the capability expansion build originated layered equipment before its writer contract")
 		creator.free()
 		return
 	creator.free()

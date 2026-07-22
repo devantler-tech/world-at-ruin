@@ -39,6 +39,7 @@ func _ready() -> void:
 	_test_values_track_their_sources()
 	_test_no_delivery_is_published()
 	_test_read_capability_covers_what_is_written()
+	_test_layered_capability_expansion_is_read_only()
 	_test_save_floor_has_its_golden_fixture()
 	_test_save_capability_matches_its_ledger()
 	_test_export_is_still_monolithic()
@@ -157,6 +158,25 @@ func _test_read_capability_covers_what_is_written() -> void:
 	if UpdateManifest.SAVE_CAPABILITY_READS < UpdateManifest.SAVE_CAPABILITY_WRITES:
 		_fail("SAVE_CAPABILITY_READS (%d) is below SAVE_CAPABILITY_WRITES (%d) — a build that cannot read what it writes strands its own saves" % [
 			UpdateManifest.SAVE_CAPABILITY_READS, UpdateManifest.SAVE_CAPABILITY_WRITES])
+
+
+## Capability 2 is the layered recipe value the reader already understands.
+## This release is deliberately the EXPANSION stage: its published metadata
+## makes it an eligible rollback target before any production path can write 2.
+func _test_layered_capability_expansion_is_read_only() -> void:
+	if UpdateManifest.SAVE_CAPABILITY_READS != 2 or UpdateManifest.SAVE_CAPABILITY_WRITES != 1:
+		_fail(("layered capability expansion must advertise reads/writes 2/1 before the "
+			+ "writer activates, got %d/%d") % [
+			UpdateManifest.SAVE_CAPABILITY_READS,
+			UpdateManifest.SAVE_CAPABILITY_WRITES,
+		])
+		return
+	var m := _manifest()
+	if _failed:
+		return
+	if int(m["shell"]["reads_capability_max"]) != 2 \
+			or int(m["save_schema"]["capability"]) != 1:
+		_fail("manifest does not publish the capability-2 read / capability-1 write expansion split")
 
 
 ## The declared save floor must be the OLDEST SCHEMA THAT EVER SHIPPED — not

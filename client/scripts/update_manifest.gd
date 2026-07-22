@@ -86,9 +86,13 @@ const SAVE_CAPABILITY_WRITES := 1
 ## already writes the new shape, and the following release gets refused or
 ## needlessly routed away from a pack update despite a valid fallback existing.
 ##
-## Must always be >= the write capability (a build must read what it writes); the
-## two are equal only because no expansion has begun.
-const SAVE_CAPABILITY_READS := 1
+## Must always be >= the write capability (a build must read what it writes).
+##
+## Capability 2 is the recipe-version-4 layered equipment value. Its reader has
+## shipped since v0.32.0; this expansion release finally advertises that fact so
+## it can bake as an eligible rollback target before any production path writes
+## capability 2. Writes deliberately remain at 1 until the later contract PR.
+const SAVE_CAPABILITY_READS := 2
 
 ## The oldest shell this manifest still supports updating FROM.
 ##
