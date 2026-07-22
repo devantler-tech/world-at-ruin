@@ -26,9 +26,10 @@ job_block() {
   ' "$workflow"
 }
 
-workflow_env_block() {
-	awk '
-    /^env:/ {
+workflow_block() {
+	local key=$1
+	awk -v key="$key" '
+    $0 ~ ("^" key ":") {
       in_env = 1
       print
       next
@@ -38,6 +39,21 @@ workflow_env_block() {
     }
     in_env {
       print
+    }
+  ' "$workflow"
+}
+
+job_names() {
+	awk '
+    /^jobs:/ {
+      in_jobs = 1
+      next
+    }
+    in_jobs && /^  [[:alnum:]_-]+:$/ {
+      name = $0
+      sub(/^  /, "", name)
+      sub(/:$/, "", name)
+      print name
     }
   ' "$workflow"
 }
@@ -80,6 +96,58 @@ job_permission() {
   ' <<<"$block"
 }
 
+job_permission_value() {
+	local block=$1
+	local permission=$2
+	awk -v permission="$permission" '
+    function permission_value(line) {
+      sub(/^[^:]+:[[:space:]]*/, "", line)
+      sub(/[[:space:]]*#.*/, "", line)
+      return line
+    }
+    /^    permissions:/ {
+      permission_blocks++
+      scalar = permission_value($0)
+      if (scalar != "") {
+        scalar_entries++
+        in_permissions = 0
+      } else {
+        in_permissions = 1
+      }
+      next
+    }
+    in_permissions && /^      [[:alnum:]_-]+:/ {
+      if ($0 ~ ("^      " permission ":")) {
+        requested_entries++
+        value = permission_value($0)
+      }
+      next
+    }
+    in_permissions && /^    [[:alnum:]_-]+:/ {
+      in_permissions = 0
+    }
+    END {
+      if (permission_blocks == 0) {
+        print "unset"
+      } else if (permission_blocks != 1 || scalar_entries > 1 || requested_entries > 1) {
+        print "invalid"
+      } else if (scalar_entries == 1) {
+        if (scalar == "read-all" || scalar == "write-all") {
+          print scalar
+        } else if (scalar == "{}") {
+          print "none"
+        } else {
+          print "invalid"
+        }
+      } else if (requested_entries == 1) {
+        print value
+      } else {
+        print "unset"
+      }
+    }
+  ' <<<"$block"
+}
+
 require_text() {
 	local block=$1
 	local text=$2
@@ -112,14 +180,34 @@ attach_release=$(job_block attach-release)
 publish_ghcr=$(job_block publish-ghcr)
 publish_release=$(job_block publish-release)
 required_checks=$(job_block cd-required-checks)
-workflow_env=$(workflow_env_block)
+workflow_env=$(workflow_block env)
+workflow_defaults=$(workflow_block defaults)
+workflow_permissions=$(workflow_block permissions)
 literal_dollar='$'
 aggregate_expression="${literal_dollar}{{ needs.attach-release.result }}"
 expected_attach_release_sha256=90be022a9db17ad62cee1727b31424d87903ec3091392f5050224bf1a13fc5cd
 actual_attach_release_sha256=$(printf '%s\n' "$attach_release" | shasum -a 256 | awk '{ print $1 }')
+expected_publish_release_sha256=d5238170772e7ed374153715bb1392a4d7e064fe07a18871f4955e03efe50758
+actual_publish_release_sha256=$(printf '%s\n' "$publish_release" | shasum -a 256 | awk '{ print $1 }')
+expected_workflow_permissions=$'permissions:\n  contents: read'
 
 reject_pattern "$workflow_env" '(^|[^[:alnum:]_])secrets([^[:alnum:]_]|$)' "workflow-level env must not expose secrets to publish-macos"
+[ -z "$workflow_defaults" ] || fail "workflow-level defaults are forbidden because privileged run steps must use their audited shell"
+[ "$workflow_permissions" = "$expected_workflow_permissions" ] || fail "workflow permissions must set only contents: read"
 [ "$actual_attach_release_sha256" = "$expected_attach_release_sha256" ] || fail "attach-release structure changed; audit the complete privileged job and update its checksum deliberately"
+[ "$actual_publish_release_sha256" = "$expected_publish_release_sha256" ] || fail "publish-release structure changed; audit the complete privileged job and update its checksum deliberately"
+
+while IFS= read -r job; do
+	block=$(job_block "$job")
+	contents_permission=$(job_permission_value "$block" contents)
+	[ "$contents_permission" != "invalid" ] || fail "$job has an unsupported or ambiguous permissions declaration"
+	if [ "$contents_permission" = "write" ] || [ "$contents_permission" = "write-all" ]; then
+		case "$job" in
+		attach-release | publish-release) ;;
+		*) fail "$job must not receive release-write repository contents permission" ;;
+		esac
+	fi
+done < <(job_names)
 
 [ "$(job_permission "$publish_macos" contents)" = "read" ] || fail "publish-macos must set only contents: read"
 reject_pattern "$publish_macos" '(^|[^[:alnum:]_])secrets([^[:alnum:]_]|$)' "publish-macos must not consume repository secrets"
