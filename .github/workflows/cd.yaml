@@ -329,7 +329,9 @@ jobs:
     # published asset: this job needs no Godot toolchain, and pulling the
     # RELEASE asset — rather than a runner-local file — proves we publish
     # exactly the bytes a player would download.
-    needs: [publish-macos]
+    # Preserve the old fail-closed sequence: never expose an OCI update until
+    # the same build has been attached successfully to its draft release.
+    needs: [publish-macos, attach-release]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:

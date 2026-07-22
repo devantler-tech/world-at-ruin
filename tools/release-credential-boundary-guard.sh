@@ -43,6 +43,7 @@ reject_text() {
 
 publish_macos=$(job_block publish-macos)
 attach_release=$(job_block attach-release)
+publish_ghcr=$(job_block publish-ghcr)
 publish_release=$(job_block publish-release)
 required_checks=$(job_block cd-required-checks)
 literal_dollar='$'
@@ -66,6 +67,11 @@ reject_text "$attach_release" "actions/checkout@" "attach-release must never che
 reject_text "$attach_release" "uses: ./" "attach-release must never execute a repository-local action"
 
 require_text "$publish_release" "    needs: [attach-release, publish-ghcr]" "publish-release must wait for both asset publication jobs"
+require_text "$publish_release" "      contents: write" "publish-release needs contents: write to publish the draft release"
+reject_text "$publish_release" "actions/checkout@" "publish-release must never check out repository-controlled code"
+reject_text "$publish_release" "uses: ./" "publish-release must never execute a repository-local action"
+
+require_text "$publish_ghcr" "    needs: [publish-macos, attach-release]" "publish-ghcr must wait for successful release attachment"
 require_text "$required_checks" "        attach-release," "CD required checks must include attach-release"
 require_text "$required_checks" "$aggregate_expression" "CD aggregate must include attach-release's result"
 
