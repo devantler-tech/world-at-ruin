@@ -135,10 +135,12 @@ stamp `N` only when the new shape is present, reports the real write version in 
 `SAVE_CAPABILITY_WRITES`, and appends the capability to
 `client/tests/data/shipped_save_capability.txt`.
 
-The first completed use of that sequence is capability 2: recipe-version-4 layered equipment became
-readable in v0.32.0, baked through v0.49.0, and only then gained an opt-in production writer. The
-writer release raises both manifest ceilings to 2 and appends 2 to the capability ledger; disabling
-its UI flag stops new player edits but must never remove the reader or lower either ceiling.
+The first active use of that sequence is capability 2: recipe-version-4 layered equipment became
+readable in v0.32.0, but builds through v0.49.0 still published a capability-1 read ceiling. The
+expansion release must therefore publish reads 2 while writes remain 1, with every production path
+still unable to originate the layered value. Only after that exact metadata has baked in a released
+rollback target may the contract release activate the writer, raise writes to 2 and append 2 to the
+capability ledger. No environment flag may collapse those two releases into one.
 
 ### Progression vault
 

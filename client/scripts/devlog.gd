@@ -13,11 +13,11 @@ const ENTRIES: Array[Dictionary] = [
 	{
 		"version": "0.50.0",
 		"date": "2026-07-22",
-		"title": "Independent outfit layers enter opt-in preview",
+		"title": "Layered outfit saves get a rollback-safe runway",
 		"notes": [
-			"Early-build testers can launch with WAR_LAYERED_OUTFIT_PICKERS=1 to preview separate clothing and armour choices wherever both can share the same part of the body. Ordinary launches keep the existing single-region wardrobe while this presentation remains unfinished.",
-			"In the preview, taking off boots leaves the shoes underneath untouched, and changing the shoes leaves the boots untouched. A layered outfit can be inspected and reshaped without silently rewriting the layer the player did not choose.",
-			"The preview still uses the wardrobe's internal garment names and remains text-led rather than icon-led. That gap is why it stays opt-in; #336 tracks the authored replacement and flag retirement.",
+			"This build publishes that it can read the layered outfit format while deliberately keeping every production writer on the older capability. That makes it a truthful rollback target before any player can originate the newer value.",
+			"Existing layered recipes still load and survive ordinary edits without loss. Even the reserved preview flag cannot activate the independent clothing and armour controls during this bake release.",
+			"After this release has baked, a later contract update can activate the editor without stranding saves. #253 remains open for that writer stage, and #336 tracks the eventual authored replacement and flag retirement.",
 		],
 	},
 	{

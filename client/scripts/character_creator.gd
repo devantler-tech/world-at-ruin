@@ -21,12 +21,12 @@ const COL_EMBER := UiTheme.EMBER
 const PRESET_DIR := "res://recipes/"
 const PRESETS := ["wanderer", "villager", "elder", "brute"]
 
-## The layer-aware outfit rows are functionally correct but still use the
-## creator's text-led wardrobe vocabulary. Product law keeps that unfinished
-## presentation default-off until #227 clears the authored UI bar; CI and the
-## focused integration test opt in explicitly and exercise both states. #336
-## owns the eventual default-on flip and flag removal.
+## Reserved for the contract release after capability-2 reads have baked. The
+## environment value is deliberately insufficient on its own: expansion builds
+## must not expose a production writer before a published rollback target
+## advertises that it can read the layered value (#253).
 const LAYERED_OUTFIT_PICKERS_ENV := "WAR_LAYERED_OUTFIT_PICKERS"
+const LAYERED_OUTFIT_CAPABILITY := 2
 
 ## What each archetype is, in the player's terms. The recipes carry their own
 ## `comment`, but those are written for whoever maintains the kit ("first recipe
@@ -403,11 +403,12 @@ func _add_shape_slider(into: Container, shape_name: String) -> void:
 	_shape_sliders[shape_name] = slider
 
 
-## The explicit player opt-in for the unfinished independent layer controls.
-## Empty, unset and every value except literal `1` fail closed to the shipped
-## single-region UI.
+## The future contract-stage opt-in for the independent layer controls. Empty,
+## unset and every value except literal `1` fail closed, and so does every build
+## whose published write capability is still below the layered value.
 static func layered_outfit_pickers_enabled() -> bool:
-	return OS.get_environment(LAYERED_OUTFIT_PICKERS_ENV) == "1"
+	return UpdateManifest.SAVE_CAPABILITY_WRITES >= LAYERED_OUTFIT_CAPABILITY \
+		and OS.get_environment(LAYERED_OUTFIT_PICKERS_ENV) == "1"
 
 
 ## The shipped default: one region picker. A layered recipe is shown through
@@ -622,9 +623,9 @@ func _set_recipe_region_equipment(slot: String, piece_name: String) -> void:
 	_restamp_version()
 
 
-## Layer-specific mutation is reachable only through the explicit opt-in UI
-## (plus focused tests/capture tooling). It preserves every layer the player did
-## not touch.
+## Baked contract-stage mutation. The production UI cannot reach this while the
+## manifest still writes capability 1; focused tests and capture tooling exercise
+## it so the later contract flip does not discover a player-state bug.
 func _set_recipe_equipment(slot: String, layer: String, piece_name: String) -> void:
 	if not _recipe.has("equipment"):
 		_recipe["equipment"] = {}
@@ -712,8 +713,8 @@ func _restamp_version() -> void:
 
 
 ## Does any region hold more than one piece? Saving must not downgrade the
-## version out from under the layered list form the opt-in panel edits or the
-## default panel preserves read-only.
+## version out from under the layered list form the future contract-stage panel
+## will edit and the expansion panel preserves read-only.
 func _uses_layered_equipment() -> bool:
 	for slot: String in (_recipe.get("equipment", {}) as Dictionary):
 		if _recipe["equipment"][slot] is Array:

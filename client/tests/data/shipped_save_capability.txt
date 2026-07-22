@@ -10,4 +10,3 @@
 # un-shipped, and a build claiming to write less than it once did is exactly the
 # stranding the no-resets law forbids.
 1
-2

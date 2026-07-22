@@ -196,8 +196,9 @@ func _ready() -> void:
 		_fail("the editor misread a layered region: %s" % str(worn_feet))
 		creator.free()
 		return
-	# 9. SAVING MUST NOT DOWNGRADE A LAYERED RECIPE. The panel can now create and
-	#    edit this state; stamping it 3 would make the save
+	# 9. SAVING MUST NOT DOWNGRADE A LAYERED RECIPE. The expansion panel cannot
+	#    create this state, but it can LOAD and preserve one; stamping it 3 would
+	#    make the save
 	#    understate its own shape and a version-3 client would refuse to load it.
 	creator._restamp_version()
 	if int(creator._recipe["version"]) != CharacterFactory.LAYERED_EQUIPMENT_VERSION:

@@ -1392,9 +1392,6 @@ jobs:
         # Only when the PR touches it. The ordinary capture deliberately seeds a
         # save so the creator is NOT in frame, so without this a creator change
         # ships with evidence that does not depict it (#145).
-        # Independent outfit rows remain an explicit preview until #253 clears
-        # the authored-UI bar. The focused test proves the default-off state;
-        # this evidence capture opts in so reviewers can inspect the new path.
         if: needs.detect-visual-changes.outputs.first_run == 'true'
         run: |
           set -o pipefail
@@ -1404,7 +1401,6 @@ jobs:
           # so a stray save cannot silently turn this back into a world shot.
           WAR_SHOT_DIR="${RUNNER_TEMP}/shots" \
           WAR_SCENARIO=first_run \
-          WAR_LAYERED_OUTFIT_PICKERS=1 \
           WAR_SAVE_PATH="${RUNNER_TEMP}/no_such_save.json" \
           WAR_VAULT_PATH="${RUNNER_TEMP}/no_such_save_vault.json" \
           WAR_BOOT_RECOVERY_PATH="${RUNNER_TEMP}/no_such_save_recovery.json" \
@@ -1448,9 +1444,6 @@ jobs:
             exit 1
           fi
           echo "first-run frames present:$expected"
-          printf '%s\n' \
-            'layered_outfit_pickers: on (explicit opt-in preview)' \
-            > "${RUNNER_TEMP}/shots/first-run-conditions.txt"
           # Same reasoning as the seeded capture: the tool proves the creator is
           # up, but a path returning early before main.gd finishes booting would
           # still satisfy that, and the frame would depict a half-started game.
@@ -1767,8 +1760,6 @@ jobs:
         # depends on, while the seeded-save world capture above deliberately
         # keeps the creator out of frame. One extra run of the already-built
         # app is cheap next to the export this job already avoids repeating.
-        # As in the editor capture, opt in explicitly so this artifact depicts
-        # the preview while the focused test owns the default-off assertion.
         run: |
           set -o pipefail
           # The save must be ABSENT here — its absence is precisely what makes
@@ -1778,7 +1769,6 @@ jobs:
           # world shot.
           WAR_CAPTURE=1 \
           WAR_SCENARIO=first_run \
-          WAR_LAYERED_OUTFIT_PICKERS=1 \
           WAR_SHOT_DIR="${RUNNER_TEMP}/exported-shots" \
           WAR_SAVE_PATH="${RUNNER_TEMP}/no_such_save.json" \
           WAR_VAULT_PATH="${RUNNER_TEMP}/no_such_save_vault.json" \
@@ -1814,9 +1804,6 @@ jobs:
             exit 1
           fi
           echo "exported first-run frames present:$expected"
-          printf '%s\n' \
-            'layered_outfit_pickers: on (explicit opt-in preview)' \
-            > "${RUNNER_TEMP}/exported-shots/first-run-conditions.txt"
           # This run exercises the ABSENT-save branch, which the seeded world
           # capture never touches, so it needs its own boot proof.
           if ! grep -q "BOOT_OK" exported-first-run.log; then
