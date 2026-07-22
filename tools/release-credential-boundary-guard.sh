@@ -23,6 +23,44 @@ job_block() {
   ' "$workflow"
 }
 
+job_permission() {
+	local block=$1
+	local permission=$2
+	awk -v permission="$permission" '
+    function permission_value(line) {
+      sub(/^[^:]+:[[:space:]]*/, "", line)
+      sub(/[[:space:]]*#.*/, "", line)
+      return line
+    }
+    /^    permissions:/ {
+      permission_blocks++
+      in_permissions = 1
+      if (permission_value($0) != "") {
+        in_permissions = 0
+      }
+      next
+    }
+    in_permissions && /^      [[:alnum:]_-]+:/ {
+      permission_entries++
+      if ($0 ~ ("^      " permission ":")) {
+        requested_entries++
+        value = permission_value($0)
+      }
+      next
+    }
+    in_permissions && /^    [[:alnum:]_-]+:/ {
+      in_permissions = 0
+    }
+    END {
+      if (permission_blocks != 1 || permission_entries != 1 || requested_entries != 1) {
+        print "invalid"
+      } else {
+        print value
+      }
+    }
+  ' <<<"$block"
+}
+
 require_text() {
 	local block=$1
 	local text=$2
@@ -49,8 +87,7 @@ required_checks=$(job_block cd-required-checks)
 literal_dollar='$'
 aggregate_expression="${literal_dollar}{{ needs.attach-release.result }}"
 
-require_text "$publish_macos" "      contents: read" "publish-macos must have read-only repository contents"
-reject_text "$publish_macos" "contents: write" "publish-macos must not hold a repository write token"
+[ "$(job_permission "$publish_macos" contents)" = "read" ] || fail "publish-macos must set only contents: read"
 reject_text "$publish_macos" "secrets." "publish-macos must not consume repository secrets"
 reject_text "$publish_macos" "gh release upload" "publish-macos must not attach the release asset"
 require_text "$publish_macos" "actions/upload-artifact@" "publish-macos must hand its build to later jobs as a workflow artifact"
@@ -59,7 +96,7 @@ require_text "$publish_macos" "name: client-macos-universal" "publish-macos must
 require_text "$attach_release" "  attach-release:" "attach-release job is missing"
 require_text "$attach_release" "    needs: [publish-macos]" "attach-release must wait for publish-macos"
 require_text "$attach_release" "    timeout-minutes: 15" "attach-release timeout must cover the fail-closed retry budget"
-require_text "$attach_release" "      contents: write" "attach-release needs contents: write to attach the release asset"
+[ "$(job_permission "$attach_release" contents)" = "write" ] || fail "attach-release must set only contents: write"
 require_text "$attach_release" "actions/download-artifact@" "attach-release must receive the build through a workflow artifact"
 require_text "$attach_release" "name: client-macos-universal" "attach-release must download the canonical client artifact"
 require_text "$attach_release" "gh release upload" "attach-release must own the release upload"
@@ -67,7 +104,7 @@ reject_text "$attach_release" "actions/checkout@" "attach-release must never che
 reject_text "$attach_release" "uses: ./" "attach-release must never execute a repository-local action"
 
 require_text "$publish_release" "    needs: [attach-release, publish-ghcr]" "publish-release must wait for both asset publication jobs"
-require_text "$publish_release" "      contents: write" "publish-release needs contents: write to publish the draft release"
+[ "$(job_permission "$publish_release" contents)" = "write" ] || fail "publish-release must set only contents: write"
 reject_text "$publish_release" "actions/checkout@" "publish-release must never check out repository-controlled code"
 reject_text "$publish_release" "uses: ./" "publish-release must never execute a repository-local action"
 
