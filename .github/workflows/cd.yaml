@@ -47,13 +47,6 @@ concurrency:
 permissions:
   contents: read
 
-env:
-  GODOT_VERSION: 4.7.1
-  # macOS universal editor + export templates, same SHA512-SUMS.txt provenance
-  # as ci.yaml's pins.
-  GODOT_MACOS_SHA512: a5c6443e193829de9a3237b57ef5e01c23839888900e241543da0dd4bac1050125e19469f0cca9a9958ac346070d98cab8e5d6aee16b181c6d06cda86bd07224
-  GODOT_TEMPLATES_SHA512: afcc83d8d3d298038f19c58744a0d660fa75dd4baa33cb55d1011bb2565a2a8c2381728924564cb909e37c205a23f21b521b23bd057993afd43ae4da0b2f9d47
-
 jobs:
   publish-macos:
     name: 🍎 Publish macOS build
@@ -65,6 +58,13 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: read # build and exercise repo-controlled code without a release-write token
+    env:
+      GODOT_VERSION: 4.7.1
+      # macOS universal editor + export templates, same SHA512-SUMS.txt
+      # provenance as ci.yaml's pins. Keep these scoped to the unprivileged
+      # build job: workflow-level env also reaches the release-write jobs.
+      GODOT_MACOS_SHA512: a5c6443e193829de9a3237b57ef5e01c23839888900e241543da0dd4bac1050125e19469f0cca9a9958ac346070d98cab8e5d6aee16b181c6d06cda86bd07224
+      GODOT_TEMPLATES_SHA512: afcc83d8d3d298038f19c58744a0d660fa75dd4baa33cb55d1011bb2565a2a8c2381728924564cb909e37c205a23f21b521b23bd057993afd43ae4da0b2f9d47
     outputs:
       sha256: ${{ steps.sha.outputs.sha256 }}
     steps:

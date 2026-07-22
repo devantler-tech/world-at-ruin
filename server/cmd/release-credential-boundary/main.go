@@ -17,6 +17,7 @@ import (
 
 const (
 	canonicalArtifact                = "client-macos-universal"
+	canonicalArtifactPath            = "build/WorldAtRuin-${{ steps.version.outputs.version }}-macOS-universal.zip"
 	expectedAttachReleaseSHA256      = "190e86bef7d107b2da75ca9c1603f671d271b1ef4ddf9390294174dfce7bde6b"
 	expectedPublishReleaseSHA256     = "dc6e02a9fa8ca3bef86ab903bf4839b78d56e3c363a0a852d1cfa2930d5802d2"
 	attachReleaseJob                 = "attach-release"
@@ -94,8 +95,8 @@ func (workflow *workflow) validate() error {
 	if !reflect.DeepEqual(workflow.root["permissions"], map[string]any{"contents": "read"}) {
 		return errors.New("workflow permissions must set only contents: read")
 	}
-	if containsSecretReference(workflow.root["env"]) {
-		return errors.New("workflow-level env must not expose secrets to publish-macos")
+	if _, exists := workflow.root["env"]; exists {
+		return errors.New("workflow-level env is forbidden because privileged jobs inherit it outside their structure locks")
 	}
 
 	for jobName, rawJob := range workflow.jobs {
@@ -125,7 +126,7 @@ func (workflow *workflow) validate() error {
 	if jobRunText(publishMacOS, "gh release upload") {
 		return errors.New("publish-macos must not attach the release asset")
 	}
-	if !hasArtifactAction(publishMacOS, "actions/upload-artifact@", canonicalArtifact, "") {
+	if !hasArtifactAction(publishMacOS, "actions/upload-artifact@", canonicalArtifact, canonicalArtifactPath) {
 		return errors.New("publish-macos must upload the canonical client workflow artifact")
 	}
 
