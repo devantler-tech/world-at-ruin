@@ -457,6 +457,28 @@ static func build_geometry(p_seed: int, terrain_h: Callable = Callable(),
 		ground_material_uv[i] = Vector2(local_ground.r, local_ground.g)
 		ground_material_uv2[i] = Vector2(local_ground.b, local_roughness)
 
+	# Do not send the duplicate full cave hull through the terrain shader.
+	# Retain a source triangle only when at least one corner can receive contact;
+	# interpolation needs the complete boundary triangle, but an all-zero
+	# triangle can never contribute a pixel. Geometry and collision still use
+	# the original complete index stream below.
+	var contact_indices := PackedInt32Array()
+	if contact_enabled:
+		# COLOR is RGBA8 in ArrayMesh. A weight below one channel quantum
+		# reaches the shader as zero and must not keep an otherwise empty
+		# triangle alive.
+		var visible_contact := 1.0 / 255.0
+		for tri in range(0, indices.size(), 3):
+			var i0 := indices[tri]
+			var i1 := indices[tri + 1]
+			var i2 := indices[tri + 2]
+			if ground_contact[i0].a >= visible_contact \
+					or ground_contact[i1].a >= visible_contact \
+					or ground_contact[i2].a >= visible_contact:
+				contact_indices.append(i0)
+				contact_indices.append(i1)
+				contact_indices.append(i2)
+
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)
 	arrays[Mesh.ARRAY_VERTEX] = verts
@@ -467,7 +489,7 @@ static func build_geometry(p_seed: int, terrain_h: Callable = Callable(),
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 
 	var contact_mesh: ArrayMesh = null
-	if contact_enabled:
+	if not contact_indices.is_empty():
 		var contact_arrays := []
 		contact_arrays.resize(Mesh.ARRAY_MAX)
 		contact_arrays[Mesh.ARRAY_VERTEX] = verts
@@ -475,7 +497,7 @@ static func build_geometry(p_seed: int, terrain_h: Callable = Callable(),
 		contact_arrays[Mesh.ARRAY_COLOR] = ground_contact
 		contact_arrays[Mesh.ARRAY_TEX_UV] = ground_material_uv
 		contact_arrays[Mesh.ARRAY_TEX_UV2] = ground_material_uv2
-		contact_arrays[Mesh.ARRAY_INDEX] = indices
+		contact_arrays[Mesh.ARRAY_INDEX] = contact_indices
 		contact_mesh = ArrayMesh.new()
 		contact_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, contact_arrays)
 	return { "mesh": mesh, "terrain_contact_mesh": contact_mesh, "layout": lay }

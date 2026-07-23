@@ -67,6 +67,7 @@ func _ready() -> void:
 		return
 	var ground_rg: PackedVector2Array = arrays[Mesh.ARRAY_TEX_UV]
 	var ground_b_roughness: PackedVector2Array = arrays[Mesh.ARRAY_TEX_UV2]
+	var contact_indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
 	if colors.size() != verts.size():
 		_fail("ground-contact channel has %d values for %d vertices" %
 			[colors.size(), verts.size()])
@@ -77,6 +78,7 @@ func _ready() -> void:
 
 	var rock_arrays := rock_mesh.surface_get_arrays(0)
 	var sky_exposure: PackedColorArray = rock_arrays[Mesh.ARRAY_COLOR]
+	var rock_indices: PackedInt32Array = rock_arrays[Mesh.ARRAY_INDEX]
 	var contact_count := 0
 	var untouched_count := 0
 	var strongest := 0.0
@@ -126,6 +128,16 @@ func _ready() -> void:
 	if strongest < 0.9:
 		_fail("contact never becomes decisive (max %.3f)" % strongest)
 		return
+	if contact_indices.size() >= rock_indices.size():
+		_fail("terrain-contact overlay kept all %d rock indices despite %d zero-contact vertices" %
+			[rock_indices.size(), untouched_count])
+		return
+	for tri in range(0, contact_indices.size(), 3):
+		if colors[contact_indices[tri]].a <= EPS \
+				and colors[contact_indices[tri + 1]].a <= EPS \
+				and colors[contact_indices[tri + 2]].a <= EPS:
+			_fail("terrain-contact overlay retained an all-zero triangle at index %d" % tri)
+			return
 
 	# The fix is material data only. The generated rock and collision surface
 	# must remain the exact same geometry.
@@ -133,8 +145,9 @@ func _ready() -> void:
 	if CaveSystemGen.fingerprint(rock_mesh) != CaveSystemGen.fingerprint(baseline[&"mesh"]):
 		_fail("terrain contact moved cave vertices — geometry/collision must stay unchanged")
 		return
-	if CaveSystemGen.fingerprint(mesh) != CaveSystemGen.fingerprint(rock_mesh):
-		_fail("terrain-contact overlay does not follow the exact cave surface")
+	var rock_verts: PackedVector3Array = rock_arrays[Mesh.ARRAY_VERTEX]
+	if verts != rock_verts:
+		_fail("terrain-contact overlay vertex stream moved away from the cave surface")
 		return
 
 	# Falsifiability: move the same terrain far below the massif. A hard-coded
@@ -146,6 +159,12 @@ func _ready() -> void:
 		return -100.0
 	Callable(far_cave, &"rebuild").call(far_ground, local_material)
 	var far_mesh := _named_mesh(far_cave, &"TerrainContact")
+	if far_mesh == null:
+		print("TEST PASS: cave terrain contact — %d contact / %d untouched vertices, max %.3f; draw triangles %d/%d; material payload exact; geometry unchanged; far-ground control dark" %
+			[contact_count, untouched_count, strongest,
+			contact_indices.size() / 3, rock_indices.size() / 3])
+		get_tree().quit(0)
+		return
 	var far_arrays := far_mesh.surface_get_arrays(0)
 	var far_data: PackedColorArray = far_arrays[Mesh.ARRAY_COLOR]
 	for sample: Color in far_data:
@@ -154,8 +173,9 @@ func _ready() -> void:
 				sample.a)
 			return
 
-	print("TEST PASS: cave terrain contact — %d contact / %d untouched vertices, max %.3f; material payload exact; geometry unchanged; far-ground control dark" %
-		[contact_count, untouched_count, strongest])
+	print("TEST PASS: cave terrain contact — %d contact / %d untouched vertices, max %.3f; draw triangles %d/%d; material payload exact; geometry unchanged; far-ground control dark" %
+		[contact_count, untouched_count, strongest,
+		contact_indices.size() / 3, rock_indices.size() / 3])
 	get_tree().quit(0)
 
 
