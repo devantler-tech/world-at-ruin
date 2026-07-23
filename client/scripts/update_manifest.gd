@@ -90,9 +90,11 @@ const SAVE_CAPABILITY_WRITES := 2
 ## needlessly routed away from a pack update despite a valid fallback existing.
 ##
 ## Must always be >= the write capability (a build must read what it writes).
-## Capability 2 is the layered recipe form introduced read-first in v0.32.0 and
-## truthfully advertised by the published v0.50.0 expansion release.
-const SAVE_CAPABILITY_READS := 2
+## Capability 3 is vault-v2 discovery state. This build is its expansion
+## release: SaveVault can read and preserve the field, while the production
+## writer truthfully remains on baked capability 2 until this release becomes
+## the retained rollback target.
+const SAVE_CAPABILITY_READS := 3
 
 ## The oldest shell this manifest still supports updating FROM.
 ##

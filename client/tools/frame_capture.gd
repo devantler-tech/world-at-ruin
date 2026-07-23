@@ -145,6 +145,14 @@ const CONTRIB_MIN_QUIET := 24
 ## splits that gap with wide margin on both sides.
 const CONTRIB_MIN_FRACTION := 0.5
 
+## ── Hollow-ash contribution control (#346) ───────────────────────────────
+## Moving the Sun changes opaque terrain too, so two different ash-vantage
+## frames do not by themselves prove that the FogVolume landed any pixels.
+## Hold camera, light and animation fixed, hide only the built volume subtree,
+## and require a visible change across a meaningful part of the world box.
+const ASH_CONTRIB_MIN_DELTA := 0.01
+const ASH_CONTRIB_MIN_FRACTION := 0.02
+
 ## The first-run scenario samples the LEFT band instead, because that is where
 ## the creator's panel is anchored (PRESET_LEFT_WIDE). Sampling the world box
 ## would measure the 3D view BEHIND the panel — so a run where the creator never
@@ -256,8 +264,8 @@ func _ready() -> void:
 	if scenario == "breath":
 		await _capture_breath(dir, main)
 		return
-	if scenario != "world":
-		_fail("unknown WAR_SCENARIO '%s' — expected 'world', 'first_run' or 'breath'" % scenario)
+	if scenario != "world" and scenario != "light_response":
+		_fail("unknown WAR_SCENARIO '%s' — expected 'world', 'first_run', 'breath' or 'light_response'" % scenario)
 		return
 
 	for i in WARMUP_FRAMES:
@@ -276,6 +284,10 @@ func _ready() -> void:
 	cam.far = 400.0
 	cam.fov = 68.0
 	get_tree().root.add_child(cam)
+
+	if scenario == "light_response":
+		await _capture_light_response(dir, main, cam)
+		return
 
 	for vantage: Array in VANTAGES:
 		var vantage_name: String = vantage[0]
@@ -348,6 +360,168 @@ func _ready() -> void:
 
 	print("CAPTURE PASS — %d vantages written to %s" % [VANTAGES.size() + cave_count, dir])
 	get_tree().quit(0)
+
+
+## Opposing-azimuth key-light positions for the fixed-camera response proof
+## (#346). `source-side` puts the DirectionalLight3D at the camera so its rays
+## travel WITH the view ray; `far-side` mirrors its horizontal position through
+## the subject while retaining the same elevation. Mirroring all three axes
+## would put the far-side source below the terrain and point the key upward.
+## Directional-light position has no shading effect, but
+## Node3D.look_at_from_position uses it to derive the orientation.
+## Kept pure so light_response_capture_test can pin the geometry headlessly.
+static func light_source_positions(eye: Vector3, target: Vector3) -> Array:
+	return [eye, Vector3(target.x * 2.0 - eye.x, eye.y, target.z * 2.0 - eye.z)]
+
+
+## A close camera outside a real hollow-ash volume, aimed through its centre and
+## slightly down onto terrain. The terrain backdrop makes the volume's light
+## response visible; sky behind translucent fog would hide the comparison.
+## Kept pure so light_response_capture_test can hold the evidence geometry.
+static func ash_response_vantage(placement: Dictionary) -> Array:
+	var target: Vector3 = placement["pos"]
+	var extents: Vector3 = placement["extents"]
+	var eye := target + Vector3(0.0, extents.y * 1.8, extents.z + 10.0)
+	return [eye, target]
+
+
+## Visible built volumes, not placement metadata. A capable device must return
+## at least one before the capture may publish ash-response frames; an
+## incapable hosted runner instead declares that evidence unavailable.
+static func visible_fog_volume_count(root: Node) -> int:
+	if root == null:
+		return 0
+	var count := 0
+	for node in root.find_children("*", "FogVolume", true, false):
+		if (node as FogVolume).is_visible_in_tree():
+			count += 1
+	return count
+
+
+## Stops every delta-driven animation and the shader `TIME` clock while the
+## controlled pair is photographed. Process frames still advance so temporal
+## reprojection and shadow cascades can settle, but foliage wind and ash drift
+## remain at one phase; only the Sun orientation changes between the images.
+static func freeze_light_response_animation() -> void:
+	Engine.time_scale = 0.0
+
+
+## Holds the crossfield camera and real world fixed while the shipping Sun moves
+## through opposing horizontal directions at a constant elevation. These are
+## evidence frames, not a synthetic material preview: the generated foliage,
+## hollow ash volumes, environment, terrain and DirectionalLight3D are the same
+## nodes a player sees.
+##
+## Run windowed with all save seams redirected:
+##   WAR_SCENARIO=light_response WAR_SHOT_DIR=/tmp/light-response \
+##     WAR_SAVE_PATH=/tmp/probe_save.json WAR_VAULT_PATH=/tmp/probe_vault.json \
+##     WAR_BOOT_RECOVERY_PATH=/tmp/probe_recovery.json \
+##     godot --path client res://tools/frame_capture.tscn
+func _capture_light_response(dir: String, main: Node, cam: Camera3D) -> void:
+	var sun := main.get_node_or_null("Sun") as DirectionalLight3D
+	if sun == null:
+		_fail("light_response: no DirectionalLight3D named Sun — there is no moving key to prove")
+		return
+	freeze_light_response_animation()
+
+	var vantage: Array = VANTAGES[1] # crossfield: broad foliage + hollow-ash read
+	var response_vantages: Array[Dictionary] = [{
+		"names": ["foliage-source-side", "foliage-far-side"],
+		"eye": vantage[1],
+		"target": vantage[2],
+		"requires_volume": false,
+	}]
+	var placements: Array = main.call("hollow_fog_placements")
+	if placements.is_empty():
+		_fail("light_response: the shipped world placed no hollow ash pool to isolate")
+		return
+	var fog_root := main.get_node_or_null("HollowFog") as Node3D
+	if visible_fog_volume_count(fog_root) > 0:
+		var ash_vantage := ash_response_vantage(placements[0])
+		response_vantages.append({
+			"names": ["ash-source-side", "ash-far-side"],
+			"eye": ash_vantage[0],
+			"target": ash_vantage[1],
+			"requires_volume": true,
+		})
+	else:
+		print("ASH EVIDENCE UNAVAILABLE — this renderer built no visible FogVolume; no ash-response frames will be published")
+
+	for response: Dictionary in response_vantages:
+		var eye: Vector3 = response["eye"]
+		var target: Vector3 = response["target"]
+		cam.global_position = eye
+		cam.look_at(target, Vector3.UP)
+		var sources := light_source_positions(eye, target)
+		var names: Array = response["names"]
+		for index in sources.size():
+			var source: Vector3 = sources[index]
+			sun.look_at_from_position(source, target, Vector3.UP)
+			for i in SETTLE_FRAMES:
+				cam.current = true
+				await get_tree().process_frame
+
+			if not _sees_geometry(cam, target):
+				_fail("%s sees no world geometry — the response frame is sky only" % names[index])
+				return
+			if not _camera_draws_world(cam, main):
+				_fail("%s cannot draw the world — the response frame would be empty" % names[index])
+				return
+
+			await RenderingServer.frame_post_draw
+			var img := get_viewport().get_texture().get_image()
+			var spread := _luma_spread(img)
+			if spread < MIN_LUMA_SPREAD:
+				_fail("%s is a uniform frame (luma spread %.4f) — nothing rendered" %
+					[names[index], spread])
+				return
+			var out := "%s/%s.png" % [dir, names[index]]
+			var err := img.save_png(out)
+			if err != OK:
+				_fail("could not write %s (error %d)" % [out, err])
+				return
+			var light_ray := (sun.global_transform.basis * Vector3.FORWARD).normalized()
+			var view_ray := (target - eye).normalized()
+			print("CAPTURED %s -> %s (light/view dot %.3f, luma spread %.3f)" %
+				[names[index], out, light_ray.dot(view_ray), spread])
+			_write_note(dir, names[index], img, _size_note(img))
+			if bool(response["requires_volume"]) and not await _prove_ash_contribution(main, img):
+				return
+
+	print("CAPTURE PASS — fixed cameras and animation phase, live Sun moved through opposing azimuths")
+	get_tree().quit(0)
+
+
+## Proves the pictured hollow ash contributes pixels by capturing the identical
+## view with only the built FogVolume subtree hidden. Animation time is already
+## frozen by the scenario, so any measured change belongs to the volume rather
+## than foliage wind or ash drift advancing between frames.
+func _prove_ash_contribution(main: Node, live: Image) -> bool:
+	var fog_root := main.get_node_or_null("HollowFog") as Node3D
+	if fog_root == null:
+		_fail("light_response: no built HollowFog subtree — placement metadata alone cannot evidence rendered ash")
+		return false
+	if visible_fog_volume_count(fog_root) < 1:
+		_fail("light_response: HollowFog contains no visible FogVolume — ash contributes no rendered pixels")
+		return false
+
+	fog_root.visible = false
+	for i in CONTRIB_GAP_FRAMES:
+		await get_tree().process_frame
+	var hidden := await _grab_frame()
+	fog_root.visible = true
+	if not fog_root.is_visible_in_tree():
+		_fail("light_response: HollowFog did not return after the contribution control")
+		return false
+
+	var verdict := ash_contribution_verdict(live, hidden)
+	print("ASH CONTRIBUTION: %d/%d samples changed (fraction %.3f, p95 delta %.4f)" %
+		[int(verdict["changed"]), int(verdict["samples"]), float(verdict["fraction"]),
+			float(verdict["delta_p95"])])
+	if not bool(verdict["ok"]):
+		_fail("light_response: %s" % str(verdict["reason"]))
+		return false
+	return true
 
 
 ## Reports the captured size against the size the project actually ships. A
@@ -1175,6 +1349,46 @@ static func terrain_contribution_verdict(points: Array[Vector2i], live_a: Image,
 	verdict["fraction"] = fraction
 	if fraction < CONTRIB_MIN_FRACTION:
 		verdict["reason"] = "hiding the terrain changed only %d of %d quiet terrain samples (%.0f%%, floor %.0f%%) — the terrain contributes no pixels, exactly what a transparent or discard-everything material renders" % [contributing, quiet, fraction * 100.0, CONTRIB_MIN_FRACTION * 100.0]
+		return verdict
+	verdict["ok"] = true
+	return verdict
+
+
+## Pure image verdict for the hollow-ash ablation above. The same central grid
+## used by the world luminance guard excludes HUD text; the minimum changed
+## fraction prevents a lone noisy pixel from vouching for a whole volume.
+static func ash_contribution_verdict(live: Image, hidden: Image) -> Dictionary:
+	var verdict := {
+		"ok": false, "reason": "", "samples": 0, "changed": 0,
+		"fraction": 0.0, "delta_p95": 0.0,
+	}
+	if live.is_empty() or hidden.is_empty():
+		verdict["reason"] = "with/without-volume control produced an empty frame"
+		return verdict
+	if live.get_size() != hidden.get_size():
+		verdict["reason"] = "with/without-volume frames differ in size and cannot be compared"
+		return verdict
+	var deltas: Array[float] = []
+	var changed := 0
+	for gy in 12:
+		for gx in 16:
+			var x := clampi(int((SAMPLE_X0 + (gx + 0.5) * (SAMPLE_X1 - SAMPLE_X0) / 16.0) *
+				live.get_width()), 0, live.get_width() - 1)
+			var y := clampi(int((SAMPLE_Y0 + (gy + 0.5) * (SAMPLE_Y1 - SAMPLE_Y0) / 12.0) *
+				live.get_height()), 0, live.get_height() - 1)
+			var delta := _pixel_delta(live.get_pixel(x, y), hidden.get_pixel(x, y))
+			deltas.append(delta)
+			if delta >= ASH_CONTRIB_MIN_DELTA:
+				changed += 1
+	var fraction := float(changed) / float(deltas.size())
+	verdict["samples"] = deltas.size()
+	verdict["changed"] = changed
+	verdict["fraction"] = fraction
+	verdict["delta_p95"] = _percentile(deltas, 0.95)
+	if fraction < ASH_CONTRIB_MIN_FRACTION:
+		verdict["reason"] = "hiding the FogVolume changed only %d of %d samples (%.1f%%, floor %.1f%%) — no rendered ash contribution was proved" % [
+			changed, deltas.size(), fraction * 100.0, ASH_CONTRIB_MIN_FRACTION * 100.0
+		]
 		return verdict
 	verdict["ok"] = true
 	return verdict

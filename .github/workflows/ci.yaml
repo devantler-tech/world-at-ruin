@@ -1307,6 +1307,40 @@ jobs:
             grep -nE "SCRIPT ERROR|^ERROR" capture.filtered.log | head -20
             exit 1
           fi
+      - name: Capture the moving-key material response
+        # #346. Ordinary evidence holds the SUN fixed and moves the camera,
+        # which cannot prove a material follows a moving light. This scenario
+        # does the inverse: one broad foliage view and one hollow-ash close-up
+        # each keep the camera/world fixed while the shipping DirectionalLight3D
+        # moves through equal-and-opposite source-side and far-side directions.
+        #
+        # Into a subdirectory so frame_diff cannot mistake these deliberately
+        # relit views for ordinary merge-base comparisons.
+        run: |
+          set -o pipefail
+          mkdir -p "${RUNNER_TEMP}/shots/light-response"
+          cp client/recipes/wanderer.json "${RUNNER_TEMP}/light_response_save.json"
+          WAR_SCENARIO=light_response \
+          WAR_SHOT_DIR="${RUNNER_TEMP}/shots/light-response" \
+          WAR_SAVE_PATH="${RUNNER_TEMP}/light_response_save.json" \
+          WAR_VAULT_PATH="${RUNNER_TEMP}/light_response_vault.json" \
+          WAR_BOOT_RECOVERY_PATH="${RUNNER_TEMP}/light_response_recovery.json" \
+            godot --path client res://tools/frame_capture.tscn 2>&1 | tee capture-light-response.log
+          if ! grep -q "CAPTURE PASS" capture-light-response.log; then
+            echo "::error::moving-key capture did not report PASS — the dynamic response evidence is missing"
+            tail -40 capture-light-response.log; exit 1
+          fi
+          if ! grep -q "BOOT_OK" capture-light-response.log; then
+            echo "::error::moving-key capture never reached BOOT_OK"
+            tail -40 capture-light-response.log; exit 1
+          fi
+          grep -vE "timeout waiting for fence|drivers/metal/rendering_device_driver_metal" \
+            capture-light-response.log > capture-light-response.filtered.log || true
+          if grep -qE "SCRIPT ERROR|^ERROR" capture-light-response.filtered.log; then
+            echo "::error::errors during moving-key capture — response frames may depict a degraded world"
+            grep -nE "SCRIPT ERROR|^ERROR" capture-light-response.filtered.log | head -20
+            exit 1
+          fi
       - name: Record what these frames can evidence
         # #232. Volumetric fog is gated on an R32_Uint atomic storage image and
         # this runner's virtualised Apple adapter does not support it, so every
@@ -1743,6 +1777,8 @@ jobs:
           path: |
             ${{ runner.temp }}/shots/*.png
             ${{ runner.temp }}/shots/*.txt
+            ${{ runner.temp }}/shots/light-response/*.png
+            ${{ runner.temp }}/shots/light-response/*.txt
             ${{ runner.temp }}/shots/opt-in-plates/*.png
             ${{ runner.temp }}/shots/opt-in-plates/*.txt
           if-no-files-found: error

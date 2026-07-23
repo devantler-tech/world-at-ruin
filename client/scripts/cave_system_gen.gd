@@ -35,6 +35,15 @@ extends Node3D
 
 const CELL := 0.65 ## Surface-net grid resolution in metres.
 const SMIN_K := 2.4 ## Chamber/tunnel blend radius.
+## Vertical distance over which the exposed massif foot inherits the ground it
+## meets. Wide enough to span several surface-net cells so interpolation makes
+## a material transition, narrow enough that the far hull keeps its weathered
+## rock outright.
+const TERRAIN_CONTACT_BAND := 1.8
+## COLOR.b carries the sampled world-space terrain height to the contact
+## shader. The generated Reach lives well inside this signed range; keeping the
+## encoded value in 0..1 makes the channel portable across ArrayMesh formats.
+const TERRAIN_HEIGHT_RANGE := 32.0
 const WALL_NOISE := 0.55 ## Low-frequency wall undulation amplitude.
 const HULL_ROCK := 3.0 ## Massif wall thickness around the carved voids.
 
@@ -292,9 +301,14 @@ static func _aim(dir: Vector3) -> Basis:
 
 
 ## Meshes the system with naive surface nets and bakes strata/sediment vertex
-## colors. Self-contained: the massif needs no terrain input — WorldGen
-## shapes the ground around it instead.
-static func build_geometry(p_seed: int) -> Dictionary:
+## colors. When both samplers are supplied, a second, render-only mesh carries
+## the exposed terrain-contact weight in COLOR.a and exact local ground
+## RGB/roughness in the two full-float UV channels. Keeping that transition
+## separate means the rock mesh and its collision stay byte-for-byte unchanged;
+## WorldGen still shapes the ground around the massif, and the samplers add
+## material data only.
+static func build_geometry(p_seed: int, terrain_h: Callable = Callable(),
+		terrain_material: Callable = Callable()) -> Dictionary:
 	var lay := layout(p_seed)
 	var noise := make_noise(p_seed)
 
@@ -409,6 +423,62 @@ static func build_geometry(p_seed: int) -> Dictionary:
 		c.a = exposure(p, lay)
 		colors[i] = c
 
+	# Local ground material at the cave/terrain intersection. This becomes a
+	# render-only overlay below rather than changing the cave mesh's established
+	# vertex format or the collision shape built from it.
+	var ground_contact := PackedColorArray()
+	ground_contact.resize(verts.size())
+	var ground_material_uv := PackedVector2Array()
+	ground_material_uv.resize(verts.size())
+	var ground_material_uv2 := PackedVector2Array()
+	ground_material_uv2.resize(verts.size())
+	var contact_enabled := terrain_h.is_valid() and terrain_material.is_valid()
+	for i in verts.size():
+		var p := verts[i]
+		var local_ground := Color.BLACK
+		var local_roughness := 1.0
+		var local_normal := Vector3.UP
+		var local_ground_y := 0.0
+		var contact := 0.0
+		if contact_enabled:
+			var ground_sample: Dictionary = terrain_material.call(p.x, p.z)
+			local_ground = ground_sample[&"color"]
+			local_roughness = ground_sample[&"roughness"]
+			local_normal = ground_sample.get(&"normal", Vector3.UP) as Vector3
+			local_ground_y = ground_sample.get(&"height", 0.0) as float
+			var ground_y: float = terrain_h.call(p.x, p.z)
+			var distance := absf(p.y - ground_y)
+			contact = (1.0 - smoothstep(0.0, TERRAIN_CONTACT_BAND, distance)) * colors[i].a
+		ground_contact[i] = Color(
+			local_normal.x * 0.5 + 0.5,
+			local_normal.z * 0.5 + 0.5,
+			clampf(local_ground_y / (TERRAIN_HEIGHT_RANGE * 2.0) + 0.5, 0.0, 1.0),
+			contact)
+		ground_material_uv[i] = Vector2(local_ground.r, local_ground.g)
+		ground_material_uv2[i] = Vector2(local_ground.b, local_roughness)
+
+	# Do not send the duplicate full cave hull through the terrain shader.
+	# Retain a source triangle only when at least one corner can receive contact;
+	# interpolation needs the complete boundary triangle, but an all-zero
+	# triangle can never contribute a pixel. Geometry and collision still use
+	# the original complete index stream below.
+	var contact_indices := PackedInt32Array()
+	if contact_enabled:
+		# COLOR is RGBA8 in ArrayMesh. A weight below one channel quantum
+		# reaches the shader as zero and must not keep an otherwise empty
+		# triangle alive.
+		var visible_contact := 1.0 / 255.0
+		for tri in range(0, indices.size(), 3):
+			var i0 := indices[tri]
+			var i1 := indices[tri + 1]
+			var i2 := indices[tri + 2]
+			if ground_contact[i0].a >= visible_contact \
+					or ground_contact[i1].a >= visible_contact \
+					or ground_contact[i2].a >= visible_contact:
+				contact_indices.append(i0)
+				contact_indices.append(i1)
+				contact_indices.append(i2)
+
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)
 	arrays[Mesh.ARRAY_VERTEX] = verts
@@ -417,7 +487,20 @@ static func build_geometry(p_seed: int) -> Dictionary:
 	arrays[Mesh.ARRAY_INDEX] = indices
 	var mesh := ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-	return { "mesh": mesh, "layout": lay }
+
+	var contact_mesh: ArrayMesh = null
+	if not contact_indices.is_empty():
+		var contact_arrays := []
+		contact_arrays.resize(Mesh.ARRAY_MAX)
+		contact_arrays[Mesh.ARRAY_VERTEX] = verts
+		contact_arrays[Mesh.ARRAY_NORMAL] = normals
+		contact_arrays[Mesh.ARRAY_COLOR] = ground_contact
+		contact_arrays[Mesh.ARRAY_TEX_UV] = ground_material_uv
+		contact_arrays[Mesh.ARRAY_TEX_UV2] = ground_material_uv2
+		contact_arrays[Mesh.ARRAY_INDEX] = contact_indices
+		contact_mesh = ArrayMesh.new()
+		contact_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, contact_arrays)
+	return { "mesh": mesh, "terrain_contact_mesh": contact_mesh, "layout": lay }
 
 
 const _CELL_EDGES: Array = [
@@ -841,7 +924,8 @@ static func _has_rock_below(field: PackedFloat32Array, nx: int, ny: int, nz: int
 ## In-scene build: mesh + collision + torches + mouth boulders. The terrain
 ## callable maps LOCAL (x, z) to LOCAL floor height of the surrounding world
 ## (identity 0.0 height for the standalone taste scene).
-func rebuild(terrain_h: Callable = func(_x: float, _z: float) -> float: return 0.0) -> void:
+func rebuild(terrain_h: Callable = func(_x: float, _z: float) -> float: return 0.0,
+		terrain_material: Callable = Callable()) -> void:
 	for node in _built:
 		node.queue_free()
 	_built.clear()
@@ -849,7 +933,7 @@ func rebuild(terrain_h: Callable = func(_x: float, _z: float) -> float: return 0
 	_torch_flames.clear()
 	_torch_phases = PackedFloat32Array()
 
-	var built := CaveSystemGen.build_geometry(seed_value)
+	var built := CaveSystemGen.build_geometry(seed_value, terrain_h, terrain_material)
 	var mesh: ArrayMesh = built["mesh"]
 	var lay: Dictionary = built["layout"]
 	last_layout = lay
@@ -862,6 +946,19 @@ func rebuild(terrain_h: Callable = func(_x: float, _z: float) -> float: return 0
 	mi.mesh = mesh
 	add_child(mi)
 	_built.append(mi)
+	var contact_mesh: ArrayMesh = built[&"terrain_contact_mesh"]
+	if contact_mesh != null:
+		var contact_mat := ShaderMaterial.new()
+		contact_mat.shader = load("res://shaders/cave_terrain_contact.gdshader")
+		contact_mat.set_shader_parameter(
+			"plates_enabled", OS.get_environment("WAR_GROUND_PLATES") == "1")
+		contact_mat.render_priority = 1
+		contact_mesh.surface_set_material(0, contact_mat)
+		var contact_mi := MeshInstance3D.new()
+		contact_mi.name = "TerrainContact"
+		contact_mi.mesh = contact_mesh
+		add_child(contact_mi)
+		_built.append(contact_mi)
 	var body := StaticBody3D.new()
 	var shape := CollisionShape3D.new()
 	var trimesh := mesh.create_trimesh_shape() as ConcavePolygonShape3D
