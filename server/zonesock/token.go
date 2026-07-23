@@ -17,8 +17,8 @@ import (
 // during the WebSocket upgrade and returns the observer entity the connection
 // is allocated to replicate. Verification is fail-closed: any error refuses
 // the peer before it attaches. The zone server only ever verifies — minting
-// belongs to the allocation/handoff step (a later child of the server epic),
-// which is why the verifier is an interface: the interim HMAC mechanism below
+// is delegated to handoff.Service, which is why the verifier is an interface:
+// the interim HMAC mechanism below
 // can be swapped without touching the socket.
 type TokenVerifier interface {
 	Verify(token string) (sim.EntityID, error)
@@ -45,7 +45,7 @@ const minSecretBytes = 32
 
 // MintToken mints an admission token binding one observer to one allocation:
 // "v2.<allocation>.<observer>.<unix expiry>.<hex hmac-sha256>". Exported for the
-// allocation/handoff step and for tests; the zone server itself never mints.
+// handoff service and for tests; the zone server itself never mints.
 func MintToken(secret []byte, allocation string, observer sim.EntityID, expiry time.Time) (string, error) {
 	if len(secret) < minSecretBytes {
 		return "", fmt.Errorf("zonesock: admission secret is %d bytes, need at least %d", len(secret), minSecretBytes)

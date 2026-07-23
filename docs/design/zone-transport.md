@@ -130,7 +130,9 @@ Consequences:
   reachable ports, session-only admission would let any signed-in user connect to arbitrary
   instances. The upgrade therefore carries a **short-lived allocation token** minted at the
   Agones-allocation/handoff step and verified by the zone server before the observer is admitted.
-  Mechanism detail belongs to the socket child and the Nakama child.
+  `server/handoff` now owns the transport-neutral verification → allocation → token-minting
+  contract; the concrete Agones allocator adapter and Nakama RPC registration remain later
+  server-foundation children.
 - **One transport discipline across tiers.** Nakama's own realtime API is WebSocket; client
   networking, platform ingress, and TLS handling follow a single pattern instead of two.
 - **The wire codec is unchanged.** Nothing in this decision touches `server/wire/` — the goldens
