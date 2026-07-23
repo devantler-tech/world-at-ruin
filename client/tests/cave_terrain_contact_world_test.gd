@@ -7,6 +7,8 @@ extends Node
 
 const EPS := 0.0001
 const CONTACT_QUANTUM := 1.0 / 255.0 + EPS
+const NORMAL_QUANTUM := 3.0 / 255.0 + EPS
+const HEIGHT_QUANTUM := CaveSystemGen.TERRAIN_HEIGHT_RANGE * 2.0 / 255.0 + EPS
 
 
 func _ready() -> void:
@@ -63,6 +65,19 @@ func _ready() -> void:
 		if absf(ground_b_roughness[i].y - (expected[&"roughness"] as float)) > EPS:
 			_fail("vertex %d roughness %.4f, not local ground %.4f" %
 				[i, ground_b_roughness[i].y, expected[&"roughness"]])
+			return
+		var encoded_normal := Vector2(weights[i].r, weights[i].g) * 2.0 - Vector2.ONE
+		var expected_normal: Vector3 = expected[&"normal"]
+		if encoded_normal.distance_to(Vector2(expected_normal.x, expected_normal.z)) > NORMAL_QUANTUM:
+			_fail("vertex %d terrain normal XZ %s, not rendered face %s" %
+				[i, encoded_normal, Vector2(expected_normal.x, expected_normal.z)])
+			return
+		var encoded_height := (
+			weights[i].b - 0.5
+		) * CaveSystemGen.TERRAIN_HEIGHT_RANGE * 2.0
+		if absf(encoded_height - (expected[&"height"] as float)) > HEIGHT_QUANTUM:
+			_fail("vertex %d terrain height %.4f, not rendered surface %.4f" %
+				[i, encoded_height, expected[&"height"]])
 			return
 
 		if weights[i].a > EPS:

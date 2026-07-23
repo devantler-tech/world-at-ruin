@@ -220,6 +220,38 @@ func surface_height_at(x: float, z: float) -> float:
 		return h00 + (h10 - h00) * fx + (h11 - h10) * fz
 	return h00 + (h11 - h01) * fx + (h01 - h00) * fz
 
+
+## Upward normal of the same flat-shaded terrain triangle returned by
+## [surface_height_at]. The contact shader needs the ground's normal rather
+## than the cave hull's normal: slope-aware ash/rock shading must answer as the
+## neighbouring ground does even though the cave foot itself is near-vertical.
+func surface_normal_at(x: float, z: float) -> Vector3:
+	var step := SIZE / QUADS
+	var half := SIZE / 2.0
+	var gx := (x + half) / step
+	var gz := (z + half) / step
+	if gx < 0.0 or gz < 0.0 or gx > QUADS or gz > QUADS or _heights.is_empty():
+		return Vector3.UP
+	var ix := mini(int(gx), QUADS - 1)
+	var iz := mini(int(gz), QUADS - 1)
+	var fx := gx - ix
+	var fz := gz - iz
+	var w := QUADS + 1
+	var x0 := ix * step - half
+	var z0 := iz * step - half
+	var x1 := x0 + step
+	var z1 := z0 + step
+	var v00 := Vector3(x0, _heights[iz * w + ix], z0)
+	var v10 := Vector3(x1, _heights[iz * w + ix + 1], z0)
+	var v01 := Vector3(x0, _heights[(iz + 1) * w + ix], z1)
+	var v11 := Vector3(x1, _heights[(iz + 1) * w + ix + 1], z1)
+	# Same two triangles and same clockwise front-face convention as
+	# _build_terrain/_add_tri. These operand orders point upward.
+	if fx >= fz:
+		return (v11 - v00).cross(v10 - v00).normalized()
+	return (v01 - v00).cross(v11 - v00).normalized()
+
+
 func _build_terrain() -> void:
 	var step := SIZE / QUADS
 	var half := SIZE / 2.0
@@ -340,10 +372,9 @@ func _ground_color(shade: Vector3, palette_at: Vector3) -> Color:
 ## height/scorch layering baked into the terrain vertex stream; roughness is the
 ## terrain shader's loose-ash baseline plus that region's signed offset.
 ##
-## This deliberately returns material only. Callers that need the walkable
-## shape sample [surface_height_at] independently, so material sharing can never
-## move collision or turn the terrain's piecewise-linear surface back into the
-## smoother analytic height field.
+## Height and normal describe the rendered terrain triangle for neighbouring
+## shaders; they are observational only. Collision and cave geometry remain on
+## their existing paths, so material sharing cannot move either surface.
 func ground_material_at(x: float, z: float) -> Dictionary:
 	var ground_y := surface_height_at(x, z)
 	if ground_y <= NO_GROUND + 1.0:
@@ -355,6 +386,8 @@ func ground_material_at(x: float, z: float) -> Dictionary:
 	return {
 		&"color": baked,
 		&"roughness": roughness,
+		&"normal": surface_normal_at(x, z),
+		&"height": ground_y,
 	}
 
 

@@ -95,6 +95,8 @@ uniform float lip_lift: hint_range(0.0, 1.0) = 0.18;
 varying vec3 world_pos;
 varying vec3 world_normal;
 
+#include "res://shaders/terrain_surface.gdshaderinc"
+
 float hash3(vec3 p) {
 	return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453);
 }
@@ -130,7 +132,7 @@ float fbm(vec3 p) {
 // Ground detail sampled on the XZ plane: the surface is a heightfield, so
 // planar sampling avoids the vertical smearing a 3D sample gives on slopes.
 float ground_noise(vec2 xz, float scale) {
-	return fbm(vec3(xz.x, 0.0, xz.y) * scale);
+	return terrain_ground_noise(xz, scale);
 }
 
 // Jittered-grid partition of the ground plane. `id` is the owning plate (the
@@ -140,27 +142,7 @@ float ground_noise(vec2 xz, float scale) {
 // widens naturally where three plates meet, which is where real broken ground
 // opens up too.
 void plates(vec2 uv, out vec2 id, out float f1, out float f2) {
-	vec2 base = floor(uv);
-	f1 = 1000.0;
-	f2 = 1000.0;
-	id = base;
-	for (int j = -1; j <= 1; j++) {
-		for (int i = -1; i <= 1; i++) {
-			vec2 cell = base + vec2(float(i), float(j));
-			// Jitter each centre inside its cell so the slabs are irregular
-			// and the underlying grid never reads as a grid.
-			vec2 jitter = vec2(hash3(vec3(cell, 0.0)), hash3(vec3(cell, 7.0)));
-			vec2 centre = cell + 0.15 + 0.7 * jitter;
-			float d = length(uv - centre);
-			if (d < f1) {
-				f2 = f1;
-				f1 = d;
-				id = cell;
-			} else if (d < f2) {
-				f2 = d;
-			}
-		}
-	}
+	terrain_plates(uv, id, f1, f2);
 }
 
 // One plate's substance, resolved from its cell id alone. rgb = colour,
@@ -168,16 +150,8 @@ void plates(vec2 uv, out vec2 id, out float f1, out float f2) {
 // ferric. Chained mixes mean each later threshold overrides the earlier one
 // exactly, so the four selection widths are 0.38 / 0.28 / 0.20 / 0.14.
 vec4 plate_substance(vec2 id) {
-	float pick = hash3(vec3(id * 1.7, 3.0));
-	vec3 c = rock_color;
-	c = mix(c, plate_basalt, step(0.38, pick));
-	c = mix(c, plate_ferric, step(0.66, pick));
-	c = mix(c, plate_pale, step(0.86, pick));
-	float r = rock_roughness;
-	r = mix(r, 0.88, step(0.38, pick));
-	r = mix(r, 0.72, step(0.66, pick));
-	r = mix(r, 0.94, step(0.86, pick));
-	return vec4(c, r);
+	return terrain_plate_substance(
+		id, rock_color, rock_roughness, plate_basalt, plate_ferric, plate_pale);
 }
 
 void vertex() {

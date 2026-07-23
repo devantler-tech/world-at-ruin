@@ -40,6 +40,10 @@ const SMIN_K := 2.4 ## Chamber/tunnel blend radius.
 ## a material transition, narrow enough that the far hull keeps its weathered
 ## rock outright.
 const TERRAIN_CONTACT_BAND := 1.8
+## COLOR.b carries the sampled world-space terrain height to the contact
+## shader. The generated Reach lives well inside this signed range; keeping the
+## encoded value in 0..1 makes the channel portable across ArrayMesh formats.
+const TERRAIN_HEIGHT_RANGE := 32.0
 const WALL_NOISE := 0.55 ## Low-frequency wall undulation amplitude.
 const HULL_ROCK := 3.0 ## Massif wall thickness around the carved voids.
 
@@ -433,15 +437,23 @@ static func build_geometry(p_seed: int, terrain_h: Callable = Callable(),
 		var p := verts[i]
 		var local_ground := Color.BLACK
 		var local_roughness := 1.0
+		var local_normal := Vector3.UP
+		var local_ground_y := 0.0
 		var contact := 0.0
 		if contact_enabled:
 			var ground_sample: Dictionary = terrain_material.call(p.x, p.z)
 			local_ground = ground_sample[&"color"]
 			local_roughness = ground_sample[&"roughness"]
+			local_normal = ground_sample.get(&"normal", Vector3.UP) as Vector3
+			local_ground_y = ground_sample.get(&"height", 0.0) as float
 			var ground_y: float = terrain_h.call(p.x, p.z)
 			var distance := absf(p.y - ground_y)
 			contact = (1.0 - smoothstep(0.0, TERRAIN_CONTACT_BAND, distance)) * colors[i].a
-		ground_contact[i] = Color(0.0, 0.0, 0.0, contact)
+		ground_contact[i] = Color(
+			local_normal.x * 0.5 + 0.5,
+			local_normal.z * 0.5 + 0.5,
+			clampf(local_ground_y / (TERRAIN_HEIGHT_RANGE * 2.0) + 0.5, 0.0, 1.0),
+			contact)
 		ground_material_uv[i] = Vector2(local_ground.r, local_ground.g)
 		ground_material_uv2[i] = Vector2(local_ground.b, local_roughness)
 
@@ -916,6 +928,8 @@ func rebuild(terrain_h: Callable = func(_x: float, _z: float) -> float: return 0
 	if contact_mesh != null:
 		var contact_mat := ShaderMaterial.new()
 		contact_mat.shader = load("res://shaders/cave_terrain_contact.gdshader")
+		contact_mat.set_shader_parameter(
+			"plates_enabled", OS.get_environment("WAR_GROUND_PLATES") == "1")
 		contact_mat.render_priority = 1
 		contact_mesh.surface_set_material(0, contact_mat)
 		var contact_mi := MeshInstance3D.new()

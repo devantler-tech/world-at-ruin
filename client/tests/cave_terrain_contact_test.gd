@@ -8,7 +8,12 @@ extends Node
 const SEED := 42
 const TEST_GROUND := Color(0.17, 0.29, 0.41)
 const TEST_ROUGHNESS := 0.73
+const TEST_NORMAL := Vector3(0.2, 0.97, -0.1)
+const TEST_HEIGHT := 3.25
 const EPS := 0.0001
+const COLOR_QUANTUM := 2.0 / 255.0 + EPS
+const HEIGHT_QUANTUM := CaveSystemGen.TERRAIN_HEIGHT_RANGE * 2.0 / 255.0 + EPS
+const TERRAIN_SURFACE_INCLUDE := "#include \"res://shaders/terrain_surface.gdshaderinc\""
 
 
 func _ready() -> void:
@@ -30,6 +35,8 @@ func _ready() -> void:
 		return {
 			&"color": TEST_GROUND,
 			&"roughness": TEST_ROUGHNESS,
+			&"normal": TEST_NORMAL.normalized(),
+			&"height": TEST_HEIGHT,
 		}
 	Callable(cave, &"rebuild").call(flat_ground, local_material)
 	if material_calls[0] == 0:
@@ -37,9 +44,17 @@ func _ready() -> void:
 		return
 
 	var rock_mesh := _rock_mesh(cave)
-	var mesh := _named_mesh(cave, &"TerrainContact")
-	if rock_mesh == null or mesh == null:
+	var contact_mi := _named_mesh_instance(cave, &"TerrainContact")
+	var mesh := contact_mi.mesh as ArrayMesh if contact_mi != null else null
+	if rock_mesh == null or contact_mi == null or mesh == null:
 		_fail("rebuild did not produce both the rock and terrain-contact meshes")
+		return
+	var contact_material := contact_mi.get_active_material(0) as ShaderMaterial
+	var terrain_shader := load("res://shaders/terrain.gdshader") as Shader
+	if contact_material == null or contact_material.shader == null \
+			or TERRAIN_SURFACE_INCLUDE not in contact_material.shader.code \
+			or terrain_shader == null or TERRAIN_SURFACE_INCLUDE not in terrain_shader.code:
+		_fail("contact overlay does not reuse the shipping terrain surface shading")
 		return
 	var arrays := mesh.surface_get_arrays(0)
 	var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
@@ -75,6 +90,17 @@ func _ready() -> void:
 		if absf(ground_b_roughness[i].y - TEST_ROUGHNESS) > EPS:
 			_fail("vertex %d carries roughness %.4f, expected %.4f" %
 				[i, ground_b_roughness[i].y, TEST_ROUGHNESS])
+			return
+		var encoded_normal := Vector2(colors[i].r, colors[i].g) * 2.0 - Vector2.ONE
+		var expected_normal := Vector2(TEST_NORMAL.normalized().x, TEST_NORMAL.normalized().z)
+		if encoded_normal.distance_to(expected_normal) > COLOR_QUANTUM:
+			_fail("vertex %d carries terrain normal XZ %s, expected %s" %
+				[i, encoded_normal, expected_normal])
+			return
+		var encoded_height := (colors[i].b - 0.5) * CaveSystemGen.TERRAIN_HEIGHT_RANGE * 2.0
+		if absf(encoded_height - TEST_HEIGHT) > HEIGHT_QUANTUM:
+			_fail("vertex %d carries terrain height %.4f, expected %.4f" %
+				[i, encoded_height, TEST_HEIGHT])
 			return
 		if contact < -EPS or contact > 1.0 + EPS:
 			_fail("vertex %d contact %.4f falls outside 0..1" % [i, contact])
@@ -141,9 +167,16 @@ func _method_arg_count(object: Object, method_name: StringName) -> int:
 
 
 func _named_mesh(cave: CaveSystemGen, child_name: StringName) -> ArrayMesh:
+	var child := _named_mesh_instance(cave, child_name)
+	if child != null and child.mesh is ArrayMesh:
+		return child.mesh as ArrayMesh
+	return null
+
+
+func _named_mesh_instance(cave: CaveSystemGen, child_name: StringName) -> MeshInstance3D:
 	var child := cave.get_node_or_null(NodePath(child_name))
-	if child is MeshInstance3D and (child as MeshInstance3D).mesh is ArrayMesh:
-		return (child as MeshInstance3D).mesh as ArrayMesh
+	if child is MeshInstance3D:
+		return child as MeshInstance3D
 	return null
 
 
