@@ -470,7 +470,9 @@ everything shipped afterwards is held to.
   of the actual change — together with the **named reference** (from
   [`docs/art-direction/`](docs/art-direction/README.md)) and the **remaining gap**. A
   claim with no attached frame is self-attestation, not evidence, and does not satisfy this.
-  Below-bar player-facing work does not ship default-on.
+  New below-bar player-facing elements do not ship default-on. An in-place improvement to an
+  already-shipped below-bar surface may remain default-on only under the exception in the quality-bar
+  section above.
 - **Dev log is a contract:** every player-visible change adds a `DevLog.ENTRIES` entry (newest
   first) in the same PR — the maintainer watches progress by playing, and the dev log is that
   surface. Write the entry's `version` as the version the change will ship in (the next
