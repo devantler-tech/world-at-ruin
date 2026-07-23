@@ -3,6 +3,7 @@ package handoff
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net"
 	"strconv"
 	"strings"
@@ -87,10 +88,14 @@ type recordingAllocator struct {
 	users      []string
 	releases   []Allocation
 	releaseErr error
+	afterAlloc func()
 }
 
 func (a *recordingAllocator) Allocate(_ context.Context, userID string) (Allocation, error) {
 	a.users = append(a.users, userID)
+	if a.afterAlloc != nil {
+		a.afterAlloc()
+	}
 	return a.allocation, a.err
 }
 
@@ -251,6 +256,69 @@ func TestReportedExpiryMatchesTokenSecondPrecision(t *testing.T) {
 	}
 }
 
+func TestMinimumTokenLifetimeSurvivesSecondPrecision(t *testing.T) {
+	nakama := &accountServer{
+		account: &api.Account{User: &api.User{Id: "player-42"}},
+	}
+	allocator := &recordingAllocator{allocation: validAllocation()}
+	now := time.Unix(2_000_000_000, 900_000_000)
+	service, err := NewService(
+		verifierAgainst(t, nakama),
+		allocator,
+		Config{
+			AdmissionSecret: testSecret(),
+			ZoneDomain:      "edge.example",
+			TokenTTL:        time.Second,
+			Now:             func() time.Time { return now },
+		},
+	)
+	if err != nil {
+		t.Fatalf("NewService returned an error: %v", err)
+	}
+
+	got, err := service.CreateHandoff(context.Background(), testSession)
+	if err != nil {
+		t.Fatalf("CreateHandoff returned an error: %v", err)
+	}
+	if lifetime := got.ExpiresAt.Sub(now); lifetime < time.Second {
+		t.Fatalf("signed token lifetime = %s, want at least one second", lifetime)
+	}
+}
+
+func TestCancellationAfterAllocationReleasesReservation(t *testing.T) {
+	nakama := &accountServer{
+		account: &api.Account{User: &api.User{Id: "player-42"}},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	allocator := &recordingAllocator{
+		allocation: validAllocation(),
+		afterAlloc: cancel,
+	}
+	service, err := NewService(
+		verifierAgainst(t, nakama),
+		allocator,
+		validConfig(),
+	)
+	if err != nil {
+		t.Fatalf("NewService returned an error: %v", err)
+	}
+
+	got, err := service.CreateHandoff(ctx, testSession)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("CreateHandoff error = %v, want context canceled", err)
+	}
+	if got != (Handoff{}) {
+		t.Fatalf("cancelled handoff = %+v, want zero value", got)
+	}
+	if len(allocator.releases) != 1 || allocator.releases[0] != allocator.allocation {
+		t.Fatalf(
+			"released allocations = %+v, want exactly cancelled allocation %+v",
+			allocator.releases,
+			allocator.allocation,
+		)
+	}
+}
+
 func TestAllocationFailureReturnsNoHandoff(t *testing.T) {
 	nakama := &accountServer{
 		account: &api.Account{User: &api.User{Id: "player-42"}},
@@ -301,6 +369,10 @@ func TestMalformedAllocationReturnsNoHandoff(t *testing.T) {
 		{
 			name:   "token-ambiguous allocation ID",
 			mutate: func(a *Allocation) { a.ID = "gameserver.17" },
+		},
+		{
+			name:   "header-unsafe allocation ID",
+			mutate: func(a *Allocation) { a.ID = "gameserver-17\r\nX-Injected: yes" },
 		},
 		{
 			name:   "empty server name",

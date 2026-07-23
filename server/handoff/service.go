@@ -18,7 +18,7 @@ const (
 	// DefaultTokenTTL keeps an allocation token useful only for the immediate
 	// pre-connect handoff.
 	DefaultTokenTTL = 30 * time.Second
-	// MaxTokenTTL is the hard ceiling for a short-lived allocation token.
+	// MaxTokenTTL is the hard ceiling for the configured short-lived token TTL.
 	MaxTokenTTL = 5 * time.Minute
 	// releaseTimeout lets rollback outlive a cancelled client request without
 	// allowing a broken allocator to hold the RPC forever.
@@ -133,11 +133,18 @@ func (s *Service) CreateHandoff(ctx context.Context, session string) (Handoff, e
 	if err != nil {
 		return Handoff{}, status.Error(status.Code(err), "handoff: allocate GameServer")
 	}
+	if err := ctx.Err(); err != nil {
+		return Handoff{}, s.releaseAfterFailure(ctx, allocation, err)
+	}
 	if err := s.validateAllocation(allocation); err != nil {
 		return Handoff{}, s.releaseAfterFailure(ctx, allocation, err)
 	}
 
-	expiresAt := time.Unix(s.now().Add(s.tokenTTL).Unix(), 0)
+	deadline := s.now().Add(s.tokenTTL)
+	expiresAt := time.Unix(deadline.Unix(), 0)
+	if deadline.Nanosecond() != 0 {
+		expiresAt = expiresAt.Add(time.Second)
+	}
 	token, err := zonesock.MintToken(
 		s.secret,
 		allocation.ID,
@@ -161,7 +168,7 @@ func (s *Service) CreateHandoff(ctx context.Context, session string) (Handoff, e
 }
 
 func (s *Service) validateAllocation(allocation Allocation) error {
-	if allocation.ID == "" || strings.Contains(allocation.ID, ".") {
+	if !validAllocationID(allocation.ID) {
 		return errors.New("handoff: allocation ID is invalid")
 	}
 	if !validDNSName(allocation.ServerName) {
@@ -190,6 +197,22 @@ func (s *Service) releaseAfterFailure(
 		return errors.New("handoff: invalid allocation could not be released")
 	}
 	return handoffErr
+}
+
+func validAllocationID(id string) bool {
+	if id == "" || len(id) > 128 {
+		return false
+	}
+	for _, char := range id {
+		if (char < 'a' || char > 'z') &&
+			(char < 'A' || char > 'Z') &&
+			(char < '0' || char > '9') &&
+			char != '-' &&
+			char != '_' {
+			return false
+		}
+	}
+	return true
 }
 
 func validDNSName(name string) bool {
