@@ -373,9 +373,10 @@ everything shipped afterwards is held to.
   READ-ONLY for that session (refuse-to-read implies refuse-to-write, or a downgrade would overwrite
   progression a newer client wrote). Tests redirect it with `WAR_VAULT_PATH`, mirroring
   `WAR_SAVE_PATH`. The immutable shell's recovery memory is a third persisted contract:
-  `BootRecovery` (`user://boot_recovery.json`) reads through schema v1 while the expansion release
-  keeps production writes on the already-shipped unversioned v0 shape until #343's bake gate,
-  reads v0 forever, and is anchored by
+  `BootRecovery` (`user://boot_recovery.json`) reads through schema v1 and writes explicit v1 on
+  first boot or the next real write of legacy v0 state. The reader shipped alone in v0.51.1 and
+  became the standing retained rollback target before #343 activated the writer; v0 remains readable
+  forever. The contract is anchored by
   `tests/boot_recovery_guard_test`, `tests/data/golden_boot_recovery_v<N>.json`, and
   `tests/data/shipped_boot_recovery_versions.txt`. A corrupt or future recovery document is
   path-latched read-only and refuses new update attempts; persistence revalidates the destination

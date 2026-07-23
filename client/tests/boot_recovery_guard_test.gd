@@ -1,14 +1,14 @@
 extends Node
 ## Forward-only fixture guard for the immutable shell's recovery memory
-## (#342, parent #256).
+## (#343, parent #256).
 ##
-## The shipped unversioned document is v0. It remains readable forever; this
-## expansion reads and preserves v1 without originating it before #343's bake
-## gate. Every ledger version must have a golden fixture that survives load and
-## write-back at its own version without loss. Newer or corrupt documents
-## degrade path-latched read-only: their bytes are preserved and new updates are
-## refused, but the recovery file may not veto an otherwise compatible retained
-## rollback.
+## The shipped unversioned document is v0 and remains readable forever. After
+## the v0.51.1 reader expansion became the standing retained rollback target,
+## first boot and the next real write of v0 state contract to explicit v1.
+## Every ledger version must have a golden fixture that survives load without
+## churn and write-back without loss. Newer or corrupt documents degrade
+## path-latched read-only: their bytes are preserved and new updates are refused,
+## but the recovery file may not veto an otherwise compatible retained rollback.
 ##
 ## Run: godot --headless --path client res://tests/boot_recovery_guard_test.tscn
 
@@ -32,10 +32,12 @@ func _ready() -> void:
 
 	var fresh := BootRecovery.fresh_state()
 	var write_version: Variant = fresh.get("version")
-	if not UpdateDecision.is_int_id(write_version) or int(write_version) != 0:
-		_fail("the expansion release must keep first-boot recovery writes on legacy v0")
-		return
 	var read_ceiling := BootRecovery.RECOVERY_VERSION
+	if (
+		not UpdateDecision.is_int_id(write_version)
+		or int(write_version) != read_ceiling):
+		_fail("the contract release must originate the baked recovery schema v%d" % read_ceiling)
+		return
 	if shipped != range(0, read_ceiling + 1):
 		_fail("recovery version ledger must be contiguous from legacy v0 through v%d (got %s)" % [
 			read_ceiling, str(shipped)])
@@ -51,7 +53,7 @@ func _ready() -> void:
 			return
 
 	for version: int in shipped:
-		var reason := _check_fixture(version, fixtures[version])
+		var reason := _check_fixture(version, fixtures[version], int(write_version))
 		if reason != "":
 			_fail("golden_boot_recovery_v%d.json: %s" % [version, reason])
 			return
@@ -66,11 +68,12 @@ func _ready() -> void:
 		return
 
 	_cleanup_probe()
-	print("TEST PASS — recovery v0..v%d round-trip at its own version; refused/replaced files preserve bytes without blocking rollback" % read_ceiling)
+	print("TEST PASS — recovery v0..v%d loads without churn, real writes contract to v%d, and refused/replaced files preserve bytes without blocking rollback" % [
+		read_ceiling, int(write_version)])
 	get_tree().quit(0)
 
 
-func _check_fixture(version: int, path: String) -> String:
+func _check_fixture(version: int, path: String, write_version: int) -> String:
 	var file := FileAccess.open(path, FileAccess.READ)
 	if file == null:
 		return "fixture is unreadable"
@@ -96,7 +99,7 @@ func _check_fixture(version: int, path: String) -> String:
 		state is not Dictionary
 		or not UpdateDecision.is_int_id((state as Dictionary).get("version"))
 		or int((state as Dictionary).get("version")) != version):
-		return "reader churned recovery v%d to another in-memory schema during expansion" % version
+		return "reader churned recovery v%d before a real write" % version
 	var saved := BootRecovery.save_state(PROBE, state)
 	if not (saved["ok"] as bool):
 		return "historical recovery state could not be re-saved: %s" % str(saved["reason"])
@@ -105,9 +108,10 @@ func _check_fixture(version: int, path: String) -> String:
 	if dropped != "":
 		return "SAVE DROPPED DATA (no-resets law): %s" % dropped
 	if (
-			rewritten is not Dictionary
-			or int((rewritten as Dictionary).get("version", 0)) != version):
-		return "write-back churned recovery v%d to another schema during expansion" % version
+		rewritten is not Dictionary
+		or int((rewritten as Dictionary).get("version", 0)) != max(version, write_version)):
+		return "real write of recovery v%d did not contract to the baked writer v%d" % [
+			version, max(version, write_version)]
 	return ""
 
 
