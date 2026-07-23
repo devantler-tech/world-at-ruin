@@ -54,6 +54,10 @@ var _zone_was_live := false
 ## ruin sites, so a marker there would move the world golden whenever somebody
 ## connected.
 var _replicas: ReplicaView = null
+## The boot-owned exploration state. Vault-v2 names are restored here even when
+## this rollback build does not register or act on a future place yet, so a
+## capability-3 selection applies rather than merely parses the player's state.
+var _discovery := Discovery.new()
 
 func _ready() -> void:
 	# Capture-harness entry for the EXPORTED client: the official export
@@ -156,6 +160,10 @@ func _ready() -> void:
 	# (a newer client's) resolves to null and is skipped — never a crash.
 	var vault = SaveVault.load_saved()
 	if vault is Dictionary:
+		# Validation has already proved this is an array of non-empty strings.
+		# Restore unknown future names too: they must survive in the live
+		# session even when this older build cannot register the place.
+		_discovery.restore(vault.get("discoveries", []))
 		for name: String in SaveVault.attuned(vault):
 			var point = RespawnPoints.resolve(name, world)
 			if point != null:
