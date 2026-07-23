@@ -388,8 +388,9 @@ everything shipped afterwards is held to.
   pilot archetype) from versioned, name-keyed, forward-only recipes, one canonical skeleton per
   archetype. `tests/creature_factory_test` binds every version through
   `tests/data/shipped_creature_recipe_versions.txt` to its matching
-  `tests/data/golden_creature_recipe_v<N>.json`, and CI holds that ledger append-only against the
-  base revision. `server/` is the Go authoritative tier — its **zone tick core** has landed
+  `tests/data/golden_creature_recipe_v<N>.json`; CI runs that scene in a dedicated non-skippable
+  product-law step and holds the ledger append-only against the base revision. `server/` is the Go
+  authoritative tier — its **zone tick core** has landed
   (`server/sim/`, the deterministic fixed-timestep simulation; `server/cmd/zone/`, the runnable
   skeleton), plus its **area-of-interest** query and enter/leave tracker (`server/sim/aoi.go` —
   the seam the replication layer consumes, with its own cross-platform golden) and the

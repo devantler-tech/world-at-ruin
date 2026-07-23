@@ -791,6 +791,12 @@ jobs:
         # step so a stranded save fails loudly here, never buried in the
         # per-stage loop below.
         run: ./tools/run-client-test.sh save_fixture_guard_test "a historical save no longer loads with zero loss"
+      - name: Creature recipe guard (every shipped version has a buildable fixture)
+        # The non-humanoid sibling of the save-fixture guard (#259). Its own
+        # named step keeps the ledger-to-fixture contract loud and prevents a
+        # ci-skip.txt entry from silencing the only runtime check that binds
+        # CreatureFactory.RECIPE_VERSION to shipped history.
+        run: ./tools/run-client-test.sh creature_factory_test "a shipped creature recipe version lost its fixture or no longer builds"
       - name: Save-vault guard (every historical vault loads with zero loss)
         # THE product-law surface for PROGRESSION state (#249, parent #3), the
         # sibling of the save-fixture guard above. Its own named step, outside
@@ -830,9 +836,9 @@ jobs:
         # judged by tools/run-client-test.sh, the same runner the product-law
         # steps above call, so the pass criterion is defined in exactly one
         # place (issue #305).
-        #   - save_fixture_guard_test, save_vault_guard_test,
-        #     boot_recovery_guard_test, vault_restore_boot_test and
-        #     ability_registry_test are deliberately
+        #   - save_fixture_guard_test, creature_factory_test,
+        #     save_vault_guard_test, boot_recovery_guard_test,
+        #     vault_restore_boot_test and ability_registry_test are deliberately
         #     excluded: each runs in its own named step above (the product-law
         #     surfaces, kept loud, separate and NON-SKIPPABLE), so discovering
         #     them here would both run them twice and expose them to ci-skip.
@@ -853,7 +859,7 @@ jobs:
             t=$(basename "$scene" .tscn)
             # Run in their own dedicated steps above — never twice, and never
             # skippable via ci-skip.txt (they are the product-law surfaces).
-            case "$t" in save_fixture_guard_test|save_vault_guard_test|boot_recovery_guard_test|vault_restore_boot_test|ability_registry_test) continue ;; esac
+            case "$t" in save_fixture_guard_test|creature_factory_test|save_vault_guard_test|boot_recovery_guard_test|vault_restore_boot_test|ability_registry_test) continue ;; esac
             if is_skipped "$t"; then
               echo "::notice::skipping ${t} (listed in ${skip_file})"
               continue
