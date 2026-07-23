@@ -168,6 +168,14 @@ For vault version `N`, the expansion pull request must:
 After bake, the contract pull request lets new or changed vaults use version `N`, raises the global
 write capability, and appends that capability to `shipped_save_capability.txt`.
 
+The first progression-vault sequence is capability 3: v0.52.0 shipped the version-2 discovery reader
+while production writes remained at capability 2. With that release retained as a rollback target,
+the later contract build registers `starter_cave` and `wardens_shrine`, observes the real wanderer's
+position, and persists the append-only found set at vault version 2. Empty and attunement-only vaults
+remain version 1; the first actual discovery is what contracts them to version 2. Rewards, quests,
+waypoints and map presentation remain separate children of the exploration roadmap rather than being
+implied by this persistence contract.
+
 ### Boot recovery
 
 The boot-recovery expansion follows the same sequence, with its own read ceiling and write version.

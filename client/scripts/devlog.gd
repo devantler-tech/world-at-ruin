@@ -11,6 +11,16 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
+		"version": "0.55.0",
+		"date": "2026-07-23",
+		"title": "The Reach remembers the places you have found",
+		"notes": [
+			"The starter cave and the Wardens' Shrine are now recorded the first time you reach them. Close the game after walking from one to the other and both places remain part of your history when you return.",
+			"Older characters and shrine attunements are left in their original save shape. The newer discovery shape is written only after there is a real place to remember, and the earlier read-capable release remains available as the safe rollback path.",
+			"This is memory, not yet a reward: there is no map marker, quest, mastery gain or discovery announcement in this slice. Those player-facing uses remain later exploration work.",
+		],
+	},
+	{
 		"version": "0.52.1",
 		"date": "2026-07-23",
 		"title": "Sunlight reaches the thin things from the right side",

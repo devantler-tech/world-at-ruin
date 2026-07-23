@@ -62,9 +62,10 @@ var _pending: Array = []
 ## The name the current seeded boot is exercising.
 var _current := ""
 var _restored := 0
-## The final boot exercises vault-v2 discovery restoration after every shipped
-## attunement has proved its own live path.
-var _testing_discoveries := false
+## The final boots exercise vault-v2 discovery restoration, a real cave-to-
+## shrine discovery write, and a reboot that can only recover the shrine from
+## disk because the wanderer wakes back at the cave.
+var _discovery_phase := ""
 
 
 func _ready() -> void:
@@ -75,7 +76,7 @@ func _ready() -> void:
 ## attuned vault, then boot main.tscn.
 func _begin_boot(seeded: bool, name: String = "") -> void:
 	_seeded = seeded
-	_testing_discoveries = false
+	_discovery_phase = ""
 	_current = name
 	_ticks = 0
 	if _main != null:
@@ -102,7 +103,7 @@ func _begin_boot(seeded: bool, name: String = "") -> void:
 ## capability 3 is safe only when main.gd actually owns and restores the live
 ## tracker a rollback-selected build will use.
 func _begin_discovery_boot() -> void:
-	_testing_discoveries = true
+	_discovery_phase = "restore"
 	_ticks = 0
 	if _main != null:
 		_main.queue_free()
@@ -124,6 +125,25 @@ func _begin_discovery_boot() -> void:
 	add_child(_main)
 
 
+## Start from a genuinely empty vault and let the production scene discover
+## both shipped places. Unlike the seeded reader boot above, this gives the
+## test no persistence help: only main.gd observing the real player and calling
+## the real SaveVault writer can create the v2 document.
+func _begin_discovery_writer_boot() -> void:
+	_discovery_phase = "write"
+	_ticks = 0
+	if _main != null:
+		_main.queue_free()
+		_main = null
+	_save = SaveIsolation.new(PROBE_PATH)
+	if not _save.begin():
+		_fail("save isolation did not take for the discovery writer boot")
+		return
+	SaveVault.clear_refusals_for_test()
+	_main = (load("res://scenes/main.tscn") as PackedScene).instantiate()
+	add_child(_main)
+
+
 func _physics_process(_delta: float) -> void:
 	_ticks += 1
 	var world := _main.get_node_or_null("World") as WorldGen
@@ -132,12 +152,24 @@ func _physics_process(_delta: float) -> void:
 		if _ticks > 10:
 			_fail("main scene did not build World and Wanderer")
 		return
+	# The writer boot starts at the cave, then walks to the shrine. Its reboot
+	# deliberately does NOT repeat this move: finding the shrine after reboot
+	# can therefore only come from the persisted vault.
+	if _discovery_phase == "write" and _ticks == 10:
+		player.global_position = world.shrine_respawn_point()
 	if _ticks != ASSERT_TICK:
 		return
 
-	if _testing_discoveries:
-		_assert_discovery_restore()
-		return
+	match _discovery_phase:
+		"restore":
+			_assert_discovery_restore()
+			return
+		"write":
+			_assert_discovery_write()
+			return
+		"reboot":
+			_assert_discovery_reboot(player, world)
+			return
 
 	var shrine_point := world.shrine_respawn_point()
 	# respawn() is the observable effect: it is what actually moves the wanderer
@@ -217,12 +249,55 @@ func _assert_discovery_restore() -> void:
 	if tracker is not Discovery:
 		_fail("CAPABILITY 3 IS PARSER-ONLY: the production boot owns no Discovery tracker")
 		return
-	var expected: Array[String] = ["future_place", "wardens_shrine"]
+	var expected: Array[String] = ["future_place", "starter_cave", "wardens_shrine"]
 	if (tracker as Discovery).discovered() != expected:
-		_fail("the production boot did not restore the vault-v2 discovery set exactly")
+		_fail("the production boot did not restore the vault-v2 set and observe the starter cave")
 		return
 	if not _save.real_save_untouched():
 		_fail("the discovery restore boot touched the player's real save or vault")
+		return
+	_begin_discovery_writer_boot()
+
+
+## The production scene must have created a v2 vault through the public writer,
+## not merely changed its in-memory tracker. Both stable shipped ids are exact
+## assertions so a renamed place cannot silently strand a player's history.
+func _assert_discovery_write() -> void:
+	var vault = SaveVault.load_saved()
+	if vault is not Dictionary:
+		_fail("the production discovery boot wrote no readable vault")
+		return
+	if vault.get("version") != SaveVault.VAULT_VERSION:
+		_fail("the production discovery boot did not activate vault-v2 writes")
+		return
+	var expected: Array[String] = ["starter_cave", "wardens_shrine"]
+	if vault.get("discoveries", []) != expected:
+		_fail("the cave-to-shrine walk did not persist both stable discovery ids exactly")
+		return
+
+	# Reboot without clearing the probes. The wanderer returns to the cave, so
+	# wardens_shrine cannot be rediscovered by proximity in the second scene.
+	_discovery_phase = "reboot"
+	_ticks = 0
+	_main.queue_free()
+	_main = (load("res://scenes/main.tscn") as PackedScene).instantiate()
+	add_child(_main)
+
+
+func _assert_discovery_reboot(player: Player, world: WorldGen) -> void:
+	if player.global_position.distance_to(world.shrine_respawn_point()) <= WorldGen.SHRINE_CLEAR_RADIUS:
+		_fail("VACUOUS TEST: the rebooted wanderer is still close enough to rediscover the shrine")
+		return
+	var tracker: Variant = null
+	for property: Dictionary in _main.get_property_list():
+		if String(property.get("name", "")) == "_discovery":
+			tracker = _main.get("_discovery")
+			break
+	if tracker is not Discovery or not (tracker as Discovery).is_discovered("wardens_shrine"):
+		_fail("the shrine discovered before logout was not restored by the real reboot")
+		return
+	if not _save.real_save_untouched():
+		_fail("the discovery writer/reboot touched the player's real save or vault")
 		return
 	print(("TEST PASS — %d shipped attunement(s) and vault-v2 discovery state survive "
 		+ "a logout (control woke at %s)") % [_restored, str(_control_spawn)])

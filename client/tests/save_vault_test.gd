@@ -3,15 +3,17 @@ extends Node
 ## sibling of character_persistence_test. Where save_vault_guard_test pins the
 ## forward-only LAW against shipped fixtures, this pins the API's behaviour:
 ##  1. The path seam (WAR_VAULT_PATH) resolves and is inert when unset.
-##  2. An empty vault is valid and carries the baked WRITE version, even while
-##     the reader understands a newer schema.
+##  2. An empty vault stays v1 even after the v2 writer activates: unrelated
+##     state is never rewritten merely to look current.
 ##  3. attune() is additive, idempotent, and does not mutate its input.
 ##  4. attune() preserves fields this build does not use (forward-compat).
-##  5. Save → load round-trips an attunement.
-##  6. persist_attunement() writes through the seam and accumulates.
-##  7. save_to() refuses to REPLACE an unreadable vault, leaves it byte-intact,
+##  5. A discovery write upgrades v1 to v2 without losing state, while an empty
+##     discovery set leaves v1 alone and an existing v2 set only grows.
+##  6. Save → load round-trips an attunement.
+##  7. Both production persistence helpers write through the seam.
+##  8. save_to() refuses to REPLACE an unreadable vault, leaves it byte-intact,
 ##     and cleans up its temp file.
-##  8. Validation refuses each malformed shape, naming the reason.
+##  9. Validation refuses each malformed shape, naming the reason.
 ##
 ## Everything runs against a throwaway path via the seam, so the player's own
 ## user://vault.json is never read or written (no-resets law).
@@ -33,19 +35,22 @@ func _ready() -> void:
 	if SaveVault.vault_path() != PROBE:
 		_fail("WAR_VAULT_PATH override was not honoured")
 		return
+	var vault_api := load("res://scripts/save_vault.gd") as Script
 
-	# 2. An empty vault stays on the baked write version while the reader is
-	# expanded. If empty() followed the read ceiling, this release would
-	# originate v2 before a v2-capable build was the retained rollback target.
+	# 2. The writer can now emit v2, but empty state remains v1. A schema version
+	# describes fields actually present; it is not a "latest client" marker.
 	var empty := SaveVault.empty()
 	if SaveVault.validate(empty) != "":
 		_fail("the empty vault does not validate: %s" % SaveVault.validate(empty))
 		return
-	if int(empty["version"]) != SaveVault.VAULT_VERSION:
-		_fail("the expansion release originated vault v%d instead of keeping the baked v1 writer" % int(empty["version"]))
+	if SaveVault.VAULT_VERSION != 2:
+		_fail("the discovery writer is still capped at vault v%d; expected the baked v2 contract" % SaveVault.VAULT_VERSION)
+		return
+	if int(empty["version"]) != 1:
+		_fail("an empty vault was churned to v%d even though it carries no v2 discovery state" % int(empty["version"]))
 		return
 	if SaveVault.VAULT_READ_VERSION != 2:
-		_fail("the vault reader ceiling is v%d, expected the v2 discovery expansion" % SaveVault.VAULT_READ_VERSION)
+		_fail("the vault reader ceiling is v%d, expected v2" % SaveVault.VAULT_READ_VERSION)
 		return
 	if not SaveVault.attuned(empty).is_empty():
 		_fail("a fresh vault already had an attunement")
@@ -75,9 +80,8 @@ func _ready() -> void:
 		_fail("attune() dropped an attunement name it does not know")
 		return
 
-	# 5. The future v2 discovery shape is readable now, and an ordinary v2
-	# attunement write-back preserves the discovery set byte-for-byte. This is
-	# the rollback guarantee the expansion release exists to establish.
+	# 5. The baked v2 discovery shape remains readable, and an ordinary v2
+	# attunement write-back preserves the discovery set byte-for-byte.
 	var expanded := {
 		"version": 2,
 		"comment": "future discovery writer",
@@ -108,7 +112,52 @@ func _ready() -> void:
 	var legacy := { "version": 1, "attuned": [SaveVault.SHRINE_WARDENS] }
 	var legacy_after := SaveVault.attune(legacy, "second_shrine")
 	if int(legacy_after.get("version", -1)) != 1 or legacy_after.has("discoveries"):
-		_fail("an ordinary v1 edit originated the v2 discovery shape before its writer was activated")
+		_fail("an ordinary v1 attunement originated the v2 discovery shape without discovery state")
+		return
+
+	# The discovery writer is the ONLY operation that contracts a v1 document
+	# to v2. It merges rather than replaces the append-only set, sorts it
+	# deterministically, and preserves every unrelated field.
+	if not vault_api.has_method("record_discoveries"):
+		_fail("the baked discovery reader has no production record_discoveries() writer")
+		return
+	var discovered: Dictionary = vault_api.call(
+		"record_discoveries",
+		legacy,
+		["wardens_shrine", "starter_cave", "wardens_shrine"])
+	if int(discovered.get("version", -1)) != 2:
+		_fail("recording a discovery did not contract the vault to v2")
+		return
+	if discovered.get("discoveries", []) != ["starter_cave", "wardens_shrine"]:
+		_fail("the discovery writer did not produce one sorted append-only set: %s" % str(discovered))
+		return
+	if not SaveVault.is_attuned(discovered, SaveVault.SHRINE_WARDENS):
+		_fail("contracting the discovery writer lost the v1 attunement")
+		return
+	var no_discoveries: Dictionary = vault_api.call("record_discoveries", legacy, [])
+	if int(no_discoveries.get("version", -1)) != 1 or no_discoveries.has("discoveries"):
+		_fail("recording no discoveries churned a v1 vault to v2")
+		return
+	var expanded_again: Dictionary = vault_api.call(
+		"record_discoveries",
+		expanded,
+		["future_place", "starter_cave"])
+	if expanded_again.get("discoveries", []) != [
+		"future_place", "starter_cave", "wardens_shrine"]:
+		_fail("a v2 discovery write replaced or duplicated accepted names: %s" % str(expanded_again))
+		return
+	if String(expanded_again.get("comment", "")) != "future discovery writer":
+		_fail("a v2 discovery write dropped an unrelated accepted field")
+		return
+	var malformed_existing := {
+		"version": 2,
+		"attuned": [],
+		"discoveries": [42],
+	}
+	var refused_discovery_write: Dictionary = vault_api.call(
+		"record_discoveries", malformed_existing, ["starter_cave"])
+	if not refused_discovery_write.is_empty():
+		_fail("the discovery writer laundered malformed existing progression into a valid v2 vault")
 		return
 
 	# 6. Save -> load round-trips.
@@ -139,6 +188,30 @@ func _ready() -> void:
 		_fail("persist_attunement() did not record the second shrine")
 		return
 
+	# Discovery persistence goes through the same production seam and upgrades
+	# the existing v1 vault without losing either attunement.
+	if not vault_api.has_method("persist_discoveries"):
+		_fail("the baked discovery reader has no production persist_discoveries() path")
+		return
+	if not bool(vault_api.call(
+		"persist_discoveries", ["starter_cave", "wardens_shrine"])):
+		_fail("persist_discoveries() failed")
+		return
+	var with_discoveries = SaveVault.load_saved()
+	if with_discoveries is not Dictionary:
+		_fail("the persisted discovery vault did not load")
+		return
+	if int(with_discoveries.get("version", -1)) != 2:
+		_fail("the production discovery write did not stamp vault v2")
+		return
+	if with_discoveries.get("discoveries", []) != ["starter_cave", "wardens_shrine"]:
+		_fail("the production discovery write did not survive its disk round-trip")
+		return
+	if not SaveVault.is_attuned(with_discoveries, SaveVault.SHRINE_WARDENS) \
+			or not SaveVault.is_attuned(with_discoveries, "second_shrine"):
+		_fail("the production discovery write lost existing attunements")
+		return
+
 	# persist_attunement() must also work from nothing — a player's very first
 	# attunement, with no vault on disk yet.
 	_cleanup_probe()
@@ -150,10 +223,10 @@ func _ready() -> void:
 		_fail("the first attunement did not persist")
 		return
 	if int(first.get("version", -1)) != 1 or first.has("discoveries"):
-		_fail("the first production write originated v2 discovery state during the reader-only release")
+		_fail("a first attunement originated v2 despite carrying no discovery state")
 		return
 
-	# 7b. save_to() itself refuses to REPLACE an unreadable vault, independently
+	# 8. save_to() itself refuses to REPLACE an unreadable vault, independently
 	# of whatever the caller checked earlier. A caller's can_write() is a
 	# point-in-time answer; everything between it and the rename is time in which
 	# another process can land a vault this build cannot read. The re-check
@@ -232,7 +305,7 @@ func _ready() -> void:
 
 	_cleanup_probe()
 	OS.set_environment(SaveVault.VAULT_PATH_ENV, "")
-	print("TEST PASS — vault seam, attunement, round-trip and refusals hold")
+	print("TEST PASS — vault seam, attunement, discovery contract, round-trip and refusals hold")
 	get_tree().quit(0)
 
 

@@ -75,9 +75,10 @@ const SAVE_SCHEMA_MIN := 1
 ## adds a savable field. A build claiming to write LESS than it once did is
 ## exactly the stranding the no-resets law forbids.
 ##
-## Capability 2 is the layered recipe form. Its read ceiling baked in v0.50.0;
-## the separate contract release may now let the opt-in creator preview write it.
-const SAVE_CAPABILITY_WRITES := 2
+## Capability 3 is vault-v2 discovery state. Its read ceiling shipped in v0.52.0
+## and is now a retained rollback target, so this separate release may originate
+## the shape without stranding a player who rolls back.
+const SAVE_CAPABILITY_WRITES := 3
 
 ## The highest content capability this build can READ.
 ##
@@ -90,10 +91,8 @@ const SAVE_CAPABILITY_WRITES := 2
 ## needlessly routed away from a pack update despite a valid fallback existing.
 ##
 ## Must always be >= the write capability (a build must read what it writes).
-## Capability 3 is vault-v2 discovery state. This build is its expansion
-## release: SaveVault can read and preserve the field, while the production
-## writer truthfully remains on baked capability 2 until this release becomes
-## the retained rollback target.
+## Capability 3 is vault-v2 discovery state. The v0.52.0 expansion release
+## baked this ceiling before the writer above was activated.
 const SAVE_CAPABILITY_READS := 3
 
 ## The oldest shell this manifest still supports updating FROM.

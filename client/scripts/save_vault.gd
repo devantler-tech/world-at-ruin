@@ -51,13 +51,18 @@ const DEFAULT_PATH := "user://vault.json"
 ## player's progression.
 const VAULT_PATH_ENV := "WAR_VAULT_PATH"
 
-## Schema emitted by production writers. It deliberately stays on v1 during
-## the discovery reader expansion so no path can originate v2 before this build
-## has baked as the retained rollback target.
-const VAULT_VERSION := 1
+## Highest schema emitted by a production writer. v2 is used only when the
+## document actually carries discovery state; an empty or attunement-only vault
+## stays on v1 so old state is never rewritten merely to look current.
+const VAULT_VERSION := 2
+
+## The minimal vault shape. Kept separate from [constant VAULT_VERSION] because
+## a fresh or attunement-only document has no v2 field to describe.
+const BASE_VAULT_VERSION := 1
 
 ## Highest vault schema this build can READ. Kept separate from the production
-## writer because v2 carries discovery state and must bake read-first.
+## writer because v2 carried discovery state through its read-first bake before
+## [constant VAULT_VERSION] was raised by the later contract release.
 const VAULT_READ_VERSION := 2
 
 ## The vault format, exhaustively. Unknown top-level fields are refused for the
@@ -253,10 +258,10 @@ static func clear_refusals_for_test() -> void:
 	_refused.clear()
 
 
-## An empty vault at the current version — the starting document for a player
-## who has never attuned anything.
+## A minimal v1 vault — the starting document for a player who has never stored
+## discovery state. Old state is never restamped merely to look current.
 static func empty() -> Dictionary:
-	return { "version": VAULT_VERSION, "attuned": [] }
+	return { "version": BASE_VAULT_VERSION, "attuned": [] }
 
 
 ## The attuned respawn-point names in `doc`, in shipped order.
@@ -285,6 +290,35 @@ static func attune(doc: Dictionary, name: String) -> Dictionary:
 	return next
 
 
+## `doc` with every valid name in `names` added to its append-only discovery
+## set. A v1 document contracts to v2 only when at least one discovery exists;
+## an empty set leaves old state byte-shaped as v1. Existing v2 names this build
+## does not register are preserved, because a rollback write may never erase
+## progression introduced by a newer client.
+static func record_discoveries(doc: Dictionary, names: Array) -> Dictionary:
+	var reason := validate(doc)
+	if not reason.is_empty():
+		push_error("SaveVault: refusing to add discoveries to an invalid vault — %s" % reason)
+		return {}
+	var next: Dictionary = doc.duplicate(true)
+	var merged: Array[String] = []
+	for raw: Variant in next.get("discoveries", []):
+		if raw is String and not (raw as String).is_empty() and raw not in merged:
+			merged.append(raw)
+	for raw: Variant in names:
+		if raw is not String or (raw as String).is_empty():
+			push_error("SaveVault: refusing an invalid discovery name")
+			return {}
+		if raw not in merged:
+			merged.append(raw)
+	if merged.is_empty() and not next.has("discoveries"):
+		return next
+	merged.sort()
+	next["version"] = VAULT_VERSION
+	next["discoveries"] = merged
+	return next
+
+
 static func load_saved() -> Variant:
 	return load_from(vault_path())
 
@@ -310,3 +344,20 @@ static func persist_attunement(name: String) -> bool:
 	if current is not Dictionary:
 		return false
 	return save_to(path, attune(current, name))
+
+
+## Add the live tracker's complete found set and persist it at the active vault
+## path. False degrades to session-only discovery; it never blocks play and it
+## never replaces a vault this build refused to read.
+static func persist_discoveries(names: Array) -> bool:
+	var path := vault_path()
+	if not can_write(path):
+		push_error("SaveVault: %s exists but is unreadable — refusing to overwrite it" % path)
+		return false
+	var current = load_or_empty()
+	if current is not Dictionary:
+		return false
+	var next := record_discoveries(current, names)
+	if next.is_empty():
+		return false
+	return save_to(path, next)

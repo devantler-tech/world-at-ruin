@@ -39,7 +39,7 @@ func _ready() -> void:
 	_test_values_track_their_sources()
 	_test_no_delivery_is_published()
 	_test_read_capability_covers_what_is_written()
-	_test_discovery_reader_expansion_is_advertised()
+	_test_discovery_writer_activation_is_advertised()
 	_test_save_floor_has_its_golden_fixture()
 	_test_save_capability_matches_its_ledger()
 	_test_export_is_still_monolithic()
@@ -160,15 +160,15 @@ func _test_read_capability_covers_what_is_written() -> void:
 			UpdateManifest.SAVE_CAPABILITY_READS, UpdateManifest.SAVE_CAPABILITY_WRITES])
 
 
-## Capability 3 is the vault-v2 discovery field. This release is deliberately
-## the expansion half: it must advertise that a rollback target can READ the
-## shape while truthfully keeping the production writer on baked capability 2.
-func _test_discovery_reader_expansion_is_advertised() -> void:
+## Capability 3 is the vault-v2 discovery field. Its v0.52.0 reader release is
+## now a retained rollback target, so this later build must advertise the
+## matching writer instead of hiding the state it now originates.
+func _test_discovery_writer_activation_is_advertised() -> void:
 	if UpdateManifest.SAVE_CAPABILITY_READS != 3:
-		_fail("the discovery expansion reads capability %d, expected 3" % UpdateManifest.SAVE_CAPABILITY_READS)
+		_fail("the discovery contract reads capability %d, expected 3" % UpdateManifest.SAVE_CAPABILITY_READS)
 		return
-	if UpdateManifest.SAVE_CAPABILITY_WRITES != 2:
-		_fail("the discovery expansion activated write capability %d before its reader baked; expected 2" % UpdateManifest.SAVE_CAPABILITY_WRITES)
+	if UpdateManifest.SAVE_CAPABILITY_WRITES != 3:
+		_fail("the baked discovery reader still advertises write capability %d; expected 3" % UpdateManifest.SAVE_CAPABILITY_WRITES)
 
 
 ## The declared save floor must be the OLDEST SCHEMA THAT EVER SHIPPED — not
