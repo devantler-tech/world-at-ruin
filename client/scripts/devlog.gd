@@ -11,7 +11,7 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
-		"version": "0.51.2",
+		"version": "0.51.4",
 		"date": "2026-07-23",
 		"title": "Sunlight reaches the thin things from the right side",
 		"notes": [
@@ -19,6 +19,16 @@ const ENTRIES: Array[Dictionary] = [
 			"Each visible side now faces the light honestly. The sun-facing leaves and blades take the full warm key; the far side keeps the weaker glow of light passing through it instead of becoming a black cutout.",
 			"The ash in the hollows no longer throws almost all of its scattered light toward the horizon. It keeps enough of that sunward shaft to show depth, but direct light now reveals the cloud from the source-facing side too.",
 			"Both responses come from the live sun rather than a stored direction, so they move when the light moves. The Reach's sun itself is still fixed in the sky — a full day-and-night cycle remains future work.",
+		],
+	},
+	{
+		"version": "0.51.2",
+		"date": "2026-07-23",
+		"title": "The starter cave now belongs to the ground it rises from",
+		"notes": [
+			"The weathered rock around the cave entrance used to end in a clean material line, as if the whole massif had been placed on top of the Reach. Its lowest band now takes on the exact colour and wear of the ash or stone it meets there.",
+			"The blend follows the faceted ground you can actually walk on and fades away up the rock. Cave walls, the far side of the massif and every collision surface are unchanged.",
+			"The material seam is softer, but the massif still has one smooth generated outline. It still needs loose rock, drifted ash and sparse growth around its foot before the cave has the layered, buried silhouette of the reference.",
 		],
 	},
 	{
