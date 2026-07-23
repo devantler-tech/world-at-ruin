@@ -3,3 +3,4 @@
 # VAULT_VERSION means adding its line here AND its golden_vault_v<N>.json;
 # removing a line is declaring shipped progression disposable, which is forbidden.
 1
+2

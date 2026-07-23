@@ -6,10 +6,10 @@ extends Node
 ##
 ## Discovers every tests/data/golden_vault_v<N>.json by listing the directory —
 ## never a hardcoded list — so a fixture cannot silently fall out of coverage,
-## and FAILS when any version 1..VAULT_VERSION has no fixture, so a vault
+## and FAILS when any version 1..VAULT_READ_VERSION has no fixture, so a vault
 ## version bump cannot ship without its golden. The required range is anchored
 ## by tests/data/shipped_vault_versions.txt, an APPEND-ONLY ledger of every
-## version that ever shipped — lowering VAULT_VERSION or deleting a fixture
+## version that ever shipped — lowering VAULT_READ_VERSION or deleting a fixture
 ## cannot pass without also editing the ledger, which is the explicit,
 ## reviewable act of breaking the law.
 ##
@@ -23,10 +23,13 @@ extends Node
 ##  4. It survives a WRITE-BACK round-trip through attune(): re-saving a loaded
 ##     vault preserves every field and name, including ones this build does not
 ##     use. Load-only checking cannot see a save path that drops them.
+##  5. A v2 fixture's discoveries restore through the real Discovery tracker,
+##     proving the expansion has an application path rather than parser-only
+##     support.
 ##
 ## Then the LIVE-NAME law (added after review — the gap a zero-loss guard cannot
 ## see on its own):
-##  5. Every attunement name in every shipped fixture, and every name in the
+##  6. Every attunement name in every shipped fixture, and every name in the
 ##     append-only tests/data/shipped_attunements.txt ledger, is still
 ##     RECOGNISED by this build (SaveVault.KNOWN_ATTUNEMENTS). A byte round-trip
 ##     proves a name survives; it does not prove the game still acts on it.
@@ -76,26 +79,26 @@ func _ready() -> void:
 		_fail("shipped_vault_versions.txt is missing, empty, or malformed — the forward-only ledger must exist")
 		return
 	var max_shipped: int = shipped[shipped.size() - 1]
-	if SaveVault.VAULT_VERSION < max_shipped:
-		_fail("VAULT VERSION ROLLBACK (no-resets law): VAULT_VERSION is %d but v%d already shipped per the ledger" % [
-			SaveVault.VAULT_VERSION, max_shipped])
+	if SaveVault.VAULT_READ_VERSION < max_shipped:
+		_fail("VAULT VERSION ROLLBACK (no-resets law): VAULT_READ_VERSION is %d but v%d already shipped per the ledger" % [
+			SaveVault.VAULT_READ_VERSION, max_shipped])
 		return
-	if SaveVault.VAULT_VERSION > max_shipped:
-		_fail("VAULT_VERSION is %d but the ledger stops at v%d — append the new version to shipped_vault_versions.txt with its fixture" % [
-			SaveVault.VAULT_VERSION, max_shipped])
+	if SaveVault.VAULT_READ_VERSION > max_shipped:
+		_fail("VAULT_READ_VERSION is %d but the ledger stops at v%d — append the new version to shipped_vault_versions.txt with its fixture" % [
+			SaveVault.VAULT_READ_VERSION, max_shipped])
 		return
-	for version in range(1, SaveVault.VAULT_VERSION + 1):
+	for version in range(1, SaveVault.VAULT_READ_VERSION + 1):
 		if version not in shipped:
 			_fail("the ledger has a hole: v%d is missing from shipped_vault_versions.txt" % version)
 			return
 		if version not in fixtures:
-			_fail("VAULT_VERSION is %d but golden_vault_v%d.json does not exist — a vault version may not ship without its fixture" % [
-				SaveVault.VAULT_VERSION, version])
+			_fail("VAULT_READ_VERSION is %d but golden_vault_v%d.json does not exist — a vault version may not ship without its fixture" % [
+				SaveVault.VAULT_READ_VERSION, version])
 			return
 	for version: int in fixtures:
-		if version > SaveVault.VAULT_VERSION:
-			_fail("fixture golden_vault_v%d.json is newer than this client (VAULT_VERSION %d)" % [
-				version, SaveVault.VAULT_VERSION])
+		if version > SaveVault.VAULT_READ_VERSION:
+			_fail("fixture golden_vault_v%d.json is newer than this client (VAULT_READ_VERSION %d)" % [
+				version, SaveVault.VAULT_READ_VERSION])
 			return
 
 	# The fixture loop writes and re-saves through PROBE; start from a clean
@@ -121,7 +124,7 @@ func _ready() -> void:
 
 	_cleanup_probe()
 	print("TEST PASS — %d historical vaults (v1..v%d) load and re-save with zero loss" % [
-		versions.size(), SaveVault.VAULT_VERSION])
+		versions.size(), SaveVault.VAULT_READ_VERSION])
 	get_tree().quit(0)
 
 
@@ -149,6 +152,22 @@ func _check_fixture(version: int, path: String) -> String:
 	var lost := _diff(expected, loaded, "vault")
 	if lost != "":
 		return "LOAD LOST DATA (no-resets law): %s" % lost
+
+	# Reader support is not enough unless the application can act on the shape.
+	# Feed the fixture through the real tracker and prove every persisted name,
+	# including an unknown future one, enters its deterministic found set.
+	if version >= 2:
+		var tracker := Discovery.new()
+		var persisted: Array = loaded.get("discoveries", [])
+		if not tracker.restore(persisted):
+			return "the Discovery application path refused a valid v2 fixture"
+		var expected_discoveries: Array[String] = []
+		for name: String in persisted:
+			if name not in expected_discoveries:
+				expected_discoveries.append(name)
+		expected_discoveries.sort()
+		if tracker.discovered() != expected_discoveries:
+			return "the Discovery application path did not restore the v2 fixture exactly"
 
 	# Write-back: re-saving a loaded vault must preserve everything, including
 	# fields and names this build does not itself use. A load-only check cannot
@@ -249,12 +268,12 @@ func _check_refusal_laws(fixture_path: String) -> String:
 
 	# 5. A vault from a NEWER client is refused, never half-applied.
 	var future: Dictionary = (doc as Dictionary).duplicate(true)
-	future["version"] = SaveVault.VAULT_VERSION + 1
+	future["version"] = SaveVault.VAULT_READ_VERSION + 1
 	if not _write_probe(JSON.stringify(future)):
 		return "refusal check: could not write the probe"
 	if SaveVault.load_from(PROBE) != null:
 		return "A NEWER-VERSION VAULT LOADED (no-resets law): v%d must be refused by a v%d client" % [
-			SaveVault.VAULT_VERSION + 1, SaveVault.VAULT_VERSION]
+			SaveVault.VAULT_READ_VERSION + 1, SaveVault.VAULT_READ_VERSION]
 
 	# 6. Refuse-to-read implies refuse-to-write: the unreadable newer vault
 	# still on the probe must NOT be writable, or a downgrade would destroy

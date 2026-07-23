@@ -3,7 +3,8 @@ extends Node
 ## sibling of character_persistence_test. Where save_vault_guard_test pins the
 ## forward-only LAW against shipped fixtures, this pins the API's behaviour:
 ##  1. The path seam (WAR_VAULT_PATH) resolves and is inert when unset.
-##  2. An empty vault is valid and carries the current version.
+##  2. An empty vault is valid and carries the baked WRITE version, even while
+##     the reader understands a newer schema.
 ##  3. attune() is additive, idempotent, and does not mutate its input.
 ##  4. attune() preserves fields this build does not use (forward-compat).
 ##  5. Save → load round-trips an attunement.
@@ -33,13 +34,18 @@ func _ready() -> void:
 		_fail("WAR_VAULT_PATH override was not honoured")
 		return
 
-	# 2. An empty vault is a valid document at the current version.
+	# 2. An empty vault stays on the baked write version while the reader is
+	# expanded. If empty() followed the read ceiling, this release would
+	# originate v2 before a v2-capable build was the retained rollback target.
 	var empty := SaveVault.empty()
 	if SaveVault.validate(empty) != "":
 		_fail("the empty vault does not validate: %s" % SaveVault.validate(empty))
 		return
 	if int(empty["version"]) != SaveVault.VAULT_VERSION:
-		_fail("the empty vault is not at VAULT_VERSION")
+		_fail("the expansion release originated vault v%d instead of keeping the baked v1 writer" % int(empty["version"]))
+		return
+	if SaveVault.VAULT_READ_VERSION != 2:
+		_fail("the vault reader ceiling is v%d, expected the v2 discovery expansion" % SaveVault.VAULT_READ_VERSION)
 		return
 	if not SaveVault.attuned(empty).is_empty():
 		_fail("a fresh vault already had an attunement")
@@ -69,7 +75,43 @@ func _ready() -> void:
 		_fail("attune() dropped an attunement name it does not know")
 		return
 
-	# 5. Save -> load round-trips.
+	# 5. The future v2 discovery shape is readable now, and an ordinary v2
+	# attunement write-back preserves the discovery set byte-for-byte. This is
+	# the rollback guarantee the expansion release exists to establish.
+	var expanded := {
+		"version": 2,
+		"comment": "future discovery writer",
+		"attuned": [SaveVault.SHRINE_WARDENS],
+		"discoveries": ["starter_cave", "wardens_shrine"],
+	}
+	var expanded_reason := SaveVault.validate(expanded)
+	if expanded_reason != "":
+		_fail("the v2 discovery expansion was refused: %s" % expanded_reason)
+		return
+	var expanded_after := SaveVault.attune(expanded, "second_shrine")
+	if expanded_after.get("discoveries", []) != expanded["discoveries"]:
+		_fail("an ordinary v2 attunement write-back changed or dropped discovery state")
+		return
+	if not SaveVault.save_to(PROBE, expanded_after):
+		_fail("saving an already-present v2 vault failed")
+		return
+	var expanded_loaded = SaveVault.load_from(PROBE)
+	if expanded_loaded is not Dictionary:
+		_fail("the re-saved v2 vault did not load")
+		return
+	if expanded_loaded.get("discoveries", []) != expanded["discoveries"]:
+		_fail("the v2 discovery set did not survive a disk round-trip")
+		return
+
+	# The expansion must not leak into old state: loading and attuning a v1
+	# document leaves it v1 and never invents the optional v2 field.
+	var legacy := { "version": 1, "attuned": [SaveVault.SHRINE_WARDENS] }
+	var legacy_after := SaveVault.attune(legacy, "second_shrine")
+	if int(legacy_after.get("version", -1)) != 1 or legacy_after.has("discoveries"):
+		_fail("an ordinary v1 edit originated the v2 discovery shape before its writer was activated")
+		return
+
+	# 6. Save -> load round-trips.
 	if not SaveVault.save_to(PROBE, once):
 		_fail("saving a vault failed")
 		return
@@ -81,7 +123,7 @@ func _ready() -> void:
 		_fail("the round-trip lost the attunement")
 		return
 
-	# 6. persist_attunement() goes through the seam and accumulates a second
+	# 7. persist_attunement() goes through the seam and accumulates a second
 	# name without losing the first.
 	if not SaveVault.persist_attunement("second_shrine"):
 		_fail("persist_attunement() failed")
@@ -107,8 +149,11 @@ func _ready() -> void:
 	if first is not Dictionary or not SaveVault.is_attuned(first, SaveVault.SHRINE_WARDENS):
 		_fail("the first attunement did not persist")
 		return
+	if int(first.get("version", -1)) != 1 or first.has("discoveries"):
+		_fail("the first production write originated v2 discovery state during the reader-only release")
+		return
 
-	# 6b. save_to() itself refuses to REPLACE an unreadable vault, independently
+	# 7b. save_to() itself refuses to REPLACE an unreadable vault, independently
 	# of whatever the caller checked earlier. A caller's can_write() is a
 	# point-in-time answer; everything between it and the rename is time in which
 	# another process can land a vault this build cannot read. The re-check
@@ -141,7 +186,7 @@ func _ready() -> void:
 	_cleanup_probe()
 	SaveVault.clear_refusals_for_test()
 
-	# 7b. The data layer and the behaviour layer must not drift: every name
+	# 8b. The data layer and the behaviour layer must not drift: every name
 	# SaveVault claims to know must have a RespawnPoints branch, and vice versa.
 	# Without this, a name could be added to the ledger and KNOWN_ATTUNEMENTS
 	# while nothing ever restored it — every guard green, the attunement dead.
@@ -155,15 +200,19 @@ func _ready() -> void:
 			% [str(known), str(resolvable)])
 		return
 
-	# 8. Validation refuses each malformed shape.
+	# 9. Validation refuses each malformed shape.
 	var refusals := {
 		"no version": {},
 		"non-integer version": { "version": "1" },
 		"zero version": { "version": 0 },
-		"future version": { "version": SaveVault.VAULT_VERSION + 1 },
+		"future version": { "version": SaveVault.VAULT_READ_VERSION + 1 },
 		"unknown field": { "version": 1, "loot": {} },
+		"discoveries on v1": { "version": 1, "discoveries": [] },
 		"attuned not an array": { "version": 1, "attuned": {} },
 		"attuned entry not a string": { "version": 1, "attuned": [7] },
+		"discoveries not an array": { "version": 2, "discoveries": {} },
+		"discovery entry not a string": { "version": 2, "discoveries": [7] },
+		"empty discovery name": { "version": 2, "discoveries": [""] },
 	}
 	for label: String in refusals:
 		if SaveVault.validate(refusals[label]) == "":
@@ -176,6 +225,9 @@ func _ready() -> void:
 		return
 	if SaveVault.validate({ "version": 1, "comment": "x", "attuned": ["a"] }) != "":
 		_fail("validation refused a fully-populated valid vault")
+		return
+	if SaveVault.validate({ "version": 2, "discoveries": ["starter_cave"] }) != "":
+		_fail("validation refused a valid v2 discovery vault")
 		return
 
 	_cleanup_probe()
