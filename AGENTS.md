@@ -402,12 +402,16 @@ everything shipped afterwards is held to.
   (`server/zonesock/` — WebSocket over TLS per `docs/design/zone-transport.md`, one codec message
   per binary frame: token-gated fail-closed admission, bounded send queue with snapshot resync on
   overflow, write/idle deadlines, hard inbound size cap; opt-in via `zone -listen`, off by
-  default), and the **combat first slice** (`server/sim/combat.go` — the telegraph cast
+  default), the **Agones lifecycle** (`server/agones/` — Ready/Health/Shutdown through the
+  official SDK, opt-in and default-off), the first **Nakama identity boundary**
+  (`server/nakamaauth/` — verifies a player session through Nakama's generated gRPC `GetAccount`
+  API and returns only the authenticated user ID; allocation/handoff remains a later child), and
+  the **combat first slice** (`server/sim/combat.go` — the telegraph cast
   lifecycle: painted at cast start, resolved once after a tick-counted cast time against
   positions at resolution, plus a stationary mob AI that aggros the nearest entity in range and
   casts a dodgeable circle; hit records only — damage/health, threat, chase AI and cast
-  replication are later children — with its own cross-platform golden), with the Agones/Nakama
-  layers arriving as later children of the server-foundation
+  replication are later children — with its own cross-platform golden), with the Nakama
+  allocation and persistence layers arriving as later children of the server-foundation
   epic (#4); `deploy/` (platform manifests) arrives later per the roadmap.
 - **Changing any persisted player-data format:** follow the
   [forward-only save-data migration contract](docs/design/save-data.md). It defines the staged
