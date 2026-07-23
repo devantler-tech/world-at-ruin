@@ -11,7 +11,7 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
-		"version": "0.51.4",
+		"version": "0.52.1",
 		"date": "2026-07-23",
 		"title": "Sunlight reaches the thin things from the right side",
 		"notes": [
