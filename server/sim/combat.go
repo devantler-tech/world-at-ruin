@@ -52,6 +52,11 @@ const maxCastTicks = 30 * TickHz
 // bound as maxCastTicks: generous for real design, hostile to garbage.
 const maxCooldownTicks = 600 * TickHz
 
+// minChaseSpeedMM is the smallest positive chase speed the integer movement
+// pass can represent on an axis: mm/s divided by TickHz must move at least one
+// millimetre. Slower positive configuration is rounded up at ingestion.
+const minChaseSpeedMM = TickHz
+
 // maxHitRecords bounds the pending hit log. The log is meant to be drained
 // every tick by the consumer (replication, tests); the bound is the safety
 // net for a consumer that stops draining, so an unattended zone cannot grow
@@ -69,16 +74,16 @@ type MobParams struct {
 	// Zero aggros nothing.
 	AggroRadiusMM int64
 
-	// CastRangeMM is how close the mob must be before it may begin a cast when
-	// World.MobChase is enabled. Clamped into [0, AggroRadiusMM], which keeps
-	// the squared-distance comparison overflow-safe and prevents a cast range
-	// that extends beyond acquisition.
+	// CastRangeMM is the allowed horizontal gap between the mob's and target's
+	// capsule surfaces before the mob may begin a cast when World.MobChase is
+	// enabled. Clamped into [0, AggroRadiusMM]; zero means capsule contact,
+	// not overlapping centres.
 	CastRangeMM int64
 
 	// ChaseSpeedMM is the server-authored horizontal chase speed in mm/s when
-	// World.MobChase is enabled. Clamped into
-	// [0, maxIntentComponentMM]; the entity's own MaxSpeed remains the final
-	// movement cap in the ordinary integration path.
+	// World.MobChase is enabled. Zero stays zero; a positive value is clamped
+	// into [minChaseSpeedMM, maxIntentComponentMM]. The entity's own MaxSpeed
+	// remains the final movement cap in the ordinary integration path.
 	ChaseSpeedMM int64
 
 	// CastTicks is how many ticks pass between painting the circle and
@@ -119,6 +124,11 @@ type mobState struct {
 	// nextCastTick is the earliest tick a new cast may start (cooldown gate,
 	// measured from the previous cast's START).
 	nextCastTick uint64
+
+	// chaseIntentOwned records that the entity's current intent was authored
+	// by this AI. Public SetIntent clears ownership, so disabling MobChase can
+	// remove stale AI movement without erasing a caller's replacement input.
+	chaseIntentOwned bool
 }
 
 // ActiveCast is one painted, not-yet-resolved telegraph. The shape is
@@ -152,10 +162,12 @@ type TelegraphHit struct {
 }
 
 // AddMob registers an existing entity as a caster with the given (clamped)
-// parameters. It panics on an unknown entity or a duplicate registration,
-// mirroring Add: both are programming errors and silently accepting either
-// would corrupt determinism. Registered mobs remain stationary casters unless
-// World.MobChase is explicitly enabled.
+// parameters. It panics on an unknown entity, a duplicate registration, or a
+// positive chase configuration whose entity movement cap is below one
+// representable millimetre per tick; each is a programming error that must
+// fail at ingestion rather than become a silently frozen encounter. A zero
+// MaxSpeed remains the explicit pinned-actor configuration. Registered mobs
+// remain stationary casters unless World.MobChase is explicitly enabled.
 func (w *World) AddMob(id EntityID, p MobParams) {
 	if w.ents[id] == nil {
 		panic("sim: AddMob for unknown entity")
@@ -166,6 +178,12 @@ func (w *World) AddMob(id EntityID, p MobParams) {
 	p.AggroRadiusMM = clampAxis(p.AggroRadiusMM, 0, maxInterestRadiusMM)
 	p.CastRangeMM = clampAxis(p.CastRangeMM, 0, p.AggroRadiusMM)
 	p.ChaseSpeedMM = clampAxis(p.ChaseSpeedMM, 0, maxIntentComponentMM)
+	if p.ChaseSpeedMM > 0 && p.ChaseSpeedMM < minChaseSpeedMM {
+		p.ChaseSpeedMM = minChaseSpeedMM
+	}
+	if p.ChaseSpeedMM > 0 && w.ents[id].MaxSpeed > 0 && w.ents[id].MaxSpeed < minChaseSpeedMM {
+		panic("sim: mob MaxSpeed cannot represent configured chase movement")
+	}
 	p.CastTicks = clampTicks(p.CastTicks, minCastTicks, maxCastTicks)
 	p.CooldownTicks = clampTicks(p.CooldownTicks, 0, maxCooldownTicks)
 	p.CircleRadiusMM = clampExtent(p.CircleRadiusMM)
@@ -282,19 +300,19 @@ func (w *World) decideMobCasts() {
 		st := w.mobs[id]
 		if st.inFlight {
 			if w.MobChase {
-				w.SetIntent(id, Vec3{})
+				w.setMobChaseIntent(id, Vec3{})
 			}
 			continue
 		}
 		target := w.nearestTargetable(id, st.params.AggroRadiusMM)
 		if w.MobChase {
 			if target == nil {
-				w.SetIntent(id, Vec3{})
-			} else if horizontalDist2(w.ents[id].Pos, target.Pos) > st.params.CastRangeMM*st.params.CastRangeMM {
-				w.SetIntent(id, mobChaseIntent(w.ents[id], target, st.params.ChaseSpeedMM))
+				w.setMobChaseIntent(id, Vec3{})
+			} else if !mobWithinCastRange(w.ents[id], target, st.params.CastRangeMM) {
+				w.setMobChaseIntent(id, mobChaseIntent(w.ents[id], target, st.params.ChaseSpeedMM))
 				continue
 			} else {
-				w.SetIntent(id, Vec3{})
+				w.setMobChaseIntent(id, Vec3{})
 			}
 		}
 		if w.Tick < st.nextCastTick {
@@ -320,8 +338,25 @@ func (w *World) decideMobCasts() {
 // tick cannot leak through as one final movement step.
 func (w *World) clearMobChaseIntents() {
 	for _, id := range w.mobOrder {
-		w.SetIntent(id, Vec3{})
+		st := w.mobs[id]
+		if !st.chaseIntentOwned {
+			continue
+		}
+		w.ents[id].Intent = Vec3{}
+		st.chaseIntentOwned = false
 	}
+}
+
+// setMobChaseIntent marks nonzero movement as AI-owned. It deliberately writes
+// the entity directly instead of calling public SetIntent, whose contract is
+// caller input and therefore clears this ownership bit.
+func (w *World) setMobChaseIntent(id EntityID, intent Vec3) {
+	e := w.ents[id]
+	if e == nil {
+		return
+	}
+	e.Intent = sanitizeIntent(intent)
+	w.mobs[id].chaseIntentOwned = e.Intent != (Vec3{})
 }
 
 // mobChaseIntent returns the horizontal velocity that closes toward target at
@@ -334,10 +369,35 @@ func mobChaseIntent(mob, target *Entity, chaseSpeedMM int64) Vec3 {
 	delta := target.Pos.Sub(mob.Pos)
 	delta.Y = 0
 	effectiveSpeed := min(chaseSpeedMM, mob.MaxSpeed)
-	return clampSpeed(Vec3{
+	intent := clampSpeed(Vec3{
 		X: delta.X * TickHz,
 		Z: delta.Z * TickHz,
 	}, effectiveSpeed)
+	if intent.X/TickHz != 0 || intent.Z/TickHz != 0 || effectiveSpeed < minChaseSpeedMM {
+		return intent
+	}
+
+	// At the smallest representable speed a diagonal normalisation can leave
+	// both components below one mm/tick. Take a deterministic one-axis
+	// staircase step instead: the dominant remaining axis wins, X wins a tie.
+	if delta.X*delta.X >= delta.Z*delta.Z {
+		if delta.X < 0 {
+			effectiveSpeed = -effectiveSpeed
+		}
+		return Vec3{X: effectiveSpeed}
+	}
+	if delta.Z < 0 {
+		effectiveSpeed = -effectiveSpeed
+	}
+	return Vec3{Z: effectiveSpeed}
+}
+
+// mobWithinCastRange measures the gap between capsule surfaces, not centres.
+// This makes a zero range reachable at contact after separation has enforced
+// the two radii. Every term is ingestion-bounded, so reach² is overflow-safe.
+func mobWithinCastRange(mob, target *Entity, castRangeMM int64) bool {
+	reachMM := castRangeMM + mob.Radius + target.Radius
+	return horizontalDist2(mob.Pos, target.Pos) <= reachMM*reachMM
 }
 
 // nearestTargetable returns the closest non-mob entity within radiusMM of the

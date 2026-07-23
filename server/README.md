@@ -83,9 +83,13 @@ zone/dungeon server:
     first movement mode. Off preserves the original stationary caster and
     clears any AI-owned intent before movement. On, the mob writes horizontal
     intent through the existing deterministic kinematic path at
-    `MobParams.ChaseSpeedMM` until it reaches the inclusive
-    `MobParams.CastRangeMM`, then stops and paints; target loss and an in-flight
-    cast also stop it. Both parameters are clamped at `AddMob` ingestion.
+    `MobParams.ChaseSpeedMM` until the gap between capsule surfaces reaches the
+    inclusive `MobParams.CastRangeMM` (zero means contact), then stops and
+    paints; target loss and an in-flight cast also stop it. Both parameters are
+    clamped at `AddMob` ingestion, including a one-millimetre-per-tick floor
+    for positive chase speed; a deterministic dominant-axis staircase keeps
+    the floor moving diagonally. Intent ownership distinguishes AI movement
+    from caller input, so disabling chase clears only stale AI movement.
     The cast resolves a fixed number of ticks later against where everyone is
     standing **at resolution** (leave and wander back in and you are still
     hit), excluding the caster, into a bounded `TelegraphHit` record log the

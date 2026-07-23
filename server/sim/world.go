@@ -259,6 +259,9 @@ func (w *World) Count() int { return len(w.order) }
 func (w *World) SetIntent(id EntityID, intent Vec3) {
 	if e := w.ents[id]; e != nil {
 		e.Intent = sanitizeIntent(intent)
+		if st := w.mobs[id]; st != nil {
+			st.chaseIntentOwned = false
+		}
 	}
 }
 

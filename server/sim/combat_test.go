@@ -568,6 +568,82 @@ func TestMobChaseFlagDisableClearsAuthoredIntentBeforeMovement(t *testing.T) {
 	}
 }
 
+func TestMobChaseFlagOffPreservesCallerIntent(t *testing.T) {
+	w := newChaseWorld(true)
+	w.Step()
+	if w.Get(100).Intent == (Vec3{}) {
+		t.Fatal("fixture never authored chase intent")
+	}
+
+	w.MobChase = false
+	w.SetIntent(100, Vec3{Z: 3_000})
+	w.Step()
+	if got := w.Get(100).Pos; got != (Vec3{Z: 100}) {
+		t.Fatalf("flag off erased caller-owned mob movement: got %+v", got)
+	}
+	if got := w.Get(100).Intent; got != (Vec3{Z: 3_000}) {
+		t.Fatalf("flag off replaced caller-owned intent: got %+v", got)
+	}
+}
+
+func TestMobChaseCastsAtCapsuleContact(t *testing.T) {
+	w := NewWorld(combatBounds)
+	w.MobChase = true
+	w.Add(Entity{ID: 100, MaxSpeed: 3_000, Radius: 300})
+	w.Add(Entity{ID: 1, Pos: Vec3{X: 2_000}, Radius: 300})
+	w.AddMob(100, MobParams{
+		AggroRadiusMM: 10_000,
+		CastRangeMM:   0,
+		ChaseSpeedMM:  3_000,
+		CastTicks:     2,
+	})
+
+	for range 100 {
+		w.Step()
+		if len(w.ActiveCasts()) > 0 {
+			return
+		}
+	}
+	t.Fatalf("zero-range chaser never cast at capsule contact: mob=%+v target=%+v", w.Get(100).Pos, w.Get(1).Pos)
+}
+
+func TestMobChaseLowSpeedDiagonalStillAdvances(t *testing.T) {
+	w := NewWorld(combatBounds)
+	w.MobChase = true
+	w.Add(Entity{ID: 100, MaxSpeed: TickHz})
+	w.Add(Entity{ID: 1, Pos: Vec3{X: 40, Z: 40}})
+	w.AddMob(100, MobParams{
+		AggroRadiusMM: 1_000,
+		CastRangeMM:   0,
+		ChaseSpeedMM:  1,
+		CastTicks:     2,
+	})
+
+	startDist2 := horizontalDist2(w.Get(100).Pos, w.Get(1).Pos)
+	steps(w, 10)
+	if got := horizontalDist2(w.Get(100).Pos, w.Get(1).Pos); got >= startDist2 {
+		t.Fatalf("low-speed diagonal chase made no progress: distance² stayed at %d", got)
+	}
+	for range 100 {
+		if len(w.ActiveCasts()) > 0 {
+			return
+		}
+		w.Step()
+	}
+	t.Fatalf("low-speed diagonal chaser never reached its target: mob=%+v target=%+v", w.Get(100).Pos, w.Get(1).Pos)
+}
+
+func TestAddMobRejectsUnrepresentablePositiveChaseCap(t *testing.T) {
+	w := NewWorld(combatBounds)
+	w.Add(Entity{ID: 100, MaxSpeed: TickHz - 1})
+	defer func() {
+		if recover() == nil {
+			t.Fatal("positive chase with a sub-tick entity speed must fail at registration")
+		}
+	}()
+	w.AddMob(100, MobParams{ChaseSpeedMM: 1})
+}
+
 func TestMobChaseParametersClampAtIngestion(t *testing.T) {
 	w := NewWorld(combatBounds)
 	w.MobChase = true

@@ -407,7 +407,9 @@ everything shipped afterwards is held to.
   positions at resolution, health/damage application, and one mob AI that deterministically
   aggros the nearest entity; it remains a stationary caster by default, while the default-off
   `World.MobChase` flag makes it close through the existing kinematic movement path to a bounded
-  cast range before stopping and painting the dodgeable circle; threat from damage, dead-target
+  capsule-surface cast range before stopping and painting the dodgeable circle; AI intent ownership
+  preserves caller movement when that flag is off, and the integer-speed floor remains mobile on
+  diagonals; threat from damage, dead-target
   filtering, real navmesh pathfinding and cast replication remain later children — with its own
   cross-platform golden), with the Agones/Nakama layers arriving as later children of the
   server-foundation epic (#4); `deploy/` (platform manifests) arrives later per the roadmap.
