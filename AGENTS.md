@@ -189,10 +189,22 @@ the concrete evidence behind this section:
 
 **Scaffolding is still allowed; it just may not pose as finished.** A deterministic library, a
 server system, or a data schema may land while its art matures — that is how this project is built,
-and it stays correct. But **player-visible placeholder art does not ship default-on**: it stays
-behind a default-off flag (product law 2) or stays out of the world until it clears the bar, and the
-PR says plainly that it is below bar and what is missing. Shipping it quietly as though it were done
-is the specific failure this section exists to stop.
+and it stays correct. The gate distinguishes the player-visible outcome being changed, following the
+maintainer's 2026-07-19 ruling on
+[#236](https://github.com/devantler-tech/world-at-ruin/pull/236):
+
+- A **new incomplete player-visible element** — something the default experience did not contain
+  before — stays behind a default-off opt-in flag (product law 2) or out of the world until it clears
+  the bar. [#218](https://github.com/devantler-tech/world-at-ruin/pull/218)'s hollow ash pools are the
+  canonical precedent: because the new pools lacked drift, `WAR_HOLLOW_FOG` kept them default-off.
+- An **in-place improvement to an existing below-bar surface** may remain default-on when it makes
+  that already-shipped surface better without presenting it as finished. Shipping the improvement on
+  **requires both the PR and the dev log to state the remaining gap explicitly**; the normal
+  inspectable-frame and named-reference requirements still apply.
+
+This distinction does not lower the bar: a new unfinished element still cannot enter the default
+experience, and an improvement cannot quietly pose as complete. It prevents the gate from freezing
+an existing surface in its worse state while the project advances it toward the bar.
 
 **Taste is the maintainer's call — and that is not licence to aim low.** Phase 0 is his taste gate
 and agents do not self-certify taste. Agents are nonetheless expected to *aim at* the AAA bar, to
@@ -458,7 +470,9 @@ everything shipped afterwards is held to.
   of the actual change — together with the **named reference** (from
   [`docs/art-direction/`](docs/art-direction/README.md)) and the **remaining gap**. A
   claim with no attached frame is self-attestation, not evidence, and does not satisfy this.
-  Below-bar player-facing work does not ship default-on.
+  New below-bar player-facing elements do not ship default-on. An in-place improvement to an
+  already-shipped below-bar surface may remain default-on only under the exception in the quality-bar
+  section above.
 - **Dev log is a contract:** every player-visible change adds a `DevLog.ENTRIES` entry (newest
   first) in the same PR — the maintainer watches progress by playing, and the dev log is that
   surface. Write the entry's `version` as the version the change will ship in (the next
@@ -604,11 +618,14 @@ Reviewers (Codex/CodeRabbit) flag **P0/P1 only**:
 - **P1 — correctness:** unseeded/non-deterministic world generation, client-authoritative gameplay
   state (once networking exists), physics entering the authoritative path, or a player-visible
   change with no dev-log entry.
-- **P1 — quality bar:** any **player-facing** surface — art, world composition, lighting, VFX,
+- **P1 — quality bar:** a **new player-facing element** — art, world composition, lighting, VFX,
   animation, audio, UI/UX, camera, game feel, or the design itself — that ships **default-on** while
   still reading as placeholder (engine primitives as art, flat untextured materials, uniform
-  scatter, no second-order life, and the equivalents of those outside art). **Separately P1 on its
-  own:** a player-visible PR carrying **no inspectable frame evidence, or no named reference and
-  stated gap** — including one that simply *omits* any readiness judgement, not only one that argues
-  from green tests. See **[Quality bar](#quality-bar--it-has-to-resemble-a-aaa-game)** and the
-  reference set in **[`docs/art-direction/`](docs/art-direction/README.md)**.
+  scatter, no second-order life, and the equivalents of those outside art). An evidence-backed
+  in-place improvement to an existing default-on, below-bar surface is not P1 merely because more
+  work remains, but it must meet the quality bar's PR-and-dev-log remaining-gap condition; otherwise
+  it is P1. **Separately P1 on its own:** a player-visible PR carrying **no inspectable frame
+  evidence, or no named reference and stated gap** — including one that simply *omits* any readiness
+  judgement, not only one that argues from green tests. See
+  **[Quality bar](#quality-bar--it-has-to-resemble-a-aaa-game)** and the reference set in
+  **[`docs/art-direction/`](docs/art-direction/README.md)**.
