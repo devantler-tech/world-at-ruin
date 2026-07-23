@@ -131,9 +131,10 @@ Consequences:
   instances. The upgrade therefore carries a **short-lived allocation token** minted at the
   Agones-allocation/handoff step and verified by the zone server before the observer is admitted.
   `server/handoff` now owns the transport-neutral verification → allocation → token-minting
-  contract, including the managed zone-domain boundary and rollback of a reservation that cannot
-  produce a usable handoff; the concrete Agones allocator adapter and Nakama RPC registration
-  remain later server-foundation children.
+  contract, including a caller-stable reservation key scoped to the verified user for reconciling
+  ambiguous allocation outcomes, the managed zone-domain boundary, and a distinct verifier secret
+  for each allocation so one compromised zone cannot mint for another. The concrete Agones
+  allocator adapter and Nakama RPC registration remain later server-foundation children.
 - **One transport discipline across tiers.** Nakama's own realtime API is WebSocket; client
   networking, platform ingress, and TLS handling follow a single pattern instead of two.
 - **The wire codec is unchanged.** Nothing in this decision touches `server/wire/` — the goldens

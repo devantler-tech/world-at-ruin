@@ -18,8 +18,8 @@ import (
 // is allocated to replicate. Verification is fail-closed: any error refuses
 // the peer before it attaches. The zone server only ever verifies — minting
 // is delegated to handoff.Service, which is why the verifier is an interface:
-// the interim HMAC mechanism below
-// can be swapped without touching the socket.
+// the interim per-allocation HMAC mechanism below can be swapped without
+// touching the socket.
 type TokenVerifier interface {
 	Verify(token string) (sim.EntityID, error)
 }
@@ -45,7 +45,8 @@ const minSecretBytes = 32
 
 // MintToken mints an admission token binding one observer to one allocation:
 // "v2.<allocation>.<observer>.<unix expiry>.<hex hmac-sha256>". Exported for the
-// handoff service and for tests; the zone server itself never mints.
+// handoff service and for tests; the zone server itself never mints, and the
+// supplied secret must belong only to this allocation.
 func MintToken(secret []byte, allocation string, observer sim.EntityID, expiry time.Time) (string, error) {
 	if len(secret) < minSecretBytes {
 		return "", fmt.Errorf("zonesock: admission secret is %d bytes, need at least %d", len(secret), minSecretBytes)
@@ -60,9 +61,9 @@ func MintToken(secret []byte, allocation string, observer sim.EntityID, expiry t
 }
 
 // HMACVerifier is the interim TokenVerifier: HMAC-SHA256 over the token's
-// public fields with a secret shared between the minting side and the zone
-// server. It verifies integrity before trusting any field, so a forged token
-// reports forged even when its expiry also lies.
+// public fields with a secret shared only between the minting side and one
+// allocated zone server. It verifies integrity before trusting any field, so a
+// forged token reports forged even when its expiry also lies.
 type HMACVerifier struct {
 	secret     []byte
 	allocation string

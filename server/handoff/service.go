@@ -30,20 +30,39 @@ type SessionVerifier interface {
 	VerifySession(context.Context, string) (string, error)
 }
 
-// Allocator binds one authenticated user to one GameServer and observer.
+// Allocator binds one authenticated user to one GameServer and observer. The
+// reservation ID, scoped to the verified user ID, is the idempotency key for
+// an allocation attempt: repeated Allocate calls must not create duplicates,
+// and Release must idempotently reconcile that owner/key pair even when
+// Allocate returned an ambiguous timeout after the fleet committed it.
 // Concrete Agones allocation is deliberately outside this transport-neutral
 // core; an adapter must return the allocation that owns the endpoint.
 type Allocator interface {
-	Allocate(context.Context, string) (Allocation, error)
-	Release(context.Context, Allocation) error
+	Allocate(context.Context, AllocationRequest) (Allocation, error)
+	Release(context.Context, AllocationRequest) error
+}
+
+// Request is the authenticated session and caller-stable idempotency key for
+// one handoff attempt. A transport retry must reuse ReservationID.
+type Request struct {
+	Session       string
+	ReservationID string
+}
+
+// AllocationRequest is the identity and idempotency key trusted by the
+// allocator after session verification.
+type AllocationRequest struct {
+	UserID        string
+	ReservationID string
 }
 
 // Allocation is the trusted result of allocating one GameServer.
 type Allocation struct {
-	ID         string
-	ServerName string
-	Port       uint16
-	Observer   sim.EntityID
+	ID              string
+	ServerName      string
+	Port            uint16
+	Observer        sim.EntityID
+	AdmissionSecret []byte
 }
 
 // Handoff is the only connection material returned to a player.
@@ -56,17 +75,15 @@ type Handoff struct {
 
 // Config sets the admission-key material and lifetime policy.
 type Config struct {
-	AdmissionSecret []byte
-	ZoneDomain      string
-	TokenTTL        time.Duration
-	Now             func() time.Time
+	ZoneDomain string
+	TokenTTL   time.Duration
+	Now        func() time.Time
 }
 
 // Service creates allocation-scoped player handoffs.
 type Service struct {
 	verifier   SessionVerifier
 	allocator  Allocator
-	secret     []byte
 	zoneDomain string
 	tokenTTL   time.Duration
 	now        func() time.Time
@@ -98,19 +115,10 @@ func NewService(verifier SessionVerifier, allocator Allocator, cfg Config) (*Ser
 	if now == nil {
 		now = time.Now
 	}
-	if _, err := zonesock.MintToken(
-		cfg.AdmissionSecret,
-		"configuration-check",
-		sim.EntityID(1),
-		now().Add(tokenTTL),
-	); err != nil {
-		return nil, errors.New("handoff: admission secret is invalid")
-	}
 
 	return &Service{
 		verifier:   verifier,
 		allocator:  allocator,
-		secret:     append([]byte(nil), cfg.AdmissionSecret...),
 		zoneDomain: zoneDomain,
 		tokenTTL:   tokenTTL,
 		now:        now,
@@ -120,8 +128,12 @@ func NewService(verifier SessionVerifier, allocator Allocator, cfg Config) (*Ser
 // CreateHandoff authenticates a Nakama session, allocates its GameServer, and
 // returns a token the allocated zone can verify. Every failed stage returns a
 // zero Handoff, so callers cannot accidentally expose a partial endpoint.
-func (s *Service) CreateHandoff(ctx context.Context, session string) (Handoff, error) {
-	userID, err := s.verifier.VerifySession(ctx, session)
+func (s *Service) CreateHandoff(ctx context.Context, request Request) (Handoff, error) {
+	if !validAllocationID(request.ReservationID) {
+		return Handoff{}, errors.New("handoff: reservation ID is invalid")
+	}
+
+	userID, err := s.verifier.VerifySession(ctx, request.Session)
 	if err != nil {
 		return Handoff{}, status.Error(status.Code(err), "handoff: authenticate player")
 	}
@@ -129,15 +141,32 @@ func (s *Service) CreateHandoff(ctx context.Context, session string) (Handoff, e
 		return Handoff{}, errors.New("handoff: verifier returned no user ID")
 	}
 
-	allocation, err := s.allocator.Allocate(ctx, userID)
+	allocationRequest := AllocationRequest{
+		UserID:        userID,
+		ReservationID: request.ReservationID,
+	}
+	allocation, err := s.allocator.Allocate(ctx, allocationRequest)
 	if err != nil {
-		return Handoff{}, status.Error(status.Code(err), "handoff: allocate GameServer")
+		return Handoff{}, s.releaseReservationAfterFailure(
+			ctx,
+			allocationRequest,
+			status.Error(status.Code(err), "handoff: allocate GameServer"),
+		)
 	}
 	if err := ctx.Err(); err != nil {
-		return Handoff{}, s.releaseAfterFailure(ctx, allocation, err)
+		return Handoff{}, s.releaseReservationAfterFailure(
+			ctx,
+			allocationRequest,
+			err,
+		)
 	}
+	allocation.ServerName = strings.TrimSuffix(allocation.ServerName, ".")
 	if err := s.validateAllocation(allocation); err != nil {
-		return Handoff{}, s.releaseAfterFailure(ctx, allocation, err)
+		return Handoff{}, s.releaseReservationAfterFailure(
+			ctx,
+			allocationRequest,
+			err,
+		)
 	}
 
 	deadline := s.now().Add(s.tokenTTL)
@@ -146,16 +175,23 @@ func (s *Service) CreateHandoff(ctx context.Context, session string) (Handoff, e
 		expiresAt = expiresAt.Add(time.Second)
 	}
 	token, err := zonesock.MintToken(
-		s.secret,
+		allocation.AdmissionSecret,
 		allocation.ID,
 		allocation.Observer,
 		expiresAt,
 	)
 	if err != nil {
-		return Handoff{}, s.releaseAfterFailure(
+		return Handoff{}, s.releaseReservationAfterFailure(
 			ctx,
-			allocation,
+			allocationRequest,
 			errors.New("handoff: mint allocation token"),
+		)
+	}
+	if err := ctx.Err(); err != nil {
+		return Handoff{}, s.releaseReservationAfterFailure(
+			ctx,
+			allocationRequest,
+			err,
 		)
 	}
 
@@ -186,15 +222,15 @@ func (s *Service) validateAllocation(allocation Allocation) error {
 	return nil
 }
 
-func (s *Service) releaseAfterFailure(
+func (s *Service) releaseReservationAfterFailure(
 	ctx context.Context,
-	allocation Allocation,
+	request AllocationRequest,
 	handoffErr error,
 ) error {
 	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), releaseTimeout)
 	defer cancel()
-	if err := s.allocator.Release(releaseCtx, allocation); err != nil {
-		return errors.New("handoff: invalid allocation could not be released")
+	if err := s.allocator.Release(releaseCtx, request); err != nil {
+		return errors.New("handoff: allocation outcome could not be reconciled")
 	}
 	return handoffErr
 }

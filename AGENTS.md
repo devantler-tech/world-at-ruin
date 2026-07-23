@@ -411,10 +411,11 @@ everything shipped afterwards is held to.
   official SDK, opt-in and default-off), the first **Nakama identity boundary**
   (`server/nakamaauth/` — verifies a player session through Nakama's generated gRPC `GetAccount`
   API and returns only the authenticated user ID), the **player handoff core**
-  (`server/handoff/` — gives only that verified identity to an allocation boundary, constrains the
-  returned endpoint to the configured managed DNS domain, requires its observer binding, releases
-  failed reservations, and mints the short-lived token the allocated zone verifier accepts; the
-  concrete Agones allocator adapter and Nakama RPC registration remain later children), and
+  (`server/handoff/` — gives only that verified identity plus a caller-stable reservation key to an
+  allocation boundary, reconciles ambiguous outcomes by that key, constrains the returned endpoint
+  to the configured managed DNS domain, requires its observer binding and per-allocation admission
+  secret, and mints the short-lived token only that allocated zone verifier accepts; the concrete
+  Agones allocator adapter and Nakama RPC registration remain later children), and
   the **combat first slice** (`server/sim/combat.go` — the telegraph cast
   lifecycle: painted at cast start, resolved once after a tick-counted cast time against
   positions at resolution, health/damage application, and one mob AI that deterministically

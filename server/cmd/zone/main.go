@@ -124,8 +124,9 @@ func admissionSecret(envName string) []byte {
 
 // runMint is the developer-side helper for exercising -listen: it mints an
 // admission token for the given observer. Real minting belongs to
-// handoff.Service — this remains for exercising the socket without the later
-// concrete Agones allocator and Nakama RPC adapters.
+// handoff.Service with a secret unique to the allocated zone — this remains for
+// exercising the socket without the later concrete Agones allocator and Nakama
+// RPC adapters.
 func runMint(secretEnv, allocation string, observer sim.EntityID, ttl time.Duration) {
 	token, err := zonesock.MintToken(admissionSecret(secretEnv), allocation, observer, time.Now().Add(ttl))
 	if err != nil {
