@@ -145,6 +145,16 @@ zone/dungeon server:
   Tests drive the real SDK client against an in-process fake sidecar
   (`agones/agonestest`), at package level and against the built binary in both
   flag states.
+- **`nakamaauth/`** — the first **Nakama meta-tier seam**: a player session is
+  presented to Nakama's generated gRPC `GetAccount` API as bearer metadata, and
+  only Nakama's authenticated user ID crosses back into World at Ruin. It does
+  not reimplement JWT verification or trust a client-provided account ID.
+  Empty sessions, RPC refusals and malformed account responses fail closed, and
+  rejection errors expose only the gRPC status code so an upstream message
+  cannot reflect the credential into logs. Hermetic tests exercise the real
+  generated gRPC client/server path. The package is inert until the
+  allocation/handoff child binds that identity to a GameServer and mints the
+  short-lived allocation token required by the transport ADR.
 - **`cmd/zone/`** — a runnable skeleton server. It boots the demo zone and either
   runs a fixed number of deterministic ticks (printing the state hash) or drives
   the loop from the wall clock. With `-replicate` it also runs the full
@@ -169,13 +179,12 @@ go run ./cmd/zone -listen :8443 -tls-cert cert.pem -tls-key key.pem -agones  # f
 Later children of the server-foundation epic
 ([#4](https://github.com/devantler-tech/world-at-ruin/issues/4), the first child
 of the Phase 1 epic [#8](https://github.com/devantler-tech/world-at-ruin/issues/8)):
-the socket **transport** and client prediction/reconciliation (the snapshot
-*payload* and its wire encoding above are ready; transport selection, sockets,
-and the client-side apply of the spawn/update/despawn deltas are the next
-layer), real navmesh geometry, the Nakama meta tier, and
-Postgres/CNPG persistence. The tick core, its capsule-vs-capsule separation, and
-its area-of-interest and snapshot queries land first because everything else is
-built on top of a simulation that is already proven deterministic.
+the Nakama allocation/handoff RPC that consumes `nakamaauth` and mints an
+allocation-scoped zone token, the rest of the Nakama auth/social/chat/storage
+surface, client prediction/reconciliation, real navmesh geometry, and
+Postgres/CNPG persistence. The tick core, socket, client replica store, Agones
+lifecycle and first Nakama identity boundary are already in place; later slices
+build on those tested seams instead of creating a parallel meta service.
 
 ## Validate
 
