@@ -410,7 +410,13 @@ everything shipped afterwards is held to.
   default), the **Agones lifecycle** (`server/agones/` — Ready/Health/Shutdown through the
   official SDK, opt-in and default-off), the first **Nakama identity boundary**
   (`server/nakamaauth/` — verifies a player session through Nakama's generated gRPC `GetAccount`
-  API and returns only the authenticated user ID; allocation/handoff remains a later child), and
+  API and returns only the authenticated user ID), the **player handoff core**
+  (`server/handoff/` — gives only that verified identity plus a caller-stable reservation key and
+  server-generated attempt ID to an allocation boundary, conditionally reconciles ambiguous
+  outcomes by that owned attempt, constrains the returned endpoint to the configured managed DNS
+  domain, requires an expiring no-show lease, observer binding and per-allocation admission secret,
+  and mints the nanosecond-expiry token only that allocated zone verifier accepts; the concrete
+  Agones allocator/lease-claim adapter and Nakama RPC registration remain later children), and
   the **combat first slice** (`server/sim/combat.go` — the telegraph cast
   lifecycle: painted at cast start, resolved once after a tick-counted cast time against
   positions at resolution, health/damage application, and one mob AI that deterministically
@@ -420,9 +426,9 @@ everything shipped afterwards is held to.
   preserves caller movement when that flag is off, and the integer-speed floor remains mobile on
   diagonals; threat from damage, dead-target
   filtering, real navmesh pathfinding and cast replication remain later children — with its own
-  cross-platform golden), with the Nakama allocation and persistence layers arriving as later
-  children of the server-foundation epic (#4); `deploy/` (platform manifests) arrives later per
-  the roadmap.
+  cross-platform golden), with the concrete Agones allocation adapter, Nakama RPC registration and
+  persistence layers arriving as later children of the server-foundation epic (#4); `deploy/`
+  (platform manifests) arrives later per the roadmap.
 - **Changing any persisted player-data format:** follow the
   [forward-only save-data migration contract](docs/design/save-data.md). It defines the staged
   expand → bake → contract rollout, the version-bump checklist, and the refusal rules for the
