@@ -978,6 +978,8 @@ jobs:
           # so cache the module downloads keyed on go.sum.
           cache: true
           cache-dependency-path: server/go.sum
+      - name: Keep release-write credentials out of the build job
+        run: ./tools/release-credential-boundary-guard.sh
       - name: Format check (gofmt)
         working-directory: server
         run: |
