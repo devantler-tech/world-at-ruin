@@ -1736,6 +1736,8 @@ jobs:
           path: |
             ${{ runner.temp }}/shots/*.png
             ${{ runner.temp }}/shots/*.txt
+            ${{ runner.temp }}/shots/light-response/*.png
+            ${{ runner.temp }}/shots/light-response/*.txt
             ${{ runner.temp }}/shots/opt-in-plates/*.png
             ${{ runner.temp }}/shots/opt-in-plates/*.txt
           if-no-files-found: error

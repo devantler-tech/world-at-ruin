@@ -13,6 +13,7 @@ extends Node
 ## contract.
 
 const FRAME_CAPTURE_PATH := "res://tools/frame_capture.gd"
+const CI_WORKFLOW_PATH := "res://../.github/workflows/ci.yaml"
 
 
 func _ready() -> void:
@@ -36,6 +37,15 @@ func _ready() -> void:
 	if not source.contains("hollow_fog_placements") or not source.contains("\"ash-source-side\""):
 		_fail("the moving-key proof never captures a real hollow FogVolume up close")
 		return
+	var workflow := FileAccess.get_file_as_string(CI_WORKFLOW_PATH)
+	if workflow.is_empty():
+		_fail("could not read %s — the evidence delivery path is untestable" % CI_WORKFLOW_PATH)
+		return
+	for extension: String in ["png", "txt"]:
+		var upload_glob := "shots/light-response/*.%s" % extension
+		if not workflow.contains(upload_glob):
+			_fail("visual CI renders moving-key frames but never uploads %s" % upload_glob)
+			return
 
 	var eye := Vector3(55.0, 11.0, 40.0)
 	var target := Vector3(-10.0, 3.0, -20.0)
