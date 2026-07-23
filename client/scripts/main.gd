@@ -9,6 +9,13 @@ const SKY_TOP := Color(0.23, 0.18, 0.22)
 const SKY_HORIZON := Color(0.55, 0.35, 0.24)
 const GROUND_BOTTOM := Color(0.1, 0.09, 0.09)
 const FOG_COLOR := Color(0.35, 0.28, 0.24)
+## Stable save-vault ids. Renaming either strands a shipped discovery forever;
+## the boot test and immutable v2 golden fixture therefore pin these spellings.
+const DISCOVERY_STARTER_CAVE := SaveVault.DISCOVERY_STARTER_CAVE
+const DISCOVERY_WARDENS_SHRINE := SaveVault.DISCOVERY_WARDENS_SHRINE
+const STARTER_CAVE_DISCOVERY_RADIUS := 10.0
+const DISCOVERY_PERSIST_RETRY_INITIAL_SECONDS := 1.0
+const DISCOVERY_PERSIST_RETRY_MAX_SECONDS := 30.0
 
 var _player: Player
 var _hud: Hud
@@ -55,9 +62,19 @@ var _zone_was_live := false
 ## connected.
 var _replicas: ReplicaView = null
 ## The boot-owned exploration state. Vault-v2 names are restored here even when
-## this rollback build does not register or act on a future place yet, so a
-## capability-3 selection applies rather than merely parses the player's state.
+## this rollback build does not register or act on a future place yet, and the
+## two shipped places are observed into the append-only vault as the wanderer
+## reaches them.
 var _discovery := Discovery.new()
+## A discovery enters the live tracker before persistence is attempted. Keep
+## the locally observed IDs themselves so a transient filesystem failure can
+## retry them without also re-originating rollback-only names restored into the
+## tracker. SaveVault preserves unknown names from the on-disk document; Main
+## submits only discoveries this build actually observed.
+var _discovery_persistence_pending: Array[String] = []
+var _discovery_persistence_retry_in := 0.0
+var _discovery_persistence_retry_delay := DISCOVERY_PERSIST_RETRY_INITIAL_SECONDS
+var _discovery_persistence_warning_shown := false
 
 func _ready() -> void:
 	# Capture-harness entry for the EXPORTED client: the official export
@@ -102,6 +119,12 @@ func _ready() -> void:
 	add_child(_player)
 	# The mouth faces the shrine, so facing the shrine faces the light.
 	_player.face_toward(Vector3.ZERO)
+	# Save only stable semantic ids, never generated coordinates: both places
+	# can move when world generation evolves without invalidating progression.
+	_discovery.add(DISCOVERY_STARTER_CAVE, world.cave_spawn_point(),
+		STARTER_CAVE_DISCOVERY_RADIUS)
+	_discovery.add(DISCOVERY_WARDENS_SHRINE, world.shrine_interactable().global_position,
+		WorldGen.SHRINE_CLEAR_RADIUS)
 
 	# The Reach is inhabited: a seeded settlement rings the shrine and lone
 	# drifters dot the open land — the same people in the same places every
@@ -168,6 +191,9 @@ func _ready() -> void:
 			var point = RespawnPoints.resolve(name, world)
 			if point != null:
 				_player.set_respawn_point(point)
+	# Observe only after restore. A persisted place then stays idempotent, while
+	# the cave under a new wanderer's feet becomes the first v2 write.
+	_observe_discoveries()
 
 	# The people speak: a person's seeded line surfaces as a toast.
 	npcs.npc_spoke.connect(func(npc_name: String, line: String) -> void:
@@ -329,6 +355,7 @@ func _connect_zone() -> void:
 ## bake in a policy nothing yet exercises.
 func _process(delta: float) -> void:
 	_drift_hollow_fog(delta)
+	_observe_discoveries(delta)
 	if _zone == null:
 		return
 	_zone.poll()
@@ -353,6 +380,46 @@ func _process(delta: float) -> void:
 		# with nothing anywhere to say why.
 		_zone_failure_reported = true
 		push_warning("zone connection closed by the zone — replication has stopped for this session")
+
+
+## Fold this frame's player position into the append-only discovery set.
+## Transient storage failures retain a dirty bit and retry with bounded
+## exponential backoff; a path-latched unreadable/newer vault stays session-only
+## and is never retried, preserving the downgrade refusal.
+func _observe_discoveries(delta: float = 0.0) -> void:
+	if _player == null:
+		return
+	var newly_found := _discovery.observe(_player.global_position)
+	if not newly_found.is_empty():
+		for name: String in newly_found:
+			if name not in _discovery_persistence_pending:
+				_discovery_persistence_pending.append(name)
+		_discovery_persistence_retry_in = 0.0
+		_discovery_persistence_retry_delay = DISCOVERY_PERSIST_RETRY_INITIAL_SECONDS
+	if _discovery_persistence_pending.is_empty():
+		return
+	if newly_found.is_empty() and _discovery_persistence_retry_in > 0.0:
+		_discovery_persistence_retry_in = maxf(
+			0.0, _discovery_persistence_retry_in - delta)
+		if _discovery_persistence_retry_in > 0.0:
+			return
+	if SaveVault.persist_discoveries(_discovery_persistence_pending):
+		_discovery_persistence_pending.clear()
+		_discovery_persistence_retry_in = 0.0
+		_discovery_persistence_retry_delay = DISCOVERY_PERSIST_RETRY_INITIAL_SECONDS
+		return
+	# persist_discoveries() latches unreadable/newer paths. Only a failure that
+	# leaves this exact path writable is transient and eligible for retry.
+	if SaveVault.can_write(SaveVault.vault_path()):
+		_discovery_persistence_retry_in = _discovery_persistence_retry_delay
+		_discovery_persistence_retry_delay = minf(
+			_discovery_persistence_retry_delay * 2.0,
+			DISCOVERY_PERSIST_RETRY_MAX_SECONDS)
+	else:
+		_discovery_persistence_pending.clear()
+	if not _discovery_persistence_warning_shown:
+		_discovery_persistence_warning_shown = true
+		_hud.toast("This place is known for now — though the Reach may not remember next waking.")
 
 
 func _unhandled_input(event: InputEvent) -> void:

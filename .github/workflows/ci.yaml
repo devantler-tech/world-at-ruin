@@ -272,6 +272,52 @@ jobs:
             echo "::error::Shipped attunement name(s) removed from $LEDGER ($(echo "$removed" | tr '\n' ' ')) — players attuned there would wake in the cave forever (no-resets law)"
             exit 1
           fi
+      - name: Discovery ledger is append-only (no-resets law)
+        # A discovery id AND the landmark it means are persisted player history
+        # just like an attunement name. The runtime guard binds the current
+        # writer and live POIs to this mapping ledger; comparing the complete
+        # id=landmark row prevents a PR from repointing production and its local
+        # test oracle together while reinterpreting an existing player's state.
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          LEDGER=client/tests/data/shipped_discoveries.txt
+          if [ ! -f "$LEDGER" ]; then
+            echo "::error::$LEDGER was deleted — the forward-only discovery ledger must exist"
+            exit 1
+          fi
+          if ! git cat-file -e "$BASE_SHA" 2>/dev/null; then
+            echo "::error::base commit $BASE_SHA not present in the checkout — cannot verify the ledger"
+            exit 1
+          fi
+          mappings='/^[[:space:]]*#/d; /^[[:space:]]*$/d; s/^[[:space:]]*//; s/[[:space:]]*$//'
+          if git cat-file -e "$BASE_SHA:$LEDGER" 2>/dev/null; then
+            if ! git show "$BASE_SHA:$LEDGER" > /tmp/discovery-base-raw; then
+              echo "::error::could not read $LEDGER at $BASE_SHA — refusing to compare against an empty base"
+              exit 1
+            fi
+            sed -e "$mappings" /tmp/discovery-base-raw | sort -u > /tmp/discovery-base
+          else
+            echo "::notice::$LEDGER does not exist at the base revision — treating the base set as empty (this is the commit that introduces it)"
+            : > /tmp/discovery-base
+          fi
+          sed -e "$mappings" "$LEDGER" | sort -u > /tmp/discovery-head
+          invalid=$(grep -vE '^[a-z0-9_]+=[a-z0-9_]+$' /tmp/discovery-head || true)
+          if [ -n "$invalid" ]; then
+            echo "::error::$LEDGER has invalid id=landmark row(s): $(echo "$invalid" | tr '\n' ' ')"
+            exit 1
+          fi
+          duplicate_ids=$(cut -d= -f1 /tmp/discovery-head | sort | uniq -d)
+          if [ -n "$duplicate_ids" ]; then
+            echo "::error::$LEDGER maps an id more than once: $(echo "$duplicate_ids" | tr '\n' ' ')"
+            exit 1
+          fi
+          removed=$(comm -23 /tmp/discovery-base /tmp/discovery-head)
+          if [ -n "$removed" ]; then
+            echo "::error::Shipped discovery mapping(s) removed or repointed in $LEDGER ($(echo "$removed" | tr '\n' ' ')) — permanent player history would be reinterpreted (no-resets law)"
+            exit 1
+          fi
       - name: Wire protocol may not move without a two-phase rollout
         # The manifest publishes the CLIENT's protocol constant as the range the
         # LIVE SERVER accepts, which is honest only while both sides are pinned to

@@ -13,8 +13,8 @@ extends RefCounted
 ## no clock, no `user://` — so it is deterministic and unit-testable, exactly
 ## like `Telegraph`'s shape predicates and `Interactable.choose`. WHAT a
 ## discovery unlocks (rewards, cosmetics, waypoints) and any player-visible
-## toast are the caller's concern and separate follow-ups; persistence of the
-## found set waits on the persistence work.
+## toast are the caller's concern and separate follow-ups. The boot-owned caller
+## persists this found set through SaveVault; this tracker stays pure.
 ##
 ## Membership is measured on the XZ plane (a landmark is a mark on the ground,
 ## so the wanderer's height never changes whether a place is found), the reach

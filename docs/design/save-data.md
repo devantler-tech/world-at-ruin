@@ -63,6 +63,15 @@ remains unpersisted.
 This wait is what makes rollback safe: if the next build fails, the retained build already understands
 everything the failed build may have written.
 
+“Applicable update tier” is literal. While the client ships as one monolithic app, the retained
+whole-app release is the rollback target: its published app must boot and apply the expanded state
+before the later app starts writing it. `v0.52.0` is that retained, independently booted whole-app
+target for capability 3. The manifest's `rollback_targets` array is a different tier: it is consumed
+only by the future mountable-pack recovery path, so it stays empty until a real `.pck` is retained.
+Putting a monolithic `.app` ZIP there would not strengthen rollback; it would make recovery select
+bytes the pack path cannot mount. Once pack delivery exists, its capability expansions require a
+selectable catalogue entry before their writers activate.
+
 ### 3. Contract by starting the new writer
 
 Enable the new write path only after the expansion is baked.
@@ -159,7 +168,11 @@ For vault version `N`, the expansion pull request must:
    originate the capability during expansion, and prove an already-present version-`N` vault
    round-trips losslessly after an ordinary write. A new live attunement also enters
    `shipped_attunements.txt`, `SaveVault.KNOWN_ATTUNEMENTS`, the resolver, and the boot restoration
-   test in the same change.
+   test in the same change. A new writable discovery id similarly enters
+   `shipped_discoveries.txt` as an immutable `id=landmark` mapping,
+   `SaveVault.KNOWN_DISCOVERIES`, and the real boot's bidirectional
+   point-of-interest registration guard. Unknown discovery names already present in a newer vault
+   remain preserved, but this build may originate only a registered, ledgered ID.
 6. Assign the new persistable capability and raise `UpdateManifest.SAVE_CAPABILITY_READS` to it while
    leaving `SAVE_CAPABILITY_WRITES` unchanged. The retained expansion build must advertise the read
    ceiling that makes it an eligible rollback target before the contract release can write that
@@ -167,6 +180,14 @@ For vault version `N`, the expansion pull request must:
 
 After bake, the contract pull request lets new or changed vaults use version `N`, raises the global
 write capability, and appends that capability to `shipped_save_capability.txt`.
+
+The first progression-vault sequence is capability 3: v0.52.0 shipped the version-2 discovery reader
+while production writes remained at capability 2. With that release retained as a rollback target,
+the later contract build registers `starter_cave` and `wardens_shrine`, observes the real wanderer's
+position, and persists the append-only found set at vault version 2. Empty and attunement-only vaults
+remain version 1; the first actual discovery is what contracts them to version 2. Rewards, quests,
+waypoints and map presentation remain separate children of the exploration roadmap rather than being
+implied by this persistence contract.
 
 ### Boot recovery
 
