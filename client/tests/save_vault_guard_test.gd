@@ -35,15 +35,18 @@ extends Node
 ##     proves a name survives; it does not prove the game still acts on it.
 ##     Renaming a shipped name and its call site together would otherwise keep
 ##     every guard green while stranding existing players.
+##  7. Every production discovery id is bidirectionally bound to the append-only
+##     shipped_discoveries.txt ledger. The real boot guard separately proves
+##     every ledger id is still registered to a live point of interest.
 ##
 ## Then the refusal laws, which are what make the separate-file design safe:
-##  6. A vault one version NEWER than this client is refused, not half-applied.
-##  7. A vault that exists but cannot be read is NOT writable — refuse-to-read
+##  8. A vault one version NEWER than this client is refused, not half-applied.
+##  9. A vault that exists but cannot be read is NOT writable — refuse-to-read
 ##     implies refuse-to-write, or a downgrade would overwrite progression a
 ##     newer client wrote.
-##  8. An absent vault reads as an empty vault, never as a failure — a missing
+## 10. An absent vault reads as an empty vault, never as a failure — a missing
 ##     vault must degrade to session-only, never block a boot.
-##  9. A refusal LATCHES for the session: once refused, the path stays
+## 11. A refusal LATCHES for the session: once refused, the path stays
 ##     unwritable even if the file then disappears. Cloud sync or a second
 ##     client can remove an unreadable vault mid-session, and a build that
 ##     re-derived writability from the file's current state would then write a
@@ -54,6 +57,7 @@ extends Node
 const DATA_DIR := "res://tests/data/"
 const SHIPPED_VERSIONS := DATA_DIR + "shipped_vault_versions.txt"
 const SHIPPED_ATTUNEMENTS := DATA_DIR + "shipped_attunements.txt"
+const SHIPPED_DISCOVERIES := DATA_DIR + "shipped_discoveries.txt"
 # A throwaway vault file: fixtures are loaded through the vault's real load
 # path via this probe, so the player's user://vault.json is never read or
 # written (no test can destroy progression — no-resets law).
@@ -115,6 +119,10 @@ func _ready() -> void:
 	var live := _check_live_names(fixtures)
 	if live != "":
 		_fail(live)
+		return
+	var discovery_names := _check_discovery_names()
+	if discovery_names != "":
+		_fail(discovery_names)
 		return
 
 	var refusal := _check_refusal_laws(fixtures[versions[versions.size() - 1]])
@@ -252,6 +260,49 @@ func _shipped_attunements() -> Array:
 		var line := file.get_line().strip_edges()
 		if line.is_empty() or line.begins_with("#"):
 			continue
+		names.append(line)
+	file.close()
+	return names
+
+
+## Every discovery id a production writer can originate must be ledgered, and
+## every ledgered id must remain recognised. This checkout-local half combines
+## with CI's base-revision comparison and the boot test's registration walk.
+func _check_discovery_names() -> String:
+	var ledger := _shipped_discoveries()
+	if ledger.is_empty():
+		return "shipped_discoveries.txt is missing or empty — persisted place ids need an immutable ledger"
+	var vault_api := load("res://scripts/save_vault.gd") as Script
+	if not vault_api.has_method("recognises_discovery"):
+		return "SaveVault has no recognises_discovery() runtime contract for ledgered place ids"
+	var constants := vault_api.get_script_constant_map()
+	var known: Variant = constants.get("KNOWN_DISCOVERIES", [])
+	if known is not Array or (known as Array).is_empty():
+		return "SaveVault.KNOWN_DISCOVERIES is missing or empty"
+	for name: String in ledger:
+		if not bool(vault_api.call("recognises_discovery", name)):
+			return ("SHIPPED DISCOVERY NO LONGER RECOGNISED (no-resets law): '%s' is in "
+				+ "shipped_discoveries.txt but not SaveVault.KNOWN_DISCOVERIES") % name
+	for raw: Variant in known:
+		if raw is not String or (raw as String).is_empty():
+			return "SaveVault.KNOWN_DISCOVERIES carries an invalid stable id"
+		if raw not in ledger:
+			return ("KNOWN DISCOVERY IS UNANCHORED (no-resets law): '%s' is writable but missing "
+				+ "from shipped_discoveries.txt") % str(raw)
+	return ""
+
+
+func _shipped_discoveries() -> Array:
+	var file := FileAccess.open(SHIPPED_DISCOVERIES, FileAccess.READ)
+	if file == null:
+		return []
+	var names := []
+	while not file.eof_reached():
+		var line := file.get_line().strip_edges()
+		if line.is_empty() or line.begins_with("#"):
+			continue
+		if line in names:
+			return []
 		names.append(line)
 	file.close()
 	return names

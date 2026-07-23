@@ -159,7 +159,9 @@ For vault version `N`, the expansion pull request must:
    originate the capability during expansion, and prove an already-present version-`N` vault
    round-trips losslessly after an ordinary write. A new live attunement also enters
    `shipped_attunements.txt`, `SaveVault.KNOWN_ATTUNEMENTS`, the resolver, and the boot restoration
-   test in the same change.
+   test in the same change. A new writable discovery id similarly enters
+   `shipped_discoveries.txt`, `SaveVault.KNOWN_DISCOVERIES`, and the real boot's bidirectional
+   point-of-interest registration guard.
 6. Assign the new persistable capability and raise `UpdateManifest.SAVE_CAPABILITY_READS` to it while
    leaving `SAVE_CAPABILITY_WRITES` unchanged. The retained expansion build must advertise the read
    ceiling that makes it an eligible rollback target before the contract release can write that

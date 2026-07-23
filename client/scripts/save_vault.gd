@@ -77,6 +77,13 @@ const VAULT_FIELDS_V2 := ["version", "comment", "attuned", "discoveries"]
 ## meaning — only new names may be added.
 const SHRINE_WARDENS := "wardens_shrine"
 
+## Every discovery id this build can ORIGINATE. These names are persisted player
+## data and therefore permanent: shipped_discoveries.txt anchors them against
+## the base revision, while the boot guard proves each still maps to a live POI.
+const DISCOVERY_STARTER_CAVE := "starter_cave"
+const DISCOVERY_WARDENS_SHRINE := SHRINE_WARDENS
+const KNOWN_DISCOVERIES := [DISCOVERY_STARTER_CAVE, DISCOVERY_WARDENS_SHRINE]
+
 ## Every attunement name this build RECOGNISES — i.e. can still act on, not
 ## merely preserve. This is the live half of the forward-only guarantee, and it
 ## is what a golden fixture alone cannot prove.
@@ -98,6 +105,11 @@ const KNOWN_ATTUNEMENTS := [SHRINE_WARDENS]
 ## Whether this build can still act on `name` (not merely preserve it).
 static func recognises(name: String) -> bool:
 	return name in KNOWN_ATTUNEMENTS
+
+
+## Whether this build can still register and act on a persisted discovery id.
+static func recognises_discovery(name: String) -> bool:
+	return name in KNOWN_DISCOVERIES
 
 
 ## The active vault path: the WAR_VAULT_PATH override when set, else the shipped

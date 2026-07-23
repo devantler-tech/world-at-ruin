@@ -11,8 +11,8 @@ const GROUND_BOTTOM := Color(0.1, 0.09, 0.09)
 const FOG_COLOR := Color(0.35, 0.28, 0.24)
 ## Stable save-vault ids. Renaming either strands a shipped discovery forever;
 ## the boot test and immutable v2 golden fixture therefore pin these spellings.
-const DISCOVERY_STARTER_CAVE := "starter_cave"
-const DISCOVERY_WARDENS_SHRINE := SaveVault.SHRINE_WARDENS
+const DISCOVERY_STARTER_CAVE := SaveVault.DISCOVERY_STARTER_CAVE
+const DISCOVERY_WARDENS_SHRINE := SaveVault.DISCOVERY_WARDENS_SHRINE
 const STARTER_CAVE_DISCOVERY_RADIUS := 10.0
 
 var _player: Player
@@ -112,7 +112,7 @@ func _ready() -> void:
 	# can move when world generation evolves without invalidating progression.
 	_discovery.add(DISCOVERY_STARTER_CAVE, world.cave_spawn_point(),
 		STARTER_CAVE_DISCOVERY_RADIUS)
-	_discovery.add(DISCOVERY_WARDENS_SHRINE, world.shrine_respawn_point(),
+	_discovery.add(DISCOVERY_WARDENS_SHRINE, world.shrine_interactable().global_position,
 		WorldGen.SHRINE_CLEAR_RADIUS)
 
 	# The Reach is inhabited: a seeded settlement rings the shrine and lone

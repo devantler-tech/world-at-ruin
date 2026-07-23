@@ -31,6 +31,7 @@ const ASSERT_TICK := 30
 const EPS := 0.01
 const PROBE_PATH := "user://vault_restore_boot_probe.json"
 const DISCOVERY_PROBE := ["wardens_shrine", "future_place", "wardens_shrine"]
+const SHIPPED_DISCOVERIES := "res://tests/data/shipped_discoveries.txt"
 
 ## An INDEPENDENT expected destination per shipped attunement name.
 ##
@@ -152,11 +153,13 @@ func _physics_process(_delta: float) -> void:
 		if _ticks > 10:
 			_fail("main scene did not build World and Wanderer")
 		return
-	# The writer boot starts at the cave, then walks to the shrine. Its reboot
-	# deliberately does NOT repeat this move: finding the shrine after reboot
-	# can therefore only come from the persisted vault.
+	# Approach the shrine from its negative-Z edge. This point is within the
+	# clearing around the shrine itself (Z=0) but outside the same radius around
+	# its standable respawn point (Z=5), so an offset discovery centre fails.
+	# The reboot deliberately does NOT repeat this move: finding the shrine then
+	# can only come from the persisted vault.
 	if _discovery_phase == "write" and _ticks == 10:
-		player.global_position = world.shrine_respawn_point()
+		player.global_position = Vector3(0.0, world.shrine_respawn_point().y, -13.0)
 	if _ticks != ASSERT_TICK:
 		return
 
@@ -249,6 +252,17 @@ func _assert_discovery_restore() -> void:
 	if tracker is not Discovery:
 		_fail("CAPABILITY 3 IS PARSER-ONLY: the production boot owns no Discovery tracker")
 		return
+	var shipped := _shipped_discoveries()
+	if shipped.is_empty():
+		_fail("shipped_discoveries.txt is missing or empty — no live discovery ids can be guarded")
+		return
+	for name: String in shipped:
+		if not (tracker as Discovery).is_registered(name):
+			_fail("shipped discovery '%s' has no live point-of-interest registration" % name)
+			return
+	if (tracker as Discovery).total() != shipped.size():
+		_fail("the production boot registers an unledgered discovery id")
+		return
 	var expected: Array[String] = ["future_place", "starter_cave", "wardens_shrine"]
 	if (tracker as Discovery).discovered() != expected:
 		_fail("the production boot did not restore the vault-v2 set and observe the starter cave")
@@ -319,6 +333,20 @@ func _oracle_point(name: String, world: WorldGen) -> Variant:
 ## here so this test exercises exactly the names that have shipped.
 func _shipped_attunements() -> Array:
 	var file := FileAccess.open("res://tests/data/shipped_attunements.txt", FileAccess.READ)
+	if file == null:
+		return []
+	var names := []
+	while not file.eof_reached():
+		var line := file.get_line().strip_edges()
+		if line.is_empty() or line.begins_with("#"):
+			continue
+		names.append(line)
+	file.close()
+	return names
+
+
+func _shipped_discoveries() -> Array:
+	var file := FileAccess.open(SHIPPED_DISCOVERIES, FileAccess.READ)
 	if file == null:
 		return []
 	var names := []
