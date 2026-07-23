@@ -1,17 +1,22 @@
 # Issue 346 — moving-sun material response
 
 These are raw, ungraded 1600×900 frames from the shipping world and materials.
-Each pair holds the camera, generated world, foliage and hollow-ash volume fixed.
-Only the real `DirectionalLight3D` named `Sun` moves:
+Each pair holds the camera, generated world, foliage and hollow-ash volume at
+one frozen animation phase. Only the real `DirectionalLight3D` named `Sun`
+moves:
 
 - **source side:** light rays travel with the camera ray (`dot = +1.000`);
-- **far side:** light rays travel against the camera ray (`dot = -1.000`).
+- **far side:** the horizontal azimuth reverses while the Sun retains the same
+  above-terrain elevation (`dot = -0.984` for foliage, `-0.928` for ash).
 
 Capture conditions: Godot 4.7.1, Metal Forward+, Apple M2 Pro,
 `VOLUMETRICS on`, `HOLLOW FOG on — 6 drifting ash pools`. All save paths were
 redirected to disposable files. `client/tools/frame_capture.gd` owns the exact
 camera and light geometry and regenerates the four frames with
-`WAR_SCENARIO=light_response`.
+`WAR_SCENARIO=light_response`. The capture also hides the built `HollowFog`
+subtree without moving the camera or light and fails unless the ash changes
+rendered pixels; this run changed 43/192 sampled pixels source-side and 40/192
+far-side.
 
 ## Foliage response
 

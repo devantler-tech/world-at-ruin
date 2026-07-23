@@ -31,12 +31,28 @@ func _ready() -> void:
 	if not _has_method(script, "ash_response_vantage"):
 		_fail("frame capture has no close view through a shipped ash pool")
 		return
+	if not _has_method(script, "freeze_light_response_animation"):
+		_fail("frame capture cannot freeze foliage wind and ash drift across each light-response pair")
+		return
+	if not _has_method(script, "ash_contribution_verdict"):
+		_fail("frame capture has no rendered with/without-volume verdict for the ash evidence")
+		return
+	if not _has_method(script, "visible_fog_volume_count"):
+		_fail("frame capture cannot distinguish a renderable ash pool from placement metadata")
+		return
 	if not source.contains("_capture_light_response"):
 		_fail("the light_response scenario is declared but never reaches a capture path")
+		return
+	if source.count("freeze_light_response_animation()") < 2:
+		_fail("the capture defines an animation freeze but never applies it to the light-response scenario")
 		return
 	if not source.contains("hollow_fog_placements") or not source.contains("\"ash-source-side\""):
 		_fail("the moving-key proof never captures a real hollow FogVolume up close")
 		return
+	for frame_name: String in ["foliage-source-side", "foliage-far-side"]:
+		if not source.contains("\"%s\"" % frame_name):
+			_fail("the capture does not regenerate documented evidence frame %s.png" % frame_name)
+			return
 	var workflow := FileAccess.get_file_as_string(CI_WORKFLOW_PATH)
 	if workflow.is_empty():
 		_fail("could not read %s — the evidence delivery path is untestable" % CI_WORKFLOW_PATH)
@@ -46,6 +62,48 @@ func _ready() -> void:
 		if not workflow.contains(upload_glob):
 			_fail("visual CI renders moving-key frames but never uploads %s" % upload_glob)
 			return
+
+	var original_time_scale := Engine.time_scale
+	script.call("freeze_light_response_animation")
+	if not is_zero_approx(Engine.time_scale):
+		var actual_time_scale := Engine.time_scale
+		Engine.time_scale = original_time_scale
+		_fail("light-response animation freeze left Engine.time_scale at %.3f instead of zero" %
+			actual_time_scale)
+		return
+	Engine.time_scale = original_time_scale
+
+	var ash_live := Image.create(16, 12, false, Image.FORMAT_RGBA8)
+	ash_live.fill(Color(0.25, 0.20, 0.18))
+	var ash_hidden := ash_live.duplicate()
+	var absent: Variant = script.call("ash_contribution_verdict", ash_live, ash_hidden)
+	if absent is not Dictionary or bool((absent as Dictionary).get("ok", true)):
+		_fail("identical with/without-volume frames passed as rendered ash contribution")
+		return
+	for y in range(4, 8):
+		for x in range(6, 10):
+			ash_hidden.set_pixel(x, y, Color(0.40, 0.34, 0.30))
+	var present: Variant = script.call("ash_contribution_verdict", ash_live, ash_hidden)
+	if present is not Dictionary or not bool((present as Dictionary).get("ok", false)):
+		_fail("a visible ash-sized image contribution did not pass the rendered-volume verdict")
+		return
+
+	var fog_root := Node3D.new()
+	fog_root.name = "HollowFogTest"
+	add_child(fog_root)
+	if int(script.call("visible_fog_volume_count", fog_root)) != 0:
+		_fail("an empty fog root was treated as rendered ash")
+		return
+	var fog_volume := FogVolume.new()
+	fog_root.add_child(fog_volume)
+	if int(script.call("visible_fog_volume_count", fog_root)) != 1:
+		_fail("a visible FogVolume was not recognised as renderable ash")
+		return
+	fog_volume.visible = false
+	if int(script.call("visible_fog_volume_count", fog_root)) != 0:
+		_fail("a hidden FogVolume was treated as rendered ash evidence")
+		return
+	fog_root.queue_free()
 
 	var eye := Vector3(55.0, 11.0, 40.0)
 	var target := Vector3(-10.0, 3.0, -20.0)
@@ -59,8 +117,11 @@ func _ready() -> void:
 	if not source_side.is_equal_approx(eye):
 		_fail("source-side light must sit at the fixed camera, got %s instead of %s" % [source_side, eye])
 		return
-	if not ((source_side + far_side) * 0.5).is_equal_approx(target):
-		_fail("the two light positions are not symmetric around the subject")
+	if not Vector2(
+			(source_side.x + far_side.x) * 0.5,
+			(source_side.z + far_side.z) * 0.5
+		).is_equal_approx(Vector2(target.x, target.z)):
+		_fail("the two light positions are not horizontally symmetric around the subject")
 		return
 	var view_ray := (target - eye).normalized()
 	var source_ray := (target - source_side).normalized()
@@ -68,8 +129,17 @@ func _ready() -> void:
 	if source_ray.dot(view_ray) < 0.999:
 		_fail("source-side light does not travel with the camera ray")
 		return
-	if far_ray.dot(view_ray) > -0.999:
-		_fail("far-side light is not opposite the camera ray")
+	if not is_equal_approx(far_side.y, source_side.y):
+		_fail("far-side light changed elevation from %.2f to %.2f and can end up below terrain" %
+			[source_side.y, far_side.y])
+		return
+	var source_horizontal := Vector2(source_ray.x, source_ray.z).normalized()
+	var far_horizontal := Vector2(far_ray.x, far_ray.z).normalized()
+	if far_horizontal.dot(source_horizontal) > -0.999:
+		_fail("far-side light azimuth is not opposite the camera-side azimuth")
+		return
+	if source_ray.y >= 0.0 or far_ray.y >= 0.0:
+		_fail("both key directions must remain downward toward the terrain")
 		return
 
 	var placement := {
