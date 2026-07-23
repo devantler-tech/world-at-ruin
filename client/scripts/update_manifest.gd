@@ -35,9 +35,11 @@ class_name UpdateManifest
 ##     trust is unstarted (ADR child 6). The published OCI artifact IS
 ##     cosign-signed by digest, which is a real integrity property, but it is a
 ##     different one and this module does not pretend otherwise.
-##   * `rollback_targets` — nothing is retained yet. Empty is the FAIL-CLOSED
-##     value: [UpdateDecision] treats an uncovered capability raise as blocked, so
-##     an empty catalogue refuses a capability-raising pack rather than shipping
+##   * `rollback_targets` — no MOUNTABLE CONTENT PACK is retained yet. The
+##     v0.52.0 monolithic app release is the whole-app rollback for capability 3,
+##     but its `.app` ZIP is deliberately not a pack target: recovery would hand
+##     it to the pack-mount path. Empty is the FAIL-CLOSED pack value:
+##     [UpdateDecision] refuses a capability-raising pack rather than shipping
 ##     one no player could roll back from.
 ##
 ## Omitting delivery is not a gap to be filled in quietly — a client reading this
@@ -75,9 +77,11 @@ const SAVE_SCHEMA_MIN := 1
 ## adds a savable field. A build claiming to write LESS than it once did is
 ## exactly the stranding the no-resets law forbids.
 ##
-## Capability 3 is vault-v2 discovery state. Its read ceiling shipped in v0.52.0
-## and is now a retained rollback target, so this separate release may originate
-## the shape without stranding a player who rolls back.
+## Capability 3 is vault-v2 discovery state. Its read ceiling shipped in the
+## retained v0.52.0 monolithic app, which is the whole-app rollback while client
+## delivery remains monolithic. The separate `rollback_targets` catalogue stays
+## empty until a mountable pack exists; advertising the app ZIP there would make
+## pack recovery select an artifact it cannot mount.
 const SAVE_CAPABILITY_WRITES := 3
 
 ## The highest content capability this build can READ.
@@ -181,7 +185,8 @@ static func build() -> Dictionary:
 				"writes": CharacterFactory.RECIPE_VERSION,
 				"capability": SAVE_CAPABILITY_WRITES,
 			},
-			# Nothing retained yet. Empty is fail-closed, not unfinished.
+			# No mountable content pack is retained yet. The v0.52.0 whole-app
+			# rollback must not be mislabelled as a pack target.
 			"rollback_targets": [],
 		},
 	}

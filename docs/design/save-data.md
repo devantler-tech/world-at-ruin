@@ -63,6 +63,15 @@ remains unpersisted.
 This wait is what makes rollback safe: if the next build fails, the retained build already understands
 everything the failed build may have written.
 
+“Applicable update tier” is literal. While the client ships as one monolithic app, the retained
+whole-app release is the rollback target: its published app must boot and apply the expanded state
+before the later app starts writing it. `v0.52.0` is that retained, independently booted whole-app
+target for capability 3. The manifest's `rollback_targets` array is a different tier: it is consumed
+only by the future mountable-pack recovery path, so it stays empty until a real `.pck` is retained.
+Putting a monolithic `.app` ZIP there would not strengthen rollback; it would make recovery select
+bytes the pack path cannot mount. Once pack delivery exists, its capability expansions require a
+selectable catalogue entry before their writers activate.
+
 ### 3. Contract by starting the new writer
 
 Enable the new write path only after the expansion is baked.

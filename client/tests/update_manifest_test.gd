@@ -148,7 +148,7 @@ func _test_no_delivery_is_published() -> void:
 		_fail("shell.download is published with no shell_authorization — that offers an UNAUTHORIZED shell replacement. Ship the root-signed authorization in the same change, or omit the download.")
 		return
 	if not (m["rollback_targets"] as Array).is_empty():
-		_fail("rollback_targets is non-empty, but nothing is retained yet — an entry here would point a recovery at an artifact that does not exist")
+		_fail("rollback_targets is non-empty, but no mountable .pck is retained — the v0.52.0 whole-app ZIP is an app rollback, not an artifact the pack path can mount")
 
 
 ## A build must be able to read what it writes, or it can never serve as its own

@@ -233,8 +233,10 @@ would tell a client where to *fetch* something is withheld, and each omission is
   keeps playing — the safe failure.
 - **`signature` / `key` / `revocation`** — the root of trust is child 6, unstarted. The published OCI
   artifact is cosign-signed by digest, which is a real but *different* integrity property.
-- **`rollback_targets`** — empty, because nothing is retained. Empty is the fail-closed value: it makes
-  the decision core refuse a capability-raising pack rather than ship one no player could roll back from.
+- **`rollback_targets`** — empty, because no mountable content pack is retained. The published
+  `v0.52.0` monolithic app is the whole-app rollback for save capability 3, but its `.app` ZIP is
+  deliberately not advertised to the pack selector. Empty is the fail-closed pack value: it makes the
+  decision core refuse a capability-raising pack rather than ship one no player could roll back from.
 
 Publishing no delivery is the correct state while there is genuinely nothing to deliver — a client can
 learn it is out of date and say so, and can go no further.

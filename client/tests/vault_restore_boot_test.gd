@@ -52,6 +52,17 @@ const DESTINATION_ORACLE := {
 	"wardens_shrine": "shrine",
 }
 
+## An INDEPENDENT landmark per shipped discovery id. Merely proving that a
+## ledgered id is registered is insufficient: swapping `starter_cave` and
+## `wardens_shrine` would keep both names live while silently reinterpreting
+## every returning player's history. These values resolve straight from WorldGen
+## rather than through Main's registrations, so a repoint cannot agree with
+## itself.
+const DISCOVERY_DESTINATION_ORACLE := {
+	"starter_cave": "cave",
+	"wardens_shrine": "shrine_interactable",
+}
+
 var _ticks := 0
 var _main: Node
 var _save: SaveIsolation
@@ -244,6 +255,10 @@ func _physics_process(_delta: float) -> void:
 ## Discovering the private member through the property list keeps the RED case
 ## a clear assertion failure instead of an invalid-property engine error.
 func _assert_discovery_restore() -> void:
+	var world := _main.get_node_or_null("World") as WorldGen
+	if world == null:
+		_fail("the discovery restore boot has no live world for landmark verification")
+		return
 	var tracker: Variant = null
 	for property: Dictionary in _main.get_property_list():
 		if String(property.get("name", "")) == "_discovery":
@@ -259,6 +274,30 @@ func _assert_discovery_restore() -> void:
 	for name: String in shipped:
 		if not (tracker as Discovery).is_registered(name):
 			_fail("shipped discovery '%s' has no live point-of-interest registration" % name)
+			return
+		if not DISCOVERY_DESTINATION_ORACLE.has(name):
+			_fail("shipped discovery '%s' has no independent landmark oracle" % name)
+			return
+		var registrations: Variant = (tracker as Discovery).get("_pois")
+		if registrations is not Dictionary:
+			_fail("Discovery does not expose its registrations to the boot guard")
+			return
+		var poi: Variant = (registrations as Dictionary).get(name)
+		if poi is not Dictionary or (poi as Dictionary).get("center") is not Vector3:
+			_fail("shipped discovery '%s' has no inspectable registered centre" % name)
+			return
+		var expected = _discovery_oracle_point(name, world)
+		if expected == null:
+			_fail("shipped discovery '%s' has an unreadable landmark oracle" % name)
+			return
+		var registered_center: Vector3 = (poi as Dictionary)["center"]
+		if registered_center.distance_to(expected) > EPS:
+			_fail(("SHIPPED DISCOVERY REPOINTED (no-resets law): '%s' is registered at %s, "
+				+ "but its permanent landmark is %s") % [name, str(registered_center), str(expected)])
+			return
+	for name: String in DISCOVERY_DESTINATION_ORACLE:
+		if name not in shipped:
+			_fail("discovery oracle '%s' is not anchored in shipped_discoveries.txt" % name)
 			return
 	if (tracker as Discovery).total() != shipped.size():
 		_fail("the production boot registers an unledgered discovery id")
@@ -326,6 +365,19 @@ func _oracle_point(name: String, world: WorldGen) -> Variant:
 	match String(DESTINATION_ORACLE[name]):
 		"shrine":
 			return world.shrine_respawn_point()
+	return null
+
+
+## The landmark a shipped discovery id MUST continue to mean, independently
+## resolved from the world rather than from Main's registration under test.
+func _discovery_oracle_point(name: String, world: WorldGen) -> Variant:
+	if not DISCOVERY_DESTINATION_ORACLE.has(name):
+		return null
+	match String(DISCOVERY_DESTINATION_ORACLE[name]):
+		"cave":
+			return world.cave_spawn_point()
+		"shrine_interactable":
+			return world.shrine_interactable().global_position
 	return null
 
 
