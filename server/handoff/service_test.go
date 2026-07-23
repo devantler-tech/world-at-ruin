@@ -3,7 +3,6 @@ package handoff
 import (
 	"bytes"
 	"context"
-	"errors"
 	"net"
 	"strconv"
 	"strings"
@@ -86,11 +85,18 @@ type recordingAllocator struct {
 	allocation Allocation
 	err        error
 	users      []string
+	releases   []Allocation
+	releaseErr error
 }
 
 func (a *recordingAllocator) Allocate(_ context.Context, userID string) (Allocation, error) {
 	a.users = append(a.users, userID)
 	return a.allocation, a.err
+}
+
+func (a *recordingAllocator) Release(_ context.Context, allocation Allocation) error {
+	a.releases = append(a.releases, allocation)
+	return a.releaseErr
 }
 
 func validAllocation() Allocation {
@@ -106,6 +112,13 @@ func testSecret() []byte {
 	return bytes.Repeat([]byte{0x42}, 32)
 }
 
+func validConfig() Config {
+	return Config{
+		AdmissionSecret: testSecret(),
+		ZoneDomain:      "edge.example",
+	}
+}
+
 func TestServiceCreatesAllocationScopedHandoffThroughRealNakama(t *testing.T) {
 	nakama := &accountServer{
 		account: &api.Account{User: &api.User{Id: "player-42"}},
@@ -117,6 +130,7 @@ func TestServiceCreatesAllocationScopedHandoffThroughRealNakama(t *testing.T) {
 		allocator,
 		Config{
 			AdmissionSecret: testSecret(),
+			ZoneDomain:      "edge.example",
 			TokenTTL:        45 * time.Second,
 			Now:             func() time.Time { return now },
 		},
@@ -131,6 +145,9 @@ func TestServiceCreatesAllocationScopedHandoffThroughRealNakama(t *testing.T) {
 	}
 	if len(allocator.users) != 1 || allocator.users[0] != "player-42" {
 		t.Fatalf("allocator users = %q, want only verified player-42", allocator.users)
+	}
+	if len(allocator.releases) != 0 {
+		t.Fatalf("released successful allocations = %+v, want none", allocator.releases)
 	}
 	if auth := nakama.observedAuthorization(); len(auth) != 1 || auth[0] != "Bearer "+testSession {
 		t.Fatalf("Nakama authorization metadata = %q, want one supplied bearer session", auth)
@@ -169,7 +186,7 @@ func TestAuthenticationFailureNeverAllocates(t *testing.T) {
 	service, err := NewService(
 		verifierAgainst(t, nakama),
 		allocator,
-		Config{AdmissionSecret: testSecret()},
+		validConfig(),
 	)
 	if err != nil {
 		t.Fatalf("NewService returned an error: %v", err)
@@ -184,6 +201,9 @@ func TestAuthenticationFailureNeverAllocates(t *testing.T) {
 	}
 	if len(allocator.users) != 0 {
 		t.Fatalf("allocator users = %q, want no allocation after auth failure", allocator.users)
+	}
+	if len(allocator.releases) != 0 {
+		t.Fatalf("released allocations after auth failure = %+v, want none", allocator.releases)
 	}
 	if strings.Contains(err.Error(), testSession) {
 		t.Fatalf("handoff error leaked the session: %q", err)
@@ -201,6 +221,7 @@ func TestReportedExpiryMatchesTokenSecondPrecision(t *testing.T) {
 		allocator,
 		Config{
 			AdmissionSecret: testSecret(),
+			ZoneDomain:      "edge.example",
 			TokenTTL:        45 * time.Second,
 			Now:             func() time.Time { return now },
 		},
@@ -234,11 +255,13 @@ func TestAllocationFailureReturnsNoHandoff(t *testing.T) {
 	nakama := &accountServer{
 		account: &api.Account{User: &api.User{Id: "player-42"}},
 	}
-	allocator := &recordingAllocator{err: errors.New("allocator unavailable")}
+	allocator := &recordingAllocator{
+		err: status.Error(codes.ResourceExhausted, "allocator unavailable for "+testSession),
+	}
 	service, err := NewService(
 		verifierAgainst(t, nakama),
 		allocator,
-		Config{AdmissionSecret: testSecret()},
+		validConfig(),
 	)
 	if err != nil {
 		t.Fatalf("NewService returned an error: %v", err)
@@ -253,6 +276,12 @@ func TestAllocationFailureReturnsNoHandoff(t *testing.T) {
 	}
 	if len(allocator.users) != 1 || allocator.users[0] != "player-42" {
 		t.Fatalf("allocator users = %q, want one verified player-42", allocator.users)
+	}
+	if len(allocator.releases) != 0 {
+		t.Fatalf("released allocations after allocation failure = %+v, want none", allocator.releases)
+	}
+	if code := status.Code(err); code != codes.ResourceExhausted {
+		t.Fatalf("handoff status code = %s, want %s", code, codes.ResourceExhausted)
 	}
 	if strings.Contains(err.Error(), testSession) ||
 		strings.Contains(err.Error(), string(testSecret())) {
@@ -282,6 +311,10 @@ func TestMalformedAllocationReturnsNoHandoff(t *testing.T) {
 			mutate: func(a *Allocation) { a.ServerName = "203.0.113.17" },
 		},
 		{
+			name:   "DNS name outside managed zone domain",
+			mutate: func(a *Allocation) { a.ServerName = "attacker.example" },
+		},
+		{
 			name:   "invalid DNS label",
 			mutate: func(a *Allocation) { a.ServerName = "-zone.edge.example" },
 		},
@@ -306,7 +339,7 @@ func TestMalformedAllocationReturnsNoHandoff(t *testing.T) {
 			service, err := NewService(
 				verifierAgainst(t, nakama),
 				allocator,
-				Config{AdmissionSecret: testSecret()},
+				validConfig(),
 			)
 			if err != nil {
 				t.Fatalf("NewService returned an error: %v", err)
@@ -319,7 +352,48 @@ func TestMalformedAllocationReturnsNoHandoff(t *testing.T) {
 			if got != (Handoff{}) {
 				t.Fatalf("failed handoff = %+v, want zero value", got)
 			}
+			if len(allocator.releases) != 1 || allocator.releases[0] != allocation {
+				t.Fatalf(
+					"released allocations = %+v, want exactly malformed allocation %+v",
+					allocator.releases,
+					allocation,
+				)
+			}
 		})
+	}
+}
+
+func TestReleaseFailureRemainsClosedAndSanitized(t *testing.T) {
+	nakama := &accountServer{
+		account: &api.Account{User: &api.User{Id: "player-42"}},
+	}
+	allocation := validAllocation()
+	allocation.Port = 0
+	allocator := &recordingAllocator{
+		allocation: allocation,
+		releaseErr: status.Error(codes.Unavailable, "release failed for "+testSession),
+	}
+	service, err := NewService(
+		verifierAgainst(t, nakama),
+		allocator,
+		validConfig(),
+	)
+	if err != nil {
+		t.Fatalf("NewService returned an error: %v", err)
+	}
+
+	got, err := service.CreateHandoff(context.Background(), testSession)
+	if err == nil {
+		t.Fatal("CreateHandoff returned nil error")
+	}
+	if got != (Handoff{}) {
+		t.Fatalf("failed handoff = %+v, want zero value", got)
+	}
+	if len(allocator.releases) != 1 || allocator.releases[0] != allocation {
+		t.Fatalf("released allocations = %+v, want exactly malformed allocation", allocator.releases)
+	}
+	if strings.Contains(err.Error(), testSession) {
+		t.Fatalf("handoff error leaked a credential: %q", err)
 	}
 }
 
@@ -338,30 +412,63 @@ func TestNewServiceRejectsUnsafeConfiguration(t *testing.T) {
 		{
 			name:   "nil verifier",
 			alloc:  allocator,
-			config: Config{AdmissionSecret: testSecret()},
+			config: validConfig(),
 		},
 		{
 			name:   "nil allocator",
 			verify: verifier,
-			config: Config{AdmissionSecret: testSecret()},
+			config: validConfig(),
 		},
 		{
 			name:   "weak admission secret",
 			verify: verifier,
 			alloc:  allocator,
-			config: Config{AdmissionSecret: []byte("too short")},
+			config: Config{AdmissionSecret: []byte("too short"), ZoneDomain: "edge.example"},
 		},
 		{
 			name:   "negative token TTL",
 			verify: verifier,
 			alloc:  allocator,
-			config: Config{AdmissionSecret: testSecret(), TokenTTL: -time.Second},
+			config: Config{
+				AdmissionSecret: testSecret(),
+				ZoneDomain:      "edge.example",
+				TokenTTL:        -time.Second,
+			},
+		},
+		{
+			name:   "sub-second token TTL",
+			verify: verifier,
+			alloc:  allocator,
+			config: Config{
+				AdmissionSecret: testSecret(),
+				ZoneDomain:      "edge.example",
+				TokenTTL:        500 * time.Millisecond,
+			},
 		},
 		{
 			name:   "token TTL is not short-lived",
 			verify: verifier,
 			alloc:  allocator,
-			config: Config{AdmissionSecret: testSecret(), TokenTTL: 6 * time.Minute},
+			config: Config{
+				AdmissionSecret: testSecret(),
+				ZoneDomain:      "edge.example",
+				TokenTTL:        6 * time.Minute,
+			},
+		},
+		{
+			name:   "missing managed zone domain",
+			verify: verifier,
+			alloc:  allocator,
+			config: Config{AdmissionSecret: testSecret()},
+		},
+		{
+			name:   "raw IP managed zone domain",
+			verify: verifier,
+			alloc:  allocator,
+			config: Config{
+				AdmissionSecret: testSecret(),
+				ZoneDomain:      "203.0.113.17",
+			},
 		},
 	}
 

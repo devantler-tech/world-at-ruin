@@ -156,13 +156,15 @@ zone/dungeon server:
 - **`handoff/`** — the transport-neutral **player handoff core**: it consumes
   `nakamaauth` rather than accepting a client-provided identity, gives only that
   verified user ID to an allocation boundary, validates the returned
-  GameServer's DNS endpoint and observer binding, and mints the short-lived
-  token the existing zone verifier accepts only for that allocation. Every
-  failed stage returns a zero handoff, and credentials never enter returned
-  errors. Hermetic tests drive the real generated Nakama gRPC path through the
-  service and then verify its token through the real zone verifier. The package
-  is inert until the concrete Agones allocator adapter and Nakama RPC register
-  it.
+  GameServer is under the configured managed DNS domain with a usable endpoint
+  and observer binding, and mints the short-lived token the existing zone
+  verifier accepts only for that allocation. Every failed stage returns a zero
+  handoff; a post-allocation failure releases the reservation on a bounded
+  cleanup context, retryable gRPC status codes survive without upstream text,
+  and credentials never enter returned errors. Hermetic tests drive the real
+  generated Nakama gRPC path through the service and then verify its token
+  through the real zone verifier. The package is inert until the concrete
+  Agones allocator adapter and Nakama RPC register it.
 - **`cmd/zone/`** — a runnable skeleton server. It boots the demo zone and either
   runs a fixed number of deterministic ticks (printing the state hash) or drives
   the loop from the wall clock. With `-replicate` it also runs the full

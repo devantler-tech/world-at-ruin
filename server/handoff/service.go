@@ -20,6 +20,9 @@ const (
 	DefaultTokenTTL = 30 * time.Second
 	// MaxTokenTTL is the hard ceiling for a short-lived allocation token.
 	MaxTokenTTL = 5 * time.Minute
+	// releaseTimeout lets rollback outlive a cancelled client request without
+	// allowing a broken allocator to hold the RPC forever.
+	releaseTimeout = 5 * time.Second
 )
 
 // SessionVerifier resolves the authenticated user behind a Nakama session.
@@ -32,6 +35,7 @@ type SessionVerifier interface {
 // core; an adapter must return the allocation that owns the endpoint.
 type Allocator interface {
 	Allocate(context.Context, string) (Allocation, error)
+	Release(context.Context, Allocation) error
 }
 
 // Allocation is the trusted result of allocating one GameServer.
@@ -53,17 +57,19 @@ type Handoff struct {
 // Config sets the admission-key material and lifetime policy.
 type Config struct {
 	AdmissionSecret []byte
+	ZoneDomain      string
 	TokenTTL        time.Duration
 	Now             func() time.Time
 }
 
 // Service creates allocation-scoped player handoffs.
 type Service struct {
-	verifier  SessionVerifier
-	allocator Allocator
-	secret    []byte
-	tokenTTL  time.Duration
-	now       func() time.Time
+	verifier   SessionVerifier
+	allocator  Allocator
+	secret     []byte
+	zoneDomain string
+	tokenTTL   time.Duration
+	now        func() time.Time
 }
 
 // NewService validates the handoff dependencies and token policy.
@@ -79,8 +85,13 @@ func NewService(verifier SessionVerifier, allocator Allocator, cfg Config) (*Ser
 	if tokenTTL == 0 {
 		tokenTTL = DefaultTokenTTL
 	}
-	if tokenTTL < 0 || tokenTTL > MaxTokenTTL {
-		return nil, errors.New("handoff: token TTL must be positive and at most five minutes")
+	if tokenTTL < time.Second || tokenTTL > MaxTokenTTL {
+		return nil, errors.New("handoff: token TTL must be between one second and five minutes")
+	}
+
+	zoneDomain := strings.ToLower(strings.TrimSuffix(cfg.ZoneDomain, "."))
+	if !validDNSName(zoneDomain) {
+		return nil, errors.New("handoff: managed zone domain is invalid")
 	}
 
 	now := cfg.Now
@@ -97,11 +108,12 @@ func NewService(verifier SessionVerifier, allocator Allocator, cfg Config) (*Ser
 	}
 
 	return &Service{
-		verifier:  verifier,
-		allocator: allocator,
-		secret:    append([]byte(nil), cfg.AdmissionSecret...),
-		tokenTTL:  tokenTTL,
-		now:       now,
+		verifier:   verifier,
+		allocator:  allocator,
+		secret:     append([]byte(nil), cfg.AdmissionSecret...),
+		zoneDomain: zoneDomain,
+		tokenTTL:   tokenTTL,
+		now:        now,
 	}, nil
 }
 
@@ -119,10 +131,10 @@ func (s *Service) CreateHandoff(ctx context.Context, session string) (Handoff, e
 
 	allocation, err := s.allocator.Allocate(ctx, userID)
 	if err != nil {
-		return Handoff{}, errors.New("handoff: allocate GameServer")
+		return Handoff{}, status.Error(status.Code(err), "handoff: allocate GameServer")
 	}
-	if err := validateAllocation(allocation); err != nil {
-		return Handoff{}, err
+	if err := s.validateAllocation(allocation); err != nil {
+		return Handoff{}, s.releaseAfterFailure(ctx, allocation, err)
 	}
 
 	expiresAt := time.Unix(s.now().Add(s.tokenTTL).Unix(), 0)
@@ -133,7 +145,11 @@ func (s *Service) CreateHandoff(ctx context.Context, session string) (Handoff, e
 		expiresAt,
 	)
 	if err != nil {
-		return Handoff{}, errors.New("handoff: mint allocation token")
+		return Handoff{}, s.releaseAfterFailure(
+			ctx,
+			allocation,
+			errors.New("handoff: mint allocation token"),
+		)
 	}
 
 	return Handoff{
@@ -144,12 +160,15 @@ func (s *Service) CreateHandoff(ctx context.Context, session string) (Handoff, e
 	}, nil
 }
 
-func validateAllocation(allocation Allocation) error {
+func (s *Service) validateAllocation(allocation Allocation) error {
 	if allocation.ID == "" || strings.Contains(allocation.ID, ".") {
 		return errors.New("handoff: allocation ID is invalid")
 	}
 	if !validDNSName(allocation.ServerName) {
 		return errors.New("handoff: GameServer DNS name is invalid")
+	}
+	if !strings.HasSuffix(strings.ToLower(allocation.ServerName), "."+s.zoneDomain) {
+		return errors.New("handoff: GameServer is outside the managed zone domain")
 	}
 	if allocation.Port == 0 {
 		return errors.New("handoff: GameServer TLS port is missing")
@@ -158,6 +177,19 @@ func validateAllocation(allocation Allocation) error {
 		return errors.New("handoff: observer binding is missing")
 	}
 	return nil
+}
+
+func (s *Service) releaseAfterFailure(
+	ctx context.Context,
+	allocation Allocation,
+	handoffErr error,
+) error {
+	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), releaseTimeout)
+	defer cancel()
+	if err := s.allocator.Release(releaseCtx, allocation); err != nil {
+		return errors.New("handoff: invalid allocation could not be released")
+	}
+	return handoffErr
 }
 
 func validDNSName(name string) bool {
