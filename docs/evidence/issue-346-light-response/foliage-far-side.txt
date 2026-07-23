@@ -1,0 +1,4 @@
+frame: foliage-far-side.png
+captured: 1600x900
+size: as shipped
+separation: value 51.9% of range (p1 0.130 -> p99 0.649) - hue 16.2 deg over 57600 px
