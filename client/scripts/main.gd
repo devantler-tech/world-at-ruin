@@ -14,6 +14,8 @@ const FOG_COLOR := Color(0.35, 0.28, 0.24)
 const DISCOVERY_STARTER_CAVE := SaveVault.DISCOVERY_STARTER_CAVE
 const DISCOVERY_WARDENS_SHRINE := SaveVault.DISCOVERY_WARDENS_SHRINE
 const STARTER_CAVE_DISCOVERY_RADIUS := 10.0
+const DISCOVERY_PERSIST_RETRY_INITIAL_SECONDS := 1.0
+const DISCOVERY_PERSIST_RETRY_MAX_SECONDS := 30.0
 
 var _player: Player
 var _hud: Hud
@@ -64,6 +66,13 @@ var _replicas: ReplicaView = null
 ## two shipped places are observed into the append-only vault as the wanderer
 ## reaches them.
 var _discovery := Discovery.new()
+## A discovery enters the live tracker before persistence is attempted. Keep a
+## separate dirty bit so a transient filesystem failure can be retried without
+## asking Discovery.observe() to return the same one-time event twice.
+var _discovery_persistence_pending := false
+var _discovery_persistence_retry_in := 0.0
+var _discovery_persistence_retry_delay := DISCOVERY_PERSIST_RETRY_INITIAL_SECONDS
+var _discovery_persistence_warning_shown := false
 
 func _ready() -> void:
 	# Capture-harness entry for the EXPORTED client: the official export
@@ -344,7 +353,7 @@ func _connect_zone() -> void:
 ## bake in a policy nothing yet exercises.
 func _process(delta: float) -> void:
 	_drift_hollow_fog(delta)
-	_observe_discoveries()
+	_observe_discoveries(delta)
 	if _zone == null:
 		return
 	_zone.poll()
@@ -371,16 +380,41 @@ func _process(delta: float) -> void:
 		push_warning("zone connection closed by the zone — replication has stopped for this session")
 
 
-## Fold this frame's player position into the append-only discovery set. A
-## refused vault write (unreadable/newer file) leaves the discovery live for
-## this session and is not retried every frame: observe() returns each id once.
-func _observe_discoveries() -> void:
+## Fold this frame's player position into the append-only discovery set.
+## Transient storage failures retain a dirty bit and retry with bounded
+## exponential backoff; a path-latched unreadable/newer vault stays session-only
+## and is never retried, preserving the downgrade refusal.
+func _observe_discoveries(delta: float = 0.0) -> void:
 	if _player == null:
 		return
 	var newly_found := _discovery.observe(_player.global_position)
-	if newly_found.is_empty():
+	if not newly_found.is_empty():
+		_discovery_persistence_pending = true
+		_discovery_persistence_retry_in = 0.0
+		_discovery_persistence_retry_delay = DISCOVERY_PERSIST_RETRY_INITIAL_SECONDS
+	if not _discovery_persistence_pending:
 		return
-	if not SaveVault.persist_discoveries(_discovery.discovered()):
+	if newly_found.is_empty() and _discovery_persistence_retry_in > 0.0:
+		_discovery_persistence_retry_in = maxf(
+			0.0, _discovery_persistence_retry_in - delta)
+		if _discovery_persistence_retry_in > 0.0:
+			return
+	if SaveVault.persist_discoveries(_discovery.discovered()):
+		_discovery_persistence_pending = false
+		_discovery_persistence_retry_in = 0.0
+		_discovery_persistence_retry_delay = DISCOVERY_PERSIST_RETRY_INITIAL_SECONDS
+		return
+	# persist_discoveries() latches unreadable/newer paths. Only a failure that
+	# leaves this exact path writable is transient and eligible for retry.
+	if SaveVault.can_write(SaveVault.vault_path()):
+		_discovery_persistence_retry_in = _discovery_persistence_retry_delay
+		_discovery_persistence_retry_delay = minf(
+			_discovery_persistence_retry_delay * 2.0,
+			DISCOVERY_PERSIST_RETRY_MAX_SECONDS)
+	else:
+		_discovery_persistence_pending = false
+	if not _discovery_persistence_warning_shown:
+		_discovery_persistence_warning_shown = true
 		_hud.toast("This place is known for now — though the Reach may not remember next waking.")
 
 

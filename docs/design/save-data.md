@@ -169,8 +169,10 @@ For vault version `N`, the expansion pull request must:
    round-trips losslessly after an ordinary write. A new live attunement also enters
    `shipped_attunements.txt`, `SaveVault.KNOWN_ATTUNEMENTS`, the resolver, and the boot restoration
    test in the same change. A new writable discovery id similarly enters
-   `shipped_discoveries.txt`, `SaveVault.KNOWN_DISCOVERIES`, and the real boot's bidirectional
-   point-of-interest registration guard.
+   `shipped_discoveries.txt` as an immutable `id=landmark` mapping,
+   `SaveVault.KNOWN_DISCOVERIES`, and the real boot's bidirectional
+   point-of-interest registration guard. Unknown discovery names already present in a newer vault
+   remain preserved, but this build may originate only a registered, ledgered ID.
 6. Assign the new persistable capability and raise `UpdateManifest.SAVE_CAPABILITY_READS` to it while
    leaving `SAVE_CAPABILITY_WRITES` unchanged. The retained expansion build must advertise the read
    ceiling that makes it an eligible rollback target before the contract release can write that

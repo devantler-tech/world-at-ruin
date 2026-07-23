@@ -427,8 +427,9 @@ everything shipped afterwards is held to.
   [forward-only save-data migration contract](docs/design/save-data.md). It defines the staged
   expand → bake → contract rollout, the version-bump checklist, and the refusal rules for the
   character recipe, progression vault and recovery ledger. Stable live names are permanent too:
-  attunements and writable discovery IDs need append-only ledgers plus real boot/application guards;
-  a green fixture guard alone does not make a one-release read-and-write bump rollback-safe.
+  attunements need append-only ledgers, while writable discovery IDs need append-only
+  `id=landmark` mappings plus real boot/application guards; a green fixture guard alone does not
+  make a one-release read-and-write bump rollback-safe.
 - **Run:** `godot client` (macOS: `/Applications/Godot.app/Contents/MacOS/Godot client`).
 - **Validate before every PR:**
   `godot --headless --editor --quit --path client && godot --headless --quit-after 120 --path client` —

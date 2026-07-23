@@ -1,8 +1,10 @@
-# Stable discovery ids that production has persisted, one per line.
+# Stable discovery id=landmark meanings that production has persisted, one per
+# line. The right-hand token is resolved independently by the real boot guard.
 #
 # APPEND-ONLY (no-resets law). SaveVault's runtime guard binds this ledger in
-# both directions, the boot guard proves every name still maps to a real POI,
-# and CI compares this file with the pull request base. Renaming or removing an
-# id would make an already-found place look new again to returning players.
-starter_cave
-wardens_shrine
+# both directions, the boot guard proves every name still maps to this exact
+# landmark, and CI compares each full mapping with the pull request base.
+# Renaming, removing, or repointing an id would reinterpret returning players'
+# permanent history.
+starter_cave=cave
+wardens_shrine=shrine_interactable

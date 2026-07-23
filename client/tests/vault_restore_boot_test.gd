@@ -28,10 +28,14 @@ extends Node
 ## Run: godot --headless --path client res://tests/vault_restore_boot_test.tscn
 
 const ASSERT_TICK := 30
+const RETRY_ASSERT_TICK := 90
 const EPS := 0.01
 const PROBE_PATH := "user://vault_restore_boot_probe.json"
 const DISCOVERY_PROBE := ["wardens_shrine", "future_place", "wardens_shrine"]
 const SHIPPED_DISCOVERIES := "res://tests/data/shipped_discoveries.txt"
+const RETRY_CHARACTER_PROBE := "user://vault_discovery_retry_character.json"
+const RETRY_PROBE_DIR := "user://vault_discovery_retry"
+const RETRY_VAULT := RETRY_PROBE_DIR + "/vault.json"
 
 ## An INDEPENDENT expected destination per shipped attunement name.
 ##
@@ -52,17 +56,6 @@ const DESTINATION_ORACLE := {
 	"wardens_shrine": "shrine",
 }
 
-## An INDEPENDENT landmark per shipped discovery id. Merely proving that a
-## ledgered id is registered is insufficient: swapping `starter_cave` and
-## `wardens_shrine` would keep both names live while silently reinterpreting
-## every returning player's history. These values resolve straight from WorldGen
-## rather than through Main's registrations, so a repoint cannot agree with
-## itself.
-const DISCOVERY_DESTINATION_ORACLE := {
-	"starter_cave": "cave",
-	"wardens_shrine": "shrine_interactable",
-}
-
 var _ticks := 0
 var _main: Node
 var _save: SaveIsolation
@@ -75,8 +68,8 @@ var _pending: Array = []
 var _current := ""
 var _restored := 0
 ## The final boots exercise vault-v2 discovery restoration, a real cave-to-
-## shrine discovery write, and a reboot that can only recover the shrine from
-## disk because the wanderer wakes back at the cave.
+## shrine discovery write, a reboot that can only recover the shrine from disk,
+## and retry after a deliberately transient first write failure.
 var _discovery_phase := ""
 
 
@@ -156,6 +149,30 @@ func _begin_discovery_writer_boot() -> void:
 	add_child(_main)
 
 
+## Boot against a vault path whose parent does not exist. The cave is observed
+## during Main._ready(), so its first persistence attempt must fail. Creating
+## the parent afterwards turns the exact same path writable and proves Main
+## retries pending progression without rediscovering the already-found cave.
+func _begin_discovery_retry_boot() -> void:
+	_discovery_phase = "retry"
+	_ticks = 0
+	if _main != null:
+		_main.queue_free()
+		_main = null
+	_cleanup_retry_probe()
+	_save = SaveIsolation.new(RETRY_CHARACTER_PROBE)
+	if not _save.begin():
+		_fail("save isolation did not take for the transient discovery-write boot")
+		return
+	OS.set_environment(SaveVault.VAULT_PATH_ENV, RETRY_VAULT)
+	if SaveVault.vault_path() != RETRY_VAULT:
+		_fail("the transient discovery-write vault seam did not take")
+		return
+	SaveVault.clear_refusals_for_test()
+	_main = (load("res://scenes/main.tscn") as PackedScene).instantiate()
+	add_child(_main)
+
+
 func _physics_process(_delta: float) -> void:
 	_ticks += 1
 	var world := _main.get_node_or_null("World") as WorldGen
@@ -171,7 +188,17 @@ func _physics_process(_delta: float) -> void:
 	# can only come from the persisted vault.
 	if _discovery_phase == "write" and _ticks == 10:
 		player.global_position = Vector3(0.0, world.shrine_respawn_point().y, -13.0)
-	if _ticks != ASSERT_TICK:
+	if _discovery_phase == "retry" and _ticks == 3:
+		if FileAccess.file_exists(RETRY_VAULT):
+			_fail("the transient write unexpectedly succeeded before its parent directory existed")
+			return
+		var mkdir_error := DirAccess.make_dir_absolute(
+			ProjectSettings.globalize_path(RETRY_PROBE_DIR))
+		if mkdir_error != OK and mkdir_error != ERR_ALREADY_EXISTS:
+			_fail("could not make the transient vault path writable (%d)" % mkdir_error)
+			return
+	var assert_tick := RETRY_ASSERT_TICK if _discovery_phase == "retry" else ASSERT_TICK
+	if _ticks != assert_tick:
 		return
 
 	match _discovery_phase:
@@ -183,6 +210,9 @@ func _physics_process(_delta: float) -> void:
 			return
 		"reboot":
 			_assert_discovery_reboot(player, world)
+			return
+		"retry":
+			_assert_discovery_retry()
 			return
 
 	var shrine_point := world.shrine_respawn_point()
@@ -269,14 +299,11 @@ func _assert_discovery_restore() -> void:
 		return
 	var shipped := _shipped_discoveries()
 	if shipped.is_empty():
-		_fail("shipped_discoveries.txt is missing or empty — no live discovery ids can be guarded")
+		_fail("shipped_discoveries.txt is missing, malformed, or empty — no live discovery mappings can be guarded")
 		return
 	for name: String in shipped:
 		if not (tracker as Discovery).is_registered(name):
 			_fail("shipped discovery '%s' has no live point-of-interest registration" % name)
-			return
-		if not DISCOVERY_DESTINATION_ORACLE.has(name):
-			_fail("shipped discovery '%s' has no independent landmark oracle" % name)
 			return
 		var registrations: Variant = (tracker as Discovery).get("_pois")
 		if registrations is not Dictionary:
@@ -286,18 +313,16 @@ func _assert_discovery_restore() -> void:
 		if poi is not Dictionary or (poi as Dictionary).get("center") is not Vector3:
 			_fail("shipped discovery '%s' has no inspectable registered centre" % name)
 			return
-		var expected = _discovery_oracle_point(name, world)
+		var expected = _discovery_landmark_point(String(shipped[name]), world)
 		if expected == null:
-			_fail("shipped discovery '%s' has an unreadable landmark oracle" % name)
+			_fail("shipped discovery '%s' has an unreadable ledgered landmark '%s'"
+				% [name, String(shipped[name])])
 			return
 		var registered_center: Vector3 = (poi as Dictionary)["center"]
 		if registered_center.distance_to(expected) > EPS:
 			_fail(("SHIPPED DISCOVERY REPOINTED (no-resets law): '%s' is registered at %s, "
-				+ "but its permanent landmark is %s") % [name, str(registered_center), str(expected)])
-			return
-	for name: String in DISCOVERY_DESTINATION_ORACLE:
-		if name not in shipped:
-			_fail("discovery oracle '%s' is not anchored in shipped_discoveries.txt" % name)
+				+ "but its permanent '%s' landmark is %s")
+				% [name, str(registered_center), String(shipped[name]), str(expected)])
 			return
 	if (tracker as Discovery).total() != shipped.size():
 		_fail("the production boot registers an unledgered discovery id")
@@ -352,8 +377,24 @@ func _assert_discovery_reboot(player: Player, world: WorldGen) -> void:
 	if not _save.real_save_untouched():
 		_fail("the discovery writer/reboot touched the player's real save or vault")
 		return
+	_begin_discovery_retry_boot()
+
+
+func _assert_discovery_retry() -> void:
+	var vault = SaveVault.load_saved()
+	if vault is not Dictionary:
+		_fail("a transient first write failure was never retried after the vault became writable")
+		return
+	if vault.get("discoveries", []) != ["starter_cave"]:
+		_fail("the retried discovery write did not persist exactly the cave: %s" % str(vault))
+		return
+	if not _save.real_save_untouched():
+		_fail("the transient discovery retry touched the player's real save or vault")
+		return
+	_cleanup_retry_probe()
 	print(("TEST PASS — %d shipped attunement(s) and vault-v2 discovery state survive "
-		+ "a logout (control woke at %s)") % [_restored, str(_control_spawn)])
+		+ "a logout, and a transient write is retried (control woke at %s)")
+		% [_restored, str(_control_spawn)])
 	get_tree().quit(0)
 
 
@@ -368,12 +409,10 @@ func _oracle_point(name: String, world: WorldGen) -> Variant:
 	return null
 
 
-## The landmark a shipped discovery id MUST continue to mean, independently
-## resolved from the world rather than from Main's registration under test.
-func _discovery_oracle_point(name: String, world: WorldGen) -> Variant:
-	if not DISCOVERY_DESTINATION_ORACLE.has(name):
-		return null
-	match String(DISCOVERY_DESTINATION_ORACLE[name]):
+## Resolve an immutable ledger landmark straight from WorldGen, independently
+## of Main's registration under test.
+func _discovery_landmark_point(landmark: String, world: WorldGen) -> Variant:
+	match landmark:
 		"cave":
 			return world.cave_spawn_point()
 		"shrine_interactable":
@@ -397,23 +436,38 @@ func _shipped_attunements() -> Array:
 	return names
 
 
-func _shipped_discoveries() -> Array:
+func _shipped_discoveries() -> Dictionary:
 	var file := FileAccess.open(SHIPPED_DISCOVERIES, FileAccess.READ)
 	if file == null:
-		return []
-	var names := []
+		return {}
+	var mappings := {}
 	while not file.eof_reached():
 		var line := file.get_line().strip_edges()
 		if line.is_empty() or line.begins_with("#"):
 			continue
-		names.append(line)
+		var parts := line.split("=", false, 1)
+		if parts.size() != 2:
+			return {}
+		var name := String(parts[0]).strip_edges()
+		var landmark := String(parts[1]).strip_edges()
+		if name.is_empty() or landmark.is_empty() or mappings.has(name):
+			return {}
+		mappings[name] = landmark
 	file.close()
-	return names
+	return mappings
+
+
+func _cleanup_retry_probe() -> void:
+	for path in [RETRY_VAULT + ".tmp", RETRY_VAULT]:
+		if FileAccess.file_exists(path):
+			DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(RETRY_PROBE_DIR))
 
 
 func _fail(message: String) -> void:
 	if _save != null:
 		_save.end()
+	_cleanup_retry_probe()
 	push_error(message)
 	print("TEST FAIL — %s" % message)
 	get_tree().quit(1)
@@ -422,3 +476,4 @@ func _fail(message: String) -> void:
 func _exit_tree() -> void:
 	if _save != null:
 		_save.end()
+	_cleanup_retry_probe()

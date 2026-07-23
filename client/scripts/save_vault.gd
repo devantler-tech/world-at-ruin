@@ -78,8 +78,9 @@ const VAULT_FIELDS_V2 := ["version", "comment", "attuned", "discoveries"]
 const SHRINE_WARDENS := "wardens_shrine"
 
 ## Every discovery id this build can ORIGINATE. These names are persisted player
-## data and therefore permanent: shipped_discoveries.txt anchors them against
-## the base revision, while the boot guard proves each still maps to a live POI.
+## data and therefore permanent: shipped_discoveries.txt anchors each id and its
+## landmark meaning against the base revision, while the boot guard proves the
+## mapping still resolves to the live POI.
 const DISCOVERY_STARTER_CAVE := "starter_cave"
 const DISCOVERY_WARDENS_SHRINE := SHRINE_WARDENS
 const KNOWN_DISCOVERIES := [DISCOVERY_STARTER_CAVE, DISCOVERY_WARDENS_SHRINE]
@@ -321,8 +322,16 @@ static func record_discoveries(doc: Dictionary, names: Array) -> Dictionary:
 		if raw is not String or (raw as String).is_empty():
 			push_error("SaveVault: refusing an invalid discovery name")
 			return {}
-		if raw not in merged:
-			merged.append(raw)
+		if raw in merged:
+			continue
+		# Unknown names that were already in the document are rollback state and
+		# remain above. Unknown names newly supplied by this build are different:
+		# accepting one would originate permanent progression with no registered
+		# landmark or append-only contract (a typo could never be repaired).
+		if not recognises_discovery(raw):
+			push_error("SaveVault: refusing to originate unknown discovery '%s'" % raw)
+			return {}
+		merged.append(raw)
 	if merged.is_empty() and not next.has("discoveries"):
 		return next
 	merged.sort()

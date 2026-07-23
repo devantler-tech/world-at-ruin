@@ -36,8 +36,8 @@ extends Node
 ##     Renaming a shipped name and its call site together would otherwise keep
 ##     every guard green while stranding existing players.
 ##  7. Every production discovery id is bidirectionally bound to the append-only
-##     shipped_discoveries.txt ledger. The real boot guard separately proves
-##     every ledger id is still registered to a live point of interest.
+##     shipped_discoveries.txt id=landmark ledger. The real boot guard separately
+##     proves every ledger id is still registered to that exact point of interest.
 ##
 ## Then the refusal laws, which are what make the separate-file design safe:
 ##  8. A vault one version NEWER than this client is refused, not half-applied.
@@ -271,7 +271,7 @@ func _shipped_attunements() -> Array:
 func _check_discovery_names() -> String:
 	var ledger := _shipped_discoveries()
 	if ledger.is_empty():
-		return "shipped_discoveries.txt is missing or empty — persisted place ids need an immutable ledger"
+		return "shipped_discoveries.txt is missing, malformed, or empty — persisted place ids need an immutable mapping ledger"
 	var vault_api := load("res://scripts/save_vault.gd") as Script
 	if not vault_api.has_method("recognises_discovery"):
 		return "SaveVault has no recognises_discovery() runtime contract for ledgered place ids"
@@ -292,20 +292,25 @@ func _check_discovery_names() -> String:
 	return ""
 
 
-func _shipped_discoveries() -> Array:
+func _shipped_discoveries() -> Dictionary:
 	var file := FileAccess.open(SHIPPED_DISCOVERIES, FileAccess.READ)
 	if file == null:
-		return []
-	var names := []
+		return {}
+	var mappings := {}
 	while not file.eof_reached():
 		var line := file.get_line().strip_edges()
 		if line.is_empty() or line.begins_with("#"):
 			continue
-		if line in names:
-			return []
-		names.append(line)
+		var parts := line.split("=", false, 1)
+		if parts.size() != 2:
+			return {}
+		var name := String(parts[0]).strip_edges()
+		var landmark := String(parts[1]).strip_edges()
+		if name.is_empty() or landmark.is_empty() or mappings.has(name):
+			return {}
+		mappings[name] = landmark
 	file.close()
-	return names
+	return mappings
 
 
 ## The refusal laws, exercised against a real fixture's bytes.

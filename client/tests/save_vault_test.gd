@@ -138,13 +138,20 @@ func _ready() -> void:
 	if int(no_discoveries.get("version", -1)) != 1 or no_discoveries.has("discoveries"):
 		_fail("recording no discoveries churned a v1 vault to v2")
 		return
+	var refused_unknown: Dictionary = vault_api.call(
+		"record_discoveries", legacy, ["starter_cvae"])
+	if not refused_unknown.is_empty():
+		_fail("the writer originated an unregistered discovery typo as permanent progression")
+		return
+	var expanded_with_future := expanded.duplicate(true)
+	(expanded_with_future["discoveries"] as Array).append("future_place")
 	var expanded_again: Dictionary = vault_api.call(
 		"record_discoveries",
-		expanded,
+		expanded_with_future,
 		["future_place", "starter_cave"])
 	if expanded_again.get("discoveries", []) != [
 		"future_place", "starter_cave", "wardens_shrine"]:
-		_fail("a v2 discovery write replaced or duplicated accepted names: %s" % str(expanded_again))
+		_fail("a v2 discovery write replaced or rejected a preserved future name: %s" % str(expanded_again))
 		return
 	if String(expanded_again.get("comment", "")) != "future discovery writer":
 		_fail("a v2 discovery write dropped an unrelated accepted field")
