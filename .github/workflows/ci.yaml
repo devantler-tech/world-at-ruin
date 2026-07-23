@@ -30,6 +30,8 @@ jobs:
           fetch-depth: 0
           # Read-only job: no push, so the token must not linger in .git/config.
           persist-credentials: false
+      - name: Cask branch visibility retry is bounded and fail-closed
+        run: tools/test-cd-cask-ref-visibility.sh
       - name: Version ledger is append-only (no-resets law)
         # The in-game guard anchors the required fixture range to
         # tests/data/shipped_recipe_versions.txt, but a checkout-local file

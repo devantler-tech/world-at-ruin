@@ -708,17 +708,34 @@ jobs:
                 '[.[] | select(.head.repo.full_name == $tap and .head.ref == $branch)] | .[0].number // empty'
           }
 
+          # BEGIN cask-ref-visibility-helper
+          wait_for_cask_ref() {
+            local tap="$1"
+            local branch="$2"
+            local attempt
+            for attempt in 1 2 3 4 5; do
+              if gh api "repos/${tap}/git/ref/heads/${branch}" >/dev/null 2>&1; then
+                return 0
+              fi
+              if [ "${attempt}" -lt 5 ]; then
+                sleep 2
+              fi
+            done
+            echo "::error::could not create or find ${branch} on ${tap}"
+            return 1
+          }
+          # END cask-ref-visibility-helper
+
           base_sha="$(gh api "repos/${tap}/git/ref/heads/main" --jq '.object.sha')"
           # Tolerate a concurrent creator: two runs can both see the branch
           # missing and race this POST; the loser gets 422 and must NOT die
-          # under `set -e` before reaching the compare-and-swap below.
+          # under `set -e` before reaching the compare-and-swap below. GitHub
+          # can acknowledge the create before the ref is immediately visible
+          # to a following GET, so use a bounded read-after-create wait.
           if ! gh api "repos/${tap}/git/ref/heads/${branch}" >/dev/null 2>&1; then
             gh api "repos/${tap}/git/refs" -X POST -f ref="refs/heads/${branch}" \
               -f sha="${base_sha}" >/dev/null 2>&1 || true
-            if ! gh api "repos/${tap}/git/ref/heads/${branch}" >/dev/null 2>&1; then
-              echo "::error::could not create or find ${branch} on ${tap}"
-              exit 1
-            fi
+            wait_for_cask_ref "${tap}" "${branch}"
           fi
 
           # DISARM before touching the branch. Auto-merge armed by a previous
