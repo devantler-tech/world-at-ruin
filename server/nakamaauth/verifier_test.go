@@ -26,6 +26,7 @@ type accountServer struct {
 	mu         sync.Mutex
 	calls      int
 	auth       []string
+	trace      []string
 	account    *api.Account
 	accountErr error
 }
@@ -37,6 +38,7 @@ func (s *accountServer) GetAccount(ctx context.Context, _ *emptypb.Empty) (*api.
 	defer s.mu.Unlock()
 	s.calls++
 	s.auth = append([]string(nil), md.Get("authorization")...)
+	s.trace = append([]string(nil), md.Get("x-trace-id")...)
 	return s.account, s.accountErr
 }
 
@@ -44,6 +46,12 @@ func (s *accountServer) observed() (int, []string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.calls, append([]string(nil), s.auth...)
+}
+
+func (s *accountServer) observedTrace() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.trace...)
 }
 
 func verifierAgainst(t *testing.T, server *accountServer) *Verifier {
@@ -97,6 +105,52 @@ func TestVerifySessionForwardsBearerAndReturnsUserID(t *testing.T) {
 	}
 	if len(auth) != 1 || auth[0] != "Bearer "+testSession {
 		t.Fatalf("authorization metadata = %q, want one bearer credential", auth)
+	}
+}
+
+func TestVerifySessionReplacesInheritedAuthorizationMetadata(t *testing.T) {
+	server := &accountServer{
+		account: &api.Account{User: &api.User{Id: "player-42"}},
+	}
+	verifier := verifierAgainst(t, server)
+	ctx := metadata.NewOutgoingContext(
+		context.Background(),
+		metadata.Pairs(
+			"authorization", "Bearer inherited-session",
+			"x-trace-id", "trace-7",
+		),
+	)
+
+	_, err := verifier.VerifySession(ctx, testSession)
+	if err != nil {
+		t.Fatalf("VerifySession returned an error: %v", err)
+	}
+
+	_, auth := server.observed()
+	if len(auth) != 1 || auth[0] != "Bearer "+testSession {
+		t.Fatalf("authorization metadata = %q, want only supplied bearer credential", auth)
+	}
+	trace := server.observedTrace()
+	if len(trace) != 1 || trace[0] != "trace-7" {
+		t.Fatalf("trace metadata = %q, want preserved trace-7", trace)
+	}
+}
+
+func TestVerifySessionPreservesSanitizedGRPCCode(t *testing.T) {
+	server := &accountServer{
+		accountErr: status.Error(codes.Unavailable, "upstream unavailable for "+testSession),
+	}
+	verifier := verifierAgainst(t, server)
+
+	_, err := verifier.VerifySession(context.Background(), testSession)
+	if err == nil {
+		t.Fatal("VerifySession returned nil error")
+	}
+	if code := status.Code(err); code != codes.Unavailable {
+		t.Fatalf("VerifySession status code = %s, want %s", code, codes.Unavailable)
+	}
+	if strings.Contains(err.Error(), testSession) {
+		t.Fatalf("VerifySession error leaked the session token: %q", err)
 	}
 }
 

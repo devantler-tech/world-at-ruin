@@ -4,7 +4,6 @@ package nakamaauth
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/heroiclabs/nakama-common/api"
 	"google.golang.org/grpc"
@@ -33,13 +32,16 @@ func (v *Verifier) VerifySession(ctx context.Context, session string) (string, e
 		return "", errors.New("nakama auth: session is empty")
 	}
 
-	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+session)
+	outgoing, _ := metadata.FromOutgoingContext(ctx)
+	outgoing = outgoing.Copy()
+	outgoing.Set("authorization", "Bearer "+session)
+	ctx = metadata.NewOutgoingContext(ctx, outgoing)
 	account, err := v.client.GetAccount(ctx, &emptypb.Empty{})
 	if err != nil {
 		// Nakama owns the detailed rejection reason. Only carry the stable
 		// status code across this boundary so an upstream message can never
 		// reflect the bearer credential into our logs.
-		return "", fmt.Errorf("nakama auth: GetAccount rejected session (%s)", status.Code(err))
+		return "", status.Error(status.Code(err), "nakama auth: GetAccount rejected session")
 	}
 
 	userID := account.GetUser().GetId()
