@@ -256,8 +256,8 @@ func _ready() -> void:
 	if scenario == "breath":
 		await _capture_breath(dir, main)
 		return
-	if scenario != "world":
-		_fail("unknown WAR_SCENARIO '%s' — expected 'world', 'first_run' or 'breath'" % scenario)
+	if scenario != "world" and scenario != "light_response":
+		_fail("unknown WAR_SCENARIO '%s' — expected 'world', 'first_run', 'breath' or 'light_response'" % scenario)
 		return
 
 	for i in WARMUP_FRAMES:
@@ -276,6 +276,10 @@ func _ready() -> void:
 	cam.far = 400.0
 	cam.fov = 68.0
 	get_tree().root.add_child(cam)
+
+	if scenario == "light_response":
+		await _capture_light_response(dir, main, cam)
+		return
 
 	for vantage: Array in VANTAGES:
 		var vantage_name: String = vantage[0]
@@ -347,6 +351,103 @@ func _ready() -> void:
 		return
 
 	print("CAPTURE PASS — %d vantages written to %s" % [VANTAGES.size() + cave_count, dir])
+	get_tree().quit(0)
+
+
+## Equal-and-opposite key-light positions for the fixed-camera response proof
+## (#346). `source-side` puts the DirectionalLight3D at the camera so its rays
+## travel WITH the view ray; `far-side` mirrors it through the subject so the
+## rays travel against the view ray. Directional-light position has no shading
+## effect, but Node3D.look_at_from_position uses it to derive the orientation.
+## Kept pure so light_response_capture_test can pin the geometry headlessly.
+static func light_source_positions(eye: Vector3, target: Vector3) -> Array:
+	return [eye, target * 2.0 - eye]
+
+
+## A close camera outside a real hollow-ash volume, aimed through its centre and
+## slightly down onto terrain. The terrain backdrop makes the volume's light
+## response visible; sky behind translucent fog would hide the comparison.
+## Kept pure so light_response_capture_test can hold the evidence geometry.
+static func ash_response_vantage(placement: Dictionary) -> Array:
+	var target: Vector3 = placement["pos"]
+	var extents: Vector3 = placement["extents"]
+	var eye := target + Vector3(0.0, extents.y * 1.8, extents.z + 10.0)
+	return [eye, target]
+
+
+## Holds the crossfield camera and real world fixed while the shipping Sun moves
+## through equal-and-opposite directions. These are evidence frames, not a
+## synthetic material preview: the generated foliage, hollow ash volumes,
+## environment, terrain and DirectionalLight3D are the same nodes a player sees.
+##
+## Run windowed with all save seams redirected:
+##   WAR_SCENARIO=light_response WAR_SHOT_DIR=/tmp/light-response \
+##     WAR_SAVE_PATH=/tmp/probe_save.json WAR_VAULT_PATH=/tmp/probe_vault.json \
+##     WAR_BOOT_RECOVERY_PATH=/tmp/probe_recovery.json \
+##     godot --path client res://tools/frame_capture.tscn
+func _capture_light_response(dir: String, main: Node, cam: Camera3D) -> void:
+	var sun := main.get_node_or_null("Sun") as DirectionalLight3D
+	if sun == null:
+		_fail("light_response: no DirectionalLight3D named Sun — there is no moving key to prove")
+		return
+
+	var vantage: Array = VANTAGES[1] # crossfield: broad foliage + hollow-ash read
+	var response_vantages: Array[Dictionary] = [{
+		"names": ["light-source-side", "light-far-side"],
+		"eye": vantage[1],
+		"target": vantage[2],
+	}]
+	var placements: Array = main.call("hollow_fog_placements")
+	if placements.is_empty():
+		_fail("light_response: the shipped world placed no hollow ash pool to isolate")
+		return
+	var ash_vantage := ash_response_vantage(placements[0])
+	response_vantages.append({
+		"names": ["ash-source-side", "ash-far-side"],
+		"eye": ash_vantage[0],
+		"target": ash_vantage[1],
+	})
+
+	for response: Dictionary in response_vantages:
+		var eye: Vector3 = response["eye"]
+		var target: Vector3 = response["target"]
+		cam.global_position = eye
+		cam.look_at(target, Vector3.UP)
+		var sources := light_source_positions(eye, target)
+		var names: Array = response["names"]
+		for index in sources.size():
+			var source: Vector3 = sources[index]
+			sun.look_at_from_position(source, target, Vector3.UP)
+			for i in SETTLE_FRAMES:
+				cam.current = true
+				await get_tree().process_frame
+
+			if not _sees_geometry(cam, target):
+				_fail("%s sees no world geometry — the response frame is sky only" % names[index])
+				return
+			if not _camera_draws_world(cam, main):
+				_fail("%s cannot draw the world — the response frame would be empty" % names[index])
+				return
+
+			await RenderingServer.frame_post_draw
+			var img := get_viewport().get_texture().get_image()
+			var spread := _luma_spread(img)
+			if spread < MIN_LUMA_SPREAD:
+				_fail("%s is a uniform frame (luma spread %.4f) — nothing rendered" %
+					[names[index], spread])
+				return
+			var out := "%s/%s.png" % [dir, names[index]]
+			var err := img.save_png(out)
+			if err != OK:
+				_fail("could not write %s (error %d)" % [out, err])
+				return
+			var light_ray := (sun.global_transform.basis * Vector3.FORWARD).normalized()
+			var view_ray := (target - eye).normalized()
+			print("CAPTURED %s -> %s (light/view dot %.3f, luma spread %.3f)" %
+				[names[index], out, light_ray.dot(view_ray), spread])
+			_write_note(dir, names[index], img, _size_note(img))
+
+	print("CAPTURE PASS — fixed cameras, live Sun moved through source-side and far-side directions")
 	get_tree().quit(0)
 
 

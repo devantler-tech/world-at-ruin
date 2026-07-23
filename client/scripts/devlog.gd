@@ -11,6 +11,17 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
+		"version": "0.51.2",
+		"date": "2026-07-23",
+		"title": "Sunlight reaches the thin things from the right side",
+		"notes": [
+			"Scrub and dead grass could turn dark while you stood on the same side as the sun. Their crossed leaf cards remembered only the side they were built from, so looking at the reverse side made direct sunlight behave as though it came through the ground.",
+			"Each visible side now faces the light honestly. The sun-facing leaves and blades take the full warm key; the far side keeps the weaker glow of light passing through it instead of becoming a black cutout.",
+			"The ash in the hollows no longer throws almost all of its scattered light toward the horizon. It keeps enough of that sunward shaft to show depth, but direct light now reveals the cloud from the source-facing side too.",
+			"Both responses come from the live sun rather than a stored direction, so they move when the light moves. The Reach's sun itself is still fixed in the sky — a full day-and-night cycle remains future work.",
+		],
+	},
+	{
 		"version": "0.51.0",
 		"date": "2026-07-23",
 		"title": "Layered outfit editing opens as a guarded preview",

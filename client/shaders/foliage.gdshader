@@ -92,7 +92,6 @@ void vertex() {
 	vec3 local_wind = normalize(transpose(mat3(MODEL_MATRIX)) * normalize(wind_dir));
 	VERTEX += local_wind * sway;
 
-	NORMAL = normalize(mix(NORMAL, vec3(0.0, 1.0, 0.0), normal_lift));
 }
 
 void fragment() {
@@ -111,6 +110,19 @@ void fragment() {
 	if (tex.a < 0.5) {
 		discard;
 	}
+
+	// The cards are double-sided, but their stored normal follows only the
+	// authored winding. When the camera sees the reverse winding, leaving that
+	// normal untouched tells direct lighting that the visible surface points
+	// AWAY from both camera and sun — exactly the inverted sun-side read from
+	// #346. Orient the geometric normal to the visible face first, then soften
+	// it toward WORLD up. Keeping the lift here is load-bearing: lifting in
+	// vertex() and flipping afterwards would turn a back face's lifted normal
+	// downward.
+	vec3 visible_normal = FRONT_FACING ? NORMAL : -NORMAL;
+	vec3 view_up = normalize(mat3(VIEW_MATRIX) * vec3(0.0, 1.0, 0.0));
+	NORMAL = normalize(mix(visible_normal, view_up, normal_lift));
+
 	ALBEDO = tex.rgb * inst_tint;
 	ROUGHNESS = roughness_value;
 	SPECULAR = 0.15;

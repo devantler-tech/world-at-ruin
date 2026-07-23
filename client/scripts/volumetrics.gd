@@ -20,9 +20,15 @@ const DENSITY := 0.005
 ## Scattering albedo: warm-neutral ash, slightly darker than white so the
 ## volume tints toward FOG_COLOR under the low sun instead of glowing grey.
 const ALBEDO := Color(0.80, 0.74, 0.68)
-## Forward scattering. The Reach's sun sits low; a high-ish anisotropy is what
-## turns uniform haze into visible shafts when looking sunward.
-const ANISOTROPY := 0.6
+## Mild backward scattering. Ash is smoke-like particulate rather than clear
+## mist: the old +0.6 bias concentrated the response into the view toward the
+## sun, leaving the same cloud dark when viewed from the side the light reaches
+## first (#346). A fixed-camera capture proved that even +0.15 kept that
+## ordering inverted. -0.15 makes direct source-facing illumination lead while
+## staying far from the -1.0 limit, so the opposite side retains a softer
+## transmitted read. The renderer still derives the response from every live
+## Light3D, so it follows the sun as that light moves.
+const ANISOTROPY := -0.15
 ## Far edge of the froxel volume. The playable field and its landmark ruins
 ## sit well inside this; beyond it the depth fog takes over seamlessly.
 const LENGTH := 64.0
