@@ -61,6 +61,41 @@ jobs:
             echo "::error::Shipped version(s) removed from $LEDGER ($(echo "$removed" | tr '\n' ' ')) — shipped saves are never disposable (no-resets law)"
             exit 1
           fi
+      - name: Creature recipe ledger is append-only (no-resets law)
+        # creature_factory_test binds CreatureFactory.RECIPE_VERSION to every
+        # historical creature fixture in this ledger. The base comparison is
+        # the immutable half: a PR may not lower the constant and delete the
+        # same ledger line while keeping every checkout-local check green.
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          LEDGER=client/tests/data/shipped_creature_recipe_versions.txt
+          if [ ! -f "$LEDGER" ]; then
+            echo "::error::$LEDGER was deleted — the forward-only creature recipe ledger must exist"
+            exit 1
+          fi
+          if ! git cat-file -e "$BASE_SHA" 2>/dev/null; then
+            echo "::error::base commit $BASE_SHA not present in the checkout — cannot verify the ledger"
+            exit 1
+          fi
+          extract='s/^[[:space:]]*\([0-9][0-9]*\)[[:space:]]*$/\1/p'
+          if git cat-file -e "$BASE_SHA:$LEDGER" 2>/dev/null; then
+            if ! git show "$BASE_SHA:$LEDGER" > /tmp/creature-recipe-base-raw; then
+              echo "::error::could not read $LEDGER at $BASE_SHA — refusing to compare against an empty base"
+              exit 1
+            fi
+            sed -n "$extract" /tmp/creature-recipe-base-raw | sort -un > /tmp/creature-recipe-base
+          else
+            echo "::notice::$LEDGER does not exist at the base revision — treating the base set as empty (this is the commit that introduces it)"
+            : > /tmp/creature-recipe-base
+          fi
+          sed -n "$extract" "$LEDGER" | sort -un > /tmp/creature-recipe-head
+          removed=$(comm -23 /tmp/creature-recipe-base /tmp/creature-recipe-head)
+          if [ -n "$removed" ]; then
+            echo "::error::Shipped creature recipe version(s) removed from $LEDGER ($(echo "$removed" | tr '\n' ' ')) — shipped creatures are never disposable (no-resets law)"
+            exit 1
+          fi
       - name: Save-capability ledger is append-only (no-resets law)
         # update_manifest_test anchors SAVE_CAPABILITY_WRITES to this ledger, but
         # both live in the same checkout: one change can lower the constant AND
