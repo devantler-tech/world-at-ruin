@@ -85,6 +85,28 @@ workflow blocks an external PR until its author signs; signatures are ledgered o
 ledger). **No GPL/AGPL in the shipped tree** — enforced in CI (`license-guard` job), not
 remembered.
 
+### Originality — reference, never reproduce
+
+Named games are references for **abstract ideas, functions and qualities**, never source material.
+World at Ruin may learn from a mechanic, design goal, genre convention or high-level aesthetic
+property; it must not copy or closely adapt another game's code, prose, lore, characters, maps,
+level layouts, compositions, UI, iconography, models, textures, animation, audio or other authored
+expression. The canonical workflow and current reference-distance audit are in
+[`docs/design/originality-boundary.md`](docs/design/originality-boundary.md).
+
+Reference media stays **link-only and view-only**: never commit, trace, paint over or feed another
+game's screenshot, model, texture, clip or audio into an art generator. A player-visible PR using a
+named-game reference carries an **Originality** note with its abstract target, at least three
+independent expressive choices, excluded reference-specific expression, input provenance and
+remaining similarity risk. The frame/reference/gap evidence below remains independently required.
+
+The proposed `docs/design/story-and-progression.md` is under **ORIGINALITY HOLD**. Do not implement
+its Undying Work or Former Lives concept until the combined immortality, amnesia, prior-life and
+identity-mystery cluster has been independently rewritten and reviewed through a draft PR. The
+structural guard in `tools/originality-guard.sh` cannot decide substantial similarity or grant legal
+clearance; high-risk narrative, character, visual and branding questions go to qualified IP counsel
+before release.
+
 ### Product law — the constraints that outrank the design
 
 1. **No hard resets, and nothing is taken from a player silently.** An early player keeps playing
@@ -594,10 +616,13 @@ everything shipped afterwards is held to.
   without this would have frozen the repo on three `tools/artgen` findings. Note also that
   adding a language leaves existing PRs blocked until each re-runs with the new analysis — that is
   expected, and a push (or a merge of `main`) clears it.
-- **Licensing hygiene:** no GPL/AGPL code or assets in the shipped tree; no commercial assets;
-  CC0/OSS-permissive only, with licence verified per asset dataset. External PRs cannot be merged
-  until their author signs the CLA (`CLA.md`; the `CLA` workflow enforces this, with the ledger on
-  the permanent `cla-signatures` branch).
+- **Licensing and originality hygiene:** no GPL/AGPL code or assets in the shipped tree; no
+  commercial assets; CC0/OSS-permissive only, with licence verified per asset dataset. No copied or
+  closely adapted third-party game expression, and no downloaded reference media or reference
+  media used as generator input; follow
+  [`docs/design/originality-boundary.md`](docs/design/originality-boundary.md). External PRs cannot
+  be merged until their author signs the CLA (`CLA.md`; the `CLA` workflow enforces this, with the
+  ledger on the permanent `cla-signatures` branch).
 - **Roadmap:** GitHub Issues on this repo (`roadmap` label for epics). The plan is **phase-gated**
   — Phase 0 (art-pipeline taste gate, #1) through Phase 8 (platforms, #15), each phase's exit
   criteria unlocking the next, plus the standing risk register (#16). Keep issues **agent-shaped**
@@ -616,7 +641,8 @@ Reviewers (Codex/CodeRabbit) flag **P0/P1 only**:
   migration, save-format break, or non-backward-compatible protocol change **not gated behind an
   announced, player-visible deprecation** — or that introduces power/wealth inflation, ships an
   unsettled/experimental feature **not default-off behind an opt-in flag**, or adds
-  GPL/AGPL/commercial-licensed content.
+  GPL/AGPL/commercial-licensed content, copied third-party expression or unlicensed third-party
+  reference media.
 - **P1 — correctness:** unseeded/non-deterministic world generation, client-authoritative gameplay
   state (once networking exists), physics entering the authoritative path, or a player-visible
   change with no dev-log entry.
@@ -625,6 +651,8 @@ Reviewers (Codex/CodeRabbit) flag **P0/P1 only**:
   still reading as placeholder (engine primitives as art, flat untextured materials, uniform
   scatter, no second-order life, and the equivalents of those outside art). **Separately P1 on its
   own:** a player-visible PR carrying **no inspectable frame evidence, or no named reference and
-  stated gap** — including one that simply *omits* any readiness judgement, not only one that argues
-  from green tests. See **[Quality bar](#quality-bar--it-has-to-resemble-a-aaa-game)** and the
-  reference set in **[`docs/art-direction/`](docs/art-direction/README.md)**.
+  stated gap, or no required Originality note when a named-game reference was used** — including one
+  that simply *omits* any readiness judgement, not only one that argues from green tests. See
+  **[Quality bar](#quality-bar--it-has-to-resemble-a-aaa-game)**, the reference set in
+  **[`docs/art-direction/`](docs/art-direction/README.md)**, and the
+  **[originality boundary](docs/design/originality-boundary.md)**.

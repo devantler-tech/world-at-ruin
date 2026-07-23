@@ -943,7 +943,7 @@ jobs:
           if-no-files-found: error
 
   license-guard:
-    name: Licence guard (no GPL/AGPL in tree, provenance on every asset)
+    name: IP guard (licences, provenance, originality boundary)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -968,6 +968,12 @@ jobs:
         # because it is the same concern and the job is already required, so
         # the check costs no extra runner.
         run: ./tools/provenance-guard.sh
+      - name: Test the originality guard
+        run: ./tools/originality-guard.test.sh
+      - name: Enforce the originality boundary
+        # Objective repository facts only: this cannot decide substantial
+        # similarity or grant legal clearance.
+        run: ./tools/originality-guard.sh
 
   # Repo-wide linting for everything that is not GDScript: JSON, Markdown, YAML, shell,
   # the workflows in this directory, spelling and secrets. MegaLinter ships no GDScript
