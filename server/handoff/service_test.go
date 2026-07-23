@@ -28,6 +28,7 @@ import (
 const (
 	testSession       = "signed.nakama.session"
 	testReservationID = "handoff-42"
+	testAttemptID     = "attempt-7"
 )
 
 type accountServer struct {
@@ -120,6 +121,7 @@ func validAllocation() Allocation {
 		Port:            8443,
 		Observer:        sim.EntityID(42),
 		AdmissionSecret: testSecret(),
+		LeaseExpiresAt:  time.Unix(4_000_000_000, 0),
 	}
 }
 
@@ -129,7 +131,8 @@ func testSecret() []byte {
 
 func validConfig() Config {
 	return Config{
-		ZoneDomain: "edge.example",
+		ZoneDomain:   "edge.example",
+		NewAttemptID: func() (string, error) { return testAttemptID, nil },
 	}
 }
 
@@ -144,6 +147,7 @@ func validAllocationRequest() AllocationRequest {
 	return AllocationRequest{
 		UserID:        "player-42",
 		ReservationID: testReservationID,
+		AttemptID:     testAttemptID,
 	}
 }
 
@@ -157,9 +161,10 @@ func TestServiceCreatesAllocationScopedHandoffThroughRealNakama(t *testing.T) {
 		verifierAgainst(t, nakama),
 		allocator,
 		Config{
-			ZoneDomain: "edge.example",
-			TokenTTL:   45 * time.Second,
-			Now:        func() time.Time { return now },
+			ZoneDomain:   "edge.example",
+			TokenTTL:     45 * time.Second,
+			Now:          func() time.Time { return now },
+			NewAttemptID: func() (string, error) { return testAttemptID, nil },
 		},
 	)
 	if err != nil {
@@ -171,10 +176,7 @@ func TestServiceCreatesAllocationScopedHandoffThroughRealNakama(t *testing.T) {
 		t.Fatalf("CreateHandoff returned an error: %v", err)
 	}
 	if len(allocator.requests) != 1 ||
-		allocator.requests[0] != (AllocationRequest{
-			UserID:        "player-42",
-			ReservationID: testReservationID,
-		}) {
+		allocator.requests[0] != validAllocationRequest() {
 		t.Fatalf(
 			"allocator requests = %+v, want one verified player and reservation ID",
 			allocator.requests,
@@ -212,6 +214,79 @@ func TestServiceCreatesAllocationScopedHandoffThroughRealNakama(t *testing.T) {
 	}
 	if observer != sim.EntityID(42) {
 		t.Fatalf("zone token observer = %d, want 42", observer)
+	}
+}
+
+func TestRetriesUseDistinctAttemptOwnership(t *testing.T) {
+	nakama := &accountServer{
+		account: &api.Account{User: &api.User{Id: "player-42"}},
+	}
+	allocator := &recordingAllocator{allocation: validAllocation()}
+	service, err := NewService(
+		verifierAgainst(t, nakama),
+		allocator,
+		Config{ZoneDomain: "edge.example"},
+	)
+	if err != nil {
+		t.Fatalf("NewService returned an error: %v", err)
+	}
+
+	for range 2 {
+		if _, err := service.CreateHandoff(context.Background(), validRequest()); err != nil {
+			t.Fatalf("CreateHandoff returned an error: %v", err)
+		}
+	}
+	if len(allocator.requests) != 2 {
+		t.Fatalf("allocator requests = %+v, want two attempts", allocator.requests)
+	}
+	first, second := allocator.requests[0], allocator.requests[1]
+	if first.UserID != second.UserID ||
+		first.ReservationID != second.ReservationID ||
+		first.AttemptID == "" ||
+		first.AttemptID == second.AttemptID {
+		t.Fatalf(
+			"retry ownership = %+v then %+v, want stable owner/key and distinct attempts",
+			first,
+			second,
+		)
+	}
+}
+
+func TestAttemptIDFailureNeverAllocates(t *testing.T) {
+	nakama := &accountServer{
+		account: &api.Account{User: &api.User{Id: "player-42"}},
+	}
+	allocator := &recordingAllocator{allocation: validAllocation()}
+	service, err := NewService(
+		verifierAgainst(t, nakama),
+		allocator,
+		Config{
+			ZoneDomain: "edge.example",
+			NewAttemptID: func() (string, error) {
+				return "", errors.New("generator leaked " + testSession)
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("NewService returned an error: %v", err)
+	}
+
+	got, err := service.CreateHandoff(context.Background(), validRequest())
+	if err == nil {
+		t.Fatal("CreateHandoff returned nil error")
+	}
+	if got != (Handoff{}) {
+		t.Fatalf("failed handoff = %+v, want zero value", got)
+	}
+	if len(allocator.requests) != 0 || len(allocator.releases) != 0 {
+		t.Fatalf(
+			"allocator requests/releases = %+v/%+v, want none",
+			allocator.requests,
+			allocator.releases,
+		)
+	}
+	if strings.Contains(err.Error(), testSession) {
+		t.Fatalf("handoff error leaked attempt generator detail: %q", err)
 	}
 }
 
@@ -297,7 +372,7 @@ func TestInvalidReservationNeverAuthenticates(t *testing.T) {
 	}
 }
 
-func TestReportedExpiryMatchesTokenSecondPrecision(t *testing.T) {
+func TestReportedExpiryMatchesTokenNanosecondPrecision(t *testing.T) {
 	nakama := &accountServer{
 		account: &api.Account{User: &api.User{Id: "player-42"}},
 	}
@@ -324,15 +399,15 @@ func TestReportedExpiryMatchesTokenSecondPrecision(t *testing.T) {
 	if len(parts) != 5 {
 		t.Fatalf("token has %d fields, want 5", len(parts))
 	}
-	tokenExpiry, err := strconv.ParseInt(parts[3], 10, 64)
+	tokenExpiryNanos, err := strconv.ParseInt(parts[3], 10, 64)
 	if err != nil {
 		t.Fatalf("parse token expiry: %v", err)
 	}
-	if got.ExpiresAt.Unix() != tokenExpiry || got.ExpiresAt.Nanosecond() != 0 {
+	if got.ExpiresAt.UnixNano() != tokenExpiryNanos {
 		t.Fatalf(
-			"reported expiry = %s, token expiry = %s; want the same second-precision instant",
+			"reported expiry = %s, token expiry = %s; want the same nanosecond instant",
 			got.ExpiresAt,
-			time.Unix(tokenExpiry, 0),
+			time.Unix(0, tokenExpiryNanos),
 		)
 	}
 }
@@ -360,8 +435,43 @@ func TestMinimumTokenLifetimeSurvivesSecondPrecision(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateHandoff returned an error: %v", err)
 	}
-	if lifetime := got.ExpiresAt.Sub(now); lifetime < time.Second {
-		t.Fatalf("signed token lifetime = %s, want at least one second", lifetime)
+	if lifetime := got.ExpiresAt.Sub(now); lifetime != time.Second {
+		t.Fatalf("signed token lifetime = %s, want exactly one second", lifetime)
+	}
+}
+
+func TestTokenNeverOutlivesUnclaimedAllocationLease(t *testing.T) {
+	nakama := &accountServer{
+		account: &api.Account{User: &api.User{Id: "player-42"}},
+	}
+	now := time.Unix(2_000_000_000, 123_456_789)
+	allocation := validAllocation()
+	allocation.LeaseExpiresAt = now.Add(5 * time.Second)
+	allocator := &recordingAllocator{allocation: allocation}
+	service, err := NewService(
+		verifierAgainst(t, nakama),
+		allocator,
+		Config{
+			ZoneDomain:   "edge.example",
+			TokenTTL:     30 * time.Second,
+			Now:          func() time.Time { return now },
+			NewAttemptID: func() (string, error) { return testAttemptID, nil },
+		},
+	)
+	if err != nil {
+		t.Fatalf("NewService returned an error: %v", err)
+	}
+
+	got, err := service.CreateHandoff(context.Background(), validRequest())
+	if err != nil {
+		t.Fatalf("CreateHandoff returned an error: %v", err)
+	}
+	if !got.ExpiresAt.Equal(allocation.LeaseExpiresAt) {
+		t.Fatalf(
+			"token expiry = %s, want lease expiry %s",
+			got.ExpiresAt,
+			allocation.LeaseExpiresAt,
+		)
 	}
 }
 
@@ -419,6 +529,7 @@ func TestCancellationDuringTokenMintReleasesReservation(t *testing.T) {
 				}
 				return now
 			},
+			NewAttemptID: func() (string, error) { return testAttemptID, nil },
 		},
 	)
 	if err != nil {
@@ -603,6 +714,10 @@ func TestMalformedAllocationReturnsNoHandoff(t *testing.T) {
 			name:   "missing per-allocation admission secret",
 			mutate: func(a *Allocation) { a.AdmissionSecret = nil },
 		},
+		{
+			name:   "missing no-show lease expiry",
+			mutate: func(a *Allocation) { a.LeaseExpiresAt = time.Time{} },
+		},
 	}
 
 	for _, test := range tests {
@@ -677,6 +792,9 @@ func TestReleaseFailureRemainsClosedAndSanitized(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), testSession) {
 		t.Fatalf("handoff error leaked a credential: %q", err)
+	}
+	if code := status.Code(err); code != codes.Unavailable {
+		t.Fatalf("handoff status code = %s, want %s", code, codes.Unavailable)
 	}
 }
 

@@ -155,17 +155,21 @@ zone/dungeon server:
   generated gRPC client/server path.
 - **`handoff/`** — the transport-neutral **player handoff core**: it consumes
   `nakamaauth` rather than accepting a client-provided identity, gives only that
-  verified user ID plus a caller-stable reservation key to an allocation
-  boundary, validates the returned GameServer is under the configured managed
-  DNS domain with a usable endpoint and observer binding, and mints the
-  short-lived token with a per-allocation secret that only that zone receives.
-  Every failed stage returns a zero handoff; post-allocation failures and
-  ambiguous allocation errors reconcile the verified-user-scoped reservation
-  key on a bounded cleanup context, retryable gRPC status codes survive without
-  upstream text, and credentials never enter returned errors. Hermetic tests
-  drive the real generated Nakama gRPC path through the service and then verify
-  its token through the real zone verifier. The package is inert until the
-  concrete Agones allocator adapter and Nakama RPC register it.
+  verified user ID plus a caller-stable reservation key and server-generated
+  attempt ID to an allocation boundary, validates the returned GameServer is
+  under the configured managed DNS domain with a usable endpoint and observer
+  binding, and mints the short-lived token with a per-allocation secret that
+  only that zone receives. Every failed stage returns a zero handoff;
+  post-allocation failures and ambiguous allocation errors conditionally
+  reconcile the verified-user/key/attempt on a bounded cleanup context, while
+  stale attempts cannot release a newer overlapping retry. Each allocation is
+  an expiring no-show lease that its adapter must reclaim unless first valid
+  zone admission claims it, and the nanosecond-precision token never outlives
+  that lease. Retryable gRPC status codes survive without upstream text, and
+  credentials never enter returned errors. Hermetic tests drive the real
+  generated Nakama gRPC path through the service and then verify its token
+  through the real zone verifier. The package is inert until the concrete
+  Agones allocator/lease-claim adapter and Nakama RPC register it.
 - **`cmd/zone/`** — a runnable skeleton server. It boots the demo zone and either
   runs a fixed number of deterministic ticks (printing the state hash) or drives
   the loop from the wall clock. With `-replicate` it also runs the full

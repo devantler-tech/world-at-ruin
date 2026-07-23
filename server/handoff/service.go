@@ -4,6 +4,8 @@ package handoff
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"net"
 	"strings"
@@ -34,7 +36,11 @@ type SessionVerifier interface {
 // reservation ID, scoped to the verified user ID, is the idempotency key for
 // an allocation attempt: repeated Allocate calls must not create duplicates,
 // and Release must idempotently reconcile that owner/key pair even when
-// Allocate returned an ambiguous timeout after the fleet committed it.
+// Allocate returned an ambiguous timeout after the fleet committed it. A
+// newer AttemptID conditionally owns the same lease; Release from a stale
+// attempt must be a no-op so overlapping retries cannot tear down the winner.
+// Unclaimed allocations must be reclaimed automatically at LeaseExpiresAt;
+// the zone admission adapter claims the current attempt on first valid use.
 // Concrete Agones allocation is deliberately outside this transport-neutral
 // core; an adapter must return the allocation that owns the endpoint.
 type Allocator interface {
@@ -54,6 +60,7 @@ type Request struct {
 type AllocationRequest struct {
 	UserID        string
 	ReservationID string
+	AttemptID     string
 }
 
 // Allocation is the trusted result of allocating one GameServer.
@@ -63,6 +70,7 @@ type Allocation struct {
 	Port            uint16
 	Observer        sim.EntityID
 	AdmissionSecret []byte
+	LeaseExpiresAt  time.Time
 }
 
 // Handoff is the only connection material returned to a player.
@@ -75,18 +83,20 @@ type Handoff struct {
 
 // Config sets the admission-key material and lifetime policy.
 type Config struct {
-	ZoneDomain string
-	TokenTTL   time.Duration
-	Now        func() time.Time
+	ZoneDomain   string
+	TokenTTL     time.Duration
+	Now          func() time.Time
+	NewAttemptID func() (string, error)
 }
 
 // Service creates allocation-scoped player handoffs.
 type Service struct {
-	verifier   SessionVerifier
-	allocator  Allocator
-	zoneDomain string
-	tokenTTL   time.Duration
-	now        func() time.Time
+	verifier     SessionVerifier
+	allocator    Allocator
+	zoneDomain   string
+	tokenTTL     time.Duration
+	now          func() time.Time
+	newAttemptID func() (string, error)
 }
 
 // NewService validates the handoff dependencies and token policy.
@@ -115,13 +125,18 @@ func NewService(verifier SessionVerifier, allocator Allocator, cfg Config) (*Ser
 	if now == nil {
 		now = time.Now
 	}
+	newAttemptID := cfg.NewAttemptID
+	if newAttemptID == nil {
+		newAttemptID = secureAttemptID
+	}
 
 	return &Service{
-		verifier:   verifier,
-		allocator:  allocator,
-		zoneDomain: zoneDomain,
-		tokenTTL:   tokenTTL,
-		now:        now,
+		verifier:     verifier,
+		allocator:    allocator,
+		zoneDomain:   zoneDomain,
+		tokenTTL:     tokenTTL,
+		now:          now,
+		newAttemptID: newAttemptID,
 	}, nil
 }
 
@@ -140,10 +155,15 @@ func (s *Service) CreateHandoff(ctx context.Context, request Request) (Handoff, 
 	if userID == "" {
 		return Handoff{}, errors.New("handoff: verifier returned no user ID")
 	}
+	attemptID, err := s.newAttemptID()
+	if err != nil || !validAllocationID(attemptID) {
+		return Handoff{}, errors.New("handoff: create allocation attempt ID")
+	}
 
 	allocationRequest := AllocationRequest{
 		UserID:        userID,
 		ReservationID: request.ReservationID,
+		AttemptID:     attemptID,
 	}
 	allocation, err := s.allocator.Allocate(ctx, allocationRequest)
 	if err != nil {
@@ -161,7 +181,8 @@ func (s *Service) CreateHandoff(ctx context.Context, request Request) (Handoff, 
 		)
 	}
 	allocation.ServerName = strings.TrimSuffix(allocation.ServerName, ".")
-	if err := s.validateAllocation(allocation); err != nil {
+	now := s.now()
+	if err := s.validateAllocation(allocation, now); err != nil {
 		return Handoff{}, s.releaseReservationAfterFailure(
 			ctx,
 			allocationRequest,
@@ -169,11 +190,11 @@ func (s *Service) CreateHandoff(ctx context.Context, request Request) (Handoff, 
 		)
 	}
 
-	deadline := s.now().Add(s.tokenTTL)
-	expiresAt := time.Unix(deadline.Unix(), 0)
-	if deadline.Nanosecond() != 0 {
-		expiresAt = expiresAt.Add(time.Second)
+	expiresAt := now.Add(s.tokenTTL)
+	if allocation.LeaseExpiresAt.Before(expiresAt) {
+		expiresAt = allocation.LeaseExpiresAt
 	}
+	expiresAt = time.Unix(0, expiresAt.UnixNano())
 	token, err := zonesock.MintToken(
 		allocation.AdmissionSecret,
 		allocation.ID,
@@ -203,7 +224,7 @@ func (s *Service) CreateHandoff(ctx context.Context, request Request) (Handoff, 
 	}, nil
 }
 
-func (s *Service) validateAllocation(allocation Allocation) error {
+func (s *Service) validateAllocation(allocation Allocation, now time.Time) error {
 	if !validAllocationID(allocation.ID) {
 		return errors.New("handoff: allocation ID is invalid")
 	}
@@ -219,6 +240,9 @@ func (s *Service) validateAllocation(allocation Allocation) error {
 	if allocation.Observer == 0 {
 		return errors.New("handoff: observer binding is missing")
 	}
+	if allocation.LeaseExpiresAt.Sub(now) < time.Second {
+		return errors.New("handoff: unclaimed allocation lease is expired")
+	}
 	return nil
 }
 
@@ -230,9 +254,20 @@ func (s *Service) releaseReservationAfterFailure(
 	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), releaseTimeout)
 	defer cancel()
 	if err := s.allocator.Release(releaseCtx, request); err != nil {
-		return errors.New("handoff: allocation outcome could not be reconciled")
+		return status.Error(
+			status.Code(err),
+			"handoff: allocation outcome could not be reconciled",
+		)
 	}
 	return handoffErr
+}
+
+func secureAttemptID() (string, error) {
+	var random [16]byte
+	if _, err := rand.Read(random[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(random[:]), nil
 }
 
 func validAllocationID(id string) bool {
