@@ -2,7 +2,12 @@ package zonesock
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -28,6 +33,47 @@ func TestTokenRoundTrip(t *testing.T) {
 	}
 	if obs != sim.EntityID(7) {
 		t.Fatalf("Verify returned observer %d, want 7", obs)
+	}
+}
+
+func TestTokenPreservesExpiryNanoseconds(t *testing.T) {
+	secret := testSecret(0xA5)
+	expiry := time.Unix(2_000_000_000, 123_456_789)
+	token, err := MintToken(secret, "allocation-a", 7, expiry)
+	if err != nil {
+		t.Fatalf("MintToken: %v", err)
+	}
+	parts := strings.Split(token, ".")
+	if len(parts) != 5 {
+		t.Fatalf("token has %d fields, want 5", len(parts))
+	}
+	got, err := strconv.ParseInt(parts[3], 10, 64)
+	if err != nil {
+		t.Fatalf("parse token expiry: %v", err)
+	}
+	if got != expiry.UnixNano() {
+		t.Fatalf("encoded expiry = %d, want %d", got, expiry.UnixNano())
+	}
+}
+
+func TestLegacySecondPrecisionTokenStillVerifies(t *testing.T) {
+	secret := testSecret(0xA5)
+	expiry := time.Now().Add(time.Minute).Unix()
+	payload := fmt.Sprintf("v2.%s.%d.%d", "allocation-a", 7, expiry)
+	mac := hmac.New(sha256.New, secret)
+	mac.Write([]byte(payload))
+	token := payload + "." + hex.EncodeToString(mac.Sum(nil))
+
+	verifier, err := NewHMACVerifier(secret, "allocation-a")
+	if err != nil {
+		t.Fatalf("NewHMACVerifier: %v", err)
+	}
+	observer, err := verifier.Verify(token)
+	if err != nil {
+		t.Fatalf("Verify(legacy): %v", err)
+	}
+	if observer != sim.EntityID(7) {
+		t.Fatalf("Verify returned observer %d, want 7", observer)
 	}
 }
 

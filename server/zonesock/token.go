@@ -17,9 +17,9 @@ import (
 // during the WebSocket upgrade and returns the observer entity the connection
 // is allocated to replicate. Verification is fail-closed: any error refuses
 // the peer before it attaches. The zone server only ever verifies — minting
-// belongs to the allocation/handoff step (a later child of the server epic),
-// which is why the verifier is an interface: the interim HMAC mechanism below
-// can be swapped without touching the socket.
+// is delegated to handoff.Service, which is why the verifier is an interface:
+// the interim per-allocation HMAC mechanism below can be swapped without
+// touching the socket.
 type TokenVerifier interface {
 	Verify(token string) (sim.EntityID, error)
 }
@@ -36,7 +36,10 @@ var (
 // tokenPrefix versions the token layout, so a future mechanism can change the
 // format without ambiguity. Independent of wire.Version — tokens and frames
 // evolve separately.
-const tokenPrefix = "v2"
+const (
+	tokenPrefix       = "v3"
+	legacyTokenPrefix = "v2"
+)
 
 // minSecretBytes is the minimum admission-secret length. 32 bytes matches the
 // HMAC-SHA256 output size, below which the MAC's strength degrades; a shorter
@@ -44,8 +47,11 @@ const tokenPrefix = "v2"
 const minSecretBytes = 32
 
 // MintToken mints an admission token binding one observer to one allocation:
-// "v2.<allocation>.<observer>.<unix expiry>.<hex hmac-sha256>". Exported for the
-// allocation/handoff step and for tests; the zone server itself never mints.
+// "v3.<allocation>.<observer>.<unix-nanosecond expiry>.<hex hmac-sha256>".
+// Nanosecond precision preserves the configured TTL without extending its
+// replay window. Exported for the handoff service and for tests; the zone
+// server itself never mints, and the supplied secret must belong only to this
+// allocation.
 func MintToken(secret []byte, allocation string, observer sim.EntityID, expiry time.Time) (string, error) {
 	if len(secret) < minSecretBytes {
 		return "", fmt.Errorf("zonesock: admission secret is %d bytes, need at least %d", len(secret), minSecretBytes)
@@ -53,16 +59,22 @@ func MintToken(secret []byte, allocation string, observer sim.EntityID, expiry t
 	if allocation == "" || strings.Contains(allocation, ".") {
 		return "", fmt.Errorf("zonesock: allocation must be non-empty and contain no dots")
 	}
-	payload := fmt.Sprintf("%s.%s.%d.%d", tokenPrefix, allocation, uint64(observer), expiry.Unix())
+	payload := fmt.Sprintf(
+		"%s.%s.%d.%d",
+		tokenPrefix,
+		allocation,
+		uint64(observer),
+		expiry.UnixNano(),
+	)
 	mac := hmac.New(sha256.New, secret)
 	mac.Write([]byte(payload))
 	return payload + "." + hex.EncodeToString(mac.Sum(nil)), nil
 }
 
 // HMACVerifier is the interim TokenVerifier: HMAC-SHA256 over the token's
-// public fields with a secret shared between the minting side and the zone
-// server. It verifies integrity before trusting any field, so a forged token
-// reports forged even when its expiry also lies.
+// public fields with a secret shared only between the minting side and one
+// allocated zone server. It verifies integrity before trusting any field, so a
+// forged token reports forged even when its expiry also lies.
 type HMACVerifier struct {
 	secret     []byte
 	allocation string
@@ -86,7 +98,8 @@ func NewHMACVerifier(secret []byte, allocation string) (*HMACVerifier, error) {
 // controls every unverified field.
 func (v *HMACVerifier) Verify(token string) (sim.EntityID, error) {
 	parts := strings.Split(token, ".")
-	if len(parts) != 5 || parts[0] != tokenPrefix {
+	if len(parts) != 5 ||
+		(parts[0] != tokenPrefix && parts[0] != legacyTokenPrefix) {
 		return 0, ErrTokenFormat
 	}
 	observer, err := strconv.ParseUint(parts[2], 10, 64)
@@ -110,7 +123,11 @@ func (v *HMACVerifier) Verify(token string) (sim.EntityID, error) {
 	if parts[1] != v.allocation {
 		return 0, ErrTokenForged
 	}
-	if !v.now().Before(time.Unix(expiry, 0)) {
+	expiresAt := time.Unix(0, expiry)
+	if parts[0] == legacyTokenPrefix {
+		expiresAt = time.Unix(expiry, 0)
+	}
+	if !v.now().Before(expiresAt) {
 		return 0, ErrTokenExpired
 	}
 	return sim.EntityID(observer), nil

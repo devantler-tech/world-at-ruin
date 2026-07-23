@@ -152,9 +152,24 @@ zone/dungeon server:
   Empty sessions, RPC refusals and malformed account responses fail closed, and
   rejection errors expose only the gRPC status code so an upstream message
   cannot reflect the credential into logs. Hermetic tests exercise the real
-  generated gRPC client/server path. The package is inert until the
-  allocation/handoff child binds that identity to a GameServer and mints the
-  short-lived allocation token required by the transport ADR.
+  generated gRPC client/server path.
+- **`handoff/`** — the transport-neutral **player handoff core**: it consumes
+  `nakamaauth` rather than accepting a client-provided identity, gives only that
+  verified user ID plus a caller-stable reservation key and server-generated
+  attempt ID to an allocation boundary, validates the returned GameServer is
+  under the configured managed DNS domain with a usable endpoint and observer
+  binding, and mints the short-lived token with a per-allocation secret that
+  only that zone receives. Every failed stage returns a zero handoff;
+  post-allocation failures and ambiguous allocation errors conditionally
+  reconcile the verified-user/key/attempt on a bounded cleanup context, while
+  stale attempts cannot release a newer overlapping retry. Each allocation is
+  an expiring no-show lease that its adapter must reclaim unless first valid
+  zone admission claims it, and the nanosecond-precision token never outlives
+  that lease. Retryable gRPC status codes survive without upstream text, and
+  credentials never enter returned errors. Hermetic tests drive the real
+  generated Nakama gRPC path through the service and then verify its token
+  through the real zone verifier. The package is inert until the concrete
+  Agones allocator/lease-claim adapter and Nakama RPC register it.
 - **`cmd/zone/`** — a runnable skeleton server. It boots the demo zone and either
   runs a fixed number of deterministic ticks (printing the state hash) or drives
   the loop from the wall clock. With `-replicate` it also runs the full
@@ -179,12 +194,13 @@ go run ./cmd/zone -listen :8443 -tls-cert cert.pem -tls-key key.pem -agones  # f
 Later children of the server-foundation epic
 ([#4](https://github.com/devantler-tech/world-at-ruin/issues/4), the first child
 of the Phase 1 epic [#8](https://github.com/devantler-tech/world-at-ruin/issues/8)):
-the Nakama allocation/handoff RPC that consumes `nakamaauth` and mints an
-allocation-scoped zone token, the rest of the Nakama auth/social/chat/storage
-surface, client prediction/reconciliation, real navmesh geometry, and
-Postgres/CNPG persistence. The tick core, socket, client replica store, Agones
-lifecycle and first Nakama identity boundary are already in place; later slices
-build on those tested seams instead of creating a parallel meta service.
+the concrete Agones allocator adapter and Nakama RPC registration that expose
+`handoff`, the rest of the Nakama auth/social/chat/storage surface, client
+prediction/reconciliation, real navmesh geometry, and Postgres/CNPG
+persistence. The tick core, socket, client replica store, Agones lifecycle,
+Nakama identity boundary and fail-closed handoff core are already in place;
+later slices build on those tested seams instead of creating a parallel meta
+service.
 
 ## Validate
 
