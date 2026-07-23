@@ -335,6 +335,29 @@ func _ground_color(shade: Vector3, palette_at: Vector3) -> Color:
 	return c
 
 
+## The local ground substance a neighbouring generated surface should inherit
+## at its contact seam. Colour comes from the same per-place region palette and
+## height/scorch layering baked into the terrain vertex stream; roughness is the
+## terrain shader's loose-ash baseline plus that region's signed offset.
+##
+## This deliberately returns material only. Callers that need the walkable
+## shape sample [surface_height_at] independently, so material sharing can never
+## move collision or turn the terrain's piecewise-linear surface back into the
+## smoother analytic height field.
+func ground_material_at(x: float, z: float) -> Dictionary:
+	var ground_y := surface_height_at(x, z)
+	if ground_y <= NO_GROUND + 1.0:
+		ground_y = height_at(x, z)
+	var at := Vector3(x, ground_y, z)
+	var baked := _ground_color(at, at)
+	var roughness := clampf(0.97 + baked.a - 0.5, 0.0, 1.0)
+	baked.a = 1.0
+	return {
+		&"color": baked,
+		&"roughness": roughness,
+	}
+
+
 ## The name of the region a place stands on. The frame-capture tool writes it
 ## beside every surface frame, so the evidence says WHICH ground it photographed
 ## rather than leaving a reviewer to derive it.
@@ -401,7 +424,13 @@ func _build_starter_cave() -> void:
 	var to_world := _cave_transform
 	cave.rebuild(func(lx: float, lz: float) -> float:
 		var w := to_world * Vector3(lx, 0.0, lz)
-		return height_at(w.x, w.z) - to_world.origin.y)
+		var surface_y := surface_height_at(w.x, w.z)
+		if surface_y <= NO_GROUND + 1.0:
+			surface_y = height_at(w.x, w.z)
+		return surface_y - to_world.origin.y,
+	func(lx: float, lz: float) -> Dictionary:
+		var w := to_world * Vector3(lx, 0.0, lz)
+		return ground_material_at(w.x, w.z))
 	# The wanderer wakes STANDING: the field-probed floor, not the nominal one.
 	var lay: Dictionary = cave.last_layout
 	var spawn_local: Vector3 = lay["spawn"]
