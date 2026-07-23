@@ -170,11 +170,12 @@ write capability, and appends that capability to `shipped_save_capability.txt`.
 
 ### Boot recovery
 
-The boot-recovery expansion follows the same sequence, with its own read ceiling and write version.
-The v1 expansion reads and preserves both unversioned v0 and explicit v1, appends both schemas to
-`shipped_boot_recovery_versions.txt`, and pins them with `golden_boot_recovery_v<N>.json`. First boot
-and ordinary v0 writes remain v0 until the expansion release is the standing retained rollback
-target; #343 owns that bake gate and the later v1-writer activation.
+Boot recovery follows the same sequence, with its own read ceiling and write version. The v1 reader
+expansion shipped alone in v0.51.1, reads and preserves both unversioned v0 and explicit v1, appends
+both schemas to `shipped_boot_recovery_versions.txt`, and pins them with
+`golden_boot_recovery_v<N>.json`. After v0.51.1 became the standing retained rollback target, #343
+contracted the writer: first boot uses explicit v1, while a loaded v0 stays v0 in memory and migrates
+only on its next real write.
 
 Recovery refusal is path-latched for the process lifetime, and persistence reparses the destination
 immediately before atomic replacement. Reconstructing state, deleting a refused file, or landing a

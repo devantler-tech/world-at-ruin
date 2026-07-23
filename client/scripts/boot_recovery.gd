@@ -31,8 +31,8 @@ class_name BootRecovery
 ## State shape — the persisted file is exactly this, as JSON:
 ## [codeblock]
 ## {
-##     version: absent | int,     # absence is shipped v0; this expansion reads
-##                                 # v1 but does not originate it until #343
+##     version: absent | int,     # absence is shipped v0; new and changed state
+##                                 # uses v1 after the v0.51.1 reader bake
 ##     marker: null | String,      # version whose boot began but has not reached
 ##                                 # the checkpoint yet
 ##     quarantined: Array[String], # the RollbackSelection ledger — every version
@@ -59,16 +59,16 @@ class_name BootRecovery
 ##    still passes every product-law eligibility proof and leaves the suspect
 ##    bytes intact for a newer shell or reinstall to recover.
 
-## Maximum schema this expansion can READ. The unversioned shape already shipped
-## and is treated as v0 forever; v1 adds only this field. Reading arrives before
-## writing under `docs/design/save-data.md`, so the retained parent shell can
-## become the standing rollback target before #343 activates v1 writes.
+## Maximum schema this shell can READ. The unversioned shape already shipped and
+## is treated as v0 forever; v1 adds only this field. Its reader shipped alone
+## in v0.51.1, which became the standing retained rollback target before #343
+## activated the writer in a separate contract release.
 const RECOVERY_VERSION := 1
 
-## Schema originated by first boot and ordinary v0 writes. Kept deliberately
-## separate from [constant RECOVERY_VERSION]: this is the expand release, so it
-## must preserve v1 when already present without creating v1 from old state.
-const WRITE_VERSION := 0
+## Schema originated by first boot and the next real write of legacy v0 state.
+## Kept separate from [constant RECOVERY_VERSION] so the next migration can
+## expand its reader without accidentally activating its writer.
+const WRITE_VERSION := 1
 
 ## Runtime-only marker placed on a safe degraded view of unreadable/newer bytes.
 ## It is never persisted. Pure transition functions and save_state refuse it,
@@ -332,7 +332,10 @@ static func save_state(path: String, state: Variant) -> Dictionary:
 	var entries: Array[String] = []
 	for raw: Variant in (ledger as Array):
 		entries.append(str(raw))
-	var schema := int(s.get("version", 0))
+	# Loading never churns a historical document in memory. A successful real
+	# write is the explicit migration boundary: legacy v0 becomes the baked
+	# writer schema, while already-newer readable state keeps its own schema.
+	var schema := maxi(int(s.get("version", 0)), WRITE_VERSION)
 	var to_write := {
 		"marker": null if marker == null else str(marker),
 		"quarantined": entries,
