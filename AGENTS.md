@@ -349,9 +349,11 @@ everything shipped afterwards is held to.
   primitives). The one sanctioned exception to "no binary assets" is `client/assets/` — artifacts
   BAKED BY COMMITTED CODE (`tools/artgen/`, the Python/bpy exception) from CC0 data, plus the
   sanctioned committed CC0 base meshes that generators reshape in code (maintainer direction on
-  #20); every asset directory carries a `PROVENANCE.md` with licence chain and checksums
-  (enforced by `tools/provenance-guard.sh` in the `license-guard` job — a directory holding any
-  non-Markdown file must be covered by a `PROVENANCE.md` at itself or an ancestor), and
+  #20); every asset directory carries a `PROVENANCE.md` with its source/licence chain and an exact
+  SHA-256 manifest of every tracked non-Markdown file it covers (enforced by
+  `tools/provenance-guard.sh` in the `license-guard` job — a directory holding any non-Markdown
+  file must be covered by a `PROVENANCE.md` at itself or an ancestor, and every addition or byte
+  replacement must be deliberately accounted for there), and
   bakes must be deterministic (the artgen workflow re-bakes and byte-compares). Characters are
   composed at runtime by `CharacterFactory` from **recipes** (`client/recipes/*.json`, versioned
   and name-keyed — names are forward-only per the no-resets law; `tests/save_fixture_guard_test`
