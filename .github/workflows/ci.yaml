@@ -159,6 +159,42 @@ jobs:
             echo "::error::Shipped vault version(s) removed from $LEDGER ($(echo "$removed" | tr '\n' ' ')) — shipped progression is never disposable (no-resets law)"
             exit 1
           fi
+      - name: Boot-recovery ledger is append-only (no-resets law)
+        # The immutable shell's recovery memory is persisted player state too
+        # (#256). The in-game guard binds each schema to a fixture, while this
+        # base comparison prevents a PR from deleting a shipped schema and its
+        # fixture together. v0 names the unversioned document already in the
+        # field; it is a real compatibility floor, not an empty prehistory.
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          LEDGER=client/tests/data/shipped_boot_recovery_versions.txt
+          if [ ! -f "$LEDGER" ]; then
+            echo "::error::$LEDGER was deleted — the forward-only boot-recovery ledger must exist"
+            exit 1
+          fi
+          if ! git cat-file -e "$BASE_SHA" 2>/dev/null; then
+            echo "::error::base commit $BASE_SHA not present in the checkout — cannot verify the ledger"
+            exit 1
+          fi
+          extract='s/^[[:space:]]*\([0-9][0-9]*\)[[:space:]]*$/\1/p'
+          if git cat-file -e "$BASE_SHA:$LEDGER" 2>/dev/null; then
+            if ! git show "$BASE_SHA:$LEDGER" > /tmp/recovery-base-raw; then
+              echo "::error::could not read $LEDGER at $BASE_SHA — refusing to compare against an empty base"
+              exit 1
+            fi
+            sed -n "$extract" /tmp/recovery-base-raw | sort -un > /tmp/recovery-ledger-base
+          else
+            echo "::notice::$LEDGER does not exist at the base revision — treating the base set as empty (this is the commit that introduces it)"
+            : > /tmp/recovery-ledger-base
+          fi
+          sed -n "$extract" "$LEDGER" | sort -un > /tmp/recovery-ledger-head
+          removed=$(comm -23 /tmp/recovery-ledger-base /tmp/recovery-ledger-head)
+          if [ -n "$removed" ]; then
+            echo "::error::Shipped boot-recovery version(s) removed from $LEDGER ($(echo "$removed" | tr '\n' ' ')) — recovery history is never disposable (no-resets law)"
+            exit 1
+          fi
       - name: Attunement ledger is append-only (no-resets law)
         # The LIVE-NAME half of the vault law (#254 review). A golden fixture
         # proves a shipped attunement name survives a round-trip; it cannot prove

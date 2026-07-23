@@ -231,10 +231,11 @@ func _ready() -> void:
 func _reconcile_boot_recovery() -> void:
 	var path := BootRecovery.recovery_path()
 	var loaded := BootRecovery.load_state(path)
-	# An unreadable ledger loads with ok false and a deliberately unreadable
-	# state, so the consumers below fail closed on their own. It is carried
-	# forward rather than replaced: save_state refuses to launder it, which is
-	# what preserves the evidence of whatever tore it.
+	# An unreadable or newer document loads with ok false and a read-only,
+	# rollback-safe degraded state. It is carried forward rather than replaced:
+	# save_state and new update attempts refuse to launder it, while its readable
+	# quarantine view cannot turn damaged recovery metadata into a total rollback
+	# veto. The original bytes remain on disk for a newer shell or reinstall.
 	var state: Variant = loaded["state"]
 
 	var settled := BootRecovery.reconcile(state)
