@@ -527,6 +527,47 @@ func TestMobChaseClearsIntentAfterLosingTarget(t *testing.T) {
 	}
 }
 
+func TestMobChaseReachesZeroRangeWithoutTruncating(t *testing.T) {
+	w := NewWorld(combatBounds)
+	w.MobChase = true
+	w.Add(Entity{ID: 100, MaxSpeed: 3_000})
+	w.Add(Entity{ID: 1, Pos: Vec3{X: 31}})
+	w.AddMob(100, MobParams{
+		AggroRadiusMM: 1_000,
+		CastRangeMM:   0,
+		ChaseSpeedMM:  3_000,
+		CastTicks:     2,
+	})
+
+	steps(w, 100)
+	if got := w.Get(100).Pos; got != (Vec3{X: 31}) {
+		t.Fatalf("zero-range chaser stopped short after movement truncation: got %+v", got)
+	}
+	if casts := w.ActiveCasts(); len(casts) == 0 {
+		t.Fatal("zero-range chaser never reached its target to cast")
+	}
+}
+
+func TestMobChaseFlagDisableClearsAuthoredIntentBeforeMovement(t *testing.T) {
+	w := newChaseWorld(true)
+	w.Step()
+	if w.Get(100).Intent == (Vec3{}) {
+		t.Fatal("fixture never began chasing")
+	}
+
+	w.MobChase = false
+	w.Step()
+	if got := w.Get(100).Pos; got != (Vec3{}) {
+		t.Fatalf("disabling chase allowed stale AI intent to move the mob: %+v", got)
+	}
+	if got := w.Get(100).Intent; got != (Vec3{}) {
+		t.Fatalf("disabling chase left stale AI intent %+v", got)
+	}
+	if casts := w.ActiveCasts(); len(casts) != 1 || casts[0].Shape.Origin != (Vec3{X: 6_000}) {
+		t.Fatalf("flag off must resume the stationary cast contract, got %+v", casts)
+	}
+}
+
 func TestMobChaseParametersClampAtIngestion(t *testing.T) {
 	w := NewWorld(combatBounds)
 	w.MobChase = true

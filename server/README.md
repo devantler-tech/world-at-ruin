@@ -74,24 +74,32 @@ zone/dungeon server:
     pins the demo scenario's resolution stream. Ascending-ID and read-only —
     never part of `Step`, so it cannot move the movement golden.
   - `World.AddMob` + the cast lifecycle — the **mob combat AI** (the single
-    implementation by decision, #207): a registered stationary caster acquires
-    the nearest non-mob entity within an inclusive aggro radius (ties broken
-    to the lowest ID, iterated in stable order) and paints a circle **anchored
-    where the target stood at cast start** — ground-anchored, never tracking,
-    which is exactly what makes the attack winnable by moving well and losable
-    by standing still. The cast resolves a fixed number of ticks later against
-    where everyone is standing **at resolution** (leave and wander back in and
-    you are still hit), excluding the caster, into a bounded `TelegraphHit`
-    record log the consumer drains every tick. A zero wind-up is clamped to a
-    full tick: an instant telegraph cannot be dodged, and dodgeability is
-    product law. `ActiveCasts` exposes the painted, unresolved marks — the
-    read seam the future replication child consumes, because a client must SEE
-    the mark to step out of it. Runs inside `Step` (one tick loop, resolution
-    before decision), decides in ascending-ID order, and never touches a
-    position — a test pins that a mob-bearing world ends every entity exactly
-    where its mob-free twin does. Its own committed golden pins a scripted
-    scenario's resolution stream. Threat, chase movement, factions and
-    interruption are deliberate later children.
+    implementation by decision, #207): a registered mob acquires the nearest
+    non-mob entity within an inclusive aggro radius (ties broken to the lowest
+    ID, iterated in stable order) and paints a circle **anchored where the
+    target stood at cast start** — ground-anchored, never tracking, which is
+    exactly what makes the attack winnable by moving well and losable by
+    standing still. `World.MobChase` is the default-off delivery gate for its
+    first movement mode. Off preserves the original stationary caster and
+    clears any AI-owned intent before movement. On, the mob writes horizontal
+    intent through the existing deterministic kinematic path at
+    `MobParams.ChaseSpeedMM` until it reaches the inclusive
+    `MobParams.CastRangeMM`, then stops and paints; target loss and an in-flight
+    cast also stop it. Both parameters are clamped at `AddMob` ingestion.
+    The cast resolves a fixed number of ticks later against where everyone is
+    standing **at resolution** (leave and wander back in and you are still
+    hit), excluding the caster, into a bounded `TelegraphHit` record log the
+    consumer drains every tick. A zero wind-up is clamped to a full tick: an
+    instant telegraph cannot be dodged, and dodgeability is product law.
+    `ActiveCasts` exposes the painted, unresolved marks — the read seam the
+    future replication child consumes, because a client must SEE the mark to
+    step out of it. Runs inside `Step` (one tick loop, resolution before
+    decision) and decides in ascending-ID order. The flag-off world keeps the
+    original stationary combat golden unchanged; chase has insertion-order,
+    range, stop and hostile-parameter regressions. Threat, dead-target
+    filtering, factions, interruption, real navmesh routing and cast
+    replication remain later children; #357 owns enabling or retiring the
+    delivery flag after real-zone evidence.
   - `Entity.Health` + `World.ApplyDamage` — the **consequence layer**: a
     resolved telegraph finally costs something. Health is part of the hashed
     world state for entities with a pool (`MaxHealth > 0`) — a divergence in

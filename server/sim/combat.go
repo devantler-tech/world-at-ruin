@@ -291,9 +291,7 @@ func (w *World) decideMobCasts() {
 			if target == nil {
 				w.SetIntent(id, Vec3{})
 			} else if horizontalDist2(w.ents[id].Pos, target.Pos) > st.params.CastRangeMM*st.params.CastRangeMM {
-				delta := target.Pos.Sub(w.ents[id].Pos)
-				delta.Y = 0
-				w.SetIntent(id, clampSpeed(delta, st.params.ChaseSpeedMM))
+				w.SetIntent(id, mobChaseIntent(w.ents[id], target, st.params.ChaseSpeedMM))
 				continue
 			} else {
 				w.SetIntent(id, Vec3{})
@@ -314,6 +312,32 @@ func (w *World) decideMobCasts() {
 		st.inFlight = true
 		st.nextCastTick = w.Tick + st.params.CooldownTicks
 	}
+}
+
+// clearMobChaseIntents restores the default stationary-caster contract before
+// movement runs. Keeping this before integration is what makes a runtime
+// on-to-off flag transition immediate: intent authored on the previous chase
+// tick cannot leak through as one final movement step.
+func (w *World) clearMobChaseIntents() {
+	for _, id := range w.mobOrder {
+		w.SetIntent(id, Vec3{})
+	}
+}
+
+// mobChaseIntent returns the horizontal velocity that closes toward target at
+// the lesser of the configured chase speed and the entity's movement cap.
+// Scaling the remaining displacement by TickHz first expresses the exact
+// one-tick velocity; clampSpeed then either caps a distant target to chase
+// speed or leaves a near target exact. The latter avoids integer integration
+// truncating a sub-speed remainder to zero forever.
+func mobChaseIntent(mob, target *Entity, chaseSpeedMM int64) Vec3 {
+	delta := target.Pos.Sub(mob.Pos)
+	delta.Y = 0
+	effectiveSpeed := min(chaseSpeedMM, mob.MaxSpeed)
+	return clampSpeed(Vec3{
+		X: delta.X * TickHz,
+		Z: delta.Z * TickHz,
+	}, effectiveSpeed)
 }
 
 // nearestTargetable returns the closest non-mob entity within radiusMM of the
