@@ -31,8 +31,8 @@ class_name BootRecovery
 ## State shape — the persisted file is exactly this, as JSON:
 ## [codeblock]
 ## {
-##     version: int,              # recovery schema; legacy shipped files without
-##                                 # this field are v0 and remain readable forever
+##     version: absent | int,     # absence is shipped v0; this expansion reads
+##                                 # v1 but does not originate it until #343
 ##     marker: null | String,      # version whose boot began but has not reached
 ##                                 # the checkpoint yet
 ##     quarantined: Array[String], # the RollbackSelection ledger — every version
@@ -59,16 +59,28 @@ class_name BootRecovery
 ##    still passes every product-law eligibility proof and leaves the suspect
 ##    bytes intact for a newer shell or reinstall to recover.
 
-## First explicit schema. The unversioned shape already shipped and is treated as
-## v0 forever; v1 adds only this field, so an older shell still reads every
-## operational field and a newer shell can migrate v0 on its next real write.
+## Maximum schema this expansion can READ. The unversioned shape already shipped
+## and is treated as v0 forever; v1 adds only this field. Reading arrives before
+## writing under `docs/design/save-data.md`, so the retained parent shell can
+## become the standing rollback target before #343 activates v1 writes.
 const RECOVERY_VERSION := 1
+
+## Schema originated by first boot and ordinary v0 writes. Kept deliberately
+## separate from [constant RECOVERY_VERSION]: this is the expand release, so it
+## must preserve v1 when already present without creating v1 from old state.
+const WRITE_VERSION := 0
 
 ## Runtime-only marker placed on a safe degraded view of unreadable/newer bytes.
 ## It is never persisted. Pure transition functions and save_state refuse it,
 ## while RollbackSelection sees the readable quarantine array it needs to keep
 ## recovery available.
 const _READ_ONLY_KEY := "__recovery_read_only"
+
+## Paths refused at least once this session. Refusal attaches to the path, not
+## only the returned Dictionary: reconstructing fresh state, deleting the file,
+## or replacing it from another shell must not turn refused evidence writable.
+## Restarting is the deliberate point at which the shell re-examines the path.
+static var _refused_paths: Dictionary = {}
 
 
 ## Where the shipped bootstrap keeps the file. `main.gd` runs [method load_state]
@@ -100,7 +112,7 @@ static func recovery_path() -> String:
 ## promoted yet.
 static func fresh_state() -> Dictionary:
 	return {
-		"version": RECOVERY_VERSION,
+		"version": WRITE_VERSION,
 		"marker": null,
 		"quarantined": [],
 		"last_good": null,
@@ -225,7 +237,7 @@ static func reconcile(state: Variant) -> Dictionary:
 
 ## Read the persisted recovery state. A missing file is the legitimate first boot
 ## and loads as [method fresh_state] with `ok` true. The shipped unversioned shape
-## is legacy v0 and is expanded in memory to v1 without losing a field. A parseable
+## is legacy v0 and remains v0 in memory without losing a field. A parseable
 ## v1 file must carry exactly the four documented keys; a missing or unknown key,
 ## malformed/newer version, or invalid JSON returns `ok` false with a read-only
 ## degraded state. That state preserves the suspect bytes, refuses writes and new
@@ -233,6 +245,10 @@ static func reconcile(state: Variant) -> Dictionary:
 ## Present operational VALUES load as they are: per-value trust is judged by the
 ## fail-closed consumers, not sanitised away at load time.
 static func load_state(path: String) -> Dictionary:
+	if _refused_paths.has(path):
+		return _degraded_load(
+			path,
+			"recovery path %s was already refused this session — it remains read-only until restart, while an independently-compatible retained rollback remains available" % path)
 	if not FileAccess.file_exists(path):
 		return {"ok": true, "state": fresh_state(), "reason": "no recovery file at %s — first boot" % path}
 	var text := FileAccess.get_file_as_string(path)
@@ -242,14 +258,17 @@ static func load_state(path: String) -> Dictionary:
 	var json := JSON.new()
 	if json.parse(text) != OK:
 		return _degraded_load(
+			path,
 			"recovery file at %s is unreadable — bytes preserved read-only; new updates are refused, but an independently-compatible retained rollback remains available" % path)
 	var parsed: Variant = json.data
 	if parsed is not Dictionary:
 		return _degraded_load(
+			path,
 			"recovery file at %s is unreadable — bytes preserved read-only; new updates are refused, but an independently-compatible retained rollback remains available" % path)
 	var p := parsed as Dictionary
 	if not (p.has("marker") and p.has("quarantined") and p.has("last_good")):
 		return _degraded_load(
+			path,
 			"recovery file at %s is missing required keys — bytes preserved read-only; new updates are refused, but rollback remains available" % path)
 	var schema: Variant = p.get("version", 0)
 	if p.has("version") and (
@@ -257,6 +276,7 @@ static func load_state(path: String) -> Dictionary:
 			or int(schema) < 1
 			or int(schema) > RECOVERY_VERSION):
 		return _degraded_load(
+			path,
 			"recovery file at %s declares unsupported schema %s (this shell reads through v%d) — bytes preserved read-only; new updates are refused, but rollback remains available"
 			% [path, str(schema), RECOVERY_VERSION])
 	var allowed := {"marker": true, "quarantined": true, "last_good": true}
@@ -265,12 +285,13 @@ static func load_state(path: String) -> Dictionary:
 	for key: String in p:
 		if not allowed.has(key):
 			return _degraded_load(
+				path,
 				"recovery file at %s carries unknown field '%s' without a readable schema — bytes preserved read-only; new updates are refused, but rollback remains available"
 				% [path, key])
 	return {
 		"ok": true,
 		"state": {
-			"version": RECOVERY_VERSION,
+			"version": int(schema),
 			"marker": p.get("marker"),
 			"quarantined": p.get("quarantined"),
 			"last_good": p.get("last_good"),
@@ -294,6 +315,8 @@ static func save_state(path: String, state: Variant) -> Dictionary:
 	var s := state as Dictionary
 	if s.get(_READ_ONLY_KEY, false) == true:
 		return {"ok": false, "reason": "refusing to overwrite unreadable or newer recovery evidence with a degraded in-memory state"}
+	if _refused_paths.has(path):
+		return {"ok": false, "reason": "refusing to overwrite recovery path %s because it was refused earlier this session" % path}
 	var schema_error := _schema_error(s)
 	if not schema_error.is_empty():
 		return {"ok": false, "reason": "refusing to persist recovery state — %s" % schema_error}
@@ -309,12 +332,14 @@ static func save_state(path: String, state: Variant) -> Dictionary:
 	var entries: Array[String] = []
 	for raw: Variant in (ledger as Array):
 		entries.append(str(raw))
+	var schema := int(s.get("version", 0))
 	var to_write := {
-		"version": RECOVERY_VERSION,
 		"marker": null if marker == null else str(marker),
 		"quarantined": entries,
 		"last_good": null if last_good == null else str(last_good),
 	}
+	if schema > 0:
+		to_write["version"] = schema
 	var payload := JSON.stringify(to_write, "  ")
 	var tmp_path := path + ".tmp"
 	var file := FileAccess.open(tmp_path, FileAccess.WRITE)
@@ -328,6 +353,14 @@ static func save_state(path: String, state: Variant) -> Dictionary:
 	if FileAccess.get_file_as_string(tmp_path) != payload:
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(tmp_path))
 		return {"ok": false, "reason": "read-back of %s did not match what was written — refusing to replace the recovery state with a torn file" % tmp_path}
+	# Re-check the destination IMMEDIATELY before replacement. A valid state may
+	# have been captured before another shell or cloud sync landed a future or
+	# corrupt document. The state-local marker cannot see that change; the
+	# path-latched read does. This narrows the remaining race to rename itself,
+	# matching SaveVault's documented #262 compare-and-swap gap.
+	if not can_write(path):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(tmp_path))
+		return {"ok": false, "reason": "refusing to replace %s because its current recovery document is unreadable or newer" % path}
 	var err := DirAccess.rename_absolute(
 		ProjectSettings.globalize_path(tmp_path), ProjectSettings.globalize_path(path))
 	if err != OK:
@@ -335,13 +368,14 @@ static func save_state(path: String, state: Variant) -> Dictionary:
 	return {"ok": true, "reason": "recovery state persisted to %s" % path}
 
 
-## Empty means a state belongs to a schema this shell understands. Absence is
-## legacy v0 and remains valid forever; explicit schemas start at v1.
+## Empty means a state belongs to a schema this shell understands. Absence or
+## explicit in-memory 0 is legacy v0 and remains valid forever; persisted
+## explicit schemas start at v1.
 static func _schema_error(state: Dictionary) -> String:
 	if not state.has("version"):
 		return ""
 	var version: Variant = state.get("version")
-	if not UpdateDecision.is_int_id(version) or int(version) < 1:
+	if not UpdateDecision.is_int_id(version) or int(version) < 0:
 		return "recovery schema is missing or malformed"
 	if int(version) > RECOVERY_VERSION:
 		return "recovery schema v%d is newer than this shell understands (v%d)" % [
@@ -349,7 +383,27 @@ static func _schema_error(state: Dictionary) -> String:
 	return ""
 
 
-static func _degraded_load(reason: String) -> Dictionary:
+## Whether `path` is safe to replace right now. Every refusal is latched for the
+## process lifetime, and an existing destination is parsed again immediately
+## before rename so a future/corrupt replacement cannot be overwritten.
+static func can_write(path: String) -> bool:
+	if _refused_paths.has(path):
+		return false
+	if not FileAccess.file_exists(path):
+		return true
+	return load_state(path)["ok"] as bool
+
+
+## Forget latched refusals. FOR TESTS ONLY: boot_ledger_boot_test simulates
+## several process restarts by replacing main.tscn inside one Godot process, so
+## its probe-path latch must reset at the boundary a real restart would provide.
+## Production never calls this; the refusal deliberately survives until exit.
+static func clear_refusals_for_test() -> void:
+	_refused_paths.clear()
+
+
+static func _degraded_load(path: String, reason: String) -> Dictionary:
+	_refused_paths[path] = true
 	var state := fresh_state()
 	state[_READ_ONLY_KEY] = true
 	return {"ok": false, "state": state, "reason": reason}

@@ -365,7 +365,7 @@ jobs:
           leaves() { jq -S -r 'paths(scalars) as $p | select($p[0] != "comment") | "\($p|map(tostring)|join("."))=\(getpath($p)|tostring)"' | sort; }
           fail=0
           for f in $(git ls-tree -r --name-only "$BASE_SHA" -- client/tests/data \
-              | grep -E 'golden_(recipe|vault)_v[0-9]+\.json$'); do
+              | grep -E 'golden_(recipe|vault|boot_recovery)_v[0-9]+\.json$'); do
             if [ ! -f "$f" ]; then
               echo "::error::$f was deleted — a shipped historical save is never removed (no-resets law)"
               fail=1; continue
@@ -763,6 +763,12 @@ jobs:
         # ci-skip.txt: silently dropping a player's progression must never be
         # one line of config away.
         run: ./tools/run-client-test.sh save_vault_guard_test "a historical vault no longer loads with zero loss"
+      - name: Boot-recovery guard (every historical recovery document loads with zero loss)
+        # THE product-law surface for the immutable shell's recovery memory
+        # (#342, parent #256). The ledger and base-fixture checks above anchor
+        # history, while this scene proves every schema still loads, acts and
+        # re-saves without loss. It must never be silenced through ci-skip.txt.
+        run: ./tools/run-client-test.sh boot_recovery_guard_test "a historical boot-recovery document no longer loads with zero loss"
       - name: Vault restore guard (an attuned point still restores on boot)
         # The BEHAVIOURAL half of the vault product law (#254 review). The
         # save-vault guard above proves shipped vaults persist and their names
@@ -790,7 +796,8 @@ jobs:
         # steps above call, so the pass criterion is defined in exactly one
         # place (issue #305).
         #   - save_fixture_guard_test, save_vault_guard_test,
-        #     vault_restore_boot_test and ability_registry_test are deliberately
+        #     boot_recovery_guard_test, vault_restore_boot_test and
+        #     ability_registry_test are deliberately
         #     excluded: each runs in its own named step above (the product-law
         #     surfaces, kept loud, separate and NON-SKIPPABLE), so discovering
         #     them here would both run them twice and expose them to ci-skip.
@@ -811,7 +818,7 @@ jobs:
             t=$(basename "$scene" .tscn)
             # Run in their own dedicated steps above — never twice, and never
             # skippable via ci-skip.txt (they are the product-law surfaces).
-            case "$t" in save_fixture_guard_test|save_vault_guard_test|vault_restore_boot_test|ability_registry_test) continue ;; esac
+            case "$t" in save_fixture_guard_test|save_vault_guard_test|boot_recovery_guard_test|vault_restore_boot_test|ability_registry_test) continue ;; esac
             if is_skipped "$t"; then
               echo "::notice::skipping ${t} (listed in ${skip_file})"
               continue

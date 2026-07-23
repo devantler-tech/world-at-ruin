@@ -1,18 +1,21 @@
 extends Node
-## Forward-only fixture guard for the immutable shell's recovery memory (#256).
+## Forward-only fixture guard for the immutable shell's recovery memory
+## (#342, parent #256).
 ##
-## The shipped unversioned document is v0. It remains readable forever; v1 adds
-## an explicit version without changing the marker/quarantine/last-good meaning.
-## Every ledger version must have a golden fixture that survives load and
-## write-back without loss. Newer or corrupt documents degrade read-only: their
-## bytes are preserved and new updates are refused, but the recovery file may
-## not veto an otherwise compatible retained rollback.
+## The shipped unversioned document is v0. It remains readable forever; this
+## expansion reads and preserves v1 without originating it before #343's bake
+## gate. Every ledger version must have a golden fixture that survives load and
+## write-back at its own version without loss. Newer or corrupt documents
+## degrade path-latched read-only: their bytes are preserved and new updates are
+## refused, but the recovery file may not veto an otherwise compatible retained
+## rollback.
 ##
 ## Run: godot --headless --path client res://tests/boot_recovery_guard_test.tscn
 
 const DATA_DIR := "res://tests/data/"
 const SHIPPED_VERSIONS := DATA_DIR + "shipped_boot_recovery_versions.txt"
 const PROBE := "user://boot_recovery_guard_probe.json"
+const REPLACED_PROBE := "user://boot_recovery_replaced_probe.json"
 
 
 func _ready() -> void:
@@ -28,13 +31,14 @@ func _ready() -> void:
 		return
 
 	var fresh := BootRecovery.fresh_state()
-	var current: Variant = fresh.get("version")
-	if current is not int or int(current) < 1:
-		_fail("fresh recovery state has no positive integer schema version")
+	var write_version: Variant = fresh.get("version")
+	if not UpdateDecision.is_int_id(write_version) or int(write_version) != 0:
+		_fail("the expansion release must keep first-boot recovery writes on legacy v0")
 		return
-	if shipped != range(0, int(current) + 1):
+	var read_ceiling := BootRecovery.RECOVERY_VERSION
+	if shipped != range(0, read_ceiling + 1):
 		_fail("recovery version ledger must be contiguous from legacy v0 through v%d (got %s)" % [
-			int(current), str(shipped)])
+			read_ceiling, str(shipped)])
 		return
 	for version: int in shipped:
 		if version not in fixtures:
@@ -47,22 +51,26 @@ func _ready() -> void:
 			return
 
 	for version: int in shipped:
-		var reason := _check_fixture(version, fixtures[version], int(current))
+		var reason := _check_fixture(version, fixtures[version])
 		if reason != "":
 			_fail("golden_boot_recovery_v%d.json: %s" % [version, reason])
 			return
 
-	var refusal := _check_read_only_degradation(fixtures[int(current)], int(current))
+	var refusal := _check_read_only_degradation(fixtures[read_ceiling], read_ceiling)
 	if refusal != "":
 		_fail(refusal)
 		return
+	var replaced := _check_destination_revalidation(fixtures[0], fixtures[read_ceiling], read_ceiling)
+	if replaced != "":
+		_fail(replaced)
+		return
 
 	_cleanup_probe()
-	print("TEST PASS — recovery v0..v%d round-trip with zero loss; future/corrupt files preserve bytes without blocking rollback" % int(current))
+	print("TEST PASS — recovery v0..v%d round-trip at its own version; refused/replaced files preserve bytes without blocking rollback" % read_ceiling)
 	get_tree().quit(0)
 
 
-func _check_fixture(version: int, path: String, current: int) -> String:
+func _check_fixture(version: int, path: String) -> String:
 	var file := FileAccess.open(path, FileAccess.READ)
 	if file == null:
 		return "fixture is unreadable"
@@ -84,6 +92,11 @@ func _check_fixture(version: int, path: String, current: int) -> String:
 	var lost := _diff(expected, state, "recovery")
 	if lost != "":
 		return "LOAD LOST DATA (no-resets law): %s" % lost
+	if (
+		state is not Dictionary
+		or not UpdateDecision.is_int_id((state as Dictionary).get("version"))
+		or int((state as Dictionary).get("version")) != version):
+		return "reader churned recovery v%d to another in-memory schema during expansion" % version
 	var saved := BootRecovery.save_state(PROBE, state)
 	if not (saved["ok"] as bool):
 		return "historical recovery state could not be re-saved: %s" % str(saved["reason"])
@@ -93,9 +106,8 @@ func _check_fixture(version: int, path: String, current: int) -> String:
 		return "SAVE DROPPED DATA (no-resets law): %s" % dropped
 	if (
 			rewritten is not Dictionary
-			or not UpdateDecision.is_int_id((rewritten as Dictionary).get("version"))
-			or int((rewritten as Dictionary).get("version")) != current):
-		return "write-back did not migrate the document to recovery schema v%d" % current
+			or int((rewritten as Dictionary).get("version", 0)) != version):
+		return "write-back churned recovery v%d to another schema during expansion" % version
 	return ""
 
 
@@ -137,8 +149,37 @@ func _assert_degraded(loaded: Dictionary, original: String, kind: String) -> Str
 		return "%s recovery state admitted a new update attempt despite lost quarantine evidence" % kind
 	if BootRecovery.save_state(PROBE, state)["ok"] as bool:
 		return "%s recovery evidence was overwritten by degraded state" % kind
+	if BootRecovery.save_state(PROBE, BootRecovery.fresh_state())["ok"] as bool:
+		return "%s recovery refusal was bypassed with reconstructed fresh state" % kind
 	if FileAccess.get_file_as_string(PROBE) != original:
 		return "%s recovery evidence changed despite the read-only refusal" % kind
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(PROBE))
+	if BootRecovery.save_state(PROBE, BootRecovery.fresh_state())["ok"] as bool:
+		return "%s recovery path became writable after refused evidence disappeared" % kind
+	if FileAccess.file_exists(PROBE):
+		return "%s recovery path was recreated after its refusal latch fired" % kind
+	return ""
+
+
+func _check_destination_revalidation(
+		v0_fixture: String, current_fixture: String, current: int) -> String:
+	var v0_raw := FileAccess.get_file_as_string(v0_fixture)
+	if not _write_probe_at(REPLACED_PROBE, v0_raw):
+		return "could not seed the destination-revalidation probe"
+	var loaded := BootRecovery.load_state(REPLACED_PROBE)
+	if not (loaded["ok"] as bool):
+		return "could not capture a valid v0 state before replacement"
+	var future: Variant = JSON.parse_string(FileAccess.get_file_as_string(current_fixture))
+	if future is not Dictionary:
+		return "destination-revalidation control fixture is unreadable"
+	(future as Dictionary)["version"] = current + 1
+	var replacement := JSON.stringify(future)
+	if not _write_probe_at(REPLACED_PROBE, replacement):
+		return "could not replace the recovery path with a future document"
+	if BootRecovery.save_state(REPLACED_PROBE, loaded["state"])["ok"] as bool:
+		return "a state captured before another shell replaced the path overwrote newer recovery evidence"
+	if FileAccess.get_file_as_string(REPLACED_PROBE) != replacement:
+		return "destination revalidation changed the newer recovery evidence"
 	return ""
 
 
@@ -224,7 +265,11 @@ func _diff(expected: Variant, actual: Variant, path: String) -> String:
 
 
 func _write_probe(raw: String) -> bool:
-	var file := FileAccess.open(PROBE, FileAccess.WRITE)
+	return _write_probe_at(PROBE, raw)
+
+
+func _write_probe_at(path: String, raw: String) -> bool:
+	var file := FileAccess.open(path, FileAccess.WRITE)
 	if file == null:
 		return false
 	file.store_string(raw)
@@ -244,5 +289,6 @@ func _exit_tree() -> void:
 
 
 func _cleanup_probe() -> void:
-	if FileAccess.file_exists(PROBE):
-		DirAccess.remove_absolute(ProjectSettings.globalize_path(PROBE))
+	for path in [PROBE, REPLACED_PROBE]:
+		if FileAccess.file_exists(path):
+			DirAccess.remove_absolute(ProjectSettings.globalize_path(path))

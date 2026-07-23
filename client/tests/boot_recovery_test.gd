@@ -117,7 +117,7 @@ func _ready() -> void:
 	# --- CONTROL 5: PERSISTENCE — round-trip, first boot, corrupt file ---
 	var missing := BootRecovery.load_state(PROBE)
 	_check(missing["ok"] as bool, true, "persistence: a missing file is the legitimate first boot")
-	_check((missing["state"] as Dictionary).get("version", -1) == 1, true, "persistence: first boot starts on recovery schema v1")
+	_check((missing["state"] as Dictionary).get("version", -1) == 0, true, "persistence: the reader-expansion release keeps first boot on legacy recovery schema v0")
 	_check((missing["state"] as Dictionary)["quarantined"] == Array([]), true, "persistence: first boot starts with an empty ledger")
 	var saved := BootRecovery.save_state(PROBE, after)
 	_check(saved["ok"] as bool, true, "persistence: a readable state persists")
@@ -125,7 +125,7 @@ func _ready() -> void:
 	var loaded := BootRecovery.load_state(PROBE)
 	_check(loaded["ok"] as bool, true, "persistence: the persisted state loads back")
 	var lstate: Dictionary = loaded["state"]
-	_check(lstate.get("version", -1) == 1, true, "persistence: the recovery schema version round-trips")
+	_check(lstate.get("version", -1) == 0, true, "persistence: ordinary v0 state does not churn to v1 before the reader expansion bakes")
 	_check(lstate["marker"] == null, true, "persistence: marker round-trips")
 	_check(lstate["last_good"] == after["last_good"], true, "persistence: last-good round-trips")
 	_check(RollbackSelection.is_quarantined(lstate["quarantined"], "0.2.0"), true, "persistence: the quarantine survives the round-trip — the boot loop stays broken across launches")
