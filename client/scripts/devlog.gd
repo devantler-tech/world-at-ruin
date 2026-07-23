@@ -11,6 +11,16 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
+		"version": "0.51.2",
+		"date": "2026-07-23",
+		"title": "The starter cave now belongs to the ground it rises from",
+		"notes": [
+			"The weathered rock around the cave entrance used to end in a clean material line, as if the whole massif had been placed on top of the Reach. Its lowest band now takes on the exact colour and wear of the ash or stone it meets there.",
+			"The blend follows the faceted ground you can actually walk on and fades away up the rock. Cave walls, the far side of the massif and every collision surface are unchanged.",
+			"The material seam is softer, but the massif still has one smooth generated outline. It still needs loose rock, drifted ash and sparse growth around its foot before the cave has the layered, buried silhouette of the reference.",
+		],
+	},
+	{
 		"version": "0.51.0",
 		"date": "2026-07-23",
 		"title": "Layered outfit editing opens as a guarded preview",
