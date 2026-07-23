@@ -619,6 +619,35 @@ func _capture_first_run(dir: String, main: Node) -> void:
 	if not await _shoot(dir, "first_run_outfit", creator):
 		return
 	shots += 1
+
+	# A row of names is not frame evidence for the wearable meshes behind those
+	# names. Drive the opted-in creator through the first head pair one layer at
+	# a time while the controls are visible: the clothing frame shows eyewear,
+	# then the armour frame shows the helm suppressing it. These are real player
+	# authoring calls, not meshes instanced around the creator (#329).
+	if CharacterCreator.layered_outfit_pickers_enabled():
+		var capture_player := creator.get("_player") as Player
+		if capture_player == null:
+			_fail("the first-run creator lost its player — cannot render the head-layer evidence")
+			return
+		var head_states := [
+			["clothing", "relic_goggles", "first_run_head_clothing"],
+			["armor", "ruin_drake_helm", "first_run_head_armor"],
+		]
+		for state: Array in head_states:
+			var head_pickers: Variant = (creator.get("_outfit_pickers") as Dictionary).get("head")
+			if not (head_pickers is Dictionary) or not (head_pickers as Dictionary).has(state[0]):
+				_fail("the opted-in creator has no head %s control — cannot render its evidence" % state[0])
+				return
+			creator.call("_set_recipe_equipment", "head", state[0], state[1])
+			capture_player.set_character(creator.get("_recipe"))
+			creator.call("_sync_sliders_from_recipe")
+			scroll.ensure_control_visible((head_pickers as Dictionary)[state[0]] as Control)
+			for i in UI_SETTLE_FRAMES:
+				await get_tree().process_frame
+			if not await _shoot(dir, state[2], creator):
+				return
+			shots += 1
 	scroll.scroll_vertical = 0
 	await get_tree().process_frame
 	# The shaping controls now sit inside a section that is COLLAPSED by default

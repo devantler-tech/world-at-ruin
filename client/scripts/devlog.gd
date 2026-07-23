@@ -11,6 +11,16 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
+		"version": "0.52.0",
+		"date": "2026-07-23",
+		"title": "The first head layers can hide one another",
+		"notes": [
+			"The wardrobe now has its first eyewear and helm: relic goggles sit on the clothing layer, and the ruin-drake helm sits over them as armour. Wearing both hides the goggles instead of drawing them through the helm.",
+			"The pair is available in the guarded layered-outfit preview: set WAR_LAYERED_OUTFIT_PICKERS=1 before launch, then use the independent head clothing and armour controls. The ordinary creator remains unchanged.",
+			"The spiked helm gives the head a stronger distance silhouette, but both pieces still use flat bake materials and the goggles do not yet read as glass. They remain opt-in until their surfaces and authored wardrobe presentation clear the character-art bar tracked by #336.",
+		],
+	},
+	{
 		"version": "0.51.0",
 		"date": "2026-07-23",
 		"title": "Layered outfit editing opens as a guarded preview",

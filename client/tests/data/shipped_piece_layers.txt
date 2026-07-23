@@ -20,3 +20,5 @@ shirt_ragged clothing
 pants_wool clothing
 shoes_cloth clothing
 boots_worn armor
+relic_goggles clothing
+ruin_drake_helm armor
