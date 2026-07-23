@@ -117,6 +117,7 @@ func _ready() -> void:
 	# --- CONTROL 5: PERSISTENCE — round-trip, first boot, corrupt file ---
 	var missing := BootRecovery.load_state(PROBE)
 	_check(missing["ok"] as bool, true, "persistence: a missing file is the legitimate first boot")
+	_check((missing["state"] as Dictionary).get("version", -1) == 0, true, "persistence: the reader-expansion release keeps first boot on legacy recovery schema v0")
 	_check((missing["state"] as Dictionary)["quarantined"] == Array([]), true, "persistence: first boot starts with an empty ledger")
 	var saved := BootRecovery.save_state(PROBE, after)
 	_check(saved["ok"] as bool, true, "persistence: a readable state persists")
@@ -124,18 +125,22 @@ func _ready() -> void:
 	var loaded := BootRecovery.load_state(PROBE)
 	_check(loaded["ok"] as bool, true, "persistence: the persisted state loads back")
 	var lstate: Dictionary = loaded["state"]
+	_check(lstate.get("version", -1) == 0, true, "persistence: ordinary v0 state does not churn to v1 before the reader expansion bakes")
 	_check(lstate["marker"] == null, true, "persistence: marker round-trips")
 	_check(lstate["last_good"] == after["last_good"], true, "persistence: last-good round-trips")
 	_check(RollbackSelection.is_quarantined(lstate["quarantined"], "0.2.0"), true, "persistence: the quarantine survives the round-trip — the boot loop stays broken across launches")
 	_check(RollbackSelection.is_readable_ledger(lstate["quarantined"]), true, "persistence: the loaded ledger is readable by the selection side")
-	# A corrupt file must load fail-closed, and its evidence must not be writable-over.
+	# A corrupt file must load read-only and preserve its evidence, but it must
+	# not turn the recovery mechanism into the reason no fallback can boot.
 	var raw := FileAccess.open(PROBE, FileAccess.WRITE)
 	raw.store_string("{ not json")
 	raw.close()
 	var corrupt := BootRecovery.load_state(PROBE)
 	_check(corrupt["ok"] as bool, false, "persistence: a corrupt file loads with ok=false, loudly")
-	_check(RollbackSelection.is_quarantined((corrupt["state"] as Dictionary)["quarantined"], "0.5.0"), true, "persistence: after a corrupt load, NOTHING can be shown safe (is_quarantined fails closed)")
-	_check(BootRecovery.begin_attempt(corrupt["state"], "0.5.0")["ok"] as bool, false, "persistence: after a corrupt load, candidates are refused")
+	_check(RollbackSelection.is_quarantined((corrupt["state"] as Dictionary)["quarantined"], "0.5.0"), false, "persistence: unreadable recovery memory does not declare every retained fallback quarantined")
+	var corrupt_pick := RollbackSelection.select([_target("0.5.0")], _select_state((corrupt["state"] as Dictionary)["quarantined"]))
+	_check(corrupt_pick["action"] == RollbackSelection.ROLLBACK, true, "persistence: a corrupt recovery file cannot block an otherwise-safe rollback")
+	_check(BootRecovery.begin_attempt(corrupt["state"], "0.5.0")["ok"] as bool, false, "persistence: read-only degraded state refuses NEW update attempts")
 	_check(BootRecovery.save_state(PROBE, corrupt["state"])["ok"] as bool, false, "persistence: the corrupt evidence is never overwritten with a well-formed lie")
 	_check(BootRecovery.save_state(PROBE, {"marker": 42, "quarantined": [], "last_good": null})["ok"] as bool, false, "persistence: a junk marker is refused at write time")
 	# A PARSEABLE file missing keys is torn, not "empty": save_state never writes

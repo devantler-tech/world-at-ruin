@@ -372,7 +372,18 @@ everything shipped afterwards is held to.
   DEGRADES to session-only and may never block a boot, and a vault that exists but cannot be read is
   READ-ONLY for that session (refuse-to-read implies refuse-to-write, or a downgrade would overwrite
   progression a newer client wrote). Tests redirect it with `WAR_VAULT_PATH`, mirroring
-  `WAR_SAVE_PATH`. Non-humanoid **creatures**
+  `WAR_SAVE_PATH`. The immutable shell's recovery memory is a third persisted contract:
+  `BootRecovery` (`user://boot_recovery.json`) reads through schema v1 while the expansion release
+  keeps production writes on the already-shipped unversioned v0 shape until #343's bake gate,
+  reads v0 forever, and is anchored by
+  `tests/boot_recovery_guard_test`, `tests/data/golden_boot_recovery_v<N>.json`, and
+  `tests/data/shipped_boot_recovery_versions.txt`. A corrupt or future recovery document is
+  path-latched read-only and refuses new update attempts; persistence revalidates the destination
+  immediately before replacement. The degraded state exposes a readable empty quarantine view so
+  broken recovery metadata cannot itself veto an otherwise-compatible retained rollback.
+  This is deliberate: rollback targets still independently prove save, protocol and shell
+  compatibility, while refusing every target would guarantee the stranding recovery exists to
+  prevent. Tests redirect it with `WAR_BOOT_RECOVERY_PATH`. Non-humanoid **creatures**
   follow the same shape — `CreatureFactory` composes a baked creature kit (the ash hound is the
   pilot archetype) from versioned, name-keyed, forward-only recipes, one canonical skeleton per
   archetype. `server/` is the Go authoritative tier — its **zone tick core** has landed
@@ -394,11 +405,11 @@ everything shipped afterwards is held to.
   replication are later children — with its own cross-platform golden), with the Agones/Nakama
   layers arriving as later children of the server-foundation
   epic (#4); `deploy/` (platform manifests) arrives later per the roadmap.
-- **Changing either save format:** follow the
+- **Changing any persisted player-data format:** follow the
   [forward-only save-data migration contract](docs/design/save-data.md). It defines the staged
-  expand → bake → contract rollout, the version-bump checklist, and the refusal rules for both the
-  character recipe and progression vault; a green fixture guard alone does not make a one-release
-  read-and-write bump rollback-safe.
+  expand → bake → contract rollout, the version-bump checklist, and the refusal rules for the
+  character recipe, progression vault and recovery ledger; a green fixture guard alone does not
+  make a one-release read-and-write bump rollback-safe.
 - **Run:** `godot client` (macOS: `/Applications/Godot.app/Contents/MacOS/Godot client`).
 - **Validate before every PR:**
   `godot --headless --editor --quit --path client && godot --headless --quit-after 120 --path client` —
@@ -414,10 +425,11 @@ everything shipped afterwards is held to.
   under `client/tests/` — CI's "Regression tests" step auto-discovers `client/tests/*_test.tscn`
   (issue #50; the old hardcoded list forced every parallel test-adding PR to collide on one line).
   Each scene must print a `TEST PASS` marker on success and run within the 180 s per-test timeout.
-  Two exclusions: `save_fixture_guard_test`, `save_vault_guard_test` and `vault_restore_boot_test`
-  each run in their own dedicated named step (the product-law surfaces for character and progression
-  state — the last one is the BEHAVIOURAL check that an attuned point still restores on boot, which
-  the persistence guards cannot see; all kept loud/separate and NOT skippable), and a test can be
+  Five exclusions: `save_fixture_guard_test`, `save_vault_guard_test`,
+  `boot_recovery_guard_test`, `vault_restore_boot_test` and `ability_registry_test` each run in
+  their own dedicated named step (the product-law surfaces for character, progression, recovery and
+  combat state — the restore test is the BEHAVIOURAL check that an attuned point still restores on
+  boot, which the persistence guards cannot see; all kept loud/separate and NOT skippable), and a test can be
   temporarily skipped by adding its basename (no
   `.tscn`) on its own line in the optional `client/tests/ci-skip.txt` (blank/`#`-comment lines
   ignored) — a rarely-edited escape hatch, so the run line itself stops changing per-test.

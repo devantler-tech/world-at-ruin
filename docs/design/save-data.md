@@ -1,7 +1,8 @@
 # Save data — forward-only migration contract
 
 This is the review contract for changing player data. It covers the character recipe in
-`user://character.json` and progression in `user://vault.json`. The
+`user://character.json`, progression in `user://vault.json`, and the immutable shell's recovery
+memory in `user://boot_recovery.json`. The
 [distribution and self-update decision](distribution-and-self-update.md) owns how builds reach a
 player; this document owns what those builds may read and write.
 
@@ -167,6 +168,19 @@ For vault version `N`, the expansion pull request must:
 After bake, the contract pull request lets new or changed vaults use version `N`, raises the global
 write capability, and appends that capability to `shipped_save_capability.txt`.
 
+### Boot recovery
+
+The boot-recovery expansion follows the same sequence, with its own read ceiling and write version.
+The v1 expansion reads and preserves both unversioned v0 and explicit v1, appends both schemas to
+`shipped_boot_recovery_versions.txt`, and pins them with `golden_boot_recovery_v<N>.json`. First boot
+and ordinary v0 writes remain v0 until the expansion release is the standing retained rollback
+target; #343 owns that bake gate and the later v1-writer activation.
+
+Recovery refusal is path-latched for the process lifetime, and persistence reparses the destination
+immediately before atomic replacement. Reconstructing state, deleting a refused file, or landing a
+future/corrupt replacement therefore cannot turn the path writable. As with the vault, this narrows
+but does not close the rename-time concurrent-writer gap tracked by #262.
+
 The ledgers are the immutable floor: the in-game guards compare the current constants and fixtures,
 while CI compares each ledger with the pull request's base revision. Editing code, fixtures and a
 ledger together therefore cannot make a shipped version disappear quietly.
@@ -184,6 +198,9 @@ The character recipe and vault deliberately fail differently:
   becomes read-only for the rest of the process. `SaveVault` latches that refusal even if the file
   later disappears, so an older client cannot overwrite newer progression after cloud sync changes
   the path.
+- An unreadable or newer boot-recovery document degrades to a rollback-safe empty quarantine view,
+  while the path remains read-only for the process lifetime. Rollback eligibility still proves save,
+  protocol and shell compatibility independently; new update attempts and recovery writes stop.
 - Vault persistence rechecks readability immediately before its atomic replace. The remaining
   concurrent-writer compare-and-swap gap is tracked by
   [#262](https://github.com/devantler-tech/world-at-ruin/issues/262); do not describe the current
@@ -199,6 +216,7 @@ violation.
 |---|---|---|
 | Historical character recipes still load and build | `CharacterFactory`, `CharacterStore` | `save_fixture_guard_test`, recipe ledger and goldens |
 | Historical vaults still load and re-save | `SaveVault` | `save_vault_guard_test`, vault ledger and goldens |
+| Historical recovery documents still load and re-save | `BootRecovery` | `boot_recovery_guard_test`, recovery ledger and goldens |
 | Shipped attunement names still work | `SaveVault`, `RespawnPoints` | `shipped_attunements.txt`, vault and boot-restoration guards |
 | Writes never outrun rollback readers | Writers and `UpdateManifest` | `update_manifest_test`, `shipped_save_capability.txt`, CI and the distribution decision |
 | Player files stay outside tests | Save-path environment seams | `SaveIsolation`, boot-isolation and path-seam guards |

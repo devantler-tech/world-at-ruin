@@ -110,6 +110,16 @@ A client-side **update manager** that, at boot and periodically:
      staged pack and only promotes it once the boot reaches a success checkpoint; if a launch does not
      reach it, the next launch **selects the previous good pack**. The shell, not the overlay, is the
      root of recovery — which is why a trustworthy shell must exist before the first player (child 6).
+     The shell's `boot_recovery.json` is itself forward-only persisted state. The expansion reads
+     explicit schema v1 and preserves it when already present, while first boot and ordinary v0
+     writes remain on the already-shipped unversioned shape until the expansion release is the
+     standing rollback target (#343). Golden fixtures plus an append-only ledger pin every readable
+     shape. A corrupt or newer document remains untouched and path-latched read-only: no new pack may
+     be attempted and a destination recheck prevents replacement from laundering the evidence, but its
+     quarantine view degrades to an empty readable list so it cannot veto an otherwise eligible
+     rollback. Eligibility still independently proves save readability, protocol reachability and
+     shell compatibility; denying every retained build because recovery metadata is broken would make
+     the recovery layer itself the source of a guaranteed strand.
    - **A pack never advances the save schema; a save-schema bump rides the shell.** If a pack raised the
      persisted save/recipe version and the player then saved, a later rollback would mount older code
      against newer data — and the older pack, which rejects versions above its own `RECIPE_VERSION`,
