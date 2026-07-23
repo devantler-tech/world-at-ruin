@@ -4,21 +4,22 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 workflow="${repo_root}/.github/workflows/cd.yaml"
 
+test_dir="$(mktemp -d)"
+trap 'rm -rf "${test_dir}"' EXIT
+
 # Exercise the exact function embedded in the CD run block rather than a
 # test-only copy that could drift from production.
-helper_source="$(
-	sed -n \
-		'/# BEGIN cask-ref-visibility-helper/,/# END cask-ref-visibility-helper/p' \
-		"${workflow}"
-)"
-eval "${helper_source}"
+helper_file="${test_dir}/cask-ref-visibility-helper.sh"
+sed -n \
+	'/# BEGIN cask-ref-visibility-helper/,/# END cask-ref-visibility-helper/p' \
+	"${workflow}" >"${helper_file}"
+# shellcheck source=/dev/null
+source "${helper_file}"
 if ! declare -F wait_for_cask_ref >/dev/null; then
 	echo "missing wait_for_cask_ref production helper in ${workflow}" >&2
 	exit 1
 fi
 
-test_dir="$(mktemp -d)"
-trap 'rm -rf "${test_dir}"' EXIT
 attempt_file="${test_dir}/attempts"
 sleep_file="${test_dir}/sleeps"
 
