@@ -1519,7 +1519,7 @@ jobs:
             echo "::error::could not read PRESETS from client/scripts/character_creator.gd — cannot tell which frames to require"
             exit 1
           fi
-          expected="first_run first_run_outfit first_run_lower"
+          expected="first_run first_run_outfit first_run_head_clothing first_run_head_armor first_run_lower"
           for p in $presets; do expected="$expected first_run_$p"; done
           missing=""
           for f in $expected; do
@@ -1881,7 +1881,7 @@ jobs:
             echo "::error::could not read PRESETS from client/scripts/character_creator.gd — cannot tell which frames to require"
             exit 1
           fi
-          expected="first_run first_run_outfit first_run_lower"
+          expected="first_run first_run_outfit first_run_head_clothing first_run_head_armor first_run_lower"
           for p in $presets; do expected="$expected first_run_$p"; done
           missing=""
           for f in $expected; do

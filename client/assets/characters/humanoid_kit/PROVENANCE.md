@@ -3,7 +3,7 @@
 The canonical humanoid for the character system
 ([#24](https://github.com/devantler-tech/world-at-ruin/issues/24)): base body, `game_engine` rig
 (53 deform bones), 29 named morph shapes (21 targets + 8 gender/phenotype macro axes) + 4
-`equip_hide_*` shapes, and five skinned equipment pieces under `equipment/`, **baked entirely by
+`equip_hide_*` shapes, and seven skinned equipment pieces under `equipment/`, **baked entirely by
 committed code** —
 `tools/artgen/humanoid_kit/bake.py` driven by `manifest.json`, reproducible byte-for-byte with
 the pinned toolchain. `kit_report.txt` is the structural contract checked by the
@@ -20,7 +20,7 @@ runtime registry `CharacterFactory` composes from.
 - **Licence of the output:** ours. MPFB `LICENSE.md` §D: "the MakeHuman team makes no claim
   whatsoever over output … We regard these things as your data." The GPL covers the tools
   (Blender, MPFB), which are downloaded at bake time and never enter this tree.
-- **Baked:** 2026-07-21 on macOS; body GLB sha256
+- **Baked:** 2026-07-23 on macOS; body GLB sha256
   `51cf634de80f34f4650880ccf43eb98b83cedc14f918db17baa299a0a4ff1538` (5 234 252 bytes).
   Regenerate with the commands in `tools/artgen/humanoid_kit/README.md`.
 - **Macro axes** (`body_female`, `body_male`, `body_aged`, `body_heavy`, `body_slim`,
@@ -58,7 +58,7 @@ rather than coming from an MHCLO `delete_verts` declaration. The source geometry
 CC0 MakeHuman data covered above; no additional downloaded asset enters its licence chain. Baked GLB
 sha256: `b0bce5c38469b887bf85eaee6fba351a9c957837a0d0323d3a446964167eba39` (355 968 bytes).
 
-The remaining pieces are MHCLO clothes from the **official MakeHuman 01-series CC0 asset packs**.
+The remaining pieces are MHCLO clothes from the **official MakeHuman CC0 asset packs**.
 
 Those packs use the `_cc0.zip`
 variants, which contain only CC0-licensed assets (the CC-BY variants are policy-excluded;
@@ -74,6 +74,8 @@ Source packs (files.makehumancommunity.org/asset_packs/):
 | `shirts01_cc0.zip` | `a5a723b0e84a109bb190fcfeac7f1de4138d875da3e30fe5b3340eac9f38bcd3` |
 | `pants01_cc0.zip` | `e4e0ec60db34f279be291a83cfd7b342a7c5cf09bb7676682a5f39f4f6ac4ad9` |
 | `shoes01_cc0.zip` | `ded3f70428505eabbf1f6d7b5f61196a7366ef20757103d276ad0ed336c35ada` |
+| `glasses01_cc0.zip` | `f215c58e09e31b7ee568c814067cb47704cee6da1f6fc01cffb8e9fca37bafdd` |
+| `hats02_cc0.zip` | `838b9b51ba31d27f21198ad4506eb9b23e1c03eb246fe68f26da99e26b40e1aa` |
 
 Pieces (author attributions are courtesy — CC0 requires none):
 
@@ -84,3 +86,12 @@ Pieces (author attributions are courtesy — CC0 requires none):
 | `pants_wool` | pants01 `toigo_wool_pants` | MRT | CC0 |
 | `shoes_cloth` | shoes01 `toigo_mj_cloth_shoes` | MRT | CC0 |
 | `boots_worn` | shoes01 `culturalibre_male_boots` | culturalibre | CC0 |
+| `relic_goggles` | glasses01 `culturalibre_doc_ock_glasses` | culturalibre | CC0 |
+| `ruin_drake_helm` | hats02 `culturalibre_warrior_helmet` | culturalibre | CC0 |
+
+The first head-layer pair is intentionally exposed only through the guarded layered-outfit preview
+while its flat bake materials remain below the character-art bar. Baked GLB sha256:
+`relic_goggles` `66e0c8428c8e311a84dbd41e870e7d5f10bef59a4e776e1d5a68e3cd3093f41b`
+(3 882 096 bytes); `ruin_drake_helm`
+`dc2764375ea9d74eae03ed393cc140794fca89902e21d28d3ca74cd5075520b9`
+(526 004 bytes).
