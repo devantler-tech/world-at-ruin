@@ -26,3 +26,19 @@ pinned toolchain. `ash_hound_report.txt` is the structural contract checked by t
   pilot proves the same pipeline shape (bake → committed GLB → runtime factory with versioned,
   name-keyed, forward-only recipes → seeded spawns) works for a non-humanoid by originating the mesh
   as code. Later archetypes reuse this machinery, one canonical skeleton per archetype.
+
+## Tracked repository outputs
+
+This manifest binds every non-Markdown file covered by this record to the exact bytes reviewed under
+the source and licence chain above. `ash_hound.glb` is the first-party procedural bake;
+`ash_hound_report.txt` and `tints.json` are first-party outputs/data generated from the same
+committed inputs. The `.import` file is Godot's tracked importer metadata for that GLB and contains
+no independently sourced art. `tools/provenance-guard.sh` verifies these checksums from Git's index,
+so adding or replacing a covered file fails CI until this record is deliberately updated.
+
+```text
+a9232db50ce6108b3cded6496c3f5595fbf4d0055756d3342b9ad17b4a5d770c  ash_hound.glb
+d1dc825c3c780d38a1f29cb2861c7fac87507209bf270bdf686c801e8fae233e  ash_hound.glb.import
+f86574cc8816497a256b631e9bb2d5593e42213aa75c87b07c97d87271241248  ash_hound_report.txt
+8862b480aa12c49ee04393ada8c11f6d8e97f69918f26c091e6bbd73a2f8f269  tints.json
+```

@@ -959,14 +959,16 @@ jobs:
               --exclude-dir=.git --exclude-dir=.github --exclude=AGENTS.md .; then
             echo "::error::GPL/AGPL-licensed content detected — forbidden in the shipped tree"; exit 1
           fi
-      - name: Require a PROVENANCE.md for every asset directory
+      - name: Test the asset provenance guard
+        run: ./tools/provenance-guard.test.sh
+      - name: Require exact provenance for every tracked asset
         # The other half of licensing hygiene: a permissive licence is only
         # worth anything if we can still say where the bytes came from.
         # AGENTS.md (Structure) requires a PROVENANCE.md per asset directory
-        # and #16 lists provenance drift as a standing risk to enforce rather
-        # than remember — this is that enforcement. It rides in this job
-        # because it is the same concern and the job is already required, so
-        # the check costs no extra runner.
+        # with an exact per-file checksum manifest, and #16 lists provenance
+        # drift as a standing risk to enforce rather than remember. It rides
+        # in this job because it is the same concern and the job is already
+        # required, so the check costs no extra runner.
         run: ./tools/provenance-guard.sh
 
   # Repo-wide linting for everything that is not GDScript: JSON, Markdown, YAML, shell,
