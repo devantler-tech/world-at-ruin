@@ -34,7 +34,14 @@ becomes the standard everyone is judged against, which is the failure #221 exist
 |---|---|---|
 | **Audio** | WoW and Guild Wars 2 zone ambience; Fatekeeper for combat and interiors | Ambience that states the biome before the UI does; impact sounds with weight and material (stone, iron, cloth read differently); salvaged tech that hums wrongly rather than beeping cleanly |
 | **Camera** | WoW and Guild Wars 2 third-person | Framing that keeps the character readable while showing the world; predictable collision behaviour indoors and in caves; no fighting the player for control |
+| **Character motion** | [Kingmakers — Official Announcement Trailer](https://www.youtube.com/watch?v=OvezgDni8z4&t=66s), 1:06–1:10 | A continuous third-person sprint: the full-body stride stays readable and the follow-camera tracks without hiding the body motion. Borrow the locomotion/camera relationship only, never the modern protagonist's look. |
 | **Game feel** | Guild Wars 2 and WoW for MMO combat rhythm; Fatekeeper for melee weight | Telegraphed windups readable at a glance (already the settled combat design), committed animations with recovery, hits that land with weight rather than registering as numbers |
+
+The character-motion row is a bounded locomotion anchor, not a universal answer for every animation.
+A motion PR must cite a linked **moving artifact**, an exact start–end time range, and the cue it is
+judging (for example stride, idle, windup, recovery or camera tracking). A still frame or a whole-title
+reference cannot establish motion quality. When 1:06–1:10 does not show the changed cue, cite another
+moving artifact from the approved titles rather than stretching this sprint beyond what it proves.
 
 **🔴 Naming the game is NOT a citation here either — the same rule applies.** The rows above name a
 *title and what to take from it*, exactly as the visual anchors do; they are not themselves
@@ -426,6 +433,11 @@ the wanderer reads as a mannequin wearing painted-on clothes.
 
 **Stance and motion (#224).** Weight on one leg, asymmetric arms, a breathing idle. The current
 symmetric hands-clasped pose reads as a rig at rest, because that is what it is.
+
+**Motion reference.** The [Kingmakers announcement trailer from
+1:06–1:10](https://www.youtube.com/watch?v=OvezgDni8z4&t=66s) anchors a readable full-body sprint and
+stable third-person tracking. It does not demonstrate an idle, so #224's breathing-idle work needs a
+separate time-ranged moving reference from the approved title set.
 
 **Races are authored identities, not sliders (#228).** WoW and WildStar give each playable race its
 own proportions, silhouette, culture and art language — a Tauren is not a tall human. Our creator

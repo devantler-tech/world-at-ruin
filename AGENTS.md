@@ -150,6 +150,11 @@ that "I looked at it and it's fine" is self-attestation, and self-attestation is
 field of grey primitives ship. A green suite plus a frame that reads as placeholder is a PR that is
 **not ready**.
 
+When the result being judged is movement, the actual-change evidence must be a short clip or captured
+frame sequence rather than a single still. The named reference must likewise be a moving artifact
+with an exact time range, following the citation contract in
+[`docs/art-direction/`](docs/art-direction/README.md).
+
 **How to produce that frame.** CI runs `client/tools/frame_capture.tscn` on player-visible PRs and
 publishes the rendered vantages as a **build artifact** — so the evidence is reproducible on a known
 machine rather than dependent on whoever happened to run the game. Point a reviewer at that artifact.
@@ -624,7 +629,9 @@ Reviewers (Codex/CodeRabbit) flag **P0/P1 only**:
   animation, audio, UI/UX, camera, game feel, or the design itself — that ships **default-on** while
   still reading as placeholder (engine primitives as art, flat untextured materials, uniform
   scatter, no second-order life, and the equivalents of those outside art). **Separately P1 on its
-  own:** a player-visible PR carrying **no inspectable frame evidence, or no named reference and
-  stated gap** — including one that simply *omits* any readiness judgement, not only one that argues
-  from green tests. See **[Quality bar](#quality-bar--it-has-to-resemble-a-aaa-game)** and the
-  reference set in **[`docs/art-direction/`](docs/art-direction/README.md)**.
+  own:** a player-visible PR carrying **no inspectable frame or clip evidence, or no named reference
+  and stated gap** — including one that simply *omits* any readiness judgement, not only one that
+  argues from green tests. Motion changes specifically require a clip or captured frame sequence of
+  the actual change and a time-ranged moving reference; a single still cannot evidence motion. See
+  **[Quality bar](#quality-bar--it-has-to-resemble-a-aaa-game)** and the reference set in
+  **[`docs/art-direction/`](docs/art-direction/README.md)**.
