@@ -367,10 +367,63 @@ func _ground_color(shade: Vector3, palette_at: Vector3) -> Color:
 	return c
 
 
+## The exact baked COLOR the terrain shader receives at world (x, z). Terrain
+## does not sample _ground_color per fragment: _add_tri samples three corners
+## with one face-centre shade and the rasterizer interpolates them. Neighbouring
+## shaders must reproduce that triangle interpolation or region boundaries and
+## low-poly face shading split again at the contact.
+func rendered_ground_color_at(x: float, z: float) -> Color:
+	var step := SIZE / QUADS
+	var half := SIZE / 2.0
+	var gx := (x + half) / step
+	var gz := (z + half) / step
+	if gx < 0.0 or gz < 0.0 or gx > QUADS or gz > QUADS or _heights.is_empty():
+		var fallback_y := height_at(x, z)
+		return _mesh_vertex_color(
+			_ground_color(Vector3(x, fallback_y, z), Vector3(x, fallback_y, z)))
+	var ix := mini(int(gx), QUADS - 1)
+	var iz := mini(int(gz), QUADS - 1)
+	var fx := gx - ix
+	var fz := gz - iz
+	var w := QUADS + 1
+	var x0 := ix * step - half
+	var z0 := iz * step - half
+	var x1 := x0 + step
+	var z1 := z0 + step
+	var v00 := Vector3(x0, _heights[iz * w + ix], z0)
+	var v10 := Vector3(x1, _heights[iz * w + ix + 1], z0)
+	var v01 := Vector3(x0, _heights[(iz + 1) * w + ix], z1)
+	var v11 := Vector3(x1, _heights[(iz + 1) * w + ix + 1], z1)
+	if fx >= fz:
+		var centre := (v00 + v11 + v10) / 3.0
+		return (
+			_mesh_vertex_color(_ground_color(centre, v00)) * (1.0 - fx)
+			+ _mesh_vertex_color(_ground_color(centre, v10)) * (fx - fz)
+			+ _mesh_vertex_color(_ground_color(centre, v11)) * fz
+		)
+	var centre := (v00 + v01 + v11) / 3.0
+	return (
+		_mesh_vertex_color(_ground_color(centre, v00)) * (1.0 - fz)
+		+ _mesh_vertex_color(_ground_color(centre, v11)) * fx
+		+ _mesh_vertex_color(_ground_color(centre, v01)) * (fz - fx)
+	)
+
+
+## SurfaceTool stores Mesh.ARRAY_COLOR as four unsigned eight-bit channels.
+## Quantise before interpolation exactly where _add_tri does, otherwise this
+## CPU-side material stream can be a fraction of a channel away from what the
+## terrain shader actually receives.
+static func _mesh_vertex_color(color: Color) -> Color:
+	return Color(
+		floorf(clampf(color.r, 0.0, 1.0) * 255.0) / 255.0,
+		floorf(clampf(color.g, 0.0, 1.0) * 255.0) / 255.0,
+		floorf(clampf(color.b, 0.0, 1.0) * 255.0) / 255.0,
+		floorf(clampf(color.a, 0.0, 1.0) * 255.0) / 255.0)
+
+
 ## The local ground substance a neighbouring generated surface should inherit
-## at its contact seam. Colour comes from the same per-place region palette and
-## height/scorch layering baked into the terrain vertex stream; roughness is the
-## terrain shader's loose-ash baseline plus that region's signed offset.
+## at its contact seam. Colour and roughness come from the rendered terrain
+## interpolation above, not a fresh analytic sample.
 ##
 ## Height and normal describe the rendered terrain triangle for neighbouring
 ## shaders; they are observational only. Collision and cave geometry remain on
@@ -379,8 +432,7 @@ func ground_material_at(x: float, z: float) -> Dictionary:
 	var ground_y := surface_height_at(x, z)
 	if ground_y <= NO_GROUND + 1.0:
 		ground_y = height_at(x, z)
-	var at := Vector3(x, ground_y, z)
-	var baked := _ground_color(at, at)
+	var baked := rendered_ground_color_at(x, z)
 	var roughness := clampf(0.97 + baked.a - 0.5, 0.0, 1.0)
 	baked.a = 1.0
 	return {

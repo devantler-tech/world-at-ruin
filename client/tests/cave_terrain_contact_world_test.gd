@@ -34,6 +34,12 @@ func _ready() -> void:
 	var ground_rg: PackedVector2Array = arrays[Mesh.ARRAY_TEX_UV]
 	var ground_b_roughness: PackedVector2Array = arrays[Mesh.ARRAY_TEX_UV2]
 	var rock_colors: PackedColorArray = (rock_mi.mesh as ArrayMesh).surface_get_arrays(0)[Mesh.ARRAY_COLOR]
+	var terrain_mi := world.get_node_or_null("Terrain") as MeshInstance3D
+	if terrain_mi == null or not terrain_mi.mesh is ArrayMesh:
+		_fail("shipping world has no readable terrain color stream")
+		return
+	var terrain_arrays := (terrain_mi.mesh as ArrayMesh).surface_get_arrays(0)
+	var terrain_colors: PackedColorArray = terrain_arrays[Mesh.ARRAY_COLOR]
 	if verts.is_empty() or weights.size() != verts.size() \
 			or ground_rg.size() != verts.size() or ground_b_roughness.size() != verts.size():
 		_fail("terrain-contact material streams do not cover the cave surface")
@@ -58,13 +64,18 @@ func _ready() -> void:
 
 		var expected: Dictionary = world.ground_material_at(world_vertex.x, world_vertex.z)
 		var ground := Color(ground_rg[i].x, ground_rg[i].y, ground_b_roughness[i].x)
-		if not ground.is_equal_approx(expected[&"color"] as Color):
-			_fail("vertex %d carries %s, not local ground %s" %
-				[i, ground, expected[&"color"]])
+		var rendered_baked := _rendered_terrain_color_at(
+			terrain_colors, world_vertex.x, world_vertex.z)
+		var rendered_ground := rendered_baked
+		rendered_ground.a = 1.0
+		if not ground.is_equal_approx(rendered_ground):
+			_fail("vertex %d carries %s, not rendered terrain interpolation %s" %
+				[i, ground, rendered_ground])
 			return
-		if absf(ground_b_roughness[i].y - (expected[&"roughness"] as float)) > EPS:
+		var rendered_roughness := clampf(0.97 + rendered_baked.a - 0.5, 0.0, 1.0)
+		if absf(ground_b_roughness[i].y - rendered_roughness) > EPS:
 			_fail("vertex %d roughness %.4f, not local ground %.4f" %
-				[i, ground_b_roughness[i].y, expected[&"roughness"]])
+				[i, ground_b_roughness[i].y, rendered_roughness])
 			return
 		var encoded_normal := Vector2(weights[i].r, weights[i].g) * 2.0 - Vector2.ONE
 		var expected_normal: Vector3 = expected[&"normal"]
@@ -114,3 +125,25 @@ func _rock_mesh(cave: CaveSystemGen) -> MeshInstance3D:
 				and (child as MeshInstance3D).mesh is ArrayMesh:
 			return child as MeshInstance3D
 	return null
+
+
+## Independent oracle over the ArrayMesh stream _build_terrain actually sent
+## to the renderer: two unindexed triangles (six colours) per grid cell.
+func _rendered_terrain_color_at(
+		colors: PackedColorArray, x: float, z: float) -> Color:
+	var step := WorldGen.SIZE / WorldGen.QUADS
+	var half := WorldGen.SIZE / 2.0
+	var gx := (x + half) / step
+	var gz := (z + half) / step
+	var ix := mini(int(gx), WorldGen.QUADS - 1)
+	var iz := mini(int(gz), WorldGen.QUADS - 1)
+	var fx := gx - ix
+	var fz := gz - iz
+	var base := (iz * WorldGen.QUADS + ix) * 6
+	if fx >= fz:
+		return colors[base] * (1.0 - fx) \
+			+ colors[base + 1] * (fx - fz) \
+			+ colors[base + 2] * fz
+	return colors[base + 3] * (1.0 - fz) \
+		+ colors[base + 4] * fx \
+		+ colors[base + 5] * (fz - fx)
