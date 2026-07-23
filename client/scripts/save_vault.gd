@@ -25,8 +25,8 @@ class_name SaveVault
 ## The vault obeys the same forward-only laws as the recipe:
 ##  - keyed by stable STRINGS (respawn points are named, never indices or
 ##    coordinates), so a name that ever shipped keeps working forever;
-##  - versioned, with `version` <= VAULT_VERSION accepted forever and a NEWER
-##    version refused rather than half-applied;
+##  - versioned, with `version` <= VAULT_READ_VERSION accepted forever and a
+##    NEWER version refused rather than half-applied;
 ##  - additive-only: a shipped field is never removed or repurposed, and every
 ##    shipped version keeps a golden fixture (save_vault_guard_test).
 ##
@@ -51,13 +51,21 @@ const DEFAULT_PATH := "user://vault.json"
 ## player's progression.
 const VAULT_PATH_ENV := "WAR_VAULT_PATH"
 
+## Schema emitted by production writers. It deliberately stays on v1 during
+## the discovery reader expansion so no path can originate v2 before this build
+## has baked as the retained rollback target.
 const VAULT_VERSION := 1
+
+## Highest vault schema this build can READ. Kept separate from the production
+## writer because v2 carries discovery state and must bake read-first.
+const VAULT_READ_VERSION := 2
 
 ## The vault format, exhaustively. Unknown top-level fields are refused for the
 ## same reason the recipe refuses them: a client that silently ignored a field
 ## would present a progression state that is not what the file says. New fields
 ## ship with a version bump and are listed in a VAULT_FIELDS_V<N> constant.
-const VAULT_FIELDS := ["version", "comment", "attuned"]
+const VAULT_FIELDS_V1 := ["version", "comment", "attuned"]
+const VAULT_FIELDS_V2 := ["version", "comment", "attuned", "discoveries"]
 
 ## The Wardens' Shrine, the first attunable respawn point. Names are forward-only
 ## (no-resets law): this string is shipped save data now and may never change
@@ -110,10 +118,12 @@ static func validate(doc: Dictionary) -> String:
 		return "vault has no integer version"
 	if int(version) < 1:
 		return "vault version %d is not positive" % int(version)
-	if int(version) > VAULT_VERSION:
-		return "vault version %d is newer than this client understands (%d)" % [int(version), VAULT_VERSION]
+	var schema := int(version)
+	if schema > VAULT_READ_VERSION:
+		return "vault version %d is newer than this client understands (%d)" % [schema, VAULT_READ_VERSION]
+	var allowed_fields := VAULT_FIELDS_V1 if schema == 1 else VAULT_FIELDS_V2
 	for field: String in doc:
-		if field not in VAULT_FIELDS:
+		if field not in allowed_fields:
 			return "unknown vault field '%s' — this client cannot apply it, refusing a half-truth" % field
 	if doc.has("attuned"):
 		if doc["attuned"] is not Array:
@@ -121,6 +131,14 @@ static func validate(doc: Dictionary) -> String:
 		for name in (doc["attuned"] as Array):
 			if name is not String:
 				return "attuned entries must be strings (names are forward-only, never indices)"
+	if doc.has("discoveries"):
+		if doc["discoveries"] is not Array:
+			return "discoveries must be an array of place names"
+		for name in (doc["discoveries"] as Array):
+			if name is not String:
+				return "discoveries entries must be strings (names are forward-only, never indices)"
+			if (name as String).is_empty():
+				return "discoveries entries must be non-empty stable names"
 	return ""
 
 

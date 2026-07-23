@@ -82,6 +82,20 @@ func discovered() -> Array[String]:
 	return out
 
 
+## Restore the append-only found set accepted from a save-vault reader. Names
+## do not need to be registered in this build: a rollback reader must preserve
+## a place introduced by a newer writer even when it cannot act on that place
+## yet. The input is validated before mutation so one malformed entry cannot
+## leave a half-restored session.
+func restore(names: Array) -> bool:
+	for name in names:
+		if name is not String or (name as String).is_empty():
+			return false
+	for name: String in names:
+		_discovered[name] = true
+	return true
+
+
 ## How many places have been found.
 func count() -> int:
 	return _discovered.size()

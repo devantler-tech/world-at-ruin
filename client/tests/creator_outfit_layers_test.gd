@@ -9,7 +9,8 @@ extends Node
 ##     layered recipe unless the preview is explicitly enabled.
 ##  2. The opt-in surface exposes distinct clothing and armour controls.
 ##  3. Editing either real UI control preserves the untouched layer.
-##  4. This contract build advertises read 2 / write 2.
+##  4. The layered writer remains active at write capability 2 while later
+##     reader expansions may raise the independent read ceiling.
 ##
 ## Run: godot --headless --path client res://tests/creator_outfit_layers_test.tscn
 
@@ -53,9 +54,9 @@ func _ready() -> void:
 		_fail("the contract build did not expose distinct enabled clothing and armour controls")
 		return
 
-	if UpdateManifest.SAVE_CAPABILITY_READS != 2 \
+	if UpdateManifest.SAVE_CAPABILITY_READS != 3 \
 			or UpdateManifest.SAVE_CAPABILITY_WRITES != 2:
-		_fail("the contract build advertises read/write capabilities %d/%d instead of 2/2" % [
+		_fail("the discovery expansion advertises read/write capabilities %d/%d instead of 3/2" % [
 			UpdateManifest.SAVE_CAPABILITY_READS,
 			UpdateManifest.SAVE_CAPABILITY_WRITES,
 		])

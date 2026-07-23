@@ -29,6 +29,8 @@ extends Node
 
 const ASSERT_TICK := 30
 const EPS := 0.01
+const PROBE_PATH := "user://vault_restore_boot_probe.json"
+const DISCOVERY_PROBE := ["wardens_shrine", "future_place", "wardens_shrine"]
 
 ## An INDEPENDENT expected destination per shipped attunement name.
 ##
@@ -60,6 +62,9 @@ var _pending: Array = []
 ## The name the current seeded boot is exercising.
 var _current := ""
 var _restored := 0
+## The final boot exercises vault-v2 discovery restoration after every shipped
+## attunement has proved its own live path.
+var _testing_discoveries := false
 
 
 func _ready() -> void:
@@ -70,12 +75,13 @@ func _ready() -> void:
 ## attuned vault, then boot main.tscn.
 func _begin_boot(seeded: bool, name: String = "") -> void:
 	_seeded = seeded
+	_testing_discoveries = false
 	_current = name
 	_ticks = 0
 	if _main != null:
 		_main.queue_free()
 		_main = null
-	_save = SaveIsolation.new("user://vault_restore_boot_probe.json")
+	_save = SaveIsolation.new(PROBE_PATH)
 	if not _save.begin():
 		_fail("save isolation did not take — refusing to boot into the real save")
 		return
@@ -91,6 +97,33 @@ func _begin_boot(seeded: bool, name: String = "") -> void:
 	add_child(_main)
 
 
+## Seed the exact expanded vault shape, then boot the real production scene.
+## This is deliberately separate from the pure Discovery and SaveVault tests:
+## capability 3 is safe only when main.gd actually owns and restores the live
+## tracker a rollback-selected build will use.
+func _begin_discovery_boot() -> void:
+	_testing_discoveries = true
+	_ticks = 0
+	if _main != null:
+		_main.queue_free()
+		_main = null
+	_save = SaveIsolation.new(PROBE_PATH)
+	if not _save.begin():
+		_fail("save isolation did not take for the discovery boot")
+		return
+	SaveVault.clear_refusals_for_test()
+	var expanded := {
+		"version": 2,
+		"attuned": [],
+		"discoveries": DISCOVERY_PROBE.duplicate(),
+	}
+	if not SaveVault.save_to(SaveVault.vault_path(), expanded):
+		_fail("could not seed the vault-v2 discovery probe")
+		return
+	_main = (load("res://scenes/main.tscn") as PackedScene).instantiate()
+	add_child(_main)
+
+
 func _physics_process(_delta: float) -> void:
 	_ticks += 1
 	var world := _main.get_node_or_null("World") as WorldGen
@@ -100,6 +133,10 @@ func _physics_process(_delta: float) -> void:
 			_fail("main scene did not build World and Wanderer")
 		return
 	if _ticks != ASSERT_TICK:
+		return
+
+	if _testing_discoveries:
+		_assert_discovery_restore()
 		return
 
 	var shrine_point := world.shrine_respawn_point()
@@ -165,8 +202,30 @@ func _physics_process(_delta: float) -> void:
 		_begin_boot(true, _pending.pop_front())
 		return
 
-	print("TEST PASS — %d shipped attunement(s) survive a logout (control woke at %s)" % [
-		_restored, str(_control_spawn)])
+	_begin_discovery_boot()
+
+
+## The production boot must own the tracker and apply every accepted v2 name.
+## Discovering the private member through the property list keeps the RED case
+## a clear assertion failure instead of an invalid-property engine error.
+func _assert_discovery_restore() -> void:
+	var tracker: Variant = null
+	for property: Dictionary in _main.get_property_list():
+		if String(property.get("name", "")) == "_discovery":
+			tracker = _main.get("_discovery")
+			break
+	if tracker is not Discovery:
+		_fail("CAPABILITY 3 IS PARSER-ONLY: the production boot owns no Discovery tracker")
+		return
+	var expected: Array[String] = ["future_place", "wardens_shrine"]
+	if (tracker as Discovery).discovered() != expected:
+		_fail("the production boot did not restore the vault-v2 discovery set exactly")
+		return
+	if not _save.real_save_untouched():
+		_fail("the discovery restore boot touched the player's real save or vault")
+		return
+	print(("TEST PASS — %d shipped attunement(s) and vault-v2 discovery state survive "
+		+ "a logout (control woke at %s)") % [_restored, str(_control_spawn)])
 	get_tree().quit(0)
 
 
