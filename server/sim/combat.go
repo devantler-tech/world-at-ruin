@@ -1,10 +1,12 @@
 package sim
 
-// Combat: the telegraph CAST LIFECYCLE and the game's ONE mob AI — a
-// stationary caster that aggros the nearest entity in range and casts a
-// circle you must step out of (#189; the Phase 1 exit criterion's mob half,
-// and the first of Phase 2's "threat, aggro, mob AI" work items). This file
-// is the single mob-AI implementation by decision (#207): a parallel
+// Combat: the telegraph CAST LIFECYCLE and the game's ONE mob AI — a caster
+// that aggros the nearest entity in range and casts a circle you must step out
+// of (#189; the Phase 1 exit criterion's mob half, and the first of Phase 2's
+// "threat, aggro, mob AI" work items). By default it retains the original
+// stationary behavior. World.MobChase opts into #356's deterministic
+// server-authored chase: close to CastRangeMM, stop, then paint. This file is
+// the single mob-AI implementation by decision (#207): a parallel
 // controller-shaped twin (`MobController`, #190) briefly coexisted and was
 // converged into this layer — the integrated engine won on the one-tick-loop
 // design rule, the ActiveCasts replication seam, multi-mob support, and
@@ -25,14 +27,13 @@ package sim
 // no casts takes a single early return and behaves byte-identically to one
 // built before this file existed, so every shipped golden is unchanged.
 //
-// Deliberately absent (later children of #9/#4): threat from damage,
-// chase/movement AI (this slice's mobs never set intent), and replication of
-// casts to clients (needs a wire schema bump once the v1 client decoder
-// lands). This layer still only RECORDS outcomes: a resolution carries its
-// caster's configured damage, and the zone loop lands each drained hit with
-// one explicit World.ApplyDamage(hit.Targets, hit.Damage) call (damage.go) —
-// application stays caller-owned ordering, never a hidden phase of Step.
-// Acquisition remains health-blind, so a mob keeps casting at a dead target
+// Deliberately absent (later children of #9/#4): threat from damage, real
+// navmesh pathfinding, and replication of casts to clients. This layer still
+// only RECORDS outcomes: a resolution carries its caster's configured damage,
+// and the zone loop lands each drained hit with one explicit
+// World.ApplyDamage(hit.Targets, hit.Damage) call (damage.go) — application
+// stays caller-owned ordering, never a hidden phase of Step. Acquisition
+// remains health-blind, so a mob keeps chasing or casting at a dead target
 // until the eligibility child teaches it better.
 
 import "sort"
@@ -67,6 +68,18 @@ type MobParams struct {
 	// for the same reason: the squared-distance comparison must not overflow.
 	// Zero aggros nothing.
 	AggroRadiusMM int64
+
+	// CastRangeMM is how close the mob must be before it may begin a cast when
+	// World.MobChase is enabled. Clamped into [0, AggroRadiusMM], which keeps
+	// the squared-distance comparison overflow-safe and prevents a cast range
+	// that extends beyond acquisition.
+	CastRangeMM int64
+
+	// ChaseSpeedMM is the server-authored horizontal chase speed in mm/s when
+	// World.MobChase is enabled. Clamped into
+	// [0, maxIntentComponentMM]; the entity's own MaxSpeed remains the final
+	// movement cap in the ordinary integration path.
+	ChaseSpeedMM int64
 
 	// CastTicks is how many ticks pass between painting the circle and
 	// resolving it — the dodge window. Clamped into
@@ -138,12 +151,11 @@ type TelegraphHit struct {
 	Damage int64
 }
 
-// AddMob registers an existing entity as a stationary caster with the given
-// (clamped) parameters. It panics on an unknown entity or a duplicate
-// registration, mirroring Add: both are programming errors and silently
-// accepting either would corrupt determinism. The mob's movement is whatever
-// its entity does — this slice's AI never sets intent, so a fixture that
-// wants a stationary mob gives its entity MaxSpeed 0.
+// AddMob registers an existing entity as a caster with the given (clamped)
+// parameters. It panics on an unknown entity or a duplicate registration,
+// mirroring Add: both are programming errors and silently accepting either
+// would corrupt determinism. Registered mobs remain stationary casters unless
+// World.MobChase is explicitly enabled.
 func (w *World) AddMob(id EntityID, p MobParams) {
 	if w.ents[id] == nil {
 		panic("sim: AddMob for unknown entity")
@@ -152,6 +164,8 @@ func (w *World) AddMob(id EntityID, p MobParams) {
 		panic("sim: duplicate mob registration")
 	}
 	p.AggroRadiusMM = clampAxis(p.AggroRadiusMM, 0, maxInterestRadiusMM)
+	p.CastRangeMM = clampAxis(p.CastRangeMM, 0, p.AggroRadiusMM)
+	p.ChaseSpeedMM = clampAxis(p.ChaseSpeedMM, 0, maxIntentComponentMM)
 	p.CastTicks = clampTicks(p.CastTicks, minCastTicks, maxCastTicks)
 	p.CooldownTicks = clampTicks(p.CooldownTicks, 0, maxCooldownTicks)
 	p.CircleRadiusMM = clampExtent(p.CircleRadiusMM)
@@ -255,18 +269,39 @@ func (w *World) resolveDueCasts() {
 	w.casts = remaining
 }
 
-// decideMobCasts runs each mob's decision, in ascending-ID order: a mob with
-// no cast in flight and its cooldown elapsed aggros the nearest non-mob
-// entity within its aggro radius (ties broken toward the LOWER entity ID)
-// and paints a circle at that target's position — where the target is
-// standing NOW, not where it will be. Cooldown is measured from cast start.
+// decideMobCasts runs each mob's decision in ascending-ID order. With
+// MobChase off, the original stationary-caster contract is preserved: a mob
+// with no cast in flight and its cooldown elapsed aggros the nearest non-mob
+// entity within its aggro radius and paints at that target's current position.
+// With MobChase on, the mob instead authors horizontal intent toward that same
+// deterministic target until it reaches CastRangeMM, then stops before
+// painting. It also stops while a cast is in flight or no target is eligible.
+// Cooldown is measured from cast start.
 func (w *World) decideMobCasts() {
 	for _, id := range w.mobOrder {
 		st := w.mobs[id]
-		if st.inFlight || w.Tick < st.nextCastTick {
+		if st.inFlight {
+			if w.MobChase {
+				w.SetIntent(id, Vec3{})
+			}
 			continue
 		}
 		target := w.nearestTargetable(id, st.params.AggroRadiusMM)
+		if w.MobChase {
+			if target == nil {
+				w.SetIntent(id, Vec3{})
+			} else if horizontalDist2(w.ents[id].Pos, target.Pos) > st.params.CastRangeMM*st.params.CastRangeMM {
+				delta := target.Pos.Sub(w.ents[id].Pos)
+				delta.Y = 0
+				w.SetIntent(id, clampSpeed(delta, st.params.ChaseSpeedMM))
+				continue
+			} else {
+				w.SetIntent(id, Vec3{})
+			}
+		}
+		if w.Tick < st.nextCastTick {
+			continue
+		}
 		if target == nil {
 			continue
 		}

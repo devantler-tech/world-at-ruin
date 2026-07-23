@@ -448,6 +448,153 @@ func TestAddMobPanicsOnDuplicate(t *testing.T) {
 	w.AddMob(1, MobParams{})
 }
 
+func newChaseWorld(enabled bool) *World {
+	w := NewWorld(combatBounds)
+	w.MobChase = enabled
+	w.Add(Entity{ID: 100, Pos: Vec3{}, MaxSpeed: 3_000})
+	w.Add(Entity{ID: 1, Pos: Vec3{X: 6_000}})
+	w.AddMob(100, MobParams{
+		AggroRadiusMM:  10_000,
+		CastRangeMM:    2_000,
+		ChaseSpeedMM:   3_000,
+		CastTicks:      4,
+		CooldownTicks:  600,
+		CircleRadiusMM: 1_500,
+	})
+	return w
+}
+
+func TestMobChaseFlagGatesMovementAndCastRange(t *testing.T) {
+	off := newChaseWorld(false)
+	off.Step()
+	if got := off.Get(100).Pos; got != (Vec3{}) {
+		t.Fatalf("flag off moved the stationary caster to %+v", got)
+	}
+	if casts := off.ActiveCasts(); len(casts) != 1 || casts[0].Shape.Origin != (Vec3{X: 6_000}) {
+		t.Fatalf("flag off must preserve the immediate stationary cast, got %+v", casts)
+	}
+
+	on := newChaseWorld(true)
+	on.Step()
+	if casts := on.ActiveCasts(); len(casts) != 0 {
+		t.Fatalf("flag on cast from outside the configured range: %+v", casts)
+	}
+	if intent := on.Get(100).Intent; intent.X <= 0 || intent.Y != 0 || intent.Z != 0 {
+		t.Fatalf("flag on did not author horizontal chase intent toward +X: %+v", intent)
+	}
+
+	for range 80 {
+		if len(on.ActiveCasts()) != 0 {
+			break
+		}
+		on.Step()
+	}
+	casts := on.ActiveCasts()
+	if len(casts) != 1 {
+		t.Fatalf("chaser never reached cast range, got position %+v and casts %+v", on.Get(100).Pos, casts)
+	}
+	mob := on.Get(100)
+	if mob.Pos.X <= 0 || horizontalDist2(mob.Pos, on.Get(1).Pos) > 2_000*2_000 {
+		t.Fatalf("chaser cast before closing to range: mob=%+v target=%+v", mob.Pos, on.Get(1).Pos)
+	}
+	if mob.Intent != (Vec3{}) {
+		t.Fatalf("chaser must stop while its cast is in flight, intent %+v", mob.Intent)
+	}
+	castPos := mob.Pos
+	on.Step()
+	on.Step()
+	if got := on.Get(100).Pos; got != castPos {
+		t.Fatalf("chaser drifted during its in-flight cast: %+v -> %+v", castPos, got)
+	}
+}
+
+func TestMobChaseClearsIntentAfterLosingTarget(t *testing.T) {
+	w := newChaseWorld(true)
+	w.Step()
+	if w.Get(100).Intent == (Vec3{}) {
+		t.Fatal("fixture never began chasing")
+	}
+
+	w.Get(1).Pos = Vec3{X: 15_000}
+	w.Step() // one already-authored movement tick, then acquisition clears
+	if got := w.Get(100).Intent; got != (Vec3{}) {
+		t.Fatalf("losing every eligible target left stale AI intent %+v", got)
+	}
+	stoppedAt := w.Get(100).Pos
+	w.Step()
+	if got := w.Get(100).Pos; got != stoppedAt {
+		t.Fatalf("mob kept walking after target loss: %+v -> %+v", stoppedAt, got)
+	}
+}
+
+func TestMobChaseParametersClampAtIngestion(t *testing.T) {
+	w := NewWorld(combatBounds)
+	w.MobChase = true
+	w.Add(Entity{ID: 100, MaxSpeed: 3_000})
+	w.Add(Entity{ID: 1, Pos: Vec3{X: 5_000}})
+	w.AddMob(100, MobParams{
+		AggroRadiusMM: 10_000,
+		CastRangeMM:   1 << 62,
+		ChaseSpeedMM:  1 << 62,
+		CastTicks:     2,
+	})
+	st := w.mobs[100]
+	if st.params.CastRangeMM != st.params.AggroRadiusMM {
+		t.Fatalf("cast range must clamp to aggro range, got %d vs %d", st.params.CastRangeMM, st.params.AggroRadiusMM)
+	}
+	if st.params.ChaseSpeedMM != maxIntentComponentMM {
+		t.Fatalf("chase speed must clamp to the safe intent bound, got %d", st.params.ChaseSpeedMM)
+	}
+}
+
+func TestMobChaseIsDeterministicAcrossInsertionOrder(t *testing.T) {
+	build := func(reverse bool) *World {
+		w := NewWorld(combatBounds)
+		w.MobChase = true
+		ents := []Entity{
+			{ID: 100, MaxSpeed: 4_000},
+			{ID: 1, Pos: Vec3{X: 8_000}},
+			{ID: 2, Pos: Vec3{X: -8_000}},
+		}
+		if reverse {
+			slices.Reverse(ents)
+		}
+		for _, e := range ents {
+			w.Add(e)
+		}
+		w.AddMob(100, MobParams{
+			AggroRadiusMM:  10_000,
+			CastRangeMM:    2_000,
+			ChaseSpeedMM:   4_000,
+			CastTicks:      3,
+			CooldownTicks:  10,
+			CircleRadiusMM: 1_000,
+		})
+		return w
+	}
+
+	a, b := build(false), build(true)
+	sawCast := false
+	for tick := range 100 {
+		a.Step()
+		b.Step()
+		if a.Hash() != b.Hash() {
+			t.Fatalf("insertion order changed chase state at tick %d: %#x vs %#x", tick, a.Hash(), b.Hash())
+		}
+		castsA, castsB := a.ActiveCasts(), b.ActiveCasts()
+		if !slices.Equal(castsA, castsB) {
+			t.Fatalf("insertion order changed active casts at tick %d: %+v vs %+v", tick, castsA, castsB)
+		}
+		sawCast = sawCast || len(castsA) > 0
+	}
+	if a.Get(100).Pos.X <= 0 {
+		t.Fatalf("equal-distance acquisition did not deterministically chase lower ID 1: %+v", a.Get(100).Pos)
+	}
+	if !sawCast {
+		t.Fatal("determinism fixture never reached a cast, so it only proved movement")
+	}
+}
+
 // --- Golden combat stream ---------------------------------------------------
 
 // combatGoldenTicks and combatGoldenHash pin the exact resolution stream a

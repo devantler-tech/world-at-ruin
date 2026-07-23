@@ -404,11 +404,13 @@ everything shipped afterwards is held to.
   overflow, write/idle deadlines, hard inbound size cap; opt-in via `zone -listen`, off by
   default), and the **combat first slice** (`server/sim/combat.go` — the telegraph cast
   lifecycle: painted at cast start, resolved once after a tick-counted cast time against
-  positions at resolution, plus a stationary mob AI that aggros the nearest entity in range and
-  casts a dodgeable circle; hit records only — damage/health, threat, chase AI and cast
-  replication are later children — with its own cross-platform golden), with the Agones/Nakama
-  layers arriving as later children of the server-foundation
-  epic (#4); `deploy/` (platform manifests) arrives later per the roadmap.
+  positions at resolution, health/damage application, and one mob AI that deterministically
+  aggros the nearest entity; it remains a stationary caster by default, while the default-off
+  `World.MobChase` flag makes it close through the existing kinematic movement path to a bounded
+  cast range before stopping and painting the dodgeable circle; threat from damage, dead-target
+  filtering, real navmesh pathfinding and cast replication remain later children — with its own
+  cross-platform golden), with the Agones/Nakama layers arriving as later children of the
+  server-foundation epic (#4); `deploy/` (platform manifests) arrives later per the roadmap.
 - **Changing any persisted player-data format:** follow the
   [forward-only save-data migration contract](docs/design/save-data.md). It defines the staged
   expand → bake → contract rollout, the version-bump checklist, and the refusal rules for the

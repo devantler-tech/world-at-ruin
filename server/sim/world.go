@@ -164,6 +164,10 @@ type World struct {
 	// the hashed state so a divergence in tick count is caught too.
 	Tick uint64
 
+	// MobChase enables server-authored movement for registered mobs. It is a
+	// server-configured feature flag and defaults off.
+	MobChase bool
+
 	// SweptCollision selects continuous collision on the movement path: when
 	// true, Step stops a mover at first contact rather than integrating it to a
 	// destination it could only reach by passing through another actor (see
