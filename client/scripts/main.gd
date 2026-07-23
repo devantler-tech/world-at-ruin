@@ -66,10 +66,12 @@ var _replicas: ReplicaView = null
 ## two shipped places are observed into the append-only vault as the wanderer
 ## reaches them.
 var _discovery := Discovery.new()
-## A discovery enters the live tracker before persistence is attempted. Keep a
-## separate dirty bit so a transient filesystem failure can be retried without
-## asking Discovery.observe() to return the same one-time event twice.
-var _discovery_persistence_pending := false
+## A discovery enters the live tracker before persistence is attempted. Keep
+## the locally observed IDs themselves so a transient filesystem failure can
+## retry them without also re-originating rollback-only names restored into the
+## tracker. SaveVault preserves unknown names from the on-disk document; Main
+## submits only discoveries this build actually observed.
+var _discovery_persistence_pending: Array[String] = []
 var _discovery_persistence_retry_in := 0.0
 var _discovery_persistence_retry_delay := DISCOVERY_PERSIST_RETRY_INITIAL_SECONDS
 var _discovery_persistence_warning_shown := false
@@ -389,18 +391,20 @@ func _observe_discoveries(delta: float = 0.0) -> void:
 		return
 	var newly_found := _discovery.observe(_player.global_position)
 	if not newly_found.is_empty():
-		_discovery_persistence_pending = true
+		for name: String in newly_found:
+			if name not in _discovery_persistence_pending:
+				_discovery_persistence_pending.append(name)
 		_discovery_persistence_retry_in = 0.0
 		_discovery_persistence_retry_delay = DISCOVERY_PERSIST_RETRY_INITIAL_SECONDS
-	if not _discovery_persistence_pending:
+	if _discovery_persistence_pending.is_empty():
 		return
 	if newly_found.is_empty() and _discovery_persistence_retry_in > 0.0:
 		_discovery_persistence_retry_in = maxf(
 			0.0, _discovery_persistence_retry_in - delta)
 		if _discovery_persistence_retry_in > 0.0:
 			return
-	if SaveVault.persist_discoveries(_discovery.discovered()):
-		_discovery_persistence_pending = false
+	if SaveVault.persist_discoveries(_discovery_persistence_pending):
+		_discovery_persistence_pending.clear()
 		_discovery_persistence_retry_in = 0.0
 		_discovery_persistence_retry_delay = DISCOVERY_PERSIST_RETRY_INITIAL_SECONDS
 		return
@@ -412,7 +416,7 @@ func _observe_discoveries(delta: float = 0.0) -> void:
 			_discovery_persistence_retry_delay * 2.0,
 			DISCOVERY_PERSIST_RETRY_MAX_SECONDS)
 	else:
-		_discovery_persistence_pending = false
+		_discovery_persistence_pending.clear()
 	if not _discovery_persistence_warning_shown:
 		_discovery_persistence_warning_shown = true
 		_hud.toast("This place is known for now — though the Reach may not remember next waking.")

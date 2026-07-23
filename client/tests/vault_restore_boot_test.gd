@@ -29,6 +29,7 @@ extends Node
 
 const ASSERT_TICK := 30
 const RETRY_ASSERT_TICK := 90
+const DRIFT_ASSERT_TICK := 60
 const EPS := 0.01
 const PROBE_PATH := "user://vault_restore_boot_probe.json"
 const DISCOVERY_PROBE := ["wardens_shrine", "future_place", "wardens_shrine"]
@@ -69,7 +70,8 @@ var _current := ""
 var _restored := 0
 ## The final boots exercise vault-v2 discovery restoration, a real cave-to-
 ## shrine discovery write, a reboot that can only recover the shrine from disk,
-## and retry after a deliberately transient first write failure.
+## retry after a deliberately transient first write failure, and a valid
+## cloud-synced vault replacement that drops a rollback-only name from disk.
 var _discovery_phase := ""
 
 
@@ -173,7 +175,41 @@ func _begin_discovery_retry_boot() -> void:
 	add_child(_main)
 
 
+## Restore a rollback-only discovery into the live tracker, then replace the
+## on-disk vault with another valid document that lacks it (the observable shape
+## of cloud sync or another rollback client winning between writes). Reaching
+## the shrine afterwards must still persist that known discovery; a restored
+## future id may not poison every later write merely because the current disk
+## document no longer carries it.
+func _begin_discovery_drift_boot() -> void:
+	_discovery_phase = "drift"
+	_ticks = 0
+	if _main != null:
+		_main.queue_free()
+		_main = null
+	_save = SaveIsolation.new(PROBE_PATH)
+	if not _save.begin():
+		_fail("save isolation did not take for the cloud-synced discovery boot")
+		return
+	SaveVault.clear_refusals_for_test()
+	var expanded := {
+		"version": 2,
+		"attuned": [],
+		"discoveries": ["future_place", "starter_cave"],
+	}
+	if not SaveVault.save_to(SaveVault.vault_path(), expanded):
+		_fail("could not seed the rollback-only discovery probe")
+		return
+	_main = (load("res://scenes/main.tscn") as PackedScene).instantiate()
+	add_child(_main)
+
+
 func _physics_process(_delta: float) -> void:
+	# _fail() requests tree shutdown but does not end this frame. A setup helper
+	# can fail after clearing the previous scene and before assigning the next;
+	# keep the pending callback from masking that real failure with a null access.
+	if _main == null:
+		return
 	_ticks += 1
 	var world := _main.get_node_or_null("World") as WorldGen
 	var player := _main.get_node_or_null("Wanderer") as Player
@@ -197,7 +233,22 @@ func _physics_process(_delta: float) -> void:
 		if mkdir_error != OK and mkdir_error != ERR_ALREADY_EXISTS:
 			_fail("could not make the transient vault path writable (%d)" % mkdir_error)
 			return
-	var assert_tick := RETRY_ASSERT_TICK if _discovery_phase == "retry" else ASSERT_TICK
+	if _discovery_phase == "drift" and _ticks == 3:
+		var replacement := {
+			"version": 2,
+			"attuned": [],
+			"discoveries": ["starter_cave"],
+		}
+		if not SaveVault.save_to(SaveVault.vault_path(), replacement):
+			_fail("could not simulate the valid cloud-synced vault replacement")
+			return
+	if _discovery_phase == "drift" and _ticks == 10:
+		player.global_position = Vector3(0.0, world.shrine_respawn_point().y, -13.0)
+	var assert_tick := ASSERT_TICK
+	if _discovery_phase == "retry":
+		assert_tick = RETRY_ASSERT_TICK
+	elif _discovery_phase == "drift":
+		assert_tick = DRIFT_ASSERT_TICK
 	if _ticks != assert_tick:
 		return
 
@@ -213,6 +264,9 @@ func _physics_process(_delta: float) -> void:
 			return
 		"retry":
 			_assert_discovery_retry()
+			return
+		"drift":
+			_assert_discovery_drift()
 			return
 
 	var shrine_point := world.shrine_respawn_point()
@@ -392,8 +446,24 @@ func _assert_discovery_retry() -> void:
 		_fail("the transient discovery retry touched the player's real save or vault")
 		return
 	_cleanup_retry_probe()
+	_begin_discovery_drift_boot()
+
+
+func _assert_discovery_drift() -> void:
+	var vault = SaveVault.load_saved()
+	if vault is not Dictionary:
+		_fail("the cloud-synced replacement left no readable vault")
+		return
+	if "wardens_shrine" not in vault.get("discoveries", []):
+		_fail(("a rollback-only in-memory id blocked the newly found shrine from reaching disk: %s")
+			% str(vault))
+		return
+	if not _save.real_save_untouched():
+		_fail("the cloud-synced discovery boot touched the player's real save or vault")
+		return
 	print(("TEST PASS — %d shipped attunement(s) and vault-v2 discovery state survive "
-		+ "a logout, and a transient write is retried (control woke at %s)")
+		+ "a logout, transient writes retry, and rollback-only ids cannot poison known writes "
+		+ "(control woke at %s)")
 		% [_restored, str(_control_spawn)])
 	get_tree().quit(0)
 
