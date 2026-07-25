@@ -618,8 +618,7 @@ fixed phase instead of an arbitrary one — on the pinned illuminant `cave-chamb
 Superseding those figures. The cave's value axis was not narrow because its rock was too uniform —
 it was narrow because the Reach's ash was pooling inside sealed stone. The height term that gathers
 ash in the surface hollows (#211) is a property of the sky, but depth fog cannot see what is above
-it, so it filled the starter cave too. Ablations on the committed seed, two runs each and
-bit-identical:
+it, so it filled the starter cave too. Ablations on the committed seed, two runs each:
 
 | environment | cave-chamber | darkest pixel | cave-walkout |
 |---|---|---|---|
@@ -642,9 +641,19 @@ leaves the surface grade untouched. **Post-fix baseline, and what a later cave p
 (`shrine` moves p99 by 0.001 — a probe clips the shrine's own structure — and its reported range
 does not move).
 
-Note the hue-sample counts fall with the veil (`cave-chamber` 57600 → 37420 coloured pixels): the
+Note the hue-sample counts fall with the veil (`cave-chamber` 57600 → ~37400 coloured pixels): the
 metric excludes crushed blacks from the hue population on purpose, and a cave that finally has
 blacks has fewer pixels eligible to vote. Read the hue span alongside its sample count here.
+
+**What is stable and what still is not, measured by running identical code twice.** The reported
+figures — value range, `p1`, `p99` to three decimals, hue span — repeat exactly at every vantage.
+Two things do not, and neither is caused by a code change: the **hue sample COUNT** drifts by a few
+pixels out of ~37 000 (0.002%) wherever the population has a large near-threshold group, and
+**`shrine` `p99` drifts by ±0.001**. The likely cause of both is that #321's `freeze_flicker` pins
+the CAVE torches only — the shrine's braziers still flicker, and pixels sitting on the luma and
+saturation gates cross them differently from shot to shot. So quote a sample count as approximate,
+and treat a `shrine` value delta under about 0.3pp as unfalsifiable until its braziers are pinned
+too. This does not touch the cave value figures, which are exact.
 
 **Testing DEPTH rather than sky is the trap.** A first attempt faded on depth below the terrain and
 measured as a complete no-op: the starter cave is carved inside a massif that stands ON the terrain,
