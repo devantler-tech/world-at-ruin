@@ -83,7 +83,7 @@ func _ready() -> void:
 	# renders a negative fog density as an ever-thickening black rather than as
 	# an error, so an unclamped caller bug would look like an art regression
 	# nobody could trace.
-	for bad: float in [-1.0, -0.001, 1.001, 12.0, INF, -INF]:
+	for bad: float in [-1.0, -0.001, 1.001, 12.0, INF, -INF, NAN]:
 		var d := CaveAtmosphere.height_density(bad)
 		if d < -EPS or d > SHIPPED_SURFACE_DENSITY + EPS or is_nan(d):
 			_fail("fraction %f escaped the clamp and returned %f" % [bad, d])

@@ -15,7 +15,8 @@ const ENTRIES: Array[Dictionary] = [
 		"date": "2026-07-25",
 		"title": "The starting cave is dark again",
 		"notes": [
-			"The ash hanging over the Reach was also filling the cave you wake up in, where no ash can fall. The cave keeps its own air now: the dark is properly dark, the torch throws a real pool of light instead of a glow on a wall, and the ledges and fractures cut into the rock can be seen for the first time.",
+			"The ash hanging over the Reach was also filling the cave you wake up in, where no ash can fall. The cave keeps its own air now: the dark is properly dark, and the torch throws a real pool of light instead of a glow on a wall.",
+			"The bedded rock and fractures added earlier were being washed out by that haze — laid down correctly, but with too little shadow anywhere in the room to read as depth. They now show the relief they always had.",
 			"Weather follows the sky it falls from. Step under the overhang at the mouth and the ash thins as rock closes over you; walk back out into the Reach and it returns, with neither change snapping into place.",
 			"None of the cave's colour or torchlight has changed. It is the same warm room it always was, with its shadows given back.",
 		],

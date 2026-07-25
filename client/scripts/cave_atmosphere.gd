@@ -170,7 +170,16 @@ static func apply(env: Environment, blocked: float) -> void:
 ## Clamped rather than trusted: a caller handing over a fraction outside 0..1
 ## would otherwise drive the fog negative, which Godot renders as an
 ## ever-thickening black rather than as an error anybody would notice.
+##
+## NaN is handled before the clamp because [method @GlobalScope.clampf] passes
+## it straight through — verified, not assumed: feeding `NAN` with this branch
+## removed returns `nan`, and a NaN fog density is the worst of the failure
+## modes, silently un-renderable rather than merely wrong. It answers with the
+## open-sky grade, which is this module's standing rule for a question it cannot
+## answer.
 static func height_density(blocked: float) -> float:
+	if is_nan(blocked):
+		return SURFACE_HEIGHT_DENSITY
 	return SURFACE_HEIGHT_DENSITY * (1.0 - clampf(blocked, 0.0, 1.0))
 
 
@@ -181,9 +190,11 @@ static func height_density(blocked: float) -> float:
 ## and discovery are not roof, and counting them would switch the weather off
 ## wherever a player stood in one.
 ##
-## Run every frame rather than on a timer or every Nth frame. Five ray queries
-## is nothing beside the frame they belong to, and a sampled version would make
-## the answer depend on which frame the question was asked on — which is exactly
+## Run every frame rather than on a timer or every Nth frame. That is
+## [constant PROBE_COUNT] short ray queries per frame — the cost of the fade
+## being smooth enough not to step, paid deliberately (see PROBE_COUNT for what
+## the cheaper counts looked like). A sampled or throttled version would make
+## the answer depend on which frame the question was asked on, which is exactly
 ## the non-determinism `frame_capture` had to pin out of the cave once already
 ## (#321), since it settles a fixed number of frames before each shot.
 ##
@@ -196,7 +207,8 @@ static func height_density(blocked: float) -> float:
 ## face thins a little. All four outdoor capture vantages are byte-identical
 ## across this change, so nothing framed today shows it.
 static func sky_blocked_fraction(space: PhysicsDirectSpaceState3D, from: Vector3) -> float:
-	# One query object reused across the cone rather than five built per frame.
+	# One query object reused across the whole cone rather than one built per
+	# probe per frame.
 	# Areas stay excluded on it: the trigger volumes that drive interaction and
 	# discovery are not roof.
 	var query := PhysicsRayQueryParameters3D.new()

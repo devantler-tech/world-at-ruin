@@ -645,11 +645,12 @@ Note the hue-sample counts fall with the veil (`cave-chamber` 57600 → ~37400 c
 metric excludes crushed blacks from the hue population on purpose, and a cave that finally has
 blacks has fewer pixels eligible to vote. Read the hue span alongside its sample count here.
 
-**What is stable and what still is not, measured by running identical code twice.** The reported
-figures — value range, `p1`, `p99` to three decimals, hue span — repeat exactly at every vantage.
-Two things do not, and neither is caused by a code change: the **hue sample COUNT** drifts by a few
-pixels out of ~37 000 (0.002%) wherever the population has a large near-threshold group, and
-**`shrine` `p99` drifts by ±0.001**. The likely cause of both is that #321's `freeze_flicker` pins
+**What is stable and what still is not, measured by running identical code twice.** At every
+vantage **except `shrine`**, the reported figures — value range, `p1`, `p99` to three decimals, hue
+span — repeat exactly. Two things do not, and neither is caused by a code change: **`shrine`'s
+`p99` drifts by ±0.001** (moving its reported range between 26.6% and 26.7%), and the **hue sample
+COUNT** drifts by a few pixels out of ~37 000 (0.002%) wherever the population has a large
+near-threshold group. The likely cause of both is that #321's `freeze_flicker` pins
 the CAVE torches only — the shrine's braziers still flicker, and pixels sitting on the luma and
 saturation gates cross them differently from shot to shot. So quote a sample count as approximate,
 and treat a `shrine` value delta under about 0.3pp as unfalsifiable until its braziers are pinned
