@@ -610,8 +610,57 @@ flicker is unchanged — only the evidence path is pinned.
 
 **Cave figures recorded before that fix carry this ±4pp uncertainty and should not be compared
 against post-fix ones.** Pinning also re-bases the cave numbers, because they are now read at one
-fixed phase instead of an arbitrary one — on the pinned illuminant `cave-chamber` measures **11.0% /
-6.0°** and `cave-walkout` **23.2% / 10.2°**. Those are the baseline a later cave pass beats.
+fixed phase instead of an arbitrary one — on the pinned illuminant `cave-chamber` measured **11.0% /
+6.0°** and `cave-walkout` **23.2% / 10.2°** at the time.
+
+### The cave was flat because the weather was indoors (#238)
+
+Superseding those figures. The cave's value axis was not narrow because its rock was too uniform —
+it was narrow because the Reach's ash was pooling inside sealed stone. The height term that gathers
+ash in the surface hollows (#211) is a property of the sky, but depth fog cannot see what is above
+it, so it filled the starter cave too. Ablations on the committed seed, two runs each:
+
+| environment | cave-chamber | darkest pixel | cave-walkout |
+|---|---|---|---|
+| shipped | 12.5% / 6.0° | 0.117 | 24.6% / 9.9° |
+| height term removed | 22.7% / 9.5° | 0.006 | 34.3% / 9.4° |
+| all depth fog removed | 22.8% / 15.0° | 0.000 | — |
+| sky ambient removed | 12.5% / 6.0° | 0.117 | 24.6% / 9.9° |
+
+Two of those rows carry the argument. The height term accounts for the **whole** flattening —
+removing all depth fog buys a further 0.1pp — so the uniform term was never the problem. And
+removing sky ambient changes the chamber by nothing at all, which is the negative control: SDFGI
+already keeps the sky out of the cave exactly as `main.gd` claims, so the veil was never ambient
+leakage. A darkest pixel of **0.117** is the finding in one number: nothing in the chamber was
+darker than a middling grey, so the room had no shadow to read structure by, and #236's bedding work
+was being veiled rather than failing.
+
+`CaveAtmosphere` now fades the height term out with how much sky a probe cone finds overhead, which
+leaves the surface grade untouched. **Post-fix baseline, and what a later cave pass beats:
+`cave-chamber` 22.7% / 9.5°, `cave-walkout` 34.3% / 9.4°**, with every outdoor vantage unchanged
+(`shrine` moves p99 by 0.001 — a probe clips the shrine's own structure — and its reported range
+does not move).
+
+Note the hue-sample counts fall with the veil (`cave-chamber` 57600 → ~37400 coloured pixels): the
+metric excludes crushed blacks from the hue population on purpose, and a cave that finally has
+blacks has fewer pixels eligible to vote. Read the hue span alongside its sample count here.
+
+**What is stable and what still is not, measured by running identical code twice.** At every
+vantage **except `shrine`**, the reported figures — value range, `p1`, `p99` to three decimals, hue
+span — repeat exactly. Two things do not, and neither is caused by a code change: **`shrine`'s
+`p99` drifts by ±0.001** (moving its reported range between 26.6% and 26.7%), and the **hue sample
+COUNT** drifts by a few pixels out of ~37 000 (0.002%) wherever the population has a large
+near-threshold group. The likely cause of both is that #321's `freeze_flicker` pins
+the CAVE torches only — the shrine's braziers still flicker, and pixels sitting on the luma and
+saturation gates cross them differently from shot to shot. So quote a sample count as approximate,
+and treat a `shrine` value delta under about 0.3pp as unfalsifiable until its braziers are pinned
+too. This does not touch the cave value figures, which are exact.
+
+**Testing DEPTH rather than sky is the trap.** A first attempt faded on depth below the terrain and
+measured as a complete no-op: the starter cave is carved inside a massif that stands ON the terrain,
+so at both cave vantages the heightfield reads about 3.6 m BELOW the camera and the chamber is open
+air by any depth measure. The frames were byte-identical to baseline and only a diagnostic print
+showed why.
 
 The superseded hue pass is kept only so the older figures stay traceable:
 

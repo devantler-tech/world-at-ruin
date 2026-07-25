@@ -41,6 +41,12 @@ var _hollow_fog: Array[Dictionary] = []
 ## wherever the pools were placed but not built. Held so [method _process] can
 ## drift them (#233) without searching the tree every frame.
 var _hollow_fog_volumes: Array[FogVolume] = []
+## The live environment, held so [method _track_cave_atmosphere] can retune the
+## ash's height pooling as the view moves under rock and back out.
+var _env: Environment = null
+## Last sky-cover reading written to [member _env]. Negative until the first
+## frame, so the opening reading is always written whatever it turns out to be.
+var _sky_blocked := -1.0
 ## Seconds this world's ash has been drifting for. Accumulated from frame deltas
 ## rather than read off a clock, so drift is a function of how long the world
 ## has been running and not of when it happened to be launched — which keeps a
@@ -355,6 +361,7 @@ func _connect_zone() -> void:
 ## bake in a policy nothing yet exercises.
 func _process(delta: float) -> void:
 	_drift_hollow_fog(delta)
+	_track_cave_atmosphere()
 	_observe_discoveries(delta)
 	if _zone == null:
 		return
@@ -532,8 +539,9 @@ func _build_environment() -> void:
 	env.fog_density = 0.010
 	env.fog_aerial_perspective = 0.35
 	env.fog_sky_affect = 0.4
-	env.fog_height = 6.0
-	env.fog_height_density = 0.06
+	# The downward pooling is [CaveAtmosphere]'s to write — at build time under
+	# an open sky, and again each frame for wherever the view has moved to.
+	CaveAtmosphere.apply(env, 0.0)
 
 	# Volumetric fog is gated on a GPU capability probe. Godot's froxel
 	# volumetrics need an R32_Uint atomic storage image, which some GPUs do not
@@ -564,6 +572,7 @@ func _build_environment() -> void:
 	world_env.name = "WorldEnvironment"
 	world_env.environment = env
 	add_child(world_env)
+	_env = env
 
 
 ## Thickens the air in the terrain's hollows (#211), so ash gathers on low
@@ -613,6 +622,39 @@ func _drift_hollow_fog(delta: float) -> void:
 	_hollow_fog_time += delta
 	for i in _hollow_fog_volumes.size():
 		HollowFog.apply_drift(_hollow_fog_volumes[i], _hollow_fog[i], _hollow_fog_time)
+
+
+## Retunes the ash's downward pooling for wherever the view is this frame, so
+## the weather stops falling inside sealed rock ([CaveAtmosphere] carries the
+## measurements and the reasoning).
+##
+## Driven off the ACTIVE camera rather than the player, for two reasons that
+## point the same way. The camera is what the frame is composed from, so it is
+## the thing whose air the fog is describing — and `tools/frame_capture` shoots
+## the cave by making its own camera current while the wanderer stays put, so
+## keying on the player would photograph the starter cave through surface
+## weather and the evidence frames would not depict what a player sees.
+func _track_cave_atmosphere() -> void:
+	if _env == null:
+		return
+	var cam := get_viewport().get_camera_3d()
+	if cam == null:
+		return
+	var blocked := CaveAtmosphere.sky_blocked_fraction(
+		cam.get_world_3d().direct_space_state, cam.global_position
+	)
+	# Written only when it actually changes. Setting a fog property does not
+	# store a float — it re-issues the whole fog block to the rendering server —
+	# and the cone can only report six values, so the overwhelming majority of
+	# frames (all of them outdoors, all of them deep in the cave) would be
+	# re-sending state identical to what is already there. This is an exact
+	# compare on the computed result, NOT a positional or time-based cache: the
+	# frame a reading changes on is still the frame it is written on, so what
+	# the environment holds is bit-identical to writing it every time.
+	if blocked == _sky_blocked:
+		return
+	_sky_blocked = blocked
+	CaveAtmosphere.apply(_env, blocked)
 
 
 ## Where this boot pooled ash, deepest hollow first — a copy, so a caller can
