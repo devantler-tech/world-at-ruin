@@ -11,6 +11,16 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
+		"version": "0.55.1",
+		"date": "2026-07-25",
+		"title": "The starting cave is dark again",
+		"notes": [
+			"The ash hanging over the Reach was also filling the cave you wake up in, where no ash can fall. The cave keeps its own air now: the dark is properly dark, the torch throws a real pool of light instead of a glow on a wall, and the ledges and fractures cut into the rock can be seen for the first time.",
+			"Weather follows the sky it falls from. Step under the overhang at the mouth and the ash thins as rock closes over you; walk back out into the Reach and it returns, with neither change snapping into place.",
+			"None of the cave's colour or torchlight has changed. It is the same warm room it always was, with its shadows given back.",
+		],
+	},
+	{
 		"version": "0.55.0",
 		"date": "2026-07-23",
 		"title": "The Reach remembers the places you have found",
