@@ -74,7 +74,27 @@ const POOL_START_HEIGHT := 6.0
 ## about what "under rock" means rather than drifting apart.
 const PROBE_HEIGHT := 60.0
 
-## Horizontal spread of the outer probes, in metres.
+## How many probes sample the sky. The reading is quantised to `1/PROBE_COUNT`,
+## and that quantum is the size of the step the world's fog takes when one probe
+## crosses an edge — so this number is a picture-quality decision, not a
+## performance one.
+##
+## **Five was not enough, and the measured reason is worth keeping.**
+## `fog_height_density` is a GLOBAL property: a step regrades the whole frame,
+## distant terrain seen through the cave mouth included, not just the air by the
+## eye. And the probe origin is the third-person camera, which orbits on a 4.6 m
+## spring arm — so turning on the spot at a mouth sweeps the cone across the lip
+## and steps the world's weather with the player standing still.
+##
+## The first pattern here was a five-point cross, and it was worse than the
+## arithmetic suggested: its centre and both lateral probes share a distance
+## along any straight walk, so **three flipped on the same step** and the grade
+## moved by 0.036 — 60% of the whole range in one 10 cm move. Twenty-four brings
+## that to 0.005, and `cave_atmosphere_test`'s law 9 measures it on every run
+## rather than trusting this note.
+const PROBE_COUNT := 24
+
+## Horizontal spread of the outermost probes, in metres.
 ##
 ## This sets how wide the mouth's transition is: the ash begins returning once
 ## the first probe clears the overhang and is fully back once all of them have.
@@ -82,20 +102,51 @@ const PROBE_HEIGHT := 60.0
 ## walk out into weather rather than a line crossed.
 const PROBE_SPREAD := 6.0
 
+## The probe pattern, as offsets from the eye — the eye's own column plus a
+## sunflower spiral over a disc of radius [constant PROBE_SPREAD].
+##
+## **What the spiral is and is not for, measured rather than assumed.** The
+## intuition that a symmetric ring would collapse into a few large steps — its
+## opposite pairs crossing a straight edge together — was written here first and
+## then **measured false**: across `cave_atmosphere_test`'s law 9 walk, a
+## 24-point ring and this spiral both step by 0.005, identically. The spiral is
+## kept for even coverage of *irregular* cover, where samples bunched on one
+## circle would miss a hole in a roof that an equal-area disc catches; that
+## property is a judgement, not something law 9 measures, and it is written as a
+## judgement here.
+##
+## The step size is set by [constant PROBE_COUNT] alone. Measured on the same
+## walk: 5 probes step 0.036, 12 and 24 both step 0.005, 48 steps 0.0025. Note
+## 12 and 24 are equal — past about a dozen the worst case stops being "how many
+## probes" and becomes "how many happen to cross within one sample", so counting
+## higher buys resolution on irregular geometry, not a smaller step.
+##
+## Built once at load rather than written out as literals, and deterministic by
+## construction: no clock and no RNG, so every capture of a given viewpoint reads
+## the same sky. A time-varying pattern would photograph a different value each
+## run — the flicker mistake #321 already had to correct once, and it is also why
+## the fade is spatial rather than a smoothing filter over time.
+static var PROBE_OFFSETS: Array[Vector3] = _build_probe_offsets()
 
-## The probe pattern, as offsets from the eye — centre plus four spread around
-## it. Deterministic and fixed: a randomised or time-varying pattern would make
-## every captured cave frame photograph a different sky reading, which is the
-## flicker mistake #321 already had to correct once. A `const` array rather than
-## a builder so the per-frame path allocates nothing and Godot holds it
-## read-only, which is that guarantee in the type rather than in this comment.
-const PROBE_OFFSETS: Array[Vector3] = [
-	Vector3.ZERO,
-	Vector3(PROBE_SPREAD, 0.0, 0.0),
-	Vector3(-PROBE_SPREAD, 0.0, 0.0),
-	Vector3(0.0, 0.0, PROBE_SPREAD),
-	Vector3(0.0, 0.0, -PROBE_SPREAD),
-]
+## Golden angle in radians — successive turns by it never repeat a direction.
+const GOLDEN_ANGLE := 2.399963229728653
+
+
+static func _build_probe_offsets() -> Array[Vector3]:
+	# The eye's own column is always sampled. A spiral alone leaves the centre
+	# empty — its innermost sample sits at a radius that falls out of the probe
+	# count — so "is there rock directly above me?", the one question this is
+	# really asking, would be answered by inference from a ring of neighbours and
+	# would change meaning whenever the count was tuned.
+	var offsets: Array[Vector3] = [Vector3.ZERO]
+	var spiral := PROBE_COUNT - 1
+	for i in spiral:
+		# sqrt keeps the samples equal-area rather than bunching them at the
+		# centre, so the disc is covered evenly.
+		var radius := PROBE_SPREAD * sqrt((float(i) + 0.5) / float(spiral))
+		var angle := float(i) * GOLDEN_ANGLE
+		offsets.append(Vector3(radius * cos(angle), 0.0, radius * sin(angle)))
+	return offsets
 
 ## How far each probe reaches, as the vector the query adds to its origin.
 const PROBE_RISE := Vector3(0.0, PROBE_HEIGHT, 0.0)

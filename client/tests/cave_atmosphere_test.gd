@@ -28,6 +28,22 @@ const SHIPPED_SURFACE_DENSITY := 0.06
 ## distinguish.
 const EPS := 1.0e-6
 
+## The largest jump in `fog_height_density` allowed between two viewpoints 0.1 m
+## apart — a tenth of the full surface grade.
+##
+## Chosen against what the change is actually visible as, not as a round number:
+## losing the whole grade moves the cave's value range by about 10pp, so a tenth
+## of it is roughly 1pp — at the edge of noticing on a single step, and the
+## sampled walk takes many.
+##
+## Measured worst steps on this walk, so the margin is known rather than hoped
+## for: the 5-point cross this replaced **0.036** (three probes crossing
+## together), 12 or 24 probes **0.005**, 48 probes **0.0025**. The shipped
+## pattern therefore clears this bound by about 20%. That is deliberately not a
+## comfortable margin — it is the honest one, and a change that needs more should
+## raise [constant CaveAtmosphere.PROBE_COUNT] rather than relax this number.
+const MAX_DENSITY_STEP := 0.006
+
 
 func _ready() -> void:
 	# LAW 1 — the open Reach is graded exactly as it shipped. This module exists
@@ -121,7 +137,14 @@ func _ready() -> void:
 	# LAW 7 — a roof narrower than the probe spread reads as PARTIAL cover, which
 	# is the mouth case the spread exists for. A pattern whose probes all sat at
 	# the eye would report this as fully covered and pop.
-	var lip := _slab(Vector3(0.0, 8.0, 0.0), Vector3(2.0, 1.0, 2.0))
+	#
+	# The lip is half the probe disc across, not a token 2 m: sized to the SPREAD
+	# rather than to whatever radius the innermost probe happens to land at, so
+	# this stays a test of partial cover instead of silently becoming a test of
+	# the probe count. An earlier 2 m lip passed only because 24 probes put their
+	# first sample at 0.87 m, and failed the moment the count changed.
+	var lip := _slab(Vector3(0.0, 8.0, 0.0),
+		Vector3(CaveAtmosphere.PROBE_SPREAD, 1.0, CaveAtmosphere.PROBE_SPREAD))
 	var partial := await _cover_at_origin()
 	lip.queue_free()
 	if partial <= EPS or partial >= 1.0 - EPS:
@@ -154,7 +177,53 @@ func _ready() -> void:
 		_fail("apply must not touch the uniform fog density")
 		return
 
-	print("TEST PASS — ash clears under rock, returns under open sky, and fades across a lip")
+	# LAW 9 — walking out from under a roof must RAMP, not step.
+	#
+	# This is the law that a 5-probe cone failed. `fog_height_density` is a
+	# GLOBAL property, so every step regrades the whole frame — distant terrain
+	# seen through the cave mouth included, not just the air by the eye. And the
+	# probe origin is the third-person camera, which orbits on a 4.6 m spring
+	# arm, so turning on the spot at a mouth sweeps the cone across the lip and
+	# would step the world's weather with the player standing still.
+	#
+	# Sampled across a straight edge, which is the worst case: a symmetric probe
+	# pattern crosses it with several probes at once and collapses back into a
+	# few large steps. Walking square-on at a straight edge is exactly how
+	# someone leaves a cave.
+	var edge := _slab(Vector3(-30.0, 8.0, 0.0), Vector3(60.0, 1.0, 60.0))
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	var space9 := get_world_3d().direct_space_state
+	var previous_density := -1.0
+	var worst_step := 0.0
+	var seen_covered := false
+	var seen_open := false
+	# 0.1 m apart: finer than a player moves in a frame, so a step measured here
+	# is one the player could see.
+	for i in 301:
+		var x := -18.0 + float(i) * 0.1
+		var f := CaveAtmosphere.sky_blocked_fraction(space9, Vector3(x, 0.0, 0.0))
+		var density := CaveAtmosphere.height_density(f)
+		if f >= 1.0 - EPS:
+			seen_covered = true
+		if f <= EPS:
+			seen_open = true
+		if previous_density >= 0.0:
+			worst_step = maxf(worst_step, absf(density - previous_density))
+		previous_density = density
+	edge.queue_free()
+	# Non-vacuity: the path must actually span both ends, or a walk that never
+	# left cover would report a tiny worst step and pass having proved nothing.
+	if not seen_covered or not seen_open:
+		_fail("the sampled path must span full cover to open sky (covered=%s open=%s)"
+			% [seen_covered, seen_open])
+		return
+	if worst_step > MAX_DENSITY_STEP:
+		_fail("walking out steps the world's fog by %f in one 0.1m move (max %f)"
+			% [worst_step, MAX_DENSITY_STEP])
+		return
+
+	print("TEST PASS — ash clears under rock, returns under open sky, and ramps across a lip")
 	get_tree().quit(0)
 
 

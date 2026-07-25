@@ -721,10 +721,11 @@ func _visible_torch_light_count(cave: Node) -> int:
 ##
 ## Reaches exactly as far as the weather's own sky probes ([constant
 ## CaveAtmosphere.PROBE_HEIGHT]), so this guard and the ash agree on what "under
-## rock" means. It stays a single CENTRE ray rather than calling
-## [method CaveAtmosphere.sky_blocked_fraction]: the fraction reports cover when
-## any probe in the cone is blocked, which would let this accept a vantage whose
-## own sightline is open sky.
+## rock" means. It stays a single CENTRE ray rather than deriving an answer from
+## [method CaveAtmosphere.sky_blocked_fraction]: that returns how MUCH of the
+## sky is covered across a 6 m disc, so it is non-zero whenever any probe in the
+## cone is blocked — and a threshold on it would let this accept a vantage with
+## open sky directly overhead because something clipped the edge of the disc.
 func _under_rock(cam: Camera3D) -> bool:
 	var space := cam.get_world_3d().direct_space_state
 	var from := cam.global_position
