@@ -23,7 +23,7 @@ jobs:
     name: Client smoke boot
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Full history: the ledger append-only check diffs against the base
           # commit, which a depth-1 checkout cannot reach.
@@ -940,7 +940,7 @@ jobs:
     # maintainer's Apple-Silicon machine.
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # This job uploads an artifact — never let the checked-out token
           # ride along in it (zizmor artipacked).
@@ -994,7 +994,7 @@ jobs:
     name: Licence guard (no GPL/AGPL in tree, provenance on every asset)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Read-only job: no push, so the token must not linger in .git/config.
           persist-credentials: false
@@ -1054,7 +1054,7 @@ jobs:
     name: Server CI (Go)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # The job only builds and tests local Go code — it never needs the
           # checkout token, so don't persist it into .git/config (zizmor
@@ -1094,7 +1094,7 @@ jobs:
       export_affecting: ${{ steps.check.outputs.export_affecting }}
       gpu_gated: ${{ steps.check.outputs.gpu_gated }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -1275,7 +1275,7 @@ jobs:
     # Same bound as the exported capture, which already carries one.
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Full history: the change report at the end of this job renders the
           # MERGE BASE from a git worktree of this same clone, which a depth-1
@@ -1871,7 +1871,7 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         # The checkout exists only to seed the capture save from
         # client/recipes/wanderer.json — the game itself comes exclusively from
         # the export artifact.
