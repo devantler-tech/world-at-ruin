@@ -44,6 +44,9 @@ var _hollow_fog_volumes: Array[FogVolume] = []
 ## The live environment, held so [method _track_cave_atmosphere] can retune the
 ## ash's height pooling as the view moves under rock and back out.
 var _env: Environment = null
+## Last sky-cover reading written to [member _env]. Negative until the first
+## frame, so the opening reading is always written whatever it turns out to be.
+var _sky_blocked := -1.0
 ## Seconds this world's ash has been drifting for. Accumulated from frame deltas
 ## rather than read off a clock, so drift is a function of how long the world
 ## has been running and not of when it happened to be launched — which keeps a
@@ -536,11 +539,9 @@ func _build_environment() -> void:
 	env.fog_density = 0.010
 	env.fog_aerial_perspective = 0.35
 	env.fog_sky_affect = 0.4
-	env.fog_height = 6.0
-	# One source of truth with [CaveAtmosphere], which retunes this per frame:
-	# a literal here that drifted from the constant there would regrade the
-	# whole Reach's surface weather on the first frame after boot.
-	env.fog_height_density = CaveAtmosphere.SURFACE_HEIGHT_DENSITY
+	# The downward pooling is [CaveAtmosphere]'s to write — at build time under
+	# an open sky, and again each frame for wherever the view has moved to.
+	CaveAtmosphere.apply(env, 0.0)
 
 	# Volumetric fog is gated on a GPU capability probe. Godot's froxel
 	# volumetrics need an R32_Uint atomic storage image, which some GPUs do not
@@ -639,12 +640,21 @@ func _track_cave_atmosphere() -> void:
 	var cam := get_viewport().get_camera_3d()
 	if cam == null:
 		return
-	var space := cam.get_world_3d().direct_space_state
-	if space == null:
-		return
-	_env.fog_height_density = CaveAtmosphere.height_density(
-		CaveAtmosphere.sky_blocked_fraction(space, cam.global_position)
+	var blocked := CaveAtmosphere.sky_blocked_fraction(
+		cam.get_world_3d().direct_space_state, cam.global_position
 	)
+	# Written only when it actually changes. Setting a fog property does not
+	# store a float — it re-issues the whole fog block to the rendering server —
+	# and the cone can only report six values, so the overwhelming majority of
+	# frames (all of them outdoors, all of them deep in the cave) would be
+	# re-sending state identical to what is already there. This is an exact
+	# compare on the computed result, NOT a positional or time-based cache: the
+	# frame a reading changes on is still the frame it is written on, so what
+	# the environment holds is bit-identical to writing it every time.
+	if blocked == _sky_blocked:
+		return
+	_sky_blocked = blocked
+	CaveAtmosphere.apply(_env, blocked)
 
 
 ## Where this boot pooled ash, deepest hollow first — a copy, so a caller can

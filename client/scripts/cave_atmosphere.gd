@@ -1,7 +1,13 @@
 class_name CaveAtmosphere
-extends RefCounted
-## Decides how much of the Reach's falling ash reaches a viewpoint, so the
-## weather stops gathering inside sealed rock.
+## Owns the Reach's downward ash pooling, so the weather stops gathering inside
+## sealed rock.
+##
+## Shaped like [Volumetrics]: the module owns its slice of the [Environment] and
+## both consumers hand that slice over to [method apply] rather than writing the
+## properties themselves. That is what makes the pooling single-writer — the
+## build-time grade is `apply(env, 0.0)`, the per-frame retune is
+## `apply(env, blocked)`, and the set of properties that fade is stated by
+## enumeration inside one function instead of by a comment somebody has to find.
 ##
 ## The Reach's air thickens downward: `Main._build_environment` sets
 ## `fog_height` with a `fog_height_density`, which is what makes ash gather in
@@ -48,10 +54,20 @@ extends RefCounted
 ## or by neither", so a torch-lit room may stay warm provided its light and its
 ## shadow separate — which is what clearing the veil restores.
 
-## The `fog_height_density` the open Reach is graded for. Unchanged from the
-## value #211 shipped: under open sky this module returns exactly what was there
-## before, so the surface ash pools are untouched by any of this.
+## The height ash begins gathering below, and the density it reaches there.
+## Both unchanged from what #211 shipped: under open sky [method apply] writes
+## exactly the values that were there before, so the surface pools are untouched
+## by any of this.
+##
+## Only these two fade. The uniform `fog_density`, `fog_aerial_perspective` and
+## `fog_sky_affect` stay where `Main._build_environment` sets them, and that
+## boundary is measured rather than assumed — with the height term gone the
+## chamber reaches 22.7% of the value range, and removing every remaining depth
+## fog term buys a further 0.1pp. Whatever is left indoors is not worth the
+## complexity of a second fade. A new fog term joins this function only if it is
+## a property of the sky.
 const SURFACE_HEIGHT_DENSITY := 0.06
+const POOL_START_HEIGHT := 6.0
 
 ## How far up a probe looks for rock. Matches the reach `frame_capture`'s own
 ## `_under_rock` uses, so the capture's enclosure guard and the weather agree
@@ -70,19 +86,35 @@ const PROBE_SPREAD := 6.0
 ## The probe pattern, as offsets from the eye — centre plus four spread around
 ## it. Deterministic and fixed: a randomised or time-varying pattern would make
 ## every captured cave frame photograph a different sky reading, which is the
-## flicker mistake #321 already had to correct once.
-static func probe_offsets() -> Array[Vector3]:
-	return [
-		Vector3.ZERO,
-		Vector3(PROBE_SPREAD, 0.0, 0.0),
-		Vector3(-PROBE_SPREAD, 0.0, 0.0),
-		Vector3(0.0, 0.0, PROBE_SPREAD),
-		Vector3(0.0, 0.0, -PROBE_SPREAD),
-	]
+## flicker mistake #321 already had to correct once. A `const` array rather than
+## a builder so the per-frame path allocates nothing and Godot holds it
+## read-only, which is that guarantee in the type rather than in this comment.
+const PROBE_OFFSETS: Array[Vector3] = [
+	Vector3.ZERO,
+	Vector3(PROBE_SPREAD, 0.0, 0.0),
+	Vector3(-PROBE_SPREAD, 0.0, 0.0),
+	Vector3(0.0, 0.0, PROBE_SPREAD),
+	Vector3(0.0, 0.0, -PROBE_SPREAD),
+]
+
+## How far each probe reaches, as the vector the query adds to its origin.
+const PROBE_RISE := Vector3(0.0, PROBE_HEIGHT, 0.0)
 
 
-## The `fog_height_density` to run where `blocked` of the sky overhead is rock:
-## the shipped surface value under open sky, easing to nothing under full cover.
+## Writes the ash's downward pooling into `env` for a viewpoint with `blocked` of
+## its sky cut off by rock: the shipped surface grade at 0.0, easing to no
+## pooling at all under full cover.
+##
+## The single writer for these properties — `Main` and `TelegraphPreview` both
+## build their environment through it, so the shipping grade cannot drift
+## between the world and the rigs used to judge it.
+static func apply(env: Environment, blocked: float) -> void:
+	env.fog_height = POOL_START_HEIGHT
+	env.fog_height_density = height_density(blocked)
+
+
+## The `fog_height_density` alone, for callers that want the policy without the
+## write — the tests, and anything reasoning about the grade.
 ##
 ## Clamped rather than trusted: a caller handing over a fraction outside 0..1
 ## would otherwise drive the fog negative, which Godot renders as an
@@ -113,12 +145,17 @@ static func height_density(blocked: float) -> float:
 ## face thins a little. All four outdoor capture vantages are byte-identical
 ## across this change, so nothing framed today shows it.
 static func sky_blocked_fraction(space: PhysicsDirectSpaceState3D, from: Vector3) -> float:
-	var offsets := probe_offsets()
+	# One query object reused across the cone rather than five built per frame.
+	# Areas stay excluded on it: the trigger volumes that drive interaction and
+	# discovery are not roof.
+	var query := PhysicsRayQueryParameters3D.new()
+	query.collide_with_areas = false
 	var blocked := 0
-	for offset: Vector3 in offsets:
-		var origin := from + offset
-		var query := PhysicsRayQueryParameters3D.create(origin, origin + Vector3.UP * PROBE_HEIGHT)
-		query.collide_with_areas = false
+	for offset: Vector3 in PROBE_OFFSETS:
+		query.from = from + offset
+		query.to = query.from + PROBE_RISE
 		if not space.intersect_ray(query).is_empty():
 			blocked += 1
-	return float(blocked) / float(offsets.size())
+	# Divided by the pattern's own length, never a second constant that would
+	# have to be kept in step with it.
+	return float(blocked) / float(PROBE_OFFSETS.size())

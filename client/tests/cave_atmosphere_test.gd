@@ -78,7 +78,7 @@ func _ready() -> void:
 	# below it would sample a different point than the one being lit), and a real
 	# horizontal spread. A single centre ray passes every law above and still
 	# pops at the mouth.
-	var offsets := CaveAtmosphere.probe_offsets()
+	var offsets := CaveAtmosphere.PROBE_OFFSETS
 	if offsets.size() < 2:
 		_fail("a single probe cannot fade — the mouth would flip, got %d" % offsets.size())
 		return
@@ -97,10 +97,7 @@ func _ready() -> void:
 	# law the first attempt at this fix failed, and no amount of pure-function
 	# testing would have shown it.
 	var roof := _slab(Vector3(0.0, 8.0, 0.0), Vector3(60.0, 1.0, 60.0))
-	await get_tree().physics_frame
-	await get_tree().physics_frame
-	var space := get_world_3d().direct_space_state
-	var covered := CaveAtmosphere.sky_blocked_fraction(space, Vector3.ZERO)
+	var covered := await _cover_at_origin()
 	if absf(covered - 1.0) > EPS:
 		_fail("a slab overhead must read as fully covered, got %f" % covered)
 		return
@@ -113,10 +110,7 @@ func _ready() -> void:
 	# unconditionally, which is precisely a fix that switches the Reach's
 	# weather off everywhere.
 	roof.queue_free()
-	await get_tree().physics_frame
-	await get_tree().physics_frame
-	space = get_world_3d().direct_space_state
-	var open := CaveAtmosphere.sky_blocked_fraction(space, Vector3.ZERO)
+	var open := await _cover_at_origin()
 	if absf(open) > EPS:
 		_fail("with nothing overhead the sky must read as open, got %f" % open)
 		return
@@ -128,17 +122,50 @@ func _ready() -> void:
 	# is the mouth case the spread exists for. A pattern whose probes all sat at
 	# the eye would report this as fully covered and pop.
 	var lip := _slab(Vector3(0.0, 8.0, 0.0), Vector3(2.0, 1.0, 2.0))
-	await get_tree().physics_frame
-	await get_tree().physics_frame
-	space = get_world_3d().direct_space_state
-	var partial := CaveAtmosphere.sky_blocked_fraction(space, Vector3.ZERO)
+	var partial := await _cover_at_origin()
 	lip.queue_free()
 	if partial <= EPS or partial >= 1.0 - EPS:
 		_fail("a narrow lip must read as partial cover, got %f" % partial)
 		return
 
+	# LAW 8 — `apply` is the single writer, and the open-sky call reproduces the
+	# grade #211 shipped exactly. `Main` and `TelegraphPreview` both build their
+	# environment through it, so without this an edit here would silently
+	# regrade the world AND the rig used to judge telegraphs against it.
+	var env := Environment.new()
+	CaveAtmosphere.apply(env, 0.0)
+	if absf(env.fog_height - CaveAtmosphere.POOL_START_HEIGHT) > EPS:
+		_fail("apply must set the pooling height, got %f" % env.fog_height)
+		return
+	if absf(env.fog_height_density - SHIPPED_SURFACE_DENSITY) > EPS:
+		_fail("apply(env, 0.0) must reproduce the shipped surface grade, got %f"
+			% env.fog_height_density)
+		return
+	# And it must move under cover — an `apply` that wrote a constant would pass
+	# every line above while leaving the cave exactly as veiled as it was.
+	CaveAtmosphere.apply(env, 1.0)
+	if absf(env.fog_height_density) > EPS:
+		_fail("apply(env, 1.0) must clear the pooling, got %f" % env.fog_height_density)
+		return
+	# The properties it does NOT own stay untouched, so the boundary is enforced
+	# rather than described: fading the uniform terms too would be a different
+	# and unmeasured art change.
+	if env.fog_density != Environment.new().fog_density:
+		_fail("apply must not touch the uniform fog density")
+		return
+
 	print("TEST PASS — ash clears under rock, returns under open sky, and fades across a lip")
 	get_tree().quit(0)
+
+
+## Settles physics, then reads the sky cover at the origin. Two frames because a
+## body added or freed this frame is not in the space state until the next one,
+## and a probe fired too early reports the PREVIOUS scene — which would let the
+## roof and no-roof laws pass on each other's readings.
+func _cover_at_origin() -> float:
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	return CaveAtmosphere.sky_blocked_fraction(get_world_3d().direct_space_state, Vector3.ZERO)
 
 
 ## A static box collider centred at `at`, so the probes have real geometry to
