@@ -1,0 +1,24 @@
+version: 2
+
+updates:
+  # The Go module lives in server/, not the repo root.
+  - package-ecosystem: gomod
+    directory: /server
+    schedule:
+      interval: daily
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
+      # devantler-tech Go modules are our own code — bump now, no cooldown.
+      exclude:
+        - "github.com/devantler-tech/*"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: daily
+    cooldown:
+      default-days: 7
+      # devantler-tech actions/workflows are our own code — bump now, no cooldown.
+      exclude:
+        - "devantler-tech/*"
