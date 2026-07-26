@@ -157,11 +157,11 @@ expect_failure \
 
 repo=$(new_repo encoded_reference)
 write_valid_contract "$repo"
-printf '%s\n' \
-	'# Reference' \
-	'' \
-	'<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0h10v10z"/></svg>' \
-	>"$repo/docs/art-direction/reference.md"
+{
+	printf '%s\n' '# Reference' ''
+	printf '<%s xmlns="http://www.w3.org/2000/svg"><path d="M0 0h10v10z"/></%s>\n' \
+		'svg' 'svg'
+} >"$repo/docs/art-direction/reference.md"
 git -C "$repo" add docs/art-direction/reference.md
 expect_failure \
 	"inline media cannot hide inside a Markdown reference" \
@@ -170,11 +170,10 @@ expect_failure \
 
 repo=$(new_repo encoded_repository_media)
 write_valid_contract "$repo"
-printf '%s\n' \
-	'# Evidence' \
-	'' \
-	'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB' \
-	>"$repo/docs/evidence/reference.md"
+{
+	printf '%s\n' '# Evidence' ''
+	printf '%s%s\n' 'data:image/png;' 'base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB'
+} >"$repo/docs/evidence/reference.md"
 git -C "$repo" add docs/evidence/reference.md
 expect_failure \
 	"encoded reference media cannot move to another documentation path" \
@@ -197,12 +196,25 @@ expect_failure \
 
 repo=$(new_repo encoded_artgen_source)
 write_valid_contract "$repo"
-printf '%s\n' \
-	'REFERENCE = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB"' \
+printf 'REFERENCE = "%s%s"\n' \
+	'data:image/png;' \
+	'base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB' \
 	>"$repo/tools/artgen/reference.py"
 git -C "$repo" add tools/artgen/reference.py
 expect_failure \
 	"encoded reference media cannot hide inside generator source" \
+	"encoded or inline media in repository text" \
+	"$repo"
+
+repo=$(new_repo encoded_client_source)
+write_valid_contract "$repo"
+printf 'const REFERENCE = "%s%s"\n' \
+	'data:image/png;' \
+	'base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB' \
+	>"$repo/client/scripts/reference.gd"
+git -C "$repo" add client/scripts/reference.gd
+expect_failure \
+	"encoded media in another implementation surface is rejected" \
 	"encoded or inline media in repository text" \
 	"$repo"
 
@@ -212,6 +224,45 @@ printf '\211PNG\r\n\032\nreference bytes\n' >"$repo/docs/evidence/reference.png"
 git -C "$repo" add docs/evidence/reference.png
 expect_failure \
 	"tracked media outside an exact first-party or asset provenance boundary is rejected" \
+	"tracked media is outside a reviewed provenance boundary" \
+	"$repo"
+
+repo=$(new_repo text_collada_model)
+write_valid_contract "$repo"
+{
+	printf '%s\n' '<?xml version="1.0" encoding="utf-8"?>'
+	printf '<%s xmlns="http://www.collada.org/2005/11/COLLADASchema">\n' 'COLLADA'
+	printf '</%s>\n' 'COLLADA'
+} >"$repo/docs/evidence/reference.dae"
+git -C "$repo" add docs/evidence/reference.dae
+expect_failure \
+	"text-based Collada models require reviewed provenance" \
+	"tracked media is outside a reviewed provenance boundary" \
+	"$repo"
+
+repo=$(new_repo text_usda_model)
+write_valid_contract "$repo"
+printf '%s\n' \
+	'#usda 1.0' \
+	'def Mesh "Reference" {}' \
+	>"$repo/docs/evidence/reference.usda"
+git -C "$repo" add docs/evidence/reference.usda
+expect_failure \
+	"text-based USD models require reviewed provenance" \
+	"tracked media is outside a reviewed provenance boundary" \
+	"$repo"
+
+repo=$(new_repo text_ply_model)
+write_valid_contract "$repo"
+printf '%s\n' \
+	'ply' \
+	'format ascii 1.0' \
+	'element vertex 0' \
+	'end_header' \
+	>"$repo/docs/evidence/reference.ply"
+git -C "$repo" add docs/evidence/reference.ply
+expect_failure \
+	"text-based PLY models require reviewed provenance" \
 	"tracked media is outside a reviewed provenance boundary" \
 	"$repo"
 

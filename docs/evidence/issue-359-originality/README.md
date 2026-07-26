@@ -8,6 +8,11 @@ shows the v0.49.0 entry as a player sees it after pressing F1.
 
 - **Art-direction reference:** [`The one-line style`](../../art-direction/README.md#the-one-line-style)
   — medieval materials and hand-craft win every tie.
+- **Exact comparison artifact:** Bandai Namco's official
+  [Elden Ring Wretch class page](https://en.bandainamcoent.eu/elden-ring/elden-ring/characters/wretch),
+  the same lawful supporting analogue recorded by the delivery that introduced this dev-log entry.
+  Its near-naked starter presentation establishes the ragged floor of an equipment progression; no
+  image or authored expression from it enters this repository.
 - **Visible result:** the entry names World at Ruin's own woven wrap, thick belt, folded panels,
   uneven torn hem and grounded weathered-clothing target.
 - **Remaining gap:** the cloth still needs richer drape, close material detail and a closer creator

@@ -51,8 +51,8 @@ is_binary() {
 has_encoded_media() {
 	local file="$1"
 
-	if grep -Ein \
-		'(<svg([[:space:]>])|data:(image|audio|video|model)/[^;,]+;base64,|^[[:space:]]*(v|vn|vt|f)[[:space:]]+(-?[0-9]+([.][0-9]+)?[[:space:]]+){2})' \
+	if grep -En \
+		'(<[sS][vV][gG]([[:space:]>])|<[cC][oO][lL][lL][aA][dD][aA]([[:space:]>])|<[xX]3[dD]([[:space:]>])|[dD][aA][tT][aA]:(image|audio|video|model)/[^;,]+;base64,|^[[:space:]]*(v|vn|vt|f)[[:space:]]+(-?[0-9]+([.][0-9]+)?[[:space:]]+){2}|^[[:space:]]*(ply|#[uU][sS][dD][aA]([[:space:]]|$)|OFF([[:space:]]|$)))' \
 		"$file" >/dev/null; then
 		return 0
 	fi
@@ -100,14 +100,15 @@ else
 	done < <(git ls-files -z -- "$ART_DIRECTION")
 fi
 
-# A copied payload remains reference media when moved elsewhere under docs or
-# embedded in generator source. Scan both text surfaces rather than trusting a
-# directory name or source-file extension.
+# A copied payload remains reference media when moved into another source,
+# documentation, test or configuration path. Scan every tracked text file
+# rather than trusting a directory name or source-file extension.
 while IFS= read -r -d '' file; do
+	[ "$file" = "client/icon.svg" ] && continue
 	if ! is_binary "$file" && has_encoded_media "$file"; then
 		encoded_documentation_media+=("$file")
 	fi
-done < <(git ls-files -z -- docs "$ARTGEN_ROOT")
+done < <(git ls-files -z)
 
 if [ -d "$ARTGEN_ROOT" ]; then
 	while IFS= read -r -d '' file; do
@@ -169,7 +170,9 @@ while IFS= read -r -d '' file; do
 	case "$lower_file" in
 	*.png | *.jpg | *.jpeg | *.gif | *.webp | *.bmp | *.tif | *.tiff | *.svg | \
 		*.mp3 | *.wav | *.ogg | *.flac | *.mp4 | *.mov | *.webm | \
-		*.gltf | *.glb | *.fbx | *.obj | *.blend)
+		*.gltf | *.glb | *.fbx | *.obj | *.blend | *.dae | *.ply | *.usd | *.usda | \
+		*.usdc | *.stl | *.x3d | *.3ds | *.abc | *.off | *.dxf | *.step | *.stp | \
+		*.iges | *.igs)
 		media_candidate=1
 		;;
 	esac
@@ -226,8 +229,8 @@ if [ ${#encoded_documentation_media[@]} -gt 0 ]; then
 	echo "::error::encoded or inline media in repository text is forbidden"
 	printf '  - %s\n' "${encoded_documentation_media[@]}"
 	echo
-	echo "Documentation and generator source may contain prose, code and external links, never"
-	echo "inline SVG, encoded media or text-encoded model data."
+	echo "Tracked text may contain prose, code and external links, never inline SVG, encoded media"
+	echo "or text-encoded model data."
 	echo
 fi
 
