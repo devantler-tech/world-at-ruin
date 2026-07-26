@@ -12,8 +12,8 @@ extends Node
 ##
 ## [b]Method.[/b] The independent variable is a known albedo ratio, applied
 ## through [code]terrain.gdshader[/code]'s [code]albedo_probe[/code] uniform:
-## render at 1.0, render at [constant REGION_RATIO], and take the difference in
-## mean ground luminance. That difference is "how much of a region step you can
+## render at [constant PROBE_LO], render at [constant PROBE_HI], and take the
+## difference in mean ground luminance. That difference is "how much of a region step you can
 ## see". Then neutralise one atmosphere term at a time and re-measure it. A term
 ## whose removal makes the difference jump is a term that was eating it.
 ##
@@ -36,6 +36,23 @@ extends Node
 ## spread rather than a round number keeps the reported delta directly
 ## comparable to the figures in the issue.
 const REGION_RATIO := 3.1
+
+## The two probe values, and they are BELOW 1.0 for a reason.
+##
+## The obvious choice — hold the ground at its shipped albedo and multiply up by
+## [constant REGION_RATIO] — measures the wrong interval. Standing on the pale
+## country the ground is already `bonepale` at 0.437, so probing 1.0 -> 3.1 walks
+## it from 0.437 to 1.355: brighter than any ground the game ever draws, and well
+## up the filmic shoulder. Tonemapping and indirect light are both nonlinear, so
+## nothing measured up there transfers back down to the interval that actually
+## ships.
+##
+## Dividing instead puts both endpoints on real ground: 0.437 / 3.1 = 0.141,
+## which is `cinderreach` (0.140) to three decimals, and 1.0 leaves `bonepale`
+## exactly as shipped. The measured span is then the real palette interval rather
+## than an extrapolation past the top of it.
+const PROBE_LO := 1.0 / REGION_RATIO
+const PROBE_HI := 1.0
 
 ## Frames to let the renderer settle after a camera move or an environment
 ## change. This number is empirical and it was WRONG at first: at 24 frames the
@@ -167,8 +184,20 @@ func _ready() -> void:
 	cam.fov = 68.0
 	get_tree().root.add_child(cam)
 
-	await _run(cam)
-	get_tree().quit(0)
+	# Stop the world before measuring anything. The claim this tool makes is that
+	# its two readings are the same frame with only albedo changed, and that is
+	# false while the world is still moving: `Main._process` drifts hollow-fog
+	# density every frame and the foliage shaders advance with time, so two
+	# readings taken after separate, variable-length convergence waits differ by
+	# whatever the animation did in between. Worse, a periodic drift can return a
+	# repeated baseline to its original value and slip past the noise check while
+	# still biasing the rows between them.
+	#
+	# Same mechanism the light-response capture uses for its controlled pairs.
+	Engine.time_scale = 0.0
+
+	var ok := await _run(cam)
+	get_tree().quit(0 if ok else 1)
 
 
 ## Finds the two objects the measurement drives: the live Environment and the
@@ -211,7 +240,10 @@ func _bind(main: Node) -> bool:
 	return true
 
 
-func _run(cam: Camera3D) -> void:
+## Returns whether the run produced a table that may be believed. A false here
+## must reach the process exit code: a run that has just declared its own numbers
+## untrustworthy but exits 0 tells any calling script it succeeded.
+func _run(cam: Camera3D) -> bool:
 	# One row per candidate the issue names, plus the two controls. Each entry is
 	# [label, {property: neutralised value}] — a data table rather than branching
 	# code, so adding a candidate is a line and the report order is the read order.
@@ -233,13 +265,25 @@ func _run(cam: Camera3D) -> void:
 		["ambient energy 0", {"ambient_light_energy": 0.0}],
 		["tonemap LINEAR", {"tonemap_mode": Environment.TONE_MAPPER_LINEAR}],
 		["tonemap white 2.0", {"tonemap_white": 2.0}],
+		# The issue names "exposure/tonemapping" as one candidate, but exposure is
+		# a separate control from the mapper and the white point, and neither of
+		# the two rows above moves it. Without this row the named candidate is
+		# never actually isolated.
+		["tonemap exposure 1.0", {"tonemap_exposure": 1.0}],
 		["colour adjustment off", {"adjustment_enabled": false}],
-		["ALL OFF (ceiling)", {
+		# The no-ATMOSPHERE control. It deliberately leaves the display transform
+		# — FILMIC, the white point, the contrast grade — exactly as shipped.
+		#
+		# An earlier version also forced LINEAR and disabled the grade, and that
+		# made it useless as a ceiling: both of those REDUCE separation (−9% and
+		# −7%), so the "ceiling" came out BELOW plain `fog off entirely` and the
+		# survival ratio taken against it meant nothing. A ceiling has to differ
+		# from the baseline in one direction only, so this row now changes the
+		# atmosphere and nothing else.
+		["atmosphere off (ceiling)", {
 			"fog_enabled": false,
 			"volumetric_fog_enabled": false,
 			"ambient_light_energy": 0.0,
-			"tonemap_mode": Environment.TONE_MAPPER_LINEAR,
-			"adjustment_enabled": false,
 		}],
 		# Repeat of row 1, last. The gap between the two baseline readings is this
 		# run's own noise floor, and no row may be read as a finding unless it
@@ -248,8 +292,9 @@ func _run(cam: Camera3D) -> void:
 		["baseline (repeat — noise floor)", {}],
 	]
 
-	print("ABLATION — albedo ratio %.2fx, %d samples/box" % [REGION_RATIO, GRID_X * GRID_Y])
-	print("| vantage | condition | luma @1.0x | luma @%.1fx | delta | vs baseline |" % REGION_RATIO)
+	print("ABLATION — probe %.3fx -> %.3fx (ratio %.2fx, the shipped palette interval), %d samples/box"
+		% [PROBE_LO, PROBE_HI, REGION_RATIO, GRID_X * GRID_Y])
+	print("| vantage | condition | luma @%.3fx | luma @%.3fx | delta | vs baseline |" % [PROBE_LO, PROBE_HI])
 	print("|---|---|---|---|---|---|")
 
 	var failures: Array[String] = []
@@ -308,6 +353,28 @@ func _run(cam: Camera3D) -> void:
 		for condition: Array in conditions:
 			var label: String = condition[0]
 			var overrides: Dictionary = condition[1]
+
+			# A condition that asks for values the environment ALREADY holds
+			# changes nothing, so its row is the baseline wearing another name —
+			# and it reports the candidate as having no effect, which is the
+			# opposite of the truth: the candidate was never tested.
+			#
+			# The live case is volumetric fog. `Volumetrics.probe()` disables it
+			# on GPUs without R32_Uint atomic storage — including the hosted macOS
+			# path — so `volumetric_fog_enabled: false` is a no-op there, passes
+			# the read-back check, and would let the run print PASS alongside a
+			# zero-effect volumetric row that cannot speak for player hardware.
+			var inert := not overrides.is_empty()
+			for key: String in overrides:
+				if not is_same(shipped[key], overrides[key]):
+					inert = false
+					break
+			if inert:
+				failures.append(("%s / %s: every value it sets is already the shipped value, so this "
+					+ "candidate was NOT measured — its row is the baseline under another name")
+					% [vname, label])
+				label = "%s [UNAVAILABLE — not measured]" % label
+
 			for key: String in overrides:
 				_env.set(key, overrides[key])
 			for i in SETTLE_FRAMES:
@@ -330,12 +397,12 @@ func _run(cam: Camera3D) -> void:
 						+ "atmosphere, not the ablation")
 						% [vname, label, key, _env.get(key), overrides[key]])
 
+			_terrain_mat.set_shader_parameter("albedo_probe", PROBE_LO)
 			var lo_read: Array = await _converged(box)
 			var lo: float = lo_read[0]
-			_terrain_mat.set_shader_parameter("albedo_probe", REGION_RATIO)
+			_terrain_mat.set_shader_parameter("albedo_probe", PROBE_HI)
 			var hi_read: Array = await _converged(box)
 			var hi: float = hi_read[0]
-			_terrain_mat.set_shader_parameter("albedo_probe", 1.0)
 			if not bool(lo_read[1]) or not bool(hi_read[1]):
 				failures.append("%s / %s: a reading never converged within %d frames"
 					% [vname, label, MAX_SETTLE_FRAMES])
@@ -345,7 +412,7 @@ func _run(cam: Camera3D) -> void:
 				baseline_delta = delta
 			if label.begins_with("baseline (repeat"):
 				noise_floor = absf(delta - baseline_delta)
-			if label.begins_with("ALL OFF"):
+			if label.begins_with("atmosphere off"):
 				ceiling_delta = delta
 			var rel := "—"
 			if baseline_delta > 0.0001 and not label.begins_with("baseline"):
@@ -388,10 +455,11 @@ func _run(cam: Camera3D) -> void:
 
 	if failures.is_empty():
 		print("ABLATION PASS")
-	else:
-		for message: String in failures:
-			push_error(message)
-		print("ABLATION FAIL — %d vantage(s) failed the vacuity guard" % failures.size())
+		return true
+	for message: String in failures:
+		push_error(message)
+	print("ABLATION FAIL — %d problem(s); this table must not be read as findings" % failures.size())
+	return false
 
 
 ## Renders until the measured value stops moving, then returns
