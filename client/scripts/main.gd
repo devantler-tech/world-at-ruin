@@ -9,6 +9,13 @@ const SKY_TOP := Color(0.23, 0.18, 0.22)
 const SKY_HORIZON := Color(0.55, 0.35, 0.24)
 const GROUND_BOTTOM := Color(0.1, 0.09, 0.09)
 const FOG_COLOR := Color(0.35, 0.28, 0.24)
+## Stable save-vault ids. Renaming either strands a shipped discovery forever;
+## the boot test and immutable v2 golden fixture therefore pin these spellings.
+const DISCOVERY_STARTER_CAVE := SaveVault.DISCOVERY_STARTER_CAVE
+const DISCOVERY_WARDENS_SHRINE := SaveVault.DISCOVERY_WARDENS_SHRINE
+const STARTER_CAVE_DISCOVERY_RADIUS := 10.0
+const DISCOVERY_PERSIST_RETRY_INITIAL_SECONDS := 1.0
+const DISCOVERY_PERSIST_RETRY_MAX_SECONDS := 30.0
 
 var _player: Player
 var _hud: Hud
@@ -34,6 +41,12 @@ var _hollow_fog: Array[Dictionary] = []
 ## wherever the pools were placed but not built. Held so [method _process] can
 ## drift them (#233) without searching the tree every frame.
 var _hollow_fog_volumes: Array[FogVolume] = []
+## The live environment, held so [method _track_cave_atmosphere] can retune the
+## ash's height pooling as the view moves under rock and back out.
+var _env: Environment = null
+## Last sky-cover reading written to [member _env]. Negative until the first
+## frame, so the opening reading is always written whatever it turns out to be.
+var _sky_blocked := -1.0
 ## Seconds this world's ash has been drifting for. Accumulated from frame deltas
 ## rather than read off a clock, so drift is a function of how long the world
 ## has been running and not of when it happened to be launched — which keeps a
@@ -54,6 +67,20 @@ var _zone_was_live := false
 ## ruin sites, so a marker there would move the world golden whenever somebody
 ## connected.
 var _replicas: ReplicaView = null
+## The boot-owned exploration state. Vault-v2 names are restored here even when
+## this rollback build does not register or act on a future place yet, and the
+## two shipped places are observed into the append-only vault as the wanderer
+## reaches them.
+var _discovery := Discovery.new()
+## A discovery enters the live tracker before persistence is attempted. Keep
+## the locally observed IDs themselves so a transient filesystem failure can
+## retry them without also re-originating rollback-only names restored into the
+## tracker. SaveVault preserves unknown names from the on-disk document; Main
+## submits only discoveries this build actually observed.
+var _discovery_persistence_pending: Array[String] = []
+var _discovery_persistence_retry_in := 0.0
+var _discovery_persistence_retry_delay := DISCOVERY_PERSIST_RETRY_INITIAL_SECONDS
+var _discovery_persistence_warning_shown := false
 
 func _ready() -> void:
 	# Capture-harness entry for the EXPORTED client: the official export
@@ -98,6 +125,12 @@ func _ready() -> void:
 	add_child(_player)
 	# The mouth faces the shrine, so facing the shrine faces the light.
 	_player.face_toward(Vector3.ZERO)
+	# Save only stable semantic ids, never generated coordinates: both places
+	# can move when world generation evolves without invalidating progression.
+	_discovery.add(DISCOVERY_STARTER_CAVE, world.cave_spawn_point(),
+		STARTER_CAVE_DISCOVERY_RADIUS)
+	_discovery.add(DISCOVERY_WARDENS_SHRINE, world.shrine_interactable().global_position,
+		WorldGen.SHRINE_CLEAR_RADIUS)
 
 	# The Reach is inhabited: a seeded settlement rings the shrine and lone
 	# drifters dot the open land — the same people in the same places every
@@ -156,10 +189,17 @@ func _ready() -> void:
 	# (a newer client's) resolves to null and is skipped — never a crash.
 	var vault = SaveVault.load_saved()
 	if vault is Dictionary:
+		# Validation has already proved this is an array of non-empty strings.
+		# Restore unknown future names too: they must survive in the live
+		# session even when this older build cannot register the place.
+		_discovery.restore(vault.get("discoveries", []))
 		for name: String in SaveVault.attuned(vault):
 			var point = RespawnPoints.resolve(name, world)
 			if point != null:
 				_player.set_respawn_point(point)
+	# Observe only after restore. A persisted place then stays idempotent, while
+	# the cave under a new wanderer's feet becomes the first v2 write.
+	_observe_discoveries()
 
 	# The people speak: a person's seeded line surfaces as a toast.
 	npcs.npc_spoke.connect(func(npc_name: String, line: String) -> void:
@@ -321,6 +361,8 @@ func _connect_zone() -> void:
 ## bake in a policy nothing yet exercises.
 func _process(delta: float) -> void:
 	_drift_hollow_fog(delta)
+	_track_cave_atmosphere()
+	_observe_discoveries(delta)
 	if _zone == null:
 		return
 	_zone.poll()
@@ -345,6 +387,46 @@ func _process(delta: float) -> void:
 		# with nothing anywhere to say why.
 		_zone_failure_reported = true
 		push_warning("zone connection closed by the zone — replication has stopped for this session")
+
+
+## Fold this frame's player position into the append-only discovery set.
+## Transient storage failures retain a dirty bit and retry with bounded
+## exponential backoff; a path-latched unreadable/newer vault stays session-only
+## and is never retried, preserving the downgrade refusal.
+func _observe_discoveries(delta: float = 0.0) -> void:
+	if _player == null:
+		return
+	var newly_found := _discovery.observe(_player.global_position)
+	if not newly_found.is_empty():
+		for name: String in newly_found:
+			if name not in _discovery_persistence_pending:
+				_discovery_persistence_pending.append(name)
+		_discovery_persistence_retry_in = 0.0
+		_discovery_persistence_retry_delay = DISCOVERY_PERSIST_RETRY_INITIAL_SECONDS
+	if _discovery_persistence_pending.is_empty():
+		return
+	if newly_found.is_empty() and _discovery_persistence_retry_in > 0.0:
+		_discovery_persistence_retry_in = maxf(
+			0.0, _discovery_persistence_retry_in - delta)
+		if _discovery_persistence_retry_in > 0.0:
+			return
+	if SaveVault.persist_discoveries(_discovery_persistence_pending):
+		_discovery_persistence_pending.clear()
+		_discovery_persistence_retry_in = 0.0
+		_discovery_persistence_retry_delay = DISCOVERY_PERSIST_RETRY_INITIAL_SECONDS
+		return
+	# persist_discoveries() latches unreadable/newer paths. Only a failure that
+	# leaves this exact path writable is transient and eligible for retry.
+	if SaveVault.can_write(SaveVault.vault_path()):
+		_discovery_persistence_retry_in = _discovery_persistence_retry_delay
+		_discovery_persistence_retry_delay = minf(
+			_discovery_persistence_retry_delay * 2.0,
+			DISCOVERY_PERSIST_RETRY_MAX_SECONDS)
+	else:
+		_discovery_persistence_pending.clear()
+	if not _discovery_persistence_warning_shown:
+		_discovery_persistence_warning_shown = true
+		_hud.toast("This place is known for now — though the Reach may not remember next waking.")
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -457,8 +539,9 @@ func _build_environment() -> void:
 	env.fog_density = 0.010
 	env.fog_aerial_perspective = 0.35
 	env.fog_sky_affect = 0.4
-	env.fog_height = 6.0
-	env.fog_height_density = 0.06
+	# The downward pooling is [CaveAtmosphere]'s to write — at build time under
+	# an open sky, and again each frame for wherever the view has moved to.
+	CaveAtmosphere.apply(env, 0.0)
 
 	# Volumetric fog is gated on a GPU capability probe. Godot's froxel
 	# volumetrics need an R32_Uint atomic storage image, which some GPUs do not
@@ -489,6 +572,7 @@ func _build_environment() -> void:
 	world_env.name = "WorldEnvironment"
 	world_env.environment = env
 	add_child(world_env)
+	_env = env
 
 
 ## Thickens the air in the terrain's hollows (#211), so ash gathers on low
@@ -538,6 +622,39 @@ func _drift_hollow_fog(delta: float) -> void:
 	_hollow_fog_time += delta
 	for i in _hollow_fog_volumes.size():
 		HollowFog.apply_drift(_hollow_fog_volumes[i], _hollow_fog[i], _hollow_fog_time)
+
+
+## Retunes the ash's downward pooling for wherever the view is this frame, so
+## the weather stops falling inside sealed rock ([CaveAtmosphere] carries the
+## measurements and the reasoning).
+##
+## Driven off the ACTIVE camera rather than the player, for two reasons that
+## point the same way. The camera is what the frame is composed from, so it is
+## the thing whose air the fog is describing — and `tools/frame_capture` shoots
+## the cave by making its own camera current while the wanderer stays put, so
+## keying on the player would photograph the starter cave through surface
+## weather and the evidence frames would not depict what a player sees.
+func _track_cave_atmosphere() -> void:
+	if _env == null:
+		return
+	var cam := get_viewport().get_camera_3d()
+	if cam == null:
+		return
+	var blocked := CaveAtmosphere.sky_blocked_fraction(
+		cam.get_world_3d().direct_space_state, cam.global_position
+	)
+	# Written only when it actually changes. Setting a fog property does not
+	# store a float — it re-issues the whole fog block to the rendering server —
+	# and the cone can only report six values, so the overwhelming majority of
+	# frames (all of them outdoors, all of them deep in the cave) would be
+	# re-sending state identical to what is already there. This is an exact
+	# compare on the computed result, NOT a positional or time-based cache: the
+	# frame a reading changes on is still the frame it is written on, so what
+	# the environment holds is bit-identical to writing it every time.
+	if blocked == _sky_blocked:
+		return
+	_sky_blocked = blocked
+	CaveAtmosphere.apply(_env, blocked)
 
 
 ## Where this boot pooled ash, deepest hollow first — a copy, so a caller can

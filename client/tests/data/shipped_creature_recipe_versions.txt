@@ -1,0 +1,5 @@
+# Every creature-recipe version that has EVER shipped — the independent
+# forward-only floor for creature_factory_test (no-resets law). APPEND-ONLY:
+# bumping RECIPE_VERSION means adding its line here AND its matching
+# golden_creature_recipe_v<N>.json; removing a line breaks shipped creatures.
+1

@@ -10,7 +10,8 @@
 // server additionally speaks the Agones GameServer lifecycle through the
 // official SDK, which is what makes the binary deployable on the fleet: Ready
 // once a player could actually connect, Health on a cadence, Shutdown on
-// exit. The Nakama layer remains a later child of the server-foundation epic.
+// exit. Nakama identity and handoff policy live in their own inert packages;
+// the concrete allocation adapter and RPC registration remain later children.
 // The socket is opt-in: without -listen the command behaves exactly as before.
 //
 //	zone                     # 600 deterministic ticks, then print the state hash
@@ -122,9 +123,10 @@ func admissionSecret(envName string) []byte {
 }
 
 // runMint is the developer-side helper for exercising -listen: it mints an
-// admission token for the given observer. Real minting belongs to the
-// allocation/handoff step (a later child of the server epic) — this exists so
-// the socket can be used and evaluated before that child lands.
+// admission token for the given observer. Real minting belongs to
+// handoff.Service with a secret unique to the allocated zone — this remains for
+// exercising the socket without the later concrete Agones allocator and Nakama
+// RPC adapters.
 func runMint(secretEnv, allocation string, observer sim.EntityID, ttl time.Duration) {
 	token, err := zonesock.MintToken(admissionSecret(secretEnv), allocation, observer, time.Now().Add(ttl))
 	if err != nil {

@@ -85,6 +85,28 @@ workflow blocks an external PR until its author signs; signatures are ledgered o
 ledger). **No GPL/AGPL in the shipped tree** — enforced in CI (`license-guard` job), not
 remembered.
 
+### Originality — reference, never reproduce
+
+Named games are references for **abstract ideas, functions and qualities**, never source material.
+World at Ruin may learn from a mechanic, design goal, genre convention or high-level aesthetic
+property; it must not copy or closely adapt another game's code, prose, lore, characters, maps,
+level layouts, compositions, UI, iconography, models, textures, animation, audio or other authored
+expression. The canonical workflow and current reference-distance audit are in
+[`docs/design/originality-boundary.md`](docs/design/originality-boundary.md).
+
+Reference media stays **link-only and view-only**: never commit, trace, paint over or feed another
+game's screenshot, model, texture, clip or audio into an art generator. A player-visible PR using a
+named-game reference carries an **Originality** note with its abstract target, at least three
+independent expressive choices, excluded reference-specific expression, input provenance and
+remaining similarity risk. The frame/reference/gap evidence below remains independently required.
+
+The proposed `docs/design/story-and-progression.md` is under **ORIGINALITY HOLD**. Do not implement
+its Undying Work or Former Lives concept until the combined immortality, amnesia, prior-life and
+identity-mystery cluster has been independently rewritten and reviewed through a draft PR. The
+structural guard in `tools/originality-guard.sh` cannot decide substantial similarity or grant legal
+clearance; high-risk narrative, character, visual and branding questions go to qualified IP counsel
+before release.
+
 ### Product law — the constraints that outrank the design
 
 1. **No hard resets, and nothing is taken from a player silently.** An early player keeps playing
@@ -149,6 +171,11 @@ actual change, the reference it is judged against, and the remaining gap — bec
 that "I looked at it and it's fine" is self-attestation, and self-attestation is exactly what let a
 field of grey primitives ship. A green suite plus a frame that reads as placeholder is a PR that is
 **not ready**.
+
+When the result being judged is movement, the actual-change evidence must be a short clip or captured
+frame sequence rather than a single still. The named reference must likewise be a moving artifact
+with an exact time range, following the citation contract in
+[`docs/art-direction/`](docs/art-direction/README.md).
 
 **How to produce that frame.** CI runs `client/tools/frame_capture.tscn` on player-visible PRs and
 publishes the rendered vantages as a **build artifact** — so the evidence is reproducible on a known
@@ -349,9 +376,11 @@ everything shipped afterwards is held to.
   primitives). The one sanctioned exception to "no binary assets" is `client/assets/` — artifacts
   BAKED BY COMMITTED CODE (`tools/artgen/`, the Python/bpy exception) from CC0 data, plus the
   sanctioned committed CC0 base meshes that generators reshape in code (maintainer direction on
-  #20); every asset directory carries a `PROVENANCE.md` with licence chain and checksums
-  (enforced by `tools/provenance-guard.sh` in the `license-guard` job — a directory holding any
-  non-Markdown file must be covered by a `PROVENANCE.md` at itself or an ancestor), and
+  #20); every asset directory carries a `PROVENANCE.md` with its source/licence chain and an exact
+  SHA-256 manifest of every tracked non-Markdown file it covers (enforced by
+  `tools/provenance-guard.sh` in the `license-guard` job — a directory holding any non-Markdown
+  file must be covered by a `PROVENANCE.md` at itself or an ancestor, and every addition or byte
+  replacement must be deliberately accounted for there), and
   bakes must be deterministic (the artgen workflow re-bakes and byte-compares). Characters are
   composed at runtime by `CharacterFactory` from **recipes** (`client/recipes/*.json`, versioned
   and name-keyed — names are forward-only per the no-resets law; `tests/save_fixture_guard_test`
@@ -387,7 +416,11 @@ everything shipped afterwards is held to.
   prevent. Tests redirect it with `WAR_BOOT_RECOVERY_PATH`. Non-humanoid **creatures**
   follow the same shape — `CreatureFactory` composes a baked creature kit (the ash hound is the
   pilot archetype) from versioned, name-keyed, forward-only recipes, one canonical skeleton per
-  archetype. `server/` is the Go authoritative tier — its **zone tick core** has landed
+  archetype. `tests/creature_factory_test` binds every version through
+  `tests/data/shipped_creature_recipe_versions.txt` to its matching
+  `tests/data/golden_creature_recipe_v<N>.json`; CI runs that scene in a dedicated non-skippable
+  product-law step and holds the ledger append-only against the base revision. `server/` is the Go
+  authoritative tier — its **zone tick core** has landed
   (`server/sim/`, the deterministic fixed-timestep simulation; `server/cmd/zone/`, the runnable
   skeleton), plus its **area-of-interest** query and enter/leave tracker (`server/sim/aoi.go` —
   the seam the replication layer consumes, with its own cross-platform golden) and the
@@ -399,17 +432,34 @@ everything shipped afterwards is held to.
   (`server/zonesock/` — WebSocket over TLS per `docs/design/zone-transport.md`, one codec message
   per binary frame: token-gated fail-closed admission, bounded send queue with snapshot resync on
   overflow, write/idle deadlines, hard inbound size cap; opt-in via `zone -listen`, off by
-  default), and the **combat first slice** (`server/sim/combat.go` — the telegraph cast
+  default), the **Agones lifecycle** (`server/agones/` — Ready/Health/Shutdown through the
+  official SDK, opt-in and default-off), the first **Nakama identity boundary**
+  (`server/nakamaauth/` — verifies a player session through Nakama's generated gRPC `GetAccount`
+  API and returns only the authenticated user ID), the **player handoff core**
+  (`server/handoff/` — gives only that verified identity plus a caller-stable reservation key and
+  server-generated attempt ID to an allocation boundary, conditionally reconciles ambiguous
+  outcomes by that owned attempt, constrains the returned endpoint to the configured managed DNS
+  domain, requires an expiring no-show lease, observer binding and per-allocation admission secret,
+  and mints the nanosecond-expiry token only that allocated zone verifier accepts; the concrete
+  Agones allocator/lease-claim adapter and Nakama RPC registration remain later children), and
+  the **combat first slice** (`server/sim/combat.go` — the telegraph cast
   lifecycle: painted at cast start, resolved once after a tick-counted cast time against
-  positions at resolution, plus a stationary mob AI that aggros the nearest entity in range and
-  casts a dodgeable circle; hit records only — damage/health, threat, chase AI and cast
-  replication are later children — with its own cross-platform golden), with the Agones/Nakama
-  layers arriving as later children of the server-foundation
-  epic (#4); `deploy/` (platform manifests) arrives later per the roadmap.
+  positions at resolution, health/damage application, and one mob AI that deterministically
+  aggros the nearest entity; it remains a stationary caster by default, while the default-off
+  `World.MobChase` flag makes it close through the existing kinematic movement path to a bounded
+  capsule-surface cast range before stopping and painting the dodgeable circle; AI intent ownership
+  preserves caller movement when that flag is off, and the integer-speed floor remains mobile on
+  diagonals; threat from damage, dead-target
+  filtering, real navmesh pathfinding and cast replication remain later children — with its own
+  cross-platform golden), with the concrete Agones allocation adapter, Nakama RPC registration and
+  persistence layers arriving as later children of the server-foundation epic (#4); `deploy/`
+  (platform manifests) arrives later per the roadmap.
 - **Changing any persisted player-data format:** follow the
   [forward-only save-data migration contract](docs/design/save-data.md). It defines the staged
   expand → bake → contract rollout, the version-bump checklist, and the refusal rules for the
-  character recipe, progression vault and recovery ledger; a green fixture guard alone does not
+  character recipe, progression vault and recovery ledger. Stable live names are permanent too:
+  attunements need append-only ledgers, while writable discovery IDs need append-only
+  `id=landmark` mappings plus real boot/application guards; a green fixture guard alone does not
   make a one-release read-and-write bump rollback-safe.
 - **Run:** `godot client` (macOS: `/Applications/Godot.app/Contents/MacOS/Godot client`).
 - **Validate before every PR:**
@@ -591,10 +641,13 @@ everything shipped afterwards is held to.
   without this would have frozen the repo on three `tools/artgen` findings. Note also that
   adding a language leaves existing PRs blocked until each re-runs with the new analysis — that is
   expected, and a push (or a merge of `main`) clears it.
-- **Licensing hygiene:** no GPL/AGPL code or assets in the shipped tree; no commercial assets;
-  CC0/OSS-permissive only, with licence verified per asset dataset. External PRs cannot be merged
-  until their author signs the CLA (`CLA.md`; the `CLA` workflow enforces this, with the ledger on
-  the permanent `cla-signatures` branch).
+- **Licensing and originality hygiene:** no GPL/AGPL code or assets in the shipped tree; no
+  commercial assets; CC0/OSS-permissive only, with licence verified per asset dataset. No copied or
+  closely adapted third-party game expression, and no downloaded reference media or reference
+  media used as generator input; follow
+  [`docs/design/originality-boundary.md`](docs/design/originality-boundary.md). External PRs cannot
+  be merged until their author signs the CLA (`CLA.md`; the `CLA` workflow enforces this, with the
+  ledger on the permanent `cla-signatures` branch).
 - **Roadmap:** GitHub Issues on this repo (`roadmap` label for epics). The plan is **phase-gated**
   — Phase 0 (art-pipeline taste gate, #1) through Phase 8 (platforms, #15), each phase's exit
   criteria unlocking the next, plus the standing risk register (#16). Keep issues **agent-shaped**
@@ -613,7 +666,8 @@ Reviewers (Codex/CodeRabbit) flag **P0/P1 only**:
   migration, save-format break, or non-backward-compatible protocol change **not gated behind an
   announced, player-visible deprecation** — or that introduces power/wealth inflation, ships an
   unsettled/experimental feature **not default-off behind an opt-in flag**, or adds
-  GPL/AGPL/commercial-licensed content.
+  GPL/AGPL/commercial-licensed content, copied third-party expression or unlicensed third-party
+  reference media.
 - **P1 — correctness:** unseeded/non-deterministic world generation, client-authoritative gameplay
   state (once networking exists), physics entering the authoritative path, or a player-visible
   change with no dev-log entry.
@@ -621,7 +675,11 @@ Reviewers (Codex/CodeRabbit) flag **P0/P1 only**:
   animation, audio, UI/UX, camera, game feel, or the design itself — that ships **default-on** while
   still reading as placeholder (engine primitives as art, flat untextured materials, uniform
   scatter, no second-order life, and the equivalents of those outside art). **Separately P1 on its
-  own:** a player-visible PR carrying **no inspectable frame evidence, or no named reference and
-  stated gap** — including one that simply *omits* any readiness judgement, not only one that argues
-  from green tests. See **[Quality bar](#quality-bar--it-has-to-resemble-a-aaa-game)** and the
-  reference set in **[`docs/art-direction/`](docs/art-direction/README.md)**.
+  own:** a player-visible PR carrying **no inspectable frame or clip evidence, no named reference and
+  stated gap, or no required Originality note when a named-game reference was used** — including one
+  that simply *omits* any readiness judgement, not only one that argues from green tests. Motion
+  changes specifically require a clip or captured frame sequence of the actual change and a
+  time-ranged moving reference; a single still cannot evidence motion. See
+  **[Quality bar](#quality-bar--it-has-to-resemble-a-aaa-game)**, the reference set in
+  **[`docs/art-direction/`](docs/art-direction/README.md)**, and the
+  **[originality boundary](docs/design/originality-boundary.md)**.

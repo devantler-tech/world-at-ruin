@@ -23,13 +23,15 @@ jobs:
     name: Client smoke boot
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Full history: the ledger append-only check diffs against the base
           # commit, which a depth-1 checkout cannot reach.
           fetch-depth: 0
           # Read-only job: no push, so the token must not linger in .git/config.
           persist-credentials: false
+      - name: Cask branch visibility retry is bounded and fail-closed
+        run: tools/test-cd-cask-ref-visibility.sh
       - name: Version ledger is append-only (no-resets law)
         # The in-game guard anchors the required fixture range to
         # tests/data/shipped_recipe_versions.txt, but a checkout-local file
@@ -59,6 +61,41 @@ jobs:
           removed=$(comm -23 /tmp/ledger-base /tmp/ledger-head)
           if [ -n "$removed" ]; then
             echo "::error::Shipped version(s) removed from $LEDGER ($(echo "$removed" | tr '\n' ' ')) — shipped saves are never disposable (no-resets law)"
+            exit 1
+          fi
+      - name: Creature recipe ledger is append-only (no-resets law)
+        # creature_factory_test binds CreatureFactory.RECIPE_VERSION to every
+        # historical creature fixture in this ledger. The base comparison is
+        # the immutable half: a PR may not lower the constant and delete the
+        # same ledger line while keeping every checkout-local check green.
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          LEDGER=client/tests/data/shipped_creature_recipe_versions.txt
+          if [ ! -f "$LEDGER" ]; then
+            echo "::error::$LEDGER was deleted — the forward-only creature recipe ledger must exist"
+            exit 1
+          fi
+          if ! git cat-file -e "$BASE_SHA" 2>/dev/null; then
+            echo "::error::base commit $BASE_SHA not present in the checkout — cannot verify the ledger"
+            exit 1
+          fi
+          extract='s/^[[:space:]]*\([0-9][0-9]*\)[[:space:]]*$/\1/p'
+          if git cat-file -e "$BASE_SHA:$LEDGER" 2>/dev/null; then
+            if ! git show "$BASE_SHA:$LEDGER" > /tmp/creature-recipe-base-raw; then
+              echo "::error::could not read $LEDGER at $BASE_SHA — refusing to compare against an empty base"
+              exit 1
+            fi
+            sed -n "$extract" /tmp/creature-recipe-base-raw | sort -un > /tmp/creature-recipe-base
+          else
+            echo "::notice::$LEDGER does not exist at the base revision — treating the base set as empty (this is the commit that introduces it)"
+            : > /tmp/creature-recipe-base
+          fi
+          sed -n "$extract" "$LEDGER" | sort -un > /tmp/creature-recipe-head
+          removed=$(comm -23 /tmp/creature-recipe-base /tmp/creature-recipe-head)
+          if [ -n "$removed" ]; then
+            echo "::error::Shipped creature recipe version(s) removed from $LEDGER ($(echo "$removed" | tr '\n' ' ')) — shipped creatures are never disposable (no-resets law)"
             exit 1
           fi
       - name: Save-capability ledger is append-only (no-resets law)
@@ -233,6 +270,52 @@ jobs:
           removed=$(comm -23 /tmp/attune-base /tmp/attune-head)
           if [ -n "$removed" ]; then
             echo "::error::Shipped attunement name(s) removed from $LEDGER ($(echo "$removed" | tr '\n' ' ')) — players attuned there would wake in the cave forever (no-resets law)"
+            exit 1
+          fi
+      - name: Discovery ledger is append-only (no-resets law)
+        # A discovery id AND the landmark it means are persisted player history
+        # just like an attunement name. The runtime guard binds the current
+        # writer and live POIs to this mapping ledger; comparing the complete
+        # id=landmark row prevents a PR from repointing production and its local
+        # test oracle together while reinterpreting an existing player's state.
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          LEDGER=client/tests/data/shipped_discoveries.txt
+          if [ ! -f "$LEDGER" ]; then
+            echo "::error::$LEDGER was deleted — the forward-only discovery ledger must exist"
+            exit 1
+          fi
+          if ! git cat-file -e "$BASE_SHA" 2>/dev/null; then
+            echo "::error::base commit $BASE_SHA not present in the checkout — cannot verify the ledger"
+            exit 1
+          fi
+          mappings='/^[[:space:]]*#/d; /^[[:space:]]*$/d; s/^[[:space:]]*//; s/[[:space:]]*$//'
+          if git cat-file -e "$BASE_SHA:$LEDGER" 2>/dev/null; then
+            if ! git show "$BASE_SHA:$LEDGER" > /tmp/discovery-base-raw; then
+              echo "::error::could not read $LEDGER at $BASE_SHA — refusing to compare against an empty base"
+              exit 1
+            fi
+            sed -e "$mappings" /tmp/discovery-base-raw | sort -u > /tmp/discovery-base
+          else
+            echo "::notice::$LEDGER does not exist at the base revision — treating the base set as empty (this is the commit that introduces it)"
+            : > /tmp/discovery-base
+          fi
+          sed -e "$mappings" "$LEDGER" | sort -u > /tmp/discovery-head
+          invalid=$(grep -vE '^[a-z0-9_]+=[a-z0-9_]+$' /tmp/discovery-head || true)
+          if [ -n "$invalid" ]; then
+            echo "::error::$LEDGER has invalid id=landmark row(s): $(echo "$invalid" | tr '\n' ' ')"
+            exit 1
+          fi
+          duplicate_ids=$(cut -d= -f1 /tmp/discovery-head | sort | uniq -d)
+          if [ -n "$duplicate_ids" ]; then
+            echo "::error::$LEDGER maps an id more than once: $(echo "$duplicate_ids" | tr '\n' ' ')"
+            exit 1
+          fi
+          removed=$(comm -23 /tmp/discovery-base /tmp/discovery-head)
+          if [ -n "$removed" ]; then
+            echo "::error::Shipped discovery mapping(s) removed or repointed in $LEDGER ($(echo "$removed" | tr '\n' ' ')) — permanent player history would be reinterpreted (no-resets law)"
             exit 1
           fi
       - name: Wire protocol may not move without a two-phase rollout
@@ -756,6 +839,12 @@ jobs:
         # step so a stranded save fails loudly here, never buried in the
         # per-stage loop below.
         run: ./tools/run-client-test.sh save_fixture_guard_test "a historical save no longer loads with zero loss"
+      - name: Creature recipe guard (every shipped version has a buildable fixture)
+        # The non-humanoid sibling of the save-fixture guard (#259). Its own
+        # named step keeps the ledger-to-fixture contract loud and prevents a
+        # ci-skip.txt entry from silencing the only runtime check that binds
+        # CreatureFactory.RECIPE_VERSION to shipped history.
+        run: ./tools/run-client-test.sh creature_factory_test "a shipped creature recipe version lost its fixture or no longer builds"
       - name: Save-vault guard (every historical vault loads with zero loss)
         # THE product-law surface for PROGRESSION state (#249, parent #3), the
         # sibling of the save-fixture guard above. Its own named step, outside
@@ -795,9 +884,9 @@ jobs:
         # judged by tools/run-client-test.sh, the same runner the product-law
         # steps above call, so the pass criterion is defined in exactly one
         # place (issue #305).
-        #   - save_fixture_guard_test, save_vault_guard_test,
-        #     boot_recovery_guard_test, vault_restore_boot_test and
-        #     ability_registry_test are deliberately
+        #   - save_fixture_guard_test, creature_factory_test,
+        #     save_vault_guard_test, boot_recovery_guard_test,
+        #     vault_restore_boot_test and ability_registry_test are deliberately
         #     excluded: each runs in its own named step above (the product-law
         #     surfaces, kept loud, separate and NON-SKIPPABLE), so discovering
         #     them here would both run them twice and expose them to ci-skip.
@@ -818,7 +907,7 @@ jobs:
             t=$(basename "$scene" .tscn)
             # Run in their own dedicated steps above — never twice, and never
             # skippable via ci-skip.txt (they are the product-law surfaces).
-            case "$t" in save_fixture_guard_test|save_vault_guard_test|boot_recovery_guard_test|vault_restore_boot_test|ability_registry_test) continue ;; esac
+            case "$t" in save_fixture_guard_test|creature_factory_test|save_vault_guard_test|boot_recovery_guard_test|vault_restore_boot_test|ability_registry_test) continue ;; esac
             if is_skipped "$t"; then
               echo "::notice::skipping ${t} (listed in ${skip_file})"
               continue
@@ -851,7 +940,7 @@ jobs:
     # maintainer's Apple-Silicon machine.
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # This job uploads an artifact — never let the checked-out token
           # ride along in it (zizmor artipacked).
@@ -902,10 +991,10 @@ jobs:
           if-no-files-found: error
 
   license-guard:
-    name: Licence guard (no GPL/AGPL in tree, provenance on every asset)
+    name: IP guard (licences, provenance, originality boundary)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Read-only job: no push, so the token must not linger in .git/config.
           persist-credentials: false
@@ -918,15 +1007,23 @@ jobs:
               --exclude-dir=.git --exclude-dir=.github --exclude=AGENTS.md .; then
             echo "::error::GPL/AGPL-licensed content detected — forbidden in the shipped tree"; exit 1
           fi
-      - name: Require a PROVENANCE.md for every asset directory
+      - name: Test the asset provenance guard
+        run: ./tools/provenance-guard.test.sh
+      - name: Require exact provenance for every tracked asset
         # The other half of licensing hygiene: a permissive licence is only
         # worth anything if we can still say where the bytes came from.
         # AGENTS.md (Structure) requires a PROVENANCE.md per asset directory
-        # and #16 lists provenance drift as a standing risk to enforce rather
-        # than remember — this is that enforcement. It rides in this job
-        # because it is the same concern and the job is already required, so
-        # the check costs no extra runner.
+        # with an exact per-file checksum manifest, and #16 lists provenance
+        # drift as a standing risk to enforce rather than remember. It rides
+        # in this job because it is the same concern and the job is already
+        # required, so the check costs no extra runner.
         run: ./tools/provenance-guard.sh
+      - name: Test the originality guard
+        run: ./tools/originality-guard.test.sh
+      - name: Enforce the originality boundary
+        # Objective repository facts only: this cannot decide substantial
+        # similarity or grant legal clearance.
+        run: ./tools/originality-guard.sh
 
   # Repo-wide linting for everything that is not GDScript: JSON, Markdown, YAML, shell,
   # the workflows in this directory, spelling and secrets. MegaLinter ships no GDScript
@@ -939,7 +1036,7 @@ jobs:
   # container's Go can lag.
   lint:
     name: Lint
-    uses: devantler-tech/actions/.github/workflows/lint.yaml@5c284fdf432754a697710c336fc2c26bc99868bb # v10.2.0
+    uses: devantler-tech/actions/.github/workflows/lint.yaml@9705e47d7df0b556ec06786247297c0e5020e56d # v10.2.1
     permissions:
       contents: write
       issues: write
@@ -965,7 +1062,7 @@ jobs:
     name: Server CI (Go)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # The job only builds and tests local Go code — it never needs the
           # checkout token, so don't persist it into .git/config (zizmor
@@ -1005,7 +1102,7 @@ jobs:
       export_affecting: ${{ steps.check.outputs.export_affecting }}
       gpu_gated: ${{ steps.check.outputs.gpu_gated }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -1186,7 +1283,7 @@ jobs:
     # Same bound as the exported capture, which already carries one.
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Full history: the change report at the end of this job renders the
           # MERGE BASE from a git worktree of this same clone, which a depth-1
@@ -1264,6 +1361,40 @@ jobs:
           if grep -qE "SCRIPT ERROR|^ERROR" capture.filtered.log; then
             echo "::error::errors during capture — frames may not depict a healthy world"
             grep -nE "SCRIPT ERROR|^ERROR" capture.filtered.log | head -20
+            exit 1
+          fi
+      - name: Capture the moving-key material response
+        # #346. Ordinary evidence holds the SUN fixed and moves the camera,
+        # which cannot prove a material follows a moving light. This scenario
+        # does the inverse: one broad foliage view and one hollow-ash close-up
+        # each keep the camera/world fixed while the shipping DirectionalLight3D
+        # moves through equal-and-opposite source-side and far-side directions.
+        #
+        # Into a subdirectory so frame_diff cannot mistake these deliberately
+        # relit views for ordinary merge-base comparisons.
+        run: |
+          set -o pipefail
+          mkdir -p "${RUNNER_TEMP}/shots/light-response"
+          cp client/recipes/wanderer.json "${RUNNER_TEMP}/light_response_save.json"
+          WAR_SCENARIO=light_response \
+          WAR_SHOT_DIR="${RUNNER_TEMP}/shots/light-response" \
+          WAR_SAVE_PATH="${RUNNER_TEMP}/light_response_save.json" \
+          WAR_VAULT_PATH="${RUNNER_TEMP}/light_response_vault.json" \
+          WAR_BOOT_RECOVERY_PATH="${RUNNER_TEMP}/light_response_recovery.json" \
+            godot --path client res://tools/frame_capture.tscn 2>&1 | tee capture-light-response.log
+          if ! grep -q "CAPTURE PASS" capture-light-response.log; then
+            echo "::error::moving-key capture did not report PASS — the dynamic response evidence is missing"
+            tail -40 capture-light-response.log; exit 1
+          fi
+          if ! grep -q "BOOT_OK" capture-light-response.log; then
+            echo "::error::moving-key capture never reached BOOT_OK"
+            tail -40 capture-light-response.log; exit 1
+          fi
+          grep -vE "timeout waiting for fence|drivers/metal/rendering_device_driver_metal" \
+            capture-light-response.log > capture-light-response.filtered.log || true
+          if grep -qE "SCRIPT ERROR|^ERROR" capture-light-response.filtered.log; then
+            echo "::error::errors during moving-key capture — response frames may depict a degraded world"
+            grep -nE "SCRIPT ERROR|^ERROR" capture-light-response.filtered.log | head -20
             exit 1
           fi
       - name: Record what these frames can evidence
@@ -1702,6 +1833,8 @@ jobs:
           path: |
             ${{ runner.temp }}/shots/*.png
             ${{ runner.temp }}/shots/*.txt
+            ${{ runner.temp }}/shots/light-response/*.png
+            ${{ runner.temp }}/shots/light-response/*.txt
             ${{ runner.temp }}/shots/opt-in-plates/*.png
             ${{ runner.temp }}/shots/opt-in-plates/*.txt
           if-no-files-found: error
@@ -1746,7 +1879,7 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         # The checkout exists only to seed the capture save from
         # client/recipes/wanderer.json — the game itself comes exclusively from
         # the export artifact.
@@ -1964,7 +2097,7 @@ jobs:
       ]
     if: ${{ always() }}
     steps:
-      - uses: devantler-tech/actions/aggregate-job-checks@0f27c13a9785608e0bbf9998777d27761b4de617 # v10.0.2
+      - uses: devantler-tech/actions/aggregate-job-checks@9705e47d7df0b556ec06786247297c0e5020e56d # v10.2.1
         with:
           # frame-capture, frame-capture-exported and detect-visual-changes are
           # conditional and report `skipped` on PRs with no player-visible
