@@ -101,8 +101,16 @@ uniform float lip_lift: hint_range(0.0, 1.0) = 0.18;
 //
 // It multiplies rather than replaces on purpose: the question is how a RATIO
 // transmits through the atmosphere, and a ratio is what the regions actually
-// are. At its default of exactly 1.0 the multiply is an identity — the shipped
-// frame is bit-identical with it present.
+// are.
+//
+// At its default of exactly 1.0 the multiply is an arithmetic identity, but the
+// shipped frame is NOT promised to be bit-identical and measurement says it is
+// not: against a same-build control that reproduced 0.00% of outdoor pixels,
+// adding this uniform moved 0.02-0.07% of them. The compiler is free to
+// reassociate the widened product, which shifts the last mantissa bit on a
+// scattered few. Every one of those differences is below 8-bit quantisation
+// (mean |dRGB| <= 0.0001) and every reported frame metric — p1, p99, hue span —
+// is unchanged to all published digits, so nothing a player can see moves.
 uniform float albedo_probe: hint_range(0.25, 4.0) = 1.0;
 
 varying vec3 world_pos;

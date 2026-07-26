@@ -212,24 +212,6 @@ func _bind(main: Node) -> bool:
 
 
 func _run(cam: Camera3D) -> void:
-	# Snapshot every value any condition touches, so each condition is measured
-	# against the shipped atmosphere rather than against the previous ablation's
-	# leftovers. Restoring after each row is what makes the rows independent.
-	var shipped := {
-		"fog_enabled": _env.fog_enabled,
-		"fog_density": _env.fog_density,
-		"fog_height": _env.fog_height,
-		"fog_height_density": _env.fog_height_density,
-		"fog_aerial_perspective": _env.fog_aerial_perspective,
-		"fog_sky_affect": _env.fog_sky_affect,
-		"ambient_light_energy": _env.ambient_light_energy,
-		"tonemap_mode": _env.tonemap_mode,
-		"tonemap_white": _env.tonemap_white,
-		"tonemap_exposure": _env.tonemap_exposure,
-		"adjustment_enabled": _env.adjustment_enabled,
-		"volumetric_fog_enabled": _env.volumetric_fog_enabled,
-	}
-
 	# One row per candidate the issue names, plus the two controls. Each entry is
 	# [label, {property: neutralised value}] — a data table rather than branching
 	# code, so adding a candidate is a line and the report order is the read order.
@@ -288,6 +270,35 @@ func _run(cam: Camera3D) -> void:
 		_terrain_mat.set_shader_parameter("albedo_probe", 1.0)
 		for i in PRIME_FRAMES:
 			await get_tree().process_frame
+
+		# Snapshot the shipped atmosphere HERE — per vantage, after the camera has
+		# arrived — not once for the whole run.
+		#
+		# `main._process` re-applies CaveAtmosphere's height fog for wherever the
+		# camera currently is, so the shipped fog over the pale country is not the
+		# shipped fog at the player's spawn. A single snapshot taken before the
+		# first camera move therefore restores the WRONG location's pooling after
+		# every condition, and main will not correct it: it only rewrites the fog
+		# when the sky-blocked fraction changes, which standing still it does not.
+		#
+		# Measured, with the run-wide snapshot: the first row read the real
+		# atmosphere and all thirteen after it read the corrupted one, which put
+		# the repeat-baseline check 25% away from the baseline and handed every
+		# innocent condition an identical, entirely fictional +25%.
+		var shipped := {
+			"fog_enabled": _env.fog_enabled,
+			"fog_density": _env.fog_density,
+			"fog_height": _env.fog_height,
+			"fog_height_density": _env.fog_height_density,
+			"fog_aerial_perspective": _env.fog_aerial_perspective,
+			"fog_sky_affect": _env.fog_sky_affect,
+			"ambient_light_energy": _env.ambient_light_energy,
+			"tonemap_mode": _env.tonemap_mode,
+			"tonemap_white": _env.tonemap_white,
+			"tonemap_exposure": _env.tonemap_exposure,
+			"adjustment_enabled": _env.adjustment_enabled,
+			"volumetric_fog_enabled": _env.volumetric_fog_enabled,
+		}
 
 		var box: Array = GROUND_BOXES[vname]
 		var baseline_delta := 0.0
