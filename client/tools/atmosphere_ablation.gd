@@ -309,10 +309,13 @@ func _run(cam: Camera3D) -> bool:
 		# Prime the accumulating systems at BOTH probe extremes before measuring
 		# anything, so the first condition is not the one that pays for SDFGI
 		# converging on a brighter world.
-		_terrain_mat.set_shader_parameter("albedo_probe", REGION_RATIO)
+		# Prime at the SAME two endpoints the measurement uses. Priming anywhere
+		# else warms the accumulating systems at a brightness no row ever reads,
+		# which is how the original range error got in.
+		_terrain_mat.set_shader_parameter("albedo_probe", PROBE_HI)
 		for i in PRIME_FRAMES:
 			await get_tree().process_frame
-		_terrain_mat.set_shader_parameter("albedo_probe", 1.0)
+		_terrain_mat.set_shader_parameter("albedo_probe", PROBE_LO)
 		for i in PRIME_FRAMES:
 			await get_tree().process_frame
 
