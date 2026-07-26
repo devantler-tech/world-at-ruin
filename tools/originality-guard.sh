@@ -35,11 +35,45 @@ CAPTURE_MANIFEST="docs/first-party-captures.sha256"
 REQUIRED_STORY_HOLD="ORIGINALITY HOLD (#359): DO NOT IMPLEMENT THE UNDYING WORK OR FORMER LIVES CONCEPT."
 
 is_binary() {
-	local file="$1" total stripped
-	iconv -f UTF-8 -t UTF-8 <"$file" >/dev/null 2>&1 || return 0
-	total=$(wc -c <"$file")
-	stripped=$(LC_ALL=C tr -d '\000' <"$file" | wc -c)
-	[ "$total" -ne "$stripped" ]
+	local file="$1" mime_type
+	[ -s "$file" ] || return 1
+	mime_type=$(file -b --mime-type -- "$file")
+	case "$mime_type" in
+	text/* | application/json | application/xml | application/yaml | application/x-yaml)
+		return 1
+		;;
+	*)
+		return 0
+		;;
+	esac
+}
+
+has_encoded_media() {
+	local file="$1"
+
+	if grep -Ein \
+		'(<svg([[:space:]>])|data:(image|audio|video|model)/[^;,]+;base64,|^[[:space:]]*(v|vn|vt|f)[[:space:]]+(-?[0-9]+([.][0-9]+)?[[:space:]]+){2})' \
+		"$file" >/dev/null; then
+		return 0
+	fi
+
+	# Encoders commonly wrap base64 at 64 or 76 columns. Accumulate adjacent
+	# base64-only lines so wrapping cannot turn one payload into safe fragments.
+	awk '
+		{
+			line = $0
+			gsub(/[[:space:]]/, "", line)
+			if (line ~ /^[A-Za-z0-9+\/=]+$/ && length(line) >= 32) {
+				block_length += length(line)
+				if (block_length >= 128) {
+					found = 1
+				}
+			} else {
+				block_length = 0
+			}
+		}
+		END { exit found ? 0 : 1 }
+	' "$file"
 }
 
 non_markdown_references=()
@@ -70,10 +104,7 @@ fi
 # embedded in generator source. Scan both text surfaces rather than trusting a
 # directory name or source-file extension.
 while IFS= read -r -d '' file; do
-	if ! is_binary "$file" &&
-		grep -Ein \
-			'(<svg([[:space:]>])|data:(image|audio|video|model)/[^;,]+;base64,|[A-Za-z0-9+/]{128,}={0,2}|^[[:space:]]*(v|vn|vt|f)[[:space:]]+(-?[0-9]+([.][0-9]+)?[[:space:]]+){2})' \
-			"$file" >/dev/null; then
+	if ! is_binary "$file" && has_encoded_media "$file"; then
 		encoded_documentation_media+=("$file")
 	fi
 done < <(git ls-files -z -- docs "$ARTGEN_ROOT")
@@ -131,22 +162,28 @@ fi
 # manifest exactly, so adding a screenshot is a visible, reviewable act.
 while IFS= read -r -d '' file; do
 	lower_file=$(printf '%s' "$file" | tr '[:upper:]' '[:lower:]')
+	media_candidate=0
+	if is_binary "$file"; then
+		media_candidate=1
+	fi
 	case "$lower_file" in
 	*.png | *.jpg | *.jpeg | *.gif | *.webp | *.bmp | *.tif | *.tiff | *.svg | \
 		*.mp3 | *.wav | *.ogg | *.flac | *.mp4 | *.mov | *.webm | \
 		*.gltf | *.glb | *.fbx | *.obj | *.blend)
-		case "$file" in
-		client/assets/* | client/icon.svg) continue ;;
-		esac
-		if [ ! -f "$CAPTURE_MANIFEST" ]; then
-			unreviewed_media+=("$file")
-			continue
-		fi
-		hash=$(shasum -a 256 "$file" | awk '{print $1}')
-		grep -Fqx "$hash  $file" "$CAPTURE_MANIFEST" ||
-			unreviewed_media+=("$file")
+		media_candidate=1
 		;;
 	esac
+	[ "$media_candidate" -eq 1 ] || continue
+	case "$file" in
+	client/assets/* | client/icon.svg) continue ;;
+	esac
+	if [ ! -f "$CAPTURE_MANIFEST" ]; then
+		unreviewed_media+=("$file")
+		continue
+	fi
+	hash=$(shasum -a 256 "$file" | awk '{print $1}')
+	grep -Fqx "$hash  $file" "$CAPTURE_MANIFEST" ||
+		unreviewed_media+=("$file")
 done < <(git ls-files -z)
 
 if [ -f "$CAPTURE_MANIFEST" ]; then

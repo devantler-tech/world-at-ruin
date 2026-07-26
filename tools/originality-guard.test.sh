@@ -55,6 +55,8 @@ write_valid_contract() {
 		'Wretch reference' \
 		>"$repo/tools/originality-reference-titles.txt"
 	: >"$repo/docs/first-party-captures.sha256"
+	printf '%s\n' '{"capture_notes":"text metadata is not media"}' \
+		>"$repo/docs/evidence/metadata.json"
 	printf '%s\n' \
 		'extends Node' \
 		'' \
@@ -66,6 +68,7 @@ write_valid_contract() {
 		docs/art-direction/README.md \
 		docs/design/originality-boundary.md \
 		docs/design/story-and-progression.md \
+		docs/evidence/metadata.json \
 		docs/first-party-captures.sha256 \
 		tools/originality-reference-titles.txt
 }
@@ -178,6 +181,20 @@ expect_failure \
 	"encoded or inline media in repository text" \
 	"$repo"
 
+repo=$(new_repo wrapped_encoded_media)
+write_valid_contract "$repo"
+printf '%s\n' \
+	'# Evidence' \
+	'' \
+	'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' \
+	'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB' \
+	>"$repo/docs/evidence/reference.md"
+git -C "$repo" add docs/evidence/reference.md
+expect_failure \
+	"line-wrapped base64 reference media is rejected" \
+	"encoded or inline media in repository text" \
+	"$repo"
+
 repo=$(new_repo encoded_artgen_source)
 write_valid_contract "$repo"
 printf '%s\n' \
@@ -195,6 +212,16 @@ printf '\211PNG\r\n\032\nreference bytes\n' >"$repo/docs/evidence/reference.png"
 git -C "$repo" add docs/evidence/reference.png
 expect_failure \
 	"tracked media outside an exact first-party or asset provenance boundary is rejected" \
+	"tracked media is outside a reviewed provenance boundary" \
+	"$repo"
+
+repo=$(new_repo unlisted_binary_media)
+write_valid_contract "$repo"
+printf '\000\000\000\034ftypavif\000\000\000\000reference bytes\n' \
+	>"$repo/docs/evidence/reference.avif"
+git -C "$repo" add docs/evidence/reference.avif
+expect_failure \
+	"unlisted binary media formats still require reviewed provenance" \
 	"tracked media is outside a reviewed provenance boundary" \
 	"$repo"
 
