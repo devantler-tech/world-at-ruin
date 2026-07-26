@@ -172,6 +172,11 @@ that "I looked at it and it's fine" is self-attestation, and self-attestation is
 field of grey primitives ship. A green suite plus a frame that reads as placeholder is a PR that is
 **not ready**.
 
+When the result being judged is movement, the actual-change evidence must be a short clip or captured
+frame sequence rather than a single still. The named reference must likewise be a moving artifact
+with an exact time range, following the citation contract in
+[`docs/art-direction/`](docs/art-direction/README.md).
+
 **How to produce that frame.** CI runs `client/tools/frame_capture.tscn` on player-visible PRs and
 publishes the rendered vantages as a **build artifact** — so the evidence is reproducible on a known
 machine rather than dependent on whoever happened to run the game. Point a reviewer at that artifact.
@@ -424,17 +429,34 @@ everything shipped afterwards is held to.
   (`server/zonesock/` — WebSocket over TLS per `docs/design/zone-transport.md`, one codec message
   per binary frame: token-gated fail-closed admission, bounded send queue with snapshot resync on
   overflow, write/idle deadlines, hard inbound size cap; opt-in via `zone -listen`, off by
-  default), and the **combat first slice** (`server/sim/combat.go` — the telegraph cast
+  default), the **Agones lifecycle** (`server/agones/` — Ready/Health/Shutdown through the
+  official SDK, opt-in and default-off), the first **Nakama identity boundary**
+  (`server/nakamaauth/` — verifies a player session through Nakama's generated gRPC `GetAccount`
+  API and returns only the authenticated user ID), the **player handoff core**
+  (`server/handoff/` — gives only that verified identity plus a caller-stable reservation key and
+  server-generated attempt ID to an allocation boundary, conditionally reconciles ambiguous
+  outcomes by that owned attempt, constrains the returned endpoint to the configured managed DNS
+  domain, requires an expiring no-show lease, observer binding and per-allocation admission secret,
+  and mints the nanosecond-expiry token only that allocated zone verifier accepts; the concrete
+  Agones allocator/lease-claim adapter and Nakama RPC registration remain later children), and
+  the **combat first slice** (`server/sim/combat.go` — the telegraph cast
   lifecycle: painted at cast start, resolved once after a tick-counted cast time against
-  positions at resolution, plus a stationary mob AI that aggros the nearest entity in range and
-  casts a dodgeable circle; hit records only — damage/health, threat, chase AI and cast
-  replication are later children — with its own cross-platform golden), with the Agones/Nakama
-  layers arriving as later children of the server-foundation
-  epic (#4); `deploy/` (platform manifests) arrives later per the roadmap.
+  positions at resolution, health/damage application, and one mob AI that deterministically
+  aggros the nearest entity; it remains a stationary caster by default, while the default-off
+  `World.MobChase` flag makes it close through the existing kinematic movement path to a bounded
+  capsule-surface cast range before stopping and painting the dodgeable circle; AI intent ownership
+  preserves caller movement when that flag is off, and the integer-speed floor remains mobile on
+  diagonals; threat from damage, dead-target
+  filtering, real navmesh pathfinding and cast replication remain later children — with its own
+  cross-platform golden), with the concrete Agones allocation adapter, Nakama RPC registration and
+  persistence layers arriving as later children of the server-foundation epic (#4); `deploy/`
+  (platform manifests) arrives later per the roadmap.
 - **Changing any persisted player-data format:** follow the
   [forward-only save-data migration contract](docs/design/save-data.md). It defines the staged
   expand → bake → contract rollout, the version-bump checklist, and the refusal rules for the
-  character recipe, progression vault and recovery ledger; a green fixture guard alone does not
+  character recipe, progression vault and recovery ledger. Stable live names are permanent too:
+  attunements need append-only ledgers, while writable discovery IDs need append-only
+  `id=landmark` mappings plus real boot/application guards; a green fixture guard alone does not
   make a one-release read-and-write bump rollback-safe.
 - **Run:** `godot client` (macOS: `/Applications/Godot.app/Contents/MacOS/Godot client`).
 - **Validate before every PR:**
@@ -650,9 +672,11 @@ Reviewers (Codex/CodeRabbit) flag **P0/P1 only**:
   animation, audio, UI/UX, camera, game feel, or the design itself — that ships **default-on** while
   still reading as placeholder (engine primitives as art, flat untextured materials, uniform
   scatter, no second-order life, and the equivalents of those outside art). **Separately P1 on its
-  own:** a player-visible PR carrying **no inspectable frame evidence, or no named reference and
+  own:** a player-visible PR carrying **no inspectable frame or clip evidence, no named reference and
   stated gap, or no required Originality note when a named-game reference was used** — including one
-  that simply *omits* any readiness judgement, not only one that argues from green tests. See
+  that simply *omits* any readiness judgement, not only one that argues from green tests. Motion
+  changes specifically require a clip or captured frame sequence of the actual change and a
+  time-ranged moving reference; a single still cannot evidence motion. See
   **[Quality bar](#quality-bar--it-has-to-resemble-a-aaa-game)**, the reference set in
   **[`docs/art-direction/`](docs/art-direction/README.md)**, and the
   **[originality boundary](docs/design/originality-boundary.md)**.

@@ -11,6 +11,38 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
+		"version": "0.55.1",
+		"date": "2026-07-25",
+		"title": "The starting cave is dark again",
+		"notes": [
+			"The ash hanging over the Reach was also filling the cave you wake up in, where no ash can fall. The cave keeps its own air now: the dark is properly dark, and the torch throws a real pool of light instead of a glow on a wall.",
+			"The bedded rock and fractures added earlier were being washed out by that haze — laid down correctly, but with too little shadow anywhere in the room to read as depth. They now show the relief they always had.",
+			"Weather follows the sky it falls from. Step under the overhang at the mouth and the ash thins as rock closes over you; walk back out into the Reach and it returns, with neither change snapping into place.",
+			"None of the cave's colour or torchlight has changed. It is the same warm room it always was, with its shadows given back.",
+		],
+	},
+	{
+		"version": "0.55.0",
+		"date": "2026-07-23",
+		"title": "The Reach remembers the places you have found",
+		"notes": [
+			"The starter cave and the Wardens' Shrine are now recorded the first time you reach them. Close the game after walking from one to the other and both places remain part of your history when you return.",
+			"Older characters and shrine attunements are left in their original save shape. The newer discovery shape is written only after there is a real place to remember, and the earlier read-capable release remains available as the safe rollback path.",
+			"This is memory, not yet a reward: there is no map marker, quest, mastery gain or discovery announcement in this slice. Those player-facing uses remain later exploration work.",
+		],
+	},
+	{
+		"version": "0.52.1",
+		"date": "2026-07-23",
+		"title": "Sunlight reaches the thin things from the right side",
+		"notes": [
+			"Scrub and dead grass could turn dark while you stood on the same side as the sun. Their crossed leaf cards remembered only the side they were built from, so looking at the reverse side made direct sunlight behave as though it came through the ground.",
+			"Each visible side now faces the light honestly. The sun-facing leaves and blades take the full warm key; the far side keeps the weaker glow of light passing through it instead of becoming a black cutout.",
+			"The ash in the hollows no longer throws almost all of its scattered light toward the horizon. It keeps enough of that sunward shaft to show depth, but direct light now reveals the cloud from the source-facing side too.",
+			"Both responses come from the live sun rather than a stored direction, so they move when the light moves. The Reach's sun itself is still fixed in the sky — a full day-and-night cycle remains future work.",
+		],
+	},
+	{
 		"version": "0.51.2",
 		"date": "2026-07-23",
 		"title": "The starter cave now belongs to the ground it rises from",
