@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tests/vault_lock_test.gd" id="1_vaultlock"]
+
+[node name="VaultLockTest" type="Node"]
+script = ExtResource("1_vaultlock")

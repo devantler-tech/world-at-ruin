@@ -199,8 +199,9 @@ target; #343 owns that bake gate and the later v1-writer activation.
 
 Recovery refusal is path-latched for the process lifetime, and persistence reparses the destination
 immediately before atomic replacement. Reconstructing state, deleting a refused file, or landing a
-future/corrupt replacement therefore cannot turn the path writable. As with the vault, this narrows
-but does not close the rename-time concurrent-writer gap tracked by #262.
+future/corrupt replacement therefore cannot turn the path writable. This narrows but does not close
+the rename-time concurrent-writer gap: boot recovery takes no write lock, so unlike the vault it is
+still guarded by the pre-replacement recheck alone.
 
 The ledgers are the immutable floor: the in-game guards compare the current constants and fixtures,
 while CI compares each ledger with the pull request's base revision. Editing code, fixtures and a
@@ -222,10 +223,17 @@ The character recipe and vault deliberately fail differently:
 - An unreadable or newer boot-recovery document degrades to a rollback-safe empty quarantine view,
   while the path remains read-only for the process lifetime. Rollback eligibility still proves save,
   protocol and shell compatibility independently; new update attempts and recovery writes stop.
-- Vault persistence rechecks readability immediately before its atomic replace. The remaining
-  concurrent-writer compare-and-swap gap is tracked by
-  [#262](https://github.com/devantler-tech/world-at-ruin/issues/262); do not describe the current
-  recheck as a complete lock.
+- Vault persistence takes a cross-process write lock around its whole read-modify-write, so no second
+  `SaveVault` writer can read, merge and rename between another's check and its replace. The lock is
+  a directory beside the vault (`vault.json.lock`): `DirAccess.make_dir_absolute` is `mkdir`, the one
+  atomic exclusive-create Godot exposes, so exactly one writer wins and the rest refuse. A refused
+  write degrades to session-only, never blocking a boot, and a lock abandoned by a crashed process is
+  broken once it ages past a deliberately generous timeout — breaking a live lock would reopen the
+  very race, while waiting too long only defers one write.
+- The lock binds `SaveVault` writers, which is the client-versus-client case the no-resets law turns
+  on. A foreign writer — cloud sync, a backup agent, a hand edit — never takes it, so vault
+  persistence still rechecks readability immediately before its atomic replace. That recheck narrows
+  the remaining foreign-writer window to the rename syscall; do not describe it as closing it.
 
 Boot tests redirect every player-state seam through `SaveIsolation`; persistence and fixture tests use
 explicit throwaway paths. A migration test that touches a played save is itself a product-law

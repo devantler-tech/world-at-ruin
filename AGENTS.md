@@ -400,8 +400,18 @@ everything shipped afterwards is held to.
   `tests/data/shipped_vault_versions.txt` — plus two rules of its own: a missing or unreadable vault
   DEGRADES to session-only and may never block a boot, and a vault that exists but cannot be read is
   READ-ONLY for that session (refuse-to-read implies refuse-to-write, or a downgrade would overwrite
-  progression a newer client wrote). Tests redirect it with `WAR_VAULT_PATH`, mirroring
-  `WAR_SAVE_PATH`. The immutable shell's recovery memory is a third persisted contract:
+  progression a newer client wrote). Every write additionally runs under a cross-process lock spanning
+  the whole read-modify-write, so two clients cannot each read the same document, merge their own
+  change and have the slower rename discard the faster one's progression (`tests/vault_lock_test`).
+  The lock is a DIRECTORY beside the vault — `DirAccess.make_dir_absolute` is `mkdir`, the only atomic
+  exclusive-create Godot exposes, and a lock built from `FileAccess.open` would be check-then-act
+  again, so do not "simplify" it into a file. It binds `SaveVault` writers only: a foreign writer
+  (cloud sync, a hand edit) never takes it, which is why the pre-rename readability recheck stays.
+  Contention degrades to session-only rather than blocking a boot, and an abandoned lock is broken
+  only after a deliberately generous timeout — shortening it to make writes prompt would let a live
+  writer be robbed mid-write. Tests redirect it with `WAR_VAULT_PATH`, mirroring `WAR_SAVE_PATH`, and
+  seam the timeout with `WAR_VAULT_LOCK_STALE_SECONDS` (test-only; malformed or negative values keep
+  the shipped window). The immutable shell's recovery memory is a third persisted contract:
   `BootRecovery` (`user://boot_recovery.json`) reads through schema v1 while the expansion release
   keeps production writes on the already-shipped unversioned v0 shape until #343's bake gate,
   reads v0 forever, and is anchored by
