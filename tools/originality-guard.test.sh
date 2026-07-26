@@ -17,6 +17,7 @@ new_repo() {
 		"$repo/client/scripts" \
 		"$repo/docs/art-direction" \
 		"$repo/docs/design" \
+		"$repo/docs/evidence" \
 		"$repo/tools/artgen"
 	git -C "$repo" init -q
 	git -C "$repo" config user.email "originality-guard@example.invalid"
@@ -44,8 +45,16 @@ write_valid_contract() {
 	printf '%s\n' \
 		'# Story proposal' \
 		'' \
-		'**ORIGINALITY HOLD:** do not implement before an independent rewrite.' \
+		'**ORIGINALITY HOLD (#359): DO NOT IMPLEMENT THE UNDYING WORK OR FORMER LIVES CONCEPT.**' \
 		>"$repo/docs/design/story-and-progression.md"
+	printf '%s\n' \
+		'# Named-game references prohibited from player prose' \
+		'World of Warcraft' \
+		'Outer Wilds' \
+		'Return of the Obra Dinn' \
+		'Wretch reference' \
+		>"$repo/tools/originality-reference-titles.txt"
+	: >"$repo/docs/first-party-captures.sha256"
 	printf '%s\n' \
 		'extends Node' \
 		'' \
@@ -56,7 +65,9 @@ write_valid_contract() {
 		client/scripts/devlog.gd \
 		docs/art-direction/README.md \
 		docs/design/originality-boundary.md \
-		docs/design/story-and-progression.md
+		docs/design/story-and-progression.md \
+		docs/first-party-captures.sha256 \
+		tools/originality-reference-titles.txt
 }
 
 run_guard() {
@@ -127,6 +138,58 @@ expect_failure \
 	"binary reference input under tools/artgen" \
 	"$repo"
 
+repo=$(new_repo text_artgen_model)
+write_valid_contract "$repo"
+printf '%s\n' \
+	'# copied ASCII model' \
+	'v 0.0 0.0 0.0' \
+	'v 1.0 0.0 0.0' \
+	'f 1 2 3' \
+	>"$repo/tools/artgen/reference.obj"
+git -C "$repo" add tools/artgen/reference.obj
+expect_failure \
+	"text-encoded models cannot become art-generation inputs" \
+	"unsupported tracked input under tools/artgen" \
+	"$repo"
+
+repo=$(new_repo encoded_reference)
+write_valid_contract "$repo"
+printf '%s\n' \
+	'# Reference' \
+	'' \
+	'<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0h10v10z"/></svg>' \
+	>"$repo/docs/art-direction/reference.md"
+git -C "$repo" add docs/art-direction/reference.md
+expect_failure \
+	"inline media cannot hide inside a Markdown reference" \
+	"encoded or inline media under docs/art-direction" \
+	"$repo"
+
+repo=$(new_repo unreviewed_media)
+write_valid_contract "$repo"
+printf '\211PNG\r\n\032\nreference bytes\n' >"$repo/docs/evidence/reference.png"
+git -C "$repo" add docs/evidence/reference.png
+expect_failure \
+	"tracked media outside an exact first-party or asset provenance boundary is rejected" \
+	"tracked media is outside a reviewed provenance boundary" \
+	"$repo"
+
+repo=$(new_repo first_party_capture)
+write_valid_contract "$repo"
+printf '\211PNG\r\n\032\nfirst-party frame\n' >"$repo/docs/evidence/frame.png"
+hash=$(shasum -a 256 "$repo/docs/evidence/frame.png" | awk '{print $1}')
+printf '%s  %s\n' "$hash" "docs/evidence/frame.png" \
+	>"$repo/docs/first-party-captures.sha256"
+git -C "$repo" add docs/evidence/frame.png docs/first-party-captures.sha256
+expect_success \
+	"exact-byte-bound first-party capture is accepted" \
+	"$repo"
+printf 'changed\n' >>"$repo/docs/evidence/frame.png"
+expect_failure \
+	"changed first-party capture invalidates its reviewed manifest entry" \
+	"first-party capture manifest contains stale or invalid entries" \
+	"$repo"
+
 repo=$(new_repo player_comparison)
 write_valid_contract "$repo"
 printf '%s\n' \
@@ -140,13 +203,39 @@ expect_failure \
 	"third-party reference term in player-facing dev log" \
 	"$repo"
 
+repo=$(new_repo audited_player_comparison)
+write_valid_contract "$repo"
+printf '%s\n' \
+	'extends Node' \
+	'' \
+	'const ENTRIES := [{"gap": "The journal structure still resembles Outer Wilds."}]' \
+	>"$repo/client/scripts/devlog.gd"
+git -C "$repo" add client/scripts/devlog.gd
+expect_failure \
+	"every audited reference title is excluded from player-facing prose" \
+	"third-party reference term in player-facing dev log" \
+	"$repo"
+
 repo=$(new_repo missing_hold)
 write_valid_contract "$repo"
 printf '%s\n' '# Story proposal' >"$repo/docs/design/story-and-progression.md"
 git -C "$repo" add docs/design/story-and-progression.md
 expect_failure \
 	"high-risk story proposal stays quarantined" \
-	"story proposal is missing ORIGINALITY HOLD" \
+	"story proposal is missing the exact ORIGINALITY HOLD directive" \
+	"$repo"
+
+repo=$(new_repo lifted_hold)
+write_valid_contract "$repo"
+printf '%s\n' \
+	'# Story proposal' \
+	'' \
+	'ORIGINALITY HOLD lifted; implementation approved.' \
+	>"$repo/docs/design/story-and-progression.md"
+git -C "$repo" add docs/design/story-and-progression.md
+expect_failure \
+	"story quarantine cannot be satisfied by saying the hold was lifted" \
+	"story proposal is missing the exact ORIGINALITY HOLD directive" \
 	"$repo"
 
 repo=$(new_repo valid)

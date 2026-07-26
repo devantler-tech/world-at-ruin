@@ -56,6 +56,16 @@ or paint over it, feed it to a generator, use it for style transfer, or describe
 asset. Generated work may use only first-party or licence-cleared inputs covered by the asset
 provenance contract.
 
+That boundary covers representation, not just file type. Inline SVG, data URIs, base64 media and
+text-encoded models are reference media too. `tools/artgen/` therefore contains implementation and
+configuration only; its inputs come from the exact-byte-bound asset provenance path.
+
+First-party screenshots used as review evidence are exact-byte-bound separately in
+`docs/first-party-captures.sha256`. A path such as `docs/evidence/` is not proof of origin by itself:
+every tracked media or model outside `client/assets/` and the first-party app icon must match that
+reviewed capture manifest. The manifest records evidence provenance; it does not make an external
+reference first-party.
+
 ## Required reference-distance workflow
 
 Every player-visible change that uses a named-game reference must do all of the following:
@@ -104,8 +114,10 @@ keep independent.
 The audit found no third-party screenshot, model, texture, audio, source-code copy or other direct
 reference asset in the tracked tree. `docs/art-direction/` contains link-only Markdown; the tracked
 Phase 0 images are first-party captures of World at Ruin; current character assets are procedural or
-documented CC0 inputs. The provenance guard binds every tracked asset to its reviewed source, licence,
-and exact bytes.
+documented CC0 inputs. The asset provenance guard binds every shipped asset to its reviewed source,
+licence and exact bytes; the first-party capture manifest binds repository evidence separately.
+`tools/originality-reference-titles.txt` is the canonical inventory of internal game comparisons
+excluded from player-facing dev-log prose and stays aligned with this audit.
 
 That is evidence about the current repository, **not a declaration that the game cannot infringe**.
 Substantial similarity can arise from a protected combination even when no file was copied. The
@@ -123,6 +135,6 @@ Before commercial branding or release:
 - preserve the reviewed PR evidence and asset provenance as the release's clearance record.
 
 Passing `tools/originality-guard.sh` means only that the objective repository boundary is intact:
-references are link-only, art generation has no tracked binary reference inputs, internal
-comparisons are absent from player prose, and the high-risk proposal remains held. It does not
-certify non-infringement.
+references are external and link-only, art generation has no tracked reference inputs, other tracked
+media is exact-byte-bound, audited comparisons are absent from player prose, and the high-risk
+proposal retains its exact hold directive. It does not certify non-infringement.

@@ -1,0 +1,11 @@
+# First-party World at Ruin captures reviewed as repository evidence.
+# Format: SHA-256, two spaces, repository-relative path.
+3af54af540bd9d29f4222609013cc6e0f228c1f321cb5bf6d7ee5a66e378765b  docs/evidence/issue-346-light-response/ash-far-side.png
+b53e850a61be8cbc75824c38c24fd0c576281c389146e30438bb0cfcfe2f7e0e  docs/evidence/issue-346-light-response/ash-source-side.png
+e2f1ed5a09bdb3131d817b4a988f5fdedd16c5506414d77098ce799c54d2750e  docs/evidence/issue-346-light-response/foliage-far-side.png
+2becc2faed2e850b30c9f71289a3ca9171839bfb95868e6cd2c2b6ca7da02deb  docs/evidence/issue-346-light-response/foliage-source-side.png
+eaea63f05c629b328c2a54c470beee6060a6b83b4258dba10590323131a9ddce  docs/evidence/issue-359-originality/devlog-grounded-language.png
+0a08c6eb3e86edf8b061dabc7fb698226ff539e77981dfea94e1858a88de1647  docs/phase-0/cave-chamber.png
+ccf317a7699cfe70a58889c0ea6423c9daeaeff5337db51407b6f06d5b4577ec  docs/phase-0/cave-walkout.png
+564e968cce61bc0475b4298e8d691591b6294a8b329de88d74e01e8d36e9107b  docs/phase-0/character-brute.png
+c4ba3927e4af3a618a25de2450381845846055557d75ff3cd0b4fe7bf280f046  docs/phase-0/character-wanderer.png

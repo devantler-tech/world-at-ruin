@@ -7,15 +7,17 @@
 #
 #   R1  docs/art-direction contains link-only UTF-8 Markdown. Downloaded
 #       screenshots, clips, audio and other reference media do not enter the
-#       repository, even with a misleading .md extension.
-#   R2  tools/artgen contains no tracked binary reference input. A generator
-#       may consume owned/CC0 inputs under client/assets with provenance, but
-#       never a copied screenshot or other game's asset.
+#       repository, even with a misleading .md extension or text encoding.
+#   R2  tools/artgen contains only reviewed source/configuration types. A
+#       generator may consume owned/CC0 inputs under client/assets with
+#       provenance, but never a copied screenshot, model or encoded media.
 #   R3  the player-facing dev log does not expose internal third-party game
-#       comparisons.
+#       comparisons listed by the canonical reference-title inventory.
 #   R4  the canonical originality policy is linked from both agent and art
 #       direction contracts, and the currently high-risk story proposal stays
 #       explicitly quarantined until an independent rewrite.
+#   R5  tracked media outside client/assets is either the first-party app icon
+#       or exact-byte-bound in the first-party capture manifest.
 #
 # This guard cannot decide substantial similarity, fair use, trade mark
 # confusion or legal clearance. docs/design/originality-boundary.md owns those
@@ -28,6 +30,9 @@ POLICY="docs/design/originality-boundary.md"
 STORY_PROPOSAL="docs/design/story-and-progression.md"
 DEV_LOG="client/scripts/devlog.gd"
 ARTGEN_ROOT="tools/artgen"
+REFERENCE_TITLES="tools/originality-reference-titles.txt"
+CAPTURE_MANIFEST="docs/first-party-captures.sha256"
+REQUIRED_STORY_HOLD="ORIGINALITY HOLD (#359): DO NOT IMPLEMENT THE UNDYING WORK OR FORMER LIVES CONCEPT."
 
 is_binary() {
 	local file="$1" total stripped
@@ -40,6 +45,10 @@ is_binary() {
 non_markdown_references=()
 binary_references=()
 binary_artgen_inputs=()
+encoded_references=()
+unsupported_artgen_inputs=()
+unreviewed_media=()
+invalid_capture_entries=()
 missing_contracts=()
 player_reference_lines=()
 
@@ -53,6 +62,10 @@ else
 		esac
 		if is_binary "$file"; then
 			binary_references+=("$file")
+		elif grep -Ein \
+			'(<svg([[:space:]>])|data:(image|audio|video|model)/[^;,]+;base64,|[A-Za-z0-9+/]{128,}={0,2})' \
+			"$file" >/dev/null; then
+			encoded_references+=("$file")
 		fi
 	done < <(git ls-files -z -- "$ART_DIRECTION")
 fi
@@ -62,11 +75,21 @@ if [ -d "$ARTGEN_ROOT" ]; then
 		if is_binary "$file"; then
 			binary_artgen_inputs+=("$file")
 		fi
+		case "$file" in
+		*.py | *.sh | *.md | *.json) ;;
+		*) unsupported_artgen_inputs+=("$file") ;;
+		esac
 	done < <(git ls-files -z -- "$ARTGEN_ROOT")
 fi
 
 [ -f "$POLICY" ] ||
 	missing_contracts+=("$POLICY is missing")
+
+[ -f "$REFERENCE_TITLES" ] ||
+	missing_contracts+=("$REFERENCE_TITLES is missing")
+
+[ -f "$CAPTURE_MANIFEST" ] ||
+	missing_contracts+=("$CAPTURE_MANIFEST is missing")
 
 if [ ! -f AGENTS.md ] || ! grep -Fq 'docs/design/originality-boundary.md' AGENTS.md; then
 	missing_contracts+=("AGENTS.md does not link docs/design/originality-boundary.md")
@@ -77,21 +100,59 @@ if [ ! -f "$ART_DIRECTION/README.md" ] ||
 	missing_contracts+=("$ART_DIRECTION/README.md does not link ../design/originality-boundary.md")
 fi
 
-if [ ! -f "$STORY_PROPOSAL" ] || ! grep -Fq 'ORIGINALITY HOLD' "$STORY_PROPOSAL"; then
-	missing_contracts+=("story proposal is missing ORIGINALITY HOLD")
+if [ ! -f "$STORY_PROPOSAL" ] || ! grep -Fq "$REQUIRED_STORY_HOLD" "$STORY_PROPOSAL"; then
+	missing_contracts+=("story proposal is missing the exact ORIGINALITY HOLD directive")
 fi
 
-# These are internal comparison terms already used by the design corpus. They
-# belong in docs and PR evidence, never in prose shown to a player. Keep the
-# expression case-sensitive so ordinary words such as "wretch" remain usable.
-if [ -f "$DEV_LOG" ]; then
-	while IFS= read -r line; do
-		player_reference_lines+=("$line")
-	done < <(
-		grep -nE \
-			'World of Warcraft|WoW|WildStar|Guild Wars 2|Diablo IV|Elden Ring|Wretch reference|The Secret World|Numenera|Kingmakers|Fatekeeper|Horizon Zero Dawn|Planescape' \
-			"$DEV_LOG" || true
-	)
+# Internal comparison terms belong in docs and PR evidence, never in prose
+# shown to a player. Keep matching case-sensitive so ordinary words remain
+# available. The inventory is reviewed beside the policy's reference audit.
+if [ -f "$DEV_LOG" ] && [ -f "$REFERENCE_TITLES" ]; then
+	while IFS= read -r title || [ -n "$title" ]; do
+		case "$title" in
+		"" | \#*) continue ;;
+		esac
+		while IFS= read -r line; do
+			player_reference_lines+=("$line")
+		done < <(grep -nF "$title" "$DEV_LOG" || true)
+	done <"$REFERENCE_TITLES"
+fi
+
+# Asset provenance owns client/assets. The app icon is reviewed source art.
+# Every other tracked media/model file must match the first-party capture
+# manifest exactly, so adding a screenshot is a visible, reviewable act.
+while IFS= read -r -d '' file; do
+	lower_file=$(printf '%s' "$file" | tr '[:upper:]' '[:lower:]')
+	case "$lower_file" in
+	*.png | *.jpg | *.jpeg | *.gif | *.webp | *.bmp | *.tif | *.tiff | *.svg | \
+		*.mp3 | *.wav | *.ogg | *.flac | *.mp4 | *.mov | *.webm | \
+		*.gltf | *.glb | *.fbx | *.obj | *.blend)
+		case "$file" in
+		client/assets/* | client/icon.svg) continue ;;
+		esac
+		if [ ! -f "$CAPTURE_MANIFEST" ]; then
+			unreviewed_media+=("$file")
+			continue
+		fi
+		hash=$(shasum -a 256 "$file" | awk '{print $1}')
+		grep -Fqx "$hash  $file" "$CAPTURE_MANIFEST" ||
+			unreviewed_media+=("$file")
+		;;
+	esac
+done < <(git ls-files -z)
+
+if [ -f "$CAPTURE_MANIFEST" ]; then
+	while IFS= read -r entry || [ -n "$entry" ]; do
+		case "$entry" in
+		"" | \#*) continue ;;
+		esac
+		hash=${entry%%  *}
+		file=${entry#*  }
+		if [ "$file" = "$entry" ] || [ ! -f "$file" ] ||
+			[ "$(shasum -a 256 "$file" | awk '{print $1}')" != "$hash" ]; then
+			invalid_capture_entries+=("$entry")
+		fi
+	done <"$CAPTURE_MANIFEST"
 fi
 
 failed=0
@@ -115,6 +176,15 @@ if [ ${#binary_references[@]} -gt 0 ]; then
 	echo
 fi
 
+if [ ${#encoded_references[@]} -gt 0 ]; then
+	failed=1
+	echo "::error::encoded or inline media under docs/art-direction is forbidden"
+	printf '  - %s\n' "${encoded_references[@]}"
+	echo
+	echo "Reference Markdown may contain prose and external links, never SVG or encoded media."
+	echo
+fi
+
 if [ ${#binary_artgen_inputs[@]} -gt 0 ]; then
 	failed=1
 	echo "::error::binary reference input under tools/artgen is forbidden"
@@ -122,6 +192,35 @@ if [ ${#binary_artgen_inputs[@]} -gt 0 ]; then
 	echo
 	echo "Owned and CC0 inputs must use the sanctioned client/assets provenance path. Named-game"
 	echo "screenshots, clips, audio, models and textures are never generator inputs."
+	echo
+fi
+
+if [ ${#unsupported_artgen_inputs[@]} -gt 0 ]; then
+	failed=1
+	echo "::error::unsupported tracked input under tools/artgen"
+	printf '  - %s\n' "${unsupported_artgen_inputs[@]}"
+	echo
+	echo "Keep generator implementation and configuration here. Models, media and other source"
+	echo "inputs belong under the exact-byte-bound client/assets provenance contract."
+	echo
+fi
+
+if [ ${#unreviewed_media[@]} -gt 0 ]; then
+	failed=1
+	echo "::error::tracked media is outside a reviewed provenance boundary"
+	printf '  - %s\n' "${unreviewed_media[@]}"
+	echo
+	echo "Use client/assets with asset provenance, or record a first-party World at Ruin capture"
+	echo "by exact SHA-256 in $CAPTURE_MANIFEST."
+	echo
+fi
+
+if [ ${#invalid_capture_entries[@]} -gt 0 ]; then
+	failed=1
+	echo "::error::first-party capture manifest contains stale or invalid entries"
+	printf '  - %s\n' "${invalid_capture_entries[@]}"
+	echo
+	echo "Each entry must be: <sha256><two spaces><tracked repository-relative path>."
 	echo
 fi
 
@@ -145,4 +244,4 @@ fi
 
 [ "$failed" -eq 0 ] || exit 1
 
-echo "originality-guard: OK — reference set is link-only Markdown; art generation has no binary reference inputs; player prose and policy anchors are clean."
+echo "originality-guard: OK — references stay external; generator inputs and tracked media are provenance-bound; player prose and policy anchors are clean."
