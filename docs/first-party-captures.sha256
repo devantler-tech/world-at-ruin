@@ -1,5 +1,6 @@
-# First-party World at Ruin captures reviewed as repository evidence.
+# First-party World at Ruin captures and source media reviewed in this repository.
 # Format: SHA-256, two spaces, repository-relative path.
+0c468c8c56231ff675ba2a99684344d9efc6d56e16eb8634238e18bd03adc4bf  client/icon.svg
 3af54af540bd9d29f4222609013cc6e0f228c1f321cb5bf6d7ee5a66e378765b  docs/evidence/issue-346-light-response/ash-far-side.png
 b53e850a61be8cbc75824c38c24fd0c576281c389146e30438bb0cfcfe2f7e0e  docs/evidence/issue-346-light-response/ash-source-side.png
 e2f1ed5a09bdb3131d817b4a988f5fdedd16c5506414d77098ce799c54d2750e  docs/evidence/issue-346-light-response/foliage-far-side.png

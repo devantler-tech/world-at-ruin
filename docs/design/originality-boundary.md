@@ -62,9 +62,9 @@ configuration only; its inputs come from the exact-byte-bound asset provenance p
 
 First-party screenshots used as review evidence are exact-byte-bound separately in
 `docs/first-party-captures.sha256`. A path such as `docs/evidence/` is not proof of origin by itself:
-every tracked media or model outside `client/assets/` and the first-party app icon must match that
-reviewed capture manifest. The manifest records evidence provenance; it does not make an external
-reference first-party.
+every tracked media or model outside `client/assets/`, including the first-party app icon, must match
+that reviewed first-party manifest. The manifest records evidence and source-media provenance; it
+does not make an external reference first-party.
 
 ## Required reference-distance workflow
 

@@ -227,6 +227,18 @@ expect_failure \
 	"tracked media is outside a reviewed provenance boundary" \
 	"$repo"
 
+repo=$(new_repo unmanifested_app_icon)
+write_valid_contract "$repo"
+{
+	printf '<%s xmlns="http://www.w3.org/2000/svg" width="16" height="16">\n' 'svg'
+	printf '</%s>\n' 'svg'
+} >"$repo/client/icon.svg"
+git -C "$repo" add client/icon.svg
+expect_failure \
+	"the first-party app icon also requires exact reviewed provenance" \
+	"tracked media is outside a reviewed provenance boundary" \
+	"$repo"
+
 repo=$(new_repo text_collada_model)
 write_valid_contract "$repo"
 {

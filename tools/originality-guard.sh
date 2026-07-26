@@ -16,8 +16,8 @@
 #   R4  the canonical originality policy is linked from both agent and art
 #       direction contracts, and the currently high-risk story proposal stays
 #       explicitly quarantined until an independent rewrite.
-#   R5  tracked media outside client/assets is either the first-party app icon
-#       or exact-byte-bound in the first-party capture manifest.
+#   R5  every tracked media file outside client/assets, including the
+#       first-party app icon, is exact-byte-bound in the first-party manifest.
 #
 # This guard cannot decide substantial similarity, fair use, trade mark
 # confusion or legal clearance. docs/design/originality-boundary.md owns those
@@ -104,7 +104,10 @@ fi
 # documentation, test or configuration path. Scan every tracked text file
 # rather than trusting a directory name or source-file extension.
 while IFS= read -r -d '' file; do
-	[ "$file" = "client/icon.svg" ] && continue
+	if [ "$file" = "client/icon.svg" ] && [ -f "$CAPTURE_MANIFEST" ]; then
+		hash=$(shasum -a 256 "$file" | awk '{print $1}')
+		grep -Fqx "$hash  $file" "$CAPTURE_MANIFEST" && continue
+	fi
 	if ! is_binary "$file" && has_encoded_media "$file"; then
 		encoded_documentation_media+=("$file")
 	fi
@@ -178,7 +181,7 @@ while IFS= read -r -d '' file; do
 	esac
 	[ "$media_candidate" -eq 1 ] || continue
 	case "$file" in
-	client/assets/* | client/icon.svg) continue ;;
+	client/assets/*) continue ;;
 	esac
 	if [ ! -f "$CAPTURE_MANIFEST" ]; then
 		unreviewed_media+=("$file")
