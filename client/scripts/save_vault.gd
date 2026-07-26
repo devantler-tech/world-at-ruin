@@ -98,15 +98,23 @@ const LOCK_RECLAIM_SUFFIX := ".reclaim-"
 ## How long a lock may go unreleased before another process may break it.
 ##
 ## The critical section is a validate, a small JSON serialise, a temp-file write
-## and a rename — sub-millisecond in practice, and entirely local. 30s is roughly
-## four orders of magnitude of headroom, which is the point: the two failure
-## directions are NOT symmetric. Breaking a lock a live process still holds
-## reopens the exact interleaving this lock exists to prevent, and that loss is
-## permanent. Waiting too long merely refuses one write, and a refused write
-## degrades to session-only — the vault's existing law, and cheap. So the timeout
-## errs long deliberately; it exists only so a crashed process cannot wedge the
-## vault forever, not to keep writes prompt.
-const LOCK_STALE_SECONDS := 30
+## and a rename — sub-millisecond in practice, and entirely local. Five minutes is
+## enormously more than that, deliberately, because the two failure directions are
+## NOT symmetric:
+##  - reclaiming a lock a LIVE process still holds reopens the exact interleaving
+##    this lock exists to prevent, and that lost progression is permanent;
+##  - waiting too long merely defers a write, and a deferred write degrades to
+##    session-only — the vault's existing law, and cheap.
+##
+## The timeout is a liveness HEURISTIC, and its failure mode is a holder that is
+## alive but not running: a laptop suspended mid-write, a process descheduled
+## under heavy load. Every second of headroom makes that misjudgement rarer, and
+## costs only a longer wait before recovering from a genuine crash — during which
+## the vault still READS and play continues untouched. That trade is so lopsided
+## that the only real argument against a larger value is recovery latency nobody
+## can feel, so this errs long on purpose. It exists solely so a crashed process
+## cannot wedge the vault forever; it is not a mechanism for keeping writes prompt.
+const LOCK_STALE_SECONDS := 300
 
 ## Test-only override for [constant LOCK_STALE_SECONDS], mirroring the
 ## WAR_VAULT_PATH seam. Production never sets it; a test sets 0 so an existing
@@ -313,6 +321,20 @@ static func _save_to_locked(path: String, doc: Dictionary) -> bool:
 	# lock as abandoned would have moved it away, and another writer could then
 	# hold it legitimately. Replacing the vault while that is true is the one
 	# outcome the lock exists to prevent, so a lost lock abandons the write.
+	#
+	# ⚠️ This is a point-in-time check, and it cannot be made otherwise here. A
+	# holder that has already outlived the stale timeout can be reclaimed in the
+	# interval between this returning true and the rename below, after which
+	# another writer may hold the lock while this one still replaces the vault.
+	# Closing that needs an OS-level lock held ACROSS the rename — `flock`, or an
+	# equivalent — and Godot's FileAccess/DirAccess expose none, which is the same
+	# wall #262 started at. What bounds it instead: the timeout is far longer than
+	# any real critical section, the interval itself is a single syscall, and the
+	# readability re-check above still refuses to replace a vault this build cannot
+	# read, so the catastrophic case (a downgrade overwriting newer progression)
+	# stays closed even when the benign one (a lost update between same-version
+	# writers) slips through. Detecting that properly wants a compare-and-swap on
+	# the vault's own bytes rather than a lock — tracked separately.
 	if not _owns_lock(path):
 		push_error("SaveVault: lost the write lock for %s while writing — refusing to replace it" % path)
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(tmp_path))
@@ -495,7 +517,15 @@ static func _reclaim_lock_if_abandoned(lock: String) -> void:
 		return
 	if int(Time.get_unix_time_from_system()) - observed < lock_stale_seconds():
 		return
-	var dead := "%s%s%d" % [lock, LOCK_RECLAIM_SUFFIX, OS.get_process_id()]
+	# A per-ATTEMPT target, not a per-process one. A reclaimer that dies between the
+	# rename and the delete leaves its private copy behind, and because that copy
+	# holds a stamp it is non-empty — so a later rename onto the same name fails.
+	# Keying only on the pid would then permanently disable stale recovery for
+	# whichever process next inherits that pid: every attempt would target the same
+	# surviving directory and fail, leaving that client unable to persist for the
+	# whole session even though the lock really was abandoned.
+	var dead := "%s%s%d-%d" % [
+		lock, LOCK_RECLAIM_SUFFIX, OS.get_process_id(), Time.get_ticks_usec()]
 	var dead_absolute := ProjectSettings.globalize_path(dead)
 	if DirAccess.rename_absolute(ProjectSettings.globalize_path(lock), dead_absolute) != OK:
 		return
@@ -532,9 +562,20 @@ static func _release_lock(path: String) -> void:
 	if depth > 1:
 		_held_locks[lock] = depth - 1
 		return
+	# Remove the directory ONLY while the stamp is still ours. A writer suspended
+	# past the stale timeout can have its lock reclaimed and the freed path taken
+	# by someone else; releasing unconditionally would then delete THAT writer's
+	# lock and let a third process acquire while it is still mid-write — reopening
+	# the lost-update race from the release path rather than the acquire path.
+	# Checked before the bookkeeping is dropped, since _owns_lock reads it.
+	var still_ours := _owns_lock(path)
 	_held_locks.erase(lock)
 	_lock_tokens.erase(lock)
-	_remove_lock_dir(lock)
+	if still_ours:
+		_remove_lock_dir(lock)
+	else:
+		push_warning(
+			"SaveVault: the write lock at %s is no longer ours — leaving it for its holder" % lock)
 
 
 ## Drop every lock this process holds. FOR TESTS ONLY, mirroring

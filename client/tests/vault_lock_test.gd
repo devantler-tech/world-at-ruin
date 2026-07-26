@@ -252,7 +252,64 @@ func _ready() -> void:
 	if _read(PROBE) != before_hijack:
 		_fail("a write that lost the lock still modified the vault")
 		return
+	# 12. Releasing a lock that is NO LONGER OURS must not delete it. A writer
+	# suspended past the stale timeout can have its lock reclaimed and the freed
+	# path taken by someone else; an unconditional release would then destroy THAT
+	# writer's lock and let a third process acquire mid-write — the same
+	# lost-update race, entered through the release path instead of the acquire
+	# path. The hijacked stamp from case 11 is still in place, so this is exactly
+	# the "someone else holds it now" state.
+	SaveVault._release_lock(PROBE)
+	if not DirAccess.dir_exists_absolute(_abs(lock)):
+		_fail("releasing a lock owned by someone else DELETED it — a third writer could acquire mid-write")
+		return
+	if not FileAccess.file_exists(lock + "/" + SaveVault.LOCK_OWNER_FILE):
+		_fail("releasing a foreign-held lock stripped its ownership stamp")
+		return
+	# That lock was deliberately left behind, so free the slot by hand before the
+	# next case — clear_locks_for_test() cannot, having no record of a lock this
+	# process no longer holds.
+	DirAccess.remove_absolute(_abs(lock + "/" + SaveVault.LOCK_OWNER_FILE))
+	DirAccess.remove_absolute(_abs(lock))
 	SaveVault.clear_locks_for_test()
+
+	# 13. A releasing holder that STILL owns its lock does remove it — otherwise
+	# case 12 could pass by never releasing anything at all.
+	if not SaveVault._acquire_lock(PROBE):
+		_fail("could not acquire the lock for the clean-release case")
+		return
+	SaveVault._release_lock(PROBE)
+	if DirAccess.dir_exists_absolute(_abs(lock)):
+		_fail("releasing a lock we still own left it behind")
+		return
+
+	# 14. A reclaimer that died between the rename and the delete leaves its
+	# private copy behind, stamped and therefore non-empty. If reclaim targets were
+	# keyed on the pid alone, the next process to inherit that pid would aim every
+	# attempt at that surviving directory, the rename would always fail, and stale
+	# recovery would be dead for the whole session. Build exactly that orphan and
+	# prove reclamation still works around it.
+	var orphan := "%s%s%d" % [lock, SaveVault.LOCK_RECLAIM_SUFFIX, OS.get_process_id()]
+	if DirAccess.make_dir_absolute(_abs(orphan)) != OK:
+		_fail("could not simulate a crashed reclaimer's leftover copy")
+		return
+	var orphan_stamp := FileAccess.open(orphan + "/" + SaveVault.LOCK_OWNER_FILE, FileAccess.WRITE)
+	if orphan_stamp == null:
+		_fail("could not stamp the orphaned reclaim copy")
+		return
+	orphan_stamp.store_string("dead-1")
+	orphan_stamp.close()
+	if DirAccess.make_dir_absolute(_abs(lock)) != OK:
+		_fail("could not simulate an abandoned lock alongside the orphan")
+		return
+	OS.set_environment(SaveVault.LOCK_STALE_ENV, "0")
+	if SaveVault._acquire_lock(PROBE):
+		_fail("a reclaiming pass ACQUIRED while an orphaned reclaim copy existed")
+		return
+	if DirAccess.dir_exists_absolute(_abs(lock)):
+		_fail("a crashed reclaimer's leftover copy blocked all future stale recovery")
+		return
+	OS.set_environment(SaveVault.LOCK_STALE_ENV, "")
 
 	_cleanup()
 	OS.set_environment(SaveVault.VAULT_PATH_ENV, "")
@@ -297,10 +354,15 @@ func _cleanup() -> void:
 	var lock := SaveVault.lock_path(PROBE)
 	DirAccess.remove_absolute(_abs(lock + "/" + SaveVault.LOCK_OWNER_FILE))
 	DirAccess.remove_absolute(_abs(lock))
-	# Any reclaim copy this process left behind, named for its own pid.
-	var dead := "%s%s%d" % [lock, SaveVault.LOCK_RECLAIM_SUFFIX, OS.get_process_id()]
-	DirAccess.remove_absolute(_abs(dead + "/" + SaveVault.LOCK_OWNER_FILE))
-	DirAccess.remove_absolute(_abs(dead))
+	# Reclaim copies carry a per-ATTEMPT suffix, so they cannot be reconstructed by
+	# name — scan the directory for the prefix instead.
+	var parent := lock.get_base_dir()
+	var reclaim_prefix := lock.get_file() + SaveVault.LOCK_RECLAIM_SUFFIX
+	for entry: String in DirAccess.get_directories_at(parent):
+		if entry.begins_with(reclaim_prefix):
+			var dead := parent.path_join(entry)
+			DirAccess.remove_absolute(_abs(dead + "/" + SaveVault.LOCK_OWNER_FILE))
+			DirAccess.remove_absolute(_abs(dead))
 	for path: String in [PROBE, PROBE + ".tmp"]:
 		if FileAccess.file_exists(path):
 			DirAccess.remove_absolute(_abs(path))
