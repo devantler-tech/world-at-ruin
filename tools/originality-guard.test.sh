@@ -162,7 +162,20 @@ printf '%s\n' \
 git -C "$repo" add docs/art-direction/reference.md
 expect_failure \
 	"inline media cannot hide inside a Markdown reference" \
-	"encoded or inline media under docs/art-direction" \
+	"encoded or inline media in repository documentation" \
+	"$repo"
+
+repo=$(new_repo encoded_repository_media)
+write_valid_contract "$repo"
+printf '%s\n' \
+	'# Evidence' \
+	'' \
+	'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB' \
+	>"$repo/docs/evidence/reference.md"
+git -C "$repo" add docs/evidence/reference.md
+expect_failure \
+	"encoded reference media cannot move to another documentation path" \
+	"encoded or inline media in repository documentation" \
 	"$repo"
 
 repo=$(new_repo unreviewed_media)

@@ -45,7 +45,7 @@ is_binary() {
 non_markdown_references=()
 binary_references=()
 binary_artgen_inputs=()
-encoded_references=()
+encoded_documentation_media=()
 unsupported_artgen_inputs=()
 unreviewed_media=()
 invalid_capture_entries=()
@@ -62,13 +62,20 @@ else
 		esac
 		if is_binary "$file"; then
 			binary_references+=("$file")
-		elif grep -Ein \
-			'(<svg([[:space:]>])|data:(image|audio|video|model)/[^;,]+;base64,|[A-Za-z0-9+/]{128,}={0,2})' \
-			"$file" >/dev/null; then
-			encoded_references+=("$file")
 		fi
 	done < <(git ls-files -z -- "$ART_DIRECTION")
 fi
+
+# A copied payload remains reference media when moved elsewhere under docs.
+# Scan repository documentation rather than trusting a directory name.
+while IFS= read -r -d '' file; do
+	if ! is_binary "$file" &&
+		grep -Ein \
+			'(<svg([[:space:]>])|data:(image|audio|video|model)/[^;,]+;base64,|[A-Za-z0-9+/]{128,}={0,2}|^[[:space:]]*(v|vn|vt|f)[[:space:]]+(-?[0-9]+([.][0-9]+)?[[:space:]]+){2})' \
+			"$file" >/dev/null; then
+		encoded_documentation_media+=("$file")
+	fi
+done < <(git ls-files -z -- docs)
 
 if [ -d "$ARTGEN_ROOT" ]; then
 	while IFS= read -r -d '' file; do
@@ -176,12 +183,13 @@ if [ ${#binary_references[@]} -gt 0 ]; then
 	echo
 fi
 
-if [ ${#encoded_references[@]} -gt 0 ]; then
+if [ ${#encoded_documentation_media[@]} -gt 0 ]; then
 	failed=1
-	echo "::error::encoded or inline media under docs/art-direction is forbidden"
-	printf '  - %s\n' "${encoded_references[@]}"
+	echo "::error::encoded or inline media in repository documentation is forbidden"
+	printf '  - %s\n' "${encoded_documentation_media[@]}"
 	echo
-	echo "Reference Markdown may contain prose and external links, never SVG or encoded media."
+	echo "Documentation may contain prose and external links, never inline SVG, encoded media or"
+	echo "text-encoded model data."
 	echo
 fi
 
