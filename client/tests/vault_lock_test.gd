@@ -25,9 +25,15 @@ extends Node
 ##  5. Reentrancy: persist_*() holds the lock across its whole read-modify-write
 ##     and still calls save_to(), which takes the same lock. This must not
 ##     self-deadlock.
-##  6. Stale recovery: a lock left by a crashed process is broken once it ages
-##     past the timeout, so a crash cannot wedge the vault forever.
-##  7. The timeout seam refuses malformed and negative values, so the shipped
+##  6. Reclamation of an abandoned lock NEVER acquires in the same pass: it frees
+##     the slot and refuses, and the next attempt acquires it. Reclaim-then-create
+##     would let two processes each recreate the lock over the other and both
+##     proceed as owners.
+##  7. A live lock is never reclaimed, and a stamped foreign lock excludes a write.
+##  8. The ownership stamp: a holder can prove the lock is still its own, and a
+##     write refuses once the stamp is no longer ours instead of replacing the
+##     vault behind the back of whoever holds it now.
+##  9. The timeout seam refuses malformed and negative values, so the shipped
 ##     window can never be shortened by a bad environment variable.
 ##
 ## Everything runs against a throwaway path via WAR_VAULT_PATH, so the player's
@@ -135,11 +141,30 @@ func _ready() -> void:
 	if SaveVault.lock_stale_seconds() != 0:
 		_fail("the stale-timeout seam did not honour an explicit 0")
 		return
-	if not SaveVault.persist_attunement(SaveVault.SHRINE_WARDENS):
-		_fail("an abandoned lock was never broken — a crash wedges the vault permanently")
+	# A reclaiming pass deliberately does NOT acquire. Reclaim-then-acquire in one
+	# pass is exactly what makes remove-then-create unsound: two processes find the
+	# same abandoned lock, the first recreates it, the second removes THAT live lock
+	# and recreates it again, and both believe they own the write. Keeping
+	# acquisition to the single atomic mkdir means only an absent slot grants it.
+	#
+	# Asserted at the ACQUIRE level on purpose. Going through persist_attunement()
+	# here is vacuous: a pass that wrongly acquires still fails further down on the
+	# ownership guard, so the end-to-end call returns false either way and the
+	# assertion would pass while the defect it names is present (measured — this
+	# exact ablation slipped through the end-to-end form).
+	if SaveVault._acquire_lock(PROBE):
+		_fail("a reclaiming pass ACQUIRED the lock — reclaim and acquire must not share a pass")
 		return
 	if DirAccess.dir_exists_absolute(_abs(lock)):
-		_fail("the stale-break path left a lock behind")
+		_fail("the abandoned lock was not reclaimed — a crash would wedge the vault permanently")
+		return
+	# The slot is free now, so the NEXT attempt acquires it cleanly. Recovery is
+	# therefore one deferred write, not a permanently unwritable vault.
+	if not SaveVault.persist_attunement(SaveVault.SHRINE_WARDENS):
+		_fail("the write did not resume after the abandoned lock was reclaimed")
+		return
+	if DirAccess.dir_exists_absolute(_abs(lock)):
+		_fail("the resumed write left the lock behind")
 		return
 
 	# 8. The seam fails SAFE. A malformed or negative value must fall back to the
@@ -166,11 +191,72 @@ func _ready() -> void:
 	if SaveVault.persist_attunement(SaveVault.SHRINE_WARDENS):
 		_fail("a FRESH lock was broken — a live writer can be robbed mid-write")
 		return
+	if not DirAccess.dir_exists_absolute(_abs(lock)):
+		_fail("a FRESH lock was RECLAIMED — a live writer's lock must survive an attempt")
+		return
 	DirAccess.remove_absolute(_abs(lock))
+
+	# 10. A STAMPED foreign lock refuses too. Cases 2 and 9 hold a bare directory,
+	# which is what a holder looks like only for the instant between creating the
+	# lock and stamping it; a settled holder's lock carries an ownership stamp, and
+	# that is the shape a reclaimer's restore relies on to fail safely rather than
+	# rename over a live lock.
+	if DirAccess.make_dir_absolute(_abs(lock)) != OK:
+		_fail("could not take the lock for the stamped-holder case")
+		return
+	var stamp := FileAccess.open(lock + "/" + SaveVault.LOCK_OWNER_FILE, FileAccess.WRITE)
+	if stamp == null:
+		_fail("could not write a foreign ownership stamp")
+		return
+	stamp.store_string("999999-1")
+	stamp.close()
+	if SaveVault.persist_attunement(SaveVault.SHRINE_WARDENS):
+		_fail("a stamped foreign lock did not exclude a write")
+		return
+	if _read(PROBE) == "":
+		_fail("the vault vanished while a stamped foreign lock was held")
+		return
+	DirAccess.remove_absolute(_abs(lock + "/" + SaveVault.LOCK_OWNER_FILE))
+	DirAccess.remove_absolute(_abs(lock))
+
+	# 11. The ownership guard, driven directly. A holder stamps the lock and can
+	# prove it still owns it; a stamp that has been replaced reads as NOT ours, so
+	# the write aborts instead of replacing the vault while another process
+	# legitimately holds the lock. That interleaving needs two real processes to
+	# arise, so the guard is exercised at its own level rather than left as an
+	# untested claim.
+	if not SaveVault._acquire_lock(PROBE):
+		_fail("could not acquire the lock for the ownership case")
+		return
+	if not SaveVault._owns_lock(PROBE):
+		_fail("a freshly acquired lock did not read as owned by this process")
+		return
+	if not FileAccess.file_exists(lock + "/" + SaveVault.LOCK_OWNER_FILE):
+		_fail("acquiring the lock did not stamp ownership into it")
+		return
+	var hijack := FileAccess.open(lock + "/" + SaveVault.LOCK_OWNER_FILE, FileAccess.WRITE)
+	if hijack == null:
+		_fail("could not overwrite the ownership stamp")
+		return
+	hijack.store_string("999999-2")
+	hijack.close()
+	if SaveVault._owns_lock(PROBE):
+		_fail("a REPLACED ownership stamp still read as ours — a stolen lock would not be detected")
+		return
+	# And a write refuses while the lock is no longer ours, rather than replacing
+	# the vault behind the back of whoever holds it now.
+	var before_hijack := _read(PROBE)
+	if SaveVault._save_to_locked(PROBE, SaveVault.empty()):
+		_fail("a write proceeded while the lock was no longer ours")
+		return
+	if _read(PROBE) != before_hijack:
+		_fail("a write that lost the lock still modified the vault")
+		return
+	SaveVault.clear_locks_for_test()
 
 	_cleanup()
 	OS.set_environment(SaveVault.VAULT_PATH_ENV, "")
-	print("TEST PASS — vault write lock excludes a competing writer, releases on every path, recovers from a crash, and is never stolen while live")
+	print("TEST PASS — vault write lock excludes a competing writer, reclaims without acquiring, releases on every path, refuses once the lock is no longer ours, and is never stolen while live")
 	get_tree().quit(0)
 
 
@@ -208,7 +294,13 @@ func _read(path: String) -> String:
 func _cleanup() -> void:
 	SaveVault.clear_locks_for_test()
 	SaveVault.clear_refusals_for_test()
-	DirAccess.remove_absolute(_abs(SaveVault.lock_path(PROBE)))
+	var lock := SaveVault.lock_path(PROBE)
+	DirAccess.remove_absolute(_abs(lock + "/" + SaveVault.LOCK_OWNER_FILE))
+	DirAccess.remove_absolute(_abs(lock))
+	# Any reclaim copy this process left behind, named for its own pid.
+	var dead := "%s%s%d" % [lock, SaveVault.LOCK_RECLAIM_SUFFIX, OS.get_process_id()]
+	DirAccess.remove_absolute(_abs(dead + "/" + SaveVault.LOCK_OWNER_FILE))
+	DirAccess.remove_absolute(_abs(dead))
 	for path: String in [PROBE, PROBE + ".tmp"]:
 		if FileAccess.file_exists(path):
 			DirAccess.remove_absolute(_abs(path))

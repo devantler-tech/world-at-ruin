@@ -224,16 +224,27 @@ The character recipe and vault deliberately fail differently:
   while the path remains read-only for the process lifetime. Rollback eligibility still proves save,
   protocol and shell compatibility independently; new update attempts and recovery writes stop.
 - Vault persistence takes a cross-process write lock around its whole read-modify-write, so no second
-  `SaveVault` writer can read, merge and rename between another's check and its replace. The lock is
-  a directory beside the vault (`vault.json.lock`): `DirAccess.make_dir_absolute` is `mkdir`, the one
+  lock-aware writer can read, merge and rename between another's check and its replace. The lock is a
+  directory beside the vault (`vault.json.lock`): `DirAccess.make_dir_absolute` is `mkdir`, the one
   atomic exclusive-create Godot exposes, so exactly one writer wins and the rest refuse. A refused
-  write degrades to session-only, never blocking a boot, and a lock abandoned by a crashed process is
-  broken once it ages past a deliberately generous timeout — breaking a live lock would reopen the
-  very race, while waiting too long only defers one write.
-- The lock binds `SaveVault` writers, which is the client-versus-client case the no-resets law turns
-  on. A foreign writer — cloud sync, a backup agent, a hand edit — never takes it, so vault
-  persistence still rechecks readability immediately before its atomic replace. That recheck narrows
-  the remaining foreign-writer window to the rename syscall; do not describe it as closing it.
+  write degrades to session-only and never blocks a boot.
+- Acquisition is only ever that single `mkdir` against an absent path. Reclaiming an abandoned lock is
+  a **separate pass that never acquires**: it renames the stale directory to a uniquely-named copy
+  (rename succeeds for exactly one process, which is what serializes reclamation), verifies on that
+  privately-owned copy that the timestamp is the one it judged abandoned, removes it, and still
+  refuses this write. The next attempt then acquires the free slot normally. Reclaiming and acquiring
+  in one pass is unsound — two processes would each recreate the lock over the other and both proceed
+  as owners — so do not "simplify" it back into remove-then-create.
+- The lock directory is **not** empty: it holds an ownership stamp. Renaming onto an empty directory
+  succeeds, so an unstamped lock could be silently renamed over; the stamp also lets a holder prove
+  the lock is still its own immediately before replacing the vault, and abandon the write if it is not.
+- **Scope the guarantee precisely.** A lock only excludes writers that take it. Builds from before this
+  protocol — the retained and rollback clients the updater keeps runnable — write the same file without
+  it, as do foreign writers such as cloud sync or a hand edit. For all of those the pre-replacement
+  readability recheck and the refuse-a-newer-version rule are the protection, and they narrow the
+  window to the rename rather than closing it. This removes lost updates between lock-aware builds now
+  and becomes general only once every still-runnable build carries the protocol; do not describe it as
+  closing the differently-versioned case outright.
 
 Boot tests redirect every player-state seam through `SaveIsolation`; persistence and fixture tests use
 explicit throwaway paths. A migration test that touches a played save is itself a product-law

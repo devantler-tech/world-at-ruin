@@ -401,17 +401,26 @@ everything shipped afterwards is held to.
   DEGRADES to session-only and may never block a boot, and a vault that exists but cannot be read is
   READ-ONLY for that session (refuse-to-read implies refuse-to-write, or a downgrade would overwrite
   progression a newer client wrote). Every write additionally runs under a cross-process lock spanning
-  the whole read-modify-write, so two clients cannot each read the same document, merge their own
-  change and have the slower rename discard the faster one's progression (`tests/vault_lock_test`).
-  The lock is a DIRECTORY beside the vault — `DirAccess.make_dir_absolute` is `mkdir`, the only atomic
-  exclusive-create Godot exposes, and a lock built from `FileAccess.open` would be check-then-act
-  again, so do not "simplify" it into a file. It binds `SaveVault` writers only: a foreign writer
-  (cloud sync, a hand edit) never takes it, which is why the pre-rename readability recheck stays.
-  Contention degrades to session-only rather than blocking a boot, and an abandoned lock is broken
-  only after a deliberately generous timeout — shortening it to make writes prompt would let a live
-  writer be robbed mid-write. Tests redirect it with `WAR_VAULT_PATH`, mirroring `WAR_SAVE_PATH`, and
-  seam the timeout with `WAR_VAULT_LOCK_STALE_SECONDS` (test-only; malformed or negative values keep
-  the shipped window). The immutable shell's recovery memory is a third persisted contract:
+  the whole read-modify-write, so two lock-aware clients cannot each read the same document, merge
+  their own change and have the slower rename discard the faster one's progression
+  (`tests/vault_lock_test`). The lock is a DIRECTORY beside the vault —
+  `DirAccess.make_dir_absolute` is `mkdir`, the only atomic exclusive-create Godot exposes, and a lock
+  built from `FileAccess.open` would be check-then-act again, so do not "simplify" it into a file. It
+  carries an ownership stamp and is therefore deliberately NOT empty: renaming onto an empty directory
+  succeeds, and the stamp also lets a holder prove the lock is still its own before it replaces the
+  vault. **Acquisition is only ever that single `mkdir` on an absent path. Reclaiming an abandoned lock
+  is a SEPARATE pass that never acquires** — it renames the stale directory aside (rename wins for
+  exactly one process, which serializes reclamation), verifies on that private copy the timestamp it
+  judged abandoned, removes it, and still refuses; the next attempt acquires the freed slot. Folding
+  reclaim and acquire back into one pass lets two processes each recreate the lock over the other and
+  both proceed as owners, so never restore remove-then-create. **Scope the claim honestly:** a lock
+  binds only writers that take it, so pre-lock retained/rollback builds and foreign writers (cloud
+  sync, a hand edit) walk straight through it, and for those the pre-rename readability recheck plus
+  the newer-version refusal remain the guard. Contention degrades to session-only rather than blocking
+  a boot, and the stale timeout is generous on purpose — shortening it to make writes prompt would let
+  a live writer be robbed mid-write. Tests redirect it with `WAR_VAULT_PATH`, mirroring
+  `WAR_SAVE_PATH`, and seam the timeout with `WAR_VAULT_LOCK_STALE_SECONDS` (test-only; malformed or
+  negative values keep the shipped window). The immutable shell's recovery memory is a third persisted contract:
   `BootRecovery` (`user://boot_recovery.json`) reads through schema v1 while the expansion release
   keeps production writes on the already-shipped unversioned v0 shape until #343's bake gate,
   reads v0 forever, and is anchored by
