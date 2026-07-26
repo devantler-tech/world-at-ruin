@@ -1,7 +1,8 @@
 # Save data — forward-only migration contract
 
 This is the review contract for changing player data. It covers the character recipe in
-`user://character.json` and progression in `user://vault.json`. The
+`user://character.json`, progression in `user://vault.json`, and the immutable shell's recovery
+memory in `user://boot_recovery.json`. The
 [distribution and self-update decision](distribution-and-self-update.md) owns how builds reach a
 player; this document owns what those builds may read and write.
 
@@ -61,6 +62,15 @@ remains unpersisted.
 
 This wait is what makes rollback safe: if the next build fails, the retained build already understands
 everything the failed build may have written.
+
+“Applicable update tier” is literal. While the client ships as one monolithic app, the retained
+whole-app release is the rollback target: its published app must boot and apply the expanded state
+before the later app starts writing it. `v0.52.0` is that retained, independently booted whole-app
+target for capability 3. The manifest's `rollback_targets` array is a different tier: it is consumed
+only by the future mountable-pack recovery path, so it stays empty until a real `.pck` is retained.
+Putting a monolithic `.app` ZIP there would not strengthen rollback; it would make recovery select
+bytes the pack path cannot mount. Once pack delivery exists, its capability expansions require a
+selectable catalogue entry before their writers activate.
 
 ### 3. Contract by starting the new writer
 
@@ -135,6 +145,14 @@ stamp `N` only when the new shape is present, reports the real write version in 
 `SAVE_CAPABILITY_WRITES`, and appends the capability to
 `client/tests/data/shipped_save_capability.txt`.
 
+The first active use of that sequence is capability 2: recipe-version-4 layered equipment became
+readable in v0.32.0, but builds through v0.49.0 still published a capability-1 read ceiling. v0.50.0
+is the retained expansion release: it publishes reads 2 while writes remain 1 and keeps every
+production writer unreachable. The separate contract release may now activate the opt-in writer,
+raise writes to 2 and append 2 to the capability ledger. The raw preview remains behind
+`WAR_LAYERED_OUTFIT_PICKERS=1` until #336 delivers an authored wardrobe surface; the flag controls
+exposure, not the already-completed two-release compatibility sequence.
+
 ### Progression vault
 
 For vault version `N`, the expansion pull request must:
@@ -150,7 +168,11 @@ For vault version `N`, the expansion pull request must:
    originate the capability during expansion, and prove an already-present version-`N` vault
    round-trips losslessly after an ordinary write. A new live attunement also enters
    `shipped_attunements.txt`, `SaveVault.KNOWN_ATTUNEMENTS`, the resolver, and the boot restoration
-   test in the same change.
+   test in the same change. A new writable discovery id similarly enters
+   `shipped_discoveries.txt` as an immutable `id=landmark` mapping,
+   `SaveVault.KNOWN_DISCOVERIES`, and the real boot's bidirectional
+   point-of-interest registration guard. Unknown discovery names already present in a newer vault
+   remain preserved, but this build may originate only a registered, ledgered ID.
 6. Assign the new persistable capability and raise `UpdateManifest.SAVE_CAPABILITY_READS` to it while
    leaving `SAVE_CAPABILITY_WRITES` unchanged. The retained expansion build must advertise the read
    ceiling that makes it an eligible rollback target before the contract release can write that
@@ -158,6 +180,27 @@ For vault version `N`, the expansion pull request must:
 
 After bake, the contract pull request lets new or changed vaults use version `N`, raises the global
 write capability, and appends that capability to `shipped_save_capability.txt`.
+
+The first progression-vault sequence is capability 3: v0.52.0 shipped the version-2 discovery reader
+while production writes remained at capability 2. With that release retained as a rollback target,
+the later contract build registers `starter_cave` and `wardens_shrine`, observes the real wanderer's
+position, and persists the append-only found set at vault version 2. Empty and attunement-only vaults
+remain version 1; the first actual discovery is what contracts them to version 2. Rewards, quests,
+waypoints and map presentation remain separate children of the exploration roadmap rather than being
+implied by this persistence contract.
+
+### Boot recovery
+
+The boot-recovery expansion follows the same sequence, with its own read ceiling and write version.
+The v1 expansion reads and preserves both unversioned v0 and explicit v1, appends both schemas to
+`shipped_boot_recovery_versions.txt`, and pins them with `golden_boot_recovery_v<N>.json`. First boot
+and ordinary v0 writes remain v0 until the expansion release is the standing retained rollback
+target; #343 owns that bake gate and the later v1-writer activation.
+
+Recovery refusal is path-latched for the process lifetime, and persistence reparses the destination
+immediately before atomic replacement. Reconstructing state, deleting a refused file, or landing a
+future/corrupt replacement therefore cannot turn the path writable. As with the vault, this narrows
+but does not close the rename-time concurrent-writer gap tracked by #262.
 
 The ledgers are the immutable floor: the in-game guards compare the current constants and fixtures,
 while CI compares each ledger with the pull request's base revision. Editing code, fixtures and a
@@ -176,6 +219,9 @@ The character recipe and vault deliberately fail differently:
   becomes read-only for the rest of the process. `SaveVault` latches that refusal even if the file
   later disappears, so an older client cannot overwrite newer progression after cloud sync changes
   the path.
+- An unreadable or newer boot-recovery document degrades to a rollback-safe empty quarantine view,
+  while the path remains read-only for the process lifetime. Rollback eligibility still proves save,
+  protocol and shell compatibility independently; new update attempts and recovery writes stop.
 - Vault persistence rechecks readability immediately before its atomic replace. The remaining
   concurrent-writer compare-and-swap gap is tracked by
   [#262](https://github.com/devantler-tech/world-at-ruin/issues/262); do not describe the current
@@ -191,6 +237,7 @@ violation.
 |---|---|---|
 | Historical character recipes still load and build | `CharacterFactory`, `CharacterStore` | `save_fixture_guard_test`, recipe ledger and goldens |
 | Historical vaults still load and re-save | `SaveVault` | `save_vault_guard_test`, vault ledger and goldens |
+| Historical recovery documents still load and re-save | `BootRecovery` | `boot_recovery_guard_test`, recovery ledger and goldens |
 | Shipped attunement names still work | `SaveVault`, `RespawnPoints` | `shipped_attunements.txt`, vault and boot-restoration guards |
 | Writes never outrun rollback readers | Writers and `UpdateManifest` | `update_manifest_test`, `shipped_save_capability.txt`, CI and the distribution decision |
 | Player files stay outside tests | Save-path environment seams | `SaveIsolation`, boot-isolation and path-seam guards |

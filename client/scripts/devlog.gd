@@ -11,6 +11,68 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
+		"version": "0.55.1",
+		"date": "2026-07-25",
+		"title": "The starting cave is dark again",
+		"notes": [
+			"The ash hanging over the Reach was also filling the cave you wake up in, where no ash can fall. The cave keeps its own air now: the dark is properly dark, and the torch throws a real pool of light instead of a glow on a wall.",
+			"The bedded rock and fractures added earlier were being washed out by that haze — laid down correctly, but with too little shadow anywhere in the room to read as depth. They now show the relief they always had.",
+			"Weather follows the sky it falls from. Step under the overhang at the mouth and the ash thins as rock closes over you; walk back out into the Reach and it returns, with neither change snapping into place.",
+			"None of the cave's colour or torchlight has changed. It is the same warm room it always was, with its shadows given back.",
+		],
+	},
+	{
+		"version": "0.55.0",
+		"date": "2026-07-23",
+		"title": "The Reach remembers the places you have found",
+		"notes": [
+			"The starter cave and the Wardens' Shrine are now recorded the first time you reach them. Close the game after walking from one to the other and both places remain part of your history when you return.",
+			"Older characters and shrine attunements are left in their original save shape. The newer discovery shape is written only after there is a real place to remember, and the earlier read-capable release remains available as the safe rollback path.",
+			"This is memory, not yet a reward: there is no map marker, quest, mastery gain or discovery announcement in this slice. Those player-facing uses remain later exploration work.",
+		],
+	},
+	{
+		"version": "0.52.1",
+		"date": "2026-07-23",
+		"title": "Sunlight reaches the thin things from the right side",
+		"notes": [
+			"Scrub and dead grass could turn dark while you stood on the same side as the sun. Their crossed leaf cards remembered only the side they were built from, so looking at the reverse side made direct sunlight behave as though it came through the ground.",
+			"Each visible side now faces the light honestly. The sun-facing leaves and blades take the full warm key; the far side keeps the weaker glow of light passing through it instead of becoming a black cutout.",
+			"The ash in the hollows no longer throws almost all of its scattered light toward the horizon. It keeps enough of that sunward shaft to show depth, but direct light now reveals the cloud from the source-facing side too.",
+			"Both responses come from the live sun rather than a stored direction, so they move when the light moves. The Reach's sun itself is still fixed in the sky — a full day-and-night cycle remains future work.",
+		],
+	},
+	{
+		"version": "0.51.2",
+		"date": "2026-07-23",
+		"title": "The starter cave now belongs to the ground it rises from",
+		"notes": [
+			"The weathered rock around the cave entrance used to end in a clean material line, as if the whole massif had been placed on top of the Reach. Its lowest band now takes on the exact colour and wear of the ash or stone it meets there.",
+			"The blend follows the faceted ground you can actually walk on and fades away up the rock. Cave walls, the far side of the massif and every collision surface are unchanged.",
+			"The material seam is softer, but the massif still has one smooth generated outline. It still needs loose rock, drifted ash and sparse growth around its foot before the cave has the layered, buried silhouette of the reference.",
+		],
+	},
+	{
+		"version": "0.51.0",
+		"date": "2026-07-23",
+		"title": "Layered outfit editing opens as a guarded preview",
+		"notes": [
+			"The v0.50.0 reader release is now a published rollback target, so this separate build can safely write layered outfit saves for the first time.",
+			"Set WAR_LAYERED_OUTFIT_PICKERS=1 before launch to edit clothing and armour independently. Changing or removing one layer preserves the other exactly and stamps the layered recipe honestly.",
+			"The ordinary creator stays on its safe read-only region control for layered outfits. #336 tracks replacing these raw preview controls with an authored wardrobe before the flag becomes unnecessary.",
+		],
+	},
+	{
+		"version": "0.50.0",
+		"date": "2026-07-22",
+		"title": "Layered outfit saves get a rollback-safe runway",
+		"notes": [
+			"This build publishes that it can read the layered outfit format while deliberately keeping every production writer on the older capability. That makes it a truthful rollback target before any player can originate the newer value.",
+			"Existing layered recipes still load and survive ordinary edits without loss. Even the reserved preview flag cannot activate the independent clothing and armour controls during this bake release.",
+			"After this release has baked, a later contract update can activate the editor without stranding saves. #253 remains open for that writer stage, and #336 tracks the eventual authored replacement and flag retirement.",
+		],
+	},
+	{
 		"version": "0.49.0",
 		"date": "2026-07-21",
 		"title": "Taking everything off no longer means a bare body",
@@ -18,7 +80,7 @@ const ENTRIES: Array[Dictionary] = [
 			"Every human now starts with a rough woven-cloth wrap beneath the wardrobe. It has a thick belt, folded front and back panels, and an uneven torn hem rather than the clean outline of modern underwear.",
 			"The wrap belongs to the body kit, not to a saved outfit. Empty equipment, old characters, creator portraits and people already in the world all receive it automatically, and no wardrobe choice can remove or replace it.",
 			"Clothes and armour still sit over the same regions in the same order. Existing character recipes have not been rewritten; their visible result simply gains this base layer underneath.",
-			"The torn shape reads at the creator's full-body distance, but the fine woven surface mostly resolves as one brown value there. The cloth still needs richer drape and close material detail to approach the Wretch reference; a closer creator view would make that work visible too.",
+			"The torn shape reads at the creator's full-body distance, but the fine woven surface mostly resolves as one brown value there. The cloth still needs richer drape and close material detail before it reads as grounded, weathered clothing; a closer creator view would make that work visible too.",
 		],
 	},
 	{

@@ -1,0 +1,4 @@
+frame: foliage-source-side.png
+captured: 1600x900
+size: as shipped
+separation: value 23.4% of range (p1 0.143 -> p99 0.377) - hue 16.5 deg over 57600 px
