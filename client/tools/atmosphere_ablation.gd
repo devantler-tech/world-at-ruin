@@ -51,6 +51,15 @@ const REGION_RATIO := 3.1
 ## which is `cinderreach` (0.140) to three decimals, and 1.0 leaves `bonepale`
 ## exactly as shipped. The measured span is then the real palette interval rather
 ## than an extrapolation past the top of it.
+##
+## ⚠️ [b]That coincidence holds at the `bonepale` vantage only.[/b] The probe is a
+## scalar on whatever palette each pixel already carries, so it always spans a
+## [constant REGION_RATIO] ratio anchored on THAT vantage's own ground.
+## `crossfield` frames mostly `ashflats` (0.290), so its span is 0.094 -> 0.290 —
+## the same ratio, but sitting lower than the real `cinderreach` -> `bonepale`
+## interval. Since the transfer is nonlinear in absolute albedo, the distance
+## rows measure how a 3.1x ratio survives THERE, and must not be reported as the
+## cinderreach-to-bonepale interval specifically.
 const PROBE_LO := 1.0 / REGION_RATIO
 const PROBE_HI := 1.0
 
@@ -104,11 +113,13 @@ const VANTAGES := [
 const GRID_X := 32
 const GRID_Y := 24
 
-## The delta the `all-off` condition must clear for the run to mean anything.
-## With every atmospheric term neutralised, a 3.1x albedo change MUST move the
-## measured box substantially; if it does not, the box is not looking at
-## terrain and every other row in the table is measuring nothing. This is the
-## guard that stops a mis-placed sample box from being reported as a discovery.
+## The CONTRAST (see [method _contrast], not raw luma) the no-atmosphere
+## condition must clear for the run to mean anything. With every atmospheric term
+## neutralised, a 3.1x albedo change MUST separate the measured box substantially;
+## if it does not, the box is not looking at terrain and every other row in the
+## table is measuring nothing. This is the guard that stops a mis-placed sample
+## box from being reported as a discovery. Measured ceiling contrast is ~0.8, so
+## this sits an order of magnitude below a healthy run.
 const VACUITY_FLOOR := 0.05
 
 ## The largest disagreement between the baseline measured FIRST and the same
@@ -249,7 +260,13 @@ func _run(cam: Camera3D) -> bool:
 	# code, so adding a candidate is a line and the report order is the read order.
 	var conditions: Array = [
 		["baseline (as shipped)", {}],
-		["fog off entirely", {"fog_enabled": false}],
+		# `fog_enabled` governs the DEPTH+HEIGHT fog only — volumetric fog is a
+		# separate system with its own flag, so a row that clears just this one
+		# and calls itself "fog off entirely" overstates what it removed. Both
+		# controls are present, named for exactly what each turns off.
+		["depth+height fog off (volumetric still on)", {"fog_enabled": false}],
+		["ALL fog off (depth+height+volumetric)",
+			{"fog_enabled": false, "volumetric_fog_enabled": false}],
 		# The depth term and the HEIGHT term are separate knobs on one fog, and
 		# they must be measured separately: `fog_density` is the uniform depth
 		# haze, while `fog_height_density` is the pooling CaveAtmosphere writes.
@@ -262,7 +279,15 @@ func _run(cam: Camera3D) -> bool:
 		["aerial perspective 0", {"fog_aerial_perspective": 0.0}],
 		["fog sky affect 0", {"fog_sky_affect": 0.0}],
 		["volumetric fog off", {"volumetric_fog_enabled": false}],
+		# Two SEPARATE sources of nondirectional light, and zeroing the first
+		# alone cannot clear the candidate. `main.gd` enables SDFGI, so bounced
+		# indirect light keeps arriving with `ambient_light_energy` at zero —
+		# this harness watches SDFGI reconverge every time the probe moves, which
+		# is direct evidence it contributes. "Ambient does nothing" is only a
+		# finding once both rows say so.
 		["ambient energy 0", {"ambient_light_energy": 0.0}],
+		["SDFGI off", {"sdfgi_enabled": false}],
+		["ambient 0 + SDFGI off", {"ambient_light_energy": 0.0, "sdfgi_enabled": false}],
 		["tonemap LINEAR", {"tonemap_mode": Environment.TONE_MAPPER_LINEAR}],
 		["tonemap white 2.0", {"tonemap_white": 2.0}],
 		# The issue names "exposure/tonemapping" as one candidate, but exposure is
@@ -284,6 +309,10 @@ func _run(cam: Camera3D) -> bool:
 			"fog_enabled": false,
 			"volumetric_fog_enabled": false,
 			"ambient_light_energy": 0.0,
+			# SDFGI belongs here too: leaving it on left indirect bounced light in
+			# the "no atmosphere" control, so it was never a ceiling on
+			# nondirectional light at all.
+			"sdfgi_enabled": false,
 		}],
 		# Repeat of row 1, last. The gap between the two baseline readings is this
 		# run's own noise floor, and no row may be read as a finding unless it
@@ -294,8 +323,9 @@ func _run(cam: Camera3D) -> bool:
 
 	print("ABLATION — probe %.3fx -> %.3fx (ratio %.2fx, the shipped palette interval), %d samples/box"
 		% [PROBE_LO, PROBE_HI, REGION_RATIO, GRID_X * GRID_Y])
-	print("| vantage | condition | luma @%.3fx | luma @%.3fx | delta | vs baseline |" % [PROBE_LO, PROBE_HI])
-	print("|---|---|---|---|---|---|")
+	print("| vantage | condition | luma @%.3fx | luma @%.3fx | raw delta | contrast | vs baseline |"
+		% [PROBE_LO, PROBE_HI])
+	print("|---|---|---|---|---|---|---|")
 
 	var failures: Array[String] = []
 	for vantage: Array in VANTAGES:
@@ -346,6 +376,7 @@ func _run(cam: Camera3D) -> bool:
 			"tonemap_exposure": _env.tonemap_exposure,
 			"adjustment_enabled": _env.adjustment_enabled,
 			"volumetric_fog_enabled": _env.volumetric_fog_enabled,
+			"sdfgi_enabled": _env.sdfgi_enabled,
 		}
 
 		var box: Array = GROUND_BOXES[vname]
@@ -410,17 +441,21 @@ func _run(cam: Camera3D) -> bool:
 				failures.append("%s / %s: a reading never converged within %d frames"
 					% [vname, label, MAX_SETTLE_FRAMES])
 
+			# `contrast` is what every comparison uses; the raw difference is
+			# printed alongside it only so a reader can see both.
 			var delta := hi - lo
+			var contrast := _contrast(lo, hi)
 			if label.begins_with("baseline (as shipped)"):
-				baseline_delta = delta
+				baseline_delta = contrast
 			if label.begins_with("baseline (repeat"):
-				noise_floor = absf(delta - baseline_delta)
+				noise_floor = absf(contrast - baseline_delta)
 			if label.begins_with("atmosphere off"):
-				ceiling_delta = delta
+				ceiling_delta = contrast
 			var rel := "—"
 			if baseline_delta > 0.0001 and not label.begins_with("baseline"):
-				rel = "%+.0f%%" % ((delta / baseline_delta - 1.0) * 100.0)
-			print("| %s | %s | %.4f | %.4f | **%.4f** | %s |" % [vname, label, lo, hi, delta, rel])
+				rel = "%+.0f%%" % ((contrast / baseline_delta - 1.0) * 100.0)
+			print("| %s | %s | %.4f | %.4f | %.4f | **%.4f** | %s |"
+				% [vname, label, lo, hi, delta, contrast, rel])
 
 			# Restore before the next row so conditions never compound.
 			for key: String in shipped:
@@ -440,7 +475,7 @@ func _run(cam: Camera3D) -> bool:
 			var survives := 0.0
 			if ceiling_delta > 0.0:
 				survives = baseline_delta / ceiling_delta * 100.0
-			print("| %s | **SURVIVES** | | | **%.4f / %.4f** | **%.1f%%** |"
+			print("| %s | **SURVIVES (contrast)** | | | | **%.4f / %.4f** | **%.1f%%** |"
 				% [vname, baseline_delta, ceiling_delta, survives])
 			# State the floor next to the result, so a reader can see which rows
 			# above are real. A row moving less than this is indistinguishable
@@ -448,7 +483,7 @@ func _run(cam: Camera3D) -> bool:
 			var floor_pct := 0.0
 			if baseline_delta > 0.0:
 				floor_pct = noise_floor / baseline_delta * 100.0
-			print("| %s | **noise floor** | | | **%.4f** | **+/-%.1f%%** |"
+			print("| %s | **noise floor** | | | | **%.4f** | **+/-%.1f%%** |"
 				% [vname, noise_floor, floor_pct])
 			if floor_pct > NOISE_CEILING * 100.0:
 				failures.append(("%s: the baseline repeated to within only %.1f%% (floor %.4f), over the "
@@ -497,6 +532,26 @@ func _converged(box: Array) -> Array:
 			quiet = 0
 		previous = value
 	return [value, false]
+
+
+## Separation between the two readings, normalised by their own brightness.
+##
+## The raw difference `hi - lo` cannot be compared across conditions, because it
+## confounds the thing under test — how much palette separation survives — with
+## plain global gain. Any condition that uniformly brightens or darkens the frame
+## scales both readings together, so it moves `hi - lo` proportionally even when
+## the contrast between the two grounds is completely unchanged. Dropping
+## exposure 1.05 -> 1.0 shrinks both readings by ~5% and would be reported as 5%
+## of "flattening" that never happened; the tonemapper and ambient rows carry the
+## same error.
+##
+## Dividing by the mean removes the gain and leaves the contrast, which is what
+## every row is actually claiming to measure.
+func _contrast(lo: float, hi: float) -> float:
+	var mean := (hi + lo) * 0.5
+	if mean <= 0.0:
+		return 0.0
+	return (hi - lo) / mean
 
 
 ## Mean luminance over a dense grid inside a fractional box of the frame.
