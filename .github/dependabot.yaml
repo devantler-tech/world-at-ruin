@@ -13,6 +13,15 @@ updates:
       exclude:
         - "github.com/devantler-tech/*"
 
+  # Workflow validation is an independent Go tool, not part of the game server.
+  - package-ecosystem: gomod
+    directory: /.github/scripts/release-credential-boundary
+    schedule:
+      interval: daily
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
+
   - package-ecosystem: github-actions
     directory: /
     schedule:
