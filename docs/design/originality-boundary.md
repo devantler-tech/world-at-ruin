@@ -104,9 +104,8 @@ keep independent.
 The audit found no third-party screenshot, model, texture, audio, source-code copy or other direct
 reference asset in the tracked tree. `docs/art-direction/` contains link-only Markdown; the tracked
 Phase 0 images are first-party captures of World at Ruin; current character assets are procedural or
-documented CC0 inputs. The asset coverage weakness is being closed separately by
-[#358](https://github.com/devantler-tech/world-at-ruin/pull/358), which binds provenance records to
-exact tracked bytes.
+documented CC0 inputs. The provenance guard binds every tracked asset to its reviewed source, licence,
+and exact bytes.
 
 That is evidence about the current repository, **not a declaration that the game cannot infringe**.
 Substantial similarity can arise from a protected combination even when no file was copied. The
