@@ -162,7 +162,7 @@ printf '%s\n' \
 git -C "$repo" add docs/art-direction/reference.md
 expect_failure \
 	"inline media cannot hide inside a Markdown reference" \
-	"encoded or inline media in repository documentation" \
+	"encoded or inline media in repository text" \
 	"$repo"
 
 repo=$(new_repo encoded_repository_media)
@@ -175,7 +175,18 @@ printf '%s\n' \
 git -C "$repo" add docs/evidence/reference.md
 expect_failure \
 	"encoded reference media cannot move to another documentation path" \
-	"encoded or inline media in repository documentation" \
+	"encoded or inline media in repository text" \
+	"$repo"
+
+repo=$(new_repo encoded_artgen_source)
+write_valid_contract "$repo"
+printf '%s\n' \
+	'REFERENCE = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB"' \
+	>"$repo/tools/artgen/reference.py"
+git -C "$repo" add tools/artgen/reference.py
+expect_failure \
+	"encoded reference media cannot hide inside generator source" \
+	"encoded or inline media in repository text" \
 	"$repo"
 
 repo=$(new_repo unreviewed_media)

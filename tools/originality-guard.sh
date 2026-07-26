@@ -66,8 +66,9 @@ else
 	done < <(git ls-files -z -- "$ART_DIRECTION")
 fi
 
-# A copied payload remains reference media when moved elsewhere under docs.
-# Scan repository documentation rather than trusting a directory name.
+# A copied payload remains reference media when moved elsewhere under docs or
+# embedded in generator source. Scan both text surfaces rather than trusting a
+# directory name or source-file extension.
 while IFS= read -r -d '' file; do
 	if ! is_binary "$file" &&
 		grep -Ein \
@@ -75,7 +76,7 @@ while IFS= read -r -d '' file; do
 			"$file" >/dev/null; then
 		encoded_documentation_media+=("$file")
 	fi
-done < <(git ls-files -z -- docs)
+done < <(git ls-files -z -- docs "$ARTGEN_ROOT")
 
 if [ -d "$ARTGEN_ROOT" ]; then
 	while IFS= read -r -d '' file; do
@@ -185,11 +186,11 @@ fi
 
 if [ ${#encoded_documentation_media[@]} -gt 0 ]; then
 	failed=1
-	echo "::error::encoded or inline media in repository documentation is forbidden"
+	echo "::error::encoded or inline media in repository text is forbidden"
 	printf '  - %s\n' "${encoded_documentation_media[@]}"
 	echo
-	echo "Documentation may contain prose and external links, never inline SVG, encoded media or"
-	echo "text-encoded model data."
+	echo "Documentation and generator source may contain prose, code and external links, never"
+	echo "inline SVG, encoded media or text-encoded model data."
 	echo
 fi
 
