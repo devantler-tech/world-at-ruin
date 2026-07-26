@@ -14,6 +14,13 @@ distinction is settled below.
 Use it two ways: **pick the target before you build**, and **name the specific reference plus your
 gap in the PR** when you are done.
 
+**References are view-only, not source material.** Follow the
+[`originality boundary`](../design/originality-boundary.md): keep third-party media as an external
+link, translate it into an abstract written brief, and make at least three independent expressive
+choices before building. Never download, trace, paint over, style-transfer or use a named game's
+media as a generator input. A player-visible PR using one of these references carries both the
+existing frame/reference/gap evidence and the policy's **Originality** note.
+
 **How references are named.** No copyrighted image is committed here, and a link to a game's home
 page does not show you the target — those games each span many incompatible art styles. So each
 reference names a **specific zone, screen or asset set** you can find and look at (in official media
