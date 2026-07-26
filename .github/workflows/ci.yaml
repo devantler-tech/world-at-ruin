@@ -1036,7 +1036,7 @@ jobs:
   # container's Go can lag.
   lint:
     name: Lint
-    uses: devantler-tech/actions/.github/workflows/lint.yaml@9705e47d7df0b556ec06786247297c0e5020e56d # v10.2.1
+    uses: devantler-tech/actions/.github/workflows/lint.yaml@6ae5d87b342984cdaf34740e60366b9d570d8fc5 # v10.2.3
     permissions:
       contents: write
       issues: write
@@ -1074,7 +1074,21 @@ jobs:
           # Real dependencies exist now (the Agones SDK and its gRPC stack),
           # so cache the module downloads keyed on go.sum.
           cache: true
-          cache-dependency-path: server/go.sum
+          cache-dependency-path: |
+            server/go.sum
+            .github/scripts/release-credential-boundary/go.sum
+      - name: Format check (release credential guard)
+        run: |
+          unformatted="$(gofmt -l .github/scripts/release-credential-boundary)"
+          if [ -n "${unformatted}" ]; then
+            echo "::error::gofmt found unformatted workflow guard files:"; echo "${unformatted}"; exit 1
+          fi
+      - name: Vet release credential guard
+        run: go -C .github/scripts/release-credential-boundary vet ./...
+      - name: Test release credential guard
+        run: go -C .github/scripts/release-credential-boundary test -race -count=1 ./...
+      - name: Keep release-write credentials out of the build job
+        run: ./.github/scripts/release-credential-boundary-guard.sh
       - name: Format check (gofmt)
         working-directory: server
         run: |
