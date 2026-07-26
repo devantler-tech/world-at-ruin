@@ -92,6 +92,19 @@ uniform float crack_relief: hint_range(0.0, 3.0) = 1.1;
 uniform float ash_contact: hint_range(0.002, 0.3) = 0.035;
 uniform float lip_lift: hint_range(0.0, 1.0) = 0.18;
 
+// The measurement instrument for #273 — a scalar on the finished ground albedo,
+// so `tools/atmosphere_ablation` can ask "how much of an albedo difference of
+// size X survives to the screen?" by rendering the SAME frame twice and varying
+// only this. The regions differ by a baked factor of 3.1x, so driving this
+// between 1.0 and that factor reproduces a region step without moving the
+// generator, the vertex colours or any determinism golden.
+//
+// It multiplies rather than replaces on purpose: the question is how a RATIO
+// transmits through the atmosphere, and a ratio is what the regions actually
+// are. At its default of exactly 1.0 the multiply is an identity — the shipped
+// frame is bit-identical with it present.
+uniform float albedo_probe: hint_range(0.25, 4.0) = 1.0;
+
 varying vec3 world_pos;
 varying vec3 world_normal;
 
@@ -333,7 +346,7 @@ void fragment() {
 	// seams to darken. (Already zeroed above when plates are off.)
 	surface *= 1.0 - crack * crack_darkness;
 
-	ALBEDO = base * surface * 2.0;
+	ALBEDO = base * surface * 2.0 * albedo_probe;
 	// The region's own roughness rides in the vertex ALPHA, biased to 0.5 (see
 	// WorldGen._ground_color). Without it every region would be one substance
 	// wearing a different tint: scoured stone would answer the low sun exactly
