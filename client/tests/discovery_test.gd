@@ -96,6 +96,10 @@ func _ready() -> void:
 	if _failed:
 		return
 
+	# --- expansion reader: future vault state changes live discovery behaviour ---
+	if not _test_restored_vault_state():
+		return
+
 	print("TEST PASS — discovery tracker holds (reach, planar, idempotent, forward-only, deterministic, degenerate-safe)")
 	get_tree().quit(0)
 
@@ -132,6 +136,28 @@ func _deterministic_replay() -> bool:
 	var log_a := _run_scripted_walk(Discovery.new())
 	var log_b := _run_scripted_walk(Discovery.new())
 	_check(log_a == log_b, true, "determinism: two identical walks produce identical results")
+	return not _failed
+
+
+## The v2 vault reader is not parser-only: discovery names it accepts can be
+## restored into the real tracker before the writer is activated. Unknown names
+## are carried as discovered too, so a rollback build never drops a place added
+## by a newer writer merely because this build has no point-of-interest for it.
+func _test_restored_vault_state() -> bool:
+	var restored := Discovery.new()
+	restored.add("wardens_shrine", Vector3.ZERO, 14.0)
+	if not restored.has_method("restore"):
+		_fail("the expanded vault shape has no Discovery.restore application path")
+		return false
+	restored.call("restore", ["wardens_shrine", "future_place", "wardens_shrine"])
+	_eq_list(restored.discovered(), "future_place,wardens_shrine",
+		"restore: names become one deterministic append-only set")
+	if _failed:
+		return false
+	_eq_list(restored.observe(Vector3.ZERO), "",
+		"restore: a persisted place is not discovered a second time after boot")
+	_check(restored.is_discovered("future_place"), true,
+		"restore: an unknown future place is preserved as discovered")
 	return not _failed
 
 

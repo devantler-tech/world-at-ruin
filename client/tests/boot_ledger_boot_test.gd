@@ -82,6 +82,10 @@ func _begin_boot(phase: String) -> void:
 	if _main != null:
 		_main.queue_free()
 		_main = null
+	# Each phase models a new executable launch. BootRecovery's refused-path
+	# latch correctly survives for a real process lifetime, so reset it at this
+	# synthetic process boundary just as SaveVault's multi-case tests do.
+	BootRecovery.clear_refusals_for_test()
 	_save = SaveIsolation.new("user://boot_ledger_probe.json")
 	if not _save.begin():
 		_fail("save isolation did not take — refusing to boot into the real save or recovery ledger")

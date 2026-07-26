@@ -1,0 +1,4 @@
+frame: ash-source-side.png
+captured: 1600x900
+size: as shipped
+separation: value 28.8% of range (p1 0.135 -> p99 0.424) - hue 12.9 deg over 57600 px

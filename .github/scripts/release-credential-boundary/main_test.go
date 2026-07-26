@@ -23,7 +23,7 @@ func loadRepositoryWorkflow(t *testing.T) *workflow {
 	if !ok {
 		t.Fatal("resolve test source path")
 	}
-	path := filepath.Join(filepath.Dir(source), "..", "..", "..", ".github", "workflows", "cd.yaml")
+	path := filepath.Join(filepath.Dir(source), "..", "..", "workflows", "cd.yaml")
 	document, err := loadWorkflow(path)
 	if err != nil {
 		t.Fatal(err)

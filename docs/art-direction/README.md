@@ -14,6 +14,13 @@ distinction is settled below.
 Use it two ways: **pick the target before you build**, and **name the specific reference plus your
 gap in the PR** when you are done.
 
+**References are view-only, not source material.** Follow the
+[`originality boundary`](../design/originality-boundary.md): keep third-party media as an external
+link, translate it into an abstract written brief, and make at least three independent expressive
+choices before building. Never download, trace, paint over, style-transfer or use a named game's
+media as a generator input. A player-visible PR using one of these references carries both the
+existing frame/reference/gap evidence and the policy's **Originality** note.
+
 **How references are named.** No copyrighted image is committed here, and a link to a game's home
 page does not show you the target — those games each span many incompatible art styles. So each
 reference names a **specific zone, screen or asset set** you can find and look at (in official media
@@ -34,7 +41,14 @@ becomes the standard everyone is judged against, which is the failure #221 exist
 |---|---|---|
 | **Audio** | WoW and Guild Wars 2 zone ambience; Fatekeeper for combat and interiors | Ambience that states the biome before the UI does; impact sounds with weight and material (stone, iron, cloth read differently); salvaged tech that hums wrongly rather than beeping cleanly |
 | **Camera** | WoW and Guild Wars 2 third-person | Framing that keeps the character readable while showing the world; predictable collision behaviour indoors and in caves; no fighting the player for control |
+| **Character motion** | [Kingmakers — Official Announcement Trailer](https://www.youtube.com/watch?v=OvezgDni8z4&t=66s), 1:06–1:10 | A continuous third-person sprint: the full-body stride stays readable and the follow-camera tracks without hiding the body motion. Borrow the locomotion/camera relationship only, never the modern protagonist's look. |
 | **Game feel** | Guild Wars 2 and WoW for MMO combat rhythm; Fatekeeper for melee weight | Telegraphed windups readable at a glance (already the settled combat design), committed animations with recovery, hits that land with weight rather than registering as numbers |
+
+The character-motion row is a bounded locomotion anchor, not a universal answer for every animation.
+A motion PR must cite a linked **moving artifact**, an exact start–end time range, and the cue it is
+judging (for example stride, idle, windup, recovery or camera tracking). A still frame or a whole-title
+reference cannot establish motion quality. When 1:06–1:10 does not show the changed cue, cite another
+moving artifact from the approved titles rather than stretching this sprint beyond what it proves.
 
 **🔴 Naming the game is NOT a citation here either — the same rule applies.** The rows above name a
 *title and what to take from it*, exactly as the visual anchors do; they are not themselves
@@ -427,6 +441,11 @@ the wanderer reads as a mannequin wearing painted-on clothes.
 **Stance and motion (#224).** Weight on one leg, asymmetric arms, a breathing idle. The current
 symmetric hands-clasped pose reads as a rig at rest, because that is what it is.
 
+**Motion reference.** The [Kingmakers announcement trailer from
+1:06–1:10](https://www.youtube.com/watch?v=OvezgDni8z4&t=66s) anchors a readable full-body sprint and
+stable third-person tracking. It does not demonstrate an idle, so #224's breathing-idle work needs a
+separate time-ranged moving reference from the approved title set.
+
 **Races are authored identities, not sliders (#228).** WoW and WildStar give each playable race its
 own proportions, silhouette, culture and art language — a Tauren is not a tall human. Our creator
 instead exposes real-world ethnicity as numeric `phenotype_african / phenotype_asian /
@@ -598,8 +617,57 @@ flicker is unchanged — only the evidence path is pinned.
 
 **Cave figures recorded before that fix carry this ±4pp uncertainty and should not be compared
 against post-fix ones.** Pinning also re-bases the cave numbers, because they are now read at one
-fixed phase instead of an arbitrary one — on the pinned illuminant `cave-chamber` measures **11.0% /
-6.0°** and `cave-walkout` **23.2% / 10.2°**. Those are the baseline a later cave pass beats.
+fixed phase instead of an arbitrary one — on the pinned illuminant `cave-chamber` measured **11.0% /
+6.0°** and `cave-walkout` **23.2% / 10.2°** at the time.
+
+### The cave was flat because the weather was indoors (#238)
+
+Superseding those figures. The cave's value axis was not narrow because its rock was too uniform —
+it was narrow because the Reach's ash was pooling inside sealed stone. The height term that gathers
+ash in the surface hollows (#211) is a property of the sky, but depth fog cannot see what is above
+it, so it filled the starter cave too. Ablations on the committed seed, two runs each:
+
+| environment | cave-chamber | darkest pixel | cave-walkout |
+|---|---|---|---|
+| shipped | 12.5% / 6.0° | 0.117 | 24.6% / 9.9° |
+| height term removed | 22.7% / 9.5° | 0.006 | 34.3% / 9.4° |
+| all depth fog removed | 22.8% / 15.0° | 0.000 | — |
+| sky ambient removed | 12.5% / 6.0° | 0.117 | 24.6% / 9.9° |
+
+Two of those rows carry the argument. The height term accounts for the **whole** flattening —
+removing all depth fog buys a further 0.1pp — so the uniform term was never the problem. And
+removing sky ambient changes the chamber by nothing at all, which is the negative control: SDFGI
+already keeps the sky out of the cave exactly as `main.gd` claims, so the veil was never ambient
+leakage. A darkest pixel of **0.117** is the finding in one number: nothing in the chamber was
+darker than a middling grey, so the room had no shadow to read structure by, and #236's bedding work
+was being veiled rather than failing.
+
+`CaveAtmosphere` now fades the height term out with how much sky a probe cone finds overhead, which
+leaves the surface grade untouched. **Post-fix baseline, and what a later cave pass beats:
+`cave-chamber` 22.7% / 9.5°, `cave-walkout` 34.3% / 9.4°**, with every outdoor vantage unchanged
+(`shrine` moves p99 by 0.001 — a probe clips the shrine's own structure — and its reported range
+does not move).
+
+Note the hue-sample counts fall with the veil (`cave-chamber` 57600 → ~37400 coloured pixels): the
+metric excludes crushed blacks from the hue population on purpose, and a cave that finally has
+blacks has fewer pixels eligible to vote. Read the hue span alongside its sample count here.
+
+**What is stable and what still is not, measured by running identical code twice.** At every
+vantage **except `shrine`**, the reported figures — value range, `p1`, `p99` to three decimals, hue
+span — repeat exactly. Two things do not, and neither is caused by a code change: **`shrine`'s
+`p99` drifts by ±0.001** (moving its reported range between 26.6% and 26.7%), and the **hue sample
+COUNT** drifts by a few pixels out of ~37 000 (0.002%) wherever the population has a large
+near-threshold group. The likely cause of both is that #321's `freeze_flicker` pins
+the CAVE torches only — the shrine's braziers still flicker, and pixels sitting on the luma and
+saturation gates cross them differently from shot to shot. So quote a sample count as approximate,
+and treat a `shrine` value delta under about 0.3pp as unfalsifiable until its braziers are pinned
+too. This does not touch the cave value figures, which are exact.
+
+**Testing DEPTH rather than sky is the trap.** A first attempt faded on depth below the terrain and
+measured as a complete no-op: the starter cave is carved inside a massif that stands ON the terrain,
+so at both cave vantages the heightfield reads about 3.6 m BELOW the camera and the chamber is open
+air by any depth measure. The frames were byte-identical to baseline and only a diagnostic print
+showed why.
 
 The superseded hue pass is kept only so the older figures stay traceable:
 

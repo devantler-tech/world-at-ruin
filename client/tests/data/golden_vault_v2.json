@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "comment": "GOLDEN VAULT v2 — the reader-expansion contract for append-only discovery state (no-resets law). This build reads and preserves the shape but does not originate it until the expansion release bakes.",
+  "attuned": [
+    "wardens_shrine"
+  ],
+  "discoveries": [
+    "starter_cave",
+    "wardens_shrine"
+  ]
+}

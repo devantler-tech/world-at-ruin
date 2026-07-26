@@ -74,24 +74,36 @@ zone/dungeon server:
     pins the demo scenario's resolution stream. Ascending-ID and read-only —
     never part of `Step`, so it cannot move the movement golden.
   - `World.AddMob` + the cast lifecycle — the **mob combat AI** (the single
-    implementation by decision, #207): a registered stationary caster acquires
-    the nearest non-mob entity within an inclusive aggro radius (ties broken
-    to the lowest ID, iterated in stable order) and paints a circle **anchored
-    where the target stood at cast start** — ground-anchored, never tracking,
-    which is exactly what makes the attack winnable by moving well and losable
-    by standing still. The cast resolves a fixed number of ticks later against
-    where everyone is standing **at resolution** (leave and wander back in and
-    you are still hit), excluding the caster, into a bounded `TelegraphHit`
-    record log the consumer drains every tick. A zero wind-up is clamped to a
-    full tick: an instant telegraph cannot be dodged, and dodgeability is
-    product law. `ActiveCasts` exposes the painted, unresolved marks — the
-    read seam the future replication child consumes, because a client must SEE
-    the mark to step out of it. Runs inside `Step` (one tick loop, resolution
-    before decision), decides in ascending-ID order, and never touches a
-    position — a test pins that a mob-bearing world ends every entity exactly
-    where its mob-free twin does. Its own committed golden pins a scripted
-    scenario's resolution stream. Threat, chase movement, factions and
-    interruption are deliberate later children.
+    implementation by decision, #207): a registered mob acquires the nearest
+    non-mob entity within an inclusive aggro radius (ties broken to the lowest
+    ID, iterated in stable order) and paints a circle **anchored where the
+    target stood at cast start** — ground-anchored, never tracking, which is
+    exactly what makes the attack winnable by moving well and losable by
+    standing still. `World.MobChase` is the default-off delivery gate for its
+    first movement mode. Off preserves the original stationary caster and
+    clears any AI-owned intent before movement. On, the mob writes horizontal
+    intent through the existing deterministic kinematic path at
+    `MobParams.ChaseSpeedMM` until the gap between capsule surfaces reaches the
+    inclusive `MobParams.CastRangeMM` (zero means contact), then stops and
+    paints; target loss and an in-flight cast also stop it. Both parameters are
+    clamped at `AddMob` ingestion, including a one-millimetre-per-tick floor
+    for positive chase speed; a deterministic dominant-axis staircase keeps
+    the floor moving diagonally. Intent ownership distinguishes AI movement
+    from caller input, so disabling chase clears only stale AI movement.
+    The cast resolves a fixed number of ticks later against where everyone is
+    standing **at resolution** (leave and wander back in and you are still
+    hit), excluding the caster, into a bounded `TelegraphHit` record log the
+    consumer drains every tick. A zero wind-up is clamped to a full tick: an
+    instant telegraph cannot be dodged, and dodgeability is product law.
+    `ActiveCasts` exposes the painted, unresolved marks — the read seam the
+    future replication child consumes, because a client must SEE the mark to
+    step out of it. Runs inside `Step` (one tick loop, resolution before
+    decision) and decides in ascending-ID order. The flag-off world keeps the
+    original stationary combat golden unchanged; chase has insertion-order,
+    range, stop and hostile-parameter regressions. Threat, dead-target
+    filtering, factions, interruption, real navmesh routing and cast
+    replication remain later children; #357 owns enabling or retiring the
+    delivery flag after real-zone evidence.
   - `Entity.Health` + `World.ApplyDamage` — the **consequence layer**: a
     resolved telegraph finally costs something. Health is part of the hashed
     world state for entities with a pool (`MaxHealth > 0`) — a divergence in
@@ -133,6 +145,31 @@ zone/dungeon server:
   Tests drive the real SDK client against an in-process fake sidecar
   (`agones/agonestest`), at package level and against the built binary in both
   flag states.
+- **`nakamaauth/`** — the first **Nakama meta-tier seam**: a player session is
+  presented to Nakama's generated gRPC `GetAccount` API as bearer metadata, and
+  only Nakama's authenticated user ID crosses back into World at Ruin. It does
+  not reimplement JWT verification or trust a client-provided account ID.
+  Empty sessions, RPC refusals and malformed account responses fail closed, and
+  rejection errors expose only the gRPC status code so an upstream message
+  cannot reflect the credential into logs. Hermetic tests exercise the real
+  generated gRPC client/server path.
+- **`handoff/`** — the transport-neutral **player handoff core**: it consumes
+  `nakamaauth` rather than accepting a client-provided identity, gives only that
+  verified user ID plus a caller-stable reservation key and server-generated
+  attempt ID to an allocation boundary, validates the returned GameServer is
+  under the configured managed DNS domain with a usable endpoint and observer
+  binding, and mints the short-lived token with a per-allocation secret that
+  only that zone receives. Every failed stage returns a zero handoff;
+  post-allocation failures and ambiguous allocation errors conditionally
+  reconcile the verified-user/key/attempt on a bounded cleanup context, while
+  stale attempts cannot release a newer overlapping retry. Each allocation is
+  an expiring no-show lease that its adapter must reclaim unless first valid
+  zone admission claims it, and the nanosecond-precision token never outlives
+  that lease. Retryable gRPC status codes survive without upstream text, and
+  credentials never enter returned errors. Hermetic tests drive the real
+  generated Nakama gRPC path through the service and then verify its token
+  through the real zone verifier. The package is inert until the concrete
+  Agones allocator/lease-claim adapter and Nakama RPC register it.
 - **`cmd/zone/`** — a runnable skeleton server. It boots the demo zone and either
   runs a fixed number of deterministic ticks (printing the state hash) or drives
   the loop from the wall clock. With `-replicate` it also runs the full
@@ -157,13 +194,13 @@ go run ./cmd/zone -listen :8443 -tls-cert cert.pem -tls-key key.pem -agones  # f
 Later children of the server-foundation epic
 ([#4](https://github.com/devantler-tech/world-at-ruin/issues/4), the first child
 of the Phase 1 epic [#8](https://github.com/devantler-tech/world-at-ruin/issues/8)):
-the socket **transport** and client prediction/reconciliation (the snapshot
-*payload* and its wire encoding above are ready; transport selection, sockets,
-and the client-side apply of the spawn/update/despawn deltas are the next
-layer), real navmesh geometry, the Nakama meta tier, and
-Postgres/CNPG persistence. The tick core, its capsule-vs-capsule separation, and
-its area-of-interest and snapshot queries land first because everything else is
-built on top of a simulation that is already proven deterministic.
+the concrete Agones allocator adapter and Nakama RPC registration that expose
+`handoff`, the rest of the Nakama auth/social/chat/storage surface, client
+prediction/reconciliation, real navmesh geometry, and Postgres/CNPG
+persistence. The tick core, socket, client replica store, Agones lifecycle,
+Nakama identity boundary and fail-closed handoff core are already in place;
+later slices build on those tested seams instead of creating a parallel meta
+service.
 
 ## Validate
 

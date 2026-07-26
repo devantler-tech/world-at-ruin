@@ -1,5 +1,13 @@
 # Story & progression — the Undying Work, the Chronicle, and the Atlas
 
+> **ORIGINALITY HOLD (#359): DO NOT IMPLEMENT THE UNDYING WORK OR FORMER LIVES CONCEPT.**
+> The proposal's combined immortal/amnesiac protagonist, forgotten prior lives and
+> identity-investigation arc is too close to an existing game's distinctive narrative cluster to
+> ship from this text. It needs an independent rewrite that removes that combination, applies the
+> [`originality boundary`](originality-boundary.md), and receives human legal judgment through a
+> draft PR. This hold does not unsettle `AGENTS.md`'s broader Ruin, cave-awakening or
+> medieval-futuristic premise.
+
 > **Status: PROPOSAL (2026-07-17).** Research-backed ideation for the maintainer to redirect —
 > nothing below is settled until he says so. It builds on the settled *Setting & story* section of
 > `AGENTS.md` (the Ruin, cave awakening, medieval-futuristic, world at rebirth) and contradicts no
