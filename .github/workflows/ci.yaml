@@ -1074,7 +1074,21 @@ jobs:
           # Real dependencies exist now (the Agones SDK and its gRPC stack),
           # so cache the module downloads keyed on go.sum.
           cache: true
-          cache-dependency-path: server/go.sum
+          cache-dependency-path: |
+            server/go.sum
+            .github/scripts/release-credential-boundary/go.sum
+      - name: Format check (release credential guard)
+        run: |
+          unformatted="$(gofmt -l .github/scripts/release-credential-boundary)"
+          if [ -n "${unformatted}" ]; then
+            echo "::error::gofmt found unformatted workflow guard files:"; echo "${unformatted}"; exit 1
+          fi
+      - name: Vet release credential guard
+        run: go -C .github/scripts/release-credential-boundary vet ./...
+      - name: Test release credential guard
+        run: go -C .github/scripts/release-credential-boundary test -race -count=1 ./...
+      - name: Keep release-write credentials out of the build job
+        run: ./.github/scripts/release-credential-boundary-guard.sh
       - name: Format check (gofmt)
         working-directory: server
         run: |
