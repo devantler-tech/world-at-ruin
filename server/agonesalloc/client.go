@@ -5,7 +5,7 @@ package agonesalloc
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/base64"
+	"encoding/base32"
 	"errors"
 	"strings"
 
@@ -122,7 +122,9 @@ func (c *Client) Reserve(ctx context.Context, request Request) (GameServer, erro
 
 func correlationLabel(value string) string {
 	digest := sha256.Sum256([]byte(value))
-	return base64.RawURLEncoding.EncodeToString(digest[:])
+	return strings.ToLower(
+		base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(digest[:]),
+	)
 }
 
 func validCorrelationID(value string) bool {

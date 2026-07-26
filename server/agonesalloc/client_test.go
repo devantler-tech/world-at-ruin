@@ -281,8 +281,8 @@ func TestReserveUsesReadyFleetThroughRealAgonesAPI(t *testing.T) {
 		Scheduling: allocationpb.AllocationRequest_Packed,
 		Metadata: &allocationpb.MetaPatch{
 			Labels: map[string]string{
-				reservationLabel: "41WZAgJNSd4DCdwYBb9z1A3dLjCkFKNXceQo7SpM3Ms",
-				attemptLabel:     "mATckMN0_Y6DybladWEfm-xuDG7Ny-1TGdZJEghBdSE",
+				reservationLabel: "4nkzsaqcjve54ayj3qmalp3t2qg52lrquqkkgv3r4quo2ksm3tfq",
+				attemptLabel:     "tacnzegdot6y5a6jxfnhkyi7tpwg4ddozxf62uyz2zereccbouqq",
 			},
 		},
 		GameServerSelectors: []*allocationpb.GameServerSelector{
@@ -296,6 +296,34 @@ func TestReserveUsesReadyFleetThroughRealAgonesAPI(t *testing.T) {
 	}
 	if !proto.Equal(requests[0], wantRequest) {
 		t.Fatalf("allocation request = %v, want %v", requests[0], wantRequest)
+	}
+}
+
+func TestReserveUsesKubernetesSafeCorrelationLabels(t *testing.T) {
+	server := &allocationServer{
+		response: &allocationpb.AllocationResponse{
+			GameServerName: "zone-17",
+			Ports: []*allocationpb.AllocationResponse_GameServerStatusPort{
+				{Name: testTLSPortName, Port: 8443},
+			},
+		},
+	}
+	client := clientAgainst(t, server, validConfig())
+
+	request := validRequest()
+	request.ReservationID = "reservation-12"
+	if _, err := client.Reserve(context.Background(), request); err != nil {
+		t.Fatalf("Reserve returned an error: %v", err)
+	}
+
+	requests := server.observedRequests()
+	if len(requests) != 1 {
+		t.Fatalf("allocation requests = %d, want 1", len(requests))
+	}
+	for name, value := range requests[0].GetMetadata().GetLabels() {
+		if !validKubernetesLabelValue(value) {
+			t.Errorf("allocation label %q value %q is not Kubernetes-safe", name, value)
+		}
 	}
 }
 
@@ -364,6 +392,31 @@ func TestReserveRefusesMalformedAllocationResponse(t *testing.T) {
 			}
 		})
 	}
+}
+
+func validKubernetesLabelValue(value string) bool {
+	if value == "" || len(value) > 63 ||
+		!isASCIIAlphanumeric(value[0]) ||
+		!isASCIIAlphanumeric(value[len(value)-1]) {
+		return false
+	}
+	for _, char := range value {
+		if (char < 'a' || char > 'z') &&
+			(char < 'A' || char > 'Z') &&
+			(char < '0' || char > '9') &&
+			char != '-' &&
+			char != '_' &&
+			char != '.' {
+			return false
+		}
+	}
+	return true
+}
+
+func isASCIIAlphanumeric(char byte) bool {
+	return (char >= 'a' && char <= 'z') ||
+		(char >= 'A' && char <= 'Z') ||
+		(char >= '0' && char <= '9')
 }
 
 func TestReservePreservesStatusWithoutUpstreamText(t *testing.T) {
