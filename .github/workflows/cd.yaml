@@ -903,10 +903,16 @@ jobs:
             fi
           fi
 
-          # MONOTONIC GUARD, as a COMPARE-AND-SWAP. The workflow concurrency
-          # group is per TAG, so two CD runs for different releases do not
-          # serialise, and nothing else locks this shared tap branch. Releases
-          # here are frequent enough for that to be a real race.
+          # MONOTONIC GUARD, as a COMPARE-AND-SWAP. The WORKFLOW concurrency
+          # group is per TAG, so two CD runs for different releases overlap
+          # freely — but THIS JOB's group is constant
+          # (`homebrew-tap-cask-world-at-ruin`), so the tap handoff itself is
+          # serialised across tags and two releases are never inside this step
+          # at once. The compare-and-swap therefore guards the writers that
+          # serialisation cannot reach: a manual edit, or any out-of-band actor
+          # on this shared branch. Do not read the job's serialisation as making
+          # it redundant, and do not read this guard as evidence that sibling
+          # releases race here — they do not.
           #
           # Version and blob SHA must come from the SAME read: reading them
           # separately leaves a window where a newer run writes in between, so
@@ -1114,6 +1120,21 @@ jobs:
               echo "::error::${tap}#${pr} conflicts with main while both carry v${repair_version}; refusing to rebuild ${branch}, which would leave the PR nothing to deliver"
               exit 1
             fi
+            # RE-VALIDATE IMMEDIATELY BEFORE THE FORCE-WRITE. The reset, not the
+            # restore, is the destructive step: `force` on the ref API permits a
+            # non-fast-forward update but offers no head-must-match guard, so a
+            # write landing between the capture above and this PATCH would be
+            # discarded with nothing left to recover it from. Our own releases
+            # cannot cause that — the job's CONSTANT concurrency group
+            # (`homebrew-tap-cask-world-at-ruin`, no tag in it) serialises the
+            # tap handoff across tags, which is exactly why it is constant — but
+            # a manual or out-of-band writer can, and the disarm/convergence
+            # logic above already exists to defend that case. Narrow the window
+            # to one read and refuse rather than reset over an uncaptured write.
+            if [ "$(cask_version_at "${branch}")" != "${repair_version}" ]; then
+              echo "::error::${branch} moved while the repair was being prepared (expected v${repair_version}); refusing to force-reset over a write this run did not capture"
+              exit 1
+            fi
             repair_reset=""
             for attempt in 1 2 3; do
               if gh api "repos/${tap}/git/refs/heads/${branch}" -X PATCH \
@@ -1135,6 +1156,26 @@ jobs:
             for attempt in 1 2 3 4 5; do
               repair_head="$(gh api "repos/${tap}/contents/Casks/world-at-ruin.rb?ref=${branch}" 2>/dev/null || true)"
               repair_blob="$(printf '%s' "${repair_head}" | jq -r '.sha // empty' 2>/dev/null || true)"
+              repair_now="$(printf '%s' "${repair_head}" | jq -r '.content // empty' 2>/dev/null \
+                | base64 -d 2>/dev/null | sed -n 's/^  version "\(.*\)"$/\1/p' | head -1 || true)"
+              # The blob compare-and-swap alone does NOT make this loop safe: a
+              # rejected PUT re-reads, so a writer that landed after the reset
+              # would simply have its blob sha adopted on the next attempt and be
+              # overwritten. Decide on the VERSION, which says who wrote last.
+              #
+              # Already ours: a retry after a PUT that actually landed.
+              if [ "${repair_now}" = "${repair_version}" ]; then
+                repair_written=1
+                break
+              fi
+              # The branch should hold main's copy and nothing else. Any other
+              # version is a release this run never captured, and restoring over
+              # it would drop that release — the exact harm this repair exists to
+              # prevent, so refuse instead of completing.
+              if [ -n "${repair_now}" ] && [ "${repair_now}" != "${repair_main_version}" ]; then
+                echo "::error::${branch} carries v${repair_now} after the rebuild, which this run did not write; refusing to restore v${repair_version} over it"
+                exit 1
+              fi
               # An empty blob sha here is a FAILED READ, not an absent file:
               # main was required to carry a readable cask version above, and
               # the branch is now main. Omitting the sha turns the PUT into a

@@ -211,6 +211,30 @@ if printf '%s' "${repair_block}" | grep -q 'content="\${content}"'; then
 	exit 1
 fi
 
+# The RESET is the destructive step: `force` on the ref API permits a
+# non-fast-forward update but gives no head-must-match guard, so a write landing
+# between the capture and the force-write is discarded with nothing left to
+# recover it from. The captured version must therefore be re-validated in
+# between. (Codex P1 on this PR. Its stated scenario — two overlapping CD runs —
+# cannot happen, because this job's concurrency group is constant and serialises
+# the tap handoff across tags; the residual out-of-band writer is real.)
+revalidate_line="$(awk -v a="${repair_line}" -v s='!= "${repair_version}"' \
+	'NR >= a && index($0, s) {print NR; exit}' "${workflow}")"
+if [ -z "${revalidate_line}" ] || [ "${revalidate_line}" -ge "${repair_patch_line}" ]; then
+	echo "the repair must re-validate the captured version immediately before the force-reset" >&2
+	exit 1
+fi
+
+# The blob compare-and-swap does NOT make the restore loop safe on its own: a
+# rejected PUT re-reads, so a writer that landed after the reset would have its
+# blob sha adopted on the next attempt and be overwritten. The loop must decide
+# on the VERSION.
+# shellcheck disable=SC2016 # literal workflow text, as above
+if ! printf '%s' "${repair_block}" | grep -q '"\${repair_now}" != "\${repair_main_version}"'; then
+	echo "the restore loop must refuse a version this run did not write" >&2
+	exit 1
+fi
+
 # Every give-up path in the repair must ABORT. Continuing would arm auto-merge
 # on a PR that can never merge — the silent stuck tap this repair exists to
 # prevent. Pair each message with its OWN `exit 1` on the next line rather than
