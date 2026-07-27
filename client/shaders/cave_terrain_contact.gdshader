@@ -65,18 +65,23 @@ void fragment() {
 	// contacts and crack relief at the same world XZ.
 	vec2 plate_uv = terrain_world_pos.xz * plate_scale;
 	vec2 plate_id = vec2(0.0);
+	vec2 plate_id2 = vec2(0.0);
 	float f1 = 0.0;
 	float f2 = 1.0;
 	float plate_resolved = 0.0;
+	float plate_blend = 0.0;
 	vec4 sub = vec4(rock_color, rock_roughness);
 	float crack = 0.0;
 	float plate_fw = 0.0;
 	if (plates_enabled) {
-		terrain_plates(plate_uv, plate_id, f1, f2);
+		terrain_plates(plate_uv, plate_id, f1, f2, plate_id2);
+		plate_blend = terrain_plate_boundary_blend(f1, f2);
 		plate_fw = max(fwidth(plate_uv.x), fwidth(plate_uv.y));
 		plate_resolved = 1.0 - smoothstep(0.30, 0.85, plate_fw);
-		sub = terrain_plate_substance(
+		sub = terrain_plate_substance_filtered(
 			plate_id,
+			plate_id2,
+			plate_blend,
 			rock_color,
 			rock_roughness,
 			plate_basalt,
@@ -111,8 +116,7 @@ void fragment() {
 		ash_contact,
 		max(ash_contact, 0.25));
 	float sheet = clamp(smoothstep(-ew, ew, exposed_edge) + rock_mix, 0.0, 1.0);
-	float slab_pick = terrain_hash3(vec3(plate_id * 2.3, 19.0));
-	float is_slab = step(0.60, slab_pick);
+	float is_slab = terrain_plate_slab(plate_id, plate_id2, plate_blend);
 	float slab = mix(0.40, is_slab, plate_resolved);
 	float plate_mask = sheet * slab;
 	float rock_exposure = max(rock_mix, plate_mask);

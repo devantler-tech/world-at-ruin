@@ -162,17 +162,19 @@ float ground_noise(vec2 xz, float scale) {
 // crack field: it goes to zero exactly on a boundary between two plates, and
 // widens naturally where three plates meet, which is where real broken ground
 // opens up too.
-void plates(vec2 uv, out vec2 id, out float f1, out float f2) {
-	terrain_plates(uv, id, f1, f2);
+void plates(vec2 uv, out vec2 id, out float f1, out float f2, out vec2 id2) {
+	terrain_plates(uv, id, f1, f2, id2);
 }
 
-// One plate's substance, resolved from its cell id alone. rgb = colour,
-// a = roughness. step() rather than smoothstep(): a slab IS basalt or IS
-// ferric. Chained mixes mean each later threshold overrides the earlier one
-// exactly, so the four selection widths are 0.38 / 0.28 / 0.20 / 0.14.
-vec4 plate_substance(vec2 id) {
-	return terrain_plate_substance(
-		id, rock_color, rock_roughness, plate_basalt, plate_ferric, plate_pale);
+// The substance covering this pixel. rgb = colour, a = roughness. step() rather
+// than smoothstep() per cell: a slab IS basalt or IS ferric. Chained mixes mean
+// each later threshold overrides the earlier one exactly, so the four selection
+// widths are 0.38 / 0.28 / 0.20 / 0.14. Only the cell boundary itself is
+// filtered, over its own screen footprint.
+vec4 plate_substance(vec2 id, vec2 id2, float blend) {
+	return terrain_plate_substance_filtered(
+		id, id2, blend,
+		rock_color, rock_roughness, plate_basalt, plate_ferric, plate_pale);
 }
 
 void vertex() {
@@ -204,14 +206,17 @@ void fragment() {
 	// control flow).
 	vec2 plate_uv = world_pos.xz * plate_scale;
 	vec2 plate_id = vec2(0.0);
+	vec2 plate_id2 = vec2(0.0);
 	float f1 = 0.0;
 	float f2 = 1.0;
 	float plate_resolved = 0.0;
+	float plate_blend = 0.0;
 	vec4 sub = vec4(rock_color, rock_roughness);
 	float crack = 0.0;
 	float plate_fw = 0.0;
 	if (plates_enabled) {
-	plates(plate_uv, plate_id, f1, f2);
+	plates(plate_uv, plate_id, f1, f2, plate_id2);
+	plate_blend = terrain_plate_boundary_blend(f1, f2);
 
 	// Screen footprint of one plate. Unlike the grain, plates are NOT tied to
 	// the distance fade: a 1.8 m slab is still a resolvable feature well past
@@ -223,7 +228,7 @@ void fragment() {
 	plate_fw = max(fwidth(plate_uv.x), fwidth(plate_uv.y));
 	plate_resolved = 1.0 - smoothstep(0.30, 0.85, plate_fw);
 
-	sub = plate_substance(plate_id);
+	sub = plate_substance(plate_id, plate_id2, plate_blend);
 	vec3 mean_col = rock_color * 0.38 + plate_basalt * 0.28
 		+ plate_ferric * 0.20 + plate_pale * 0.14;
 	float mean_rough = rock_roughness * 0.38 + 0.88 * 0.28
@@ -297,8 +302,7 @@ void fragment() {
 	// them. So a cell is not automatically a slab. Each one independently
 	// either carries stone or does not, which turns the net into scattered
 	// slabs whose edges only appear where a stone meets open ground.
-	float slab_pick = hash3(vec3(plate_id * 2.3, 19.0));
-	float is_slab = step(0.60, slab_pick);
+	float is_slab = terrain_plate_slab(plate_id, plate_id2, plate_blend);
 	// Once a pixel spans a whole plate there is no per-plate answer to give,
 	// so converge on the mean coverage exactly as the substance does above.
 	float slab = mix(0.40, is_slab, plate_resolved);
