@@ -554,12 +554,17 @@ everything shipped afterwards is held to.
   mixed change. A settled in-place improvement to an already-shipped below-bar surface may remain
   default-on only under the exception in the quality-bar section above; an unsettled or experimental
   improvement remains default-off under product law 2.
-- **Dev log is a contract:** every player-visible change adds a `DevLog.ENTRIES` entry (newest
-  first) in the same PR — the maintainer watches progress by playing, and the dev log is that
-  surface. Write the entry's `version` as the version the change will ship in (the next
-  semantic-release bump implied by your commit type). **Do NOT hand-edit `DevLog.VERSION` or
-  `config/version` in `project.godot`** — release builds are stamped from the release tag (below),
-  so a hand-bump only drifts from the real version.
+- **Dev log is a contract:** every player-visible change adds a dev-log entry in the same PR — the
+  maintainer watches progress by playing, and the dev log is that surface. **Add a new file
+  `client/devlog/<version>.json`** holding one object with `version`, `date`, `title` and `notes`
+  (an array of strings); copy the shape from any existing entry. Name the file for the version the
+  change will ship in (the next semantic-release bump implied by your commit type) and put the same
+  string in its `version` field — `devlog_storage_test` fails if the two disagree. One file per
+  entry is deliberate: entries used to share a single array, so every concurrent player-visible PR
+  collided on the same lines and had to rebase behind each sibling merge. Never reintroduce a shared
+  list. Ordering is by version, computed at load, so a new entry needs no edit to any existing file.
+  **Do NOT hand-edit `DevLog.VERSION` or `config/version` in `project.godot`** — release builds are
+  stamped from the release tag (below), so a hand-bump only drifts from the real version.
 - **CI, CD and releases:**
   - `ci.yaml` (`pull_request` + `merge_group`) lints, tests and analyses. It is the gate on a
     change. Its macOS export job is **build verification** — proof the project still exports and
