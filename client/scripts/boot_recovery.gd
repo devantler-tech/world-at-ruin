@@ -320,6 +320,7 @@ static func load_state(path: String) -> Dictionary:
 ## predicate select() trusts, so write and read can never diverge) or last-good.
 ## Writing junk into a well-formed file would LAUNDER corruption into evidence,
 ## which is exactly how a recorded failure gets erased.
+##
 ## Held under the cross-process write lock ([FileLock]), because this whole
 ## function is a read-modify-write and the two writers that race it — the updater
 ## and the game — both exist today. Without the lock, two of them reparse the
