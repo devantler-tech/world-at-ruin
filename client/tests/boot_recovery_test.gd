@@ -117,13 +117,36 @@ func _ready() -> void:
 	# --- CONTROL 5: PERSISTENCE — round-trip, first boot, corrupt file ---
 	var missing := BootRecovery.load_state(PROBE)
 	_check(missing["ok"] as bool, true, "persistence: a missing file is the legitimate first boot")
+	_check(missing.get("path_was_missing", false) as bool, true, "persistence: the load result, not a caller-side existence check, identifies first boot")
 	_check((missing["state"] as Dictionary).get("version", -1) == 1, true, "persistence: the contract release starts new recovery state on baked schema v1")
 	_check((missing["state"] as Dictionary)["quarantined"] == Array([]), true, "persistence: first boot starts with an empty ledger")
+	# Simulate a cloud-sync writer landing valid legacy state AFTER this shell
+	# observed a missing path but BEFORE it initializes the file. First-boot
+	# persistence must be conditional: overwriting this v0 document with the
+	# synthetic fresh v1 state would migrate without a real recovery transition.
+	var concurrent_v0 := FileAccess.open(PROBE, FileAccess.WRITE)
+	concurrent_v0.store_string(JSON.stringify({
+		"marker": null,
+		"quarantined": ["0.1.0"],
+		"last_good": "0.1.1",
+	}))
+	concurrent_v0.close()
+	var raced_init := BootRecovery.save_state(PROBE, missing["state"], true)
+	_check(raced_init["ok"] as bool, false, "persistence: first-boot initialization refuses a document created after the missing load")
+	var concurrent_after: Variant = JSON.parse_string(FileAccess.get_file_as_string(PROBE))
+	_check(
+		concurrent_after is Dictionary
+			and not (concurrent_after as Dictionary).has("version")
+			and (concurrent_after as Dictionary).get("quarantined") == Array(["0.1.0"]),
+		true,
+		"persistence: the concurrently-created v0 document stays byte-semantically intact")
+	_cleanup_probe()
 	var saved := BootRecovery.save_state(PROBE, after)
 	_check(saved["ok"] as bool, true, "persistence: a readable state persists")
 	_check(FileAccess.file_exists(PROBE + ".tmp"), false, "persistence: no temp file is left behind (atomic write)")
 	var loaded := BootRecovery.load_state(PROBE)
 	_check(loaded["ok"] as bool, true, "persistence: the persisted state loads back")
+	_check(loaded.get("path_was_missing", true) as bool, false, "persistence: an existing document is never reported as first boot")
 	var lstate: Dictionary = loaded["state"]
 	_check(lstate.get("version", -1) == 1, true, "persistence: an ordinary write uses baked recovery schema v1")
 	_check(lstate["marker"] == null, true, "persistence: marker round-trips")
