@@ -32,6 +32,41 @@ const SAVE_PATH_ENV := "WAR_SAVE_PATH"
 ## upgrade. recover_legacy_backup() closes that one-time migration gap.
 const LEGACY_TEST_BACKUP := "user://character.json.test-backup"
 
+## Prefix for the private staging file a write commits from. What follows it is a
+## per-attempt unique stamp, so no two writers — and no two attempts — ever stage
+## through the same path (see [method _write_tmp_path]).
+const WRITE_TMP_SUFFIX := ".tmp-"
+
+## How long an abandoned staging file must have sat UNCHANGED before this build
+## reclaims it (see [method _sweep_abandoned_writes]).
+##
+## The vault sweeps with no age floor at all, and copying that here would be
+## wrong: its sweep runs while HOLDING the cross-process write lock, so no other
+## lock-aware writer can be inside its staging window and anything it finds is
+## provably finished or dead. The character store has no such lock (#423 is
+## blocked on the lock extraction in #422), so an age floor is what replaces the
+## lock's proof — a staging file younger than this may be a live write by a
+## second client, and deleting it would corrupt exactly the concurrent writer
+## this change exists to protect.
+##
+## The failure directions are lopsided and point the same way as the vault's
+## quarantine window: sweeping too eagerly destroys another client's in-flight
+## character write, while sweeping too late leaves one stale file in user:// for
+## one more launch. So this errs long on purpose. It is a liveness HEURISTIC
+## about whether some writer is still working, exactly like
+## [constant SaveVault.QUARANTINE_MIN_AGE_SECONDS], and it is not a mechanism for
+## making reclamation prompt. A write completes in milliseconds; anything still
+## present five minutes later is not in flight.
+const WRITE_TMP_MIN_AGE_SECONDS := 300
+
+## Test-only override for [constant WRITE_TMP_MIN_AGE_SECONDS], mirroring
+## [constant SaveVault.QUARANTINE_MIN_AGE_ENV]. Production never sets it; a test
+## sets 0 so a just-written stage is immediately eligible. Unset, empty,
+## non-integer and negative values all keep the shipped default, so the window
+## can never be SHORTENED by a malformed value — the direction that could destroy
+## another client's write.
+const WRITE_TMP_MIN_AGE_ENV := "WAR_CHARACTER_WRITE_TMP_MIN_AGE_SECONDS"
+
 
 ## The active save path: the WAR_SAVE_PATH override when set, else the shipped
 ## default. Resolved fresh each call so a test can redirect the game before it
@@ -102,9 +137,80 @@ static func clear_refusals_for_test() -> void:
 	_refused.clear()
 
 
-## Atomic: write a sibling temp file, then rename over the target. A crash
-## mid-write must never corrupt the only copy of a character (no-resets law
+## The staging window in seconds: the WRITE_TMP_MIN_AGE_ENV override when it is a
+## non-negative integer, else the shipped default. Unset, empty, non-integer and
+## negative values all fall through to the default, so the window can never be
+## shortened by a malformed value.
+static func write_tmp_min_age_seconds() -> int:
+	var raw := OS.get_environment(WRITE_TMP_MIN_AGE_ENV)
+	if raw.is_valid_int():
+		var seconds := int(raw)
+		if seconds >= 0:
+			return seconds
+	return WRITE_TMP_MIN_AGE_SECONDS
+
+
+## The staging file this attempt commits from — PRIVATE to one write.
+##
+## The shared `character.json.tmp` this replaced is a name any other process can
+## derive. A second client — the player running a second install, a rollback
+## build the updater deliberately keeps runnable, a sync agent — opens that same
+## deterministic path and truncates our staged recipe after we serialised it and
+## before the rename. `path` itself is untouched, so [method can_write] and the
+## pre-rename re-check both pass, and the rename then commits THEIR partial bytes
+## over the character while reporting success. `CharacterFactory` refuses the
+## result on the next boot, and there is no wipe to recover with.
+##
+## A per-attempt name removes the sharing instead of trying to detect it: a
+## writer that never cooperated cannot name the file we are committing from. The
+## process id makes a cross-process collision impossible and the microsecond
+## stamp separates two attempts inside one process, matching
+## [method SaveVault._free_quarantine_path].
+static func _write_tmp_path(path: String) -> String:
+	return "%s%s%d-%d" % [path, WRITE_TMP_SUFFIX, OS.get_process_id(), Time.get_ticks_usec()]
+
+
+## Remove staging files abandoned by a crashed writer.
+##
+## A per-attempt name cannot be reclaimed by simply being overwritten the way one
+## fixed `character.json.tmp` was, so without this a hard crash mid-write would
+## leak a file into user:// on every occurrence.
+##
+## Age-gated rather than lock-gated, which is the one place this deliberately
+## departs from the vault's sweep. The vault runs its sweep under the
+## cross-process write lock, so everything carrying the prefix is provably
+## finished or dead; the character store has no lock yet (#423), so a young
+## staging file may belong to a live write by a second client and deleting it
+## would cause the corruption this change exists to prevent. Only files that have
+## sat unchanged past [method write_tmp_min_age_seconds] are reclaimed.
+##
+## Scoped to WRITE_TMP_SUFFIX deliberately. A foreign writer's plain
+## `character.json.tmp` carries no per-attempt stamp and is none of our business
+## — deleting a file another client is mid-write on is the kind of cross-writer
+## damage this whole area exists to avoid.
+static func _sweep_abandoned_writes(path: String) -> void:
+	var parent := path.get_base_dir()
+	var prefix := path.get_file() + WRITE_TMP_SUFFIX
+	var min_age := write_tmp_min_age_seconds()
+	var now := int(Time.get_unix_time_from_system())
+	for entry: String in DirAccess.get_files_at(parent):
+		if not entry.begins_with(prefix):
+			continue
+		var candidate := parent.path_join(entry)
+		if now - int(FileAccess.get_modified_time(candidate)) < min_age:
+			continue
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(candidate))
+
+
+## Atomic: write a PRIVATE sibling staging file, then rename over the target. A
+## crash mid-write must never corrupt the only copy of a character (no-resets law
 ## — there is no wipe to recover WITH).
+##
+## The staging name is per-attempt rather than a derivable `character.json.tmp`,
+## so a writer that never cooperated cannot truncate the document being committed
+## from (see [method _write_tmp_path]). That is a hole neither [method can_write]
+## nor the pre-rename re-check can see, because both read the TARGET and the
+## target is untouched until the rename.
 ##
 ## Refuses outright when the target holds a recipe this build cannot accept. This
 ## is the load-bearing half of the refusal: the creator is also locked shut while
@@ -114,7 +220,8 @@ static func save_to(path: String, recipe: Dictionary) -> bool:
 	if not can_write(path):
 		push_error("CharacterStore: refusing to write %s — the recipe there is not this build's to replace" % path)
 		return false
-	var tmp_path := path + ".tmp"
+	_sweep_abandoned_writes(path)
+	var tmp_path := _write_tmp_path(path)
 	var file := FileAccess.open(tmp_path, FileAccess.WRITE)
 	if file == null:
 		push_error("CharacterStore: cannot write %s" % tmp_path)
