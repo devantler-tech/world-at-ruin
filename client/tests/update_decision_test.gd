@@ -14,12 +14,17 @@ extends Node
 
 var _failed := false
 
+const OBSERVED_AT := "2026-07-27T12:00:00Z"
+const FUTURE_NOT_AFTER := "2026-07-27T12:00:01Z"
+
 
 # A complete, valid manifest whose latest build == `installed_current`, so each
 # case perturbs one thing from a known-good baseline.
 func _base_manifest() -> Dictionary:
 	return {
 		"schema": 1,
+		"sequence": 42,
+		"not_after": FUTURE_NOT_AFTER,
 		"channel": "live",
 		"shell": {"current": "0.1.14", "min_supported": "0.1.0", "reads_min": 1, "reads_capability_max": 9},
 		"pack": {"version": "0.1.14", "min_shell": "0.1.14", "url": "x", "sha256": "y", "size": 0},
@@ -47,11 +52,24 @@ func _target(version: String, capability: int, read_ceiling: int) -> Dictionary:
 
 
 func _installed_current() -> Dictionary:
-	return {"shell_version": "0.1.14", "pack_version": "0.1.14", "save_schema": 1, "save_capability": 1, "protocol": 1}
+	return {
+		"shell_version": "0.1.14",
+		"pack_version": "0.1.14",
+		"save_schema": 1,
+		"save_capability": 1,
+		"protocol": 1,
+		"manifest_sequence_high_water": 41,
+		"observed_at": OBSERVED_AT,
+	}
 
 
 func _ready() -> void:
 	_test_up_to_date()
+	_test_stale_sequence_refused()
+	_test_expired_manifest_refused()
+	_test_freshness_fields_are_required()
+	_test_freshness_boundaries()
+	_test_freshness_context_fails_closed()
 	_test_pack_update()
 	_test_pack_needs_newer_shell()
 	_test_shell_below_floor()
@@ -88,6 +106,77 @@ func _ready() -> void:
 
 func _test_up_to_date() -> void:
 	_expect(_installed_current(), _base_manifest(), UpdateDecision.UP_TO_DATE, "on the latest build")
+
+
+func _test_stale_sequence_refused() -> void:
+	var stale := _base_manifest()
+	stale["sequence"] = 40
+	_expect(_installed_current(), stale, "stale_manifest", "a manifest below the accepted sequence high-water mark is refused distinctly")
+
+
+func _test_expired_manifest_refused() -> void:
+	var expired := _base_manifest()
+	expired["not_after"] = OBSERVED_AT
+	_expect(_installed_current(), expired, "expired_manifest", "a manifest at its expiry boundary is no longer accepted")
+
+
+func _test_freshness_fields_are_required() -> void:
+	var no_sequence := _base_manifest()
+	no_sequence.erase("sequence")
+	_expect(_installed_current(), no_sequence, UpdateDecision.INVALID_MANIFEST, "a manifest without sequence fails closed")
+
+	var no_expiry := _base_manifest()
+	no_expiry.erase("not_after")
+	_expect(_installed_current(), no_expiry, UpdateDecision.INVALID_MANIFEST, "a manifest without not_after fails closed")
+
+	for bad_sequence: Variant in [-1, 1.5, true, "42"]:
+		var malformed_sequence := _base_manifest()
+		malformed_sequence["sequence"] = bad_sequence
+		_expect(_installed_current(), malformed_sequence, UpdateDecision.INVALID_MANIFEST,
+			"a non-counter sequence %s is refused" % str(bad_sequence))
+
+	for bad_expiry: Variant in ["", "2026-02-30T12:00:00Z", "2026-07-27 12:00:01", 42]:
+		var malformed_expiry := _base_manifest()
+		malformed_expiry["not_after"] = bad_expiry
+		_expect(_installed_current(), malformed_expiry, UpdateDecision.INVALID_MANIFEST,
+			"a non-canonical expiry %s is refused" % str(bad_expiry))
+
+
+func _test_freshness_boundaries() -> void:
+	var equal_sequence := _base_manifest()
+	equal_sequence["sequence"] = 41
+	_expect(_installed_current(), equal_sequence, UpdateDecision.UP_TO_DATE,
+		"the already-accepted sequence is idempotently valid")
+
+	var first_manifest := _base_manifest()
+	first_manifest["sequence"] = 0
+	var fresh_install := _installed_current()
+	fresh_install.erase("manifest_sequence_high_water")
+	_expect(fresh_install, first_manifest, UpdateDecision.UP_TO_DATE,
+		"a fresh install without a high-water mark accepts sequence zero")
+
+	var one_second_left := _base_manifest()
+	one_second_left["not_after"] = FUTURE_NOT_AFTER
+	_expect(_installed_current(), one_second_left, UpdateDecision.UP_TO_DATE,
+		"a manifest remains valid immediately before its expiry")
+
+
+func _test_freshness_context_fails_closed() -> void:
+	var no_clock := _installed_current()
+	no_clock.erase("observed_at")
+	_expect(no_clock, _base_manifest(), UpdateDecision.BLOCKED_INCOMPATIBLE,
+		"missing caller-supplied observation time blocks rather than bypassing expiry")
+
+	var bad_clock := _installed_current()
+	bad_clock["observed_at"] = "not-a-time"
+	_expect(bad_clock, _base_manifest(), UpdateDecision.BLOCKED_INCOMPATIBLE,
+		"malformed caller-supplied observation time blocks rather than bypassing expiry")
+
+	for bad_high_water: Variant in [-1, 1.5, true, "41"]:
+		var installed := _installed_current()
+		installed["manifest_sequence_high_water"] = bad_high_water
+		_expect(installed, _base_manifest(), UpdateDecision.BLOCKED_INCOMPATIBLE,
+			"a malformed sequence high-water mark %s blocks rather than weakening replay protection" % str(bad_high_water))
 
 
 func _test_pack_update() -> void:
@@ -217,6 +306,8 @@ func _test_future_schema_shell_blocked_when_cant_read_save() -> void:
 	# envelope lets us block a stranding future-schema shell update.
 	var m := {
 		"schema": 2,
+		"sequence": 42,
+		"not_after": FUTURE_NOT_AFTER,
 		"channel": "live",
 		"shell": {"current": "0.2.0", "min_supported": "0.1.0", "reads_min": 2, "reads_capability_max": 9},
 	}
@@ -315,6 +406,8 @@ func _test_schema_too_new_ignores_broken_body() -> void:
 	# would strand it. (Codex P0.)
 	var m := {
 		"schema": 2,
+		"sequence": 42,
+		"not_after": FUTURE_NOT_AFTER,
 		"channel": "live",
 		"shell": {"current": "0.2.0", "min_supported": "0.1.0", "reads_min": 1, "reads_capability_max": 9},
 		"future_field": {"restructured": true}, # no schema-1 pack/protocol/save at all

@@ -160,11 +160,13 @@ strands the same way.
 A small **signed JSON** document per channel, published by CI beside the artifacts. See
 [`client-update-manifest.example.json`](./client-update-manifest.example.json). Shape:
 
-- `schema` — manifest schema version. A **stable, backward-compatible envelope** — `schema`, `channel`,
-  and the `shell.current`/`shell.min_supported`/`shell.download` fields — keeps its shape across *every*
-  schema bump, so a client of any schema can always at least read "you need this shell." Bumps are
-  additive within that envelope; a client processes only the schema it understands and, on a higher
-  schema, follows the envelope to a `shell_update` rather than guessing at (or rejecting on) new fields.
+- `schema` — manifest schema version. A **stable, backward-compatible envelope** — `schema`,
+  `sequence`, `not_after`, `channel`, and the
+  `shell.current`/`shell.min_supported`/`shell.download` fields — keeps its shape across *every* schema
+  bump, so a client of any schema can reject a replay or expiry and still read "you need this shell."
+  Bumps are additive within that envelope; a client processes only the schema it understands and, on a
+  higher schema, follows the envelope to a `shell_update` rather than guessing at (or rejecting on) new
+  fields.
 - `channel` — `live` by default; the field exists so `canary` can be added later without a redesign.
 - `shell` — `current`, `min_supported` (shells older are refused — the forward-only floor),
   `reads_min` (the lowest save **schema** the advertised shell can read) and `reads_capability_max`
@@ -213,10 +215,13 @@ inside the pack) — so a pack-only release never masquerades as a phantom shell
 
 ### What the build can state about itself today (`UpdateManifest`)
 
-`client/scripts/update_manifest.gd` derives the manifest from the constants the build actually runs on,
-so it can never disagree with the build it describes. `update_manifest_test.gd` proves the generated
-manifest is accepted by the **real** `UpdateDecision.decide()`, and deletes each required field in turn
-to prove that acceptance is not vacuous.
+`client/scripts/update_manifest.gd` derives the build facts from the constants the build actually runs
+on, so it can never disagree with the build it describes. Its publisher supplies the monotonic
+`sequence` and canonical UTC `not_after`: those are publication facts, not build facts, and deriving
+them from SemVer or a wall clock inside the generator would either conflate two counters or make
+identical builds nondeterministic. `update_manifest_test.gd` proves the generated manifest is accepted
+by the **real** `UpdateDecision.decide()`, and deletes each required field in turn to prove that
+acceptance is not vacuous.
 
 It publishes a **contract, not a delivery**: what this build reads, writes and speaks. Every field that
 would tell a client where to *fetch* something is withheld, and each omission is **load-bearing**:
@@ -301,6 +306,16 @@ stale cache, or engine change can strand or subvert a client:
 - **Anti-replay / freshness.** Every manifest carries a **monotonic, root-anchored `sequence`** and an
   expiry (`not_after`); the client persists the highest sequence it has accepted and **refuses any older
   or expired manifest**.
+  The pure enforcement boundary is `UpdateDecision`: both fields are required in the stable envelope;
+  the caller supplies its accepted sequence high-water mark and observation time; below-mark and
+  expired manifests produce distinct `stale_manifest` and `expired_manifest` outcomes. A fresh client
+  with no high-water mark uses sequence zero as its floor. Missing or malformed caller state blocks
+  rather than disabling freshness checks. The decision core performs no persistence and reads no
+  clock; those belong to the updater that invokes it.
+  `UpdateManifest.build(sequence, not_after)` validates and emits the publisher-supplied envelope.
+  Epoch binding, signing-key certificates, root-signed revocation, and the independently fresh
+  revocation head remain key-custody child 6; a bare sequence is monotonic but not root-anchored until
+  that boundary exists.
   - **The persisted sequence alone is NOT enough, so contraction waits out the TTL.** A returning or
     freshly-installed client has no high-water mark, so an unexpired cached manifest at sequence `N`
     looks perfectly valid to it even after the server contracted per `N+1` — every signature and expiry
