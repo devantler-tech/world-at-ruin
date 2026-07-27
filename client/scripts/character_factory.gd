@@ -210,7 +210,7 @@ static func build(recipe: Dictionary) -> Node3D:
 			_apply_girth(skeleton, bone, recipe["bone_girth"][key])
 	for key: String in recipe.get("bone_scale", {}):
 		for bone in _bones_for(skeleton, key):
-			_apply_uniform_subtree(skeleton, bone, recipe["bone_scale"][key])
+			KitAssembly.scale_bone_subtree(skeleton, bone, recipe["bone_scale"][key])
 	for key: String in recipe.get("joint_push", {}):
 		for bone in _bones_for(skeleton, key):
 			_scale_joint_origin(skeleton, bone, recipe["joint_push"][key])
@@ -671,24 +671,12 @@ static func cpu_skin(skel: Skeleton3D, mi: MeshInstance3D) -> PackedVector3Array
 
 
 static func find_skeleton(node: Node) -> Skeleton3D:
-	if node == null or node is Skeleton3D:
-		return node
-	for child in node.get_children():
-		var found := find_skeleton(child)
-		if found != null:
-			return found
-	return null
+	return KitAssembly.find_skeleton(node)
 
 
 ## The BODY mesh — equipment meshes (Equip_ prefix) are deliberately skipped.
 static func find_skinned_mesh(skeleton: Skeleton3D) -> MeshInstance3D:
-	if skeleton == null:
-		return null
-	for child in skeleton.get_children():
-		if child is MeshInstance3D and (child as MeshInstance3D).skin != null \
-				and not String(child.name).begins_with(EQUIP_PREFIX):
-			return child
-	return null
+	return KitAssembly.find_skinned_mesh(skeleton, EQUIP_PREFIX)
 
 
 ## A recipe bone key is an exact bone name or a bare name with _l/_r variants.
@@ -716,13 +704,6 @@ static func _apply_girth(skeleton: Skeleton3D, bone: int, girth: float) -> void:
 		var child_rest := skeleton.get_bone_rest(child)
 		skeleton.set_bone_rest(child, Transform3D(
 			child_rest.basis * Basis.from_scale(Vector3.ONE / girth), child_rest.origin / girth))
-
-
-## Uniform subtree scale: the bone and everything below it grow around the
-## bone's own joint (a hand grows its fingers, a head its face).
-static func _apply_uniform_subtree(skeleton: Skeleton3D, bone: int, factor: float) -> void:
-	var rest := skeleton.get_bone_rest(bone)
-	skeleton.set_bone_rest(bone, Transform3D(rest.basis * Basis.from_scale(Vector3.ONE * factor), rest.origin))
 
 
 ## Moves a joint along its offset from the parent joint: pushing upperarm out
