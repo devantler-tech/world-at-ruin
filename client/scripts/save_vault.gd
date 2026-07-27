@@ -506,6 +506,15 @@ static func _save_to_locked(
 		# An unreadable identity on EITHER side is never a match, even against
 		# itself: two different unhashable files would otherwise compare equal and
 		# one would be replaced by the other.
+		#
+		# Defense in depth, and honestly so: the production read-modify-write
+		# cannot reach that state, because can_write() refuses an existing file it
+		# cannot read before any identity is taken. It guards this PUBLIC entry
+		# point against a future caller that does not run that check first, and no
+		# test pins it — provoking a genuine hash failure needs filesystem
+		# conditions a test cannot portably create. What IS pinned is the constant
+		# staying distinct from ABSENT and UNCHECKED (vault_cas_test case 4b),
+		# which is the part with a reachable lost-update behind it.
 		var unreadable := (
 			actual == IDENTITY_UNREADABLE or expected_identity == IDENTITY_UNREADABLE)
 		if unreadable or actual != expected_identity:

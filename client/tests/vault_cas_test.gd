@@ -180,6 +180,12 @@ func _ready() -> void:
 	if SaveVault.IDENTITY_UNREADABLE == SaveVault.IDENTITY_UNCHECKED:
 		_fail("an unhashable vault reports UNCHECKED — the CAS guard would be skipped entirely")
 		return
+	# An unreadable expectation also refuses. Stated plainly: against a HASHABLE
+	# file this is carried by the plain inequality, so it pins that the sentinel
+	# is not silently treated as "unchecked" rather than the either-side rule
+	# itself. The both-sides-unreadable case has no test — provoking a genuine
+	# hash failure needs filesystem conditions a test cannot portably create, and
+	# can_write() makes it unreachable from the production path anyway.
 	if SaveVault.replace_if_unchanged(PROBE, SaveVault.empty(), SaveVault.IDENTITY_UNREADABLE):
 		_fail("a write proceeded against an UNREADABLE expectation")
 		return
