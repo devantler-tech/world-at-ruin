@@ -161,6 +161,40 @@ func _ready() -> void:
 		_fail("a FRESH lock was RECLAIMED — a live writer's lock must survive an attempt")
 		return
 	DirAccess.remove_absolute(_abs(lock))
+	FileLock.clear_for_test()
+
+	# 8. The ownership guard on the write path. Acquiring is not enough on its
+	# own: a holder that outlives the stale timeout can have its lock reclaimed
+	# and the freed slot taken by someone else, and replacing the record then is
+	# the exact loss the lock exists to prevent. That interleaving needs two real
+	# processes to arise, so it is driven here by replacing the stamp under a lock
+	# this process legitimately holds.
+	#
+	# Asserted END TO END through save_state(). The nested acquire is reentrant
+	# and succeeds, so what refuses the write is the ownership check alone —
+	# ablating it makes this case, and only this case, pass a write through.
+	var held := _read(PROBE)
+	if not FileLock.acquire(PROBE):
+		_fail("could not acquire the lock for the ownership case")
+		return
+	if not FileLock.owns(PROBE):
+		_fail("a freshly acquired lock did not read as owned by this process")
+		return
+	var hijack := FileAccess.open(FileLock.owner_path(lock), FileAccess.WRITE)
+	if hijack == null:
+		_fail("could not overwrite the ownership stamp")
+		return
+	hijack.store_string("999999-2")
+	hijack.close()
+	var lost := BootRecovery.save_state(
+		PROBE, BootRecovery.begin_attempt(BootRecovery.fresh_state(), "v8.8.8"))
+	if lost.get("ok", false):
+		_fail("a write proceeded while the lock was no longer ours — a stolen lock goes undetected")
+		return
+	if _read(PROBE) != held:
+		_fail("a write that lost the lock still modified the recovery file")
+		return
+	FileLock.release(PROBE)
 
 	_cleanup()
 	OS.set_environment(BootRecovery.RECOVERY_PATH_ENV, "")
