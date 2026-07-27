@@ -26,8 +26,10 @@ branch="goreleaser/world-at-ruin"
 call_file="${test_dir}/calls"
 : >"${call_file}"
 
-# Mock the single API the helper reads. `mock_behind` is the comparison the
-# tap would report; `mock_fail` makes the read itself fail.
+# Mock the comparison API the helper reads. `mock_behind` is what the tap would
+# report; `mock_fail` makes the read itself fail. Names are deliberately
+# `mock_`-prefixed: the helper declares `local behind`, which would otherwise
+# shadow a same-named global and (under `set -u`) kill the substitution.
 gh() {
 	printf '%s\n' "$*" >>"${call_file}"
 	if [ "${mock_fail}" = "1" ]; then
@@ -36,8 +38,22 @@ gh() {
 	printf '%s\n' "${mock_behind}"
 }
 
+# The helper calls this production helper, which lives outside the extracted
+# block. Stub it so version agreement can be driven per case.
+cask_version_at() {
+	if [ "$1" = "main" ]; then
+		printf '%s' "${mock_main_version}"
+	else
+		printf '%s' "${mock_branch_version}"
+	fi
+}
+
 mock_fail=0
 mock_behind=0
+# Default: the branch's content has already been delivered to main, which is the
+# post-squash-merge state the reset targets.
+mock_branch_version="0.43.0"
+mock_main_version="0.43.0"
 
 # --- The defect: previous PR squash-merged, branch left behind main. --------
 mock_behind=1
@@ -81,6 +97,31 @@ if ! grep -q 'trusted_open_pr || echo UNKNOWN' "${workflow}"; then
 	echo "reset call site does not fail closed on an unreadable PR query" >&2
 	exit 1
 fi
+
+# --- A DIVERGED branch whose content is delivered must still reset. --------
+# The tap squash-merges, so after a merge the branch keeps its own commits
+# while main gains a non-ancestor squash: the reported defect measured 4 ahead
+# and 1 behind. A guard that refused every diverged branch would make this a
+# no-op in exactly the case it targets, so pin that it still resets.
+mock_behind=1
+mock_branch_version="0.43.0"
+mock_main_version="0.43.0"
+if ! cask_branch_needs_reset "${tap}" "${branch}" ""; then
+	echo "a diverged branch whose cask version is already on main must reset" >&2
+	exit 1
+fi
+
+# --- Safety control: UNDELIVERED branch content is never discarded. --------
+# A concurrent run that wrote the cask but has not yet opened its PR leaves the
+# branch naming a version main does not carry. That content must survive.
+mock_branch_version="0.44.0"
+mock_main_version="0.43.0"
+if cask_branch_needs_reset "${tap}" "${branch}" ""; then
+	echo "reset discarded branch content that main has not received" >&2
+	exit 1
+fi
+mock_branch_version="0.43.0"
+mock_main_version="0.43.0"
 
 # --- Safety control: a concurrent run's unmerged write is ahead-only. ------
 # A release that has written content but not yet opened its PR leaves the

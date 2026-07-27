@@ -730,6 +730,15 @@ jobs:
           }
           # END cask-ref-visibility-helper
 
+          # Helper: the cask version carried by a ref, empty when the file or
+          # ref is missing. Defined here because the branch-reset guard below
+          # needs it; also used by the PR-open and title-convergence blocks.
+          cask_version_at() {
+            gh api "repos/${tap}/contents/Casks/world-at-ruin.rb?ref=${1}" 2>/dev/null \
+              | jq -r '.content // empty' | base64 -d 2>/dev/null \
+              | sed -n 's/^  version "\(.*\)"$/\1/p' | head -1 || true
+          }
+
           # BEGIN cask-branch-reset-helper
           # The tap SQUASH-merges, so merging a cask PR puts a new, non-ancestor
           # commit on the tap's main touching Casks/world-at-ruin.rb — the exact
@@ -758,7 +767,7 @@ jobs:
             local tap="$1"
             local branch="$2"
             local open_pr="$3"
-            local behind
+            local behind branch_version main_version
             if [ -n "${open_pr}" ]; then
               return 1
             fi
@@ -767,7 +776,31 @@ jobs:
             case "${behind}" in
               '' | *[!0-9]*) return 1 ;;
             esac
-            [ "${behind}" -gt 0 ]
+            if [ "${behind}" -le 0 ]; then
+              return 1
+            fi
+            # `ahead_by` is deliberately NOT the discriminator. The tap
+            # squash-merges, so after a merge the branch KEEPS its own commits
+            # while main gains a non-ancestor squash: DIVERGED (ahead>0 AND
+            # behind>0) is the normal, expected shape of the very state this
+            # reset exists to clear — the reported case measured 4 ahead, 1
+            # behind. Refusing to reset a diverged branch would therefore make
+            # this a no-op in exactly the scenario it targets.
+            #
+            # What must never be discarded is content the branch carries that
+            # main has NOT received. That is a question about the CASK VERSION,
+            # not the commit graph: once a cask PR merges, the branch and main
+            # name the same version, whereas a concurrent run that has written
+            # but not yet opened its PR leaves the branch naming a version main
+            # does not have. Refuse whenever they disagree — that fails closed
+            # for an undelivered write in either direction.
+            branch_version="$(cask_version_at "${branch}")"
+            main_version="$(cask_version_at main)"
+            if [ -n "${branch_version}" ] && \
+               [ "${branch_version}" != "${main_version}" ]; then
+              return 1
+            fi
+            return 0
           }
           # END cask-branch-reset-helper
 
@@ -794,9 +827,23 @@ jobs:
             # and discard that in-flight release. Any non-empty value refuses
             # the reset, so an unreadable PR state fails closed like an
             # unreadable comparison does.
-            if gh api "repos/${tap}/git/refs/heads/${branch}" -X PATCH \
-                 -f sha="${base_sha}" -F force=true >/dev/null 2>&1; then
-              echo "::notice::reset ${branch} to ${tap} main (${base_sha}) — the previous cask PR merged and left it behind"
+            # Re-read main HERE rather than reusing the base_sha captured
+            # before the comparison and PR checks: if another cask PR merged in
+            # that window, resetting to the older sha lands the branch behind
+            # again and recreates the conflict this is meant to remove. Capture
+            # and shape-check it instead of inlining the call — an empty or
+            # partial response must not become the target of a force update.
+            reset_sha="$(gh api "repos/${tap}/git/ref/heads/main" \
+              --jq '.object.sha' 2>/dev/null || true)"
+            case "${reset_sha}" in
+              [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) : ;;
+              *) reset_sha="" ;;
+            esac
+            if [ -z "${reset_sha}" ]; then
+              echo "::warning::could not re-read ${tap} main before resetting ${branch}; leaving it alone"
+            elif gh api "repos/${tap}/git/refs/heads/${branch}" -X PATCH \
+                 -f sha="${reset_sha}" -F force=true >/dev/null 2>&1; then
+              echo "::notice::reset ${branch} to ${tap} main (${reset_sha}) — the previous cask PR merged and left it behind"
             else
               # Losing this is not fatal: the release still gets its content
               # write and PR below, just on the pre-existing (conflicting)
@@ -930,14 +977,6 @@ jobs:
           # Racy too: two runs can both see no open PR, and `gh pr create` errors
           # if one already exists — failing this job over a benign overlap.
           # Tolerate the loss, then re-check so a genuine failure still errors.
-          # Helper: the cask version carried by a ref, empty when the file or
-          # ref is missing.
-          cask_version_at() {
-            gh api "repos/${tap}/contents/Casks/world-at-ruin.rb?ref=${1}" 2>/dev/null \
-              | jq -r '.content // empty' | base64 -d 2>/dev/null \
-              | sed -n 's/^  version "\(.*\)"$/\1/p' | head -1 || true
-          }
-
           if ! trusted_open_pr | grep -q .; then
             # ALREADY DELIVERED is success, not a missing PR: a stale rerun
             # (an older tag re-run after the newer release's PR merged) finds
