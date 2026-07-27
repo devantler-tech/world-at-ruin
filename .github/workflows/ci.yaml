@@ -32,6 +32,8 @@ jobs:
           persist-credentials: false
       - name: Cask branch visibility retry is bounded and fail-closed
         run: tools/test-cd-cask-ref-visibility.sh
+      - name: Cask branch resets only when stale and unclaimed
+        run: tools/test-cd-cask-branch-reset.sh
       - name: Retained boot-recovery reader gate is pinned and fail-closed
         run: ./tools/retained-boot-recovery-reader-guard.test.sh
       - name: Version ledger is append-only (no-resets law)
