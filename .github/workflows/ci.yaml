@@ -1036,27 +1036,19 @@ jobs:
   # container's Go can lag.
   lint:
     name: Lint
-    uses: devantler-tech/actions/.github/workflows/lint.yaml@4caaa94e681a5627e8c77d2910dc51ea2ab34c5c # v10.2.4
+    uses: devantler-tech/actions/.github/workflows/lint.yaml@3efb4149a69b189fd957b7d871932570f6198313 # v10.2.5
     permissions:
-      contents: write
-      issues: write
-      pull-requests: write
+      contents: read
     with:
-      # Auto-fix only on branches in this repository.
-      #
-      # v10.2.0 of the shared workflow already forces read-only on fork pull requests, so
-      # the fork half of this is belt-and-braces. What this expression still does on its
-      # own is cover merge_group: there is no pull_request context there, so the shared
-      # workflow's fork check passes and MegaLinter would apply fixes that nothing can
-      # commit and nothing reports — work performed and silently discarded. Setting it
-      # false keeps merge-queue runs honest read-only checks.
+      # Pull-request and merge-queue code is untrusted, including this repository's
+      # MegaLinter configuration. Keep lint read-only and never expose the GitHub App
+      # credential used by release automation. Auto-fixes belong on a separate trusted
+      # workflow that does not execute proposed code.
       #
       # Read-only is not a softer gate: with APPLY_FIXES=none a deliberately misformatted
       # JSON file is a prettier warning and MegaLinter exits 0 (measured), while real lint
       # ERRORS — invalid JSON, shellcheck failures — still fail the job.
-      apply-fixes: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
-    secrets:
-      APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
+      apply-fixes: false
 
   server-ci:
     name: Server CI (Go)
