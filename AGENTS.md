@@ -549,9 +549,17 @@ everything shipped afterwards is held to.
   WAR_VAULT_PATH=/tmp/probe_vault.json WAR_BOOT_RECOVERY_PATH=/tmp/probe_recovery.json` to keep all
   three fully out of reach.
 - **Validate the server before every PR:** from `server/`, `gofmt -l .` (must print nothing),
-  `go vet ./...`, `go test -race ./...` (includes the tick-determinism and golden-hash tests), and
-  `go build ./...`. The `Server CI (Go)` job runs exactly this and feeds the `CI - Required Checks`
-  aggregate. Simulation determinism is a product-law requirement: the sim is integer-only with no
+  `go vet ./...`, `golangci-lint run ./...`, `go test -race ./...` (includes the tick-determinism
+  and golden-hash tests), and `go build ./...`. The `Server CI (Go)` job runs exactly this and feeds
+  the `CI - Required Checks` aggregate. `server/.golangci.yml` enables a correctness-focused linter
+  set by name — the classes that bite a process expected to stay up (an unchecked error return, a
+  response body never closed, a request with no context, an unguarded integer conversion on the
+  wire) — rather than inheriting a default set. It is scoped to the lines a change touches, found by
+  diffing against the merge base with `main`, so it is blocking for new and edited code while the
+  pre-existing findings inventoried in #436 are worked through separately. That scoping is why the
+  job checks out full history; a shallow checkout cannot reach the merge base. Do not silence a
+  finding with `//nolint` — fix it, or if it is genuinely wrong, record the exclusion in the config
+  with the reason. Simulation determinism is a product-law requirement: the sim is integer-only with no
   wall-clock or unseeded randomness in the authoritative path, and changing the committed golden
   hash (`server/sim`) is a deliberate, reviewed act — never a rubber-stamp.
 - **Determinism:** world generation is seeded (`WorldGen.WORLD_SEED`) — the same world every boot.
