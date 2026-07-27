@@ -161,9 +161,10 @@ A small **signed JSON** document per channel, published by CI beside the artifac
 [`client-update-manifest.example.json`](./client-update-manifest.example.json). Shape:
 
 - `schema` — manifest schema version. A **stable, backward-compatible envelope** — `schema`,
-  `sequence`, `not_after`, `channel`, and the
-  `shell.current`/`shell.min_supported`/`shell.download` fields — keeps its shape across *every* schema
-  bump, so a client of any schema can reject a replay or expiry and still read "you need this shell."
+  `sequence`, `not_after`, `channel`, and the `shell.current`, `shell.min_supported`,
+  `shell.reads_min`, `shell.reads_max`, `shell.reads_capability_max`, and `shell.download` fields —
+  keeps its shape across *every* schema bump, so a client of any schema can reject a replay or expiry
+  and still read "you need this shell."
   Bumps are additive within that envelope; a client processes only the schema it understands and, on a
   higher schema, follows the envelope to a `shell_update` rather than guessing at (or rejecting on) new
   fields.
