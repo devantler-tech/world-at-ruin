@@ -2,8 +2,10 @@ version: "2"
 run:
   allow-parallel-runners: true
   modules-download-mode: readonly
-  go: "1.26.5"
 linters:
+  # Named explicitly rather than inherited from a default set: this is the
+  # server that has to stay up for everyone connected to it, so the set is the
+  # classes that take a process down or corrupt what it sends — not style.
   default: none
   enable:
     - asasalint
@@ -37,4 +39,9 @@ linters:
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
+  # Blocking for the lines a change touches, so the findings that predate the
+  # gate (inventoried in #436) do not wall off unrelated work. This fails
+  # CLOSED: when the base ref cannot be resolved the whole backlog is reported
+  # and the job goes red, so a broken diff base can never pass vacuously.
+  # Remove this line once #436 reaches zero and the gate covers the module.
   new-from-merge-base: origin/main
