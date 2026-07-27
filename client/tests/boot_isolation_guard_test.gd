@@ -118,6 +118,17 @@ const GUARANTEE_CALL := "real_save_untouched("
 const QUIT_CALL := "quit("
 const SUCCESS_QUIT_ARGS := ["0", ""]
 
+## Tokens that CONSUME a boolean, so the guarantee's answer is acted on.
+##
+## 🔴 Calling it is still not enough. `real_save_untouched()` clears the seams as
+## a side effect, so a harness can swap a bare `end()` for a bare
+## `_save.real_save_untouched()`, tear down exactly as before, discard the answer,
+## and satisfy a presence-only check while asserting nothing. That is the third
+## rung of the same ladder this guard keeps climbing: naming a class is not
+## calling it, naming the call in prose is not calling it, and calling it without
+## reading the result is not asserting it.
+const RESULT_USED_TOKENS := ["if ", "not ", "=", "return ", "assert(", "and ", "or ", "while "]
+
 ## Line prefixes that begin a new TOP-LEVEL declaration, ending a function body.
 ##
 ## Not merely "an unindented line": a multiline string inside `_fail` can put
@@ -181,13 +192,28 @@ const COMMENT_ONLY_FAIL_FIXTURE := """func _fail(message: String) -> void:
 
 ## A booter whose `_fail` is compliant but which also exits nonzero elsewhere,
 ## spelled with an argument the old literal `quit(1)` scan could not see.
+##
+## The apostrophe in the trailing comment is deliberate: it is the unmatched quote
+## that a literal-pass-then-comment-pass lexer treats as an opening string, which
+## blanks everything after it — including the `quit(2)` below — and hides the very
+## stray exit this fixture exists to catch. See [method _executable].
 const STRAY_NONZERO_QUIT_FIXTURE := """func _on_timeout() -> void:
+	push_error("timed out")  # don't wait forever
 	get_tree().quit(2)
 
 
 func _fail(message: String) -> void:
 	if _save != null and not _save.real_save_untouched():
 		message += " breached"
+	get_tree().quit(1)
+"""
+
+## A `_fail` that CALLS the guarantee but throws the answer away, using it purely
+## as teardown in place of a bare `end()`. Seams cleared, evidence discarded,
+## nothing asserted — see [constant RESULT_USED_TOKENS].
+const IGNORED_RESULT_FIXTURE := """func _fail(message: String) -> void:
+	if _save != null:
+		_save.real_save_untouched()
 	get_tree().quit(1)
 """
 
@@ -319,7 +345,7 @@ func _ready() -> void:
 		_fail("the string-only fixture no longer names the guarantee, so it cannot prove that a "
 			+ "mention is rejected — restore it")
 		return
-	if _fail_body(_strip_literals(STRING_ONLY_FIXTURE)).is_empty():
+	if _fail_body(_executable(STRING_ONLY_FIXTURE)).is_empty():
 		_fail(("the string-only fixture's `_fail` body vanished — the body boundary is stopping at "
 			+ "the multiline string inside it rather than at a real declaration, so a correctly "
 			+ "guarded booter would be rejected over string formatting alone"))
@@ -333,6 +359,16 @@ func _ready() -> void:
 		_fail(("the guard accepted a `_fail` that names the guarantee only in a TRAILING comment — "
 			+ "comment stripping has regressed. `_code_of` keeps trailing comments on purpose, which "
 			+ "is safe for booter detection and a bypass here (#326)"))
+		return
+
+	# --- negative control: calling the guarantee is not asserting it ---
+	if not IGNORED_RESULT_FIXTURE.contains(GUARANTEE_CALL):
+		_fail("the ignored-result fixture no longer calls the guarantee — restore it")
+		return
+	if _guards_failure_path(IGNORED_RESULT_FIXTURE):
+		_fail(("the guard accepted a `_fail` that calls the guarantee and DISCARDS its answer — "
+			+ "using it as a bare teardown clears the seams exactly as `end()` did while asserting "
+			+ "nothing, so presence alone cannot be the test (#326)"))
 		return
 
 	# --- negative control: a nonzero quit is not only `quit(1)` ---
@@ -403,7 +439,15 @@ func _claims_isolation(code: String) -> bool:
 ## whole-file match makes that control fail immediately instead of silently
 ## passing every harness in the repo.
 func _guards_failure_path(code: String) -> bool:
-	return _fail_body(_executable(code)).contains(GUARANTEE_CALL)
+	for line: String in _fail_body(_executable(code)).split("\n"):
+		if not line.contains(GUARANTEE_CALL):
+			continue
+		# The call must appear where its answer is read — see RESULT_USED_TOKENS.
+		var before := line.substr(0, line.find(GUARANTEE_CALL))
+		for token: String in RESULT_USED_TOKENS:
+			if before.contains(token):
+				return true
+	return false
 
 
 ## `code` reduced to what actually RUNS: string contents blanked, then comments
@@ -414,57 +458,46 @@ func _guards_failure_path(code: String) -> bool:
 ## at it and destroy the rest of the line.
 ##
 ## ⚠️ Scoped to the failure-path law, NOT used by booter detection — the same
-## asymmetry as [method _strip_literals], and for a sharper reason. [method
+## asymmetry as the literal blanking inside [method _executable], and for a
+## sharper reason. [method
 ## _code_of] deliberately keeps a TRAILING comment, and its doc calls that
 ## "err[ing] toward demanding isolation, which is the safe direction". That is
 ## true when the token being matched means "this file boots" — a stray mention
 ## demands isolation. It inverts here: a trailing `# real_save_untouched(` would
 ## make an UNGUARDED `_fail` read as guarded, so the same leniency that is safe
 ## one law up is a bypass in this one. Same limitation, opposite direction.
+## 🔴 ONE pass, not two. Stripping literals and then comments looks equivalent and
+## is not: an apostrophe in a trailing comment — `foo()  # don't wait` — opens a
+## string literal that never closes, so the blanking runs on past the newline and
+## erases real code below it. A `get_tree().quit(2)` a few lines down then
+## vanishes from [method _nonzero_quit] and the stray exit it represents goes
+## unreported while this guard stays green. The reverse order fails too, because
+## a `#` inside a string is not a comment. Only a single lexer that knows which
+## state it is in gets both right.
 func _executable(code: String) -> String:
-	var out := PackedStringArray()
-	for line: String in _strip_literals(code).split("\n"):
-		var hash := line.find("#")
-		out.append(line if hash < 0 else line.substr(0, hash))
-	return "\n".join(out)
-
-
-## The argument of the first non-success `quit(...)` in `region`, or "" when every
-## quit there is a success quit. Used on the code OUTSIDE `_fail`.
-##
-## Returns the offending argument rather than a bool so the failure message can
-## name it — a guard that says only "something is wrong" costs the next person a
-## bisect.
-func _nonzero_quit(region: String) -> String:
-	var parts := region.split(QUIT_CALL)
-	for i in range(1, parts.size()):
-		var rest: String = parts[i]
-		var close := rest.find(")")
-		if close < 0:
-			continue
-		var arg := rest.substr(0, close).strip_edges()
-		if arg not in SUCCESS_QUIT_ARGS:
-			return arg
-	return ""
-
-
-## `code` with the CONTENTS of every string literal blanked out, preserving
-## length and line structure so line-based logic still lines up.
-##
-## 🔴 Scoped to the failure-path law ONLY — never apply it to booter detection.
-## A harness reaches the main scene by writing `load("res://scenes/main.tscn")`,
-## so [constant SCENE_TOKEN] lives INSIDE a literal; stripping literals before
-## that check would classify every booter as a non-booter and the whole guard
-## would pass vacuously. Here the opposite is true: a literal mentioning the
-## guarantee is exactly what must not count.
-func _strip_literals(code: String) -> String:
 	var out := ""
 	var i := 0
 	var quote := ""
 	var triple := false
+	var in_comment := false
 	while i < code.length():
 		var ch := code[i]
+		if in_comment:
+			# A comment runs to end-of-line and nothing inside it is code —
+			# quotes included, which is the whole point of this branch.
+			if ch == "\n":
+				in_comment = false
+				out += "\n"
+			else:
+				out += " "
+			i += 1
+			continue
 		if quote.is_empty():
+			if ch == "#":
+				in_comment = true
+				out += " "
+				i += 1
+				continue
 			if ch == "\"" or ch == "'":
 				triple = code.substr(i, 3) == ch.repeat(3)
 				quote = ch
@@ -489,6 +522,25 @@ func _strip_literals(code: String) -> String:
 		out += "\n" if ch == "\n" else " "
 		i += 1
 	return out
+
+
+## The argument of the first non-success `quit(...)` in `region`, or "" when every
+## quit there is a success quit. Used on the code OUTSIDE `_fail`.
+##
+## Returns the offending argument rather than a bool so the failure message can
+## name it — a guard that says only "something is wrong" costs the next person a
+## bisect.
+func _nonzero_quit(region: String) -> String:
+	var parts := region.split(QUIT_CALL)
+	for i in range(1, parts.size()):
+		var rest: String = parts[i]
+		var close := rest.find(")")
+		if close < 0:
+			continue
+		var arg := rest.substr(0, close).strip_edges()
+		if arg not in SUCCESS_QUIT_ARGS:
+			return arg
+	return ""
 
 
 ## Does this line begin a new top-level declaration? See [constant
