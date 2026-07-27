@@ -847,18 +847,35 @@ jobs:
               [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) : ;;
               *) reset_sha="" ;;
             esac
+            # ABORT rather than continue when the reset cannot be completed.
+            # Continuing is NOT merely "today's behaviour": reaching here means
+            # the branch is known behind with no open PR, so writing the cask
+            # anyway opens a PR that is born CONFLICTING — and because that PR
+            # then stays open, every later cycle's open-PR guard suppresses the
+            # reset, so the tap can never recover on its own. Failing leaves no
+            # PR behind, which keeps the next release's reset path viable; the
+            # release itself is already published by this point, so the cost is
+            # a retryable cask handoff rather than a stuck tap.
             if [ -z "${reset_sha}" ]; then
-              echo "::warning::could not re-read ${tap} main before resetting ${branch}; leaving it alone"
-            elif gh api "repos/${tap}/git/refs/heads/${branch}" -X PATCH \
-                 -f sha="${reset_sha}" -F force=true >/dev/null 2>&1; then
-              echo "::notice::reset ${branch} to ${tap} main (${reset_sha}) — the previous cask PR merged and left it behind"
-            else
-              # Losing this is not fatal: the release still gets its content
-              # write and PR below, just on the pre-existing (conflicting)
-              # branch — the state we have today. Say so loudly instead of
-              # failing the publish.
-              echo "::warning::could not reset ${branch} to ${tap} main; the cask PR may be born conflicted"
+              echo "::error::could not re-read ${tap} main before resetting ${branch}; refusing to open a PR from a known-behind branch"
+              exit 1
             fi
+            reset_done=""
+            for attempt in 1 2 3; do
+              if gh api "repos/${tap}/git/refs/heads/${branch}" -X PATCH \
+                   -f sha="${reset_sha}" -F force=true >/dev/null 2>&1; then
+                reset_done=1
+                break
+              fi
+              if [ "${attempt}" != "3" ]; then
+                sleep 3
+              fi
+            done
+            if [ -z "${reset_done}" ]; then
+              echo "::error::could not reset ${branch} to ${tap} main (${reset_sha}) after 3 attempts; refusing to open a PR from a known-behind branch, which would be born conflicted and block every later reset"
+              exit 1
+            fi
+            echo "::notice::reset ${branch} to ${tap} main (${reset_sha}) — the previous cask PR merged and left it behind"
           fi
 
           # DISARM before touching the branch. Auto-merge armed by a previous

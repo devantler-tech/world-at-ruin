@@ -206,3 +206,26 @@ if [ "${patch_line}" -ge "${put_line}" ]; then
 	echo "the branch reset must happen before the cask content write" >&2
 	exit 1
 fi
+
+# A reset that cannot be completed must ABORT, never fall through to the cask
+# write. Continuing opens a PR born conflicting, and that PR then keeps every
+# later cycle's open-PR guard from ever retrying the reset — the tap cannot
+# recover on its own. Pin that both give-up paths between the reset and the
+# content write exit non-zero.
+# Pair each give-up message with its OWN `exit 1` on the next line, rather
+# than counting every exit in the range — the disarm block already has one and
+# is not ours to assert on.
+give_up_exits="$(awk -v a="${reset_line}" -v b="${put_line}" \
+	'NR > a && NR < b && /refusing to open a PR from a known-behind branch/ {pending = NR; msgs++; next}
+	 pending && NR == pending + 1 && /^[[:space:]]*exit 1$/ {paired++; pending = 0}
+	 END {print msgs "/" paired}' "${workflow}")"
+if [ "${give_up_exits}" != "2/2" ]; then
+	echo "each give-up path must abort: want 2 messages each followed by 'exit 1', got ${give_up_exits}" >&2
+	echo "continuing opens a conflicted PR that blocks all later resets" >&2
+	exit 1
+fi
+if awk -v a="${reset_line}" -v b="${put_line}" \
+	'NR > a && NR < b && /::warning::could not reset/ {found=1} END {exit !found}' "${workflow}"; then
+	echo "the failed-reset path still only warns; it must abort" >&2
+	exit 1
+fi
