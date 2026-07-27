@@ -264,9 +264,9 @@ func _assert_torn() -> void:
 	# file with "" — which would otherwise be reported as an overwrite with
 	# empty content rather than as the removal it is.
 	if not FileAccess.file_exists(_save.recovery_probe()):
-		_fail(("the unreadable ledger was REMOVED — the player loses the one record that would "
+		_fail("the unreadable ledger was REMOVED — the player loses the one record that would "
 			+ "have stopped a boot loop, and a file that is gone is a different failure from the "
-			+ "overwrite this phase guards against"))
+			+ "overwrite this phase guards against")
 		return
 	var text := FileAccess.get_file_as_string(_save.recovery_probe())
 	if text != "this is not json":
