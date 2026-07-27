@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource path="res://tests/cave_terrain_contact_world_test.gd" type="Script" id="1"]
+
+[node name="CaveTerrainContactWorldTest" type="Node"]
+script = ExtResource("1")

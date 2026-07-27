@@ -1,0 +1,4 @@
+frame: ash-far-side.png
+captured: 1600x900
+size: as shipped
+separation: value 53.3% of range (p1 0.127 -> p99 0.660) - hue 12.8 deg over 57600 px

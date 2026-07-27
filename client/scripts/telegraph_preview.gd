@@ -220,8 +220,11 @@ func _build_lighting() -> void:
 	env.fog_density = 0.010
 	env.fog_aerial_perspective = 0.35
 	env.fog_sky_affect = 0.4
-	env.fog_height = 6.0
-	env.fog_height_density = 0.06
+	# The downward pooling is CaveAtmosphere's to write, exactly as the
+	# volumetrics below are Volumetrics' — the preview is above ground, so it
+	# takes the open-sky grade. A telegraph judged under a different sky than
+	# the player's is judged wrong.
+	CaveAtmosphere.apply(env, 0.0)
 	# Volumetrics are part of the shipping rig on supporting hardware (#158),
 	# probe-gated exactly as in main.gd — a telegraph judged without the air
 	# volume the player sees through is judged under different light (the same

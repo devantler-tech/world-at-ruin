@@ -63,6 +63,15 @@ remains unpersisted.
 This wait is what makes rollback safe: if the next build fails, the retained build already understands
 everything the failed build may have written.
 
+“Applicable update tier” is literal. While the client ships as one monolithic app, the retained
+whole-app release is the rollback target: its published app must boot and apply the expanded state
+before the later app starts writing it. `v0.52.0` is that retained, independently booted whole-app
+target for capability 3. The manifest's `rollback_targets` array is a different tier: it is consumed
+only by the future mountable-pack recovery path, so it stays empty until a real `.pck` is retained.
+Putting a monolithic `.app` ZIP there would not strengthen rollback; it would make recovery select
+bytes the pack path cannot mount. Once pack delivery exists, its capability expansions require a
+selectable catalogue entry before their writers activate.
+
 ### 3. Contract by starting the new writer
 
 Enable the new write path only after the expansion is baked.
@@ -159,7 +168,11 @@ For vault version `N`, the expansion pull request must:
    originate the capability during expansion, and prove an already-present version-`N` vault
    round-trips losslessly after an ordinary write. A new live attunement also enters
    `shipped_attunements.txt`, `SaveVault.KNOWN_ATTUNEMENTS`, the resolver, and the boot restoration
-   test in the same change.
+   test in the same change. A new writable discovery id similarly enters
+   `shipped_discoveries.txt` as an immutable `id=landmark` mapping,
+   `SaveVault.KNOWN_DISCOVERIES`, and the real boot's bidirectional
+   point-of-interest registration guard. Unknown discovery names already present in a newer vault
+   remain preserved, but this build may originate only a registered, ledgered ID.
 6. Assign the new persistable capability and raise `UpdateManifest.SAVE_CAPABILITY_READS` to it while
    leaving `SAVE_CAPABILITY_WRITES` unchanged. The retained expansion build must advertise the read
    ceiling that makes it an eligible rollback target before the contract release can write that
@@ -167,6 +180,14 @@ For vault version `N`, the expansion pull request must:
 
 After bake, the contract pull request lets new or changed vaults use version `N`, raises the global
 write capability, and appends that capability to `shipped_save_capability.txt`.
+
+The first progression-vault sequence is capability 3: v0.52.0 shipped the version-2 discovery reader
+while production writes remained at capability 2. With that release retained as a rollback target,
+the later contract build registers `starter_cave` and `wardens_shrine`, observes the real wanderer's
+position, and persists the append-only found set at vault version 2. Empty and attunement-only vaults
+remain version 1; the first actual discovery is what contracts them to version 2. Rewards, quests,
+waypoints and map presentation remain separate children of the exploration roadmap rather than being
+implied by this persistence contract.
 
 ### Boot recovery
 
@@ -178,8 +199,9 @@ target; #343 owns that bake gate and the later v1-writer activation.
 
 Recovery refusal is path-latched for the process lifetime, and persistence reparses the destination
 immediately before atomic replacement. Reconstructing state, deleting a refused file, or landing a
-future/corrupt replacement therefore cannot turn the path writable. As with the vault, this narrows
-but does not close the rename-time concurrent-writer gap tracked by #262.
+future/corrupt replacement therefore cannot turn the path writable. This narrows but does not close
+the rename-time concurrent-writer gap: boot recovery takes no write lock, so unlike the vault it is
+still guarded by the pre-replacement recheck alone.
 
 The ledgers are the immutable floor: the in-game guards compare the current constants and fixtures,
 while CI compares each ledger with the pull request's base revision. Editing code, fixtures and a
@@ -201,10 +223,28 @@ The character recipe and vault deliberately fail differently:
 - An unreadable or newer boot-recovery document degrades to a rollback-safe empty quarantine view,
   while the path remains read-only for the process lifetime. Rollback eligibility still proves save,
   protocol and shell compatibility independently; new update attempts and recovery writes stop.
-- Vault persistence rechecks readability immediately before its atomic replace. The remaining
-  concurrent-writer compare-and-swap gap is tracked by
-  [#262](https://github.com/devantler-tech/world-at-ruin/issues/262); do not describe the current
-  recheck as a complete lock.
+- Vault persistence takes a cross-process write lock around its whole read-modify-write, so no second
+  lock-aware writer can read, merge and rename between another's check and its replace. The lock is a
+  directory beside the vault (`vault.json.lock`): `DirAccess.make_dir_absolute` is `mkdir`, the one
+  atomic exclusive-create Godot exposes, so exactly one writer wins and the rest refuse. A refused
+  write degrades to session-only and never blocks a boot.
+- Acquisition is only ever that single `mkdir` against an absent path. Reclaiming an abandoned lock is
+  a **separate pass that never acquires**: it renames the stale directory to a uniquely-named copy
+  (rename succeeds for exactly one process, which is what serializes reclamation), verifies on that
+  privately-owned copy that the timestamp is the one it judged abandoned, removes it, and still
+  refuses this write. The next attempt then acquires the free slot normally. Reclaiming and acquiring
+  in one pass is unsound — two processes would each recreate the lock over the other and both proceed
+  as owners — so do not "simplify" it back into remove-then-create.
+- The lock directory is **not** empty: it holds an ownership stamp. Renaming onto an empty directory
+  succeeds, so an unstamped lock could be silently renamed over; the stamp also lets a holder prove
+  the lock is still its own immediately before replacing the vault, and abandon the write if it is not.
+- **Scope the guarantee precisely.** A lock only excludes writers that take it. Builds from before this
+  protocol — the retained and rollback clients the updater keeps runnable — write the same file without
+  it, as do foreign writers such as cloud sync or a hand edit. For all of those the pre-replacement
+  readability recheck and the refuse-a-newer-version rule are the protection, and they narrow the
+  window to the rename rather than closing it. This removes lost updates between lock-aware builds now
+  and becomes general only once every still-runnable build carries the protocol; do not describe it as
+  closing the differently-versioned case outright.
 
 Boot tests redirect every player-state seam through `SaveIsolation`; persistence and fixture tests use
 explicit throwaway paths. A migration test that touches a played save is itself a product-law

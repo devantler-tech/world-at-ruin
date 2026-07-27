@@ -65,6 +65,7 @@ func begin() -> bool:
 	for path in [_probe, _vault_probe, _recovery_probe]:
 		if FileAccess.file_exists(path):
 			DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	_clear_vault_lock()
 	_default_before_exists = FileAccess.file_exists(CharacterStore.DEFAULT_PATH)
 	_default_before_sha = _sha(CharacterStore.DEFAULT_PATH)
 	_vault_before_exists = FileAccess.file_exists(SaveVault.DEFAULT_PATH)
@@ -107,6 +108,21 @@ func end() -> void:
 	for path in [_probe, _vault_probe, _recovery_probe]:
 		if FileAccess.file_exists(path):
 			DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	_clear_vault_lock()
+
+
+## Drop the vault write lock as well as the probe files.
+##
+## The lock is a DIRECTORY, so the file sweep above cannot see it, and a lock left
+## behind by a boot that was killed mid-write would otherwise outlive its test:
+## the next test redirecting to the same probe path would find a lock that is not
+## yet stale, refuse every vault write, and fail as though the vault were simply
+## not being applied. Clearing the in-process bookkeeping first, then the
+## directory, covers both a lock this process still holds and one inherited from
+## an earlier run.
+func _clear_vault_lock() -> void:
+	SaveVault.clear_locks_for_test()
+	SaveVault._remove_lock_dir(SaveVault.lock_path(_vault_probe))
 
 
 func _sha(path: String) -> String:

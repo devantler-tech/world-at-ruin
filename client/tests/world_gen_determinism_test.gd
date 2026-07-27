@@ -89,7 +89,13 @@ const HALF := WorldGen.SIZE / 2.0
 ## surface-node-exact and ruin-clearance arms still pass unchanged, which is how
 ## the #282 footprint seating is shown to have followed the new ground rather
 ## than been invalidated by it.
-const GOLDEN_FINGERPRINT := "7213a02a"
+## v0.51.2 (#345): the cave gains one deterministic, render-only copy of its
+## exact surface carrying local terrain material at the contact seam. The cave
+## rock/collision mesh remains pinned separately by
+## cave_system_determinism_test (verts=10198 hash=767321522), while this whole
+## world golden intentionally records the added visible node and its matching
+## vertices.
+const GOLDEN_FINGERPRINT := "37fee52c"
 
 
 

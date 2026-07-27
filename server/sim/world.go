@@ -164,6 +164,12 @@ type World struct {
 	// the hashed state so a divergence in tick count is caught too.
 	Tick uint64
 
+	// MobChase enables server-authored movement for registered mobs. It is a
+	// server-configured feature flag and defaults off. When off, Step clears
+	// every registered mob's AI-owned intent before movement, including intent
+	// left by a runtime transition from on to off.
+	MobChase bool
+
 	// SweptCollision selects continuous collision on the movement path: when
 	// true, Step stops a mover at first contact rather than integrating it to a
 	// destination it could only reach by passing through another actor (see
@@ -253,6 +259,9 @@ func (w *World) Count() int { return len(w.order) }
 func (w *World) SetIntent(id EntityID, intent Vec3) {
 	if e := w.ents[id]; e != nil {
 		e.Intent = sanitizeIntent(intent)
+		if st := w.mobs[id]; st != nil {
+			st.chaseIntentOwned = false
+		}
 	}
 }
 
@@ -290,6 +299,9 @@ func sanitizeIntent(v Vec3) Vec3 {
 // so the moves an actor made this very tick count toward dodging a telegraph;
 // it is a no-op for a world with no mobs and no casts.
 func (w *World) Step() {
+	if !w.MobChase {
+		w.clearMobChaseIntents()
+	}
 	if w.SweptCollision {
 		w.integrateSwept()
 	} else {

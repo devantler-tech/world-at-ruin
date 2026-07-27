@@ -11,13 +11,66 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
-		"version": "0.52.0",
-		"date": "2026-07-23",
+		"version": "0.58.0",
+		"date": "2026-07-27",
 		"title": "The first head layers can hide one another",
 		"notes": [
 			"The wardrobe now has its first eyewear and helm: relic goggles sit on the clothing layer, and the ruin-drake helm sits over them as armour. Wearing both hides the goggles instead of drawing them through the helm.",
 			"The pair is available in the guarded layered-outfit preview: set WAR_LAYERED_OUTFIT_PICKERS=1 before launch, then use the independent head clothing and armour controls. The ordinary creator remains unchanged.",
 			"The spiked helm gives the head a stronger distance silhouette, but both pieces still use flat bake materials and the goggles do not yet read as glass. They remain opt-in until their surfaces and authored wardrobe presentation clear the character-art bar tracked by #336.",
+		],
+	},
+	{
+		"version": "0.55.2",
+		"date": "2026-07-27",
+		"title": "The ground has colour again",
+		"notes": [
+			"The Reach is built from four kinds of ground — pale bone-coloured flats, rust, cinder, ash — and you could barely see any of it. The ground was always that varied underfoot; the haze in the air was washing the colour out of it before it reached you.",
+			"There is less of that haze now, so the country reads as country. Walk west from the shrine onto the pale stone and you can see you have arrived somewhere; look across the ruin field and the far ground separates into places instead of one flat sheet.",
+			"The Reach is still hazy and still grim. Most of what thinned is the flat overall murk that hung between you and everything, which was doing the most to hide the ground and the least to make the place feel bleak. The ash still gathers low and still settles into the hollows — a little lighter than before, and the drifting pools down in them are exactly as thick as they were.",
+			"Nothing about the ground itself changed. This is the same terrain, the same colours, the same seed — you can simply see it now.",
+		],
+	},
+	{
+		"version": "0.55.1",
+		"date": "2026-07-25",
+		"title": "The starting cave is dark again",
+		"notes": [
+			"The ash hanging over the Reach was also filling the cave you wake up in, where no ash can fall. The cave keeps its own air now: the dark is properly dark, and the torch throws a real pool of light instead of a glow on a wall.",
+			"The bedded rock and fractures added earlier were being washed out by that haze — laid down correctly, but with too little shadow anywhere in the room to read as depth. They now show the relief they always had.",
+			"Weather follows the sky it falls from. Step under the overhang at the mouth and the ash thins as rock closes over you; walk back out into the Reach and it returns, with neither change snapping into place.",
+			"None of the cave's colour or torchlight has changed. It is the same warm room it always was, with its shadows given back.",
+		],
+	},
+	{
+		"version": "0.55.0",
+		"date": "2026-07-23",
+		"title": "The Reach remembers the places you have found",
+		"notes": [
+			"The starter cave and the Wardens' Shrine are now recorded the first time you reach them. Close the game after walking from one to the other and both places remain part of your history when you return.",
+			"Older characters and shrine attunements are left in their original save shape. The newer discovery shape is written only after there is a real place to remember, and the earlier read-capable release remains available as the safe rollback path.",
+			"This is memory, not yet a reward: there is no map marker, quest, mastery gain or discovery announcement in this slice. Those player-facing uses remain later exploration work.",
+		],
+	},
+	{
+		"version": "0.52.1",
+		"date": "2026-07-23",
+		"title": "Sunlight reaches the thin things from the right side",
+		"notes": [
+			"Scrub and dead grass could turn dark while you stood on the same side as the sun. Their crossed leaf cards remembered only the side they were built from, so looking at the reverse side made direct sunlight behave as though it came through the ground.",
+			"Each visible side now faces the light honestly. The sun-facing leaves and blades take the full warm key; the far side keeps the weaker glow of light passing through it instead of becoming a black cutout.",
+			"The ash in the hollows no longer throws almost all of its scattered light toward the horizon. It keeps enough of that sunward shaft to show depth, but direct light now reveals the cloud from the source-facing side too.",
+			"Both responses come from the live sun rather than a stored direction, so they move when the light moves. The Reach's sun itself is still fixed in the sky — a full day-and-night cycle remains future work.",
+		],
+	},
+	{
+		"version": "0.51.2",
+		"date": "2026-07-23",
+		"title": "The starter cave now belongs to the ground it rises from",
+		"notes": [
+			"The weathered rock around the cave entrance used to end in a clean material line, as if the whole massif had been placed on top of the Reach. Its lowest band now takes on the exact colour and wear of the ash or stone it meets there.",
+			"The blend follows the faceted ground you can actually walk on and fades away up the rock. Cave walls, the far side of the massif and every collision surface are unchanged.",
+			"The material seam is softer, but the massif still has one smooth generated outline. It still needs loose rock, drifted ash and sparse growth around its foot before the cave has the layered, buried silhouette of the reference.",
 		],
 	},
 	{
@@ -48,7 +101,7 @@ const ENTRIES: Array[Dictionary] = [
 			"Every human now starts with a rough woven-cloth wrap beneath the wardrobe. It has a thick belt, folded front and back panels, and an uneven torn hem rather than the clean outline of modern underwear.",
 			"The wrap belongs to the body kit, not to a saved outfit. Empty equipment, old characters, creator portraits and people already in the world all receive it automatically, and no wardrobe choice can remove or replace it.",
 			"Clothes and armour still sit over the same regions in the same order. Existing character recipes have not been rewritten; their visible result simply gains this base layer underneath.",
-			"The torn shape reads at the creator's full-body distance, but the fine woven surface mostly resolves as one brown value there. The cloth still needs richer drape and close material detail to approach the Wretch reference; a closer creator view would make that work visible too.",
+			"The torn shape reads at the creator's full-body distance, but the fine woven surface mostly resolves as one brown value there. The cloth still needs richer drape and close material detail before it reads as grounded, weathered clothing; a closer creator view would make that work visible too.",
 		],
 	},
 	{

@@ -16,13 +16,39 @@ class_name Volumetrics
 ## Density stays well under Godot's default (0.05): the depth fog already
 ## contributes distance attenuation, and stacking a heavy volume on top would
 ## milk out the frame the grading pass works to keep crisp.
-const DENSITY := 0.005
+##
+## This term is what was hiding the ground (#273). #260 gave the Reach four
+## ground regions spanning a 3.1x baked luma range, and measured at the
+## `crossfield` vantage only 27.4% of the separation a player could see was
+## reaching the screen. Ablated one term at a time, this one accounted for the
+## overwhelming majority of the loss at distance: neutralising it recovered
+## +149%, against +4% for the height term and +7% for the depth term.
+##
+## Lowered to a third rather than removed. Removed, distance separation
+## recovers +149%; at a third it recovers +71%, and the remaining haze is what
+## keeps the Reach oppressive — the murk is the art direction and #273 asks for
+## the ground back without giving that up. The knee is here: a further cut to a
+## quarter of shipped buys only about 20 more points while thinning the air
+## noticeably.
+##
+## Two things this deliberately does NOT thin. [HollowFog]'s ash pools carry
+## their own [FogMaterial] density, which is a multiplier inside each volume and
+## a different unit from this one, so the drifting pools in the hollows are
+## untouched. And sun shafts are scattering through this volume rather than the
+## volume itself, so they survive at reduced strength rather than disappearing.
+const DENSITY := 0.0017
 ## Scattering albedo: warm-neutral ash, slightly darker than white so the
 ## volume tints toward FOG_COLOR under the low sun instead of glowing grey.
 const ALBEDO := Color(0.80, 0.74, 0.68)
-## Forward scattering. The Reach's sun sits low; a high-ish anisotropy is what
-## turns uniform haze into visible shafts when looking sunward.
-const ANISOTROPY := 0.6
+## Mild backward scattering. Ash is smoke-like particulate rather than clear
+## mist: the old +0.6 bias concentrated the response into the view toward the
+## sun, leaving the same cloud dark when viewed from the side the light reaches
+## first (#346). A fixed-camera capture proved that even +0.15 kept that
+## ordering inverted. -0.15 makes direct source-facing illumination lead while
+## staying far from the -1.0 limit, so the opposite side retains a softer
+## transmitted read. The renderer still derives the response from every live
+## Light3D, so it follows the sun as that light moves.
+const ANISOTROPY := -0.15
 ## Far edge of the froxel volume. The playable field and its landmark ruins
 ## sit well inside this; beyond it the depth fog takes over seamlessly.
 const LENGTH := 64.0

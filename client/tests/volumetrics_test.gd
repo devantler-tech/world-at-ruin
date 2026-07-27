@@ -16,6 +16,15 @@ extends Node
 ##
 ## Run: godot --headless --path client res://tests/volumetrics_test.tscn
 
+## Ash is smoke-like particulate, not clear mist. A positive value pushes
+## scattering into the far-side/sunward view and makes the same volume read
+## dark from the side the light reaches first (#346). The fixed-camera capture
+## proved that even +0.15 kept the ordering inverted. A mild NEGATIVE bias
+## returns more light toward the source-facing observer while staying far from
+## the -1.0 degenerate limit, so the opposite side keeps a transmitted read.
+const MIN_ASH_ANISOTROPY := -0.20
+const MAX_ASH_ANISOTROPY := -0.05
+
 func _ready() -> void:
 	# LAW 1 — no rendering device means no volumetrics, unconditionally. This
 	# is the branch every headless run (this one included) and every renderer
@@ -93,13 +102,16 @@ func _ready() -> void:
 
 	# LAW 6 — the tuned constants stay inside the ranges the shipped look
 	# reasons about: a subtle volume UNDER Godot's 0.05 default density (the
-	# depth fog already carries distance haze), forward scattering, and a
+	# depth fog already carries distance haze), mild backward scattering that
+	# makes the directly lit side lead without erasing the far-side read, and a
 	# volume that ends before the depth fog's far field.
 	if Volumetrics.DENSITY <= 0.0 or Volumetrics.DENSITY >= 0.05:
 		_fail("DENSITY must be a subtle positive volume below Godot's default")
 		return
-	if Volumetrics.ANISOTROPY <= 0.0 or Volumetrics.ANISOTROPY > 0.9:
-		_fail("ANISOTROPY must forward-scatter without going degenerate")
+	if Volumetrics.ANISOTROPY < MIN_ASH_ANISOTROPY \
+			or Volumetrics.ANISOTROPY > MAX_ASH_ANISOTROPY:
+		_fail("ANISOTROPY %.2f must stay in [%.2f, %.2f] — source-facing ash needs a mild backward bias" %
+			[Volumetrics.ANISOTROPY, MIN_ASH_ANISOTROPY, MAX_ASH_ANISOTROPY])
 		return
 	if Volumetrics.LENGTH <= 0.0:
 		_fail("LENGTH must be a positive volume extent")
