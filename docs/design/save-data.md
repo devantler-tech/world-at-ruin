@@ -274,6 +274,22 @@ catastrophic rather than helpful.
 - An unreadable or newer boot-recovery document degrades to a rollback-safe empty quarantine view,
   while the path remains read-only for the process lifetime. Rollback eligibility still proves save,
   protocol and shell compatibility independently; new update attempts and recovery writes stop.
+- The character write commits from a **private staging file**, `character.json.tmp-<pid>-<ticks>`,
+  never a derivable `character.json.tmp`. A shared staging name is a hole no target-side check can
+  see: a second client — a retained rollback build, a sync agent, a second install — opens that same
+  predictable path and can truncate the staged recipe after it is serialised and before the rename,
+  and because `character.json` itself is untouched until then, both the write guard and the
+  pre-replacement re-check pass and the rename commits the other writer's partial bytes. A name a
+  foreign writer cannot derive removes the sharing instead of trying to detect it.
+- Because a per-attempt name is not reclaimed by being overwritten the way one fixed name was, a
+  crashed writer's staging file is swept on the next write — but only once it has sat unchanged past
+  `WRITE_TMP_MIN_AGE_SECONDS` (300 s, overridable for tests via
+  `WAR_CHARACTER_WRITE_TMP_MIN_AGE_SECONDS`). The age floor is what stands in for the lock the
+  character store does not yet have: the vault may sweep anything it finds because it sweeps while
+  holding the write lock, whereas a young character stage may be a live write by a second client, and
+  deleting it would cause exactly the corruption the private name removes. The window errs long —
+  sweeping too eagerly destroys another client's write, sweeping too late leaves one file for one
+  more launch.
 - Vault persistence takes a cross-process write lock around its whole read-modify-write, so no second
   lock-aware writer can read, merge and rename between another's check and its replace. The lock is a
   directory beside the vault (`vault.json.lock`): `DirAccess.make_dir_absolute` is `mkdir`, the one
