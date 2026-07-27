@@ -781,10 +781,19 @@ jobs:
             gh api "repos/${tap}/git/refs" -X POST -f ref="refs/heads/${branch}" \
               -f sha="${base_sha}" >/dev/null 2>&1 || true
             wait_for_cask_ref "${tap}" "${branch}"
-          elif cask_branch_needs_reset "${tap}" "${branch}" "$(trusted_open_pr)"; then
+          elif cask_branch_needs_reset "${tap}" "${branch}" \
+               "$(trusted_open_pr || echo UNKNOWN)"; then
             # A fresh cycle on a branch left stale by the previous merge. Read
             # the open-PR state HERE rather than reusing an earlier read, so the
             # "no live PR" proof is as close to the write as it can be.
+            #
+            # `|| echo UNKNOWN` is load-bearing: the query pipeline yields an
+            # empty string BOTH when no PR is open and when the API call fails,
+            # and those must not mean the same thing here. A transient failure
+            # while a PR really is open would otherwise read as "safe to reset"
+            # and discard that in-flight release. Any non-empty value refuses
+            # the reset, so an unreadable PR state fails closed like an
+            # unreadable comparison does.
             if gh api "repos/${tap}/git/refs/heads/${branch}" -X PATCH \
                  -f sha="${base_sha}" -F force=true >/dev/null 2>&1; then
               echo "::notice::reset ${branch} to ${tap} main (${base_sha}) — the previous cask PR merged and left it behind"

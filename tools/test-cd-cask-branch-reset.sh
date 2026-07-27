@@ -66,6 +66,22 @@ if [ -s "${call_file}" ]; then
 	exit 1
 fi
 
+# --- Safety control: an UNREADABLE open-PR state is not "no PR". ----------
+# The call site maps a failed PR query to a sentinel rather than the empty
+# string, because the query yields empty for "none open" AND for "the call
+# failed". Treating those alike would reset under a live release.
+: >"${call_file}"
+if cask_branch_needs_reset "${tap}" "${branch}" "UNKNOWN"; then
+	echo "reset was allowed while the open-PR state was unreadable" >&2
+	exit 1
+fi
+
+# The call site must actually pass that sentinel, not a bare query.
+if ! grep -q 'trusted_open_pr || echo UNKNOWN' "${workflow}"; then
+	echo "reset call site does not fail closed on an unreadable PR query" >&2
+	exit 1
+fi
+
 # --- Safety control: a concurrent run's unmerged write is ahead-only. ------
 # A release that has written content but not yet opened its PR leaves the
 # branch AHEAD of main, never behind. Resetting there would throw away a
