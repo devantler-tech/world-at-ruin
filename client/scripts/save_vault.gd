@@ -138,6 +138,19 @@ const LOCK_STALE_SECONDS := 300
 ## default, so a malformed value can never shorten the window in the field.
 const LOCK_STALE_ENV := "WAR_VAULT_LOCK_STALE_SECONDS"
 
+## The identity of a vault path that holds no file. Distinct from
+## [constant IDENTITY_UNCHECKED]: "absent" is a real state to compare against, and
+## a writer that read nothing must still refuse if a vault appeared meanwhile.
+const IDENTITY_ABSENT := ""
+
+## The opt-out for [method replace_if_unchanged]: replace whatever is there.
+##
+## A single `*` can never collide with a real identity — those are SHA-256 hex —
+## nor with [constant IDENTITY_ABSENT], so "no expectation" stays distinguishable
+## from "expected nothing". It exists for the blind whole-document replace that
+## [method save_to] is; every read-modify-write passes a real identity instead.
+const IDENTITY_UNCHECKED := "*"
+
 ## Suffix for a vault set aside because no client could own it. What follows it is
 ## a per-attempt unique stamp, so a second corruption never overwrites the first —
 ## preserving the bytes is the entire point (#290), and a predictable name is a
@@ -335,9 +348,51 @@ static func _refuse(path: String, message: String) -> Variant:
 ## one reached through persist_attunement(). The lock is reentrant, so the
 ## nesting those helpers create costs nothing and cannot self-deadlock.
 static func save_to(path: String, doc: Dictionary) -> bool:
+	return replace_if_unchanged(path, doc, IDENTITY_UNCHECKED)
+
+
+## The identity of the document at `path`: the SHA-256 of its bytes, or
+## [constant IDENTITY_ABSENT] when no file is there.
+##
+## Keyed on WHAT THE FILE IS rather than on who cooperated, which is the whole
+## reason this exists alongside the lock. A lock binds only writers that take it,
+## so a pre-lock rollback build, cloud sync, a backup agent and a hand edit all
+## walk straight through it — but every one of them changes the bytes, so every
+## one of them is visible here.
+##
+## Content-hashed rather than size-plus-mtime on purpose: mtime has
+## filesystem-dependent granularity, sync tools routinely preserve it, and a
+## same-size edit is exactly the shape a merged progression document has.
+static func document_identity(path: String) -> String:
+	if not FileAccess.file_exists(path):
+		return IDENTITY_ABSENT
+	# Empty on any read failure, which is IDENTITY_ABSENT — the fail-closed
+	# direction: it can only make a comparison MISmatch and refuse a write, never
+	# match one that should have been refused.
+	return FileAccess.get_sha256(path)
+
+
+## Replace the vault at `path` with `doc`, but only while the file still carries
+## `expected_identity` — a compare-and-swap on the document's own bytes.
+##
+## This is the backstop for every writer the lock cannot bind (#386). The lock
+## keeps cooperating writers from ENTERING the read-modify-write together, which
+## is cheaper than detecting the collision afterwards; this catches everyone who
+## never took it, plus the point-in-time gap where a holder that has outlived the
+## stale timeout is reclaimed between proving ownership and renaming.
+##
+## Pass [constant IDENTITY_UNCHECKED] for a deliberate blind replace.
+##
+## HONEST ABOUT THE RESIDUAL: verify-then-rename is still two operations, so the
+## window shrinks to the rename syscall rather than closing. Closing it needs a
+## lock the OS holds ACROSS the rename (`flock`, `O_EXCL`), which Godot's
+## FileAccess/DirAccess do not expose. The gain is not closure — it is turning a
+## SILENT lost update into a DETECTED refusal, which the vault's law already
+## handles: session-only, loud in logs, never fatal.
+static func replace_if_unchanged(path: String, doc: Dictionary, expected_identity: String) -> bool:
 	if not _acquire_lock(path):
 		return false
-	var wrote := _save_to_locked(path, doc)
+	var wrote := _save_to_locked(path, doc, expected_identity)
 	_release_lock(path)
 	return wrote
 
@@ -345,7 +400,8 @@ static func save_to(path: String, doc: Dictionary) -> bool:
 ## save_to()'s body, with the write lock already held. Split out so acquisition
 ## and release live on ONE path each: GDScript has no `defer`, and a lock leaked
 ## down some early-return branch would wedge the vault for LOCK_STALE_SECONDS.
-static func _save_to_locked(path: String, doc: Dictionary) -> bool:
+static func _save_to_locked(
+		path: String, doc: Dictionary, expected_identity: String = IDENTITY_UNCHECKED) -> bool:
 	var reason := validate(doc)
 	if reason != "":
 		push_error("SaveVault: refusing to write an invalid vault — %s" % reason)
@@ -398,6 +454,25 @@ static func _save_to_locked(path: String, doc: Dictionary) -> bool:
 		push_error("SaveVault: lost the write lock for %s while writing — refusing to replace it" % path)
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(tmp_path))
 		return false
+	# Compare-and-swap on the document's own bytes (#386). Everything above binds
+	# only writers that COOPERATE — the lock excludes other SaveVault writers, the
+	# ownership stamp proves we still hold it. None of it sees a writer that never
+	# took the lock: a pre-lock retained or rollback build, cloud sync, a backup
+	# agent, a hand edit. Those replace the vault and this process, holding a
+	# document it read before they wrote, would merge onto a stale base and rename
+	# their progression away without ever learning it existed. Under the no-resets
+	# law that loss is permanent and unrecoverable.
+	#
+	# The readability re-check above does not catch it: it refuses a vault this
+	# build cannot READ, and a same-version write from a foreign writer reads
+	# perfectly well. Only the bytes tell them apart.
+	if expected_identity != IDENTITY_UNCHECKED:
+		var actual := document_identity(path)
+		if actual != expected_identity:
+			push_error(
+				"SaveVault: %s changed under us while writing — refusing to replace it" % path)
+			DirAccess.remove_absolute(ProjectSettings.globalize_path(tmp_path))
+			return false
 	var err := DirAccess.rename_absolute(
 		ProjectSettings.globalize_path(tmp_path), ProjectSettings.globalize_path(path))
 	if err != OK:
@@ -961,14 +1036,24 @@ static func persist_attunement(name: String) -> bool:
 ## writing the result is only correct if nothing else replaced the file in
 ## between, and a lock taken at the write alone would still have re-introduced
 ## the check-then-act it was meant to remove.
+##
+## The identity is captured BEFORE the load, not after, and that order is
+## deliberate. Captured after, a foreign write landing between the load and the
+## hash would be recorded as our expectation while `current` still held the OLD
+## document — the comparison would pass and we would rename their progression
+## away, which is the exact loss this guards. Captured before, that same
+## interleaving makes the identity stale and the write REFUSES: we lose our own
+## update to session-only, and nothing on disk is destroyed. Both orders have a
+## window; only this one fails in the safe direction.
 static func _persist_attunement_locked(path: String, name: String) -> bool:
 	if not can_write(path):
 		push_error("SaveVault: %s exists but is unreadable — refusing to overwrite it" % path)
 		return false
+	var expected := document_identity(path)
 	var current = load_or_empty()
 	if current is not Dictionary:
 		return false
-	return save_to(path, attune(current, name))
+	return replace_if_unchanged(path, attune(current, name), expected)
 
 
 ## Add the live tracker's complete found set and persist it at the active vault
@@ -992,10 +1077,11 @@ static func _persist_discoveries_locked(path: String, names: Array) -> bool:
 	if not can_write(path):
 		push_error("SaveVault: %s exists but is unreadable — refusing to overwrite it" % path)
 		return false
+	var expected := document_identity(path)
 	var current = load_or_empty()
 	if current is not Dictionary:
 		return false
 	var next := record_discoveries(current, names)
 	if next.is_empty():
 		return false
-	return save_to(path, next)
+	return replace_if_unchanged(path, next, expected)
