@@ -11,6 +11,18 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
+		"version": "0.61.3",
+		"date": "2026-07-27",
+		"title": "The stone ground holds still as you walk",
+		"notes": [
+			"Walking across the slabbed stone ground made the joins between slabs sparkle and crawl, worst at the middle distance where most of the ground sits. It was distracting in exactly the place your eye spends most of its time.",
+			"Every crack is cut with a shallow groove so raking light catches it. Far enough away a crack is thinner than a single dot on your screen, and the groove could no longer be drawn the same way twice from one step to the next — so it flickered. That groove now fades out at the distance its crack stops being visible.",
+			"Up close nothing has changed: the seams you actually stand over keep their full depth, which is the part worth looking at.",
+			"Some shimmer remains, just past the distance where a seam fades. Removing the rest would cost near-field depth, so it is left for a separate judgement rather than traded away here.",
+			"The slabbed ground is still a preview: set WAR_GROUND_PLATES=1 before launch to see it.",
+		],
+	},
+	{
 		"version": "0.59.1",
 		"date": "2026-07-27",
 		"title": "A version that cannot read your character no longer replaces them",
