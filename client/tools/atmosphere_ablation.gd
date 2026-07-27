@@ -362,6 +362,29 @@ func _run(cam: Camera3D) -> bool:
 		["baseline (repeat — noise floor)", {}],
 	]
 
+	# Every property any condition sets, in table order. This is what each vantage
+	# snapshots and restores, so it has to come from the table rather than from a
+	# list maintained next to it.
+	var tracked: Array[String] = []
+	for condition: Array in conditions:
+		for key: String in (condition[1] as Dictionary):
+			if not tracked.has(key):
+				tracked.append(key)
+
+	# Checked against the live Environment BEFORE the first frame renders. A
+	# misspelled property otherwise reads back as `null`, compares unequal to
+	# whatever the condition asked for, and is reported as "something re-applies
+	# it each frame" — a typo diagnosed as a renderer fighting the tool, paid for
+	# with a full render pass.
+	var unknown: Array[String] = []
+	for key: String in tracked:
+		if not (key in _env):
+			unknown.append(key)
+	if not unknown.is_empty():
+		_fail("condition table names %d property(s) that do not exist on Environment: %s"
+			% [unknown.size(), ", ".join(unknown)])
+		return false
+
 	print("ABLATION — probe %.3fx -> %.3fx (ratio %.2fx, the shipped palette interval), %d samples/box"
 		% [PROBE_LO, PROBE_HI, REGION_RATIO, GRID_X * GRID_Y])
 	print("| vantage | condition | luma @%.3fx | luma @%.3fx | raw delta | contrast | vs baseline |"
@@ -404,28 +427,17 @@ func _run(cam: Camera3D) -> bool:
 		# atmosphere and all thirteen after it read the corrupted one, which put
 		# the repeat-baseline check 25% away from the baseline and handed every
 		# innocent condition an identical, entirely fictional +25%.
-		var shipped := {
-			"fog_enabled": _env.fog_enabled,
-			"fog_density": _env.fog_density,
-			"fog_height": _env.fog_height,
-			"fog_height_density": _env.fog_height_density,
-			"fog_aerial_perspective": _env.fog_aerial_perspective,
-			"fog_sky_affect": _env.fog_sky_affect,
-			"ambient_light_energy": _env.ambient_light_energy,
-			"tonemap_mode": _env.tonemap_mode,
-			"tonemap_white": _env.tonemap_white,
-			"tonemap_exposure": _env.tonemap_exposure,
-			"adjustment_enabled": _env.adjustment_enabled,
-			"volumetric_fog_enabled": _env.volumetric_fog_enabled,
-			# The DENSITY, not just the flag. Every row above this one only ever
-			# turned volumetric fog off, so the flag alone was enough to restore
-			# it; the candidate rows below dim it instead, and a property that is
-			# overridden but never captured here is never put back — it would leak
-			# forward into every subsequent row, silently measuring one candidate
-			# stacked on top of the last.
-			"volumetric_fog_density": _env.volumetric_fog_density,
-			"sdfgi_enabled": _env.sdfgi_enabled,
-		}
+		# Derived from the condition table, never listed beside it. A property that
+		# is overridden but not captured here is never put back, so it leaks
+		# forward into every subsequent row and silently measures one candidate
+		# stacked on the last — and a property named by a condition and missing
+		# from a hand-written list crashes the run outright, on a line that blames
+		# the guard rather than the omission, after a whole vantage has rendered.
+		# Both failures are the same drift, and deriving the set removes it: this
+		# file's claim that "adding a candidate is a line" is then true.
+		var shipped := {}
+		for key: String in tracked:
+			shipped[key] = _env.get(key)
 
 		var box: Array = GROUND_BOXES[vname]
 		var baseline_delta := 0.0
@@ -446,9 +458,21 @@ func _run(cam: Camera3D) -> bool:
 			# path — so `volumetric_fog_enabled: false` is a no-op there, passes
 			# the read-back check, and would let the run print PASS alongside a
 			# zero-effect volumetric row that cannot speak for player hardware.
+			#
+			# Compared with [method _override_stuck], the SAME narrowing-aware test
+			# the read-back uses, because `shipped` was read back off the
+			# Environment and carries its 32-bit narrowing while the override is a
+			# 64-bit literal. Under exact identity the two can never match for a
+			# value that is not exactly representable, so a candidate row asking
+			# for a value the environment ALREADY holds would sail through
+			# unflagged and report its ~0% as a genuine finding — which is the one
+			# thing this guard exists to prevent. Harmless while every condition
+			# neutralised its term to a representable 0.0 or false; live from the
+			# moment a row dims one instead, since the dimmed values are exactly
+			# the inexact ones.
 			var inert := not overrides.is_empty()
 			for key: String in overrides:
-				if not is_same(shipped[key], overrides[key]):
+				if not _override_stuck(shipped[key], overrides[key]):
 					inert = false
 					break
 			if inert:
