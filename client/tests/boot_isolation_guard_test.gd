@@ -127,7 +127,11 @@ const VERDICT_STRAY := "stray:"
 
 ## Callable spellings that invoke a method without a direct `name(` — normalised
 ## back to a direct call before scanning, so one scanner covers them all.
-const DEFERRED_CALL_FORMS := [".call_deferred(", ".call(", ".callv(", ".bind("]
+## ⚠️ `.bind(` is deliberately ABSENT. It returns a new Callable and invokes
+## nothing, so normalising `quit.bind(1)` to `quit(1)` would report a function
+## that merely BUILDS a callable as terminating — the same naming-is-not-calling
+## error one rung down, introduced by an over-eager fix and caught in review.
+const DEFERRED_CALL_FORMS := [".call_deferred(", ".call(", ".callv("]
 
 ## Tokens that read a boolean IN PLACE, so the guarantee's answer is acted on
 ## right where it is produced.
@@ -232,6 +236,22 @@ const IGNORED_RESULT_FIXTURE := """func _fail(message: String) -> void:
 	if _save != null:
 		_save.real_save_untouched()
 	get_tree().quit(1)
+"""
+
+## The result stored under a name that only ever appears as a SUBSTRING later.
+## `push_error(message)` contains "error"; the answer is still discarded.
+const SUBSTRING_NAME_FIXTURE := """func _fail(message: String) -> void:
+	var error = _save.real_save_untouched()
+	push_error(message)
+	get_tree().quit(1)
+"""
+
+## A `_fail` that only BUILDS a callable and never invokes it, so nothing exits.
+## `Callable.bind()` returns a Callable; it does not call one.
+const BIND_ONLY_FIXTURE := """func _fail(message: String) -> void:
+	if _save != null and not _save.real_save_untouched():
+		message += " breached"
+	var later = get_tree().quit.bind(1)
 """
 
 ## A booter with no `_fail` at all. Its failure path cannot be located, so the
@@ -443,6 +463,18 @@ func _ready() -> void:
 			+ "nothing, so presence alone cannot be the test (#326)"))
 		return
 
+	# --- negative control: a substring is not an identifier ---
+	if _verdict(SUBSTRING_NAME_FIXTURE) != VERDICT_UNGUARDED:
+		_fail(("the guard accepted a `_fail` whose stored result is only matched as a SUBSTRING of a "
+			+ "later token (`error` inside `push_error`) — the answer is never read (#326)"))
+		return
+
+	# --- negative control: binding a callable is not calling it ---
+	if _verdict(BIND_ONLY_FIXTURE) != VERDICT_NONTERMINAL:
+		_fail(("the guard treated `quit.bind(1)` as a terminating exit — `Callable.bind()` returns a "
+			+ "callable and invokes nothing, so that `_fail` never sets a failure status (#326)"))
+		return
+
 	# --- negative control: a booter with no locatable failure path ---
 	if _verdict(NO_FAIL_FIXTURE) != VERDICT_UNLOCATABLE:
 		_fail(("the guard vouched for a booter with no `%s` at all — a failure path it cannot find "
@@ -570,25 +602,54 @@ func _verdict(code: String) -> String:
 ## whole-file match makes that control fail immediately instead of silently
 ## passing every harness in the repo.
 func _guards_failure_path(code: String) -> bool:
-	var body := _fail_body(_executable(code))
-	for line: String in body.split("\n"):
+	var lines := _fail_body(_executable(code)).split("\n")
+	for i in lines.size():
+		var line: String = lines[i]
 		if not line.contains(GUARANTEE_CALL):
 			continue
 		var before := line.substr(0, line.find(GUARANTEE_CALL))
 		# Used directly in a condition — the answer is read on this line.
+		# 🔴 Word-boundary matched, not `contains`: `var error = ` ends with
+		# "or ", so a substring test reads an ordinary assignment as a boolean
+		# operator. Found by this file's own SUBSTRING_NAME_FIXTURE.
 		for token: String in CONDITION_TOKENS:
-			if before.contains(token):
+			if _mentions_identifier(before, token.strip_edges()):
 				return true
-		# Stored in a variable. That only counts if something LATER reads it:
+		# Stored in a variable. That counts only if a LATER line reads it:
 		# `var untouched = _save.real_save_untouched()` with no further mention
 		# discards the answer exactly as a bare call would.
 		var name := _assigned_name(before)
 		if name.is_empty():
 			continue
-		for other: String in body.split("\n"):
-			if other != line and other.contains(name):
+		for j in range(i + 1, lines.size()):
+			if _mentions_identifier(lines[j], name):
 				return true
 	return false
+
+
+## Does `line` use `name` as a whole identifier?
+##
+## 🔴 A substring test is not good enough and was a real bug here:
+## `var error = _save.real_save_untouched()` followed by `push_error(message)`
+## contains "error" and would read as a use, so the result stayed unread while
+## the guard went green. Identifier characters on either side disqualify a match.
+func _mentions_identifier(line: String, name: String) -> bool:
+	var from := 0
+	while true:
+		var at := line.find(name, from)
+		if at < 0:
+			return false
+		var before_ok := at == 0 or not _is_ident_char(line[at - 1])
+		var end := at + name.length()
+		var after_ok := end >= line.length() or not _is_ident_char(line[end])
+		if before_ok and after_ok:
+			return true
+		from = at + 1
+	return false
+
+
+func _is_ident_char(ch: String) -> bool:
+	return ch == "_" or ch.is_valid_identifier() or ch.is_valid_int()
 
 
 ## The variable an assignment prefix binds to, or "" when the prefix is not an
