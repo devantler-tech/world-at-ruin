@@ -11,6 +11,17 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
+		"version": "0.55.2",
+		"date": "2026-07-27",
+		"title": "The ground has colour again",
+		"notes": [
+			"The Reach is built from four kinds of ground — pale bone-coloured flats, rust, cinder, ash — and you could barely see any of it. The ground was always that varied underfoot; the haze in the air was washing the colour out of it before it reached you.",
+			"There is less of that haze now, so the country reads as country. Walk west from the shrine onto the pale stone and you can see you have arrived somewhere; look across the ruin field and the far ground separates into places instead of one flat sheet.",
+			"The Reach is still hazy and still grim. The ash that gathers in the hollows is exactly as thick as it was, and so are the drifting pools down in them — what thinned is the flat overall murk that hung between you and everything, which was doing the most to hide the ground and the least to make the place feel bleak.",
+			"Nothing about the ground itself changed. This is the same terrain, the same colours, the same seed — you can simply see it now.",
+		],
+	},
+	{
 		"version": "0.55.1",
 		"date": "2026-07-25",
 		"title": "The starting cave is dark again",
