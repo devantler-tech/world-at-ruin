@@ -157,7 +157,7 @@ func _ready() -> void:
 		if not _claims_isolation(code):
 			unisolated.append(file)
 		# The failure path is checked separately from the file as a whole — see
-		# PASS_PATH_CONTROL for why that scoping is the load-bearing part.
+		# PASS_PATH_ONLY_FIXTURE for why that scoping is the load-bearing part.
 		var fail_body := _fail_body(code)
 		if fail_body.is_empty():
 			unlocatable.append(file)
@@ -278,7 +278,8 @@ func _guards_failure_path(code: String) -> bool:
 ##
 ## Scoped to the function rather than the file on purpose: every booter here
 ## asserts the guarantee on its PASS path, so a file-wide match is satisfied by
-## code that never runs when the test fails — see [constant PASS_PATH_CONTROL].
+## code that never runs when the test fails — see [constant
+## PASS_PATH_ONLY_FIXTURE].
 ##
 ## The body ends at the next TOP-LEVEL declaration, which in GDScript is the
 ## next non-empty line starting at column 0. Nested blocks stay in, because they
