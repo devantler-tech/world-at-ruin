@@ -191,6 +191,11 @@ remain version 1; the first actual discovery is what contracts them to version 2
 waypoints and map presentation remain separate children of the exploration roadmap rather than being
 implied by this persistence contract.
 
+Capability 4 readers also accept vault v3 `reward_claims` and restore those stable names into the
+boot-owned exploration reward tracker. Production writers remain capability 3/v2; ordinary
+attunement and discovery writes preserve an already-present v3 document and its claims. Writer
+activation is a separate capability step after the retained v3 reader is a safe rollback target.
+
 ### Boot recovery
 
 Boot recovery follows the same sequence, with its own read ceiling and write version. It reads and

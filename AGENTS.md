@@ -431,11 +431,15 @@ everything shipped afterwards is held to.
   a boot, and the stale timeout is generous on purpose — shortening it to make writes prompt would let
   a live writer be robbed mid-write. Tests redirect it with `WAR_VAULT_PATH`, mirroring
   `WAR_SAVE_PATH`, and seam the timeout with `WAR_LOCK_STALE_SECONDS` (test-only; malformed or
-  negative values keep the shipped window). **The lock lives in `FileLock`, not in the vault, and
-  `BootRecovery` persistence takes it too** (`tests/boot_recovery_lock_test`) — that file's two
-  writers, the updater and the game, both exist today, and a lost update there discards the evidence
-  deciding whether a client rolls back. One primitive guards both files; a second mechanism for the
-  second file would be a second set of bugs. The immutable shell's recovery memory is a third persisted contract:
+  negative values keep the shipped window). Production writers emit through vault v2. The reader also
+  accepts vault v3 `reward_claims`, and `Main` restores those claims into its boot-owned
+  `ExplorationRewards` tracker. Production does not originate v3 documents until the retained reader
+  expansion has baked and the writer capability is activated separately. **The lock lives in
+  `FileLock`, not in the vault, and `BootRecovery` persistence takes it too**
+  (`tests/boot_recovery_lock_test`) — that file's two writers, the updater and the game, both exist
+  today, and a lost update there discards the evidence deciding whether a client rolls back. One
+  primitive guards both files; a second mechanism for the second file would be a second set of bugs.
+  The immutable shell's recovery memory is a third persisted contract:
   `BootRecovery` (`user://boot_recovery.json`) reads through schema v1 and writes explicit v1 on
   first boot or the next real write of legacy v0 state. The retained v0.51.1 app reads v1 and is the
   rollback target that permits this writer; v0 remains readable forever. The contract is anchored by

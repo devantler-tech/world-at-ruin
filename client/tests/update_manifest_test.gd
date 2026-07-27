@@ -44,6 +44,7 @@ func _ready() -> void:
 	_test_no_delivery_is_published()
 	_test_read_capability_covers_what_is_written()
 	_test_discovery_writer_activation_is_advertised()
+	_test_reward_claim_reader_expansion_is_advertised()
 	_test_save_floor_has_its_golden_fixture()
 	_test_save_capability_matches_its_ledger()
 	_test_export_is_still_monolithic()
@@ -187,11 +188,24 @@ func _test_read_capability_covers_what_is_written() -> void:
 ## now a retained rollback target, so this later build must advertise the
 ## matching writer instead of hiding the state it now originates.
 func _test_discovery_writer_activation_is_advertised() -> void:
-	if UpdateManifest.SAVE_CAPABILITY_READS != 3:
-		_fail("the discovery contract reads capability %d, expected 3" % UpdateManifest.SAVE_CAPABILITY_READS)
+	if UpdateManifest.SAVE_CAPABILITY_READS < 3:
+		_fail("the discovery contract reads capability %d, expected at least 3"
+			% UpdateManifest.SAVE_CAPABILITY_READS)
 		return
 	if UpdateManifest.SAVE_CAPABILITY_WRITES != 3:
 		_fail("the baked discovery reader still advertises write capability %d; expected 3" % UpdateManifest.SAVE_CAPABILITY_WRITES)
+
+
+## Capability 4 is vault-v3 claimed exploration-reward state. This release is
+## the expand half: retained builds must read it before production can write it.
+func _test_reward_claim_reader_expansion_is_advertised() -> void:
+	if UpdateManifest.SAVE_CAPABILITY_READS != 4:
+		_fail("the reward-claim expansion reads capability %d, expected 4"
+			% UpdateManifest.SAVE_CAPABILITY_READS)
+		return
+	if UpdateManifest.SAVE_CAPABILITY_WRITES != 3:
+		_fail("the reward-claim expansion activated write capability %d before its reader baked; expected 3"
+			% UpdateManifest.SAVE_CAPABILITY_WRITES)
 
 
 ## The declared save floor must be the OLDEST SCHEMA THAT EVER SHIPPED — not

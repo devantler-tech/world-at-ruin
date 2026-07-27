@@ -33,6 +33,7 @@ const DRIFT_ASSERT_TICK := 60
 const EPS := 0.01
 const PROBE_PATH := "user://vault_restore_boot_probe.json"
 const DISCOVERY_PROBE := ["wardens_shrine", "future_place", "wardens_shrine"]
+const REWARD_CLAIM_PROBE := ["starter_cave", "future_place", "starter_cave"]
 const SHIPPED_DISCOVERIES := "res://tests/data/shipped_discoveries.txt"
 const RETRY_CHARACTER_PROBE := "user://vault_discovery_retry_character.json"
 ## Resolved per process in _ready(); local worktrees share Godot's user://.
@@ -73,6 +74,8 @@ var _restored := 0
 ## shrine discovery write, a reboot that can only recover the shrine from disk,
 ## retry after a deliberately transient first write failure, and a valid
 ## cloud-synced vault replacement that drops a rollback-only name from disk.
+## The final reader boot applies vault-v3 claimed exploration rewards without
+## activating a production reward writer.
 var _discovery_phase := ""
 var _retry_probe_dir := ""
 var _retry_vault := ""
@@ -211,6 +214,34 @@ func _begin_discovery_drift_boot() -> void:
 	add_child(_main)
 
 
+## Seed the exact v3 reader-expansion shape, then boot the production scene.
+## The tracker is intentionally not given registration data here: a rollback
+## reader must remember that a newer build already granted an unknown place, or
+## later registration could grant it twice.
+func _begin_reward_reader_boot() -> void:
+	_discovery_phase = "reward_restore"
+	_ticks = 0
+	if _main != null:
+		_main.queue_free()
+		_main = null
+	_save = SaveIsolation.new(PROBE_PATH)
+	if not _save.begin():
+		_fail("save isolation did not take for the reward-claim reader boot")
+		return
+	SaveVault.clear_refusals_for_test()
+	var expanded := {
+		"version": 3,
+		"attuned": [],
+		"discoveries": ["starter_cave"],
+		"reward_claims": REWARD_CLAIM_PROBE.duplicate(),
+	}
+	if not SaveVault.save_to(SaveVault.vault_path(), expanded):
+		_fail("could not seed the vault-v3 reward-claim probe")
+		return
+	_main = (load(MAIN_SCENE_PATH) as PackedScene).instantiate()
+	add_child(_main)
+
+
 func _physics_process(_delta: float) -> void:
 	# _fail() requests tree shutdown but does not end this frame. A setup helper
 	# can fail after clearing the previous scene and before assigning the next;
@@ -274,6 +305,9 @@ func _physics_process(_delta: float) -> void:
 			return
 		"drift":
 			_assert_discovery_drift()
+			return
+		"reward_restore":
+			_assert_reward_claim_restore()
 			return
 
 	var shrine_point := world.shrine_respawn_point()
@@ -468,8 +502,38 @@ func _assert_discovery_drift() -> void:
 	if not _save.real_save_untouched():
 		_fail("the cloud-synced discovery boot touched the player's real save or vault")
 		return
+	_begin_reward_reader_boot()
+
+
+## Capability 4 is safe only if the real launch path owns and applies the
+## accepted claim set. A parser-only reader would let a rollback build grant an
+## already-consumed reward again.
+func _assert_reward_claim_restore() -> void:
+	var tracker: Variant = null
+	for property: Dictionary in _main.get_property_list():
+		if String(property.get("name", "")) == "_exploration_rewards":
+			tracker = _main.get("_exploration_rewards")
+			break
+	if tracker is not ExplorationRewards:
+		_fail("CAPABILITY 4 IS PARSER-ONLY: the production boot owns no ExplorationRewards tracker")
+		return
+	var expected: Array[String] = ["future_place", "starter_cave"]
+	if (tracker as ExplorationRewards).claimed() != expected:
+		_fail("the production boot did not restore the vault-v3 reward claims exactly")
+		return
+	var vault = SaveVault.load_saved()
+	if vault is not Dictionary:
+		_fail("the reward-claim reader boot left no readable vault")
+		return
+	if vault.get("version") != 3 or vault.get("reward_claims", []) != REWARD_CLAIM_PROBE:
+		_fail("the reader-only boot changed or downgraded the v3 reward-claim document")
+		return
+	if not _save.real_save_untouched():
+		_fail("the reward-claim reader boot touched the player's real save or vault")
+		return
 	print(("TEST PASS — %d shipped attunement(s) and vault-v2 discovery state survive "
-		+ "a logout, transient writes retry, and rollback-only ids cannot poison known writes "
+		+ "a logout, transient writes retry, rollback-only ids cannot poison known writes, "
+		+ "and vault-v3 reward claims apply without activating their writer "
 		+ "(control woke at %s)")
 		% [_restored, str(_control_spawn)])
 	get_tree().quit(0)
