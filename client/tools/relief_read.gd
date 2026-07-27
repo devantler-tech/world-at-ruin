@@ -201,6 +201,10 @@ func _ready() -> void:
 	for distance in DISTANCES:
 		_cam.global_position = _anchor + bearing * distance
 		var lit := await _settled_luma(mat, shipping_relief)
+		# Taken HERE, while the relief is still on. Reading the viewport after the
+		# flat pass instead would save the relief-OFF frame under a name that says
+		# lit — evidence that quietly depicts the opposite of its own caption.
+		var lit_frame := get_viewport().get_texture().get_image()
 		var flat := await _settled_luma(mat, 0.0)
 		if lit.is_empty() or flat.is_empty():
 			_fail("the crop sampled no pixels — the viewport is smaller than the crop")
@@ -213,7 +217,7 @@ func _ready() -> void:
 			return
 		covers.append(_covered_fraction(lit, flat))
 		strengths.append(_covered_strength(lit, flat))
-		_save_evidence(lit, flat, distance)
+		_save_evidence(lit_frame, lit, flat, distance)
 		print("  relief d=%5.1fm covered=%.5f strength=%.5f spread=%.4f"
 			% [distance, covers[covers.size() - 1], strengths[strengths.size() - 1], spread])
 
@@ -365,11 +369,11 @@ func _covered_strength(a: PackedFloat32Array, b: PackedFloat32Array) -> float:
 ## claim is about has no reason to believe the claim
 ## ([[evidence-jobs-must-depict-the-change]] — evidence that cannot depict what
 ## it asserts is worse than none, because it still looks like proof).
-func _save_evidence(lit: PackedFloat32Array, flat: PackedFloat32Array, distance: float) -> void:
+func _save_evidence(frame: Image, lit: PackedFloat32Array, flat: PackedFloat32Array,
+		distance: float) -> void:
 	var dir := OS.get_environment("WAR_RELIEF_SHOT_DIR")
 	if dir.is_empty():
 		return
-	var frame := get_viewport().get_texture().get_image()
 	if frame.save_png("%s/relief-%02.0fm-frame.png" % [dir, distance]) != OK:
 		push_warning("could not write the %.0f m frame" % distance)
 
