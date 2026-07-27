@@ -218,10 +218,15 @@ ledger together therefore cannot make a shipped version disappear quietly.
 
 The character recipe and vault deliberately fail differently:
 
-- A recipe that `CharacterFactory` refuses is existing player state, not a first run. Keep the file
-  untouched, do not open a writable replacement path, and surface recovery instead of presenting a
-  blank character. `CharacterStore` currently parses only; rejection happens later during
-  `CharacterFactory.build()`, and there is no vault-style refusal latch to mistake for protection.
+- A recipe that `CharacterFactory` refuses is existing player state, not a first run. The file stays
+  untouched, no writable replacement path opens, and the player is told rather than shown a blank
+  character. `CharacterStore.load_from()` decides this at the save boundary: it parses, then asks
+  `CharacterFactory.refusal_reason()` whether this build can accept what it parsed, and latches a
+  refusal on the path when it cannot. The latch outlives the file, so a recipe that disappears after
+  being refused — cloud sync, a second client, the player deleting it — does not reopen the writable
+  path. `CharacterStore.save_to()` refuses every write to a refused path, and `main.gd` locks all
+  character-creator entry, so the door and the lock are independent. Only an absent, never-refused
+  path is a first run.
 - A missing vault degrades to an empty, session-capable vault and never blocks character boot.
 - An existing vault that is unreadable, malformed or newer degrades to session-only progression and
   becomes read-only for the rest of the process. `SaveVault` latches that refusal even if the file
@@ -300,6 +305,7 @@ violation.
 | Promise | Runtime owner | Permanent guard |
 |---|---|---|
 | Historical character recipes still load and build | `CharacterFactory`, `CharacterStore` | `save_fixture_guard_test`, recipe ledger and goldens |
+| A refused recipe is never replaced by a first run | `CharacterStore`, `main.gd` | `character_refusal_test`, `character_refusal_boot_test` |
 | Historical vaults still load and re-save | `SaveVault` | `save_vault_guard_test`, vault ledger and goldens |
 | Historical recovery documents still load and re-save | `BootRecovery` | `boot_recovery_guard_test`, recovery ledger and goldens |
 | Shipped attunement names still work | `SaveVault`, `RespawnPoints` | `shipped_attunements.txt`, vault and boot-restoration guards |

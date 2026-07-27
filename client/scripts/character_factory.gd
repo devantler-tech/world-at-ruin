@@ -537,6 +537,38 @@ static func validate(recipe: Dictionary, skeleton: Skeleton3D, mesh_instance: Me
 	return ""
 
 
+## Why this build cannot accept `recipe`, or "" when it can.
+##
+## The same judgement [method build] makes, without building anything. It exists
+## because the decision is needed at the SAVE boundary, before any body is built:
+## the writable character creator opens on the strength of "is there a character
+## here?", and answering that without knowing whether the recipe is acceptable
+## opens a first-run creator over an existing save. [validate] needs the
+## kit's skeleton and skinned mesh, so the persistence layer cannot ask the
+## question without a kit — this instantiates one, asks, and frees it.
+##
+## Both paths run the same [validate] call, so they cannot disagree about a
+## recipe; [method build] keeps its own copy because it is already holding the
+## instance it is about to shape.
+##
+## Fails CLOSED. When the kit itself cannot be loaded there is no way to tell an
+## acceptable recipe from an unacceptable one, and answering "acceptable" would
+## let a build that can render nothing overwrite a character it never read.
+static func refusal_reason(recipe: Dictionary) -> String:
+	var packed: PackedScene = load(KIT_SCENE_PATH)
+	if packed == null:
+		return "kit missing: %s" % KIT_SCENE_PATH
+	var instance := packed.instantiate() as Node3D
+	var skeleton := find_skeleton(instance)
+	var mesh_instance := find_skinned_mesh(skeleton)
+	if skeleton == null or mesh_instance == null:
+		instance.free()
+		return "kit has no skeleton or skinned mesh"
+	var problem := validate(recipe, skeleton, mesh_instance)
+	instance.free()
+	return problem
+
+
 ## Loads a recipe JSON from disk; null on parse failure (with an error).
 static func load_recipe(path: String) -> Variant:
 	var file := FileAccess.open(path, FileAccess.READ)

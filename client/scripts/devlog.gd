@@ -11,6 +11,16 @@ const CODENAME := "Ashfall Reach"
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 const ENTRIES: Array[Dictionary] = [
 	{
+		"version": "0.59.1",
+		"date": "2026-07-27",
+		"title": "A version that cannot read your character no longer replaces them",
+		"notes": [
+			"If you went back to an older version of the game after playing a newer one, that older build could not read the character you had made — and it took that to mean you had never played at all. It opened the new-character screen over the top, and the moment you finished making someone, the character you already had was gone. A damaged character file did the same thing.",
+			"A character this version cannot read is now left exactly as it is. The game tells you so, no new-character screen opens, and nothing can write over them — not the opening screen, not the character editor.",
+			"Starting fresh is unchanged: when there is genuinely no character saved, you make one as usual.",
+		],
+	},
+	{
 		"version": "0.59.0",
 		"date": "2026-07-27",
 		"title": "The wanderer has a first walking stride",
