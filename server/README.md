@@ -163,9 +163,10 @@ zone/dungeon server:
   refusals preserve the stable gRPC code without reflecting upstream text.
   Hermetic tests exercise the real generated client/server path.
 - **`nakamalease/`** — the private **Nakama handoff lease store**: one
-  user-scoped object per SHA-256-derived reservation key owns the current
+  server-owned object per SHA-256-derived user/reservation key owns the current
   allocation attempt, observer binding, per-allocation secret reference,
-  no-show deadline and optional claim time. Objects are server-only
+  no-show deadline and optional claim time. Global system ownership prevents
+  players from pre-creating or replacing a lease; objects are also server-only
   (`PermissionRead: 0`, `PermissionWrite: 0`), use a strict versioned JSON
   schema, omit the raw user/reservation identifiers and admission-secret bytes,
   and expose only sanitized errors. Nakama's unique-create marker and exact

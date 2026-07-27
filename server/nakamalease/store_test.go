@@ -18,21 +18,25 @@ import (
 
 const (
 	testUserID        = "11111111-1111-4111-8111-111111111111"
+	testCanonicalID   = "abcdefab-cdef-4abc-8def-abcdefabcdef"
 	testReservationID = "handoff-42"
 	testAttemptID     = "attempt-7"
 	testAllocationID  = "gameserver-17"
 	testSecretRef     = "zone-admission-gameserver-17"
+	testSystemUserID  = "00000000-0000-0000-0000-000000000000"
 )
 
 type memoryStorage struct {
-	mu        sync.Mutex
-	objects   map[string]*api.StorageObject
-	writes    []*runtime.StorageWrite
-	deletes   []*runtime.StorageDelete
-	version   int
-	readErr   error
-	writeErr  error
-	deleteErr error
+	mu          sync.Mutex
+	objects     map[string]*api.StorageObject
+	reads       []*runtime.StorageRead
+	writes      []*runtime.StorageWrite
+	deletes     []*runtime.StorageDelete
+	version     int
+	readErr     error
+	writeErr    error
+	deleteErr   error
+	deleteFault func(map[string]*api.StorageObject, []*runtime.StorageDelete) error
 }
 
 func newMemoryStorage() *memoryStorage {
@@ -52,7 +56,9 @@ func (s *memoryStorage) StorageRead(
 	}
 	objects := make([]*api.StorageObject, 0, len(reads))
 	for _, read := range reads {
-		if object := s.objects[storageID(read.UserID, read.Collection, read.Key)]; object != nil {
+		copy := *read
+		s.reads = append(s.reads, &copy)
+		if object := s.objects[storageID(storageOwner(read.UserID), read.Collection, read.Key)]; object != nil {
 			objects = append(objects, cloneStorageObject(object))
 		}
 	}
@@ -71,7 +77,8 @@ func (s *memoryStorage) StorageWrite(
 	acks := make([]*api.StorageObjectAck, 0, len(writes))
 	for _, write := range writes {
 		s.writes = append(s.writes, cloneStorageWrite(write))
-		id := storageID(write.UserID, write.Collection, write.Key)
+		ownerID := storageOwner(write.UserID)
+		id := storageID(ownerID, write.Collection, write.Key)
 		current := s.objects[id]
 		switch {
 		case write.Version == "*" && current != nil:
@@ -85,7 +92,7 @@ func (s *memoryStorage) StorageWrite(
 		s.objects[id] = &api.StorageObject{
 			Collection:      write.Collection,
 			Key:             write.Key,
-			UserId:          write.UserID,
+			UserId:          ownerID,
 			Value:           write.Value,
 			Version:         version,
 			PermissionRead:  int32(write.PermissionRead),
@@ -94,7 +101,7 @@ func (s *memoryStorage) StorageWrite(
 		acks = append(acks, &api.StorageObjectAck{
 			Collection: write.Collection,
 			Key:        write.Key,
-			UserId:     write.UserID,
+			UserId:     ownerID,
 			Version:    version,
 		})
 	}
@@ -110,10 +117,13 @@ func (s *memoryStorage) StorageDelete(
 	if s.deleteErr != nil {
 		return s.deleteErr
 	}
+	if s.deleteFault != nil {
+		return s.deleteFault(s.objects, deletes)
+	}
 	for _, deletion := range deletes {
 		copy := *deletion
 		s.deletes = append(s.deletes, &copy)
-		id := storageID(deletion.UserID, deletion.Collection, deletion.Key)
+		id := storageID(storageOwner(deletion.UserID), deletion.Collection, deletion.Key)
 		current := s.objects[id]
 		if current == nil || current.GetVersion() != deletion.Version {
 			return runtime.ErrStorageRejectedVersion
@@ -121,6 +131,13 @@ func (s *memoryStorage) StorageDelete(
 		delete(s.objects, id)
 	}
 	return nil
+}
+
+func storageOwner(userID string) string {
+	if userID == "" {
+		return testSystemUserID
+	}
+	return userID
 }
 
 func storageID(userID, collection, key string) string {
@@ -182,10 +199,10 @@ func TestCreatePersistsPrivateVersionedLeaseByHashedKey(t *testing.T) {
 	}
 	write := storage.writes[0]
 	if write.Collection != Collection ||
-		write.Key != "e3559902024d49de0309dc1805bf73d40ddd2e30a414a35771e428ed2a4cdccb" ||
-		write.UserID != testUserID {
+		write.Key != "ff9dd796a2c444815c6712b11b454a52ebe370f5bed18ee266445ce61da7a9e6" ||
+		write.UserID != "" {
 		t.Fatalf(
-			"storage identity = %q/%q/%q, want private user-scoped hashed reservation",
+			"storage identity = %q/%q/%q, want server-owned hashed user/reservation",
 			write.UserID,
 			write.Collection,
 			write.Key,
@@ -225,6 +242,92 @@ func TestCreatePersistsPrivateVersionedLeaseByHashedKey(t *testing.T) {
 	}
 	if !reflect.DeepEqual(document, want) {
 		t.Fatalf("stored document = %#v, want %#v", document, want)
+	}
+}
+
+func TestCreateIgnoresAClientOwnedObjectAtTheDerivedKey(t *testing.T) {
+	storage := newMemoryStorage()
+	store, err := NewStore(storage)
+	if err != nil {
+		t.Fatalf("NewStore returned an error: %v", err)
+	}
+	lease := validLease()
+	value, err := json.Marshal(documentFrom(lease))
+	if err != nil {
+		t.Fatalf("marshal client object: %v", err)
+	}
+	key := reservationKey(testUserID, testReservationID)
+	storage.objects[storageID(testUserID, Collection, key)] = &api.StorageObject{
+		Collection:      Collection,
+		Key:             key,
+		UserId:          testUserID,
+		Value:           string(value),
+		Version:         "client-version",
+		PermissionRead:  0,
+		PermissionWrite: 0,
+	}
+
+	got, err := store.Create(context.Background(), lease)
+	if err != nil {
+		t.Fatalf("Create returned an error: %v", err)
+	}
+	if got.Lease != lease || got.Version != "v1" {
+		t.Fatalf("created record = %+v, want lease %+v at version v1", got, lease)
+	}
+	if len(storage.reads) != 1 || storage.reads[0].UserID != "" {
+		t.Fatalf("storage reads = %+v, want one server-owned read", storage.reads)
+	}
+	if len(storage.writes) != 1 || storage.writes[0].UserID != "" {
+		t.Fatalf("storage writes = %+v, want one server-owned write", storage.writes)
+	}
+	if storage.objects[storageID(testUserID, Collection, key)].Version != "client-version" {
+		t.Fatal("Create mutated the client-owned decoy object")
+	}
+}
+
+func TestLeaseIdentityCanonicalizesEquivalentUserIDSpellings(t *testing.T) {
+	storage := newMemoryStorage()
+	store, err := NewStore(storage)
+	if err != nil {
+		t.Fatalf("NewStore returned an error: %v", err)
+	}
+	upper := validLease()
+	upper.UserID = strings.ToUpper(testCanonicalID)
+
+	created, err := store.Create(context.Background(), upper)
+	if err != nil {
+		t.Fatalf("Create with uppercase user ID returned an error: %v", err)
+	}
+	want := validLease()
+	want.UserID = testCanonicalID
+	if created.Lease != want {
+		t.Fatalf("created lease = %+v, want canonical lease %+v", created.Lease, want)
+	}
+	replayed, err := store.Create(context.Background(), want)
+	if err != nil {
+		t.Fatalf("Create with lowercase user ID returned an error: %v", err)
+	}
+	if replayed != created {
+		t.Fatalf("equivalent user ID replay = %+v, want original %+v", replayed, created)
+	}
+	if len(storage.writes) != 1 {
+		t.Fatalf("writes for equivalent user ID spellings = %d, want 1", len(storage.writes))
+	}
+
+	if err := store.Release(
+		context.Background(),
+		strings.ToUpper(testCanonicalID),
+		testReservationID,
+		testAttemptID,
+	); err != nil {
+		t.Fatalf("Release with uppercase user ID returned an error: %v", err)
+	}
+	if _, err := store.Load(
+		context.Background(),
+		testCanonicalID,
+		testReservationID,
+	); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Load after canonical release error = %v, want ErrNotFound", err)
 	}
 }
 
@@ -449,6 +552,34 @@ func TestReplaceCannotReplayAStaleUnchangedRecord(t *testing.T) {
 	}
 }
 
+func TestReplaceReconcilesAReplacementCommittedFromTheSameObservedRecord(t *testing.T) {
+	storage := newMemoryStorage()
+	store, err := NewStore(storage)
+	if err != nil {
+		t.Fatalf("NewStore returned an error: %v", err)
+	}
+	observed, err := store.Create(context.Background(), validLease())
+	if err != nil {
+		t.Fatalf("Create returned an error: %v", err)
+	}
+	next := validLease()
+	next.AttemptID = "attempt-8"
+	next.AllocationID = "gameserver-18"
+	next.SecretRef = "zone-admission-gameserver-18"
+	replaced, err := store.Replace(context.Background(), observed, next)
+	if err != nil {
+		t.Fatalf("first Replace returned an error: %v", err)
+	}
+
+	reconciled, err := store.Replace(context.Background(), observed, next)
+	if err != nil {
+		t.Fatalf("overlapping Replace returned an error: %v", err)
+	}
+	if reconciled != replaced {
+		t.Fatalf("reconciled replacement = %+v, want committed replacement %+v", reconciled, replaced)
+	}
+}
+
 func TestConcurrentReplaceLeavesExactlyOneCurrentAttempt(t *testing.T) {
 	storage := newMemoryStorage()
 	store, err := NewStore(storage)
@@ -638,6 +769,70 @@ func TestClaimReplayKeepsTheOriginalClaimWithoutWriting(t *testing.T) {
 	}
 }
 
+func TestClaimReconcilesAClaimCommittedFromTheSameObservedRecord(t *testing.T) {
+	storage := newMemoryStorage()
+	store, err := NewStore(storage)
+	if err != nil {
+		t.Fatalf("NewStore returned an error: %v", err)
+	}
+	observed, err := store.Create(context.Background(), validLease())
+	if err != nil {
+		t.Fatalf("Create returned an error: %v", err)
+	}
+	firstClaimedAt := observed.Lease.ExpiresAt.Add(-time.Second)
+	claimed, err := store.Claim(
+		context.Background(),
+		observed,
+		testAttemptID,
+		firstClaimedAt,
+	)
+	if err != nil {
+		t.Fatalf("first Claim returned an error: %v", err)
+	}
+
+	reconciled, err := store.Claim(
+		context.Background(),
+		observed,
+		testAttemptID,
+		firstClaimedAt.Add(500*time.Millisecond),
+	)
+	if err != nil {
+		t.Fatalf("overlapping Claim returned an error: %v", err)
+	}
+	if reconciled != claimed {
+		t.Fatalf("reconciled claim = %+v, want committed claim %+v", reconciled, claimed)
+	}
+}
+
+func TestClaimReportsConflictWhenTheObservedLeaseWasReleased(t *testing.T) {
+	storage := newMemoryStorage()
+	store, err := NewStore(storage)
+	if err != nil {
+		t.Fatalf("NewStore returned an error: %v", err)
+	}
+	observed, err := store.Create(context.Background(), validLease())
+	if err != nil {
+		t.Fatalf("Create returned an error: %v", err)
+	}
+	if err := store.Release(
+		context.Background(),
+		testUserID,
+		testReservationID,
+		testAttemptID,
+	); err != nil {
+		t.Fatalf("Release returned an error: %v", err)
+	}
+
+	if _, err := store.Claim(
+		context.Background(),
+		observed,
+		testAttemptID,
+		observed.Lease.ExpiresAt.Add(-time.Second),
+	); !errors.Is(err, ErrConflict) {
+		t.Fatalf("Claim after release error = %v, want ErrConflict", err)
+	}
+}
+
 func TestReleaseDeletesTheCurrentAttemptAndReplaysIdempotently(t *testing.T) {
 	storage := newMemoryStorage()
 	store, err := NewStore(storage)
@@ -662,8 +857,8 @@ func TestReleaseDeletesTheCurrentAttemptAndReplaysIdempotently(t *testing.T) {
 	}
 	deletion := storage.deletes[0]
 	if deletion.Collection != Collection ||
-		deletion.Key != "e3559902024d49de0309dc1805bf73d40ddd2e30a414a35771e428ed2a4cdccb" ||
-		deletion.UserID != testUserID ||
+		deletion.Key != "ff9dd796a2c444815c6712b11b454a52ebe370f5bed18ee266445ce61da7a9e6" ||
+		deletion.UserID != "" ||
 		deletion.Version != current.Version {
 		t.Fatalf("storage deletion = %+v, want exact current lease version", deletion)
 	}
@@ -679,6 +874,77 @@ func TestReleaseDeletesTheCurrentAttemptAndReplaysIdempotently(t *testing.T) {
 	if len(storage.deletes) != 1 {
 		t.Fatalf("storage deletes after replay = %d, want 1", len(storage.deletes))
 	}
+}
+
+func TestReleaseReconcilesNakamaConditionalDeleteRejections(t *testing.T) {
+	t.Run("already deleted", func(t *testing.T) {
+		storage := newMemoryStorage()
+		store, err := NewStore(storage)
+		if err != nil {
+			t.Fatalf("NewStore returned an error: %v", err)
+		}
+		if _, err := store.Create(context.Background(), validLease()); err != nil {
+			t.Fatalf("Create returned an error: %v", err)
+		}
+		storage.deleteFault = func(
+			objects map[string]*api.StorageObject,
+			deletes []*runtime.StorageDelete,
+		) error {
+			deletion := deletes[0]
+			delete(
+				objects,
+				storageID(storageOwner(deletion.UserID), deletion.Collection, deletion.Key),
+			)
+			return errors.New("Storage delete rejected - not found, version check failed, or permission denied.")
+		}
+
+		if err := store.Release(
+			context.Background(),
+			testUserID,
+			testReservationID,
+			testAttemptID,
+		); err != nil {
+			t.Fatalf("Release after a concurrent delete returned an error: %v", err)
+		}
+	})
+
+	t.Run("concurrently replaced", func(t *testing.T) {
+		storage := newMemoryStorage()
+		store, err := NewStore(storage)
+		if err != nil {
+			t.Fatalf("NewStore returned an error: %v", err)
+		}
+		if _, err := store.Create(context.Background(), validLease()); err != nil {
+			t.Fatalf("Create returned an error: %v", err)
+		}
+		replacement := validLease()
+		replacement.AttemptID = "attempt-8"
+		replacement.AllocationID = "gameserver-18"
+		replacement.SecretRef = "zone-admission-gameserver-18"
+		replacementValue, err := json.Marshal(documentFrom(replacement))
+		if err != nil {
+			t.Fatalf("marshal replacement: %v", err)
+		}
+		storage.deleteFault = func(
+			objects map[string]*api.StorageObject,
+			deletes []*runtime.StorageDelete,
+		) error {
+			deletion := deletes[0]
+			id := storageID(storageOwner(deletion.UserID), deletion.Collection, deletion.Key)
+			objects[id].Value = string(replacementValue)
+			objects[id].Version = "concurrent-version"
+			return errors.New("Storage delete rejected - not found, version check failed, or permission denied.")
+		}
+
+		if err := store.Release(
+			context.Background(),
+			testUserID,
+			testReservationID,
+			testAttemptID,
+		); !errors.Is(err, ErrConflict) {
+			t.Fatalf("Release after a concurrent replacement error = %v, want ErrConflict", err)
+		}
+	})
 }
 
 func TestReleaseRejectsAStaleAttemptWithoutDeleting(t *testing.T) {
@@ -782,6 +1048,17 @@ func TestLoadRejectsMalformedOrPublicStoredObjects(t *testing.T) {
 				object.PermissionWrite = 1
 			},
 		},
+		{
+			name: "claim at expiry boundary",
+			tamper: func(object *api.StorageObject) {
+				object.Value = strings.Replace(
+					object.Value,
+					`"claimed_at_nanos":null`,
+					`"claimed_at_nanos":2000000000123456789`,
+					1,
+				)
+			},
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			storage := newMemoryStorage()
@@ -792,7 +1069,11 @@ func TestLoadRejectsMalformedOrPublicStoredObjects(t *testing.T) {
 			if _, err := store.Create(context.Background(), validLease()); err != nil {
 				t.Fatalf("Create returned an error: %v", err)
 			}
-			id := storageID(testUserID, Collection, reservationKey(testReservationID))
+			id := storageID(
+				testSystemUserID,
+				Collection,
+				reservationKey(testUserID, testReservationID),
+			)
 			storage.mu.Lock()
 			test.tamper(storage.objects[id])
 			storage.mu.Unlock()
@@ -803,6 +1084,65 @@ func TestLoadRejectsMalformedOrPublicStoredObjects(t *testing.T) {
 				testReservationID,
 			); err == nil {
 				t.Fatal("Load of invalid stored object returned nil, want an error")
+			}
+		})
+	}
+}
+
+func TestStorageContextCancellationIsPreserved(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		want error
+		run  func(*Store, *memoryStorage) error
+	}{
+		{
+			name: "read canceled",
+			want: context.Canceled,
+			run: func(store *Store, storage *memoryStorage) error {
+				storage.readErr = fmt.Errorf("backend detail: %w", context.Canceled)
+				_, err := store.Load(context.Background(), testUserID, testReservationID)
+				return err
+			},
+		},
+		{
+			name: "write deadline",
+			want: context.DeadlineExceeded,
+			run: func(store *Store, storage *memoryStorage) error {
+				storage.writeErr = fmt.Errorf("backend detail: %w", context.DeadlineExceeded)
+				_, err := store.Create(context.Background(), validLease())
+				return err
+			},
+		},
+		{
+			name: "delete canceled",
+			want: context.Canceled,
+			run: func(store *Store, storage *memoryStorage) error {
+				if _, err := store.Create(context.Background(), validLease()); err != nil {
+					t.Fatalf("Create returned an error: %v", err)
+				}
+				storage.deleteErr = fmt.Errorf("backend detail: %w", context.Canceled)
+				return store.Release(
+					context.Background(),
+					testUserID,
+					testReservationID,
+					testAttemptID,
+				)
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			storage := newMemoryStorage()
+			store, err := NewStore(storage)
+			if err != nil {
+				t.Fatalf("NewStore returned an error: %v", err)
+			}
+
+			err = test.run(store, storage)
+			if !errors.Is(err, test.want) {
+				t.Fatalf("storage cancellation = %v, want %v", err, test.want)
+			}
+			if strings.Contains(err.Error(), "backend detail") {
+				t.Fatalf("storage cancellation leaked backend detail: %v", err)
 			}
 		})
 	}

@@ -22,6 +22,7 @@ const (
 	Collection = "world_at_ruin_handoff_leases"
 
 	schemaVersion = 1
+	systemOwnerID = "00000000-0000-0000-0000-000000000000"
 )
 
 var (
@@ -163,7 +164,21 @@ func (s *Store) Replace(
 	if !observed.ClaimedAt.IsZero() {
 		return Record{}, ErrClaimed
 	}
-	return s.write(ctx, normalized, current.Version)
+	replaced, err := s.write(ctx, normalized, current.Version)
+	if !errors.Is(err, ErrConflict) {
+		return replaced, err
+	}
+	latest, loadErr := s.Load(ctx, observed.UserID, observed.ReservationID)
+	if errors.Is(loadErr, ErrNotFound) {
+		return Record{}, ErrConflict
+	}
+	if loadErr != nil {
+		return Record{}, loadErr
+	}
+	if latest.Lease == normalized {
+		return latest, nil
+	}
+	return Record{}, ErrConflict
 }
 
 // Claim marks an observed lease as admitted using an exact-version write.
@@ -194,7 +209,22 @@ func (s *Store) Claim(
 	if err != nil {
 		return Record{}, err
 	}
-	return s.write(ctx, claimed, current.Version)
+	record, err := s.write(ctx, claimed, current.Version)
+	if !errors.Is(err, ErrConflict) {
+		return record, err
+	}
+	latest, loadErr := s.Load(ctx, observed.UserID, observed.ReservationID)
+	if errors.Is(loadErr, ErrNotFound) {
+		return Record{}, ErrConflict
+	}
+	if loadErr != nil {
+		return Record{}, loadErr
+	}
+	if latest.Lease.AttemptID == attemptID &&
+		!latest.Lease.ClaimedAt.IsZero() {
+		return latest, nil
+	}
+	return Record{}, ErrConflict
 }
 
 // Release conditionally removes an unclaimed lease. Replaying a release after
@@ -212,28 +242,39 @@ func (s *Store) Release(
 	if err != nil {
 		return err
 	}
+	userID = current.Lease.UserID
 	if current.Lease.AttemptID != attemptID {
 		return ErrStaleAttempt
 	}
 	if !current.Lease.ClaimedAt.IsZero() {
 		return ErrClaimed
 	}
-	key := reservationKey(reservationID)
+	key := reservationKey(userID, reservationID)
 	err = s.storage.StorageDelete(ctx, []*runtime.StorageDelete{
 		{
 			Collection: Collection,
 			Key:        key,
-			UserID:     userID,
+			UserID:     "",
 			Version:    current.Version,
 		},
 	})
-	if errors.Is(err, runtime.ErrStorageRejectedVersion) {
-		return ErrConflict
+	if err == nil {
+		return nil
 	}
-	if err != nil {
+	if cancellation := storageCancellation(err); cancellation != nil {
+		return cancellation
+	}
+	latest, loadErr := s.Load(ctx, userID, reservationID)
+	switch {
+	case errors.Is(loadErr, ErrNotFound):
+		return nil
+	case loadErr != nil:
+		return loadErr
+	case latest.Version != current.Version || latest.Lease != current.Lease:
+		return ErrConflict
+	default:
 		return ErrStorage
 	}
-	return nil
 }
 
 func (s *Store) write(
@@ -245,12 +286,12 @@ func (s *Store) write(
 	if err != nil {
 		return Record{}, errors.New("nakama lease: encode lease")
 	}
-	key := reservationKey(lease.ReservationID)
+	key := reservationKey(lease.UserID, lease.ReservationID)
 	acks, err := s.storage.StorageWrite(ctx, []*runtime.StorageWrite{
 		{
 			Collection:      Collection,
 			Key:             key,
-			UserID:          lease.UserID,
+			UserID:          "",
 			Value:           string(value),
 			Version:         version,
 			PermissionRead:  0,
@@ -261,12 +302,12 @@ func (s *Store) write(
 		return Record{}, ErrConflict
 	}
 	if err != nil {
-		return Record{}, ErrStorage
+		return Record{}, sanitizeStorageError(err)
 	}
 	if len(acks) != 1 ||
 		acks[0].GetCollection() != Collection ||
 		acks[0].GetKey() != key ||
-		acks[0].GetUserId() != lease.UserID ||
+		acks[0].GetUserId() != systemOwnerID ||
 		acks[0].GetVersion() == "" {
 		return Record{}, ErrStorage
 	}
@@ -285,16 +326,17 @@ func (s *Store) Load(
 	if !validUserID(userID) || !validOpaqueID(reservationID) {
 		return Record{}, errors.New("nakama lease: invalid identity")
 	}
-	key := reservationKey(reservationID)
+	userID = strings.ToLower(userID)
+	key := reservationKey(userID, reservationID)
 	objects, err := s.storage.StorageRead(ctx, []*runtime.StorageRead{
 		{
 			Collection: Collection,
 			Key:        key,
-			UserID:     userID,
+			UserID:     "",
 		},
 	})
 	if err != nil {
-		return Record{}, ErrStorage
+		return Record{}, sanitizeStorageError(err)
 	}
 	if len(objects) == 0 {
 		return Record{}, ErrNotFound
@@ -305,7 +347,7 @@ func (s *Store) Load(
 	object := objects[0]
 	if object.GetCollection() != Collection ||
 		object.GetKey() != key ||
-		object.GetUserId() != userID ||
+		object.GetUserId() != systemOwnerID ||
 		object.GetVersion() == "" ||
 		object.GetPermissionRead() != 0 ||
 		object.GetPermissionWrite() != 0 {
@@ -389,19 +431,38 @@ func normalizeLease(lease Lease) (Lease, error) {
 		lease.ExpiresAt.UnixNano() <= 0 {
 		return Lease{}, errors.New("nakama lease: invalid lease")
 	}
+	lease.UserID = strings.ToLower(lease.UserID)
 	lease.ExpiresAt = time.Unix(0, lease.ExpiresAt.UnixNano()).UTC()
 	if !lease.ClaimedAt.IsZero() {
 		lease.ClaimedAt = time.Unix(0, lease.ClaimedAt.UnixNano()).UTC()
-		if lease.ClaimedAt.After(lease.ExpiresAt) {
+		if !lease.ClaimedAt.Before(lease.ExpiresAt) {
 			return Lease{}, errors.New("nakama lease: invalid lease")
 		}
 	}
 	return lease, nil
 }
 
-func reservationKey(reservationID string) string {
-	digest := sha256.Sum256([]byte(reservationID))
+func reservationKey(userID, reservationID string) string {
+	digest := sha256.Sum256([]byte(strings.ToLower(userID) + "\x00" + reservationID))
 	return hex.EncodeToString(digest[:])
+}
+
+func sanitizeStorageError(err error) error {
+	if cancellation := storageCancellation(err); cancellation != nil {
+		return cancellation
+	}
+	return ErrStorage
+}
+
+func storageCancellation(err error) error {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return context.Canceled
+	case errors.Is(err, context.DeadlineExceeded):
+		return context.DeadlineExceeded
+	default:
+		return nil
+	}
 }
 
 func validUserID(value string) bool {

@@ -470,11 +470,11 @@ everything shipped afterwards is held to.
   outcomes by that owned attempt, constrains the returned endpoint to the configured managed DNS
   domain, requires an expiring no-show lease, observer binding and per-allocation admission secret,
   and mints the nanosecond-expiry token only that allocated zone verifier accepts), the private
-  **Nakama handoff lease store** (`server/nakamalease/` — server-only, strict-schema objects keyed
-  by a SHA-256-derived reservation key; unique create and exact-version replacement/claim/release
-  preserve one current attempt under retries without persisting raw reservation IDs or admission
-  secrets; the concrete coordinator, secret delivery and Nakama RPC registration remain later
-  children), and
+  **Nakama handoff lease store** (`server/nakamalease/` — server-owned, strict-schema objects keyed
+  by a SHA-256-derived user/reservation key; unique create and exact-version
+  replacement/claim/release preserve one current attempt under retries without persisting raw user
+  or reservation IDs or admission secrets; the concrete coordinator, secret delivery and Nakama RPC
+  registration remain later children), and
   the **combat first slice** (`server/sim/combat.go` — the telegraph cast
   lifecycle: painted at cast start, resolved once after a tick-counted cast time against
   positions at resolution, health/damage application, and one mob AI that deterministically
