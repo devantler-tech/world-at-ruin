@@ -65,24 +65,19 @@ void fragment() {
 	// contacts and crack relief at the same world XZ.
 	vec2 plate_uv = terrain_world_pos.xz * plate_scale;
 	vec2 plate_id = vec2(0.0);
-	vec2 plate_id2 = vec2(0.0);
 	float f1 = 0.0;
 	float f2 = 1.0;
 	float plate_resolved = 0.0;
-	float plate_edge_w = 0.0;
 	vec4 sub = vec4(rock_color, rock_roughness);
 	float crack = 0.0;
 	float plate_fw = 0.0;
+	float crack_fw = 0.0;
 	if (plates_enabled) {
-		terrain_plates(plate_uv, plate_id, plate_id2, f1, f2);
+		terrain_plates(plate_uv, plate_id, f1, f2);
 		plate_fw = max(fwidth(plate_uv.x), fwidth(plate_uv.y));
 		plate_resolved = 1.0 - smoothstep(0.30, 0.85, plate_fw);
-		float crack_fw = fwidth(f2 - f1);
-		plate_edge_w = terrain_plate_edge_weight(f1, f2, crack_fw);
-		sub = terrain_plate_substance_filtered(
+		sub = terrain_plate_substance(
 			plate_id,
-			plate_id2,
-			plate_edge_w,
 			rock_color,
 			rock_roughness,
 			plate_basalt,
@@ -93,6 +88,7 @@ void fragment() {
 		float mean_rough = rock_roughness * 0.38 + 0.88 * 0.28
 			+ 0.72 * 0.20 + 0.94 * 0.14;
 		sub = mix(vec4(mean_col, mean_rough), sub, plate_resolved);
+		crack_fw = fwidth(f2 - f1);
 		float cw = max(crack_width, crack_fw * 1.2);
 		crack = 1.0 - smoothstep(0.0, cw, f2 - f1);
 		crack *= 1.0 - smoothstep(0.30, 0.85, plate_fw);
@@ -116,7 +112,8 @@ void fragment() {
 		ash_contact,
 		max(ash_contact, 0.25));
 	float sheet = clamp(smoothstep(-ew, ew, exposed_edge) + rock_mix, 0.0, 1.0);
-	float is_slab = terrain_plate_slab(plate_id, plate_id2, plate_edge_w, 0.60);
+	float slab_pick = terrain_hash3(vec3(plate_id * 2.3, 19.0));
+	float is_slab = step(0.60, slab_pick);
 	float slab = mix(0.40, is_slab, plate_resolved);
 	float plate_mask = sheet * slab;
 	float rock_exposure = max(rock_mix, plate_mask);
@@ -168,6 +165,10 @@ void fragment() {
 			dcdy * duvdx.x - dcdx * duvdy.x
 		) / safe_det * plate_scale * plate_mask;
 		grad *= 1.0 - smoothstep(0.30, 0.85, plate_fw);
+		// Same crack-footprint dissolve as terrain.gdshader, for the same
+		// reason: `plate_fw` is a whole plate's footprint and cannot stand in
+		// for the much narrower seam whose relief this is.
+		grad *= 1.0 - smoothstep(0.7, 1.3, crack_fw * 1.2 / max(crack_width, 1e-6));
 		float grad_len = length(grad);
 		grad = grad_len > 1.5 ? grad * (1.5 / grad_len) : grad;
 	}

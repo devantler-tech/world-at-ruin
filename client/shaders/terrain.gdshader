@@ -162,18 +162,17 @@ float ground_noise(vec2 xz, float scale) {
 // crack field: it goes to zero exactly on a boundary between two plates, and
 // widens naturally where three plates meet, which is where real broken ground
 // opens up too.
-void plates(vec2 uv, out vec2 id, out vec2 id2, out float f1, out float f2) {
-	terrain_plates(uv, id, id2, f1, f2);
+void plates(vec2 uv, out vec2 id, out float f1, out float f2) {
+	terrain_plates(uv, id, f1, f2);
 }
 
 // One plate's substance, resolved from its cell id alone. rgb = colour,
 // a = roughness. step() rather than smoothstep(): a slab IS basalt or IS
 // ferric. Chained mixes mean each later threshold overrides the earlier one
 // exactly, so the four selection widths are 0.38 / 0.28 / 0.20 / 0.14.
-vec4 plate_substance(vec2 id, vec2 id2, float edge_w) {
-	return terrain_plate_substance_filtered(
-		id, id2, edge_w,
-		rock_color, rock_roughness, plate_basalt, plate_ferric, plate_pale);
+vec4 plate_substance(vec2 id) {
+	return terrain_plate_substance(
+		id, rock_color, rock_roughness, plate_basalt, plate_ferric, plate_pale);
 }
 
 void vertex() {
@@ -205,25 +204,15 @@ void fragment() {
 	// control flow).
 	vec2 plate_uv = world_pos.xz * plate_scale;
 	vec2 plate_id = vec2(0.0);
-	vec2 plate_id2 = vec2(0.0);
 	float f1 = 0.0;
 	float f2 = 1.0;
 	float plate_resolved = 0.0;
-	float plate_edge_w = 0.0;
 	vec4 sub = vec4(rock_color, rock_roughness);
 	float crack = 0.0;
 	float plate_fw = 0.0;
 	float crack_fw = 0.0;
 	if (plates_enabled) {
-	plates(plate_uv, plate_id, plate_id2, f1, f2);
-
-	// The boundary's own screen footprint, taken once and shared by everything
-	// that has to resolve it — the substance, the slab silhouette and the crack.
-	// Taking it here rather than at each use keeps the three from ever filtering
-	// the same edge at different widths, and costs one derivative instead of
-	// three.
-	crack_fw = fwidth(f2 - f1);
-	plate_edge_w = terrain_plate_edge_weight(f1, f2, crack_fw);
+	plates(plate_uv, plate_id, f1, f2);
 
 	// Screen footprint of one plate. Unlike the grain, plates are NOT tied to
 	// the distance fade: a 1.8 m slab is still a resolvable feature well past
@@ -235,7 +224,7 @@ void fragment() {
 	plate_fw = max(fwidth(plate_uv.x), fwidth(plate_uv.y));
 	plate_resolved = 1.0 - smoothstep(0.30, 0.85, plate_fw);
 
-	sub = plate_substance(plate_id, plate_id2, plate_edge_w);
+	sub = plate_substance(plate_id);
 	vec3 mean_col = rock_color * 0.38 + plate_basalt * 0.28
 		+ plate_ferric * 0.20 + plate_pale * 0.14;
 	float mean_rough = rock_roughness * 0.38 + 0.88 * 0.28
@@ -245,6 +234,7 @@ void fragment() {
 	// The crack itself, widened to the local footprint so it stays a line
 	// instead of aliasing, and dissolved once it is thinner than about a pixel
 	// — detail leaves the frame by fading, never by shimmering.
+	crack_fw = fwidth(f2 - f1);
 	float cw = max(crack_width, crack_fw * 1.2);
 	crack = 1.0 - smoothstep(0.0, cw, f2 - f1);
 	crack *= 1.0 - smoothstep(0.30, 0.85, plate_fw);
@@ -308,10 +298,8 @@ void fragment() {
 	// them. So a cell is not automatically a slab. Each one independently
 	// either carries stone or does not, which turns the net into scattered
 	// slabs whose edges only appear where a stone meets open ground.
-	// Resolved across the boundary like the substance: a stone's edge is the
-	// biggest contrast the partition draws, so leaving it as a bare step would
-	// have kept the contact crawling however well the substance was filtered.
-	float is_slab = terrain_plate_slab(plate_id, plate_id2, plate_edge_w, 0.60);
+	float slab_pick = hash3(vec3(plate_id * 2.3, 19.0));
+	float is_slab = step(0.60, slab_pick);
 	// Once a pixel spans a whole plate there is no per-plate answer to give,
 	// so converge on the mean coverage exactly as the substance does above.
 	float slab = mix(0.40, is_slab, plate_resolved);
@@ -438,6 +426,7 @@ void fragment() {
 	// crack had visually vanished — detail leaving by shimmering rather than by
 	// fading, which is the failure this shader family is written to avoid.
 	grad *= 1.0 - smoothstep(0.30, 0.85, plate_fw);
+	grad *= 1.0 - smoothstep(0.7, 1.3, crack_fw * 1.2 / max(crack_width, 1e-6));
 	float grad_len = length(grad);
 	grad = grad_len > 1.5 ? grad * (1.5 / grad_len) : grad;
 	}
