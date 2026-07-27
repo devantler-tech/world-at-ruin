@@ -197,7 +197,15 @@ static func _sweep_abandoned_writes(path: String) -> void:
 		if not entry.begins_with(prefix):
 			continue
 		var candidate := parent.path_join(entry)
-		if now - int(FileAccess.get_modified_time(candidate)) < min_age:
+		var modified := int(FileAccess.get_modified_time(candidate))
+		# get_modified_time() answers 0 when it cannot stat the file, and 0 is
+		# also an epoch timestamp — so an age computed from it reads as ancient
+		# and would sweep a file whose age we in fact do not know. Unknown age
+		# keeps the file: leaking one stale stage costs a launch, deleting a live
+		# one costs the character.
+		if modified <= 0:
+			continue
+		if now - modified < min_age:
 			continue
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(candidate))
 
