@@ -171,6 +171,27 @@ if [ ${#dev_log_targets[@]} -gt 0 ] && [ -f "$REFERENCE_TITLES" ]; then
 	done <"$REFERENCE_TITLES"
 fi
 
+# The scan above reads the file as bytes, but an entry is JSON, and a JSON
+# string can spell any character as a \uXXXX escape. A title written with an
+# escaped space reaches the player as ordinary prose while a fixed-string grep
+# over the raw bytes sees nothing, so the decoded strings are compared too.
+# Reported by file rather than by line: the decoded text has no line
+# correspondence to the source.
+if [ -d "$DEV_LOG_ENTRIES" ] && [ -f "$REFERENCE_TITLES" ]; then
+	while IFS= read -r -d '' entry_file; do
+		decoded=$(jq -r '[..|strings]|join("\n")' "$entry_file" 2>/dev/null || true)
+		[ -z "$decoded" ] && continue
+		while IFS= read -r title || [ -n "$title" ]; do
+			case "$title" in
+			"" | \#*) continue ;;
+			esac
+			if printf '%s\n' "$decoded" | grep -qF "$title"; then
+				player_reference_lines+=("$entry_file: decoded entry text contains '$title'")
+			fi
+		done <"$REFERENCE_TITLES"
+	done < <(find "$DEV_LOG_ENTRIES" -type f -name '*.json' -print0)
+fi
+
 # Asset provenance owns client/assets. The app icon is reviewed source art.
 # Every other tracked media/model file must match the first-party capture
 # manifest exactly, so adding a screenshot is a visible, reviewable act.
