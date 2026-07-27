@@ -52,6 +52,37 @@ const MARKER_HEIGHT_M := 1.8
 ## without reading as authored art.
 const MARKER_COLOR := Color(0.62, 0.78, 0.9)
 
+## CI's frame-capture job greps the capture log for this to learn whether the
+## frames it is about to publish contain any replicated entity at all. The
+## token lives here, beside the view that draws them, so the string the
+## workflow parses and the string the capture prints cannot drift apart.
+##
+## The gate this closes is CONFIGURATION, not hardware (#325). A capture boots
+## the client with no reachable zone, so `ReplicaStore` stays empty and
+## `ReplicaView` correctly draws nothing — and the published frames are then
+## byte-comparable to a build without replication at all. Without this verdict
+## a reviewer of a replication-visual change cannot tell evidence of the change
+## from evidence of its absence, which is #231's shape with a different gate.
+## `replica_view_test` pins both states.
+const CAPTURE_MARKER := "REPLICATION"
+
+## The exact line the frame capture prints for a replication verdict.
+##
+## The SECOND whitespace-separated field is the machine-readable verdict — `on`
+## or `off` — and the remainder is for a human reading the log. CI parses that
+## second field, so it is a contract, not prose.
+##
+## Takes the count alone rather than a count and a flag: "populated" IS
+## `entities > 0` here, and a separate bool would make `on` with zero entities
+## representable — a line claiming a population the frames cannot contain. That
+## differs from [method HollowFog.marker], whose flag is genuinely independent
+## of its count.
+static func marker(entities: int) -> String:
+	if entities > 0:
+		return "%s on — %d replicated entities in the captured frames" % [CAPTURE_MARKER, entities]
+	return "%s off — no zone populated the replica table; these frames contain no replicated entity" % CAPTURE_MARKER
+
+
 ## id -> MeshInstance3D. The view's own index, never derived from child names:
 ## duplicate `add_child` names uniquify by native CLASS (`@Node3D@N`), so a
 ## name-based lookup silently finds one marker out of many (recorded on #282).

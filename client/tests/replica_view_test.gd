@@ -55,8 +55,40 @@ func _ready() -> void:
 		return
 	if not _check_placement_is_world_absolute():
 		return
+	if not _check_capture_marker_contract():
+		return
 	print("TEST PASS — replicated entities appear, track, resize and leave the scene tree exactly as the store reports them")
 	get_tree().quit(0)
+
+
+## The capture marker is a MACHINE CONTRACT, not a log pleasantry (#325).
+##
+## CI's frame-capture job parses this line to record, in the evidence artifact,
+## whether the published frames contain any replicated entity. If the token or
+## the verdict field drifts, the job can no longer tell — and a green capture
+## over a world that never populated its replica table goes back to reading as
+## evidence for a replication change. Pinned here because the workflow's grep
+## cannot defend itself.
+func _check_capture_marker_contract() -> bool:
+	# An empty table is the only `off` state, so the count alone decides the
+	# verdict — including the boundary at one entity, which is what stops a
+	# population of exactly one from reading as no population at all.
+	for case: Array in [["on", 3], ["on", 1], ["off", 0]]:
+		var want: String = case[0]
+		var line := ReplicaView.marker(case[1] as int)
+		if not line.begins_with(ReplicaView.CAPTURE_MARKER + " "):
+			_fail("marker() must start with CAPTURE_MARKER and a space — CI greps for it")
+			return false
+		# The second whitespace-separated field is what CI reads as the verdict.
+		if line.split(" ")[1] != want:
+			_fail("marker(%d)'s second field must be exactly '%s' — CI parses it" % [case[1] as int, want])
+			return false
+		# One line, or the job's exactly-one-distinct-verdict parse sees a
+		# second verdict where the prose was meant to be.
+		if line.contains("\n"):
+			_fail("marker() must be a single line — CI matches it anchored at the start of one")
+			return false
+	return true
 
 
 func _fail(message: String) -> void:
