@@ -105,6 +105,11 @@ func _assert_control() -> void:
 	if bool(_main.get("_save_blocked")):
 		_fail("a boot with no character blocked the creator — that is the first-run path")
 		return
+	# CONTROL for the notice: a first run must not accuse the game of refusing
+	# anything, or the positive assertion would pass on a boot that always says it.
+	if _toast_text() == _main.get("REFUSED_SAVE_NOTICE"):
+		_fail("a boot with no character told the player their save had been refused")
+		return
 	if not _save.real_save_untouched():
 		_fail("the control boot touched the player's real save or vault")
 		return
@@ -121,6 +126,12 @@ func _assert_refusal() -> void:
 		return
 	if not bool(_main.get("_save_blocked")):
 		_fail("the boot did not lock character writing after refusing the saved recipe")
+		return
+	# The player has to be TOLD. Refusing silently leaves someone staring at a
+	# body that is not theirs with nothing to explain it, which is its own harm.
+	if _toast_text() != _main.get("REFUSED_SAVE_NOTICE"):
+		_fail("the boot did not tell the player their character was left alone (toast read %s)"
+			% [_toast_text()])
 		return
 	if not CharacterStore.is_refused(CharacterStore.save_path()):
 		_fail("the boot did not latch the refusal, so a later write could still replace the recipe")
@@ -143,6 +154,19 @@ func _assert_refusal() -> void:
 	_main = null
 	print("TEST PASS — a refused character survives the boot untouched and no writer can replace it")
 	get_tree().quit(0)
+
+
+## What the HUD is currently saying to the player, or "" when it has no HUD or
+## nothing to say. Read off the live label rather than the notice list, so this
+## asserts what a player would actually read.
+func _toast_text() -> String:
+	var hud = _main.get("_hud")
+	if hud == null:
+		return ""
+	var toast = hud.get("_toast")
+	if toast == null:
+		return ""
+	return String(toast.text)
 
 
 func _fail(message: String) -> void:
