@@ -261,6 +261,9 @@ The stable shell envelope also publishes the inclusive schema range. `shell.read
 `shell.reads_max` comes from `SAVE_SCHEMA_MAX`, which derives from
 `CharacterFactory.RECIPE_VERSION`, the same bound the real reader uses to refuse newer recipes.
 Both fields are required, so an absent ceiling cannot be mistaken for unlimited compatibility.
+For a parseable manifest, `save_schema.writes` must not exceed `shell.reads_max`, and
+`save_schema.capability` must not exceed `shell.reads_capability_max`; a candidate that cannot reopen
+what it writes is incoherent and refused.
 
 **Three assumptions are guarded by failing tests rather than comments**, because each is true today and
 will expire:

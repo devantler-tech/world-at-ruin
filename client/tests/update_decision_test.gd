@@ -86,6 +86,7 @@ func _ready() -> void:
 	_test_shell_update_blocked_when_target_cant_read_save()
 	_test_future_schema_shell_blocked_when_cant_read_save()
 	_test_shell_read_ceiling_blocks_stranding_updates()
+	_test_candidate_writes_fit_shell_read_ceilings()
 	_test_schema_too_new_updates_shell()
 	_test_future_schema_without_newer_shell_refused()
 	_test_pack_needs_shell_beyond_advertised_refused()
@@ -323,8 +324,8 @@ func _test_shell_read_ceiling_blocks_stranding_updates() -> void:
 	parseable["shell"]["current"] = "0.1.15"
 	parseable["shell"]["reads_max"] = 6
 	parseable["save_schema"] = {"min": 1, "writes": 7, "capability": 1}
-	_expect(installed, parseable, UpdateDecision.BLOCKED_INCOMPATIBLE,
-		"a parseable shell update whose read ceiling is below the installed save is blocked")
+	_expect(installed, parseable, UpdateDecision.INVALID_MANIFEST,
+		"a parseable candidate that writes beyond its own read ceiling is refused as incoherent")
 
 	# A future-schema manifest is decided from the stable shell envelope alone.
 	# Its upper save-schema ceiling must therefore enforce the same guard even
@@ -356,6 +357,22 @@ func _test_shell_read_ceiling_blocks_stranding_updates() -> void:
 	inverted["shell"]["reads_max"] = 2
 	_expect(_installed_current(), inverted, UpdateDecision.INVALID_MANIFEST,
 		"a shell read ceiling below its own floor is refused as incoherent")
+
+
+func _test_candidate_writes_fit_shell_read_ceilings() -> void:
+	var schema_hazard := _base_manifest()
+	schema_hazard["shell"]["current"] = "0.1.15"
+	schema_hazard["shell"]["reads_max"] = 3
+	schema_hazard["save_schema"]["writes"] = 4
+	_expect(_installed_current(), schema_hazard, UpdateDecision.INVALID_MANIFEST,
+		"a candidate that writes beyond its own shell schema ceiling is refused")
+
+	var capability_hazard := _base_manifest()
+	capability_hazard["shell"]["current"] = "0.1.15"
+	capability_hazard["shell"]["reads_capability_max"] = 3
+	capability_hazard["save_schema"]["capability"] = 4
+	_expect(_installed_current(), capability_hazard, UpdateDecision.INVALID_MANIFEST,
+		"a candidate that writes beyond its own shell capability ceiling is refused")
 
 
 func _test_unpinned_channel_defaults_to_live() -> void:
@@ -615,7 +632,8 @@ func _test_capability_raise_needs_a_readable_rollback_target() -> void:
 	high_floor["shell"]["current"] = "0.1.15"
 	high_floor["save_schema"] = {"min": 1, "writes": 1, "capability": 5} # no regression: clears the forward-only check
 	high_floor["shell"]["reads_capability_max"] = 4 # shell understands shapes only up to capability 4
-	_expect(inst_cap5, high_floor, UpdateDecision.BLOCKED_INCOMPATIBLE, "a shell understanding fewer shapes than the save holds blocks rather than stranding it")
+	_expect(inst_cap5, high_floor, UpdateDecision.INVALID_MANIFEST,
+		"a parseable candidate that writes beyond its own capability ceiling is refused as incoherent")
 	# ...on the future-schema (envelope-only) route as well, which is the whole point.
 	var future_high := _base_manifest()
 	future_high["schema"] = UpdateDecision.SUPPORTED_MANIFEST_SCHEMA + 1

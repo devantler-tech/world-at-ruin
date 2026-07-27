@@ -490,6 +490,7 @@ static func _body_error(m: Dictionary) -> String:
 	if not (m.has("save_schema") and m["save_schema"] is Dictionary):
 		return "missing 'save_schema' object"
 	var sv: Dictionary = m["save_schema"]
+	var sh: Dictionary = m["shell"]
 	if not is_int_id(sv.get("min")):
 		return "save_schema.min is not an integer"
 	# `writes` (the candidate's write-schema) is REQUIRED: it drives the
@@ -500,6 +501,9 @@ static func _body_error(m: Dictionary) -> String:
 	if int(sv["writes"]) < int(sv["min"]):
 		return "save_schema.writes %d is below save_schema.min %d (incoherent)" % [
 			int(sv["writes"]), int(sv["min"])]
+	if int(sv["writes"]) > int(sh["reads_max"]):
+		return "save_schema.writes %d exceeds shell.reads_max %d (candidate cannot reopen its own save)" % [
+			int(sv["writes"]), int(sh["reads_max"])]
 	# `capability` (what the candidate WRITES within its schema) is REQUIRED for the
 	# same fail-closed reason as `writes`: a same-schema content expansion raises
 	# only the capability, so a manifest that omits it would let exactly the
@@ -508,6 +512,9 @@ static func _body_error(m: Dictionary) -> String:
 	# this library never assumes — it refuses.
 	if not is_int_id(sv.get("capability")):
 		return "save_schema.capability is missing or not an integer"
+	if int(sv["capability"]) > int(sh["reads_capability_max"]):
+		return "save_schema.capability %d exceeds shell.reads_capability_max %d (candidate cannot reopen its own save)" % [
+			int(sv["capability"]), int(sh["reads_capability_max"])]
 	return ""
 
 
