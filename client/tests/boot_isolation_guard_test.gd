@@ -102,16 +102,30 @@ const COMMENT_ONLY_CONTROL := "world_gen_determinism_test.gd"
 const FAIL_FUNC := "func _fail("
 const GUARANTEE_CALL := "real_save_untouched("
 
-## A booter that asserts the guarantee on its PASS path as well as its failure
-## path. Pins the body-scoping in [method _fail_body] as an executable control.
+## A synthetic harness asserting the guarantee on its PASS path and NOT on its
+## failure path — the exact shape #326 found in five files.
 ##
-## 🔴 Whole-file matching would pass EVERY harness in this repo while proving
-## nothing — including all five that #326 found asserting on the pass path only,
-## which is precisely why the gap survived. So a guard that regressed to
-## `code.contains(GUARANTEE_CALL)` would go green over the exact defect it
-## exists to catch. This control fails if the extracted body ever stops being a
-## strict subset of the file.
-const PASS_PATH_CONTROL := "starter_cave_test.gd"
+## 🔴 This is the one misclassification that would make the law vacuous. Whole-
+## file matching passes EVERY harness in this repo, including all five with the
+## defect, because they all assert on the way out of a SUCCESSFUL run; that is
+## precisely why the gap survived review. A guard that regressed to
+## `code.contains(GUARANTEE_CALL)` would therefore go green over the defect it
+## exists to catch.
+##
+## Synthetic rather than a real file on purpose: it pins the discrimination
+## itself, so the control cannot be quietly voided by someone editing whichever
+## harness it happened to point at.
+const PASS_PATH_ONLY_FIXTURE := """func _ready() -> void:
+	if not _save.real_save_untouched():
+		_fail("the boot test touched the player's real save")
+	get_tree().quit(0)
+
+
+func _fail(message: String) -> void:
+	if _save != null:
+		_save.end()
+	get_tree().quit(1)
+"""
 
 
 func _ready() -> void:
@@ -147,7 +161,7 @@ func _ready() -> void:
 		var fail_body := _fail_body(code)
 		if fail_body.is_empty():
 			unlocatable.append(file)
-		elif not fail_body.contains(GUARANTEE_CALL):
+		elif not _guards_failure_path(code):
 			unguarded.append(file)
 
 	# --- the law ---
@@ -203,29 +217,38 @@ func _ready() -> void:
 			+ "false positive #309's proposed grep would have shipped") % COMMENT_ONLY_CONTROL)
 		return
 
-	# --- negative control: the failure path is not the whole file ---
-	if PASS_PATH_CONTROL not in booters:
-		_fail(("the pass-path control %s is no longer a booter — repoint PASS_PATH_CONTROL at another "
-			+ "harness that asserts the guarantee on BOTH paths, or the file-vs-failure-path "
-			+ "distinction stops being tested") % PASS_PATH_CONTROL)
+	# --- negative control: pass-path code does not satisfy the failure-path law ---
+	if not PASS_PATH_ONLY_FIXTURE.contains(GUARANTEE_CALL):
+		_fail(("the pass-path fixture no longer asserts the guarantee at all, so it cannot prove "
+			+ "whole-file matching would be vacuous — restore it to a harness that asserts on the "
+			+ "PASS path only"))
 		return
-	var control_code := _code_of(_read(TESTS_DIR + "/" + PASS_PATH_CONTROL))
-	var control_body := _fail_body(control_code)
-	if control_body.is_empty() or control_body.length() >= control_code.length():
-		_fail(("the extracted `_fail` body of %s is not a strict subset of its source — body scoping "
-			+ "has regressed to whole-file matching, which passes every harness in this repo while "
-			+ "proving nothing (#326)") % PASS_PATH_CONTROL)
+	var fixture_body := _fail_body(PASS_PATH_ONLY_FIXTURE)
+	if fixture_body.is_empty():
+		_fail("the pass-path fixture's `_fail` body could not be located — body extraction is broken")
 		return
-	if not control_code.replace(control_body, "").contains(GUARANTEE_CALL):
-		_fail(("%s no longer asserts the guarantee anywhere OUTSIDE its `_fail` body, so it cannot "
-			+ "prove that whole-file matching would be vacuous — repoint PASS_PATH_CONTROL")
-			% PASS_PATH_CONTROL)
+	if _guards_failure_path(PASS_PATH_ONLY_FIXTURE):
+		_fail(("the guard accepted a harness that asserts the guarantee ONLY on its pass path — the "
+			+ "failure-path classification has widened to whole-file matching, which passes every "
+			+ "harness in this repo including the five this law was written for (#326)"))
+		return
+
+	# --- and the real corpus is the shape that makes the scoping matter ---
+	var pass_path_assertors := 0
+	for file: String in booters:
+		var code := _code_of(_read(TESTS_DIR + "/" + file))
+		if code.replace(_fail_body(code), "").contains(GUARANTEE_CALL):
+			pass_path_assertors += 1
+	if pass_path_assertors == 0:
+		_fail(("no booter asserts the guarantee outside its `_fail` body — the corpus no longer has "
+			+ "the shape that makes whole-file matching vacuous, so the scoping above is untested "
+			+ "against real files"))
 		return
 
 	print(("TEST PASS — %d test(s) boot %s, all isolated and all asserting the guarantee on their "
-		+ "failure path; prose-only mention in %s correctly ignored, and %s proves the failure-path "
-		+ "check is not satisfied by pass-path code")
-		% [booters.size(), MAIN_SCENE, COMMENT_ONLY_CONTROL, PASS_PATH_CONTROL])
+		+ "failure path; prose-only mention in %s correctly ignored, and pass-path-only code is "
+		+ "correctly rejected (%d booter(s) assert on the pass path too)")
+		% [booters.size(), MAIN_SCENE, COMMENT_ONLY_CONTROL, pass_path_assertors])
 	get_tree().quit(0)
 
 
@@ -238,6 +261,16 @@ func _claims_isolation(code: String) -> bool:
 		if code.contains(owner) and code.contains(ISOLATION_CLAIMS[owner]):
 			return true
 	return false
+
+
+## Does this code assert the isolation guarantee on its FAILURE path?
+##
+## THE single classification point, deliberately: [constant
+## PASS_PATH_ONLY_FIXTURE] is judged by this same function, so widening it to a
+## whole-file match makes that control fail immediately instead of silently
+## passing every harness in the repo.
+func _guards_failure_path(code: String) -> bool:
+	return _fail_body(code).contains(GUARANTEE_CALL)
 
 
 ## The body of the `_fail` function in already-comment-stripped `code`, or ""
