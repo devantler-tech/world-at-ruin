@@ -1,0 +1,11 @@
+{
+	"date": "2026-07-17",
+	"notes": [
+		"The character screen learned gender and phenotype: new whole-body sliders — female, male, aged, heavy, slim — and three facial-structure axes, all live on the body as you drag them. The one androgynous base is now every body the world will need.",
+		"Your clothes follow: every garment was rebaked to track the new axes, so a shirt fits an elder the same way it fits a brute.",
+		"A fourth preset joined the character screen: the elder — a village matriarch the Ruin could not kill, and the first face of the new axes.",
+		"As always, nothing you saved is touched: old characters load exactly as they were, and the new sliders simply sit at zero until you move them."
+	],
+	"title": "Every body the world will need",
+	"version": "0.1.10"
+}
