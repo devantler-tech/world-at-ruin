@@ -22,6 +22,7 @@ on:
 concurrency:
   group: "Release"
   cancel-in-progress: false
+  queue: max # pending runs wait FIFO; the default replaces them
 
 permissions:
   contents: read
