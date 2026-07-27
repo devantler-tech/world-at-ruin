@@ -438,13 +438,17 @@ why the ragged end of the range is specified here first.
 subsurface softness and tonal variation. Right now they share one shading response, which is why
 the wanderer reads as a mannequin wearing painted-on clothes.
 
-**Stance and motion (#224).** Weight on one leg, asymmetric arms, a breathing idle. The current
-symmetric hands-clasped pose reads as a rig at rest, because that is what it is.
+**Stance and motion (#224).** The standing body carries weight on one leg, hangs its arms
+asymmetrically and breathes. With `WAR_WALK_CYCLE=1`, grounded non-sprint travel adds a first
+code-authored gait: opposing legs, flexed swing knee and counter-swung arms follow distance travelled.
+The ordinary game keeps the standing body during travel while this preview is default-off. Run,
+jump, landing, turning and blended state transitions remain unauthored.
 
 **Motion reference.** The [Kingmakers announcement trailer from
 1:06–1:10](https://www.youtube.com/watch?v=OvezgDni8z4&t=66s) anchors a readable full-body sprint and
-stable third-person tracking. It does not demonstrate an idle, so #224's breathing-idle work needs a
-separate time-ranged moving reference from the approved title set.
+stable third-person tracking. The walk preview borrows only that readable full-body
+locomotion/camera relationship; it does not copy the modern protagonist or claim a reference match
+for the current rough gait.
 
 **Races are authored identities, not sliders (#228).** WoW and WildStar give each playable race its
 own proportions, silhouette, culture and art language — a Tauren is not a tall human. Our creator

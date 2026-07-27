@@ -53,6 +53,7 @@ var _spring: SpringArm3D
 var _camera: Camera3D
 var _visual: Node3D
 var _character_body: Node3D
+var _walk_locomotion: WalkLocomotion
 var _placeholder: Array[Node] = []
 var _embedded_ticks := 0
 
@@ -175,6 +176,11 @@ func set_character(recipe: Dictionary) -> void:
 	body.rotation.y = PI  # The kit body faces +Z; the visual's forward is -Z.
 	_visual.add_child(body)
 	_character_body = body
+	if _walk_locomotion == null:
+		_walk_locomotion = WalkLocomotion.new()
+		_walk_locomotion.name = "WalkLocomotion"
+		add_child(_walk_locomotion)
+	_walk_locomotion.bind(body)
 
 ## The current body's skinned mesh — the character creator drives blend-shape
 ## weights on it live while sliders move.
@@ -250,6 +256,12 @@ func _physics_process(delta: float) -> void:
 	velocity.z = horizontal.z
 
 	move_and_slide()
+	if _walk_locomotion != null:
+		_walk_locomotion.advance_motion(
+			Vector2(velocity.x, velocity.z).length(),
+			is_on_floor(),
+			sprinting,
+			delta)
 
 	# Face the direction of travel.
 	if horizontal.length() > 0.5:
