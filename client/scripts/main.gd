@@ -14,6 +14,14 @@ const FOG_COLOR := Color(0.35, 0.28, 0.24)
 const DISCOVERY_STARTER_CAVE := SaveVault.DISCOVERY_STARTER_CAVE
 const DISCOVERY_WARDENS_SHRINE := SaveVault.DISCOVERY_WARDENS_SHRINE
 const STARTER_CAVE_DISCOVERY_RADIUS := 10.0
+## Shown when a character exists on disk that this build cannot accept. Says the
+## one thing the player needs and nothing it cannot know: their character is
+## still there. It deliberately does not advise updating — a recipe from a newer
+## build and a damaged one are indistinguishable to the player, and only the
+## first is fixed that way.
+const REFUSED_SAVE_NOTICE := \
+	"This version of the game can't read your saved character. " \
+	+ "It has been left untouched and nothing new will replace it."
 const DISCOVERY_PERSIST_RETRY_INITIAL_SECONDS := 1.0
 const DISCOVERY_PERSIST_RETRY_MAX_SECONDS := 30.0
 
@@ -21,11 +29,12 @@ var _player: Player
 var _hud: Hud
 var _creator: CharacterCreator
 var _interaction: InteractionController
-## Set when legacy save recovery could not restore a stranded character. While
-## true, ALL character-creator entry is locked (auto first-run AND the manual
-## editor key): applying a new character would write the default save and orphan
-## the stranded backup forever (no-resets law). Cleared only by a boot that
-## recovers or needs no recovery.
+## Set when a character exists that this boot must not replace: legacy recovery
+## could not restore a stranded save, or the saved recipe was refused (newer than
+## this build understands, or damaged). While true, ALL character-creator entry is
+## locked — auto first-run AND the manual editor key — because applying would
+## write over player state this build cannot read back (no-resets law). Decided
+## fresh each boot: the next launch re-examines the file.
 var _save_blocked := false
 ## Whether this device's GPU can render froxel volumetrics (#158). Decided in
 ## [method _build_environment] and read again once the world exists, because
@@ -253,9 +262,18 @@ func _ready() -> void:
 		_boot_notices.insert(
 			0, "A saved character couldn't be restored — please restart. Your character is safe.")
 	else:
+		var save_path := CharacterStore.save_path()
 		var saved = CharacterStore.load_saved()
 		if saved is Dictionary:
 			_player.set_character(saved)
+		elif CharacterStore.is_refused(save_path):
+			# There IS a character here, and this build cannot accept it — it was
+			# written by a newer build, or it is damaged. Both are existing player
+			# state, so the one thing we must not do is treat this as a first run
+			# and open the writable creator over it. Lock every writer and say so;
+			# the store keeps the refusal latched for the rest of the process.
+			_save_blocked = true
+			_boot_notices.insert(0, REFUSED_SAVE_NOTICE)
 		else:
 			# First time in the world: shape a character before setting out.
 			_open_creator.call_deferred(true)
@@ -491,9 +509,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 
 func _open_creator(first_run: bool) -> void:
-	# Single chokepoint: while a stranded save is unrecovered, applying a new
-	# character would overwrite the default and orphan it forever (no-resets
-	# law) — refuse every entry, auto and manual editor-key alike.
+	# Single chokepoint: while a character exists that this build must not
+	# replace — stranded and unrecovered, or refused — applying would overwrite
+	# player state this build cannot read back (no-resets law). Refuse every
+	# entry, auto and manual editor-key alike. CharacterStore.save_to() refuses
+	# the same write independently, so this is the door and that is the lock.
 	if _save_blocked:
 		return
 	var initial = CharacterStore.load_saved()
