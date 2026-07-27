@@ -469,8 +469,12 @@ everything shipped afterwards is held to.
   server-generated attempt ID to an allocation boundary, conditionally reconciles ambiguous
   outcomes by that owned attempt, constrains the returned endpoint to the configured managed DNS
   domain, requires an expiring no-show lease, observer binding and per-allocation admission secret,
-  and mints the nanosecond-expiry token only that allocated zone verifier accepts; the concrete
-  Agones allocator/lease-claim adapter and Nakama RPC registration remain later children), and
+  and mints the nanosecond-expiry token only that allocated zone verifier accepts), the private
+  **Nakama handoff lease store** (`server/nakamalease/` — server-only, strict-schema objects keyed
+  by a SHA-256-derived reservation key; unique create and exact-version replacement/claim/release
+  preserve one current attempt under retries without persisting raw reservation IDs or admission
+  secrets; the concrete coordinator, secret delivery and Nakama RPC registration remain later
+  children), and
   the **combat first slice** (`server/sim/combat.go` — the telegraph cast
   lifecycle: painted at cast start, resolved once after a tick-counted cast time against
   positions at resolution, health/damage application, and one mob AI that deterministically
@@ -480,9 +484,9 @@ everything shipped afterwards is held to.
   preserves caller movement when that flag is off, and the integer-speed floor remains mobile on
   diagonals; threat from damage, dead-target
   filtering, real navmesh pathfinding and cast replication remain later children — with its own
-  cross-platform golden), with the concrete Agones allocation adapter, Nakama RPC registration and
-  persistence layers arriving as later children of the server-foundation epic (#4); `deploy/`
-  (platform manifests) arrives later per the roadmap.
+  cross-platform golden), with coordinator composition, Nakama RPC registration and broader
+  persistence arriving as later children of the server-foundation epic (#4); `deploy/` (platform
+  manifests) arrives later per the roadmap.
 - **Changing any persisted player-data format:** follow the
   [forward-only save-data migration contract](docs/design/save-data.md). It defines the staged
   expand → bake → contract rollout, the version-bump checklist, and the refusal rules for the

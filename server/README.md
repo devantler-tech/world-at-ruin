@@ -161,8 +161,18 @@ zone/dungeon server:
   never cross this boundary. A response is usable only when it names a valid
   GameServer and carries exactly one in-range configured TLS port. Allocation
   refusals preserve the stable gRPC code without reflecting upstream text.
-  Hermetic tests exercise the real generated client/server path. The package is
-  inert until the persistent lease/claim/secret coordinator consumes it.
+  Hermetic tests exercise the real generated client/server path.
+- **`nakamalease/`** — the private **Nakama handoff lease store**: one
+  user-scoped object per SHA-256-derived reservation key owns the current
+  allocation attempt, observer binding, per-allocation secret reference,
+  no-show deadline and optional claim time. Objects are server-only
+  (`PermissionRead: 0`, `PermissionWrite: 0`), use a strict versioned JSON
+  schema, omit the raw user/reservation identifiers and admission-secret bytes,
+  and expose only sanitized errors. Nakama's unique-create marker and exact
+  storage versions make create, replacement, claim and release safe under
+  retries and overlapping attempts; a stale attempt cannot overwrite, claim or
+  delete the current owner. Hermetic race-enabled tests exercise Nakama's real
+  runtime storage request, object and acknowledgement shapes.
 - **`handoff/`** — the transport-neutral **player handoff core**: it consumes
   `nakamaauth` rather than accepting a client-provided identity, gives only that
   verified user ID plus a caller-stable reservation key and server-generated
@@ -178,9 +188,9 @@ zone/dungeon server:
   that lease. Retryable gRPC status codes survive without upstream text, and
   credentials never enter returned errors. Hermetic tests drive the real
   generated Nakama gRPC path through the service and then verify its token
-  through the real zone verifier. The package is inert until the persistent
-  lease/claim/secret coordinator composes `agonesalloc` into its `Allocator`
-  contract and a Nakama RPC registers the resulting service.
+  through the real zone verifier. The package remains inert until a coordinator
+  composes `agonesalloc` and `nakamalease` into its allocation, secret-delivery
+  and admission lifecycle, and a Nakama RPC registers the resulting service.
 - **`cmd/zone/`** — a runnable skeleton server. It boots the demo zone and either
   runs a fixed number of deterministic ticks (printing the state hash) or drives
   the loop from the wall clock. With `-replicate` it also runs the full
@@ -205,14 +215,14 @@ go run ./cmd/zone -listen :8443 -tls-cert cert.pem -tls-key key.pem -agones  # f
 Later children of the server-foundation epic
 ([#4](https://github.com/devantler-tech/world-at-ruin/issues/4), the first child
 of the Phase 1 epic [#8](https://github.com/devantler-tech/world-at-ruin/issues/8)):
-the persistent lease/claim/secret coordinator that composes `agonesalloc` into
-`handoff.Allocator`, Nakama RPC registration that exposes that service, the
-rest of the Nakama auth/social/chat/storage surface, client prediction and
-reconciliation, real navmesh geometry, and Postgres/CNPG persistence. The tick
-core, socket, client replica store, Agones lifecycle, Nakama identity boundary,
-allocation API boundary and fail-closed handoff core are already in place;
-later slices build on those tested seams instead of creating a parallel meta
-service.
+the coordinator that composes `agonesalloc`, `nakamalease` and per-allocation
+secret delivery into `handoff.Allocator`, Nakama RPC registration that exposes
+that service, the rest of the Nakama auth/social/chat/storage surface, client
+prediction and reconciliation, real navmesh geometry, and Postgres/CNPG
+persistence. The tick core, socket, client replica store, Agones lifecycle,
+Nakama identity boundary, allocation API boundary, private lease store and
+fail-closed handoff core are already in place; later slices build on those
+tested seams instead of creating a parallel meta service.
 
 ## Validate
 
