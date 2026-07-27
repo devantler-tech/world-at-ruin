@@ -140,6 +140,20 @@ static func acquire(path: String) -> bool:
 	# non-empty directory, which fails safely instead of clobbering. (Measured:
 	# renaming onto an EMPTY directory succeeds, so an empty lock would be
 	# silently overwritable.)
+	# Never stamp OVER an existing owner file. The directory we just created is
+	# empty by construction, so a stamp already present means this is not that
+	# directory: a process descheduled between the mkdir above and this line for
+	# longer than the stale timeout has its empty lock reclaimed as abandoned, and
+	# another writer can then create and stamp a fresh lock at the same path.
+	# Opening with WRITE truncates, so resuming and stamping anyway would destroy
+	# that writer's token — making it abandon a write it legitimately owns — and
+	# record us as the holder of a lock we never created. Refuse instead, and
+	# leave the directory alone: it belongs to whoever stamped it.
+	if FileAccess.file_exists(owner_path(lock)):
+		push_error(
+			"FileLock: the lock at %s was replaced while this process was acquiring it — refusing to write"
+			% lock)
+		return false
 	var token := "%d-%d" % [OS.get_process_id(), Time.get_ticks_usec()]
 	var owner := FileAccess.open(owner_path(lock), FileAccess.WRITE)
 	if owner == null:
@@ -150,6 +164,24 @@ static func acquire(path: String) -> bool:
 	owner.close()
 	_held[lock] = 1
 	_tokens[lock] = token
+	return true
+
+
+## Run `body` with `path`'s write lock held, releasing it on every exit path.
+## Returns false — without calling `body` at all — when the lock could not be
+## taken.
+##
+## This is what makes a whole read-modify-write one transaction. Locking only the
+## final replace is not enough: two writers can each load the same document
+## BEFORE either takes the lock, then acquire in turn, and the second still
+## discards the first's change. The lock has to span load → merge → save, and
+## because GDScript has no `defer`, a caller bracketing that itself would leak
+## the lock down any early return in between.
+static func with_lock(path: String, body: Callable) -> bool:
+	if not acquire(path):
+		return false
+	body.call()
+	release(path)
 	return true
 
 

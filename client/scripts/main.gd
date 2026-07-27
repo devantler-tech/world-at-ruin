@@ -323,6 +323,20 @@ func _ready() -> void:
 ## child's work, not this caller's.
 func _reconcile_boot_recovery() -> void:
 	var path := BootRecovery.recovery_path()
+	# The whole load → reconcile → write is ONE transaction, held under the
+	# ledger's write lock. Locking only the final replace would not close the
+	# race: two shells can each load the same ledger before either takes the
+	# lock, then acquire in turn, and the second's write discards the first's
+	# quarantine record — the exact loss the lock exists to prevent.
+	if not FileLock.with_lock(path, func() -> void: _reconcile_boot_recovery_locked(path)):
+		push_warning(
+			"boot recovery: another writer holds the ledger's write lock — leaving reconciliation to the next launch")
+
+
+## _reconcile_boot_recovery()'s body, with the ledger's write lock already held.
+## Split out so acquisition and release live on ONE path each: GDScript has no
+## `defer`, and this body returns early on three separate branches.
+func _reconcile_boot_recovery_locked(path: String) -> void:
 	var loaded := BootRecovery.load_state(path)
 	# An unreadable or newer document loads with ok false and a read-only,
 	# rollback-safe degraded state. It is carried forward rather than replaced:

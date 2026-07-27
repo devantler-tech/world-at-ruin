@@ -195,6 +195,80 @@ func _ready() -> void:
 		_fail("a write that lost the lock still modified the recovery file")
 		return
 	FileLock.release(PROBE)
+	_cleanup()
+
+	# 9. The TRANSACTION boundary. Serializing only the final replace does not
+	# close the race: two shells can each load the same ledger BEFORE either takes
+	# the lock, then acquire in turn, and the second's write discards the first's
+	# quarantine record. So the caller runs its whole load → reconcile → write
+	# under `with_lock`, and the property that makes that work is that the body
+	# does not run at all when the lock is unavailable.
+	if DirAccess.make_dir_absolute(_abs(lock)) != OK:
+		_fail("could not simulate a competing writer for the transaction case")
+		return
+	# Single-cell ARRAYS, not plain locals. A GDScript lambda captures locals by
+	# VALUE, so `ran = true` inside the body would update the closure's own copy
+	# and the assertion here would read false whatever the body did — an
+	# assertion that cannot fail. Arrays are reference types, so mutating an
+	# element is visible to this scope. (Measured: the plain-local form passed
+	# case 9 and failed case 10 for exactly this reason.)
+	var ran := [false]
+	if FileLock.with_lock(PROBE, func() -> void: ran[0] = true):
+		_fail("with_lock reported success while another writer held the lock")
+		return
+	if ran[0]:
+		_fail("with_lock ran its body under a foreign lock — a load would read state it may not write")
+		return
+	DirAccess.remove_absolute(_abs(lock))
+	FileLock.clear_for_test()
+
+	# 10. And it releases afterwards, so a transaction cannot wedge the ledger for
+	# the stale timeout. Checked with a body that itself writes, since the nested
+	# acquire inside save_state is exactly the reentrancy this depends on.
+	var observed := [false, false]
+	var ran_body := FileLock.with_lock(PROBE, func() -> void:
+		observed[0] = DirAccess.dir_exists_absolute(_abs(lock))
+		observed[1] = BootRecovery.save_state(PROBE, BootRecovery.fresh_state()).get("ok", false))
+	if not ran_body:
+		_fail("with_lock could not take a free lock")
+		return
+	if not observed[0]:
+		_fail("the lock was not held while the transaction body ran")
+		return
+	if not observed[1]:
+		_fail("a nested save_state inside with_lock self-deadlocked on its own lock")
+		return
+	if DirAccess.dir_exists_absolute(_abs(lock)):
+		_fail("with_lock leaked the lock — the ledger would wedge until the timeout")
+		return
+
+	# 11. Acquiring never stamps OVER an existing owner file. A process
+	# descheduled between its mkdir and its stamp can have that empty lock
+	# reclaimed and the slot retaken by another writer; truncating that writer's
+	# token would make it abandon a write it owns while recording us as holder of
+	# a lock we never created.
+	if DirAccess.make_dir_absolute(_abs(lock)) != OK:
+		_fail("could not create the lock for the stamp-clobber case")
+		return
+	var foreign := FileAccess.open(FileLock.owner_path(lock), FileAccess.WRITE)
+	if foreign == null:
+		_fail("could not stamp the replacement lock")
+		return
+	foreign.store_string("replacement-1")
+	foreign.close()
+	if FileLock.acquire(PROBE):
+		_fail("acquired a lock that already carried another writer's stamp")
+		return
+	var stamp_after := FileAccess.open(FileLock.owner_path(lock), FileAccess.READ)
+	if stamp_after == null:
+		_fail("the replacement writer's ownership stamp was deleted")
+		return
+	var stamp_text := stamp_after.get_as_text()
+	stamp_after.close()
+	if stamp_text != "replacement-1":
+		_fail("a resumed acquirer OVERWROTE the replacement writer's stamp: %s" % stamp_text)
+		return
+	FileLock.remove_dir(lock)
 
 	_cleanup()
 	OS.set_environment(BootRecovery.RECOVERY_PATH_ENV, "")
