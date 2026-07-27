@@ -234,6 +234,15 @@ const IGNORED_RESULT_FIXTURE := """func _fail(message: String) -> void:
 	get_tree().quit(1)
 """
 
+## A booter with no `_fail` at all. Its failure path cannot be located, so the
+## guard cannot vouch for it and must say so rather than pass it silently.
+const NO_FAIL_FIXTURE := """func _ready() -> void:
+	if not _save.real_save_untouched():
+		push_error("touched")
+		get_tree().quit(1)
+	get_tree().quit(0)
+"""
+
 ## The subtler form of the same discard: the answer is STORED and then never
 ## read. An assignment looks like a use and is not one.
 const IGNORED_ASSIGNMENT_FIXTURE := """func _fail(message: String) -> void:
@@ -432,6 +441,12 @@ func _ready() -> void:
 		_fail(("the guard accepted a `_fail` that calls the guarantee and DISCARDS its answer — "
 			+ "using it as a bare teardown clears the seams exactly as `end()` did while asserting "
 			+ "nothing, so presence alone cannot be the test (#326)"))
+		return
+
+	# --- negative control: a booter with no locatable failure path ---
+	if _verdict(NO_FAIL_FIXTURE) != VERDICT_UNLOCATABLE:
+		_fail(("the guard vouched for a booter with no `%s` at all — a failure path it cannot find "
+			+ "is one it cannot check, and every law here assumes that body exists") % FAIL_FUNC)
 		return
 
 	# --- negative control: storing the answer is not reading it ---
