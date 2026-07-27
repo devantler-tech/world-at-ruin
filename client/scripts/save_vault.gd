@@ -372,6 +372,19 @@ static func document_identity(path: String) -> String:
 	return FileAccess.get_sha256(path)
 
 
+## The expectation the most recent [method replace_if_unchanged] call ran under.
+##
+## FOR TESTS ONLY, and it exists because the thing it pins cannot otherwise be
+## observed. The production read-modify-write is protected only if it threads a
+## REAL identity; a helper that passed [constant IDENTITY_UNCHECKED] instead
+## still writes correctly whenever nothing races it, so an end-to-end assertion
+## — and even a replay of the helper's own sequence — passes while the
+## protection is gone. That exact ablation was measured slipping through both.
+## Landing a foreign write INSIDE a live call needs a second process, so what
+## the call ran under is recorded here instead.
+static var _last_write_expectation: String = IDENTITY_UNCHECKED
+
+
 ## Replace the vault at `path` with `doc`, but only while the file still carries
 ## `expected_identity` — a compare-and-swap on the document's own bytes.
 ##
@@ -390,6 +403,7 @@ static func document_identity(path: String) -> String:
 ## SILENT lost update into a DETECTED refusal, which the vault's law already
 ## handles: session-only, loud in logs, never fatal.
 static func replace_if_unchanged(path: String, doc: Dictionary, expected_identity: String) -> bool:
+	_last_write_expectation = expected_identity
 	if not _acquire_lock(path):
 		return false
 	var wrote := _save_to_locked(path, doc, expected_identity)

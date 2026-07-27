@@ -34,9 +34,15 @@ extends Node
 ##  6. A refused write leaves no temp file behind.
 ##  7. save_to() stays a deliberate blind replace via the sentinel, so the
 ##     existing whole-document callers are unaffected.
-##  8. The production read-modify-write threads a LIVE identity — proven both by
-##     an uncontended persist still succeeding, and by replaying that helper's
-##     exact sequence with a foreign write interposed.
+##  8. The production read-modify-write threads a LIVE identity: it succeeds
+##     uncontended, it ran against the identity of the document it READ, and its
+##     sequence refuses when a foreign write is interposed.
+##
+## Case 8's middle assertion is not decoration. A helper that wrote blind passed
+## BOTH the uncontended check and the replayed sequence — measured — because
+## writing blind is indistinguishable from writing correctly until something
+## actually races it, which is precisely when the loss becomes permanent. The
+## expectation each production write ran under is therefore asserted directly.
 ##
 ## RESIDUAL, stated rather than glossed: verify-then-rename is two operations, so
 ## the window shrinks to the rename syscall rather than closing. Closing it needs
@@ -188,16 +194,36 @@ func _ready() -> void:
 		_fail("the blind replace did not take effect")
 		return
 
-	# 8. The production read-modify-write threads a LIVE identity. Two halves,
-	# because neither alone is sufficient:
+	# 8. The production read-modify-write threads a LIVE identity. Three parts,
+	# because the first two together are still VACUOUS — measured: a build whose
+	# helpers passed IDENTITY_UNCHECKED passed both, and the guard below is the
+	# only thing that caught it.
 	#
 	# (a) An uncontended persist still succeeds. This is what fails if a helper
 	#     passes a stale or wrongly-ordered identity — every write would refuse.
+	var before_attune := SaveVault.document_identity(PROBE)
 	if not SaveVault.persist_attunement(SaveVault.SHRINE_WARDENS):
 		_fail("an uncontended persist_attunement() refused — the helper's identity is wrong")
 		return
+	# (b) And it compared against the document it actually READ. A helper writing
+	#     blind is indistinguishable from a correct one until something races it,
+	#     which is exactly when the loss is permanent — so the expectation the
+	#     write ran under is asserted directly rather than inferred from success.
+	if SaveVault._last_write_expectation == SaveVault.IDENTITY_UNCHECKED:
+		_fail("persist_attunement() wrote BLIND — the CAS guard never runs on the production path")
+		return
+	if SaveVault._last_write_expectation != before_attune:
+		_fail("persist_attunement() compared against something other than the document it read")
+		return
+	var before_discover := SaveVault.document_identity(PROBE)
 	if not SaveVault.persist_discoveries([SaveVault.DISCOVERY_STARTER_CAVE]):
 		_fail("an uncontended persist_discoveries() refused — the helper's identity is wrong")
+		return
+	if SaveVault._last_write_expectation == SaveVault.IDENTITY_UNCHECKED:
+		_fail("persist_discoveries() wrote BLIND — the CAS guard never runs on the production path")
+		return
+	if SaveVault._last_write_expectation != before_discover:
+		_fail("persist_discoveries() compared against something other than the document it read")
 		return
 	var settled = SaveVault.load_saved()
 	if settled is not Dictionary or not SaveVault.is_attuned(settled, SaveVault.SHRINE_WARDENS):
