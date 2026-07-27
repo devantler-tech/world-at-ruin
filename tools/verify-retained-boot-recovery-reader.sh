@@ -12,23 +12,23 @@ workdir=$(mktemp -d "${TMPDIR:-/tmp}/war-retained-reader.XXXXXX")
 
 cleanup() {
 	case "${workdir:-}" in
-		"${TMPDIR:-/tmp}"/war-retained-reader.*)
-			rm -rf -- "$workdir"
-			;;
+	"${TMPDIR:-/tmp}"/war-retained-reader.*)
+		rm -rf -- "$workdir"
+		;;
 	esac
 }
 trap cleanup EXIT
 
 for tool in curl jq shasum unzip; do
-	command -v "$tool" >/dev/null 2>&1 \
-		|| {
+	command -v "$tool" >/dev/null 2>&1 ||
+		{
 			printf "retained-reader gate: required tool '%s' is unavailable\n" "$tool" >&2
 			exit 1
 		}
 done
 
-[ -f "$golden" ] \
-	|| {
+[ -f "$golden" ] ||
+	{
 		printf 'retained-reader gate: shipped v1 golden is missing at %s\n' "$golden" >&2
 		exit 1
 	}
@@ -43,8 +43,8 @@ printf '%s  %s\n' "$RETAINED_SHA256" "$archive" | shasum -a 256 -c -
 
 unzip -q "$archive" -d "$workdir/app"
 executable="$workdir/app/World at Ruin.app/Contents/MacOS/World at Ruin"
-[ -x "$executable" ] \
-	|| {
+[ -x "$executable" ] ||
+	{
 		printf 'retained-reader gate: released app executable is missing\n' >&2
 		exit 1
 	}
@@ -52,12 +52,12 @@ executable="$workdir/app/World at Ruin.app/Contents/MacOS/World at Ruin"
 recovery="$workdir/boot_recovery.json"
 cp "$golden" "$recovery"
 WAR_SAVE_PATH="$workdir/character.json" \
-WAR_VAULT_PATH="$workdir/vault.json" \
-WAR_BOOT_RECOVERY_PATH="$recovery" \
+	WAR_VAULT_PATH="$workdir/vault.json" \
+	WAR_BOOT_RECOVERY_PATH="$recovery" \
 	"$executable" --headless --quit-after 60 2>&1 | tee "$workdir/boot.log"
 
-grep -Fq "BOOT_OK v${RETAINED_TAG#v} " "$workdir/boot.log" \
-	|| {
+grep -Fq "BOOT_OK v${RETAINED_TAG#v} " "$workdir/boot.log" ||
+	{
 		printf 'retained-reader gate: released app did not boot with its pinned version\n' >&2
 		exit 1
 	}
