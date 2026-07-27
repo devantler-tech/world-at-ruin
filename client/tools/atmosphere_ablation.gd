@@ -321,6 +321,32 @@ func _run(cam: Camera3D) -> bool:
 		["baseline (repeat — noise floor)", {}],
 	]
 
+	# Every property any condition sets, derived from the table rather than
+	# restated beside it. The snapshot below is what each condition is restored
+	# to and what the inert check reads, so a property present in the table and
+	# absent from a hand-written snapshot list crashed the run on an unrelated
+	# line — after a whole vantage had already rendered, and with an error naming
+	# the guard rather than the omission. Deriving it makes this file's own claim
+	# ("adding a candidate is a line") true.
+	var tracked: Array[String] = []
+	for condition: Array in conditions:
+		for key: String in (condition[1] as Dictionary):
+			if not tracked.has(key):
+				tracked.append(key)
+
+	# Validated against the live Environment BEFORE the first frame renders. A
+	# misspelled property would otherwise read back as `null`, compare unequal to
+	# whatever the condition wanted, and be reported as "something re-applies it
+	# each frame" — a wrong diagnosis of a typo, paid for with a full render pass.
+	var unknown: Array[String] = []
+	for key: String in tracked:
+		if not (key in _env):
+			unknown.append(key)
+	if not unknown.is_empty():
+		_fail("condition table names %d property(s) that do not exist on Environment: %s"
+			% [unknown.size(), ", ".join(unknown)])
+		return false
+
 	print("ABLATION — probe %.3fx -> %.3fx (ratio %.2fx, the shipped palette interval), %d samples/box"
 		% [PROBE_LO, PROBE_HI, REGION_RATIO, GRID_X * GRID_Y])
 	print("| vantage | condition | luma @%.3fx | luma @%.3fx | raw delta | contrast | vs baseline |"
@@ -363,21 +389,9 @@ func _run(cam: Camera3D) -> bool:
 		# atmosphere and all thirteen after it read the corrupted one, which put
 		# the repeat-baseline check 25% away from the baseline and handed every
 		# innocent condition an identical, entirely fictional +25%.
-		var shipped := {
-			"fog_enabled": _env.fog_enabled,
-			"fog_density": _env.fog_density,
-			"fog_height": _env.fog_height,
-			"fog_height_density": _env.fog_height_density,
-			"fog_aerial_perspective": _env.fog_aerial_perspective,
-			"fog_sky_affect": _env.fog_sky_affect,
-			"ambient_light_energy": _env.ambient_light_energy,
-			"tonemap_mode": _env.tonemap_mode,
-			"tonemap_white": _env.tonemap_white,
-			"tonemap_exposure": _env.tonemap_exposure,
-			"adjustment_enabled": _env.adjustment_enabled,
-			"volumetric_fog_enabled": _env.volumetric_fog_enabled,
-			"sdfgi_enabled": _env.sdfgi_enabled,
-		}
+		var shipped := {}
+		for key: String in tracked:
+			shipped[key] = _env.get(key)
 
 		var box: Array = GROUND_BOXES[vname]
 		var baseline_delta := 0.0
@@ -400,7 +414,7 @@ func _run(cam: Camera3D) -> bool:
 			# zero-effect volumetric row that cannot speak for player hardware.
 			var inert := not overrides.is_empty()
 			for key: String in overrides:
-				if not is_same(shipped[key], overrides[key]):
+				if not _holds(shipped[key], overrides[key]):
 					inert = false
 					break
 			if inert:
@@ -425,7 +439,7 @@ func _run(cam: Camera3D) -> bool:
 			# "this term does nothing", which is the single most misleading answer
 			# this tool could give.
 			for key: String in overrides:
-				if not is_same(_env.get(key), overrides[key]):
+				if not _holds(_env.get(key), overrides[key]):
 					failures.append(("%s / %s: `%s` was reset to %s before the read (wanted %s) — "
 						+ "something re-applies it each frame, so this row measures the shipped "
 						+ "atmosphere, not the ablation")
@@ -532,6 +546,41 @@ func _converged(box: Array) -> Array:
 			quiet = 0
 		previous = value
 	return [value, false]
+
+
+## Whether an Environment property reading `got` holds the value `want` asked
+## for, accounting for the renderer's storage precision.
+##
+## [b]Exact identity is the wrong test here, and it fails in one direction only:
+## it rejects overrides that were applied perfectly.[/b] Godot stores
+## [Environment]'s float properties as 32-bit floats while GDScript computes in
+## 64-bit, so any value that is not exactly representable in float32 reads back
+## as a slightly different double. Measured: `0.0035` reads back as
+## `0.0035000001080334187`, `0.036` as `0.035999998450279236`.
+##
+## Under [method @GlobalScope.is_same] every such row was reported as
+## "`volumetric_fog_density` was reset ... something re-applies it each frame" and
+## the whole run refused to publish its table. Nothing had been reset. The shipped
+## conditions never exposed it because each of them sets a bool, an enum or `0.0`,
+## all exactly representable — so the defect appears precisely when a condition
+## names a real candidate value, which is what measuring a proposed trade is.
+##
+## Compares against the float32 round-trip rather than with a tolerance, so the
+## guard stays exact: a genuine reset restores the shipped value, which differs
+## from any candidate by far more than one float32 step and is still caught.
+## Non-float values keep exact identity, so bool and enum overrides are unaffected.
+##
+## Static so `tests/atmosphere_ablation_holds_test` can pin it without a
+## rendering device: the defect it encodes is pure arithmetic, and a guard whose
+## only proof is a windowed GPU run is one nobody re-checks.
+static func _holds(got: Variant, want: Variant) -> bool:
+	if is_same(got, want):
+		return true
+	if got is float and want is float:
+		# A float64 property would compare equal above; reaching here means the
+		# value made a round trip through 32-bit storage.
+		return is_same(got, PackedFloat32Array([want])[0])
+	return false
 
 
 ## Separation between the two readings, normalised by their own brightness.
