@@ -1,0 +1,17 @@
+# actionlint configuration. actionlint runs here through MegaLinter's ACTION_ACTIONLINT
+# (see .mega-linter.yml); there is no dedicated actionlint job.
+#
+# `concurrency.queue` is a real GitHub Actions key — it is in GitHub's own workflow schema
+# for both workflow-level and job-level `concurrency`, and the workflows here rely on
+# `queue: max` so a pending release, cask bump or CLA run is never silently replaced.
+# actionlint does not know the key yet: as of v1.7.12 (its latest release, 2026-03-30, which
+# predates the key) parse.go hard-codes the accepted set as ["group", "cancel-in-progress"]
+# and reports anything else as an unexpected key.
+#
+# The pattern below is deliberately anchored to that one message so every other actionlint
+# finding on these workflows still fails the build. Delete this file once actionlint
+# recognises `queue`.
+paths:
+  .github/workflows/**:
+    ignore:
+      - 'unexpected key "queue" for "concurrency" section'
