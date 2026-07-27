@@ -426,8 +426,19 @@ everything shipped afterwards is held to.
   reclaim and acquire back into one pass lets two processes each recreate the lock over the other and
   both proceed as owners, so never restore remove-then-create. **Scope the claim honestly:** a lock
   binds only writers that take it, so pre-lock retained/rollback builds and foreign writers (cloud
-  sync, a hand edit) walk straight through it, and for those the pre-rename readability recheck plus
-  the newer-version refusal remain the guard. Contention degrades to session-only rather than blocking
+  sync, a hand edit) walk straight through it. Those are covered by a **compare-and-swap on the
+  document's own bytes** (#386, `tests/vault_cas_test`): the read-modify-write records the vault's
+  SHA-256 when it reads it and refuses the rename once the file no longer carries it, which keys on
+  what the file IS rather than on who cooperated. The identity is captured BEFORE the load — captured
+  after, a foreign write landing in between would become the expectation while the merge still held the
+  old document and the check would pass; captured before, that interleaving refuses. `save_to()`
+  remains a blind whole-document replace via an explicit sentinel so fixture seeding is unaffected;
+  `replace_if_unchanged()` is the guarded path every persist takes. It shrinks the window to the rename
+  syscall rather than closing it — closing that needs an OS-level lock held across the rename, which
+  Godot does not expose — so the gain is a DETECTED refusal in place of a silent lost update.
+  `SaveVault._last_write_expectation` exists solely so a test can prove the production path threads a
+  real identity: a helper writing blind is indistinguishable from a correct one until something races
+  it, and that ablation was measured passing every end-to-end assertion. Contention degrades to session-only rather than blocking
   a boot, and the stale timeout is generous on purpose — shortening it to make writes prompt would let
   a live writer be robbed mid-write. Tests redirect it with `WAR_VAULT_PATH`, mirroring
   `WAR_SAVE_PATH`, and seam the timeout with `WAR_VAULT_LOCK_STALE_SECONDS` (test-only; malformed or

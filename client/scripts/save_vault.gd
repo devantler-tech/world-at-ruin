@@ -74,12 +74,19 @@ class_name SaveVault
 ##    or checking the lock, and walks straight through it;
 ##  - a foreign writer (cloud sync, a backup agent, a hand edit) never takes it
 ##    either.
-## For both, the pre-rename re-check in [method _save_to_locked] plus the
-## refuse-a-newer-version rule are the protection, and they narrow the window to
-## the rename rather than closing it. So this lock removes lost updates between
-## lock-aware builds now, and only becomes a general guarantee once every
-## still-runnable build carries it. Do not describe it as closing the
-## differently-versioned case outright.
+## So this lock removes lost updates between lock-aware builds and nothing more.
+## Do not describe it as closing the differently-versioned case outright.
+##
+## What covers the rest is a COMPARE-AND-SWAP on the document's own bytes (#386,
+## see [method replace_if_unchanged]): the read-modify-write records the vault's
+## SHA-256 when it reads it and verifies the file still carries it immediately
+## before the rename. That keys on what the file IS rather than on who
+## cooperated, so a rollback build, cloud sync, a backup agent and a hand edit
+## are all visible — and it subsumes the point-in-time ownership gap, since a
+## reclaimed-and-rewritten vault fails the comparison. It shrinks the window to
+## the rename syscall rather than closing it, which is the same wall the lock
+## started at; the gain is that a lost update is now DETECTED and refused
+## instead of silently applied.
 
 const DEFAULT_PATH := "user://vault.json"
 
