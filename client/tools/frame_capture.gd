@@ -186,6 +186,21 @@ const BREATH_MIN_TRAVEL_M := 0.003
 ## shift still clears the travel floor above.
 const BREATH_MIN_SWING_DEG := 1.0
 
+## Fixed phases of the opt-in walk cycle. Eight shows both planted/swing
+## exchanges and the two passing poses without turning the artifact into a
+## long flipbook.
+const WALK_PHASES := 8
+const WALK_SETTLE_FRAMES := 4
+## A real gait must move a foot through the world, not merely rotate an arm.
+## The shipped first slice clears this by a wide margin; the floor rejects a
+## frozen or disconnected lower body without pinning the tuning.
+const WALK_MIN_FOOT_TRAVEL_M := 0.08
+## Three-quarter front, full-body framing on open ground south of the shrine.
+const WALK_CAM_SIDE := 2.0
+const WALK_CAM_RISE := 0.5
+const WALK_CAM_FRONT := 3.2
+const WALK_VANTAGE_Z := 18.0
+
 ## The creator is 2D and needs no shadow/SDFGI convergence, so it settles far
 ## sooner than a world vantage. Kept separate so adding this scenario does not
 ## lengthen the world capture, per #145.
@@ -264,8 +279,11 @@ func _ready() -> void:
 	if scenario == "breath":
 		await _capture_breath(dir, main)
 		return
+	if scenario == "walk":
+		await _capture_walk(dir, main)
+		return
 	if scenario != "world" and scenario != "light_response":
-		_fail("unknown WAR_SCENARIO '%s' — expected 'world', 'first_run', 'breath' or 'light_response'" % scenario)
+		_fail("unknown WAR_SCENARIO '%s' — expected 'world', 'first_run', 'breath', 'walk' or 'light_response'" % scenario)
 		return
 
 	for i in WARMUP_FRAMES:
@@ -1072,6 +1090,114 @@ func _capture_breath(dir: String, main: Node) -> void:
 
 	print("CAPTURE PASS — %d breath phases written to %s (shoulder travel %.1f mm, breath swing %.2f deg)" %
 		[BREATH_PHASES, dir, travel * 1000.0, breath_swing])
+	get_tree().quit(0)
+
+
+## The `walk` scenario: a fixed-phase full-body sequence of the REAL wanderer.
+##
+## The flag is read when Player binds its recipe body, so the caller must set
+## `WAR_WALK_CYCLE=1` before this scene boots. The runtime driver is then
+## stopped with Player physics, and its own `apply_phase` method poses the
+## sequence deterministically — the evidence uses the shipping implementation,
+## not a preview copy.
+func _capture_walk(dir: String, main: Node) -> void:
+	for i in WARMUP_FRAMES:
+		await get_tree().process_frame
+	if not _has_world(main):
+		_fail("the world did not build — a sky-only walk sequence is not evidence")
+		return
+
+	var player := main.get_node_or_null("Wanderer") as Player
+	if player == null:
+		_fail("the shipped scene has no Wanderer Player — the walk path is not live")
+		return
+	var animator := player.get_node_or_null("WalkLocomotion")
+	if animator == null:
+		_fail("the shipped Wanderer has no WalkLocomotion driver")
+		return
+	if OS.get_environment(WalkLocomotion.FLAG_ENV) != "1":
+		_fail("WAR_WALK_CYCLE is not opted in — refusing to advertise a disabled gait")
+		return
+	var world := main.get_node_or_null("World") as WorldGen
+	if world == null:
+		_fail("the shipped scene has no WorldGen for the daylight walk vantage")
+		return
+
+	# Hold translation and input fixed while the exact phases are driven. The
+	# body stands on open ground south of the shrine rather than in the
+	# starter cave, so daylight reaches it without the shrine pillar occluding
+	# the full silhouette.
+	player.set_physics_process(false)
+	player.control_enabled = false
+	var walk_ground := world.surface_height_at(0.0, WALK_VANTAGE_Z)
+	if walk_ground <= WorldGen.NO_GROUND + 1.0:
+		_fail("the committed walk vantage has no terrain under it")
+		return
+	player.global_position = Vector3(0.0, walk_ground + 0.1, WALK_VANTAGE_Z)
+	player.face_toward(Vector3.ZERO)
+	var skeleton := CharacterFactory.find_skeleton(player.get_node("Visual"))
+	if skeleton == null:
+		_fail("the shipped Wanderer has no recipe skeleton")
+		return
+
+	# Keep the independently-running breath on one deterministic phase. Without
+	# this, frame-to-frame chest motion is legitimate but makes the walk
+	# sequence depend on runner speed.
+	var body := skeleton.get_parent()
+	var idle := body.get_node_or_null("BreathingIdle") if body != null else null
+	if idle != null:
+		idle.set_process(false)
+		BreathingIdle.apply_at(skeleton, 0.0)
+
+	skeleton.force_update_all_bone_transforms()
+	var chest := skeleton.find_bone("spine_03")
+	var left_foot := skeleton.find_bone("foot_l")
+	if chest < 0 or left_foot < 0:
+		_fail("the walk evidence rig lacks spine_03 or foot_l")
+		return
+	var focus: Vector3 = skeleton.global_transform * skeleton.get_bone_global_pose(chest).origin
+	var cam := Camera3D.new()
+	cam.far = 400.0
+	cam.fov = 42.0
+	get_tree().root.add_child(cam)
+	cam.global_position = focus + Vector3(WALK_CAM_SIDE, WALK_CAM_RISE, -WALK_CAM_FRONT)
+	cam.look_at(focus - Vector3(0.0, 0.45, 0.0), Vector3.UP)
+
+	var foot_positions: Array[Vector3] = []
+	for i in WALK_PHASES:
+		var phase := TAU * float(i) / float(WALK_PHASES)
+		animator.call("apply_phase", phase)
+		skeleton.force_update_all_bone_transforms()
+		foot_positions.append(
+			skeleton.global_transform * skeleton.get_bone_global_pose(left_foot).origin)
+		for _s in WALK_SETTLE_FRAMES:
+			cam.current = true
+			await get_tree().process_frame
+		var img := await _grab_frame()
+		var spread := _luma_spread(img)
+		if spread < MIN_LUMA_SPREAD:
+			_fail("walk phase %d is a uniform frame (luma spread %.4f) — nothing rendered" %
+				[i, spread])
+			return
+		var frame_name := "walk_%02d" % i
+		var err := img.save_png("%s/%s.png" % [dir, frame_name])
+		if err != OK:
+			_fail("could not write %s (error %d)" % [frame_name, err])
+			return
+		_write_note(dir, frame_name, img, _size_note(img))
+		print("CAPTURED %s (phase %.3f rad)" % [frame_name, phase])
+
+	var travel := 0.0
+	for a in foot_positions:
+		for b in foot_positions:
+			travel = maxf(travel, a.distance_to(b))
+	if travel < WALK_MIN_FOOT_TRAVEL_M:
+		_fail(("the walk sequence photographs one lower-body pose: the left foot travels %.4f m, " +
+			"under the %.4f m floor") % [travel, WALK_MIN_FOOT_TRAVEL_M])
+		return
+
+	print("CAPTURE PASS — %d walk phases written to %s (left-foot travel %.1f cm)" %
+		[WALK_PHASES, dir, travel * 100.0])
 	get_tree().quit(0)
 
 
