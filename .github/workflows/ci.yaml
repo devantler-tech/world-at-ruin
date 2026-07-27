@@ -1981,6 +1981,8 @@ jobs:
             ${{ runner.temp }}/shots/opt-in-plates/*.txt
             ${{ runner.temp }}/shots/walk/*.png
             ${{ runner.temp }}/shots/walk/*.txt
+            ${{ runner.temp }}/shots/replication/*.png
+            ${{ runner.temp }}/shots/replication/*.txt
           if-no-files-found: error
 
   frame-capture-exported:
