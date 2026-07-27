@@ -51,9 +51,27 @@ extends Node
 ## under test, or a loader that silently defaulted a missing key would agree
 ## with itself (the DESTINATION_ORACLE lesson from vault_restore_boot_test).
 ##
+## Each phase judges the ledger only once the booted scene reports itself ready,
+## and then re-reads it until it is readable or a bounded deadline passes. The
+## reconcile write is synchronous inside that `_ready()`, so the wait is normally
+## over on the first look; what the bound buys is that a read arriving before the
+## write can never be reported as data loss, while a ledger that never appears
+## still fails loudly instead of hanging. This guard names a product-law
+## violation when it fails, so it may only ever name one it actually observed —
+## a guard that cries data loss at random is the one kind of red that gets
+## learned as noise, and the day it reports a genuine loss it would read exactly
+## like those false alarms.
+##
 ## Run: godot --headless --path client res://tests/boot_ledger_boot_test.tscn
 
+## The earliest frame at which a phase may judge what the boot left on disk;
+## every boot needs a few frames to build its world first.
 const ASSERT_TICK := 5
+## How long a phase keeps re-reading the ledger before it gives a verdict.
+const PROBE_DEADLINE_TICK := 180
+## When to give up on the scene itself. Recovery memory must never block a
+## launch, so a world that never builds is a failure of that law.
+const SCENE_DEADLINE_TICK := 10
 ## A build distinct from the running one, standing in for the launch that died.
 ## Distinct on purpose: quarantining the RUNNING build would then refuse this
 ## boot's own attempt and tangle the two assertions together.
@@ -139,11 +157,19 @@ func _physics_process(_delta: float) -> void:
 	_ticks += 1
 	var world := _main.get_node_or_null("World") as WorldGen
 	var player := _main.get_node_or_null("Wanderer") as Player
-	if world == null or player == null:
-		if _ticks > 10:
+	# is_node_ready() is what makes "the boot has finished writing" checkable
+	# rather than assumed: _reconcile_boot_recovery() is the first thing
+	# main.tscn's _ready() does, so a scene that reports ready has already been
+	# through its recovery write. Without this the phases below could read the
+	# ledger before the write and report the gap as a write that never happened.
+	if world == null or player == null or not _main.is_node_ready():
+		if _ticks > SCENE_DEADLINE_TICK:
 			_fail("main scene did not build World and Wanderer in the '%s' boot — recovery memory must never block a launch" % _phase)
 		return
-	if _ticks != ASSERT_TICK:
+	# `>=`, never `==`: an exact-tick assertion does nothing at all on every later
+	# frame, so a boot that became ready one frame late would leave the phase
+	# spinning until the CI timeout instead of ever reaching a verdict.
+	if _ticks < ASSERT_TICK:
 		return
 
 	match _phase:
@@ -162,11 +188,14 @@ func _physics_process(_delta: float) -> void:
 ## A. A clean boot persists the active writer schema, quarantines nothing and
 ## marks nothing.
 func _assert_control() -> void:
-	var raw: Variant = _read_probe()
-	if raw == null:
-		_fail("a clean first boot did not persist boot recovery schema v%d" % BootRecovery.WRITE_VERSION)
+	var probe := _await_probe()
+	if probe["state"] == "pending":
 		return
-	var doc: Dictionary = raw
+	if probe["state"] != "ok":
+		_fail("a clean first boot did not persist boot recovery schema v%d — %s" % [
+			BootRecovery.WRITE_VERSION, _probe_evidence(probe)])
+		return
+	var doc: Dictionary = probe["doc"]
 	if doc.get("version", -1) != BootRecovery.WRITE_VERSION:
 		_fail("a clean first boot persisted recovery schema %s instead of active writer schema v%d" % [
 			str(doc.get("version")), BootRecovery.WRITE_VERSION])
@@ -192,11 +221,13 @@ func _assert_control() -> void:
 ## B. A marker left by the previous launch is reconciled into a quarantine, and
 ## the failed build can no longer be mounted.
 func _assert_failed_previous() -> void:
-	var raw: Variant = _read_probe()
-	if raw == null:
-		_fail("the boot after a failed launch wrote no recovery file")
+	var probe := _await_probe()
+	if probe["state"] == "pending":
 		return
-	var doc: Dictionary = raw
+	if probe["state"] != "ok":
+		_fail("the boot after a failed launch left no readable recovery file — %s" % _probe_evidence(probe))
+		return
+	var doc: Dictionary = probe["doc"]
 	var ledger := doc.get("quarantined", []) as Array
 	if not ledger.has(FAILED_VERSION):
 		_fail(("RECONCILE DID NOT RUN: a marker for %s was on disk — the previous launch died "
@@ -227,6 +258,16 @@ func _assert_failed_previous() -> void:
 func _assert_torn() -> void:
 	# Reaching here at all means the world and the wanderer were built — the
 	# degrade-never-block law held. What remains is that the evidence survived.
+	# No wait here, and none is wanted: this phase's file is seeded before the
+	# boot and the whole assertion is that the boot left it alone. Absence is
+	# still called out separately, because get_file_as_string answers a missing
+	# file with "" — which would otherwise be reported as an overwrite with
+	# empty content rather than as the removal it is.
+	if not FileAccess.file_exists(_save.recovery_probe()):
+		_fail(("the unreadable ledger was REMOVED — the player loses the one record that would "
+			+ "have stopped a boot loop, and a file that is gone is a different failure from the "
+			+ "overwrite this phase guards against"))
+		return
 	var text := FileAccess.get_file_as_string(_save.recovery_probe())
 	if text != "this is not json":
 		_fail(("the unreadable ledger was OVERWRITTEN with %s — a well-formed file holding a "
@@ -243,11 +284,16 @@ func _assert_torn() -> void:
 func _assert_self_quarantined() -> void:
 	# Again, arriving here means the world built. The ledger must also be intact:
 	# the boot may not quietly un-quarantine itself to get its attempt recorded.
-	var raw: Variant = _read_probe()
-	if raw == null:
-		_fail("the self-quarantined boot destroyed the recovery file")
+	var probe := _await_probe()
+	if probe["state"] == "pending":
 		return
-	var ledger := (raw as Dictionary).get("quarantined", []) as Array
+	if probe["state"] != "ok":
+		# This phase seeds the ledger before the boot, so — and only so — absence
+		# here really is destruction. Saying which of the two states was seen
+		# keeps a genuine loss distinguishable from a file replaced with junk.
+		_fail("the self-quarantined boot destroyed or replaced the seeded recovery ledger — %s" % _probe_evidence(probe))
+		return
+	var ledger := (probe["doc"] as Dictionary).get("quarantined", []) as Array
 	if not ledger.has(DevLog.VERSION):
 		_fail(("the running build removed ITSELF from the quarantine ledger (%s) to record an "
 			+ "attempt — quarantine is forward-only and a build may never launder its own "
@@ -261,11 +307,15 @@ func _assert_self_quarantined() -> void:
 
 ## E. A pending-but-unreadable marker is cleared ON DISK, not only in memory.
 func _assert_unreadable_marker() -> void:
-	var raw: Variant = _read_probe()
-	if raw == null:
-		_fail("the unreadable-marker boot destroyed the recovery file — the ledger loaded fine, only its marker was junk, so there was nothing to preserve as evidence")
+	var probe := _await_probe()
+	if probe["state"] == "pending":
 		return
-	var doc: Dictionary = raw
+	if probe["state"] != "ok":
+		_fail(("the unreadable-marker boot destroyed or replaced the recovery file — the ledger "
+			+ "loaded fine and only its marker was junk, so there was nothing to preserve as "
+			+ "evidence. %s") % _probe_evidence(probe))
+		return
+	var doc: Dictionary = probe["doc"]
 	if doc.get("marker") != null:
 		_fail(("the pending marker %s was NOT cleared on disk — reconcile clears it in memory but "
 			+ "cannot name the failed build, so a caller that decides to save from "
@@ -291,13 +341,49 @@ func _assert_unreadable_marker() -> void:
 	get_tree().quit(0)
 
 
-## The probe parsed as JSON, or null when it is missing or unreadable.
-func _read_probe() -> Variant:
+## What the recovery ledger looks like right now, keeping apart the outcomes a
+## caller must never conflate.
+##
+## Answering "missing", "not JSON" and "not written yet" with one bare null is
+## what let this harness report data loss for a read that simply arrived early.
+## Each caller below therefore gets a state it can name in its own message:
+##   pending    — nothing readable yet and the deadline has not passed; the
+##                caller returns and looks again next frame.
+##   ok         — `doc` holds the parsed ledger.
+##   absent     — the deadline passed with no file at all.
+##   unreadable — the deadline passed with a file that is not a JSON object;
+##                `body` carries what was actually on disk.
+func _await_probe() -> Dictionary:
 	var path := _save.recovery_probe()
-	if not FileAccess.file_exists(path):
-		return null
-	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
-	return parsed if parsed is Dictionary else null
+	if FileAccess.file_exists(path):
+		var text := FileAccess.get_file_as_string(path)
+		var parsed: Variant = JSON.parse_string(text)
+		if parsed is Dictionary:
+			return {"state": "ok", "doc": parsed as Dictionary}
+		if _ticks < PROBE_DEADLINE_TICK:
+			return {"state": "pending"}
+		return {"state": "unreadable", "body": text}
+	if _ticks < PROBE_DEADLINE_TICK:
+		return {"state": "pending"}
+	return {"state": "absent"}
+
+
+## What was actually observed, in the words of the thing observed, so a failure
+## states its evidence rather than asserting a cause it cannot see.
+func _probe_evidence(probe: Dictionary) -> String:
+	var waited := _ticks - ASSERT_TICK
+	match str(probe.get("state")):
+		"absent":
+			return ("no file exists at %s, still absent %d frames after the boot reported ready — "
+				+ "the reconcile write runs inside that same _ready(), so this is a file that is "
+				+ "not coming rather than one that has yet to arrive") % [
+					_save.recovery_probe(), waited]
+		"unreadable":
+			var body := str(probe.get("body"))
+			return ("the file at %s still does not parse as a JSON object %d frames after the boot "
+				+ "reported ready (%d bytes: %s)") % [
+					_save.recovery_probe(), waited, body.length(), JSON.stringify(body)]
+	return "the probe reported an unexpected state %s" % JSON.stringify(probe)
 
 
 ## Report a failure — and NEVER let the reported one hide an isolation breach.
