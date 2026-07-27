@@ -32,6 +32,8 @@ jobs:
           persist-credentials: false
       - name: Cask branch visibility retry is bounded and fail-closed
         run: tools/test-cd-cask-ref-visibility.sh
+      - name: Retained boot-recovery reader gate is pinned and fail-closed
+        run: ./tools/retained-boot-recovery-reader-guard.test.sh
       - name: Version ledger is append-only (no-resets law)
         # The in-game guard anchors the required fixture range to
         # tests/data/shipped_recipe_versions.txt, but a checkout-local file
@@ -945,6 +947,12 @@ jobs:
           # This job uploads an artifact — never let the checked-out token
           # ride along in it (zizmor artipacked).
           persist-credentials: false
+      - name: Retained v1 reader artifact consumes the shipped recovery golden
+        # The writer may emit recovery v1 only because v0.51.1 is the retained
+        # monolithic rollback target. BOOT_OK alone is insufficient: recovery
+        # deliberately degrades when unreadable. This gate seeds the real v1
+        # golden and requires the released app to reconcile it without loss.
+        run: ./tools/verify-retained-boot-recovery-reader.sh
       - name: Install Godot (pinned, checksum-verified)
         run: |
           curl -fsSL -o godot.zip "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_macos.universal.zip"
@@ -1036,7 +1044,7 @@ jobs:
   # container's Go can lag.
   lint:
     name: Lint
-    uses: devantler-tech/actions/.github/workflows/lint.yaml@6ae5d87b342984cdaf34740e60366b9d570d8fc5 # v10.2.3
+    uses: devantler-tech/actions/.github/workflows/lint.yaml@4caaa94e681a5627e8c77d2910dc51ea2ab34c5c # v10.2.4
     permissions:
       contents: write
       issues: write
@@ -2111,7 +2119,7 @@ jobs:
       ]
     if: ${{ always() }}
     steps:
-      - uses: devantler-tech/actions/aggregate-job-checks@9705e47d7df0b556ec06786247297c0e5020e56d # v10.2.1
+      - uses: devantler-tech/actions/aggregate-job-checks@4caaa94e681a5627e8c77d2910dc51ea2ab34c5c # v10.2.4
         with:
           # frame-capture, frame-capture-exported and detect-visual-changes are
           # conditional and report `skipped` on PRs with no player-visible

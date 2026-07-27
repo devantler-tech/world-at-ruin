@@ -191,17 +191,17 @@ implied by this persistence contract.
 
 ### Boot recovery
 
-Boot recovery follows the same sequence, with its own read ceiling and write version. The v1 reader
-expansion shipped alone in v0.51.1, reads and preserves both unversioned v0 and explicit v1, appends
-both schemas to `shipped_boot_recovery_versions.txt`, and pins them with
-`golden_boot_recovery_v<N>.json`. After v0.51.1 became the standing retained rollback target, #343
-contracted the writer: first boot uses explicit v1, while a loaded v0 stays v0 in memory and migrates
-only on its next real write.
+Boot recovery follows the same sequence, with its own read ceiling and write version. It reads and
+preserves both unversioned v0 and explicit v1, records both schemas in
+`shipped_boot_recovery_versions.txt`, and pins them with `golden_boot_recovery_v<N>.json`. The
+published v0.51.1 app is the standing retained rollback target that reads and applies v1. First boot
+uses explicit v1, while a loaded v0 stays v0 in memory and migrates only on its next real write.
 
 Recovery refusal is path-latched for the process lifetime, and persistence reparses the destination
 immediately before atomic replacement. Reconstructing state, deleting a refused file, or landing a
-future/corrupt replacement therefore cannot turn the path writable. As with the vault, this narrows
-but does not close the rename-time concurrent-writer gap tracked by #262.
+future/corrupt replacement therefore cannot turn the path writable. This narrows but does not close
+the rename-time concurrent-writer gap: boot recovery takes no write lock, so unlike the vault it is
+still guarded by the pre-replacement recheck alone.
 
 The ledgers are the immutable floor: the in-game guards compare the current constants and fixtures,
 while CI compares each ledger with the pull request's base revision. Editing code, fixtures and a
@@ -223,10 +223,28 @@ The character recipe and vault deliberately fail differently:
 - An unreadable or newer boot-recovery document degrades to a rollback-safe empty quarantine view,
   while the path remains read-only for the process lifetime. Rollback eligibility still proves save,
   protocol and shell compatibility independently; new update attempts and recovery writes stop.
-- Vault persistence rechecks readability immediately before its atomic replace. The remaining
-  concurrent-writer compare-and-swap gap is tracked by
-  [#262](https://github.com/devantler-tech/world-at-ruin/issues/262); do not describe the current
-  recheck as a complete lock.
+- Vault persistence takes a cross-process write lock around its whole read-modify-write, so no second
+  lock-aware writer can read, merge and rename between another's check and its replace. The lock is a
+  directory beside the vault (`vault.json.lock`): `DirAccess.make_dir_absolute` is `mkdir`, the one
+  atomic exclusive-create Godot exposes, so exactly one writer wins and the rest refuse. A refused
+  write degrades to session-only and never blocks a boot.
+- Acquisition is only ever that single `mkdir` against an absent path. Reclaiming an abandoned lock is
+  a **separate pass that never acquires**: it renames the stale directory to a uniquely-named copy
+  (rename succeeds for exactly one process, which is what serializes reclamation), verifies on that
+  privately-owned copy that the timestamp is the one it judged abandoned, removes it, and still
+  refuses this write. The next attempt then acquires the free slot normally. Reclaiming and acquiring
+  in one pass is unsound — two processes would each recreate the lock over the other and both proceed
+  as owners — so do not "simplify" it back into remove-then-create.
+- The lock directory is **not** empty: it holds an ownership stamp. Renaming onto an empty directory
+  succeeds, so an unstamped lock could be silently renamed over; the stamp also lets a holder prove
+  the lock is still its own immediately before replacing the vault, and abandon the write if it is not.
+- **Scope the guarantee precisely.** A lock only excludes writers that take it. Builds from before this
+  protocol — the retained and rollback clients the updater keeps runnable — write the same file without
+  it, as do foreign writers such as cloud sync or a hand edit. For all of those the pre-replacement
+  readability recheck and the refuse-a-newer-version rule are the protection, and they narrow the
+  window to the rename rather than closing it. This removes lost updates between lock-aware builds now
+  and becomes general only once every still-runnable build carries the protocol; do not describe it as
+  closing the differently-versioned case outright.
 
 Boot tests redirect every player-state seam through `SaveIsolation`; persistence and fixture tests use
 explicit throwaway paths. A migration test that touches a played save is itself a product-law

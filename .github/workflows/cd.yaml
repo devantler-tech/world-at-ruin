@@ -1020,7 +1020,7 @@ jobs:
       ]
     if: ${{ always() }}
     steps:
-      - uses: devantler-tech/actions/aggregate-job-checks@9705e47d7df0b556ec06786247297c0e5020e56d # v10.2.1
+      - uses: devantler-tech/actions/aggregate-job-checks@4caaa94e681a5627e8c77d2910dc51ea2ab34c5c # v10.2.4
         with:
           job-results: >-
             ${{ needs.publish-macos.result }}

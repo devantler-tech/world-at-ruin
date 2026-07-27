@@ -270,6 +270,10 @@ func _ready() -> void:
 ## child's work, not this caller's.
 func _reconcile_boot_recovery() -> void:
 	var path := BootRecovery.recovery_path()
+	# Missing is distinct from an existing clean document. The first real boot
+	# establishes the active writer schema on disk; later clean boots leave that
+	# document byte-stable.
+	var existed := FileAccess.file_exists(path)
 	var loaded := BootRecovery.load_state(path)
 	# An unreadable or newer document loads with ok false and a read-only,
 	# rollback-safe degraded state. It is carried forward rather than replaced:
@@ -294,10 +298,14 @@ func _reconcile_boot_recovery() -> void:
 	#
 	# A pending marker is the whole test: every ok-true path of reconcile clears
 	# a non-null marker, and the only path that leaves the state untouched is the
-	# one where nothing was pending. Then writing back would be a pointless
-	# rewrite of the player's file on every single launch.
+	# one where nothing was pending. An existing document then needs no rewrite,
+	# but an absent first-boot path must persist the active writer schema once.
 	var pending: Variant = (state as Dictionary).get("marker") if state is Dictionary else null
 	if pending == null:
+		if not existed and loaded["ok"] as bool:
+			var initialized := BootRecovery.save_state(path, state)
+			if not (initialized["ok"] as bool):
+				push_warning("boot recovery: first-boot state was not persisted — %s" % str(initialized["reason"]))
 		return
 
 	var failed := str(settled["quarantined_version"])

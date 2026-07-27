@@ -32,7 +32,7 @@ class_name BootRecovery
 ## [codeblock]
 ## {
 ##     version: absent | int,     # absence is shipped v0; new and changed state
-##                                 # uses v1 after the v0.51.1 reader bake
+##                                 # uses v1, which retained v0.51.1 can read
 ##     marker: null | String,      # version whose boot began but has not reached
 ##                                 # the checkpoint yet
 ##     quarantined: Array[String], # the RollbackSelection ledger — every version
@@ -59,10 +59,9 @@ class_name BootRecovery
 ##    still passes every product-law eligibility proof and leaves the suspect
 ##    bytes intact for a newer shell or reinstall to recover.
 
-## Maximum schema this shell can READ. The unversioned shape already shipped and
-## is treated as v0 forever; v1 adds only this field. Its reader shipped alone
-## in v0.51.1, which became the standing retained rollback target before #343
-## activated the writer in a separate contract release.
+## Maximum schema this shell can READ. The unversioned shape is treated as v0
+## forever; v1 adds only this field. The retained v0.51.1 app reads v1 and is the
+## standing rollback target that permits this shell to originate it.
 const RECOVERY_VERSION := 1
 
 ## Schema originated by first boot and the next real write of legacy v0 state.

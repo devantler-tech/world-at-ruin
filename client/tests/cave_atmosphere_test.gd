@@ -19,10 +19,16 @@ extends Node3D
 ##
 ## Run: godot --headless --path client res://tests/cave_atmosphere_test.tscn
 
-## What #211 shipped, restated here rather than read from the module under test.
+## What ships, restated here rather than read from the module under test.
 ## Asserting the constant equals itself would pass for any value at all,
 ## including one that silently regraded every outdoor frame in the game.
-const SHIPPED_SURFACE_DENSITY := 0.06
+##
+## Lowered from #211's 0.06 to 0.045 by #273, which is the one kind of change
+## law 1 exists to make deliberate: the ground regions #260 generated were being
+## flattened by the weather, and this term is the near-field half of that. The
+## number moving here is the point of that change rather than a side effect of
+## one, so it moves in the same reviewed commit as the constant it pins.
+const SHIPPED_SURFACE_DENSITY := 0.045
 
 ## Tolerance for float comparison — far narrower than any difference these laws
 ## distinguish.
@@ -38,11 +44,21 @@ const EPS := 1.0e-6
 ##
 ## Measured worst steps on this walk, so the margin is known rather than hoped
 ## for: the 5-point cross this replaced **0.036** (three probes crossing
-## together), 12 or 24 probes **0.005**, 48 probes **0.0025**. The shipped
-## pattern therefore clears this bound by about 20%. That is deliberately not a
-## comfortable margin — it is the honest one, and a change that needs more should
-## raise [constant CaveAtmosphere.PROBE_COUNT] rather than relax this number.
-const MAX_DENSITY_STEP := 0.006
+## together), 12 or 24 probes **0.005**, 48 probes **0.0025**, all at the 0.06
+## grade those were measured on. The shipped pattern therefore clears this bound
+## by about 20%. That is deliberately not a comfortable margin — it is the honest
+## one, and a change that needs more should raise
+## [constant CaveAtmosphere.PROBE_COUNT] rather than relax this number.
+##
+## Derived from the grade rather than written as a literal, because every step
+## this bounds is a fraction of it: [method CaveAtmosphere.height_density] scales
+## the whole curve by the surface density, so lowering that shrinks the real
+## steps proportionally. Left at the literal 0.006 while #273 lowered the grade
+## to 0.045, the bound would have stayed still while the steps it measures got
+## smaller — the law would still have passed, and would have been measuring a
+## fifth less than it was written to measure. A threshold salvaged across a
+## change to the quantity it bounds goes quietly vacuous exactly this way.
+const MAX_DENSITY_STEP := SHIPPED_SURFACE_DENSITY * 0.1
 
 
 func _ready() -> void:

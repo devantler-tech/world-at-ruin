@@ -2,9 +2,9 @@ extends Node
 ## Forward-only fixture guard for the immutable shell's recovery memory
 ## (#343, parent #256).
 ##
-## The shipped unversioned document is v0 and remains readable forever. After
-## the v0.51.1 reader expansion became the standing retained rollback target,
-## first boot and the next real write of v0 state contract to explicit v1.
+## The shipped unversioned document is v0 and remains readable forever. The
+## retained v0.51.1 app reads v1 and is the standing rollback target; first boot
+## and the next real write of v0 state therefore contract to explicit v1.
 ## Every ledger version must have a golden fixture that survives load without
 ## churn and write-back without loss. Newer or corrupt documents degrade
 ## path-latched read-only: their bytes are preserved and new updates are refused,

@@ -110,12 +110,12 @@ A client-side **update manager** that, at boot and periodically:
      staged pack and only promotes it once the boot reaches a success checkpoint; if a launch does not
      reach it, the next launch **selects the previous good pack**. The shell, not the overlay, is the
      root of recovery — which is why a trustworthy shell must exist before the first player (child 6).
-     The shell's `boot_recovery.json` is itself forward-only persisted state. The reader expansion
-     shipped alone in v0.51.1, reads both unversioned v0 and explicit v1, and preserves either shape
-     without load-time churn. Once v0.51.1 became the standing retained rollback target, #343
-     activated explicit v1 for first boot and the next real write of v0 state. Golden fixtures plus
-     an append-only ledger pin every readable shape. A corrupt or newer document remains untouched
-     and path-latched read-only: no new pack may be attempted and a destination recheck prevents
+     The shell's `boot_recovery.json` is itself forward-only persisted state. It reads both
+     unversioned v0 and explicit v1 without load-time churn; first boot and the next real write of v0
+     state use v1. The published v0.51.1 app is the standing rollback target that reads and applies
+     v1, enforced by an artifact-level CI gate against the shipped golden. Golden fixtures plus an
+     append-only ledger pin every readable shape. A corrupt or newer document remains untouched and
+     path-latched read-only: no new pack may be attempted and a destination recheck prevents
      replacement from laundering the evidence, but its quarantine view degrades to an empty readable
      list so it cannot veto an otherwise eligible rollback. Eligibility still independently proves
      save readability, protocol reachability and shell compatibility; denying every retained build
