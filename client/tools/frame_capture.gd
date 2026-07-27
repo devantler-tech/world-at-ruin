@@ -1599,19 +1599,30 @@ func _designate_replica_points(cam: Camera3D, view: ReplicaView, entities: Array
 	var vp := get_viewport().get_visible_rect().size
 	var right := cam.global_transform.basis.x
 	var up := cam.global_transform.basis.y
-	var half_height := ReplicaView.MARKER_HEIGHT_M * 0.5
 	var out: Array[Vector2i] = []
 	for e_var: Variant in entities:
 		var e: Dictionary = e_var
 		# Never null: _replicas_are_framed runs first and hard-fails on a missing
 		# marker, so reaching here means every fixture id has one.
 		var marker := view.marker_for(int(e["id"]))
-		var radius: float = float(e["radius"]) / ReplicaView.MM_PER_M
+		# Measured off the mesh the view ACTUALLY built rather than re-derived
+		# from the fixture and the nominal height. `ReplicaView._fit_capsule`
+		# grows a capsule's height once its radius passes half the nominal one,
+		# so a span computed from the constant would creep onto the caps for a
+		# wide entity. Reading the mesh cannot drift from that rule, because it
+		# is the result of it.
+		var mesh: CapsuleMesh = marker.mesh
+		var radius := mesh.radius
+		# The straight section is what the rows must stay inside — Godot's
+		# capsule height INCLUDES both hemispherical caps. Zero when the mesh
+		# has become a sphere (radius equal to half its height), which collapses
+		# the rows onto the equator: degenerate, but still interior, which is
+		# the property the samples actually need.
+		var cylinder_half := maxf(mesh.height * 0.5 - radius, 0.0)
 		for row in REPLICATION_SAMPLE_ROWS:
-			# Spans ±0.5 of the half-height. The capsule's cylindrical section
-			# runs to ±(half_height - radius), so this stays inside it for every
-			# radius the fixture uses and never samples a cap.
-			var v := (float(row) / float(REPLICATION_SAMPLE_ROWS - 1) - 0.5) * half_height
+			# Spans 90% of the straight section, so no row sits on the seam
+			# where the cap begins and antialiasing mixes in the background.
+			var v := (float(row) / float(REPLICATION_SAMPLE_ROWS - 1) - 0.5) * 1.8 * cylinder_half
 			for col in REPLICATION_SAMPLE_COLS:
 				# Spans ±0.5 of the radius, so a point stays interior even where
 				# the capsule curves away from the camera.

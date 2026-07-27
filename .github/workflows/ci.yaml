@@ -1474,6 +1474,18 @@ jobs:
             echo "::error::replication capture never reached BOOT_OK — frames depict a partially booted game"
             tail -40 capture-replication.log; exit 1
           fi
+          # A script error anywhere else in the run leaves the population marker
+          # and BOOT_OK looking healthy while the world around the capsules is
+          # degraded — the same green-check-over-degraded-evidence failure the
+          # world and moving-key steps already sweep for. The carve-out is the
+          # known Metal fence-timeout noise, not a general softening.
+          grep -vE "timeout waiting for fence|drivers/metal/rendering_device_driver_metal" \
+            capture-replication.log > capture-replication.filtered.log || true
+          if grep -qE "SCRIPT ERROR|^ERROR" capture-replication.filtered.log; then
+            echo "::error::errors during the replication capture — the frames may not depict a healthy world"
+            grep -nE "SCRIPT ERROR|^ERROR" capture-replication.filtered.log | head -20
+            exit 1
+          fi
           if grep -qE "SHADER ERROR|Shader compilation failed" capture-replication.log; then
             echo "::error::shader compilation failed during the replication capture — the frames show a fallback material"
             grep -nE "SHADER ERROR|Shader compilation failed" capture-replication.log | head -20
