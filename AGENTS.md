@@ -402,9 +402,12 @@ everything shipped afterwards is held to.
   SEPARATE versioned file** — `SaveVault` (`user://vault.json`, #249): the recipe format is closed
   (`CharacterFactory.validate` rejects any unknown top-level field, and every shipped client already
   enforces that), so the character save cannot grow new kinds of data without older clients refusing
-  it. `CharacterStore` parses the JSON object, then `CharacterFactory.build()` refuses the unknown
-  shape and leaves the saved body unbuilt; the store does not provide the vault's refusal latch, and
-  the manual editor remains a writable path. A sibling file is the only shape a shipped client
+  it. `CharacterStore.load_from()` parses the JSON object and then asks
+  `CharacterFactory.refusal_reason()` whether this build can accept it, latching a refusal on the
+  path when it cannot — the same shape as the vault's, and latched for the life of the process so a
+  recipe that disappears after being refused does not reopen a writable path. While a path is
+  refused, `save_to()` and `clear()` both refuse it and `main.gd` locks every character-creator
+  entry, so an unreadable recipe is never mistaken for a first run. A sibling file is the only shape a shipped client
   handles safely: it never reads it, so it never rejects or deletes it. The vault obeys the same laws
   (name-keyed, additive-only, newer versions refused) with the same enforcement shape —
   `tests/save_vault_guard_test`, golden `tests/data/golden_vault_v<N>.json`, and the append-only
@@ -431,7 +434,11 @@ everything shipped afterwards is held to.
   a boot, and the stale timeout is generous on purpose — shortening it to make writes prompt would let
   a live writer be robbed mid-write. Tests redirect it with `WAR_VAULT_PATH`, mirroring
   `WAR_SAVE_PATH`, and seam the timeout with `WAR_VAULT_LOCK_STALE_SECONDS` (test-only; malformed or
-  negative values keep the shipped window). The immutable shell's recovery memory is a third persisted contract:
+  negative values keep the shipped window). Production writers emit through vault v2. The reader also
+  accepts vault v3 `reward_claims`, and `Main` restores those claims into its boot-owned
+  `ExplorationRewards` tracker. Production does not originate v3 documents until the retained reader
+  expansion has baked and the writer capability is activated separately. The immutable shell's
+  recovery memory is a third persisted contract:
   `BootRecovery` (`user://boot_recovery.json`) reads through schema v1 and writes explicit v1 on
   first boot or the next real write of legacy v0 state. The retained v0.51.1 app reads v1 and is the
   rollback target that permits this writer; v0 remains readable forever. The contract is anchored by

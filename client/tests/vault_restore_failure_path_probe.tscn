@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tests/vault_restore_failure_path_probe.gd" id="1_failure_probe"]
+
+[node name="VaultRestoreFailurePathProbe" type="Node"]
+script = ExtResource("1_failure_probe")

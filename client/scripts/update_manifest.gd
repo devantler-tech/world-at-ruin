@@ -95,9 +95,10 @@ const SAVE_CAPABILITY_WRITES := 3
 ## needlessly routed away from a pack update despite a valid fallback existing.
 ##
 ## Must always be >= the write capability (a build must read what it writes).
-## Capability 3 is vault-v2 discovery state. The v0.52.0 expansion release
-## baked this ceiling before the writer above was activated.
-const SAVE_CAPABILITY_READS := 3
+## Capability 4 is vault-v3 claimed exploration-reward state. This build is its
+## expansion release: SaveVault reads and preserves the field while production
+## writers remain on baked capability 3 until this build is retained.
+const SAVE_CAPABILITY_READS := 4
 
 ## The oldest shell this manifest still supports updating FROM.
 ##

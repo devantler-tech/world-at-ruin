@@ -98,6 +98,39 @@ func _ready() -> void:
 	if _failed:
 		return
 
+	# --- restore: accepted persisted claims are live, atomic, and claim-once ---
+	var restored := ExplorationRewards.new()
+	if not restored.has_method("restore"):
+		_fail("the reward tracker has no restore path for accepted vault-v3 claims")
+		return
+	var persisted := ["shrine", "future_place", "shrine"]
+	if not bool(restored.call("restore", persisted)):
+		_fail("restore refused valid non-empty stable reward-claim ids")
+		return
+	_eq_list(restored.claimed(), "future_place,shrine",
+		"restore: duplicate persisted ids become one deterministic claimed set")
+	_check(restored.is_claimed("future_place"), true,
+		"restore: an unknown future id is preserved as claimed")
+	# The caller's input is not retained by reference.
+	persisted.append("later_mutation")
+	_check(restored.is_claimed("later_mutation"), false,
+		"restore: mutating the source array cannot change restored state")
+	# Registering a restored place later must not grant it a second time.
+	restored.add("shrine", {"kind": "lore", "id": "shrine_history"})
+	_check(restored.claim(["shrine"]).is_empty(), true,
+		"restore: a persisted claim cannot grant again after registration")
+	if _failed:
+		return
+
+	var invalid_restore := ExplorationRewards.new()
+	if bool(invalid_restore.call("restore", ["valid_place", 7])):
+		_fail("restore accepted a malformed reward-claim id")
+		return
+	_check(invalid_restore.claimed().is_empty(), true,
+		"restore: one malformed id leaves no half-restored state")
+	if _failed:
+		return
+
 	# --- determinism: two identical registrations + claims agree byte-for-byte ---
 	if not _deterministic_replay():
 		return

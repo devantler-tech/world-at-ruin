@@ -33,10 +33,11 @@ const DRIFT_ASSERT_TICK := 60
 const EPS := 0.01
 const PROBE_PATH := "user://vault_restore_boot_probe.json"
 const DISCOVERY_PROBE := ["wardens_shrine", "future_place", "wardens_shrine"]
+const REWARD_CLAIM_PROBE := ["starter_cave", "future_place", "starter_cave"]
 const SHIPPED_DISCOVERIES := "res://tests/data/shipped_discoveries.txt"
 const RETRY_CHARACTER_PROBE := "user://vault_discovery_retry_character.json"
-const RETRY_PROBE_DIR := "user://vault_discovery_retry"
-const RETRY_VAULT := RETRY_PROBE_DIR + "/vault.json"
+## Resolved per process in _ready(); local worktrees share Godot's user://.
+const RETRY_PROBE_PREFIX := "user://vault_discovery_retry"
 const MAIN_SCENE_PATH := "res://scenes/main.tscn"
 
 ## An INDEPENDENT expected destination per shipped attunement name.
@@ -73,10 +74,18 @@ var _restored := 0
 ## shrine discovery write, a reboot that can only recover the shrine from disk,
 ## retry after a deliberately transient first write failure, and a valid
 ## cloud-synced vault replacement that drops a rollback-only name from disk.
+## The final reader boot applies vault-v3 claimed exploration rewards without
+## activating a production reward writer.
 var _discovery_phase := ""
+var _retry_probe_dir := ""
+var _retry_vault := ""
 
 
 func _ready() -> void:
+	_retry_probe_dir = "%s.process-%d" % [RETRY_PROBE_PREFIX, OS.get_process_id()]
+	_retry_vault = _retry_probe_dir + "/vault.json"
+	# Machine-readable evidence for the cross-process isolation guard.
+	print("SAVE_ISOLATION_RETRY_VAULT=%s" % _retry_vault)
 	_begin_boot(false)
 
 
@@ -167,8 +176,8 @@ func _begin_discovery_retry_boot() -> void:
 	if not _save.begin():
 		_fail("save isolation did not take for the transient discovery-write boot")
 		return
-	OS.set_environment(SaveVault.VAULT_PATH_ENV, RETRY_VAULT)
-	if SaveVault.vault_path() != RETRY_VAULT:
+	OS.set_environment(SaveVault.VAULT_PATH_ENV, _retry_vault)
+	if SaveVault.vault_path() != _retry_vault:
 		_fail("the transient discovery-write vault seam did not take")
 		return
 	SaveVault.clear_refusals_for_test()
@@ -205,6 +214,34 @@ func _begin_discovery_drift_boot() -> void:
 	add_child(_main)
 
 
+## Seed the exact v3 reader-expansion shape, then boot the production scene.
+## The tracker is intentionally not given registration data here: a rollback
+## reader must remember that a newer build already granted an unknown place, or
+## later registration could grant it twice.
+func _begin_reward_reader_boot() -> void:
+	_discovery_phase = "reward_restore"
+	_ticks = 0
+	if _main != null:
+		_main.queue_free()
+		_main = null
+	_save = SaveIsolation.new(PROBE_PATH)
+	if not _save.begin():
+		_fail("save isolation did not take for the reward-claim reader boot")
+		return
+	SaveVault.clear_refusals_for_test()
+	var expanded := {
+		"version": 3,
+		"attuned": [],
+		"discoveries": ["starter_cave"],
+		"reward_claims": REWARD_CLAIM_PROBE.duplicate(),
+	}
+	if not SaveVault.save_to(SaveVault.vault_path(), expanded):
+		_fail("could not seed the vault-v3 reward-claim probe")
+		return
+	_main = (load(MAIN_SCENE_PATH) as PackedScene).instantiate()
+	add_child(_main)
+
+
 func _physics_process(_delta: float) -> void:
 	# _fail() requests tree shutdown but does not end this frame. A setup helper
 	# can fail after clearing the previous scene and before assigning the next;
@@ -226,11 +263,11 @@ func _physics_process(_delta: float) -> void:
 	if _discovery_phase == "write" and _ticks == 10:
 		player.global_position = Vector3(0.0, world.shrine_respawn_point().y, -13.0)
 	if _discovery_phase == "retry" and _ticks == 3:
-		if FileAccess.file_exists(RETRY_VAULT):
+		if FileAccess.file_exists(_retry_vault):
 			_fail("the transient write unexpectedly succeeded before its parent directory existed")
 			return
 		var mkdir_error := DirAccess.make_dir_absolute(
-			ProjectSettings.globalize_path(RETRY_PROBE_DIR))
+			ProjectSettings.globalize_path(_retry_probe_dir))
 		if mkdir_error != OK and mkdir_error != ERR_ALREADY_EXISTS:
 			_fail("could not make the transient vault path writable (%d)" % mkdir_error)
 			return
@@ -268,6 +305,9 @@ func _physics_process(_delta: float) -> void:
 			return
 		"drift":
 			_assert_discovery_drift()
+			return
+		"reward_restore":
+			_assert_reward_claim_restore()
 			return
 
 	var shrine_point := world.shrine_respawn_point()
@@ -462,8 +502,38 @@ func _assert_discovery_drift() -> void:
 	if not _save.real_save_untouched():
 		_fail("the cloud-synced discovery boot touched the player's real save or vault")
 		return
+	_begin_reward_reader_boot()
+
+
+## Capability 4 is safe only if the real launch path owns and applies the
+## accepted claim set. A parser-only reader would let a rollback build grant an
+## already-consumed reward again.
+func _assert_reward_claim_restore() -> void:
+	var tracker: Variant = null
+	for property: Dictionary in _main.get_property_list():
+		if String(property.get("name", "")) == "_exploration_rewards":
+			tracker = _main.get("_exploration_rewards")
+			break
+	if tracker is not ExplorationRewards:
+		_fail("CAPABILITY 4 IS PARSER-ONLY: the production boot owns no ExplorationRewards tracker")
+		return
+	var expected: Array[String] = ["future_place", "starter_cave"]
+	if (tracker as ExplorationRewards).claimed() != expected:
+		_fail("the production boot did not restore the vault-v3 reward claims exactly")
+		return
+	var vault = SaveVault.load_saved()
+	if vault is not Dictionary:
+		_fail("the reward-claim reader boot left no readable vault")
+		return
+	if vault.get("version") != 3 or vault.get("reward_claims", []) != REWARD_CLAIM_PROBE:
+		_fail("the reader-only boot changed or downgraded the v3 reward-claim document")
+		return
+	if not _save.real_save_untouched():
+		_fail("the reward-claim reader boot touched the player's real save or vault")
+		return
 	print(("TEST PASS — %d shipped attunement(s) and vault-v2 discovery state survive "
-		+ "a logout, transient writes retry, and rollback-only ids cannot poison known writes "
+		+ "a logout, transient writes retry, rollback-only ids cannot poison known writes, "
+		+ "and vault-v3 reward claims apply without activating their writer "
 		+ "(control woke at %s)")
 		% [_restored, str(_control_spawn)])
 	get_tree().quit(0)
@@ -529,15 +599,19 @@ func _shipped_discoveries() -> Dictionary:
 
 
 func _cleanup_retry_probe() -> void:
-	for path in [RETRY_VAULT + ".tmp", RETRY_VAULT]:
+	for path in [_retry_vault + ".tmp", _retry_vault]:
 		if FileAccess.file_exists(path):
 			DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
-	DirAccess.remove_absolute(ProjectSettings.globalize_path(RETRY_PROBE_DIR))
+	if not _retry_probe_dir.is_empty():
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(_retry_probe_dir))
 
 
 func _fail(message: String) -> void:
 	if _save != null:
-		_save.end()
+		var isolation_breached := not _save.real_save_untouched()
+		_save = null
+		if isolation_breached:
+			message += " — AND the run touched the player's real save, vault or recovery ledger"
 	_cleanup_retry_probe()
 	push_error(message)
 	print("TEST FAIL — %s" % message)
@@ -546,5 +620,7 @@ func _fail(message: String) -> void:
 
 func _exit_tree() -> void:
 	if _save != null:
-		_save.end()
+		if not _save.real_save_untouched():
+			push_error("vault restore boot test teardown detected a real player-data mutation")
+		_save = null
 	_cleanup_retry_probe()

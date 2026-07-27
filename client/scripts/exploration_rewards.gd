@@ -24,8 +24,10 @@ extends RefCounted
 ## claimed at most ONCE (this game has no undo, so re-claiming is a no-op). It does
 ## not import [Discovery]; the caller composes them — feed the ids
 ## `Discovery.observe(pos)` returns straight into [method claim]. WHAT to do with a
-## granted reward (a toast, unlocking a waypoint, revealing the map) and PERSISTING
-## the claimed set across a logout are the caller's concern and separate follow-ups.
+## granted reward (a toast, unlocking a waypoint, revealing the map) remains the
+## caller's concern. Production restores accepted [code]reward_claims[/code] from
+## vault v3; applying and persisting newly granted claims remain separate caller
+## and writer responsibilities.
 
 ## A travel/attune point the player can return to — access, not power.
 const KIND_WAYPOINT := "waypoint"
@@ -126,6 +128,20 @@ func claimed() -> Array[String]:
 		out.append(poi_id)
 	out.sort()
 	return out
+
+
+## Restore the append-only claim set accepted from a save-vault reader. Names
+## do not need to be registered in this build: a rollback reader must remember
+## that a newer client already granted a place's reward, or registration after
+## rollback could grant it twice. Validate before mutation so one malformed
+## entry cannot leave a half-restored session.
+func restore(names: Array) -> bool:
+	for name in names:
+		if name is not String or (name as String).is_empty():
+			return false
+	for name: String in names:
+		_claimed[name] = true
+	return true
 
 
 ## How many rewards have been claimed.

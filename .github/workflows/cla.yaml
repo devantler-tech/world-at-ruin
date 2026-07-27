@@ -25,6 +25,7 @@ on:
 concurrency:
   group: cla-${{ github.event.pull_request.number || github.event.issue.number }}
   cancel-in-progress: false
+  queue: max # pending runs wait FIFO; the default replaces them
 
 permissions: {}
 
