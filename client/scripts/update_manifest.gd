@@ -109,15 +109,24 @@ const SHELL_MIN_SUPPORTED := "0.1.0"
 
 ## Build the update manifest for this build.
 ##
-## Takes no arguments: every value is derived from this build's own constants, and
-## the fields that would need outside input (where to fetch, and the signature
-## over it) are exactly the ones withheld — see the class comment.
+## `sequence` and `not_after` are publication-envelope facts supplied by the
+## publisher: the sequence is monotonic across publications, and the expiry is a
+## canonical UTC timestamp. They cannot be derived from this build without either
+## conflating SemVer with the anti-replay counter or reading the wall clock and
+## making identical builds nondeterministic. Every other emitted value is derived
+## from this build's own constants; delivery and signing fields remain withheld —
+## see the class comment.
 ##
 ## Returns `{ manifest: Dictionary, error: String }`. `error` is "" on success;
 ## otherwise `manifest` is empty and `error` says what was wrong. It FAILS CLOSED
 ## rather than emitting something [UpdateDecision] would refuse in the field,
 ## where the failure is expensive and invisible.
-static func build() -> Dictionary:
+static func build(sequence: Variant, not_after: Variant) -> Dictionary:
+	if not UpdateDecision.is_int_id(sequence):
+		return {"manifest": {}, "error": "sequence is not a non-negative whole number"}
+	if not UpdateDecision.is_utc_datetime(not_after):
+		return {"manifest": {}, "error": "not_after is not a canonical UTC timestamp (YYYY-MM-DDTHH:MM:SSZ)"}
+
 	# `cd.yaml` accepts a prerelease tag (`^v[0-9]+\.[0-9]+\.[0-9]+(-.+)?$`) and
 	# stamps `DevLog.VERSION` from it, so a `v0.2.0-rc.1` release would put
 	# "0.2.0-rc.1" here. `UpdateDecision.is_version` takes dotted digits ONLY, so
@@ -145,6 +154,8 @@ static func build() -> Dictionary:
 		"error": "",
 		"manifest": {
 			"schema": SCHEMA,
+			"sequence": int(sequence),
+			"not_after": str(not_after),
 			"channel": CHANNEL,
 			"shell": {
 				"current": shell_version,

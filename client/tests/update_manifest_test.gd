@@ -28,6 +28,9 @@ const CAPABILITY_LEDGER := "res://tests/data/shipped_save_capability.txt"
 const RECIPE_LEDGER := "res://tests/data/shipped_recipe_versions.txt"
 const EXPORT_PRESETS := "res://export_presets.cfg"
 const SERVER_WIRE := "res://../server/wire/wire.go"
+const MANIFEST_SEQUENCE := 42
+const MANIFEST_NOT_AFTER := "2026-07-27T12:00:01Z"
+const OBSERVED_AT := "2026-07-27T12:00:00Z"
 
 var _failed := false
 
@@ -36,6 +39,7 @@ func _ready() -> void:
 	_test_round_trip_is_accepted()
 	_test_round_trip_offers_a_pack_update()
 	_test_every_required_field_is_load_bearing()
+	_test_freshness_inputs_fail_closed()
 	_test_values_track_their_sources()
 	_test_no_delivery_is_published()
 	_test_read_capability_covers_what_is_written()
@@ -79,7 +83,7 @@ func _test_round_trip_offers_a_pack_update() -> void:
 ## manifest, the round trip above would be proving nothing about that field.
 func _test_every_required_field_is_load_bearing() -> void:
 	var required := [
-		"schema", "channel",
+		"schema", "sequence", "not_after", "channel",
 		"shell", "shell.current", "shell.min_supported", "shell.reads_min", "shell.reads_capability_max",
 		"pack", "pack.version", "pack.min_shell",
 		"protocol", "protocol.min", "protocol.max",
@@ -99,6 +103,23 @@ func _test_every_required_field_is_load_bearing() -> void:
 			return
 
 
+## Publication inputs are untrusted even though the remaining fields come from
+## build constants. Emitting a malformed counter or expiry would publish bytes
+## every real client refuses, so build() must fail before serialization.
+func _test_freshness_inputs_fail_closed() -> void:
+	for bad_sequence: Variant in [-1, 1.5, true, "42"]:
+		var built := UpdateManifest.build(bad_sequence, MANIFEST_NOT_AFTER)
+		if str(built.get("error", "")).is_empty() or not (built.get("manifest", {}) as Dictionary).is_empty():
+			_fail("build() emitted a manifest for invalid sequence %s" % str(bad_sequence))
+			return
+
+	for bad_expiry: Variant in ["", "2026-02-30T12:00:00Z", "2026-07-27 12:00:01", 42]:
+		var built := UpdateManifest.build(MANIFEST_SEQUENCE, bad_expiry)
+		if str(built.get("error", "")).is_empty() or not (built.get("manifest", {}) as Dictionary).is_empty():
+			_fail("build() emitted a manifest for invalid not_after %s" % str(bad_expiry))
+			return
+
+
 # --- the manifest must not restate, nor overstate ---
 
 ## Every value is checked against the constant it claims to come from. A
@@ -110,6 +131,8 @@ func _test_values_track_their_sources() -> void:
 		return
 	var checks := {
 		"schema": [m["schema"], UpdateDecision.SUPPORTED_MANIFEST_SCHEMA],
+		"sequence": [m["sequence"], MANIFEST_SEQUENCE],
+		"not_after": [m["not_after"], MANIFEST_NOT_AFTER],
 		"pack.version": [m["pack"]["version"], DevLog.VERSION],
 		"protocol.min": [m["protocol"]["min"], WireCodec.VERSION],
 		"protocol.max": [m["protocol"]["max"], WireCodec.VERSION],
@@ -300,7 +323,7 @@ func _test_json_is_stable_and_parseable() -> void:
 # --- helpers ---
 
 func _manifest() -> Dictionary:
-	var built := UpdateManifest.build()
+	var built := UpdateManifest.build(MANIFEST_SEQUENCE, MANIFEST_NOT_AFTER)
 	if str(built.get("error", "")) != "":
 		_fail("build() refused to emit a manifest for this build: %s" % str(built["error"]))
 		return {}
@@ -315,6 +338,8 @@ func _installed_current() -> Dictionary:
 		"save_schema": CharacterFactory.RECIPE_VERSION,
 		"save_capability": UpdateManifest.SAVE_CAPABILITY_WRITES,
 		"protocol": WireCodec.VERSION,
+		"manifest_sequence_high_water": MANIFEST_SEQUENCE - 1,
+		"observed_at": OBSERVED_AT,
 	}
 
 

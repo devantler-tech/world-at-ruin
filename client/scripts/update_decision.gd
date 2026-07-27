@@ -37,16 +37,24 @@ const PACK_UPDATE := "pack_update"
 const SHELL_UPDATE := "shell_update"
 const BLOCKED_INCOMPATIBLE := "blocked_incompatible"
 const INVALID_MANIFEST := "invalid_manifest"
+const STALE_MANIFEST := "stale_manifest"
+const EXPIRED_MANIFEST := "expired_manifest"
 
 
 ## Decide what the client should do. `installed` describes the running build:
 ##   { shell_version: String, pack_version: String, save_schema: int,
-##     save_capability: int, protocol: int, quarantined: Array[String] (optional) }
+##     save_capability: int, protocol: int,
+##     manifest_sequence_high_water: int (optional), observed_at: String,
+##     quarantined: Array[String] (optional) }
 ## Missing keys default to the lowest value, so a partial state is never a crash —
 ## with ONE deliberate exception: `save_capability` must be present and whole, or
 ## the decision is a loud block. A defaulted capability does not fail safe (see the
 ## check itself), and the forward path must not be more permissive than
 ## [RollbackSelection] about the very same fact.
+## `manifest_sequence_high_water` is likewise supplied by the caller from whatever
+## persistence the updater owns; an absent value means this client has not accepted
+## a manifest yet. `observed_at` is required and caller-supplied so this core can
+## enforce expiry without reading the wall clock and ceasing to be pure.
 ## `manifest` is the parsed update manifest (the caller has already verified its
 ## signature). Returns { action: String, reason: String } where action is one of
 ## the constants above. It never crashes on a malformed manifest.
@@ -60,6 +68,27 @@ static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 	var env_err := _envelope_error(manifest)
 	if env_err != "":
 		return _result(INVALID_MANIFEST, env_err)
+
+	# Freshness state is caller-owned: this core neither persists the high-water
+	# mark nor reads the clock. Unknown state fails closed rather than turning
+	# anti-replay off. A genuinely fresh install is represented by the ABSENCE of
+	# the optional high-water key, whose safe floor is sequence zero.
+	if not is_utc_datetime(installed.get("observed_at")):
+		return _result(BLOCKED_INCOMPATIBLE, "the caller-supplied manifest observation time is missing or not a canonical UTC timestamp — cannot prove the manifest is unexpired")
+	var high_water: Variant = installed.get("manifest_sequence_high_water", 0)
+	if not is_int_id(high_water):
+		return _result(BLOCKED_INCOMPATIBLE, "the accepted manifest sequence high-water mark is not a whole number — cannot prove this manifest is not a replay")
+
+	var sequence := int(manifest["sequence"])
+	if sequence < int(high_water):
+		return _result(STALE_MANIFEST, "manifest sequence %d is below the accepted high-water mark %d — refusing a replay" % [
+			sequence, int(high_water)])
+
+	var observed_unix := _utc_datetime_to_unix(str(installed["observed_at"]))
+	var not_after_unix := _utc_datetime_to_unix(str(manifest["not_after"]))
+	if observed_unix >= not_after_unix:
+		return _result(EXPIRED_MANIFEST, "manifest expired at %s at or before observation at %s" % [
+			str(manifest["not_after"]), str(installed["observed_at"])])
 
 	# The installed save capability is the ONE installed field that is not defaulted
 	# to the lowest value (see the note on this function). Defaulting it to 0 does
@@ -372,6 +401,10 @@ static func compare_versions(a: String, b: String) -> int:
 ## of any schema can read it to learn it needs a newer shell — never stranded.
 ## Returns "" if valid, else a short reason.
 static func _envelope_error(m: Dictionary) -> String:
+	if not is_int_id(m.get("sequence")):
+		return "sequence is missing or not a whole number"
+	if not is_utc_datetime(m.get("not_after")):
+		return "not_after is missing or not a canonical UTC timestamp"
 	if not (m.get("channel") is String) or (m["channel"] as String).is_empty():
 		return "channel is missing or not a non-empty string"
 	if not (m.has("shell") and m["shell"] is Dictionary):
@@ -492,6 +525,60 @@ static func is_int_id(v: Variant) -> bool:
 	if v is float:
 		return is_finite(v) and v == floor(v) and v >= 0.0
 	return false
+
+
+## True only for a canonical second-precision UTC timestamp
+## (`YYYY-MM-DDTHH:MM:SSZ`). Parsing alone is too permissive: invalid calendar
+## dates can normalize, and accepting multiple textual forms makes signed
+## manifests disagree about the same instant. Round-tripping through [Time]
+## proves both the calendar value and the one canonical spelling. This reads no
+## clock; [method decide] still compares only caller-supplied data.
+static func is_utc_datetime(v: Variant) -> bool:
+	if not (v is String):
+		return false
+	var text := v as String
+	if text.length() != 20 \
+			or text.substr(4, 1) != "-" \
+			or text.substr(7, 1) != "-" \
+			or text.substr(10, 1) != "T" \
+			or text.substr(13, 1) != ":" \
+			or text.substr(16, 1) != ":" \
+			or not text.ends_with("Z"):
+		return false
+	var year_text := text.substr(0, 4)
+	var month_text := text.substr(5, 2)
+	var day_text := text.substr(8, 2)
+	var hour_text := text.substr(11, 2)
+	var minute_text := text.substr(14, 2)
+	var second_text := text.substr(17, 2)
+	for component: String in [year_text, month_text, day_text, hour_text, minute_text, second_text]:
+		if not is_unsigned_digits(component):
+			return false
+	var year := int(year_text)
+	var month := int(month_text)
+	var day := int(day_text)
+	var hour := int(hour_text)
+	var minute := int(minute_text)
+	var second := int(second_text)
+	if year < 1 or month < 1 or month > 12 \
+			or day < 1 or day > _days_in_month(year, month) \
+			or hour > 23 or minute > 59 or second > 59:
+		return false
+	var unix_time := _utc_datetime_to_unix(text)
+	return Time.get_datetime_string_from_unix_time(unix_time) + "Z" == text
+
+
+static func _days_in_month(year: int, month: int) -> int:
+	if month == 2:
+		return 29 if year % 4 == 0 and (year % 100 != 0 or year % 400 == 0) else 28
+	if month in [4, 6, 9, 11]:
+		return 30
+	return 31
+
+
+## Caller must validate with [method is_utc_datetime] first.
+static func _utc_datetime_to_unix(value: String) -> int:
+	return int(Time.get_unix_time_from_datetime_string(value.trim_suffix("Z")))
 
 
 ## True if v is a non-empty dotted-integer version string ("0.1.14"). Public for

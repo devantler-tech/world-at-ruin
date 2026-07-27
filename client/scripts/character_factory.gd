@@ -59,8 +59,9 @@ const HAND_RELAX_DEG := 8.0
 ##
 ## The pose is the still half. `BreathingIdle` supplies the motion on top of it
 ## as bone POSES, leaving every rest edit here untouched — so the stance is what
-## the body IS and the idle is what it is DOING. Locomotion (walk, run, jump)
-## is still absent and stays with the parent #224.
+## the body IS and the idle is what it is DOING. `WalkLocomotion` can decorate
+## grounded travel behind `WAR_WALK_CYCLE`; run, jump, landing and turn motion
+## remain absent and stay with the parent #224.
 ##
 ## This shipped opt-in (`WAR_REST_STANCE`) while the pose stood still, because a
 ## motionless stance was only half of what the art direction asks for. #243
