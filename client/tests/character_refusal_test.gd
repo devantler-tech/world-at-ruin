@@ -145,6 +145,12 @@ func _assert_refused(label: String, path: String) -> void:
 		_fail("%s: the path stayed writable" % label)
 	if CharacterStore.save_to(path, _wanderer()):
 		_fail("%s: a write was accepted over a refused recipe" % label)
+	# Deleting is a write too, and the destructive one.
+	OS.set_environment(CharacterStore.SAVE_PATH_ENV, path)
+	CharacterStore.clear()
+	OS.set_environment(CharacterStore.SAVE_PATH_ENV, "")
+	if not FileAccess.file_exists(path):
+		_fail("%s: a refused recipe was deleted" % label)
 	if FileAccess.get_sha256(path) != before:
 		_fail("%s: the original bytes were modified" % label)
 

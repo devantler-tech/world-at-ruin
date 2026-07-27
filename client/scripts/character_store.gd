@@ -160,9 +160,18 @@ static func load_saved() -> Variant:
 	return load_from(save_path())
 
 
+## Delete the active save. Refuses a path whose recipe was refused this session:
+## deleting is the most destructive write of all, and the state being protected
+## is precisely a character this build could not read well enough to judge.
+## Nothing in the shipped game calls this — the guard is here so that nothing
+## ever can without meeting the same condition as every other writer.
 static func clear() -> void:
+	var path := save_path()
+	if _refused.has(path):
+		push_error("CharacterStore: refusing to delete %s — the recipe there is not this build's to discard" % path)
+		return
 	if exists():
-		DirAccess.remove_absolute(ProjectSettings.globalize_path(save_path()))
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
 
 
 ## Move a character stranded at `backup` back to `target`, but ONLY when
