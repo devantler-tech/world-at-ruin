@@ -432,9 +432,9 @@ everything shipped afterwards is held to.
   a live writer be robbed mid-write. Tests redirect it with `WAR_VAULT_PATH`, mirroring
   `WAR_SAVE_PATH`, and seam the timeout with `WAR_VAULT_LOCK_STALE_SECONDS` (test-only; malformed or
   negative values keep the shipped window). The immutable shell's recovery memory is a third persisted contract:
-  `BootRecovery` (`user://boot_recovery.json`) reads through schema v1 while the expansion release
-  keeps production writes on the already-shipped unversioned v0 shape until #343's bake gate,
-  reads v0 forever, and is anchored by
+  `BootRecovery` (`user://boot_recovery.json`) reads through schema v1 and writes explicit v1 on
+  first boot or the next real write of legacy v0 state. The retained v0.51.1 app reads v1 and is the
+  rollback target that permits this writer; v0 remains readable forever. The contract is anchored by
   `tests/boot_recovery_guard_test`, `tests/data/golden_boot_recovery_v<N>.json`, and
   `tests/data/shipped_boot_recovery_versions.txt`. A corrupt or future recovery document is
   path-latched read-only and refuses new update attempts; persistence revalidates the destination

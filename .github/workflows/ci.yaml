@@ -34,6 +34,8 @@ jobs:
         run: tools/test-cd-cask-ref-visibility.sh
       - name: Cask branch resets only when stale and unclaimed
         run: tools/test-cd-cask-branch-reset.sh
+      - name: Retained boot-recovery reader gate is pinned and fail-closed
+        run: ./tools/retained-boot-recovery-reader-guard.test.sh
       - name: Version ledger is append-only (no-resets law)
         # The in-game guard anchors the required fixture range to
         # tests/data/shipped_recipe_versions.txt, but a checkout-local file
@@ -947,6 +949,12 @@ jobs:
           # This job uploads an artifact — never let the checked-out token
           # ride along in it (zizmor artipacked).
           persist-credentials: false
+      - name: Retained v1 reader artifact consumes the shipped recovery golden
+        # The writer may emit recovery v1 only because v0.51.1 is the retained
+        # monolithic rollback target. BOOT_OK alone is insufficient: recovery
+        # deliberately degrades when unreadable. This gate seeds the real v1
+        # golden and requires the released app to reconcile it without loss.
+        run: ./tools/verify-retained-boot-recovery-reader.sh
       - name: Install Godot (pinned, checksum-verified)
         run: |
           curl -fsSL -o godot.zip "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_macos.universal.zip"
@@ -1038,27 +1046,19 @@ jobs:
   # container's Go can lag.
   lint:
     name: Lint
-    uses: devantler-tech/actions/.github/workflows/lint.yaml@4caaa94e681a5627e8c77d2910dc51ea2ab34c5c # v10.2.4
+    uses: devantler-tech/actions/.github/workflows/lint.yaml@3efb4149a69b189fd957b7d871932570f6198313 # v10.2.5
     permissions:
-      contents: write
-      issues: write
-      pull-requests: write
+      contents: read
     with:
-      # Auto-fix only on branches in this repository.
-      #
-      # v10.2.0 of the shared workflow already forces read-only on fork pull requests, so
-      # the fork half of this is belt-and-braces. What this expression still does on its
-      # own is cover merge_group: there is no pull_request context there, so the shared
-      # workflow's fork check passes and MegaLinter would apply fixes that nothing can
-      # commit and nothing reports — work performed and silently discarded. Setting it
-      # false keeps merge-queue runs honest read-only checks.
+      # Pull-request and merge-queue code is untrusted, including this repository's
+      # MegaLinter configuration. Keep lint read-only and never expose the GitHub App
+      # credential used by release automation. Auto-fixes belong on a separate trusted
+      # workflow that does not execute proposed code.
       #
       # Read-only is not a softer gate: with APPLY_FIXES=none a deliberately misformatted
       # JSON file is a prettier warning and MegaLinter exits 0 (measured), while real lint
       # ERRORS — invalid JSON, shellcheck failures — still fail the job.
-      apply-fixes: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
-    secrets:
-      APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
+      apply-fixes: false
 
   server-ci:
     name: Server CI (Go)
@@ -1625,7 +1625,7 @@ jobs:
             echo "::error::could not read PRESETS from client/scripts/character_creator.gd — cannot tell which frames to require"
             exit 1
           fi
-          expected="first_run first_run_outfit first_run_lower"
+          expected="first_run first_run_outfit first_run_head_clothing first_run_head_armor first_run_lower"
           for p in $presets; do expected="$expected first_run_$p"; done
           missing=""
           for f in $expected; do
@@ -1989,7 +1989,7 @@ jobs:
             echo "::error::could not read PRESETS from client/scripts/character_creator.gd — cannot tell which frames to require"
             exit 1
           fi
-          expected="first_run first_run_outfit first_run_lower"
+          expected="first_run first_run_outfit first_run_head_clothing first_run_head_armor first_run_lower"
           for p in $presets; do expected="$expected first_run_$p"; done
           missing=""
           for f in $expected; do

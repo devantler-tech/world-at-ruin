@@ -26,6 +26,11 @@ const PRESETS := ["wanderer", "villager", "elder", "brute"]
 ## with an authored wardrobe surface suitable for every player.
 const LAYERED_OUTFIT_PICKERS_ENV := "WAR_LAYERED_OUTFIT_PICKERS"
 const LAYERED_OUTFIT_CAPABILITY := 2
+## The first head pair proves the authoring and occlusion path, but its flat
+## bake materials do not yet clear the character-art bar. Keep this new region
+## on the same guarded preview as the raw layered controls; saved recipes remain
+## readable because this list gates origination only (#329, #336).
+const PREVIEW_ONLY_OUTFIT_REGIONS := ["head"]
 
 ## What each archetype is, in the player's terms. The recipes carry their own
 ## `comment`, but those are written for whoever maintains the kit ("first recipe
@@ -259,10 +264,14 @@ func _build_panel() -> void:
 	# picker whose only entry is "none" is a row the player cannot use. Showing
 	# all thirteen would have added nine dead rows to a screen already faulted
 	# for reading as a debug panel (#227). Each region appears the moment a piece
-	# is baked for it, with no change here.
+	# is baked for it, except a new below-bar region held behind the existing
+	# layered-outfit preview.
 	var equipment_registry := CharacterFactory.equipment_registry()
+	var layered_outfit := layered_outfit_pickers_enabled()
 	for slot: String in pickable_regions(equipment_registry):
-		if layered_outfit_pickers_enabled():
+		if slot in PREVIEW_ONLY_OUTFIT_REGIONS and not layered_outfit:
+			continue
+		if layered_outfit:
 			for layer: String in pickable_layers(equipment_registry, slot):
 				_add_layer_outfit_picker(outfit, slot, layer)
 		else:

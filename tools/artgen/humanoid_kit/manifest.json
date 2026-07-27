@@ -1,5 +1,5 @@
 {
-  "kit_version": 6,
+  "kit_version": 7,
   "comment": "Humanoid kit bake manifest — the single source of truth for what the kit contains. Changing this file (or bake.py) is the ONLY sanctioned way the kit changes; the artgen CI workflow re-bakes and compares. Shape, slot and equipment-piece names are the stable, forward-only public API consumed by recipes (no-resets law: never rename or remove a shipped name, only add).",
   "tools": {
     "blender": "5.2.0",
@@ -165,7 +165,7 @@
       "license": "CC0"
     }
   ],
-  "equipment_comment": "Equipment pieces are either CC0 MHCLO assets from the official MakeHuman 01-series CC0 packs (the _cc0.zip variants — the CC-BY variants are policy-excluded), or deterministic garments generated from the same CC0 MakeHuman body inside bake.py. Packs are downloaded pinned+checksummed by bootstrap.sh, never committed; each piece bakes to its own skinned GLB sharing the one canonical skeleton, with a clothes blend shape per kit shape so equipment follows the body. Covered vertices become an equip_hide_<name> shape on the BODY that tucks skin inward.",
+  "equipment_comment": "Equipment pieces are either CC0 MHCLO assets from the official MakeHuman CC0 packs (the _cc0.zip variants — the CC-BY variants are policy-excluded), or deterministic garments generated from the same CC0 MakeHuman body inside bake.py. Packs are downloaded pinned+checksummed by bootstrap.sh, never committed; each piece bakes to its own skinned GLB sharing the one canonical skeleton, with a clothes blend shape per kit shape so equipment follows the body. Covered vertices become an equip_hide_<name> shape on the BODY that tucks skin inward.",
   "asset_packs": {
     "skins01": {
       "url": "https://files.makehumancommunity.org/asset_packs/skins01/skins01_cc0.zip",
@@ -191,6 +191,16 @@
       "url": "https://files.makehumancommunity.org/asset_packs/shoes01/shoes01_cc0.zip",
       "mirror": "https://files2.makehumancommunity.org/asset_packs/shoes01/shoes01_cc0.zip",
       "sha256": "ded3f70428505eabbf1f6d7b5f61196a7366ef20757103d276ad0ed336c35ada"
+    },
+    "glasses01": {
+      "url": "https://files.makehumancommunity.org/asset_packs/glasses01/glasses01_cc0.zip",
+      "mirror": "https://files2.makehumancommunity.org/asset_packs/glasses01/glasses01_cc0.zip",
+      "sha256": "f215c58e09e31b7ee568c814067cb47704cee6da1f6fc01cffb8e9fca37bafdd"
+    },
+    "hats02": {
+      "url": "https://files.makehumancommunity.org/asset_packs/hats02/hats02_cc0.zip",
+      "mirror": "https://files2.makehumancommunity.org/asset_packs/hats02/hats02_cc0.zip",
+      "sha256": "838b9b51ba31d27f21198ad4506eb9b23e1c03eb246fe68f26da99e26b40e1aa"
     }
   },
   "equipment_slots": [
@@ -262,6 +272,29 @@
       "author": "culturalibre",
       "license": "CC0",
       "color": [0.23, 0.18, 0.14]
+    },
+    {
+      "name": "relic_goggles",
+      "slot": "head",
+      "layer": "clothing",
+      "occluded_by": ["armor"],
+      "pack": "glasses01",
+      "mhclo": "clothes/culturalibre_doc_ock_glasses/culturalibre_doc_ock_glasses.mhclo",
+      "author": "culturalibre",
+      "license": "CC0",
+      "color": [0.1, 0.16, 0.14],
+      "roughness": 0.42
+    },
+    {
+      "name": "ruin_drake_helm",
+      "slot": "head",
+      "layer": "armor",
+      "pack": "hats02",
+      "mhclo": "clothes/culturalibre_warrior_helmet/culturalibre_warrior_helmet.mhclo",
+      "author": "culturalibre",
+      "license": "CC0",
+      "color": [0.26, 0.11, 0.09],
+      "roughness": 0.58
     }
   ]
 }
