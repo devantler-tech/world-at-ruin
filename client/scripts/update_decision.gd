@@ -419,11 +419,16 @@ static func _envelope_error(m: Dictionary) -> String:
 	# a manifest whose schema-specific body this client cannot parse.
 	if not is_int_id(sh.get("reads_min")):
 		return "shell.reads_min is missing or not an integer"
-	# The capability floor lives in the STABLE envelope for exactly the reason
-	# `reads_min` does: the future-schema route decides from this block alone, so a
-	# save-strand check that exists only in the parseable body is absent precisely
-	# where the client understands least. Required, not optional — an absent floor
-	# would read as 0 and clear every save.
+	if not is_int_id(sh.get("reads_max")):
+		return "shell.reads_max is missing or not an integer"
+	if int(sh["reads_max"]) < int(sh["reads_min"]):
+		return "shell.reads_max %d is below shell.reads_min %d (incoherent manifest)" % [
+			int(sh["reads_max"]), int(sh["reads_min"])]
+	# The capability ceiling lives in the STABLE envelope for exactly the reason
+	# the schema range does: the future-schema route decides from this block alone,
+	# so a save-strand check that exists only in the parseable body is absent
+	# precisely where the client understands least. Required, not optional — an
+	# absent ceiling would read as 0 and clear every save.
 	if not is_int_id(sh.get("reads_capability_max")):
 		return "shell.reads_capability_max is missing or not an integer"
 	# A coherent manifest never advertises a current shell below its own floor;
@@ -434,21 +439,24 @@ static func _envelope_error(m: Dictionary) -> String:
 	return ""
 
 
-## SHELL_UPDATE to `m_shell.current`, unless that shell's save read floor
-## (`reads_min`) is above the installed save — in which case updating to it would
-## strand the save, so it is a loud block instead. Every shell-update path routes
-## through here so the check can never be forgotten.
+## SHELL_UPDATE to `m_shell.current`, unless that shell's save read range excludes
+## the installed save — in which case updating to it would strand the save, so it
+## is a loud block instead. Every shell-update path routes through here so the
+## check can never be forgotten.
 static func _shell_or_block(installed_save: int, installed_capability: int,
 		m_shell: Dictionary, why: String) -> Dictionary:
 	if installed_save < int(m_shell["reads_min"]):
 		return _result(BLOCKED_INCOMPATIBLE, "shell update (%s) targets a build reading saves only from schema %d, but the installed save is %d — updating would strand it" % [
 			why, int(m_shell["reads_min"]), installed_save])
-	# The CAPABILITY floor, checked here for the same reason `reads_min` is: a shell
-	# that cannot read the shapes this save already holds strands it just as surely
-	# as one whose schema floor is too high. It matters most on the route that has
-	# the least evidence — a future-schema manifest is decided from this envelope
-	# ALONE, with no parsed body to carry a capability, so without a capability floor
-	# in the stable envelope that route could install a shell which regresses it.
+	if installed_save > int(m_shell["reads_max"]):
+		return _result(BLOCKED_INCOMPATIBLE, "shell update (%s) targets a build reading saves only through schema %d, but the installed save is %d — updating would strand it" % [
+			why, int(m_shell["reads_max"]), installed_save])
+	# The CAPABILITY ceiling, checked here for the same reason the schema range is:
+	# a shell that cannot read the shapes this save already holds strands it just
+	# as surely as one whose schema range excludes the save. It matters most on
+	# the route that has the least evidence — a future-schema manifest is decided
+	# from this envelope ALONE, with no parsed body to carry a capability, so
+	# without a capability ceiling that route could install a regressing shell.
 	if installed_capability > int(m_shell["reads_capability_max"]):
 		return _result(BLOCKED_INCOMPATIBLE, "shell update (%s) targets a build understanding save shapes only up to capability %d, but the installed save is %d — updating would strand it" % [
 			why, int(m_shell["reads_capability_max"]), installed_capability])

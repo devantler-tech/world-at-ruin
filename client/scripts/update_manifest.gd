@@ -66,6 +66,13 @@ const CHANNEL := "live"
 ## without raising this floor fails the suite.
 const SAVE_SCHEMA_MIN := 1
 
+## The highest save schema this build can still read.
+##
+## Derived from [constant CharacterFactory.RECIPE_VERSION], the real ceiling
+## [method CharacterFactory.validate] enforces. Restating the number here would
+## let the advertised shell range drift from what the build can actually open.
+const SAVE_SCHEMA_MAX := CharacterFactory.RECIPE_VERSION
+
 ## What a freshly-written save carries WITHIN its schema — the content-capability
 ## counter this build WRITES.
 ##
@@ -160,10 +167,12 @@ static func build(sequence: Variant, not_after: Variant) -> Dictionary:
 			"shell": {
 				"current": shell_version,
 				"min_supported": SHELL_MIN_SUPPORTED,
-				# The save floor and capability ceiling live in the STABLE envelope
-				# because a client on a FUTURE schema decides from this block alone —
-				# where a strand check matters most and evidence is thinnest.
+				# The save-schema range and capability ceiling live in the STABLE
+				# envelope because a client on a FUTURE schema decides from this
+				# block alone — where a strand check matters most and evidence is
+				# thinnest.
 				"reads_min": SAVE_SCHEMA_MIN,
+				"reads_max": SAVE_SCHEMA_MAX,
 				"reads_capability_max": SAVE_CAPABILITY_READS,
 			},
 			"pack": {

@@ -47,10 +47,11 @@ when an expanded document is already present; rollback safety requires both halv
   adds the new golden in the same pull request. A same-schema addition raises only the read-capability
   ceiling. Neither change activates the writer.
 
-Do not blindly raise a constant that also controls writing. Today `CharacterFactory.RECIPE_VERSION`
-feeds `UpdateManifest.save_schema.writes`, and `SaveVault.VAULT_VERSION` feeds the version of a new
-empty vault. If read support cannot advance without advertising or emitting the new version, split
-the read ceiling from the write version first. An expansion that starts writing is not an expansion.
+Do not blindly raise a constant that also controls writing. `CharacterFactory.RECIPE_VERSION`
+currently feeds both `UpdateManifest.shell.reads_max` and `UpdateManifest.save_schema.writes`, while
+`SaveVault.VAULT_VERSION` feeds the version of a new empty vault. Split the read ceiling from the
+write version before schema read support advances. An expansion that starts writing is not an
+expansion.
 
 ### 2. Bake the expansion
 
