@@ -161,6 +161,9 @@ fi
 line_of() {
 	grep -n "$1" "${workflow}" | head -1 | cut -d: -f1
 }
+# These patterns match the LITERAL shell text written in the workflow, so the
+# `$` must stay unexpanded — single quotes are the point, not an oversight.
+# shellcheck disable=SC2016
 pr_resolved_line="$(line_of '^ *pr="\$(trusted_open_pr)"')"
 repair_line="$(line_of 'if cask_pr_conflicts')"
 repair_patch_line="$(awk '/if cask_pr_conflicts/ {found=1} found && /git\/refs\/heads\/.*-X PATCH/ {print NR; exit}' "${workflow}")"
@@ -197,10 +200,12 @@ fi
 # ${VERSION} here would silently downgrade the tap while repairing it.
 repair_block="$(awk -v a="${repair_line}" -v b="${arm_line}" \
 	'NR >= a && NR < b' "${workflow}")"
+# shellcheck disable=SC2016 # literal workflow text, as above
 if ! printf '%s' "${repair_block}" | grep -q 'content="\${repair_content}"'; then
 	echo "the repair must write back the content captured from the branch" >&2
 	exit 1
 fi
+# shellcheck disable=SC2016 # literal workflow text, as above
 if printf '%s' "${repair_block}" | grep -q 'content="\${content}"'; then
 	echo "the repair re-writes this run's rendered cask, which downgrades a newer branch version" >&2
 	exit 1
