@@ -216,22 +216,19 @@ the concrete evidence behind this section:
 
 **Scaffolding is still allowed; it just may not pose as finished.** A deterministic library, a
 server system, or a data schema may land while its art matures — that is how this project is built,
-and it stays correct. The gate distinguishes the player-visible outcome being changed, following the
-maintainer's 2026-07-19 ruling on
-[#236](https://github.com/devantler-tech/world-at-ruin/pull/236):
+and it stays correct. The gate distinguishes the player-visible outcome being changed:
 
 - A **new incomplete player-visible element** — something the default experience did not contain
   before — stays behind a default-off opt-in flag (product law 2) or out of the world until it clears
-  the bar. [#218](https://github.com/devantler-tech/world-at-ruin/pull/218)'s hollow ash pools are the
-  canonical precedent: because the new pools lacked drift, `WAR_HOLLOW_FOG` kept them default-off.
+  the bar.
 - An **in-place improvement to an existing below-bar surface** may remain default-on when it makes
   that already-shipped surface better without presenting it as finished. Shipping the improvement on
   **requires both the PR and the dev log to state the remaining gap explicitly**; the normal
   inspectable-frame and named-reference requirements still apply.
 
-This distinction does not lower the bar: a new unfinished element still cannot enter the default
-experience, and an improvement cannot quietly pose as complete. It prevents the gate from freezing
-an existing surface in its worse state while the project advances it toward the bar.
+This distinction does not lower the bar. A new unfinished element must not expand the default
+experience, while an in-place improvement should not leave an already-shipped surface in its worse
+state. In both cases, unfinished work cannot quietly pose as complete.
 
 **Taste is the maintainer's call — and that is not licence to aim low.** Phase 0 is his taste gate
 and agents do not self-certify taste. Agents are nonetheless expected to *aim at* the AAA bar, to
