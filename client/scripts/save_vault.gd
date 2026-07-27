@@ -192,9 +192,9 @@ const VAULT_VERSION := 2
 const BASE_VAULT_VERSION := 1
 
 ## Highest vault schema this build can READ. Kept separate from the production
-## writer because v2 carried discovery state through its read-first bake before
-## [constant VAULT_VERSION] was raised by the later contract release.
-const VAULT_READ_VERSION := 2
+## writer because v3 carries claimed exploration rewards and must bake
+## read-first before a production writer may originate that state.
+const VAULT_READ_VERSION := 3
 
 ## The vault format, exhaustively. Unknown top-level fields are refused for the
 ## same reason the recipe refuses them: a client that silently ignored a field
@@ -202,6 +202,9 @@ const VAULT_READ_VERSION := 2
 ## ship with a version bump and are listed in a VAULT_FIELDS_V<N> constant.
 const VAULT_FIELDS_V1 := ["version", "comment", "attuned"]
 const VAULT_FIELDS_V2 := ["version", "comment", "attuned", "discoveries"]
+const VAULT_FIELDS_V3 := [
+	"version", "comment", "attuned", "discoveries", "reward_claims",
+]
 
 ## The Wardens' Shrine, the first attunable respawn point. Names are forward-only
 ## (no-resets law): this string is shipped save data now and may never change
@@ -270,7 +273,11 @@ static func validate(doc: Dictionary) -> String:
 	var schema := int(version)
 	if schema > VAULT_READ_VERSION:
 		return "vault version %d is newer than this client understands (%d)" % [schema, VAULT_READ_VERSION]
-	var allowed_fields := VAULT_FIELDS_V1 if schema == 1 else VAULT_FIELDS_V2
+	var allowed_fields := VAULT_FIELDS_V1
+	if schema == 2:
+		allowed_fields = VAULT_FIELDS_V2
+	elif schema == 3:
+		allowed_fields = VAULT_FIELDS_V3
 	for field: String in doc:
 		if field not in allowed_fields:
 			return "unknown vault field '%s' — this client cannot apply it, refusing a half-truth" % field
@@ -288,6 +295,14 @@ static func validate(doc: Dictionary) -> String:
 				return "discoveries entries must be strings (names are forward-only, never indices)"
 			if (name as String).is_empty():
 				return "discoveries entries must be non-empty stable names"
+	if doc.has("reward_claims"):
+		if doc["reward_claims"] is not Array:
+			return "reward_claims must be an array of place names"
+		for name in (doc["reward_claims"] as Array):
+			if name is not String:
+				return "reward_claims entries must be strings (names are forward-only, never indices)"
+			if (name as String).is_empty():
+				return "reward_claims entries must be non-empty stable names"
 	return ""
 
 
@@ -894,9 +909,9 @@ static func attune(doc: Dictionary, name: String) -> Dictionary:
 
 ## `doc` with every valid name in `names` added to its append-only discovery
 ## set. A v1 document contracts to v2 only when at least one discovery exists;
-## an empty set leaves old state byte-shaped as v1. Existing v2 names this build
-## does not register are preserved, because a rollback write may never erase
-## progression introduced by a newer client.
+## an empty set leaves old state byte-shaped as v1. Existing readable versions
+## and names this build does not register are preserved, because a rollback write
+## may never erase progression introduced by a newer client.
 static func record_discoveries(doc: Dictionary, names: Array) -> Dictionary:
 	var reason := validate(doc)
 	if not reason.is_empty():
@@ -924,7 +939,7 @@ static func record_discoveries(doc: Dictionary, names: Array) -> Dictionary:
 	if merged.is_empty() and not next.has("discoveries"):
 		return next
 	merged.sort()
-	next["version"] = VAULT_VERSION
+	next["version"] = maxi(int(next.get("version", BASE_VAULT_VERSION)), VAULT_VERSION)
 	next["discoveries"] = merged
 	return next
 

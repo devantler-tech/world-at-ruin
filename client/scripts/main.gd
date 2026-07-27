@@ -72,6 +72,10 @@ var _replicas: ReplicaView = null
 ## two shipped places are observed into the append-only vault as the wanderer
 ## reaches them.
 var _discovery := Discovery.new()
+## The boot-owned exploration-reward state. Vault-v3 claims are restored even
+## when this rollback build does not register the newer place yet, so a reward
+## already granted by a newer client can never be granted twice.
+var _exploration_rewards := ExplorationRewards.new()
 ## A discovery enters the live tracker before persistence is attempted. Keep
 ## the locally observed IDs themselves so a transient filesystem failure can
 ## retry them without also re-originating rollback-only names restored into the
@@ -228,6 +232,10 @@ func _ready() -> void:
 		# Restore unknown future names too: they must survive in the live
 		# session even when this older build cannot register the place.
 		_discovery.restore(vault.get("discoveries", []))
+		# Validation has already proved this is an array of non-empty strings.
+		# Restore unknown future claims too: forgetting one during rollback could
+		# grant a reward that the newer client already consumed.
+		_exploration_rewards.restore(vault.get("reward_claims", []))
 		for name: String in SaveVault.attuned(vault):
 			var point = RespawnPoints.resolve(name, world)
 			if point != null:

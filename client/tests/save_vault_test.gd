@@ -49,8 +49,9 @@ func _ready() -> void:
 	if int(empty["version"]) != 1:
 		_fail("an empty vault was churned to v%d even though it carries no v2 discovery state" % int(empty["version"]))
 		return
-	if SaveVault.VAULT_READ_VERSION != 2:
-		_fail("the vault reader ceiling is v%d, expected v2" % SaveVault.VAULT_READ_VERSION)
+	if SaveVault.VAULT_READ_VERSION != 3:
+		_fail("the vault reader ceiling is v%d, expected the v3 reward-claim expansion"
+			% SaveVault.VAULT_READ_VERSION)
 		return
 	if not SaveVault.attuned(empty).is_empty():
 		_fail("a fresh vault already had an attunement")
@@ -107,6 +108,46 @@ func _ready() -> void:
 		_fail("the v2 discovery set did not survive a disk round-trip")
 		return
 
+	# The future v3 reward-claim shape is readable now, and an ordinary
+	# attunement write-back preserves both earlier progression sections and the
+	# new append-only claim set exactly.
+	var reward_expanded := {
+		"version": 3,
+		"comment": "future exploration reward writer",
+		"attuned": [SaveVault.SHRINE_WARDENS],
+		"discoveries": ["starter_cave", "wardens_shrine"],
+		"reward_claims": ["future_place", "starter_cave"],
+	}
+	var reward_expanded_reason := SaveVault.validate(reward_expanded)
+	if reward_expanded_reason != "":
+		_fail("the v3 reward-claim expansion was refused: %s" % reward_expanded_reason)
+		return
+	var reward_expanded_after := SaveVault.attune(reward_expanded, "second_shrine")
+	if reward_expanded_after.get("reward_claims", []) != reward_expanded["reward_claims"]:
+		_fail("an ordinary v3 attunement write-back changed or dropped reward claims")
+		return
+	if reward_expanded_after.get("discoveries", []) != reward_expanded["discoveries"]:
+		_fail("an ordinary v3 attunement write-back changed or dropped discovery state")
+		return
+	if not SaveVault.save_to(PROBE, reward_expanded_after):
+		_fail("saving an already-present v3 vault failed")
+		return
+	var reward_expanded_loaded = SaveVault.load_from(PROBE)
+	if reward_expanded_loaded is not Dictionary:
+		_fail("the re-saved v3 vault did not load")
+		return
+	if reward_expanded_loaded.get("reward_claims", []) != reward_expanded["reward_claims"]:
+		_fail("the v3 reward-claim set did not survive a disk round-trip")
+		return
+	var reward_expanded_discovery_write: Dictionary = vault_api.call(
+		"record_discoveries", reward_expanded, ["wardens_shrine"])
+	if int(reward_expanded_discovery_write.get("version", -1)) != 3:
+		_fail("an ordinary discovery write downgraded an already-present v3 vault")
+		return
+	if reward_expanded_discovery_write.get("reward_claims", []) != reward_expanded["reward_claims"]:
+		_fail("an ordinary discovery write changed or dropped v3 reward claims")
+		return
+
 	# The expansion must not leak into old state: loading and attuning a v1
 	# document leaves it v1 and never invents the optional v2 field.
 	var legacy := { "version": 1, "attuned": [SaveVault.SHRINE_WARDENS] }
@@ -130,6 +171,9 @@ func _ready() -> void:
 		return
 	if discovered.get("discoveries", []) != ["starter_cave", "wardens_shrine"]:
 		_fail("the discovery writer did not produce one sorted append-only set: %s" % str(discovered))
+		return
+	if int(discovered.get("version", -1)) != 2 or discovered.has("reward_claims"):
+		_fail("the discovery writer originated v3 reward-claim state before its reader baked")
 		return
 	if not SaveVault.is_attuned(discovered, SaveVault.SHRINE_WARDENS):
 		_fail("contracting the discovery writer lost the v1 attunement")
@@ -288,11 +332,15 @@ func _ready() -> void:
 		"future version": { "version": SaveVault.VAULT_READ_VERSION + 1 },
 		"unknown field": { "version": 1, "loot": {} },
 		"discoveries on v1": { "version": 1, "discoveries": [] },
+		"reward claims on v2": { "version": 2, "reward_claims": [] },
 		"attuned not an array": { "version": 1, "attuned": {} },
 		"attuned entry not a string": { "version": 1, "attuned": [7] },
 		"discoveries not an array": { "version": 2, "discoveries": {} },
 		"discovery entry not a string": { "version": 2, "discoveries": [7] },
 		"empty discovery name": { "version": 2, "discoveries": [""] },
+		"reward claims not an array": { "version": 3, "reward_claims": {} },
+		"reward claim not a string": { "version": 3, "reward_claims": [7] },
+		"empty reward claim": { "version": 3, "reward_claims": [""] },
 	}
 	for label: String in refusals:
 		if SaveVault.validate(refusals[label]) == "":
@@ -308,6 +356,13 @@ func _ready() -> void:
 		return
 	if SaveVault.validate({ "version": 2, "discoveries": ["starter_cave"] }) != "":
 		_fail("validation refused a valid v2 discovery vault")
+		return
+	if SaveVault.validate({
+		"version": 3,
+		"discoveries": ["starter_cave"],
+		"reward_claims": ["starter_cave"],
+	}) != "":
+		_fail("validation refused a valid v3 reward-claim vault")
 		return
 
 	_cleanup_probe()
