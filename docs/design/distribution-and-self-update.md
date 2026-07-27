@@ -161,25 +161,27 @@ A small **signed JSON** document per channel, published by CI beside the artifac
 [`client-update-manifest.example.json`](./client-update-manifest.example.json). Shape:
 
 - `schema` — manifest schema version. A **stable, backward-compatible envelope** — `schema`,
-  `sequence`, `not_after`, `channel`, and the
-  `shell.current`/`shell.min_supported`/`shell.download` fields — keeps its shape across *every* schema
-  bump, so a client of any schema can reject a replay or expiry and still read "you need this shell."
+  `sequence`, `not_after`, `channel`, and the `shell.current`, `shell.min_supported`,
+  `shell.reads_min`, `shell.reads_max`, `shell.reads_capability_max`, and `shell.download` fields —
+  keeps its shape across *every* schema bump, so a client of any schema can reject a replay or expiry
+  and still read "you need this shell."
   Bumps are additive within that envelope; a client processes only the schema it understands and, on a
   higher schema, follows the envelope to a `shell_update` rather than guessing at (or rejecting on) new
   fields.
 - `channel` — `live` by default; the field exists so `canary` can be added later without a redesign.
 - `shell` — `current`, `min_supported` (shells older are refused — the forward-only floor),
-  `reads_min` (the lowest save **schema** the advertised shell can read) and `reads_capability_max`
-  (the **highest** save capability it understands), and per-target signed `download` entries (`url`, `sha256`, `size`). The **shell
+  `reads_min`/`reads_max` (the inclusive save-**schema** range the advertised shell can read),
+  `reads_capability_max` (the **highest** save capability it understands), and per-target signed
+  `download` entries (`url`, `sha256`, `size`). The **shell
   version is independent of the pack version**: the executable and the content advance on their own
-  clocks. Both read floors live in the **stable envelope** rather than the schema-specific body for the
+  clocks. The schema range and capability ceiling live in the **stable envelope** rather than the schema-specific body for the
   same reason: a future-schema manifest is followed to a `shell_update` from the envelope ALONE, so a
   save-strand check placed in the body would be missing on precisely the route where the client
   understands least. `reads_capability_max` exists because the schema floor does not cover the
   capability axis — a shell can read a save's schema while lacking the same-schema shapes it holds.
-  Note the directions differ and are not interchangeable: `reads_min` is a **floor** (a newer shell
-  drops support for ancient schemas), whereas capability is a **ceiling** — capability counts shapes
-  PRESENT in the save, so the hazard is a save holding a shape the build does not understand. This
+  The directions are not interchangeable: `reads_min` and `reads_max` bound the schema from below and
+  above, while capability is a separate **ceiling** because it counts shapes PRESENT in the save.
+  The hazard on either upper bound is a save holding state the build does not understand. This
   matches `rollback_targets[].save_capability`, which is likewise compared as "the build's capability
   must be at least the save's".
 - `pack` — `version`, `min_shell` (the shell this pack needs), and **two artifacts**: a `full` cumulative
@@ -253,6 +255,15 @@ makes the expand-before-write rollout unrepresentable: a build that reads capabi
 writing N could not be described, so it would either never become an eligible rollback target or would
 falsely claim to write the new shape. Writes are backed by an append-only ledger
 (`tests/data/shipped_save_capability.txt`) and reads must always cover writes.
+
+The stable shell envelope also publishes the inclusive schema range. `shell.reads_min` comes from
+`SAVE_SCHEMA_MIN`, whose oldest fixture and append-only recipe ledger prove the floor.
+`shell.reads_max` comes from `SAVE_SCHEMA_MAX`, which derives from
+`CharacterFactory.RECIPE_VERSION`, the same bound the real reader uses to refuse newer recipes.
+Both fields are required, so an absent ceiling cannot be mistaken for unlimited compatibility.
+For a parseable manifest, `save_schema.writes` must not exceed `shell.reads_max`, and
+`save_schema.capability` must not exceed `shell.reads_capability_max`; a candidate that cannot reopen
+what it writes is incoherent and refused.
 
 **Three assumptions are guarded by failing tests rather than comments**, because each is true today and
 will expire:

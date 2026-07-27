@@ -85,7 +85,7 @@ func _test_round_trip_offers_a_pack_update() -> void:
 func _test_every_required_field_is_load_bearing() -> void:
 	var required := [
 		"schema", "sequence", "not_after", "channel",
-		"shell", "shell.current", "shell.min_supported", "shell.reads_min", "shell.reads_capability_max",
+		"shell", "shell.current", "shell.min_supported", "shell.reads_min", "shell.reads_max", "shell.reads_capability_max",
 		"pack", "pack.version", "pack.min_shell",
 		"protocol", "protocol.min", "protocol.max",
 		"save_schema", "save_schema.min", "save_schema.writes", "save_schema.capability",
@@ -141,6 +141,8 @@ func _test_values_track_their_sources() -> void:
 		"save_schema.min": [m["save_schema"]["min"], UpdateManifest.SAVE_SCHEMA_MIN],
 		"save_schema.capability": [m["save_schema"]["capability"], UpdateManifest.SAVE_CAPABILITY_WRITES],
 		"shell.reads_min": [m["shell"]["reads_min"], UpdateManifest.SAVE_SCHEMA_MIN],
+		"shell.reads_max": [m["shell"]["reads_max"], UpdateManifest.SAVE_SCHEMA_MAX],
+		"shell.reads_max/source": [UpdateManifest.SAVE_SCHEMA_MAX, CharacterFactory.RECIPE_VERSION],
 		"shell.reads_capability_max": [m["shell"]["reads_capability_max"], UpdateManifest.SAVE_CAPABILITY_READS],
 	}
 	for path: String in checks:
