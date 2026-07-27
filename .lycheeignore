@@ -21,3 +21,26 @@ https://github\.com/user-attachments/
 # This is bot-blocking, not a dead link. Scoped to the host rather than accepting 403
 # globally, which would hide genuine 403s elsewhere.
 https://www\.playstation\.com/
+
+# infocuria is the Court of Justice's own case-law portal, and it 403s the link checker on
+# every run. The two anchors are the CJEU judgments the originality boundary rests on —
+# C-406/10 (SAS v World Programming) and C-355/12 (Nintendo v PC Box) — cited in
+# docs/design/originality-boundary.md since #361.
+#
+# Evidence this is the same bot-blocking shape as the entry above, and not a dead link:
+#
+#   - Both anchors fail with a clean `[403] Rejected status code: 403 Forbidden`, which is
+#     a server refusing the request rather than a 404 or a DNS/connection failure.
+#   - Deterministic: reproduced on two separate CI runs against two different commits.
+#   - It fails the `lint` job, which feeds `CI - Required Checks`, so with the boundary doc
+#     on main this blocks every pull request in the repository rather than only its own.
+#
+# ⚠️ Unlike the two entries above, these URLs were NOT fetched from a normal network to
+# confirm a 200 — this deployment does not retrieve URLs that it read out of repository
+# content. So the "not a dead link" half rests on the 403 shape and on the citations being
+# well-known published judgments, not on an observed success. If the portal's URL scheme
+# has in fact moved, that is worth correcting in the document itself; this entry only stops
+# a third party's bot policy from gating merges.
+#
+# Scoped to the host, like the entry above, rather than accepting 403 globally.
+https://infocuria\.curia\.europa\.eu/
