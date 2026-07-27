@@ -46,16 +46,19 @@ static var _loaded := false
 static func _load_entries() -> Array[Dictionary]:
 	var out: Array[Dictionary] = []
 	for file_name: String in DirAccess.get_files_at(ENTRY_DIR):
-		if not file_name.ends_with(".json"):
+		# Godot's exported/imported filesystem can present a .json as
+		# .json.remap; match on the stem so discovery survives both.
+		var stem := file_name.trim_suffix(".remap")
+		if not stem.ends_with(".json"):
 			continue
-		var file := FileAccess.open(ENTRY_DIR + file_name, FileAccess.READ)
+		var file := FileAccess.open(ENTRY_DIR + stem, FileAccess.READ)
 		if file == null:
-			push_error("dev log: cannot read %s%s" % [ENTRY_DIR, file_name])
+			push_error("dev log: cannot read %s%s" % [ENTRY_DIR, stem])
 			continue
 		var parsed: Variant = JSON.parse_string(file.get_as_text())
 		file.close()
 		if parsed is not Dictionary:
-			push_error("dev log: %s%s is not a JSON object" % [ENTRY_DIR, file_name])
+			push_error("dev log: %s%s is not a JSON object" % [ENTRY_DIR, stem])
 			continue
 		out.append(parsed as Dictionary)
 	out.sort_custom(_newer_first)

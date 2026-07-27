@@ -571,6 +571,14 @@ everything shipped afterwards is held to.
   have, which needs a decision whatever the storage looks like. Resolve it by renaming your file to
   the next free version and updating its `version` field to match; never merge two entries into one
   file, and never make one file hold a list again.
+  ⚠️ **Re-check your entry's version before it merges.** The version an entry names is a prediction
+  about the next release, and a sibling merging first invalidates it: from a `0.58.0` base a `fix:`
+  entry named `0.58.1` actually ships as `0.59.1` once someone else's `feat:` lands ahead of it, and
+  nothing currently detects that — the filename and its `version` field still agree, so the guard is
+  satisfied while the log misnames the release. This drift predates one-file-per-entry, but the
+  shared array used to force a rebase on every sibling merge, which is where an author noticed.
+  Until an automated check exists ([#412](https://github.com/devantler-tech/world-at-ruin/issues/412)),
+  rename the file and its `version` field when your base moves under you.
   **Do NOT hand-edit `DevLog.VERSION` or `config/version` in `project.godot`** — release builds are
   stamped from the release tag (below), so a hand-bump only drifts from the real version.
 - **CI, CD and releases:**

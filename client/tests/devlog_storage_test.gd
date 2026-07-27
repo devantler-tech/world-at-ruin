@@ -34,8 +34,12 @@ func _ready() -> void:
 	var files: PackedStringArray = DirAccess.get_files_at(DevLog.ENTRY_DIR)
 	var entry_files: Array[String] = []
 	for name: String in files:
-		if name.ends_with(".json"):
-			entry_files.append(name)
+		# Same stem match the loader uses: an exported filesystem can present a
+		# .json as .json.remap, and a guard that counted only the plain form
+		# would report every entry missing on exactly the build that ships.
+		var stem := name.trim_suffix(".remap")
+		if stem.ends_with(".json"):
+			entry_files.append(stem)
 
 	if entry_files.size() < MIN_ENTRIES:
 		_fail(("only %d entry file(s) under %s — the guards below would be near-vacuous, and this is "
