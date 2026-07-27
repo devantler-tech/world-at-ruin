@@ -34,9 +34,10 @@ extends Node
 ##     it fails validation. A version is a claim of ownership by some client, and
 ##     this build does not adjudicate that claim.
 ## 11. Junk sharing the quarantine namespace — a DIRECTORY especially — neither
-##     blocks the move nor is destroyed by it. file_exists() reports a directory
-##     absent and a rename cannot replace it, so choosing one would fail
-##     identically on every launch.
+##     blocks the move nor is destroyed by it. This pins the namespace being
+##     shared safely; it does NOT reach `_slot_is_free()`'s directory branch,
+##     which is unreachable by construction and intentionally left so (the case
+##     explains why testing it would undo the property it protects).
 ##
 ## Everything runs through the WAR_VAULT_PATH seam against a throwaway path, so
 ## the player's own user://vault.json is never read, written or moved
@@ -248,10 +249,19 @@ func _ready() -> void:
 			return
 
 	# 11. Junk sharing the quarantine namespace neither breaks the move nor gets
-	#     destroyed by it. A DIRECTORY is the interesting shape: FileAccess reports
-	#     it absent and a rename cannot replace it, so a scheme that picked it
-	#     would fail the same way on every launch — a permanent wedge, the exact
-	#     outcome this change exists to remove.
+	#     destroyed by it.
+	#
+	#     ⚠️ Read what this does and does NOT prove. It pins the namespace being
+	#     shared safely. It does NOT exercise `_slot_is_free()`'s directory branch,
+	#     because a candidate is `<path>.unreadable-<pid>-<usec>` and no test can
+	#     know that name in advance — which is the whole point of choosing it that
+	#     way. That branch is intentionally untestable, and deliberately so: the
+	#     only way to test it would be a seam that makes the candidate name
+	#     predictable, and predictability is exactly the property whose absence
+	#     stops a foreign writer from having its file replaced by our rename. A
+	#     testability hook there would reintroduce the P1 it was added to close, so
+	#     the branch stays as unreachable defence and this case pins the reachable
+	#     half.
 	_reset_state()
 	var junk_dir := PROBE + SaveVault.QUARANTINE_SUFFIX + "leftover"
 	DirAccess.make_dir_absolute(ProjectSettings.globalize_path(junk_dir))
