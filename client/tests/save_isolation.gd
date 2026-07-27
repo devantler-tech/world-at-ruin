@@ -128,8 +128,8 @@ func end() -> void:
 ## directory, covers both a lock this process still holds and one inherited from
 ## an earlier run.
 func _clear_vault_lock() -> void:
-	SaveVault.clear_locks_for_test()
-	SaveVault._remove_lock_dir(SaveVault.lock_path(_vault_probe))
+	FileLock.clear_for_test()
+	FileLock.remove_dir(FileLock.path_for(_vault_probe))
 
 
 func _sha(path: String) -> String:

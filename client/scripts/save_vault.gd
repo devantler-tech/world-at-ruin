@@ -60,7 +60,7 @@ class_name SaveVault
 ##
 ## Both of those judge the vault as it is at one instant, which is why every
 ## write is additionally taken under a cross-process LOCK (#262, see
-## [method _acquire_lock]). Refuse-to-read handles a newer vault we can already
+## [method FileLock.acquire]). Refuse-to-read handles a newer vault we can already
 ## see; the lock handles one ARRIVING while we are mid-write. Without it,
 ## read-merge-write is check-then-act: two clients can each read the same
 ## document, each merge their own change into it, and the slower writer's rename
@@ -88,55 +88,6 @@ const DEFAULT_PATH := "user://vault.json"
 ## sets it; tests point it at a throwaway file so no test can damage a real
 ## player's progression.
 const VAULT_PATH_ENV := "WAR_VAULT_PATH"
-
-## The write lock's suffix. The lock is a DIRECTORY beside the vault, because
-## `DirAccess.make_dir_absolute` is the only exclusive-create primitive Godot
-## exposes: it is `mkdir`, which is atomic on every platform we ship and returns
-## ERR_ALREADY_EXISTS rather than succeeding when the path is taken. A lock made
-## from a plain `FileAccess.open` would be check-then-act all over again — two
-## processes would both "create" it — which is precisely the approximation #262
-## refused to accept.
-const LOCK_SUFFIX := ".lock"
-
-## The ownership stamp written inside the lock directory. Its presence is
-## deliberate — an EMPTY lock directory can be silently renamed over (measured),
-## so a stamped lock is what makes a reclaimer's restore fail safely instead of
-## overwriting a live holder. It also lets a holder prove the lock is still its
-## own immediately before replacing the vault.
-const LOCK_OWNER_FILE := "owner"
-
-## Suffix for the uniquely-named directory an abandoned lock is renamed to while
-## it is being reclaimed. Renaming is what serializes reclamation: exactly one
-## process can move a given directory, so only one can ever be the reclaimer.
-const LOCK_RECLAIM_SUFFIX := ".reclaim-"
-
-## How long a lock may go unreleased before another process may break it.
-##
-## The critical section is a validate, a small JSON serialise, a temp-file write
-## and a rename — sub-millisecond in practice, and entirely local. Five minutes is
-## enormously more than that, deliberately, because the two failure directions are
-## NOT symmetric:
-##  - reclaiming a lock a LIVE process still holds reopens the exact interleaving
-##    this lock exists to prevent, and that lost progression is permanent;
-##  - waiting too long merely defers a write, and a deferred write degrades to
-##    session-only — the vault's existing law, and cheap.
-##
-## The timeout is a liveness HEURISTIC, and its failure mode is a holder that is
-## alive but not running: a laptop suspended mid-write, a process descheduled
-## under heavy load. Every second of headroom makes that misjudgement rarer, and
-## costs only a longer wait before recovering from a genuine crash — during which
-## the vault still READS and play continues untouched. That trade is so lopsided
-## that the only real argument against a larger value is recovery latency nobody
-## can feel, so this errs long on purpose. It exists solely so a crashed process
-## cannot wedge the vault forever; it is not a mechanism for keeping writes prompt.
-const LOCK_STALE_SECONDS := 300
-
-## Test-only override for [constant LOCK_STALE_SECONDS], mirroring the
-## WAR_VAULT_PATH seam. Production never sets it; a test sets 0 so an existing
-## lock is immediately stale and the recovery path can be proven without
-## sleeping. Unset, empty, non-integer or negative values keep the shipped
-## default, so a malformed value can never shorten the window in the field.
-const LOCK_STALE_ENV := "WAR_VAULT_LOCK_STALE_SECONDS"
 
 ## Suffix for a vault set aside because no client could own it. What follows it is
 ## a per-attempt unique stamp, so a second corruption never overwrites the first —
@@ -167,7 +118,7 @@ const QUARANTINE_MAX_ATTEMPTS := 100
 ##  - waiting longer merely leaves the player session-only for one more launch,
 ##    which is the vault's standing answer to doubt.
 ## So this errs long on purpose. It is a liveness HEURISTIC about whether some
-## writer is still working, exactly like [constant LOCK_STALE_SECONDS], and it is
+## writer is still working, exactly like [constant FileLock.STALE_SECONDS], and it is
 ## not a mechanism for making recovery prompt.
 ##
 ## The alternative of requiring the same bytes across two boots was rejected: it
@@ -176,7 +127,7 @@ const QUARANTINE_MAX_ATTEMPTS := 100
 const QUARANTINE_MIN_AGE_SECONDS := 300
 
 ## Test-only override for [constant QUARANTINE_MIN_AGE_SECONDS], mirroring
-## [constant LOCK_STALE_ENV]. Production never sets it; a test sets 0 so a
+## [constant FileLock.STALE_ENV]. Production never sets it; a test sets 0 so a
 ## just-written probe is immediately eligible. Unset, empty, non-integer and
 ## negative values all keep the shipped default, so the window can never be
 ## SHORTENED by a malformed value — the direction that could destroy progression.
@@ -335,16 +286,16 @@ static func _refuse(path: String, message: String) -> Variant:
 ## one reached through persist_attunement(). The lock is reentrant, so the
 ## nesting those helpers create costs nothing and cannot self-deadlock.
 static func save_to(path: String, doc: Dictionary) -> bool:
-	if not _acquire_lock(path):
+	if not FileLock.acquire(path):
 		return false
 	var wrote := _save_to_locked(path, doc)
-	_release_lock(path)
+	FileLock.release(path)
 	return wrote
 
 
 ## save_to()'s body, with the write lock already held. Split out so acquisition
 ## and release live on ONE path each: GDScript has no `defer`, and a lock leaked
-## down some early-return branch would wedge the vault for LOCK_STALE_SECONDS.
+## down some early-return branch would wedge the vault for FileLock.STALE_SECONDS.
 static func _save_to_locked(path: String, doc: Dictionary) -> bool:
 	var reason := validate(doc)
 	if reason != "":
@@ -394,7 +345,7 @@ static func _save_to_locked(path: String, doc: Dictionary) -> bool:
 	# stays closed even when the benign one (a lost update between same-version
 	# writers) slips through. Detecting that properly wants a compare-and-swap on
 	# the vault's own bytes rather than a lock — tracked separately.
-	if not _owns_lock(path):
+	if not FileLock.owns(path):
 		push_error("SaveVault: lost the write lock for %s while writing — refusing to replace it" % path)
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(tmp_path))
 		return false
@@ -529,10 +480,10 @@ static func quarantine_unreadable(path: String) -> String:
 		return ""
 	if not _is_unownable(path):
 		return ""
-	if not _acquire_lock(path):
+	if not FileLock.acquire(path):
 		return ""
 	var moved := _quarantine_locked(path)
-	_release_lock(path)
+	FileLock.release(path)
 	return moved
 
 
@@ -628,7 +579,7 @@ static func _quarantine_locked(path: String) -> String:
 ## sidesteps the race instead of trying to win it.
 ##
 ## This is the same per-attempt naming, for the same reason, as the reclaim
-## target in [method _reclaim_lock_if_abandoned].
+## target in [method FileLock._reclaim_if_abandoned].
 ##
 ## The vacancy check is kept as cheap defence: it also rejects a DIRECTORY, which
 ## `FileAccess.file_exists()` reports as absent and which a rename cannot replace.
@@ -654,210 +605,6 @@ static func _slot_is_free(candidate: String) -> bool:
 	if FileAccess.file_exists(candidate):
 		return false
 	return not DirAccess.dir_exists_absolute(ProjectSettings.globalize_path(candidate))
-
-
-## Every write lock this PROCESS holds, lock path -> reentrancy depth.
-##
-## Reentrancy is what lets persist_attunement() hold the lock across its whole
-## read-modify-write and still call save_to(), which takes the same lock. Without
-## it the nested acquire would collide with our OWN directory and the write would
-## refuse itself — a deadlock that looks exactly like healthy contention.
-static var _held_locks: Dictionary = {}
-
-
-## The ownership stamp this process wrote for each lock it holds, lock path ->
-## token. Kept in memory so [method _owns_lock] compares against what THIS
-## process stamped rather than trusting whatever the file currently says.
-static var _lock_tokens: Dictionary = {}
-
-
-## The write lock's directory path for the vault at `path`.
-static func lock_path(path: String) -> String:
-	return path + LOCK_SUFFIX
-
-
-## The stale-lock timeout: the LOCK_STALE_ENV override when it is a non-negative
-## integer, else the shipped default. Unset and malformed both fall through to
-## the default, so the window can never be shortened by accident.
-static func lock_stale_seconds() -> int:
-	var raw := OS.get_environment(LOCK_STALE_ENV)
-	if raw.is_valid_int():
-		var seconds := int(raw)
-		if seconds >= 0:
-			return seconds
-	return LOCK_STALE_SECONDS
-
-
-## Take the cross-process write lock for the vault at `path`.
-##
-## `mkdir` decides the race: exactly one caller creates the directory and every
-## other gets ERR_ALREADY_EXISTS, across threads and processes alike — among
-## callers that take this lock at all (see the class docs: a pre-lock build does
-## not). Failing to acquire is not an error the player should feel: the caller
-## degrades to session-only, which is the vault's standing answer to doubt.
-static func _acquire_lock(path: String) -> bool:
-	var lock := lock_path(path)
-	var depth := int(_held_locks.get(lock, 0))
-	if depth > 0:
-		_held_locks[lock] = depth + 1
-		return true
-	var absolute := ProjectSettings.globalize_path(lock)
-	var err := DirAccess.make_dir_absolute(absolute)
-	if err == ERR_ALREADY_EXISTS:
-		# Someone holds it. Try to reclaim it if it is abandoned — but NEVER acquire
-		# in the same pass, and refuse this write either way.
-		#
-		# Acquiring straight after a reclaim is what makes remove-then-create
-		# unsound, and it is a real double-ownership bug rather than a theoretical
-		# one: two processes both find the same stale lock, the first removes and
-		# recreates it, and the second then removes THAT — a live lock — and
-		# recreates it again, leaving both convinced they own the write. Keeping
-		# acquisition to the single atomic mkdir below means the only way to hold
-		# this lock is to have created it against an absent path, which exactly one
-		# caller can ever do.
-		_reclaim_lock_if_abandoned(lock)
-		push_error(
-			"SaveVault: another process holds the vault write lock at %s — refusing to write" % lock)
-		return false
-	if err != OK:
-		# Anything else is an environment fault, not contention — an unwritable or
-		# missing parent directory, say. Both refuse the write, but reporting them
-		# as contention would send whoever reads this log hunting a race that is
-		# not happening.
-		push_error(
-			"SaveVault: cannot create the vault write lock at %s (error %d) — refusing to write"
-			% [lock, err])
-		return false
-	# Stamp ownership INSIDE the lock. Two things depend on the directory not being
-	# empty: [method _owns_lock] can then prove this process is still the holder
-	# before the destructive rename, and a reclaimer's restore is a rename onto a
-	# non-empty directory, which fails safely instead of clobbering. (Measured:
-	# renaming onto an EMPTY directory succeeds, so an empty lock would be
-	# silently overwritable.)
-	var token := "%d-%d" % [OS.get_process_id(), Time.get_ticks_usec()]
-	var owner := FileAccess.open(_lock_owner_path(lock), FileAccess.WRITE)
-	if owner == null:
-		push_error("SaveVault: cannot stamp ownership into %s — refusing to write" % lock)
-		DirAccess.remove_absolute(absolute)
-		return false
-	owner.store_string(token)
-	owner.close()
-	_held_locks[lock] = 1
-	_lock_tokens[lock] = token
-	return true
-
-
-## The ownership stamp's path inside the lock directory.
-static func _lock_owner_path(lock: String) -> String:
-	return lock + "/" + LOCK_OWNER_FILE
-
-
-## Whether this process is still the recorded holder of `path`'s lock.
-##
-## Checked immediately before the vault is replaced. If a reclaimer misjudged our
-## live lock as abandoned and moved it away, the safe response is to abandon the
-## write rather than replace the vault while another writer believes it holds the
-## lock. Absent directory, absent stamp and foreign stamp all read as NOT ours.
-static func _owns_lock(path: String) -> bool:
-	var lock := lock_path(path)
-	var mine: String = _lock_tokens.get(lock, "")
-	if mine.is_empty():
-		return false
-	var owner := FileAccess.open(_lock_owner_path(lock), FileAccess.READ)
-	if owner == null:
-		return false
-	var recorded := owner.get_as_text()
-	owner.close()
-	return recorded == mine
-
-
-## Reclaim `lock` when it was abandoned by a dead process. Never acquires it.
-##
-## Reclamation is serialized by RENAME, not by remove: renaming a directory
-## succeeds for exactly one caller and fails for every other once the source is
-## gone (measured), so only one process can ever be reclaiming a given lock. The
-## winner then owns a uniquely-named copy nobody else can touch, which is the only
-## place a timestamp can be re-read without racing.
-##
-## The re-read is an IDENTITY check, not another staleness check: it must be the
-## exact timestamp that was judged stale. A lock replaced between the judgement
-## and the rename is a different, live lock, and mtime survives a rename
-## (measured), so an exact match is what distinguishes them.
-static func _reclaim_lock_if_abandoned(lock: String) -> void:
-	var observed := int(FileAccess.get_modified_time(lock))
-	if observed <= 0:
-		return
-	if int(Time.get_unix_time_from_system()) - observed < lock_stale_seconds():
-		return
-	# A per-ATTEMPT target, not a per-process one. A reclaimer that dies between the
-	# rename and the delete leaves its private copy behind, and because that copy
-	# holds a stamp it is non-empty — so a later rename onto the same name fails.
-	# Keying only on the pid would then permanently disable stale recovery for
-	# whichever process next inherits that pid: every attempt would target the same
-	# surviving directory and fail, leaving that client unable to persist for the
-	# whole session even though the lock really was abandoned.
-	var dead := "%s%s%d-%d" % [
-		lock, LOCK_RECLAIM_SUFFIX, OS.get_process_id(), Time.get_ticks_usec()]
-	var dead_absolute := ProjectSettings.globalize_path(dead)
-	if DirAccess.rename_absolute(ProjectSettings.globalize_path(lock), dead_absolute) != OK:
-		return
-	if int(FileAccess.get_modified_time(dead)) != observed:
-		# Not the directory that was judged abandoned — a live holder replaced it in
-		# the gap. Put it back; the restore fails rather than clobbers when the slot
-		# is occupied by a stamped lock, and if it cannot be restored the copy is
-		# dropped rather than left to shadow the real one.
-		if DirAccess.rename_absolute(dead_absolute, ProjectSettings.globalize_path(lock)) == OK:
-			return
-		push_warning("SaveVault: could not restore a live write lock at %s" % lock)
-		_remove_lock_dir(dead)
-		return
-	push_warning("SaveVault: reclaimed an abandoned vault write lock at %s" % lock)
-	_remove_lock_dir(dead)
-
-
-## Delete a lock directory and its ownership stamp. A directory holding a file
-## cannot be removed in one call (measured), so the stamp goes first.
-static func _remove_lock_dir(lock: String) -> void:
-	DirAccess.remove_absolute(ProjectSettings.globalize_path(_lock_owner_path(lock)))
-	DirAccess.remove_absolute(ProjectSettings.globalize_path(lock))
-
-
-## Release one level of this process's lock for `path`, removing the directory
-## when the outermost holder lets go. Releasing a lock we do not hold is a no-op
-## rather than an error: it must be safe to call on any failure path without
-## first proving acquisition got that far.
-static func _release_lock(path: String) -> void:
-	var lock := lock_path(path)
-	var depth := int(_held_locks.get(lock, 0))
-	if depth <= 0:
-		return
-	if depth > 1:
-		_held_locks[lock] = depth - 1
-		return
-	# Remove the directory ONLY while the stamp is still ours. A writer suspended
-	# past the stale timeout can have its lock reclaimed and the freed path taken
-	# by someone else; releasing unconditionally would then delete THAT writer's
-	# lock and let a third process acquire while it is still mid-write — reopening
-	# the lost-update race from the release path rather than the acquire path.
-	# Checked before the bookkeeping is dropped, since _owns_lock reads it.
-	var still_ours := _owns_lock(path)
-	_held_locks.erase(lock)
-	_lock_tokens.erase(lock)
-	if still_ours:
-		_remove_lock_dir(lock)
-	else:
-		push_warning(
-			"SaveVault: the write lock at %s is no longer ours — leaving it for its holder" % lock)
-
-
-## Drop every lock this process holds. FOR TESTS ONLY, mirroring
-## clear_refusals_for_test(): one test drives several contention cases through a
-## single throwaway path and has to get back to a known state between them.
-static func clear_locks_for_test() -> void:
-	for lock: String in _held_locks.keys():
-		_remove_lock_dir(lock)
-	_held_locks.clear()
-	_lock_tokens.clear()
 
 
 ## A minimal v1 vault — the starting document for a player who has never stored
@@ -947,10 +694,10 @@ static func load_or_empty() -> Variant:
 ## but the disk does not — the caller should carry on rather than fail the boot.
 static func persist_attunement(name: String) -> bool:
 	var path := vault_path()
-	if not _acquire_lock(path):
+	if not FileLock.acquire(path):
 		return false
 	var stored := _persist_attunement_locked(path, name)
-	_release_lock(path)
+	FileLock.release(path)
 	return stored
 
 
@@ -976,10 +723,10 @@ static func _persist_attunement_locked(path: String, name: String) -> bool:
 ## never replaces a vault this build refused to read.
 static func persist_discoveries(names: Array) -> bool:
 	var path := vault_path()
-	if not _acquire_lock(path):
+	if not FileLock.acquire(path):
 		return false
 	var stored := _persist_discoveries_locked(path, names)
-	_release_lock(path)
+	FileLock.release(path)
 	return stored
 
 
