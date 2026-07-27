@@ -1111,15 +1111,8 @@ jobs:
               *) repair_sha="" ;;
             esac
             repair_main_version=""
-            repair_main_blob=""
             if [ -n "${repair_sha}" ]; then
               repair_main_version="$(cask_version_at "${repair_sha}")"
-              # main's BLOB at that same revision. The restore loop compares
-              # against this rather than the version: a same-version correction
-              # (a fixed sha256 or url) is a normal manual tap edit, so a version
-              # match cannot identify who wrote the file.
-              repair_main_blob="$(gh api "repos/${tap}/contents/Casks/world-at-ruin.rb?ref=${repair_sha}" \
-                --jq '.sha' 2>/dev/null || true)"
             fi
             # ABORT on a partial read rather than rebuild from it. Every one of
             # these collapses an API, decode or parse failure into the same
@@ -1127,7 +1120,7 @@ jobs:
             # empty would restore nothing over a branch whose content main has
             # not received.
             if [ -z "${repair_content}" ] || [ -z "${repair_version}" ] \
-               || [ -z "${repair_blob_captured}" ] || [ -z "${repair_main_blob}" ] \
+               || [ -z "${repair_blob_captured}" ] \
                || [ -z "${repair_main_version}" ] || [ -z "${repair_sha}" ]; then
               echo "::error::${tap}#${pr} conflicts with main, but the branch cask, its version or main's head could not be read; refusing to rebuild ${branch} from a partial read"
               exit 1
@@ -1168,109 +1161,94 @@ jobs:
               echo "::error::${tap}#${pr} carries v${repair_version} but ${tap} main already has v${repair_main_version}; refusing to rebuild ${branch}, which would open a downgrade"
               exit 1
             fi
-            # RE-VALIDATE IMMEDIATELY BEFORE THE FORCE-WRITE. The reset, not the
-            # restore, is the destructive step: `force` on the ref API permits a
-            # non-fast-forward update but offers no head-must-match guard, so a
-            # write landing between the capture above and this PATCH would be
-            # discarded with nothing left to recover it from. Our own releases
-            # cannot cause that — the job's CONSTANT concurrency group
-            # (`homebrew-tap-cask-world-at-ruin`, no tag in it) serialises the
-            # tap handoff across tags, which is exactly why it is constant — but
-            # a manual or out-of-band writer can, and the disarm/convergence
-            # logic above already exists to defend that case. Narrow the window
-            # to one read and refuse rather than reset over an uncaptured write.
-            #
-            # Compare the BLOB, not the version. A version match is too coarse: a
-            # cask can be rewritten without its version moving — a corrected
-            # `sha256` or `url` for the same release is the ordinary reason
-            # someone touches a tap by hand — and reverting that silently is
-            # exactly the write this guard exists to protect. The blob sha is
-            # content identity, so it catches those and every version change too.
-            if [ "$(gh api "repos/${tap}/contents/Casks/world-at-ruin.rb?ref=${branch}" \
-                 --jq '.sha' 2>/dev/null || true)" != "${repair_blob_captured}" ]; then
-              echo "::error::${branch} moved while the repair was being prepared (expected the captured v${repair_version} bytes); refusing to force-reset over a write this run did not capture"
+            # The branch's delta against main MUST be the cask and nothing else.
+            # The rebuild reconstructs the branch from main's tree plus the
+            # captured cask, so any OTHER branch-only path — a manual commit, a
+            # bot's edit — would be silently discarded. A `dirty` mergeability
+            # state says the two sides conflict; it does NOT say the cask is the
+            # only difference, so ask rather than assume.
+            repair_delta="$(gh api "repos/${tap}/compare/main...${branch}" \
+              --jq '[.files[].filename] | sort | join(" ")' 2>/dev/null || true)"
+            if [ -z "${repair_delta}" ]; then
+              echo "::error::could not read what ${branch} changes against ${tap} main; refusing to rebuild it blind"
               exit 1
             fi
-            repair_reset=""
+            if [ "${repair_delta}" != "Casks/world-at-ruin.rb" ]; then
+              echo "::error::${branch} also changes: ${repair_delta} — the rebuild reconstructs only the cask, so those would be discarded; refusing, resolve ${tap}#${pr} by hand"
+              exit 1
+            fi
+
+            # REBUILD AS ONE ATOMIC, NON-FORCED REF UPDATE.
+            #
+            # Reset-then-restore cannot be made safe here, and guarding it is the
+            # wrong shape: it is TWO mutations with an observable window between
+            # them, and `force` on the ref API carries no expected-head guard (it
+            # takes only the new sha), so that window is both unguardable and
+            # re-opened by every retry. Build the finished state FIRST and move
+            # the ref exactly once instead.
+            #
+            # The commit carries main's tree with the cask replaced, and parents
+            # [branch, main]. Because the branch head is a parent, the update IS
+            # a fast-forward — so it is issued WITHOUT `force`, and GitHub then
+            # refuses it unless the branch is still exactly where it was read.
+            # That is precisely the compare-and-swap the ref API does not
+            # otherwise offer.
+            #
+            # Everything downstream of the old two-step is gone with it: there is
+            # no intermediate state to observe (so no stale-read ambiguity), no
+            # cask to restore afterwards (so no create-vs-update ambiguity), and
+            # nothing to verify after the write — the ref either moved to the
+            # finished commit or did not move at all.
+            repair_branch_head="$(gh api "repos/${tap}/git/ref/heads/${branch}" \
+              --jq '.object.sha' 2>/dev/null || true)"
+            repair_main_tree="$(gh api "repos/${tap}/git/commits/${repair_sha}" \
+              --jq '.tree.sha' 2>/dev/null || true)"
+            if [ -z "${repair_branch_head}" ] || [ -z "${repair_main_tree}" ]; then
+              echo "::error::could not read ${branch}'s head or ${tap} main's tree; refusing to rebuild ${branch}"
+              exit 1
+            fi
+            repair_tree="$(jq -nc --arg base "${repair_main_tree}" --arg blob "${repair_blob_captured}" \
+              '{base_tree:$base,tree:[{path:"Casks/world-at-ruin.rb",mode:"100644",type:"blob",sha:$blob}]}' \
+              | gh api "repos/${tap}/git/trees" -X POST --input - --jq '.sha' 2>/dev/null || true)"
+            if [ -z "${repair_tree}" ]; then
+              echo "::error::could not build the rebuilt tree for ${branch}; refusing to move the ref"
+              exit 1
+            fi
+            repair_commit="$(jq -nc \
+              --arg msg "chore(cask): update world-at-ruin to v${repair_version}" \
+              --arg tree "${repair_tree}" --arg parent "${repair_branch_head}" --arg base "${repair_sha}" \
+              '{message:$msg,tree:$tree,parents:[$parent,$base]}' \
+              | gh api "repos/${tap}/git/commits" -X POST --input - --jq '.sha' 2>/dev/null || true)"
+            if [ -z "${repair_commit}" ]; then
+              echo "::error::could not create the rebuilt commit for ${branch}; refusing to move the ref"
+              exit 1
+            fi
+            # NO `force` — that omission is the entire safety property, not a
+            # detail. Retrying is harmless precisely because of it: a retry can
+            # only ever re-apply the same fast-forward, never overwrite a branch
+            # that has moved.
+            repair_moved=""
             for attempt in 1 2 3; do
               if gh api "repos/${tap}/git/refs/heads/${branch}" -X PATCH \
-                   -f sha="${repair_sha}" -F force=true >/dev/null 2>&1; then
-                repair_reset=1
+                   -f sha="${repair_commit}" >/dev/null 2>&1; then
+                repair_moved=1
                 break
               fi
               if [ "${attempt}" != "3" ]; then
                 sleep 3
               fi
             done
-            if [ -z "${repair_reset}" ]; then
-              echo "::error::could not rebuild ${branch} onto ${tap} main (${repair_sha}) after 3 attempts; ${tap}#${pr} stays conflicting and will block every later reset"
+            if [ -z "${repair_moved}" ]; then
+              echo "::error::could not fast-forward ${branch} onto ${tap} main; it moved while the rebuild was being prepared, so completing would have discarded a write this run did not capture — refusing, ${tap}#${pr} stays conflicting"
               exit 1
             fi
-            # Restore the captured cask. The branch now holds main's copy, so
-            # the PUT is a normal compare-and-swap against that blob.
-            repair_written=""
-            for attempt in 1 2 3 4 5; do
-              repair_head="$(gh api "repos/${tap}/contents/Casks/world-at-ruin.rb?ref=${branch}" 2>/dev/null || true)"
-              repair_blob="$(printf '%s' "${repair_head}" | jq -r '.sha // empty' 2>/dev/null || true)"
-              # The blob compare-and-swap alone does NOT make this loop safe: a
-              # rejected PUT re-reads, so a writer that landed after the reset
-              # would simply have its blob sha adopted on the next attempt and be
-              # overwritten. Decide on WHICH FILE is there before writing.
-              #
-              # Compare BLOBS, not versions. A same-version correction — a fixed
-              # sha256 or url — is a normal manual tap edit, so a version match
-              # would accept a stranger's bytes as "main's copy" and overwrite
-              # them. This is the same coarse-key mistake the pre-reset guard
-              # already avoids, and it has to be avoided on both sides of the
-              # reset.
-              #
-              # Already ours: identical bytes hash to the captured blob, so this
-              # is a retry after a PUT that actually landed.
-              if [ -n "${repair_blob}" ] && [ "${repair_blob}" = "${repair_blob_captured}" ]; then
-                repair_written=1
-                break
-              fi
-              # Otherwise the branch must hold exactly main's copy at the sha it
-              # was reset to. Anything else is a write this run never captured,
-              # and restoring over it would drop that write — the exact harm this
-              # repair exists to prevent, so refuse instead of completing.
-              if [ -n "${repair_blob}" ] && [ "${repair_blob}" != "${repair_main_blob}" ]; then
-                echo "::error::${branch} carries an unexpected cask after the rebuild (blob ${repair_blob}, expected main's ${repair_main_blob}); refusing to restore v${repair_version} over a write this run did not make"
-                exit 1
-              fi
-              # An empty blob sha here is a FAILED READ, not an absent file:
-              # main was required to carry a readable cask version above, and
-              # the branch is now main. Omitting the sha turns the PUT into a
-              # create, which GitHub refuses while the file exists — so a
-              # transient read failure costs a retry instead of a blind
-              # overwrite that would skip the compare-and-swap entirely.
-              if [ -n "${repair_blob}" ]; then
-                repair_args=(-f "sha=${repair_blob}")
-              else
-                repair_args=()
-              fi
-              if gh api "repos/${tap}/contents/Casks/world-at-ruin.rb" -X PUT \
-                   -f message="chore(cask): update world-at-ruin to v${repair_version}" \
-                   -f content="${repair_content}" -f branch="${branch}" \
-                   "${repair_args[@]}" >/dev/null 2>&1; then
-                repair_written=1
-                break
-              fi
-              if [ "${attempt}" != "5" ]; then
-                sleep 3
-              fi
-            done
-            if [ -z "${repair_written}" ]; then
-              echo "::error::rebuilt ${branch} onto ${tap} main but could not restore the v${repair_version} cask; ${tap}#${pr} now has nothing to deliver"
-              exit 1
-            fi
-            # No re-check of mergeability follows, deliberately: the branch is
-            # now main's head plus exactly one commit, so it cannot conflict by
-            # construction. If main moved again in the meantime the branch is
-            # merely behind once more, and the next release repairs it — which
-            # is the difference between a transient conflict and the permanent
-            # one this closes.
-            echo "::notice::${tap}#${pr} was born conflicting — rebuilt ${branch} onto main (${repair_sha}) and restored the v${repair_version} cask"
+            # No re-check of mergeability follows, deliberately: the branch now
+            # descends from main and differs only in the cask, so it cannot
+            # conflict by construction. If main moved again in the meantime the
+            # branch is merely behind once more, and the next release repairs it
+            # — which is the difference between a transient conflict and the
+            # permanent one this closes.
+            echo "::notice::${tap}#${pr} was born conflicting — rebuilt ${branch} onto main (${repair_sha}) carrying the v${repair_version} cask"
           fi
 
           # Title convergence + arming. The title must state the version the

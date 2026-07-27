@@ -180,96 +180,72 @@ if [ "${pr_resolved_line}" -ge "${repair_line}" ]; then
 	echo "the conflict repair must run after the cask PR is resolved" >&2
 	exit 1
 fi
-# The force-write is gated on the helper, exactly as the reset path is.
+# The ref update is gated on the helper, exactly as the reset path is.
 if [ "${repair_line}" -ge "${repair_patch_line}" ]; then
-	echo "the repair's ref force-write must be gated by cask_pr_conflicts" >&2
+	echo "the repair's ref update must be gated by cask_pr_conflicts" >&2
 	exit 1
 fi
-# BEFORE arming: auto-merge was disarmed earlier in the step, and rebuilding a
+# BEFORE arming: auto-merge was disarmed earlier in the step, and moving the
 # branch under an ARMED PR would let the tap merge whatever head the rebuild
-# happens to leave. Repairing first keeps the force-write inside the disarmed
-# window.
+# leaves. Repairing first keeps the write inside the disarmed window.
 if [ "${repair_patch_line}" -ge "${arm_line}" ]; then
 	echo "the repair must rebuild the branch BEFORE auto-merge is armed" >&2
 	exit 1
 fi
 
-# The rebuild must write back the version the BRANCH carries, never this run's
-# ${VERSION}. A newer concurrent release can own the branch content (the
-# compare-and-swap above breaks out and leaves it alone), so re-writing
-# ${VERSION} here would silently downgrade the tap while repairing it.
 repair_block="$(awk -v a="${repair_line}" -v b="${arm_line}" \
 	'NR >= a && NR < b' "${workflow}")"
+
+# ---- THE core safety property: the ref update carries NO `force`. ----------
+# `force` on the ref API takes only the new sha and offers no expected-head
+# guard, so a forced update silently overwrites a branch that moved. The rebuild
+# instead builds the finished commit FIRST with the branch head as a parent,
+# which makes the update a fast-forward — so it is issued without `force` and
+# GitHub refuses it unless the branch is still exactly where it was read. That
+# refusal IS the compare-and-swap; reintroducing `force` removes it entirely.
+if printf '%s' "${repair_block}" | grep -q 'force=true'; then
+	echo "the repair must not force-write the branch — a forced update has no expected-head guard" >&2
+	exit 1
+fi
+# ...and the fast-forward only holds if the branch head is a parent.
 # shellcheck disable=SC2016 # literal workflow text, as above
-if ! printf '%s' "${repair_block}" | grep -q 'content="\${repair_content}"'; then
-	echo "the repair must write back the content captured from the branch" >&2
+if ! printf '%s' "${repair_block}" | grep -q 'parents:\[\$parent,\$base\]'; then
+	echo "the rebuilt commit must have the branch head as a parent, or the update is not a fast-forward" >&2
+	exit 1
+fi
+
+# The tree must be based on MAIN's tree. Basing it on the branch's would revert
+# main's changes to every OTHER cask in the tap.
+# shellcheck disable=SC2016 # literal workflow text, as above
+if ! printf '%s' "${repair_block}" | grep -q 'base_tree:\$base'; then
+	echo "the rebuilt tree must be based on main's tree, or other casks are reverted" >&2
+	exit 1
+fi
+# It must carry the blob CAPTURED from the branch, never this run's rendered
+# ${content}: a newer concurrent release can own the branch content (the
+# compare-and-swap above breaks out and leaves it alone), so using ${content}
+# would silently downgrade the tap while repairing it.
+# shellcheck disable=SC2016 # literal workflow text, as above
+if ! printf '%s' "${repair_block}" | grep -q 'blob "\${repair_blob_captured}"'; then
+	echo "the rebuild must carry the blob captured from the branch" >&2
 	exit 1
 fi
 # shellcheck disable=SC2016 # literal workflow text, as above
 if printf '%s' "${repair_block}" | grep -q 'content="\${content}"'; then
-	echo "the repair re-writes this run's rendered cask, which downgrades a newer branch version" >&2
+	echo "the repair uses this run's rendered cask, which downgrades a newer branch version" >&2
 	exit 1
 fi
 
-# The RESET is the destructive step: `force` on the ref API permits a
-# non-fast-forward update but gives no head-must-match guard, so a write landing
-# between the capture and the force-write is discarded with nothing left to
-# recover it from. The captured version must therefore be re-validated in
-# between. (Codex P1 on this PR. Its stated scenario — two overlapping CD runs —
-# cannot happen, because this job's concurrency group is constant and serialises
-# the tap handoff across tags; the residual out-of-band writer is real.)
-# It must compare the captured BLOB, not the version: a cask can be rewritten
-# without its version moving (a corrected sha256 or url for the same release is
-# the ordinary reason a tap is touched by hand), and a version-only check would
-# revert that silently.
-revalidate_line="$(awk -v a="${repair_line}" -v s='!= "${repair_blob_captured}"' \
-	'NR >= a && index($0, s) {print NR; exit}' "${workflow}")"
-if [ -z "${revalidate_line}" ] || [ "${revalidate_line}" -ge "${repair_patch_line}" ]; then
-	echo "the repair must re-validate the captured BLOB immediately before the force-reset" >&2
+# The branch may differ from main ONLY in the cask. The rebuild reconstructs the
+# branch from main's tree plus that one file, so any other branch-only path would
+# be silently discarded — and a `dirty` mergeable_state does not establish that
+# the cask is the sole delta.
+if ! printf '%s' "${repair_block}" | grep -q 'compare/main\.\.\.'; then
+	echo "the repair must verify the branch's delta against main before rebuilding it" >&2
 	exit 1
 fi
-
-# main's cask version must be read AT the sha the branch is about to be reset
-# to. Reading it from the `main` ref lets an out-of-band merge land between the
-# two reads, so the restore loop's unknown-writer guard fires on main's own
-# content — aborting with the captured cask already gone from the branch.
-# shellcheck disable=SC2016 # literal workflow text, as above
-if ! printf '%s' "${repair_block}" | grep -q 'cask_version_at "\${repair_sha}"'; then
-	echo "main's cask version must be read at the captured reset sha, not the moving main ref" >&2
-	exit 1
-fi
-
-# The blob compare-and-swap does NOT make the restore loop safe on its own: a
-# rejected PUT re-reads, so a writer that landed after the reset would have its
-# blob sha adopted on the next attempt and be overwritten. The loop must decide
-# on the VERSION.
-# ...and it must decide on the BLOB, not the version, on BOTH sides of the reset:
-# a same-version correction (a fixed sha256/url) is a normal manual tap edit, so
-# a version match would accept a stranger's bytes as "main's copy".
-# shellcheck disable=SC2016 # literal workflow text, as above
-if ! printf '%s' "${repair_block}" | grep -q '"\${repair_blob}" != "\${repair_main_blob}"'; then
-	echo "the restore loop must refuse a BLOB this run did not write" >&2
-	exit 1
-fi
-
-# A downgrade must be refused outright. Unequal versions are not enough: an
-# out-of-band merge (or a workflow_dispatch rerun of an older tag, which this
-# workflow accepts) can leave main NEWER than the branch, and restoring the
-# older captured cask then opens a PR that auto-merges a Homebrew downgrade.
-if ! printf '%s' "${repair_block}" | grep -q 'would open a downgrade'; then
-	echo "the repair must refuse to restore a cask older than main" >&2
-	exit 1
-fi
-# shellcheck disable=SC2016 # literal workflow text, as above
-if ! printf '%s' "${repair_block}" | grep -q 'sort -V'; then
-	echo "the downgrade guard must actually order the two versions" >&2
-	exit 1
-fi
-# ...and must decline rather than guess when either side is a prerelease, since
-# `sort -V` orders 1.0.0-rc.1 ABOVE 1.0.0 and would authorise the downgrade it
-# is meant to refuse.
-if ! printf '%s' "${repair_block}" | grep -q 'is a prerelease; refusing to order them here'; then
-	echo "the downgrade guard must refuse rather than mis-order a prerelease" >&2
+if ! printf '%s' "${repair_block}" | grep -q 'the rebuild reconstructs only the cask'; then
+	echo "the repair must refuse a branch that changes files other than the cask" >&2
 	exit 1
 fi
 
