@@ -221,7 +221,7 @@ func _assert_control() -> void:
 ## B. A marker left by the previous launch is reconciled into a quarantine, and
 ## the failed build can no longer be mounted.
 func _assert_failed_previous() -> void:
-	var probe := _await_probe()
+	var probe := _await_probe(_marker_cleared)
 	if probe["state"] == "pending":
 		return
 	if probe["state"] != "ok":
@@ -307,7 +307,7 @@ func _assert_self_quarantined() -> void:
 
 ## E. A pending-but-unreadable marker is cleared ON DISK, not only in memory.
 func _assert_unreadable_marker() -> void:
-	var probe := _await_probe()
+	var probe := _await_probe(_marker_cleared)
 	if probe["state"] == "pending":
 		return
 	if probe["state"] != "ok":
@@ -347,25 +347,43 @@ func _assert_unreadable_marker() -> void:
 ## Answering "missing", "not JSON" and "not written yet" with one bare null is
 ## what let this harness report data loss for a read that simply arrived early.
 ## Each caller below therefore gets a state it can name in its own message:
-##   pending    — nothing readable yet and the deadline has not passed; the
+##   pending    — nothing settled yet and the deadline has not passed; the
 ##                caller returns and looks again next frame.
 ##   ok         — `doc` holds the parsed ledger.
 ##   absent     — the deadline passed with no file at all.
 ##   unreadable — the deadline passed with a file that is not a JSON object;
 ##                `body` carries what was actually on disk.
-func _await_probe() -> Dictionary:
+##
+## A phase whose ledger is SEEDED passes `settled` — the visible mark the boot's
+## own write leaves. Readability alone cannot serve there: the seed already
+## parses, so such a phase would otherwise judge the boot's work against the
+## content that preceded it. On the deadline the last read is returned as `ok`
+## anyway, so the phase renders its own precise verdict on what it found instead
+## of every stall collapsing into one timeout message.
+func _await_probe(settled: Callable = Callable()) -> Dictionary:
 	var path := _save.recovery_probe()
 	if FileAccess.file_exists(path):
 		var text := FileAccess.get_file_as_string(path)
 		var parsed: Variant = JSON.parse_string(text)
 		if parsed is Dictionary:
-			return {"state": "ok", "doc": parsed as Dictionary}
+			var doc := parsed as Dictionary
+			var waiting := settled.is_valid() and not (settled.call(doc) as bool)
+			if waiting and _ticks < PROBE_DEADLINE_TICK:
+				return {"state": "pending"}
+			return {"state": "ok", "doc": doc}
 		if _ticks < PROBE_DEADLINE_TICK:
 			return {"state": "pending"}
 		return {"state": "unreadable", "body": text}
 	if _ticks < PROBE_DEADLINE_TICK:
 		return {"state": "pending"}
 	return {"state": "absent"}
+
+
+## Reconcile's one visible effect on disk that every seeded phase shares: a
+## pending marker is cleared. Waiting on it is what makes those phases judge the
+## boot's write rather than the seed that preceded it.
+func _marker_cleared(doc: Dictionary) -> bool:
+	return doc.get("marker") == null
 
 
 ## What was actually observed, in the words of the thing observed, so a failure
