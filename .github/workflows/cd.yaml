@@ -43,6 +43,7 @@ on:
 concurrency:
   group: "CD-${{ github.ref_name || inputs.tag }}"
   cancel-in-progress: false
+  queue: max # pending runs wait FIFO; the default replaces them
 
 permissions:
   contents: read
@@ -586,13 +587,14 @@ jobs:
     # such interleaving). One tap job at a time makes the sequence atomic
     # with respect to sibling releases and kills the family at the root; the
     # in-job convergence/disarm logic stays as defense against manual
-    # actors. Trade-off, so a red run here is not misdiagnosed: if THREE
-    # releases stack inside one tap-job runtime (~seconds), GitHub cancels
-    # the middle PENDING job — that cancellation means "superseded", and the
-    # newest run delivers its content via the monotonic compare-and-swap.
+    # actors. `queue: max` holds stacked releases FIFO, so every release's
+    # handoff runs in tag order and none is dropped while pending; the
+    # in-job monotonic compare-and-swap still guards against an out-of-order
+    # or manual write landing on a newer version.
     concurrency:
       group: homebrew-tap-cask-world-at-ruin
       cancel-in-progress: false
+      queue: max # pending runs wait FIFO; the default replaces them
     permissions:
       contents: read # read the published release asset
     steps:
