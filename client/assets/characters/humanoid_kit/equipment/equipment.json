@@ -2,7 +2,7 @@
   "base_pieces": [
     "loincloth_ragged"
   ],
-  "kit_version": 6,
+  "kit_version": 7,
   "layers": [
     "base",
     "clothing",
@@ -25,6 +25,19 @@
       "layer": "clothing",
       "scene": "pants_wool.glb",
       "slot": "legs"
+    },
+    "relic_goggles": {
+      "layer": "clothing",
+      "occluded_by": [
+        "armor"
+      ],
+      "scene": "relic_goggles.glb",
+      "slot": "head"
+    },
+    "ruin_drake_helm": {
+      "layer": "armor",
+      "scene": "ruin_drake_helm.glb",
+      "slot": "head"
     },
     "shirt_ragged": {
       "hide_shape": "equip_hide_shirt_ragged",

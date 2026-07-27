@@ -4,3 +4,5 @@ shirt_ragged
 pants_wool
 shoes_cloth
 boots_worn
+relic_goggles
+ruin_drake_helm
