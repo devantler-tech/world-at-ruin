@@ -359,9 +359,16 @@ static func _refuse(path: String, message: String) -> Variant:
 ## corrupt on the next boot and (correctly) lock itself read-only, so the
 ## rename matters here too.
 ##
-## Held under the cross-process write lock, so a direct save_to() is as safe as
-## one reached through persist_attunement(). The lock is reentrant, so the
-## nesting those helpers create costs nothing and cannot self-deadlock.
+## Held under the cross-process write lock, so a direct save_to() is excluded
+## from other lock-aware writers exactly as one reached through
+## persist_attunement() is. The lock is reentrant, so the nesting those helpers
+## create costs nothing and cannot self-deadlock.
+##
+## This is a BLIND whole-document replace: it had no prior read, so there is no
+## document to compare against and it takes whatever is on disk. That is right
+## for its callers — seeding a fixture, replacing the vault wholesale — and wrong
+## for a read-modify-write, which must not discard a writer that landed since it
+## read. Those go through [method replace_if_unchanged] with a real identity.
 static func save_to(path: String, doc: Dictionary) -> bool:
 	return replace_if_unchanged(path, doc, IDENTITY_UNCHECKED)
 
