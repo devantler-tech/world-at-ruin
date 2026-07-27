@@ -204,12 +204,51 @@ func _ready() -> void:
 		_fail("the surviving vault is not the foreign writer's document")
 		return
 
-	# 6. No temp file survives a refusal. A stranded vault.json.tmp would be
-	# mistaken for a crashed write and is exactly the litter the lock path is
-	# careful to avoid.
-	if FileAccess.file_exists(PROBE + ".tmp"):
-		_fail("a refused write left its temp file behind")
+	# 6. No staging file survives a refusal. Matched by PREFIX: a write stages
+	# through a PRIVATE per-attempt path so a foreign writer cannot truncate the
+	# document being committed, which means a fixed-name probe would report clean
+	# without ever looking at the file a refused write created.
+	if not _staging_leftovers().is_empty():
+		_fail("a refused write left staging files behind: %s" % ", ".join(_staging_leftovers()))
 		return
+
+	# 6b. The write stages through a PRIVATE path, so a foreign writer cannot
+	# corrupt the payload being committed. The target-side compare-and-swap is
+	# blind to this: a pre-lock build using the old shared `vault.json.tmp` could
+	# truncate our staged document after we serialised it, leave `path` untouched
+	# so every check passes, and have us rename ITS bytes over the vault while
+	# reporting success. Pinned by proving the shared name is not what a write
+	# commits from — a squatter sitting on it must survive untouched, and the
+	# write must still succeed.
+	if not _foreign_write(PROBE, foreign):
+		_fail("could not reseed the vault for the staging case")
+		return
+	var squatter := PROBE + ".tmp"
+	var squat_file := FileAccess.open(squatter, FileAccess.WRITE)
+	if squat_file == null:
+		_fail("could not place a squatter on the shared temp name")
+		return
+	squat_file.store_string("{\"foreign\": \"mid-write\"}")
+	squat_file.close()
+	var squat_bytes := _read(squatter)
+	var staged_expected := SaveVault.document_identity(PROBE)
+	var staged_current = SaveVault.load_or_empty()
+	if staged_current is not Dictionary:
+		_fail("the vault did not read back for the staging case")
+		return
+	if not SaveVault.replace_if_unchanged(
+			PROBE, SaveVault.attune(staged_current, SaveVault.SHRINE_WARDENS), staged_expected):
+		_fail("an uncontended write failed while a squatter held the shared temp name")
+		return
+	if _read(squatter) != squat_bytes:
+		_fail("the write staged through the SHARED temp name — a foreign writer could corrupt it")
+		return
+	var committed = SaveVault.load_saved()
+	if committed is not Dictionary or not SaveVault.is_attuned(
+			committed, SaveVault.SHRINE_WARDENS):
+		_fail("the write committed something other than its own document")
+		return
+	_remove(squatter)
 
 	# 7. save_to() is still a blind whole-document replace. The sentinel is the
 	# opt-out for callers that never read first, and it must remain usable — a CAS
@@ -335,6 +374,18 @@ func _remove(path: String) -> void:
 		DirAccess.remove_absolute(_abs(path))
 
 
+## Every staging file beside the probe. Staging paths carry a per-attempt stamp,
+## so they cannot be reconstructed by name — scan the directory for the prefix.
+func _staging_leftovers() -> Array:
+	var parent := PROBE.get_base_dir()
+	var prefix := PROBE.get_file() + SaveVault.WRITE_TMP_SUFFIX
+	var found: Array = []
+	for entry: String in DirAccess.get_files_at(parent):
+		if entry.begins_with(prefix):
+			found.append(parent.path_join(entry))
+	return found
+
+
 func _cleanup() -> void:
 	SaveVault.clear_locks_for_test()
 	SaveVault.clear_refusals_for_test()
@@ -343,3 +394,5 @@ func _cleanup() -> void:
 	DirAccess.remove_absolute(_abs(lock))
 	for path: String in [PROBE, PROBE + ".tmp"]:
 		_remove(path)
+	for leftover: String in _staging_leftovers():
+		_remove(leftover)

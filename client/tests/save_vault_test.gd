@@ -259,9 +259,13 @@ func _ready() -> void:
 	if still != corrupt:
 		_fail("save_to() altered the unreadable vault (%s)" % still)
 		return
-	# ...and it left no temp file behind.
-	if FileAccess.file_exists(PROBE + ".tmp"):
-		_fail("save_to() left its temp file behind after refusing")
+	# ...and it left no staging file behind. Matched by PREFIX, not by the exact
+	# name: staging paths carry a per-attempt stamp (SaveVault.WRITE_TMP_SUFFIX),
+	# so probing one fixed name would answer "clean" without ever looking at the
+	# file a refused write actually created.
+	if not _staging_leftovers().is_empty():
+		_fail("save_to() left its staging file behind after refusing: %s" % (
+			", ".join(_staging_leftovers())))
 		return
 	_cleanup_probe()
 	SaveVault.clear_refusals_for_test()
@@ -331,3 +335,17 @@ func _exit_tree() -> void:
 func _cleanup_probe() -> void:
 	if FileAccess.file_exists(PROBE):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(PROBE))
+	for leftover: String in _staging_leftovers():
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(leftover))
+
+
+## Every staging file beside the probe. Staging paths carry a per-attempt stamp,
+## so they cannot be reconstructed by name — scan the directory for the prefix.
+func _staging_leftovers() -> Array:
+	var parent := PROBE.get_base_dir()
+	var prefix := PROBE.get_file() + SaveVault.WRITE_TMP_SUFFIX
+	var found: Array = []
+	for entry: String in DirAccess.get_files_at(parent):
+		if entry.begins_with(prefix):
+			found.append(parent.path_join(entry))
+	return found

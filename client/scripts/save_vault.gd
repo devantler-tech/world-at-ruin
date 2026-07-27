@@ -145,6 +145,11 @@ const LOCK_STALE_SECONDS := 300
 ## default, so a malformed value can never shorten the window in the field.
 const LOCK_STALE_ENV := "WAR_VAULT_LOCK_STALE_SECONDS"
 
+## Prefix for the private staging file a write commits from. What follows it is a
+## per-attempt unique stamp, so no two writers — and no two attempts — ever stage
+## through the same path (see [method _write_tmp_path]).
+const WRITE_TMP_SUFFIX := ".tmp-"
+
 ## The identity of a vault path that holds no file. Distinct from
 ## [constant IDENTITY_UNCHECKED]: "absent" is a real state to compare against, and
 ## a writer that read nothing must still refuse if a vault appeared meanwhile.
@@ -400,6 +405,43 @@ static func document_identity(path: String) -> String:
 	return sha
 
 
+## The staging file this attempt commits from — PRIVATE to one write.
+##
+## The shared `vault.json.tmp` this replaced is a hole the target-side
+## compare-and-swap cannot see. A pre-lock retained or rollback build uses that
+## same deterministic name, so it could open and truncate our staged document
+## after we serialised it and before the rename. `path` itself is untouched, so
+## every check above passes — and the rename then commits THEIR partial bytes
+## over the vault while reporting success. A per-attempt name removes the sharing
+## instead of trying to detect it: a writer that never took the lock cannot name
+## the file we are committing from.
+##
+## Process id plus microsecond ticks, matching [method _free_quarantine_path].
+static func _write_tmp_path(path: String) -> String:
+	return "%s%s%d-%d" % [path, WRITE_TMP_SUFFIX, OS.get_process_id(), Time.get_ticks_usec()]
+
+
+## Remove staging files abandoned by a crashed writer.
+##
+## A per-attempt name cannot be reclaimed by simply being overwritten the way one
+## fixed `vault.json.tmp` was, so without this a hard crash mid-write would leak a
+## file into user:// on every occurrence. Only ever called while holding the write
+## lock, which is what makes it safe: no other lock-aware writer can be inside its
+## staging window, so anything carrying this prefix is finished or dead.
+##
+## Scoped to WRITE_TMP_SUFFIX deliberately. A foreign writer's `vault.json.tmp`
+## carries no per-attempt stamp and is none of our business — deleting a file
+## another client is mid-write on is the kind of cross-writer damage this whole
+## area exists to avoid.
+static func _sweep_abandoned_writes(path: String) -> void:
+	var parent := path.get_base_dir()
+	var prefix := path.get_file() + WRITE_TMP_SUFFIX
+	for entry: String in DirAccess.get_files_at(parent):
+		if entry.begins_with(prefix):
+			DirAccess.remove_absolute(
+				ProjectSettings.globalize_path(parent.path_join(entry)))
+
+
 ## The expectation the most recent [method replace_if_unchanged] call ran under.
 ##
 ## FOR TESTS ONLY, and it exists because the thing it pins cannot otherwise be
@@ -448,7 +490,8 @@ static func _save_to_locked(
 	if reason != "":
 		push_error("SaveVault: refusing to write an invalid vault — %s" % reason)
 		return false
-	var tmp_path := path + ".tmp"
+	_sweep_abandoned_writes(path)
+	var tmp_path := _write_tmp_path(path)
 	var file := FileAccess.open(tmp_path, FileAccess.WRITE)
 	if file == null:
 		push_error("SaveVault: cannot write %s" % tmp_path)
