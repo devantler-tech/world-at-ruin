@@ -118,6 +118,13 @@ const GUARANTEE_CALL := "real_save_untouched("
 const QUIT_CALL := "quit("
 const SUCCESS_QUIT_ARGS := ["0", ""]
 
+## The verdicts [method _verdict] can return. Shared by the scan loop and by
+## every negative control, so a law and its control cannot drift apart.
+const VERDICT_UNLOCATABLE := "unlocatable"
+const VERDICT_UNGUARDED := "unguarded"
+const VERDICT_NONTERMINAL := "nonterminal"
+const VERDICT_STRAY := "stray:"
+
 ## Callable spellings that invoke a method without a direct `name(` — normalised
 ## back to a direct call before scanning, so one scanner covers them all.
 const DEFERRED_CALL_FORMS := [".call_deferred(", ".call(", ".callv(", ".bind("]
@@ -304,22 +311,15 @@ func _ready() -> void:
 		# PASS_PATH_ONLY_FIXTURE for why that scoping is the load-bearing part.
 		# Literals are blanked first, so naming the call in a message is not
 		# mistaken for making it (STRING_ONLY_FIXTURE).
-		var executable := _executable(code)
-		var fail_body := _fail_body(executable)
-		if fail_body.is_empty():
-			unlocatable.append(file)
-		elif not _guards_failure_path(code):
-			unguarded.append(file)
-		elif _nonzero_quit(fail_body).is_empty():
-			# A `_fail` that exits 0 — or does not exit at all — is not a failure
-			# funnel, and every other law here assumes it is one.
-			nonterminal.append(file)
-		else:
-			# A guarded `_fail` proves nothing if some other path also exits
-			# failing without going through it.
-			var stray := _nonzero_quit(executable.replace(fail_body, ""))
-			if not stray.is_empty():
-				stray_exit.append("%s (quit(%s))" % [file, stray])
+		var verdict := _verdict(code)
+		match verdict:
+			VERDICT_UNLOCATABLE: unlocatable.append(file)
+			VERDICT_UNGUARDED: unguarded.append(file)
+			VERDICT_NONTERMINAL: nonterminal.append(file)
+			_:
+				if verdict.begins_with(VERDICT_STRAY):
+					stray_exit.append("%s (quit(%s))"
+						% [file, verdict.trim_prefix(VERDICT_STRAY)])
 
 	# --- the law ---
 	if not unisolated.is_empty():
@@ -397,7 +397,7 @@ func _ready() -> void:
 	if fixture_body.is_empty():
 		_fail("the pass-path fixture's `_fail` body could not be located — body extraction is broken")
 		return
-	if _guards_failure_path(PASS_PATH_ONLY_FIXTURE):
+	if _verdict(PASS_PATH_ONLY_FIXTURE) != VERDICT_UNGUARDED:
 		_fail(("the guard accepted a harness that asserts the guarantee ONLY on its pass path — the "
 			+ "failure-path classification has widened to whole-file matching, which passes every "
 			+ "harness in this repo including the five this law was written for (#326)"))
@@ -418,7 +418,7 @@ func _ready() -> void:
 	if not COMMENT_ONLY_FAIL_FIXTURE.contains(GUARANTEE_CALL):
 		_fail("the comment-only fixture no longer names the guarantee — restore it")
 		return
-	if _guards_failure_path(COMMENT_ONLY_FAIL_FIXTURE):
+	if _verdict(COMMENT_ONLY_FAIL_FIXTURE) != VERDICT_UNGUARDED:
 		_fail(("the guard accepted a `_fail` that names the guarantee only in a TRAILING comment — "
 			+ "comment stripping has regressed. `_code_of` keeps trailing comments on purpose, which "
 			+ "is safe for booter detection and a bypass here (#326)"))
@@ -428,28 +428,26 @@ func _ready() -> void:
 	if not IGNORED_RESULT_FIXTURE.contains(GUARANTEE_CALL):
 		_fail("the ignored-result fixture no longer calls the guarantee — restore it")
 		return
-	if _guards_failure_path(IGNORED_RESULT_FIXTURE):
+	if _verdict(IGNORED_RESULT_FIXTURE) != VERDICT_UNGUARDED:
 		_fail(("the guard accepted a `_fail` that calls the guarantee and DISCARDS its answer — "
 			+ "using it as a bare teardown clears the seams exactly as `end()` did while asserting "
 			+ "nothing, so presence alone cannot be the test (#326)"))
 		return
 
 	# --- negative control: storing the answer is not reading it ---
-	if _guards_failure_path(IGNORED_ASSIGNMENT_FIXTURE):
+	if _verdict(IGNORED_ASSIGNMENT_FIXTURE) != VERDICT_UNGUARDED:
 		_fail(("the guard accepted a `_fail` that assigns the guarantee's result to a variable it "
 			+ "never reads — an assignment token alone cannot stand for a use (#326)"))
 		return
 
 	# --- negative control: `_fail` must itself exit nonzero ---
-	if not _nonzero_quit(_fail_body(_executable(NONTERMINAL_FAIL_FIXTURE))).is_empty():
+	if _verdict(NONTERMINAL_FAIL_FIXTURE) != VERDICT_NONTERMINAL:
 		_fail(("the non-terminal fixture reads as exiting nonzero — the `_fail`-terminates check "
 			+ "cannot detect a `_fail` that quits 0, so an assertion failure would report success"))
 		return
 
 	# --- negative control: a callable quit is still a quit ---
-	var deferred_exec := _executable(DEFERRED_QUIT_FIXTURE)
-	var deferred_stray := _nonzero_quit(
-		deferred_exec.replace(_fail_body(deferred_exec), ""))
+	var deferred_stray := _verdict(DEFERRED_QUIT_FIXTURE).trim_prefix(VERDICT_STRAY)
 	if deferred_stray != "2":
 		_fail(("the stray-exit scan missed `quit.call_deferred(2)` (got '%s') — a failing exit "
 			+ "reached through a callable contains no `quit(` and bypasses the isolation "
@@ -457,8 +455,7 @@ func _ready() -> void:
 		return
 
 	# --- negative control: `static var` ends a function body ---
-	var sv_exec := _executable(STATIC_VAR_BOUNDARY_FIXTURE)
-	var sv_stray := _nonzero_quit(sv_exec.replace(_fail_body(sv_exec), ""))
+	var sv_stray := _verdict(STATIC_VAR_BOUNDARY_FIXTURE).trim_prefix(VERDICT_STRAY)
 	if sv_stray != "2":
 		_fail(("a `static var` initializer after `_fail` was absorbed into its body (stray exit "
 			+ "read '%s', expected '2') — the body boundary must treat `static var` as a "
@@ -466,9 +463,7 @@ func _ready() -> void:
 		return
 
 	# --- negative control: a nonzero quit is not only `quit(1)` ---
-	var stray_control := _nonzero_quit(
-		_executable(STRAY_NONZERO_QUIT_FIXTURE).replace(
-			_fail_body(_executable(STRAY_NONZERO_QUIT_FIXTURE)), ""))
+	var stray_control := _verdict(STRAY_NONZERO_QUIT_FIXTURE).trim_prefix(VERDICT_STRAY)
 	if stray_control != "2":
 		_fail(("the stray-exit scan no longer recognises `quit(2)` outside `_fail` (got '%s') — it "
 			+ "has narrowed to specific failure spellings instead of excluding the success form, so "
@@ -524,6 +519,33 @@ func _claims_isolation(code: String) -> bool:
 		if code.contains(owner) and code.contains(ISOLATION_CLAIMS[owner]):
 			return true
 	return false
+
+
+## THE single per-file verdict: "" when the file is compliant, otherwise which
+## law it breaks ([constant VERDICT_STRAY] carries the offending quit argument).
+##
+## 🔴 Every control below runs its fixture through THIS function, and that is the
+## whole reason it exists. Before it, each control tested a detector in isolation
+## — so deleting a law's CALL SITE from the scan loop left every control green,
+## including deletion of this PR's core `unguarded` law. Detectors were pinned;
+## the wiring that consults them was not. Routing both the loop and the controls
+## through one verdict closes that: a branch removed here fails the fixture that
+## expects it.
+func _verdict(code: String) -> String:
+	var executable := _executable(code)
+	var fail_body := _fail_body(executable)
+	if fail_body.is_empty():
+		return VERDICT_UNLOCATABLE
+	if not _guards_failure_path(code):
+		return VERDICT_UNGUARDED
+	# A `_fail` that exits 0 — or does not exit at all — is not a failure funnel,
+	# and every other law here assumes it is one.
+	if _nonzero_quit(fail_body).is_empty():
+		return VERDICT_NONTERMINAL
+	# A guarded `_fail` proves nothing if some other path also exits failing
+	# without going through it.
+	var stray := _nonzero_quit(executable.replace(fail_body, ""))
+	return "" if stray.is_empty() else VERDICT_STRAY + stray
 
 
 ## Does this code assert the isolation guarantee on its FAILURE path?
