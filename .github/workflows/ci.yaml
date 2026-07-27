@@ -32,6 +32,8 @@ jobs:
           persist-credentials: false
       - name: Cask branch visibility retry is bounded and fail-closed
         run: tools/test-cd-cask-ref-visibility.sh
+      - name: Cask branch resets only when stale and unclaimed
+        run: tools/test-cd-cask-branch-reset.sh
       - name: Version ledger is append-only (no-resets law)
         # The in-game guard anchors the required fixture range to
         # tests/data/shipped_recipe_versions.txt, but a checkout-local file

@@ -730,6 +730,47 @@ jobs:
           }
           # END cask-ref-visibility-helper
 
+          # BEGIN cask-branch-reset-helper
+          # The tap SQUASH-merges, so merging a cask PR puts a new, non-ancestor
+          # commit on the tap's main touching Casks/world-at-ruin.rb — the exact
+          # file every subsequent release rewrites. This evergreen branch is
+          # seeded from main only when absent, so once it exists it is never
+          # re-synced and the NEXT release's PR is born CONFLICTING and can
+          # never auto-merge: releases keep being cut while the tap silently
+          # stays pinned at the last merged version.
+          #
+          # Two conditions gate the reset, and both are load-bearing:
+          #
+          #   1. NO open trusted PR. Resetting under a live PR would discard an
+          #      in-flight release that has already been published.
+          #   2. The branch is BEHIND main. `behind_by > 0` is precisely "main
+          #      moved on without us", which IS the conflict condition — and it
+          #      is what keeps a concurrent release safe: a run that has written
+          #      content but not yet opened its PR leaves the branch AHEAD only
+          #      (behind_by == 0), so its write is never thrown away here. The
+          #      monotonic compare-and-swap below then settles which version
+          #      wins, exactly as it does today.
+          #
+          # An unreadable comparison fails CLOSED — leave the branch alone and
+          # let the existing conflict surface rather than force-writing a ref on
+          # a guess.
+          cask_branch_needs_reset() {
+            local tap="$1"
+            local branch="$2"
+            local open_pr="$3"
+            local behind
+            if [ -n "${open_pr}" ]; then
+              return 1
+            fi
+            behind="$(gh api "repos/${tap}/compare/main...${branch}" \
+              --jq '.behind_by' 2>/dev/null || true)"
+            case "${behind}" in
+              '' | *[!0-9]*) return 1 ;;
+            esac
+            [ "${behind}" -gt 0 ]
+          }
+          # END cask-branch-reset-helper
+
           base_sha="$(gh api "repos/${tap}/git/ref/heads/main" --jq '.object.sha')"
           # Tolerate a concurrent creator: two runs can both see the branch
           # missing and race this POST; the loser gets 422 and must NOT die
@@ -740,6 +781,20 @@ jobs:
             gh api "repos/${tap}/git/refs" -X POST -f ref="refs/heads/${branch}" \
               -f sha="${base_sha}" >/dev/null 2>&1 || true
             wait_for_cask_ref "${tap}" "${branch}"
+          elif cask_branch_needs_reset "${tap}" "${branch}" "$(trusted_open_pr)"; then
+            # A fresh cycle on a branch left stale by the previous merge. Read
+            # the open-PR state HERE rather than reusing an earlier read, so the
+            # "no live PR" proof is as close to the write as it can be.
+            if gh api "repos/${tap}/git/refs/heads/${branch}" -X PATCH \
+                 -f sha="${base_sha}" -F force=true >/dev/null 2>&1; then
+              echo "::notice::reset ${branch} to ${tap} main (${base_sha}) — the previous cask PR merged and left it behind"
+            else
+              # Losing this is not fatal: the release still gets its content
+              # write and PR below, just on the pre-existing (conflicting)
+              # branch — the state we have today. Say so loudly instead of
+              # failing the publish.
+              echo "::warning::could not reset ${branch} to ${tap} main; the cask PR may be born conflicted"
+            fi
           fi
 
           # DISARM before touching the branch. Auto-merge armed by a previous
