@@ -330,6 +330,26 @@ expect_failure \
 	"third-party reference term in player-facing dev log" \
 	"$repo"
 
+# Entry prose lives one file per release, so scanning only the loader script
+# would leave every future entry unguarded — the prose it used to hold is
+# exactly what moved out of it.
+repo=$(new_repo entry_file_comparison)
+write_valid_contract "$repo"
+mkdir -p "$repo/client/devlog"
+printf '%s\n' \
+	'{' \
+	'	"version": "0.1.0",' \
+	'	"date": "2026-07-16",' \
+	'	"title": "The world exists",' \
+	'	"notes": ["The journal structure still resembles Outer Wilds."]' \
+	'}' \
+	>"$repo/client/devlog/0.1.0.json"
+git -C "$repo" add client/devlog/0.1.0.json
+expect_failure \
+	"a reference term in an entry FILE is caught, not just in the loader script" \
+	"third-party reference term in player-facing dev log" \
+	"$repo"
+
 repo=$(new_repo missing_hold)
 write_valid_contract "$repo"
 printf '%s\n' '# Story proposal' >"$repo/docs/design/story-and-progression.md"
