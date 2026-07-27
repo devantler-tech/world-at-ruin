@@ -220,11 +220,53 @@ func _fail(message: String) -> void:
 
 ## A `_fail` that CALLS the guarantee but throws the answer away, using it purely
 ## as teardown in place of a bare `end()`. Seams cleared, evidence discarded,
-## nothing asserted — see [constant RESULT_USED_TOKENS].
+## nothing asserted — see [constant CONDITION_TOKENS].
 const IGNORED_RESULT_FIXTURE := """func _fail(message: String) -> void:
 	if _save != null:
 		_save.real_save_untouched()
 	get_tree().quit(1)
+"""
+
+## The subtler form of the same discard: the answer is STORED and then never
+## read. An assignment looks like a use and is not one.
+const IGNORED_ASSIGNMENT_FIXTURE := """func _fail(message: String) -> void:
+	var untouched = _save.real_save_untouched()
+	get_tree().quit(1)
+"""
+
+## A `_fail` that asserts correctly and then exits SUCCESS. Every other law here
+## assumes `_fail` is the failure funnel; if it quits 0 the suite reports a pass
+## on an assertion failure.
+const NONTERMINAL_FAIL_FIXTURE := """func _fail(message: String) -> void:
+	if _save != null and not _save.real_save_untouched():
+		message += " breached"
+	get_tree().quit(0)
+"""
+
+## A failing exit reached through a callable rather than a direct call. Contains
+## no `quit(` at all, so a scanner that splits on that literal sees nothing.
+const DEFERRED_QUIT_FIXTURE := """func _on_timeout() -> void:
+	get_tree().quit.call_deferred(2)
+
+
+func _fail(message: String) -> void:
+	if _save != null and not _save.real_save_untouched():
+		message += " breached"
+	get_tree().quit(1)
+"""
+
+## A compliant `_fail` followed by a `static var` initializer holding a failing
+## exit. If `static var ` is missing from [constant DECLARATION_STARTS] the body
+## absorbs the initializer, and subtracting that body then deletes the stray exit
+## from the scan — the guard goes green over two faults at once.
+const STATIC_VAR_BOUNDARY_FIXTURE := """func _fail(message: String) -> void:
+	if _save != null and not _save.real_save_untouched():
+		message += " breached"
+	get_tree().quit(1)
+
+
+static var _late_exit := func() -> void:
+	get_tree().quit(2)
 """
 
 
@@ -390,6 +432,37 @@ func _ready() -> void:
 		_fail(("the guard accepted a `_fail` that calls the guarantee and DISCARDS its answer — "
 			+ "using it as a bare teardown clears the seams exactly as `end()` did while asserting "
 			+ "nothing, so presence alone cannot be the test (#326)"))
+		return
+
+	# --- negative control: storing the answer is not reading it ---
+	if _guards_failure_path(IGNORED_ASSIGNMENT_FIXTURE):
+		_fail(("the guard accepted a `_fail` that assigns the guarantee's result to a variable it "
+			+ "never reads — an assignment token alone cannot stand for a use (#326)"))
+		return
+
+	# --- negative control: `_fail` must itself exit nonzero ---
+	if not _nonzero_quit(_fail_body(_executable(NONTERMINAL_FAIL_FIXTURE))).is_empty():
+		_fail(("the non-terminal fixture reads as exiting nonzero — the `_fail`-terminates check "
+			+ "cannot detect a `_fail` that quits 0, so an assertion failure would report success"))
+		return
+
+	# --- negative control: a callable quit is still a quit ---
+	var deferred_exec := _executable(DEFERRED_QUIT_FIXTURE)
+	var deferred_stray := _nonzero_quit(
+		deferred_exec.replace(_fail_body(deferred_exec), ""))
+	if deferred_stray != "2":
+		_fail(("the stray-exit scan missed `quit.call_deferred(2)` (got '%s') — a failing exit "
+			+ "reached through a callable contains no `quit(` and bypasses the isolation "
+			+ "assertion (#326)") % deferred_stray)
+		return
+
+	# --- negative control: `static var` ends a function body ---
+	var sv_exec := _executable(STATIC_VAR_BOUNDARY_FIXTURE)
+	var sv_stray := _nonzero_quit(sv_exec.replace(_fail_body(sv_exec), ""))
+	if sv_stray != "2":
+		_fail(("a `static var` initializer after `_fail` was absorbed into its body (stray exit "
+			+ "read '%s', expected '2') — the body boundary must treat `static var` as a "
+			+ "declaration, or subtracting the body also hides the exit") % sv_stray)
 		return
 
 	# --- negative control: a nonzero quit is not only `quit(1)` ---
