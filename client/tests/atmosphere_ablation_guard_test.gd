@@ -87,6 +87,25 @@ func _ready() -> void:
 		_fail("an unchanged bool must count as stuck")
 		return
 
+	# LAW 5 — the property-existence check the run pre-flights its condition table
+	# with actually discriminates.
+	#
+	# Pinned because a passing ablation run cannot demonstrate it: every key in
+	# the shipped table is valid, so a run only ever exercises the "nothing
+	# unknown" branch and a check that answered true for everything would sail
+	# through the very run meant to be its evidence. Both directions asserted.
+	var probe := Environment.new()
+	for real_key: String in [
+		"volumetric_fog_density", "fog_height_density", "fog_density", "sdfgi_enabled",
+	]:
+		if not (real_key in probe):
+			_fail("`%s` is a real Environment property and must be recognised" % real_key)
+			return
+	for typo: String in ["volumetric_fog_densty", "fog_heigth_density", "not_a_property"]:
+		if typo in probe:
+			_fail("`%s` is not an Environment property and must be rejected" % typo)
+			return
+
 	print("TEST PASS — the ablation read-back guard accepts 32-bit narrowing and still catches a rewrite")
 	get_tree().quit(0)
 
