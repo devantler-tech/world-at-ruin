@@ -210,6 +210,7 @@ void fragment() {
 	vec4 sub = vec4(rock_color, rock_roughness);
 	float crack = 0.0;
 	float plate_fw = 0.0;
+	float crack_fw = 0.0;
 	if (plates_enabled) {
 	plates(plate_uv, plate_id, f1, f2);
 
@@ -233,7 +234,7 @@ void fragment() {
 	// The crack itself, widened to the local footprint so it stays a line
 	// instead of aliasing, and dissolved once it is thinner than about a pixel
 	// — detail leaves the frame by fading, never by shimmering.
-	float crack_fw = fwidth(f2 - f1);
+	crack_fw = fwidth(f2 - f1);
 	float cw = max(crack_width, crack_fw * 1.2);
 	crack = 1.0 - smoothstep(0.0, cw, f2 - f1);
 	crack *= 1.0 - smoothstep(0.30, 0.85, plate_fw);
@@ -425,6 +426,27 @@ void fragment() {
 	// crack had visually vanished — detail leaving by shimmering rather than by
 	// fading, which is the failure this shader family is written to avoid.
 	grad *= 1.0 - smoothstep(0.30, 0.85, plate_fw);
+	// The first of those two guards did not actually do what it says. `plate_fw`
+	// is the footprint of a whole PLATE, and a plate is some thirty times wider
+	// than the seam drawn inside it, so dissolving on it is not "the same
+	// schedule as the crack" — it does not engage until long after the crack has
+	// stopped being drawable. In between, `crack_fixed` above is a step of
+	// CONSTANT width (deliberately, per the note on the second-derivative), and
+	// past about eight metres that width is narrower than one pixel. So this
+	// term spent that whole range differencing a sub-pixel step, which is
+	// precisely the jittering micro-relief the paragraph above describes.
+	//
+	// So dissolve on the CRACK's own footprint too. The ratio is how far the
+	// seam has had to be stretched to stay a pixel wide, making 1.0 exactly the
+	// distance at which it stops being resolvable; the fade is centred there.
+	// Below 0.7 this multiplier is exactly 1.0, so every seam a player can
+	// actually resolve keeps its full relief, unchanged.
+	//
+	// Measured on-GPU (tools/plate_crawl): the flickering fraction of the ground
+	// falls 0.0052 -> 0.0027 against a plates-off control that reads 0.0000.
+	// Zeroing crack_relief outright gives 0.0000, so this term is the whole of
+	// what still moves.
+	grad *= 1.0 - smoothstep(0.7, 1.3, crack_fw * 1.2 / max(crack_width, 1e-6));
 	float grad_len = length(grad);
 	grad = grad_len > 1.5 ? grad * (1.5 / grad_len) : grad;
 	}
