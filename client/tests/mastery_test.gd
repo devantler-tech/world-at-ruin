@@ -300,7 +300,9 @@ func _weapons_are_independent() -> bool:
 ## final state is identical for every weapon — the determinism the product law
 ## requires of anything progression rests on.
 func _deterministic_replay() -> bool:
-	_check(_scripted_ledger() == _scripted_ledger(), true, "determinism: identical scripts produce identical ledgers")
+	var first_run := _scripted_ledger()
+	var replay := _scripted_ledger()
+	_check(first_run == replay, true, "determinism: identical scripts produce identical ledgers")
 	return not _failed
 
 

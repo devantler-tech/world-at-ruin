@@ -1,9 +1,9 @@
 # MegaLinter configuration. The gate itself is devantler-tech/actions' lint.yaml
 # reusable workflow, called from .github/workflows/ci.yaml.
 #
-# Scope note: MegaLinter ships no GDScript linter in any flavour, so client/**/*.gd,
-# *.tscn and *.gdshader — the majority of this repo — are outside its reach entirely.
-# That gap is tracked in #274 and is NOT what any setting below is about.
+# Scope note: MegaLinter ships no GDScript linter in any flavour, so the dedicated
+# GDScript lint job owns client/**/*.gd through .gdlintrc. Scene and shader syntax
+# remains covered by Godot's import/smoke path; no setting below claims otherwise.
 
 APPLY_FIXES: all
 FLAVOR_SUGGESTIONS: false

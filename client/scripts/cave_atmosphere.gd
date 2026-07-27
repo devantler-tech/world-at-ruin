@@ -141,6 +141,10 @@ const PROBE_SPREAD := 6.0
 ## the same sky. A time-varying pattern would photograph a different value each
 ## run — the flicker mistake #321 already had to correct once, and it is also why
 ## the fade is spatial rather than a smoothing filter over time.
+# Public probe geometry is test-inspected as a stable atmospheric law; its
+# constant-shaped name communicates immutability even though GDScript cannot
+# build this typed array in a const expression.
+# gdlint:ignore = class-variable-name
 static var PROBE_OFFSETS: Array[Vector3] = _build_probe_offsets()
 
 ## Golden angle in radians — successive turns by it never repeat a direction.

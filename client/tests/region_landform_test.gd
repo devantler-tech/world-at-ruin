@@ -154,20 +154,20 @@ func _fail(msg: String) -> void:
 ## somewhere in the world is too steep.
 func _test_every_region_declares_an_affordable_landform() -> void:
 	for reg: Dictionary in GroundRegions.REGIONS:
-		var name_: StringName = reg[&"name"]
+		var region_name: StringName = reg[&"name"]
 		if not reg.has(&"amp") or not reg.has(&"ridged"):
-			_fail("region %s declares no landform (amp/ridged)" % name_)
+			_fail("region %s declares no landform (amp/ridged)" % region_name)
 			continue
 		var amp := float(reg[&"amp"])
 		var ridged := float(reg[&"ridged"])
 		if amp <= 0.1 or amp > 2.0:
-			_fail("region %s amp %.3f is outside the sane range (0.1, 2.0]" % [name_, amp])
+			_fail("region %s amp %.3f is outside the sane range (0.1, 2.0]" % [region_name, amp])
 		if ridged < 0.0 or ridged > 1.0:
-			_fail("region %s ridged %.3f is outside 0..1" % [name_, ridged])
+			_fail("region %s ridged %.3f is outside 0..1" % [region_name, ridged])
 		var cost := GroundRegions.landform_cost(amp, ridged)
 		if cost > GroundRegions.LANDFORM_GRADIENT_BUDGET:
 			_fail("region %s costs %.3f against the %.3f gradient budget (amp %.2f, ridged %.2f) — this is ground the wanderer cannot walk up" %
-				[name_, cost, GroundRegions.LANDFORM_GRADIENT_BUDGET, amp, ridged])
+				[region_name, cost, GroundRegions.LANDFORM_GRADIENT_BUDGET, amp, ridged])
 
 
 ## 2. The ashflats landform is the IDENTITY on the base field, and the shrine
@@ -323,17 +323,17 @@ func _test_terrain_stays_walkable() -> void:
 
 ## 6. The regions are actually different heights.
 func _test_regions_differ_in_relief(relief: Dictionary) -> void:
-	for name_: StringName in RELIEF_FLOOR:
-		var measured := float(relief.get(name_, 0.0))
-		var floor_ := float(RELIEF_FLOOR[name_])
-		if measured < floor_:
+	for region_name: StringName in RELIEF_FLOOR:
+		var measured := float(relief.get(region_name, 0.0))
+		var relief_floor := float(RELIEF_FLOOR[region_name])
+		if measured < relief_floor:
 			_fail("region %s relief %.3f m is under its floor %.3f m — its landform has been flattened" %
-				[name_, measured, floor_])
+				[region_name, measured, relief_floor])
 
 	var tallest := -INF
 	var flattest := INF
-	for name_: StringName in RELIEF_FLOOR:
-		var measured := float(relief.get(name_, 0.0))
+	for region_name: StringName in RELIEF_FLOOR:
+		var measured := float(relief.get(region_name, 0.0))
 		tallest = maxf(tallest, measured)
 		flattest = minf(flattest, measured)
 	if tallest - flattest < RELIEF_SPREAD:
@@ -358,21 +358,21 @@ func _test_regions_differ_in_relief(relief: Dictionary) -> void:
 func _test_ridging_creases_the_field() -> void:
 	var found := false
 	for reg: Dictionary in GroundRegions.REGIONS:
-		var name_: StringName = reg[&"name"]
+		var region_name: StringName = reg[&"name"]
 		var amp := float(reg[&"amp"])
 		var ridged := float(reg[&"ridged"])
 		var ratio := _crease_ratio(amp, ridged)
 		if ridged == 0.0:
 			if not is_equal_approx(ratio, 1.0):
 				_fail("region %s asks for no ridging but its crease ratio is %.4f, not 1 — shape() is creasing a region that did not ask" %
-					[name_, ratio])
+					[region_name, ratio])
 			continue
-		if name_ != CREASED_REGION:
+		if region_name != CREASED_REGION:
 			continue
 		found = true
 		if ratio < CREASE_RATIO_FLOOR:
 			_fail("region %s ridges at %.2f but creases the field only %.3fx (floor %.2fx) — the crease knob is not producing an edge" %
-				[name_, ridged, ratio, CREASE_RATIO_FLOOR])
+				[region_name, ridged, ratio, CREASE_RATIO_FLOOR])
 	if not found:
 		_fail("no region named %s carries ridging — nothing in the world creases" % CREASED_REGION)
 
@@ -506,22 +506,22 @@ func _measure_relief() -> Dictionary:
 			var at := GroundRegions.region_for(sites, x, z)
 			if float(at[&"blend"]) < 1.0:
 				continue
-			var name_: StringName = GroundRegions.REGIONS[at[&"region"]][&"name"]
+			var region_name: StringName = GroundRegions.REGIONS[at[&"region"]][&"name"]
 			var h := _world.height_at(x, z)
-			sums[name_] = float(sums[name_]) + h
-			squares[name_] = float(squares[name_]) + h * h
-			totals[name_] = int(totals[name_]) + 1
+			sums[region_name] = float(sums[region_name]) + h
+			squares[region_name] = float(squares[region_name]) + h * h
+			totals[region_name] = int(totals[region_name]) + 1
 
 	var relief := {}
 	for reg: Dictionary in GroundRegions.REGIONS:
-		var name_: StringName = reg[&"name"]
-		var n := int(totals[name_])
+		var region_name: StringName = reg[&"name"]
+		var n := int(totals[region_name])
 		if n < 1000:
 			_fail("region %s has only %d decided interior samples — too few to measure relief" %
-				[name_, n])
-			relief[name_] = 0.0
+				[region_name, n])
+			relief[region_name] = 0.0
 			continue
-		var mean := float(sums[name_]) / n
-		var variance := maxf(float(squares[name_]) / n - mean * mean, 0.0)
-		relief[name_] = sqrt(variance)
+		var mean := float(sums[region_name]) / n
+		var variance := maxf(float(squares[region_name]) / n - mean * mean, 0.0)
+		relief[region_name] = sqrt(variance)
 	return relief

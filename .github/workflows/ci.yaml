@@ -1025,10 +1025,9 @@ jobs:
         # similarity or grant legal clearance.
         run: ./tools/originality-guard.sh
 
-  # Repo-wide linting for everything that is not GDScript: JSON, Markdown, YAML, shell,
-  # the workflows in this directory, spelling and secrets. MegaLinter ships no GDScript
-  # linter in any flavour, so client/**/*.gd is out of its reach by construction — that
-  # gap is tracked separately, not papered over here.
+  # Repo-wide linting for JSON, Markdown, YAML, shell, workflows, spelling and secrets.
+  # MegaLinter ships no GDScript linter in any flavour; the dedicated gdscript-lint job
+  # below covers client/**/*.gd with the project's own pinned policy instead.
   #
   # The Go flavour is the org's shared image (ksail's validate-go-project uses it too), so
   # it is warm on the runners. Go linting itself stays OFF here — server-ci below already
@@ -1049,6 +1048,25 @@ jobs:
       # JSON file is a prettier warning and MegaLinter exits 0 (measured), while real lint
       # ERRORS — invalid JSON, shellcheck failures — still fail the job.
       apply-fixes: false
+
+  gdscript-lint:
+    name: GDScript lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - name: Install the pinned GDScript linter
+        run: python -m pip install --disable-pip-version-check "gdtoolkit==4.5.0"
+      - name: Prove the lint policy catches a real defect
+        run: ./tools/gdscript-lint.test.sh
+      - name: Lint GDScript
+        run: ./tools/gdscript-lint.sh client
 
   server-ci:
     name: Server CI (Go)
@@ -2096,6 +2114,7 @@ jobs:
         client-export-macos,
         license-guard,
         lint,
+        gdscript-lint,
         server-ci,
         detect-visual-changes,
         frame-capture,
@@ -2118,6 +2137,7 @@ jobs:
             ${{ needs.client-export-macos.result }}
             ${{ needs.license-guard.result }}
             ${{ needs.lint.result }}
+            ${{ needs.gdscript-lint.result }}
             ${{ needs.server-ci.result }}
             ${{ needs.detect-visual-changes.result }}
             ${{ needs.frame-capture.result }}
