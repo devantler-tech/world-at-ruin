@@ -33,6 +33,19 @@ extends Node
 ## no save present the first-run creator opens and its panel covers a third of
 ## the frame, and with the real path a capture would touch the player's own save.
 
+## The change-report tool's image comparison, reused rather than reimplemented:
+## its max-channel metric is the repo's settled answer to "how much did this
+## frame move", and a second private copy here would be free to drift from the
+## numbers a reviewer reads in the change report. Preloaded because
+## `frame_diff.gd` is a tool script with no `class_name`; only its static
+## comparison is called, so nothing of it is instantiated.
+const FrameDiff := preload("res://tools/frame_diff.gd")
+
+## Every scenario this tool knows. Listed once so the dispatch below and the
+## error message a caller sees cannot disagree — the previous pair of hand-kept
+## conditions had already drifted apart by one scenario.
+const SCENARIOS: Array[String] = ["world", "first_run", "breath", "walk", "light_response", "replication"]
+
 ## The committed vantages. Fixed on purpose — evidence is only comparable across
 ## commits if the camera does not move between them. Each is [name, eye, target].
 const VANTAGES: Array = [
@@ -153,6 +166,81 @@ const CONTRIB_MIN_FRACTION := 0.5
 const ASH_CONTRIB_MIN_DELTA := 0.01
 const ASH_CONTRIB_MIN_FRACTION := 0.02
 
+## ── Replication capture (#325) ───────────────────────────────────────────
+## The committed population the `replication` scenario photographs. Values,
+## not bytes: `WireCodec.decode` is pinned against the SERVER's encoder by the
+## shared cross-tier goldens, so re-proving the decoder here would duplicate
+## that contract while adding a hand-maintained hex blob. What this scenario
+## exists to evidence is everything downstream of it — the fold, the view, and
+## the pixels — so it enters the store the way a decoded frame does.
+const REPLICATION_FIXTURE := "res://tools/data/replication_snapshot.json"
+## The zone seam the scenario forces. `.invalid` is the RFC 2606 reserved TLD,
+## so it cannot resolve even if a future refactor did try to open it — but the
+## scenario does not rely on that: it forces an EMPTY token, and ZoneConnection
+## refuses on the missing token before it constructs a socket at all. The
+## capture then ASSERTS that refusal, so "no server was contacted" is a proved
+## property of the run rather than a claim in a comment.
+const REPLICATION_ZONE_URL := "wss://capture.invalid/zone"
+## Where the camera stands relative to the fixture's centroid, and what height
+## it looks at. Derived from the fixture rather than committed as a vantage:
+## the subject here is the population, so the frame must follow it if the
+## fixture ever moves.
+const REPLICATION_CAM_OFFSET := Vector3(6.5, 2.6, 7.5)
+const REPLICATION_LOOK_HEIGHT_M := 1.0
+## Frames between the populated pair. The same gap separates the populated and
+## empty shots, so the noise reference measures exactly the drift — foliage
+## sway, fog reprojection, temporal antialiasing — that the verdict must see
+## past. Same shape as the terrain-contribution control above.
+const REPLICATION_GAP_FRAMES := 15
+## How far a marker may sit above the ground beneath it before the fixture is
+## judged to be floating. Capsule origins are at the capsule's CENTRE, so a
+## grounded marker sits half its height up; the band allows that plus slack for
+## uneven ground, and rejects a fixture authored at the wrong height — which
+## would publish capsules hanging in the air as evidence.
+const REPLICATION_MAX_GROUND_GAP_M := 2.0
+## ⚠️ THE VERDICT IS SAMPLED WHERE THE MARKERS ARE, NOT OVER THE WHOLE FRAME,
+## and that is MEASURED rather than assumed. The obvious guard — "the frame with
+## the population must differ from the frame without it" — was built first and
+## proved VACUOUS on exactly the shape the breath guard hit: three capsules
+## changed 3.79% of the frame while two shots of the SAME populated state
+## already differed by 4.01%, because this world is never still (temporal
+## antialiasing jitters every edge, foliage sways, fog reprojects). The
+## population was genuinely there and the whole-frame metric could not see it
+## past the drift. Any threshold that passed it would also have passed an empty
+## table.
+##
+## So the measurement is restricted to the pixels the capsules actually cover,
+## exactly as the terrain-contribution control restricts itself to samples whose
+## ray lands on bare ground. At those points the drift is small and the
+## population is the entire signal. Same structure, same reason.
+##
+## Sample grid per marker, in fractions of its own half-height and radius, so
+## every point is well inside the capsule body rather than on a cap or an edge
+## that antialiasing shares with the background.
+const REPLICATION_SAMPLE_ROWS := 6
+const REPLICATION_SAMPLE_COLS := 3
+## The floor on usable samples: fewer means the markers cover too little frame
+## for the verdict to mean anything, which is itself a failure — a control that
+## silently measured three pixels would be the self-attestation this tool exists
+## to replace.
+const REPLICATION_MIN_POINTS := 40
+## A sample is QUIET when the two populated shots differ by no more than this at
+## it. Only quiet samples may vouch: a point the wind or a fog froxel moves
+## across changes between ANY two frames, population or no population.
+const REPLICATION_QUIET_NOISE := 0.02
+## What removing the population must do to a quiet sample for it to count. A
+## capsule giving way to ground or sky moves channels by whole tenths; this floor
+## only needs to clear the noise band with margin.
+const REPLICATION_MIN_CHANGE := 0.08
+## The floor on quiet samples: if drift touches nearly every sample, the
+## measurement is impossible and must say so rather than pass.
+const REPLICATION_MIN_QUIET := 24
+## The fraction of quiet samples that must change when the population leaves.
+## Under the measured healthy value on purpose: a marker pixel can give way to
+## ground of a similar value, and one capsule may be partly occluded, without
+## refuting that the population rendered.
+const REPLICATION_MIN_FRACTION := 0.6
+
 ## The first-run scenario samples the LEFT band instead, because that is where
 ## the creator's panel is anchored (PRESET_LEFT_WIDE). Sampling the world box
 ## would measure the 3D view BEHIND the panel — so a run where the creator never
@@ -251,6 +339,18 @@ func _ready() -> void:
 				% [seam[0], seam[2]])
 			return
 
+	# The scenario is resolved BEFORE the game boots, because one of them has to
+	# configure the world it is about to photograph. `replication` needs the
+	# zone seam set while main.gd's _ready runs — see _arm_replication_seam().
+	var scenario := OS.get_environment("WAR_SCENARIO")
+	if scenario.is_empty():
+		scenario = "world"
+	if not SCENARIOS.has(scenario):
+		_fail("unknown WAR_SCENARIO '%s' — expected one of %s" % [scenario, ", ".join(SCENARIOS)])
+		return
+	if scenario == "replication":
+		_arm_replication_seam()
+
 	# Load the scene the PROJECT actually boots, not a hardcoded path: the
 	# capture gate treats project.godot as a visual trigger, so a PR that
 	# repoints application/run/main_scene must be captured as the shipped game
@@ -270,9 +370,19 @@ func _ready() -> void:
 		_fail("the main scene never attached — nothing would have been rendered")
 		return
 
-	var scenario := OS.get_environment("WAR_SCENARIO")
-	if scenario.is_empty():
-		scenario = "world"
+	# Say what these frames contain BEFORE any scenario can return, so the
+	# verdict is not something a later code path can forget to print. Every
+	# scenario but `replication` boots with no zone, so its table is empty and
+	# its frames contain no replicated entity — which is exactly the fact #325
+	# needs stated rather than assumed. `replication` prints its own `on` once
+	# it has proved the population is really there; printing `off` here too
+	# would make that log carry two contradictory verdicts, which CI refuses.
+	if scenario != "replication":
+		print(ReplicaView.marker(false, 0))
+
+	if scenario == "replication":
+		await _capture_replication(dir, main)
+		return
 	if scenario == "first_run":
 		await _capture_first_run(dir, main)
 		return
@@ -281,9 +391,6 @@ func _ready() -> void:
 		return
 	if scenario == "walk":
 		await _capture_walk(dir, main)
-		return
-	if scenario != "world" and scenario != "light_response":
-		_fail("unknown WAR_SCENARIO '%s' — expected 'world', 'first_run', 'breath', 'walk' or 'light_response'" % scenario)
 		return
 
 	for i in WARMUP_FRAMES:
@@ -1199,6 +1306,371 @@ func _capture_walk(dir: String, main: Node) -> void:
 	print("CAPTURE PASS — %d walk phases written to %s (left-foot travel %.1f cm)" %
 		[WALK_PHASES, dir, travel * 100.0])
 	get_tree().quit(0)
+
+
+## Point the zone seam at a URL nothing can answer, with NO token.
+##
+## Must run before main.gd's `_ready`, because `_connect_zone()` reads these
+## once at boot and returns immediately when no zone is configured — so setting
+## them any later leaves `_zone` null and the whole scenario without the shipped
+## wiring it exists to photograph.
+##
+## The token is forced EMPTY deliberately. `ZoneConnection.connect_to` refuses a
+## missing token before it constructs a transport, so the capture cannot open a
+## socket, cannot resolve a name, and cannot depend on a network at all — which
+## is what makes this scenario runnable on any runner. It is also OVERWRITING,
+## not defaulting: an operator with a real zone in their environment would
+## otherwise have this capture reach for their live server.
+func _arm_replication_seam() -> void:
+	OS.set_environment(ZoneConnection.ZONE_URL_ENV, REPLICATION_ZONE_URL)
+	OS.set_environment(ZoneConnection.ZONE_TOKEN_ENV, "")
+
+
+## The `replication` scenario: photograph a deterministic replicated population,
+## with NO zone server anywhere (#325).
+##
+## Every other capture boots the client with no zone, so `ReplicaStore` stays
+## empty, `ReplicaView` correctly draws nothing, and the published frames are
+## byte-comparable to a build without replication. A reviewer of any
+## replication-visual change — remote appearance, interpolation, nameplates,
+## culling — therefore receives evidence that structurally cannot contain the
+## thing under review. That is #231's failure shape gated by CONFIGURATION
+## rather than by hardware, and this scenario is the answer to it.
+##
+## The population enters through the SHIPPED path: main.gd's own
+## `_connect_zone()` built the view and the store, `ReplicaStore.apply` folds
+## the fixture exactly as it folds a decoded frame, and main.gd's `_process`
+## calls `ReplicaView.sync`. Only the socket is absent, and its absence is
+## asserted rather than assumed.
+##
+## Run:
+##   WAR_SCENARIO=replication WAR_SHOT_DIR=/tmp/replication \
+##     WAR_SAVE_PATH=/tmp/probe_save.json WAR_VAULT_PATH=/tmp/probe_vault.json \
+##     WAR_BOOT_RECOVERY_PATH=/tmp/probe_recovery.json \
+##     godot --path client res://tools/frame_capture.tscn
+func _capture_replication(dir: String, main: Node) -> void:
+	for i in WARMUP_FRAMES:
+		await get_tree().process_frame
+	if not _has_world(main):
+		_fail("the world did not build (no Terrain under World) — a sky-only frame is not evidence")
+		return
+
+	# The SHIPPED wiring, not a harness copy. If either of these is missing the
+	# scenario has nothing to prove: markers drawn by the tool itself would
+	# evidence the tool, not the game.
+	var zone: ZoneConnection = main.get("_zone")
+	if zone == null:
+		_fail(("main.gd built no zone connection even though the capture set %s — the shipped " +
+			"_connect_zone() path did not run, so these frames could not contain a replicated entity") %
+			ZoneConnection.ZONE_URL_ENV)
+		return
+	var view := main.get_node_or_null("Replicas") as ReplicaView
+	if view == null:
+		_fail("the shipped scene has no Replicas view under Main — nothing would draw the replicated table")
+		return
+
+	# 🔑 NO SERVER WAS CONTACTED, and it is proved rather than promised. The
+	# refusal must be the TOKEN one specifically: any other terminal state means
+	# the connection got further than the credential check, i.e. this capture
+	# tried to reach the network — which would make it flake on an offline
+	# runner and, worse, could point a CI job at whatever host resolved.
+	if zone.state() != ZoneConnection.State.FAILED or zone.error() != ZoneConnection.ERR_TOKEN:
+		_fail(("the zone connection did not stop at the credential check (state %d, error '%s') — this " +
+			"capture must never open a socket, so the population is refused rather than photographed " +
+			"against an unknown network state") % [zone.state(), zone.error()])
+		return
+
+	var fixture := _load_replication_fixture()
+	if fixture.is_empty():
+		return
+	var entities: Array = fixture["entities"]
+
+	# Folded by the REAL store, which validates the frame whole: a fixture that
+	# named the observer, repeated an id or exceeded the wire's cap is refused
+	# here exactly as a bad frame off the socket would be.
+	var applied: Dictionary = zone.store().apply({
+		"ok": true,
+		"kind": WireCodec.KIND_SNAPSHOT,
+		"snapshot": fixture,
+	})
+	if applied.get("ok") != true:
+		_fail("the committed replication fixture was refused by the store (%s: %s)" %
+			[str(applied.get("error")), str(applied.get("detail"))])
+		return
+
+	var centroid := Vector3.ZERO
+	for e_var: Variant in entities:
+		var e: Dictionary = e_var
+		centroid += Vector3(float(e["x"]), float(e["y"]), float(e["z"])) / ReplicaView.MM_PER_M
+	centroid /= float(entities.size())
+
+	var cam := Camera3D.new()
+	cam.far = 400.0
+	cam.fov = 55.0
+	get_tree().root.add_child(cam)
+	cam.global_position = centroid + REPLICATION_CAM_OFFSET
+	cam.look_at(Vector3(centroid.x, centroid.y + REPLICATION_LOOK_HEIGHT_M, centroid.z), Vector3.UP)
+	for i in SETTLE_FRAMES:
+		# Re-assert every frame: the player's own camera can otherwise take back
+		# `current` and we would silently capture the wrong view.
+		cam.current = true
+		await get_tree().process_frame
+
+	if view.count() != entities.size():
+		_fail(("the view holds %d markers for a %d-entity fixture — the shipped per-frame sync did not " +
+			"put the folded table on screen") % [view.count(), entities.size()])
+		return
+	if not _replicas_are_framed(cam, view, entities):
+		return
+
+	# Designated while the population is ON SCREEN, because these are the pixels
+	# the verdict is about. Taken once and reused for both comparisons, so the
+	# noise reference and the signal are measured at identical points.
+	var points := _designate_replica_points(cam, view, entities)
+	if points.size() < REPLICATION_MIN_POINTS:
+		_fail(("only %d marker samples fall inside the frame (floor %d) — the capsules cover too little " +
+			"of it for a verdict, so the camera or the fixture needs to bring them closer") %
+			[points.size(), REPLICATION_MIN_POINTS])
+		return
+
+	var populated := await _grab_frame()
+	var spread := _luma_spread(populated)
+	if spread < MIN_LUMA_SPREAD:
+		_fail("the replication frame is uniform (luma spread %.4f) — nothing rendered" % spread)
+		return
+	if not _write_frame(dir, "replication_populated", populated):
+		return
+
+	# The noise reference: the SAME state, the same gap later. Two shots of one
+	# scene are never identical here — temporal antialiasing jitters every edge,
+	# foliage sways, fog reprojects — so this measures the drift the verdict
+	# below has to see past, in this run, on this machine. A committed floor
+	# alone would be a constant fitted to whatever machine authored it.
+	for i in REPLICATION_GAP_FRAMES:
+		cam.current = true
+		await get_tree().process_frame
+	var populated_again := await _grab_frame()
+
+	# The control. A resync snapshot with no entities is the store's own
+	# wholesale-replacement semantics, so the table empties through the same
+	# path a server resync would use rather than through a test-only reset.
+	var cleared: Dictionary = zone.store().apply({
+		"ok": true,
+		"kind": WireCodec.KIND_SNAPSHOT,
+		"snapshot": {"tick": int(fixture["tick"]) + 1, "observer": int(fixture["observer"]), "entities": []},
+	})
+	if cleared.get("ok") != true:
+		_fail("the empty control snapshot was refused by the store (%s: %s)" %
+			[str(cleared.get("error")), str(cleared.get("detail"))])
+		return
+	for i in REPLICATION_GAP_FRAMES:
+		cam.current = true
+		await get_tree().process_frame
+	if view.count() != 0:
+		_fail(("the control still draws %d markers after an empty resync — it is not a control, and the " +
+			"comparison below would be measuring nothing") % view.count())
+		return
+	var empty := await _grab_frame()
+	if not _write_frame(dir, "replication_empty", empty):
+		return
+
+	# 🔑 THE GUARD THAT MAKES THIS EVIDENCE RATHER THAN DECORATION.
+	#
+	# Everything above passes a build whose markers render as nothing at all: a
+	# material discarding every fragment, a mesh with zero extent, a shader that
+	# failed to compile. The view would still hold N nodes, the frustum checks
+	# would still place them on screen, and the capture would still publish two
+	# PNGs — while the population contributed no pixels. So the population must
+	# be shown to have changed the pixels it covers, against the drift measured
+	# moments ago in the same run at those same points.
+	var quiet := 0
+	var changed := 0
+	var deltas: Array[float] = []
+	for p: Vector2i in points:
+		var here := populated.get_pixel(p.x, p.y)
+		if _pixel_delta(here, populated_again.get_pixel(p.x, p.y)) > REPLICATION_QUIET_NOISE:
+			continue
+		quiet += 1
+		var d := _pixel_delta(here, empty.get_pixel(p.x, p.y))
+		deltas.append(d)
+		if d >= REPLICATION_MIN_CHANGE:
+			changed += 1
+	if quiet < REPLICATION_MIN_QUIET:
+		_fail(("only %d of %d marker samples were quiet enough to measure (floor %d) — the world drifted " +
+			"across the capsules themselves, so this run cannot say whether the population rendered") %
+			[quiet, points.size(), REPLICATION_MIN_QUIET])
+		return
+	var fraction := float(changed) / float(quiet)
+	if fraction < REPLICATION_MIN_FRACTION:
+		_fail(("removing the population changed only %.0f%% of the quiet samples ON the capsules " +
+			"(floor %.0f%%, median change %.3f) — the markers are in the tree and in front of the " +
+			"camera but land no pixels, so these frames depict the same world with and without them") %
+			[fraction * 100.0, REPLICATION_MIN_FRACTION * 100.0, _percentile(deltas, 0.5)])
+		return
+
+	# Reported, never gated: the whole-frame figure is what a reviewer sees in
+	# the change report, and it is useful context — but it is drift-dominated
+	# here, which is exactly why the verdict above is sampled instead.
+	var whole_frame: Dictionary = FrameDiff.compare_images(empty, populated)
+	var whole_drift: Dictionary = FrameDiff.compare_images(populated, populated_again)
+
+	print(ReplicaView.marker(true, entities.size()))
+	print(("CAPTURE PASS — %d replicated entities written to %s (%.0f%% of %d quiet on-capsule samples " +
+		"changed, median %.3f; whole frame moved %.3f%% against %.3f%% drift; luma spread %.3f)") %
+		[entities.size(), dir, fraction * 100.0, quiet, _percentile(deltas, 0.5),
+		float(whole_frame.get("changed_fraction", 0.0)) * 100.0,
+		float(whole_drift.get("changed_fraction", 0.0)) * 100.0, spread])
+	get_tree().quit(0)
+
+
+## The committed population, validated as a wire snapshot before it is trusted.
+##
+## A fixture that silently lost its entity list would otherwise photograph an
+## empty world and — with the store happily folding an empty snapshot — report
+## a pass for frames containing nothing.
+func _load_replication_fixture() -> Dictionary:
+	if not FileAccess.file_exists(REPLICATION_FIXTURE):
+		_fail("the replication fixture %s is missing — there is no committed population to photograph" % REPLICATION_FIXTURE)
+		return {}
+	var text := FileAccess.get_file_as_string(REPLICATION_FIXTURE)
+	var parsed: Variant = JSON.parse_string(text)
+	if not (parsed is Dictionary):
+		_fail("the replication fixture %s is not a JSON object" % REPLICATION_FIXTURE)
+		return {}
+	var doc: Dictionary = parsed
+	for key: String in ["tick", "observer", "entities"]:
+		if not doc.has(key):
+			_fail("the replication fixture is missing '%s'" % key)
+			return {}
+	var entities: Variant = doc["entities"]
+	if not (entities is Array) or (entities as Array).is_empty():
+		_fail("the replication fixture names no entities — an empty population is not evidence of replication")
+		return {}
+	# JSON numbers are ALWAYS floats in Godot, and the store's contract is
+	# integer millimetres, so hand every value across as an int rather than
+	# letting a 4000.0 reach code that indexes and compares ids.
+	var out_entities: Array = []
+	for e_var: Variant in entities as Array:
+		if not (e_var is Dictionary):
+			_fail("the replication fixture holds a non-object entity")
+			return {}
+		var e: Dictionary = e_var
+		for key: String in ["id", "x", "y", "z", "radius"]:
+			if not e.has(key):
+				_fail("a replication fixture entity is missing '%s'" % key)
+				return {}
+		out_entities.append({
+			"id": int(e["id"]), "x": int(e["x"]), "y": int(e["y"]),
+			"z": int(e["z"]), "radius": int(e["radius"]),
+		})
+	return {"tick": int(doc["tick"]), "observer": int(doc["observer"]), "entities": out_entities}
+
+
+## Whether every replicated marker is one this camera would actually DRAW, and
+## is standing on the ground rather than hanging over it.
+##
+## A marker present in the tree proves the sync ran; it does not prove the shot
+## contains it. Each of these has a distinct way of publishing an empty-looking
+## frame while every other check passes: behind the camera, outside the frame,
+## hidden, on a render layer the camera does not cull for, or — the one a
+## reviewer would notice and no numeric guard would — floating in the air
+## because the fixture was authored at the wrong height.
+func _replicas_are_framed(cam: Camera3D, view: ReplicaView, entities: Array) -> bool:
+	var vp := get_viewport().get_visible_rect().size
+	var space := cam.get_world_3d().direct_space_state
+	for e_var: Variant in entities:
+		var e: Dictionary = e_var
+		var id: int = e["id"]
+		var marker := view.marker_for(id)
+		if marker == null:
+			_fail("replicated entity %d has no marker — the view's table and the fixture disagree" % id)
+			return false
+		if not marker.visible:
+			_fail("the marker for replicated entity %d is hidden — it would not appear in the frame" % id)
+			return false
+		if (marker.layers & cam.cull_mask) == 0:
+			_fail("the marker for replicated entity %d is on render layers outside the camera's cull mask — it would not be drawn" % id)
+			return false
+		if cam.is_position_behind(marker.global_position):
+			_fail("the marker for replicated entity %d is behind the camera" % id)
+			return false
+		var p := cam.unproject_position(marker.global_position)
+		if p.x < 0.0 or p.y < 0.0 or p.x >= vp.x or p.y >= vp.y:
+			_fail("the marker for replicated entity %d projects to (%.0f, %.0f), outside the %dx%d frame" %
+				[id, p.x, p.y, int(vp.x), int(vp.y)])
+			return false
+		# Well above the marker so the ray starts outside the terrain even for a
+		# fixture authored below it — a buried marker then reads as a NEGATIVE
+		# gap rather than as a missing hit.
+		var from := Vector3(marker.global_position.x, marker.global_position.y + 50.0, marker.global_position.z)
+		var query := PhysicsRayQueryParameters3D.create(from, from + Vector3.DOWN * 200.0)
+		query.collide_with_areas = false
+		var hit := space.intersect_ray(query)
+		if hit.is_empty():
+			_fail("no ground under replicated entity %d — the fixture places it off the world" % id)
+			return false
+		var gap: float = marker.global_position.y - (hit["position"] as Vector3).y
+		if gap < 0.0 or gap > REPLICATION_MAX_GROUND_GAP_M:
+			_fail(("replicated entity %d sits %.2f m above the ground at its position (ground y %.2f), " +
+				"outside the [0, %.2f] band — re-measure the fixture's y for this entity rather than " +
+				"publishing a capsule hanging in the air") %
+				[id, gap, (hit["position"] as Vector3).y, REPLICATION_MAX_GROUND_GAP_M])
+			return false
+	return true
+
+
+## The pixels the replicated capsules cover — the samples the verdict measures.
+##
+## Points are taken INSIDE the capsule body, offset along the camera's own right
+## and up axes so the grid faces the viewer whatever direction the shot is from.
+## Interior rather than silhouette on purpose: an edge pixel is shared with the
+## background by antialiasing, so it moves between any two frames and would land
+## in the drift band rather than in the signal.
+##
+## Caps are excluded (the vertical span stops short of ±half-height) for the
+## same reason — a cap curves away from the camera, so its shading is the part
+## most sensitive to a fog froxel drifting past.
+func _designate_replica_points(cam: Camera3D, view: ReplicaView, entities: Array) -> Array[Vector2i]:
+	var vp := get_viewport().get_visible_rect().size
+	var right := cam.global_transform.basis.x
+	var up := cam.global_transform.basis.y
+	var half_height := ReplicaView.MARKER_HEIGHT_M * 0.5
+	var out: Array[Vector2i] = []
+	for e_var: Variant in entities:
+		var e: Dictionary = e_var
+		var marker := view.marker_for(int(e["id"]))
+		if marker == null:
+			continue
+		var radius: float = float(e["radius"]) / ReplicaView.MM_PER_M
+		for row in REPLICATION_SAMPLE_ROWS:
+			# Spans ±0.5 of the half-height. The capsule's cylindrical section
+			# runs to ±(half_height - radius), so this stays inside it for every
+			# radius the fixture uses and never samples a cap.
+			var v := (float(row) / float(REPLICATION_SAMPLE_ROWS - 1) - 0.5) * half_height
+			for col in REPLICATION_SAMPLE_COLS:
+				# Spans ±0.5 of the radius, so a point stays interior even where
+				# the capsule curves away from the camera.
+				var h := (float(col) / float(REPLICATION_SAMPLE_COLS - 1) - 0.5) * radius
+				var world: Vector3 = marker.global_position + up * v + right * h
+				if cam.is_position_behind(world):
+					continue
+				var p := cam.unproject_position(world)
+				if p.x < 0.0 or p.y < 0.0 or p.x >= vp.x or p.y >= vp.y:
+					continue
+				out.append(Vector2i(int(p.x), int(p.y)))
+	return out
+
+
+## Write one captured frame and its note, failing the capture if the file did
+## not land.
+func _write_frame(dir: String, frame_name: String, img: Image) -> bool:
+	var err := img.save_png("%s/%s.png" % [dir, frame_name])
+	if err != OK:
+		_fail("could not write %s (error %d)" % [frame_name, err])
+		return false
+	_write_note(dir, frame_name, img, _size_note(img))
+	print("CAPTURED %s" % frame_name)
+	return true
 
 
 ## A character in the shipped scene that actually carries an idle, preferring
