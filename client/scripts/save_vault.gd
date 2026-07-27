@@ -138,16 +138,17 @@ const LOCK_STALE_SECONDS := 300
 ## default, so a malformed value can never shorten the window in the field.
 const LOCK_STALE_ENV := "WAR_VAULT_LOCK_STALE_SECONDS"
 
-## Suffix for a vault set aside because no client could read it. The trailing
-## index keeps every quarantined document: a second corruption never overwrites
-## the first, because preserving the bytes is the entire point (#290).
+## Suffix for a vault set aside because no client could own it. What follows it is
+## a per-attempt unique stamp, so a second corruption never overwrites the first —
+## preserving the bytes is the entire point (#290), and a predictable name is a
+## way to lose them (see [method _free_quarantine_path]).
 const QUARANTINE_SUFFIX := ".unreadable-"
 
-## How many quarantine slots are tried before giving up. A bound rather than an
-## unbounded search: once this many unreadable vaults sit preserved beside one
-## path, something is wrong that setting aside one more will not fix, and
-## refusing is the only direction that cannot destroy bytes.
-const QUARANTINE_MAX_SLOTS := 100
+## How many unique destinations are tried before giving up. A bound rather than an
+## unbounded search: if this many freshly-stamped names are all somehow taken,
+## something is wrong that setting aside one more will not fix, and refusing is
+## the only direction that cannot destroy bytes.
+const QUARANTINE_MAX_ATTEMPTS := 100
 
 ## How long an unparseable vault must have sat UNCHANGED before it is set aside.
 ##
@@ -535,8 +536,8 @@ static func _quarantine_locked(path: String) -> String:
 	var target := _free_quarantine_path(path)
 	if target.is_empty():
 		push_error(
-			"SaveVault: %d unreadable vaults are already preserved beside %s — refusing to set aside another"
-			% [QUARANTINE_MAX_SLOTS, path])
+			"SaveVault: could not find a free destination beside %s in %d attempts — refusing to set it aside"
+			% [path, QUARANTINE_MAX_ATTEMPTS])
 		return ""
 	# Judge the document one last time, IMMEDIATELY before the rename — the same
 	# discipline, and for the same reason, as the readability re-check in
@@ -552,6 +553,18 @@ static func _quarantine_locked(path: String) -> String:
 	if not _is_unownable(path):
 		push_warning(
 			"SaveVault: %s became a readable vault while it was being set aside — leaving it" % path)
+		return ""
+	# And prove it is the SAME document whose age was judged. Unownability alone is
+	# not enough: a foreign writer can replace stale corrupt bytes with freshly
+	# arriving, still-unparseable ones — a newer client's write caught mid-flight —
+	# and that file would inherit the OLD file's staleness verdict, bypassing the
+	# age gate exactly where it matters most. mtime survives a rename (measured, see
+	# [method _reclaim_lock_if_abandoned]), so an exact match is what distinguishes
+	# the document we judged from a different one wearing the same path. This is an
+	# IDENTITY check, deliberately not a fresh staleness check.
+	if int(FileAccess.get_modified_time(path)) != modified:
+		push_warning(
+			"SaveVault: %s changed while it was being set aside — leaving it for the next launch" % path)
 		return ""
 	var err := DirAccess.rename_absolute(
 		ProjectSettings.globalize_path(path), ProjectSettings.globalize_path(target))
@@ -570,12 +583,28 @@ static func _quarantine_locked(path: String) -> String:
 	return target
 
 
-## The first free quarantine slot beside `path`, or "" when they are all taken.
-## An occupied slot is never reused: preserving the bytes is the point, so a
-## later corruption must never overwrite one already set aside.
+## A free quarantine destination beside `path`, or "" if one cannot be found.
+##
+## The name is UNIQUE PER ATTEMPT (pid + microseconds), not an index, and that is
+## a safety property rather than tidiness. `rename()` REPLACES its destination
+## silently, so any name a second party could also derive is a way to destroy
+## bytes this feature promises to preserve: with `unreadable-0`, a sync agent or
+## recovery tool creating that exact path between the vacancy check and the
+## rename would have its file overwritten — and no vacancy check can close that,
+## because Godot exposes no exclusive-create for FILES (only `make_dir_absolute`,
+## which cannot be a rename target). A name a foreign writer cannot predict
+## sidesteps the race instead of trying to win it.
+##
+## This is the same per-attempt naming, for the same reason, as the reclaim
+## target in [method _reclaim_lock_if_abandoned].
+##
+## The vacancy check is kept as cheap defence: it also rejects a DIRECTORY, which
+## `FileAccess.file_exists()` reports as absent and which a rename cannot replace.
+## A fresh microsecond on each attempt means a retry genuinely changes the name.
 static func _free_quarantine_path(path: String) -> String:
-	for index in range(QUARANTINE_MAX_SLOTS):
-		var candidate := "%s%s%d" % [path, QUARANTINE_SUFFIX, index]
+	for _attempt in range(QUARANTINE_MAX_ATTEMPTS):
+		var candidate := "%s%s%d-%d" % [
+			path, QUARANTINE_SUFFIX, OS.get_process_id(), Time.get_ticks_usec()]
 		if _slot_is_free(candidate):
 			return candidate
 	return ""

@@ -19,8 +19,10 @@ extends Node
 ##     parses, so some client owns it — the protection #249 added must not
 ##     regress.
 ##  5. A valid vault is never touched.
-##  6. Quarantine never overwrites an earlier quarantine: slots are allocated,
-##     never reused.
+##  6. Quarantine never overwrites an earlier quarantine: two corruptions land in
+##     two different files, and the destination is UNPREDICTABLE rather than an
+##     index — `rename()` replaces its target silently, so a name a foreign writer
+##     could also derive is a way to destroy the bytes being preserved.
 ##  7. A malformed window override keeps the SHIPPED window, so the age gate can
 ##     never be shortened by accident — the direction that could destroy state.
 ##  8. A zero-byte vault — the commonest corruption a crash or a full disk leaves
@@ -31,9 +33,10 @@ extends Node
 ## 10. A document that DECLARES a version this build knows is left alone even when
 ##     it fails validation. A version is a claim of ownership by some client, and
 ##     this build does not adjudicate that claim.
-## 11. A DIRECTORY sitting on a quarantine slot counts as occupied. It is the
-##     permanent-wedge shape: file_exists() says false, the rename fails, and a
-##     deterministic search picks the same slot on every later launch.
+## 11. Junk sharing the quarantine namespace — a DIRECTORY especially — neither
+##     blocks the move nor is destroyed by it. file_exists() reports a directory
+##     absent and a rename cannot replace it, so choosing one would fail
+##     identically on every launch.
 ##
 ## Everything runs through the WAR_VAULT_PATH seam against a throwaway path, so
 ## the player's own user://vault.json is never read, written or moved
@@ -69,8 +72,13 @@ func _ready() -> void:
 	if moved.is_empty():
 		_fail("a stale corrupt vault was not set aside — the player stays wedged")
 		return
-	if moved != PROBE + SaveVault.QUARANTINE_SUFFIX + "0":
-		_fail("quarantine used an unexpected slot: %s" % moved)
+	if not moved.begins_with(PROBE + SaveVault.QUARANTINE_SUFFIX):
+		_fail("quarantine used an unexpected destination: %s" % moved)
+		return
+	# The stamp must be unpredictable, not an index — a name a foreign writer could
+	# also derive is a way for a rename to silently replace preserved bytes.
+	if moved == PROBE + SaveVault.QUARANTINE_SUFFIX + "0":
+		_fail("quarantine used a PREDICTABLE destination — rename() would overwrite a collision")
 		return
 	if FileAccess.file_exists(PROBE):
 		_fail("the corrupt vault is still in place after being set aside")
@@ -142,20 +150,31 @@ func _ready() -> void:
 		_fail("a healthy vault's bytes changed")
 		return
 
-	# 6. Quarantine preserves, never deletes — including an earlier quarantine.
-	#    An occupied slot is stepped over rather than overwritten.
+	# 6. Quarantine preserves, never deletes — including an earlier quarantine. Two
+	#    corruptions in one session must land in two DIFFERENT files, both intact.
 	_reset_state()
-	_write(PROBE + SaveVault.QUARANTINE_SUFFIX + "0", SENTINEL_BYTES)
+	_write(PROBE, SENTINEL_BYTES)
+	var first_q := SaveVault.quarantine_unreadable(PROBE)
+	if first_q.is_empty():
+		_fail("the first of two corruptions was not set aside")
+		return
+	SaveVault.clear_refusals_for_test()
 	_write(PROBE, CORRUPT_BYTES)
 	var second := SaveVault.quarantine_unreadable(PROBE)
-	if second != PROBE + SaveVault.QUARANTINE_SUFFIX + "1":
-		_fail("a second corruption did not take the next free slot: %s" % second)
+	if second.is_empty():
+		_fail("the second corruption was not set aside")
 		return
-	if _read(PROBE + SaveVault.QUARANTINE_SUFFIX + "0") != SENTINEL_BYTES:
+	if second == first_q:
+		_fail("the second corruption reused the first's destination — bytes would be overwritten")
+		return
+	if _read(first_q) != SENTINEL_BYTES:
 		_fail("quarantine overwrote bytes it had already preserved")
 		return
 	if _read(second) != CORRUPT_BYTES:
 		_fail("the second quarantine did not preserve its bytes")
+		return
+	if _quarantined().size() != 2:
+		_fail("expected two preserved documents, found %d" % _quarantined().size())
 		return
 
 	# 7. The window can never be SHORTENED by a malformed value. Negative,
@@ -228,25 +247,33 @@ func _ready() -> void:
 			_fail("a versioned document's bytes changed: %s" % owned)
 			return
 
-	# 11. A DIRECTORY on a slot is occupied. Without this the rename fails, the
-	#     deterministic search picks the same slot every launch, and the vault is
-	#     wedged permanently — the exact outcome this change exists to remove.
+	# 11. Junk sharing the quarantine namespace neither breaks the move nor gets
+	#     destroyed by it. A DIRECTORY is the interesting shape: FileAccess reports
+	#     it absent and a rename cannot replace it, so a scheme that picked it
+	#     would fail the same way on every launch — a permanent wedge, the exact
+	#     outcome this change exists to remove.
 	_reset_state()
-	var blocked_slot := PROBE + SaveVault.QUARANTINE_SUFFIX + "0"
-	DirAccess.make_dir_absolute(ProjectSettings.globalize_path(blocked_slot))
-	if not DirAccess.dir_exists_absolute(ProjectSettings.globalize_path(blocked_slot)):
+	var junk_dir := PROBE + SaveVault.QUARANTINE_SUFFIX + "leftover"
+	DirAccess.make_dir_absolute(ProjectSettings.globalize_path(junk_dir))
+	if not DirAccess.dir_exists_absolute(ProjectSettings.globalize_path(junk_dir)):
 		_fail("could not create the blocking directory the case needs")
 		return
-	if FileAccess.file_exists(blocked_slot):
+	if FileAccess.file_exists(junk_dir):
 		_fail("file_exists() reported a directory as a file — the case no longer models the trap")
 		return
 	_write(PROBE, CORRUPT_BYTES)
 	var past_dir := SaveVault.quarantine_unreadable(PROBE)
-	if past_dir != PROBE + SaveVault.QUARANTINE_SUFFIX + "1":
-		_fail("a directory-occupied slot was not stepped over: %s" % past_dir)
+	if past_dir.is_empty():
+		_fail("a leftover directory in the quarantine namespace blocked the move entirely")
+		return
+	if past_dir == junk_dir:
+		_fail("quarantine chose a directory as its destination — the rename cannot succeed")
 		return
 	if _read(past_dir) != CORRUPT_BYTES:
-		_fail("the bytes were not preserved past the blocked slot")
+		_fail("the bytes were not preserved alongside the leftover directory")
+		return
+	if not DirAccess.dir_exists_absolute(ProjectSettings.globalize_path(junk_dir)):
+		_fail("quarantine destroyed a leftover directory it should have left alone")
 		return
 
 	_cleanup()
@@ -299,12 +326,29 @@ func _exit_tree() -> void:
 	_cleanup()
 
 
+## Every quarantine destination beside the probe. They carry a per-attempt unique
+## stamp rather than an index, so they are found by PREFIX, never enumerated.
+func _quarantined() -> Array[String]:
+	var found: Array[String] = []
+	var dir := DirAccess.open("user://")
+	if dir == null:
+		return found
+	var prefix := PROBE.trim_prefix("user://") + SaveVault.QUARANTINE_SUFFIX
+	for name: String in dir.get_files():
+		if name.begins_with(prefix):
+			found.append("user://" + name)
+	for name: String in dir.get_directories():
+		if name.begins_with(prefix):
+			found.append("user://" + name)
+	return found
+
+
 func _cleanup() -> void:
 	SaveVault.clear_locks_for_test()
 	_remove(PROBE)
 	_remove(PROBE + ".tmp")
-	for index in range(SaveVault.QUARANTINE_MAX_SLOTS):
-		_remove("%s%s%d" % [PROBE, SaveVault.QUARANTINE_SUFFIX, index])
+	for path: String in _quarantined():
+		_remove(path)
 
 
 func _remove(path: String) -> void:

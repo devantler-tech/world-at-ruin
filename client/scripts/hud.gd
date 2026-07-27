@@ -8,6 +8,13 @@ const COL_BONE := Color(0.88, 0.84, 0.76)
 const COL_DIM := Color(0.88, 0.84, 0.76, 0.55)
 const COL_EMBER := Color(1.0, 0.62, 0.25)
 
+## Widest a toast line may render before it wraps. Measured against the shipped
+## 1600-wide viewport: the longest message this build can produce is a combined
+## boot notice at 1249px, which already fits — this is headroom for messages that
+## grow and for windows narrower than the default, not a fix for a clipped line
+## today.
+const TOAST_MAX_WIDTH := 1100.0
+
 var _toast: Label
 var _prompt: Label
 var _hints: Label
@@ -97,6 +104,15 @@ func _build_toast() -> void:
 	_toast.set_anchors_preset(Control.PRESET_CENTER_TOP)
 	_toast.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_toast.position.y = 120
+	# Wrap rather than run off the sides. A Label anchored to a point sizes itself
+	# to its text, so a long line simply extends past both edges and the ends
+	# become unreadable — and a toast is the only channel some messages have (a
+	# boot notice that progression restarted, a seeded line from a person). The
+	# cap is well inside the 1600-wide viewport, leaving a margin at the default
+	# size and letting a narrower window shrink the line instead of clipping it.
+	_toast.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_toast.custom_minimum_size.x = TOAST_MAX_WIDTH
+	_toast.size.x = TOAST_MAX_WIDTH
 	add_child(_toast)
 
 ## The interaction prompt: what pressing E would do right now, shown just above
