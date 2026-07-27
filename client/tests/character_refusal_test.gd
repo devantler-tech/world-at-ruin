@@ -3,7 +3,7 @@ extends Node
 ##
 ## The recipe on disk is player state under the no-resets law, so a build that
 ## cannot ACCEPT an existing recipe must not treat the session as a first run.
-## Before the latch, two boot paths ended in the player's character being
+## Without the latch, two boot paths end in the player's character being
 ## replaced:
 ##  - a recipe that did not parse read as null, which is also what a genuinely
 ##    missing save reads as, so the writable first-run creator opened over a
@@ -98,8 +98,8 @@ func _check_refusal(label: String, recipe: Dictionary) -> void:
 
 
 ## Malformed bytes — not a JSON object at all. This is the shape corruption
-## actually produces (a truncated or zero-byte file), and it is the one that
-## previously read as "no save" and opened the writable creator.
+## actually produces (a truncated or zero-byte file), and the one that reads
+## identically to "no save" unless the refusal is latched.
 func _check_malformed_recipe_is_refused() -> void:
 	_clear(PROBE)
 	CharacterStore.clear_refusals_for_test()

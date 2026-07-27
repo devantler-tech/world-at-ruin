@@ -73,8 +73,8 @@ static func _refuse(path: String, message: String) -> Variant:
 ## Whether the recipe at `path` was refused this session.
 ##
 ## This is what tells a refusal apart from a first run: [method load_from]
-## returns null for both, and treating them the same is what opened the writable
-## creator over an existing character.
+## returns null for both, and treating them the same opens the writable creator
+## over an existing character.
 static func is_refused(path: String) -> bool:
 	return _refused.has(path)
 
@@ -137,7 +137,7 @@ static func save_to(path: String, recipe: Dictionary) -> bool:
 ## that IS there and was rejected latches a refusal (see [method _refuse]) and
 ## never becomes writable again this session. Ask [method is_refused] or
 ## [method can_write] to tell them apart — reading the null alone as "no character
-## yet" is what opened the writable creator over a character that was still there.
+## yet" opens the writable creator over a character that is still there.
 static func load_from(path: String) -> Variant:
 	if not FileAccess.file_exists(path):
 		return null

@@ -542,8 +542,8 @@ static func validate(recipe: Dictionary, skeleton: Skeleton3D, mesh_instance: Me
 ## The same judgement [method build] makes, without building anything. It exists
 ## because the decision is needed at the SAVE boundary, before any body is built:
 ## the writable character creator opens on the strength of "is there a character
-## here?", and answering that without knowing whether the recipe is acceptable is
-## what let a first-run creator open over an existing save. [validate] needs the
+## here?", and answering that without knowing whether the recipe is acceptable
+## opens a first-run creator over an existing save. [validate] needs the
 ## kit's skeleton and skinned mesh, so the persistence layer cannot ask the
 ## question without a kit — this instantiates one, asks, and frees it.
 ##
