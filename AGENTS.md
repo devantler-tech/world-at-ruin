@@ -560,9 +560,17 @@ everything shipped afterwards is held to.
   (an array of strings); copy the shape from any existing entry. Name the file for the version the
   change will ship in (the next semantic-release bump implied by your commit type) and put the same
   string in its `version` field — `devlog_storage_test` fails if the two disagree. One file per
-  entry is deliberate: entries used to share a single array, so every concurrent player-visible PR
-  collided on the same lines and had to rebase behind each sibling merge. Never reintroduce a shared
-  list. Ordering is by version, computed at load, so a new entry needs no edit to any existing file.
+  entry is deliberate: entries used to share a single array, so **every** concurrent player-visible
+  PR collided on the same lines and had to rebase behind each sibling merge. Never reintroduce a
+  shared list. Ordering is by version, computed at load, so a new entry needs no edit to any
+  existing file.
+  **What this does and does not remove.** Two PRs whose commit types imply *different* bumps write
+  different filenames and merge without touching each other. Two PRs implying the *same* bump both
+  name their file for the same next version and still collide — but that collision is now a real
+  one rather than a bookkeeping accident: they are both claiming a release only one of them can
+  have, which needs a decision whatever the storage looks like. Resolve it by renaming your file to
+  the next free version and updating its `version` field to match; never merge two entries into one
+  file, and never make one file hold a list again.
   **Do NOT hand-edit `DevLog.VERSION` or `config/version` in `project.godot`** — release builds are
   stamped from the release tag (below), so a hand-bump only drifts from the real version.
 - **CI, CD and releases:**

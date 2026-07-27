@@ -52,15 +52,17 @@ func _ready() -> void:
 		return
 
 	# --- 2. THE NAME IS THE VERSION ---
-	var by_version: Dictionary = {}
-	for e: Dictionary in entries:
-		by_version[String(e["version"])] = true
-	for name: String in entry_files:
-		var version := name.trim_suffix(".json")
-		if not by_version.has(version):
-			_fail(("%s%s carries version '%s', which does not match its filename — the filename is "
-				+ "how an author finds an entry and how two concurrent PRs stay on disjoint paths")
-				% [DevLog.ENTRY_DIR, name, _version_in(name)])
+	# Each file is compared against its OWN declared version. Asking instead
+	# whether the filename appears somewhere among the loaded versions would be a
+	# membership test, not a mapping one: swap the contents of two entry files and
+	# every name would still be found, so both violations would pass.
+	for file_name: String in entry_files:
+		var named := file_name.trim_suffix(".json")
+		var declared := _version_in(file_name)
+		if declared != named:
+			_fail(("%s%s declares version '%s' — the filename is how an author finds an entry and "
+				+ "how two concurrent PRs stay on disjoint paths, so the two must agree")
+				% [DevLog.ENTRY_DIR, file_name, declared])
 			return
 
 	print("TEST PASS — dev log is %d file(s) under %s, each named for the version it carries, all loaded"
