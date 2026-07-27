@@ -45,10 +45,75 @@ static func exists() -> bool:
 	return FileAccess.file_exists(save_path())
 
 
+## Paths whose recipe this build refused to accept, latched for the life of the
+## process. A refusal is recorded rather than re-derived from the file's current
+## state, because the file can change under us: cloud sync, a second client, or
+## the player deleting it can all make a refused recipe vanish mid-session.
+## Re-deriving would then answer "no character here", and the first-run creator
+## would write a fresh one that syncs back over the character it just refused to
+## read — exactly what refusing was protecting.
+##
+## Once refused, always refused. Restarting is the deliberate act that re-examines
+## the file, and by then whichever build owns that recipe has had its chance to run.
+static var _refused: Dictionary = {}
+
+
+## Latch `path` as refused, log why, and return null.
+##
+## EVERY rejection of an existing file latches here, not only the ones reached
+## through [method can_write]. The boot path calls [method load_saved] directly,
+## and a rejection that did not latch would leave the path looking absent-and-
+## writable the moment the file moved.
+static func _refuse(path: String, message: String) -> Variant:
+	push_error("CharacterStore: " + message)
+	_refused[path] = true
+	return null
+
+
+## Whether the recipe at `path` was refused this session.
+##
+## This is what tells a refusal apart from a first run: [method load_from]
+## returns null for both, and treating them the same is what opened the writable
+## creator over an existing character.
+static func is_refused(path: String) -> bool:
+	return _refused.has(path)
+
+
+## Whether it is safe to write a recipe to `path`. False when the path was
+## refused this session, or when a file is present that this build cannot accept
+## — a character from a NEWER build, or a corrupt one. Writing then would replace
+## player state this build cannot even read. Absent AND never-refused is
+## writable: that is a first run, not a loss.
+static func can_write(path: String) -> bool:
+	if _refused.has(path):
+		return false
+	if not FileAccess.file_exists(path):
+		return true
+	# load_from() latches any rejection of an existing file (see _refuse), so a
+	# failure here has already marked the path.
+	return load_from(path) != null
+
+
+## Forget every latched refusal. FOR TESTS ONLY — a test exercises several recipe
+## states through one throwaway path in a single process, and a latch that
+## outlived the case would make every later case read as refused. Production never
+## calls this: the latch is meant to outlive everything but a restart.
+static func clear_refusals_for_test() -> void:
+	_refused.clear()
+
+
 ## Atomic: write a sibling temp file, then rename over the target. A crash
 ## mid-write must never corrupt the only copy of a character (no-resets law
 ## — there is no wipe to recover WITH).
+##
+## Refuses outright when the target holds a recipe this build cannot accept. This
+## is the load-bearing half of the refusal: the creator is also locked shut while
+## a refusal stands, but that is a UI guard on one entry point, and every writer
+## reaching the file goes through here.
 static func save_to(path: String, recipe: Dictionary) -> bool:
+	if not can_write(path):
+		push_error("CharacterStore: refusing to write %s — the recipe there is not this build's to replace" % path)
+		return false
 	var tmp_path := path + ".tmp"
 	var file := FileAccess.open(tmp_path, FileAccess.WRITE)
 	if file == null:
@@ -64,11 +129,27 @@ static func save_to(path: String, recipe: Dictionary) -> bool:
 	return true
 
 
-## The recipe stored at path, or null when none exists or it cannot be parsed.
+## The recipe stored at path, or null when none exists, it cannot be parsed, or
+## this build cannot accept it.
+##
+## Null is TWO different answers and the caller must not conflate them. An absent
+## file is a first run: nothing was refused and the path stays writable. A file
+## that IS there and was rejected latches a refusal (see [method _refuse]) and
+## never becomes writable again this session. Ask [method is_refused] or
+## [method can_write] to tell them apart — reading the null alone as "no character
+## yet" is what opened the writable creator over a character that was still there.
 static func load_from(path: String) -> Variant:
 	if not FileAccess.file_exists(path):
 		return null
-	return CharacterFactory.load_recipe(path)
+	var parsed = CharacterFactory.load_recipe(path)
+	if parsed is not Dictionary:
+		return _refuse(path, "%s is not a readable recipe" % path)
+	# Validation, not just parsing: a recipe from a NEWER build parses perfectly
+	# and is still not ours to replace.
+	var reason := CharacterFactory.refusal_reason(parsed)
+	if reason != "":
+		return _refuse(path, "refusing %s — %s" % [path, reason])
+	return parsed
 
 
 static func save_recipe(recipe: Dictionary) -> bool:
