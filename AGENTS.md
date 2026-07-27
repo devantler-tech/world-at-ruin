@@ -568,12 +568,33 @@ everything shipped afterwards is held to.
   mixed change. A settled in-place improvement to an already-shipped below-bar surface may remain
   default-on only under the exception in the quality-bar section above; an unsettled or experimental
   improvement remains default-off under product law 2.
-- **Dev log is a contract:** every player-visible change adds a `DevLog.ENTRIES` entry (newest
-  first) in the same PR — the maintainer watches progress by playing, and the dev log is that
-  surface. Write the entry's `version` as the version the change will ship in (the next
-  semantic-release bump implied by your commit type). **Do NOT hand-edit `DevLog.VERSION` or
-  `config/version` in `project.godot`** — release builds are stamped from the release tag (below),
-  so a hand-bump only drifts from the real version.
+- **Dev log is a contract:** every player-visible change adds a dev-log entry in the same PR — the
+  maintainer watches progress by playing, and the dev log is that surface. **Add a new file
+  `client/devlog/<version>.json`** holding one object with `version`, `date`, `title` and `notes`
+  (an array of strings); copy the shape from any existing entry. Name the file for the version the
+  change will ship in (the next semantic-release bump implied by your commit type) and put the same
+  string in its `version` field — `devlog_storage_test` fails if the two disagree. One file per
+  entry is deliberate: entries used to share a single array, so **every** concurrent player-visible
+  PR collided on the same lines and had to rebase behind each sibling merge. Never reintroduce a
+  shared list. Ordering is by version, computed at load, so a new entry needs no edit to any
+  existing file.
+  **What this does and does not remove.** Two PRs whose commit types imply *different* bumps write
+  different filenames and merge without touching each other. Two PRs implying the *same* bump both
+  name their file for the same next version and still collide — but that collision is now a real
+  one rather than a bookkeeping accident: they are both claiming a release only one of them can
+  have, which needs a decision whatever the storage looks like. Resolve it by renaming your file to
+  the next free version and updating its `version` field to match; never merge two entries into one
+  file, and never make one file hold a list again.
+  ⚠️ **Re-check your entry's version before it merges.** The version an entry names is a prediction
+  about the next release, and a sibling merging first invalidates it: from a `0.58.0` base a `fix:`
+  entry named `0.58.1` actually ships as `0.59.1` once someone else's `feat:` lands ahead of it, and
+  nothing currently detects that — the filename and its `version` field still agree, so the guard is
+  satisfied while the log misnames the release. This drift predates one-file-per-entry, but the
+  shared array used to force a rebase on every sibling merge, which is where an author noticed.
+  Until an automated check exists ([#412](https://github.com/devantler-tech/world-at-ruin/issues/412)),
+  rename the file and its `version` field when your base moves under you.
+  **Do NOT hand-edit `DevLog.VERSION` or `config/version` in `project.godot`** — release builds are
+  stamped from the release tag (below), so a hand-bump only drifts from the real version.
 - **CI, CD and releases:**
   - `ci.yaml` (`pull_request` + `merge_group`) lints, tests and analyses. It is the gate on a
     change. Its macOS export job is **build verification** — proof the project still exports and

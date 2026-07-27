@@ -29,6 +29,9 @@ ART_DIRECTION="docs/art-direction"
 POLICY="docs/design/originality-boundary.md"
 STORY_PROPOSAL="docs/design/story-and-progression.md"
 DEV_LOG="client/scripts/devlog.gd"
+# Entry prose lives one file per release here, so the scan below must cover the
+# directory as well as the script: the script now holds only the loader.
+DEV_LOG_ENTRIES="client/devlog"
 ARTGEN_ROOT="tools/artgen"
 REFERENCE_TITLES="tools/originality-reference-titles.txt"
 CAPTURE_MANIFEST="docs/first-party-captures.sha256"
@@ -150,15 +153,43 @@ fi
 # Internal comparison terms belong in docs and PR evidence, never in prose
 # shown to a player. Keep matching case-sensitive so ordinary words remain
 # available. The inventory is reviewed beside the policy's reference audit.
-if [ -f "$DEV_LOG" ] && [ -f "$REFERENCE_TITLES" ]; then
+dev_log_targets=()
+[ -f "$DEV_LOG" ] && dev_log_targets+=("$DEV_LOG")
+if [ -d "$DEV_LOG_ENTRIES" ]; then
+	while IFS= read -r -d '' entry_file; do
+		dev_log_targets+=("$entry_file")
+	done < <(find "$DEV_LOG_ENTRIES" -type f -name '*.json' -print0)
+fi
+if [ ${#dev_log_targets[@]} -gt 0 ] && [ -f "$REFERENCE_TITLES" ]; then
 	while IFS= read -r title || [ -n "$title" ]; do
 		case "$title" in
 		"" | \#*) continue ;;
 		esac
 		while IFS= read -r line; do
 			player_reference_lines+=("$line")
-		done < <(grep -nF "$title" "$DEV_LOG" || true)
+		done < <(grep -HnF "$title" "${dev_log_targets[@]}" || true)
 	done <"$REFERENCE_TITLES"
+fi
+
+# The scan above reads the file as bytes, but an entry is JSON, and a JSON
+# string can spell any character as a \uXXXX escape. A title written with an
+# escaped space reaches the player as ordinary prose while a fixed-string grep
+# over the raw bytes sees nothing, so the decoded strings are compared too.
+# Reported by file rather than by line: the decoded text has no line
+# correspondence to the source.
+if [ -d "$DEV_LOG_ENTRIES" ] && [ -f "$REFERENCE_TITLES" ]; then
+	while IFS= read -r -d '' entry_file; do
+		decoded=$(jq -r '[..|strings]|join("\n")' "$entry_file" 2>/dev/null || true)
+		[ -z "$decoded" ] && continue
+		while IFS= read -r title || [ -n "$title" ]; do
+			case "$title" in
+			"" | \#*) continue ;;
+			esac
+			if printf '%s\n' "$decoded" | grep -qF "$title"; then
+				player_reference_lines+=("$entry_file: decoded entry text contains '$title'")
+			fi
+		done <"$REFERENCE_TITLES"
+	done < <(find "$DEV_LOG_ENTRIES" -type f -name '*.json' -print0)
 fi
 
 # Asset provenance owns client/assets. The app icon is reviewed source art.

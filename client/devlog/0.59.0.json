@@ -1,0 +1,11 @@
+{
+	"date": "2026-07-27",
+	"notes": [
+		"Set WAR_WALK_CYCLE=1 before launching and grounded walking moves the whole body instead of sliding a standing pose over the Reach. The legs exchange their planted and swinging sides, one knee flexes through each step, and the arms counter-swing.",
+		"The stride follows distance travelled rather than the frame clock, so moving the same distance lands on the same body pose. Stopping returns to the standing stance instead of freezing halfway through a step.",
+		"The ordinary game remains unchanged while this early gait is default-off. Sprinting and airborne movement deliberately return to the standing pose rather than passing the walk off as a run or jump.",
+		"This is a rough first locomotion slice, not a finished movement set. The feet do not yet solve contact against uneven ground; run, jump, landing and turning have no authored motion; and transitions reset instead of blending."
+	],
+	"title": "The wanderer has a first walking stride",
+	"version": "0.59.0"
+}

@@ -330,6 +330,57 @@ expect_failure \
 	"third-party reference term in player-facing dev log" \
 	"$repo"
 
+# Entry prose lives one file per release, so scanning only the loader script
+# would leave every future entry unguarded — the prose it used to hold is
+# exactly what moved out of it.
+repo=$(new_repo entry_file_comparison)
+write_valid_contract "$repo"
+mkdir -p "$repo/client/devlog"
+printf '%s\n' \
+	'{' \
+	'	"version": "0.1.0",' \
+	'	"date": "2026-07-16",' \
+	'	"title": "The world exists",' \
+	'	"notes": ["The journal structure still resembles Outer Wilds."]' \
+	'}' \
+	>"$repo/client/devlog/0.1.0.json"
+git -C "$repo" add client/devlog/0.1.0.json
+expect_failure \
+	"a reference term in an entry FILE is caught, not just in the loader script" \
+	"third-party reference term in player-facing dev log" \
+	"$repo"
+
+# JSON can spell any character as \uXXXX. A title written with escaped spaces
+# reads as ordinary prose to the player while a fixed-string grep over the raw
+# bytes matches nothing, so the guard has to compare the DECODED text.
+repo=$(new_repo escaped_entry_comparison)
+write_valid_contract "$repo"
+mkdir -p "$repo/client/devlog"
+cat >"$repo/client/devlog/0.1.0.json" <<'PLAIN_ENTRY'
+{
+	"version": "0.1.0",
+	"date": "2026-07-16",
+	"title": "The world exists",
+	"notes": ["The journal structure still resembles Outer Wilds."]
+}
+PLAIN_ENTRY
+# Re-spell the term with escaped spaces. Generated here rather than written
+# literally above, because an editor or a shell that interprets the sequence
+# would silently turn this fixture back into the plain-text case.
+perl -pi -e 's/Outer Wilds/Outer\\u0020Wilds/' "$repo/client/devlog/0.1.0.json"
+# The fixture is only meaningful while the raw bytes do NOT spell the title —
+# otherwise this silently degrades into the plain-text case above and would
+# pass without ever exercising the decode.
+if grep -qF "Outer Wilds" "$repo/client/devlog/0.1.0.json"; then
+	echo "FAIL: escaped fixture is not escaped — it spells the title in raw bytes" >&2
+	exit 1
+fi
+git -C "$repo" add client/devlog/0.1.0.json
+expect_failure \
+	"an ESCAPED reference term in an entry file is caught (raw grep cannot see it)" \
+	"third-party reference term in player-facing dev log" \
+	"$repo"
+
 repo=$(new_repo missing_hold)
 write_valid_contract "$repo"
 printf '%s\n' '# Story proposal' >"$repo/docs/design/story-and-progression.md"
