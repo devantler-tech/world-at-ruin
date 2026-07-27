@@ -1111,8 +1111,15 @@ jobs:
               *) repair_sha="" ;;
             esac
             repair_main_version=""
+            repair_main_blob=""
             if [ -n "${repair_sha}" ]; then
               repair_main_version="$(cask_version_at "${repair_sha}")"
+              # main's BLOB at that same revision. The restore loop compares
+              # against this rather than the version: a same-version correction
+              # (a fixed sha256 or url) is a normal manual tap edit, so a version
+              # match cannot identify who wrote the file.
+              repair_main_blob="$(gh api "repos/${tap}/contents/Casks/world-at-ruin.rb?ref=${repair_sha}" \
+                --jq '.sha' 2>/dev/null || true)"
             fi
             # ABORT on a partial read rather than rebuild from it. Every one of
             # these collapses an API, decode or parse failure into the same
@@ -1120,7 +1127,7 @@ jobs:
             # empty would restore nothing over a branch whose content main has
             # not received.
             if [ -z "${repair_content}" ] || [ -z "${repair_version}" ] \
-               || [ -z "${repair_blob_captured}" ] \
+               || [ -z "${repair_blob_captured}" ] || [ -z "${repair_main_blob}" ] \
                || [ -z "${repair_main_version}" ] || [ -z "${repair_sha}" ]; then
               echo "::error::${tap}#${pr} conflicts with main, but the branch cask, its version or main's head could not be read; refusing to rebuild ${branch} from a partial read"
               exit 1
@@ -1131,6 +1138,34 @@ jobs:
             # has edited by hand, and it needs a person, loudly.
             if [ "${repair_version}" = "${repair_main_version}" ]; then
               echo "::error::${tap}#${pr} conflicts with main while both carry v${repair_version}; refusing to rebuild ${branch}, which would leave the PR nothing to deliver"
+              exit 1
+            fi
+            # REFUSE A DOWNGRADE. Unequal is not enough. If an out-of-band merge
+            # has already put a NEWER cask on main — a manual tap edit, or a
+            # `workflow_dispatch` rerun of an OLDER tag, which this workflow
+            # accepts by design — then resetting onto main and restoring the
+            # older captured cask opens a PR that auto-merges a Homebrew
+            # DOWNGRADE. Restore only when the branch is strictly newer.
+            #
+            # Deliberately CONSERVATIVE rather than a second copy of the SemVer
+            # comparator above: a prerelease on either side is refused instead of
+            # ordered. Duplicating that comparator is how the two copies drift,
+            # and a guard that is subtly wrong about precedence is worse than one
+            # that declines to answer. `sort -V` is safe here only because
+            # excluding prereleases leaves plain X.Y.Z on both sides — which is
+            # exactly the case the comparator above documents it getting wrong.
+            # Cost: a prerelease whose cask PR is born conflicting fails loudly
+            # instead of self-healing. That path is rare and the failure is
+            # actionable, whereas a silent downgrade is neither.
+            case "${repair_version}-${repair_main_version}" in
+              *-*-*)
+                echo "::error::${tap}#${pr}: one of v${repair_version} / v${repair_main_version} is a prerelease; refusing to order them here — rebuild ${branch} by hand"
+                exit 1
+                ;;
+            esac
+            if [ "$(printf '%s\n%s\n' "${repair_version}" "${repair_main_version}" \
+                    | sort -V | tail -1)" != "${repair_version}" ]; then
+              echo "::error::${tap}#${pr} carries v${repair_version} but ${tap} main already has v${repair_main_version}; refusing to rebuild ${branch}, which would open a downgrade"
               exit 1
             fi
             # RE-VALIDATE IMMEDIATELY BEFORE THE FORCE-WRITE. The reset, not the
@@ -1177,24 +1212,30 @@ jobs:
             for attempt in 1 2 3 4 5; do
               repair_head="$(gh api "repos/${tap}/contents/Casks/world-at-ruin.rb?ref=${branch}" 2>/dev/null || true)"
               repair_blob="$(printf '%s' "${repair_head}" | jq -r '.sha // empty' 2>/dev/null || true)"
-              repair_now="$(printf '%s' "${repair_head}" | jq -r '.content // empty' 2>/dev/null \
-                | base64 -d 2>/dev/null | sed -n 's/^  version "\(.*\)"$/\1/p' | head -1 || true)"
               # The blob compare-and-swap alone does NOT make this loop safe: a
               # rejected PUT re-reads, so a writer that landed after the reset
               # would simply have its blob sha adopted on the next attempt and be
-              # overwritten. Decide on the VERSION, which says who wrote last.
+              # overwritten. Decide on WHICH FILE is there before writing.
               #
-              # Already ours: a retry after a PUT that actually landed.
-              if [ "${repair_now}" = "${repair_version}" ]; then
+              # Compare BLOBS, not versions. A same-version correction — a fixed
+              # sha256 or url — is a normal manual tap edit, so a version match
+              # would accept a stranger's bytes as "main's copy" and overwrite
+              # them. This is the same coarse-key mistake the pre-reset guard
+              # already avoids, and it has to be avoided on both sides of the
+              # reset.
+              #
+              # Already ours: identical bytes hash to the captured blob, so this
+              # is a retry after a PUT that actually landed.
+              if [ -n "${repair_blob}" ] && [ "${repair_blob}" = "${repair_blob_captured}" ]; then
                 repair_written=1
                 break
               fi
-              # The branch should hold main's copy and nothing else. Any other
-              # version is a release this run never captured, and restoring over
-              # it would drop that release — the exact harm this repair exists to
-              # prevent, so refuse instead of completing.
-              if [ -n "${repair_now}" ] && [ "${repair_now}" != "${repair_main_version}" ]; then
-                echo "::error::${branch} carries v${repair_now} after the rebuild, which this run did not write; refusing to restore v${repair_version} over it"
+              # Otherwise the branch must hold exactly main's copy at the sha it
+              # was reset to. Anything else is a write this run never captured,
+              # and restoring over it would drop that write — the exact harm this
+              # repair exists to prevent, so refuse instead of completing.
+              if [ -n "${repair_blob}" ] && [ "${repair_blob}" != "${repair_main_blob}" ]; then
+                echo "::error::${branch} carries an unexpected cask after the rebuild (blob ${repair_blob}, expected main's ${repair_main_blob}); refusing to restore v${repair_version} over a write this run did not make"
                 exit 1
               fi
               # An empty blob sha here is a FAILED READ, not an absent file:

@@ -243,9 +243,33 @@ fi
 # rejected PUT re-reads, so a writer that landed after the reset would have its
 # blob sha adopted on the next attempt and be overwritten. The loop must decide
 # on the VERSION.
+# ...and it must decide on the BLOB, not the version, on BOTH sides of the reset:
+# a same-version correction (a fixed sha256/url) is a normal manual tap edit, so
+# a version match would accept a stranger's bytes as "main's copy".
 # shellcheck disable=SC2016 # literal workflow text, as above
-if ! printf '%s' "${repair_block}" | grep -q '"\${repair_now}" != "\${repair_main_version}"'; then
-	echo "the restore loop must refuse a version this run did not write" >&2
+if ! printf '%s' "${repair_block}" | grep -q '"\${repair_blob}" != "\${repair_main_blob}"'; then
+	echo "the restore loop must refuse a BLOB this run did not write" >&2
+	exit 1
+fi
+
+# A downgrade must be refused outright. Unequal versions are not enough: an
+# out-of-band merge (or a workflow_dispatch rerun of an older tag, which this
+# workflow accepts) can leave main NEWER than the branch, and restoring the
+# older captured cask then opens a PR that auto-merges a Homebrew downgrade.
+if ! printf '%s' "${repair_block}" | grep -q 'would open a downgrade'; then
+	echo "the repair must refuse to restore a cask older than main" >&2
+	exit 1
+fi
+# shellcheck disable=SC2016 # literal workflow text, as above
+if ! printf '%s' "${repair_block}" | grep -q 'sort -V'; then
+	echo "the downgrade guard must actually order the two versions" >&2
+	exit 1
+fi
+# ...and must decline rather than guess when either side is a prerelease, since
+# `sort -V` orders 1.0.0-rc.1 ABOVE 1.0.0 and would authorise the downgrade it
+# is meant to refuse.
+if ! printf '%s' "${repair_block}" | grep -q 'is a prerelease; refusing to order them here'; then
+	echo "the downgrade guard must refuse rather than mis-order a prerelease" >&2
 	exit 1
 fi
 
