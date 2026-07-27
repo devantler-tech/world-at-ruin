@@ -23,6 +23,12 @@ extends RefCounted
 ## before the scene loads, so the real save is never cleared, moved, or written:
 ## a killed run leaves it exactly where it was.
 ##
+## The caller's name is namespaced by the current process ID. Git worktrees do
+## not isolate Godot's project-wide `user://` directory, so two local test
+## processes using the same fixed probe name would otherwise remove, seed and
+## replace one another's evidence. The namespace is chosen once here: every
+## synthetic boot phase inside one process still shares the same probe.
+##
 ## Usage — in a boot test's _ready(), before instantiating main.tscn:
 ##     _save := SaveIsolation.new("user://<name>_boot_probe.json")
 ##     if not _save.begin():
@@ -44,11 +50,12 @@ var _recovery_before_sha: String
 
 
 func _init(probe_path: String) -> void:
-	_probe = probe_path
+	var stem := probe_path.trim_suffix(".json")
+	_probe = "%s.process-%d.json" % [stem, OS.get_process_id()]
 	# Sibling probes, derived so a caller cannot forget to pass one and
 	# silently fall back to the player's real vault or recovery ledger.
-	_vault_probe = probe_path.trim_suffix(".json") + "_vault.json"
-	_recovery_probe = probe_path.trim_suffix(".json") + "_recovery.json"
+	_vault_probe = _probe.trim_suffix(".json") + "_vault.json"
+	_recovery_probe = _probe.trim_suffix(".json") + "_recovery.json"
 
 
 ## The redirected recovery-ledger path, so a test can seed a prior launch's

@@ -927,6 +927,11 @@ jobs:
             exit 1
           fi
           echo "Ran ${ran} discovered regression test scene(s)."
+      - name: Parallel save-isolation guard
+        # Git worktrees still share Godot's project-wide user:// directory on
+        # one host. A serial scene pass cannot prove two agent sessions will not
+        # remove or replace one another's character, vault and recovery probes.
+        run: ./tools/parallel-save-isolation.test.sh
 
   client-export-macos:
     name: Client export (macOS)

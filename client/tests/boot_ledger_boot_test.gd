@@ -90,6 +90,8 @@ func _begin_boot(phase: String) -> void:
 	if not _save.begin():
 		_fail("save isolation did not take — refusing to boot into the real save or recovery ledger")
 		return
+	# Machine-readable evidence for the cross-process isolation guard.
+	print("SAVE_ISOLATION_PROBE=%s" % CharacterStore.save_path())
 	# begin() starts from clean probes, so the seed goes in afterwards.
 	match phase:
 		"failed_previous":

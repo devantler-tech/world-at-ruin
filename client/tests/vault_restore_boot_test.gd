@@ -35,8 +35,8 @@ const PROBE_PATH := "user://vault_restore_boot_probe.json"
 const DISCOVERY_PROBE := ["wardens_shrine", "future_place", "wardens_shrine"]
 const SHIPPED_DISCOVERIES := "res://tests/data/shipped_discoveries.txt"
 const RETRY_CHARACTER_PROBE := "user://vault_discovery_retry_character.json"
-const RETRY_PROBE_DIR := "user://vault_discovery_retry"
-const RETRY_VAULT := RETRY_PROBE_DIR + "/vault.json"
+## Resolved per process in _ready(); local worktrees share Godot's user://.
+const RETRY_PROBE_PREFIX := "user://vault_discovery_retry"
 const MAIN_SCENE_PATH := "res://scenes/main.tscn"
 
 ## An INDEPENDENT expected destination per shipped attunement name.
@@ -74,9 +74,15 @@ var _restored := 0
 ## retry after a deliberately transient first write failure, and a valid
 ## cloud-synced vault replacement that drops a rollback-only name from disk.
 var _discovery_phase := ""
+var _retry_probe_dir := ""
+var _retry_vault := ""
 
 
 func _ready() -> void:
+	_retry_probe_dir = "%s.process-%d" % [RETRY_PROBE_PREFIX, OS.get_process_id()]
+	_retry_vault = _retry_probe_dir + "/vault.json"
+	# Machine-readable evidence for the cross-process isolation guard.
+	print("SAVE_ISOLATION_RETRY_VAULT=%s" % _retry_vault)
 	_begin_boot(false)
 
 
@@ -167,8 +173,8 @@ func _begin_discovery_retry_boot() -> void:
 	if not _save.begin():
 		_fail("save isolation did not take for the transient discovery-write boot")
 		return
-	OS.set_environment(SaveVault.VAULT_PATH_ENV, RETRY_VAULT)
-	if SaveVault.vault_path() != RETRY_VAULT:
+	OS.set_environment(SaveVault.VAULT_PATH_ENV, _retry_vault)
+	if SaveVault.vault_path() != _retry_vault:
 		_fail("the transient discovery-write vault seam did not take")
 		return
 	SaveVault.clear_refusals_for_test()
@@ -226,11 +232,11 @@ func _physics_process(_delta: float) -> void:
 	if _discovery_phase == "write" and _ticks == 10:
 		player.global_position = Vector3(0.0, world.shrine_respawn_point().y, -13.0)
 	if _discovery_phase == "retry" and _ticks == 3:
-		if FileAccess.file_exists(RETRY_VAULT):
+		if FileAccess.file_exists(_retry_vault):
 			_fail("the transient write unexpectedly succeeded before its parent directory existed")
 			return
 		var mkdir_error := DirAccess.make_dir_absolute(
-			ProjectSettings.globalize_path(RETRY_PROBE_DIR))
+			ProjectSettings.globalize_path(_retry_probe_dir))
 		if mkdir_error != OK and mkdir_error != ERR_ALREADY_EXISTS:
 			_fail("could not make the transient vault path writable (%d)" % mkdir_error)
 			return
@@ -529,15 +535,19 @@ func _shipped_discoveries() -> Dictionary:
 
 
 func _cleanup_retry_probe() -> void:
-	for path in [RETRY_VAULT + ".tmp", RETRY_VAULT]:
+	for path in [_retry_vault + ".tmp", _retry_vault]:
 		if FileAccess.file_exists(path):
 			DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
-	DirAccess.remove_absolute(ProjectSettings.globalize_path(RETRY_PROBE_DIR))
+	if not _retry_probe_dir.is_empty():
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(_retry_probe_dir))
 
 
 func _fail(message: String) -> void:
 	if _save != null:
-		_save.end()
+		var isolation_breached := not _save.real_save_untouched()
+		_save = null
+		if isolation_breached:
+			message += " — AND the run touched the player's real save, vault or recovery ledger"
 	_cleanup_retry_probe()
 	push_error(message)
 	print("TEST FAIL — %s" % message)
@@ -546,5 +556,7 @@ func _fail(message: String) -> void:
 
 func _exit_tree() -> void:
 	if _save != null:
-		_save.end()
+		if not _save.real_save_untouched():
+			push_error("vault restore boot test teardown detected a real player-data mutation")
+		_save = null
 	_cleanup_retry_probe()
