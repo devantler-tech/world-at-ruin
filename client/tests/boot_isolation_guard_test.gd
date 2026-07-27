@@ -102,12 +102,21 @@ const COMMENT_ONLY_CONTROL := "world_gen_determinism_test.gd"
 const FAIL_FUNC := "func _fail("
 const GUARANTEE_CALL := "real_save_untouched("
 
-## A failing exit. The contract is "assert the guarantee on EVERY exit path", so
-## a second failing exit that bypasses `_fail` would satisfy the law above while
-## leaving the actual invariant unmet — checking `_fail` alone would then be
-## checking a function nothing calls. Every booter today funnels its single
-## failing quit through `_fail`; this keeps it that way.
-const FAILING_QUIT := "quit(1)"
+## A quit, and the only argument that means SUCCESS.
+##
+## The contract is "assert the guarantee on EVERY exit path", so a second failing
+## exit that bypasses `_fail` would satisfy the law above while leaving the actual
+## invariant unmet — checking `_fail` alone would then be checking a function
+## nothing calls. Every booter today funnels its single failing quit through
+## `_fail`; this keeps it that way.
+##
+## 🔴 Matched by EXCLUDING the success form, never by listing failure forms.
+## Scanning for the literal `quit(1)` would miss `quit(2)`, `quit(ERROR_CODE)` and
+## every other nonzero spelling — an allow-list of failures can only ever be
+## incomplete, while the success argument is exactly two spellings and both are
+## right here. Godot's `quit()` defaults to 0, so a bare call is also success.
+const QUIT_CALL := "quit("
+const SUCCESS_QUIT_ARGS := ["0", ""]
 
 ## Line prefixes that begin a new TOP-LEVEL declaration, ending a function body.
 ##
@@ -161,6 +170,27 @@ remember to call real_save_untouched( on the way out
 	get_tree().quit(1)
 """
 
+## A `_fail` naming the guarantee in a TRAILING comment. Same bypass as
+## [constant STRING_ONLY_FIXTURE] through a different door: [method _code_of]
+## strips only whole-line comments, so this survives into the matched text.
+const COMMENT_ONLY_FAIL_FIXTURE := """func _fail(message: String) -> void:
+	if _save != null:
+		_save.end()  # real_save_untouched( is what this SHOULD call
+	get_tree().quit(1)
+"""
+
+## A booter whose `_fail` is compliant but which also exits nonzero elsewhere,
+## spelled with an argument the old literal `quit(1)` scan could not see.
+const STRAY_NONZERO_QUIT_FIXTURE := """func _on_timeout() -> void:
+	get_tree().quit(2)
+
+
+func _fail(message: String) -> void:
+	if _save != null and not _save.real_save_untouched():
+		message += " breached"
+	get_tree().quit(1)
+"""
+
 
 func _ready() -> void:
 	var sources := _test_sources()
@@ -195,16 +225,18 @@ func _ready() -> void:
 		# PASS_PATH_ONLY_FIXTURE for why that scoping is the load-bearing part.
 		# Literals are blanked first, so naming the call in a message is not
 		# mistaken for making it (STRING_ONLY_FIXTURE).
-		var stripped := _strip_literals(code)
-		var fail_body := _fail_body(stripped)
+		var executable := _executable(code)
+		var fail_body := _fail_body(executable)
 		if fail_body.is_empty():
 			unlocatable.append(file)
 		elif not _guards_failure_path(code):
 			unguarded.append(file)
-		elif stripped.replace(fail_body, "").contains(FAILING_QUIT):
+		else:
 			# A guarded `_fail` proves nothing if some other path also exits
 			# failing without going through it.
-			stray_exit.append(file)
+			var stray := _nonzero_quit(executable.replace(fail_body, ""))
+			if not stray.is_empty():
+				stray_exit.append("%s (quit(%s))" % [file, stray])
 
 	# --- the law ---
 	if not unisolated.is_empty():
@@ -233,10 +265,10 @@ func _ready() -> void:
 		return
 
 	if not stray_exit.is_empty():
-		_fail(("%d booter(s) exit failing WITHOUT going through `%s`: %s — a `%s` outside that body "
-			+ "skips the isolation check entirely, so the guarantee is asserted on one exit path and "
-			+ "not the others. Route every failing exit through `_fail` (#326)")
-			% [stray_exit.size(), FAIL_FUNC, ", ".join(stray_exit), FAILING_QUIT])
+		_fail(("%d booter(s) exit failing WITHOUT going through `%s`: %s — a nonzero quit outside "
+			+ "that body skips the isolation check entirely, so the guarantee is asserted on one "
+			+ "exit path and not the others. Route every failing exit through `_fail` (#326)")
+			% [stray_exit.size(), FAIL_FUNC, ", ".join(stray_exit)])
 		return
 
 	# --- the guard is not passing vacuously ---
@@ -291,6 +323,26 @@ func _ready() -> void:
 		_fail(("the string-only fixture's `_fail` body vanished — the body boundary is stopping at "
 			+ "the multiline string inside it rather than at a real declaration, so a correctly "
 			+ "guarded booter would be rejected over string formatting alone"))
+		return
+
+	# --- negative control: naming the call in a COMMENT is not calling it ---
+	if not COMMENT_ONLY_FAIL_FIXTURE.contains(GUARANTEE_CALL):
+		_fail("the comment-only fixture no longer names the guarantee — restore it")
+		return
+	if _guards_failure_path(COMMENT_ONLY_FAIL_FIXTURE):
+		_fail(("the guard accepted a `_fail` that names the guarantee only in a TRAILING comment — "
+			+ "comment stripping has regressed. `_code_of` keeps trailing comments on purpose, which "
+			+ "is safe for booter detection and a bypass here (#326)"))
+		return
+
+	# --- negative control: a nonzero quit is not only `quit(1)` ---
+	var stray_control := _nonzero_quit(
+		_executable(STRAY_NONZERO_QUIT_FIXTURE).replace(
+			_fail_body(_executable(STRAY_NONZERO_QUIT_FIXTURE)), ""))
+	if stray_control != "2":
+		_fail(("the stray-exit scan no longer recognises `quit(2)` outside `_fail` (got '%s') — it "
+			+ "has narrowed to specific failure spellings instead of excluding the success form, so "
+			+ "any other nonzero exit bypasses the isolation assertion (#326)") % stray_control)
 		return
 
 	# --- negative control: a column-zero line is not automatically a declaration ---
@@ -351,7 +403,49 @@ func _claims_isolation(code: String) -> bool:
 ## whole-file match makes that control fail immediately instead of silently
 ## passing every harness in the repo.
 func _guards_failure_path(code: String) -> bool:
-	return _fail_body(_strip_literals(code)).contains(GUARANTEE_CALL)
+	return _fail_body(_executable(code)).contains(GUARANTEE_CALL)
+
+
+## `code` reduced to what actually RUNS: string contents blanked, then comments
+## removed. Both are needed, and only together.
+##
+## 🔴 The comment pass must come AFTER the literal pass, never before: a `#`
+## inside a string is not a comment, and stripping comments first would truncate
+## at it and destroy the rest of the line.
+##
+## ⚠️ Scoped to the failure-path law, NOT used by booter detection — the same
+## asymmetry as [method _strip_literals], and for a sharper reason. [method
+## _code_of] deliberately keeps a TRAILING comment, and its doc calls that
+## "err[ing] toward demanding isolation, which is the safe direction". That is
+## true when the token being matched means "this file boots" — a stray mention
+## demands isolation. It inverts here: a trailing `# real_save_untouched(` would
+## make an UNGUARDED `_fail` read as guarded, so the same leniency that is safe
+## one law up is a bypass in this one. Same limitation, opposite direction.
+func _executable(code: String) -> String:
+	var out := PackedStringArray()
+	for line: String in _strip_literals(code).split("\n"):
+		var hash := line.find("#")
+		out.append(line if hash < 0 else line.substr(0, hash))
+	return "\n".join(out)
+
+
+## The argument of the first non-success `quit(...)` in `region`, or "" when every
+## quit there is a success quit. Used on the code OUTSIDE `_fail`.
+##
+## Returns the offending argument rather than a bool so the failure message can
+## name it — a guard that says only "something is wrong" costs the next person a
+## bisect.
+func _nonzero_quit(region: String) -> String:
+	var parts := region.split(QUIT_CALL)
+	for i in range(1, parts.size()):
+		var rest: String = parts[i]
+		var close := rest.find(")")
+		if close < 0:
+			continue
+		var arg := rest.substr(0, close).strip_edges()
+		if arg not in SUCCESS_QUIT_ARGS:
+			return arg
+	return ""
 
 
 ## `code` with the CONTENTS of every string literal blanked out, preserving
