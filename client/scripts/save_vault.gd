@@ -150,6 +150,14 @@ const LOCK_STALE_ENV := "WAR_VAULT_LOCK_STALE_SECONDS"
 ## a writer that read nothing must still refuse if a vault appeared meanwhile.
 const IDENTITY_ABSENT := ""
 
+## The identity of a vault that is PRESENT but could not be hashed.
+##
+## Distinct from [constant IDENTITY_ABSENT] because collapsing the two turns a
+## refusal into a lost update: a writer that read nothing expects absence, and a
+## vault that appeared since but cannot be hashed would compare equal to that
+## expectation. A write never proceeds against this value on either side.
+const IDENTITY_UNREADABLE := "?"
+
 ## The opt-out for [method replace_if_unchanged]: replace whatever is there.
 ##
 ## A single `*` can never collide with a real identity — those are SHA-256 hex —
@@ -373,10 +381,16 @@ static func save_to(path: String, doc: Dictionary) -> bool:
 static func document_identity(path: String) -> String:
 	if not FileAccess.file_exists(path):
 		return IDENTITY_ABSENT
-	# Empty on any read failure, which is IDENTITY_ABSENT — the fail-closed
-	# direction: it can only make a comparison MISmatch and refuse a write, never
-	# match one that should have been refused.
-	return FileAccess.get_sha256(path)
+	var sha := FileAccess.get_sha256(path)
+	# get_sha256() returns an EMPTY string on failure, and empty is exactly
+	# IDENTITY_ABSENT. Collapsing the two would be a lost update rather than a
+	# refusal: a writer that read no vault expects absence, and a vault that has
+	# appeared since but cannot be hashed would compare EQUAL to that expectation
+	# and be replaced. A file that is there but unreadable is its own answer, and
+	# one that never matches anything.
+	if sha.is_empty():
+		return IDENTITY_UNREADABLE
+	return sha
 
 
 ## The expectation the most recent [method replace_if_unchanged] call ran under.
@@ -489,7 +503,12 @@ static func _save_to_locked(
 	# perfectly well. Only the bytes tell them apart.
 	if expected_identity != IDENTITY_UNCHECKED:
 		var actual := document_identity(path)
-		if actual != expected_identity:
+		# An unreadable identity on EITHER side is never a match, even against
+		# itself: two different unhashable files would otherwise compare equal and
+		# one would be replaced by the other.
+		var unreadable := (
+			actual == IDENTITY_UNREADABLE or expected_identity == IDENTITY_UNREADABLE)
+		if unreadable or actual != expected_identity:
 			push_error(
 				"SaveVault: %s changed under us while writing — refusing to replace it" % path)
 			DirAccess.remove_absolute(ProjectSettings.globalize_path(tmp_path))

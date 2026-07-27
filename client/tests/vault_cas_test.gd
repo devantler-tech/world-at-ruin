@@ -28,7 +28,9 @@ extends Node
 ##  3. The refusal is not vacuous — the identical call with a CURRENT identity
 ##     succeeds. Without this the whole file could pass by always refusing.
 ##  4. Detection covers the absent -> created direction too: a writer that read
-##     no vault must still refuse once one has appeared.
+##     no vault must still refuse once one has appeared — and "absent" stays
+##     distinguishable from "present but unhashable", which are the same empty
+##     string to FileAccess and would otherwise compare equal.
 ##  5. Refusing is session-only degradation, never a boot blocker: the vault
 ##     still READS, and it reads the foreign writer's document.
 ##  6. A refused write leaves no temp file behind.
@@ -163,6 +165,26 @@ func _ready() -> void:
 		return
 	if _read(PROBE) != appeared_bytes:
 		_fail("the refused absent-expectation write still modified the vault")
+		return
+
+	# 4b. "Absent" and "present but unhashable" must not be the SAME answer.
+	# FileAccess.get_sha256() returns an empty string on failure, and empty is
+	# what absence reports — so collapsing them turns this exact case into a lost
+	# update: the writer above expects absence, a vault has appeared, and if that
+	# vault cannot be hashed it would compare EQUAL to "no vault" and be replaced.
+	# Pinned on the identity itself because provoking a genuine hash failure needs
+	# filesystem conditions a test cannot portably create.
+	if SaveVault.IDENTITY_UNREADABLE == SaveVault.IDENTITY_ABSENT:
+		_fail("an unhashable vault reports ABSENT — a writer expecting none would replace it")
+		return
+	if SaveVault.IDENTITY_UNREADABLE == SaveVault.IDENTITY_UNCHECKED:
+		_fail("an unhashable vault reports UNCHECKED — the CAS guard would be skipped entirely")
+		return
+	if SaveVault.replace_if_unchanged(PROBE, SaveVault.empty(), SaveVault.IDENTITY_UNREADABLE):
+		_fail("a write proceeded against an UNREADABLE expectation")
+		return
+	if _read(PROBE) != appeared_bytes:
+		_fail("the refused unreadable-expectation write still modified the vault")
 		return
 
 	# 5. Session-only degradation. A refused write must never block a boot, and
