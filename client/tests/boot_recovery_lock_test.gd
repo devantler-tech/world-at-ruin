@@ -242,11 +242,16 @@ func _ready() -> void:
 		_fail("with_lock leaked the lock — the ledger would wedge until the timeout")
 		return
 
-	# 11. Acquiring never stamps OVER an existing owner file. A process
-	# descheduled between its mkdir and its stamp can have that empty lock
-	# reclaimed and the slot retaken by another writer; truncating that writer's
-	# token would make it abandon a write it owns while recording us as holder of
-	# a lock we never created.
+	# 11. Stamping never writes OVER an existing owner file. A process descheduled
+	# between its mkdir and its stamp can have that empty lock reclaimed and the
+	# slot retaken by another writer; truncating that writer's token would make it
+	# abandon a write it owns while recording us as holder of a lock we never
+	# created.
+	#
+	# Driven at the STAMP level on purpose. Going through acquire() cannot reach
+	# this guard at all — `mkdir` fails first when the directory exists, so the
+	# end-to-end form asserts a branch it never executes and passes with the guard
+	# deleted (measured). Same reasoning as vault_lock_test's ownership case.
 	if DirAccess.make_dir_absolute(_abs(lock)) != OK:
 		_fail("could not create the lock for the stamp-clobber case")
 		return
@@ -256,8 +261,8 @@ func _ready() -> void:
 		return
 	foreign.store_string("replacement-1")
 	foreign.close()
-	if FileLock.acquire(PROBE):
-		_fail("acquired a lock that already carried another writer's stamp")
+	if FileLock._stamp_ownership(lock, "resumed-acquirer") != ERR_ALREADY_EXISTS:
+		_fail("stamping a lock that already carried another writer's token was not refused")
 		return
 	var stamp_after := FileAccess.open(FileLock.owner_path(lock), FileAccess.READ)
 	if stamp_after == null:
@@ -267,6 +272,15 @@ func _ready() -> void:
 	stamp_after.close()
 	if stamp_text != "replacement-1":
 		_fail("a resumed acquirer OVERWROTE the replacement writer's stamp: %s" % stamp_text)
+		return
+	# And it DOES stamp a genuinely empty lock, so case 11 cannot pass by refusing
+	# everything.
+	FileLock.remove_dir(lock)
+	if DirAccess.make_dir_absolute(_abs(lock)) != OK:
+		_fail("could not create an empty lock for the positive stamp case")
+		return
+	if FileLock._stamp_ownership(lock, "mine-1") != OK:
+		_fail("stamping an empty lock was refused")
 		return
 	FileLock.remove_dir(lock)
 

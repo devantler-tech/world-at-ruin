@@ -140,31 +140,49 @@ static func acquire(path: String) -> bool:
 	# non-empty directory, which fails safely instead of clobbering. (Measured:
 	# renaming onto an EMPTY directory succeeds, so an empty lock would be
 	# silently overwritable.)
-	# Never stamp OVER an existing owner file. The directory we just created is
-	# empty by construction, so a stamp already present means this is not that
-	# directory: a process descheduled between the mkdir above and this line for
-	# longer than the stale timeout has its empty lock reclaimed as abandoned, and
-	# another writer can then create and stamp a fresh lock at the same path.
-	# Opening with WRITE truncates, so resuming and stamping anyway would destroy
-	# that writer's token — making it abandon a write it legitimately owns — and
-	# record us as the holder of a lock we never created. Refuse instead, and
-	# leave the directory alone: it belongs to whoever stamped it.
-	if FileAccess.file_exists(owner_path(lock)):
+	var token := "%d-%d" % [OS.get_process_id(), Time.get_ticks_usec()]
+	var stamped := _stamp_ownership(lock, token)
+	if stamped == ERR_ALREADY_EXISTS:
+		# Not the directory we created. Leave it alone — it belongs to whoever
+		# stamped it — and refuse.
 		push_error(
 			"FileLock: the lock at %s was replaced while this process was acquiring it — refusing to write"
 			% lock)
 		return false
-	var token := "%d-%d" % [OS.get_process_id(), Time.get_ticks_usec()]
-	var owner := FileAccess.open(owner_path(lock), FileAccess.WRITE)
-	if owner == null:
+	if stamped != OK:
 		push_error("FileLock: cannot stamp ownership into %s — refusing to write" % lock)
 		DirAccess.remove_absolute(absolute)
 		return false
-	owner.store_string(token)
-	owner.close()
 	_held[lock] = 1
 	_tokens[lock] = token
 	return true
+
+
+## Write `token` as the ownership stamp inside `lock`.
+##
+## Returns `ERR_ALREADY_EXISTS` when a stamp is already present, and writes
+## NOTHING in that case. A directory reaching this point from [method acquire] is
+## empty by construction — it was just created — so an existing stamp means this
+## is a DIFFERENT directory: a process descheduled between its `mkdir` and its
+## stamp for longer than the stale timeout has its empty lock reclaimed as
+## abandoned, and another writer can then create and stamp a fresh lock at the
+## same path. `FileAccess.WRITE` truncates, so stamping anyway would destroy that
+## writer's token — making it abandon a write it legitimately owns — and record
+## this process as the holder of a lock it never created.
+##
+## Split out so the refusal is reachable from a test. Driving it through
+## [method acquire] cannot reach it: `mkdir` fails first when the directory
+## exists, so an end-to-end case asserts a branch it never executes and passes
+## with this guard deleted (measured).
+static func _stamp_ownership(lock: String, token: String) -> int:
+	if FileAccess.file_exists(owner_path(lock)):
+		return ERR_ALREADY_EXISTS
+	var owner := FileAccess.open(owner_path(lock), FileAccess.WRITE)
+	if owner == null:
+		return ERR_CANT_CREATE
+	owner.store_string(token)
+	owner.close()
+	return OK
 
 
 ## Run `body` with `path`'s write lock held, releasing it on every exit path.
