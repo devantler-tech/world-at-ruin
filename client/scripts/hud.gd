@@ -8,12 +8,16 @@ const COL_BONE := Color(0.88, 0.84, 0.76)
 const COL_DIM := Color(0.88, 0.84, 0.76, 0.55)
 const COL_EMBER := Color(1.0, 0.62, 0.25)
 
-## Widest a toast line may render before it wraps. Measured against the shipped
-## 1600-wide viewport: the longest message this build can produce is a combined
-## boot notice at 1249px, which already fits — this is headroom for messages that
-## grow and for windows narrower than the default, not a fix for a clipped line
-## today.
-const TOAST_MAX_WIDTH := 1100.0
+## Clear space either side of a toast, in pixels from the viewport edge. At the
+## shipped 1600-wide viewport this leaves an 1100px column — the longest message
+## this build can produce is a combined boot notice measuring 1249px, so it wraps
+## to two comfortable lines instead of reaching for the edges.
+const TOAST_SIDE_MARGIN := 250.0
+
+## How tall the toast's box is. Only a bound for wrapped text: a toast is one or
+## two lines, and this leaves room for more without the label ever growing into
+## the rest of the HUD.
+const TOAST_HEIGHT := 120.0
 
 var _toast: Label
 var _prompt: Label
@@ -101,18 +105,24 @@ func _build_toast() -> void:
 	_toast.modulate.a = 0.0
 	_toast.add_theme_font_size_override("font_size", 16)
 	_toast.add_theme_color_override("font_color", COL_EMBER)
-	_toast.set_anchors_preset(Control.PRESET_CENTER_TOP)
-	_toast.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_toast.position.y = 120
-	# Wrap rather than run off the sides. A Label anchored to a point sizes itself
-	# to its text, so a long line simply extends past both edges and the ends
+	# Span the width and centre the TEXT inside it, rather than sizing a box to the
+	# text and centring the box. A point-anchored Label grows from its anchor by
+	# whatever its content demands, so a long line runs off the edges and the ends
 	# become unreadable — and a toast is the only channel some messages have (a
-	# boot notice that progression restarted, a seeded line from a person). The
-	# cap is well inside the 1600-wide viewport, leaving a margin at the default
-	# size and letting a narrower window shrink the line instead of clipping it.
+	# boot notice that progression restarted, a seeded line from a person).
+	#
+	# The margins are offsets from the viewport edges, so the column is centred by
+	# construction at any window size and narrows with the window instead of being
+	# clipped by it. A fixed width on a point anchor does NOT survive that: the
+	# rectangle's placement then depends on grow direction and on when the size is
+	# assigned relative to entering the tree, which is how it ends up off-centre.
+	_toast.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	_toast.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_toast.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_toast.custom_minimum_size.x = TOAST_MAX_WIDTH
-	_toast.size.x = TOAST_MAX_WIDTH
+	_toast.offset_left = TOAST_SIDE_MARGIN
+	_toast.offset_right = -TOAST_SIDE_MARGIN
+	_toast.offset_top = 120
+	_toast.offset_bottom = 120 + TOAST_HEIGHT
 	add_child(_toast)
 
 ## The interaction prompt: what pressing E would do right now, shown just above

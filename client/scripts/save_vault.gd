@@ -477,12 +477,31 @@ static func quarantine_min_age_seconds() -> int:
 ## fault about this process, not about the bytes, and moving a file we could not
 ## read would be acting on a guess.
 static func _is_unownable(path: String) -> bool:
+	var data = _read_document(path)
+	if data == null:
+		return false
+	return _is_unownable_bytes(data)
+
+
+## The document's raw bytes, or null when it cannot be opened.
+##
+## Quarantine judges and re-verifies from BYTES rather than re-reading through a
+## parser each time, because the bytes are the identity of the document being
+## moved (see [method _quarantine_locked]). Null and an empty array are different
+## answers: a zero-length file is a real, unownable document, while an unopenable
+## one is a fault about this process and must not be judged at all.
+static func _read_document(path: String) -> Variant:
 	var file := FileAccess.open(path, FileAccess.READ)
 	if file == null:
-		return false
-	var text := file.get_as_text()
+		return null
+	var data := file.get_buffer(file.get_length())
 	file.close()
-	var parsed = JSON.parse_string(text)
+	return data
+
+
+## Whether `data` is a document no client could own — see [method _is_unownable].
+static func _is_unownable_bytes(data: PackedByteArray) -> bool:
+	var parsed = JSON.parse_string(data.get_string_from_utf8())
 	if parsed is not Dictionary:
 		return true
 	# The same integer test validate() applies, so the two can never disagree
@@ -523,7 +542,13 @@ static func _quarantine_locked(path: String) -> String:
 	# writer may have replaced this file with a perfectly good vault since.
 	if not FileAccess.file_exists(path):
 		return ""
-	if not _is_unownable(path):
+	# Capture the exact bytes being judged. Everything below re-verifies against
+	# THIS array, because the bytes are what identifies the document — see the
+	# pre-rename check.
+	var observed = _read_document(path)
+	if observed == null:
+		return ""
+	if not _is_unownable_bytes(observed):
 		return ""
 	var modified := int(FileAccess.get_modified_time(path))
 	if modified <= 0:
@@ -550,21 +575,28 @@ static func _quarantine_locked(path: String) -> String:
 	#
 	# This narrows the window to the rename syscall; it cannot close it, for the
 	# same reason that re-check cannot, and no in-process primitive can.
-	if not _is_unownable(path):
-		push_warning(
-			"SaveVault: %s became a readable vault while it was being set aside — leaving it" % path)
-		return ""
-	# And prove it is the SAME document whose age was judged. Unownability alone is
-	# not enough: a foreign writer can replace stale corrupt bytes with freshly
-	# arriving, still-unparseable ones — a newer client's write caught mid-flight —
-	# and that file would inherit the OLD file's staleness verdict, bypassing the
-	# age gate exactly where it matters most. mtime survives a rename (measured, see
-	# [method _reclaim_lock_if_abandoned]), so an exact match is what distinguishes
-	# the document we judged from a different one wearing the same path. This is an
-	# IDENTITY check, deliberately not a fresh staleness check.
-	if int(FileAccess.get_modified_time(path)) != modified:
+	# Prove it is the SAME document whose age was judged, BY ITS BYTES. Unownability
+	# alone is not enough: a foreign writer can replace stale corrupt bytes with
+	# freshly arriving, still-unparseable ones — a newer client's write caught
+	# mid-flight — and that file would inherit the OLD file's staleness verdict,
+	# bypassing the age gate exactly where it matters most.
+	#
+	# The timestamp cannot carry that proof on its own. Copy and sync tools
+	# routinely PRESERVE modification time while replacing content (`cp -p`,
+	# `rsync -t`), so an mtime match is consistent with a completely different
+	# document. Comparing the bytes is what actually establishes identity, and it
+	# re-derives unownability for free.
+	var current = _read_document(path)
+	if current == null or (current as PackedByteArray) != (observed as PackedByteArray):
 		push_warning(
 			"SaveVault: %s changed while it was being set aside — leaving it for the next launch" % path)
+		return ""
+	# mtime is still checked, and it is NOT redundant: identical bytes rewritten a
+	# moment ago are a live writer at work, not the abandoned document whose age
+	# passed the gate.
+	if int(FileAccess.get_modified_time(path)) != modified:
+		push_warning(
+			"SaveVault: %s was rewritten while it was being set aside — leaving it" % path)
 		return ""
 	var err := DirAccess.rename_absolute(
 		ProjectSettings.globalize_path(path), ProjectSettings.globalize_path(target))
