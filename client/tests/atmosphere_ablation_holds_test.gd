@@ -96,6 +96,25 @@ func _ready() -> void:
 		_fail("a null read-back must NOT count as applied")
 		return
 
+	# LAW 5 — the primitive the harness pre-flights its condition table with
+	# actually distinguishes a real Environment property from a typo.
+	#
+	# Pinned because the harness's own success path cannot prove it: a run where
+	# every key is valid exercises only the "no unknown keys" branch, so a `in`
+	# that answered true for everything would sail through the very run that is
+	# supposed to be the evidence. Both directions are asserted here instead.
+	var probe := Environment.new()
+	for real_key: String in [
+		"volumetric_fog_density", "fog_height_density", "fog_density", "sdfgi_enabled",
+	]:
+		if not (real_key in probe):
+			_fail("`%s` is a real Environment property and must be recognised" % real_key)
+			return
+	for typo: String in ["volumetric_fog_densty", "fog_heigth_density", "not_a_property"]:
+		if typo in probe:
+			_fail("`%s` is not an Environment property and must be rejected" % typo)
+			return
+
 	print("TEST PASS: atmosphere_ablation_holds")
 	get_tree().quit(0)
 
