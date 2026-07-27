@@ -9,8 +9,9 @@
 # and reports anything else as an unexpected key.
 #
 # The pattern below is deliberately anchored to that one message so every other actionlint
-# finding on these workflows still fails the build. Delete this file once actionlint
-# recognises `queue`.
+# finding on these workflows still fails the build. It does not validate the key's VALUE, so a
+# typo such as `queue: maxx` reaches GitHub's own workflow validation instead of failing lint.
+# Delete this file once actionlint recognises `queue`; tracked in #420.
 paths:
   .github/workflows/**:
     ignore:
