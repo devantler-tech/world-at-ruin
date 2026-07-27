@@ -305,13 +305,31 @@ catastrophic rather than helpful.
 - The lock directory is **not** empty: it holds an ownership stamp. Renaming onto an empty directory
   succeeds, so an unstamped lock could be silently renamed over; the stamp also lets a holder prove
   the lock is still its own immediately before replacing the vault, and abandon the write if it is not.
-- **Scope the guarantee precisely.** A lock only excludes writers that take it. Builds from before this
+- **Scope the lock precisely.** A lock only excludes writers that take it. Builds from before this
   protocol — the retained and rollback clients the updater keeps runnable — write the same file without
-  it, as do foreign writers such as cloud sync or a hand edit. For all of those the pre-replacement
-  readability recheck and the refuse-a-newer-version rule are the protection, and they narrow the
-  window to the rename rather than closing it. This removes lost updates between lock-aware builds now
-  and becomes general only once every still-runnable build carries the protocol; do not describe it as
-  closing the differently-versioned case outright.
+  it, as do foreign writers such as cloud sync, a backup agent or a hand edit. The lock removes lost
+  updates between lock-aware builds and nothing more; do not describe it as closing the
+  differently-versioned case outright.
+- Every write additionally **compare-and-swaps on the document's own bytes**. The read-modify-write
+  records the SHA-256 of the vault it read and verifies the file still carries it immediately before the
+  rename, refusing when it does not. This keys on what the file *is* rather than on who cooperated, so
+  it covers exactly the writers the lock cannot bind — and it subsumes the point-in-time ownership gap,
+  because a reclaimed-and-rewritten vault fails the comparison. `save_to()` stays a deliberate blind
+  whole-document replace via an explicit sentinel; `replace_if_unchanged()` is the guarded entry point.
+- The identity is captured **before** the read, not after. Captured after, a foreign write landing
+  between the read and the hash would be recorded as the expectation while the merge still held the old
+  document, and the comparison would pass. Captured before, that interleaving makes the expectation
+  stale and the write refuses. Both orders leave a window; only this one fails safe.
+- Each write **stages through a private per-attempt path** (`vault.json.tmp-<pid>-<ticks>`), never a
+  shared `vault.json.tmp`. The compare-and-swap verifies the *target*, so it cannot see a foreign
+  writer truncating the staged document between serialisation and the rename — the target is untouched,
+  every check passes, and the rename would commit the other writer's partial bytes while reporting
+  success. A per-attempt name removes the sharing rather than detecting it. Abandoned staging files are
+  swept under the write lock, which a fixed name previously got for free by being overwritten.
+- **The residual is a shrunk window, not a closed one.** Verify-then-rename is two operations, so the
+  gap narrows to the rename syscall. Closing it needs a lock the OS holds across the rename (`flock`,
+  `O_EXCL`), which Godot's `FileAccess`/`DirAccess` do not expose. The gain is turning a *silent* lost
+  update into a *detected refusal*, which degrades to session-only and never blocks a boot.
 
 Boot tests redirect every player-state seam through `SaveIsolation`; persistence and fixture tests use
 explicit throwaway paths. A migration test that touches a played save is itself a product-law
