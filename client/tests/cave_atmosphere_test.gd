@@ -19,10 +19,15 @@ extends Node3D
 ##
 ## Run: godot --headless --path client res://tests/cave_atmosphere_test.tscn
 
-## What #211 shipped, restated here rather than read from the module under test.
-## Asserting the constant equals itself would pass for any value at all,
-## including one that silently regraded every outdoor frame in the game.
-const SHIPPED_SURFACE_DENSITY := 0.06
+## The shipped outdoor grade, restated here rather than read from the module
+## under test. Asserting the constant equals itself would pass for any value at
+## all, including one that silently regraded every outdoor frame in the game.
+##
+## Lowered from #211's 0.06 to 0.6x of it by #273, which measured this term as
+## the second-largest cause of the ground palette not reaching the player. That
+## this test had to be edited to let the change through is the guard working as
+## intended: the surface grade moves only as a deliberate, measured act.
+const SHIPPED_SURFACE_DENSITY := 0.036
 
 ## Tolerance for float comparison — far narrower than any difference these laws
 ## distinguish.
@@ -37,12 +42,20 @@ const EPS := 1.0e-6
 ## sampled walk takes many.
 ##
 ## Measured worst steps on this walk, so the margin is known rather than hoped
-## for: the 5-point cross this replaced **0.036** (three probes crossing
-## together), 12 or 24 probes **0.005**, 48 probes **0.0025**. The shipped
-## pattern therefore clears this bound by about 20%. That is deliberately not a
-## comfortable margin — it is the honest one, and a change that needs more should
-## raise [constant CaveAtmosphere.PROBE_COUNT] rather than relax this number.
-const MAX_DENSITY_STEP := 0.006
+## for: the 5-point cross this replaced stepped by **60%** of the grade (three
+## probes crossing together), 12 or 24 probes by **8.3%**, 48 probes by **4.2%**.
+## The shipped pattern therefore clears this bound by about 20%. That is
+## deliberately not a comfortable margin — it is the honest one, and a change
+## that needs more should raise [constant CaveAtmosphere.PROBE_COUNT] rather than
+## relax this number.
+##
+## Expressed as a FRACTION of the grade rather than as an absolute, because the
+## walk's step scales with it: [method CaveAtmosphere.height_density] is the
+## grade times the open-sky fraction, so halving the grade halves every step. A
+## literal 0.006 survived #273's reduction unchanged and would silently have
+## become a 2x-loose bound with the same words above it still claiming "a tenth".
+## Deriving it keeps the stated meaning true and the margin constant.
+const MAX_DENSITY_STEP := SHIPPED_SURFACE_DENSITY * 0.1
 
 
 func _ready() -> void:

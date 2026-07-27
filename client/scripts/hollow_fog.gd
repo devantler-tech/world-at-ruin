@@ -104,8 +104,14 @@ const POOL_HEIGHT := 6.0
 ## POOL_HEIGHT. Slightly under half, so the densest part hugs the ground.
 const POOL_LIFT_FRACTION := 0.38
 ## Added density at the pool's core, on top of the environment's baseline
-## volumetric density (0.005). An order of magnitude over that baseline, which
-## is what makes a hollow read as thicker air rather than as more of the same.
+## volumetric density ([constant Volumetrics.DENSITY]) — enough over it that a
+## hollow reads as thicker air rather than as more of the same.
+##
+## Deliberately NOT quoted as a ratio against that baseline: the two are
+## different units (see [constant POOL_DENSITY]), so the numbers do not divide
+## into anything meaningful. What is true is the ordering, and #273 widened it —
+## halving the uniform baseline left these pools untouched, so the ash gathered
+## in a hollow now stands further out from the air around it than it did.
 ##
 ## This is the first value here ever judged on a rendered frame. Every earlier
 ## one was inert: build_volume() configured a FogMaterial but never assigned it,
@@ -121,9 +127,12 @@ const POOL_LIFT_FRACTION := 0.38
 ## Density at a pool's core, at full depth.
 ##
 ## ⚠️ FogMaterial.density is NOT the same unit as
-## Environment.volumetric_fog_density (0.005 there). It is a multiplier applied
-## within the volume and Godot's own default is 1.0, so a value picked on the
-## environment's scale renders as nothing at all. Tuned by rendering the same
+## Environment.volumetric_fog_density (see [constant Volumetrics.DENSITY]). It is
+## a multiplier applied within the volume and Godot's own default is 1.0, so a
+## value picked on the environment's scale renders as nothing at all. Because the
+## units are separate, retuning the environment's baseline — as #273 did — does
+## not scale these pools, which is why that change thins the uniform air without
+## thinning the ash gathered in the hollows. Tuned by rendering the same
 ## vantage and judging the frames: 0.005 / 0.02 / 0.05 / 0.12 are all
 ## indistinguishable from no pools at all (0.05 measured a 0.00025 mean
 ## luminance delta, against 0.00118 here), 0.7 is readable but very faint, and

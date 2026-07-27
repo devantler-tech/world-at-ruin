@@ -55,9 +55,19 @@ class_name CaveAtmosphere
 ## shadow separate — which is what clearing the veil restores.
 
 ## The height ash begins gathering below, and the density it reaches there.
-## Both unchanged from what #211 shipped: under open sky [method apply] writes
-## exactly the values that were there before, so the surface pools are untouched
-## by any of this.
+##
+## The pooling height is what #211 shipped. The density is **0.6x** of it, and
+## that reduction is the near-field half of #273's atmosphere trade: measured
+## with `tools/atmosphere_ablation`, the height term is the second-largest thing
+## eating the ground palette where the player is standing on it (**+20%**
+## separation with the term removed entirely, against **+35%** for volumetric
+## fog), while costing almost nothing at distance (**+4%**). So it is reduced,
+## not removed — the ash still thickens downward and still gathers in the
+## hollows, at a grade that lets the ground under it keep its identity.
+##
+## Measured together with [constant Volumetrics.DENSITY]'s halving: **+28%**
+## separation near field and **+51%** across the ruin field, against a run noise
+## floor of 0.0001 and 0.0005.
 ##
 ## Only these two fade. The uniform `fog_density`, `fog_aerial_perspective` and
 ## `fog_sky_affect` stay where `Main._build_environment` sets them, and that
@@ -66,7 +76,7 @@ class_name CaveAtmosphere
 ## fog term buys a further 0.1pp. Whatever is left indoors is not worth the
 ## complexity of a second fade. A new fog term joins this function only if it is
 ## a property of the sky.
-const SURFACE_HEIGHT_DENSITY := 0.06
+const SURFACE_HEIGHT_DENSITY := 0.036
 const POOL_START_HEIGHT := 6.0
 
 ## How far up a probe looks for rock. Matches the reach `frame_capture`'s own

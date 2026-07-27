@@ -16,7 +16,33 @@ class_name Volumetrics
 ## Density stays well under Godot's default (0.05): the depth fog already
 ## contributes distance attenuation, and stacking a heavy volume on top would
 ## milk out the frame the grading pass works to keep crisp.
-const DENSITY := 0.005
+##
+## [b]This is the single biggest thing standing between the ground palette and
+## the player[/b] (#273), and it is measured rather than argued.
+## `tools/atmosphere_ablation` renders one frame at two ground albedos and reads
+## how much of the difference survives; against every other atmospheric term this
+## one dominates at both distances:
+##
+## | term neutralised | near field | across the ruin field |
+## |---|---|---|
+## | volumetric fog off | +35% | +150% |
+## | depth+height fog off | +29% | +45% |
+## | fog height density 0 | +20% | +4% |
+## | fog depth density 0 | +0% | +7% |
+##
+## Halving it recovers a large share of that without turning the air off: the
+## measured separation rises **+15% near and +47% at distance** on its own, and
+## +28%/+51% together with the height term's reduction ([constant
+## CaveAtmosphere.SURFACE_HEIGHT_DENSITY]). The Reach stays hazy — this is the
+## UNIFORM air only, and [constant HollowFog.POOL_DENSITY] is a separate in-volume
+## multiplier that is deliberately untouched, so thinning the placeless baseline
+## leaves the hollows' ash exactly as thick and makes it read as *gathering*
+## somewhere rather than hanging everywhere.
+##
+## Deliberately NOT lowered further. 0.0015 measures better again (+23%/+77%) and
+## was rejected: at that point the air stops reading as weather at all, and #273
+## asks for the murk to keep its character, not to be minimised.
+const DENSITY := 0.0025
 ## Scattering albedo: warm-neutral ash, slightly darker than white so the
 ## volume tints toward FOG_COLOR under the low sun instead of glowing grey.
 const ALBEDO := Color(0.80, 0.74, 0.68)
