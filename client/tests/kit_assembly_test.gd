@@ -28,8 +28,6 @@ extends Node
 
 const EQUIP_PREFIX := "Equip_"
 
-var _failed := false
-
 
 func _ready() -> void:
 	if not _check_find_skeleton():
@@ -167,10 +165,10 @@ func _check_scale_bone_subtree() -> bool:
 
 	# Uniform means uniform: all three axes scale together, or the rest stops
 	# being TRS-representable and reset_bone_poses() silently drops the shear.
-	var s := scaled.basis.get_scale()
-	if not (is_equal_approx(s.x, s.y) and is_equal_approx(s.y, s.z)):
+	var axis_scale := scaled.basis.get_scale()
+	if not (is_equal_approx(axis_scale.x, axis_scale.y) and is_equal_approx(axis_scale.y, axis_scale.z)):
 		_fail("scale_bone_subtree must scale uniformly — got a non-uniform scale %s, which is not "
-			% str(s) + "TRS-representable and would be silently dropped at reset_bone_poses()")
+			% str(axis_scale) + "TRS-representable and would be silently dropped at reset_bone_poses()")
 		skeleton.free()
 		return false
 	skeleton.free()
@@ -218,7 +216,6 @@ func _skeleton_with_equip_then_body() -> Skeleton3D:
 
 
 func _fail(message: String) -> void:
-	_failed = true
 	push_error(message)
 	print("TEST FAIL — %s" % message)
 	get_tree().quit(1)
