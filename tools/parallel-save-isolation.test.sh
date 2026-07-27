@@ -70,6 +70,21 @@ run_pair() {
 	fi
 }
 
+check_failure_path() {
+	local log="${logs}/vault-restore-failure-path.log"
+	local status=0
+	local expected="TEST FAIL — forced failure-path probe — AND the run touched the player's real save, vault or recovery ledger"
+
+	perl -e 'alarm shift; exec @ARGV' "${timeout_seconds}" \
+		"${godot_bin}" --headless --path client \
+		"res://tests/vault_restore_failure_path_probe.tscn" >"${log}" 2>&1 || status=$?
+	if [ "${status}" -eq 0 ] || ! grep -Fq "${expected}" "${log}"; then
+		echo "::error::vault-restore failure path cleaned up without reporting the isolation breach"
+		tail -80 "${log}"
+		return 1
+	fi
+}
+
 run_pair \
 	"boot-ledger" \
 	"res://tests/boot_ledger_boot_test.tscn" \
@@ -78,5 +93,6 @@ run_pair \
 	"vault-retry" \
 	"res://tests/vault_restore_boot_test.tscn" \
 	"SAVE_ISOLATION_RETRY_VAULT="
+check_failure_path
 
 echo "TEST PASS — concurrent boot tests report independent save, vault, recovery and retry probes"

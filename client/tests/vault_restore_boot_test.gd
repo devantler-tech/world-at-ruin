@@ -544,7 +544,10 @@ func _cleanup_retry_probe() -> void:
 
 func _fail(message: String) -> void:
 	if _save != null:
-		_save.end()
+		var isolation_breached := not _save.real_save_untouched()
+		_save = null
+		if isolation_breached:
+			message += " — AND the run touched the player's real save, vault or recovery ledger"
 	_cleanup_retry_probe()
 	push_error(message)
 	print("TEST FAIL — %s" % message)
@@ -553,5 +556,7 @@ func _fail(message: String) -> void:
 
 func _exit_tree() -> void:
 	if _save != null:
-		_save.end()
+		if not _save.real_save_untouched():
+			push_error("vault restore boot test teardown detected a real player-data mutation")
+		_save = null
 	_cleanup_retry_probe()
