@@ -37,6 +37,7 @@ const SHIPPED_DISCOVERIES := "res://tests/data/shipped_discoveries.txt"
 const RETRY_CHARACTER_PROBE := "user://vault_discovery_retry_character.json"
 const RETRY_PROBE_DIR := "user://vault_discovery_retry"
 const RETRY_VAULT := RETRY_PROBE_DIR + "/vault.json"
+const MAIN_SCENE_PATH := "res://scenes/main.tscn"
 
 ## An INDEPENDENT expected destination per shipped attunement name.
 ##
@@ -101,7 +102,7 @@ func _begin_boot(seeded: bool, name: String = "") -> void:
 		if not SaveVault.save_to(SaveVault.vault_path(), attuned):
 			_fail("could not seed the vault probe for '%s'" % name)
 			return
-	_main = (load("res://scenes/main.tscn") as PackedScene).instantiate()
+	_main = (load(MAIN_SCENE_PATH) as PackedScene).instantiate()
 	add_child(_main)
 
 
@@ -128,7 +129,7 @@ func _begin_discovery_boot() -> void:
 	if not SaveVault.save_to(SaveVault.vault_path(), expanded):
 		_fail("could not seed the vault-v2 discovery probe")
 		return
-	_main = (load("res://scenes/main.tscn") as PackedScene).instantiate()
+	_main = (load(MAIN_SCENE_PATH) as PackedScene).instantiate()
 	add_child(_main)
 
 
@@ -147,7 +148,7 @@ func _begin_discovery_writer_boot() -> void:
 		_fail("save isolation did not take for the discovery writer boot")
 		return
 	SaveVault.clear_refusals_for_test()
-	_main = (load("res://scenes/main.tscn") as PackedScene).instantiate()
+	_main = (load(MAIN_SCENE_PATH) as PackedScene).instantiate()
 	add_child(_main)
 
 
@@ -171,7 +172,7 @@ func _begin_discovery_retry_boot() -> void:
 		_fail("the transient discovery-write vault seam did not take")
 		return
 	SaveVault.clear_refusals_for_test()
-	_main = (load("res://scenes/main.tscn") as PackedScene).instantiate()
+	_main = (load(MAIN_SCENE_PATH) as PackedScene).instantiate()
 	add_child(_main)
 
 
@@ -200,7 +201,7 @@ func _begin_discovery_drift_boot() -> void:
 	if not SaveVault.save_to(SaveVault.vault_path(), expanded):
 		_fail("could not seed the rollback-only discovery probe")
 		return
-	_main = (load("res://scenes/main.tscn") as PackedScene).instantiate()
+	_main = (load(MAIN_SCENE_PATH) as PackedScene).instantiate()
 	add_child(_main)
 
 
@@ -412,7 +413,7 @@ func _assert_discovery_write() -> void:
 	_discovery_phase = "reboot"
 	_ticks = 0
 	_main.queue_free()
-	_main = (load("res://scenes/main.tscn") as PackedScene).instantiate()
+	_main = (load(MAIN_SCENE_PATH) as PackedScene).instantiate()
 	add_child(_main)
 
 

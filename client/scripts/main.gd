@@ -81,6 +81,28 @@ var _discovery_persistence_pending: Array[String] = []
 var _discovery_persistence_retry_in := 0.0
 var _discovery_persistence_retry_delay := DISCOVERY_PERSIST_RETRY_INITIAL_SECONDS
 var _discovery_persistence_warning_shown := false
+## Notices raised while _ready() is still running, delivered together at the end
+## of it. The HUD has ONE toast label and a later toast replaces an earlier one
+## before a frame renders, so a boot that has several things to say would
+## otherwise show only whichever spoke last — see [method _notify].
+var _boot_notices: Array[String] = []
+## True until _ready() has delivered its notices. While set, [method _notify]
+## collects instead of showing.
+var _booting := true
+
+
+## Say something to the player, surviving a boot that raises more than one notice.
+##
+## During _ready() the message is collected; afterwards it is shown immediately.
+## Every startup path that speaks to the player goes through here, because the
+## overwrite is invisible in testing — nothing renders during _ready(), so the
+## lost notice leaves no trace at all.
+func _notify(message: String) -> void:
+	if _booting:
+		_boot_notices.append(message)
+		return
+	_hud.toast(message)
+
 
 func _ready() -> void:
 	# Capture-harness entry for the EXPORTED client: the official export
@@ -178,6 +200,19 @@ func _ready() -> void:
 			if stored else
 			"The Wardens' flame knows you now — though it may not remember past this waking."))
 
+	# A vault whose bytes no client can parse is set aside before anything reads
+	# it (#290). Left in place it refuses every write for the life of the install:
+	# the player is told each session that the Reach may not remember, with no way
+	# to clear it from inside the game. Nothing is destroyed — the bytes are
+	# preserved beside the vault — and a document from a NEWER client still
+	# parses, so that one is never touched.
+	#
+	# The notice is COLLECTED rather than shown here — see [method _notify]. Every
+	# startup path that speaks to the player does the same, so a boot with several
+	# things to say delivers all of them instead of only the last.
+	if not SaveVault.quarantine_unreadable(SaveVault.vault_path()).is_empty():
+		_notify("What the Reach remembered has torn. Those pages are set aside; it begins again.")
+
 	# Restore a previously attuned respawn point. A missing, unreadable or
 	# newer-versioned vault simply leaves the wanderer waking in the cave, as
 	# before the vault existed — progression state may never block a boot, and
@@ -214,7 +249,9 @@ func _ready() -> void:
 		# stranded backup forever (no-resets law). Say so; the next launch
 		# retries the recovery.
 		_save_blocked = true
-		_hud.toast("A saved character couldn't be restored — please restart. Your character is safe.")
+		# First in the notice list: this is the one the player must act on.
+		_boot_notices.insert(
+			0, "A saved character couldn't be restored — please restart. Your character is safe.")
 	else:
 		var saved = CharacterStore.load_saved()
 		if saved is Dictionary:
@@ -222,6 +259,14 @@ func _ready() -> void:
 		else:
 			# First time in the world: shape a character before setting out.
 			_open_creator.call_deferred(true)
+
+	# Every boot notice at once, so no fact is lost to the single toast label.
+	# Placed after every startup path that can raise one — the vault quarantine
+	# above, discovery persistence inside _observe_discoveries(), and legacy
+	# character recovery — so none of them is left to be overwritten by this.
+	_booting = false
+	if not _boot_notices.is_empty():
+		_hud.toast("   ".join(_boot_notices))
 
 	# The live replication link, when a zone was named (#244). Default-off, so
 	# the shipped single-player boot is unchanged.
@@ -434,7 +479,10 @@ func _observe_discoveries(delta: float = 0.0) -> void:
 		_discovery_persistence_pending.clear()
 	if not _discovery_persistence_warning_shown:
 		_discovery_persistence_warning_shown = true
-		_hud.toast("This place is known for now — though the Reach may not remember next waking.")
+		# _notify rather than a direct toast: the first observation happens during
+		# _ready(), where a direct toast would be overwritten by the consolidated
+		# boot notice and the player would never learn the place was not recorded.
+		_notify("This place is known for now — though the Reach may not remember next waking.")
 
 
 func _unhandled_input(event: InputEvent) -> void:
