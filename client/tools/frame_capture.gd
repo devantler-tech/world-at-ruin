@@ -187,11 +187,6 @@ const REPLICATION_ZONE_URL := "wss://capture.invalid/zone"
 ## fixture ever moves.
 const REPLICATION_CAM_OFFSET := Vector3(6.5, 2.6, 7.5)
 const REPLICATION_LOOK_HEIGHT_M := 1.0
-## Frames between the populated pair. The same gap separates the populated and
-## empty shots, so the noise reference measures exactly the drift — foliage
-## sway, fog reprojection, temporal antialiasing — that the verdict must see
-## past. Same shape as the terrain-contribution control above.
-const REPLICATION_GAP_FRAMES := 15
 ## How far a marker may sit above the ground beneath it before the fixture is
 ## judged to be floating. Capsule origins are at the capsule's CENTRE, so a
 ## grounded marker sits half its height up; the band allows that plus slack for
@@ -210,36 +205,17 @@ const REPLICATION_MAX_GROUND_GAP_M := 2.0
 ## table.
 ##
 ## So the measurement is restricted to the pixels the capsules actually cover,
-## exactly as the terrain-contribution control restricts itself to samples whose
-## ray lands on bare ground. At those points the drift is small and the
-## population is the entire signal. Same structure, same reason.
+## and it runs through the very same [method contribution_verdict] the terrain
+## control uses — the question "did this thing land pixels?" is identical, and
+## its noise band, change floor and sample floors are already pinned by
+## `terrain_contribution_test`. Only the designation differs: bare ground there,
+## capsule interiors here.
 ##
 ## Sample grid per marker, in fractions of its own half-height and radius, so
 ## every point is well inside the capsule body rather than on a cap or an edge
 ## that antialiasing shares with the background.
 const REPLICATION_SAMPLE_ROWS := 6
 const REPLICATION_SAMPLE_COLS := 3
-## The floor on usable samples: fewer means the markers cover too little frame
-## for the verdict to mean anything, which is itself a failure — a control that
-## silently measured three pixels would be the self-attestation this tool exists
-## to replace.
-const REPLICATION_MIN_POINTS := 40
-## A sample is QUIET when the two populated shots differ by no more than this at
-## it. Only quiet samples may vouch: a point the wind or a fog froxel moves
-## across changes between ANY two frames, population or no population.
-const REPLICATION_QUIET_NOISE := 0.02
-## What removing the population must do to a quiet sample for it to count. A
-## capsule giving way to ground or sky moves channels by whole tenths; this floor
-## only needs to clear the noise band with margin.
-const REPLICATION_MIN_CHANGE := 0.08
-## The floor on quiet samples: if drift touches nearly every sample, the
-## measurement is impossible and must say so rather than pass.
-const REPLICATION_MIN_QUIET := 24
-## The fraction of quiet samples that must change when the population leaves.
-## Under the measured healthy value on purpose: a marker pixel can give way to
-## ground of a similar value, and one capsule may be partly occluded, without
-## refuting that the population rendered.
-const REPLICATION_MIN_FRACTION := 0.6
 
 ## The first-run scenario samples the LEFT band instead, because that is where
 ## the creator's panel is anchored (PRESET_LEFT_WIDE). Sampling the world box
@@ -370,19 +346,19 @@ func _ready() -> void:
 		_fail("the main scene never attached — nothing would have been rendered")
 		return
 
-	# Say what these frames contain BEFORE any scenario can return, so the
-	# verdict is not something a later code path can forget to print. Every
-	# scenario but `replication` boots with no zone, so its table is empty and
-	# its frames contain no replicated entity — which is exactly the fact #325
-	# needs stated rather than assumed. `replication` prints its own `on` once
-	# it has proved the population is really there; printing `off` here too
-	# would make that log carry two contradictory verdicts, which CI refuses.
-	if scenario != "replication":
-		print(ReplicaView.marker(false, 0))
-
 	if scenario == "replication":
 		await _capture_replication(dir, main)
 		return
+
+	# Every remaining scenario boots with no zone, so its replica table is empty
+	# and its frames contain no replicated entity — the fact #325 needs STATED
+	# rather than left for a reviewer to know. Printed here, above the dispatch,
+	# so it cannot be forgotten by one scenario's code path. `replication` has
+	# already returned above and prints its own `on` once it has proved the
+	# population is really there; an `off` here too would leave that log with
+	# two contradictory verdicts, which CI refuses.
+	print(ReplicaView.marker(0))
+
 	if scenario == "first_run":
 		await _capture_first_run(dir, main)
 		return
@@ -1427,11 +1403,6 @@ func _capture_replication(dir: String, main: Node) -> void:
 	# the verdict is about. Taken once and reused for both comparisons, so the
 	# noise reference and the signal are measured at identical points.
 	var points := _designate_replica_points(cam, view, entities)
-	if points.size() < REPLICATION_MIN_POINTS:
-		_fail(("only %d marker samples fall inside the frame (floor %d) — the capsules cover too little " +
-			"of it for a verdict, so the camera or the fixture needs to bring them closer") %
-			[points.size(), REPLICATION_MIN_POINTS])
-		return
 
 	var populated := await _grab_frame()
 	var spread := _luma_spread(populated)
@@ -1446,7 +1417,7 @@ func _capture_replication(dir: String, main: Node) -> void:
 	# foliage sways, fog reprojects — so this measures the drift the verdict
 	# below has to see past, in this run, on this machine. A committed floor
 	# alone would be a constant fitted to whatever machine authored it.
-	for i in REPLICATION_GAP_FRAMES:
+	for i in CONTRIB_GAP_FRAMES:
 		cam.current = true
 		await get_tree().process_frame
 	var populated_again := await _grab_frame()
@@ -1463,7 +1434,7 @@ func _capture_replication(dir: String, main: Node) -> void:
 		_fail("the empty control snapshot was refused by the store (%s: %s)" %
 			[str(cleared.get("error")), str(cleared.get("detail"))])
 		return
-	for i in REPLICATION_GAP_FRAMES:
+	for i in CONTRIB_GAP_FRAMES:
 		cam.current = true
 		await get_tree().process_frame
 	if view.count() != 0:
@@ -1483,29 +1454,11 @@ func _capture_replication(dir: String, main: Node) -> void:
 	# PNGs — while the population contributed no pixels. So the population must
 	# be shown to have changed the pixels it covers, against the drift measured
 	# moments ago in the same run at those same points.
-	var quiet := 0
-	var changed := 0
-	var deltas: Array[float] = []
-	for p: Vector2i in points:
-		var here := populated.get_pixel(p.x, p.y)
-		if _pixel_delta(here, populated_again.get_pixel(p.x, p.y)) > REPLICATION_QUIET_NOISE:
-			continue
-		quiet += 1
-		var d := _pixel_delta(here, empty.get_pixel(p.x, p.y))
-		deltas.append(d)
-		if d >= REPLICATION_MIN_CHANGE:
-			changed += 1
-	if quiet < REPLICATION_MIN_QUIET:
-		_fail(("only %d of %d marker samples were quiet enough to measure (floor %d) — the world drifted " +
-			"across the capsules themselves, so this run cannot say whether the population rendered") %
-			[quiet, points.size(), REPLICATION_MIN_QUIET])
-		return
-	var fraction := float(changed) / float(quiet)
-	if fraction < REPLICATION_MIN_FRACTION:
-		_fail(("removing the population changed only %.0f%% of the quiet samples ON the capsules " +
-			"(floor %.0f%%, median change %.3f) — the markers are in the tree and in front of the " +
-			"camera but land no pixels, so these frames depict the same world with and without them") %
-			[fraction * 100.0, REPLICATION_MIN_FRACTION * 100.0, _percentile(deltas, 0.5)])
+	var verdict := contribution_verdict(points, populated, populated_again, empty,
+		"on-capsule marker", "removing the replicated population")
+	if not bool(verdict["ok"]):
+		_fail("%s — the markers are in the tree and in front of the camera, so these frames depict the same world with and without them" %
+			str(verdict["reason"]))
 		return
 
 	# Reported, never gated: the whole-frame figure is what a reviewer sees in
@@ -1514,10 +1467,11 @@ func _capture_replication(dir: String, main: Node) -> void:
 	var whole_frame: Dictionary = FrameDiff.compare_images(empty, populated)
 	var whole_drift: Dictionary = FrameDiff.compare_images(populated, populated_again)
 
-	print(ReplicaView.marker(true, entities.size()))
+	print(ReplicaView.marker(entities.size()))
 	print(("CAPTURE PASS — %d replicated entities written to %s (%.0f%% of %d quiet on-capsule samples " +
 		"changed, median %.3f; whole frame moved %.3f%% against %.3f%% drift; luma spread %.3f)") %
-		[entities.size(), dir, fraction * 100.0, quiet, _percentile(deltas, 0.5),
+		[entities.size(), dir, float(verdict["fraction"]) * 100.0, int(verdict["quiet"]),
+		float(verdict["median_change"]),
 		float(whole_frame.get("changed_fraction", 0.0)) * 100.0,
 		float(whole_drift.get("changed_fraction", 0.0)) * 100.0, spread])
 	get_tree().quit(0)
@@ -1591,13 +1545,11 @@ func _replicas_are_framed(cam: Camera3D, view: ReplicaView, entities: Array) -> 
 		if (marker.layers & cam.cull_mask) == 0:
 			_fail("the marker for replicated entity %d is on render layers outside the camera's cull mask — it would not be drawn" % id)
 			return false
-		if cam.is_position_behind(marker.global_position):
-			_fail("the marker for replicated entity %d is behind the camera" % id)
-			return false
-		var p := cam.unproject_position(marker.global_position)
-		if p.x < 0.0 or p.y < 0.0 or p.x >= vp.x or p.y >= vp.y:
-			_fail("the marker for replicated entity %d projects to (%.0f, %.0f), outside the %dx%d frame" %
-				[id, p.x, p.y, int(vp.x), int(vp.y)])
+		if not _on_screen(cam, vp, marker.global_position):
+			var p := cam.unproject_position(marker.global_position)
+			_fail(("the marker for replicated entity %d is not in shot (behind=%s, projects to (%.0f, %.0f) " +
+				"in a %dx%d frame)") %
+				[id, str(cam.is_position_behind(marker.global_position)), p.x, p.y, int(vp.x), int(vp.y)])
 			return false
 		# Well above the marker so the ray starts outside the terrain even for a
 		# fixture authored below it — a buried marker then reads as a NEGATIVE
@@ -1619,6 +1571,19 @@ func _replicas_are_framed(cam: Camera3D, view: ReplicaView, entities: Array) -> 
 	return true
 
 
+## Whether a world point is in front of the camera AND inside its frame.
+##
+## Shared by the framing assertion and the sample designation so the two cannot
+## drift into disagreeing about what "in shot" means — a designation that
+## accepted a point the assertion rejected would hand the verdict pixels the
+## capture never photographed.
+func _on_screen(cam: Camera3D, vp: Vector2, world: Vector3) -> bool:
+	if cam.is_position_behind(world):
+		return false
+	var p := cam.unproject_position(world)
+	return p.x >= 0.0 and p.y >= 0.0 and p.x < vp.x and p.y < vp.y
+
+
 ## The pixels the replicated capsules cover — the samples the verdict measures.
 ##
 ## Points are taken INSIDE the capsule body, offset along the camera's own right
@@ -1638,9 +1603,9 @@ func _designate_replica_points(cam: Camera3D, view: ReplicaView, entities: Array
 	var out: Array[Vector2i] = []
 	for e_var: Variant in entities:
 		var e: Dictionary = e_var
+		# Never null: _replicas_are_framed runs first and hard-fails on a missing
+		# marker, so reaching here means every fixture id has one.
 		var marker := view.marker_for(int(e["id"]))
-		if marker == null:
-			continue
 		var radius: float = float(e["radius"]) / ReplicaView.MM_PER_M
 		for row in REPLICATION_SAMPLE_ROWS:
 			# Spans ±0.5 of the half-height. The capsule's cylindrical section
@@ -1652,12 +1617,9 @@ func _designate_replica_points(cam: Camera3D, view: ReplicaView, entities: Array
 				# the capsule curves away from the camera.
 				var h := (float(col) / float(REPLICATION_SAMPLE_COLS - 1) - 0.5) * radius
 				var world: Vector3 = marker.global_position + up * v + right * h
-				if cam.is_position_behind(world):
+				if not _on_screen(cam, vp, world):
 					continue
-				var p := cam.unproject_position(world)
-				if p.x < 0.0 or p.y < 0.0 or p.x >= vp.x or p.y >= vp.y:
-					continue
-				out.append(Vector2i(int(p.x), int(p.y)))
+				out.append(Vector2i(cam.unproject_position(world)))
 	return out
 
 
@@ -1886,7 +1848,7 @@ func _prove_terrain_contribution(cam: Camera3D, main: Node) -> bool:
 	if not terrain.is_visible_in_tree():
 		_fail("the terrain did not come back visible after the contribution control — every later frame would photograph a world with no ground")
 		return false
-	var verdict := terrain_contribution_verdict(pts, live_a, live_b, hidden)
+	var verdict := contribution_verdict(pts, live_a, live_b, hidden)
 	print("TERRAIN CONTRIBUTION %s: %d terrain samples, %d quiet (noise p95 %.4f), %d contributing (fraction %.2f, median change %.3f)" %
 		[CONTRIB_VANTAGE, pts.size(), int(verdict["quiet"]), float(verdict["noise_p95"]),
 			int(verdict["contributing"]), float(verdict["fraction"]), float(verdict["median_change"])])
@@ -1946,13 +1908,23 @@ static func designate_terrain_points(cam: Camera3D, world: Node, vp_size: Vector
 ## The pure verdict over one designation and three frames — static so the test
 ## can drive it with synthetic images. Returns ok/reason plus the counts the
 ## capture log prints; every non-ok reason names what failed and why it damns.
-static func terrain_contribution_verdict(points: Array[Vector2i], live_a: Image, live_b: Image, hidden: Image) -> Dictionary:
+##
+## The question is never terrain-specific: given points that should be covered
+## by SOMETHING, two live frames to measure the world's own drift at them, and a
+## third frame with that something ablated, did it land pixels? Terrain hidden
+## behind its own `visible = false` (#150) and a replicated population removed
+## from the store (#325) are the same measurement, so `subject` and `ablation`
+## only supply the nouns the reason strings read back. Their defaults keep the
+## terrain control and its test reading exactly as before.
+static func contribution_verdict(points: Array[Vector2i], live_a: Image, live_b: Image, hidden: Image,
+		subject: String = "bare-terrain", ablation: String = "hiding the terrain",
+		min_fraction: float = CONTRIB_MIN_FRACTION) -> Dictionary:
 	var verdict := {
 		"ok": false, "reason": "", "quiet": 0, "contributing": 0,
 		"fraction": 0.0, "noise_p95": 0.0, "median_change": 0.0,
 	}
 	if points.size() < CONTRIB_MIN_POINTS:
-		verdict["reason"] = "only %d bare-terrain samples (floor %d) — too few to measure contribution" % [points.size(), CONTRIB_MIN_POINTS]
+		verdict["reason"] = "only %d %s samples (floor %d) — too few to measure contribution" % [points.size(), subject, CONTRIB_MIN_POINTS]
 		return verdict
 	if live_a.get_size() != live_b.get_size() or live_a.get_size() != hidden.get_size():
 		verdict["reason"] = "control frames differ in size — the captures are not comparable"
@@ -1979,12 +1951,12 @@ static func terrain_contribution_verdict(points: Array[Vector2i], live_a: Image,
 	verdict["noise_p95"] = _percentile(noises, 0.95)
 	verdict["median_change"] = _percentile(changes, 0.5)
 	if quiet < CONTRIB_MIN_QUIET:
-		verdict["reason"] = "only %d of %d terrain samples were quiet across the live pair (floor %d) — too much frame motion to measure the terrain's contribution" % [quiet, points.size(), CONTRIB_MIN_QUIET]
+		verdict["reason"] = "only %d of %d %s samples were quiet across the live pair (floor %d) — too much frame motion to measure what it contributes" % [quiet, points.size(), subject, CONTRIB_MIN_QUIET]
 		return verdict
 	var fraction := float(contributing) / float(quiet)
 	verdict["fraction"] = fraction
-	if fraction < CONTRIB_MIN_FRACTION:
-		verdict["reason"] = "hiding the terrain changed only %d of %d quiet terrain samples (%.0f%%, floor %.0f%%) — the terrain contributes no pixels, exactly what a transparent or discard-everything material renders" % [contributing, quiet, fraction * 100.0, CONTRIB_MIN_FRACTION * 100.0]
+	if fraction < min_fraction:
+		verdict["reason"] = "%s changed only %d of %d quiet %s samples (%.0f%%, floor %.0f%%) — it contributes no pixels, exactly what a transparent or discard-everything material renders" % [ablation, contributing, quiet, subject, fraction * 100.0, min_fraction * 100.0]
 		return verdict
 	verdict["ok"] = true
 	return verdict

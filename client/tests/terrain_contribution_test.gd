@@ -76,7 +76,7 @@ func _ready() -> void:
 	var samples := _grid_samples(60)
 
 	# Real contribution: hiding the terrain turns every quiet sample into sky.
-	var v := FrameCapture.terrain_contribution_verdict(
+	var v := FrameCapture.contribution_verdict(
 		samples, _flat(ground), _flat(ground), _flat(sky))
 	if not bool(v["ok"]):
 		_fail("a ground-to-sky change at every sample must PASS (got: %s)" % str(v["reason"]))
@@ -84,7 +84,7 @@ func _ready() -> void:
 
 	# The transparent-material signature: the hidden frame is identical to the
 	# live one — the exact failure #150 names. It must FAIL.
-	v = FrameCapture.terrain_contribution_verdict(
+	v = FrameCapture.contribution_verdict(
 		samples, _flat(ground), _flat(ground), _flat(ground))
 	if bool(v["ok"]):
 		_fail("a hidden frame identical to the live one must FAIL — that is the transparent-material case the control exists to catch")
@@ -100,7 +100,7 @@ func _ready() -> void:
 		var p := samples[i]
 		live_b.set_pixel(p.x, p.y, wind_a)
 		hidden.set_pixel(p.x, p.y, wind_b)
-	v = FrameCapture.terrain_contribution_verdict(samples, _flat(ground), live_b, hidden)
+	v = FrameCapture.contribution_verdict(samples, _flat(ground), live_b, hidden)
 	if bool(v["ok"]):
 		_fail("wind-touched samples vouched for the terrain — the noise reference must discount them")
 		return
@@ -116,7 +116,7 @@ func _ready() -> void:
 		hidden_sky.set_pixel(samples[i].x, samples[i].y, wind_b)
 	for i in range(30, 60):
 		hidden_sky.set_pixel(samples[i].x, samples[i].y, sky)
-	v = FrameCapture.terrain_contribution_verdict(samples, _flat(ground), live_b, hidden_sky)
+	v = FrameCapture.contribution_verdict(samples, _flat(ground), live_b, hidden_sky)
 	if not bool(v["ok"]):
 		_fail("30 quiet samples all turning to sky must PASS despite 30 wind-touched ones (got: %s)" % str(v["reason"]))
 		return
@@ -124,13 +124,13 @@ func _ready() -> void:
 	# The exact fraction threshold is a real line: with 30 quiet samples,
 	# ceil(30 * floor) contributing passes and one fewer fails.
 	var need := int(ceilf(FrameCapture.CONTRIB_MIN_FRACTION * 30.0))
-	v = FrameCapture.terrain_contribution_verdict(
+	v = FrameCapture.contribution_verdict(
 		samples, _flat(ground), live_b, _quiet_sky_count(ground, sky, wind_b, samples, need))
 	if not bool(v["ok"]):
 		_fail("%d of 30 quiet samples contributing meets the %.0f%% floor and must PASS (got: %s)" %
 			[need, FrameCapture.CONTRIB_MIN_FRACTION * 100.0, str(v["reason"])])
 		return
-	v = FrameCapture.terrain_contribution_verdict(
+	v = FrameCapture.contribution_verdict(
 		samples, _flat(ground), live_b, _quiet_sky_count(ground, sky, wind_b, samples, need - 1))
 	if bool(v["ok"]):
 		_fail("%d of 30 quiet samples contributing is under the %.0f%% floor and must FAIL" %
@@ -140,7 +140,7 @@ func _ready() -> void:
 	# The sample floor fires on a short designation.
 	var few: Array[Vector2i] = []
 	few.assign(samples.slice(0, FrameCapture.CONTRIB_MIN_POINTS - 1))
-	v = FrameCapture.terrain_contribution_verdict(few, _flat(ground), _flat(ground), _flat(sky))
+	v = FrameCapture.contribution_verdict(few, _flat(ground), _flat(ground), _flat(sky))
 	if bool(v["ok"]):
 		_fail("%d samples is under the %d floor and must FAIL" %
 			[few.size(), FrameCapture.CONTRIB_MIN_POINTS])
@@ -151,14 +151,14 @@ func _ready() -> void:
 	var all_windy := _flat(ground)
 	for p in samples:
 		all_windy.set_pixel(p.x, p.y, wind_a)
-	v = FrameCapture.terrain_contribution_verdict(samples, _flat(ground), all_windy, _flat(sky))
+	v = FrameCapture.contribution_verdict(samples, _flat(ground), all_windy, _flat(sky))
 	if bool(v["ok"]):
 		_fail("a live pair with every sample moving must FAIL — nothing quiet is measurable")
 		return
 
 	# Mismatched frame sizes and an out-of-frame sample are contract breaches,
 	# never passes.
-	v = FrameCapture.terrain_contribution_verdict(
+	v = FrameCapture.contribution_verdict(
 		samples, _flat(ground), _flat(ground), Image.create(8, 8, false, Image.FORMAT_RGBA8))
 	if bool(v["ok"]):
 		_fail("mismatched control-frame sizes must FAIL")
@@ -166,7 +166,7 @@ func _ready() -> void:
 	var stray: Array[Vector2i] = []
 	stray.assign(samples)
 	stray[0] = Vector2i(4000, 4000)
-	v = FrameCapture.terrain_contribution_verdict(stray, _flat(ground), _flat(ground), _flat(sky))
+	v = FrameCapture.contribution_verdict(stray, _flat(ground), _flat(ground), _flat(sky))
 	if bool(v["ok"]):
 		_fail("a sample outside the frame must FAIL, not read whatever memory says")
 		return

@@ -70,27 +70,21 @@ func _ready() -> void:
 ## evidence for a replication change. Pinned here because the workflow's grep
 ## cannot defend itself.
 func _check_capture_marker_contract() -> bool:
-	var on_line := ReplicaView.marker(true, 3)
-	var off_line := ReplicaView.marker(false, 0)
-	for line: String in [on_line, off_line]:
+	# An empty table is the only `off` state, so the count alone decides the
+	# verdict — including the boundary at one entity, which is what stops a
+	# population of exactly one from reading as no population at all.
+	for case: Array in [["on", 3], ["on", 1], ["off", 0]]:
+		var want: String = case[0]
+		var line := ReplicaView.marker(case[1] as int)
 		if not line.begins_with(ReplicaView.CAPTURE_MARKER + " "):
 			_fail("marker() must start with CAPTURE_MARKER and a space — CI greps for it")
 			return false
-	# The second whitespace-separated field is what CI reads as the verdict.
-	if on_line.split(" ")[1] != "on":
-		_fail("marker(true, …)'s second field must be exactly 'on' — CI parses it")
-		return false
-	if off_line.split(" ")[1] != "off":
-		_fail("marker(false, …)'s second field must be exactly 'off' — CI parses it")
-		return false
-	# The two states must be distinguishable, or the verdict carries no
-	# information at all.
-	if on_line == off_line:
-		_fail("marker() must report the populated and empty states differently")
-		return false
-	# One line, or the job's exactly-one-distinct-verdict parse sees a second
-	# verdict where the prose was meant to be.
-	for line: String in [on_line, off_line]:
+		# The second whitespace-separated field is what CI reads as the verdict.
+		if line.split(" ")[1] != want:
+			_fail("marker(%d)'s second field must be exactly '%s' — CI parses it" % [case[1] as int, want])
+			return false
+		# One line, or the job's exactly-one-distinct-verdict parse sees a
+		# second verdict where the prose was meant to be.
 		if line.contains("\n"):
 			_fail("marker() must be a single line — CI matches it anchored at the start of one")
 			return false

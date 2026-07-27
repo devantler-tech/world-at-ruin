@@ -71,8 +71,14 @@ const CAPTURE_MARKER := "REPLICATION"
 ## The SECOND whitespace-separated field is the machine-readable verdict — `on`
 ## or `off` — and the remainder is for a human reading the log. CI parses that
 ## second field, so it is a contract, not prose.
-static func marker(populated: bool, entities: int) -> String:
-	if populated:
+##
+## Takes the count alone rather than a count and a flag: "populated" IS
+## `entities > 0` here, and a separate bool would make `on` with zero entities
+## representable — a line claiming a population the frames cannot contain. That
+## differs from [method HollowFog.marker], whose flag is genuinely independent
+## of its count.
+static func marker(entities: int) -> String:
+	if entities > 0:
 		return "%s on — %d replicated entities in the captured frames" % [CAPTURE_MARKER, entities]
 	return "%s off — no zone populated the replica table; these frames contain no replicated entity" % CAPTURE_MARKER
 
