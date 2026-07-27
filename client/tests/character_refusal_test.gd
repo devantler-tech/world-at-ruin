@@ -41,6 +41,7 @@ func _ready() -> void:
 	_check_valid_recipe_loads_and_stays_writable()
 	_check_refusal("a future-version recipe", _future_version_recipe())
 	_check_refusal("an unknown-field recipe", _unknown_field_recipe())
+	_check_refusal("an unknown-name recipe", _unknown_name_recipe())
 	_check_malformed_recipe_is_refused()
 	_check_latch_survives_the_file_disappearing()
 
@@ -178,6 +179,18 @@ func _unknown_field_recipe() -> Dictionary:
 	if recipe.is_empty():
 		return {}
 	recipe["wings"] = { "span": 2 }
+	return recipe
+
+
+## A recipe whose FIELDS are all legal but which names something this build does
+## not have. Distinct from the unknown-FIELD case: the shape is perfectly
+## well-formed, so nothing short of running the real validation catches it — which
+## is exactly why the store has to ask the factory rather than only parsing.
+func _unknown_name_recipe() -> Dictionary:
+	var recipe := _wanderer()
+	if recipe.is_empty():
+		return {}
+	recipe["skin"] = "no_such_skin"
 	return recipe
 
 
