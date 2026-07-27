@@ -49,11 +49,14 @@ class_name SaveVault
 ##     it in place refuses every future write for the life of the install: the
 ##     player is told each session that the Reach may not remember, and the only
 ##     remedy is deleting a file inside user:// that the game never mentions. So
-##     an UNPARSEABLE vault is set aside at boot instead — preserved, never
+##     a vault NO CLIENT COULD OWN is set aside at boot instead — preserved, never
 ##     deleted — and a fresh one is started (#290, see
-##     [method quarantine_unreadable]). A vault that parses is left untouched
-##     however far ahead of this build it is; the distinction is exactly the one
-##     between "no client can read this" and "this client cannot read this".
+##     [method quarantine_unreadable]). The distinction is exactly the one between
+##     "no client can read this" and "this client cannot read this", and it is
+##     drawn at the VERSION (see [method _is_unownable]): a document declaring a
+##     version is somebody's progression and is left untouched however far ahead
+##     of this build it is, while one that is not an object at all, or carries no
+##     usable integer version, was written by no client that ever shipped.
 ##
 ## Both of those judge the vault as it is at one instant, which is why every
 ## write is additionally taken under a cross-process LOCK (#262, see
@@ -451,24 +454,42 @@ static func quarantine_min_age_seconds() -> int:
 	return QUARANTINE_MIN_AGE_SECONDS
 
 
-## Whether the document at `path` is bytes NO client can read.
+## Whether the document at `path` is one NO client could own.
 ##
-## Deliberately narrower than "load_from() refused it". A vault that PARSES but
-## fails validation — a newer version, an unknown field — is real progression
-## some client understands, and it must be left exactly where it is. Only a
-## document that is not a JSON object at all is unreadable by everyone, which is
-## precisely what makes preserving it elsewhere cost nothing.
+## Deliberately narrower than "load_from() refused it", and the line is drawn at
+## the VERSION rather than at validity:
+##  - not a JSON object at all — no vault is an array or a scalar in any version,
+##    so nothing could ever have written it as progression;
+##  - a JSON object carrying no usable integer version (`{}`, `{"version":"bad"}`,
+##    `{"version":0}`) — `version` is the whole forward-only contract, the one
+##    field whose meaning is fixed across every schema, so a document without one
+##    was written by no client that ever shipped and can be read by none that
+##    ever will.
 ##
-## A file that cannot be OPENED is not judged unreadable: that is a permission or
-## locking fault about this process, not about the bytes, and moving a file we
-## could not read would be acting on a guess.
-static func _is_unparseable(path: String) -> bool:
+## Everything else is left exactly where it is, including a document that FAILS
+## validation while declaring a version this build knows. A version is a claim of
+## ownership by some client, and this build does not adjudicate that claim: the
+## cost of being wrong is destroyed progression, while the cost of being cautious
+## is a shape that essentially only arises from hand-editing staying read-only.
+##
+## A file that cannot be OPENED is not judged: that is a permission or locking
+## fault about this process, not about the bytes, and moving a file we could not
+## read would be acting on a guess.
+static func _is_unownable(path: String) -> bool:
 	var file := FileAccess.open(path, FileAccess.READ)
 	if file == null:
 		return false
 	var text := file.get_as_text()
 	file.close()
-	return JSON.parse_string(text) is not Dictionary
+	var parsed = JSON.parse_string(text)
+	if parsed is not Dictionary:
+		return true
+	# The same integer test validate() applies, so the two can never disagree
+	# about what counts as a version.
+	var version = (parsed as Dictionary).get("version")
+	if version is int or (version is float and version == floorf(version)):
+		return int(version) < 1
+	return true
 
 
 ## Set aside a vault no client can read so it stops wedging progression saving,
@@ -486,7 +507,7 @@ static func _is_unparseable(path: String) -> bool:
 static func quarantine_unreadable(path: String) -> String:
 	if not FileAccess.file_exists(path):
 		return ""
-	if not _is_unparseable(path):
+	if not _is_unownable(path):
 		return ""
 	if not _acquire_lock(path):
 		return ""
@@ -501,7 +522,7 @@ static func _quarantine_locked(path: String) -> String:
 	# writer may have replaced this file with a perfectly good vault since.
 	if not FileAccess.file_exists(path):
 		return ""
-	if not _is_unparseable(path):
+	if not _is_unownable(path):
 		return ""
 	var modified := int(FileAccess.get_modified_time(path))
 	if modified <= 0:
@@ -516,6 +537,21 @@ static func _quarantine_locked(path: String) -> String:
 		push_error(
 			"SaveVault: %d unreadable vaults are already preserved beside %s — refusing to set aside another"
 			% [QUARANTINE_MAX_SLOTS, path])
+		return ""
+	# Judge the document one last time, IMMEDIATELY before the rename — the same
+	# discipline, and for the same reason, as the readability re-check in
+	# [method _save_to_locked]. Everything above (the timestamp read, the free-slot
+	# search) is time in which a writer that does not take our lock — cloud sync, a
+	# backup restore, a pre-lock build the updater deliberately keeps runnable —
+	# can land a real vault at this path. Moving THAT aside would destroy exactly
+	# the progression quarantine exists to protect, and would then clear the latch
+	# and start a fresh older vault on top of it.
+	#
+	# This narrows the window to the rename syscall; it cannot close it, for the
+	# same reason that re-check cannot, and no in-process primitive can.
+	if not _is_unownable(path):
+		push_warning(
+			"SaveVault: %s became a readable vault while it was being set aside — leaving it" % path)
 		return ""
 	var err := DirAccess.rename_absolute(
 		ProjectSettings.globalize_path(path), ProjectSettings.globalize_path(target))
@@ -540,9 +576,23 @@ static func _quarantine_locked(path: String) -> String:
 static func _free_quarantine_path(path: String) -> String:
 	for index in range(QUARANTINE_MAX_SLOTS):
 		var candidate := "%s%s%d" % [path, QUARANTINE_SUFFIX, index]
-		if not FileAccess.file_exists(candidate):
+		if _slot_is_free(candidate):
 			return candidate
 	return ""
+
+
+## Whether nothing at all occupies `candidate`.
+##
+## A DIRECTORY counts as occupied, not just a file. `FileAccess.file_exists()`
+## answers false for a directory, so a sync restore or a manual recovery that
+## left one named like a quarantine slot would be chosen as free — the rename
+## onto it then fails, and because the search is deterministic every later launch
+## picks the SAME slot and fails identically. That is a permanent wedge, which is
+## the one outcome this whole change exists to remove.
+static func _slot_is_free(candidate: String) -> bool:
+	if FileAccess.file_exists(candidate):
+		return false
+	return not DirAccess.dir_exists_absolute(ProjectSettings.globalize_path(candidate))
 
 
 ## Every write lock this PROCESS holds, lock path -> reentrancy depth.

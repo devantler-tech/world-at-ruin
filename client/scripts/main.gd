@@ -184,8 +184,16 @@ func _ready() -> void:
 	# to clear it from inside the game. Nothing is destroyed — the bytes are
 	# preserved beside the vault — and a document from a NEWER client still
 	# parses, so that one is never touched.
+	#
+	# The notice is COLLECTED rather than toasted here: the HUD has one toast
+	# label and a later toast replaces an earlier one synchronously, before a
+	# single frame renders. A boot that both set a vault aside and failed to
+	# restore a stranded character would otherwise show only the second, and the
+	# player would never learn that progression had restarted. Every boot notice
+	# is delivered together, below.
+	var boot_notices: Array[String] = []
 	if not SaveVault.quarantine_unreadable(SaveVault.vault_path()).is_empty():
-		_hud.toast(
+		boot_notices.append(
 			"What the Reach remembered has torn. Those pages are set aside; it begins again.")
 
 	# Restore a previously attuned respawn point. A missing, unreadable or
@@ -224,7 +232,9 @@ func _ready() -> void:
 		# stranded backup forever (no-resets law). Say so; the next launch
 		# retries the recovery.
 		_save_blocked = true
-		_hud.toast("A saved character couldn't be restored — please restart. Your character is safe.")
+		# First in the notice list: this is the one the player must act on.
+		boot_notices.insert(
+			0, "A saved character couldn't be restored — please restart. Your character is safe.")
 	else:
 		var saved = CharacterStore.load_saved()
 		if saved is Dictionary:
@@ -232,6 +242,10 @@ func _ready() -> void:
 		else:
 			# First time in the world: shape a character before setting out.
 			_open_creator.call_deferred(true)
+
+	# Every boot notice at once, so no fact is lost to the single toast label.
+	if not boot_notices.is_empty():
+		_hud.toast("   ".join(boot_notices))
 
 	# The live replication link, when a zone was named (#244). Default-off, so
 	# the shipped single-player boot is unchanged.

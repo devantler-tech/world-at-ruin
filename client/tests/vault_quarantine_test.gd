@@ -25,6 +25,15 @@ extends Node
 ##     never be shortened by accident — the direction that could destroy state.
 ##  8. A zero-byte vault — the commonest corruption a crash or a full disk leaves
 ##     — is set aside like any other unreadable bytes, and saving works after.
+##  9. A JSON OBJECT carrying no usable integer version (`{}`, a string version, a
+##     non-positive one) is unownable too: no client ever wrote it, so leaving it
+##     would wedge saving exactly as the unparseable case did.
+## 10. A document that DECLARES a version this build knows is left alone even when
+##     it fails validation. A version is a claim of ownership by some client, and
+##     this build does not adjudicate that claim.
+## 11. A DIRECTORY sitting on a quarantine slot counts as occupied. It is the
+##     permanent-wedge shape: file_exists() says false, the rename fails, and a
+##     deterministic search picks the same slot on every later launch.
 ##
 ## Everything runs through the WAR_VAULT_PATH seam against a throwaway path, so
 ## the player's own user://vault.json is never read, written or moved
@@ -187,6 +196,59 @@ func _ready() -> void:
 		_fail("progression still would not persist after a zero-byte vault was set aside")
 		return
 
+	# 9. Objects with no usable version are unownable too. `version` is the one
+	#    field whose meaning is fixed across every schema, so a document without a
+	#    positive integer one was written by no client that ever shipped — and
+	#    before this, each of these parsed as a Dictionary, escaped quarantine, and
+	#    then latched on validation: the wedge, intact.
+	OS.set_environment(SaveVault.QUARANTINE_MIN_AGE_ENV, "0")
+	for shape: String in ["{}", "{\"version\": \"bad\"}", "{\"version\": 0}", "{\"version\": -1}",
+			"{\"attuned\": [\"wardens_shrine\"]}"]:
+		_reset_state()
+		_write(PROBE, shape)
+		if SaveVault.quarantine_unreadable(PROBE).is_empty():
+			_fail("a versionless object was not set aside, so it still wedges saving: %s" % shape)
+			return
+		if FileAccess.file_exists(PROBE):
+			_fail("a versionless object was left in place: %s" % shape)
+			return
+
+	# 10. But a document that DECLARES a version this build knows is left alone,
+	#     even when it fails validation. The version is a claim of ownership; being
+	#     wrong here destroys progression, while being cautious only leaves a
+	#     hand-edited shape read-only.
+	for owned: String in ["{\"version\": 1, \"bogus_field\": 1}", "{\"version\": 2, \"attuned\": {}}",
+			"{\"version\": 1.0, \"attuned\": [7]}"]:
+		_reset_state()
+		_write(PROBE, owned)
+		if not SaveVault.quarantine_unreadable(PROBE).is_empty():
+			_fail("a versioned document was set aside — ownership is claimed by its version: %s" % owned)
+			return
+		if _read(PROBE) != owned:
+			_fail("a versioned document's bytes changed: %s" % owned)
+			return
+
+	# 11. A DIRECTORY on a slot is occupied. Without this the rename fails, the
+	#     deterministic search picks the same slot every launch, and the vault is
+	#     wedged permanently — the exact outcome this change exists to remove.
+	_reset_state()
+	var blocked_slot := PROBE + SaveVault.QUARANTINE_SUFFIX + "0"
+	DirAccess.make_dir_absolute(ProjectSettings.globalize_path(blocked_slot))
+	if not DirAccess.dir_exists_absolute(ProjectSettings.globalize_path(blocked_slot)):
+		_fail("could not create the blocking directory the case needs")
+		return
+	if FileAccess.file_exists(blocked_slot):
+		_fail("file_exists() reported a directory as a file — the case no longer models the trap")
+		return
+	_write(PROBE, CORRUPT_BYTES)
+	var past_dir := SaveVault.quarantine_unreadable(PROBE)
+	if past_dir != PROBE + SaveVault.QUARANTINE_SUFFIX + "1":
+		_fail("a directory-occupied slot was not stepped over: %s" % past_dir)
+		return
+	if _read(past_dir) != CORRUPT_BYTES:
+		_fail("the bytes were not preserved past the blocked slot")
+		return
+
 	_cleanup()
 	_clear_env()
 	print("TEST PASS — an unreadable vault is set aside, preserved, and never a newer client's")
@@ -246,5 +308,8 @@ func _cleanup() -> void:
 
 
 func _remove(path: String) -> void:
-	if FileAccess.file_exists(path):
-		DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	# Directories too: case 11 parks one on a quarantine slot, and leaving it
+	# behind would make every later case pick a different slot than it expects.
+	var absolute := ProjectSettings.globalize_path(path)
+	if FileAccess.file_exists(path) or DirAccess.dir_exists_absolute(absolute):
+		DirAccess.remove_absolute(absolute)
