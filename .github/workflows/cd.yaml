@@ -796,8 +796,16 @@ jobs:
             # for an undelivered write in either direction.
             branch_version="$(cask_version_at "${branch}")"
             main_version="$(cask_version_at main)"
-            if [ -n "${branch_version}" ] && \
-               [ "${branch_version}" != "${main_version}" ]; then
+            # BOTH reads must succeed. cask_version_at collapses an API,
+            # decode or parse failure into the same empty string it returns for
+            # a genuinely absent file, so accepting empty here would turn a
+            # transient read failure into permission to force-reset — throwing
+            # away a newer version before the monotonic guard downstream ever
+            # sees it, and leaving Homebrew pinned behind.
+            if [ -z "${branch_version}" ] || [ -z "${main_version}" ]; then
+              return 1
+            fi
+            if [ "${branch_version}" != "${main_version}" ]; then
               return 1
             fi
             return 0

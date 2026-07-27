@@ -123,6 +123,36 @@ fi
 mock_branch_version="0.43.0"
 mock_main_version="0.43.0"
 
+# --- Fail closed: an UNREADABLE cask version is not "nothing to lose". ----
+# cask_version_at returns the same empty string for a failed API read, a decode
+# failure and an absent file. Accepting empty would let a transient failure
+# authorise a force-reset over content main has not received.
+# BOTH empty is the case that actually needs the guard, and it is the shape a
+# real outage takes: two failed reads compare EQUAL, so without an explicit
+# emptiness check they read as "already delivered" and authorise the reset.
+# (A single empty side is already refused by the inequality check below, so it
+# does not exercise this guard at all.)
+mock_branch_version=""
+mock_main_version=""
+if cask_branch_needs_reset "${tap}" "${branch}" ""; then
+	echo "reset was allowed while BOTH cask versions were unreadable" >&2
+	exit 1
+fi
+mock_branch_version=""
+mock_main_version="0.43.0"
+if cask_branch_needs_reset "${tap}" "${branch}" ""; then
+	echo "reset was allowed while the branch cask version was unreadable" >&2
+	exit 1
+fi
+mock_branch_version="0.43.0"
+mock_main_version=""
+if cask_branch_needs_reset "${tap}" "${branch}" ""; then
+	echo "reset was allowed while main's cask version was unreadable" >&2
+	exit 1
+fi
+mock_branch_version="0.43.0"
+mock_main_version="0.43.0"
+
 # --- Safety control: a concurrent run's unmerged write is ahead-only. ------
 # A release that has written content but not yet opened its PR leaves the
 # branch AHEAD of main, never behind. Resetting there would throw away a
