@@ -87,6 +87,32 @@ const MIN_BOOTERS := 7
 ## the control vacuous — it fails loudly instead.
 const COMMENT_ONLY_CONTROL := "world_gen_determinism_test.gd"
 
+## The failure exit path a booter funnels through, and the guarantee it must
+## assert there (#326).
+##
+## Redirecting the seams is only half the law: a run that DID touch the real
+## save proves it by comparing the before/after bytes, and
+## [method SaveIsolation.real_save_untouched] is the only thing that makes that
+## comparison. A `_fail` that tears down with a bare `end()` clears the seams and
+## deletes the probes, discarding the evidence — so an isolation breach exits
+## reporting whatever gameplay assertion happened to fail first, which is the
+## hardest possible state to diagnose and the same invisibility that let #309
+## persist. Both isolation owners expose the call, so the law is one token for
+## harnesses driving [SaveIsolation] and those going through [IsolatedBoot].
+const FAIL_FUNC := "func _fail("
+const GUARANTEE_CALL := "real_save_untouched("
+
+## A booter that asserts the guarantee on its PASS path as well as its failure
+## path. Pins the body-scoping in [method _fail_body] as an executable control.
+##
+## 🔴 Whole-file matching would pass EVERY harness in this repo while proving
+## nothing — including all five that #326 found asserting on the pass path only,
+## which is precisely why the gap survived. So a guard that regressed to
+## `code.contains(GUARANTEE_CALL)` would go green over the exact defect it
+## exists to catch. This control fails if the extracted body ever stops being a
+## strict subset of the file.
+const PASS_PATH_CONTROL := "starter_cave_test.gd"
+
 
 func _ready() -> void:
 	var sources := _test_sources()
@@ -96,6 +122,8 @@ func _ready() -> void:
 
 	var booters := PackedStringArray()
 	var unisolated := PackedStringArray()
+	var unguarded := PackedStringArray()
+	var unlocatable := PackedStringArray()
 	for file: String in sources:
 		if file in EXEMPT:
 			continue
@@ -114,6 +142,13 @@ func _ready() -> void:
 		booters.append(file)
 		if not _claims_isolation(code):
 			unisolated.append(file)
+		# The failure path is checked separately from the file as a whole — see
+		# PASS_PATH_CONTROL for why that scoping is the load-bearing part.
+		var fail_body := _fail_body(code)
+		if fail_body.is_empty():
+			unlocatable.append(file)
+		elif not fail_body.contains(GUARANTEE_CALL):
+			unguarded.append(file)
 
 	# --- the law ---
 	if not unisolated.is_empty():
@@ -122,6 +157,23 @@ func _ready() -> void:
 			+ "run can never touch the player's real save or vault. Naming the class is not enough; "
 			+ "the call is what redirects (#309)")
 			% [unisolated.size(), MAIN_SCENE, ", ".join(unisolated)])
+		return
+
+	# --- the same law, on the way out (#326) ---
+	if not unlocatable.is_empty():
+		_fail(("%d booter(s) have no `%s` body this guard can locate: %s — the failure path is where "
+			+ "an isolation breach would be reported, so a booter whose failure path cannot be found "
+			+ "is one this guard cannot vouch for. Funnel failures through `_fail`, or teach this "
+			+ "guard the new shape")
+			% [unlocatable.size(), FAIL_FUNC, ", ".join(unlocatable)])
+		return
+	if not unguarded.is_empty():
+		_fail(("%d booter(s) tear down on failure without asserting the isolation guarantee: %s — call "
+			+ "%s on the failure path too (it clears the seams itself, so it replaces the bare "
+			+ "`end()` rather than adding a second teardown). Otherwise a run that touched the "
+			+ "player's real save discards that evidence and exits reporting an unrelated gameplay "
+			+ "failure instead (#326)")
+			% [unguarded.size(), ", ".join(unguarded), GUARANTEE_CALL])
 		return
 
 	# --- the guard is not passing vacuously ---
@@ -151,8 +203,29 @@ func _ready() -> void:
 			+ "false positive #309's proposed grep would have shipped") % COMMENT_ONLY_CONTROL)
 		return
 
-	print("TEST PASS — %d test(s) boot %s, all isolated; prose-only mention in %s correctly ignored"
-		% [booters.size(), MAIN_SCENE, COMMENT_ONLY_CONTROL])
+	# --- negative control: the failure path is not the whole file ---
+	if PASS_PATH_CONTROL not in booters:
+		_fail(("the pass-path control %s is no longer a booter — repoint PASS_PATH_CONTROL at another "
+			+ "harness that asserts the guarantee on BOTH paths, or the file-vs-failure-path "
+			+ "distinction stops being tested") % PASS_PATH_CONTROL)
+		return
+	var control_code := _code_of(_read(TESTS_DIR + "/" + PASS_PATH_CONTROL))
+	var control_body := _fail_body(control_code)
+	if control_body.is_empty() or control_body.length() >= control_code.length():
+		_fail(("the extracted `_fail` body of %s is not a strict subset of its source — body scoping "
+			+ "has regressed to whole-file matching, which passes every harness in this repo while "
+			+ "proving nothing (#326)") % PASS_PATH_CONTROL)
+		return
+	if not control_code.replace(control_body, "").contains(GUARANTEE_CALL):
+		_fail(("%s no longer asserts the guarantee anywhere OUTSIDE its `_fail` body, so it cannot "
+			+ "prove that whole-file matching would be vacuous — repoint PASS_PATH_CONTROL")
+			% PASS_PATH_CONTROL)
+		return
+
+	print(("TEST PASS — %d test(s) boot %s, all isolated and all asserting the guarantee on their "
+		+ "failure path; prose-only mention in %s correctly ignored, and %s proves the failure-path "
+		+ "check is not satisfied by pass-path code")
+		% [booters.size(), MAIN_SCENE, COMMENT_ONLY_CONTROL, PASS_PATH_CONTROL])
 	get_tree().quit(0)
 
 
@@ -165,6 +238,34 @@ func _claims_isolation(code: String) -> bool:
 		if code.contains(owner) and code.contains(ISOLATION_CLAIMS[owner]):
 			return true
 	return false
+
+
+## The body of the `_fail` function in already-comment-stripped `code`, or ""
+## when the file declares none.
+##
+## Scoped to the function rather than the file on purpose: every booter here
+## asserts the guarantee on its PASS path, so a file-wide match is satisfied by
+## code that never runs when the test fails — see [constant PASS_PATH_CONTROL].
+##
+## The body ends at the next TOP-LEVEL declaration, which in GDScript is the
+## next non-empty line starting at column 0. Nested blocks stay in, because they
+## are indented; a trailing `_fail` at end-of-file ends at EOF.
+##
+## Limitation, stated rather than hidden: only the FIRST `_fail` declaration is
+## read. GDScript cannot overload, so a second one is a redefinition error the
+## engine rejects before this guard ever runs.
+func _fail_body(code: String) -> String:
+	var body := PackedStringArray()
+	var inside := false
+	for line: String in code.split("\n"):
+		if not inside:
+			if line.begins_with(FAIL_FUNC):
+				inside = true
+			continue
+		if not line.is_empty() and not (line.begins_with("\t") or line.begins_with(" ")):
+			break
+		body.append(line)
+	return "\n".join(body) if inside else ""
 
 
 ## Every `.gd` under the tests directory, sorted so a failure names the same
