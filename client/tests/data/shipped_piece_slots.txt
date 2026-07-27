@@ -15,3 +15,5 @@ shirt_ragged torso
 pants_wool legs
 shoes_cloth feet
 boots_worn feet
+relic_goggles head
+ruin_drake_helm head
