@@ -585,14 +585,17 @@ everything shipped afterwards is held to.
   have, which needs a decision whatever the storage looks like. Resolve it by renaming your file to
   the next free version and updating its `version` field to match; never merge two entries into one
   file, and never make one file hold a list again.
-  ⚠️ **Re-check your entry's version before it merges.** The version an entry names is a prediction
-  about the next release, and a sibling merging first invalidates it: from a `0.58.0` base a `fix:`
-  entry named `0.58.1` actually ships as `0.59.1` once someone else's `feat:` lands ahead of it, and
-  nothing currently detects that — the filename and its `version` field still agree, so the guard is
-  satisfied while the log misnames the release. This drift predates one-file-per-entry, but the
-  shared array used to force a rebase on every sibling merge, which is where an author noticed.
-  Until an automated check exists ([#412](https://github.com/devantler-tech/world-at-ruin/issues/412)),
-  rename the file and its `version` field when your base moves under you.
+  ⚠️ **An entry's version must be above every release that already exists.** The version an entry
+  names is a prediction about the next release, and a sibling merging first invalidates it: from a
+  `0.58.0` base a `fix:` entry named `0.58.1` actually ships as `0.59.1` once someone else's `feat:`
+  lands ahead of it. `tools/devlog-entry-version-guard.sh` refuses that in CI — it checks every
+  entry a change **adds** against the release tags in the checkout and names the lowest version you
+  could legitimately use. When it fires, rename the file and its `version` field together. Editing
+  an entry that has already shipped stays legal; only added entries are checked.
+  The guard runs in the merge queue as well as on the PR, so the tags it measures against are as
+  close to final as CI can see. It is a floor rather than a guarantee: two PRs merging back-to-back
+  can each be above every tag that existed when they were checked and still release in an order that
+  leaves the second one low.
   **Do NOT hand-edit `DevLog.VERSION` or `config/version` in `project.godot`** — release builds are
   stamped from the release tag (below), so a hand-bump only drifts from the real version.
 - **CI, CD and releases:**
