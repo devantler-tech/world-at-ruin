@@ -1089,9 +1089,17 @@ jobs:
             # the ones being restored.
             repair_resp="$(gh api "repos/${tap}/contents/Casks/world-at-ruin.rb?ref=${branch}" 2>/dev/null || true)"
             repair_content="$(printf '%s' "${repair_resp}" | jq -r '.content // empty' 2>/dev/null | tr -d '\n' || true)"
+            repair_blob_captured="$(printf '%s' "${repair_resp}" | jq -r '.sha // empty' 2>/dev/null || true)"
             repair_version="$(printf '%s' "${repair_content}" | base64 -d 2>/dev/null \
               | sed -n 's/^  version "\(.*\)"$/\1/p' | head -1 || true)"
-            repair_main_version="$(cask_version_at main)"
+            # Read main's HEAD FIRST, then read its cask AT THAT SHA. Reading the
+            # version from the `main` ref instead would let an out-of-band merge
+            # land between the two, so `repair_main_version` would describe a
+            # revision the branch is NOT about to be reset to — and the restore
+            # loop's unknown-writer guard would then fire on main's own content,
+            # aborting with the captured cask already gone from the branch.
+            # Both values must come from one revision.
+            #
             # Read main HERE rather than reusing base_sha: that was captured
             # before the write, and a merge in this window is the whole reason
             # the branch conflicts. Shape-check it — an empty or partial
@@ -1102,12 +1110,17 @@ jobs:
               [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) : ;;
               *) repair_sha="" ;;
             esac
+            repair_main_version=""
+            if [ -n "${repair_sha}" ]; then
+              repair_main_version="$(cask_version_at "${repair_sha}")"
+            fi
             # ABORT on a partial read rather than rebuild from it. Every one of
             # these collapses an API, decode or parse failure into the same
             # empty string it returns for genuinely absent content, so acting on
             # empty would restore nothing over a branch whose content main has
             # not received.
             if [ -z "${repair_content}" ] || [ -z "${repair_version}" ] \
+               || [ -z "${repair_blob_captured}" ] \
                || [ -z "${repair_main_version}" ] || [ -z "${repair_sha}" ]; then
               echo "::error::${tap}#${pr} conflicts with main, but the branch cask, its version or main's head could not be read; refusing to rebuild ${branch} from a partial read"
               exit 1
@@ -1131,8 +1144,16 @@ jobs:
             # a manual or out-of-band writer can, and the disarm/convergence
             # logic above already exists to defend that case. Narrow the window
             # to one read and refuse rather than reset over an uncaptured write.
-            if [ "$(cask_version_at "${branch}")" != "${repair_version}" ]; then
-              echo "::error::${branch} moved while the repair was being prepared (expected v${repair_version}); refusing to force-reset over a write this run did not capture"
+            #
+            # Compare the BLOB, not the version. A version match is too coarse: a
+            # cask can be rewritten without its version moving — a corrected
+            # `sha256` or `url` for the same release is the ordinary reason
+            # someone touches a tap by hand — and reverting that silently is
+            # exactly the write this guard exists to protect. The blob sha is
+            # content identity, so it catches those and every version change too.
+            if [ "$(gh api "repos/${tap}/contents/Casks/world-at-ruin.rb?ref=${branch}" \
+                 --jq '.sha' 2>/dev/null || true)" != "${repair_blob_captured}" ]; then
+              echo "::error::${branch} moved while the repair was being prepared (expected the captured v${repair_version} bytes); refusing to force-reset over a write this run did not capture"
               exit 1
             fi
             repair_reset=""

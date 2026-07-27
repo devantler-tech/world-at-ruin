@@ -218,10 +218,24 @@ fi
 # between. (Codex P1 on this PR. Its stated scenario — two overlapping CD runs —
 # cannot happen, because this job's concurrency group is constant and serialises
 # the tap handoff across tags; the residual out-of-band writer is real.)
-revalidate_line="$(awk -v a="${repair_line}" -v s='!= "${repair_version}"' \
+# It must compare the captured BLOB, not the version: a cask can be rewritten
+# without its version moving (a corrected sha256 or url for the same release is
+# the ordinary reason a tap is touched by hand), and a version-only check would
+# revert that silently.
+revalidate_line="$(awk -v a="${repair_line}" -v s='!= "${repair_blob_captured}"' \
 	'NR >= a && index($0, s) {print NR; exit}' "${workflow}")"
 if [ -z "${revalidate_line}" ] || [ "${revalidate_line}" -ge "${repair_patch_line}" ]; then
-	echo "the repair must re-validate the captured version immediately before the force-reset" >&2
+	echo "the repair must re-validate the captured BLOB immediately before the force-reset" >&2
+	exit 1
+fi
+
+# main's cask version must be read AT the sha the branch is about to be reset
+# to. Reading it from the `main` ref lets an out-of-band merge land between the
+# two reads, so the restore loop's unknown-writer guard fires on main's own
+# content — aborting with the captured cask already gone from the branch.
+# shellcheck disable=SC2016 # literal workflow text, as above
+if ! printf '%s' "${repair_block}" | grep -q 'cask_version_at "\${repair_sha}"'; then
+	echo "main's cask version must be read at the captured reset sha, not the moving main ref" >&2
 	exit 1
 fi
 
