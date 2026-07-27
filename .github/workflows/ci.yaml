@@ -1128,6 +1128,19 @@ jobs:
       - name: Vet
         working-directory: server
         run: go vet ./...
+      # The lint gate is scoped to changed files against the merge base. That
+      # scoping FAILS OPEN on its own: with nothing to filter, golangci-lint
+      # never resolves the base ref, so an unresolvable `origin/main` prints
+      # "0 issues" and exits 0 — measured. A shallow checkout or a fetch
+      # regression would then disable the gate silently, and the more of #436
+      # that gets fixed the more likely that is to go unnoticed. Resolve the
+      # base explicitly first so that failure is loud and separate.
+      - name: Resolve lint base
+        run: |
+          if ! git merge-base origin/main HEAD >/dev/null 2>&1; then
+            echo "::error::cannot resolve 'origin/main' — the Go lint gate is scoped against it and would pass vacuously. Check fetch-depth on this job's checkout."
+            exit 1
+          fi
       # vet catches a deliberately narrow set of mistakes. The zone server is the
       # process that has to stay up for everyone connected to it, so the error
       # paths matter here more than anywhere else in the repo: an unchecked

@@ -39,9 +39,13 @@ linters:
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
-  # Blocking for the lines a change touches, so the findings that predate the
-  # gate (inventoried in #436) do not wall off unrelated work. This fails
-  # CLOSED: when the base ref cannot be resolved the whole backlog is reported
-  # and the job goes red, so a broken diff base can never pass vacuously.
-  # Remove this line once #436 reaches zero and the gate covers the module.
+  # Scoped to the FILES a change touches, so the findings that predate the gate
+  # (inventoried in #436) do not wall off unrelated work. Remove both keys once
+  # #436 reaches zero and the gate covers the whole module.
   new-from-merge-base: origin/main
+  # Whole changed FILES, not just changed lines. Deleting a safeguard attaches
+  # the resulting diagnostic to the surviving unchanged line — dropping a
+  # `defer resp.Body.Close()` reports against the untouched `http.Get` — so a
+  # line-scoped gate lets a PR remove error, close or context handling and stay
+  # green. Editing a file makes you answerable for it.
+  whole-files: true
