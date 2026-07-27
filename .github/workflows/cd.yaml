@@ -1135,6 +1135,12 @@ jobs:
             for attempt in 1 2 3 4 5; do
               repair_head="$(gh api "repos/${tap}/contents/Casks/world-at-ruin.rb?ref=${branch}" 2>/dev/null || true)"
               repair_blob="$(printf '%s' "${repair_head}" | jq -r '.sha // empty' 2>/dev/null || true)"
+              # An empty blob sha here is a FAILED READ, not an absent file:
+              # main was required to carry a readable cask version above, and
+              # the branch is now main. Omitting the sha turns the PUT into a
+              # create, which GitHub refuses while the file exists — so a
+              # transient read failure costs a retry instead of a blind
+              # overwrite that would skip the compare-and-swap entirely.
               if [ -n "${repair_blob}" ]; then
                 repair_args=(-f "sha=${repair_blob}")
               else
