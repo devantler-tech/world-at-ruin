@@ -51,8 +51,11 @@ func _ready() -> void:
 	# away, and it is the reason the tolerance is nine orders of magnitude below
 	# the smallest of these gaps rather than merely "small".
 	var rewritten: Array = [
-		[0.06, 0.03], # height fog reverted to shipped
-		[0.005, 1.0 / 600.0], # volumetric reverted to shipped
+		# Literal values rather than the live constants: these stand for the gap
+		# a rewrite leaves, and pinning them to whatever ships today would let a
+		# future retune quietly shrink the distance this law measures.
+		[0.06, 0.03], # height fog reverted over a candidate
+		[0.005, 1.0 / 600.0], # volumetric reverted over a candidate
 		[0.06, 0.0], # a neutralising row reverted — the original coverage
 		[0.005, 0.0],
 		[0.03, 0.015], # reverted to a different candidate
