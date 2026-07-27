@@ -214,6 +214,17 @@ if ! printf '%s' "${repair_block}" | grep -q 'parents:\[\$parent,\$base\]'; then
 	exit 1
 fi
 
+# Every read the rebuild depends on must be anchored to ONE branch revision.
+# The fast-forward rule only rejects moves that happen AFTER the sha it is
+# anchored to, so reading the cask or the delta from the moving `${branch}` ref
+# lets a writer land in between: the parent becomes THEIR commit while the tree
+# carries the older cask — a perfectly valid fast-forward, so the update
+# succeeds and silently reverts their release instead of refusing.
+if printf '%s' "${repair_block}" | grep -qE '\?ref=\$\{branch\}|compare/main\.\.\.\$\{branch\}'; then
+	echo "the rebuild must read the cask and the delta at the pinned branch sha, not the moving ref" >&2
+	exit 1
+fi
+
 # The tree must be based on MAIN's tree. Basing it on the branch's would revert
 # main's changes to every OTHER cask in the tap.
 # shellcheck disable=SC2016 # literal workflow text, as above

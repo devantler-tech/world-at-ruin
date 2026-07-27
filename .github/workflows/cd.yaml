@@ -1076,18 +1076,37 @@ jobs:
           # END cask-conflict-repair-helper
 
           if cask_pr_conflicts "${tap}" "${pr}"; then
-            # Rebuild the branch's HISTORY while preserving its CONTENT: capture
-            # the cask file, reset the branch onto main, write the file back.
-            # Nothing main has not received is discarded, which is the property
-            # the reset guard protects — the compare-and-swap above still owns
-            # WHICH version the content names, and this touches only the commits
-            # underneath it.
+            # Rebuild the branch's HISTORY while preserving its CONTENT: take the
+            # cask as it stands, put it on top of main, and move the branch there
+            # in one non-forced step. Nothing main has not received is discarded,
+            # and the compare-and-swap above still owns WHICH version the content
+            # names — this touches only the commits underneath it.
             #
-            # Content and version come from ONE read, for the same reason the
-            # compare-and-swap does it: reading them separately lets a write land
-            # in between, so the version would describe bytes that are no longer
-            # the ones being restored.
-            repair_resp="$(gh api "repos/${tap}/contents/Casks/world-at-ruin.rb?ref=${branch}" 2>/dev/null || true)"
+            # PIN EVERYTHING TO ONE BRANCH REVISION. Read the branch HEAD first,
+            # then read the cask and the delta AT THAT SHA, and use the same sha
+            # as the rebuilt commit's parent. Reading the content from the moving
+            # `${branch}` ref instead would let a writer land between the content
+            # read and the head read: the parent would then be THAT writer's
+            # commit while the tree carried the older cask, which is a perfectly
+            # valid fast-forward — so the non-forced update would succeed and
+            # silently revert their release instead of refusing. The fast-forward
+            # rule only rejects moves that happen AFTER the sha it is anchored
+            # to, so the capture has to be anchored to that same sha.
+            repair_branch_head="$(gh api "repos/${tap}/git/ref/heads/${branch}" \
+              --jq '.object.sha' 2>/dev/null || true)"
+            case "${repair_branch_head}" in
+              [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) : ;;
+              *) repair_branch_head="" ;;
+            esac
+            if [ -z "${repair_branch_head}" ]; then
+              echo "::error::could not read ${branch}'s head on ${tap}; refusing to rebuild it"
+              exit 1
+            fi
+            # Content and version come from ONE read of that pinned sha, for the
+            # same reason the compare-and-swap does it: reading them separately
+            # lets a write land in between, so the version would describe bytes
+            # that are no longer the ones being carried forward.
+            repair_resp="$(gh api "repos/${tap}/contents/Casks/world-at-ruin.rb?ref=${repair_branch_head}" 2>/dev/null || true)"
             repair_content="$(printf '%s' "${repair_resp}" | jq -r '.content // empty' 2>/dev/null | tr -d '\n' || true)"
             repair_blob_captured="$(printf '%s' "${repair_resp}" | jq -r '.sha // empty' 2>/dev/null || true)"
             repair_version="$(printf '%s' "${repair_content}" | base64 -d 2>/dev/null \
@@ -1167,7 +1186,7 @@ jobs:
             # bot's edit — would be silently discarded. A `dirty` mergeability
             # state says the two sides conflict; it does NOT say the cask is the
             # only difference, so ask rather than assume.
-            repair_delta="$(gh api "repos/${tap}/compare/main...${branch}" \
+            repair_delta="$(gh api "repos/${tap}/compare/main...${repair_branch_head}" \
               --jq '[.files[].filename] | sort | join(" ")' 2>/dev/null || true)"
             if [ -z "${repair_delta}" ]; then
               echo "::error::could not read what ${branch} changes against ${tap} main; refusing to rebuild it blind"
@@ -1199,12 +1218,10 @@ jobs:
             # cask to restore afterwards (so no create-vs-update ambiguity), and
             # nothing to verify after the write — the ref either moved to the
             # finished commit or did not move at all.
-            repair_branch_head="$(gh api "repos/${tap}/git/ref/heads/${branch}" \
-              --jq '.object.sha' 2>/dev/null || true)"
             repair_main_tree="$(gh api "repos/${tap}/git/commits/${repair_sha}" \
               --jq '.tree.sha' 2>/dev/null || true)"
-            if [ -z "${repair_branch_head}" ] || [ -z "${repair_main_tree}" ]; then
-              echo "::error::could not read ${branch}'s head or ${tap} main's tree; refusing to rebuild ${branch}"
+            if [ -z "${repair_main_tree}" ]; then
+              echo "::error::could not read ${tap} main's tree; refusing to rebuild ${branch}"
               exit 1
             fi
             repair_tree="$(jq -nc --arg base "${repair_main_tree}" --arg blob "${repair_blob_captured}" \
