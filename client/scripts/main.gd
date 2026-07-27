@@ -178,6 +178,16 @@ func _ready() -> void:
 			if stored else
 			"The Wardens' flame knows you now — though it may not remember past this waking."))
 
+	# A vault whose bytes no client can parse is set aside before anything reads
+	# it (#290). Left in place it refuses every write for the life of the install:
+	# the player is told each session that the Reach may not remember, with no way
+	# to clear it from inside the game. Nothing is destroyed — the bytes are
+	# preserved beside the vault — and a document from a NEWER client still
+	# parses, so that one is never touched.
+	if not SaveVault.quarantine_unreadable(SaveVault.vault_path()).is_empty():
+		_hud.toast(
+			"What the Reach remembered has torn. Those pages are set aside; it begins again.")
+
 	# Restore a previously attuned respawn point. A missing, unreadable or
 	# newer-versioned vault simply leaves the wanderer waking in the cave, as
 	# before the vault existed — progression state may never block a boot, and
