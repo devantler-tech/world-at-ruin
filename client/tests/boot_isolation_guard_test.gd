@@ -102,6 +102,23 @@ const COMMENT_ONLY_CONTROL := "world_gen_determinism_test.gd"
 const FAIL_FUNC := "func _fail("
 const GUARANTEE_CALL := "real_save_untouched("
 
+## A failing exit. The contract is "assert the guarantee on EVERY exit path", so
+## a second failing exit that bypasses `_fail` would satisfy the law above while
+## leaving the actual invariant unmet — checking `_fail` alone would then be
+## checking a function nothing calls. Every booter today funnels its single
+## failing quit through `_fail`; this keeps it that way.
+const FAILING_QUIT := "quit(1)"
+
+## Line prefixes that begin a new TOP-LEVEL declaration, ending a function body.
+##
+## Not merely "an unindented line": a multiline string inside `_fail` can put
+## content at column zero, and treating that as a declaration would truncate the
+## body and reject a correctly-guarded booter over string formatting alone.
+const DECLARATION_STARTS := [
+	"func ", "static func ", "const ", "var ", "@", "class ", "class_name",
+	"signal ", "enum ", "extends ",
+]
+
 ## A synthetic harness asserting the guarantee on its PASS path and NOT on its
 ## failure path — the exact shape #326 found in five files.
 ##
@@ -127,6 +144,23 @@ func _fail(message: String) -> void:
 	get_tree().quit(1)
 """
 
+## A `_fail` that only NAMES the guarantee inside a diagnostic string while still
+## tearing down with a bare `end()`. Mentioning a call is not making one, and a
+## plain substring match cannot tell the two apart — the same
+## naming-is-not-calling confusion [constant ISOLATION_CLAIMS] already documents
+## one law up. Its `_fail` also opens a multiline string whose content starts at
+## column zero, so it doubles as the control for [constant DECLARATION_STARTS]:
+## a body boundary that stopped at any unindented line would truncate here and
+## reach the wrong verdict for the right-looking reason.
+const STRING_ONLY_FIXTURE := """func _fail(message: String) -> void:
+	if _save != null:
+		_save.end()
+	push_error(\"\"\"
+remember to call real_save_untouched( on the way out
+\"\"\")
+	get_tree().quit(1)
+"""
+
 
 func _ready() -> void:
 	var sources := _test_sources()
@@ -138,6 +172,7 @@ func _ready() -> void:
 	var unisolated := PackedStringArray()
 	var unguarded := PackedStringArray()
 	var unlocatable := PackedStringArray()
+	var stray_exit := PackedStringArray()
 	for file: String in sources:
 		if file in EXEMPT:
 			continue
@@ -158,11 +193,18 @@ func _ready() -> void:
 			unisolated.append(file)
 		# The failure path is checked separately from the file as a whole — see
 		# PASS_PATH_ONLY_FIXTURE for why that scoping is the load-bearing part.
-		var fail_body := _fail_body(code)
+		# Literals are blanked first, so naming the call in a message is not
+		# mistaken for making it (STRING_ONLY_FIXTURE).
+		var stripped := _strip_literals(code)
+		var fail_body := _fail_body(stripped)
 		if fail_body.is_empty():
 			unlocatable.append(file)
 		elif not _guards_failure_path(code):
 			unguarded.append(file)
+		elif stripped.replace(fail_body, "").contains(FAILING_QUIT):
+			# A guarded `_fail` proves nothing if some other path also exits
+			# failing without going through it.
+			stray_exit.append(file)
 
 	# --- the law ---
 	if not unisolated.is_empty():
@@ -188,6 +230,13 @@ func _ready() -> void:
 			+ "player's real save discards that evidence and exits reporting an unrelated gameplay "
 			+ "failure instead (#326)")
 			% [unguarded.size(), ", ".join(unguarded), GUARANTEE_CALL])
+		return
+
+	if not stray_exit.is_empty():
+		_fail(("%d booter(s) exit failing WITHOUT going through `%s`: %s — a `%s` outside that body "
+			+ "skips the isolation check entirely, so the guarantee is asserted on one exit path and "
+			+ "not the others. Route every failing exit through `_fail` (#326)")
+			% [stray_exit.size(), FAIL_FUNC, ", ".join(stray_exit), FAILING_QUIT])
 		return
 
 	# --- the guard is not passing vacuously ---
@@ -233,6 +282,38 @@ func _ready() -> void:
 			+ "harness in this repo including the five this law was written for (#326)"))
 		return
 
+	# --- negative control: naming the call in a string is not calling it ---
+	if not STRING_ONLY_FIXTURE.contains(GUARANTEE_CALL):
+		_fail("the string-only fixture no longer names the guarantee, so it cannot prove that a "
+			+ "mention is rejected — restore it")
+		return
+	if _fail_body(_strip_literals(STRING_ONLY_FIXTURE)).is_empty():
+		_fail(("the string-only fixture's `_fail` body vanished — the body boundary is stopping at "
+			+ "the multiline string inside it rather than at a real declaration, so a correctly "
+			+ "guarded booter would be rejected over string formatting alone"))
+		return
+
+	# --- negative control: a column-zero line is not automatically a declaration ---
+	# Pinned on the helper directly, because the fixture above CANNOT prove it:
+	# blanking literals already removes the column-zero content, so a boundary
+	# that stopped at any unindented line would still reach the right verdict
+	# there — for the wrong reason. This is the only check that distinguishes the
+	# two rules.
+	if _starts_declaration("still_inside_the_body()"):
+		_fail(("the body boundary treats any column-zero line as a declaration — a multiline string "
+			+ "inside `_fail` would truncate the body and reject a correctly guarded booter over "
+			+ "string formatting alone (DECLARATION_STARTS)"))
+		return
+	if not _starts_declaration("func _ready() -> void:"):
+		_fail("the body boundary no longer recognises a real declaration, so a `_fail` body would "
+			+ "run past the end of its function and pick up unrelated code")
+		return
+	if _guards_failure_path(STRING_ONLY_FIXTURE):
+		_fail(("the guard accepted a `_fail` that only NAMES the guarantee in a diagnostic string "
+			+ "while still tearing down with a bare end() — mentioning a call is not making one, "
+			+ "the same confusion ISOLATION_CLAIMS guards one law up"))
+		return
+
 	# --- and the real corpus is the shape that makes the scoping matter ---
 	var pass_path_assertors := 0
 	for file: String in booters:
@@ -270,7 +351,61 @@ func _claims_isolation(code: String) -> bool:
 ## whole-file match makes that control fail immediately instead of silently
 ## passing every harness in the repo.
 func _guards_failure_path(code: String) -> bool:
-	return _fail_body(code).contains(GUARANTEE_CALL)
+	return _fail_body(_strip_literals(code)).contains(GUARANTEE_CALL)
+
+
+## `code` with the CONTENTS of every string literal blanked out, preserving
+## length and line structure so line-based logic still lines up.
+##
+## 🔴 Scoped to the failure-path law ONLY — never apply it to booter detection.
+## A harness reaches the main scene by writing `load("res://scenes/main.tscn")`,
+## so [constant SCENE_TOKEN] lives INSIDE a literal; stripping literals before
+## that check would classify every booter as a non-booter and the whole guard
+## would pass vacuously. Here the opposite is true: a literal mentioning the
+## guarantee is exactly what must not count.
+func _strip_literals(code: String) -> String:
+	var out := ""
+	var i := 0
+	var quote := ""
+	var triple := false
+	while i < code.length():
+		var ch := code[i]
+		if quote.is_empty():
+			if ch == "\"" or ch == "'":
+				triple = code.substr(i, 3) == ch.repeat(3)
+				quote = ch
+				out += "   " if triple else " "
+				i += 3 if triple else 1
+				continue
+			out += ch
+			i += 1
+			continue
+		# Inside a literal: a backslash escapes the next character, so a `\"`
+		# must not be mistaken for the closing quote.
+		if not triple and ch == "\\":
+			out += "  "
+			i += 2
+			continue
+		var closes := code.substr(i, 3) == quote.repeat(3) if triple else ch == quote
+		if closes:
+			out += "   " if triple else " "
+			i += 3 if triple else 1
+			quote = ""
+			continue
+		out += "\n" if ch == "\n" else " "
+		i += 1
+	return out
+
+
+## Does this line begin a new top-level declaration? See [constant
+## DECLARATION_STARTS] for why "unindented" alone is not the test.
+func _starts_declaration(line: String) -> bool:
+	if line.is_empty() or line.begins_with("\t") or line.begins_with(" "):
+		return false
+	for token: String in DECLARATION_STARTS:
+		if line.begins_with(token):
+			return true
+	return false
 
 
 ## The body of the `_fail` function in already-comment-stripped `code`, or ""
@@ -296,7 +431,7 @@ func _fail_body(code: String) -> String:
 			if line.begins_with(FAIL_FUNC):
 				inside = true
 			continue
-		if not line.is_empty() and not (line.begins_with("\t") or line.begins_with(" ")):
+		if _starts_declaration(line):
 			break
 		body.append(line)
 	return "\n".join(body) if inside else ""
