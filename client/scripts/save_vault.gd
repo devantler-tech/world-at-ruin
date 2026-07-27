@@ -43,6 +43,21 @@ class_name SaveVault
 ##     separate-file design exists to survive. Refuse-to-read implies
 ##     refuse-to-write, always.
 ##
+##     That read-only latch is per-PATH and permanent, which is right while the
+##     bytes are still there — and wrong once no client can read them at all. A
+##     document that does not parse is progression nobody can recover, so leaving
+##     it in place refuses every future write for the life of the install: the
+##     player is told each session that the Reach may not remember, and the only
+##     remedy is deleting a file inside user:// that the game never mentions. So
+##     a vault NO CLIENT COULD OWN is set aside at boot instead — preserved, never
+##     deleted — and a fresh one is started (#290, see
+##     [method quarantine_unreadable]). The distinction is exactly the one between
+##     "no client can read this" and "this client cannot read this", and it is
+##     drawn at the VERSION (see [method _is_unownable]): a document declaring a
+##     version is somebody's progression and is left untouched however far ahead
+##     of this build it is, while one that is not an object at all, or carries no
+##     usable integer version, was written by no client that ever shipped.
+##
 ## Both of those judge the vault as it is at one instant, which is why every
 ## write is additionally taken under a cross-process LOCK (#262, see
 ## [method _acquire_lock]). Refuse-to-read handles a newer vault we can already
@@ -122,6 +137,50 @@ const LOCK_STALE_SECONDS := 300
 ## sleeping. Unset, empty, non-integer or negative values keep the shipped
 ## default, so a malformed value can never shorten the window in the field.
 const LOCK_STALE_ENV := "WAR_VAULT_LOCK_STALE_SECONDS"
+
+## Suffix for a vault set aside because no client could own it. What follows it is
+## a per-attempt unique stamp, so a second corruption never overwrites the first —
+## preserving the bytes is the entire point (#290), and a predictable name is a
+## way to lose them (see [method _free_quarantine_path]).
+const QUARANTINE_SUFFIX := ".unreadable-"
+
+## How many unique destinations are tried before giving up. A bound rather than an
+## unbounded search: if this many freshly-stamped names are all somehow taken,
+## something is wrong that setting aside one more will not fix, and refusing is
+## the only direction that cannot destroy bytes.
+const QUARANTINE_MAX_ATTEMPTS := 100
+
+## How long an unparseable vault must have sat UNCHANGED before it is set aside.
+##
+## Quarantine exists because bytes no client can parse otherwise wedge
+## progression saving forever (#290). The one case where setting them aside is
+## WRONG is a write still in flight: cloud sync or a backup restore can
+## materialise a partial file and complete it moments later, and those partial
+## bytes may be a NEWER client's progression. Quarantining them would let this
+## build start a fresh v1 vault that the newer client later reads as
+## authoritative — turning a transient partial write into permanent loss.
+##
+## An age threshold separates the two without any new persisted state. The
+## failure directions are as lopsided as the lock's, and point the same way:
+##  - setting aside a document that was about to be completed can cost a newer
+##    client its progression, and nothing ever asks for quarantined bytes back;
+##  - waiting longer merely leaves the player session-only for one more launch,
+##    which is the vault's standing answer to doubt.
+## So this errs long on purpose. It is a liveness HEURISTIC about whether some
+## writer is still working, exactly like [constant LOCK_STALE_SECONDS], and it is
+## not a mechanism for making recovery prompt.
+##
+## The alternative of requiring the same bytes across two boots was rejected: it
+## needs a fourth persisted user:// file — with its own env seam and
+## SaveIsolation redirect — to record a fact the file's own mtime already carries.
+const QUARANTINE_MIN_AGE_SECONDS := 300
+
+## Test-only override for [constant QUARANTINE_MIN_AGE_SECONDS], mirroring
+## [constant LOCK_STALE_ENV]. Production never sets it; a test sets 0 so a
+## just-written probe is immediately eligible. Unset, empty, non-integer and
+## negative values all keep the shipped default, so the window can never be
+## SHORTENED by a malformed value — the direction that could destroy progression.
+const QUARANTINE_MIN_AGE_ENV := "WAR_VAULT_QUARANTINE_MIN_AGE_SECONDS"
 
 ## Highest schema emitted by a production writer. v2 is used only when the
 ## document actually carries discovery state; an empty or attunement-only vault
@@ -382,6 +441,219 @@ static func can_write(path: String) -> bool:
 ## never calls this: the latch is meant to outlive everything but a restart.
 static func clear_refusals_for_test() -> void:
 	_refused.clear()
+
+
+## The quarantine window in seconds: the QUARANTINE_MIN_AGE_ENV override when it
+## is a non-negative integer, else the shipped default. Unset and malformed both
+## fall through to the default, so the window can never be shortened by accident.
+static func quarantine_min_age_seconds() -> int:
+	var raw := OS.get_environment(QUARANTINE_MIN_AGE_ENV)
+	if raw.is_valid_int():
+		var seconds := int(raw)
+		if seconds >= 0:
+			return seconds
+	return QUARANTINE_MIN_AGE_SECONDS
+
+
+## Whether the document at `path` is one NO client could own.
+##
+## Deliberately narrower than "load_from() refused it", and the line is drawn at
+## the VERSION rather than at validity:
+##  - not a JSON object at all — no vault is an array or a scalar in any version,
+##    so nothing could ever have written it as progression;
+##  - a JSON object carrying no usable integer version (`{}`, `{"version":"bad"}`,
+##    `{"version":0}`) — `version` is the whole forward-only contract, the one
+##    field whose meaning is fixed across every schema, so a document without one
+##    was written by no client that ever shipped and can be read by none that
+##    ever will.
+##
+## Everything else is left exactly where it is, including a document that FAILS
+## validation while declaring a version this build knows. A version is a claim of
+## ownership by some client, and this build does not adjudicate that claim: the
+## cost of being wrong is destroyed progression, while the cost of being cautious
+## is a shape that essentially only arises from hand-editing staying read-only.
+##
+## A file that cannot be OPENED is not judged: that is a permission or locking
+## fault about this process, not about the bytes, and moving a file we could not
+## read would be acting on a guess.
+static func _is_unownable(path: String) -> bool:
+	var data = _read_document(path)
+	if data == null:
+		return false
+	return _is_unownable_bytes(data)
+
+
+## The document's raw bytes, or null when it cannot be opened.
+##
+## Quarantine judges and re-verifies from BYTES rather than re-reading through a
+## parser each time, because the bytes are the identity of the document being
+## moved (see [method _quarantine_locked]). Null and an empty array are different
+## answers: a zero-length file is a real, unownable document, while an unopenable
+## one is a fault about this process and must not be judged at all.
+static func _read_document(path: String) -> Variant:
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		return null
+	var data := file.get_buffer(file.get_length())
+	file.close()
+	return data
+
+
+## Whether `data` is a document no client could own — see [method _is_unownable].
+static func _is_unownable_bytes(data: PackedByteArray) -> bool:
+	var parsed = JSON.parse_string(data.get_string_from_utf8())
+	if parsed is not Dictionary:
+		return true
+	# The same integer test validate() applies, so the two can never disagree
+	# about what counts as a version.
+	var version = (parsed as Dictionary).get("version")
+	if version is int or (version is float and version == floorf(version)):
+		return int(version) < 1
+	return true
+
+
+## Set aside a vault no client can read so it stops wedging progression saving,
+## and return the path its bytes were preserved at ("" when nothing was moved).
+##
+## Called once on the boot path, before the vault is read. It is deliberately NOT
+## part of load_from(): reading must stay free of side effects, and the
+## readability re-check inside [method _save_to_locked] runs at the most
+## dangerous possible moment — mid-write, holding the lock — where moving the
+## file would be catastrophic rather than helpful.
+##
+## The cheap checks run before the lock only so a healthy boot does not create a
+## lock directory it has no use for; every condition is re-derived under the
+## lock, which is the authoritative pass.
+static func quarantine_unreadable(path: String) -> String:
+	if not FileAccess.file_exists(path):
+		return ""
+	if not _is_unownable(path):
+		return ""
+	if not _acquire_lock(path):
+		return ""
+	var moved := _quarantine_locked(path)
+	_release_lock(path)
+	return moved
+
+
+## quarantine_unreadable()'s body, with the write lock held.
+static func _quarantine_locked(path: String) -> String:
+	# Re-derive every condition: the pre-checks are an optimisation, and another
+	# writer may have replaced this file with a perfectly good vault since.
+	if not FileAccess.file_exists(path):
+		return ""
+	# Capture the exact bytes being judged. Everything below re-verifies against
+	# THIS array, because the bytes are what identifies the document — see the
+	# pre-rename check.
+	var observed = _read_document(path)
+	if observed == null:
+		return ""
+	if not _is_unownable_bytes(observed):
+		return ""
+	var modified := int(FileAccess.get_modified_time(path))
+	if modified <= 0:
+		# No usable timestamp means no way to tell an abandoned document from one
+		# still being written. Leave it: session-only play is recoverable, a
+		# premature quarantine of a newer client's progression is not.
+		return ""
+	if int(Time.get_unix_time_from_system()) - modified < quarantine_min_age_seconds():
+		return ""
+	var target := _free_quarantine_path(path)
+	if target.is_empty():
+		push_error(
+			"SaveVault: could not find a free destination beside %s in %d attempts — refusing to set it aside"
+			% [path, QUARANTINE_MAX_ATTEMPTS])
+		return ""
+	# Judge the document one last time, IMMEDIATELY before the rename — the same
+	# discipline, and for the same reason, as the readability re-check in
+	# [method _save_to_locked]. Everything above (the timestamp read, the free-slot
+	# search) is time in which a writer that does not take our lock — cloud sync, a
+	# backup restore, a pre-lock build the updater deliberately keeps runnable —
+	# can land a real vault at this path. Moving THAT aside would destroy exactly
+	# the progression quarantine exists to protect, and would then clear the latch
+	# and start a fresh older vault on top of it.
+	#
+	# This narrows the window to the rename syscall; it cannot close it, for the
+	# same reason that re-check cannot, and no in-process primitive can.
+	# Prove it is the SAME document whose age was judged, BY ITS BYTES. Unownability
+	# alone is not enough: a foreign writer can replace stale corrupt bytes with
+	# freshly arriving, still-unparseable ones — a newer client's write caught
+	# mid-flight — and that file would inherit the OLD file's staleness verdict,
+	# bypassing the age gate exactly where it matters most.
+	#
+	# The timestamp cannot carry that proof on its own. Copy and sync tools
+	# routinely PRESERVE modification time while replacing content (`cp -p`,
+	# `rsync -t`), so an mtime match is consistent with a completely different
+	# document. Comparing the bytes is what actually establishes identity, and it
+	# re-derives unownability for free.
+	var current = _read_document(path)
+	if current == null or (current as PackedByteArray) != (observed as PackedByteArray):
+		push_warning(
+			"SaveVault: %s changed while it was being set aside — leaving it for the next launch" % path)
+		return ""
+	# mtime is still checked, and it is NOT redundant: identical bytes rewritten a
+	# moment ago are a live writer at work, not the abandoned document whose age
+	# passed the gate.
+	if int(FileAccess.get_modified_time(path)) != modified:
+		push_warning(
+			"SaveVault: %s was rewritten while it was being set aside — leaving it" % path)
+		return ""
+	var err := DirAccess.rename_absolute(
+		ProjectSettings.globalize_path(path), ProjectSettings.globalize_path(target))
+	if err != OK:
+		push_error(
+			"SaveVault: could not set aside the unreadable vault at %s (error %d)" % [path, err])
+		return ""
+	# The latch existed to stop this build writing over progression it could not
+	# read. Those bytes are now preserved at `target` and the path holds nothing,
+	# so there is nothing left to protect — and leaving the latch set would keep
+	# the player wedged for the rest of the session, which is the defect this
+	# closes.
+	_refused.erase(path)
+	push_warning(
+		"SaveVault: set aside an unreadable vault — %s is preserved at %s" % [path, target])
+	return target
+
+
+## A free quarantine destination beside `path`, or "" if one cannot be found.
+##
+## The name is UNIQUE PER ATTEMPT (pid + microseconds), not an index, and that is
+## a safety property rather than tidiness. `rename()` REPLACES its destination
+## silently, so any name a second party could also derive is a way to destroy
+## bytes this feature promises to preserve: with `unreadable-0`, a sync agent or
+## recovery tool creating that exact path between the vacancy check and the
+## rename would have its file overwritten — and no vacancy check can close that,
+## because Godot exposes no exclusive-create for FILES (only `make_dir_absolute`,
+## which cannot be a rename target). A name a foreign writer cannot predict
+## sidesteps the race instead of trying to win it.
+##
+## This is the same per-attempt naming, for the same reason, as the reclaim
+## target in [method _reclaim_lock_if_abandoned].
+##
+## The vacancy check is kept as cheap defence: it also rejects a DIRECTORY, which
+## `FileAccess.file_exists()` reports as absent and which a rename cannot replace.
+## A fresh microsecond on each attempt means a retry genuinely changes the name.
+static func _free_quarantine_path(path: String) -> String:
+	for _attempt in range(QUARANTINE_MAX_ATTEMPTS):
+		var candidate := "%s%s%d-%d" % [
+			path, QUARANTINE_SUFFIX, OS.get_process_id(), Time.get_ticks_usec()]
+		if _slot_is_free(candidate):
+			return candidate
+	return ""
+
+
+## Whether nothing at all occupies `candidate`.
+##
+## A DIRECTORY counts as occupied, not just a file. `FileAccess.file_exists()`
+## answers false for a directory, so a sync restore or a manual recovery that
+## left one named like a quarantine slot would be chosen as free — the rename
+## onto it then fails, and because the search is deterministic every later launch
+## picks the SAME slot and fails identically. That is a permanent wedge, which is
+## the one outcome this whole change exists to remove.
+static func _slot_is_free(candidate: String) -> bool:
+	if FileAccess.file_exists(candidate):
+		return false
+	return not DirAccess.dir_exists_absolute(ProjectSettings.globalize_path(candidate))
 
 
 ## Every write lock this PROCESS holds, lock path -> reentrancy depth.

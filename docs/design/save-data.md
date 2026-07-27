@@ -104,7 +104,9 @@ Enable the new write path only after the expansion is baked.
 - Delete or rewrite a historical golden, lower a version constant, or remove a shipped-ledger entry.
 - Put progression inside `character.json`; every already-shipped client treats that recipe as closed.
 - Treat a refused document as first-run state and replace it. Refusal means preserve the bytes and stop
-  writing, not start over.
+  writing, not start over. The single exception is a document **no client could own** — see
+  *Setting aside a document no client could own* below — where the bytes are moved intact to a
+  neighbouring file first, so nothing is replaced and nothing is lost.
 
 An additive transform may copy a historical document without loss, but there is no destructive
 “migration to latest”. Old documents remain valid at their original version. Removing anything needs
@@ -219,7 +221,45 @@ The character recipe and vault deliberately fail differently:
 - An existing vault that is unreadable, malformed or newer degrades to session-only progression and
   becomes read-only for the rest of the process. `SaveVault` latches that refusal even if the file
   later disappears, so an older client cannot overwrite newer progression after cloud sync changes
-  the path.
+  the path. The one document that does not stay latched forever is one no client could own, which is
+  set aside at boot instead — see the next section.
+
+### Setting aside a document no client could own
+
+The refusal latch above is permanent per path, which is correct while the bytes are still somebody's
+progression and wrong once they are nobody's. A document that no client can read is progression no
+client can recover, so latching it refuses every future write for the life of the install: the player
+is told each waking that the Reach may not remember, and the only remedy is deleting a file inside
+`user://` that the game never mentions. That is its own no-resets harm, quieter than data loss.
+
+So at boot, and only at boot, such a vault is **moved intact** to a neighbouring
+`vault.json.unreadable-<unique>` file and a fresh vault is started. This does not weaken the rule
+above, because nothing is replaced and nothing is deleted — the bytes survive for manual recovery,
+and the latch is cleared only once the path genuinely holds nothing.
+
+**The line is drawn at the version, not at validity.** A document is *unownable* when it is not a JSON
+object at all, or carries no positive integer `version`. `version` is the one field whose meaning is
+fixed across every schema, so a document without one was written by no client that ever shipped and can
+be read by none that ever will. A document that *declares* a version is left exactly where it is, even
+when it fails validation and even when its version is far ahead of this build: a version is a claim of
+ownership, and being wrong about it destroys progression, while being cautious only leaves a
+hand-edited shape read-only.
+
+Three properties keep the act safe, and all three are load-bearing:
+
+- **It waits.** The document must have sat unchanged for a window (five minutes) before it is moved,
+  so a partial file that cloud sync or a backup restore is about to complete — possibly a newer
+  client's progression caught mid-write — is not mistaken for abandoned corruption.
+- **It re-judges immediately before the move,** both that the document is still unownable and that its
+  modification time is unchanged. The second is an identity check: without it a freshly arriving
+  unparseable file would inherit the old one's staleness verdict and be moved instantly.
+- **It never overwrites.** The destination carries a per-attempt unique stamp rather than an index,
+  because `rename()` replaces its destination silently and any name a second party could also derive
+  is a way to destroy exactly the bytes this is preserving.
+
+Quarantine happens on the boot path only. Reads stay free of side effects, and the readability
+re-check inside `_save_to_locked()` runs mid-write holding the lock, where moving the file would be
+catastrophic rather than helpful.
 - An unreadable or newer boot-recovery document degrades to a rollback-safe empty quarantine view,
   while the path remains read-only for the process lifetime. Rollback eligibility still proves save,
   protocol and shell compatibility independently; new update attempts and recovery writes stop.
