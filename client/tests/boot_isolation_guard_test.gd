@@ -634,17 +634,14 @@ func _guards_failure_path(code: String) -> bool:
 ## contains "error" and would read as a use, so the result stayed unread while
 ## the guard went green. Identifier characters on either side disqualify a match.
 func _mentions_identifier(line: String, name: String) -> bool:
-	var from := 0
-	while true:
-		var at := line.find(name, from)
-		if at < 0:
-			return false
+	var at := line.find(name)
+	while at >= 0:
 		var before_ok := at == 0 or not _is_ident_char(line[at - 1])
 		var end := at + name.length()
 		var after_ok := end >= line.length() or not _is_ident_char(line[end])
 		if before_ok and after_ok:
 			return true
-		from = at + 1
+		at = line.find(name, at + 1)
 	return false
 
 
