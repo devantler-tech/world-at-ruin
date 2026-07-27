@@ -294,10 +294,18 @@ func _reconcile_boot_recovery() -> void:
 	#
 	# A pending marker is the whole test: every ok-true path of reconcile clears
 	# a non-null marker, and the only path that leaves the state untouched is the
-	# one where nothing was pending. Then writing back would be a pointless
-	# rewrite of the player's file on every single launch.
+	# one where nothing was pending. An existing document then needs no rewrite,
+	# but an absent first-boot path must persist the active writer schema once.
+	# The load result owns that distinction; a caller-side existence check could
+	# become stale before load_state consumes a concurrently-created v0 file.
 	var pending: Variant = (state as Dictionary).get("marker") if state is Dictionary else null
 	if pending == null:
+		if loaded.get("path_was_missing", false) as bool and loaded["ok"] as bool:
+			# Keep initialization conditional through the final replace: a cloud
+			# sync writer may create valid v0 state after the missing load.
+			var initialized := BootRecovery.save_state(path, state, true)
+			if not (initialized["ok"] as bool):
+				push_warning("boot recovery: first-boot state was not persisted — %s" % str(initialized["reason"]))
 		return
 
 	var failed := str(settled["quarantined_version"])

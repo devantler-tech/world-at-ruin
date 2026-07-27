@@ -15,14 +15,14 @@ extends Node
 ## boot could clear it. The tests below therefore assert reconcile behaviour, and
 ## the ABSENCE of marking is itself part of the contract (phase A).
 ##
-## Structure — four boots, because a single one cannot separate "the guard ran"
+## Structure — five boots, because a single one cannot separate "the guard ran"
 ## from "the guard is absent and the file happened to look right":
-##  A. NEGATIVE CONTROL — a clean boot must quarantine NOTHING, and must not
-##     mark anything either. Without this the quarantine asserted in B is
-##     worthless: a wiring that quarantined on every launch would satisfy B on
-##     its own. It also pins the no-marking decision, so re-introducing
-##     `begin_attempt` here fails loudly rather than silently reviving the
-##     unrecoverable case.
+##  A. NEGATIVE CONTROL — a clean boot must persist the active writer schema,
+##     quarantine NOTHING, and must not mark anything either. Without this the
+##     quarantine asserted in B is worthless: a wiring that quarantined on every
+##     launch would satisfy B on its own. It also pins the no-marking decision,
+##     so re-introducing `begin_attempt` here fails loudly rather than silently
+##     reviving the unrecoverable case.
 ##  B. POSITIVE — seed a marker, as a launch that died before its checkpoint
 ##     would have left, and require the NEXT boot to quarantine exactly that
 ##     build and refuse to re-mount it. This is the load-bearing liveness proof:
@@ -66,7 +66,7 @@ const UNREADABLE_MARKER := "42"
 var _ticks := 0
 var _main: Node
 var _save: SaveIsolation
-## Which of the four boots is running.
+## Which of the five boots is running.
 var _phase := "control"
 
 
@@ -157,29 +157,30 @@ func _physics_process(_delta: float) -> void:
 			_assert_unreadable_marker()
 
 
-## A. A clean boot quarantines nothing and marks nothing.
-##
-## With nothing pending there is nothing to record, so writing no file at all is
-## the CORRECT outcome — a launch must not rewrite the player's ledger just to
-## say "still fine". Either shape is accepted; what is refused is a spurious
-## quarantine, or a marker, which is what re-introducing begin_attempt here
-## would produce.
+## A. A clean boot persists the active writer schema, quarantines nothing and
+## marks nothing.
 func _assert_control() -> void:
 	var raw: Variant = _read_probe()
-	if raw != null:
-		var doc: Dictionary = raw
-		var ledger := doc.get("quarantined", []) as Array
-		if not ledger.is_empty():
-			_fail(("VACUOUS TEST GUARD: a clean boot quarantined %s. Nothing failed, so the "
-				+ "quarantine asserted in the next phase would prove nothing") % str(ledger))
-			return
-		if doc.get("marker") != null:
-			_fail(("a clean boot left a boot-attempt marker (%s). Marking the RUNNING build is "
-				+ "unrecoverable — an interrupted startup quarantines the installed build, and "
-				+ "begin_attempt refuses quarantined versions, so no later successful boot can "
-				+ "ever clear it. Marking belongs to the pack-mount path")
-				% str(doc.get("marker")))
-			return
+	if raw == null:
+		_fail("a clean first boot did not persist boot recovery schema v%d" % BootRecovery.WRITE_VERSION)
+		return
+	var doc: Dictionary = raw
+	if doc.get("version", -1) != BootRecovery.WRITE_VERSION:
+		_fail("a clean first boot persisted recovery schema %s instead of active writer schema v%d" % [
+			str(doc.get("version")), BootRecovery.WRITE_VERSION])
+		return
+	var ledger := doc.get("quarantined", []) as Array
+	if not ledger.is_empty():
+		_fail(("VACUOUS TEST GUARD: a clean boot quarantined %s. Nothing failed, so the "
+			+ "quarantine asserted in the next phase would prove nothing") % str(ledger))
+		return
+	if doc.get("marker") != null:
+		_fail(("a clean boot left a boot-attempt marker (%s). Marking the RUNNING build is "
+			+ "unrecoverable — an interrupted startup quarantines the installed build, and "
+			+ "begin_attempt refuses quarantined versions, so no later successful boot can "
+			+ "ever clear it. Marking belongs to the pack-mount path")
+			% str(doc.get("marker")))
+		return
 	if not _save.real_save_untouched():
 		_fail("the control boot touched the player's real save, vault or recovery ledger")
 		return
@@ -279,10 +280,12 @@ func _assert_unreadable_marker() -> void:
 	if not _save.real_save_untouched():
 		_fail("the unreadable-marker boot touched the player's real save, vault or recovery ledger")
 		return
-	print(("TEST PASS — reconcile is live: a clean boot quarantines and marks nothing, a marker "
-		+ "left by a dead launch quarantines %s and refuses to re-mount it, a torn or "
+	print(("TEST PASS — reconcile is live: a clean first boot persists recovery v%d while "
+		+ "quarantining and marking nothing, a marker left by a dead launch quarantines %s "
+		+ "and refuses to re-mount it, a torn or "
 		+ "self-quarantined ledger still boots the game, and a pending-but-unreadable marker is "
-		+ "cleared on disk rather than wedging every future launch") % FAILED_VERSION)
+		+ "cleared on disk rather than wedging every future launch")
+		% [BootRecovery.WRITE_VERSION, FAILED_VERSION])
 	get_tree().quit(0)
 
 
