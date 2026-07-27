@@ -26,6 +26,10 @@ const ENTRY_DIR := "res://devlog/"
 ## every entry file put that work inside the launch path, where it competed with
 ## the recovery ledger's read-modify-write and made `boot_ledger_boot_test`
 ## intermittent. Nothing on the boot path pays for the log now.
+## Constant in spirit but read from disk, so it cannot be a `const` — the same
+## shape as `CaveAtmosphere.PROBE_OFFSETS`, and named to match how every caller
+## already reads it.
+# gdlint:ignore = class-variable-name
 static var ENTRIES: Array[Dictionary]:
 	get:
 		if not _loaded:
