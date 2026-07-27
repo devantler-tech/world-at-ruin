@@ -36,6 +36,16 @@ jobs:
         run: tools/test-cd-cask-branch-reset.sh
       - name: Retained boot-recovery reader gate is pinned and fail-closed
         run: ./tools/retained-boot-recovery-reader-guard.test.sh
+      - name: Dev-log entry version guard is pinned and fail-closed
+        run: ./tools/devlog-entry-version-guard.test.sh
+      - name: Dev-log entry names an unreleased version
+        # An entry's version is a hand-written prediction of the next release.
+        # Checked here, at the last point before the change merges, so the tag
+        # list it is measured against is as close to final as CI can see.
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: ./tools/devlog-entry-version-guard.sh
       - name: Version ledger is append-only (no-resets law)
         # The in-game guard anchors the required fixture range to
         # tests/data/shipped_recipe_versions.txt, but a checkout-local file
