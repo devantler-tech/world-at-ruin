@@ -118,7 +118,12 @@ const GUARANTEE_CALL := "real_save_untouched("
 const QUIT_CALL := "quit("
 const SUCCESS_QUIT_ARGS := ["0", ""]
 
-## Tokens that CONSUME a boolean, so the guarantee's answer is acted on.
+## Callable spellings that invoke a method without a direct `name(` — normalised
+## back to a direct call before scanning, so one scanner covers them all.
+const DEFERRED_CALL_FORMS := [".call_deferred(", ".call(", ".callv(", ".bind("]
+
+## Tokens that read a boolean IN PLACE, so the guarantee's answer is acted on
+## right where it is produced.
 ##
 ## 🔴 Calling it is still not enough. `real_save_untouched()` clears the seams as
 ## a side effect, so a harness can swap a bare `end()` for a bare
@@ -127,7 +132,12 @@ const SUCCESS_QUIT_ARGS := ["0", ""]
 ## rung of the same ladder this guard keeps climbing: naming a class is not
 ## calling it, naming the call in prose is not calling it, and calling it without
 ## reading the result is not asserting it.
-const RESULT_USED_TOKENS := ["if ", "not ", "=", "return ", "assert(", "and ", "or ", "while "]
+##
+## Assignment is deliberately NOT in this list. `var untouched = …` with nothing
+## reading `untouched` discards the answer just as thoroughly, so an assignment
+## is accepted only when the bound name is mentioned again — see [method
+## _assigned_name] and its use above.
+const CONDITION_TOKENS := ["if ", "not ", "return ", "assert(", "and ", "or ", "while "]
 
 ## Line prefixes that begin a new TOP-LEVEL declaration, ending a function body.
 ##
@@ -135,8 +145,8 @@ const RESULT_USED_TOKENS := ["if ", "not ", "=", "return ", "assert(", "and ", "
 ## content at column zero, and treating that as a declaration would truncate the
 ## body and reject a correctly-guarded booter over string formatting alone.
 const DECLARATION_STARTS := [
-	"func ", "static func ", "const ", "var ", "@", "class ", "class_name",
-	"signal ", "enum ", "extends ",
+	"func ", "static func ", "const ", "var ", "static var ", "@", "class ",
+	"class_name", "signal ", "enum ", "extends ",
 ]
 
 ## A synthetic harness asserting the guarantee on its PASS path and NOT on its
@@ -229,6 +239,7 @@ func _ready() -> void:
 	var unguarded := PackedStringArray()
 	var unlocatable := PackedStringArray()
 	var stray_exit := PackedStringArray()
+	var nonterminal := PackedStringArray()
 	for file: String in sources:
 		if file in EXEMPT:
 			continue
@@ -257,6 +268,10 @@ func _ready() -> void:
 			unlocatable.append(file)
 		elif not _guards_failure_path(code):
 			unguarded.append(file)
+		elif _nonzero_quit(fail_body).is_empty():
+			# A `_fail` that exits 0 — or does not exit at all — is not a failure
+			# funnel, and every other law here assumes it is one.
+			nonterminal.append(file)
 		else:
 			# A guarded `_fail` proves nothing if some other path also exits
 			# failing without going through it.
@@ -290,6 +305,12 @@ func _ready() -> void:
 			% [unguarded.size(), ", ".join(unguarded), GUARANTEE_CALL])
 		return
 
+	if not nonterminal.is_empty():
+		_fail(("%d booter(s) have a `%s` that does not exit with a failure status: %s — a `_fail` "
+			+ "that quits 0, or does not quit at all, is not a failure funnel, and every other law "
+			+ "here assumes it is one: an assertion failure would report success or hang (#326)")
+			% [nonterminal.size(), FAIL_FUNC, ", ".join(nonterminal)])
+		return
 	if not stray_exit.is_empty():
 		_fail(("%d booter(s) exit failing WITHOUT going through `%s`: %s — a nonzero quit outside "
 			+ "that body skips the isolation check entirely, so the guarantee is asserted on one "
@@ -439,15 +460,40 @@ func _claims_isolation(code: String) -> bool:
 ## whole-file match makes that control fail immediately instead of silently
 ## passing every harness in the repo.
 func _guards_failure_path(code: String) -> bool:
-	for line: String in _fail_body(_executable(code)).split("\n"):
+	var body := _fail_body(_executable(code))
+	for line: String in body.split("\n"):
 		if not line.contains(GUARANTEE_CALL):
 			continue
-		# The call must appear where its answer is read — see RESULT_USED_TOKENS.
 		var before := line.substr(0, line.find(GUARANTEE_CALL))
-		for token: String in RESULT_USED_TOKENS:
+		# Used directly in a condition — the answer is read on this line.
+		for token: String in CONDITION_TOKENS:
 			if before.contains(token):
 				return true
+		# Stored in a variable. That only counts if something LATER reads it:
+		# `var untouched = _save.real_save_untouched()` with no further mention
+		# discards the answer exactly as a bare call would.
+		var name := _assigned_name(before)
+		if name.is_empty():
+			continue
+		for other: String in body.split("\n"):
+			if other != line and other.contains(name):
+				return true
 	return false
+
+
+## The variable an assignment prefix binds to, or "" when the prefix is not an
+## assignment. Handles `x =`, `var x =` and `var x: T :=`.
+func _assigned_name(before: String) -> String:
+	var eq := before.find("=")
+	if eq < 0:
+		return ""
+	var lhs := before.substr(0, eq).strip_edges().trim_suffix(":")
+	lhs = lhs.trim_prefix("var ").trim_prefix("static var ").strip_edges()
+	# Drop an explicit type annotation: `x: bool` binds `x`.
+	var colon := lhs.find(":")
+	if colon >= 0:
+		lhs = lhs.substr(0, colon).strip_edges()
+	return lhs if lhs.is_valid_identifier() else ""
 
 
 ## `code` reduced to what actually RUNS: string contents blanked, then comments
@@ -531,7 +577,13 @@ func _executable(code: String) -> String:
 ## name it — a guard that says only "something is wrong" costs the next person a
 ## bisect.
 func _nonzero_quit(region: String) -> String:
-	var parts := region.split(QUIT_CALL)
+	# `quit.call_deferred(2)` is a real failing exit that contains no `quit(`.
+	# Normalising the callable forms back to a direct call keeps ONE scanner
+	# instead of a growing list of spellings to match.
+	var direct := region
+	for form: String in DEFERRED_CALL_FORMS:
+		direct = direct.replace(form, "(")
+	var parts := direct.split(QUIT_CALL)
 	for i in range(1, parts.size()):
 		var rest: String = parts[i]
 		var close := rest.find(")")
