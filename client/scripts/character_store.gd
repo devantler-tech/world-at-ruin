@@ -121,6 +121,17 @@ static func save_to(path: String, recipe: Dictionary) -> bool:
 		return false
 	file.store_string(JSON.stringify(recipe, "  "))
 	file.close()
+	# Re-check immediately before the replacement. The check above is a
+	# point-in-time reading, and the actors this store is written against — cloud
+	# sync, a second client — can install a recipe this build cannot accept while
+	# the temp file is being written. Without this the write would replace a
+	# newly-arrived character having never refused or latched it, which is the
+	# exact loss the latch exists to prevent. The residual window is the rename
+	# itself; the vault narrows the same window the same way.
+	if not can_write(path):
+		push_error("CharacterStore: refusing to replace %s — its recipe changed to one this build cannot accept" % path)
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(tmp_path))
+		return false
 	var err := DirAccess.rename_absolute(
 		ProjectSettings.globalize_path(tmp_path), ProjectSettings.globalize_path(path))
 	if err != OK:

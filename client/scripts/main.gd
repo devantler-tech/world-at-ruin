@@ -516,7 +516,19 @@ func _open_creator(first_run: bool) -> void:
 	# the same write independently, so this is the door and that is the lock.
 	if _save_blocked:
 		return
+	var save_path := CharacterStore.save_path()
 	var initial = CharacterStore.load_saved()
+	if initial is not Dictionary and CharacterStore.is_refused(save_path):
+		# The file changed since boot — corrupted, or replaced by a newer build's
+		# recipe — so the refusal is discovered HERE rather than at startup. It is
+		# the same state, and it gets the same answer: lock the creator instead of
+		# opening it over a character this build cannot read. Falling through
+		# would open the editor on the wanderer preset, and applying would change
+		# the body on screen while the store refused to persist it — telling the
+		# player their character was saved when it was not.
+		_save_blocked = true
+		_notify(REFUSED_SAVE_NOTICE)
+		return
 	if initial is not Dictionary:
 		initial = CharacterFactory.load_recipe("res://recipes/wanderer.json")
 		if initial is Dictionary:
@@ -526,7 +538,14 @@ func _open_creator(first_run: bool) -> void:
 	_creator = CharacterCreator.new()
 	add_child(_creator)
 	_creator.applied.connect(func(recipe: Dictionary) -> void:
-		CharacterStore.save_recipe(recipe)
+		# Only claim the body changed if it was actually recorded. The store can
+		# refuse between opening the creator and applying, and showing the new
+		# body with a success line would tell the player they are saved when the
+		# next launch will show them someone else.
+		if not CharacterStore.save_recipe(recipe):
+			_save_blocked = true
+			_hud.toast(REFUSED_SAVE_NOTICE)
+			return
 		_player.set_character(recipe)
 		_hud.toast("The body remembers its new shape." if not first_run
 			else "You wake in the dark. Embers, and a mouth of light ahead."))

@@ -110,6 +110,8 @@ func _assert_control() -> void:
 	if _toast_text() == _main.get("REFUSED_SAVE_NOTICE"):
 		_fail("a boot with no character told the player their save had been refused")
 		return
+	if not _check_refusal_discovered_after_boot():
+		return
 	if not _save.real_save_untouched():
 		_fail("the control boot touched the player's real save or vault")
 		return
@@ -154,6 +156,40 @@ func _assert_refusal() -> void:
 	_main = null
 	print("TEST PASS — a refused character survives the boot untouched and no writer can replace it")
 	get_tree().quit(0)
+
+
+## A refusal can be discovered AFTER boot: the save is fine at startup and then
+## a newer build's client or a bad write replaces it mid-session. Opening the
+## editor then must lock, not fall back to the first-run preset — otherwise the
+## body on screen changes while the store refuses to persist it, and the player
+## is told they were saved when the next launch will show them someone else.
+##
+## Runs on the control boot, which started with no character, so nothing was
+## latched at startup and the refusal here can only come from the new file.
+## Returns false when it failed (the caller stops).
+func _check_refusal_discovered_after_boot() -> bool:
+	var path := CharacterStore.save_path()
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	if file == null:
+		_fail("could not seed the post-boot corrupt recipe")
+		return false
+	file.store_string("{ truncated mid-write")
+	file.close()
+	var before := FileAccess.get_sha256(path)
+	_main.call("_open_creator", false)
+	if not bool(_main.get("_save_blocked")):
+		_fail("a refusal discovered after boot did not lock the creator")
+		return false
+	if _toast_text() != _main.get("REFUSED_SAVE_NOTICE"):
+		_fail("a refusal discovered after boot did not tell the player")
+		return false
+	if FileAccess.get_sha256(path) != before:
+		_fail("a refusal discovered after boot modified the file")
+		return false
+	# Leave the probe as the control boot found it, so the isolation assertion
+	# and the seeded boot both start clean.
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	return true
 
 
 ## What the HUD is currently saying to the player, or "" when it has no HUD or
