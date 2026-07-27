@@ -1119,8 +1119,8 @@ func _place_boulders(lay: Dictionary, terrain_h: Callable) -> void:
 	# The PORTAL: the massif's own arch is the lintel; two jamb slabs lean at
 	# the doorway's shoulders, flanking boulders scatter outward — a stone
 	# doorway in a hillside, the reference grammar.
-	var jamb_left := _slab(rng, rock, Vector3(2.0, 4.6, 1.6))
-	var jamb_right := _slab(rng, rock, Vector3(2.0, 4.4, 1.6))
+	var jamb_left := _slab(rock, Vector3(2.0, 4.6, 1.6))
+	var jamb_right := _slab(rock, Vector3(2.0, 4.4, 1.6))
 	var ground_l: float = terrain_h.call(mouth.x + 1.4, 3.3)
 	var ground_r: float = terrain_h.call(mouth.x + 1.4, -3.3)
 	jamb_left.position = Vector3(mouth.x + 1.4, ground_l + 1.7, 3.3)
@@ -1137,13 +1137,13 @@ func _place_boulders(lay: Dictionary, terrain_h: Callable) -> void:
 		var size := Vector3(rng.randf_range(1.3, 2.2), rng.randf_range(1.8, 3.2), rng.randf_range(1.1, 1.9))
 		var at := spot + Vector3(rng.randf_range(-0.4, 0.4), 0.0, rng.randf_range(-0.3, 0.3))
 		var ground: float = terrain_h.call(at.x, at.z)
-		var boulder := _slab(rng, rock, size)
+		var boulder := _slab(rock, size)
 		# A third buried, leaning like a fallen slab.
 		boulder.position = Vector3(at.x, ground + size.y * 0.32, at.z)
 		boulder.rotation = Vector3(rng.randf_range(-0.28, 0.1), rng.randf_range(0.0, TAU), rng.randf_range(-0.25, 0.25))
 
 
-func _slab(rng: RandomNumberGenerator, rock: StandardMaterial3D, size: Vector3) -> StaticBody3D:
+func _slab(rock: StandardMaterial3D, size: Vector3) -> StaticBody3D:
 	var body := StaticBody3D.new()
 	var mi := MeshInstance3D.new()
 	var box := BoxMesh.new()

@@ -504,7 +504,10 @@ everything shipped afterwards is held to.
   project mount) and every absence-of-error check then passes vacuously.
   Then run the regression tests: `godot --headless --path client res://tests/<name>.tscn` for each
   scene under `client/tests/`. CI (`ci.yaml`) runs exactly this, plus the `license-guard` job (no
-  GPL/AGPL texts in the tree) and the `Server CI (Go)` job (below).
+  GPL/AGPL texts in the tree), the `GDScript lint` job, and the `Server CI (Go)` job (below).
+  GDScript lint uses `gdtoolkit==4.5.0` with the repository's explicit `.gdlintrc`; after installing
+  that pinned tool, run `./tools/gdscript-lint.test.sh` to prove the policy rejects a real invalid
+  fixture and `./tools/gdscript-lint.sh client` to lint the product tree. Both are blocking in CI.
 - **Adding a test needs NO `ci.yaml` edit:** name the scene `<name>_test.tscn` and put it directly
   under `client/tests/` — CI's "Regression tests" step auto-discovers `client/tests/*_test.tscn`
   (issue #50; the old hardcoded list forced every parallel test-adding PR to collide on one line).
