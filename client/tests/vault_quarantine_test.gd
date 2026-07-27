@@ -23,6 +23,8 @@ extends Node
 ##     never reused.
 ##  7. A malformed window override keeps the SHIPPED window, so the age gate can
 ##     never be shortened by accident — the direction that could destroy state.
+##  8. A zero-byte vault — the commonest corruption a crash or a full disk leaves
+##     — is set aside like any other unreadable bytes, and saving works after.
 ##
 ## Everything runs through the WAR_VAULT_PATH seam against a throwaway path, so
 ## the player's own user://vault.json is never read, written or moved
@@ -162,6 +164,27 @@ func _ready() -> void:
 	_write(PROBE, CORRUPT_BYTES)
 	if not SaveVault.quarantine_unreadable(PROBE).is_empty():
 		_fail("a malformed window override let a fresh corrupt vault be set aside")
+		return
+
+	# 8. The commonest corruption of all: a zero-byte file. A crash between
+	#    creating the temp file and writing it, or a full disk, leaves nothing
+	#    rather than half a document — and an empty file parses as no vault in any
+	#    version, so it must be set aside like any other unreadable bytes.
+	_reset_state()
+	OS.set_environment(SaveVault.QUARANTINE_MIN_AGE_ENV, "0")
+	_write(PROBE, "")
+	if not FileAccess.file_exists(PROBE):
+		_fail("the empty probe vault was not created")
+		return
+	var emptied := SaveVault.quarantine_unreadable(PROBE)
+	if emptied.is_empty():
+		_fail("a zero-byte vault was not set aside — the commonest corruption still wedges saving")
+		return
+	if FileAccess.file_exists(PROBE):
+		_fail("the zero-byte vault is still in place after being set aside")
+		return
+	if not SaveVault.persist_attunement(SaveVault.SHRINE_WARDENS):
+		_fail("progression still would not persist after a zero-byte vault was set aside")
 		return
 
 	_cleanup()
