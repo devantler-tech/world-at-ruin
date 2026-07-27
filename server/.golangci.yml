@@ -1,0 +1,40 @@
+version: "2"
+run:
+  allow-parallel-runners: true
+  modules-download-mode: readonly
+  go: "1.26.5"
+linters:
+  default: none
+  enable:
+    - asasalint
+    - bodyclose
+    - contextcheck
+    - copyloopvar
+    - durationcheck
+    - errcheck
+    - errorlint
+    - exhaustive
+    - fatcontext
+    - forcetypeassert
+    - gocritic
+    - gosec
+    - govet
+    - ineffassign
+    - makezero
+    - nilerr
+    - noctx
+    - protogetter
+    - reassign
+    - recvcheck
+    - staticcheck
+    - testifylint
+    - thelper
+    - tparallel
+    - unconvert
+    - unparam
+    - unused
+    - wastedassign
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  new-from-merge-base: origin/main
