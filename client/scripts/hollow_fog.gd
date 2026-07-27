@@ -104,8 +104,12 @@ const POOL_HEIGHT := 6.0
 ## POOL_HEIGHT. Slightly under half, so the densest part hugs the ground.
 const POOL_LIFT_FRACTION := 0.38
 ## Added density at the pool's core, on top of the environment's baseline
-## volumetric density (0.005). An order of magnitude over that baseline, which
-## is what makes a hollow read as thicker air rather than as more of the same.
+## volumetric density ([constant Volumetrics.DENSITY]). Well over that baseline,
+## which is what makes a hollow read as thicker air rather than as more of the
+## same — and note the caveat below that the two are not the same unit, so the
+## ratio is an indication rather than a measurement. Named rather than written
+## out, because that baseline moves: #273 lowered it and this comment would
+## otherwise still be quoting the old number.
 ##
 ## This is the first value here ever judged on a rendered frame. Every earlier
 ## one was inert: build_volume() configured a FogMaterial but never assigned it,
@@ -121,7 +125,9 @@ const POOL_LIFT_FRACTION := 0.38
 ## Density at a pool's core, at full depth.
 ##
 ## ⚠️ FogMaterial.density is NOT the same unit as
-## Environment.volumetric_fog_density (0.005 there). It is a multiplier applied
+## Environment.volumetric_fog_density ([constant Volumetrics.DENSITY] there). It
+## is why lowering that baseline for #273 left these pools exactly as thick as
+## they were: this value is not derived from it. It is a multiplier applied
 ## within the volume and Godot's own default is 1.0, so a value picked on the
 ## environment's scale renders as nothing at all. Tuned by rendering the same
 ## vantage and judging the frames: 0.005 / 0.02 / 0.05 / 0.12 are all

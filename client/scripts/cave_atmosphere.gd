@@ -66,7 +66,22 @@ class_name CaveAtmosphere
 ## fog term buys a further 0.1pp. Whatever is left indoors is not worth the
 ## complexity of a second fade. A new fog term joins this function only if it is
 ## a property of the sky.
-const SURFACE_HEIGHT_DENSITY := 0.06
+##
+## Trimmed by a quarter for #273, and only by a quarter. Measured at the
+## `bonepale` vantage, this term is the near-field half of what flattens ground
+## colour: neutralising it recovers +20% of the separation a player can see,
+## while at distance it is worth +4% and the volumetric term carries that end
+## instead. So the cut is spent mostly on the volumetric haze, which buys more
+## on both axes, and this term gives up the least that still helps underfoot —
+## +21% near field with it left alone, +29% at three quarters.
+##
+## Cutting it as hard as the volumetric term was measured and rejected: it
+## reaches +42% near for +1 point at distance, and this is the term that shapes
+## the ash rather than the one that merely thickens the air. It is what makes
+## the Reach's weather gather in the hollows instead of hanging at one density
+## everywhere, and it is the term this module fades at a cave mouth — a third of
+## it would leave little for that fade to be about.
+const SURFACE_HEIGHT_DENSITY := 0.045
 const POOL_START_HEIGHT := 6.0
 
 ## How far up a probe looks for rock. Matches the reach `frame_capture`'s own
