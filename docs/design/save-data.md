@@ -293,6 +293,12 @@ catastrophic rather than helpful.
   between the read and the hash would be recorded as the expectation while the merge still held the old
   document, and the comparison would pass. Captured before, that interleaving makes the expectation
   stale and the write refuses. Both orders leave a window; only this one fails safe.
+- Each write **stages through a private per-attempt path** (`vault.json.tmp-<pid>-<ticks>`), never a
+  shared `vault.json.tmp`. The compare-and-swap verifies the *target*, so it cannot see a foreign
+  writer truncating the staged document between serialisation and the rename — the target is untouched,
+  every check passes, and the rename would commit the other writer's partial bytes while reporting
+  success. A per-attempt name removes the sharing rather than detecting it. Abandoned staging files are
+  swept under the write lock, which a fixed name previously got for free by being overwritten.
 - **The residual is a shrunk window, not a closed one.** Verify-then-rename is two operations, so the
   gap narrows to the rename syscall. Closing it needs a lock the OS holds across the rename (`flock`,
   `O_EXCL`), which Godot's `FileAccess`/`DirAccess` do not expose. The gain is turning a *silent* lost

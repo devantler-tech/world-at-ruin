@@ -438,7 +438,13 @@ everything shipped afterwards is held to.
   Godot does not expose — so the gain is a DETECTED refusal in place of a silent lost update.
   `SaveVault._last_write_expectation` exists solely so a test can prove the production path threads a
   real identity: a helper writing blind is indistinguishable from a correct one until something races
-  it, and that ablation was measured passing every end-to-end assertion. Contention degrades to session-only rather than blocking
+  it, and that ablation was measured passing every end-to-end assertion. **Each write stages through a
+  PRIVATE `vault.json.tmp-<pid>-<ticks>`, never a shared `vault.json.tmp`** — the CAS verifies the
+  target, so a pre-lock build truncating our staged document leaves `path` untouched, passes every
+  check, and gets its partial bytes committed by our rename. Do not "simplify" staging back to a fixed
+  name; `_sweep_abandoned_writes()` (under the lock, prefix-scoped) reclaims what a fixed name used to
+  get for free by being overwritten, and tests must match staging files by PREFIX or they assert
+  vacuously. Contention degrades to session-only rather than blocking
   a boot, and the stale timeout is generous on purpose — shortening it to make writes prompt would let
   a live writer be robbed mid-write. Tests redirect it with `WAR_VAULT_PATH`, mirroring
   `WAR_SAVE_PATH`, and seam the timeout with `WAR_VAULT_LOCK_STALE_SECONDS` (test-only; malformed or
