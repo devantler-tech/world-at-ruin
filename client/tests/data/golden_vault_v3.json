@@ -1,0 +1,15 @@
+{
+  "version": 3,
+  "comment": "GOLDEN VAULT v3 — the reader-expansion contract for append-only claimed exploration rewards (no-resets law). This build reads and preserves the shape but does not originate it until the expansion release bakes.",
+  "attuned": [
+    "wardens_shrine"
+  ],
+  "discoveries": [
+    "starter_cave",
+    "wardens_shrine"
+  ],
+  "reward_claims": [
+    "future_place",
+    "starter_cave"
+  ]
+}
