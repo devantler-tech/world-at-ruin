@@ -1978,6 +1978,26 @@ jobs:
             grep -nE "SHADER ERROR|Shader compilation failed" run.log | head -20
             exit 1
           fi
+          # The phase marker says the tool finished; it does not say the game
+          # was healthy while it shot. A capture that half-booted, or that hit
+          # a script error after the world built, still writes renderable
+          # frames — and publishing those as movement evidence is worse than
+          # publishing none. Same two checks the world capture makes, including
+          # its Metal `timeout waiting for fence` exemption (a virtualised
+          # adapter retry that recovers, not a render fault) and its
+          # filter-to-a-FILE form, which avoids the pipefail/SIGPIPE hazard
+          # where `grep -v … | grep -q …` can read as "no errors found".
+          if ! grep -q "BOOT_OK" run.log; then
+            echo "::error::run capture never reached BOOT_OK — frames depict a partially booted game"
+            tail -40 run.log; exit 1
+          fi
+          grep -vE "timeout waiting for fence|drivers/metal/rendering_device_driver_metal" \
+            run.log > run.filtered.log || true
+          if grep -qE "SCRIPT ERROR|^ERROR" run.filtered.log; then
+            echo "::error::errors during the run capture — the frames may not depict a healthy game"
+            grep -nE "SCRIPT ERROR|^ERROR" run.filtered.log | head -20
+            exit 1
+          fi
       - name: Frames actually exist
         # The tool fails closed on a uniform frame, but never trust a single
         # signal: confirm real files landed before advertising an artifact.

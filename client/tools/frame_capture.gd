@@ -1187,11 +1187,14 @@ func _capture_breath(dir: String, main: Node) -> void:
 ## real difference is which pose the shipping driver is asked for. A copied
 ## second capture would drift from this one the first time either is retuned.
 ##
-## The flag is read when Player binds its recipe body, so the caller must set
-## `WAR_WALK_CYCLE=1` before this scene boots. The runtime driver is then
-## stopped with Player physics, and its own `apply_phase` method poses the
-## sequence deterministically — the evidence uses the shipping implementation,
-## not a preview copy.
+## Each gait has its OWN opt-in, and the flag is read when Player binds its
+## recipe body — so the caller must export the flag for the gait it wants
+## before this scene boots: `WAR_WALK_CYCLE=1` for `walk`, `WAR_RUN_CYCLE=1`
+## for `run`. Setting the wrong one is refused below rather than quietly
+## photographing a standing body. The runtime driver is then stopped with
+## Player physics, and its own `apply_phase` method poses the sequence
+## deterministically — the evidence uses the shipping implementation, not a
+## preview copy.
 func _capture_gait(dir: String, main: Node, running: bool) -> void:
 	var gait := "run" if running else "walk"
 	for i in WARMUP_FRAMES:
