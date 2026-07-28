@@ -4,8 +4,9 @@ extends Node3D
 ## Taste-gate gallery for the character system (issue #24, stage 2): every
 ## recipe under res://recipes/ built by CharacterFactory and lined up under
 ## the taste lighting. Open scenes/recipes.tscn in the editor — edit a recipe
-## JSON or toggle `refresh` to rebuild. Runs headless in CI via the factory
-## test; will later be where new NPC/enemy silhouettes are judged.
+## JSON or toggle `refresh` to rebuild. Runs headless in CI via
+## character_body_swap_test; will later be where new NPC/enemy silhouettes are
+## judged.
 
 const RECIPES_DIR := "res://recipes/"
 const SPACING := 1.5
