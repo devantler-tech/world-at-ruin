@@ -23,6 +23,12 @@ const HINT_DWELL_SECONDS := 6.0
 ## Slow enough to read as the HUD stepping back rather than a draw glitch.
 const HINT_FADE_SECONDS := 0.8
 
+## The affordance's box, as offsets from the bottom-right of the window. It sits
+## a row BELOW the hint bar's 46px so a pinned bar and it never overlap.
+const AFFORDANCE_SIDE_MARGIN := 18.0
+const AFFORDANCE_BASELINE := 26.0
+const AFFORDANCE_HEIGHT := 20.0
+
 ## Clear space either side of a toast, in pixels from the viewport edge. At the
 ## shipped 1600-wide viewport this leaves an 1100px column — the longest message
 ## this build can produce is a combined boot notice measuring 1249px, so it wraps
@@ -86,7 +92,10 @@ func _on_device_changed(device: int) -> void:
 	reveal_hints()
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event.is_action_pressed("toggle_hints"):
+	# Gated on the flag, not just on `toggle_hints()`'s own guard: consuming the
+	# event in a build that then does nothing with it would be a change to the
+	# default path, and the whole point of default-off is that there is none.
+	if _contextual_hints and event.is_action_pressed("toggle_hints"):
 		toggle_hints()
 		get_viewport().set_input_as_handled()
 		return
@@ -146,9 +155,17 @@ func _build_hint_affordance() -> void:
 	_hint_affordance.add_theme_color_override("font_color", UiTheme.BONE_DIM)
 	_hint_affordance.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
 	_hint_affordance.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	_hint_affordance.offset_right = -18
+	# Offsets from the window edges, never `position` — the same reasoning the
+	# toast records. Assigning `position` to an anchored Control re-derives the
+	# offsets from whatever size the rect is holding at that instant, so the
+	# right edge lands wherever layout left it: measured at 1690px inside a
+	# 1600px window, which pushed this right-aligned text clean off the screen
+	# while `visible`, `modulate` and `text` all still read perfectly correct.
+	_hint_affordance.offset_left = 0.0
+	_hint_affordance.offset_right = -AFFORDANCE_SIDE_MARGIN
 	# A row below the hint bar, so a pinned bar and this never collide.
-	_hint_affordance.position.y -= 26
+	_hint_affordance.offset_top = -AFFORDANCE_BASELINE
+	_hint_affordance.offset_bottom = -AFFORDANCE_BASELINE + AFFORDANCE_HEIGHT
 	add_child(_hint_affordance)
 
 

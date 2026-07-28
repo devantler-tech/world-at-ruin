@@ -50,11 +50,30 @@ const SETTLE_SECONDS := 1.8
 const KEYBOARD_TOGGLE := "H"
 const PAD_TOGGLE := "RB"
 
+## The shipped viewport (project.godot's `window/size/viewport_*`), restated
+## here so a placement assertion is measured against the size the player runs
+## rather than whatever window the harness happened to open.
+const WINDOW_WIDTH := 1600
+const WINDOW_HEIGHT := 900
+
 var _failed := false
 
 
 func _ready() -> void:
 	Player.ensure_input_actions()
+	# Headless boots a 64x64 dummy window, which is SMALLER than the hint labels'
+	# own minimum size — every Control's rect is then clamped up to its content
+	# and the placement assertions below would fail on correct code while
+	# telling us nothing. Ask for the shipped viewport so the layout under test
+	# is the layout the player gets.
+	get_tree().root.size = Vector2i(WINDOW_WIDTH, WINDOW_HEIGHT)
+	await get_tree().process_frame
+	if get_tree().root.size.x != WINDOW_WIDTH:
+		print("TEST FAIL — could not size the test window to %dx%d (got %s); "
+			% [WINDOW_WIDTH, WINDOW_HEIGHT, get_tree().root.size]
+			+ "the placement assertions would be measuring the dummy window")
+		get_tree().quit(1)
+		return
 
 	await _test_default_stays_permanent()
 	if _failed:
@@ -103,6 +122,15 @@ func _test_default_stays_permanent() -> void:
 	_check(hud.hints_visible(),
 		"the default hint bar is STILL visible long past any dwell (alpha %.2f)"
 			% _hints_alpha(hud))
+	if _failed:
+		await _drop_hud(hud)
+		return
+
+	# The toggle key is registered in every build, so prove it is INERT here.
+	# A default build that could hide its own control bar would be exactly the
+	# player-visible change nobody opted into.
+	await _press_key(KEY_H)
+	_check(hud.hints_visible(), "the toggle key does nothing on the default bar")
 	await _drop_hud(hud)
 
 
@@ -166,6 +194,16 @@ func _test_affordance_is_derived() -> void:
 		return
 	_check(affordance.visible and affordance.modulate.a > 0.01,
 		"the affordance is on screen, so the control set is never unreachable")
+	# PLACEMENT, not just presence. `visible`, `modulate` and `text` all read
+	# correct on a label whose rect overhangs the window — and because this one
+	# is right-aligned, the text then draws past the edge and the player sees
+	# nothing at all. Measured on the first cut of this change: rect 1690px wide
+	# in a 1600px viewport, every assertion above green, and the corner empty in
+	# the captured frame. Geometry is the only assertion that catches it.
+	var view := hud.get_viewport().get_visible_rect()
+	var rect := affordance.get_global_rect()
+	_check(view.encloses(rect),
+		"the affordance's rect stays inside the window (rect %s, window %s)" % [rect, view])
 	_check(affordance.text.contains(KEYBOARD_TOGGLE),
 		"the affordance names the keyboard key that opens the set (was '%s')" % affordance.text)
 	# Derivation, not duplication: the text must be built from the live map.
