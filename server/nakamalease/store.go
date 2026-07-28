@@ -700,6 +700,33 @@ type document struct {
 	Releasing      bool   `json:"releasing,omitempty"`
 }
 
+// postLegacySchemaKeys are the document keys that postdate the legacy schema.
+var postLegacySchemaKeys = [...]string{"staging", "releasing"}
+
+// carriesPostLegacySchemaKey reports whether the encoded document contains one
+// of those keys, whatever its value. Presence is read from the raw keys rather
+// than inferred from a decoded field: a decoded value cannot separate an absent
+// key from one written as null, and duplicate keys resolve to the last
+// occurrence, so an earlier flag would be hidden by a later null.
+//
+// Casing is folded because encoding/json matches a field name
+// case-insensitively, so "Releasing" reaches the same field an exact lookup for
+// "releasing" would miss.
+func carriesPostLegacySchemaKey(value string) (bool, error) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(value), &raw); err != nil {
+		return false, err
+	}
+	for key := range raw {
+		for _, flag := range postLegacySchemaKeys {
+			if strings.EqualFold(key, flag) {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
 func documentFrom(lease Lease) document {
 	var claimedAtNanos *int64
 	if !lease.ClaimedAt.IsZero() {
@@ -730,10 +757,15 @@ func leaseFrom(value, userID, reservationID string) (Lease, error) {
 		return Lease{}, errors.New("nakama lease: invalid stored lease")
 	}
 	if (stored.Schema != schemaVersion && stored.Schema != legacySchemaVersion) ||
-		(stored.Schema == legacySchemaVersion && (stored.Staging || stored.Releasing)) ||
 		stored.ExpiresAtNanos <= 0 ||
 		(stored.ClaimedAtNanos != nil && *stored.ClaimedAtNanos <= 0) {
 		return Lease{}, errors.New("nakama lease: invalid stored lease")
+	}
+	if stored.Schema == legacySchemaVersion {
+		carried, err := carriesPostLegacySchemaKey(value)
+		if err != nil || carried {
+			return Lease{}, errors.New("nakama lease: invalid stored lease")
+		}
 	}
 	listed := userID == "" && reservationID == ""
 	if listed {
