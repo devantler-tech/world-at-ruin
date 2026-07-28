@@ -254,6 +254,16 @@ func _ready() -> void:
 	if int(no_claims.get("version", -1)) != 2 or no_claims.has("reward_claims"):
 		_fail("recording no reward claims churned a v2 vault to v3")
 		return
+	var malformed_claims := {
+		"version": 3,
+		"attuned": [],
+		"discoveries": ["starter_cave"],
+		"reward_claims": [42],
+	}
+	if not (vault_api.call(
+		"record_reward_claims", malformed_claims, ["starter_cave"]) as Dictionary).is_empty():
+		_fail("the reward writer laundered malformed existing progression into a valid v3 vault")
+		return
 
 	# 6. Save -> load round-trips.
 	if not SaveVault.save_to(PROBE, once):

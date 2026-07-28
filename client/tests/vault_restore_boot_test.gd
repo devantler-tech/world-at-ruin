@@ -80,6 +80,7 @@ var _restored := 0
 var _discovery_phase := ""
 var _retry_probe_dir := ""
 var _retry_vault := ""
+var _reward_retry_reposition_tick := -1
 
 
 func _ready() -> void:
@@ -269,6 +270,7 @@ func _begin_reward_writer_boot() -> void:
 func _begin_reward_retry_boot() -> void:
 	_discovery_phase = "reward_retry"
 	_ticks = 0
+	_reward_retry_reposition_tick = -1
 	if _main != null:
 		_main.queue_free()
 		_main = null
@@ -306,9 +308,21 @@ func _physics_process(_delta: float) -> void:
 	# can only come from the persisted vault.
 	if _discovery_phase in ["write", "reward_write"] and _ticks == 10:
 		player.global_position = Vector3(0.0, world.shrine_respawn_point().y, -13.0)
-	if _discovery_phase == "reward_retry" and _ticks == 1:
+	if _discovery_phase == "reward_retry" and _reward_retry_reposition_tick < 0:
 		player.global_position = Vector3(0.0, world.shrine_respawn_point().y, -13.0)
-	if _discovery_phase in ["retry", "reward_retry"] and _ticks == 3:
+		if player.global_position.distance_to(
+				Vector3(0.0, world.shrine_respawn_point().y, -13.0)) > EPS:
+			_fail("the reward-retry approach did not take before the persistence retry")
+			return
+		_reward_retry_reposition_tick = _ticks
+	var retry_path_due := (
+		_discovery_phase == "retry" and _ticks == 3
+	) or (
+		_discovery_phase == "reward_retry"
+		and _reward_retry_reposition_tick >= 0
+		and _ticks == _reward_retry_reposition_tick + 2
+	)
+	if retry_path_due:
 		if FileAccess.file_exists(_retry_vault):
 			_fail("the transient write unexpectedly succeeded before its parent directory existed")
 			return

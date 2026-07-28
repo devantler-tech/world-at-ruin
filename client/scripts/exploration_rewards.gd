@@ -98,6 +98,17 @@ func reward_for(poi_id: String) -> Dictionary:
 ## to pass the same ids again or ids with no reward. Marks the returned places
 ## claimed.
 func claim(found_ids: Array) -> Array[Dictionary]:
+	var granted: Array[Dictionary] = []
+	for poi_id: String in _claimable(found_ids):
+		_claimed[poi_id] = true
+		var reward: Dictionary = _rewards[poi_id]
+		granted.append(reward.duplicate(true))
+	return granted
+
+
+## The registered, unclaimed ids in `found_ids`, deduplicated and sorted. This
+## is the one definition of what a walk can grant for both claim paths.
+func _claimable(found_ids: Array) -> Array[String]:
 	var claimable: Array[String] = []
 	for raw_id: Variant in found_ids:
 		if raw_id is not String:
@@ -110,12 +121,7 @@ func claim(found_ids: Array) -> Array[Dictionary]:
 		if not claimable.has(poi_id):
 			claimable.append(poi_id)
 	claimable.sort()
-	var granted: Array[Dictionary] = []
-	for poi_id: String in claimable:
-		_claimed[poi_id] = true
-		var reward: Dictionary = _rewards[poi_id]
-		granted.append(reward.duplicate(true))
-	return granted
+	return claimable
 
 
 ## Whether the reward for `poi_id` has already been claimed. Safe (false) for an
@@ -160,22 +166,10 @@ func count() -> int:
 ## marked only after the callback returns, so an unapplied grant can never be
 ## consumed. Returns the successfully applied place ids for durable persistence.
 func claim_applied(found_ids: Array, apply: Callable) -> Array[String]:
-	var claimable: Array[String] = []
-	for raw_id: Variant in found_ids:
-		if raw_id is not String:
-			continue
-		var poi_id: String = raw_id
-		if not _rewards.has(poi_id):
-			continue
-		if _claimed.has(poi_id):
-			continue
-		if not claimable.has(poi_id):
-			claimable.append(poi_id)
-	claimable.sort()
 	var applied: Array[String] = []
 	if not apply.is_valid():
 		return applied
-	for poi_id: String in claimable:
+	for poi_id: String in _claimable(found_ids):
 		var reward: Dictionary = _rewards[poi_id]
 		var outcome: Variant = apply.call(poi_id, reward.duplicate(true))
 		if outcome is not bool or not outcome:

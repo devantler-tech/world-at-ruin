@@ -159,6 +159,20 @@ func _ready() -> void:
 	if _failed:
 		return
 
+	var guarded := ExplorationRewards.new()
+	guarded.add("place", {"kind": "lore", "id": "guarded"})
+	_check(guarded.claim_applied(["place"], Callable()).is_empty(), true,
+		"apply-first: an invalid callback applies and consumes nothing")
+	_check(guarded.claimed().is_empty(), true,
+		"apply-first: an invalid callback leaves the place claimable")
+	_check(guarded.claim_applied(
+		["place"], Callable(self, "_return_non_bool_for_test")).is_empty(), true,
+		"apply-first: a non-bool callback result is refused")
+	_check(guarded.claimed().is_empty(), true,
+		"apply-first: a non-bool callback result never consumes the place")
+	if _failed:
+		return
+
 	_rejected_apply = ""
 	var retried: Array = applied.call(
 		"claim_applied",
@@ -193,6 +207,10 @@ func _ready() -> void:
 
 	print("TEST PASS — exploration rewards hold (closed horizontal schema, forward-only, claim-once, deterministic, audited)")
 	get_tree().quit(0)
+
+
+func _return_non_bool_for_test(_poi_id: String, _reward: Dictionary) -> Variant:
+	return "not-applied"
 
 
 ## Runs the identical registration + claim script on two independent instances and

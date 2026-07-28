@@ -262,11 +262,14 @@ func _ready() -> void:
 		# Restore unknown future claims too: forgetting one during rollback could
 		# grant a reward that the newer client already consumed.
 		_exploration_rewards.restore(vault.get("reward_claims", []))
+		# A direct attunement is an explicit player choice and therefore wins
+		# over an automatically restored exploration waypoint. Compute that
+		# winner first, then apply it once after the other restored outcomes;
+		# precedence is a named policy rather than an accidental loop order.
+		var preferred_attunement: Variant = _preferred_attuned_respawn(vault, world)
 		_apply_restored_reward_outcomes()
-		for name: String in SaveVault.attuned(vault):
-			var point = RespawnPoints.resolve(name, world)
-			if point != null:
-				_player.set_respawn_point(point)
+		if preferred_attunement != null:
+			_player.set_respawn_point(preferred_attunement)
 		# A discovery may have persisted before its reward claim during a
 		# transient failure or an older release. Reconcile that durable discovery
 		# now; claim_applied keeps already-restored claims idempotent.
@@ -538,6 +541,20 @@ func _claim_exploration_rewards(found_ids: Array) -> void:
 			_reward_persistence_pending.append(name)
 	_reward_persistence_retry_in = 0.0
 	_reward_persistence_retry_delay = REWARD_PERSIST_RETRY_INITIAL_SECONDS
+
+
+## The final respawn point selected by direct attunement, or null when this
+## build cannot resolve one. Direct attunement has explicit precedence over an
+## automatically restored waypoint claim.
+func _preferred_attuned_respawn(vault: Dictionary, world: WorldGen) -> Variant:
+	var preferred: Variant = null
+	for name: String in SaveVault.attuned(vault):
+		var point = RespawnPoints.resolve(name, world)
+		if point != null:
+			# Attunements are append-only in stored order, so the latest
+			# resolvable direct choice retains the established v1 behaviour.
+			preferred = point
+	return preferred
 
 
 ## Re-apply the known outcomes represented by persisted claims. Unknown future
