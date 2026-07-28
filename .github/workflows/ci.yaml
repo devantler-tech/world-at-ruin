@@ -42,6 +42,8 @@ jobs:
         run: ./tools/devlog-entry-version-guard.test.sh
       - name: Save-capability vocabulary guard is pinned and fail-closed
         run: ./tools/save-capability-vocabulary-guard.test.sh
+      - name: Player-visible gate diffs from the PR's own base
+        run: ./tools/pr-diff-base.test.sh
       - name: Dev-log entry names an unreleased version
         # An entry's version is a hand-written prediction of the next release.
         # Checked here, at the last point before the change merges, so the tag
@@ -1248,8 +1250,17 @@ jobs:
         name: Does this PR touch anything a player could see?
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          if ! git cat-file -e "$BASE_SHA" 2>/dev/null; then
+          # base.sha is frozen at PR-creation time and never advances on
+          # synchronize, while the checkout is the merge ref GitHub rebuilds
+          # against current main — so diffing from it reports everything merged
+          # to main since the PR opened as though this PR had made it. The
+          # resolver returns the merge ref's own base-branch parent instead
+          # (#494); it is a separate, tested script because the stale-base case
+          # only reproduces when the base branch moves, which no assertion
+          # against this file could show.
+          if ! DIFF_BASE="$(./tools/pr-diff-base.sh "$HEAD_SHA" "$BASE_SHA")"; then
             # Cannot diff — assume BOTH, so evidence is never silently skipped.
             # first_run must be set here too: leaving it empty reads as false,
             # which would quietly drop first-run evidence in precisely the case
@@ -1298,7 +1309,12 @@ jobs:
           # here as "no match" and silently turns the gate OFF on exactly the
           # large PRs most likely to need it. Same hazard the capture-log check
           # below already avoids by writing to a file.
-          git diff --name-only "$BASE_SHA"...HEAD > changed.txt
+          git diff --name-only "$DIFF_BASE" HEAD > changed.txt
+          # Say which base was used and what it saw. Without this the gate's
+          # decision is unobservable after the fact, which is most of why the
+          # stale base in #494 survived as long as it did.
+          echo "Classifying $(wc -l < changed.txt | tr -d ' ') changed path(s) from base $DIFF_BASE:"
+          sed 's/^/  /' changed.txt
           # ci.yaml is in the visual list for the same reason it is in the
           # export-affecting list below, and the reason is now sharper: since
           # #142 the capture is a REQUIRED check, and a required job that its
