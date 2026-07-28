@@ -336,9 +336,13 @@ void fragment() {
 		// the stone of that place. Shifting by the difference moves the whole
 		// palette together, so the bedding contrast the three colors encode
 		// survives intact instead of being flattened toward one regional tint.
-		vec3 region_a = max(vec3(0.0), weathered_a + region_rock_delta);
-		vec3 region_b = max(vec3(0.0), weathered_b + region_rock_delta);
-		vec3 region_c = max(vec3(0.0), weathered_c + region_rock_delta);
+		// Clamped both ways: these are reflectances, so neither end means
+		// anything outside 0..1. The 2.1 gain below is a separate artistic
+		// term and is deliberately left above 1. Inert for every shipped
+		// region — the brightest lands at 0.67.
+		vec3 region_a = clamp(weathered_a + region_rock_delta, 0.0, 1.0);
+		vec3 region_b = clamp(weathered_b + region_rock_delta, 0.0, 1.0);
+		vec3 region_c = clamp(weathered_c + region_rock_delta, 0.0, 1.0);
 
 		// The same geological bedding, bleached and cooled: outdoor rock keeps
 		// its layers but an age of sun and ash has taken the warm glow out.

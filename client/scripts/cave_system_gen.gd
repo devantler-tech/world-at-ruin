@@ -1192,18 +1192,19 @@ func _place_boulders(lay: Dictionary, terrain_h: Callable,
 ## hull uses, so the two read as one stone. With no world to ask (the standalone
 ## taste scene) the difference is zero and the authored colour ships unchanged.
 func _boulder_material(terrain_material: Callable, x: float, z: float) -> StandardMaterial3D:
-	var rock := StandardMaterial3D.new()
 	var albedo := BOULDER_ALBEDO
 	if terrain_material.is_valid():
 		var sample: Dictionary = terrain_material.call(x, z)
 		var delta: Vector3 = sample.get(&"region_rock_delta", Vector3.ZERO) as Vector3
+		# Clamped both ways: an albedo is a reflectance, so neither end is
+		# meaningful outside 0..1. Inert for every shipped region — the widest
+		# shift lands at 0.52 — and there so a future palette cannot push the
+		# entrance rock out of range silently.
 		albedo = Color(
-			maxf(0.0, albedo.r + delta.x),
-			maxf(0.0, albedo.g + delta.y),
-			maxf(0.0, albedo.b + delta.z))
-	rock.albedo_color = albedo
-	rock.roughness = 0.95
-	return rock
+			clampf(albedo.r + delta.x, 0.0, 1.0),
+			clampf(albedo.g + delta.y, 0.0, 1.0),
+			clampf(albedo.b + delta.z, 0.0, 1.0))
+	return _flat(albedo, 0.95)
 
 
 func _slab(rock: StandardMaterial3D, size: Vector3) -> StaticBody3D:

@@ -37,6 +37,7 @@ func _ready() -> void:
 	_test_massif_tracks_its_region(world)
 	_test_hull_carries_payload_per_vertex(world)
 	_test_entrance_rock_follows_the_region(world)
+	_test_sentinel_cannot_collide_with_a_region()
 	_test_no_world_means_baseline()
 	_test_geometry_is_untouched(world)
 
@@ -204,6 +205,35 @@ func _test_entrance_rock_follows_the_region(world: WorldGen) -> void:
 	if shifted == 0:
 		_fail("all %d entrance rocks carry the baseline colour — none followed its region"
 			% checked)
+
+
+## LAW 3c — the "no region data" sentinel cannot collide with a real region.
+##
+## The shader reads a non-positive `region_ash_value` as "this mesh carries no
+## region arrays", because a mesh built without them reads (0, 0) everywhere.
+## That is only sound while every region's ash has POSITIVE luminance — a region
+## whose ash was pure black would encode as 0.0 and be mistaken for absent data,
+## silently reverting its stone to the baseline palette.
+##
+## The invariant holds for every shipped region by a wide margin (the darkest,
+## `cinderreach`, sits at 0.49 of the baseline). It was previously unstated and
+## unenforced, which is the real defect: the sentinel's safety depended on a
+## property of the palette that nothing checked. This arm enforces it where the
+## regions are defined, so adding a black-ash region fails here loudly rather
+## than dimming the massif in a way no test would catch.
+func _test_sentinel_cannot_collide_with_a_region() -> void:
+	var base: Dictionary = GroundRegions.REGIONS[0]
+	var base_luma := (base[&"ash"] as Color).get_luminance()
+	if base_luma <= 0.0:
+		_fail("the baseline region's ash luminance is %.4f — the value ratio is undefined"
+			% base_luma)
+		return
+	for reg: Dictionary in GroundRegions.REGIONS:
+		var ratio := (reg[&"ash"] as Color).get_luminance() / base_luma
+		if ratio <= 0.0:
+			_fail("region %s encodes ash value %.4f, which the shader reads as "
+				% [reg[&"name"], ratio] + "'no region data' — its stone would silently "
+				+ "revert to the baseline palette")
 
 
 ## LAW 4 — no world, no region: the standalone taste scene keeps its palette.
