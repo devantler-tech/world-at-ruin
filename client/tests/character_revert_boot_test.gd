@@ -13,7 +13,8 @@ extends Node
 ## beside it exists to prevent, and only driving the real scene's apply callback
 ## can see it.
 ##
-## Two arms on ONE boot, differing ONLY by whether the write lock is held:
+## Three arms on ONE boot. A and B differ ONLY by whether the write lock is held;
+## C holds the lock like B and differs only in having no recipe on disk:
 ##  A. CONTROL — lock FREE. Applying the edit must SUCCEED and the body on screen
 ##     must show the EDITED weight. Without this, arm B's "shows the on-disk
 ##     weight" would pass just as well on a main.gd whose apply never reached the
@@ -57,11 +58,12 @@ const SIGNAL_SHAPE := "torso_vshape"
 ## Far apart on purpose — see the fixture note above.
 const ON_DISK_WEIGHT := 0.9
 const EDITED_WEIGHT := 0.1
-## What the shipped wanderer preset carries for [constant SIGNAL_SHAPE]. Arm C
-## opens the creator with no recipe on disk, so the preset IS what it opened
-## with. Distinct from BOTH weights above, so arm C separates "went back to the
-## preset" from "stayed on the edit" AND from "somehow read the old disk value".
-const PRESET_WEIGHT := 0.7
+## The shipped preset the creator falls back to when nothing is on disk, read at
+## run time rather than copied here as a number: the value lives in that file,
+## and a hard-coded duplicate would fail this arm for the wrong reason the day
+## the preset is retuned. Arm C guards that it is distinct from
+## [constant EDITED_WEIGHT] before relying on it.
+const PRESET_PATH := "res://recipes/wanderer.json"
 ## Deferred boot wiring needs idle frames; give it many.
 const BOOT_TICK := 30
 
@@ -103,7 +105,7 @@ func _seed_on_disk() -> bool:
 ## The wanderer preset with the signal shape pinned to `weight`. Built from the
 ## shipped preset rather than hand-rolled so the body actually composes.
 func _recipe(weight: float) -> Dictionary:
-	var loaded = CharacterFactory.load_recipe("res://recipes/wanderer.json")
+	var loaded = CharacterFactory.load_recipe(PRESET_PATH)
 	if loaded is not Dictionary:
 		return {}
 	var recipe: Dictionary = (loaded as Dictionary).duplicate(true)
@@ -227,6 +229,20 @@ func _assert_revert_without_disk() -> void:
 		_fail("the recipe survived removal, so this arm would not be testing the no-disk path")
 		return
 
+	var preset = CharacterFactory.load_recipe(PRESET_PATH)
+	if preset is not Dictionary:
+		_fail("the preset is unreadable, so there is no expected fallback to assert against")
+		return
+	var preset_weight := float((preset as Dictionary)["shapes"][SIGNAL_SHAPE])
+	# Without this the arm is vacuous whenever the preset happens to carry the
+	# edited weight: "went back to the preset" and "stayed on the edit" would be
+	# the same number, and the assertion below would pass on broken code.
+	if is_equal_approx(preset_weight, EDITED_WEIGHT):
+		_fail(("the preset's %s (%f) equals the edited weight — this arm cannot separate a revert "
+			+ "from a body that never moved; pick a different signal shape")
+			% [SIGNAL_SHAPE, preset_weight])
+		return
+
 	var creator = _open_creator()
 	if creator == null:
 		return
@@ -246,12 +262,12 @@ func _assert_revert_without_disk() -> void:
 	DirAccess.remove_absolute(_abs(lock))
 
 	var shown := _shown_weight()
-	if not is_equal_approx(shown, PRESET_WEIGHT):
+	if not is_equal_approx(shown, preset_weight):
 		_fail(("a contended apply with no recipe on disk left the body on the edit "
 			+ "(shape %s reads %f, want the preset %f) — the notice says nothing changed "
 			+ "while the player is looking at something that was never recorded, and with "
 			+ "no saved character they cannot discover otherwise")
-			% [SIGNAL_SHAPE, shown, PRESET_WEIGHT])
+			% [SIGNAL_SHAPE, shown, preset_weight])
 		return
 	if CharacterStore.exists():
 		_fail("a contended apply created a recipe it had failed to write")
