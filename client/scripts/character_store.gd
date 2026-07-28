@@ -355,6 +355,21 @@ static func clear() -> void:
 			"CharacterStore: lost the write lock for %s — refusing to delete it" % path)
 		FileLock.release(path)
 		return
+	# Re-derive acceptance INSIDE the lock, immediately before the removal. The
+	# refusal check at the top of this function is a point-in-time reading taken
+	# BEFORE the lock was held, and a second lock-aware client can install a whole
+	# new recipe in that window — release its own lock, and let this one acquire.
+	# Deleting then would destroy a character this build never read and never
+	# refused, which under the no-resets law is unrecoverable. The pre-lock check
+	# stays as a cheap way to avoid creating a lock directory for a write that is
+	# already doomed; THIS is the authoritative pass, exactly as
+	# [method _save_to_locked] re-checks before its rename.
+	if not can_write(path):
+		push_error(
+			"CharacterStore: refusing to delete %s — its recipe changed to one this build cannot accept"
+			% path)
+		FileLock.release(path)
+		return
 	if exists():
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
 	FileLock.release(path)

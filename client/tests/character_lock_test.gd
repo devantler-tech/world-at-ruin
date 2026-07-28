@@ -75,6 +75,7 @@ func _ready() -> void:
 	_check_refusal_latch_independent_of_lock(recipe)
 	_check_lost_lock_refuses_write(recipe)
 	_check_contention_does_not_latch_a_refusal(recipe)
+	_check_delete_revalidates_under_the_lock(recipe)
 
 	_finish()
 
@@ -82,7 +83,7 @@ func _ready() -> void:
 func _finish() -> void:
 	_cleanup()
 	if _failures.is_empty():
-		print("TEST PASS — the character write takes the cross-process lock, refuses under contention without staging, releases on every path, recovers from an abandoned lock, and never latches a refusal on contention (9 checks)")
+		print("TEST PASS — the character write takes the cross-process lock, refuses under contention without staging, releases on every path, recovers from an abandoned lock, never latches a refusal on contention, and re-derives acceptance before deleting (10 checks)")
 		get_tree().quit(0)
 		return
 	print("TEST FAIL — %s" % "; ".join(_failures))
@@ -287,6 +288,49 @@ func _check_contention_does_not_latch_a_refusal(recipe: Dictionary) -> void:
 	if not CharacterStore.is_refused(_probe):
 		_fail("a genuine refusal did NOT latch — the creator would never lock shut")
 	CharacterStore.clear_refusals_for_test()
+	_remove(_probe)
+
+
+## 10. `clear()` re-derives acceptance INSIDE the lock, so a recipe installed
+## during the check-to-lock window is never deleted unread.
+##
+## `clear()`'s refusal check runs BEFORE the lock, which is only an optimisation:
+## a second lock-aware client can write a whole new recipe in that window, release
+## its lock, and let this process acquire the freed slot. Deleting on the strength
+## of the earlier reading would destroy a character this build never read and
+## never refused — unrecoverable under the no-resets law.
+##
+## Simulated by installing an unacceptable recipe AFTER the latch is clear, which
+## is the state that window produces. Both directions are asserted: a deletable
+## path must still delete, or a `clear()` that refused everything would satisfy
+## the first half.
+func _check_delete_revalidates_under_the_lock(recipe: Dictionary) -> void:
+	var previous := OS.get_environment(CharacterStore.SAVE_PATH_ENV)
+	OS.set_environment(CharacterStore.SAVE_PATH_ENV, _probe)
+	CharacterStore.clear_refusals_for_test()
+
+	# The window's outcome: a recipe this build cannot accept, with NOTHING
+	# latched — exactly what a second client leaves behind after the pre-lock read.
+	_write_text(_probe, "{ not a readable recipe")
+	if CharacterStore.is_refused(_probe):
+		_fail("the latch was already set — this case would pass on the pre-lock check alone")
+	CharacterStore.clear()
+	if not FileAccess.file_exists(_probe):
+		_fail("clear() DELETED a recipe this build never read — the check-to-lock window is open")
+	if DirAccess.dir_exists_absolute(_abs(FileLock.path_for(_probe))):
+		_fail("a refused delete leaked the lock")
+
+	# The other direction: an acceptable recipe still deletes.
+	CharacterStore.clear_refusals_for_test()
+	_remove(_probe)
+	if not CharacterStore.save_to(_probe, recipe):
+		_fail("could not seed a deletable recipe")
+	else:
+		CharacterStore.clear()
+		if FileAccess.file_exists(_probe):
+			_fail("clear() refused an acceptable recipe — the guard rejects everything")
+	CharacterStore.clear_refusals_for_test()
+	OS.set_environment(CharacterStore.SAVE_PATH_ENV, previous)
 	_remove(_probe)
 
 
