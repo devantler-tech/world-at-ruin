@@ -101,3 +101,26 @@ EXCLUDED_DIRECTORIES:
 # (an identifier, not a fetchable page). All 13 "broken links" it reports are of that
 # shape. Point it at documentation, which is what it is good at.
 SPELL_LYCHEE_FILTER_REGEX_EXCLUDE: (\.github/workflows/.*)
+
+# lychee's default 20-second timeout is tight for third-party pages fetched from a CI runner.
+# The art-direction document cites commercial game sites whose marketing pages are heavy, and
+# a timeout on one of them fails `lint`, which feeds `CI - Required Checks` — so a slow third
+# party turns an unrelated pull request red.
+#
+# A timeout is not evidence that a URL is unreachable, so the answer is tolerance rather than
+# a .lycheeignore entry: an entry would permanently stop checking a link that is genuinely
+# checkable, and would hide it if that link later died.
+#
+# Retries are NOT the lever, which is worth stating because reaching for --max-retries is the
+# obvious move and it does nothing here. lychee already retries a timed-out request
+# --max-retries times (default 3), so a host that is slow on one attempt already passes
+# untouched. The failure shape that reaches CI is a host slow on EVERY attempt, and retrying
+# it more times just times out more times. Measured against a local server stalling past the
+# timeout on every request: at the default retry count the check failed, adding an explicit
+# --max-retries 3 failed identically, and only a longer timeout passed.
+#
+# Genuine failures stay blocking and stay fast: a 404, a DNS failure and a refused connection
+# are answered immediately, so none of them wait for this timeout or benefit from it. The cost
+# is bounded and paid only when something really is hanging — worst case per URL is
+# (1 + --max-retries) × 45s, and lychee checks URLs concurrently.
+SPELL_LYCHEE_ARGUMENTS: "--timeout 45"

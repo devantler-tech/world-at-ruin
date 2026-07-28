@@ -1,0 +1,27 @@
+# Dev-log entries whose version is verified by CONTAINMENT rather than by being
+# ahead of every release.
+#
+# tools/devlog-entry-version-guard.sh checks that a newly added entry names a
+# build that has not shipped yet. That is the right rule for an authored entry,
+# whose version is a prediction. It is the wrong rule for CORRECTING an entry
+# that is already on main and already carries the wrong number: the fix gives it
+# the number of a release that has necessarily already happened, which the
+# forward-looking rule refuses.
+#
+# An entry listed here is measured against the stronger property instead — the
+# release it names must be the FIRST release containing the commit the entry
+# describes. That is proven from the tags, not asserted, so a listing cannot
+# wave a wrong number through; it can only substitute one machine-checked proof
+# for another. Anything not listed here keeps the forward-looking rule untouched.
+#
+# The anchor is the commit whose change the entry describes, NOT the commit that
+# added the entry file: every entry file's add-commit is the one-file-per-entry
+# migration, which says nothing about when the change shipped.
+#
+# Columns, tab-separated:
+#   <entry path>	<anchor commit>	<why this entry is a correction>
+#
+# Use a full 40-character SHA: an abbreviation can become ambiguous as history
+# grows, and the guard fails closed rather than guessing.
+
+client/devlog/0.60.0.json	789d57095b09a99a6b93fd5aa9bcc3be283140a2	Describes the guarded grounded walk gait, which first shipped in v0.60.0. The entry was authored as 0.59.0 and a sibling release was cut ahead of it, so it named a build released before the code existed (#435).
