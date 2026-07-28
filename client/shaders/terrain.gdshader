@@ -216,6 +216,7 @@ void fragment() {
 	float plate_resolved = 0.0;
 	float plate_edge_w = 0.0;
 	vec4 sub = vec4(rock_color, rock_roughness);
+	vec4 sub_nb = vec4(rock_color, rock_roughness);
 	float crack = 0.0;
 	float plate_fw = 0.0;
 	float crack_fw = 0.0;
@@ -249,13 +250,38 @@ void fragment() {
 	// distance where the contact resolves, the weight is exactly 0.0 and the
 	// near-field read — hard edges, named substances, full contrast — is
 	// untouched, which is what #306's third acceptance criterion protects.
-	plate_edge_w = terrain_plate_edge_blend(f1, f2, crack_fw * 1.2);
-	sub = mix(plate_substance(plate_id), plate_substance(plate_id2), plate_edge_w);
+	// The footprint is taken from the ANALYTIC separator, not from
+	// `fwidth(f2 - f1)`. `f2 - f1` is non-negative and folds to zero at the
+	// boundary — the nearest and second-nearest sites swap identity across it —
+	// so it is a cusp rather than a signed coordinate, and a screen difference
+	// of it COLLAPSES on exactly the quads that straddle an edge: both samples
+	// report a similar small magnitude from opposite sides, the difference goes
+	// to zero, and the blend width with it. The pixels most in need of
+	// averaging would be the ones that got none.
+	//
+	// grad(f2 - f1) = normalize(uv - c2) - normalize(uv - c1) is exact and
+	// stays finite across the boundary, so scaling it by the plate footprint
+	// gives how far `f2 - f1` really moves in one pixel. Same closed form the
+	// relief below uses, for the same reason.
+	vec2 e1 = plate_uv - plate_c1;
+	vec2 e2 = plate_uv - plate_c2;
+	float edge_fw = length(
+		e2 * inversesqrt(max(dot(e2, e2), 1e-12))
+		- e1 * inversesqrt(max(dot(e1, e1), 1e-12))) * plate_fw;
+	plate_edge_w = terrain_plate_edge_blend(f1, f2, edge_fw * 1.2);
+
+	// Both cells' substances are kept SEPARATE here and composed with their own
+	// slab masks below. Blending the substances here and the masks there would
+	// be a product of two blends where the correct answer is a blend of two
+	// products: at a contact between a slab and a bare cell it would show a
+	// quarter of the bare cell's substance, which that cell never draws.
 	vec3 mean_col = rock_color * 0.38 + plate_basalt * 0.28
 		+ plate_ferric * 0.20 + plate_pale * 0.14;
 	float mean_rough = rock_roughness * 0.38 + 0.88 * 0.28
 		+ 0.72 * 0.20 + 0.94 * 0.14;
-	sub = mix(vec4(mean_col, mean_rough), sub, plate_resolved);
+	vec4 mean4 = vec4(mean_col, mean_rough);
+	sub = mix(mean4, plate_substance(plate_id), plate_resolved);
+	sub_nb = mix(mean4, plate_substance(plate_id2), plate_resolved);
 
 	// The crack itself, widened to the local footprint so it stays a line
 	// instead of aliasing, and dissolved once it is thinner than about a pixel
@@ -335,10 +361,21 @@ void fragment() {
 	// leaves the boundary floor where it was (0.0014 -> 0.0015 with the relief
 	// switched off), and averaging the mask too takes it to 0.0003.
 	float is_slab2 = step(0.60, hash3(vec3(plate_id2 * 2.3, 19.0)));
-	float is_slab_soft = mix(is_slab, is_slab2, plate_edge_w);
 	// Once a pixel spans a whole plate there is no per-plate answer to give,
-	// so converge on the mean coverage exactly as the substance does above.
-	float slab = mix(0.40, is_slab_soft, plate_resolved);
+	// so converge on the mean coverage exactly as the substance does above —
+	// PER CELL, because each cell's substance is gated by its own mask.
+	float slab_own = mix(0.40, is_slab, plate_resolved);
+	float slab_nb = mix(0.40, is_slab2, plate_resolved);
+	float slab = mix(slab_own, slab_nb, plate_edge_w);
+	// The substance carried across the boundary, PREMULTIPLIED by each cell's
+	// own mask. `slab` above is the same blend of the masks alone, so dividing
+	// the two back out below recovers exactly
+	//     mix(slab_own * sub_own, slab_nb * sub_nb, w)
+	// — a blend of products. Blending the substances and the masks separately
+	// and multiplying afterwards is a product of blends, which is a different
+	// quantity: at a 50/50 contact between a slab and a bare cell it draws a
+	// quarter of the bare cell's substance, a material that cell never shows.
+	vec4 sub_pre = mix(slab_own * sub, slab_nb * sub_nb, plate_edge_w);
 	// ...but the SAME average must not reach the crack relief, and this is the
 	// one place the two uses of the mask have to part company.
 	//
@@ -363,7 +400,6 @@ void fragment() {
 	// actually drew a slab, and costs nothing where it matters: past the
 	// distance the contact stops being resolvable the gradient has already
 	// faded to nothing, so the hard step multiplies a term that is not there.
-	float slab_hard = mix(0.40, is_slab, plate_resolved);
 	// TWO separate quantities, and conflating them was a real bug in both
 	// directions:
 	//
@@ -383,7 +419,7 @@ void fragment() {
 	// slopes. They are separate values because they answer separate questions.
 	float plate_mask = sheet * slab;
 	// The relief's own gate — same quantity, binary slab (see above).
-	float plate_mask_relief = sheet * slab_hard;
+	float plate_mask_relief = sheet * slab_own;
 	float rock_exposure = max(rock_mix, plate_mask);
 
 	// The vertex tint stays the base layer (as cave_rock does with COLOR), so
@@ -396,8 +432,14 @@ void fragment() {
 	float eff_plate = plate_mask * plate_gate;
 	// Stone is rock_color unless this cell is a slab, in which case it is the
 	// slab's own substance. Then ash over the top of whichever it is.
-	vec3 stone_rgb = mix(rock_color, sub.rgb, eff_plate);
-	float stone_rough = mix(rock_roughness, sub.a, eff_plate);
+	// rock + K*(sub_pre - slab*rock) rather than mix(rock, sub, K*slab): the
+	// premultiplied form is the blend of per-cell products (see `sub_pre`).
+	// With `plate_edge_w` at 0 the two are arithmetically identical, so a
+	// resolved contact is unchanged.
+	vec3 stone_rgb = rock_color
+		+ sheet * plate_gate * (sub_pre.rgb - slab * rock_color);
+	float stone_rough = rock_roughness
+		+ sheet * plate_gate * (sub_pre.a - slab * rock_roughness);
 	float eff_exposure = mix(rock_mix, rock_exposure, plate_gate);
 	crack *= eff_plate;
 	vec3 surface = mix(ash_color, stone_rgb, eff_exposure);

@@ -71,6 +71,7 @@ void fragment() {
 	float plate_resolved = 0.0;
 	float plate_edge_w = 0.0;
 	vec4 sub = vec4(rock_color, rock_roughness);
+	vec4 sub_nb = vec4(rock_color, rock_roughness);
 	float crack = 0.0;
 	float plate_fw = 0.0;
 	float crack_fw = 0.0;
@@ -81,32 +82,32 @@ void fragment() {
 		plate_fw = max(fwidth(plate_uv.x), fwidth(plate_uv.y));
 		plate_resolved = 1.0 - smoothstep(0.30, 0.85, plate_fw);
 		crack_fw = fwidth(f2 - f1);
-		plate_edge_w = terrain_plate_edge_blend(f1, f2, crack_fw * 1.2);
+		// Same analytic footprint as terrain.gdshader, for the same reason:
+		// `fwidth(f2 - f1)` collapses on a quad straddling the boundary,
+		// because that quantity is a cusp there rather than a signed
+		// coordinate. grad(f2 - f1) = normalize(uv - c2) - normalize(uv - c1).
+		vec2 ce1 = plate_uv - plate_c1;
+		vec2 ce2 = plate_uv - plate_c2;
+		float edge_fw = length(
+			ce2 * inversesqrt(max(dot(ce2, ce2), 1e-12))
+			- ce1 * inversesqrt(max(dot(ce1, ce1), 1e-12))) * plate_fw;
+		plate_edge_w = terrain_plate_edge_blend(f1, f2, edge_fw * 1.2);
 		// The same footprint average as the ground (#306). This path exists to
 		// resolve the IDENTICAL substance at the same world XZ, so leaving the
 		// step unfiltered here would reintroduce the crawl at the cave contact
 		// and disagree with the ground it has to meet.
-		sub = mix(
-			terrain_plate_substance(
-				plate_id,
-				rock_color,
-				rock_roughness,
-				plate_basalt,
-				plate_ferric,
-				plate_pale),
-			terrain_plate_substance(
-				plate_id2,
-				rock_color,
-				rock_roughness,
-				plate_basalt,
-				plate_ferric,
-				plate_pale),
-			plate_edge_w);
+		sub = terrain_plate_substance(
+			plate_id, rock_color, rock_roughness,
+			plate_basalt, plate_ferric, plate_pale);
+		sub_nb = terrain_plate_substance(
+			plate_id2, rock_color, rock_roughness,
+			plate_basalt, plate_ferric, plate_pale);
 		vec3 mean_col = rock_color * 0.38 + plate_basalt * 0.28
 			+ plate_ferric * 0.20 + plate_pale * 0.14;
 		float mean_rough = rock_roughness * 0.38 + 0.88 * 0.28
 			+ 0.72 * 0.20 + 0.94 * 0.14;
 		sub = mix(vec4(mean_col, mean_rough), sub, plate_resolved);
+		sub_nb = mix(vec4(mean_col, mean_rough), sub_nb, plate_resolved);
 		float cw = max(crack_width, crack_fw * 1.2);
 		crack = 1.0 - smoothstep(0.0, cw, f2 - f1);
 		crack *= 1.0 - smoothstep(0.30, 0.85, plate_fw);
@@ -137,21 +138,25 @@ void fragment() {
 	// the IDENTICAL substance as the ground it meets, so a soft mask there and a
 	// hard one here would part company along the contact — the drift this file's
 	// parity test exists to catch.
-	float is_slab_soft = mix(
-		is_slab,
-		step(0.60, terrain_hash3(vec3(plate_id2 * 2.3, 19.0))),
-		plate_edge_w);
-	float slab = mix(0.40, is_slab_soft, plate_resolved);
-	float slab_hard = mix(0.40, is_slab, plate_resolved);
+	// Per-cell masks, then a blend of PRODUCTS (see terrain.gdshader): blending
+	// substance and mask separately and multiplying afterwards would show a
+	// quarter of a bare neighbour's substance at a slab-to-bare contact.
+	float slab_own = mix(0.40, is_slab, plate_resolved);
+	float slab_nb = mix(
+		0.40, step(0.60, terrain_hash3(vec3(plate_id2 * 2.3, 19.0))), plate_resolved);
+	float slab = mix(slab_own, slab_nb, plate_edge_w);
+	vec4 sub_pre = mix(slab_own * sub, slab_nb * sub_nb, plate_edge_w);
 	float plate_mask = sheet * slab;
-	float plate_mask_relief = sheet * slab_hard;
+	float plate_mask_relief = sheet * slab_own;
 	float rock_exposure = max(rock_mix, plate_mask);
 
 	vec3 base = vec3(UV, UV2.x);
 	float plate_gate = plates_enabled ? 1.0 : 0.0;
 	float eff_plate = plate_mask * plate_gate;
-	vec3 stone_rgb = mix(rock_color, sub.rgb, eff_plate);
-	float stone_rough = mix(rock_roughness, sub.a, eff_plate);
+	vec3 stone_rgb = rock_color
+		+ sheet * plate_gate * (sub_pre.rgb - slab * rock_color);
+	float stone_rough = rock_roughness
+		+ sheet * plate_gate * (sub_pre.a - slab * rock_roughness);
 	float eff_exposure = mix(rock_mix, rock_exposure, plate_gate);
 	crack *= eff_plate;
 

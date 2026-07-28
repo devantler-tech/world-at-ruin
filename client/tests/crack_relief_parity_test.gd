@@ -43,7 +43,7 @@ const CEILING_PATTERN := \
 ## widening — a looser pattern would capture whichever of the three came first
 ## and compare the wrong quantity across the two files.
 const EDGE_BLEND_PATTERN := \
-	"terrain_plate_edge_blend\\(\\s*f1\\s*,\\s*f2\\s*,\\s*crack_fw\\s*\\*\\s*([0-9.]+)\\s*\\)"
+	"terrain_plate_edge_blend\\(\\s*f1\\s*,\\s*f2\\s*,\\s*edge_fw\\s*\\*\\s*([0-9.]+)\\s*\\)"
 
 ## A screen-space derivative taken OF a crack quantity — the form this must not
 ## regress to. Deliberately anchored on the crack operand rather than on
@@ -141,11 +141,11 @@ func _ready() -> void:
 	# which is exactly what this file exists to prevent.
 	var ground_edge := _single(ground, EDGE_BLEND_PATTERN)
 	if ground_edge < 0.0:
-		_fail("no plate-boundary footprint (`terrain_plate_edge_blend(f1, f2, crack_fw * ...)`) in %s — the substance step is no longer averaged over the pixel drawing it, and the contact band has nothing left to match" % GROUND_SHADER_PATH)
+		_fail("no plate-boundary footprint (`terrain_plate_edge_blend(f1, f2, edge_fw * ...)`) in %s — the substance step is no longer averaged over the pixel drawing it, and the contact band has nothing left to match" % GROUND_SHADER_PATH)
 		return
 	var contact_edge := _single(contact, EDGE_BLEND_PATTERN)
 	if contact_edge < 0.0:
-		_fail("no plate-boundary footprint (`terrain_plate_edge_blend(f1, f2, crack_fw * ...)`) in %s — the contact band takes the owning plate's substance outright while the ground averages it, so plate contacts crawl at the cave mouth only" % CONTACT_SHADER_PATH)
+		_fail("no plate-boundary footprint (`terrain_plate_edge_blend(f1, f2, edge_fw * ...)`) in %s — the contact band takes the owning plate's substance outright while the ground averages it, so plate contacts crawl at the cave mouth only" % CONTACT_SHADER_PATH)
 		return
 	if not is_equal_approx(ground_edge, contact_edge):
 		_fail("plate-boundary footprint disagrees: the ground averages the substance step over %s of a footprint but the contact band uses %s — one surface filters a contact the other still steps across" % [
