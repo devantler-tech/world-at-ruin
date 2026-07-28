@@ -748,11 +748,20 @@ static func cave_vantages(lay: Dictionary) -> Array:
 ## band for exactly that reason. Static and pure so it can.
 static func mouth_vantage(lay: Dictionary) -> Array:
 	var mouth: Vector3 = lay["mouth"]
-	# Dead on the bore's centreline: the jambs sit at z = ±3.3 and the flanking
-	# boulders at ±4.4/±4.8, so anywhere off-axis frames one shoulder of the
-	# doorway closer than the other and the composition stops being symmetric.
-	var eye := Vector3(mouth.x + MOUTH_STANDOFF, MOUTH_EYE_HEIGHT, 0.0)
-	var target := Vector3(mouth.x + MOUTH_LOOK_INSET, MOUTH_LOOK_HEIGHT, 0.0)
+	# On the bore's own centreline, taken from the layout rather than assumed to
+	# be zero: the bore runs from `mouth` along +X, so `mouth.z` IS the axis this
+	# camera looks down, and the roofed-target law below only holds while the
+	# aim point sits inside that bore.
+	#
+	# It is deliberately NOT enough on its own. `_place_boulders` authors the
+	# jamb slabs at an ABSOLUTE z = ±3.3 and the flanking boulders at ±3.4/±4.4/
+	# ±4.8 — not at `mouth.z` plus those offsets — so a mouth moved off the
+	# centreline would slide the doorway out from between its own jambs, and
+	# following it here would frame a bore the entrance grammar had been left
+	# behind by. The test pins the two together so that desynchronisation fails
+	# by name instead of arriving as a quietly lopsided frame.
+	var eye := Vector3(mouth.x + MOUTH_STANDOFF, MOUTH_EYE_HEIGHT, mouth.z)
+	var target := Vector3(mouth.x + MOUTH_LOOK_INSET, MOUTH_LOOK_HEIGHT, mouth.z)
 	return ["cave-mouth", eye, target]
 
 
@@ -891,10 +900,15 @@ func _capture_mouth(cam: Camera3D, dir: String, main: Node) -> int:
 	if ground <= WorldGen.NO_GROUND + 1.0:
 		ground = world.height_at(eye.x, eye.z)
 	eye.y = ground + MOUTH_EYE_HEIGHT
-	# Declare it in the evidence log for the reason the cave vantages are
-	# declared: a coordinate delta between two runs means the WORLD moved, and
-	# a reviewer should read that off the log rather than infer it from pixels.
-	print("MOUTH VANTAGE %s: eye (%.2f, %.2f, %.2f) -> target (%.2f, %.2f, %.2f), ground %.2f" %
+	# Declare it under the SAME marker as the interior cave vantages, not a
+	# bespoke one. This is a derived cave camera by every part of that
+	# definition — fixed per committed seed, moving only when the world moves —
+	# and `AGENTS.md` tells a reviewer that such movement surfaces as a
+	# `CAVE VANTAGE` coordinate delta in this log. A marker of its own would
+	# leave this camera out of the set a reader following that instruction
+	# collects, which is the one place a silent shift was meant to show up.
+	# The ground it was seated on rides along, since that is what moves it.
+	print("CAVE VANTAGE %s: eye (%.2f, %.2f, %.2f) -> target (%.2f, %.2f, %.2f), ground %.2f" %
 		[vantage_name, eye.x, eye.y, eye.z, target.x, target.y, target.z, ground])
 
 	cam.global_position = eye

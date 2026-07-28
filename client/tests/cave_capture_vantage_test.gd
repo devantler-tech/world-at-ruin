@@ -28,6 +28,10 @@ extends Node
 ##     density field cannot see. The band is what the assertion can honestly
 ##     claim: wherever the real ground puts the camera within it, the camera is
 ##     outside the massif with sky above.
+##  8. The bore and the entrance grammar share a centreline. Laws 6-7 are all
+##     satisfiable by a frame whose doorway has slid out from between its own
+##     jambs, because the jambs are authored at absolute z while the bore
+##     follows the mouth; this is the only law that can see that.
 ##
 ## Run: godot --headless --path client res://tests/cave_capture_vantage_test.tscn
 
@@ -50,6 +54,11 @@ const UP_RANGE := 16.0
 ## envelope cannot silently invalidate what this test proved.
 const GROUND_BAND := 6.0
 const GROUND_BAND_STEP := 1.0
+## How far the mouth may sit off the axis the entrance rock is authored around
+## (law 8). Tight on purpose: this is not a tolerance for drift, it is a guard
+## on an assumption two files share without either stating it, so anything that
+## is not "the same centreline" should trip it.
+const CENTRELINE_TOLERANCE := 0.01
 
 
 func _ready() -> void:
@@ -150,6 +159,22 @@ func _ready() -> void:
 	if mouth_eye.x <= mouth_target.x:
 		_fail("vantage '%s': eye x=%.1f is not outside target x=%.1f — the camera does not look inward at the mouth" %
 			[mouth_name, mouth_eye.x, mouth_target.x])
+		return
+	# 8. The bore and the entrance grammar must share a centreline. The vantage
+	# follows `mouth.z`, but `_place_boulders` authors the jamb slabs and the
+	# flanking boulders at ABSOLUTE z offsets rather than relative to the mouth,
+	# so the two only line up while the mouth sits on the axis they were written
+	# around. Moving the mouth laterally without moving that rock slides the
+	# doorway out from between its own jambs — the frame stays open air, stays
+	# roofed at the target and stays inward-looking, so every law above still
+	# passes while the composition this vantage exists to photograph has come
+	# apart. Pinned here because nothing else can see it.
+	var mouth_axis: float = (lay["mouth"] as Vector3).z
+	if absf(mouth_axis) > CENTRELINE_TOLERANCE:
+		_fail(("the mouth sits at z=%.2f, off the centreline the entrance grammar is authored around "
+			+ "(_place_boulders writes its jambs at absolute z=±3.3 and its boulders at ±3.4/±4.4/±4.8). "
+			+ "Move that rock with the mouth, or '%s' frames a doorway its own jambs no longer flank.")
+			% [mouth_axis, mouth_name])
 		return
 
 	print("TEST PASS — %d cave capture vantages sit in open air under rock, and '%s' stands unroofed outside the massif looking into a roofed mouth across a %.0f m ground band (density-field-verified; enclosure and open-air checks each proven falsifiable by an isolated control)" %
