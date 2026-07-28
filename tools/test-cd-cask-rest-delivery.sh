@@ -371,6 +371,41 @@ fi
 [[ "${out}" == *"required status checks"* ]] ||
 	fail "the refusal did not name the unreadable gate"
 
+# A page that did not return every check run is a PARTIAL answer: the pending
+# or failing run this page never showed would be invisible, and the head would
+# be judged on a fraction of its own evidence. Refuse, loudly.
+reset_mocks
+mock_checks=("$(checks_truncated 130 "$(check_run completed success)")")
+if out="$(merge_cask_pr_when_green "${tap}" 1337 "${branch}" "0.65.7" 2>&1)"; then
+	fail "a truncated check-runs page was judged as complete"
+fi
+[ "$(merge_calls)" -eq 0 ] || fail "a partial page must not reach a merge"
+[[ "${out}" == *"partial page"* ]] ||
+	fail "the refusal did not name the partial page as the cause"
+[ "$(wc -l <"${sleep_log}" | tr -d ' ')" -eq 0 ] ||
+	fail "a truncated page should be refused at once, not waited out"
+
+# The tap squash-merges on the PR TITLE, derived before this wait began. A
+# writer landing on the branch during the wait would otherwise ship its content
+# under the previous version's changelog entry. Hand it back (rc 2) instead.
+reset_mocks
+mock_checks=("${green_checks}")
+mock_branch_version="0.66.0"
+rc=0
+merge_cask_pr_when_green "${tap}" 1337 "${branch}" "0.65.7" >/dev/null 2>&1 || rc=$?
+[ "${rc}" -eq 2 ] || fail "a branch that moved during the wait returned ${rc}, want 2"
+[ "$(merge_calls)" -eq 0 ] ||
+	fail "a moved branch must not be merged under the stale title"
+
+# ...and the check is made against the branch as it stands at merge time, so an
+# unmoved branch still delivers.
+reset_mocks
+mock_checks=("${green_checks}")
+mock_branch_version="0.65.7"
+merge_cask_pr_when_green "${tap}" 1337 "${branch}" "0.65.7" >/dev/null ||
+	fail "an unmoved branch was refused"
+[ "$(merge_calls)" -eq 1 ] || fail "an unmoved branch should deliver"
+
 # An already-merged PR is delivered, not merged twice.
 reset_mocks
 mock_pr_state='{"merged":true,"head":{"sha":"cafe1234cafe1234cafe1234cafe1234cafe1234"}}'
