@@ -1354,7 +1354,7 @@ jobs:
           merge_cask_pr_when_green() {
             local tap="$1"
             local pr="$2"
-            local attempt pr_state head runs total unfinished failed
+            local attempt pr_state head runs counts total unfinished failed
             for attempt in $(seq 1 20); do
               pr_state="$(gh api "repos/${tap}/pulls/${pr}" 2>/dev/null || true)"
               if [ -n "${pr_state}" ] \
@@ -1369,35 +1369,41 @@ jobs:
               esac
               if [ -n "${head}" ]; then
                 runs="$(gh api "repos/${tap}/commits/${head}/check-runs?per_page=100" 2>/dev/null || true)"
-                total="$(printf '%s' "${runs}" | jq -r '.check_runs | length' 2>/dev/null || true)"
-                unfinished="$(printf '%s' "${runs}" \
-                  | jq -r '[.check_runs[] | select(.status != "completed")] | length' 2>/dev/null || true)"
+                # All three counts come from ONE read and ONE parse, so they
+                # describe the same snapshot and cannot disagree about it.
+                #
                 # `neutral` and `skipped` are how a check reports "not
                 # applicable here", which is a pass. Everything else that has
                 # COMPLETED — failure, cancelled, timed_out, action_required —
                 # is a real refusal and must never be waited out into a merge.
-                failed="$(printf '%s' "${runs}" \
-                  | jq -r '[.check_runs[]
-                            | select(.status == "completed")
-                            | select(.conclusion != "success"
-                                     and .conclusion != "neutral"
-                                     and .conclusion != "skipped")] | length' 2>/dev/null || true)"
-                # An unreadable count is a FAILED READ, never a green one. Each
-                # is checked on its own: jq collapses an API failure, a decode
-                # failure and a genuinely absent field into the same empty
-                # string, and the merge below must not run on any of them.
-                case "${total}" in '' | *[!0-9]*) total="" ;; esac
-                case "${unfinished}" in '' | *[!0-9]*) unfinished="" ;; esac
-                case "${failed}" in '' | *[!0-9]*) failed="" ;; esac
+                counts="$(printf '%s' "${runs}" | jq -r '
+                  [.check_runs[]] as $r
+                  | [ ($r | length),
+                      ([$r[] | select(.status != "completed")] | length),
+                      ([$r[] | select(.status == "completed")
+                             | select(.conclusion != "success"
+                                      and .conclusion != "neutral"
+                                      and .conclusion != "skipped")] | length)
+                    ] | @tsv' 2>/dev/null || true)"
+                total=""; unfinished=""; failed=""
+                # An unparsed payload is a FAILED READ, never a green one: jq
+                # collapses an API failure, a decode failure and genuinely
+                # absent content into the same empty output, so nothing below
+                # may treat it as evidence.
+                case "${counts}" in
+                  [0-9]*[[:space:]][0-9]*[[:space:]][0-9]*)
+                    total="${counts%%[[:space:]]*}"
+                    unfinished="${counts#*[[:space:]]}"
+                    unfinished="${unfinished%%[[:space:]]*}"
+                    failed="${counts##*[[:space:]]}"
+                    ;;
+                esac
                 if [ -n "${failed}" ] && [ "${failed}" -gt 0 ]; then
                   echo "::error::${tap}#${pr} carries ${failed} failing check(s) at ${head}; refusing to merge it"
                   return 1
                 fi
-                # ALL THREE must be readable before merging, `failed` included:
-                # a run where only the failure count failed to parse would
-                # otherwise merge having verified nothing about failures.
-                if [ -n "${total}" ] && [ -n "${unfinished}" ] && [ -n "${failed}" ] \
-                   && [ "${failed}" -eq 0 ] && [ "${total}" -gt 0 ] && [ "${unfinished}" -eq 0 ]; then
+                if [ -n "${total}" ] && [ "${failed}" -eq 0 ] \
+                   && [ "${total}" -gt 0 ] && [ "${unfinished}" -eq 0 ]; then
                   if gh api -X PUT "repos/${tap}/pulls/${pr}/merge" \
                        -f merge_method=squash -f sha="${head}" >/dev/null 2>&1; then
                     echo "merged ${tap}#${pr} over REST at ${head} — all ${total} check(s) green"

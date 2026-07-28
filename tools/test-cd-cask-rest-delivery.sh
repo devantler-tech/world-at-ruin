@@ -181,13 +181,21 @@ merge_cask_pr_when_green "${tap}" 1337 >/dev/null \
 [ "$(wc -l <"${sleep_log}" | tr -d ' ')" -eq 2 ] \
 	|| fail "expected two waits before the third read went green"
 
-# A failing check is a refusal, never something to wait out.
+# A failing check is a refusal, never something to wait out. Not merging is
+# only half the property: the run must give up IMMEDIATELY and say why, rather
+# than burning the whole wait budget on a head that can never go green — so
+# assert the absence of waiting too, which is what makes the early return
+# load-bearing rather than shadowed by the merge precondition.
 reset_mocks
 mock_checks=("${failing_checks}")
-if merge_cask_pr_when_green "${tap}" 1337 >/dev/null 2>&1; then
+if out="$(merge_cask_pr_when_green "${tap}" 1337 2>&1)"; then
 	fail "a head carrying a failing check was merged"
 fi
 [ "$(merge_calls)" -eq 0 ] || fail "a failing head must not be merged at all"
+[ "$(wc -l <"${sleep_log}" | tr -d ' ')" -eq 0 ] \
+	|| fail "a failing check should be refused at once, not waited out"
+[[ "${out}" == *"failing check"* ]] \
+	|| fail "the refusal did not say that a check had failed"
 
 # `neutral` and `skipped` are how a check says "not applicable" — a pass.
 reset_mocks
@@ -247,8 +255,11 @@ fi
 # ---------------------------------------------------------------------------
 
 # Match the INVOCATION, not a mention: the helper's own comment explains what
-# it replaced, and a bare substring search would fail on that explanation.
-if grep -nE '^[[:space:]]*[^#[:space:]].*gh pr create' "${workflow}"; then
+# it replaced, so strip whole-line comments first and search what is left.
+# (A single `^[[:space:]]*[^#[:space:]].*gh pr create` does NOT work — the
+# leading-character class eats the `g` of the very token being searched for,
+# so the ablation that reinstates `gh pr create` passes it.)
+if grep -vE '^[[:space:]]*#' "${workflow}" | grep -q 'gh pr create'; then
 	fail "cd.yaml still calls the GraphQL-backed 'gh pr create'"
 fi
 if ! grep -qF "grep -qiE 'rate limit|RATE_LIMITED'" "${workflow}"; then
