@@ -502,9 +502,14 @@ everything shipped afterwards is held to.
   and mints the nanosecond-expiry token only that allocated zone verifier accepts), the private
   **Nakama handoff lease store** (`server/nakamalease/` — server-owned, strict-schema objects keyed
   by a SHA-256-derived user/reservation key; unique create and exact-version
-  replacement/claim/release preserve one current attempt under retries without persisting raw user
-  or reservation IDs or admission secrets; the concrete coordinator, secret delivery and Nakama RPC
-  registration remain later children), and
+  staging/finalization/replacement/claim/release preserve one current attempt under retries, with a
+  durable releasing barrier and private-collection expiry sweep that arbitrate zone claim against
+  external cleanup, without persisting raw user or reservation IDs or admission secrets), the
+  durable **handoff allocation coordinator**
+  (`server/handoffalloc/` — implements `handoff.Allocator` over the real lease store and an injected
+  GameServer-resource boundary; persists a recoverable intent before provisioning, finalizes the
+  allocation before returning connection material, resolves retries, protects claimed/stale
+  ownership and supervises exact no-show cleanup), and
   the **combat first slice** (`server/sim/combat.go` — the telegraph cast
   lifecycle: painted at cast start, resolved once after a tick-counted cast time against
   positions at resolution, health/damage application, and one mob AI that deterministically
@@ -514,9 +519,9 @@ everything shipped afterwards is held to.
   preserves caller movement when that flag is off, and the integer-speed floor remains mobile on
   diagonals; threat from damage, dead-target
   filtering, real navmesh pathfinding and cast replication remain later children — with its own
-  cross-platform golden), with coordinator composition, Nakama RPC registration and broader
-  persistence arriving as later children of the server-foundation epic (#4); `deploy/` (platform
-  manifests) arrives later per the roadmap.
+  cross-platform golden), with the concrete Agones/secret resource adapter, expiry-loop
+  supervision, zone claim adapter, Nakama RPC registration and broader persistence arriving as later children of the
+  server-foundation epic (#4); `deploy/` (platform manifests) arrives later per the roadmap.
 - **Changing any persisted player-data format:** follow the
   [forward-only save-data migration contract](docs/design/save-data.md). It defines the staged
   expand → bake → contract rollout, the version-bump checklist, and the refusal rules for the
