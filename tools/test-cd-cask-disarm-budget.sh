@@ -310,11 +310,39 @@ disarm_prior_cask_auto_merge "${tap}" "${pre_pr}" "${branch}" || rc=$?
 
 # The workflow must actually SET that deadline — a helper that honours a
 # variable nobody assigns is an unfireable guard.
-# The pattern matches the LITERAL shell written in the workflow, so the `$`
+# These patterns match the LITERAL shell written in the workflow, so the `$`
 # must stay unexpanded — single quotes are the point, not an oversight.
 # shellcheck disable=SC2016
-if ! grep -q '^ *cask_rest_deadline=\$(( \$(date +%s) + [0-9]\+ ))' "${workflow}"; then
-	fail "the workflow never sets cask_rest_deadline, so the shared bound never applies in production"
+if ! grep -q '^ *cask_rest_deadline=\$(( CASK_JOB_START + [0-9]\+ ))' "${workflow}"; then
+	fail "the workflow never sets cask_rest_deadline from the job anchor, so the shared bound never applies in production"
+fi
+# ...and anchor it to the JOB, not this step. `timeout-minutes` bounds the job,
+# so a step-relative deadline drifts past it whenever the earlier steps are
+# slow, and the runner kills the wait before the deliberate error can fire.
+# shellcheck disable=SC2016
+if ! grep -q 'CASK_JOB_START=\$(date +%s)" >> "\$GITHUB_ENV"' "${workflow}"; then
+	fail "the job never records CASK_JOB_START, so the deadline is measured from the tap step rather than the job"
+fi
+# shellcheck disable=SC2016
+anchor_line="$(grep -n 'CASK_JOB_START=\$(date +%s)' "${workflow}" | head -1 | cut -d: -f1)"
+# shellcheck disable=SC2016
+use_line="$(grep -n 'cask_rest_deadline=\$(( CASK_JOB_START' "${workflow}" | head -1 | cut -d: -f1)"
+if [ "${anchor_line}" -ge "${use_line}" ]; then
+	fail "CASK_JOB_START is recorded at line ${anchor_line}, after its use at ${use_line}; the deadline would fall back every run"
+fi
+# The offset must leave real headroom under the job timeout, or the deadline
+# can never fire before the runner kills the job.
+# shellcheck disable=SC2016
+offset="$(grep -o 'cask_rest_deadline=\$(( CASK_JOB_START + [0-9]\+' "${workflow}" | grep -o '[0-9]\+$')"
+timeout_min="$(awk '/^  homebrew-cask:/{f=1} f && /timeout-minutes:/{print $2; exit}' "${workflow}")"
+if [ -z "${offset}" ] || [ -z "${timeout_min}" ]; then
+	fail "could not read the deadline offset (${offset}) or the job timeout (${timeout_min})"
+fi
+if [ "${offset}" -ge "$((timeout_min * 60))" ]; then
+	fail "the deadline offset ${offset}s is not inside the ${timeout_min}m job timeout; the runner would kill the wait first"
+fi
+if [ "$((timeout_min * 60 - offset))" -lt 60 ]; then
+	fail "only $((timeout_min * 60 - offset))s of headroom between the deadline and the job timeout — too tight for the merge call and teardown"
 fi
 
 echo "PASS: the cask disarm survives an exhausted GraphQL budget and fails closed on every other refusal"

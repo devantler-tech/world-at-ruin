@@ -615,6 +615,13 @@ jobs:
           fi
           echo "tag=${RAW_TAG}" >> "$GITHUB_OUTPUT"
           echo "version=${RAW_TAG#v}" >> "$GITHUB_OUTPUT"
+          # Anchor for the tap step's REST wait deadline. Recorded HERE, in the
+          # job's first scripted step, because `timeout-minutes` bounds the
+          # whole JOB: a deadline measured from the tap step would start its
+          # clock after the asset download, and a slow download would let the
+          # runner kill the wait before the deliberate deadline error fires —
+          # turning a loud, diagnosable failure into an anonymous timeout.
+          echo "CASK_JOB_START=$(date +%s)" >> "$GITHUB_ENV"
 
       - name: 🔑 Require the tap token
         # Fail with a diagnosis rather than a bare auth error from `gh` later.
@@ -705,11 +712,25 @@ jobs:
           content="$(base64 -w0 < Casks/world-at-ruin.rb)"
 
           # ONE deadline for every REST check-wait this job performs, however
-          # many it turns out to need (see the delivery helper). 10 minutes of
-          # the job's 15 leaves the asset download, the tap reads, the branch
-          # repair and the PR work their own headroom, and a wait that runs
-          # past it fails loudly rather than taking the runner timeout with it.
-          cask_rest_deadline=$(( $(date +%s) + 600 ))
+          # many it turns out to need (see the delivery helper).
+          #
+          # Measured from the JOB's start, not this step's: `timeout-minutes`
+          # bounds the job, so a step-relative deadline silently grows past it
+          # whenever the earlier steps are slow — and the asset download is
+          # both the slowest and the most variable of them (it retries). The
+          # point of the deadline is a LOUD, diagnosable failure, and a runner
+          # timeout that beats it to the punch is exactly what it is meant to
+          # prevent. 13 minutes of the 15 leaves the merge call and step
+          # teardown their headroom, and the budget correctly SHRINKS when the
+          # earlier steps have already spent the job's time.
+          #
+          # The fallback keeps the helper usable if the anchor is ever missing
+          # (a reordered or skipped step), at the original step-relative bound.
+          if [ -n "${CASK_JOB_START:-}" ]; then
+            cask_rest_deadline=$(( CASK_JOB_START + 780 ))
+          else
+            cask_rest_deadline=$(( $(date +%s) + 600 ))
+          fi
 
           # A fork can use the same branch name, so never select a PR by ref
           # alone. Ask GitHub for the tap owner's head and then fail closed by
