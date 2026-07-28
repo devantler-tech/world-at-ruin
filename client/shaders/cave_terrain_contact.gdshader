@@ -169,8 +169,12 @@ void fragment() {
 		// reason: `plate_fw` is a whole plate's footprint and cannot stand in
 		// for the much narrower seam whose relief this is.
 		grad *= 1.0 - smoothstep(0.7, 1.3, crack_fw * 1.2 / max(crack_width, 1e-6));
+		// Same seam-slope ceiling as terrain.gdshader, for the same reason and
+		// necessarily the same number: this band blends into that ground, so a
+		// contact whose seams may tilt further than the ground's would shimmer
+		// exactly where the two meet.
 		float grad_len = length(grad);
-		grad = grad_len > 1.5 ? grad * (1.5 / grad_len) : grad;
+		grad = grad_len > 0.4 ? grad * (0.4 / grad_len) : grad;
 	}
 	vec3 bump = vec3(
 		(h0 - hx) * bump_strength + grad.x * crack_relief,
