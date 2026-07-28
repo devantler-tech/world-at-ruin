@@ -200,8 +200,7 @@ func _ready() -> void:
 		_fail("releasing an absent lock left a private copy behind")
 		return
 
-	# 8. The full release path still balances a real acquire, so cases 5-7 cannot
-	# pass against a release() that never reaches _release_exclusively() at all.
+	# 8. The full release path still balances a real acquire.
 	if not FileLock.acquire(PROBE):
 		_fail("could not acquire the lock for the end-to-end release case")
 		return
@@ -211,6 +210,32 @@ func _ready() -> void:
 		return
 	if not _private_copies(lock).is_empty():
 		_fail("a balanced acquire/release left a private copy behind")
+		return
+
+	# 9. release() is WIRED to the private-copy verification — asserted directly,
+	# because no outcome can carry it. Cases 5-7 drive _release_exclusively()
+	# themselves, and case 8 only shows that an owned lock ends up deleted, which a
+	# release that checks ownership and then deletes the SHARED directory does too:
+	# single-threaded the two compare the same bytes and differ only when another
+	# process substitutes the directory in between. Measured — with release()
+	# reverted to check-then-act, cases 1-8 ALL still passed, so without this case
+	# the fix's production half would be untested.
+	#
+	# The seam records the private path the last release renamed the lock to, which
+	# a check-then-act release never produces.
+	if not FileLock.acquire(PROBE):
+		_fail("could not acquire the lock for the release-wiring case")
+		return
+	FileLock.release(PROBE)
+	var used := FileLock._last_release_private
+	if used.is_empty():
+		_fail("release() never renamed the lock aside — it deleted the SHARED directory")
+		return
+	if not used.begins_with(lock + FileLock.RELEASE_SUFFIX):
+		_fail("release() renamed the lock to an unexpected path: %s" % used)
+		return
+	if DirAccess.dir_exists_absolute(_abs(used)):
+		_fail("release() left the private copy it verified on: %s" % used)
 		return
 
 	_cleanup()

@@ -113,6 +113,22 @@ static var _held: Dictionary = {}
 ## Lock path -> the ownership token this process stamped into it.
 static var _tokens: Dictionary = {}
 
+## The private path the last [method _release_exclusively] renamed a lock to
+## before verifying it, or "" when that pass never got as far as a rename.
+##
+## Exists SOLELY so a test can prove [method release] actually goes through the
+## private copy, and is the same seam — for the same reason — as
+## `SaveVault._last_write_expectation`. Single-threaded, a release that deletes
+## the SHARED directory after an ownership check is indistinguishable by outcome
+## from one that renames first and verifies the copy: both leave an owned lock
+## deleted and a foreign lock intact, because the bytes compared are the same
+## bytes. They differ only when another process substitutes the directory in
+## between, which no single-process test can stage. Measured: with `release()`
+## reverted to check-then-act and this seam absent, every other case in
+## lock_ownership_test still passed. So the wiring is asserted directly rather
+## than inferred from behaviour it cannot produce.
+static var _last_release_private: String = ""
+
 
 ## The lock directory guarding the file at `path`.
 static func path_for(path: String) -> String:
@@ -422,12 +438,16 @@ static func _release_exclusively(lock: String, mine: String) -> void:
 	var private := "%s%s%d-%d" % [
 		lock, RELEASE_SUFFIX, OS.get_process_id(), Time.get_ticks_usec()]
 	var private_absolute := ProjectSettings.globalize_path(private)
+	_last_release_private = ""
 	if DirAccess.rename_absolute(ProjectSettings.globalize_path(lock), private_absolute) != OK:
 		# Already gone, or another process is moving it. Either way it is not ours
 		# to delete, and there is nothing left to leak.
 		push_warning(
 			"FileLock: could not take the write lock at %s aside to release it — leaving it" % lock)
 		return
+	# Recorded only once the rename SUCCEEDED, so the seam names a copy that really
+	# exists rather than one this pass merely intended to make.
+	_last_release_private = private
 	if _recorded_token(private) == mine:
 		remove_dir(private)
 		return
@@ -452,3 +472,6 @@ static func clear_for_test() -> void:
 		remove_dir(lock)
 	_held.clear()
 	_tokens.clear()
+	# Cleared too, so a later case cannot read a previous case's rename as its own
+	# and pass without the production path having run at all.
+	_last_release_private = ""
