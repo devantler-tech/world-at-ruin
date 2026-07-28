@@ -31,10 +31,27 @@ extends Node
 ## already flickers as hard as the on state, this vantage cannot see plates at
 ## all and its verdict would be vacuous either way.
 ##
+## ## What the control does NOT make portable — read this before quoting a number
+##
+## Everything above compares two readings taken seconds apart in one process, so
+## it holds on any machine. The contribution's ABSOLUTE LEVEL does not. The same
+## unmodified shader measures 0.0027 on one Apple Silicon Mac and 0.0074 on
+## another at the same resolution, each reproducing to the digit, each with the
+## control at 0.0000 (#439). Both are right; they are not the same number, and
+## the cause is not established.
+##
+## So this tool reports the contribution and does not judge it, unless you set
+## `WAR_CRAWL_MAX` to a budget you measured HERE. **To compare two builds, run
+## both on one machine in one sitting and diff the readings** — never against a
+## figure recorded elsewhere, including the reference in this file.
+##
 ## Run (must be WINDOWED — a headless run renders nothing at all):
 ##   WAR_SAVE_PATH=/tmp/probe_save.json WAR_VAULT_PATH=/tmp/probe_vault.json \
 ##     WAR_BOOT_RECOVERY_PATH=/tmp/probe_recovery.json \
 ##     godot --path client --resolution 1280x720 res://tools/plate_crawl.tscn
+##
+## Add `WAR_CRAWL_MAX=<budget>` to turn the report into a pass/fail gate against
+## a baseline of your own.
 ##
 ## Redirect all three save seams: this boots the real launch path, so an
 ## unredirected run writes the player's own save, vault and recovery ledger
@@ -83,16 +100,32 @@ const WARMUP_FRAMES := 150
 ## — which would read as crawl that the shader had nothing to do with.
 const SETTLE_FRAMES := 90
 
-## The verdict line, sitting BETWEEN two measured readings rather than picked:
-## the ground flickered 0.0052 of the crop before the crack relief was made to
-## dissolve on its own footprint and 0.0027 after, so this fails the code that
-## shipped the artifact and passes the code that fixes it. Both readings
-## reproduced to the digit across repeat runs.
+## A REFERENCE reading, not a limit, and deliberately not a gate by default.
 ##
-## For scale, zeroing `crack_relief` outright takes it to 0.0000 — the relief is
-## the whole of what still moves — so there is real headroom left below this
-## line and it can be ratcheted down as that is claimed. Never up.
-const MAX_PLATE_CONTRIBUTION := 0.0040
+## On the machine #398 was measured on, the ground flickered 0.0052 of the crop
+## before the crack relief was made to dissolve on its own footprint and 0.0027
+## after; zeroing `crack_relief` outright gives 0.0000, which is the floor the
+## remaining work is against. **Those figures reproduced to the digit across
+## repeat runs ON THAT MACHINE.** That is all they were ever evidence for, and
+## the earlier wording here — "reproduced to the digit across repeat runs" with
+## no such qualifier — read as a much stronger claim than it supports.
+##
+## The absolute level is NOT portable. The same unmodified shader measured
+## 0.0074 on another Apple Silicon Mac at the same resolution, reproducing to
+## the digit there too, with the plates-off control at 0.0000 in both places
+## (#439). Both readings are internally consistent; they simply are not the same
+## number. The cause is not established, so nothing here should pretend to
+## normalise it away.
+##
+## Which is why this is not compared against anything unless the caller asks.
+## A constant calibrated on one machine, applied everywhere, does not detect a
+## regression — it reports one against code that is fine, and the failure text
+## points confidently at the crack relief while doing it. That is worse than no
+## gate, because it takes a reader through git history to disbelieve.
+const REFERENCE_CONTRIBUTION := 0.0027
+## The environment this reference was taken in, named so a reader can tell at a
+## glance whether their own number is comparable.
+const REFERENCE_ENVIRONMENT := "Apple M2 Pro, Metal, Forward+, 1280x720, no display scaling"
 ## Below this the off-state control is not quiet enough for the comparison to
 ## mean anything, and the run reports VACUOUS rather than a pass. The measured
 ## floor is 0.0000 — with the movers and the scenery hidden, a settled frame
@@ -148,8 +181,11 @@ func _ready() -> void:
 		return
 
 	var contribution := on - off
-	print("CRAWL off=%.4f on=%.4f contribution=%.4f (limit %.4f)"
-		% [off, on, contribution, MAX_PLATE_CONTRIBUTION])
+	var budget := _requested_budget()
+	print("CRAWL off=%.4f on=%.4f contribution=%.4f (%s)"
+		% [off, on, contribution,
+			("budget %.4f from WAR_CRAWL_MAX" % budget) if budget >= 0.0
+				else "no budget set — reporting only"])
 
 	# STATES DIFFER — the plates must actually be in this frame. Toggling the
 	# uniform changes what the ground is made of, so two identical frames mean
@@ -175,16 +211,34 @@ func _ready() -> void:
 		_fail(("VACUOUS — the plates-off control already flickers %.4f (max %.4f), so this "
 			+ "vantage cannot isolate the plate contribution") % [off, MAX_QUIET_FLOOR])
 		return
-	if contribution > MAX_PLATE_CONTRIBUTION:
-		_fail(("%.4f of the ground flickers under a %.2f-pixel camera step, above the %.4f "
-			+ "limit — something in the plate path is being drawn narrower than the pixel "
-			+ "drawing it. Measured, that has been the crack RELIEF: check what it dissolves "
-			+ "on before looking anywhere else")
-			% [contribution, STEP_PIXELS, MAX_PLATE_CONTRIBUTION])
+	# Everything above this line is machine-INDEPENDENT: each of those checks
+	# compares two readings taken seconds apart in one process, so a GPU that
+	# simply answers differently cannot trip them. They stay hard failures.
+	#
+	# The contribution is not like that. It is an absolute level, and the same
+	# unmodified shader measures 0.0027 on one Mac and 0.0074 on another (#439).
+	# So the tool does not judge it unless the caller supplies a budget measured
+	# in the SAME environment — which is the only comparison that means anything.
+	print("CRAWL reference %.4f on %s — comparable only on a like environment"
+		% [REFERENCE_CONTRIBUTION, REFERENCE_ENVIRONMENT])
+	if budget < 0.0:
+		print(("CRAWL REPORT — %.4f of the ground flickers under a %.2f-pixel step. No verdict: "
+			+ "set WAR_CRAWL_MAX to a budget measured on THIS machine to gate on it. To compare "
+			+ "two builds, run both here and diff these numbers — never against a recorded "
+			+ "constant.") % [contribution, STEP_PIXELS])
+		get_tree().quit(0)
+		return
+	if contribution > budget:
+		_fail(("%.4f of the ground flickers under a %.2f-pixel camera step, above the %.4f budget "
+			+ "YOU supplied via WAR_CRAWL_MAX — so this is a regression against your own baseline, "
+			+ "not against a recorded constant. Something in the plate path is being drawn "
+			+ "narrower than the pixel drawing it; measured, that has been the crack RELIEF, so "
+			+ "check what it dissolves on before looking anywhere else")
+			% [contribution, STEP_PIXELS, budget])
 		return
 
-	print("CRAWL PASS — %.4f of the ground flickers under a %.2f-pixel step (limit %.4f)"
-		% [contribution, STEP_PIXELS, MAX_PLATE_CONTRIBUTION])
+	print(("CRAWL PASS — %.4f of the ground flickers under a %.2f-pixel step, within the %.4f "
+		+ "budget supplied via WAR_CRAWL_MAX") % [contribution, STEP_PIXELS, budget])
 	get_tree().quit(0)
 
 
@@ -337,6 +391,30 @@ func _save_frame(plates: bool) -> void:
 	var path := "%s/plates-%s.png" % [dir, "on" if plates else "off"]
 	if img.save_png(path) != OK:
 		push_warning("could not write %s" % path)
+
+
+## The flicker budget the CALLER supplied, or -1.0 when they supplied none.
+##
+## An env var rather than a constant because the only sound budget is one
+## measured in the same environment it is applied to, and this file cannot know
+## what that is. A malformed value is refused rather than silently read as 0.0,
+## which would fail every run and look like a catastrophic regression.
+func _requested_budget() -> float:
+	var raw := OS.get_environment("WAR_CRAWL_MAX").strip_edges()
+	if raw.is_empty():
+		return -1.0
+	if not raw.is_valid_float():
+		push_warning("WAR_CRAWL_MAX=%s is not a number — ignoring it and reporting only" % raw)
+		return -1.0
+	var value := raw.to_float()
+	# A negative budget is refused rather than accepted, because -1.0 is this
+	# function's own "no budget" sentinel: taken at face value it would read as
+	# unset and quietly report, and taken literally it would fail every possible
+	# run. Neither is what someone typing a negative number meant.
+	if value < 0.0:
+		push_warning("WAR_CRAWL_MAX=%s is negative — ignoring it and reporting only" % raw)
+		return -1.0
+	return value
 
 
 ## Leaves the camera as the ONLY thing that differs between two captures.

@@ -1,5 +1,12 @@
 # URLs the link checker must skip. Each entry is a regex, and each needs a reason —
 # an unexplained entry here is indistinguishable from hiding a genuinely broken link.
+#
+# Slowness is not a reason. A host that timed out is not a host that is unreachable, and an
+# entry here would stop checking it for good. Timeouts are absorbed by the timeout lychee runs
+# with, set and explained in .mega-linter.yml. Every entry below fails deterministically on
+# something other than time — a protocol the checker cannot complete, or a server refusing it
+# outright — which is what makes each one reproducible enough to justify. If a link is failing
+# on time, that setting is what to revisit, not this file.
 
 # GitHub's user-attachments assets (the README's hero image) 302-redirect to a signed
 # S3 URL, and lychee fails on it with "HTTP/2 protocol error. Server may not support
