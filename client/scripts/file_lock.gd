@@ -15,17 +15,20 @@ class_name FileLock
 ## which is the very race being closed, so the SHAPE is load-bearing rather than
 ## an implementation detail.
 ##
-## [b]Ownership is decided by that same primitive, at both ends.[/b] Holding the
-## lock is one property, and it is established once on the way in and settled once
-## on the way out — never by testing a marker and then acting on what the test
-## said, which is the same race one level down:
-##  - CLAIMING is a `mkdir` of the ownership directory inside the lock, so exactly
-##    one acquirer can ever win it (see [method _claim_ownership]);
-##  - RELEASING renames the lock to a private path and verifies the token on that
-##    copy before deleting it, so no other process can substitute the directory
-##    between the check and the delete (see [method _release_exclusively]).
-## Both are the technique [method _reclaim_if_abandoned] already used, applied to
-## the two operations that previously did not.
+## [b]Ownership is settled in one step at both ends.[/b] Holding the lock is a
+## single property, established once on the way in and given up once on the way
+## out — never by testing a marker and then acting on what the test said, which is
+## the same race one level down:
+##  - ACQUIRING builds the whole lock, stamp included, under a private name and
+##    `rename`s it into place, so the shared path only ever holds a finished lock
+##    and a slow acquirer can never write into someone else's (see
+##    [method _publish_lock]);
+##  - RELEASING renames the STAMP — not the lock — to a private name and verifies
+##    the token there before deleting, so the lock never vacates its slot and no
+##    third process can slip in while ownership is being decided (see
+##    [method _release_exclusively]).
+## Both use the technique [method _reclaim_if_abandoned] already relied on, applied
+## to the two operations that previously did not.
 ##
 ## [b]Scope the guarantee precisely.[/b] A lock only excludes writers that TAKE
 ## it. It holds between lock-aware builds; it does nothing about:
@@ -58,33 +61,32 @@ class_name FileLock
 ## The lock's suffix, appended to the guarded file's own path.
 const SUFFIX := ".lock"
 
-## The ownership claim inside the lock directory — itself a DIRECTORY, for the
-## same reason the lock is one: `mkdir` is the only atomic exclusive-create Godot
-## exposes, so exactly one caller can ever claim ownership of a given lock.
+## The ownership stamp inside the lock directory, naming the process that holds
+## it. Written before the lock is published, never after — see
+## [method _publish_lock].
 ##
 ## Its presence is deliberate — an EMPTY lock directory can be silently renamed
-## over (measured), so a claimed lock is what makes a reclaimer's restore fail
+## over (measured), so a stamped lock is what makes a reclaimer's restore fail
 ## safely instead of overwriting a live holder. It also lets a holder prove the
 ## lock is still its own immediately before it replaces the guarded file.
-const OWNER_DIR := "owner"
+const OWNER_FILE := "owner"
 
-## The token file the claim's winner writes INSIDE [constant OWNER_DIR]. The
-## claim and the token are two steps on purpose: the claim is what must be
-## atomic, and a token written after it is only ever written by the one caller
-## that won. A winner that dies between the two leaves a claim with no token,
-## which [method owns] reads as NOT ours — the write is refused rather than
-## taken on an unproven claim.
-const TOKEN_FILE := "token"
+## Suffix for the uniquely-named directory a lock is BUILT in before it is
+## published. Per-ATTEMPT, and private to this attempt: nothing else can name it,
+## which is what lets the lock be assembled without any of it being visible at the
+## shared path. See [method _publish_lock].
+const STAGING_SUFFIX := ".staging-"
 
 ## Suffix for the uniquely-named directory an abandoned lock is renamed to while
 ## it is reclaimed. Per-ATTEMPT rather than per-process: see
 ## [method _reclaim_if_abandoned].
 const RECLAIM_SUFFIX := ".reclaim-"
 
-## Suffix for the uniquely-named directory a lock is renamed to while it is
-## RELEASED. Distinct from [constant RECLAIM_SUFFIX] so a leftover copy says which
-## pass abandoned it, and per-ATTEMPT for the same reason: see
-## [method _release_exclusively].
+## Suffix for the uniquely-named name the ownership stamp is renamed to while its
+## holder releases it. Applied to the STAMP, never to the lock directory — see
+## [method _release_exclusively] for why the lock itself must not move. Distinct
+## from [constant RECLAIM_SUFFIX] so a leftover says which pass abandoned it, and
+## per-ATTEMPT for the same reason.
 const RELEASE_SUFFIX := ".release-"
 
 ## How long a lock may go unreleased before another process may break it.
@@ -113,6 +115,17 @@ static var _held: Dictionary = {}
 ## Lock path -> the ownership token this process stamped into it.
 static var _tokens: Dictionary = {}
 
+## The staging path the last [method _publish_lock] assembled a lock in, or ""
+## when that pass never got as far as building one.
+##
+## The acquire-side twin of [member _last_release_private], and there for the same
+## reason: after [method acquire] returns, a lock built IN PLACE and a lock
+## published whole are indistinguishable — both leave a stamped directory at the
+## shared path. They differ only in whether a half-built lock was ever visible
+## there, which one process cannot observe. So the seam asserts that acquisition
+## went through the staging path, which is the property the fix actually is.
+static var _last_publish_staging: String = ""
+
 ## The private path the last [method _release_exclusively] renamed a lock to
 ## before verifying it, or "" when that pass never got as far as a rename.
 ##
@@ -137,12 +150,7 @@ static func path_for(path: String) -> String:
 
 ## The ownership claim's directory inside `lock`.
 static func owner_path(lock: String) -> String:
-	return lock + "/" + OWNER_DIR
-
-
-## The ownership token's path inside `lock`'s claim.
-static func token_path(lock: String) -> String:
-	return owner_path(lock) + "/" + TOKEN_FILE
+	return lock + "/" + OWNER_FILE
 
 
 ## The stale-lock timeout: the [constant STALE_ENV] override when it is a
@@ -160,18 +168,18 @@ static func stale_seconds() -> int:
 
 ## Take the cross-process write lock guarding `path`.
 ##
-## `mkdir` decides the race: exactly one caller creates the directory and every
-## other gets `ERR_ALREADY_EXISTS`, across threads and processes alike — among
-## callers that take this lock at all (see the class docs: a pre-lock build does
-## not).
+## The lock is PUBLISHED whole — built complete under a private name and moved
+## into place in one step — so the shared path only ever holds a finished lock and
+## exactly one caller can put it there. Among callers that take this lock at all
+## (see the class docs: a pre-lock build does not).
 static func acquire(path: String) -> bool:
 	var lock := path_for(path)
 	var depth := int(_held.get(lock, 0))
 	if depth > 0:
 		_held[lock] = depth + 1
 		return true
-	var absolute := ProjectSettings.globalize_path(lock)
-	var err := DirAccess.make_dir_absolute(absolute)
+	var token := "%d-%d" % [OS.get_process_id(), Time.get_ticks_usec()]
+	var err := _publish_lock(lock, token)
 	if err == ERR_ALREADY_EXISTS:
 		# Someone holds it. Try to reclaim it if it is abandoned — but NEVER acquire
 		# in the same pass, and refuse this write either way.
@@ -181,9 +189,9 @@ static func acquire(path: String) -> bool:
 		# one: two processes both find the same stale lock, the first removes and
 		# recreates it, and the second then removes THAT — a live lock — and
 		# recreates it again, leaving both convinced they own the write. Keeping
-		# acquisition to the single atomic mkdir below means the only way to hold
-		# this lock is to have created it against an absent path, which exactly one
-		# caller can ever do.
+		# acquisition to the single atomic publish below means the only way to hold
+		# this lock is to have moved a finished one onto an absent path, which
+		# exactly one caller can ever do.
 		_reclaim_if_abandoned(lock)
 		# WARNING, not error: losing the race is the design working. The class docs
 		# above call contention expected and non-player-facing, and issue #379's own
@@ -203,94 +211,90 @@ static func acquire(path: String) -> bool:
 			"FileLock: cannot create the write lock at %s (error %d) — refusing to write"
 			% [lock, err])
 		return false
-	# Claim ownership INSIDE the lock. Two things depend on the directory not being
-	# empty: [method owns] can then prove this process is still the holder before
-	# the destructive rename, and a reclaimer's restore is a rename onto a
-	# non-empty directory, which fails safely instead of clobbering. (Measured:
-	# renaming onto an EMPTY directory succeeds, so an empty lock would be
-	# silently overwritable.)
-	var token := "%d-%d" % [OS.get_process_id(), Time.get_ticks_usec()]
-	var claimed := _claim_ownership(lock, token)
-	if claimed == ERR_ALREADY_EXISTS:
-		# Not the directory we created. Leave it alone — it belongs to whoever
-		# claimed it — and refuse.
-		push_error(
-			"FileLock: the lock at %s was replaced while this process was acquiring it — refusing to write"
-			% lock)
-		return false
-	if claimed != OK:
-		push_error("FileLock: cannot claim ownership of %s — refusing to write" % lock)
-		# remove_dir(), not remove_absolute(): the claim directory may have been
-		# created before the token write failed, and a directory holding an entry
-		# cannot be removed in one call (measured) — a bare remove would leave the
-		# lock behind and wedge the file for the whole stale timeout.
-		remove_dir(lock)
-		return false
 	_held[lock] = 1
 	_tokens[lock] = token
 	return true
 
 
-## Claim ownership of `lock` for `token`, atomically.
+## Build a complete lock for `token` privately, then publish it at `lock` in ONE
+## step. Returns `ERR_ALREADY_EXISTS` when the slot was taken, leaving it untouched.
 ##
-## Returns `ERR_ALREADY_EXISTS` when the claim is already taken, and writes
-## NOTHING in that case. A directory reaching this point from [method acquire] is
-## empty by construction — it was just created — so an existing claim means this
-## is a DIFFERENT directory: a process descheduled between its `mkdir` and its
-## claim for longer than the stale timeout has its empty lock reclaimed as
-## abandoned, and another writer can then create and claim a fresh lock at the
-## same path. Claiming anyway would destroy that writer's token — making it
-## abandon a write it legitimately owns — and record this process as the holder
-## of a lock it never created.
+## [b]Publishing whole is what makes ownership atomic, and building in place cannot
+## be made to work.[/b] `mkdir` alone is atomic, but a lock created empty and
+## stamped afterwards is only half-built at the shared path in between, and every
+## later step addresses it BY PATH. An acquirer descheduled past the stale timeout
+## in that gap has its empty lock reclaimed as abandoned and the slot retaken; when
+## it resumes, the path it stamps is a DIFFERENT directory — so it overwrites the
+## new holder's token and records itself as owner of a lock it never created, and
+## if that holder has just passed [method owns], both are inside the guarded write.
+## Nothing added after the fact fixes that, because the flaw is the window itself.
 ##
-## [b]The claim is a `mkdir`, not a file write, and that is the whole point.[/b]
-## Testing for the marker and then creating it is check-then-act: two acquirers
-## reaching the gap above can BOTH see no claim, both write their token, and both
-## then read their own token back if the reads interleave with the writes — two
-## processes inside the same guarded read-modify-write, which is exactly the lost
-## update this lock exists to prevent. `DirAccess.make_dir_absolute` is `mkdir`,
-## the one exclusive-create Godot exposes that fails with `ERR_ALREADY_EXISTS`
-## rather than succeeding when the path is taken (measured), so the winner is
-## decided by the operating system in a single step and the loser cannot mistake
-## itself for the holder. The token is written after, by the one caller that won.
+## So the lock is assembled under a name no other process can derive and moved into
+## place by `rename`, which the operating system settles for exactly one caller:
+## onto an absent path it succeeds, and onto a non-empty directory it fails
+## (measured). A published lock always carries its stamp, so a rival's publish
+## finds a non-empty target and loses. There is no moment at which a partial lock
+## is visible, and a slow acquirer can only ever win or lose the rename — never
+## corrupt a lock that is not its own.
 ##
-## [b]Cross-version, this fails CLOSED in both directions[/b] — both measured on
-## 4.7.1. A build predating this shape writes `owner` as a FILE and reads it with
-## `FileAccess`; a build carrying it makes `owner` a DIRECTORY:
-##  - old build meeting a new claim: `FileAccess.open(<dir>, WRITE)` returns null,
-##    so it refuses; `file_exists(<dir>)` is false and `open(<dir>, READ)` is
-##    null, so [method owns] is false and its write refuses too;
-##  - new build meeting an old claim: `mkdir` over an existing FILE returns
-##    `ERR_ALREADY_EXISTS`, so it refuses, and the token beneath it cannot be
-##    opened, so [method owns] is false.
-## Neither can read the other's claim as its own, so the mismatch costs a
-## deferred write — degrading to session-only, this client's standing answer to
-## doubt about persisted state — rather than admitting two writers.
-##
-## Split out so the refusal is reachable from a test. Driving it through
-## [method acquire] cannot reach it: `mkdir` fails first when the directory
-## exists, so an end-to-end case asserts a branch it never executes and passes
-## with this guard deleted (measured).
-static func _claim_ownership(lock: String, token: String) -> int:
-	var err := DirAccess.make_dir_absolute(ProjectSettings.globalize_path(owner_path(lock)))
+## [b]This is also why the on-disk shape is unchanged from the pre-atomic build.[/b]
+## Atomicity comes from the rename, not from the stamp's shape, so `owner` stays a
+## plain file and a retained older client and a current one still exclude each
+## other exactly as before: an older build's `mkdir` is refused by a published
+## lock, and its half-built empty lock is refused by the guard below rather than
+## moved aside. Neither can hold the lock while the other writes.
+static func _publish_lock(lock: String, token: String) -> int:
+	var staging := "%s%s%d-%d" % [
+		lock, STAGING_SUFFIX, OS.get_process_id(), Time.get_ticks_usec()]
+	var staging_absolute := ProjectSettings.globalize_path(staging)
+	_last_publish_staging = ""
+	var err := DirAccess.make_dir_absolute(staging_absolute)
 	if err != OK:
-		# ERR_ALREADY_EXISTS is a lost race; anything else is an environment fault.
-		# Both refuse, and neither may write a token into a claim it does not hold.
 		return err
-	var owner := FileAccess.open(token_path(lock), FileAccess.WRITE)
+	# Recorded once the staging directory really exists, so the seam names a build
+	# that happened rather than one this pass merely intended.
+	_last_publish_staging = staging
+	var owner := FileAccess.open(staging + "/" + OWNER_FILE, FileAccess.WRITE)
 	if owner == null:
+		DirAccess.remove_absolute(staging_absolute)
 		return ERR_CANT_CREATE
 	owner.store_string(token)
 	owner.close()
-	return OK
+	# Refuse rather than displace ANY lock already at the slot, including an EMPTY
+	# one. `rename` fails onto a non-empty directory but REPLACES an empty one
+	# (measured), and an empty lock is exactly what a build predating this shape
+	# leaves while it stamps — so without this, publishing would move that build's
+	# lock out from under it and a bare lock directory would stop excluding a
+	# writer at all, which is the behaviour every caller has shipped against.
+	#
+	# This is a REFUSAL filter, never a grant, and that is what keeps it from being
+	# check-then-act: it can only ever turn a success into a refusal. The rename
+	# below still decides the race on its own, so a lock appearing in the gap costs
+	# at most one deferred write — and the build it belonged to refuses in turn,
+	# reading this build's published stamp as already present.
+	if DirAccess.dir_exists_absolute(ProjectSettings.globalize_path(lock)):
+		remove_dir(staging)
+		return ERR_ALREADY_EXISTS
+	if DirAccess.rename_absolute(staging_absolute, ProjectSettings.globalize_path(lock)) == OK:
+		return OK
+	# The slot is taken. Read as contention rather than as an environment fault:
+	# the parent directory was demonstrably writable a moment ago, since the
+	# staging directory and its stamp were both created in it.
+	remove_dir(staging)
+	return ERR_ALREADY_EXISTS
 
 
 ## The ownership token recorded in `lock`, or "" when there is none to read.
-##
-## Absent claim, absent token and an unreadable token all read as "" — which no
-## live holder's token can equal, so every one of them means NOT ours.
 static func _recorded_token(lock: String) -> String:
-	var owner := FileAccess.open(token_path(lock), FileAccess.READ)
+	return _token_at(owner_path(lock))
+
+
+## The token written at `stamp`, or "" when it cannot be read.
+##
+## Absent, unreadable and empty all read as "" — which no live holder's token can
+## equal, so every one of them means NOT ours.
+static func _token_at(stamp: String) -> String:
+	var owner := FileAccess.open(stamp, FileAccess.READ)
 	if owner == null:
 		return ""
 	var recorded := owner.get_as_text()
@@ -375,11 +379,9 @@ static func _reclaim_if_abandoned(lock: String) -> void:
 	remove_dir(dead)
 
 
-## Delete a lock directory, its ownership claim and the token inside it. A
-## directory holding an entry cannot be removed in one call (measured), so the
-## three levels come off innermost-first: token, then claim, then lock.
+## Delete a lock directory and its ownership stamp. A directory holding a file
+## cannot be removed in one call (measured), so the stamp goes first.
 static func remove_dir(lock: String) -> void:
-	DirAccess.remove_absolute(ProjectSettings.globalize_path(token_path(lock)))
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(owner_path(lock)))
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(lock))
 
@@ -416,62 +418,71 @@ static func release(path: String) -> void:
 
 ## Delete `lock` only if it still carries `mine`, deciding the two atomically.
 ##
-## Same primitive and same shape as [method _reclaim_if_abandoned], for the same
-## reason: renaming a directory succeeds for exactly one caller and fails for
-## every other once the source is gone (measured), so the winner ends up holding a
-## uniquely-named copy nobody else can reach. Verifying the token on THAT copy
-## cannot race — no other process can substitute the directory in between, because
-## no other process can name it.
+## Rename is the serializer, exactly as in [method _reclaim_if_abandoned]: it
+## succeeds for one caller and fails for every other once the source is gone
+## (measured), so the winner ends up holding a uniquely-named stamp nobody else can
+## reach, and reading the token off THAT cannot race.
 ##
-## The check-then-act this replaces was the release-path mirror of the acquire
-## path's: this file already used rename correctly when reclaiming and not when
-## releasing, so ownership was a half-guarded property rather than one.
+## [b]It is the STAMP that moves, never the lock directory.[/b] Taking the whole
+## lock aside would empty the shared path for the length of the check, and a lock
+## that is briefly absent is a lock a third process can acquire — so a stale former
+## holder releasing after its lock had already been reclaimed and retaken would
+## vacate the CURRENT holder's slot, let a third in, then fail to put it back and
+## delete it, leaving two processes inside the guarded write. That is the same lost
+## update this lock exists to prevent, so a release must never vacate a slot it may
+## not own.
 ##
-## A process dying between the rename and the delete leaves its private copy
-## behind, exactly as a dying reclaimer does, and for the same reason that is
-## tolerable: the name carries this ATTEMPT's pid and tick count, so no later pass
-## ever targets it, and the lock itself is already FREE — the failure direction is
-## a stray directory rather than a file no client can write for the whole stale
-## window.
+## Moving only the stamp keeps the lock directory present and non-empty throughout,
+## which closes that off completely (all measured):
+##  - a rival's publish sees a non-empty target and fails, and an older build's
+##    `mkdir` sees the directory and fails, so NOBODY can acquire while the stamp
+##    is aside;
+##  - therefore nothing can create a stamp at the shared name, so the restore below
+##    cannot collide and cannot clobber;
+##  - a concurrent holder's [method owns] finds no stamp and reads NOT ours, so it
+##    refuses its write rather than proceeding — the safe direction.
+##
+## A process dying between the rename and the delete leaves its stamp behind under
+## a per-ATTEMPT name, exactly as a dying reclaimer does: no later pass targets it,
+## and the lock it belonged to is reclaimable on the normal stale path.
 static func _release_exclusively(lock: String, mine: String) -> void:
 	# Cleared FIRST, on every path including the early returns below. Left set, the
-	# seam would still name the previous pass's copy and a later assertion about
+	# seam would still name the previous pass's stamp and a later assertion about
 	# this one would pass without this pass having renamed anything.
 	_last_release_private = ""
 	if mine.is_empty():
 		# Never acquired, or already released. Nothing of ours to remove, and
 		# guessing would delete a lock belonging to whoever holds it now.
 		return
-	# Per-ATTEMPT, exactly as reclaim targets are: a release that dies after the
-	# rename leaves its private copy behind, and keying on the pid alone would aim
-	# every later attempt from an inheritor of that pid at the same surviving
-	# directory.
-	var private := "%s%s%d-%d" % [
-		lock, RELEASE_SUFFIX, OS.get_process_id(), Time.get_ticks_usec()]
-	var private_absolute := ProjectSettings.globalize_path(private)
-	if DirAccess.rename_absolute(ProjectSettings.globalize_path(lock), private_absolute) != OK:
-		# Already gone, or another process is moving it. Either way it is not ours
-		# to delete, and there is nothing left to leak.
+	var aside := "%s%s%d-%d" % [
+		owner_path(lock), RELEASE_SUFFIX, OS.get_process_id(), Time.get_ticks_usec()]
+	var aside_absolute := ProjectSettings.globalize_path(aside)
+	if DirAccess.rename_absolute(
+			ProjectSettings.globalize_path(owner_path(lock)), aside_absolute) != OK:
+		# No stamp to take aside: the lock was already released, or reclaimed out
+		# from under us. Either way it is not ours to delete.
 		push_warning(
-			"FileLock: could not take the write lock at %s aside to release it — leaving it" % lock)
+			"FileLock: no ownership stamp to release at %s — leaving the lock alone" % lock)
 		return
-	# Recorded only once the rename SUCCEEDED, so the seam names a copy that really
-	# exists rather than one this pass merely intended to make.
-	_last_release_private = private
-	if _recorded_token(private) == mine:
-		remove_dir(private)
+	# Recorded only once the rename SUCCEEDED, so the seam names a stamp that really
+	# exists rather than one this pass merely intended to move.
+	_last_release_private = aside
+	if _token_at(aside) == mine:
+		DirAccess.remove_absolute(aside_absolute)
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(lock))
 		return
-	# Not ours. Put it back for whoever holds it now — the restore fails rather
-	# than clobbers when the slot has been taken again, since a claimed lock is
-	# non-empty (measured).
+	# Not ours. Put it back for whoever holds it now. Nothing can have taken the
+	# name in the meantime — publishing and `mkdir` both need the lock directory to
+	# be absent or empty, and it has been present and non-empty throughout.
 	push_warning(
 		"FileLock: the write lock at %s is no longer ours — leaving it for its holder" % lock)
-	if DirAccess.rename_absolute(private_absolute, ProjectSettings.globalize_path(lock)) == OK:
+	if DirAccess.rename_absolute(
+			aside_absolute, ProjectSettings.globalize_path(owner_path(lock))) == OK:
 		return
-	# The slot is occupied by a newer lock, so this copy is an orphan that would
-	# otherwise shadow the real one. Drop it rather than leave it behind.
-	push_warning("FileLock: could not restore a write lock at %s that is not ours" % lock)
-	remove_dir(private)
+	# Unreachable by the argument above; if the filesystem says otherwise, drop the
+	# stamp rather than leave it shadowing the lock it came from.
+	push_warning("FileLock: could not restore an ownership stamp at %s that is not ours" % lock)
+	DirAccess.remove_absolute(aside_absolute)
 
 
 ## Drop every lock this process holds. FOR TESTS ONLY: one test drives several
@@ -484,4 +495,5 @@ static func clear_for_test() -> void:
 	_tokens.clear()
 	# Cleared too, so a later case cannot read a previous case's rename as its own
 	# and pass without the production path having run at all.
+	_last_publish_staging = ""
 	_last_release_private = ""

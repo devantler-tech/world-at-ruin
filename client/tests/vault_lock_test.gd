@@ -201,11 +201,8 @@ func _ready() -> void:
 	# lock and stamping it; a settled holder's lock carries an ownership stamp, and
 	# that is the shape a reclaimer's restore relies on to fail safely rather than
 	# rename over a live lock.
-	if DirAccess.make_dir_absolute(_abs(lock)) != OK:
-		_fail("could not take the lock for the stamped-holder case")
-		return
-	if FileLock._claim_ownership(lock, "999999-1") != OK:
-		_fail("could not claim a foreign ownership stamp")
+	if FileLock._publish_lock(lock, "999999-1") != OK:
+		_fail("could not publish a foreign stamped lock")
 		return
 	if SaveVault.persist_attunement(SaveVault.SHRINE_WARDENS):
 		_fail("a stamped foreign lock did not exclude a write")
@@ -227,10 +224,10 @@ func _ready() -> void:
 	if not FileLock.owns(PROBE):
 		_fail("a freshly acquired lock did not read as owned by this process")
 		return
-	if not FileAccess.file_exists(FileLock.token_path(lock)):
+	if not FileAccess.file_exists(FileLock.owner_path(lock)):
 		_fail("acquiring the lock did not stamp ownership into it")
 		return
-	var hijack := FileAccess.open(FileLock.token_path(lock), FileAccess.WRITE)
+	var hijack := FileAccess.open(FileLock.owner_path(lock), FileAccess.WRITE)
 	if hijack == null:
 		_fail("could not overwrite the ownership stamp")
 		return
@@ -259,7 +256,7 @@ func _ready() -> void:
 	if not DirAccess.dir_exists_absolute(_abs(lock)):
 		_fail("releasing a lock owned by someone else DELETED it — a third writer could acquire mid-write")
 		return
-	if not FileAccess.file_exists(FileLock.token_path(lock)):
+	if not FileAccess.file_exists(FileLock.owner_path(lock)):
 		_fail("releasing a foreign-held lock stripped its ownership stamp")
 		return
 	# That lock was deliberately left behind, so free the slot by hand before the
@@ -285,11 +282,8 @@ func _ready() -> void:
 	# recovery would be dead for the whole session. Build exactly that orphan and
 	# prove reclamation still works around it.
 	var orphan := "%s%s%d" % [lock, FileLock.RECLAIM_SUFFIX, OS.get_process_id()]
-	if DirAccess.make_dir_absolute(_abs(orphan)) != OK:
+	if FileLock._publish_lock(orphan, "dead-1") != OK:
 		_fail("could not simulate a crashed reclaimer's leftover copy")
-		return
-	if FileLock._claim_ownership(orphan, "dead-1") != OK:
-		_fail("could not claim the orphaned reclaim copy")
 		return
 	if DirAccess.make_dir_absolute(_abs(lock)) != OK:
 		_fail("could not simulate an abandoned lock alongside the orphan")

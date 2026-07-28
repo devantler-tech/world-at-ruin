@@ -102,11 +102,8 @@ func _ready() -> void:
 	# 5. A STAMPED foreign lock refuses too. Case 2 holds a bare directory, which
 	# is what a holder looks like only for the instant between creating the lock
 	# and stamping it; a real holder is stamped for the whole of its write.
-	if DirAccess.make_dir_absolute(_abs(lock)) != OK:
-		_fail("could not create the lock for the stamped-foreign case")
-		return
-	if FileLock._claim_ownership(lock, "someone-else-1") != OK:
-		_fail("could not claim the foreign lock")
+	if FileLock._publish_lock(lock, "someone-else-1") != OK:
+		_fail("could not publish the foreign lock")
 		return
 	var stamped := BootRecovery.save_state(PROBE, BootRecovery.fresh_state())
 	if stamped.get("ok", false):
@@ -179,7 +176,7 @@ func _ready() -> void:
 	if not FileLock.owns(PROBE):
 		_fail("a freshly acquired lock did not read as owned by this process")
 		return
-	var hijack := FileAccess.open(FileLock.token_path(lock), FileAccess.WRITE)
+	var hijack := FileAccess.open(FileLock.owner_path(lock), FileAccess.WRITE)
 	if hijack == null:
 		_fail("could not overwrite the ownership stamp")
 		return
@@ -252,16 +249,13 @@ func _ready() -> void:
 	# this guard at all — `mkdir` fails first when the directory exists, so the
 	# end-to-end form asserts a branch it never executes and passes with the guard
 	# deleted (measured). Same reasoning as vault_lock_test's ownership case.
-	if DirAccess.make_dir_absolute(_abs(lock)) != OK:
-		_fail("could not create the lock for the claim-clobber case")
+	if FileLock._publish_lock(lock, "replacement-1") != OK:
+		_fail("could not publish the replacement lock")
 		return
-	if FileLock._claim_ownership(lock, "replacement-1") != OK:
-		_fail("could not claim the replacement lock")
-		return
-	if FileLock._claim_ownership(lock, "resumed-acquirer") != ERR_ALREADY_EXISTS:
+	if FileLock._publish_lock(lock, "resumed-acquirer") != ERR_ALREADY_EXISTS:
 		_fail("claiming a lock another writer already owns was not refused")
 		return
-	var stamp_after := FileAccess.open(FileLock.token_path(lock), FileAccess.READ)
+	var stamp_after := FileAccess.open(FileLock.owner_path(lock), FileAccess.READ)
 	if stamp_after == null:
 		_fail("the replacement writer's ownership token was deleted")
 		return
@@ -273,11 +267,8 @@ func _ready() -> void:
 	# And it DOES claim a genuinely unclaimed lock, so case 11 cannot pass by
 	# refusing everything.
 	FileLock.remove_dir(lock)
-	if DirAccess.make_dir_absolute(_abs(lock)) != OK:
-		_fail("could not create an empty lock for the positive claim case")
-		return
-	if FileLock._claim_ownership(lock, "mine-1") != OK:
-		_fail("claiming an unclaimed lock was refused")
+	if FileLock._publish_lock(lock, "mine-1") != OK:
+		_fail("publishing onto a free slot was refused")
 		return
 	FileLock.remove_dir(lock)
 
