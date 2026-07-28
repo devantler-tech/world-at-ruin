@@ -54,8 +54,8 @@ const FLOOR_MAX_ANGLE_DEG := 45.0
 ## build reaches **42.54** degrees against a 45 degree floor limit.
 ##
 ## The bar is set just above THIS build rather than just under the floor limit,
-## and that is deliberate. Walkability is a near miss here, so a threshold at
-## 44.9 would licence spending 2.4 degrees of headroom the world has never had.
+## and that is deliberate: a threshold at 44.9 would licence letting the ground
+## get 2.4 degrees steeper than it currently is, without anything here noticing.
 ## Ratchet it down as the ground gets gentler; never up to accommodate a re-tune.
 const MAX_GRADE_DEG := 43.0
 
@@ -63,11 +63,13 @@ const MAX_GRADE_DEG := 43.0
 ## Ratchets, measured at `SAMPLE_STEP` on the shipped seed.
 ##
 ## 🔴 This is the walkability law; `MAX_GRADE_DEG` above is only its weakest
-## form. A global maximum is set by whichever region is steepest, so it cannot
-## see any of the others move: on this build `bonepale` could steepen from 38.45
-## degrees to 42.5 — a landform change large enough to alter what that region IS
-## — while the global figure never budged and this suite stayed green. Per
-## region, that drift has nowhere to hide.
+## form. A global maximum is held by whichever region is steepest, so it is
+## blind to every other one — and not by a little. Measured: raising
+## `bonepale`'s amplitude to 0.62 takes its own ground from 38.45 degrees to
+## **41.11**, a change large enough to alter what that region is to walk across,
+## while the global reading does not rise at all (42.54 to 42.50 — it goes
+## DOWN). The old global-only form of this arm stayed green on exactly that.
+## Per region, the drift has nowhere to hide.
 ##
 ## Measured: ashflats 42.50, cinderreach 42.49, rustmoor 41.50, bonepale 38.45.
 ## Each bar sits just above its own region, which is what makes them ratchets
