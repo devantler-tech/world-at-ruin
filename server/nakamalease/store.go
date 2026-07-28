@@ -147,7 +147,9 @@ func (s *Store) Create(ctx context.Context, lease Lease) (Record, error) {
 	switch {
 	case err == nil && current.Lease == normalized:
 		return current, nil
-	case err == nil && sameStagingAttempt(current.Lease, normalized):
+	case err == nil &&
+		normalized.Staging &&
+		sameAttemptIdentity(current.Lease, normalized):
 		if current.Lease.Releasing {
 			return Record{}, ErrReleasing
 		}
@@ -175,7 +177,7 @@ func (s *Store) Create(ctx context.Context, lease Lease) (Record, error) {
 		}
 		return latest, nil
 	}
-	if sameStagingAttempt(latest.Lease, normalized) {
+	if normalized.Staging && sameAttemptIdentity(latest.Lease, normalized) {
 		if latest.Lease.Releasing {
 			return Record{}, ErrReleasing
 		}
@@ -184,10 +186,8 @@ func (s *Store) Create(ctx context.Context, lease Lease) (Record, error) {
 	return Record{}, ErrConflict
 }
 
-func sameStagingAttempt(left, right Lease) bool {
-	return left.Staging &&
-		right.Staging &&
-		left.UserID == right.UserID &&
+func sameAttemptIdentity(left, right Lease) bool {
+	return left.UserID == right.UserID &&
 		left.ReservationID == right.ReservationID &&
 		left.AttemptID == right.AttemptID
 }
@@ -308,7 +308,7 @@ func (s *Store) Replace(
 	if latest.Lease == normalized {
 		return latest, nil
 	}
-	if sameStagingAttempt(latest.Lease, normalized) {
+	if normalized.Staging && sameAttemptIdentity(latest.Lease, normalized) {
 		if latest.Lease.Releasing {
 			return Record{}, ErrReleasing
 		}

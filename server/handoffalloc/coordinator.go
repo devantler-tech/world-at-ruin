@@ -139,17 +139,7 @@ func (c *Coordinator) Allocate(
 	case err == nil &&
 		current.Lease.AttemptID == request.AttemptID &&
 		!current.Lease.Staging:
-		allocation, resolveErr := c.resources.Resolve(ctx, current.Lease)
-		if resolveErr != nil {
-			return handoff.Allocation{}, sanitizedResourceError(
-				resolveErr,
-				"handoff allocation: resolve GameServer resource",
-			)
-		}
-		if !matchesLease(allocation, current.Lease) {
-			return handoff.Allocation{}, ErrInvalidResource
-		}
-		return allocation, nil
+		return c.resolveDurable(ctx, current.Lease)
 	case err == nil && current.Lease.AttemptID == request.AttemptID:
 		// Recover the durable staging intent by replaying the external
 		// operation with the same attempt and expiry.
@@ -204,6 +194,9 @@ func (c *Coordinator) Allocate(
 			return handoff.Allocation{}, err
 		}
 	}
+	if !staging.Lease.Staging {
+		return c.resolveDurable(ctx, staging.Lease)
+	}
 
 	provisioned, err := c.resources.Provision(
 		ctx,
@@ -213,10 +206,14 @@ func (c *Coordinator) Allocate(
 	if err != nil {
 		var staged *nakamalease.Lease
 		if hasReportedStagedResource(provisioned) {
+			stagedExpiry := provisioned.Allocation.LeaseExpiresAt
+			if stagedExpiry.IsZero() {
+				stagedExpiry = staging.Lease.ExpiresAt
+			}
 			stagedLease := leaseFromProvisioned(
 				request,
 				provisioned,
-				staging.Lease.ExpiresAt,
+				stagedExpiry,
 			)
 			staged = &stagedLease
 		}
@@ -251,6 +248,23 @@ func (c *Coordinator) Allocate(
 		return handoff.Allocation{}, err
 	}
 	return provisioned.Allocation, nil
+}
+
+func (c *Coordinator) resolveDurable(
+	ctx context.Context,
+	lease nakamalease.Lease,
+) (handoff.Allocation, error) {
+	allocation, err := c.resources.Resolve(ctx, lease)
+	if err != nil {
+		return handoff.Allocation{}, sanitizedResourceError(
+			err,
+			"handoff allocation: resolve GameServer resource",
+		)
+	}
+	if !matchesLease(allocation, lease) {
+		return handoff.Allocation{}, ErrInvalidResource
+	}
+	return allocation, nil
 }
 
 // ReconcileExpired reclaims every expired durable attempt visible in the

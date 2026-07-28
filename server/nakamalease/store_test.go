@@ -527,6 +527,68 @@ func TestConcurrentStagingCreateReusesTheDurableWinnerExpiry(t *testing.T) {
 	}
 }
 
+func TestConcurrentStagingCreateAcceptsAProgressedWinner(t *testing.T) {
+	storage := newCreateRaceStorage()
+	progressed := validLease()
+	progressed.ClaimedAt = progressed.ExpiresAt.Add(-time.Second)
+	storage.createConflictMutation = func(
+		objects map[string]*api.StorageObject,
+		id string,
+	) {
+		value, err := json.Marshal(documentFrom(progressed))
+		if err != nil {
+			t.Fatalf("marshal progressed winner: %v", err)
+		}
+		objects[id].Value = string(value)
+		objects[id].Version = "claimed-v2"
+	}
+	store, err := NewStore(storage)
+	if err != nil {
+		t.Fatalf("NewStore returned an error: %v", err)
+	}
+	staging := validLease()
+	staging.AllocationID = ""
+	staging.Observer = 0
+	staging.SecretRef = ""
+	staging.Staging = true
+	var records [2]Record
+	var errs [2]error
+	var creates sync.WaitGroup
+	creates.Add(len(records))
+	for i := range records {
+		go func() {
+			defer creates.Done()
+			records[i], errs[i] = store.Create(context.Background(), staging)
+		}()
+	}
+	creates.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent staging Create %d returned an error: %v", i, err)
+		}
+	}
+	progressedWinners := 0
+	for _, record := range records {
+		if !record.Lease.Staging {
+			progressedWinners++
+			if record.Lease != progressed {
+				t.Fatalf(
+					"progressed staging winner = %+v, want %+v",
+					record.Lease,
+					progressed,
+				)
+			}
+		}
+	}
+	if progressedWinners != 1 {
+		t.Fatalf(
+			"progressed staging records = %d, want the reloaded winner once",
+			progressedWinners,
+		)
+	}
+}
+
 func TestConcurrentIdenticalCreateReconcilesAClaimedWinner(t *testing.T) {
 	storage := newCreateRaceStorage()
 	claimTime := validLease().ExpiresAt.Add(-time.Second).UnixNano()

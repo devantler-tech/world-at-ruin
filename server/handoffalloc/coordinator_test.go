@@ -1120,6 +1120,50 @@ func TestAllocateProvisionFailureReclaimsTheReportedStagedResource(t *testing.T)
 	}
 }
 
+func TestAllocateProvisionFailureReclaimsTheReportedCanonicalExpiry(t *testing.T) {
+	storage := newMemoryStorage()
+	store := newLeaseStore(t, storage)
+	allocation := validAllocation()
+	allocation.LeaseExpiresAt = testNow.Add(59 * time.Second)
+	resources := &recordingResources{
+		provisioned: Provisioned{
+			Allocation: allocation,
+			SecretRef:  "zone-admission-gameserver-17",
+		},
+		provisionErr:           status.Error(codes.Unavailable, "backend detail"),
+		stagedOnProvisionError: true,
+	}
+	coordinator, err := NewCoordinator(
+		resources,
+		store,
+		Config{
+			LeaseTTL: time.Minute,
+			Now:      func() time.Time { return testNow },
+		},
+	)
+	if err != nil {
+		t.Fatalf("NewCoordinator returned an error: %v", err)
+	}
+
+	if _, err := coordinator.Allocate(
+		context.Background(),
+		validRequest(),
+	); status.Code(err) != codes.Unavailable {
+		t.Fatalf(
+			"staged provision failure status = %s, want Unavailable",
+			status.Code(err),
+		)
+	}
+	if len(resources.releases) != 1 ||
+		!resources.releases[0].ExpiresAt.Equal(allocation.LeaseExpiresAt) {
+		t.Fatalf(
+			"staged cleanup expiry = %+v, want canonical resource expiry %s",
+			resources.releases,
+			allocation.LeaseExpiresAt,
+		)
+	}
+}
+
 func TestAllocatePersistsTheCanonicalExpiryReturnedByAnIdempotentResource(t *testing.T) {
 	storage := newMemoryStorage()
 	store := newLeaseStore(t, storage)
