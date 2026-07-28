@@ -23,15 +23,21 @@ const REFUSED_SAVE_NOTICE := \
 	"This version of the game can't read your saved character. " \
 	+ "It has been left untouched and nothing new will replace it."
 
-## Shown when a save lost the cross-process write lock rather than being refused.
+## Shown when a save did not happen for a reason that is not a refusal.
 ##
-## Deliberately RETRYABLE in tone, and it never latches [member _save_blocked]:
-## contention means another copy of the game was saving at that instant, which
-## the next attempt resolves. Latching it would turn a momentary collision into a
-## session-long lockout of the character creator.
-const BUSY_SAVE_NOTICE := \
-	"Another copy of the game was saving just then. " \
-	+ "Your character was not changed — try again."
+## Deliberately RETRYABLE in tone, and it never latches [member _save_blocked].
+## It also names no CAUSE, because this branch cannot know one: a false here is
+## contention (another copy of the game held the write lock, or this attempt
+## freed an abandoned one and refused that pass) OR a transient persistence
+## failure (the save directory missing or unwritable, a staging file that could
+## not be created or renamed, ownership lost mid-write). Blaming a second copy
+## of the game would be a confident lie on every one of the second set, and
+## would send a player hunting a program that is not running. What the player
+## needs is true of all of them: nothing was changed, and trying again is the
+## right next move.
+const UNSAVED_NOTICE := \
+	"Your character could not be saved just now. " \
+	+ "It has not been changed — try again."
 const DISCOVERY_PERSIST_RETRY_INITIAL_SECONDS := 1.0
 const DISCOVERY_PERSIST_RETRY_MAX_SECONDS := 30.0
 
@@ -584,11 +590,23 @@ func _open_creator(first_run: bool) -> void:
 			# the rest of the session over a collision the next attempt resolves.
 			# The store's refusal latch is what tells them apart; it is never set by
 			# a lock failure.
+			# Put the BODY back to what is actually on disk. The creator previews
+			# every edit on the live player as it is made, and _close(true) goes on
+			# to tear itself down whether or not this callback returned early — so
+			# without this the player is left looking at a character that was never
+			# recorded, which is precisely the "saved when they are not" the notice
+			# above exists to prevent. The cancel path already reverts this way; a
+			# failed apply has exactly the same problem and now gets the same answer.
+			# A first run has nothing on disk to revert TO, and load_saved() answers
+			# null there and on a refused path alike, so the guard covers both.
+			var on_disk = CharacterStore.load_saved()
+			if on_disk is Dictionary:
+				_player.set_character(on_disk)
 			if CharacterStore.is_refused(CharacterStore.save_path()):
 				_save_blocked = true
 				_hud.toast(REFUSED_SAVE_NOTICE)
 			else:
-				_hud.toast(BUSY_SAVE_NOTICE)
+				_hud.toast(UNSAVED_NOTICE)
 			return
 		_player.set_character(recipe)
 		_hud.toast("The body remembers its new shape." if not first_run
