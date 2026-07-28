@@ -52,6 +52,26 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
         run: ./tools/devlog-entry-version-guard.sh
+      - name: Dev-log entry version sweep is pinned and fail-closed
+        run: ./tools/devlog-entry-version-sweep.test.sh
+      - name: No dev-log entry names a release that does not contain it
+        # The guard above is a floor, not a guarantee: it checks entries a
+        # change ADDS against the tags that exist while the branch is open, and
+        # the tag an entry must beat does not exist yet at that point. Two
+        # changes merging back-to-back can each pass it and still leave the
+        # second naming a release cut before its code existed (#467).
+        #
+        # This sweeps the whole entry directory instead, so that drift is caught
+        # on the next change rather than staying wrong until someone runs the
+        # survey by hand — and it covers the guard's permutation blind spot,
+        # where a bulk correction lands entries on paths that already existed
+        # and so read as modifications rather than additions.
+        #
+        # Needs the full history and tags that this job's fetch-depth: 0 gives:
+        # a verdict is a containment question, and a shallow fetch hides the
+        # tags it is answered from. The gate fails closed on that rather than
+        # passing vacuously.
+        run: ./tools/devlog-entry-version-sweep.sh --gate
       - name: Version ledger is append-only (no-resets law)
         # The in-game guard anchors the required fixture range to
         # tests/data/shipped_recipe_versions.txt, but a checkout-local file
