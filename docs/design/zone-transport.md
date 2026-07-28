@@ -136,9 +136,15 @@ Consequences:
   zone-domain boundary, and a distinct verifier secret for each allocation so one compromised zone
   cannot mint for another. Every result is an unclaimed lease with an explicit expiry: the token
   never outlives it, the allocator must reclaim it automatically unless first valid zone admission
-  claims the current attempt, and a stale attempt's conditional release is a no-op. The concrete
-  Agones allocator/lease-claim adapter and Nakama RPC registration remain later server-foundation
-  children.
+  claims the current attempt, and a stale attempt's conditional release is a no-op.
+  `server/handoffalloc` now composes that core with the real private Nakama lease store and a
+  GameServer-resource boundary: a staging intent is durable before provisioning begins, connection
+  material is returned only after the exact allocation finalizes that intent, and a versioned
+  `releasing` barrier ensures zone claim and resource cleanup cannot both win. Its supervised
+  private-collection expiry loop exact-version fences and reclaims no-shows, including a crash that
+  left only the attempt ID. The concrete adapter that combines Agones allocation with
+  per-allocation secret delivery, expiry-loop supervision, the zone claim adapter and Nakama RPC
+  registration remain later server-foundation children.
 - **One transport discipline across tiers.** Nakama's own realtime API is WebSocket; client
   networking, platform ingress, and TLS handling follow a single pattern instead of two.
 - **The wire codec is unchanged.** Nothing in this decision touches `server/wire/` — the goldens

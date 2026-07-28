@@ -21,8 +21,9 @@ const (
 	// Collection is the private Nakama collection that owns handoff leases.
 	Collection = "world_at_ruin_handoff_leases"
 
-	schemaVersion = 1
-	systemOwnerID = "00000000-0000-0000-0000-000000000000"
+	schemaVersion       = 2
+	legacySchemaVersion = 1
+	systemOwnerID       = "00000000-0000-0000-0000-000000000000"
 )
 
 var (
@@ -36,11 +37,23 @@ var (
 	ErrExpired = errors.New("nakama lease: expired")
 	// ErrClaimed means a connected player already owns the allocation.
 	ErrClaimed = errors.New("nakama lease: claimed")
+	// ErrReleasing means cleanup has atomically blocked new zone admission.
+	ErrReleasing = errors.New("nakama lease: releasing")
+	// ErrStaging means external allocation material is not durable yet.
+	ErrStaging = errors.New("nakama lease: staging")
 	// ErrStorage means Nakama storage did not complete the requested operation.
 	ErrStorage = errors.New("nakama lease: storage operation failed")
 )
 
 type storageClient interface {
+	StorageList(
+		context.Context,
+		string,
+		string,
+		string,
+		int,
+		string,
+	) ([]*api.StorageObject, string, error)
 	StorageRead(context.Context, []*runtime.StorageRead) ([]*api.StorageObject, error)
 	StorageWrite(context.Context, []*runtime.StorageWrite) ([]*api.StorageObjectAck, error)
 	StorageDelete(context.Context, []*runtime.StorageDelete) error
@@ -58,6 +71,8 @@ type Lease struct {
 	SecretRef     string
 	ExpiresAt     time.Time
 	ClaimedAt     time.Time
+	Staging       bool
+	Releasing     bool
 }
 
 // Record is a lease paired with the exact Nakama version that observed it.
@@ -76,6 +91,12 @@ const (
 	StateExpired State = "expired"
 	// StateClaimed is owned by the player that completed zone admission.
 	StateClaimed State = "claimed"
+	// StateStaging durably owns an attempt before its external resource is
+	// provisioned or recovered.
+	StateStaging State = "staging"
+	// StateReleasing blocks admission while the exact external resource is
+	// being reclaimed.
+	StateReleasing State = "releasing"
 )
 
 // State reports claim ownership before applying the no-show deadline.
@@ -83,8 +104,14 @@ func (r Record) State(now time.Time) State {
 	if !r.Lease.ClaimedAt.IsZero() {
 		return StateClaimed
 	}
+	if r.Lease.Releasing {
+		return StateReleasing
+	}
 	if !now.Before(r.Lease.ExpiresAt) {
 		return StateExpired
+	}
+	if r.Lease.Staging {
+		return StateStaging
 	}
 	return StateUnclaimed
 }
@@ -113,9 +140,19 @@ func (s *Store) Create(ctx context.Context, lease Lease) (Record, error) {
 	if !normalized.ClaimedAt.IsZero() {
 		return Record{}, ErrClaimed
 	}
+	if normalized.Releasing {
+		return Record{}, ErrReleasing
+	}
 	current, err := s.Load(ctx, normalized.UserID, normalized.ReservationID)
 	switch {
 	case err == nil && current.Lease == normalized:
+		return current, nil
+	case err == nil &&
+		normalized.Staging &&
+		sameAttemptIdentity(current.Lease, normalized):
+		if current.Lease.Releasing {
+			return Record{}, ErrReleasing
+		}
 		return current, nil
 	case err == nil:
 		return Record{}, ErrConflict
@@ -123,7 +160,97 @@ func (s *Store) Create(ctx context.Context, lease Lease) (Record, error) {
 		return Record{}, err
 	}
 
-	return s.write(ctx, normalized, "*")
+	created, err := s.write(ctx, normalized, "*")
+	if !errors.Is(err, ErrConflict) {
+		return created, err
+	}
+	latest, loadErr := s.Load(ctx, normalized.UserID, normalized.ReservationID)
+	if errors.Is(loadErr, ErrNotFound) {
+		return Record{}, ErrConflict
+	}
+	if loadErr != nil {
+		return Record{}, loadErr
+	}
+	if sameAllocationOwner(latest.Lease, normalized) {
+		if latest.Lease.Releasing {
+			return Record{}, ErrReleasing
+		}
+		return latest, nil
+	}
+	if normalized.Staging && sameAttemptIdentity(latest.Lease, normalized) {
+		if latest.Lease.Releasing {
+			return Record{}, ErrReleasing
+		}
+		return latest, nil
+	}
+	return Record{}, ErrConflict
+}
+
+func sameAttemptIdentity(left, right Lease) bool {
+	return left.UserID == right.UserID &&
+		left.ReservationID == right.ReservationID &&
+		left.AttemptID == right.AttemptID
+}
+
+func sameAllocationOwner(left, right Lease) bool {
+	left.ClaimedAt = time.Time{}
+	left.Releasing = false
+	right.ClaimedAt = time.Time{}
+	right.Releasing = false
+	return left == right
+}
+
+// Finalize atomically replaces a durable staging intent with the exact
+// external allocation material returned for the same attempt.
+func (s *Store) Finalize(
+	ctx context.Context,
+	current Record,
+	next Lease,
+) (Record, error) {
+	observed, err := normalizeLease(current.Lease)
+	if err != nil || current.Version == "" || current.Version == "*" {
+		return Record{}, errors.New("nakama lease: invalid observed record")
+	}
+	normalized, err := normalizeLease(next)
+	if err != nil {
+		return Record{}, err
+	}
+	if !observed.Staging ||
+		observed.Releasing ||
+		!observed.ClaimedAt.IsZero() ||
+		normalized.Staging ||
+		normalized.Releasing ||
+		!normalized.ClaimedAt.IsZero() {
+		return Record{}, errors.New("nakama lease: invalid finalization")
+	}
+	if observed.UserID != normalized.UserID ||
+		observed.ReservationID != normalized.ReservationID ||
+		observed.AttemptID != normalized.AttemptID ||
+		normalized.ExpiresAt.After(observed.ExpiresAt) {
+		return Record{}, errors.New("nakama lease: finalization identity changed")
+	}
+	finalized, err := s.write(ctx, normalized, current.Version)
+	if !errors.Is(err, ErrConflict) {
+		return finalized, err
+	}
+	latest, loadErr := s.Load(ctx, observed.UserID, observed.ReservationID)
+	if errors.Is(loadErr, ErrNotFound) {
+		return Record{}, ErrConflict
+	}
+	if loadErr != nil {
+		return Record{}, loadErr
+	}
+	if latest.Lease.AttemptID != normalized.AttemptID {
+		return Record{}, ErrConflict
+	}
+	switch {
+	case latest.Lease.Releasing:
+		return Record{}, ErrReleasing
+	case sameAllocationOwner(latest.Lease, normalized):
+		return latest, nil
+	default:
+		return Record{}, ErrConflict
+	}
 }
 
 // Replace atomically transfers an observed lease key to a distinct attempt.
@@ -143,6 +270,9 @@ func (s *Store) Replace(
 	}
 	if !normalized.ClaimedAt.IsZero() {
 		return Record{}, ErrClaimed
+	}
+	if normalized.Releasing {
+		return Record{}, ErrReleasing
 	}
 	if observed.UserID != normalized.UserID ||
 		observed.ReservationID != normalized.ReservationID {
@@ -178,7 +308,65 @@ func (s *Store) Replace(
 	if latest.Lease == normalized {
 		return latest, nil
 	}
+	if normalized.Staging && sameAttemptIdentity(latest.Lease, normalized) {
+		if latest.Lease.Releasing {
+			return Record{}, ErrReleasing
+		}
+		return latest, nil
+	}
 	return Record{}, ErrConflict
+}
+
+// BeginRelease atomically blocks admission for the observed attempt while its
+// exact external resource is reclaimed.
+func (s *Store) BeginRelease(
+	ctx context.Context,
+	current Record,
+	attemptID string,
+) (Record, error) {
+	observed, err := normalizeLease(current.Lease)
+	if err != nil || current.Version == "" || current.Version == "*" {
+		return Record{}, errors.New("nakama lease: invalid observed record")
+	}
+	if attemptID != observed.AttemptID {
+		return Record{}, ErrStaleAttempt
+	}
+	if observed.Releasing {
+		latest, loadErr := s.Load(ctx, observed.UserID, observed.ReservationID)
+		if loadErr != nil {
+			return Record{}, loadErr
+		}
+		if latest.Version != current.Version || latest.Lease != observed {
+			return Record{}, ErrConflict
+		}
+		return latest, nil
+	}
+	if !observed.ClaimedAt.IsZero() {
+		return Record{}, ErrClaimed
+	}
+	observed.Releasing = true
+	releasing, err := s.write(ctx, observed, current.Version)
+	if !errors.Is(err, ErrConflict) {
+		return releasing, err
+	}
+	latest, loadErr := s.Load(ctx, observed.UserID, observed.ReservationID)
+	if errors.Is(loadErr, ErrNotFound) {
+		return Record{}, ErrConflict
+	}
+	if loadErr != nil {
+		return Record{}, loadErr
+	}
+	if latest.Lease.AttemptID != attemptID {
+		return Record{}, ErrConflict
+	}
+	switch {
+	case !latest.Lease.ClaimedAt.IsZero():
+		return Record{}, ErrClaimed
+	case latest.Lease.Releasing:
+		return latest, nil
+	default:
+		return Record{}, ErrConflict
+	}
 }
 
 // Claim marks an observed lease as admitted using an exact-version write.
@@ -194,6 +382,12 @@ func (s *Store) Claim(
 	}
 	if attemptID != observed.AttemptID {
 		return Record{}, ErrStaleAttempt
+	}
+	if observed.Releasing {
+		return Record{}, ErrReleasing
+	}
+	if observed.Staging {
+		return Record{}, ErrStaging
 	}
 	if !observed.ClaimedAt.IsZero() {
 		return current, nil
@@ -219,6 +413,9 @@ func (s *Store) Claim(
 	}
 	if loadErr != nil {
 		return Record{}, loadErr
+	}
+	if latest.Lease.AttemptID == attemptID && latest.Lease.Releasing {
+		return Record{}, ErrReleasing
 	}
 	if latest.Lease.AttemptID == attemptID &&
 		!latest.Lease.ClaimedAt.IsZero() {
@@ -277,8 +474,137 @@ func (s *Store) Release(
 	}
 }
 
+// ReclaimExpired atomically fences each expired unclaimed attempt, invokes
+// the exact idempotent external cleanup, and deletes only the fenced version.
+// The callback receives no raw user or reservation identifiers because those
+// identifiers are deliberately absent from persisted lease values.
+func (s *Store) ReclaimExpired(
+	ctx context.Context,
+	now time.Time,
+	reclaim func(context.Context, Lease) error,
+) error {
+	if now.IsZero() || now.UnixNano() <= 0 {
+		return errors.New("nakama lease: invalid reconciliation time")
+	}
+	if reclaim == nil {
+		return errors.New("nakama lease: reclaim callback is required")
+	}
+	cursor := ""
+	var reclamationErrors error
+	for {
+		objects, nextCursor, err := s.storage.StorageList(
+			ctx,
+			"",
+			systemOwnerID,
+			Collection,
+			100,
+			cursor,
+		)
+		if err != nil {
+			return errors.Join(reclamationErrors, sanitizeStorageError(err))
+		}
+		for _, object := range objects {
+			if err := s.reclaimExpiredObject(ctx, now, object, reclaim); err != nil {
+				if ctx.Err() != nil {
+					return errors.Join(reclamationErrors, ctx.Err())
+				}
+				reclamationErrors = errors.Join(reclamationErrors, err)
+			}
+		}
+		if nextCursor == "" {
+			return reclamationErrors
+		}
+		if nextCursor == cursor {
+			return errors.Join(reclamationErrors, ErrStorage)
+		}
+		cursor = nextCursor
+	}
+}
+
+func (s *Store) reclaimExpiredObject(
+	ctx context.Context,
+	now time.Time,
+	object *api.StorageObject,
+	reclaim func(context.Context, Lease) error,
+) error {
+	if !validListedObject(object) {
+		return ErrStorage
+	}
+	lease, err := leaseFrom(object.GetValue(), "", "")
+	if err != nil {
+		return err
+	}
+	if !lease.ClaimedAt.IsZero() ||
+		(!lease.Releasing && now.Before(lease.ExpiresAt)) {
+		return nil
+	}
+	version := object.GetVersion()
+	if !lease.Releasing {
+		lease.Releasing = true
+		record, writeErr := s.writeKey(
+			ctx,
+			object.GetKey(),
+			lease,
+			version,
+		)
+		if errors.Is(writeErr, ErrConflict) {
+			return nil
+		}
+		if writeErr != nil {
+			return writeErr
+		}
+		lease = record.Lease
+		version = record.Version
+	}
+	if err := reclaim(ctx, lease); err != nil {
+		return err
+	}
+	err = s.storage.StorageDelete(ctx, []*runtime.StorageDelete{
+		{
+			Collection: Collection,
+			Key:        object.GetKey(),
+			UserID:     "",
+			Version:    version,
+		},
+	})
+	switch {
+	case err == nil, errors.Is(err, runtime.ErrStorageRejectedVersion):
+		return nil
+	default:
+		return sanitizeStorageError(err)
+	}
+}
+
+func validListedObject(object *api.StorageObject) bool {
+	if object == nil ||
+		object.GetCollection() != Collection ||
+		object.GetUserId() != systemOwnerID ||
+		object.GetVersion() == "" ||
+		object.GetPermissionRead() != 0 ||
+		object.GetPermissionWrite() != 0 ||
+		len(object.GetKey()) != sha256.Size*2 {
+		return false
+	}
+	decoded, err := hex.DecodeString(object.GetKey())
+	return err == nil && len(decoded) == sha256.Size
+}
+
 func (s *Store) write(
 	ctx context.Context,
+	lease Lease,
+	version string,
+) (Record, error) {
+	return s.writeKey(
+		ctx,
+		reservationKey(lease.UserID, lease.ReservationID),
+		lease,
+		version,
+	)
+}
+
+func (s *Store) writeKey(
+	ctx context.Context,
+	key string,
 	lease Lease,
 	version string,
 ) (Record, error) {
@@ -286,7 +612,6 @@ func (s *Store) write(
 	if err != nil {
 		return Record{}, errors.New("nakama lease: encode lease")
 	}
-	key := reservationKey(lease.UserID, lease.ReservationID)
 	acks, err := s.storage.StorageWrite(ctx, []*runtime.StorageWrite{
 		{
 			Collection:      Collection,
@@ -371,6 +696,8 @@ type document struct {
 	SecretRef      string `json:"secret_ref"`
 	ExpiresAtNanos int64  `json:"expires_at_nanos"`
 	ClaimedAtNanos *int64 `json:"claimed_at_nanos"`
+	Staging        bool   `json:"staging,omitempty"`
+	Releasing      bool   `json:"releasing,omitempty"`
 }
 
 func documentFrom(lease Lease) document {
@@ -387,6 +714,8 @@ func documentFrom(lease Lease) document {
 		SecretRef:      lease.SecretRef,
 		ExpiresAtNanos: lease.ExpiresAt.UnixNano(),
 		ClaimedAtNanos: claimedAtNanos,
+		Staging:        lease.Staging,
+		Releasing:      lease.Releasing,
 	}
 }
 
@@ -400,10 +729,16 @@ func leaseFrom(value, userID, reservationID string) (Lease, error) {
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return Lease{}, errors.New("nakama lease: invalid stored lease")
 	}
-	if stored.Schema != schemaVersion ||
+	if (stored.Schema != schemaVersion && stored.Schema != legacySchemaVersion) ||
+		(stored.Schema == legacySchemaVersion && (stored.Staging || stored.Releasing)) ||
 		stored.ExpiresAtNanos <= 0 ||
 		(stored.ClaimedAtNanos != nil && *stored.ClaimedAtNanos <= 0) {
 		return Lease{}, errors.New("nakama lease: invalid stored lease")
+	}
+	listed := userID == "" && reservationID == ""
+	if listed {
+		userID = systemOwnerID
+		reservationID = "listed"
 	}
 	lease := Lease{
 		UserID:        userID,
@@ -413,27 +748,49 @@ func leaseFrom(value, userID, reservationID string) (Lease, error) {
 		Observer:      sim.EntityID(stored.Observer),
 		SecretRef:     stored.SecretRef,
 		ExpiresAt:     time.Unix(0, stored.ExpiresAtNanos).UTC(),
+		Staging:       stored.Staging,
+		Releasing:     stored.Releasing,
 	}
 	if stored.ClaimedAtNanos != nil {
 		lease.ClaimedAt = time.Unix(0, *stored.ClaimedAtNanos).UTC()
 	}
-	return normalizeLease(lease)
+	normalized, err := normalizeLease(lease)
+	if err != nil {
+		return Lease{}, err
+	}
+	if listed {
+		normalized.UserID = ""
+		normalized.ReservationID = ""
+	}
+	return normalized, nil
 }
 
 func normalizeLease(lease Lease) (Lease, error) {
 	if !validUserID(lease.UserID) ||
 		!validOpaqueID(lease.ReservationID) ||
 		!validOpaqueID(lease.AttemptID) ||
-		!validOpaqueID(lease.AllocationID) ||
-		lease.Observer == 0 ||
-		!validSecretRef(lease.SecretRef) ||
 		lease.ExpiresAt.IsZero() ||
 		lease.ExpiresAt.UnixNano() <= 0 {
+		return Lease{}, errors.New("nakama lease: invalid lease")
+	}
+	if lease.Staging {
+		if lease.AllocationID != "" ||
+			lease.Observer != 0 ||
+			lease.SecretRef != "" ||
+			!lease.ClaimedAt.IsZero() {
+			return Lease{}, errors.New("nakama lease: invalid lease")
+		}
+	} else if !validOpaqueID(lease.AllocationID) ||
+		lease.Observer == 0 ||
+		!validSecretRef(lease.SecretRef) {
 		return Lease{}, errors.New("nakama lease: invalid lease")
 	}
 	lease.UserID = strings.ToLower(lease.UserID)
 	lease.ExpiresAt = time.Unix(0, lease.ExpiresAt.UnixNano()).UTC()
 	if !lease.ClaimedAt.IsZero() {
+		if lease.Releasing {
+			return Lease{}, errors.New("nakama lease: invalid lease")
+		}
 		lease.ClaimedAt = time.Unix(0, lease.ClaimedAt.UnixNano()).UTC()
 		if !lease.ClaimedAt.Before(lease.ExpiresAt) {
 			return Lease{}, errors.New("nakama lease: invalid lease")
