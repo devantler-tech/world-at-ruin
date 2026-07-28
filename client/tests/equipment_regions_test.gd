@@ -128,26 +128,34 @@ func _ready() -> void:
 		return
 
 	# --- 6. NEGATIVE CONTROLS, each isolated to ONE behaviour ---
-	# a) a declared region gains a piece -> it becomes pickable.
+	# a) a declared region holds a reader-backed, production-activated piece ->
+	# it is pickable.
 	var with_piece := {
 		"slots": ["torso", "neck"],
-		"pieces": {"cord_pendant": {"slot": "neck", "layer": "clothing"}},
+		"pieces": {"shirt_ragged": {"slot": "torso", "layer": "clothing"}},
 	}
-	_check("neck" in CharacterCreator.pickable_regions(with_piece), true,
-		"control: a region holding a piece IS offered (proves the filter is piece-driven, not a hardcoded allow-list)")
+	_check("torso" in CharacterCreator.pickable_regions(with_piece), true,
+		"control: a region holding an activated piece IS offered")
 	# b) the same region with no piece -> not pickable. Without (b), a rule that
 	# simply returned every declared region would pass (a) identically.
 	var without_piece := {"slots": ["torso", "neck"], "pieces": {}}
-	_check("neck" in CharacterCreator.pickable_regions(without_piece), false,
+	_check("torso" in CharacterCreator.pickable_regions(without_piece), false,
 		"control: the same region with nothing baked is NOT offered")
-	# c) declared ORDER is preserved, not sorted — the kit decides the row order,
+	# c) a reader-only expansion stays hidden until its contract release.
+	var reader_only := {
+		"slots": ["torso", "neck"],
+		"pieces": {"cord_pendant": {"slot": "neck", "layer": "clothing"}},
+	}
+	_check("neck" in CharacterCreator.pickable_regions(reader_only), false,
+		"control: a reader-only piece does not become writable before activation")
+	# d) declared ORDER is preserved, not sorted — the kit decides the row order,
 	# and an alphabetical sort would silently reorder the player's outfit list.
 	var ordered := {
 		"slots": ["torso", "legs", "feet"],
 		"pieces": {
-			"a_shirt": {"slot": "torso", "layer": "clothing"},
-			"b_pants": {"slot": "legs", "layer": "clothing"},
-			"c_shoes": {"slot": "feet", "layer": "clothing"},
+			"shirt_ragged": {"slot": "torso", "layer": "clothing"},
+			"pants_wool": {"slot": "legs", "layer": "clothing"},
+			"shoes_cloth": {"slot": "feet", "layer": "clothing"},
 		},
 	}
 	var declared_order: Array[String] = ["torso", "legs", "feet"]

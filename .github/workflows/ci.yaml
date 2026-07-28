@@ -167,10 +167,10 @@ jobs:
             exit 1
           fi
       - name: Persisted vocabulary advances the save capability
-        # The append-only checks prove old names remain, but permit additions.
-        # This base-anchored implication prevents a new character-recipe value
-        # from being written while the manifest still blesses an older rollback
-        # target that rejects that value.
+        # Reader registries grow during expand; the explicit production-writer
+        # resource grows only at contract. This base-anchored implication keeps
+        # the safe retained-reader state representable while preventing a newly
+        # writable recipe value from leaving rollback metadata behind.
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}

@@ -28,37 +28,35 @@ to `character.json`, and why every future change follows a staged rollout.
 
 ## Save-bearing vocabulary boundary
 
-The base-anchored save-capability vocabulary guard watches an explicit set; it never infers its scope
-from every `shipped_*.txt` file. These are the character-recipe registries whose additions can make a
-new save unreadable to an older client at the same schema and capability:
+Reader compatibility and production writer exposure are deliberately separate:
 
-| Ledger | Why it is save-bearing |
-|---|---|
-| `shipped_equipment.txt` | Each entry can become a piece name in the recipe's persisted `equipment` dictionary; an older `CharacterFactory` refuses an unknown piece. |
-| `shipped_skins.txt` | Each entry can become the recipe's persisted `skin` string; an older `CharacterFactory` refuses an unknown skin. |
-| `shipped_piece_slots.txt` | It records the persisted `slot -> piece` pairing. `CharacterFactory` refuses a known piece under a slot other than the one in its registry, so a newly legal pairing is new readable vocabulary too. |
+- The kit, skin and forward-only `shipped_*.txt` registries say what this build can read, render and
+  preserve. They may grow in the expand release while `SAVE_CAPABILITY_WRITES` remains unchanged.
+- `client/registries/character_writer_vocabulary.json` is the smaller set the production character
+  creator may newly originate. It records equipment as exact `piece -> slot` pairs, plus skin names,
+  non-plumbing blend-shape names and each field's bone keys. The creator filters its pickers and
+  sliders through that resource, while values already present in the opened recipe may still be
+  preserved during expansion.
 
-The exclusions are equally deliberate:
+The base-anchored guard compares that writer resource, not the wider reader ledgers. Adding a writer
+entry is the contract transition and requires `SAVE_CAPABILITY_WRITES` plus
+`shipped_save_capability.txt` to advance. Adding only reader support remains green. This split is what
+makes expand → bake → contract enforceable rather than merely described.
 
-- `shipped_piece_layers.txt` is render metadata derived from a piece name; the layer is never written
-  into a recipe.
-- `shipped_attunements.txt` and `shipped_discoveries.txt` describe vault names, but vault validation
-  accepts and preserves unknown string names. An older reader therefore does not reject the document
-  merely because one of those registries grew; their version, resolver and real-effect guards own
-  their rollout.
-- `shipped_abilities.txt`, `shipped_class_power.txt` and `shipped_class_cycle_floor.txt` describe
-  combat registries and balance promises that do not appear in any current player document.
-- `shipped_creature_shapes.txt`, `shipped_creature_tints.txt` and
-  `shipped_creature_recipe_versions.txt` describe generated world-creature recipes, not persisted
-  player state. A creature-tint addition is the guard's permanent presentation-only negative control.
-- The recipe, vault and boot-recovery version ledgers, plus `shipped_save_capability.txt` itself,
-  describe document shape or capability rather than registry vocabulary and have their own immutable
-  base checks.
+Those four groups are save-bearing because an older `CharacterFactory` rejects an unknown blend
+shape, bone key, skin or equipment name, and also rejects a known piece under a different slot. The
+other registries are excluded for present-state reasons:
 
-Character `shapes`, `bone_girth`, `bone_scale` and `joint_push` are persisted too, but they do not
-have extensible registry ledgers: the historical goldens, kit shape checks and
-`CharacterFactory.GUARDED_BONE_KEYS` own those closed sets. If one becomes an extensible shipped
-registry, its ledger joins the explicit guard set in the same change.
+- Equipment layer is render metadata derived from the piece; the layer is never written into a
+  recipe.
+- Vault attunements and discoveries accept and preserve unknown string names. Their version, resolver
+  and real-effect guards own their rollout.
+- Ability, class-power and class-cycle ledgers describe combat registries and balance promises, not
+  fields in a current player document.
+- Creature shapes, tints and recipe versions describe generated world creatures, not persisted player
+  state. A creature-tint addition is the guard's permanent presentation-only negative control.
+- Recipe, vault and boot-recovery version ledgers, plus the capability ledger itself, describe
+  document shape or capability and retain their own immutable base checks.
 
 ## Expand, bake, then contract
 
