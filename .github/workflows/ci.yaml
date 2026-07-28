@@ -36,6 +36,8 @@ jobs:
         run: tools/test-cd-cask-branch-reset.sh
       - name: Cask PR conflict repair is polled, gated and fail-closed
         run: tools/test-cd-cask-conflict-repair.sh
+      - name: Cask delivery survives an exhausted GraphQL budget
+        run: tools/test-cd-cask-graphql-budget.sh
       - name: Retained boot-recovery reader gate is pinned and fail-closed
         run: ./tools/retained-boot-recovery-reader-guard.test.sh
       - name: Dev-log entry version guard is pinned and fail-closed
