@@ -74,8 +74,9 @@ var _restored := 0
 ## shrine discovery write, a reboot that can only recover the shrine from disk,
 ## retry after a deliberately transient first write failure, and a valid
 ## cloud-synced vault replacement that drops a rollback-only name from disk.
-## The final reader boot applies vault-v3 claimed exploration rewards without
-## activating a production reward writer.
+## The reward boots then apply the retained v3 reader, activate a real
+## cave-to-shrine waypoint claim, restore its outcome after logout, and prove a
+## transient first claim write retries without granting twice in-session.
 var _discovery_phase := ""
 var _retry_probe_dir := ""
 var _retry_vault := ""
@@ -144,8 +145,9 @@ func _begin_discovery_boot() -> void:
 
 ## Start from a genuinely empty vault and let the production scene discover
 ## both shipped places. Unlike the seeded reader boot above, this gives the
-## test no persistence help: only main.gd observing the real player and calling
-## the real SaveVault writer can create the v2 document.
+## test no persistence help: only main.gd observing the real player, applying
+## the shrine waypoint, and calling the real SaveVault writers can create the
+## v3 document.
 func _begin_discovery_writer_boot() -> void:
 	_discovery_phase = "write"
 	_ticks = 0
@@ -242,6 +244,48 @@ func _begin_reward_reader_boot() -> void:
 	add_child(_main)
 
 
+## Start from no vault and let the production scene discover the Wardens'
+## Shrine, apply its registered waypoint reward, and originate the first v3
+## claim. The test supplies no reward or persistence help.
+func _begin_reward_writer_boot() -> void:
+	_discovery_phase = "reward_write"
+	_ticks = 0
+	if _main != null:
+		_main.queue_free()
+		_main = null
+	_save = SaveIsolation.new(PROBE_PATH)
+	if not _save.begin():
+		_fail("save isolation did not take for the reward-claim writer boot")
+		return
+	SaveVault.clear_refusals_for_test()
+	_main = (load(MAIN_SCENE_PATH) as PackedScene).instantiate()
+	add_child(_main)
+
+
+## Repeat the real shrine walk against a vault path whose parent does not yet
+## exist. The waypoint outcome applies in-session, but neither discovery nor
+## claim can persist until the parent appears; the pending claim must then retry
+## without invoking the already-consumed reward again.
+func _begin_reward_retry_boot() -> void:
+	_discovery_phase = "reward_retry"
+	_ticks = 0
+	if _main != null:
+		_main.queue_free()
+		_main = null
+	_cleanup_retry_probe()
+	_save = SaveIsolation.new(RETRY_CHARACTER_PROBE)
+	if not _save.begin():
+		_fail("save isolation did not take for the transient reward-claim boot")
+		return
+	OS.set_environment(SaveVault.VAULT_PATH_ENV, _retry_vault)
+	if SaveVault.vault_path() != _retry_vault:
+		_fail("the transient reward-claim vault seam did not take")
+		return
+	SaveVault.clear_refusals_for_test()
+	_main = (load(MAIN_SCENE_PATH) as PackedScene).instantiate()
+	add_child(_main)
+
+
 func _physics_process(_delta: float) -> void:
 	# _fail() requests tree shutdown but does not end this frame. A setup helper
 	# can fail after clearing the previous scene and before assigning the next;
@@ -260,9 +304,11 @@ func _physics_process(_delta: float) -> void:
 	# its standable respawn point (Z=5), so an offset discovery centre fails.
 	# The reboot deliberately does NOT repeat this move: finding the shrine then
 	# can only come from the persisted vault.
-	if _discovery_phase == "write" and _ticks == 10:
+	if _discovery_phase in ["write", "reward_write"] and _ticks == 10:
 		player.global_position = Vector3(0.0, world.shrine_respawn_point().y, -13.0)
-	if _discovery_phase == "retry" and _ticks == 3:
+	if _discovery_phase == "reward_retry" and _ticks == 1:
+		player.global_position = Vector3(0.0, world.shrine_respawn_point().y, -13.0)
+	if _discovery_phase in ["retry", "reward_retry"] and _ticks == 3:
 		if FileAccess.file_exists(_retry_vault):
 			_fail("the transient write unexpectedly succeeded before its parent directory existed")
 			return
@@ -283,7 +329,7 @@ func _physics_process(_delta: float) -> void:
 	if _discovery_phase == "drift" and _ticks == 10:
 		player.global_position = Vector3(0.0, world.shrine_respawn_point().y, -13.0)
 	var assert_tick := ASSERT_TICK
-	if _discovery_phase == "retry":
+	if _discovery_phase in ["retry", "reward_retry"]:
 		assert_tick = RETRY_ASSERT_TICK
 	elif _discovery_phase == "drift":
 		assert_tick = DRIFT_ASSERT_TICK
@@ -308,6 +354,15 @@ func _physics_process(_delta: float) -> void:
 			return
 		"reward_restore":
 			_assert_reward_claim_restore()
+			return
+		"reward_write":
+			_assert_reward_claim_write(player, world)
+			return
+		"reward_reboot":
+			_assert_reward_claim_reboot(player, world)
+			return
+		"reward_retry":
+			_assert_reward_claim_retry(player, world)
 			return
 
 	var shrine_point := world.shrine_respawn_point()
@@ -432,20 +487,24 @@ func _assert_discovery_restore() -> void:
 	_begin_discovery_writer_boot()
 
 
-## The production scene must have created a v2 vault through the public writer,
-## not merely changed its in-memory tracker. Both stable shipped ids are exact
-## assertions so a renamed place cannot silently strand a player's history.
+## The production scene must have created a v3 vault through the public
+## discovery and reward writers, not merely changed its in-memory trackers.
+## Both stable shipped ids are exact assertions so a renamed place cannot
+## silently strand a player's history.
 func _assert_discovery_write() -> void:
 	var vault = SaveVault.load_saved()
 	if vault is not Dictionary:
 		_fail("the production discovery boot wrote no readable vault")
 		return
 	if vault.get("version") != SaveVault.VAULT_VERSION:
-		_fail("the production discovery boot did not activate vault-v2 writes")
+		_fail("the production cave-to-shrine walk did not emit the current vault contract")
 		return
 	var expected: Array[String] = ["starter_cave", "wardens_shrine"]
 	if vault.get("discoveries", []) != expected:
 		_fail("the cave-to-shrine walk did not persist both stable discovery ids exactly")
+		return
+	if vault.get("reward_claims", []) != [SaveVault.DISCOVERY_WARDENS_SHRINE]:
+		_fail("the cave-to-shrine walk did not persist its applied waypoint claim")
 		return
 
 	# Reboot without clearing the probes. The wanderer returns to the cave, so
@@ -531,12 +590,118 @@ func _assert_reward_claim_restore() -> void:
 	if not _save.real_save_untouched():
 		_fail("the reward-claim reader boot touched the player's real save or vault")
 		return
+	_begin_reward_writer_boot()
+
+
+## The production walk must apply the waypoint before recording its place id,
+## persist that claim as vault v3, and leave the live tracker idempotent.
+func _assert_reward_claim_write(player: Player, world: WorldGen) -> void:
+	var tracker := _reward_tracker()
+	if tracker == null:
+		return
+	if not tracker.is_registered(SaveVault.DISCOVERY_WARDENS_SHRINE):
+		_fail("the production boot registered no reward for the Wardens' Shrine")
+		return
+	if tracker.claimed() != [SaveVault.DISCOVERY_WARDENS_SHRINE]:
+		_fail("the real shrine walk did not claim exactly its registered reward")
+		return
+	player.respawn()
+	if player.global_position.distance_to(world.shrine_respawn_point()) > EPS:
+		_fail("the Wardens' waypoint outcome was not applied before its claim was consumed")
+		return
+	var vault = SaveVault.load_saved()
+	if vault is not Dictionary:
+		_fail("the production reward walk wrote no readable vault")
+		return
+	if int(vault.get("version", -1)) != 3:
+		_fail("the production reward walk did not activate vault-v3 writes")
+		return
+	if vault.get("discoveries", []) != ["starter_cave", "wardens_shrine"]:
+		_fail("the reward walk did not durably preserve both discoveries")
+		return
+	if vault.get("reward_claims", []) != [SaveVault.DISCOVERY_WARDENS_SHRINE]:
+		_fail("the applied waypoint was not persisted as one append-only claim")
+		return
+	# Reboot without moving to the shrine. Only restoring the v3 claim and
+	# re-applying its registered outcome can make respawn choose the waypoint.
+	# Keep the same SaveIsolation scope alive across both scenes: asking it to
+	# verify here would also clear the three redirected paths before the reboot.
+	_discovery_phase = "reward_reboot"
+	_ticks = 0
+	_main.queue_free()
+	_main = (load(MAIN_SCENE_PATH) as PackedScene).instantiate()
+	add_child(_main)
+
+
+func _assert_reward_claim_reboot(player: Player, world: WorldGen) -> void:
+	if player.global_position.distance_to(world.shrine_respawn_point()) \
+			<= WorldGen.SHRINE_CLEAR_RADIUS:
+		_fail("VACUOUS TEST: the reward reboot began close enough to rediscover the shrine")
+		return
+	var tracker := _reward_tracker()
+	if tracker == null:
+		return
+	if tracker.claimed() != [SaveVault.DISCOVERY_WARDENS_SHRINE]:
+		_fail("the real reboot did not restore exactly the persisted waypoint claim")
+		return
+	player.respawn()
+	if player.global_position.distance_to(world.shrine_respawn_point()) > EPS:
+		_fail("the persisted reward claim did not restore its waypoint outcome after logout")
+		return
+	var vault = SaveVault.load_saved()
+	if vault is not Dictionary or vault.get("reward_claims", []).count(
+			SaveVault.DISCOVERY_WARDENS_SHRINE) != 1:
+		_fail("the reward reboot duplicated or lost the append-only claim")
+		return
+	if not _save.real_save_untouched():
+		_fail("the reward reboot touched the player's real save or vault")
+		return
+	_begin_reward_retry_boot()
+
+
+func _assert_reward_claim_retry(player: Player, world: WorldGen) -> void:
+	var tracker := _reward_tracker()
+	if tracker == null:
+		return
+	if tracker.claimed() != [SaveVault.DISCOVERY_WARDENS_SHRINE]:
+		_fail("the transient write path granted or consumed the waypoint more than once")
+		return
+	player.respawn()
+	if player.global_position.distance_to(world.shrine_respawn_point()) > EPS:
+		_fail("the transient write failure discarded the live waypoint outcome")
+		return
+	var vault = SaveVault.load_saved()
+	if vault is not Dictionary:
+		_fail("the transient reward-claim write was never retried")
+		return
+	if int(vault.get("version", -1)) != 3 \
+			or vault.get("discoveries", []) != ["starter_cave", "wardens_shrine"] \
+			or vault.get("reward_claims", []) != [SaveVault.DISCOVERY_WARDENS_SHRINE]:
+		_fail("the retried reward write did not persist the exact v3 progression state: %s"
+			% str(vault))
+		return
+	if not _save.real_save_untouched():
+		_fail("the transient reward retry touched the player's real save or vault")
+		return
+	_cleanup_retry_probe()
 	print(("TEST PASS — %d shipped attunement(s) and vault-v2 discovery state survive "
 		+ "a logout, transient writes retry, rollback-only ids cannot poison known writes, "
-		+ "and vault-v3 reward claims apply without activating their writer "
+		+ "and vault-v3 waypoint claims apply before consumption and survive a real reboot "
 		+ "(control woke at %s)")
 		% [_restored, str(_control_spawn)])
 	get_tree().quit(0)
+
+
+func _reward_tracker() -> ExplorationRewards:
+	var tracker: Variant = null
+	for property: Dictionary in _main.get_property_list():
+		if String(property.get("name", "")) == "_exploration_rewards":
+			tracker = _main.get("_exploration_rewards")
+			break
+	if tracker is not ExplorationRewards:
+		_fail("the production boot owns no ExplorationRewards tracker")
+		return null
+	return tracker as ExplorationRewards
 
 
 ## The landmark a shipped name MUST lead to, derived straight from the world so

@@ -215,18 +215,24 @@ const QUARANTINE_MIN_AGE_SECONDS := 300
 ## SHORTENED by a malformed value — the direction that could destroy progression.
 const QUARANTINE_MIN_AGE_ENV := "WAR_VAULT_QUARANTINE_MIN_AGE_SECONDS"
 
-## Highest schema emitted by a production writer. v2 is used only when the
-## document actually carries discovery state; an empty or attunement-only vault
-## stays on v1 so old state is never rewritten merely to look current.
-const VAULT_VERSION := 2
+## Highest schema emitted by a production writer. v3 is used only when the
+## document actually carries claimed exploration rewards; a discovery-only
+## vault stays on v2 and an empty or attunement-only vault stays on v1, so old
+## state is never rewritten merely to look current.
+const VAULT_VERSION := 3
 
 ## The minimal vault shape. Kept separate from [constant VAULT_VERSION] because
-## a fresh or attunement-only document has no v2 field to describe.
+## a fresh or attunement-only document has no later-version field to describe.
 const BASE_VAULT_VERSION := 1
 
+## The schema each optional progression section first requires. Keeping these
+## separate stops a discovery-only write from churning a v2 document to v3 just
+## because this build can now originate a different, later field.
+const DISCOVERY_VAULT_VERSION := 2
+const REWARD_CLAIM_VAULT_VERSION := 3
+
 ## Highest vault schema this build can READ. Kept separate from the production
-## writer because v3 carries claimed exploration rewards and must bake
-## read-first before a production writer may originate that state.
+## writer so future expand-before-write releases remain representable.
 const VAULT_READ_VERSION := 3
 
 ## The vault format, exhaustively. Unknown top-level fields are refused for the
@@ -1113,8 +1119,48 @@ static func record_discoveries(doc: Dictionary, names: Array) -> Dictionary:
 	if merged.is_empty() and not next.has("discoveries"):
 		return next
 	merged.sort()
-	next["version"] = maxi(int(next.get("version", BASE_VAULT_VERSION)), VAULT_VERSION)
+	next["version"] = maxi(
+		int(next.get("version", BASE_VAULT_VERSION)), DISCOVERY_VAULT_VERSION)
 	next["discoveries"] = merged
+	return next
+
+
+## `doc` with every successfully applied place in `names` added to its
+## append-only reward-claim set. Existing unknown future claims survive, while a
+## new claim must be a stable place this build recognises and must already exist
+## in the durable discovery set. That ordering prevents a transient discovery
+## write failure from leaving a consumed reward whose discovery never landed.
+static func record_reward_claims(doc: Dictionary, names: Array) -> Dictionary:
+	var reason := validate(doc)
+	if not reason.is_empty():
+		push_error("SaveVault: refusing to add reward claims to an invalid vault — %s" % reason)
+		return {}
+	var next: Dictionary = doc.duplicate(true)
+	var merged: Array[String] = []
+	for raw: Variant in next.get("reward_claims", []):
+		if raw is String and not (raw as String).is_empty() and raw not in merged:
+			merged.append(raw)
+	var durable_discoveries: Array = next.get("discoveries", [])
+	for raw: Variant in names:
+		if raw is not String or (raw as String).is_empty():
+			push_error("SaveVault: refusing an invalid reward-claim name")
+			return {}
+		if raw in merged:
+			continue
+		if not recognises_discovery(raw):
+			push_error("SaveVault: refusing to originate unknown reward claim '%s'" % raw)
+			return {}
+		if raw not in durable_discoveries:
+			push_error(
+				"SaveVault: refusing reward claim '%s' before its discovery is durable" % raw)
+			return {}
+		merged.append(raw)
+	if merged.is_empty() and not next.has("reward_claims"):
+		return next
+	merged.sort()
+	next["version"] = maxi(
+		int(next.get("version", BASE_VAULT_VERSION)), REWARD_CLAIM_VAULT_VERSION)
+	next["reward_claims"] = merged
 	return next
 
 
@@ -1196,6 +1242,34 @@ static func _persist_discoveries_locked(path: String, names: Array) -> bool:
 	if current is not Dictionary:
 		return false
 	var next := record_discoveries(current, names)
+	if next.is_empty():
+		return false
+	return replace_if_unchanged(path, next, expected)
+
+
+## Add successfully applied exploration-reward place ids at the active vault
+## path. False leaves the live session claimed but the disk unchanged; the
+## caller may retry while the path remains writable.
+static func persist_reward_claims(names: Array) -> bool:
+	var path := vault_path()
+	if not _acquire_lock(path):
+		return false
+	var stored := _persist_reward_claims_locked(path, names)
+	_release_lock(path)
+	return stored
+
+
+## persist_reward_claims()'s read-modify-write under the same whole-sequence
+## lock and document-identity comparison as every other progression mutation.
+static func _persist_reward_claims_locked(path: String, names: Array) -> bool:
+	if not can_write(path):
+		push_error("SaveVault: %s exists but is unreadable — refusing to overwrite it" % path)
+		return false
+	var expected := document_identity(path)
+	var current = load_or_empty()
+	if current is not Dictionary:
+		return false
+	var next := record_reward_claims(current, names)
 	if next.is_empty():
 		return false
 	return replace_if_unchanged(path, next, expected)

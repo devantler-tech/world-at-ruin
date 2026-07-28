@@ -89,7 +89,7 @@ const SAVE_SCHEMA_MAX := CharacterFactory.RECIPE_VERSION
 ## delivery remains monolithic. The separate `rollback_targets` catalogue stays
 ## empty until a mountable pack exists; advertising the app ZIP there would make
 ## pack recovery select an artifact it cannot mount.
-const SAVE_CAPABILITY_WRITES := 3
+const SAVE_CAPABILITY_WRITES := 4
 
 ## The highest content capability this build can READ.
 ##
@@ -102,9 +102,8 @@ const SAVE_CAPABILITY_WRITES := 3
 ## needlessly routed away from a pack update despite a valid fallback existing.
 ##
 ## Must always be >= the write capability (a build must read what it writes).
-## Capability 4 is vault-v3 claimed exploration-reward state. This build is its
-## expansion release: SaveVault reads and preserves the field while production
-## writers remain on baked capability 3 until this build is retained.
+## Capability 4 is vault-v3 claimed exploration-reward state. Its v0.61.0
+## reader release is retained, so this build now reads and writes the contract.
 const SAVE_CAPABILITY_READS := 4
 
 ## The oldest shell this manifest still supports updating FROM.

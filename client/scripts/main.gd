@@ -24,6 +24,8 @@ const REFUSED_SAVE_NOTICE := \
 	+ "It has been left untouched and nothing new will replace it."
 const DISCOVERY_PERSIST_RETRY_INITIAL_SECONDS := 1.0
 const DISCOVERY_PERSIST_RETRY_MAX_SECONDS := 30.0
+const REWARD_PERSIST_RETRY_INITIAL_SECONDS := 1.0
+const REWARD_PERSIST_RETRY_MAX_SECONDS := 30.0
 
 var _player: Player
 var _hud: Hud
@@ -94,6 +96,13 @@ var _discovery_persistence_pending: Array[String] = []
 var _discovery_persistence_retry_in := 0.0
 var _discovery_persistence_retry_delay := DISCOVERY_PERSIST_RETRY_INITIAL_SECONDS
 var _discovery_persistence_warning_shown := false
+## Successfully applied reward place ids waiting for their append-only v3
+## claim write. The live tracker marks them before they enter this queue, so a
+## transient filesystem retry never applies the same outcome twice in-session.
+var _reward_persistence_pending: Array[String] = []
+var _reward_persistence_retry_in := 0.0
+var _reward_persistence_retry_delay := REWARD_PERSIST_RETRY_INITIAL_SECONDS
+var _reward_persistence_warning_shown := false
 ## Notices raised while _ready() is still running, delivered together at the end
 ## of it. The HUD has ONE toast label and a later toast replaces an earlier one
 ## before a frame renders, so a boot that has several things to say would
@@ -166,6 +175,14 @@ func _ready() -> void:
 		STARTER_CAVE_DISCOVERY_RADIUS)
 	_discovery.add(DISCOVERY_WARDENS_SHRINE, world.shrine_interactable().global_position,
 		WorldGen.SHRINE_CLEAR_RADIUS)
+	# The first production exploration reward: reaching the Wardens' Shrine
+	# unlocks its return point. The reward carries only the stable semantic id;
+	# the generated world's live coordinate is resolved when the outcome applies.
+	_exploration_rewards.add(DISCOVERY_WARDENS_SHRINE, {
+		"kind": ExplorationRewards.KIND_WAYPOINT,
+		"id": SaveVault.SHRINE_WARDENS,
+		"name": "Wardens' Shrine",
+	})
 
 	# The Reach is inhabited: a seeded settlement rings the shrine and lone
 	# drifters dot the open land — the same people in the same places every
@@ -245,10 +262,15 @@ func _ready() -> void:
 		# Restore unknown future claims too: forgetting one during rollback could
 		# grant a reward that the newer client already consumed.
 		_exploration_rewards.restore(vault.get("reward_claims", []))
+		_apply_restored_reward_outcomes()
 		for name: String in SaveVault.attuned(vault):
 			var point = RespawnPoints.resolve(name, world)
 			if point != null:
 				_player.set_respawn_point(point)
+		# A discovery may have persisted before its reward claim during a
+		# transient failure or an older release. Reconcile that durable discovery
+		# now; claim_applied keeps already-restored claims idempotent.
+		_claim_exploration_rewards(_discovery.discovered())
 	# Observe only after restore. A persisted place then stays idempotent, while
 	# the cave under a new wanderer's feet becomes the first v2 write.
 	_observe_discoveries()
@@ -468,9 +490,11 @@ func _process(delta: float) -> void:
 		push_warning("zone connection closed by the zone — replication has stopped for this session")
 
 
-## Fold this frame's player position into the append-only discovery set.
-## Transient storage failures retain a dirty bit and retry with bounded
-## exponential backoff; a path-latched unreadable/newer vault stays session-only
+## Fold this frame's player position into the append-only discovery and reward
+## sets. Outcomes apply before their place ids are marked claimed. Discovery and
+## claim writes then retry independently with bounded exponential backoff; the
+## vault refuses a claim until its discovery is durable, so either write order
+## still fails closed. A path-latched unreadable/newer vault stays session-only
 ## and is never retried, preserving the downgrade refusal.
 func _observe_discoveries(delta: float = 0.0) -> void:
 	if _player == null:
@@ -482,9 +506,63 @@ func _observe_discoveries(delta: float = 0.0) -> void:
 				_discovery_persistence_pending.append(name)
 		_discovery_persistence_retry_in = 0.0
 		_discovery_persistence_retry_delay = DISCOVERY_PERSIST_RETRY_INITIAL_SECONDS
+		_claim_exploration_rewards(newly_found)
+	_persist_pending_discoveries(delta)
+	_persist_pending_reward_claims(delta)
+
+
+## Apply registered outcomes for newly discovered places, then queue only the
+## ids whose outcomes succeeded. The tracker records success before this method
+## returns, so a persistence retry cannot re-grant the live reward.
+func _claim_exploration_rewards(found_ids: Array) -> void:
+	var applied := _exploration_rewards.claim_applied(
+		found_ids, Callable(self, "_apply_exploration_reward"))
+	if applied.is_empty():
+		return
+	for name: String in applied:
+		if name not in _reward_persistence_pending:
+			_reward_persistence_pending.append(name)
+	_reward_persistence_retry_in = 0.0
+	_reward_persistence_retry_delay = REWARD_PERSIST_RETRY_INITIAL_SECONDS
+
+
+## Re-apply the known outcomes represented by persisted claims. Unknown future
+## claims remain remembered but inert in this rollback build; a later build can
+## register them without granting twice.
+func _apply_restored_reward_outcomes() -> void:
+	for poi_id: String in _exploration_rewards.claimed():
+		if not _exploration_rewards.is_registered(poi_id):
+			continue
+		var reward := _exploration_rewards.reward_for(poi_id)
+		if not _apply_exploration_reward(poi_id, reward, false):
+			push_warning("Main: could not restore exploration reward '%s'" % poi_id)
+
+
+## Apply one horizontal reward to the live session. Only kinds with a real
+## production outcome return true. The Wardens' waypoint resolves from its
+## stable id into this generated world's current coordinate, so a world-layout
+## change never strands the persisted claim at an obsolete position.
+func _apply_exploration_reward(
+		_poi_id: String, reward: Dictionary, announce: bool = true) -> bool:
+	match String(reward.get("kind", "")):
+		ExplorationRewards.KIND_WAYPOINT:
+			var world := get_node_or_null("World") as WorldGen
+			if world == null or _player == null:
+				return false
+			var point = RespawnPoints.resolve(String(reward.get("id", "")), world)
+			if point == null:
+				return false
+			_player.set_respawn_point(point)
+			if announce:
+				_notify("You know a new way back: %s." % String(reward.get("name", "")))
+			return true
+	return false
+
+
+func _persist_pending_discoveries(delta: float) -> void:
 	if _discovery_persistence_pending.is_empty():
 		return
-	if newly_found.is_empty() and _discovery_persistence_retry_in > 0.0:
+	if _discovery_persistence_retry_in > 0.0:
 		_discovery_persistence_retry_in = maxf(
 			0.0, _discovery_persistence_retry_in - delta)
 		if _discovery_persistence_retry_in > 0.0:
@@ -509,6 +587,31 @@ func _observe_discoveries(delta: float = 0.0) -> void:
 		# _ready(), where a direct toast would be overwritten by the consolidated
 		# boot notice and the player would never learn the place was not recorded.
 		_notify("This place is known for now — though the Reach may not remember next waking.")
+
+
+func _persist_pending_reward_claims(delta: float) -> void:
+	if _reward_persistence_pending.is_empty():
+		return
+	if _reward_persistence_retry_in > 0.0:
+		_reward_persistence_retry_in = maxf(
+			0.0, _reward_persistence_retry_in - delta)
+		if _reward_persistence_retry_in > 0.0:
+			return
+	if SaveVault.persist_reward_claims(_reward_persistence_pending):
+		_reward_persistence_pending.clear()
+		_reward_persistence_retry_in = 0.0
+		_reward_persistence_retry_delay = REWARD_PERSIST_RETRY_INITIAL_SECONDS
+		return
+	if SaveVault.can_write(SaveVault.vault_path()):
+		_reward_persistence_retry_in = _reward_persistence_retry_delay
+		_reward_persistence_retry_delay = minf(
+			_reward_persistence_retry_delay * 2.0,
+			REWARD_PERSIST_RETRY_MAX_SECONDS)
+	else:
+		_reward_persistence_pending.clear()
+	if not _reward_persistence_warning_shown:
+		_reward_persistence_warning_shown = true
+		_notify("This way back is known for now — though the Reach may not remember next waking.")
 
 
 func _unhandled_input(event: InputEvent) -> void:

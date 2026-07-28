@@ -451,10 +451,12 @@ everything shipped afterwards is held to.
   a boot, and the stale timeout is generous on purpose — shortening it to make writes prompt would let
   a live writer be robbed mid-write. Tests redirect it with `WAR_VAULT_PATH`, mirroring
   `WAR_SAVE_PATH`, and seam the timeout with `WAR_VAULT_LOCK_STALE_SECONDS` (test-only; malformed or
-  negative values keep the shipped window). Production writers emit through vault v2. The reader also
-  accepts vault v3 `reward_claims`, and `Main` restores those claims into its boot-owned
-  `ExplorationRewards` tracker. Production does not originate v3 documents until the retained reader
-  expansion has baked and the writer capability is activated separately. The immutable shell's
+  negative values keep the shipped window). Production writers emit vault v3 only when an applied
+  exploration reward adds a `reward_claims` entry; discovery-only documents remain v2 and empty or
+  attunement-only documents remain v1. `Main` restores accepted claims into its boot-owned
+  `ExplorationRewards` tracker, re-applies their registered horizontal outcomes, and records a newly
+  discovered place only after its outcome succeeds. The retained v0.61.0 capability-4 reader is the
+  rollback target that permits this writer. The immutable shell's
   recovery memory is a third persisted contract:
   `BootRecovery` (`user://boot_recovery.json`) reads through schema v1 and writes explicit v1 on
   first boot or the next real write of legacy v0 state. The retained v0.51.1 app reads v1 and is the

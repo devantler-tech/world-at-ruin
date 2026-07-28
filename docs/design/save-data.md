@@ -188,14 +188,19 @@ The first progression-vault sequence is capability 3: v0.52.0 shipped the versio
 while production writes remained at capability 2. With that release retained as a rollback target,
 the later contract build registers `starter_cave` and `wardens_shrine`, observes the real wanderer's
 position, and persists the append-only found set at vault version 2. Empty and attunement-only vaults
-remain version 1; the first actual discovery is what contracts them to version 2. Rewards, quests,
-waypoints and map presentation remain separate children of the exploration roadmap rather than being
-implied by this persistence contract.
+remain version 1; the first actual discovery is what contracts them to version 2. Quests and map
+presentation remain separate children of the exploration roadmap rather than being implied by this
+persistence contract.
 
-Capability 4 readers also accept vault v3 `reward_claims` and restore those stable names into the
-boot-owned exploration reward tracker. Production writers remain capability 3/v2; ordinary
-attunement and discovery writes preserve an already-present v3 document and its claims. Writer
-activation is a separate capability step after the retained v3 reader is a safe rollback target.
+Capability 4 adds vault v3 `reward_claims`. The retained v0.61.0 app reads and preserves that shape,
+and production writes it while keeping that safe whole-app rollback target. The boot-owned
+exploration reward tracker restores every accepted stable place name, re-applies registered outcomes,
+and keeps unknown future claims inert but remembered. A newly discovered place is marked claimed only
+after its horizontal outcome succeeds; the claim writer then requires that place's discovery to
+already be durable. Transient discovery and claim failures retry independently without granting
+twice in-session, while a refused newer or unreadable vault remains session-only and byte-intact.
+Ordinary attunement and discovery writes preserve an already-present v3 document and its claims;
+discovery-only documents remain v2.
 
 ### Boot recovery
 

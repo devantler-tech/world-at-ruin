@@ -1,0 +1,10 @@
+{
+	"date": "2026-07-28",
+	"notes": [
+		"Finding the Wardens' Shrine now teaches your wanderer a permanent way back there. Fall after reaching it and the Reach returns you to the shrine instead of the starter cave.",
+		"The unlocked waypoint survives closing and reopening the game. Reaching it again never grants the same reward twice.",
+		"If saving is interrupted, the way back still works for the current waking and the game keeps trying to remember it without applying the reward again."
+	],
+	"title": "The Wardens' Shrine becomes a lasting way back",
+	"version": "0.63.0"
+}
