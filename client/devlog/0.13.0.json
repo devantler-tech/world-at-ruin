@@ -1,10 +1,11 @@
 {
-	"date": "2026-07-19",
+	"date": "2026-07-18",
 	"notes": [
-		"Your wanderer used to stand square: both feet planted the same, both legs straight, shoulders dead level. It read like a figure waiting to be posed. Now the weight rests on one leg — that hip rides up, the shoulder above it drops to answer it, and the other knee softens with the foot turned slightly out.",
-		"Every body stands this way, whatever you do with the sliders, and it holds through the whole build so a heavy frame and a slight one both carry it.",
-		"This arrived switched off, as something you had to ask for: it was a pose and nothing more — nothing breathed, shifted weight or moved — and we would rather you chose that than woke up in it. The breathing landed in 0.18.0 and it is on for everyone now."
+		"The ground cover was standing in for itself — a ball for a bush, a flat wedge for grass, a box for a pile of bones. It is now built as the thing it is: scrub you can pick individual leaves out of, grass that reads as separate blades, and heaps of broken stone and bone with uneven, weathered surfaces instead of one flat colour.",
+		"The low sun now shines through the thin stuff. Dry grass lights up from behind when you look toward the horizon, and no two clumps are quite the same shade, so a stretch of ground reads as a place rather than as a pattern.",
+		"And it moves. A dry wind crosses the Reach in gusts, and the scrub and grass lean downwind together as each gust passes, while the stone and bone stay exactly where they fell.",
+		"They are still scattered evenly across the land, though, where real scrub would gather in thickets and leave bare patches between. That is the next thing to fix."
 	],
-	"title": "Standing like someone who has been standing a while",
+	"title": "Scrub, straw and bone",
 	"version": "0.13.0"
 }

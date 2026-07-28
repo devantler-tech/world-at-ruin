@@ -8,5 +8,5 @@
 		"Three things are still unfinished. The brute has no shirt in its recipe, so its portrait shows a bare chest — the wardrobe has no clothed starting state underneath yet, which is being fixed separately. The plates are a fixed small size, so the faces are smaller than they should be. And a plate does not light up when you hover it or when it is the one you have chosen; only the name beside it does."
 	],
 	"title": "You can see the four bodies before you choose one",
-	"version": "0.23.0"
+	"version": "0.48.0"
 }

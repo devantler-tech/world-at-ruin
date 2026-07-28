@@ -5,5 +5,5 @@
 		"The game checks what your hardware supports before turning this on. Machines that can't render it safely see exactly what they saw before — the same clean frame with the same distance haze — rather than a broken screen."
 	],
 	"title": "Light through the ash",
-	"version": "0.9.0"
+	"version": "0.27.0"
 }

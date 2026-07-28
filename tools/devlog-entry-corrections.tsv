@@ -25,3 +25,36 @@
 # grows, and the guard fails closed rather than guessing.
 
 client/devlog/0.60.0.json	789d57095b09a99a6b93fd5aa9bcc3be283140a2	Describes the guarded grounded walk gait, which first shipped in v0.60.0. The entry was authored as 0.59.0 and a sibling release was cut ahead of it, so it named a build released before the code existed (#435).
+
+# The bulk correction of #452. Every entry below was authored with a
+# predicted version that sibling releases overtook before it merged, so it
+# named a build that shipped without it. Each is re-pointed at the release
+# that first contains its anchor commit — proven from the tags, and the
+# release it used to name provably does NOT contain that commit.
+client/devlog/0.6.0.json	3e3596bcfe0b7de6035b796030a5169a070c3d64	Authored as 0.2.0, but the change it describes first shipped in v0.6.0; v0.2.0 was cut without it (#452).
+client/devlog/0.10.0.json	48d512d97769d1dbef54d4ae1cc256cfabfecbc2	Authored as 0.3.0, but the change it describes first shipped in v0.10.0; v0.3.0 was cut without it (#452).
+client/devlog/0.11.0.json	10779b4189d4e75df9ad49d9a4e38bef8fa41892	Authored as 0.4.0, but the change it describes first shipped in v0.11.0; v0.4.0 was cut without it (#452).
+client/devlog/0.13.0.json	7dd35b0212177e660510fe4ca4d25ed506061776	Authored as 0.5.0, but the change it describes first shipped in v0.13.0; v0.5.0 was cut without it (#452).
+client/devlog/0.19.0.json	d8f0972602b694e36f6f9d36ca3dcafee544c72e	Authored as 0.6.0, but the change it describes first shipped in v0.19.0; v0.6.0 was cut without it (#452).
+client/devlog/0.25.0.json	71bb6582a5f3a1d08aa2b8818f52d39a6c8105df	Authored as 0.7.0, but the change it describes first shipped in v0.25.0; v0.7.0 was cut without it (#452).
+client/devlog/0.26.0.json	2ff82caa6f68ebdcf2c43ab6e48e868270d825fe	Authored as 0.8.0, but the change it describes first shipped in v0.26.0; v0.8.0 was cut without it (#452).
+client/devlog/0.27.0.json	8a4b7239394302f0504bca4b024ba2d30c091e9d	Authored as 0.9.0, but the change it describes first shipped in v0.27.0; v0.9.0 was cut without it (#452).
+client/devlog/0.28.0.json	990d55a4e37f5bcf7cd7a1a0c7b8e60ac4b66cd6	Authored as 0.10.0, but the change it describes first shipped in v0.28.0; v0.10.0 was cut without it (#452).
+client/devlog/0.29.0.json	fc8ff94b7620932c5cddf9181d9c6de7cc0477d7	Authored as 0.11.0, but the change it describes first shipped in v0.29.0; v0.11.0 was cut without it (#452).
+client/devlog/0.30.0.json	baaee5caa5c317dd576f6429b78720e6be6497ae	Authored as 0.12.0, but the change it describes first shipped in v0.30.0; v0.12.0 was cut without it (#452).
+client/devlog/0.31.0.json	d4c62c83d5f2fa301d7898e8d26639b2c788b55b	Authored as 0.13.0, but the change it describes first shipped in v0.31.0; v0.13.0 was cut without it (#452).
+client/devlog/0.33.0.json	2eb73813133f9f9ce75df070dc4fac8dbc9ee958	Authored as 0.14.0, but the change it describes first shipped in v0.33.0; v0.14.0 was cut without it (#452).
+client/devlog/0.35.0.json	ab82944b0a54daab88517db6f70df24e2cd506d0	Authored as 0.15.0, but the change it describes first shipped in v0.35.0; v0.15.0 was cut without it (#452).
+client/devlog/0.39.0.json	7c76056d4d92e1ac8b3aea80f004e6c9f9ef2076	Authored as 0.16.0, but the change it describes first shipped in v0.39.0; v0.16.0 was cut without it (#452).
+client/devlog/0.40.0.json	91c8c13464f846e8493fccdd4d765266c9807eda	Authored as 0.17.0, but the change it describes first shipped in v0.40.0; v0.17.0 was cut without it (#452).
+client/devlog/0.42.0.json	6ab110ef4800f1802293a3330e9c230fa59bb20b	Authored as 0.18.0, but the change it describes first shipped in v0.42.0; v0.18.0 was cut without it (#452).
+client/devlog/0.43.0.json	69cfb1dd650337a85a50a6d9e0ae67981376c452	Authored as 0.19.0, but the change it describes first shipped in v0.43.0; v0.19.0 was cut without it (#452).
+client/devlog/0.44.0.json	2432b3f73855e88f705e6a2de10b21e0b7ea0012	Authored as 0.20.0, but the change it describes first shipped in v0.44.0; v0.20.0 was cut without it (#452).
+client/devlog/0.46.0.json	e1a98dc6bf04beba4243bbc5df4df311af6387f8	Authored as 0.21.0, but the change it describes first shipped in v0.46.0; v0.21.0 was cut without it (#452).
+client/devlog/0.47.0.json	7b5e1cbd8d73256fb5aad6e5e132175f96ff5f89	Authored as 0.22.0, but the change it describes first shipped in v0.47.0; v0.22.0 was cut without it (#452).
+client/devlog/0.48.0.json	4a0059b63638e6f0b00898b1fddaef0bd7070f9f	Authored as 0.23.0, but the change it describes first shipped in v0.48.0; v0.23.0 was cut without it (#452).
+client/devlog/0.51.3.json	403f214847981322b20be544f97e12f0325cb8a6	Authored as 0.51.2, but the change it describes first shipped in v0.51.3; v0.51.2 was cut without it (#452).
+client/devlog/0.56.0.json	cb632fd160df0b9c3020401d5967808e7d627634	Authored as 0.55.0, but the change it describes first shipped in v0.56.0; v0.55.0 was cut without it (#452).
+client/devlog/0.59.1.json	0dc6ebc944094f4c34c47dd310adc7ce9dfc7e1f	Authored as 0.58.1, but the change it describes first shipped in v0.59.1; v0.58.1 was cut without it (#452).
+client/devlog/0.61.2.json	61a6c2bb8e4173ffbcb459631afa91d0155beeba	Authored as 0.59.1, but the change it describes first shipped in v0.61.2; v0.59.1 was cut without it (#452).
+client/devlog/0.64.0.json	a4beefbd81687b317c8162df2978335da3a11ade	Authored as 0.63.0, but the change it describes first shipped in v0.64.0; v0.63.0 was cut without it (#452).
