@@ -444,11 +444,42 @@ void fragment() {
 	//
 	// Measured on-GPU (tools/plate_crawl): the flickering fraction of the ground
 	// falls 0.0052 -> 0.0027 against a plates-off control that reads 0.0000.
-	// Zeroing crack_relief outright gives 0.0000, so this term is the whole of
-	// what still moves.
+	//
+	// The relief is most of what moves, but NOT all of it. A later session
+	// measured `crack_relief = 0` at 0.0007 rather than the 0.0000 recorded
+	// above, twice, by two independent routes (the uniform zeroed outright, and
+	// this fade forced closed) agreeing to the digit on flicker, peak and
+	// spread, against a plates-off control still reading 0.0000. What is left
+	// at that floor is the substance and slab boundary — the step this issue was
+	// originally filed on. Absolute levels here are not portable between
+	// machines and the tool says so; the ordering is what carries.
 	grad *= 1.0 - smoothstep(0.7, 1.3, crack_fw * 1.2 / max(crack_width, 1e-6));
+	// The magnitude bound is the SLOPE A SEAM CAN HAVE, not a catastrophe
+	// backstop. `bump` adds `grad * crack_relief` to the horizontal components
+	// of a unit normal, so the ceiling is a tilt: at the shipped crack_relief
+	// this bounds it by atan(0.4 * 1.1) ~= 24 degrees, the wall of a shallow
+	// groove a few centimetres across that ash settles into. A ceiling set only
+	// high enough to stop one degenerate quad flipping a normal allows
+	// atan(1.5 * 1.1) ~= 59 degrees, which no seam in this ground has — so every
+	// under-sampled quad claiming an impossible slope passed through it
+	// untouched, and that is what the fade above was left carrying alone.
+	//
+	// A bound on the SLOPE and the fade above are different levers, and the
+	// difference is the whole reason this one is here. The fade is keyed on
+	// distance, so it removes shimmer and near-field seam read together at
+	// about 1:1 — measured on-GPU with both instruments in one sitting, pulling
+	// the fade window in to (0.40, 0.75) buys 65% of the relief's flicker and
+	// takes 65-74% of the seam coverage at every swept distance with it, which
+	// is the softening #306's third acceptance criterion forbids. This is keyed
+	// on the slope a fragment claims, which is what actually distinguishes an
+	// aliased sample from a resolved one, so it buys the SAME 65% while leaving
+	// the near field untouched: coverage at 6 m is 0.00045 either way, and the
+	// loss past it stays within 21% against the fade's 65-74%. What it spends
+	// instead is rake strength, 22% at 6 m — every seam still there, raking
+	// slightly less hard. Below 0.4 the near field goes too (0.2 already costs
+	// 13% of the 6 m coverage), so this is the knee rather than a floor.
 	float grad_len = length(grad);
-	grad = grad_len > 1.5 ? grad * (1.5 / grad_len) : grad;
+	grad = grad_len > 0.4 ? grad * (0.4 / grad_len) : grad;
 	}
 	// A crack is a groove, so height is -crack and the normal tilts INTO it.
 	// The grain bump below is NOT plate work and runs on both paths; only the
