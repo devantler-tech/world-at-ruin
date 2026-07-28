@@ -23,9 +23,11 @@
 # the version stamped at release time from the tag actually cut, the way cd.yaml
 # already stamps `DevLog.VERSION` — a different change, tracked separately.
 #
-# Only ADDED entry files are checked. Editing the prose of an entry that has long
-# since shipped is legitimate and must stay so; it is the freshly authored entry
-# whose version is a guess.
+# ADDED entry files are checked, and so is any entry a change overwrites in place
+# while LISTING it as a correction. Editing the prose of an entry that has long
+# since shipped is legitimate and must stay so, so an unlisted modification stays
+# unchecked; it is the freshly authored entry whose version is a guess, and the
+# listed correction whose number is a claim.
 #
 # CORRECTIONS take the other proof. Being ahead of every release is the right
 # test for an authored entry, and the wrong one for correcting an entry already
@@ -167,7 +169,7 @@ diff_base() {
 	fi
 }
 
-# Entry files this change ADDS, relative to the base commit.
+# Entry files this change ADDS, plus listed corrections it OVERWRITES in place.
 #
 # --no-renames is load-bearing, not tidiness. Rename detection is on by default,
 # and two real entries differ only in a version string and some prose, so moving
@@ -176,9 +178,32 @@ diff_base() {
 # own failure message asks for, so without this a second, still-stale rename
 # would sail through. Forcing a rename to read as delete-plus-add puts the
 # landing name back under the check.
-added_entry_files() {
-	git diff --no-renames --diff-filter=A --name-only "$1" HEAD -- "$ENTRY_DIR" |
-		grep -E '\.json$' || true
+#
+# ADDED is not sufficient on its own, because a bulk correction is a PERMUTATION:
+# entries move onto release numbers that other entries are vacating in the same
+# change (0.3.0 -> 0.10.0 while 0.10.0 -> 0.28.0). A destination that already
+# existed in the base is MODIFIED rather than added, so it would escape the check
+# entirely — while sitting in the corrections file, which states that a listed
+# entry is verified by containment. Measured on the #452 bulk correction: 6 of 27
+# listed corrections were invisible to this guard for exactly that reason, so a
+# mistyped anchor or target in any of them would have passed CI under a claim of
+# being machine-checked.
+#
+# Including them is a strict TIGHTENING, and deliberately narrow: a modified
+# entry qualifies only when it is ALREADY LISTED in CORRECTIONS_FILE. Editing the
+# prose of an entry that has long since shipped stays unchecked and legal, which
+# is the freedom the added-only rule existed to protect.
+candidate_entry_files() {
+	local base="$1" file
+	{
+		git diff --no-renames --diff-filter=A --name-only "$base" HEAD -- "$ENTRY_DIR"
+		while IFS= read -r file; do
+			[ -n "$file" ] || continue
+			if [ -n "$(correction_anchor "$file")" ]; then
+				printf '%s\n' "$file"
+			fi
+		done < <(git diff --no-renames --diff-filter=M --name-only "$base" HEAD -- "$ENTRY_DIR")
+	} | grep -E '\.json$' | sort -u || true
 }
 
 # The version an entry declares. The filename must agree with it, but that is
@@ -211,9 +236,9 @@ main() {
 	validate_corrections
 
 	local added
-	added=$(added_entry_files "$(diff_base "$base")")
+	added=$(candidate_entry_files "$(diff_base "$base")")
 	if [ -z "$added" ]; then
-		printf 'dev-log entry version guard: PASS — no new entry (newest release %s)\n' "$newest"
+		printf 'dev-log entry version guard: PASS — no new or corrected entry (newest release %s)\n' "$newest"
 		return 0
 	fi
 
