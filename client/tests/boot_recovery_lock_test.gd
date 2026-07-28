@@ -72,8 +72,10 @@ func _ready() -> void:
 	if DirAccess.make_dir_absolute(_abs(lock)) != OK:
 		_fail("could not simulate a competing writer's lock")
 		return
-	var contended := BootRecovery.save_state(
-		PROBE, BootRecovery.begin_attempt(BootRecovery.fresh_state(), "v9.9.9"))
+	var attempt := _pending_attempt("9.9.9")
+	if attempt.is_empty():
+		return
+	var contended := BootRecovery.save_state(PROBE, attempt)
 	if contended.get("ok", false):
 		_fail("a write proceeded while another writer held the lock — the record can be discarded")
 		return
@@ -186,8 +188,10 @@ func _ready() -> void:
 		return
 	hijack.store_string("999999-2")
 	hijack.close()
-	var lost := BootRecovery.save_state(
-		PROBE, BootRecovery.begin_attempt(BootRecovery.fresh_state(), "v8.8.8"))
+	var hijacked_attempt := _pending_attempt("8.8.8")
+	if hijacked_attempt.is_empty():
+		return
+	var lost := BootRecovery.save_state(PROBE, hijacked_attempt)
 	if lost.get("ok", false):
 		_fail("a write proceeded while the lock was no longer ours — a stolen lock goes undetected")
 		return
@@ -305,6 +309,40 @@ func _exit_tree() -> void:
 
 func _abs(path: String) -> String:
 	return ProjectSettings.globalize_path(path)
+
+
+## A state carrying a PENDING boot attempt for `version`, or `{}` after failing
+## the test.
+##
+## [method BootRecovery.begin_attempt] returns a result wrapper —
+## `{"ok", "state", "reason"}` — and the reconciled document lives under `state`.
+## Handing the wrapper itself to [method BootRecovery.save_state] is silently
+## accepted rather than rejected: [method BootRecovery._schema_error] only
+## validates a `version` key when one is PRESENT, so a wrapper carrying none
+## reads as a legitimate legacy-v0 document with a null marker. The contention
+## cases would then be guarding an empty document while claiming to guard a
+## pending attempt — the refusal under test would still be the lock's, but the
+## thing at risk would not be the thing named. Unwrapping here keeps the subject
+## of the test and its description the same object.
+func _pending_attempt(version: String) -> Dictionary:
+	var result := BootRecovery.begin_attempt(BootRecovery.fresh_state(), version)
+	if not result.get("ok", false):
+		_fail("could not build a pending-attempt state for %s: %s" % [
+			version, result.get("reason", "")])
+		return {}
+	var state: Variant = result.get("state")
+	if state is not Dictionary:
+		_fail("begin_attempt reported ok for %s without returning a state" % version)
+		return {}
+	var pending := state as Dictionary
+	# Assert the marker rather than trusting it: an empty return is this helper's
+	# failure signal, so a state that silently lost its marker would sail past the
+	# `is_empty()` guard at every call site and reintroduce the defect.
+	if pending.get("marker") != version:
+		_fail("the pending-attempt state for %s carries marker %s" % [
+			version, str(pending.get("marker"))])
+		return {}
+	return pending
 
 
 ## The recovery file's bytes, or "" when absent. Byte comparison is deliberate: a

@@ -29,6 +29,18 @@ class_name FileLock
 ## Failing to acquire is not an error the player should feel: callers degrade to
 ## session-only, which is this client's standing answer to doubt about persisted
 ## state. Contention must never block a boot.
+##
+## [b]This lock is CROSS-PROCESS, not cross-thread — call it from the main thread
+## only.[/b] Exclusion between processes rests on `mkdir`, which is atomic for
+## every caller; the per-process bookkeeping beside it does not share that
+## property. [code]_held[/code] and [code]_tokens[/code] are Dictionaries that
+## gain and lose keys on every acquire and release, and Godot does not permit one
+## to be resized from one GDScript thread while another touches it — the result
+## is corruption rather than a lost update. Every caller today (character store,
+## progression vault, boot recovery) writes from the main thread, so the shipped
+## contract is main-thread-only and the bookkeeping needs no Mutex. Should a
+## writer ever move off the main thread, guarding those two Dictionaries with a
+## Mutex is a precondition of that move, not a later hardening step.
 
 
 ## The lock's suffix, appended to the guarded file's own path.
@@ -123,7 +135,14 @@ static func acquire(path: String) -> bool:
 		# this lock is to have created it against an absent path, which exactly one
 		# caller can ever do.
 		_reclaim_if_abandoned(lock)
-		push_error("FileLock: another process holds the write lock at %s — refusing to write" % lock)
+		# WARNING, not error: losing the race is the design working. The class docs
+		# above call contention expected and non-player-facing, and issue #379's own
+		# scenario — the updater writing while the game runs — makes this the normal
+		# path rather than a fault. Logging it at error level would bury the genuine
+		# environment faults just below (an uncreatable lock, an unstampable owner)
+		# under routine noise, and those are the ones worth waking up for. The
+		# lost-lock case at release() already reports at this level for the same reason.
+		push_warning("FileLock: another process holds the write lock at %s — refusing to write" % lock)
 		return false
 	if err != OK:
 		# Anything else is an environment fault, not contention — an unwritable or
