@@ -1093,15 +1093,24 @@ jobs:
               echo "::error::could not read ${tap}#${pre_pr} before updating ${branch}; refusing to write with its auto-merge state unknown"
               return 1
             fi
-            # An unreadable field must not read as "not armed": `jq` prints
-            # `false` for a malformed document too, so require the positive
-            # answer and treat everything else as a reason to look closer.
-            if [ "$(printf '%s' "${pre_state}" | jq -r '.merged' 2>/dev/null)" = "true" ]; then
-              return 0
-            fi
-            if [ "$(printf '%s' "${pre_state}" | jq -r '.auto_merge != null' 2>/dev/null)" != "true" ]; then
-              return 0
-            fi
+            # THREE outcomes, not two. A `jq` that fails on a malformed
+            # document prints nothing, and an empty answer compared against
+            # "true" reads as "not armed" — which would proceed to the write
+            # with the PR's real state unknown. Name the unreadable case and
+            # fail closed on it, the same way the reset guard treats an
+            # unreadable comparison. One read, so both facts describe the same
+            # snapshot.
+            case "$(printf '%s' "${pre_state}" \
+                    | jq -r 'if .merged == true then "merged"
+                             elif .auto_merge == null then "unarmed"
+                             else "armed" end' 2>/dev/null || true)" in
+              merged | unarmed) return 0 ;;
+              armed) : ;;
+              *)
+                echo "::error::could not determine ${tap}#${pre_pr}'s auto-merge state before updating ${branch}; refusing to write while it may be armed"
+                return 1
+                ;;
+            esac
 
             pre_node="$(printf '%s' "${pre_state}" | jq -r '.node_id // empty' 2>/dev/null || true)"
             if [ -z "${pre_node}" ]; then

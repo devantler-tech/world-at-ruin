@@ -66,6 +66,10 @@ reset_mocks() {
 	mock_graphql_out="API rate limit exceeded for installation"
 	mock_armed=true
 	mock_merged=false
+	# When set, the PR-state endpoint returns this verbatim instead of a
+	# well-formed document — how "the read failed or came back malformed" is
+	# expressed without changing the stub's dispatch.
+	mock_pr_state_override=""
 	mock_merge_rc=0
 	mock_branch_version="0.65.7"
 	mock_checks='{"total_count":1,"check_runs":[{"name":"CI - Required Checks","status":"completed","conclusion":"success"}]}'
@@ -112,6 +116,10 @@ gh() {
 		return 0
 	fi
 	if [[ "${path}" == */pulls/* ]]; then
+		if [ -n "${mock_pr_state_override}" ]; then
+			printf '%s\n' "${mock_pr_state_override}"
+			return 0
+		fi
 		printf '{"merged":%s,"auto_merge":%s,"node_id":"PR_kwDO","head":{"sha":"cafe1234cafe1234cafe1234cafe1234cafe1234"}}' \
 			"${mock_merged}" \
 			"$([ "${mock_armed}" = "true" ] && printf '{"enabled_by":{"login":"tap"}}' || printf 'null')"
@@ -181,6 +189,27 @@ mock_merged=true
 rc=0
 disarm_prior_cask_auto_merge "${tap}" "${pre_pr}" "${branch}" || rc=$?
 [ "${rc}" -eq 0 ] || fail "an already-merged previous PR was treated as a failure (rc=${rc})"
+
+# An UNREADABLE PR state is not "not armed". A malformed document makes `jq`
+# print nothing, and an empty answer must never be the one that lets the write
+# proceed — that would put new content on the branch with the previous PR
+# possibly still armed, which is the whole hazard.
+reset_mocks
+mock_pr_state_override='{"merged": tru'
+rc=0
+disarm_prior_cask_auto_merge "${tap}" "${pre_pr}" "${branch}" || rc=$?
+[ "${rc}" -ne 0 ] ||
+	fail "an unreadable PR state was treated as unarmed; the job would write new content without knowing whether auto-merge was live"
+[ "$(merge_calls)" -eq 0 ] || fail "an unreadable PR state still merged the previous PR"
+[ "$(graphql_calls)" -eq 0 ] || fail "a mutation was spent against an unreadable PR state"
+
+# An EMPTY read is likewise fail-closed.
+reset_mocks
+mock_pr_state_override=' '
+rc=0
+disarm_prior_cask_auto_merge "${tap}" "${pre_pr}" "${branch}" || rc=$?
+[ "${rc}" -ne 0 ] ||
+	fail "an empty PR-state read was treated as unarmed"
 
 # A FAILING required check is not merged past. The fallback does auto-merge's
 # waiting, not auto-merge's bypassing.
