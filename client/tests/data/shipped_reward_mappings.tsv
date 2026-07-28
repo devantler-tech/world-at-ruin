@@ -1,0 +1,9 @@
+# Stable persisted-place to reward-payload mappings, one tab-separated row:
+# place_id	kind	reward_id	display_name
+#
+# APPEND-ONLY (no-resets law). A reward claim stores only place_id, so every
+# later boot derives the earned outcome from this row. The real boot guard binds
+# production registrations to the ledger in both directions, and CI compares
+# each complete row with the pull request base. Removing or changing any column
+# would reinterpret progression that a released client already granted.
+wardens_shrine	waypoint	wardens_shrine	Wardens' Shrine

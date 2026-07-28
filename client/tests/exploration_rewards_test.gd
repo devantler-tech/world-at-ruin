@@ -17,6 +17,8 @@ extends Node
 ## Run: godot --headless --path client res://tests/exploration_rewards_test.tscn
 
 var _failed := false
+var _apply_attempts: Array[String] = []
+var _rejected_apply := ""
 
 
 func _ready() -> void:
@@ -131,6 +133,58 @@ func _ready() -> void:
 	if _failed:
 		return
 
+	# --- apply-first claims: a failed outcome is never recorded as consumed ---
+	#
+	# The break this catches is marking `_claimed` before the caller has
+	# successfully applied the reward. That loses the grant forever: a failed
+	# waypoint/lore/cosmetic application then looks consumed and cannot retry.
+	var applied := ExplorationRewards.new()
+	applied.add("b_cave", {"kind": "lore", "id": "cave_01"})
+	applied.add("a_shrine", {"kind": "waypoint", "id": "shrine", "name": "Shrine"})
+	if not applied.has_method("claim_applied"):
+		_fail("the reward tracker has no apply-first claim path")
+		return
+	_apply_attempts.clear()
+	_rejected_apply = "b_cave"
+	var first_applied: Array = applied.call(
+		"claim_applied",
+		["b_cave", "a_shrine"],
+		Callable(self, "_apply_reward_for_test"))
+	_check(first_applied == ["a_shrine"], true,
+		"apply-first: only the successfully applied place is returned for persistence")
+	_check(_apply_attempts == ["a_shrine", "b_cave"], true,
+		"apply-first: outcomes are attempted in deterministic place-id order")
+	_check(applied.claimed() == ["a_shrine"], true,
+		"apply-first: the failed cave outcome was not marked consumed")
+	if _failed:
+		return
+
+	var guarded := ExplorationRewards.new()
+	guarded.add("place", {"kind": "lore", "id": "guarded"})
+	_check(guarded.claim_applied(["place"], Callable()).is_empty(), true,
+		"apply-first: an invalid callback applies and consumes nothing")
+	_check(guarded.claimed().is_empty(), true,
+		"apply-first: an invalid callback leaves the place claimable")
+	_check(guarded.claim_applied(
+		["place"], Callable(self, "_return_non_bool_for_test")).is_empty(), true,
+		"apply-first: a non-bool callback result is refused")
+	_check(guarded.claimed().is_empty(), true,
+		"apply-first: a non-bool callback result never consumes the place")
+	if _failed:
+		return
+
+	_rejected_apply = ""
+	var retried: Array = applied.call(
+		"claim_applied",
+		["b_cave", "a_shrine"],
+		Callable(self, "_apply_reward_for_test"))
+	_check(retried == ["b_cave"], true,
+		"apply-first: the failed outcome retries while the applied one stays idempotent")
+	_check(applied.claimed() == ["a_shrine", "b_cave"], true,
+		"apply-first: the retried outcome is recorded only after it succeeds")
+	if _failed:
+		return
+
 	# --- determinism: two identical registrations + claims agree byte-for-byte ---
 	if not _deterministic_replay():
 		return
@@ -153,6 +207,10 @@ func _ready() -> void:
 
 	print("TEST PASS — exploration rewards hold (closed horizontal schema, forward-only, claim-once, deterministic, audited)")
 	get_tree().quit(0)
+
+
+func _return_non_bool_for_test(_poi_id: String, _reward: Dictionary) -> Variant:
+	return "not-applied"
 
 
 ## Runs the identical registration + claim script on two independent instances and
@@ -181,6 +239,16 @@ func _run_scripted_claims(r: ExplorationRewards) -> String:
 		trace.append(",".join(ids))
 	trace.append("=" + ",".join(r.claimed()))
 	return "|".join(trace)
+
+
+## A real deterministic outcome used by the apply-first contract above. It
+## records every attempted place and can refuse one named place, matching the
+## production boundary where applying a reward can fail without consuming it.
+func _apply_reward_for_test(poi_id: String, reward: Dictionary) -> bool:
+	_apply_attempts.append(poi_id)
+	if poi_id == _rejected_apply:
+		return false
+	return not reward.is_empty()
 
 
 func _eq_list(actual: Array[String], expected: String, label: String) -> void:

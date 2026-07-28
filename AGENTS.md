@@ -451,10 +451,15 @@ everything shipped afterwards is held to.
   a boot, and the stale timeout is generous on purpose — shortening it to make writes prompt would let
   a live writer be robbed mid-write. Tests redirect it with `WAR_VAULT_PATH`, mirroring
   `WAR_SAVE_PATH`, and seam the timeout with `WAR_LOCK_STALE_SECONDS` (test-only; malformed or
-  negative values keep the shipped window). Production writers emit through vault v2. The reader also
-  accepts vault v3 `reward_claims`, and `Main` restores those claims into its boot-owned
-  `ExplorationRewards` tracker. Production does not originate v3 documents until the retained reader
-  expansion has baked and the writer capability is activated separately. **The lock lives in
+  negative values keep the shipped window). Production writers emit vault v3 only when an applied
+  exploration reward adds a `reward_claims` entry; discovery-only documents remain v2 and empty or
+  attunement-only documents remain v1. `Main` restores accepted claims into its boot-owned
+  `ExplorationRewards` tracker, re-applies their registered horizontal outcomes, and records a newly
+  discovered place only after its outcome succeeds. Because a claim persists only the place id, the
+  append-only `tests/data/shipped_reward_mappings.tsv` ledger permanently binds each shipped claim to
+  its exact reward payload; the real boot guard checks the production registry bidirectionally and CI
+  base-compares complete rows. The retained v0.61.0 capability-4 reader is the rollback target that
+  permits this writer. **The lock lives in
   `FileLock`, not in the vault, and `BootRecovery` persistence takes it too**
   (`tests/boot_recovery_lock_test`) — that file's two writers, the updater and the game, both exist
   today, and a lost update there discards the evidence deciding whether a client rolls back. One

@@ -44,7 +44,7 @@ func _ready() -> void:
 	_test_no_delivery_is_published()
 	_test_read_capability_covers_what_is_written()
 	_test_discovery_writer_activation_is_advertised()
-	_test_reward_claim_reader_expansion_is_advertised()
+	_test_reward_claim_writer_activation_is_advertised()
 	_test_save_floor_has_its_golden_fixture()
 	_test_save_capability_matches_its_ledger()
 	_test_export_is_still_monolithic()
@@ -194,19 +194,21 @@ func _test_discovery_writer_activation_is_advertised() -> void:
 		_fail("the discovery contract reads capability %d, expected at least 3"
 			% UpdateManifest.SAVE_CAPABILITY_READS)
 		return
-	if UpdateManifest.SAVE_CAPABILITY_WRITES != 3:
-		_fail("the baked discovery reader still advertises write capability %d; expected 3" % UpdateManifest.SAVE_CAPABILITY_WRITES)
+	if UpdateManifest.SAVE_CAPABILITY_WRITES < 3:
+		_fail("the discovery writer regressed to capability %d; expected at least 3"
+			% UpdateManifest.SAVE_CAPABILITY_WRITES)
 
 
-## Capability 4 is vault-v3 claimed exploration-reward state. This release is
-## the expand half: retained builds must read it before production can write it.
-func _test_reward_claim_reader_expansion_is_advertised() -> void:
+## Capability 4 is vault-v3 claimed exploration-reward state. The v0.61.0
+## reader release is retained, so this build must advertise the matching writer
+## without lowering its read ceiling.
+func _test_reward_claim_writer_activation_is_advertised() -> void:
 	if UpdateManifest.SAVE_CAPABILITY_READS != 4:
-		_fail("the reward-claim expansion reads capability %d, expected 4"
+		_fail("the reward-claim contract reads capability %d, expected 4"
 			% UpdateManifest.SAVE_CAPABILITY_READS)
 		return
-	if UpdateManifest.SAVE_CAPABILITY_WRITES != 3:
-		_fail("the reward-claim expansion activated write capability %d before its reader baked; expected 3"
+	if UpdateManifest.SAVE_CAPABILITY_WRITES != 4:
+		_fail("the retained reward-claim reader still advertises write capability %d; expected 4"
 			% UpdateManifest.SAVE_CAPABILITY_WRITES)
 
 

@@ -3,14 +3,15 @@ extends Node
 ## sibling of character_persistence_test. Where save_vault_guard_test pins the
 ## forward-only LAW against shipped fixtures, this pins the API's behaviour:
 ##  1. The path seam (WAR_VAULT_PATH) resolves and is inert when unset.
-##  2. An empty vault stays v1 even after the v2 writer activates: unrelated
-##     state is never rewritten merely to look current.
+##  2. An empty vault stays v1 even after the v3 writer activates: unrelated
+##     state is never rewritten merely to look current, and discovery-only
+##     state remains v2.
 ##  3. attune() is additive, idempotent, and does not mutate its input.
 ##  4. attune() preserves fields this build does not use (forward-compat).
 ##  5. A discovery write upgrades v1 to v2 without losing state, while an empty
 ##     discovery set leaves v1 alone and an existing v2 set only grows.
 ##  6. Save → load round-trips an attunement.
-##  7. Both production persistence helpers write through the seam.
+##  7. All production persistence helpers write through the seam.
 ##  8. save_to() refuses to REPLACE an unreadable vault, leaves it byte-intact,
 ##     and cleans up its temp file.
 ##  9. Validation refuses each malformed shape, naming the reason.
@@ -37,14 +38,14 @@ func _ready() -> void:
 		return
 	var vault_api := load("res://scripts/save_vault.gd") as Script
 
-	# 2. The writer can now emit v2, but empty state remains v1. A schema version
+	# 2. The writer can now emit v3, but empty state remains v1. A schema version
 	# describes fields actually present; it is not a "latest client" marker.
 	var empty := SaveVault.empty()
 	if SaveVault.validate(empty) != "":
 		_fail("the empty vault does not validate: %s" % SaveVault.validate(empty))
 		return
-	if SaveVault.VAULT_VERSION != 2:
-		_fail("the discovery writer is still capped at vault v%d; expected the baked v2 contract" % SaveVault.VAULT_VERSION)
+	if SaveVault.VAULT_VERSION != 3:
+		_fail("the reward-claim writer is still capped at vault v%d; expected the retained v3 contract" % SaveVault.VAULT_VERSION)
 		return
 	if int(empty["version"]) != 1:
 		_fail("an empty vault was churned to v%d even though it carries no v2 discovery state" % int(empty["version"]))
@@ -211,6 +212,59 @@ func _ready() -> void:
 		_fail("the discovery writer laundered malformed existing progression into a valid v2 vault")
 		return
 
+	# Reward claims are the only operation that contracts a discovery vault to
+	# v3. The new place must already be durably discovered, existing and future
+	# claims remain append-only, and newly supplied typos are refused.
+	if not vault_api.has_method("record_reward_claims"):
+		_fail("the retained reward-claim reader has no production record_reward_claims() writer")
+		return
+	var claimed: Dictionary = vault_api.call(
+		"record_reward_claims", expanded, ["wardens_shrine"])
+	if int(claimed.get("version", -1)) != 3:
+		_fail("recording an exploration reward did not contract the vault to v3")
+		return
+	if claimed.get("reward_claims", []) != ["wardens_shrine"]:
+		_fail("the reward writer did not emit the applied place exactly: %s" % str(claimed))
+		return
+	if claimed.get("discoveries", []) != expanded["discoveries"]:
+		_fail("the reward writer changed or dropped the durable discovery set")
+		return
+	if not SaveVault.is_attuned(claimed, SaveVault.SHRINE_WARDENS):
+		_fail("the reward writer lost an earlier attunement")
+		return
+
+	var claims_with_future: Dictionary = vault_api.call(
+		"record_reward_claims", reward_expanded, ["wardens_shrine"])
+	if claims_with_future.get("reward_claims", []) != [
+		"future_place", "starter_cave", "wardens_shrine"]:
+		_fail("a v3 reward write replaced or rejected preserved future claims: %s"
+			% str(claims_with_future))
+		return
+	if not (vault_api.call(
+		"record_reward_claims", expanded, ["starter_cvae"]) as Dictionary).is_empty():
+		_fail("the reward writer originated an unregistered place typo as permanent progression")
+		return
+	var undiscovered := expanded.duplicate(true)
+	undiscovered["discoveries"] = ["starter_cave"]
+	if not (vault_api.call(
+		"record_reward_claims", undiscovered, ["wardens_shrine"]) as Dictionary).is_empty():
+		_fail("the reward writer consumed a place that was not durably discovered")
+		return
+	var no_claims: Dictionary = vault_api.call("record_reward_claims", expanded, [])
+	if int(no_claims.get("version", -1)) != 2 or no_claims.has("reward_claims"):
+		_fail("recording no reward claims churned a v2 vault to v3")
+		return
+	var malformed_claims := {
+		"version": 3,
+		"attuned": [],
+		"discoveries": ["starter_cave"],
+		"reward_claims": [42],
+	}
+	if not (vault_api.call(
+		"record_reward_claims", malformed_claims, ["starter_cave"]) as Dictionary).is_empty():
+		_fail("the reward writer laundered malformed existing progression into a valid v3 vault")
+		return
+
 	# 6. Save -> load round-trips.
 	if not SaveVault.save_to(PROBE, once):
 		_fail("saving a vault failed")
@@ -261,6 +315,26 @@ func _ready() -> void:
 	if not SaveVault.is_attuned(with_discoveries, SaveVault.SHRINE_WARDENS) \
 			or not SaveVault.is_attuned(with_discoveries, "second_shrine"):
 		_fail("the production discovery write lost existing attunements")
+		return
+
+	if not vault_api.has_method("persist_reward_claims"):
+		_fail("the reward-claim writer has no production persistence path")
+		return
+	if not bool(vault_api.call("persist_reward_claims", ["wardens_shrine"])):
+		_fail("persist_reward_claims() failed")
+		return
+	var with_claims = SaveVault.load_saved()
+	if with_claims is not Dictionary:
+		_fail("the persisted reward-claim vault did not load")
+		return
+	if int(with_claims.get("version", -1)) != 3:
+		_fail("the production reward write did not stamp vault v3")
+		return
+	if with_claims.get("reward_claims", []) != ["wardens_shrine"]:
+		_fail("the production reward claim did not survive its disk round-trip")
+		return
+	if with_claims.get("discoveries", []) != ["starter_cave", "wardens_shrine"]:
+		_fail("the production reward write lost earlier discoveries")
 		return
 
 	# persist_attunement() must also work from nothing — a player's very first
@@ -371,7 +445,7 @@ func _ready() -> void:
 
 	_cleanup_probe()
 	OS.set_environment(SaveVault.VAULT_PATH_ENV, "")
-	print("TEST PASS — vault seam, attunement, discovery contract, round-trip and refusals hold")
+	print("TEST PASS — vault seam, attunement, discovery/reward contracts, round-trip and refusals hold")
 	get_tree().quit(0)
 
 
