@@ -10,5 +10,5 @@
 		"The fading controls are a preview: set WAR_CONTEXTUAL_HINTS=1 before launch to try them."
 	],
 	"title": "The controls step out of the way once you have read them",
-	"version": "0.63.0"
+	"version": "0.64.0"
 }

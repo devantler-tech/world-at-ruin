@@ -108,7 +108,7 @@ func _ready() -> void:
 
 ## These two literals stay INDEPENDENT of `Hud`'s constants rather than
 ## referencing them, because the names are a PUBLIC contract, not an internal
-## detail: `client/devlog/0.63.0.json` tells players to set
+## detail: `client/devlog/0.64.0.json` tells players to set
 ## `WAR_CONTEXTUAL_HINTS=1`, and `hud.gd` documents both. Referencing
 ## `Hud.CONTEXTUAL_HINTS_ENV` here would let a rename sail through green while
 ## silently breaking the name we published.
