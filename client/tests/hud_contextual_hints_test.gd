@@ -75,6 +75,9 @@ func _ready() -> void:
 		get_tree().quit(1)
 		return
 
+	_test_env_names_are_the_documented_ones()
+	if _failed:
+		return
 	await _test_default_stays_permanent()
 	if _failed:
 		return
@@ -99,6 +102,29 @@ func _ready() -> void:
 		+ "a device change and the derived toggle key both bring it back, "
 		+ "and every HUD colour and size comes from UiTheme")
 	get_tree().quit(0)
+
+
+# --- 0. the env names are the ones we told players to use --------------------
+
+## These two literals stay INDEPENDENT of `Hud`'s constants rather than
+## referencing them, because the names are a PUBLIC contract, not an internal
+## detail: `client/devlog/0.63.0.json` tells players to set
+## `WAR_CONTEXTUAL_HINTS=1`, and `hud.gd` documents both. Referencing
+## `Hud.CONTEXTUAL_HINTS_ENV` here would let a rename sail through green while
+## silently breaking the name we published.
+##
+## Pinning them explicitly is what removes the drift risk that referencing would
+## otherwise address. Note a rename is ALREADY caught loudly — it makes the flag
+## read false, and the `flag-always-off` ablation shows that failing on "the
+## opt-in hint bar faded out after its dwell". This turns that indirect,
+## puzzling failure into one that names the actual cause.
+func _test_env_names_are_the_documented_ones() -> void:
+	_check(Hud.CONTEXTUAL_HINTS_ENV == FLAG_ENV,
+		"the opt-in flag is still the published '%s' (Hud says '%s')"
+			% [FLAG_ENV, Hud.CONTEXTUAL_HINTS_ENV])
+	_check(Hud.HINT_DWELL_ENV == DWELL_ENV,
+		"the dwell override is still '%s' (Hud says '%s')"
+			% [DWELL_ENV, Hud.HINT_DWELL_ENV])
 
 
 # --- 1. the default path is untouched ---------------------------------------
