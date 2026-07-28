@@ -17,6 +17,21 @@ extends Node
 ##  5. Controls — each predicate is proven falsifiable: a point outside the
 ##     massif is open air but NOT enclosed; a point inside the hull above the
 ##     chamber is enclosed-space rock, NOT open air.
+##  6. The EXTERIOR mouth vantage is the mirror image of law 3, and that
+##     inversion is what makes it the shot #495 asked for: its eye stands in
+##     open air with NO roof (outside the massif) while its target is roofed
+##     (inside the bore). Neither half alone says the camera looks INTO the
+##     mouth — an unroofed eye aimed at open country satisfies the first, and a
+##     roofed target photographed from inside satisfies the second.
+##  7. Its eye is checked across a VERTICAL BAND, not at one height, because
+##     the capture re-seats it onto the world's terrain — ground the cave's
+##     density field cannot see. The band is what the assertion can honestly
+##     claim: wherever the real ground puts the camera within it, the camera is
+##     outside the massif with sky above.
+##  8. The bore and the entrance grammar share a centreline. Laws 6-7 are all
+##     satisfiable by a frame whose doorway has slid out from between its own
+##     jambs, because the jambs are authored at absolute z while the bore
+##     follows the mouth; this is the only law that can see that.
 ##
 ## Run: godot --headless --path client res://tests/cave_capture_vantage_test.tscn
 
@@ -31,6 +46,19 @@ const AIR_MARGIN := 0.3
 ## is far thicker than the step, so a roof cannot be stepped over.
 const UP_STEP := 0.5
 const UP_RANGE := 16.0
+## Half-height of the band the exterior eye is checked over, about its nominal
+## height (law 7). Deliberately far wider than the ground actually moves: the
+## terrain sits 0.39 m below the mouth apron where the eye stands, and has
+## fallen only 3.1 m by 16 m out. Sized against how much the heightfield could
+## be RESHAPED, not against where it sits today, so a terrain pass inside that
+## envelope cannot silently invalidate what this test proved.
+const GROUND_BAND := 6.0
+const GROUND_BAND_STEP := 1.0
+## How far the mouth may sit off the axis the entrance rock is authored around
+## (law 8). Tight on purpose: this is not a tolerance for drift, it is a guard
+## on an assumption two files share without either stating it, so anything that
+## is not "the same centreline" should trip it.
+const CENTRELINE_TOLERANCE := 0.01
 
 
 func _ready() -> void:
@@ -89,7 +117,68 @@ func _ready() -> void:
 		_fail("control: a point inside the hull reads as open air — the open-air check is vacuous")
 		return
 
-	print("TEST PASS — %d cave capture vantages sit in open air under rock (density-field-verified; enclosure and open-air checks each proven falsifiable by an isolated control)" % vants.size())
+	# 6–7. The exterior mouth vantage (#495): the shot that frames the entrance
+	# from outside. Its laws INVERT law 3 at the eye and restate it at the
+	# target, which is what pins the camera to "outside, looking in".
+	var mouth_v: Array = FrameCapture.mouth_vantage(lay)
+	var mouth_name: String = mouth_v[0]
+	var mouth_eye: Vector3 = mouth_v[1]
+	var mouth_target: Vector3 = mouth_v[2]
+
+	# 7. Across the whole band the terrain could seat the eye in.
+	var dy := -GROUND_BAND
+	while dy <= GROUND_BAND:
+		var at := mouth_eye + Vector3.UP * dy
+		if not _open_air(at, lay, noise):
+			_fail("vantage '%s': eye %s (%.1f m off nominal) is not in open air (density %.2f) — the exterior camera would sit in rock" %
+				[mouth_name, at, dy, CaveSystemGen.density(at, lay, noise)])
+			return
+		if _under_rock(at, lay, noise):
+			_fail("vantage '%s': eye %s (%.1f m off nominal) has rock above it — the camera is INSIDE the massif, so the frame cannot show the entrance from outside" %
+				[mouth_name, at, dy])
+			return
+		dy += GROUND_BAND_STEP
+
+	# 6. The target is inside the bore: open air with rock over it. Without
+	# this the camera could be standing outside pointed at anything at all.
+	if not _open_air(mouth_target, lay, noise):
+		_fail("vantage '%s': target %s is not in open air — the shot would frame the inside of the massif face, not the doorway" %
+			[mouth_name, mouth_target])
+		return
+	if not _under_rock(mouth_target, lay, noise):
+		_fail("vantage '%s': target %s has no rock above it — the camera is not aimed into the mouth" %
+			[mouth_name, mouth_target])
+		return
+	if mouth_eye.distance_to(mouth_target) < 1.0:
+		_fail("vantage '%s': eye and target nearly coincide — look_at would be degenerate" % mouth_name)
+		return
+	# It must look INWARD. The mouth's own axis is +X out of the massif, so an
+	# eye further out than its target is the only arrangement that can see the
+	# doorway; the density laws above hold just as well for a camera deep in
+	# the bore looking at its own lip.
+	if mouth_eye.x <= mouth_target.x:
+		_fail("vantage '%s': eye x=%.1f is not outside target x=%.1f — the camera does not look inward at the mouth" %
+			[mouth_name, mouth_eye.x, mouth_target.x])
+		return
+	# 8. The bore and the entrance grammar must share a centreline. The vantage
+	# follows `mouth.z`, but `_place_boulders` authors the jamb slabs and the
+	# flanking boulders at ABSOLUTE z offsets rather than relative to the mouth,
+	# so the two only line up while the mouth sits on the axis they were written
+	# around. Moving the mouth laterally without moving that rock slides the
+	# doorway out from between its own jambs — the frame stays open air, stays
+	# roofed at the target and stays inward-looking, so every law above still
+	# passes while the composition this vantage exists to photograph has come
+	# apart. Pinned here because nothing else can see it.
+	var mouth_axis: float = (lay["mouth"] as Vector3).z
+	if absf(mouth_axis) > CENTRELINE_TOLERANCE:
+		_fail(("the mouth sits at z=%.2f, off the centreline the entrance grammar is authored around "
+			+ "(_place_boulders writes its jambs at absolute z=±3.3 and its boulders at ±3.4/±4.4/±4.8). "
+			+ "Move that rock with the mouth, or '%s' frames a doorway its own jambs no longer flank.")
+			% [mouth_axis, mouth_name])
+		return
+
+	print("TEST PASS — %d cave capture vantages sit in open air under rock, and '%s' stands unroofed outside the massif looking into a roofed mouth across a %.0f m ground band (density-field-verified; enclosure and open-air checks each proven falsifiable by an isolated control)" %
+		[vants.size(), mouth_name, GROUND_BAND * 2.0])
 	get_tree().quit(0)
 
 
