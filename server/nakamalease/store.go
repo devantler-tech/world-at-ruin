@@ -21,8 +21,9 @@ const (
 	// Collection is the private Nakama collection that owns handoff leases.
 	Collection = "world_at_ruin_handoff_leases"
 
-	schemaVersion = 1
-	systemOwnerID = "00000000-0000-0000-0000-000000000000"
+	schemaVersion       = 2
+	legacySchemaVersion = 1
+	systemOwnerID       = "00000000-0000-0000-0000-000000000000"
 )
 
 var (
@@ -36,6 +37,8 @@ var (
 	ErrExpired = errors.New("nakama lease: expired")
 	// ErrClaimed means a connected player already owns the allocation.
 	ErrClaimed = errors.New("nakama lease: claimed")
+	// ErrReleasing means cleanup has atomically blocked new zone admission.
+	ErrReleasing = errors.New("nakama lease: releasing")
 	// ErrStorage means Nakama storage did not complete the requested operation.
 	ErrStorage = errors.New("nakama lease: storage operation failed")
 )
@@ -58,6 +61,7 @@ type Lease struct {
 	SecretRef     string
 	ExpiresAt     time.Time
 	ClaimedAt     time.Time
+	Releasing     bool
 }
 
 // Record is a lease paired with the exact Nakama version that observed it.
@@ -76,12 +80,18 @@ const (
 	StateExpired State = "expired"
 	// StateClaimed is owned by the player that completed zone admission.
 	StateClaimed State = "claimed"
+	// StateReleasing blocks admission while the exact external resource is
+	// being reclaimed.
+	StateReleasing State = "releasing"
 )
 
 // State reports claim ownership before applying the no-show deadline.
 func (r Record) State(now time.Time) State {
 	if !r.Lease.ClaimedAt.IsZero() {
 		return StateClaimed
+	}
+	if r.Lease.Releasing {
+		return StateReleasing
 	}
 	if !now.Before(r.Lease.ExpiresAt) {
 		return StateExpired
@@ -113,6 +123,9 @@ func (s *Store) Create(ctx context.Context, lease Lease) (Record, error) {
 	if !normalized.ClaimedAt.IsZero() {
 		return Record{}, ErrClaimed
 	}
+	if normalized.Releasing {
+		return Record{}, ErrReleasing
+	}
 	current, err := s.Load(ctx, normalized.UserID, normalized.ReservationID)
 	switch {
 	case err == nil && current.Lease == normalized:
@@ -143,6 +156,9 @@ func (s *Store) Replace(
 	}
 	if !normalized.ClaimedAt.IsZero() {
 		return Record{}, ErrClaimed
+	}
+	if normalized.Releasing {
+		return Record{}, ErrReleasing
 	}
 	if observed.UserID != normalized.UserID ||
 		observed.ReservationID != normalized.ReservationID {
@@ -181,6 +197,58 @@ func (s *Store) Replace(
 	return Record{}, ErrConflict
 }
 
+// BeginRelease atomically blocks admission for the observed attempt while its
+// exact external resource is reclaimed.
+func (s *Store) BeginRelease(
+	ctx context.Context,
+	current Record,
+	attemptID string,
+) (Record, error) {
+	observed, err := normalizeLease(current.Lease)
+	if err != nil || current.Version == "" || current.Version == "*" {
+		return Record{}, errors.New("nakama lease: invalid observed record")
+	}
+	if attemptID != observed.AttemptID {
+		return Record{}, ErrStaleAttempt
+	}
+	if observed.Releasing {
+		latest, loadErr := s.Load(ctx, observed.UserID, observed.ReservationID)
+		if loadErr != nil {
+			return Record{}, loadErr
+		}
+		if latest.Version != current.Version || latest.Lease != observed {
+			return Record{}, ErrConflict
+		}
+		return latest, nil
+	}
+	if !observed.ClaimedAt.IsZero() {
+		return Record{}, ErrClaimed
+	}
+	observed.Releasing = true
+	releasing, err := s.write(ctx, observed, current.Version)
+	if !errors.Is(err, ErrConflict) {
+		return releasing, err
+	}
+	latest, loadErr := s.Load(ctx, observed.UserID, observed.ReservationID)
+	if errors.Is(loadErr, ErrNotFound) {
+		return Record{}, ErrConflict
+	}
+	if loadErr != nil {
+		return Record{}, loadErr
+	}
+	if latest.Lease.AttemptID != attemptID {
+		return Record{}, ErrConflict
+	}
+	switch {
+	case !latest.Lease.ClaimedAt.IsZero():
+		return Record{}, ErrClaimed
+	case latest.Lease.Releasing:
+		return latest, nil
+	default:
+		return Record{}, ErrConflict
+	}
+}
+
 // Claim marks an observed lease as admitted using an exact-version write.
 func (s *Store) Claim(
 	ctx context.Context,
@@ -194,6 +262,9 @@ func (s *Store) Claim(
 	}
 	if attemptID != observed.AttemptID {
 		return Record{}, ErrStaleAttempt
+	}
+	if observed.Releasing {
+		return Record{}, ErrReleasing
 	}
 	if !observed.ClaimedAt.IsZero() {
 		return current, nil
@@ -219,6 +290,9 @@ func (s *Store) Claim(
 	}
 	if loadErr != nil {
 		return Record{}, loadErr
+	}
+	if latest.Lease.AttemptID == attemptID && latest.Lease.Releasing {
+		return Record{}, ErrReleasing
 	}
 	if latest.Lease.AttemptID == attemptID &&
 		!latest.Lease.ClaimedAt.IsZero() {
@@ -371,6 +445,7 @@ type document struct {
 	SecretRef      string `json:"secret_ref"`
 	ExpiresAtNanos int64  `json:"expires_at_nanos"`
 	ClaimedAtNanos *int64 `json:"claimed_at_nanos"`
+	Releasing      bool   `json:"releasing,omitempty"`
 }
 
 func documentFrom(lease Lease) document {
@@ -387,6 +462,7 @@ func documentFrom(lease Lease) document {
 		SecretRef:      lease.SecretRef,
 		ExpiresAtNanos: lease.ExpiresAt.UnixNano(),
 		ClaimedAtNanos: claimedAtNanos,
+		Releasing:      lease.Releasing,
 	}
 }
 
@@ -400,7 +476,8 @@ func leaseFrom(value, userID, reservationID string) (Lease, error) {
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return Lease{}, errors.New("nakama lease: invalid stored lease")
 	}
-	if stored.Schema != schemaVersion ||
+	if (stored.Schema != schemaVersion && stored.Schema != legacySchemaVersion) ||
+		(stored.Schema == legacySchemaVersion && stored.Releasing) ||
 		stored.ExpiresAtNanos <= 0 ||
 		(stored.ClaimedAtNanos != nil && *stored.ClaimedAtNanos <= 0) {
 		return Lease{}, errors.New("nakama lease: invalid stored lease")
@@ -413,6 +490,7 @@ func leaseFrom(value, userID, reservationID string) (Lease, error) {
 		Observer:      sim.EntityID(stored.Observer),
 		SecretRef:     stored.SecretRef,
 		ExpiresAt:     time.Unix(0, stored.ExpiresAtNanos).UTC(),
+		Releasing:     stored.Releasing,
 	}
 	if stored.ClaimedAtNanos != nil {
 		lease.ClaimedAt = time.Unix(0, *stored.ClaimedAtNanos).UTC()
@@ -434,6 +512,9 @@ func normalizeLease(lease Lease) (Lease, error) {
 	lease.UserID = strings.ToLower(lease.UserID)
 	lease.ExpiresAt = time.Unix(0, lease.ExpiresAt.UnixNano()).UTC()
 	if !lease.ClaimedAt.IsZero() {
+		if lease.Releasing {
+			return Lease{}, errors.New("nakama lease: invalid lease")
+		}
 		lease.ClaimedAt = time.Unix(0, lease.ClaimedAt.UnixNano()).UTC()
 		if !lease.ClaimedAt.Before(lease.ExpiresAt) {
 			return Lease{}, errors.New("nakama lease: invalid lease")

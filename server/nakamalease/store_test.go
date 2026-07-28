@@ -76,6 +76,9 @@ func (s *memoryStorage) StorageWrite(
 	}
 	acks := make([]*api.StorageObjectAck, 0, len(writes))
 	for _, write := range writes {
+		if write.PermissionRead != 0 || write.PermissionWrite != 0 {
+			return nil, errors.New("test storage: expected server-only permissions")
+		}
 		s.writes = append(s.writes, cloneStorageWrite(write))
 		ownerID := storageOwner(write.UserID)
 		id := storageID(ownerID, write.Collection, write.Key)
@@ -95,8 +98,8 @@ func (s *memoryStorage) StorageWrite(
 			UserId:          ownerID,
 			Value:           write.Value,
 			Version:         version,
-			PermissionRead:  int32(write.PermissionRead),
-			PermissionWrite: int32(write.PermissionWrite),
+			PermissionRead:  0,
+			PermissionWrite: 0,
 		}
 		acks = append(acks, &api.StorageObjectAck{
 			Collection: write.Collection,
@@ -221,7 +224,7 @@ func TestCreatePersistsPrivateVersionedLeaseByHashedKey(t *testing.T) {
 	if write.Value == "" || !json.Valid([]byte(write.Value)) {
 		t.Fatalf("stored lease is not valid JSON: %q", write.Value)
 	}
-	if got := string(write.Value); got == "" ||
+	if got := write.Value; got == "" ||
 		strings.Contains(got, testReservationID) ||
 		strings.Contains(got, testUserID) {
 		t.Fatalf("stored lease exposes raw storage identity: %q", got)
@@ -232,7 +235,7 @@ func TestCreatePersistsPrivateVersionedLeaseByHashedKey(t *testing.T) {
 		t.Fatalf("decode stored lease: %v", err)
 	}
 	want := map[string]any{
-		"schema":           float64(1),
+		"schema":           float64(2),
 		"attempt_id":       testAttemptID,
 		"allocation_id":    testAllocationID,
 		"observer":         float64(42),
@@ -280,7 +283,7 @@ func TestCreateIgnoresAClientOwnedObjectAtTheDerivedKey(t *testing.T) {
 	if len(storage.writes) != 1 || storage.writes[0].UserID != "" {
 		t.Fatalf("storage writes = %+v, want one server-owned write", storage.writes)
 	}
-	if storage.objects[storageID(testUserID, Collection, key)].Version != "client-version" {
+	if storage.objects[storageID(testUserID, Collection, key)].GetVersion() != "client-version" {
 		t.Fatal("Create mutated the client-owned decoy object")
 	}
 }
@@ -416,6 +419,54 @@ func TestCreateAndReplaceRequireAnUnclaimedLease(t *testing.T) {
 		}
 		if len(storage.writes) != 1 {
 			t.Fatalf("storage writes after preclaimed replacement = %d, want 1", len(storage.writes))
+		}
+	})
+
+	t.Run("create releasing", func(t *testing.T) {
+		storage := newMemoryStorage()
+		store, err := NewStore(storage)
+		if err != nil {
+			t.Fatalf("NewStore returned an error: %v", err)
+		}
+		lease := validLease()
+		lease.Releasing = true
+
+		if _, err := store.Create(context.Background(), lease); !errors.Is(err, ErrReleasing) {
+			t.Fatalf("Create releasing lease error = %v, want ErrReleasing", err)
+		}
+		if len(storage.writes) != 0 {
+			t.Fatalf("storage writes after releasing create = %d, want 0", len(storage.writes))
+		}
+	})
+
+	t.Run("replace with releasing target", func(t *testing.T) {
+		storage := newMemoryStorage()
+		store, err := NewStore(storage)
+		if err != nil {
+			t.Fatalf("NewStore returned an error: %v", err)
+		}
+		current, err := store.Create(context.Background(), validLease())
+		if err != nil {
+			t.Fatalf("Create returned an error: %v", err)
+		}
+		next := validLease()
+		next.AttemptID = "attempt-8"
+		next.AllocationID = "gameserver-18"
+		next.SecretRef = "zone-admission-gameserver-18"
+		next.Releasing = true
+
+		if _, err := store.Replace(
+			context.Background(),
+			current,
+			next,
+		); !errors.Is(err, ErrReleasing) {
+			t.Fatalf("Replace with releasing lease error = %v, want ErrReleasing", err)
+		}
+		if len(storage.writes) != 1 {
+			t.Fatalf(
+				"storage writes after releasing replacement = %d, want 1",
+				len(storage.writes),
+			)
 		}
 	})
 }
@@ -635,6 +686,196 @@ func TestConcurrentReplaceLeavesExactlyOneCurrentAttempt(t *testing.T) {
 	}
 	if loaded != winner {
 		t.Fatalf("stored concurrent winner = %+v, want successful record %+v", loaded, winner)
+	}
+}
+
+func TestBeginReleaseMarksTheCurrentAttemptBeforeExternalCleanup(t *testing.T) {
+	storage := newMemoryStorage()
+	store, err := NewStore(storage)
+	if err != nil {
+		t.Fatalf("NewStore returned an error: %v", err)
+	}
+	current, err := store.Create(context.Background(), validLease())
+	if err != nil {
+		t.Fatalf("Create returned an error: %v", err)
+	}
+
+	releasing, err := store.BeginRelease(
+		context.Background(),
+		current,
+		testAttemptID,
+	)
+	if err != nil {
+		t.Fatalf("BeginRelease returned an error: %v", err)
+	}
+	want := validLease()
+	want.Releasing = true
+	if releasing.Lease != want || releasing.Version != "v2" {
+		t.Fatalf("releasing record = %+v, want lease %+v at v2", releasing, want)
+	}
+	if releasing.State(time.Now()) != StateReleasing {
+		t.Fatalf(
+			"releasing record state = %q, want %q",
+			releasing.State(time.Now()),
+			StateReleasing,
+		)
+	}
+	loaded, err := store.Load(context.Background(), testUserID, testReservationID)
+	if err != nil {
+		t.Fatalf("Load returned an error: %v", err)
+	}
+	if loaded != releasing {
+		t.Fatalf("stored releasing record = %+v, want %+v", loaded, releasing)
+	}
+	if len(storage.writes) != 2 || storage.writes[1].Version != current.Version {
+		t.Fatalf(
+			"begin-release writes = %+v, want exact observed version %q",
+			storage.writes,
+			current.Version,
+		)
+	}
+}
+
+func TestClaimCannotWinAfterReleaseBegins(t *testing.T) {
+	storage := newMemoryStorage()
+	store, err := NewStore(storage)
+	if err != nil {
+		t.Fatalf("NewStore returned an error: %v", err)
+	}
+	current, err := store.Create(context.Background(), validLease())
+	if err != nil {
+		t.Fatalf("Create returned an error: %v", err)
+	}
+	releasing, err := store.BeginRelease(
+		context.Background(),
+		current,
+		testAttemptID,
+	)
+	if err != nil {
+		t.Fatalf("BeginRelease returned an error: %v", err)
+	}
+
+	if _, err := store.Claim(
+		context.Background(),
+		releasing,
+		testAttemptID,
+		releasing.Lease.ExpiresAt.Add(-time.Second),
+	); !errors.Is(err, ErrReleasing) {
+		t.Fatalf("Claim after BeginRelease error = %v, want ErrReleasing", err)
+	}
+	if len(storage.writes) != 2 {
+		t.Fatalf("claim after BeginRelease writes = %d, want 2", len(storage.writes))
+	}
+}
+
+func TestBeginReleaseReplayKeepsTheExistingBarrier(t *testing.T) {
+	storage := newMemoryStorage()
+	store, err := NewStore(storage)
+	if err != nil {
+		t.Fatalf("NewStore returned an error: %v", err)
+	}
+	current, err := store.Create(context.Background(), validLease())
+	if err != nil {
+		t.Fatalf("Create returned an error: %v", err)
+	}
+	releasing, err := store.BeginRelease(
+		context.Background(),
+		current,
+		testAttemptID,
+	)
+	if err != nil {
+		t.Fatalf("first BeginRelease returned an error: %v", err)
+	}
+
+	replayed, err := store.BeginRelease(
+		context.Background(),
+		releasing,
+		testAttemptID,
+	)
+	if err != nil {
+		t.Fatalf("replayed BeginRelease returned an error: %v", err)
+	}
+	if replayed != releasing {
+		t.Fatalf("replayed release barrier = %+v, want %+v", replayed, releasing)
+	}
+	if len(storage.writes) != 2 {
+		t.Fatalf("replayed BeginRelease writes = %d, want 2", len(storage.writes))
+	}
+}
+
+func TestClaimAndBeginReleaseLeaveExactlyOneOwner(t *testing.T) {
+	storage := newMemoryStorage()
+	store, err := NewStore(storage)
+	if err != nil {
+		t.Fatalf("NewStore returned an error: %v", err)
+	}
+	current, err := store.Create(context.Background(), validLease())
+	if err != nil {
+		t.Fatalf("Create returned an error: %v", err)
+	}
+	claimedAt := current.Lease.ExpiresAt.Add(-time.Second)
+	type result struct {
+		operation string
+		record    Record
+		err       error
+	}
+	start := make(chan struct{})
+	results := make(chan result, 2)
+	go func() {
+		<-start
+		record, beginErr := store.BeginRelease(
+			context.Background(),
+			current,
+			testAttemptID,
+		)
+		results <- result{operation: "release", record: record, err: beginErr}
+	}()
+	go func() {
+		<-start
+		record, claimErr := store.Claim(
+			context.Background(),
+			current,
+			testAttemptID,
+			claimedAt,
+		)
+		results <- result{operation: "claim", record: record, err: claimErr}
+	}()
+	close(start)
+
+	first, second := <-results, <-results
+	successes := 0
+	for _, got := range []result{first, second} {
+		if got.err == nil {
+			successes++
+			continue
+		}
+		switch got.operation {
+		case "release":
+			if !errors.Is(got.err, ErrClaimed) {
+				t.Fatalf("losing BeginRelease error = %v, want ErrClaimed", got.err)
+			}
+		case "claim":
+			if !errors.Is(got.err, ErrReleasing) {
+				t.Fatalf("losing Claim error = %v, want ErrReleasing", got.err)
+			}
+		}
+	}
+	if successes != 1 {
+		t.Fatalf(
+			"Claim/BeginRelease results = %+v and %+v, want exactly one success",
+			first,
+			second,
+		)
+	}
+	current, err = store.Load(context.Background(), testUserID, testReservationID)
+	if err != nil {
+		t.Fatalf("Load returned an error: %v", err)
+	}
+	if current.Lease.Releasing == !current.Lease.ClaimedAt.IsZero() {
+		t.Fatalf(
+			"final lease = %+v, want exactly one of releasing or claimed",
+			current.Lease,
+		)
 	}
 }
 
@@ -1019,6 +1260,41 @@ func TestRecordStateDistinguishesNoShowExpiryFromClaimedOwnership(t *testing.T) 
 	}
 }
 
+func TestLoadKeepsSchemaOneLeaseReadableAsNotReleasing(t *testing.T) {
+	storage := newMemoryStorage()
+	store, err := NewStore(storage)
+	if err != nil {
+		t.Fatalf("NewStore returned an error: %v", err)
+	}
+	key := reservationKey(testUserID, testReservationID)
+	storage.objects[storageID(testSystemUserID, Collection, key)] = &api.StorageObject{
+		Collection: Collection,
+		Key:        key,
+		UserId:     testSystemUserID,
+		Value: `{"schema":1,"attempt_id":"attempt-7","allocation_id":"gameserver-17",` +
+			`"observer":42,"secret_ref":"zone-admission-gameserver-17",` +
+			`"expires_at_nanos":2000000000123456789,"claimed_at_nanos":null}`,
+		Version:         "schema-one",
+		PermissionRead:  0,
+		PermissionWrite: 0,
+	}
+
+	got, err := store.Load(context.Background(), testUserID, testReservationID)
+	if err != nil {
+		t.Fatalf("Load schema-one lease returned an error: %v", err)
+	}
+	if got.Lease != validLease() || got.Version != "schema-one" {
+		t.Fatalf(
+			"loaded schema-one record = %+v, want lease %+v at schema-one",
+			got,
+			validLease(),
+		)
+	}
+	if got.Lease.Releasing {
+		t.Fatalf("schema-one lease loaded as releasing: %+v", got.Lease)
+	}
+}
+
 func TestLoadRejectsMalformedOrPublicStoredObjects(t *testing.T) {
 	for _, test := range []struct {
 		name   string
@@ -1027,13 +1303,40 @@ func TestLoadRejectsMalformedOrPublicStoredObjects(t *testing.T) {
 		{
 			name: "unknown JSON field",
 			tamper: func(object *api.StorageObject) {
-				object.Value = strings.Replace(object.Value, "{", `{"unexpected":true,`, 1)
+				object.Value = strings.Replace(
+					object.GetValue(),
+					"{",
+					`{"unexpected":true,`,
+					1,
+				)
 			},
 		},
 		{
 			name: "unsupported schema",
 			tamper: func(object *api.StorageObject) {
-				object.Value = strings.Replace(object.Value, `"schema":1`, `"schema":2`, 1)
+				object.Value = strings.Replace(
+					object.GetValue(),
+					`"schema":2`,
+					`"schema":3`,
+					1,
+				)
+			},
+		},
+		{
+			name: "schema one cannot encode releasing",
+			tamper: func(object *api.StorageObject) {
+				object.Value = strings.Replace(
+					object.GetValue(),
+					`"schema":2`,
+					`"schema":1`,
+					1,
+				)
+				object.Value = strings.Replace(
+					object.GetValue(),
+					"{",
+					`{"releasing":true,`,
+					1,
+				)
 			},
 		},
 		{
@@ -1052,9 +1355,26 @@ func TestLoadRejectsMalformedOrPublicStoredObjects(t *testing.T) {
 			name: "claim at expiry boundary",
 			tamper: func(object *api.StorageObject) {
 				object.Value = strings.Replace(
-					object.Value,
+					object.GetValue(),
 					`"claimed_at_nanos":null`,
 					`"claimed_at_nanos":2000000000123456789`,
+					1,
+				)
+			},
+		},
+		{
+			name: "claimed lease cannot also be releasing",
+			tamper: func(object *api.StorageObject) {
+				object.Value = strings.Replace(
+					object.GetValue(),
+					`"claimed_at_nanos":null`,
+					`"claimed_at_nanos":1999999999123456789`,
+					1,
+				)
+				object.Value = strings.Replace(
+					object.GetValue(),
+					"{",
+					`{"releasing":true,`,
 					1,
 				)
 			},

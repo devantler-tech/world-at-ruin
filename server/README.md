@@ -169,11 +169,14 @@ zone/dungeon server:
   players from pre-creating or replacing a lease; objects are also server-only
   (`PermissionRead: 0`, `PermissionWrite: 0`), use a strict versioned JSON
   schema, omit the raw user/reservation identifiers and admission-secret bytes,
-  and expose only sanitized errors. Nakama's unique-create marker and exact
-  storage versions make create, replacement, claim and release safe under
-  retries and overlapping attempts; a stale attempt cannot overwrite, claim or
-  delete the current owner. Hermetic race-enabled tests exercise Nakama's real
-  runtime storage request, object and acknowledgement shapes.
+  and expose only sanitized errors. The reader accepts schema one while every
+  write emits schema two, whose durable `releasing` barrier atomically decides
+  whether zone admission or external cleanup owns an attempt. Nakama's
+  unique-create marker and exact storage versions make create, replacement,
+  claim and release safe under retries and overlapping attempts; a stale
+  attempt cannot overwrite, claim or delete the current owner. Hermetic
+  race-enabled tests exercise Nakama's real runtime storage request, object and
+  acknowledgement shapes.
 - **`handoff/`** — the transport-neutral **player handoff core**: it consumes
   `nakamaauth` rather than accepting a client-provided identity, gives only that
   verified user ID plus a caller-stable reservation key and server-generated
@@ -189,9 +192,21 @@ zone/dungeon server:
   that lease. Retryable gRPC status codes survive without upstream text, and
   credentials never enter returned errors. Hermetic tests drive the real
   generated Nakama gRPC path through the service and then verify its token
-  through the real zone verifier. The package remains inert until a coordinator
-  composes `agonesalloc` and `nakamalease` into its allocation, secret-delivery
-  and admission lifecycle, and a Nakama RPC registers the resulting service.
+  through the real zone verifier.
+- **`handoffalloc/`** — the durable **handoff allocation coordinator**: it
+  implements `handoff.Allocator` over the real `nakamalease` store and an
+  injected GameServer-resource boundary. It returns connection material only
+  after the exact allocation and secret reference are durable, resolves
+  same-attempt retries without allocating twice, and atomically marks an old
+  attempt `releasing` before external cleanup so a concurrent zone claim cannot
+  win after reclamation begins. Replacement and release retry from that barrier;
+  failed lease writes reclaim only the staged resource on a bounded cleanup
+  context that survives caller cancellation. Claimed and stale attempts remain
+  untouched, external errors are sanitized, and raw admission-secret bytes
+  never enter the lease. The coordinator is inert until a concrete
+  `GameServerResources` adapter provisions Agones GameServers and
+  allocation-scoped secrets, and a Nakama RPC registers the resulting handoff
+  service.
 - **`cmd/zone/`** — a runnable skeleton server. It boots the demo zone and either
   runs a fixed number of deterministic ticks (printing the state hash) or drives
   the loop from the wall clock. With `-replicate` it also runs the full
@@ -216,14 +231,15 @@ go run ./cmd/zone -listen :8443 -tls-cert cert.pem -tls-key key.pem -agones  # f
 Later children of the server-foundation epic
 ([#4](https://github.com/devantler-tech/world-at-ruin/issues/4), the first child
 of the Phase 1 epic [#8](https://github.com/devantler-tech/world-at-ruin/issues/8)):
-the coordinator that composes `agonesalloc`, `nakamalease` and per-allocation
-secret delivery into `handoff.Allocator`, Nakama RPC registration that exposes
-that service, the rest of the Nakama auth/social/chat/storage surface, client
-prediction and reconciliation, real navmesh geometry, and Postgres/CNPG
-persistence. The tick core, socket, client replica store, Agones lifecycle,
-Nakama identity boundary, allocation API boundary, private lease store and
-fail-closed handoff core are already in place; later slices build on those
-tested seams instead of creating a parallel meta service.
+the concrete resource adapter that composes `agonesalloc` with
+per-allocation secret delivery, the zone admission claim adapter, Nakama RPC
+registration that exposes the handoff service, the rest of the Nakama
+auth/social/chat/storage surface, client prediction and reconciliation, real
+navmesh geometry, and Postgres/CNPG persistence. The tick core, socket, client
+replica store, Agones lifecycle, Nakama identity boundary, allocation API
+boundary, private lease store, durable handoff coordinator and fail-closed
+handoff core are already in place; later slices build on those tested seams
+instead of creating a parallel meta service.
 
 ## Validate
 
