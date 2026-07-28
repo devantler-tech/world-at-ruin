@@ -96,7 +96,7 @@ void fragment() {
 			- ce1 * inversesqrt(max(dot(ce1, ce1), 1e-12));
 		float edge_fw = abs(dot(gsep_e, dFdx(plate_uv)))
 			+ abs(dot(gsep_e, dFdy(plate_uv)));
-		plate_edge_w = terrain_plate_edge_blend(f1, f2, edge_fw * 1.2);
+		plate_edge_w = terrain_plate_edge_blend(f1, f2, edge_fw * 0.5);
 		// The same footprint average as the ground (#306). This path exists to
 		// resolve the IDENTICAL substance at the same world XZ, so leaving the
 		// step unfiltered here would reintroduce the crawl at the cave contact
@@ -165,49 +165,49 @@ void fragment() {
 	float exp_own = max(rock_mix, mask_own);
 	float exp_nb = max(rock_mix, mask_nb);
 	float eff_exposure = mix(rock_mix, rock_exposure, plate_gate);
-	crack *= eff_plate;
 
+	// Hoisted above the branch: both paths' roughness needs it.
+	float region_rough = UV2.y - ash_roughness;
 	vec3 surface;
 	float stone_rough;
-	// Same opt-in branch and same per-cell crack fold as terrain.gdshader.
+	// Same opt-in branch and same per-cell ordering as terrain.gdshader: scorch
+	// is affine with a non-zero constant, so the crack must follow it rather
+	// than precede it, and the roughness offsets and clamp keep their original
+	// order too. Grain and lip below are pure multiplies and do commute.
+	float scorch_k = smoothstep(0.62, 0.95, drift) * 0.35 * (1.0 - rock_mix);
 	if (plates_enabled) {
 	float crack_own = crack * mask_own;
 	float crack_nb = crack * mask_nb;
 	surface = mix(
-		mix(ash_color, mix(rock_color, sub.rgb, mask_own), exp_own)
-			* (1.0 - crack_own * crack_darkness),
-		mix(ash_color, mix(rock_color, sub_nb.rgb, mask_nb), exp_nb)
-			* (1.0 - crack_nb * crack_darkness),
+		mix(mix(ash_color, mix(rock_color, sub.rgb, mask_own), exp_own),
+			scorch_color, scorch_k) * (1.0 - crack_own * crack_darkness),
+		mix(mix(ash_color, mix(rock_color, sub_nb.rgb, mask_nb), exp_nb),
+			scorch_color, scorch_k) * (1.0 - crack_nb * crack_darkness),
 		plate_edge_w);
 	stone_rough = mix(
-		mix(mix(ash_roughness, mix(rock_roughness, sub.a, mask_own), exp_own),
+		mix(clamp(mix(ash_roughness, mix(rock_roughness, sub.a, mask_own), exp_own)
+			+ region_rough - 0.06 * (grain - 0.5) * detail, 0.0, 1.0),
 			1.0, crack_own * 0.5),
-		mix(mix(ash_roughness, mix(rock_roughness, sub_nb.a, mask_nb), exp_nb),
+		mix(clamp(mix(ash_roughness, mix(rock_roughness, sub_nb.a, mask_nb), exp_nb)
+			+ region_rough - 0.06 * (grain - 0.5) * detail, 0.0, 1.0),
 			1.0, crack_nb * 0.5),
 		plate_edge_w);
 	crack = mix(crack_own, crack_nb, plate_edge_w);
 	} else {
-	surface = mix(ash_color, rock_color, rock_mix);
-	stone_rough = mix(ash_roughness, rock_roughness, rock_mix);
+	surface = mix(mix(ash_color, rock_color, rock_mix), scorch_color, scorch_k);
+	stone_rough = clamp(mix(ash_roughness, rock_roughness, rock_mix)
+		+ region_rough - 0.06 * (grain - 0.5) * detail, 0.0, 1.0);
 	crack = 0.0;
 	}
-	surface = mix(
-		surface,
-		scorch_color,
-		smoothstep(0.62, 0.95, drift) * 0.35 * (1.0 - rock_mix));
 	surface *= 0.93 + 0.14 * mix(0.5, grain, detail);
 	float lip = (1.0 - smoothstep(0.0, aw * 4.0, abs(ash_edge)))
 		* (1.0 - smoothstep(0.30, 0.85, fwidth(ash_edge)));
 	surface *= 1.0 + lip * lip_lift * plate_gate;
 
 	ALBEDO = base * surface * 2.0;
-	float region_rough = UV2.y - ash_roughness;
-	// `stone_rough` already carries the per-cell ash-vs-stone resolve.
-	ROUGHNESS = clamp(
-		stone_rough + region_rough
-			- 0.06 * (grain - 0.5) * detail,
-		0.0,
-		1.0);
+	// `stone_rough` already carries the per-cell resolve, the region/grain
+	// offsets, the clamp and the crack — all in the original order.
+	ROUGHNESS = stone_rough;
 	SPECULAR = 0.18;
 
 	float e = 0.22;

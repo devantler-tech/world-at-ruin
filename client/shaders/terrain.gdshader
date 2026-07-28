@@ -277,7 +277,7 @@ void fragment() {
 		- e1 * inversesqrt(max(dot(e1, e1), 1e-12));
 	float edge_fw = abs(dot(gsep_e, dFdx(plate_uv)))
 		+ abs(dot(gsep_e, dFdy(plate_uv)));
-	plate_edge_w = terrain_plate_edge_blend(f1, f2, edge_fw * 1.2);
+	plate_edge_w = terrain_plate_edge_blend(f1, f2, edge_fw * 0.5);
 
 	// Both cells' substances are kept SEPARATE here and composed with their own
 	// slab masks below. Blending the substances here and the masks there would
@@ -453,6 +453,8 @@ void fragment() {
 	// this is arithmetically identical to composing the owning cell alone, so a
 	// resolved contact and the plates-off path are both unchanged.
 	float eff_exposure = mix(rock_mix, rock_exposure, plate_gate);
+	// Hoisted above the branch: both paths' roughness needs it.
+	float region_rough = COLOR.a - 0.5;
 	vec3 surface;
 	float stone_rough;
 	// The whole per-cell composition sits on the opt-in path. Off, the ground
@@ -463,34 +465,45 @@ void fragment() {
 	float mask_nb = sheet * slab_nb;
 	float exp_own = max(rock_mix, mask_own);
 	float exp_nb = max(rock_mix, mask_nb);
-	// The crack is gated by the mask, so it is per-cell too, and it is applied
-	// HERE rather than after the average: darkening the blended surface would
-	// darken the neighbour's ash by the slab's seam and under-darken the slab.
-	// Folding it in early is exact — every transform between here and where it
-	// used to be applied (scorch, grain, lip) is either multiplicative or affine
-	// with a cell-independent factor, and both commute with this multiply.
+	// The crack is gated by the mask, so it is per-cell too — darkening the
+	// averaged surface would darken the neighbour's ash by the slab's seam and
+	// under-darken the slab.
+	//
+	// It must land AFTER scorch, which is where it used to be. Scorch is affine
+	// with a non-zero constant, so it does NOT commute with this multiply:
+	//   mix(S, scorch, k) * (1-d)  =  S(1-k)(1-d) + scorch*k*(1-d)
+	//   mix(S * (1-d), scorch, k)  =  S(1-k)(1-d) + scorch*k
+	// which differ by scorch*k*d — a scorched seam would come out undarkened.
+	// So scorch is applied per cell here, before the crack. Grain and lip below
+	// are pure multiplies and DO commute, so they stay on the averaged surface.
 	float crack_own = crack * mask_own;
 	float crack_nb = crack * mask_nb;
+	float scorch_k = smoothstep(0.62, 0.95, drift) * 0.35 * (1.0 - rock_mix);
 	surface = mix(
-		mix(ash_color, mix(rock_color, sub.rgb, mask_own), exp_own)
-			* (1.0 - crack_own * crack_darkness),
-		mix(ash_color, mix(rock_color, sub_nb.rgb, mask_nb), exp_nb)
-			* (1.0 - crack_nb * crack_darkness),
+		mix(mix(ash_color, mix(rock_color, sub.rgb, mask_own), exp_own),
+			scorch_color, scorch_k) * (1.0 - crack_own * crack_darkness),
+		mix(mix(ash_color, mix(rock_color, sub_nb.rgb, mask_nb), exp_nb),
+			scorch_color, scorch_k) * (1.0 - crack_nb * crack_darkness),
 		plate_edge_w);
+	// Roughness keeps its downstream terms in the original order too: the
+	// region/grain offsets and the clamp are applied per cell BEFORE the crack
+	// pushes toward 1, exactly as the ungated path did.
 	stone_rough = mix(
-		mix(mix(ash_roughness, mix(rock_roughness, sub.a, mask_own), exp_own),
+		mix(clamp(mix(ash_roughness, mix(rock_roughness, sub.a, mask_own), exp_own)
+			+ region_rough - 0.06 * (grain - 0.5) * detail, 0.0, 1.0),
 			1.0, crack_own * 0.5),
-		mix(mix(ash_roughness, mix(rock_roughness, sub_nb.a, mask_nb), exp_nb),
+		mix(clamp(mix(ash_roughness, mix(rock_roughness, sub_nb.a, mask_nb), exp_nb)
+			+ region_rough - 0.06 * (grain - 0.5) * detail, 0.0, 1.0),
 			1.0, crack_nb * 0.5),
 		plate_edge_w);
 	crack = mix(crack_own, crack_nb, plate_edge_w);
 	} else {
-	surface = mix(ash_color, rock_color, rock_mix);
-	stone_rough = mix(ash_roughness, rock_roughness, rock_mix);
+	surface = mix(mix(ash_color, rock_color, rock_mix), scorch_color,
+		smoothstep(0.62, 0.95, drift) * 0.35 * (1.0 - rock_mix));
+	stone_rough = clamp(mix(ash_roughness, rock_roughness, rock_mix)
+		+ region_rough - 0.06 * (grain - 0.5) * detail, 0.0, 1.0);
 	crack = 0.0;
 	}
-	// Scorch pools in the low, sheltered drifts — the Ruin's burn, not shadow.
-	surface = mix(surface, scorch_color, smoothstep(0.62, 0.95, drift) * 0.35 * (1.0 - rock_mix));
 	// Grain modulates brightness slightly; kept subtle so it reads as texture
 	// rather than dirt sprayed over the frame.
 	surface *= 0.93 + 0.14 * mix(0.5, grain, detail);
@@ -517,12 +530,12 @@ void fragment() {
 	// per-slab substance rather than one stone. The two are answering different
 	// questions and compose cleanly: the REGION says how worn this part of the
 	// Reach is, the SLAB says what this particular piece of it is made of.
-	float region_rough = COLOR.a - 0.5;
 	// `stone_rough` already carries the ash-vs-stone resolve, per cell, from the
 	// surface composition above — blending it against ash a second time here
 	// would apply that choice twice.
-	ROUGHNESS = clamp(stone_rough + region_rough
-		- 0.06 * (grain - 0.5) * detail, 0.0, 1.0);
+	// `stone_rough` already carries the per-cell resolve, the region/grain
+	// offsets, the clamp and the crack — all in the original order.
+	ROUGHNESS = stone_rough;
 	// Packed ash in a crack is matte, whatever the slab either side of it is.
 	SPECULAR = 0.18;
 

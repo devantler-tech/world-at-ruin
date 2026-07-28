@@ -94,10 +94,15 @@ void terrain_plates(
 
 // How much of the NEIGHBOURING plate belongs in this fragment.
 //
-// `f2 - f1` is the distance to the boundary, and `fw` is how far that quantity
-// moves across one pixel, so the ratio is where the fragment sits within its own
-// footprint. On the boundary the two plates are equally present and the answer
-// is a half; a footprint away it is entirely the owning plate's. That is the
+// `f2 - f1` is the distance to the boundary and `fw` is the HALF-footprint —
+// how far the pixel reaches toward one side. Callers pass half of the full
+// per-pixel variation, because that variation spans the pixel and so reaches
+// only half of it either way. Ramping over the full width instead would still
+// hand ~8% of the neighbour to a pixel lying wholly inside its own plate, which
+// is a soft band rather than a coverage average, and would soften named
+// substances at resolved contacts — the opposite of this term's purpose.
+// On the boundary the two plates are equally present and the answer is a half;
+// a half-footprint away it is entirely the owning plate's. That is the
 // whole term: it is an analytic average over the pixel, not a soft edge, so it
 // is exactly 0.0 wherever the boundary is resolved and only engages once the
 // step is narrower than the pixel drawing it.
