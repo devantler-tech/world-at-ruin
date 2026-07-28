@@ -1164,6 +1164,130 @@ func TestAllocateProvisionFailureReclaimsTheReportedCanonicalExpiry(t *testing.T
 	}
 }
 
+func TestAllocateProvisionFailureAdoptsAProgressedSameAttemptWinner(t *testing.T) {
+	storage := newMemoryStorage()
+	store := newLeaseStore(t, storage)
+	staging := nakamalease.Lease{
+		UserID:        testUserID,
+		ReservationID: testReservationID,
+		AttemptID:     testAttemptID,
+		ExpiresAt:     testNow.Add(time.Minute),
+		Staging:       true,
+	}
+	if _, err := store.Create(context.Background(), staging); err != nil {
+		t.Fatalf("create concurrent staging intent: %v", err)
+	}
+	resources := &recordingResources{
+		provisioned: Provisioned{
+			Allocation: validAllocation(),
+			SecretRef:  "zone-admission-gameserver-17",
+		},
+		provisionErr: status.Error(codes.Unavailable, "ambiguous sibling result"),
+	}
+	resources.provisionCheck = func(
+		request handoff.AllocationRequest,
+		_ time.Time,
+	) error {
+		current, err := store.Load(
+			context.Background(),
+			request.UserID,
+			request.ReservationID,
+		)
+		if err != nil {
+			return fmt.Errorf("load staging winner: %w", err)
+		}
+		_, err = store.Finalize(
+			context.Background(),
+			current,
+			leaseFromProvisioned(
+				request,
+				resources.provisioned,
+				resources.provisioned.Allocation.LeaseExpiresAt,
+			),
+		)
+		return err
+	}
+	coordinator, err := NewCoordinator(
+		resources,
+		store,
+		Config{
+			LeaseTTL: time.Minute,
+			Now:      func() time.Time { return testNow },
+		},
+	)
+	if err != nil {
+		t.Fatalf("NewCoordinator returned an error: %v", err)
+	}
+
+	got, err := coordinator.Allocate(context.Background(), validRequest())
+	if err != nil {
+		t.Fatalf("Allocate did not adopt the progressed winner: %v", err)
+	}
+	if !reflect.DeepEqual(got, validAllocation()) {
+		t.Fatalf("adopted allocation = %+v, want %+v", got, validAllocation())
+	}
+	if !reflect.DeepEqual(
+		resources.events,
+		[]string{"provision:attempt-7", "resolve:attempt-7"},
+	) {
+		t.Fatalf(
+			"progressed-winner events = %v, want provision then resolve",
+			resources.events,
+		)
+	}
+	if len(resources.releases) != 0 {
+		t.Fatalf(
+			"provision loser released the progressed winner: %+v",
+			resources.releases,
+		)
+	}
+}
+
+func TestAllocateRechecksExpiryAfterSlowProvisioning(t *testing.T) {
+	storage := newMemoryStorage()
+	store := newLeaseStore(t, storage)
+	now := testNow
+	resources := &recordingResources{
+		provisioned: Provisioned{
+			Allocation: validAllocation(),
+			SecretRef:  "zone-admission-gameserver-17",
+		},
+		provisionCheck: func(
+			_ handoff.AllocationRequest,
+			expiresAt time.Time,
+		) error {
+			now = expiresAt
+			return nil
+		},
+	}
+	coordinator, err := NewCoordinator(
+		resources,
+		store,
+		Config{
+			LeaseTTL: time.Minute,
+			Now:      func() time.Time { return now },
+		},
+	)
+	if err != nil {
+		t.Fatalf("NewCoordinator returned an error: %v", err)
+	}
+
+	got, err := coordinator.Allocate(context.Background(), validRequest())
+	if !errors.Is(err, ErrInvalidResource) {
+		t.Fatalf("slow provisioning error = %v, want ErrInvalidResource", err)
+	}
+	if !reflect.DeepEqual(got, handoff.Allocation{}) {
+		t.Fatalf("slow provisioning returned %+v, want zero allocation", got)
+	}
+	if len(resources.releases) != 1 ||
+		resources.releases[0].AttemptID != testAttemptID {
+		t.Fatalf(
+			"expired staged resource releases = %+v, want exact attempt",
+			resources.releases,
+		)
+	}
+}
+
 func TestAllocatePersistsTheCanonicalExpiryReturnedByAnIdempotentResource(t *testing.T) {
 	storage := newMemoryStorage()
 	store := newLeaseStore(t, storage)

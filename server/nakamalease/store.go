@@ -490,6 +490,7 @@ func (s *Store) ReclaimExpired(
 		return errors.New("nakama lease: reclaim callback is required")
 	}
 	cursor := ""
+	var reclamationErrors error
 	for {
 		objects, nextCursor, err := s.storage.StorageList(
 			ctx,
@@ -500,18 +501,21 @@ func (s *Store) ReclaimExpired(
 			cursor,
 		)
 		if err != nil {
-			return sanitizeStorageError(err)
+			return errors.Join(reclamationErrors, sanitizeStorageError(err))
 		}
 		for _, object := range objects {
 			if err := s.reclaimExpiredObject(ctx, now, object, reclaim); err != nil {
-				return err
+				if cancellation := storageCancellation(err); cancellation != nil {
+					return errors.Join(reclamationErrors, cancellation)
+				}
+				reclamationErrors = errors.Join(reclamationErrors, err)
 			}
 		}
 		if nextCursor == "" {
-			return nil
+			return reclamationErrors
 		}
 		if nextCursor == cursor {
-			return ErrStorage
+			return errors.Join(reclamationErrors, ErrStorage)
 		}
 		cursor = nextCursor
 	}

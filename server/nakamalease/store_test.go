@@ -1666,6 +1666,73 @@ func TestRecordStateDistinguishesNoShowExpiryFromClaimedOwnership(t *testing.T) 
 	}
 }
 
+func TestReclaimExpiredContinuesAfterOneResourceFails(t *testing.T) {
+	storage := newMemoryStorage()
+	store, err := NewStore(storage)
+	if err != nil {
+		t.Fatalf("NewStore returned an error: %v", err)
+	}
+	first := validLease()
+	second := validLease()
+	second.UserID = "22222222-2222-4222-8222-222222222222"
+	second.ReservationID = "handoff-43"
+	second.AttemptID = "attempt-8"
+	second.AllocationID = "gameserver-18"
+	second.SecretRef = "zone-admission-gameserver-18"
+	for _, lease := range []Lease{first, second} {
+		if _, err := store.Create(context.Background(), lease); err != nil {
+			t.Fatalf("Create lease %q returned an error: %v", lease.AttemptID, err)
+		}
+	}
+	resourceErr := errors.New("test resource unavailable")
+	var attempts []string
+	err = store.ReclaimExpired(
+		context.Background(),
+		first.ExpiresAt,
+		func(_ context.Context, lease Lease) error {
+			attempts = append(attempts, lease.AttemptID)
+			if len(attempts) == 1 {
+				return resourceErr
+			}
+			return nil
+		},
+	)
+	if !errors.Is(err, resourceErr) {
+		t.Fatalf("ReclaimExpired error = %v, want resource failure", err)
+	}
+	if len(attempts) != 2 {
+		t.Fatalf(
+			"expiry cleanup attempts = %v, want both records despite first failure",
+			attempts,
+		)
+	}
+	for _, lease := range []Lease{first, second} {
+		record, loadErr := store.Load(
+			context.Background(),
+			lease.UserID,
+			lease.ReservationID,
+		)
+		if lease.AttemptID == attempts[0] {
+			if loadErr != nil {
+				t.Fatalf("load failed cleanup record: %v", loadErr)
+			}
+			if !record.Lease.Releasing {
+				t.Fatalf(
+					"failed cleanup record = %+v, want durable releasing barrier",
+					record,
+				)
+			}
+			continue
+		}
+		if !errors.Is(loadErr, ErrNotFound) {
+			t.Fatalf(
+				"successful cleanup record error = %v, want ErrNotFound",
+				loadErr,
+			)
+		}
+	}
+}
+
 func TestLoadKeepsSchemaOneLeaseReadableAsNotReleasing(t *testing.T) {
 	storage := newMemoryStorage()
 	store, err := NewStore(storage)

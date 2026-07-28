@@ -182,7 +182,7 @@ func (c *Coordinator) Allocate(
 			UserID:        request.UserID,
 			ReservationID: request.ReservationID,
 			AttemptID:     request.AttemptID,
-			ExpiresAt:     now.Add(c.leaseTTL),
+			ExpiresAt:     c.now().Add(c.leaseTTL),
 			Staging:       true,
 		}
 		if hasCurrent {
@@ -204,6 +204,14 @@ func (c *Coordinator) Allocate(
 		staging.Lease.ExpiresAt,
 	)
 	if err != nil {
+		if winner, progressed, winnerErr := c.resolveProgressedAttempt(
+			ctx,
+			request,
+		); progressed {
+			return winner, winnerErr
+		} else if winnerErr != nil {
+			return handoff.Allocation{}, winnerErr
+		}
 		var staged *nakamalease.Lease
 		if hasReportedStagedResource(provisioned) {
 			stagedExpiry := provisioned.Allocation.LeaseExpiresAt
@@ -227,7 +235,7 @@ func (c *Coordinator) Allocate(
 	}
 	resourceExpiry := provisioned.Allocation.LeaseExpiresAt
 	next := leaseFromProvisioned(request, provisioned, resourceExpiry)
-	if !resourceExpiry.After(now) ||
+	if !resourceExpiry.After(c.now()) ||
 		resourceExpiry.After(staging.Lease.ExpiresAt) {
 		if releaseErr := c.reconcileAttempt(ctx, request, &next); releaseErr != nil {
 			return handoff.Allocation{}, ErrReconciliation
@@ -248,6 +256,26 @@ func (c *Coordinator) Allocate(
 		return handoff.Allocation{}, err
 	}
 	return provisioned.Allocation, nil
+}
+
+func (c *Coordinator) resolveProgressedAttempt(
+	ctx context.Context,
+	request handoff.AllocationRequest,
+) (handoff.Allocation, bool, error) {
+	current, err := c.leases.Load(ctx, request.UserID, request.ReservationID)
+	switch {
+	case errors.Is(err, nakamalease.ErrNotFound):
+		return handoff.Allocation{}, false, nil
+	case err != nil:
+		return handoff.Allocation{}, false, err
+	case current.Lease.AttemptID != request.AttemptID,
+		current.Lease.Staging,
+		current.Lease.Releasing:
+		return handoff.Allocation{}, false, nil
+	default:
+		allocation, resolveErr := c.resolveDurable(ctx, current.Lease)
+		return allocation, true, resolveErr
+	}
 }
 
 func (c *Coordinator) resolveDurable(
