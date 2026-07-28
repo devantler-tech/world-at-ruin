@@ -505,8 +505,8 @@ func (s *Store) ReclaimExpired(
 		}
 		for _, object := range objects {
 			if err := s.reclaimExpiredObject(ctx, now, object, reclaim); err != nil {
-				if cancellation := storageCancellation(err); cancellation != nil {
-					return errors.Join(reclamationErrors, cancellation)
+				if ctx.Err() != nil {
+					return errors.Join(reclamationErrors, ctx.Err())
 				}
 				reclamationErrors = errors.Join(reclamationErrors, err)
 			}

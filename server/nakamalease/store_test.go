@@ -1666,7 +1666,7 @@ func TestRecordStateDistinguishesNoShowExpiryFromClaimedOwnership(t *testing.T) 
 	}
 }
 
-func TestReclaimExpiredContinuesAfterOneResourceFails(t *testing.T) {
+func TestReclaimExpiredContinuesAfterOneResourceTimesOut(t *testing.T) {
 	storage := newMemoryStorage()
 	store, err := NewStore(storage)
 	if err != nil {
@@ -1684,7 +1684,7 @@ func TestReclaimExpiredContinuesAfterOneResourceFails(t *testing.T) {
 			t.Fatalf("Create lease %q returned an error: %v", lease.AttemptID, err)
 		}
 	}
-	resourceErr := errors.New("test resource unavailable")
+	resourceErr := context.DeadlineExceeded
 	var attempts []string
 	err = store.ReclaimExpired(
 		context.Background(),
@@ -1698,7 +1698,7 @@ func TestReclaimExpiredContinuesAfterOneResourceFails(t *testing.T) {
 		},
 	)
 	if !errors.Is(err, resourceErr) {
-		t.Fatalf("ReclaimExpired error = %v, want resource failure", err)
+		t.Fatalf("ReclaimExpired error = %v, want resource timeout", err)
 	}
 	if len(attempts) != 2 {
 		t.Fatalf(
