@@ -55,6 +55,14 @@ record in it. Obscurity is not a permission boundary: if the transport can addre
 all, the guarantee has to come from an access rule the store enforces, not from nobody having
 looked.
 
+**Routing access through server code is not the same as authorising it.** A server holding
+storage credentials on a player's behalf is a deputy, and a deputy that accepts the *subject* of an
+operation from its caller can be confused into acting on the wrong player: an RPC taking a
+client-supplied user id satisfies every word of the rule above while reading someone else's
+character. So the key of a player-owned record is **derived from the verified identity** the session
+resolves to, never from a parameter the client supplies. Any operation that legitimately crosses
+players — moderation, support tooling, a trade — is a separately authorised path, and says so.
+
 *How the lease store meets it today:* the record is written with no client owner and both permission
 bits closed, so Nakama attributes it to the system account and no client API can reach it, and the
 read path re-verifies collection, key, owner, version and both permission bits before trusting the
@@ -120,6 +128,15 @@ worth.
 This is the same expand-then-contract discipline `save-data.md` already requires of client save
 data, and it applies here for the same reason: the writer is the irreversible step.
 
+**"Baked" means the rollback target can read it, not that the running fleet can.** Reach across
+currently-running revisions is the wrong criterion: a rollback does not deploy the revisions that
+happen to be running, it deploys a **retained artifact**, and that artifact was built before the
+reader was extended. Rolling back to it after the writer activated strands every upgraded record,
+and strict decoding guarantees it strands them loudly rather than silently.
+
+So the bake condition is that **the retained rollback target itself carries the expanded reader**,
+registered and tested as the standing rollback candidate, before the writer is activated.
+
 ### A stored document is decoded strictly
 
 Decoding rejects unknown fields and trailing content. An unexpected field is a refusal, not
@@ -139,6 +156,15 @@ That technique works only where a record is identified by what it contains. It d
 mutation like "grant three gold", because two legitimate identical grants are indistinguishable
 from one grant delivered twice — there is no field to compare. Such a mutation must carry an
 identity supplied by its **caller**, which is the obligation #475 states.
+
+**A caller-supplied key is only safe if it is bound to the mutation it names.** A bare key answers
+"have I seen this token before", and answering that alone is how a reused token silently returns the
+first result for a second, different mutation — or suppresses a legitimate grant. So a key is
+durably stored **with the authenticated subject and the normalized mutation it was issued for**, and
+the same key presented for a different subject, operation, or payload is **rejected as a conflict**
+rather than served from the earlier result. Retry gets the original outcome; collision gets an
+error. Silently treating a collision as a retry is the failure this rule exists to prevent, and it
+loses player value in the direction no wipe can undo.
 
 Reading the lease implementation as general-purpose idempotency is the trap here. It is a correct
 solution to the narrower problem, and copying it onto player state would silently collapse two
@@ -208,6 +234,18 @@ Where re-applying the original mutation is impossible, the obligation is to **re
 another route** — a compensating grant carrying the same worth — not merely to tell the player it
 is gone. Telling them is required as well, and it is not the remedy.
 
+**That remedy is only real if the evidence outlives the failure.** The audit trail is what a
+re-application reads from, and an audit entry written into the same database as the mutation is
+rolled back *by the same rollback*. A point-in-time restore that loses the grant loses the record of
+the grant with it, and the promise above quietly becomes unkeepable at exactly the moment it is
+needed.
+
+So the recovery evidence must **survive the failure domain it is meant to recover from**: an
+independently durable journal — archived write-ahead log, or a sink outside the database's own
+restore boundary — retained at least as long as the restore window it must cover. Until such a
+journal exists, this bound is **stated but not yet keepable**, and the enforcement map records it
+that way rather than implying otherwise.
+
 Surfacing a loss is not an alternative to remedying it. Under the no-resets law there is no wipe to
 even out an unlucky player against a lucky one, so an acknowledged mutation left unrestored is a
 permanent, uncompensated loss to one person. Notification is owed on top of the remedy, never
@@ -247,7 +285,10 @@ needs to write a guard for.
 | A cancellation is reconciled, never read as failure | every caller | not yet built — #475 supplies the stable identity |
 | Upstream storage errors do not cross the boundary | `nakamalease` error sanitization | `TestStorageFailuresAreSanitized`, `TestStorageContextCancellationIsPreserved` |
 | A replay identified by its own content applies once | `nakamalease.Store` | `TestCreateReplaysTheSameAttemptWithoutAnotherWrite`, `TestClaimReplayKeepsTheOriginalClaimWithoutWriting` |
-| An acknowledged player-owned mutation is never lost | player-owned record owners | not yet built — #473, #474, #475 |
+| Player-owned keys derive from the verified identity, never a client-supplied subject | player-owned record owners | not yet built — #472, #473, #474 |
+| An idempotency key is bound to its subject and payload; mismatched reuse is rejected | player-owned record owners | not yet built — #475 |
+| Recovery evidence survives the failure domain it recovers from | platform + player-owned record owners | not yet built — no journal outside the database restore boundary |
+| An acknowledged player-owned mutation is never lost | player-owned record owners | not yet built — #473, #474, #475, **and conditional on the row above** |
 | A replay **not** identified by its own content applies once | player-owned record owners | not yet built — #475 |
 | A world-owned record states its own recovery invariant | first world-owned record owner | not yet built — no such record exists |
 
