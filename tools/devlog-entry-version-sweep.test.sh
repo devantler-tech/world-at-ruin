@@ -88,19 +88,26 @@ expect_gate_pass() {
 
 # A refusal that fires for the wrong reason proves nothing, so every expected
 # failure is matched on its message as well as on a non-zero status.
+#
+# Matched through a here-string rather than `printf ... | grep -qF`. Under
+# `pipefail` a matching `grep -q` closes the pipe as soon as it decides, which
+# can kill the writer with SIGPIPE and make the pipeline report 141 — so a
+# successful match reads as a failed one. The writer here is a small builtin
+# that finishes first, so the pipe form happens to work, but the here-string has
+# no such dependency on output size.
 expect_gate_fail() {
 	local label="$1" d="$2" needle="$3" out rc=0
 	out="$(run_sweep "$d" --gate)" || rc=$?
 	if [ "$rc" -eq 0 ]; then
 		t_fail "$label: expected the gate to refuse, but it passed"
-	elif ! printf '%s' "$out" | grep -qF "$needle"; then
+	elif ! grep -qF "$needle" <<<"$out"; then
 		t_fail "$label: refused for the wrong reason — wanted '$needle', got: $out"
 	fi
 }
 
 expect_output_matching() {
 	local label="$1" out="$2" needle="$3"
-	printf '%s' "$out" | grep -qF "$needle" ||
+	grep -qF "$needle" <<<"$out" ||
 		t_fail "$label: wanted '$needle' in the output, got: $out"
 }
 
@@ -123,8 +130,12 @@ printf 'x\n' >"$d/base.txt"
 step "$d" base v0.1.0
 entry 0.1.0 >"$d/client/devlog/0.1.0.json"
 step "$d" 'an entry naming a release cut before its code existed' v0.2.0
+# Matched on a phrase unique to the GATE's refusal, not on "name a release that
+# does not contain" — the survey summary line above it carries that wording on
+# every run, passing or failing, so a needle built from it matches the report
+# rather than the decision and would hold however the refusal was worded.
 expect_gate_fail 'an entry naming a release that does not contain it' "$d" \
-	'name a release that does not contain'
+	'The SHIPPED column above'
 
 # GREEN CONTROL, and the criterion the exclusion has to meet: NEVER-CUT alone
 # does NOT fail. The entry names 0.9.9, which was never released at all, so it
@@ -184,7 +195,7 @@ step "$d" base v0.1.0
 entry 0.1.0 >"$d/client/devlog/0.1.0.json"
 step "$d" 'the same correction, unlisted' v0.2.0
 expect_gate_fail 'the same entry without its listing' "$d" \
-	'name a release that does not contain'
+	'The SHIPPED column above'
 
 # --- Mode separation ------------------------------------------------------
 # The survey must stay a survey. It is run by hand to read the whole picture,
