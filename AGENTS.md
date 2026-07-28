@@ -459,6 +459,15 @@ everything shipped afterwards is held to.
   (`tests/boot_recovery_lock_test`) — that file's two writers, the updater and the game, both exist
   today, and a lost update there discards the evidence deciding whether a client rolls back. One
   primitive guards both files; a second mechanism for the second file would be a second set of bugs.
+  **All three persisted writers — vault, character store and boot recovery — stage through a PRIVATE
+  `<file>.tmp-<pid>-<ticks>`, never a shared `<file>.tmp`.** A derivable staging name is a hole no
+  target-side check can see, because the target is untouched until the rename. The reclaim shape
+  differs by what each writer can prove, and copying the wrong one is a real bug rather than a style
+  slip: vault and boot-recovery sweeps run UNDER the write lock, which proves no other lock-aware
+  writer is inside its staging window, so they may delete anything carrying the prefix; the character
+  store has no lock yet (#423) and substitutes an age floor, because a young stage there may be a
+  second client's live write. Ask what made the sweep safe in the writer you are copying FROM before
+  reusing it.
   The immutable shell's recovery memory is a third persisted contract:
   `BootRecovery` (`user://boot_recovery.json`) reads through schema v1 and writes explicit v1 on
   first boot or the next real write of legacy v0 state. The retained v0.51.1 app reads v1 and is the
