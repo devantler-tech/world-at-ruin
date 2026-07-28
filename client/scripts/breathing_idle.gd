@@ -110,6 +110,17 @@ const IDLE_AXES := {
 ## character across runs rather than random per boot.
 var phase_offset := 0.0
 
+## The elapsed breath time every capture pins itself to (#485), measured from
+## this body's own [member phase_offset] rather than from zero — so freezing
+## keeps the crowd out of step exactly as [member phase_offset] intends.
+##
+## The value is arbitrary; what matters is that it is a CONSTANT, so two runs
+## photograph the same pose. Zero is deliberately avoided for the same reason
+## `CaveSystemGen.FLICKER_CAPTURE_TIME` avoids it: it would evidence every body
+## at precisely its seeded phase, and a seed is a less representative moment
+## than one a little way into the cycle.
+const BREATH_CAPTURE_TIME := 1.0
+
 var _skeleton: Skeleton3D = null
 var _t := 0.0
 
@@ -183,3 +194,27 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	_t += delta
 	apply_at(_skeleton, _t)
+
+
+## Pin this body to a fixed breath phase and stop advancing it, so a captured
+## frame is reproducible.
+##
+## The capture settles a fixed number of FRAMES while `_t` accumulates DELTA, so
+## without this the pose at the shutter depends on how fast those frames
+## happened to render, and two runs of identical code photograph different
+## bodies. That is the same defect `CaveSystemGen.freeze_flicker` fixed for the
+## torches (#321), on the same mechanism, and it is measured in
+## `frame_capture._pin_idles`.
+##
+## In-game behaviour is deliberately NOT changed: nothing calls this except the
+## capture tool, so bodies breathe for players exactly as before.
+##
+## Returns false when the idle never found its skeleton, because a caller that
+## believes it pinned a body it did not would go on to photograph a moving one.
+func freeze_at(elapsed: float = BREATH_CAPTURE_TIME) -> bool:
+	set_process(false)
+	if _skeleton == null:
+		return false
+	_t = phase_offset + elapsed
+	apply_at(_skeleton, _t)
+	return true

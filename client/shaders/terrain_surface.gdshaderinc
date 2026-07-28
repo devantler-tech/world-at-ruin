@@ -52,15 +52,22 @@ float terrain_ground_noise(vec2 xz, float scale) {
 // under one pixel, and that is the aliasing rather than a measurement of it.
 // The search already computes both centres, so returning them costs two
 // out-parameters rather than another nine-cell evaluation.
+//
+// `id2` is the CELL those second-nearest values belong to — the plate this
+// fragment would have belonged to had it fallen a little further across. It
+// costs nothing extra for the same reason `c2` does (the search already knows
+// it), and it is what lets a caller average the substance step across the
+// boundary rather than taking the owning cell's value outright.
 void terrain_plates(
 		vec2 uv, out vec2 id, out float f1, out float f2,
-		out vec2 c1, out vec2 c2) {
+		out vec2 c1, out vec2 c2, out vec2 id2) {
 	vec2 base = floor(uv);
 	f1 = 1000.0;
 	f2 = 1000.0;
 	id = base;
 	c1 = base;
 	c2 = base;
+	id2 = base;
 	for (int j = -1; j <= 1; j++) {
 		for (int i = -1; i <= 1; i++) {
 			vec2 cell = base + vec2(float(i), float(j));
@@ -72,15 +79,39 @@ void terrain_plates(
 			if (d < f1) {
 				f2 = f1;
 				c2 = c1;
+				id2 = id;
 				f1 = d;
 				c1 = centre;
 				id = cell;
 			} else if (d < f2) {
 				f2 = d;
 				c2 = centre;
+				id2 = cell;
 			}
 		}
 	}
+}
+
+// How much of the NEIGHBOURING plate belongs in this fragment.
+//
+// `f2 - f1` is the distance to the boundary and `fw` is the HALF-footprint —
+// how far the pixel reaches toward one side. Callers pass half of the full
+// per-pixel variation, because that variation spans the pixel and so reaches
+// only half of it either way. Ramping over the full width instead would still
+// hand ~8% of the neighbour to a pixel lying wholly inside its own plate, which
+// is a soft band rather than a coverage average, and would soften named
+// substances at resolved contacts — the opposite of this term's purpose.
+// On the boundary the two plates are equally present and the answer is a half;
+// a half-footprint away it is entirely the owning plate's. That is the
+// whole term: it is an analytic average over the pixel, not a soft edge, so it
+// is exactly 0.0 wherever the boundary is resolved and only engages once the
+// step is narrower than the pixel drawing it.
+//
+// Both the substance and the slab mask are step functions of the SAME cell id,
+// so both step at exactly this boundary and both take this one weight — fixing
+// only the substance would leave half the contrast still snapping.
+float terrain_plate_edge_blend(float f1, float f2, float fw) {
+	return 0.5 * (1.0 - smoothstep(0.0, max(fw, 1e-6), f2 - f1));
 }
 
 vec4 terrain_plate_substance(

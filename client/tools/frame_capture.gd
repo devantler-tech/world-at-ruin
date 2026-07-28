@@ -44,7 +44,7 @@ const FrameDiff := preload("res://tools/frame_diff.gd")
 ## Every scenario this tool knows. Listed once so the dispatch below and the
 ## error message a caller sees cannot disagree — the previous pair of hand-kept
 ## conditions had already drifted apart by one scenario.
-const SCENARIOS: Array[String] = ["world", "first_run", "breath", "walk", "light_response", "replication"]
+const SCENARIOS: Array[String] = ["world", "first_run", "breath", "walk", "run", "light_response", "replication"]
 
 ## The committed vantages. Fixed on purpose — evidence is only comparable across
 ## commits if the camera does not move between them. Each is [name, eye, target].
@@ -366,7 +366,10 @@ func _ready() -> void:
 		await _capture_breath(dir, main)
 		return
 	if scenario == "walk":
-		await _capture_walk(dir, main)
+		await _capture_gait(dir, main, false)
+		return
+	if scenario == "run":
+		await _capture_gait(dir, main, true)
 		return
 
 	for i in WARMUP_FRAMES:
@@ -1176,30 +1179,44 @@ func _capture_breath(dir: String, main: Node) -> void:
 	get_tree().quit(0)
 
 
-## The `walk` scenario: a fixed-phase full-body sequence of the REAL wanderer.
+## The `walk` and `run` scenarios: a fixed-phase full-body sequence of the REAL
+## wanderer, in whichever grounded gait `running` selects.
 ##
-## The flag is read when Player binds its recipe body, so the caller must set
-## `WAR_WALK_CYCLE=1` before this scene boots. The runtime driver is then
-## stopped with Player physics, and its own `apply_phase` method poses the
-## sequence deterministically — the evidence uses the shipping implementation,
-## not a preview copy.
-func _capture_walk(dir: String, main: Node) -> void:
+## One function rather than two: the vantage, framing, settling, uniform-frame
+## rejection and foot-travel floor are identical for both gaits, and the only
+## real difference is which pose the shipping driver is asked for. A copied
+## second capture would drift from this one the first time either is retuned.
+##
+## Each gait has its OWN opt-in, and the flag is read when Player binds its
+## recipe body — so the caller must export the flag for the gait it wants
+## before this scene boots: `WAR_WALK_CYCLE=1` for `walk`, `WAR_RUN_CYCLE=1`
+## for `run`. Setting the wrong one is refused below rather than quietly
+## photographing a standing body. The runtime driver is then stopped with
+## Player physics, and its own `apply_phase` method poses the sequence
+## deterministically — the evidence uses the shipping implementation, not a
+## preview copy.
+func _capture_gait(dir: String, main: Node, running: bool) -> void:
+	var gait := "run" if running else "walk"
 	for i in WARMUP_FRAMES:
 		await get_tree().process_frame
 	if not _has_world(main):
-		_fail("the world did not build — a sky-only walk sequence is not evidence")
+		_fail("the world did not build — a sky-only %s sequence is not evidence" % gait)
 		return
 
 	var player := main.get_node_or_null("Wanderer") as Player
 	if player == null:
-		_fail("the shipped scene has no Wanderer Player — the walk path is not live")
+		_fail("the shipped scene has no Wanderer Player — the %s path is not live" % gait)
 		return
 	var animator := player.get_node_or_null("WalkLocomotion")
 	if animator == null:
 		_fail("the shipped Wanderer has no WalkLocomotion driver")
 		return
-	if OS.get_environment(WalkLocomotion.FLAG_ENV) != "1":
-		_fail("WAR_WALK_CYCLE is not opted in — refusing to advertise a disabled gait")
+	# Each gait has its own opt-in, so the evidence must demand the flag for the
+	# gait it is photographing — checking the walk's flag while capturing the run
+	# would publish a standing body as a run sequence.
+	var gait_flag := WalkLocomotion.RUN_FLAG_ENV if running else WalkLocomotion.FLAG_ENV
+	if OS.get_environment(gait_flag) != "1":
+		_fail("%s is not opted in — refusing to advertise a disabled gait" % gait_flag)
 		return
 	var world := main.get_node_or_null("World") as WorldGen
 	if world == null:
@@ -1249,7 +1266,7 @@ func _capture_walk(dir: String, main: Node) -> void:
 	var foot_positions: Array[Vector3] = []
 	for i in WALK_PHASES:
 		var phase := TAU * float(i) / float(WALK_PHASES)
-		animator.call("apply_phase", phase)
+		animator.call("apply_phase", phase, running)
 		skeleton.force_update_all_bone_transforms()
 		foot_positions.append(
 			skeleton.global_transform * skeleton.get_bone_global_pose(left_foot).origin)
@@ -1259,10 +1276,10 @@ func _capture_walk(dir: String, main: Node) -> void:
 		var img := await _grab_frame()
 		var spread := _luma_spread(img)
 		if spread < MIN_LUMA_SPREAD:
-			_fail("walk phase %d is a uniform frame (luma spread %.4f) — nothing rendered" %
-				[i, spread])
+			_fail("%s phase %d is a uniform frame (luma spread %.4f) — nothing rendered" %
+				[gait, i, spread])
 			return
-		var frame_name := "walk_%02d" % i
+		var frame_name := "%s_%02d" % [gait, i]
 		var err := img.save_png("%s/%s.png" % [dir, frame_name])
 		if err != OK:
 			_fail("could not write %s (error %d)" % [frame_name, err])
@@ -1275,12 +1292,12 @@ func _capture_walk(dir: String, main: Node) -> void:
 		for b in foot_positions:
 			travel = maxf(travel, a.distance_to(b))
 	if travel < WALK_MIN_FOOT_TRAVEL_M:
-		_fail(("the walk sequence photographs one lower-body pose: the left foot travels %.4f m, " +
-			"under the %.4f m floor") % [travel, WALK_MIN_FOOT_TRAVEL_M])
+		_fail(("the %s sequence photographs one lower-body pose: the left foot travels %.4f m, " +
+			"under the %.4f m floor") % [gait, travel, WALK_MIN_FOOT_TRAVEL_M])
 		return
 
-	print("CAPTURE PASS — %d walk phases written to %s (left-foot travel %.1f cm)" %
-		[WALK_PHASES, dir, travel * 100.0])
+	print("CAPTURE PASS — %d %s phases written to %s (left-foot travel %.1f cm)" %
+		[WALK_PHASES, gait, dir, travel * 100.0])
 	get_tree().quit(0)
 
 
@@ -1685,6 +1702,21 @@ func _shoot(dir: String, frame: String, creator: CanvasLayer) -> bool:
 	if _visible_panel_area(creator) <= 0.0:
 		_fail("%s: the creator has no visible panel — the frame would be the world behind a transparent layer" % frame)
 		return false
+	# Pin the breath before the shutter (#485). Re-done per shot rather than once
+	# up front because a preset switch calls `set_character`, which rebuilds the
+	# portrait and gives it a FRESH idle already advancing on wall-clock time —
+	# so freezing only at the start would leave every frame after the first
+	# preset unpinned, which is most of the set.
+	var pinned := _pin_idles()
+	if pinned == 0:
+		_fail("%s: no breathing idle to pin — the portrait would be photographed mid-breath and the frame would not repeat" % frame)
+		return false
+	# Declared per frame so CI can assert the pin FIRED, not merely that it
+	# exists. Deleting the call above passes every unit test in the repo — the
+	# frames still render, still write, still report CAPTURE PASS, and only the
+	# change report silently goes back to tens of percent on unchanged builds.
+	# That is #231's shape exactly, so the wiring gets its own evidence.
+	print("PINNED %s — %d idle(s) frozen at +%.2fs" % [frame, pinned, BreathingIdle.BREATH_CAPTURE_TIME])
 	await RenderingServer.frame_post_draw
 	var img := get_viewport().get_texture().get_image()
 	var spread := _luma_spread_box(img, UI_SAMPLE_X0, UI_SAMPLE_X1, UI_SAMPLE_Y0, UI_SAMPLE_Y1)
@@ -1701,6 +1733,44 @@ func _shoot(dir: String, frame: String, creator: CanvasLayer) -> bool:
 		[frame, out, img.get_width(), img.get_height(), spread, note])
 	_write_note(dir, frame, img, note)
 	return true
+
+
+## Freezes every body in the scene at a fixed breath phase and returns how many
+## were pinned, so the caller can refuse a frame that pinned nothing.
+##
+## ## Why the first-run frames needed this (#485)
+##
+## The creator is a CanvasLayer whose panel takes the LEFT band only, so most of
+## every `first_run_*` frame is a live 3D portrait — and that portrait breathes
+## on accumulated wall-clock time. The capture settles a fixed number of FRAMES,
+## so the pose at the shutter depended on how fast those frames rendered.
+##
+## Measured on unchanged `main`, two runs of IDENTICAL code, this machine
+## (macOS, the platform CI captures on), as changed-pixel fraction per frame:
+##
+##   first_run_elder        53.74%      first_run_head_clothing  19.18%
+##   first_run_villager     46.63%      first_run_first_run      16.70%
+##   first_run_brute        31.67%      first_run_lower          14.13%
+##   first_run_base_layer   24.21%      first_run_wanderer        9.18%
+##   first_run_advanced_1    3.62%      first_run_outfit          2.58%
+##   first_run_head_armor    3.01%
+##
+## Nothing changed between those two runs. `frame_diff.gd` carries the same
+## table with the pinned column beside it: every frame falls to 0.00%-0.60%,
+## which is what temporal antialiasing, foliage and fog still move. That column
+## is NOT a CI floor — see the warning under it before treating it as one.
+##
+## Scoped to `_shoot`, which only the first-run scenario calls, so the world
+## vantages keep the behaviour they were calibrated on.
+func _pin_idles() -> int:
+	var pinned := 0
+	for node: Node in get_tree().root.find_children("*", "BreathingIdle", true, false):
+		# A body whose idle never found its skeleton is NOT counted as pinned:
+		# it is exactly the case where the caller would believe the frame
+		# repeats when it does not.
+		if (node as BreathingIdle).freeze_at():
+			pinned += 1
+	return pinned
 
 
 ## The creator's scrolling control list.
