@@ -300,9 +300,14 @@ recovery invariant stated before it ships.
 Two consequences of the first row are worth stating outright, because they are the ones that get
 assumed wrongly:
 
-- A record is durable only **once the write is acknowledged**. Work that a zone process has done
-  but not yet written is not server-held state, and it dies with the process. A mutation that
-  matters must be written before it is shown to the player as done.
+- **Durability and reportability are different moments, and conflating them duplicates value.** A
+  write that storage applied is durable from that instant, even if the response never arrived — so
+  "durable once acknowledged" is false, and recovery code that believes it will treat committed
+  state as absent and reissue the mutation. What the acknowledgement gates is **reporting
+  completion**: a mutation may be shown to the player as done only after it is acknowledged, or
+  after reconciliation has established what happened (see the indeterminate-error rule above).
+  Work a zone process has done but never written is a separate case — it is not server-held state
+  at all, and it dies with the process.
 - Surviving a crash is not the same as being *correct* after one. A process that dies between
   applying a mutation and acknowledging it leaves a client that will retry, which is why the
   idempotency contract (#475) is a durability obligation and not an optimisation.
@@ -415,6 +420,8 @@ needs to write a guard for.
 | No blind **claim** — claim presents the observed version | `nakamalease.Store` | `TestClaimRejectsAStaleAttemptWithoutWriting`, `TestClaimReportsConflictWhenTheObservedLeaseWasReleased` |
 | No blind **finalize** — finalize presents the observed version | `nakamalease.Store` | **unguarded** — `Finalize` writes with `current.Version`, but the only direct call site (`handoffalloc/coordinator_test.go`) finalizes a freshly loaded record and never supplies a stale version |
 | No blind **release** — release deletes conditionally | `nakamalease.Store` | `TestReleaseRejectsAStaleAttemptWithoutDeleting`, `TestReleaseReconcilesNakamaConditionalDeleteRejections` |
+| No blind **begin-release** — the fencing write presents the observed version | `nakamalease.Store` | `TestBeginReleaseMarksTheCurrentAttemptBeforeExternalCleanup`, `TestBeginReleaseReplayKeepsTheExistingBarrier`, `TestClaimAndBeginReleaseLeaveExactlyOneOwner` |
+| No blind **expiry reclaim** — the sweep fences with the listed version, then deletes conditionally | `nakamalease.Store` | **unguarded** — `TestReclaimExpiredContinuesAfterOneResourceTimesOut` covers per-object error tolerance, not a stale-version reclaim |
 | The writer declares the current schema | `nakamalease` document encode | `TestCreatePersistsPrivateVersionedLeaseByHashedKey` (asserts `schema: 2` on the stored value) |
 | The reader accepts the legacy end of the range | `nakamalease` document decode | `TestLoadKeepsSchemaOneLeaseReadableAsNotReleasing` |
 | The reader rejects a schema outside the range | `nakamalease` document decode | `TestLoadRejectsMalformedOrPublicStoredObjects` (`unsupported schema`) |
