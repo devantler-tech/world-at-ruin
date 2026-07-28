@@ -425,13 +425,17 @@ everything shipped afterwards is held to.
   the distinction #423 established, rather than becoming a second permanent refusal — and
   `CharacterStore.last_refusal()` names which of the three outcomes occurred, because one
   undifferentiated `false` cannot tell a caller whether to retry or lock the creator shut.
-  `CharacterStore._last_write_expectation` exists solely so a test can prove the production apply
-  threads a REAL identity: a caller writing blind is indistinguishable from a correct one until
-  something races it, and that ablation was measured passing every assertion in `character_cas_test`
-  and every end-to-end assertion in `character_revert_boot_test`, which is why the threading is pinned
-  in the latter's control arm against the scene that actually calls `save_recipe()`.
-  Its staging sweep keeps an age floor the vault has no need of, because a retained rollback build or a
-  foreign writer stages through that prefix without ever taking the lock. A sibling file is the only shape a shipped client
+  `CharacterStore._last_write_expectation` exists so a test can prove the production apply threads a
+  REAL identity directly, rather than only through a consequence: a caller writing blind is
+  indistinguishable from a correct one until something races it, and that ablation was measured
+  passing every assertion in `character_cas_test`. It is asserted in `character_revert_boot_test`'s
+  control arm, against the scene that actually calls `save_recipe()`. That test's arm D catches the
+  same ablation behaviourally — it stages a real race, so a blind apply overwrites the foreign
+  character and fails there too — and the two are deliberately kept: the control arm names the cause
+  in one line, arm D proves the player-visible consequence. Unlike the vault and the ledger, whose
+  end-to-end coverage that ablation passed outright, this file has both.
+  The character store's staging sweep keeps an age floor the vault has no need of, because a retained
+  rollback build or a foreign writer stages through that prefix without ever taking the lock. A sibling file is the only shape a shipped client
   handles safely: it never reads it, so it never rejects or deletes it. The vault obeys the same laws
   (name-keyed, additive-only, newer versions refused) with the same enforcement shape —
   `tests/save_vault_guard_test`, golden `tests/data/golden_vault_v<N>.json`, and the append-only
