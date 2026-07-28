@@ -439,16 +439,21 @@ subsurface softness and tonal variation. Right now they share one shading respon
 the wanderer reads as a mannequin wearing painted-on clothes.
 
 **Stance and motion (#224).** The standing body carries weight on one leg, hangs its arms
-asymmetrically and breathes. With `WAR_WALK_CYCLE=1`, grounded non-sprint travel adds a first
-code-authored gait: opposing legs, flexed swing knee and counter-swung arms follow distance travelled.
-The ordinary game keeps the standing body during travel while this preview is default-off. Run,
-jump, landing, turning and blended state transitions remain unauthored.
+asymmetrically and breathes. Two grounded gaits are code-authored, each behind its own opt-in so
+neither enrols testers of the other. With `WAR_WALK_CYCLE=1`, non-sprint travel gets opposing legs,
+a flexed swing knee and counter-swung arms following distance travelled. With `WAR_RUN_CYCLE=1`,
+sprinting gets a distinct run rather than that walk played faster: the elbows carry folded and drive
+— a channel the walk holds straight — and the knees keep a standing bias so neither ever reaches the
+walk's planted pose, with a longer stride so speed comes from ground covered per step rather than
+step rate. The ordinary game keeps the standing body during travel while both previews are
+default-off. Jump, landing, turning and blended state transitions remain unauthored, and neither
+gait has a flight phase, since vertical travel is the controller's rather than the pose's.
 
 **Motion reference.** The [Kingmakers announcement trailer from
 1:06–1:10](https://www.youtube.com/watch?v=OvezgDni8z4&t=66s) anchors a readable full-body sprint and
-stable third-person tracking. The walk preview borrows only that readable full-body
-locomotion/camera relationship; it does not copy the modern protagonist or claim a reference match
-for the current rough gait.
+stable third-person tracking. Both gait previews borrow only that readable full-body
+locomotion/camera relationship; they do not copy the modern protagonist or claim a reference match
+for the current rough gaits, and the camera side of that relationship is untouched.
 
 **Races are authored identities, not sliders (#228).** WoW and WildStar give each playable race its
 own proportions, silhouette, culture and art language — a Tauren is not a tall human. Our creator
