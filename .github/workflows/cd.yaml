@@ -1030,10 +1030,10 @@ jobs:
           create_cask_pr() {
             local tap="$1"
             local branch="$2"
-            local version="$3"
+            local cask_version="$3"
             local out
             if out="$(gh api --method POST "repos/${tap}/pulls" \
-                 -f title="chore(cask): update world-at-ruin to v${version}" \
+                 -f title="chore(cask): update world-at-ruin to v${cask_version}" \
                  -f head="${branch}" \
                  -f base=main \
                  -f body="Automated cask update for World at Ruin. Programmed release path: check-gated auto-merge, no review needed." 2>&1)"; then

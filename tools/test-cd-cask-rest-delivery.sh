@@ -256,11 +256,20 @@ fi
 
 # Match the INVOCATION, not a mention: the helper's own comment explains what
 # it replaced, so strip whole-line comments first and search what is left.
-# (A single `^[[:space:]]*[^#[:space:]].*gh pr create` does NOT work — the
-# leading-character class eats the `g` of the very token being searched for,
-# so the ablation that reinstates `gh pr create` passes it.)
-if grep -vE '^[[:space:]]*#' "${workflow}" | grep -q 'gh pr create'; then
-	fail "cd.yaml still calls the GraphQL-backed 'gh pr create'"
+#
+# Two traps, both of which made this guard silently unfireable until an
+# ablation reinstated `gh pr create` and the test still passed:
+#
+#   1. `^[[:space:]]*[^#[:space:]].*gh pr create` cannot work — the
+#      leading-character class eats the `g` of the very token being searched.
+#   2. `grep -v … | grep -q …` cannot work under `set -o pipefail`: `-q` exits
+#      at the first match and closes the pipe, the upstream grep dies of
+#      SIGPIPE (141), and pipefail hands that to `if`, so a MATCH reads as
+#      false. Count instead — `grep -c` drains its input, so nothing is
+#      signalled.
+uncommented_hits="$(grep -vE '^[[:space:]]*#' "${workflow}" | grep -c 'gh pr create' || true)"
+if [ "${uncommented_hits}" != "0" ]; then
+	fail "cd.yaml still calls the GraphQL-backed 'gh pr create' (${uncommented_hits} call site(s))"
 fi
 if ! grep -qF "grep -qiE 'rate limit|RATE_LIMITED'" "${workflow}"; then
 	fail "the arming loop does not recognise a GraphQL rate-limit refusal"
