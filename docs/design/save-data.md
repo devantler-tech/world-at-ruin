@@ -212,9 +212,11 @@ uses explicit v1, while a loaded v0 stays v0 in memory and migrates only on its 
 
 Recovery refusal is path-latched for the process lifetime, and persistence reparses the destination
 immediately before atomic replacement. Reconstructing state, deleting a refused file, or landing a
-future/corrupt replacement therefore cannot turn the path writable. This narrows but does not close
-the rename-time concurrent-writer gap: boot recovery takes no write lock, so unlike the vault it is
-still guarded by the pre-replacement recheck alone.
+future/corrupt replacement therefore cannot turn the path writable. Recovery persistence also takes
+the same cross-process write lock the vault takes, so a second lock-aware writer cannot read, merge
+and rename between another's check and its replace. That matters here more than anywhere: the
+updater and the game are both live writers of this file, and what a lost update discards is the
+evidence deciding whether a client rolls back.
 
 The ledgers are the immutable floor: the in-game guards compare the current constants and fixtures,
 while CI compares each ledger with the pull request's base revision. Editing code, fixtures and a
@@ -295,11 +297,14 @@ catastrophic rather than helpful.
   deleting it would cause exactly the corruption the private name removes. The window errs long —
   sweeping too eagerly destroys another client's write, sweeping too late leaves one file for one
   more launch.
-- Vault persistence takes a cross-process write lock around its whole read-modify-write, so no second
-  lock-aware writer can read, merge and rename between another's check and its replace. The lock is a
-  directory beside the vault (`vault.json.lock`): `DirAccess.make_dir_absolute` is `mkdir`, the one
+- Vault and boot-recovery persistence each take a cross-process write lock around their whole
+  read-modify-write, so no second lock-aware writer can read, merge and rename between another's
+  check and its replace. One primitive serves both (`FileLock`); a second mechanism for the second
+  file would be a second set of bugs. The lock is a directory beside the file it guards
+  (`vault.json.lock`, `boot_recovery.json.lock`): `DirAccess.make_dir_absolute` is `mkdir`, the one
   atomic exclusive-create Godot exposes, so exactly one writer wins and the rest refuse. A refused
-  write degrades to session-only and never blocks a boot.
+  write degrades to session-only and never blocks a boot — and reads take no lock at all, so a held
+  lock can never prevent a rollback decision.
 - Acquisition is only ever that single `mkdir` against an absent path. Reclaiming an abandoned lock is
   a **separate pass that never acquires**: it renames the stale directory to a uniquely-named copy
   (rename succeeds for exactly one process, which is what serializes reclamation), verifies on that
@@ -309,7 +314,8 @@ catastrophic rather than helpful.
   as owners — so do not "simplify" it back into remove-then-create.
 - The lock directory is **not** empty: it holds an ownership stamp. Renaming onto an empty directory
   succeeds, so an unstamped lock could be silently renamed over; the stamp also lets a holder prove
-  the lock is still its own immediately before replacing the vault, and abandon the write if it is not.
+  the lock is still its own immediately before it replaces the file, and abandon the write if it is
+  not. Both writers make that check on their own replace path.
 - **Scope the lock precisely.** A lock only excludes writers that take it. Builds from before this
   protocol — the retained and rollback clients the updater keeps runnable — write the same file without
   it, as do foreign writers such as cloud sync, a backup agent or a hand edit. The lock removes lost

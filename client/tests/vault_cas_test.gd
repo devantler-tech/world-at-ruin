@@ -387,10 +387,10 @@ func _staging_leftovers() -> Array:
 
 
 func _cleanup() -> void:
-	SaveVault.clear_locks_for_test()
+	FileLock.clear_for_test()
 	SaveVault.clear_refusals_for_test()
-	var lock := SaveVault.lock_path(PROBE)
-	DirAccess.remove_absolute(_abs(lock + "/" + SaveVault.LOCK_OWNER_FILE))
+	var lock := FileLock.path_for(PROBE)
+	DirAccess.remove_absolute(_abs(lock + "/" + FileLock.OWNER_FILE))
 	DirAccess.remove_absolute(_abs(lock))
 	for path: String in [PROBE, PROBE + ".tmp"]:
 		_remove(path)
