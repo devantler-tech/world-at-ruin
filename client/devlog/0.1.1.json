@@ -1,0 +1,9 @@
+{
+	"date": "2026-07-16",
+	"notes": [
+		"Fixed getting wedged inside the terrain after a hard fall (the first player-reported bug — reported minutes after the world first existed).",
+		"Falls now cap at a survivable-feeling terminal speed, and the Reach pops you back onto the surface if the ground ever claims you."
+	],
+	"title": "The ground no longer swallows wanderers",
+	"version": "0.1.1"
+}

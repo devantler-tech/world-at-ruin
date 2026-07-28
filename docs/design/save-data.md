@@ -47,10 +47,11 @@ when an expanded document is already present; rollback safety requires both halv
   adds the new golden in the same pull request. A same-schema addition raises only the read-capability
   ceiling. Neither change activates the writer.
 
-Do not blindly raise a constant that also controls writing. Today `CharacterFactory.RECIPE_VERSION`
-feeds `UpdateManifest.save_schema.writes`, and `SaveVault.VAULT_VERSION` feeds the version of a new
-empty vault. If read support cannot advance without advertising or emitting the new version, split
-the read ceiling from the write version first. An expansion that starts writing is not an expansion.
+Do not blindly raise a constant that also controls writing. `CharacterFactory.RECIPE_VERSION`
+currently feeds both `UpdateManifest.shell.reads_max` and `UpdateManifest.save_schema.writes`, while
+`SaveVault.VAULT_VERSION` feeds the version of a new empty vault. Split the read ceiling from the
+write version before schema read support advances. An expansion that starts writing is not an
+expansion.
 
 ### 2. Bake the expansion
 
@@ -220,10 +221,15 @@ ledger together therefore cannot make a shipped version disappear quietly.
 
 The character recipe and vault deliberately fail differently:
 
-- A recipe that `CharacterFactory` refuses is existing player state, not a first run. Keep the file
-  untouched, do not open a writable replacement path, and surface recovery instead of presenting a
-  blank character. `CharacterStore` currently parses only; rejection happens later during
-  `CharacterFactory.build()`, and there is no vault-style refusal latch to mistake for protection.
+- A recipe that `CharacterFactory` refuses is existing player state, not a first run. The file stays
+  untouched, no writable replacement path opens, and the player is told rather than shown a blank
+  character. `CharacterStore.load_from()` decides this at the save boundary: it parses, then asks
+  `CharacterFactory.refusal_reason()` whether this build can accept what it parsed, and latches a
+  refusal on the path when it cannot. The latch outlives the file, so a recipe that disappears after
+  being refused — cloud sync, a second client, the player deleting it — does not reopen the writable
+  path. `CharacterStore.save_to()` refuses every write to a refused path, and `main.gd` locks all
+  character-creator entry, so the door and the lock are independent. Only an absent, never-refused
+  path is a first run.
 - A missing vault degrades to an empty, session-capable vault and never blocks character boot.
 - An existing vault that is unreadable, malformed or newer degrades to session-only progression and
   becomes read-only for the rest of the process. `SaveVault` latches that refusal even if the file
@@ -270,6 +276,22 @@ catastrophic rather than helpful.
 - An unreadable or newer boot-recovery document degrades to a rollback-safe empty quarantine view,
   while the path remains read-only for the process lifetime. Rollback eligibility still proves save,
   protocol and shell compatibility independently; new update attempts and recovery writes stop.
+- The character write commits from a **private staging file**, `character.json.tmp-<pid>-<ticks>`,
+  never a derivable `character.json.tmp`. A shared staging name is a hole no target-side check can
+  see: a second client — a retained rollback build, a sync agent, a second install — opens that same
+  predictable path and can truncate the staged recipe after it is serialised and before the rename,
+  and because `character.json` itself is untouched until then, both the write guard and the
+  pre-replacement re-check pass and the rename commits the other writer's partial bytes. A name a
+  foreign writer cannot derive removes the sharing instead of trying to detect it.
+- Because a per-attempt name is not reclaimed by being overwritten the way one fixed name was, a
+  crashed writer's staging file is swept on the next write — but only once it has sat unchanged past
+  `WRITE_TMP_MIN_AGE_SECONDS` (300 s, overridable for tests via
+  `WAR_CHARACTER_WRITE_TMP_MIN_AGE_SECONDS`). The age floor is what stands in for the lock the
+  character store does not yet have: the vault may sweep anything it finds because it sweeps while
+  holding the write lock, whereas a young character stage may be a live write by a second client, and
+  deleting it would cause exactly the corruption the private name removes. The window errs long —
+  sweeping too eagerly destroys another client's write, sweeping too late leaves one file for one
+  more launch.
 - Vault and boot-recovery persistence each take a cross-process write lock around their whole
   read-modify-write, so no second lock-aware writer can read, merge and rename between another's
   check and its replace. One primitive serves both (`FileLock`); a second mechanism for the second
@@ -289,13 +311,31 @@ catastrophic rather than helpful.
   succeeds, so an unstamped lock could be silently renamed over; the stamp also lets a holder prove
   the lock is still its own immediately before it replaces the file, and abandon the write if it is
   not. Both writers make that check on their own replace path.
-- **Scope the guarantee precisely.** A lock only excludes writers that take it. Builds from before this
+- **Scope the lock precisely.** A lock only excludes writers that take it. Builds from before this
   protocol — the retained and rollback clients the updater keeps runnable — write the same file without
-  it, as do foreign writers such as cloud sync or a hand edit. For all of those the pre-replacement
-  readability recheck and the refuse-a-newer-version rule are the protection, and they narrow the
-  window to the rename rather than closing it. This removes lost updates between lock-aware builds now
-  and becomes general only once every still-runnable build carries the protocol; do not describe it as
-  closing the differently-versioned case outright.
+  it, as do foreign writers such as cloud sync, a backup agent or a hand edit. The lock removes lost
+  updates between lock-aware builds and nothing more; do not describe it as closing the
+  differently-versioned case outright.
+- Every write additionally **compare-and-swaps on the document's own bytes**. The read-modify-write
+  records the SHA-256 of the vault it read and verifies the file still carries it immediately before the
+  rename, refusing when it does not. This keys on what the file *is* rather than on who cooperated, so
+  it covers exactly the writers the lock cannot bind — and it subsumes the point-in-time ownership gap,
+  because a reclaimed-and-rewritten vault fails the comparison. `save_to()` stays a deliberate blind
+  whole-document replace via an explicit sentinel; `replace_if_unchanged()` is the guarded entry point.
+- The identity is captured **before** the read, not after. Captured after, a foreign write landing
+  between the read and the hash would be recorded as the expectation while the merge still held the old
+  document, and the comparison would pass. Captured before, that interleaving makes the expectation
+  stale and the write refuses. Both orders leave a window; only this one fails safe.
+- Each write **stages through a private per-attempt path** (`vault.json.tmp-<pid>-<ticks>`), never a
+  shared `vault.json.tmp`. The compare-and-swap verifies the *target*, so it cannot see a foreign
+  writer truncating the staged document between serialisation and the rename — the target is untouched,
+  every check passes, and the rename would commit the other writer's partial bytes while reporting
+  success. A per-attempt name removes the sharing rather than detecting it. Abandoned staging files are
+  swept under the write lock, which a fixed name previously got for free by being overwritten.
+- **The residual is a shrunk window, not a closed one.** Verify-then-rename is two operations, so the
+  gap narrows to the rename syscall. Closing it needs a lock the OS holds across the rename (`flock`,
+  `O_EXCL`), which Godot's `FileAccess`/`DirAccess` do not expose. The gain is turning a *silent* lost
+  update into a *detected refusal*, which degrades to session-only and never blocks a boot.
 
 Boot tests redirect every player-state seam through `SaveIsolation`; persistence and fixture tests use
 explicit throwaway paths. A migration test that touches a played save is itself a product-law
@@ -306,6 +346,7 @@ violation.
 | Promise | Runtime owner | Permanent guard |
 |---|---|---|
 | Historical character recipes still load and build | `CharacterFactory`, `CharacterStore` | `save_fixture_guard_test`, recipe ledger and goldens |
+| A refused recipe is never replaced by a first run | `CharacterStore`, `main.gd` | `character_refusal_test`, `character_refusal_boot_test` |
 | Historical vaults still load and re-save | `SaveVault` | `save_vault_guard_test`, vault ledger and goldens |
 | Historical recovery documents still load and re-save | `BootRecovery` | `boot_recovery_guard_test`, recovery ledger and goldens |
 | Shipped attunement names still work | `SaveVault`, `RespawnPoints` | `shipped_attunements.txt`, vault and boot-restoration guards |

@@ -1,0 +1,10 @@
+{
+	"date": "2026-07-17",
+	"notes": [
+		"The Reach is no longer a diorama you only walk through: look at something close and a prompt appears — press E (or a gamepad button) to act on it.",
+		"The Wardens' Shrine can be attuned: stand at its flame, attune it, and the Reach will return you there when you fall — instead of waking you back in the dark of the cave. (For now this lasts the session; it will remember across logouts once the save vault is sealed.)",
+		"The people finally speak: walk up to anyone and they have a first word for you — the same word, from the same person, every boot. It is a first line only; real conversations, and the errands they will carry, come later."
+	],
+	"title": "The world answers",
+	"version": "0.1.14"
+}

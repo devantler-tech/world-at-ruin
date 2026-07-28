@@ -1,0 +1,10 @@
+{
+  "_comment": "The replicated population the `replication` frame-capture scenario photographs (issue #325, epic #4). Committed rather than generated so the frames stay comparable across runs and across commits — the same property the fixed VANTAGES exist to protect. Shape and units are the wire's own (client/scripts/wire_codec.gd): positions and radii are integer MILLIMETRES, Y is up, and `observer` is the id this table replicates FOR and therefore may never appear in `entities`. The capture applies this as a base snapshot to the store the shipped ZoneConnection holds, so ReplicaStore.apply and ReplicaView.sync are the real ones; only the socket is absent. Heights sit the capsules on the Reach's ground at these coordinates — the capture raycasts and FAILS if a marker floats, so moving an entity horizontally means re-measuring its y.",
+  "tick": 1,
+  "observer": 1,
+  "entities": [
+    { "id": 101, "x": -4000, "y": 0, "z": -12000, "radius": 400 },
+    { "id": 102, "x": -1000, "y": 0, "z": -13500, "radius": 400 },
+    { "id": 103, "x": -7000, "y": 0, "z": -11000, "radius": 400 }
+  ]
+}

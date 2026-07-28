@@ -23,6 +23,7 @@ var _toast: Label
 var _prompt: Label
 var _hints: Label
 var _devlog_panel: PanelContainer
+var _devlog_label: RichTextLabel
 var _toast_tween: Tween
 var _device: InputDevice
 
@@ -57,6 +58,8 @@ func _on_device_changed(device: int) -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("toggle_devlog"):
+		if _devlog_label.text.is_empty():
+			_devlog_label.text = _render_devlog()
 		_devlog_panel.visible = not _devlog_panel.visible
 		get_viewport().set_input_as_handled()
 
@@ -172,11 +175,13 @@ func _build_devlog() -> void:
 	_devlog_panel.add_theme_stylebox_override("panel", style)
 	add_child(_devlog_panel)
 
-	var log := RichTextLabel.new()
-	log.bbcode_enabled = true
-	log.scroll_active = true
-	log.text = _render_devlog()
-	_devlog_panel.add_child(log)
+	_devlog_label = RichTextLabel.new()
+	_devlog_label.bbcode_enabled = true
+	_devlog_label.scroll_active = true
+	# Left empty until the log is first opened. The panel starts hidden and most
+	# launches never show it, so composing every entry here spent launch time
+	# laying out text nobody is looking at.
+	_devlog_panel.add_child(_devlog_label)
 
 func _render_devlog() -> String:
 	var ember := COL_EMBER.to_html(false)

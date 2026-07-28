@@ -1,0 +1,51 @@
+version: "2"
+run:
+  allow-parallel-runners: true
+  modules-download-mode: readonly
+linters:
+  # Named explicitly rather than inherited from a default set: this is the
+  # server that has to stay up for everyone connected to it, so the set is the
+  # classes that take a process down or corrupt what it sends — not style.
+  default: none
+  enable:
+    - asasalint
+    - bodyclose
+    - contextcheck
+    - copyloopvar
+    - durationcheck
+    - errcheck
+    - errorlint
+    - exhaustive
+    - fatcontext
+    - forcetypeassert
+    - gocritic
+    - gosec
+    - govet
+    - ineffassign
+    - makezero
+    - nilerr
+    - noctx
+    - protogetter
+    - reassign
+    - recvcheck
+    - staticcheck
+    - testifylint
+    - thelper
+    - tparallel
+    - unconvert
+    - unparam
+    - unused
+    - wastedassign
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  # Scoped to the FILES a change touches, so the findings that predate the gate
+  # (inventoried in #436) do not wall off unrelated work. Remove both keys once
+  # #436 reaches zero and the gate covers the whole module.
+  new-from-merge-base: origin/main
+  # Whole changed FILES, not just changed lines. Deleting a safeguard attaches
+  # the resulting diagnostic to the surviving unchanged line — dropping a
+  # `defer resp.Body.Close()` reports against the untouched `http.Get` — so a
+  # line-scoped gate lets a PR remove error, close or context handling and stay
+  # green. Editing a file makes you answerable for it.
+  whole-files: true

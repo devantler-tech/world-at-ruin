@@ -103,8 +103,11 @@ func _physics_process(_delta: float) -> void:
 
 
 func _fail(message: String) -> void:
-	if _save != null:
-		_save.end()
+	# real_save_untouched() clears the seams itself, so it REPLACES the bare
+	# end() rather than adding a second teardown (#326).
+	if _save != null and not _save.real_save_untouched():
+		message += (" — AND the run touched the player's real save, vault or recovery ledger; "
+			+ "the isolation breach outranks the failure above")
 	push_error(message)
 	print("TEST FAIL — %s" % message)
 	get_tree().quit(1)
