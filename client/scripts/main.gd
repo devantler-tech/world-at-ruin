@@ -699,6 +699,15 @@ func _open_creator(first_run: bool) -> void:
 	if _save_blocked:
 		return
 	var save_path := CharacterStore.save_path()
+	# Capture the recipe's identity BEFORE reading it, so the apply below can
+	# compare-and-swap on the bytes this session actually edited (#469). The order
+	# is load-bearing and cannot be relaxed to "somewhere near the read": captured
+	# AFTER, a foreign write landing between the load and the capture becomes the
+	# expectation while the creator still opens on the OLD document, and the check
+	# then passes on exactly the interleaving it exists to refuse. Captured before,
+	# that interleaving refuses. The same ordering guards the vault (#386) and the
+	# boot-recovery ledger (#453).
+	var expected_identity := CharacterStore.document_identity(save_path)
 	var initial = CharacterStore.load_saved()
 	if initial is not Dictionary and CharacterStore.is_refused(save_path):
 		# The file changed since boot — corrupted, or replaced by a newer build's
@@ -724,12 +733,18 @@ func _open_creator(first_run: bool) -> void:
 		# refuse between opening the creator and applying, and showing the new
 		# body with a success line would tell the player they are saved when the
 		# next launch will show them someone else.
-		if not CharacterStore.save_recipe(recipe):
+		if not CharacterStore.save_recipe(recipe, expected_identity):
 			# A refused write and a CONTENDED one both answer false, and they must
 			# not be treated alike. A refusal is permanent — the recipe on disk is
 			# not this build's to replace — so the creator latches shut. Contention
 			# is momentary: another copy of the game held the write lock, or this
-			# attempt freed an abandoned one and deliberately refused that pass.
+			# attempt freed an abandoned one and deliberately refused that pass, or
+			# the recipe changed under this edit and the compare-and-swap refused
+			# rather than discarding whoever wrote it (#469). All three momentary
+			# outcomes want the same answer here — show what is on disk, say it was
+			# not saved, do NOT latch — and the store's refusal latch is what tells
+			# them from the permanent one; it is never set by a lock failure or by a
+			# stale identity. CharacterStore.last_refusal() names which one it was.
 			# Latching on that would lock the player out of their own character for
 			# the rest of the session over a collision the next attempt resolves.
 			# The store's refusal latch is what tells them apart; it is never set by
