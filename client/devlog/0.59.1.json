@@ -1,10 +1,11 @@
 {
 	"date": "2026-07-27",
 	"notes": [
-		"If you went back to an older version of the game after playing a newer one, that older build could not read the character you had made — and it took that to mean you had never played at all. It opened the new-character screen over the top, and the moment you finished making someone, the character you already had was gone. A damaged character file did the same thing.",
-		"A character this version cannot read is now left exactly as it is. The game tells you so, no new-character screen opens, and nothing can write over them — not the opening screen, not the character editor.",
-		"Starting fresh is unchanged: when there is genuinely no character saved, you make one as usual."
+		"If the file holding your progress was ever damaged — a crash partway through a save, a bad sector, a sync that went wrong — the Reach quietly stopped recording anything new. Not for that session: forever. Every shrine you attuned and every place you found came back as \"it may not remember past this waking\", every waking, and nothing you could do inside the game would clear it.",
+		"Damaged progress is now set aside instead. The Reach says so once, keeps the damaged pages exactly as they were, and begins remembering again from where you stand.",
+		"Nothing is thrown away. The old pages are kept beside your progress rather than deleted, so anything recoverable stays recoverable.",
+		"Progress written by a NEWER version of the game is still left strictly alone, as before — that is somebody's real progress, and this build will not touch it. Only pages that no version could read are set aside, and only once they have clearly been abandoned rather than half-written a moment ago."
 	],
-	"title": "A version that cannot read your character no longer replaces them",
+	"title": "Damaged progress no longer stops the Reach remembering",
 	"version": "0.59.1"
 }
