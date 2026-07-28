@@ -34,51 +34,55 @@ extends Node
 
 const EXTENT := 220.0
 
-## Lattice spacing for the grade and relief sweeps, in metres. Fine enough to
-## resolve a grade at the scale a walking character meets one; the guard states
-## its own sampling scale rather than implying a true continuous maximum.
+## Lattice spacing for the RELIEF sweep, in metres.
 ##
-## The recorded numbers below are sampling-dependent and are NOT comparable
-## across steps — the same baseline world measures 41.9 degrees at 1 m and 44.4
-## at 0.5 m. Change this and every threshold here has to be re-measured.
+## The relief figures below are sampling-dependent and are NOT comparable across
+## steps, so changing this means re-measuring every one of them. The grade arms
+## do not use it: a collision face is a fixed piece of the world, so its angle
+## is a property of the mesh rather than of how densely anything sampled it.
 const SAMPLE_STEP := 0.5
 
 ## Godot's `CharacterBody3D.floor_max_angle` default, which the wanderer uses
 ## unchanged: above this a surface stops being floor and becomes wall.
 const FLOOR_MAX_ANGLE_DEG := 45.0
 
-## The worst grade the open ground may reach anywhere, in degrees. A RATCHET,
-## not a safety margin.
+## The steepest collision FACE the open terrain may reach anywhere, in degrees.
+## A RATCHET, not a safety margin.
 ##
-## Measured at `SAMPLE_STEP` on the shipped seed, away from the massif: this
-## build reaches **42.54** degrees against a 45 degree floor limit.
+## Measured on the shipped seed away from the massif: this world reaches
+## **44.18** degrees against a 45 degree floor limit. That is 0.82 degrees of
+## real margin, and it is genuinely that tight — the Reach has always run this
+## close to the limit; only a gentler proxy made it look otherwise.
 ##
-## The bar is set just above THIS build rather than just under the floor limit,
+## The bar is set just above THIS world rather than just under the floor limit,
 ## and that is deliberate: a threshold at 44.9 would licence letting the ground
-## get 2.4 degrees steeper than it currently is, without anything here noticing.
-## Ratchet it down as the ground gets gentler; never up to accommodate a re-tune.
-const MAX_GRADE_DEG := 43.0
+## get steeper still without anything here noticing. Ratchet it down as the
+## ground gets gentler; never up to accommodate a re-tune.
+const MAX_GRADE_DEG := 44.5
 
-## The worst grade each region's OWN decided interior may reach, in degrees.
-## Ratchets, measured at `SAMPLE_STEP` on the shipped seed.
+## The steepest face each region's OWN decided interior may reach, in degrees.
+## Ratchets, measured on the shipped seed.
 ##
 ## 🔴 This is the walkability law; `MAX_GRADE_DEG` above is only its weakest
 ## form. A global maximum is held by whichever region is steepest, so it is
-## blind to every other one — and not by a little. Measured: raising
-## `bonepale`'s amplitude to 0.62 takes its own ground from 38.45 degrees to
-## **41.11**, a change large enough to alter what that region is to walk across,
-## while the global reading does not rise at all (42.54 to 42.50 — it goes
-## DOWN). The old global-only form of this arm stayed green on exactly that.
-## Per region, the drift has nowhere to hide.
+## blind to every other one — and not by a little. Measured on the previous
+## sweep: raising `bonepale`'s amplitude to 0.62 took its own ground from 38.45
+## degrees to 41.11, a change large enough to alter what that region is to walk
+## across, while the global reading did not rise at all. Per region, the drift
+## has nowhere to hide.
 ##
-## Measured: ashflats 42.50, cinderreach 42.49, rustmoor 41.50, bonepale 38.45.
+## Measured: cinderreach 43.38, ashflats 41.55, rustmoor 41.04, bonepale 36.92.
 ## Each bar sits just above its own region, which is what makes them ratchets
 ## rather than a shared allowance the regions can trade between themselves.
+##
+## These sit BELOW the global bar because a region only owns faces whose three
+## vertices agree on it (see `_sweep_face_grades`): the world's steepest ground
+## is in the blend bands between regions, which belong to none of them.
 const MAX_REGION_GRADE_DEG := {
-	&"ashflats": 43.0,
-	&"cinderreach": 43.0,
-	&"rustmoor": 42.0,
-	&"bonepale": 39.0,
+	&"ashflats": 42.0,
+	&"cinderreach": 43.8,
+	&"rustmoor": 41.5,
+	&"bonepale": 37.5,
 }
 
 ## The massif's buried skirt is DELIBERATELY a cliff — the heightfield cannot
@@ -144,7 +148,7 @@ var _region_worst := {}
 func _ready() -> void:
 	_world = WorldGen.new()
 	add_child(_world)
-	_worst_grade = _worst_open_grade_deg()
+	_worst_grade = _sweep_face_grades()
 	var relief := _measure_relief()
 
 	_test_every_region_declares_an_affordable_landform()
@@ -538,59 +542,79 @@ func _base_field_transects() -> Array[PackedFloat32Array]:
 	return out
 
 
-## The steepest grade between lattice neighbours over the OPEN terrain, in
-## degrees. Measured through `height_at` — the shipped function, not a
-## re-derivation of it — with the massif's deliberate skirt excluded.
+## in one decided region.
+func _face_region(sites: Array, a: Vector2, b: Vector2, c: Vector2) -> StringName:
+	var owner := -1
+	for v: Vector2 in [a, b, c]:
+		var at := GroundRegions.region_for(sites, v.x, v.y)
+		if float(at[&"blend"]) < 1.0:
+			return &""
+		var region: int = at[&"region"]
+		if owner == -1:
+			owner = region
+		elif owner != region:
+			return &""
+	return GroundRegions.REGIONS[owner][&"name"]
+
+
+## The steepest COLLISION FACE over the open terrain, in degrees, with the
+## massif's deliberate skirt excluded. Fills `_region_worst` from the same pass.
 ##
-## Fills `_region_worst` from the same pass: the sweep is this suite's expensive
-## part, and attributing each step to the region that owns it costs one
-## `region_for` per sample rather than a second sweep.
+## 🔴 Both halves of this are load-bearing, and the cheaper version of each is
+## wrong in a way that stays green.
 ##
-## 🔴 A step is attributed only where BOTH it and its owner are unambiguous —
-## decided cells, blend 1.0. A blend band belongs to no region, so charging its
-## gradient to whichever side happened to be sampled would make a region's
-## ratchet move when its NEIGHBOUR was re-tuned. Those bands are exactly where
-## the world's steepest ground is (global worst 42.54 against a decided-interior
-## worst of 42.50), so they are not unguarded — `MAX_GRADE_DEG` covers them, and
-## covering them is most of what it is still for.
-func _worst_open_grade_deg() -> float:
+## **The angle is a face normal, not a cardinal rise.** A wanderer is classified
+## against the normal of the triangle under them, and that is not recoverable
+## from one axis: ground rising along BOTH axes at 40 degrees is a ~50 degree
+## face, so a per-axis test can report every component under the bar while the
+## surface the player meets is a wall. Measured on this field, `max(|dx|, |dz|)`
+## reads 42.54 degrees where the true gradient is 50.72 — 8.18 degrees of
+## understatement, straddling the very limit being guarded.
+##
+## **The surface is the baked mesh, not `height_at`.** Physics stands on the
+## piecewise-linear grid, so that is what must be under the limit; nothing walks
+## on the smooth field. Read through the shipped `surface_normal_at` at each
+## face's own centroid — one call per triangle, exactly the faces
+## `_build_terrain` emits, rather than a re-derivation that could drift from the
+## real split convention.
+##
+## **Attribution needs all THREE vertices decided and agreeing.** Testing only
+## the centroid would charge a face straddling a boundary to whichever region
+## owns its middle, so retuning a NEIGHBOUR could trip this region's supposedly
+## independent ratchet. Faces spanning a blend band therefore belong to no
+## region; `MAX_GRADE_DEG` covers them, and that is most of what it is still for.
+func _sweep_face_grades() -> float:
 	var sites := GroundRegions.sites(WorldGen.WORLD_SEED, EXTENT)
-	var half := EXTENT / 2.0
-	var count := int(EXTENT / SAMPLE_STEP)
+	var step := WorldGen.SIZE / WorldGen.QUADS
+	var half := WorldGen.SIZE / 2.0
 	var worst := 0.0
-	var row := PackedFloat32Array()
-	var prev := PackedFloat32Array()
-	row.resize(count + 1)
-	prev.resize(count + 1)
 	for reg: Dictionary in GroundRegions.REGIONS:
 		_region_worst[reg[&"name"]] = 0.0
-	for iz in count + 1:
-		var z := iz * SAMPLE_STEP - half
-		for ix in count + 1:
-			row[ix] = _world.height_at(ix * SAMPLE_STEP - half, z)
-		for ix in count + 1:
-			var x := ix * SAMPLE_STEP - half
-			if (Vector2(x, z) - WorldGen.CAVE_SITE).length() <= CAVE_KEEPOUT:
-				continue
-			var step := 0.0
-			if ix > 0:
-				step = maxf(step, absf(row[ix] - row[ix - 1]))
-			if iz > 0:
-				step = maxf(step, absf(row[ix] - prev[ix]))
-			worst = maxf(worst, step)
-			var at := GroundRegions.region_for(sites, x, z)
-			if float(at[&"blend"]) < 1.0:
-				continue
-			var region_name: StringName = GroundRegions.REGIONS[at[&"region"]][&"name"]
-			_region_worst[region_name] = maxf(float(_region_worst[region_name]), step)
-		var swap := prev
-		prev = row
-		row = swap
-	for region_name: StringName in _region_worst:
-		_region_worst[region_name] = rad_to_deg(
-			atan(float(_region_worst[region_name]) / SAMPLE_STEP)
-		)
-	return rad_to_deg(atan(worst / SAMPLE_STEP))
+	for iz in WorldGen.QUADS:
+		for ix in WorldGen.QUADS:
+			var x0 := ix * step - half
+			var z0 := iz * step - half
+			var x1 := x0 + step
+			var z1 := z0 + step
+			# The same two triangles `_build_terrain` splits each quad into.
+			for tri: Array in [
+				[Vector2(x0, z0), Vector2(x1, z1), Vector2(x1, z0)],
+				[Vector2(x0, z0), Vector2(x0, z1), Vector2(x1, z1)],
+			]:
+				var a: Vector2 = tri[0]
+				var b: Vector2 = tri[1]
+				var c: Vector2 = tri[2]
+				var centre := (a + b + c) / 3.0
+				if (centre - WorldGen.CAVE_SITE).length() <= CAVE_KEEPOUT:
+					continue
+				var n := _world.surface_normal_at(centre.x, centre.y)
+				var deg := rad_to_deg(acos(clampf(absf(n.y), -1.0, 1.0)))
+				worst = maxf(worst, deg)
+				var owner := _face_region(sites, a, b, c)
+				if owner == &"":
+					continue
+				_region_worst[owner] = maxf(float(_region_worst[owner]), deg)
+	return worst
 
 
 ## Relief per region: the standard deviation of ground height across each
