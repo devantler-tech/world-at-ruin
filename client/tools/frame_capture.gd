@@ -1208,8 +1208,12 @@ func _capture_gait(dir: String, main: Node, running: bool) -> void:
 	if animator == null:
 		_fail("the shipped Wanderer has no WalkLocomotion driver")
 		return
-	if OS.get_environment(WalkLocomotion.FLAG_ENV) != "1":
-		_fail("WAR_WALK_CYCLE is not opted in — refusing to advertise a disabled gait")
+	# Each gait has its own opt-in, so the evidence must demand the flag for the
+	# gait it is photographing — checking the walk's flag while capturing the run
+	# would publish a standing body as a run sequence.
+	var gait_flag := WalkLocomotion.RUN_FLAG_ENV if running else WalkLocomotion.FLAG_ENV
+	if OS.get_environment(gait_flag) != "1":
+		_fail("%s is not opted in — refusing to advertise a disabled gait" % gait_flag)
 		return
 	var world := main.get_node_or_null("World") as WorldGen
 	if world == null:

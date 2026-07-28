@@ -6,7 +6,8 @@ extends Node
 ## stays in its standing pose. This test exercises the real Player ->
 ## CharacterFactory wiring and holds both authored gaits:
 ##
-##  1. DEFAULT-OFF — ordinary movement does not touch the shipped pose.
+##  1. DEFAULT-OFF — ordinary movement does not touch the shipped pose; each gait
+##     answers to its OWN opt-in, so a walk tester is never enrolled in the run.
 ##  2. OPT-IN — grounded non-sprint travel drives opposing legs, counter-swung
 ##     arms, and a flexed knee.
 ##  3. DISTANCE-DRIVEN — equal travelled distances land on the same pose even
@@ -26,6 +27,7 @@ extends Node
 ## Run: godot --headless --path client res://tests/walk_locomotion_test.tscn
 
 const FLAG := "WAR_WALK_CYCLE"
+const RUN_FLAG := "WAR_RUN_CYCLE"
 const RECIPE_PATH := "res://recipes/wanderer.json"
 const DRIVEN_BONES := [
 	"thigh_l", "thigh_r",
@@ -58,12 +60,16 @@ const MAX_RUN_PHASE_SHARE := 0.85
 
 var _had_flag := false
 var _original_flag := ""
+var _had_run_flag := false
+var _original_run_flag := ""
 var _recipe: Dictionary = {}
 
 
 func _ready() -> void:
 	_had_flag = OS.has_environment(FLAG)
 	_original_flag = OS.get_environment(FLAG)
+	_had_run_flag = OS.has_environment(RUN_FLAG)
+	_original_run_flag = OS.get_environment(RUN_FLAG)
 	var loaded = CharacterFactory.load_recipe(RECIPE_PATH)
 	if not (loaded is Dictionary):
 		_fail("could not load %s" % RECIPE_PATH)
@@ -81,6 +87,8 @@ func _ready() -> void:
 	if not _check_non_walk_states_restore_rest():
 		return
 	if not _check_sprint_runs():
+		return
+	if not _check_gaits_are_independently_opt_in():
 		return
 	if not _check_run_is_authored_not_scaled():
 		return
@@ -279,6 +287,50 @@ func _check_sprint_runs() -> bool:
 	return true
 
 
+## 6b. Collapsing the two opt-ins back into one flag makes this fail.
+##
+## Product law 2: a player who set `WAR_WALK_CYCLE` consented to the WALK
+## experiment. If the run rode that same flag, updating would silently enrol
+## every existing walk tester into an unfinished run. So each gait is checked
+## against its own flag, in both directions — walk-only must still reset on
+## sprint exactly as it did before the run existed, and run-only must pose the
+## run while leaving ordinary walking at rest.
+func _check_gaits_are_independently_opt_in() -> bool:
+	var walk_only := _player_with_flags("1", "")
+	if walk_only.is_empty():
+		return false
+	var wsk: Skeleton3D = walk_only["skeleton"]
+	var wan: Node = walk_only["animator"]
+	var wrest := _snapshot(wsk)
+	wan.call("advance_motion", Player.SPRINT_SPEED, true, true, 0.1)
+	var sprint_posed_without_optin := not _same_pose(wrest, _snapshot(wsk), "")
+	wan.call("advance_motion", Player.WALK_SPEED, true, false, 0.1)
+	var walk_posed := not _same_pose(wrest, _snapshot(wsk), "")
+	_free_subject(walk_only)
+	if sprint_posed_without_optin:
+		return _fail("WAR_WALK_CYCLE alone drove the run — a walk tester was enrolled into it silently")
+	if not walk_posed:
+		return _fail("WAR_WALK_CYCLE alone no longer drives the walk — the existing opt-in regressed")
+
+	var run_only := _player_with_flags("", "1")
+	if run_only.is_empty():
+		return false
+	var rsk: Skeleton3D = run_only["skeleton"]
+	var ran: Node = run_only["animator"]
+	var rrest := _snapshot(rsk)
+	ran.call("advance_motion", Player.SPRINT_SPEED, true, true, 0.1)
+	var run_posed := not _same_pose(rrest, _snapshot(rsk), "")
+	ran.call("advance_motion", 0.0, true, false, 0.1)
+	ran.call("advance_motion", Player.WALK_SPEED, true, false, 0.1)
+	var walk_posed_without_optin := not _same_pose(rrest, _snapshot(rsk), "")
+	_free_subject(run_only)
+	if not run_posed:
+		return _fail("WAR_RUN_CYCLE alone did not drive the run — the run has no opt-in of its own")
+	if walk_posed_without_optin:
+		return _fail("WAR_RUN_CYCLE alone drove the walk — the flags are not independent")
+	return true
+
+
 ## 7. Redefining the run as the walk times a constant — the cheap fix this slice
 ## exists to refuse — makes these disagree.
 ##
@@ -400,11 +452,19 @@ func _check_seamless_and_deterministic() -> bool:
 	return deterministic
 
 
+## Both gaits opted in (or both out) — what most laws below want, since they
+## exercise one gait at a time and care only that it is enabled.
 func _player_with_flag(value: String) -> Dictionary:
-	if value.is_empty():
-		OS.unset_environment(FLAG)
-	else:
-		OS.set_environment(FLAG, value)
+	return _player_with_flags(value, value)
+
+
+## Independent opt-in, for the laws that are ABOUT the flags.
+func _player_with_flags(walk_value: String, run_value: String) -> Dictionary:
+	for pair: Array in [[FLAG, walk_value], [RUN_FLAG, run_value]]:
+		if (pair[1] as String).is_empty():
+			OS.unset_environment(pair[0] as String)
+		else:
+			OS.set_environment(pair[0] as String, pair[1] as String)
 	var player := Player.new()
 	add_child(player)
 	# Direct gait laws drive the animator explicitly. The one runtime-hook test
@@ -475,6 +535,10 @@ func _restore_flag() -> void:
 		OS.set_environment(FLAG, _original_flag)
 	else:
 		OS.unset_environment(FLAG)
+	if _had_run_flag:
+		OS.set_environment(RUN_FLAG, _original_run_flag)
+	else:
+		OS.unset_environment(RUN_FLAG)
 
 
 func _fail(message: String) -> bool:

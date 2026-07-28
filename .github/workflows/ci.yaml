@@ -1954,7 +1954,7 @@ jobs:
             exit 1
           fi
           WAR_SCENARIO=run \
-          WAR_WALK_CYCLE=1 \
+          WAR_RUN_CYCLE=1 \
           WAR_SHOT_DIR="${RUNNER_TEMP}/shots/run" \
           WAR_SAVE_PATH="${RUNNER_TEMP}/run_save.json" \
           WAR_VAULT_PATH="${RUNNER_TEMP}/run_save_vault.json" \
@@ -2123,6 +2123,8 @@ jobs:
             ${{ runner.temp }}/shots/opt-in-plates/*.txt
             ${{ runner.temp }}/shots/walk/*.png
             ${{ runner.temp }}/shots/walk/*.txt
+            ${{ runner.temp }}/shots/run/*.png
+            ${{ runner.temp }}/shots/run/*.txt
             ${{ runner.temp }}/shots/replication/*.png
             ${{ runner.temp }}/shots/replication/*.txt
           if-no-files-found: error

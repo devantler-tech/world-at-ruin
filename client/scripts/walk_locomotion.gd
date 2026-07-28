@@ -49,9 +49,15 @@ extends Node
 ## issue (#405) both name the walk, and renaming a class is a refactor that has
 ## no business riding along with a behaviour change.
 ##
-## Experimental and default-off per product law. `WAR_WALK_CYCLE=1` opts in.
+## Experimental and default-off per product law, and the two gaits are opted
+## into SEPARATELY: `WAR_WALK_CYCLE=1` for the walk, `WAR_RUN_CYCLE=1` for the
+## run. One flag covering both would enrol everyone already testing the walk
+## into an unfinished run the moment they updated, which product law 2 forbids;
+## it would also tie #405's "has the walk cleared the bar?" judgement to a gait
+## that has not been judged at all.
 
 const FLAG_ENV := "WAR_WALK_CYCLE"
+const RUN_FLAG_ENV := "WAR_RUN_CYCLE"
 
 ## Metres travelled per complete left/right cycle. The amplitude stays fixed
 ## while the cadence follows speed, avoiding short-input foot sliding without
@@ -110,7 +116,8 @@ const DRIVEN_BONES := [
 	"lowerarm_l", "lowerarm_r",
 ]
 
-var _enabled := false
+var _walk_enabled := false
+var _run_enabled := false
 var _phase := 0.0
 var _skeleton: Skeleton3D = null
 
@@ -120,38 +127,59 @@ var _skeleton: Skeleton3D = null
 func bind(body: Node3D) -> void:
 	_skeleton = CharacterFactory.find_skeleton(body)
 	_phase = 0.0
-	_enabled = OS.get_environment(FLAG_ENV) == "1"
+	_walk_enabled = OS.get_environment(FLAG_ENV) == "1"
+	_run_enabled = OS.get_environment(RUN_FLAG_ENV) == "1"
 	if _skeleton == null:
 		push_error("WalkLocomotion: character body has no skeleton")
-		_enabled = false
+		_walk_enabled = false
+		_run_enabled = false
 		return
 	for bone_name: String in DRIVEN_BONES:
 		if _skeleton.find_bone(bone_name) < 0:
 			push_error("WalkLocomotion: rig has no bone %s" % bone_name)
-			_enabled = false
+			_walk_enabled = false
+			_run_enabled = false
+
+
+## Whether any gait is opted in — the node has nothing to do when neither is.
+func _any_gait_enabled() -> bool:
+	return _walk_enabled or _run_enabled
 
 
 ## Advance from the controller's actual horizontal motion.
 ##
 ## `grounded` and `sprinting` are explicit inputs so neither gait can quietly
-## become a placeholder for a state it does not author. `sprinting` now SELECTS
-## the run rather than suppressing the walk; `grounded` still suppresses both,
-## because the airborne pose is genuinely unwritten.
+## become a placeholder for a state it does not author. `sprinting` SELECTS the
+## run; `grounded` suppresses both, because the airborne pose is genuinely
+## unwritten.
+##
+## Each gait answers to its OWN flag. A player who opted into the walk gets
+## exactly the pre-run behaviour — sprint returns to the standing pose — because
+## `WAR_WALK_CYCLE` was consent to the walk experiment and not to this one
+## (product law 2: nobody is silently enrolled into an unfinished experience).
 func advance_motion(
 		horizontal_speed: float,
 		grounded: bool,
 		sprinting: bool,
 		delta: float) -> void:
-	if not _enabled or _skeleton == null:
+	if not _any_gait_enabled() or _skeleton == null:
 		return
 	if not grounded or horizontal_speed < MIN_WALK_SPEED:
 		_phase = 0.0
 		_reset_pose()
 		return
+	# The gait this state needs, and whether its own flag is on. An un-opted-in
+	# gait resets rather than borrowing the other one — the same honesty the
+	# airborne state gets.
+	if not (_run_enabled if sprinting else _walk_enabled):
+		_phase = 0.0
+		_reset_pose()
+		return
 	var distance := maxf(horizontal_speed, 0.0) * maxf(delta, 0.0)
-	# The phase carries across a gait change instead of restarting: the stride
-	# LENGTH switches, so cadence changes without the legs snapping to a new
-	# point in the cycle mid-step.
+	# Phase is continuous across a gait change — the stride LENGTH switches, so
+	# cadence changes without the legs jumping to a different point in the
+	# cycle. The POSE is not continuous: the elbows and the knee bias step in
+	# and out, which is a transition cue this slice does not author (#496).
 	var stride_length := RUN_STRIDE_LENGTH_M if sprinting else STRIDE_LENGTH_M
 	_phase = fposmod(_phase + TAU * distance / stride_length, TAU)
 	apply_phase(_phase, sprinting)
