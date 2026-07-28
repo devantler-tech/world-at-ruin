@@ -350,24 +350,30 @@ static func clear() -> void:
 	# deleting a character while its legitimate new holder is mid-write. Releasing
 	# on this path matters as much as the check — an early return that kept the lock
 	# would wedge every later write for the whole stale timeout.
-	if not FileLock.owns(path):
-		push_error(
-			"CharacterStore: lost the write lock for %s — refusing to delete it" % path)
-		FileLock.release(path)
-		return
-	# Re-derive acceptance INSIDE the lock, immediately before the removal. The
-	# refusal check at the top of this function is a point-in-time reading taken
-	# BEFORE the lock was held, and a second lock-aware client can install a whole
-	# new recipe in that window — release its own lock, and let this one acquire.
-	# Deleting then would destroy a character this build never read and never
-	# refused, which under the no-resets law is unrecoverable. The pre-lock check
-	# stays as a cheap way to avoid creating a lock directory for a write that is
-	# already doomed; THIS is the authoritative pass, exactly as
-	# [method _save_to_locked] re-checks before its rename.
+	# Re-derive acceptance INSIDE the lock. The refusal check at the top of this
+	# function is a point-in-time reading taken BEFORE the lock was held, and a
+	# second lock-aware client can install a whole new recipe in that window —
+	# release its own lock, and let this one acquire. Deleting then would destroy
+	# a character this build never read and never refused, which under the
+	# no-resets law is unrecoverable. The pre-lock check stays as a cheap way to
+	# avoid creating a lock directory for a delete that is already doomed; THIS is
+	# the authoritative pass.
 	if not can_write(path):
 		push_error(
 			"CharacterStore: refusing to delete %s — its recipe changed to one this build cannot accept"
 			% path)
+		FileLock.release(path)
+		return
+	# Ownership is proved LAST, immediately before the removal — the same position
+	# [method _save_to_locked] gives it before its rename, and the order matters.
+	# The acceptance check above reads and parses a file, which is real time; a
+	# process suspended across it can have its lock reclaimed, and another client
+	# can then legitimately take the lock and write a valid recipe that
+	# can_write() would happily accept on the way to deleting it. Proving
+	# ownership before that read rather than after would leave exactly that gap.
+	if not FileLock.owns(path):
+		push_error(
+			"CharacterStore: lost the write lock for %s — refusing to delete it" % path)
 		FileLock.release(path)
 		return
 	if exists():

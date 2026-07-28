@@ -33,11 +33,17 @@ const REFUSED_SAVE_NOTICE := \
 ## not be created or renamed, ownership lost mid-write). Blaming a second copy
 ## of the game would be a confident lie on every one of the second set, and
 ## would send a player hunting a program that is not running. What the player
-## needs is true of all of them: nothing was changed, and trying again is the
+## needs is true of all of them: their edit did not land, and trying again is the
 ## right next move.
+##
+## It says the EDIT was not saved, never that the character "has not changed" —
+## the two are not the same, and the stronger claim can be false on screen. This
+## same failure path reloads the recipe from disk, and when the reason was
+## contention that recipe may be another copy's newly committed character. The
+## body would then visibly change at the very moment a notice claimed it had not.
 const UNSAVED_NOTICE := \
-	"Your character could not be saved just now. " \
-	+ "It has not been changed — try again."
+	"Your changes could not be saved just now — " \
+	+ "try again."
 const DISCOVERY_PERSIST_RETRY_INITIAL_SECONDS := 1.0
 const DISCOVERY_PERSIST_RETRY_MAX_SECONDS := 30.0
 
