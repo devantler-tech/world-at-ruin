@@ -174,8 +174,10 @@ func set_character(recipe: Dictionary) -> void:
 	if body == null:
 		return
 	# Detach before freeing. `queue_free` alone defers removal to the end of the
-	# frame, so the outgoing body would stay parented beside the incoming one —
-	# both rendered, and both visible to anything walking Visual's children.
+	# frame, so until that boundary Visual holds the outgoing body and the
+	# placeholder beside the incoming one, and a walk over its children can
+	# resolve the body that is on its way out. The delete queue is flushed
+	# before the frame draws, so this never reached a rendered frame.
 	for node in _placeholder:
 		_visual.remove_child(node)
 		node.queue_free()

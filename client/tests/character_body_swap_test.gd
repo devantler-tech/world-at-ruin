@@ -4,10 +4,16 @@ extends Node
 ##
 ## `queue_free()` defers removal to the end of the frame, so a caller that
 ## disposes a node with `queue_free()` alone leaves the outgoing node parented
-## beside the incoming one for the rest of that frame. Both still render, and a
-## consumer walking children sees two bodies where the game has one. The
-## codebase's idiom is `remove_child()` before `queue_free()`, documented on
-## `replica_view.gd`'s `_free_marker`.
+## beside the incoming one until that boundary. A consumer walking children in
+## that window sees two bodies where the game has one, and a walk that takes the
+## first structural match can take the one leaving. The codebase's idiom is
+## `remove_child()` before `queue_free()`, documented on `replica_view.gd`'s
+## `_free_marker`.
+##
+## The delete queue is flushed before the frame is drawn, so the stale nodes are
+## NOT rendered — measured by capturing the swap frame with and without the fix
+## (identical), against a control capsule left unfreed at the same position
+## (occludes the body outright, so the capture is not blind to overlap).
 ##
 ## Two sites, asserted the same way:
 ##  1. `Player.set_character` — the shipping path, driven twice within ONE frame
