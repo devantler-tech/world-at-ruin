@@ -1,0 +1,10 @@
+{
+	"date": "2026-07-28",
+	"notes": [
+		"Sprinting now looks like running. Your wanderer drives with folded arms and keeps a bend in the knee instead of standing bolt upright while sliding across the ground.",
+		"The run is its own movement rather than the walk sped up, and it covers more ground per stride, so going faster reads as longer, harder strides instead of quicker little steps.",
+		"Jumping still has no movement of its own yet — the body settles back to standing in the air, and that work is still to come."
+	],
+	"title": "Sprinting looks like running",
+	"version": "0.66.0"
+}
