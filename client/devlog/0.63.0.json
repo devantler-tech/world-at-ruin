@@ -1,0 +1,14 @@
+{
+	"date": "2026-07-28",
+	"notes": [
+		"The list of controls used to run across the bottom of every frame and never leave. It was the brightest thing on screen, so the first thing you read was a keyboard reference instead of the world in front of you.",
+		"Now it shows itself, gives you time to read it, and then fades out and leaves you the picture.",
+		"It comes back on its own the moment it is actually useful again: pick up a controller and it returns, showing the controller's buttons rather than the keyboard's.",
+		"If you want it back at any other time, press H — there is a small marker in the bottom corner that says so, and it stays there. Press H again to put it away.",
+		"The heads-up display also takes its colours and lettering from the game's own palette now, instead of keeping a second copy of them, so the two can no longer drift apart.",
+		"Still plain: this is text over the world, not the framed, worked-metal panels the interface is aiming for. That is separate work.",
+		"The fading controls are a preview: set WAR_CONTEXTUAL_HINTS=1 before launch to try them."
+	],
+	"title": "The controls step out of the way once you have read them",
+	"version": "0.63.0"
+}
