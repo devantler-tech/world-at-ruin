@@ -51,6 +51,14 @@ reset_mocks() {
 	# of this fixture. Every mock here carries the `mock_` prefix for that
 	# reason — the same trap silently blanked `pr_state` while this was written.
 	mock_statuses='{"state":"success","statuses":[{"context":"CodeRabbit","state":"success","description":"review complete"}]}'
+	# What the branch carries, read fresh on each merge attempt. Changing it
+	# mid-test is how "another writer landed during the wait" is expressed.
+	mock_branch_version="0.65.7"
+}
+
+# The production helper calls this; it lives outside the extracted blocks.
+cask_version_at() {
+	printf '%s\n' "${mock_branch_version}"
 }
 
 sleep() {
@@ -109,17 +117,29 @@ check_run() { # status conclusion
 checks() { # one JSON check-run object per argument
 	local joined=""
 	local c
+	local n=0
 	for c in "$@"; do
 		[ -n "${joined}" ] && joined="${joined},"
 		joined="${joined}${c}"
+		n=$((n + 1))
 	done
-	printf '{"check_runs":[%s]}' "${joined}"
+	# `total_count` mirrors the real endpoint, which reports the head's FULL
+	# count independently of what this page returned. `checks_truncated` below
+	# is what makes the two disagree.
+	printf '{"total_count":%d,"check_runs":[%s]}' "${n}" "${joined}"
+}
+checks_truncated() { # declared-total, then the runs this page returned
+	local declared="$1"
+	shift
+	local body
+	body="$(checks "$@")"
+	printf '%s' "${body}" | sed "s/\"total_count\":[0-9]*/\"total_count\":${declared}/"
 }
 
 green_checks="$(checks "$(check_run completed success)" "$(check_run completed success)")"
 pending_checks="$(checks "$(check_run completed success)" "$(check_run in_progress null)")"
 failing_checks="$(checks "$(check_run completed success)" "$(check_run completed failure)")"
-empty_checks='{"check_runs":[]}'
+empty_checks='{"total_count":0,"check_runs":[]}'
 
 merge_calls() { grep -c '/merge' "${call_log}" || true; }
 
@@ -172,7 +192,7 @@ fi
 # All checks green: merge, pinned to the head those checks describe.
 reset_mocks
 mock_checks=("${green_checks}")
-merge_cask_pr_when_green "${tap}" 1337 >/dev/null ||
+merge_cask_pr_when_green "${tap}" 1337 "${branch}" "0.65.7" >/dev/null ||
 	fail "a fully green head was not merged"
 [ "$(merge_calls)" -eq 1 ] || fail "expected exactly one merge call on a green head"
 grep -q 'sha=cafe1234cafe1234cafe1234cafe1234cafe1234' "${call_log}" ||
@@ -184,7 +204,7 @@ grep -q 'merge_method=squash' "${call_log}" || fail "the merge was not a squash"
 # Pending checks are waited out, not merged through.
 reset_mocks
 mock_checks=("${pending_checks}" "${pending_checks}" "${green_checks}")
-merge_cask_pr_when_green "${tap}" 1337 >/dev/null ||
+merge_cask_pr_when_green "${tap}" 1337 "${branch}" "0.65.7" >/dev/null ||
 	fail "a head that went green on the third read was not merged"
 [ "$(merge_calls)" -eq 1 ] || fail "expected exactly one merge, after the wait"
 [ "$(wc -l <"${sleep_log}" | tr -d ' ')" -eq 2 ] ||
@@ -197,7 +217,7 @@ merge_cask_pr_when_green "${tap}" 1337 >/dev/null ||
 # load-bearing rather than shadowed by the merge precondition.
 reset_mocks
 mock_checks=("${failing_checks}")
-if out="$(merge_cask_pr_when_green "${tap}" 1337 2>&1)"; then
+if out="$(merge_cask_pr_when_green "${tap}" 1337 "${branch}" "0.65.7" 2>&1)"; then
 	fail "a head carrying a failing check was merged"
 fi
 [ "$(merge_calls)" -eq 0 ] || fail "a failing head must not be merged at all"
@@ -209,7 +229,7 @@ fi
 # `neutral` and `skipped` are how a check says "not applicable" — a pass.
 reset_mocks
 mock_checks=("$(checks "$(check_run completed neutral)" "$(check_run completed skipped)")")
-merge_cask_pr_when_green "${tap}" 1337 >/dev/null ||
+merge_cask_pr_when_green "${tap}" 1337 "${branch}" "0.65.7" >/dev/null ||
 	fail "neutral/skipped conclusions were not treated as green"
 [ "$(merge_calls)" -eq 1 ] || fail "expected the neutral/skipped head to merge"
 
@@ -217,7 +237,7 @@ merge_cask_pr_when_green "${tap}" 1337 >/dev/null ||
 for bad in cancelled timed_out action_required stale; do
 	reset_mocks
 	mock_checks=("$(checks "$(check_run completed "${bad}")")")
-	if merge_cask_pr_when_green "${tap}" 1337 >/dev/null 2>&1; then
+	if merge_cask_pr_when_green "${tap}" 1337 "${branch}" "0.65.7" >/dev/null 2>&1; then
 		fail "a head whose check concluded '${bad}' was merged"
 	fi
 	[ "$(merge_calls)" -eq 0 ] || fail "'${bad}' must not reach a merge call"
@@ -226,7 +246,7 @@ done
 # No check runs at all is "not validated yet", never "nothing to validate".
 reset_mocks
 mock_checks=("${empty_checks}")
-if merge_cask_pr_when_green "${tap}" 1337 >/dev/null 2>&1; then
+if merge_cask_pr_when_green "${tap}" 1337 "${branch}" "0.65.7" >/dev/null 2>&1; then
 	fail "a head carrying no check runs was merged"
 fi
 [ "$(merge_calls)" -eq 0 ] || fail "an unchecked head must never be merged"
@@ -236,7 +256,7 @@ fi
 # An unreadable check payload fails closed for the same reason.
 reset_mocks
 mock_checks=("not json at all")
-if merge_cask_pr_when_green "${tap}" 1337 >/dev/null 2>&1; then
+if merge_cask_pr_when_green "${tap}" 1337 "${branch}" "0.65.7" >/dev/null 2>&1; then
 	fail "an unreadable check payload was treated as green"
 fi
 [ "$(merge_calls)" -eq 0 ] || fail "an unreadable payload must not reach a merge"
@@ -248,7 +268,7 @@ fi
 reset_mocks
 mock_checks=("${green_checks}")
 mock_statuses='{"state":"failure","statuses":[{"context":"tap/audit","state":"failure","description":"cask audit failed"}]}'
-if merge_cask_pr_when_green "${tap}" 1337 >/dev/null 2>&1; then
+if merge_cask_pr_when_green "${tap}" 1337 "${branch}" "0.65.7" >/dev/null 2>&1; then
 	fail "a head whose legacy status had failed was merged"
 fi
 [ "$(merge_calls)" -eq 0 ] || fail "a failing legacy status must block the merge"
@@ -256,7 +276,7 @@ fi
 reset_mocks
 mock_checks=("${green_checks}")
 mock_statuses='{"state":"pending","statuses":[{"context":"tap/audit","state":"pending","description":"queued"}]}'
-if merge_cask_pr_when_green "${tap}" 1337 >/dev/null 2>&1; then
+if merge_cask_pr_when_green "${tap}" 1337 "${branch}" "0.65.7" >/dev/null 2>&1; then
 	fail "a head with a pending legacy status was merged"
 fi
 [ "$(merge_calls)" -eq 0 ] || fail "a pending legacy status must be waited for"
@@ -267,7 +287,7 @@ fi
 reset_mocks
 mock_checks=("${green_checks}")
 mock_statuses='{"state":"failure","statuses":[{"context":"CodeRabbit","state":"failure","description":"Review rate limit exceeded"}]}'
-merge_cask_pr_when_green "${tap}" 1337 >/dev/null ||
+merge_cask_pr_when_green "${tap}" 1337 "${branch}" "0.65.7" >/dev/null ||
 	fail "a review provider's own rate-limit status blocked delivery"
 [ "$(merge_calls)" -eq 1 ] || fail "the quota-status carve-out did not reach a merge"
 
@@ -275,23 +295,60 @@ merge_cask_pr_when_green "${tap}" 1337 >/dev/null ||
 reset_mocks
 mock_checks=("${green_checks}")
 mock_statuses='{"state":"pending","statuses":[]}'
-merge_cask_pr_when_green "${tap}" 1337 >/dev/null ||
+merge_cask_pr_when_green "${tap}" 1337 "${branch}" "0.65.7" >/dev/null ||
 	fail "a head carrying no legacy statuses was treated as blocked"
 
 # An unreadable status payload fails closed, like an unreadable check payload.
 reset_mocks
 mock_checks=("${green_checks}")
 mock_statuses='not json at all'
-if merge_cask_pr_when_green "${tap}" 1337 >/dev/null 2>&1; then
+if merge_cask_pr_when_green "${tap}" 1337 "${branch}" "0.65.7" >/dev/null 2>&1; then
 	fail "an unreadable status payload was treated as green"
 fi
 [ "$(merge_calls)" -eq 0 ] || fail "an unreadable status payload must not reach a merge"
+
+# A page that did not return every check run is a PARTIAL answer: the pending
+# or failing run this page never showed would be invisible, and the head would
+# merge on a fraction of its own evidence. Refuse, loudly.
+reset_mocks
+mock_checks=("$(checks_truncated 130 "$(check_run completed success)" "$(check_run completed success)")")
+if out="$(merge_cask_pr_when_green "${tap}" 1337 "${branch}" "0.65.7" 2>&1)"; then
+	fail "a truncated check-runs page was judged as complete"
+fi
+[ "$(merge_calls)" -eq 0 ] || fail "a partial page must not reach a merge"
+[[ "${out}" == *"partial page"* ]] ||
+	fail "the refusal did not name the partial page as the cause"
+[ "$(wc -l <"${sleep_log}" | tr -d ' ')" -eq 0 ] ||
+	fail "a truncated page should be refused at once, not waited out"
+
+# The tap squash-merges on the PR TITLE, which was derived before this wait
+# began. If another writer lands on the branch during the wait, merging would
+# ship that content under the previous version's changelog entry. Hand it back
+# (rc 2) so the caller re-derives the title instead.
+reset_mocks
+mock_checks=("${green_checks}")
+mock_branch_version="0.66.0" # a sibling wrote a newer cask during the wait
+rc=0
+merge_cask_pr_when_green "${tap}" 1337 "${branch}" "0.65.7" >/dev/null 2>&1 || rc=$?
+[ "${rc}" -eq 2 ] || fail "a branch that moved during the wait returned ${rc}, want 2"
+[ "$(merge_calls)" -eq 0 ] ||
+	fail "a moved branch must not be merged under the stale title"
+
+# ...and the check is made against the branch as it stands at merge time, not a
+# value captured before the wait: a branch that moves back to the expected
+# version still delivers.
+reset_mocks
+mock_checks=("${green_checks}")
+mock_branch_version="0.65.7"
+merge_cask_pr_when_green "${tap}" 1337 "${branch}" "0.65.7" >/dev/null ||
+	fail "an unmoved branch was refused"
+[ "$(merge_calls)" -eq 1 ] || fail "an unmoved branch should deliver"
 
 # An already-merged PR is delivered, not merged twice.
 reset_mocks
 mock_pr_state='{"merged":true,"head":{"sha":"cafe1234cafe1234cafe1234cafe1234cafe1234"}}'
 mock_checks=("${green_checks}")
-merge_cask_pr_when_green "${tap}" 1337 >/dev/null ||
+merge_cask_pr_when_green "${tap}" 1337 "${branch}" "0.65.7" >/dev/null ||
 	fail "an already-merged cask PR was not reported as delivered"
 [ "$(merge_calls)" -eq 0 ] || fail "an already-merged PR must not be merged again"
 
@@ -300,7 +357,7 @@ merge_cask_pr_when_green "${tap}" 1337 >/dev/null ||
 reset_mocks
 mock_merge_rc=1
 mock_checks=("${green_checks}")
-if merge_cask_pr_when_green "${tap}" 1337 >/dev/null 2>&1; then
+if merge_cask_pr_when_green "${tap}" 1337 "${branch}" "0.65.7" >/dev/null 2>&1; then
 	fail "a refused merge was reported as delivered"
 fi
 [ "$(merge_calls)" -eq 20 ] || fail "a refused merge should be re-read each attempt"
@@ -332,8 +389,13 @@ fi
 # Written without a `$` so shellcheck does not read the literal search pattern
 # as a failed expansion (SC2016); `if merge_cask_pr_when_green "` is unique to
 # the fallback call site and never matches the definition.
-if ! grep -q 'if merge_cask_pr_when_green "' "${workflow}"; then
+if ! grep -q 'merge_cask_pr_when_green "' "${workflow}"; then
 	fail "a rate-limited arm does not fall back to the REST delivery path"
+fi
+# rc 2 must be routed back into the loop, not treated as a failure: it is how
+# the helper says "the branch moved, re-derive the title before delivering".
+if ! grep -q 'rest_rc}" -eq 2' "${workflow}"; then
+	fail "a moved branch during the REST wait is not routed back for a re-derive"
 fi
 # The disarm is deliberately NOT given the fallback: there is no REST
 # equivalent, so it must keep aborting before the write.

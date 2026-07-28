@@ -1351,10 +1351,14 @@ jobs:
           # is roughly twice the observed worst case and still leaves room
           # inside the job timeout. Exhausting it fails LOUDLY: checks that
           # never finish are a real problem, not a quota one.
+          # Returns 0 delivered, 2 the branch moved so the caller must re-derive
+          # the title before delivering, 1 anything else.
           merge_cask_pr_when_green() {
             local tap="$1"
             local pr="$2"
-            local attempt pr_state head runs counts total unfinished failed statuses blocking
+            local branch="$3"
+            local expected_version="$4"
+            local attempt pr_state head runs counts declared total unfinished failed statuses blocking
             for attempt in $(seq 1 20); do
               pr_state="$(gh api "repos/${tap}/pulls/${pr}" 2>/dev/null || true)"
               if [ -n "${pr_state}" ] \
@@ -1378,26 +1382,40 @@ jobs:
                 # is a real refusal and must never be waited out into a merge.
                 counts="$(printf '%s' "${runs}" | jq -r '
                   [.check_runs[]] as $r
-                  | [ ($r | length),
+                  | [ .total_count,
+                      ($r | length),
                       ([$r[] | select(.status != "completed")] | length),
                       ([$r[] | select(.status == "completed")
                              | select(.conclusion != "success"
                                       and .conclusion != "neutral"
                                       and .conclusion != "skipped")] | length)
                     ] | @tsv' 2>/dev/null || true)"
-                total=""; unfinished=""; failed=""
+                declared=""; total=""; unfinished=""; failed=""
                 # An unparsed payload is a FAILED READ, never a green one: jq
                 # collapses an API failure, a decode failure and genuinely
                 # absent content into the same empty output, so nothing below
-                # may treat it as evidence.
+                # may treat it as evidence. A missing `total_count` renders as
+                # an empty field and lands here too, which is what makes the
+                # truncation check below impossible to skip.
                 case "${counts}" in
-                  [0-9]*[[:space:]][0-9]*[[:space:]][0-9]*)
-                    total="${counts%%[[:space:]]*}"
-                    unfinished="${counts#*[[:space:]]}"
-                    unfinished="${unfinished%%[[:space:]]*}"
-                    failed="${counts##*[[:space:]]}"
+                  [0-9]*[[:space:]][0-9]*[[:space:]][0-9]*[[:space:]][0-9]*)
+                    read -r declared total unfinished failed <<<"${counts}"
                     ;;
                 esac
+                # `unfinished` and `failed` are computed over the runs this page
+                # RETURNED, so a head with more check runs than the page holds
+                # would be judged on a fraction of them — a pending or failing
+                # run on page 2 is simply invisible, and the head merges on a
+                # partial answer. That fails OPEN, which is the wrong direction
+                # for a merge the tap token can push past its own rulesets. The
+                # tap runs ~13 checks so this is headroom, not a live case;
+                # refuse loudly rather than paginate, so if it ever does fire it
+                # says exactly what happened.
+                if [ -n "${declared}" ] && [ -n "${total}" ] \
+                   && [ "${declared}" != "${total}" ]; then
+                  echo "::error::${tap}#${pr} reports ${declared} check run(s) at ${head} but the page returned ${total}; refusing to judge a partial page"
+                  return 1
+                fi
                 if [ -n "${failed}" ] && [ "${failed}" -gt 0 ]; then
                   echo "::error::${tap}#${pr} carries ${failed} failing check(s) at ${head}; refusing to merge it"
                   return 1
@@ -1425,6 +1443,20 @@ jobs:
                 if [ -n "${total}" ] && [ -n "${blocking}" ] && [ "${failed}" -eq 0 ] \
                    && [ "${blocking}" -eq 0 ] \
                    && [ "${total}" -gt 0 ] && [ "${unfinished}" -eq 0 ]; then
+                  # The tap squash-merges on the PR TITLE, and that title was
+                  # derived from the branch BEFORE this wait began. Waiting for
+                  # checks holds that derivation open for minutes rather than
+                  # milliseconds, so a writer landing on the shared branch
+                  # meanwhile would have its content merged under the previous
+                  # version's changelog entry — the same lying-title hazard the
+                  # arming path re-reads for, and it must not come back on this
+                  # path. Prove the branch still carries what the title claims,
+                  # as late as possible and never from a value read before the
+                  # wait; hand a moved branch back so the caller re-derives.
+                  if [ "$(cask_version_at "${branch}")" != "${expected_version}" ]; then
+                    echo "::notice::${branch} moved to a different version while waiting for ${tap}#${pr}'s checks; re-deriving the title before delivering"
+                    return 2
+                  fi
                   if gh api -X PUT "repos/${tap}/pulls/${pr}/merge" \
                        -f merge_method=squash -f sha="${head}" >/dev/null 2>&1; then
                     echo "merged ${tap}#${pr} over REST at ${head} — all ${total} check(s) green"
@@ -1538,9 +1570,21 @@ jobs:
               # budget. The title is already converged at this point, so the
               # squash lands under the same message arming would have used.
               echo "::notice::auto-merge cannot be armed on ${tap}#${pr} — the tap account's GraphQL budget is exhausted; delivering over REST instead"
-              if merge_cask_pr_when_green "${tap}" "${pr}"; then
+              # `|| rest_rc=$?` rather than a bare call: under `set -e` a
+              # non-zero return would abort the step before rc 2 could be read
+              # as "re-derive" rather than "failed".
+              rest_rc=0
+              merge_cask_pr_when_green "${tap}" "${pr}" "${branch}" "${branch_version}" || rest_rc=$?
+              if [ "${rest_rc}" -eq 0 ]; then
                 armed=true
                 break
+              fi
+              if [ "${rest_rc}" -eq 2 ]; then
+                # Same fall-through the arming path takes when the branch moves:
+                # loop, re-derive the title from the new content, and deliver
+                # under a title that describes what is actually being merged.
+                sleep 2
+                continue
               fi
               exit 1
             else
