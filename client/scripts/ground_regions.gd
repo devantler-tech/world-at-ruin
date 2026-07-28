@@ -116,10 +116,18 @@ const REGIONS: Array[Dictionary] = [
 		&"scorch": Color(0.10, 0.065, 0.05),
 		# Fire-fused crust: slightly slicker than loose ash.
 		&"rough": -0.06,
-		# Where the burn pooled it also slumped: the lowest, calmest relief in
-		# the Reach. Subdued rather than flat — a dead-level plain would read
-		# as missing terrain, not as a basin.
-		&"amp": 0.55,
+		# The Reach's high ground: the tallest, most open relief in the world,
+		# and the one region that stands ABOVE the ashflats rather than below
+		# it. The burn pooled here longest because this is where it could
+		# climb — long uncreased swells rather than dunes or spines, so the
+		# height reads as landscape the eye can cross rather than as clutter.
+		#
+		# Its ground carries this: measured per region on the shipped seed, the
+		# steepest grade inside cinderreach is 42.49 degrees at this amplitude
+		# — level with the ashflats' 42.50 and under the 43 degree ratchet.
+		# See `LANDFORM_GRADIENT_BUDGET` for why the arithmetic budget could
+		# not see that and the measurement can.
+		&"amp": 1.15,
 		&"ridged": 0.0,
 	},
 	{
@@ -164,12 +172,11 @@ const REGIONS: Array[Dictionary] = [
 
 ## 🔴 THE GRADIENT BUDGET — what a region's landform may cost in steepness.
 ##
-## The Reach's baseline ground is ALREADY at its walkability ceiling. Measured
-## on the shipped seed, away from the massif (whose buried skirt is deliberately
-## a cliff), the steepest grade in the pre-landform world is **41.9 degrees**
-## against a character floor limit of 45. There is no headroom, so a region
-## cannot be made TALLER than the baseline without producing ground the wanderer
-## cannot walk up — a region you can look at but not enter.
+## The Reach's ground runs close to its walkability ceiling. Measured on the
+## shipped seed at 0.5 m, away from the massif (whose buried skirt is
+## deliberately a cliff), the steepest open grade is **42.54 degrees** against a
+## character floor limit of 45. A landform that overspends does not read as
+## dramatic — it produces ground the wanderer can see and cannot enter.
 ##
 ## Both knobs spend the same budget, and the crease spends more than it looks:
 ##
@@ -177,19 +184,43 @@ const REGIONS: Array[Dictionary] = [
 ##   * `ridged` scales it by up to **2x**, because `-2|n|` is twice as steep as
 ##     `n`. A crease is a doubling of slope, not a decoration on top of one.
 ##
-## So a landform costs `amp * lerp(1, 2, ridged)`, capped here at the baseline.
-## A first pass ignored this and gave the scoured region `amp` 1.35 with
-## `ridged` 0.8 — a cost of 2.43 — which took the open ground to **58 degrees**
-## and made a whole region unwalkable while every other guard stayed green.
-## `region_landform_test` now pins both the arithmetic and its measured
-## consequence.
+## So a landform costs `amp * lerp(1, 2, ridged)`. A first pass ignored that and
+## gave the scoured region `amp` 1.35 with `ridged` 0.8 — a cost of 2.43 — which
+## took the open ground to **58 degrees** and made a whole region unwalkable
+## while every other guard stayed green. Catching THAT is what this number is
+## for, and all it is for.
 ##
-## The design consequence is worth stating, because it is not a limitation:
-## regions differ by being FLATTER and more creased than the baseline, never
-## taller. `ashflats` is the high rolling ground, and every other region is
-## something this world took away from it — which is what a burned world ought
-## to look like anyway.
-const LANDFORM_GRADIENT_BUDGET := 1.05
+## 🔴 It is a COARSE cap, not the walkability law. The cost model prices every
+## region as if it sat on the world's steepest ground, and no region does. The
+## steepest grade is a property of the base field under a region's own cells,
+## and those differ enormously: measured per region on the shipped seed, the
+## worst grade runs from **38.45** degrees under `bonepale` to **42.50** under
+## `ashflats`. A single global ceiling has to be set for the worst of them, so
+## it silently underprices every other region's headroom.
+##
+## The model is wrong by degrees, not decimals, and predictably so. Scaling a
+## region's whole grade by its cost ratio says `cinderreach` reaches **51.4**
+## degrees at `amp` 1.15; it reaches **42.49**. The over-prediction is
+## structural rather than a bad constant: a region's worst grade is carried in
+## large part by the global detail layer and by its blend bands, and NEITHER of
+## those scales with `amp`, so no arithmetic on the landform term alone can
+## price it. Trusting the model over the measurement is how a walkable landform
+## gets forbidden.
+##
+## So the real law is MEASURED, per region, by `region_landform_test` arm 5,
+## which ratchets each region against its own ground. This cap sits well above
+## every shipped cost and exists only to stop an absurd landform before the
+## sweep has to.
+##
+## 🔴 A region's steepness is not its own property. An amplitude STEP between
+## neighbours is itself a gradient, and it lands in the blend band rather than
+## inside either region — which is where the Reach's steepest open ground
+## actually is: the worst grade in any decided region interior is 42.50, while
+## the world's worst is 42.54. So the way to raise a region is often to raise
+## the FLATTEST one: narrowing the step between neighbours makes the world
+## gentler and taller at the same time, and flattening a region to buy safety
+## can cost more gradient than it saves.
+const LANDFORM_GRADIENT_BUDGET := 1.30
 
 
 ## What a region's landform costs against `LANDFORM_GRADIENT_BUDGET`.
