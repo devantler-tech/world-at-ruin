@@ -1768,31 +1768,32 @@ func TestLoadKeepsSchemaOneLeaseReadableAsNotReleasing(t *testing.T) {
 	}
 }
 
-// A JSON null encodes an absent flag rather than a carried one, matching
-// claimed_at_nanos, which this package's own writer emits as literal null. A
-// null therefore loads at schema 1 and cannot express staging or releasing.
-func TestLoadTreatsNullFlagsOnLegacySchemaAsAbsent(t *testing.T) {
+// The legacy refusal keys on whether the document carries the newer keys at
+// all, so a value that decodes to the zero flag still counts as carried. A
+// duplicate key is the case a decoded field cannot see: encoding/json keeps the
+// last occurrence, so a trailing null would otherwise hide the flag in front of
+// it.
+func TestLoadRefusesLegacySchemaCarryingPostLegacyKeys(t *testing.T) {
 	for _, test := range []struct {
 		name   string
 		prefix string
 	}{
-		{name: "staging", prefix: `"staging":null,`},
-		{name: "releasing", prefix: `"releasing":null,`},
+		{name: "staging null", prefix: `"staging":null,`},
+		{name: "releasing null", prefix: `"releasing":null,`},
+		{name: "staging shadowed by a later null", prefix: `"staging":true,"staging":null,`},
+		{name: "releasing shadowed by a later null", prefix: `"releasing":true,"releasing":null,`},
+		{name: "staging false shadowed by a later null", prefix: `"staging":false,"staging":null,`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			lease, err := leaseFrom(
+			if _, err := leaseFrom(
 				`{`+test.prefix+`"schema":1,"attempt_id":"attempt-7",`+
 					`"allocation_id":"gameserver-17","observer":42,`+
 					`"secret_ref":"zone-admission-gameserver-17",`+
 					`"expires_at_nanos":2000000000123456789,"claimed_at_nanos":null}`,
 				testUserID,
 				testReservationID,
-			)
-			if err != nil {
-				t.Fatalf("null %s on schema one returned an error: %v", test.name, err)
-			}
-			if lease.Staging || lease.Releasing {
-				t.Fatalf("null %s loaded as a set flag: %+v", test.name, lease)
+			); err == nil {
+				t.Fatalf("legacy document carrying %s loaded, want an error", test.name)
 			}
 		})
 	}

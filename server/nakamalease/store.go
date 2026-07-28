@@ -696,20 +696,29 @@ type document struct {
 	SecretRef      string `json:"secret_ref"`
 	ExpiresAtNanos int64  `json:"expires_at_nanos"`
 	ClaimedAtNanos *int64 `json:"claimed_at_nanos"`
-	// Staging and Releasing postdate schema 1, so decoding must tell a document
-	// that omits them from one that carries them at their zero value. Both are
-	// written only when set, which keeps an unset flag off the wire.
-	Staging   *bool `json:"staging,omitempty"`
-	Releasing *bool `json:"releasing,omitempty"`
+	Staging        bool   `json:"staging,omitempty"`
+	Releasing      bool   `json:"releasing,omitempty"`
 }
 
-// flagWhenSet returns a pointer only for a set flag, so an unset flag is absent
-// from the encoded document rather than present as false.
-func flagWhenSet(value bool) *bool {
-	if !value {
-		return nil
+// postLegacySchemaKeys are the document keys that postdate the legacy schema.
+var postLegacySchemaKeys = [...]string{"staging", "releasing"}
+
+// carriesPostLegacySchemaKey reports whether the encoded document contains one
+// of those keys, whatever its value. Presence is read from the raw keys rather
+// than inferred from a decoded field: a decoded value cannot separate an absent
+// key from one written as null, and duplicate keys resolve to the last
+// occurrence, so an earlier flag would be hidden by a later null.
+func carriesPostLegacySchemaKey(value string) (bool, error) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(value), &raw); err != nil {
+		return false, err
 	}
-	return &value
+	for _, key := range postLegacySchemaKeys {
+		if _, ok := raw[key]; ok {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func documentFrom(lease Lease) document {
@@ -726,8 +735,8 @@ func documentFrom(lease Lease) document {
 		SecretRef:      lease.SecretRef,
 		ExpiresAtNanos: lease.ExpiresAt.UnixNano(),
 		ClaimedAtNanos: claimedAtNanos,
-		Staging:        flagWhenSet(lease.Staging),
-		Releasing:      flagWhenSet(lease.Releasing),
+		Staging:        lease.Staging,
+		Releasing:      lease.Releasing,
 	}
 }
 
@@ -742,11 +751,15 @@ func leaseFrom(value, userID, reservationID string) (Lease, error) {
 		return Lease{}, errors.New("nakama lease: invalid stored lease")
 	}
 	if (stored.Schema != schemaVersion && stored.Schema != legacySchemaVersion) ||
-		(stored.Schema == legacySchemaVersion &&
-			(stored.Staging != nil || stored.Releasing != nil)) ||
 		stored.ExpiresAtNanos <= 0 ||
 		(stored.ClaimedAtNanos != nil && *stored.ClaimedAtNanos <= 0) {
 		return Lease{}, errors.New("nakama lease: invalid stored lease")
+	}
+	if stored.Schema == legacySchemaVersion {
+		carried, err := carriesPostLegacySchemaKey(value)
+		if err != nil || carried {
+			return Lease{}, errors.New("nakama lease: invalid stored lease")
+		}
 	}
 	listed := userID == "" && reservationID == ""
 	if listed {
@@ -761,8 +774,8 @@ func leaseFrom(value, userID, reservationID string) (Lease, error) {
 		Observer:      sim.EntityID(stored.Observer),
 		SecretRef:     stored.SecretRef,
 		ExpiresAt:     time.Unix(0, stored.ExpiresAtNanos).UTC(),
-		Staging:       stored.Staging != nil && *stored.Staging,
-		Releasing:     stored.Releasing != nil && *stored.Releasing,
+		Staging:       stored.Staging,
+		Releasing:     stored.Releasing,
 	}
 	if stored.ClaimedAtNanos != nil {
 		lease.ClaimedAt = time.Unix(0, *stored.ClaimedAtNanos).UTC()
