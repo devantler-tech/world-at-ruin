@@ -38,6 +38,12 @@ const FADE_PATTERN := \
 	"1\\.0\\s*-\\s*smoothstep\\(\\s*([0-9.]+)\\s*,\\s*([0-9.]+)\\s*,\\s*crack_fw\\s*\\*"
 const CEILING_PATTERN := \
 	"grad_len\\s*>\\s*([0-9.]+)\\s*\\?\\s*grad\\s*\\*\\s*\\(\\s*([0-9.]+)\\s*/\\s*grad_len\\s*\\)"
+## Matched on the call itself rather than on `crack_fw`, which by this point in
+## both files is also the operand of the fade above and of the crack's own
+## widening — a looser pattern would capture whichever of the three came first
+## and compare the wrong quantity across the two files.
+const EDGE_BLEND_PATTERN := \
+	"terrain_plate_edge_blend\\(\\s*f1\\s*,\\s*f2\\s*,\\s*edge_fw\\s*\\*\\s*([0-9.]+)\\s*\\)"
 
 ## A screen-space derivative taken OF a crack quantity — the form this must not
 ## regress to. Deliberately anchored on the crack operand rather than on
@@ -124,7 +130,30 @@ func _ready() -> void:
 		])
 		return
 
-	# 3. THE GRADIENT IS TAKEN IN CLOSED FORM, on both surfaces. A screen-space
+	# 3. THE PLATE-BOUNDARY FOOTPRINT. How wide a footprint the substance step
+	# between two plates is averaged over (#306). It is the same hand-copied
+	# pair as the guards above and drifts the same silent way, but it fails in
+	# the opposite direction from them: too small a factor and the contact band
+	# keeps a hard substance step the ground beside it has already filtered, so
+	# the crawl comes back in a strip around every cave mouth; too large and the
+	# band softens named substances the ground still draws at full contrast.
+	# Either way the two surfaces disagree along a line the player can see,
+	# which is exactly what this file exists to prevent.
+	var ground_edge := _single(ground, EDGE_BLEND_PATTERN)
+	if ground_edge < 0.0:
+		_fail("no plate-boundary footprint (`terrain_plate_edge_blend(f1, f2, edge_fw * ...)`) in %s — the substance step is no longer averaged over the pixel drawing it, and the contact band has nothing left to match" % GROUND_SHADER_PATH)
+		return
+	var contact_edge := _single(contact, EDGE_BLEND_PATTERN)
+	if contact_edge < 0.0:
+		_fail("no plate-boundary footprint (`terrain_plate_edge_blend(f1, f2, edge_fw * ...)`) in %s — the contact band takes the owning plate's substance outright while the ground averages it, so plate contacts crawl at the cave mouth only" % CONTACT_SHADER_PATH)
+		return
+	if not is_equal_approx(ground_edge, contact_edge):
+		_fail("plate-boundary footprint disagrees: the ground averages the substance step over %s of a footprint but the contact band uses %s — one surface filters a contact the other still steps across" % [
+			_num(ground_edge), _num(contact_edge)
+		])
+		return
+
+	# 4. THE GRADIENT IS TAKEN IN CLOSED FORM, on both surfaces. A screen-space
 	# difference of the crack field is only a gradient while the crack is wider
 	# than the quad differencing it, and `crack_width` is a constant in plate
 	# units — so past a few metres of grazing ground the differenced form
@@ -149,9 +178,10 @@ func _ready() -> void:
 			_fail("%s does not take the crack gradient in closed form — the `normalize(uv - c2) - normalize(uv - c1)` separator is gone, so the relief is no longer exact at distance" % path)
 			return
 
-	print("TEST PASS — %s and %s apply the same crack-relief guards: seam-slope ceiling %s, crack-footprint fade over (%s, %s), gradient in closed form on both" % [
+	print("TEST PASS — %s and %s apply the same crack-relief guards: seam-slope ceiling %s, crack-footprint fade over (%s, %s), plate-boundary footprint %s, gradient in closed form on both" % [
 		GROUND_SHADER_PATH, CONTACT_SHADER_PATH,
-		_num(ground_ceiling[0]), _num(ground_fade[0]), _num(ground_fade[1])
+		_num(ground_ceiling[0]), _num(ground_fade[0]), _num(ground_fade[1]),
+		_num(ground_edge)
 	])
 	get_tree().quit(0)
 
@@ -176,6 +206,19 @@ func _pair(text: String, pattern: String) -> Array:
 	if m == null:
 		return []
 	return [float(m.get_string(1)), float(m.get_string(2))]
+
+
+## The first capture group of [param pattern] in [param text] as a float, or
+## -1.0 if it does not match. Negative is unambiguous here: every quantity this
+## file pins is a footprint or a slope, and none of them can be below zero.
+func _single(text: String, pattern: String) -> float:
+	var re := RegEx.new()
+	if re.compile(pattern) != OK:
+		return -1.0
+	var m := re.search(text)
+	if m == null:
+		return -1.0
+	return float(m.get_string(1))
 
 
 ## Whether [param pattern] occurs anywhere in [param text]. A compile failure
