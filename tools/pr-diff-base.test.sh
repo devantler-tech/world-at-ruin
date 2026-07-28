@@ -151,15 +151,28 @@ fi
 FIX_OWN="$SCRATCH_DIR/own-merge"
 build_fixture "$FIX_OWN" "client/scripts/bar.gd"
 git -C "$FIX_OWN" checkout -q pr
-git -C "$FIX_OWN" merge -q --no-ff main -m "contributor merges main" || true
+# NOT `|| true`: a merge that silently failed would leave HEAD at the pr tip,
+# where HEAD^1 and the frozen base and the merge-base all coincide — so the
+# negative assertion below would pass while testing nothing, and any failure
+# would blame the resolver for a broken fixture.
+if ! git -C "$FIX_OWN" merge -q --no-ff main -m "contributor merges main"; then
+	t_fail "fixture: could not build the contributor's-own-merge shape — this layer proves nothing without it"
+fi
 own_head="$(git -C "$FIX_OWN" rev-parse HEAD)"
+own_frozen="$(cat "$FIX_OWN/.frozen_base")"
 # The event's head sha IS this merge commit, so HEAD^2 (main) must not be
 # mistaken for it — the resolver must fall back rather than take HEAD^1.
-resolved_own="$(cd "$FIX_OWN" && resolve_pr_diff_base "$own_head" "$(cat "$FIX_OWN/.frozen_base")" || echo NONE)"
+# Pin the value POSITIVELY: the fallback is merge-base(frozen, HEAD), which for
+# this shape is the frozen base itself. A negative-only assertion would accept
+# any other wrong answer.
+resolved_own="$(cd "$FIX_OWN" && resolve_pr_diff_base "$own_head" "$own_frozen" || echo NONE)"
+expected_own="$(git -C "$FIX_OWN" merge-base "$own_frozen" HEAD)"
 if [ "$resolved_own" = "NONE" ]; then
 	t_fail "resolver should fall back to the frozen base when HEAD is the contributor's own merge, not the merge ref"
 elif [ "$resolved_own" = "$(git -C "$FIX_OWN" rev-parse 'HEAD^1')" ]; then
 	t_fail "resolver took HEAD^1 on a non-merge-ref checkout — that diffs from an arbitrary point in the feature branch"
+elif [ "$resolved_own" != "$expected_own" ]; then
+	t_fail "resolver should fall back to merge-base(frozen, HEAD) = $expected_own on a non-merge-ref checkout, got $resolved_own"
 fi
 
 # --- Layer 2d: fail open when nothing resolves -------------------------------
@@ -204,6 +217,20 @@ done
 
 if ! grep -q './tools/pr-diff-base.test.sh' "$WORKFLOW"; then
 	t_fail "this test is not wired into ci.yaml — it would never run"
+fi
+
+# The head sha is what distinguishes the merge ref from a contributor's own
+# merge, so an unwired HEAD_SHA silently restores #494: the resolver sees an
+# empty head, skips merge-ref detection entirely, and falls back to the frozen
+# base — with every other assertion in this file still passing. Pin both halves,
+# the env export and the argument position.
+# shellcheck disable=SC2016  # literal workflow text, must not expand
+if ! printf '%s' "$detect_block" | grep -qE 'HEAD_SHA: \$\{\{ github\.event\.pull_request\.head\.sha \}\}'; then
+	t_fail "detect-visual-changes does not export HEAD_SHA from the event — the resolver would skip merge-ref detection and silently fall back to the frozen base (#494)"
+fi
+# shellcheck disable=SC2016  # literal workflow text, must not expand
+if ! printf '%s' "$detect_block" | grep -qE '\./tools/pr-diff-base\.sh "\$HEAD_SHA" "\$BASE_SHA"'; then
+	t_fail "the resolver is not invoked as pr-diff-base.sh \"\$HEAD_SHA\" \"\$BASE_SHA\" — argument order is load-bearing, head first"
 fi
 
 # --- Layer 3b: the gate must not be classified by its OWN resolver -----------
