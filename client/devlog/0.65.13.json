@@ -1,0 +1,13 @@
+{
+	"date": "2026-07-28",
+	"notes": [
+		"Skin no longer breaks up into a fine orange speckle when you look at someone from a few steps away. It was worst on faces and on the back of a shaved head — the places skin covers the most screen in one unbroken piece — and it read as a rendering fault on the character you look at more than any other, your own.",
+		"The cause was that the game kept only the full-size version of each skin. Close up that is exactly what you want. Further away, a person covers far fewer dots on screen than the skin picture has detail in it, so the game had to pick one point of that picture for each dot rather than blending the many it actually covered — and picking rather than blending is what turns skin into a dotted pattern. It now keeps smaller prepared versions alongside the full-size one and blends from those at distance, which is what the clothing has always done.",
+		"Nothing changes up close: the skin you see standing still is the same skin. This only affects what happens once a body is far enough away to be shrunk down.",
+		"Every skin in the game is covered, not only the one the wanderer starts in, and a test now fails if a skin ever ships without those smaller versions again.",
+		"Still open, and this is the larger half: skin still has no surface detail of its own. There is nothing describing how it catches light — no pores, no grain, no variation in sheen — so it is still flat colour draped on a body rather than skin, and that is true up close where this change does nothing. Removing the speckle makes the flatness easier to see, not less. Tracked separately.",
+		"Also still open: at a shallow, glancing angle — a body seen edge-on down a slope — the smaller versions are chosen more coarsely than they need to be, so skin there is softer than it should be. Sharpening that case is a separate setting this change deliberately did not touch."
+	],
+	"title": "Skin stays skin at a distance instead of breaking into speckle",
+	"version": "0.65.13"
+}
