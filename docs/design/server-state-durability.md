@@ -126,8 +126,8 @@ assumed wrongly:
 
 **Not yet established:** the Postgres failover bound. The platform runs CNPG, so a bound exists, but
 this project has not measured or stated it, and a number nobody has verified would be worse than an
-admitted gap. Establishing it is the first thing any player-owned record needs, because the row
-above is the only one where a player can lose something that was genuinely acknowledged.
+admitted gap. Establishing it is the first thing any player-owned record needs, because failover is
+the only case in the table where a player can lose a mutation that was genuinely acknowledged.
 
 ## What a rollback costs a player
 
