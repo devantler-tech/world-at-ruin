@@ -590,11 +590,66 @@ void fragment() {
 	// centre would otherwise normalize a zero vector.
 	vec2 gsep = d2 * inversesqrt(max(dot(d2, d2), 1e-12))
 		- d1 * inversesqrt(max(dot(d1, d1), 1e-12));
-	float ct = clamp((f2 - f1) / max(crack_width, 1e-6), 0.0, 1.0);
-	// d/dx of (1 - smoothstep(0, w, x)) is -6t(1-t)/w. The crack is 1 at the
-	// seam and 0 off it, so this is negative and the normal tilts INTO the
-	// groove, exactly as the differenced form did.
-	float dcrack = -6.0 * ct * (1.0 - ct) / max(crack_width, 1e-6);
+	float cwid = max(crack_width, 1e-6);
+	float sep = f2 - f1;
+	// The slope is AVERAGED over the pixel rather than read at its centre, and
+	// that is a third guard rather than a restatement of the two below. Those
+	// are keyed on when the CRACK stops resolving; the quantity sampled here is
+	// the crack's SLOPE, and its profile is finer than the mark it belongs to.
+	// 1 - smoothstep(0, w, s) turns over inside a half-width, so its derivative
+	// peaks at w/2 and returns to zero at both ends — under-sampled a factor of
+	// two sooner than the crack. That leaves a band where the fades still read
+	// the seam as resolvable and the relief is at full strength, while its own
+	// profile is already narrower than the pixel reading it.
+	//
+	// The mean of a derivative over an interval is the difference of its
+	// antiderivative at the ends, and that antiderivative IS the crack profile,
+	// so the filtered slope costs two smoothsteps and no cellular evaluation:
+	//
+	//     mean over [s - h/2, s + h/2] = (P(s + h/2) - P(s - h/2)) / h
+	//
+	// `sep` is a V about the seam — zero ON it, rising on BOTH sides — so an
+	// offset crossing the seam lands at |sep +- h/2|. The reflection is what
+	// makes this correct rather than merely smooth: a footprint spanning the
+	// whole groove sees its two walls cancel and returns ~0, the honest answer
+	// for a groove too small to see. Without abs() that same footprint reads a
+	// full-strength one-sided slope, which is the artifact itself.
+	//
+	// h -> 0 recovers the analytic slope, so the near field converges on the
+	// unfiltered term by construction: `crack_fw` goes to zero as the camera
+	// closes, whatever the width factor below.
+	//
+	// That factor is a PREFILTER WIDTH and it is measured, not derived. A box
+	// exactly one footprint wide (0.5 here) is inert — it still passes the
+	// slope's energy above Nyquist, and it measured bit-identical on flicker
+	// and peak. Widening it is what engages the filter. Measured on-GPU with
+	// both instruments, one machine, one sitting, plates-off control 0.0000 on
+	// every run:
+	//
+	//   factor | crawl  | covered 6 m | 12 m    | 24 m    | 48 m    | 6 m strength
+	//   main   | 0.0005 | 0.00034     | 0.00050 | 0.00028 | 0.00056 | 0.03071
+	//   1.0    | 0.0004 |
+	//   2.0    | 0.0002 | 0.00049     | 0.00057 | 0.00039 | 0.00067 | 0.03082
+	//   3.0    | 0.0001 |
+	//   4.0    | 0.0000 | 0.00030     | 0.00022 | 0.00019 | 0.00024 | 0.03047
+	//
+	// 2.0 is the knee, and unusually it is not a trade at all: crawl falls 60%
+	// while seam coverage RISES at every swept distance and the 6 m rake is
+	// unchanged (+0.4%). Averaging spreads a groove's shading across the pixels
+	// that should show it instead of concentrating it on the one the centre
+	// happened to land in, so the seam reads WIDER rather than fainter. Both
+	// earlier levers had to pay: the fade cost 65-74% of coverage, the slope
+	// ceiling 22% of strength.
+	//
+	// 4.0 is past the knee and is the failure this shader's third acceptance
+	// criterion names. It takes crawl to the control's own floor, but coverage
+	// collapses to 0.00019-0.00024 at 24 m and 48 m — at or under `relief_read`'s
+	// vacuity floor, which is the instrument saying the seams are gone rather
+	// than softened. Do not chase the 0.0000.
+	float half_h = 2.0 * max(crack_fw, 1e-6);
+	// Negative off the seam, so the normal still tilts INTO the groove.
+	float dcrack = ((1.0 - smoothstep(0.0, cwid, abs(sep + half_h)))
+		- (1.0 - smoothstep(0.0, cwid, abs(sep - half_h)))) / (2.0 * half_h);
 	// Gradient in plate-uv space, then into world XZ (plate_uv = xz * scale).
 	// This is inside the gate for a reason found by measurement: when the
 	// relief was computed unconditionally, the grooves kept raking the light

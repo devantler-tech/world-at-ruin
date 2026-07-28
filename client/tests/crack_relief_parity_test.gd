@@ -45,6 +45,22 @@ const CEILING_PATTERN := \
 const EDGE_BLEND_PATTERN := \
 	"terrain_plate_edge_blend\\(\\s*f1\\s*,\\s*f2\\s*,\\s*edge_fw\\s*\\*\\s*([0-9.]+)\\s*\\)"
 
+## How much of the crack footprint the relief's slope is averaged over, matched
+## on the assignment so it captures the factor rather than one of the several
+## other `max(crack_fw, ...)` guards in either file.
+const SLOPE_FOOTPRINT_PATTERN := \
+	"half_h\\s*=\\s*([0-9.]+)\\s*\\*\\s*max\\(\\s*crack_fw\\s*,"
+## The point-sampled slope, `-6t(1-t)/w` — the analytic derivative of the crack
+## profile read at the pixel CENTRE. Correct arithmetic and the wrong quantity
+## past a few metres, so this is the second form the relief must not regress to.
+const POINT_SLOPE_PATTERN := \
+	"-\\s*6\\.0\\s*\\*\\s*\\w+\\s*\\*\\s*\\(\\s*1\\.0\\s*-\\s*\\w+\\s*\\)\\s*/"
+## The reflected offsets either side of the seam. `f2 - f1` is a V — zero ON the
+## boundary and rising on BOTH sides — so the two profile samples must be taken
+## at |s +- h/2|. Matched as two separate laws because dropping EITHER abs()
+## leaves a filter that still runs and still looks averaged.
+const REFLECT_HI_PATTERN := "abs\\(\\s*\\w+\\s*\\+\\s*half_h\\s*\\)"
+const REFLECT_LO_PATTERN := "abs\\(\\s*\\w+\\s*-\\s*half_h\\s*\\)"
 ## A screen-space derivative taken OF a crack quantity — the form this must not
 ## regress to. Deliberately anchored on the crack operand rather than on
 ## `dFdx` alone: both shaders legitimately take derivatives of other things
@@ -178,10 +194,50 @@ func _ready() -> void:
 			_fail("%s does not take the crack gradient in closed form — the `normalize(uv - c2) - normalize(uv - c1)` separator is gone, so the relief is no longer exact at distance" % path)
 			return
 
-	print("TEST PASS — %s and %s apply the same crack-relief guards: seam-slope ceiling %s, crack-footprint fade over (%s, %s), plate-boundary footprint %s, gradient in closed form on both" % [
+	# 5. THE SLOPE IS FILTERED OVER THE PIXEL, on both surfaces. Law 4 makes the
+	# gradient EXACT; this makes it the right quantity to sample. The crack
+	# profile turns over inside a half-width, so its slope peaks at w/2 and is
+	# under-sampled a factor of two sooner than the crack — which leaves a band
+	# where the fade in law 2 still calls the seam resolvable, the relief runs at
+	# full strength, and its own profile is already narrower than the pixel.
+	#
+	# Two regression forms, and neither fails anything else. Reading the slope at
+	# the pixel centre is the analytic derivative, so it looks MORE correct than
+	# the filtered form and is the natural "simplification" back. Dropping either
+	# reflection leaves a filter that still runs and still averages — it simply
+	# reads one wall of the groove at full strength where the honest answer is
+	# the two walls cancelling.
+	for named in [[GROUND_SHADER_PATH, ground], [CONTACT_SHADER_PATH, contact]]:
+		var path: String = named[0]
+		var src: String = named[1]
+		if _matches(src, POINT_SLOPE_PATTERN):
+			_fail("%s reads the crack slope at the pixel centre (`-6t(1-t)/w`) instead of averaging it over the footprint — the slope's profile is half the width of the crack, so it is under-sampled while the fade still calls the seam resolvable, and the relief shimmers at full strength" % path)
+			return
+		if not _matches(src, REFLECT_HI_PATTERN) or not _matches(src, REFLECT_LO_PATTERN):
+			_fail("%s does not take the two profile samples at reflected offsets (`abs(s + half_h)` and `abs(s - half_h)`) — `f2 - f1` is a V about the seam, so an unreflected offset reads one wall of the groove at full strength instead of letting a footprint that spans it cancel to zero" % path)
+			return
+
+	# 5a. And over the SAME footprint on both, for the reason every other law
+	# here is paired: a band that filters the slope harder or softer than the
+	# ground it meets rakes its seams differently along the join.
+	var ground_slope_fw := _single(ground, SLOPE_FOOTPRINT_PATTERN)
+	if ground_slope_fw < 0.0:
+		_fail("no slope footprint (`half_h = X * max(crack_fw, ...)`) in %s — the relief's slope is no longer averaged over the pixel drawing it, and the contact band has nothing left to match" % GROUND_SHADER_PATH)
+		return
+	var contact_slope_fw := _single(contact, SLOPE_FOOTPRINT_PATTERN)
+	if contact_slope_fw < 0.0:
+		_fail("no slope footprint (`half_h = X * max(crack_fw, ...)`) in %s — the contact band samples the slope where the ground filters it, so seams shimmer at the cave mouth only" % CONTACT_SHADER_PATH)
+		return
+	if not is_equal_approx(ground_slope_fw, contact_slope_fw):
+		_fail("slope footprint disagrees: the ground averages the relief slope over %s of the crack footprint but the contact band uses %s — seams would rake differently either side of every cave mouth" % [
+			_num(ground_slope_fw), _num(contact_slope_fw)
+		])
+		return
+
+	print("TEST PASS — %s and %s apply the same crack-relief guards: seam-slope ceiling %s, crack-footprint fade over (%s, %s), plate-boundary footprint %s, slope footprint %s, gradient in closed form and slope filtered over the pixel on both" % [
 		GROUND_SHADER_PATH, CONTACT_SHADER_PATH,
 		_num(ground_ceiling[0]), _num(ground_fade[0]), _num(ground_fade[1]),
-		_num(ground_edge)
+		_num(ground_edge), _num(ground_slope_fw)
 	])
 	get_tree().quit(0)
 
