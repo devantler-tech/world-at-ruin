@@ -542,6 +542,10 @@ static func _save_to_locked(
 		ProjectSettings.globalize_path(tmp_path), ProjectSettings.globalize_path(path))
 	if err != OK:
 		push_error("SaveVault: atomic replace failed (%d)" % err)
+		# Staging names are per-attempt, so a failed rename leaks this file
+		# rather than having it reclaimed by the next write's truncation.
+		# Every other refusal branch above removes it; so does this one.
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(tmp_path))
 		return false
 	return true
 
