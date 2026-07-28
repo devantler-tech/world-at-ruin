@@ -6,6 +6,7 @@
 		"Press C any time to reshape yourself (an early-build courtesy while the character system grows: skin, hair and clothes are still to come, and the body still stands in the sculptor's pose).",
 		"The capsule placeholder is gone; the wanderer wears a recipe-built body from the character system."
 	],
+	"shipped_in": "0.1.15",
 	"title": "You wake in the starter cave",
 	"version": "0.1.7"
 }

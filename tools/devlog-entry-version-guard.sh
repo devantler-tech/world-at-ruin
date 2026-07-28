@@ -120,6 +120,95 @@ first_release_containing() {
 		sed 's/^v//' | oldest_version
 }
 
+# The lowest release strictly above $1. Empty when $1 is above every release.
+#
+# This is the whole answer for a PRE-RELEASE entry, and it needs no history
+# walk. An entry numbered below the first tag was authored before any release
+# existed, so the first release cut after its number is necessarily the one that
+# first carried it — the containment lookup and this succession agree by
+# construction for that class. Deriving it from tags alone keeps the check
+# working on a checkout whose depth hides the commit an anchor search would
+# need, which is the misconfiguration most likely to make a gate pass vacuously.
+first_release_after() {
+	local v
+	while IFS= read -r v; do
+		# An `if` rather than `&&`: the loop's status is its last iteration's, so
+		# a trailing release that is NOT above $1 would leave the while non-zero
+		# and `set -e` would abort the run inside the command substitution — no
+		# message, no verdict. That is the empty-output failure mode, and it hits
+		# exactly when $1 is above every release, which is the case the caller
+		# most needs an answer for.
+		if version_gt "$v" "$1"; then
+			printf '%s\n' "$v"
+		fi
+	done < <(released_versions) | oldest_version
+}
+
+# The release an entry declares it first reached players in, or empty.
+#
+# Present only on entries whose own version was never cut. It is a claim about a
+# release, so it is verified rather than trusted — see check_shipped_in.
+declared_shipped_in() {
+	jq -er '.shipped_in // empty' "$1" 2>/dev/null || true
+}
+
+# Verify every `shipped_in` declaration in the tree.
+#
+# A declaration is how the log stops presenting a never-released number as a
+# build the reader could have played, so it carries the same weight as the
+# version field and gets the same treatment: a wrong one fails rather than
+# quietly mislabelling the log again. Three properties, each provable from the
+# tags in the checkout:
+#
+#   1. The entry's own version was NEVER released. An entry that shipped as
+#      itself has nothing to redirect the reader to, so a declaration on it is
+#      false however plausible its target looks.
+#   2. The declared release EXISTS. Pointing at another version that was never
+#      cut would move the false claim rather than remove it.
+#   3. It is the FIRST release above the entry's version. Any later release also
+#      contains the change, so "a release containing it" would accept a whole
+#      tail of true-but-wrong answers; only the first one dates the work.
+#
+# Whole-tree rather than diff-scoped, unlike the added-entry rule above. The
+# declarations are edits to entries that shipped long ago, which the added-only
+# rule deliberately leaves unchecked — so a diff-scoped check would verify these
+# on the change that introduces them and never again, and a later edit could
+# falsify one silently.
+check_shipped_in() {
+	local file version shipped expected
+	while IFS= read -r file; do
+		[ -n "$file" ] || continue
+		shipped=$(declared_shipped_in "$file")
+		[ -n "$shipped" ] || continue
+
+		version=$(declared_version "$file")
+		is_version "$version" ||
+			fail "$file declares shipped_in but no readable version of its own"
+		is_version "$shipped" ||
+			fail "$file declares shipped_in '$shipped', which is not an X.Y.Z release version"
+
+		[ -z "$(git tag --list "v$version")" ] ||
+			fail "$(printf '%s declares it first shipped in v%s, but v%s was itself released and contains its own change. shipped_in marks an entry whose version was NEVER cut; remove it.' \
+				"$file" "$shipped" "$version")"
+		[ -n "$(git tag --list "v$shipped")" ] ||
+			fail "$(printf '%s declares it first shipped in v%s, but no such release exists. Naming one never-cut version from another leaves the log claiming a build the reader could not have played.' \
+				"$file" "$shipped")"
+
+		expected=$(first_release_after "$version")
+		# Nothing has been cut above this entry yet, so it is a freshly authored
+		# one under the forward-looking rule — it describes a build that has not
+		# shipped, and cannot already know where it landed. Named separately
+		# because the comparison below would otherwise refuse it against an
+		# empty release and read as the guard malfunctioning.
+		[ -n "$expected" ] ||
+			fail "$(printf '%s declares it first shipped in v%s, but no release above %s exists yet — this entry has not shipped at all. shipped_in records where an already-released change landed; a new entry takes the forward-looking rule instead.' \
+				"$file" "$shipped" "$version")"
+		[ "$shipped" = "$expected" ] ||
+			fail "$(printf '%s declares it first shipped in v%s, but the first release cut after %s is v%s. A later release contains the change too, so only the first one dates it.' \
+				"$file" "$shipped" "$version" "$expected")"
+	done < <(find "$ENTRY_DIR" -name '*.json' | sort)
+}
+
 # Every listing must carry both a path and an anchor. A half-written line would
 # otherwise be indistinguishable from "not listed", so the entry would fall
 # through to the ordinary rule and be refused for the wrong reason — which reads
@@ -234,6 +323,7 @@ main() {
 		fail 'no release tags are visible in this checkout — refusing to pass vacuously (a shallow fetch hides them)'
 
 	validate_corrections
+	check_shipped_in
 
 	local added
 	added=$(candidate_entry_files "$(diff_base "$base")")

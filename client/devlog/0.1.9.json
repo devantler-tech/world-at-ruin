@@ -6,6 +6,7 @@
 		"Under the hood this is the equipment system arriving: clothes are baked from CC0 MakeHuman pieces onto the one canonical skeleton, so every garment fits every body — and every future humanoid. Weapon sockets now wait on both hands for the first weapon to exist.",
 		"Old saved characters keep working untouched (they always will); dressing them is one visit to the character screen (C)."
 	],
+	"shipped_in": "0.1.15",
 	"title": "The ragged clothes the Ruin left you",
 	"version": "0.1.9"
 }

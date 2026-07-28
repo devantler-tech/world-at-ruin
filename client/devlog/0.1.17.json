@@ -5,6 +5,7 @@
 		"They also look like torches now: an iron bracket bolted to the rock, a shaft leaning up out of it, a pitch-soaked wrapped head, and a flame that tapers to a point and rises straight up however the shaft is angled. Before, each was a plain stick with a ball stuck on the end.",
 		"The flame breathes with its own light as it flickers, and the way down is lit a little more evenly."
 	],
+	"shipped_in": "0.2.0",
 	"title": "The torches hang on the walls",
 	"version": "0.1.17"
 }

@@ -725,6 +725,21 @@ everything shipped afterwards is held to.
   leaves the second one low.
   **Do NOT hand-edit `DevLog.VERSION` or `config/version` in `project.godot`** — release builds are
   stamped from the release tag (below), so a hand-bump only drifts from the real version.
+  **`shipped_in` marks an entry whose version was never cut.** The seventeen oldest entries were
+  written before the repo's first tag (`v0.1.15`), so their numbers name builds that have never
+  existed and cannot be renamed onto the release that carried them — fifteen of them first shipped
+  in the same one, and versions are unique by filename and by `devlog_entries_test`. Such an entry
+  keeps its number as its identity and adds an optional `"shipped_in"` field naming the release its
+  change first reached players in; the log then renders it **without** the leading `v` and says
+  where it landed, instead of presenting a build nobody could have played.
+  **You will almost certainly never add one.** It records an already-released change, so
+  `tools/devlog-entry-version-guard.sh` refuses it on a new entry — a fresh entry describes a build
+  that has not shipped and takes the forward-looking rule above. The guard checks every declaration
+  in the tree, not just added ones, against the tags in the checkout: the entry's own version must
+  be untagged, the declared release must exist, and it must be the **first** release cut above the
+  entry's version (a later one contains the change too, so only the first dates it).
+  `tools/devlog-entry-version-sweep.sh` reports a verified declaration as `PRE-RELEASE` rather than
+  `NEVER-CUT`.
 - **CI, CD and releases:**
   - `ci.yaml` (`pull_request` + `merge_group`) lints, tests and analyses. It is the gate on a
     change. Its macOS export job is **build verification** — proof the project still exports and

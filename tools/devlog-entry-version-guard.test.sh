@@ -93,7 +93,17 @@ mkdir -p "$repo/client/devlog"
 git -C "$repo" init -q -b main
 git -C "$repo" config user.email t@example.com
 git -C "$repo" config user.name t
+# The same entry with a shipped_in declaration, for the pre-release cases.
+declared_entry() {
+	entry "$1" | jq -S --tab --arg s "$2" '. + {shipped_in: $s}'
+}
+
 entry 0.58.0 >"$repo/client/devlog/0.58.0.json"
+# A second base entry on a version no tag ever names. The declaration cases edit
+# this one IN PLACE: a declaration lands on an entry that shipped long ago, which
+# the added-only rule leaves unchecked, so adding a fresh file instead would test
+# the forward-looking rule rather than the declaration.
+entry 0.58.5 >"$repo/client/devlog/0.58.5.json"
 git -C "$repo" add -A
 git -C "$repo" commit -qm 'base'
 base="$(git -C "$repo" rev-parse HEAD)"
@@ -245,6 +255,52 @@ printf '%s' "$missing_base_out" | grep -qF 'is not present in the checkout' ||
 unset_base_out=$( (cd "$repo" && BASE_SHA='' bash "$GUARD" 2>&1) || true)
 printf '%s' "$unset_base_out" | grep -qF 'BASE_SHA is unset' ||
 	t_fail "an unset BASE_SHA was not refused: $unset_base_out"
+
+# --- Pre-release declarations ---------------------------------------------
+# `shipped_in` is how an entry whose version was never cut stops presenting that
+# number as a build. It is a claim about a release, so it is proved rather than
+# trusted — these pin each way it can be false, because a declaration that is
+# merely believed would re-create the mislabelling it exists to remove.
+#
+# Deliberately placed while `$repo` is still the forward-looking fixture: these
+# edit a base entry IN PLACE, and the corrections repo below rebinds both `$repo`
+# and `$base`, so a case appended after it would silently run against a tree that
+# has no 0.58.5 entry and a different tag set.
+
+# GREEN: the entry names the first release cut above its own never-cut version.
+reset_tree
+declared_entry 0.58.5 0.59.0 >"$repo/client/devlog/0.58.5.json"
+commit_all 'declare where a pre-release entry shipped'
+expect_pass 'a pre-release entry naming the first release above it'
+
+# RED: a later release also CONTAINS the change, so "some release that has it"
+# would accept a whole tail of true-but-wrong answers. Only the first dates it.
+reset_tree
+declared_entry 0.58.5 0.61.4 >"$repo/client/devlog/0.58.5.json"
+commit_all 'declare a later release'
+expect_fail_matching 'a declaration naming a later release than the first' 'the first release cut after 0.58.5 is v0.59.0'
+
+# RED: the entry shipped as itself, so there is nothing to redirect a reader to
+# and the declaration is false however plausible its target looks.
+reset_tree
+declared_entry 0.58.0 0.59.0 >"$repo/client/devlog/0.58.0.json"
+commit_all 'declare on an entry that was released'
+expect_fail_matching 'a declaration on an entry that was itself released' 'was itself released'
+
+# RED: pointing at another version that was never cut moves the false claim
+# rather than removing it.
+reset_tree
+declared_entry 0.58.5 0.58.7 >"$repo/client/devlog/0.58.5.json"
+commit_all 'declare a release that was never cut'
+expect_fail_matching 'a declaration naming a version that was never released' 'no such release exists'
+
+# RED: a freshly authored entry has not shipped at all, so it cannot know where
+# it landed. Without this, declaring shipped_in would be a way around the
+# forward-looking rule rather than a record of an already-released change.
+reset_tree
+declared_entry 0.62.0 0.61.4 >"$repo/client/devlog/0.62.0.json"
+commit_all 'declare on a brand-new entry'
+expect_fail_matching 'a declaration on an entry that has not shipped' 'has not shipped at all'
 
 # --- Corrections: the containment proof -----------------------------------
 # A correction names a release that has already happened, so the forward-looking

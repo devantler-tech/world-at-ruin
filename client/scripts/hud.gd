@@ -304,10 +304,22 @@ func _build_devlog() -> void:
 func _render_devlog() -> String:
 	var ember := UiTheme.EMBER.to_html(false)
 	var bone := UiTheme.BONE.to_html(false)
+	var dim := UiTheme.BONE_DIM.to_html(false)
 	var out := "[color=#%s][b]DEV LOG — watch the world grow[/b][/color]\n" % ember
-	out += "[color=#%s]Every player-visible change lands here, newest first. F1 closes.[/color]\n\n" % UiTheme.BONE_DIM.to_html(false)
+	out += "[color=#%s]Every player-visible change lands here, newest first. F1 closes.[/color]\n\n" % dim
 	for entry: Dictionary in DevLog.ENTRIES:
-		out += "[color=#%s][b]v%s — %s[/b]  ·  %s[/color]\n" % [ember, entry["version"], entry["title"], entry["date"]]
+		# An entry whose version was never cut drops the `v` and says where its
+		# change actually landed. The `v` is what makes a number read as a build
+		# the reader could have played, and for these there is no such build —
+		# the log would otherwise date the work to a release that never existed,
+		# which is exactly what someone reading it to find when something
+		# appeared is misled by.
+		var shipped_in := String(entry.get("shipped_in", ""))
+		var tag := "v" if shipped_in.is_empty() else ""
+		out += "[color=#%s][b]%s%s — %s[/b]  ·  %s[/color]" % [ember, tag, entry["version"], entry["title"], entry["date"]]
+		if not shipped_in.is_empty():
+			out += "[color=#%s]  ·  never released; first shipped in v%s[/color]" % [dim, shipped_in]
+		out += "\n"
 		for note: String in entry["notes"]:
 			out += "[color=#%s]  • %s[/color]\n" % [bone, note]
 		out += "\n"
