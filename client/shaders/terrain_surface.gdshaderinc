@@ -39,11 +39,28 @@ float terrain_ground_noise(vec2 xz, float scale) {
 	return terrain_fbm(vec3(xz.x, 0.0, xz.y) * scale);
 }
 
-void terrain_plates(vec2 uv, out vec2 id, out float f1, out float f2) {
+// The same partition as terrain_plates, additionally reporting the two nearest
+// cell CENTRES. The search already computes both, so a caller that needs the
+// crack field's gradient pays two extra out-parameters rather than another
+// nine-cell evaluation.
+//
+// That gradient is available in closed form, which is the point of exposing
+// them: f1 = |uv - c1| and f2 = |uv - c2| are plain distances, so
+//
+//     grad(f2 - f1) = normalize(uv - c2) - normalize(uv - c1)
+//
+// exactly, with no screen derivative anywhere in it. A caller differencing the
+// crack field with dFdx/dFdy instead is sampling a step whose width can be far
+// under one pixel, and that is the aliasing rather than a measurement of it.
+void terrain_plates_centres(
+		vec2 uv, out vec2 id, out float f1, out float f2,
+		out vec2 c1, out vec2 c2) {
 	vec2 base = floor(uv);
 	f1 = 1000.0;
 	f2 = 1000.0;
 	id = base;
+	c1 = base;
+	c2 = base;
 	for (int j = -1; j <= 1; j++) {
 		for (int i = -1; i <= 1; i++) {
 			vec2 cell = base + vec2(float(i), float(j));
@@ -54,13 +71,22 @@ void terrain_plates(vec2 uv, out vec2 id, out float f1, out float f2) {
 			float d = length(uv - centre);
 			if (d < f1) {
 				f2 = f1;
+				c2 = c1;
 				f1 = d;
+				c1 = centre;
 				id = cell;
 			} else if (d < f2) {
 				f2 = d;
+				c2 = centre;
 			}
 		}
 	}
+}
+
+void terrain_plates(vec2 uv, out vec2 id, out float f1, out float f2) {
+	vec2 c1;
+	vec2 c2;
+	terrain_plates_centres(uv, id, f1, f2, c1, c2);
 }
 
 vec4 terrain_plate_substance(

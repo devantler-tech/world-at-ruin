@@ -162,8 +162,12 @@ float ground_noise(vec2 xz, float scale) {
 // crack field: it goes to zero exactly on a boundary between two plates, and
 // widens naturally where three plates meet, which is where real broken ground
 // opens up too.
-void plates(vec2 uv, out vec2 id, out float f1, out float f2) {
-	terrain_plates(uv, id, f1, f2);
+// `c1`/`c2` are the centres those two distances are measured to. They come out
+// of the same search at no extra cost and are what lets the crack relief below
+// take an ANALYTIC gradient instead of differencing a sub-pixel step.
+void plates(vec2 uv, out vec2 id, out float f1, out float f2,
+		out vec2 c1, out vec2 c2) {
+	terrain_plates_centres(uv, id, f1, f2, c1, c2);
 }
 
 // One plate's substance, resolved from its cell id alone. rgb = colour,
@@ -211,8 +215,10 @@ void fragment() {
 	float crack = 0.0;
 	float plate_fw = 0.0;
 	float crack_fw = 0.0;
+	vec2 plate_c1 = vec2(0.0);
+	vec2 plate_c2 = vec2(0.0);
 	if (plates_enabled) {
-	plates(plate_uv, plate_id, f1, f2);
+	plates(plate_uv, plate_id, f1, f2, plate_c1, plate_c2);
 
 	// Screen footprint of one plate. Unlike the grain, plates are NOT tied to
 	// the distance fade: a 1.8 m slab is still a resolvable feature well past
@@ -389,31 +395,47 @@ void fragment() {
 	// frame. The first cut of this shader did exactly that and the macOS GPU
 	// watchdog killed the process before the world finished building.
 	//
-	// So take the gradient from the screen derivatives of the value already in
-	// hand, and convert it back into world XZ with the derivatives of the
-	// plate coordinate itself (a 2x2 solve). `crack_fixed` deliberately uses
-	// the constant width, never the fwidth-widened one: differencing a term
-	// that already carries a screen derivative would be a second derivative,
-	// which is undefined.
+	// So take the gradient in CLOSED FORM from the two plate centres the
+	// partition already found. f1 and f2 are plain distances to those centres,
+	// so the crack field's gradient is
+	//
+	//     grad(f2 - f1) = normalize(uv - c2) - normalize(uv - c1)
+	//
+	// exactly — two normalizes, no extra cellular evaluation, and no screen
+	// derivative of the crack field at all.
+	//
+	// That last part is the reason this is not a tidier spelling of the same
+	// thing. A differenced form has to read the crack at the CONSTANT width,
+	// because differencing a term that already carries fwidth() would be a
+	// second derivative; and a constant-width crack is narrower than one pixel
+	// past roughly eight metres, so the difference was sampling a step it could
+	// not see. Analytically there is no such bar: the width below is the same
+	// footprint-widened one the ALBEDO crack is drawn at, so the groove the
+	// relief rakes is the groove the eye is shown, and it stops being thinner
+	// than the pixel that samples it. The relief is band-limited by
+	// construction rather than faded out after the fact.
 	// Same uniform branch as the plate block: with the treatment off there is
-	// no relief to compute, and this is where its second batch of derivative
-	// work lives.
+	// no relief to compute.
 	vec2 grad = vec2(0.0);
 	if (plates_enabled) {
-	float crack_fixed = 1.0 - smoothstep(0.0, crack_width, f2 - f1);
-	vec2 duvdx = dFdx(plate_uv);
-	vec2 duvdy = dFdy(plate_uv);
-	float dcdx = dFdx(crack_fixed);
-	float dcdy = dFdy(crack_fixed);
-	float det = duvdx.x * duvdy.y - duvdx.y * duvdy.x;
-	float safe_det = abs(det) < 1e-8 ? 1e-8 : det;
+	vec2 d1 = plate_uv - plate_c1;
+	vec2 d2 = plate_uv - plate_c2;
+	// inversesqrt of a floored square length: a fragment sitting exactly on a
+	// centre would otherwise normalize a zero vector.
+	vec2 gsep = d2 * inversesqrt(max(dot(d2, d2), 1e-12))
+		- d1 * inversesqrt(max(dot(d1, d1), 1e-12));
+	float cwr = max(crack_width, crack_fw * 1.2);
+	float ct = clamp((f2 - f1) / max(cwr, 1e-6), 0.0, 1.0);
+	// d/dx of (1 - smoothstep(0, w, x)) is -6t(1-t)/w. The crack is 1 at the
+	// seam and 0 off it, so this is negative and the normal tilts INTO the
+	// groove, exactly as the differenced form did.
+	float dcrack = -6.0 * ct * (1.0 - ct) / max(cwr, 1e-6);
 	// Gradient in plate-uv space, then into world XZ (plate_uv = xz * scale).
 	// This is inside the gate for a reason found by measurement: when the
 	// relief was computed unconditionally, the grooves kept raking the light
 	// with the treatment switched off, moving cave-chamber 29.61% away from
 	// base. Shader reasoning said the gate was already exact; it was not.
-	grad = vec2(dcdx * duvdy.y - dcdy * duvdx.y,
-		dcdy * duvdx.x - dcdx * duvdy.x) / safe_det * plate_scale * plate_mask;
+	grad = gsep * dcrack * plate_scale * plate_mask;
 	// A screen-space gradient is UNBOUNDED as the feature it measures compresses
 	// into a pixel: at a grazing angle a seam 4 cm wide spans a fraction of one,
 	// and the raw slope runs to tens per metre — enough to swing the normal
