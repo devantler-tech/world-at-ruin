@@ -334,6 +334,16 @@ corrections client/devlog/0.59.0.json "$feature"
 commit_all 'an unlisted entry alongside a valid corrections file'
 expect_fail_matching 'an entry that is not the listed one' 'is already released'
 
+# RED: a listing with no anchor is unusable. Without this it would read as "not
+# listed", and the entry would be refused by the ordinary rule — a message about
+# renaming, for a listing that actually just needs finishing.
+reset_tree
+entry 0.60.0 >"$repo/client/devlog/0.60.0.json"
+mkdir -p "$repo/tools"
+printf 'client/devlog/0.60.0.json\n' >"$repo/tools/devlog-entry-corrections.tsv"
+commit_all 'a listing with no anchor commit'
+expect_fail_matching 'a listing with no anchor commit' 'with no anchor commit'
+
 # GREEN control: the ordinary forward-looking path still passes with a
 # corrections file present, so the lookup itself has not broken authoring.
 reset_tree

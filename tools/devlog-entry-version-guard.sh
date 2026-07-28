@@ -118,6 +118,21 @@ first_release_containing() {
 		sed 's/^v//' | oldest_version
 }
 
+# Every listing must carry both a path and an anchor. A half-written line would
+# otherwise be indistinguishable from "not listed", so the entry would fall
+# through to the ordinary rule and be refused for the wrong reason — which reads
+# as the guard misfiring rather than as a listing that needs finishing.
+validate_corrections() {
+	local path commit rest lineno=0
+	[ -f "$CORRECTIONS_FILE" ] || return 0
+	while IFS=$'\t' read -r path commit rest || [ -n "$path" ]; do
+		lineno=$((lineno + 1))
+		case "$path" in '' | '#'*) continue ;; esac
+		[ -n "$commit" ] ||
+			fail "$CORRECTIONS_FILE line $lineno lists $path with no anchor commit — a correction is verified against the commit it describes, so the listing is unusable without one"
+	done <"$CORRECTIONS_FILE"
+}
+
 # The anchor commit sanctioning $1 as a correction, or empty when it is not one.
 #
 # Matched on the exact landing path, so a listing covers one specific entry and
@@ -192,6 +207,8 @@ main() {
 	newest=$(released_versions | newest_version)
 	[ -n "$newest" ] ||
 		fail 'no release tags are visible in this checkout — refusing to pass vacuously (a shallow fetch hides them)'
+
+	validate_corrections
 
 	local added
 	added=$(added_entry_files "$(diff_base "$base")")
