@@ -35,11 +35,11 @@ lost player-owned record is lost permanently and a duplicated one is duplicated 
 
 ## The rules
 
-These rules bind every server-held record. They are **not** all met today, and they fail in two
-different ways. Some are enforced now by the lease store in `server/nakamalease`. Several are
-**gaps in running code** — they bind that same lease store, which does not currently keep them.
-The rest are obligations on records that do not exist yet, where nothing is broken because nothing
-is there. **The enforcement map at the end says which is which, rule by rule, and is the authority
+These rules bind every server-held record. They are **not** all met today, and they fall short in
+three different ways. Some are enforced now by the lease store in `server/nakamalease`. Several are
+**gaps in running code** — they bind that same lease store, which does not currently keep them. A
+few are kept but **unguarded**, enforced in code with no test pinning them. The rest are obligations
+on records that do not exist yet, where nothing is broken because nothing is there. **The enforcement map at the end says which is which, rule by rule, and is the authority
 whenever this section and the code disagree.**
 
 Each rule states the invariant first. Where an implementation currently enforces one, that is named
@@ -60,9 +60,18 @@ looked.
 storage credentials on a player's behalf is a deputy, and a deputy that accepts the *subject* of an
 operation from its caller can be confused into acting on the wrong player: an RPC taking a
 client-supplied user id satisfies every word of the rule above while reading someone else's
-character. So the key of a player-owned record is **derived from the verified identity** the session
-resolves to, never from a parameter the client supplies. Any operation that legitimately crosses
-players — moderation, support tooling, a trade — is a separately authorised path, and says so.
+character. So the **ownership component** of a player-owned record's key is **derived from the
+verified identity** the session resolves to, never from a parameter the client supplies.
+
+The rule binds the *owner*, not the whole key. A player legitimately has several records — characters,
+inventory objects, loadouts — so a caller may well select *which* record by a client-supplied
+identifier; what it may never do is say *whose*. A selector is therefore allowed, and the server
+resolves it **within** the authenticated owner's namespace and verifies the selected record belongs
+to that owner. Requiring the entire key to come from identity would either make those APIs
+impossible or force unrelated state into one contention-heavy document.
+
+Any operation that legitimately crosses players — moderation, support tooling, a trade — is a
+separately authorised path, and says so.
 
 *How the lease store meets it today:* the record is written with no client owner and both permission
 bits closed, so Nakama attributes it to the system account and no client API can reach it, and the
@@ -126,8 +135,15 @@ zero-valued field is where it fails. A boolean decoded into a plain `bool` reads
 was absent or explicitly written as `false`, so a legacy document carrying `"staging": false` is
 accepted today even though `staging` postdates that schema. A newer field must therefore be decoded
 **presence-aware** — a pointer or an explicit presence flag — not by testing its value for truth.
-The same package already does this correctly for `claimed_at_nanos`, which is a pointer precisely so
+The same package already does this **partly** for `claimed_at_nanos`, which is a pointer precisely so
 that absent and zero are distinguishable; the two booleans beside it are the gap, not the pattern.
+
+**A pointer is not a complete presence check, so do not copy it as one.** `*int64` separates absent
+from numeric zero, but an explicit JSON `null` decodes to `nil` as well — absence and a present-null
+are indistinguishable. That is harmless where the field is optional and both mean "unset", and it is
+not harmless for a **required** field, which can then be omitted or nulled without detection. A
+required field whose zero value or null is legal therefore needs a real presence bit or a custom
+unmarshaller, not a pointer.
 
 ### Read support ships and bakes before the writer that needs it
 
@@ -160,6 +176,14 @@ something to skip past.
 This is the server-side form of the closed-format law the character recipe already follows: a
 format that silently ignores what it does not understand cannot be reasoned about later, because
 no reader can tell an old document from a corrupted one.
+
+**"Strict" must include duplicate members, which the obvious decoder does not reject.** Go's
+`json.Decoder` with `DisallowUnknownFields` rejects an *unknown* field and still accepts a document
+repeating a **known** one — `{"schema":1,"schema":2}` decodes without error and silently keeps `2`
+(verified). So a corrupted or half-migrated document can carry two balances and the parser picks
+one, which is precisely the "cannot tell an old document from a corrupted one" failure this rule
+exists to prevent. Rejecting a repeated member needs an explicit token-level check; it does not come
+free with the standard decoder.
 
 **A refusal latches the record read-only; it never leaves it writable.** Refusing to *read* a
 document is only half an answer, and the dangerous half is what happens next: a caller that gets
@@ -372,16 +396,18 @@ needs to write a guard for.
 | The reader accepts the legacy end of the range | `nakamalease` document decode | `TestLoadKeepsSchemaOneLeaseReadableAsNotReleasing` |
 | The reader rejects a schema outside the range | `nakamalease` document decode | `TestLoadRejectsMalformedOrPublicStoredObjects` (`unsupported schema`) |
 | Unknown fields are refused | `nakamalease` document decode | `TestLoadRejectsMalformedOrPublicStoredObjects` (`unknown JSON field`) |
-| Trailing content is refused | `nakamalease` document decode | **gap (#491)** — `leaseFrom` checks for `io.EOF`, but no case appends a second JSON value, so a regression of that check leaves every named guard green |
+| A repeated known member is refused | `nakamalease` document decode | **gap (running code)** — `DisallowUnknownFields` does not reject duplicates; `{"schema":1,"schema":2}` decodes clean and keeps `2` |
+| A required nullable field cannot be omitted or nulled undetected | every record owner, **incl. `nakamalease` today** | **gap (running code)** — `claimed_at_nanos` is a `*int64`, so absent and explicit `null` are indistinguishable |
+| Trailing content is refused | `nakamalease` document decode | **unguarded (#491)** — `leaseFrom` *does* enforce this via its second decode and `io.EOF` check; no test appends a trailing token, so a regression would leave every named guard green |
 | A required field omitted from its own schema is refused | every record owner, **incl. `nakamalease` today** | **gap (running code)** — no schema declares a required-field set, so an omitted required field decodes as an implicit zero |
 | Every shipped schema **shape** stays readable, permanently | every record owner, **incl. `nakamalease` today** | **gap (running code)** — schemas 1 and 2 have shipped with no ledger or goldens, and schema 2 alone admits staging, finalized, claimed and releasing shapes |
 | A refusal quarantines the record **across replicas**, not just in one process | every record owner, **incl. `nakamalease` today** | **gap (running code)** — the decoder refuses the read but nothing blocks a later write at that key, from any instance; `CharacterStore`'s latch is process-local and does not port |
 | A newer field on a legacy schema is refused **by presence, not by truth** | `nakamalease` document decode | **gap (#491)** — `staging`/`releasing` are plain booleans, so an explicit `false` is accepted; needs presence-aware decoding and a zero-value case |
 | Read support ships and bakes before its writer activates | every record owner, **incl. `nakamalease` today** | **gap (running code)** — no server-side equivalent of the client staging guard, and nothing registers the rollback target as carrying the expanded reader |
 | A logical mutation spanning records is atomic or recoverable | player-owned record owners | not yet built — #474, #475 |
-| Any error after a write is dispatched is reconciled, never read as failure | every caller | not yet built — #475 supplies the stable identity |
+| Any error after a write is dispatched is reconciled, never read as failure | every caller, **incl. `nakamalease` today** | **gap (running code)** — `writeKey` returns `sanitizeStorageError` immediately for any non-version error and `Create` propagates it without reconciling the durable record; #475 supplies the stable identity for future records |
 | Read and write storage errors do not cross the boundary | `nakamalease` error sanitization | `TestStorageFailuresAreSanitized`, `TestStorageContextCancellationIsPreserved` |
-| **List** errors do not cross the boundary | `nakamalease` expiry sweep | **gap (#491)** — the fake carries a `listErr` field that no test ever assigns, so the sweep's `StorageList` error path is unexercised and a raw backend error there would keep every cited guard green |
+| **List** errors do not cross the boundary | `nakamalease` expiry sweep | **unguarded (#491)** — `ReclaimExpired` *does* call `sanitizeStorageError`; the fake's `listErr` field is never assigned by any test, so that path is unexercised |
 | A replay of an already-final operation returns without writing | `nakamalease.Store` | `TestCreateReplaysTheSameAttemptWithoutAnotherWrite`, `TestClaimReplayKeepsTheOriginalClaimWithoutWriting`, `TestBeginReleaseReplayKeepsTheExistingBarrier` |
 | A replay whose response was lost is reconciled to the durable outcome | `nakamalease.Store` | `TestClaimReconcilesAClaimCommittedFromTheSameObservedRecord`, `TestReplaceReconcilesAReplacementCommittedFromTheSameObservedRecord`, `TestReleaseReconcilesNakamaConditionalDeleteRejections`, `TestConcurrentIdenticalCreateReconcilesTheDurableWinner` |
 | Player-owned keys derive from the verified identity, never a client-supplied subject | player-owned record owners | not yet built — #472, #473, #474 |
@@ -394,14 +420,19 @@ needs to write a guard for.
 | A replay **not** identified by its own content applies once | player-owned record owners | not yet built — #475 |
 | A world-owned record states its own recovery invariant | first world-owned record owner | not yet built — no such record exists |
 
-The three labels mean different things, and the difference is the point of the table:
+The four labels mean different things, and the difference is the point of the table:
 
 - **A cited guard** — the promise holds today and a named test body covers it.
 - **`gap (running code)`** — the promise binds a record that **already exists** and that record does
   not keep it. These are defects now, not future work.
+- **`unguarded`** — the running code *does* keep the promise, but no test pins it, so a regression
+  would be silent. Not a defect today; a defect waiting for an unlucky refactor.
 - **`not yet built`** — the promise binds records that do not exist yet. Nothing is broken; the row
   exists so a record added later is measured against it rather than shipping unguarded and being
   noticed afterwards.
+
+The `gap`/`unguarded` split matters because collapsing them misreports working code as broken, and
+the map is supposed to be the authority on which is which.
 
 Every gap is recorded rather than quietly softened. The honest options were always to weaken the
 rule or to fix the code, and weakening a rule to match an implementation is how a contract stops
