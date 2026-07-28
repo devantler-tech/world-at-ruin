@@ -128,8 +128,8 @@ merge_calls() { grep -c '/merge' "${call_log}" || true; }
 # ---------------------------------------------------------------------------
 
 reset_mocks
-create_cask_pr "${tap}" "${branch}" "0.65.7" \
-	|| fail "create_cask_pr rejected a successful create"
+create_cask_pr "${tap}" "${branch}" "0.65.7" ||
+	fail "create_cask_pr rejected a successful create"
 if ! grep -q -- '--method POST' "${call_log}"; then
 	fail "the create did not go through the REST pulls endpoint"
 fi
@@ -151,8 +151,8 @@ reset_mocks
 mock_create_rc=1
 mock_create_out='HTTP 422: Validation Failed (https://api.github.com/repos/x/pulls)
 A pull request already exists for devantler-tech:goreleaser/world-at-ruin.'
-create_cask_pr "${tap}" "${branch}" "0.65.7" >/dev/null \
-	|| fail "create_cask_pr failed on a benign already-exists race"
+create_cask_pr "${tap}" "${branch}" "0.65.7" >/dev/null ||
+	fail "create_cask_pr failed on a benign already-exists race"
 
 # Every other refusal must surface WITH the API's reason — the swallowed
 # `|| true` that hid it is what made #502 read as an unexplained missing PR.
@@ -162,8 +162,8 @@ mock_create_out='HTTP 403: Resource not accessible by integration'
 if out="$(create_cask_pr "${tap}" "${branch}" "0.65.7" 2>&1)"; then
 	fail "create_cask_pr reported success on a genuine refusal"
 fi
-[[ "${out}" == *"Resource not accessible by integration"* ]] \
-	|| fail "the create failure did not surface the API's own message"
+[[ "${out}" == *"Resource not accessible by integration"* ]] ||
+	fail "the create failure did not surface the API's own message"
 
 # ---------------------------------------------------------------------------
 # merge_cask_pr_when_green — auto-merge's wait, done over REST.
@@ -172,23 +172,23 @@ fi
 # All checks green: merge, pinned to the head those checks describe.
 reset_mocks
 mock_checks=("${green_checks}")
-merge_cask_pr_when_green "${tap}" 1337 >/dev/null \
-	|| fail "a fully green head was not merged"
+merge_cask_pr_when_green "${tap}" 1337 >/dev/null ||
+	fail "a fully green head was not merged"
 [ "$(merge_calls)" -eq 1 ] || fail "expected exactly one merge call on a green head"
-grep -q 'sha=cafe1234cafe1234cafe1234cafe1234cafe1234' "${call_log}" \
-	|| fail "the merge was not pinned to the head whose checks were read"
+grep -q 'sha=cafe1234cafe1234cafe1234cafe1234cafe1234' "${call_log}" ||
+	fail "the merge was not pinned to the head whose checks were read"
 grep -q 'merge_method=squash' "${call_log}" || fail "the merge was not a squash"
-[ "$(wc -l <"${sleep_log}" | tr -d ' ')" -eq 0 ] \
-	|| fail "an already-green head should merge without waiting"
+[ "$(wc -l <"${sleep_log}" | tr -d ' ')" -eq 0 ] ||
+	fail "an already-green head should merge without waiting"
 
 # Pending checks are waited out, not merged through.
 reset_mocks
 mock_checks=("${pending_checks}" "${pending_checks}" "${green_checks}")
-merge_cask_pr_when_green "${tap}" 1337 >/dev/null \
-	|| fail "a head that went green on the third read was not merged"
+merge_cask_pr_when_green "${tap}" 1337 >/dev/null ||
+	fail "a head that went green on the third read was not merged"
 [ "$(merge_calls)" -eq 1 ] || fail "expected exactly one merge, after the wait"
-[ "$(wc -l <"${sleep_log}" | tr -d ' ')" -eq 2 ] \
-	|| fail "expected two waits before the third read went green"
+[ "$(wc -l <"${sleep_log}" | tr -d ' ')" -eq 2 ] ||
+	fail "expected two waits before the third read went green"
 
 # A failing check is a refusal, never something to wait out. Not merging is
 # only half the property: the run must give up IMMEDIATELY and say why, rather
@@ -201,16 +201,16 @@ if out="$(merge_cask_pr_when_green "${tap}" 1337 2>&1)"; then
 	fail "a head carrying a failing check was merged"
 fi
 [ "$(merge_calls)" -eq 0 ] || fail "a failing head must not be merged at all"
-[ "$(wc -l <"${sleep_log}" | tr -d ' ')" -eq 0 ] \
-	|| fail "a failing check should be refused at once, not waited out"
-[[ "${out}" == *"failing check"* ]] \
-	|| fail "the refusal did not say that a check had failed"
+[ "$(wc -l <"${sleep_log}" | tr -d ' ')" -eq 0 ] ||
+	fail "a failing check should be refused at once, not waited out"
+[[ "${out}" == *"failing check"* ]] ||
+	fail "the refusal did not say that a check had failed"
 
 # `neutral` and `skipped` are how a check says "not applicable" — a pass.
 reset_mocks
 mock_checks=("$(checks "$(check_run completed neutral)" "$(check_run completed skipped)")")
-merge_cask_pr_when_green "${tap}" 1337 >/dev/null \
-	|| fail "neutral/skipped conclusions were not treated as green"
+merge_cask_pr_when_green "${tap}" 1337 >/dev/null ||
+	fail "neutral/skipped conclusions were not treated as green"
 [ "$(merge_calls)" -eq 1 ] || fail "expected the neutral/skipped head to merge"
 
 # Everything else that COMPLETED is a refusal, not a pass.
@@ -230,8 +230,8 @@ if merge_cask_pr_when_green "${tap}" 1337 >/dev/null 2>&1; then
 	fail "a head carrying no check runs was merged"
 fi
 [ "$(merge_calls)" -eq 0 ] || fail "an unchecked head must never be merged"
-[ "$(wc -l <"${sleep_log}" | tr -d ' ')" -eq 19 ] \
-	|| fail "the wait budget is not the bounded 20 reads the comment claims"
+[ "$(wc -l <"${sleep_log}" | tr -d ' ')" -eq 19 ] ||
+	fail "the wait budget is not the bounded 20 reads the comment claims"
 
 # An unreadable check payload fails closed for the same reason.
 reset_mocks
@@ -267,16 +267,16 @@ fi
 reset_mocks
 mock_checks=("${green_checks}")
 mock_statuses='{"state":"failure","statuses":[{"context":"CodeRabbit","state":"failure","description":"Review rate limit exceeded"}]}'
-merge_cask_pr_when_green "${tap}" 1337 >/dev/null \
-	|| fail "a review provider's own rate-limit status blocked delivery"
+merge_cask_pr_when_green "${tap}" 1337 >/dev/null ||
+	fail "a review provider's own rate-limit status blocked delivery"
 [ "$(merge_calls)" -eq 1 ] || fail "the quota-status carve-out did not reach a merge"
 
 # A head with no legacy statuses at all is not blocked by their absence.
 reset_mocks
 mock_checks=("${green_checks}")
 mock_statuses='{"state":"pending","statuses":[]}'
-merge_cask_pr_when_green "${tap}" 1337 >/dev/null \
-	|| fail "a head carrying no legacy statuses was treated as blocked"
+merge_cask_pr_when_green "${tap}" 1337 >/dev/null ||
+	fail "a head carrying no legacy statuses was treated as blocked"
 
 # An unreadable status payload fails closed, like an unreadable check payload.
 reset_mocks
@@ -291,8 +291,8 @@ fi
 reset_mocks
 mock_pr_state='{"merged":true,"head":{"sha":"cafe1234cafe1234cafe1234cafe1234cafe1234"}}'
 mock_checks=("${green_checks}")
-merge_cask_pr_when_green "${tap}" 1337 >/dev/null \
-	|| fail "an already-merged cask PR was not reported as delivered"
+merge_cask_pr_when_green "${tap}" 1337 >/dev/null ||
+	fail "an already-merged cask PR was not reported as delivered"
 [ "$(merge_calls)" -eq 0 ] || fail "an already-merged PR must not be merged again"
 
 # A head that moves between the check read and the merge is refused by `sha=`,
@@ -329,7 +329,10 @@ fi
 if ! grep -qF "grep -qiE 'rate limit|RATE_LIMITED'" "${workflow}"; then
 	fail "the arming loop does not recognise a GraphQL rate-limit refusal"
 fi
-if ! grep -q 'merge_cask_pr_when_green "${tap}" "${pr}"' "${workflow}"; then
+# Written without a `$` so shellcheck does not read the literal search pattern
+# as a failed expansion (SC2016); `if merge_cask_pr_when_green "` is unique to
+# the fallback call site and never matches the definition.
+if ! grep -q 'if merge_cask_pr_when_green "' "${workflow}"; then
 	fail "a rate-limited arm does not fall back to the REST delivery path"
 fi
 # The disarm is deliberately NOT given the fallback: there is no REST
