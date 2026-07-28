@@ -5,5 +5,5 @@
 		"A check keeps it that way. Every change you can see adds an entry to the top of this same list, so two changes landing near each other is precisely how a block gets copied twice — that now stops the build instead of reaching you."
 	],
 	"title": "The dev log reads true",
-	"version": "0.1.18"
+	"version": "0.5.1"
 }
