@@ -1,0 +1,12 @@
+{
+	"date": "2026-07-28",
+	"notes": [
+		"If you ever had the game open twice and edited your character in both, the two saves could land on top of each other and one of them simply vanished. There is no undo for that — your character is the one thing here with no spare copy — so only one copy of the game can be saving at a time now. The other is turned away rather than allowed to write over it, and tells you to try again.",
+		"When a save cannot go through, the character on screen goes back to the one that is actually recorded. Before, you were told nothing had changed while still looking at the face you had just made, which is the worst possible pair of things to be told at once: the next time you launched, that face was gone.",
+		"A collision like that is momentary, and it is now treated that way — you can close the creator and try again. It used to shut the character editor for the rest of the session on the assumption that something was permanently wrong.",
+		"The message you get no longer blames a second copy of the game, because it cannot actually tell. A save can also fail because the folder it writes to has gone missing or unwritable, and sending you off to hunt for a game that is not running would have been a confident guess at the wrong thing. It now says only what is true either way: your changes did not save, and trying again is the right move. It deliberately stops short of promising your character is untouched — if the other copy did save, the body you are looking at is theirs, and it has just changed.",
+		"Still open: the game does not yet notice if you edit the same character in two places at once and save the older of the two. Ordering the writes cannot catch that on its own, and it is tracked separately."
+	],
+	"title": "Your character cannot be quietly overwritten by a second copy of the game",
+	"version": "0.65.7"
+}
