@@ -57,7 +57,8 @@ const EXPIRED_MANIFEST := "expired_manifest"
 ## persistence the updater owns; an absent value means this client has not accepted
 ## a manifest yet. `key_epoch_high_water` is the same shape for the signing-key
 ## epoch that mark was accumulated under — the sequence line restarts per epoch, so
-## the two are read together and never independently. `observed_at` is required and caller-supplied so this core can
+## the two are read together and never independently.
+## `observed_at` is required and caller-supplied so this core can
 ## enforce expiry without reading the wall clock and ceasing to be pure.
 ## `manifest` is the parsed update manifest (the caller has already verified its
 ## signature). Returns { action: String, reason: String } where action is one of
@@ -87,6 +88,13 @@ static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 	# rotated away from must not be able to sign its way back in, so an epoch below
 	# the accepted mark is refused — as a key-trust event distinct from an ordinary
 	# replay, because the two call for different operator responses.
+	#
+	# The epoch is only as trustworthy as the signature carrying it, and nothing yet
+	# binds a key to an epoch — that binding is the signing-key certificate of the
+	# key-custody boundary. So a claimed epoch is trusted exactly as the signature is,
+	# no more: it defends against a KEYLESS replayer, who can only resend manifests
+	# as published and therefore cannot invent a higher epoch. It does not yet defend
+	# against a compromised key claiming one, which is what the certificate closes.
 	var epoch_high_water: Variant = installed.get("key_epoch_high_water", 0)
 	if not is_int_id(epoch_high_water):
 		return _result(BLOCKED_INCOMPATIBLE, "the accepted signing-key epoch high-water mark is not a whole number — cannot prove this manifest was not signed under a superseded key")
