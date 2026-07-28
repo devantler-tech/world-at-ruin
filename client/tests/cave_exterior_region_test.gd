@@ -36,6 +36,7 @@ func _ready() -> void:
 	_test_baseline_is_exact(world)
 	_test_massif_tracks_its_region(world)
 	_test_hull_carries_payload_per_vertex(world)
+	_test_entrance_rock_follows_the_region(world)
 	_test_no_world_means_baseline()
 	_test_geometry_is_untouched(world)
 
@@ -152,6 +153,57 @@ func _test_hull_carries_payload_per_vertex(world: WorldGen) -> void:
 	if distinct.size() < 2:
 		_fail("the whole hull carries one palette (%d distinct) — a footprint spanning "
 			% distinct.size() + "two regions cannot be described by one value")
+
+
+## LAW 3b — the entrance rock follows the region too.
+##
+## The jambs and flanking boulders stand AT the mouth, against the massif, in the
+## sequence every wanderer walks. Recolouring the hull while leaving these on the
+## baseline warm rock would rebuild the mismatch this change exists to remove,
+## one surface over — so they are pinned in the same arm rather than trusted.
+func _test_entrance_rock_follows_the_region(world: WorldGen) -> void:
+	var cave := world.get_node_or_null("StarterCave") as CaveSystemGen
+	if cave == null:
+		return
+	var to_world := world.cave_to_world()
+	var checked := 0
+	var shifted := 0
+	for child in cave.get_children():
+		# The first rebuild's boulders are still in the tree awaiting a deferred
+		# free; they were built with no world and would read as the baseline.
+		if not (child is StaticBody3D) or child.is_queued_for_deletion():
+			continue
+		for sub in (child as Node).get_children():
+			var mi := sub as MeshInstance3D
+			if mi == null or not (mi.mesh is BoxMesh):
+				continue
+			var mat := mi.get_surface_override_material(0) as StandardMaterial3D
+			if mat == null:
+				continue
+			var w: Vector3 = to_world * (child as Node3D).position
+			var at: Dictionary = world.ground_material_at(w.x, w.z)
+			var delta: Vector3 = at[&"region_rock_delta"]
+			var want := Color(
+				maxf(0.0, CaveSystemGen.BOULDER_ALBEDO.r + delta.x),
+				maxf(0.0, CaveSystemGen.BOULDER_ALBEDO.g + delta.y),
+				maxf(0.0, CaveSystemGen.BOULDER_ALBEDO.b + delta.z))
+			checked += 1
+			if absf(mat.albedo_color.r - want.r) > EPS \
+					or absf(mat.albedo_color.g - want.g) > EPS \
+					or absf(mat.albedo_color.b - want.b) > EPS:
+				_fail("entrance rock at %s carries %s, not the region's %s" %
+					[w, mat.albedo_color, want])
+				return
+			if delta.length() > EPS:
+				shifted += 1
+	if checked == 0:
+		_fail("found no entrance rock to check — the arm is vacuous")
+		return
+	# Without this the arm passes on a build where every boulder sat on the
+	# baseline and nothing was ever shifted.
+	if shifted == 0:
+		_fail("all %d entrance rocks carry the baseline colour — none followed its region"
+			% checked)
 
 
 ## LAW 4 — no world, no region: the standalone taste scene keeps its palette.

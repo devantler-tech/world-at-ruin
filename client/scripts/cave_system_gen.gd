@@ -52,6 +52,8 @@ const COL_ROCK_DARK := Color(0.33, 0.24, 0.16)
 const COL_SEDIMENT := Color(0.52, 0.44, 0.33)
 const COL_EMBER := Color(1.0, 0.55, 0.18)
 const COL_FLAME_CORE := Color(1.0, 0.87, 0.48) ## Hotter inner cone.
+## Entrance rock on the BASELINE region, shifted per region by `_boulder_material`.
+const BOULDER_ALBEDO := Color(0.41, 0.36, 0.3)
 const COL_IRON := Color(0.16, 0.15, 0.15) ## Bracket, collar.
 const COL_WOOD := Color(0.2, 0.13, 0.08) ## Shaft.
 const COL_PITCH := Color(0.09, 0.07, 0.06) ## Soaked head wrapping.
@@ -1005,7 +1007,7 @@ func rebuild(terrain_h: Callable = func(_x: float, _z: float) -> float: return 0
 	_built.append(body)
 
 	_place_torches(lay)
-	_place_boulders(lay, terrain_h)
+	_place_boulders(lay, terrain_h, terrain_material)
 
 
 ## Torches along the spine, each BRACKETED TO THE ROCK — the light that pulls a
@@ -1145,18 +1147,25 @@ static func _glow(color: Color, energy: float) -> StandardMaterial3D:
 
 ## Big leaning slabs framing the mouth — the WoW cave-entrance grammar; they
 ## sit ON the ground flanking the bore and hide the cave↔terrain seam.
-func _place_boulders(lay: Dictionary, terrain_h: Callable) -> void:
+##
+## They follow the ground's region for the same reason the hull does (#291), and
+## they need it MORE: they stand at the mouth, against the massif, in the one
+## sequence every wanderer walks. Recolouring the hull alone would leave a
+## cluster of warm rock at exactly the seam this change exists to close.
+## Each is sampled where it stands rather than sharing one material, because the
+## spread of these spots is comparable to the blend band they sit in.
+func _place_boulders(lay: Dictionary, terrain_h: Callable,
+		terrain_material: Callable = Callable()) -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = seed_value + 7
 	var mouth: Vector3 = lay["mouth"]
-	var rock := StandardMaterial3D.new()
-	rock.albedo_color = Color(0.41, 0.36, 0.3)
-	rock.roughness = 0.95
 	# The PORTAL: the massif's own arch is the lintel; two jamb slabs lean at
 	# the doorway's shoulders, flanking boulders scatter outward — a stone
 	# doorway in a hillside, the reference grammar.
-	var jamb_left := _slab(rock, Vector3(2.0, 4.6, 1.6))
-	var jamb_right := _slab(rock, Vector3(2.0, 4.4, 1.6))
+	var jamb_left := _slab(
+		_boulder_material(terrain_material, mouth.x + 1.4, 3.3), Vector3(2.0, 4.6, 1.6))
+	var jamb_right := _slab(
+		_boulder_material(terrain_material, mouth.x + 1.4, -3.3), Vector3(2.0, 4.4, 1.6))
 	var ground_l: float = terrain_h.call(mouth.x + 1.4, 3.3)
 	var ground_r: float = terrain_h.call(mouth.x + 1.4, -3.3)
 	jamb_left.position = Vector3(mouth.x + 1.4, ground_l + 1.7, 3.3)
@@ -1173,10 +1182,28 @@ func _place_boulders(lay: Dictionary, terrain_h: Callable) -> void:
 		var size := Vector3(rng.randf_range(1.3, 2.2), rng.randf_range(1.8, 3.2), rng.randf_range(1.1, 1.9))
 		var at := spot + Vector3(rng.randf_range(-0.4, 0.4), 0.0, rng.randf_range(-0.3, 0.3))
 		var ground: float = terrain_h.call(at.x, at.z)
-		var boulder := _slab(rock, size)
+		var boulder := _slab(_boulder_material(terrain_material, at.x, at.z), size)
 		# A third buried, leaning like a fallen slab.
 		boulder.position = Vector3(at.x, ground + size.y * 0.32, at.z)
 		boulder.rotation = Vector3(rng.randf_range(-0.28, 0.1), rng.randf_range(0.0, TAU), rng.randf_range(-0.25, 0.25))
+
+
+## Entrance rock, shifted to the region it stands in by the same difference the
+## hull uses, so the two read as one stone. With no world to ask (the standalone
+## taste scene) the difference is zero and the authored colour ships unchanged.
+func _boulder_material(terrain_material: Callable, x: float, z: float) -> StandardMaterial3D:
+	var rock := StandardMaterial3D.new()
+	var albedo := BOULDER_ALBEDO
+	if terrain_material.is_valid():
+		var sample: Dictionary = terrain_material.call(x, z)
+		var delta: Vector3 = sample.get(&"region_rock_delta", Vector3.ZERO) as Vector3
+		albedo = Color(
+			maxf(0.0, albedo.r + delta.x),
+			maxf(0.0, albedo.g + delta.y),
+			maxf(0.0, albedo.b + delta.z))
+	rock.albedo_color = albedo
+	rock.roughness = 0.95
+	return rock
 
 
 func _slab(rock: StandardMaterial3D, size: Vector3) -> StaticBody3D:
