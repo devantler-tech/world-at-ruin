@@ -158,9 +158,37 @@ func _ready() -> void:
 			[head_frames.size(), unmatched.size(), incomparable.size()])
 		return
 
+	# An unmatched SET gets its own marker line, on the same reasoning as
+	# REMOVED above. The per-frame "no base frame" lines are already honest, but
+	# they sit in a 25-row table under a PASS verdict and nothing acts on them:
+	# the workflow greps for `REMOVED:` alone. So a PR can be told PASS while a
+	# whole scenario carried no comparison at all — measured on #455, where 6 of
+	# 25 frames went unmatched and the job raised not one annotation.
+	var unmatched_report := unmatched_line(unmatched)
+	if unmatched_report != "":
+		print(unmatched_report)
+
 	print("DIFF PASS — compared %d of %d frames against the base (unmatched %d, incomparable %d, REMOVED %d)" %
 		[compared, head_frames.size(), unmatched.size(), incomparable.size(), removed.size()])
 	get_tree().quit(0)
+
+
+## The unmatched frames' own verdict line, or "" when every frame matched.
+##
+## Uppercase `UNMATCHED:` with a colon is the greppable token, chosen so it
+## cannot collide with the lowercase `unmatched %d` the PASS summary prints on
+## EVERY run — a token matching both would warn on every clean PR, which is as
+## useless as warning on none. `frame_diff_test.gd` pins that separation.
+##
+## Returns "" rather than a "0 unmatched" line for the same reason: a clean run
+## must leave the workflow's grep with nothing to find.
+static func unmatched_line(unmatched: Array[String]) -> String:
+	if unmatched.is_empty():
+		return ""
+	return "DIFF UNMATCHED: %d frame(s) carry no base comparison and are NOT evidence for this PR — %s" % [
+		unmatched.size(),
+		", ".join(unmatched),
+	]
 
 
 ## Per-pixel luminance comparison of two frames.

@@ -2079,6 +2079,16 @@ jobs:
           if grep -q "REMOVED:" diff.log; then
             echo "::warning::a committed vantage present in the base is missing from this PR's capture — see the REMOVED lines"
           fi
+          # A frame the head captured and the base did not is UNMEASURED, and
+          # until now nothing said so above the fold: the per-frame "no base
+          # frame" lines sit inside a 25-row table under a PASS verdict, and the
+          # only grep here was the one above. Measured on #455 — 6 of 25 frames,
+          # the entire breath sequence, carried no comparison and the job raised
+          # no annotation at all. frame_diff emits the marker only when the set
+          # is non-empty, so a fully-compared run stays quiet.
+          if grep -q "UNMATCHED:" diff.log; then
+            echo "::warning::some captured frames carry no base comparison and are NOT evidence for this PR — see the UNMATCHED line"
+          fi
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: frames-${{ github.event.pull_request.head.sha }}
