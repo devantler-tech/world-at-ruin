@@ -79,6 +79,34 @@ extends Node
 ## three orders of magnitude. Any gate must be per-vantage and calibrated on CI.
 ## The numbers are comparable for the SAME vantage across builds, which is the
 ## comparison a reviewer makes; they are not comparable between vantages.
+##
+## ## The first_run_* set (#519, part of #485)
+##
+## Those frames are mostly a LIVE 3D PORTRAIT — the creator's panel takes the
+## left band only, and 29 bodies breathe in shot. Until #519 the breath ran on
+## accumulated wall-clock time while the capture settled a fixed number of
+## FRAMES, so the pose at the shutter depended on render speed. Two runs of
+## IDENTICAL code, same machine:
+##
+##   frame                   unpinned    pinned
+##   first_run_elder           53.74%     0.47%
+##   first_run_villager        46.63%     0.01%
+##   first_run_brute           31.67%     0.01%
+##   first_run_base_layer      24.21%     0.60%
+##   first_run_head_clothing   19.18%     0.01%
+##   first_run                 16.70%     0.01%
+##   first_run_lower           14.13%     0.00%
+##   first_run_wanderer         9.18%     0.01%
+##   first_run_advanced_1       3.62%     0.01%
+##   first_run_head_armor       3.01%     0.01%
+##   first_run_outfit           2.58%     0.01%
+##
+## ⚠️ THE PINNED COLUMN IS NOT A CI FLOOR, and must not be used as one. It is
+## two runs on ONE machine — precisely the back-to-back shape the second lesson
+## above warns reads too low. It establishes that the breath clock was the
+## DOMINANT source and that it is gone; the per-vantage floor #485 asks for
+## still has to be measured across independent CI builds, and only sunward and
+## crossfield remain gate candidates until it is.
 const CHANGED_EPS := 0.01
 
 ## NOTE: deliberately no luminance weights here. An earlier revision measured

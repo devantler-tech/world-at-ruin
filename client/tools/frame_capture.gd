@@ -1738,10 +1738,10 @@ func _shoot(dir: String, frame: String, creator: CanvasLayer) -> bool:
 ##   first_run_advanced_1    3.62%      first_run_outfit          2.58%
 ##   first_run_head_armor    3.01%
 ##
-## Nothing changed between those two runs. The same pass with this pin applied
-## is recorded on the PR and in `frame_diff.gd`'s calibration table; the residual
-## is what temporal antialiasing, foliage and fog still move, and it is far
-## below the numbers above.
+## Nothing changed between those two runs. `frame_diff.gd` carries the same
+## table with the pinned column beside it: every frame falls to 0.00%-0.60%,
+## which is what temporal antialiasing, foliage and fog still move. That column
+## is NOT a CI floor — see the warning under it before treating it as one.
 ##
 ## Scoped to `_shoot`, which only the first-run scenario calls, so the world
 ## vantages keep the behaviour they were calibrated on.
