@@ -107,6 +107,39 @@ extends Node
 ## DOMINANT source and that it is gone; the per-vantage floor #485 asks for
 ## still has to be measured across independent CI builds, and only sunward and
 ## crossfield remain gate candidates until it is.
+##
+## ## The cave-mouth vantage (#495)
+##
+## The entrance grammar — two jamb slabs, six flanking boulders and the massif
+## face over the bore — was photographed by NOTHING: on #492 an entrance-rock
+## recolour moved all six committed vantages by 0.01%-0.29%, their noise floor.
+## `cave-walkout` sounds like the missing shot and is not; it looks out from
+## INSIDE the chamber. Re-running that isolation with the exterior vantage
+## added, one machine, entrance rock recoloured (0.41, 0.36, 0.30) ->
+## (0.30, 0.34, 0.42):
+##
+##   vantage         repeat run    entrance rock recoloured
+##   cave-mouth           0.01%                      13.64%   <- the new frame
+##   crossfield           0.16%                       0.13%
+##   sunward              0.12%                       0.09%
+##   shrine               0.08%                       0.12%
+##   bonepale             0.08%                       0.11%
+##   cave-walkout         0.00%                       0.10%
+##   cave-chamber         0.02%                       0.05%
+##
+## The load-bearing comparison is DOWN the second column, not across the row:
+## it is one arm, so it needs no cross-run calibration and is not exposed to the
+## back-to-back lesson above. In the build that recoloured the entrance rock the
+## new vantage moves 13.64% of its pixels (mean |dRGB| 0.0114) while every older
+## vantage stays inside the 0.05%-0.13% band it occupies when nothing changed —
+## two orders of magnitude, and the localization property crossfield
+## demonstrates for fog, now holding for the doorway.
+##
+## ⚠️ The first column is NOT a CI floor either, for the same reason the pinned
+## breath column is not: two runs on one machine. It is here to show the frame
+## is reproducible at all (this vantage pins the torch flicker, so it is not
+## noise-dominated the way the interior ones were before #321) — not to license
+## a gate. A gate still needs the independent-build measurement #485 asks for.
 const CHANGED_EPS := 0.01
 
 ## NOTE: deliberately no luminance weights here. An earlier revision measured
