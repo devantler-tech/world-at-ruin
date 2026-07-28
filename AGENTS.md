@@ -411,8 +411,31 @@ everything shipped afterwards is held to.
   the SAME cross-process `FileLock` the vault takes — spanning the acceptance read, the validation and
   the rename as one unit, and proving ownership again before the rename (`tests/character_lock_test`);
   the two stores fail the same way for the same reason rather than each growing a bespoke mechanism.
-  Its staging sweep keeps an age floor the vault has no need of, because a retained rollback build or a
-  foreign writer stages through that prefix without ever taking the lock. A sibling file is the only shape a shipped client
+  The recipe additionally carries the same **compare-and-swap on its own bytes** the vault (#386) and
+  the boot-recovery ledger (#453) do (#469, `tests/character_cas_test`) — `document_identity()` plus an
+  `expected_identity` argument to `save_to()`/`save_recipe()`, with `IDENTITY_UNCHECKED` the explicit
+  opt-out so blind seeds and the existing refusal, lock and staging suites are unaffected. The lock and
+  the CAS answer different halves and neither subsumes the other: the lock keeps cooperating writers
+  from ENTERING the read-modify-write together, and cannot see that the base a caller READ has moved on
+  — two clients opening the creator from the same saved recipe serialise exactly as intended and the
+  second still discards the first's character. **The identity is captured BEFORE `load_saved()`**, in
+  `main.gd::_open_creator`: captured after, a foreign write landing between the load and the capture
+  becomes the expectation while the creator still opens on the old recipe, and the check passes. A
+  stale-identity refusal is **retryable and never latches** — it joins lock contention on that side of
+  the distinction #423 established, rather than becoming a second permanent refusal — and
+  `CharacterStore.last_refusal()` names which of the three outcomes occurred, because one
+  undifferentiated `false` cannot tell a caller whether to retry or lock the creator shut.
+  `CharacterStore._last_write_expectation` exists so a test can prove the production apply threads a
+  REAL identity directly, rather than only through a consequence: a caller writing blind is
+  indistinguishable from a correct one until something races it, and that ablation was measured
+  passing every assertion in `character_cas_test`. It is asserted in `character_revert_boot_test`'s
+  control arm, against the scene that actually calls `save_recipe()`. That test's arm D catches the
+  same ablation behaviourally — it stages a real race, so a blind apply overwrites the foreign
+  character and fails there too — and the two are deliberately kept: the control arm names the cause
+  in one line, arm D proves the player-visible consequence. Unlike the vault and the ledger, whose
+  end-to-end coverage that ablation passed outright, this file has both.
+  The character store's staging sweep keeps an age floor the vault has no need of, because a retained
+  rollback build or a foreign writer stages through that prefix without ever taking the lock. A sibling file is the only shape a shipped client
   handles safely: it never reads it, so it never rejects or deletes it. The vault obeys the same laws
   (name-keyed, additive-only, newer versions refused) with the same enforcement shape —
   `tests/save_vault_guard_test`, golden `tests/data/golden_vault_v<N>.json`, and the append-only

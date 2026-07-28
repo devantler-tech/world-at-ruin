@@ -67,6 +67,104 @@ const WRITE_TMP_MIN_AGE_SECONDS := 300
 ## another client's write.
 const WRITE_TMP_MIN_AGE_ENV := "WAR_CHARACTER_WRITE_TMP_MIN_AGE_SECONDS"
 
+## The identity of a save path that holds no recipe. Distinct from
+## [constant IDENTITY_UNCHECKED]: "absent" is a real state to compare against, and
+## a writer that read nothing must still refuse if a recipe appeared meanwhile.
+const IDENTITY_ABSENT := ""
+
+## The identity of a recipe that is PRESENT but could not be hashed.
+##
+## Distinct from [constant IDENTITY_ABSENT] because collapsing the two turns a
+## refusal into a lost update: a writer that read nothing expects absence, and a
+## recipe that appeared since but cannot be hashed would compare equal to that
+## expectation. A write never proceeds against this value on either side.
+const IDENTITY_UNREADABLE := "?"
+
+## The opt-out for [method save_to]'s compare-and-swap: replace whatever is there.
+##
+## A single `*` can never collide with a real identity — those are SHA-256 hex —
+## nor with [constant IDENTITY_ABSENT], so "no expectation" stays distinguishable
+## from "expected nothing". It exists for the blind whole-document replace that
+## seeding a fixture is; every read-modify-write passes a real identity instead.
+const IDENTITY_UNCHECKED := "*"
+
+## Why the most recent write refused, or [constant REFUSAL_NONE] when it wrote.
+##
+## A caller handed one undifferentiated `false` cannot choose what to do next, and
+## the three outcomes want three different answers. [constant REFUSAL_UNACCEPTABLE]
+## is PERMANENT — the recipe on disk is not this build's to replace, the refusal
+## latches, and the creator must lock shut. [constant REFUSAL_LOCK] and
+## [constant REFUSAL_STALE] are both momentary and retryable, and latching on
+## either would lock the player out of their own character for the rest of the
+## session over a collision the next attempt resolves. That is the distinction
+## #423 established for contention; the compare-and-swap adds a third outcome to
+## the same side of it rather than a second permanent one.
+const REFUSAL_NONE := ""
+const REFUSAL_LOCK := "lock"
+const REFUSAL_UNACCEPTABLE := "unacceptable"
+const REFUSAL_STALE := "stale"
+const REFUSAL_WRITE := "write"
+
+## The outcome of the most recent [method save_to] call. See the refusal
+## constants above; reset to [constant REFUSAL_NONE] at the top of every write.
+static var _last_refusal: String = REFUSAL_NONE
+
+## The expectation the most recent [method save_to] call ran under.
+##
+## FOR TESTS ONLY, and it exists because the thing it pins cannot otherwise be
+## observed. The production read-modify-write is protected only if it threads a
+## REAL identity; a caller passing [constant IDENTITY_UNCHECKED] instead still
+## writes correctly whenever nothing races it, so an end-to-end assertion — and
+## even a replay of the caller's own sequence — passes while the protection is
+## gone. That exact ablation was measured slipping through the vault's coverage.
+## Landing a foreign write INSIDE a live call needs a second process, so what the
+## call ran under is recorded here instead.
+static var _last_write_expectation: String = IDENTITY_UNCHECKED
+
+
+## Why the most recent [method save_to] refused: one of the REFUSAL_* constants,
+## or [constant REFUSAL_NONE] when it succeeded.
+##
+## Scoped to the SAVE path deliberately. [method clear] is also a write and does
+## not report here, so a caller must not read this after a failed delete — it
+## would answer for whatever saved last. Nothing in the shipped game calls
+## [method clear], and widening this to cover it would mean pretending one
+## accessor describes two different operations.
+##
+## [method is_refused] answers a different question — whether the PATH is latched
+## for the session — and a caller needs both. A stale-identity refusal never
+## latches, so asking only [method is_refused] reports "nothing is wrong with this
+## path", which is true and useless for deciding whether to retry.
+static func last_refusal() -> String:
+	return _last_refusal
+
+
+## The identity of the recipe at `path`: the SHA-256 of its bytes, or
+## [constant IDENTITY_ABSENT] when no file is there.
+##
+## Keyed on WHAT THE FILE IS rather than on who cooperated, which is the whole
+## reason this exists alongside the lock. A lock binds only writers that take it,
+## so a pre-lock rollback build — which the updater deliberately keeps runnable —
+## cloud sync, a backup agent and a hand edit all walk straight through it. Every
+## one of them changes the bytes, so every one of them is visible here.
+##
+## Content-hashed rather than size-plus-mtime on purpose: mtime has
+## filesystem-dependent granularity, sync tools routinely preserve it, and a
+## same-size edit is exactly the shape an edited recipe has.
+static func document_identity(path: String) -> String:
+	if not FileAccess.file_exists(path):
+		return IDENTITY_ABSENT
+	var sha := FileAccess.get_sha256(path)
+	# get_sha256() returns an EMPTY string on failure, and empty is exactly
+	# IDENTITY_ABSENT. Collapsing the two would be a lost update rather than a
+	# refusal: a writer that read no recipe expects absence, and a recipe that has
+	# appeared since but cannot be hashed would compare EQUAL to that expectation
+	# and be replaced. A file that is there but unreadable is its own answer, and
+	# one that never matches anything.
+	if sha.is_empty():
+		return IDENTITY_UNREADABLE
+	return sha
+
 
 ## The active save path: the WAR_SAVE_PATH override when set, else the shipped
 ## default. Resolved fresh each call so a test can redirect the game before it
@@ -223,12 +321,27 @@ static func _sweep_abandoned_writes(path: String) -> void:
 ## is the load-bearing half of the refusal: the creator is also locked shut while
 ## a refusal stands, but that is a UI guard on one entry point, and every writer
 ## reaching the file goes through here.
-static func save_to(path: String, recipe: Dictionary) -> bool:
+## `expected_identity` is a compare-and-swap on the recipe's own bytes (#469): pass
+## what [method document_identity] returned BEFORE the caller read the recipe it is
+## editing, and the write refuses once the file no longer carries it. Pass
+## [constant IDENTITY_UNCHECKED] for a deliberate blind replace.
+##
+## The lock and the CAS answer different halves. The lock keeps cooperating writers
+## from ENTERING the read-modify-write together; it cannot tell a writer that the
+## document it is about to replace has moved on since it READ it, because the
+## staleness is in the caller's base rather than in the ordering of the writes. Two
+## clients opening the creator from the same saved recipe serialise perfectly and
+## the second still discards the first's character.
+static func save_to(
+		path: String, recipe: Dictionary, expected_identity: String = IDENTITY_UNCHECKED) -> bool:
+	_last_refusal = REFUSAL_NONE
+	_last_write_expectation = expected_identity
 	if not FileLock.acquire(path):
 		push_error(
 			"CharacterStore: refusing to write %s — another process holds the write lock" % path)
+		_last_refusal = REFUSAL_LOCK
 		return false
-	var wrote := _save_to_locked(path, recipe)
+	var wrote := _save_to_locked(path, recipe, expected_identity)
 	FileLock.release(path)
 	return wrote
 
@@ -243,15 +356,18 @@ static func save_to(path: String, recipe: Dictionary) -> bool:
 ## only the rename would not close the race this exists for: two clients can each
 ## read and accept the same recipe BEFORE either takes the lock, then acquire in
 ## turn, and the second still discards the first's character.
-static func _save_to_locked(path: String, recipe: Dictionary) -> bool:
+static func _save_to_locked(
+		path: String, recipe: Dictionary, expected_identity: String = IDENTITY_UNCHECKED) -> bool:
 	if not can_write(path):
 		push_error("CharacterStore: refusing to write %s — the recipe there is not this build's to replace" % path)
+		_last_refusal = REFUSAL_UNACCEPTABLE
 		return false
 	_sweep_abandoned_writes(path)
 	var tmp_path := _write_tmp_path(path)
 	var file := FileAccess.open(tmp_path, FileAccess.WRITE)
 	if file == null:
 		push_error("CharacterStore: cannot write %s" % tmp_path)
+		_last_refusal = REFUSAL_WRITE
 		return false
 	file.store_string(JSON.stringify(recipe, "  "))
 	file.close()
@@ -265,6 +381,7 @@ static func _save_to_locked(path: String, recipe: Dictionary) -> bool:
 	if not can_write(path):
 		push_error("CharacterStore: refusing to replace %s — its recipe changed to one this build cannot accept" % path)
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(tmp_path))
+		_last_refusal = REFUSAL_UNACCEPTABLE
 		return false
 	# Prove we are STILL the lock's holder. A reclaimer that misjudged this live
 	# lock as abandoned would have moved it away, and another writer could then
@@ -284,11 +401,49 @@ static func _save_to_locked(path: String, recipe: Dictionary) -> bool:
 		push_error(
 			"CharacterStore: lost the write lock for %s while writing — refusing to replace it" % path)
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(tmp_path))
+		_last_refusal = REFUSAL_LOCK
 		return false
+	# Compare-and-swap on the recipe's own bytes (#469). Everything above binds only
+	# writers that COOPERATE — the lock excludes other CharacterStore writers, the
+	# ownership stamp proves we still hold it — and none of it sees a writer that
+	# never took the lock: a retained rollback build the updater keeps runnable,
+	# cloud sync, a backup agent, a hand edit. It also cannot see the case the lock
+	# is most often blamed for: two clients that each read the SAME recipe before
+	# either acquired, then wrote in turn. Both took the lock, both held it
+	# legitimately, and the second still replaces the first's character with one
+	# derived from a snapshot it had already superseded.
+	#
+	# The acceptance re-check above does not catch either: it refuses a recipe this
+	# build cannot READ, and a same-version write from another writer reads
+	# perfectly well. Only the bytes tell them apart. Under the no-resets law the
+	# loss is permanent — there is no wipe to recover with.
+	if expected_identity != IDENTITY_UNCHECKED:
+		var actual := document_identity(path)
+		# An unreadable identity on EITHER side is never a match, even against
+		# itself: two different unhashable files would otherwise compare equal and
+		# one would be replaced by the other.
+		#
+		# Defense in depth, and honestly so: the production read-modify-write cannot
+		# reach that state, because can_write() refuses an existing file it cannot
+		# read before any identity is taken. It guards this PUBLIC entry point
+		# against a future caller that does not run that check first, and no test
+		# pins it — provoking a genuine hash failure needs filesystem conditions a
+		# test cannot portably create. What IS pinned is the constant staying
+		# distinct from ABSENT and UNCHECKED, which is the part with a reachable
+		# lost update behind it.
+		var unreadable := (
+			actual == IDENTITY_UNREADABLE or expected_identity == IDENTITY_UNREADABLE)
+		if unreadable or actual != expected_identity:
+			push_error(
+				"CharacterStore: %s changed under this write — refusing to replace it" % path)
+			DirAccess.remove_absolute(ProjectSettings.globalize_path(tmp_path))
+			_last_refusal = REFUSAL_STALE
+			return false
 	var err := DirAccess.rename_absolute(
 		ProjectSettings.globalize_path(tmp_path), ProjectSettings.globalize_path(path))
 	if err != OK:
 		push_error("CharacterStore: atomic replace failed (%d)" % err)
+		_last_refusal = REFUSAL_WRITE
 		return false
 	return true
 
@@ -316,8 +471,13 @@ static func load_from(path: String) -> Variant:
 	return parsed
 
 
-static func save_recipe(recipe: Dictionary) -> bool:
-	return save_to(save_path(), recipe)
+## Save through the whole-game path. `expected_identity` threads the caller's
+## compare-and-swap; see [method save_to]. The default keeps a blind replace for
+## callers that genuinely had no base to compare — a fixture seed, or a first
+## write — and is what every existing caller continues to get.
+static func save_recipe(
+		recipe: Dictionary, expected_identity: String = IDENTITY_UNCHECKED) -> bool:
+	return save_to(save_path(), recipe, expected_identity)
 
 
 static func load_saved() -> Variant:

@@ -13,8 +13,10 @@ extends Node
 ## beside it exists to prevent, and only driving the real scene's apply callback
 ## can see it.
 ##
-## Three arms on ONE boot. A and B differ ONLY by whether the write lock is held;
-## C holds the lock like B and differs only in having no recipe on disk:
+## Four arms on ONE boot. A and B differ ONLY by whether the write lock is held;
+## D holds NO lock at all and differs from A only in a foreign write landing while
+## the creator is open; C holds the lock like B and differs only in having no
+## recipe on disk:
 ##  A. CONTROL — lock FREE. Applying the edit must SUCCEED and the body on screen
 ##     must show the EDITED weight. Without this, arm B's "shows the on-disk
 ##     weight" would pass just as well on a main.gd whose apply never reached the
@@ -24,6 +26,12 @@ extends Node
 ##     the creator must NOT latch shut (contention is momentary, not a refusal),
 ##     and the player must be told without being blamed for a second copy of the
 ##     game that may not be running.
+##  D. STALE BASE — the lock is FREE, and a foreign writer commits a newer
+##     character between the creator opening and the apply. Both writers
+##     cooperated, so the lock sees nothing; only the compare-and-swap on the
+##     recipe's bytes does. The apply must refuse, the other client's character
+##     must survive byte-intact and be what the body shows, and the creator must
+##     NOT latch — a stale base is retryable, unlike a refusal.
 ##  C. NO DISK RECIPE — the same contended apply with nothing on disk (a first
 ##     run, or a save deleted while the creator was open). There is no recorded
 ##     character to go back to, so the body must return to what the creator
@@ -65,6 +73,10 @@ const SIGNAL_SHAPE := "torso_vshape"
 ## Far apart on purpose — see the fixture note above.
 const ON_DISK_WEIGHT := 0.9
 const EDITED_WEIGHT := 0.1
+## The weight a FOREIGN writer commits while the creator is open (arm D, #469).
+## Distinct from both of the above so "the body shows what the other client wrote"
+## cannot be satisfied by a body that stayed on the edit or never left the seed.
+const FOREIGN_WEIGHT := 0.5
 ## The shipped preset the creator falls back to when nothing is on disk, read at
 ## run time rather than copied here as a number: the value lives in that file,
 ## and a hard-coded duplicate would fail this arm for the wrong reason the day
@@ -132,6 +144,7 @@ func _physics_process(_delta: float) -> void:
 	match _arm:
 		0: _assert_control()
 		1: _assert_revert()
+		2: _assert_revert_on_stale_base()
 		_: _assert_revert_without_disk()
 
 
@@ -143,6 +156,25 @@ func _assert_control() -> void:
 	if creator == null:
 		return
 	creator.applied.emit(_recipe(EDITED_WEIGHT))
+	# The production write must run under a REAL compare-and-swap expectation
+	# (#469). This cannot be asserted from the store's own suite: a main.gd passing
+	# IDENTITY_UNCHECKED writes correctly whenever nothing races it, so
+	# character_cas_test stays green with the guard absent from the product, and so
+	# does every end-to-end assertion in this file — the arm below would still show
+	# the edited weight on screen and on disk. Landing a foreign write INSIDE a live
+	# apply needs a second process, so what the call ran under is asserted instead.
+	# That exact ablation was measured slipping through the vault's coverage.
+	if CharacterStore._last_write_expectation == CharacterStore.IDENTITY_UNCHECKED:
+		_fail(("the production apply wrote BLIND — it passed the opt-out sentinel instead of the "
+			+ "recipe's identity, so a second client's character would be overwritten silently"))
+		return
+	# ...and it must be the identity of the document the creator actually OPENED on,
+	# not some other read. A real-looking but unrelated hash would satisfy the check
+	# above while comparing against the wrong base.
+	if CharacterStore._last_write_expectation != _seeded_sha:
+		_fail(("the production apply presented an identity that is not the one the recipe carried "
+			+ "when the creator opened — it compared against the wrong base"))
+		return
 	if bool(_main.get("_save_blocked")):
 		_fail("an uncontended apply latched the creator shut")
 		return
@@ -224,6 +256,81 @@ func _assert_revert() -> void:
 	_ticks = 0
 
 
+## ARM D: nobody contends for the lock — a foreign writer simply COMMITS a newer
+## character while the creator is open (#469). This is the failure the lock cannot
+## see, and the one the player actually loses a character to: the apply acquires
+## cleanly, `can_write()` accepts the other client's perfectly valid recipe, and
+## without the compare-and-swap the rename replaces it with one derived from a
+## snapshot that was already superseded.
+##
+## It differs from arm B in exactly one respect — the lock is FREE throughout — so
+## a main.gd that only handled contention fails here while passing there.
+func _assert_revert_on_stale_base() -> void:
+	var creator = _open_creator()
+	if creator == null:
+		return
+	# Preview the edit first, same discipline as arm B: without it "the body shows
+	# the foreign character" could be true because nothing ever moved.
+	_main.get("_player").set_character(_recipe(EDITED_WEIGHT))
+	if not is_equal_approx(_shown_weight(), EDITED_WEIGHT):
+		_fail("the pre-apply preview did not take, so a revert cannot be observed")
+		return
+
+	# The other client's write: valid, same-version, still readable, and committed
+	# WITHOUT the lock — a second copy of the game that already released it, a
+	# retained rollback build, cloud sync or a hand edit are indistinguishable here.
+	var foreign := _recipe(FOREIGN_WEIGHT)
+	var file := FileAccess.open(CharacterStore.save_path(), FileAccess.WRITE)
+	if file == null:
+		_fail("could not simulate a foreign writer committing a newer character")
+		return
+	file.store_string(JSON.stringify(foreign, "  "))
+	file.close()
+	var foreign_sha := FileAccess.get_sha256(CharacterStore.save_path())
+	if foreign_sha.is_empty() or foreign_sha == _seeded_sha:
+		_fail("the foreign write did not change the recipe on disk, so this arm tests nothing")
+		return
+
+	# The lock is deliberately NOT held. If this apply succeeds, the guard is absent.
+	creator.applied.emit(_recipe(EDITED_WEIGHT))
+
+	if FileAccess.get_sha256(CharacterStore.save_path()) != foreign_sha:
+		_fail(("the apply replaced a character committed after the creator opened — under the "
+			+ "no-resets law that loss is permanent, and the lock cannot see it because both "
+			+ "writers cooperated"))
+		return
+	if CharacterStore.last_refusal() != CharacterStore.REFUSAL_STALE:
+		_fail("the apply did not refuse as STALE (reported '%s') — the caller cannot tell this from contention"
+			% CharacterStore.last_refusal())
+		return
+	# The body must show what is actually on disk now: the OTHER client's character.
+	# This is the one arm where the reloaded recipe is not the one this session
+	# seeded, which is exactly why UNSAVED_NOTICE says the EDIT was not saved rather
+	# than that the character has not changed.
+	var shown := _shown_weight()
+	if not is_equal_approx(shown, FOREIGN_WEIGHT):
+		_fail(("a refused stale apply left the body on the edit that was never recorded "
+			+ "(shape %s reads %f, want the newly-committed %f)")
+			% [SIGNAL_SHAPE, shown, FOREIGN_WEIGHT])
+		return
+	# A stale base is momentary and retryable — the next attempt reads the new
+	# recipe and succeeds. Latching would lock the player out of their own
+	# character for the session over a collision that has already resolved.
+	if bool(_main.get("_save_blocked")):
+		_fail("a stale-base apply latched the creator shut — that is the refusal path, not a losable write")
+		return
+	if CharacterStore.is_refused(CharacterStore.save_path()):
+		_fail("a stale-base apply latched a refusal on a recipe this build can read perfectly well")
+		return
+	if _toast_text() != String(_main.get("UNSAVED_NOTICE")):
+		_fail("a stale-base apply did not tell the player their change was not saved (toast read %s)"
+			% [_toast_text()])
+		return
+	_close_creator(creator)
+	_arm = 3
+	_ticks = 0
+
+
 ## ARM C: the same contended apply with NOTHING on disk. `load_saved()` cannot
 ## answer here, so the body must fall back to the recipe the creator opened with
 ## — the preset — rather than keeping an edit that was never recorded.
@@ -292,7 +399,8 @@ func _assert_revert_without_disk() -> void:
 	_main.queue_free()
 	_main = null
 	print("TEST PASS — an apply that never reached disk puts the body back to the recorded "
-		+ "character, falls back to the opening recipe when there is none, leaves the recipe "
+		+ "character, falls back to the opening recipe when there is none, refuses rather than "
+		+ "replacing a character committed while the creator was open, leaves the recipe "
 		+ "byte-intact, and does not latch the creator shut")
 	get_tree().quit(0)
 
