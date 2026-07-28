@@ -342,16 +342,22 @@ void fragment() {
 	// ...but the SAME average must not reach the crack relief, and this is the
 	// one place the two uses of the mask have to part company.
 	//
-	// `plate_mask` gates the relief, and the relief is the term that aliases.
-	// Softening the mask across a contact widens the region where it is
-	// non-zero, so an aliased gradient leaks onto the neighbouring cell that
-	// used to mask it off entirely. Measured on the shipping build, that leak
-	// costs MORE than the average it is paying for: routing the softened mask
-	// into the relief reads 0.0062 against this split's 0.0047, a loss of
-	// 0.0015, while averaging the boundary at all only buys 0.0007 (0.0054 on
-	// `main` -> 0.0047 here). Doing both to one mask is therefore a net
-	// REGRESSION on `main`, which is what the earlier attempts at this measured
-	// and why the two uses have to be separated rather than the average dropped.
+	// `plate_mask` gates the relief, and the relief is LARGEST exactly here: the
+	// crack derivative peaks at the seam, which is the same place this average
+	// is non-zero. Softening the gate therefore widens the region over which
+	// that peak is applied, spilling relief onto the neighbouring cell that
+	// previously masked it to zero.
+	//
+	// Note this is NOT an aliasing argument and does not depend on one. The
+	// gradient is taken in closed form above, so it is exact at every distance;
+	// the cost is simply that a soft gate applies a large term where a hard gate
+	// applied none. Measured with that closed form in place, the leak costs more
+	// than the average it would pay for: routing the softened mask into the
+	// relief reads 0.0045 against this split's 0.0030, while averaging the
+	// boundary at all buys 0.0007 (0.0037 on `main` -> 0.0030 here). Doing both
+	// to one mask is a net REGRESSION on `main`, which is what every earlier
+	// attempt at this measured — and the reason the two USES are separated
+	// rather than the average abandoned.
 	//
 	// Gating it on the BINARY mask keeps the relief confined to cells that
 	// actually drew a slab, and costs nothing where it matters: past the
