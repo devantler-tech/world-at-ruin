@@ -1991,6 +1991,55 @@ jobs:
             grep -nE "SHADER ERROR|Shader compilation failed" walk.log | head -20
             exit 1
           fi
+      - name: Capture the opt-in grounded run
+        # Sprint is the state a player holds most, so it gets the same evidence
+        # treatment as the walk rather than being taken on trust. Its own
+        # directory for the same base-comparison reason, and the RUN marker is
+        # required specifically: the walk scenario prints "CAPTURE PASS" too, so
+        # a dispatch regression that silently fell back to the walk would
+        # otherwise pass while photographing the wrong gait.
+        run: |
+          set -o pipefail
+          mkdir -p "${RUNNER_TEMP}/shots/run"
+          if ! cp client/recipes/wanderer.json "${RUNNER_TEMP}/run_save.json"; then
+            echo "::error::could not seed the run-capture save from client/recipes/wanderer.json"
+            exit 1
+          fi
+          WAR_SCENARIO=run \
+          WAR_RUN_CYCLE=1 \
+          WAR_SHOT_DIR="${RUNNER_TEMP}/shots/run" \
+          WAR_SAVE_PATH="${RUNNER_TEMP}/run_save.json" \
+          WAR_VAULT_PATH="${RUNNER_TEMP}/run_save_vault.json" \
+          WAR_BOOT_RECOVERY_PATH="${RUNNER_TEMP}/run_save_recovery.json" \
+            godot --path client res://tools/frame_capture.tscn 2>&1 | tee run.log
+          if ! grep -qE "[0-9]+ run phases written" run.log; then
+            echo "::error::run capture did not report a phase sequence — see log"; tail -40 run.log; exit 1
+          fi
+          if grep -qE "SHADER ERROR|Shader compilation failed" run.log; then
+            echo "::error::shader compilation failed during the run capture — the frames show a fallback material"
+            grep -nE "SHADER ERROR|Shader compilation failed" run.log | head -20
+            exit 1
+          fi
+          # The phase marker says the tool finished; it does not say the game
+          # was healthy while it shot. A capture that half-booted, or that hit
+          # a script error after the world built, still writes renderable
+          # frames — and publishing those as movement evidence is worse than
+          # publishing none. Same two checks the world capture makes, including
+          # its Metal `timeout waiting for fence` exemption (a virtualised
+          # adapter retry that recovers, not a render fault) and its
+          # filter-to-a-FILE form, which avoids the pipefail/SIGPIPE hazard
+          # where `grep -v … | grep -q …` can read as "no errors found".
+          if ! grep -q "BOOT_OK" run.log; then
+            echo "::error::run capture never reached BOOT_OK — frames depict a partially booted game"
+            tail -40 run.log; exit 1
+          fi
+          grep -vE "timeout waiting for fence|drivers/metal/rendering_device_driver_metal" \
+            run.log > run.filtered.log || true
+          if grep -qE "SCRIPT ERROR|^ERROR" run.filtered.log; then
+            echo "::error::errors during the run capture — the frames may not depict a healthy game"
+            grep -nE "SCRIPT ERROR|^ERROR" run.filtered.log | head -20
+            exit 1
+          fi
       - name: Frames actually exist
         # The tool fails closed on a uniform frame, but never trust a single
         # signal: confirm real files landed before advertising an artifact.
@@ -2163,6 +2212,8 @@ jobs:
             ${{ runner.temp }}/shots/walk/*.txt
             ${{ runner.temp }}/shots/breath/*.png
             ${{ runner.temp }}/shots/breath/*.txt
+            ${{ runner.temp }}/shots/run/*.png
+            ${{ runner.temp }}/shots/run/*.txt
             ${{ runner.temp }}/shots/replication/*.png
             ${{ runner.temp }}/shots/replication/*.txt
           if-no-files-found: error
