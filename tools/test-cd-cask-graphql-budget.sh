@@ -151,6 +151,9 @@ declare -a not_green=(
 	'{"total_count":1,"check_runs":[{"status":"completed","conclusion":"action_required"}]}'
 	'{"total_count":0,"check_runs":[]}'
 	'not json at all'
+	# A truncated page: every RETURNED run is green, but total_count says
+	# more exist than came back, so the unread ones could be pending or red.
+	'{"total_count":101,"check_runs":[{"status":"completed","conclusion":"success"}]}'
 )
 for payload in "${not_green[@]}"; do
 	mock_checks="${payload}"

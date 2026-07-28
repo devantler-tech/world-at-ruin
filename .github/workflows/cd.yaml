@@ -1034,7 +1034,7 @@ jobs:
               -f title="chore(cask): update world-at-ruin to v${VERSION}" \
               -f head="${branch}" -f base=main \
               -f body="Automated cask update for World at Ruin. Programmed release path: check-gated auto-merge, no review needed." \
-              >/dev/null 2>&1 || true
+              >/dev/null || true
             if ! trusted_open_pr | grep -q .; then
               echo "::error::no open cask PR on ${tap} for ${branch} after attempting to create one"
               exit 1
@@ -1345,7 +1345,7 @@ jobs:
           cask_checks_green_at() {
             local tap="$1"
             local sha="$2"
-            local resp total pending bad
+            local resp total returned pending bad
             resp="$(gh api "repos/${tap}/commits/${sha}/check-runs?per_page=100" 2>/dev/null || true)"
             [ -n "${resp}" ] || return 1
             total="$(printf '%s' "${resp}" | jq -r '.total_count // empty' 2>/dev/null || true)"
@@ -1353,6 +1353,14 @@ jobs:
               '' | *[!0-9]*) return 1 ;;
               0) return 1 ;;
             esac
+            # A TRUNCATED page must not read as green. This single request caps
+            # at 100, and the verdict below is computed only over what came
+            # back — so a pending or failing run on an unread page would be
+            # invisible and the head would merge on a partial answer. Refuse
+            # instead: the tap runs ~13 checks, so this is headroom, not a
+            # paginating loop.
+            returned="$(printf '%s' "${resp}" | jq -r '.check_runs | length' 2>/dev/null || true)"
+            [ "${returned}" = "${total}" ] || return 1
             pending="$(printf '%s' "${resp}" \
               | jq -r '[.check_runs[] | select(.status != "completed")] | length' 2>/dev/null || true)"
             bad="$(printf '%s' "${resp}" \
