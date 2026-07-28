@@ -1890,7 +1890,17 @@ jobs:
             echo "::error::could not seed the breath-capture save from client/recipes/wanderer.json — frames would show the first-run creator over the subject"
             exit 1
           fi
-          WAR_SHOT_DIR="${RUNNER_TEMP}/shots" \
+          # Into a subdirectory, for exactly the reason `walk` and `replication`
+          # already are: this is a MOTION sequence, and the base render below
+          # covers the world and first-run scenarios only. Left at the top level
+          # its six phases were compared against a base that is never rendered,
+          # so every visual PR reported `unmatched 6` — 25 frames claimed, 19
+          # comparable, forever. That is not a measurable gap, it is a category
+          # error: a breath phase has no static base vantage to compare with,
+          # and the idle's own regression test is the frames-must-differ guard
+          # below, not a base diff.
+          mkdir -p "${RUNNER_TEMP}/shots/breath"
+          WAR_SHOT_DIR="${RUNNER_TEMP}/shots/breath" \
           WAR_SCENARIO=breath \
           WAR_SAVE_PATH="${RUNNER_TEMP}/breath_save.json" \
           WAR_VAULT_PATH="${RUNNER_TEMP}/breath_save_vault.json" \
@@ -2079,15 +2089,20 @@ jobs:
           if grep -q "REMOVED:" diff.log; then
             echo "::warning::a committed vantage present in the base is missing from this PR's capture — see the REMOVED lines"
           fi
-          # A frame the head captured and the base did not is UNMEASURED, and
-          # until now nothing said so above the fold: the per-frame "no base
-          # frame" lines sit inside a 25-row table under a PASS verdict, and the
-          # only grep here was the one above. Measured on #455 — 6 of 25 frames,
-          # the entire breath sequence, carried no comparison and the job raised
-          # no annotation at all. frame_diff emits the marker only when the set
-          # is non-empty, so a fully-compared run stays quiet.
-          if grep -q "UNMATCHED:" diff.log; then
-            echo "::warning::some captured frames carry no base comparison and are NOT evidence for this PR — see the UNMATCHED line"
+          # A frame that produced no measurement is UNMEASURED, and until now
+          # nothing said so above the fold: the per-frame lines sit inside a
+          # 25-row table under a PASS verdict, and the only grep here was the
+          # one above. Measured on #455 — 6 of 25 frames carried no comparison
+          # and the job raised no annotation about them.
+          #
+          # Covers both classes, since the consequence is the same and a reader
+          # cannot act on the difference: a frame the base never produced, and a
+          # pair that exists but could not be read or was refused. frame_diff
+          # emits the marker only when that set is non-empty, so a fully-compared
+          # run stays quiet — which is what keeps this warning meaningful rather
+          # than a permanent fixture of every visual PR.
+          if grep -q "UNCOMPARED:" diff.log; then
+            echo "::warning::some captured frames carry no base comparison and are NOT evidence for this PR — see the UNCOMPARED line"
           fi
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -2104,6 +2119,8 @@ jobs:
             ${{ runner.temp }}/shots/opt-in-plates/*.txt
             ${{ runner.temp }}/shots/walk/*.png
             ${{ runner.temp }}/shots/walk/*.txt
+            ${{ runner.temp }}/shots/breath/*.png
+            ${{ runner.temp }}/shots/breath/*.txt
             ${{ runner.temp }}/shots/replication/*.png
             ${{ runner.temp }}/shots/replication/*.txt
           if-no-files-found: error

@@ -227,32 +227,49 @@ func _ready() -> void:
 	# `DIFF PASS — compared 19 of 25 frames (unmatched 6, ...)` with not one
 	# annotation, while the entire breath sequence carried no comparison.
 	var none: Array[String] = []
-	if FrameDiff.unmatched_line(none) != "":
-		_fail("a run with nothing unmatched still emitted a marker ('%s') — a clean run must stay silent, or every PR earns a spurious warning and the signal is worth nothing" %
-			FrameDiff.unmatched_line(none))
+	if FrameDiff.uncompared_line(none, none) != "":
+		_fail("a run with nothing uncompared still emitted a marker ('%s') — a clean run must stay silent, or every PR earns a spurious warning and the signal is worth nothing" %
+			FrameDiff.uncompared_line(none, none))
 		return
 	var some: Array[String] = ["breath_00", "breath_01"]
-	var report := FrameDiff.unmatched_line(some)
-	if not report.contains("UNMATCHED:"):
-		_fail("the unmatched report ('%s') carries no UNMATCHED: marker — the workflow greps for that token, so nothing would be raised" % report)
+	var report := FrameDiff.uncompared_line(some, none)
+	if not report.contains("UNCOMPARED:"):
+		_fail("the report ('%s') carries no UNCOMPARED: marker — the workflow greps for that token, so nothing would be raised" % report)
 		return
 	if not (report.contains("breath_00") and report.contains("breath_01")):
-		_fail("the unmatched report ('%s') does not name the frames — a reader cannot tell WHICH frames are unevidenced" % report)
+		_fail("the report ('%s') does not name the frames — a reader cannot tell WHICH frames are unevidenced" % report)
 		return
 	if not report.contains("2"):
-		_fail("the unmatched report ('%s') does not carry the count" % report)
+		_fail("the report ('%s') does not carry the count" % report)
+		return
+	# BOTH classes count. A frame whose pair exists but could not be read, or was
+	# refused for a size mismatch (what display clamping produces), reaches the
+	# summary with no measurement exactly like a missing base frame — and
+	# reporting only the first class would leave this one buried under PASS,
+	# which is the whole defect this marker exists to close.
+	var bad: Array[String] = ["shrine"]
+	var inc_report := FrameDiff.uncompared_line(none, bad)
+	if not (inc_report.contains("UNCOMPARED:") and inc_report.contains("shrine")):
+		_fail("an INCOMPARABLE-only run emitted '%s' — a frame that exists but could not be compared is just as unevidenced as a missing one, and must not be silent" % inc_report)
+		return
+	var both_report := FrameDiff.uncompared_line(some, bad)
+	if not both_report.contains("3"):
+		_fail("a run with 2 unmatched and 1 incomparable reported '%s' — the count must cover both classes" % both_report)
+		return
+	if not (both_report.contains("breath_00") and both_report.contains("shrine")):
+		_fail("a mixed run ('%s') dropped one class from the names" % both_report)
 		return
 	# The control, and the whole reason the marker is uppercase WITH a colon:
-	# the PASS line already contains the word "unmatched" followed by a number
-	# and is printed on every single run. A grep token that matched that too
-	# would warn on every clean PR, which is the same worthless signal as
+	# the PASS line already contains "unmatched"/"incomparable" followed by a
+	# number and is printed on every single run. A grep token that matched that
+	# too would warn on every clean PR, which is the same worthless signal as
 	# warning on none. Assert the two are distinguishable rather than assuming.
 	var pass_line := "DIFF PASS — compared 19 of 25 frames against the base (unmatched 0, incomparable 0, REMOVED 0)"
-	if pass_line.contains("UNMATCHED:"):
-		_fail("the PASS summary itself matches the UNMATCHED: grep token — CI would warn on every clean run")
+	if pass_line.contains("UNCOMPARED:"):
+		_fail("the PASS summary itself matches the UNCOMPARED: grep token — CI would warn on every clean run")
 		return
 
-	print("TEST PASS — frame_diff measures localized change the spread guard cannot sample (%.2f%% of pixels, max %.3f), separates mean from max, holds its epsilon, SEES HUE-ONLY change, refuses mismatched sizes, and announces an unmatched frame set" %
+	print("TEST PASS — frame_diff measures localized change the spread guard cannot sample (%.2f%% of pixels, max %.3f), separates mean from max, holds its epsilon, SEES HUE-ONLY change, refuses mismatched sizes, and announces BOTH classes of uncompared frame" %
 		[got_fraction * 100.0, got_max])
 	get_tree().quit(0)
 
