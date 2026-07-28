@@ -57,6 +57,26 @@ const MIN_CHANNEL_TRAVEL := 0.2
 ## Tolerance for a channel returning to itself after exactly one period.
 const LOOP_EPSILON := 1e-5
 
+## How far a frozen bone may sit from its expected pose, as `1 - |dot|` between
+## the two rotations, before law 8 calls it a different phase.
+##
+## MEASURED, not chosen (godot 4.7.1, golden_recipe_v1), worst driven bone:
+##
+##   correct freeze                      0.00000018   <- float32 pose storage
+##   stopped but never posed             0.00009876
+##   posed ignoring phase_offset         0.00006592
+##
+## 1e-5 sits ~56x above the noise and ~7x under the nearer of the two defects.
+##
+## ⚠️ `Quaternion.angle_to` is deliberately NOT used here. It computes
+## `acos(2*dot^2 - 1)`, and `acos` has an infinite derivative at 1 — so the
+## float32 rounding in a correctly-stored pose comes back as ~0.0012 rad and a
+## PERFECT freeze fails. That is not hypothetical: the first draft of this law
+## used `angle_to` with a 1e-4 rad tolerance and reported spine_02 at 0.001196
+## rad while `want` and `got` printed identical to six decimals. `1 - |dot|` is
+## well-conditioned in exactly the region this law lives in.
+const FREEZE_POSE_EPSILON := 1e-5
+
 ## The stance thresholds, matching rest_stance_test — these are the same laws,
 ## re-asserted under motion rather than new ones.
 const MIN_HIP_TILT := 0.004
@@ -103,8 +123,10 @@ func _ready() -> void:
 		return
 	if not _check_phase_is_deterministic_per_recipe(recipe):
 		return
+	if not _check_freeze_pins_a_real_pose(recipe):
+		return
 
-	print("TEST PASS — breathing idle: %d bones driven, bounded and moving, seamless loop, stance holds at %d phases, fingerprint pose-invariant" % [
+	print("TEST PASS — breathing idle: %d bones driven, bounded and moving, seamless loop, stance holds at %d phases, fingerprint pose-invariant, freeze pins a real pose" % [
 		BreathingIdle.IDLE_AXES.size(), PHASE_SAMPLES])
 	get_tree().quit(0)
 
@@ -311,6 +333,95 @@ func _check_phase_is_deterministic_per_recipe(recipe: Dictionary) -> bool:
 	if is_equal_approx(CharacterFactory._idle_phase_for(other), a):
 		_fail("two different recipes share phase %.6f — a crowd would breathe in lockstep" % a)
 		return false
+	return true
+
+
+## 8. FREEZING PINS A REAL POSE, and the pinned pose is the one asked for (#485).
+##
+## `frame_capture` freezes every idle before each first-run shot so two runs
+## photograph the same body. Two ways that can go wrong, and BOTH pass a test
+## that only checks the frames stopped changing:
+##
+##   * `set_process(false)` alone — the body stops wherever wall-clock left it,
+##     so it is stable WITHIN a run and still differs BETWEEN runs. This is the
+##     defect, not the fix, and it is the shape a careless simplification takes.
+##   * posing at bare `elapsed`, ignoring `phase_offset` — reproducible, but it
+##     puts a whole crowd on one phase, undoing the thing `phase_offset` exists
+##     for.
+##
+## So the law is asserted against the INDEPENDENTLY COMPUTED expected pose:
+## `angles(phase_offset + elapsed)`, which is a different expression from the
+## one under test. Comparing against `apply_at`'s own output would restate the
+## implementation and pass either way.
+func _check_freeze_pins_a_real_pose(recipe: Dictionary) -> bool:
+	var subject := CharacterFactory.build(recipe)
+	if subject == null:
+		_fail("CharacterFactory.build returned null while checking the freeze")
+		return false
+	add_child(subject)
+	var skeleton := CharacterFactory.find_skeleton(subject)
+	var idle := subject.get_node_or_null("BreathingIdle") as BreathingIdle
+	if skeleton == null or idle == null:
+		_fail("the built character has no skeleton or no BreathingIdle — the capture would have nothing to pin")
+		subject.queue_free()
+		return false
+
+	# Drive it somewhere OTHER than the freeze target first. Without this the
+	# body might already be sitting at the expected pose, and a freeze that did
+	# nothing at all would satisfy every assertion below. Half a breath period
+	# puts the chest in ANTIPHASE, which is the furthest the decoy can be from
+	# the target and so the widest margin this law can be given.
+	BreathingIdle.apply_at(skeleton,
+		idle.phase_offset + BreathingIdle.BREATH_CAPTURE_TIME + BreathingIdle.BREATH_PERIOD * 0.5)
+	var before := _posed(skeleton, "spine_02")
+
+	if not idle.freeze_at():
+		_fail("freeze_at() reported failure on a healthy rig — the capture would refuse a frame it should have taken")
+		subject.queue_free()
+		return false
+	if idle.is_processing():
+		_fail("the idle still processes after freeze_at() — it would keep advancing and the next frame would differ")
+		subject.queue_free()
+		return false
+
+	var expected := BreathingIdle.angles(idle.phase_offset + BreathingIdle.BREATH_CAPTURE_TIME)
+	for bone_name: String in BreathingIdle.IDLE_AXES:
+		var bone := skeleton.find_bone(bone_name)
+		var axis: Vector3 = BreathingIdle.IDLE_AXES[bone_name]
+		var rest := skeleton.get_bone_rest(bone).basis.get_rotation_quaternion()
+		var want := rest * Quaternion(axis, deg_to_rad(float(expected[bone_name])))
+		var deviation := 1.0 - absf(skeleton.get_bone_pose_rotation(bone).dot(want))
+		if deviation > FREEZE_POSE_EPSILON:
+			_fail("freeze_at() left %s at 1-|dot| %.9f from angles(phase_offset + %.2f), over the %.9f floor — the pinned frame is not the phase it claims"
+				% [bone_name, deviation, BreathingIdle.BREATH_CAPTURE_TIME, FREEZE_POSE_EPSILON])
+			subject.queue_free()
+			return false
+
+	# NON-VACUITY: the assertion above must be capable of failing. The pose it
+	# checked has to differ from where the body actually was, or every bone
+	# comparison was trivially satisfied and this law proves nothing.
+	if _posed(skeleton, "spine_02").distance_to(before) < 1e-6:
+		_fail("the freeze target and the pre-freeze pose are indistinguishable — this law cannot fail and proves nothing")
+		subject.queue_free()
+		return false
+
+	# And the crowd must stay out of step: two recipes with different offsets
+	# must freeze to DIFFERENT poses, or the pin has flattened `phase_offset`.
+	var other_recipe := recipe.duplicate(true)
+	other_recipe["skin"] = "%s-variant" % String(recipe.get("skin", "x"))
+	var other_phase := CharacterFactory._idle_phase_for(other_recipe)
+	if is_equal_approx(other_phase, idle.phase_offset):
+		_fail("the two recipes used for the crowd check share a phase — the check below cannot fail")
+		subject.queue_free()
+		return false
+	var mine: Dictionary = BreathingIdle.angles(idle.phase_offset + BreathingIdle.BREATH_CAPTURE_TIME)
+	var theirs: Dictionary = BreathingIdle.angles(other_phase + BreathingIdle.BREATH_CAPTURE_TIME)
+	if is_equal_approx(float(mine["spine_02"]), float(theirs["spine_02"])):
+		_fail("two different recipes freeze to the same chest angle — freezing has put the crowd in lockstep")
+		subject.queue_free()
+		return false
+
+	subject.queue_free()
 	return true
 
 

@@ -1702,6 +1702,21 @@ func _shoot(dir: String, frame: String, creator: CanvasLayer) -> bool:
 	if _visible_panel_area(creator) <= 0.0:
 		_fail("%s: the creator has no visible panel — the frame would be the world behind a transparent layer" % frame)
 		return false
+	# Pin the breath before the shutter (#485). Re-done per shot rather than once
+	# up front because a preset switch calls `set_character`, which rebuilds the
+	# portrait and gives it a FRESH idle already advancing on wall-clock time —
+	# so freezing only at the start would leave every frame after the first
+	# preset unpinned, which is most of the set.
+	var pinned := _pin_idles()
+	if pinned == 0:
+		_fail("%s: no breathing idle to pin — the portrait would be photographed mid-breath and the frame would not repeat" % frame)
+		return false
+	# Declared per frame so CI can assert the pin FIRED, not merely that it
+	# exists. Deleting the call above passes every unit test in the repo — the
+	# frames still render, still write, still report CAPTURE PASS, and only the
+	# change report silently goes back to tens of percent on unchanged builds.
+	# That is #231's shape exactly, so the wiring gets its own evidence.
+	print("PINNED %s — %d idle(s) frozen at +%.2fs" % [frame, pinned, BreathingIdle.BREATH_CAPTURE_TIME])
 	await RenderingServer.frame_post_draw
 	var img := get_viewport().get_texture().get_image()
 	var spread := _luma_spread_box(img, UI_SAMPLE_X0, UI_SAMPLE_X1, UI_SAMPLE_Y0, UI_SAMPLE_Y1)
@@ -1718,6 +1733,44 @@ func _shoot(dir: String, frame: String, creator: CanvasLayer) -> bool:
 		[frame, out, img.get_width(), img.get_height(), spread, note])
 	_write_note(dir, frame, img, note)
 	return true
+
+
+## Freezes every body in the scene at a fixed breath phase and returns how many
+## were pinned, so the caller can refuse a frame that pinned nothing.
+##
+## ## Why the first-run frames needed this (#485)
+##
+## The creator is a CanvasLayer whose panel takes the LEFT band only, so most of
+## every `first_run_*` frame is a live 3D portrait — and that portrait breathes
+## on accumulated wall-clock time. The capture settles a fixed number of FRAMES,
+## so the pose at the shutter depended on how fast those frames rendered.
+##
+## Measured on unchanged `main`, two runs of IDENTICAL code, this machine
+## (macOS, the platform CI captures on), as changed-pixel fraction per frame:
+##
+##   first_run_elder        53.74%      first_run_head_clothing  19.18%
+##   first_run_villager     46.63%      first_run_first_run      16.70%
+##   first_run_brute        31.67%      first_run_lower          14.13%
+##   first_run_base_layer   24.21%      first_run_wanderer        9.18%
+##   first_run_advanced_1    3.62%      first_run_outfit          2.58%
+##   first_run_head_armor    3.01%
+##
+## Nothing changed between those two runs. `frame_diff.gd` carries the same
+## table with the pinned column beside it: every frame falls to 0.00%-0.60%,
+## which is what temporal antialiasing, foliage and fog still move. That column
+## is NOT a CI floor — see the warning under it before treating it as one.
+##
+## Scoped to `_shoot`, which only the first-run scenario calls, so the world
+## vantages keep the behaviour they were calibrated on.
+func _pin_idles() -> int:
+	var pinned := 0
+	for node: Node in get_tree().root.find_children("*", "BreathingIdle", true, false):
+		# A body whose idle never found its skeleton is NOT counted as pinned:
+		# it is exactly the case where the caller would believe the frame
+		# repeats when it does not.
+		if (node as BreathingIdle).freeze_at():
+			pinned += 1
+	return pinned
 
 
 ## The creator's scrolling control list.
