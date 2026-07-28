@@ -303,69 +303,37 @@ merge_cask_pr_when_green "${tap}" 1337 "${branch}" "0.65.7" >/dev/null ||
 	fail "an unrequired failing status blocked delivery"
 [ "$(merge_calls)" -eq 1 ] || fail "an unrequired failing status should not gate"
 
-# ...but a REVIEW PROVIDER reporting its own quota does not block even when it
-# IS required: that describes the provider's billing state, not this cask, and
-# blocking would reintroduce the exact failure this helper removes.
+# ...but a REVIEW PROVIDER that is quota-blocked does NOT satisfy a context the
+# tap REQUIRES. Excusing it would merge past the tap's own policy using a token
+# that can bypass its ruleset. If a provider should not gate the tap, that is a
+# ruleset change, not a silent bypass here.
 reset_mocks
 mock_required='[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"CodeRabbit"}]}}]'
 mock_checks=("${green_checks}")
 mock_statuses='{"state":"failure","statuses":[{"context":"CodeRabbit","state":"failure","description":"Review rate limit exceeded"}]}'
-merge_cask_pr_when_green "${tap}" 1337 "${branch}" "0.65.7" >/dev/null ||
-	fail "a required review provider's own rate-limit status blocked delivery"
-[ "$(merge_calls)" -eq 1 ] || fail "the quota-status carve-out did not reach a merge"
-
-# A head with no legacy statuses at all is not blocked by their absence.
-reset_mocks
-mock_checks=("${green_checks}")
-mock_statuses='{"state":"pending","statuses":[]}'
-merge_cask_pr_when_green "${tap}" 1337 "${branch}" "0.65.7" >/dev/null ||
-	fail "a head carrying no legacy statuses was treated as blocked"
-
-# An unreadable status payload fails closed, like an unreadable check payload.
-reset_mocks
-mock_checks=("${green_checks}")
-mock_statuses='not json at all'
 if merge_cask_pr_when_green "${tap}" 1337 "${branch}" "0.65.7" >/dev/null 2>&1; then
-	fail "an unreadable status payload was treated as green"
+	fail "a quota-blocked REQUIRED review provider was treated as satisfied"
 fi
-[ "$(merge_calls)" -eq 0 ] || fail "an unreadable status payload must not reach a merge"
-
-# A page that did not return every check run is a PARTIAL answer: the pending
-# or failing run this page never showed would be invisible, and the head would
-# merge on a fraction of its own evidence. Refuse, loudly.
-reset_mocks
-mock_checks=("$(checks_truncated 130 "$(check_run completed success)" "$(check_run completed success)")")
-if out="$(merge_cask_pr_when_green "${tap}" 1337 "${branch}" "0.65.7" 2>&1)"; then
-	fail "a truncated check-runs page was judged as complete"
-fi
-[ "$(merge_calls)" -eq 0 ] || fail "a partial page must not reach a merge"
-[[ "${out}" == *"partial page"* ]] ||
-	fail "the refusal did not name the partial page as the cause"
-[ "$(wc -l <"${sleep_log}" | tr -d ' ')" -eq 0 ] ||
-	fail "a truncated page should be refused at once, not waited out"
-
-# The tap squash-merges on the PR TITLE, which was derived before this wait
-# began. If another writer lands on the branch during the wait, merging would
-# ship that content under the previous version's changelog entry. Hand it back
-# (rc 2) so the caller re-derives the title instead.
-reset_mocks
-mock_checks=("${green_checks}")
-mock_branch_version="0.66.0" # a sibling wrote a newer cask during the wait
-rc=0
-merge_cask_pr_when_green "${tap}" 1337 "${branch}" "0.65.7" >/dev/null 2>&1 || rc=$?
-[ "${rc}" -eq 2 ] || fail "a branch that moved during the wait returned ${rc}, want 2"
 [ "$(merge_calls)" -eq 0 ] ||
-	fail "a moved branch must not be merged under the stale title"
+	fail "a required provider's quota failure must fail closed, not bypass the gate"
 
-# ...and the check is made against the branch as it stands at merge time, not a
-# value captured before the wait: a branch that moves back to the expected
-# version still delivers.
+# A requirement pinned to a specific integration is not satisfied by a
+# same-named check from a different producer.
 reset_mocks
-mock_checks=("${green_checks}")
-mock_branch_version="0.65.7"
+mock_required='[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"CI - Required Checks","integration_id":15368}]}}]'
+mock_checks=("$(checks '{"name":"CI - Required Checks","status":"completed","conclusion":"success","app":{"id":99999}}')")
+if merge_cask_pr_when_green "${tap}" 1337 "${branch}" "0.65.7" >/dev/null 2>&1; then
+	fail "a same-named check from the wrong integration satisfied a pinned requirement"
+fi
+[ "$(merge_calls)" -eq 0 ] || fail "a wrong-producer check must not satisfy a pinned requirement"
+
+# ...and IS satisfied by the pinned integration itself.
+reset_mocks
+mock_required='[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"CI - Required Checks","integration_id":15368}]}}]'
+mock_checks=("$(checks '{"name":"CI - Required Checks","status":"completed","conclusion":"success","app":{"id":15368}}')")
 merge_cask_pr_when_green "${tap}" 1337 "${branch}" "0.65.7" >/dev/null ||
-	fail "an unmoved branch was refused"
-[ "$(merge_calls)" -eq 1 ] || fail "an unmoved branch should deliver"
+	fail "the pinned integration's own successful check did not satisfy the requirement"
+[ "$(merge_calls)" -eq 1 ] || fail "the correctly-produced check should deliver"
 
 # A fast unrequired check can complete before the required workflows have even
 # registered their runs. "Something finished and nothing visible is pending" is

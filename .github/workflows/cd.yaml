@@ -1367,8 +1367,8 @@ jobs:
             # here, and merging on the second would bypass the gate entirely.
             required="$(gh api "repos/${tap}/rules/branches/main" 2>/dev/null \
               | jq -c '[.[] | select(.type == "required_status_checks")
-                       | .parameters.required_status_checks[]?.context]
-                       | unique' 2>/dev/null || true)"
+                       | .parameters.required_status_checks[]?
+                       | {context, integration_id}] | unique' 2>/dev/null || true)"
             case "${required}" in
               '' | 'null' | '[]')
                 echo "::error::could not read the required status checks for ${tap} main; refusing to merge ${tap}#${pr} without knowing what the gate is"
@@ -1405,25 +1405,26 @@ jobs:
                     and (.conclusion == "success"
                          or .conclusion == "neutral"
                          or .conclusion == "skipped");
-                  # A review provider reporting ITS OWN quota describes that
-                  # provider is billing state, not this cask. Deliberately
-                  # narrow: the context must be a known review provider AND the
-                  # message must be about the limit. Matching the message alone
-                  # would let any required context — a cask audit reporting an
-                  # upstream quota, say — excuse itself off the gate.
-                  def provider_quota:
-                    ((.context // "") | test("^(coderabbit|codex|cursor|bugbot)"; "i"))
-                    and (((.description // "") + " " + (.context // ""))
-                         | test("rate limit|quota"; "i"));
+                  # A requirement is identified by BOTH its context and, when
+                  # the ruleset pins one, the integration that must produce it.
+                  # Matching the name alone would let a same-named check from
+                  # another producer satisfy a requirement this token can then
+                  # merge past. A legacy status carries no integration id at
+                  # all, so a pinned requirement is never satisfiable by one.
+                  def produced_by($c): $c.integration_id == null
+                    or (.app.id == $c.integration_id);
                   ($runsdoc[0].check_runs // []) as $r
                   | ($stdoc[0].statuses // []) as $s
                   | [ ($runsdoc[0].total_count // -1),
                       ($r | length),
                       ([$r[] | select(.status == "completed") | select(passed | not)] | length),
                       ([ $req[] as $c
-                         | select((([$r[] | select(.name == $c) | select(passed)] | length) == 0)
-                                  and (([$s[] | select(.context == $c) | select(.state == "success")] | length) == 0)
-                                  and (([$s[] | select(.context == $c) | select(provider_quota)] | length) == 0))
+                         | select((([$r[] | select(.name == $c.context)
+                                          | select(produced_by($c))
+                                          | select(passed)] | length) == 0)
+                                  and (([$s[] | select($c.integration_id == null)
+                                              | select(.context == $c.context)
+                                              | select(.state == "success")] | length) == 0))
                        ] | length)
                     ] | @tsv' 2>/dev/null || true)"
                 declared=""; returned=""; failed_any=""; unsatisfied=""
@@ -1444,6 +1445,16 @@ jobs:
                   echo "::error::${tap}#${pr} reports ${declared} check run(s) at ${head} but the page returned ${returned}; refusing to judge a partial page"
                   return 1
                 fi
+                # NOTE: a review provider that is quota-blocked is NOT treated
+                # as satisfying a required context. Elsewhere this deployment
+                # classifies a provider's own quota status as a service state
+                # rather than a verdict, and that remains right for deciding
+                # whether OUR PRs are mergeable — but here the tap itself lists
+                # the context as required and this token can merge past its
+                # ruleset, so excusing it would silently bypass the tap's own
+                # policy. If a provider should not gate the tap, the ruleset is
+                # the place to say so. Fail closed instead.
+                #
                 # Stricter than auto-merge, deliberately: a FAILING check on a
                 # machine-generated cask PR is abnormal even when that check is
                 # not required, and stopping loudly is a better error than
