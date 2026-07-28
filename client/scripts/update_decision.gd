@@ -38,13 +38,15 @@ const SHELL_UPDATE := "shell_update"
 const BLOCKED_INCOMPATIBLE := "blocked_incompatible"
 const INVALID_MANIFEST := "invalid_manifest"
 const STALE_MANIFEST := "stale_manifest"
+const STALE_KEY_EPOCH := "stale_key_epoch"
 const EXPIRED_MANIFEST := "expired_manifest"
 
 
 ## Decide what the client should do. `installed` describes the running build:
 ##   { shell_version: String, pack_version: String, save_schema: int,
 ##     save_capability: int, protocol: int,
-##     manifest_sequence_high_water: int (optional), observed_at: String,
+##     manifest_sequence_high_water: int (optional), key_epoch_high_water: int (optional),
+##     observed_at: String,
 ##     quarantined: Array[String] (optional) }
 ## Missing keys default to the lowest value, so a partial state is never a crash —
 ## with ONE deliberate exception: `save_capability` must be present and whole, or
@@ -53,7 +55,9 @@ const EXPIRED_MANIFEST := "expired_manifest"
 ## [RollbackSelection] about the very same fact.
 ## `manifest_sequence_high_water` is likewise supplied by the caller from whatever
 ## persistence the updater owns; an absent value means this client has not accepted
-## a manifest yet. `observed_at` is required and caller-supplied so this core can
+## a manifest yet. `key_epoch_high_water` is the same shape for the signing-key
+## epoch that mark was accumulated under — the sequence line restarts per epoch, so
+## the two are read together and never independently. `observed_at` is required and caller-supplied so this core can
 ## enforce expiry without reading the wall clock and ceasing to be pure.
 ## `manifest` is the parsed update manifest (the caller has already verified its
 ## signature). Returns { action: String, reason: String } where action is one of
@@ -79,8 +83,27 @@ static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 	if not is_int_id(high_water):
 		return _result(BLOCKED_INCOMPATIBLE, "the accepted manifest sequence high-water mark is not a whole number — cannot prove this manifest is not a replay")
 
+	# The signing-key epoch is the SCOPE the sequence mark lives in. A key that was
+	# rotated away from must not be able to sign its way back in, so an epoch below
+	# the accepted mark is refused — as a key-trust event distinct from an ordinary
+	# replay, because the two call for different operator responses.
+	var epoch_high_water: Variant = installed.get("key_epoch_high_water", 0)
+	if not is_int_id(epoch_high_water):
+		return _result(BLOCKED_INCOMPATIBLE, "the accepted signing-key epoch high-water mark is not a whole number — cannot prove this manifest was not signed under a superseded key")
+	var key_epoch := int(manifest.get("key_epoch", 0))
+	if key_epoch < int(epoch_high_water):
+		return _result(STALE_KEY_EPOCH, "manifest key epoch %d is below the accepted epoch %d — refusing a manifest signed under a superseded key" % [
+			key_epoch, int(epoch_high_water)])
+
+	# The sequence mark applies only WITHIN the epoch that produced it. Sequence
+	# numbering restarts per epoch, so after a rotation the first manifest signed by
+	# the new key legitimately carries a sequence at or below the mark accumulated
+	# under the old one. Enforcing the mark across that boundary refuses every
+	# post-rotation manifest and strands the client — at exactly the moment a
+	# compromised key makes the rotation urgent. A higher epoch has already been
+	# proven above, so it starts its own sequence line from the floor.
 	var sequence := int(manifest["sequence"])
-	if sequence < int(high_water):
+	if key_epoch == int(epoch_high_water) and sequence < int(high_water):
 		return _result(STALE_MANIFEST, "manifest sequence %d is below the accepted high-water mark %d — refusing a replay" % [
 			sequence, int(high_water)])
 
@@ -403,6 +426,11 @@ static func compare_versions(a: String, b: String) -> int:
 static func _envelope_error(m: Dictionary) -> String:
 	if not is_int_id(m.get("sequence")):
 		return "sequence is missing or not a whole number"
+	# `key_epoch` is OPTIONAL so every manifest published before signing-key epochs
+	# existed stays readable, but a present one must be well-formed: a malformed
+	# epoch must never read as "no epoch" and silently disarm anti-rollback.
+	if m.has("key_epoch") and not is_int_id(m["key_epoch"]):
+		return "key_epoch is present but not a whole number"
 	if not is_utc_datetime(m.get("not_after")):
 		return "not_after is missing or not a canonical UTC timestamp"
 	if not (m.get("channel") is String) or (m["channel"] as String).is_empty():

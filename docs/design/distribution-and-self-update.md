@@ -313,9 +313,21 @@ stale cache, or engine change can strand or subvert a client:
   rather than disabling freshness checks. The decision core performs no persistence and reads no
   clock; those belong to the updater that invokes it.
   `UpdateManifest.build(sequence, not_after)` validates and emits the publisher-supplied envelope.
-  Epoch binding, signing-key certificates, root-signed revocation, and the independently fresh
-  revocation head remain key-custody child 6; a bare sequence is monotonic but not root-anchored until
-  that boundary exists.
+  **The sequence mark is scoped to the signing-key epoch it was accumulated under.** `UpdateDecision`
+  reads an optional `key_epoch` from the envelope against an optional caller-supplied
+  `key_epoch_high_water`; an epoch below the mark is refused as `stale_key_epoch`, distinct from an
+  ordinary replay because a key rotated away from signing again is a key-trust event rather than a
+  stale cache. Both sides floor to zero, so manifests published before epochs existed and clients that
+  have never seen one are unaffected, and a malformed epoch on either side blocks rather than reading
+  as "no epoch" and disarming the check. Above the mark the sequence line restarts: a higher epoch is
+  **not** gated by the superseded epoch's sequence mark, because per-epoch numbering means the first
+  manifest a rotated key signs legitimately sits at or below it — enforcing the old mark across that
+  boundary would refuse every post-rotation manifest and strand the client at exactly the moment a
+  compromised key makes rotation urgent.
+  Signing-key certificates, root-signed revocation, and the independently fresh revocation head remain
+  key-custody child 6, and the epoch's authoritative source is the signing-key certificate that
+  boundary introduces; until it exists the epoch is enforced but not yet root-anchored, exactly as the
+  bare sequence is.
   - **The persisted sequence alone is NOT enough, so contraction waits out the TTL.** A returning or
     freshly-installed client has no high-water mark, so an unexpired cached manifest at sequence `N`
     looks perfectly valid to it even after the server contracted per `N+1` — every signature and expiry

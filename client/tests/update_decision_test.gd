@@ -66,6 +66,11 @@ func _installed_current() -> Dictionary:
 func _ready() -> void:
 	_test_up_to_date()
 	_test_stale_sequence_refused()
+	_test_epoch_rollback_refused()
+	_test_sequence_mark_is_scoped_to_its_epoch()
+	_test_same_epoch_sequence_still_refused()
+	_test_absent_epoch_reads_as_zero()
+	_test_epoch_state_fails_closed()
 	_test_expired_manifest_refused()
 	_test_freshness_fields_are_required()
 	_test_freshness_boundaries()
@@ -112,6 +117,78 @@ func _test_stale_sequence_refused() -> void:
 	var stale := _base_manifest()
 	stale["sequence"] = 40
 	_expect(_installed_current(), stale, "stale_manifest", "a manifest below the accepted sequence high-water mark is refused distinctly")
+
+
+func _test_epoch_rollback_refused() -> void:
+	# A signing key that was rotated away from cannot sign its way back in. This is
+	# a key-trust event, not an ordinary replay, so it carries its own outcome.
+	var installed := _installed_current()
+	installed["key_epoch_high_water"] = 2
+	var rolled_back := _base_manifest()
+	rolled_back["key_epoch"] = 1
+	rolled_back["sequence"] = 9000
+	_expect(installed, rolled_back, UpdateDecision.STALE_KEY_EPOCH,
+		"a manifest signed under a superseded key epoch is refused even at a high sequence")
+
+
+func _test_sequence_mark_is_scoped_to_its_epoch() -> void:
+	# The regression this change exists for. Sequence numbering restarts per epoch,
+	# so the first manifest signed by a rotated key legitimately carries a sequence
+	# at or below the mark accumulated under the old key. Treating that mark as
+	# global refuses every post-rotation manifest and strands the client — exactly
+	# when a compromised key makes the rotation urgent.
+	var installed := _installed_current()
+	installed["manifest_sequence_high_water"] = 41
+	installed["key_epoch_high_water"] = 1
+	var rotated := _base_manifest()
+	rotated["key_epoch"] = 2
+	rotated["sequence"] = 0
+	_expect(installed, rotated, UpdateDecision.UP_TO_DATE,
+		"a higher epoch is not gated by the superseded epoch's sequence mark")
+
+
+func _test_same_epoch_sequence_still_refused() -> void:
+	# Scoping the mark must not disarm it. Within one epoch the sequence is still
+	# monotonic and a replay is still refused as one.
+	var installed := _installed_current()
+	installed["manifest_sequence_high_water"] = 41
+	installed["key_epoch_high_water"] = 2
+	var replay := _base_manifest()
+	replay["key_epoch"] = 2
+	replay["sequence"] = 40
+	_expect(installed, replay, "stale_manifest",
+		"within one epoch a below-mark sequence is still refused as a replay")
+
+
+func _test_absent_epoch_reads_as_zero() -> void:
+	# Every manifest published before epochs existed carries none, and a fresh
+	# install has no mark. Both floor to zero, so the existing corpus is unaffected.
+	var installed := _installed_current()
+	installed.erase("key_epoch_high_water")
+	var no_epoch := _base_manifest()
+	no_epoch.erase("key_epoch")
+	_expect(installed, no_epoch, UpdateDecision.UP_TO_DATE,
+		"a manifest with no epoch and a client with no epoch mark are unaffected")
+
+	# An epoch-bearing manifest is accepted by a client that has never seen one.
+	var first_epoch := _base_manifest()
+	first_epoch["key_epoch"] = 1
+	_expect(installed, first_epoch, UpdateDecision.UP_TO_DATE,
+		"a client with no epoch mark accepts the first epoch-bearing manifest")
+
+
+func _test_epoch_state_fails_closed() -> void:
+	# Unknown freshness state blocks rather than silently turning the check off —
+	# the rule the sequence mark already follows.
+	var bad_mark := _installed_current()
+	bad_mark["key_epoch_high_water"] = "two"
+	_expect(bad_mark, _base_manifest(), UpdateDecision.BLOCKED_INCOMPATIBLE,
+		"a non-integer epoch high-water mark blocks rather than disabling anti-rollback")
+
+	var bad_epoch := _base_manifest()
+	bad_epoch["key_epoch"] = 1.5
+	_expect(_installed_current(), bad_epoch, UpdateDecision.INVALID_MANIFEST,
+		"a fractional manifest epoch is refused as malformed")
 
 
 func _test_expired_manifest_refused() -> void:
