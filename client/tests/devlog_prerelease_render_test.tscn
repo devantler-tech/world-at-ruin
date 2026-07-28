@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tests/devlog_prerelease_render_test.gd" id="1_dlpre"]
+
+[node name="DevlogPrereleaseRenderTest" type="Node"]
+script = ExtResource("1_dlpre")

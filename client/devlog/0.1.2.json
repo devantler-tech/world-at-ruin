@@ -7,6 +7,7 @@
 		"Two new always-run tests pin all of this: one buries a wanderer and demands the world give him back; one raycasts the whole Reach and demands the math and the physics agree exactly.",
 		"Sprint momentum now carries through jumps instead of braking mid-air."
 	],
+	"shipped_in": "0.1.15",
 	"title": "The ground becomes real",
 	"version": "0.1.2"
 }

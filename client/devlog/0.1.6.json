@@ -6,6 +6,7 @@
 		"Recipes are forever: a golden recipe exercising every slider is locked into the tests — if a future change would break a character someone made, the build fails before it can.",
 		"Clay-grey for now, and standing in a sculptor's pose: skin, hair and clothes are later stages of the system."
 	],
+	"shipped_in": "0.1.15",
 	"title": "Bodies from recipes",
 	"version": "0.1.6"
 }

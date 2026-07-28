@@ -6,6 +6,7 @@
 		"A fourth preset joined the character screen: the elder — a village matriarch the Ruin could not kill, and the first face of the new axes.",
 		"As always, nothing you saved is touched: old characters load exactly as they were, and the new sliders simply sit at zero until you move them."
 	],
+	"shipped_in": "0.1.15",
 	"title": "Every body the world will need",
 	"version": "0.1.10"
 }

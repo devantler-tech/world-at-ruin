@@ -1,0 +1,10 @@
+{
+	"date": "2026-07-28",
+	"notes": [
+		"The seventeen oldest entries in this log were written before the first build was ever released, so the numbers they carry name builds that never existed. They now say so, and each one names the release its work actually first reached you in.",
+		"That closes the gap the last correction left open. Renaming them was never possible — fifteen of them first shipped in the same build, and two entries cannot share a number — so they keep their own numbering as a record and no longer present it as something you could have played.",
+		"Reading down to the bottom of the log now dates the earliest work correctly instead of pointing at a build that was never cut."
+	],
+	"title": "The oldest entries stop naming builds that never existed",
+	"version": "0.65.17"
+}

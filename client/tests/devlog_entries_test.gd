@@ -65,6 +65,23 @@ func _ready() -> void:
 			if note is not String or (note as String).is_empty():
 				_fail("dev-log entry '%s' has an empty or non-string note" % e["version"])
 				return
+		# Optional, and only on an entry whose own version was never cut (#466).
+		# Which release it names is proved against the repository's tags by
+		# tools/devlog-entry-version-guard.sh, which can see them; the property
+		# checkable from the data alone is that it points FORWARD. A declaration
+		# at or below the entry's own number would render as "never released;
+		# first shipped in" an earlier build, which is unreadable rather than
+		# merely wrong.
+		if e.has("shipped_in"):
+			var shipped: Variant = e["shipped_in"]
+			if shipped is not String or (shipped as String).is_empty():
+				_fail("dev-log entry '%s' has an empty or non-string 'shipped_in'" % e["version"])
+				return
+			if _compare_versions(shipped as String, String(e["version"])) <= 0:
+				_fail(("dev-log entry '%s' declares it first shipped in '%s', which is not ABOVE it. An entry " +
+					"declares this because its own version was never cut, so the release that carried it is " +
+					"necessarily a later one.") % [e["version"], shipped])
+				return
 
 	# --- 1. UNIQUE VERSIONS: the #119 guard ---
 	var seen: Dictionary = {}

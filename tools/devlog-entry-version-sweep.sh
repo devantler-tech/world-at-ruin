@@ -18,8 +18,13 @@
 #   OK          the entry names the first release containing its change.
 #   MISLABELLED it names some other release — the reported one is where the
 #               change actually first shipped.
-#   NEVER-CUT   it names a version that was never released at all. Entries
-#               predating the first tag read this way.
+#   NEVER-CUT   it names a version that was never released at all, and says
+#               nothing about where its change actually landed.
+#   PRE-RELEASE it names a version that was never cut, AND declares the release
+#               its change first reached players in — verified here against
+#               containment, so it is a resolved entry rather than drift. This
+#               is what the entries written before the first tag look like once
+#               they say so; the log renders them as notes rather than builds.
 #   UNRELEASED  its change is not in any release yet, so the forward-looking
 #               rule applies and there is nothing to correct.
 #   NO-ANCHOR   the version string cannot be traced to an introducing commit, so
@@ -78,8 +83,17 @@ while IFS= read -r file; do
 	elif [ "$shipped" = "$version" ]; then
 		printf '%-10s  %-9s  %-9s  %s\n' "$version" "$anchor" "$shipped" OK
 	elif [ -z "$(git tag --list "v$version")" ]; then
-		wrong=$((wrong + 1))
-		printf '%-10s  %-9s  %-9s  %s\n' "$version" "$anchor" "$shipped" 'NEVER-CUT'
+		# A declared entry is resolved, not drift — but only when its declaration
+		# agrees with containment. The guard proves the same claim from tag
+		# succession; checking it here against the anchor keeps the two routes
+		# independent, so a declaration that satisfies one and not the other is
+		# reported rather than averaged away.
+		if [ "$(declared_shipped_in "$file")" = "$shipped" ]; then
+			printf '%-10s  %-9s  %-9s  %s\n' "$version" "$anchor" "$shipped" 'PRE-RELEASE'
+		else
+			wrong=$((wrong + 1))
+			printf '%-10s  %-9s  %-9s  %s\n' "$version" "$anchor" "$shipped" 'NEVER-CUT'
+		fi
 	else
 		wrong=$((wrong + 1))
 		printf '%-10s  %-9s  %-9s  %s\n' "$version" "$anchor" "$shipped" MISLABELLED
