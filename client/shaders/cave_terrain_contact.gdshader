@@ -163,9 +163,8 @@ void fragment() {
 		vec2 d2 = plate_uv - plate_c2;
 		vec2 gsep = d2 * inversesqrt(max(dot(d2, d2), 1e-12))
 			- d1 * inversesqrt(max(dot(d1, d1), 1e-12));
-		float cwr = max(crack_width, crack_fw * 1.2);
-		float ct = clamp((f2 - f1) / max(cwr, 1e-6), 0.0, 1.0);
-		float dcrack = -6.0 * ct * (1.0 - ct) / max(cwr, 1e-6);
+		float ct = clamp((f2 - f1) / max(crack_width, 1e-6), 0.0, 1.0);
+		float dcrack = -6.0 * ct * (1.0 - ct) / max(crack_width, 1e-6);
 		grad = gsep * dcrack * plate_scale * plate_mask;
 		grad *= 1.0 - smoothstep(0.30, 0.85, plate_fw);
 		// Same crack-footprint dissolve as terrain.gdshader, for the same

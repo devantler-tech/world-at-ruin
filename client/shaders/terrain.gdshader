@@ -404,16 +404,23 @@ void fragment() {
 	// exactly — two normalizes, no extra cellular evaluation, and no screen
 	// derivative of the crack field at all.
 	//
-	// That last part is the reason this is not a tidier spelling of the same
-	// thing. A differenced form has to read the crack at the CONSTANT width,
-	// because differencing a term that already carries fwidth() would be a
-	// second derivative; and a constant-width crack is narrower than one pixel
-	// past roughly eight metres, so the difference was sampling a step it could
-	// not see. Analytically there is no such bar: the width below is the same
-	// footprint-widened one the ALBEDO crack is drawn at, so the groove the
-	// relief rakes is the groove the eye is shown, and it stops being thinner
-	// than the pixel that samples it. The relief is band-limited by
-	// construction rather than faded out after the fact.
+	// That last part is what this change is FOR, and it is not a tidier
+	// spelling of the same arithmetic. A screen-space difference of the crack
+	// is only a gradient while the crack is wider than the quad doing the
+	// differencing, and this one is not: `crack_width` is a constant in plate
+	// units, so past a few metres of grazing ground the step is thinner than
+	// the pixels sampling it and the difference returns sampling error rather
+	// than a slope. The closed form has no such range limit — it is exact at
+	// every distance, and the shimmer it removes was numerical, not artistic.
+	//
+	// The width stays the CONSTANT one, unchanged. Reading the relief at the
+	// footprint-widened crack instead — the natural next thought, since the
+	// closed form finally permits what a differenced one could not — was
+	// measured on-GPU and is INERT: crawl 0.0037 either way, bit for bit, and
+	// the seam read matched to within a repeat run at every swept distance.
+	// The widening only becomes active past roughly the distance the fade
+	// below has already closed, so there is nothing left for it to band-limit.
+	// It is left out rather than carried as an unjustified difference.
 	// Same uniform branch as the plate block: with the treatment off there is
 	// no relief to compute.
 	vec2 grad = vec2(0.0);
@@ -424,12 +431,11 @@ void fragment() {
 	// centre would otherwise normalize a zero vector.
 	vec2 gsep = d2 * inversesqrt(max(dot(d2, d2), 1e-12))
 		- d1 * inversesqrt(max(dot(d1, d1), 1e-12));
-	float cwr = max(crack_width, crack_fw * 1.2);
-	float ct = clamp((f2 - f1) / max(cwr, 1e-6), 0.0, 1.0);
+	float ct = clamp((f2 - f1) / max(crack_width, 1e-6), 0.0, 1.0);
 	// d/dx of (1 - smoothstep(0, w, x)) is -6t(1-t)/w. The crack is 1 at the
 	// seam and 0 off it, so this is negative and the normal tilts INTO the
 	// groove, exactly as the differenced form did.
-	float dcrack = -6.0 * ct * (1.0 - ct) / max(cwr, 1e-6);
+	float dcrack = -6.0 * ct * (1.0 - ct) / max(crack_width, 1e-6);
 	// Gradient in plate-uv space, then into world XZ (plate_uv = xz * scale).
 	// This is inside the gate for a reason found by measurement: when the
 	// relief was computed unconditionally, the grooves kept raking the light
