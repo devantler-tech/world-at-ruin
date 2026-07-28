@@ -160,23 +160,37 @@ void fragment() {
 	// Each cell's FINAL surface composed before averaging, as terrain.gdshader
 	// does and for the same reason: the ash-vs-stone choice is driven by the
 	// mask, so averaging before that resolve shows a material neither cell has.
-	float mask_own = sheet * slab_own * plate_gate;
-	float mask_nb = sheet * slab_nb * plate_gate;
-	float exp_own = mix(rock_mix, max(rock_mix, sheet * slab_own), plate_gate);
-	float exp_nb = mix(rock_mix, max(rock_mix, sheet * slab_nb), plate_gate);
-	vec3 stone_rgb = mix(rock_color, sub.rgb, mask_own);
-	float stone_rough = mix(rock_roughness, sub.a, mask_own);
+	float mask_own = sheet * slab_own;
+	float mask_nb = sheet * slab_nb;
+	float exp_own = max(rock_mix, mask_own);
+	float exp_nb = max(rock_mix, mask_nb);
 	float eff_exposure = mix(rock_mix, rock_exposure, plate_gate);
 	crack *= eff_plate;
 
-	vec3 surface = mix(
-		mix(ash_color, stone_rgb, exp_own),
-		mix(ash_color, mix(rock_color, sub_nb.rgb, mask_nb), exp_nb),
+	vec3 surface;
+	float stone_rough;
+	// Same opt-in branch and same per-cell crack fold as terrain.gdshader.
+	if (plates_enabled) {
+	float crack_own = crack * mask_own;
+	float crack_nb = crack * mask_nb;
+	surface = mix(
+		mix(ash_color, mix(rock_color, sub.rgb, mask_own), exp_own)
+			* (1.0 - crack_own * crack_darkness),
+		mix(ash_color, mix(rock_color, sub_nb.rgb, mask_nb), exp_nb)
+			* (1.0 - crack_nb * crack_darkness),
 		plate_edge_w);
 	stone_rough = mix(
-		mix(ash_roughness, stone_rough, exp_own),
-		mix(ash_roughness, mix(rock_roughness, sub_nb.a, mask_nb), exp_nb),
+		mix(mix(ash_roughness, mix(rock_roughness, sub.a, mask_own), exp_own),
+			1.0, crack_own * 0.5),
+		mix(mix(ash_roughness, mix(rock_roughness, sub_nb.a, mask_nb), exp_nb),
+			1.0, crack_nb * 0.5),
 		plate_edge_w);
+	crack = mix(crack_own, crack_nb, plate_edge_w);
+	} else {
+	surface = mix(ash_color, rock_color, rock_mix);
+	stone_rough = mix(ash_roughness, rock_roughness, rock_mix);
+	crack = 0.0;
+	}
 	surface = mix(
 		surface,
 		scorch_color,
@@ -185,7 +199,6 @@ void fragment() {
 	float lip = (1.0 - smoothstep(0.0, aw * 4.0, abs(ash_edge)))
 		* (1.0 - smoothstep(0.30, 0.85, fwidth(ash_edge)));
 	surface *= 1.0 + lip * lip_lift * plate_gate;
-	surface *= 1.0 - crack * crack_darkness;
 
 	ALBEDO = base * surface * 2.0;
 	float region_rough = UV2.y - ash_roughness;
@@ -195,7 +208,6 @@ void fragment() {
 			- 0.06 * (grain - 0.5) * detail,
 		0.0,
 		1.0);
-	ROUGHNESS = mix(ROUGHNESS, 1.0, crack * 0.5);
 	SPECULAR = 0.18;
 
 	float e = 0.22;

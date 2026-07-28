@@ -452,22 +452,43 @@ void fragment() {
 	// exposure, and blend the two finished surfaces. With `plate_edge_w` at 0
 	// this is arithmetically identical to composing the owning cell alone, so a
 	// resolved contact and the plates-off path are both unchanged.
-	float mask_own = sheet * slab_own * plate_gate;
-	float mask_nb = sheet * slab_nb * plate_gate;
-	float exp_own = mix(rock_mix, max(rock_mix, sheet * slab_own), plate_gate);
-	float exp_nb = mix(rock_mix, max(rock_mix, sheet * slab_nb), plate_gate);
-	vec3 stone_rgb = mix(rock_color, sub.rgb, mask_own);
-	float stone_rough = mix(rock_roughness, sub.a, mask_own);
 	float eff_exposure = mix(rock_mix, rock_exposure, plate_gate);
-	crack *= eff_plate;
-	vec3 surface = mix(
-		mix(ash_color, stone_rgb, exp_own),
-		mix(ash_color, mix(rock_color, sub_nb.rgb, mask_nb), exp_nb),
+	vec3 surface;
+	float stone_rough;
+	// The whole per-cell composition sits on the opt-in path. Off, the ground
+	// resolves ash against rock exactly as it did before #261 and pays for none
+	// of the plate work — the coherent branch this file is built around.
+	if (plates_enabled) {
+	float mask_own = sheet * slab_own;
+	float mask_nb = sheet * slab_nb;
+	float exp_own = max(rock_mix, mask_own);
+	float exp_nb = max(rock_mix, mask_nb);
+	// The crack is gated by the mask, so it is per-cell too, and it is applied
+	// HERE rather than after the average: darkening the blended surface would
+	// darken the neighbour's ash by the slab's seam and under-darken the slab.
+	// Folding it in early is exact — every transform between here and where it
+	// used to be applied (scorch, grain, lip) is either multiplicative or affine
+	// with a cell-independent factor, and both commute with this multiply.
+	float crack_own = crack * mask_own;
+	float crack_nb = crack * mask_nb;
+	surface = mix(
+		mix(ash_color, mix(rock_color, sub.rgb, mask_own), exp_own)
+			* (1.0 - crack_own * crack_darkness),
+		mix(ash_color, mix(rock_color, sub_nb.rgb, mask_nb), exp_nb)
+			* (1.0 - crack_nb * crack_darkness),
 		plate_edge_w);
 	stone_rough = mix(
-		mix(ash_roughness, stone_rough, exp_own),
-		mix(ash_roughness, mix(rock_roughness, sub_nb.a, mask_nb), exp_nb),
+		mix(mix(ash_roughness, mix(rock_roughness, sub.a, mask_own), exp_own),
+			1.0, crack_own * 0.5),
+		mix(mix(ash_roughness, mix(rock_roughness, sub_nb.a, mask_nb), exp_nb),
+			1.0, crack_nb * 0.5),
 		plate_edge_w);
+	crack = mix(crack_own, crack_nb, plate_edge_w);
+	} else {
+	surface = mix(ash_color, rock_color, rock_mix);
+	stone_rough = mix(ash_roughness, rock_roughness, rock_mix);
+	crack = 0.0;
+	}
 	// Scorch pools in the low, sheltered drifts — the Ruin's burn, not shadow.
 	surface = mix(surface, scorch_color, smoothstep(0.62, 0.95, drift) * 0.35 * (1.0 - rock_mix));
 	// Grain modulates brightness slightly; kept subtle so it reads as texture
@@ -483,7 +504,6 @@ void fragment() {
 	// Gated by the SLAB mask, not by rock exposure — a crack belongs to the
 	// stone that drew it, and a bare steep face that never drew a slab has no
 	// seams to darken. (Already zeroed above when plates are off.)
-	surface *= 1.0 - crack * crack_darkness;
 
 	ALBEDO = base * surface * 2.0 * albedo_probe;
 	// The region's own roughness rides in the vertex ALPHA, biased to 0.5 (see
@@ -504,7 +524,6 @@ void fragment() {
 	ROUGHNESS = clamp(stone_rough + region_rough
 		- 0.06 * (grain - 0.5) * detail, 0.0, 1.0);
 	// Packed ash in a crack is matte, whatever the slab either side of it is.
-	ROUGHNESS = mix(ROUGHNESS, 1.0, crack * 0.5);
 	SPECULAR = 0.18;
 
 	// Perturb the normal from the gradient of the grain field. This is what
