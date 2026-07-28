@@ -70,8 +70,15 @@ resolves it **within** the authenticated owner's namespace and verifies the sele
 to that owner. Requiring the entire key to come from identity would either make those APIs
 impossible or force unrelated state into one contention-heavy document.
 
-Any operation that legitimately crosses players — moderation, support tooling, a trade — is a
-separately authorised path, and says so.
+Any operation that legitimately crosses players — moderation, support tooling — is a separately
+authorised path, and says so.
+
+**Player-to-player transfer is not on that list, and must not be read onto it.** The settled economy
+has bound loot and **no trading or auction house**, precisely because a transfer path is what turns
+a duplicate into durable value and makes RMT and botting worth doing. So "separately authorised" is
+about operations *on* a player's records by the operator, never about moving value *between*
+players. A future inventory implementation that reads this section as permission to build transfers
+behind an authorisation check has defeated the guard at the exact point ownership is defined.
 
 *How the lease store meets it today:* the record is written with no client owner and both permission
 bits closed, so Nakama attributes it to the system account and no client API can reach it, and the
@@ -355,8 +362,23 @@ can crash before any evidence exists, which is the loss this rule set out to pre
 So the journal must let reconciliation tell a **committed** mutation from a mere **attempt**: an
 intent written first and a commit marker written after the record lands, or an equivalent ordered,
 recoverable protocol. Reconciliation re-applies only what is marked committed, and an intent with no
-commit marker is evidence of an attempt whose outcome must be resolved by reading the record — never
-grounds to grant value on its own.
+commit marker is never grounds to grant value on its own.
+
+**Resolving such an intent by reading the record is not generally possible, so the protocol must
+make it decidable.** A crash between the primary write and its commit marker leaves an intent whose
+outcome the current record usually cannot answer: if the mutation was `+3` and a later grant has
+since moved the same balance, no value the record can hold distinguishes "the `+3` landed" from "it
+did not". Attribution by arithmetic fails as soon as a second mutation touches the field.
+
+So a record owner must adopt one of two mechanisms, and say which:
+
+- **store the mutation's identity and outcome atomically with the primary write** — then the record
+  itself answers whether that identity has been applied, whatever happened afterwards; or
+- **block subsequent mutations to the record while an intent is unresolved** — then no later write
+  can obscure the answer, at the cost of a stall.
+
+The first is usually right, and it is the same idempotency-key record #475 already requires — which
+is why that obligation is load-bearing for recovery, not only for retries.
 
 Surfacing a loss is not an alternative to remedying it. Under the no-resets law there is no wipe to
 even out an unlucky player against a lucky one, so an acknowledged mutation left unrestored is a
@@ -391,6 +413,7 @@ needs to write a guard for.
 | No blind **create** — create is conditional | `nakamalease.Store` | `TestConcurrentIdenticalCreateReconcilesTheDurableWinner` |
 | No blind **replace** — replace presents the observed version | `nakamalease.Store` | `TestReplaceUsesObservedVersionAndStaleRecordCannotOverwrite`, `TestConcurrentReplaceLeavesExactlyOneCurrentAttempt` |
 | No blind **claim** — claim presents the observed version | `nakamalease.Store` | `TestClaimRejectsAStaleAttemptWithoutWriting`, `TestClaimReportsConflictWhenTheObservedLeaseWasReleased` |
+| No blind **finalize** — finalize presents the observed version | `nakamalease.Store` | **unguarded** — `Finalize` writes with `current.Version`, but the only direct call site (`handoffalloc/coordinator_test.go`) finalizes a freshly loaded record and never supplies a stale version |
 | No blind **release** — release deletes conditionally | `nakamalease.Store` | `TestReleaseRejectsAStaleAttemptWithoutDeleting`, `TestReleaseReconcilesNakamaConditionalDeleteRejections` |
 | The writer declares the current schema | `nakamalease` document encode | `TestCreatePersistsPrivateVersionedLeaseByHashedKey` (asserts `schema: 2` on the stored value) |
 | The reader accepts the legacy end of the range | `nakamalease` document decode | `TestLoadKeepsSchemaOneLeaseReadableAsNotReleasing` |
@@ -401,7 +424,8 @@ needs to write a guard for.
 | Trailing content is refused | `nakamalease` document decode | **unguarded (#491)** — `leaseFrom` *does* enforce this via its second decode and `io.EOF` check; no test appends a trailing token, so a regression would leave every named guard green |
 | A required field omitted from its own schema is refused | every record owner, **incl. `nakamalease` today** | **gap (running code)** — no schema declares a required-field set, so an omitted required field decodes as an implicit zero |
 | Every shipped schema **shape** stays readable, permanently | every record owner, **incl. `nakamalease` today** | **gap (running code)** — schemas 1 and 2 have shipped with no ledger or goldens, and schema 2 alone admits staging, finalized, claimed and releasing shapes |
-| A refusal quarantines the record **across replicas**, not just in one process | every record owner, **incl. `nakamalease` today** | **gap (running code)** — the decoder refuses the read but nothing blocks a later write at that key, from any instance; `CharacterStore`'s latch is process-local and does not port |
+| A refusal quarantines the record **across replicas** | `nakamalease.Store` | **unguarded** — met by the operation-level form: every write presents `current.Version` from a strict `Load`, so an undecodable document yields no version and blocks every write. No composite refusal→write test pins it |
+| A refusal quarantines the record across replicas | future player-owned record owners | not yet built — `CharacterStore`'s process-local latch does not port; use the strict-read + version-match form |
 | A newer field on a legacy schema is refused **by presence, not by truth** | `nakamalease` document decode | **gap (#491)** — `staging`/`releasing` are plain booleans, so an explicit `false` is accepted; needs presence-aware decoding and a zero-value case |
 | Read support ships and bakes before its writer activates | every record owner, **incl. `nakamalease` today** | **gap (running code)** — no server-side equivalent of the client staging guard, and nothing registers the rollback target as carrying the expanded reader |
 | A logical mutation spanning records is atomic or recoverable | player-owned record owners | not yet built — #474, #475 |
@@ -416,6 +440,7 @@ needs to write a guard for.
 | Recovery evidence survives the failure domain it recovers from | platform + player-owned record owners | not yet built — no journal outside the database restore boundary |
 | A mutation is acknowledged only once evidence sufficient to re-apply it is durable | player-owned record owners | not yet built — **and conditional on the row above** |
 | Reconciliation can tell a committed mutation from an attempt | player-owned record owners | not yet built — needs an intent + commit-marker protocol; ordering alone inflates the economy or loses the evidence |
+| An unresolved intent is decidable without arithmetic on the record | player-owned record owners | not yet built — store mutation identity + outcome atomically with the write (#475), or block later mutations while an intent is open |
 | An acknowledged player-owned mutation is never lost | player-owned record owners | not yet built — #473, #474, #475, **and conditional on the row above** |
 | A replay **not** identified by its own content applies once | player-owned record owners | not yet built — #475 |
 | A world-owned record states its own recovery invariant | first world-owned record owner | not yet built — no such record exists |
