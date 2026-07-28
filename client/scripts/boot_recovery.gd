@@ -320,7 +320,30 @@ static func load_state(path: String) -> Dictionary:
 ## predicate select() trusts, so write and read can never diverge) or last-good.
 ## Writing junk into a well-formed file would LAUNDER corruption into evidence,
 ## which is exactly how a recorded failure gets erased.
+##
+## Held under the cross-process write lock ([FileLock]), because this whole
+## function is a read-modify-write and the two writers that race it — the updater
+## and the game — both exist today. Without the lock, two of them reparse the
+## same document, each merges its own record, and the slower rename discards the
+## other's. What that loses is not a respawn point: it is the evidence deciding
+## whether a client rolls back, lost at the least recoverable moment there is.
+##
+## Contention refuses the write rather than blocking, which is this file's
+## standing law — persistence may degrade, but it may never stop a boot. Reads
+## take no lock at all, so a held lock can never prevent a rollback decision.
 static func save_state(path: String, state: Variant, only_if_missing: bool = false) -> Dictionary:
+	if not FileLock.acquire(path):
+		return {"ok": false, "reason": "refusing to persist recovery state to %s because another writer holds its write lock" % path}
+	var result := _save_state_locked(path, state, only_if_missing)
+	FileLock.release(path)
+	return result
+
+
+## save_state()'s body, with the write lock already held. Split out so
+## acquisition and release live on ONE path each: GDScript has no `defer`, and a
+## lock leaked down any of the many early-return branches below would wedge
+## recovery for the whole stale timeout.
+static func _save_state_locked(path: String, state: Variant, only_if_missing: bool) -> Dictionary:
 	if state is not Dictionary:
 		return {"ok": false, "reason": "refusing to persist recovery state that is not a dictionary"}
 	var s := state as Dictionary
@@ -380,6 +403,23 @@ static func save_state(path: String, state: Variant, only_if_missing: bool = fal
 	if not can_write(path):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(tmp_path))
 		return {"ok": false, "reason": "refusing to replace %s because its current recovery document is unreadable or newer" % path}
+	# Prove we are STILL the lock's holder. A reclaimer that misjudged this live
+	# lock as abandoned would have moved it away, and another writer could then
+	# hold it legitimately. Replacing the record while that is true is the one
+	# outcome the lock exists to prevent, so a lost lock abandons the write.
+	#
+	# ⚠️ Point-in-time, and it cannot be made otherwise here — the same wall the
+	# vault documents. A holder that has already outlived the stale timeout can be
+	# reclaimed between this returning true and the rename below. Closing that
+	# needs an OS-level lock held ACROSS the rename (`flock` or equivalent), and
+	# Godot's FileAccess/DirAccess expose none. What bounds it: the timeout is far
+	# longer than any real critical section, the interval is a single syscall, and
+	# the readability recheck above still refuses to replace a document this shell
+	# cannot read — so the catastrophic case stays closed even when a lost update
+	# between same-version writers slips through.
+	if not FileLock.owns(path):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(tmp_path))
+		return {"ok": false, "reason": "refusing to replace %s because this process no longer holds its write lock" % path}
 	var err := DirAccess.rename_absolute(
 		ProjectSettings.globalize_path(tmp_path), ProjectSettings.globalize_path(path))
 	if err != OK:

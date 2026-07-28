@@ -298,7 +298,7 @@ func _ready() -> void:
 func _reset_state() -> void:
 	_cleanup()
 	SaveVault.clear_refusals_for_test()
-	SaveVault.clear_locks_for_test()
+	FileLock.clear_for_test()
 
 
 func _write(path: String, text: String) -> void:
@@ -354,7 +354,7 @@ func _quarantined() -> Array[String]:
 
 
 func _cleanup() -> void:
-	SaveVault.clear_locks_for_test()
+	FileLock.clear_for_test()
 	_remove(PROBE)
 	_remove(PROBE + ".tmp")
 	for path: String in _quarantined():

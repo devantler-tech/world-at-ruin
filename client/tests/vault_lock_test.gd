@@ -51,8 +51,8 @@ func _ready() -> void:
 	# 1. The lock is a directory beside the vault. `mkdir` is the only atomic
 	# exclusive-create Godot exposes; a plain file open would be check-then-act
 	# again, so the SHAPE is load-bearing, not an implementation detail.
-	var lock := SaveVault.lock_path(PROBE)
-	if lock != PROBE + SaveVault.LOCK_SUFFIX:
+	var lock := FileLock.path_for(PROBE)
+	if lock != PROBE + FileLock.SUFFIX:
 		_fail("lock_path() did not sit beside the vault: %s" % lock)
 		return
 	if not SaveVault.persist_attunement(SaveVault.SHRINE_WARDENS):
@@ -137,8 +137,8 @@ func _ready() -> void:
 	if DirAccess.make_dir_absolute(_abs(lock)) != OK:
 		_fail("could not simulate a crashed process's abandoned lock")
 		return
-	OS.set_environment(SaveVault.LOCK_STALE_ENV, "0")
-	if SaveVault.lock_stale_seconds() != 0:
+	OS.set_environment(FileLock.STALE_ENV, "0")
+	if FileLock.stale_seconds() != 0:
 		_fail("the stale-timeout seam did not honour an explicit 0")
 		return
 	# A reclaiming pass deliberately does NOT acquire. Reclaim-then-acquire in one
@@ -152,7 +152,7 @@ func _ready() -> void:
 	# ownership guard, so the end-to-end call returns false either way and the
 	# assertion would pass while the defect it names is present (measured — this
 	# exact ablation slipped through the end-to-end form).
-	if SaveVault._acquire_lock(PROBE):
+	if FileLock.acquire(PROBE):
 		_fail("a reclaiming pass ACQUIRED the lock — reclaim and acquire must not share a pass")
 		return
 	if DirAccess.dir_exists_absolute(_abs(lock)):
@@ -172,12 +172,12 @@ func _ready() -> void:
 	# would let any live writer be robbed mid-write, which is the one loss this
 	# lock exists to prevent.
 	for bad: String in ["", "-1", "abc", "3.5"]:
-		OS.set_environment(SaveVault.LOCK_STALE_ENV, bad)
-		if SaveVault.lock_stale_seconds() != SaveVault.LOCK_STALE_SECONDS:
+		OS.set_environment(FileLock.STALE_ENV, bad)
+		if FileLock.stale_seconds() != FileLock.STALE_SECONDS:
 			_fail("the stale seam accepted %s instead of falling back to the shipped window" % (
 				"an empty value" if bad.is_empty() else "'%s'" % bad))
 			return
-	OS.set_environment(SaveVault.LOCK_STALE_ENV, "")
+	OS.set_environment(FileLock.STALE_ENV, "")
 
 	# 9. A live lock is NOT stolen, re-checked END TO END now that the seam has
 	# been exercised and reset. Case 2 already proves freshness is respected, and
@@ -204,7 +204,7 @@ func _ready() -> void:
 	if DirAccess.make_dir_absolute(_abs(lock)) != OK:
 		_fail("could not take the lock for the stamped-holder case")
 		return
-	var stamp := FileAccess.open(lock + "/" + SaveVault.LOCK_OWNER_FILE, FileAccess.WRITE)
+	var stamp := FileAccess.open(lock + "/" + FileLock.OWNER_FILE, FileAccess.WRITE)
 	if stamp == null:
 		_fail("could not write a foreign ownership stamp")
 		return
@@ -216,7 +216,7 @@ func _ready() -> void:
 	if _read(PROBE) == "":
 		_fail("the vault vanished while a stamped foreign lock was held")
 		return
-	DirAccess.remove_absolute(_abs(lock + "/" + SaveVault.LOCK_OWNER_FILE))
+	DirAccess.remove_absolute(_abs(lock + "/" + FileLock.OWNER_FILE))
 	DirAccess.remove_absolute(_abs(lock))
 
 	# 11. The ownership guard, driven directly. A holder stamps the lock and can
@@ -225,22 +225,22 @@ func _ready() -> void:
 	# legitimately holds the lock. That interleaving needs two real processes to
 	# arise, so the guard is exercised at its own level rather than left as an
 	# untested claim.
-	if not SaveVault._acquire_lock(PROBE):
+	if not FileLock.acquire(PROBE):
 		_fail("could not acquire the lock for the ownership case")
 		return
-	if not SaveVault._owns_lock(PROBE):
+	if not FileLock.owns(PROBE):
 		_fail("a freshly acquired lock did not read as owned by this process")
 		return
-	if not FileAccess.file_exists(lock + "/" + SaveVault.LOCK_OWNER_FILE):
+	if not FileAccess.file_exists(lock + "/" + FileLock.OWNER_FILE):
 		_fail("acquiring the lock did not stamp ownership into it")
 		return
-	var hijack := FileAccess.open(lock + "/" + SaveVault.LOCK_OWNER_FILE, FileAccess.WRITE)
+	var hijack := FileAccess.open(lock + "/" + FileLock.OWNER_FILE, FileAccess.WRITE)
 	if hijack == null:
 		_fail("could not overwrite the ownership stamp")
 		return
 	hijack.store_string("999999-2")
 	hijack.close()
-	if SaveVault._owns_lock(PROBE):
+	if FileLock.owns(PROBE):
 		_fail("a REPLACED ownership stamp still read as ours — a stolen lock would not be detected")
 		return
 	# And a write refuses while the lock is no longer ours, rather than replacing
@@ -259,26 +259,26 @@ func _ready() -> void:
 	# lost-update race, entered through the release path instead of the acquire
 	# path. The hijacked stamp from case 11 is still in place, so this is exactly
 	# the "someone else holds it now" state.
-	SaveVault._release_lock(PROBE)
+	FileLock.release(PROBE)
 	if not DirAccess.dir_exists_absolute(_abs(lock)):
 		_fail("releasing a lock owned by someone else DELETED it — a third writer could acquire mid-write")
 		return
-	if not FileAccess.file_exists(lock + "/" + SaveVault.LOCK_OWNER_FILE):
+	if not FileAccess.file_exists(lock + "/" + FileLock.OWNER_FILE):
 		_fail("releasing a foreign-held lock stripped its ownership stamp")
 		return
 	# That lock was deliberately left behind, so free the slot by hand before the
 	# next case — clear_locks_for_test() cannot, having no record of a lock this
 	# process no longer holds.
-	DirAccess.remove_absolute(_abs(lock + "/" + SaveVault.LOCK_OWNER_FILE))
+	DirAccess.remove_absolute(_abs(lock + "/" + FileLock.OWNER_FILE))
 	DirAccess.remove_absolute(_abs(lock))
-	SaveVault.clear_locks_for_test()
+	FileLock.clear_for_test()
 
 	# 13. A releasing holder that STILL owns its lock does remove it — otherwise
 	# case 12 could pass by never releasing anything at all.
-	if not SaveVault._acquire_lock(PROBE):
+	if not FileLock.acquire(PROBE):
 		_fail("could not acquire the lock for the clean-release case")
 		return
-	SaveVault._release_lock(PROBE)
+	FileLock.release(PROBE)
 	if DirAccess.dir_exists_absolute(_abs(lock)):
 		_fail("releasing a lock we still own left it behind")
 		return
@@ -289,11 +289,11 @@ func _ready() -> void:
 	# attempt at that surviving directory, the rename would always fail, and stale
 	# recovery would be dead for the whole session. Build exactly that orphan and
 	# prove reclamation still works around it.
-	var orphan := "%s%s%d" % [lock, SaveVault.LOCK_RECLAIM_SUFFIX, OS.get_process_id()]
+	var orphan := "%s%s%d" % [lock, FileLock.RECLAIM_SUFFIX, OS.get_process_id()]
 	if DirAccess.make_dir_absolute(_abs(orphan)) != OK:
 		_fail("could not simulate a crashed reclaimer's leftover copy")
 		return
-	var orphan_stamp := FileAccess.open(orphan + "/" + SaveVault.LOCK_OWNER_FILE, FileAccess.WRITE)
+	var orphan_stamp := FileAccess.open(orphan + "/" + FileLock.OWNER_FILE, FileAccess.WRITE)
 	if orphan_stamp == null:
 		_fail("could not stamp the orphaned reclaim copy")
 		return
@@ -302,14 +302,14 @@ func _ready() -> void:
 	if DirAccess.make_dir_absolute(_abs(lock)) != OK:
 		_fail("could not simulate an abandoned lock alongside the orphan")
 		return
-	OS.set_environment(SaveVault.LOCK_STALE_ENV, "0")
-	if SaveVault._acquire_lock(PROBE):
+	OS.set_environment(FileLock.STALE_ENV, "0")
+	if FileLock.acquire(PROBE):
 		_fail("a reclaiming pass ACQUIRED while an orphaned reclaim copy existed")
 		return
 	if DirAccess.dir_exists_absolute(_abs(lock)):
 		_fail("a crashed reclaimer's leftover copy blocked all future stale recovery")
 		return
-	OS.set_environment(SaveVault.LOCK_STALE_ENV, "")
+	OS.set_environment(FileLock.STALE_ENV, "")
 
 	_cleanup()
 	OS.set_environment(SaveVault.VAULT_PATH_ENV, "")
@@ -320,7 +320,7 @@ func _ready() -> void:
 func _fail(message: String) -> void:
 	_cleanup()
 	OS.set_environment(SaveVault.VAULT_PATH_ENV, "")
-	OS.set_environment(SaveVault.LOCK_STALE_ENV, "")
+	OS.set_environment(FileLock.STALE_ENV, "")
 	push_error(message)
 	print("TEST FAIL — %s" % message)
 	get_tree().quit(1)
@@ -349,19 +349,19 @@ func _read(path: String) -> String:
 
 
 func _cleanup() -> void:
-	SaveVault.clear_locks_for_test()
+	FileLock.clear_for_test()
 	SaveVault.clear_refusals_for_test()
-	var lock := SaveVault.lock_path(PROBE)
-	DirAccess.remove_absolute(_abs(lock + "/" + SaveVault.LOCK_OWNER_FILE))
+	var lock := FileLock.path_for(PROBE)
+	DirAccess.remove_absolute(_abs(lock + "/" + FileLock.OWNER_FILE))
 	DirAccess.remove_absolute(_abs(lock))
 	# Reclaim copies carry a per-ATTEMPT suffix, so they cannot be reconstructed by
 	# name — scan the directory for the prefix instead.
 	var parent := lock.get_base_dir()
-	var reclaim_prefix := lock.get_file() + SaveVault.LOCK_RECLAIM_SUFFIX
+	var reclaim_prefix := lock.get_file() + FileLock.RECLAIM_SUFFIX
 	for entry: String in DirAccess.get_directories_at(parent):
 		if entry.begins_with(reclaim_prefix):
 			var dead := parent.path_join(entry)
-			DirAccess.remove_absolute(_abs(dead + "/" + SaveVault.LOCK_OWNER_FILE))
+			DirAccess.remove_absolute(_abs(dead + "/" + FileLock.OWNER_FILE))
 			DirAccess.remove_absolute(_abs(dead))
 	for path: String in [PROBE, PROBE + ".tmp"]:
 		if FileAccess.file_exists(path):
