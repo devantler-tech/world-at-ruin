@@ -237,9 +237,8 @@ func _ready() -> void:
 			% [contribution, STEP_PIXELS, budget])
 		return
 
-	print("CRAWL PASS — %.4f of the ground flickers under a %.2f-pixel step, within the %.4f "
-		% [contribution, STEP_PIXELS, budget]
-		+ "budget supplied via WAR_CRAWL_MAX")
+	print(("CRAWL PASS — %.4f of the ground flickers under a %.2f-pixel step, within the %.4f "
+		+ "budget supplied via WAR_CRAWL_MAX") % [contribution, STEP_PIXELS, budget])
 	get_tree().quit(0)
 
 
@@ -407,7 +406,15 @@ func _requested_budget() -> float:
 	if not raw.is_valid_float():
 		push_warning("WAR_CRAWL_MAX=%s is not a number — ignoring it and reporting only" % raw)
 		return -1.0
-	return raw.to_float()
+	var value := raw.to_float()
+	# A negative budget is refused rather than accepted, because -1.0 is this
+	# function's own "no budget" sentinel: taken at face value it would read as
+	# unset and quietly report, and taken literally it would fail every possible
+	# run. Neither is what someone typing a negative number meant.
+	if value < 0.0:
+		push_warning("WAR_CRAWL_MAX=%s is negative — ignoring it and reporting only" % raw)
+		return -1.0
+	return value
 
 
 ## Leaves the camera as the ONLY thing that differs between two captures.
