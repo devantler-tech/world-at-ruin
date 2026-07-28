@@ -1768,6 +1768,42 @@ func TestLoadKeepsSchemaOneLeaseReadableAsNotReleasing(t *testing.T) {
 	}
 }
 
+func TestLoadKeepsCurrentSchemaLeaseCarryingExplicitFalseFlags(t *testing.T) {
+	storage := newMemoryStorage()
+	store, err := NewStore(storage)
+	if err != nil {
+		t.Fatalf("NewStore returned an error: %v", err)
+	}
+	key := reservationKey(testUserID, testReservationID)
+	storage.objects[storageID(testSystemUserID, Collection, key)] = &api.StorageObject{
+		Collection: Collection,
+		Key:        key,
+		UserId:     testSystemUserID,
+		Value: `{"schema":2,"attempt_id":"attempt-7","allocation_id":"gameserver-17",` +
+			`"observer":42,"secret_ref":"zone-admission-gameserver-17",` +
+			`"expires_at_nanos":2000000000123456789,"claimed_at_nanos":null,` +
+			`"staging":false,"releasing":false}`,
+		Version:         "explicit-false",
+		PermissionRead:  0,
+		PermissionWrite: 0,
+	}
+
+	got, err := store.Load(context.Background(), testUserID, testReservationID)
+	if err != nil {
+		t.Fatalf("Load of explicit-false lease returned an error: %v", err)
+	}
+	if got.Lease != validLease() || got.Version != "explicit-false" {
+		t.Fatalf(
+			"loaded explicit-false record = %+v, want lease %+v at explicit-false",
+			got,
+			validLease(),
+		)
+	}
+	if got.Lease.Staging || got.Lease.Releasing {
+		t.Fatalf("explicit-false lease loaded as staging or releasing: %+v", got.Lease)
+	}
+}
+
 func TestLoadRejectsMalformedOrPublicStoredObjects(t *testing.T) {
 	for _, test := range []struct {
 		name   string
@@ -1808,6 +1844,57 @@ func TestLoadRejectsMalformedOrPublicStoredObjects(t *testing.T) {
 					object.GetValue(),
 					"{",
 					`{"releasing":true,`,
+					1,
+				)
+			},
+		},
+		{
+			name: "schema one cannot carry releasing at its zero value",
+			tamper: func(object *api.StorageObject) {
+				object.Value = strings.Replace(
+					object.GetValue(),
+					`"schema":2`,
+					`"schema":1`,
+					1,
+				)
+				object.Value = strings.Replace(
+					object.GetValue(),
+					"{",
+					`{"releasing":false,`,
+					1,
+				)
+			},
+		},
+		{
+			name: "schema one cannot encode staging",
+			tamper: func(object *api.StorageObject) {
+				object.Value = strings.Replace(
+					object.GetValue(),
+					`"schema":2`,
+					`"schema":1`,
+					1,
+				)
+				object.Value = strings.Replace(
+					object.GetValue(),
+					"{",
+					`{"staging":true,`,
+					1,
+				)
+			},
+		},
+		{
+			name: "schema one cannot carry staging at its zero value",
+			tamper: func(object *api.StorageObject) {
+				object.Value = strings.Replace(
+					object.GetValue(),
+					`"schema":2`,
+					`"schema":1`,
+					1,
+				)
+				object.Value = strings.Replace(
+					object.GetValue(),
+					"{",
+					`{"staging":false,`,
 					1,
 				)
 			},
