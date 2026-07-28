@@ -6,5 +6,5 @@
 		"If saving is interrupted, the way back still works for the current waking and the game keeps trying to remember it without applying the reward again."
 	],
 	"title": "The Wardens' Shrine becomes a lasting way back",
-	"version": "0.63.0"
+	"version": "0.64.0"
 }
