@@ -27,13 +27,19 @@
 # since shipped is legitimate and must stay so; it is the freshly authored entry
 # whose version is a guess.
 #
-# KNOWN INTERACTION. Correcting an entry that is ALREADY mislabelled means giving
-# it the number of a release that has already happened, and this guard refuses
-# exactly that — it cannot tell "names a release that shipped without it" from
-# "names the release it did ship in", because the change is on main either way.
-# `main` currently holds one such entry (0.59.0, first contained in v0.60.0).
-# Fixing it needs this check taught to verify containment, or a reviewed
-# one-off; it is not something to work around by loosening the rule above.
+# CORRECTIONS take the other proof. Being ahead of every release is the right
+# test for an authored entry, and the wrong one for correcting an entry already
+# on main that carries the wrong number: the fix necessarily names a release that
+# has already happened. An entry listed in tools/devlog-entry-corrections.tsv is
+# therefore measured against CONTAINMENT instead — the release it names must be
+# the first release containing the anchor commit whose change it describes. That
+# is the property the forward-looking rule only approximates, so a listing
+# substitutes a stronger machine-checked proof rather than an exemption: a wrong
+# number still fails, and an entry that is not listed is unaffected.
+#
+# The anchor must be the commit the entry DESCRIBES. An entry's own add-commit
+# is useless for this — the one-file-per-entry migration created every existing
+# entry file in a single commit, so it says nothing about when the change shipped.
 #
 # Fail-closed: a missing base commit, an unreadable entry, or a checkout with no
 # visible release tags is an error, never a pass. A tagless checkout would
@@ -42,6 +48,7 @@
 set -euo pipefail
 
 ENTRY_DIR='client/devlog'
+CORRECTIONS_FILE='tools/devlog-entry-corrections.tsv'
 
 fail() {
 	printf 'dev-log entry version guard: FAIL — %s\n' "$1" >&2
@@ -88,6 +95,43 @@ newest_version() {
 		fi
 	done
 	printf '%s' "$newest"
+}
+
+# The lowest version on stdin, by the same component-wise comparison. Empty when
+# nothing on stdin is a version, which the caller must treat as an error.
+oldest_version() {
+	local oldest='' v
+	while IFS= read -r v; do
+		is_version "$v" || continue
+		if [ -z "$oldest" ] || version_gt "$oldest" "$v"; then
+			oldest="$v"
+		fi
+	done
+	printf '%s' "$oldest"
+}
+
+# The first release containing $1, as a bare version. Empty when no release
+# contains it — which is the honest answer for a change that has not shipped,
+# not a reason to pass.
+first_release_containing() {
+	git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --contains "$1" 2>/dev/null |
+		sed 's/^v//' | oldest_version
+}
+
+# The anchor commit sanctioning $1 as a correction, or empty when it is not one.
+#
+# Matched on the exact landing path, so a listing covers one specific entry and
+# cannot be read as a pattern. A missing corrections file is not an error: the
+# ordinary rule applies to everything and nothing needs sanctioning.
+correction_anchor() {
+	local file="$1" path commit rest
+	[ -f "$CORRECTIONS_FILE" ] || return 0
+	while IFS=$'\t' read -r path commit rest || [ -n "$path" ]; do
+		case "$path" in '' | '#'*) continue ;; esac
+		[ "$path" = "$file" ] || continue
+		printf '%s' "$commit"
+		return 0
+	done <"$CORRECTIONS_FILE"
 }
 
 # The commit this change is measured against.
@@ -156,7 +200,7 @@ main() {
 		return 0
 	fi
 
-	local file version floor
+	local file version floor anchor shipped
 	floor=$(next_patch "$newest")
 	while IFS= read -r file; do
 		[ -n "$file" ] || continue
@@ -166,6 +210,23 @@ main() {
 			fail "$file declares no readable version — the field is missing or the file is not parseable JSON"
 		is_version "$version" ||
 			fail "$file declares version '$version', which is not an X.Y.Z release version"
+
+		# A sanctioned correction is held to containment instead: it must name
+		# the first release that actually contains the change it describes.
+		anchor=$(correction_anchor "$file")
+		if [ -n "$anchor" ]; then
+			git rev-parse -q --verify "$anchor^{commit}" >/dev/null 2>&1 ||
+				fail "$file is listed in $CORRECTIONS_FILE against '$anchor', which is not a commit in this checkout — the correction cannot be verified"
+			shipped=$(first_release_containing "$anchor")
+			[ -n "$shipped" ] ||
+				fail "$file is listed in $CORRECTIONS_FILE against $anchor, but no release contains that commit — an unshipped change takes the ordinary forward-looking rule, not a correction"
+			[ "$version" = "$shipped" ] ||
+				fail "$(printf '%s declares version %s, but the change it is anchored to (%s) first shipped in v%s. A correction must name the release that actually contains it.' \
+					"$file" "$version" "$anchor" "$shipped")"
+			printf 'dev-log entry version guard: %s verified by containment — first released in v%s\n' "$file" "$shipped"
+			continue
+		fi
+
 		version_gt "$version" "$newest" ||
 			fail "$(printf '%s names version %s, but v%s is already released and does not contain this change. An entry describes a build that has not shipped yet, so it must be above every existing release — %s at the lowest, or the next minor for a feat:. Rename the file and its version field together.' \
 				"$file" "$version" "$newest" "$floor")"
