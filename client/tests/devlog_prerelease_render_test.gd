@@ -35,6 +35,25 @@ extends Node
 ## this test rather than a silent loss of the correction.
 const SHIPPED_NOTE := "never released; first shipped in v%s"
 
+## The pre-release block, by exact membership. A CLOSED set: these are the
+## entries written before the repo's first tag, nothing can join them later
+## (`devlog-entry-version-guard.sh` refuses `shipped_in` on an entry that has not
+## shipped, which every new entry is), and an entry only leaves by being deleted.
+##
+## Pinned as the whole list rather than as a count or a "at least one" floor,
+## because the failure this guards against is ONE entry silently losing its
+## declaration. Such an entry falls back to rendering `v0.1.4 — …`, which is
+## exactly the misleading form this change removed, and every other check would
+## still pass: the sweep reclassifies it `NEVER-CUT`, which the gate excludes;
+## `check_shipped_in` skips an entry with no declaration to skip; and a floor of
+## "some entry declares" is still satisfied by the other sixteen. Membership is
+## the only assertion that fails on a single-entry regression.
+const PRE_RELEASE_BLOCK: Array[String] = [
+	"0.1.0", "0.1.1", "0.1.2", "0.1.3", "0.1.4", "0.1.5", "0.1.6", "0.1.7",
+	"0.1.8", "0.1.9", "0.1.10", "0.1.11", "0.1.12", "0.1.13", "0.1.14",
+	"0.1.16", "0.1.17",
+]
+
 var _failed := false
 
 
@@ -43,7 +62,7 @@ func _ready() -> void:
 	add_child(hud)
 	var rendered: String = hud._render_devlog()
 
-	var declaring := 0
+	var declaring: Array[String] = []
 	var ordinary := 0
 	for entry: Dictionary in DevLog.ENTRIES:
 		var version := String(entry["version"])
@@ -61,7 +80,7 @@ func _ready() -> void:
 				return
 			continue
 
-		declaring += 1
+		declaring.append(version)
 		if rendered.contains(release_header):
 			_fail(("entry %s still renders as 'v%s' — that version was NEVER released, so the leading "
 				+ "v presents a build the reader could not have played. Drop it for a declaring entry.")
@@ -76,15 +95,37 @@ func _ready() -> void:
 				% [version, SHIPPED_NOTE % shipped_in])
 			return
 
-	if declaring == 0:
-		_fail("no dev-log entry declares 'shipped_in', so every check above passed vacuously — the pre-release block is what this test exists for")
+	# --- MEMBERSHIP: the block is exactly this set, no more and no less ---
+	# Reported as the difference in each direction rather than as a count
+	# mismatch, so the message names the entry to look at.
+	var missing: Array[String] = []
+	for version: String in PRE_RELEASE_BLOCK:
+		if not declaring.has(version):
+			missing.append(version)
+	if not missing.is_empty():
+		_fail(("dev-log entries no longer declaring 'shipped_in': %s — each falls straight back to rendering "
+			+ "'v<version> — ', the misleading form naming a build that was never cut. Nothing else "
+			+ "catches this: the sweep reclassifies such an entry NEVER-CUT, which the gate excludes, "
+			+ "and the guard has no declaration left to check.")
+			% [", ".join(missing)])
+		return
+	var unexpected: Array[String] = []
+	for version: String in declaring:
+		if not PRE_RELEASE_BLOCK.has(version):
+			unexpected.append(version)
+	if not unexpected.is_empty():
+		_fail(("dev-log entries declaring 'shipped_in' outside the pre-release block: %s. The block is "
+			+ "closed — it is the entries written before the repo's first tag, and an entry that has "
+			+ "shipped since cannot join it. An ordinarily mislabelled entry is corrected by renaming "
+			+ "it onto the release that contains it, not by declaring where it landed.")
+			% [", ".join(unexpected)])
 		return
 	if ordinary == 0:
 		_fail("every dev-log entry declares 'shipped_in', so the untouched-ordinary-entry check passed vacuously")
 		return
 
-	print("TEST PASS — dev log renders %d pre-release entries without a v and naming where they shipped, %d released entries unchanged"
-		% [declaring, ordinary])
+	print("TEST PASS — dev log renders the %d-entry pre-release block without a v and naming where each shipped, %d released entries unchanged"
+		% [declaring.size(), ordinary])
 	get_tree().quit(0)
 
 
