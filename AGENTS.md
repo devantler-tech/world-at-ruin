@@ -407,7 +407,12 @@ everything shipped afterwards is held to.
   path when it cannot — the same shape as the vault's, and latched for the life of the process so a
   recipe that disappears after being refused does not reopen a writable path. While a path is
   refused, `save_to()` and `clear()` both refuse it and `main.gd` locks every character-creator
-  entry, so an unreadable recipe is never mistaken for a first run. A sibling file is the only shape a shipped client
+  entry, so an unreadable recipe is never mistaken for a first run. Both writes additionally run under
+  the SAME cross-process `FileLock` the vault takes — spanning the acceptance read, the validation and
+  the rename as one unit, and proving ownership again before the rename (`tests/character_lock_test`);
+  the two stores fail the same way for the same reason rather than each growing a bespoke mechanism.
+  Its staging sweep keeps an age floor the vault has no need of, because a retained rollback build or a
+  foreign writer stages through that prefix without ever taking the lock. A sibling file is the only shape a shipped client
   handles safely: it never reads it, so it never rejects or deletes it. The vault obeys the same laws
   (name-keyed, additive-only, newer versions refused) with the same enforcement shape —
   `tests/save_vault_guard_test`, golden `tests/data/golden_vault_v<N>.json`, and the append-only

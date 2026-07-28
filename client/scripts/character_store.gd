@@ -40,14 +40,14 @@ const WRITE_TMP_SUFFIX := ".tmp-"
 ## How long an abandoned staging file must have sat UNCHANGED before this build
 ## reclaims it (see [method _sweep_abandoned_writes]).
 ##
-## The vault sweeps with no age floor at all, and copying that here would be
-## wrong: its sweep runs while HOLDING the cross-process write lock, so no other
-## lock-aware writer can be inside its staging window and anything it finds is
-## provably finished or dead. The character store has no such lock (#423 is
-## blocked on the lock extraction in #422), so an age floor is what replaces the
-## lock's proof — a staging file younger than this may be a live write by a
-## second client, and deleting it would corrupt exactly the concurrent writer
-## this change exists to protect.
+## The vault sweeps with no age floor at all, and this store keeps one even
+## though its sweep now runs under the same write lock. The lock's proof covers
+## less than it appears to: it excludes writers that TAKE it, so anything it
+## finds is provably finished or dead only among lock-aware builds. A retained
+## rollback build — which the updater deliberately keeps runnable — and a foreign
+## writer such as cloud sync stage through this prefix without ever consulting
+## the lock, and a staging file younger than this window may be one of them
+## mid-write. The age floor is what stands in for the lock against exactly those.
 ##
 ## The failure directions are lopsided and point the same way as the vault's
 ## quarantine window: sweeping too eagerly destroys another client's in-flight
@@ -176,13 +176,12 @@ static func _write_tmp_path(path: String) -> String:
 ## fixed `character.json.tmp` was, so without this a hard crash mid-write would
 ## leak a file into user:// on every occurrence.
 ##
-## Age-gated rather than lock-gated, which is the one place this deliberately
-## departs from the vault's sweep. The vault runs its sweep under the
-## cross-process write lock, so everything carrying the prefix is provably
-## finished or dead; the character store has no lock yet (#423), so a young
-## staging file may belong to a live write by a second client and deleting it
-## would cause the corruption this change exists to prevent. Only files that have
-## sat unchanged past [method write_tmp_min_age_seconds] are reclaimed.
+## Age-gated as well as lock-gated, which is the one place this deliberately
+## departs from the vault's sweep. Both sweeps run holding the cross-process
+## write lock, but that lock binds only writers that take it: a retained rollback
+## build or a foreign writer stages through this prefix without consulting it, so
+## a young staging file may still belong to a live write. Only files that have sat
+## unchanged past [method write_tmp_min_age_seconds] are reclaimed.
 ##
 ## Scoped to WRITE_TMP_SUFFIX deliberately. A foreign writer's plain
 ## `character.json.tmp` carries no per-attempt stamp and is none of our business
@@ -225,6 +224,26 @@ static func _sweep_abandoned_writes(path: String) -> void:
 ## a refusal stands, but that is a UI guard on one entry point, and every writer
 ## reaching the file goes through here.
 static func save_to(path: String, recipe: Dictionary) -> bool:
+	if not FileLock.acquire(path):
+		push_error(
+			"CharacterStore: refusing to write %s — another process holds the write lock" % path)
+		return false
+	var wrote := _save_to_locked(path, recipe)
+	FileLock.release(path)
+	return wrote
+
+
+## save_to()'s body, with the write lock already held. Split out so acquisition
+## and release live on ONE path each: GDScript has no `defer`, and a lock leaked
+## down any of the early returns below would wedge saving for
+## FileLock.STALE_SECONDS.
+##
+## Everything the write depends on is decided in here, INSIDE the lock — the
+## acceptance read, the validation, the staging sweep and the rename. Locking
+## only the rename would not close the race this exists for: two clients can each
+## read and accept the same recipe BEFORE either takes the lock, then acquire in
+## turn, and the second still discards the first's character.
+static func _save_to_locked(path: String, recipe: Dictionary) -> bool:
 	if not can_write(path):
 		push_error("CharacterStore: refusing to write %s — the recipe there is not this build's to replace" % path)
 		return false
@@ -245,6 +264,25 @@ static func save_to(path: String, recipe: Dictionary) -> bool:
 	# itself; the vault narrows the same window the same way.
 	if not can_write(path):
 		push_error("CharacterStore: refusing to replace %s — its recipe changed to one this build cannot accept" % path)
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(tmp_path))
+		return false
+	# Prove we are STILL the lock's holder. A reclaimer that misjudged this live
+	# lock as abandoned would have moved it away, and another writer could then
+	# hold it legitimately. Replacing the character while that is true is the one
+	# outcome the lock exists to prevent, so a lost lock abandons the write.
+	#
+	# ⚠️ Point-in-time, and it cannot be made otherwise here: a holder that has
+	# already outlived the stale timeout can be reclaimed between this returning
+	# true and the rename below. Closing that needs an OS-level lock held ACROSS
+	# the rename (`flock`, `O_EXCL`), which Godot's FileAccess/DirAccess do not
+	# expose. What bounds it instead: the timeout is far longer than any real
+	# critical section, the interval is a single syscall, and the acceptance
+	# re-check above still refuses to replace a recipe this build cannot read — so
+	# the catastrophic case (overwriting a newer client's character) stays closed
+	# even when the benign one slips through.
+	if not FileLock.owns(path):
+		push_error(
+			"CharacterStore: lost the write lock for %s while writing — refusing to replace it" % path)
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(tmp_path))
 		return false
 	var err := DirAccess.rename_absolute(
@@ -296,8 +334,51 @@ static func clear() -> void:
 	if _refused.has(path):
 		push_error("CharacterStore: refusing to delete %s — the recipe there is not this build's to discard" % path)
 		return
+	# Deleting is a write, and the most destructive one, so it takes the same lock
+	# as every other writer: removing the file while a second client is mid-write
+	# would strand that write's rename over a path it no longer owns.
+	if not FileLock.acquire(path):
+		push_error(
+			"CharacterStore: refusing to delete %s — another process holds the write lock" % path)
+		return
+	# Prove we still hold the lock, exactly as [method _save_to_locked] does before
+	# its rename. The gap here is far narrower — acquire and delete are adjacent,
+	# where the save serialises a whole document in between — so this is defence in
+	# depth rather than a window anyone has measured. It is kept because "too fast
+	# to matter" is an argument that rots: it becomes invisibly untrue the moment
+	# anything is inserted between these two lines, and what it would cost is
+	# deleting a character while its legitimate new holder is mid-write. Releasing
+	# on this path matters as much as the check — an early return that kept the lock
+	# would wedge every later write for the whole stale timeout.
+	# Re-derive acceptance INSIDE the lock. The refusal check at the top of this
+	# function is a point-in-time reading taken BEFORE the lock was held, and a
+	# second lock-aware client can install a whole new recipe in that window —
+	# release its own lock, and let this one acquire. Deleting then would destroy
+	# a character this build never read and never refused, which under the
+	# no-resets law is unrecoverable. The pre-lock check stays as a cheap way to
+	# avoid creating a lock directory for a delete that is already doomed; THIS is
+	# the authoritative pass.
+	if not can_write(path):
+		push_error(
+			"CharacterStore: refusing to delete %s — its recipe changed to one this build cannot accept"
+			% path)
+		FileLock.release(path)
+		return
+	# Ownership is proved LAST, immediately before the removal — the same position
+	# [method _save_to_locked] gives it before its rename, and the order matters.
+	# The acceptance check above reads and parses a file, which is real time; a
+	# process suspended across it can have its lock reclaimed, and another client
+	# can then legitimately take the lock and write a valid recipe that
+	# can_write() would happily accept on the way to deleting it. Proving
+	# ownership before that read rather than after would leave exactly that gap.
+	if not FileLock.owns(path):
+		push_error(
+			"CharacterStore: lost the write lock for %s — refusing to delete it" % path)
+		FileLock.release(path)
+		return
 	if exists():
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	FileLock.release(path)
 
 
 ## Move a character stranded at `backup` back to `target`, but ONLY when
