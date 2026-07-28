@@ -318,17 +318,21 @@ catastrophic rather than helpful.
 - Because a per-attempt name is not reclaimed by being overwritten the way one fixed name was, a
   crashed writer's staging file is swept on the next write — but only once it has sat unchanged past
   `WRITE_TMP_MIN_AGE_SECONDS` (300 s, overridable for tests via
-  `WAR_CHARACTER_WRITE_TMP_MIN_AGE_SECONDS`). The age floor is what stands in for the lock the
-  character store does not yet have: the vault may sweep anything it finds because it sweeps while
-  holding the write lock, whereas a young character stage may be a live write by a second client, and
-  deleting it would cause exactly the corruption the private name removes. The window errs long —
+  `WAR_CHARACTER_WRITE_TMP_MIN_AGE_SECONDS`). The character sweep keeps that age floor even though it
+  now runs under the write lock, because the lock proves less than it appears to: it binds only
+  writers that take it, so a retained rollback build or a foreign writer can still be mid-write on a
+  young stage, and deleting it would cause exactly the corruption the private name removes. The
+  vault's sweep needs no such floor. The window errs long —
   sweeping too eagerly destroys another client's write, sweeping too late leaves one file for one
   more launch.
-- Vault and boot-recovery persistence each take a cross-process write lock around their whole
-  read-modify-write, so no second lock-aware writer can read, merge and rename between another's
-  check and its replace. One primitive serves both (`FileLock`); a second mechanism for the second
-  file would be a second set of bugs. The lock is a directory beside the file it guards
-  (`vault.json.lock`, `boot_recovery.json.lock`): `DirAccess.make_dir_absolute` is `mkdir`, the one
+- Character, vault and boot-recovery persistence each take a cross-process write lock around their
+  whole read-modify-write, so no second lock-aware writer can read, merge and rename between another's
+  check and its replace. For the character that span is the acceptance read, the validation and the
+  rename together: locking only the rename would still let two clients each accept the same recipe
+  before either acquires, and the slower one would discard the other's character. One primitive serves
+  all three (`FileLock`); a second mechanism per file would be a second set of bugs. The lock is a
+  directory beside the file it guards
+  (`character.json.lock`, `vault.json.lock`, `boot_recovery.json.lock`): `DirAccess.make_dir_absolute` is `mkdir`, the one
   atomic exclusive-create Godot exposes, so exactly one writer wins and the rest refuse. A refused
   write degrades to session-only and never blocks a boot — and reads take no lock at all, so a held
   lock can never prevent a rollback decision.
