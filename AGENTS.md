@@ -427,21 +427,29 @@ everything shipped afterwards is held to.
   exactly one process, which serializes reclamation), verifies on that private copy the timestamp it
   judged abandoned, removes it, and still refuses; the next attempt acquires the freed slot. Folding
   reclaim and acquire back into one pass lets two processes each recreate the lock over the other and
-  both proceed as owners, so never restore remove-then-create. **Ownership itself is settled by those
-  same two primitives at BOTH ends, and neither may become a test followed by an action**
-  (#430, `tests/lock_ownership_test`): the claim is a `mkdir` of an `owner/` DIRECTORY inside the lock,
-  so exactly one acquirer wins it and the winner alone writes the token file beneath it; the release
-  renames the lock to a private `.release-<pid>-<ticks>` path and verifies the token on THAT copy
-  before deleting it, so the directory cannot be substituted between the check and the delete. Do not
-  "simplify" the claim back into a file, and do not delete the lock at its shared path after asking
-  `owns()` — each is the very race the lock exists to close, one level down. The claim being a
-  directory is also what makes the two on-disk shapes fail CLOSED against each other, so a retained
-  pre-#430 client and a current one degrade to session-only rather than both writing: an older build's
-  `FileAccess` cannot open a directory claim, and this build's `mkdir` is refused by an older build's
-  stamp file (both measured on 4.7.1). `FileLock._last_release_private` exists solely so a test can
-  prove the release actually goes through that private copy — single-threaded the two shapes compare
-  identical bytes and differ only under a real substitution, and the check-then-act form was measured
-  passing every other case in that suite. **Scope the claim honestly:** a lock
+  both proceed as owners, so never restore remove-then-create. **Ownership itself is settled in ONE
+  step at both ends, and neither end may become a test followed by an action**
+  (#430, `tests/lock_ownership_test`). The lock is **PUBLISHED WHOLE**: built complete — stamp included
+  — in a private `.staging-<pid>-<ticks>` directory and `rename`d into place, so the shared path never
+  holds a half-built lock. Do not "simplify" this back to creating the lock and stamping it afterwards:
+  an acquirer descheduled in that gap past the stale timeout has its empty lock reclaimed and the slot
+  retaken, and it then stamps BY PATH over the new holder's token, recording itself as owner of a lock
+  it never created. Publishing keeps one refusal guard in front of the rename, because `rename` fails
+  onto a non-empty directory but REPLACES an empty one (measured) — an existing lock directory is
+  refused rather than displaced, so a bare lock still excludes a writer exactly as it always has. That
+  guard only ever turns a success into a refusal, which is why it is not check-then-act.
+  The **release renames the STAMP, never the lock**, to `owner.release-<pid>-<ticks>` inside the lock,
+  and verifies the token there before deleting. Taking the whole lock aside would empty the slot for
+  the length of the check, and a briefly-absent lock is one a third process can acquire — so a stale
+  former holder would vacate the CURRENT holder's slot, admit a third writer, then delete the displaced
+  lock. Keeping the lock present and non-empty throughout means nothing can acquire or create a stamp
+  meanwhile, so the restore cannot collide. Do not delete the lock at its shared path after asking
+  `owns()`. The on-disk shape is deliberately UNCHANGED by all this — atomicity comes from the rename,
+  not from the stamp's shape — so a retained older client and a current one still exclude each other
+  exactly as before. `FileLock._last_publish_staging` and `_last_release_private` exist solely so tests
+  can prove acquisition and release really go through those paths: single-threaded, both the fixed and
+  the broken shapes leave identical end states and differ only under a real substitution, and each
+  broken form was measured passing every other case in that suite. **Scope the claim honestly:** a lock
   binds only writers that take it, so pre-lock retained/rollback builds and foreign writers (cloud
   sync, a hand edit) walk straight through it. Those are covered by a **compare-and-swap on the
   document's own bytes** (#386, `tests/vault_cas_test`): the read-modify-write records the vault's
