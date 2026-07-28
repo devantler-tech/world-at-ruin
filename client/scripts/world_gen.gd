@@ -428,6 +428,15 @@ static func _mesh_vertex_color(color: Color) -> Color:
 ## Height and normal describe the rendered terrain triangle for neighbouring
 ## shaders; they are observational only. Collision and cave geometry remain on
 ## their existing paths, so material sharing cannot move either surface.
+##
+## `region_rock_delta` and `region_ash_value` describe the REGION rather than
+## the rendered pixel, and they are what a neighbouring rock surface needs. The
+## rendered `color` above is the finished ground — ash, rock and scorch already
+## blended by height and shelter — so a stone face that adopted it would become
+## ground rather than resemble it. The region's own rock colour is the honest
+## input for stone, and both are stated as a DIFFERENCE from `ashflats`, the
+## baseline region: a consumer that adds the delta reproduces its authored
+## palette exactly wherever the baseline stands, and needs no copy of it.
 func ground_material_at(x: float, z: float) -> Dictionary:
 	var ground_y := surface_height_at(x, z)
 	if ground_y <= NO_GROUND + 1.0:
@@ -435,11 +444,28 @@ func ground_material_at(x: float, z: float) -> Dictionary:
 	var baked := rendered_ground_color_at(x, z)
 	var roughness := clampf(0.97 + baked.a - 0.5, 0.0, 1.0)
 	baked.a = 1.0
+	var pal := GroundRegions.palette_for(_region_sites, x, z)
+	var base: Dictionary = GroundRegions.REGIONS[0]
+	var pal_rock: Color = pal[&"rock"]
+	var base_rock: Color = base[&"rock"]
+	var pal_ash: Color = pal[&"ash"]
+	var base_ash: Color = base[&"ash"]
 	return {
 		&"color": baked,
 		&"roughness": roughness,
 		&"normal": surface_normal_at(x, z),
 		&"height": ground_y,
+		# A signed difference rather than a Color: it goes negative for any
+		# region darker than the baseline, and it carries no alpha to mean.
+		&"region_rock_delta": Vector3(
+			pal_rock.r - base_rock.r,
+			pal_rock.g - base_rock.g,
+			pal_rock.b - base_rock.b),
+		# Value, not hue: this world's haze and low sun eat hue and leave
+		# brightness (the measurement behind the regions themselves), so the
+		# ratio of luminances is the part of a region's ash that actually
+		# reaches a surface with room for only one number.
+		&"region_ash_value": pal_ash.get_luminance() / base_ash.get_luminance(),
 	}
 
 

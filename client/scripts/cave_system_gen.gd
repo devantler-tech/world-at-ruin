@@ -52,6 +52,8 @@ const COL_ROCK_DARK := Color(0.33, 0.24, 0.16)
 const COL_SEDIMENT := Color(0.52, 0.44, 0.33)
 const COL_EMBER := Color(1.0, 0.55, 0.18)
 const COL_FLAME_CORE := Color(1.0, 0.87, 0.48) ## Hotter inner cone.
+## Entrance rock on the BASELINE region, shifted per region by `_boulder_material`.
+const BOULDER_ALBEDO := Color(0.41, 0.36, 0.3)
 const COL_IRON := Color(0.16, 0.15, 0.15) ## Bracket, collar.
 const COL_WOOD := Color(0.2, 0.13, 0.08) ## Shaft.
 const COL_PITCH := Color(0.09, 0.07, 0.06) ## Soaked head wrapping.
@@ -432,6 +434,22 @@ static func build_geometry(p_seed: int, terrain_h: Callable = Callable(),
 	ground_material_uv.resize(verts.size())
 	var ground_material_uv2 := PackedVector2Array()
 	ground_material_uv2.resize(verts.size())
+	# The region the massif STANDS in, per hull vertex, for the weathered
+	# exterior (#291). The exterior palette was authored to sit between the
+	# ground's ash and rock so the massif reads as stone of the same landscape;
+	# regions then made that ground vary per place and left the rock behind, so
+	# the cave mouth opens onto pale ground with a warm rock face above it.
+	#
+	# This rides the SAME `terrain_material` seam the contact overlay already
+	# uses, so no new plumbing crosses into the cave, and it is carried per
+	# vertex rather than as one material-wide value because the massif's
+	# footprint is not inside a single region: it spans two, with roughly a
+	# third of it inside a blend band, so one palette for the whole hull would
+	# paint the ashflats side with the neighbouring region's stone.
+	var hull_region_uv := PackedVector2Array()
+	hull_region_uv.resize(verts.size())
+	var hull_region_uv2 := PackedVector2Array()
+	hull_region_uv2.resize(verts.size())
 	var contact_enabled := terrain_h.is_valid() and terrain_material.is_valid()
 	for i in verts.size():
 		var p := verts[i]
@@ -440,12 +458,21 @@ static func build_geometry(p_seed: int, terrain_h: Callable = Callable(),
 		var local_normal := Vector3.UP
 		var local_ground_y := 0.0
 		var contact := 0.0
+		# Baseline region: zero rock delta and unit ash value reproduce the
+		# authored exterior palette exactly, which is what the standalone taste
+		# scene (no world, no terrain callable) must keep rendering.
+		var region_rock_delta := Vector3.ZERO
+		var region_ash_value := 1.0
 		if contact_enabled:
 			var ground_sample: Dictionary = terrain_material.call(p.x, p.z)
 			local_ground = ground_sample[&"color"]
 			local_roughness = ground_sample[&"roughness"]
 			local_normal = ground_sample.get(&"normal", Vector3.UP) as Vector3
 			local_ground_y = ground_sample.get(&"height", 0.0) as float
+			region_rock_delta = ground_sample.get(
+				&"region_rock_delta", region_rock_delta) as Vector3
+			region_ash_value = ground_sample.get(
+				&"region_ash_value", region_ash_value) as float
 			var ground_y: float = terrain_h.call(p.x, p.z)
 			var distance := absf(p.y - ground_y)
 			contact = (1.0 - smoothstep(0.0, TERRAIN_CONTACT_BAND, distance)) * colors[i].a
@@ -456,6 +483,11 @@ static func build_geometry(p_seed: int, terrain_h: Callable = Callable(),
 			contact)
 		ground_material_uv[i] = Vector2(local_ground.r, local_ground.g)
 		ground_material_uv2[i] = Vector2(local_ground.b, local_roughness)
+		# UV2.y carries the ash VALUE, and the shader reads a non-positive one
+		# as "no region data" — the one encoding an absent UV array cannot fake,
+		# since a mesh built without these arrays reads (0, 0) everywhere.
+		hull_region_uv[i] = Vector2(region_rock_delta.x, region_rock_delta.y)
+		hull_region_uv2[i] = Vector2(region_rock_delta.z, region_ash_value)
 
 	# Do not send the duplicate full cave hull through the terrain shader.
 	# Retain a source triangle only when at least one corner can receive contact;
@@ -484,6 +516,12 @@ static func build_geometry(p_seed: int, terrain_h: Callable = Callable(),
 	arrays[Mesh.ARRAY_VERTEX] = verts
 	arrays[Mesh.ARRAY_NORMAL] = normals
 	arrays[Mesh.ARRAY_COLOR] = colors
+	# Region payload for the weathered exterior. Vertices and indices are
+	# untouched, so the collision trimesh built from this mesh and both
+	# geometry fingerprints (`fingerprint` here, `_world_fingerprint` in the
+	# determinism suite) read exactly as before — each hashes ARRAY_VERTEX only.
+	arrays[Mesh.ARRAY_TEX_UV] = hull_region_uv
+	arrays[Mesh.ARRAY_TEX_UV2] = hull_region_uv2
 	arrays[Mesh.ARRAY_INDEX] = indices
 	var mesh := ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
@@ -985,7 +1023,7 @@ func rebuild(terrain_h: Callable = func(_x: float, _z: float) -> float: return 0
 	_built.append(body)
 
 	_place_torches(lay)
-	_place_boulders(lay, terrain_h)
+	_place_boulders(lay, terrain_h, terrain_material)
 
 
 ## Torches along the spine, each BRACKETED TO THE ROCK — the light that pulls a
@@ -1125,18 +1163,25 @@ static func _glow(color: Color, energy: float) -> StandardMaterial3D:
 
 ## Big leaning slabs framing the mouth — the WoW cave-entrance grammar; they
 ## sit ON the ground flanking the bore and hide the cave↔terrain seam.
-func _place_boulders(lay: Dictionary, terrain_h: Callable) -> void:
+##
+## They follow the ground's region for the same reason the hull does (#291), and
+## they need it MORE: they stand at the mouth, against the massif, in the one
+## sequence every wanderer walks. Recolouring the hull alone would leave a
+## cluster of warm rock at exactly the seam this change exists to close.
+## Each is sampled where it stands rather than sharing one material, because the
+## spread of these spots is comparable to the blend band they sit in.
+func _place_boulders(lay: Dictionary, terrain_h: Callable,
+		terrain_material: Callable = Callable()) -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = seed_value + 7
 	var mouth: Vector3 = lay["mouth"]
-	var rock := StandardMaterial3D.new()
-	rock.albedo_color = Color(0.41, 0.36, 0.3)
-	rock.roughness = 0.95
 	# The PORTAL: the massif's own arch is the lintel; two jamb slabs lean at
 	# the doorway's shoulders, flanking boulders scatter outward — a stone
 	# doorway in a hillside, the reference grammar.
-	var jamb_left := _slab(rock, Vector3(2.0, 4.6, 1.6))
-	var jamb_right := _slab(rock, Vector3(2.0, 4.4, 1.6))
+	var jamb_left := _slab(
+		_boulder_material(terrain_material, mouth.x + 1.4, 3.3), Vector3(2.0, 4.6, 1.6))
+	var jamb_right := _slab(
+		_boulder_material(terrain_material, mouth.x + 1.4, -3.3), Vector3(2.0, 4.4, 1.6))
 	var ground_l: float = terrain_h.call(mouth.x + 1.4, 3.3)
 	var ground_r: float = terrain_h.call(mouth.x + 1.4, -3.3)
 	jamb_left.position = Vector3(mouth.x + 1.4, ground_l + 1.7, 3.3)
@@ -1153,10 +1198,29 @@ func _place_boulders(lay: Dictionary, terrain_h: Callable) -> void:
 		var size := Vector3(rng.randf_range(1.3, 2.2), rng.randf_range(1.8, 3.2), rng.randf_range(1.1, 1.9))
 		var at := spot + Vector3(rng.randf_range(-0.4, 0.4), 0.0, rng.randf_range(-0.3, 0.3))
 		var ground: float = terrain_h.call(at.x, at.z)
-		var boulder := _slab(rock, size)
+		var boulder := _slab(_boulder_material(terrain_material, at.x, at.z), size)
 		# A third buried, leaning like a fallen slab.
 		boulder.position = Vector3(at.x, ground + size.y * 0.32, at.z)
 		boulder.rotation = Vector3(rng.randf_range(-0.28, 0.1), rng.randf_range(0.0, TAU), rng.randf_range(-0.25, 0.25))
+
+
+## Entrance rock, shifted to the region it stands in by the same difference the
+## hull uses, so the two read as one stone. With no world to ask (the standalone
+## taste scene) the difference is zero and the authored colour ships unchanged.
+func _boulder_material(terrain_material: Callable, x: float, z: float) -> StandardMaterial3D:
+	var albedo := BOULDER_ALBEDO
+	if terrain_material.is_valid():
+		var sample: Dictionary = terrain_material.call(x, z)
+		var delta: Vector3 = sample.get(&"region_rock_delta", Vector3.ZERO) as Vector3
+		# Clamped both ways: an albedo is a reflectance, so neither end is
+		# meaningful outside 0..1. Inert for every shipped region — the widest
+		# shift lands at 0.52 — and there so a future palette cannot push the
+		# entrance rock out of range silently.
+		albedo = Color(
+			clampf(albedo.r + delta.x, 0.0, 1.0),
+			clampf(albedo.g + delta.y, 0.0, 1.0),
+			clampf(albedo.b + delta.z, 0.0, 1.0))
+	return _flat(albedo, 0.95)
 
 
 func _slab(rock: StandardMaterial3D, size: Vector3) -> StaticBody3D:
