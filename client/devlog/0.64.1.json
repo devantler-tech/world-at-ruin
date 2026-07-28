@@ -1,10 +1,12 @@
 {
 	"date": "2026-07-28",
 	"notes": [
-		"Every entry in this log carries the version it arrived in, and for most of them that number was wrong. It was written when the work started, then other releases were cut before it shipped — so the log pointed you at a build that did not contain the thing it was describing.",
-		"Twenty-seven entries now name the release that actually contains them. Each one is checked against the release history rather than taken on trust, so the log cannot quietly drift back.",
-		"Still to do: the oldest entries carry numbers that were never released at all. They are notes from before the first build existed, and they need a decision rather than a renumbering, so they are left as they are for now."
+		"The slabbed stone ground still shimmered a little at middle distance, in the band just past where a seam gets too fine to see. The last note on this left it alone because the obvious way to remove it — fading the grooves out nearer — would have taken the close-up seams with it.",
+		"It did not have to be paid for that way. Each crack is cut with a shallow groove, and far away the ground could report a groove wall steeper than any real seam has — a near-vertical cliff a few centimetres across. Those impossible walls were the flicker. Grooves are now held to the steepness a real seam can actually have.",
+		"That leaves the close-up read alone. Every seam is still there, in the same places, on the same stones; they catch the raking light slightly less hard. Fading them out instead would have erased about two thirds of them.",
+		"Roughly half of what still moves is no longer the grooves at all — it is the joins where one kind of stone meets another. That is a different thing to fix and is tracked separately.",
+		"The slabbed ground is still a preview: set WAR_GROUND_PLATES=1 before launch to see it."
 	],
-	"title": "The dev log names the build each change actually arrived in",
+	"title": "The stone ground keeps its seams and stops shimmering for them",
 	"version": "0.64.1"
 }

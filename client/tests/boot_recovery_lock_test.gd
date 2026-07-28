@@ -102,15 +102,9 @@ func _ready() -> void:
 	# 5. A STAMPED foreign lock refuses too. Case 2 holds a bare directory, which
 	# is what a holder looks like only for the instant between creating the lock
 	# and stamping it; a real holder is stamped for the whole of its write.
-	if DirAccess.make_dir_absolute(_abs(lock)) != OK:
-		_fail("could not create the lock for the stamped-foreign case")
+	if FileLock._publish_lock(lock, "someone-else-1") != OK:
+		_fail("could not publish the foreign lock")
 		return
-	var stamp := FileAccess.open(FileLock.owner_path(lock), FileAccess.WRITE)
-	if stamp == null:
-		_fail("could not stamp the foreign lock")
-		return
-	stamp.store_string("someone-else-1")
-	stamp.close()
 	var stamped := BootRecovery.save_state(PROBE, BootRecovery.fresh_state())
 	if stamped.get("ok", false):
 		_fail("a write proceeded while a STAMPED foreign lock was held")
@@ -246,45 +240,35 @@ func _ready() -> void:
 		_fail("with_lock leaked the lock — the ledger would wedge until the timeout")
 		return
 
-	# 11. Stamping never writes OVER an existing owner file. A process descheduled
-	# between its mkdir and its stamp can have that empty lock reclaimed and the
-	# slot retaken by another writer; truncating that writer's token would make it
-	# abandon a write it owns while recording us as holder of a lock we never
-	# created.
+	# 11. A claim never displaces an existing one. A process descheduled between its
+	# mkdir and its claim can have that empty lock reclaimed and the slot retaken by
+	# another writer; taking the claim anyway would make that writer abandon a write
+	# it owns while recording us as holder of a lock we never created.
 	#
-	# Driven at the STAMP level on purpose. Going through acquire() cannot reach
+	# Driven at the CLAIM level on purpose. Going through acquire() cannot reach
 	# this guard at all — `mkdir` fails first when the directory exists, so the
 	# end-to-end form asserts a branch it never executes and passes with the guard
 	# deleted (measured). Same reasoning as vault_lock_test's ownership case.
-	if DirAccess.make_dir_absolute(_abs(lock)) != OK:
-		_fail("could not create the lock for the stamp-clobber case")
+	if FileLock._publish_lock(lock, "replacement-1") != OK:
+		_fail("could not publish the replacement lock")
 		return
-	var foreign := FileAccess.open(FileLock.owner_path(lock), FileAccess.WRITE)
-	if foreign == null:
-		_fail("could not stamp the replacement lock")
-		return
-	foreign.store_string("replacement-1")
-	foreign.close()
-	if FileLock._stamp_ownership(lock, "resumed-acquirer") != ERR_ALREADY_EXISTS:
-		_fail("stamping a lock that already carried another writer's token was not refused")
+	if FileLock._publish_lock(lock, "resumed-acquirer") != ERR_ALREADY_EXISTS:
+		_fail("claiming a lock another writer already owns was not refused")
 		return
 	var stamp_after := FileAccess.open(FileLock.owner_path(lock), FileAccess.READ)
 	if stamp_after == null:
-		_fail("the replacement writer's ownership stamp was deleted")
+		_fail("the replacement writer's ownership token was deleted")
 		return
 	var stamp_text := stamp_after.get_as_text()
 	stamp_after.close()
 	if stamp_text != "replacement-1":
-		_fail("a resumed acquirer OVERWROTE the replacement writer's stamp: %s" % stamp_text)
+		_fail("a resumed acquirer OVERWROTE the replacement writer's token: %s" % stamp_text)
 		return
-	# And it DOES stamp a genuinely empty lock, so case 11 cannot pass by refusing
-	# everything.
+	# And it DOES claim a genuinely unclaimed lock, so case 11 cannot pass by
+	# refusing everything.
 	FileLock.remove_dir(lock)
-	if DirAccess.make_dir_absolute(_abs(lock)) != OK:
-		_fail("could not create an empty lock for the positive stamp case")
-		return
-	if FileLock._stamp_ownership(lock, "mine-1") != OK:
-		_fail("stamping an empty lock was refused")
+	if FileLock._publish_lock(lock, "mine-1") != OK:
+		_fail("publishing onto a free slot was refused")
 		return
 	FileLock.remove_dir(lock)
 

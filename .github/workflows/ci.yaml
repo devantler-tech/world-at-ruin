@@ -345,6 +345,55 @@ jobs:
             echo "::error::Shipped discovery mapping(s) removed or repointed in $LEDGER ($(echo "$removed" | tr '\n' ' ')) — permanent player history would be reinterpreted (no-resets law)"
             exit 1
           fi
+      - name: Reward mapping ledger is append-only (no-resets law)
+        # A reward claim persists only its place id, so the complete reward
+        # payload that later boots derive from that id is player history too.
+        # The real boot guard binds production registrations to this ledger in
+        # both directions; this base comparison prevents production and its
+        # checkout-local oracle from being repointed together.
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          LEDGER=client/tests/data/shipped_reward_mappings.tsv
+          if [ ! -f "$LEDGER" ]; then
+            echo "::error::$LEDGER was deleted — persisted reward meanings must remain anchored"
+            exit 1
+          fi
+          if ! git cat-file -e "$BASE_SHA" 2>/dev/null; then
+            echo "::error::base commit $BASE_SHA not present in the checkout — cannot verify the ledger"
+            exit 1
+          fi
+          if git cat-file -e "$BASE_SHA:$LEDGER" 2>/dev/null; then
+            if ! git show "$BASE_SHA:$LEDGER" > /tmp/reward-base-raw; then
+              echo "::error::could not read $LEDGER at $BASE_SHA — refusing to compare against an empty base"
+              exit 1
+            fi
+            sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' /tmp/reward-base-raw | sort -u > /tmp/reward-base
+          else
+            echo "::notice::$LEDGER does not exist at the base revision — treating the base set as empty (this is the commit that introduces it)"
+            : > /tmp/reward-base
+          fi
+          sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' "$LEDGER" | sort -u > /tmp/reward-head
+          if [ ! -s /tmp/reward-head ]; then
+            echo "::error::$LEDGER has no reward mappings"
+            exit 1
+          fi
+          invalid=$(awk -F '\t' 'NF != 4 || $1 !~ /^[a-z0-9_]+$/ || $2 !~ /^[a-z0-9_]+$/ || $3 !~ /^[a-z0-9_]+$/ || $4 == "" { print }' /tmp/reward-head)
+          if [ -n "$invalid" ]; then
+            echo "::error::$LEDGER has invalid place_id<TAB>kind<TAB>reward_id<TAB>display_name row(s): $(echo "$invalid" | tr '\n' ' ')"
+            exit 1
+          fi
+          duplicate_ids=$(cut -f1 /tmp/reward-head | sort | uniq -d)
+          if [ -n "$duplicate_ids" ]; then
+            echo "::error::$LEDGER maps a persisted place more than once: $(echo "$duplicate_ids" | tr '\n' ' ')"
+            exit 1
+          fi
+          removed=$(comm -23 /tmp/reward-base /tmp/reward-head)
+          if [ -n "$removed" ]; then
+            echo "::error::Shipped reward mapping(s) removed or changed in $LEDGER ($(echo "$removed" | tr '\n' ' ')) — earned progression would be reinterpreted (no-resets law)"
+            exit 1
+          fi
       - name: Wire protocol may not move without a two-phase rollout
         # The manifest publishes the CLIENT's protocol constant as the range the
         # LIVE SERVER accepts, which is honest only while both sides are pinned to

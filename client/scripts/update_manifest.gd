@@ -88,12 +88,13 @@ const SAVE_SCHEMA_MAX := CharacterFactory.RECIPE_VERSION
 ## earlier. A build claiming to write LESS than it once did is exactly the
 ## stranding the no-resets law forbids.
 ##
-## Capability 3 is vault-v2 discovery state. Its read ceiling shipped in the
-## retained v0.52.0 monolithic app, which is the whole-app rollback while client
-## delivery remains monolithic. The separate `rollback_targets` catalogue stays
-## empty until a mountable pack exists; advertising the app ZIP there would make
-## pack recovery select an artifact it cannot mount.
-const SAVE_CAPABILITY_WRITES := 3
+## Capability 4 is vault-v3 claimed exploration-reward state. Its v0.61.0 reader
+## release is retained as the whole-app rollback while client delivery remains
+## monolithic; this build now writes the contract too. The separate
+## `rollback_targets` catalogue stays empty until a mountable pack exists;
+## advertising the app ZIP there would make pack recovery select an artifact it
+## cannot mount.
+const SAVE_CAPABILITY_WRITES := 4
 
 ## The highest content capability this build can READ.
 ##
@@ -106,9 +107,8 @@ const SAVE_CAPABILITY_WRITES := 3
 ## needlessly routed away from a pack update despite a valid fallback existing.
 ##
 ## Must always be >= the write capability (a build must read what it writes).
-## Capability 4 is vault-v3 claimed exploration-reward state. This build is its
-## expansion release: SaveVault reads and preserves the field while production
-## writers remain on baked capability 3 until this build is retained.
+## Capability 4 is vault-v3 claimed exploration-reward state. Its v0.61.0
+## reader release is retained, so this build now reads and writes the contract.
 const SAVE_CAPABILITY_READS := 4
 
 ## The oldest shell this manifest still supports updating FROM.

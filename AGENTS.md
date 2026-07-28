@@ -420,14 +420,36 @@ everything shipped afterwards is held to.
   (`tests/vault_lock_test`). The lock is a DIRECTORY beside the vault —
   `DirAccess.make_dir_absolute` is `mkdir`, the only atomic exclusive-create Godot exposes, and a lock
   built from `FileAccess.open` would be check-then-act again, so do not "simplify" it into a file. It
-  carries an ownership stamp and is therefore deliberately NOT empty: renaming onto an empty directory
-  succeeds, and the stamp also lets a holder prove the lock is still its own before it replaces the
+  carries an ownership claim and is therefore deliberately NOT empty: renaming onto an empty directory
+  succeeds, and the claim also lets a holder prove the lock is still its own before it replaces the
   vault. **Acquisition is only ever that single `mkdir` on an absent path. Reclaiming an abandoned lock
   is a SEPARATE pass that never acquires** — it renames the stale directory aside (rename wins for
   exactly one process, which serializes reclamation), verifies on that private copy the timestamp it
   judged abandoned, removes it, and still refuses; the next attempt acquires the freed slot. Folding
   reclaim and acquire back into one pass lets two processes each recreate the lock over the other and
-  both proceed as owners, so never restore remove-then-create. **Scope the claim honestly:** a lock
+  both proceed as owners, so never restore remove-then-create. **Ownership itself is settled in ONE
+  step at both ends, and neither end may become a test followed by an action**
+  (#430, `tests/lock_ownership_test`). The lock is **PUBLISHED WHOLE**: built complete — stamp included
+  — in a private `.staging-<pid>-<ticks>` directory and `rename`d into place, so the shared path never
+  holds a half-built lock. Do not "simplify" this back to creating the lock and stamping it afterwards:
+  an acquirer descheduled in that gap past the stale timeout has its empty lock reclaimed and the slot
+  retaken, and it then stamps BY PATH over the new holder's token, recording itself as owner of a lock
+  it never created. Publishing keeps one refusal guard in front of the rename, because `rename` fails
+  onto a non-empty directory but REPLACES an empty one (measured) — an existing lock directory is
+  refused rather than displaced, so a bare lock still excludes a writer exactly as it always has. That
+  guard only ever turns a success into a refusal, which is why it is not check-then-act.
+  The **release renames the STAMP, never the lock**, to `owner.release-<pid>-<ticks>` inside the lock,
+  and verifies the token there before deleting. Taking the whole lock aside would empty the slot for
+  the length of the check, and a briefly-absent lock is one a third process can acquire — so a stale
+  former holder would vacate the CURRENT holder's slot, admit a third writer, then delete the displaced
+  lock. Keeping the lock present and non-empty throughout means nothing can acquire or create a stamp
+  meanwhile, so the restore cannot collide. Do not delete the lock at its shared path after asking
+  `owns()`. The on-disk shape is deliberately UNCHANGED by all this — atomicity comes from the rename,
+  not from the stamp's shape — so a retained older client and a current one still exclude each other
+  exactly as before. `FileLock._last_publish_staging` and `_last_release_private` exist solely so tests
+  can prove acquisition and release really go through those paths: single-threaded, both the fixed and
+  the broken shapes leave identical end states and differ only under a real substitution, and each
+  broken form was measured passing every other case in that suite. **Scope the claim honestly:** a lock
   binds only writers that take it, so pre-lock retained/rollback builds and foreign writers (cloud
   sync, a hand edit) walk straight through it. Those are covered by a **compare-and-swap on the
   document's own bytes** (#386, `tests/vault_cas_test`): the read-modify-write records the vault's
@@ -451,14 +473,30 @@ everything shipped afterwards is held to.
   a boot, and the stale timeout is generous on purpose — shortening it to make writes prompt would let
   a live writer be robbed mid-write. Tests redirect it with `WAR_VAULT_PATH`, mirroring
   `WAR_SAVE_PATH`, and seam the timeout with `WAR_LOCK_STALE_SECONDS` (test-only; malformed or
-  negative values keep the shipped window). Production writers emit through vault v2. The reader also
-  accepts vault v3 `reward_claims`, and `Main` restores those claims into its boot-owned
-  `ExplorationRewards` tracker. Production does not originate v3 documents until the retained reader
-  expansion has baked and the writer capability is activated separately. **The lock lives in
+  negative values keep the shipped window). Production writers emit vault v3 only when an applied
+  exploration reward adds a `reward_claims` entry; discovery-only documents remain v2 and empty or
+  attunement-only documents remain v1. `Main` restores accepted claims into its boot-owned
+  `ExplorationRewards` tracker, re-applies their registered horizontal outcomes, and records a newly
+  discovered place only after its outcome succeeds. Because a claim persists only the place id, the
+  append-only `tests/data/shipped_reward_mappings.tsv` ledger permanently binds each shipped claim to
+  its exact reward payload; the real boot guard checks the production registry bidirectionally and CI
+  base-compares complete rows. The retained v0.61.0 capability-4 reader is the rollback target that
+  permits this writer. **The lock lives in
   `FileLock`, not in the vault, and `BootRecovery` persistence takes it too**
   (`tests/boot_recovery_lock_test`) — that file's two writers, the updater and the game, both exist
   today, and a lost update there discards the evidence deciding whether a client rolls back. One
   primitive guards both files; a second mechanism for the second file would be a second set of bugs.
+  **All three persisted writers — vault, character store and boot recovery — stage through a PRIVATE
+  `<file>.tmp-<pid>-<ticks>`, never a shared `<file>.tmp`.** A derivable staging name is a hole no
+  target-side check can see, because the target is untouched until the rename. **Whether that
+  writer's abandoned-stage sweep may delete unconditionally is decided by SHIPPING ORDER, and copying
+  the wrong shape deletes a live write rather than a dead one.** An unconditional sweep is safe only
+  while every build that can create a file carrying the prefix also takes the lock. Vault and boot
+  recovery gained their lock BEFORE private staging, so that holds and their sweeps are lock-gated
+  alone. The character store is the mirror image — private staging (#434) shipped before its lock
+  (#423) — so retained builds from that window stage through its prefix taking no lock, which is why
+  it keeps an age floor permanently, lock or no lock. Before reusing either sweep, ask which order the
+  writer you are copying INTO shipped them in.
   The immutable shell's recovery memory is a third persisted contract:
   `BootRecovery` (`user://boot_recovery.json`) reads through schema v1 and writes explicit v1 on
   first boot or the next real write of legacy v0 state. The retained v0.51.1 app reads v1 and is the
