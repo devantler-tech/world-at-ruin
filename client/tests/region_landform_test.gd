@@ -197,12 +197,13 @@ func _fail(msg: String) -> void:
 ##
 ## The budget arm is a COARSE backstop, not the walkability law — arm 5 is, and
 ## it is the measured one. `amp * lerp(1, 2, ridged)` cannot price a region's
-## real steepness, because a region's worst grade is carried substantially by
-## the global detail layer and by its blend bands, neither of which scales with
-## `amp` (see `GroundRegions.LANDFORM_GRADIENT_BUDGET` — the model over-predicts
-## `cinderreach` by 8.9 degrees). What this arm still buys is a cheap, named
-## failure for a landform that is absurd on its face, before the sweep has to
-## find it.
+## real steepness, because a region's steepest face is carried substantially by
+## the global detail layer and by its boundaries, neither of which scales with
+## `amp` (see `GroundRegions.LANDFORM_GRADIENT_BUDGET` — the model puts
+## `cinderreach` at 46.5 degrees where it measures 43.38, over-predicting by
+## 3.12 and forbidding a landform that is in fact walkable). What this arm still
+## buys is a cheap, named failure for a landform that is absurd on its face,
+## before the sweep has to find it.
 func _test_every_region_declares_an_affordable_landform() -> void:
 	for reg: Dictionary in GroundRegions.REGIONS:
 		var region_name: StringName = reg[&"name"]
