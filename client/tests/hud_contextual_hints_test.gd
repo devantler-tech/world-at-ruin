@@ -129,8 +129,16 @@ func _test_default_stays_permanent() -> void:
 	# The toggle key is registered in every build, so prove it is INERT here.
 	# A default build that could hide its own control bar would be exactly the
 	# player-visible change nobody opted into.
+	#
+	# TWICE, deliberately. One press of a live toggle only PINS the bar, leaving
+	# alpha at 1.0 — indistinguishable from the permanent bar, so a single-press
+	# check passes with every flag guard deleted (measured). The second press is
+	# what would unpin and hide it, and that is the state this must never reach.
 	await _press_key(KEY_H)
-	_check(hud.hints_visible(), "the toggle key does nothing on the default bar")
+	await _press_key(KEY_H)
+	_check(hud.hints_visible(),
+		"the toggle key is inert on the default bar even pressed twice (alpha %.2f)"
+			% _hints_alpha(hud))
 	await _drop_hud(hud)
 
 
