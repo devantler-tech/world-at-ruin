@@ -334,9 +334,15 @@ static func clear() -> void:
 	if _refused.has(path):
 		push_error("CharacterStore: refusing to delete %s — the recipe there is not this build's to discard" % path)
 		return
-	# Deleting is a write, and the most destructive one, so it meets the same
-	# condition as every other writer: removing the file while a second client is
-	# mid-write would strand that write's rename over a path it no longer owns.
+	# Deleting is a write, and the most destructive one, so it takes the same lock
+	# as every other writer: removing the file while a second client is mid-write
+	# would strand that write's rename over a path it no longer owns.
+	#
+	# No ownership re-proof before the delete, unlike [method _save_to_locked].
+	# That check guards a gap the save genuinely has — it serialises a whole
+	# document between acquiring and renaming, which is time enough for a holder
+	# that outlived the stale timeout to be reclaimed. Here the acquire and the
+	# delete are adjacent syscalls, so there is no such gap to guard.
 	if not FileLock.acquire(path):
 		push_error(
 			"CharacterStore: refusing to delete %s — another process holds the write lock" % path)
