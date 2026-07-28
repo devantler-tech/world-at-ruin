@@ -128,15 +128,16 @@ func end() -> void:
 ## the directories, covers both a lock this process still holds and one inherited
 ## from an earlier run.
 ##
-## BOTH locked probes are swept. Probe paths carry the process id, so an
+## ALL THREE locked probes are swept. Probe paths carry the process id, so an
 ## inherited lock needs the OS to have reused that pid — which is precisely the
 ## case [method FileLock._reclaim_if_abandoned] is built around, so it is a real
-## possibility here rather than a theoretical one. Sweeping only the vault's
-## would leave the recovery ledger's behind, and a stuck recovery lock is the
-## worse of the two: it refuses the quarantine write that decides a rollback.
+## possibility here rather than a theoretical one. Sweeping only some would leave
+## the others behind: a stuck recovery lock refuses the quarantine write that
+## decides a rollback, and a stuck character lock refuses the first-run creator's
+## save, which is the very thing most boot tests exist to exercise.
 func _clear_locks() -> void:
 	FileLock.clear_for_test()
-	for locked: String in [_vault_probe, _recovery_probe]:
+	for locked: String in [_probe, _vault_probe, _recovery_probe]:
 		FileLock.remove_dir(FileLock.path_for(locked))
 
 
