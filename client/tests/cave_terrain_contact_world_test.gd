@@ -22,9 +22,20 @@ func _ready() -> void:
 	if contact_mi == null or not contact_mi.mesh is ArrayMesh:
 		_fail("shipping WorldGen supplied no local-ground material to StarterCave")
 		return
-	var rock_mi := _rock_mesh(cave)
-	if rock_mi == null:
-		_fail("StarterCave lost its rock mesh")
+	# The hull this test reads must be the SHIPPING one. `rebuild` is called twice
+	# in the frame the world is built — once by `_ready` with no samplers, then by
+	# WorldGen with them — so a discarded hull that lingers in the tree would sit
+	# AHEAD of the live one and be picked up by any consumer taking the first
+	# structural match. Counting them is what makes that visible: the values this
+	# test goes on to read happen not to depend on the samplers, so reading the
+	# throwaway hull would otherwise pass and the test would be correct by luck.
+	var hulls := _rock_meshes(cave)
+	if hulls.size() != 1:
+		_fail("StarterCave exposes %d hull meshes, not 1 — a consumer reading its children cannot tell the live hull from a discarded one" % hulls.size())
+		return
+	var rock_mi := hulls[0]
+	if rock_mi.is_queued_for_deletion():
+		_fail("StarterCave's only hull mesh is already queued for deletion — the live hull is not in the tree")
 		return
 
 	var contact_mesh := contact_mi.mesh as ArrayMesh
@@ -119,12 +130,16 @@ func _fail(message: String) -> void:
 	get_tree().quit(1)
 
 
-func _rock_mesh(cave: CaveSystemGen) -> MeshInstance3D:
+## Every child that a consumer looking for the rock hull would structurally
+## accept. Returned as a list rather than the first match on purpose — the count
+## is the assertion, and a helper that returned one node could not express it.
+func _rock_meshes(cave: CaveSystemGen) -> Array[MeshInstance3D]:
+	var found: Array[MeshInstance3D] = []
 	for child in cave.get_children():
 		if child is MeshInstance3D and child.name != &"TerrainContact" \
 				and (child as MeshInstance3D).mesh is ArrayMesh:
-			return child as MeshInstance3D
-	return null
+			found.append(child as MeshInstance3D)
+	return found
 
 
 ## Independent oracle over the ArrayMesh stream _build_terrain actually sent
