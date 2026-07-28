@@ -443,6 +443,15 @@ static func _save_to_locked(
 		ProjectSettings.globalize_path(tmp_path), ProjectSettings.globalize_path(path))
 	if err != OK:
 		push_error("CharacterStore: atomic replace failed (%d)" % err)
+		# Staging names are per-attempt (see _write_tmp_path), so a failed rename
+		# leaks this file rather than having it reclaimed by the next write's
+		# truncation the way the old fixed `<path>.tmp` was. _sweep_abandoned_writes()
+		# does reclaim it, but only on a later write to the same path and only once
+		# it is WRITE_TMP_MIN_AGE_SECONDS old — so a player whose disk is full or
+		# whose save directory turned read-only accumulates one orphan per attempt
+		# until then. Every other refusal branch above removes it; so does this one,
+		# and so does the vault's equivalent branch.
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(tmp_path))
 		_last_refusal = REFUSAL_WRITE
 		return false
 	return true
