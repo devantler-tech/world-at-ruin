@@ -286,6 +286,26 @@ func _settled_luma(mat: ShaderMaterial, relief: float) -> PackedFloat32Array:
 	return _crop_luma()
 
 
+## CROP resolved to whole pixels for a frame of this size — the ONE place that
+## conversion happens.
+##
+## Both the luma read and the evidence dump need the crop's pixel size, and
+## deriving it twice does not give the same answer twice: flooring each edge
+## independently and subtracting is not the same as flooring the width, because
+## `floor(a + b) - floor(a)` is not `floor(b)`. At 1280x720 the two agree, which
+## is exactly why a second derivation survived — at 999x999 they are 900x550 and
+## 899x549. The dump would then walk the luma arrays at the wrong row stride and
+## write a SHEARED difference image, with no crash and nothing in the numbers to
+## show for it: evidence that cannot depict what it asserts, which is the failure
+## this file's own dump exists to prevent.
+func _crop_bounds(w: int, h: int) -> Rect2i:
+	var x0 := int(CROP.position.x * float(w))
+	var y0 := int(CROP.position.y * float(h))
+	var x1 := mini(int((CROP.position.x + CROP.size.x) * float(w)), w)
+	var y1 := mini(int((CROP.position.y + CROP.size.y) * float(h)), h)
+	return Rect2i(x0, y0, maxi(x1 - x0, 0), maxi(y1 - y0, 0))
+
+
 ## Luma of every pixel in the crop, row-major. Read out of the raw buffer rather
 ## than through get_pixel(): the crop is tens of thousands of pixels and this
 ## runs twice per distance.
@@ -293,20 +313,16 @@ func _crop_luma() -> PackedFloat32Array:
 	var img := get_viewport().get_texture().get_image()
 	img.convert(Image.FORMAT_RGB8)
 	var w := img.get_width()
-	var h := img.get_height()
-	var x0 := int(CROP.position.x * float(w))
-	var y0 := int(CROP.position.y * float(h))
-	var x1 := mini(int((CROP.position.x + CROP.size.x) * float(w)), w)
-	var y1 := mini(int((CROP.position.y + CROP.size.y) * float(h)), h)
+	var bounds := _crop_bounds(w, img.get_height())
 	var out := PackedFloat32Array()
-	if x1 <= x0 or y1 <= y0:
+	if bounds.size.x <= 0 or bounds.size.y <= 0:
 		return out
 	var data := img.get_data()
-	out.resize((x1 - x0) * (y1 - y0))
+	out.resize(bounds.size.x * bounds.size.y)
 	var n := 0
-	for y in range(y0, y1):
+	for y in range(bounds.position.y, bounds.position.y + bounds.size.y):
 		var row := y * w
-		for x in range(x0, x1):
+		for x in range(bounds.position.x, bounds.position.x + bounds.size.x):
 			var o := (row + x) * 3
 			out[n] = (float(data[o]) * 0.2126 + float(data[o + 1]) * 0.7152
 				+ float(data[o + 2]) * 0.0722) / 255.0
@@ -378,10 +394,12 @@ func _save_evidence(frame: Image, lit: PackedFloat32Array, flat: PackedFloat32Ar
 		push_warning("could not write the %.0f m frame" % distance)
 
 	# The difference, scaled so a move at the detection threshold is plainly
-	# visible rather than one grey level off black.
-	var w := int(CROP.size.x * float(frame.get_width()))
-	var h := mini(int(CROP.size.y * float(frame.get_height())),
-		int(float(lit.size()) / maxf(float(w), 1.0)))
+	# visible rather than one grey level off black. The crop's pixel size comes
+	# from _crop_bounds, the same call the luma arrays were built from, so the
+	# row stride here cannot disagree with theirs.
+	var bounds := _crop_bounds(frame.get_width(), frame.get_height())
+	var w := bounds.size.x
+	var h := bounds.size.y
 	if w <= 0 or h <= 0:
 		return
 	var delta := Image.create(w, h, false, Image.FORMAT_RGB8)
