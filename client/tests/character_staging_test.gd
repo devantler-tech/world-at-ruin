@@ -184,8 +184,8 @@ func _check_failed_rename_leaves_no_stage(recipe: Dictionary) -> void:
 	# The refusal vocabulary is unchanged by the cleanup: a failed rename is still
 	# REFUSAL_WRITE, so a caller keeps telling it apart from lock contention.
 	elif CharacterStore.last_refusal() != CharacterStore.REFUSAL_WRITE:
-		_fail("a failed rename reported refusal %s, expected %s" % [
-			CharacterStore.last_refusal(), CharacterStore.REFUSAL_WRITE])
+		var got := CharacterStore.last_refusal()
+		_fail("a failed rename reported refusal %s, not %s" % [got, CharacterStore.REFUSAL_WRITE])
 	var leftovers := _stages(blocked)
 	if not leftovers.is_empty():
 		_fail("a failed rename left staging files behind: %s" % ", ".join(leftovers))
