@@ -103,6 +103,25 @@ const MIN_LUMA_SPREAD := 0.02
 ## torch flicker cannot flake it while a dead frame still cannot pass it.
 const CAVE_MIN_LUMA_SPREAD := 0.02
 
+## ── The exterior mouth vantage (#495) ────────────────────────────────────────
+## Standoff from the mouth along the bore axis, in metres of CAVE-LOCAL +X (the
+## direction that runs out of the massif). Chosen so the whole doorway
+## composition lands in one frame: at this range the 68° view spans about 16 m
+## vertically, against jamb slabs 4.6 m tall, flanking boulders out to z = ±4.8
+## and a massif face standing 5.5 m over the bore. Closer crops the face off the
+## top; further shrinks the entrance rock toward the noise floor this vantage
+## exists to clear.
+const MOUTH_STANDOFF := 11.0
+## Eye height above the ground the camera stands on — a wanderer's, because the
+## composition this frame is evidence for is the one a player walks up to.
+const MOUTH_EYE_HEIGHT := 1.7
+## Aim point, just inside the bore: far enough in to be roofed by the massif
+## (which is what proves the shot looks INTO the doorway rather than past it),
+## and high enough that the frame carries the face above the bore rather than
+## centring on the floor.
+const MOUTH_LOOK_INSET := 1.0
+const MOUTH_LOOK_HEIGHT := 2.2
+
 ## The guard samples only this central box (fractions of width/height), because
 ## the HUD is drawn OVER the 3D view: the title sits top-left and the control
 ## hints run along the bottom. Sampling the whole frame would let those few
@@ -462,7 +481,19 @@ func _ready() -> void:
 	if cave_count < 0:
 		return
 
-	print("CAPTURE PASS — %d vantages written to %s" % [VANTAGES.size() + cave_count, dir])
+	# AFTER the cave, and that order carries a guarantee rather than being
+	# tidiness: _capture_cave has by now failed the run unless the massif hull
+	# exists, is visible and sits inside the camera's cull mask. The hull is
+	# this frame's subject too — it is the face standing over the bore — so
+	# running second is what lets the exterior step assert only the properties
+	# that are its own. Moving this call above the cave capture silently drops
+	# that cover.
+	var mouth_count := await _capture_mouth(cam, dir, main)
+	if mouth_count < 0:
+		return
+
+	print("CAPTURE PASS — %d vantages written to %s" %
+		[VANTAGES.size() + cave_count + mouth_count, dir])
 	get_tree().quit(0)
 
 
@@ -694,6 +725,37 @@ static func cave_vantages(lay: Dictionary) -> Array:
 	]
 
 
+## The doorway seen from OUTSIDE, in cave-local space — the one composition the
+## committed set could not photograph (#495).
+##
+## `cave-walkout` sounds like this frame and is not: it stands inside the
+## chamber looking at the bend the exit climbs into, so the exterior face, the
+## jamb slabs and the flanking boulders appear in nothing. That is the massif's
+## entrance grammar and the cave↔terrain seam it exists to hide, standing in the
+## sequence every wanderer walks first — measured unseen on #492, where
+## recolouring the entrance rock moved all six committed vantages by 0.01–0.29%,
+## the noise floor. A regression there ships with the report reading green.
+##
+## Derived from the layout for the reason [method cave_vantages] gives, and
+## returned as ONE vantage rather than appended to that array because its laws
+## are the opposite ones: this camera stands under open sky outside the rock,
+## where the cave path's roofed-by-rock and dark-frame guards would reject it.
+##
+## The eye's Y is NOMINAL — [constant MOUTH_EYE_HEIGHT] over the mouth-floor
+## plane. Outside the massif the ground belongs to the world's heightfield, not
+## the cave's density field, so [method _capture_mouth] re-seats the eye onto
+## the real terrain; the field-level test holds this point across a vertical
+## band for exactly that reason. Static and pure so it can.
+static func mouth_vantage(lay: Dictionary) -> Array:
+	var mouth: Vector3 = lay["mouth"]
+	# Dead on the bore's centreline: the jambs sit at z = ±3.3 and the flanking
+	# boulders at ±4.4/±4.8, so anywhere off-axis frames one shoulder of the
+	# doorway closer than the other and the composition stops being symmetric.
+	var eye := Vector3(mouth.x + MOUTH_STANDOFF, MOUTH_EYE_HEIGHT, 0.0)
+	var target := Vector3(mouth.x + MOUTH_LOOK_INSET, MOUTH_LOOK_HEIGHT, 0.0)
+	return ["cave-mouth", eye, target]
+
+
 ## Photographs the starter cave from vantages derived off the live layout, and
 ## returns the number of frames written (or -1 after failing the run). The cave
 ## is where every player begins, and it is lit on a different principle from
@@ -788,6 +850,98 @@ func _capture_cave(cam: Camera3D, dir: String, main: Node) -> int:
 		_write_note(dir, vantage_name, img, cave_note)
 		captured += 1
 	return captured
+
+
+## Photographs the cave mouth from OUTSIDE and returns the number of frames
+## written (or -1 after failing the run). See [method mouth_vantage] for why the
+## composition needs its own frame; this is the capture half, and it is separate
+## from [method _capture_cave] because every structural guard inverts: the
+## camera must be UNROOFED rather than roofed, it stands in daylight so it is
+## held to the outdoor luminance floor rather than the cave's, and the ground
+## under it is the world's heightfield rather than a cave floor.
+func _capture_mouth(cam: Camera3D, dir: String, main: Node) -> int:
+	var world := main.get_node_or_null("World") as WorldGen
+	if world == null:
+		_fail("no WorldGen node named World — cannot derive the mouth vantage")
+		return -1
+	var cave := world.get_node_or_null("StarterCave") as CaveSystemGen
+	if cave == null:
+		_fail("no StarterCave under World — the entrance every player walks out of would go unphotographed")
+		return -1
+	# The torches are inside, but their light reaches OUT through the bore, and
+	# the bore is the subject. An unpinned flicker therefore moves this frame
+	# the same way it moved the cave frames before #321 — so pin it here rather
+	# than inheriting whatever _capture_cave left behind. freeze_flicker() is
+	# idempotent, so this neither depends on nor disturbs the call order.
+	cave.freeze_flicker()
+
+	var to_world := world.cave_to_world()
+	var lay: Dictionary = cave.last_layout
+	var vantage: Array = mouth_vantage(lay)
+	var vantage_name: String = vantage[0]
+	var eye := to_world * (vantage[1] as Vector3)
+	var target := to_world * (vantage[2] as Vector3)
+
+	# Stand the camera on the ground it is actually looking across. Outside the
+	# massif that ground is the terrain, which the cave layout knows nothing
+	# about — it falls 2.3 m between the mouth apron and this standoff — so a
+	# camera left at the nominal height would float over the near ground or, on
+	# a reshaped heightfield, sink under it.
+	var ground := world.surface_height_at(eye.x, eye.z)
+	if ground <= WorldGen.NO_GROUND + 1.0:
+		ground = world.height_at(eye.x, eye.z)
+	eye.y = ground + MOUTH_EYE_HEIGHT
+	# Declare it in the evidence log for the reason the cave vantages are
+	# declared: a coordinate delta between two runs means the WORLD moved, and
+	# a reviewer should read that off the log rather than infer it from pixels.
+	print("MOUTH VANTAGE %s: eye (%.2f, %.2f, %.2f) -> target (%.2f, %.2f, %.2f), ground %.2f" %
+		[vantage_name, eye.x, eye.y, eye.z, target.x, target.y, target.z, ground])
+
+	cam.global_position = eye
+	cam.look_at(target, Vector3.UP)
+	for i in SETTLE_FRAMES:
+		cam.current = true
+		await get_tree().process_frame
+
+	if not _sees_geometry(cam, target):
+		_fail("vantage '%s' sees no geometry — the shot frames nothing" % vantage_name)
+		return -1
+	if not _camera_draws_world(cam, main):
+		_fail("vantage '%s': the terrain's render layers are outside the camera's cull mask — it would not be drawn" % vantage_name)
+		return -1
+	# OUTSIDE is the point, and it is the one property that separates this frame
+	# from `cave-walkout`. The cave path fails a camera the sky can see; this one
+	# fails a camera it cannot — a vantage that drifted inside the bore would
+	# still see geometry, still draw the world and still make a bright frame,
+	# and would silently be the interior shot we already had.
+	#
+	# Inverting a predicate is how a guard goes vacuous, so note what stops it
+	# here: _capture_cave has already REQUIRED this same call to answer true at
+	# two interior vantages in this very run. A broken _under_rock that always
+	# answered false would have failed there before reaching this line, so the
+	# two directions hold each other up and neither can quietly pass on nothing.
+	if _under_rock(cam):
+		_fail("vantage '%s' is roofed by rock — the camera is inside the massif, so this is not the entrance seen from outside" % vantage_name)
+		return -1
+
+	await RenderingServer.frame_post_draw
+	var img := get_viewport().get_texture().get_image()
+	var spread := _luma_spread(img)
+	if spread < MIN_LUMA_SPREAD:
+		_fail("vantage '%s' is a uniform frame (luma spread %.4f) — nothing rendered" %
+			[vantage_name, spread])
+		return -1
+	var out := "%s/%s.png" % [dir, vantage_name]
+	var err := img.save_png(out)
+	if err != OK:
+		_fail("could not write %s (error %d)" % [out, err])
+		return -1
+	var note := _size_note(img)
+	print("CAPTURED %s -> %s (%dx%d, luma spread %.3f)%s" %
+		[vantage_name, out, img.get_width(), img.get_height(), spread, note])
+	_write_note(dir, vantage_name, img, note,
+		String(world.region_name_at(cam.global_position.x, cam.global_position.z)))
+	return 1
 
 
 ## The hull massif, found structurally: generated children carry
