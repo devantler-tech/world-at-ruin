@@ -583,7 +583,9 @@ everything shipped afterwards is held to.
   by a SHA-256-derived user/reservation key; unique create and exact-version
   staging/finalization/replacement/claim/release preserve one current attempt under retries, with a
   durable releasing barrier and private-collection expiry sweep that arbitrate zone claim against
-  external cleanup, without persisting raw user or reservation IDs or admission secrets), the
+  external cleanup, without persisting raw user or reservation IDs or admission secrets; the
+  durability contract those objects follow — and that every later server-held record inherits — is
+  [`docs/design/server-state-durability.md`](docs/design/server-state-durability.md)), the
   durable **handoff allocation coordinator**
   (`server/handoffalloc/` — implements `handoff.Allocator` over the real lease store and an injected
   GameServer-resource boundary; persists a recoverable intent before provisioning, finalizes the

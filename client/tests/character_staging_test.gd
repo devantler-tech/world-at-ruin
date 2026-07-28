@@ -26,6 +26,8 @@ extends Node
 ##     while the character store has no lock yet (#423), so a young staging file
 ##     may be a live write by a second client. Deleting it would cause exactly
 ##     the corruption this change removes.
+##  6. A write whose RENAME fails leaves no stage behind (#504) — the one refusal
+##     branch that used to return without removing it.
 ##
 ## The probe is namespaced by process id: git worktrees do not isolate Godot's
 ## project-wide user:// directory, so two local test processes sharing a fixed
@@ -51,10 +53,11 @@ func _ready() -> void:
 	_check_no_stage_left_behind(recipe)
 	_check_abandoned_stage_reclaimed(recipe)
 	_check_live_stage_kept(recipe)
+	_check_failed_rename_leaves_no_stage(recipe)
 
 	_cleanup()
 	if _failures.is_empty():
-		print("TEST PASS — character staging is private (5 checks)")
+		print("TEST PASS — character staging is private (6 checks)")
 		get_tree().quit(0)
 		return
 	print("TEST FAIL — %s" % "; ".join(_failures))
@@ -149,15 +152,67 @@ func _check_live_stage_kept(recipe: Dictionary) -> void:
 	_remove(_probe)
 
 
-## Every staging file for the probe, matched by prefix.
-func _stages() -> Array[String]:
+## 6. A write whose RENAME fails leaves no staging file behind.
+##
+## Every other refusal branch in `_save_to_locked()` removes its stage; the
+## rename-failure branch returned without doing so. A per-attempt name is never
+## reclaimed by the next write's truncation the way the old fixed `<path>.tmp`
+## was (#429), so each failed attempt littered `user://` until some later write
+## to the same path swept it — 300s away at best, never if the player stops
+## saving. `SaveVault`'s equivalent branch already removes it.
+##
+## The failure is provoked by pointing the write at a path held by a NON-EMPTY
+## DIRECTORY: no platform renames a file onto one. The portable alternatives are
+## worse — a read-only parent needs POSIX modes Godot does not expose, and a full
+## disk cannot be staged from a test.
+##
+## The RED run is this check's own control. On the unfixed store it fails with a
+## LEFTOVER, which is what proves the rename branch was actually reached: had the
+## write instead failed earlier (a stage that never opened), there would be no
+## file to find and this check would pass vacuously — the #424 trap, in the other
+## direction.
+func _check_failed_rename_leaves_no_stage(recipe: Dictionary) -> void:
+	var blocked := _probe + ".blocked"
+	var globalized := ProjectSettings.globalize_path(blocked)
+	if DirAccess.make_dir_recursive_absolute(globalized) != OK:
+		_fail("could not stage a directory at %s to block the rename" % blocked)
+		return
+	_write_text(blocked.path_join("occupant"), "this directory cannot be renamed over")
+
+	if CharacterStore.save_to(blocked, recipe):
+		_fail("a write whose rename cannot succeed reported success")
+	# The refusal vocabulary is unchanged by the cleanup: a failed rename is still
+	# REFUSAL_WRITE, so a caller keeps telling it apart from lock contention.
+	elif CharacterStore.last_refusal() != CharacterStore.REFUSAL_WRITE:
+		var got := CharacterStore.last_refusal()
+		_fail("a failed rename reported refusal %s, not %s" % [got, CharacterStore.REFUSAL_WRITE])
+	var leftovers := _stages(blocked)
+	if not leftovers.is_empty():
+		_fail("a failed rename left staging files behind: %s" % ", ".join(leftovers))
+
+	_remove_blocked(blocked)
+
+
+## Every staging file for `path`, matched BY PREFIX rather than by a fixed name
+## (the vacuity trap #424 measured).
+func _stages(path: String = _probe) -> Array[String]:
 	var found: Array[String] = []
-	var parent := _probe.get_base_dir()
-	var prefix := _probe.get_file() + CharacterStore.WRITE_TMP_SUFFIX
+	var parent := path.get_base_dir()
+	var prefix := path.get_file() + CharacterStore.WRITE_TMP_SUFFIX
 	for entry: String in DirAccess.get_files_at(parent):
 		if entry.begins_with(prefix):
 			found.append(entry)
 	return found
+
+
+## Remove the blocking directory, its occupant, and any stage left beside it.
+func _remove_blocked(blocked: String) -> void:
+	var parent := blocked.get_base_dir()
+	for entry: String in _stages(blocked):
+		_remove(parent.path_join(entry))
+	_remove(blocked.path_join("occupant"))
+	if DirAccess.dir_exists_absolute(ProjectSettings.globalize_path(blocked)):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(blocked))
 
 
 func _write_text(path: String, text: String) -> void:
@@ -195,6 +250,7 @@ func _cleanup() -> void:
 	var parent := _probe.get_base_dir()
 	for entry: String in _stages():
 		_remove(parent.path_join(entry))
+	_remove_blocked(_probe + ".blocked")
 
 
 func _exit_tree() -> void:

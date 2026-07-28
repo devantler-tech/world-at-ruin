@@ -1768,6 +1768,85 @@ func TestLoadKeepsSchemaOneLeaseReadableAsNotReleasing(t *testing.T) {
 	}
 }
 
+// The legacy refusal keys on whether the document carries the newer keys at
+// all, so a value that decodes to the zero flag still counts as carried. A
+// duplicate key is the case a decoded field cannot see: encoding/json keeps the
+// last occurrence, so a trailing null would otherwise hide the flag in front of
+// it.
+func TestLoadRefusesLegacySchemaCarryingPostLegacyKeys(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		prefix string
+	}{
+		{name: "staging null", prefix: `"staging":null,`},
+		{name: "releasing null", prefix: `"releasing":null,`},
+		{name: "staging shadowed by a later null", prefix: `"staging":true,"staging":null,`},
+		{name: "releasing shadowed by a later null", prefix: `"releasing":true,"releasing":null,`},
+		{name: "staging false shadowed by a later null", prefix: `"staging":false,"staging":null,`},
+		// encoding/json matches a field name case-insensitively, so these reach
+		// the same fields the lowercase spellings do.
+		{name: "capitalised releasing", prefix: `"Releasing":true,`},
+		{name: "capitalised staging", prefix: `"Staging":true,`},
+		{name: "upper-case releasing", prefix: `"RELEASING":true,`},
+		{name: "capitalised releasing at its zero value", prefix: `"Releasing":false,`},
+		{name: "capitalised releasing as null", prefix: `"Releasing":null,`},
+		// The decoder routes U+017F to Staging, but the rune is already lower
+		// case, so a lowercasing presence check would miss it. The value is
+		// false deliberately: a true flag is refused by a later check anyway,
+		// which would leave the case-folding untested.
+		{name: "long-s staging at its zero value", prefix: `"ſtaging":false,`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := leaseFrom(
+				`{`+test.prefix+`"schema":1,"attempt_id":"attempt-7",`+
+					`"allocation_id":"gameserver-17","observer":42,`+
+					`"secret_ref":"zone-admission-gameserver-17",`+
+					`"expires_at_nanos":2000000000123456789,"claimed_at_nanos":null}`,
+				testUserID,
+				testReservationID,
+			); err == nil {
+				t.Fatalf("legacy document carrying %s loaded, want an error", test.name)
+			}
+		})
+	}
+}
+
+func TestLoadKeepsCurrentSchemaLeaseCarryingExplicitFalseFlags(t *testing.T) {
+	storage := newMemoryStorage()
+	store, err := NewStore(storage)
+	if err != nil {
+		t.Fatalf("NewStore returned an error: %v", err)
+	}
+	key := reservationKey(testUserID, testReservationID)
+	storage.objects[storageID(testSystemUserID, Collection, key)] = &api.StorageObject{
+		Collection: Collection,
+		Key:        key,
+		UserId:     testSystemUserID,
+		Value: `{"schema":2,"attempt_id":"attempt-7","allocation_id":"gameserver-17",` +
+			`"observer":42,"secret_ref":"zone-admission-gameserver-17",` +
+			`"expires_at_nanos":2000000000123456789,"claimed_at_nanos":null,` +
+			`"staging":false,"releasing":false}`,
+		Version:         "explicit-false",
+		PermissionRead:  0,
+		PermissionWrite: 0,
+	}
+
+	got, err := store.Load(context.Background(), testUserID, testReservationID)
+	if err != nil {
+		t.Fatalf("Load of explicit-false lease returned an error: %v", err)
+	}
+	if got.Lease != validLease() || got.Version != "explicit-false" {
+		t.Fatalf(
+			"loaded explicit-false record = %+v, want lease %+v at explicit-false",
+			got,
+			validLease(),
+		)
+	}
+	if got.Lease.Staging || got.Lease.Releasing {
+		t.Fatalf("explicit-false lease loaded as staging or releasing: %+v", got.Lease)
+	}
+}
+
 func TestLoadRejectsMalformedOrPublicStoredObjects(t *testing.T) {
 	for _, test := range []struct {
 		name   string
@@ -1808,6 +1887,57 @@ func TestLoadRejectsMalformedOrPublicStoredObjects(t *testing.T) {
 					object.GetValue(),
 					"{",
 					`{"releasing":true,`,
+					1,
+				)
+			},
+		},
+		{
+			name: "schema one cannot carry releasing at its zero value",
+			tamper: func(object *api.StorageObject) {
+				object.Value = strings.Replace(
+					object.GetValue(),
+					`"schema":2`,
+					`"schema":1`,
+					1,
+				)
+				object.Value = strings.Replace(
+					object.GetValue(),
+					"{",
+					`{"releasing":false,`,
+					1,
+				)
+			},
+		},
+		{
+			name: "schema one cannot encode staging",
+			tamper: func(object *api.StorageObject) {
+				object.Value = strings.Replace(
+					object.GetValue(),
+					`"schema":2`,
+					`"schema":1`,
+					1,
+				)
+				object.Value = strings.Replace(
+					object.GetValue(),
+					"{",
+					`{"staging":true,`,
+					1,
+				)
+			},
+		},
+		{
+			name: "schema one cannot carry staging at its zero value",
+			tamper: func(object *api.StorageObject) {
+				object.Value = strings.Replace(
+					object.GetValue(),
+					`"schema":2`,
+					`"schema":1`,
+					1,
+				)
+				object.Value = strings.Replace(
+					object.GetValue(),
+					"{",
+					`{"staging":false,`,
 					1,
 				)
 			},
