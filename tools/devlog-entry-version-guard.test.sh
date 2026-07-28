@@ -58,6 +58,17 @@ is_version 0.61.4 || t_fail 'is_version rejected a valid version'
 [ "$(next_patch 0.61.4)" = '0.61.5' ] || t_fail 'next_patch is wrong'
 [ "$(next_patch 0.9.0)" = '0.9.1' ] || t_fail 'next_patch is wrong at a nine boundary'
 
+# oldest_version picks the FIRST release containing a change, so the same
+# numeric comparison has to hold in the other direction: lexically "0.10.0"
+# sorts below "0.9.0", which would name the wrong release as the one that
+# shipped a change.
+[ "$(printf '0.61.4\n0.9.0\n0.10.0\n' | oldest_version)" = '0.9.0' ] ||
+	t_fail 'oldest_version did not pick the lowest version'
+[ "$(printf '0.10.0\n0.60.0\n' | oldest_version)" = '0.10.0' ] ||
+	t_fail 'oldest_version compared lexically rather than numerically'
+[ -z "$(printf 'not-a-version\n\n' | oldest_version)" ] ||
+	t_fail 'oldest_version accepted a non-version'
+
 # --- Layer 2: the decision, against real commits and tags -----------------
 # Builds a repository whose newest release is v0.61.4 and whose history already
 # holds a long-shipped entry, then runs the guard as CI runs it.
@@ -234,6 +245,102 @@ printf '%s' "$missing_base_out" | grep -qF 'is not present in the checkout' ||
 unset_base_out=$( (cd "$repo" && BASE_SHA='' bash "$GUARD" 2>&1) || true)
 printf '%s' "$unset_base_out" | grep -qF 'BASE_SHA is unset' ||
 	t_fail "an unset BASE_SHA was not refused: $unset_base_out"
+
+# --- Corrections: the containment proof -----------------------------------
+# A correction names a release that has already happened, so the forward-looking
+# rule above necessarily refuses it. These cases pin that the alternative proof
+# is a REAL check and not an exemption: the same listing that lets a correct
+# number through must refuse a wrong one, and an entry that is not listed must
+# be unaffected.
+#
+# Needs its own history. In the repo above every tag sits on the base commit, so
+# every commit is contained in every release and containment cannot discriminate.
+# Here the feature commit is reachable from v0.60.0 onward but not from v0.58.0,
+# which is the shape a real correction is measured against.
+repo="$scratch/corrections"
+mkdir -p "$repo/client/devlog" "$repo/tools"
+git -C "$repo" init -q -b main
+git -C "$repo" config user.email t@example.com
+git -C "$repo" config user.name t
+entry 0.58.0 >"$repo/client/devlog/0.58.0.json"
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'before the feature'
+git -C "$repo" tag v0.58.0
+printf 'the feature\n' >"$repo/client/feature.txt"
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'the change an entry describes'
+feature="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" tag v0.60.0
+printf 'later work\n' >"$repo/client/later.txt"
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'later, released work'
+git -C "$repo" tag v0.61.4
+base="$(git -C "$repo" rev-parse HEAD)"
+# A commit no release contains — the state a change is in before it ships.
+printf 'unreleased\n' >"$repo/client/unreleased.txt"
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'unreleased work'
+unreleased="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" reset -q --hard "$base"
+
+corrections() {
+	# reset_tree's `git clean -fd` takes the directory with it, since an empty
+	# tools/ is not tracked — so recreate it rather than assuming it survived.
+	mkdir -p "$repo/tools"
+	printf '# a comment line, and a blank line, are not listings\n\n%s\t%s\tbecause\n' "$1" "$2" \
+		>"$repo/tools/devlog-entry-corrections.tsv"
+}
+
+# GREEN: the correction this mechanism exists for. 0.60.0 is below the newest
+# release 0.61.4 — refused by the ordinary rule — but it is exactly the release
+# that first contains the change, which is the stronger property.
+reset_tree
+entry 0.60.0 >"$repo/client/devlog/0.60.0.json"
+corrections client/devlog/0.60.0.json "$feature"
+commit_all 'correct a mislabelled entry'
+expect_pass 'a correction naming the release that contains its change'
+
+# RED, and the ablation that proves the listing is not an exemption. Same
+# listing, same anchor — only the declared version is wrong. If the containment
+# comparison were dropped, this would pass and the mechanism would be a hole.
+reset_tree
+entry 0.59.0 >"$repo/client/devlog/0.59.0.json"
+corrections client/devlog/0.59.0.json "$feature"
+commit_all 'a correction onto the wrong release'
+expect_fail_matching 'a listed correction naming the wrong release' 'first shipped in v0.60.0'
+
+# RED: an anchor whose change has not shipped cannot support a correction —
+# there is no release to name, and the forward-looking rule is the right test.
+reset_tree
+entry 0.60.0 >"$repo/client/devlog/0.60.0.json"
+corrections client/devlog/0.60.0.json "$unreleased"
+commit_all 'a correction anchored to unreleased work'
+expect_fail_matching 'a correction anchored to an unreleased commit' 'no release contains that commit'
+
+# RED: an anchor that is not a commit is unverifiable, so it fails closed rather
+# than being taken on trust.
+reset_tree
+entry 0.60.0 >"$repo/client/devlog/0.60.0.json"
+corrections client/devlog/0.60.0.json 0000000000000000000000000000000000000000
+commit_all 'a correction anchored to a missing commit'
+expect_fail_matching 'a correction anchored to a missing commit' 'is not a commit in this checkout'
+
+# RED, and the non-weakening control: a corrections file EXISTS and is valid,
+# but it lists a different entry. A listing must cover the one path it names and
+# must not read as a general licence for the directory.
+reset_tree
+entry 0.60.0 >"$repo/client/devlog/0.60.0.json"
+corrections client/devlog/0.59.0.json "$feature"
+commit_all 'an unlisted entry alongside a valid corrections file'
+expect_fail_matching 'an entry that is not the listed one' 'is already released'
+
+# GREEN control: the ordinary forward-looking path still passes with a
+# corrections file present, so the lookup itself has not broken authoring.
+reset_tree
+entry 0.61.5 >"$repo/client/devlog/0.61.5.json"
+corrections client/devlog/0.60.0.json "$feature"
+commit_all 'a normal forward-looking entry with corrections present'
+expect_pass 'a forward-looking entry while a corrections file exists'
 
 # --- Layer 3: wiring ------------------------------------------------------
 # A correct guard that CI never runs passes all of the above and protects
