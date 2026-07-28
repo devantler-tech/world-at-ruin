@@ -337,12 +337,18 @@ void fragment() {
 	// `plate_mask` gates the relief, and the relief is the term that aliases.
 	// Softening the mask across a contact widens the region where it is
 	// non-zero, so an aliased gradient leaks onto the neighbouring cell that
-	// used to mask it off entirely — measured at +0.0008 on the shipping build,
-	// which is more than the 0.0011 the average saves. Gating it on the BINARY
-	// mask keeps the relief confined to cells that actually drew a slab, and
-	// costs nothing where it matters: past the distance the contact stops being
-	// resolvable the gradient has already faded to nothing, so the hard step
-	// multiplies a term that is not there.
+	// used to mask it off entirely. Measured on the shipping build, that leak
+	// costs MORE than the average it is paying for: routing the softened mask
+	// into the relief reads 0.0062 against this split's 0.0047, a loss of
+	// 0.0015, while averaging the boundary at all only buys 0.0007 (0.0054 on
+	// `main` -> 0.0047 here). Doing both to one mask is therefore a net
+	// REGRESSION on `main`, which is what the earlier attempts at this measured
+	// and why the two uses have to be separated rather than the average dropped.
+	//
+	// Gating it on the BINARY mask keeps the relief confined to cells that
+	// actually drew a slab, and costs nothing where it matters: past the
+	// distance the contact stops being resolvable the gradient has already
+	// faded to nothing, so the hard step multiplies a term that is not there.
 	float slab_hard = mix(0.40, is_slab, plate_resolved);
 	// TWO separate quantities, and conflating them was a real bug in both
 	// directions:
