@@ -509,10 +509,10 @@ func _process(delta: float) -> void:
 
 ## Fold this frame's player position into the append-only discovery and reward
 ## sets. Outcomes apply before their place ids are marked claimed. Discovery and
-## claim writes then retry independently with bounded exponential backoff; the
-## vault refuses a claim until its discovery is durable, so either write order
-## still fails closed. A path-latched unreadable/newer vault stays session-only
-## and is never retried, preserving the downgrade refusal.
+## claim writes keep independent bounded exponential backoff. A writable claim
+## refusal requeues its discovery prerequisite before retrying; a path-latched
+## unreadable/newer vault stays session-only and is never retried, preserving
+## the downgrade refusal.
 func _observe_discoveries(delta: float = 0.0) -> void:
 	if _player == null:
 		return
@@ -634,6 +634,15 @@ func _persist_pending_reward_claims(delta: float) -> void:
 		_reward_persistence_retry_delay = REWARD_PERSIST_RETRY_INITIAL_SECONDS
 		return
 	if SaveVault.can_write(SaveVault.vault_path()):
+		# A writable claim refusal can mean cloud sync replaced the vault after
+		# its discovery write succeeded. The claim writer correctly refuses a
+		# place that is no longer durable, so restore that prerequisite to the
+		# discovery queue before retrying the claim. Both writes are append-only
+		# and idempotent; the live reward remains claimed and is never re-applied.
+		for name: String in _reward_persistence_pending:
+			if name not in _discovery_persistence_pending:
+				_discovery_persistence_pending.append(name)
+		_discovery_persistence_retry_in = 0.0
 		_reward_persistence_retry_in = _reward_persistence_retry_delay
 		_reward_persistence_retry_delay = minf(
 			_reward_persistence_retry_delay * 2.0,

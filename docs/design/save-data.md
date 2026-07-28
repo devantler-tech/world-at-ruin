@@ -229,8 +229,11 @@ and production writes it while keeping that safe whole-app rollback target. The 
 exploration reward tracker restores every accepted stable place name, re-applies registered outcomes,
 and keeps unknown future claims inert but remembered. A newly discovered place is marked claimed only
 after its horizontal outcome succeeds; the claim writer then requires that place's discovery to
-already be durable. Transient discovery and claim failures retry independently without granting
-twice in-session, while a refused newer or unreadable vault remains session-only and byte-intact.
+already be durable. Transient discovery and claim failures keep independent retry backoff without
+granting twice in-session. If a writable cloud replacement drops a claim's already-written
+discovery, the refused claim requeues that prerequisite before retrying so the vault converges
+without re-applying the live reward. A refused newer or unreadable vault remains session-only and
+byte-intact.
 Ordinary attunement and discovery writes preserve an already-present v3 document and its claims;
 discovery-only documents remain v2.
 

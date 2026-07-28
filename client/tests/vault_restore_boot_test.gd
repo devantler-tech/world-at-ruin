@@ -288,6 +288,34 @@ func _begin_reward_retry_boot() -> void:
 	add_child(_main)
 
 
+## Recreate a cloud replacement that lands after discovery persistence but
+## before an already-applied reward claim converges. The live tracker retains
+## the claim, while the replacement intentionally drops both its prerequisite
+## discovery and the claim itself.
+func _begin_reward_drift_boot() -> void:
+	_discovery_phase = "reward_drift"
+	_ticks = 0
+	if _main != null:
+		_main.queue_free()
+		_main = null
+	_save = SaveIsolation.new(PROBE_PATH)
+	if not _save.begin():
+		_fail("save isolation did not take for the cloud-replaced reward boot")
+		return
+	SaveVault.clear_refusals_for_test()
+	var claimed := {
+		"version": 3,
+		"attuned": [],
+		"discoveries": ["starter_cave", "wardens_shrine"],
+		"reward_claims": ["wardens_shrine"],
+	}
+	if not SaveVault.save_to(SaveVault.vault_path(), claimed):
+		_fail("could not seed the cloud-replaced reward probe")
+		return
+	_main = (load(MAIN_SCENE_PATH) as PackedScene).instantiate()
+	add_child(_main)
+
+
 func _physics_process(_delta: float) -> void:
 	# _fail() requests tree shutdown but does not end this frame. A setup helper
 	# can fail after clearing the previous scene and before assigning the next;
@@ -342,8 +370,20 @@ func _physics_process(_delta: float) -> void:
 			return
 	if _discovery_phase == "drift" and _ticks == 10:
 		player.global_position = Vector3(0.0, world.shrine_respawn_point().y, -13.0)
+	if _discovery_phase == "reward_drift" and _ticks == 3:
+		var replacement := {
+			"version": 2,
+			"attuned": [],
+			"discoveries": ["starter_cave"],
+		}
+		if not SaveVault.save_to(SaveVault.vault_path(), replacement):
+			_fail("could not simulate the reward-write cloud replacement")
+			return
+		var pending: Array[String] = [SaveVault.DISCOVERY_WARDENS_SHRINE]
+		_main.set("_reward_persistence_pending", pending)
+		_main.set("_reward_persistence_retry_in", 0.0)
 	var assert_tick := ASSERT_TICK
-	if _discovery_phase in ["retry", "reward_retry"]:
+	if _discovery_phase in ["retry", "reward_retry", "reward_drift"]:
 		assert_tick = RETRY_ASSERT_TICK
 	elif _discovery_phase == "drift":
 		assert_tick = DRIFT_ASSERT_TICK
@@ -377,6 +417,9 @@ func _physics_process(_delta: float) -> void:
 			return
 		"reward_retry":
 			_assert_reward_claim_retry(player, world)
+			return
+		"reward_drift":
+			_assert_reward_claim_drift(player, world)
 			return
 
 	var shrine_point := world.shrine_respawn_point()
@@ -698,9 +741,33 @@ func _assert_reward_claim_retry(player: Player, world: WorldGen) -> void:
 		_fail("the transient reward retry touched the player's real save or vault")
 		return
 	_cleanup_retry_probe()
+	_begin_reward_drift_boot()
+
+
+func _assert_reward_claim_drift(player: Player, world: WorldGen) -> void:
+	var tracker := _reward_tracker()
+	if tracker == null:
+		return
+	if tracker.claimed() != [SaveVault.DISCOVERY_WARDENS_SHRINE]:
+		_fail("the cloud replacement granted or consumed the waypoint more than once")
+		return
+	player.respawn()
+	if player.global_position.distance_to(world.shrine_respawn_point()) > EPS:
+		_fail("the cloud replacement discarded the live waypoint outcome")
+		return
+	var vault = SaveVault.load_saved()
+	if vault is not Dictionary \
+			or int(vault.get("version", -1)) != 3 \
+			or vault.get("discoveries", []) != ["starter_cave", "wardens_shrine"] \
+			or vault.get("reward_claims", []) != [SaveVault.DISCOVERY_WARDENS_SHRINE]:
+		_fail("the cloud-replaced reward write never reconverged: %s" % str(vault))
+		return
+	if not _save.real_save_untouched():
+		_fail("the cloud-replaced reward retry touched the player's real save or vault")
+		return
 	print(("TEST PASS — %d shipped attunement(s) and vault-v2 discovery state survive "
 		+ "a logout, transient writes retry, rollback-only ids cannot poison known writes, "
-		+ "and vault-v3 waypoint claims apply before consumption and survive a real reboot "
+		+ "and vault-v3 waypoint claims survive reboot and cloud replacement without re-granting "
 		+ "(control woke at %s)")
 		% [_restored, str(_control_spawn)])
 	get_tree().quit(0)
