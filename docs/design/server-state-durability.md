@@ -111,9 +111,15 @@ document that claims to be old but carries new fields is refused rather than par
 accept today is not a promise, because a later change can drop the bottom of that range and every
 test still passes — nothing pins it. Meanwhile a record nobody has touched in months is still
 sitting at that schema, and dropping support strands it. So each shipped schema is appended to a
-permanent ledger and pinned by a golden document that later readers must continue to load, exactly
+permanent ledger and pinned by golden documents that later readers must continue to load, exactly
 as `shipped_vault_versions.txt` and its goldens do for client save data. Removing a schema from the
 readable set is then a visible, deliberate act rather than a silent consequence of a refactor.
+
+**One golden per schema is not enough when a schema permits several shapes.** A schema is a grammar,
+not a single document: a schema-2 lease is stored as staging, finalized, claimed or releasing, and a
+golden covering one of those keeps passing while a reader accidentally rejects another shape that is
+still sitting in production. The ledger therefore pins **every valid discriminated or optional shape
+a schema admits**, not one representative per version number.
 
 **That refusal is only as good as the reader's ability to see a field is present**, and a
 zero-valued field is where it fails. A boolean decoded into a plain `bool` reads `false` whether it
@@ -160,11 +166,23 @@ document is only half an answer, and the dangerous half is what happens next: a 
 "cannot read this" and treats it as "nothing is stored here" will happily write a fresh default
 record over a player's earned state. That is the no-resets law broken by a reader, not a writer.
 
-So a refusal must block create, update and delete at that key for the life of the process, and the
-stored bytes must be preserved untouched, until a reader that understands the document runs or a
-deliberate recovery handles it. `CharacterStore` already works exactly this way on the client — a
-latched refusal makes `save_to()` and `clear()` refuse too — and the reasoning carries over
-unchanged.
+So a refusal must block create, update and delete at that key, and the stored bytes must be
+preserved untouched, until a reader that understands the document runs or a deliberate recovery
+handles it.
+
+**A process-local latch does not achieve that here, and copying the client's one would be a
+mistake.** `CharacterStore` latches a refusal in memory and that is sufficient *because it is the
+only writer on one machine*. Server requests move between replicas and replicas restart, so the
+next mutation for that key can land on an instance that never saw the refusal, holds no latch, and
+proceeds. The safeguard would then be defeated by ordinary routing rather than by anything going
+wrong.
+
+The quarantine therefore has to be **shared and durable** — a marker at the key itself that any
+replica observes — or, equivalently, every mutation must be gated on a **successful strict read of
+the current document plus a version match**, so that a document no reader can decode is one no
+writer can replace. The second form is usually cheaper, because compare-and-swap already carries
+the version; what it adds is that a *failed decode* must block the write rather than be treated as
+"no current document".
 
 **Presence-awareness is required for the fields a schema *needs*, not only the ones it forbids.**
 Rejecting a newer field on an older schema is one direction; the other is a document that omits a
@@ -303,6 +321,19 @@ durable**, whether by writing the journal synchronously before acknowledging, or
 defined atomic commit across the record and its evidence. "Both are written, usually within a
 second" is the same not-an-invariant this contract already rejects for cross-record mutations.
 
+**Durable-before-acknowledge is necessary and still not sufficient: the journal needs an ordered
+protocol.** The journal and the record are two writes, so ordering alone fails in both directions.
+Journal-first leaves evidence for a primary write that never committed, and reconciliation after a
+restore then re-applies a grant that never happened — **permanently inflating the economy**, which
+under the no-resets law is as irreversible as losing value and rather harder to notice. Record-first
+can crash before any evidence exists, which is the loss this rule set out to prevent.
+
+So the journal must let reconciliation tell a **committed** mutation from a mere **attempt**: an
+intent written first and a commit marker written after the record lands, or an equivalent ordered,
+recoverable protocol. Reconciliation re-applies only what is marked committed, and an intent with no
+commit marker is evidence of an attempt whose outcome must be resolved by reading the record — never
+grounds to grant value on its own.
+
 Surfacing a loss is not an alternative to remedying it. Under the no-resets law there is no wipe to
 even out an unlucky player against a lucky one, so an acknowledged mutation left unrestored is a
 permanent, uncompensated loss to one person. Notification is owed on top of the remedy, never
@@ -343,8 +374,8 @@ needs to write a guard for.
 | Unknown fields are refused | `nakamalease` document decode | `TestLoadRejectsMalformedOrPublicStoredObjects` (`unknown JSON field`) |
 | Trailing content is refused | `nakamalease` document decode | **gap (#491)** — `leaseFrom` checks for `io.EOF`, but no case appends a second JSON value, so a regression of that check leaves every named guard green |
 | A required field omitted from its own schema is refused | every record owner, **incl. `nakamalease` today** | **gap (running code)** — no schema declares a required-field set, so an omitted required field decodes as an implicit zero |
-| Every shipped schema stays readable, permanently | every record owner, **incl. `nakamalease` today** | **gap (running code)** — schemas 1 and 2 have shipped with no ledger or goldens pinning them (the client has `shipped_vault_versions.txt`) |
-| A refusal latches the record read-only against create, update and delete | every record owner, **incl. `nakamalease` today** | **gap (running code)** — the decoder refuses the read but nothing blocks a subsequent write at that key; `CharacterStore` does latch, client-side |
+| Every shipped schema **shape** stays readable, permanently | every record owner, **incl. `nakamalease` today** | **gap (running code)** — schemas 1 and 2 have shipped with no ledger or goldens, and schema 2 alone admits staging, finalized, claimed and releasing shapes |
+| A refusal quarantines the record **across replicas**, not just in one process | every record owner, **incl. `nakamalease` today** | **gap (running code)** — the decoder refuses the read but nothing blocks a later write at that key, from any instance; `CharacterStore`'s latch is process-local and does not port |
 | A newer field on a legacy schema is refused **by presence, not by truth** | `nakamalease` document decode | **gap (#491)** — `staging`/`releasing` are plain booleans, so an explicit `false` is accepted; needs presence-aware decoding and a zero-value case |
 | Read support ships and bakes before its writer activates | every record owner, **incl. `nakamalease` today** | **gap (running code)** — no server-side equivalent of the client staging guard, and nothing registers the rollback target as carrying the expanded reader |
 | A logical mutation spanning records is atomic or recoverable | player-owned record owners | not yet built — #474, #475 |
@@ -358,6 +389,7 @@ needs to write a guard for.
 | An idempotency key is unique per logical mutation, so two identical legitimate mutations cannot share one | player-owned record owners | not yet built — #475 |
 | Recovery evidence survives the failure domain it recovers from | platform + player-owned record owners | not yet built — no journal outside the database restore boundary |
 | A mutation is acknowledged only once evidence sufficient to re-apply it is durable | player-owned record owners | not yet built — **and conditional on the row above** |
+| Reconciliation can tell a committed mutation from an attempt | player-owned record owners | not yet built — needs an intent + commit-marker protocol; ordering alone inflates the economy or loses the evidence |
 | An acknowledged player-owned mutation is never lost | player-owned record owners | not yet built — #473, #474, #475, **and conditional on the row above** |
 | A replay **not** identified by its own content applies once | player-owned record owners | not yet built — #475 |
 | A world-owned record states its own recovery invariant | first world-owned record owner | not yet built — no such record exists |
