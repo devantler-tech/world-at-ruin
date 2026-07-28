@@ -432,6 +432,22 @@ static func build_geometry(p_seed: int, terrain_h: Callable = Callable(),
 	ground_material_uv.resize(verts.size())
 	var ground_material_uv2 := PackedVector2Array()
 	ground_material_uv2.resize(verts.size())
+	# The region the massif STANDS in, per hull vertex, for the weathered
+	# exterior (#291). The exterior palette was authored to sit between the
+	# ground's ash and rock so the massif reads as stone of the same landscape;
+	# regions then made that ground vary per place and left the rock behind, so
+	# the cave mouth opens onto pale ground with a warm rock face above it.
+	#
+	# This rides the SAME `terrain_material` seam the contact overlay already
+	# uses, so no new plumbing crosses into the cave, and it is carried per
+	# vertex rather than as one material-wide value because the massif's
+	# footprint is not inside a single region: it spans two, with roughly a
+	# third of it inside a blend band, so one palette for the whole hull would
+	# paint the ashflats side with the neighbouring region's stone.
+	var hull_region_uv := PackedVector2Array()
+	hull_region_uv.resize(verts.size())
+	var hull_region_uv2 := PackedVector2Array()
+	hull_region_uv2.resize(verts.size())
 	var contact_enabled := terrain_h.is_valid() and terrain_material.is_valid()
 	for i in verts.size():
 		var p := verts[i]
@@ -440,12 +456,21 @@ static func build_geometry(p_seed: int, terrain_h: Callable = Callable(),
 		var local_normal := Vector3.UP
 		var local_ground_y := 0.0
 		var contact := 0.0
+		# Baseline region: zero rock delta and unit ash value reproduce the
+		# authored exterior palette exactly, which is what the standalone taste
+		# scene (no world, no terrain callable) must keep rendering.
+		var region_rock_delta := Vector3.ZERO
+		var region_ash_value := 1.0
 		if contact_enabled:
 			var ground_sample: Dictionary = terrain_material.call(p.x, p.z)
 			local_ground = ground_sample[&"color"]
 			local_roughness = ground_sample[&"roughness"]
 			local_normal = ground_sample.get(&"normal", Vector3.UP) as Vector3
 			local_ground_y = ground_sample.get(&"height", 0.0) as float
+			region_rock_delta = ground_sample.get(
+				&"region_rock_delta", region_rock_delta) as Vector3
+			region_ash_value = ground_sample.get(
+				&"region_ash_value", region_ash_value) as float
 			var ground_y: float = terrain_h.call(p.x, p.z)
 			var distance := absf(p.y - ground_y)
 			contact = (1.0 - smoothstep(0.0, TERRAIN_CONTACT_BAND, distance)) * colors[i].a
@@ -456,6 +481,11 @@ static func build_geometry(p_seed: int, terrain_h: Callable = Callable(),
 			contact)
 		ground_material_uv[i] = Vector2(local_ground.r, local_ground.g)
 		ground_material_uv2[i] = Vector2(local_ground.b, local_roughness)
+		# UV2.y carries the ash VALUE, and the shader reads a non-positive one
+		# as "no region data" — the one encoding an absent UV array cannot fake,
+		# since a mesh built without these arrays reads (0, 0) everywhere.
+		hull_region_uv[i] = Vector2(region_rock_delta.x, region_rock_delta.y)
+		hull_region_uv2[i] = Vector2(region_rock_delta.z, region_ash_value)
 
 	# Do not send the duplicate full cave hull through the terrain shader.
 	# Retain a source triangle only when at least one corner can receive contact;
@@ -484,6 +514,12 @@ static func build_geometry(p_seed: int, terrain_h: Callable = Callable(),
 	arrays[Mesh.ARRAY_VERTEX] = verts
 	arrays[Mesh.ARRAY_NORMAL] = normals
 	arrays[Mesh.ARRAY_COLOR] = colors
+	# Region payload for the weathered exterior. Vertices and indices are
+	# untouched, so the collision trimesh built from this mesh and both
+	# geometry fingerprints (`fingerprint` here, `_world_fingerprint` in the
+	# determinism suite) read exactly as before — each hashes ARRAY_VERTEX only.
+	arrays[Mesh.ARRAY_TEX_UV] = hull_region_uv
+	arrays[Mesh.ARRAY_TEX_UV2] = hull_region_uv2
 	arrays[Mesh.ARRAY_INDEX] = indices
 	var mesh := ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)

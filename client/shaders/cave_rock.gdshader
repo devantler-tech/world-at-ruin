@@ -74,6 +74,14 @@ float edge_line(float coord, float half_width) {
 // The palette sits between the ground's ash and rock colors on purpose: the
 // massif must read as stone of the SAME landscape the terrain shader draws,
 // not as cave sandstone that happens to be outdoors.
+//
+// These four are the palette of the BASELINE region (`ashflats`). The ground
+// stopped being one palette when it gained regions, so holding these fixed
+// left the massif as stone of a landscape that no longer surrounds it — a
+// wanderer walks out of the mouth onto pale scoured ground with a warm rock
+// face still above them. UV/UV2 carry the local region as a DIFFERENCE from
+// that baseline, so where the baseline stands the difference is zero and these
+// authored colors ship unchanged.
 uniform vec3 weathered_a: source_color = vec3(0.46, 0.42, 0.36);
 uniform vec3 weathered_b: source_color = vec3(0.29, 0.26, 0.23);
 uniform vec3 weathered_c: source_color = vec3(0.55, 0.52, 0.46);
@@ -313,10 +321,29 @@ void fragment() {
 		float band = value_noise(vec3(0.0, layer * 2.1, 0.0));
 		float vein = fbm(world_pos * vec3(0.05, 0.9, 0.05) + vec3(warp));
 
+		// The region this face STANDS in, as a difference from the baseline.
+		// UV2.y is the ash VALUE ratio and is positive for any real region, so
+		// a non-positive one means the mesh carries no region arrays at all
+		// (the standalone taste scene) and the authored baseline is correct.
+		vec3 region_rock_delta = vec3(UV.x, UV.y, UV2.x);
+		float region_ash_value = UV2.y;
+		if (region_ash_value <= 0.0) {
+			region_rock_delta = vec3(0.0);
+			region_ash_value = 1.0;
+		}
+		// The stone tracks the region's ROCK, not its finished ground: adopting
+		// the rendered ground would turn the massif into ash rather than into
+		// the stone of that place. Shifting by the difference moves the whole
+		// palette together, so the bedding contrast the three colors encode
+		// survives intact instead of being flattened toward one regional tint.
+		vec3 region_a = max(vec3(0.0), weathered_a + region_rock_delta);
+		vec3 region_b = max(vec3(0.0), weathered_b + region_rock_delta);
+		vec3 region_c = max(vec3(0.0), weathered_c + region_rock_delta);
+
 		// The same geological bedding, bleached and cooled: outdoor rock keeps
 		// its layers but an age of sun and ash has taken the warm glow out.
-		vec3 wstrata = mix(weathered_a, weathered_b, smoothstep(0.25, 0.75, band));
-		wstrata = mix(wstrata, weathered_c, smoothstep(0.55, 0.95, vein) * 0.4);
+		vec3 wstrata = mix(region_a, region_b, smoothstep(0.25, 0.75, band));
+		wstrata = mix(wstrata, region_c, smoothstep(0.55, 0.95, vein) * 0.4);
 		// The baked tint keeps its variation but not its warmth outdoors.
 		vec3 wbase = mix(vec3(dot(base, vec3(0.3333))), base, 0.45);
 
@@ -329,6 +356,12 @@ void fragment() {
 		// Ash settles where the rock lies back — the same ash the ground
 		// wears, so the massif meets the Reach in one material family. A broad
 		// drift term wanders the boundary like the terrain's rock line.
+		//
+		// It follows the region by VALUE alone. That is not a shortcut for want
+		// of channels: this world's low sun and heavy haze eat hue and leave
+		// brightness (the measurement behind the regions themselves), so value
+		// is the part of a region's ash that actually reaches the screen.
+		vec3 region_ash = ash_color * region_ash_value;
 		float drift = fbm(world_pos * 0.16);
 		float ash_mix = smoothstep(0.3, 0.75, n.y) * smoothstep(0.3, 0.7, drift + 0.15);
 
@@ -345,7 +378,7 @@ void fragment() {
 
 		vec3 exterior = wbase * wstrata * 2.1;
 		exterior = mix(exterior, exterior * 0.68, scour * scour_strength);
-		exterior = mix(exterior, ash_color * wbase * 2.0, ash_mix * 0.5);
+		exterior = mix(exterior, region_ash * wbase * 2.0, ash_mix * 0.5);
 		exterior *= 0.9 + 0.2 * mix(0.5, g0, detail);
 
 		ALBEDO = mix(interior, exterior, sky);
