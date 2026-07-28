@@ -122,11 +122,12 @@ const REGIONS: Array[Dictionary] = [
 		# climb — long uncreased swells rather than dunes or spines, so the
 		# height reads as landscape the eye can cross rather than as clutter.
 		#
-		# Its ground carries this: measured per region on the shipped seed, the
-		# steepest grade inside cinderreach is 42.49 degrees at this amplitude
-		# — level with the ashflats' 42.50 and under the 43 degree ratchet.
-		# See `LANDFORM_GRADIENT_BUDGET` for why the arithmetic budget could
-		# not see that and the measurement can.
+		# Its ground carries this: measured on the shipped seed, the steepest
+		# collision face inside cinderreach is 43.38 degrees at this amplitude,
+		# under the 45 degree floor limit, and the world's own steepest face is
+		# unchanged at 44.18 — this region got taller without the world getting
+		# steeper anywhere. See `LANDFORM_GRADIENT_BUDGET` for why the
+		# arithmetic budget could not see that and the measurement can.
 		&"amp": 1.15,
 		&"ridged": 0.0,
 	},
@@ -173,10 +174,11 @@ const REGIONS: Array[Dictionary] = [
 ## 🔴 THE GRADIENT BUDGET — what a region's landform may cost in steepness.
 ##
 ## The Reach's ground runs close to its walkability ceiling. Measured on the
-## shipped seed at 0.5 m, away from the massif (whose buried skirt is
-## deliberately a cliff), the steepest open grade is **42.54 degrees** against a
-## character floor limit of 45. A landform that overspends does not read as
-## dramatic — it produces ground the wanderer can see and cannot enter.
+## shipped seed away from the massif (whose buried skirt is deliberately a
+## cliff), the steepest collision face in the open world is **44.18 degrees**
+## against a character floor limit of 45 — 0.82 degrees of real margin. A
+## landform that overspends does not read as dramatic; it produces ground the
+## wanderer can see and cannot enter.
 ##
 ## Both knobs spend the same budget, and the crease spends more than it looks:
 ##
@@ -191,35 +193,34 @@ const REGIONS: Array[Dictionary] = [
 ## for, and all it is for.
 ##
 ## 🔴 It is a COARSE cap, not the walkability law. The cost model prices every
-## region as if it sat on the world's steepest ground, and no region does. The
-## steepest grade is a property of the base field under a region's own cells,
-## and those differ enormously: measured per region on the shipped seed, the
-## worst grade runs from **38.45** degrees under `bonepale` to **42.50** under
+## region as if it sat on the world's steepest ground, and no region does. Real
+## steepness is a property of the base field under a region's own cells, and
+## those differ enormously: measured per region on the shipped seed, the
+## steepest face runs from **36.92** degrees under `bonepale` to **41.55** under
 ## `ashflats`. A single global ceiling has to be set for the worst of them, so
 ## it silently underprices every other region's headroom.
 ##
 ## The model is wrong by degrees, not decimals, and predictably so. Scaling a
-## region's whole grade by its cost ratio says `cinderreach` reaches **51.4**
-## degrees at `amp` 1.15; it reaches **42.49**. The over-prediction is
-## structural rather than a bad constant: a region's worst grade is carried in
-## large part by the global detail layer and by its blend bands, and NEITHER of
-## those scales with `amp`, so no arithmetic on the landform term alone can
-## price it. Trusting the model over the measurement is how a walkable landform
-## gets forbidden.
+## region's whole grade by its cost ratio says `cinderreach` reaches **46.5**
+## degrees at `amp` 1.15 — past the floor limit, so forbidden. It reaches
+## **43.38**, and is walkable. The over-prediction is structural rather than a
+## bad constant: a region's steepest face is carried in large part by the global
+## detail layer and by its boundaries, and NEITHER of those scales with `amp`,
+## so no arithmetic on the landform term alone can price it. Trusting the model
+## over the measurement is how a walkable landform gets forbidden.
 ##
 ## So the real law is MEASURED, per region, by `region_landform_test` arm 5,
 ## which ratchets each region against its own ground. This cap sits well above
 ## every shipped cost and exists only to stop an absurd landform before the
 ## sweep has to.
 ##
-## 🔴 A region's steepness is not its own property. An amplitude STEP between
-## neighbours is itself a gradient, and it lands in the blend band rather than
-## inside either region — which is where the Reach's steepest open ground
-## actually is: the worst grade in any decided region interior is 42.50, while
-## the world's worst is 42.54. So the way to raise a region is often to raise
-## the FLATTEST one: narrowing the step between neighbours makes the world
-## gentler and taller at the same time, and flattening a region to buy safety
-## can cost more gradient than it saves.
+## 🔴 A region's steepness is not wholly its own property. An amplitude STEP
+## between neighbours is itself a gradient, and it falls at their boundary
+## rather than inside either region — which is where the Reach's steepest open
+## ground actually is: the worst face inside any decided region is 43.38, while
+## the world's worst is 44.18. So a region's own numbers can never account for
+## the whole world, and narrowing the amplitude step between neighbours is a way
+## to spend less gradient at their boundary rather than more.
 const LANDFORM_GRADIENT_BUDGET := 1.30
 
 

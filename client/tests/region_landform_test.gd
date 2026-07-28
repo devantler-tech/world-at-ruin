@@ -65,11 +65,12 @@ const MAX_GRADE_DEG := 44.5
 ##
 ## 🔴 This is the walkability law; `MAX_GRADE_DEG` above is only its weakest
 ## form. A global maximum is held by whichever region is steepest, so it is
-## blind to every other one — and not by a little. Measured on the previous
-## sweep: raising `bonepale`'s amplitude to 0.62 took its own ground from 38.45
-## degrees to 41.11, a change large enough to alter what that region is to walk
-## across, while the global reading did not rise at all. Per region, the drift
-## has nowhere to hide.
+## blind to every other one — and not by a little. Measured: raising
+## `bonepale`'s amplitude to 0.62 takes its own ground from 36.92 degrees to
+## **39.76**, a change large enough to alter what that region is to walk across,
+## while the global reading does not move at all — 44.18 either way, to the
+## hundredth. A global-only arm stays green on exactly that. Per region, the
+## drift has nowhere to hide.
 ##
 ## Measured: cinderreach 43.38, ashflats 41.55, rustmoor 41.04, bonepale 36.92.
 ## Each bar sits just above its own region, which is what makes them ratchets
@@ -88,10 +89,10 @@ const MAX_REGION_GRADE_DEG := {
 ## The massif's buried skirt is DELIBERATELY a cliff — the heightfield cannot
 ## have holes, so the terrain dips under the cave floors and meets the rock hull
 ## below ground (see `world_gen._prepare_starter_cave`). It is not walkable
-## ground and never was: including it measures 70 degrees on this build and 75
-## on the baseline, which says nothing about either landform. Excluded by
-## radius from `CAVE_SITE`, generously — over-excluding costs sample count,
-## under-excluding measures the wrong thing.
+## ground and never was: including it puts the world's steepest face at 66.33
+## degrees, which says nothing about any landform. Excluded by radius from
+## `CAVE_SITE`, generously — over-excluding costs sample count, under-excluding
+## measures the wrong thing.
 const CAVE_KEEPOUT := 40.0
 
 ## Relief — the standard deviation of ground height inside a region's decided
