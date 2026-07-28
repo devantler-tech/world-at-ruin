@@ -167,7 +167,7 @@ float ground_noise(vec2 xz, float scale) {
 // take an ANALYTIC gradient instead of differencing a sub-pixel step.
 void plates(vec2 uv, out vec2 id, out float f1, out float f2,
 		out vec2 c1, out vec2 c2) {
-	terrain_plates_centres(uv, id, f1, f2, c1, c2);
+	terrain_plates(uv, id, f1, f2, c1, c2);
 }
 
 // One plate's substance, resolved from its cell id alone. rgb = colour,

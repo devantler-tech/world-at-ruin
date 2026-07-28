@@ -39,20 +39,20 @@ float terrain_ground_noise(vec2 xz, float scale) {
 	return terrain_fbm(vec3(xz.x, 0.0, xz.y) * scale);
 }
 
-// The same partition as terrain_plates, additionally reporting the two nearest
-// cell CENTRES. The search already computes both, so a caller that needs the
-// crack field's gradient pays two extra out-parameters rather than another
-// nine-cell evaluation.
+// The jittered-grid partition. `id` is the owning cell, `f1`/`f2` the two
+// nearest centre distances, and `c1`/`c2` the centres those are measured to.
 //
-// That gradient is available in closed form, which is the point of exposing
-// them: f1 = |uv - c1| and f2 = |uv - c2| are plain distances, so
+// The centres are reported because the crack field's gradient is then available
+// in closed form: f1 = |uv - c1| and f2 = |uv - c2| are plain distances, so
 //
 //     grad(f2 - f1) = normalize(uv - c2) - normalize(uv - c1)
 //
 // exactly, with no screen derivative anywhere in it. A caller differencing the
 // crack field with dFdx/dFdy instead is sampling a step whose width can be far
 // under one pixel, and that is the aliasing rather than a measurement of it.
-void terrain_plates_centres(
+// The search already computes both centres, so returning them costs two
+// out-parameters rather than another nine-cell evaluation.
+void terrain_plates(
 		vec2 uv, out vec2 id, out float f1, out float f2,
 		out vec2 c1, out vec2 c2) {
 	vec2 base = floor(uv);
@@ -81,12 +81,6 @@ void terrain_plates_centres(
 			}
 		}
 	}
-}
-
-void terrain_plates(vec2 uv, out vec2 id, out float f1, out float f2) {
-	vec2 c1;
-	vec2 c2;
-	terrain_plates_centres(uv, id, f1, f2, c1, c2);
 }
 
 vec4 terrain_plate_substance(

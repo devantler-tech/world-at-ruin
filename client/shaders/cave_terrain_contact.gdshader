@@ -75,7 +75,7 @@ void fragment() {
 	vec2 plate_c1 = vec2(0.0);
 	vec2 plate_c2 = vec2(0.0);
 	if (plates_enabled) {
-		terrain_plates_centres(plate_uv, plate_id, f1, f2, plate_c1, plate_c2);
+		terrain_plates(plate_uv, plate_id, f1, f2, plate_c1, plate_c2);
 		plate_fw = max(fwidth(plate_uv.x), fwidth(plate_uv.y));
 		plate_resolved = 1.0 - smoothstep(0.30, 0.85, plate_fw);
 		sub = terrain_plate_substance(
