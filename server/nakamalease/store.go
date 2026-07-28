@@ -308,6 +308,12 @@ func (s *Store) Replace(
 	if latest.Lease == normalized {
 		return latest, nil
 	}
+	if sameStagingAttempt(latest.Lease, normalized) {
+		if latest.Lease.Releasing {
+			return Record{}, ErrReleasing
+		}
+		return latest, nil
+	}
 	return Record{}, ErrConflict
 }
 

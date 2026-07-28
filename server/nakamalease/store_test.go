@@ -942,6 +942,68 @@ func TestConcurrentReplaceLeavesExactlyOneCurrentAttempt(t *testing.T) {
 	}
 }
 
+func TestConcurrentStagingReplaceReusesTheDurableWinnerExpiry(t *testing.T) {
+	storage := newMemoryStorage()
+	store, err := NewStore(storage)
+	if err != nil {
+		t.Fatalf("NewStore returned an error: %v", err)
+	}
+	current, err := store.Create(context.Background(), validLease())
+	if err != nil {
+		t.Fatalf("Create returned an error: %v", err)
+	}
+	current, err = store.BeginRelease(
+		context.Background(),
+		current,
+		testAttemptID,
+	)
+	if err != nil {
+		t.Fatalf("BeginRelease returned an error: %v", err)
+	}
+	staging := validLease()
+	staging.AttemptID = "attempt-8"
+	staging.AllocationID = ""
+	staging.Observer = 0
+	staging.SecretRef = ""
+	staging.Staging = true
+	candidates := []Lease{staging, staging}
+	candidates[1].ExpiresAt = candidates[1].ExpiresAt.Add(time.Nanosecond)
+	records := make([]Record, len(candidates))
+	errs := make([]error, len(candidates))
+	var replacements sync.WaitGroup
+	replacements.Add(len(candidates))
+	for i := range candidates {
+		go func() {
+			defer replacements.Done()
+			records[i], errs[i] = store.Replace(
+				context.Background(),
+				current,
+				candidates[i],
+			)
+		}()
+	}
+	replacements.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf(
+				"concurrent staging Replace %d returned an error: %v",
+				i,
+				err,
+			)
+		}
+	}
+	if records[0] != records[1] ||
+		!records[0].Lease.Staging ||
+		records[0].Lease.AttemptID != "attempt-8" {
+		t.Fatalf(
+			"concurrent staging records = %+v and %+v, want one durable replacement",
+			records[0],
+			records[1],
+		)
+	}
+}
+
 func TestBeginReleaseMarksTheCurrentAttemptBeforeExternalCleanup(t *testing.T) {
 	storage := newMemoryStorage()
 	store, err := NewStore(storage)
