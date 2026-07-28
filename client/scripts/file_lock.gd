@@ -426,7 +426,18 @@ static func release(path: String) -> void:
 ## The check-then-act this replaces was the release-path mirror of the acquire
 ## path's: this file already used rename correctly when reclaiming and not when
 ## releasing, so ownership was a half-guarded property rather than one.
+##
+## A process dying between the rename and the delete leaves its private copy
+## behind, exactly as a dying reclaimer does, and for the same reason that is
+## tolerable: the name carries this ATTEMPT's pid and tick count, so no later pass
+## ever targets it, and the lock itself is already FREE — the failure direction is
+## a stray directory rather than a file no client can write for the whole stale
+## window.
 static func _release_exclusively(lock: String, mine: String) -> void:
+	# Cleared FIRST, on every path including the early returns below. Left set, the
+	# seam would still name the previous pass's copy and a later assertion about
+	# this one would pass without this pass having renamed anything.
+	_last_release_private = ""
 	if mine.is_empty():
 		# Never acquired, or already released. Nothing of ours to remove, and
 		# guessing would delete a lock belonging to whoever holds it now.
@@ -438,7 +449,6 @@ static func _release_exclusively(lock: String, mine: String) -> void:
 	var private := "%s%s%d-%d" % [
 		lock, RELEASE_SUFFIX, OS.get_process_id(), Time.get_ticks_usec()]
 	var private_absolute := ProjectSettings.globalize_path(private)
-	_last_release_private = ""
 	if DirAccess.rename_absolute(ProjectSettings.globalize_path(lock), private_absolute) != OK:
 		# Already gone, or another process is moving it. Either way it is not ours
 		# to delete, and there is nothing left to leak.
