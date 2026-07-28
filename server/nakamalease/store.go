@@ -136,7 +136,21 @@ func (s *Store) Create(ctx context.Context, lease Lease) (Record, error) {
 		return Record{}, err
 	}
 
-	return s.write(ctx, normalized, "*")
+	created, err := s.write(ctx, normalized, "*")
+	if !errors.Is(err, ErrConflict) {
+		return created, err
+	}
+	latest, loadErr := s.Load(ctx, normalized.UserID, normalized.ReservationID)
+	if errors.Is(loadErr, ErrNotFound) {
+		return Record{}, ErrConflict
+	}
+	if loadErr != nil {
+		return Record{}, loadErr
+	}
+	if latest.Lease == normalized {
+		return latest, nil
+	}
+	return Record{}, ErrConflict
 }
 
 // Replace atomically transfers an observed lease key to a distinct attempt.

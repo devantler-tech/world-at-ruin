@@ -39,6 +39,37 @@ type memoryStorage struct {
 	deleteFault func(map[string]*api.StorageObject, []*runtime.StorageDelete) error
 }
 
+type createRaceStorage struct {
+	*memoryStorage
+	initialReads sync.WaitGroup
+	barrierMu    sync.Mutex
+	barrierReads int
+}
+
+func newCreateRaceStorage() *createRaceStorage {
+	storage := &createRaceStorage{memoryStorage: newMemoryStorage()}
+	storage.initialReads.Add(2)
+	return storage
+}
+
+func (s *createRaceStorage) StorageRead(
+	ctx context.Context,
+	reads []*runtime.StorageRead,
+) ([]*api.StorageObject, error) {
+	objects, err := s.memoryStorage.StorageRead(ctx, reads)
+	s.barrierMu.Lock()
+	waitForPeer := s.barrierReads < 2
+	if waitForPeer {
+		s.barrierReads++
+	}
+	s.barrierMu.Unlock()
+	if waitForPeer {
+		s.initialReads.Done()
+		s.initialReads.Wait()
+	}
+	return objects, err
+}
+
 func newMemoryStorage() *memoryStorage {
 	return &memoryStorage{
 		objects: make(map[string]*api.StorageObject),
@@ -377,6 +408,46 @@ func TestCreateReplaysTheSameAttemptWithoutAnotherWrite(t *testing.T) {
 	}
 	if len(storage.writes) != 1 {
 		t.Fatalf("storage writes after replay = %d, want 1", len(storage.writes))
+	}
+}
+
+func TestConcurrentIdenticalCreateReconcilesTheDurableWinner(t *testing.T) {
+	storage := newCreateRaceStorage()
+	store, err := NewStore(storage)
+	if err != nil {
+		t.Fatalf("NewStore returned an error: %v", err)
+	}
+	lease := validLease()
+	var records [2]Record
+	var errs [2]error
+	var creates sync.WaitGroup
+	creates.Add(len(records))
+	for i := range records {
+		go func() {
+			defer creates.Done()
+			records[i], errs[i] = store.Create(context.Background(), lease)
+		}()
+	}
+	creates.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent Create %d returned an error: %v", i, err)
+		}
+	}
+	if records[0] != records[1] || records[0].Lease != lease {
+		t.Fatalf(
+			"concurrent records = %+v and %+v, want one durable lease %+v",
+			records[0],
+			records[1],
+			lease,
+		)
+	}
+	if len(storage.writes) != 2 {
+		t.Fatalf(
+			"concurrent create writes = %d, want one winner and one conflict",
+			len(storage.writes),
+		)
 	}
 }
 
