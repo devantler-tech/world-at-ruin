@@ -122,8 +122,14 @@ static var _last_refusal: String = REFUSAL_NONE
 static var _last_write_expectation: String = IDENTITY_UNCHECKED
 
 
-## Why the most recent write refused: one of the REFUSAL_* constants, or
-## [constant REFUSAL_NONE] when it succeeded.
+## Why the most recent [method save_to] refused: one of the REFUSAL_* constants,
+## or [constant REFUSAL_NONE] when it succeeded.
+##
+## Scoped to the SAVE path deliberately. [method clear] is also a write and does
+## not report here, so a caller must not read this after a failed delete — it
+## would answer for whatever saved last. Nothing in the shipped game calls
+## [method clear], and widening this to cover it would mean pretending one
+## accessor describes two different operations.
 ##
 ## [method is_refused] answers a different question — whether the PATH is latched
 ## for the session — and a caller needs both. A stale-identity refusal never

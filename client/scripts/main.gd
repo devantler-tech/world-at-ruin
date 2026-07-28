@@ -737,18 +737,16 @@ func _open_creator(first_run: bool) -> void:
 			# A refused write and a CONTENDED one both answer false, and they must
 			# not be treated alike. A refusal is permanent — the recipe on disk is
 			# not this build's to replace — so the creator latches shut. Contention
-			# is momentary: another copy of the game held the write lock, or this
-			# attempt freed an abandoned one and deliberately refused that pass, or
-			# the recipe changed under this edit and the compare-and-swap refused
-			# rather than discarding whoever wrote it (#469). All three momentary
-			# outcomes want the same answer here — show what is on disk, say it was
-			# not saved, do NOT latch — and the store's refusal latch is what tells
-			# them from the permanent one; it is never set by a lock failure or by a
-			# stale identity. CharacterStore.last_refusal() names which one it was.
-			# Latching on that would lock the player out of their own character for
-			# the rest of the session over a collision the next attempt resolves.
-			# The store's refusal latch is what tells them apart; it is never set by
-			# a lock failure.
+			# is momentary, and now has two shapes: another copy of the game held the
+			# write lock (or this attempt freed an abandoned one and deliberately
+			# refused that pass), or the recipe changed under this edit and the
+			# compare-and-swap refused rather than discarding whoever wrote it
+			# (#469). Latching on either would lock the player out of their own
+			# character for the rest of the session over a collision the next
+			# attempt resolves. The store's refusal latch is what tells the
+			# permanent case from both momentary ones; it is never set by a lock
+			# failure or by a stale identity, and CharacterStore.last_refusal()
+			# names which of the three occurred.
 			# Put the BODY back to what is actually on disk. The creator previews
 			# every edit on the live player as it is made, and _close(true) goes on
 			# to tear itself down whether or not this callback returned early — so
