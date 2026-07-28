@@ -40,6 +40,8 @@ jobs:
         run: ./tools/retained-boot-recovery-reader-guard.test.sh
       - name: Dev-log entry version guard is pinned and fail-closed
         run: ./tools/devlog-entry-version-guard.test.sh
+      - name: Save-capability vocabulary guard is pinned and fail-closed
+        run: ./tools/save-capability-vocabulary-guard.test.sh
       - name: Dev-log entry names an unreleased version
         # An entry's version is a hand-written prediction of the next release.
         # Checked here, at the last point before the change merges, so the tag
@@ -164,6 +166,15 @@ jobs:
             echo "::error::Shipped capability/capabilities removed from $LEDGER ($(echo "$removed" | tr '\n' ' ')) — a build may never write less than it already has (no-resets law)"
             exit 1
           fi
+      - name: Persisted vocabulary advances the save capability
+        # The append-only checks prove old names remain, but permit additions.
+        # This base-anchored implication prevents a new character-recipe value
+        # from being written while the manifest still blesses an older rollback
+        # target that rejects that value.
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: ./tools/save-capability-vocabulary-guard.sh
       - name: Vault ledger is append-only (no-resets law)
         # The progression sibling of the recipe ledger above (#249). Same
         # reasoning: the in-game guard anchors the required vault-fixture range

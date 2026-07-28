@@ -26,6 +26,40 @@ field placed into an old recipe does not become safe because the new client trea
 old client still rejects it. This is why progression lives in a sibling vault instead of being added
 to `character.json`, and why every future change follows a staged rollout.
 
+## Save-bearing vocabulary boundary
+
+The base-anchored save-capability vocabulary guard watches an explicit set; it never infers its scope
+from every `shipped_*.txt` file. These are the character-recipe registries whose additions can make a
+new save unreadable to an older client at the same schema and capability:
+
+| Ledger | Why it is save-bearing |
+|---|---|
+| `shipped_equipment.txt` | Each entry can become a piece name in the recipe's persisted `equipment` dictionary; an older `CharacterFactory` refuses an unknown piece. |
+| `shipped_skins.txt` | Each entry can become the recipe's persisted `skin` string; an older `CharacterFactory` refuses an unknown skin. |
+| `shipped_piece_slots.txt` | It records the persisted `slot -> piece` pairing. `CharacterFactory` refuses a known piece under a slot other than the one in its registry, so a newly legal pairing is new readable vocabulary too. |
+
+The exclusions are equally deliberate:
+
+- `shipped_piece_layers.txt` is render metadata derived from a piece name; the layer is never written
+  into a recipe.
+- `shipped_attunements.txt` and `shipped_discoveries.txt` describe vault names, but vault validation
+  accepts and preserves unknown string names. An older reader therefore does not reject the document
+  merely because one of those registries grew; their version, resolver and real-effect guards own
+  their rollout.
+- `shipped_abilities.txt`, `shipped_class_power.txt` and `shipped_class_cycle_floor.txt` describe
+  combat registries and balance promises that do not appear in any current player document.
+- `shipped_creature_shapes.txt`, `shipped_creature_tints.txt` and
+  `shipped_creature_recipe_versions.txt` describe generated world-creature recipes, not persisted
+  player state. A creature-tint addition is the guard's permanent presentation-only negative control.
+- The recipe, vault and boot-recovery version ledgers, plus `shipped_save_capability.txt` itself,
+  describe document shape or capability rather than registry vocabulary and have their own immutable
+  base checks.
+
+Character `shapes`, `bone_girth`, `bone_scale` and `joint_push` are persisted too, but they do not
+have extensible registry ledgers: the historical goldens, kit shape checks and
+`CharacterFactory.GUARDED_BONE_KEYS` own those closed sets. If one becomes an extensible shipped
+registry, its ledger joins the explicit guard set in the same change.
+
 ## Expand, bake, then contract
 
 Every change that makes a new field, value shape or stable name persistable uses three release
