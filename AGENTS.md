@@ -504,7 +504,22 @@ everything shipped afterwards is held to.
   `tests/boot_recovery_guard_test`, `tests/data/golden_boot_recovery_v<N>.json`, and
   `tests/data/shipped_boot_recovery_versions.txt`. A corrupt or future recovery document is
   path-latched read-only and refuses new update attempts; persistence revalidates the destination
-  immediately before replacement. The degraded state exposes a readable empty quarantine view so
+  immediately before replacement. That revalidation catches a destination this build cannot READ;
+  a foreign document that reads perfectly well is caught by the ledger's **compare-and-swap on its
+  own bytes** (#453, `tests/boot_recovery_cas_test`), the same guard and the same shape the vault
+  gained in #386 — `document_identity()` plus an `expected_identity` argument to `save_state()`,
+  with `IDENTITY_UNCHECKED` left as the explicit opt-out so blind seeds and the existing lock and
+  staging suites are unaffected. **The identity is captured BEFORE `load_state()`**, in
+  `main.gd::_reconcile_boot_recovery_locked`: captured after, a foreign write landing between the
+  load and the capture becomes the expectation while the transaction still holds the old document,
+  and the check passes. Neither that ordering nor `document_identity()`'s unhashable-file branch is
+  pinned by a test — both were ablated and both stayed green, because separating them needs a
+  second process and a genuinely unhashable file respectively — so both are guarded by review, and
+  the test file names them rather than implying coverage. `BootRecovery._last_write_expectation`
+  exists solely so `boot_ledger_boot_test` can prove the BOOTED scene threads a real identity: a
+  caller writing blind is indistinguishable from a correct one until something races it, and that
+  ablation is measured passing every other assertion in both suites.
+  The degraded state exposes a readable empty quarantine view so
   broken recovery metadata cannot itself veto an otherwise-compatible retained rollback.
   This is deliberate: rollback targets still independently prove save, protocol and shell
   compatibility, while refusing every target would guarantee the stranding recovery exists to
