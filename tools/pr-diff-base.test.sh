@@ -206,6 +206,44 @@ if ! grep -q './tools/pr-diff-base.test.sh' "$WORKFLOW"; then
 	t_fail "this test is not wired into ci.yaml — it would never run"
 fi
 
+# --- Layer 3b: the gate must not be classified by its OWN resolver -----------
+# A PR that changes the resolver cannot be classified by it: a regression
+# returning an empty diff would zero all four outputs and skip the required
+# capture on a player-visible change in the same PR.
+#
+# Note WHY a path pattern cannot close this, and why this test does not check
+# for one: with an empty changed.txt no pattern matches, including the
+# resolver's own. The guard must therefore run BEFORE the resolver and use a
+# resolver-independent base.
+resolver_rel="tools/$(basename "$RESOLVER")"
+
+if ! printf '%s' "$detect_block" | grep -qE "grep -qE '\^tools/pr-diff-base\\\\\.sh\\\$'"; then
+	t_fail "no resolver-change guard in detect-visual-changes — a PR editing $resolver_rel would be classified by the very file it changes"
+fi
+
+# The guard is only resolver-independent if it derives its own diff, before the
+# resolver is consulted. Order is the property, so assert it by line position.
+guard_line="$(printf '%s' "$detect_block" | grep -n 'gate_machinery\.txt' | head -1 | cut -d: -f1)"
+# shellcheck disable=SC2016  # literal workflow text, must not expand
+resolve_line="$(printf '%s' "$detect_block" | grep -n 'DIFF_BASE="\$(\./tools/pr-diff-base\.sh' | head -1 | cut -d: -f1)"
+if [ -z "$guard_line" ] || [ -z "$resolve_line" ]; then
+	t_fail "could not locate both the resolver-change guard and the resolve step — cannot prove their order"
+elif [ "$guard_line" -ge "$resolve_line" ]; then
+	t_fail "the resolver-change guard runs at or after the resolver (guard line $guard_line, resolve line $resolve_line) — it must precede it to stay independent"
+fi
+
+# It must key off the FROZEN base, which no resolver regression can influence.
+# shellcheck disable=SC2016  # literal workflow text, must not expand
+if ! printf '%s' "$detect_block" | grep -qE 'git diff --name-only "\$BASE_SHA" HEAD > gate_machinery\.txt'; then
+	t_fail "the resolver-change guard does not diff from the frozen \$BASE_SHA — a resolver regression could then suppress the guard that exists to catch it"
+fi
+
+# And the guard's pattern must name the file that actually ships, or a rename
+# leaves a guard that matches nothing while still reading as present.
+if [ ! -f "$ROOT/$resolver_rel" ]; then
+	t_fail "the guarded path $resolver_rel does not exist — the guard would match nothing"
+fi
+
 if [ "$failures" -ne 0 ]; then
 	printf 'pr diff base test: %d failure(s)\n' "$failures" >&2
 	exit 1

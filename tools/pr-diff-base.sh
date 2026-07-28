@@ -38,11 +38,11 @@ resolve_pr_diff_base() {
 	local fallback="${2-}"
 	local second_parent
 
-	if second_parent="$(git rev-parse --verify --quiet 'HEAD^2' 2>/dev/null)"; then
-		if [ -n "$head_sha" ] && [ "$second_parent" = "$(git rev-parse --verify --quiet "$head_sha" 2>/dev/null || true)" ]; then
-			git rev-parse 'HEAD^1'
-			return 0
-		fi
+	if second_parent="$(git rev-parse --verify --quiet 'HEAD^2' 2>/dev/null)" &&
+		[ -n "$head_sha" ] &&
+		[ "$second_parent" = "$(git rev-parse --verify --quiet "$head_sha" 2>/dev/null || true)" ]; then
+		git rev-parse 'HEAD^1'
+		return 0
 	fi
 
 	# Not the merge ref — the head sha itself is checked out, or the event gave

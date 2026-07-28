@@ -1260,22 +1260,48 @@ jobs:
           # (#494); it is a separate, tested script because the stale-base case
           # only reproduces when the base branch moves, which no assertion
           # against this file could show.
-          if ! DIFF_BASE="$(./tools/pr-diff-base.sh "$HEAD_SHA" "$BASE_SHA")"; then
-            # Cannot diff — assume BOTH, so evidence is never silently skipped.
-            # first_run must be set here too: leaving it empty reads as false,
-            # which would quietly drop first-run evidence in precisely the case
-            # where the changed paths cannot be classified at all.
-            # gpu_gated belongs here for the same reason, and the omission was
-            # worse than the others: an unset output reads as false, so the
-            # probe-gated warning would be silently suppressed in exactly the
-            # case where nothing could be classified — fail-OPEN inside a guard
-            # whose whole purpose is to fail closed.
+          # Assume BOTH, so evidence is never silently skipped. first_run must be
+          # set here too: leaving it empty reads as false, which would quietly
+          # drop first-run evidence in precisely the case where the changed paths
+          # cannot be classified at all. gpu_gated belongs here for the same
+          # reason, and the omission was worse than the others: an unset output
+          # reads as false, so the probe-gated warning would be silently
+          # suppressed in exactly the case where nothing could be classified —
+          # fail-OPEN inside a guard whose whole purpose is to fail closed.
+          capture_everything() {
             {
               echo "visual=true"
               echo "first_run=true"
               echo "export_affecting=true"
               echo "gpu_gated=true"
             } >> "$GITHUB_OUTPUT"
+          }
+          # The resolver below decides what this gate sees, so a PR that changes
+          # it must NOT be classified by it — that is the #142 "a required job
+          # its own gate skips fails open" lesson, now applying to a file outside
+          # this workflow. Adding the resolver to the path patterns cannot close
+          # it: a regression returning an empty diff produces an empty
+          # changed.txt, so no pattern matches, including its own. The check has
+          # to be independent of the resolver's output, which is why it uses the
+          # FROZEN base — stale there can only over-report, and over-capturing is
+          # the safe direction for a self-validation guard.
+          if ! git cat-file -e "$BASE_SHA" 2>/dev/null; then
+            capture_everything
+            exit 0
+          fi
+          git diff --name-only "$BASE_SHA" HEAD > gate_machinery.txt
+          if grep -qE '^tools/pr-diff-base\.sh$' gate_machinery.txt; then
+            echo "This PR changes the gate's own base resolver — capturing everything."
+            # Diagnostic ONLY, and deliberately after the decision above: report
+            # what this PR's resolver would have said, so it can be inspected
+            # without being trusted. `|| true` because a resolver that cannot run
+            # must not fail the job here — it has already been overruled.
+            echo "  resolver would have reported base: $(./tools/pr-diff-base.sh "$HEAD_SHA" "$BASE_SHA" 2>/dev/null || echo unresolved)"
+            capture_everything
+            exit 0
+          fi
+          if ! DIFF_BASE="$(./tools/pr-diff-base.sh "$HEAD_SHA" "$BASE_SHA")"; then
+            capture_everything
             exit 0
           fi
           # `tools` is in the list on purpose: a change to the capture tool
