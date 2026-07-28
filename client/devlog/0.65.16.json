@@ -9,5 +9,5 @@
 		"The slabbed ground is still a preview: set WAR_GROUND_PLATES=1 before launch to see it."
 	],
 	"title": "Stone joins stop snapping when you walk past them",
-	"version": "0.65.12"
+	"version": "0.65.16"
 }
