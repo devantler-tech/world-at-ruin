@@ -262,18 +262,18 @@ func _ready() -> void:
 		# Restore unknown future claims too: forgetting one during rollback could
 		# grant a reward that the newer client already consumed.
 		_exploration_rewards.restore(vault.get("reward_claims", []))
-		# A direct attunement is an explicit player choice and therefore wins
-		# over an automatically restored exploration waypoint. Compute that
-		# winner first, then apply it once after the other restored outcomes;
-		# precedence is a named policy rather than an accidental loop order.
-		var preferred_attunement: Variant = _preferred_attuned_respawn(vault, world)
 		_apply_restored_reward_outcomes()
-		if preferred_attunement != null:
-			_player.set_respawn_point(preferred_attunement)
 		# A discovery may have persisted before its reward claim during a
 		# transient failure or an older release. Reconcile that durable discovery
 		# now; claim_applied keeps already-restored claims idempotent.
 		_claim_exploration_rewards(_discovery.discovered())
+		# A direct attunement is an explicit player choice and therefore wins
+		# over both restored and newly reconciled exploration waypoints. Select
+		# it last, after every automatic outcome, so precedence is a named policy
+		# rather than an accidental statement order.
+		var preferred_attunement: Variant = _preferred_attuned_respawn(vault, world)
+		if preferred_attunement != null:
+			_player.set_respawn_point(preferred_attunement)
 	# Observe only after restore. A persisted place then stays idempotent, while
 	# the cave under a new wanderer's feet becomes the first v2 write.
 	_observe_discoveries()

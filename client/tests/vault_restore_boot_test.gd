@@ -106,11 +106,18 @@ func _begin_boot(seeded: bool, name: String = "") -> void:
 		_fail("save isolation did not take — refusing to boot into the real save")
 		return
 	if seeded:
-		# Written through the store's own save path, so the test seeds exactly
-		# what a real earlier session would have left behind.
+		# Written through the store's own writers, so the test seeds exactly what
+		# a real earlier session could leave behind: an explicit attunement plus
+		# a durable shrine discovery whose reward claim has not landed yet.
+		# Every shipped attunement must remain the final respawn choice while boot
+		# reconciliation fills that missing claim. The current catalogue points
+		# both at Wardens' Shrine; walking the full attunement ledger makes a
+		# future second destination distinguish the precedence automatically.
 		SaveVault.clear_refusals_for_test()
 		var attuned := SaveVault.attune(SaveVault.empty(), name)
-		if not SaveVault.save_to(SaveVault.vault_path(), attuned):
+		var mixed := SaveVault.record_discoveries(
+			attuned, [SaveVault.DISCOVERY_WARDENS_SHRINE])
+		if not SaveVault.save_to(SaveVault.vault_path(), mixed):
 			_fail("could not seed the vault probe for '%s'" % name)
 			return
 	_main = (load(MAIN_SCENE_PATH) as PackedScene).instantiate()
@@ -475,6 +482,12 @@ func _physics_process(_delta: float) -> void:
 		return
 	if woke_at.distance_to(_control_spawn) <= EPS:
 		_fail("the restore boot for '%s' woke in the same place as the control — nothing changed" % _current)
+		return
+	var reconciled = SaveVault.load_saved()
+	if reconciled is not Dictionary \
+			or reconciled.get("reward_claims", []) != [SaveVault.DISCOVERY_WARDENS_SHRINE]:
+		_fail("boot did not reconcile the durable shrine discovery beside attunement '%s'"
+			% _current)
 		return
 	if not _save.real_save_untouched():
 		_fail("the restore boot touched the player's real save or vault")
