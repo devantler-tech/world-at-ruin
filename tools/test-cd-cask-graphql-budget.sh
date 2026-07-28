@@ -23,6 +23,14 @@ for fn in graphql_budget_exhausted cask_checks_green_at cask_rest_check_gated_me
 done
 
 tap="devantler-tech/homebrew-tap"
+# The production helper re-reads the branch version to catch a writer landing
+# during the wait; both live outside the extracted block, so stub them.
+# shellcheck disable=SC2034  # read by the sourced production helper, not here
+branch="goreleaser/world-at-ruin"
+mock_branch_version="1.0.0"
+cask_version_at() {
+	printf '%s\n' "${mock_branch_version}"
+}
 merge_file="${test_dir}/merges"
 reads_file="${test_dir}/pr_reads"
 sleep_file="${test_dir}/sleeps"
@@ -173,21 +181,21 @@ fi
 reset_mock_state
 mock_pr='{"merged":true,"head":{"sha":"aaaa1111"}}'
 mock_checks="${green_json}"
-cask_rest_check_gated_merge "${tap}" "42" || fail "an already-merged PR must succeed"
+cask_rest_check_gated_merge "${tap}" "42" "1.0.0" || fail "an already-merged PR must succeed"
 [ "$(merge_count)" -eq 0 ] || fail "an already-merged PR must not be merged again"
 
 # Green at head: merge, and BIND the merge to the head that was read. An
 # unbound merge would ship whatever got pushed after the green read.
 reset_mock_state
 mock_pr='{"merged":false,"head":{"sha":"aaaa1111"}}'
-cask_rest_check_gated_merge "${tap}" "42" || fail "a green head must merge"
+cask_rest_check_gated_merge "${tap}" "42" "1.0.0" || fail "a green head must merge"
 [ "$(merge_count)" -eq 1 ] || fail "a green head must merge exactly once"
 [ "$(tr -d ' \n' <"${merge_file}")" = "aaaa1111" ] || fail "the merge must be bound to the head sha it read"
 
 # THE SAFETY ASSERTION: while checks are pending, nothing is merged at all.
 reset_mock_state
 mock_checks="${pending_json}"
-if cask_rest_check_gated_merge "${tap}" "42"; then
+if cask_rest_check_gated_merge "${tap}" "42" "1.0.0"; then
 	fail "a permanently pending head must not report delivery"
 fi
 [ "$(merge_count)" -eq 0 ] || fail "a pending head must NEVER be merged"
@@ -198,7 +206,7 @@ fi
 # A red check is not merely "not yet" — it must never merge, however long we wait.
 reset_mock_state
 mock_checks='{"total_count":1,"check_runs":[{"status":"completed","conclusion":"failure"}]}'
-if cask_rest_check_gated_merge "${tap}" "42"; then
+if cask_rest_check_gated_merge "${tap}" "42" "1.0.0"; then
 	fail "a failing head must not report delivery"
 fi
 [ "$(merge_count)" -eq 0 ] || fail "a failing head must NEVER be merged"
@@ -214,7 +222,7 @@ mock_checks_early="${pending_json}"
 mock_checks_until_read="1"
 mock_head_after_read="1"
 mock_head_moved_sha="bbbb2222"
-cask_rest_check_gated_merge "${tap}" "42" || fail "a moved head must still merge"
+cask_rest_check_gated_merge "${tap}" "42" "1.0.0" || fail "a moved head must still merge"
 [ "$(merge_count)" -eq 1 ] || fail "a moved head must merge exactly once"
 [ "$(tr -d ' \n' <"${merge_file}")" = "bbbb2222" ] || fail "the merge must bind to the CURRENT head, not the first one read"
 mock_checks_early=""
@@ -226,10 +234,30 @@ mock_head_moved_sha=""
 # retried rather than reported as delivered.
 reset_mock_state
 mock_merge_ok="no"
-if cask_rest_check_gated_merge "${tap}" "42"; then
+if cask_rest_check_gated_merge "${tap}" "42" "1.0.0"; then
 	fail "a merge the API refuses must not report delivery"
 fi
 [ "$(merge_count)" -eq 30 ] || fail "a refused merge must be retried across the bounded wait"
 mock_merge_ok="yes"
+
+# THE STALE-TITLE ASSERTION: the tap squash-merges on the PR title, which was
+# derived before the wait began. If the branch content moves under us, the
+# merge must NOT happen — it would ship the new content under the old version's
+# changelog entry. The caller re-derives the title on the distinct rc 2.
+reset_mock_state
+mock_pr='{"merged":false,"head":{"sha":"aaaa1111"}}'
+mock_checks="${green_json}"
+mock_branch_version="9.9.9"
+rc=0
+cask_rest_check_gated_merge "${tap}" "42" "1.0.0" || rc=$?
+[ "${rc}" -eq 2 ] || fail "a moved branch must return the distinct re-derive code 2, got ${rc}"
+[ "$(merge_count)" -eq 0 ] || fail "a moved branch must NEVER be merged under the stale title"
+mock_branch_version="1.0.0"
+
+# ...and the same guard must not fire when the branch has NOT moved, or the
+# fallback could never deliver anything at all.
+reset_mock_state
+cask_rest_check_gated_merge "${tap}" "42" "1.0.0" || fail "an unmoved branch must still deliver"
+[ "$(merge_count)" -eq 1 ] || fail "an unmoved branch must merge"
 
 echo "cd cask GraphQL-budget fallback: all assertions passed"

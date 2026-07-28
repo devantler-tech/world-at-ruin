@@ -1379,9 +1379,12 @@ jobs:
           # spread. Holding the job that long is the deliberate trade — the
           # alternative on this path is not a faster release but an undelivered
           # one plus a red main, which is what #502 measured twice in one day.
+          # Returns 0 delivered, 2 the branch moved (caller re-derives the
+          # title and retries), 1 the wait ran out.
           cask_rest_check_gated_merge() {
             local tap="$1"
             local pr="$2"
+            local expected_version="$3"
             local attempt state head
             for attempt in $(seq 1 30); do
               state="$(gh api "repos/${tap}/pulls/${pr}" 2>/dev/null || true)"
@@ -1389,6 +1392,15 @@ jobs:
                 if [ "$(printf '%s' "${state}" | jq -r '.merged' 2>/dev/null || true)" = "true" ]; then
                   echo "${tap}#${pr} merged while waiting for its checks"
                   return 0
+                fi
+                # The tap squash-merges on the PR TITLE, which was derived
+                # before this wait began. A writer landing on the shared branch
+                # during the wait would otherwise have its content merged under
+                # the PREVIOUS version's changelog entry — the same lying-title
+                # hazard the arming loop re-reads for. Hand back instead.
+                if [ "$(cask_version_at "${branch}")" != "${expected_version}" ]; then
+                  echo "::notice::${branch} moved while waiting for checks; re-deriving the title"
+                  return 2
                 fi
                 head="$(printf '%s' "${state}" | jq -r '.head.sha' 2>/dev/null || true)"
                 if [ -n "${head}" ] && cask_checks_green_at "${tap}" "${head}"; then
@@ -1475,9 +1487,17 @@ jobs:
               # be empty — this branch handles only the case where the mutation
               # produced no usable outcome at all.
               echo "::notice::the tap account's GraphQL budget is exhausted, so auto-merge cannot be armed — delivering ${tap}#${pr} over REST instead"
-              if cask_rest_check_gated_merge "${tap}" "${pr}"; then
+              # `|| rest_rc=$?` so `set -e` does not kill the job on the
+              # branch-moved return, which is a retry signal rather than a fault.
+              rest_rc=0
+              cask_rest_check_gated_merge "${tap}" "${pr}" "${branch_version}" || rest_rc=$?
+              if [ "${rest_rc}" -eq 0 ]; then
                 armed=true
                 break
+              fi
+              if [ "${rest_rc}" -eq 2 ]; then
+                sleep 2
+                continue
               fi
               echo "::error::GraphQL budget exhausted and ${tap}#${pr} did not become mergeable over REST within the wait"
               exit 1
