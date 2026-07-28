@@ -45,6 +45,10 @@ extends Node
 ##     answer false alike, and `main.gd` latches the creator shut on the second
 ##     only — so a momentary collision must not lock a player out of their own
 ##     character for the session.
+## 10. `clear()` re-derives acceptance INSIDE the lock. Its pre-lock refusal check
+##     is only an optimisation: a second client can install a whole new recipe in
+##     the check-to-lock window, and deleting on the earlier reading would destroy
+##     a character this build never read.
 ##
 ## The probe is namespaced by process id: git worktrees do not isolate Godot's
 ## project-wide user:// directory, so two local test processes sharing a fixed

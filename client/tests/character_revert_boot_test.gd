@@ -44,13 +44,20 @@ extends Node
 ## would let a body that was never reverted still land within tolerance of the
 ## on-disk value, and the test would pass while the bug shipped.
 ##
-## Runs behind SaveIsolation, so the player's own character, vault and recovery
-## ledger are never read or written (no-resets law).
+## Boots through [IsolatedBoot], so the player's own character, vault and recovery
+## ledger are never read or written (no-resets law). Redirecting the seams and
+## instantiating the scene are ONE act there, which is why this cannot obtain a
+## booted scene and an unisolated save at the same time.
+##
+## The fixture is seeded between `boot()` and `add_child()` deliberately:
+## `boot()` redirects the seams and instantiates, but a scene's `_ready()` does
+## not run until it enters the tree — so this is the window where the recipe the
+## player "already has" can be written to the redirected path before the game's
+## own launch path reads it.
 ##
 ## Run: godot --headless --path client res://tests/character_revert_boot_test.tscn
 
 const PROBE_PATH := "user://character_revert_boot_probe.json"
-const MAIN_SCENE_PATH := "res://scenes/main.tscn"
 ## The blend shape both arms read. Present on the base body, and driven straight
 ## from `recipe["shapes"]` with no remapping, so the recipe weight and the mesh
 ## weight are the same number.
@@ -69,7 +76,7 @@ const BOOT_TICK := 30
 
 var _ticks := 0
 var _main: Node
-var _save: SaveIsolation
+var _boot: IsolatedBoot
 ## Which arm runs next: 0 = control, 1 = revert-to-disk, 2 = revert-with-no-disk.
 var _arm := 0
 ## The on-disk recipe's bytes, to prove the refused apply left them alone.
@@ -77,14 +84,14 @@ var _seeded_sha := ""
 
 
 func _ready() -> void:
-	_save = SaveIsolation.new(PROBE_PATH)
-	if not _save.begin():
+	_boot = IsolatedBoot.new(PROBE_PATH)
+	_main = _boot.boot()
+	if _main == null:
 		_fail("save isolation did not take — refusing to boot into the real save")
 		return
 	CharacterStore.clear_refusals_for_test()
 	if not _seed_on_disk():
 		return
-	_main = (load(MAIN_SCENE_PATH) as PackedScene).instantiate()
 	add_child(_main)
 
 
@@ -279,7 +286,7 @@ func _assert_revert_without_disk() -> void:
 		_fail("a contended apply with no recipe on disk did not tell the player (toast read %s)"
 			% [_toast_text()])
 		return
-	if not _save.real_save_untouched():
+	if not _boot.real_save_untouched():
 		_fail("the boot test touched the player's real save, vault or recovery ledger")
 		return
 	_main.queue_free()
@@ -343,7 +350,7 @@ func _abs(path: String) -> String:
 func _fail(message: String) -> void:
 	# real_save_untouched() clears the seams itself, so it REPLACES the bare
 	# end() rather than adding a second teardown (#326).
-	if _save != null and not _save.real_save_untouched():
+	if _boot != null and not _boot.real_save_untouched():
 		message += (" — AND the run touched the player's real save, vault or recovery ledger; "
 			+ "the isolation breach outranks the failure above")
 	push_error(message)
