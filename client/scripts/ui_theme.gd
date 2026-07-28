@@ -27,6 +27,16 @@ const BONE_DIM := Color(0.88, 0.84, 0.76, 0.55)
 const FONT_BODY := 12
 const FONT_SECTION := 13
 const FONT_TITLE := 18
+## The HUD's two raised sizes. Larger than body text because both speak over the
+## 3D view rather than inside a panel: a toast is the only channel some messages
+## have, and the interaction prompt has to be readable without breaking the
+## player's attention away from what they are reaching for.
+const FONT_TOAST := 16
+const FONT_PROMPT := 15
+
+## The surface every panel is cut from. Shared so the HUD's dev log and the
+## creator's panels stay one material rather than two that drift.
+const PANEL_BG := Color(0.07, 0.06, 0.055, 0.93)
 
 
 ## The creator's theme. Built fresh per call: a Theme is a Resource, and a
@@ -55,9 +65,17 @@ static func _flat(bg: Color, border: Color, width: int, radius: int) -> StyleBox
 
 
 static func _style_panel(theme: Theme) -> void:
-	var panel := _flat(Color(0.07, 0.06, 0.055, 0.93), EMBER_DIM, 1, 0)
-	panel.set_content_margin_all(14)
-	theme.set_stylebox("panel", "PanelContainer", panel)
+	theme.set_stylebox("panel", "PanelContainer", panel_box(14))
+
+
+## A panel surface with the given inner padding. Public because the HUD's dev
+## log is a PanelContainer built outside any Theme — it is one node, so giving
+## it a whole Theme resource would cost more than it explains — and it must
+## still be cut from the same stone as the creator's panels.
+static func panel_box(content_margin: int) -> StyleBoxFlat:
+	var panel := _flat(PANEL_BG, EMBER_DIM, 1, 0)
+	panel.set_content_margin_all(content_margin)
+	return panel
 
 
 ## Buttons and dropdowns read as cut stone that warms when the player reaches
