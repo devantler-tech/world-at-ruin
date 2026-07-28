@@ -54,6 +54,9 @@ reset_mocks() {
 	# What the branch carries, read fresh on each merge attempt. Changing it
 	# mid-test is how "another writer landed during the wait" is expressed.
 	mock_branch_version="0.65.7"
+	# What the tap requires of its main. Measured live on 2026-07-28: one
+	# context, from an organization-level ruleset.
+	mock_required='[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"CI - Required Checks"}]}}]'
 }
 
 # The production helper calls this; it lives outside the extracted blocks.
@@ -99,6 +102,10 @@ gh() {
 		[ "${#mock_checks[@]}" -gt 0 ] && printf '%s\n' "${mock_checks[idx]}"
 		return 0
 	fi
+	if [[ "${path}" == */rules/branches/* ]]; then
+		printf '%s\n' "${mock_required}"
+		return 0
+	fi
 	if [[ "${path}" == */status ]]; then
 		printf '%s\n' "${mock_statuses}"
 		return 0
@@ -110,8 +117,8 @@ gh() {
 	return 0
 }
 
-check_run() { # status conclusion
-	printf '{"status":"%s","conclusion":%s}' "$1" \
+check_run() { # status conclusion [name]
+	printf '{"name":"%s","status":"%s","conclusion":%s}' "${3:-CI - Required Checks}" "$1" \
 		"$([ "$2" = "null" ] && echo null || printf '"%s"' "$2")"
 }
 checks() { # one JSON check-run object per argument
@@ -136,9 +143,12 @@ checks_truncated() { # declared-total, then the runs this page returned
 	printf '%s' "${body}" | sed "s/\"total_count\":[0-9]*/\"total_count\":${declared}/"
 }
 
-green_checks="$(checks "$(check_run completed success)" "$(check_run completed success)")"
-pending_checks="$(checks "$(check_run completed success)" "$(check_run in_progress null)")"
-failing_checks="$(checks "$(check_run completed success)" "$(check_run completed failure)")"
+# The REQUIRED context is the one that decides; the second run in each set is
+# deliberately an unrequired extra, so "required satisfied" and "everything
+# finished" are distinguishable rather than the same fixture.
+green_checks="$(checks "$(check_run completed success)" "$(check_run completed success Lint)")"
+pending_checks="$(checks "$(check_run in_progress null)" "$(check_run completed success Lint)")"
+failing_checks="$(checks "$(check_run completed success)" "$(check_run completed failure Lint)")"
 empty_checks='{"total_count":0,"check_runs":[]}'
 
 merge_calls() { grep -c '/merge' "${call_log}" || true; }
@@ -261,34 +271,47 @@ if merge_cask_pr_when_green "${tap}" 1337 "${branch}" "0.65.7" >/dev/null 2>&1; 
 fi
 [ "$(merge_calls)" -eq 0 ] || fail "an unreadable payload must not reach a merge"
 
-# Legacy commit statuses gate the merge too. A required status lives on this
-# surface (the tap's heads carry one), and check runs cannot see it — so a
-# non-success status must hold the merge back even when every check run is
-# green.
+# Legacy commit statuses are a second surface the gate must read: a REQUIRED
+# context can live there and no check-run read can see it.
+required_status_only='[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"tap/audit"}]}}]'
+
 reset_mocks
+mock_required="${required_status_only}"
 mock_checks=("${green_checks}")
 mock_statuses='{"state":"failure","statuses":[{"context":"tap/audit","state":"failure","description":"cask audit failed"}]}'
 if merge_cask_pr_when_green "${tap}" 1337 "${branch}" "0.65.7" >/dev/null 2>&1; then
-	fail "a head whose legacy status had failed was merged"
+	fail "a failing REQUIRED legacy status was merged past"
 fi
-[ "$(merge_calls)" -eq 0 ] || fail "a failing legacy status must block the merge"
+[ "$(merge_calls)" -eq 0 ] || fail "a failing required status must block the merge"
 
 reset_mocks
+mock_required="${required_status_only}"
 mock_checks=("${green_checks}")
 mock_statuses='{"state":"pending","statuses":[{"context":"tap/audit","state":"pending","description":"queued"}]}'
 if merge_cask_pr_when_green "${tap}" 1337 "${branch}" "0.65.7" >/dev/null 2>&1; then
-	fail "a head with a pending legacy status was merged"
+	fail "a pending REQUIRED legacy status was merged past"
 fi
-[ "$(merge_calls)" -eq 0 ] || fail "a pending legacy status must be waited for"
+[ "$(merge_calls)" -eq 0 ] || fail "a pending required status must be waited for"
 
-# ...except a review provider reporting ITS OWN quota, which describes the
-# provider's billing state rather than this cask. Letting that block delivery
-# would reintroduce the exact failure this whole helper exists to remove.
+# A satisfied required context delivers even though an UNREQUIRED status is
+# failing — the same call auto-merge makes. Being stricter here would strand
+# releases on checks the tap itself does not gate on.
 reset_mocks
+mock_checks=("${green_checks}")
+mock_statuses='{"state":"failure","statuses":[{"context":"some/advisory","state":"failure","description":"advisory only"}]}'
+merge_cask_pr_when_green "${tap}" 1337 "${branch}" "0.65.7" >/dev/null ||
+	fail "an unrequired failing status blocked delivery"
+[ "$(merge_calls)" -eq 1 ] || fail "an unrequired failing status should not gate"
+
+# ...but a REVIEW PROVIDER reporting its own quota does not block even when it
+# IS required: that describes the provider's billing state, not this cask, and
+# blocking would reintroduce the exact failure this helper removes.
+reset_mocks
+mock_required='[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"CodeRabbit"}]}}]'
 mock_checks=("${green_checks}")
 mock_statuses='{"state":"failure","statuses":[{"context":"CodeRabbit","state":"failure","description":"Review rate limit exceeded"}]}'
 merge_cask_pr_when_green "${tap}" 1337 "${branch}" "0.65.7" >/dev/null ||
-	fail "a review provider's own rate-limit status blocked delivery"
+	fail "a required review provider's own rate-limit status blocked delivery"
 [ "$(merge_calls)" -eq 1 ] || fail "the quota-status carve-out did not reach a merge"
 
 # A head with no legacy statuses at all is not blocked by their absence.
@@ -343,6 +366,42 @@ mock_branch_version="0.65.7"
 merge_cask_pr_when_green "${tap}" 1337 "${branch}" "0.65.7" >/dev/null ||
 	fail "an unmoved branch was refused"
 [ "$(merge_calls)" -eq 1 ] || fail "an unmoved branch should deliver"
+
+# A fast unrequired check can complete before the required workflows have even
+# registered their runs. "Something finished and nothing visible is pending" is
+# NOT the same claim as "the gate passed" — and since this merge bypasses the
+# tap's rulesets, nothing downstream would catch it.
+reset_mocks
+mock_checks=("$(checks "$(check_run completed success Lint)")")
+if merge_cask_pr_when_green "${tap}" 1337 "${branch}" "0.65.7" >/dev/null 2>&1; then
+	fail "merged before the required context had even appeared"
+fi
+[ "$(merge_calls)" -eq 0 ] ||
+	fail "an absent required context must never reach a merge"
+
+# The quota carve-out is for a REVIEW PROVIDER reporting its own billing state.
+# A required context that merely mentions a quota — a cask audit hitting an
+# upstream limit, say — is a real refusal and must still block.
+reset_mocks
+mock_required='{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"tap/audit"}]}}'
+mock_required="[${mock_required}]"
+mock_checks=("${green_checks}")
+mock_statuses='{"state":"failure","statuses":[{"context":"tap/audit","state":"failure","description":"upstream API quota exhausted"}]}'
+if merge_cask_pr_when_green "${tap}" 1337 "${branch}" "0.65.7" >/dev/null 2>&1; then
+	fail "a non-provider required context excused itself via the quota carve-out"
+fi
+[ "$(merge_calls)" -eq 0 ] || fail "an unrelated quota failure must still block"
+
+# If the required contexts cannot be read, the gate is unknown — fail closed.
+reset_mocks
+mock_required='not json at all'
+mock_checks=("${green_checks}")
+if out="$(merge_cask_pr_when_green "${tap}" 1337 "${branch}" "0.65.7" 2>&1)"; then
+	fail "merged without knowing what the tap requires"
+fi
+[ "$(merge_calls)" -eq 0 ] || fail "an unreadable ruleset must not reach a merge"
+[[ "${out}" == *"required status checks"* ]] ||
+	fail "the refusal did not name the unreadable gate"
 
 # An already-merged PR is delivered, not merged twice.
 reset_mocks
