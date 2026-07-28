@@ -420,14 +420,28 @@ everything shipped afterwards is held to.
   (`tests/vault_lock_test`). The lock is a DIRECTORY beside the vault —
   `DirAccess.make_dir_absolute` is `mkdir`, the only atomic exclusive-create Godot exposes, and a lock
   built from `FileAccess.open` would be check-then-act again, so do not "simplify" it into a file. It
-  carries an ownership stamp and is therefore deliberately NOT empty: renaming onto an empty directory
-  succeeds, and the stamp also lets a holder prove the lock is still its own before it replaces the
+  carries an ownership claim and is therefore deliberately NOT empty: renaming onto an empty directory
+  succeeds, and the claim also lets a holder prove the lock is still its own before it replaces the
   vault. **Acquisition is only ever that single `mkdir` on an absent path. Reclaiming an abandoned lock
   is a SEPARATE pass that never acquires** — it renames the stale directory aside (rename wins for
   exactly one process, which serializes reclamation), verifies on that private copy the timestamp it
   judged abandoned, removes it, and still refuses; the next attempt acquires the freed slot. Folding
   reclaim and acquire back into one pass lets two processes each recreate the lock over the other and
-  both proceed as owners, so never restore remove-then-create. **Scope the claim honestly:** a lock
+  both proceed as owners, so never restore remove-then-create. **Ownership itself is settled by those
+  same two primitives at BOTH ends, and neither may become a test followed by an action**
+  (#430, `tests/lock_ownership_test`): the claim is a `mkdir` of an `owner/` DIRECTORY inside the lock,
+  so exactly one acquirer wins it and the winner alone writes the token file beneath it; the release
+  renames the lock to a private `.release-<pid>-<ticks>` path and verifies the token on THAT copy
+  before deleting it, so the directory cannot be substituted between the check and the delete. Do not
+  "simplify" the claim back into a file, and do not delete the lock at its shared path after asking
+  `owns()` — each is the very race the lock exists to close, one level down. The claim being a
+  directory is also what makes the two on-disk shapes fail CLOSED against each other, so a retained
+  pre-#430 client and a current one degrade to session-only rather than both writing: an older build's
+  `FileAccess` cannot open a directory claim, and this build's `mkdir` is refused by an older build's
+  stamp file (both measured on 4.7.1). `FileLock._last_release_private` exists solely so a test can
+  prove the release actually goes through that private copy — single-threaded the two shapes compare
+  identical bytes and differ only under a real substitution, and the check-then-act form was measured
+  passing every other case in that suite. **Scope the claim honestly:** a lock
   binds only writers that take it, so pre-lock retained/rollback builds and foreign writers (cloud
   sync, a hand edit) walk straight through it. Those are covered by a **compare-and-swap on the
   document's own bytes** (#386, `tests/vault_cas_test`): the read-modify-write records the vault's
