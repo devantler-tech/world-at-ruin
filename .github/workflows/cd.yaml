@@ -1354,7 +1354,7 @@ jobs:
           merge_cask_pr_when_green() {
             local tap="$1"
             local pr="$2"
-            local attempt pr_state head runs counts total unfinished failed
+            local attempt pr_state head runs counts total unfinished failed statuses blocking
             for attempt in $(seq 1 20); do
               pr_state="$(gh api "repos/${tap}/pulls/${pr}" 2>/dev/null || true)"
               if [ -n "${pr_state}" ] \
@@ -1402,7 +1402,28 @@ jobs:
                   echo "::error::${tap}#${pr} carries ${failed} failing check(s) at ${head}; refusing to merge it"
                   return 1
                 fi
-                if [ -n "${total}" ] && [ "${failed}" -eq 0 ] \
+                # Legacy commit STATUSES are a second, separate gate, and a
+                # required one can live there: the tap's heads carry a
+                # `CodeRabbit` status that no check-run read can see. Merging
+                # on check runs alone would walk straight past it.
+                #
+                # One context is deliberately excluded — a review provider
+                # reporting its own rate or quota limit. That describes the
+                # provider's billing state, not this cask, and letting it block
+                # here would reintroduce the very "an unrelated external quota
+                # strands a release" failure this helper exists to remove.
+                # Everything else that is not `success`, PENDING INCLUDED, is
+                # waited for.
+                statuses="$(gh api "repos/${tap}/commits/${head}/status" 2>/dev/null || true)"
+                blocking="$(printf '%s' "${statuses}" | jq -r '
+                  [.statuses[]
+                   | select(.state != "success")
+                   | select((((.description // "") + " " + (.context // ""))
+                             | test("rate limit|quota"; "i")) | not)]
+                  | length' 2>/dev/null || true)"
+                case "${blocking}" in '' | *[!0-9]*) blocking="" ;; esac
+                if [ -n "${total}" ] && [ -n "${blocking}" ] && [ "${failed}" -eq 0 ] \
+                   && [ "${blocking}" -eq 0 ] \
                    && [ "${total}" -gt 0 ] && [ "${unfinished}" -eq 0 ]; then
                   if gh api -X PUT "repos/${tap}/pulls/${pr}/merge" \
                        -f merge_method=squash -f sha="${head}" >/dev/null 2>&1; then

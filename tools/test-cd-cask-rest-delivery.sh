@@ -46,6 +46,11 @@ reset_mocks() {
 	mock_merge_rc=0
 	mock_pr_state='{"merged":false,"head":{"sha":"cafe1234cafe1234cafe1234cafe1234cafe1234"}}'
 	mock_checks=()
+	# NOT named `statuses`: the helper declares `local statuses`, and bash's
+	# dynamic scoping would make the stub read the caller's empty local instead
+	# of this fixture. Every mock here carries the `mock_` prefix for that
+	# reason — the same trap silently blanked `pr_state` while this was written.
+	mock_statuses='{"state":"success","statuses":[{"context":"CodeRabbit","state":"success","description":"review complete"}]}'
 }
 
 sleep() {
@@ -84,6 +89,10 @@ gh() {
 			idx=$((${#mock_checks[@]} - 1))
 		fi
 		[ "${#mock_checks[@]}" -gt 0 ] && printf '%s\n' "${mock_checks[idx]}"
+		return 0
+	fi
+	if [[ "${path}" == */status ]]; then
+		printf '%s\n' "${mock_statuses}"
 		return 0
 	fi
 	if [[ "${path}" == */pulls/* ]]; then
@@ -231,6 +240,52 @@ if merge_cask_pr_when_green "${tap}" 1337 >/dev/null 2>&1; then
 	fail "an unreadable check payload was treated as green"
 fi
 [ "$(merge_calls)" -eq 0 ] || fail "an unreadable payload must not reach a merge"
+
+# Legacy commit statuses gate the merge too. A required status lives on this
+# surface (the tap's heads carry one), and check runs cannot see it — so a
+# non-success status must hold the merge back even when every check run is
+# green.
+reset_mocks
+mock_checks=("${green_checks}")
+mock_statuses='{"state":"failure","statuses":[{"context":"tap/audit","state":"failure","description":"cask audit failed"}]}'
+if merge_cask_pr_when_green "${tap}" 1337 >/dev/null 2>&1; then
+	fail "a head whose legacy status had failed was merged"
+fi
+[ "$(merge_calls)" -eq 0 ] || fail "a failing legacy status must block the merge"
+
+reset_mocks
+mock_checks=("${green_checks}")
+mock_statuses='{"state":"pending","statuses":[{"context":"tap/audit","state":"pending","description":"queued"}]}'
+if merge_cask_pr_when_green "${tap}" 1337 >/dev/null 2>&1; then
+	fail "a head with a pending legacy status was merged"
+fi
+[ "$(merge_calls)" -eq 0 ] || fail "a pending legacy status must be waited for"
+
+# ...except a review provider reporting ITS OWN quota, which describes the
+# provider's billing state rather than this cask. Letting that block delivery
+# would reintroduce the exact failure this whole helper exists to remove.
+reset_mocks
+mock_checks=("${green_checks}")
+mock_statuses='{"state":"failure","statuses":[{"context":"CodeRabbit","state":"failure","description":"Review rate limit exceeded"}]}'
+merge_cask_pr_when_green "${tap}" 1337 >/dev/null \
+	|| fail "a review provider's own rate-limit status blocked delivery"
+[ "$(merge_calls)" -eq 1 ] || fail "the quota-status carve-out did not reach a merge"
+
+# A head with no legacy statuses at all is not blocked by their absence.
+reset_mocks
+mock_checks=("${green_checks}")
+mock_statuses='{"state":"pending","statuses":[]}'
+merge_cask_pr_when_green "${tap}" 1337 >/dev/null \
+	|| fail "a head carrying no legacy statuses was treated as blocked"
+
+# An unreadable status payload fails closed, like an unreadable check payload.
+reset_mocks
+mock_checks=("${green_checks}")
+mock_statuses='not json at all'
+if merge_cask_pr_when_green "${tap}" 1337 >/dev/null 2>&1; then
+	fail "an unreadable status payload was treated as green"
+fi
+[ "$(merge_calls)" -eq 0 ] || fail "an unreadable status payload must not reach a merge"
 
 # An already-merged PR is delivered, not merged twice.
 reset_mocks
