@@ -8,5 +8,5 @@
 		"Still open: the game does not yet notice if you edit the same character in two places at once and save the older of the two. Ordering the writes cannot catch that on its own, and it is tracked separately."
 	],
 	"title": "Your character cannot be quietly overwritten by a second copy of the game",
-	"version": "0.65.1"
+	"version": "0.65.3"
 }

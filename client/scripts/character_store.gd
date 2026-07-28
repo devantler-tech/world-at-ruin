@@ -337,15 +337,23 @@ static func clear() -> void:
 	# Deleting is a write, and the most destructive one, so it takes the same lock
 	# as every other writer: removing the file while a second client is mid-write
 	# would strand that write's rename over a path it no longer owns.
-	#
-	# No ownership re-proof before the delete, unlike [method _save_to_locked].
-	# That check guards a gap the save genuinely has — it serialises a whole
-	# document between acquiring and renaming, which is time enough for a holder
-	# that outlived the stale timeout to be reclaimed. Here the acquire and the
-	# delete are adjacent syscalls, so there is no such gap to guard.
 	if not FileLock.acquire(path):
 		push_error(
 			"CharacterStore: refusing to delete %s — another process holds the write lock" % path)
+		return
+	# Prove we still hold the lock, exactly as [method _save_to_locked] does before
+	# its rename. The gap here is far narrower — acquire and delete are adjacent,
+	# where the save serialises a whole document in between — so this is defence in
+	# depth rather than a window anyone has measured. It is kept because "too fast
+	# to matter" is an argument that rots: it becomes invisibly untrue the moment
+	# anything is inserted between these two lines, and what it would cost is
+	# deleting a character while its legitimate new holder is mid-write. Releasing
+	# on this path matters as much as the check — an early return that kept the lock
+	# would wedge every later write for the whole stale timeout.
+	if not FileLock.owns(path):
+		push_error(
+			"CharacterStore: lost the write lock for %s — refusing to delete it" % path)
+		FileLock.release(path)
 		return
 	if exists():
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
