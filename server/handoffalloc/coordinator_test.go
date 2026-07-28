@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -30,15 +31,46 @@ const (
 var testNow = time.Unix(2_000_000_000, 123_456_789).UTC()
 
 type memoryStorage struct {
-	objects   map[string]*api.StorageObject
-	version   int
-	readErr   error
-	writeErr  error
-	deleteErr error
+	objects    map[string]*api.StorageObject
+	version    int
+	readErr    error
+	writeErr   error
+	writeErrAt int
+	deleteErr  error
 }
 
 func newMemoryStorage() *memoryStorage {
 	return &memoryStorage{objects: make(map[string]*api.StorageObject)}
+}
+
+func (s *memoryStorage) StorageList(
+	_ context.Context,
+	_ string,
+	userID string,
+	collection string,
+	_ int,
+	_ string,
+) ([]*api.StorageObject, string, error) {
+	if s.readErr != nil {
+		return nil, "", s.readErr
+	}
+	objects := make([]*api.StorageObject, 0, len(s.objects))
+	for _, object := range s.objects {
+		if object.GetUserId() == userID &&
+			object.GetCollection() == collection {
+			cloned, ok := proto.Clone(object).(*api.StorageObject)
+			if !ok {
+				return nil, "", errors.New(
+					"test storage: cloned object has an unexpected type",
+				)
+			}
+			objects = append(objects, cloned)
+		}
+	}
+	sort.Slice(objects, func(left, right int) bool {
+		return objects[left].GetKey() < objects[right].GetKey()
+	})
+	return objects, "", nil
 }
 
 func (s *memoryStorage) StorageRead(
@@ -70,6 +102,10 @@ func (s *memoryStorage) StorageWrite(
 ) ([]*api.StorageObjectAck, error) {
 	if s.writeErr != nil {
 		return nil, s.writeErr
+	}
+	if s.writeErrAt > 0 && s.version+1 == s.writeErrAt {
+		s.writeErrAt = 0
+		return nil, errors.New("test storage: injected write failure")
 	}
 	if len(writes) != 1 {
 		return nil, errors.New("test storage: expected one write")
@@ -139,6 +175,7 @@ type recordingResources struct {
 	releases               []nakamalease.Lease
 	events                 []string
 	provisionErr           error
+	provisionCheck         func(handoff.AllocationRequest, time.Time) error
 	resolveErr             error
 	releaseErr             error
 	stagedOnProvisionError bool
@@ -149,10 +186,15 @@ type recordingResources struct {
 func (r *recordingResources) Provision(
 	_ context.Context,
 	request handoff.AllocationRequest,
-	_ time.Time,
+	expiresAt time.Time,
 ) (Provisioned, error) {
 	r.provisions = append(r.provisions, request)
 	r.events = append(r.events, "provision:"+request.AttemptID)
+	if r.provisionCheck != nil {
+		if err := r.provisionCheck(request, expiresAt); err != nil {
+			return Provisioned{}, err
+		}
+	}
 	if r.provisionErr != nil {
 		if r.stagedOnProvisionError {
 			return r.provisioned, r.provisionErr
@@ -328,6 +370,133 @@ func TestAllocateReturnsOnlyAfterTheAttemptLeaseIsDurable(t *testing.T) {
 	}
 	if len(resources.releases) != 0 {
 		t.Fatalf("released successful allocation = %+v, want none", resources.releases)
+	}
+}
+
+func TestAllocatePersistsARecoverableIntentBeforeProvisioning(t *testing.T) {
+	storage := newMemoryStorage()
+	store := newLeaseStore(t, storage)
+	resources := &recordingResources{
+		provisioned: Provisioned{
+			Allocation: validAllocation(),
+			SecretRef:  "zone-admission-gameserver-17",
+		},
+	}
+	resources.provisionCheck = func(
+		request handoff.AllocationRequest,
+		expiresAt time.Time,
+	) error {
+		durable, err := store.Load(
+			context.Background(),
+			request.UserID,
+			request.ReservationID,
+		)
+		switch {
+		case err != nil:
+			return fmt.Errorf("load staging intent before provision: %w", err)
+		case durable.State(testNow) != nakamalease.StateStaging:
+			return fmt.Errorf(
+				"pre-provision state = %q, want %q",
+				durable.State(testNow),
+				nakamalease.StateStaging,
+			)
+		case durable.Lease.AttemptID != request.AttemptID ||
+			!durable.Lease.ExpiresAt.Equal(expiresAt):
+			return fmt.Errorf(
+				"pre-provision intent = %+v, want exact attempt and expiry",
+				durable.Lease,
+			)
+		case durable.Lease.AllocationID != "" ||
+			durable.Lease.Observer != 0 ||
+			durable.Lease.SecretRef != "":
+			return fmt.Errorf(
+				"pre-provision intent contains resource material: %+v",
+				durable.Lease,
+			)
+		default:
+			return nil
+		}
+	}
+	coordinator, err := NewCoordinator(
+		resources,
+		store,
+		Config{
+			LeaseTTL: time.Minute,
+			Now:      func() time.Time { return testNow },
+		},
+	)
+	if err != nil {
+		t.Fatalf("NewCoordinator returned an error: %v", err)
+	}
+
+	if _, err := coordinator.Allocate(
+		context.Background(),
+		validRequest(),
+	); err != nil {
+		t.Fatalf("Allocate returned an error: %v", err)
+	}
+}
+
+func TestAllocateRecoversAStagingIntentAfterProcessRestart(t *testing.T) {
+	storage := newMemoryStorage()
+	store := newLeaseStore(t, storage)
+	staging := nakamalease.Lease{
+		UserID:        testUserID,
+		ReservationID: testReservationID,
+		AttemptID:     testAttemptID,
+		ExpiresAt:     testNow.Add(time.Minute),
+		Staging:       true,
+	}
+	before, err := store.Create(context.Background(), staging)
+	if err != nil {
+		t.Fatalf("create crash-surviving staging intent: %v", err)
+	}
+	resources := &recordingResources{
+		provisioned: Provisioned{
+			Allocation: validAllocation(),
+			SecretRef:  "zone-admission-gameserver-17",
+		},
+	}
+	coordinator, err := NewCoordinator(
+		resources,
+		store,
+		Config{
+			LeaseTTL: time.Minute,
+			Now:      func() time.Time { return testNow },
+		},
+	)
+	if err != nil {
+		t.Fatalf("NewCoordinator returned an error: %v", err)
+	}
+
+	got, err := coordinator.Allocate(context.Background(), validRequest())
+	if err != nil {
+		t.Fatalf("recovered Allocate returned an error: %v", err)
+	}
+	if !reflect.DeepEqual(got, validAllocation()) {
+		t.Fatalf("recovered allocation = %+v, want %+v", got, validAllocation())
+	}
+	after, err := store.Load(
+		context.Background(),
+		testUserID,
+		testReservationID,
+	)
+	if err != nil {
+		t.Fatalf("load finalized recovered intent: %v", err)
+	}
+	if after.Version == before.Version ||
+		after.Lease.Staging ||
+		after.Lease.AllocationID != validAllocation().ID {
+		t.Fatalf(
+			"recovered durable lease = %+v, want finalized newer record",
+			after,
+		)
+	}
+	if len(resources.provisions) != 1 {
+		t.Fatalf(
+			"recovered intent provisions = %d, want one idempotent replay",
+			len(resources.provisions),
+		)
 	}
 }
 
@@ -583,6 +752,52 @@ func TestAllocateNewAttemptReleasesAndReplacesTheUnclaimedLease(t *testing.T) {
 	}
 }
 
+func TestAllocateDetachesSupersededResourceCleanupFromCallerCancellation(t *testing.T) {
+	storage := newMemoryStorage()
+	store := newLeaseStore(t, storage)
+	resources := &recordingResources{
+		provisioned: Provisioned{
+			Allocation: validAllocation(),
+			SecretRef:  "zone-admission-gameserver-17",
+		},
+	}
+	coordinator, err := NewCoordinator(
+		resources,
+		store,
+		Config{
+			LeaseTTL: time.Minute,
+			Now:      func() time.Time { return testNow },
+		},
+	)
+	if err != nil {
+		t.Fatalf("NewCoordinator returned an error: %v", err)
+	}
+	if _, err := coordinator.Allocate(context.Background(), validRequest()); err != nil {
+		t.Fatalf("first Allocate returned an error: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	resources.releaseContextCheck = func(cleanupCtx context.Context) error {
+		cancel()
+		return cleanupCtx.Err()
+	}
+	next := validRequest()
+	next.AttemptID = "attempt-8"
+	resources.provisioned.Allocation.ID = "gameserver-18"
+	resources.provisioned.SecretRef = "zone-admission-gameserver-18"
+
+	if _, err := coordinator.Allocate(ctx, next); errors.Is(err, ErrReconciliation) {
+		t.Fatalf("caller cancellation prevented durable resource cleanup: %v", err)
+	}
+	if len(resources.releases) != 1 ||
+		resources.releases[0].AttemptID != testAttemptID ||
+		!resources.releases[0].Releasing {
+		t.Fatalf(
+			"detached cleanup releases = %+v, want exact releasing predecessor",
+			resources.releases,
+		)
+	}
+}
+
 func TestAllocateNewAttemptCannotTouchAClaimedLease(t *testing.T) {
 	storage := newMemoryStorage()
 	store := newLeaseStore(t, storage)
@@ -747,25 +962,12 @@ func TestAllocateLeaseWriteFailureReleasesOnlyTheStagedResource(t *testing.T) {
 	if !reflect.DeepEqual(got, handoff.Allocation{}) {
 		t.Fatalf("Allocate storage failure returned %+v, want zero allocation", got)
 	}
-	if !reflect.DeepEqual(
-		resources.events,
-		[]string{"provision:attempt-7", "release:attempt-7"},
-	) {
+	if len(resources.events) != 0 || len(resources.releases) != 0 {
 		t.Fatalf(
-			"storage failure resource order = %v, want staged provision then release",
+			"failed staging write touched external resources: events=%v releases=%+v",
 			resources.events,
+			resources.releases,
 		)
-	}
-	if len(resources.releases) != 1 {
-		t.Fatalf("released staged resources = %+v, want one", resources.releases)
-	}
-	staged := resources.releases[0]
-	if staged.UserID != testUserID ||
-		staged.ReservationID != testReservationID ||
-		staged.AttemptID != testAttemptID ||
-		staged.AllocationID != "gameserver-17" ||
-		staged.SecretRef != "zone-admission-gameserver-17" {
-		t.Fatalf("released staged lease = %+v, want exact attempted resource", staged)
 	}
 	for _, leaked := range []string{
 		testReservationID,
@@ -814,12 +1016,9 @@ func TestAllocateCleansAStagedResourceAfterTheRequestIsCanceled(t *testing.T) {
 	if !reflect.DeepEqual(got, handoff.Allocation{}) {
 		t.Fatalf("canceled Allocate returned %+v, want zero allocation", got)
 	}
-	if !reflect.DeepEqual(
-		resources.events,
-		[]string{"provision:attempt-7", "release:attempt-7"},
-	) {
+	if len(resources.events) != 0 {
 		t.Fatalf(
-			"canceled storage failure resource order = %v, want staged cleanup",
+			"canceled staging write touched external resources: %v",
 			resources.events,
 		)
 	}
@@ -853,8 +1052,14 @@ func TestAllocateProvisionFailurePreservesStatusWithoutBackendText(t *testing.T)
 	if !reflect.DeepEqual(got, handoff.Allocation{}) {
 		t.Fatalf("provision failure returned %+v, want zero allocation", got)
 	}
-	if len(resources.releases) != 0 {
-		t.Fatalf("provision failure released nonexistent resource: %+v", resources.releases)
+	if len(resources.releases) != 1 ||
+		resources.releases[0].AttemptID != testAttemptID ||
+		!resources.releases[0].Staging ||
+		!resources.releases[0].Releasing {
+		t.Fatalf(
+			"provision failure did not reconcile durable attempt: %+v",
+			resources.releases,
+		)
 	}
 	for _, leaked := range []string{testReservationID, testAttemptID} {
 		if strings.Contains(err.Error(), leaked) {
@@ -915,6 +1120,53 @@ func TestAllocateProvisionFailureReclaimsTheReportedStagedResource(t *testing.T)
 	}
 }
 
+func TestAllocatePersistsTheCanonicalExpiryReturnedByAnIdempotentResource(t *testing.T) {
+	storage := newMemoryStorage()
+	store := newLeaseStore(t, storage)
+	allocation := validAllocation()
+	allocation.LeaseExpiresAt = testNow.Add(59 * time.Second)
+	resources := &recordingResources{
+		provisioned: Provisioned{
+			Allocation: allocation,
+			SecretRef:  "zone-admission-gameserver-17",
+		},
+	}
+	coordinator, err := NewCoordinator(
+		resources,
+		store,
+		Config{
+			LeaseTTL: time.Minute,
+			Now:      func() time.Time { return testNow },
+		},
+	)
+	if err != nil {
+		t.Fatalf("NewCoordinator returned an error: %v", err)
+	}
+
+	got, err := coordinator.Allocate(context.Background(), validRequest())
+	if err != nil {
+		t.Fatalf("Allocate returned an error: %v", err)
+	}
+	if !got.LeaseExpiresAt.Equal(allocation.LeaseExpiresAt) {
+		t.Fatalf(
+			"returned expiry = %s, want canonical resource expiry %s",
+			got.LeaseExpiresAt,
+			allocation.LeaseExpiresAt,
+		)
+	}
+	record, err := store.Load(context.Background(), testUserID, testReservationID)
+	if err != nil {
+		t.Fatalf("load canonical allocation lease: %v", err)
+	}
+	if !record.Lease.ExpiresAt.Equal(allocation.LeaseExpiresAt) {
+		t.Fatalf(
+			"durable expiry = %s, want canonical resource expiry %s",
+			record.Lease.ExpiresAt,
+			allocation.LeaseExpiresAt,
+		)
+	}
+}
+
 func TestAllocateRefusesAProvisionedResourceWithADifferentLeaseExpiry(t *testing.T) {
 	storage := newMemoryStorage()
 	store := newLeaseStore(t, storage)
@@ -962,7 +1214,7 @@ func TestAllocateRefusesAProvisionedResourceWithADifferentLeaseExpiry(t *testing
 
 func TestAllocateFailsClosedWhenStagedCleanupCannotBeReconciled(t *testing.T) {
 	storage := newMemoryStorage()
-	storage.writeErr = errors.New("storage failed after an ambiguous write")
+	storage.writeErrAt = 2
 	store := newLeaseStore(t, storage)
 	resources := &recordingResources{
 		provisioned: Provisioned{
@@ -996,6 +1248,189 @@ func TestAllocateFailsClosedWhenStagedCleanupCannotBeReconciled(t *testing.T) {
 		if strings.Contains(err.Error(), leaked) {
 			t.Fatalf("ambiguous cleanup leaked %q: %v", leaked, err)
 		}
+	}
+}
+
+func TestReconcileExpiredReclaimsTheExactNoShowAllocation(t *testing.T) {
+	storage := newMemoryStorage()
+	store := newLeaseStore(t, storage)
+	now := testNow
+	resources := &recordingResources{
+		provisioned: Provisioned{
+			Allocation: validAllocation(),
+			SecretRef:  "zone-admission-gameserver-17",
+		},
+	}
+	coordinator, err := NewCoordinator(
+		resources,
+		store,
+		Config{
+			LeaseTTL: time.Minute,
+			Now:      func() time.Time { return now },
+		},
+	)
+	if err != nil {
+		t.Fatalf("NewCoordinator returned an error: %v", err)
+	}
+	if _, err := coordinator.Allocate(
+		context.Background(),
+		validRequest(),
+	); err != nil {
+		t.Fatalf("Allocate returned an error: %v", err)
+	}
+	resources.releases = nil
+	resources.events = nil
+	now = testNow.Add(time.Minute)
+
+	if err := coordinator.ReconcileExpired(context.Background()); err != nil {
+		t.Fatalf("ReconcileExpired returned an error: %v", err)
+	}
+	if len(resources.releases) != 1 {
+		t.Fatalf(
+			"expired allocation releases = %+v, want one",
+			resources.releases,
+		)
+	}
+	released := resources.releases[0]
+	if released.UserID != "" ||
+		released.ReservationID != "" ||
+		released.AttemptID != testAttemptID ||
+		released.AllocationID != validAllocation().ID ||
+		released.SecretRef != "zone-admission-gameserver-17" ||
+		!released.Releasing {
+		t.Fatalf(
+			"expired cleanup lease = %+v, want exact persisted resource without raw identity",
+			released,
+		)
+	}
+	if _, err := store.Load(
+		context.Background(),
+		testUserID,
+		testReservationID,
+	); !errors.Is(err, nakamalease.ErrNotFound) {
+		t.Fatalf("expired lease after reconciliation = %v, want ErrNotFound", err)
+	}
+}
+
+func TestReconcileExpiredRecoversACrashedPreProvisionAttempt(t *testing.T) {
+	storage := newMemoryStorage()
+	store := newLeaseStore(t, storage)
+	now := testNow.Add(time.Minute)
+	staging := nakamalease.Lease{
+		UserID:        testUserID,
+		ReservationID: testReservationID,
+		AttemptID:     testAttemptID,
+		ExpiresAt:     testNow.Add(time.Minute),
+		Staging:       true,
+	}
+	if _, err := store.Create(context.Background(), staging); err != nil {
+		t.Fatalf("create crash-surviving staging intent: %v", err)
+	}
+	resources := &recordingResources{}
+	coordinator, err := NewCoordinator(
+		resources,
+		store,
+		Config{
+			LeaseTTL: time.Minute,
+			Now:      func() time.Time { return now },
+		},
+	)
+	if err != nil {
+		t.Fatalf("NewCoordinator returned an error: %v", err)
+	}
+
+	if err := coordinator.ReconcileExpired(context.Background()); err != nil {
+		t.Fatalf("ReconcileExpired returned an error: %v", err)
+	}
+	if len(resources.releases) != 1 ||
+		resources.releases[0].AttemptID != testAttemptID ||
+		!resources.releases[0].Staging ||
+		!resources.releases[0].Releasing ||
+		resources.releases[0].AllocationID != "" {
+		t.Fatalf(
+			"crashed-attempt cleanup = %+v, want discoverable staging attempt",
+			resources.releases,
+		)
+	}
+	if _, err := store.Load(
+		context.Background(),
+		testUserID,
+		testReservationID,
+	); !errors.Is(err, nakamalease.ErrNotFound) {
+		t.Fatalf("staging lease after reconciliation = %v, want ErrNotFound", err)
+	}
+}
+
+func TestReconcileExpiredCannotReclaimAClaimedAllocation(t *testing.T) {
+	storage := newMemoryStorage()
+	store := newLeaseStore(t, storage)
+	now := testNow
+	resources := &recordingResources{
+		provisioned: Provisioned{
+			Allocation: validAllocation(),
+			SecretRef:  "zone-admission-gameserver-17",
+		},
+	}
+	coordinator, err := NewCoordinator(
+		resources,
+		store,
+		Config{
+			LeaseTTL: time.Minute,
+			Now:      func() time.Time { return now },
+		},
+	)
+	if err != nil {
+		t.Fatalf("NewCoordinator returned an error: %v", err)
+	}
+	if _, err := coordinator.Allocate(
+		context.Background(),
+		validRequest(),
+	); err != nil {
+		t.Fatalf("Allocate returned an error: %v", err)
+	}
+	current, err := store.Load(
+		context.Background(),
+		testUserID,
+		testReservationID,
+	)
+	if err != nil {
+		t.Fatalf("load allocation lease: %v", err)
+	}
+	claimed, err := store.Claim(
+		context.Background(),
+		current,
+		testAttemptID,
+		testNow.Add(30*time.Second),
+	)
+	if err != nil {
+		t.Fatalf("claim allocation lease: %v", err)
+	}
+	resources.releases = nil
+	now = testNow.Add(time.Minute)
+
+	if err := coordinator.ReconcileExpired(context.Background()); err != nil {
+		t.Fatalf("ReconcileExpired returned an error: %v", err)
+	}
+	if len(resources.releases) != 0 {
+		t.Fatalf(
+			"expiry reconciliation released claimed resources: %+v",
+			resources.releases,
+		)
+	}
+	after, err := store.Load(
+		context.Background(),
+		testUserID,
+		testReservationID,
+	)
+	if err != nil {
+		t.Fatalf("load claimed lease after reconciliation: %v", err)
+	}
+	if after != claimed {
+		t.Fatalf(
+			"expiry reconciliation changed claimed lease from %+v to %+v",
+			claimed,
+			after,
+		)
 	}
 }
 
@@ -1215,11 +1650,8 @@ func TestReleaseStaleAttemptCannotTouchTheCurrentResource(t *testing.T) {
 	stale := validRequest()
 	stale.AttemptID = "attempt-older"
 
-	if err := coordinator.Release(
-		context.Background(),
-		stale,
-	); !errors.Is(err, nakamalease.ErrStaleAttempt) {
-		t.Fatalf("stale Release error = %v, want ErrStaleAttempt", err)
+	if err := coordinator.Release(context.Background(), stale); err != nil {
+		t.Fatalf("stale Release error = %v, want successful no-op", err)
 	}
 	if len(resources.events) != 0 {
 		t.Fatalf("stale Release touched resources: %v", resources.events)

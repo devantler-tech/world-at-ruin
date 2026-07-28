@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -34,6 +35,7 @@ type memoryStorage struct {
 	deletes                []*runtime.StorageDelete
 	version                int
 	readErr                error
+	listErr                error
 	writeErr               error
 	deleteErr              error
 	createConflictMutation func(map[string]*api.StorageObject, string)
@@ -75,6 +77,32 @@ func newMemoryStorage() *memoryStorage {
 	return &memoryStorage{
 		objects: make(map[string]*api.StorageObject),
 	}
+}
+
+func (s *memoryStorage) StorageList(
+	_ context.Context,
+	_ string,
+	userID string,
+	collection string,
+	_ int,
+	_ string,
+) ([]*api.StorageObject, string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.listErr != nil {
+		return nil, "", s.listErr
+	}
+	objects := make([]*api.StorageObject, 0, len(s.objects))
+	for _, object := range s.objects {
+		if object.GetUserId() == userID &&
+			object.GetCollection() == collection {
+			objects = append(objects, cloneStorageObject(object))
+		}
+	}
+	sort.Slice(objects, func(left, right int) bool {
+		return objects[left].GetKey() < objects[right].GetKey()
+	})
+	return objects, "", nil
 }
 
 func (s *memoryStorage) StorageRead(
@@ -451,6 +479,50 @@ func TestConcurrentIdenticalCreateReconcilesTheDurableWinner(t *testing.T) {
 		t.Fatalf(
 			"concurrent create writes = %d, want one winner and one conflict",
 			len(storage.writes),
+		)
+	}
+}
+
+func TestConcurrentStagingCreateReusesTheDurableWinnerExpiry(t *testing.T) {
+	storage := newCreateRaceStorage()
+	store, err := NewStore(storage)
+	if err != nil {
+		t.Fatalf("NewStore returned an error: %v", err)
+	}
+	staging := validLease()
+	staging.AllocationID = ""
+	staging.Observer = 0
+	staging.SecretRef = ""
+	staging.Staging = true
+	candidates := []Lease{staging, staging}
+	candidates[1].ExpiresAt = candidates[1].ExpiresAt.Add(time.Nanosecond)
+	records := make([]Record, len(candidates))
+	errs := make([]error, len(candidates))
+	var creates sync.WaitGroup
+	creates.Add(len(candidates))
+	for i := range candidates {
+		go func() {
+			defer creates.Done()
+			records[i], errs[i] = store.Create(
+				context.Background(),
+				candidates[i],
+			)
+		}()
+	}
+	creates.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent staging Create %d returned an error: %v", i, err)
+		}
+	}
+	if records[0] != records[1] ||
+		!records[0].Lease.Staging ||
+		records[0].Lease.AttemptID != testAttemptID {
+		t.Fatalf(
+			"concurrent staging records = %+v and %+v, want one durable intent",
+			records[0],
+			records[1],
 		)
 	}
 }
@@ -1107,6 +1179,35 @@ func TestClaimRejectsAStaleAttemptWithoutWriting(t *testing.T) {
 	}
 	if len(storage.writes) != 1 {
 		t.Fatalf("storage writes after stale claim = %d, want 1", len(storage.writes))
+	}
+}
+
+func TestClaimRejectsAStagingIntentWithoutWriting(t *testing.T) {
+	storage := newMemoryStorage()
+	store, err := NewStore(storage)
+	if err != nil {
+		t.Fatalf("NewStore returned an error: %v", err)
+	}
+	staging := validLease()
+	staging.AllocationID = ""
+	staging.Observer = 0
+	staging.SecretRef = ""
+	staging.Staging = true
+	current, err := store.Create(context.Background(), staging)
+	if err != nil {
+		t.Fatalf("Create staging intent returned an error: %v", err)
+	}
+
+	if _, err := store.Claim(
+		context.Background(),
+		current,
+		testAttemptID,
+		staging.ExpiresAt.Add(-time.Second),
+	); !errors.Is(err, ErrStaging) {
+		t.Fatalf("Claim staging intent error = %v, want ErrStaging", err)
+	}
+	if len(storage.writes) != 1 {
+		t.Fatalf("claim staging writes = %d, want only the create", len(storage.writes))
 	}
 }
 

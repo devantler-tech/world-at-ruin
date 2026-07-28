@@ -18,7 +18,11 @@ const (
 	DefaultLeaseTTL = 2 * time.Minute
 	// MaxLeaseTTL bounds the lifetime of resources that never complete
 	// admission.
-	MaxLeaseTTL          = 10 * time.Minute
+	MaxLeaseTTL = 10 * time.Minute
+	// DefaultSweepInterval bounds how long an expired durable attempt waits
+	// before the supervised reconciler retries exact cleanup.
+	DefaultSweepInterval = 15 * time.Second
+
 	stagedCleanupTimeout = 5 * time.Second
 )
 
@@ -43,10 +47,13 @@ type Provisioned struct {
 }
 
 // GameServerResources owns the external GameServer and admission-secret
-// lifecycle. Provision reports any resource staged before an error so the
-// coordinator can reclaim it. Resolve must return the exact durable resource,
-// while Release must be idempotent for that exact resource. Its concrete Agones
-// and Kubernetes implementation is a later server-foundation child.
+// lifecycle. Provision is idempotent by AttemptID and reports any resource
+// staged before an error so the coordinator can reclaim it. Resolve must return
+// the exact durable resource, while Release must be idempotent for that exact
+// resource. Its concrete Agones and Kubernetes implementation is a later
+// server-foundation child. Release must also discover an attempt from AttemptID
+// alone when a staging lease has no allocation material yet; this makes a crash
+// after Provision recoverable.
 type GameServerResources interface {
 	Provision(context.Context, handoff.AllocationRequest, time.Time) (Provisioned, error)
 	Resolve(context.Context, nakamalease.Lease) (handoff.Allocation, error)
@@ -55,16 +62,18 @@ type GameServerResources interface {
 
 // Config sets the unclaimed allocation lease policy.
 type Config struct {
-	LeaseTTL time.Duration
-	Now      func() time.Time
+	LeaseTTL      time.Duration
+	SweepInterval time.Duration
+	Now           func() time.Time
 }
 
 // Coordinator makes external GameServer resources durable through Nakama.
 type Coordinator struct {
-	resources GameServerResources
-	leases    *nakamalease.Store
-	leaseTTL  time.Duration
-	now       func() time.Time
+	resources     GameServerResources
+	leases        *nakamalease.Store
+	leaseTTL      time.Duration
+	sweepInterval time.Duration
+	now           func() time.Time
 }
 
 // NewCoordinator builds a durable handoff allocation coordinator.
@@ -88,15 +97,28 @@ func NewCoordinator(
 			"handoff allocation: lease TTL must be between one second and ten minutes",
 		)
 	}
+	sweepInterval := cfg.SweepInterval
+	if sweepInterval == 0 {
+		sweepInterval = DefaultSweepInterval
+		if leaseTTL < sweepInterval {
+			sweepInterval = leaseTTL
+		}
+	}
+	if sweepInterval < time.Second || sweepInterval > leaseTTL {
+		return nil, errors.New(
+			"handoff allocation: sweep interval must be between one second and the lease TTL",
+		)
+	}
 	now := cfg.Now
 	if now == nil {
 		now = time.Now
 	}
 	return &Coordinator{
-		resources: resources,
-		leases:    leases,
-		leaseTTL:  leaseTTL,
-		now:       now,
+		resources:     resources,
+		leases:        leases,
+		leaseTTL:      leaseTTL,
+		sweepInterval: sweepInterval,
+		now:           now,
 	}, nil
 }
 
@@ -114,7 +136,9 @@ func (c *Coordinator) Allocate(
 		current.Lease.AttemptID == request.AttemptID &&
 		current.Lease.Releasing:
 		return handoff.Allocation{}, nakamalease.ErrReleasing
-	case err == nil && current.Lease.AttemptID == request.AttemptID:
+	case err == nil &&
+		current.Lease.AttemptID == request.AttemptID &&
+		!current.Lease.Staging:
 		allocation, resolveErr := c.resources.Resolve(ctx, current.Lease)
 		if resolveErr != nil {
 			return handoff.Allocation{}, sanitizedResourceError(
@@ -126,12 +150,24 @@ func (c *Coordinator) Allocate(
 			return handoff.Allocation{}, ErrInvalidResource
 		}
 		return allocation, nil
+	case err == nil && current.Lease.AttemptID == request.AttemptID:
+		// Recover the durable staging intent by replaying the external
+		// operation with the same attempt and expiry.
 	case err == nil:
 	case errors.Is(err, nakamalease.ErrNotFound):
 	default:
 		return handoff.Allocation{}, err
 	}
-	if hasCurrent {
+	if hasCurrent &&
+		current.Lease.AttemptID == request.AttemptID &&
+		current.Lease.Staging &&
+		!now.Before(current.Lease.ExpiresAt) {
+		if releaseErr := c.reconcileAttempt(ctx, request, nil); releaseErr != nil {
+			return handoff.Allocation{}, ErrReconciliation
+		}
+		return handoff.Allocation{}, nakamalease.ErrExpired
+	}
+	if hasCurrent && current.Lease.AttemptID != request.AttemptID {
 		if current.State(now) == nakamalease.StateClaimed {
 			return handoff.Allocation{}, nakamalease.ErrClaimed
 		}
@@ -143,44 +179,118 @@ func (c *Coordinator) Allocate(
 		if err != nil {
 			return handoff.Allocation{}, err
 		}
-		if err := c.resources.Release(ctx, current.Lease); err != nil {
+		if err := c.releaseResource(ctx, current.Lease); err != nil {
 			return handoff.Allocation{}, ErrReconciliation
 		}
 	}
 
-	expiresAt := now.Add(c.leaseTTL)
-	provisioned, err := c.resources.Provision(ctx, request, expiresAt)
+	var staging nakamalease.Record
+	if current.Lease.AttemptID == request.AttemptID && current.Lease.Staging {
+		staging = current
+	} else {
+		stagingLease := nakamalease.Lease{
+			UserID:        request.UserID,
+			ReservationID: request.ReservationID,
+			AttemptID:     request.AttemptID,
+			ExpiresAt:     now.Add(c.leaseTTL),
+			Staging:       true,
+		}
+		if hasCurrent {
+			staging, err = c.leases.Replace(ctx, current, stagingLease)
+		} else {
+			staging, err = c.leases.Create(ctx, stagingLease)
+		}
+		if err != nil {
+			return handoff.Allocation{}, err
+		}
+	}
+
+	provisioned, err := c.resources.Provision(
+		ctx,
+		request,
+		staging.Lease.ExpiresAt,
+	)
 	if err != nil {
+		var staged *nakamalease.Lease
 		if hasReportedStagedResource(provisioned) {
-			staged := leaseFromProvisioned(request, provisioned, expiresAt)
-			if releaseErr := c.releaseStaged(ctx, staged); releaseErr != nil {
-				return handoff.Allocation{}, ErrReconciliation
-			}
+			stagedLease := leaseFromProvisioned(
+				request,
+				provisioned,
+				staging.Lease.ExpiresAt,
+			)
+			staged = &stagedLease
+		}
+		if releaseErr := c.reconcileAttempt(ctx, request, staged); releaseErr != nil {
+			return handoff.Allocation{}, ErrReconciliation
 		}
 		return handoff.Allocation{}, sanitizedResourceError(
 			err,
 			"handoff allocation: provision GameServer resource",
 		)
 	}
-	next := leaseFromProvisioned(request, provisioned, expiresAt)
-	if !matchesLease(provisioned.Allocation, next) {
-		if releaseErr := c.releaseStaged(ctx, next); releaseErr != nil {
+	resourceExpiry := provisioned.Allocation.LeaseExpiresAt
+	next := leaseFromProvisioned(request, provisioned, resourceExpiry)
+	if !resourceExpiry.After(now) ||
+		resourceExpiry.After(staging.Lease.ExpiresAt) {
+		if releaseErr := c.reconcileAttempt(ctx, request, &next); releaseErr != nil {
 			return handoff.Allocation{}, ErrReconciliation
 		}
 		return handoff.Allocation{}, ErrInvalidResource
 	}
-	if hasCurrent {
-		_, err = c.leases.Replace(ctx, current, next)
-	} else {
-		_, err = c.leases.Create(ctx, next)
+	if !matchesLease(provisioned.Allocation, next) {
+		if releaseErr := c.reconcileAttempt(ctx, request, &next); releaseErr != nil {
+			return handoff.Allocation{}, ErrReconciliation
+		}
+		return handoff.Allocation{}, ErrInvalidResource
 	}
+	_, err = c.leases.Finalize(ctx, staging, next)
 	if err != nil {
-		if releaseErr := c.releaseStaged(ctx, next); releaseErr != nil {
+		if releaseErr := c.reconcileAttempt(ctx, request, &next); releaseErr != nil {
 			return handoff.Allocation{}, ErrReconciliation
 		}
 		return handoff.Allocation{}, err
 	}
 	return provisioned.Allocation, nil
+}
+
+// ReconcileExpired reclaims every expired durable attempt visible in the
+// private lease collection. Exact-version fencing arbitrates with zone claim.
+func (c *Coordinator) ReconcileExpired(ctx context.Context) error {
+	err := c.leases.ReclaimExpired(
+		ctx,
+		c.now(),
+		func(reclaimCtx context.Context, lease nakamalease.Lease) error {
+			return c.releaseResource(reclaimCtx, lease)
+		},
+	)
+	if err != nil {
+		if errors.Is(err, context.Canceled) ||
+			errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
+		return ErrReconciliation
+	}
+	return nil
+}
+
+// RunExpiryReconciler supervises no-show cleanup until the host context ends.
+// A concrete Nakama composition must run this loop for the Allocator contract.
+func (c *Coordinator) RunExpiryReconciler(ctx context.Context) error {
+	if err := c.ReconcileExpired(ctx); err != nil {
+		return err
+	}
+	ticker := time.NewTicker(c.sweepInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			if err := c.ReconcileExpired(ctx); err != nil {
+				return err
+			}
+		}
+	}
 }
 
 func leaseFromProvisioned(
@@ -203,7 +313,7 @@ func hasReportedStagedResource(provisioned Provisioned) bool {
 	return provisioned.Allocation.ID != "" || provisioned.SecretRef != ""
 }
 
-func (c *Coordinator) releaseStaged(
+func (c *Coordinator) releaseResource(
 	ctx context.Context,
 	lease nakamalease.Lease,
 ) error {
@@ -213,6 +323,53 @@ func (c *Coordinator) releaseStaged(
 	)
 	defer cancel()
 	return c.resources.Release(cleanupCtx, lease)
+}
+
+func (c *Coordinator) reconcileAttempt(
+	ctx context.Context,
+	request handoff.AllocationRequest,
+	resource *nakamalease.Lease,
+) error {
+	current, err := c.leases.Load(ctx, request.UserID, request.ReservationID)
+	if errors.Is(err, nakamalease.ErrNotFound) {
+		if resource != nil {
+			return c.releaseResource(ctx, *resource)
+		}
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if current.Lease.AttemptID != request.AttemptID {
+		if resource != nil {
+			return c.releaseResource(ctx, *resource)
+		}
+		return nil
+	}
+	if current.State(c.now()) == nakamalease.StateClaimed {
+		return nakamalease.ErrClaimed
+	}
+	releasing, err := c.leases.BeginRelease(ctx, current, request.AttemptID)
+	if err != nil {
+		return err
+	}
+	releaseLease := releasing.Lease
+	if resource != nil {
+		releaseLease.AllocationID = resource.AllocationID
+		releaseLease.Observer = resource.Observer
+		releaseLease.SecretRef = resource.SecretRef
+		releaseLease.ExpiresAt = resource.ExpiresAt
+		releaseLease.Staging = false
+	}
+	if err := c.releaseResource(ctx, releaseLease); err != nil {
+		return err
+	}
+	return c.leases.Release(
+		ctx,
+		request.UserID,
+		request.ReservationID,
+		request.AttemptID,
+	)
 }
 
 func matchesLease(allocation handoff.Allocation, lease nakamalease.Lease) bool {
@@ -238,30 +395,11 @@ func (c *Coordinator) Release(
 	ctx context.Context,
 	request handoff.AllocationRequest,
 ) error {
-	current, err := c.leases.Load(ctx, request.UserID, request.ReservationID)
-	if errors.Is(err, nakamalease.ErrNotFound) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if current.Lease.AttemptID != request.AttemptID {
-		return nakamalease.ErrStaleAttempt
-	}
-	if current.State(c.now()) == nakamalease.StateClaimed {
-		return nakamalease.ErrClaimed
-	}
-	releasing, err := c.leases.BeginRelease(ctx, current, request.AttemptID)
-	if err != nil {
-		return err
-	}
-	if err := c.resources.Release(ctx, releasing.Lease); err != nil {
+	if err := c.reconcileAttempt(ctx, request, nil); err != nil {
+		if errors.Is(err, nakamalease.ErrClaimed) {
+			return err
+		}
 		return ErrReconciliation
 	}
-	return c.leases.Release(
-		ctx,
-		request.UserID,
-		request.ReservationID,
-		request.AttemptID,
-	)
+	return nil
 }
