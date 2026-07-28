@@ -374,15 +374,20 @@ static func _write_tmp_path(path: String) -> String:
 ## would leak a file into user:// on every occurrence.
 ##
 ## LOCK-gated like [method SaveVault._sweep_abandoned_writes], NOT age-gated like
-## [method CharacterStore._sweep_abandoned_writes], and which of the two applies
-## is a property of this file rather than a style choice. The character store
-## substitutes an age floor because it has no cross-process lock (#423); recovery
-## has one. [method save_state] is the only writer, it holds the lock for `path`
-## across the whole staging window, and the prefix scoping below means every file
-## this can delete was created by a build that takes that lock. Holding it
-## therefore proves no other lock-aware writer is inside its staging window, so
-## anything found here is finished or dead. Importing the age floor as well would
-## only delay reclamation without adding a guarantee.
+## [method CharacterStore._sweep_abandoned_writes]. Which of the two a writer owes
+## is decided by SHIPPING ORDER, not by taste, and getting it wrong deletes a live
+## write. An unconditional sweep is safe only while every build that can create a
+## file carrying this prefix also takes the lock.
+##
+## Here that holds: the lock shipped FIRST (#422) and private staging arrives after
+## it (#442), so no released build stages through this prefix without holding the
+## lock. [method save_state] is the only writer and holds it across the whole
+## staging window, so anything found here is finished or dead. The character store
+## is the mirror image — private staging shipped first (#434), its lock after
+## (#423) — so retained builds from that window stage through its prefix while
+## taking no lock, and only an age floor can tell those apart from a crash. That
+## is why its floor stays even once it holds the lock, and why importing it here
+## would delay reclamation without adding a guarantee.
 ##
 ## ⚠️ The one residual, the same wall the ownership proof documents: a holder that
 ## has outlived the stale timeout can be reclaimed, so its stage may be swept
