@@ -74,8 +74,10 @@ void fragment() {
 	float crack = 0.0;
 	float plate_fw = 0.0;
 	float crack_fw = 0.0;
+	vec2 plate_c1 = vec2(0.0);
+	vec2 plate_c2 = vec2(0.0);
 	if (plates_enabled) {
-		terrain_plates(plate_uv, plate_id, f1, f2, plate_id2);
+		terrain_plates(plate_uv, plate_id, f1, f2, plate_c1, plate_c2, plate_id2);
 		plate_fw = max(fwidth(plate_uv.x), fwidth(plate_uv.y));
 		plate_resolved = 1.0 - smoothstep(0.30, 0.85, plate_fw);
 		crack_fw = fwidth(f2 - f1);
@@ -180,17 +182,17 @@ void fragment() {
 	float hz = terrain_ground_noise(terrain_world_pos.xz + vec2(0.0, e), grain_scale);
 	vec2 grad = vec2(0.0);
 	if (plates_enabled) {
-		float crack_fixed = 1.0 - smoothstep(0.0, crack_width, f2 - f1);
-		vec2 duvdx = dFdx(plate_uv);
-		vec2 duvdy = dFdy(plate_uv);
-		float dcdx = dFdx(crack_fixed);
-		float dcdy = dFdy(crack_fixed);
-		float det = duvdx.x * duvdy.y - duvdx.y * duvdy.x;
-		float safe_det = abs(det) < 1e-8 ? 1e-8 : det;
-		grad = vec2(
-			dcdx * duvdy.y - dcdy * duvdx.y,
-			dcdy * duvdx.x - dcdx * duvdy.x
-		) / safe_det * plate_scale * plate_mask_relief;
+		// Same closed-form crack gradient as terrain.gdshader, for the same
+		// reason: differencing the crack field samples a step narrower than a
+		// pixel past a few metres, which IS the aliasing rather than a reading
+		// of it. grad(f2 - f1) = normalize(uv - c2) - normalize(uv - c1).
+		vec2 d1 = plate_uv - plate_c1;
+		vec2 d2 = plate_uv - plate_c2;
+		vec2 gsep = d2 * inversesqrt(max(dot(d2, d2), 1e-12))
+			- d1 * inversesqrt(max(dot(d1, d1), 1e-12));
+		float ct = clamp((f2 - f1) / max(crack_width, 1e-6), 0.0, 1.0);
+		float dcrack = -6.0 * ct * (1.0 - ct) / max(crack_width, 1e-6);
+		grad = gsep * dcrack * plate_scale * plate_mask_relief;
 		grad *= 1.0 - smoothstep(0.30, 0.85, plate_fw);
 		// Same crack-footprint dissolve as terrain.gdshader, for the same
 		// reason: `plate_fw` is a whole plate's footprint and cannot stand in

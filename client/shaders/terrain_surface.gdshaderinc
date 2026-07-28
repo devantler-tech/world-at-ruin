@@ -39,16 +39,34 @@ float terrain_ground_noise(vec2 xz, float scale) {
 	return terrain_fbm(vec3(xz.x, 0.0, xz.y) * scale);
 }
 
-// `id2` is the cell on the OTHER side of the nearest boundary — the plate this
-// fragment would have belonged to had it fallen a little further across. It is
-// tracked alongside `f2` (they are the same cell by definition: f2 is that
-// cell's centre distance) so a caller can antialias the step between the two
-// rather than taking the owning cell's value outright.
-void terrain_plates(vec2 uv, out vec2 id, out float f1, out float f2, out vec2 id2) {
+// The jittered-grid partition. `id` is the owning cell, `f1`/`f2` the two
+// nearest centre distances, and `c1`/`c2` the centres those are measured to.
+//
+// The centres are reported because the crack field's gradient is then available
+// in closed form: f1 = |uv - c1| and f2 = |uv - c2| are plain distances, so
+//
+//     grad(f2 - f1) = normalize(uv - c2) - normalize(uv - c1)
+//
+// exactly, with no screen derivative anywhere in it. A caller differencing the
+// crack field with dFdx/dFdy instead is sampling a step whose width can be far
+// under one pixel, and that is the aliasing rather than a measurement of it.
+// The search already computes both centres, so returning them costs two
+// out-parameters rather than another nine-cell evaluation.
+//
+// `id2` is the CELL those second-nearest values belong to — the plate this
+// fragment would have belonged to had it fallen a little further across. It
+// costs nothing extra for the same reason `c2` does (the search already knows
+// it), and it is what lets a caller average the substance step across the
+// boundary rather than taking the owning cell's value outright.
+void terrain_plates(
+		vec2 uv, out vec2 id, out float f1, out float f2,
+		out vec2 c1, out vec2 c2, out vec2 id2) {
 	vec2 base = floor(uv);
 	f1 = 1000.0;
 	f2 = 1000.0;
 	id = base;
+	c1 = base;
+	c2 = base;
 	id2 = base;
 	for (int j = -1; j <= 1; j++) {
 		for (int i = -1; i <= 1; i++) {
@@ -60,11 +78,14 @@ void terrain_plates(vec2 uv, out vec2 id, out float f1, out float f2, out vec2 i
 			float d = length(uv - centre);
 			if (d < f1) {
 				f2 = f1;
+				c2 = c1;
 				id2 = id;
 				f1 = d;
+				c1 = centre;
 				id = cell;
 			} else if (d < f2) {
 				f2 = d;
+				c2 = centre;
 				id2 = cell;
 			}
 		}

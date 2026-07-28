@@ -45,6 +45,20 @@ const CEILING_PATTERN := \
 const EDGE_BLEND_PATTERN := \
 	"terrain_plate_edge_blend\\(\\s*f1\\s*,\\s*f2\\s*,\\s*crack_fw\\s*\\*\\s*([0-9.]+)\\s*\\)"
 
+## A screen-space derivative taken OF a crack quantity — the form this must not
+## regress to. Deliberately anchored on the crack operand rather than on
+## `dFdx` alone: both shaders legitimately take derivatives of other things
+## (`fwidth(f2 - f1)` sets the albedo crack's width, `fwidth(ash_edge)` the ash
+## contact), and a bare `dFdx` search would condemn those too.
+const DIFFERENCED_CRACK_PATTERN := "dFd[xy]\\s*\\(\\s*crack"
+## The closed-form separator, `normalize(uv - c2) - normalize(uv - c1)`, written
+## as a pair of inversesqrt-scaled offsets so it is one expression rather than
+## two normalize() calls the optimiser may fold. Matched on its SHAPE — two
+## `inversesqrt(max(dot(...)))` scalings subtracted — so renaming the locals does
+## not fail the test while removing the construction does.
+const CLOSED_FORM_PATTERN := \
+	"inversesqrt\\(\\s*max\\(\\s*dot\\([^)]*\\)[^)]*\\)\\s*\\)\\s*\\n?\\s*-\\s*\\w+\\s*\\*\\s*inversesqrt"
+
 
 func _ready() -> void:
 	var ground := _shader_source(GROUND_SHADER_PATH)
@@ -139,7 +153,32 @@ func _ready() -> void:
 		])
 		return
 
-	print("TEST PASS — %s and %s apply the same crack-relief guards: seam-slope ceiling %s, crack-footprint fade over (%s, %s), plate-boundary footprint %s" % [
+	# 4. THE GRADIENT IS TAKEN IN CLOSED FORM, on both surfaces. A screen-space
+	# difference of the crack field is only a gradient while the crack is wider
+	# than the quad differencing it, and `crack_width` is a constant in plate
+	# units — so past a few metres of grazing ground the differenced form
+	# returns sampling error rather than a slope, which is the shimmer #306 is
+	# about (measured: 0.0054 -> 0.0037 of the ground crop on one machine in one
+	# sitting, control unchanged at 0.0000).
+	#
+	# This is a REGRESSION guard, not a style preference. The differenced form
+	# is the shorter-looking of the two and reads as the obvious way to take a
+	# gradient, so "simplifying" back to it is a live risk — and it would fail
+	# nothing else: the frame still renders, both shaders still agree with each
+	# other, and the only symptom is ground that shimmers again at the distance
+	# a player walks through. Checked on both files for the same reason every
+	# other law here is: the contact band hand-copies this block.
+	for named in [[GROUND_SHADER_PATH, ground], [CONTACT_SHADER_PATH, contact]]:
+		var path: String = named[0]
+		var src: String = named[1]
+		if _matches(src, DIFFERENCED_CRACK_PATTERN):
+			_fail("%s differences the crack field with dFdx/dFdy — past a few metres that step is thinner than the quad sampling it, so this returns sampling error rather than a slope and the ground shimmers again. Take the gradient in closed form from the plate centres instead." % path)
+			return
+		if not _matches(src, CLOSED_FORM_PATTERN):
+			_fail("%s does not take the crack gradient in closed form — the `normalize(uv - c2) - normalize(uv - c1)` separator is gone, so the relief is no longer exact at distance" % path)
+			return
+
+	print("TEST PASS — %s and %s apply the same crack-relief guards: seam-slope ceiling %s, crack-footprint fade over (%s, %s), plate-boundary footprint %s, gradient in closed form on both" % [
 		GROUND_SHADER_PATH, CONTACT_SHADER_PATH,
 		_num(ground_ceiling[0]), _num(ground_fade[0]), _num(ground_fade[1]),
 		_num(ground_edge)
@@ -180,6 +219,17 @@ func _single(text: String, pattern: String) -> float:
 	if m == null:
 		return -1.0
 	return float(m.get_string(1))
+
+
+## Whether [param pattern] occurs anywhere in [param text]. A compile failure
+## reports NO match, which would make a malformed pattern silently pass every
+## law that uses it — so callers must treat "absent" as the failing side for the
+## construction they require, which the closed-form check does.
+func _matches(text: String, pattern: String) -> bool:
+	var re := RegEx.new()
+	if re.compile(pattern) != OK:
+		return false
+	return re.search(text) != null
 
 
 ## A float rendered so the two sides of a mismatch message are directly
