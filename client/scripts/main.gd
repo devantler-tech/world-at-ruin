@@ -22,6 +22,16 @@ const STARTER_CAVE_DISCOVERY_RADIUS := 10.0
 const REFUSED_SAVE_NOTICE := \
 	"This version of the game can't read your saved character. " \
 	+ "It has been left untouched and nothing new will replace it."
+
+## Shown when a save lost the cross-process write lock rather than being refused.
+##
+## Deliberately RETRYABLE in tone, and it never latches [member _save_blocked]:
+## contention means another copy of the game was saving at that instant, which
+## the next attempt resolves. Latching it would turn a momentary collision into a
+## session-long lockout of the character creator.
+const BUSY_SAVE_NOTICE := \
+	"Another copy of the game was saving just then. " \
+	+ "Your character was not changed — try again."
 const DISCOVERY_PERSIST_RETRY_INITIAL_SECONDS := 1.0
 const DISCOVERY_PERSIST_RETRY_MAX_SECONDS := 30.0
 
@@ -565,8 +575,20 @@ func _open_creator(first_run: bool) -> void:
 		# body with a success line would tell the player they are saved when the
 		# next launch will show them someone else.
 		if not CharacterStore.save_recipe(recipe):
-			_save_blocked = true
-			_hud.toast(REFUSED_SAVE_NOTICE)
+			# A refused write and a CONTENDED one both answer false, and they must
+			# not be treated alike. A refusal is permanent — the recipe on disk is
+			# not this build's to replace — so the creator latches shut. Contention
+			# is momentary: another copy of the game held the write lock, or this
+			# attempt freed an abandoned one and deliberately refused that pass.
+			# Latching on that would lock the player out of their own character for
+			# the rest of the session over a collision the next attempt resolves.
+			# The store's refusal latch is what tells them apart; it is never set by
+			# a lock failure.
+			if CharacterStore.is_refused(CharacterStore.save_path()):
+				_save_blocked = true
+				_hud.toast(REFUSED_SAVE_NOTICE)
+			else:
+				_hud.toast(BUSY_SAVE_NOTICE)
 			return
 		_player.set_character(recipe)
 		_hud.toast("The body remembers its new shape." if not first_run

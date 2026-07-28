@@ -41,6 +41,10 @@ extends Node
 ##     unwritable with the lock free, and takes no lock on its way out.
 ##  8. A write that LOST its lock refuses rather than replacing the recipe behind
 ##     the back of whoever holds it now.
+##  9. Contention does NOT latch a refusal, while a genuine refusal does. The two
+##     answer false alike, and `main.gd` latches the creator shut on the second
+##     only — so a momentary collision must not lock a player out of their own
+##     character for the session.
 ##
 ## The probe is namespaced by process id: git worktrees do not isolate Godot's
 ## project-wide user:// directory, so two local test processes sharing a fixed
@@ -70,6 +74,7 @@ func _ready() -> void:
 	_check_abandoned_lock_reclaimed(recipe)
 	_check_refusal_latch_independent_of_lock(recipe)
 	_check_lost_lock_refuses_write(recipe)
+	_check_contention_does_not_latch_a_refusal(recipe)
 
 	_finish()
 
@@ -77,7 +82,7 @@ func _ready() -> void:
 func _finish() -> void:
 	_cleanup()
 	if _failures.is_empty():
-		print("TEST PASS — the character write takes the cross-process lock, refuses under contention without staging, releases on every path, and recovers from an abandoned lock (8 checks)")
+		print("TEST PASS — the character write takes the cross-process lock, refuses under contention without staging, releases on every path, recovers from an abandoned lock, and never latches a refusal on contention (9 checks)")
 		get_tree().quit(0)
 		return
 	print("TEST FAIL — %s" % "; ".join(_failures))
@@ -246,6 +251,42 @@ func _check_lost_lock_refuses_write(recipe: Dictionary) -> void:
 	FileLock.release(_probe)
 	# That lock is owned by the hijacked stamp now, so release left it in place.
 	FileLock.remove_dir(FileLock.path_for(_probe))
+	_remove(_probe)
+
+
+## 9. Contention must NOT latch a refusal — a refused write and a contended one
+## both answer false, and the caller has to tell them apart.
+##
+## `main.gd` locks the character creator shut for the whole session when a save
+## comes back false AND the path reads as refused. Were contention to latch,
+## one momentary collision — or the reclaiming pass, which deliberately refuses
+## once while freeing an abandoned lock — would lock the player out of their own
+## character until they restarted. Both directions are asserted, because a latch
+## that never fires would satisfy the first half alone.
+func _check_contention_does_not_latch_a_refusal(recipe: Dictionary) -> void:
+	CharacterStore.clear_refusals_for_test()
+	if not CharacterStore.save_to(_probe, recipe):
+		_fail("could not seed a recipe for the latch case")
+		return
+	var lock := FileLock.path_for(_probe)
+	if DirAccess.make_dir_absolute(_abs(lock)) != OK:
+		_fail("could not take the lock for the latch case")
+		return
+	if CharacterStore.save_to(_probe, recipe):
+		_fail("a save succeeded while another writer held the lock")
+	if CharacterStore.is_refused(_probe):
+		_fail("CONTENTION latched a refusal — one collision would lock the creator for the session")
+	DirAccess.remove_absolute(_abs(lock))
+
+	# The other direction: a genuine refusal DOES latch, so the caller still has a
+	# signal to latch the creator on.
+	_remove(_probe)
+	_write_text(_probe, "{ not a readable recipe")
+	if CharacterStore.save_to(_probe, recipe):
+		_fail("a save replaced a recipe this build cannot read")
+	if not CharacterStore.is_refused(_probe):
+		_fail("a genuine refusal did NOT latch — the creator would never lock shut")
+	CharacterStore.clear_refusals_for_test()
 	_remove(_probe)
 
 
