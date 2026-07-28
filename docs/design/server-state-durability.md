@@ -35,18 +35,30 @@ lost player-owned record is lost permanently and a duplicated one is duplicated 
 
 ## The rules
 
-These are the rules `server/nakamalease/store.go` already enforces. They are stated here once so
-that later records inherit them rather than each deriving its own.
+These rules bind every server-held record. They are **not** all met today. Some are enforced now by
+the lease store in `server/nakamalease`; others — cross-record atomicity, rollout ordering,
+cancellation reconciliation, player-owned recovery — are obligations on records that do not exist
+yet, and one is a known gap against running code. **The enforcement map at the end says which is
+which, rule by rule, and is the authority whenever this section and the code disagree.**
 
-### Every record is private and server-owned
+Each rule states the invariant first. Where an implementation currently enforces one, that is named
+as evidence of how — never as the rule itself, because the storage engine is replaceable and the
+invariant is not.
 
-A record is written with no client owner and with both permissions closed, so Nakama attributes it
-to the system account and no client API can read or write it. The read path re-verifies all of it —
-collection, key, owner, non-empty version, and both permission bits — and fails closed rather than
-trusting the object it was handed.
+### Server-authoritative state is unreadable and unwritable by clients
 
-The reason is that Nakama's storage is also a *client-facing* API. A record that is merely
-undocumented is still reachable; a record written with closed permissions is not.
+A client may never read or write a server-held record directly. Its only access is through server
+code that decides what it is allowed to see and change.
+
+The reason is that a store's client API does not stop existing because we chose not to document a
+record in it. Obscurity is not a permission boundary: if the transport can address the record at
+all, the guarantee has to come from an access rule the store enforces, not from nobody having
+looked.
+
+*How the lease store meets it today:* the record is written with no client owner and both permission
+bits closed, so Nakama attributes it to the system account and no client API can reach it, and the
+read path re-verifies collection, key, owner, version and both permission bits before trusting the
+object it was handed.
 
 ### Every write is a compare-and-swap
 
@@ -196,11 +208,10 @@ Where re-applying the original mutation is impossible, the obligation is to **re
 another route** — a compensating grant carrying the same worth — not merely to tell the player it
 is gone. Telling them is required as well, and it is not the remedy.
 
-An earlier draft of this section allowed the loss so long as it was surfaced. That is the promise
-above being withdrawn one paragraph after making it: under the no-resets law there is no wipe to
-even out an unlucky player against a lucky one, so an acknowledged mutation that cannot be restored
-is a permanent, uncompensated loss to one person. Notification is the courtesy owed on top of the
-remedy; it has never been the remedy.
+Surfacing a loss is not an alternative to remedying it. Under the no-resets law there is no wipe to
+even out an unlucky player against a lucky one, so an acknowledged mutation left unrestored is a
+permanent, uncompensated loss to one person. Notification is owed on top of the remedy, never
+instead of it.
 
 Session-scoped state carries no such promise, and deliberately so: a rolled-back lease costs a
 reconnect, which is a cost a player can see and recover from without help.
@@ -226,7 +237,7 @@ needs to write a guard for.
 
 | Promise | Runtime owner | Permanent guard |
 |---|---|---|
-| Records are private and server-owned | `nakamalease.Store` | `TestCreatePersistsPrivateVersionedLeaseByHashedKey`, `TestCreateIgnoresAClientOwnedObjectAtTheDerivedKey`, `TestLoadRejectsMalformedOrPublicStoredObjects` |
+| Server-authoritative state is unreadable and unwritable by clients | `nakamalease.Store` | `TestCreatePersistsPrivateVersionedLeaseByHashedKey`, `TestCreateIgnoresAClientOwnedObjectAtTheDerivedKey`, `TestLoadRejectsMalformedOrPublicStoredObjects` |
 | No write is blind — every write is a compare-and-swap | `nakamalease.Store` | `TestReplaceUsesObservedVersionAndStaleRecordCannotOverwrite`, `TestConcurrentReplaceLeavesExactlyOneCurrentAttempt` |
 | Documents declare a schema and readers accept a range | `nakamalease` document decode | `TestLoadKeepsSchemaOneLeaseReadableAsNotReleasing` |
 | Unknown fields and trailing content are refused | `nakamalease` document decode | `TestLoadRejectsMalformedOrPublicStoredObjects` |
