@@ -99,6 +99,11 @@ const DEFAULT_PATH := "user://boot_recovery.json"
 ## means the shipped default — production never sets it.
 const RECOVERY_PATH_ENV := "WAR_BOOT_RECOVERY_PATH"
 
+## Prefix for the private staging file a write commits from. What follows it is a
+## per-attempt unique stamp, so no two writers — and no two attempts — ever stage
+## through the same path (see [method _write_tmp_path]).
+const WRITE_TMP_SUFFIX := ".tmp-"
+
 
 ## The active recovery-ledger path: the [constant RECOVERY_PATH_ENV] override
 ## when set, else the shipped default.
@@ -309,7 +314,7 @@ static func load_state(path: String) -> Dictionary:
 	}
 
 
-## Persist `state` to `path`, atomically (temp file + rename, the
+## Persist `state` to `path`, atomically (private staging file + rename, the
 ## [CharacterStore] pattern — a crash mid-write must never tear the only copy of
 ## the failure history). When `only_if_missing` is true, refuse if another shell
 ## or cloud-sync writer created the destination after [method load_state]
@@ -339,10 +344,72 @@ static func save_state(path: String, state: Variant, only_if_missing: bool = fal
 	return result
 
 
+## The staging file this attempt commits from — PRIVATE to one write.
+##
+## The shared `boot_recovery.json.tmp` this replaced is a name any other process
+## can derive. A writer that never took the lock — a retained or rollback build
+## from before [FileLock] existed, a sync agent, a second install — opens that
+## same deterministic path and truncates the staged document after it was
+## serialised. `path` itself is untouched, so [method can_write], the
+## `only_if_missing` re-check and the ownership proof all pass, and the rename
+## then commits THEIR partial bytes over the quarantine ledger while reporting
+## success. What that loses is the evidence deciding whether a client rolls back.
+##
+## The read-back compare below narrows this and does not close it: it catches a
+## truncation landing BEFORE the compare, never one landing between the compare
+## and the rename. A per-attempt name removes the sharing instead of trying to
+## detect it — a writer that never cooperated cannot name the file we commit
+## from.
+##
+## Process id plus microsecond ticks, matching [method SaveVault._write_tmp_path]
+## and [method CharacterStore._write_tmp_path].
+static func _write_tmp_path(path: String) -> String:
+	return "%s%s%d-%d" % [path, WRITE_TMP_SUFFIX, OS.get_process_id(), Time.get_ticks_usec()]
+
+
+## Remove staging files abandoned by a crashed writer.
+##
+## A per-attempt name cannot be reclaimed by simply being overwritten the way one
+## fixed `boot_recovery.json.tmp` was, so without this a hard crash mid-write
+## would leak a file into user:// on every occurrence.
+##
+## LOCK-gated like [method SaveVault._sweep_abandoned_writes], NOT age-gated like
+## [method CharacterStore._sweep_abandoned_writes], and which of the two applies
+## is a property of this file rather than a style choice. The character store
+## substitutes an age floor because it has no cross-process lock (#423); recovery
+## has one. [method save_state] is the only writer, it holds the lock for `path`
+## across the whole staging window, and the prefix scoping below means every file
+## this can delete was created by a build that takes that lock. Holding it
+## therefore proves no other lock-aware writer is inside its staging window, so
+## anything found here is finished or dead. Importing the age floor as well would
+## only delay reclamation without adding a guarantee.
+##
+## ⚠️ The one residual, the same wall the ownership proof documents: a holder that
+## has outlived the stale timeout can be reclaimed, so its stage may be swept
+## while it still exists. That writer's own read-back compare then fails and it
+## abandons the write — a degraded write, never a torn file, which is this file's
+## standing trade.
+##
+## Scoped to WRITE_TMP_SUFFIX deliberately. A foreign writer's plain
+## `boot_recovery.json.tmp` carries no per-attempt stamp and is none of our
+## business — deleting a file another client is mid-write on is the kind of
+## cross-writer damage this whole area exists to avoid.
+static func _sweep_abandoned_writes(path: String) -> void:
+	var parent := path.get_base_dir()
+	var prefix := path.get_file() + WRITE_TMP_SUFFIX
+	for entry: String in DirAccess.get_files_at(parent):
+		if entry.begins_with(prefix):
+			DirAccess.remove_absolute(
+				ProjectSettings.globalize_path(parent.path_join(entry)))
+
+
 ## save_state()'s body, with the write lock already held. Split out so
 ## acquisition and release live on ONE path each: GDScript has no `defer`, and a
 ## lock leaked down any of the many early-return branches below would wedge
 ## recovery for the whole stale timeout.
+##
+## The staging sweep and the staging write both live HERE rather than in
+## [method save_state], because the lock is what makes the sweep safe.
 static func _save_state_locked(path: String, state: Variant, only_if_missing: bool) -> Dictionary:
 	if state is not Dictionary:
 		return {"ok": false, "reason": "refusing to persist recovery state that is not a dictionary"}
@@ -380,7 +447,8 @@ static func _save_state_locked(path: String, state: Variant, only_if_missing: bo
 	if schema > 0:
 		to_write["version"] = schema
 	var payload := JSON.stringify(to_write, "  ")
-	var tmp_path := path + ".tmp"
+	_sweep_abandoned_writes(path)
+	var tmp_path := _write_tmp_path(path)
 	var file := FileAccess.open(tmp_path, FileAccess.WRITE)
 	if file == null:
 		return {"ok": false, "reason": "cannot write %s" % tmp_path}
