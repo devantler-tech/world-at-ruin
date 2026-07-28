@@ -280,10 +280,13 @@ func _ready() -> void:
 		await _capture_breath(dir, main)
 		return
 	if scenario == "walk":
-		await _capture_walk(dir, main)
+		await _capture_gait(dir, main, false)
+		return
+	if scenario == "run":
+		await _capture_gait(dir, main, true)
 		return
 	if scenario != "world" and scenario != "light_response":
-		_fail("unknown WAR_SCENARIO '%s' — expected 'world', 'first_run', 'breath', 'walk' or 'light_response'" % scenario)
+		_fail("unknown WAR_SCENARIO '%s' — expected 'world', 'first_run', 'breath', 'walk', 'run' or 'light_response'" % scenario)
 		return
 
 	for i in WARMUP_FRAMES:
@@ -1093,23 +1096,30 @@ func _capture_breath(dir: String, main: Node) -> void:
 	get_tree().quit(0)
 
 
-## The `walk` scenario: a fixed-phase full-body sequence of the REAL wanderer.
+## The `walk` and `run` scenarios: a fixed-phase full-body sequence of the REAL
+## wanderer, in whichever grounded gait `running` selects.
+##
+## One function rather than two: the vantage, framing, settling, uniform-frame
+## rejection and foot-travel floor are identical for both gaits, and the only
+## real difference is which pose the shipping driver is asked for. A copied
+## second capture would drift from this one the first time either is retuned.
 ##
 ## The flag is read when Player binds its recipe body, so the caller must set
 ## `WAR_WALK_CYCLE=1` before this scene boots. The runtime driver is then
 ## stopped with Player physics, and its own `apply_phase` method poses the
 ## sequence deterministically — the evidence uses the shipping implementation,
 ## not a preview copy.
-func _capture_walk(dir: String, main: Node) -> void:
+func _capture_gait(dir: String, main: Node, running: bool) -> void:
+	var gait := "run" if running else "walk"
 	for i in WARMUP_FRAMES:
 		await get_tree().process_frame
 	if not _has_world(main):
-		_fail("the world did not build — a sky-only walk sequence is not evidence")
+		_fail("the world did not build — a sky-only %s sequence is not evidence" % gait)
 		return
 
 	var player := main.get_node_or_null("Wanderer") as Player
 	if player == null:
-		_fail("the shipped scene has no Wanderer Player — the walk path is not live")
+		_fail("the shipped scene has no Wanderer Player — the %s path is not live" % gait)
 		return
 	var animator := player.get_node_or_null("WalkLocomotion")
 	if animator == null:
@@ -1166,7 +1176,7 @@ func _capture_walk(dir: String, main: Node) -> void:
 	var foot_positions: Array[Vector3] = []
 	for i in WALK_PHASES:
 		var phase := TAU * float(i) / float(WALK_PHASES)
-		animator.call("apply_phase", phase)
+		animator.call("apply_phase", phase, running)
 		skeleton.force_update_all_bone_transforms()
 		foot_positions.append(
 			skeleton.global_transform * skeleton.get_bone_global_pose(left_foot).origin)
@@ -1176,10 +1186,10 @@ func _capture_walk(dir: String, main: Node) -> void:
 		var img := await _grab_frame()
 		var spread := _luma_spread(img)
 		if spread < MIN_LUMA_SPREAD:
-			_fail("walk phase %d is a uniform frame (luma spread %.4f) — nothing rendered" %
-				[i, spread])
+			_fail("%s phase %d is a uniform frame (luma spread %.4f) — nothing rendered" %
+				[gait, i, spread])
 			return
-		var frame_name := "walk_%02d" % i
+		var frame_name := "%s_%02d" % [gait, i]
 		var err := img.save_png("%s/%s.png" % [dir, frame_name])
 		if err != OK:
 			_fail("could not write %s (error %d)" % [frame_name, err])
@@ -1192,12 +1202,12 @@ func _capture_walk(dir: String, main: Node) -> void:
 		for b in foot_positions:
 			travel = maxf(travel, a.distance_to(b))
 	if travel < WALK_MIN_FOOT_TRAVEL_M:
-		_fail(("the walk sequence photographs one lower-body pose: the left foot travels %.4f m, " +
-			"under the %.4f m floor") % [travel, WALK_MIN_FOOT_TRAVEL_M])
+		_fail(("the %s sequence photographs one lower-body pose: the left foot travels %.4f m, " +
+			"under the %.4f m floor") % [gait, travel, WALK_MIN_FOOT_TRAVEL_M])
 		return
 
-	print("CAPTURE PASS — %d walk phases written to %s (left-foot travel %.1f cm)" %
-		[WALK_PHASES, dir, travel * 100.0])
+	print("CAPTURE PASS — %d %s phases written to %s (left-foot travel %.1f cm)" %
+		[WALK_PHASES, gait, dir, travel * 100.0])
 	get_tree().quit(0)
 
 
