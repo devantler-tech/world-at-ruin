@@ -1,0 +1,10 @@
+{
+	"date": "2026-07-28",
+	"notes": [
+		"Changing character used to leave the previous body standing in the same place as the new one. For a moment both were drawn on top of each other, together with the grey stand-in figure you begin as. The body you are leaving behind now goes the instant the new one arrives, so a change of character reads as a change rather than a pile-up.",
+		"This showed every time you came out of the character creator, and again on anything that rebuilds the body — which is exactly where the game most needs to look deliberate rather than half-finished.",
+		"The recipe gallery — the screen used behind the scenes to judge how the bodies look lined up beside each other — had the same fault: rebuilding it stacked a dead row behind the new one instead of replacing it. It now shows only the row it just built."
+	],
+	"title": "Changing character no longer leaves the old body standing inside the new one",
+	"version": "0.65.8"
+}

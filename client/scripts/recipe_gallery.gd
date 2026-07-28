@@ -25,7 +25,11 @@ func _ready() -> void:
 
 
 func rebuild() -> void:
+	# Detach before freeing: `queue_free` alone leaves the previous row parented
+	# until the end of the frame, so a rebuild would stack a dead row behind the
+	# new one instead of replacing it.
 	for node in _built:
+		remove_child(node)
 		node.queue_free()
 	_built.clear()
 	var names := _recipe_names()

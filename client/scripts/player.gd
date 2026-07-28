@@ -173,10 +173,15 @@ func set_character(recipe: Dictionary) -> void:
 	var body := CharacterFactory.build(recipe)
 	if body == null:
 		return
+	# Detach before freeing. `queue_free` alone defers removal to the end of the
+	# frame, so the outgoing body would stay parented beside the incoming one —
+	# both rendered, and both visible to anything walking Visual's children.
 	for node in _placeholder:
+		_visual.remove_child(node)
 		node.queue_free()
 	_placeholder.clear()
 	if _character_body != null:
+		_visual.remove_child(_character_body)
 		_character_body.queue_free()
 	body.rotation.y = PI  # The kit body faces +Z; the visual's forward is -Z.
 	_visual.add_child(body)
