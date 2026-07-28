@@ -708,14 +708,20 @@ var postLegacySchemaKeys = [...]string{"staging", "releasing"}
 // than inferred from a decoded field: a decoded value cannot separate an absent
 // key from one written as null, and duplicate keys resolve to the last
 // occurrence, so an earlier flag would be hidden by a later null.
+//
+// Casing is folded because encoding/json matches a field name
+// case-insensitively, so "Releasing" reaches the same field an exact lookup for
+// "releasing" would miss.
 func carriesPostLegacySchemaKey(value string) (bool, error) {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(value), &raw); err != nil {
 		return false, err
 	}
-	for _, key := range postLegacySchemaKeys {
-		if _, ok := raw[key]; ok {
-			return true, nil
+	for key := range raw {
+		for _, flag := range postLegacySchemaKeys {
+			if strings.EqualFold(key, flag) {
+				return true, nil
+			}
 		}
 	}
 	return false, nil

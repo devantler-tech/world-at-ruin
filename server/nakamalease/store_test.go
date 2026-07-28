@@ -1783,6 +1783,18 @@ func TestLoadRefusesLegacySchemaCarryingPostLegacyKeys(t *testing.T) {
 		{name: "staging shadowed by a later null", prefix: `"staging":true,"staging":null,`},
 		{name: "releasing shadowed by a later null", prefix: `"releasing":true,"releasing":null,`},
 		{name: "staging false shadowed by a later null", prefix: `"staging":false,"staging":null,`},
+		// encoding/json matches a field name case-insensitively, so these reach
+		// the same fields the lowercase spellings do.
+		{name: "capitalised releasing", prefix: `"Releasing":true,`},
+		{name: "capitalised staging", prefix: `"Staging":true,`},
+		{name: "upper-case releasing", prefix: `"RELEASING":true,`},
+		{name: "capitalised releasing at its zero value", prefix: `"Releasing":false,`},
+		{name: "capitalised releasing as null", prefix: `"Releasing":null,`},
+		// The decoder routes U+017F to Staging, but the rune is already lower
+		// case, so a lowercasing presence check would miss it. The value is
+		// false deliberately: a true flag is refused by a later check anyway,
+		// which would leave the case-folding untested.
+		{name: "long-s staging at its zero value", prefix: `"ſtaging":false,`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if _, err := leaseFrom(
