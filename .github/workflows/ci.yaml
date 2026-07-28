@@ -1907,6 +1907,29 @@ jobs:
             grep -nE "SCRIPT ERROR|^ERROR" first-run.filtered.log | head -20
             exit 1
           fi
+          # The breath pin is what makes these frames REPEAT (#485). Assert it
+          # fired for every frame, because deleting the call passes every unit
+          # test in the repo: the frames still render, still write and still
+          # report CAPTURE PASS, while the change report silently returns to
+          # reporting tens of percent on builds that changed nothing. Measured
+          # on unchanged main, two runs of identical code: first_run_elder
+          # 53.74% of pixels changed, first_run_villager 46.63%; pinned, the
+          # same pass reads 0.47% and 0.01%.
+          #
+          # Counted off the FILTERED log for the same reason the error scan is,
+          # and compared against the CAPTURED lines rather than a hard-coded
+          # number so adding a first-run frame cannot leave this checking a
+          # stale count. `|| true` because grep -c exits 1 on no match, which
+          # this step's `set -o pipefail` would otherwise turn into a silent
+          # abort before the comparison runs.
+          shot_lines=$(grep -cE "^CAPTURED first_run" first-run.filtered.log || true)
+          pin_lines=$(grep -cE "^PINNED first_run" first-run.filtered.log || true)
+          if [ "$shot_lines" -eq 0 ] || [ "$pin_lines" -ne "$shot_lines" ]; then
+            echo "::error::first-run capture pinned $pin_lines of $shot_lines frames — an unpinned frame is photographed mid-breath and does not repeat between runs"
+            grep -nE "^(CAPTURED|PINNED) first_run" first-run.filtered.log | head -30
+            exit 1
+          fi
+          echo "breath pinned on all $pin_lines first-run frames"
       - name: Capture the breathing idle
         # A STILL CANNOT SHOW AN IDLE (#243). Every other capture here
         # photographs one instant, which is the right evidence for a material

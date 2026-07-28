@@ -1690,9 +1690,16 @@ func _shoot(dir: String, frame: String, creator: CanvasLayer) -> bool:
 	# portrait and gives it a FRESH idle already advancing on wall-clock time —
 	# so freezing only at the start would leave every frame after the first
 	# preset unpinned, which is most of the set.
-	if _pin_idles() == 0:
+	var pinned := _pin_idles()
+	if pinned == 0:
 		_fail("%s: no breathing idle to pin — the portrait would be photographed mid-breath and the frame would not repeat" % frame)
 		return false
+	# Declared per frame so CI can assert the pin FIRED, not merely that it
+	# exists. Deleting the call above passes every unit test in the repo — the
+	# frames still render, still write, still report CAPTURE PASS, and only the
+	# change report silently goes back to tens of percent on unchanged builds.
+	# That is #231's shape exactly, so the wiring gets its own evidence.
+	print("PINNED %s — %d idle(s) frozen at +%.2fs" % [frame, pinned, BreathingIdle.BREATH_CAPTURE_TIME])
 	await RenderingServer.frame_post_draw
 	var img := get_viewport().get_texture().get_image()
 	var spread := _luma_spread_box(img, UI_SAMPLE_X0, UI_SAMPLE_X1, UI_SAMPLE_Y0, UI_SAMPLE_Y1)
