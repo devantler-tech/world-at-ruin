@@ -35,11 +35,12 @@ lost player-owned record is lost permanently and a duplicated one is duplicated 
 
 ## The rules
 
-These rules bind every server-held record. They are **not** all met today. Some are enforced now by
-the lease store in `server/nakamalease`; others — cross-record atomicity, rollout ordering,
-cancellation reconciliation, player-owned recovery — are obligations on records that do not exist
-yet, and one is a known gap against running code. **The enforcement map at the end says which is
-which, rule by rule, and is the authority whenever this section and the code disagree.**
+These rules bind every server-held record. They are **not** all met today, and they fail in two
+different ways. Some are enforced now by the lease store in `server/nakamalease`. Several are
+**gaps in running code** — they bind that same lease store, which does not currently keep them.
+The rest are obligations on records that do not exist yet, where nothing is broken because nothing
+is there. **The enforcement map at the end says which is which, rule by rule, and is the authority
+whenever this section and the code disagree.**
 
 Each rule states the invariant first. Where an implementation currently enforces one, that is named
 as evidence of how — never as the rule itself, because the storage engine is replaceable and the
@@ -283,9 +284,15 @@ needed.
 
 So the recovery evidence must **survive the failure domain it is meant to recover from**: an
 independently durable journal — archived write-ahead log, or a sink outside the database's own
-restore boundary — retained at least as long as the restore window it must cover. Until such a
-journal exists, this bound is **stated but not yet keepable**, and the enforcement map records it
-that way rather than implying otherwise.
+restore boundary. Until such a journal exists, this bound is **stated but not yet keepable**, and
+the enforcement map records it that way rather than implying otherwise.
+
+**Its retention must exceed the restore window, not match it.** Matching is the pathological case:
+restoring to the oldest permitted point is exactly the moment the entries just after that point
+become eligible for deletion, so the evidence expires precisely when reconciliation needs it. The
+minimum retention is the maximum restore lookback **plus** the time to detect the incident, perform
+the restore, and finish reconciling from the journal — with margin, since all three are measured
+after the fact and none is a constant.
 
 **A journal that is merely *eventually* durable moves the window, it does not close it.** If the
 mutation is acknowledged to the player while its evidence is still in flight to that journal, a
@@ -326,19 +333,26 @@ needs to write a guard for.
 | Promise | Runtime owner | Permanent guard |
 |---|---|---|
 | Server-authoritative state is unreadable and unwritable by clients | `nakamalease.Store` | `TestCreatePersistsPrivateVersionedLeaseByHashedKey`, `TestCreateIgnoresAClientOwnedObjectAtTheDerivedKey`, `TestLoadRejectsMalformedOrPublicStoredObjects` |
-| No write is blind — every write is a compare-and-swap | `nakamalease.Store` | `TestReplaceUsesObservedVersionAndStaleRecordCannotOverwrite`, `TestConcurrentReplaceLeavesExactlyOneCurrentAttempt` |
-| Documents declare a schema and readers accept a range | `nakamalease` document decode | `TestLoadKeepsSchemaOneLeaseReadableAsNotReleasing` |
+| No blind **create** — create is conditional | `nakamalease.Store` | `TestConcurrentIdenticalCreateReconcilesTheDurableWinner` |
+| No blind **replace** — replace presents the observed version | `nakamalease.Store` | `TestReplaceUsesObservedVersionAndStaleRecordCannotOverwrite`, `TestConcurrentReplaceLeavesExactlyOneCurrentAttempt` |
+| No blind **claim** — claim presents the observed version | `nakamalease.Store` | `TestClaimRejectsAStaleAttemptWithoutWriting`, `TestClaimReportsConflictWhenTheObservedLeaseWasReleased` |
+| No blind **release** — release deletes conditionally | `nakamalease.Store` | `TestReleaseRejectsAStaleAttemptWithoutDeleting`, `TestReleaseReconcilesNakamaConditionalDeleteRejections` |
+| The writer declares the current schema | `nakamalease` document encode | `TestCreatePersistsPrivateVersionedLeaseByHashedKey` (asserts `schema: 2` on the stored value) |
+| The reader accepts the legacy end of the range | `nakamalease` document decode | `TestLoadKeepsSchemaOneLeaseReadableAsNotReleasing` |
+| The reader rejects a schema outside the range | `nakamalease` document decode | `TestLoadRejectsMalformedOrPublicStoredObjects` (`unsupported schema`) |
 | Unknown fields are refused | `nakamalease` document decode | `TestLoadRejectsMalformedOrPublicStoredObjects` (`unknown JSON field`) |
 | Trailing content is refused | `nakamalease` document decode | **gap (#491)** — `leaseFrom` checks for `io.EOF`, but no case appends a second JSON value, so a regression of that check leaves every named guard green |
-| A required field omitted from its own schema is refused | every record owner | not yet built — no schema declares a required-field set |
-| Every shipped schema stays readable, permanently | every record owner | not yet built — no server-side ledger or goldens (the client has `shipped_vault_versions.txt`) |
-| A refusal latches the record read-only against create, update and delete | every record owner | not yet built — `CharacterStore` does this client-side; no server equivalent |
+| A required field omitted from its own schema is refused | every record owner, **incl. `nakamalease` today** | **gap (running code)** — no schema declares a required-field set, so an omitted required field decodes as an implicit zero |
+| Every shipped schema stays readable, permanently | every record owner, **incl. `nakamalease` today** | **gap (running code)** — schemas 1 and 2 have shipped with no ledger or goldens pinning them (the client has `shipped_vault_versions.txt`) |
+| A refusal latches the record read-only against create, update and delete | every record owner, **incl. `nakamalease` today** | **gap (running code)** — the decoder refuses the read but nothing blocks a subsequent write at that key; `CharacterStore` does latch, client-side |
 | A newer field on a legacy schema is refused **by presence, not by truth** | `nakamalease` document decode | **gap (#491)** — `staging`/`releasing` are plain booleans, so an explicit `false` is accepted; needs presence-aware decoding and a zero-value case |
-| Read support ships and bakes before its writer activates | every record owner | not yet built — no server-side equivalent of the client staging guard |
+| Read support ships and bakes before its writer activates | every record owner, **incl. `nakamalease` today** | **gap (running code)** — no server-side equivalent of the client staging guard, and nothing registers the rollback target as carrying the expanded reader |
 | A logical mutation spanning records is atomic or recoverable | player-owned record owners | not yet built — #474, #475 |
 | Any error after a write is dispatched is reconciled, never read as failure | every caller | not yet built — #475 supplies the stable identity |
-| Upstream storage errors do not cross the boundary | `nakamalease` error sanitization | `TestStorageFailuresAreSanitized`, `TestStorageContextCancellationIsPreserved` |
-| A replay identified by its own content applies once | `nakamalease.Store` | `TestCreateReplaysTheSameAttemptWithoutAnotherWrite`, `TestClaimReplayKeepsTheOriginalClaimWithoutWriting` |
+| Read and write storage errors do not cross the boundary | `nakamalease` error sanitization | `TestStorageFailuresAreSanitized`, `TestStorageContextCancellationIsPreserved` |
+| **List** errors do not cross the boundary | `nakamalease` expiry sweep | **gap (#491)** — the fake carries a `listErr` field that no test ever assigns, so the sweep's `StorageList` error path is unexercised and a raw backend error there would keep every cited guard green |
+| A replay of an already-final operation returns without writing | `nakamalease.Store` | `TestCreateReplaysTheSameAttemptWithoutAnotherWrite`, `TestClaimReplayKeepsTheOriginalClaimWithoutWriting`, `TestBeginReleaseReplayKeepsTheExistingBarrier` |
+| A replay whose response was lost is reconciled to the durable outcome | `nakamalease.Store` | `TestClaimReconcilesAClaimCommittedFromTheSameObservedRecord`, `TestReplaceReconcilesAReplacementCommittedFromTheSameObservedRecord`, `TestReleaseReconcilesNakamaConditionalDeleteRejections`, `TestConcurrentIdenticalCreateReconcilesTheDurableWinner` |
 | Player-owned keys derive from the verified identity, never a client-supplied subject | player-owned record owners | not yet built — #472, #473, #474 |
 | An idempotency key is bound to its subject and payload; mismatched reuse is rejected | player-owned record owners | not yet built — #475 |
 | An idempotency key is unique per logical mutation, so two identical legitimate mutations cannot share one | player-owned record owners | not yet built — #475 |
@@ -348,16 +362,20 @@ needs to write a guard for.
 | A replay **not** identified by its own content applies once | player-owned record owners | not yet built — #475 |
 | A world-owned record states its own recovery invariant | first world-owned record owner | not yet built — no such record exists |
 
-Rows marked *not yet built* are obligations on work that does not exist. They are listed so a record
-added later is measured against them rather than shipping without a guard and being noticed
-afterwards.
+The three labels mean different things, and the difference is the point of the table:
 
-The rows marked **gap** are different, and worse: they are promises this document makes that the
-running code does not currently keep. They are recorded here rather than quietly softened, because
-the honest options were to weaken the rule or to fix the decoder, and weakening a rule to match an
-implementation is how a contract stops meaning anything.
+- **A cited guard** — the promise holds today and a named test body covers it.
+- **`gap (running code)`** — the promise binds a record that **already exists** and that record does
+  not keep it. These are defects now, not future work.
+- **`not yet built`** — the promise binds records that do not exist yet. Nothing is broken; the row
+  exists so a record added later is measured against it rather than shipping unguarded and being
+  noticed afterwards.
 
-**Read this map as claims about test *bodies*, not test names.** Both gaps above were found that
+Every gap is recorded rather than quietly softened. The honest options were always to weaken the
+rule or to fix the code, and weakening a rule to match an implementation is how a contract stops
+meaning anything.
+
+**Read this map as claims about test *bodies*, not test names.** Several gaps above were found that
 way: a named guard existed and looked sufficient, and the case that would actually catch the
 regression was not among its cases. A guard cited here should be opened and checked before it is
 trusted — including by whoever next edits this table.
