@@ -43,10 +43,11 @@ const AIR_MARGIN := 0.3
 const UP_STEP := 0.5
 const UP_RANGE := 16.0
 ## Half-height of the band the exterior eye is checked over, about its nominal
-## height (law 7). Comfortably wider than the ground moves across the standoff
-## the vantage uses — measured at 2.3 m of fall from the mouth apron out to the
-## eye — so terrain reshaping inside that envelope cannot silently invalidate
-## what this test proved.
+## height (law 7). Deliberately far wider than the ground actually moves: the
+## terrain sits 0.39 m below the mouth apron where the eye stands, and has
+## fallen only 3.1 m by 16 m out. Sized against how much the heightfield could
+## be RESHAPED, not against where it sits today, so a terrain pass inside that
+## envelope cannot silently invalidate what this test proved.
 const GROUND_BAND := 6.0
 const GROUND_BAND_STEP := 1.0
 

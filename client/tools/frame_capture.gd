@@ -884,9 +884,9 @@ func _capture_mouth(cam: Camera3D, dir: String, main: Node) -> int:
 
 	# Stand the camera on the ground it is actually looking across. Outside the
 	# massif that ground is the terrain, which the cave layout knows nothing
-	# about — it falls 2.3 m between the mouth apron and this standoff — so a
-	# camera left at the nominal height would float over the near ground or, on
-	# a reshaped heightfield, sink under it.
+	# about: it sits 0.39 m below the mouth apron at this standoff and keeps
+	# falling — 3.1 m by 16 m out — so a camera left at the nominal height would
+	# float over the near ground, and would sink under a reshaped heightfield.
 	var ground := world.surface_height_at(eye.x, eye.z)
 	if ground <= WorldGen.NO_GROUND + 1.0:
 		ground = world.height_at(eye.x, eye.z)
