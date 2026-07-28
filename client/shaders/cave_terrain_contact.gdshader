@@ -65,30 +65,46 @@ void fragment() {
 	// contacts and crack relief at the same world XZ.
 	vec2 plate_uv = terrain_world_pos.xz * plate_scale;
 	vec2 plate_id = vec2(0.0);
+	vec2 plate_id2 = vec2(0.0);
 	float f1 = 0.0;
 	float f2 = 1.0;
 	float plate_resolved = 0.0;
+	float plate_edge_w = 0.0;
 	vec4 sub = vec4(rock_color, rock_roughness);
 	float crack = 0.0;
 	float plate_fw = 0.0;
 	float crack_fw = 0.0;
 	if (plates_enabled) {
-		terrain_plates(plate_uv, plate_id, f1, f2);
+		terrain_plates(plate_uv, plate_id, f1, f2, plate_id2);
 		plate_fw = max(fwidth(plate_uv.x), fwidth(plate_uv.y));
 		plate_resolved = 1.0 - smoothstep(0.30, 0.85, plate_fw);
-		sub = terrain_plate_substance(
-			plate_id,
-			rock_color,
-			rock_roughness,
-			plate_basalt,
-			plate_ferric,
-			plate_pale);
+		crack_fw = fwidth(f2 - f1);
+		plate_edge_w = terrain_plate_edge_blend(f1, f2, crack_fw * 1.2);
+		// The same footprint average as the ground (#306). This path exists to
+		// resolve the IDENTICAL substance at the same world XZ, so leaving the
+		// step unfiltered here would reintroduce the crawl at the cave contact
+		// and disagree with the ground it has to meet.
+		sub = mix(
+			terrain_plate_substance(
+				plate_id,
+				rock_color,
+				rock_roughness,
+				plate_basalt,
+				plate_ferric,
+				plate_pale),
+			terrain_plate_substance(
+				plate_id2,
+				rock_color,
+				rock_roughness,
+				plate_basalt,
+				plate_ferric,
+				plate_pale),
+			plate_edge_w);
 		vec3 mean_col = rock_color * 0.38 + plate_basalt * 0.28
 			+ plate_ferric * 0.20 + plate_pale * 0.14;
 		float mean_rough = rock_roughness * 0.38 + 0.88 * 0.28
 			+ 0.72 * 0.20 + 0.94 * 0.14;
 		sub = mix(vec4(mean_col, mean_rough), sub, plate_resolved);
-		crack_fw = fwidth(f2 - f1);
 		float cw = max(crack_width, crack_fw * 1.2);
 		crack = 1.0 - smoothstep(0.0, cw, f2 - f1);
 		crack *= 1.0 - smoothstep(0.30, 0.85, plate_fw);
@@ -114,8 +130,19 @@ void fragment() {
 	float sheet = clamp(smoothstep(-ew, ew, exposed_edge) + rock_mix, 0.0, 1.0);
 	float slab_pick = terrain_hash3(vec3(plate_id * 2.3, 19.0));
 	float is_slab = step(0.60, slab_pick);
-	float slab = mix(0.40, is_slab, plate_resolved);
+	// Same split as the ground (#306): the albedo takes the footprint average of
+	// the slab mask, the relief keeps the binary one. This band has to resolve
+	// the IDENTICAL substance as the ground it meets, so a soft mask there and a
+	// hard one here would part company along the contact — the drift this file's
+	// parity test exists to catch.
+	float is_slab_soft = mix(
+		is_slab,
+		step(0.60, terrain_hash3(vec3(plate_id2 * 2.3, 19.0))),
+		plate_edge_w);
+	float slab = mix(0.40, is_slab_soft, plate_resolved);
+	float slab_hard = mix(0.40, is_slab, plate_resolved);
 	float plate_mask = sheet * slab;
+	float plate_mask_relief = sheet * slab_hard;
 	float rock_exposure = max(rock_mix, plate_mask);
 
 	vec3 base = vec3(UV, UV2.x);
@@ -163,7 +190,7 @@ void fragment() {
 		grad = vec2(
 			dcdx * duvdy.y - dcdy * duvdx.y,
 			dcdy * duvdx.x - dcdx * duvdy.x
-		) / safe_det * plate_scale * plate_mask;
+		) / safe_det * plate_scale * plate_mask_relief;
 		grad *= 1.0 - smoothstep(0.30, 0.85, plate_fw);
 		// Same crack-footprint dissolve as terrain.gdshader, for the same
 		// reason: `plate_fw` is a whole plate's footprint and cannot stand in

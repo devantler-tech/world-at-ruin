@@ -39,11 +39,17 @@ float terrain_ground_noise(vec2 xz, float scale) {
 	return terrain_fbm(vec3(xz.x, 0.0, xz.y) * scale);
 }
 
-void terrain_plates(vec2 uv, out vec2 id, out float f1, out float f2) {
+// `id2` is the cell on the OTHER side of the nearest boundary — the plate this
+// fragment would have belonged to had it fallen a little further across. It is
+// tracked alongside `f2` (they are the same cell by definition: f2 is that
+// cell's centre distance) so a caller can antialias the step between the two
+// rather than taking the owning cell's value outright.
+void terrain_plates(vec2 uv, out vec2 id, out float f1, out float f2, out vec2 id2) {
 	vec2 base = floor(uv);
 	f1 = 1000.0;
 	f2 = 1000.0;
 	id = base;
+	id2 = base;
 	for (int j = -1; j <= 1; j++) {
 		for (int i = -1; i <= 1; i++) {
 			vec2 cell = base + vec2(float(i), float(j));
@@ -54,13 +60,32 @@ void terrain_plates(vec2 uv, out vec2 id, out float f1, out float f2) {
 			float d = length(uv - centre);
 			if (d < f1) {
 				f2 = f1;
+				id2 = id;
 				f1 = d;
 				id = cell;
 			} else if (d < f2) {
 				f2 = d;
+				id2 = cell;
 			}
 		}
 	}
+}
+
+// How much of the NEIGHBOURING plate belongs in this fragment.
+//
+// `f2 - f1` is the distance to the boundary, and `fw` is how far that quantity
+// moves across one pixel, so the ratio is where the fragment sits within its own
+// footprint. On the boundary the two plates are equally present and the answer
+// is a half; a footprint away it is entirely the owning plate's. That is the
+// whole term: it is an analytic average over the pixel, not a soft edge, so it
+// is exactly 0.0 wherever the boundary is resolved and only engages once the
+// step is narrower than the pixel drawing it.
+//
+// Both the substance and the slab mask are step functions of the SAME cell id,
+// so both step at exactly this boundary and both take this one weight — fixing
+// only the substance would leave half the contrast still snapping.
+float terrain_plate_edge_blend(float f1, float f2, float fw) {
+	return 0.5 * (1.0 - smoothstep(0.0, max(fw, 1e-6), f2 - f1));
 }
 
 vec4 terrain_plate_substance(

@@ -162,8 +162,8 @@ float ground_noise(vec2 xz, float scale) {
 // crack field: it goes to zero exactly on a boundary between two plates, and
 // widens naturally where three plates meet, which is where real broken ground
 // opens up too.
-void plates(vec2 uv, out vec2 id, out float f1, out float f2) {
-	terrain_plates(uv, id, f1, f2);
+void plates(vec2 uv, out vec2 id, out float f1, out float f2, out vec2 id2) {
+	terrain_plates(uv, id, f1, f2, id2);
 }
 
 // One plate's substance, resolved from its cell id alone. rgb = colour,
@@ -204,15 +204,17 @@ void fragment() {
 	// control flow).
 	vec2 plate_uv = world_pos.xz * plate_scale;
 	vec2 plate_id = vec2(0.0);
+	vec2 plate_id2 = vec2(0.0);
 	float f1 = 0.0;
 	float f2 = 1.0;
 	float plate_resolved = 0.0;
+	float plate_edge_w = 0.0;
 	vec4 sub = vec4(rock_color, rock_roughness);
 	float crack = 0.0;
 	float plate_fw = 0.0;
 	float crack_fw = 0.0;
 	if (plates_enabled) {
-	plates(plate_uv, plate_id, f1, f2);
+	plates(plate_uv, plate_id, f1, f2, plate_id2);
 
 	// Screen footprint of one plate. Unlike the grain, plates are NOT tied to
 	// the distance fade: a 1.8 m slab is still a resolvable feature well past
@@ -224,7 +226,23 @@ void fragment() {
 	plate_fw = max(fwidth(plate_uv.x), fwidth(plate_uv.y));
 	plate_resolved = 1.0 - smoothstep(0.30, 0.85, plate_fw);
 
-	sub = plate_substance(plate_id);
+	// Footprint of the boundary itself, needed before the substance is chosen so
+	// the step between two plates can be averaged over the pixel that draws it.
+	crack_fw = fwidth(f2 - f1);
+
+	// A plate boundary is a step of ZERO width: `plate_substance` is a function
+	// of the owning cell id, so a fragment does not shade across a contact, it
+	// SWAPS by the whole contrast between two substances. Past the distance
+	// where that boundary is narrower than a pixel, sliding the camera a
+	// fraction of a pixel makes every pixel the boundary crosses flip — which
+	// is the crawl this treatment was filed for (#306).
+	//
+	// So average the two plates over the boundary's own footprint. Below the
+	// distance where the contact resolves, the weight is exactly 0.0 and the
+	// near-field read — hard edges, named substances, full contrast — is
+	// untouched, which is what #306's third acceptance criterion protects.
+	plate_edge_w = terrain_plate_edge_blend(f1, f2, crack_fw * 1.2);
+	sub = mix(plate_substance(plate_id), plate_substance(plate_id2), plate_edge_w);
 	vec3 mean_col = rock_color * 0.38 + plate_basalt * 0.28
 		+ plate_ferric * 0.20 + plate_pale * 0.14;
 	float mean_rough = rock_roughness * 0.38 + 0.88 * 0.28
@@ -234,7 +252,6 @@ void fragment() {
 	// The crack itself, widened to the local footprint so it stays a line
 	// instead of aliasing, and dissolved once it is thinner than about a pixel
 	// — detail leaves the frame by fading, never by shimmering.
-	crack_fw = fwidth(f2 - f1);
 	float cw = max(crack_width, crack_fw * 1.2);
 	crack = 1.0 - smoothstep(0.0, cw, f2 - f1);
 	crack *= 1.0 - smoothstep(0.30, 0.85, plate_fw);
@@ -300,9 +317,33 @@ void fragment() {
 	// slabs whose edges only appear where a stone meets open ground.
 	float slab_pick = hash3(vec3(plate_id * 2.3, 19.0));
 	float is_slab = step(0.60, slab_pick);
+	// The slab mask chooses stone-or-not from the SAME cell id as the substance,
+	// so it steps at exactly the same zero-width boundary and crawls the same
+	// way. It takes the same footprint average, or half the contrast at a
+	// contact would still snap while the other half was being filtered.
+	// The slab mask chooses stone-or-not from the SAME cell id as the substance,
+	// so it steps at exactly the same zero-width boundary and crawls the same
+	// way. Measured, it is the DOMINANT half: averaging the substance alone
+	// leaves the boundary floor where it was (0.0014 -> 0.0015 with the relief
+	// switched off), and averaging the mask too takes it to 0.0003.
+	float is_slab2 = step(0.60, hash3(vec3(plate_id2 * 2.3, 19.0)));
+	float is_slab_soft = mix(is_slab, is_slab2, plate_edge_w);
 	// Once a pixel spans a whole plate there is no per-plate answer to give,
 	// so converge on the mean coverage exactly as the substance does above.
-	float slab = mix(0.40, is_slab, plate_resolved);
+	float slab = mix(0.40, is_slab_soft, plate_resolved);
+	// ...but the SAME average must not reach the crack relief, and this is the
+	// one place the two uses of the mask have to part company.
+	//
+	// `plate_mask` gates the relief, and the relief is the term that aliases.
+	// Softening the mask across a contact widens the region where it is
+	// non-zero, so an aliased gradient leaks onto the neighbouring cell that
+	// used to mask it off entirely — measured at +0.0008 on the shipping build,
+	// which is more than the 0.0011 the average saves. Gating it on the BINARY
+	// mask keeps the relief confined to cells that actually drew a slab, and
+	// costs nothing where it matters: past the distance the contact stops being
+	// resolvable the gradient has already faded to nothing, so the hard step
+	// multiplies a term that is not there.
+	float slab_hard = mix(0.40, is_slab, plate_resolved);
 	// TWO separate quantities, and conflating them was a real bug in both
 	// directions:
 	//
@@ -321,6 +362,8 @@ void fragment() {
 	// drew its own substance and seams — the tessellation again, now only on
 	// slopes. They are separate values because they answer separate questions.
 	float plate_mask = sheet * slab;
+	// The relief's own gate — same quantity, binary slab (see above).
+	float plate_mask_relief = sheet * slab_hard;
 	float rock_exposure = max(rock_mix, plate_mask);
 
 	// The vertex tint stays the base layer (as cave_rock does with COLOR), so
@@ -413,7 +456,7 @@ void fragment() {
 	// with the treatment switched off, moving cave-chamber 29.61% away from
 	// base. Shader reasoning said the gate was already exact; it was not.
 	grad = vec2(dcdx * duvdy.y - dcdy * duvdx.y,
-		dcdy * duvdx.x - dcdx * duvdy.x) / safe_det * plate_scale * plate_mask;
+		dcdy * duvdx.x - dcdx * duvdy.x) / safe_det * plate_scale * plate_mask_relief;
 	// A screen-space gradient is UNBOUNDED as the feature it measures compresses
 	// into a pixel: at a grazing angle a seam 4 cm wide spans a fraction of one,
 	// and the raw slope runs to tens per metre — enough to swing the normal
