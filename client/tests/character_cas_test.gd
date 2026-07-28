@@ -91,7 +91,12 @@ extends Node
 
 const PROBE := "user://character_cas_probe.json"
 
-var _failed := false
+## The one shape every document here differs by, so two recipes are separated by a
+## single value rather than by whatever the preset happens to carry. Present on
+## the wanderer preset, and asserted to be so in [method _wanderer] — a missing
+## shape would make every "the bytes changed" comparison pass for the wrong
+## reason. Named the same way `character_revert_boot_test` names its signal shape.
+const SIGNAL_SHAPE := "torso_muscle"
 
 
 func _ready() -> void:
@@ -137,7 +142,7 @@ func _ready() -> void:
 	# A byte change must move it. An edited recipe is a same-version, same-shape,
 	# still-readable write — exactly the case the acceptance re-check cannot see
 	# and only the bytes distinguish.
-	var edited := _with_weight(wanderer, 0.42)
+	var edited := _with_shape(wanderer, 0.42)
 	if not CharacterStore.save_to(PROBE, edited, first):
 		_fail("a write presenting the current identity refused — the guard rejects every write, not just racing ones")
 		return
@@ -148,12 +153,12 @@ func _ready() -> void:
 
 	# 2. Another writer lands between this client's read and its rename. `second`
 	# is the identity this client read; the foreign bytes are what is on disk now.
-	var foreign := _with_weight(wanderer, 0.77)
+	var foreign := _with_shape(wanderer, 0.77)
 	if not _foreign_write(PROBE, foreign):
 		_fail("could not simulate a foreign writer")
 		return
 	var foreign_bytes := _read(PROBE)
-	var stale_ok := CharacterStore.save_to(PROBE, _with_weight(wanderer, 0.15), second)
+	var stale_ok := CharacterStore.save_to(PROBE, _with_shape(wanderer, 0.15), second)
 	if stale_ok:
 		_fail("a write presenting a STALE identity overwrote another writer's recipe — the character is lost permanently")
 		return
@@ -195,21 +200,21 @@ func _ready() -> void:
 	if after is not Dictionary:
 		_fail("the recipe stopped reading after a refused write")
 		return
-	if not is_equal_approx(float((after as Dictionary)["shapes"]["torso_muscle"]), 0.77):
+	if not is_equal_approx(float((after as Dictionary)["shapes"][SIGNAL_SHAPE]), 0.77):
 		_fail("the recipe did not read back the foreign writer's document after the refusal")
 		return
 
 	# 3. The refusal is not vacuous: the SAME call, with the identity the recipe
 	# actually carries now, must succeed.
 	var current := CharacterStore.document_identity(PROBE)
-	if not CharacterStore.save_to(PROBE, _with_weight(wanderer, 0.15), current):
+	if not CharacterStore.save_to(PROBE, _with_shape(wanderer, 0.15), current):
 		_fail("a write presenting the CURRENT identity refused — the guard rejects every write, not just racing ones")
 		return
 	if CharacterStore.last_refusal() != CharacterStore.REFUSAL_NONE:
 		_fail("a successful write still reported a refusal reason: '%s'" % CharacterStore.last_refusal())
 		return
 	var settled = CharacterStore.load_from(PROBE)
-	if settled is not Dictionary or not is_equal_approx(float((settled as Dictionary)["shapes"]["torso_muscle"]), 0.15):
+	if settled is not Dictionary or not is_equal_approx(float((settled as Dictionary)["shapes"][SIGNAL_SHAPE]), 0.15):
 		_fail("the accepted write did not reach disk")
 		return
 
@@ -239,11 +244,11 @@ func _ready() -> void:
 	if not CharacterStore.save_to(PROBE, wanderer):
 		_fail("save_to() no longer performs a blind replace")
 		return
-	if not CharacterStore.save_recipe(_with_weight(wanderer, 0.31)):
+	if not CharacterStore.save_recipe(_with_shape(wanderer, 0.31)):
 		_fail("save_recipe() no longer performs a blind replace")
 		return
 	var blind = CharacterStore.load_saved()
-	if blind is not Dictionary or not is_equal_approx(float((blind as Dictionary)["shapes"]["torso_muscle"]), 0.31):
+	if blind is not Dictionary or not is_equal_approx(float((blind as Dictionary)["shapes"][SIGNAL_SHAPE]), 0.31):
 		_fail("the blind replace did not take effect through the whole-game path")
 		return
 
@@ -276,8 +281,8 @@ func _wanderer() -> Dictionary:
 		return {}
 	var copy: Dictionary = (recipe as Dictionary).duplicate(true)
 	copy.erase("comment")
-	if not (copy.get("shapes", {}) as Dictionary).has("torso_muscle"):
-		_fail("the wanderer preset has no 'torso_muscle' shape — this test distinguishes documents by it")
+	if not (copy.get("shapes", {}) as Dictionary).has(SIGNAL_SHAPE):
+		_fail("the wanderer preset has no '%s' shape — this test distinguishes documents by it" % SIGNAL_SHAPE)
 		return {}
 	return copy
 
@@ -286,9 +291,9 @@ func _wanderer() -> Dictionary:
 ## still readable — so the acceptance re-check accepts it and ONLY the bytes tell
 ## two of these apart. A document this build could not read would be caught by
 ## can_write() and would prove nothing about the compare-and-swap.
-func _with_weight(recipe: Dictionary, weight: float) -> Dictionary:
+func _with_shape(recipe: Dictionary, value: float) -> Dictionary:
 	var copy := recipe.duplicate(true)
-	(copy["shapes"] as Dictionary)["torso_muscle"] = weight
+	(copy["shapes"] as Dictionary)[SIGNAL_SHAPE] = value
 	return copy
 
 
