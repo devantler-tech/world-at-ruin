@@ -352,6 +352,48 @@ corrections client/devlog/0.60.0.json "$feature"
 commit_all 'a normal forward-looking entry with corrections present'
 expect_pass 'a forward-looking entry while a corrections file exists'
 
+# --- Corrections that OVERWRITE an existing entry path --------------------
+# A bulk correction is a permutation: entries move onto release numbers that
+# other entries vacate in the same change, so a destination that already existed
+# in the base is MODIFIED rather than added. Checking only added paths let those
+# through while the corrections file claimed they were verified by containment —
+# 6 of the 27 listed corrections in #452 were invisible to the guard that way.
+#
+# client/devlog/0.58.0.json exists in this repo's base, so rewriting it is the
+# overwrite case. The guard reads the DECLARED version, not the filename, which
+# is what lets these cases vary one without the other.
+
+# RED: the case that used to escape entirely. The path is modified rather than
+# added, it IS listed, and its declared version is not the release containing its
+# anchor. Ablating candidate_entry_files back to --diff-filter=A makes this pass.
+reset_tree
+entry 0.58.0 >"$repo/client/devlog/0.58.0.json"
+printf '\n' >>"$repo/client/devlog/0.58.0.json"
+corrections client/devlog/0.58.0.json "$feature"
+commit_all 'overwrite a listed correction with the wrong release'
+expect_fail_matching 'a listed correction overwritten onto the wrong release' 'first shipped in v0.60.0'
+
+# GREEN: the same overwrite naming the release that DOES contain the anchor.
+# Without this the case above could be satisfied by refusing every modification.
+reset_tree
+entry 0.60.0 >"$repo/client/devlog/0.58.0.json"
+corrections client/devlog/0.58.0.json "$feature"
+commit_all 'overwrite a listed correction with the right release'
+expect_pass 'a listed correction overwritten onto the release containing it'
+
+# GREEN, and the non-weakening control that bounds the tightening: an UNLISTED
+# entry modified in place is still not checked. Editing the prose of an entry
+# that shipped long ago stays legal — this is the freedom the added-only rule
+# protected, and it must survive. Its declared version (0.58.0) is far below the
+# newest release, so if modifications were checked indiscriminately it would be
+# refused here.
+reset_tree
+entry 0.58.0 >"$repo/client/devlog/0.58.0.json"
+printf '\n' >>"$repo/client/devlog/0.58.0.json"
+corrections client/devlog/0.59.0.json "$feature"
+commit_all 'edit the prose of a shipped, unlisted entry'
+expect_pass 'an unlisted entry modified in place is still unchecked'
+
 # --- Layer 3: wiring ------------------------------------------------------
 # A correct guard that CI never runs passes all of the above and protects
 # nothing, so the wiring is asserted rather than assumed.

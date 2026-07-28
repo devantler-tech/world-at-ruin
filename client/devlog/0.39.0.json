@@ -7,5 +7,5 @@
 		"This is still a long way from where the interface needs to end up. The panel is a plain rectangle with no material to it, the type is the engine's own, and your wanderer stands in the world rather than being framed and lit for a portrait. Those are next."
 	],
 	"title": "The creator asks who you are, not what your numbers are",
-	"version": "0.16.0"
+	"version": "0.39.0"
 }
