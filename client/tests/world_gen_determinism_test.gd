@@ -95,7 +95,18 @@ const HALF := WorldGen.SIZE / 2.0
 ## cave_system_determinism_test (verts=10198 hash=767321522), while this whole
 ## world golden intentionally records the added visible node and its matching
 ## vertices.
-const GOLDEN_FINGERPRINT := "37fee52c"
+## (#493): the world no longer carries the cave's discarded first build. The
+## generator disposed each previous pass with a deferred `queue_free` alone, so
+## the tree held 16 dead nodes — a duplicate hull, its collision body, the
+## torches and the boulders — beside the 17 live ones for the rest of the frame
+## the world is built in, and this traversal hashed them all. They leave the
+## tree at the point of disposal now, so only the live world is fingerprinted.
+## Nothing live moved, and that is measured rather than argued: re-running this
+## exact traversal on the previous build while skipping nodes already queued for
+## deletion yields precisely this value. The cave rock mesh stays pinned
+## independently by cave_system_determinism_test (verts=10198 hash=767321522),
+## which is unchanged across the fix.
+const GOLDEN_FINGERPRINT := "dc6215d4"
 
 
 

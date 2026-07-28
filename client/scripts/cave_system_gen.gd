@@ -927,6 +927,16 @@ static func _has_rock_below(field: PackedFloat32Array, nx: int, ny: int, nz: int
 func rebuild(terrain_h: Callable = func(_x: float, _z: float) -> float: return 0.0,
 		terrain_material: Callable = Callable()) -> void:
 	for node in _built:
+		# LEAVE THE TREE NOW, free the memory later. `queue_free` is deferred: the
+		# node stays a child until the end of the frame. The world builds the cave
+		# with two rebuilds in ONE frame — `_ready` runs on `add_child` with no
+		# samplers, then WorldGen rebuilds with them — so a discarded hull outlives
+		# its replacement for the rest of that frame, and sits AHEAD of it in
+		# `get_children()`. Anything reading the cave's meshes from the tree then
+		# takes the throwaway. Removing the child first makes that read impossible
+		# rather than something every consumer has to defend against.
+		if node.get_parent() == self:
+			remove_child(node)
 		node.queue_free()
 	_built.clear()
 	_torch_lights.clear()
@@ -943,6 +953,12 @@ func rebuild(terrain_h: Callable = func(_x: float, _z: float) -> float: return 0
 	mesh.surface_set_material(0, mat)
 
 	var mi := MeshInstance3D.new()
+	# Named so a consumer can ask for the hull directly, the way it already can
+	# for `TerrainContact`, instead of iterating and taking the first structural
+	# match. The name is only dependable because the removal above frees it before
+	# the replacement is added — Godot would otherwise suffix the newcomer and
+	# leave the stale node holding this name.
+	mi.name = "RockHull"
 	mi.mesh = mesh
 	add_child(mi)
 	_built.append(mi)
