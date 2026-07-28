@@ -597,11 +597,17 @@ func _open_creator(first_run: bool) -> void:
 			# recorded, which is precisely the "saved when they are not" the notice
 			# above exists to prevent. The cancel path already reverts this way; a
 			# failed apply has exactly the same problem and now gets the same answer.
-			# A first run has nothing on disk to revert TO, and load_saved() answers
-			# null there and on a refused path alike, so the guard covers both.
+			# Disk is the truth where there IS one. Where there is not — a first
+			# run, or a save deleted while the creator was open — the recipe the
+			# creator OPENED with is the last state that was ever true for this
+			# body, so fall back to it. Leaving the edit up in that case would
+			# contradict the notice below on exactly the paths load_saved() cannot
+			# answer for, which is the one case the player has no way to check.
 			var on_disk = CharacterStore.load_saved()
 			if on_disk is Dictionary:
 				_player.set_character(on_disk)
+			else:
+				_player.set_character(initial)
 			if CharacterStore.is_refused(CharacterStore.save_path()):
 				_save_blocked = true
 				_hud.toast(REFUSED_SAVE_NOTICE)

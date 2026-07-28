@@ -23,6 +23,12 @@ extends Node
 ##     the creator must NOT latch shut (contention is momentary, not a refusal),
 ##     and the player must be told without being blamed for a second copy of the
 ##     game that may not be running.
+##  C. NO DISK RECIPE — the same contended apply with nothing on disk (a first
+##     run, or a save deleted while the creator was open). There is no recorded
+##     character to go back to, so the body must return to what the creator
+##     OPENED with — the preset — and not stay on the edit. This is the one case
+##     the player cannot check for themselves, since there is no saved character
+##     to compare against, and it is the path `load_saved()` cannot answer for.
 ##
 ## The competing writer is simulated by creating the lock directory directly.
 ## That is not an approximation: the lock IS a directory, so one created here is
@@ -51,14 +57,19 @@ const SIGNAL_SHAPE := "torso_vshape"
 ## Far apart on purpose — see the fixture note above.
 const ON_DISK_WEIGHT := 0.9
 const EDITED_WEIGHT := 0.1
+## What the shipped wanderer preset carries for [constant SIGNAL_SHAPE]. Arm C
+## opens the creator with no recipe on disk, so the preset IS what it opened
+## with. Distinct from BOTH weights above, so arm C separates "went back to the
+## preset" from "stayed on the edit" AND from "somehow read the old disk value".
+const PRESET_WEIGHT := 0.7
 ## Deferred boot wiring needs idle frames; give it many.
 const BOOT_TICK := 30
 
 var _ticks := 0
 var _main: Node
 var _save: SaveIsolation
-## Set once the control arm has passed, so the positive arm runs on the tick after.
-var _control_done := false
+## Which arm runs next: 0 = control, 1 = revert-to-disk, 2 = revert-with-no-disk.
+var _arm := 0
 ## The on-disk recipe's bytes, to prove the refused apply left them alone.
 var _seeded_sha := ""
 
@@ -109,10 +120,10 @@ func _physics_process(_delta: float) -> void:
 	_ticks += 1
 	if _ticks < BOOT_TICK:
 		return
-	if not _control_done:
-		_assert_control()
-	else:
-		_assert_revert()
+	match _arm:
+		0: _assert_control()
+		1: _assert_revert()
+		_: _assert_revert_without_disk()
 
 
 ## CONTROL: with the lock free, an apply reaches BOTH disk and the body. Without
@@ -144,7 +155,7 @@ func _assert_control() -> void:
 	_close_creator(creator)
 	if not _seed_on_disk():
 		return
-	_control_done = true
+	_arm = 1
 	_ticks = 0
 
 
@@ -199,13 +210,67 @@ func _assert_revert() -> void:
 	if toast == String(_main.get("REFUSED_SAVE_NOTICE")):
 		_fail("a contended apply told the player their save had been permanently refused")
 		return
+	_close_creator(creator)
+	_arm = 2
+	_ticks = 0
+
+
+## ARM C: the same contended apply with NOTHING on disk. `load_saved()` cannot
+## answer here, so the body must fall back to the recipe the creator opened with
+## — the preset — rather than keeping an edit that was never recorded.
+func _assert_revert_without_disk() -> void:
+	# Remove the recipe directly rather than through clear(): clear() takes the
+	# same write lock this arm is about to hold, and the arm is about the ABSENCE
+	# of a recipe, not about how it came to be absent.
+	DirAccess.remove_absolute(_abs(CharacterStore.save_path()))
+	if CharacterStore.load_saved() is Dictionary:
+		_fail("the recipe survived removal, so this arm would not be testing the no-disk path")
+		return
+
+	var creator = _open_creator()
+	if creator == null:
+		return
+	# Same preview-first discipline as arm B: move the body OFF the value being
+	# asserted, or "shows the preset" would be true for the trivial reason that
+	# nothing ever changed it.
+	_main.get("_player").set_character(_recipe(EDITED_WEIGHT))
+	if not is_equal_approx(_shown_weight(), EDITED_WEIGHT):
+		_fail("the pre-apply preview did not take, so a revert cannot be observed")
+		return
+
+	var lock := FileLock.path_for(CharacterStore.save_path())
+	if DirAccess.make_dir_absolute(_abs(lock)) != OK:
+		_fail("could not simulate a competing writer by taking the lock")
+		return
+	creator.applied.emit(_recipe(EDITED_WEIGHT))
+	DirAccess.remove_absolute(_abs(lock))
+
+	var shown := _shown_weight()
+	if not is_equal_approx(shown, PRESET_WEIGHT):
+		_fail(("a contended apply with no recipe on disk left the body on the edit "
+			+ "(shape %s reads %f, want the preset %f) — the notice says nothing changed "
+			+ "while the player is looking at something that was never recorded, and with "
+			+ "no saved character they cannot discover otherwise")
+			% [SIGNAL_SHAPE, shown, PRESET_WEIGHT])
+		return
+	if CharacterStore.exists():
+		_fail("a contended apply created a recipe it had failed to write")
+		return
+	if bool(_main.get("_save_blocked")):
+		_fail("a contended apply with no recipe on disk latched the creator shut")
+		return
+	if _toast_text() != String(_main.get("UNSAVED_NOTICE")):
+		_fail("a contended apply with no recipe on disk did not tell the player (toast read %s)"
+			% [_toast_text()])
+		return
 	if not _save.real_save_untouched():
 		_fail("the boot test touched the player's real save, vault or recovery ledger")
 		return
 	_main.queue_free()
 	_main = null
 	print("TEST PASS — an apply that never reached disk puts the body back to the recorded "
-		+ "character, leaves the recipe byte-intact, and does not latch the creator shut")
+		+ "character, falls back to the opening recipe when there is none, leaves the recipe "
+		+ "byte-intact, and does not latch the creator shut")
 	get_tree().quit(0)
 
 
