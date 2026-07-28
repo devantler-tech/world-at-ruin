@@ -116,8 +116,9 @@ const TALLEST_REGION := &"cinderreach"
 const TALLEST_MARGIN := 0.05
 
 ## How far apart the tallest and flattest regions' relief must sit, in metres.
-## Measured spread on the shipped seed is 1.20 m. Without a margin, "these
-## regions differ" would pass on a difference no player could see.
+## Measured spread on the shipped seed is 1.31 m (cinderreach 2.324 against
+## bonepale 1.017). Without a margin, "these regions differ" would pass on a
+## difference no player could see.
 const RELIEF_SPREAD := 0.85
 
 ## The second-difference ratio a strongly-ridged region must reach against the
