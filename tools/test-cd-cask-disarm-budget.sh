@@ -70,6 +70,8 @@ reset_mocks() {
 	# well-formed document — how "the read failed or came back malformed" is
 	# expressed without changing the stub's dispatch.
 	mock_pr_state_override=""
+	mock_pr_title="chore(cask): update world-at-ruin to v0.65.7"
+	mock_patch_rc=0
 	mock_merge_rc=0
 	mock_branch_version="0.65.7"
 	mock_checks='{"total_count":1,"check_runs":[{"name":"CI - Required Checks","status":"completed","conclusion":"success"}]}'
@@ -86,11 +88,12 @@ cask_version_at() {
 sleep() { :; }
 
 gh() {
-	local a token_put=0 path="" is_graphql=0
+	local a token_put=0 token_patch=0 path="" is_graphql=0
 	printf '%s\n' "$*" >>"${call_log}"
 	for a in "$@"; do
 		case "${a}" in
 		PUT) token_put=1 ;;
+		PATCH) token_patch=1 ;;
 		graphql) is_graphql=1 ;;
 		repos/*) [ -z "${path}" ] && path="${a}" ;;
 		esac
@@ -102,6 +105,15 @@ gh() {
 	fi
 	if [ "${token_put}" = "1" ] && [[ "${path}" == */merge ]]; then
 		return "${mock_merge_rc}"
+	fi
+	if [ "${token_patch}" = "1" ] && [[ "${path}" == */pulls/* ]]; then
+		return "${mock_patch_rc}"
+	fi
+	# The title is read through `--jq .title`, which returns a bare string
+	# rather than the document the other PR reads yield.
+	if [[ "${path}" == */pulls/* ]] && printf '%s' "$*" | grep -q -- '--jq'; then
+		printf '%s\n' "${mock_pr_title}"
+		return 0
 	fi
 	if [[ "${path}" == *check-runs* ]]; then
 		printf '%s\n' "${mock_checks}"
@@ -129,6 +141,7 @@ gh() {
 }
 
 merge_calls() { grep -c -- '/merge' "${call_log}" || true; }
+patch_calls() { grep -c -- '-X PATCH' "${call_log}" || true; }
 graphql_calls() { grep -c -- 'graphql' "${call_log}" || true; }
 
 # ---------------------------------------------------------------------------
@@ -230,5 +243,78 @@ disarm_prior_cask_auto_merge "${tap}" "${pre_pr}" "${branch}" || rc=$?
 [ "${rc}" -ne 0 ] ||
 	fail "the fallback proceeded without being able to read what the branch carries"
 [ "$(merge_calls)" -eq 0 ] || fail "an unreadable branch version still merged the previous PR"
+
+# ---------------------------------------------------------------------------
+# The delivered PR is merged under a title that DESCRIBES it. The tap
+# squash-merges on the title, and the armed PR's title was written by whichever
+# run armed it — an out-of-band writer can have moved the branch since.
+# ---------------------------------------------------------------------------
+
+# Title already correct: converged, so no PATCH is spent.
+reset_mocks
+mock_pr_title="chore(cask): update world-at-ruin to v0.65.7"
+rc=0
+disarm_prior_cask_auto_merge "${tap}" "${pre_pr}" "${branch}" || rc=$?
+[ "${rc}" -eq 0 ] || fail "an already-converged title was rejected (rc=${rc})"
+[ "$(patch_calls)" -eq 0 ] ||
+	fail "the title was rewritten when it already described the branch content"
+
+# Title STALE against what the branch now carries: retitled before the merge,
+# and the retitle must come first — merging under the old title is the hazard.
+reset_mocks
+mock_pr_title="chore(cask): update world-at-ruin to v0.65.0"
+rc=0
+disarm_prior_cask_auto_merge "${tap}" "${pre_pr}" "${branch}" || rc=$?
+[ "${rc}" -eq 0 ] || fail "a stale title could not be converged (rc=${rc})"
+[ "$(patch_calls)" -gt 0 ] ||
+	fail "the PR was delivered under a title naming a version the branch does not carry — the lying-changelog hazard"
+grep -q 'title=chore(cask): update world-at-ruin to v0.65.7' "${call_log}" ||
+	fail "the retitle did not name the version the branch actually carries"
+[ "$(grep -n -- '-X PATCH' "${call_log}" | head -1 | cut -d: -f1)" \
+	-lt "$(grep -n -- '/merge' "${call_log}" | head -1 | cut -d: -f1)" ] ||
+	fail "the merge went out before the retitle; the squash would carry the stale title"
+
+# A retitle that FAILS must not fall through to the merge.
+reset_mocks
+mock_pr_title="chore(cask): update world-at-ruin to v0.65.0"
+mock_patch_rc=1
+rc=0
+disarm_prior_cask_auto_merge "${tap}" "${pre_pr}" "${branch}" || rc=$?
+[ "${rc}" -ne 0 ] || fail "a failed retitle still reported success"
+[ "$(merge_calls)" -eq 0 ] || fail "a failed retitle still merged the PR under its stale title"
+
+# ---------------------------------------------------------------------------
+# One shared wall-clock deadline bounds every REST wait the job takes, so two
+# waits in one job cannot together exceed the runner timeout.
+# ---------------------------------------------------------------------------
+
+reset_mocks
+# Already expired: the wait must refuse immediately rather than spend its own
+# full budget on top of a previous one.
+# Read by the SOURCED production helper, not by this file — shellcheck cannot
+# see across the `source`.
+# shellcheck disable=SC2034
+cask_rest_deadline=$(($(date +%s) - 1))
+rc=0
+disarm_prior_cask_auto_merge "${tap}" "${pre_pr}" "${branch}" || rc=$?
+[ "${rc}" -ne 0 ] ||
+	fail "the REST wait ignored the job's shared deadline; two waits could outlast the runner timeout"
+[ "$(merge_calls)" -eq 0 ] || fail "a PR was merged after the shared deadline had passed"
+unset cask_rest_deadline
+
+# Unset deadline (a caller that never set one) must not break the wait.
+reset_mocks
+rc=0
+disarm_prior_cask_auto_merge "${tap}" "${pre_pr}" "${branch}" || rc=$?
+[ "${rc}" -eq 0 ] || fail "an unset deadline broke the REST wait (rc=${rc})"
+
+# The workflow must actually SET that deadline — a helper that honours a
+# variable nobody assigns is an unfireable guard.
+# The pattern matches the LITERAL shell written in the workflow, so the `$`
+# must stay unexpanded — single quotes are the point, not an oversight.
+# shellcheck disable=SC2016
+if ! grep -q '^ *cask_rest_deadline=\$(( \$(date +%s) + [0-9]\+ ))' "${workflow}"; then
+	fail "the workflow never sets cask_rest_deadline, so the shared bound never applies in production"
+fi
 
 echo "PASS: the cask disarm survives an exhausted GraphQL budget and fails closed on every other refusal"

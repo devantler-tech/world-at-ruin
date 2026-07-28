@@ -704,6 +704,13 @@ jobs:
           tap="devantler-tech/homebrew-tap"
           content="$(base64 -w0 < Casks/world-at-ruin.rb)"
 
+          # ONE deadline for every REST check-wait this job performs, however
+          # many it turns out to need (see the delivery helper). 10 minutes of
+          # the job's 15 leaves the asset download, the tap reads, the branch
+          # repair and the PR work their own headroom, and a wait that runs
+          # past it fails loudly rather than taking the runner timeout with it.
+          cask_rest_deadline=$(( $(date +%s) + 600 ))
+
           # A fork can use the same branch name, so never select a PR by ref
           # alone. Ask GitHub for the tap owner's head and then fail closed by
           # checking the returned PR's head repository and ref ourselves.
@@ -773,6 +780,18 @@ jobs:
           # Exhausting it fails LOUDLY: checks that never finish are a real
           # problem, not a quota one.
           #
+          # The per-call budget alone is NOT enough, because one job can take
+          # this wait TWICE: once to clear a previously-armed PR that could not
+          # be disarmed for quota, and again when the same exhausted budget
+          # sends this run's own PR down the delivery path. Two full budgets is
+          # 13m20s of a 15-minute job, before the asset download, ~160 API
+          # reads and the conflict repair's own polling — so a slow-but-healthy
+          # pair of PRs would hit the runner timeout with the new PR neither
+          # armed nor delivered, which is the outcome this whole path exists to
+          # prevent. Bound the two waits with ONE wall-clock deadline set at
+          # step start, so their SUM is budgeted rather than each in isolation.
+          # Unset (a test sourcing the helper alone) means no deadline.
+          #
           # Returns 0 delivered, 2 the branch moved so the caller must re-derive
           # the title before delivering, 1 anything else.
           merge_cask_pr_when_green() {
@@ -799,6 +818,14 @@ jobs:
             esac
 
             for attempt in $(seq 1 20); do
+              # Shared wall-clock bound across every REST wait this job takes.
+              # Checked at the TOP of the iteration so an already-expired
+              # deadline costs no further reads.
+              if [ "${cask_rest_deadline:-0}" -gt 0 ] \
+                 && [ "$(date +%s)" -ge "${cask_rest_deadline}" ]; then
+                echo "::error::${tap}#${pr} did not reach an all-green head before this job's shared REST delivery deadline; the cask is written and the PR is open, but it was not delivered"
+                return 1
+              fi
               pr_state="$(gh api "repos/${tap}/pulls/${pr}" 2>/dev/null || true)"
               if [ -n "${pr_state}" ] \
                  && [ "$(printf '%s' "${pr_state}" | jq -r '.merged' 2>/dev/null)" = "true" ]; then
@@ -1135,6 +1162,33 @@ jobs:
             pre_version="$(cask_version_at "${branch}")"
             if [ -z "${pre_version}" ]; then
               echo "::error::the tap account's GraphQL budget is exhausted and ${branch}'s cask version could not be read; refusing to deliver ${tap}#${pre_pr} under an unverified title"
+              return 1
+            fi
+            # CONVERGE THE TITLE FIRST. The tap squash-merges on the PR TITLE,
+            # and that title was written by the run that armed this PR — it
+            # describes what the branch carried THEN. An out-of-band writer
+            # (serialisation stops sibling releases, not a manual edit) can
+            # have moved the branch since, and `merge_cask_pr_when_green` only
+            # proves the branch still carries `expected_version` — which is
+            # what we just READ from it, so it agrees by construction and
+            # cannot catch a title that disagrees. Without this, delivering
+            # would ship the new content under the old version's changelog
+            # entry: exactly the lying-title hazard the arming path re-derives
+            # for. Re-read the title rather than reusing the pre-mutation
+            # snapshot, so the comparison is as late as it can be.
+            pre_title="chore(cask): update world-at-ruin to v${pre_version}"
+            if [ "$(gh api "repos/${tap}/pulls/${pre_pr}" --jq '.title' 2>/dev/null || true)" != "${pre_title}" ]; then
+              if ! gh api -X PATCH "repos/${tap}/pulls/${pre_pr}" -f title="${pre_title}" >/dev/null 2>&1; then
+                echo "::error::could not retitle ${tap}#${pre_pr} to ${pre_title} before delivering it; refusing to merge it under a title that does not describe its content"
+                return 1
+              fi
+              echo "retitled ${tap}#${pre_pr}: ${pre_title}"
+            fi
+            # The retitle is itself a window: prove the content the title was
+            # derived from is still what the branch carries, exactly as the
+            # arming loop does after its own PATCH.
+            if [ "$(cask_version_at "${branch}")" != "${pre_version}" ]; then
+              echo "::error::${branch} moved while retitling ${tap}#${pre_pr}; refusing to deliver it under a title derived from content it no longer carries"
               return 1
             fi
             echo "::notice::auto-merge cannot be disarmed on ${tap}#${pre_pr} — the tap account's GraphQL budget is exhausted; delivering v${pre_version} over REST instead so nothing stays armed across the write"
