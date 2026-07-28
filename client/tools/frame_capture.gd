@@ -44,7 +44,7 @@ const FrameDiff := preload("res://tools/frame_diff.gd")
 ## Every scenario this tool knows. Listed once so the dispatch below and the
 ## error message a caller sees cannot disagree — the previous pair of hand-kept
 ## conditions had already drifted apart by one scenario.
-const SCENARIOS: Array[String] = ["world", "first_run", "breath", "walk", "light_response", "replication"]
+const SCENARIOS: Array[String] = ["world", "first_run", "breath", "walk", "run", "light_response", "replication"]
 
 ## The committed vantages. Fixed on purpose — evidence is only comparable across
 ## commits if the camera does not move between them. Each is [name, eye, target].
