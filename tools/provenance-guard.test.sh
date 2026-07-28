@@ -144,6 +144,47 @@ expect_failure \
 	"cannot be represented in a provenance manifest" \
 	"$repo"
 
+# R1 — the binary test decides on the decoded BYTES, not on iconv's exit status.
+#
+# BSD iconv reports failure on a file it decoded perfectly when a multi-byte
+# character straddles its first 1024-byte read boundary and stdout is a
+# character device: the status carries a stale ENOTTY from an ioctl on the
+# device, not a decode error. Both fixtures below are built to that shape, so a
+# status-based test classifies the valid one as binary on macOS while CI's GNU
+# iconv stays green — the two must agree.
+straddling_multibyte_file() {
+	# An em dash (E2 80 94) at offset 1022 occupies bytes 1022-1024, so it spans
+	# the boundary. Everything else is ASCII, so the file is valid UTF-8 whole.
+	{
+		head -c 1022 /dev/zero | tr '\0' 'a'
+		printf '\342\200\224'
+		head -c 200 /dev/zero | tr '\0' 'b'
+		printf '\n'
+	} >"$1"
+}
+
+repo=$(new_repo utf8_straddle)
+mkdir -p "$repo/client/scripts"
+straddling_multibyte_file "$repo/client/scripts/long_text.gd"
+git -C "$repo" add client/scripts/long_text.gd
+expect_success "valid UTF-8 spanning iconv's read boundary is not an asset" "$repo"
+
+# The positive control for the same rule: narrowing that false positive must not
+# cost R1 its reason to exist. These bytes carry no NUL, so the NUL test cannot
+# catch them and only the UTF-8 test stands between them and a silent ship.
+repo=$(new_repo utf8_invalid)
+mkdir -p "$repo/client/scripts"
+{
+	head -c 1022 /dev/zero | tr '\0' 'a'
+	printf '\377\376'
+	head -c 200 /dev/zero | tr '\0' 'b'
+} >"$repo/client/scripts/not_text.gd"
+git -C "$repo" add client/scripts/not_text.gd
+expect_failure \
+	"NUL-free undecodable bytes are still binary" \
+	"client/scripts/not_text.gd" \
+	"$repo"
+
 if [ "$failures" -ne 0 ]; then
 	printf 'provenance-guard tests: %d failure(s)\n' "$failures" >&2
 	exit 1

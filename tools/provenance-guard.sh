@@ -86,7 +86,22 @@ is_binary() {
 	# Invalid UTF-8 → binary. This is what catches the NUL-free binary formats;
 	# an image or mesh that decodes cleanly as UTF-8 is not a thing that
 	# happens by accident.
-	iconv -f UTF-8 -t UTF-8 <"$file" >/dev/null 2>&1 || return 0
+	#
+	# The verdict comes from the decoded BYTES, never from iconv's exit status.
+	# BSD iconv reports failure on a file it converted perfectly whenever a
+	# multi-byte character straddles its first 1024-byte read boundary and
+	# stdout is a character device: the status carries a stale ENOTTY from an
+	# ioctl on that device rather than a decode error. Reading it as a verdict
+	# calls ordinary source binary on macOS while GNU iconv passes the same file
+	# in CI, and the advice that follows — move a .gd file into client/assets and
+	# give it a PROVENANCE.md — would be wrong to act on.
+	#
+	# A UTF-8 round-trip is the identity on decodable bytes and stops at the
+	# first undecodable one, so comparing the output against the input decides
+	# the same way on both platforms. `cmp` inside a process substitution keeps
+	# the verdict cmp's alone; iconv's status never reaches it, which a plain
+	# pipeline would not guarantee under the `pipefail` set above.
+	cmp -s <(iconv -f UTF-8 -t UTF-8 <"$file" 2>/dev/null) "$file" || return 0
 	# A NUL byte → binary. Octal range through `tr`, NOT a grep bracket
 	# expression: BSD grep rejects \xNN ranges outright.
 	total=$(wc -c <"$file")
