@@ -7,5 +7,5 @@
 		"This is a rough first locomotion slice, not a finished movement set. The feet do not yet solve contact against uneven ground; run, jump, landing and turning have no authored motion; and transitions reset instead of blending."
 	],
 	"title": "The wanderer has a first walking stride",
-	"version": "0.59.0"
+	"version": "0.60.0"
 }
