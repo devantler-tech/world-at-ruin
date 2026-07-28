@@ -72,7 +72,7 @@ func begin() -> bool:
 	for path in [_probe, _vault_probe, _recovery_probe]:
 		if FileAccess.file_exists(path):
 			DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
-	_clear_vault_lock()
+	_clear_locks()
 	_default_before_exists = FileAccess.file_exists(CharacterStore.DEFAULT_PATH)
 	_default_before_sha = _sha(CharacterStore.DEFAULT_PATH)
 	_vault_before_exists = FileAccess.file_exists(SaveVault.DEFAULT_PATH)
@@ -115,21 +115,29 @@ func end() -> void:
 	for path in [_probe, _vault_probe, _recovery_probe]:
 		if FileAccess.file_exists(path):
 			DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
-	_clear_vault_lock()
+	_clear_locks()
 
 
-## Drop the vault write lock as well as the probe files.
+## Drop every write lock as well as the probe files.
 ##
-## The lock is a DIRECTORY, so the file sweep above cannot see it, and a lock left
+## A lock is a DIRECTORY, so the file sweep above cannot see it, and a lock left
 ## behind by a boot that was killed mid-write would otherwise outlive its test:
 ## the next test redirecting to the same probe path would find a lock that is not
-## yet stale, refuse every vault write, and fail as though the vault were simply
-## not being applied. Clearing the in-process bookkeeping first, then the
-## directory, covers both a lock this process still holds and one inherited from
-## an earlier run.
-func _clear_vault_lock() -> void:
-	SaveVault.clear_locks_for_test()
-	SaveVault._remove_lock_dir(SaveVault.lock_path(_vault_probe))
+## yet stale, refuse every write to that file, and fail as though persistence
+## were simply not being applied. Clearing the in-process bookkeeping first, then
+## the directories, covers both a lock this process still holds and one inherited
+## from an earlier run.
+##
+## BOTH locked probes are swept. Probe paths carry the process id, so an
+## inherited lock needs the OS to have reused that pid — which is precisely the
+## case [method FileLock._reclaim_if_abandoned] is built around, so it is a real
+## possibility here rather than a theoretical one. Sweeping only the vault's
+## would leave the recovery ledger's behind, and a stuck recovery lock is the
+## worse of the two: it refuses the quarantine write that decides a rollback.
+func _clear_locks() -> void:
+	FileLock.clear_for_test()
+	for locked: String in [_vault_probe, _recovery_probe]:
+		FileLock.remove_dir(FileLock.path_for(locked))
 
 
 func _sha(path: String) -> String:

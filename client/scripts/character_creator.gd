@@ -20,6 +20,10 @@ const COL_EMBER := UiTheme.EMBER
 
 const PRESET_DIR := "res://recipes/"
 const PRESETS := ["wanderer", "villager", "elder", "brute"]
+## Names this production writer may ORIGINATE. Reader registries deliberately
+## grow one retained release earlier; keeping activation in a separate resource
+## makes that safe expansion state representable and base-comparable in CI.
+const WRITER_VOCABULARY_PATH := "res://registries/character_writer_vocabulary.json"
 
 ## Capability-2 reads baked in v0.50.0, so the contract release may expose this
 ## preview. It remains deliberately opt-in until #336 replaces the raw controls
@@ -49,10 +53,10 @@ const PRESET_BLURBS := {
 ## The kit exposes 29 shape sliders and the panel used to place all of them in
 ## one undifferentiated run under a single BUILD heading — the "debug panel"
 ## the first screen of the game read as (#270). Grouping is keyed on the shape
-## NAMES rather than a hand-maintained list of them, for the same reason
-## `_shape_names()` reads the live mesh: the creator must not go stale when the
-## kit gains shapes. Anything unmatched falls into SHAPE_GROUP_FALLBACK, so a
-## new shape always appears somewhere — never silently vanishes.
+## NAMES rather than a group-specific list. `_shape_names()` takes the
+## production-activated subset of the live mesh; anything activated but
+## unmatched falls into SHAPE_GROUP_FALLBACK, so writer vocabulary never
+## silently vanishes from the screen.
 const SHAPE_GROUPS := [
 	["ARCHETYPE", ["body_"]],
 	["HERITAGE", ["phenotype_"]],
@@ -77,6 +81,7 @@ var first_run := false
 
 var _player: Player
 var _recipe: Dictionary
+var _initial_recipe: Dictionary
 var _shape_sliders := {}
 var _bone_sliders := {}
 var _outfit_pickers := {}
@@ -86,6 +91,7 @@ var _portraits: Array[ArchetypePortrait] = []
 var _camera: Camera3D
 var _light: DirectionalLight3D
 var _syncing := false
+static var _writer_vocabulary: Dictionary = {}
 
 
 ## Builds and shows the creator over a live player. `initial` is the starting
@@ -93,6 +99,7 @@ var _syncing := false
 func open(player: Player, initial: Dictionary, p_first_run: bool) -> void:
 	_player = player
 	_recipe = initial.duplicate(true)
+	_initial_recipe = initial.duplicate(true)
 	first_run = p_first_run
 	_player.control_enabled = false
 	_player.set_character(_recipe)
@@ -263,9 +270,9 @@ func _build_panel() -> void:
 	# garments arrive, which means most regions have no baked piece yet — and a
 	# picker whose only entry is "none" is a row the player cannot use. Showing
 	# all thirteen would have added nine dead rows to a screen already faulted
-	# for reading as a debug panel (#227). Each region appears the moment a piece
-	# is baked for it, except a new below-bar region held behind the existing
-	# layered-outfit preview.
+	# for reading as a debug panel (#227). Each region appears when a baked piece
+	# is activated in the production writer vocabulary, except a new below-bar
+	# region held behind the existing layered-outfit preview.
 	var equipment_registry := CharacterFactory.equipment_registry()
 	var layered_outfit := layered_outfit_pickers_enabled()
 	for slot: String in pickable_regions(equipment_registry):
@@ -287,7 +294,7 @@ func _build_panel() -> void:
 		for shape_name: String in group[1]:
 			_add_shape_slider(advanced, shape_name)
 	_add_heading(advanced, "FRAME")
-	for spec: Array in BONE_SLIDERS:
+	for spec: Array in writable_bone_sliders():
 		_add_bone_slider(advanced, spec)
 
 	var buttons := HBoxContainer.new()
@@ -350,6 +357,104 @@ static func group_shape_names(names: PackedStringArray) -> Array:
 		var bucket: Array = buckets[title]
 		if not bucket.is_empty():
 			out.append([title, PackedStringArray(bucket)])
+	return out
+
+
+## The explicit production-origination boundary. Reader registries are wider
+## during expand/bake, so the creator never derives this set from the live kit.
+## Malformed configuration fails closed to no writable names; the dedicated
+## contract test makes that state loud in CI.
+static func writer_vocabulary() -> Dictionary:
+	if not _writer_vocabulary.is_empty():
+		return _writer_vocabulary
+	var file := FileAccess.open(WRITER_VOCABULARY_PATH, FileAccess.READ)
+	if file == null:
+		push_error("CharacterCreator: writer vocabulary missing: %s" % WRITER_VOCABULARY_PATH)
+		return {}
+	var parsed: Variant = JSON.parse_string(file.get_as_text())
+	if parsed is not Dictionary:
+		push_error("CharacterCreator: writer vocabulary is not a JSON object")
+		return {}
+	var candidate := parsed as Dictionary
+	var required := ["bone_keys", "equipment", "shapes", "skins"]
+	if candidate.size() != required.size():
+		push_error("CharacterCreator: writer vocabulary must contain exactly %s" % str(required))
+		return {}
+	for key: String in required:
+		if key not in candidate:
+			push_error("CharacterCreator: writer vocabulary is missing '%s'" % key)
+			return {}
+	if candidate["equipment"] is not Dictionary \
+			or candidate["bone_keys"] is not Dictionary \
+			or candidate["shapes"] is not Array \
+			or candidate["skins"] is not Array:
+		push_error("CharacterCreator: writer vocabulary has an invalid collection type")
+		return {}
+	for piece_name: Variant in (candidate["equipment"] as Dictionary):
+		var slot: Variant = candidate["equipment"][piece_name]
+		if piece_name is not String or (piece_name as String).is_empty() \
+				or slot is not String or (slot as String).is_empty():
+			push_error("CharacterCreator: writer equipment entries must be non-empty name -> slot strings")
+			return {}
+	var required_bone_fields := ["bone_girth", "bone_scale", "joint_push"]
+	var bones := candidate["bone_keys"] as Dictionary
+	if bones.size() != required_bone_fields.size():
+		push_error("CharacterCreator: writer bone keys must contain exactly %s" % str(required_bone_fields))
+		return {}
+	for field: String in required_bone_fields:
+		if field not in bones or bones[field] is not Array \
+				or not _is_nonempty_string_array(bones[field]):
+			push_error("CharacterCreator: writer bone field '%s' is missing or invalid" % field)
+			return {}
+	if not _is_nonempty_string_array(candidate["shapes"]) \
+			or not _is_nonempty_string_array(candidate["skins"]):
+		push_error("CharacterCreator: writer shapes and skins must be non-empty string arrays")
+		return {}
+	_writer_vocabulary = candidate
+	return _writer_vocabulary
+
+
+static func _is_nonempty_string_array(value: Variant) -> bool:
+	if value is not Array or (value as Array).is_empty():
+		return false
+	var seen := {}
+	for entry: Variant in value:
+		if entry is not String or (entry as String).is_empty() or entry in seen:
+			return false
+		seen[entry] = true
+	return true
+
+
+## Only sliders whose persisted field/key pair is activated for production.
+static func writable_bone_sliders() -> Array:
+	var out: Array = []
+	var bones: Dictionary = writer_vocabulary().get("bone_keys", {})
+	for spec: Array in BONE_SLIDERS:
+		if String(spec[2]) in (bones.get(String(spec[1]), []) as Array):
+			out.append(spec)
+	return out
+
+
+## Reader-only skins may load and round-trip without entering a new save.
+static func pickable_skins(registry: Dictionary) -> Array[String]:
+	var out: Array[String] = []
+	var readers: Dictionary = registry.get("skins", {})
+	for skin_name: Variant in writer_vocabulary().get("skins", []):
+		var name := String(skin_name)
+		if name in readers:
+			out.append(name)
+	out.sort()
+	return out
+
+
+## Reader-only blend shapes stay invisible until their contract release adds
+## them to the explicit writer vocabulary with a capability advance.
+static func pickable_shape_names(reader_names: PackedStringArray) -> PackedStringArray:
+	var out := PackedStringArray()
+	var allowed: Array = writer_vocabulary().get("shapes", [])
+	for shape_name: String in reader_names:
+		if shape_name in allowed:
+			out.append(shape_name)
 	return out
 
 
@@ -445,9 +550,10 @@ func _add_region_outfit_picker(into: Container, slot: String) -> void:
 
 
 ## Opt-in preview: one OptionButton per recipe-addressable (region, layer) pair.
-## "bare" plus every baked piece that fits there. A region may carry clothing
-## with armour over it, so collapsing the pair to one picker hides the inner
-## piece and makes a valid layered recipe impossible to edit (#253).
+## "bare" plus every production-activated piece that fits there. A region may
+## carry clothing with armour over it, so collapsing the pair to one picker
+## hides the inner piece and makes a valid layered recipe impossible to edit
+## (#253).
 ##
 ## Changing one picker rebuilds the body (equipping is composition, not a
 ## per-frame knob — same contract as the bone sliders) while preserving every
@@ -487,8 +593,8 @@ func _add_layer_outfit_picker(into: Container, slot: String, layer: String) -> v
 ## already faulted for reading as a debug panel (#227).
 ##
 ## Pure and static, like `group_shape_names`, so the rule is checkable without
-## standing up the UI — and a region appears the moment a piece is baked for it,
-## with no change here.
+## standing up the UI — and a region appears when its first reader-backed piece
+## is activated in the production writer vocabulary.
 static func pickable_regions(registry: Dictionary) -> Array[String]:
 	var out: Array[String] = []
 	for slot: Variant in registry.get("slots", []):
@@ -499,9 +605,10 @@ static func pickable_regions(registry: Dictionary) -> Array[String]:
 	return out
 
 
-## The recipe-addressable layers that have at least one baked piece in this
-## region, in the kit's render order. Base pieces are kit-owned and therefore
-## filtered by `_pieces_in_slot`; they never become removable creator controls.
+## The recipe-addressable layers that have at least one production-activated
+## piece in this region, in the kit's render order. Base pieces are kit-owned
+## and therefore filtered by `_pieces_in_slot`; they never become removable
+## creator controls.
 static func pickable_layers(registry: Dictionary, slot: String) -> Array[String]:
 	var out: Array[String] = []
 	for layer: String in CharacterFactory.LAYERS:
@@ -510,18 +617,19 @@ static func pickable_layers(registry: Dictionary, slot: String) -> Array[String]
 	return out
 
 
-## Every baked piece that can be worn in this region, sorted so the picker's
-## order — and the decision to show the picker at all — never depends on
-## dictionary iteration order. Shared by both callers on purpose: the row is
-## built from exactly the list that decided the row should exist, so a region
-## can never be shown with nothing in it, or hidden while holding something.
+## Every production-activated piece that can be worn in this region, sorted so
+## the picker's order — and the decision to show the picker at all — never
+## depends on dictionary iteration order. Shared by both callers on purpose:
+## the row is built from exactly the list that decided the row should exist.
 static func _pieces_in_slot(registry: Dictionary, slot: String, layer := "") -> Array[String]:
 	var out: Array[String] = []
 	var pieces: Dictionary = registry.get("pieces", {})
+	var allowed: Dictionary = writer_vocabulary().get("equipment", {})
 	for piece_name: String in pieces:
 		var piece := pieces[piece_name] as Dictionary
 		var piece_layer := String(piece.get("layer", ""))
-		if String(piece.get("slot", "")) == slot and piece_layer != "base" \
+		if String(allowed.get(piece_name, "")) == slot \
+				and String(piece.get("slot", "")) == slot and piece_layer != "base" \
 				and (layer == "" or piece_layer == layer):
 			out.append(piece_name)
 	out.sort()
@@ -540,9 +648,7 @@ func _add_skin_picker(into: Container) -> void:
 	_skin_picker = OptionButton.new()
 	_skin_picker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_skin_picker.add_item("clay")
-	var names = CharacterFactory.skins_registry().get("skins", {}).keys()
-	names.sort()
-	for skin_name: String in names:
+	for skin_name: String in pickable_skins(CharacterFactory.skins_registry()):
 		_skin_picker.add_item(skin_name)
 	_skin_picker.item_selected.connect(func(index: int) -> void:
 		if _syncing:
@@ -582,18 +688,18 @@ func _labeled_slider(into: Container, text: String, minimum: float, maximum: flo
 	return slider
 
 
-## The kit's shape list, straight from the live mesh — the creator never goes
-## stale when the kit gains shapes. equip_hide_* shapes are composition
-## plumbing (skin tucked under a worn piece), never a slider.
+## The production-activated subset of the live kit's shape list.
+## equip_hide_* shapes are composition plumbing (skin tucked under a worn
+## piece), never a slider; reader-only expansions stay hidden until contract.
 func _shape_names() -> PackedStringArray:
-	var names := PackedStringArray()
+	var reader_names := PackedStringArray()
 	var mesh := _player.character_mesh()
 	if mesh != null:
 		for i in mesh.mesh.get_blend_shape_count():
 			var shape_name := String(mesh.mesh.get_blend_shape_name(i))
 			if not shape_name.begins_with(CharacterFactory.HIDE_SHAPE_PREFIX):
-				names.append(shape_name)
-	return names
+				reader_names.append(shape_name)
+	return pickable_shape_names(reader_names)
 
 
 func _set_recipe_shape(shape_name: String, value: float) -> void:
@@ -745,7 +851,7 @@ func _sync_sliders_from_recipe() -> void:
 	var shapes: Dictionary = _recipe.get("shapes", {})
 	for shape_name: String in _shape_sliders:
 		(_shape_sliders[shape_name] as HSlider).value = shapes.get(shape_name, 0.0)
-	for spec: Array in BONE_SLIDERS:
+	for spec: Array in writable_bone_sliders():
 		(_bone_sliders[spec[0]] as HSlider).value = _recipe.get(spec[1], {}).get(spec[2], 1.0)
 	for slot: String in _outfit_pickers:
 		var worn := _worn_by_layer(slot)
@@ -774,8 +880,72 @@ func _sync_sliders_from_recipe() -> void:
 	_syncing = false
 
 
+## Why `candidate` cannot be emitted by this production writer, or "" when it
+## can. Vocabulary already present in `initial` is preservation, not
+## origination: an expansion reader must be able to round-trip a future name
+## before that name is activated for new saves.
+static func writer_vocabulary_problem(initial: Dictionary, candidate: Dictionary) -> String:
+	var vocabulary := writer_vocabulary()
+	if vocabulary.is_empty():
+		return "the production writer vocabulary is unavailable"
+
+	var initial_shapes: Dictionary = initial.get("shapes", {}) \
+		if initial.get("shapes", {}) is Dictionary else {}
+	var candidate_shapes: Dictionary = candidate.get("shapes", {}) \
+		if candidate.get("shapes", {}) is Dictionary else {}
+	var allowed_shapes: Array = vocabulary.get("shapes", [])
+	for shape_name: String in candidate_shapes:
+		if shape_name not in initial_shapes and shape_name not in allowed_shapes:
+			return "shape '%s' is reader-only and cannot be newly originated" % shape_name
+
+	var allowed_bones: Dictionary = vocabulary.get("bone_keys", {})
+	for field: String in ["bone_girth", "bone_scale", "joint_push"]:
+		var initial_values: Dictionary = initial.get(field, {}) \
+			if initial.get(field, {}) is Dictionary else {}
+		var candidate_values: Dictionary = candidate.get(field, {}) \
+			if candidate.get(field, {}) is Dictionary else {}
+		var allowed_keys: Array = allowed_bones.get(field, [])
+		for key: String in candidate_values:
+			if key not in initial_values and key not in allowed_keys:
+				return "bone key '%s.%s' is reader-only and cannot be newly originated" % [field, key]
+
+	var allowed_equipment: Dictionary = vocabulary.get("equipment", {})
+	var candidate_equipment: Dictionary = candidate.get("equipment", {}) \
+		if candidate.get("equipment", {}) is Dictionary else {}
+	for slot: String in candidate_equipment:
+		var value: Variant = candidate_equipment[slot]
+		var names: Array = value if value is Array else [value]
+		for entry: Variant in names:
+			var piece_name := String(entry)
+			if _recipe_has_equipment_pair(initial, slot, piece_name):
+				continue
+			if String(allowed_equipment.get(piece_name, "")) != slot:
+				return "equipment pair '%s -> %s' is reader-only and cannot be newly originated" \
+					% [slot, piece_name]
+
+	var skin_name := String(candidate.get("skin", ""))
+	var initial_skin := String(initial.get("skin", ""))
+	if skin_name != "" and skin_name != initial_skin \
+			and skin_name not in (vocabulary.get("skins", []) as Array):
+		return "skin '%s' is reader-only and cannot be newly originated" % skin_name
+	return ""
+
+
+static func _recipe_has_equipment_pair(recipe: Dictionary, slot: String, piece_name: String) -> bool:
+	var equipment: Variant = recipe.get("equipment", {})
+	if equipment is not Dictionary or slot not in (equipment as Dictionary):
+		return false
+	var value: Variant = equipment[slot]
+	var names: Array = value if value is Array else [value]
+	return piece_name in names
+
+
 func _close(apply_changes: bool) -> void:
 	if apply_changes:
+		var problem := writer_vocabulary_problem(_initial_recipe, _recipe)
+		if problem != "":
+			push_error("CharacterCreator: refusing to apply recipe — %s" % problem)
+			return
 		applied.emit(_recipe)
 	elif not first_run:
 		# Rebuild the body the recipe on disk describes.

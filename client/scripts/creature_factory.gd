@@ -67,7 +67,7 @@ static func build(recipe: Dictionary) -> Node3D:
 	for key: String in recipe.get("bone_scale", {}):
 		var bone := skeleton.find_bone(key)
 		if bone >= 0:
-			_apply_uniform_subtree(skeleton, bone, recipe["bone_scale"][key])
+			KitAssembly.scale_bone_subtree(skeleton, bone, recipe["bone_scale"][key])
 	skeleton.reset_bone_poses()
 	skeleton.force_update_all_bone_transforms()
 
@@ -206,28 +206,10 @@ static func _mixed_vertices(mesh_instance: MeshInstance3D) -> PackedVector3Array
 
 
 static func find_skeleton(node: Node) -> Skeleton3D:
-	if node == null or node is Skeleton3D:
-		return node
-	for child in node.get_children():
-		var found := find_skeleton(child)
-		if found != null:
-			return found
-	return null
+	return KitAssembly.find_skeleton(node)
 
 
+## The hide mesh. The creature kit parents no equipment to its skeleton, so
+## unlike the humanoid kit there is no prefix to exclude.
 static func find_skinned_mesh(skeleton: Skeleton3D) -> MeshInstance3D:
-	if skeleton == null:
-		return null
-	for child in skeleton.get_children():
-		if child is MeshInstance3D and (child as MeshInstance3D).skin != null:
-			return child
-	return null
-
-
-## Uniform subtree scale: the bone and everything below it grow around the
-## bone's own joint. Uniform-only keeps every rest TRS-representable (poses are
-## TRS; shear in a rest is silently dropped at reset_bone_poses and the skin
-## lies) — the law proven in the character system.
-static func _apply_uniform_subtree(skeleton: Skeleton3D, bone: int, factor: float) -> void:
-	var rest := skeleton.get_bone_rest(bone)
-	skeleton.set_bone_rest(bone, Transform3D(rest.basis * Basis.from_scale(Vector3.ONE * factor), rest.origin))
+	return KitAssembly.find_skinned_mesh(skeleton)

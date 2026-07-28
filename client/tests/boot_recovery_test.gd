@@ -143,7 +143,10 @@ func _ready() -> void:
 	_cleanup_probe()
 	var saved := BootRecovery.save_state(PROBE, after)
 	_check(saved["ok"] as bool, true, "persistence: a readable state persists")
-	_check(FileAccess.file_exists(PROBE + ".tmp"), false, "persistence: no temp file is left behind (atomic write)")
+	# Matched BY PREFIX, never by the fixed `PROBE + ".tmp"` this used to probe:
+	# staging is per-attempt (#442), so a fixed-name assertion passes vacuously —
+	# the trap measured in #424 and re-confirmed in #434.
+	_check(_stages().is_empty(), true, "persistence: no staging file is left behind (atomic write)")
 	var loaded := BootRecovery.load_state(PROBE)
 	_check(loaded["ok"] as bool, true, "persistence: the persisted state loads back")
 	_check(loaded.get("path_was_missing", true) as bool, false, "persistence: an existing document is never reported as first boot")
@@ -212,8 +215,22 @@ func _select_state(quarantined: Variant) -> Dictionary:
 	}
 
 
+## Every staging file for the probe, matched by prefix (see the write-side
+## comment above: the fixed `.tmp` name no longer exists).
+func _stages() -> Array[String]:
+	var found: Array[String] = []
+	var prefix := PROBE.get_file() + BootRecovery.WRITE_TMP_SUFFIX
+	for entry: String in DirAccess.get_files_at(PROBE.get_base_dir()):
+		if entry.begins_with(prefix):
+			found.append(entry)
+	return found
+
+
 func _cleanup_probe() -> void:
-	for leftover in [PROBE, PROBE + ".tmp"]:
+	var leftovers: Array[String] = [PROBE, PROBE + ".tmp"]
+	for entry: String in _stages():
+		leftovers.append(PROBE.get_base_dir().path_join(entry))
+	for leftover: String in leftovers:
 		if FileAccess.file_exists(leftover):
 			DirAccess.remove_absolute(ProjectSettings.globalize_path(leftover))
 

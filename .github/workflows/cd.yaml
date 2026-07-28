@@ -732,6 +732,88 @@ jobs:
           }
           # END cask-ref-visibility-helper
 
+          # Helper: the cask version carried by a ref, empty when the file or
+          # ref is missing. Defined here because the branch-reset guard below
+          # needs it; also used by the PR-open and title-convergence blocks.
+          cask_version_at() {
+            gh api "repos/${tap}/contents/Casks/world-at-ruin.rb?ref=${1}" 2>/dev/null \
+              | jq -r '.content // empty' | base64 -d 2>/dev/null \
+              | sed -n 's/^  version "\(.*\)"$/\1/p' | head -1 || true
+          }
+
+          # BEGIN cask-branch-reset-helper
+          # The tap SQUASH-merges, so merging a cask PR puts a new, non-ancestor
+          # commit on the tap's main touching Casks/world-at-ruin.rb — the exact
+          # file every subsequent release rewrites. This evergreen branch is
+          # seeded from main only when absent, so once it exists it is never
+          # re-synced and the NEXT release's PR is born CONFLICTING and can
+          # never auto-merge: releases keep being cut while the tap silently
+          # stays pinned at the last merged version.
+          #
+          # Two conditions gate the reset, and both are load-bearing:
+          #
+          #   1. NO open trusted PR. Resetting under a live PR would discard an
+          #      in-flight release that has already been published.
+          #   2. The branch is BEHIND main. `behind_by > 0` is precisely "main
+          #      moved on without us", which IS the conflict condition — and it
+          #      is what keeps a concurrent release safe: a run that has written
+          #      content but not yet opened its PR leaves the branch AHEAD only
+          #      (behind_by == 0), so its write is never thrown away here. The
+          #      monotonic compare-and-swap below then settles which version
+          #      wins, exactly as it does today.
+          #
+          # An unreadable comparison fails CLOSED — leave the branch alone and
+          # let the existing conflict surface rather than force-writing a ref on
+          # a guess.
+          cask_branch_needs_reset() {
+            local tap="$1"
+            local branch="$2"
+            local open_pr="$3"
+            local behind branch_version main_version
+            if [ -n "${open_pr}" ]; then
+              return 1
+            fi
+            behind="$(gh api "repos/${tap}/compare/main...${branch}" \
+              --jq '.behind_by' 2>/dev/null || true)"
+            case "${behind}" in
+              '' | *[!0-9]*) return 1 ;;
+            esac
+            if [ "${behind}" -le 0 ]; then
+              return 1
+            fi
+            # `ahead_by` is deliberately NOT the discriminator. The tap
+            # squash-merges, so after a merge the branch KEEPS its own commits
+            # while main gains a non-ancestor squash: DIVERGED (ahead>0 AND
+            # behind>0) is the normal, expected shape of the very state this
+            # reset exists to clear — the reported case measured 4 ahead, 1
+            # behind. Refusing to reset a diverged branch would therefore make
+            # this a no-op in exactly the scenario it targets.
+            #
+            # What must never be discarded is content the branch carries that
+            # main has NOT received. That is a question about the CASK VERSION,
+            # not the commit graph: once a cask PR merges, the branch and main
+            # name the same version, whereas a concurrent run that has written
+            # but not yet opened its PR leaves the branch naming a version main
+            # does not have. Refuse whenever they disagree — that fails closed
+            # for an undelivered write in either direction.
+            branch_version="$(cask_version_at "${branch}")"
+            main_version="$(cask_version_at main)"
+            # BOTH reads must succeed. cask_version_at collapses an API,
+            # decode or parse failure into the same empty string it returns for
+            # a genuinely absent file, so accepting empty here would turn a
+            # transient read failure into permission to force-reset — throwing
+            # away a newer version before the monotonic guard downstream ever
+            # sees it, and leaving Homebrew pinned behind.
+            if [ -z "${branch_version}" ] || [ -z "${main_version}" ]; then
+              return 1
+            fi
+            if [ "${branch_version}" != "${main_version}" ]; then
+              return 1
+            fi
+            return 0
+          }
+          # END cask-branch-reset-helper
+
           base_sha="$(gh api "repos/${tap}/git/ref/heads/main" --jq '.object.sha')"
           # Tolerate a concurrent creator: two runs can both see the branch
           # missing and race this POST; the loser gets 422 and must NOT die
@@ -742,6 +824,60 @@ jobs:
             gh api "repos/${tap}/git/refs" -X POST -f ref="refs/heads/${branch}" \
               -f sha="${base_sha}" >/dev/null 2>&1 || true
             wait_for_cask_ref "${tap}" "${branch}"
+          elif cask_branch_needs_reset "${tap}" "${branch}" \
+               "$(trusted_open_pr || echo UNKNOWN)"; then
+            # A fresh cycle on a branch left stale by the previous merge. Read
+            # the open-PR state HERE rather than reusing an earlier read, so the
+            # "no live PR" proof is as close to the write as it can be.
+            #
+            # `|| echo UNKNOWN` is load-bearing: the query pipeline yields an
+            # empty string BOTH when no PR is open and when the API call fails,
+            # and those must not mean the same thing here. A transient failure
+            # while a PR really is open would otherwise read as "safe to reset"
+            # and discard that in-flight release. Any non-empty value refuses
+            # the reset, so an unreadable PR state fails closed like an
+            # unreadable comparison does.
+            # Re-read main HERE rather than reusing the base_sha captured
+            # before the comparison and PR checks: if another cask PR merged in
+            # that window, resetting to the older sha lands the branch behind
+            # again and recreates the conflict this is meant to remove. Capture
+            # and shape-check it instead of inlining the call — an empty or
+            # partial response must not become the target of a force update.
+            reset_sha="$(gh api "repos/${tap}/git/ref/heads/main" \
+              --jq '.object.sha' 2>/dev/null || true)"
+            case "${reset_sha}" in
+              [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) : ;;
+              *) reset_sha="" ;;
+            esac
+            # ABORT rather than continue when the reset cannot be completed.
+            # Continuing is NOT merely "today's behaviour": reaching here means
+            # the branch is known behind with no open PR, so writing the cask
+            # anyway opens a PR that is born CONFLICTING — and because that PR
+            # then stays open, every later cycle's open-PR guard suppresses the
+            # reset, so the tap can never recover on its own. Failing leaves no
+            # PR behind, which keeps the next release's reset path viable; the
+            # release itself is already published by this point, so the cost is
+            # a retryable cask handoff rather than a stuck tap.
+            if [ -z "${reset_sha}" ]; then
+              echo "::error::could not re-read ${tap} main before resetting ${branch}; refusing to open a PR from a known-behind branch"
+              exit 1
+            fi
+            reset_done=""
+            for attempt in 1 2 3; do
+              if gh api "repos/${tap}/git/refs/heads/${branch}" -X PATCH \
+                   -f sha="${reset_sha}" -F force=true >/dev/null 2>&1; then
+                reset_done=1
+                break
+              fi
+              if [ "${attempt}" != "3" ]; then
+                sleep 3
+              fi
+            done
+            if [ -z "${reset_done}" ]; then
+              echo "::error::could not reset ${branch} to ${tap} main (${reset_sha}) after 3 attempts; refusing to open a PR from a known-behind branch, which would be born conflicted and block every later reset"
+              exit 1
+            fi
+            echo "::notice::reset ${branch} to ${tap} main (${reset_sha}) — the previous cask PR merged and left it behind"
           fi
 
           # DISARM before touching the branch. Auto-merge armed by a previous
@@ -767,10 +903,16 @@ jobs:
             fi
           fi
 
-          # MONOTONIC GUARD, as a COMPARE-AND-SWAP. The workflow concurrency
-          # group is per TAG, so two CD runs for different releases do not
-          # serialise, and nothing else locks this shared tap branch. Releases
-          # here are frequent enough for that to be a real race.
+          # MONOTONIC GUARD, as a COMPARE-AND-SWAP. The WORKFLOW concurrency
+          # group is per TAG, so two CD runs for different releases overlap
+          # freely — but THIS JOB's group is constant
+          # (`homebrew-tap-cask-world-at-ruin`), so the tap handoff itself is
+          # serialised across tags and two releases are never inside this step
+          # at once. The compare-and-swap therefore guards the writers that
+          # serialisation cannot reach: a manual edit, or any out-of-band actor
+          # on this shared branch. Do not read the job's serialisation as making
+          # it redundant, and do not read this guard as evidence that sibling
+          # releases race here — they do not.
           #
           # Version and blob SHA must come from the SAME read: reading them
           # separately leaves a window where a newer run writes in between, so
@@ -868,14 +1010,6 @@ jobs:
           # Racy too: two runs can both see no open PR, and `gh pr create` errors
           # if one already exists — failing this job over a benign overlap.
           # Tolerate the loss, then re-check so a genuine failure still errors.
-          # Helper: the cask version carried by a ref, empty when the file or
-          # ref is missing.
-          cask_version_at() {
-            gh api "repos/${tap}/contents/Casks/world-at-ruin.rb?ref=${1}" 2>/dev/null \
-              | jq -r '.content // empty' | base64 -d 2>/dev/null \
-              | sed -n 's/^  version "\(.*\)"$/\1/p' | head -1 || true
-          }
-
           if ! trusted_open_pr | grep -q .; then
             # ALREADY DELIVERED is success, not a missing PR: a stale rerun
             # (an older tag re-run after the newer release's PR merged) finds
@@ -899,6 +1033,247 @@ jobs:
           fi
           pr="$(trusted_open_pr)"
           echo "cask PR is open on ${tap} (#${pr}, ${branch})"
+
+          # BEGIN cask-conflict-repair-helper
+          # The branch-reset decision above reads the open-PR state ONCE,
+          # before the content write, and that snapshot can go stale in a way
+          # that strands the tap. While the PREVIOUS cask PR is still open the
+          # reset is correctly suppressed — resetting under a live release
+          # would discard it. But that PR's required checks can finish and
+          # auto-merge it moments later, putting a non-ancestor squash commit
+          # on main. This run then writes its cask onto a branch that has just
+          # gone behind, and the PR it opens is born CONFLICTING. That PR is
+          # itself open, so every later cycle's open-PR guard suppresses the
+          # reset too and the tap can never recover on its own.
+          #
+          # Moving the check closer to the write cannot close this: reading a
+          # remote state before a write is a TOCTOU, and the merge is
+          # asynchronous. So REPAIR rather than predict — once the PR exists,
+          # ask GitHub whether it actually conflicts.
+          #
+          # `mergeable_state` is computed in the background, so a freshly
+          # opened PR reports `unknown` for a moment: poll rather than read
+          # once, or the check misses the very PR this run just opened. A state
+          # that never resolves fails CLOSED — leave the branch alone rather
+          # than force-write a ref on a guess, exactly as the reset guard does.
+          cask_pr_conflicts() {
+            local tap="$1"
+            local pr="$2"
+            local state attempt
+            for attempt in 1 2 3 4 5 6 7 8; do
+              state="$(gh api "repos/${tap}/pulls/${pr}" --jq '.mergeable_state' 2>/dev/null || true)"
+              case "${state}" in
+                dirty) return 0 ;;
+                '' | null | unknown) ;;
+                *) return 1 ;;
+              esac
+              # BACK OFF, and give it a real budget. A fixed 3s × 5 is only ~12
+              # seconds, and the PR being asked about is the one this run JUST
+              # opened — the primary case, and the slowest, because GitHub
+              # computes mergeability in the background after creation. Giving up
+              # early fails CLOSED, which here means silently skipping the repair
+              # in exactly the scenario it exists for, leaving the tap stuck.
+              # Rising delays reach ~84s while keeping the read count bounded.
+              if [ "${attempt}" != "8" ]; then
+                sleep "$(( attempt * 3 ))"
+              fi
+            done
+            return 1
+          }
+          # END cask-conflict-repair-helper
+
+          if cask_pr_conflicts "${tap}" "${pr}"; then
+            # Rebuild the branch's HISTORY while preserving its CONTENT: take the
+            # cask as it stands, put it on top of main, and move the branch there
+            # in one non-forced step. Nothing main has not received is discarded,
+            # and the compare-and-swap above still owns WHICH version the content
+            # names — this touches only the commits underneath it.
+            #
+            # PIN EVERYTHING TO ONE BRANCH REVISION. Read the branch HEAD first,
+            # then read the cask and the delta AT THAT SHA, and use the same sha
+            # as the rebuilt commit's parent. Reading the content from the moving
+            # `${branch}` ref instead would let a writer land between the content
+            # read and the head read: the parent would then be THAT writer's
+            # commit while the tree carried the older cask, which is a perfectly
+            # valid fast-forward — so the non-forced update would succeed and
+            # silently revert their release instead of refusing. The fast-forward
+            # rule only rejects moves that happen AFTER the sha it is anchored
+            # to, so the capture has to be anchored to that same sha.
+            repair_branch_head="$(gh api "repos/${tap}/git/ref/heads/${branch}" \
+              --jq '.object.sha' 2>/dev/null || true)"
+            case "${repair_branch_head}" in
+              [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) : ;;
+              *) repair_branch_head="" ;;
+            esac
+            if [ -z "${repair_branch_head}" ]; then
+              echo "::error::could not read ${branch}'s head on ${tap}; refusing to rebuild it"
+              exit 1
+            fi
+            # Content and version come from ONE read of that pinned sha, for the
+            # same reason the compare-and-swap does it: reading them separately
+            # lets a write land in between, so the version would describe bytes
+            # that are no longer the ones being carried forward.
+            repair_resp="$(gh api "repos/${tap}/contents/Casks/world-at-ruin.rb?ref=${repair_branch_head}" 2>/dev/null || true)"
+            repair_content="$(printf '%s' "${repair_resp}" | jq -r '.content // empty' 2>/dev/null | tr -d '\n' || true)"
+            repair_blob_captured="$(printf '%s' "${repair_resp}" | jq -r '.sha // empty' 2>/dev/null || true)"
+            repair_version="$(printf '%s' "${repair_content}" | base64 -d 2>/dev/null \
+              | sed -n 's/^  version "\(.*\)"$/\1/p' | head -1 || true)"
+            # Read main's HEAD FIRST, then read its cask AT THAT SHA. Reading the
+            # version from the `main` ref instead would let an out-of-band merge
+            # land between the two, so `repair_main_version` would describe a
+            # revision the branch is NOT about to be reset to — and the restore
+            # loop's unknown-writer guard would then fire on main's own content,
+            # aborting with the captured cask already gone from the branch.
+            # Both values must come from one revision.
+            #
+            # Read main HERE rather than reusing base_sha: that was captured
+            # before the write, and a merge in this window is the whole reason
+            # the branch conflicts. Shape-check it — an empty or partial
+            # response must never become the target of a force update.
+            repair_sha="$(gh api "repos/${tap}/git/ref/heads/main" \
+              --jq '.object.sha' 2>/dev/null || true)"
+            case "${repair_sha}" in
+              [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) : ;;
+              *) repair_sha="" ;;
+            esac
+            repair_main_version=""
+            if [ -n "${repair_sha}" ]; then
+              repair_main_version="$(cask_version_at "${repair_sha}")"
+            fi
+            # ABORT on a partial read rather than rebuild from it. Every one of
+            # these collapses an API, decode or parse failure into the same
+            # empty string it returns for genuinely absent content, so acting on
+            # empty would restore nothing over a branch whose content main has
+            # not received.
+            if [ -z "${repair_content}" ] || [ -z "${repair_version}" ] \
+               || [ -z "${repair_blob_captured}" ] \
+               || [ -z "${repair_main_version}" ] || [ -z "${repair_sha}" ]; then
+              echo "::error::${tap}#${pr} conflicts with main, but the branch cask, its version or main's head could not be read; refusing to rebuild ${branch} from a partial read"
+              exit 1
+            fi
+            # Equal versions mean the branch has nothing main lacks, so a
+            # rebuild would leave the PR with an empty diff and no way to merge.
+            # That is not the post-merge race this repairs — it is a tap someone
+            # has edited by hand, and it needs a person, loudly.
+            if [ "${repair_version}" = "${repair_main_version}" ]; then
+              echo "::error::${tap}#${pr} conflicts with main while both carry v${repair_version}; refusing to rebuild ${branch}, which would leave the PR nothing to deliver"
+              exit 1
+            fi
+            # REFUSE A DOWNGRADE. Unequal is not enough. If an out-of-band merge
+            # has already put a NEWER cask on main — a manual tap edit, or a
+            # `workflow_dispatch` rerun of an OLDER tag, which this workflow
+            # accepts by design — then resetting onto main and restoring the
+            # older captured cask opens a PR that auto-merges a Homebrew
+            # DOWNGRADE. Restore only when the branch is strictly newer.
+            #
+            # Deliberately CONSERVATIVE rather than a second copy of the SemVer
+            # comparator above: a prerelease on either side is refused instead of
+            # ordered. Duplicating that comparator is how the two copies drift,
+            # and a guard that is subtly wrong about precedence is worse than one
+            # that declines to answer. `sort -V` is safe here only because
+            # excluding prereleases leaves plain X.Y.Z on both sides — which is
+            # exactly the case the comparator above documents it getting wrong.
+            # Cost: a prerelease whose cask PR is born conflicting fails loudly
+            # instead of self-healing. That path is rare and the failure is
+            # actionable, whereas a silent downgrade is neither.
+            case "${repair_version}-${repair_main_version}" in
+              *-*-*)
+                echo "::error::${tap}#${pr}: one of v${repair_version} / v${repair_main_version} is a prerelease; refusing to order them here — rebuild ${branch} by hand"
+                exit 1
+                ;;
+            esac
+            if [ "$(printf '%s\n%s\n' "${repair_version}" "${repair_main_version}" \
+                    | sort -V | tail -1)" != "${repair_version}" ]; then
+              echo "::error::${tap}#${pr} carries v${repair_version} but ${tap} main already has v${repair_main_version}; refusing to rebuild ${branch}, which would open a downgrade"
+              exit 1
+            fi
+            # The branch's delta against main MUST be the cask and nothing else.
+            # The rebuild reconstructs the branch from main's tree plus the
+            # captured cask, so any OTHER branch-only path — a manual commit, a
+            # bot's edit — would be silently discarded. A `dirty` mergeability
+            # state says the two sides conflict; it does NOT say the cask is the
+            # only difference, so ask rather than assume.
+            repair_delta="$(gh api "repos/${tap}/compare/main...${repair_branch_head}" \
+              --jq '[.files[].filename] | sort | join(" ")' 2>/dev/null || true)"
+            if [ -z "${repair_delta}" ]; then
+              echo "::error::could not read what ${branch} changes against ${tap} main; refusing to rebuild it blind"
+              exit 1
+            fi
+            if [ "${repair_delta}" != "Casks/world-at-ruin.rb" ]; then
+              echo "::error::${branch} also changes: ${repair_delta} — the rebuild reconstructs only the cask, so those would be discarded; refusing, resolve ${tap}#${pr} by hand"
+              exit 1
+            fi
+
+            # REBUILD AS ONE ATOMIC, NON-FORCED REF UPDATE.
+            #
+            # Reset-then-restore cannot be made safe here, and guarding it is the
+            # wrong shape: it is TWO mutations with an observable window between
+            # them, and `force` on the ref API carries no expected-head guard (it
+            # takes only the new sha), so that window is both unguardable and
+            # re-opened by every retry. Build the finished state FIRST and move
+            # the ref exactly once instead.
+            #
+            # The commit carries main's tree with the cask replaced, and parents
+            # [branch, main]. Because the branch head is a parent, the update IS
+            # a fast-forward — so it is issued WITHOUT `force`, and GitHub then
+            # refuses it unless the branch is still exactly where it was read.
+            # That is precisely the compare-and-swap the ref API does not
+            # otherwise offer.
+            #
+            # Everything downstream of the old two-step is gone with it: there is
+            # no intermediate state to observe (so no stale-read ambiguity), no
+            # cask to restore afterwards (so no create-vs-update ambiguity), and
+            # nothing to verify after the write — the ref either moved to the
+            # finished commit or did not move at all.
+            repair_main_tree="$(gh api "repos/${tap}/git/commits/${repair_sha}" \
+              --jq '.tree.sha' 2>/dev/null || true)"
+            if [ -z "${repair_main_tree}" ]; then
+              echo "::error::could not read ${tap} main's tree; refusing to rebuild ${branch}"
+              exit 1
+            fi
+            repair_tree="$(jq -nc --arg base "${repair_main_tree}" --arg blob "${repair_blob_captured}" \
+              '{base_tree:$base,tree:[{path:"Casks/world-at-ruin.rb",mode:"100644",type:"blob",sha:$blob}]}' \
+              | gh api "repos/${tap}/git/trees" -X POST --input - --jq '.sha' 2>/dev/null || true)"
+            if [ -z "${repair_tree}" ]; then
+              echo "::error::could not build the rebuilt tree for ${branch}; refusing to move the ref"
+              exit 1
+            fi
+            repair_commit="$(jq -nc \
+              --arg msg "chore(cask): update world-at-ruin to v${repair_version}" \
+              --arg tree "${repair_tree}" --arg parent "${repair_branch_head}" --arg base "${repair_sha}" \
+              '{message:$msg,tree:$tree,parents:[$parent,$base]}' \
+              | gh api "repos/${tap}/git/commits" -X POST --input - --jq '.sha' 2>/dev/null || true)"
+            if [ -z "${repair_commit}" ]; then
+              echo "::error::could not create the rebuilt commit for ${branch}; refusing to move the ref"
+              exit 1
+            fi
+            # NO `force` — that omission is the entire safety property, not a
+            # detail. Retrying is harmless precisely because of it: a retry can
+            # only ever re-apply the same fast-forward, never overwrite a branch
+            # that has moved.
+            repair_moved=""
+            for attempt in 1 2 3; do
+              if gh api "repos/${tap}/git/refs/heads/${branch}" -X PATCH \
+                   -f sha="${repair_commit}" >/dev/null 2>&1; then
+                repair_moved=1
+                break
+              fi
+              if [ "${attempt}" != "3" ]; then
+                sleep 3
+              fi
+            done
+            if [ -z "${repair_moved}" ]; then
+              echo "::error::could not fast-forward ${branch} onto ${tap} main; it moved while the rebuild was being prepared, so completing would have discarded a write this run did not capture — refusing, ${tap}#${pr} stays conflicting"
+              exit 1
+            fi
+            # No re-check of mergeability follows, deliberately: the branch now
+            # descends from main and differs only in the cask, so it cannot
+            # conflict by construction. If main moved again in the meantime the
+            # branch is merely behind once more, and the next release repairs it
+            # — which is the difference between a transient conflict and the
+            # permanent one this closes.
+            echo "::notice::${tap}#${pr} was born conflicting — rebuilt ${branch} onto main (${repair_sha}) carrying the v${repair_version} cask"
+          fi
 
           # Title convergence + arming. The title must state the version the
           # branch CONTENT actually carries, never this run's ${VERSION}: a

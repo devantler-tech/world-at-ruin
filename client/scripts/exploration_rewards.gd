@@ -23,11 +23,12 @@ extends RefCounted
 ## FORWARD-ONLY (a place never silently redefines what it grants), and a reward is
 ## claimed at most ONCE (this game has no undo, so re-claiming is a no-op). It does
 ## not import [Discovery]; the caller composes them — feed the ids
-## `Discovery.observe(pos)` returns straight into [method claim]. WHAT to do with a
-## granted reward (a toast, unlocking a waypoint, revealing the map) remains the
-## caller's concern. Production restores accepted [code]reward_claims[/code] from
-## vault v3; applying and persisting newly granted claims remain separate caller
-## and writer responsibilities.
+## `Discovery.observe(pos)` returns into [method claim_applied] with the real
+## outcome callback. The callback must succeed before the place is marked claimed,
+## so a failed waypoint, lore, cosmetic, or reveal can retry instead of being lost
+## forever. Production restores accepted [code]reward_claims[/code] from vault v3,
+## re-applies their registered outcomes on boot, and persists newly applied claims
+## through the vault-v3 writer.
 
 ## A travel/attune point the player can return to — access, not power.
 const KIND_WAYPOINT := "waypoint"
@@ -77,6 +78,17 @@ func is_registered(poi_id: String) -> bool:
 	return _rewards.has(poi_id)
 
 
+## Every registered place id in deterministic order. This is an inspection
+## surface for the immutable shipped-reward guard; callers receive a new array
+## and cannot mutate the registry.
+func registered_ids() -> Array[String]:
+	var out: Array[String] = []
+	for poi_id: String in _rewards:
+		out.append(poi_id)
+	out.sort()
+	return out
+
+
 ## A copy of the reward registered for `poi_id`, or an empty dictionary if none.
 ## The copy keeps the registered reward immutable to callers.
 func reward_for(poi_id: String) -> Dictionary:
@@ -86,7 +98,10 @@ func reward_for(poi_id: String) -> Dictionary:
 	return reward.duplicate(true)
 
 
-## Grant the rewards for the places just discovered. Pass the ids
+## Grant the rewards for the places just discovered in a pure caller that can
+## treat yielding a reward as its complete outcome. Production side effects use
+## [method claim_applied] instead, because only that path can prove the outcome
+## happened before marking it claimed. Pass the ids
 ## `Discovery.observe(pos)` returned; this yields a copy of the reward for each id
 ## that is registered AND not yet claimed, EXACTLY once, ordered by id so two
 ## identical walks grant identically (determinism). Unregistered ids are skipped,
@@ -94,6 +109,17 @@ func reward_for(poi_id: String) -> Dictionary:
 ## to pass the same ids again or ids with no reward. Marks the returned places
 ## claimed.
 func claim(found_ids: Array) -> Array[Dictionary]:
+	var granted: Array[Dictionary] = []
+	for poi_id: String in _claimable(found_ids):
+		_claimed[poi_id] = true
+		var reward: Dictionary = _rewards[poi_id]
+		granted.append(reward.duplicate(true))
+	return granted
+
+
+## The registered, unclaimed ids in `found_ids`, deduplicated and sorted. This
+## is the one definition of what a walk can grant for both claim paths.
+func _claimable(found_ids: Array) -> Array[String]:
 	var claimable: Array[String] = []
 	for raw_id: Variant in found_ids:
 		if raw_id is not String:
@@ -106,12 +132,7 @@ func claim(found_ids: Array) -> Array[Dictionary]:
 		if not claimable.has(poi_id):
 			claimable.append(poi_id)
 	claimable.sort()
-	var granted: Array[Dictionary] = []
-	for poi_id: String in claimable:
-		_claimed[poi_id] = true
-		var reward: Dictionary = _rewards[poi_id]
-		granted.append(reward.duplicate(true))
-	return granted
+	return claimable
 
 
 ## Whether the reward for `poi_id` has already been claimed. Safe (false) for an
@@ -147,6 +168,26 @@ func restore(names: Array) -> bool:
 ## How many rewards have been claimed.
 func count() -> int:
 	return _claimed.size()
+
+
+## Apply and record the rewards for newly discovered places, in deterministic
+## place-id order. [param apply] receives `(poi_id, reward)` and must return
+## [code]true[/code] only after the outcome is live. A refused, failed or
+## malformed outcome remains unclaimed and can retry; a successful outcome is
+## marked only after the callback returns, so an unapplied grant can never be
+## consumed. Returns the successfully applied place ids for durable persistence.
+func claim_applied(found_ids: Array, apply: Callable) -> Array[String]:
+	var applied: Array[String] = []
+	if not apply.is_valid():
+		return applied
+	for poi_id: String in _claimable(found_ids):
+		var reward: Dictionary = _rewards[poi_id]
+		var outcome: Variant = apply.call(poi_id, reward.duplicate(true))
+		if outcome is not bool or not outcome:
+			continue
+		_claimed[poi_id] = true
+		applied.append(poi_id)
+	return applied
 
 
 ## How many rewards are registered in total.

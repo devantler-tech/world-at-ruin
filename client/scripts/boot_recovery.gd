@@ -99,6 +99,11 @@ const DEFAULT_PATH := "user://boot_recovery.json"
 ## means the shipped default — production never sets it.
 const RECOVERY_PATH_ENV := "WAR_BOOT_RECOVERY_PATH"
 
+## Prefix for the private staging file a write commits from. What follows it is a
+## per-attempt unique stamp, so no two writers — and no two attempts — ever stage
+## through the same path (see [method _write_tmp_path]).
+const WRITE_TMP_SUFFIX := ".tmp-"
+
 
 ## The active recovery-ledger path: the [constant RECOVERY_PATH_ENV] override
 ## when set, else the shipped default.
@@ -309,7 +314,7 @@ static func load_state(path: String) -> Dictionary:
 	}
 
 
-## Persist `state` to `path`, atomically (temp file + rename, the
+## Persist `state` to `path`, atomically (private staging file + rename, the
 ## [CharacterStore] pattern — a crash mid-write must never tear the only copy of
 ## the failure history). When `only_if_missing` is true, refuse if another shell
 ## or cloud-sync writer created the destination after [method load_state]
@@ -320,7 +325,97 @@ static func load_state(path: String) -> Dictionary:
 ## predicate select() trusts, so write and read can never diverge) or last-good.
 ## Writing junk into a well-formed file would LAUNDER corruption into evidence,
 ## which is exactly how a recorded failure gets erased.
+##
+## Held under the cross-process write lock ([FileLock]), because this whole
+## function is a read-modify-write and the two writers that race it — the updater
+## and the game — both exist today. Without the lock, two of them reparse the
+## same document, each merges its own record, and the slower rename discards the
+## other's. What that loses is not a respawn point: it is the evidence deciding
+## whether a client rolls back, lost at the least recoverable moment there is.
+##
+## Contention refuses the write rather than blocking, which is this file's
+## standing law — persistence may degrade, but it may never stop a boot. Reads
+## take no lock at all, so a held lock can never prevent a rollback decision.
 static func save_state(path: String, state: Variant, only_if_missing: bool = false) -> Dictionary:
+	if not FileLock.acquire(path):
+		return {"ok": false, "reason": "refusing to persist recovery state to %s because another writer holds its write lock" % path}
+	var result := _save_state_locked(path, state, only_if_missing)
+	FileLock.release(path)
+	return result
+
+
+## The staging file this attempt commits from — PRIVATE to one write.
+##
+## The shared `boot_recovery.json.tmp` this replaced is a name any other process
+## can derive. A writer that never took the lock — a retained or rollback build
+## from before [FileLock] existed, a sync agent, a second install — opens that
+## same deterministic path and truncates the staged document after it was
+## serialised. `path` itself is untouched, so [method can_write], the
+## `only_if_missing` re-check and the ownership proof all pass, and the rename
+## then commits THEIR partial bytes over the quarantine ledger while reporting
+## success. What that loses is the evidence deciding whether a client rolls back.
+##
+## The read-back compare below narrows this and does not close it: it catches a
+## truncation landing BEFORE the compare, never one landing between the compare
+## and the rename. A per-attempt name removes the sharing instead of trying to
+## detect it — a writer that never cooperated cannot name the file we commit
+## from.
+##
+## Process id plus microsecond ticks, matching [method SaveVault._write_tmp_path]
+## and [method CharacterStore._write_tmp_path].
+static func _write_tmp_path(path: String) -> String:
+	return "%s%s%d-%d" % [path, WRITE_TMP_SUFFIX, OS.get_process_id(), Time.get_ticks_usec()]
+
+
+## Remove staging files abandoned by a crashed writer.
+##
+## A per-attempt name cannot be reclaimed by simply being overwritten the way one
+## fixed `boot_recovery.json.tmp` was, so without this a hard crash mid-write
+## would leak a file into user:// on every occurrence.
+##
+## LOCK-gated like [method SaveVault._sweep_abandoned_writes], NOT age-gated like
+## [method CharacterStore._sweep_abandoned_writes]. Which of the two a writer owes
+## is decided by SHIPPING ORDER, not by taste, and getting it wrong deletes a live
+## write. An unconditional sweep is safe only while every build that can create a
+## file carrying this prefix also takes the lock.
+##
+## Here that holds: the lock shipped FIRST (#422) and private staging arrives after
+## it (#442), so no released build stages through this prefix without holding the
+## lock. [method save_state] is the only writer and holds it across the whole
+## staging window, so anything found here is finished or dead. The character store
+## is the mirror image — private staging shipped first (#434), its lock after
+## (#423) — so retained builds from that window stage through its prefix while
+## taking no lock, and only an age floor can tell those apart from a crash. That
+## is why its floor stays even once it holds the lock, and why importing it here
+## would delay reclamation without adding a guarantee.
+##
+## ⚠️ The one residual, the same wall the ownership proof documents: a holder that
+## has outlived the stale timeout can be reclaimed, so its stage may be swept
+## while it still exists. That writer's own read-back compare then fails and it
+## abandons the write — a degraded write, never a torn file, which is this file's
+## standing trade.
+##
+## Scoped to WRITE_TMP_SUFFIX deliberately. A foreign writer's plain
+## `boot_recovery.json.tmp` carries no per-attempt stamp and is none of our
+## business — deleting a file another client is mid-write on is the kind of
+## cross-writer damage this whole area exists to avoid.
+static func _sweep_abandoned_writes(path: String) -> void:
+	var parent := path.get_base_dir()
+	var prefix := path.get_file() + WRITE_TMP_SUFFIX
+	for entry: String in DirAccess.get_files_at(parent):
+		if entry.begins_with(prefix):
+			DirAccess.remove_absolute(
+				ProjectSettings.globalize_path(parent.path_join(entry)))
+
+
+## save_state()'s body, with the write lock already held. Split out so
+## acquisition and release live on ONE path each: GDScript has no `defer`, and a
+## lock leaked down any of the many early-return branches below would wedge
+## recovery for the whole stale timeout.
+##
+## The staging sweep and the staging write both live HERE rather than in
+## [method save_state], because the lock is what makes the sweep safe.
+static func _save_state_locked(path: String, state: Variant, only_if_missing: bool) -> Dictionary:
 	if state is not Dictionary:
 		return {"ok": false, "reason": "refusing to persist recovery state that is not a dictionary"}
 	var s := state as Dictionary
@@ -357,7 +452,8 @@ static func save_state(path: String, state: Variant, only_if_missing: bool = fal
 	if schema > 0:
 		to_write["version"] = schema
 	var payload := JSON.stringify(to_write, "  ")
-	var tmp_path := path + ".tmp"
+	_sweep_abandoned_writes(path)
+	var tmp_path := _write_tmp_path(path)
 	var file := FileAccess.open(tmp_path, FileAccess.WRITE)
 	if file == null:
 		return {"ok": false, "reason": "cannot write %s" % tmp_path}
@@ -380,6 +476,23 @@ static func save_state(path: String, state: Variant, only_if_missing: bool = fal
 	if not can_write(path):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(tmp_path))
 		return {"ok": false, "reason": "refusing to replace %s because its current recovery document is unreadable or newer" % path}
+	# Prove we are STILL the lock's holder. A reclaimer that misjudged this live
+	# lock as abandoned would have moved it away, and another writer could then
+	# hold it legitimately. Replacing the record while that is true is the one
+	# outcome the lock exists to prevent, so a lost lock abandons the write.
+	#
+	# ⚠️ Point-in-time, and it cannot be made otherwise here — the same wall the
+	# vault documents. A holder that has already outlived the stale timeout can be
+	# reclaimed between this returning true and the rename below. Closing that
+	# needs an OS-level lock held ACROSS the rename (`flock` or equivalent), and
+	# Godot's FileAccess/DirAccess expose none. What bounds it: the timeout is far
+	# longer than any real critical section, the interval is a single syscall, and
+	# the readability recheck above still refuses to replace a document this shell
+	# cannot read — so the catastrophic case stays closed even when a lost update
+	# between same-version writers slips through.
+	if not FileLock.owns(path):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(tmp_path))
+		return {"ok": false, "reason": "refusing to replace %s because this process no longer holds its write lock" % path}
 	var err := DirAccess.rename_absolute(
 		ProjectSettings.globalize_path(tmp_path), ProjectSettings.globalize_path(path))
 	if err != OK:

@@ -210,7 +210,7 @@ static func build(recipe: Dictionary) -> Node3D:
 			_apply_girth(skeleton, bone, recipe["bone_girth"][key])
 	for key: String in recipe.get("bone_scale", {}):
 		for bone in _bones_for(skeleton, key):
-			_apply_uniform_subtree(skeleton, bone, recipe["bone_scale"][key])
+			KitAssembly.scale_bone_subtree(skeleton, bone, recipe["bone_scale"][key])
 	for key: String in recipe.get("joint_push", {}):
 		for bone in _bones_for(skeleton, key):
 			_scale_joint_origin(skeleton, bone, recipe["joint_push"][key])
@@ -537,6 +537,38 @@ static func validate(recipe: Dictionary, skeleton: Skeleton3D, mesh_instance: Me
 	return ""
 
 
+## Why this build cannot accept `recipe`, or "" when it can.
+##
+## The same judgement [method build] makes, without building anything. It exists
+## because the decision is needed at the SAVE boundary, before any body is built:
+## the writable character creator opens on the strength of "is there a character
+## here?", and answering that without knowing whether the recipe is acceptable
+## opens a first-run creator over an existing save. [validate] needs the
+## kit's skeleton and skinned mesh, so the persistence layer cannot ask the
+## question without a kit — this instantiates one, asks, and frees it.
+##
+## Both paths run the same [validate] call, so they cannot disagree about a
+## recipe; [method build] keeps its own copy because it is already holding the
+## instance it is about to shape.
+##
+## Fails CLOSED. When the kit itself cannot be loaded there is no way to tell an
+## acceptable recipe from an unacceptable one, and answering "acceptable" would
+## let a build that can render nothing overwrite a character it never read.
+static func refusal_reason(recipe: Dictionary) -> String:
+	var packed: PackedScene = load(KIT_SCENE_PATH)
+	if packed == null:
+		return "kit missing: %s" % KIT_SCENE_PATH
+	var instance := packed.instantiate() as Node3D
+	var skeleton := find_skeleton(instance)
+	var mesh_instance := find_skinned_mesh(skeleton)
+	if skeleton == null or mesh_instance == null:
+		instance.free()
+		return "kit has no skeleton or skinned mesh"
+	var problem := validate(recipe, skeleton, mesh_instance)
+	instance.free()
+	return problem
+
+
 ## Loads a recipe JSON from disk; null on parse failure (with an error).
 static func load_recipe(path: String) -> Variant:
 	var file := FileAccess.open(path, FileAccess.READ)
@@ -639,24 +671,12 @@ static func cpu_skin(skel: Skeleton3D, mi: MeshInstance3D) -> PackedVector3Array
 
 
 static func find_skeleton(node: Node) -> Skeleton3D:
-	if node == null or node is Skeleton3D:
-		return node
-	for child in node.get_children():
-		var found := find_skeleton(child)
-		if found != null:
-			return found
-	return null
+	return KitAssembly.find_skeleton(node)
 
 
 ## The BODY mesh — equipment meshes (Equip_ prefix) are deliberately skipped.
 static func find_skinned_mesh(skeleton: Skeleton3D) -> MeshInstance3D:
-	if skeleton == null:
-		return null
-	for child in skeleton.get_children():
-		if child is MeshInstance3D and (child as MeshInstance3D).skin != null \
-				and not String(child.name).begins_with(EQUIP_PREFIX):
-			return child
-	return null
+	return KitAssembly.find_skinned_mesh(skeleton, EQUIP_PREFIX)
 
 
 ## A recipe bone key is an exact bone name or a bare name with _l/_r variants.
@@ -684,13 +704,6 @@ static func _apply_girth(skeleton: Skeleton3D, bone: int, girth: float) -> void:
 		var child_rest := skeleton.get_bone_rest(child)
 		skeleton.set_bone_rest(child, Transform3D(
 			child_rest.basis * Basis.from_scale(Vector3.ONE / girth), child_rest.origin / girth))
-
-
-## Uniform subtree scale: the bone and everything below it grow around the
-## bone's own joint (a hand grows its fingers, a head its face).
-static func _apply_uniform_subtree(skeleton: Skeleton3D, bone: int, factor: float) -> void:
-	var rest := skeleton.get_bone_rest(bone)
-	skeleton.set_bone_rest(bone, Transform3D(rest.basis * Basis.from_scale(Vector3.ONE * factor), rest.origin))
 
 
 ## Moves a joint along its offset from the parent joint: pushing upperarm out

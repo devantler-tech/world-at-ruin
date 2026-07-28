@@ -14,18 +14,29 @@ const FOG_COLOR := Color(0.35, 0.28, 0.24)
 const DISCOVERY_STARTER_CAVE := SaveVault.DISCOVERY_STARTER_CAVE
 const DISCOVERY_WARDENS_SHRINE := SaveVault.DISCOVERY_WARDENS_SHRINE
 const STARTER_CAVE_DISCOVERY_RADIUS := 10.0
+## Shown when a character exists on disk that this build cannot accept. Says the
+## one thing the player needs and nothing it cannot know: their character is
+## still there. It deliberately does not advise updating — a recipe from a newer
+## build and a damaged one are indistinguishable to the player, and only the
+## first is fixed that way.
+const REFUSED_SAVE_NOTICE := \
+	"This version of the game can't read your saved character. " \
+	+ "It has been left untouched and nothing new will replace it."
 const DISCOVERY_PERSIST_RETRY_INITIAL_SECONDS := 1.0
 const DISCOVERY_PERSIST_RETRY_MAX_SECONDS := 30.0
+const REWARD_PERSIST_RETRY_INITIAL_SECONDS := 1.0
+const REWARD_PERSIST_RETRY_MAX_SECONDS := 30.0
 
 var _player: Player
 var _hud: Hud
 var _creator: CharacterCreator
 var _interaction: InteractionController
-## Set when legacy save recovery could not restore a stranded character. While
-## true, ALL character-creator entry is locked (auto first-run AND the manual
-## editor key): applying a new character would write the default save and orphan
-## the stranded backup forever (no-resets law). Cleared only by a boot that
-## recovers or needs no recovery.
+## Set when a character exists that this boot must not replace: legacy recovery
+## could not restore a stranded save, or the saved recipe was refused (newer than
+## this build understands, or damaged). While true, ALL character-creator entry is
+## locked — auto first-run AND the manual editor key — because applying would
+## write over player state this build cannot read back (no-resets law). Decided
+## fresh each boot: the next launch re-examines the file.
 var _save_blocked := false
 ## Whether this device's GPU can render froxel volumetrics (#158). Decided in
 ## [method _build_environment] and read again once the world exists, because
@@ -85,6 +96,13 @@ var _discovery_persistence_pending: Array[String] = []
 var _discovery_persistence_retry_in := 0.0
 var _discovery_persistence_retry_delay := DISCOVERY_PERSIST_RETRY_INITIAL_SECONDS
 var _discovery_persistence_warning_shown := false
+## Successfully applied reward place ids waiting for their append-only v3
+## claim write. The live tracker marks them before they enter this queue, so a
+## transient filesystem retry never applies the same outcome twice in-session.
+var _reward_persistence_pending: Array[String] = []
+var _reward_persistence_retry_in := 0.0
+var _reward_persistence_retry_delay := REWARD_PERSIST_RETRY_INITIAL_SECONDS
+var _reward_persistence_warning_shown := false
 ## Notices raised while _ready() is still running, delivered together at the end
 ## of it. The HUD has ONE toast label and a later toast replaces an earlier one
 ## before a frame renders, so a boot that has several things to say would
@@ -157,6 +175,14 @@ func _ready() -> void:
 		STARTER_CAVE_DISCOVERY_RADIUS)
 	_discovery.add(DISCOVERY_WARDENS_SHRINE, world.shrine_interactable().global_position,
 		WorldGen.SHRINE_CLEAR_RADIUS)
+	# The first production exploration reward: reaching the Wardens' Shrine
+	# unlocks its return point. The reward carries only the stable semantic id;
+	# the generated world's live coordinate is resolved when the outcome applies.
+	_exploration_rewards.add(DISCOVERY_WARDENS_SHRINE, {
+		"kind": ExplorationRewards.KIND_WAYPOINT,
+		"id": SaveVault.SHRINE_WARDENS,
+		"name": "Wardens' Shrine",
+	})
 
 	# The Reach is inhabited: a seeded settlement rings the shrine and lone
 	# drifters dot the open land — the same people in the same places every
@@ -236,10 +262,18 @@ func _ready() -> void:
 		# Restore unknown future claims too: forgetting one during rollback could
 		# grant a reward that the newer client already consumed.
 		_exploration_rewards.restore(vault.get("reward_claims", []))
-		for name: String in SaveVault.attuned(vault):
-			var point = RespawnPoints.resolve(name, world)
-			if point != null:
-				_player.set_respawn_point(point)
+		_apply_restored_reward_outcomes()
+		# A discovery may have persisted before its reward claim during a
+		# transient failure or an older release. Reconcile that durable discovery
+		# now; claim_applied keeps already-restored claims idempotent.
+		_claim_exploration_rewards(_discovery.discovered())
+		# A direct attunement is an explicit player choice and therefore wins
+		# over both restored and newly reconciled exploration waypoints. Select
+		# it last, after every automatic outcome, so precedence is a named policy
+		# rather than an accidental statement order.
+		var preferred_attunement: Variant = _preferred_attuned_respawn(vault, world)
+		if preferred_attunement != null:
+			_player.set_respawn_point(preferred_attunement)
 	# Observe only after restore. A persisted place then stays idempotent, while
 	# the cave under a new wanderer's feet becomes the first v2 write.
 	_observe_discoveries()
@@ -261,9 +295,18 @@ func _ready() -> void:
 		_boot_notices.insert(
 			0, "A saved character couldn't be restored — please restart. Your character is safe.")
 	else:
+		var save_path := CharacterStore.save_path()
 		var saved = CharacterStore.load_saved()
 		if saved is Dictionary:
 			_player.set_character(saved)
+		elif CharacterStore.is_refused(save_path):
+			# There IS a character here, and this build cannot accept it — it was
+			# written by a newer build, or it is damaged. Both are existing player
+			# state, so the one thing we must not do is treat this as a first run
+			# and open the writable creator over it. Lock every writer and say so;
+			# the store keeps the refusal latched for the rest of the process.
+			_save_blocked = true
+			_boot_notices.insert(0, REFUSED_SAVE_NOTICE)
 		else:
 			# First time in the world: shape a character before setting out.
 			_open_creator.call_deferred(true)
@@ -323,6 +366,20 @@ func _ready() -> void:
 ## child's work, not this caller's.
 func _reconcile_boot_recovery() -> void:
 	var path := BootRecovery.recovery_path()
+	# The whole load → reconcile → write is ONE transaction, held under the
+	# ledger's write lock. Locking only the final replace would not close the
+	# race: two shells can each load the same ledger before either takes the
+	# lock, then acquire in turn, and the second's write discards the first's
+	# quarantine record — the exact loss the lock exists to prevent.
+	if not FileLock.with_lock(path, func() -> void: _reconcile_boot_recovery_locked(path)):
+		push_warning(
+			"boot recovery: another writer holds the ledger's write lock — leaving reconciliation to the next launch")
+
+
+## _reconcile_boot_recovery()'s body, with the ledger's write lock already held.
+## Split out so acquisition and release live on ONE path each: GDScript has no
+## `defer`, and this body returns early on three separate branches.
+func _reconcile_boot_recovery_locked(path: String) -> void:
 	var loaded := BootRecovery.load_state(path)
 	# An unreadable or newer document loads with ok false and a read-only,
 	# rollback-safe degraded state. It is carried forward rather than replaced:
@@ -450,10 +507,12 @@ func _process(delta: float) -> void:
 		push_warning("zone connection closed by the zone — replication has stopped for this session")
 
 
-## Fold this frame's player position into the append-only discovery set.
-## Transient storage failures retain a dirty bit and retry with bounded
-## exponential backoff; a path-latched unreadable/newer vault stays session-only
-## and is never retried, preserving the downgrade refusal.
+## Fold this frame's player position into the append-only discovery and reward
+## sets. Outcomes apply before their place ids are marked claimed. Discovery and
+## claim writes keep independent bounded exponential backoff. A writable claim
+## refusal requeues its discovery prerequisite before retrying; a path-latched
+## unreadable/newer vault stays session-only and is never retried, preserving
+## the downgrade refusal.
 func _observe_discoveries(delta: float = 0.0) -> void:
 	if _player == null:
 		return
@@ -464,9 +523,77 @@ func _observe_discoveries(delta: float = 0.0) -> void:
 				_discovery_persistence_pending.append(name)
 		_discovery_persistence_retry_in = 0.0
 		_discovery_persistence_retry_delay = DISCOVERY_PERSIST_RETRY_INITIAL_SECONDS
+		_claim_exploration_rewards(newly_found)
+	_persist_pending_discoveries(delta)
+	_persist_pending_reward_claims(delta)
+
+
+## Apply registered outcomes for newly discovered places, then queue only the
+## ids whose outcomes succeeded. The tracker records success before this method
+## returns, so a persistence retry cannot re-grant the live reward.
+func _claim_exploration_rewards(found_ids: Array) -> void:
+	var applied := _exploration_rewards.claim_applied(
+		found_ids, Callable(self, "_apply_exploration_reward"))
+	if applied.is_empty():
+		return
+	for name: String in applied:
+		if name not in _reward_persistence_pending:
+			_reward_persistence_pending.append(name)
+	_reward_persistence_retry_in = 0.0
+	_reward_persistence_retry_delay = REWARD_PERSIST_RETRY_INITIAL_SECONDS
+
+
+## The final respawn point selected by direct attunement, or null when this
+## build cannot resolve one. Direct attunement has explicit precedence over an
+## automatically restored waypoint claim.
+func _preferred_attuned_respawn(vault: Dictionary, world: WorldGen) -> Variant:
+	var preferred: Variant = null
+	for name: String in SaveVault.attuned(vault):
+		var point = RespawnPoints.resolve(name, world)
+		if point != null:
+			# Attunements are append-only in stored order, so the latest
+			# resolvable direct choice retains the established v1 behaviour.
+			preferred = point
+	return preferred
+
+
+## Re-apply the known outcomes represented by persisted claims. Unknown future
+## claims remain remembered but inert in this rollback build; a later build can
+## register them without granting twice.
+func _apply_restored_reward_outcomes() -> void:
+	for poi_id: String in _exploration_rewards.claimed():
+		if not _exploration_rewards.is_registered(poi_id):
+			continue
+		var reward := _exploration_rewards.reward_for(poi_id)
+		if not _apply_exploration_reward(poi_id, reward, false):
+			push_warning("Main: could not restore exploration reward '%s'" % poi_id)
+
+
+## Apply one horizontal reward to the live session. Only kinds with a real
+## production outcome return true. The Wardens' waypoint resolves from its
+## stable id into this generated world's current coordinate, so a world-layout
+## change never strands the persisted claim at an obsolete position.
+func _apply_exploration_reward(
+		_poi_id: String, reward: Dictionary, announce: bool = true) -> bool:
+	match String(reward.get("kind", "")):
+		ExplorationRewards.KIND_WAYPOINT:
+			var world := get_node_or_null("World") as WorldGen
+			if world == null or _player == null:
+				return false
+			var point = RespawnPoints.resolve(String(reward.get("id", "")), world)
+			if point == null:
+				return false
+			_player.set_respawn_point(point)
+			if announce:
+				_notify("You know a new way back: %s." % String(reward.get("name", "")))
+			return true
+	return false
+
+
+func _persist_pending_discoveries(delta: float) -> void:
 	if _discovery_persistence_pending.is_empty():
 		return
-	if newly_found.is_empty() and _discovery_persistence_retry_in > 0.0:
+	if _discovery_persistence_retry_in > 0.0:
 		_discovery_persistence_retry_in = maxf(
 			0.0, _discovery_persistence_retry_in - delta)
 		if _discovery_persistence_retry_in > 0.0:
@@ -493,18 +620,66 @@ func _observe_discoveries(delta: float = 0.0) -> void:
 		_notify("This place is known for now — though the Reach may not remember next waking.")
 
 
+func _persist_pending_reward_claims(delta: float) -> void:
+	if _reward_persistence_pending.is_empty():
+		return
+	if _reward_persistence_retry_in > 0.0:
+		_reward_persistence_retry_in = maxf(
+			0.0, _reward_persistence_retry_in - delta)
+		if _reward_persistence_retry_in > 0.0:
+			return
+	if SaveVault.persist_reward_claims(_reward_persistence_pending):
+		_reward_persistence_pending.clear()
+		_reward_persistence_retry_in = 0.0
+		_reward_persistence_retry_delay = REWARD_PERSIST_RETRY_INITIAL_SECONDS
+		return
+	if SaveVault.can_write(SaveVault.vault_path()):
+		# A writable claim refusal can mean cloud sync replaced the vault after
+		# its discovery write succeeded. The claim writer correctly refuses a
+		# place that is no longer durable, so restore that prerequisite to the
+		# discovery queue before retrying the claim. Both writes are append-only
+		# and idempotent; the live reward remains claimed and is never re-applied.
+		for name: String in _reward_persistence_pending:
+			if name not in _discovery_persistence_pending:
+				_discovery_persistence_pending.append(name)
+		_discovery_persistence_retry_in = 0.0
+		_reward_persistence_retry_in = _reward_persistence_retry_delay
+		_reward_persistence_retry_delay = minf(
+			_reward_persistence_retry_delay * 2.0,
+			REWARD_PERSIST_RETRY_MAX_SECONDS)
+	else:
+		_reward_persistence_pending.clear()
+	if not _reward_persistence_warning_shown:
+		_reward_persistence_warning_shown = true
+		_notify("This way back is known for now — though the Reach may not remember next waking.")
+
+
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("character_editor") and _creator == null:
 		_open_creator(false)
 		get_viewport().set_input_as_handled()
 
 func _open_creator(first_run: bool) -> void:
-	# Single chokepoint: while a stranded save is unrecovered, applying a new
-	# character would overwrite the default and orphan it forever (no-resets
-	# law) — refuse every entry, auto and manual editor-key alike.
+	# Single chokepoint: while a character exists that this build must not
+	# replace — stranded and unrecovered, or refused — applying would overwrite
+	# player state this build cannot read back (no-resets law). Refuse every
+	# entry, auto and manual editor-key alike. CharacterStore.save_to() refuses
+	# the same write independently, so this is the door and that is the lock.
 	if _save_blocked:
 		return
+	var save_path := CharacterStore.save_path()
 	var initial = CharacterStore.load_saved()
+	if initial is not Dictionary and CharacterStore.is_refused(save_path):
+		# The file changed since boot — corrupted, or replaced by a newer build's
+		# recipe — so the refusal is discovered HERE rather than at startup. It is
+		# the same state, and it gets the same answer: lock the creator instead of
+		# opening it over a character this build cannot read. Falling through
+		# would open the editor on the wanderer preset, and applying would change
+		# the body on screen while the store refused to persist it — telling the
+		# player their character was saved when it was not.
+		_save_blocked = true
+		_notify(REFUSED_SAVE_NOTICE)
+		return
 	if initial is not Dictionary:
 		initial = CharacterFactory.load_recipe("res://recipes/wanderer.json")
 		if initial is Dictionary:
@@ -514,7 +689,14 @@ func _open_creator(first_run: bool) -> void:
 	_creator = CharacterCreator.new()
 	add_child(_creator)
 	_creator.applied.connect(func(recipe: Dictionary) -> void:
-		CharacterStore.save_recipe(recipe)
+		# Only claim the body changed if it was actually recorded. The store can
+		# refuse between opening the creator and applying, and showing the new
+		# body with a success line would tell the player they are saved when the
+		# next launch will show them someone else.
+		if not CharacterStore.save_recipe(recipe):
+			_save_blocked = true
+			_hud.toast(REFUSED_SAVE_NOTICE)
+			return
 		_player.set_character(recipe)
 		_hud.toast("The body remembers its new shape." if not first_run
 			else "You wake in the dark. Embers, and a mouth of light ahead."))

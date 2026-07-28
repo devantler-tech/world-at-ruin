@@ -38,13 +38,15 @@ const SHELL_UPDATE := "shell_update"
 const BLOCKED_INCOMPATIBLE := "blocked_incompatible"
 const INVALID_MANIFEST := "invalid_manifest"
 const STALE_MANIFEST := "stale_manifest"
+const STALE_KEY_EPOCH := "stale_key_epoch"
 const EXPIRED_MANIFEST := "expired_manifest"
 
 
 ## Decide what the client should do. `installed` describes the running build:
 ##   { shell_version: String, pack_version: String, save_schema: int,
 ##     save_capability: int, protocol: int,
-##     manifest_sequence_high_water: int (optional), observed_at: String,
+##     manifest_sequence_high_water: int (optional), key_epoch_high_water: int (optional),
+##     observed_at: String,
 ##     quarantined: Array[String] (optional) }
 ## Missing keys default to the lowest value, so a partial state is never a crash —
 ## with ONE deliberate exception: `save_capability` must be present and whole, or
@@ -53,7 +55,10 @@ const EXPIRED_MANIFEST := "expired_manifest"
 ## [RollbackSelection] about the very same fact.
 ## `manifest_sequence_high_water` is likewise supplied by the caller from whatever
 ## persistence the updater owns; an absent value means this client has not accepted
-## a manifest yet. `observed_at` is required and caller-supplied so this core can
+## a manifest yet. `key_epoch_high_water` is the same shape for the signing-key
+## epoch that mark was accumulated under — the sequence line restarts per epoch, so
+## the two are read together and never independently.
+## `observed_at` is required and caller-supplied so this core can
 ## enforce expiry without reading the wall clock and ceasing to be pure.
 ## `manifest` is the parsed update manifest (the caller has already verified its
 ## signature). Returns { action: String, reason: String } where action is one of
@@ -79,8 +84,34 @@ static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 	if not is_int_id(high_water):
 		return _result(BLOCKED_INCOMPATIBLE, "the accepted manifest sequence high-water mark is not a whole number — cannot prove this manifest is not a replay")
 
+	# The signing-key epoch is the SCOPE the sequence mark lives in. A key that was
+	# rotated away from must not be able to sign its way back in, so an epoch below
+	# the accepted mark is refused — as a key-trust event distinct from an ordinary
+	# replay, because the two call for different operator responses.
+	#
+	# The epoch is only as trustworthy as the signature carrying it, and nothing yet
+	# binds a key to an epoch — that binding is the signing-key certificate of the
+	# key-custody boundary. So a claimed epoch is trusted exactly as the signature is,
+	# no more: it defends against a KEYLESS replayer, who can only resend manifests
+	# as published and therefore cannot invent a higher epoch. It does not yet defend
+	# against a compromised key claiming one, which is what the certificate closes.
+	var epoch_high_water: Variant = installed.get("key_epoch_high_water", 0)
+	if not is_int_id(epoch_high_water):
+		return _result(BLOCKED_INCOMPATIBLE, "the accepted signing-key epoch high-water mark is not a whole number — cannot prove this manifest was not signed under a superseded key")
+	var key_epoch := int(manifest.get("key_epoch", 0))
+	if key_epoch < int(epoch_high_water):
+		return _result(STALE_KEY_EPOCH, "manifest key epoch %d is below the accepted epoch %d — refusing a manifest signed under a superseded key" % [
+			key_epoch, int(epoch_high_water)])
+
+	# The sequence mark applies only WITHIN the epoch that produced it. Sequence
+	# numbering restarts per epoch, so after a rotation the first manifest signed by
+	# the new key legitimately carries a sequence at or below the mark accumulated
+	# under the old one. Enforcing the mark across that boundary refuses every
+	# post-rotation manifest and strands the client — at exactly the moment a
+	# compromised key makes the rotation urgent. A higher epoch has already been
+	# proven above, so it starts its own sequence line from the floor.
 	var sequence := int(manifest["sequence"])
-	if sequence < int(high_water):
+	if key_epoch == int(epoch_high_water) and sequence < int(high_water):
 		return _result(STALE_MANIFEST, "manifest sequence %d is below the accepted high-water mark %d — refusing a replay" % [
 			sequence, int(high_water)])
 
@@ -403,6 +434,11 @@ static func compare_versions(a: String, b: String) -> int:
 static func _envelope_error(m: Dictionary) -> String:
 	if not is_int_id(m.get("sequence")):
 		return "sequence is missing or not a whole number"
+	# `key_epoch` is OPTIONAL so every manifest published before signing-key epochs
+	# existed stays readable, but a present one must be well-formed: a malformed
+	# epoch must never read as "no epoch" and silently disarm anti-rollback.
+	if m.has("key_epoch") and not is_int_id(m["key_epoch"]):
+		return "key_epoch is present but not a whole number"
 	if not is_utc_datetime(m.get("not_after")):
 		return "not_after is missing or not a canonical UTC timestamp"
 	if not (m.get("channel") is String) or (m["channel"] as String).is_empty():
@@ -419,11 +455,16 @@ static func _envelope_error(m: Dictionary) -> String:
 	# a manifest whose schema-specific body this client cannot parse.
 	if not is_int_id(sh.get("reads_min")):
 		return "shell.reads_min is missing or not an integer"
-	# The capability floor lives in the STABLE envelope for exactly the reason
-	# `reads_min` does: the future-schema route decides from this block alone, so a
-	# save-strand check that exists only in the parseable body is absent precisely
-	# where the client understands least. Required, not optional — an absent floor
-	# would read as 0 and clear every save.
+	if not is_int_id(sh.get("reads_max")):
+		return "shell.reads_max is missing or not an integer"
+	if int(sh["reads_max"]) < int(sh["reads_min"]):
+		return "shell.reads_max %d is below shell.reads_min %d (incoherent manifest)" % [
+			int(sh["reads_max"]), int(sh["reads_min"])]
+	# The capability ceiling lives in the STABLE envelope for exactly the reason
+	# the schema range does: the future-schema route decides from this block alone,
+	# so a save-strand check that exists only in the parseable body is absent
+	# precisely where the client understands least. Required, not optional — an
+	# absent ceiling would read as 0 and clear every save.
 	if not is_int_id(sh.get("reads_capability_max")):
 		return "shell.reads_capability_max is missing or not an integer"
 	# A coherent manifest never advertises a current shell below its own floor;
@@ -434,21 +475,24 @@ static func _envelope_error(m: Dictionary) -> String:
 	return ""
 
 
-## SHELL_UPDATE to `m_shell.current`, unless that shell's save read floor
-## (`reads_min`) is above the installed save — in which case updating to it would
-## strand the save, so it is a loud block instead. Every shell-update path routes
-## through here so the check can never be forgotten.
+## SHELL_UPDATE to `m_shell.current`, unless that shell's save read range excludes
+## the installed save — in which case updating to it would strand the save, so it
+## is a loud block instead. Every shell-update path routes through here so the
+## check can never be forgotten.
 static func _shell_or_block(installed_save: int, installed_capability: int,
 		m_shell: Dictionary, why: String) -> Dictionary:
 	if installed_save < int(m_shell["reads_min"]):
 		return _result(BLOCKED_INCOMPATIBLE, "shell update (%s) targets a build reading saves only from schema %d, but the installed save is %d — updating would strand it" % [
 			why, int(m_shell["reads_min"]), installed_save])
-	# The CAPABILITY floor, checked here for the same reason `reads_min` is: a shell
-	# that cannot read the shapes this save already holds strands it just as surely
-	# as one whose schema floor is too high. It matters most on the route that has
-	# the least evidence — a future-schema manifest is decided from this envelope
-	# ALONE, with no parsed body to carry a capability, so without a capability floor
-	# in the stable envelope that route could install a shell which regresses it.
+	if installed_save > int(m_shell["reads_max"]):
+		return _result(BLOCKED_INCOMPATIBLE, "shell update (%s) targets a build reading saves only through schema %d, but the installed save is %d — updating would strand it" % [
+			why, int(m_shell["reads_max"]), installed_save])
+	# The CAPABILITY ceiling, checked here for the same reason the schema range is:
+	# a shell that cannot read the shapes this save already holds strands it just
+	# as surely as one whose schema range excludes the save. It matters most on
+	# the route that has the least evidence — a future-schema manifest is decided
+	# from this envelope ALONE, with no parsed body to carry a capability, so
+	# without a capability ceiling that route could install a regressing shell.
 	if installed_capability > int(m_shell["reads_capability_max"]):
 		return _result(BLOCKED_INCOMPATIBLE, "shell update (%s) targets a build understanding save shapes only up to capability %d, but the installed save is %d — updating would strand it" % [
 			why, int(m_shell["reads_capability_max"]), installed_capability])
@@ -482,6 +526,7 @@ static func _body_error(m: Dictionary) -> String:
 	if not (m.has("save_schema") and m["save_schema"] is Dictionary):
 		return "missing 'save_schema' object"
 	var sv: Dictionary = m["save_schema"]
+	var sh: Dictionary = m["shell"]
 	if not is_int_id(sv.get("min")):
 		return "save_schema.min is not an integer"
 	# `writes` (the candidate's write-schema) is REQUIRED: it drives the
@@ -492,6 +537,9 @@ static func _body_error(m: Dictionary) -> String:
 	if int(sv["writes"]) < int(sv["min"]):
 		return "save_schema.writes %d is below save_schema.min %d (incoherent)" % [
 			int(sv["writes"]), int(sv["min"])]
+	if int(sv["writes"]) > int(sh["reads_max"]):
+		return "save_schema.writes %d exceeds shell.reads_max %d (candidate cannot reopen its own save)" % [
+			int(sv["writes"]), int(sh["reads_max"])]
 	# `capability` (what the candidate WRITES within its schema) is REQUIRED for the
 	# same fail-closed reason as `writes`: a same-schema content expansion raises
 	# only the capability, so a manifest that omits it would let exactly the
@@ -500,6 +548,9 @@ static func _body_error(m: Dictionary) -> String:
 	# this library never assumes — it refuses.
 	if not is_int_id(sv.get("capability")):
 		return "save_schema.capability is missing or not an integer"
+	if int(sv["capability"]) > int(sh["reads_capability_max"]):
+		return "save_schema.capability %d exceeds shell.reads_capability_max %d (candidate cannot reopen its own save)" % [
+			int(sv["capability"]), int(sh["reads_capability_max"])]
 	return ""
 
 

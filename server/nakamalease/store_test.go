@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -27,22 +28,81 @@ const (
 )
 
 type memoryStorage struct {
-	mu          sync.Mutex
-	objects     map[string]*api.StorageObject
-	reads       []*runtime.StorageRead
-	writes      []*runtime.StorageWrite
-	deletes     []*runtime.StorageDelete
-	version     int
-	readErr     error
-	writeErr    error
-	deleteErr   error
-	deleteFault func(map[string]*api.StorageObject, []*runtime.StorageDelete) error
+	mu                     sync.Mutex
+	objects                map[string]*api.StorageObject
+	reads                  []*runtime.StorageRead
+	writes                 []*runtime.StorageWrite
+	deletes                []*runtime.StorageDelete
+	version                int
+	readErr                error
+	listErr                error
+	writeErr               error
+	deleteErr              error
+	createConflictMutation func(map[string]*api.StorageObject, string)
+	deleteFault            func(map[string]*api.StorageObject, []*runtime.StorageDelete) error
+}
+
+type createRaceStorage struct {
+	*memoryStorage
+	initialReads sync.WaitGroup
+	barrierMu    sync.Mutex
+	barrierReads int
+}
+
+func newCreateRaceStorage() *createRaceStorage {
+	storage := &createRaceStorage{memoryStorage: newMemoryStorage()}
+	storage.initialReads.Add(2)
+	return storage
+}
+
+func (s *createRaceStorage) StorageRead(
+	ctx context.Context,
+	reads []*runtime.StorageRead,
+) ([]*api.StorageObject, error) {
+	objects, err := s.memoryStorage.StorageRead(ctx, reads)
+	s.barrierMu.Lock()
+	waitForPeer := s.barrierReads < 2
+	if waitForPeer {
+		s.barrierReads++
+	}
+	s.barrierMu.Unlock()
+	if waitForPeer {
+		s.initialReads.Done()
+		s.initialReads.Wait()
+	}
+	return objects, err
 }
 
 func newMemoryStorage() *memoryStorage {
 	return &memoryStorage{
 		objects: make(map[string]*api.StorageObject),
 	}
+}
+
+func (s *memoryStorage) StorageList(
+	_ context.Context,
+	_ string,
+	userID string,
+	collection string,
+	_ int,
+	_ string,
+) ([]*api.StorageObject, string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.listErr != nil {
+		return nil, "", s.listErr
+	}
+	objects := make([]*api.StorageObject, 0, len(s.objects))
+	for _, object := range s.objects {
+		if object.GetUserId() == userID &&
+			object.GetCollection() == collection {
+			objects = append(objects, cloneStorageObject(object))
+		}
+	}
+	sort.Slice(objects, func(left, right int) bool {
+		return objects[left].GetKey() < objects[right].GetKey()
+	})
+	return objects, "", nil
 }
 
 func (s *memoryStorage) StorageRead(
@@ -76,12 +136,18 @@ func (s *memoryStorage) StorageWrite(
 	}
 	acks := make([]*api.StorageObjectAck, 0, len(writes))
 	for _, write := range writes {
+		if write.PermissionRead != 0 || write.PermissionWrite != 0 {
+			return nil, errors.New("test storage: expected server-only permissions")
+		}
 		s.writes = append(s.writes, cloneStorageWrite(write))
 		ownerID := storageOwner(write.UserID)
 		id := storageID(ownerID, write.Collection, write.Key)
 		current := s.objects[id]
 		switch {
 		case write.Version == "*" && current != nil:
+			if s.createConflictMutation != nil {
+				s.createConflictMutation(s.objects, id)
+			}
 			return nil, runtime.ErrStorageRejectedVersion
 		case write.Version == "*":
 		case current == nil || current.GetVersion() != write.Version:
@@ -95,8 +161,8 @@ func (s *memoryStorage) StorageWrite(
 			UserId:          ownerID,
 			Value:           write.Value,
 			Version:         version,
-			PermissionRead:  int32(write.PermissionRead),
-			PermissionWrite: int32(write.PermissionWrite),
+			PermissionRead:  0,
+			PermissionWrite: 0,
 		}
 		acks = append(acks, &api.StorageObjectAck{
 			Collection: write.Collection,
@@ -221,7 +287,7 @@ func TestCreatePersistsPrivateVersionedLeaseByHashedKey(t *testing.T) {
 	if write.Value == "" || !json.Valid([]byte(write.Value)) {
 		t.Fatalf("stored lease is not valid JSON: %q", write.Value)
 	}
-	if got := string(write.Value); got == "" ||
+	if got := write.Value; got == "" ||
 		strings.Contains(got, testReservationID) ||
 		strings.Contains(got, testUserID) {
 		t.Fatalf("stored lease exposes raw storage identity: %q", got)
@@ -232,7 +298,7 @@ func TestCreatePersistsPrivateVersionedLeaseByHashedKey(t *testing.T) {
 		t.Fatalf("decode stored lease: %v", err)
 	}
 	want := map[string]any{
-		"schema":           float64(1),
+		"schema":           float64(2),
 		"attempt_id":       testAttemptID,
 		"allocation_id":    testAllocationID,
 		"observer":         float64(42),
@@ -280,7 +346,7 @@ func TestCreateIgnoresAClientOwnedObjectAtTheDerivedKey(t *testing.T) {
 	if len(storage.writes) != 1 || storage.writes[0].UserID != "" {
 		t.Fatalf("storage writes = %+v, want one server-owned write", storage.writes)
 	}
-	if storage.objects[storageID(testUserID, Collection, key)].Version != "client-version" {
+	if storage.objects[storageID(testUserID, Collection, key)].GetVersion() != "client-version" {
 		t.Fatal("Create mutated the client-owned decoy object")
 	}
 }
@@ -377,6 +443,258 @@ func TestCreateReplaysTheSameAttemptWithoutAnotherWrite(t *testing.T) {
 	}
 }
 
+func TestConcurrentIdenticalCreateReconcilesTheDurableWinner(t *testing.T) {
+	storage := newCreateRaceStorage()
+	store, err := NewStore(storage)
+	if err != nil {
+		t.Fatalf("NewStore returned an error: %v", err)
+	}
+	lease := validLease()
+	var records [2]Record
+	var errs [2]error
+	var creates sync.WaitGroup
+	creates.Add(len(records))
+	for i := range records {
+		go func() {
+			defer creates.Done()
+			records[i], errs[i] = store.Create(context.Background(), lease)
+		}()
+	}
+	creates.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent Create %d returned an error: %v", i, err)
+		}
+	}
+	if records[0] != records[1] || records[0].Lease != lease {
+		t.Fatalf(
+			"concurrent records = %+v and %+v, want one durable lease %+v",
+			records[0],
+			records[1],
+			lease,
+		)
+	}
+	if len(storage.writes) != 2 {
+		t.Fatalf(
+			"concurrent create writes = %d, want one winner and one conflict",
+			len(storage.writes),
+		)
+	}
+}
+
+func TestConcurrentStagingCreateReusesTheDurableWinnerExpiry(t *testing.T) {
+	storage := newCreateRaceStorage()
+	store, err := NewStore(storage)
+	if err != nil {
+		t.Fatalf("NewStore returned an error: %v", err)
+	}
+	staging := validLease()
+	staging.AllocationID = ""
+	staging.Observer = 0
+	staging.SecretRef = ""
+	staging.Staging = true
+	candidates := []Lease{staging, staging}
+	candidates[1].ExpiresAt = candidates[1].ExpiresAt.Add(time.Nanosecond)
+	records := make([]Record, len(candidates))
+	errs := make([]error, len(candidates))
+	var creates sync.WaitGroup
+	creates.Add(len(candidates))
+	for i := range candidates {
+		go func() {
+			defer creates.Done()
+			records[i], errs[i] = store.Create(
+				context.Background(),
+				candidates[i],
+			)
+		}()
+	}
+	creates.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent staging Create %d returned an error: %v", i, err)
+		}
+	}
+	if records[0] != records[1] ||
+		!records[0].Lease.Staging ||
+		records[0].Lease.AttemptID != testAttemptID {
+		t.Fatalf(
+			"concurrent staging records = %+v and %+v, want one durable intent",
+			records[0],
+			records[1],
+		)
+	}
+}
+
+func TestConcurrentStagingCreateAcceptsAProgressedWinner(t *testing.T) {
+	storage := newCreateRaceStorage()
+	progressed := validLease()
+	progressed.ClaimedAt = progressed.ExpiresAt.Add(-time.Second)
+	storage.createConflictMutation = func(
+		objects map[string]*api.StorageObject,
+		id string,
+	) {
+		value, err := json.Marshal(documentFrom(progressed))
+		if err != nil {
+			t.Fatalf("marshal progressed winner: %v", err)
+		}
+		objects[id].Value = string(value)
+		objects[id].Version = "claimed-v2"
+	}
+	store, err := NewStore(storage)
+	if err != nil {
+		t.Fatalf("NewStore returned an error: %v", err)
+	}
+	staging := validLease()
+	staging.AllocationID = ""
+	staging.Observer = 0
+	staging.SecretRef = ""
+	staging.Staging = true
+	var records [2]Record
+	var errs [2]error
+	var creates sync.WaitGroup
+	creates.Add(len(records))
+	for i := range records {
+		go func() {
+			defer creates.Done()
+			records[i], errs[i] = store.Create(context.Background(), staging)
+		}()
+	}
+	creates.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent staging Create %d returned an error: %v", i, err)
+		}
+	}
+	progressedWinners := 0
+	for _, record := range records {
+		if !record.Lease.Staging {
+			progressedWinners++
+			if record.Lease != progressed {
+				t.Fatalf(
+					"progressed staging winner = %+v, want %+v",
+					record.Lease,
+					progressed,
+				)
+			}
+		}
+	}
+	if progressedWinners != 1 {
+		t.Fatalf(
+			"progressed staging records = %d, want the reloaded winner once",
+			progressedWinners,
+		)
+	}
+}
+
+func TestConcurrentIdenticalCreateReconcilesAClaimedWinner(t *testing.T) {
+	storage := newCreateRaceStorage()
+	claimTime := validLease().ExpiresAt.Add(-time.Second).UnixNano()
+	storage.createConflictMutation = func(
+		objects map[string]*api.StorageObject,
+		id string,
+	) {
+		object := objects[id]
+		object.Value = strings.Replace(
+			object.GetValue(),
+			`"claimed_at_nanos":null`,
+			fmt.Sprintf(`"claimed_at_nanos":%d`, claimTime),
+			1,
+		)
+		object.Version = "claimed-v2"
+	}
+	store, err := NewStore(storage)
+	if err != nil {
+		t.Fatalf("NewStore returned an error: %v", err)
+	}
+	lease := validLease()
+	var records [2]Record
+	var errs [2]error
+	var creates sync.WaitGroup
+	creates.Add(len(records))
+	for i := range records {
+		go func() {
+			defer creates.Done()
+			records[i], errs[i] = store.Create(context.Background(), lease)
+		}()
+	}
+	creates.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent Create %d returned an error: %v", i, err)
+		}
+	}
+	claimed := 0
+	for _, record := range records {
+		if !record.Lease.ClaimedAt.IsZero() {
+			claimed++
+		}
+		if record.Lease.AttemptID != lease.AttemptID ||
+			record.Lease.AllocationID != lease.AllocationID ||
+			record.Lease.SecretRef != lease.SecretRef {
+			t.Fatalf("concurrent Create returned a different owner: %+v", record)
+		}
+	}
+	if claimed != 1 {
+		t.Fatalf("claimed concurrent records = %d, want the reloaded winner once", claimed)
+	}
+}
+
+func TestConcurrentIdenticalCreateRefusesAReleasingWinner(t *testing.T) {
+	storage := newCreateRaceStorage()
+	storage.createConflictMutation = func(
+		objects map[string]*api.StorageObject,
+		id string,
+	) {
+		object := objects[id]
+		object.Value = strings.Replace(
+			object.GetValue(),
+			"{",
+			`{"releasing":true,`,
+			1,
+		)
+		object.Version = "releasing-v2"
+	}
+	store, err := NewStore(storage)
+	if err != nil {
+		t.Fatalf("NewStore returned an error: %v", err)
+	}
+	lease := validLease()
+	var errs [2]error
+	var creates sync.WaitGroup
+	creates.Add(len(errs))
+	for i := range errs {
+		go func() {
+			defer creates.Done()
+			_, errs[i] = store.Create(context.Background(), lease)
+		}()
+	}
+	creates.Wait()
+
+	succeeded := 0
+	releasing := 0
+	for _, err := range errs {
+		switch {
+		case err == nil:
+			succeeded++
+		case errors.Is(err, ErrReleasing):
+			releasing++
+		default:
+			t.Fatalf("concurrent Create returned an unexpected error: %v", err)
+		}
+	}
+	if succeeded != 1 || releasing != 1 {
+		t.Fatalf(
+			"concurrent outcomes = %d success/%d releasing, want one of each",
+			succeeded,
+			releasing,
+		)
+	}
+}
+
 func TestCreateAndReplaceRequireAnUnclaimedLease(t *testing.T) {
 	t.Run("create", func(t *testing.T) {
 		storage := newMemoryStorage()
@@ -416,6 +734,54 @@ func TestCreateAndReplaceRequireAnUnclaimedLease(t *testing.T) {
 		}
 		if len(storage.writes) != 1 {
 			t.Fatalf("storage writes after preclaimed replacement = %d, want 1", len(storage.writes))
+		}
+	})
+
+	t.Run("create releasing", func(t *testing.T) {
+		storage := newMemoryStorage()
+		store, err := NewStore(storage)
+		if err != nil {
+			t.Fatalf("NewStore returned an error: %v", err)
+		}
+		lease := validLease()
+		lease.Releasing = true
+
+		if _, err := store.Create(context.Background(), lease); !errors.Is(err, ErrReleasing) {
+			t.Fatalf("Create releasing lease error = %v, want ErrReleasing", err)
+		}
+		if len(storage.writes) != 0 {
+			t.Fatalf("storage writes after releasing create = %d, want 0", len(storage.writes))
+		}
+	})
+
+	t.Run("replace with releasing target", func(t *testing.T) {
+		storage := newMemoryStorage()
+		store, err := NewStore(storage)
+		if err != nil {
+			t.Fatalf("NewStore returned an error: %v", err)
+		}
+		current, err := store.Create(context.Background(), validLease())
+		if err != nil {
+			t.Fatalf("Create returned an error: %v", err)
+		}
+		next := validLease()
+		next.AttemptID = "attempt-8"
+		next.AllocationID = "gameserver-18"
+		next.SecretRef = "zone-admission-gameserver-18"
+		next.Releasing = true
+
+		if _, err := store.Replace(
+			context.Background(),
+			current,
+			next,
+		); !errors.Is(err, ErrReleasing) {
+			t.Fatalf("Replace with releasing lease error = %v, want ErrReleasing", err)
+		}
+		if len(storage.writes) != 1 {
+			t.Fatalf(
+				"storage writes after releasing replacement = %d, want 1",
+				len(storage.writes),
+			)
 		}
 	})
 }
@@ -638,6 +1004,258 @@ func TestConcurrentReplaceLeavesExactlyOneCurrentAttempt(t *testing.T) {
 	}
 }
 
+func TestConcurrentStagingReplaceReusesTheDurableWinnerExpiry(t *testing.T) {
+	storage := newMemoryStorage()
+	store, err := NewStore(storage)
+	if err != nil {
+		t.Fatalf("NewStore returned an error: %v", err)
+	}
+	current, err := store.Create(context.Background(), validLease())
+	if err != nil {
+		t.Fatalf("Create returned an error: %v", err)
+	}
+	current, err = store.BeginRelease(
+		context.Background(),
+		current,
+		testAttemptID,
+	)
+	if err != nil {
+		t.Fatalf("BeginRelease returned an error: %v", err)
+	}
+	staging := validLease()
+	staging.AttemptID = "attempt-8"
+	staging.AllocationID = ""
+	staging.Observer = 0
+	staging.SecretRef = ""
+	staging.Staging = true
+	candidates := []Lease{staging, staging}
+	candidates[1].ExpiresAt = candidates[1].ExpiresAt.Add(time.Nanosecond)
+	records := make([]Record, len(candidates))
+	errs := make([]error, len(candidates))
+	var replacements sync.WaitGroup
+	replacements.Add(len(candidates))
+	for i := range candidates {
+		go func() {
+			defer replacements.Done()
+			records[i], errs[i] = store.Replace(
+				context.Background(),
+				current,
+				candidates[i],
+			)
+		}()
+	}
+	replacements.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf(
+				"concurrent staging Replace %d returned an error: %v",
+				i,
+				err,
+			)
+		}
+	}
+	if records[0] != records[1] ||
+		!records[0].Lease.Staging ||
+		records[0].Lease.AttemptID != "attempt-8" {
+		t.Fatalf(
+			"concurrent staging records = %+v and %+v, want one durable replacement",
+			records[0],
+			records[1],
+		)
+	}
+}
+
+func TestBeginReleaseMarksTheCurrentAttemptBeforeExternalCleanup(t *testing.T) {
+	storage := newMemoryStorage()
+	store, err := NewStore(storage)
+	if err != nil {
+		t.Fatalf("NewStore returned an error: %v", err)
+	}
+	current, err := store.Create(context.Background(), validLease())
+	if err != nil {
+		t.Fatalf("Create returned an error: %v", err)
+	}
+
+	releasing, err := store.BeginRelease(
+		context.Background(),
+		current,
+		testAttemptID,
+	)
+	if err != nil {
+		t.Fatalf("BeginRelease returned an error: %v", err)
+	}
+	want := validLease()
+	want.Releasing = true
+	if releasing.Lease != want || releasing.Version != "v2" {
+		t.Fatalf("releasing record = %+v, want lease %+v at v2", releasing, want)
+	}
+	if releasing.State(time.Now()) != StateReleasing {
+		t.Fatalf(
+			"releasing record state = %q, want %q",
+			releasing.State(time.Now()),
+			StateReleasing,
+		)
+	}
+	loaded, err := store.Load(context.Background(), testUserID, testReservationID)
+	if err != nil {
+		t.Fatalf("Load returned an error: %v", err)
+	}
+	if loaded != releasing {
+		t.Fatalf("stored releasing record = %+v, want %+v", loaded, releasing)
+	}
+	if len(storage.writes) != 2 || storage.writes[1].Version != current.Version {
+		t.Fatalf(
+			"begin-release writes = %+v, want exact observed version %q",
+			storage.writes,
+			current.Version,
+		)
+	}
+}
+
+func TestClaimCannotWinAfterReleaseBegins(t *testing.T) {
+	storage := newMemoryStorage()
+	store, err := NewStore(storage)
+	if err != nil {
+		t.Fatalf("NewStore returned an error: %v", err)
+	}
+	current, err := store.Create(context.Background(), validLease())
+	if err != nil {
+		t.Fatalf("Create returned an error: %v", err)
+	}
+	releasing, err := store.BeginRelease(
+		context.Background(),
+		current,
+		testAttemptID,
+	)
+	if err != nil {
+		t.Fatalf("BeginRelease returned an error: %v", err)
+	}
+
+	if _, err := store.Claim(
+		context.Background(),
+		releasing,
+		testAttemptID,
+		releasing.Lease.ExpiresAt.Add(-time.Second),
+	); !errors.Is(err, ErrReleasing) {
+		t.Fatalf("Claim after BeginRelease error = %v, want ErrReleasing", err)
+	}
+	if len(storage.writes) != 2 {
+		t.Fatalf("claim after BeginRelease writes = %d, want 2", len(storage.writes))
+	}
+}
+
+func TestBeginReleaseReplayKeepsTheExistingBarrier(t *testing.T) {
+	storage := newMemoryStorage()
+	store, err := NewStore(storage)
+	if err != nil {
+		t.Fatalf("NewStore returned an error: %v", err)
+	}
+	current, err := store.Create(context.Background(), validLease())
+	if err != nil {
+		t.Fatalf("Create returned an error: %v", err)
+	}
+	releasing, err := store.BeginRelease(
+		context.Background(),
+		current,
+		testAttemptID,
+	)
+	if err != nil {
+		t.Fatalf("first BeginRelease returned an error: %v", err)
+	}
+
+	replayed, err := store.BeginRelease(
+		context.Background(),
+		releasing,
+		testAttemptID,
+	)
+	if err != nil {
+		t.Fatalf("replayed BeginRelease returned an error: %v", err)
+	}
+	if replayed != releasing {
+		t.Fatalf("replayed release barrier = %+v, want %+v", replayed, releasing)
+	}
+	if len(storage.writes) != 2 {
+		t.Fatalf("replayed BeginRelease writes = %d, want 2", len(storage.writes))
+	}
+}
+
+func TestClaimAndBeginReleaseLeaveExactlyOneOwner(t *testing.T) {
+	storage := newMemoryStorage()
+	store, err := NewStore(storage)
+	if err != nil {
+		t.Fatalf("NewStore returned an error: %v", err)
+	}
+	current, err := store.Create(context.Background(), validLease())
+	if err != nil {
+		t.Fatalf("Create returned an error: %v", err)
+	}
+	claimedAt := current.Lease.ExpiresAt.Add(-time.Second)
+	type result struct {
+		operation string
+		record    Record
+		err       error
+	}
+	start := make(chan struct{})
+	results := make(chan result, 2)
+	go func() {
+		<-start
+		record, beginErr := store.BeginRelease(
+			context.Background(),
+			current,
+			testAttemptID,
+		)
+		results <- result{operation: "release", record: record, err: beginErr}
+	}()
+	go func() {
+		<-start
+		record, claimErr := store.Claim(
+			context.Background(),
+			current,
+			testAttemptID,
+			claimedAt,
+		)
+		results <- result{operation: "claim", record: record, err: claimErr}
+	}()
+	close(start)
+
+	first, second := <-results, <-results
+	successes := 0
+	for _, got := range []result{first, second} {
+		if got.err == nil {
+			successes++
+			continue
+		}
+		switch got.operation {
+		case "release":
+			if !errors.Is(got.err, ErrClaimed) {
+				t.Fatalf("losing BeginRelease error = %v, want ErrClaimed", got.err)
+			}
+		case "claim":
+			if !errors.Is(got.err, ErrReleasing) {
+				t.Fatalf("losing Claim error = %v, want ErrReleasing", got.err)
+			}
+		}
+	}
+	if successes != 1 {
+		t.Fatalf(
+			"Claim/BeginRelease results = %+v and %+v, want exactly one success",
+			first,
+			second,
+		)
+	}
+	current, err = store.Load(context.Background(), testUserID, testReservationID)
+	if err != nil {
+		t.Fatalf("Load returned an error: %v", err)
+	}
+	if current.Lease.Releasing == !current.Lease.ClaimedAt.IsZero() {
+		t.Fatalf(
+			"final lease = %+v, want exactly one of releasing or claimed",
+			current.Lease,
+		)
+	}
+}
+
 func TestClaimPersistsClaimTimeForTheCurrentAttempt(t *testing.T) {
 	storage := newMemoryStorage()
 	store, err := NewStore(storage)
@@ -685,6 +1303,35 @@ func TestClaimRejectsAStaleAttemptWithoutWriting(t *testing.T) {
 	}
 	if len(storage.writes) != 1 {
 		t.Fatalf("storage writes after stale claim = %d, want 1", len(storage.writes))
+	}
+}
+
+func TestClaimRejectsAStagingIntentWithoutWriting(t *testing.T) {
+	storage := newMemoryStorage()
+	store, err := NewStore(storage)
+	if err != nil {
+		t.Fatalf("NewStore returned an error: %v", err)
+	}
+	staging := validLease()
+	staging.AllocationID = ""
+	staging.Observer = 0
+	staging.SecretRef = ""
+	staging.Staging = true
+	current, err := store.Create(context.Background(), staging)
+	if err != nil {
+		t.Fatalf("Create staging intent returned an error: %v", err)
+	}
+
+	if _, err := store.Claim(
+		context.Background(),
+		current,
+		testAttemptID,
+		staging.ExpiresAt.Add(-time.Second),
+	); !errors.Is(err, ErrStaging) {
+		t.Fatalf("Claim staging intent error = %v, want ErrStaging", err)
+	}
+	if len(storage.writes) != 1 {
+		t.Fatalf("claim staging writes = %d, want only the create", len(storage.writes))
 	}
 }
 
@@ -1019,6 +1666,108 @@ func TestRecordStateDistinguishesNoShowExpiryFromClaimedOwnership(t *testing.T) 
 	}
 }
 
+func TestReclaimExpiredContinuesAfterOneResourceTimesOut(t *testing.T) {
+	storage := newMemoryStorage()
+	store, err := NewStore(storage)
+	if err != nil {
+		t.Fatalf("NewStore returned an error: %v", err)
+	}
+	first := validLease()
+	second := validLease()
+	second.UserID = "22222222-2222-4222-8222-222222222222"
+	second.ReservationID = "handoff-43"
+	second.AttemptID = "attempt-8"
+	second.AllocationID = "gameserver-18"
+	second.SecretRef = "zone-admission-gameserver-18"
+	for _, lease := range []Lease{first, second} {
+		if _, err := store.Create(context.Background(), lease); err != nil {
+			t.Fatalf("Create lease %q returned an error: %v", lease.AttemptID, err)
+		}
+	}
+	resourceErr := context.DeadlineExceeded
+	var attempts []string
+	err = store.ReclaimExpired(
+		context.Background(),
+		first.ExpiresAt,
+		func(_ context.Context, lease Lease) error {
+			attempts = append(attempts, lease.AttemptID)
+			if len(attempts) == 1 {
+				return resourceErr
+			}
+			return nil
+		},
+	)
+	if !errors.Is(err, resourceErr) {
+		t.Fatalf("ReclaimExpired error = %v, want resource timeout", err)
+	}
+	if len(attempts) != 2 {
+		t.Fatalf(
+			"expiry cleanup attempts = %v, want both records despite first failure",
+			attempts,
+		)
+	}
+	for _, lease := range []Lease{first, second} {
+		record, loadErr := store.Load(
+			context.Background(),
+			lease.UserID,
+			lease.ReservationID,
+		)
+		if lease.AttemptID == attempts[0] {
+			if loadErr != nil {
+				t.Fatalf("load failed cleanup record: %v", loadErr)
+			}
+			if !record.Lease.Releasing {
+				t.Fatalf(
+					"failed cleanup record = %+v, want durable releasing barrier",
+					record,
+				)
+			}
+			continue
+		}
+		if !errors.Is(loadErr, ErrNotFound) {
+			t.Fatalf(
+				"successful cleanup record error = %v, want ErrNotFound",
+				loadErr,
+			)
+		}
+	}
+}
+
+func TestLoadKeepsSchemaOneLeaseReadableAsNotReleasing(t *testing.T) {
+	storage := newMemoryStorage()
+	store, err := NewStore(storage)
+	if err != nil {
+		t.Fatalf("NewStore returned an error: %v", err)
+	}
+	key := reservationKey(testUserID, testReservationID)
+	storage.objects[storageID(testSystemUserID, Collection, key)] = &api.StorageObject{
+		Collection: Collection,
+		Key:        key,
+		UserId:     testSystemUserID,
+		Value: `{"schema":1,"attempt_id":"attempt-7","allocation_id":"gameserver-17",` +
+			`"observer":42,"secret_ref":"zone-admission-gameserver-17",` +
+			`"expires_at_nanos":2000000000123456789,"claimed_at_nanos":null}`,
+		Version:         "schema-one",
+		PermissionRead:  0,
+		PermissionWrite: 0,
+	}
+
+	got, err := store.Load(context.Background(), testUserID, testReservationID)
+	if err != nil {
+		t.Fatalf("Load schema-one lease returned an error: %v", err)
+	}
+	if got.Lease != validLease() || got.Version != "schema-one" {
+		t.Fatalf(
+			"loaded schema-one record = %+v, want lease %+v at schema-one",
+			got,
+			validLease(),
+		)
+	}
+	if got.Lease.Releasing {
+		t.Fatalf("schema-one lease loaded as releasing: %+v", got.Lease)
+	}
+}
+
 func TestLoadRejectsMalformedOrPublicStoredObjects(t *testing.T) {
 	for _, test := range []struct {
 		name   string
@@ -1027,13 +1776,40 @@ func TestLoadRejectsMalformedOrPublicStoredObjects(t *testing.T) {
 		{
 			name: "unknown JSON field",
 			tamper: func(object *api.StorageObject) {
-				object.Value = strings.Replace(object.Value, "{", `{"unexpected":true,`, 1)
+				object.Value = strings.Replace(
+					object.GetValue(),
+					"{",
+					`{"unexpected":true,`,
+					1,
+				)
 			},
 		},
 		{
 			name: "unsupported schema",
 			tamper: func(object *api.StorageObject) {
-				object.Value = strings.Replace(object.Value, `"schema":1`, `"schema":2`, 1)
+				object.Value = strings.Replace(
+					object.GetValue(),
+					`"schema":2`,
+					`"schema":3`,
+					1,
+				)
+			},
+		},
+		{
+			name: "schema one cannot encode releasing",
+			tamper: func(object *api.StorageObject) {
+				object.Value = strings.Replace(
+					object.GetValue(),
+					`"schema":2`,
+					`"schema":1`,
+					1,
+				)
+				object.Value = strings.Replace(
+					object.GetValue(),
+					"{",
+					`{"releasing":true,`,
+					1,
+				)
 			},
 		},
 		{
@@ -1052,9 +1828,26 @@ func TestLoadRejectsMalformedOrPublicStoredObjects(t *testing.T) {
 			name: "claim at expiry boundary",
 			tamper: func(object *api.StorageObject) {
 				object.Value = strings.Replace(
-					object.Value,
+					object.GetValue(),
 					`"claimed_at_nanos":null`,
 					`"claimed_at_nanos":2000000000123456789`,
+					1,
+				)
+			},
+		},
+		{
+			name: "claimed lease cannot also be releasing",
+			tamper: func(object *api.StorageObject) {
+				object.Value = strings.Replace(
+					object.GetValue(),
+					`"claimed_at_nanos":null`,
+					`"claimed_at_nanos":1999999999123456789`,
+					1,
+				)
+				object.Value = strings.Replace(
+					object.GetValue(),
+					"{",
+					`{"releasing":true,`,
 					1,
 				)
 			},

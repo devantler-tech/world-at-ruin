@@ -1,0 +1,10 @@
+{
+	"date": "2026-07-22",
+	"notes": [
+		"This build publishes that it can read the layered outfit format while deliberately keeping every production writer on the older capability. That makes it a truthful rollback target before any player can originate the newer value.",
+		"Existing layered recipes still load and survive ordinary edits without loss. Even the reserved preview flag cannot activate the independent clothing and armour controls during this bake release.",
+		"After this release has baked, a later contract update can activate the editor without stranding saves. #253 remains open for that writer stage, and #336 tracks the eventual authored replacement and flag retirement."
+	],
+	"title": "Layered outfit saves get a rollback-safe runway",
+	"version": "0.50.0"
+}

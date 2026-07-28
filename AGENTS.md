@@ -402,9 +402,12 @@ everything shipped afterwards is held to.
   SEPARATE versioned file** — `SaveVault` (`user://vault.json`, #249): the recipe format is closed
   (`CharacterFactory.validate` rejects any unknown top-level field, and every shipped client already
   enforces that), so the character save cannot grow new kinds of data without older clients refusing
-  it. `CharacterStore` parses the JSON object, then `CharacterFactory.build()` refuses the unknown
-  shape and leaves the saved body unbuilt; the store does not provide the vault's refusal latch, and
-  the manual editor remains a writable path. A sibling file is the only shape a shipped client
+  it. `CharacterStore.load_from()` parses the JSON object and then asks
+  `CharacterFactory.refusal_reason()` whether this build can accept it, latching a refusal on the
+  path when it cannot — the same shape as the vault's, and latched for the life of the process so a
+  recipe that disappears after being refused does not reopen a writable path. While a path is
+  refused, `save_to()` and `clear()` both refuse it and `main.gd` locks every character-creator
+  entry, so an unreadable recipe is never mistaken for a first run. A sibling file is the only shape a shipped client
   handles safely: it never reads it, so it never rejects or deletes it. The vault obeys the same laws
   (name-keyed, additive-only, newer versions refused) with the same enforcement shape —
   `tests/save_vault_guard_test`, golden `tests/data/golden_vault_v<N>.json`, and the append-only
@@ -417,25 +420,84 @@ everything shipped afterwards is held to.
   (`tests/vault_lock_test`). The lock is a DIRECTORY beside the vault —
   `DirAccess.make_dir_absolute` is `mkdir`, the only atomic exclusive-create Godot exposes, and a lock
   built from `FileAccess.open` would be check-then-act again, so do not "simplify" it into a file. It
-  carries an ownership stamp and is therefore deliberately NOT empty: renaming onto an empty directory
-  succeeds, and the stamp also lets a holder prove the lock is still its own before it replaces the
+  carries an ownership claim and is therefore deliberately NOT empty: renaming onto an empty directory
+  succeeds, and the claim also lets a holder prove the lock is still its own before it replaces the
   vault. **Acquisition is only ever that single `mkdir` on an absent path. Reclaiming an abandoned lock
   is a SEPARATE pass that never acquires** — it renames the stale directory aside (rename wins for
   exactly one process, which serializes reclamation), verifies on that private copy the timestamp it
   judged abandoned, removes it, and still refuses; the next attempt acquires the freed slot. Folding
   reclaim and acquire back into one pass lets two processes each recreate the lock over the other and
-  both proceed as owners, so never restore remove-then-create. **Scope the claim honestly:** a lock
+  both proceed as owners, so never restore remove-then-create. **Ownership itself is settled in ONE
+  step at both ends, and neither end may become a test followed by an action**
+  (#430, `tests/lock_ownership_test`). The lock is **PUBLISHED WHOLE**: built complete — stamp included
+  — in a private `.staging-<pid>-<ticks>` directory and `rename`d into place, so the shared path never
+  holds a half-built lock. Do not "simplify" this back to creating the lock and stamping it afterwards:
+  an acquirer descheduled in that gap past the stale timeout has its empty lock reclaimed and the slot
+  retaken, and it then stamps BY PATH over the new holder's token, recording itself as owner of a lock
+  it never created. Publishing keeps one refusal guard in front of the rename, because `rename` fails
+  onto a non-empty directory but REPLACES an empty one (measured) — an existing lock directory is
+  refused rather than displaced, so a bare lock still excludes a writer exactly as it always has. That
+  guard only ever turns a success into a refusal, which is why it is not check-then-act.
+  The **release renames the STAMP, never the lock**, to `owner.release-<pid>-<ticks>` inside the lock,
+  and verifies the token there before deleting. Taking the whole lock aside would empty the slot for
+  the length of the check, and a briefly-absent lock is one a third process can acquire — so a stale
+  former holder would vacate the CURRENT holder's slot, admit a third writer, then delete the displaced
+  lock. Keeping the lock present and non-empty throughout means nothing can acquire or create a stamp
+  meanwhile, so the restore cannot collide. Do not delete the lock at its shared path after asking
+  `owns()`. The on-disk shape is deliberately UNCHANGED by all this — atomicity comes from the rename,
+  not from the stamp's shape — so a retained older client and a current one still exclude each other
+  exactly as before. `FileLock._last_publish_staging` and `_last_release_private` exist solely so tests
+  can prove acquisition and release really go through those paths: single-threaded, both the fixed and
+  the broken shapes leave identical end states and differ only under a real substitution, and each
+  broken form was measured passing every other case in that suite. **Scope the claim honestly:** a lock
   binds only writers that take it, so pre-lock retained/rollback builds and foreign writers (cloud
-  sync, a hand edit) walk straight through it, and for those the pre-rename readability recheck plus
-  the newer-version refusal remain the guard. Contention degrades to session-only rather than blocking
+  sync, a hand edit) walk straight through it. Those are covered by a **compare-and-swap on the
+  document's own bytes** (#386, `tests/vault_cas_test`): the read-modify-write records the vault's
+  SHA-256 when it reads it and refuses the rename once the file no longer carries it, which keys on
+  what the file IS rather than on who cooperated. The identity is captured BEFORE the load — captured
+  after, a foreign write landing in between would become the expectation while the merge still held the
+  old document and the check would pass; captured before, that interleaving refuses. `save_to()`
+  remains a blind whole-document replace via an explicit sentinel so fixture seeding is unaffected;
+  `replace_if_unchanged()` is the guarded path every persist takes. It shrinks the window to the rename
+  syscall rather than closing it — closing that needs an OS-level lock held across the rename, which
+  Godot does not expose — so the gain is a DETECTED refusal in place of a silent lost update.
+  `SaveVault._last_write_expectation` exists solely so a test can prove the production path threads a
+  real identity: a helper writing blind is indistinguishable from a correct one until something races
+  it, and that ablation was measured passing every end-to-end assertion. **Each write stages through a
+  PRIVATE `vault.json.tmp-<pid>-<ticks>`, never a shared `vault.json.tmp`** — the CAS verifies the
+  target, so a pre-lock build truncating our staged document leaves `path` untouched, passes every
+  check, and gets its partial bytes committed by our rename. Do not "simplify" staging back to a fixed
+  name; `_sweep_abandoned_writes()` (under the lock, prefix-scoped) reclaims what a fixed name used to
+  get for free by being overwritten, and tests must match staging files by PREFIX or they assert
+  vacuously. Contention degrades to session-only rather than blocking
   a boot, and the stale timeout is generous on purpose — shortening it to make writes prompt would let
   a live writer be robbed mid-write. Tests redirect it with `WAR_VAULT_PATH`, mirroring
-  `WAR_SAVE_PATH`, and seam the timeout with `WAR_VAULT_LOCK_STALE_SECONDS` (test-only; malformed or
-  negative values keep the shipped window). Production writers emit through vault v2. The reader also
-  accepts vault v3 `reward_claims`, and `Main` restores those claims into its boot-owned
-  `ExplorationRewards` tracker. Production does not originate v3 documents until the retained reader
-  expansion has baked and the writer capability is activated separately. The immutable shell's
-  recovery memory is a third persisted contract:
+  `WAR_SAVE_PATH`, and seam the timeout with `WAR_LOCK_STALE_SECONDS` (test-only; malformed or
+  negative values keep the shipped window). Production writers emit vault v3 only when an applied
+  exploration reward adds a `reward_claims` entry; discovery-only documents remain v2 and empty or
+  attunement-only documents remain v1. `Main` restores accepted claims into its boot-owned
+  `ExplorationRewards` tracker, re-applies their registered horizontal outcomes, and records a newly
+  discovered place only after its outcome succeeds. Because a claim persists only the place id, the
+  append-only `tests/data/shipped_reward_mappings.tsv` ledger permanently binds each shipped claim to
+  its exact reward payload; the real boot guard checks the production registry bidirectionally and CI
+  base-compares complete rows. The retained v0.61.0 capability-4 reader is the rollback target that
+  permits this writer. **The lock lives in
+  `FileLock`, not in the vault, and `BootRecovery` persistence takes it too**
+  (`tests/boot_recovery_lock_test`) — that file's two writers, the updater and the game, both exist
+  today, and a lost update there discards the evidence deciding whether a client rolls back. One
+  primitive guards both files; a second mechanism for the second file would be a second set of bugs.
+  **All three persisted writers — vault, character store and boot recovery — stage through a PRIVATE
+  `<file>.tmp-<pid>-<ticks>`, never a shared `<file>.tmp`.** A derivable staging name is a hole no
+  target-side check can see, because the target is untouched until the rename. **Whether that
+  writer's abandoned-stage sweep may delete unconditionally is decided by SHIPPING ORDER, and copying
+  the wrong shape deletes a live write rather than a dead one.** An unconditional sweep is safe only
+  while every build that can create a file carrying the prefix also takes the lock. Vault and boot
+  recovery gained their lock BEFORE private staging, so that holds and their sweeps are lock-gated
+  alone. The character store is the mirror image — private staging (#434) shipped before its lock
+  (#423) — so retained builds from that window stage through its prefix taking no lock, which is why
+  it keeps an age floor permanently, lock or no lock. Before reusing either sweep, ask which order the
+  writer you are copying INTO shipped them in.
+  The immutable shell's recovery memory is a third persisted contract:
   `BootRecovery` (`user://boot_recovery.json`) reads through schema v1 and writes explicit v1 on
   first boot or the next real write of legacy v0 state. The retained v0.51.1 app reads v1 and is the
   rollback target that permits this writer; v0 remains readable forever. The contract is anchored by
@@ -476,9 +538,14 @@ everything shipped afterwards is held to.
   and mints the nanosecond-expiry token only that allocated zone verifier accepts), the private
   **Nakama handoff lease store** (`server/nakamalease/` — server-owned, strict-schema objects keyed
   by a SHA-256-derived user/reservation key; unique create and exact-version
-  replacement/claim/release preserve one current attempt under retries without persisting raw user
-  or reservation IDs or admission secrets; the concrete coordinator, secret delivery and Nakama RPC
-  registration remain later children), and
+  staging/finalization/replacement/claim/release preserve one current attempt under retries, with a
+  durable releasing barrier and private-collection expiry sweep that arbitrate zone claim against
+  external cleanup, without persisting raw user or reservation IDs or admission secrets), the
+  durable **handoff allocation coordinator**
+  (`server/handoffalloc/` — implements `handoff.Allocator` over the real lease store and an injected
+  GameServer-resource boundary; persists a recoverable intent before provisioning, finalizes the
+  allocation before returning connection material, resolves retries, protects claimed/stale
+  ownership and supervises exact no-show cleanup), and
   the **combat first slice** (`server/sim/combat.go` — the telegraph cast
   lifecycle: painted at cast start, resolved once after a tick-counted cast time against
   positions at resolution, health/damage application, and one mob AI that deterministically
@@ -488,16 +555,19 @@ everything shipped afterwards is held to.
   preserves caller movement when that flag is off, and the integer-speed floor remains mobile on
   diagonals; threat from damage, dead-target
   filtering, real navmesh pathfinding and cast replication remain later children — with its own
-  cross-platform golden), with coordinator composition, Nakama RPC registration and broader
-  persistence arriving as later children of the server-foundation epic (#4); `deploy/` (platform
-  manifests) arrives later per the roadmap.
+  cross-platform golden), with the concrete Agones/secret resource adapter, expiry-loop
+  supervision, zone claim adapter, Nakama RPC registration and broader persistence arriving as later children of the
+  server-foundation epic (#4); `deploy/` (platform manifests) arrives later per the roadmap.
 - **Changing any persisted player-data format:** follow the
   [forward-only save-data migration contract](docs/design/save-data.md). It defines the staged
   expand → bake → contract rollout, the version-bump checklist, and the refusal rules for the
   character recipe, progression vault and recovery ledger. Stable live names are permanent too:
   attunements need append-only ledgers, while writable discovery IDs need append-only
   `id=landmark` mappings plus real boot/application guards; a green fixture guard alone does not
-  make a one-release read-and-write bump rollback-safe.
+  make a one-release read-and-write bump rollback-safe. Character reader registries may expand
+  without activating their writers; production origination is the explicit
+  `client/registries/character_writer_vocabulary.json` subset, whose equipment-slot, skin,
+  blend-shape and bone-key additions require the contract-stage save-capability advance.
 - **Run:** `godot client` (macOS: `/Applications/Godot.app/Contents/MacOS/Godot client`).
 - **Validate before every PR:**
   `godot --headless --editor --quit --path client && godot --headless --quit-after 120 --path client` —
@@ -546,9 +616,24 @@ everything shipped afterwards is held to.
   WAR_VAULT_PATH=/tmp/probe_vault.json WAR_BOOT_RECOVERY_PATH=/tmp/probe_recovery.json` to keep all
   three fully out of reach.
 - **Validate the server before every PR:** from `server/`, `gofmt -l .` (must print nothing),
-  `go vet ./...`, `go test -race ./...` (includes the tick-determinism and golden-hash tests), and
-  `go build ./...`. The `Server CI (Go)` job runs exactly this and feeds the `CI - Required Checks`
-  aggregate. Simulation determinism is a product-law requirement: the sim is integer-only with no
+  `go vet ./...`, `golangci-lint run ./...`, `go test -race ./...` (includes the tick-determinism
+  and golden-hash tests), and `go build ./...`. The `Server CI (Go)` job runs exactly this and feeds
+  the `CI - Required Checks` aggregate. `server/.golangci.yml` enables a correctness-focused linter
+  set by name — the classes that bite a process expected to stay up (an unchecked error return, a
+  response body never closed, a request with no context, an unguarded integer conversion on the
+  wire) — rather than inheriting a default set. It is scoped to the **files** a change touches,
+  found by diffing against the merge base with `main`, so it blocks on edited code while the
+  pre-existing findings inventoried in #436 are worked through separately. **Editing a file makes
+  you answerable for that whole file**, not only your new lines: deleting a safeguard attaches the
+  resulting diagnostic to the surviving unchanged line, so a line-scoped gate would let a change
+  remove error, close or context handling and stay green. Expect a file with a #436 backlog
+  (`wire/wire.go` carries 8) to surface it the first time you touch it — that is the gate working,
+  and fixing them is how #436 shrinks. That scoping is why the job checks out full history and why
+  a `Resolve lint base` step runs first: with nothing to filter, golangci-lint never resolves the
+  base ref, so an unresolvable `origin/main` prints `0 issues` and exits 0 — the gate fails OPEN on
+  its own, and the preflight is what makes that failure loud. Do not silence a
+  finding with `//nolint` — fix it, or if it is genuinely wrong, record the exclusion in the config
+  with the reason. Simulation determinism is a product-law requirement: the sim is integer-only with no
   wall-clock or unseeded randomness in the authoritative path, and changing the committed golden
   hash (`server/sim`) is a deliberate, reviewed act — never a rubber-stamp.
 - **Determinism:** world generation is seeded (`WorldGen.WORLD_SEED`) — the same world every boot.
@@ -565,12 +650,36 @@ everything shipped afterwards is held to.
   mixed change. A settled in-place improvement to an already-shipped below-bar surface may remain
   default-on only under the exception in the quality-bar section above; an unsettled or experimental
   improvement remains default-off under product law 2.
-- **Dev log is a contract:** every player-visible change adds a `DevLog.ENTRIES` entry (newest
-  first) in the same PR — the maintainer watches progress by playing, and the dev log is that
-  surface. Write the entry's `version` as the version the change will ship in (the next
-  semantic-release bump implied by your commit type). **Do NOT hand-edit `DevLog.VERSION` or
-  `config/version` in `project.godot`** — release builds are stamped from the release tag (below),
-  so a hand-bump only drifts from the real version.
+- **Dev log is a contract:** every player-visible change adds a dev-log entry in the same PR — the
+  maintainer watches progress by playing, and the dev log is that surface. **Add a new file
+  `client/devlog/<version>.json`** holding one object with `version`, `date`, `title` and `notes`
+  (an array of strings); copy the shape from any existing entry. Name the file for the version the
+  change will ship in (the next semantic-release bump implied by your commit type) and put the same
+  string in its `version` field — `devlog_storage_test` fails if the two disagree. One file per
+  entry is deliberate: entries used to share a single array, so **every** concurrent player-visible
+  PR collided on the same lines and had to rebase behind each sibling merge. Never reintroduce a
+  shared list. Ordering is by version, computed at load, so a new entry needs no edit to any
+  existing file.
+  **What this does and does not remove.** Two PRs whose commit types imply *different* bumps write
+  different filenames and merge without touching each other. Two PRs implying the *same* bump both
+  name their file for the same next version and still collide — but that collision is now a real
+  one rather than a bookkeeping accident: they are both claiming a release only one of them can
+  have, which needs a decision whatever the storage looks like. Resolve it by renaming your file to
+  the next free version and updating its `version` field to match; never merge two entries into one
+  file, and never make one file hold a list again.
+  ⚠️ **An entry's version must be above every release that already exists.** The version an entry
+  names is a prediction about the next release, and a sibling merging first invalidates it: from a
+  `0.58.0` base a `fix:` entry named `0.58.1` actually ships as `0.59.1` once someone else's `feat:`
+  lands ahead of it. `tools/devlog-entry-version-guard.sh` refuses that in CI — it checks every
+  entry a change **adds** against the release tags in the checkout and names the lowest version you
+  could legitimately use. When it fires, rename the file and its `version` field together. Editing
+  an entry that has already shipped stays legal; only added entries are checked.
+  The guard runs in the merge queue as well as on the PR, so the tags it measures against are as
+  close to final as CI can see. It is a floor rather than a guarantee: two PRs merging back-to-back
+  can each be above every tag that existed when they were checked and still release in an order that
+  leaves the second one low.
+  **Do NOT hand-edit `DevLog.VERSION` or `config/version` in `project.godot`** — release builds are
+  stamped from the release tag (below), so a hand-bump only drifts from the real version.
 - **CI, CD and releases:**
   - `ci.yaml` (`pull_request` + `merge_group`) lints, tests and analyses. It is the gate on a
     change. Its macOS export job is **build verification** — proof the project still exports and

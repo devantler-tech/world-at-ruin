@@ -68,6 +68,10 @@ static func ensure_input_actions() -> void:
 		"toggle_devlog": [KEY_F1, KEY_L],
 		"character_editor": [KEY_C],
 		"interact": [KEY_E],
+		# Brings the full control set back after it has faded, and pins it there
+		# (#271). Bound in every build, but only the HUD's contextual-hint mode
+		# acts on it — with the hint bar permanent there is nothing to reveal.
+		"toggle_hints": [KEY_H],
 		# The look_* actions are gamepad-only: the mouse drives the camera
 		# directly through InputEventMouseMotion, not through actions.
 		"look_left": [],
@@ -83,6 +87,7 @@ static func ensure_input_actions() -> void:
 		"interact": JOY_BUTTON_X,
 		"toggle_devlog": JOY_BUTTON_BACK,
 		"character_editor": JOY_BUTTON_Y,
+		"toggle_hints": JOY_BUTTON_RIGHT_SHOULDER,
 	}
 	# …and both sticks live: [axis, full-deflection sign] per direction.
 	var joy_axes := {

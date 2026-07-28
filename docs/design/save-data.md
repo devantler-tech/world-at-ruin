@@ -26,6 +26,38 @@ field placed into an old recipe does not become safe because the new client trea
 old client still rejects it. This is why progression lives in a sibling vault instead of being added
 to `character.json`, and why every future change follows a staged rollout.
 
+## Save-bearing vocabulary boundary
+
+Reader compatibility and production writer exposure are deliberately separate:
+
+- The kit, skin and forward-only `shipped_*.txt` registries say what this build can read, render and
+  preserve. They may grow in the expand release while `SAVE_CAPABILITY_WRITES` remains unchanged.
+- `client/registries/character_writer_vocabulary.json` is the smaller set the production character
+  creator may newly originate. It records equipment as exact `piece -> slot` pairs, plus skin names,
+  non-plumbing blend-shape names and each field's bone keys. The creator filters its pickers and
+  sliders through that resource, while values already present in the opened recipe may still be
+  preserved during expansion.
+
+The base-anchored guard compares that writer resource, not the wider reader ledgers. Adding a writer
+entry is the contract transition and requires `SAVE_CAPABILITY_WRITES` plus
+`shipped_save_capability.txt` to advance. Adding only reader support remains green. This split is what
+makes expand → bake → contract enforceable rather than merely described.
+
+Those four groups are save-bearing because an older `CharacterFactory` rejects an unknown blend
+shape, bone key, skin or equipment name, and also rejects a known piece under a different slot. The
+other registries are excluded for present-state reasons:
+
+- Equipment layer is render metadata derived from the piece; the layer is never written into a
+  recipe.
+- Vault attunements and discoveries accept and preserve unknown string names. Their version, resolver
+  and real-effect guards own their rollout.
+- Ability, class-power and class-cycle ledgers describe combat registries and balance promises, not
+  fields in a current player document.
+- Creature shapes, tints and recipe versions describe generated world creatures, not persisted player
+  state. A creature-tint addition is the guard's permanent presentation-only negative control.
+- Recipe, vault and boot-recovery version ledgers, plus the capability ledger itself, describe
+  document shape or capability and retain their own immutable base checks.
+
 ## Expand, bake, then contract
 
 Every change that makes a new field, value shape or stable name persistable uses three release
@@ -47,10 +79,11 @@ when an expanded document is already present; rollback safety requires both halv
   adds the new golden in the same pull request. A same-schema addition raises only the read-capability
   ceiling. Neither change activates the writer.
 
-Do not blindly raise a constant that also controls writing. Today `CharacterFactory.RECIPE_VERSION`
-feeds `UpdateManifest.save_schema.writes`, and `SaveVault.VAULT_VERSION` feeds the version of a new
-empty vault. If read support cannot advance without advertising or emitting the new version, split
-the read ceiling from the write version first. An expansion that starts writing is not an expansion.
+Do not blindly raise a constant that also controls writing. `CharacterFactory.RECIPE_VERSION`
+currently feeds both `UpdateManifest.shell.reads_max` and `UpdateManifest.save_schema.writes`, while
+`SaveVault.VAULT_VERSION` feeds the version of a new empty vault. Split the read ceiling from the
+write version before schema read support advances. An expansion that starts writing is not an
+expansion.
 
 ### 2. Bake the expansion
 
@@ -174,7 +207,10 @@ For vault version `N`, the expansion pull request must:
    `shipped_discoveries.txt` as an immutable `id=landmark` mapping,
    `SaveVault.KNOWN_DISCOVERIES`, and the real boot's bidirectional
    point-of-interest registration guard. Unknown discovery names already present in a newer vault
-   remain preserved, but this build may originate only a registered, ledgered ID.
+   remain preserved, but this build may originate only a registered, ledgered ID. A persisted reward
+   also enters `shipped_reward_mappings.tsv` as an immutable
+   `place_id → kind → reward_id → display_name` row; the real boot binds every production reward
+   registration to that payload in both directions.
 6. Assign the new persistable capability and raise `UpdateManifest.SAVE_CAPABILITY_READS` to it while
    leaving `SAVE_CAPABILITY_WRITES` unchanged. The retained expansion build must advertise the read
    ceiling that makes it an eligible rollback target before the contract release can write that
@@ -187,14 +223,25 @@ The first progression-vault sequence is capability 3: v0.52.0 shipped the versio
 while production writes remained at capability 2. With that release retained as a rollback target,
 the later contract build registers `starter_cave` and `wardens_shrine`, observes the real wanderer's
 position, and persists the append-only found set at vault version 2. Empty and attunement-only vaults
-remain version 1; the first actual discovery is what contracts them to version 2. Rewards, quests,
-waypoints and map presentation remain separate children of the exploration roadmap rather than being
-implied by this persistence contract.
+remain version 1; the first actual discovery is what contracts them to version 2. Quests and map
+presentation remain separate children of the exploration roadmap rather than being implied by this
+persistence contract.
 
-Capability 4 readers also accept vault v3 `reward_claims` and restore those stable names into the
-boot-owned exploration reward tracker. Production writers remain capability 3/v2; ordinary
-attunement and discovery writes preserve an already-present v3 document and its claims. Writer
-activation is a separate capability step after the retained v3 reader is a safe rollback target.
+Capability 4 adds vault v3 `reward_claims`. The retained v0.61.0 app reads and preserves that shape,
+and production writes it while keeping that safe whole-app rollback target. The boot-owned
+exploration reward tracker restores every accepted stable place name, re-applies registered outcomes,
+and keeps unknown future claims inert but remembered. A newly discovered place is marked claimed only
+after its horizontal outcome succeeds; the claim writer then requires that place's discovery to
+already be durable. Transient discovery and claim failures keep independent retry backoff without
+granting twice in-session. If a writable cloud replacement drops a claim's already-written
+discovery, the refused claim requeues that prerequisite before retrying so the vault converges
+without re-applying the live reward. A refused newer or unreadable vault remains session-only and
+byte-intact.
+Because a claim stores only its stable place id, `shipped_reward_mappings.tsv` permanently binds that
+id to the exact outcome every later boot derives from it; CI base-compares complete rows and the real
+boot verifies the live registry against the ledger.
+Ordinary attunement and discovery writes preserve an already-present v3 document and its claims;
+discovery-only documents remain v2.
 
 ### Boot recovery
 
@@ -206,9 +253,11 @@ uses explicit v1, while a loaded v0 stays v0 in memory and migrates only on its 
 
 Recovery refusal is path-latched for the process lifetime, and persistence reparses the destination
 immediately before atomic replacement. Reconstructing state, deleting a refused file, or landing a
-future/corrupt replacement therefore cannot turn the path writable. This narrows but does not close
-the rename-time concurrent-writer gap: boot recovery takes no write lock, so unlike the vault it is
-still guarded by the pre-replacement recheck alone.
+future/corrupt replacement therefore cannot turn the path writable. Recovery persistence also takes
+the same cross-process write lock the vault takes, so a second lock-aware writer cannot read, merge
+and rename between another's check and its replace. That matters here more than anywhere: the
+updater and the game are both live writers of this file, and what a lost update discards is the
+evidence deciding whether a client rolls back.
 
 The ledgers are the immutable floor: the in-game guards compare the current constants and fixtures,
 while CI compares each ledger with the pull request's base revision. Editing code, fixtures and a
@@ -218,10 +267,15 @@ ledger together therefore cannot make a shipped version disappear quietly.
 
 The character recipe and vault deliberately fail differently:
 
-- A recipe that `CharacterFactory` refuses is existing player state, not a first run. Keep the file
-  untouched, do not open a writable replacement path, and surface recovery instead of presenting a
-  blank character. `CharacterStore` currently parses only; rejection happens later during
-  `CharacterFactory.build()`, and there is no vault-style refusal latch to mistake for protection.
+- A recipe that `CharacterFactory` refuses is existing player state, not a first run. The file stays
+  untouched, no writable replacement path opens, and the player is told rather than shown a blank
+  character. `CharacterStore.load_from()` decides this at the save boundary: it parses, then asks
+  `CharacterFactory.refusal_reason()` whether this build can accept what it parsed, and latches a
+  refusal on the path when it cannot. The latch outlives the file, so a recipe that disappears after
+  being refused — cloud sync, a second client, the player deleting it — does not reopen the writable
+  path. `CharacterStore.save_to()` refuses every write to a refused path, and `main.gd` locks all
+  character-creator entry, so the door and the lock are independent. Only an absent, never-refused
+  path is a first run.
 - A missing vault degrades to an empty, session-capable vault and never blocks character boot.
 - An existing vault that is unreadable, malformed or newer degrades to session-only progression and
   becomes read-only for the rest of the process. `SaveVault` latches that refusal even if the file
@@ -268,11 +322,30 @@ catastrophic rather than helpful.
 - An unreadable or newer boot-recovery document degrades to a rollback-safe empty quarantine view,
   while the path remains read-only for the process lifetime. Rollback eligibility still proves save,
   protocol and shell compatibility independently; new update attempts and recovery writes stop.
-- Vault persistence takes a cross-process write lock around its whole read-modify-write, so no second
-  lock-aware writer can read, merge and rename between another's check and its replace. The lock is a
-  directory beside the vault (`vault.json.lock`): `DirAccess.make_dir_absolute` is `mkdir`, the one
+- The character write commits from a **private staging file**, `character.json.tmp-<pid>-<ticks>`,
+  never a derivable `character.json.tmp`. A shared staging name is a hole no target-side check can
+  see: a second client — a retained rollback build, a sync agent, a second install — opens that same
+  predictable path and can truncate the staged recipe after it is serialised and before the rename,
+  and because `character.json` itself is untouched until then, both the write guard and the
+  pre-replacement re-check pass and the rename commits the other writer's partial bytes. A name a
+  foreign writer cannot derive removes the sharing instead of trying to detect it.
+- Because a per-attempt name is not reclaimed by being overwritten the way one fixed name was, a
+  crashed writer's staging file is swept on the next write — but only once it has sat unchanged past
+  `WRITE_TMP_MIN_AGE_SECONDS` (300 s, overridable for tests via
+  `WAR_CHARACTER_WRITE_TMP_MIN_AGE_SECONDS`). The age floor is what stands in for the lock the
+  character store does not yet have: the vault may sweep anything it finds because it sweeps while
+  holding the write lock, whereas a young character stage may be a live write by a second client, and
+  deleting it would cause exactly the corruption the private name removes. The window errs long —
+  sweeping too eagerly destroys another client's write, sweeping too late leaves one file for one
+  more launch.
+- Vault and boot-recovery persistence each take a cross-process write lock around their whole
+  read-modify-write, so no second lock-aware writer can read, merge and rename between another's
+  check and its replace. One primitive serves both (`FileLock`); a second mechanism for the second
+  file would be a second set of bugs. The lock is a directory beside the file it guards
+  (`vault.json.lock`, `boot_recovery.json.lock`): `DirAccess.make_dir_absolute` is `mkdir`, the one
   atomic exclusive-create Godot exposes, so exactly one writer wins and the rest refuse. A refused
-  write degrades to session-only and never blocks a boot.
+  write degrades to session-only and never blocks a boot — and reads take no lock at all, so a held
+  lock can never prevent a rollback decision.
 - Acquisition is only ever that single `mkdir` against an absent path. Reclaiming an abandoned lock is
   a **separate pass that never acquires**: it renames the stale directory to a uniquely-named copy
   (rename succeeds for exactly one process, which is what serializes reclamation), verifies on that
@@ -282,14 +355,33 @@ catastrophic rather than helpful.
   as owners — so do not "simplify" it back into remove-then-create.
 - The lock directory is **not** empty: it holds an ownership stamp. Renaming onto an empty directory
   succeeds, so an unstamped lock could be silently renamed over; the stamp also lets a holder prove
-  the lock is still its own immediately before replacing the vault, and abandon the write if it is not.
-- **Scope the guarantee precisely.** A lock only excludes writers that take it. Builds from before this
+  the lock is still its own immediately before it replaces the file, and abandon the write if it is
+  not. Both writers make that check on their own replace path.
+- **Scope the lock precisely.** A lock only excludes writers that take it. Builds from before this
   protocol — the retained and rollback clients the updater keeps runnable — write the same file without
-  it, as do foreign writers such as cloud sync or a hand edit. For all of those the pre-replacement
-  readability recheck and the refuse-a-newer-version rule are the protection, and they narrow the
-  window to the rename rather than closing it. This removes lost updates between lock-aware builds now
-  and becomes general only once every still-runnable build carries the protocol; do not describe it as
-  closing the differently-versioned case outright.
+  it, as do foreign writers such as cloud sync, a backup agent or a hand edit. The lock removes lost
+  updates between lock-aware builds and nothing more; do not describe it as closing the
+  differently-versioned case outright.
+- Every write additionally **compare-and-swaps on the document's own bytes**. The read-modify-write
+  records the SHA-256 of the vault it read and verifies the file still carries it immediately before the
+  rename, refusing when it does not. This keys on what the file *is* rather than on who cooperated, so
+  it covers exactly the writers the lock cannot bind — and it subsumes the point-in-time ownership gap,
+  because a reclaimed-and-rewritten vault fails the comparison. `save_to()` stays a deliberate blind
+  whole-document replace via an explicit sentinel; `replace_if_unchanged()` is the guarded entry point.
+- The identity is captured **before** the read, not after. Captured after, a foreign write landing
+  between the read and the hash would be recorded as the expectation while the merge still held the old
+  document, and the comparison would pass. Captured before, that interleaving makes the expectation
+  stale and the write refuses. Both orders leave a window; only this one fails safe.
+- Each write **stages through a private per-attempt path** (`vault.json.tmp-<pid>-<ticks>`), never a
+  shared `vault.json.tmp`. The compare-and-swap verifies the *target*, so it cannot see a foreign
+  writer truncating the staged document between serialisation and the rename — the target is untouched,
+  every check passes, and the rename would commit the other writer's partial bytes while reporting
+  success. A per-attempt name removes the sharing rather than detecting it. Abandoned staging files are
+  swept under the write lock, which a fixed name previously got for free by being overwritten.
+- **The residual is a shrunk window, not a closed one.** Verify-then-rename is two operations, so the
+  gap narrows to the rename syscall. Closing it needs a lock the OS holds across the rename (`flock`,
+  `O_EXCL`), which Godot's `FileAccess`/`DirAccess` do not expose. The gain is turning a *silent* lost
+  update into a *detected refusal*, which degrades to session-only and never blocks a boot.
 
 Boot tests redirect every player-state seam through `SaveIsolation`; persistence and fixture tests use
 explicit throwaway paths. A migration test that touches a played save is itself a product-law
@@ -300,6 +392,7 @@ violation.
 | Promise | Runtime owner | Permanent guard |
 |---|---|---|
 | Historical character recipes still load and build | `CharacterFactory`, `CharacterStore` | `save_fixture_guard_test`, recipe ledger and goldens |
+| A refused recipe is never replaced by a first run | `CharacterStore`, `main.gd` | `character_refusal_test`, `character_refusal_boot_test` |
 | Historical vaults still load and re-save | `SaveVault` | `save_vault_guard_test`, vault ledger and goldens |
 | Historical recovery documents still load and re-save | `BootRecovery` | `boot_recovery_guard_test`, recovery ledger and goldens |
 | Shipped attunement names still work | `SaveVault`, `RespawnPoints` | `shipped_attunements.txt`, vault and boot-restoration guards |

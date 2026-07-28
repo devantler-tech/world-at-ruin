@@ -162,8 +162,12 @@ float ground_noise(vec2 xz, float scale) {
 // crack field: it goes to zero exactly on a boundary between two plates, and
 // widens naturally where three plates meet, which is where real broken ground
 // opens up too.
-void plates(vec2 uv, out vec2 id, out float f1, out float f2) {
-	terrain_plates(uv, id, f1, f2);
+// `c1`/`c2` are the centres those two distances are measured to. They come out
+// of the same search at no extra cost and are what lets the crack relief below
+// take an ANALYTIC gradient instead of differencing a sub-pixel step.
+void plates(vec2 uv, out vec2 id, out float f1, out float f2,
+		out vec2 c1, out vec2 c2) {
+	terrain_plates(uv, id, f1, f2, c1, c2);
 }
 
 // One plate's substance, resolved from its cell id alone. rgb = colour,
@@ -210,8 +214,11 @@ void fragment() {
 	vec4 sub = vec4(rock_color, rock_roughness);
 	float crack = 0.0;
 	float plate_fw = 0.0;
+	float crack_fw = 0.0;
+	vec2 plate_c1 = vec2(0.0);
+	vec2 plate_c2 = vec2(0.0);
 	if (plates_enabled) {
-	plates(plate_uv, plate_id, f1, f2);
+	plates(plate_uv, plate_id, f1, f2, plate_c1, plate_c2);
 
 	// Screen footprint of one plate. Unlike the grain, plates are NOT tied to
 	// the distance fade: a 1.8 m slab is still a resolvable feature well past
@@ -233,7 +240,7 @@ void fragment() {
 	// The crack itself, widened to the local footprint so it stays a line
 	// instead of aliasing, and dissolved once it is thinner than about a pixel
 	// — detail leaves the frame by fading, never by shimmering.
-	float crack_fw = fwidth(f2 - f1);
+	crack_fw = fwidth(f2 - f1);
 	float cw = max(crack_width, crack_fw * 1.2);
 	crack = 1.0 - smoothstep(0.0, cw, f2 - f1);
 	crack *= 1.0 - smoothstep(0.30, 0.85, plate_fw);
@@ -388,31 +395,53 @@ void fragment() {
 	// frame. The first cut of this shader did exactly that and the macOS GPU
 	// watchdog killed the process before the world finished building.
 	//
-	// So take the gradient from the screen derivatives of the value already in
-	// hand, and convert it back into world XZ with the derivatives of the
-	// plate coordinate itself (a 2x2 solve). `crack_fixed` deliberately uses
-	// the constant width, never the fwidth-widened one: differencing a term
-	// that already carries a screen derivative would be a second derivative,
-	// which is undefined.
+	// So take the gradient in CLOSED FORM from the two plate centres the
+	// partition already found. f1 and f2 are plain distances to those centres,
+	// so the crack field's gradient is
+	//
+	//     grad(f2 - f1) = normalize(uv - c2) - normalize(uv - c1)
+	//
+	// exactly — two normalizes, no extra cellular evaluation, and no screen
+	// derivative of the crack field at all.
+	//
+	// That last part is what this change is FOR, and it is not a tidier
+	// spelling of the same arithmetic. A screen-space difference of the crack
+	// is only a gradient while the crack is wider than the quad doing the
+	// differencing, and this one is not: `crack_width` is a constant in plate
+	// units, so past a few metres of grazing ground the step is thinner than
+	// the pixels sampling it and the difference returns sampling error rather
+	// than a slope. The closed form has no such range limit — it is exact at
+	// every distance, and the shimmer it removes was numerical, not artistic.
+	//
+	// The width stays the CONSTANT one, unchanged. Reading the relief at the
+	// footprint-widened crack instead — the natural next thought, since the
+	// closed form finally permits what a differenced one could not — was
+	// measured on-GPU and is INERT: crawl 0.0037 either way, bit for bit, and
+	// the seam read matched to within a repeat run at every swept distance.
+	// The widening only becomes active past roughly the distance the fade
+	// below has already closed, so there is nothing left for it to band-limit.
+	// It is left out rather than carried as an unjustified difference.
 	// Same uniform branch as the plate block: with the treatment off there is
-	// no relief to compute, and this is where its second batch of derivative
-	// work lives.
+	// no relief to compute.
 	vec2 grad = vec2(0.0);
 	if (plates_enabled) {
-	float crack_fixed = 1.0 - smoothstep(0.0, crack_width, f2 - f1);
-	vec2 duvdx = dFdx(plate_uv);
-	vec2 duvdy = dFdy(plate_uv);
-	float dcdx = dFdx(crack_fixed);
-	float dcdy = dFdy(crack_fixed);
-	float det = duvdx.x * duvdy.y - duvdx.y * duvdy.x;
-	float safe_det = abs(det) < 1e-8 ? 1e-8 : det;
+	vec2 d1 = plate_uv - plate_c1;
+	vec2 d2 = plate_uv - plate_c2;
+	// inversesqrt of a floored square length: a fragment sitting exactly on a
+	// centre would otherwise normalize a zero vector.
+	vec2 gsep = d2 * inversesqrt(max(dot(d2, d2), 1e-12))
+		- d1 * inversesqrt(max(dot(d1, d1), 1e-12));
+	float ct = clamp((f2 - f1) / max(crack_width, 1e-6), 0.0, 1.0);
+	// d/dx of (1 - smoothstep(0, w, x)) is -6t(1-t)/w. The crack is 1 at the
+	// seam and 0 off it, so this is negative and the normal tilts INTO the
+	// groove, exactly as the differenced form did.
+	float dcrack = -6.0 * ct * (1.0 - ct) / max(crack_width, 1e-6);
 	// Gradient in plate-uv space, then into world XZ (plate_uv = xz * scale).
 	// This is inside the gate for a reason found by measurement: when the
 	// relief was computed unconditionally, the grooves kept raking the light
 	// with the treatment switched off, moving cave-chamber 29.61% away from
 	// base. Shader reasoning said the gate was already exact; it was not.
-	grad = vec2(dcdx * duvdy.y - dcdy * duvdx.y,
-		dcdy * duvdx.x - dcdx * duvdy.x) / safe_det * plate_scale * plate_mask;
+	grad = gsep * dcrack * plate_scale * plate_mask;
 	// A screen-space gradient is UNBOUNDED as the feature it measures compresses
 	// into a pixel: at a grazing angle a seam 4 cm wide spans a fraction of one,
 	// and the raw slope runs to tens per metre — enough to swing the normal
@@ -425,8 +454,60 @@ void fragment() {
 	// crack had visually vanished — detail leaving by shimmering rather than by
 	// fading, which is the failure this shader family is written to avoid.
 	grad *= 1.0 - smoothstep(0.30, 0.85, plate_fw);
+	// The first of those two guards did not actually do what it says. `plate_fw`
+	// is the footprint of a whole PLATE, and a plate is some thirty times wider
+	// than the seam drawn inside it, so dissolving on it is not "the same
+	// schedule as the crack" — it does not engage until long after the crack has
+	// stopped being drawable. In between, `crack_fixed` above is a step of
+	// CONSTANT width (deliberately, per the note on the second-derivative), and
+	// past about eight metres that width is narrower than one pixel. So this
+	// term spent that whole range differencing a sub-pixel step, which is
+	// precisely the jittering micro-relief the paragraph above describes.
+	//
+	// So dissolve on the CRACK's own footprint too. The ratio is how far the
+	// seam has had to be stretched to stay a pixel wide, making 1.0 exactly the
+	// distance at which it stops being resolvable; the fade is centred there.
+	// Below 0.7 this multiplier is exactly 1.0, so every seam a player can
+	// actually resolve keeps its full relief, unchanged.
+	//
+	// Measured on-GPU (tools/plate_crawl): the flickering fraction of the ground
+	// falls 0.0052 -> 0.0027 against a plates-off control that reads 0.0000.
+	//
+	// The relief is most of what moves, but NOT all of it. A later session
+	// measured `crack_relief = 0` at 0.0007 rather than the 0.0000 recorded
+	// above, twice, by two independent routes (the uniform zeroed outright, and
+	// this fade forced closed) agreeing to the digit on flicker, peak and
+	// spread, against a plates-off control still reading 0.0000. What is left
+	// at that floor is the substance and slab boundary — the step this issue was
+	// originally filed on. Absolute levels here are not portable between
+	// machines and the tool says so; the ordering is what carries.
+	grad *= 1.0 - smoothstep(0.7, 1.3, crack_fw * 1.2 / max(crack_width, 1e-6));
+	// The magnitude bound is the SLOPE A SEAM CAN HAVE, not a catastrophe
+	// backstop. `bump` adds `grad * crack_relief` to the horizontal components
+	// of a unit normal, so the ceiling is a tilt: at the shipped crack_relief
+	// this bounds it by atan(0.4 * 1.1) ~= 24 degrees, the wall of a shallow
+	// groove a few centimetres across that ash settles into. A ceiling set only
+	// high enough to stop one degenerate quad flipping a normal allows
+	// atan(1.5 * 1.1) ~= 59 degrees, which no seam in this ground has — so every
+	// under-sampled quad claiming an impossible slope passed through it
+	// untouched, and that is what the fade above was left carrying alone.
+	//
+	// A bound on the SLOPE and the fade above are different levers, and the
+	// difference is the whole reason this one is here. The fade is keyed on
+	// distance, so it removes shimmer and near-field seam read together at
+	// about 1:1 — measured on-GPU with both instruments in one sitting, pulling
+	// the fade window in to (0.40, 0.75) buys 65% of the relief's flicker and
+	// takes 65-74% of the seam coverage at every swept distance with it, which
+	// is the softening #306's third acceptance criterion forbids. This is keyed
+	// on the slope a fragment claims, which is what actually distinguishes an
+	// aliased sample from a resolved one, so it buys the SAME 65% while leaving
+	// the near field untouched: coverage at 6 m is 0.00045 either way, and the
+	// loss past it stays within 21% against the fade's 65-74%. What it spends
+	// instead is rake strength, 22% at 6 m — every seam still there, raking
+	// slightly less hard. Below 0.4 the near field goes too (0.2 already costs
+	// 13% of the 6 m coverage), so this is the knee rather than a floor.
 	float grad_len = length(grad);
-	grad = grad_len > 1.5 ? grad * (1.5 / grad_len) : grad;
+	grad = grad_len > 0.4 ? grad * (0.4 / grad_len) : grad;
 	}
 	// A crack is a groove, so height is -crack and the normal tilts INTO it.
 	// The grain bump below is NOT plate work and runs on both paths; only the

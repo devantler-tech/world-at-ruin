@@ -44,7 +44,7 @@ func _ready() -> void:
 	_test_no_delivery_is_published()
 	_test_read_capability_covers_what_is_written()
 	_test_discovery_writer_activation_is_advertised()
-	_test_reward_claim_reader_expansion_is_advertised()
+	_test_reward_claim_writer_activation_is_advertised()
 	_test_save_floor_has_its_golden_fixture()
 	_test_save_capability_matches_its_ledger()
 	_test_export_is_still_monolithic()
@@ -85,7 +85,7 @@ func _test_round_trip_offers_a_pack_update() -> void:
 func _test_every_required_field_is_load_bearing() -> void:
 	var required := [
 		"schema", "sequence", "not_after", "channel",
-		"shell", "shell.current", "shell.min_supported", "shell.reads_min", "shell.reads_capability_max",
+		"shell", "shell.current", "shell.min_supported", "shell.reads_min", "shell.reads_max", "shell.reads_capability_max",
 		"pack", "pack.version", "pack.min_shell",
 		"protocol", "protocol.min", "protocol.max",
 		"save_schema", "save_schema.min", "save_schema.writes", "save_schema.capability",
@@ -141,6 +141,8 @@ func _test_values_track_their_sources() -> void:
 		"save_schema.min": [m["save_schema"]["min"], UpdateManifest.SAVE_SCHEMA_MIN],
 		"save_schema.capability": [m["save_schema"]["capability"], UpdateManifest.SAVE_CAPABILITY_WRITES],
 		"shell.reads_min": [m["shell"]["reads_min"], UpdateManifest.SAVE_SCHEMA_MIN],
+		"shell.reads_max": [m["shell"]["reads_max"], UpdateManifest.SAVE_SCHEMA_MAX],
+		"shell.reads_max/source": [UpdateManifest.SAVE_SCHEMA_MAX, CharacterFactory.RECIPE_VERSION],
 		"shell.reads_capability_max": [m["shell"]["reads_capability_max"], UpdateManifest.SAVE_CAPABILITY_READS],
 	}
 	for path: String in checks:
@@ -192,19 +194,21 @@ func _test_discovery_writer_activation_is_advertised() -> void:
 		_fail("the discovery contract reads capability %d, expected at least 3"
 			% UpdateManifest.SAVE_CAPABILITY_READS)
 		return
-	if UpdateManifest.SAVE_CAPABILITY_WRITES != 3:
-		_fail("the baked discovery reader still advertises write capability %d; expected 3" % UpdateManifest.SAVE_CAPABILITY_WRITES)
+	if UpdateManifest.SAVE_CAPABILITY_WRITES < 3:
+		_fail("the discovery writer regressed to capability %d; expected at least 3"
+			% UpdateManifest.SAVE_CAPABILITY_WRITES)
 
 
-## Capability 4 is vault-v3 claimed exploration-reward state. This release is
-## the expand half: retained builds must read it before production can write it.
-func _test_reward_claim_reader_expansion_is_advertised() -> void:
+## Capability 4 is vault-v3 claimed exploration-reward state. The v0.61.0
+## reader release is retained, so this build must advertise the matching writer
+## without lowering its read ceiling.
+func _test_reward_claim_writer_activation_is_advertised() -> void:
 	if UpdateManifest.SAVE_CAPABILITY_READS != 4:
-		_fail("the reward-claim expansion reads capability %d, expected 4"
+		_fail("the reward-claim contract reads capability %d, expected 4"
 			% UpdateManifest.SAVE_CAPABILITY_READS)
 		return
-	if UpdateManifest.SAVE_CAPABILITY_WRITES != 3:
-		_fail("the reward-claim expansion activated write capability %d before its reader baked; expected 3"
+	if UpdateManifest.SAVE_CAPABILITY_WRITES != 4:
+		_fail("the retained reward-claim reader still advertises write capability %d; expected 4"
 			% UpdateManifest.SAVE_CAPABILITY_WRITES)
 
 

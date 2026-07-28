@@ -1,0 +1,12 @@
+{
+	"date": "2026-07-16",
+	"notes": [
+		"First walkable slice: the Ashfall Reach — a ruined field under a dying sky, generated entirely from code.",
+		"The Wardens' shrine burns at the centre. It will be a respawn shrine one day; today it is a landmark and a promise.",
+		"A wanderer (you) with third-person movement: walk, sprint, jump, mouse-look.",
+		"Fall off the world and the shrine calls you back — the first, tiniest nod to the death rules.",
+		"This dev log. Open it each build to watch the world grow."
+	],
+	"title": "The world exists",
+	"version": "0.1.0"
+}

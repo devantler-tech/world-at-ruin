@@ -66,6 +66,13 @@ const CHANNEL := "live"
 ## without raising this floor fails the suite.
 const SAVE_SCHEMA_MIN := 1
 
+## The highest save schema this build can still read.
+##
+## Derived from [constant CharacterFactory.RECIPE_VERSION], the real ceiling
+## [method CharacterFactory.validate] enforces. Restating the number here would
+## let the advertised shell range drift from what the build can actually open.
+const SAVE_SCHEMA_MAX := CharacterFactory.RECIPE_VERSION
+
 ## What a freshly-written save carries WITHIN its schema — the content-capability
 ## counter this build WRITES.
 ##
@@ -74,15 +81,20 @@ const SAVE_SCHEMA_MIN := 1
 ##
 ## APPEND-ONLY, and it may only ever RISE — enforced against
 ## `tests/data/shipped_save_capability.txt`. Raise it by one in the same PR that
-## adds a savable field. A build claiming to write LESS than it once did is
-## exactly the stranding the no-resets law forbids.
+## starts writing a savable field, shape or registry name. CI compares
+## `registries/character_writer_vocabulary.json` with the base revision so a
+## contract-stage equipment/slot, skin, blend-shape or bone-key exposure cannot
+## leave this counter behind; the wider reader registries may still expand
+## earlier. A build claiming to write LESS than it once did is exactly the
+## stranding the no-resets law forbids.
 ##
-## Capability 3 is vault-v2 discovery state. Its read ceiling shipped in the
-## retained v0.52.0 monolithic app, which is the whole-app rollback while client
-## delivery remains monolithic. The separate `rollback_targets` catalogue stays
-## empty until a mountable pack exists; advertising the app ZIP there would make
-## pack recovery select an artifact it cannot mount.
-const SAVE_CAPABILITY_WRITES := 3
+## Capability 4 is vault-v3 claimed exploration-reward state. Its v0.61.0 reader
+## release is retained as the whole-app rollback while client delivery remains
+## monolithic; this build now writes the contract too. The separate
+## `rollback_targets` catalogue stays empty until a mountable pack exists;
+## advertising the app ZIP there would make pack recovery select an artifact it
+## cannot mount.
+const SAVE_CAPABILITY_WRITES := 4
 
 ## The highest content capability this build can READ.
 ##
@@ -95,9 +107,8 @@ const SAVE_CAPABILITY_WRITES := 3
 ## needlessly routed away from a pack update despite a valid fallback existing.
 ##
 ## Must always be >= the write capability (a build must read what it writes).
-## Capability 4 is vault-v3 claimed exploration-reward state. This build is its
-## expansion release: SaveVault reads and preserves the field while production
-## writers remain on baked capability 3 until this build is retained.
+## Capability 4 is vault-v3 claimed exploration-reward state. Its v0.61.0
+## reader release is retained, so this build now reads and writes the contract.
 const SAVE_CAPABILITY_READS := 4
 
 ## The oldest shell this manifest still supports updating FROM.
@@ -161,10 +172,12 @@ static func build(sequence: Variant, not_after: Variant) -> Dictionary:
 			"shell": {
 				"current": shell_version,
 				"min_supported": SHELL_MIN_SUPPORTED,
-				# The save floor and capability ceiling live in the STABLE envelope
-				# because a client on a FUTURE schema decides from this block alone —
-				# where a strand check matters most and evidence is thinnest.
+				# The save-schema range and capability ceiling live in the STABLE
+				# envelope because a client on a FUTURE schema decides from this
+				# block alone — where a strand check matters most and evidence is
+				# thinnest.
 				"reads_min": SAVE_SCHEMA_MIN,
+				"reads_max": SAVE_SCHEMA_MAX,
 				"reads_capability_max": SAVE_CAPABILITY_READS,
 			},
 			"pack": {
