@@ -104,6 +104,42 @@ const RECOVERY_PATH_ENV := "WAR_BOOT_RECOVERY_PATH"
 ## through the same path (see [method _write_tmp_path]).
 const WRITE_TMP_SUFFIX := ".tmp-"
 
+## The identity of a recovery path that holds no file. Distinct from
+## [constant IDENTITY_UNCHECKED]: "absent" is a real state to compare against,
+## and a first boot that read nothing must still refuse if a ledger appeared
+## meanwhile carrying a quarantine record.
+const IDENTITY_ABSENT := ""
+
+## The identity of a ledger that is PRESENT but could not be hashed.
+##
+## Distinct from [constant IDENTITY_ABSENT] because collapsing the two turns a
+## refusal into a lost update: a shell that read nothing expects absence, and a
+## ledger that appeared since but cannot be hashed would compare equal to that
+## expectation. A write never proceeds against this value on either side.
+const IDENTITY_UNREADABLE := "?"
+
+## The opt-out for [method save_state]: replace whatever is there.
+##
+## A single `*` can never collide with a real identity — those are SHA-256 hex —
+## nor with [constant IDENTITY_ABSENT], so "no expectation" stays distinguishable
+## from "expected nothing". It exists for callers that never read the ledger
+## first; every read-modify-write passes a real identity instead.
+const IDENTITY_UNCHECKED := "*"
+
+
+## The expectation the most recent [method save_state] call ran under.
+##
+## FOR TESTS ONLY, and it exists because the thing it pins cannot otherwise be
+## observed. The reconcile transaction is protected only if it threads a REAL
+## identity; a caller passing [constant IDENTITY_UNCHECKED] instead still writes
+## correctly whenever nothing races it, so an end-to-end assertion — and even a
+## replay of the caller's own sequence — passes while the protection is gone.
+## That exact ablation was measured slipping through both for [SaveVault].
+## Landing a foreign write INSIDE a live call needs a second process, so what the
+## call ran under is recorded here instead, and `boot_ledger_boot_test` asserts
+## it against the real booted scene.
+static var _last_write_expectation: String = IDENTITY_UNCHECKED
+
 
 ## The active recovery-ledger path: the [constant RECOVERY_PATH_ENV] override
 ## when set, else the shipped default.
@@ -336,12 +372,49 @@ static func load_state(path: String) -> Dictionary:
 ## Contention refuses the write rather than blocking, which is this file's
 ## standing law — persistence may degrade, but it may never stop a boot. Reads
 ## take no lock at all, so a held lock can never prevent a rollback decision.
-static func save_state(path: String, state: Variant, only_if_missing: bool = false) -> Dictionary:
+##
+## `expected_identity` is a compare-and-swap on the document's own bytes (#453),
+## the backstop for every writer the lock cannot bind. Pass the value
+## [method document_identity] returned BEFORE [method load_state] read the
+## ledger; pass [constant IDENTITY_UNCHECKED] for a deliberate blind replace.
+static func save_state(
+		path: String,
+		state: Variant,
+		only_if_missing: bool = false,
+		expected_identity: String = IDENTITY_UNCHECKED) -> Dictionary:
+	_last_write_expectation = expected_identity
 	if not FileLock.acquire(path):
 		return {"ok": false, "reason": "refusing to persist recovery state to %s because another writer holds its write lock" % path}
-	var result := _save_state_locked(path, state, only_if_missing)
+	var result := _save_state_locked(path, state, only_if_missing, expected_identity)
 	FileLock.release(path)
 	return result
+
+
+## The identity of the document at `path`: the SHA-256 of its bytes, or
+## [constant IDENTITY_ABSENT] when no file is there.
+##
+## Keyed on WHAT THE FILE IS rather than on who cooperated, which is the whole
+## reason this exists alongside the lock. A lock binds only writers that take it,
+## so a retained pre-lock build, a rollback build, cloud sync, a backup agent and
+## a hand edit all walk straight through it — but every one of them changes the
+## bytes, so every one of them is visible here.
+##
+## Content-hashed rather than size-plus-mtime on purpose: mtime has
+## filesystem-dependent granularity, sync tools routinely preserve it, and a
+## same-size edit is exactly the shape a merged quarantine ledger has.
+static func document_identity(path: String) -> String:
+	if not FileAccess.file_exists(path):
+		return IDENTITY_ABSENT
+	var sha := FileAccess.get_sha256(path)
+	# get_sha256() returns an EMPTY string on failure, and empty is exactly
+	# IDENTITY_ABSENT. Collapsing the two would be a lost update rather than a
+	# refusal: a shell that read no ledger expects absence, and a ledger that has
+	# appeared since but cannot be hashed would compare EQUAL to that expectation
+	# and be replaced. A file that is there but unreadable is its own answer, and
+	# one that never matches anything.
+	if sha.is_empty():
+		return IDENTITY_UNREADABLE
+	return sha
 
 
 ## The staging file this attempt commits from — PRIVATE to one write.
@@ -415,7 +488,11 @@ static func _sweep_abandoned_writes(path: String) -> void:
 ##
 ## The staging sweep and the staging write both live HERE rather than in
 ## [method save_state], because the lock is what makes the sweep safe.
-static func _save_state_locked(path: String, state: Variant, only_if_missing: bool) -> Dictionary:
+static func _save_state_locked(
+		path: String,
+		state: Variant,
+		only_if_missing: bool,
+		expected_identity: String = IDENTITY_UNCHECKED) -> Dictionary:
 	if state is not Dictionary:
 		return {"ok": false, "reason": "refusing to persist recovery state that is not a dictionary"}
 	var s := state as Dictionary
@@ -468,8 +545,9 @@ static func _save_state_locked(path: String, state: Variant, only_if_missing: bo
 	# Re-check the destination IMMEDIATELY before replacement. A valid state may
 	# have been captured before another shell or cloud sync landed a future or
 	# corrupt document. The state-local marker cannot see that change; the
-	# path-latched read does. This narrows the remaining race to rename itself,
-	# matching SaveVault's documented #262 compare-and-swap gap.
+	# path-latched read does. This catches a destination this build cannot READ;
+	# a foreign document that reads perfectly well is caught by the
+	# compare-and-swap below instead.
 	if only_if_missing and FileAccess.file_exists(path):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(tmp_path))
 		return {"ok": false, "reason": "refusing to initialize recovery path %s because another writer created it during the first-boot write" % path}
@@ -493,6 +571,33 @@ static func _save_state_locked(path: String, state: Variant, only_if_missing: bo
 	if not FileLock.owns(path):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(tmp_path))
 		return {"ok": false, "reason": "refusing to replace %s because this process no longer holds its write lock" % path}
+	# Compare-and-swap on the document's own BYTES, last before the rename so the
+	# window is as small as this file can make it (#453).
+	#
+	# Everything above binds only writers that COOPERATE — the lock excludes other
+	# BootRecovery writers, the ownership stamp proves we still hold it. None of it
+	# sees a writer that never took the lock: a retained pre-lock build, a rollback
+	# build, cloud sync, a backup agent, a hand edit. Those replace the ledger, and
+	# this process — holding a document it read before they wrote — would reconcile
+	# onto a stale base and rename their quarantine record away without ever
+	# learning it existed. Quarantine is forward-only, so that loss is permanent.
+	#
+	# The readability re-check above does not catch it: it refuses a document this
+	# build cannot READ, and a same-version write from a foreign writer reads
+	# perfectly well. Only the bytes tell them apart.
+	if expected_identity != IDENTITY_UNCHECKED:
+		var actual := document_identity(path)
+		# An unreadable identity on EITHER side is never a match, even against
+		# itself: two different unhashable files would otherwise compare equal and
+		# one would be replaced by the other.
+		var unreadable := (
+			actual == IDENTITY_UNREADABLE or expected_identity == IDENTITY_UNREADABLE)
+		if unreadable or actual != expected_identity:
+			DirAccess.remove_absolute(ProjectSettings.globalize_path(tmp_path))
+			# Worded to stay distinguishable from the readability refusal above and
+			# from lock contention: those three need different responses, and a
+			# caller handed one undifferentiated failure cannot choose between them.
+			return {"ok": false, "reason": "refusing to replace %s because its recovery document changed under this write — another writer replaced it after this shell read it" % path}
 	var err := DirAccess.rename_absolute(
 		ProjectSettings.globalize_path(tmp_path), ProjectSettings.globalize_path(path))
 	if err != OK:

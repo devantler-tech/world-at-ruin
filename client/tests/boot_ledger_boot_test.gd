@@ -86,6 +86,9 @@ var _main: Node
 var _save: SaveIsolation
 ## Which of the five boots is running.
 var _phase := "control"
+## The identity of the ledger bytes [method _seed] last wrote, for the
+## compare-and-swap threading assertions (#453).
+var _seeded_identity := BootRecovery.IDENTITY_ABSENT
 
 
 func _ready() -> void:
@@ -143,6 +146,11 @@ func _seed(body: String) -> bool:
 		return false
 	file.store_string(body)
 	file.close()
+	# What the booting scene must compare against: the bytes that are on disk the
+	# moment before it reads them. Recorded here rather than derived in the
+	# assertion, so the oracle is the seed itself and not a second call to the
+	# primitive under test.
+	_seeded_identity = BootRecovery.document_identity(_save.recovery_probe())
 	return true
 
 
@@ -212,6 +220,15 @@ func _assert_control() -> void:
 			+ "ever clear it. Marking belongs to the pack-mount path")
 			% str(doc.get("marker")))
 		return
+	# The first-boot write must be GUARDED, not blind. A ledger created by cloud
+	# sync between this shell's load and its rename would otherwise be discarded
+	# along with whatever quarantine record it carried (#453).
+	if BootRecovery._last_write_expectation != BootRecovery.IDENTITY_ABSENT:
+		_fail(("the first-boot write did not compare against the absence it read "
+			+ "(expectation %s). A blind first-boot write discards a ledger another "
+			+ "writer created after the load")
+			% _describe_expectation(BootRecovery._last_write_expectation))
+		return
 	if not _save.real_save_untouched():
 		_fail("the control boot touched the player's real save, vault or recovery ledger")
 		return
@@ -248,10 +265,51 @@ func _assert_failed_previous() -> void:
 	if BootRecovery.begin_attempt(doc, FAILED_VERSION)["ok"] as bool:
 		_fail("%s was quarantined and begin_attempt STILL accepted it — the boot loop is not actually closed" % FAILED_VERSION)
 		return
+	# THE THREADING PROOF (#453). The reconcile write is protected only if it
+	# compares against the document it actually READ. A caller passing
+	# IDENTITY_UNCHECKED writes correctly whenever nothing races it, so every
+	# assertion above — and even a replay of this caller's own sequence — passes
+	# while the guard is absent from the product. That exact ablation was measured
+	# slipping through the vault's end-to-end coverage, so the expectation the
+	# production write ran under is asserted directly rather than inferred from a
+	# correct-looking file.
+	#
+	# This phase, not the control one, carries the load-bearing version: here a
+	# real ledger existed, so the expectation must be its SHA-256 — a value that
+	# is neither sentinel and cannot be produced by forgetting to thread anything.
+	if BootRecovery._last_write_expectation == BootRecovery.IDENTITY_UNCHECKED:
+		_fail("the reconcile write ran BLIND — the compare-and-swap never runs on the "
+			+ "production path, so a foreign writer's quarantine record is silently "
+			+ "renamed away exactly when it matters most")
+		return
+	if BootRecovery._last_write_expectation != _seeded_identity:
+		_fail(("the reconcile write compared against %s rather than the ledger it read (%s). "
+			+ "An expectation captured after the load would pass this check only by "
+			+ "accident, and would let a write interleaved with the load through")
+			% [
+				_describe_expectation(BootRecovery._last_write_expectation),
+				_describe_expectation(_seeded_identity),
+			])
+		return
 	if not _save.real_save_untouched():
 		_fail("the recovering boot touched the player's real save, vault or recovery ledger")
 		return
 	_begin_boot("torn")
+
+
+## Name an identity for a failure message. The sentinels are a single character
+## each, so printing them raw produces messages like `expectation ` that read as
+## a formatting bug rather than as the diagnosis.
+func _describe_expectation(identity: String) -> String:
+	match identity:
+		BootRecovery.IDENTITY_UNCHECKED:
+			return "IDENTITY_UNCHECKED (a blind replace)"
+		BootRecovery.IDENTITY_ABSENT:
+			return "IDENTITY_ABSENT (no ledger on disk)"
+		BootRecovery.IDENTITY_UNREADABLE:
+			return "IDENTITY_UNREADABLE (present but unhashable)"
+		_:
+			return "identity %s" % identity
 
 
 ## C. A torn ledger boots the game anyway, and is preserved rather than laundered.

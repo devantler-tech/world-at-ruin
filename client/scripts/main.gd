@@ -380,6 +380,15 @@ func _reconcile_boot_recovery() -> void:
 ## Split out so acquisition and release live on ONE path each: GDScript has no
 ## `defer`, and this body returns early on three separate branches.
 func _reconcile_boot_recovery_locked(path: String) -> void:
+	# The ledger's identity is captured BEFORE the load, and that order is the
+	# whole guard (#453). Captured AFTER, a foreign write landing between the load
+	# and the capture would become the expectation while this transaction still
+	# held the document it actually read — the check would pass and quarantine
+	# evidence would be renamed away. Captured before, that interleaving refuses.
+	#
+	# This is what covers the writers the lock above cannot bind: a retained
+	# pre-lock build, a rollback build, cloud sync, a backup agent, a hand edit.
+	var expected := BootRecovery.document_identity(path)
 	var loaded := BootRecovery.load_state(path)
 	# An unreadable or newer document loads with ok false and a read-only,
 	# rollback-safe degraded state. It is carried forward rather than replaced:
@@ -413,7 +422,7 @@ func _reconcile_boot_recovery_locked(path: String) -> void:
 		if loaded.get("path_was_missing", false) as bool and loaded["ok"] as bool:
 			# Keep initialization conditional through the final replace: a cloud
 			# sync writer may create valid v0 state after the missing load.
-			var initialized := BootRecovery.save_state(path, state, true)
+			var initialized := BootRecovery.save_state(path, state, true, expected)
 			if not (initialized["ok"] as bool):
 				push_warning("boot recovery: first-boot state was not persisted — %s" % str(initialized["reason"]))
 		return
@@ -423,7 +432,7 @@ func _reconcile_boot_recovery_locked(path: String) -> void:
 		push_warning("boot recovery: a boot-attempt marker was pending but unreadable — the failed build cannot be identified, so nothing was quarantined; clearing it so launches are not wedged forever")
 	else:
 		push_warning("boot recovery: the previous launch of %s never reached its checkpoint — quarantined" % failed)
-	var written := BootRecovery.save_state(path, settled["state"])
+	var written := BootRecovery.save_state(path, settled["state"], false, expected)
 	if not (written["ok"] as bool):
 		push_warning("boot recovery: the reconciled ledger was not persisted — %s" % str(written["reason"]))
 
