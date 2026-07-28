@@ -106,6 +106,14 @@ schema while carrying a newer field.
 Accepting a version number is not the same as accepting the document: a forged or half-migrated
 document that claims to be old but carries new fields is refused rather than partially understood.
 
+**Every shipped schema is ledgered, and stays readable forever.** A "range" the reader happens to
+accept today is not a promise, because a later change can drop the bottom of that range and every
+test still passes — nothing pins it. Meanwhile a record nobody has touched in months is still
+sitting at that schema, and dropping support strands it. So each shipped schema is appended to a
+permanent ledger and pinned by a golden document that later readers must continue to load, exactly
+as `shipped_vault_versions.txt` and its goldens do for client save data. Removing a schema from the
+readable set is then a visible, deliberate act rather than a silent consequence of a refactor.
+
 **That refusal is only as good as the reader's ability to see a field is present**, and a
 zero-valued field is where it fails. A boolean decoded into a plain `bool` reads `false` whether it
 was absent or explicitly written as `false`, so a legacy document carrying `"staging": false` is
@@ -146,6 +154,24 @@ This is the server-side form of the closed-format law the character recipe alrea
 format that silently ignores what it does not understand cannot be reasoned about later, because
 no reader can tell an old document from a corrupted one.
 
+**A refusal latches the record read-only; it never leaves it writable.** Refusing to *read* a
+document is only half an answer, and the dangerous half is what happens next: a caller that gets
+"cannot read this" and treats it as "nothing is stored here" will happily write a fresh default
+record over a player's earned state. That is the no-resets law broken by a reader, not a writer.
+
+So a refusal must block create, update and delete at that key for the life of the process, and the
+stored bytes must be preserved untouched, until a reader that understands the document runs or a
+deliberate recovery handles it. `CharacterStore` already works exactly this way on the client — a
+latched refusal makes `save_to()` and `clear()` refuse too — and the reasoning carries over
+unchanged.
+
+**Presence-awareness is required for the fields a schema *needs*, not only the ones it forbids.**
+Rejecting a newer field on an older schema is one direction; the other is a document that omits a
+field its own schema requires. Decoded into a plain value, a missing balance, count or flag arrives
+as an implicit zero, so a truncated or half-written document is accepted as a valid one that just
+happens to say the player has nothing. Every accepted schema therefore declares its **exact
+required-field set**, and any required field whose zero value is legal is decoded presence-aware.
+
 ### A replay is recognised by identity, and content identity does not generalise
 
 A retry across a dropped connection is normal, so every operation must be safe to deliver twice.
@@ -166,6 +192,14 @@ rather than served from the earlier result. Retry gets the original outcome; col
 error. Silently treating a collision as a retry is the failure this rule exists to prevent, and it
 loses player value in the direction no wipe can undo.
 
+**Binding catches a *mismatched* reuse; it cannot catch an identical one.** Two legitimate grants of
+the same reward to the same player have the same subject, operation and payload, so every binding
+matches and the second is classified as a retry and silently dropped — the same loss, reached from
+the other side. A key therefore has to be unique per **logical mutation**, not per mutation
+*shape*: derive it from a stable source-event identity (the thing that caused the grant), or issue
+it from a namespace where reuse is structurally impossible. A key a caller can pick freely and
+reuse in good faith is not an idempotency key.
+
 Reading the lease implementation as general-purpose idempotency is the trap here. It is a correct
 solution to the narrower problem, and copying it onto player state would silently collapse two
 legitimate mutations into one.
@@ -180,16 +214,23 @@ The reason is the same one that keeps `nakamaauth` from reflecting a rejected be
 log: an error string from a system holding player data is an exfiltration surface, and the stable
 classification is the only part a caller should branch on anyway.
 
-**A cancellation is an ambiguous outcome, not a failed one.** Preserving it tells the caller that
-*this call* stopped waiting — never that storage did not apply the write. A deadline that expires
-after the write commits but before the response arrives is indistinguishable, at the caller, from
-one that expires before it commits.
+**Every error returned after a write is dispatched is an indeterminate outcome, not a failed one.**
+Once the request is on the wire, no error the caller receives distinguishes "storage never applied
+it" from "storage applied it and the answer did not come back". That is true of a cancellation or
+deadline, and equally true of a transport or backend error — `Unavailable`, a reset connection, a
+proxy 502 — which this contract otherwise collapses to one opaque storage error.
 
-So a caller must never read a cancellation as proof that nothing happened. Where the mutation
-carries player value, the caller reconciles it by its stable identity — re-read the record, or
-resolve the idempotency key (#475) — before reporting an outcome or issuing a different mutation.
-Treating cancellation as failure is how a player is told a reward did not arrive after it already
-did.
+The classification exists to keep an upstream message from crossing the boundary; it is **not** a
+statement about whether the write landed, and must never be read as one. Reserving
+ambiguity-handling for cancellation alone is the dangerous half-rule: it invites a caller to treat
+the far more common transport error as proof that nothing committed, then issue a different
+mutation and duplicate the value.
+
+So: any error after dispatch, whatever its class, is reconciled by stable identity — re-read the
+record, or resolve the idempotency key (#475) — before reporting an outcome or issuing another
+mutation. Only a *pre-dispatch* rejection (a validation refusal, a refused connection) is safe to
+treat as "nothing happened". Reading an ambiguous error as failure is how a player is told a reward
+did not arrive after it already did.
 
 ## What survives a failure
 
@@ -246,6 +287,15 @@ restore boundary — retained at least as long as the restore window it must cov
 journal exists, this bound is **stated but not yet keepable**, and the enforcement map records it
 that way rather than implying otherwise.
 
+**A journal that is merely *eventually* durable moves the window, it does not close it.** If the
+mutation is acknowledged to the player while its evidence is still in flight to that journal, a
+restore landing in the interval loses the mutation and its only record together — the original
+failure, in a shorter window. The acknowledgement is therefore the thing that has to be gated: a
+player-owned mutation is reported as done only once **evidence sufficient to re-apply it is itself
+durable**, whether by writing the journal synchronously before acknowledging, or by an explicitly
+defined atomic commit across the record and its evidence. "Both are written, usually within a
+second" is the same not-an-invariant this contract already rejects for cross-record mutations.
+
 Surfacing a loss is not an alternative to remedying it. Under the no-resets law there is no wipe to
 even out an unlucky player against a lucky one, so an acknowledged mutation left unrestored is a
 permanent, uncompensated loss to one person. Notification is owed on top of the remedy, never
@@ -278,16 +328,22 @@ needs to write a guard for.
 | Server-authoritative state is unreadable and unwritable by clients | `nakamalease.Store` | `TestCreatePersistsPrivateVersionedLeaseByHashedKey`, `TestCreateIgnoresAClientOwnedObjectAtTheDerivedKey`, `TestLoadRejectsMalformedOrPublicStoredObjects` |
 | No write is blind — every write is a compare-and-swap | `nakamalease.Store` | `TestReplaceUsesObservedVersionAndStaleRecordCannotOverwrite`, `TestConcurrentReplaceLeavesExactlyOneCurrentAttempt` |
 | Documents declare a schema and readers accept a range | `nakamalease` document decode | `TestLoadKeepsSchemaOneLeaseReadableAsNotReleasing` |
-| Unknown fields and trailing content are refused | `nakamalease` document decode | `TestLoadRejectsMalformedOrPublicStoredObjects` |
+| Unknown fields are refused | `nakamalease` document decode | `TestLoadRejectsMalformedOrPublicStoredObjects` (`unknown JSON field`) |
+| Trailing content is refused | `nakamalease` document decode | **gap (#491)** — `leaseFrom` checks for `io.EOF`, but no case appends a second JSON value, so a regression of that check leaves every named guard green |
+| A required field omitted from its own schema is refused | every record owner | not yet built — no schema declares a required-field set |
+| Every shipped schema stays readable, permanently | every record owner | not yet built — no server-side ledger or goldens (the client has `shipped_vault_versions.txt`) |
+| A refusal latches the record read-only against create, update and delete | every record owner | not yet built — `CharacterStore` does this client-side; no server equivalent |
 | A newer field on a legacy schema is refused **by presence, not by truth** | `nakamalease` document decode | **gap (#491)** — `staging`/`releasing` are plain booleans, so an explicit `false` is accepted; needs presence-aware decoding and a zero-value case |
 | Read support ships and bakes before its writer activates | every record owner | not yet built — no server-side equivalent of the client staging guard |
 | A logical mutation spanning records is atomic or recoverable | player-owned record owners | not yet built — #474, #475 |
-| A cancellation is reconciled, never read as failure | every caller | not yet built — #475 supplies the stable identity |
+| Any error after a write is dispatched is reconciled, never read as failure | every caller | not yet built — #475 supplies the stable identity |
 | Upstream storage errors do not cross the boundary | `nakamalease` error sanitization | `TestStorageFailuresAreSanitized`, `TestStorageContextCancellationIsPreserved` |
 | A replay identified by its own content applies once | `nakamalease.Store` | `TestCreateReplaysTheSameAttemptWithoutAnotherWrite`, `TestClaimReplayKeepsTheOriginalClaimWithoutWriting` |
 | Player-owned keys derive from the verified identity, never a client-supplied subject | player-owned record owners | not yet built — #472, #473, #474 |
 | An idempotency key is bound to its subject and payload; mismatched reuse is rejected | player-owned record owners | not yet built — #475 |
+| An idempotency key is unique per logical mutation, so two identical legitimate mutations cannot share one | player-owned record owners | not yet built — #475 |
 | Recovery evidence survives the failure domain it recovers from | platform + player-owned record owners | not yet built — no journal outside the database restore boundary |
+| A mutation is acknowledged only once evidence sufficient to re-apply it is durable | player-owned record owners | not yet built — **and conditional on the row above** |
 | An acknowledged player-owned mutation is never lost | player-owned record owners | not yet built — #473, #474, #475, **and conditional on the row above** |
 | A replay **not** identified by its own content applies once | player-owned record owners | not yet built — #475 |
 | A world-owned record states its own recovery invariant | first world-owned record owner | not yet built — no such record exists |
@@ -296,7 +352,12 @@ Rows marked *not yet built* are obligations on work that does not exist. They ar
 added later is measured against them rather than shipping without a guard and being noticed
 afterwards.
 
-The row marked **gap** is different, and worse: it is a promise this document makes that the running
-code does not currently keep. It is recorded here rather than quietly softened, because the honest
-options were to weaken the rule or to fix the decoder, and weakening a rule to match an
+The rows marked **gap** are different, and worse: they are promises this document makes that the
+running code does not currently keep. They are recorded here rather than quietly softened, because
+the honest options were to weaken the rule or to fix the decoder, and weakening a rule to match an
 implementation is how a contract stops meaning anything.
+
+**Read this map as claims about test *bodies*, not test names.** Both gaps above were found that
+way: a named guard existed and looked sufficient, and the case that would actually catch the
+regression was not among its cases. A guard cited here should be opened and checked before it is
+trusted — including by whoever next edits this table.
