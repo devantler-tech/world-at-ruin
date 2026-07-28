@@ -177,16 +177,16 @@ func _affordance_text(device: int) -> String:
 	return "" if label == "" else "[%s] controls" % label
 
 
-## Show the full set, then let it fade — unless the player has pinned it, or
-## the build is on the permanent bar, in which case this only guarantees the
-## bar is opaque.
+## Show the full set, then let it fade. A no-op on the permanent bar, which is
+## already opaque and has no tween to restart, and on a pinned one, which the
+## player has asked to keep.
 func reveal_hints() -> void:
-	if _hints == null:
+	if _hints == null or not _contextual_hints:
 		return
 	if _hints_tween and _hints_tween.is_valid():
 		_hints_tween.kill()
 	_hints.modulate.a = 1.0
-	if not _contextual_hints or _hints_pinned:
+	if _hints_pinned:
 		return
 	_hints_tween = create_tween()
 	_hints_tween.tween_interval(_hint_dwell_seconds())
@@ -205,9 +205,12 @@ func toggle_hints() -> void:
 	_hints.modulate.a = 1.0 if _hints_pinned else 0.0
 
 
+## Clamped at zero: `is_valid_float()` accepts "-5", and a negative interval is
+## not a shorter dwell but an undefined one. A malformed value falls back to the
+## shipped dwell rather than to no dwell at all.
 func _hint_dwell_seconds() -> float:
 	var raw := OS.get_environment(HINT_DWELL_ENV)
-	return float(raw) if raw.is_valid_float() else HINT_DWELL_SECONDS
+	return maxf(0.0, float(raw)) if raw.is_valid_float() else HINT_DWELL_SECONDS
 
 
 ## Read-only inspection of the hint bar, for the regression test.
