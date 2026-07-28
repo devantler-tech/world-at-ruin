@@ -27,16 +27,17 @@ const (
 )
 
 type memoryStorage struct {
-	mu          sync.Mutex
-	objects     map[string]*api.StorageObject
-	reads       []*runtime.StorageRead
-	writes      []*runtime.StorageWrite
-	deletes     []*runtime.StorageDelete
-	version     int
-	readErr     error
-	writeErr    error
-	deleteErr   error
-	deleteFault func(map[string]*api.StorageObject, []*runtime.StorageDelete) error
+	mu                     sync.Mutex
+	objects                map[string]*api.StorageObject
+	reads                  []*runtime.StorageRead
+	writes                 []*runtime.StorageWrite
+	deletes                []*runtime.StorageDelete
+	version                int
+	readErr                error
+	writeErr               error
+	deleteErr              error
+	createConflictMutation func(map[string]*api.StorageObject, string)
+	deleteFault            func(map[string]*api.StorageObject, []*runtime.StorageDelete) error
 }
 
 type createRaceStorage struct {
@@ -116,6 +117,9 @@ func (s *memoryStorage) StorageWrite(
 		current := s.objects[id]
 		switch {
 		case write.Version == "*" && current != nil:
+			if s.createConflictMutation != nil {
+				s.createConflictMutation(s.objects, id)
+			}
 			return nil, runtime.ErrStorageRejectedVersion
 		case write.Version == "*":
 		case current == nil || current.GetVersion() != write.Version:
@@ -447,6 +451,112 @@ func TestConcurrentIdenticalCreateReconcilesTheDurableWinner(t *testing.T) {
 		t.Fatalf(
 			"concurrent create writes = %d, want one winner and one conflict",
 			len(storage.writes),
+		)
+	}
+}
+
+func TestConcurrentIdenticalCreateReconcilesAClaimedWinner(t *testing.T) {
+	storage := newCreateRaceStorage()
+	claimTime := validLease().ExpiresAt.Add(-time.Second).UnixNano()
+	storage.createConflictMutation = func(
+		objects map[string]*api.StorageObject,
+		id string,
+	) {
+		object := objects[id]
+		object.Value = strings.Replace(
+			object.GetValue(),
+			`"claimed_at_nanos":null`,
+			fmt.Sprintf(`"claimed_at_nanos":%d`, claimTime),
+			1,
+		)
+		object.Version = "claimed-v2"
+	}
+	store, err := NewStore(storage)
+	if err != nil {
+		t.Fatalf("NewStore returned an error: %v", err)
+	}
+	lease := validLease()
+	var records [2]Record
+	var errs [2]error
+	var creates sync.WaitGroup
+	creates.Add(len(records))
+	for i := range records {
+		go func() {
+			defer creates.Done()
+			records[i], errs[i] = store.Create(context.Background(), lease)
+		}()
+	}
+	creates.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent Create %d returned an error: %v", i, err)
+		}
+	}
+	claimed := 0
+	for _, record := range records {
+		if !record.Lease.ClaimedAt.IsZero() {
+			claimed++
+		}
+		if record.Lease.AttemptID != lease.AttemptID ||
+			record.Lease.AllocationID != lease.AllocationID ||
+			record.Lease.SecretRef != lease.SecretRef {
+			t.Fatalf("concurrent Create returned a different owner: %+v", record)
+		}
+	}
+	if claimed != 1 {
+		t.Fatalf("claimed concurrent records = %d, want the reloaded winner once", claimed)
+	}
+}
+
+func TestConcurrentIdenticalCreateRefusesAReleasingWinner(t *testing.T) {
+	storage := newCreateRaceStorage()
+	storage.createConflictMutation = func(
+		objects map[string]*api.StorageObject,
+		id string,
+	) {
+		object := objects[id]
+		object.Value = strings.Replace(
+			object.GetValue(),
+			"{",
+			`{"releasing":true,`,
+			1,
+		)
+		object.Version = "releasing-v2"
+	}
+	store, err := NewStore(storage)
+	if err != nil {
+		t.Fatalf("NewStore returned an error: %v", err)
+	}
+	lease := validLease()
+	var errs [2]error
+	var creates sync.WaitGroup
+	creates.Add(len(errs))
+	for i := range errs {
+		go func() {
+			defer creates.Done()
+			_, errs[i] = store.Create(context.Background(), lease)
+		}()
+	}
+	creates.Wait()
+
+	succeeded := 0
+	releasing := 0
+	for _, err := range errs {
+		switch {
+		case err == nil:
+			succeeded++
+		case errors.Is(err, ErrReleasing):
+			releasing++
+		default:
+			t.Fatalf("concurrent Create returned an unexpected error: %v", err)
+		}
+	}
+	if succeeded != 1 || releasing != 1 {
+		t.Fatalf(
+			"concurrent outcomes = %d success/%d releasing, want one of each",
+			succeeded,
+			releasing,
 		)
 	}
 }

@@ -147,10 +147,21 @@ func (s *Store) Create(ctx context.Context, lease Lease) (Record, error) {
 	if loadErr != nil {
 		return Record{}, loadErr
 	}
-	if latest.Lease == normalized {
+	if sameAllocationOwner(latest.Lease, normalized) {
+		if latest.Lease.Releasing {
+			return Record{}, ErrReleasing
+		}
 		return latest, nil
 	}
 	return Record{}, ErrConflict
+}
+
+func sameAllocationOwner(left, right Lease) bool {
+	left.ClaimedAt = time.Time{}
+	left.Releasing = false
+	right.ClaimedAt = time.Time{}
+	right.Releasing = false
+	return left == right
 }
 
 // Replace atomically transfers an observed lease key to a distinct attempt.
