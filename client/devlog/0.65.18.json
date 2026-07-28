@@ -6,5 +6,5 @@
 		"Reading down to the bottom of the log now dates the earliest work correctly instead of pointing at a build that was never cut."
 	],
 	"title": "The oldest entries stop naming builds that never existed",
-	"version": "0.65.17"
+	"version": "0.65.18"
 }
