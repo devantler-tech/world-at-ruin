@@ -1060,15 +1060,22 @@ jobs:
             local tap="$1"
             local pr="$2"
             local state attempt
-            for attempt in 1 2 3 4 5; do
+            for attempt in 1 2 3 4 5 6 7 8; do
               state="$(gh api "repos/${tap}/pulls/${pr}" --jq '.mergeable_state' 2>/dev/null || true)"
               case "${state}" in
                 dirty) return 0 ;;
                 '' | null | unknown) ;;
                 *) return 1 ;;
               esac
-              if [ "${attempt}" != "5" ]; then
-                sleep 3
+              # BACK OFF, and give it a real budget. A fixed 3s × 5 is only ~12
+              # seconds, and the PR being asked about is the one this run JUST
+              # opened — the primary case, and the slowest, because GitHub
+              # computes mergeability in the background after creation. Giving up
+              # early fails CLOSED, which here means silently skipping the repair
+              # in exactly the scenario it exists for, leaving the tap stuck.
+              # Rising delays reach ~84s while keeping the read count bounded.
+              if [ "${attempt}" != "8" ]; then
+                sleep "$(( attempt * 3 ))"
               fi
             done
             return 1

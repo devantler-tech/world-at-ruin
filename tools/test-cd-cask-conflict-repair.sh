@@ -146,6 +146,21 @@ if ! grep -q '^sleep ' "${call_file}"; then
 	echo "polling must back off between reads" >&2
 	exit 1
 fi
+# The delay must RISE, and the whole window must be worth having. A fixed short
+# gap gives ~12s, but the PR being asked about is the one this run just opened —
+# the slowest case, because GitHub computes mergeability in the background after
+# creation — and giving up early fails closed, silently skipping the repair in
+# exactly the scenario it exists for.
+distinct_delays="$(grep '^sleep ' "${call_file}" | sort -u | wc -l | tr -d ' ')"
+if [ "${distinct_delays}" -lt 2 ]; then
+	echo "polling uses a FIXED delay; it must back off so the window is not ~12s" >&2
+	exit 1
+fi
+total_wait="$(grep '^sleep ' "${call_file}" | awk '{s += $2} END {print s + 0}')"
+if [ "${total_wait}" -lt 45 ]; then
+	echo "polling window is only ${total_wait}s — too short for a freshly-opened PR's mergeability" >&2
+	exit 1
+fi
 
 # --- Fail closed: an unreadable PR state is not a conflict. ----------------
 reset_mock dirty
