@@ -444,18 +444,25 @@ void fragment() {
 	//
 	// Measured on-GPU (tools/plate_crawl): the flickering fraction of the ground
 	// falls 0.0052 -> 0.0027 against a plates-off control that reads 0.0000.
-	// Zeroing crack_relief outright gives 0.0000, so this term is the whole of
-	// what still moves.
+	//
+	// The relief is most of what moves, but NOT all of it. A later session
+	// measured `crack_relief = 0` at 0.0007 rather than the 0.0000 recorded
+	// above, twice, by two independent routes (the uniform zeroed outright, and
+	// this fade forced closed) agreeing to the digit on flicker, peak and
+	// spread, against a plates-off control still reading 0.0000. What is left
+	// at that floor is the substance and slab boundary — the step this issue was
+	// originally filed on. Absolute levels here are not portable between
+	// machines and the tool says so; the ordering is what carries.
 	grad *= 1.0 - smoothstep(0.7, 1.3, crack_fw * 1.2 / max(crack_width, 1e-6));
 	// The magnitude bound is the SLOPE A SEAM CAN HAVE, not a catastrophe
 	// backstop. `bump` adds `grad * crack_relief` to the horizontal components
-	// of a unit normal, so the ceiling is a tilt: 0.4 * 1.1 is at most
-	// atan(0.44) ~= 24 degrees, the wall of a shallow groove a few centimetres
-	// across that ash settles into. A ceiling set only high enough to stop one
-	// degenerate quad flipping a normal permits atan(1.65) ~= 59 degrees, which
-	// no seam in this ground has — so every under-sampled quad claiming an
-	// impossible slope passed through it untouched, and that is what the fade
-	// above was left carrying alone.
+	// of a unit normal, so the ceiling is a tilt: at the shipped crack_relief
+	// this bounds it by atan(0.4 * 1.1) ~= 24 degrees, the wall of a shallow
+	// groove a few centimetres across that ash settles into. A ceiling set only
+	// high enough to stop one degenerate quad flipping a normal allows
+	// atan(1.5 * 1.1) ~= 59 degrees, which no seam in this ground has — so every
+	// under-sampled quad claiming an impossible slope passed through it
+	// untouched, and that is what the fade above was left carrying alone.
 	//
 	// A bound on the SLOPE and the fade above are different levers, and the
 	// difference is the whole reason this one is here. The fade is keyed on
