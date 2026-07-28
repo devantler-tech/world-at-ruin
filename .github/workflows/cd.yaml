@@ -895,6 +895,15 @@ jobs:
             if [ "$(printf '%s' "${pre_state}" | jq -r '.auto_merge != null')" = "true" ]; then
               pre_node="$(printf '%s' "${pre_state}" | jq -r '.node_id')"
               disarm_mutation="mutation(\$id: ID!) { disablePullRequestAutoMerge(input: { pullRequestId: \$id }) { pullRequest { number } } }"
+              # Deliberately NOT given the REST fallback the arming path has:
+              # disarming has no REST equivalent at all, and there is no safe
+              # substitute for it. Writing new content while a previous release
+              # stays armed is the hazard, so an exhausted GraphQL budget here
+              # still aborts BEFORE the write — leaving the tap exactly as it
+              # was rather than half-updated under a stale title. The fallback
+              # below also makes reaching this rarer: a quota-limited run now
+              # merges directly instead of arming, so it leaves nothing armed
+              # for the next run to have to disarm.
               if ! gh api graphql -f query="${disarm_mutation}" -F id="${pre_node}" >/dev/null; then
                 echo "::error::could not disarm auto-merge on ${tap}#${pre_pr} before updating ${branch}"
                 exit 1
@@ -1002,12 +1011,49 @@ jobs:
             sleep 3
           done
 
+          # BEGIN cask-pr-create-helper
+          # Open the tap PR over REST rather than with `gh pr create`.
+          #
+          # `gh pr create` is backed by GraphQL, whose hourly budget belongs to
+          # the ACCOUNT the tap token authenticates as and is shared with every
+          # other automated consumer of that account. Exhausting it fails the
+          # create for a reason that has nothing to do with this release, and
+          # leaves the cask written to the branch with no PR to deliver it —
+          # release undelivered, main red, and nothing retrying. REST carries a
+          # separate budget, so the create survives a drained GraphQL pool.
+          #
+          # A concurrent creator is still benign: GitHub answers the loser with
+          # "A pull request already exists", which is success for our purpose.
+          # Every other failure is surfaced with the API's own message instead
+          # of being swallowed, so a genuine refusal says WHY rather than
+          # reaching the caller's re-check as an unexplained missing PR.
+          create_cask_pr() {
+            local tap="$1"
+            local branch="$2"
+            local version="$3"
+            local out
+            if out="$(gh api --method POST "repos/${tap}/pulls" \
+                 -f title="chore(cask): update world-at-ruin to v${version}" \
+                 -f head="${branch}" \
+                 -f base=main \
+                 -f body="Automated cask update for World at Ruin. Programmed release path: check-gated auto-merge, no review needed." 2>&1)"; then
+              return 0
+            fi
+            if printf '%s' "${out}" | grep -qi 'already exists'; then
+              echo "::notice::a cask PR for ${branch} is already open — another run opened it first"
+              return 0
+            fi
+            echo "::error::could not open the cask PR on ${tap} for ${branch}: ${out}"
+            return 1
+          }
+          # END cask-pr-create-helper
+
           # `// empty` is load-bearing: with no open PR, `jq '.[0].number'`
           # prints the literal `null`, which `grep -q .` MATCHES — so the check
           # would conclude a PR already exists and never create one, leaving the
           # job green with no tap PR at all on the very first run.
           #
-          # Racy too: two runs can both see no open PR, and `gh pr create` errors
+          # Racy too: two runs can both see no open PR, and the create errors
           # if one already exists — failing this job over a benign overlap.
           # Tolerate the loss, then re-check so a genuine failure still errors.
           if ! trusted_open_pr | grep -q .; then
@@ -1023,9 +1069,7 @@ jobs:
               echo "::notice::${tap} main already carries v${main_now} and no cask PR is open — nothing to deliver"
               exit 0
             fi
-            gh pr create --repo "${tap}" --base main --head "${branch}" \
-              --title "chore(cask): update world-at-ruin to v${VERSION}" \
-              --body "Automated cask update for World at Ruin. Programmed release path: check-gated auto-merge, no review needed." || true
+            create_cask_pr "${tap}" "${branch}" "${VERSION}" || true
             if ! trusted_open_pr | grep -q .; then
               echo "::error::no open cask PR on ${tap} for ${branch} after attempting to create one"
               exit 1
@@ -1275,6 +1319,105 @@ jobs:
             echo "::notice::${tap}#${pr} was born conflicting — rebuilt ${branch} onto main (${repair_sha}) carrying the v${repair_version} cask"
           fi
 
+          # BEGIN cask-rest-merge-helper
+          # Deliver the cask WITHOUT GraphQL: wait for the checks auto-merge
+          # would have waited for, then merge over REST.
+          #
+          # Arming is GraphQL-only — `enablePullRequestAutoMerge` has no REST
+          # equivalent — so a run whose account's GraphQL budget is exhausted
+          # cannot arm at all, and the release would otherwise fail over a
+          # quota that belongs to unrelated consumption elsewhere. The GraphQL
+          # budget resets hourly, far beyond this job's 15-minute timeout, so
+          # there is nothing worth retrying: doing auto-merge's waiting here is
+          # what actually delivers the release.
+          #
+          # The check gate is NOT delegated to the merge endpoint. The tap
+          # token can bypass rulesets, so GitHub would merge an unchecked head
+          # if simply asked. This reads the head's own check runs and merges
+          # only when every one has completed without failing, pinned with
+          # `sha=` to the exact head those checks describe — a head pushed
+          # after the read is refused by the endpoint and re-enters the loop
+          # rather than merging on someone else's evidence. That is the same
+          # property the clean-status direct merge below relies on.
+          #
+          # A head carrying NO check runs is never merged. "The checks have not
+          # been created yet" and "this repository requires no checks" are
+          # indistinguishable from here, and treating them alike would ship a
+          # cask the tap never validated — so an empty set only ever means
+          # keep waiting.
+          #
+          # Budget: the tap's cask PRs measured 2m00s-3m27s from open to merge
+          # across the four releases of 2026-07-28, so 20 reads at 20s (~6m40s)
+          # is roughly twice the observed worst case and still leaves room
+          # inside the job timeout. Exhausting it fails LOUDLY: checks that
+          # never finish are a real problem, not a quota one.
+          merge_cask_pr_when_green() {
+            local tap="$1"
+            local pr="$2"
+            local attempt pr_state head runs total unfinished failed
+            for attempt in $(seq 1 20); do
+              pr_state="$(gh api "repos/${tap}/pulls/${pr}" 2>/dev/null || true)"
+              if [ -n "${pr_state}" ] \
+                 && [ "$(printf '%s' "${pr_state}" | jq -r '.merged' 2>/dev/null)" = "true" ]; then
+                echo "${tap}#${pr} is already merged"
+                return 0
+              fi
+              head="$(printf '%s' "${pr_state}" | jq -r '.head.sha // empty' 2>/dev/null || true)"
+              case "${head}" in
+                [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) : ;;
+                *) head="" ;;
+              esac
+              if [ -n "${head}" ]; then
+                runs="$(gh api "repos/${tap}/commits/${head}/check-runs?per_page=100" 2>/dev/null || true)"
+                total="$(printf '%s' "${runs}" | jq -r '.check_runs | length' 2>/dev/null || true)"
+                unfinished="$(printf '%s' "${runs}" \
+                  | jq -r '[.check_runs[] | select(.status != "completed")] | length' 2>/dev/null || true)"
+                # `neutral` and `skipped` are how a check reports "not
+                # applicable here", which is a pass. Everything else that has
+                # COMPLETED — failure, cancelled, timed_out, action_required —
+                # is a real refusal and must never be waited out into a merge.
+                failed="$(printf '%s' "${runs}" \
+                  | jq -r '[.check_runs[]
+                            | select(.status == "completed")
+                            | select(.conclusion != "success"
+                                     and .conclusion != "neutral"
+                                     and .conclusion != "skipped")] | length' 2>/dev/null || true)"
+                # An unreadable count is a FAILED READ, never a green one. Each
+                # is checked on its own: jq collapses an API failure, a decode
+                # failure and a genuinely absent field into the same empty
+                # string, and the merge below must not run on any of them.
+                case "${total}" in '' | *[!0-9]*) total="" ;; esac
+                case "${unfinished}" in '' | *[!0-9]*) unfinished="" ;; esac
+                case "${failed}" in '' | *[!0-9]*) failed="" ;; esac
+                if [ -n "${failed}" ] && [ "${failed}" -gt 0 ]; then
+                  echo "::error::${tap}#${pr} carries ${failed} failing check(s) at ${head}; refusing to merge it"
+                  return 1
+                fi
+                # ALL THREE must be readable before merging, `failed` included:
+                # a run where only the failure count failed to parse would
+                # otherwise merge having verified nothing about failures.
+                if [ -n "${total}" ] && [ -n "${unfinished}" ] && [ -n "${failed}" ] \
+                   && [ "${failed}" -eq 0 ] && [ "${total}" -gt 0 ] && [ "${unfinished}" -eq 0 ]; then
+                  if gh api -X PUT "repos/${tap}/pulls/${pr}/merge" \
+                       -f merge_method=squash -f sha="${head}" >/dev/null 2>&1; then
+                    echo "merged ${tap}#${pr} over REST at ${head} — all ${total} check(s) green"
+                    return 0
+                  fi
+                  # Refused: the head moved between the check read and the
+                  # merge, so the evidence no longer describes what would be
+                  # merged. Re-read and re-decide rather than retrying blind.
+                  echo "::notice::${tap}#${pr} moved while merging at ${head}; re-reading (attempt ${attempt})"
+                fi
+              fi
+              if [ "${attempt}" != "20" ]; then
+                sleep 20
+              fi
+            done
+            echo "::error::${tap}#${pr} did not reach an all-green head within the REST merge budget; the cask is written and the PR is open, but it was not delivered"
+            return 1
+          }
+          # END cask-rest-merge-helper
+
           # Title convergence + arming. The title must state the version the
           # branch CONTENT actually carries, never this run's ${VERSION}: a
           # concurrent newer release can win the compare-and-swap above (or
@@ -1359,6 +1502,20 @@ jobs:
               continue
             elif printf '%s' "${out}" | grep -qi 'already.*enabled'; then
               echo "auto-merge already armed on ${tap}#${pr}"
+            elif printf '%s' "${out}" | grep -qiE 'rate limit|RATE_LIMITED'; then
+              # The account's GraphQL budget is exhausted. That is a property
+              # of unrelated consumption on a shared account, not of this
+              # release, and the budget resets hourly — well beyond this job's
+              # timeout, so retrying the mutation cannot succeed. Do
+              # auto-merge's waiting over REST instead, which carries its own
+              # budget. The title is already converged at this point, so the
+              # squash lands under the same message arming would have used.
+              echo "::notice::auto-merge cannot be armed on ${tap}#${pr} — the tap account's GraphQL budget is exhausted; delivering over REST instead"
+              if merge_cask_pr_when_green "${tap}" "${pr}"; then
+                armed=true
+                break
+              fi
+              exit 1
             else
               echo "::error::could not arm auto-merge on ${tap}#${pr}: ${out}"
               exit 1
