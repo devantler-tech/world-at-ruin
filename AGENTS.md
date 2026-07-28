@@ -455,8 +455,11 @@ everything shipped afterwards is held to.
   exploration reward adds a `reward_claims` entry; discovery-only documents remain v2 and empty or
   attunement-only documents remain v1. `Main` restores accepted claims into its boot-owned
   `ExplorationRewards` tracker, re-applies their registered horizontal outcomes, and records a newly
-  discovered place only after its outcome succeeds. The retained v0.61.0 capability-4 reader is the
-  rollback target that permits this writer. **The lock lives in
+  discovered place only after its outcome succeeds. Because a claim persists only the place id, the
+  append-only `tests/data/shipped_reward_mappings.tsv` ledger permanently binds each shipped claim to
+  its exact reward payload; the real boot guard checks the production registry bidirectionally and CI
+  base-compares complete rows. The retained v0.61.0 capability-4 reader is the rollback target that
+  permits this writer. **The lock lives in
   `FileLock`, not in the vault, and `BootRecovery` persistence takes it too**
   (`tests/boot_recovery_lock_test`) — that file's two writers, the updater and the game, both exist
   today, and a lost update there discards the evidence deciding whether a client rolls back. One

@@ -1,6 +1,6 @@
 {
   "version": 3,
-  "comment": "GOLDEN VAULT v3 — the append-only claimed exploration-reward contract (no-resets law). Readers preserve every accepted claim; writers add only a successfully applied reward whose discovery is already durable.",
+  "comment": "GOLDEN VAULT v3 — the reader-expansion contract for append-only claimed exploration rewards (no-resets law). This build reads and preserves the shape but does not originate it until the expansion release bakes.",
   "attuned": [
     "wardens_shrine"
   ],

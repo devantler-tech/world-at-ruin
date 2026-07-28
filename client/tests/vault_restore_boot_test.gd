@@ -35,6 +35,7 @@ const PROBE_PATH := "user://vault_restore_boot_probe.json"
 const DISCOVERY_PROBE := ["wardens_shrine", "future_place", "wardens_shrine"]
 const REWARD_CLAIM_PROBE := ["starter_cave", "future_place", "starter_cave"]
 const SHIPPED_DISCOVERIES := "res://tests/data/shipped_discoveries.txt"
+const SHIPPED_REWARDS := "res://tests/data/shipped_reward_mappings.tsv"
 const RETRY_CHARACTER_PROBE := "user://vault_discovery_retry_character.json"
 ## Resolved per process in _ready(); local worktrees share Godot's user://.
 const RETRY_PROBE_PREFIX := "user://vault_discovery_retry"
@@ -672,6 +673,10 @@ func _assert_reward_claim_write(player: Player, world: WorldGen) -> void:
 	if not tracker.is_registered(SaveVault.DISCOVERY_WARDENS_SHRINE):
 		_fail("the production boot registered no reward for the Wardens' Shrine")
 		return
+	var mapping_error := _check_reward_mappings(tracker)
+	if not mapping_error.is_empty():
+		_fail(mapping_error)
+		return
 	if tracker.claimed() != [SaveVault.DISCOVERY_WARDENS_SHRINE]:
 		_fail("the real shrine walk did not claim exactly its registered reward")
 		return
@@ -853,6 +858,57 @@ func _shipped_discoveries() -> Dictionary:
 		if name.is_empty() or landmark.is_empty() or mappings.has(name):
 			return {}
 		mappings[name] = landmark
+	file.close()
+	return mappings
+
+
+## Every production reward registration must equal its immutable ledger payload,
+## and every ledger row must still be live. The CI half anchors complete rows to
+## the base revision so production and this local oracle cannot drift together.
+func _check_reward_mappings(tracker: ExplorationRewards) -> String:
+	var ledger := _shipped_reward_mappings()
+	if ledger.is_empty():
+		return "shipped_reward_mappings.tsv is missing, malformed, or empty"
+	if not tracker.has_method("registered_ids"):
+		return "ExplorationRewards has no ledger inspection API for production mappings"
+	var registered: Array = tracker.call("registered_ids")
+	var expected: Array = ledger.keys()
+	expected.sort()
+	if registered != expected:
+		return ("production reward ids %s do not match shipped_reward_mappings.tsv %s"
+			% [str(registered), str(expected)])
+	for poi_id: String in expected:
+		if tracker.reward_for(poi_id) != ledger[poi_id]:
+			return (("SHIPPED REWARD REINTERPRETED (no-resets law): "
+				+ "'%s' now maps to %s, but its immutable payload is %s")
+				% [poi_id, str(tracker.reward_for(poi_id)), str(ledger[poi_id])])
+	return ""
+
+
+func _shipped_reward_mappings() -> Dictionary:
+	var file := FileAccess.open(SHIPPED_REWARDS, FileAccess.READ)
+	if file == null:
+		return {}
+	var mappings := {}
+	while not file.eof_reached():
+		var line := file.get_line()
+		if line.strip_edges().is_empty() or line.begins_with("#"):
+			continue
+		var parts := line.split("\t", true)
+		if parts.size() != 4:
+			return {}
+		var poi_id := String(parts[0]).strip_edges()
+		var kind := String(parts[1]).strip_edges()
+		var reward_id := String(parts[2]).strip_edges()
+		var display_name := String(parts[3]).strip_edges()
+		if poi_id.is_empty() or kind.is_empty() or reward_id.is_empty() \
+				or display_name.is_empty() or mappings.has(poi_id):
+			return {}
+		mappings[poi_id] = {
+			"kind": kind,
+			"id": reward_id,
+			"name": display_name,
+		}
 	file.close()
 	return mappings
 

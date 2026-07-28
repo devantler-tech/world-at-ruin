@@ -78,6 +78,17 @@ func is_registered(poi_id: String) -> bool:
 	return _rewards.has(poi_id)
 
 
+## Every registered place id in deterministic order. This is an inspection
+## surface for the immutable shipped-reward guard; callers receive a new array
+## and cannot mutate the registry.
+func registered_ids() -> Array[String]:
+	var out: Array[String] = []
+	for poi_id: String in _rewards:
+		out.append(poi_id)
+	out.sort()
+	return out
+
+
 ## A copy of the reward registered for `poi_id`, or an empty dictionary if none.
 ## The copy keeps the registered reward immutable to callers.
 func reward_for(poi_id: String) -> Dictionary:

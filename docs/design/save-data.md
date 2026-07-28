@@ -207,7 +207,10 @@ For vault version `N`, the expansion pull request must:
    `shipped_discoveries.txt` as an immutable `id=landmark` mapping,
    `SaveVault.KNOWN_DISCOVERIES`, and the real boot's bidirectional
    point-of-interest registration guard. Unknown discovery names already present in a newer vault
-   remain preserved, but this build may originate only a registered, ledgered ID.
+   remain preserved, but this build may originate only a registered, ledgered ID. A persisted reward
+   also enters `shipped_reward_mappings.tsv` as an immutable
+   `place_id → kind → reward_id → display_name` row; the real boot binds every production reward
+   registration to that payload in both directions.
 6. Assign the new persistable capability and raise `UpdateManifest.SAVE_CAPABILITY_READS` to it while
    leaving `SAVE_CAPABILITY_WRITES` unchanged. The retained expansion build must advertise the read
    ceiling that makes it an eligible rollback target before the contract release can write that
@@ -234,6 +237,9 @@ granting twice in-session. If a writable cloud replacement drops a claim's alrea
 discovery, the refused claim requeues that prerequisite before retrying so the vault converges
 without re-applying the live reward. A refused newer or unreadable vault remains session-only and
 byte-intact.
+Because a claim stores only its stable place id, `shipped_reward_mappings.tsv` permanently binds that
+id to the exact outcome every later boot derives from it; CI base-compares complete rows and the real
+boot verifies the live registry against the ledger.
 Ordinary attunement and discovery writes preserve an already-present v3 document and its claims;
 discovery-only documents remain v2.
 
