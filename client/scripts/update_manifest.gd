@@ -81,8 +81,12 @@ const SAVE_SCHEMA_MAX := CharacterFactory.RECIPE_VERSION
 ##
 ## APPEND-ONLY, and it may only ever RISE — enforced against
 ## `tests/data/shipped_save_capability.txt`. Raise it by one in the same PR that
-## adds a savable field. A build claiming to write LESS than it once did is
-## exactly the stranding the no-resets law forbids.
+## starts writing a savable field, shape or registry name. CI compares
+## `registries/character_writer_vocabulary.json` with the base revision so a
+## contract-stage equipment/slot, skin, blend-shape or bone-key exposure cannot
+## leave this counter behind; the wider reader registries may still expand
+## earlier. A build claiming to write LESS than it once did is exactly the
+## stranding the no-resets law forbids.
 ##
 ## Capability 3 is vault-v2 discovery state. Its read ceiling shipped in the
 ## retained v0.52.0 monolithic app, which is the whole-app rollback while client

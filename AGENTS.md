@@ -528,7 +528,10 @@ everything shipped afterwards is held to.
   character recipe, progression vault and recovery ledger. Stable live names are permanent too:
   attunements need append-only ledgers, while writable discovery IDs need append-only
   `id=landmark` mappings plus real boot/application guards; a green fixture guard alone does not
-  make a one-release read-and-write bump rollback-safe.
+  make a one-release read-and-write bump rollback-safe. Character reader registries may expand
+  without activating their writers; production origination is the explicit
+  `client/registries/character_writer_vocabulary.json` subset, whose equipment-slot, skin,
+  blend-shape and bone-key additions require the contract-stage save-capability advance.
 - **Run:** `godot client` (macOS: `/Applications/Godot.app/Contents/MacOS/Godot client`).
 - **Validate before every PR:**
   `godot --headless --editor --quit --path client && godot --headless --quit-after 120 --path client` —

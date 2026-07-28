@@ -1,0 +1,65 @@
+{
+  "bone_keys": {
+    "bone_girth": [
+      "calf",
+      "lowerarm",
+      "neck_01",
+      "upperarm"
+    ],
+    "bone_scale": [
+      "foot",
+      "hand",
+      "head"
+    ],
+    "joint_push": [
+      "upperarm"
+    ]
+  },
+  "equipment": {
+    "boots_worn": "feet",
+    "pants_wool": "legs",
+    "relic_goggles": "head",
+    "ruin_drake_helm": "head",
+    "shirt_ragged": "torso",
+    "shoes_cloth": "feet"
+  },
+  "shapes": [
+    "arms_heavy",
+    "arms_muscle",
+    "belly",
+    "body_aged",
+    "body_female",
+    "body_heavy",
+    "body_male",
+    "body_slim",
+    "buttocks_full",
+    "chin_prominent",
+    "head_aged",
+    "head_heavy",
+    "head_round",
+    "head_square",
+    "hips_wide",
+    "jaw_wide",
+    "legs_heavy",
+    "legs_muscle",
+    "neck_thick",
+    "nose_hump",
+    "nose_strong",
+    "phenotype_african",
+    "phenotype_asian",
+    "phenotype_caucasian",
+    "shoulders_broad",
+    "torso_broad",
+    "torso_muscle",
+    "torso_vshape",
+    "waist_slim"
+  ],
+  "skins": [
+    "skin_female_aged",
+    "skin_female_light",
+    "skin_female_mid",
+    "skin_male_aged",
+    "skin_male_deep",
+    "skin_male_light"
+  ]
+}
