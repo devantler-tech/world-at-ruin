@@ -1,0 +1,10 @@
+{
+	"date": "2026-07-28",
+	"notes": [
+		"Two entries near the top of this log named a build they did not actually arrive in. Both now name the release that genuinely contains them, checked against the release history rather than taken on trust.",
+		"The log is also checked automatically from now on. Every entry is measured against the build it claims, so an entry that slips out of step is caught straight away instead of sitting here wrong until someone happens to notice.",
+		"Still to do: seventeen of the oldest entries all arrived in the same two builds. They cannot each carry that name, so what the log should say for them is still an open question."
+	],
+	"title": "The dev log checks its own dates now",
+	"version": "0.65.17"
+}

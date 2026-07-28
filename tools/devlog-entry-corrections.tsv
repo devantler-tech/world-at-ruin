@@ -69,3 +69,13 @@ client/devlog/0.5.1.json	764176c41dab000d015a9356f263630f52fff136	Authored as 0.
 client/devlog/0.43.1.json	bb925677b67fe64b263f81e9665b16ef93d8c491	Authored as 0.19.1, but the change it describes first shipped in v0.43.1; v0.19.1 was never cut (#501).
 client/devlog/0.56.1.json	58fc66e27cf3161fb3f9f2b4bcad60f63789790a	Authored as 0.55.1, but the change it describes first shipped in v0.56.1; v0.55.1 was never cut (#501).
 client/devlog/0.57.5.json	19a0244b19895ed0cc372ff2f63c1645421a4327	Authored as 0.55.2, but the change it describes first shipped in v0.57.5; v0.55.2 was never cut (#501).
+
+# The drift that regressed AFTER the #452 correction, and the reason the sweep
+# is now a CI gate (#467). Both entries were authored above every release that
+# existed at the time and passed the forward-looking guard; siblings then
+# released ahead of them, leaving each naming a build cut before its code
+# existed. This is a permutation — 0.65.9 was occupied by the entry that had to
+# move to 0.65.10 — so both destinations read as modifications rather than
+# additions, which is the guard blind spot the gate covers.
+client/devlog/0.65.9.json	5b6ad2c85267bc543c975eba18b70a7889eb172a	Authored as 0.65.8, but the change it describes first shipped in v0.65.9; v0.65.8 was cut without it (#467).
+client/devlog/0.65.10.json	bbac5762aea5725fe9a63cf69c969e62efa6c8cd	Authored as 0.65.9, but the change it describes first shipped in v0.65.10; v0.65.9 was cut without it (#467).
