@@ -217,6 +217,7 @@ void fragment() {
 	float plate_edge_w = 0.0;
 	vec4 sub = vec4(rock_color, rock_roughness);
 	vec4 sub_nb = vec4(rock_color, rock_roughness);
+	float is_slab2 = 0.0;
 	float crack = 0.0;
 	float plate_fw = 0.0;
 	float crack_fw = 0.0;
@@ -263,11 +264,19 @@ void fragment() {
 	// stays finite across the boundary, so scaling it by the plate footprint
 	// gives how far `f2 - f1` really moves in one pixel. Same closed form the
 	// relief below uses, for the same reason.
+	// Projected through BOTH screen derivatives rather than scaled by a single
+	// footprint scalar: |grad| * plate_fw discards the separator's ORIENTATION
+	// against the pixel, so a boundary lying diagonally, or ground at a grazing
+	// angle where the footprint is anisotropic, is under- or over-estimated.
+	// d(f2-f1)/dx = dot(grad, dFdx(plate_uv)) is the exact pixel-space rate, and
+	// |dx| + |dy| is then precisely what `fwidth` would have returned had the
+	// quantity not been a cusp.
 	vec2 e1 = plate_uv - plate_c1;
 	vec2 e2 = plate_uv - plate_c2;
-	float edge_fw = length(
-		e2 * inversesqrt(max(dot(e2, e2), 1e-12))
-		- e1 * inversesqrt(max(dot(e1, e1), 1e-12))) * plate_fw;
+	vec2 gsep_e = e2 * inversesqrt(max(dot(e2, e2), 1e-12))
+		- e1 * inversesqrt(max(dot(e1, e1), 1e-12));
+	float edge_fw = abs(dot(gsep_e, dFdx(plate_uv)))
+		+ abs(dot(gsep_e, dFdy(plate_uv)));
 	plate_edge_w = terrain_plate_edge_blend(f1, f2, edge_fw * 1.2);
 
 	// Both cells' substances are kept SEPARATE here and composed with their own
@@ -282,6 +291,10 @@ void fragment() {
 	vec4 mean4 = vec4(mean_col, mean_rough);
 	sub = mix(mean4, plate_substance(plate_id), plate_resolved);
 	sub_nb = mix(mean4, plate_substance(plate_id2), plate_resolved);
+	// The neighbour's slab pick belongs on the opt-in path with the rest of the
+	// plate work: it is a hash, and the default-off ground must not pay for a
+	// preview it never draws.
+	is_slab2 = step(0.60, hash3(vec3(plate_id2 * 2.3, 19.0)));
 
 	// The crack itself, widened to the local footprint so it stays a line
 	// instead of aliasing, and dissolved once it is thinner than about a pixel
@@ -360,22 +373,12 @@ void fragment() {
 	// way. Measured, it is the DOMINANT half: averaging the substance alone
 	// leaves the boundary floor where it was (0.0014 -> 0.0015 with the relief
 	// switched off), and averaging the mask too takes it to 0.0003.
-	float is_slab2 = step(0.60, hash3(vec3(plate_id2 * 2.3, 19.0)));
 	// Once a pixel spans a whole plate there is no per-plate answer to give,
 	// so converge on the mean coverage exactly as the substance does above —
 	// PER CELL, because each cell's substance is gated by its own mask.
 	float slab_own = mix(0.40, is_slab, plate_resolved);
 	float slab_nb = mix(0.40, is_slab2, plate_resolved);
 	float slab = mix(slab_own, slab_nb, plate_edge_w);
-	// The substance carried across the boundary, PREMULTIPLIED by each cell's
-	// own mask. `slab` above is the same blend of the masks alone, so dividing
-	// the two back out below recovers exactly
-	//     mix(slab_own * sub_own, slab_nb * sub_nb, w)
-	// — a blend of products. Blending the substances and the masks separately
-	// and multiplying afterwards is a product of blends, which is a different
-	// quantity: at a 50/50 contact between a slab and a bare cell it draws a
-	// quarter of the bare cell's substance, a material that cell never shows.
-	vec4 sub_pre = mix(slab_own * sub, slab_nb * sub_nb, plate_edge_w);
 	// ...but the SAME average must not reach the crack relief, and this is the
 	// one place the two uses of the mask have to part company.
 	//
@@ -436,13 +439,35 @@ void fragment() {
 	// premultiplied form is the blend of per-cell products (see `sub_pre`).
 	// With `plate_edge_w` at 0 the two are arithmetically identical, so a
 	// resolved contact is unchanged.
-	vec3 stone_rgb = rock_color
-		+ sheet * plate_gate * (sub_pre.rgb - slab * rock_color);
-	float stone_rough = rock_roughness
-		+ sheet * plate_gate * (sub_pre.a - slab * rock_roughness);
+	// Each cell's FINAL surface is composed before the two are averaged.
+	//
+	// Averaging any earlier is a product of blends again, one level up: the
+	// ash-vs-stone choice is driven by `rock_exposure`, which is itself derived
+	// from the mask, so mixing an averaged stone colour by an averaged exposure
+	// reintroduces a material neither cell draws. At a 50/50 contact between a
+	// slab and a bare cell with the ash sheet full, that yielded 50% ash +
+	// 25% slab + 25% base rock where the correct answer is 50% ash + 50% slab.
+	//
+	// So resolve ash-vs-stone per cell, with that cell's own mask and its own
+	// exposure, and blend the two finished surfaces. With `plate_edge_w` at 0
+	// this is arithmetically identical to composing the owning cell alone, so a
+	// resolved contact and the plates-off path are both unchanged.
+	float mask_own = sheet * slab_own * plate_gate;
+	float mask_nb = sheet * slab_nb * plate_gate;
+	float exp_own = mix(rock_mix, max(rock_mix, sheet * slab_own), plate_gate);
+	float exp_nb = mix(rock_mix, max(rock_mix, sheet * slab_nb), plate_gate);
+	vec3 stone_rgb = mix(rock_color, sub.rgb, mask_own);
+	float stone_rough = mix(rock_roughness, sub.a, mask_own);
 	float eff_exposure = mix(rock_mix, rock_exposure, plate_gate);
 	crack *= eff_plate;
-	vec3 surface = mix(ash_color, stone_rgb, eff_exposure);
+	vec3 surface = mix(
+		mix(ash_color, stone_rgb, exp_own),
+		mix(ash_color, mix(rock_color, sub_nb.rgb, mask_nb), exp_nb),
+		plate_edge_w);
+	stone_rough = mix(
+		mix(ash_roughness, stone_rough, exp_own),
+		mix(ash_roughness, mix(rock_roughness, sub_nb.a, mask_nb), exp_nb),
+		plate_edge_w);
 	// Scorch pools in the low, sheltered drifts — the Ruin's burn, not shadow.
 	surface = mix(surface, scorch_color, smoothstep(0.62, 0.95, drift) * 0.35 * (1.0 - rock_mix));
 	// Grain modulates brightness slightly; kept subtle so it reads as texture
@@ -473,7 +498,10 @@ void fragment() {
 	// questions and compose cleanly: the REGION says how worn this part of the
 	// Reach is, the SLAB says what this particular piece of it is made of.
 	float region_rough = COLOR.a - 0.5;
-	ROUGHNESS = clamp(mix(ash_roughness, stone_rough, eff_exposure) + region_rough
+	// `stone_rough` already carries the ash-vs-stone resolve, per cell, from the
+	// surface composition above — blending it against ash a second time here
+	// would apply that choice twice.
+	ROUGHNESS = clamp(stone_rough + region_rough
 		- 0.06 * (grain - 0.5) * detail, 0.0, 1.0);
 	// Packed ash in a crack is matte, whatever the slab either side of it is.
 	ROUGHNESS = mix(ROUGHNESS, 1.0, crack * 0.5);

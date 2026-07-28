@@ -72,6 +72,7 @@ void fragment() {
 	float plate_edge_w = 0.0;
 	vec4 sub = vec4(rock_color, rock_roughness);
 	vec4 sub_nb = vec4(rock_color, rock_roughness);
+	float is_slab2 = 0.0;
 	float crack = 0.0;
 	float plate_fw = 0.0;
 	float crack_fw = 0.0;
@@ -88,9 +89,13 @@ void fragment() {
 		// coordinate. grad(f2 - f1) = normalize(uv - c2) - normalize(uv - c1).
 		vec2 ce1 = plate_uv - plate_c1;
 		vec2 ce2 = plate_uv - plate_c2;
-		float edge_fw = length(
-			ce2 * inversesqrt(max(dot(ce2, ce2), 1e-12))
-			- ce1 * inversesqrt(max(dot(ce1, ce1), 1e-12))) * plate_fw;
+		// Projected through both screen derivatives, as terrain.gdshader does:
+		// scaling by a single footprint scalar discards the separator's
+		// orientation against the pixel.
+		vec2 gsep_e = ce2 * inversesqrt(max(dot(ce2, ce2), 1e-12))
+			- ce1 * inversesqrt(max(dot(ce1, ce1), 1e-12));
+		float edge_fw = abs(dot(gsep_e, dFdx(plate_uv)))
+			+ abs(dot(gsep_e, dFdy(plate_uv)));
 		plate_edge_w = terrain_plate_edge_blend(f1, f2, edge_fw * 1.2);
 		// The same footprint average as the ground (#306). This path exists to
 		// resolve the IDENTICAL substance at the same world XZ, so leaving the
@@ -108,6 +113,7 @@ void fragment() {
 			+ 0.72 * 0.20 + 0.94 * 0.14;
 		sub = mix(vec4(mean_col, mean_rough), sub, plate_resolved);
 		sub_nb = mix(vec4(mean_col, mean_rough), sub_nb, plate_resolved);
+		is_slab2 = step(0.60, terrain_hash3(vec3(plate_id2 * 2.3, 19.0)));
 		float cw = max(crack_width, crack_fw * 1.2);
 		crack = 1.0 - smoothstep(0.0, cw, f2 - f1);
 		crack *= 1.0 - smoothstep(0.30, 0.85, plate_fw);
@@ -142,10 +148,8 @@ void fragment() {
 	// substance and mask separately and multiplying afterwards would show a
 	// quarter of a bare neighbour's substance at a slab-to-bare contact.
 	float slab_own = mix(0.40, is_slab, plate_resolved);
-	float slab_nb = mix(
-		0.40, step(0.60, terrain_hash3(vec3(plate_id2 * 2.3, 19.0))), plate_resolved);
+	float slab_nb = mix(0.40, is_slab2, plate_resolved);
 	float slab = mix(slab_own, slab_nb, plate_edge_w);
-	vec4 sub_pre = mix(slab_own * sub, slab_nb * sub_nb, plate_edge_w);
 	float plate_mask = sheet * slab;
 	float plate_mask_relief = sheet * slab_own;
 	float rock_exposure = max(rock_mix, plate_mask);
@@ -153,14 +157,26 @@ void fragment() {
 	vec3 base = vec3(UV, UV2.x);
 	float plate_gate = plates_enabled ? 1.0 : 0.0;
 	float eff_plate = plate_mask * plate_gate;
-	vec3 stone_rgb = rock_color
-		+ sheet * plate_gate * (sub_pre.rgb - slab * rock_color);
-	float stone_rough = rock_roughness
-		+ sheet * plate_gate * (sub_pre.a - slab * rock_roughness);
+	// Each cell's FINAL surface composed before averaging, as terrain.gdshader
+	// does and for the same reason: the ash-vs-stone choice is driven by the
+	// mask, so averaging before that resolve shows a material neither cell has.
+	float mask_own = sheet * slab_own * plate_gate;
+	float mask_nb = sheet * slab_nb * plate_gate;
+	float exp_own = mix(rock_mix, max(rock_mix, sheet * slab_own), plate_gate);
+	float exp_nb = mix(rock_mix, max(rock_mix, sheet * slab_nb), plate_gate);
+	vec3 stone_rgb = mix(rock_color, sub.rgb, mask_own);
+	float stone_rough = mix(rock_roughness, sub.a, mask_own);
 	float eff_exposure = mix(rock_mix, rock_exposure, plate_gate);
 	crack *= eff_plate;
 
-	vec3 surface = mix(ash_color, stone_rgb, eff_exposure);
+	vec3 surface = mix(
+		mix(ash_color, stone_rgb, exp_own),
+		mix(ash_color, mix(rock_color, sub_nb.rgb, mask_nb), exp_nb),
+		plate_edge_w);
+	stone_rough = mix(
+		mix(ash_roughness, stone_rough, exp_own),
+		mix(ash_roughness, mix(rock_roughness, sub_nb.a, mask_nb), exp_nb),
+		plate_edge_w);
 	surface = mix(
 		surface,
 		scorch_color,
@@ -173,8 +189,9 @@ void fragment() {
 
 	ALBEDO = base * surface * 2.0;
 	float region_rough = UV2.y - ash_roughness;
+	// `stone_rough` already carries the per-cell ash-vs-stone resolve.
 	ROUGHNESS = clamp(
-		mix(ash_roughness, stone_rough, eff_exposure) + region_rough
+		stone_rough + region_rough
 			- 0.06 * (grain - 0.5) * detail,
 		0.0,
 		1.0);
