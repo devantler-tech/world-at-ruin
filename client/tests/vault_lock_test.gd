@@ -204,20 +204,16 @@ func _ready() -> void:
 	if DirAccess.make_dir_absolute(_abs(lock)) != OK:
 		_fail("could not take the lock for the stamped-holder case")
 		return
-	var stamp := FileAccess.open(lock + "/" + FileLock.OWNER_FILE, FileAccess.WRITE)
-	if stamp == null:
-		_fail("could not write a foreign ownership stamp")
+	if FileLock._claim_ownership(lock, "999999-1") != OK:
+		_fail("could not claim a foreign ownership stamp")
 		return
-	stamp.store_string("999999-1")
-	stamp.close()
 	if SaveVault.persist_attunement(SaveVault.SHRINE_WARDENS):
 		_fail("a stamped foreign lock did not exclude a write")
 		return
 	if _read(PROBE) == "":
 		_fail("the vault vanished while a stamped foreign lock was held")
 		return
-	DirAccess.remove_absolute(_abs(lock + "/" + FileLock.OWNER_FILE))
-	DirAccess.remove_absolute(_abs(lock))
+	FileLock.remove_dir(lock)
 
 	# 11. The ownership guard, driven directly. A holder stamps the lock and can
 	# prove it still owns it; a stamp that has been replaced reads as NOT ours, so
@@ -231,10 +227,10 @@ func _ready() -> void:
 	if not FileLock.owns(PROBE):
 		_fail("a freshly acquired lock did not read as owned by this process")
 		return
-	if not FileAccess.file_exists(lock + "/" + FileLock.OWNER_FILE):
+	if not FileAccess.file_exists(FileLock.token_path(lock)):
 		_fail("acquiring the lock did not stamp ownership into it")
 		return
-	var hijack := FileAccess.open(lock + "/" + FileLock.OWNER_FILE, FileAccess.WRITE)
+	var hijack := FileAccess.open(FileLock.token_path(lock), FileAccess.WRITE)
 	if hijack == null:
 		_fail("could not overwrite the ownership stamp")
 		return
@@ -263,14 +259,13 @@ func _ready() -> void:
 	if not DirAccess.dir_exists_absolute(_abs(lock)):
 		_fail("releasing a lock owned by someone else DELETED it — a third writer could acquire mid-write")
 		return
-	if not FileAccess.file_exists(lock + "/" + FileLock.OWNER_FILE):
+	if not FileAccess.file_exists(FileLock.token_path(lock)):
 		_fail("releasing a foreign-held lock stripped its ownership stamp")
 		return
 	# That lock was deliberately left behind, so free the slot by hand before the
 	# next case — clear_locks_for_test() cannot, having no record of a lock this
 	# process no longer holds.
-	DirAccess.remove_absolute(_abs(lock + "/" + FileLock.OWNER_FILE))
-	DirAccess.remove_absolute(_abs(lock))
+	FileLock.remove_dir(lock)
 	FileLock.clear_for_test()
 
 	# 13. A releasing holder that STILL owns its lock does remove it — otherwise
@@ -293,12 +288,9 @@ func _ready() -> void:
 	if DirAccess.make_dir_absolute(_abs(orphan)) != OK:
 		_fail("could not simulate a crashed reclaimer's leftover copy")
 		return
-	var orphan_stamp := FileAccess.open(orphan + "/" + FileLock.OWNER_FILE, FileAccess.WRITE)
-	if orphan_stamp == null:
-		_fail("could not stamp the orphaned reclaim copy")
+	if FileLock._claim_ownership(orphan, "dead-1") != OK:
+		_fail("could not claim the orphaned reclaim copy")
 		return
-	orphan_stamp.store_string("dead-1")
-	orphan_stamp.close()
 	if DirAccess.make_dir_absolute(_abs(lock)) != OK:
 		_fail("could not simulate an abandoned lock alongside the orphan")
 		return
@@ -352,17 +344,18 @@ func _cleanup() -> void:
 	FileLock.clear_for_test()
 	SaveVault.clear_refusals_for_test()
 	var lock := FileLock.path_for(PROBE)
-	DirAccess.remove_absolute(_abs(lock + "/" + FileLock.OWNER_FILE))
-	DirAccess.remove_absolute(_abs(lock))
-	# Reclaim copies carry a per-ATTEMPT suffix, so they cannot be reconstructed by
-	# name — scan the directory for the prefix instead.
+	FileLock.remove_dir(lock)
+	# Reclaim AND release copies carry a per-ATTEMPT suffix, so they cannot be
+	# reconstructed by name — scan the directory for the prefixes instead.
 	var parent := lock.get_base_dir()
-	var reclaim_prefix := lock.get_file() + FileLock.RECLAIM_SUFFIX
+	var private_prefixes := [
+		lock.get_file() + FileLock.RECLAIM_SUFFIX,
+		lock.get_file() + FileLock.RELEASE_SUFFIX,
+	]
 	for entry: String in DirAccess.get_directories_at(parent):
-		if entry.begins_with(reclaim_prefix):
-			var dead := parent.path_join(entry)
-			DirAccess.remove_absolute(_abs(dead + "/" + FileLock.OWNER_FILE))
-			DirAccess.remove_absolute(_abs(dead))
+		for prefix: String in private_prefixes:
+			if entry.begins_with(prefix):
+				FileLock.remove_dir(parent.path_join(entry))
 	for path: String in [PROBE, PROBE + ".tmp"]:
 		if FileAccess.file_exists(path):
 			DirAccess.remove_absolute(_abs(path))
