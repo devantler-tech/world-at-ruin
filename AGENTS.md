@@ -808,7 +808,16 @@ everything shipped afterwards is held to.
     `client/tools/update_manifest_emit.tscn` inside `publish-macos` — **not** `publish-ghcr`, which
     has no checkout and no Godot, so it could only restate values instead of deriving them from the
     stamped `DevLog.VERSION`. The bytes are JCS (RFC 8785) canonical with **no trailing newline**,
-    because they are what a signature will cover.
+    because they are what a signature will cover. Its layer media type is
+    `application/vnd.devantler.worldatruin.client.manifest.v1+json`.
+  - **The manifest publishes a contract, never a delivery, and that is not merely "not done yet."**
+    A GHCR blob is not a plain HTTPS download — reading one takes an OCI token exchange first, which
+    is exactly what `verify-ghcr-public` does — while the client's `RollbackSelection` gates every
+    target on a bare whitespace-free `https://` address. So no URL we could publish today would be
+    fetchable by the definition the client enforces, and `pack.full` / `shell.download` stay omitted
+    (which is also the fail-closed value: `UpdateDecision` refuses a capability-raising pack rather
+    than offering one no player could roll back from). Settling how delivery is fetched is a design
+    decision, tracked as **#611** — do not add a URL to the manifest before it lands.
   - **The manifest's `sequence` is derived from the RELEASE VERSION, never from a clock** —
     `tools/manifest-sequence.sh`, pinned by `tools/manifest-sequence.test.sh`. A client refuses any
     manifest at or below the highest `sequence` it has accepted, so the mark must be monotonic in
