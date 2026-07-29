@@ -50,13 +50,9 @@ static func verify_signature(algorithm: Variant, public_key_pem: Variant,
 	if str(decoded_signature["error"]) != "":
 		return _refused("update signature %s" % str(decoded_signature["error"]))
 	var signature: PackedByteArray = decoded_signature["bytes"]
-	# A P-256 ECDSA signature is a short-form DER SEQUENCE of two INTEGERs.
-	# Mbed TLS validates both integers; this boundary pins the outer encoding so
-	# arbitrary binary input is never handed to it as if it were the agreed wire
-	# format.
-	if signature.size() < 8 or signature.size() > 72 \
-			or signature[0] != 0x30 or signature[1] != signature.size() - 2:
-		return _refused("update signature is not a DER-encoded P-256 ECDSA signature")
+	if not _is_canonical_p256_ecdsa_der(signature):
+		return _refused(
+			"update signature is not a canonical DER-encoded P-256 ECDSA signature")
 
 	var public_key := CryptoKey.new()
 	var load_error := public_key.load_from_string(str(public_key_pem), true)
@@ -126,6 +122,48 @@ static func _strict_base64(value: String) -> Dictionary:
 	if decoded.is_empty() or Marshalls.raw_to_base64(decoded) != value:
 		return {"bytes": PackedByteArray(), "error": "is not canonical base64"}
 	return {"bytes": decoded, "error": ""}
+
+
+## Require DER's unique minimal representation rather than accepting any
+## BER-compatible SEQUENCE that the engine can reduce to the same r/s values.
+## P-256 coordinates need at most 32 bytes plus one necessary sign-protection
+## zero, so every length is short-form and the whole signature is at most 72
+## bytes.
+static func _is_canonical_p256_ecdsa_der(signature: PackedByteArray) -> bool:
+	if signature.size() < 8 or signature.size() > 72 \
+			or signature[0] != 0x30 or signature[1] != signature.size() - 2:
+		return false
+
+	var after_r := _canonical_positive_der_integer_end(signature, 2)
+	if after_r < 0:
+		return false
+	var after_s := _canonical_positive_der_integer_end(signature, after_r)
+	return after_s == signature.size()
+
+
+## Return the first byte after one canonical positive short-form DER INTEGER,
+## or -1 when its tag, length, sign or leading-zero representation is invalid.
+static func _canonical_positive_der_integer_end(value: PackedByteArray, offset: int) -> int:
+	if offset < 0 or offset + 2 > value.size() or value[offset] != 0x02:
+		return -1
+
+	var integer_size := int(value[offset + 1])
+	if integer_size < 1 or integer_size > 33:
+		return -1
+	var content_start := offset + 2
+	var content_end := content_start + integer_size
+	if content_end > value.size():
+		return -1
+
+	var first := int(value[content_start])
+	if first == 0:
+		# Zero is not a valid ECDSA coordinate. Otherwise a leading zero is
+		# canonical only when it prevents the next byte from looking negative.
+		if integer_size == 1 or (int(value[content_start + 1]) & 0x80) == 0:
+			return -1
+	elif (first & 0x80) != 0:
+		return -1
+	return content_end
 
 
 static func _sha256(message: PackedByteArray) -> PackedByteArray:

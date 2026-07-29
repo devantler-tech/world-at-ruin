@@ -23,6 +23,7 @@ func _ready() -> void:
 	_test_independent_vector_verifies()
 	_test_tampered_message_is_refused()
 	_test_tampered_signature_is_refused()
+	_test_noncanonical_der_signature_is_refused()
 	_test_wrong_key_is_refused()
 	_test_malformed_inputs_fail_closed()
 	_test_unsupported_algorithm_is_refused()
@@ -77,6 +78,22 @@ func _test_tampered_signature_is_refused() -> void:
 	var got := _verify(str(_vector["message"]), Marshalls.raw_to_base64(raw),
 		str(_vector["public_key_path"]), str(_vector["algorithm"]))
 	_expect_refused(got, "a one-bit signature change")
+
+
+## Catches accepting a BER-compatible but non-DER encoding of the same valid
+## signature. The r value has an unnecessary leading zero; a permissive parser
+## can recover the original integer and verify it unless this boundary enforces
+## DER's unique minimal representation.
+func _test_noncanonical_der_signature_is_refused() -> void:
+	var padded_r := _verify(str(_vector["message"]),
+		str(_vector["noncanonical_r_signature_base64"]),
+		str(_vector["public_key_path"]), str(_vector["algorithm"]))
+	_expect_refused(padded_r, "the same signature with a non-minimal r INTEGER")
+
+	var padded_s := _verify(str(_vector["message"]),
+		str(_vector["noncanonical_s_signature_base64"]),
+		str(_vector["public_key_path"]), str(_vector["algorithm"]))
+	_expect_refused(padded_s, "the same signature with a non-minimal s INTEGER")
 
 
 ## Catches treating key parsing as verification or accidentally using a global

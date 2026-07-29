@@ -66,6 +66,7 @@ It accepts the independent vector and refuses:
 
 - a one-byte message change;
 - a one-bit signature change;
+- the same signature with non-minimal DER padding on either integer;
 - another valid P-256 public key;
 - malformed base64;
 - malformed public-key input; and
