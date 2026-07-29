@@ -2,7 +2,7 @@
 	"date": "2026-07-29",
 	"notes": [
 		"Walking into a sprint and easing back down can now stay continuous instead of snapping the wanderer's whole body between poses. Enable both previews with WAR_WALK_CYCLE=1 and WAR_RUN_CYCLE=1; ordinary play remains unchanged while either preview is off.",
-		"Every authored arm, leg and spine channel now crosses between the walk and run over a short eased transition while the stride itself keeps moving. Pressing or releasing sprint no longer resets the feet or jumps directly to the other silhouette.",
+		"Every authored arm and leg channel now crosses between the walk and run over a short eased transition while the stride itself keeps moving. Pressing or releasing sprint no longer resets the feet or jumps directly to the other silhouette.",
 		"The motion set is still deliberately rough: starts, stops, landing impact, directional lean, turn cues and camera response remain unauthored."
 	],
 	"title": "Walking can ease into a sprint",
