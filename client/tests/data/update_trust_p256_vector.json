@@ -1,0 +1,13 @@
+{
+  "_": [
+    "OpenSSL 3.6.3 cross-tool fixture for issue #582.",
+    "The private keys were discarded. Godot consumes only the message, DER signature, and public keys.",
+    "The signed message ends in LF because the independently generated input file does."
+  ],
+  "algorithm": "ecdsa-p256-sha256",
+  "message": "{\"channel\":\"live\",\"sequence\":42}\n",
+  "message_sha256": "d6c057c1f427530b4172533d585bfc59c0777e88cef373bf85a5e922833e697b",
+  "signature_base64": "MEQCIF5m/kAVXYRTUzNz/l1191DQzpebCxSkbQs6uPd58qclAiA2Je4EI1Z3hkYOTMHICOQH0lD8XcqwRTmQiyx3dcLwmQ==",
+  "public_key_path": "res://tests/data/update_trust_p256_public.pem",
+  "wrong_public_key_path": "res://tests/data/update_trust_p256_wrong_public.pem"
+}

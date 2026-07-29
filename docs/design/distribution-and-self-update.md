@@ -204,10 +204,11 @@ A small **signed JSON** document per channel, published by CI beside the artifac
   exceeds the target's — to the **shell** tier, so a rollback can never face a save it cannot read.
 - `key` — the certificate of the current signing key, signed by the offline **root** key baked into
   the shell (see Signing) — this is what lets a signing key rotate without a reinstall. It carries
-  `id` (what a revocation list names), `epoch` (the monotonic anti-rollback counter the decision core
-  reads), and the validity window `not_before` / `not_after` as canonical UTC timestamps. The decision
-  core requires all four whenever the block is present; the root signature over it is verified at the
-  crypto boundary (see Signing).
+  `algorithm` (`ecdsa-p256-sha256`), `public_key` (a PEM P-256 SubjectPublicKeyInfo), `id` (what a
+  revocation list names), `epoch` (the monotonic anti-rollback counter the decision core reads), and
+  the validity window `not_before` / `not_after` as canonical UTC timestamps. The decision core
+  requires the four fields it consumes whenever the block is present; the trust boundary validates
+  the algorithm/key fields and root signature before the block reaches that core (see Signing).
 - `revocation` — the root-signed, monotonically versioned revoked-key list **plus `head_url`**, the
   independently fetched root-signed **revocation head** whose version acts as a floor (see Signing), so
   a stale embedded block cannot be masked by a freshly signed manifest.
@@ -243,8 +244,10 @@ would tell a client where to *fetch* something is withheld, and each omission is
   monolithic ZIP cannot simply be re-labelled a *shell* artifact instead of a pack: that is the same
   unauthorized download. A client following the envelope to a `shell_update` finds nowhere to go and
   keeps playing — the safe failure.
-- **`signature` / `key` / `revocation`** — the root of trust is child 6, unstarted. The published OCI
-  artifact is cosign-signed by digest, which is a real but *different* integrity property.
+- **`signature` / `key` / `revocation`** — the Godot-native ECDSA P-256 verifier exists, but the root
+  public key, signing custody, certificate/revocation publisher, and trust-chain caller remain child 6.
+  The published OCI artifact is cosign-signed by digest, which is a real but *different* integrity
+  property.
 - **`rollback_targets`** — empty, because no mountable content pack is retained. The published
   `v0.52.0` monolithic app is the whole-app rollback for save capability 3, but its `.app` ZIP is
   deliberately not advertised to the pack selector. Empty is the fail-closed pack value: it makes the
@@ -298,14 +301,18 @@ will expire:
   consistent with no-seasons/no-resets. The schema permits named channels for a future `canary`.
 - **Signing & a rotatable root of trust.** Packs and manifests are signed in CI; the client verifies the
   signature + `sha256` before mounting. The signing bytes are **pinned** — a canonical JSON profile
-  (sorted keys, UTF-8, the `signature` field excluded), an **Ed25519** signature, base64 encoding — so CI
-  and the client never disagree on what was signed. Critically the first shell bakes in a **rotatable
-  root of trust, not a single signing key**: a long-lived **root key** (offline; only its public half is
-  in the shell) signs short-lived **signing keys**, and the manifest's `key` field carries the current
-  signing key's certificate. A compromised or lost *signing* key is then rotated by signing a new one
-  with the root — **no reinstall**, even while shell updates are deferred. Only root-key compromise needs
-  an out-of-band shell update, so the root is guarded hardest (host least-privilege, child 6). This
-  reuses the CI trust model that already runs `license-guard` and the CLA gate.
+  (sorted keys, UTF-8, the `signature` field excluded), SHA-256, and an **ECDSA P-256** signature encoded
+  as ASN.1 DER then canonical base64 — so CI and the client never disagree on what was signed. The
+  production verifier is `UpdateTrust`, pinned by an independent OpenSSL vector and negative
+  message/signature/key/encoding cases; [ADR 0002](../adr/0002-use-ecdsa-p256-for-client-update-trust.md)
+  records why this uses Godot's built-in verifier rather than an unaudited Ed25519 implementation or a
+  new native extension. Critically the first shell bakes in a **rotatable root of trust, not a single
+  signing key**: a long-lived **root key** (offline; only its public half is in the shell) signs
+  short-lived **signing keys**, and the manifest's `key` field carries the current signing key's
+  certificate. A compromised or lost *signing* key is then rotated by signing a new one with the root —
+  **no reinstall**, even while shell updates are deferred. Only root-key compromise needs an
+  out-of-band shell update, so the root is guarded hardest (host least-privilege, child 6). This reuses
+  the CI trust model that already runs `license-guard` and the CLA gate.
   - **Rotation must also revoke — not just re-sign.** Re-signing with the root does not by itself stop an
     attacker who kept a compromised *signing* key. So each signing-key certificate carries a **validity
     window** and a **monotonic key epoch**, the client **persists the highest epoch it has seen and
@@ -358,11 +365,13 @@ stale cache, or engine change can strand or subvert a client:
   construction, and an unreadable value blocks rather than reopening the path. Clients that never
   adopted certificates are unaffected, so pre-certificate publications stay readable.
   **Root verification of that certificate remains key-custody child 6**, together with root-signed
-  revocation and the independently fresh revocation head. The decision core verifies no signatures —
-  it performs no I/O at all — so a certificate is trusted exactly as far as the manifest signature
-  carrying it: enough to stop a keyless replayer, not yet enough to stop a compromised key minting
-  its own certificate. Reading the epoch from the certificate is what confines closing that gap to
-  the crypto boundary, with no further change to the decision core.
+  revocation and the independently fresh revocation head. `UpdateTrust` supplies the production
+  ECDSA verification primitive, but no updater caller or root material invokes it yet. The decision
+  core verifies no signatures — it performs no I/O at all — so a certificate currently remains
+  trusted exactly as far as the manifest signature carrying it: enough to stop a keyless replayer,
+  not yet enough to stop a compromised key minting its own certificate. Reading the epoch from the
+  certificate confines closing that gap to the trust-chain caller, with no further change to the
+  decision core.
   - **The persisted sequence alone is NOT enough, so contraction waits out the TTL.** A returning or
     freshly-installed client has no high-water mark, so an unexpired cached manifest at sequence `N`
     looks perfectly valid to it even after the server contracted per `N+1` — every signature and expiry
