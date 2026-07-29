@@ -71,6 +71,18 @@ const VANTAGES: Array = [
 	# for what swallows the rest. A frame that cannot show the thing it is
 	# evidence for is worse than no frame.
 	["bonepale", Vector3(-58.0, 5.5, 2.0), Vector3(-72.0, 1.0, -4.0)],
+	# Looking south-west across the open ground at the cinderreach high country
+	# (#327). The other outdoor vantages cannot evidence a LANDFORM: they frame
+	# ashflats, and the strongest of them moves only 5.38% of pixels when a whole
+	# region changes height, because they are near-field cameras chosen to show
+	# ground PALETTE — which reads underfoot and is gone by mid-distance.
+	#
+	# Shape is the opposite: a silhouette survives the haze that eats colour, so
+	# the camera that evidences it has to stand BACK and look ACROSS. This one
+	# moves 33.61% of pixels on that change. Committed rather than taken ad hoc
+	# precisely because a self-chosen angle is the one that can flatter — fixed
+	# cameras are what make a later regression here impossible to hide.
+	["cinderreach", Vector3(-52.0, 9.0, -34.0), Vector3(-92.0, 2.0, -74.0)],
 ]
 
 ## Frames to let the world build before the first shot (generation is synchronous

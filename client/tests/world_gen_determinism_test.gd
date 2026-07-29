@@ -106,7 +106,14 @@ const HALF := WorldGen.SIZE / 2.0
 ## deletion yields precisely this value. The cave rock mesh stays pinned
 ## independently by cave_system_determinism_test (verts=10198 hash=767321522),
 ## which is unchanged across the fix.
-const GOLDEN_FINGERPRINT := "dc6215d4"
+## (#327): `cinderreach` carries the Reach's tallest landform, so the terrain
+## grid under that region moved. Confined, and measured rather than asserted:
+## hashing `height_at` over each region's decided interior separately gives
+## byte-identical values for `ashflats`, `bonepale` and `rustmoor` across the
+## change, and a different one for `cinderreach` alone. The shrine's ground is
+## inside `ashflats` and did not move at all — `region_landform_test` arm 2
+## measures its eased core at 0.000000 mm.
+const GOLDEN_FINGERPRINT := "9cdce7d5"
 
 
 

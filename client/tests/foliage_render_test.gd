@@ -38,7 +38,23 @@ const HALF := WorldGen.SIZE / 2.0
 ## _fingerprint). Regenerate deliberately (record mode prints it) only when
 ## placement is intentionally changed; like the #58 world golden, a change
 ## here is a reviewed act.
-const GOLDEN_FINGERPRINT := "5e2577e7"
+## (#327): `cinderreach` carries the Reach's tallest landform, and cover reads
+## the ground rather than sitting on top of it — so the whole composition
+## re-lands. Three couplings, all of them the intended design rather than
+## collateral: props rest ON the surface, so their height follows it; the kind
+## mix reads local slope (`WorldGen._foliage_kind_weights_at`), so steeper
+## ground draws rubble where it drew scrub; and density thins with BOTH
+## elevation and slope (`_foliage_density_at`), so high open ground carries
+## less cover than sheltered hollows.
+##
+## 🔴 That last one is why this golden moves world-wide rather than only inside
+## `cinderreach`. Density gates acceptance, acceptance consumes the shared
+## candidate stream, and the scatter fills to a fixed count — so thinning cover
+## in one region re-deals the draws everywhere after it. Measured: 2400 props
+## before and after, 371 of the still-matching props changed height, and the
+## rest of the movement is that re-deal. The scatter RULE is untouched; a
+## change here still has to be a reviewed act.
+const GOLDEN_FINGERPRINT := "ba6074d1"
 
 
 func _ready() -> void:

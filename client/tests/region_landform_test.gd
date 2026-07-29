@@ -20,8 +20,10 @@ extends Node
 ##      landform change must not smuggle a bulk height change in with it.
 ##   4. CONTINUITY — the shipped height field has no step, including where
 ##      three regions meet.
-##   5. WALKABLE — the worst open-ground grade stays under the floor limit.
-##   6. THE REGIONS DIFFER IN HEIGHT — measured relief separates them.
+##   5. WALKABLE — every region's own worst grade stays under its ratchet, and
+##      the world's worst stays under the floor limit.
+##   6. THE REGIONS DIFFER IN HEIGHT — measured relief separates them, and the
+##      tallest is not the one the player starts in.
 ##   7. RIDGING ACTUALLY CREASES — the crease knob does something no amount of
 ##      amplitude could do.
 ##
@@ -30,44 +32,86 @@ extends Node
 ## that world is continuous, walkable, mean-zero and identity-preserving, and it
 ## is also the single uniform landform this change exists to remove.
 
-const EXTENT := 220.0
-
-## Lattice spacing for the grade and relief sweeps, in metres. Fine enough to
-## resolve a grade at the scale a walking character meets one; the guard states
-## its own sampling scale rather than implying a true continuous maximum.
+## The world's edge length, taken FROM the world rather than restated.
 ##
-## The recorded numbers below are sampling-dependent and are NOT comparable
-## across steps — the same baseline world measures 41.9 degrees at 1 m and 44.4
-## at 0.5 m. Change this and every threshold here has to be re-measured.
+## 🔴 Region sites are dealt across an extent, so sites built from one extent and
+## faces swept over another attribute ground to the wrong regions — quietly, and
+## in a way that lets a region-specific regression evade its own ratchet while an
+## unrelated one fails. Both numbers were 220.0, so a hard-coded copy here was
+## correct and would have stayed correct right up until someone resized the
+## world. `WorldGen` deals its own sites from `SIZE`; so does this suite now.
+const EXTENT := WorldGen.SIZE
+
+## Lattice spacing for the RELIEF sweep, in metres.
+##
+## The relief figures below are sampling-dependent and are NOT comparable across
+## steps, so changing this means re-measuring every one of them. The grade arms
+## do not use it: a collision face is a fixed piece of the world, so its angle
+## is a property of the mesh rather than of how densely anything sampled it.
 const SAMPLE_STEP := 0.5
 
 ## Godot's `CharacterBody3D.floor_max_angle` default, which the wanderer uses
 ## unchanged: above this a surface stops being floor and becomes wall.
 const FLOOR_MAX_ANGLE_DEG := 45.0
 
-## The worst grade the open ground may reach, in degrees. A RATCHET, not a
-## safety margin.
+## The steepest collision FACE the open terrain may reach anywhere, in degrees.
+## A RATCHET, not a safety margin.
 ##
-## Measured at `SAMPLE_STEP` on the shipped seed, away from the massif: the
-## PRE-landform world already reached **44.42** degrees against a 45 degree
-## floor limit, and this build reaches **43.00** — the landform axis leaves the
-## open ground gentler than it found it, because every region other than
-## `ashflats` is flatter than the baseline.
+## Measured on the shipped seed away from the massif: this world reaches
+## **44.18** degrees against a 45 degree floor limit. That is 0.82 degrees of
+## real margin, and it is genuinely that tight — the Reach has always run this
+## close to the limit; only a gentler proxy made it look otherwise.
 ##
-## The bar is therefore set just above THIS build rather than just under the
-## floor limit, and that is deliberate: the pre-landform world would NOT pass it.
-## Walkability was already a near miss here, so a threshold at 44.9 would licence
-## spending 1.9 degrees of headroom the world never had. Ratchet it down as the
+## The bar is set just above THIS world rather than just under the floor limit,
+## and that is deliberate: a threshold at 44.9 would licence letting the ground
+## get steeper still without anything here noticing. Ratchet it down as the
 ## ground gets gentler; never up to accommodate a re-tune.
-const MAX_GRADE_DEG := 44.0
+const MAX_GRADE_DEG := 44.5
+
+## The steepest face each region's OWN decided interior may reach, in degrees.
+## Ratchets, measured on the shipped seed.
+##
+## 🔴 This is the walkability law; `MAX_GRADE_DEG` above is only its weakest
+## form. A global maximum is held by whichever region is steepest, so it is
+## blind to every other one — and not by a little. Measured: raising
+## `bonepale`'s amplitude to 0.62 takes its own ground from 36.92 degrees to
+## **39.76**, a change large enough to alter what that region is to walk across,
+## while the global reading does not move at all — 44.18 either way, to the
+## hundredth. A global-only arm stays green on exactly that. Per region, the
+## drift has nowhere to hide.
+##
+## Measured: cinderreach 43.38, ashflats 41.55, rustmoor 41.04, bonepale 36.92.
+## Each bar sits just above its own region, which is what makes them ratchets
+## rather than a shared allowance the regions can trade between themselves.
+##
+## These sit BELOW the global bar because a region only owns faces whose three
+## vertices agree on it (see `_sweep_face_grades`): the world's steepest ground
+## is in the blend bands between regions, which belong to none of them.
+const MAX_REGION_GRADE_DEG := {
+	&"ashflats": 42.0,
+	&"cinderreach": 43.8,
+	&"rustmoor": 41.5,
+	&"bonepale": 37.5,
+}
 
 ## The massif's buried skirt is DELIBERATELY a cliff — the heightfield cannot
 ## have holes, so the terrain dips under the cave floors and meets the rock hull
 ## below ground (see `world_gen._prepare_starter_cave`). It is not walkable
-## ground and never was: including it measures 70 degrees on this build and 75
-## on the baseline, which says nothing about either landform. Excluded by
-## radius from `CAVE_SITE`, generously — over-excluding costs sample count,
-## under-excluding measures the wrong thing.
+## ground and never was: including it puts the world's steepest face at 66.33
+## degrees, which says nothing about any landform. Excluded by radius from
+## `CAVE_SITE`, generously — over-excluding costs sample count, under-excluding
+## measures the wrong thing.
+##
+## The test is on the face CENTROID, so a triangle can straddle the boundary with
+## a vertex inside the radius. That is deliberate, and measured rather than
+## assumed: at `SIZE / QUADS` = 1.72 m a triangle reaches at most ~1.6 m from its
+## centroid, and the 135 faces in that band grade **1.27 to 34.64 degrees**
+## (median 15.51). The skirt's cliff is nowhere near the boundary — including the
+## buried skirt puts the world's worst face at 66.33 — so no straddling face can
+## reach, let alone set, a maximum of 44.18. A vertex/edge intersection test would
+## change no reading here while discarding 135 samples of ordinary walkable
+## ground. Re-measure this band before widening the rule: it is the RADIUS doing
+## the work, not the shape of the test.
 const CAVE_KEEPOUT := 40.0
 
 ## Relief — the standard deviation of ground height inside a region's decided
@@ -76,20 +120,31 @@ const CAVE_KEEPOUT := 40.0
 ## that describe no region, and both inside `ashflats`, so leaving them in would
 ## understate the baseline everything else is compared against).
 ##
-## Measured: ashflats 2.218, rustmoor 1.549, cinderreach 1.120, bonepale 1.017.
+## Measured: cinderreach 2.324, ashflats 2.218, rustmoor 1.549, bonepale 1.017.
 ## The floors sit under those with margin. They exist to catch the axis being
 ## flattened, not to pin one particular landscape — a re-tune that keeps the
 ## regions distinct is free to move them.
 const RELIEF_FLOOR := {
 	&"ashflats": 1.90,
 	&"rustmoor": 1.20,
-	&"cinderreach": 0.94,
+	&"cinderreach": 2.05,
 	&"bonepale": 0.85,
 }
 
+## The region that must stand tallest, and by how much over the runner-up.
+##
+## Named rather than discovered, for the reason `CREASED_REGION` is: the point
+## of the landform axis is that the Reach has high ground that is NOT the ground
+## the player starts on, and a test that simply asked "is some region tallest"
+## would stay green if that quietly went back to being `ashflats`. Measured
+## margin on the shipped seed is 0.106 m (2.324 against 2.218).
+const TALLEST_REGION := &"cinderreach"
+const TALLEST_MARGIN := 0.05
+
 ## How far apart the tallest and flattest regions' relief must sit, in metres.
-## Measured spread on the shipped seed is 1.20 m. Without a margin, "these
-## regions differ" would pass on a difference no player could see.
+## Measured spread on the shipped seed is 1.31 m (cinderreach 2.324 against
+## bonepale 1.017). Without a margin, "these regions differ" would pass on a
+## difference no player could see.
 const RELIEF_SPREAD := 0.85
 
 ## The second-difference ratio a strongly-ridged region must reach against the
@@ -103,14 +158,17 @@ const CREASED_REGION := &"bonepale"
 
 var _failures: Array[String] = []
 var _world: WorldGen
-## The lattice sweep is the expensive part of this suite, and two arms read it.
+## The lattice sweep is the expensive part of this suite, and three arms read it.
 var _worst_grade := 0.0
+## Worst grade inside each region's decided interior, in degrees. Filled by the
+## same sweep that produces `_worst_grade`.
+var _region_worst := {}
 
 
 func _ready() -> void:
 	_world = WorldGen.new()
 	add_child(_world)
-	_worst_grade = _worst_open_grade_deg()
+	_worst_grade = _sweep_face_grades()
 	var relief := _measure_relief()
 
 	_test_every_region_declares_an_affordable_landform()
@@ -121,13 +179,23 @@ func _ready() -> void:
 	_test_regions_differ_in_relief(relief)
 	_test_ridging_creases_the_field()
 
-	print("region relief (m): ashflats %.3f, rustmoor %.3f, cinderreach %.3f, bonepale %.3f; worst open grade %.2f deg" %
+	print("region relief (m): ashflats %.3f, rustmoor %.3f, cinderreach %.3f, bonepale %.3f; worst collision-face grade %.2f deg" %
 		[
 			float(relief.get(&"ashflats", 0.0)),
 			float(relief.get(&"rustmoor", 0.0)),
 			float(relief.get(&"cinderreach", 0.0)),
 			float(relief.get(&"bonepale", 0.0)),
 			_worst_grade,
+		])
+	# Printed per region because these are the numbers the ratchets are set
+	# from: a re-tune has to be able to read its own measurement off the run
+	# rather than re-deriving it in a throwaway harness.
+	print("worst grade per region (deg): ashflats %.2f, rustmoor %.2f, cinderreach %.2f, bonepale %.2f" %
+		[
+			float(_region_worst.get(&"ashflats", 0.0)),
+			float(_region_worst.get(&"rustmoor", 0.0)),
+			float(_region_worst.get(&"cinderreach", 0.0)),
+			float(_region_worst.get(&"bonepale", 0.0)),
 		])
 
 	if _failures.is_empty():
@@ -146,12 +214,15 @@ func _fail(msg: String) -> void:
 ## 1. Every region carries a landform, in ranges that mean something, and one it
 ## can pay for.
 ##
-## The budget arm is the one that matters. A region's landform costs
-## `amp * lerp(1, 2, ridged)` in gradient, and the Reach's ground is already at
-## its walkability ceiling, so overspending produces a region the wanderer can
-## see and cannot enter. This is the cheap, exact form of arm 5 — it names the
-## offending region and the number, where the lattice sweep can only report that
-## somewhere in the world is too steep.
+## The budget arm is a COARSE backstop, not the walkability law — arm 5 is, and
+## it is the measured one. `amp * lerp(1, 2, ridged)` cannot price a region's
+## real steepness, because a region's steepest face is carried substantially by
+## the global detail layer and by its boundaries, neither of which scales with
+## `amp` (see `GroundRegions.LANDFORM_GRADIENT_BUDGET` — the model puts
+## `cinderreach` at 46.5 degrees where it measures 43.38, over-predicting by
+## 3.12 and forbidding a landform that is in fact walkable). What this arm still
+## buys is a cheap, named failure for a landform that is absurd on its face,
+## before the sweep has to find it.
 func _test_every_region_declares_an_affordable_landform() -> void:
 	for reg: Dictionary in GroundRegions.REGIONS:
 		var region_name: StringName = reg[&"name"]
@@ -302,27 +373,86 @@ func _test_ridge_is_mean_zero() -> void:
 ## and it exists for the same reason: a landform blended against the runner-up
 ## region only would jump wherever the SECOND-nearest site changes identity
 ## while the owner stays put, and that discontinuity hides where the THIRD site
-## takes over. Sweeping a lattice rather than walking site to site is what puts
+## takes over. Sweeping every face rather than walking site to site is what puts
 ## those places inside the test.
 ##
-## A step shows up as a grade far beyond anything noise of this amplitude can
-## produce, so the bound is deliberately loose — arm 5 is the tight one. Stated
-## as a grade rather than a raw delta so it means the same at any sampling step.
+## A step shows up as a face angle far beyond anything noise of this amplitude
+## can produce, so the bound is deliberately loose — arm 5 is the tight one.
+## Stated as an angle rather than a raw height delta because the mesh's quads
+## are a fixed size, so the two carry the same information and the angle is the
+## one the floor limit is also expressed in.
 func _test_landform_is_continuous() -> void:
 	if _worst_grade >= 80.0:
-		_fail("the height field steps: %.2f deg at %.1f m sampling is a discontinuity, not a slope" %
-			[_worst_grade, SAMPLE_STEP])
+		_fail("the collision surface steps: a %.2f deg face is a discontinuity, not a slope" %
+			_worst_grade)
 
 
-## 5. The open ground stays floor rather than becoming wall.
+## 5. The open ground stays floor rather than becoming wall — per region, and
+## then everywhere.
+##
+## The per-region bars are the real law. A single world-wide maximum is held by
+## whichever region is steepest and is therefore blind to every other one, so a
+## region can take on a whole degree of extra steepness — enough to change what
+## that ground IS to walk across — without moving the number at all.
 func _test_terrain_stays_walkable() -> void:
+	var declared := {}
+	for reg: Dictionary in GroundRegions.REGIONS:
+		var region_name: StringName = reg[&"name"]
+		declared[region_name] = true
+		if not MAX_REGION_GRADE_DEG.has(region_name):
+			_fail("region %s has no grade ratchet — a new region must be measured, not left unguarded" %
+				region_name)
+			continue
+		var measured := float(_region_worst.get(region_name, 0.0))
+		if measured <= 0.0:
+			_fail("region %s reported no grade at all — the sweep never attributed a sample to it" %
+				region_name)
+			continue
+		var bar := float(MAX_REGION_GRADE_DEG[region_name])
+		if measured > bar:
+			_fail("region %s reaches %.2f deg inside its own ground, over its %.1f deg ratchet (character floor limit %.1f) — its landform is too steep for what it sits on" %
+				[region_name, measured, bar, FLOOR_MAX_ANGLE_DEG])
+
+	# The other face of the same coverage defect. This loop reads the region
+	# list, so a ratchet left behind for a region that no longer exists is never
+	# consulted — it cannot fail, and it cannot drag a measurement the way a
+	# stale RELIEF_FLOOR key drags the spread in arm 6. What it does is read as
+	# coverage: a bar sitting in the table implies some ground is being held to
+	# it. Rejecting it is what makes arm 6's claim that these two checks mirror
+	# each other true, rather than half true.
+	for region_name: StringName in MAX_REGION_GRADE_DEG:
+		if not declared.has(region_name):
+			_fail("MAX_REGION_GRADE_DEG carries %s, which is not a declared region — a ratchet for ground that does not exist guards nothing while reading as coverage" %
+				region_name)
+
 	if _worst_grade > MAX_GRADE_DEG:
-		_fail("worst open grade %.2f deg exceeds %.1f deg (character floor limit %.1f) — a region's landform is too steep for the ground under it" %
+		_fail("worst collision-face grade %.2f deg exceeds %.1f deg (character floor limit %.1f) — the world has ground the wanderer cannot walk up, and it is not inside any one region" %
 			[_worst_grade, MAX_GRADE_DEG, FLOOR_MAX_ANGLE_DEG])
 
 
 ## 6. The regions are actually different heights.
+##
+## 🔴 Coverage is checked BOTH ways before anything is measured, because every
+## arm here iterates `RELIEF_FLOOR` rather than the region list. A region added
+## to `GroundRegions.REGIONS` and forgotten here would be silently absent from
+## the floor check, from the spread, and from the tallest-region comparison —
+## exempt from the very law this arm exists to enforce, with the suite green. A
+## key left behind for a region that no longer exists is the same defect wearing
+## the other face: it contributes a phantom 0.0 m to the spread. This mirrors
+## the grade-ratchet coverage check in arm 5; the two must not drift apart.
 func _test_regions_differ_in_relief(relief: Dictionary) -> void:
+	var declared := {}
+	for reg: Dictionary in GroundRegions.REGIONS:
+		var region_name: StringName = reg[&"name"]
+		declared[region_name] = true
+		if not RELIEF_FLOOR.has(region_name):
+			_fail("region %s has no relief floor — a new region must be measured, not left unguarded" %
+				region_name)
+	for region_name: StringName in RELIEF_FLOOR:
+		if not declared.has(region_name):
+			_fail("RELIEF_FLOOR carries %s, which is not a declared region — a stale key measures nothing and drags the spread" %
+				region_name)
+
 	for region_name: StringName in RELIEF_FLOOR:
 		var measured := float(relief.get(region_name, 0.0))
 		var relief_floor := float(RELIEF_FLOOR[region_name])
@@ -339,6 +469,24 @@ func _test_regions_differ_in_relief(relief: Dictionary) -> void:
 	if tallest - flattest < RELIEF_SPREAD:
 		_fail("region relief spans only %.3f m (%.3f to %.3f), under the %.2f m spread — the regions are one landform in four paints" %
 			[tallest - flattest, flattest, tallest, RELIEF_SPREAD])
+
+	# The high ground is somewhere the player has to GO. Without this, every
+	# other arm here passes on a world whose tallest region is the one the
+	# shrine stands in — which is the world where exploring costs relief
+	# instead of gaining it.
+	var champion := float(relief.get(TALLEST_REGION, 0.0))
+	var runner_up := -INF
+	var runner_up_name := &"(none)"
+	for region_name: StringName in RELIEF_FLOOR:
+		if region_name == TALLEST_REGION:
+			continue
+		var measured := float(relief.get(region_name, 0.0))
+		if measured > runner_up:
+			runner_up = measured
+			runner_up_name = region_name
+	if champion - runner_up < TALLEST_MARGIN:
+		_fail("%s stands %.3f m against %s's %.3f m — the Reach's high ground is no longer the region the player has to travel to" %
+			[TALLEST_REGION, champion, runner_up_name, runner_up])
 
 
 ## 7. Ridging creases the field, and creasing is not something amplitude can do.
@@ -452,33 +600,79 @@ func _base_field_transects() -> Array[PackedFloat32Array]:
 	return out
 
 
-## The steepest grade between lattice neighbours over the OPEN terrain, in
-## degrees. Measured through `height_at` — the shipped function, not a
-## re-derivation of it — with the massif's deliberate skirt excluded.
-func _worst_open_grade_deg() -> float:
-	var half := EXTENT / 2.0
-	var count := int(EXTENT / SAMPLE_STEP)
+## in one decided region.
+func _face_region(sites: Array, a: Vector2, b: Vector2, c: Vector2) -> StringName:
+	var owner := -1
+	for v: Vector2 in [a, b, c]:
+		var at := GroundRegions.region_for(sites, v.x, v.y)
+		if float(at[&"blend"]) < 1.0:
+			return &""
+		var region: int = at[&"region"]
+		if owner == -1:
+			owner = region
+		elif owner != region:
+			return &""
+	return GroundRegions.REGIONS[owner][&"name"]
+
+
+## The steepest COLLISION FACE over the open terrain, in degrees, with the
+## massif's deliberate skirt excluded. Fills `_region_worst` from the same pass.
+##
+## 🔴 Both halves of this are load-bearing, and the cheaper version of each is
+## wrong in a way that stays green.
+##
+## **The angle is a face normal, not a cardinal rise.** A wanderer is classified
+## against the normal of the triangle under them, and that is not recoverable
+## from one axis: ground rising along BOTH axes at 40 degrees is a ~50 degree
+## face, so a per-axis test can report every component under the bar while the
+## surface the player meets is a wall. Measured on this field, `max(|dx|, |dz|)`
+## reads 42.54 degrees where the true gradient is 50.72 — 8.18 degrees of
+## understatement, straddling the very limit being guarded.
+##
+## **The surface is the baked mesh, not `height_at`.** Physics stands on the
+## piecewise-linear grid, so that is what must be under the limit; nothing walks
+## on the smooth field. Read through the shipped `surface_normal_at` at each
+## face's own centroid — one call per triangle, exactly the faces
+## `_build_terrain` emits, rather than a re-derivation that could drift from the
+## real split convention.
+##
+## **Attribution needs all THREE vertices decided and agreeing.** Testing only
+## the centroid would charge a face straddling a boundary to whichever region
+## owns its middle, so retuning a NEIGHBOUR could trip this region's supposedly
+## independent ratchet. Faces spanning a blend band therefore belong to no
+## region; `MAX_GRADE_DEG` covers them, and that is most of what it is still for.
+func _sweep_face_grades() -> float:
+	var sites := GroundRegions.sites(WorldGen.WORLD_SEED, EXTENT)
+	var step := WorldGen.SIZE / WorldGen.QUADS
+	var half := WorldGen.SIZE / 2.0
 	var worst := 0.0
-	var row := PackedFloat32Array()
-	var prev := PackedFloat32Array()
-	row.resize(count + 1)
-	prev.resize(count + 1)
-	for iz in count + 1:
-		var z := iz * SAMPLE_STEP - half
-		for ix in count + 1:
-			row[ix] = _world.height_at(ix * SAMPLE_STEP - half, z)
-		for ix in count + 1:
-			var x := ix * SAMPLE_STEP - half
-			if (Vector2(x, z) - WorldGen.CAVE_SITE).length() <= CAVE_KEEPOUT:
-				continue
-			if ix > 0:
-				worst = maxf(worst, absf(row[ix] - row[ix - 1]))
-			if iz > 0:
-				worst = maxf(worst, absf(row[ix] - prev[ix]))
-		var swap := prev
-		prev = row
-		row = swap
-	return rad_to_deg(atan(worst / SAMPLE_STEP))
+	for reg: Dictionary in GroundRegions.REGIONS:
+		_region_worst[reg[&"name"]] = 0.0
+	for iz in WorldGen.QUADS:
+		for ix in WorldGen.QUADS:
+			var x0 := ix * step - half
+			var z0 := iz * step - half
+			var x1 := x0 + step
+			var z1 := z0 + step
+			# The same two triangles `_build_terrain` splits each quad into.
+			for tri: Array in [
+				[Vector2(x0, z0), Vector2(x1, z1), Vector2(x1, z0)],
+				[Vector2(x0, z0), Vector2(x0, z1), Vector2(x1, z1)],
+			]:
+				var a: Vector2 = tri[0]
+				var b: Vector2 = tri[1]
+				var c: Vector2 = tri[2]
+				var centre := (a + b + c) / 3.0
+				if (centre - WorldGen.CAVE_SITE).length() <= CAVE_KEEPOUT:
+					continue
+				var n := _world.surface_normal_at(centre.x, centre.y)
+				var deg := rad_to_deg(acos(clampf(absf(n.y), -1.0, 1.0)))
+				worst = maxf(worst, deg)
+				var owner := _face_region(sites, a, b, c)
+				if owner == &"":
+					continue
+				_region_worst[owner] = maxf(float(_region_worst[owner]), deg)
+	return worst
 
 
 ## Relief per region: the standard deviation of ground height across each
