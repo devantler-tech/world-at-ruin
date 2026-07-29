@@ -6,11 +6,9 @@ extends Node3D
 ##
 ## "Telegraphs must read against the ground at a glance" is an art
 ## constraint judged by eye in the REAL lighting, never a headless
-## assertion — so this scene rebuilds the shipping overworld light rig
-## (sun/sky/environment values mirrored from `main.gd::_build_environment`;
-## if that rig changes, re-copy it — a preview under different light judges
-## nothing) over a noisy ashen ground, and loops a circle cast and a cone
-## cast side by side with a player-height capsule for scale.
+## assertion — so this scene uses the shipping Reach atmosphere over a noisy
+## ashen ground, and loops a circle cast and a cone cast side by side with a
+## player-height capsule for scale.
 ##
 ## Run windowed:  godot --path client res://scenes/telegraph.tscn
 ##   V — toggle side vantage / into-the-sun vantage (regressions hide in the
@@ -34,12 +32,7 @@ const CONE_RANGE := 9.0
 const CONE_HALF_DEG := 35.0
 const CONE_TIME := 1.8
 
-# Mirrored from main.gd (the shipping overworld palette).
 const SUN_COLOR := Color(1.0, 0.72, 0.5)
-const SKY_TOP := Color(0.23, 0.18, 0.22)
-const SKY_HORIZON := Color(0.55, 0.35, 0.24)
-const GROUND_BOTTOM := Color(0.1, 0.09, 0.09)
-const FOG_COLOR := Color(0.35, 0.28, 0.24)
 
 var _circle_runtime: TelegraphRuntime
 var _cone_runtime: TelegraphRuntime
@@ -163,8 +156,8 @@ func _build_ground() -> void:
 	add_child(mi)
 
 
-## The shipping overworld light rig, mirrored from main.gd so the judgement
-## happens under the light the player actually gets.
+## The shipping overworld light rig, shared with the live world so the
+## judgement happens under the light the player actually gets.
 func _build_lighting() -> void:
 	var sun := DirectionalLight3D.new()
 	sun.name = "Sun"
@@ -180,63 +173,7 @@ func _build_lighting() -> void:
 	sun.shadow_normal_bias = 1.5
 	add_child(sun)
 
-	var sky_mat := ProceduralSkyMaterial.new()
-	sky_mat.sky_top_color = SKY_TOP
-	sky_mat.sky_horizon_color = SKY_HORIZON
-	sky_mat.ground_bottom_color = GROUND_BOTTOM
-	sky_mat.ground_horizon_color = SKY_HORIZON
-	sky_mat.sun_angle_max = 40.0
-	var sky := Sky.new()
-	sky.sky_material = sky_mat
-
-	var env := Environment.new()
-	env.background_mode = Environment.BG_SKY
-	env.sky = sky
-	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	env.ambient_light_energy = 0.9
-	env.sdfgi_enabled = true
-	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
-	env.tonemap_exposure = 1.05
-	env.tonemap_white = 6.0
-	env.ssao_enabled = true
-	env.ssao_radius = 1.4
-	env.ssao_intensity = 2.4
-	env.ssao_power = 1.7
-	env.ssao_detail = 0.6
-	env.ssao_light_affect = 0.0
-	env.ssao_ao_channel_affect = 0.35
-	env.glow_enabled = true
-	env.glow_normalized = true
-	env.glow_intensity = 0.32
-	env.glow_strength = 1.0
-	env.glow_bloom = 0.05
-	env.glow_blend_mode = Environment.GLOW_BLEND_MODE_SOFTLIGHT
-	env.glow_hdr_threshold = 1.45
-	env.glow_hdr_scale = 2.0
-	env.fog_enabled = true
-	env.fog_light_color = FOG_COLOR
-	env.fog_light_energy = 0.9
-	env.fog_sun_scatter = 0.06
-	env.fog_density = 0.010
-	env.fog_aerial_perspective = 0.35
-	env.fog_sky_affect = 0.4
-	# The downward pooling is CaveAtmosphere's to write, exactly as the
-	# volumetrics below are Volumetrics' — the preview is above ground, so it
-	# takes the open-sky grade. A telegraph judged under a different sky than
-	# the player's is judged wrong.
-	CaveAtmosphere.apply(env, 0.0)
-	# Volumetrics are part of the shipping rig on supporting hardware (#158),
-	# probe-gated exactly as in main.gd — a telegraph judged without the air
-	# volume the player sees through is judged under different light (the same
-	# class of miss as the grading omission below).
-	Volumetrics.apply(env, Volumetrics.probe())
-	# The grading pass is part of the shipping look too — judging telegraph
-	# contrast without it grades under a different image than players get
-	# (its omission here was a real review catch).
-	env.adjustment_enabled = true
-	env.adjustment_brightness = 1.0
-	env.adjustment_contrast = 1.08
-	env.adjustment_saturation = 0.94
+	var env := ReachAtmosphere.build(Volumetrics.probe())
 	var we := WorldEnvironment.new()
 	we.name = "WorldEnvironment"
 	we.environment = env
