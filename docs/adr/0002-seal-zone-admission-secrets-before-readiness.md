@@ -408,8 +408,13 @@ or envelope from a sibling GameServer is refused and that an ambiguous
 allocation dispatch never issues a second RPC, survives a late commit safely,
 and cannot overlap a newer attempt for the same reservation.
 
-This ADR changes no runtime behavior. The environment secret remains a
-developer-only helper until all production composition children land.
+The zone-side lifecycle is selected with
+`-agones-admission-public-key <path>`. It derives the allocation ID from the
+observed GameServer and completes the metadata barrier before the serving
+command calls `Ready`. Omitting that flag retains the environment secret as a
+developer-only socket helper. Allocation response validation, coordinator
+unwrap/recovery and the private claim boundary remain separate composition
+children.
 
 ## Consequences
 
