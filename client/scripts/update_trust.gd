@@ -26,6 +26,70 @@ const _PUBLIC_KEY_BEGIN := "-----BEGIN PUBLIC KEY-----"
 const _PUBLIC_KEY_END := "-----END PUBLIC KEY-----"
 
 
+## Authenticate a certificate-backed manifest and only then ask
+## [UpdateDecision] what it means for this installation.
+##
+## The order is the trust contract:
+##   1. the offline root verifies the signing-key certificate;
+##   2. only that authenticated signing key verifies the manifest;
+##   3. only an authenticated manifest reaches the decision core.
+##
+## Revocation belongs between steps 1 and 2 and is deliberately not claimed
+## here yet. Keeping this boundary pure makes that insertion testable without
+## network, disk, clock, or scene dependencies.
+##
+## Returns `{trusted: bool, error: String, decision: Dictionary}`. A trust
+## refusal always carries an empty decision so a caller cannot accidentally act
+## on unauthenticated certificate fields.
+static func verify_and_decide(installed: Dictionary, manifest: Dictionary,
+		root_public_key_pem: Variant) -> Dictionary:
+	if not (manifest.get("key") is Dictionary):
+		return _untrusted("manifest carries no signing-key certificate")
+	var certificate: Dictionary = manifest["key"]
+	if not certificate.has("root_signature"):
+		return _untrusted("signing-key certificate carries no offline-root signature")
+
+	var certificate_payload := certificate.duplicate(true)
+	certificate_payload.erase("root_signature")
+	var certificate_jcs := JCS.canonicalize(certificate_payload)
+	if str(certificate_jcs["error"]) != "":
+		return _untrusted("signing-key certificate cannot be canonicalized: %s" %
+			str(certificate_jcs["error"]))
+	var certificate_verification := verify_signature(
+		certificate.get("algorithm"),
+		root_public_key_pem,
+		str(certificate_jcs["text"]).to_utf8_buffer(),
+		certificate.get("root_signature"),
+	)
+	if not bool(certificate_verification["valid"]):
+		return _untrusted("signing-key certificate is not authenticated by the offline root: %s" %
+			str(certificate_verification["error"]))
+
+	if not manifest.has("signature"):
+		return _untrusted("manifest carries no signing-key signature")
+	var manifest_payload := manifest.duplicate(true)
+	manifest_payload.erase("signature")
+	var manifest_jcs := JCS.canonicalize(manifest_payload)
+	if str(manifest_jcs["error"]) != "":
+		return _untrusted("manifest cannot be canonicalized: %s" %
+			str(manifest_jcs["error"]))
+	var manifest_verification := verify_signature(
+		certificate.get("algorithm"),
+		certificate.get("public_key"),
+		str(manifest_jcs["text"]).to_utf8_buffer(),
+		manifest.get("signature"),
+	)
+	if not bool(manifest_verification["valid"]):
+		return _untrusted("manifest is not authenticated by its root-certified signing key: %s" %
+			str(manifest_verification["error"]))
+
+	return {
+		"trusted": true,
+		"error": "",
+		"decision": UpdateDecision.decide(installed, manifest),
+	}
+
+
 ## Verify an ECDSA P-256/SHA-256 signature over the exact message bytes.
 ##
 ## Returns `{valid: bool, error: String}`. Every malformed or unsupported input
@@ -177,3 +241,7 @@ static func _sha256(message: PackedByteArray) -> PackedByteArray:
 
 static func _refused(error: String) -> Dictionary:
 	return {"valid": false, "error": error}
+
+
+static func _untrusted(error: String) -> Dictionary:
+	return {"trusted": false, "error": error, "decision": {}}
