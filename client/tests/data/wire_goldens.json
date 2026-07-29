@@ -67,5 +67,54 @@
         { "id": 4, "x": -8000, "y": 0, "z": 0, "radius": 500 }
       ]
     }
+  },
+  "_mob_chase_comment": "Cross-tier MOB CHASE evidence (issue #357): the authoritative Go World advances a registered mob through the ordinary Step loop, snapshots it through the shipped wire encoder, and the client folds these frames through ZoneConnection before ReplicaView renders them. The sequence shows approach, cast-range arrival, and two held cast ticks; stationary_control preserves the zero-speed pinned-caster baseline. Regenerate only as a deliberate reviewed act: WAR_RECORD_MOB_CHASE_STREAM=1 go test ./wire/ -run TestMobChaseStreamFixture -v.",
+  "mob_chase": {
+    "observer": 1,
+    "mob": 100,
+    "target": 2,
+    "cast_range_mm": 2000,
+    "frames": [
+      {
+        "tick": 0,
+        "phase": "approach",
+        "hex": "0100010000000000000000010000000000000002000000020000000000000018fcffffffffffff000000000000000044cbffffffffffff90010000000000006400000000000000a8e4ffffffffffff000000000000000008d5ffffffffffff9001000000000000"
+      },
+      {
+        "tick": 10,
+        "phase": "approach",
+        "hex": "0100010a00000000000000010000000000000002000000020000000000000018fcffffffffffff000000000000000044cbffffffffffff90010000000000006400000000000000e4e7ffffffffffff0000000000000000b2d3ffffffffffff9001000000000000"
+      },
+      {
+        "tick": 20,
+        "phase": "approach",
+        "hex": "0100011400000000000000010000000000000002000000020000000000000018fcffffffffffff000000000000000044cbffffffffffff900100000000000064000000000000007cebffffffffffff000000000000000036d2ffffffffffff9001000000000000"
+      },
+      {
+        "tick": 30,
+        "phase": "approach",
+        "hex": "0100011e00000000000000010000000000000002000000020000000000000018fcffffffffffff000000000000000044cbffffffffffff9001000000000000640000000000000014efffffffffffff0000000000000000bad0ffffffffffff9001000000000000"
+      },
+      {
+        "tick": 39,
+        "phase": "cast_start",
+        "hex": "0100012700000000000000010000000000000002000000020000000000000018fcffffffffffff000000000000000044cbffffffffffff9001000000000000640000000000000050f2ffffffffffff000000000000000064cfffffffffffff9001000000000000"
+      },
+      {
+        "tick": 40,
+        "phase": "cast_hold",
+        "hex": "0100012800000000000000010000000000000002000000020000000000000018fcffffffffffff000000000000000044cbffffffffffff9001000000000000640000000000000050f2ffffffffffff000000000000000064cfffffffffffff9001000000000000"
+      },
+      {
+        "tick": 41,
+        "phase": "cast_hold",
+        "hex": "0100012900000000000000010000000000000002000000020000000000000018fcffffffffffff000000000000000044cbffffffffffff9001000000000000640000000000000050f2ffffffffffff000000000000000064cfffffffffffff9001000000000000"
+      }
+    ],
+    "stationary_control": {
+      "tick": 1,
+      "phase": "stationary_control",
+      "hex": "0100010100000000000000010000000000000002000000020000000000000018fcffffffffffff000000000000000044cbffffffffffff90010000000000006400000000000000a8e4ffffffffffff000000000000000008d5ffffffffffff9001000000000000"
+    }
   }
 }
