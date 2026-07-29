@@ -86,3 +86,11 @@ client/devlog/0.65.10.json	bbac5762aea5725fe9a63cf69c969e62efa6c8cd	Authored as 
 # all. That landed the entry in NEVER-CUT rather than MISLABELLED, which the gate
 # excluded wholesale — so the log kept naming a build nobody could have played.
 client/devlog/0.66.1.json	9b06460e535e9d3c7d3298673321d5869a7cf2fa	Authored as 0.65.17, but the change it describes first shipped in v0.66.1; v0.65.17 was never cut (#522).
+
+# The cave-foot talus entry merged immediately before semantic-release cut
+# v0.67.1, leaving its predicted name attached to the later v0.67.2 release.
+client/devlog/0.67.1.json	3dfad578639a284a319470463fe488c38860beb4	Authored as 0.67.2, but the change it describes first shipped in v0.67.1 (#581).
+
+# The seam-occlusion entry merged while the cave-foot correction was in CI,
+# occupying v0.67.1 even though its own change first appeared in v0.68.2.
+client/devlog/0.68.2.json	ae0ba27d8275f184aff9804bfdcff402d1bdc689	Authored as 0.67.1, but the change it describes first shipped in v0.68.2 (#585).
