@@ -104,9 +104,97 @@ extends Node
 ## ⚠️ THE PINNED COLUMN IS NOT A CI FLOOR, and must not be used as one. It is
 ## two runs on ONE machine — precisely the back-to-back shape the second lesson
 ## above warns reads too low. It establishes that the breath clock was the
-## DOMINANT source and that it is gone; the per-vantage floor #485 asks for
-## still has to be measured across independent CI builds, and only sunward and
-## crossfield remain gate candidates until it is.
+## DOMINANT source and that it is gone. The independent-build floor it defers to
+## is the next section.
+##
+## ## The independent-build floor for `first_run_*` (#485): THERE ISN'T ONE
+##
+## Measured on CI as #485 requires — three independent builds of a
+## capture-tool-only PR (#495, `client/tools/frame_capture.gd`), which cannot
+## change what the creator draws. Per-vantage changed-pixel fraction, and the
+## MAX each vantage reached across the three:
+##
+##   frame                    2a5ddb5   333a035   efca51d       MAX
+##   first_run_advanced_2       0.00%    39.40%     6.99%     39.40%
+##   first_run_head_armor       0.02%    27.91%     2.39%     27.91%
+##   first_run_advanced_3       2.17%    28.14%     0.39%     28.14%
+##   first_run_wanderer         0.78%    25.12%    25.82%     25.82%
+##   first_run_head_clothing    0.01%    23.41%     0.02%     23.41%
+##   first_run_lower            0.00%     5.25%    23.36%     23.36%
+##   first_run_base_layer      19.31%    14.41%     1.12%     19.31%
+##   first_run_villager         0.01%    17.58%     1.49%     17.58%
+##   first_run_brute            3.16%    10.33%     2.85%     10.33%
+##   first_run_outfit           0.01%     7.16%     0.07%      7.16%
+##   first_run                  0.01%     6.34%     0.78%      6.34%
+##   first_run_elder            0.02%     4.12%     0.10%      4.12%
+##   first_run_advanced_1       0.01%     2.52%     0.04%      2.52%
+##   ---- world vantages, same three builds ----
+##   shrine                     0.37%     1.59%     3.81%      3.81%
+##   cave-chamber               0.20%     0.49%     0.41%      0.49%
+##   crossfield                 0.10%     0.26%     0.18%      0.26%
+##   bonepale                   0.14%     0.20%     0.16%      0.20%
+##   sunward                    0.13%     0.15%     0.17%      0.17%
+##   cave-walkout               0.13%     0.00%     0.00%      0.13%
+##
+## Two things in that table settle the question #485 asked.
+##
+## First, no vantage has a floor worth calibrating. Read the rows ACROSS rather
+## than down: nine of the thirteen reach double digits in at least one build
+## while sitting near zero in another — advanced_2 over 0.00%/39.40%/6.99%,
+## lower over 0.00%/5.25%/23.36%, head_clothing over 0.01%/23.41%/0.02% — and
+## which of them spikes is not the same twice. Nor is it the weaker claim that
+## each is quiet in the other two builds: some are loud twice, wanderer reading
+## 0.78%/25.12%/25.82%. The remaining four are genuinely calmer — outfit,
+## first_run, elder and advanced_1 top out between 7.16% and 2.52%, the band
+## shrine already occupies at 3.81% — so the set is not uniformly bad; it is
+## nine bad rows and four ordinary ones. A per-vantage floor would therefore
+## have to be pinned at each vantage's WORST reading rather than a typical one,
+## and for nine of the thirteen that is a double-digit percentage.
+##
+## Second, the floor it would need EXCEEDS THE SIGNAL. The highest reading here
+## is 39.40% on a build that cannot have changed the creator; the real creator
+## change #485 records on #320 read 36.59%. That is the torch-lit shape again —
+## noise above signal — so no threshold on the whole frame can separate them,
+## and `first_run_*` is not a gate candidate. Only sunward and crossfield are.
+##
+## A fourth build corroborates both points, and it is the PR that added this
+## section: its whole delta against its base is this comment block, so its
+## first-run frames must match. On its first CI run `first_run_base_layer` read
+## 11.66% while the other twelve read 0.00%-0.01%, and the world vantages held
+## at 0.01%-2.31%. A different single vantage again, and the rest of the set at
+## the floor in that same build — which is what "no vantage is reliably quiet"
+## looks like from the other side.
+##
+## ## Where that residual actually is (#485): the BACKDROP, not the subject
+##
+## Localized between two of those builds whose first-run rendering code is
+## behaviourally identical — both files that differ change COMMENT PROSE only,
+## one inside `_capture_mouth` and one in a cave-vantage test, and the first-run
+## path executes neither — by splitting each frame at the panel's own band
+## (`UI_SAMPLE_X0/X1`, 0.02-0.30 of width) and counting changed pixels on each
+## side:
+##
+##   frame                     whole    panel band    world band
+##   first_run_lower          40.46%         0.00%        56.22%
+##   first_run_wanderer       35.02%         0.01%        48.65%
+##   first_run_advanced_2     34.48%         0.00%        47.91%
+##   first_run_head_armor     18.04%         0.01%        25.07%
+##   first_run_base_layer      9.96%         0.01%        13.83%
+##
+## The panel holds at 0.00%-0.01% on every first-run frame. Rendering the mask
+## shows the rest: the CHARACTER PORTRAIT is clean too — its silhouette, face
+## and clothing carry no changed pixels, and neither do the four preset
+## thumbnails inside the panel. What moves is the terrain behind them, and
+## nearly all of it.
+##
+## So both subjects these frames exist to evidence — the panel and the body —
+## already repeat across independent builds. The number printed for them does
+## not, because it is dominated by a live backdrop that no first-run PR is
+## about. A reviewer reading 40% is reading scenery.
+##
+## The backdrop is unpinned by construction: `_shoot` pins the breath and
+## nothing else, while the cave scenario calls `freeze_flicker()` and the
+## light-response scenario freezes its animation. Fixing that is #556.
 ##
 ## ## The cave-mouth vantage (#495)
 ##
