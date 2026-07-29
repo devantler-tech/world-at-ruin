@@ -35,7 +35,7 @@ uniform float crack_relief: hint_range(0.0, 3.0) = 1.1;
 // the same default: this band blends into that ground, so a contact darkening
 // its sub-pixel seams harder or softer than the ground would draw a visible
 // join exactly where the two meet.
-uniform float seam_cavity: hint_range(0.0, 8.0) = 3.0;
+uniform float seam_cavity: hint_range(0.0, 8.0) = 3.5;
 uniform float ash_contact: hint_range(0.002, 0.3) = 0.035;
 uniform float lip_lift: hint_range(0.0, 1.0) = 0.18;
 

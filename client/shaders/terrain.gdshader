@@ -99,26 +99,31 @@ uniform float crack_relief: hint_range(0.0, 3.0) = 1.1;
 // far-field statistical shading rather than a mid-field drawn mark, and it
 // cannot outline a seam a player can still see.
 //
-// 3.0 is the KNEE, swept on-GPU (both instruments, one machine, one sitting,
+// 3.5 is the KNEE, swept on-GPU (both instruments, one machine, one sitting,
 // plates-off control 0.0000 on every arm). It is the smallest value that
-// restores the near-field read the mean filter costs — 6 m coverage x strength
-// runs 42% BELOW `main` with the cavity off and 19% above it here — while the
-// crawl this whole issue was filed on stays at the `crack_relief`-ablated floor
-// of 0.0000, against 0.0005 on `main`:
+// restores the near-field read the mean filter costs, measured as 6 m coverage
+// x strength — the two move in opposite directions, so neither alone decides:
 //
 //   cavity   crawl    6 m       12 m      24 m      48 m      6 m read
 //   off      0.0000   0.00028   0.00022   0.00004   0.00011   -42%
-//   2.0      0.0000   0.00042   0.00086   0.00027   0.00280   -27%
-//   3.0      0.0000   0.00072   0.00144   0.00096   0.00493   +19%
-//   4.0      0.0001   0.00088   0.00192   0.00176   0.00680   +54%
+//   3.0      0.0000   0.00053   0.00113   0.00043   0.00420   -13%
+//   3.5      0.0000   0.00066   0.00149   0.00070   0.00547    +7%
+//   4.0      0.0000   0.00079   0.00180   0.00100   0.00661   +27%
+//   8.0      0.0002   0.00151   0.00395   0.00449   0.01367  +180%
 //   (main)   0.0005   0.00034   0.00050   0.00028   0.00056     0%
 //
-// Above 3.0 the crawl floor starts to give: 4.0 reads 0.0001 and 8.0 reads
-// 0.0007, which is worse than `main`. Below it the far field is back under
-// `relief_read`'s 0.0002 vacuity floor at 24 m. Absolute levels are not
-// portable between machines and both tools say so — the ORDERING is what
-// carries.
-uniform float seam_cavity: hint_range(0.0, 8.0) = 3.0;
+// The aim is a near field left AS IT WAS, not maximised, so the smallest value
+// that clears `main` is the right one rather than the largest that still holds
+// the floor. Below 3.5 the near field is still being paid away; at 8.0 the
+// crawl floor gives.
+//
+// The crawl column is only this flat because the variance is blended across
+// both cells at a contact (see `plate_mask_relief_nb`). Gated by the owning
+// cell alone it read 0.0001 at 4.0 and 0.0007 at 8.0 — worse than `main` — and
+// removing that step is what let the knee move up to where the near field is
+// whole. Absolute levels are not portable between machines and both tools say
+// so; the ORDERING is what carries.
+uniform float seam_cavity: hint_range(0.0, 8.0) = 3.5;
 // How hard the ash sheet ends. This used to be a 0.24-wide smoothstep ramp,
 // which is precisely the "smooth interpolation" the diagnosis names — wind
 // leaves a boundary, not a gradient.
