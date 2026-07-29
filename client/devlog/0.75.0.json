@@ -1,0 +1,11 @@
+{
+	"date": "2026-07-29",
+	"notes": [
+		"Opt in with WAR_ASH_FIELD_DRIFT=1 and the ash inside each hollow no longer brightens as one basin-sized mass. Its density now varies across the pool and the whole field travels on the same wind as the grass.",
+		"The placed density remains the field's resting mean, so deeper hollows keep their existing tuning. The experiment changes where that density sits, not how much ash the pool owns over time.",
+		"The ordinary game is unchanged while this is judged: the moving field is experimental and default-off, and the settled whole-pool swell remains the fallback.",
+		"Still short of the mark: from inside a hollow the ash reads as a broad warm veil, not layered gaps and fine billows. The preview needs player taste and performance feedback before it can replace the settled path."
+	],
+	"title": "Ash moves inside the hollows",
+	"version": "0.75.0"
+}
