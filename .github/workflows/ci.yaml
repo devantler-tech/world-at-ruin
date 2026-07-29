@@ -57,6 +57,7 @@ jobs:
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
         run: ./tools/devlog-entry-version-guard.sh
       - name: Dev-log entry version sweep is pinned and fail-closed
         run: ./tools/devlog-entry-version-sweep.test.sh

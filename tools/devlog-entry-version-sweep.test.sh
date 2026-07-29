@@ -24,6 +24,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SWEEP="$ROOT/tools/devlog-entry-version-sweep.sh"
 GUARD="$ROOT/tools/devlog-entry-version-guard.sh"
+RESOLVER="$ROOT/tools/pr-diff-base.sh"
 WORKFLOW="$ROOT/.github/workflows/ci.yaml"
 
 failures=0
@@ -54,7 +55,7 @@ new_repo() {
 	local d
 	d="$(mktemp -d "$scratch/repoXXXXXX")"
 	mkdir -p "$d/tools" "$d/client/devlog"
-	cp "$SWEEP" "$GUARD" "$d/tools/"
+	cp "$SWEEP" "$GUARD" "$RESOLVER" "$d/tools/"
 	git -C "$d" init -q -b main
 	git -C "$d" config user.email t@example.com
 	git -C "$d" config user.name t

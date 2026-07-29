@@ -228,6 +228,47 @@ expect_pass 'a stale base, with a sibling entry landed since'
 git -C "$repo" checkout -q main
 git -C "$repo" branch -qD sibling pr
 
+# RED, and the shape that distinguishes a contributor's own merge from the
+# forge's merge ref. The current base already carries a released sibling entry;
+# the contributor's branch adds only a forward-looking one, then merges current
+# main. HEAD^1 is the contributor's PREVIOUS commit, so blindly diffing from it
+# reports the sibling entry as this branch's addition and refuses it.
+reset_tree
+git -C "$repo" checkout -q -b current-main
+entry 0.61.4 >"$repo/client/devlog/0.61.4.json"
+commit_all 'a released sibling entry on current main'
+current_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -q -B pr "$base"
+entry 0.61.5 >"$repo/client/devlog/0.61.5.json"
+commit_all 'our own, correct, forward-looking entry'
+git -C "$repo" merge -q --no-ff current-main -m 'contributor merges current main'
+own_head="$(git -C "$repo" rev-parse HEAD)"
+own_merge_out=''
+own_merge_rc=0
+own_merge_out="$(cd "$repo" && BASE_SHA="$current_base" HEAD_SHA="$own_head" bash "$GUARD" 2>&1)" ||
+	own_merge_rc=$?
+if [ "$own_merge_rc" -ne 0 ]; then
+	t_fail "a contributor's own merge should diff from current main, not HEAD^1: $own_merge_out"
+fi
+
+# GREEN control for merge_group. Its event head identifies the whole synthetic
+# group rather than one PR head, so the shared resolver deliberately falls back
+# to merge-base(BASE_SHA, HEAD). In this fixture that is current-main, exactly
+# the same base the old HEAD^1 path used; the full group contribution remains
+# checked without mistaking the group's head for a PR head.
+git -C "$repo" checkout -q -B merge-group "$current_base"
+git -C "$repo" merge -q --no-ff pr -m 'merge group'
+group_head="$(git -C "$repo" rev-parse HEAD)"
+group_out=''
+group_rc=0
+group_out="$(cd "$repo" && BASE_SHA="$current_base" HEAD_SHA="$group_head" bash "$GUARD" 2>&1)" ||
+	group_rc=$?
+if [ "$group_rc" -ne 0 ]; then
+	t_fail "a merge_group checkout should retain its base-to-group diff: $group_out"
+fi
+git -C "$repo" checkout -q main
+git -C "$repo" branch -qD current-main pr merge-group
+
 # --- Fail-closed cases ----------------------------------------------------
 # A checkout that cannot see the tags would make every comparison vacuously
 # true. That is what a shallow fetch produces, so it must be an error and not a
@@ -457,6 +498,15 @@ grep -Fq 'tools/devlog-entry-version-guard.sh' "$WORKFLOW" ||
 	t_fail 'CI does not run the dev-log entry version guard'
 grep -Fq 'tools/devlog-entry-version-guard.test.sh' "$WORKFLOW" ||
 	t_fail 'CI does not run this guard test'
+# shellcheck disable=SC2016  # literal source expression, must not expand
+grep -Fq '. "$GUARD_DIR/pr-diff-base.sh"' "$GUARD" ||
+	t_fail 'the dev-log guard does not source the shared PR diff-base resolver'
+if grep -q '^diff_base()' "$GUARD"; then
+	t_fail 'the dev-log guard still carries a second diff-base implementation'
+fi
+# shellcheck disable=SC2016  # literal workflow expression, must not expand
+grep -Fq 'HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}' "$WORKFLOW" ||
+	t_fail 'CI does not pass the pull_request or merge_group head identity to the dev-log guard'
 
 if [ "$failures" -ne 0 ]; then
 	printf 'dev-log entry version guard test: %d failure(s)\n' "$failures" >&2

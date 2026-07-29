@@ -51,6 +51,10 @@ set -euo pipefail
 
 ENTRY_DIR='client/devlog'
 CORRECTIONS_FILE='tools/devlog-entry-corrections.tsv'
+GUARD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# shellcheck source=tools/pr-diff-base.sh
+. "$GUARD_DIR/pr-diff-base.sh"
 
 fail() {
 	printf 'dev-log entry version guard: FAIL — %s\n' "$1" >&2
@@ -240,24 +244,6 @@ correction_anchor() {
 	done <"$CORRECTIONS_FILE"
 }
 
-# The commit this change is measured against.
-#
-# On a pull_request or merge_group checkout HEAD is the merge commit the forge
-# built, whose FIRST parent is the base branch tip; diffing against that yields
-# only what this change contributes. BASE_SHA must NOT be used directly there:
-# it is the base as of the event, so a PR whose base has moved on sees every
-# entry a sibling added since as "added by this change" and is refused for
-# someone else's entry. Entries land on most player-visible PRs, so that would
-# fire constantly rather than rarely. BASE_SHA remains the fallback for a
-# checkout that is not a merge commit — a local run, or the head ref itself.
-diff_base() {
-	if git rev-parse -q --verify 'HEAD^2' >/dev/null 2>&1; then
-		git rev-parse 'HEAD^1'
-	else
-		printf '%s' "$1"
-	fi
-}
-
 # Entry files this change ADDS, plus listed corrections it OVERWRITES in place.
 #
 # --no-renames is load-bearing, not tidiness. Rename detection is on by default,
@@ -317,6 +303,19 @@ main() {
 	git cat-file -e "$base" 2>/dev/null ||
 		fail "base commit $base is not present in the checkout — cannot verify entry versions"
 
+	# The shared resolver distinguishes the forge's merge ref from a contributor
+	# whose own head is a merge commit. CI supplies the event head explicitly.
+	# Direct callers historically supplied only BASE_SHA, so retain their
+	# synthetic-merge behavior by using HEAD^2 as the hint only when HEAD_SHA is
+	# absent. A local head-ref check must set HEAD_SHA to that head commit.
+	local head="${HEAD_SHA:-}"
+	if [ -z "$head" ]; then
+		head="$(git rev-parse --verify --quiet 'HEAD^2' 2>/dev/null || true)"
+	fi
+	local change_base
+	change_base="$(resolve_pr_diff_base "$head" "$base")" ||
+		fail "could not resolve a diff base from HEAD_SHA '${HEAD_SHA:-unset}' and BASE_SHA '$base'"
+
 	local newest
 	newest=$(released_versions | newest_version)
 	[ -n "$newest" ] ||
@@ -326,7 +325,7 @@ main() {
 	check_shipped_in
 
 	local added
-	added=$(candidate_entry_files "$(diff_base "$base")")
+	added=$(candidate_entry_files "$change_base")
 	if [ -z "$added" ]; then
 		printf 'dev-log entry version guard: PASS — no new or corrected entry (newest release %s)\n' "$newest"
 		return 0
