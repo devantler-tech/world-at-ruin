@@ -601,11 +601,10 @@ everything shipped afterwards is held to.
   the **combat first slice** (`server/sim/combat.go` — the telegraph cast
   lifecycle: painted at cast start, resolved once after a tick-counted cast time against
   positions at resolution, health/damage application, and one mob AI that deterministically
-  aggros the nearest entity; it remains a stationary caster by default, while the default-off
-  `World.MobChase` flag makes it close through the existing kinematic movement path to a bounded
-  capsule-surface cast range before stopping and painting the dodgeable circle; AI intent ownership
-  preserves caller movement when that flag is off, and the integer-speed floor remains mobile on
-  diagonals; threat from damage, dead-target
+  aggros the nearest entity; a mob with positive `ChaseSpeedMM` closes through the existing
+  kinematic movement path to a bounded capsule-surface cast range before stopping and painting the
+  dodgeable circle, while zero chase speed deliberately preserves a stationary caster; the
+  integer-speed floor remains mobile on diagonals; threat from damage, dead-target
   filtering, real navmesh pathfinding and cast replication remain later children — with its own
   cross-platform golden), with the production admission-secret lifecycle selected in
   `docs/adr/0002-seal-zone-admission-secrets-before-readiness.md` but its concrete Agones sealed-envelope

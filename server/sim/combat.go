@@ -3,10 +3,10 @@ package sim
 // Combat: the telegraph CAST LIFECYCLE and the game's ONE mob AI — a caster
 // that aggros the nearest entity in range and casts a circle you must step out
 // of (#189; the Phase 1 exit criterion's mob half, and the first of Phase 2's
-// "threat, aggro, mob AI" work items). By default it retains the original
-// stationary behavior. World.MobChase opts into #356's deterministic
-// server-authored chase: close to CastRangeMM, stop, then paint. This file is
-// the single mob-AI implementation by decision (#207): a parallel
+// "threat, aggro, mob AI" work items). A mob with a positive ChaseSpeedMM
+// closes to CastRangeMM, stops, then paints; zero keeps the original stationary
+// caster contract for deliberately pinned actors. This file is the single
+// mob-AI implementation by decision (#207): a parallel
 // controller-shaped twin (`MobController`, #190) briefly coexisted and was
 // converged into this layer — the integrated engine won on the one-tick-loop
 // design rule, the ActiveCasts replication seam, multi-mob support, and
@@ -75,15 +75,14 @@ type MobParams struct {
 	AggroRadiusMM int64
 
 	// CastRangeMM is the allowed horizontal gap between the mob's and target's
-	// capsule surfaces before the mob may begin a cast when World.MobChase is
-	// enabled. Clamped into [0, AggroRadiusMM]; zero means capsule contact,
-	// not overlapping centres.
+	// capsule surfaces before a chasing mob may begin a cast. Clamped into
+	// [0, AggroRadiusMM]; zero means capsule contact, not overlapping centres.
 	CastRangeMM int64
 
-	// ChaseSpeedMM is the server-authored horizontal chase speed in mm/s when
-	// World.MobChase is enabled. Zero stays zero; a positive value is clamped
-	// into [minChaseSpeedMM, maxIntentComponentMM]. The entity's own MaxSpeed
-	// remains the final movement cap in the ordinary integration path.
+	// ChaseSpeedMM is the server-authored horizontal chase speed in mm/s. Zero
+	// keeps the mob as a stationary caster; a positive value is clamped into
+	// [minChaseSpeedMM, maxIntentComponentMM]. The entity's own MaxSpeed remains
+	// the final movement cap in the ordinary integration path.
 	ChaseSpeedMM int64
 
 	// CastTicks is how many ticks pass between painting the circle and
@@ -124,11 +123,6 @@ type mobState struct {
 	// nextCastTick is the earliest tick a new cast may start (cooldown gate,
 	// measured from the previous cast's START).
 	nextCastTick uint64
-
-	// chaseIntentOwned records that the entity's current intent was authored
-	// by this AI. Public SetIntent clears ownership, so disabling MobChase can
-	// remove stale AI movement without erasing a caller's replacement input.
-	chaseIntentOwned bool
 }
 
 // ActiveCast is one painted, not-yet-resolved telegraph. The shape is
@@ -166,8 +160,8 @@ type TelegraphHit struct {
 // positive chase configuration whose entity movement cap is below one
 // representable millimetre per tick; each is a programming error that must
 // fail at ingestion rather than become a silently frozen encounter. A zero
-// MaxSpeed remains the explicit pinned-actor configuration. Registered mobs
-// remain stationary casters unless World.MobChase is explicitly enabled.
+// MaxSpeed remains the explicit pinned-actor configuration. A zero
+// ChaseSpeedMM keeps a registered mob as a stationary caster.
 func (w *World) AddMob(id EntityID, p MobParams) {
 	if w.ents[id] == nil {
 		panic("sim: AddMob for unknown entity")
@@ -287,31 +281,31 @@ func (w *World) resolveDueCasts() {
 	w.casts = remaining
 }
 
-// decideMobCasts runs each mob's decision in ascending-ID order. With
-// MobChase off, the original stationary-caster contract is preserved: a mob
-// with no cast in flight and its cooldown elapsed aggros the nearest non-mob
-// entity within its aggro radius and paints at that target's current position.
-// With MobChase on, the mob instead authors horizontal intent toward that same
-// deterministic target until it reaches CastRangeMM, then stops before
-// painting. It also stops while a cast is in flight or no target is eligible.
-// Cooldown is measured from cast start.
+// decideMobCasts runs each mob's decision in ascending-ID order. A positive
+// ChaseSpeedMM authors horizontal intent toward the deterministic nearest
+// target until the capsule gap reaches CastRangeMM, then stops before painting;
+// it also stops while a cast is in flight or no target is eligible. Zero
+// preserves the stationary-caster contract and paints at the target's current
+// position as soon as cooldown allows. Cooldown is measured from cast start.
 func (w *World) decideMobCasts() {
 	for _, id := range w.mobOrder {
 		st := w.mobs[id]
+		chases := st.params.ChaseSpeedMM > 0
 		if st.inFlight {
-			if w.MobChase {
+			if chases {
 				w.setMobChaseIntent(id, Vec3{})
 			}
 			continue
 		}
 		target := w.nearestTargetable(id, st.params.AggroRadiusMM)
-		if w.MobChase {
-			if target == nil {
+		if chases {
+			switch {
+			case target == nil:
 				w.setMobChaseIntent(id, Vec3{})
-			} else if !mobWithinCastRange(w.ents[id], target, st.params.CastRangeMM) {
+			case !mobWithinCastRange(w.ents[id], target, st.params.CastRangeMM):
 				w.setMobChaseIntent(id, mobChaseIntent(w.ents[id], target, st.params.ChaseSpeedMM))
 				continue
-			} else {
+			default:
 				w.setMobChaseIntent(id, Vec3{})
 			}
 		}
@@ -332,31 +326,14 @@ func (w *World) decideMobCasts() {
 	}
 }
 
-// clearMobChaseIntents restores the default stationary-caster contract before
-// movement runs. Keeping this before integration is what makes a runtime
-// on-to-off flag transition immediate: intent authored on the previous chase
-// tick cannot leak through as one final movement step.
-func (w *World) clearMobChaseIntents() {
-	for _, id := range w.mobOrder {
-		st := w.mobs[id]
-		if !st.chaseIntentOwned {
-			continue
-		}
-		w.ents[id].Intent = Vec3{}
-		st.chaseIntentOwned = false
-	}
-}
-
-// setMobChaseIntent marks nonzero movement as AI-owned. It deliberately writes
-// the entity directly instead of calling public SetIntent, whose contract is
-// caller input and therefore clears this ownership bit.
+// setMobChaseIntent writes the registered mob directly instead of routing an
+// authoritative AI decision through SetIntent's untrusted-client boundary.
 func (w *World) setMobChaseIntent(id EntityID, intent Vec3) {
 	e := w.ents[id]
 	if e == nil {
 		return
 	}
 	e.Intent = sanitizeIntent(intent)
-	w.mobs[id].chaseIntentOwned = e.Intent != (Vec3{})
 }
 
 // mobChaseIntent returns the horizontal velocity that closes toward target at
