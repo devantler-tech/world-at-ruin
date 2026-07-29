@@ -23,6 +23,10 @@ uniform vec3 tint_high : source_color = vec3(1.0, 1.0, 1.0);
 // Metres of horizontal sway at the tip.
 uniform float wind_strength = 0.0;
 uniform float wind_speed = 1.0;
+// Capture tooling can hold the shipping wind curve at a known phase without
+// stopping player physics or replacing the live material. Disabled in-game.
+uniform bool wind_time_override_enabled = false;
+uniform float wind_time_override = 0.0;
 // The wind's direction in WORLD space, shared by every prop.
 //
 // This has to be resolved per instance rather than baked into the offset.
@@ -75,8 +79,9 @@ void vertex() {
 	vec3 world_pos = MODEL_MATRIX[3].xyz;
 	// Note the MINUS on the time term: with a plus, points of constant phase
 	// travel against wind_dir and the gusts visibly roll upwind.
+	float wind_time = wind_time_override_enabled ? wind_time_override : TIME;
 	float phase = dot(world_pos, wind_axis) / max(wind_wavelength, 0.001)
-		- TIME * wind_speed
+		- wind_time * wind_speed
 		+ hash11(id) * 0.6;
 
 	// Biased so the sway is always DOWNWIND: a gust varies how hard the

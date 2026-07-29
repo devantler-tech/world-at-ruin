@@ -123,13 +123,87 @@ done
 # the question the verdict actually asks and is answered the same way whichever
 # side of the merge each commit sits on.
 #
+# HOW MANY TIMES TO ASK. Once, for every entry at once.
+#
+# `-S` answers one version string per walk, so asking it per entry re-walks the
+# same history as many times as there are entries — and `--full-history`, which
+# the paragraph above makes non-negotiable, is precisely what makes one walk
+# expensive, because it turns off the simplification that used to cut the
+# traversal short. That cost is entries x history where it only ever needed to
+# be history.
+#
+# EQUIVALENCE WITH THE PICKAXE, which is the part that has to be argued rather
+# than assumed. `-S` selects a commit when the NUMBER of occurrences of the
+# string differs from its parent's. The same selection falls out of counting the
+# string's additions and subtracting its deletions in that commit's own patch
+# and keeping the commits whose net is non-zero:
+#
+#   - an occurrence added or deleted moves the count, and moves the net;
+#   - a line edited but still carrying the string cancels (one deletion, one
+#     addition) exactly as an unchanged occurrence count does for `-S`;
+#   - unchanged occurrences never appear in a patch at all, and contribute
+#     nothing to either;
+#   - a merge carries no patch here (no `-m`/`-c`) and cannot match the pickaxe
+#     for the same reason, so both routes skip merges identically.
+#
+# The report is the control: it must stay byte-identical over the whole entry
+# set, which `devlog-entry-version-sweep.test.sh` pins per anchoring case.
+ANCHOR_INDEX=''
+# Global rather than a local the trap closes over: an EXIT trap runs after the
+# function's locals are gone, so `set -u` would abort the cleanup it exists for.
+ANCHOR_SCRATCH=''
+clean_anchor_scratch() {
+	[ -n "$ANCHOR_SCRATCH" ] && rm -rf "$ANCHOR_SCRATCH"
+	return 0
+}
+trap clean_anchor_scratch EXIT
+
+# `version<TAB>commit` for every introduction, in walk order, from ONE traversal.
+build_anchor_index() {
+	local scratch
+	scratch="$(mktemp -d)"
+	ANCHOR_SCRATCH="$scratch"
+	ANCHOR_INDEX="$scratch/anchors"
+	# Written to a file rather than piped so a failed walk stays a failed LOOKUP
+	# — every entry then reads NO-ANCHOR, which the gate fails on — instead of
+	# `pipefail` aborting the sweep before it prints anything.
+	if ! git log --full-history --reverse --format='#war-anchor %h' -p \
+		-- client/scripts/devlog.gd "$ENTRY_DIR" >"$scratch/patch"; then
+		: >"$ANCHOR_INDEX"
+		return 0
+	fi
+	awk '
+		function emit(   v) {
+			if (sha == "") return
+			for (v in delta)
+				if (delta[v] != 0) print v "\t" sha
+			split("", delta)
+		}
+		substr($0, 1, 12) == "#war-anchor " { emit(); sha = substr($0, 13); next }
+		# The patch header carries the paths, not content: counting them would
+		# invent an occurrence every time a file is touched.
+		/^\+\+\+ / || /^--- / { next }
+		/^[+-]/ {
+			sign = (substr($0, 1, 1) == "+") ? 1 : -1
+			rest = $0
+			# A line may carry the string more than once, so every occurrence is
+			# counted rather than just the first — `-S` counts them all.
+			while (match(rest, /"version": "[^"]*"/)) {
+				tok = substr(rest, RSTART, RLENGTH)
+				delta[substr(tok, 13, length(tok) - 13)] += sign
+				rest = substr(rest, RSTART + RLENGTH)
+			}
+		}
+		END { emit() }
+	' "$scratch/patch" >"$ANCHOR_INDEX"
+}
+
 # Takes the first line by expansion rather than by piping to `head`: under
 # `pipefail` the early close sends git SIGPIPE, which reads as a failed lookup
 # and aborts the sweep on its first entry.
 introducing_commit() {
 	local out candidate release best='' best_release=''
-	out=$(git log --full-history --reverse --format='%h' -S"\"version\": \"$1\"" \
-		-- client/scripts/devlog.gd "$ENTRY_DIR") || return 0
+	out=$(awk -F'\t' -v want="$1" '$1 == want { print $2 }' "$ANCHOR_INDEX")
 	[ -n "$out" ] || return 0
 	# A lone candidate cannot be ranked against anything, and both branches below
 	# select it regardless of what it contains — so the containment lookup is
@@ -158,6 +232,8 @@ introducing_commit() {
 	[ -n "$best" ] || best="${out%%$'\n'*}"
 	printf '%s' "$best"
 }
+
+build_anchor_index
 
 total=0
 wrong=0
