@@ -110,7 +110,12 @@ const SAVE_CAPABILITY_WRITES := 4
 ## Capability 5 reads the `ashen_bindings` character-vocabulary expansion while
 ## production writers remain at capability 4. The writer may advance only after
 ## a retained release advertises this ceiling; #544 owns that contract stage.
-const SAVE_CAPABILITY_READS := 5
+##
+## Capability 6 is vault-v4 forward-only quest-objective progress. This is its
+## expand release: the reader accepts and applies the shape while the production
+## writer remains on retained capability 4. Once this release is retained, the
+## separate writer stage may activate capability 6.
+const SAVE_CAPABILITY_READS := 6
 
 ## The oldest shell this manifest still supports updating FROM.
 ##

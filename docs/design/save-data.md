@@ -49,8 +49,10 @@ other registries are excluded for present-state reasons:
 
 - Equipment layer is render metadata derived from the piece; the layer is never written into a
   recipe.
-- Vault attunements and discoveries accept and preserve unknown string names. Their version, resolver
-  and real-effect guards own their rollout.
+- Vault attunements, discoveries and reward claims accept and preserve unknown stable string names.
+  Vault-v4 quest progress similarly preserves unknown quest and objective IDs plus their raw
+  progress in the exact JSON integer range `0..2^53-1`. Their version, resolver and real-effect
+  guards own rollout.
 - Ability, class-power and class-cycle ledgers describe combat registries and balance promises, not
   fields in a current player document.
 - Creature shapes, tints and recipe versions describe generated world creatures, not persisted player
@@ -249,6 +251,17 @@ id to the exact outcome every later boot derives from it; CI base-compares compl
 boot verifies the live registry against the ledger.
 Ordinary attunement and discovery writes preserve an already-present v3 document and its claims;
 discovery-only documents remain v2.
+
+Capability 6 is the reader expansion for vault v4 quest progress. Its optional `quests` object maps
+stable quest IDs to stable objective IDs and progress in the exact JSON integer range `0..2^53-1`.
+`SaveVault` validates and preserves the whole nested shape; `Main` restores it into a boot-owned
+`QuestLog` before any quest definition registers. Known objectives get a clamped live view, while
+snapshots retain raw values and opaque future IDs so a rollback build cannot truncate newer progress.
+Restored completion is latched
+silently and can never be announced or granted again. The production writer remains vault v3 at
+capability 4: empty state and ordinary attunement, discovery and reward writes cannot originate
+`quests`, but they preserve an already-present v4 document. Activating vault-v4 writes is the separate
+contract child #560, gated on retaining the capability-6 reader release as a whole-app rollback target.
 
 ### Boot recovery
 

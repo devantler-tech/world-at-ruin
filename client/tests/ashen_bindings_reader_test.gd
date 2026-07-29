@@ -59,13 +59,14 @@ func _ready() -> void:
 		return
 
 	# Test the published behavior, not only the source constants: capability 5
-	# is readable while capability 4 remains the only production writer.
+	# remains readable even after later reader expansions, while capability 4
+	# remains the only production writer.
 	var built_manifest := UpdateManifest.build(MANIFEST_SEQUENCE, MANIFEST_NOT_AFTER)
 	var manifest := built_manifest.get("manifest", {}) as Dictionary
 	if not String(built_manifest.get("error", "")).is_empty() or manifest.is_empty():
 		_fail("the reader build could not produce its stable update envelope")
 		return
-	if int((manifest["shell"] as Dictionary).get("reads_capability_max", -1)) != 5 \
+	if int((manifest["shell"] as Dictionary).get("reads_capability_max", -1)) < 5 \
 			or int((manifest["save_schema"] as Dictionary).get("capability", -1)) != 4:
 		_fail("reader expansion advertises the wrong read/write capabilities: %s/%s" % [
 			(manifest["shell"] as Dictionary).get("reads_capability_max"),

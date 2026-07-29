@@ -38,8 +38,9 @@ func _ready() -> void:
 		return
 	var vault_api := load("res://scripts/save_vault.gd") as Script
 
-	# 2. The writer can now emit v3, but empty state remains v1. A schema version
-	# describes fields actually present; it is not a "latest client" marker.
+	# 2. The writer remains on v3 while the reader expands through v4. Empty
+	# state remains v1: a schema version describes fields actually present; it
+	# is not a "latest client" marker.
 	var empty := SaveVault.empty()
 	if SaveVault.validate(empty) != "":
 		_fail("the empty vault does not validate: %s" % SaveVault.validate(empty))
@@ -50,8 +51,8 @@ func _ready() -> void:
 	if int(empty["version"]) != 1:
 		_fail("an empty vault was churned to v%d even though it carries no v2 discovery state" % int(empty["version"]))
 		return
-	if SaveVault.VAULT_READ_VERSION != 3:
-		_fail("the vault reader ceiling is v%d, expected the v3 reward-claim expansion"
+	if SaveVault.VAULT_READ_VERSION != 4:
+		_fail("the vault reader ceiling is v%d, expected the v4 quest-progress expansion"
 			% SaveVault.VAULT_READ_VERSION)
 		return
 	if not SaveVault.attuned(empty).is_empty():
@@ -147,6 +148,51 @@ func _ready() -> void:
 		return
 	if reward_expanded_discovery_write.get("reward_claims", []) != reward_expanded["reward_claims"]:
 		_fail("an ordinary discovery write changed or dropped v3 reward claims")
+		return
+
+	# The future v4 quest-progress shape is readable, but no production writer
+	# originates it in this expansion release. Every existing writer must carry
+	# the opaque nested ids and counts through without truncating a newer
+	# client's progress.
+	var quest_expanded := {
+		"version": 4,
+		"comment": "future quest progress writer",
+		"attuned": [SaveVault.SHRINE_WARDENS],
+		"discoveries": ["starter_cave", "wardens_shrine"],
+		"reward_claims": ["wardens_shrine"],
+		"quests": {
+			"future_quest": {"future_objective": 11},
+			"reach_shrine": {"arrive": 2, "return": 1},
+		},
+	}
+	var quest_expanded_reason := SaveVault.validate(quest_expanded)
+	if not quest_expanded_reason.is_empty():
+		_fail("the v4 quest-progress expansion was refused: %s" % quest_expanded_reason)
+		return
+	var quest_expanded_after := SaveVault.attune(quest_expanded, "second_shrine")
+	if quest_expanded_after.get("quests", {}) != quest_expanded["quests"]:
+		_fail("an ordinary v4 attunement write-back changed or dropped quest progress")
+		return
+	if not SaveVault.save_to(PROBE, quest_expanded_after):
+		_fail("saving an already-present v4 vault failed")
+		return
+	var quest_expanded_loaded = SaveVault.load_from(PROBE)
+	if quest_expanded_loaded is not Dictionary \
+			or not _quest_progress_equal(
+				quest_expanded_loaded.get("quests", {}), quest_expanded["quests"]):
+		_fail("the v4 quest progress did not survive its disk round-trip")
+		return
+	var quest_expanded_discovery_write: Dictionary = vault_api.call(
+		"record_discoveries", quest_expanded, ["starter_cave"])
+	if int(quest_expanded_discovery_write.get("version", -1)) != 4 \
+			or quest_expanded_discovery_write.get("quests", {}) != quest_expanded["quests"]:
+		_fail("an ordinary discovery write downgraded or changed an existing v4 vault")
+		return
+	var quest_expanded_reward_write: Dictionary = vault_api.call(
+		"record_reward_claims", quest_expanded, ["wardens_shrine"])
+	if int(quest_expanded_reward_write.get("version", -1)) != 4 \
+			or quest_expanded_reward_write.get("quests", {}) != quest_expanded["quests"]:
+		_fail("an ordinary reward write downgraded or changed an existing v4 vault")
 		return
 
 	# The expansion must not leak into old state: loading and attuning a v1
@@ -253,6 +299,9 @@ func _ready() -> void:
 	var no_claims: Dictionary = vault_api.call("record_reward_claims", expanded, [])
 	if int(no_claims.get("version", -1)) != 2 or no_claims.has("reward_claims"):
 		_fail("recording no reward claims churned a v2 vault to v3")
+		return
+	if claimed.has("quests"):
+		_fail("the production reward writer originated v4 quest state during reader expansion")
 		return
 	var malformed_claims := {
 		"version": 3,
@@ -388,6 +437,32 @@ func _ready() -> void:
 	_cleanup_probe()
 	SaveVault.clear_refusals_for_test()
 
+	# 8a. JSON numbers above 2^53 - 1 are not exact. A raw newer vault that
+	# carries 9007199254740993 parses as 9007199254740992; accepting that rounded
+	# value would let any ordinary write permanently lower earned progress.
+	var unsafe_progress := (
+		'{"version":4,"quests":{"future_quest":{"future_step":9007199254740993}}}')
+	var unsafe_progress_file := FileAccess.open(PROBE, FileAccess.WRITE)
+	if unsafe_progress_file == null:
+		_fail("could not stage the unsafe-integer vault")
+		return
+	unsafe_progress_file.store_string(unsafe_progress)
+	unsafe_progress_file.close()
+	if SaveVault.load_from(PROBE) is Dictionary:
+		_fail("the v4 reader accepted quest progress that JSON already rounded")
+		return
+	var unsafe_reread := FileAccess.open(PROBE, FileAccess.READ)
+	if unsafe_reread == null:
+		_fail("refusing unsafe quest progress removed its source document")
+		return
+	var unsafe_source := unsafe_reread.get_as_text()
+	unsafe_reread.close()
+	if unsafe_source != unsafe_progress:
+		_fail("refusing unsafe quest progress did not preserve its source bytes")
+		return
+	_cleanup_probe()
+	SaveVault.clear_refusals_for_test()
+
 	# 8b. The data layer and the behaviour layer must not drift: every name
 	# SaveVault claims to know must have a RespawnPoints branch, and vice versa.
 	# Without this, a name could be added to the ledger and KNOWN_ATTUNEMENTS
@@ -411,6 +486,7 @@ func _ready() -> void:
 		"unknown field": { "version": 1, "loot": {} },
 		"discoveries on v1": { "version": 1, "discoveries": [] },
 		"reward claims on v2": { "version": 2, "reward_claims": [] },
+		"quests on v3": { "version": 3, "quests": {} },
 		"attuned not an array": { "version": 1, "attuned": {} },
 		"attuned entry not a string": { "version": 1, "attuned": [7] },
 		"discoveries not an array": { "version": 2, "discoveries": {} },
@@ -419,6 +495,17 @@ func _ready() -> void:
 		"reward claims not an array": { "version": 3, "reward_claims": {} },
 		"reward claim not a string": { "version": 3, "reward_claims": [7] },
 		"empty reward claim": { "version": 3, "reward_claims": [""] },
+		"quests not an object": { "version": 4, "quests": [] },
+		"empty quest id": { "version": 4, "quests": {"": {"step": 1}} },
+		"quest objectives not an object": { "version": 4, "quests": {"hunt": []} },
+		"empty objective id": { "version": 4, "quests": {"hunt": {"": 1}} },
+		"negative quest progress": { "version": 4, "quests": {"hunt": {"step": -1}} },
+		"fractional quest progress": { "version": 4, "quests": {"hunt": {"step": 1.5}} },
+		"string quest progress": { "version": 4, "quests": {"hunt": {"step": "1"}} },
+		"unsafe JSON integer quest progress": {
+			"version": 4,
+			"quests": {"hunt": {"step": 9_007_199_254_740_992}},
+		},
 	}
 	for label: String in refusals:
 		if SaveVault.validate(refusals[label]) == "":
@@ -442,10 +529,21 @@ func _ready() -> void:
 	}) != "":
 		_fail("validation refused a valid v3 reward-claim vault")
 		return
+	if SaveVault.validate({
+		"version": 4,
+		"discoveries": ["starter_cave"],
+		"reward_claims": ["starter_cave"],
+		"quests": {
+			"future_quest": {"future_objective": 9},
+			"reach_shrine": {"arrive": 1},
+		},
+	}) != "":
+		_fail("validation refused a valid v4 quest-progress vault")
+		return
 
 	_cleanup_probe()
 	OS.set_environment(SaveVault.VAULT_PATH_ENV, "")
-	print("TEST PASS — vault seam, attunement, discovery/reward contracts, round-trip and refusals hold")
+	print("TEST PASS — vault seam, attunement, discovery/reward writers, quest reader, round-trip and refusals hold")
 	get_tree().quit(0)
 
 
@@ -459,6 +557,28 @@ func _fail(message: String) -> void:
 
 func _exit_tree() -> void:
 	_cleanup_probe()
+
+
+## JSON parses whole numbers as floats, while in-memory fixtures use ints.
+## Compare the schema's numeric meaning while still requiring the exact nested
+## key set: no quest, objective, or progress amount may be changed or dropped.
+func _quest_progress_equal(actual: Variant, expected: Dictionary) -> bool:
+	if actual is not Dictionary or (actual as Dictionary).size() != expected.size():
+		return false
+	for quest_id: String in expected:
+		if not (actual as Dictionary).has(quest_id):
+			return false
+		var actual_objectives: Variant = (actual as Dictionary)[quest_id]
+		var expected_objectives: Dictionary = expected[quest_id]
+		if actual_objectives is not Dictionary \
+				or (actual_objectives as Dictionary).size() != expected_objectives.size():
+			return false
+		for objective_id: String in expected_objectives:
+			if not (actual_objectives as Dictionary).has(objective_id) \
+					or int((actual_objectives as Dictionary)[objective_id]) \
+						!= int(expected_objectives[objective_id]):
+				return false
+	return true
 
 
 func _cleanup_probe() -> void:

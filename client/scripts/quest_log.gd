@@ -14,8 +14,9 @@ extends RefCounted
 ## every incomplete objective listening for that tag advances. WHAT an objective's
 ## tag means, what completing a quest GRANTS (rewards belong to
 ## `ExplorationRewards`/a loot layer, deferred), how a quest is offered or turned
-## in, and PERSISTING progress across a logout are the caller's concern and
-## separate follow-ups.
+## in, and when progress is WRITTEN are caller concerns. This type owns the
+## deterministic restore/snapshot boundary that lets Main apply vault-v4 progress
+## before quest content registers; activating the production writer is separate.
 ##
 ## It mirrors this world's two standing laws as MECHANICAL invariants, not
 ## review-time hopes:
@@ -29,6 +30,11 @@ extends RefCounted
 ## A quest also never silently redefines itself: registration is forward-only, so
 ## a definition is fixed once added.
 
+## Largest integer JSON can round-trip exactly through Godot's float-backed
+## parser. Persisted progress above this could be silently lowered before the
+## no-resets guards ever see it.
+const MAX_PERSISTED_PROGRESS := 9_007_199_254_740_991
+
 ## quest id -> the ordered Array of objective Dictionaries
 ## ({ "id": String, "tag": String, "count": int }) that quest requires. A quest is
 ## complete when every objective's progress has reached its count.
@@ -41,11 +47,20 @@ var _progress: Dictionary = {}
 ## grows — a completed quest is never un-completed (the no-undo).
 var _complete: Dictionary = {}
 
+## quest id -> { objective id -> raw persisted progress }. This is deliberately
+## wider than the definitions this build knows: a rollback reader must preserve
+## a newer client's quest or objective ids, and must not truncate progress merely
+## because its older definition has a lower required count. The live [_progress]
+## view clamps known objectives; this raw view is what [method snapshot] carries
+## forward unchanged.
+var _restored_progress: Dictionary = {}
+
 
 ## Register `quest_id` with an ordered, non-empty list of objectives. Each
 ## objective is a Dictionary carrying exactly a non-empty String `id` (unique
 ## within the quest), a non-empty String `tag` (the event it listens for), and an
-## int `count` >= 1 (how many matching events complete it). Returns false (and
+## int `count` in 1..[constant MAX_PERSISTED_PROGRESS] (how many matching events
+## complete it). Returns false (and
 ## changes nothing) if the id is empty, already registered (registration is
 ## forward-only — a quest never silently redefines itself), or any objective is
 ## malformed. A deep copy is stored, so a caller mutating its definition afterwards
@@ -63,6 +78,7 @@ func add(quest_id: String, objectives: Array) -> bool:
 		start[obj["id"]] = 0
 	_quests[quest_id] = stored
 	_progress[quest_id] = start
+	_apply_restored_progress(quest_id)
 	return true
 
 
@@ -101,7 +117,9 @@ func record(tag: String, amount: int = 1) -> Array[String]:
 			# a colossal amount would overflow int64 and wrap NEGATIVE, driving
 			# progress backwards through the very forward-only law this upholds.
 			# `required > current` here, so the addend is positive and bounded.
-			progress[obj_id] = current + min(amount, required - current)
+			var advanced_to: int = current + mini(amount, required - current)
+			progress[obj_id] = advanced_to
+			_remember_progress(quest_id, obj_id, advanced_to)
 			advanced = true
 		if advanced and _is_all_complete(quest_id):
 			_complete[quest_id] = true
@@ -149,6 +167,50 @@ func completed() -> Array[String]:
 	return out
 
 
+## Merge a persisted quest-progress snapshot without ever driving state
+## backwards. Definitions may register before or after this call: known
+## objectives are applied immediately and future ids stay opaque until a later
+## registration can interpret them. A restored completion is marked complete
+## silently, so the next matching event cannot announce or reward it again.
+##
+## Returns false and changes nothing when the whole nested shape is malformed.
+func restore(persisted: Variant) -> bool:
+	if not _persisted_progress_valid(persisted):
+		return false
+	for quest_id: String in persisted:
+		if not _restored_progress.has(quest_id):
+			_restored_progress[quest_id] = {}
+		var stored: Dictionary = _restored_progress[quest_id]
+		var incoming: Dictionary = persisted[quest_id]
+		for objective_id: String in incoming:
+			var amount := int(incoming[objective_id])
+			stored[objective_id] = maxi(int(stored.get(objective_id, 0)), amount)
+		_apply_restored_progress(quest_id)
+	return true
+
+
+## A deterministic deep copy of every persisted or newly-earned objective
+## amount, including ids this build does not understand. Sorted insertion order
+## makes identical state serialize identically without exposing the live maps.
+func snapshot() -> Dictionary:
+	var out: Dictionary = {}
+	var quest_ids: Array[String] = []
+	for quest_id: String in _restored_progress:
+		quest_ids.append(quest_id)
+	quest_ids.sort()
+	for quest_id: String in quest_ids:
+		var objectives: Dictionary = _restored_progress[quest_id]
+		var objective_ids: Array[String] = []
+		for objective_id: String in objectives:
+			objective_ids.append(objective_id)
+		objective_ids.sort()
+		var copied: Dictionary = {}
+		for objective_id: String in objective_ids:
+			copied[objective_id] = int(objectives[objective_id])
+		out[quest_id] = copied
+	return out
+
+
 ## Every registered quest's id, sorted. A copy, safe to mutate.
 func registered() -> Array[String]:
 	var out: Array[String] = []
@@ -179,9 +241,62 @@ func _is_all_complete(quest_id: String) -> bool:
 	return true
 
 
+## Apply only the portion of a restored snapshot this build can interpret. Raw
+## values remain untouched in [_restored_progress], while the live view clamps
+## to the known definition and completion is latched without an announcement.
+func _apply_restored_progress(quest_id: String) -> void:
+	if not _quests.has(quest_id) or not _restored_progress.has(quest_id):
+		return
+	var raw: Dictionary = _restored_progress[quest_id]
+	var live: Dictionary = _progress[quest_id]
+	for objective: Dictionary in _quests[quest_id] as Array:
+		var objective_id: String = objective["id"]
+		if not raw.has(objective_id):
+			continue
+		var required_count: int = objective["count"]
+		live[objective_id] = mini(
+			required_count, maxi(int(live[objective_id]), int(raw[objective_id])))
+	if _is_all_complete(quest_id):
+		_complete[quest_id] = true
+
+
+func _remember_progress(quest_id: String, objective_id: String, amount: int) -> void:
+	if not _restored_progress.has(quest_id):
+		_restored_progress[quest_id] = {}
+	var stored: Dictionary = _restored_progress[quest_id]
+	stored[objective_id] = maxi(int(stored.get(objective_id, 0)), amount)
+
+
+## The JSON-facing contract: non-empty stable ids and whole-number progress in
+## 0..[constant MAX_PERSISTED_PROGRESS]. Validate the complete value before
+## mutating state so one bad branch cannot partially apply the valid branches
+## beside it.
+func _persisted_progress_valid(persisted: Variant) -> bool:
+	if persisted is not Dictionary:
+		return false
+	for quest_id: Variant in persisted:
+		if quest_id is not String or (quest_id as String).is_empty():
+			return false
+		var objectives: Variant = persisted[quest_id]
+		if objectives is not Dictionary:
+			return false
+		for objective_id: Variant in objectives:
+			if objective_id is not String or (objective_id as String).is_empty():
+				return false
+			var amount: Variant = objectives[objective_id]
+			if not (amount is int or (amount is float and amount == floorf(amount))):
+				return false
+			if int(amount) < 0:
+				return false
+			if amount > MAX_PERSISTED_PROGRESS:
+				return false
+	return true
+
+
 ## Whether `objectives` is a valid, non-empty objective list: every entry a
 ## Dictionary carrying exactly a non-empty String `id` (unique within the list), a
-## non-empty String `tag`, and an int `count` >= 1. This is the whole
+## non-empty String `tag`, and an int `count` in
+## 1..[constant MAX_PERSISTED_PROGRESS]. This is the whole
 ## well-formed-quest guard — a malformed definition is refused at [method add]
 ## rather than corrupting progress tracking later.
 func _objectives_valid(objectives: Array) -> bool:
@@ -206,7 +321,9 @@ func _objectives_valid(objectives: Array) -> bool:
 		if tag is not String or (tag as String).is_empty():
 			return false
 		var c: Variant = obj.get("count")
-		if c is not int or (c as int) < 1:
+		if c is not int \
+				or (c as int) < 1 \
+				or (c as int) > MAX_PERSISTED_PROGRESS:
 			return false
 		seen[id] = true
 	return true
