@@ -221,6 +221,11 @@ void fragment() {
 	float crack = 0.0;
 	float plate_fw = 0.0;
 	float crack_fw = 0.0;
+	// Hoisted out of the block below because the crack relief needs the same
+	// footprint: it is the one quantity that measures how far the separator
+	// moves in a pixel, and both the boundary average and the seam filter are
+	// keyed on it.
+	float edge_fw = 0.0;
 	vec2 plate_c1 = vec2(0.0);
 	vec2 plate_c2 = vec2(0.0);
 	if (plates_enabled) {
@@ -275,7 +280,7 @@ void fragment() {
 	vec2 e2 = plate_uv - plate_c2;
 	vec2 gsep_e = e2 * inversesqrt(max(dot(e2, e2), 1e-12))
 		- e1 * inversesqrt(max(dot(e1, e1), 1e-12));
-	float edge_fw = abs(dot(gsep_e, dFdx(plate_uv)))
+	edge_fw = abs(dot(gsep_e, dFdx(plate_uv)))
 		+ abs(dot(gsep_e, dFdy(plate_uv)));
 	plate_edge_w = terrain_plate_edge_blend(f1, f2, edge_fw * 0.5);
 
@@ -583,6 +588,9 @@ void fragment() {
 	// Same uniform branch as the plate block: with the treatment off there is
 	// no relief to compute.
 	vec2 grad = vec2(0.0);
+	// How much the seam's slope VARIES inside one pixel — the part of a groove
+	// a normal cannot represent. Folded into roughness after the bump below.
+	float seam_slope_var = 0.0;
 	if (plates_enabled) {
 	vec2 d1 = plate_uv - plate_c1;
 	vec2 d2 = plate_uv - plate_c2;
@@ -590,17 +598,75 @@ void fragment() {
 	// centre would otherwise normalize a zero vector.
 	vec2 gsep = d2 * inversesqrt(max(dot(d2, d2), 1e-12))
 		- d1 * inversesqrt(max(dot(d1, d1), 1e-12));
-	float ct = clamp((f2 - f1) / max(crack_width, 1e-6), 0.0, 1.0);
-	// d/dx of (1 - smoothstep(0, w, x)) is -6t(1-t)/w. The crack is 1 at the
-	// seam and 0 off it, so this is negative and the normal tilts INTO the
-	// groove, exactly as the differenced form did.
-	float dcrack = -6.0 * ct * (1.0 - ct) / max(crack_width, 1e-6);
-	// Gradient in plate-uv space, then into world XZ (plate_uv = xz * scale).
+	float cw_relief = max(crack_width, 1e-6);
+	// The relief is read at the PIXEL CENTRE, and what it reads is finer than
+	// the mark every guard below is keyed on: the crack profile turns over
+	// inside a half-width, so its slope peaks at w/2 and is zero at both ends —
+	// under-sampled a factor of two sooner than the crack itself. That
+	// point-sample is the crawl.
+	//
+	// So integrate the groove across the pixel instead of sampling it. Two
+	// moments come out and the treatment needs BOTH — that is the whole of this
+	// change:
+	//   - the MEAN tilt, which is what a normal can carry; and
+	//   - the VARIANCE about it, which is what a normal cannot, because a pixel
+	//     spanning a whole groove sees the two walls cancel exactly.
+	// Filtering to the mean alone is correct and still erases the seam: past
+	// the distance a groove resolves, the honest answer for the mean IS no net
+	// tilt. The detail is not gone, it moved into the second moment — and a
+	// second moment belongs in roughness, which is where it goes below.
+	//
+	// The profile integrated is a TOP HAT, because the seam-slope ceiling makes
+	// it one. The raw slope peaks at 6*0.25/w * plate_scale, which at the
+	// shipped width is ~40 against a ceiling of 0.4 — a hundredfold — so the
+	// clamp binds across all but the outermost half-percent of the groove, and
+	// what this shader actually applies is a constant-magnitude wall that flips
+	// sign at the seam. `amp` is that plateau, reached through the same ceiling,
+	// so the model follows the code rather than assuming it: open `crack_width`
+	// far enough that the clamp stops binding and `amp` becomes the true peak.
+	float amp = min(length(gsep) * (1.5 / cw_relief) * plate_scale
+		* plate_mask_relief, 0.4);
+	// The footprint is `edge_fw`, the ANALYTIC separator's screen rate — never
+	// `fwidth(f2 - f1)`. That quantity is a cusp at the seam, so its screen
+	// difference collapses on exactly the quads that straddle one: a filter
+	// keyed on it widens everywhere EXCEPT where the seam is. That reads as a
+	// free win on both instruments and is an artefact of a derivative
+	// degenerating into its own epsilon floor, which varies by GPU and driver.
+	// Same quantity and same reason as the boundary average above.
+	float seam_h = max(edge_fw, 1e-6);
+	float half_h = 0.5 * seam_h;
+	float s_sep = f2 - f1;
+	// Mean of a sign-flipping top hat over [s - h/2, s + h/2]. Its
+	// antiderivative is min(|x|, w), which is EVEN, so the folded coordinate
+	// `f2 - f1` serves directly: the straddling case (s < h/2) is carried by
+	// the abs, and what comes out is the even function of the signed offset
+	// that the fragment's own `gsep` then gives a direction to. At the seam the
+	// two terms are equal and the mean is exactly zero, which is the
+	// cancellation this whole term exists to account for.
+	float mean_tilt = amp * (min(s_sep + half_h, cw_relief)
+		- min(abs(s_sep - half_h), cw_relief)) / seam_h;
+	// Second moment. The top hat has magnitude `amp` wherever the footprint
+	// overlaps the groove [-w, w], so E[u^2] is amp^2 times the covered
+	// fraction of the pixel.
+	float covered = clamp(max(min(s_sep + half_h, cw_relief)
+		- max(s_sep - half_h, -cw_relief), 0.0) / seam_h, 0.0, 1.0);
+	// Var = E[u^2] - E[u]^2, floored for float safety. It is zero for a pixel
+	// that resolves one wall (covered 1, mean amp) and zero for one that misses
+	// the groove entirely (both terms zero) — non-zero ONLY where a pixel holds
+	// relief the mean is discarding. That is why folding it into roughness
+	// cannot soften a seam a player can still resolve, which is #306's third
+	// acceptance criterion.
+	seam_slope_var = max(amp * amp * covered - mean_tilt * mean_tilt, 0.0);
+	// The tilt is INTO the groove, so it opposes the separator's gradient —
+	// the same sign the differenced form and the closed-form `dcrack` both
+	// carried, the latter by being negative by construction.
+	//
 	// This is inside the gate for a reason found by measurement: when the
 	// relief was computed unconditionally, the grooves kept raking the light
 	// with the treatment switched off, moving cave-chamber 29.61% away from
 	// base. Shader reasoning said the gate was already exact; it was not.
-	grad = gsep * dcrack * plate_scale * plate_mask_relief;
+	vec2 ghat = gsep * inversesqrt(max(dot(gsep, gsep), 1e-12));
+	grad = -ghat * mean_tilt;
 	// A screen-space gradient is UNBOUNDED as the feature it measures compresses
 	// into a pixel: at a grazing angle a seam 4 cm wide spans a fraction of one,
 	// and the raw slope runs to tens per metre — enough to swing the normal
@@ -667,6 +733,19 @@ void fragment() {
 	// 13% of the 6 m coverage), so this is the knee rather than a floor.
 	float grad_len = length(grad);
 	grad = grad_len > 0.4 ? grad * (0.4 / grad_len) : grad;
+	// The variance takes the PLATE resolution cutoff and nothing else. Once a
+	// pixel spans a whole plate there are no per-plate seams left to have a
+	// second moment about, exactly as the substance and slab mask converge on
+	// their means above — so this one is a statement about what exists, not a
+	// fade bought to hide shimmer.
+	//
+	// It deliberately does NOT take the crack-footprint fade or the slope
+	// ceiling. Those two bound what the NORMAL may claim, and the read they
+	// give up is precisely what this term carries instead; applying them here
+	// would hand back the seam they were spent on. Variance scales as the
+	// square of the amplitude it is a variance of, so the cutoff enters
+	// squared.
+	seam_slope_var *= plate_resolved * plate_resolved;
 	}
 	// A crack is a groove, so height is -crack and the normal tilts INTO it.
 	// The grain bump below is NOT plate work and runs on both paths; only the
@@ -678,4 +757,35 @@ void fragment() {
 		(h0 - hz) * bump_strength + grad.y * crack_relief) * detail;
 	vec3 perturbed = normalize(n + bump);
 	NORMAL = normalize((VIEW_MATRIX * vec4(perturbed, 0.0)).xyz);
+
+	// The seam relief the normal above could not carry, folded into roughness.
+	//
+	// A groove narrower than the pixel drawing it has no net tilt — its two
+	// walls cancel — but it is not FLAT, and shading it as flat is exactly how
+	// a seam vanishes into the far field. What is left is a distribution of
+	// normals, and the filtered-NDF result for GGX is that a slope variance of
+	// s^2 widens the lobe by 2*s^2 in alpha^2. Godot's ROUGHNESS is perceptual
+	// (alpha = ROUGHNESS^2), so the fold is done in alpha^2 and taken back.
+	//
+	// This channel is what lets the mean above be filtered honestly. Roughness
+	// here is a smooth, low-frequency field — `seam_slope_var` moves over the
+	// pixel footprint, not over the seam — so carrying the seam's residual read
+	// in it cannot reintroduce the crawl that taking it out of the normal
+	// bought. Detail leaves the frame by CHANGING CHANNEL rather than by
+	// fading, which is the same principle as the fades above and a strictly
+	// stronger form of it: nothing is discarded.
+	//
+	// ROUGHNESS was already set from `stone_rough` above, where the rest of the
+	// surface is composed; the fold has to wait for the relief block below it,
+	// which is where the seam's second moment is computed.
+	//
+	// Scaled by `crack_relief * detail` because that is what the bump above
+	// applies to the same slope, and squared because it is a variance of it.
+	// Zeroed with the treatment, since `seam_slope_var` is only ever written
+	// inside the `plates_enabled` branch.
+	float seam_gain = crack_relief * detail;
+	float seam_var = seam_slope_var * seam_gain * seam_gain;
+	float rough_a2 = stone_rough * stone_rough;
+	rough_a2 *= rough_a2;
+	ROUGHNESS = sqrt(sqrt(min(rough_a2 + 2.0 * seam_var, 1.0)));
 }

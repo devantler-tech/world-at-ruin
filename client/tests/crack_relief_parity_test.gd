@@ -59,6 +59,30 @@ const DIFFERENCED_CRACK_PATTERN := "dFd[xy]\\s*\\(\\s*crack"
 const CLOSED_FORM_PATTERN := \
 	"inversesqrt\\(\\s*max\\(\\s*dot\\([^)]*\\)[^)]*\\)\\s*\\)\\s*\\n?\\s*-\\s*\\w+\\s*\\*\\s*inversesqrt"
 
+## The seam-variance fold, which is hand-copied across the same pair and drifts
+## the same silent way. Three quantities, each with its own failure:
+##
+## `AMP_CEILING_PATTERN` — the top-hat plateau the groove is integrated as. It
+## must be the SAME number as the seam-slope ceiling, because it is the same
+## physical bound read from the other side: the ceiling is what makes the
+## applied profile a top hat, and `amp` is that top hat's height. Drift them and
+## the integral stops describing the code it models, silently — the frame still
+## renders and both files still agree with each other.
+##
+## `FOLD_PATTERN` — the filtered-NDF coefficient. A GGX lobe widens by exactly
+## 2*variance in alpha^2; any other number is a made-up roughness, too strong or
+## too weak, and nothing errors either way.
+##
+## `VAR_CUTOFF_PATTERN` — the plate-resolution cutoff, which must be SQUARED.
+## Variance scales as the square of the amplitude it belongs to, so a single
+## factor leaves the far field carrying a seam read the plates no longer justify.
+const AMP_CEILING_PATTERN := \
+	"plate_mask_relief\\s*,\\s*([0-9.]+)\\s*\\)"
+const FOLD_PATTERN := \
+	"rough_a2\\s*\\+\\s*([0-9.]+)\\s*\\*\\s*seam_var"
+const VAR_CUTOFF_PATTERN := \
+	"seam_slope_var\\s*\\*=\\s*plate_resolved\\s*\\*\\s*plate_resolved"
+
 
 func _ready() -> void:
 	var ground := _shader_source(GROUND_SHADER_PATH)
@@ -178,10 +202,79 @@ func _ready() -> void:
 			_fail("%s does not take the crack gradient in closed form — the `normalize(uv - c2) - normalize(uv - c1)` separator is gone, so the relief is no longer exact at distance" % path)
 			return
 
-	print("TEST PASS — %s and %s apply the same crack-relief guards: seam-slope ceiling %s, crack-footprint fade over (%s, %s), plate-boundary footprint %s, gradient in closed form on both" % [
+	# 5. THE SEAM-VARIANCE FOLD. The relief is filtered into two moments: the mean
+	# tilt, which the normal carries, and the variance about it, which roughness
+	# carries because a pixel spanning a whole groove sees its two walls cancel.
+	# The second half is what keeps a seam readable past the distance the fade in
+	# law 2 has already closed, so a contact band that lost it goes flat in a
+	# strip around every cave mouth while the ground beside it still reads —
+	# visibly, and along exactly the join this file exists to hold.
+	var ground_amp := _single(ground, AMP_CEILING_PATTERN)
+	if ground_amp < 0.0:
+		_fail("no top-hat amplitude (`min(... * plate_mask_relief, X)`) in %s — the groove is no longer integrated over the pixel, so the relief is point-sampled again and the contact band has nothing left to match" % GROUND_SHADER_PATH)
+		return
+	var contact_amp := _single(contact, AMP_CEILING_PATTERN)
+	if contact_amp < 0.0:
+		_fail("no top-hat amplitude (`min(... * plate_mask_relief, X)`) in %s — the contact band point-samples the groove while the ground integrates it, so seams crawl at the cave mouth only" % CONTACT_SHADER_PATH)
+		return
+
+	# 5a. Each amplitude must agree with THAT FILE'S OWN seam-slope ceiling
+	# before the two files are compared. The top hat is only the right profile to
+	# integrate because the ceiling clamps the raw slope flat across the groove
+	# (measured: the raw peak is ~100x the ceiling at the shipped crack width, so
+	# the clamp binds over 99% of it). If the plateau and the clamp are different
+	# numbers, the closed form integrates a groove the shader does not draw.
+	for named in [[GROUND_SHADER_PATH, ground_amp, ground_ceiling[0]], [CONTACT_SHADER_PATH, contact_amp, contact_ceiling[0]]]:
+		var path: String = named[0]
+		var amp: float = named[1]
+		var ceiling: float = named[2]
+		if not is_equal_approx(amp, ceiling):
+			_fail("in %s the groove is integrated as a top hat of height %s but the seam-slope ceiling clamps it at %s — the top hat is the right profile only because the ceiling makes it one, so these are the same bound and the filter now models a groove the shader does not draw" % [
+				path, _num(amp), _num(ceiling)
+			])
+			return
+
+	if not is_equal_approx(ground_amp, contact_amp):
+		_fail("top-hat amplitude disagrees: the ground integrates a groove of height %s but the contact band uses %s — the same seam would carry a different residual read either side of every cave mouth" % [
+			_num(ground_amp), _num(contact_amp)
+		])
+		return
+
+	# 5b. The filtered-NDF coefficient. A slope variance of s^2 widens a GGX lobe
+	# by exactly 2*s^2 in alpha^2; the number is a result, not a taste setting,
+	# and a mismatched pair roughens one surface harder than the other along the
+	# join.
+	var ground_fold := _single(ground, FOLD_PATTERN)
+	if ground_fold < 0.0:
+		_fail("no seam-variance fold (`rough_a2 + X * seam_var`) in %s — the relief the normal cannot carry is being discarded rather than folded into roughness, which is how a seam vanishes into the far field" % GROUND_SHADER_PATH)
+		return
+	var contact_fold := _single(contact, FOLD_PATTERN)
+	if contact_fold < 0.0:
+		_fail("no seam-variance fold (`rough_a2 + X * seam_var`) in %s — the contact band drops the residual seam read the ground keeps, so it goes flat in a strip around every cave mouth" % CONTACT_SHADER_PATH)
+		return
+	if not is_equal_approx(ground_fold, contact_fold):
+		_fail("seam-variance fold disagrees: the ground widens its lobe by %s * variance but the contact band uses %s — one surface carries more residual seam than the other along the join" % [
+			_num(ground_fold), _num(contact_fold)
+		])
+		return
+
+	# 5c. The cutoff must be SQUARED on both. `seam_slope_var *= plate_resolved`
+	# alone is the easy edit to make and reads as equivalent; it is not, because
+	# a variance scales as the square of the amplitude it is a variance of. The
+	# symptom is a far field that keeps a seam read after the plates carrying it
+	# have converged on their mean — nothing errors, the ground just will not go
+	# quiet.
+	for named in [[GROUND_SHADER_PATH, ground], [CONTACT_SHADER_PATH, contact]]:
+		var path: String = named[0]
+		var src: String = named[1]
+		if not _matches(src, VAR_CUTOFF_PATTERN):
+			_fail("%s does not take the plate-resolution cutoff on the seam variance SQUARED (`seam_slope_var *= plate_resolved * plate_resolved`) — a variance scales as the square of its amplitude, so a single factor leaves a seam read the plates no longer justify" % path)
+			return
+
+	print("TEST PASS — %s and %s apply the same crack-relief guards: seam-slope ceiling %s, crack-footprint fade over (%s, %s), plate-boundary footprint %s, gradient in closed form on both, seam variance integrated as a top hat of height %s and folded into roughness at %s * variance with a squared plate cutoff" % [
 		GROUND_SHADER_PATH, CONTACT_SHADER_PATH,
 		_num(ground_ceiling[0]), _num(ground_fade[0]), _num(ground_fade[1]),
-		_num(ground_edge)
+		_num(ground_edge), _num(ground_amp), _num(ground_fold)
 	])
 	get_tree().quit(0)
 
