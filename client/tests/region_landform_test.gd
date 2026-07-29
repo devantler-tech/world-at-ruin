@@ -394,6 +394,13 @@ func _test_landform_is_continuous() -> void:
 ## whichever region is steepest and is therefore blind to every other one, so a
 ## region can take on a whole degree of extra steepness — enough to change what
 ## that ground IS to walk across — without moving the number at all.
+##
+## What this arm proves is CLASSIFICATION: that Godot will call these faces floor
+## rather than wall. It does not prove they can be walked up, and the two come
+## apart — a face under the limit can still stall a capsule or let it slide back.
+## `terrain_traversal_test` holds that half by driving the shipped wanderer up the
+## steepest slopes each region owns (#541). Keep them together: this arm is the
+## cheap sweep over every face, that one is the expensive proof on the worst.
 func _test_terrain_stays_walkable() -> void:
 	var declared := {}
 	for reg: Dictionary in GroundRegions.REGIONS:

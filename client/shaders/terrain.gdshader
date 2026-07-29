@@ -86,6 +86,44 @@ uniform float crack_width: hint_range(0.001, 0.3) = 0.032;
 // (crack_relief, below), not drawn on as a line.
 uniform float crack_darkness: hint_range(0.0, 1.0) = 0.09;
 uniform float crack_relief: hint_range(0.0, 3.0) = 1.1;
+// How hard an UNRESOLVED groove darkens the pixel that contains it — the seam
+// relief the normal cannot carry, kept as occlusion instead of discarded (#539).
+//
+// This is a different quantity from `crack_darkness` above and the distinction
+// is the whole reason it is safe to set higher. `crack_darkness` draws the
+// crack as a LINE wherever the crack field says there is one, which is what
+// tessellated the ground into a polygon net and read as a cracked lakebed at
+// 0.55. This one is driven by the second moment, which is zero wherever a
+// pixel resolves the groove and zero wherever it misses it entirely — it is
+// non-zero only in the band where a seam is turning sub-pixel, so it is
+// far-field statistical shading rather than a mid-field drawn mark, and it
+// cannot outline a seam a player can still see.
+//
+// 3.5 is the KNEE, swept on-GPU (both instruments, one machine, one sitting,
+// plates-off control 0.0000 on every arm). It is the smallest value that
+// restores the near-field read the mean filter costs, measured as 6 m coverage
+// x strength — the two move in opposite directions, so neither alone decides:
+//
+//   cavity   crawl    6 m       12 m      24 m      48 m      6 m read
+//   off      0.0000   0.00028   0.00022   0.00004   0.00011   -42%
+//   3.0      0.0000   0.00053   0.00113   0.00043   0.00420   -13%
+//   3.5      0.0000   0.00066   0.00149   0.00070   0.00547    +7%
+//   4.0      0.0000   0.00079   0.00180   0.00100   0.00661   +27%
+//   8.0      0.0002   0.00151   0.00395   0.00449   0.01367  +180%
+//   (main)   0.0005   0.00034   0.00050   0.00028   0.00056     0%
+//
+// The aim is a near field left AS IT WAS, not maximised, so the smallest value
+// that clears `main` is the right one rather than the largest that still holds
+// the floor. Below 3.5 the near field is still being paid away; at 8.0 the
+// crawl floor gives.
+//
+// The crawl column is only this flat because the variance is blended across
+// both cells at a contact (see `plate_mask_relief_nb`). Gated by the owning
+// cell alone it read 0.0001 at 4.0 and 0.0007 at 8.0 — worse than `main` — and
+// removing that step is what let the knee move up to where the near field is
+// whole. Absolute levels are not portable between machines and both tools say
+// so; the ORDERING is what carries.
+uniform float seam_cavity: hint_range(0.0, 8.0) = 3.5;
 // How hard the ash sheet ends. This used to be a 0.24-wide smoothstep ramp,
 // which is precisely the "smooth interpolation" the diagnosis names — wind
 // leaves a boundary, not a gradient.
@@ -166,10 +204,12 @@ float ground_noise(vec2 xz, float scale) {
 // of the same search at no extra cost and are what lets the crack relief below
 // take an ANALYTIC gradient instead of differencing a sub-pixel step. `id2` is
 // the cell they belong to, which is what lets the substance step across the
-// boundary be averaged over the pixel drawing it.
+// boundary be averaged over the pixel drawing it. `f3`/`id3` are the third
+// candidate, which is what keeps that averaging continuous where three plates
+// meet (#499).
 void plates(vec2 uv, out vec2 id, out float f1, out float f2,
-		out vec2 c1, out vec2 c2, out vec2 id2) {
-	terrain_plates(uv, id, f1, f2, c1, c2, id2);
+		out vec2 c1, out vec2 c2, out vec2 id2, out float f3, out vec2 id3) {
+	terrain_plates(uv, id, f1, f2, c1, c2, id2, f3, id3);
 }
 
 // One plate's substance, resolved from its cell id alone. rgb = colour,
@@ -179,6 +219,39 @@ void plates(vec2 uv, out vec2 id, out float f1, out float f2,
 vec4 plate_substance(vec2 id) {
 	return terrain_plate_substance(
 		id, rock_color, rock_roughness, plate_basalt, plate_ferric, plate_pale);
+}
+
+// One cell's FINISHED surface: ash resolved against that cell's own stone, its
+// own crack darkening, and its own roughness terms — composed before any
+// averaging with a neighbour, for the reason the call site sets out (averaging
+// earlier is a product of blends where the correct answer is a blend of
+// products).
+//
+// The per-cell ORDERING here is load-bearing and is why this is one function
+// rather than three inline copies. Scorch is affine with a non-zero constant, so
+// it does not commute with the crack multiply and has to land before it; the
+// region and grain offsets have to land before the crack pushes roughness toward
+// 1. A triple junction needs three of these (#499), and three hand-copies of an
+// ordering nothing checks is exactly how the ground and the contact band drifted
+// apart before `crack_relief_parity_test` was written to pin them.
+void plate_cell_surface(
+		vec4 sub_cell, float slab_cell, float sheet, float rock_mix,
+		float scorch_k, float crack_in, float region_rough, float grain,
+		float detail,
+		out vec3 surface_out, out float rough_out, out float crack_out) {
+	float mask = sheet * slab_cell;
+	float exposure = max(rock_mix, mask);
+	// The crack is gated by the mask, so it is per-cell too — darkening the
+	// averaged surface would darken the neighbour's ash by the slab's seam and
+	// under-darken the slab.
+	crack_out = crack_in * mask;
+	surface_out = mix(
+		mix(ash_color, mix(rock_color, sub_cell.rgb, mask), exposure),
+		scorch_color, scorch_k) * (1.0 - crack_out * crack_darkness);
+	rough_out = mix(
+		clamp(mix(ash_roughness, mix(rock_roughness, sub_cell.a, mask), exposure)
+			+ region_rough - 0.06 * (grain - 0.5) * detail, 0.0, 1.0),
+		1.0, crack_out * 0.5);
 }
 
 void vertex() {
@@ -211,20 +284,33 @@ void fragment() {
 	vec2 plate_uv = world_pos.xz * plate_scale;
 	vec2 plate_id = vec2(0.0);
 	vec2 plate_id2 = vec2(0.0);
+	vec2 plate_id3 = vec2(0.0);
 	float f1 = 0.0;
 	float f2 = 1.0;
+	float f3 = 1.0;
 	float plate_resolved = 0.0;
 	float plate_edge_w = 0.0;
+	// Coverage split across the three nearest plates, (owning, second, third).
+	// The third is 0.0 everywhere except at a triple junction (#499).
+	vec3 plate_w = vec3(1.0, 0.0, 0.0);
 	vec4 sub = vec4(rock_color, rock_roughness);
 	vec4 sub_nb = vec4(rock_color, rock_roughness);
+	vec4 sub_nb3 = vec4(rock_color, rock_roughness);
 	float is_slab2 = 0.0;
+	float is_slab3 = 0.0;
 	float crack = 0.0;
 	float plate_fw = 0.0;
 	float crack_fw = 0.0;
+	// Hoisted out of the block below because the crack relief needs the same
+	// footprint: it is the one quantity that measures how far the separator
+	// moves in a pixel, and both the boundary average and the seam filter are
+	// keyed on it.
+	float edge_fw = 0.0;
 	vec2 plate_c1 = vec2(0.0);
 	vec2 plate_c2 = vec2(0.0);
 	if (plates_enabled) {
-	plates(plate_uv, plate_id, f1, f2, plate_c1, plate_c2, plate_id2);
+	plates(plate_uv, plate_id, f1, f2, plate_c1, plate_c2, plate_id2, f3,
+		plate_id3);
 
 	// Screen footprint of one plate. Unlike the grain, plates are NOT tied to
 	// the distance fade: a 1.8 m slab is still a resolvable feature well past
@@ -275,9 +361,16 @@ void fragment() {
 	vec2 e2 = plate_uv - plate_c2;
 	vec2 gsep_e = e2 * inversesqrt(max(dot(e2, e2), 1e-12))
 		- e1 * inversesqrt(max(dot(e1, e1), 1e-12));
-	float edge_fw = abs(dot(gsep_e, dFdx(plate_uv)))
+	edge_fw = abs(dot(gsep_e, dFdx(plate_uv)))
 		+ abs(dot(gsep_e, dFdy(plate_uv)));
 	plate_edge_w = terrain_plate_edge_blend(f1, f2, edge_fw * 0.5);
+	// ...and WHICH plates that share belongs to. Away from a triple junction this
+	// is exactly `(1 - plate_edge_w, plate_edge_w, 0)` — the two-cell answer,
+	// unchanged — and at one it becomes symmetric in the candidates so an
+	// identity swap exchanges equal weights instead of stepping the blend target
+	// (#499). Keyed on the isotropic `plate_fw`, not `edge_fw`; see the
+	// function's own note on why a width built from `c1` puts the defect back.
+	plate_w = terrain_plate_blend_weights(f1, f2, f3, plate_edge_w, plate_fw);
 
 	// Both cells' substances are kept SEPARATE here and composed with their own
 	// slab masks below. Blending the substances here and the masks there would
@@ -291,10 +384,16 @@ void fragment() {
 	vec4 mean4 = vec4(mean_col, mean_rough);
 	sub = mix(mean4, plate_substance(plate_id), plate_resolved);
 	sub_nb = mix(mean4, plate_substance(plate_id2), plate_resolved);
+	sub_nb3 = mix(mean4, plate_substance(plate_id3), plate_resolved);
 	// The neighbour's slab pick belongs on the opt-in path with the rest of the
 	// plate work: it is a hash, and the default-off ground must not pay for a
 	// preview it never draws.
 	is_slab2 = step(0.60, hash3(vec3(plate_id2 * 2.3, 19.0)));
+	// The third candidate takes the same mask as the other two. The mask is the
+	// DOMINANT half of the boundary residual (see the note at `slab` below), so
+	// a third substance blended under the second's mask would leave most of the
+	// junction step exactly where it was.
+	is_slab3 = step(0.60, hash3(vec3(plate_id3 * 2.3, 19.0)));
 
 	// The crack itself, widened to the local footprint so it stays a line
 	// instead of aliasing, and dissolved once it is thinner than about a pixel
@@ -378,7 +477,12 @@ void fragment() {
 	// PER CELL, because each cell's substance is gated by its own mask.
 	float slab_own = mix(0.40, is_slab, plate_resolved);
 	float slab_nb = mix(0.40, is_slab2, plate_resolved);
-	float slab = mix(slab_own, slab_nb, plate_edge_w);
+	float slab_nb3 = mix(0.40, is_slab3, plate_resolved);
+	// A weighted average over the three candidates. `plate_w` sums to one, and
+	// away from a junction it is `(1 - plate_edge_w, plate_edge_w, 0)` — so this
+	// is the previous two-cell blend term for term everywhere but a junction.
+	float slab = slab_own * plate_w.x + slab_nb * plate_w.y
+		+ slab_nb3 * plate_w.z;
 	// ...but the SAME average must not reach the crack relief, and this is the
 	// one place the two uses of the mask have to part company.
 	//
@@ -423,6 +527,18 @@ void fragment() {
 	float plate_mask = sheet * slab;
 	// The relief's own gate — same quantity, binary slab (see above).
 	float plate_mask_relief = sheet * slab_own;
+	// The NEIGHBOUR cell's version of that gate, for the seam variance only.
+	// The relief's MEAN keeps the owning cell's binary gate, for the measured
+	// reason above; the variance cannot, because the two terms are large in
+	// opposite places. The mean's hard step is harmless precisely where the
+	// note above says — past the distance a contact resolves, the mean has
+	// already faded, so the step multiplies a term that is not there. The
+	// variance is largest exactly THERE, so the same step lands on its peak
+	// instead of on nothing, and flips the cavity between full and zero as the
+	// pixel centre crosses a slab/bare boundary the footprint still straddles.
+	// That is a zero-width step reintroduced into the very quantity this change
+	// exists to filter.
+	float plate_mask_relief_nb = sheet * slab_nb;
 	float rock_exposure = max(rock_mix, plate_mask);
 
 	// The vertex tint stays the base layer (as cave_rock does with COLOR), so
@@ -461,42 +577,43 @@ void fragment() {
 	// resolves ash against rock exactly as it did before #261 and pays for none
 	// of the plate work — the coherent branch this file is built around.
 	if (plates_enabled) {
-	float mask_own = sheet * slab_own;
-	float mask_nb = sheet * slab_nb;
-	float exp_own = max(rock_mix, mask_own);
-	float exp_nb = max(rock_mix, mask_nb);
-	// The crack is gated by the mask, so it is per-cell too — darkening the
-	// averaged surface would darken the neighbour's ash by the slab's seam and
-	// under-darken the slab.
-	//
-	// It must land AFTER scorch, which is where it used to be. Scorch is affine
-	// with a non-zero constant, so it does NOT commute with this multiply:
+	// Scorch must land BEFORE the crack, which is why it is computed here and
+	// passed in rather than applied to the averaged surface. Scorch is affine
+	// with a non-zero constant, so it does NOT commute with the crack multiply:
 	//   mix(S, scorch, k) * (1-d)  =  S(1-k)(1-d) + scorch*k*(1-d)
 	//   mix(S * (1-d), scorch, k)  =  S(1-k)(1-d) + scorch*k
 	// which differ by scorch*k*d — a scorched seam would come out undarkened.
-	// So scorch is applied per cell here, before the crack. Grain and lip below
-	// are pure multiplies and DO commute, so they stay on the averaged surface.
-	float crack_own = crack * mask_own;
-	float crack_nb = crack * mask_nb;
+	// Grain and lip below are pure multiplies and DO commute, so they stay on the
+	// averaged surface.
 	float scorch_k = smoothstep(0.62, 0.95, drift) * 0.35 * (1.0 - rock_mix);
-	surface = mix(
-		mix(mix(ash_color, mix(rock_color, sub.rgb, mask_own), exp_own),
-			scorch_color, scorch_k) * (1.0 - crack_own * crack_darkness),
-		mix(mix(ash_color, mix(rock_color, sub_nb.rgb, mask_nb), exp_nb),
-			scorch_color, scorch_k) * (1.0 - crack_nb * crack_darkness),
-		plate_edge_w);
+	vec3 surf_own;
+	vec3 surf_nb;
+	vec3 surf_nb3;
+	float rough_own;
+	float rough_nb;
+	float rough_nb3;
+	float crack_own;
+	float crack_nb;
+	float crack_nb3;
+	plate_cell_surface(sub, slab_own, sheet, rock_mix, scorch_k, crack,
+		region_rough, grain, detail, surf_own, rough_own, crack_own);
+	plate_cell_surface(sub_nb, slab_nb, sheet, rock_mix, scorch_k, crack,
+		region_rough, grain, detail, surf_nb, rough_nb, crack_nb);
+	// The third candidate, which carries weight only at a triple junction.
+	plate_cell_surface(sub_nb3, slab_nb3, sheet, rock_mix, scorch_k, crack,
+		region_rough, grain, detail, surf_nb3, rough_nb3, crack_nb3);
+	// A weighted average of the three finished surfaces. `plate_w` sums to one
+	// and is `(1 - plate_edge_w, plate_edge_w, 0)` away from a junction, so this
+	// is the previous two-cell blend term for term there — and at a resolved
+	// contact, where it is `(1, 0, 0)`, it still composes the owning cell alone.
+	surface = surf_own * plate_w.x + surf_nb * plate_w.y + surf_nb3 * plate_w.z;
 	// Roughness keeps its downstream terms in the original order too: the
 	// region/grain offsets and the clamp are applied per cell BEFORE the crack
 	// pushes toward 1, exactly as the ungated path did.
-	stone_rough = mix(
-		mix(clamp(mix(ash_roughness, mix(rock_roughness, sub.a, mask_own), exp_own)
-			+ region_rough - 0.06 * (grain - 0.5) * detail, 0.0, 1.0),
-			1.0, crack_own * 0.5),
-		mix(clamp(mix(ash_roughness, mix(rock_roughness, sub_nb.a, mask_nb), exp_nb)
-			+ region_rough - 0.06 * (grain - 0.5) * detail, 0.0, 1.0),
-			1.0, crack_nb * 0.5),
-		plate_edge_w);
-	crack = mix(crack_own, crack_nb, plate_edge_w);
+	stone_rough = rough_own * plate_w.x + rough_nb * plate_w.y
+		+ rough_nb3 * plate_w.z;
+	crack = crack_own * plate_w.x + crack_nb * plate_w.y
+		+ crack_nb3 * plate_w.z;
 	} else {
 	surface = mix(mix(ash_color, rock_color, rock_mix), scorch_color,
 		smoothstep(0.62, 0.95, drift) * 0.35 * (1.0 - rock_mix));
@@ -583,6 +700,9 @@ void fragment() {
 	// Same uniform branch as the plate block: with the treatment off there is
 	// no relief to compute.
 	vec2 grad = vec2(0.0);
+	// How much the seam's slope VARIES inside one pixel — the part of a groove
+	// a normal cannot represent. Carried as cavity darkening after the bump.
+	float seam_slope_var = 0.0;
 	if (plates_enabled) {
 	vec2 d1 = plate_uv - plate_c1;
 	vec2 d2 = plate_uv - plate_c2;
@@ -590,17 +710,98 @@ void fragment() {
 	// centre would otherwise normalize a zero vector.
 	vec2 gsep = d2 * inversesqrt(max(dot(d2, d2), 1e-12))
 		- d1 * inversesqrt(max(dot(d1, d1), 1e-12));
-	float ct = clamp((f2 - f1) / max(crack_width, 1e-6), 0.0, 1.0);
-	// d/dx of (1 - smoothstep(0, w, x)) is -6t(1-t)/w. The crack is 1 at the
-	// seam and 0 off it, so this is negative and the normal tilts INTO the
-	// groove, exactly as the differenced form did.
-	float dcrack = -6.0 * ct * (1.0 - ct) / max(crack_width, 1e-6);
-	// Gradient in plate-uv space, then into world XZ (plate_uv = xz * scale).
+	float cw_relief = max(crack_width, 1e-6);
+	// The relief is read at the PIXEL CENTRE, and what it reads is finer than
+	// the mark every guard below is keyed on: the crack profile turns over
+	// inside a half-width, so its slope peaks at w/2 and is zero at both ends —
+	// under-sampled a factor of two sooner than the crack itself. That
+	// point-sample is the crawl.
+	//
+	// So integrate the groove across the pixel instead of sampling it. Two
+	// moments come out and the treatment needs BOTH:
+	//   - the MEAN tilt, which is what a normal can carry; and
+	//   - the VARIANCE about it, which a normal cannot, because a pixel
+	//     spanning a whole groove sees the two walls cancel exactly.
+	// Filtering to the mean alone is correct and still erases the seam: past
+	// the distance a groove resolves, the honest answer for the mean IS no net
+	// tilt. The detail is not gone, it moved into the second moment — which is
+	// carried as occlusion below.
+	//
+	// The profile integrated is a TOP HAT, because the seam-slope ceiling makes
+	// it one. The raw slope peaks at 6*0.25/w * plate_scale, which at the
+	// shipped width is ~40 against a ceiling of 0.4 — a hundredfold — so the
+	// clamp binds across all but the outermost half-percent of the groove, and
+	// what this shader actually applies is a constant-magnitude wall that flips
+	// sign at the seam. `amp` is that plateau, reached through the same ceiling,
+	// so the model follows the code rather than assuming it: open `crack_width`
+	// far enough that the clamp stops binding and `amp` becomes the true peak.
+	float amp = min(length(gsep) * (1.5 / cw_relief) * plate_scale
+		* plate_mask_relief, 0.4);
+	// The same plateau for the NEIGHBOURING cell. The profile below is shared —
+	// it is a property of the footprint and the seam, not of either cell — so
+	// the only per-cell quantity is this height, and blending the two over the
+	// boundary footprint is what keeps the cavity continuous across a
+	// slab-to-bare contact. See `plate_mask_relief_nb` above for why the mean
+	// does not need this and the variance does.
+	float amp_nb = min(length(gsep) * (1.5 / cw_relief) * plate_scale
+		* plate_mask_relief_nb, 0.4);
+	// The footprint is `edge_fw`, the ANALYTIC separator's screen rate — never
+	// `fwidth(f2 - f1)`. That quantity is a cusp at the seam, so its screen
+	// difference collapses on exactly the quads that straddle one: a filter
+	// keyed on it widens everywhere EXCEPT where the seam is. That reads as a
+	// free win on both instruments and is an artefact of a derivative
+	// degenerating into its own epsilon floor, which varies by GPU and driver.
+	// Same quantity and same reason as the boundary average above.
+	float seam_h = max(edge_fw, 1e-6);
+	float half_h = 0.5 * seam_h;
+	float s_sep = f2 - f1;
+	// Mean of a sign-flipping top hat over [s - h/2, s + h/2]. Its
+	// antiderivative is min(|x|, w), which is EVEN, so the folded coordinate
+	// `f2 - f1` serves directly: the straddling case (s < h/2) is carried by
+	// the abs, and what comes out is the even function of the signed offset
+	// that the fragment's own `gsep` then gives a direction to. At the seam the
+	// two terms are equal and the mean is exactly zero, which is the
+	// cancellation this whole term exists to account for.
+	// The profile's SHAPE, with the per-cell height factored out: mean = amp *
+	// prof, so this is the same closed form written once and reused by both
+	// cells. It is dimensionless and depends only on the footprint's overlap
+	// with the groove, which is why the two cells can share it.
+	float prof = (min(s_sep + half_h, cw_relief)
+		- min(abs(s_sep - half_h), cw_relief)) / seam_h;
+	float mean_tilt = amp * prof;
+	// Second moment. The top hat has magnitude `amp` wherever the footprint
+	// overlaps the groove [-w, w], so E[u^2] is amp^2 times the covered
+	// fraction of the pixel.
+	float covered = clamp(max(min(s_sep + half_h, cw_relief)
+		- max(s_sep - half_h, -cw_relief), 0.0) / seam_h, 0.0, 1.0);
+	// Var = E[u^2] - E[u]^2, floored for float safety, with amp^2 factored out.
+	// It is zero for a pixel that resolves one wall (covered 1, prof 1) and zero
+	// for one that misses the groove entirely (both terms zero) — non-zero ONLY
+	// where a pixel holds relief the mean is discarding. That is why carrying it
+	// cannot soften a seam a player can still resolve, which is #306's third
+	// acceptance criterion.
+	float spread = max(covered - prof * prof, 0.0);
+	// Blend the two cells' variances over the boundary's own footprint, exactly
+	// as the substance and the slab mask are blended above, and for the same
+	// reason: a pixel straddling a contact contains BOTH cells' seams, so
+	// gating the whole symmetric integral by whichever cell owns the pixel
+	// centre steps the cavity between full and zero as that centre crosses.
+	// `spread` is common to both, so blending the squared heights is
+	// arithmetically identical to blending the two variances, one multiply
+	// cheaper. With `plate_edge_w` at 0 — every contact a player can resolve —
+	// this is exactly the owning cell's own variance, so the near field is
+	// untouched.
+	seam_slope_var = mix(amp * amp, amp_nb * amp_nb, plate_edge_w) * spread;
+	// The tilt is INTO the groove, so it opposes the separator's gradient —
+	// the same sign the differenced form and the closed-form `dcrack` both
+	// carried, the latter by being negative by construction.
+	//
 	// This is inside the gate for a reason found by measurement: when the
 	// relief was computed unconditionally, the grooves kept raking the light
 	// with the treatment switched off, moving cave-chamber 29.61% away from
 	// base. Shader reasoning said the gate was already exact; it was not.
-	grad = gsep * dcrack * plate_scale * plate_mask_relief;
+	vec2 ghat = gsep * inversesqrt(max(dot(gsep, gsep), 1e-12));
+	grad = -ghat * mean_tilt;
 	// A screen-space gradient is UNBOUNDED as the feature it measures compresses
 	// into a pixel: at a grazing angle a seam 4 cm wide spans a fraction of one,
 	// and the raw slope runs to tens per metre — enough to swing the normal
@@ -667,6 +868,19 @@ void fragment() {
 	// 13% of the 6 m coverage), so this is the knee rather than a floor.
 	float grad_len = length(grad);
 	grad = grad_len > 0.4 ? grad * (0.4 / grad_len) : grad;
+	// The variance takes the PLATE resolution cutoff and nothing else. Once a
+	// pixel spans a whole plate there are no per-plate seams left to have a
+	// second moment about, exactly as the substance and slab mask converge on
+	// their means above — so this one is a statement about what exists, not a
+	// fade bought to hide shimmer.
+	//
+	// It deliberately does NOT take the crack-footprint fade or the slope
+	// ceiling. Those two bound what the NORMAL may claim, and the read they
+	// give up is precisely what this term carries instead; applying them here
+	// would hand back the seam they were spent on. Variance scales as the
+	// square of the amplitude it is a variance of, so the cutoff enters
+	// squared.
+	seam_slope_var *= plate_resolved * plate_resolved;
 	}
 	// A crack is a groove, so height is -crack and the normal tilts INTO it.
 	// The grain bump below is NOT plate work and runs on both paths; only the
@@ -678,4 +892,53 @@ void fragment() {
 		(h0 - hz) * bump_strength + grad.y * crack_relief) * detail;
 	vec3 perturbed = normalize(n + bump);
 	NORMAL = normalize((VIEW_MATRIX * vec4(perturbed, 0.0)).xyz);
+
+	// The seam relief the normal above could not carry, kept as OCCLUSION.
+	//
+	// A groove narrower than the pixel drawing it has no net tilt — its two
+	// walls cancel — but it is not flat, and shading it as flat is exactly how
+	// a seam vanishes into the far field. What such a groove still does is
+	// OCCLUDE: light reaching the bottom of it is blocked by its own walls, and
+	// that survives the averaging the tilt does not, because occlusion does not
+	// cancel between two opposing walls the way a signed slope does.
+	//
+	// Roughness is the textbook home for a filtered normal distribution
+	// (Toksvig, LEAN, geometric specular AA all terminate there) and it was
+	// measured on #306 and is INERT on this surface — a strength control at 8x
+	// and an albedo positive control at 400x together say the channel, not the
+	// coefficient, is what has no authority here: the ground is largely diffuse
+	// at SPECULAR = 0.18 under a low sun, so a lobe widening of the physically
+	// correct size lands below both the instrument's threshold and a player's.
+	// Godot's AO built-in is the other candidate and was NOT measured; it is
+	// passed over by reasoning, which is a weaker claim and is recorded as one:
+	// AO acts on ambient light, and the same low sun that makes the roughness
+	// move invisible is what dominates this surface. Cavity darkening on the
+	// finished albedo is where a diffuse surface's self-occlusion shows without
+	// depending on that argument, which is why it is done here.
+	//
+	// This lands on the FINISHED pixel rather than per cell, unlike the crack
+	// darkening above, and that is correct rather than a convenience: the crack
+	// is a per-cell material choice gated by that cell's own slab mask, while
+	// this is a statement about how much unresolved groove the PIXEL contains —
+	// a footprint quantity that has no per-cell answer.
+	//
+	// Scaled by `crack_relief * detail` because that is what the bump above
+	// applies to the same slope, and squared because it is a variance of it.
+	float seam_gain = crack_relief * detail;
+	float seam_var = seam_slope_var * seam_gain * seam_gain;
+	// A saturating cavity rather than `1 - k*var`: the variance is unbounded
+	// from this shader's point of view (it scales with an artist-set relief and
+	// a uniform gain), and a linear darkening would go NEGATIVE before anyone
+	// noticed. This form is monotone, bounded to (0, 1], and — the property
+	// that matters — is EXACTLY 1.0 when the variance is zero, so the near
+	// field, the far field past the plate cutoff, and the whole default-off
+	// path are arithmetically untouched rather than approximately so.
+	//
+	// The denominator is floored for the same reason `crack_width` is above:
+	// this divides by a UNIFORM, and `hint_range` bounds the inspector rather
+	// than the value a caller may set. A sufficiently negative `seam_cavity`
+	// would otherwise drive it through zero — an infinite or negative albedo
+	// rather than a clamped-looking one. The floor cannot bite at the shipped
+	// domain, where the denominator is at least 1.0.
+	ALBEDO *= 1.0 / max(1.0 + seam_cavity * seam_var, 1e-3);
 }

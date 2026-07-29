@@ -39,6 +39,8 @@ const BLOCKED_INCOMPATIBLE := "blocked_incompatible"
 const INVALID_MANIFEST := "invalid_manifest"
 const STALE_MANIFEST := "stale_manifest"
 const STALE_KEY_EPOCH := "stale_key_epoch"
+const EXPIRED_KEY_CERTIFICATE := "expired_key_certificate"
+const UNCERTIFIED_MANIFEST := "uncertified_manifest"
 const EXPIRED_MANIFEST := "expired_manifest"
 
 
@@ -46,6 +48,7 @@ const EXPIRED_MANIFEST := "expired_manifest"
 ##   { shell_version: String, pack_version: String, save_schema: int,
 ##     save_capability: int, protocol: int,
 ##     manifest_sequence_high_water: int (optional), key_epoch_high_water: int (optional),
+##     key_certificate_required: bool (optional),
 ##     observed_at: String,
 ##     quarantined: Array[String] (optional) }
 ## Missing keys default to the lowest value, so a partial state is never a crash —
@@ -58,11 +61,21 @@ const EXPIRED_MANIFEST := "expired_manifest"
 ## a manifest yet. `key_epoch_high_water` is the same shape for the signing-key
 ## epoch that mark was accumulated under — the sequence line restarts per epoch, so
 ## the two are read together and never independently.
+## `key_certificate_required` is the certificate-adoption latch: the updater sets it
+## when it accepts its first certificate-backed manifest, and from then on a manifest
+## carrying no certificate is refused. Without it, stripping the certificate would be
+## a way around the certificate entirely, so the latch is what makes the binding real
+## rather than advisory. Nothing here ever clears it.
 ## `observed_at` is required and caller-supplied so this core can
 ## enforce expiry without reading the wall clock and ceasing to be pure.
 ## `manifest` is the parsed update manifest (the caller has already verified its
-## signature). Returns { action: String, reason: String } where action is one of
-## the constants above. It never crashes on a malformed manifest.
+## signature). Its optional `key` block is the signing-key certificate —
+## { id: String, epoch: int, not_before: String, not_after: String } — and when
+## present it, not the top-level `key_epoch`, is where the enforced epoch comes
+## from; the caller is likewise responsible for having verified the offline
+## root's signature over it. Returns { action: String, reason: String } where
+## action is one of the constants above. It never crashes on a malformed
+## manifest.
 static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 	# Envelope first: `schema` and the `shell` block keep a stable, backward-
 	# compatible shape across every schema bump, so a client of ANY schema can
@@ -88,17 +101,55 @@ static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 	# rotated away from must not be able to sign its way back in, so an epoch below
 	# the accepted mark is refused — as a key-trust event distinct from an ordinary
 	# replay, because the two call for different operator responses.
-	#
-	# The epoch is only as trustworthy as the signature carrying it, and nothing yet
-	# binds a key to an epoch — that binding is the signing-key certificate of the
-	# key-custody boundary. So a claimed epoch is trusted exactly as the signature is,
-	# no more: it defends against a KEYLESS replayer, who can only resend manifests
-	# as published and therefore cannot invent a higher epoch. It does not yet defend
-	# against a compromised key claiming one, which is what the certificate closes.
 	var epoch_high_water: Variant = installed.get("key_epoch_high_water", 0)
 	if not is_int_id(epoch_high_water):
 		return _result(BLOCKED_INCOMPATIBLE, "the accepted signing-key epoch high-water mark is not a whole number — cannot prove this manifest was not signed under a superseded key")
+
+	# Where that epoch COMES FROM is the certificate boundary. With a `key`
+	# certificate the epoch is read from it, because the certificate is the
+	# structure that binds a key to a validity window and a monotonic epoch — and
+	# therefore the structure an offline root signature can anchor. Without one the
+	# legacy top-level field still applies, so every manifest published before
+	# certificates existed keeps deciding exactly as it did.
+	#
+	# The residual, stated plainly: this core verifies no signatures (it performs no
+	# I/O at all), and the Ed25519 root that would sign a certificate is unstarted.
+	# So a certificate is still only as trustworthy as the manifest signature
+	# carrying it — this defends against a KEYLESS replayer, who can only resend
+	# manifests as published, and NOT yet against a compromised key minting its own
+	# certificate. Reading the epoch from the certificate is what makes closing that
+	# gap a change to the crypto boundary alone, with no further change here.
+	# Adoption RATCHETS, and without that the binding above is decorative. Once a
+	# client has accepted a certificate-backed epoch, a manifest that simply OMITS
+	# the certificate must be refused — otherwise a superseded or compromised key
+	# strips `key`, names any top-level `key_epoch` it likes above the mark, and is
+	# not only admitted but starts a fresh sequence line. That downgrade survives
+	# root verification too: signing the certificate cannot matter to an attacker
+	# who never sends one. The latch is caller-owned state like the high-water
+	# marks, set when the updater accepts its first certified manifest, and an
+	# unreadable value fails closed rather than quietly reopening the path.
+	var certificate_required: Variant = installed.get("key_certificate_required", false)
+	if not (certificate_required is bool):
+		return _result(BLOCKED_INCOMPATIBLE, "the certificate-adoption latch is not a boolean — cannot prove whether this client already requires certificate-backed manifests")
+
+	var observed_unix := _utc_datetime_to_unix(str(installed["observed_at"]))
 	var key_epoch := int(manifest.get("key_epoch", 0))
+	if not manifest.has("key"):
+		if bool(certificate_required):
+			return _result(UNCERTIFIED_MANIFEST, "this client has accepted a certificate-backed signing key, but this manifest carries no certificate — refusing a manifest that would downgrade to a self-declared epoch")
+	else:
+		var cert: Dictionary = manifest["key"]
+		# Checked BEFORE the epoch is used: a certificate outside its validity
+		# window cannot vouch for anything it carries, including its own epoch.
+		# This bounds the SIGNER, independently of how long a publication stays
+		# fresh — `not_after` expires a manifest, this expires a key.
+		var valid_from := _utc_datetime_to_unix(str(cert["not_before"]))
+		var valid_until := _utc_datetime_to_unix(str(cert["not_after"]))
+		if observed_unix < valid_from or observed_unix >= valid_until:
+			return _result(EXPIRED_KEY_CERTIFICATE, "the signing-key certificate '%s' is valid from %s until %s, but this manifest was observed at %s — refusing a manifest signed outside its key's validity window" % [
+				str(cert["id"]), str(cert["not_before"]), str(cert["not_after"]), str(installed["observed_at"])])
+		key_epoch = int(cert["epoch"])
+
 	if key_epoch < int(epoch_high_water):
 		return _result(STALE_KEY_EPOCH, "manifest key epoch %d is below the accepted epoch %d — refusing a manifest signed under a superseded key" % [
 			key_epoch, int(epoch_high_water)])
@@ -115,7 +166,6 @@ static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 		return _result(STALE_MANIFEST, "manifest sequence %d is below the accepted high-water mark %d — refusing a replay" % [
 			sequence, int(high_water)])
 
-	var observed_unix := _utc_datetime_to_unix(str(installed["observed_at"]))
 	var not_after_unix := _utc_datetime_to_unix(str(manifest["not_after"]))
 	if observed_unix >= not_after_unix:
 		return _result(EXPIRED_MANIFEST, "manifest expired at %s at or before observation at %s" % [
@@ -439,6 +489,22 @@ static func _envelope_error(m: Dictionary) -> String:
 	# epoch must never read as "no epoch" and silently disarm anti-rollback.
 	if m.has("key_epoch") and not is_int_id(m["key_epoch"]):
 		return "key_epoch is present but not a whole number"
+	# The signing-key certificate is optional for the same reason `key_epoch` is —
+	# manifests published before it existed stay readable — but a PRESENT one must
+	# be wholly well-formed, because a malformed certificate that degraded to "no
+	# certificate" would hand the epoch straight back to the free field it exists
+	# to supersede. That is the same fail-closed rule the epoch itself follows.
+	if m.has("key"):
+		var cert_err := _certificate_error(m["key"])
+		if cert_err != "":
+			return cert_err
+		# Two epochs that disagree is an INCOHERENT manifest, not a precedence
+		# question: a signer must never be able to present both and have the
+		# client pick the convenient one.
+		var cert: Dictionary = m["key"]
+		if m.has("key_epoch") and int(m["key_epoch"]) != int(cert["epoch"]):
+			return "key.epoch %d disagrees with the top-level key_epoch %d (incoherent manifest)" % [
+				int(cert["epoch"]), int(m["key_epoch"])]
 	if not is_utc_datetime(m.get("not_after")):
 		return "not_after is missing or not a canonical UTC timestamp"
 	if not (m.get("channel") is String) or (m["channel"] as String).is_empty():
@@ -472,6 +538,40 @@ static func _envelope_error(m: Dictionary) -> String:
 	if compare_versions(str(sh["current"]), str(sh["min_supported"])) < 0:
 		return "shell.current %s is below its own min_supported %s (incoherent manifest)" % [
 			str(sh["current"]), str(sh["min_supported"])]
+	return ""
+
+
+## The signing-key certificate carried in the manifest's `key` field: the id a
+## revocation list will name, the monotonic epoch anti-rollback reads, and the
+## validity window that bounds both. Returns "" if well-formed, else a short
+## reason.
+##
+## It deliberately does NOT verify the offline root's signature over this block.
+## This core performs no I/O and verifies no signatures — it already trusts the
+## caller to have verified the manifest's own — so root verification belongs to
+## the same crypto boundary that will introduce Ed25519 signing. What this
+## validator guarantees is that a certificate is either wholly usable or refused:
+## every field the decision path reads is present and coherent, so no downstream
+## check has to re-derive a default from a half-formed certificate.
+static func _certificate_error(raw: Variant) -> String:
+	if not (raw is Dictionary):
+		return "key is present but not an object"
+	var cert: Dictionary = raw
+	# The id is what a revocation list revokes; a certificate without one could
+	# never be named, so it is required even though nothing consumes it yet.
+	if not ((cert.get("id") is String) and not (cert["id"] as String).is_empty()):
+		return "key.id is missing or not a non-empty string — a signing key with no id can never be revoked"
+	if not is_int_id(cert.get("epoch")):
+		return "key.epoch is missing or not a whole number"
+	if not is_utc_datetime(cert.get("not_before")):
+		return "key.not_before is missing or not a canonical UTC timestamp"
+	if not is_utc_datetime(cert.get("not_after")):
+		return "key.not_after is missing or not a canonical UTC timestamp"
+	# An empty or inverted window is incoherent: it could never admit any
+	# observation, so it would strand every client rather than fail visibly here.
+	if _utc_datetime_to_unix(str(cert["not_before"])) >= _utc_datetime_to_unix(str(cert["not_after"])):
+		return "key.not_before %s is at or after key.not_after %s (incoherent certificate)" % [
+			str(cert["not_before"]), str(cert["not_after"])]
 	return ""
 
 

@@ -58,16 +58,28 @@ float terrain_ground_noise(vec2 xz, float scale) {
 // costs nothing extra for the same reason `c2` does (the search already knows
 // it), and it is what lets a caller average the substance step across the
 // boundary rather than taking the owning cell's value outright.
+//
+// `f3`/`id3` are the THIRD-nearest, and they exist because `id2` alone is not a
+// continuous choice of neighbour. At a triple junction the owning cell stays the
+// same while the second- and third-nearest swap across their bisector, so a
+// caller blending toward `id2` sees its blend target change identity abruptly
+// while the weight is still near a half (#499). Carrying the third candidate is
+// what lets that swap be made harmless; see `terrain_plate_junction_split`. It
+// costs two more out-parameters and no additional distance evaluation — the
+// nine-cell search already visits every candidate.
 void terrain_plates(
 		vec2 uv, out vec2 id, out float f1, out float f2,
-		out vec2 c1, out vec2 c2, out vec2 id2) {
+		out vec2 c1, out vec2 c2, out vec2 id2,
+		out float f3, out vec2 id3) {
 	vec2 base = floor(uv);
 	f1 = 1000.0;
 	f2 = 1000.0;
+	f3 = 1000.0;
 	id = base;
 	c1 = base;
 	c2 = base;
 	id2 = base;
+	id3 = base;
 	for (int j = -1; j <= 1; j++) {
 		for (int i = -1; i <= 1; i++) {
 			vec2 cell = base + vec2(float(i), float(j));
@@ -77,6 +89,8 @@ void terrain_plates(
 			vec2 centre = cell + 0.15 + 0.7 * jitter;
 			float d = length(uv - centre);
 			if (d < f1) {
+				f3 = f2;
+				id3 = id2;
 				f2 = f1;
 				c2 = c1;
 				id2 = id;
@@ -84,12 +98,83 @@ void terrain_plates(
 				c1 = centre;
 				id = cell;
 			} else if (d < f2) {
+				f3 = f2;
+				id3 = id2;
 				f2 = d;
 				c2 = centre;
 				id2 = cell;
+			} else if (d < f3) {
+				f3 = d;
+				id3 = cell;
 			}
 		}
 	}
+}
+
+// How a fragment's coverage divides between the three nearest plates, as
+// (owning, second, third). Sums to 1.0.
+//
+// `terrain_plate_edge_blend` decides HOW MUCH of a fragment belongs to a
+// neighbouring plate. It does not decide WHICH one, and taking `id2` outright is
+// only exact away from a triple junction. At one — where the owning cell stays
+// the same while the second- and third-nearest swap across their bisector —
+// `id2` changes identity discontinuously while that weight is still near a half,
+// so the blend target jumps by the whole contrast between two substances. That
+// is a fresh zero-width step inside the very region the averaging exists to
+// remove (#499), and the averaging cannot filter it because it is a step in
+// WHICH value is being blended, not in how much.
+//
+// The answer is a weighting that is SYMMETRIC in the candidates, because a
+// discontinuity that lives in an identity swap is removed by symmetry or not at
+// all: if two candidates carry equal weight wherever they are equidistant, then
+// exchanging their labels does not move the blended value, exactly and at every
+// footprint. Two swaps have to be covered, and covering only one is the trap
+// this function was rewritten around —
+//
+//   f2 == f3, the second/third swap. This is the one #499 names.
+//   f1 == f2, the owner swap. This one runs the whole length of every ordinary
+//     plate boundary, and `terrain_plate_edge_blend` already handles it alone
+//     (it returns exactly 0.5 there, so the two cells trade equal shares). But
+//     next to a junction the third candidate carries weight too, and a rule that
+//     hands the owner a fixed `1 - w` while the second gets `w * something`
+//     stops being symmetric under it — the owner's share jumps as the label
+//     moves. Measured on the probe in `plate_junction_test`, splitting only the
+//     neighbour's half left exactly half the original step behind (0.306 down to
+//     0.172, and flat under refinement — a jump, not a gradient).
+//
+// So blend two answers by how close the fragment is to a junction:
+//
+//   P — the pairwise answer, `(1 - w, w, 0)`. Exact wherever the third plate is
+//       further away than the footprint, which is almost everywhere.
+//   S — the symmetric coverage answer, each candidate weighted by how far it is
+//       past the nearest and then normalised. Symmetric in all three by
+//       construction, so it is continuous under BOTH swaps.
+//   j — how much of a junction this is, from `f3 - f2`.
+//
+// `j` is 0.0 wherever the third plate is past the footprint, so the result there
+// is P *bit-identical* to the two-cell rule and no fragment outside a junction
+// changes at all. `j` is 1.0 where the second and third are equidistant, which
+// is where P is discontinuous and S is not.
+//
+// The footprint is the caller's ISOTROPIC plate footprint, not the analytic
+// separator `edge_fw` the owning boundary uses. `edge_fw` is built from `c1` and
+// `c2`, and it survives the owner swap only because the separator merely negates
+// there and the projection takes absolute values. Against the THIRD candidate no
+// such cancellation exists, so a width built from `c1` would jump whenever the
+// owner's label moved and would put a smaller copy of the defect back inside the
+// fix. An orientation-free width depends on no cell identity at all. The cost is
+// that the junction blend engages over a slightly conservative distance, which
+// is acceptable for a correction that only ever applies where three plates meet.
+vec3 terrain_plate_blend_weights(
+		float f1, float f2, float f3, float pair_w, float fw) {
+	float w = max(fw, 1e-6);
+	vec3 pairwise = vec3(1.0 - pair_w, pair_w, 0.0);
+	float g2 = 1.0 - smoothstep(0.0, w, f2 - f1);
+	float g3 = 1.0 - smoothstep(0.0, w, f3 - f1);
+	// The nearest candidate's own term is 1.0 by construction (f1 - f1 == 0).
+	vec3 symmetric = vec3(1.0, g2, g3) / (1.0 + g2 + g3);
+	float j = 1.0 - smoothstep(0.0, w, f3 - f2);
+	return mix(pairwise, symmetric, j);
 }
 
 // How much of the NEIGHBOURING plate belongs in this fragment.
