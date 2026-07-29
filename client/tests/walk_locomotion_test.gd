@@ -16,7 +16,9 @@ extends Node
 ##     opt-in restore the standing pose; the gaits never impersonate a jump.
 ##  5. SPRINT RUNS — sprinting poses the run rather than restoring rest, and the
 ##     run is AUTHORED rather than the walk scaled up.
-##  6. SEAMLESS + DETERMINISTIC — phase 0 and TAU agree, and identical travel
+##  6. GAIT CHANGES BLEND — pressing and releasing sprint while moving keeps
+##     every driven channel continuous, then reaches the unchanged target gait.
+##  7. SEAMLESS + DETERMINISTIC — phase 0 and TAU agree, and identical travel
 ##     produces byte-equivalent bone rotations on separate player bodies.
 ##
 ## Each assertion names a real break: deleting the Player hook, inverting a
@@ -53,6 +55,12 @@ const MIN_ELBOW_CARRIAGE_DEG := 20.0
 ## How far apart two channels' run/walk ratios must sit before the run is
 ## provably not the walk times a constant.
 const MIN_RATIO_SPREAD := 0.25
+## A one-millisecond input edge advances the authored gait by less than one
+## degree. Two degrees leaves room for imported-skeleton dust while remaining
+## far below the current 35-49 degree elbow and 14 degree knee steps.
+const MAX_SWITCH_STEP_DEG := 2.0
+const SETTLE_STEPS := 20
+const SETTLE_DELTA := 0.02
 ## Most of the walk's phase the run may turn through over the same ground. The
 ## stride ratio 2.4/3.6 puts the real gaits at 0.71 (sin 30 over sin 45), and
 ## equal strides put them at 1.0, so the floor sits between the two rather than
@@ -95,6 +103,8 @@ func _ready() -> void:
 		return
 	if not _check_gaits_are_independently_opt_in():
 		return
+	if not _check_gait_switch_blends():
+		return
 	if not _check_run_is_authored_not_scaled():
 		return
 	if not _check_run_stride_is_longer():
@@ -103,7 +113,7 @@ func _ready() -> void:
 		return
 
 	_restore_flag()
-	print("TEST PASS — grounded locomotion is default-off, distance-driven and deterministic; walk and run each pose opposed limbs, sprint runs on an authored gait that is not the walk scaled, and stop/air restore rest")
+	print("TEST PASS — grounded locomotion is default-off, distance-driven and deterministic; walk and run are authored, gait changes blend continuously, and stop/air restore rest")
 	get_tree().quit(0)
 
 
@@ -335,7 +345,56 @@ func _check_gaits_are_independently_opt_in() -> bool:
 	return true
 
 
-## 7. Redefining the run as the walk times a constant — the cheap fix this slice
+## 7. Restoring the direct `sprinting ? run : walk` pose selection makes this
+## fail on both input edges. The test drives the real bound skeleton: pure-angle
+## arithmetic cannot prove that the runtime applied the blended pose.
+func _check_gait_switch_blends() -> bool:
+	var subject := _player_with_flag("1")
+	if subject.is_empty():
+		return false
+	var skeleton: Skeleton3D = subject["skeleton"]
+	var animator: Node = subject["animator"]
+
+	# Establish a real moving walk before the input edge. Starting from rest is
+	# deliberately not the contract: there is no prior gait to blend from.
+	animator.call("advance_motion", Player.WALK_SPEED, true, false, 0.1)
+	var before_press := _snapshot(skeleton)
+	animator.call("advance_motion", Player.SPRINT_SPEED, true, true, 0.001)
+	var press_step := _max_pose_delta_deg(before_press, _snapshot(skeleton))
+	if press_step > MAX_SWITCH_STEP_DEG:
+		_free_subject(subject)
+		return _fail(("sprint press stepped a driven bone by %.2f deg in one millisecond " +
+			"(limit %.1f deg) — walk changed directly to the run pose") %
+			[press_step, MAX_SWITCH_STEP_DEG])
+
+	for _i in SETTLE_STEPS:
+		animator.call(
+			"advance_motion", Player.SPRINT_SPEED, true, true, SETTLE_DELTA)
+	var run_offsets := _offset_angles(skeleton)
+	if minf(run_offsets["lowerarm_l"], run_offsets["lowerarm_r"]) < MIN_ELBOW_CARRIAGE_DEG:
+		_free_subject(subject)
+		return _fail("the gait blend never converged to the authored run elbow carriage")
+
+	var before_release := _snapshot(skeleton)
+	animator.call("advance_motion", Player.WALK_SPEED, true, false, 0.001)
+	var release_step := _max_pose_delta_deg(before_release, _snapshot(skeleton))
+	if release_step > MAX_SWITCH_STEP_DEG:
+		_free_subject(subject)
+		return _fail(("sprint release stepped a driven bone by %.2f deg in one millisecond " +
+			"(limit %.1f deg) — run changed directly to the walk pose") %
+			[release_step, MAX_SWITCH_STEP_DEG])
+
+	for _i in SETTLE_STEPS:
+		animator.call(
+			"advance_motion", Player.WALK_SPEED, true, false, SETTLE_DELTA)
+	var walk_offsets := _offset_angles(skeleton)
+	_free_subject(subject)
+	if maxf(absf(walk_offsets["lowerarm_l"]), absf(walk_offsets["lowerarm_r"])) > POSE_EPSILON:
+		return _fail("the gait blend never converged to the walk's straight elbows")
+	return true
+
+
+## 8. Redefining the run as the walk times a constant — the cheap fix this slice
 ## exists to refuse — makes these disagree.
 ##
 ## Held against the pure functions, so it is a statement about the AUTHORED
@@ -392,7 +451,7 @@ func _check_run_is_authored_not_scaled() -> bool:
 	return true
 
 
-## 8. Shortening the run's stride to the walk's turns sprint speed into a
+## 9. Shortening the run's stride to the walk's turns sprint speed into a
 ## blur of steps rather than longer ground-covering strides.
 func _check_run_stride_is_longer() -> bool:
 	var walking := _player_with_flag("1")
@@ -426,7 +485,7 @@ func _check_run_stride_is_longer() -> bool:
 	return true
 
 
-## 9. A phase seam or non-deterministic clock/counter makes these literal
+## 10. A phase seam or non-deterministic clock/counter makes these literal
 ## comparisons disagree.
 func _check_seamless_and_deterministic() -> bool:
 	var a := _player_with_flag("1")
@@ -528,6 +587,15 @@ func _same_pose(
 			return _fail("%s (%s differs by %.6f rad)" %
 				[message, bone_name, qa.angle_to(qb)]) if not message.is_empty() else false
 	return true
+
+
+func _max_pose_delta_deg(a: Dictionary, b: Dictionary) -> float:
+	var largest := 0.0
+	for bone_name: String in DRIVEN_BONES:
+		largest = maxf(
+			largest,
+			rad_to_deg((a[bone_name] as Quaternion).angle_to(b[bone_name] as Quaternion)))
+	return largest
 
 
 func _free_subject(subject: Dictionary) -> void:
