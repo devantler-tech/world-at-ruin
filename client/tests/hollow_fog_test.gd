@@ -268,6 +268,16 @@ func _ready() -> void:
 		_fail("marker() must distinguish 'no qualifying hollow' from 'volumetrics unavailable'")
 		return
 
+	var field_material := _run_field_material_laws(pools[0])
+	if field_material != "":
+		_fail(field_material)
+		return
+
+	var spatial_field := _run_spatial_field_laws(pools[0])
+	if spatial_field != "":
+		_fail(spatial_field)
+		return
+
 	var drift := _run_drift_laws(pools)
 	if drift != "":
 		_fail(drift)
@@ -284,6 +294,130 @@ func _ready() -> void:
 ## How many samples one drift period is cut into. 64 lands within 0.12% of the
 ## true extremes of a sinusoid, which is far inside every margin asserted below.
 const DRIFT_SAMPLES := 64
+const HOLLOW_FOG_API: GDScript = preload("res://scripts/hollow_fog.gd")
+
+
+## Product law 2: the unsettled intra-pool density field is default-off, and a
+## player's explicit opt-in reaches the material the renderer consumes.
+func _run_field_material_laws(placement: Dictionary) -> String:
+	const FLAG := "WAR_ASH_FIELD_DRIFT"
+	var had_flag := OS.has_environment(FLAG)
+	var previous := OS.get_environment(FLAG)
+
+	OS.unset_environment(FLAG)
+	var resting := HollowFog.build_volume(placement)
+	var resting_material := resting.material
+	resting.free()
+	if not resting_material is FogMaterial:
+		_restore_environment(FLAG, had_flag, previous)
+		return "unset %s no longer builds the settled scalar FogMaterial — the experimental field drift is not default-off" % FLAG
+
+	OS.set_environment(FLAG, "1")
+	var drifting := HollowFog.build_volume(placement)
+	var drifting_material := drifting.material
+	var field_marker := HollowFog.marker(true, true, 1)
+	HollowFog.apply_drift(drifting, placement, 7.5)
+	var field_time: Variant = (
+		(drifting_material as ShaderMaterial).get_shader_parameter("field_time")
+		if drifting_material is ShaderMaterial else null
+	)
+	drifting.free()
+	_restore_environment(FLAG, had_flag, previous)
+	if not drifting_material is ShaderMaterial:
+		return "%s=1 still builds a scalar FogMaterial — the player opted into spatial drift but the renderer received one density for the whole pool" % FLAG
+	var shader_material := drifting_material as ShaderMaterial
+	if shader_material.shader == null:
+		return "%s=1 builds a ShaderMaterial with no shader — the opted-in pool renders nothing" % FLAG
+	if not is_equal_approx(
+		float(shader_material.get_shader_parameter("placed_density")),
+		float(placement["density"])
+	):
+		return "%s=1 does not bind the placement's density into the fog shader" % FLAG
+	if not Vector3(shader_material.get_shader_parameter("wind_dir")).is_equal_approx(Wind.axis()):
+		return "%s=1 does not bind the Reach's shared Wind axis into the fog shader" % FLAG
+	if field_time == null or not is_equal_approx(float(field_time), 7.5):
+		return "%s=1 ignores the production drift clock — the spatial field cannot move independently of unrelated scene animation" % FLAG
+	if not field_marker.contains("spatial field"):
+		return "%s=1 builds the field but the boot marker does not name it — capture evidence cannot prove which ash path it photographed" % FLAG
+	return ""
+
+
+func _restore_environment(name: String, had_value: bool, value: String) -> void:
+	if had_value:
+		OS.set_environment(name, value)
+	else:
+		OS.unset_environment(name)
+
+
+## The pure, headless statement of the GPU density field. The shader is judged
+## in a real frame; these laws pin the behavior that cannot be read back without
+## a rendering device.
+func _run_spatial_field_laws(placement: Dictionary) -> String:
+	if not HOLLOW_FOG_API.has_method("field_density"):
+		return "HollowFog has no field_density() — the custom material still has no testable spatial density field"
+
+	const FLAG := "WAR_ASH_FIELD_DRIFT"
+	var had_flag := OS.has_environment(FLAG)
+	var previous := OS.get_environment(FLAG)
+	OS.set_environment(FLAG, "1")
+	var volume := HollowFog.build_volume(placement)
+	var material := volume.material as ShaderMaterial
+	volume.free()
+	_restore_environment(FLAG, had_flag, previous)
+	if material == null:
+		return "the spatial-field laws cannot reach a ShaderMaterial through the opted-in production builder"
+
+	var field_speed := float(material.get_shader_parameter("field_speed"))
+	var field_wavelength := float(material.get_shader_parameter("field_wavelength"))
+	var field_rate := field_speed / maxf(field_wavelength, 0.001)
+	if field_rate <= 0.0:
+		return "field_rate is %.3f — a non-positive rate freezes the density field" % field_rate
+	if field_speed <= 0.1:
+		return "field_speed is %.3f m/s — the field has no non-vacuous travel along the wind" % field_speed
+	var primary_pockets := (HollowFog.POOL_RADIUS * 2.0) / (TAU * field_wavelength)
+	if primary_pockets < 2.0:
+		return "the primary field fits only %.2f pockets across a pool — the first GPU frame still read as one basin-sized dimmer" % primary_pockets
+
+	var placed := float(placement["density"])
+	var origin: Vector3 = placement["pos"]
+	var minimum := INF
+	var maximum := -INF
+	for x_step in range(-3, 4):
+		for z_step in range(-3, 4):
+			var sample := origin + Vector3(float(x_step) * 3.0, 0.0, float(z_step) * 3.0)
+			var density := float(HOLLOW_FOG_API.call("field_density", placed, sample, 4.0))
+			minimum = minf(minimum, density)
+			maximum = maxf(maximum, density)
+	if maximum - minimum < placed * 0.12:
+		return "one pool's field spans only %.4f around placed density %.4f — the air still changes as one mass" % [maximum - minimum, placed]
+	if minimum <= 0.0:
+		return "the spatial field reaches density %.4f — moving ash may thin, but it may not blink out" % minimum
+
+	# A static field translated downwind by field_speed must carry the same
+	# sample to the translated point at the later time. Wrong direction,
+	# missing time, or a per-pool clock breaks this equality.
+	var dt := 3.25
+	var earlier := float(HOLLOW_FOG_API.call("field_density", placed, origin, 2.0))
+	var later_pos := origin + Wind.axis() * field_speed * dt
+	var later := float(HOLLOW_FOG_API.call("field_density", placed, later_pos, 2.0 + dt))
+	if absf(later - earlier) > placed * 0.0001:
+		return "the density field does not translate on Wind (%.6f became %.6f after moving %.2f m downwind)" % [
+			earlier, later, field_speed * dt
+		]
+
+	# Every harmonic completes an integer number of cycles over this period, so
+	# the temporal mean at a fixed point is the placement's tuned density.
+	var period := TAU / field_rate
+	var sum_density := 0.0
+	for i in DRIFT_SAMPLES:
+		var time := period * float(i) / float(DRIFT_SAMPLES)
+		sum_density += float(HOLLOW_FOG_API.call("field_density", placed, origin, time))
+	var mean_density := sum_density / float(DRIFT_SAMPLES)
+	if absf(mean_density - placed) > placed * 0.01:
+		return "spatial drift averages %.4f at a pool placed at %.4f — the field moved the resting density that #211 tuned" % [
+			mean_density, placed
+		]
+	return ""
 
 
 ## The drift laws (#233), or "" if they all hold.
