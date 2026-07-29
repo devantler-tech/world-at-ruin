@@ -461,6 +461,18 @@ void fragment() {
 	float plate_mask = sheet * slab;
 	// The relief's own gate — same quantity, binary slab (see above).
 	float plate_mask_relief = sheet * slab_own;
+	// The NEIGHBOUR cell's version of that gate, for the seam variance only.
+	// The relief's MEAN keeps the owning cell's binary gate, for the measured
+	// reason above; the variance cannot, because the two terms are large in
+	// opposite places. The mean's hard step is harmless precisely where the
+	// note above says — past the distance a contact resolves, the mean has
+	// already faded, so the step multiplies a term that is not there. The
+	// variance is largest exactly THERE, so the same step lands on its peak
+	// instead of on nothing, and flips the cavity between full and zero as the
+	// pixel centre crosses a slab/bare boundary the footprint still straddles.
+	// That is a zero-width step reintroduced into the very quantity this change
+	// exists to filter.
+	float plate_mask_relief_nb = sheet * slab_nb;
 	float rock_exposure = max(rock_mix, plate_mask);
 
 	// The vertex tint stays the base layer (as cave_rock does with COLOR), so
@@ -658,6 +670,14 @@ void fragment() {
 	// far enough that the clamp stops binding and `amp` becomes the true peak.
 	float amp = min(length(gsep) * (1.5 / cw_relief) * plate_scale
 		* plate_mask_relief, 0.4);
+	// The same plateau for the NEIGHBOURING cell. The profile below is shared —
+	// it is a property of the footprint and the seam, not of either cell — so
+	// the only per-cell quantity is this height, and blending the two over the
+	// boundary footprint is what keeps the cavity continuous across a
+	// slab-to-bare contact. See `plate_mask_relief_nb` above for why the mean
+	// does not need this and the variance does.
+	float amp_nb = min(length(gsep) * (1.5 / cw_relief) * plate_scale
+		* plate_mask_relief_nb, 0.4);
 	// The footprint is `edge_fw`, the ANALYTIC separator's screen rate — never
 	// `fwidth(f2 - f1)`. That quantity is a cusp at the seam, so its screen
 	// difference collapses on exactly the quads that straddle one: a filter
@@ -675,20 +695,36 @@ void fragment() {
 	// that the fragment's own `gsep` then gives a direction to. At the seam the
 	// two terms are equal and the mean is exactly zero, which is the
 	// cancellation this whole term exists to account for.
-	float mean_tilt = amp * (min(s_sep + half_h, cw_relief)
+	// The profile's SHAPE, with the per-cell height factored out: mean = amp *
+	// prof, so this is the same closed form written once and reused by both
+	// cells. It is dimensionless and depends only on the footprint's overlap
+	// with the groove, which is why the two cells can share it.
+	float prof = (min(s_sep + half_h, cw_relief)
 		- min(abs(s_sep - half_h), cw_relief)) / seam_h;
+	float mean_tilt = amp * prof;
 	// Second moment. The top hat has magnitude `amp` wherever the footprint
 	// overlaps the groove [-w, w], so E[u^2] is amp^2 times the covered
 	// fraction of the pixel.
 	float covered = clamp(max(min(s_sep + half_h, cw_relief)
 		- max(s_sep - half_h, -cw_relief), 0.0) / seam_h, 0.0, 1.0);
-	// Var = E[u^2] - E[u]^2, floored for float safety. It is zero for a pixel
-	// that resolves one wall (covered 1, mean amp) and zero for one that misses
-	// the groove entirely (both terms zero) — non-zero ONLY where a pixel holds
-	// relief the mean is discarding. That is why carrying it cannot soften a
-	// seam a player can still resolve, which is #306's third acceptance
-	// criterion.
-	seam_slope_var = max(amp * amp * covered - mean_tilt * mean_tilt, 0.0);
+	// Var = E[u^2] - E[u]^2, floored for float safety, with amp^2 factored out.
+	// It is zero for a pixel that resolves one wall (covered 1, prof 1) and zero
+	// for one that misses the groove entirely (both terms zero) — non-zero ONLY
+	// where a pixel holds relief the mean is discarding. That is why carrying it
+	// cannot soften a seam a player can still resolve, which is #306's third
+	// acceptance criterion.
+	float spread = max(covered - prof * prof, 0.0);
+	// Blend the two cells' variances over the boundary's own footprint, exactly
+	// as the substance and the slab mask are blended above, and for the same
+	// reason: a pixel straddling a contact contains BOTH cells' seams, so
+	// gating the whole symmetric integral by whichever cell owns the pixel
+	// centre steps the cavity between full and zero as that centre crosses.
+	// `spread` is common to both, so blending the squared heights is
+	// arithmetically identical to blending the two variances, one multiply
+	// cheaper. With `plate_edge_w` at 0 — every contact a player can resolve —
+	// this is exactly the owning cell's own variance, so the near field is
+	// untouched.
+	seam_slope_var = mix(amp * amp, amp_nb * amp_nb, plate_edge_w) * spread;
 	// The tilt is INTO the groove, so it opposes the separator's gradient —
 	// the same sign the differenced form and the closed-form `dcrack` both
 	// carried, the latter by being negative by construction.

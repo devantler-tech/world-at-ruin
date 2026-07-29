@@ -96,6 +96,17 @@ const CAVITY_DEFAULT_PATTERN := \
 	"uniform\\s+float\\s+seam_cavity\\s*:[^=]*=\\s*([0-9.]+)"
 const VAR_CUTOFF_PATTERN := \
 	"seam_slope_var\\s*\\*=\\s*plate_resolved\\s*\\*\\s*plate_resolved"
+## The TWO-CELL blend on the variance. The relief's mean is gated by the owning
+## cell's binary slab mask, and that is correct for the mean — past the distance
+## a contact resolves the mean has already faded, so the hard step multiplies a
+## term that is not there. The variance is largest exactly there, so the same
+## step lands on its peak: without this blend the cavity flips between full and
+## zero as the pixel centre crosses a slab-to-bare boundary whose seam the
+## footprint still straddles, which is a zero-width step reintroduced into the
+## quantity this whole change exists to filter. Both files must blend, or the
+## contact band steps where the ground does not.
+const CAVITY_TWO_CELL_PATTERN := \
+	"mix\\(\\s*amp\\s*\\*\\s*amp\\s*,\\s*amp_nb\\s*\\*\\s*amp_nb\\s*,\\s*plate_edge_w\\s*\\)"
 
 
 func _ready() -> void:
@@ -282,7 +293,17 @@ func _ready() -> void:
 		])
 		return
 
-	# 5d. The cutoff must be SQUARED on both. `seam_slope_var *= plate_resolved`
+	# 5d. The variance must be blended across BOTH cells over the boundary
+	# footprint on each file. Gating the symmetric integral by the owning cell
+	# alone steps the cavity at every slab-to-bare contact.
+	for named in [[GROUND_SHADER_PATH, ground], [CONTACT_SHADER_PATH, contact]]:
+		var path: String = named[0]
+		var src: String = named[1]
+		if not _matches(src, CAVITY_TWO_CELL_PATTERN):
+			_fail("%s does not blend the seam variance across both cells over the boundary footprint (`mix(amp * amp, amp_nb * amp_nb, plate_edge_w)`) — gating the symmetric integral by whichever cell owns the pixel centre flips the cavity between full and zero as that centre crosses a slab-to-bare contact, which is a zero-width step in the very quantity the filter exists to remove" % path)
+			return
+
+	# 5e. The cutoff must be SQUARED on both. `seam_slope_var *= plate_resolved`
 	# alone is the easy edit to make and reads as equivalent; it is not, because
 	# a variance scales as the square of the amplitude it is a variance of. The
 	# symptom is a far field that keeps a seam read after the plates carrying it

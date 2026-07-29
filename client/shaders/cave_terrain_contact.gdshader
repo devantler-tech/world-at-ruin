@@ -160,6 +160,11 @@ void fragment() {
 	float slab = mix(slab_own, slab_nb, plate_edge_w);
 	float plate_mask = sheet * slab;
 	float plate_mask_relief = sheet * slab_own;
+	// The neighbour cell's gate, for the seam variance only — same split as
+	// terrain.gdshader: the mean keeps the owning cell's binary gate, the
+	// variance blends both, because the variance peaks exactly where the mean's
+	// hard step is harmless and so lands on the peak instead of on nothing.
+	float plate_mask_relief_nb = sheet * slab_nb;
 	float rock_exposure = max(rock_mix, plate_mask);
 
 	vec3 base = vec3(UV, UV2.x);
@@ -249,14 +254,22 @@ void fragment() {
 		// terrain.gdshader — this is the same integral over the same profile.
 		float amp = min(length(gsep) * (1.5 / cw_relief) * plate_scale
 			* plate_mask_relief, 0.4);
+		float amp_nb = min(length(gsep) * (1.5 / cw_relief) * plate_scale
+			* plate_mask_relief_nb, 0.4);
 		float seam_h = max(edge_fw, 1e-6);
 		float half_h = 0.5 * seam_h;
 		float s_sep = f2 - f1;
-		float mean_tilt = amp * (min(s_sep + half_h, cw_relief)
+		float prof = (min(s_sep + half_h, cw_relief)
 			- min(abs(s_sep - half_h), cw_relief)) / seam_h;
+		float mean_tilt = amp * prof;
 		float covered = clamp(max(min(s_sep + half_h, cw_relief)
 			- max(s_sep - half_h, -cw_relief), 0.0) / seam_h, 0.0, 1.0);
-		seam_slope_var = max(amp * amp * covered - mean_tilt * mean_tilt, 0.0);
+		float spread = max(covered - prof * prof, 0.0);
+		// Same two-cell blend as terrain.gdshader, over the same boundary
+		// footprint: a pixel straddling a slab-to-bare contact contains both
+		// cells' seams, and gating the symmetric integral by whichever cell owns
+		// the pixel centre steps the cavity as that centre crosses.
+		seam_slope_var = mix(amp * amp, amp_nb * amp_nb, plate_edge_w) * spread;
 		vec2 ghat = gsep * inversesqrt(max(dot(gsep, gsep), 1e-12));
 		grad = -ghat * mean_tilt;
 		grad *= 1.0 - smoothstep(0.30, 0.85, plate_fw);
