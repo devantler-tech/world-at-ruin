@@ -44,6 +44,13 @@ entry() {
 		"$1"
 }
 
+# A pre-release entry adds the release its change actually reached. Build it
+# from the ordinary fixture shape so the two differ only by that declaration.
+declared_entry() {
+	entry "$1" |
+		jq -S --tab --arg shipped_in "$2" '. + {shipped_in: $shipped_in}'
+}
+
 # A fresh repository carrying the production tools, with no history yet.
 #
 # The directory name comes from mktemp rather than a counter: every call site is
@@ -132,6 +139,39 @@ step "$d" base v0.1.0
 entry 0.2.0 >"$d/client/devlog/0.2.0.json"
 step "$d" 'an entry that names its own release' v0.2.0
 expect_gate_pass 'an entry naming the release that contains it' "$d"
+
+# GREEN: a never-cut entry becomes a resolved PRE-RELEASE note only when its
+# declaration agrees with the release that first contains its anchor. This is
+# the shape of the 17 entries corrected by #466: the authored version was never
+# a build, while shipped_in records the first build players could actually run.
+d="$(new_repo)"
+printf 'x\n' >"$d/base.txt"
+step "$d" base v0.1.0
+declared_entry 0.9.9 0.2.0 >"$d/client/devlog/0.9.9.json"
+step "$d" 'a pre-release entry whose declaration agrees with containment' v0.2.0
+anchor="$(git -C "$d" rev-parse --short HEAD)"
+expect_gate_pass 'a pre-release declaration agreeing with containment' "$d"
+out="$(run_sweep "$d" --gate)"
+expect_row 'an agreeing declaration reads PRE-RELEASE' "$out" \
+	"^0\\.9\\.9 +${anchor} +0\\.2\\.0 +PRE-RELEASE\$"
+expect_output_matching 'a PRE-RELEASE entry is not counted as excluded' "$out" \
+	'0 NEVER-CUT entries excluded'
+
+# RED CONTROL: a declaration is evidence, not authority. The entry says 0.3.0,
+# but its anchor first reached a release in v0.2.0. It must stay NEVER-CUT and
+# fail as a one-to-one correction; otherwise the sweep merely trusts shipped_in
+# and loses its independent containment check.
+d="$(new_repo)"
+printf 'x\n' >"$d/base.txt"
+step "$d" base v0.1.0
+declared_entry 0.9.9 0.3.0 >"$d/client/devlog/0.9.9.json"
+step "$d" 'a pre-release entry whose declaration disagrees with containment' v0.2.0
+anchor="$(git -C "$d" rev-parse --short HEAD)"
+out="$(run_sweep "$d")"
+expect_row 'a disagreeing declaration stays NEVER-CUT' "$out" \
+	"^0\\.9\\.9 +${anchor} +0\\.2\\.0 +NEVER-CUT\$"
+expect_gate_fail 'a pre-release declaration disagreeing with containment' "$d" \
+	'has one release that contains it and nothing else claims'
 
 # RED: the drift this gate exists for. The entry names v0.1.0, a release that
 # was really cut, but its change first shipped in v0.2.0 — the shape #467
