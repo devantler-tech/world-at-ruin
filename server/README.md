@@ -79,17 +79,15 @@ zone/dungeon server:
     ID, iterated in stable order) and paints a circle **anchored where the
     target stood at cast start** — ground-anchored, never tracking, which is
     exactly what makes the attack winnable by moving well and losable by
-    standing still. `World.MobChase` is the default-off delivery gate for its
-    first movement mode. Off preserves the original stationary caster and
-    clears any AI-owned intent before movement. On, the mob writes horizontal
-    intent through the existing deterministic kinematic path at
-    `MobParams.ChaseSpeedMM` until the gap between capsule surfaces reaches the
-    inclusive `MobParams.CastRangeMM` (zero means contact), then stops and
-    paints; target loss and an in-flight cast also stop it. Both parameters are
+    standing still. A positive `MobParams.ChaseSpeedMM` makes the mob write
+    horizontal intent through the existing deterministic kinematic path until
+    the gap between capsule surfaces reaches the inclusive
+    `MobParams.CastRangeMM` (zero means contact), then stop and paint; target
+    loss and an in-flight cast also stop it. Zero chase speed deliberately
+    preserves the original stationary-caster behavior. Both parameters are
     clamped at `AddMob` ingestion, including a one-millimetre-per-tick floor
     for positive chase speed; a deterministic dominant-axis staircase keeps
-    the floor moving diagonally. Intent ownership distinguishes AI movement
-    from caller input, so disabling chase clears only stale AI movement.
+    the floor moving diagonally.
     The cast resolves a fixed number of ticks later against where everyone is
     standing **at resolution** (leave and wander back in and you are still
     hit), excluding the caster, into a bounded `TelegraphHit` record log the

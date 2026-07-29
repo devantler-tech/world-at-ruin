@@ -109,6 +109,9 @@ var _discovery := Discovery.new()
 ## when this rollback build does not register the newer place yet, so a reward
 ## already granted by a newer client can never be granted twice.
 var _exploration_rewards := ExplorationRewards.new()
+## Boot-owned quest progress. The v4 reader restores this state, while the
+## retained v3 writer deliberately cannot originate quest data yet.
+var _quest_log := QuestLog.new()
 ## A discovery enters the live tracker before persistence is attempted. Keep
 ## the locally observed IDs themselves so a transient filesystem failure can
 ## retry them without also re-originating rollback-only names restored into the
@@ -276,6 +279,9 @@ func _ready() -> void:
 	# (a newer client's) resolves to null and is skipped — never a crash.
 	var vault = SaveVault.load_saved()
 	if vault is Dictionary:
+		# The v4 reader accepts forward-only quest progress before any quest
+		# definitions exist. QuestLog applies it when content registers later.
+		_quest_log.restore(vault.get("quests", {}))
 		# Validation has already proved this is an array of non-empty strings.
 		# Restore unknown future names too: they must survive in the live
 		# session even when this older build cannot register the place.

@@ -34,6 +34,10 @@ const EPS := 0.01
 const PROBE_PATH := "user://vault_restore_boot_probe.json"
 const DISCOVERY_PROBE := ["wardens_shrine", "future_place", "wardens_shrine"]
 const REWARD_CLAIM_PROBE := ["starter_cave", "future_place", "starter_cave"]
+const QUEST_PROBE := {
+	"future_quest": {"future_objective": 11},
+	"restored_hunt": {"hounds": 2},
+}
 const SHIPPED_DISCOVERIES := "res://tests/data/shipped_discoveries.txt"
 const SHIPPED_REWARDS := "res://tests/data/shipped_reward_mappings.tsv"
 const RETRY_CHARACTER_PROBE := "user://vault_discovery_retry_character.json"
@@ -78,6 +82,9 @@ var _restored := 0
 ## The reward boots then apply the retained v3 reader, activate a real
 ## cave-to-shrine waypoint claim, restore its outcome after logout, and prove a
 ## transient first claim write retries without granting twice in-session.
+## The final pair is the vault-v4 QUEST reader's non-vacuous proof: the control
+## boot has zero quest progress, while the otherwise-identical seeded boot
+## restores opaque future ids and known progress without activating a writer.
 var _discovery_phase := ""
 var _retry_probe_dir := ""
 var _retry_vault := ""
@@ -324,6 +331,36 @@ func _begin_reward_drift_boot() -> void:
 	add_child(_main)
 
 
+## Boot the real scene first without quest state (negative control), then with
+## the exact v4 reader shape. Definitions register only after boot so the test
+## also proves restored opaque ids wait safely for content this rollback build
+## learns later.
+func _begin_quest_reader_boot(seeded: bool) -> void:
+	_discovery_phase = "quest_restore" if seeded else "quest_control"
+	_ticks = 0
+	if _main != null:
+		_main.queue_free()
+		_main = null
+	_save = SaveIsolation.new(PROBE_PATH)
+	if not _save.begin():
+		_fail("save isolation did not take for the quest reader boot")
+		return
+	SaveVault.clear_refusals_for_test()
+	if seeded:
+		var expanded := {
+			"version": 4,
+			"attuned": [],
+			"discoveries": ["starter_cave"],
+			"reward_claims": ["starter_cave"],
+			"quests": QUEST_PROBE.duplicate(true),
+		}
+		if not SaveVault.save_to(SaveVault.vault_path(), expanded):
+			_fail("could not seed the vault-v4 quest-progress probe")
+			return
+	_main = (load(MAIN_SCENE_PATH) as PackedScene).instantiate()
+	add_child(_main)
+
+
 func _physics_process(_delta: float) -> void:
 	# _fail() requests tree shutdown but does not end this frame. A setup helper
 	# can fail after clearing the previous scene and before assigning the next;
@@ -428,6 +465,9 @@ func _physics_process(_delta: float) -> void:
 			return
 		"reward_drift":
 			_assert_reward_claim_drift(player, world)
+			return
+		"quest_control", "quest_restore":
+			_assert_quest_reader()
 			return
 
 	var shrine_point := world.shrine_respawn_point()
@@ -783,9 +823,66 @@ func _assert_reward_claim_drift(player: Player, world: WorldGen) -> void:
 	if not _save.real_save_untouched():
 		_fail("the cloud-replaced reward retry touched the player's real save or vault")
 		return
+	_begin_quest_reader_boot(false)
+
+
+## The test adds the same definition after both real boots. The unseeded boot
+## must begin at zero; only the v4 document can make the seeded boot resume at
+## two. Completing from there also proves restored completion is announced once
+## now, while an already-restored completion would stay silent in QuestLog's
+## focused test.
+func _assert_quest_reader() -> void:
+	var tracker := _quest_tracker()
+	if tracker == null:
+		return
+	if not tracker.add(
+			"restored_hunt",
+			[{"id": "hounds", "tag": "defeat:ash_hound", "count": 3}]):
+		_fail("the quest reader boot could not register its known definition")
+		return
+	if _discovery_phase == "quest_control":
+		if tracker.progress_of("restored_hunt", "hounds") != 0:
+			_fail("VACUOUS TEST: the no-vault boot already had quest progress")
+			return
+		var control_vault = SaveVault.load_saved()
+		if control_vault is not Dictionary \
+				or int(control_vault.get("version", -1)) > SaveVault.VAULT_VERSION \
+				or control_vault.has("quests"):
+			_fail("the reader-only control boot originated quest state: %s" % str(control_vault))
+			return
+		if not _save.real_save_untouched():
+			_fail("the quest reader control boot touched the player's real save or vault")
+			return
+		_begin_quest_reader_boot(true)
+		return
+
+	if tracker.progress_of("restored_hunt", "hounds") != 2:
+		_fail("the production boot did not restore the vault-v4 objective progress")
+		return
+	if not tracker.has_method("snapshot") or tracker.call("snapshot") != QUEST_PROBE:
+		_fail("the production tracker dropped or rewrote opaque future quest progress")
+		return
+	if tracker.record("defeat:ash_hound") != ["restored_hunt"]:
+		_fail("the restored quest did not complete exactly on its next real event")
+		return
+	if not tracker.record("defeat:ash_hound").is_empty():
+		_fail("the restored quest announced completion more than once")
+		return
+	var vault = SaveVault.load_saved()
+	var persisted_quests := QuestLog.new()
+	if vault is not Dictionary \
+			or int(vault.get("version", -1)) != 4 \
+			or not persisted_quests.restore(vault.get("quests", {})) \
+			or persisted_quests.snapshot() != QUEST_PROBE:
+		_fail("ordinary production writes changed or downgraded the v4 quest document")
+		return
+	if not _save.real_save_untouched():
+		_fail("the quest reader restore boot touched the player's real save or vault")
+		return
 	print(("TEST PASS — %d shipped attunement(s) and vault-v2 discovery state survive "
 		+ "a logout, transient writes retry, rollback-only ids cannot poison known writes, "
-		+ "and vault-v3 waypoint claims survive reboot and cloud replacement without re-granting "
+		+ "vault-v3 waypoint claims survive reboot and cloud replacement without re-granting, "
+		+ "and vault-v4 quest progress restores without activating a writer "
 		+ "(control woke at %s)")
 		% [_restored, str(_control_spawn)])
 	get_tree().quit(0)
@@ -801,6 +898,18 @@ func _reward_tracker() -> ExplorationRewards:
 		_fail("the production boot owns no ExplorationRewards tracker")
 		return null
 	return tracker as ExplorationRewards
+
+
+func _quest_tracker() -> QuestLog:
+	var tracker: Variant = null
+	for property: Dictionary in _main.get_property_list():
+		if String(property.get("name", "")) == "_quest_log":
+			tracker = _main.get("_quest_log")
+			break
+	if tracker is not QuestLog:
+		_fail("CAPABILITY 5 IS PARSER-ONLY: the production boot owns no QuestLog tracker")
+		return null
+	return tracker as QuestLog
 
 
 ## The landmark a shipped name MUST lead to, derived straight from the world so

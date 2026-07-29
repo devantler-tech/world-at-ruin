@@ -509,7 +509,14 @@ everything shipped afterwards is held to.
   append-only `tests/data/shipped_reward_mappings.tsv` ledger permanently binds each shipped claim to
   its exact reward payload; the real boot guard checks the production registry bidirectionally and CI
   base-compares complete rows. The retained v0.61.0 capability-4 reader is the rollback target that
-  permits this writer. **The lock lives in
+  permits this writer. The vault reader now accepts optional v4 `quests` as
+  `quest_id → objective_id → progress in the exact JSON integer range 0..2^53-1`, and the manifest
+  advertises save-capability reads 6 while writes remain capability 4 and vault v3. `Main` restores that data
+  into its boot-owned `QuestLog` before definitions register; the tracker preserves opaque future
+  IDs and raw progress, clamps only its live known view, and latches restored completion without
+  announcing it again. Existing production writers preserve an already-present v4 document but
+  cannot originate one. Writer activation remains a separate child (#560) after this reader is a
+  retained rollback target. **The lock lives in
   `FileLock`, not in the vault, and `BootRecovery` persistence takes it too**
   (`tests/boot_recovery_lock_test`) — that file's two writers, the updater and the game, both exist
   today, and a lost update there discards the evidence deciding whether a client rolls back. One
@@ -598,11 +605,10 @@ everything shipped afterwards is held to.
   the **combat first slice** (`server/sim/combat.go` — the telegraph cast
   lifecycle: painted at cast start, resolved once after a tick-counted cast time against
   positions at resolution, health/damage application, and one mob AI that deterministically
-  aggros the nearest entity; it remains a stationary caster by default, while the default-off
-  `World.MobChase` flag makes it close through the existing kinematic movement path to a bounded
-  capsule-surface cast range before stopping and painting the dodgeable circle; AI intent ownership
-  preserves caller movement when that flag is off, and the integer-speed floor remains mobile on
-  diagonals; threat from damage, dead-target
+  aggros the nearest entity; a mob with positive `ChaseSpeedMM` closes through the existing
+  kinematic movement path to a bounded capsule-surface cast range before stopping and painting the
+  dodgeable circle, while zero chase speed deliberately preserves a stationary caster; the
+  integer-speed floor remains mobile on diagonals; threat from damage, dead-target
   filtering, real navmesh pathfinding and cast replication remain later children — with its own
   cross-platform golden). The zone-side sealed-envelope boot from
   `docs/adr/0002-seal-zone-admission-secrets-before-readiness.md` is available through
