@@ -273,7 +273,8 @@ func _physics_process(delta: float) -> void:
 			Vector2(velocity.x, velocity.z).length(),
 			is_on_floor(),
 			sprinting,
-			delta)
+			delta,
+			velocity.y)
 
 	# Face the direction of travel.
 	if horizontal.length() > 0.5:

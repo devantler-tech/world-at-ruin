@@ -12,8 +12,8 @@ extends Node
 ##     arms, and a flexed knee.
 ##  3. DISTANCE-DRIVEN — equal travelled distances land on the same pose even
 ##     when speed and delta differ.
-##  4. HONEST STATES — stop and airborne restore the standing pose; the gaits do
-##     not impersonate the jump work still missing.
+##  4. HONEST STATES — stop and an airborne tick without the separate jump
+##     opt-in restore the standing pose; the gaits never impersonate a jump.
 ##  5. SPRINT RUNS — sprinting poses the run rather than restoring rest, and the
 ##     run is AUTHORED rather than the walk scaled up.
 ##  6. SEAMLESS + DETERMINISTIC — phase 0 and TAU agree, and identical travel
@@ -28,6 +28,7 @@ extends Node
 
 const FLAG := "WAR_WALK_CYCLE"
 const RUN_FLAG := "WAR_RUN_CYCLE"
+const JUMP_FLAG := "WAR_JUMP_MOTION"
 const RECIPE_PATH := "res://recipes/wanderer.json"
 const DRIVEN_BONES := [
 	"thigh_l", "thigh_r",
@@ -62,6 +63,8 @@ var _had_flag := false
 var _original_flag := ""
 var _had_run_flag := false
 var _original_run_flag := ""
+var _had_jump_flag := false
+var _original_jump_flag := ""
 var _recipe: Dictionary = {}
 
 
@@ -70,6 +73,8 @@ func _ready() -> void:
 	_original_flag = OS.get_environment(FLAG)
 	_had_run_flag = OS.has_environment(RUN_FLAG)
 	_original_run_flag = OS.get_environment(RUN_FLAG)
+	_had_jump_flag = OS.has_environment(JUMP_FLAG)
+	_original_jump_flag = OS.get_environment(JUMP_FLAG)
 	var loaded = CharacterFactory.load_recipe(RECIPE_PATH)
 	if not (loaded is Dictionary):
 		_fail("could not load %s" % RECIPE_PATH)
@@ -221,9 +226,8 @@ func _check_distance_drives_phase() -> bool:
 ## stops, leaves at least one driven pose away from rest.
 ##
 ## Sprint is deliberately NOT in this list any more (#481): it now selects the
-## run. Airborne stays, because the jump pose is still unwritten — that is the
-## honest-state law this assertion exists to keep, and #224's remaining jump
-## criterion depends on it not quietly lapsing.
+## run. Airborne stays because this gait-only subject explicitly leaves the
+## separate jump opt-in off — that is the honest-state law this assertion keeps.
 func _check_non_walk_states_restore_rest() -> bool:
 	var subject := _player_with_flag("1")
 	if subject.is_empty():
@@ -460,6 +464,7 @@ func _player_with_flag(value: String) -> Dictionary:
 
 ## Independent opt-in, for the laws that are ABOUT the flags.
 func _player_with_flags(walk_value: String, run_value: String) -> Dictionary:
+	OS.unset_environment(JUMP_FLAG)
 	for pair: Array in [[FLAG, walk_value], [RUN_FLAG, run_value]]:
 		if (pair[1] as String).is_empty():
 			OS.unset_environment(pair[0] as String)
@@ -539,6 +544,10 @@ func _restore_flag() -> void:
 		OS.set_environment(RUN_FLAG, _original_run_flag)
 	else:
 		OS.unset_environment(RUN_FLAG)
+	if _had_jump_flag:
+		OS.set_environment(JUMP_FLAG, _original_jump_flag)
+	else:
+		OS.unset_environment(JUMP_FLAG)
 
 
 func _fail(message: String) -> bool:
