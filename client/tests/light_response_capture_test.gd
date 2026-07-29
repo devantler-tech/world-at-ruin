@@ -40,6 +40,15 @@ func _ready() -> void:
 	if not _has_method(script, "visible_fog_volume_count"):
 		_fail("frame capture cannot distinguish a renderable ash pool from placement metadata")
 		return
+	if not _has_method(script, "ash_motion_vantage"):
+		_fail("frame capture has no player-height camera inside a hollow ash pool")
+		return
+	if not _has_method(script, "ash_motion_measurement"):
+		_fail("frame capture has no same-run noise measurement for the moving density field")
+		return
+	if not _has_method(script, "ash_motion_phase_times"):
+		_fail("frame capture has no multi-phase sequence for the moving density field")
+		return
 	if not source.contains("_capture_light_response"):
 		_fail("the light_response scenario is declared but never reaches a capture path")
 		return
@@ -160,6 +169,67 @@ func _ready() -> void:
 		return
 	if ash_eye.y <= ash_target.y:
 		_fail("ash close-up must look down through the pool so terrain provides a visible backdrop")
+		return
+
+	var motion_vantage: Variant = script.call("ash_motion_vantage", placement)
+	if motion_vantage is not Array or (motion_vantage as Array).size() != 2:
+		_fail("ash_motion_vantage must return exactly eye and target")
+		return
+	var motion_eye := (motion_vantage as Array)[0] as Vector3
+	var motion_target := (motion_vantage as Array)[1] as Vector3
+	var extents := placement["extents"] as Vector3
+	var local_eye := motion_eye - (placement["pos"] as Vector3)
+	if absf(local_eye.x) >= extents.x or absf(local_eye.y) >= extents.y or absf(local_eye.z) >= extents.z:
+		_fail("ash-motion camera is outside the FogVolume — it cannot show ash moving past the player")
+		return
+	if (motion_target - motion_eye).dot(Wind.axis()) <= 0.0:
+		_fail("ash-motion camera does not look downwind through the travelling field")
+		return
+	var across := Vector3(-Wind.axis().z, 0.0, Wind.axis().x).normalized()
+	if absf((motion_target - motion_eye).dot(across)) <= (motion_target - motion_eye).dot(Wind.axis()):
+		_fail("ash-motion camera looks along the advection — Wind must cross the frame so travelling pockets are visually readable")
+		return
+	if motion_target.y >= motion_eye.y:
+		_fail("ash-motion camera must look slightly down so the density field has terrain behind it")
+		return
+	var phase_times: Variant = script.call("ash_motion_phase_times")
+	if phase_times is not Array or (phase_times as Array).size() < 4:
+		_fail("ash-motion evidence is not a real multi-phase frame sequence")
+		return
+	var previous_phase := 0.0
+	for phase_value: Variant in phase_times as Array:
+		var phase := float(phase_value)
+		if phase <= previous_phase:
+			_fail("ash-motion phase times do not advance monotonically")
+			return
+		previous_phase = phase
+	if not is_equal_approx(previous_phase, 4.0):
+		_fail("ash-motion sequence does not end at the four-second measured state")
+		return
+
+	var still_a := Image.create(16, 12, false, Image.FORMAT_RGBA8)
+	still_a.fill(Color(0.22, 0.18, 0.16))
+	var still_b := still_a.duplicate()
+	var moved := still_a.duplicate()
+	for y in range(2, 10):
+		for x in range(3, 13):
+			moved.set_pixel(x, y, Color(0.34, 0.29, 0.25))
+	var controls: Array[Image] = [still_a, still_b, still_b.duplicate()]
+	var absent_motion: Variant = script.call("ash_motion_measurement", controls, still_b)
+	if absent_motion is not Dictionary or not bool((absent_motion as Dictionary).get("ok", false)):
+		_fail("an identical later ash frame could not be measured against the controls")
+		return
+	if float((absent_motion as Dictionary).get("signal_mean_min", -1.0)) != 0.0:
+		_fail("identical ash frames reported a non-zero motion signal")
+		return
+	var present_motion: Variant = script.call("ash_motion_measurement", controls, moved)
+	if present_motion is not Dictionary or not bool((present_motion as Dictionary).get("ok", false)):
+		_fail("a density-field-sized change could not be measured against the controls")
+		return
+	if float((present_motion as Dictionary).get("signal_mean_min", 0.0)) <= float(
+		(present_motion as Dictionary).get("noise_mean_max", 0.0)
+	):
+		_fail("the measurement did not preserve a visible signal above its identical-state controls")
 		return
 
 	print("TEST PASS — light-response capture holds each camera, moves the live key through opposite directions, and isolates a shipped ash pool")
