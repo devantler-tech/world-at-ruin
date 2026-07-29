@@ -142,9 +142,13 @@ Consequences:
   material is returned only after the exact allocation finalizes that intent, and a versioned
   `releasing` barrier ensures zone claim and resource cleanup cannot both win. Its supervised
   private-collection expiry loop exact-version fences and reclaims no-shows, including a crash that
-  left only the attempt ID. The concrete adapter that combines Agones allocation with
-  per-allocation secret delivery, expiry-loop supervision, the zone claim adapter and Nakama RPC
-  registration remain later server-foundation children.
+  left only the attempt ID.
+  [ADR 0002](../adr/0002-seal-zone-admission-secrets-before-readiness.md) now selects the
+  production secret lifecycle: each zone seals its own in-memory key before Ready, and the
+  coordinator resolves only that allocated GameServer's identity-bound ciphertext. The concrete
+  envelope publisher, Agones resource adapter, expiry/orphan supervision, zone claim adapter and
+  Nakama RPC registration remain later server-foundation children; the current environment secret
+  is still a developer-only helper.
 - **One transport discipline across tiers.** Nakama's own realtime API is WebSocket; client
   networking, platform ingress, and TLS handling follow a single pattern instead of two.
 - **The wire codec is unchanged.** Nothing in this decision touches `server/wire/` — the goldens
