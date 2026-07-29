@@ -396,7 +396,28 @@ func _test_terrain_stays_walkable() -> void:
 
 
 ## 6. The regions are actually different heights.
+##
+## 🔴 Coverage is checked BOTH ways before anything is measured, because every
+## arm here iterates `RELIEF_FLOOR` rather than the region list. A region added
+## to `GroundRegions.REGIONS` and forgotten here would be silently absent from
+## the floor check, from the spread, and from the tallest-region comparison —
+## exempt from the very law this arm exists to enforce, with the suite green. A
+## key left behind for a region that no longer exists is the same defect wearing
+## the other face: it contributes a phantom 0.0 m to the spread. This mirrors
+## the grade-ratchet coverage check in arm 5; the two must not drift apart.
 func _test_regions_differ_in_relief(relief: Dictionary) -> void:
+	var declared := {}
+	for reg: Dictionary in GroundRegions.REGIONS:
+		var region_name: StringName = reg[&"name"]
+		declared[region_name] = true
+		if not RELIEF_FLOOR.has(region_name):
+			_fail("region %s has no relief floor — a new region must be measured, not left unguarded" %
+				region_name)
+	for region_name: StringName in RELIEF_FLOOR:
+		if not declared.has(region_name):
+			_fail("RELIEF_FLOOR carries %s, which is not a declared region — a stale key measures nothing and drags the spread" %
+				region_name)
+
 	for region_name: StringName in RELIEF_FLOOR:
 		var measured := float(relief.get(region_name, 0.0))
 		var relief_floor := float(RELIEF_FLOOR[region_name])
