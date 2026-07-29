@@ -204,6 +204,40 @@ if ! grep -rqF 'OS.get_environment("WAR_GROUND_PLATES")' "$ROOT/client" --includ
 	t_fail "WAR_GROUND_PLATES has no OS.get_environment call in client/*.gd — the consumer check is matching something else"
 fi
 
+# A COMMENTED-OUT consumer must not satisfy the check. A consumer commented out
+# during a refactor, with the list entry left behind, is exactly the state that
+# publishes default-world frames as opt-in evidence with every check green.
+# Driven through the sourced function against fixture trees, since the shipped
+# client legitimately has a real consumer.
+# shellcheck source=/dev/null
+. "$SCRIPT"
+
+mk_client() {
+	local dir="$1" line="$2"
+	rm -rf "$dir"
+	mkdir -p "$dir/scripts"
+	printf 'func _ready():\n\t%s\n' "$line" >"$dir/scripts/probe.gd"
+}
+
+mk_client "$SCRATCH_DIR/client-real" 'var e = OS.get_environment("WAR_PROBE")'
+if ! check_preview_flag_consumers "$SCRATCH_DIR/client-real" WAR_PROBE 2>/dev/null; then
+	t_fail "a real OS.get_environment consumer was not recognised — the check rejects valid code"
+fi
+
+mk_client "$SCRATCH_DIR/client-commented" '# var e = OS.get_environment("WAR_PROBE")'
+if check_preview_flag_consumers "$SCRATCH_DIR/client-commented" WAR_PROBE 2>/dev/null; then
+	t_fail "a COMMENTED-OUT consumer satisfied the check — a refactored-out reader would keep the gate green"
+fi
+
+mk_client "$SCRATCH_DIR/client-trailing" 'pass # OS.get_environment("WAR_PROBE")'
+if check_preview_flag_consumers "$SCRATCH_DIR/client-trailing" WAR_PROBE 2>/dev/null; then
+	t_fail "a consumer inside a TRAILING comment satisfied the check"
+fi
+
+if check_preview_flag_consumers "$SCRATCH_DIR/does-not-exist" WAR_PROBE 2>/dev/null; then
+	t_fail "a missing client tree was accepted — the check must fail closed"
+fi
+
 if [ ! -f "$WORKFLOW" ]; then
 	t_fail "ci.yaml not found — the wiring layer proves nothing"
 else

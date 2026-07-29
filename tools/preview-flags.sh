@@ -94,24 +94,41 @@ read_preview_flags() {
 # Matched against the exact `OS.get_environment("FLAG")` call because that is
 # how the client reads these, and a bare name search would be satisfied by a
 # dev-log entry or a comment mentioning the flag.
+#
+# COMMENTS ARE STRIPPED FIRST. A raw search also succeeds on
+# `# OS.get_environment("WAR_FOO")`, so a consumer commented out during a
+# refactor — with its list entry left behind — would keep this gate green while
+# the client ignores the exported flag, which is the very state the gate exists
+# to catch. Everything from the first `#` on a line is dropped before matching.
+# A `#` inside a string literal earlier on the same line could hide a real call,
+# but that fails CLOSED (a rejection naming the flag), which is the safe
+# direction for a guard whose whole job is refusing what it cannot confirm.
+#
+# Stripped into a FILE and grepped from there, never piped into `grep -q`: under
+# `pipefail` the early exit SIGPIPEs the upstream and the pipeline reports
+# failure, which would read here as "no consumer found" and reject every flag.
 check_preview_flag_consumers() {
 	local client_dir="$1"
 	shift
-	local flag missing=0
+	local flag missing=0 stripped
 
 	if [ ! -d "$client_dir" ]; then
 		printf 'preview-flags: no client tree at %s — cannot confirm any flag is consumed\n' "$client_dir" >&2
 		return 1
 	fi
 
+	stripped="$(mktemp)"
+	find "$client_dir" -name '*.gd' -type f -exec awk '{sub(/#.*/, ""); print}' {} + >"$stripped"
+
 	for flag in "$@"; do
-		if ! grep -rqF "OS.get_environment(\"$flag\")" "$client_dir" --include='*.gd'; then
+		if ! grep -qF "OS.get_environment(\"$flag\")" "$stripped"; then
 			printf 'preview-flags: %s is listed but no client script reads it\n' "$flag" >&2
-			printf 'preview-flags: expected OS.get_environment("%s") somewhere under %s — a flag nothing consumes captures the DEFAULT world and still passes every check\n' "$flag" "$client_dir" >&2
+			printf 'preview-flags: expected an executable OS.get_environment("%s") under %s — a flag nothing consumes captures the DEFAULT world and still passes every check\n' "$flag" "$client_dir" >&2
 			missing=$((missing + 1))
 		fi
 	done
 
+	rm -f "$stripped"
 	[ "$missing" -eq 0 ]
 }
 
