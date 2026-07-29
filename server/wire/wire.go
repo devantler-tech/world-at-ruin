@@ -277,18 +277,18 @@ func appendStates(b []byte, es []sim.EntityState) []byte {
 // validity predicate first, so n is non-negative and at most MaxEntities,
 // which is strictly smaller than the uint32 wire field's ceiling.
 func appendCount(b []byte, n int) []byte {
-	return binary.LittleEndian.AppendUint32(b, uint32(n)) //nolint:gosec // validated against MaxEntities before encoding
+	return binary.LittleEndian.AppendUint32(b, uint32(n))
 }
 
 // appendSigned64 preserves an int64's two's-complement bits in the protocol's
 // uint64 storage word. This is an equal-width representation, not arithmetic
 // narrowing; signed64 performs the exact inverse after decoding.
 func appendSigned64(b []byte, v int64) []byte {
-	return binary.LittleEndian.AppendUint64(b, uint64(v)) //nolint:gosec // equal-width two's-complement representation
+	return binary.LittleEndian.AppendUint64(b, uint64(v))
 }
 
 func signed64(v uint64) int64 {
-	return int64(v) //nolint:gosec // inverse of appendSigned64's equal-width representation
+	return int64(v)
 }
 
 // --- decoding helpers -------------------------------------------------------
