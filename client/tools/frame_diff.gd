@@ -192,9 +192,20 @@ extends Node
 ## not, because it is dominated by a live backdrop that no first-run PR is
 ## about. A reviewer reading 40% is reading scenery.
 ##
-## The backdrop is unpinned by construction: `_shoot` pins the breath and
-## nothing else, while the cave scenario calls `freeze_flicker()` and the
-## light-response scenario freezes its animation. Fixing that is #556.
+## #556 identified the dominant source as under-converged temporal lighting,
+## not one of the obvious live clocks. Controlled M2 Pro ablations advanced
+## unpinned foliage by 300 rendered frames and moved only 0.00%-0.07%; changing
+## the shrine-brazier phase moved 0.00%-0.06%. Meanwhile the repository's
+## atmosphere ablation records SDFGI/volumetric disagreement of 25% under short
+## settles, and the world capture already gives those systems 150 initial
+## frames. First-run gave its supposedly "2D" UI only 60 despite photographing
+## the live world through most of the viewport.
+##
+## First-run now pins the shipping wind, brazier, cave-light and hollow-fog
+## phases without globally pausing the player, then gives that fixed backdrop
+## the world capture's full 150-frame convergence. Two post-fix real-GPU boots
+## moved 0.00%-0.02% per full frame; independent CI builds remain the authority
+## for the hosted floor.
 ##
 ## ## The cave-mouth vantage (#495)
 ##
