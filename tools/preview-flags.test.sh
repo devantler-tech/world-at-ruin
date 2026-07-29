@@ -168,9 +168,15 @@ if ! "$SCRIPT" --check 2>"$SCRATCH_DIR/stderr"; then
 	t_fail "the shipped tools/preview-flags.txt is not valid: $(cat "$SCRATCH_DIR/stderr")"
 fi
 
+# Buffered to a file once, and every check below reads that file. Piping into
+# `grep -q` would reinstate the hazard this file documents further down: the
+# early exit SIGPIPEs the producer, `pipefail` reports the pipeline as failed,
+# and the assertion inverts or aborts the run.
+"$SCRIPT" --names >"$SCRATCH_DIR/shipped-flags"
+
 # The plate treatment is the reason this pass exists. Losing it from the list
 # would leave the capture green while #261 lost its only evidence.
-if ! "$SCRIPT" --names | grep -qx 'WAR_GROUND_PLATES'; then
+if ! grep -qx 'WAR_GROUND_PLATES' "$SCRATCH_DIR/shipped-flags"; then
 	t_fail "the shipped list no longer contains WAR_GROUND_PLATES — #261 would have no frame evidence"
 fi
 
@@ -178,7 +184,7 @@ fi
 # own cameras, so forcing them on globally changes those frames instead of adding
 # evidence.
 for scenario_flag in WAR_LAYERED_OUTFIT_PICKERS WAR_WALK_CYCLE WAR_RUN_CYCLE; do
-	if "$SCRIPT" --names | grep -qx "$scenario_flag"; then
+	if grep -qx "$scenario_flag" "$SCRATCH_DIR/shipped-flags"; then
 		t_fail "$scenario_flag is scenario-gated and must not be in the global preview list"
 	fi
 done
@@ -244,10 +250,11 @@ else
 	# Registering a preview is one line in the list and touches no client path,
 	# so the visual gate must treat the list (and its resolver) as visual — or
 	# the PR that enables a treatment skips the capture that would render it.
-	visual_pattern="$(
-		grep -oE "grep -qE '\^client/\(scripts\|shaders[^']*'" "$WORKFLOW" |
-			head -1 | sed -E "s/^grep -qE '//; s/'\$//"
-	)"
+	# Buffered, then the first line is taken off the FILE. Piping into `head -1`
+	# SIGPIPEs the grep once head has its line, and under `pipefail` that aborts
+	# the run — the same hazard this file warns about below.
+	grep -oE "grep -qE '\^client/\(scripts\|shaders[^']*'" "$WORKFLOW" >"$SCRATCH_DIR/visual-raw" || true
+	visual_pattern="$(sed -E -n "1{s/^grep -qE '//; s/'\$//; p; q;}" "$SCRATCH_DIR/visual-raw")"
 	if [ -z "$visual_pattern" ]; then
 		t_fail "could not extract the visual path pattern from ci.yaml — the gate assertion below proves nothing"
 	else
@@ -293,7 +300,7 @@ else
 		if grep -q "${listed_flag}=1" "$SCRATCH_DIR/workflow-nocomments"; then
 			t_fail "ci.yaml hard-codes ${listed_flag}=1 — tools/preview-flags.txt is not the source of truth"
 		fi
-	done < <("$SCRIPT" --names)
+	done <"$SCRATCH_DIR/shipped-flags"
 fi
 
 if [ "$failures" -ne 0 ]; then

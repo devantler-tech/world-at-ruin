@@ -104,31 +104,31 @@ read_preview_flags() {
 # but that fails CLOSED (a rejection naming the flag), which is the safe
 # direction for a guard whose whole job is refusing what it cannot confirm.
 #
-# Stripped into a FILE and grepped from there, never piped into `grep -q`: under
-# `pipefail` the early exit SIGPIPEs the upstream and the pipeline reports
-# failure, which would read here as "no consumer found" and reject every flag.
+# Held in a VARIABLE and matched with a here-string, never piped into `grep -q`:
+# under `pipefail` the early exit SIGPIPEs the upstream and the pipeline reports
+# failure, which would read here as "no consumer found" and reject every flag. A
+# here-string is a redirect rather than a pipeline, so it sidesteps that without
+# a temp file to leak if `find` aborts under `errexit`.
 check_preview_flag_consumers() {
 	local client_dir="$1"
 	shift
-	local flag missing=0 stripped
+	local flag missing=0 executable_src
 
 	if [ ! -d "$client_dir" ]; then
 		printf 'preview-flags: no client tree at %s — cannot confirm any flag is consumed\n' "$client_dir" >&2
 		return 1
 	fi
 
-	stripped="$(mktemp)"
-	find "$client_dir" -name '*.gd' -type f -exec awk '{sub(/#.*/, ""); print}' {} + >"$stripped"
+	executable_src="$(find "$client_dir" -name '*.gd' -type f -exec awk '{sub(/#.*/, ""); print}' {} +)"
 
 	for flag in "$@"; do
-		if ! grep -qF "OS.get_environment(\"$flag\")" "$stripped"; then
+		if ! grep -qF "OS.get_environment(\"$flag\")" <<<"$executable_src"; then
 			printf 'preview-flags: %s is listed but no client script reads it\n' "$flag" >&2
 			printf 'preview-flags: expected an executable OS.get_environment("%s") under %s — a flag nothing consumes captures the DEFAULT world and still passes every check\n' "$flag" "$client_dir" >&2
 			missing=$((missing + 1))
 		fi
 	done
 
-	rm -f "$stripped"
 	[ "$missing" -eq 0 ]
 }
 
