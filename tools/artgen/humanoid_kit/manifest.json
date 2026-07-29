@@ -1,5 +1,5 @@
 {
-  "kit_version": 7,
+  "kit_version": 8,
   "comment": "Humanoid kit bake manifest — the single source of truth for what the kit contains. Changing this file (or bake.py) is the ONLY sanctioned way the kit changes; the artgen CI workflow re-bakes and compares. Shape, slot and equipment-piece names are the stable, forward-only public API consumed by recipes (no-resets law: never rename or remove a shipped name, only add).",
   "tools": {
     "blender": "5.2.0",
@@ -201,6 +201,11 @@
       "url": "https://files.makehumancommunity.org/asset_packs/hats02/hats02_cc0.zip",
       "mirror": "https://files2.makehumancommunity.org/asset_packs/hats02/hats02_cc0.zip",
       "sha256": "838b9b51ba31d27f21198ad4506eb9b23e1c03eb246fe68f26da99e26b40e1aa"
+    },
+    "gloves01": {
+      "url": "https://files.makehumancommunity.org/asset_packs/gloves01/gloves01_cc0.zip",
+      "mirror": "https://files2.makehumancommunity.org/asset_packs/gloves01/gloves01_cc0.zip",
+      "sha256": "ecdaee1d02749d17352791d415cb622a883350cc8a4b90eda3725aef35d9afb2"
     }
   },
   "equipment_slots": [
@@ -295,6 +300,17 @@
       "license": "CC0",
       "color": [0.26, 0.11, 0.09],
       "roughness": 0.58
+    },
+    {
+      "name": "ashen_bindings",
+      "slot": "hands",
+      "layer": "armor",
+      "pack": "gloves01",
+      "mhclo": "clothes/culturalibre_hero-heroine_gloves_5/culturalibre_hero-heroine_gloves_5.mhclo",
+      "author": "culturalibre",
+      "license": "CC0",
+      "color": [0.2, 0.14, 0.12],
+      "roughness": 0.86
     }
   ]
 }

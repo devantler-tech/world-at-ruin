@@ -22,3 +22,4 @@ shoes_cloth clothing
 boots_worn armor
 relic_goggles clothing
 ruin_drake_helm armor
+ashen_bindings armor
