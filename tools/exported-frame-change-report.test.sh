@@ -126,6 +126,9 @@ fi
 if ! printf '%s\n' "$render_output" | grep -qE 'ADDED CI COST: base export and capture [0-9]+s'; then
 	t_fail "render-base did not report the added CI cost"
 fi
+if ! grep -q 'run_timed 420 env' "$REPORTER"; then
+	t_fail "the base world capture timeout no longer clears the measured hosted 296s runtime"
+fi
 
 # Missing CAPTURE PASS is a real base-render failure. The production script
 # must return non-zero so the workflow can annotate it through an explicitly

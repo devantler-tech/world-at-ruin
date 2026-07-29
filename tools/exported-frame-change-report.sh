@@ -67,7 +67,11 @@ render_base() {
 		return 1
 	fi
 
-	run_timed 180 env \
+	# The exact-head #620 hosted run needed 296s for this same world capture;
+	# the original 180s bound killed a healthy base render and left every head
+	# frame uncompared. Keep roughly 40% measured headroom while still bounding
+	# an old export that boots the wrong path and never exits.
+	run_timed 420 env \
 		WAR_CAPTURE=1 \
 		WAR_SHOT_DIR="$base_shots" \
 		WAR_SAVE_PATH="$work_dir/probe_save_base.json" \
