@@ -596,7 +596,12 @@ everything shipped afterwards is held to.
   durable releasing barrier and private-collection expiry sweep that arbitrate zone claim against
   external cleanup, without persisting raw user or reservation IDs or admission secrets; the
   durability contract those objects follow — and that every later server-held record inherits — is
-  [`docs/design/server-state-durability.md`](docs/design/server-state-durability.md)), the
+  [`docs/design/server-state-durability.md`](docs/design/server-state-durability.md)), the private
+  **player-state mutation boundary** (`server/playerstate/` — atomically commits one private
+  conditional player-record write with one private create-only audit object, binds the caller's
+  stable mutation key to its operation and normalized payload, and returns the original outcome on
+  replay or an ambiguous committed response; its strict audit schema is permanently ledgered, and
+  it remains inert until a player-record owner calls it), the
   durable **handoff allocation coordinator**
   (`server/handoffalloc/` — implements `handoff.Allocator` over the real lease store and an injected
   GameServer-resource boundary; persists a recoverable intent before provisioning, finalizes the
