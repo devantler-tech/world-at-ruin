@@ -137,12 +137,25 @@ zone/dungeon server:
   is killed as unhealthy — so this package speaks exactly that contract through
   the official Agones Go SDK (the server's first dependency): Ready once the
   serving loop is up, Health on a fixed cadence, Shutdown on every exit path.
+  Its sealed-admission path reads the GameServer identity while it is
+  `Starting`, generates one 32-byte secret in memory, RSA-OAEP seals it to a
+  projected public key, publishes the versioned envelope, key fingerprint and
+  fingerprint-qualified Ready label, then waits for `WatchGameServer` to
+  return those exact values. The command starts the identity-bound HMAC
+  verifier and listener before calling `Ready`. A `Ready`, `Reserved`, or
+  `Allocated` restart calls `Shutdown` without replacing metadata.
   It is **opt-in behind the `-agones` flag, default off** — flag off means no
-  SDK dial at all, and the lifecycle never touches `sim/`, so no golden can
-  move. An unreachable sidecar with the flag on fails loudly, never silently.
+  SDK dial at all; adding `-agones-admission-public-key <path>` selects sealed
+  admission, while omitting it retains the environment-secret path for local
+  socket exercises. The lifecycle never touches `sim/`, so no golden can move.
+  An unreachable sidecar with the flag on fails loudly, never silently.
   Tests drive the real SDK client against an in-process fake sidecar
   (`agones/agonestest`), at package level and against the built binary in both
-  flag states.
+  flag states. The pod-shape contract leaves `serviceAccountName` unset so the
+  Agones controller installs its official SDK identity and shadows that token
+  only in the zone container; the sidecar retains its credential, the public
+  wrapping key is a read-only ConfigMap projection, and no Kubernetes Secret
+  volume is part of the shape.
 - **`nakamaauth/`** — the first **Nakama meta-tier seam**: a player session is
   presented to Nakama's generated gRPC `GetAccount` API as bearer metadata, and
   only Nakama's authenticated user ID crosses back into World at Ruin. It does
@@ -222,7 +235,9 @@ zone/dungeon server:
   future bandwidth evidence). With `-agones` (`-listen` only — Ready must
   mean a connectable endpoint, and only `-listen` opens one) it registers
   with the local Agones sidecar for its lifetime, so the shape a fleet
-  GameServer runs is `-listen` + `-agones`.
+  GameServer runs is `-listen` + `-agones`. Supplying
+  `-agones-admission-public-key` makes the observed GameServer name the
+  allocation ID and removes the local environment secret from that path.
 
 ```sh
 cd server
@@ -230,7 +245,9 @@ go run ./cmd/zone                     # 600 deterministic ticks, then the state 
 go run ./cmd/zone -ticks 1800         # a different fixed count
 go run ./cmd/zone -realtime -duration 3s   # drive the fixed loop from real time
 go run ./cmd/zone -replicate 1        # also wire-encode observer 1's delta stream
-go run ./cmd/zone -listen :8443 -tls-cert cert.pem -tls-key key.pem -agones  # fleet GameServer shape
+go run ./cmd/zone -allocation-id local-zone -listen :8443 -tls-cert cert.pem -tls-key key.pem -agones
+go run ./cmd/zone -listen :8443 -tls-cert cert.pem -tls-key key.pem -agones \
+  -agones-admission-public-key /var/run/world-at-ruin/admission/public.pem
 ```
 
 ## What is deliberately not here yet
@@ -239,17 +256,18 @@ Later children of the server-foundation epic
 ([#4](https://github.com/devantler-tech/world-at-ruin/issues/4), the first child
 of the Phase 1 epic [#8](https://github.com/devantler-tech/world-at-ruin/issues/8)):
 the concrete resource adapter that composes `agonesalloc` with
-the sealed-envelope lifecycle selected in
+the zone-side sealed-envelope lifecycle in
 [ADR 0002](../docs/adr/0002-seal-zone-admission-secrets-before-readiness.md),
 the zone admission claim adapter, Nakama RPC registration that exposes the
 handoff service, the rest of the Nakama auth/social/chat/storage surface,
 client prediction and reconciliation, real navmesh geometry, and Postgres/CNPG
-persistence. The decision is accepted, but none of its production envelope,
-unwrap, recovery, or claim behavior is live yet. The tick core, socket, client
+persistence. Zone boot already generates, publishes and observes the sealed
+envelope; allocation metadata validation, coordinator unwrap/recovery and
+private claim behavior are not composed yet. The tick core, socket, client
 replica store, Agones lifecycle, Nakama identity boundary, allocation API
 boundary, private lease store, durable handoff coordinator and fail-closed
-handoff core are already in place; later slices build on those tested seams
-instead of creating a parallel meta service.
+handoff core are in place; later slices build on those tested seams instead of
+creating a parallel meta service.
 
 ## Validate
 
