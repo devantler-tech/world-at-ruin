@@ -98,10 +98,17 @@ func _ready() -> void:
 		var creator := CharacterCreator.new()
 		add_child(creator)
 		creator.open(player, {"version": 1}, false)
+		var portrait_camera := creator._camera
+		var portrait_light := creator._light
 		if _picker_with(creator, PIECE) != null:
 			_fail("preview value '%s' offered reader-only '%s'" % [preview_value, PIECE])
 			return
-		creator.free()
+		creator._close(false)
+		await get_tree().process_frame
+		if is_instance_valid(portrait_camera) or is_instance_valid(portrait_light):
+			_fail("preview value '%s' left its portrait rig active before evidence capture" \
+				% preview_value)
+			return
 		player.free()
 
 	var shot_path := OS.get_environment(SHOT_ENV)
