@@ -374,8 +374,10 @@ func _test_landform_is_continuous() -> void:
 ## region can take on a whole degree of extra steepness — enough to change what
 ## that ground IS to walk across — without moving the number at all.
 func _test_terrain_stays_walkable() -> void:
+	var declared := {}
 	for reg: Dictionary in GroundRegions.REGIONS:
 		var region_name: StringName = reg[&"name"]
+		declared[region_name] = true
 		if not MAX_REGION_GRADE_DEG.has(region_name):
 			_fail("region %s has no grade ratchet — a new region must be measured, not left unguarded" %
 				region_name)
@@ -389,6 +391,18 @@ func _test_terrain_stays_walkable() -> void:
 		if measured > bar:
 			_fail("region %s reaches %.2f deg inside its own ground, over its %.1f deg ratchet (character floor limit %.1f) — its landform is too steep for what it sits on" %
 				[region_name, measured, bar, FLOOR_MAX_ANGLE_DEG])
+
+	# The other face of the same coverage defect. This loop reads the region
+	# list, so a ratchet left behind for a region that no longer exists is never
+	# consulted — it cannot fail, and it cannot drag a measurement the way a
+	# stale RELIEF_FLOOR key drags the spread in arm 6. What it does is read as
+	# coverage: a bar sitting in the table implies some ground is being held to
+	# it. Rejecting it is what makes arm 6's claim that these two checks mirror
+	# each other true, rather than half true.
+	for region_name: StringName in MAX_REGION_GRADE_DEG:
+		if not declared.has(region_name):
+			_fail("MAX_REGION_GRADE_DEG carries %s, which is not a declared region — a ratchet for ground that does not exist guards nothing while reading as coverage" %
+				region_name)
 
 	if _worst_grade > MAX_GRADE_DEG:
 		_fail("worst open grade %.2f deg exceeds %.1f deg (character floor limit %.1f) — the world has ground the wanderer cannot walk up, and it is not inside any one region" %
