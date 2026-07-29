@@ -50,6 +50,8 @@ jobs:
         run: ./tools/pr-diff-base.test.sh
       - name: Opt-in preview flag list is pinned and fail-closed
         run: ./tools/preview-flags.test.sh
+      - name: Manifest sequence is monotonic in release order and fail-closed
+        run: ./tools/manifest-sequence.test.sh
       - name: Dev-log entry names an unreleased version
         # An entry's version is a hand-written prediction of the next release.
         # Checked here, at the last point before the change merges, so the tag
