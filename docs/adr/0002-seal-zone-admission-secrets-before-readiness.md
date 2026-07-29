@@ -188,6 +188,37 @@ the token's opaque allocation-ID grammar.
    coordinator finalizes the Nakama lease with `SecretRef`; `handoff.Service`
    mints the token and releases its copy.
 
+The allocator-generation fence is a separate, server-only authority rather
+than a timeout heuristic:
+
+- An `AllocatorFenceSupervisor`, running under its own Kubernetes identity,
+  is the only writer of private `allocator_generations` records in Nakama.
+  Each exact-version record contains an opaque generation ID, the immutable
+  set and digest of allocator Pod UIDs admitted to that generation, and an
+  `open`, `draining`, or `fenced` state. The coordinator can read but cannot
+  advance these records.
+- The allocator adapter selects an endpoint from the current `open`
+  generation before dispatch. The same lease transition that persists
+  `allocation-dispatched` also pins the generation ID, member-set digest, and
+  selected allocator Pod UID. The RPC connects to that exact endpoint rather
+  than a Service that could route it to an unrecorded process. Any membership
+  change opens a new generation; it never mutates an existing member set.
+- To close a generation, the supervisor first persists `draining`, which
+  prevents new dispatches from selecting it. It then records a termination
+  proof for every immutable member UID: either the exact Pod reached a
+  terminal phase or that exact UID is absent after its owning ReplicaSet is
+  scaled to zero or superseded. A replacement Pod has a different UID and
+  belongs to a new generation. Only the complete proof set permits the
+  exact-version transition to `fenced`.
+- A coordinator restart re-reads the lease's pinned generation and the
+  matching durable fence record. It accepts the fence only when the generation
+  ID and member-set digest match and every recorded member UID has a
+  termination proof. Missing, stale, or conflicting evidence leaves the
+  dispatch quarantined. After accepting the fence it performs one consistent
+  exact-attempt list: a match is reconciled or released; zero matches makes the
+  old attempt definitively unallocated and permits a newer attempt. It still
+  never dispatches the fenced attempt again.
+
 The reference is a lowercase DNS-subdomain value compatible with the current
 Nakama schema:
 
@@ -245,7 +276,7 @@ cannot release a newer session.
 | Event | Required behavior |
 |---|---|
 | Successful handoff | Finalize the exact GameServer and `SecretRef` before returning an endpoint or token. |
-| Agones timeout after allocation | Keep the durable dispatch quarantined and list only managed GameServers with the exact attempt digest. Reconcile one exact match, or release it if the lease already expired; release all exact-UID duplicates, and never retry allocation for that attempt. No-match observation alone is not a completion fence. |
+| Agones timeout after allocation | Keep the dispatch quarantined and list managed GameServers with the exact attempt digest. Reconcile one match, or release it if the lease expired. For duplicates, release each matching object individually with its own exact-UID precondition. Never retry allocation for that attempt. No-match observation alone is not a completion fence. |
 | Same-attempt replay | Reuse the staging expiry and the exact attempt-labelled GameServer. A dispatched no-match attempt remains ambiguous and does not allocate again. |
 | Same reservation, newer attempt | An ambiguous older dispatch blocks the newer attempt. Otherwise mark the older lease `releasing`, delete only its exact UID, then stage the new attempt. |
 | Stale-attempt release | Validate the attempt digest, allocation ID, UID digest, and envelope digest; never delete a newer attempt's GameServer. |
@@ -279,23 +310,31 @@ The production identities are deliberately asymmetric:
   `gameservers.agones.dev`. It receives no `create`, `update`, `patch`,
   `watch`, Pod, ConfigMap, or Secret API permission. Deletes carry UID
   preconditions.
+- **Allocator fence supervisor ServiceAccount:** a separate identity limited
+  to `get`, `list`, and `watch` on allocator Pods, ReplicaSets, and endpoint
+  discovery in the allocator namespace. It receives no GameServer mutation or
+  Secret permission and is the only principal allowed to advance the private
+  allocator-generation records.
 - **Nakama storage:** the lease and claim lookup remain system-owned,
   server-only objects with no player read or write permission.
 
 NetworkPolicy permits coordinator-to-allocator and coordinator-to-Kubernetes
-API traffic, the GameServer Pod's SDK sidecar-to-Kubernetes API traffic, and
-zone-to-private-claim traffic. NetworkPolicy is Pod-scoped, so the token shadow
-rather than a claimed container-level network boundary keeps the zone process
-credentialless. The claim endpoint requires the zone workload's mTLS identity
-and independently verifies the allocation token; it is not exposed through the
-player RPC surface. Player traffic reaches only the zone's TLS WebSocket port
-and the existing public Nakama endpoints.
+API traffic, fence-supervisor-to-Kubernetes API traffic, the GameServer Pod's
+SDK sidecar-to-Kubernetes API traffic, and zone-to-private-claim traffic.
+NetworkPolicy is Pod-scoped, so the token shadow rather than a claimed
+container-level network boundary keeps the zone process credentialless. The
+claim endpoint requires the zone workload's mTLS identity and independently
+verifies the allocation token; it is not exposed through the player RPC
+surface. Player traffic reaches only the zone's TLS WebSocket port and the
+existing public Nakama endpoints.
 
 Hermetic authorization tests must prove both the allowed calls and negative
 capabilities: the zone container's token path is shadowed, the SDK sidecar
-retains only its required credential, the coordinator cannot read Secrets or
-mutate GameServers, public callers cannot reach the claim boundary, and one
-allocation's token cannot claim another.
+retains only its required credential, and the coordinator cannot create,
+update, patch, or watch GameServers or access Secrets. Positive coordinator
+tests must prove that deletion proceeds only after the managed-resource and
+attempt checks and carries the exact UID precondition. Public callers cannot
+reach the claim boundary, and one allocation's token cannot claim another.
 
 ## Rejected alternatives
 
@@ -378,8 +417,9 @@ The coordinator must retain an unwrap keyring for at least the longest
 GameServer and handoff lifetime, and production readiness gains an observable
 metadata barrier. Coordinator recovery now depends on an exact GameServer GET,
 while the durable lease gains an allocation-dispatch phase and a fenced claimed
-session-end transition. No new raw-secret data store, controller, mounted
-allocation Secret, or namespace-wide Secret authority is introduced.
+session-end transition. The allocator fence supervisor adds a metadata-only
+control-plane authority, but no new raw-secret data store, mounted allocation
+Secret, or namespace-wide Secret authority is introduced.
 
 An ambiguous Agones dispatch can temporarily quarantine one reservation until
 the labelled GameServer appears or an allocator-generation fence proves the
