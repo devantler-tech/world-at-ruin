@@ -188,6 +188,13 @@ raise writes to 2 and append 2 to the capability ledger. The raw preview remains
 `WAR_LAYERED_OUTFIT_PICKERS=1` until #336 delivers an authored wardrobe surface; the flag controls
 exposure, not the already-completed two-release compatibility sequence.
 
+The current character-vocabulary expansion is capability 5. The reader registry contains
+`ashen_bindings` at `hands/armor`, so a future recipe that already carries the stable name renders
+and survives ordinary edits. Production origination remains the capability-4 writer vocabulary in
+both `WAR_LAYERED_OUTFIT_PICKERS` states. #544 owns activation after a retained capability-5 reader
+release exists; that contract change adds the writer-vocabulary entry, raises writes to 5, and
+appends capability 5 to the shipped ledger.
+
 ### Progression vault
 
 For vault version `N`, the expansion pull request must:

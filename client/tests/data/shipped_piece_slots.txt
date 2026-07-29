@@ -17,3 +17,4 @@ shoes_cloth feet
 boots_worn feet
 relic_goggles head
 ruin_drake_helm head
+ashen_bindings hands
