@@ -448,9 +448,8 @@ func TestAddMobPanicsOnDuplicate(t *testing.T) {
 	w.AddMob(1, MobParams{})
 }
 
-func newChaseWorld(enabled bool) *World {
+func newChaseWorld() *World {
 	w := NewWorld(combatBounds)
-	w.MobChase = enabled
 	w.Add(Entity{ID: 100, Pos: Vec3{}, MaxSpeed: 3_000})
 	w.Add(Entity{ID: 1, Pos: Vec3{X: 6_000}})
 	w.AddMob(100, MobParams{
@@ -464,52 +463,75 @@ func newChaseWorld(enabled bool) *World {
 	return w
 }
 
-func TestMobChaseFlagGatesMovementAndCastRange(t *testing.T) {
-	off := newChaseWorld(false)
-	off.Step()
-	if got := off.Get(100).Pos; got != (Vec3{}) {
-		t.Fatalf("flag off moved the stationary caster to %+v", got)
-	}
-	if casts := off.ActiveCasts(); len(casts) != 1 || casts[0].Shape.Origin != (Vec3{X: 6_000}) {
-		t.Fatalf("flag off must preserve the immediate stationary cast, got %+v", casts)
-	}
+func TestRegisteredMobChasesToCastRangeByDefault(t *testing.T) {
+	w := NewWorld(combatBounds)
+	w.Add(Entity{ID: 100, Pos: Vec3{}, MaxSpeed: 3_000})
+	w.Add(Entity{ID: 1, Pos: Vec3{X: 6_000}})
+	w.AddMob(100, MobParams{
+		AggroRadiusMM:  10_000,
+		CastRangeMM:    2_000,
+		ChaseSpeedMM:   3_000,
+		CastTicks:      4,
+		CooldownTicks:  600,
+		CircleRadiusMM: 1_500,
+	})
 
-	on := newChaseWorld(true)
-	on.Step()
-	if casts := on.ActiveCasts(); len(casts) != 0 {
-		t.Fatalf("flag on cast from outside the configured range: %+v", casts)
+	w.Step()
+	if casts := w.ActiveCasts(); len(casts) != 0 {
+		t.Fatalf("registered mob cast from outside its configured range: %+v", casts)
 	}
-	if intent := on.Get(100).Intent; intent.X <= 0 || intent.Y != 0 || intent.Z != 0 {
-		t.Fatalf("flag on did not author horizontal chase intent toward +X: %+v", intent)
+	if intent := w.Get(100).Intent; intent.X <= 0 || intent.Y != 0 || intent.Z != 0 {
+		t.Fatalf("registered mob did not author horizontal chase intent toward +X: %+v", intent)
 	}
 
 	for range 80 {
-		if len(on.ActiveCasts()) != 0 {
+		if len(w.ActiveCasts()) != 0 {
 			break
 		}
-		on.Step()
+		w.Step()
 	}
-	casts := on.ActiveCasts()
+	casts := w.ActiveCasts()
 	if len(casts) != 1 {
-		t.Fatalf("chaser never reached cast range, got position %+v and casts %+v", on.Get(100).Pos, casts)
+		t.Fatalf("registered mob never reached cast range, got position %+v and casts %+v", w.Get(100).Pos, casts)
 	}
-	mob := on.Get(100)
-	if mob.Pos.X <= 0 || horizontalDist2(mob.Pos, on.Get(1).Pos) > 2_000*2_000 {
-		t.Fatalf("chaser cast before closing to range: mob=%+v target=%+v", mob.Pos, on.Get(1).Pos)
+	mob := w.Get(100)
+	if mob.Pos.X <= 0 || horizontalDist2(mob.Pos, w.Get(1).Pos) > 2_000*2_000 {
+		t.Fatalf("registered mob cast before closing to range: mob=%+v target=%+v", mob.Pos, w.Get(1).Pos)
 	}
 	if mob.Intent != (Vec3{}) {
-		t.Fatalf("chaser must stop while its cast is in flight, intent %+v", mob.Intent)
+		t.Fatalf("registered mob must stop while its cast is in flight, intent %+v", mob.Intent)
 	}
 	castPos := mob.Pos
-	on.Step()
-	on.Step()
-	if got := on.Get(100).Pos; got != castPos {
-		t.Fatalf("chaser drifted during its in-flight cast: %+v -> %+v", castPos, got)
+	w.Step()
+	w.Step()
+	if got := w.Get(100).Pos; got != castPos {
+		t.Fatalf("registered mob drifted during its in-flight cast: %+v -> %+v", castPos, got)
+	}
+}
+
+func TestMobWithZeroChaseSpeedRemainsAStationaryCaster(t *testing.T) {
+	w := NewWorld(combatBounds)
+	w.Add(Entity{ID: 100, Pos: Vec3{}, MaxSpeed: 3_000})
+	w.Add(Entity{ID: 1, Pos: Vec3{X: 6_000}})
+	w.AddMob(100, MobParams{
+		AggroRadiusMM:  10_000,
+		ChaseSpeedMM:   0,
+		CastTicks:      4,
+		CooldownTicks:  600,
+		CircleRadiusMM: 1_500,
+	})
+
+	w.Step()
+	if got := w.Get(100).Pos; got != (Vec3{}) {
+		t.Fatalf("zero-speed stationary caster moved to %+v", got)
+	}
+	if casts := w.ActiveCasts(); len(casts) != 1 || casts[0].Shape.Origin != (Vec3{X: 6_000}) {
+		t.Fatalf("zero-speed stationary caster did not preserve its immediate cast: %+v", casts)
 	}
 }
 
 func TestMobChaseClearsIntentAfterLosingTarget(t *testing.T) {
-	w := newChaseWorld(true)
+	w := newChaseWorld()
 	w.Step()
 	if w.Get(100).Intent == (Vec3{}) {
 		t.Fatal("fixture never began chasing")
@@ -529,7 +551,6 @@ func TestMobChaseClearsIntentAfterLosingTarget(t *testing.T) {
 
 func TestMobChaseReachesZeroRangeWithoutTruncating(t *testing.T) {
 	w := NewWorld(combatBounds)
-	w.MobChase = true
 	w.Add(Entity{ID: 100, MaxSpeed: 3_000})
 	w.Add(Entity{ID: 1, Pos: Vec3{X: 31}})
 	w.AddMob(100, MobParams{
@@ -548,47 +569,8 @@ func TestMobChaseReachesZeroRangeWithoutTruncating(t *testing.T) {
 	}
 }
 
-func TestMobChaseFlagDisableClearsAuthoredIntentBeforeMovement(t *testing.T) {
-	w := newChaseWorld(true)
-	w.Step()
-	if w.Get(100).Intent == (Vec3{}) {
-		t.Fatal("fixture never began chasing")
-	}
-
-	w.MobChase = false
-	w.Step()
-	if got := w.Get(100).Pos; got != (Vec3{}) {
-		t.Fatalf("disabling chase allowed stale AI intent to move the mob: %+v", got)
-	}
-	if got := w.Get(100).Intent; got != (Vec3{}) {
-		t.Fatalf("disabling chase left stale AI intent %+v", got)
-	}
-	if casts := w.ActiveCasts(); len(casts) != 1 || casts[0].Shape.Origin != (Vec3{X: 6_000}) {
-		t.Fatalf("flag off must resume the stationary cast contract, got %+v", casts)
-	}
-}
-
-func TestMobChaseFlagOffPreservesCallerIntent(t *testing.T) {
-	w := newChaseWorld(true)
-	w.Step()
-	if w.Get(100).Intent == (Vec3{}) {
-		t.Fatal("fixture never authored chase intent")
-	}
-
-	w.MobChase = false
-	w.SetIntent(100, Vec3{Z: 3_000})
-	w.Step()
-	if got := w.Get(100).Pos; got != (Vec3{Z: 100}) {
-		t.Fatalf("flag off erased caller-owned mob movement: got %+v", got)
-	}
-	if got := w.Get(100).Intent; got != (Vec3{Z: 3_000}) {
-		t.Fatalf("flag off replaced caller-owned intent: got %+v", got)
-	}
-}
-
 func TestMobChaseCastsAtCapsuleContact(t *testing.T) {
 	w := NewWorld(combatBounds)
-	w.MobChase = true
 	w.Add(Entity{ID: 100, MaxSpeed: 3_000, Radius: 300})
 	w.Add(Entity{ID: 1, Pos: Vec3{X: 2_000}, Radius: 300})
 	w.AddMob(100, MobParams{
@@ -609,7 +591,6 @@ func TestMobChaseCastsAtCapsuleContact(t *testing.T) {
 
 func TestMobChaseLowSpeedDiagonalStillAdvances(t *testing.T) {
 	w := NewWorld(combatBounds)
-	w.MobChase = true
 	w.Add(Entity{ID: 100, MaxSpeed: TickHz})
 	w.Add(Entity{ID: 1, Pos: Vec3{X: 40, Z: 40}})
 	w.AddMob(100, MobParams{
@@ -646,7 +627,6 @@ func TestAddMobRejectsUnrepresentablePositiveChaseCap(t *testing.T) {
 
 func TestMobChaseParametersClampAtIngestion(t *testing.T) {
 	w := NewWorld(combatBounds)
-	w.MobChase = true
 	w.Add(Entity{ID: 100, MaxSpeed: 3_000})
 	w.Add(Entity{ID: 1, Pos: Vec3{X: 5_000}})
 	w.AddMob(100, MobParams{
@@ -667,7 +647,6 @@ func TestMobChaseParametersClampAtIngestion(t *testing.T) {
 func TestMobChaseIsDeterministicAcrossInsertionOrder(t *testing.T) {
 	build := func(reverse bool) *World {
 		w := NewWorld(combatBounds)
-		w.MobChase = true
 		ents := []Entity{
 			{ID: 100, MaxSpeed: 4_000},
 			{ID: 1, Pos: Vec3{X: 8_000}},

@@ -44,7 +44,9 @@ const FrameDiff := preload("res://tools/frame_diff.gd")
 ## Every scenario this tool knows. Listed once so the dispatch below and the
 ## error message a caller sees cannot disagree — the previous pair of hand-kept
 ## conditions had already drifted apart by one scenario.
-const SCENARIOS: Array[String] = ["world", "first_run", "breath", "walk", "run", "light_response", "replication"]
+const SCENARIOS: Array[String] = [
+	"world", "first_run", "breath", "walk", "run", "light_response", "replication", "mob_chase",
+]
 
 ## The committed vantages. Fixed on purpose — evidence is only comparable across
 ## commits if the camera does not move between them. Each is [name, eye, target].
@@ -212,6 +214,12 @@ const REPLICATION_FIXTURE := "res://tools/data/replication_snapshot.json"
 ## capture then ASSERTS that refusal, so "no server was contacted" is a proved
 ## property of the run rather than a claim in a comment.
 const REPLICATION_ZONE_URL := "wss://capture.invalid/zone"
+const MOB_CHASE_REFERENCE := (
+	"docs/art-direction/README.md Character motion — " +
+	"Kingmakers Official Announcement Trailer 1:06–1:10 — " +
+	"https://www.youtube.com/watch?v=OvezgDni8z4&t=66s"
+)
+const MOB_CHASE_REMAINING_GAP := "replicated capsules prove authoritative approach and cast hold; creature locomotion, cast telegraphs and authored combat presentation are not replicated yet"
 ## Where the camera stands relative to the fixture's centroid, and what height
 ## it looks at. Derived from the fixture rather than committed as a vantage:
 ## the subject here is the population, so the frame must follow it if the
@@ -355,7 +363,7 @@ func _ready() -> void:
 	if not SCENARIOS.has(scenario):
 		_fail("unknown WAR_SCENARIO '%s' — expected one of %s" % [scenario, ", ".join(SCENARIOS)])
 		return
-	if scenario == "replication":
+	if scenario == "replication" or scenario == "mob_chase":
 		_arm_replication_seam()
 
 	# Load the scene the PROJECT actually boots, not a hardcoded path: the
@@ -379,6 +387,9 @@ func _ready() -> void:
 
 	if scenario == "replication":
 		await _capture_replication(dir, main)
+		return
+	if scenario == "mob_chase":
+		await _capture_mob_chase(dir, main)
 		return
 
 	# Every remaining scenario boots with no zone, so its replica table is empty
@@ -1674,6 +1685,158 @@ func _capture_replication(dir: String, main: Node) -> void:
 	get_tree().quit(0)
 
 
+## The `mob_chase` scenario: a fixed-camera motion sequence sourced from the
+## authoritative Go tick and wire encoder, then folded through ZoneConnection
+## before the shipped ReplicaView draws it (#357).
+##
+## The ordinary replication capture proves a static committed population
+## contributes pixels. This sequence proves the moving behavior reaches the
+## same render path: four approach states close monotonically, the cast-start
+## state lands inside the configured capsule-surface range, and two later
+## authoritative ticks hold the identical position. The fixture's zero-speed
+## stationary control remains beside the sequence as the pre-retirement
+## baseline without preserving a runtime feature flag.
+func _capture_mob_chase(dir: String, main: Node) -> void:
+	for i in WARMUP_FRAMES:
+		await get_tree().process_frame
+	if not _has_world(main):
+		_fail("the world did not build (no Terrain under World) — a sky-only chase sequence is not evidence")
+		return
+
+	var refused_zone: ZoneConnection = main.get("_zone")
+	var view := main.get_node_or_null("Replicas") as ReplicaView
+	if refused_zone == null or view == null:
+		_fail("the shipped Main scene did not build its zone connection and Replicas view")
+		return
+	if refused_zone.state() != ZoneConnection.State.FAILED or refused_zone.error() != ZoneConnection.ERR_TOKEN:
+		_fail("mob-chase capture did not stop the boot connection at the credential boundary")
+		return
+
+	var replay := MobChaseReplay.new()
+	if not replay.is_valid():
+		_fail("authoritative mob-chase fixture was refused: %s" % replay.error_detail())
+		return
+	if not replay.start():
+		_fail("authoritative mob-chase replay could not start: %s" % replay.error_detail())
+		return
+	main.set("_zone", replay.connection())
+	main.set("_zone_failure_reported", false)
+	main.set("_zone_was_live", true)
+
+	var first_mob := replay.first_mob_state()
+	var first_target := replay.first_target_state()
+	if first_mob.is_empty() or first_target.is_empty():
+		_fail("authoritative mob-chase fixture has no first mob/target state")
+		return
+	var centroid := Vector3(
+		(float(first_mob["x"]) + float(first_target["x"])) * 0.5 / ReplicaView.MM_PER_M,
+		(float(first_mob["y"]) + float(first_target["y"])) * 0.5 / ReplicaView.MM_PER_M,
+		(float(first_mob["z"]) + float(first_target["z"])) * 0.5 / ReplicaView.MM_PER_M,
+	)
+	var cam := Camera3D.new()
+	cam.far = 400.0
+	cam.fov = 55.0
+	get_tree().root.add_child(cam)
+	cam.global_position = centroid + REPLICATION_CAM_OFFSET
+	cam.look_at(Vector3(centroid.x, centroid.y + REPLICATION_LOOK_HEIGHT_M, centroid.z), Vector3.UP)
+
+	var previous_distance2 := -1
+	var cast_position := Vector2i()
+	var have_cast_position := false
+	var approach_frames := 0
+	var hold_frames := 0
+	var captured := 0
+	while replay.has_next():
+		var result := replay.advance()
+		if result.get("ok") != true:
+			_fail("authoritative mob-chase frame %d was refused: %s" % [captured, str(result)])
+			return
+		for i in SETTLE_FRAMES:
+			cam.current = true
+			await get_tree().process_frame
+
+		var store := replay.connection().store()
+		var entities := _mob_chase_entities(store, [replay.mob_id(), replay.target_id()])
+		if entities.size() != 2 or view.count() != 2:
+			_fail("mob-chase frame %d reached %d states and %d rendered markers, want two of each" %
+				[captured, entities.size(), view.count()])
+			return
+		if not _replicas_are_framed(cam, view, entities):
+			return
+		for entity: Dictionary in entities:
+			var marker := view.marker_for(int(entity["id"]))
+			var expected := Vector3(
+				float(entity["x"]) / ReplicaView.MM_PER_M,
+				float(entity["y"]) / ReplicaView.MM_PER_M,
+				float(entity["z"]) / ReplicaView.MM_PER_M,
+			)
+			if marker == null or not marker.global_position.is_equal_approx(expected):
+				_fail("marker %d does not render the folded authoritative position %s" % [entity["id"], expected])
+				return
+
+		var mob := store.entity(replay.mob_id())
+		var target := store.entity(replay.target_id())
+		var dx: int = int(mob["x"]) - int(target["x"])
+		var dz: int = int(mob["z"]) - int(target["z"])
+		var distance2 := dx * dx + dz * dz
+		var phase := String(result["phase"])
+		if phase == "approach":
+			approach_frames += 1
+			if previous_distance2 >= 0 and distance2 >= previous_distance2:
+				_fail("rendered approach did not close: distance² %d after %d" % [distance2, previous_distance2])
+				return
+		else:
+			var position := Vector2i(int(mob["x"]), int(mob["z"]))
+			var maximum_center_distance := (
+				replay.cast_range_mm() + int(mob["radius"]) + int(target["radius"])
+			)
+			if distance2 > maximum_center_distance * maximum_center_distance:
+				_fail("rendered %s state is outside capsule-surface cast range" % phase)
+				return
+			if not have_cast_position:
+				cast_position = position
+				have_cast_position = true
+			elif position != cast_position:
+				_fail("rendered mob drifted during cast: %s -> %s" % [cast_position, position])
+				return
+			if phase == "cast_hold":
+				hold_frames += 1
+		previous_distance2 = distance2
+
+		var image := await _grab_frame()
+		var frame_name := "mob_chase_%02d_%s" % [captured, phase]
+		if not _write_frame(dir, frame_name, image):
+			return
+		_write_note(dir, frame_name, image, _size_note(image), "", [
+			"authoritative_tick: %d" % int(result["tick"]),
+			"phase: %s" % phase,
+			"reference: %s" % MOB_CHASE_REFERENCE,
+			"remaining_gap: %s" % MOB_CHASE_REMAINING_GAP,
+		])
+		captured += 1
+
+	if approach_frames < 3 or hold_frames < 2:
+		_fail("mob-chase capture under-evidences motion: approach=%d held=%d" % [approach_frames, hold_frames])
+		return
+	print(ReplicaView.marker(view.count()))
+	print("MOB CHASE on — %d authoritative frames, %d approach states, %d held-cast states" %
+		[captured, approach_frames, hold_frames])
+	print("CAPTURE PASS — authoritative chase sequence written to %s" % dir)
+	get_tree().quit(0)
+
+
+func _mob_chase_entities(store: ReplicaStore, ids: Array) -> Array:
+	var out: Array = []
+	for id_var: Variant in ids:
+		var id := int(id_var)
+		var state := store.entity(id)
+		if state.is_empty():
+			continue
+		state["id"] = id
+		out.append(state)
+	return out
+
+
 ## The committed population, validated as a wire snapshot before it is trusted.
 ##
 ## A fixture that silently lost its entity list would otherwise photograph an
@@ -1992,7 +2155,16 @@ func _bottom_outfit_picker(creator: CharacterCreator) -> Control:
 ## that succeeded.
 ## `ground` names the region the camera stands on, where that is meaningful —
 ## empty for the cave vantages, which are underground and belong to no region.
-func _write_note(dir: String, frame: String, img: Image, note: String, ground: String = "") -> void:
+## `details` carries scenario-specific provenance as complete `key: value`
+## lines, rather than overloading the size field.
+func _write_note(
+	dir: String,
+	frame: String,
+	img: Image,
+	note: String,
+	ground: String = "",
+	details: Array[String] = [],
+) -> void:
 	# Art-direction check 1 — value range and hue span — measured rather than
 	# eyeballed (#230). Printed AND written: the job log is where an agent
 	# judging its own PR looks, and the note travels with the uploaded frames
@@ -2013,6 +2185,8 @@ func _write_note(dir: String, frame: String, img: Image, note: String, ground: S
 	f.store_line("separation: %s" % separation)
 	if not ground.is_empty():
 		f.store_line("ground: %s" % ground)
+	for detail: String in details:
+		f.store_line(detail)
 	f.close()
 
 

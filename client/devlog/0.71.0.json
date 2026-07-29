@@ -1,0 +1,11 @@
+{
+	"date": "2026-07-29",
+	"notes": [
+		"The first server-held enemy can now close the distance instead of attacking from wherever it first notices you. It follows the authoritative movement rules, stops at the edge of its attack range, and holds that position while the attack is being cast.",
+		"This is the default for every registered mob with a chase speed. A zero chase speed still deliberately creates the old stationary caster, so encounters that need a rooted enemy keep that option without a world-wide experimental switch.",
+		"The movement now has end-to-end evidence: the server records a seven-frame approach and held-cast sequence through the real wire encoder, the client folds it through the live connection path, and the shipped replica renderer publishes the fixed-camera frame sequence.",
+		"Still short of the mark: the replicated enemy is only a capsule marker. Real creature locomotion, cast telegraphs, threat from damage, dead-target handling and navmesh pathfinding remain later work."
+	],
+	"title": "Enemies close to attack range",
+	"version": "0.71.0"
+}
