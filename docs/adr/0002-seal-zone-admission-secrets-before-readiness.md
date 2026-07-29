@@ -94,8 +94,9 @@ wrapping-key fingerprint
 ```
 
 The lowercase, unpadded base32 encoding of the full SHA-256 fingerprint of the
-DER-encoded public key identifies the key. The zone base64url-encodes the
-ciphertext without padding and publishes:
+DER SubjectPublicKeyInfo bytes returned by Go's `x509.MarshalPKIXPublicKey`
+identifies the key. PKCS #1 encoding is not accepted for this fingerprint. The
+zone base64url-encodes the ciphertext without padding and publishes:
 
 | Metadata | Value |
 |---|---|
@@ -154,9 +155,15 @@ the token's opaque allocation-ID grammar.
    Allocated state, Fleet, attempt label, envelope, key fingerprint, and TLS
    port. The retry waits only for that identity and never substitutes another
    object.
-5. Reconstruct the OAEP label, decrypt exactly 32 bytes, and construct the
+5. After the returned GameServer is observable, list managed Allocated
+   GameServers with the exact attempt digest from a consistent Kubernetes API
+   snapshot. Finalization requires exactly one match and its UID must equal the
+   returned GameServer. Zero matches are retried within the same bound. More
+   than one match moves every matched exact UID through release, then fails
+   closed; a retry allocation is never finalized without this singleton check.
+6. Reconstruct the OAEP label, decrypt exactly 32 bytes, and construct the
    durable reference.
-6. Return the raw bytes only in the in-memory `handoff.Allocation`. The
+7. Return the raw bytes only in the in-memory `handoff.Allocation`. The
    coordinator finalizes the Nakama lease with `SecretRef`; `handoff.Service`
    mints the token and releases its copy.
 
@@ -164,14 +171,15 @@ The reference is a lowercase DNS-subdomain value compatible with the current
 Nakama schema:
 
 ```text
-v1.k<base32-sha256-public-key>.u<base32-sha256-gameserver-uid>.e<base32-sha256-envelope>
+v1.k<base32-sha256-public-key>.u<base32-sha256-gameserver-uid>.e<base32-sha256-envelope>.p<decimal-tls-port>
 ```
 
 `AllocationID` supplies the GameServer name and the adapter configuration
 supplies the namespace. `Resolve` gets that exact GameServer, recomputes every
-reference component, repeats the state and correlation checks, and decrypts
-the pinned envelope. A changed UID, annotation, key, label, port, or state is
-an invalid resource, never an opportunity to repair in place.
+reference component, requires the named TLS port to equal the persisted decimal
+port, repeats the state and correlation checks, and decrypts the pinned
+envelope. A changed UID, annotation, key, label, port, or state is an invalid
+resource, never an opportunity to repair in place.
 
 No raw secret store exists to reconcile or garbage-collect. Removing the
 GameServer removes the only persisted ciphertext.
@@ -205,7 +213,7 @@ of admission or cleanup can win.
 | Event | Required behavior |
 |---|---|
 | Successful handoff | Finalize the exact GameServer and `SecretRef` before returning an endpoint or token. |
-| Agones timeout after allocation | List only managed GameServers with the exact attempt digest; reconcile one exact match, retry allocation when none exists, and fail closed while releasing all duplicates when more than one exists. |
+| Agones timeout after allocation | List only managed GameServers with the exact attempt digest; reconcile one exact match and retry allocation when none exists. After any retry succeeds, repeat the consistent singleton list before finalization; fail closed while releasing all exact-UID duplicates when more than one exists. |
 | Same-attempt replay | Reuse the staging expiry and the exact attempt-labelled GameServer; do not allocate again. |
 | Same reservation, newer attempt | Mark the older lease `releasing`, delete only its exact UID, then stage the new attempt. |
 | Stale-attempt release | Validate the attempt digest, allocation ID, UID digest, and envelope digest; never delete a newer attempt's GameServer. |
