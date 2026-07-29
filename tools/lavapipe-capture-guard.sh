@@ -38,7 +38,7 @@ read_verdict() {
 [ "$(read_verdict 'HOLLOW FOG')" = "on" ] ||
 	die "the capture built no hollow fog"
 
-grep -Eq '^HOLLOW FOG on — [1-9][0-9]* drifting ash pools$' "$log" ||
+grep -Eq '^HOLLOW FOG on — [1-9][0-9]* .*ash pools([[:space:]]|$)' "$log" ||
 	die "the enabled hollow-fog marker did not report a positive pool count"
 grep -q 'BOOT_OK' "$log" ||
 	die "the real boot path never completed"

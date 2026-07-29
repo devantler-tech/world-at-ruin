@@ -1566,7 +1566,7 @@ jobs:
           ./tools/lavapipe-capture-guard.sh \
             capture-lavapipe.log "${RUNNER_TEMP}/lavapipe-shots"
 
-          pools="$(grep -E '^HOLLOW FOG on — [1-9][0-9]* drifting ash pools$' capture-lavapipe.log)"
+          pools="$(grep -E '^HOLLOW FOG on — [1-9][0-9]* .*ash pools([[:space:]]|$)' capture-lavapipe.log)"
           {
             echo "# Lavapipe capture conditions"
             echo

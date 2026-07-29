@@ -24,7 +24,7 @@ make_valid_fixture() {
 Godot Engine v4.7.1.stable.official
 Vulkan 1.4.318 - Forward+ - Using Device #0: Unknown - llvmpipe (LLVM 20.1.2, 256 bits)
 VOLUMETRICS on — R32_Uint atomic storage image supported
-HOLLOW FOG on — 3 drifting ash pools
+HOLLOW FOG on — 3 ash pools with whole-pool density swell
 BOOT_OK vdev
 CAPTURE PASS — 5 vantages written
 EOF
@@ -49,7 +49,7 @@ expect_refusal() {
 }
 
 valid="$(make_valid_fixture valid)"
-expect_pass "a Vulkan capture with enabled volumetrics, three pools and a frame" "$valid"
+expect_pass "a Vulkan capture with enabled volumetrics, three moving pools and a frame" "$valid"
 
 non_vulkan="$(make_valid_fixture non-vulkan)"
 sed -i.bak '/Vulkan .*Using Device/d' "$non_vulkan/capture.log"
