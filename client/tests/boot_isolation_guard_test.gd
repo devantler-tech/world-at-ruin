@@ -328,6 +328,18 @@ func _fail(message: String) -> void:
 	get_tree().quit(1)
 """
 
+## A `not` elsewhere in the condition does not negate the guarantee. The guard
+## must understand the call's own polarity rather than search its line prefix.
+const MISLEADING_NOT_GUARANTEE_FIXTURE := """var _save: SaveIsolation
+
+
+func _fail(message: String) -> void:
+	var other_breach := false
+	if not other_breach and _save.real_save_untouched():
+		push_error("save stayed isolated")
+	get_tree().quit(1)
+"""
+
 ## The result comes from a SaveIsolation object, but not the one whose begin()
 ## owns the active redirects. Type alone cannot prove the live scope was clean.
 const STALE_OWNER_GUARANTEE_FIXTURE := """var _active: SaveIsolation
@@ -377,6 +389,28 @@ func _ready() -> void:
 		_fail("save owner missing")
 		return
 	get_tree().quit(0)
+
+
+func _fail(message: String) -> void:
+	if _save != null and not _save.real_save_untouched():
+		message += " breached"
+	get_tree().quit(1)
+"""
+
+## Equal indentation is not dominance when statements live under sibling
+## branches. The clean assertion below cannot vouch for the later success path.
+const SIBLING_BRANCH_SUCCESS_FIXTURE := """var _save: SaveIsolation
+
+
+func _ready() -> void:
+	_save = SaveIsolation.new("user://sibling-branch.json")
+	_save.begin()
+	if OS.has_feature("guard-branch"):
+		if not _save.real_save_untouched():
+			_fail("save isolation breached")
+			return
+	if OS.has_feature("success-branch"):
+		get_tree().quit(0)
 
 
 func _fail(message: String) -> void:
@@ -614,6 +648,10 @@ func _ready() -> void:
 		_fail(("the guard accepted a positive-only `real_save_untouched()` branch — printing when "
 			+ "the save is clean does not handle the false breach case"))
 		return
+	if _verdict(MISLEADING_NOT_GUARANTEE_FIXTURE) != VERDICT_UNGUARDED:
+		_fail(("the guard accepted a positive-only guarantee because an unrelated operand was "
+			+ "negated earlier in the condition — polarity must belong to the guarantee call"))
+		return
 
 	# --- negative control: the guarantee must come from the active owner ---
 	if _verdict(STALE_OWNER_GUARANTEE_FIXTURE) != VERDICT_UNGUARDED:
@@ -631,6 +669,10 @@ func _ready() -> void:
 	if _verdict(SUCCESS_PATH_UNGUARDED_FIXTURE) != VERDICT_SUCCESS_UNGUARDED:
 		_fail(("the guard accepted a booter whose `_fail` is guarded but whose success path reaches "
 			+ "quit(0) without asserting the active isolation owner's guarantee"))
+		return
+	if _verdict(SIBLING_BRANCH_SUCCESS_FIXTURE) != VERDICT_SUCCESS_UNGUARDED:
+		_fail(("the guard accepted a guarantee in one sibling branch as dominating quit(0) in "
+			+ "another — equal indentation does not imply shared control flow"))
 		return
 
 	# --- negative control: a nonzero quit is not only `quit(1)` ---
@@ -869,7 +911,7 @@ func _guards_failure_path(code: String) -> bool:
 		# `true` means clean; the assertion has to route the FALSE result into
 		# the failure outcome. Merely reading the positive case is observational
 		# logging, not breach handling.
-		if not _mentions_identifier(before, "not"):
+		if not _call_is_negated(line, "." + GUARANTEE_CALL):
 			continue
 		# Stored in a variable. That counts only if a LATER line reads it:
 		# `var untouched = not _save.real_save_untouched()` with no further
@@ -927,11 +969,12 @@ func _success_exit_has_guard(
 	var success_indent := _indent_of(lines[success_line])
 	for i in range(success_line - 1, function_start, -1):
 		var line: String = lines[i]
-		if _indent_of(line) != success_indent or not line.contains(GUARANTEE_CALL):
+		if _indent_of(line) > success_indent or not line.contains(GUARANTEE_CALL) \
+				or not _scope_dominates(lines, function_start, i, success_line):
 			continue
 		var receiver := _call_receiver(line, "." + GUARANTEE_CALL)
-		var before := line.substr(0, line.find(GUARANTEE_CALL))
-		if receiver not in active_owners or not _mentions_identifier(before, "not") \
+		if receiver not in active_owners \
+				or not _call_is_negated(line, "." + GUARANTEE_CALL) \
 				or not line.strip_edges().begins_with("if "):
 			continue
 		var block_end := _block_end(lines, i, success_line + 1)
@@ -944,6 +987,47 @@ func _success_exit_has_guard(
 		if calls_fail and returns:
 			return true
 	return false
+
+
+## A statement dominates a later statement only when it lives in the same
+## active block ancestry or an enclosing one. Indentation alone cannot
+## distinguish two sibling branches whose nested statements share a column.
+func _scope_dominates(
+		lines: PackedStringArray,
+		function_start: int,
+		guard_line: int,
+		success_line: int,
+) -> bool:
+	var guard_scope := _block_ancestry(lines, function_start, guard_line)
+	var success_scope := _block_ancestry(lines, function_start, success_line)
+	if guard_scope.size() > success_scope.size():
+		return false
+	for i in guard_scope.size():
+		if guard_scope[i] != success_scope[i]:
+			return false
+	return true
+
+
+func _block_ancestry(
+		lines: PackedStringArray,
+		function_start: int,
+		target_line: int,
+) -> PackedInt32Array:
+	var ancestry := PackedInt32Array()
+	for i in range(function_start + 1, target_line):
+		var line: String = lines[i]
+		var trimmed := line.strip_edges()
+		if trimmed.is_empty():
+			continue
+		var indent := _indent_of(line)
+		while not ancestry.is_empty() and indent <= _indent_of(lines[ancestry[-1]]):
+			ancestry.remove_at(ancestry.size() - 1)
+		if trimmed.ends_with(":"):
+			ancestry.append(i)
+	var target_indent := _indent_of(lines[target_line])
+	while not ancestry.is_empty() and target_indent <= _indent_of(lines[ancestry[-1]]):
+		ancestry.remove_at(ancestry.size() - 1)
+	return ancestry
 
 
 ## Receivers that actually invoke an isolation boundary in executable code.
@@ -971,6 +1055,31 @@ func _call_receiver(line: String, call: String) -> String:
 		start -= 1
 	var receiver := line.substr(start + 1, call_at - start - 1)
 	return receiver if receiver.is_valid_identifier() else ""
+
+
+## Whether unary `not` applies to this call itself. An unrelated `not` earlier
+## in the expression does not change the guarantee's polarity. Parentheses
+## between the operator and receiver are transparent; paired negations cancel.
+func _call_is_negated(line: String, call: String) -> bool:
+	var call_at := line.find(call)
+	if call_at <= 0:
+		return false
+	var receiver_start := call_at - 1
+	while receiver_start >= 0 and _is_ident_char(line[receiver_start]):
+		receiver_start -= 1
+	var prefix := line.substr(0, receiver_start + 1).strip_edges()
+	var negations := 0
+	while not prefix.is_empty():
+		while prefix.ends_with("("):
+			prefix = prefix.trim_suffix("(").strip_edges()
+		if not prefix.ends_with("not"):
+			break
+		var not_start := prefix.length() - "not".length()
+		if not_start > 0 and _is_ident_char(prefix[not_start - 1]):
+			break
+		negations += 1
+		prefix = prefix.substr(0, not_start).strip_edges()
+	return negations % 2 == 1
 
 
 ## Does `line` use `name` as a whole identifier?
