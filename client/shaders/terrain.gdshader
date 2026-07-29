@@ -166,10 +166,12 @@ float ground_noise(vec2 xz, float scale) {
 // of the same search at no extra cost and are what lets the crack relief below
 // take an ANALYTIC gradient instead of differencing a sub-pixel step. `id2` is
 // the cell they belong to, which is what lets the substance step across the
-// boundary be averaged over the pixel drawing it.
+// boundary be averaged over the pixel drawing it. `f3`/`id3` are the third
+// candidate, which is what keeps that averaging continuous where three plates
+// meet (#499).
 void plates(vec2 uv, out vec2 id, out float f1, out float f2,
-		out vec2 c1, out vec2 c2, out vec2 id2) {
-	terrain_plates(uv, id, f1, f2, c1, c2, id2);
+		out vec2 c1, out vec2 c2, out vec2 id2, out float f3, out vec2 id3) {
+	terrain_plates(uv, id, f1, f2, c1, c2, id2, f3, id3);
 }
 
 // One plate's substance, resolved from its cell id alone. rgb = colour,
@@ -179,6 +181,39 @@ void plates(vec2 uv, out vec2 id, out float f1, out float f2,
 vec4 plate_substance(vec2 id) {
 	return terrain_plate_substance(
 		id, rock_color, rock_roughness, plate_basalt, plate_ferric, plate_pale);
+}
+
+// One cell's FINISHED surface: ash resolved against that cell's own stone, its
+// own crack darkening, and its own roughness terms — composed before any
+// averaging with a neighbour, for the reason the call site sets out (averaging
+// earlier is a product of blends where the correct answer is a blend of
+// products).
+//
+// The per-cell ORDERING here is load-bearing and is why this is one function
+// rather than three inline copies. Scorch is affine with a non-zero constant, so
+// it does not commute with the crack multiply and has to land before it; the
+// region and grain offsets have to land before the crack pushes roughness toward
+// 1. A triple junction needs three of these (#499), and three hand-copies of an
+// ordering nothing checks is exactly how the ground and the contact band drifted
+// apart before `crack_relief_parity_test` was written to pin them.
+void plate_cell_surface(
+		vec4 sub_cell, float slab_cell, float sheet, float rock_mix,
+		float scorch_k, float crack_in, float region_rough, float grain,
+		float detail,
+		out vec3 surface_out, out float rough_out, out float crack_out) {
+	float mask = sheet * slab_cell;
+	float exposure = max(rock_mix, mask);
+	// The crack is gated by the mask, so it is per-cell too — darkening the
+	// averaged surface would darken the neighbour's ash by the slab's seam and
+	// under-darken the slab.
+	crack_out = crack_in * mask;
+	surface_out = mix(
+		mix(ash_color, mix(rock_color, sub_cell.rgb, mask), exposure),
+		scorch_color, scorch_k) * (1.0 - crack_out * crack_darkness);
+	rough_out = mix(
+		clamp(mix(ash_roughness, mix(rock_roughness, sub_cell.a, mask), exposure)
+			+ region_rough - 0.06 * (grain - 0.5) * detail, 0.0, 1.0),
+		1.0, crack_out * 0.5);
 }
 
 void vertex() {
@@ -211,20 +246,28 @@ void fragment() {
 	vec2 plate_uv = world_pos.xz * plate_scale;
 	vec2 plate_id = vec2(0.0);
 	vec2 plate_id2 = vec2(0.0);
+	vec2 plate_id3 = vec2(0.0);
 	float f1 = 0.0;
 	float f2 = 1.0;
+	float f3 = 1.0;
 	float plate_resolved = 0.0;
 	float plate_edge_w = 0.0;
+	// Coverage split across the three nearest plates, (owning, second, third).
+	// The third is 0.0 everywhere except at a triple junction (#499).
+	vec3 plate_w = vec3(1.0, 0.0, 0.0);
 	vec4 sub = vec4(rock_color, rock_roughness);
 	vec4 sub_nb = vec4(rock_color, rock_roughness);
+	vec4 sub_nb3 = vec4(rock_color, rock_roughness);
 	float is_slab2 = 0.0;
+	float is_slab3 = 0.0;
 	float crack = 0.0;
 	float plate_fw = 0.0;
 	float crack_fw = 0.0;
 	vec2 plate_c1 = vec2(0.0);
 	vec2 plate_c2 = vec2(0.0);
 	if (plates_enabled) {
-	plates(plate_uv, plate_id, f1, f2, plate_c1, plate_c2, plate_id2);
+	plates(plate_uv, plate_id, f1, f2, plate_c1, plate_c2, plate_id2, f3,
+		plate_id3);
 
 	// Screen footprint of one plate. Unlike the grain, plates are NOT tied to
 	// the distance fade: a 1.8 m slab is still a resolvable feature well past
@@ -278,6 +321,13 @@ void fragment() {
 	float edge_fw = abs(dot(gsep_e, dFdx(plate_uv)))
 		+ abs(dot(gsep_e, dFdy(plate_uv)));
 	plate_edge_w = terrain_plate_edge_blend(f1, f2, edge_fw * 0.5);
+	// ...and WHICH plates that share belongs to. Away from a triple junction this
+	// is exactly `(1 - plate_edge_w, plate_edge_w, 0)` — the two-cell answer,
+	// unchanged — and at one it becomes symmetric in the candidates so an
+	// identity swap exchanges equal weights instead of stepping the blend target
+	// (#499). Keyed on the isotropic `plate_fw`, not `edge_fw`; see the
+	// function's own note on why a width built from `c1` puts the defect back.
+	plate_w = terrain_plate_blend_weights(f1, f2, f3, plate_edge_w, plate_fw);
 
 	// Both cells' substances are kept SEPARATE here and composed with their own
 	// slab masks below. Blending the substances here and the masks there would
@@ -291,10 +341,16 @@ void fragment() {
 	vec4 mean4 = vec4(mean_col, mean_rough);
 	sub = mix(mean4, plate_substance(plate_id), plate_resolved);
 	sub_nb = mix(mean4, plate_substance(plate_id2), plate_resolved);
+	sub_nb3 = mix(mean4, plate_substance(plate_id3), plate_resolved);
 	// The neighbour's slab pick belongs on the opt-in path with the rest of the
 	// plate work: it is a hash, and the default-off ground must not pay for a
 	// preview it never draws.
 	is_slab2 = step(0.60, hash3(vec3(plate_id2 * 2.3, 19.0)));
+	// The third candidate takes the same mask as the other two. The mask is the
+	// DOMINANT half of the boundary residual (see the note at `slab` below), so
+	// a third substance blended under the second's mask would leave most of the
+	// junction step exactly where it was.
+	is_slab3 = step(0.60, hash3(vec3(plate_id3 * 2.3, 19.0)));
 
 	// The crack itself, widened to the local footprint so it stays a line
 	// instead of aliasing, and dissolved once it is thinner than about a pixel
@@ -378,7 +434,12 @@ void fragment() {
 	// PER CELL, because each cell's substance is gated by its own mask.
 	float slab_own = mix(0.40, is_slab, plate_resolved);
 	float slab_nb = mix(0.40, is_slab2, plate_resolved);
-	float slab = mix(slab_own, slab_nb, plate_edge_w);
+	float slab_nb3 = mix(0.40, is_slab3, plate_resolved);
+	// A weighted average over the three candidates. `plate_w` sums to one, and
+	// away from a junction it is `(1 - plate_edge_w, plate_edge_w, 0)` — so this
+	// is the previous two-cell blend term for term everywhere but a junction.
+	float slab = slab_own * plate_w.x + slab_nb * plate_w.y
+		+ slab_nb3 * plate_w.z;
 	// ...but the SAME average must not reach the crack relief, and this is the
 	// one place the two uses of the mask have to part company.
 	//
@@ -461,42 +522,43 @@ void fragment() {
 	// resolves ash against rock exactly as it did before #261 and pays for none
 	// of the plate work — the coherent branch this file is built around.
 	if (plates_enabled) {
-	float mask_own = sheet * slab_own;
-	float mask_nb = sheet * slab_nb;
-	float exp_own = max(rock_mix, mask_own);
-	float exp_nb = max(rock_mix, mask_nb);
-	// The crack is gated by the mask, so it is per-cell too — darkening the
-	// averaged surface would darken the neighbour's ash by the slab's seam and
-	// under-darken the slab.
-	//
-	// It must land AFTER scorch, which is where it used to be. Scorch is affine
-	// with a non-zero constant, so it does NOT commute with this multiply:
+	// Scorch must land BEFORE the crack, which is why it is computed here and
+	// passed in rather than applied to the averaged surface. Scorch is affine
+	// with a non-zero constant, so it does NOT commute with the crack multiply:
 	//   mix(S, scorch, k) * (1-d)  =  S(1-k)(1-d) + scorch*k*(1-d)
 	//   mix(S * (1-d), scorch, k)  =  S(1-k)(1-d) + scorch*k
 	// which differ by scorch*k*d — a scorched seam would come out undarkened.
-	// So scorch is applied per cell here, before the crack. Grain and lip below
-	// are pure multiplies and DO commute, so they stay on the averaged surface.
-	float crack_own = crack * mask_own;
-	float crack_nb = crack * mask_nb;
+	// Grain and lip below are pure multiplies and DO commute, so they stay on the
+	// averaged surface.
 	float scorch_k = smoothstep(0.62, 0.95, drift) * 0.35 * (1.0 - rock_mix);
-	surface = mix(
-		mix(mix(ash_color, mix(rock_color, sub.rgb, mask_own), exp_own),
-			scorch_color, scorch_k) * (1.0 - crack_own * crack_darkness),
-		mix(mix(ash_color, mix(rock_color, sub_nb.rgb, mask_nb), exp_nb),
-			scorch_color, scorch_k) * (1.0 - crack_nb * crack_darkness),
-		plate_edge_w);
+	vec3 surf_own;
+	vec3 surf_nb;
+	vec3 surf_nb3;
+	float rough_own;
+	float rough_nb;
+	float rough_nb3;
+	float crack_own;
+	float crack_nb;
+	float crack_nb3;
+	plate_cell_surface(sub, slab_own, sheet, rock_mix, scorch_k, crack,
+		region_rough, grain, detail, surf_own, rough_own, crack_own);
+	plate_cell_surface(sub_nb, slab_nb, sheet, rock_mix, scorch_k, crack,
+		region_rough, grain, detail, surf_nb, rough_nb, crack_nb);
+	// The third candidate, which carries weight only at a triple junction.
+	plate_cell_surface(sub_nb3, slab_nb3, sheet, rock_mix, scorch_k, crack,
+		region_rough, grain, detail, surf_nb3, rough_nb3, crack_nb3);
+	// A weighted average of the three finished surfaces. `plate_w` sums to one
+	// and is `(1 - plate_edge_w, plate_edge_w, 0)` away from a junction, so this
+	// is the previous two-cell blend term for term there — and at a resolved
+	// contact, where it is `(1, 0, 0)`, it still composes the owning cell alone.
+	surface = surf_own * plate_w.x + surf_nb * plate_w.y + surf_nb3 * plate_w.z;
 	// Roughness keeps its downstream terms in the original order too: the
 	// region/grain offsets and the clamp are applied per cell BEFORE the crack
 	// pushes toward 1, exactly as the ungated path did.
-	stone_rough = mix(
-		mix(clamp(mix(ash_roughness, mix(rock_roughness, sub.a, mask_own), exp_own)
-			+ region_rough - 0.06 * (grain - 0.5) * detail, 0.0, 1.0),
-			1.0, crack_own * 0.5),
-		mix(clamp(mix(ash_roughness, mix(rock_roughness, sub_nb.a, mask_nb), exp_nb)
-			+ region_rough - 0.06 * (grain - 0.5) * detail, 0.0, 1.0),
-			1.0, crack_nb * 0.5),
-		plate_edge_w);
-	crack = mix(crack_own, crack_nb, plate_edge_w);
+	stone_rough = rough_own * plate_w.x + rough_nb * plate_w.y
+		+ rough_nb3 * plate_w.z;
+	crack = crack_own * plate_w.x + crack_nb * plate_w.y
+		+ crack_nb3 * plate_w.z;
 	} else {
 	surface = mix(mix(ash_color, rock_color, rock_mix), scorch_color,
 		smoothstep(0.62, 0.95, drift) * 0.35 * (1.0 - rock_mix));
