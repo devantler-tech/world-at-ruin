@@ -1,0 +1,12 @@
+{
+	"date": "2026-07-29",
+	"notes": [
+		"The note about stone joins ended by saying the grooves themselves were still most of what moved out there, and that they were the harder half. That is this note.",
+		"A groove has two walls that face each other. Close up they catch the low sun from opposite sides and the seam rakes, which is what makes the ground read as broken slabs rather than a picture of them. Far enough away that the whole groove sits inside one pixel, those two walls point in opposite directions and cancel exactly — so the honest average of them is flat ground, and the seams quietly dissolved into sparkle as you looked out across the Reach.",
+		"But a groove that is too small to tilt anything still does something: it is a hollow, and light that goes into it does not all come back. So the part that cancels as a slope is now kept as shadow instead of being thrown away. Seams stop shimmering and go on reading into the distance, as a darkening that thins out with range rather than a line drawn on the ground.",
+		"Measured at middle distance, the grooves' contribution to the flicker is gone — the ground out there is now as steady as it is with the seams switched off entirely, and the close-up seam read is slightly stronger than before rather than paid away for it.",
+		"The slabbed ground is still a preview: set WAR_GROUND_PLATES=1 before launch to see it."
+	],
+	"title": "Stone seams keep reading into the distance instead of dissolving",
+	"version": "0.68.2"
+}
