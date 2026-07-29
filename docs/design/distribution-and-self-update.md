@@ -346,8 +346,17 @@ stale cache, or engine change can strand or subvert a client:
   a bound on the SIGNER that is independent of how long a publication stays fresh. A certificate
   epoch that disagrees with a top-level `key_epoch` is an incoherent manifest, so a signer cannot
   present both and let the client choose; a malformed certificate is refused rather than degrading to
-  "no certificate" and handing the epoch back to the free field it supersedes; and a manifest with no
-  certificate decides exactly as before, so pre-certificate publications stay readable.
+  "no certificate" and handing the epoch back to the free field it supersedes.
+  **Adoption ratchets, and that is what makes the binding real rather than advisory.** A manifest with
+  no certificate decides exactly as before *until* the client accepts its first certificate-backed
+  one; the updater then latches `key_certificate_required`, and from that point a manifest carrying no
+  certificate is refused as `uncertified_manifest`. Without that latch the certificate is decorative:
+  a superseded or compromised key never has to defeat it, only to OMIT it and name any top-level
+  `key_epoch` it likes — which would clear the high-water mark *and* start a fresh sequence line. That
+  downgrade survives root verification too, because signing a certificate cannot constrain an attacker
+  who never sends one. The latch is caller-owned state like the high-water marks, one-way by
+  construction, and an unreadable value blocks rather than reopening the path. Clients that never
+  adopted certificates are unaffected, so pre-certificate publications stay readable.
   **Root verification of that certificate remains key-custody child 6**, together with root-signed
   revocation and the independently fresh revocation head. The decision core verifies no signatures —
   it performs no I/O at all — so a certificate is trusted exactly as far as the manifest signature

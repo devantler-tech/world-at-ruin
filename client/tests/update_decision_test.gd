@@ -94,6 +94,8 @@ func _ready() -> void:
 	_test_certificate_window_boundaries()
 	_test_malformed_certificate_fails_closed()
 	_test_certificate_epoch_survives_json_parsing()
+	_test_stripping_the_certificate_is_refused_after_adoption()
+	_test_adoption_latch_fails_closed()
 	_test_absent_certificate_keeps_legacy_behaviour()
 	_test_expired_manifest_refused()
 	_test_freshness_fields_are_required()
@@ -344,6 +346,49 @@ func _test_certificate_epoch_survives_json_parsing() -> void:
 	m["sequence"] = 1
 	_expect(installed, m, UpdateDecision.UP_TO_DATE,
 		"a certificate epoch that arrived as a JSON float is read as a whole number")
+
+
+func _test_stripping_the_certificate_is_refused_after_adoption() -> void:
+	# The downgrade the certificate binding would otherwise invite (Codex P1 on
+	# PR #561). A superseded or compromised key does not have to defeat the
+	# certificate — it can just OMIT it and name any top-level epoch it likes.
+	# Without the adoption latch that manifest is not merely accepted, it clears
+	# the high-water mark AND starts a fresh sequence line, so the certificate
+	# would be decorative and root-signing it later would change nothing: an
+	# attacker who never sends a certificate is unaffected by how well it is signed.
+	var adopted := _installed_current()
+	adopted["key_epoch_high_water"] = 5
+	adopted["key_certificate_required"] = true
+
+	var stripped := _base_manifest()
+	stripped["key_epoch"] = 9000
+	stripped["sequence"] = 1
+	_expect(adopted, stripped, "uncertified_manifest",
+		"once a certificate has been adopted, a manifest that omits it cannot downgrade to a self-declared epoch")
+
+	# The latch must not refuse a properly certified manifest.
+	var certified := _base_manifest()
+	certified["key"] = _certificate(5)
+	_expect(adopted, certified, UpdateDecision.UP_TO_DATE,
+		"an adopted client still accepts a certificate-backed manifest")
+
+	# And a client that has NOT adopted certificates is unaffected — the ratchet
+	# only ever tightens, so pre-certificate clients keep updating.
+	var not_adopted := _installed_current()
+	not_adopted["key_epoch_high_water"] = 5
+	var legacy := _base_manifest()
+	legacy["key_epoch"] = 5
+	_expect(not_adopted, legacy, UpdateDecision.UP_TO_DATE,
+		"a client that never adopted certificates still accepts a certificate-less manifest")
+
+
+func _test_adoption_latch_fails_closed() -> void:
+	# Unreadable latch state blocks rather than silently reopening the downgrade,
+	# the rule every other piece of freshness state here already follows.
+	var bad := _installed_current()
+	bad["key_certificate_required"] = "yes"
+	_expect(bad, _base_manifest(), UpdateDecision.BLOCKED_INCOMPATIBLE,
+		"a non-boolean certificate-adoption latch blocks rather than defaulting to permissive")
 
 
 func _test_absent_certificate_keeps_legacy_behaviour() -> void:

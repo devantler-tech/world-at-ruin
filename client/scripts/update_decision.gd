@@ -40,6 +40,7 @@ const INVALID_MANIFEST := "invalid_manifest"
 const STALE_MANIFEST := "stale_manifest"
 const STALE_KEY_EPOCH := "stale_key_epoch"
 const EXPIRED_KEY_CERTIFICATE := "expired_key_certificate"
+const UNCERTIFIED_MANIFEST := "uncertified_manifest"
 const EXPIRED_MANIFEST := "expired_manifest"
 
 
@@ -47,6 +48,7 @@ const EXPIRED_MANIFEST := "expired_manifest"
 ##   { shell_version: String, pack_version: String, save_schema: int,
 ##     save_capability: int, protocol: int,
 ##     manifest_sequence_high_water: int (optional), key_epoch_high_water: int (optional),
+##     key_certificate_required: bool (optional),
 ##     observed_at: String,
 ##     quarantined: Array[String] (optional) }
 ## Missing keys default to the lowest value, so a partial state is never a crash —
@@ -59,6 +61,11 @@ const EXPIRED_MANIFEST := "expired_manifest"
 ## a manifest yet. `key_epoch_high_water` is the same shape for the signing-key
 ## epoch that mark was accumulated under — the sequence line restarts per epoch, so
 ## the two are read together and never independently.
+## `key_certificate_required` is the certificate-adoption latch: the updater sets it
+## when it accepts its first certificate-backed manifest, and from then on a manifest
+## carrying no certificate is refused. Without it, stripping the certificate would be
+## a way around the certificate entirely, so the latch is what makes the binding real
+## rather than advisory. Nothing here ever clears it.
 ## `observed_at` is required and caller-supplied so this core can
 ## enforce expiry without reading the wall clock and ceasing to be pure.
 ## `manifest` is the parsed update manifest (the caller has already verified its
@@ -112,9 +119,25 @@ static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 	# manifests as published, and NOT yet against a compromised key minting its own
 	# certificate. Reading the epoch from the certificate is what makes closing that
 	# gap a change to the crypto boundary alone, with no further change here.
+	# Adoption RATCHETS, and without that the binding above is decorative. Once a
+	# client has accepted a certificate-backed epoch, a manifest that simply OMITS
+	# the certificate must be refused — otherwise a superseded or compromised key
+	# strips `key`, names any top-level `key_epoch` it likes above the mark, and is
+	# not only admitted but starts a fresh sequence line. That downgrade survives
+	# root verification too: signing the certificate cannot matter to an attacker
+	# who never sends one. The latch is caller-owned state like the high-water
+	# marks, set when the updater accepts its first certified manifest, and an
+	# unreadable value fails closed rather than quietly reopening the path.
+	var certificate_required: Variant = installed.get("key_certificate_required", false)
+	if not (certificate_required is bool):
+		return _result(BLOCKED_INCOMPATIBLE, "the certificate-adoption latch is not a boolean — cannot prove whether this client already requires certificate-backed manifests")
+
 	var observed_unix := _utc_datetime_to_unix(str(installed["observed_at"]))
 	var key_epoch := int(manifest.get("key_epoch", 0))
-	if manifest.has("key"):
+	if not manifest.has("key"):
+		if bool(certificate_required):
+			return _result(UNCERTIFIED_MANIFEST, "this client has accepted a certificate-backed signing key, but this manifest carries no certificate — refusing a manifest that would downgrade to a self-declared epoch")
+	else:
 		var cert: Dictionary = manifest["key"]
 		# Checked BEFORE the epoch is used: a certificate outside its validity
 		# window cannot vouch for anything it carries, including its own epoch.
