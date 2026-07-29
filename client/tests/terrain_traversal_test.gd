@@ -169,8 +169,31 @@ func _ready() -> void:
 		_fail("no climbable slope was found in any region — the selection is broken")
 		_abort()
 		return
+	_check_region_coverage()
 	Player.ensure_input_actions()
 	_spawn_climbers()
+
+
+## Every region must supply its full quota of climbs.
+##
+## Checking only that `_climbs` is non-empty is not the same claim: the other
+## three regions keep it full while one contributes nothing, so a region whose
+## terrain, cave-keepout overlap or available gain changed could drop out of both
+## arms entirely and the suite would stay green. That is the failure this whole
+## file exists to make impossible — a guard that passes without exercising what
+## it says it covers — so it is caught here rather than in the report.
+func _check_region_coverage() -> void:
+	var per_region := {}
+	for reg: Dictionary in GroundRegions.REGIONS:
+		per_region[reg[&"name"]] = 0
+	for climb in _climbs:
+		per_region[climb.region] = int(per_region[climb.region]) + 1
+	for region: StringName in per_region:
+		var found: int = per_region[region]
+		if found < CLIMBS_PER_REGION:
+			_fail(
+				"region %s supplied only %d of %d climbs — its steepest ground is under-sampled or absent, so neither arm covers it" %
+				[region, found, CLIMBS_PER_REGION])
 
 
 ## Report and stop. `get_tree().quit()` takes effect at the end of the frame, so
@@ -190,17 +213,24 @@ func _physics_process(_delta: float) -> void:
 		0:
 			if _phase_tick > SETTLE_TICKS:
 				_begin_climb()
+		# The budget is checked BEFORE driving, not after. Driving first lets a
+		# climb that only satisfies the arrival condition on tick CLIMB_TICKS + 1
+		# record itself as arrived in the same tick the arm ends — so the budget
+		# this file documents as a ratchet would silently allow one tick past it,
+		# and a traversal regression needing exactly one more tick would pass.
 		1:
-			_drive()
 			if _phase_tick > CLIMB_TICKS:
 				_end_real_arm()
+			else:
+				_drive()
 		2:
 			if _phase_tick > SETTLE_TICKS:
 				_begin_climb()
 		3:
-			_drive()
 			if _phase_tick > CLIMB_TICKS:
 				_end_ablated_arm()
+			else:
+				_drive()
 
 
 ## The terrain collision moves to its own physics layer and the climbers mask
