@@ -91,6 +91,17 @@ cases=(
 	" no an-empty-version"
 	"1.2.1000000 no a-patch-that-reaches-the-positional-base"
 	"1.1000000.3 no a-minor-that-reaches-the-positional-base"
+	"999999.999999.999999 yes the-control-the-largest-in-range-version"
+	# Past the shell's signed-integer range. These are the cases a value
+	# comparison could not judge: `[ x -ge y ]` aborts with "integer expression
+	# expected", `set -e` does not fire inside an `if`, and the arithmetic then
+	# wraps. Measured before the length guard: the first exited 0 with sequence
+	# `0` — the lowest possible anti-replay floor, and the one mark nothing can
+	# ever supersede.
+	"9223372036854775808.0.0 no a-major-past-the-signed-integer-range"
+	"1.9223372036854775808.0 no a-minor-past-the-signed-integer-range"
+	"1.0.9223372036854775808 no a-patch-past-the-signed-integer-range"
+	"99999999999999999999999999.0.0 no a-major-far-past-any-integer-range"
 )
 
 for entry in "${cases[@]}"; do
@@ -102,11 +113,24 @@ for entry in "${cases[@]}"; do
 	# be refusing on arity instead of on the value under test.
 	[ "${version}" = "" ] && version=""
 
-	if "${SCRIPT}" "${version}" >/dev/null 2>&1; then
-		[ "${expect}" = "no" ] && fail "${label}: '${version}' was accepted — CD would publish an unorderable mark"
+	# stdout and stderr are captured SEPARATELY. Exit status alone would miss the
+	# shape this guard exists for: a leaked "integer expression expected" on
+	# stderr while the script still exits 0 and prints a wrapped mark. An
+	# accepted version must therefore be silent on stderr AND print a bare
+	# integer, not merely return 0.
+	stderr_file="$(mktemp)"
+	if stdout="$("${SCRIPT}" "${version}" 2>"${stderr_file}")"; then
+		if [ "${expect}" = "no" ]; then
+			fail "${label}: '${version}' was accepted (printed '${stdout}') — CD would publish an unorderable mark"
+		elif [ -s "${stderr_file}" ]; then
+			fail "${label}: '${version}' succeeded but wrote to stderr: $(tr '\n' ' ' <"${stderr_file}") — a swallowed comparison failure is how a wrapped mark ships"
+		elif ! printf '%s' "${stdout}" | grep -Eq '^[0-9]+$'; then
+			fail "${label}: '${version}' printed '${stdout}', which is not a bare integer"
+		fi
 	else
 		[ "${expect}" = "yes" ] && fail "${label}: '${version}' was refused — the refusal cases prove nothing if nothing can pass"
 	fi
+	rm -f "${stderr_file}"
 done
 
 # Wrong arity is its own contract (exit 2, a usage error rather than a bad value).

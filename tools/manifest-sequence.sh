@@ -69,9 +69,25 @@ patch="${rest##*.}"
 # base would silently wrap one component into the next and invert the order it
 # exists to preserve, so the bound is checked rather than assumed.
 limit=1000000
+digits=6
+
+# THE BOUND IS CHECKED BY LENGTH, NOT BY VALUE, AND THAT IS THE WHOLE POINT.
+# `[ "${component}" -ge "${limit}" ]` reads correct and fails OPEN: a component
+# past the shell's signed-integer range makes `[` abort with "integer expression
+# expected", `set -e` does NOT fire because the failure is a condition inside an
+# `if`, and execution reaches the arithmetic below — which wraps. Measured before
+# this guard: `9223372036854775808.0.0` exited 0 and printed sequence `0`, the
+# LOWEST possible anti-replay floor, which is the one value that can never be
+# superseded. A script whose entire job is to fail closed cannot compare numbers
+# it has not first proved are numbers.
+#
+# The regex above already forbids leading zeros, so length and magnitude agree
+# exactly: 6 digits is at most 999999 and always in range, 7 or more is always
+# at or past the base. So the check needs no integer conversion at all, and the
+# arithmetic that follows can only ever see values below the base.
 for component in "${major}" "${minor}" "${patch}"; do
-	if [ "${component}" -ge "${limit}" ]; then
-		echo "::error::version component '${component}' in '${version}' reaches the ${limit} positional base — the sequence encoding would carry into the next component and stop being monotonic" >&2
+	if [ "${#component}" -gt "${digits}" ]; then
+		echo "::error::version component '${component}' in '${version}' is at or past the ${limit} positional base — the sequence encoding would carry into the next component and stop being monotonic" >&2
 		exit 1
 	fi
 done
