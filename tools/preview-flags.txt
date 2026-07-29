@@ -1,0 +1,19 @@
+# Default-off world treatments the opt-in frame-evidence pass photographs.
+#
+# One environment-variable name per line; the capture exports each as `=1`.
+# Blank lines and `#` comments are ignored. Adding a preview here is the whole
+# change — no workflow edit (#528).
+#
+# SCOPE: only treatments that change the WORLD SURFACE on every ordinary
+# vantage, so one extra capture of the standard vantages evidences them.
+# Scenario-gated flags do NOT belong here — WAR_LAYERED_OUTFIT_PICKERS,
+# WAR_WALK_CYCLE and WAR_RUN_CYCLE each drive their own dedicated capture with
+# its own camera and fixtures, and forcing them on globally would change those
+# frames rather than add evidence.
+#
+# Retire a flag from this list in the same change that flips its treatment
+# default-on, so the pass never spends a capture photographing the shipped path.
+
+# #261 — slabbed ground. The default capture photographs the smooth-noise
+# fallback, so without this entry no artifact can show the treatment at all.
+WAR_GROUND_PLATES
