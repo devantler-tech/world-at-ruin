@@ -61,8 +61,9 @@ const HAND_RELAX_DEG := 8.0
 ## as bone POSES, leaving every rest edit here untouched — so the stance is what
 ## the body IS and the idle is what it is DOING. `WalkLocomotion` can decorate
 ## grounded travel with a walk behind `WAR_WALK_CYCLE` and a run behind
-## `WAR_RUN_CYCLE`; jump, landing and turn motion remain absent and stay with
-## the parent #224.
+## `WAR_RUN_CYCLE`, plus the controller's airborne arc behind
+## `WAR_JUMP_MOTION`. Landing impact, turn motion and state blending remain
+## absent and stay with the parent #224.
 ##
 ## This shipped opt-in (`WAR_REST_STANCE`) while the pose stood still, because a
 ## motionless stance was only half of what the art direction asks for. #243
