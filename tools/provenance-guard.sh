@@ -27,6 +27,12 @@
 #       This binds the prose licence/source chain to every shipped file and
 #       catches both an unrecorded addition and a silent replacement.
 #
+#   R4  Every tracked Godot texture import under client/assets/ must explicitly
+#       generate mipmaps. Runtime load() calls do not trigger Godot's 3D-use
+#       detection, so accepting the 2D import default silently ships distant
+#       textures without a mip chain. The asset catalogue is entirely 3D; a
+#       blanket rule is fail-closed and cannot miss a new runtime-only path.
+#
 # WHY BINARY-BY-CONTENT RATHER THAN BY EXTENSION: an extension allowlist fails
 # open the first time a new format lands, and has to be maintained forever.
 # Testing for a NUL byte needs no list and catches any future binary format on
@@ -163,6 +169,7 @@ uncovered=()
 unaccounted=()
 checksum_mismatch=()
 unrepresentable=()
+missing_mipmaps=()
 checked=0
 accounted=0
 
@@ -231,6 +238,21 @@ if [ -d "$ASSET_ROOT" ]; then
 			unaccounted+=("$file (expected in $record)")
 		fi
 	done < <(git ls-files -z -- "$ASSET_ROOT")
+
+	# R4 — every Godot texture import in the shipped asset catalogue declares
+	# its mip chain. Read the indexed bytes, matching the tracked-file scope of
+	# the other rules rather than trusting an unstaged working-tree edit.
+	while IFS= read -r -d '' import_file; do
+		case "$import_file" in
+		*.import) ;;
+		*) continue ;;
+		esac
+
+		if grep -Fqx 'importer="texture"' < <(git show ":$import_file") &&
+			! grep -Fqx 'mipmaps/generate=true' < <(git show ":$import_file"); then
+			missing_mipmaps+=("${import_file%.import} (set mipmaps/generate=true in $import_file)")
+		fi
+	done < <(git ls-files -z -- "$ASSET_ROOT")
 fi
 
 failed=0
@@ -287,6 +309,16 @@ if [ ${#unrepresentable[@]} -gt 0 ]; then
 	printf '  - %q\n' "${unrepresentable[@]}"
 	echo
 	echo "Rename the tracked asset to a line-safe path, then account for it in PROVENANCE.md."
+	echo
+fi
+
+if [ ${#missing_mipmaps[@]} -gt 0 ]; then
+	failed=1
+	echo "::error::tracked textures without mipmaps — runtime load() does not trigger Godot's 3D import detection"
+	printf '  - %s\n' "${missing_mipmaps[@]}"
+	echo
+	echo "Set mipmaps/generate=true in each texture's tracked .import file. This keeps"
+	echo "distant runtime-loaded textures from aliasing after the editor import pass."
 	echo
 fi
 
