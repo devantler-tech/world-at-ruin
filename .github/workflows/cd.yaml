@@ -214,27 +214,28 @@ jobs:
         # supplies them — and both are derived from ONE captured instant so they
         # cannot disagree.
         #
-        # SEQUENCE IS THE PUBLICATION TIME IN EPOCH SECONDS, and the choice is
-        # load-bearing. The client persists the highest sequence it has accepted
-        # and refuses anything at or below it, so a counter that can EVER go
-        # backwards strands every client that saw the higher value. A wall clock
-        # cannot regress; a run number resets to 1 the day this workflow is
-        # renamed, which would do exactly that, silently, to every player.
+        # SEQUENCE COMES FROM THE VERSION, NOT A CLOCK, and the reasoning is in
+        # tools/manifest-sequence.sh. Briefly: this workflow's concurrency group
+        # is scoped per tag, so two releases run concurrently, and a mark sampled
+        # from each runner's own clock can be inverted by whichever run reaches
+        # `oras tag ... latest` last. The version is already the publication
+        # order, so ordering by it cannot be raced.
         #
         # NOT_AFTER IS +24h, matching the shape reference in
         # docs/design/client-update-manifest.example.json. It is not decoration:
         # the ADR derives the server's protocol-CONTRACTION schedule from it —
         # a contraction may only happen once every manifest advertising the old
         # range has expired — so shortening it shortens that wait and lengthening
-        # it lengthens it.
+        # it lengthens it. A clock is the RIGHT source for an expiry, which is a
+        # real instant, and the wrong one for an ordering.
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
           set -o pipefail
-          SEQUENCE=$(date -u +%s)
-          # BSD `date -r <epoch>`: this job runs on macOS. Deriving the expiry
-          # from ${SEQUENCE} rather than calling `date` twice is what keeps the
-          # two ends of the window pinned to the same instant.
-          NOT_AFTER=$(date -u -r "$((SEQUENCE + 86400))" +%Y-%m-%dT%H:%M:%SZ)
+          SEQUENCE=$(./tools/manifest-sequence.sh "${VERSION}")
+          # BSD `date -r <epoch>`: this job runs on macOS.
+          NOT_AFTER=$(date -u -r "$(( $(date -u +%s) + 86400 ))" +%Y-%m-%dT%H:%M:%SZ)
           echo "sequence=${SEQUENCE} not_after=${NOT_AFTER}"
           WAR_MANIFEST_SEQUENCE="${SEQUENCE}" \
           WAR_MANIFEST_NOT_AFTER="${NOT_AFTER}" \

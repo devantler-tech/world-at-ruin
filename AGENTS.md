@@ -809,14 +809,22 @@ everything shipped afterwards is held to.
     has no checkout and no Godot, so it could only restate values instead of deriving them from the
     stamped `DevLog.VERSION`. The bytes are JCS (RFC 8785) canonical with **no trailing newline**,
     because they are what a signature will cover.
-  - **The manifest's publication envelope: `sequence` is the publication time in epoch seconds and
-    `not_after` is that instant + 24h**, both derived from one captured instant so they cannot
-    disagree. Neither is decoration. A client refuses any manifest at or below the highest
-    `sequence` it has accepted, so a counter that can EVER go backwards strands every client that
-    saw the higher value — which is why this is a wall clock and not a run number, since a run
-    number resets to 1 the day the workflow is renamed. And `not_after` is the clock the ADR derives
-    the server's protocol-**contraction** schedule from (a contraction may only happen once every
-    manifest advertising the old range has expired), so changing the 24h window changes that wait.
+  - **The manifest's `sequence` is derived from the RELEASE VERSION, never from a clock** —
+    `tools/manifest-sequence.sh`, pinned by `tools/manifest-sequence.test.sh`. A client refuses any
+    manifest at or below the highest `sequence` it has accepted, so the mark must be monotonic in
+    *publication order*. **CD's concurrency group is scoped per tag** (`CD-<ref_name>`), so two
+    releases run concurrently and a mark sampled from each runner's own clock can be inverted by
+    whichever run reaches `oras tag … latest` last — publishing a HIGHER mark on an OLDER build,
+    which is a downgrade a client would accept. The version is already the publication order, so
+    ordering by it cannot be raced, cannot collide, and is idempotent across a CD re-run. Its known
+    limit: a second manifest for an already-released version cannot supersede the first. That is
+    unreachable while a manifest is only published as part of a release; if revocation ever needs
+    re-publishing between releases, the answer is a durable counter, not a return to the clock.
+  - **`not_after` is publication time + 24h**, matching the shape reference. A clock is the right
+    source for an expiry, which is a real instant, and the wrong one for an ordering. It is not
+    decoration: it is the clock the ADR derives the server's protocol-**contraction** schedule from
+    (a contraction may only happen once every manifest advertising the old range has expired), so
+    changing the 24h window changes that wait.
   - **The release publishes LAST, after the artifact jobs.** `publish-release` depends on both
     `publish-macos` and `publish-ghcr`, so the draft goes public only once the build is attached
     *and* the GHCR origin exists and is signed. Publishing earlier would leave a public, immutable
