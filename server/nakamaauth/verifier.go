@@ -1,4 +1,4 @@
-// Package nakamaauth verifies player sessions against Nakama's account API.
+// Package nakamaauth provisions player accounts and verifies Nakama sessions.
 package nakamaauth
 
 import (

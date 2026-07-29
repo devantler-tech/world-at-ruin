@@ -156,14 +156,19 @@ zone/dungeon server:
   only in the zone container; the sidecar retains its credential, the public
   wrapping key is a read-only ConfigMap projection, and no Kubernetes Secret
   volume is part of the shape.
-- **`nakamaauth/`** — the first **Nakama meta-tier seam**: a player session is
-  presented to Nakama's generated gRPC `GetAccount` API as bearer metadata, and
-  only Nakama's authenticated user ID crosses back into World at Ruin. It does
-  not reimplement JWT verification or trust a client-provided account ID.
-  Empty sessions, RPC refusals and malformed account responses fail closed, and
-  rejection errors expose only the gRPC status code so an upstream message
-  cannot reflect the credential into logs. Hermetic tests exercise the real
-  generated gRPC client/server path.
+- **`nakamaauth/`** — the first **Nakama meta-tier seam**. Its session verifier
+  presents a Nakama session to the generated gRPC `GetAccount` API as bearer
+  metadata, and only Nakama's authenticated user ID crosses back into World at
+  Ruin. Its default-off Google OIDC provisioner sends the external credential
+  to `AuthenticateGoogle` with account creation allowed, then resolves the
+  returned Nakama session through that same verifier. Repeating one identity
+  therefore resolves the same stable Nakama user rather than creating a
+  client-chosen identity. `ProvisionerConfig.GoogleProvisioningEnabled` is false by
+  default, so no caller can use the new path without opting in explicitly.
+  Both paths fail closed on empty or malformed responses, strip unrelated
+  authorization metadata at their respective boundaries, and expose only
+  stable gRPC status codes so an upstream message cannot reflect a credential
+  into logs. Hermetic tests exercise the real generated gRPC client/server path.
 - **`agonesalloc/`** — the typed **Agones allocation API boundary**: it sends
   one current-format `AllocationRequest` through Agones's generated gRPC client,
   selecting only Ready GameServers from the configured namespace and fleet.
@@ -259,15 +264,16 @@ the concrete resource adapter that composes `agonesalloc` with
 the zone-side sealed-envelope lifecycle in
 [ADR 0002](../docs/adr/0002-seal-zone-admission-secrets-before-readiness.md),
 the zone admission claim adapter, Nakama RPC registration that exposes the
-handoff service, the rest of the Nakama auth/social/chat/storage surface,
-client prediction and reconciliation, real navmesh geometry, and Postgres/CNPG
+handoff service, the client entry point that enables Google account
+provisioning, the rest of the Nakama social/chat/storage surface, client
+prediction and reconciliation, real navmesh geometry, and Postgres/CNPG
 persistence. Zone boot already generates, publishes and observes the sealed
 envelope; allocation metadata validation, coordinator unwrap/recovery and
 private claim behavior are not composed yet. The tick core, socket, client
-replica store, Agones lifecycle, Nakama identity boundary, allocation API
-boundary, private lease store, durable handoff coordinator and fail-closed
-handoff core are in place; later slices build on those tested seams instead of
-creating a parallel meta service.
+replica store, Agones lifecycle, default-off Nakama account provisioning and
+session verification, allocation API boundary, private lease store, durable
+handoff coordinator and fail-closed handoff core are in place; later slices
+build on those tested seams instead of creating a parallel meta service.
 
 ## Validate
 
