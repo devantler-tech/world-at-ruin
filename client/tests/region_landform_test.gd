@@ -32,7 +32,15 @@ extends Node
 ## that world is continuous, walkable, mean-zero and identity-preserving, and it
 ## is also the single uniform landform this change exists to remove.
 
-const EXTENT := 220.0
+## The world's edge length, taken FROM the world rather than restated.
+##
+## 🔴 Region sites are dealt across an extent, so sites built from one extent and
+## faces swept over another attribute ground to the wrong regions — quietly, and
+## in a way that lets a region-specific regression evade its own ratchet while an
+## unrelated one fails. Both numbers were 220.0, so a hard-coded copy here was
+## correct and would have stayed correct right up until someone resized the
+## world. `WorldGen` deals its own sites from `SIZE`; so does this suite now.
+const EXTENT := WorldGen.SIZE
 
 ## Lattice spacing for the RELIEF sweep, in metres.
 ##
