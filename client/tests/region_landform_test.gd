@@ -93,6 +93,17 @@ const MAX_REGION_GRADE_DEG := {
 ## degrees, which says nothing about any landform. Excluded by radius from
 ## `CAVE_SITE`, generously — over-excluding costs sample count, under-excluding
 ## measures the wrong thing.
+##
+## The test is on the face CENTROID, so a triangle can straddle the boundary with
+## a vertex inside the radius. That is deliberate, and measured rather than
+## assumed: at `SIZE / QUADS` = 1.72 m a triangle reaches at most ~1.6 m from its
+## centroid, and the 135 faces in that band grade **1.27 to 34.64 degrees**
+## (median 15.51). The skirt's cliff is nowhere near the boundary — including the
+## buried skirt puts the world's worst face at 66.33 — so no straddling face can
+## reach, let alone set, a maximum of 44.18. A vertex/edge intersection test would
+## change no reading here while discarding 135 samples of ordinary walkable
+## ground. Re-measure this band before widening the rule: it is the RADIUS doing
+## the work, not the shape of the test.
 const CAVE_KEEPOUT := 40.0
 
 ## Relief — the standard deviation of ground height inside a region's decided
