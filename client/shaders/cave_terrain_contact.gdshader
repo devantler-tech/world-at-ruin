@@ -31,6 +31,11 @@ uniform float plate_scale = 0.85;
 uniform float crack_width: hint_range(0.001, 0.3) = 0.032;
 uniform float crack_darkness: hint_range(0.0, 1.0) = 0.09;
 uniform float crack_relief: hint_range(0.0, 3.0) = 1.1;
+// Same unresolved-groove occlusion as terrain.gdshader (#539), and necessarily
+// the same default: this band blends into that ground, so a contact darkening
+// its sub-pixel seams harder or softer than the ground would draw a visible
+// join exactly where the two meet.
+uniform float seam_cavity: hint_range(0.0, 8.0) = 3.5;
 uniform float ash_contact: hint_range(0.002, 0.3) = 0.035;
 uniform float lip_lift: hint_range(0.0, 1.0) = 0.18;
 
@@ -106,6 +111,9 @@ void fragment() {
 	float crack = 0.0;
 	float plate_fw = 0.0;
 	float crack_fw = 0.0;
+	// Hoisted for the crack relief below, as terrain.gdshader does: the seam
+	// filter and the boundary average are keyed on the same footprint.
+	float edge_fw = 0.0;
 	vec2 plate_c1 = vec2(0.0);
 	vec2 plate_c2 = vec2(0.0);
 	if (plates_enabled) {
@@ -125,7 +133,7 @@ void fragment() {
 		// orientation against the pixel.
 		vec2 gsep_e = ce2 * inversesqrt(max(dot(ce2, ce2), 1e-12))
 			- ce1 * inversesqrt(max(dot(ce1, ce1), 1e-12));
-		float edge_fw = abs(dot(gsep_e, dFdx(plate_uv)))
+		edge_fw = abs(dot(gsep_e, dFdx(plate_uv)))
 			+ abs(dot(gsep_e, dFdy(plate_uv)));
 		plate_edge_w = terrain_plate_edge_blend(f1, f2, edge_fw * 0.5);
 		// ...and the same three-way coverage split, keyed on the isotropic
@@ -198,6 +206,11 @@ void fragment() {
 		+ slab_nb3 * plate_w.z;
 	float plate_mask = sheet * slab;
 	float plate_mask_relief = sheet * slab_own;
+	// The neighbour cell's gate, for the seam variance only — same split as
+	// terrain.gdshader: the mean keeps the owning cell's binary gate, the
+	// variance blends both, because the variance peaks exactly where the mean's
+	// hard step is harmless and so lands on the peak instead of on nothing.
+	float plate_mask_relief_nb = sheet * slab_nb;
 	float rock_exposure = max(rock_mix, plate_mask);
 
 	vec3 base = vec3(UV, UV2.x);
@@ -262,6 +275,11 @@ void fragment() {
 	float hx = terrain_ground_noise(terrain_world_pos.xz + vec2(e, 0.0), grain_scale);
 	float hz = terrain_ground_noise(terrain_world_pos.xz + vec2(0.0, e), grain_scale);
 	vec2 grad = vec2(0.0);
+	// Same seam-slope variance as terrain.gdshader, carried as cavity darkening
+	// below. This band blends into that ground, so a contact whose seams
+	// stopped reading at the distance the ground's still read would draw a
+	// visible join exactly where the two meet.
+	float seam_slope_var = 0.0;
 	if (plates_enabled) {
 		// Same closed-form crack gradient as terrain.gdshader, for the same
 		// reason: differencing the crack field samples a step narrower than a
@@ -271,9 +289,36 @@ void fragment() {
 		vec2 d2 = plate_uv - plate_c2;
 		vec2 gsep = d2 * inversesqrt(max(dot(d2, d2), 1e-12))
 			- d1 * inversesqrt(max(dot(d1, d1), 1e-12));
-		float ct = clamp((f2 - f1) / max(crack_width, 1e-6), 0.0, 1.0);
-		float dcrack = -6.0 * ct * (1.0 - ct) / max(crack_width, 1e-6);
-		grad = gsep * dcrack * plate_scale * plate_mask_relief;
+		float cw_relief = max(crack_width, 1e-6);
+		// Same footprint-integrated groove as terrain.gdshader, for the same
+		// reason and necessarily the same form: the relief was read at the
+		// pixel centre while the thing being read (the crack profile's slope,
+		// which peaks at w/2 and is zero at both ends) is finer than the mark
+		// the guards below are keyed on. The mean tilt is what a normal can
+		// carry; the variance about it is what a normal cannot, because a
+		// pixel spanning a whole groove sees its two walls cancel. The full
+		// derivation, the top-hat justification and the limits are in
+		// terrain.gdshader — this is the same integral over the same profile.
+		float amp = min(length(gsep) * (1.5 / cw_relief) * plate_scale
+			* plate_mask_relief, 0.4);
+		float amp_nb = min(length(gsep) * (1.5 / cw_relief) * plate_scale
+			* plate_mask_relief_nb, 0.4);
+		float seam_h = max(edge_fw, 1e-6);
+		float half_h = 0.5 * seam_h;
+		float s_sep = f2 - f1;
+		float prof = (min(s_sep + half_h, cw_relief)
+			- min(abs(s_sep - half_h), cw_relief)) / seam_h;
+		float mean_tilt = amp * prof;
+		float covered = clamp(max(min(s_sep + half_h, cw_relief)
+			- max(s_sep - half_h, -cw_relief), 0.0) / seam_h, 0.0, 1.0);
+		float spread = max(covered - prof * prof, 0.0);
+		// Same two-cell blend as terrain.gdshader, over the same boundary
+		// footprint: a pixel straddling a slab-to-bare contact contains both
+		// cells' seams, and gating the symmetric integral by whichever cell owns
+		// the pixel centre steps the cavity as that centre crosses.
+		seam_slope_var = mix(amp * amp, amp_nb * amp_nb, plate_edge_w) * spread;
+		vec2 ghat = gsep * inversesqrt(max(dot(gsep, gsep), 1e-12));
+		grad = -ghat * mean_tilt;
 		grad *= 1.0 - smoothstep(0.30, 0.85, plate_fw);
 		// Same crack-footprint dissolve as terrain.gdshader, for the same
 		// reason: `plate_fw` is a whole plate's footprint and cannot stand in
@@ -285,6 +330,12 @@ void fragment() {
 		// exactly where the two meet.
 		float grad_len = length(grad);
 		grad = grad_len > 0.4 ? grad * (0.4 / grad_len) : grad;
+		// Same plate-resolution cutoff on the variance as terrain.gdshader,
+		// and the same two guards deliberately left off it: the crack fade and
+		// the slope ceiling bound what the NORMAL may claim, and the read they
+		// give up is what this term carries instead. Squared, because it is a
+		// variance of the amplitude the cutoff scales.
+		seam_slope_var *= plate_resolved * plate_resolved;
 	}
 	vec3 bump = vec3(
 		(h0 - hx) * bump_strength + grad.x * crack_relief,
@@ -292,5 +343,15 @@ void fragment() {
 		(h0 - hz) * bump_strength + grad.y * crack_relief) * detail;
 	vec3 perturbed = normalize(n + bump);
 	NORMAL = normalize((VIEW_MATRIX * vec4(perturbed, 0.0)).xyz);
+	// Same cavity darkening as terrain.gdshader: the sub-pixel groove has no
+	// net tilt but is not flat, and what it still does is occlude. Roughness is
+	// the textbook home for a filtered normal distribution and was measured
+	// INERT on this surface (#306), so the residual read is carried where a
+	// diffuse surface's self-occlusion actually shows. Set from `stone_rough`
+	// and `surface` above; the darkening waits for the relief block, which is
+	// where the second moment is computed.
+	float seam_gain = crack_relief * detail;
+	float seam_var = seam_slope_var * seam_gain * seam_gain;
+	ALBEDO *= 1.0 / max(1.0 + seam_cavity * seam_var, 1e-3);
 	ALPHA = COLOR.a;
 }
