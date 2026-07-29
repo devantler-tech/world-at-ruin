@@ -59,6 +59,55 @@ const DIFFERENCED_CRACK_PATTERN := "dFd[xy]\\s*\\(\\s*crack"
 const CLOSED_FORM_PATTERN := \
 	"inversesqrt\\(\\s*max\\(\\s*dot\\([^)]*\\)[^)]*\\)\\s*\\)\\s*\\n?\\s*-\\s*\\w+\\s*\\*\\s*inversesqrt"
 
+## The seam-variance cavity, which is hand-copied across the same pair and
+## drifts the same silent way. Three quantities, each with its own failure:
+##
+## `AMP_CEILING_PATTERN` — the top-hat plateau the groove is integrated as. It
+## must be the SAME number as the seam-slope ceiling, because it is the same
+## physical bound read from the other side: the ceiling is what makes the
+## applied profile a top hat, and `amp` is that top hat's height. Drift them and
+## the integral stops describing the code it models, silently — the frame still
+## renders and both files still agree with each other.
+##
+## `CAVITY_PATTERN` — the darkening's SHAPE. `1 / (1 + k*var)` saturates and is
+## exactly 1.0 at zero variance, so the near field, the far field past the plate
+## cutoff and the default-off path are untouched arithmetically rather than
+## approximately. The obvious `1 - k*var` rewrite passes every frame a reviewer
+## would look at and goes NEGATIVE on a high relief setting, which is a black
+## seam rather than a dark one.
+##
+## `CAVITY_DEFAULT_PATTERN` — how hard that darkening pulls. It is a uniform, so
+## unlike the roughness fold it replaced there is no derivable constant to
+## check; what must hold is that the two files ship the SAME default, or the
+## same sub-pixel seam is occluded harder on one side of every cave mouth than
+## the other.
+##
+## `VAR_CUTOFF_PATTERN` — the plate-resolution cutoff, which must be SQUARED.
+## Variance scales as the square of the amplitude it belongs to, so a single
+## factor leaves the far field carrying a seam read the plates no longer justify.
+const AMP_CEILING_PATTERN := \
+	"plate_mask_relief\\s*,\\s*([0-9.]+)\\s*\\)"
+## The denominator is floored on both files because this divides by a UNIFORM
+## and `hint_range` bounds the inspector, not what a caller may set — the same
+## reason `crack_width` is floored where the relief divides by it.
+const CAVITY_PATTERN := \
+	"ALBEDO\\s*\\*=\\s*1\\.0\\s*/\\s*max\\(\\s*1\\.0\\s*\\+\\s*seam_cavity\\s*\\*\\s*seam_var\\s*,\\s*[0-9.e-]+\\s*\\)"
+const CAVITY_DEFAULT_PATTERN := \
+	"uniform\\s+float\\s+seam_cavity\\s*:[^=]*=\\s*([0-9.]+)"
+const VAR_CUTOFF_PATTERN := \
+	"seam_slope_var\\s*\\*=\\s*plate_resolved\\s*\\*\\s*plate_resolved"
+## The TWO-CELL blend on the variance. The relief's mean is gated by the owning
+## cell's binary slab mask, and that is correct for the mean — past the distance
+## a contact resolves the mean has already faded, so the hard step multiplies a
+## term that is not there. The variance is largest exactly there, so the same
+## step lands on its peak: without this blend the cavity flips between full and
+## zero as the pixel centre crosses a slab-to-bare boundary whose seam the
+## footprint still straddles, which is a zero-width step reintroduced into the
+## quantity this whole change exists to filter. Both files must blend, or the
+## contact band steps where the ground does not.
+const CAVITY_TWO_CELL_PATTERN := \
+	"mix\\(\\s*amp\\s*\\*\\s*amp\\s*,\\s*amp_nb\\s*\\*\\s*amp_nb\\s*,\\s*plate_edge_w\\s*\\)"
+
 
 func _ready() -> void:
 	var ground := _shader_source(GROUND_SHADER_PATH)
@@ -178,10 +227,99 @@ func _ready() -> void:
 			_fail("%s does not take the crack gradient in closed form — the `normalize(uv - c2) - normalize(uv - c1)` separator is gone, so the relief is no longer exact at distance" % path)
 			return
 
-	print("TEST PASS — %s and %s apply the same crack-relief guards: seam-slope ceiling %s, crack-footprint fade over (%s, %s), plate-boundary footprint %s, gradient in closed form on both" % [
+	# 5. THE SEAM-VARIANCE CAVITY. The relief is filtered into two moments: the
+	# mean tilt, which the normal carries, and the variance about it, which is
+	# carried as occlusion because a pixel spanning a whole groove sees its two
+	# walls cancel. The second half is what keeps a seam readable past the
+	# distance the fade in law 2 has already closed, so a contact band that lost
+	# it goes flat in a strip around every cave mouth while the ground beside it
+	# still reads — visibly, and along exactly the join this file exists to hold.
+	var ground_amp := _single(ground, AMP_CEILING_PATTERN)
+	if ground_amp < 0.0:
+		_fail("no top-hat amplitude (`min(... * plate_mask_relief, X)`) in %s — the groove is no longer integrated over the pixel, so the relief is point-sampled again and the contact band has nothing left to match" % GROUND_SHADER_PATH)
+		return
+	var contact_amp := _single(contact, AMP_CEILING_PATTERN)
+	if contact_amp < 0.0:
+		_fail("no top-hat amplitude (`min(... * plate_mask_relief, X)`) in %s — the contact band point-samples the groove while the ground integrates it, so seams crawl at the cave mouth only" % CONTACT_SHADER_PATH)
+		return
+
+	# 5a. Each amplitude must agree with THAT FILE'S OWN seam-slope ceiling
+	# before the two files are compared. The top hat is only the right profile to
+	# integrate because the ceiling clamps the raw slope flat across the groove
+	# (measured: the raw peak is ~100x the ceiling at the shipped crack width, so
+	# the clamp binds over 99% of it). If the plateau and the clamp are different
+	# numbers, the closed form integrates a groove the shader does not draw.
+	for named in [[GROUND_SHADER_PATH, ground_amp, ground_ceiling[0]], [CONTACT_SHADER_PATH, contact_amp, contact_ceiling[0]]]:
+		var path: String = named[0]
+		var amp: float = named[1]
+		var ceiling: float = named[2]
+		if not is_equal_approx(amp, ceiling):
+			_fail("in %s the groove is integrated as a top hat of height %s but the seam-slope ceiling clamps it at %s — the top hat is the right profile only because the ceiling makes it one, so these are the same bound and the filter now models a groove the shader does not draw" % [
+				path, _num(amp), _num(ceiling)
+			])
+			return
+
+	if not is_equal_approx(ground_amp, contact_amp):
+		_fail("top-hat amplitude disagrees: the ground integrates a groove of height %s but the contact band uses %s — the same seam would carry a different residual read either side of every cave mouth" % [
+			_num(ground_amp), _num(contact_amp)
+		])
+		return
+
+	# 5b. The cavity's SHAPE, on both files. `1 / (1 + k*var)` is exactly 1.0 at
+	# zero variance, which is what makes the near field, the far field past the
+	# plate cutoff and the whole default-off path untouched as arithmetic rather
+	# than as an approximation.
+	for named in [[GROUND_SHADER_PATH, ground], [CONTACT_SHADER_PATH, contact]]:
+		var path: String = named[0]
+		var src: String = named[1]
+		if not _matches(src, CAVITY_PATTERN):
+			_fail("%s does not carry the seam variance as a saturating cavity (`ALBEDO *= 1.0 / (1.0 + seam_cavity * seam_var)`) — the relief the normal cannot hold is being discarded rather than kept as occlusion, which is how a seam vanishes into the far field; a linear `1 - k*var` is not a substitute, it goes negative on a high relief setting" % path)
+			return
+
+	# 5c. And the same STRENGTH. The coefficient is a uniform rather than a
+	# derived constant, so the law is agreement rather than a value: a pair that
+	# differs occludes the same sub-pixel seam harder on one side of the join.
+	var ground_cavity := _single(ground, CAVITY_DEFAULT_PATTERN)
+	if ground_cavity < 0.0:
+		_fail("no `seam_cavity` uniform default in %s — the cavity strength is unset, so the ground and the contact band have nothing to agree on" % GROUND_SHADER_PATH)
+		return
+	var contact_cavity := _single(contact, CAVITY_DEFAULT_PATTERN)
+	if contact_cavity < 0.0:
+		_fail("no `seam_cavity` uniform default in %s — the contact band cannot match the ground's cavity strength" % CONTACT_SHADER_PATH)
+		return
+	if not is_equal_approx(ground_cavity, contact_cavity):
+		_fail("seam-cavity strength disagrees: the ground darkens an unresolved groove at %s but the contact band uses %s — the same seam is occluded harder on one side of every cave mouth than the other" % [
+			_num(ground_cavity), _num(contact_cavity)
+		])
+		return
+
+	# 5d. The variance must be blended across BOTH cells over the boundary
+	# footprint on each file. Gating the symmetric integral by the owning cell
+	# alone steps the cavity at every slab-to-bare contact.
+	for named in [[GROUND_SHADER_PATH, ground], [CONTACT_SHADER_PATH, contact]]:
+		var path: String = named[0]
+		var src: String = named[1]
+		if not _matches(src, CAVITY_TWO_CELL_PATTERN):
+			_fail("%s does not blend the seam variance across both cells over the boundary footprint (`mix(amp * amp, amp_nb * amp_nb, plate_edge_w)`) — gating the symmetric integral by whichever cell owns the pixel centre flips the cavity between full and zero as that centre crosses a slab-to-bare contact, which is a zero-width step in the very quantity the filter exists to remove" % path)
+			return
+
+	# 5e. The cutoff must be SQUARED on both. `seam_slope_var *= plate_resolved`
+	# alone is the easy edit to make and reads as equivalent; it is not, because
+	# a variance scales as the square of the amplitude it is a variance of. The
+	# symptom is a far field that keeps a seam read after the plates carrying it
+	# have converged on their mean — nothing errors, the ground just will not go
+	# quiet.
+	for named in [[GROUND_SHADER_PATH, ground], [CONTACT_SHADER_PATH, contact]]:
+		var path: String = named[0]
+		var src: String = named[1]
+		if not _matches(src, VAR_CUTOFF_PATTERN):
+			_fail("%s does not take the plate-resolution cutoff on the seam variance SQUARED (`seam_slope_var *= plate_resolved * plate_resolved`) — a variance scales as the square of its amplitude, so a single factor leaves a seam read the plates no longer justify" % path)
+			return
+
+	print("TEST PASS — %s and %s apply the same crack-relief guards: seam-slope ceiling %s, crack-footprint fade over (%s, %s), plate-boundary footprint %s, gradient in closed form on both, seam variance integrated as a top hat of height %s and carried as a saturating cavity at strength %s with a squared plate cutoff" % [
 		GROUND_SHADER_PATH, CONTACT_SHADER_PATH,
 		_num(ground_ceiling[0]), _num(ground_fade[0]), _num(ground_fade[1]),
-		_num(ground_edge)
+		_num(ground_edge), _num(ground_amp), _num(ground_cavity)
 	])
 	get_tree().quit(0)
 

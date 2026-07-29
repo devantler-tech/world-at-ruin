@@ -1,0 +1,11 @@
+{
+	"date": "2026-07-29",
+	"notes": [
+		"The starter cave has an opt-in debris skirt at its outside foot. Set WAR_CAVE_FOOT_TALUS=1 before launch to gather broken stone where the massif meets the Reach; the ordinary game remains unchanged while the treatment is judged.",
+		"The stones follow the cave's real ground-contact surface instead of appearing as an unrelated scatter. They fall outward onto the local terrain, leave the doorway clear and gather asymmetrically around the flanks.",
+		"The treatment is scenery only. It adds no collision, reward, resource or saved state, and it does not alter the cave rock players walk through.",
+		"Still short of the mark: the smooth massif itself has not gained broken planar faces, and the seam still lacks drifted ash, dirt buildup and returning scrub. This is the loose-stone layer, not a claim that the cave now fully belongs to the terrain."
+	],
+	"title": "Broken stone gathers at the cave foot",
+	"version": "0.67.1"
+}

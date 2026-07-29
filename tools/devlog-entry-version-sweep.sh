@@ -53,10 +53,11 @@
 #   MISLABELLED  fails. The entry names a real release that does not contain it,
 #                which is the drift this gate exists to stop regressing.
 #   NO-ANCHOR    fails. No verdict was reached, and "could not evaluate" must
-#                not read as "passed" — that is the vacuous pass a shallow fetch
-#                would otherwise buy. No entry reads this way in a full-history
-#                checkout, so it indicates broken anchoring rather than a
-#                mislabelled entry, and the message says so.
+#                not read as "passed" — that is the vacuous pass a partial
+#                checkout would otherwise buy. It says the lookup found no
+#                introducing commit, which is not the same as a mislabelled
+#                version, so the message hands over the search it ran rather
+#                than naming a cause it cannot observe.
 #   NEVER-CUT    is SPLIT, because it is not one class. Whether the log can be
 #                corrected is decided by the release the change DID first reach,
 #                not by the fact that its own number was skipped:
@@ -98,16 +99,64 @@ done
 [ -n "$(released_versions | newest_version)" ] ||
 	fail 'no release tags are visible in this checkout — every entry would read as never-cut (a shallow fetch hides them)'
 
-# The commit that first introduced this version string, in either era.
+# The commit whose containment answers "which release first carried this entry",
+# in either era.
+#
+# TWO INDEPENDENT DECISIONS, and getting either wrong buys a vacuous PASS.
+#
+# WHICH COMMITS ARE VISIBLE. `--full-history`, because the answer must not depend
+# on the topology the branch reached its history through. A pathspec-restricted
+# `git log` simplifies by default: where a merge is TREESAME to a parent it
+# follows only that parent, and where it is TREESAME to SEVERAL it follows the
+# first. A branch carrying its own copy of an entry — a duplicate authored in
+# parallel, a cherry-pick, a re-applied correction — makes a merge TREESAME to
+# both sides, so which introduction survives is decided by which side happens to
+# be the first parent. That is a property of how the merge was typed, not of the
+# log.
+#
+# WHICH OF THEM TO ANSWER WITH. Once several introductions are visible, walk
+# order cannot choose between them: `--reverse` reverses the walk, it does not
+# rank by release. Taking the oldest picks an unreleased branch commit over the
+# tagged one whenever the branch authored its copy first, and the entry then
+# reads UNRELEASED though the release demonstrably contains it. So the candidates
+# are ranked by CONTAINMENT — the earliest release any of them reaches — which is
+# the question the verdict actually asks and is answered the same way whichever
+# side of the merge each commit sits on.
 #
 # Takes the first line by expansion rather than by piping to `head`: under
 # `pipefail` the early close sends git SIGPIPE, which reads as a failed lookup
 # and aborts the sweep on its first entry.
 introducing_commit() {
-	local out
-	out=$(git log --reverse --format='%h' -S"\"version\": \"$1\"" \
+	local out candidate release best='' best_release=''
+	out=$(git log --full-history --reverse --format='%h' -S"\"version\": \"$1\"" \
 		-- client/scripts/devlog.gd "$ENTRY_DIR") || return 0
-	printf '%s' "${out%%$'\n'*}"
+	[ -n "$out" ] || return 0
+	# A lone candidate cannot be ranked against anything, and both branches below
+	# select it regardless of what it contains — so the containment lookup is
+	# skipped rather than computed and discarded. This is the ordinary case (every
+	# entry in this repository today) and the lookup is the expensive half: it
+	# shells out to `git tag --contains` per candidate, which the caller then
+	# repeats on the anchor it gets back.
+	if [ "$out" = "${out%%$'\n'*}" ]; then
+		printf '%s' "$out"
+		return 0
+	fi
+	while IFS= read -r candidate; do
+		[ -n "$candidate" ] || continue
+		release=$(first_release_containing "$candidate")
+		[ -n "$release" ] || continue
+		# Same shape as the guard's oldest_version: an `if` rather than `&&`, so
+		# a final non-match cannot leave the loop non-zero for `set -e`.
+		if [ -z "$best_release" ] || version_gt "$best_release" "$release"; then
+			best_release="$release"
+			best="$candidate"
+		fi
+	done <<<"$out"
+	# No candidate has reached a release at all, so the change is genuinely
+	# unshipped and every candidate answers containment identically. The oldest
+	# is taken so the report is stable rather than dependent on the walk.
+	[ -n "$best" ] || best="${out%%$'\n'*}"
+	printf '%s' "$best"
 }
 
 total=0
@@ -218,8 +267,15 @@ printf 'dev-log entry version gate: %d NEVER-CUT entr%s excluded — the release
 	"$colliding" "$([ "$colliding" -eq 1 ] && printf y || printf ies)"
 
 if [ "$no_anchor" -ne 0 ]; then
-	printf 'dev-log entry version gate: FAIL — %d entr%s could not be anchored to an introducing commit, so no verdict was reached. In a full-history checkout every entry anchors; this points at a shallow fetch or an unreadable entry file, not at a mislabelled version.\n' \
-		"$no_anchor" "$([ "$no_anchor" -eq 1 ] && printf y || printf ies)" >&2
+	# States what the lookup did and hands over the command to repeat, rather
+	# than naming a cause. The earlier wording asserted a shallow fetch or an
+	# unreadable file; when neither was true that sent the reader looking for
+	# something that was not there, which on a blocking gate costs more than the
+	# missing verdict itself. Anything this can say about the cause is a guess —
+	# what it can say exactly is which search returned nothing.
+	printf 'dev-log entry version gate: FAIL — %d entr%s could not be anchored to an introducing commit, so no verdict was reached; "could not evaluate" must not read as "passed". The anchor is the first commit in THIS checkout whose diff introduces the entry version string under client/scripts/devlog.gd or %s. Repeat that search for an entry listed NO-ANCHOR above with:\n  git log --full-history --reverse -S%s -- client/scripts/devlog.gd %s\nAn empty result means this checkout holds no such commit: its history is partial or rewritten, or the entry file did not parse and no version was read. An entry whose introducing commit genuinely cannot be found is resolved by listing it in %s with the anchor commit whose change it describes.\n' \
+		"$no_anchor" "$([ "$no_anchor" -eq 1 ] && printf y || printf ies)" \
+		"$ENTRY_DIR" '"\"version\": \"<version>\""' "$ENTRY_DIR" "$CORRECTIONS_FILE" >&2
 	exit 1
 fi
 
