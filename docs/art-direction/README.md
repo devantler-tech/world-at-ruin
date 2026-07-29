@@ -511,6 +511,20 @@ because the value axis is currently doing so little; it is an option, not the ru
 **Checkable tell.** If the frame separates on neither value nor hue, it is flat regardless of how
 much geometry is in it.
 
+**Hollow-ash motion preview (#328).** The settled pools still use one whole-volume density swell.
+With `WAR_ASH_FIELD_DRIFT=1`, a default-off fog shader instead distributes each pool's placed
+density across four world-space harmonics and carries that field on the shared `Wind`; more than two
+primary pockets cross a pool and the placed density remains the temporal mean. The local
+`ash_motion` capture freezes every other scene animation, photographs three identical-field
+controls, then advances only the production fog clock through eight half-second phases from a
+player-height camera inside the hollow.
+
+This is an experiment, not a claimed reference match. Against
+[Fatekeeper's official gallery screenshot 02](https://fatekeeper.thqnordic.com/game-sites/fatekeeper/content/screenshots/screenshot-02.png),
+the current ash still reads as a broad warm veil rather than layered mist with clear gaps and fine
+billows. It stays default-off until a captured sequence, player judgement and performance evidence
+justify retiring the alternate path and its flag.
+
 ### VFX
 
 **Target.** Layered, not a single gradient — and the torch shows that *having* the layers is not the
