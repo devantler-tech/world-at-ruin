@@ -79,7 +79,7 @@ const VANTAGES: Array = [
 	#
 	# Shape is the opposite: a silhouette survives the haze that eats colour, so
 	# the camera that evidences it has to stand BACK and look ACROSS. This one
-	# moves 32.33% of pixels on that change. Committed rather than taken ad hoc
+	# moves 33.61% of pixels on that change. Committed rather than taken ad hoc
 	# precisely because a self-chosen angle is the one that can flatter — fixed
 	# cameras are what make a later regression here impossible to hide.
 	["cinderreach", Vector3(-52.0, 9.0, -34.0), Vector3(-92.0, 2.0, -74.0)],
