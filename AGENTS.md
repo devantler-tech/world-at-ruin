@@ -600,9 +600,11 @@ everything shipped afterwards is held to.
   preserves caller movement when that flag is off, and the integer-speed floor remains mobile on
   diagonals; threat from damage, dead-target
   filtering, real navmesh pathfinding and cast replication remain later children — with its own
-  cross-platform golden), with the concrete Agones/secret resource adapter, expiry-loop
-  supervision, zone claim adapter, Nakama RPC registration and broader persistence arriving as later children of the
-  server-foundation epic (#4); `deploy/` (platform manifests) arrives later per the roadmap.
+  cross-platform golden), with the production admission-secret lifecycle selected in
+  `docs/adr/0002-seal-zone-admission-secrets-before-readiness.md` but its concrete Agones sealed-envelope
+  resource adapter, expiry/orphan supervision, zone claim adapter, Nakama RPC registration and
+  broader persistence still arriving as later children of the server-foundation epic (#4);
+  `deploy/` (platform manifests) arrives later per the roadmap.
 - **Changing any persisted player-data format:** follow the
   [forward-only save-data migration contract](docs/design/save-data.md). It defines the staged
   expand → bake → contract rollout, the version-bump checklist, and the refusal rules for the
