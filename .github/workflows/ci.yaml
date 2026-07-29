@@ -1375,7 +1375,16 @@ jobs:
           # the aggregate accepts the skip — so a broken capture workflow could
           # merge green. Running the capture IS how a change to it is validated
           # (the #145/#170 lesson, applied to the editor job).
-          if grep -qE '^client/(scripts|shaders|assets|scenes|recipes|abilities|tools)/|^client/(project\.godot|export_presets\.cfg)$|^\.github/workflows/ci\.yaml$' changed.txt; then
+          #
+          # tools/preview-flags.* is here for that same reason, one step
+          # removed. Registering a preview is deliberately ONE LINE in the list
+          # and touches no client path — so without this a PR that enables a new
+          # treatment classifies as NON-VISUAL, skips the capture, and the
+          # treatment it just turned on is never rendered. The list would be
+          # promising evidence the gate then declines to produce. The resolver
+          # is in the same clause because the capture's flag set comes through
+          # it, and a change to it changes what every capture enables.
+          if grep -qE '^client/(scripts|shaders|assets|scenes|recipes|abilities|tools)/|^client/(project\.godot|export_presets\.cfg)$|^\.github/workflows/ci\.yaml$|^tools/preview-flags\.(txt|sh)$' changed.txt; then
             echo "visual=true" >> "$GITHUB_OUTPUT"
           else
             echo "visual=false" >> "$GITHUB_OUTPUT"

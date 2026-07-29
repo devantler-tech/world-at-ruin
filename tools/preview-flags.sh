@@ -80,6 +80,41 @@ read_preview_flags() {
 	fi
 }
 
+# check_preview_flag_consumers <client_dir> <flag>...
+#
+# Every listed flag must be READ by the client, not merely well-formed.
+#
+# Shape validation alone accepts `WAR_GROUND_PLATE` — a plausible typo for a
+# real flag. Nothing consumes it, so the capture exports it, renders the
+# DEFAULT world, and still satisfies CAPTURE PASS, BOOT_OK and the error sweep:
+# a PR would publish frames that do not contain the treatment it just enabled,
+# with every check green. That is the failure this whole pass exists to
+# prevent, so a flag with no consumer is an error.
+#
+# Matched against the exact `OS.get_environment("FLAG")` call because that is
+# how the client reads these, and a bare name search would be satisfied by a
+# dev-log entry or a comment mentioning the flag.
+check_preview_flag_consumers() {
+	local client_dir="$1"
+	shift
+	local flag missing=0
+
+	if [ ! -d "$client_dir" ]; then
+		printf 'preview-flags: no client tree at %s — cannot confirm any flag is consumed\n' "$client_dir" >&2
+		return 1
+	fi
+
+	for flag in "$@"; do
+		if ! grep -rqF "OS.get_environment(\"$flag\")" "$client_dir" --include='*.gd'; then
+			printf 'preview-flags: %s is listed but no client script reads it\n' "$flag" >&2
+			printf 'preview-flags: expected OS.get_environment("%s") somewhere under %s — a flag nothing consumes captures the DEFAULT world and still passes every check\n' "$flag" "$client_dir" >&2
+			missing=$((missing + 1))
+		fi
+	done
+
+	[ "$missing" -eq 0 ]
+}
+
 # Executed rather than sourced: emit the set in the requested shape.
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
 	mode="${1---env}"
@@ -91,9 +126,9 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
 	# some treatments, photograph the rest on their default path, and look like a
 	# complete capture.
 	case "$mode" in
-	--names | --check | --env) ;;
+	--names | --check | --check-consumers | --env) ;;
 	*)
-		printf 'usage: preview-flags.sh [--env|--names|--check]\n' >&2
+		printf 'usage: preview-flags.sh [--env|--names|--check|--check-consumers]\n' >&2
 		exit 2
 		;;
 	esac
@@ -102,6 +137,15 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
 
 	case "$mode" in
 	--check) ;;
+	# Deliberately NOT folded into --env, which the capture calls. The capture
+	# job is path-gated and can legitimately be skipped, whereas the test that
+	# calls this runs on every PR — so the earlier, cheaper job is the one that
+	# should catch a flag nothing reads. It also keeps the GPU step from
+	# depending on the client tree's layout.
+	--check-consumers)
+		# shellcheck disable=SC2086 # deliberate split: one argument per flag
+		check_preview_flag_consumers "$(dirname "$PREVIEW_FLAGS_FILE_DEFAULT")/../client" $flags
+		;;
 	--names) printf '%s\n' "$flags" ;;
 	# `NAME=1` lines, for a caller that sources this under `set -a`. The capture
 	# writes this straight into the artifact, so the record a reviewer opens is

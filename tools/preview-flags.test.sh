@@ -183,9 +183,51 @@ for scenario_flag in WAR_LAYERED_OUTFIT_PICKERS WAR_WALK_CYCLE WAR_RUN_CYCLE; do
 	fi
 done
 
+# Every listed flag must be READ by the client. A shape-valid typo like
+# WAR_GROUND_PLATE would otherwise be exported, render the DEFAULT world, and
+# still satisfy CAPTURE PASS / BOOT_OK / the error sweep — publishing frames
+# without the treatment the PR enabled, with every check green.
+if ! "$SCRIPT" --check-consumers 2>"$SCRATCH_DIR/stderr"; then
+	t_fail "a shipped preview flag has no client consumer: $(cat "$SCRATCH_DIR/stderr")"
+fi
+
+# The control: the check must REJECT a plausible typo, or it proves nothing.
+printf 'WAR_GROUND_PLATE\n' >"$SCRATCH_DIR/typo.txt"
+if WAR_PREVIEW_FLAGS_FILE="$SCRATCH_DIR/typo.txt" "$SCRIPT" --check-consumers 2>/dev/null; then
+	t_fail "WAR_GROUND_PLATE (a typo for WAR_GROUND_PLATES) was accepted — nothing reads it, so the capture would photograph the default world"
+fi
+
+# And it must not be satisfied by a mere MENTION: the flag names appear in
+# client/devlog/*.json prose, so a name-only search would bless the typo's
+# real sibling for the wrong reason.
+if ! grep -rqF 'OS.get_environment("WAR_GROUND_PLATES")' "$ROOT/client" --include='*.gd'; then
+	t_fail "WAR_GROUND_PLATES has no OS.get_environment call in client/*.gd — the consumer check is matching something else"
+fi
+
 if [ ! -f "$WORKFLOW" ]; then
 	t_fail "ci.yaml not found — the wiring layer proves nothing"
 else
+	# Registering a preview is one line in the list and touches no client path,
+	# so the visual gate must treat the list (and its resolver) as visual — or
+	# the PR that enables a treatment skips the capture that would render it.
+	visual_pattern="$(
+		grep -oE "grep -qE '\^client/\(scripts\|shaders[^']*'" "$WORKFLOW" |
+			head -1 | sed -E "s/^grep -qE '//; s/'\$//"
+	)"
+	if [ -z "$visual_pattern" ]; then
+		t_fail "could not extract the visual path pattern from ci.yaml — the gate assertion below proves nothing"
+	else
+		for gated in tools/preview-flags.txt tools/preview-flags.sh; do
+			if ! printf '%s\n' "$gated" | grep -qE "$visual_pattern"; then
+				t_fail "$gated does not classify as visual — a PR that only registers a preview would skip the frame capture that renders it"
+			fi
+		done
+		# Control: the pattern must still REJECT a genuinely non-visual path,
+		# or the assertion above passes on an over-broad gate.
+		if printf '%s\n' "README.md" | grep -qE "$visual_pattern"; then
+			t_fail "the visual pattern matches README.md — it is too broad to prove anything"
+		fi
+	fi
 	# These three match COMMAND SHAPE, never a bare mention. An earlier draft
 	# grepped for the plain path and passed with the step deleted, because this
 	# file is also named in a comment two screens above — a guard a comment can
