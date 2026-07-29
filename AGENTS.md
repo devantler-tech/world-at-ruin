@@ -578,7 +578,11 @@ everything shipped afterwards is held to.
   per binary frame: token-gated fail-closed admission, bounded send queue with snapshot resync on
   overflow, write/idle deadlines, hard inbound size cap; opt-in via `zone -listen`, off by
   default), the **Agones lifecycle** (`server/agones/` — Ready/Health/Shutdown through the
-  official SDK, opt-in and default-off), the first **Nakama identity boundary**
+  official SDK, opt-in and default-off; its sealed-admission mode accepts a projected RSA public
+  key, generates one in-memory 32-byte secret while the GameServer is `Starting`, publishes the
+  identity-bound ciphertext/fingerprint/readiness metadata, observes those exact values through
+  `WatchGameServer`, and only then permits the serving command to call `Ready`; an allocatable
+  restart calls `Shutdown` without rotating metadata), the first **Nakama identity boundary**
   (`server/nakamaauth/` — verifies a player session through Nakama's generated gRPC `GetAccount`
   API and returns only the authenticated user ID), the **player handoff core**
   (`server/handoff/` — gives only that verified identity plus a caller-stable reservation key and
@@ -606,10 +610,12 @@ everything shipped afterwards is held to.
   dodgeable circle, while zero chase speed deliberately preserves a stationary caster; the
   integer-speed floor remains mobile on diagonals; threat from damage, dead-target
   filtering, real navmesh pathfinding and cast replication remain later children — with its own
-  cross-platform golden), with the production admission-secret lifecycle selected in
-  `docs/adr/0002-seal-zone-admission-secrets-before-readiness.md` but its concrete Agones sealed-envelope
-  resource adapter, expiry/orphan supervision, zone claim adapter, Nakama RPC registration and
-  broader persistence still arriving as later children of the server-foundation epic (#4);
+  cross-platform golden). The zone-side sealed-envelope boot from
+  `docs/adr/0002-seal-zone-admission-secrets-before-readiness.md` is available through
+  `zone -agones -agones-admission-public-key <path>`; allocation-response validation, the concrete
+  GameServer resource adapter and unwrap path, expiry/orphan supervision, the zone claim adapter,
+  Nakama RPC registration and broader persistence remain later children of the server-foundation
+  epic (#4);
   `deploy/` (platform manifests) arrives later per the roadmap.
 - **Changing any persisted player-data format:** follow the
   [forward-only save-data migration contract](docs/design/save-data.md). It defines the staged
@@ -830,9 +836,11 @@ everything shipped afterwards is held to.
     entries. Arming failures fail the job loudly: a cask PR that silently never merges is how the
     tap once fell six releases behind (#169).
     **`auto_updates` is deliberately ABSENT**: it tells Homebrew "this app updates itself, do not
-    upgrade it", and there is no working in-client updater yet (`update_decision.gd` is pure
-    decision logic). Declaring it now would make `brew upgrade` skip the cask and strand players on
-    the version they installed. Add it only once the self-updater ships (#106). The `postflight`
+    upgrade it", and there is no working in-client updater yet. `UpdateDecision` is pure decision
+    logic and `UpdateTrust` is only the Godot-native ECDSA P-256 verification primitive; no caller
+    fetches or promotes an update, and no root material is published. Declaring `auto_updates` now
+    would make `brew upgrade` skip the cask and strand players on the version they installed. Add
+    it only once the self-updater ships (#106). The `postflight`
     quarantine strip is **mandatory, not cosmetic** — the build is ad-hoc signed
     (`codesign/codesign=1` with an empty identity), so Gatekeeper blocks it otherwise.
     No `verified:` on the `url`: `brew audit --strict` rejects it when the download and homepage
