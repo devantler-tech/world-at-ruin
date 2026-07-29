@@ -304,10 +304,12 @@ const WALK_CAM_RISE := 0.5
 const WALK_CAM_FRONT := 3.2
 const WALK_VANTAGE_Z := 18.0
 
-## The creator is 2D and needs no shadow/SDFGI convergence, so it settles far
-## sooner than a world vantage. Kept separate so adding this scenario does not
-## lengthen the world capture, per #145.
-const UI_WARMUP_FRAMES := 60
+## The creator is 2D, but its transparent side photographs the live 3D world.
+## SDFGI and volumetric reprojection therefore need the same 150-frame initial
+## convergence as a world capture. The former 60-frame UI-only assumption is
+## what let independent runners photograph different terrain-lighting phases
+## even after the creator's own breathing pose was pinned (#556).
+const UI_WARMUP_FRAMES := WARMUP_FRAMES
 ## Frames to settle after a preset switch: it rebuilds the portrait rig, so an
 ## immediate shot photographs the previous body.
 const UI_SETTLE_FRAMES := 30
@@ -384,6 +386,12 @@ func _ready() -> void:
 	if not main.is_inside_tree():
 		_fail("the main scene never attached — nothing would have been rendered")
 		return
+
+	if scenario == "first_run":
+		if not pin_first_run_backdrop_clock(scenario, main):
+			_fail("first-run backdrop animation could not be fixed before capture")
+			return
+		print("BACKDROP PINNED — scenery clocks fixed before first-run capture")
 
 	if scenario == "replication":
 		await _capture_replication(dir, main)
@@ -562,6 +570,19 @@ static func visible_fog_volume_count(root: Node) -> int:
 ## remain at one phase; only the Sun orientation changes between the images.
 static func freeze_light_response_animation() -> void:
 	Engine.time_scale = 0.0
+
+
+## The creator is motionless, but the world visible around and through it is
+## live: generated foliage reads shader TIME, while lights and fog advance from
+## process delta. Ask the normally booted main scene to fix only those scenery
+## phases, leaving player physics and animation time untouched. This runs after
+## scene attachment and before _capture_first_run's warm-up and first shutter.
+static func pin_first_run_backdrop_clock(scenario: String, main: Node) -> bool:
+	if scenario != "first_run":
+		return false
+	if main == null or not main.has_method("freeze_first_run_backdrop_animation"):
+		return false
+	return main.call("freeze_first_run_backdrop_animation") == true
 
 
 ## Holds the crossfield camera and real world fixed while the shipping Sun moves

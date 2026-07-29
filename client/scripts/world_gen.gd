@@ -102,6 +102,9 @@ var _cave_apron: Array = []
 ## record of where scenery actually went — and it is the record that carries the
 ## laws worth pinning (determinism, keep-outs, resting on the ground).
 var _foliage: Array[Dictionary] = []
+## Representative, non-zero phase used by evidence captures. The ordinary game
+## never calls the capture freeze and keeps its live wind, flame, and light.
+const CAPTURE_ANIMATION_TIME := 1.0
 
 func _ready() -> void:
 	# Dealt before anything is baked: the terrain colour bake reads them.
@@ -136,12 +139,39 @@ func _ready() -> void:
 
 func _process(delta: float) -> void:
 	_time += delta
+	_apply_brazier_animation()
+
+
+func _apply_brazier_animation() -> void:
 	if _brazier_light:
 		# Slow ember breathing, with a faint flicker on top.
 		var pulse := 2.2 + 0.5 * sin(_time * 1.4) + 0.15 * sin(_time * 9.7)
 		_brazier_light.light_energy = pulse
 		var mat := _brazier_mesh.get_surface_override_material(0) as StandardMaterial3D
 		mat.emission_energy_multiplier = 1.6 + 0.4 * sin(_time * 1.4)
+
+
+## Fix every generated scenery phase that can recolour the first-run backdrop.
+## Wind is held through the shipping foliage shader's opt-in time override, so
+## its shadows and GI stop moving without freezing player physics. Brazier and
+## cave lights use their own shipping curves at the same representative phase.
+## Returns the vegetation material count so capture can fail closed if the world
+## shape changes and the wind pin silently reaches nothing.
+func freeze_capture_animation(at_time: float = CAPTURE_ANIMATION_TIME) -> int:
+	_time = at_time
+	set_process(false)
+	_apply_brazier_animation()
+	var pinned_materials := 0
+	for node in find_children("Foliage_*", "MultiMeshInstance3D", false, false):
+		var material := (node as MultiMeshInstance3D).material_override as ShaderMaterial
+		if material == null or material.shader != FoliageArt.SHADER:
+			continue
+		material.set_shader_parameter("wind_time_override_enabled", true)
+		material.set_shader_parameter("wind_time_override", at_time)
+		pinned_materials += 1
+	for cave in find_children("*", "CaveSystemGen", true, false):
+		(cave as CaveSystemGen).freeze_flicker(at_time)
+	return pinned_materials
 
 ## Terrain height at world (x, z). Shared by generation, collision, and
 ## anything that needs to stand on the ground.
