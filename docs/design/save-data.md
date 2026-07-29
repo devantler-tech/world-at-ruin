@@ -258,10 +258,11 @@ stable quest IDs to stable objective IDs and progress in the exact JSON integer 
 `QuestLog` before any quest definition registers. Known objectives get a clamped live view, while
 snapshots retain raw values and opaque future IDs so a rollback build cannot truncate newer progress.
 Restored completion is latched
-silently and can never be announced or granted again. The production writer remains vault v3 at
-capability 4: empty state and ordinary attunement, discovery and reward writes cannot originate
-`quests`, but they preserve an already-present v4 document. Activating vault-v4 writes is the separate
-contract child #560, gated on retaining the capability-6 reader release as a whole-app rollback target.
+silently and can never be announced or granted again. The production vault writer remains v3 while
+the project-wide write baseline is capability 5: empty state and ordinary attunement, discovery and
+reward writes cannot originate `quests`, but they preserve an already-present v4 document.
+Activating vault-v4 writes is the separate contract child #560, gated on retaining the capability-6
+reader release as a whole-app rollback target.
 
 ### Boot recovery
 
