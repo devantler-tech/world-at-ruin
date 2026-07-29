@@ -102,17 +102,21 @@ zone base64url-encodes the ciphertext without padding and publishes:
 |---|---|
 | `agones.dev/sdk-war-admission-envelope` annotation | Version 1 ciphertext |
 | `agones.dev/sdk-war-admission-key` annotation | Full wrapping-key fingerprint |
-| `agones.dev/sdk-war-admission-ready` label | `v1` |
+| `agones.dev/sdk-war-admission-ready` label | `v1-<full wrapping-key fingerprint>` |
 
 These are the names produced when the zone gives the suffixes to Agones SDK
 `SetAnnotation` and `SetLabel`. The envelope and fingerprint are not
 credentials. They are still size-limited, schema-validated, and excluded from
 ordinary logs.
 
-The coordinator holds a keyring indexed by the full fingerprint. Rotation
-publishes a new public key first, waits for new Ready GameServers to advertise
-it, and retains the previous private key until every GameServer and handoff
-lease using it has expired. Unknown or retired fingerprints fail closed.
+The coordinator holds a keyring indexed by the full fingerprint and selects
+only the configured current fingerprint in the Ready label. Rotation publishes
+the new public key and unwrap key first, waits for replacement GameServers with
+the new Ready value, switches allocation to that exact value, and shuts down
+idle Ready GameServers carrying the old value. The previous private key remains
+until every already-Allocated GameServer and handoff lease using it has ended.
+An exposure response switches the selector away from the old fingerprint before
+draining it. Unknown or retired fingerprints fail closed.
 
 ### Zone boot and readiness
 
@@ -121,9 +125,11 @@ The production Agones lifecycle will perform these steps in order:
 1. Read the public wrapping key from a read-only ConfigMap projection and get
    this GameServer's namespace, name, UID, and state through the local Agones
    SDK.
-2. Refuse an invalid identity or an already-Allocated restart. An allocated
-   process that lost its in-memory key calls `Shutdown` and exits; it never
-   advertises a replacement key or returns itself to Ready.
+2. Wait only for the expected non-allocatable `Starting` state. A process that
+   observes an invalid identity or an already `Ready`, `Reserved`, or
+   `Allocated` GameServer is a restart that lost its in-memory key; it calls
+   `Shutdown` and exits. It never replaces metadata while the GameServer is
+   allocatable and never returns that object to Ready.
 3. Generate the admission secret with `crypto/rand`, seal it with the
    identity-bound OAEP label, and retain the raw bytes only in process memory.
 4. Set the two annotations and Ready label through the SDK.
@@ -146,24 +152,39 @@ the token's opaque allocation-ID grammar.
 1. Receive the already-durable staging attempt from `handoffalloc`.
 2. Before allocating, reconcile any Allocated GameServer carrying the full
    SHA-256-derived attempt label.
-3. Otherwise call the Agones allocation service with selectors for the
-   configured Fleet and `agones.dev/sdk-war-admission-ready=v1`. The existing
-   reservation and attempt correlation labels are applied atomically by the
-   allocation request.
-4. Validate the response metadata, then perform a bounded read-after-allocation
+3. If no match exists and the durable lease already says
+   `allocation-dispatched`, return an ambiguous outcome and leave the attempt
+   quarantined. The same attempt and reservation cannot issue another
+   allocation or advance to a newer attempt while this phase remains.
+4. Otherwise, use an exact-version Nakama transition to persist
+   `allocation-dispatched` before issuing exactly one Agones allocation RPC.
+   Select the configured Fleet and exact
+   `agones.dev/sdk-war-admission-ready=v1-<current fingerprint>` value. Apply the
+   existing reservation and attempt correlation labels atomically in that
+   request.
+5. A successful or definitive unallocated response is terminal for that one
+   dispatch. A timeout, cancellation, connection loss, or unavailable response
+   is ambiguous: reconcile only by the exact attempt label and never send a
+   second allocation RPC. An observation timeout alone cannot clear the
+   dispatch. It clears only when the exact GameServer appears, a definitive
+   unallocated response was received, or an explicit allocator-generation
+   fence proves that every allocator process which could still commit it has
+   terminated.
+6. Validate a successful response's metadata, then perform a bounded
+   read-after-allocation
    retry of an exact Kubernetes `get` for the named GameServer. Check its UID,
    Allocated state, Fleet, attempt label, envelope, key fingerprint, and TLS
    port. The retry waits only for that identity and never substitutes another
    object.
-5. After the returned GameServer is observable, list managed Allocated
+7. After the returned GameServer is observable, list managed Allocated
    GameServers with the exact attempt digest from a consistent Kubernetes API
    snapshot. Finalization requires exactly one match and its UID must equal the
    returned GameServer. Zero matches are retried within the same bound. More
    than one match moves every matched exact UID through release, then fails
-   closed; a retry allocation is never finalized without this singleton check.
-6. Reconstruct the OAEP label, decrypt exactly 32 bytes, and construct the
+   closed.
+8. Reconstruct the OAEP label, decrypt exactly 32 bytes, and construct the
    durable reference.
-7. Return the raw bytes only in the in-memory `handoff.Allocation`. The
+9. Return the raw bytes only in the in-memory `handoff.Allocation`. The
    coordinator finalizes the Nakama lease with `SecretRef`; `handoff.Service`
    mints the token and releases its copy.
 
@@ -208,19 +229,32 @@ allocation because it cannot supply a token verified by that allocation's
 secret. `Claim` and `BeginRelease` keep their current version race: exactly one
 of admission or cleanup can win.
 
+Claimed leases are not no-show leases and are never reclaimed merely because
+their original handoff expiry passed. A new system-only session-end transition
+will fence claimed cleanup by lease version, attempt digest, allocation ID,
+GameServer UID, and session generation. Normal zone completion invokes that
+private boundary. A supervisor may invoke it only after observing that the
+exact GameServer UID is `Shutdown` or unhealthy, or that the pinned UID is
+absent. The transition moves the exact claimed lease to `releasing` before
+external deletion; only its successful completion permits the stable
+reservation to stage a replacement attempt. A stale completion or death signal
+cannot release a newer session.
+
 ### Retry, recovery, and cleanup behavior
 
 | Event | Required behavior |
 |---|---|
 | Successful handoff | Finalize the exact GameServer and `SecretRef` before returning an endpoint or token. |
-| Agones timeout after allocation | List only managed GameServers with the exact attempt digest; reconcile one exact match and retry allocation when none exists. After any retry succeeds, repeat the consistent singleton list before finalization; fail closed while releasing all exact-UID duplicates when more than one exists. |
-| Same-attempt replay | Reuse the staging expiry and the exact attempt-labelled GameServer; do not allocate again. |
-| Same reservation, newer attempt | Mark the older lease `releasing`, delete only its exact UID, then stage the new attempt. |
+| Agones timeout after allocation | Keep the durable dispatch quarantined and list only managed GameServers with the exact attempt digest. Reconcile one exact match, or release it if the lease already expired; release all exact-UID duplicates, and never retry allocation for that attempt. No-match observation alone is not a completion fence. |
+| Same-attempt replay | Reuse the staging expiry and the exact attempt-labelled GameServer. A dispatched no-match attempt remains ambiguous and does not allocate again. |
+| Same reservation, newer attempt | An ambiguous older dispatch blocks the newer attempt. Otherwise mark the older lease `releasing`, delete only its exact UID, then stage the new attempt. |
 | Stale-attempt release | Validate the attempt digest, allocation ID, UID digest, and envelope digest; never delete a newer attempt's GameServer. |
 | Claim racing cleanup | The Nakama exact-version `Claim`/`BeginRelease` barrier decides the winner before external deletion. |
-| No-show expiry | The supervised lease reconciler begins release and deletes the exact GameServer with a UID precondition. |
+| No-show expiry | For a non-ambiguous unclaimed lease, the supervised reconciler begins release and deletes the exact GameServer with a UID precondition. A dispatched no-match lease remains quarantined past expiry until a late object is released or an allocator-generation fence clears it. |
 | Coordinator restart | Resolve the GameServer and ciphertext from the durable lease reference and decrypt with the retained keyring. |
-| Allocated zone restart | Shut down and let the lease retry allocate a new process; never regenerate a key for an Allocated GameServer. |
+| Ready zone restart | Call `Shutdown` before changing metadata; never rotate a secret while the object remains allocatable. |
+| Unclaimed Allocated zone restart | Call `Shutdown`; the exact-version no-show cleanup releases the lease before a new attempt. |
+| Claimed Allocated zone restart | Call `Shutdown`; the system-only session-end transition must fence and release the exact claimed session before a replacement attempt. |
 | Orphan after a crash | A startup and periodic sweep compares attempt-labelled Allocated GameServers with live private leases. After a bounded grace and two observations, it deletes only exact-UID orphans. Ready pool members have no attempt label and are excluded. |
 | Delete timeout | Re-read by name; absence is success, the same UID is retried, and a different UID is left untouched. |
 
@@ -231,10 +265,15 @@ never lists Kubernetes Secrets because this protocol creates none.
 
 The production identities are deliberately asymmetric:
 
-- **Zone ServiceAccount:** `automountServiceAccountToken: false`; no Kubernetes
-  RBAC. It can reach only its localhost Agones SDK sidecar, the private claim
-  endpoint, and its player-facing TLS listener. The wrapping public key is a
-  read-only ConfigMap projection.
+- **GameServer Pod:** leave `serviceAccountName` unset so the Agones controller
+  installs its SDK ServiceAccount and calls its `DisableServiceAccount` path,
+  which shadows the token mount with an empty volume only in the designated
+  zone container. Do not set Pod-level `automountServiceAccountToken: false`:
+  the SDK sidecar retains the official narrow credential it needs for
+  `SetAnnotation`, `WatchGameServer`, and `Ready`, while the zone container has
+  no Kubernetes token. The wrapping public key is a read-only ConfigMap
+  projection. Any future custom ServiceAccount must preserve the same
+  sidecar-only token mount and SDK permissions.
 - **Coordinator ServiceAccount:** Agones allocator mTLS credentials and a
   namespaced Role limited to `get`, `list`, and `delete` on
   `gameservers.agones.dev`. It receives no `create`, `update`, `patch`,
@@ -244,16 +283,19 @@ The production identities are deliberately asymmetric:
   server-only objects with no player read or write permission.
 
 NetworkPolicy permits coordinator-to-allocator and coordinator-to-Kubernetes
-API traffic, zone-to-local-sidecar traffic, and zone-to-private-claim traffic.
-The claim endpoint requires the zone workload's mTLS identity and independently
-verifies the allocation token; it is not exposed through the player RPC
-surface. Player traffic reaches only the zone's TLS WebSocket port and the
-existing public Nakama endpoints.
+API traffic, the GameServer Pod's SDK sidecar-to-Kubernetes API traffic, and
+zone-to-private-claim traffic. NetworkPolicy is Pod-scoped, so the token shadow
+rather than a claimed container-level network boundary keeps the zone process
+credentialless. The claim endpoint requires the zone workload's mTLS identity
+and independently verifies the allocation token; it is not exposed through the
+player RPC surface. Player traffic reaches only the zone's TLS WebSocket port
+and the existing public Nakama endpoints.
 
 Hermetic authorization tests must prove both the allowed calls and negative
-capabilities: the zone has no Kubernetes token, the coordinator cannot read
-Secrets or mutate GameServers, public callers cannot reach the claim boundary,
-and one allocation's token cannot claim another.
+capabilities: the zone container's token path is shadowed, the SDK sidecar
+retains only its required credential, the coordinator cannot read Secrets or
+mutate GameServers, public callers cannot reach the claim boundary, and one
+allocation's token cannot claim another.
 
 ## Rejected alternatives
 
@@ -324,7 +366,8 @@ allocation gRPC contract, create a handoff through the real Nakama gRPC/storage
 shapes, open the TLS WebSocket with the returned token, and prove that the
 exact claim wins against no-show cleanup. The same test must show that a token
 or envelope from a sibling GameServer is refused and that an ambiguous
-allocation retry does not create a second surviving zone.
+allocation dispatch never issues a second RPC, survives a late commit safely,
+and cannot overlap a newer attempt for the same reservation.
 
 This ADR changes no runtime behavior. The environment secret remains a
 developer-only helper until all production composition children land.
@@ -334,8 +377,17 @@ developer-only helper until all production composition children land.
 The coordinator must retain an unwrap keyring for at least the longest
 GameServer and handoff lifetime, and production readiness gains an observable
 metadata barrier. Coordinator recovery now depends on an exact GameServer GET,
-but no new raw-secret data store, controller, mounted allocation Secret, or
-namespace-wide Secret authority is introduced.
+while the durable lease gains an allocation-dispatch phase and a fenced claimed
+session-end transition. No new raw-secret data store, controller, mounted
+allocation Secret, or namespace-wide Secret authority is introduced.
+
+An ambiguous Agones dispatch can temporarily quarantine one reservation until
+the labelled GameServer appears or an allocator-generation fence proves the
+operation dead. This deliberately trades availability for the guarantee that a
+late server-side commit cannot race a second allocation. The Agones SDK sidecar
+retains its official Kubernetes credential, but the zone container's token path
+is shadowed and raw admission material never enters Kubernetes credentials or
+Secrets.
 
 The result preserves the current HMAC token and durable lease seams while
 making each GameServer its own admission authority. A compromised zone can
