@@ -21,3 +21,8 @@ WAR_GROUND_PLATES
 # #558 — contact-derived talus at the starter cave foot. The default capture
 # photographs bare cave contacts, so the treatment needs an opt-in artifact.
 WAR_CAVE_FOOT_TALUS
+
+# #612 — region-authored foliage density and kind composition. The ordinary
+# capture photographs the single shipped cover law, so regional cover needs an
+# opt-in artifact until the art gate in #613 retires this preview.
+WAR_REGION_FOLIAGE
