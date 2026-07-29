@@ -134,6 +134,7 @@ var _phase_tick := 0
 var _height_scale := 1.0
 var _terrain_shape: ConcavePolygonShape3D
 var _report: Array[String] = []
+var _aborted := false
 
 
 ## One slope under test: where it is, how steep, and what the climber did on it.
@@ -160,17 +161,29 @@ func _ready() -> void:
 	_world.name = "World"
 	add_child(_world)
 	_isolate_terrain_collision()
+	if _terrain_shape == null:
+		_abort()
+		return
 	_select_climbs()
 	if _climbs.is_empty():
 		_fail("no climbable slope was found in any region — the selection is broken")
-		_finish()
+		_abort()
 		return
 	Player.ensure_input_actions()
 	_spawn_climbers()
 
 
+## Report and stop. `get_tree().quit()` takes effect at the end of the frame, so
+## a bare `_finish()` from `_ready` still lets `_physics_process` run — and the
+## setup paths that reach here are exactly the ones that left the ablation with
+## no shape to exaggerate. The flag is what makes stopping actually stop.
+func _abort() -> void:
+	_aborted = true
+	_finish()
+
+
 func _physics_process(_delta: float) -> void:
-	if _world == null:
+	if _world == null or _aborted:
 		return
 	_phase_tick += 1
 	match _phase:
@@ -246,7 +259,17 @@ func _select_climbs() -> void:
 ## `CANDIDATE_SEPARATION` of one already taken or whose fall line does not drop
 ## far enough to be a climb.
 func _take_steepest(region: StringName, faces: Array) -> void:
-	faces.sort_custom(func(a: Array, b: Array) -> bool: return a[0] > b[0])
+	# Ties break on position, not on whatever order the lattice sweep happened to
+	# emit them in: `sort_custom` is not stable, so two faces of equal grade could
+	# otherwise swap between runs and take the whole climb — and its measured
+	# arrival tick — with them. The ratchets here are set from measured values, so
+	# they are only meaningful if the same twelve slopes are chosen every time.
+	faces.sort_custom(func(a: Array, b: Array) -> bool:
+		if a[0] != b[0]:
+			return a[0] > b[0]
+		if a[1].x != b[1].x:
+			return a[1].x < b[1].x
+		return a[1].y < b[1].y)
 	var taken: Array[Vector2] = []
 	for face: Array in faces:
 		if taken.size() >= CLIMBS_PER_REGION:
