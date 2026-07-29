@@ -182,7 +182,11 @@ line_of() {
 pr_resolved_line="$(line_of '^ *pr="\$(trusted_open_pr)"')"
 repair_line="$(line_of 'if cask_pr_conflicts')"
 repair_patch_line="$(awk '/if cask_pr_conflicts/ {found=1} found && /git\/refs\/heads\/.*-X PATCH/ {print NR; exit}' "${workflow}")"
-arm_line="$(line_of 'enablePullRequestAutoMerge')"
+# Match the ARMING MUTATION, not the name: the name also appears in prose
+# explaining why arming is GraphQL-only, and `line_of` takes the first hit — so
+# a comment that happens to sit earlier in the step would stand in for the arm
+# and the ordering below would be measured against the wrong line.
+arm_line="$(line_of 'mutation=.*enablePullRequestAutoMerge')"
 for name in pr_resolved_line repair_line repair_patch_line arm_line; do
 	if [ -z "${!name}" ]; then
 		echo "could not locate ${name} in ${workflow}" >&2
