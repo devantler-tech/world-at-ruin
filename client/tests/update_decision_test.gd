@@ -93,6 +93,7 @@ func _ready() -> void:
 	_test_not_yet_valid_certificate_refused()
 	_test_certificate_window_boundaries()
 	_test_malformed_certificate_fails_closed()
+	_test_certificate_epoch_survives_json_parsing()
 	_test_absent_certificate_keeps_legacy_behaviour()
 	_test_expired_manifest_refused()
 	_test_freshness_fields_are_required()
@@ -327,6 +328,22 @@ func _test_malformed_certificate_fails_closed() -> void:
 		if not why.begins_with("key"):
 			_fail("malformed certificate %s was refused, but not by the certificate validator — reason: %s" % [c, why])
 			return
+
+
+func _test_certificate_epoch_survives_json_parsing() -> void:
+	# A manifest reaches the client as PARSED JSON, and Godot's JSON numbers are
+	# always floats — a real certificate epoch is 1.0, never 1. Every fixture here
+	# is built from int literals, so none of them can catch a validator that
+	# rejects the shape the client actually receives. Parse it for real instead.
+	var parsed: Variant = JSON.parse_string('{"id":"signing-2026-07","epoch":3,"not_before":"%s","not_after":"%s"}' % [
+		CERT_NOT_BEFORE, CERT_NOT_AFTER])
+	var installed := _installed_current()
+	installed["key_epoch_high_water"] = 2
+	var m := _base_manifest()
+	m["key"] = parsed
+	m["sequence"] = 1
+	_expect(installed, m, UpdateDecision.UP_TO_DATE,
+		"a certificate epoch that arrived as a JSON float is read as a whole number")
 
 
 func _test_absent_certificate_keeps_legacy_behaviour() -> void:
