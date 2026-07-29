@@ -138,6 +138,22 @@ var _boot_notices: Array[String] = []
 var _booting := true
 
 
+## Hold only the live SCENERY behind first-run UI at known phases. The creator
+## and player keep normal engine time, so the evidence still photographs the
+## shipped boot and settled pose rather than a globally paused approximation.
+## Called only by frame_capture's first_run scenario.
+func freeze_first_run_backdrop_animation() -> bool:
+	var world := get_node_or_null("World") as WorldGen
+	if world == null or world.freeze_capture_animation() <= 0:
+		return false
+	_hollow_fog_time = WorldGen.CAPTURE_ANIMATION_TIME
+	for i in _hollow_fog_volumes.size():
+		HollowFog.apply_drift(
+			_hollow_fog_volumes[i], _hollow_fog[i], _hollow_fog_time)
+	set_process(false)
+	return true
+
+
 ## Say something to the player, surviving a boot that raises more than one notice.
 ##
 ## During _ready() the message is collected; afterwards it is shown immediately.
