@@ -45,6 +45,7 @@ func _ready() -> void:
 	_test_read_capability_covers_what_is_written()
 	_test_discovery_writer_activation_is_advertised()
 	_test_reward_claim_writer_activation_is_advertised()
+	_test_quest_reader_expansion_is_advertised()
 	_test_save_floor_has_its_golden_fixture()
 	_test_save_capability_matches_its_ledger()
 	_test_export_is_still_monolithic()
@@ -203,13 +204,34 @@ func _test_discovery_writer_activation_is_advertised() -> void:
 ## reader release is retained, so this build must advertise the matching writer
 ## without lowering its read ceiling.
 func _test_reward_claim_writer_activation_is_advertised() -> void:
-	if UpdateManifest.SAVE_CAPABILITY_READS != 4:
-		_fail("the reward-claim contract reads capability %d, expected 4"
+	if UpdateManifest.SAVE_CAPABILITY_READS < 4:
+		_fail("the reward-claim contract reads capability %d, expected at least 4"
 			% UpdateManifest.SAVE_CAPABILITY_READS)
 		return
 	if UpdateManifest.SAVE_CAPABILITY_WRITES != 4:
 		_fail("the retained reward-claim reader still advertises write capability %d; expected 4"
 			% UpdateManifest.SAVE_CAPABILITY_WRITES)
+
+
+## Capability 5 is vault-v4 quest-objective progress. This is deliberately the
+## expand release: the manifest must advertise the new reader while the writer
+## remains on the retained capability-4 reward contract.
+func _test_quest_reader_expansion_is_advertised() -> void:
+	if UpdateManifest.SAVE_CAPABILITY_READS != 5:
+		_fail("the quest-progress reader advertises capability %d, expected 5"
+			% UpdateManifest.SAVE_CAPABILITY_READS)
+		return
+	if UpdateManifest.SAVE_CAPABILITY_WRITES != 4:
+		_fail("the quest reader expansion moved write capability to %d; expected it to remain 4"
+			% UpdateManifest.SAVE_CAPABILITY_WRITES)
+		return
+	if SaveVault.VAULT_READ_VERSION != 4:
+		_fail("the manifest advertises quest reads but SaveVault stops at v%d"
+			% SaveVault.VAULT_READ_VERSION)
+		return
+	if SaveVault.VAULT_VERSION != 3:
+		_fail("the reader expansion activated vault-v%d writes; expected the v3 writer to remain"
+			% SaveVault.VAULT_VERSION)
 
 
 ## The declared save floor must be the OLDEST SCHEMA THAT EVER SHIPPED — not

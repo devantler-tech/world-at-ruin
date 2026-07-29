@@ -182,9 +182,10 @@ const BASE_VAULT_VERSION := 1
 const DISCOVERY_VAULT_VERSION := 2
 const REWARD_CLAIM_VAULT_VERSION := 3
 
-## Highest vault schema this build can READ. Kept separate from the production
-## writer so future expand-before-write releases remain representable.
-const VAULT_READ_VERSION := 3
+## Highest vault schema this build can READ. v4 adds forward-only quest
+## objective progress, but the production writer stays on v3 until this reader
+## release is retained as a safe rollback target.
+const VAULT_READ_VERSION := 4
 
 ## The vault format, exhaustively. Unknown top-level fields are refused for the
 ## same reason the recipe refuses them: a client that silently ignored a field
@@ -194,6 +195,9 @@ const VAULT_FIELDS_V1 := ["version", "comment", "attuned"]
 const VAULT_FIELDS_V2 := ["version", "comment", "attuned", "discoveries"]
 const VAULT_FIELDS_V3 := [
 	"version", "comment", "attuned", "discoveries", "reward_claims",
+]
+const VAULT_FIELDS_V4 := [
+	"version", "comment", "attuned", "discoveries", "reward_claims", "quests",
 ]
 
 ## The Wardens' Shrine, the first attunable respawn point. Names are forward-only
@@ -268,6 +272,8 @@ static func validate(doc: Dictionary) -> String:
 		allowed_fields = VAULT_FIELDS_V2
 	elif schema == 3:
 		allowed_fields = VAULT_FIELDS_V3
+	elif schema == 4:
+		allowed_fields = VAULT_FIELDS_V4
 	for field: String in doc:
 		if field not in allowed_fields:
 			return "unknown vault field '%s' — this client cannot apply it, refusing a half-truth" % field
@@ -293,6 +299,24 @@ static func validate(doc: Dictionary) -> String:
 				return "reward_claims entries must be strings (names are forward-only, never indices)"
 			if (name as String).is_empty():
 				return "reward_claims entries must be non-empty stable names"
+	if doc.has("quests"):
+		if doc["quests"] is not Dictionary:
+			return "quests must be an object keyed by stable quest ids"
+		for quest_id: Variant in doc["quests"]:
+			if quest_id is not String or (quest_id as String).is_empty():
+				return "quest ids must be non-empty stable strings"
+			var objectives: Variant = doc["quests"][quest_id]
+			if objectives is not Dictionary:
+				return "quest '%s' progress must be an object keyed by objective id" % quest_id
+			for objective_id: Variant in objectives:
+				if objective_id is not String or (objective_id as String).is_empty():
+					return "quest objective ids must be non-empty stable strings"
+				var progress: Variant = objectives[objective_id]
+				if not (progress is int \
+						or (progress is float and progress == floorf(progress))):
+					return "quest objective progress must be a whole number"
+				if int(progress) < 0:
+					return "quest objective progress must be non-negative"
 	return ""
 
 

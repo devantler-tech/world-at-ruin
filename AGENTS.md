@@ -509,7 +509,14 @@ everything shipped afterwards is held to.
   append-only `tests/data/shipped_reward_mappings.tsv` ledger permanently binds each shipped claim to
   its exact reward payload; the real boot guard checks the production registry bidirectionally and CI
   base-compares complete rows. The retained v0.61.0 capability-4 reader is the rollback target that
-  permits this writer. **The lock lives in
+  permits this writer. The vault reader now accepts optional v4 `quests` as
+  `quest_id → objective_id → non-negative whole-number progress`, and the manifest advertises
+  save-capability reads 5 while writes remain capability 4 and vault v3. `Main` restores that data
+  into its boot-owned `QuestLog` before definitions register; the tracker preserves opaque future
+  IDs and raw progress, clamps only its live known view, and latches restored completion without
+  announcing it again. Existing production writers preserve an already-present v4 document but
+  cannot originate one. Writer activation remains a separate child (#560) after this reader is a
+  retained rollback target. **The lock lives in
   `FileLock`, not in the vault, and `BootRecovery` persistence takes it too**
   (`tests/boot_recovery_lock_test`) — that file's two writers, the updater and the game, both exist
   today, and a lost update there discards the evidence deciding whether a client rolls back. One

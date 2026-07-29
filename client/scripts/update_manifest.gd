@@ -107,9 +107,11 @@ const SAVE_CAPABILITY_WRITES := 4
 ## needlessly routed away from a pack update despite a valid fallback existing.
 ##
 ## Must always be >= the write capability (a build must read what it writes).
-## Capability 4 is vault-v3 claimed exploration-reward state. Its v0.61.0
-## reader release is retained, so this build now reads and writes the contract.
-const SAVE_CAPABILITY_READS := 4
+## Capability 5 is vault-v4 forward-only quest-objective progress. This is its
+## expand release: the reader accepts and applies the shape while the production
+## writer remains on retained capability 4. Once this release is retained, the
+## separate writer stage may activate capability 5.
+const SAVE_CAPABILITY_READS := 5
 
 ## The oldest shell this manifest still supports updating FROM.
 ##
