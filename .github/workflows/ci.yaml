@@ -2406,6 +2406,53 @@ jobs:
             grep -nE "SCRIPT ERROR|^ERROR" exported-capture.filtered.log | head -20
             exit 1
           fi
+      - name: Capture opted-in previews from the exported client
+        # The default exported capture above deliberately photographs the
+        # shipped fallback. This second run proves the same default-off world
+        # treatments photographed by the editor evidence job also survive
+        # resource packing and the release entry path.
+        #
+        # Resolve the shared list fail-closed and source the exact emitted file
+        # into this step only. GitHub Actions runs each step in its own process,
+        # so these flags cannot leak into the default or first-run captures.
+        run: |
+          set -o pipefail
+          mkdir -p "${RUNNER_TEMP}/exported-shots/opt-in-previews"
+          if ! cp client/recipes/wanderer.json "${RUNNER_TEMP}/exported_preview_save.json"; then
+            echo "::error::could not seed the exported opt-in preview save — frames would show the first-run creator instead of the treatments"
+            exit 1
+          fi
+          flags_file="${RUNNER_TEMP}/exported-shots/opt-in-previews/enabled-flags.txt"
+          tools/preview-flags.sh --env >"$flags_file"
+          echo "opt-in treatments enabled for the exported capture:"
+          cat "$flags_file"
+          set -a
+          # shellcheck source=/dev/null
+          . "$flags_file"
+          set +a
+          WAR_CAPTURE=1 \
+          WAR_SHOT_DIR="${RUNNER_TEMP}/exported-shots/opt-in-previews" \
+          WAR_SAVE_PATH="${RUNNER_TEMP}/exported_preview_save.json" \
+          WAR_VAULT_PATH="${RUNNER_TEMP}/exported_preview_save_vault.json" \
+          WAR_BOOT_RECOVERY_PATH="${RUNNER_TEMP}/exported_preview_save_recovery.json" \
+            "build/app/World at Ruin.app/Contents/MacOS/World at Ruin" 2>&1 | tee exported-previews.log
+          if ! grep -q "CAPTURE PASS" exported-previews.log; then
+            echo "::error::exported opt-in preview capture did not report PASS"
+            tail -40 exported-previews.log
+            exit 1
+          fi
+          if ! grep -q "BOOT_OK" exported-previews.log; then
+            echo "::error::exported opt-in preview capture never reached BOOT_OK"
+            tail -40 exported-previews.log
+            exit 1
+          fi
+          grep -vE "timeout waiting for fence|drivers/metal/rendering_device_driver_metal" \
+            exported-previews.log > exported-previews.filtered.log || true
+          if grep -qE "SCRIPT ERROR|^ERROR" exported-previews.filtered.log; then
+            echo "::error::errors during the exported opt-in preview capture"
+            grep -nE "SCRIPT ERROR|^ERROR" exported-previews.filtered.log | head -20
+            exit 1
+          fi
       - name: Capture the exported first-run UI
         # UNCONDITIONAL within this job, unlike the editor job's narrower
         # first_run gate: the paths that fire THIS job are exactly the ones
@@ -2548,6 +2595,8 @@ jobs:
           path: |
             ${{ runner.temp }}/exported-shots/*.png
             ${{ runner.temp }}/exported-shots/*.txt
+            ${{ runner.temp }}/exported-shots/opt-in-previews/*.png
+            ${{ runner.temp }}/exported-shots/opt-in-previews/*.txt
           if-no-files-found: error
 
   ci-required-checks:
