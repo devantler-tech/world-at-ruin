@@ -77,6 +77,11 @@ func _malformed_definitions_refused() -> bool:
 		"empty tag": [{"id": "a", "tag": "", "count": 1}],
 		"zero count": [{"id": "a", "tag": "x", "count": 0}],
 		"negative count": [{"id": "a", "tag": "x", "count": -2}],
+		"count above exact JSON integer range": [{
+			"id": "a",
+			"tag": "x",
+			"count": 9_007_199_254_740_992,
+		}],
 		"non-int count": [{"id": "a", "tag": "x", "count": "three"}],
 		# Unexpected keys are refused so a field this library does not understand
 		# can never be silently ignored — and so an objective cannot smuggle a grant.
@@ -107,6 +112,9 @@ func _malformed_restore_refused() -> bool:
 		"negative progress": {"hunt": {"step": -1}},
 		"fractional progress": {"hunt": {"step": 1.5}},
 		"string progress": {"hunt": {"step": "1"}},
+		"progress above exact JSON integer range": {
+			"hunt": {"step": 9_007_199_254_740_992},
+		},
 		"valid branch beside malformed branch": {
 			"future_quest": {"future_step": 7},
 			"hunt": {"step": -1},
@@ -167,6 +175,14 @@ func _restore_before_and_after_registration() -> bool:
 		"restore-after: accepted a stale duplicate snapshot")
 	_check(after.call("snapshot") == {"pilgrimage": {"steps": 8}}, true,
 		"restore-after: stale restore could not drive persisted progress backwards")
+
+	var exact_json_boundary := QuestLog.new()
+	_check(bool(exact_json_boundary.call("restore", {
+		"future_quest": {"future_step": 9_007_199_254_740_991},
+	})), true, "restore boundary: accepted the largest exactly representable JSON integer")
+	_check(exact_json_boundary.call("snapshot") == {
+		"future_quest": {"future_step": 9_007_199_254_740_991},
+	}, true, "restore boundary: preserved the exact JSON integer ceiling")
 	return not _failed
 
 

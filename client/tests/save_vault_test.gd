@@ -437,6 +437,32 @@ func _ready() -> void:
 	_cleanup_probe()
 	SaveVault.clear_refusals_for_test()
 
+	# 8a. JSON numbers above 2^53 - 1 are not exact. A raw newer vault that
+	# carries 9007199254740993 parses as 9007199254740992; accepting that rounded
+	# value would let any ordinary write permanently lower earned progress.
+	var unsafe_progress := (
+		'{"version":4,"quests":{"future_quest":{"future_step":9007199254740993}}}')
+	var unsafe_progress_file := FileAccess.open(PROBE, FileAccess.WRITE)
+	if unsafe_progress_file == null:
+		_fail("could not stage the unsafe-integer vault")
+		return
+	unsafe_progress_file.store_string(unsafe_progress)
+	unsafe_progress_file.close()
+	if SaveVault.load_from(PROBE) is Dictionary:
+		_fail("the v4 reader accepted quest progress that JSON already rounded")
+		return
+	var unsafe_reread := FileAccess.open(PROBE, FileAccess.READ)
+	if unsafe_reread == null:
+		_fail("refusing unsafe quest progress removed its source document")
+		return
+	var unsafe_source := unsafe_reread.get_as_text()
+	unsafe_reread.close()
+	if unsafe_source != unsafe_progress:
+		_fail("refusing unsafe quest progress did not preserve its source bytes")
+		return
+	_cleanup_probe()
+	SaveVault.clear_refusals_for_test()
+
 	# 8b. The data layer and the behaviour layer must not drift: every name
 	# SaveVault claims to know must have a RespawnPoints branch, and vice versa.
 	# Without this, a name could be added to the ledger and KNOWN_ATTUNEMENTS
@@ -476,6 +502,10 @@ func _ready() -> void:
 		"negative quest progress": { "version": 4, "quests": {"hunt": {"step": -1}} },
 		"fractional quest progress": { "version": 4, "quests": {"hunt": {"step": 1.5}} },
 		"string quest progress": { "version": 4, "quests": {"hunt": {"step": "1"}} },
+		"unsafe JSON integer quest progress": {
+			"version": 4,
+			"quests": {"hunt": {"step": 9_007_199_254_740_992}},
+		},
 	}
 	for label: String in refusals:
 		if SaveVault.validate(refusals[label]) == "":

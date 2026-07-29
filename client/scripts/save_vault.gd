@@ -317,6 +317,9 @@ static func validate(doc: Dictionary) -> String:
 					return "quest objective progress must be a whole number"
 				if int(progress) < 0:
 					return "quest objective progress must be non-negative"
+				if progress > QuestLog.MAX_PERSISTED_PROGRESS:
+					return (
+						"quest objective progress exceeds JSON's exact-integer range")
 	return ""
 
 

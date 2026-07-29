@@ -30,6 +30,11 @@ extends RefCounted
 ## A quest also never silently redefines itself: registration is forward-only, so
 ## a definition is fixed once added.
 
+## Largest integer JSON can round-trip exactly through Godot's float-backed
+## parser. Persisted progress above this could be silently lowered before the
+## no-resets guards ever see it.
+const MAX_PERSISTED_PROGRESS := 9_007_199_254_740_991
+
 ## quest id -> the ordered Array of objective Dictionaries
 ## ({ "id": String, "tag": String, "count": int }) that quest requires. A quest is
 ## complete when every objective's progress has reached its count.
@@ -54,7 +59,8 @@ var _restored_progress: Dictionary = {}
 ## Register `quest_id` with an ordered, non-empty list of objectives. Each
 ## objective is a Dictionary carrying exactly a non-empty String `id` (unique
 ## within the quest), a non-empty String `tag` (the event it listens for), and an
-## int `count` >= 1 (how many matching events complete it). Returns false (and
+## int `count` in 1..[constant MAX_PERSISTED_PROGRESS] (how many matching events
+## complete it). Returns false (and
 ## changes nothing) if the id is empty, already registered (registration is
 ## forward-only — a quest never silently redefines itself), or any objective is
 ## malformed. A deep copy is stored, so a caller mutating its definition afterwards
@@ -261,9 +267,10 @@ func _remember_progress(quest_id: String, objective_id: String, amount: int) -> 
 	stored[objective_id] = maxi(int(stored.get(objective_id, 0)), amount)
 
 
-## The JSON-facing contract: non-empty stable ids and non-negative whole-number
-## progress only. Validate the complete value before mutating state so one bad
-## branch cannot partially apply the valid branches beside it.
+## The JSON-facing contract: non-empty stable ids and whole-number progress in
+## 0..[constant MAX_PERSISTED_PROGRESS]. Validate the complete value before
+## mutating state so one bad branch cannot partially apply the valid branches
+## beside it.
 func _persisted_progress_valid(persisted: Variant) -> bool:
 	if persisted is not Dictionary:
 		return false
@@ -281,12 +288,15 @@ func _persisted_progress_valid(persisted: Variant) -> bool:
 				return false
 			if int(amount) < 0:
 				return false
+			if amount > MAX_PERSISTED_PROGRESS:
+				return false
 	return true
 
 
 ## Whether `objectives` is a valid, non-empty objective list: every entry a
 ## Dictionary carrying exactly a non-empty String `id` (unique within the list), a
-## non-empty String `tag`, and an int `count` >= 1. This is the whole
+## non-empty String `tag`, and an int `count` in
+## 1..[constant MAX_PERSISTED_PROGRESS]. This is the whole
 ## well-formed-quest guard — a malformed definition is refused at [method add]
 ## rather than corrupting progress tracking later.
 func _objectives_valid(objectives: Array) -> bool:
@@ -311,7 +321,9 @@ func _objectives_valid(objectives: Array) -> bool:
 		if tag is not String or (tag as String).is_empty():
 			return false
 		var c: Variant = obj.get("count")
-		if c is not int or (c as int) < 1:
+		if c is not int \
+				or (c as int) < 1 \
+				or (c as int) > MAX_PERSISTED_PROGRESS:
 			return false
 		seen[id] = true
 	return true
