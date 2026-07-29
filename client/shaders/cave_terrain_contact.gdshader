@@ -292,6 +292,6 @@ void fragment() {
 	// where the second moment is computed.
 	float seam_gain = crack_relief * detail;
 	float seam_var = seam_slope_var * seam_gain * seam_gain;
-	ALBEDO *= 1.0 / (1.0 + seam_cavity * seam_var);
+	ALBEDO *= 1.0 / max(1.0 + seam_cavity * seam_var, 1e-3);
 	ALPHA = COLOR.a;
 }

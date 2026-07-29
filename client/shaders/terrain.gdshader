@@ -806,10 +806,12 @@ void fragment() {
 	// coefficient, is what has no authority here: the ground is largely diffuse
 	// at SPECULAR = 0.18 under a low sun, so a lobe widening of the physically
 	// correct size lands below both the instrument's threshold and a player's.
-	// Godot's AO built-in is the other candidate and fails the same way for the
-	// same reason — it acts on ambient, and this ground is sun-dominated.
-	// Cavity darkening on the finished albedo is where a diffuse surface's
-	// self-occlusion actually shows, which is why it is done here.
+	// Godot's AO built-in is the other candidate and was NOT measured; it is
+	// passed over by reasoning, which is a weaker claim and is recorded as one:
+	// AO acts on ambient light, and the same low sun that makes the roughness
+	// move invisible is what dominates this surface. Cavity darkening on the
+	// finished albedo is where a diffuse surface's self-occlusion shows without
+	// depending on that argument, which is why it is done here.
 	//
 	// This lands on the FINISHED pixel rather than per cell, unlike the crack
 	// darkening above, and that is correct rather than a convenience: the crack
@@ -828,5 +830,12 @@ void fragment() {
 	// that matters — is EXACTLY 1.0 when the variance is zero, so the near
 	// field, the far field past the plate cutoff, and the whole default-off
 	// path are arithmetically untouched rather than approximately so.
-	ALBEDO *= 1.0 / (1.0 + seam_cavity * seam_var);
+	//
+	// The denominator is floored for the same reason `crack_width` is above:
+	// this divides by a UNIFORM, and `hint_range` bounds the inspector rather
+	// than the value a caller may set. A sufficiently negative `seam_cavity`
+	// would otherwise drive it through zero — an infinite or negative albedo
+	// rather than a clamped-looking one. The floor cannot bite at the shipped
+	// domain, where the denominator is at least 1.0.
+	ALBEDO *= 1.0 / max(1.0 + seam_cavity * seam_var, 1e-3);
 }

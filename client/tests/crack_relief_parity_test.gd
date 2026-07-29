@@ -87,8 +87,11 @@ const CLOSED_FORM_PATTERN := \
 ## factor leaves the far field carrying a seam read the plates no longer justify.
 const AMP_CEILING_PATTERN := \
 	"plate_mask_relief\\s*,\\s*([0-9.]+)\\s*\\)"
+## The denominator is floored on both files because this divides by a UNIFORM
+## and `hint_range` bounds the inspector, not what a caller may set — the same
+## reason `crack_width` is floored where the relief divides by it.
 const CAVITY_PATTERN := \
-	"ALBEDO\\s*\\*=\\s*1\\.0\\s*/\\s*\\(\\s*1\\.0\\s*\\+\\s*seam_cavity\\s*\\*\\s*seam_var\\s*\\)"
+	"ALBEDO\\s*\\*=\\s*1\\.0\\s*/\\s*max\\(\\s*1\\.0\\s*\\+\\s*seam_cavity\\s*\\*\\s*seam_var\\s*,\\s*[0-9.e-]+\\s*\\)"
 const CAVITY_DEFAULT_PATTERN := \
 	"uniform\\s+float\\s+seam_cavity\\s*:[^=]*=\\s*([0-9.]+)"
 const VAR_CUTOFF_PATTERN := \
