@@ -49,8 +49,10 @@ other registries are excluded for present-state reasons:
 
 - Equipment layer is render metadata derived from the piece; the layer is never written into a
   recipe.
-- Vault attunements and discoveries accept and preserve unknown string names. Their version, resolver
-  and real-effect guards own their rollout.
+- Vault attunements, discoveries and reward claims accept and preserve unknown stable string names.
+  Vault-v4 quest progress similarly preserves unknown quest and objective IDs plus their raw
+  progress in the exact JSON integer range `0..2^53-1`. Their version, resolver and real-effect
+  guards own rollout.
 - Ability, class-power and class-cycle ledgers describe combat registries and balance promises, not
   fields in a current player document.
 - Creature shapes, tints and recipe versions describe generated world creatures, not persisted player
@@ -188,6 +190,13 @@ raise writes to 2 and append 2 to the capability ledger. The raw preview remains
 `WAR_LAYERED_OUTFIT_PICKERS=1` until #336 delivers an authored wardrobe surface; the flag controls
 exposure, not the already-completed two-release compatibility sequence.
 
+The current character-vocabulary expansion is capability 5. The reader registry contains
+`ashen_bindings` at `hands/armor`, so a future recipe that already carries the stable name renders
+and survives ordinary edits. Production origination remains the capability-4 writer vocabulary in
+both `WAR_LAYERED_OUTFIT_PICKERS` states. #544 owns activation after a retained capability-5 reader
+release exists; that contract change adds the writer-vocabulary entry, raises writes to 5, and
+appends capability 5 to the shipped ledger.
+
 ### Progression vault
 
 For vault version `N`, the expansion pull request must:
@@ -242,6 +251,17 @@ id to the exact outcome every later boot derives from it; CI base-compares compl
 boot verifies the live registry against the ledger.
 Ordinary attunement and discovery writes preserve an already-present v3 document and its claims;
 discovery-only documents remain v2.
+
+Capability 6 is the reader expansion for vault v4 quest progress. Its optional `quests` object maps
+stable quest IDs to stable objective IDs and progress in the exact JSON integer range `0..2^53-1`.
+`SaveVault` validates and preserves the whole nested shape; `Main` restores it into a boot-owned
+`QuestLog` before any quest definition registers. Known objectives get a clamped live view, while
+snapshots retain raw values and opaque future IDs so a rollback build cannot truncate newer progress.
+Restored completion is latched
+silently and can never be announced or granted again. The production writer remains vault v3 at
+capability 4: empty state and ordinary attunement, discovery and reward writes cannot originate
+`quests`, but they preserve an already-present v4 document. Activating vault-v4 writes is the separate
+contract child #560, gated on retaining the capability-6 reader release as a whole-app rollback target.
 
 ### Boot recovery
 

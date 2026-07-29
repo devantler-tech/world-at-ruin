@@ -211,9 +211,11 @@ zone/dungeon server:
   including a crash that left only an attempt ID. Claimed and stale attempts
   remain untouched, external errors are sanitized, and raw admission-secret
   bytes never enter the lease. The coordinator is inert until a concrete
-  `GameServerResources` adapter provisions Agones GameServers and
-  allocation-scoped secrets, its expiry loop is supervised, and a Nakama RPC
-  registers the resulting handoff service.
+  `GameServerResources` adapter will provision Agones GameServers and
+  resolve their zone-generated sealed admission envelopes according to
+  [ADR 0002](../docs/adr/0002-seal-zone-admission-secrets-before-readiness.md),
+  its expiry loop will be supervised, and a Nakama RPC will register the
+  resulting handoff service.
 - **`cmd/zone/`** — a runnable skeleton server. It boots the demo zone and either
   runs a fixed number of deterministic ticks (printing the state hash) or drives
   the loop from the wall clock. With `-replicate` it also runs the full
@@ -239,10 +241,13 @@ Later children of the server-foundation epic
 ([#4](https://github.com/devantler-tech/world-at-ruin/issues/4), the first child
 of the Phase 1 epic [#8](https://github.com/devantler-tech/world-at-ruin/issues/8)):
 the concrete resource adapter that composes `agonesalloc` with
-per-allocation secret delivery, the zone admission claim adapter, Nakama RPC
-registration that exposes the handoff service, the rest of the Nakama
-auth/social/chat/storage surface, client prediction and reconciliation, real
-navmesh geometry, and Postgres/CNPG persistence. The tick core, socket, client
+the sealed-envelope lifecycle selected in
+[ADR 0002](../docs/adr/0002-seal-zone-admission-secrets-before-readiness.md),
+the zone admission claim adapter, Nakama RPC registration that exposes the
+handoff service, the rest of the Nakama auth/social/chat/storage surface,
+client prediction and reconciliation, real navmesh geometry, and Postgres/CNPG
+persistence. The decision is accepted, but none of its production envelope,
+unwrap, recovery, or claim behavior is live yet. The tick core, socket, client
 replica store, Agones lifecycle, Nakama identity boundary, allocation API
 boundary, private lease store, durable handoff coordinator and fail-closed
 handoff core are already in place; later slices build on those tested seams

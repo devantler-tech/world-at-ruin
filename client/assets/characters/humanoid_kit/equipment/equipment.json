@@ -2,13 +2,19 @@
   "base_pieces": [
     "loincloth_ragged"
   ],
-  "kit_version": 7,
+  "kit_version": 8,
   "layers": [
     "base",
     "clothing",
     "armor"
   ],
   "pieces": {
+    "ashen_bindings": {
+      "hide_shape": "equip_hide_ashen_bindings",
+      "layer": "armor",
+      "scene": "ashen_bindings.glb",
+      "slot": "hands"
+    },
     "boots_worn": {
       "hide_shape": "equip_hide_boots_worn",
       "layer": "armor",

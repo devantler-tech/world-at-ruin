@@ -2,8 +2,8 @@
 
 The canonical humanoid for the character system
 ([#24](https://github.com/devantler-tech/world-at-ruin/issues/24)): base body, `game_engine` rig
-(53 deform bones), 29 named morph shapes (21 targets + 8 gender/phenotype macro axes) + 4
-`equip_hide_*` shapes, and seven skinned equipment pieces under `equipment/`, **baked entirely by
+(53 deform bones), 29 named morph shapes (21 targets + 8 gender/phenotype macro axes) + 5
+`equip_hide_*` shapes, and eight skinned equipment pieces under `equipment/`, **baked entirely by
 committed code** —
 `tools/artgen/humanoid_kit/bake.py` driven by `manifest.json`, reproducible byte-for-byte with
 the pinned toolchain. `kit_report.txt` is the structural contract checked by the
@@ -20,8 +20,8 @@ runtime registry `CharacterFactory` composes from.
 - **Licence of the output:** ours. MPFB `LICENSE.md` §D: "the MakeHuman team makes no claim
   whatsoever over output … We regard these things as your data." The GPL covers the tools
   (Blender, MPFB), which are downloaded at bake time and never enter this tree.
-- **Baked:** 2026-07-23 on macOS; body GLB sha256
-  `51cf634de80f34f4650880ccf43eb98b83cedc14f918db17baa299a0a4ff1538` (5 234 252 bytes).
+- **Baked:** 2026-07-29 on macOS; body GLB sha256
+  `af7b82fb2b1a22b54e994460cc01979cf64c3aa8c8dd50229ccac2736de558ff` (5 377 088 bytes).
   Regenerate with the commands in `tools/artgen/humanoid_kit/README.md`.
 - **Macro axes** (`body_female`, `body_male`, `body_aged`, `body_heavy`, `body_slim`,
   `phenotype_african`, `phenotype_asian`, `phenotype_caucasian`) are diffed from second MPFB
@@ -63,7 +63,7 @@ The remaining pieces are MHCLO clothes from the **official MakeHuman CC0 asset p
 Those packs use the `_cc0.zip`
 variants, which contain only CC0-licensed assets (the CC-BY variants are policy-excluded;
 AGENTS.md licensing). Downloaded pinned + checksummed by `tools/artgen/humanoid_kit/bootstrap.sh`;
-each `.mhclo` header declares `license CC0` (verified per piece 2026-07-17). Fitted, skinned to
+each `.mhclo` header declares `license CC0` (verified per piece through 2026-07-29). Fitted, skinned to
 the kit rig and re-exported by the bake; the packs' MakeSkin textures are deliberately not used
 (flat `diffuseColor` materials — the texture layer is a later stage of #24).
 
@@ -76,6 +76,7 @@ Source packs (files.makehumancommunity.org/asset_packs/):
 | `shoes01_cc0.zip` | `ded3f70428505eabbf1f6d7b5f61196a7366ef20757103d276ad0ed336c35ada` |
 | `glasses01_cc0.zip` | `f215c58e09e31b7ee568c814067cb47704cee6da1f6fc01cffb8e9fca37bafdd` |
 | `hats02_cc0.zip` | `838b9b51ba31d27f21198ad4506eb9b23e1c03eb246fe68f26da99e26b40e1aa` |
+| `gloves01_cc0.zip` | `ecdaee1d02749d17352791d415cb622a883350cc8a4b90eda3725aef35d9afb2` |
 
 Pieces (author attributions are courtesy — CC0 requires none):
 
@@ -88,6 +89,7 @@ Pieces (author attributions are courtesy — CC0 requires none):
 | `boots_worn` | shoes01 `culturalibre_male_boots` | culturalibre | CC0 |
 | `relic_goggles` | glasses01 `culturalibre_doc_ock_glasses` | culturalibre | CC0 |
 | `ruin_drake_helm` | hats02 `culturalibre_warrior_helmet` | culturalibre | CC0 |
+| `ashen_bindings` | gloves01 `culturalibre_hero-heroine_gloves_5` | culturalibre | CC0 |
 
 The first head-layer pair is intentionally exposed only through the guarded layered-outfit preview
 while its flat bake materials remain below the character-art bar. Baked GLB sha256:
@@ -95,6 +97,12 @@ while its flat bake materials remain below the character-art bar. Baked GLB sha2
 (3 882 096 bytes); `ruin_drake_helm`
 `dc2764375ea9d74eae03ed393cc140794fca89902e21d28d3ca74cd5075520b9`
 (526 004 bytes).
+
+`ashen_bindings` is the reader-only first hand-slot armor piece: a dark, rough, scalloped binding
+that fits the early worn-light-armor tier without exposing a production writer before the retained
+reader release. Baked GLB sha256:
+`fdd81071ee4762321ca3ce8ce5701405d983640949ab927e4143e2cbfce215da`
+(1 345 072 bytes).
 
 ## Tracked repository outputs
 
@@ -110,7 +118,9 @@ adding or replacing a covered file fails CI until this record is deliberately up
 ```text
 9218c57b3fc628b0226463b2a8a84f50ec3db49da0ab7fce4ab01b0ce9fd0395  equipment/boots_worn.glb
 1334028e21666739532c6a9405e60a10bfb42bdf5a3a838cfe69bf0343ccdb66  equipment/boots_worn.glb.import
-bf7db2f83ddc722748e5a006a560feee6a73b6d265340d590bf4f3091ccbf794  equipment/equipment.json
+fdd81071ee4762321ca3ce8ce5701405d983640949ab927e4143e2cbfce215da  equipment/ashen_bindings.glb
+e3cb568bc74cffdda584e8b2d792d34b66bc39894dec482abd0cb727ce2601d0  equipment/ashen_bindings.glb.import
+17dcb4f0c0ef707c2a7346ca26a3c19e2a78f808cbbfebaa792210df18445e5d  equipment/equipment.json
 b0bce5c38469b887bf85eaee6fba351a9c957837a0d0323d3a446964167eba39  equipment/loincloth_ragged.glb
 e4c3ad324a60b93225a8d940667d3bf7a5872e5e43e64feb68d5c41952bf7216  equipment/loincloth_ragged.glb.import
 b37dce4df5ef58700c0bcc4e8f7ddcad3341bfc2868c4cce4bf9291432299d15  equipment/loincloth_ragged_loincloth_ragged_albedo.png
@@ -129,9 +139,9 @@ d99aea1a543900ca28711183005f726902ef1e69c552a05091804a6f1d6c3ac9  equipment/shir
 df089d0a11668b03759603f5be1f72fe5deeb0233bd9bf33e2333af23de6fe13  equipment/shirt_ragged.glb.import
 d36a2cfa7159b8bee548c2fa107cbfce82e8ae98a80cc053918ccfdc768da62d  equipment/shoes_cloth.glb
 5b48bbccab33f47758748b950026795e6044c6d94f461d20aa8fb78b57e0ae10  equipment/shoes_cloth.glb.import
-51cf634de80f34f4650880ccf43eb98b83cedc14f918db17baa299a0a4ff1538  humanoid_base.glb
+af7b82fb2b1a22b54e994460cc01979cf64c3aa8c8dd50229ccac2736de558ff  humanoid_base.glb
 49a83c611e575377fb52f68c2121c6d8488481a5996ae275a61183f506ca018d  humanoid_base.glb.import
-a2c94d9921dfdd3e22da8574243b469b89dedf9840d0e9ee91d3947e0e0abb49  kit_report.txt
+978d90350c525c3abb86626af0cf738d28380e0c4302e4bb065f3b286e08a4c8  kit_report.txt
 300c087e4957efdffce83954fe7b3eb07894f63c9ba5e4bb6994346bbe9d6a04  skins/skin_female_aged.png
 02e1fd4171ea849eb8c2c1e2ec69a9f541a2f1cdd795523b9de9627bd071c159  skins/skin_female_aged.png.import
 ab9e330fc71a8910795cbea02235d197c71519062477e8ef1606df79179d0794  skins/skin_female_light.png
@@ -144,5 +154,5 @@ c9b03eed714890b7999317b29f4230e3b276c1ddaa5044cba37a851ad3bb23a3  skins/skin_mal
 37dd3be0281ce86c59ddc70ca06c39c1e9cd9702388af7da54ae4c1011952cf0  skins/skin_male_deep.png.import
 0f64d85b52c6003102f4258255a02324e18ba54fe2c5135b38789272319a8480  skins/skin_male_light.png
 cf16c2135216c6f6aae91df4de73de78e2c2e0d5622ae9ab6acef77a79a9bf4b  skins/skin_male_light.png.import
-f375c983bc4964dbb1493eb588f5afc028ecee4853202b8e3640dc5d9c3b1157  skins/skins.json
+dcbceb6dd37826e400f95a49469f55fac22d5364712af8f91f9b23761e4da517  skins/skins.json
 ```
