@@ -111,6 +111,17 @@ expect_output_matching() {
 		t_fail "$label: wanted '$needle' in the output, got: $out"
 }
 
+# A whole report ROW, matched as a pattern. The survey pads its columns to a
+# fixed width, so a fixed-string needle for a row would encode that padding and
+# break on any column change; and asserting the verdict alone would pass on a
+# row that reached it from the wrong anchor. This pins version, anchor, shipped
+# and verdict together, which is what makes an anchoring case discriminating.
+expect_row() {
+	local label="$1" out="$2" pattern="$3"
+	grep -qE "$pattern" <<<"$out" ||
+		t_fail "$label: no row matching /$pattern/, got: $out"
+}
+
 # --- Layer 1: the decision, against real commits and tags -----------------
 
 # GREEN: an entry naming the release that first contains it. Without this case
@@ -209,6 +220,39 @@ step "$d" base v0.1.0
 printf '{ not json at all\n' >"$d/client/devlog/0.2.0.json"
 step "$d" 'an entry that cannot be read' v0.2.0
 expect_gate_fail 'an unreadable entry' "$d" 'could not be anchored'
+
+# RED: the anchor must not depend on the topology the branch reached its history
+# through. `main` introduces the entry and the release is cut on it; the branch
+# independently authors a BYTE-IDENTICAL copy, then merges `main` in.
+#
+# That merge is TREESAME to BOTH parents across the entry paths, and a
+# pathspec-restricted `git log` simplifies by following only the FIRST such
+# parent — the branch. The commit that really introduced the string is pruned,
+# the lookup answers with the branch's later copy, and the entry reads
+# UNRELEASED against a release that demonstrably contains it.
+#
+# UNRELEASED is a PASSING verdict, so the gate's status cannot discriminate here
+# and the row itself is the assertion: without --full-history this same fixture
+# reports `0.2.0  <branch sha>  -  UNRELEASED`.
+d="$(new_repo)"
+printf 'x\n' >"$d/base.txt"
+step "$d" base v0.1.0
+git -C "$d" branch feature
+entry 0.2.0 >"$d/client/devlog/0.2.0.json"
+step "$d" 'main introduces the entry' v0.2.0
+# Captured after the tag, so the expected anchor is main's commit rather than
+# whatever the branch goes on to add.
+main_anchor="$(git -C "$d" rev-parse --short HEAD)"
+git -C "$d" checkout -q feature
+# Re-created because checking out a branch that never had the directory removes
+# it, and the copy has to be byte-identical for the merge to be TREESAME.
+mkdir -p "$d/client/devlog"
+entry 0.2.0 >"$d/client/devlog/0.2.0.json"
+step "$d" 'the branch authors a byte-identical copy of the same entry'
+git -C "$d" merge -q --no-edit main -m 'merge main into the branch'
+expect_row 'an entry anchored past a merge that is TREESAME to both parents' \
+	"$(run_sweep "$d")" \
+	"^0\.2\.0 +${main_anchor} +0\.2\.0 +OK\$"
 
 # GREEN: a correction is verified by CONTAINMENT through the corrections file.
 # Its own introducing commit would make it MISLABELLED, so this passes only if
