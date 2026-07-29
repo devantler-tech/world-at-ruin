@@ -52,6 +52,7 @@ const SCENARIOS: Array[String] = [
 	"run",
 	"jump",
 	"light_response",
+	"ash_motion",
 	"replication",
 	"mob_chase",
 ]
@@ -338,6 +339,18 @@ const UI_WARMUP_FRAMES := WARMUP_FRAMES
 ## Frames to settle after a preset switch: it rebuilds the portrait rig, so an
 ## immediate shot photographs the previous body.
 const UI_SETTLE_FRAMES := 30
+## Three frozen controls produce three within-run pairs. One pair can land at an
+## unusually quiet phase and understate the renderer's floor by an order of
+## magnitude; the maximum across all three pairs is the conservative control.
+const ASH_MOTION_CONTROL_FRAMES := 3
+## Seconds of the production field clock between the frozen control and moved
+## state. At FIELD_SPEED this carries the pattern 4.32 m downwind: large enough
+## to judge inside a hollow without jumping to an unrelated phase.
+const ASH_MOTION_SECONDS := 4.0
+## Real intermediate states in the evidence sequence. Eight at half-second
+## spacing show direction and continuity; interpolating two endpoint stills
+## would manufacture motion the renderer never produced.
+const ASH_MOTION_PHASE_STEPS := 8
 
 
 func _ready() -> void:
@@ -470,6 +483,9 @@ func _ready() -> void:
 	if scenario == "light_response":
 		await _capture_light_response(dir, main, cam)
 		return
+	if scenario == "ash_motion":
+		await _capture_ash_motion(dir, main, cam)
+		return
 
 	for vantage: Array in VANTAGES:
 		var vantage_name: String = vantage[0]
@@ -579,6 +595,93 @@ static func ash_response_vantage(placement: Dictionary) -> Array:
 	return [eye, target]
 
 
+## Player-height camera INSIDE one real hollow, looking mostly crosswind and
+## slightly down. Wind therefore carries pockets ACROSS the frame instead of
+## compressing their travel into depth, while terrain behind translucent fog
+## gives them a readable backdrop.
+static func ash_motion_vantage(placement: Dictionary) -> Array:
+	var centre: Vector3 = placement["pos"]
+	var extents: Vector3 = placement["extents"]
+	var floor_y := centre.y - extents.y
+	var eye := Vector3(centre.x, floor_y + minf(1.7, extents.y * 1.4), centre.z)
+	var travel := minf(extents.x * 0.55, 8.0)
+	var along := Wind.axis()
+	var across := Vector3(-along.z, 0.0, along.x).normalized()
+	var target := (
+		eye + along * travel * 0.25 + across * travel * 0.85
+		+ Vector3(0.0, -1.1, 0.0)
+	)
+	return [eye, target]
+
+
+## Measures a moved ash frame against at least three frozen, identical-field
+## controls from the SAME run. Reporting only: issue #328 explicitly requires
+## quoted numbers rather than a guessed pass/fail threshold. The conservative
+## floor is the largest control-pair delta; the signal is the smallest delta
+## from the moved frame to any control, so neither number is cherry-picked.
+static func ash_motion_measurement(controls: Array, moved: Image) -> Dictionary:
+	var out := {
+		"ok": false,
+		"reason": "",
+		"control_pairs": 0,
+		"signal_pairs": 0,
+		"noise_mean_max": 0.0,
+		"noise_changed_max": 0.0,
+		"signal_mean_min": INF,
+		"signal_changed_min": INF,
+	}
+	if controls.size() < ASH_MOTION_CONTROL_FRAMES:
+		out["reason"] = "need at least %d identical-field controls, got %d" % [
+			ASH_MOTION_CONTROL_FRAMES, controls.size(),
+		]
+		return out
+	for first_index in controls.size() - 1:
+		if controls[first_index] is not Image:
+			out["reason"] = "control %d is not an image" % first_index
+			return out
+		for second_index in range(first_index + 1, controls.size()):
+			if controls[second_index] is not Image:
+				out["reason"] = "control %d is not an image" % second_index
+				return out
+			var noise := FrameDiff.compare_images(
+				controls[first_index] as Image, controls[second_index] as Image
+			)
+			if not bool(noise["ok"]):
+				out["reason"] = "control pair %d/%d: %s" % [
+					first_index, second_index, noise["reason"],
+				]
+				return out
+			out["control_pairs"] = int(out["control_pairs"]) + 1
+			out["noise_mean_max"] = maxf(
+				float(out["noise_mean_max"]), float(noise["mean"])
+			)
+			out["noise_changed_max"] = maxf(
+				float(out["noise_changed_max"]), float(noise["changed_fraction"])
+			)
+	for control_index in controls.size():
+		var moved_delta := FrameDiff.compare_images(controls[control_index] as Image, moved)
+		if not bool(moved_delta["ok"]):
+			out["reason"] = "moved/control %d: %s" % [control_index, moved_delta["reason"]]
+			return out
+		out["signal_pairs"] = int(out["signal_pairs"]) + 1
+		out["signal_mean_min"] = minf(
+			float(out["signal_mean_min"]), float(moved_delta["mean"])
+		)
+		out["signal_changed_min"] = minf(
+			float(out["signal_changed_min"]), float(moved_delta["changed_fraction"])
+		)
+	out["ok"] = true
+	return out
+
+
+## Production-clock offsets captured after the frozen controls.
+static func ash_motion_phase_times() -> Array[float]:
+	var times: Array[float] = []
+	for step in range(1, ASH_MOTION_PHASE_STEPS + 1):
+		times.append(ASH_MOTION_SECONDS * float(step) / float(ASH_MOTION_PHASE_STEPS))
+	return times
+
+
 ## Visible built volumes, not placement metadata. A capable device must return
 ## at least one before the capture may publish ash-response frames; an
 ## incapable hosted runner instead declares that evidence unavailable.
@@ -598,6 +701,145 @@ static func visible_fog_volume_count(root: Node) -> int:
 ## remain at one phase; only the Sun orientation changes between the images.
 static func freeze_light_response_animation() -> void:
 	Engine.time_scale = 0.0
+
+
+## Captures the opted-in intra-pool density field from the player's own
+## vantage. All scene animation is frozen for every frame; only the production
+## HollowFog clock advances between the controls and moved state. That makes
+## the reported signal attributable to the ash field, not foliage or torches.
+##
+## Run windowed with all save seams redirected:
+##   WAR_ASH_FIELD_DRIFT=1 WAR_SCENARIO=ash_motion \
+##     WAR_SHOT_DIR=/tmp/ash-motion WAR_SAVE_PATH=/tmp/probe_save.json \
+##     WAR_VAULT_PATH=/tmp/probe_vault.json \
+##     WAR_BOOT_RECOVERY_PATH=/tmp/probe_recovery.json \
+##     godot --path client res://tools/frame_capture.tscn
+func _capture_ash_motion(dir: String, main: Node, cam: Camera3D) -> void:
+	if not HollowFog.field_drift_enabled():
+		_fail("ash_motion requires WAR_ASH_FIELD_DRIFT=1 — refusing to photograph the settled whole-pool path")
+		return
+	var placements: Array = main.call("hollow_fog_placements")
+	if placements.is_empty():
+		_fail("ash_motion: the shipped world placed no hollow ash pool")
+		return
+	var fog_root := main.get_node_or_null("HollowFog") as Node3D
+	if visible_fog_volume_count(fog_root) < 1:
+		_fail("ash_motion: the renderer built no visible FogVolume")
+		return
+
+	var original_time_scale := Engine.time_scale
+	freeze_light_response_animation()
+	var field_time_value: Variant = main.get("_hollow_fog_time")
+	if field_time_value == null:
+		Engine.time_scale = original_time_scale
+		_fail("ash_motion: the shipped world exposes no HollowFog production clock")
+		return
+	var base_field_time := float(field_time_value)
+	main.set("_hollow_fog_time", base_field_time)
+
+	var vantage := ash_motion_vantage(placements[0])
+	var eye: Vector3 = vantage[0]
+	var target: Vector3 = vantage[1]
+	cam.global_position = eye
+	cam.look_at(target, Vector3.UP)
+
+	var controls: Array[Image] = []
+	var frame_names: Array[String] = []
+	for control_index in ASH_MOTION_CONTROL_FRAMES:
+		var frame_name := "ash-motion-control-%d" % (control_index + 1)
+		var settle := SETTLE_FRAMES if control_index == 0 else CONTRIB_GAP_FRAMES
+		var control := await _capture_ash_motion_frame(
+			dir, frame_name, cam, main, target, settle
+		)
+		if control == null:
+			Engine.time_scale = original_time_scale
+			return
+		controls.append(control)
+		frame_names.append(frame_name)
+
+	var moved: Image = null
+	var phase_times := ash_motion_phase_times()
+	for phase_index in phase_times.size():
+		main.set("_hollow_fog_time", base_field_time + phase_times[phase_index])
+		var phase_name := "ash-motion-phase-%02d" % (phase_index + 1)
+		var phase_image := await _capture_ash_motion_frame(
+			dir, phase_name, cam, main, target, CONTRIB_GAP_FRAMES
+		)
+		if phase_image == null:
+			Engine.time_scale = original_time_scale
+			return
+		moved = phase_image
+		frame_names.append(phase_name)
+	Engine.time_scale = original_time_scale
+
+	var measurement := ash_motion_measurement(controls, moved)
+	if not bool(measurement["ok"]):
+		_fail("ash_motion comparison failed: %s" % measurement["reason"])
+		return
+	var line := (
+		"same-run identical-field floor: max mean |dRGB| %.4f, changed %.2f%% "
+		+ "across %d pairs; 4 s field travel: min mean |dRGB| %.4f, changed %.2f%% "
+		+ "across %d pairs"
+	) % [
+		float(measurement["noise_mean_max"]),
+		float(measurement["noise_changed_max"]) * 100.0,
+		int(measurement["control_pairs"]),
+		float(measurement["signal_mean_min"]),
+		float(measurement["signal_changed_min"]) * 100.0,
+		int(measurement["signal_pairs"]),
+	]
+	print("ASH MOTION: %s" % line)
+	for frame_name in frame_names:
+		_append_capture_note(dir, frame_name, line)
+	print("CAPTURE PASS — player-height inside a hollow; only the spatial ash field advanced (%s)" % line)
+	get_tree().quit(0)
+
+
+func _capture_ash_motion_frame(
+	dir: String,
+	frame_name: String,
+	cam: Camera3D,
+	main: Node,
+	target: Vector3,
+	settle_frames: int
+) -> Image:
+	for i in settle_frames:
+		cam.current = true
+		await get_tree().process_frame
+	if not _sees_geometry(cam, target):
+		_fail("%s sees no world geometry — the ash frame is sky only" % frame_name)
+		return null
+	if not _camera_draws_world(cam, main):
+		_fail("%s cannot draw the world — the ash frame would be empty" % frame_name)
+		return null
+	await RenderingServer.frame_post_draw
+	var img := get_viewport().get_texture().get_image()
+	var spread := _luma_spread(img)
+	if spread < MIN_LUMA_SPREAD:
+		_fail("%s is a uniform frame (luma spread %.4f) — nothing rendered" % [
+			frame_name, spread,
+		])
+		return null
+	var out := "%s/%s.png" % [dir, frame_name]
+	var err := img.save_png(out)
+	if err != OK:
+		_fail("could not write %s (error %d)" % [out, err])
+		return null
+	print("CAPTURED %s -> %s (luma spread %.3f)" % [frame_name, out, spread])
+	_write_note(dir, frame_name, img, _size_note(img))
+	return img
+
+
+## Adds the shared field/noise measurement to every frame's provenance note.
+func _append_capture_note(dir: String, frame_name: String, line: String) -> void:
+	var path := "%s/%s.txt" % [dir, frame_name]
+	var f := FileAccess.open(path, FileAccess.READ_WRITE)
+	if f == null:
+		push_warning("could not append ash-motion measurement to %s" % frame_name)
+		return
+	f.seek_end()
+	f.store_line("ash motion: %s" % line)
+	f.close()
 
 
 ## The creator is motionless, but the world visible around and through it is
