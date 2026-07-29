@@ -1013,6 +1013,8 @@ func rebuild(terrain_h: Callable = func(_x: float, _z: float) -> float: return 0
 		contact_mi.mesh = contact_mesh
 		add_child(contact_mi)
 		_built.append(contact_mi)
+		if OS.get_environment("WAR_CAVE_FOOT_TALUS") == "1":
+			_build_cave_foot_talus(contact_mesh, terrain_h, lay[&"mouth"] as Vector3)
 	var body := StaticBody3D.new()
 	var shape := CollisionShape3D.new()
 	var trimesh := mesh.create_trimesh_shape() as ConcavePolygonShape3D
@@ -1024,6 +1026,40 @@ func rebuild(terrain_h: Callable = func(_x: float, _z: float) -> float: return 0
 
 	_place_torches(lay)
 	_place_boulders(lay, terrain_h, terrain_material)
+
+
+## One render-only batch gathered from the real terrain-contact surface. The
+## placement library owns determinism and keep-outs; this shipping path only
+## turns its closed cosmetic schema into existing generated rubble art.
+func _build_cave_foot_talus(contact_mesh: ArrayMesh, terrain_h: Callable,
+		mouth: Vector3) -> void:
+	var talus := CaveFootTalus.new()
+	var items: Array[Dictionary] = talus.placements(
+		contact_mesh, terrain_h, mouth, seed_value)
+	if items.is_empty():
+		return
+
+	var rubble_mesh := FoliageArt.mesh_for(FoliageGen.Kind.RUBBLE)
+	var lift := rubble_mesh.get_aabb().size.y * 0.4
+	var multimesh := MultiMesh.new()
+	multimesh.transform_format = MultiMesh.TRANSFORM_3D
+	multimesh.mesh = rubble_mesh
+	multimesh.instance_count = items.size()
+	for i: int in items.size():
+		var placement: Dictionary = items[i]
+		var pos: Vector3 = placement["pos"]
+		var prop_scale := float(placement["scale"])
+		var basis := Basis(
+			Vector3.UP, float(placement["yaw"])).scaled(Vector3.ONE * prop_scale)
+		var rendered := Vector3(pos.x, pos.y + lift * prop_scale, pos.z)
+		multimesh.set_instance_transform(i, Transform3D(basis, rendered))
+
+	var batch := MultiMeshInstance3D.new()
+	batch.name = "CaveFootTalus"
+	batch.multimesh = multimesh
+	batch.material_override = FoliageArt.material_for(FoliageGen.Kind.RUBBLE)
+	add_child(batch)
+	_built.append(batch)
 
 
 ## Torches along the spine, each BRACKETED TO THE ROCK — the light that pulls a
