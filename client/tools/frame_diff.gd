@@ -138,10 +138,18 @@ extends Node
 ##
 ## Two things in that table settle the question #485 asked.
 ##
-## First, the variance is NOT PER-VANTAGE, so a per-vantage floor cannot
-## express it. A different subset blows up in each build — base_layer in the
-## first, advanced_2/head_armor/head_clothing in the second, lower/wanderer in
-## the third — while the same vantage reads at the floor in the other two.
+## First, no vantage has a floor worth calibrating. Read the rows ACROSS rather
+## than down: nine of the thirteen reach double digits in at least one build
+## while sitting near zero in another — advanced_2 over 0.00%/39.40%/6.99%,
+## lower over 0.00%/5.25%/23.36%, head_clothing over 0.01%/23.41%/0.02% — and
+## which of them spikes is not the same twice. Nor is it the weaker claim that
+## each is quiet in the other two builds: some are loud twice, wanderer reading
+## 0.78%/25.12%/25.82%. The remaining four are genuinely calmer — outfit,
+## first_run, elder and advanced_1 top out between 7.16% and 2.52%, the band
+## shrine already occupies at 3.81% — so the set is not uniformly bad; it is
+## nine bad rows and four ordinary ones. A per-vantage floor would therefore
+## have to be pinned at each vantage's WORST reading rather than a typical one,
+## and for nine of the thirteen that is a double-digit percentage.
 ##
 ## Second, the floor it would need EXCEEDS THE SIGNAL. The highest reading here
 ## is 39.40% on a build that cannot have changed the creator; the real creator
@@ -149,14 +157,22 @@ extends Node
 ## noise above signal — so no threshold on the whole frame can separate them,
 ## and `first_run_*` is not a gate candidate. Only sunward and crossfield are.
 ##
+## A fourth build corroborates both points, and it is the PR that added this
+## section: its whole delta against its base is this comment block, so its
+## first-run frames must match. On its first CI run `first_run_base_layer` read
+## 11.66% while the other twelve read 0.00%-0.01%, and the world vantages held
+## at 0.01%-2.31%. A different single vantage again, and the rest of the set at
+## the floor in that same build — which is what "no vantage is reliably quiet"
+## looks like from the other side.
+##
 ## ## Where that residual actually is (#485): the BACKDROP, not the subject
 ##
 ## Localized between two of those builds whose first-run rendering code is
 ## behaviourally identical — both files that differ change COMMENT PROSE only,
 ## one inside `_capture_mouth` and one in a cave-vantage test, and the first-run
 ## path executes neither — by splitting each frame at the panel's own band
-## (`UI_SAMPLE_X0/X1`,
-## 0.02-0.30 of width) and counting changed pixels on each side:
+## (`UI_SAMPLE_X0/X1`, 0.02-0.30 of width) and counting changed pixels on each
+## side:
 ##
 ##   frame                     whole    panel band    world band
 ##   first_run_lower          40.46%         0.00%        56.22%
