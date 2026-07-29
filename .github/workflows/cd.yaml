@@ -68,6 +68,7 @@ jobs:
       GODOT_TEMPLATES_SHA512: afcc83d8d3d298038f19c58744a0d660fa75dd4baa33cb55d1011bb2565a2a8c2381728924564cb909e37c205a23f21b521b23bd057993afd43ae4da0b2f9d47
     outputs:
       sha256: ${{ steps.sha.outputs.sha256 }}
+      manifest_sha256: ${{ steps.manifest.outputs.sha256 }}
     steps:
       - name: 🛡️ Harden runner
         uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
@@ -195,6 +196,74 @@ jobs:
           echo "sha256=${SHA}" >> "$GITHUB_OUTPUT"
           echo "sha256=${SHA}"
 
+      - name: 🧾 Emit the update manifest
+        id: manifest
+        # What this build reads, writes and speaks — derived from the constants
+        # the build actually runs on, never restated by hand here. A manifest
+        # written in this script would drift silently from the client, and every
+        # no-stranding guarantee of the product law is decided from these numbers.
+        #
+        # RUN HERE, NOT IN THE GHCR JOB: the manifest is derived from
+        # `DevLog.VERSION`, which the stamp step above wrote into THIS checkout.
+        # `publish-ghcr` has no checkout and no Godot, so it has nothing to
+        # derive from and could only restate.
+        #
+        # THE ENVELOPE IS A PUBLICATION FACT. `sequence` and `not_after` cannot
+        # come from the build without conflating SemVer with the anti-replay
+        # counter or making identical builds nondeterministic, so the publisher
+        # supplies them — and both are derived from ONE captured instant so they
+        # cannot disagree.
+        #
+        # SEQUENCE IS THE PUBLICATION TIME IN EPOCH SECONDS, and the choice is
+        # load-bearing. The client persists the highest sequence it has accepted
+        # and refuses anything at or below it, so a counter that can EVER go
+        # backwards strands every client that saw the higher value. A wall clock
+        # cannot regress; a run number resets to 1 the day this workflow is
+        # renamed, which would do exactly that, silently, to every player.
+        #
+        # NOT_AFTER IS +24h, matching the shape reference in
+        # docs/design/client-update-manifest.example.json. It is not decoration:
+        # the ADR derives the server's protocol-CONTRACTION schedule from it —
+        # a contraction may only happen once every manifest advertising the old
+        # range has expired — so shortening it shortens that wait and lengthening
+        # it lengthens it.
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          set -o pipefail
+          SEQUENCE=$(date -u +%s)
+          # BSD `date -r <epoch>`: this job runs on macOS. Deriving the expiry
+          # from ${SEQUENCE} rather than calling `date` twice is what keeps the
+          # two ends of the window pinned to the same instant.
+          NOT_AFTER=$(date -u -r "$((SEQUENCE + 86400))" +%Y-%m-%dT%H:%M:%SZ)
+          echo "sequence=${SEQUENCE} not_after=${NOT_AFTER}"
+          WAR_MANIFEST_SEQUENCE="${SEQUENCE}" \
+          WAR_MANIFEST_NOT_AFTER="${NOT_AFTER}" \
+          WAR_MANIFEST_OUT="${PWD}/build/update-manifest.json" \
+            godot --headless --path client res://tools/update_manifest_emit.tscn 2>&1 | tee manifest.log
+          # The emitter exits non-zero and writes nothing on any refusal, and
+          # `pipefail` above carries that through `tee`. This second check is for
+          # the case the pipeline cannot see: a Godot that reports success while
+          # a script error scrolled past, which is how the export step upstream
+          # is guarded too.
+          if ! grep -q "MANIFEST OK" manifest.log; then
+            echo "::error::the update manifest was not emitted — publishing a build with no contract"
+            tail -20 manifest.log
+            exit 1
+          fi
+          test -s build/update-manifest.json
+          # Prove it is parseable JSON before it is ever pushed. A manifest the
+          # origin serves but no client can parse is the one failure this job
+          # can still catch cheaply.
+          jq -e . build/update-manifest.json > /dev/null
+          # Published across the job boundary for the same reason the zip's is:
+          # the GHCR job signs whatever it receives, so without this a truncated
+          # or swapped transfer would be signed as though it were what we emitted.
+          SHA=$(shasum -a 256 build/update-manifest.json | cut -d' ' -f1)
+          echo "sha256=${SHA}" >> "$GITHUB_OUTPUT"
+          echo "manifest: $(wc -c < build/update-manifest.json) bytes, sha256=${SHA}"
+
       - name: 📎 Hand the build to the GHCR job
         # The GHCR job cannot read the release: it is still a DRAFT at that
         # point, and GitHub only exposes draft releases to tokens with PUSH
@@ -208,7 +277,12 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: client-macos-universal
-          path: build/WorldAtRuin-${{ steps.version.outputs.version }}-macOS-universal.zip
+          # The manifest travels with the build for the same reason the build
+          # does: it is the same file object the GHCR job pushes, so what is
+          # signed is what was emitted rather than something regenerated there.
+          path: |
+            build/WorldAtRuin-${{ steps.version.outputs.version }}-macOS-universal.zip
+            build/update-manifest.json
           if-no-files-found: error
           retention-days: 1
 
@@ -390,6 +464,27 @@ jobs:
           echo "${ACTUAL}  WorldAtRuin-${VERSION}-macOS-universal.zip" > ../release-asset.sha256
           echo "checksum matches the build attached to the release: ${ACTUAL}"
 
+      - name: 🧾 Confirm the update manifest crossed the job boundary intact
+        # The manifest is signed by the same digest as the build, so it gets the
+        # same proof the build gets. Signing a manifest this job cannot show is
+        # the one it was handed would attest to bytes nobody checked.
+        env:
+          EXPECTED: ${{ needs.publish-macos.outputs.manifest_sha256 }}
+        run: |
+          set -euo pipefail
+          cd oci
+          if [ -z "${EXPECTED}" ]; then
+            echo "::error::no manifest checksum was published by the build job — cannot prove the manifest is the one emitted from the build"
+            exit 1
+          fi
+          ACTUAL=$(sha256sum update-manifest.json | cut -d' ' -f1)
+          if [ "${ACTUAL}" != "${EXPECTED}" ]; then
+            echo "::error::manifest checksum mismatch — build job emitted ${EXPECTED}, this job received ${ACTUAL}"
+            exit 1
+          fi
+          echo "${ACTUAL}  update-manifest.json" > ../manifest.sha256
+          echo "checksum matches the manifest emitted from the build: ${ACTUAL}"
+
       - name: 🔧 Set up ORAS
         uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2.0.1
 
@@ -418,12 +513,19 @@ jobs:
           cd oci
           # Bare version (v stripped) plus `latest`, mirroring the convention in
           # devantler-tech/actions' publish-manifests.
+          # The manifest is a SECOND LAYER of this artifact, not a second tag:
+          # one digest then covers the build and the contract describing it, so
+          # `cosign verify` attests to both at once and there is no second thing
+          # to keep in sync. A separate tag could be updated independently, which
+          # is precisely how a manifest comes to describe a build it does not ship
+          # with.
           oras push "${ARTIFACT}:${VERSION}" \
             --artifact-type application/vnd.devantler.worldatruin.client.v1+zip \
             --annotation "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
             --annotation "org.opencontainers.image.version=${VERSION}" \
             --annotation "org.opencontainers.image.revision=${GITHUB_SHA}" \
-            "WorldAtRuin-${VERSION}-macOS-universal.zip:application/zip"
+            "WorldAtRuin-${VERSION}-macOS-universal.zip:application/zip" \
+            "update-manifest.json:application/vnd.devantler.worldatruin.client.manifest.v1+json"
           oras tag "${ARTIFACT}:${VERSION}" latest
           # `oras manifest fetch --descriptor` rather than `oras resolve`: the
           # latter is marked [Preview] and `--format` is [Experimental], so both
@@ -466,6 +568,12 @@ jobs:
           oras pull "${ARTIFACT}@${DIGEST}"
           sha256sum -c <(sed "s#  .*#  WorldAtRuin-${VERSION}-macOS-universal.zip#" ../release-asset.sha256)
           echo "pulled bytes are identical to the release asset"
+          # The manifest gets the same pull-back proof. Checked against the sha
+          # the BUILD job emitted rather than the copy in this workspace, so a
+          # push that re-encoded the JSON fails here instead of shipping a
+          # contract whose signed bytes nobody can reproduce.
+          sha256sum -c ../manifest.sha256
+          echo "pulled manifest is byte-identical to the one emitted from the build"
 
     outputs:
       artifact: ${{ steps.push.outputs.artifact }}

@@ -801,6 +801,22 @@ everything shipped afterwards is held to.
     preferred: GitHub Packages has no generic/raw-file registry, so an OCI artifact is the only way
     a `.app` zip enters it. The GitHub Release asset remains the *install* download; GHCR is the
     *update* origin.
+  - **The update manifest is a SECOND LAYER of that same artifact, not a second tag** (#280). One
+    digest therefore covers the build and the contract describing it, so `cosign verify` attests to
+    both and there is nothing to keep in sync; a separate tag could be updated independently, which
+    is exactly how a manifest comes to describe a build it does not ship with. It is emitted by
+    `client/tools/update_manifest_emit.tscn` inside `publish-macos` — **not** `publish-ghcr`, which
+    has no checkout and no Godot, so it could only restate values instead of deriving them from the
+    stamped `DevLog.VERSION`. The bytes are JCS (RFC 8785) canonical with **no trailing newline**,
+    because they are what a signature will cover.
+  - **The manifest's publication envelope: `sequence` is the publication time in epoch seconds and
+    `not_after` is that instant + 24h**, both derived from one captured instant so they cannot
+    disagree. Neither is decoration. A client refuses any manifest at or below the highest
+    `sequence` it has accepted, so a counter that can EVER go backwards strands every client that
+    saw the higher value — which is why this is a wall clock and not a run number, since a run
+    number resets to 1 the day the workflow is renamed. And `not_after` is the clock the ADR derives
+    the server's protocol-**contraction** schedule from (a contraction may only happen once every
+    manifest advertising the old range has expired), so changing the 24h window changes that wait.
   - **The release publishes LAST, after the artifact jobs.** `publish-release` depends on both
     `publish-macos` and `publish-ghcr`, so the draft goes public only once the build is attached
     *and* the GHCR origin exists and is signed. Publishing earlier would leave a public, immutable
