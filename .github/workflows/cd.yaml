@@ -227,8 +227,6 @@ jobs:
         # a contraction may only happen once every manifest advertising the old
         # range has expired — so shortening it shortens that wait and lengthening
         # it lengthens it.
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
           set -o pipefail
@@ -277,12 +275,28 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: client-macos-universal
-          # The manifest travels with the build for the same reason the build
-          # does: it is the same file object the GHCR job pushes, so what is
-          # signed is what was emitted rather than something regenerated there.
-          path: |
-            build/WorldAtRuin-${{ steps.version.outputs.version }}-macOS-universal.zip
-            build/update-manifest.json
+          path: build/WorldAtRuin-${{ steps.version.outputs.version }}-macOS-universal.zip
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: 📎 Hand the update manifest to the GHCR job
+        # ITS OWN ARTIFACT, deliberately, rather than a second path on the one
+        # above. `release-credential-boundary` pins that artifact's path to the
+        # canonical zip EXACTLY, because that pin is what proves the build job
+        # hands its output over instead of attaching the release itself. Adding
+        # a path there would have meant widening a security guard to fit a
+        # feature; a separate artifact leaves the guard untouched.
+        #
+        # It also keeps the manifest out of `attach-release`, which downloads
+        # the canonical artifact into `build/` and has no business holding a
+        # file it does not publish.
+        #
+        # Still the same file object the GHCR job pushes, so what gets signed is
+        # what was emitted rather than something regenerated there.
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: client-update-manifest
+          path: build/update-manifest.json
           if-no-files-found: error
           retention-days: 1
 
@@ -440,6 +454,15 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: client-macos-universal
+          path: oci
+
+      - name: ⬇️ Fetch the update manifest from the macOS job
+        # Into the SAME directory, because `oras push` takes its layer paths
+        # relative to one working directory — the build and the contract
+        # describing it are pushed as one artifact.
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: client-update-manifest
           path: oci
 
       - name: 🧾 Confirm the build matches what was attached to the release
