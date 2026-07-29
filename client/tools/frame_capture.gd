@@ -45,7 +45,15 @@ const FrameDiff := preload("res://tools/frame_diff.gd")
 ## error message a caller sees cannot disagree — the previous pair of hand-kept
 ## conditions had already drifted apart by one scenario.
 const SCENARIOS: Array[String] = [
-	"world", "first_run", "breath", "walk", "run", "light_response", "replication", "mob_chase",
+	"world",
+	"first_run",
+	"breath",
+	"walk",
+	"run",
+	"jump",
+	"light_response",
+	"replication",
+	"mob_chase",
 ]
 
 ## The committed vantages. Fixed on purpose — evidence is only comparable across
@@ -304,6 +312,23 @@ const WALK_CAM_RISE := 0.5
 const WALK_CAM_FRONT := 3.2
 const WALK_VANTAGE_Z := 18.0
 
+## Exact points on the shipped controller's airborne arc: launch, approach to
+## apex, apex, approach to landing, and landing-ready descent. A five-frame
+## sequence exposes continuity between the three authored silhouettes without
+## inventing wall-clock timing in the evidence tool.
+const JUMP_SPEEDS := [
+	WalkLocomotion.JUMP_REFERENCE_SPEED,
+	WalkLocomotion.JUMP_REFERENCE_SPEED * 0.5,
+	0.0,
+	-WalkLocomotion.JUMP_REFERENCE_SPEED * 0.5,
+	-WalkLocomotion.JUMP_REFERENCE_SPEED,
+]
+const JUMP_LABELS := ["takeoff", "rise", "apex", "fall", "descent"]
+const JUMP_SETTLE_FRAMES := 4
+## A frozen standing body or an upper-body-only flourish cannot pass this
+## evidence gate: one real foot must move through the full-body sequence.
+const JUMP_MIN_FOOT_TRAVEL_M := 0.05
+
 ## The creator is 2D, but its transparent side photographs the live 3D world.
 ## SDFGI and volumetric reprojection therefore need the same 150-frame initial
 ## convergence as a world capture. The former 60-frame UI-only assumption is
@@ -420,6 +445,9 @@ func _ready() -> void:
 		return
 	if scenario == "run":
 		await _capture_gait(dir, main, true)
+		return
+	if scenario == "jump":
+		await _capture_jump(dir, main)
 		return
 
 	for i in WARMUP_FRAMES:
@@ -1510,6 +1538,110 @@ func _capture_gait(dir: String, main: Node, running: bool) -> void:
 
 	print("CAPTURE PASS — %d %s phases written to %s (left-foot travel %.1f cm)" %
 		[WALK_PHASES, gait, dir, travel * 100.0])
+	get_tree().quit(0)
+
+
+## The `jump` scenario: a fixed-velocity full-body sequence of the REAL
+## wanderer on open daylight ground. Player physics is paused only after the
+## production scene has built and bound its recipe body; each frame then calls
+## the shipping driver's exact [method WalkLocomotion.apply_jump] seam.
+##
+## This is intentionally separate from the grounded gait loop. A jump advances
+## from vertical velocity rather than a periodic phase, and describing it as a
+## gait would make it too easy for future capture cleanup to erase that
+## behavioral distinction.
+func _capture_jump(dir: String, main: Node) -> void:
+	for i in WARMUP_FRAMES:
+		await get_tree().process_frame
+	if not _has_world(main):
+		_fail("the world did not build — a sky-only jump sequence is not evidence")
+		return
+
+	var player := main.get_node_or_null("Wanderer") as Player
+	if player == null:
+		_fail("the shipped scene has no Wanderer Player — the jump path is not live")
+		return
+	var animator := player.get_node_or_null("WalkLocomotion")
+	if animator == null or not animator.has_method("apply_jump"):
+		_fail("the shipped Wanderer has no exact jump-pose seam")
+		return
+	if OS.get_environment(WalkLocomotion.JUMP_FLAG_ENV) != "1":
+		_fail("%s is not opted in — refusing to advertise disabled jump motion" %
+			WalkLocomotion.JUMP_FLAG_ENV)
+		return
+	var world := main.get_node_or_null("World") as WorldGen
+	if world == null:
+		_fail("the shipped scene has no WorldGen for the daylight jump vantage")
+		return
+
+	player.set_physics_process(false)
+	player.control_enabled = false
+	var ground := world.surface_height_at(0.0, WALK_VANTAGE_Z)
+	if ground <= WorldGen.NO_GROUND + 1.0:
+		_fail("the committed jump vantage has no terrain under it")
+		return
+	player.global_position = Vector3(0.0, ground + 0.1, WALK_VANTAGE_Z)
+	player.face_toward(Vector3.ZERO)
+	var skeleton := CharacterFactory.find_skeleton(player.get_node("Visual"))
+	if skeleton == null:
+		_fail("the shipped Wanderer has no recipe skeleton")
+		return
+
+	var body := skeleton.get_parent()
+	var idle := body.get_node_or_null("BreathingIdle") if body != null else null
+	if idle != null:
+		idle.set_process(false)
+		BreathingIdle.apply_at(skeleton, 0.0)
+
+	skeleton.force_update_all_bone_transforms()
+	var chest := skeleton.find_bone("spine_03")
+	var left_foot := skeleton.find_bone("foot_l")
+	if chest < 0 or left_foot < 0:
+		_fail("the jump evidence rig lacks spine_03 or foot_l")
+		return
+	var focus: Vector3 = skeleton.global_transform * skeleton.get_bone_global_pose(chest).origin
+	var cam := Camera3D.new()
+	cam.far = 400.0
+	cam.fov = 42.0
+	get_tree().root.add_child(cam)
+	cam.global_position = focus + Vector3(WALK_CAM_SIDE, WALK_CAM_RISE, -WALK_CAM_FRONT)
+	cam.look_at(focus - Vector3(0.0, 0.45, 0.0), Vector3.UP)
+
+	var foot_positions: Array[Vector3] = []
+	for i in JUMP_SPEEDS.size():
+		var speed: float = JUMP_SPEEDS[i]
+		animator.call("apply_jump", speed)
+		skeleton.force_update_all_bone_transforms()
+		foot_positions.append(
+			skeleton.global_transform * skeleton.get_bone_global_pose(left_foot).origin)
+		for _s in JUMP_SETTLE_FRAMES:
+			cam.current = true
+			await get_tree().process_frame
+		var img := await _grab_frame()
+		var spread := _luma_spread(img)
+		if spread < MIN_LUMA_SPREAD:
+			_fail("jump phase %d is a uniform frame (luma spread %.4f) — nothing rendered" %
+				[i, spread])
+			return
+		var frame_name := "jump_%02d_%s" % [i, JUMP_LABELS[i]]
+		var err := img.save_png("%s/%s.png" % [dir, frame_name])
+		if err != OK:
+			_fail("could not write %s (error %d)" % [frame_name, err])
+			return
+		_write_note(dir, frame_name, img, _size_note(img))
+		print("CAPTURED %s (vertical speed %.1f m/s)" % [frame_name, speed])
+
+	var travel := 0.0
+	for a in foot_positions:
+		for b in foot_positions:
+			travel = maxf(travel, a.distance_to(b))
+	if travel < JUMP_MIN_FOOT_TRAVEL_M:
+		_fail(("the jump sequence photographs one lower-body pose: the left foot travels %.4f m, " +
+			"under the %.4f m floor") % [travel, JUMP_MIN_FOOT_TRAVEL_M])
+		return
+
+	print("CAPTURE PASS — %d jump phases written to %s (left-foot travel %.1f cm)" %
+		[JUMP_SPEEDS.size(), dir, travel * 100.0])
 	get_tree().quit(0)
 
 

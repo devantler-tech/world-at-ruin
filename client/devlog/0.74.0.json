@@ -1,0 +1,10 @@
+{
+	"date": "2026-07-29",
+	"notes": [
+		"Jumping can now move the wanderer's body instead of carrying a standing pose through the air. It is an opt-in preview: set WAR_JUMP_MOTION=1 before launch; ordinary play remains unchanged.",
+		"The real jump drives distinct push-off, tucked-apex and landing-ready silhouettes from the wanderer's actual vertical speed, and the airborne pose clears as soon as the character lands.",
+		"Still short of the mark: there is no authored landing anticipation or impact, directional lean, turn cue, camera response, or blend into walking and running. This is the first reviewable jump arc, not a finished movement set."
+	],
+	"title": "Jumping can move the wanderer",
+	"version": "0.74.0"
+}
