@@ -275,10 +275,35 @@ else
 	# satisfy is not a guard. Anchoring on the line shape is what makes deleting
 	# the wiring detectable.
 	#
-	# The capture must OBTAIN its flags from this resolver...
-	if ! grep -qE '^[[:space:]]+tools/preview-flags\.sh --env[[:space:]]*>' "$WORKFLOW"; then
-		t_fail "no capture step resolves its flags from tools/preview-flags.sh --env — the list is not wired to anything"
+	# The editor capture must OBTAIN its flags from this resolver...
+	sed -n '/^  frame-capture:/,/^  frame-capture-exported:/p' \
+		"$WORKFLOW" >"$SCRATCH_DIR/editor-capture-job"
+	if ! grep -qE '^[[:space:]]+tools/preview-flags\.sh --env[[:space:]]*>' \
+		"$SCRATCH_DIR/editor-capture-job"; then
+		t_fail "the editor capture does not resolve its flags from tools/preview-flags.sh --env — its opt-in evidence can only show the default world"
 	fi
+	# The shipped artifact has its own capture job and must resolve the same
+	# source of truth there. A resolver call in the editor-only job cannot prove
+	# an exported build ever rendered the treatments.
+	sed -n '/^  frame-capture-exported:/,/^  ci-required-checks:/p' \
+		"$WORKFLOW" >"$SCRATCH_DIR/exported-capture-job"
+	# shellcheck disable=SC2016 # workflow variables are matched as literal source
+	if ! grep -qE '^[[:space:]]+tools/preview-flags\.sh --env[[:space:]]*>' \
+		"$SCRATCH_DIR/exported-capture-job"; then
+		t_fail "the exported-client capture does not resolve tools/preview-flags.txt — its artifact can only show the default world"
+	elif ! grep -qF '. "$flags_file"' "$SCRATCH_DIR/exported-capture-job" \
+		|| ! grep -qF 'WAR_SHOT_DIR="${RUNNER_TEMP}/exported-shots/opt-in-previews"' \
+			"$SCRATCH_DIR/exported-capture-job"; then
+		t_fail "the exported-client capture resolves preview flags but does not source them into an isolated opt-in run"
+	fi
+	# shellcheck disable=SC2016 # GitHub expression is a literal artifact path
+	for preview_artifact in \
+		'${{ runner.temp }}/exported-shots/opt-in-previews/*.png' \
+		'${{ runner.temp }}/exported-shots/opt-in-previews/*.txt'; do
+		if ! grep -qF "$preview_artifact" "$SCRATCH_DIR/exported-capture-job"; then
+			t_fail "the exported opt-in artifact omits $preview_artifact — reviewers cannot inspect the enabled treatment and its exact flag record"
+		fi
+	done
 	# ...and the workflow must RUN this test, or the guard above is unenforced.
 	if ! grep -qE '^[[:space:]]+run: \./tools/preview-flags\.test\.sh[[:space:]]*$' "$WORKFLOW"; then
 		t_fail "ci.yaml has no 'run:' step invoking preview-flags.test.sh — this guard would not fire in CI"
