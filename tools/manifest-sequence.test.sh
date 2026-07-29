@@ -59,6 +59,18 @@ for version in "${versions[@]}"; do
 		fail "${version} was refused, so the ordering below it proves nothing"
 		continue
 	fi
+	# Validate before comparing, for the same reason the script itself does: `[` on
+	# a non-integer aborts with "integer expression expected", and because that is
+	# a condition inside an `if`, `set -e` does not fire — so every ordering
+	# assertion below would silently stop comparing while the loop reported
+	# nothing. Found by ablating this file: forcing multi-line output produced 11
+	# swallowed comparison errors and no ordering failure at all.
+	if [[ -z "${current}" || "${current}" == *[!0-9]* ]]; then
+		fail "${version} printed '${current}', which is not a bare integer — the ordering comparison cannot run on it"
+		previous=""
+		previous_version=""
+		continue
+	fi
 	if [ -n "${previous}" ] && [ "${current}" -le "${previous}" ]; then
 		fail "${previous_version} -> ${version} did not increase the sequence (${previous} -> ${current}) — a client would refuse the newer release as stale"
 	fi
@@ -124,7 +136,10 @@ for entry in "${cases[@]}"; do
 			fail "${label}: '${version}' was accepted (printed '${stdout}') — CD would publish an unorderable mark"
 		elif [ -s "${stderr_file}" ]; then
 			fail "${label}: '${version}' succeeded but wrote to stderr: $(tr '\n' ' ' <"${stderr_file}") — a swallowed comparison failure is how a wrapped mark ships"
-		elif ! printf '%s' "${stdout}" | grep -Eq '^[0-9]+$'; then
+		# A bash pattern over the WHOLE value, not `grep -Eq '^[0-9]+$'`, which is
+		# line-oriented: it matches when ANY line is all digits, so `123\nextra`
+		# would satisfy it while CD expects one bare integer.
+		elif [[ -z "${stdout}" || "${stdout}" == *[!0-9]* ]]; then
 			fail "${label}: '${version}' printed '${stdout}', which is not a bare integer"
 		fi
 	else
@@ -144,8 +159,12 @@ fi
 # --- wiring: a derivation CD does not call is a derivation that does nothing ---
 
 CD="${ROOT}/.github/workflows/cd.yaml"
-if ! grep -q 'tools/manifest-sequence.sh' "${CD}"; then
-	fail "cd.yaml does not call tools/manifest-sequence.sh — the manifest step is deriving its mark some other way"
+# Match the CONCRETE INVOCATION, not the script path. `cd.yaml` also names the
+# path in a comment explaining the derivation, so a path-only grep passes on that
+# comment alone — it would stay green with the real `SEQUENCE=` assignment
+# deleted, which is the one thing this assertion exists to catch.
+if ! grep -qE 'SEQUENCE=\$\(\./tools/manifest-sequence\.sh +"\$\{VERSION\}"\)' "${CD}"; then
+	fail "cd.yaml does not assign SEQUENCE from tools/manifest-sequence.sh with \${VERSION} — the manifest step is deriving its mark some other way"
 fi
 if grep -qE 'SEQUENCE=\$\(date' "${CD}"; then
 	fail "cd.yaml still samples a clock for the sequence — concurrent releases can invert the mark"
