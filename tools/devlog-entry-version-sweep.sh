@@ -131,6 +131,16 @@ introducing_commit() {
 	out=$(git log --full-history --reverse --format='%h' -S"\"version\": \"$1\"" \
 		-- client/scripts/devlog.gd "$ENTRY_DIR") || return 0
 	[ -n "$out" ] || return 0
+	# A lone candidate cannot be ranked against anything, and both branches below
+	# select it regardless of what it contains — so the containment lookup is
+	# skipped rather than computed and discarded. This is the ordinary case (every
+	# entry in this repository today) and the lookup is the expensive half: it
+	# shells out to `git tag --contains` per candidate, which the caller then
+	# repeats on the anchor it gets back.
+	if [ "$out" = "${out%%$'\n'*}" ]; then
+		printf '%s' "$out"
+		return 0
+	fi
 	while IFS= read -r candidate; do
 		[ -n "$candidate" ] || continue
 		release=$(first_release_containing "$candidate")
