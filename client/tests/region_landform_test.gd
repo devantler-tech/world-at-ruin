@@ -171,7 +171,7 @@ func _ready() -> void:
 	_test_regions_differ_in_relief(relief)
 	_test_ridging_creases_the_field()
 
-	print("region relief (m): ashflats %.3f, rustmoor %.3f, cinderreach %.3f, bonepale %.3f; worst open grade %.2f deg" %
+	print("region relief (m): ashflats %.3f, rustmoor %.3f, cinderreach %.3f, bonepale %.3f; worst collision-face grade %.2f deg" %
 		[
 			float(relief.get(&"ashflats", 0.0)),
 			float(relief.get(&"rustmoor", 0.0)),
@@ -365,16 +365,18 @@ func _test_ridge_is_mean_zero() -> void:
 ## and it exists for the same reason: a landform blended against the runner-up
 ## region only would jump wherever the SECOND-nearest site changes identity
 ## while the owner stays put, and that discontinuity hides where the THIRD site
-## takes over. Sweeping a lattice rather than walking site to site is what puts
+## takes over. Sweeping every face rather than walking site to site is what puts
 ## those places inside the test.
 ##
-## A step shows up as a grade far beyond anything noise of this amplitude can
-## produce, so the bound is deliberately loose — arm 5 is the tight one. Stated
-## as a grade rather than a raw delta so it means the same at any sampling step.
+## A step shows up as a face angle far beyond anything noise of this amplitude
+## can produce, so the bound is deliberately loose — arm 5 is the tight one.
+## Stated as an angle rather than a raw height delta because the mesh's quads
+## are a fixed size, so the two carry the same information and the angle is the
+## one the floor limit is also expressed in.
 func _test_landform_is_continuous() -> void:
 	if _worst_grade >= 80.0:
-		_fail("the height field steps: %.2f deg at %.1f m sampling is a discontinuity, not a slope" %
-			[_worst_grade, SAMPLE_STEP])
+		_fail("the collision surface steps: a %.2f deg face is a discontinuity, not a slope" %
+			_worst_grade)
 
 
 ## 5. The open ground stays floor rather than becoming wall — per region, and
@@ -416,7 +418,7 @@ func _test_terrain_stays_walkable() -> void:
 				region_name)
 
 	if _worst_grade > MAX_GRADE_DEG:
-		_fail("worst open grade %.2f deg exceeds %.1f deg (character floor limit %.1f) — the world has ground the wanderer cannot walk up, and it is not inside any one region" %
+		_fail("worst collision-face grade %.2f deg exceeds %.1f deg (character floor limit %.1f) — the world has ground the wanderer cannot walk up, and it is not inside any one region" %
 			[_worst_grade, MAX_GRADE_DEG, FLOOR_MAX_ANGLE_DEG])
 
 
