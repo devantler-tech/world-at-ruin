@@ -1934,6 +1934,10 @@ jobs:
           if ! grep -qE "[0-9]+ first-run vantages? written" first-run.log; then
             echo "::error::first-run capture did not report a first-run vantage — see log"; tail -40 first-run.log; exit 1
           fi
+          if ! grep -Fxq "BACKDROP PINNED — scenery clocks fixed before first-run capture" first-run.log; then
+            echo "::error::first-run capture did not pin its live scenery clock before boot"
+            tail -40 first-run.log; exit 1
+          fi
           # Require the FULL expected set, not merely a plausible count. A
           # capture-tool change that dropped the lower-panel shot or the preset
           # loop would still report some number and still write first_run.png —
@@ -2482,6 +2486,10 @@ jobs:
           # otherwise go green.
           if ! grep -qE "[0-9]+ first-run vantages? written" exported-first-run.log; then
             echo "::error::exported first-run capture did not report a first-run vantage — see log"; tail -40 exported-first-run.log; exit 1
+          fi
+          if ! grep -Fxq "BACKDROP PINNED — scenery clocks fixed before first-run capture" exported-first-run.log; then
+            echo "::error::exported first-run capture did not pin its live scenery clock before boot"
+            tail -40 exported-first-run.log; exit 1
           fi
           # Require the FULL expected set, for the editor job's reason: a
           # regression that dropped the lower-panel shot or the preset loop
