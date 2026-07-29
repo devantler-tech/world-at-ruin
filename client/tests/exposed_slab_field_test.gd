@@ -13,9 +13,10 @@ extends Node
 const FIELD_PATH := "res://scripts/exposed_slab_field.gd"
 const PARTITION_PATH := "res://shaders/terrain_surface.gdshaderinc"
 const GROUND_SHADER_PATH := "res://shaders/terrain.gdshader"
+const NOISE_PATH := "res://shaders/noise.gdshaderinc"
 const EPS := 0.000001
 const WORLD_SIZE := 220.0
-const EXPECTED_WORLD_CANDIDATES := 36_481
+const EXPECTED_WORLD_CANDIDATES := 36_100
 ## An owner can meet any of the other 24 cells in its owner-relative 5×5
 ## window: two-apart cells can both occur in a fragment's local 3×3 search.
 const EXPECTED_MAX_VERTICES := 24
@@ -82,8 +83,8 @@ func _test_shader_interior_fixture(field: RefCounted) -> void:
 	if a.get(&"exposed") != false:
 		_fail("shader interior fixture is exposed, expected buried")
 	var drift := float(a.get(&"drift", -1.0))
-	if absf(drift - 0.64379003839202) > EPS:
-		_fail("shader interior fixture drift %.9f != 0.643790038" % drift)
+	if absf(drift - 0.64235711097717) > EPS:
+		_fail("shader interior fixture drift %.9f != 0.642357111" % drift)
 
 
 ## Points on opposite sides of the bisector between shader cells (0, 0) and
@@ -92,9 +93,9 @@ func _test_shader_interior_fixture(field: RefCounted) -> void:
 func _test_shader_boundary_fixture(field: RefCounted) -> void:
 	var context := {&"rock_mix": 0.0}
 	var left := field.call(
-		"sample", 1409, Vector2(0.883740, 0.457158), context) as Dictionary
+		"sample", 1409, Vector2(0.885244, 0.457407), context) as Dictionary
 	var right := field.call(
-		"sample", 1409, Vector2(0.906449, 0.451000), context) as Dictionary
+		"sample", 1409, Vector2(0.907955, 0.451256), context) as Dictionary
 	if left.get(&"id") != Vector2i(0, 0):
 		_fail("shader boundary fixture's left side belongs to %s, expected (0, 0)"
 			% [left.get(&"id")])
@@ -111,10 +112,10 @@ func _test_shader_boundary_fixture(field: RefCounted) -> void:
 func _test_shader_triple_fixture(field: RefCounted) -> void:
 	var context := {&"rock_mix": 0.0}
 	var fixtures := [
-		[Vector2(7.924941, 16.414000), Vector2i(6, 14), &"rock"],
-		[Vector2(7.948471, 16.414000), Vector2i(7, 14), &"basalt"],
-		[Vector2(7.936706, 16.402230), Vector2i(6, 13), &"basalt"],
-		[Vector2(7.936706, 16.425760), Vector2i(7, 14), &"basalt"],
+		[Vector2(11.814926, 14.060237), Vector2i(9, 12), &"basalt"],
+		[Vector2(11.838456, 14.060237), Vector2i(10, 11), &"basalt"],
+		[Vector2(11.826691, 14.048471), Vector2i(9, 11), &"pale"],
+		[Vector2(11.826691, 14.072001), Vector2i(9, 12), &"basalt"],
 	]
 	var owners: Dictionary = {}
 	for fixture in fixtures:
@@ -145,8 +146,8 @@ func _test_exposure_fixture(field: RefCounted) -> void:
 	if result.get(&"exposed") != true:
 		_fail("shader exposure fixture is buried, expected exposed")
 	var drift := float(result.get(&"drift", -1.0))
-	if absf(drift - 0.50969165759670) > EPS:
-		_fail("shader exposure fixture drift %.9f != 0.509691658" % drift)
+	if absf(drift - 0.50994616746902) > EPS:
+		_fail("shader exposure fixture drift %.9f != 0.509946167" % drift)
 
 
 ## The shipping shader's cells are world-coordinate based, so changing the
@@ -179,6 +180,44 @@ func _test_region_context(field: RefCounted) -> void:
 	if buried.get(&"exposed") != false or regional.get(&"exposed") != true:
 		_fail("rock_mix 0/1 resolved exposure %s/%s, expected false/true"
 			% [buried.get(&"exposed"), regional.get(&"exposed")])
+	var footprint_point := Vector2(-13.0, 48.0)
+	var close := field.call("sample", 1409, footprint_point, {
+		&"rock_mix": 0.3,
+		&"exposure_width": 0.035,
+	}) as Dictionary
+	var wide := field.call("sample", 1409, footprint_point, {
+		&"rock_mix": 0.3,
+		&"exposure_width": 0.25,
+	}) as Dictionary
+	var default_width := field.call("sample", 1409, footprint_point, {
+		&"rock_mix": 0.3,
+	}) as Dictionary
+	var clamped_low := field.call("sample", 1409, footprint_point, {
+		&"rock_mix": 0.3,
+		&"exposure_width": 0.001,
+	}) as Dictionary
+	var clamped_high := field.call("sample", 1409, footprint_point, {
+		&"rock_mix": 0.3,
+		&"exposure_width": 1.0,
+	}) as Dictionary
+	if close.get(&"id") != Vector2i(-12, 40):
+		_fail("exposure-width fixture belongs to %s, expected (-12, 40)"
+			% [close.get(&"id")])
+	if close.get(&"exposed") != false or wide.get(&"exposed") != true:
+		_fail("exposure_width 0.035/0.25 resolved %s/%s, expected false/true"
+			% [close.get(&"exposed"), wide.get(&"exposed")])
+	if absf(float(default_width.get(&"exposure_width")) - 0.035) > EPS \
+			or absf(float(clamped_low.get(&"exposure_width")) - 0.035) > EPS:
+		_fail("default/low exposure widths are %s/%s, expected 0.035/0.035"
+			% [default_width.get(&"exposure_width"),
+				clamped_low.get(&"exposure_width")])
+	if absf(float(clamped_high.get(&"exposure_width")) - 0.25) > EPS:
+		_fail("high exposure width is %s, expected the shader ceiling 0.25"
+			% [clamped_high.get(&"exposure_width")])
+	if default_width.get(&"exposed") != close.get(&"exposed") \
+			or clamped_low.get(&"exposed") != close.get(&"exposed") \
+			or clamped_high.get(&"exposed") != wide.get(&"exposed"):
+		_fail("exposure-width default/clamps do not preserve the bounded decisions")
 
 
 func _test_candidate_bound(field: RefCounted, field_script: Script) -> void:
@@ -199,8 +238,8 @@ func _test_candidate_bound(field: RefCounted, field_script: Script) -> void:
 	if identities.front() != Vector3i(1409, -95, -95):
 		_fail("first 220 m candidate is %s, expected (1409, -95, -95)"
 			% [identities.front()])
-	if identities.back() != Vector3i(1409, 95, 95):
-		_fail("last 220 m candidate is %s, expected (1409, 95, 95)"
+	if identities.back() != Vector3i(1409, 94, 94):
+		_fail("last 220 m candidate is %s, expected (1409, 94, 94)"
 			% [identities.back()])
 	var fresh := field_script.new() as RefCounted
 	var rebuilt := fresh.call(
@@ -230,18 +269,18 @@ func _test_polygons(field: RefCounted, field_script: Script) -> void:
 		_fail("changing the seed moved the current world-coordinate shader polygon")
 
 	# The fixed shader boundary must be an edge of both cells' geometry.
-	var boundary := Vector2(0.895094, 0.454079)
+	var boundary := Vector2(0.896599, 0.454331)
 	for identity in [Vector3i(1409, 0, 0), Vector3i(1409, 1, 0)]:
 		var polygon := field.call("polygon_for", identity) as PackedVector2Array
 		if _distance_to_edges(boundary, polygon) > 0.00001:
 			_fail("shader boundary fixture is not on polygon %s" % [identity])
 
 	# The three fixed shader owners must share the pinned triple vertex.
-	var triple := Vector2(7.936706, 16.414000)
+	var triple := Vector2(11.826691, 14.060237)
 	for identity in [
-		Vector3i(1409, 6, 14),
-		Vector3i(1409, 7, 14),
-		Vector3i(1409, 6, 13),
+		Vector3i(1409, 9, 12),
+		Vector3i(1409, 10, 11),
+		Vector3i(1409, 9, 11),
 	]:
 		var polygon := field.call("polygon_for", identity) as PackedVector2Array
 		if _distance_to_vertices(triple, polygon) > 0.0002:
@@ -315,15 +354,41 @@ func _distance_to_vertices(point: Vector2, polygon: PackedVector2Array) -> float
 func _test_shader_source_contract() -> void:
 	var partition := _source(PARTITION_PATH)
 	var ground := _source(GROUND_SHADER_PATH)
-	if partition.is_empty() or ground.is_empty():
-		_fail("shader parity source is unreadable (partition=%d ground=%d bytes)"
-			% [partition.length(), ground.length()])
+	var noise := _source(NOISE_PATH)
+	if partition.is_empty() or ground.is_empty() or noise.is_empty():
+		_fail("shader parity source is unreadable (partition=%d ground=%d noise=%d bytes)"
+			% [partition.length(), ground.length(), noise.length()])
 		return
 	var compact_partition := _compact_shader(partition)
 	var compact_ground := _compact_shader(ground)
+	var compact_noise := _compact_shader(noise)
 	var partition_laws := [
 		"returnfract(sin(dot(p,vec3(127.1,311.7,74.7)))*43758.5453);",
+		"vec3u=f*f*(3.0-2.0*f);",
+		"floatn000=terrain_hash3(i);",
+		"floatn100=terrain_hash3(i+vec3(1.0,0.0,0.0));",
+		"floatn010=terrain_hash3(i+vec3(0.0,1.0,0.0));",
+		"floatn110=terrain_hash3(i+vec3(1.0,1.0,0.0));",
+		"floatn001=terrain_hash3(i+vec3(0.0,0.0,1.0));",
+		"floatn101=terrain_hash3(i+vec3(1.0,0.0,1.0));",
+		"floatn011=terrain_hash3(i+vec3(0.0,1.0,1.0));",
+		"floatn111=terrain_hash3(i+vec3(1.0,1.0,1.0));",
+		"mix(mix(n000,n100,u.x),mix(n010,n110,u.x),u.y),mix(mix(n001,n101,u.x),mix(n011,n111,u.x),u.y),u.z);",
+		"floatamp=0.5;",
+		"floatsum=0.0;",
+		"for(inti=0;i<3;i++){",
+		"sum+=amp*terrain_value_noise(p);",
+		"p*=2.03;",
+		"amp*=0.5;",
+		"returnterrain_fbm(vec3(xz.x,0.0,xz.y)*scale);",
+		"for(intj=-1;j<=1;j++){",
+		"for(inti=-1;i<=1;i++){",
+		"vec2cell=base+vec2(float(i),float(j));",
+		"terrain_hash3(vec3(cell,0.0)),terrain_hash3(vec3(cell,7.0)));",
 		"vec2centre=cell+0.15+0.7*jitter;",
+		"floatd=length(uv-centre);",
+		"if(d<f1){",
+		"f1=d;c1=centre;id=cell;",
 		"floatpick=terrain_hash3(vec3(id*1.7,3.0));",
 		"c=mix(c,basalt,step(0.38,pick));",
 		"c=mix(c,ferric,step(0.66,pick));",
@@ -338,12 +403,17 @@ func _test_shader_source_contract() -> void:
 		"uniformfloatash_contact:hint_range(0.002,0.3)=0.035;",
 		"vec2plate_uv=world_pos.xz*plate_scale;",
 		"floatexposed_edge=drift-0.47;",
+		"floatew=clamp(max(ash_contact,fwidth(exposed_edge)*1.2),ash_contact,max(ash_contact,0.25));",
+		"floatsheet=clamp(smoothstep(-ew,ew,exposed_edge)+rock_mix,0.0,1.0);",
 		"floatslab_pick=hash3(vec3(plate_id*2.3,19.0));",
 		"floatis_slab=step(0.60,slab_pick);",
 	]
 	for law in ground_laws:
 		if not compact_ground.contains(law):
 			_fail("ground shader parity law is missing: %s" % law)
+	var slab_hash_law := "returnfract(sin(dot(p,vec3(127.1,311.7,74.7)))*43758.5453);"
+	if not (compact_ground + compact_noise).contains(slab_hash_law):
+		_fail("ground slab hash parity law is missing from terrain/noise source")
 
 
 func _source(path: String) -> String:

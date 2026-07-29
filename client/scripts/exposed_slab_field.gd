@@ -5,18 +5,25 @@ extends RefCounted
 ## The arithmetic in this first slice matches the shipping terrain shader for
 ## the current world: one 3×3 jittered-cell ownership search, the same
 ## three-octave drift field, the same named-substance bands, and the same
-## discrete slab decision.
+## discrete slab decision. Every scalar transcendental/mix step is rounded back
+## to binary32, matching the shader's precision instead of GDScript's float64.
+## GPU vendors may still approximate `sin` differently; the mesh child must
+## compare these fixed fixtures on its actual render device before enabling
+## visible topology. This child deliberately creates none.
 
 const PLATE_SCALE := 0.85
 const DRIFT_SCALE := 0.055
 const ASH_CONTACT := 0.035
 const EXPOSED_THRESHOLD := 0.47
+const EXPOSURE_WIDTH_MAX := 0.25
+## The shader literal rounded to the binary32 value its scalar path receives.
+const HASH_SCALE_F32 := 43758.546875
 ## A fragment searches 3×3 cells around itself. Relative to one possible owner,
 ## that admits competitors two lattice cells away: a 5×5 window, minus itself.
 const MAX_VERTICES_PER_POLYGON := 24
-## `candidate_identities(1409, 220.0)` spans cell -95 through 95 on each axis:
-## 191² candidates, including the one-cell halo needed at the world boundary.
-const MAX_CANDIDATES_220M := 36_481
+## `candidate_identities(1409, 220.0)` spans cell -95 through 94 on each axis:
+## 190² candidates, including the one-cell halo reachable at each world edge.
+const MAX_CANDIDATES_220M := 36_100
 
 const CANDIDATE_HALO := 1
 const CLIP_RADIUS := 2.0
@@ -24,16 +31,23 @@ const CLIP_EPSILON := 0.0000001
 
 
 ## Resolve the field at one world-space XZ point. `region_context.rock_mix`
-## carries the slope-aware exposed-rock term that the terrain shader receives
-## from the rendered surface; callers with flat ground use zero.
+## carries the slope-aware exposed-rock term that the terrain shader receives.
+## `region_context.exposure_width` carries that rendered sample's effective
+## `fwidth`-expanded transition, clamped to the shader's 0.035..0.25 range.
+## Static geometry uses the 0.035 default so its topology is camera-independent;
+## a rendered parity probe supplies the measured footprint explicitly.
 func sample(world_seed: int, world_xz: Vector2, region_context: Dictionary) -> Dictionary:
 	var id := _plate_id(world_xz * PLATE_SCALE)
 	var drift := _ground_noise(world_xz, DRIFT_SCALE)
-	var rock_mix := clampf(float(region_context.get(&"rock_mix", 0.0)), 0.0, 1.0)
-	var sheet := clampf(
-		smoothstep(-ASH_CONTACT, ASH_CONTACT, drift - EXPOSED_THRESHOLD) + rock_mix,
-		0.0,
-		1.0)
+	var rock_mix := _f32(clampf(
+		float(region_context.get(&"rock_mix", 0.0)), 0.0, 1.0))
+	var exposure_width := _f32(clampf(
+		float(region_context.get(&"exposure_width", ASH_CONTACT)),
+		ASH_CONTACT,
+		EXPOSURE_WIDTH_MAX))
+	var sheet := _f32(clampf(_f32(
+		smoothstep(-exposure_width, exposure_width, _f32(drift - EXPOSED_THRESHOLD))
+		+ rock_mix), 0.0, 1.0))
 	var is_slab := _hash3(Vector3(float(id.x), float(id.y), 0.0) * Vector3(2.3, 2.3, 0.0)
 		+ Vector3(0.0, 0.0, 19.0)) >= 0.60
 	return {
@@ -42,6 +56,7 @@ func sample(world_seed: int, world_xz: Vector2, region_context: Dictionary) -> D
 		&"identity": Vector3i(world_seed, id.x, id.y),
 		&"substance": _substance(id),
 		&"drift": drift,
+		&"exposure_width": exposure_width,
 		&"exposed": is_slab and sheet >= 0.5,
 	}
 
@@ -55,7 +70,7 @@ func candidate_identities(world_seed: int, world_size: float) -> Array[Vector3i]
 		return identities
 	var half_uv := world_size * 0.5 * PLATE_SCALE
 	var minimum := floori(-half_uv) - CANDIDATE_HALO
-	var maximum := ceili(half_uv) + CANDIDATE_HALO
+	var maximum := floori(half_uv) + CANDIDATE_HALO
 	identities.resize((maximum - minimum + 1) * (maximum - minimum + 1))
 	var index := 0
 	for y in range(minimum, maximum + 1):
@@ -174,9 +189,9 @@ func _fbm(p_in: Vector3) -> float:
 	var amplitude := 0.5
 	var total := 0.0
 	for _octave in 3:
-		total += amplitude * _value_noise(p)
+		total = _f32(total + _f32(amplitude * _value_noise(p)))
 		p *= 2.03
-		amplitude *= 0.5
+		amplitude = _f32(amplitude * 0.5)
 	return total
 
 
@@ -192,13 +207,32 @@ func _value_noise(p: Vector3) -> float:
 	var n101 := _hash3(cell + Vector3(1.0, 0.0, 1.0))
 	var n011 := _hash3(cell + Vector3(0.0, 1.0, 1.0))
 	var n111 := _hash3(cell + Vector3(1.0, 1.0, 1.0))
-	return lerpf(
-		lerpf(lerpf(n000, n100, blend.x), lerpf(n010, n110, blend.x), blend.y),
-		lerpf(lerpf(n001, n101, blend.x), lerpf(n011, n111, blend.x), blend.y),
+	return _lerp_f32(
+		_lerp_f32(
+			_lerp_f32(n000, n100, blend.x),
+			_lerp_f32(n010, n110, blend.x),
+			blend.y),
+		_lerp_f32(
+			_lerp_f32(n001, n101, blend.x),
+			_lerp_f32(n011, n111, blend.x),
+			blend.y),
 		blend.z)
 
 
 func _hash3(p: Vector3) -> float:
 	var dotted := p.dot(Vector3(127.1, 311.7, 74.7))
-	var value := sin(dotted) * 43758.5453
-	return value - floor(value)
+	var wave := _f32(sin(dotted))
+	var value := _f32(wave * HASH_SCALE_F32)
+	return _f32(value - floor(value))
+
+
+func _lerp_f32(from: float, to: float, weight: float) -> float:
+	var delta := _f32(to - from)
+	return _f32(from + _f32(delta * weight))
+
+
+## Standard Godot vectors store binary32 components. Round-tripping one scalar
+## through a component makes every mirrored shader scalar operation explicit
+## without allocating a PackedFloat32Array for each of millions of hash calls.
+func _f32(value: float) -> float:
+	return Vector2(value, 0.0).x
