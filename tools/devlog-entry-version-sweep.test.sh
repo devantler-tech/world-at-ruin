@@ -137,21 +137,58 @@ step "$d" 'an entry naming a release cut before its code existed' v0.2.0
 expect_gate_fail 'an entry naming a release that does not contain it' "$d" \
 	'The SHIPPED column above'
 
-# GREEN CONTROL, and the criterion the exclusion has to meet: NEVER-CUT alone
-# does NOT fail. The entry names 0.9.9, which was never released at all, so it
-# is wrong in the sweep's summary and still deliberately excluded from the gate
-# while #466 is open. Without this case the gate would be indistinguishable from
-# one that fails on every wrong entry, which would gate the whole repo on an
-# open decision.
+# RED: a NEVER-CUT entry that HAS a one-to-one correction. The entry names
+# 0.9.9, never released at all; its change first shipped in v0.2.0, no entry
+# occupies that release and no other entry wants it. One honest answer exists, so
+# this is drift like any other and the gate must refuse it.
+#
+# This is the 0.65.17 -> v0.66.1 shape measured on main (#522): an entry authored
+# above every release at the time, stranded when a sibling feat: cut the next
+# minor. Being never-cut rather than mislabelled is an accident of which number
+# the release train skipped, not a reason the log may keep naming a build that
+# does not exist.
 d="$(new_repo)"
 printf 'x\n' >"$d/base.txt"
 step "$d" base v0.1.0
 entry 0.9.9 >"$d/client/devlog/0.9.9.json"
 step "$d" 'an entry naming a version that was never released' v0.2.0
-expect_gate_pass 'a NEVER-CUT entry alone' "$d"
+expect_gate_fail 'a NEVER-CUT entry whose containing release is free and uniquely wanted' "$d" \
+	'has one release that contains it and nothing else claims'
+
+# GREEN CONTROL for the UNIQUENESS half of the test, and the case a
+# free-file-only rule gets wrong. Two never-cut entries whose changes both first
+# shipped in v0.2.0: the destination file does not exist, so "is the target free?"
+# alone would call both correctable and demand two entries take one name. They
+# genuinely collide, so both stay excluded and the gate passes.
+#
+# This is the shape of the historical pair #466 had to decide by hand rather than
+# rename; without this case the split would degrade into failing every never-cut
+# entry, which is the blanket the exclusion existed to prevent.
+d="$(new_repo)"
+printf 'x\n' >"$d/base.txt"
+step "$d" base v0.1.0
+entry 0.9.8 >"$d/client/devlog/0.9.8.json"
+entry 0.9.9 >"$d/client/devlog/0.9.9.json"
+step "$d" 'two entries naming versions that were never released' v0.2.0
+expect_gate_pass 'two NEVER-CUT entries competing for one release' "$d"
+expect_output_matching 'both colliding entries are counted as excluded' \
+	"$(run_sweep "$d" --gate)" '2 NEVER-CUT entries excluded'
+
+# GREEN CONTROL for the FREE half: the containing release already has an entry.
+# 0.9.9's change first shipped in v0.2.0, but v0.2.0's own entry is sitting there
+# and is correct. Renaming onto it would collide, so this one is excluded too —
+# resolving it needs a permutation, which is a decision rather than a mechanical
+# fix.
+d="$(new_repo)"
+printf 'x\n' >"$d/base.txt"
+step "$d" base v0.1.0
+entry 0.2.0 >"$d/client/devlog/0.2.0.json"
+entry 0.9.9 >"$d/client/devlog/0.9.9.json"
+step "$d" 'an entry whose containing release already has an entry' v0.2.0
+expect_gate_pass 'a NEVER-CUT entry whose target release is occupied' "$d"
 # The exclusion is only reviewable if it is visible, so the count is asserted
-# rather than inferred from the pass.
-expect_output_matching 'the NEVER-CUT exclusion is stated with its count' \
+# rather than inferred from the pass — and it must count only what it excluded.
+expect_output_matching 'the occupied entry is the only one excluded' \
 	"$(run_sweep "$d" --gate)" '1 NEVER-CUT entry excluded'
 
 # GREEN: an entry whose change has not shipped yet. This is every open PR's own

@@ -57,14 +57,20 @@
 #                would otherwise buy. No entry reads this way in a full-history
 #                checkout, so it indicates broken anchoring rather than a
 #                mislabelled entry, and the message says so.
-#   NEVER-CUT    is EXCLUDED, deliberately and by name rather than incidentally.
-#                These 17 entries predate the repo's first tag or were overtaken
-#                onto a version never released at all. Unlike MISLABELLED they
-#                have no one-to-one correction — fourteen of them collide onto
-#                v0.1.15 — so what the log should say is an open decision in
-#                #466, not a mechanical fix. Failing them would gate every
-#                change in the repo on that decision. When #466 lands, this
-#                exclusion is what should be removed.
+#   NEVER-CUT    is SPLIT, because it is not one class. Whether the log can be
+#                corrected is decided by the release the change DID first reach,
+#                not by the fact that its own number was skipped:
+#                  - the containing release has no entry of its own and exactly
+#                    one never-cut entry wants it -> a single honest answer
+#                    exists, so this FAILS like any other drift;
+#                  - the release is already occupied, or several never-cut
+#                    entries want it -> renaming would have to pick a winner,
+#                    which is a decision rather than a mechanical fix, so it is
+#                    EXCLUDED and reported with its count.
+#                Both halves are load-bearing. Occupancy alone would call two
+#                entries competing for a free release correctable and demand
+#                they take one name; uniqueness alone would rename an entry onto
+#                a release whose own entry is already correct.
 #   OK           passes.
 #   UNRELEASED   passes. The entry's change has not shipped, so the
 #                forward-looking rule owns it and there is nothing to compare.
@@ -107,8 +113,13 @@ introducing_commit() {
 total=0
 wrong=0
 mislabelled=0
-never_cut=0
 no_anchor=0
+# Each never-cut entry as `version<TAB>containing release`. The verdict for one
+# of them depends on what the OTHERS want, so the decision cannot be made in the
+# loop that discovers them and is deferred until the whole set is known. This
+# doubles as the never-cut count, so there is no separate counter to keep in
+# step with it.
+never_cut_rows=()
 printf '%-10s  %-9s  %-9s  %s\n' ENTRY ANCHOR SHIPPED VERDICT
 while IFS= read -r file; do
 	version=$(declared_version "$file")
@@ -143,7 +154,7 @@ while IFS= read -r file; do
 			printf '%-10s  %-9s  %-9s  %s\n' "$version" "$anchor" "$shipped" 'PRE-RELEASE'
 		else
 			wrong=$((wrong + 1))
-			never_cut=$((never_cut + 1))
+			never_cut_rows+=("$version"$'\t'"$shipped")
 			printf '%-10s  %-9s  %-9s  %s\n' "$version" "$anchor" "$shipped" 'NEVER-CUT'
 		fi
 	else
@@ -157,11 +168,54 @@ printf '\n%d of %d entries name a release that does not contain them.\n' "$wrong
 
 [ "$gate" -eq 1 ] || exit 0
 
+# Split the never-cut set by whether a one-to-one correction actually exists.
+# Only the gate consumes this, so it is computed after the survey has returned.
+#
+# A release is available to an entry when no entry file occupies it AND exactly
+# one never-cut entry wants it. Both conditions are required: the occupancy test
+# alone would call two entries competing for a free release correctable and then
+# demand they take one name, and the uniqueness test alone would rename an entry
+# onto a release whose own entry is already there and correct.
+#
+# The occupied case stays excluded even where a PERMUTATION would resolve it —
+# 0.65.9 vacating 0.65.10 for the entry that had to move there is a real
+# precedent in the corrections file. Chaining those moves is more than this gate
+# should decide unattended, and excluding it errs toward the status quo rather
+# than toward a refusal nobody can act on.
+correctable=0
+colliding=0
+correctable_report=''
+if [ "${#never_cut_rows[@]}" -gt 0 ]; then
+	for row in "${never_cut_rows[@]}"; do
+		version="${row%%$'\t'*}"
+		target="${row##*$'\t'}"
+		wanted=0
+		for other in "${never_cut_rows[@]}"; do
+			# An `if` rather than `&&`: a for loop's status is its last
+			# iteration's, so a final non-match would leave the loop non-zero and
+			# `set -e` would abort the sweep with no verdict — the same trap the
+			# guard's first_release_after documents.
+			if [ "${other##*$'\t'}" = "$target" ]; then
+				wanted=$((wanted + 1))
+			fi
+		done
+		if [ -e "$ENTRY_DIR/$target.json" ] || [ "$wanted" -ne 1 ]; then
+			colliding=$((colliding + 1))
+		else
+			correctable=$((correctable + 1))
+			correctable_report+="$(printf '\n  %-10s -> v%s' "$version" "$target")"
+		fi
+	done
+fi
+
 # The exclusion is stated on every gate run, passing or failing. A count that is
 # only mentioned when it happens to be non-zero is an exclusion nobody can see,
-# and this one is load-bearing enough to need reviewing when #466 lands.
-printf 'dev-log entry version gate: %d NEVER-CUT entr%s excluded — no one-to-one correction exists for them, tracked in #466.\n' \
-	"$never_cut" "$([ "$never_cut" -eq 1 ] && printf y || printf ies)"
+# and this one decides whether an entry may keep naming a build that never
+# existed. It counts only what it actually excluded — an entry whose containing
+# release is free and uniquely wanted is refused below, not counted here — so
+# the reason it gives is true of the set it names.
+printf 'dev-log entry version gate: %d NEVER-CUT entr%s excluded — the release that first contains each is already occupied or wanted by more than one entry, so no one-to-one correction exists.\n' \
+	"$colliding" "$([ "$colliding" -eq 1 ] && printf y || printf ies)"
 
 if [ "$no_anchor" -ne 0 ]; then
 	printf 'dev-log entry version gate: FAIL — %d entr%s could not be anchored to an introducing commit, so no verdict was reached. In a full-history checkout every entry anchors; this points at a shallow fetch or an unreadable entry file, not at a mislabelled version.\n' \
@@ -174,6 +228,15 @@ if [ "$mislabelled" -ne 0 ]; then
 		"$mislabelled" \
 		"$([ "$mislabelled" -eq 1 ] && printf y || printf ies)" \
 		"$([ "$mislabelled" -eq 1 ] && printf it || printf them)" \
+		"$CORRECTIONS_FILE" >&2
+	exit 1
+fi
+
+if [ "$correctable" -ne 0 ]; then
+	printf 'dev-log entry version gate: FAIL — %d never-cut entr%s below. Each has one release that contains it and nothing else claims, so a single correct answer exists and this is drift rather than an open decision:%s\nRename the file and its version field onto that release together, and list it in %s with the anchor commit whose change it describes.\n' \
+		"$correctable" \
+		"$([ "$correctable" -eq 1 ] && printf y || printf ies)" \
+		"$correctable_report" \
 		"$CORRECTIONS_FILE" >&2
 	exit 1
 fi
