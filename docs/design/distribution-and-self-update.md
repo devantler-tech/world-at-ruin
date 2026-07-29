@@ -202,8 +202,12 @@ A small **signed JSON** document per channel, published by CI beside the artifac
   `min` low while raising `writes`, and a *same-schema* expansion raises only `capability`. The decision
   core routes any pack whose `writes` exceeds the rollback target's read ceiling — or whose `capability`
   exceeds the target's — to the **shell** tier, so a rollback can never face a save it cannot read.
-- `key` — the id/certificate of the current signing key, signed by the offline **root** key baked into
-  the shell (see Signing) — this is what lets a signing key rotate without a reinstall.
+- `key` — the certificate of the current signing key, signed by the offline **root** key baked into
+  the shell (see Signing) — this is what lets a signing key rotate without a reinstall. It carries
+  `id` (what a revocation list names), `epoch` (the monotonic anti-rollback counter the decision core
+  reads), and the validity window `not_before` / `not_after` as canonical UTC timestamps. The decision
+  core requires all four whenever the block is present; the root signature over it is verified at the
+  crypto boundary (see Signing).
 - `revocation` — the root-signed, monotonically versioned revoked-key list **plus `head_url`**, the
   independently fetched root-signed **revocation head** whose version acts as a floor (see Signing), so
   a stale embedded block cannot be masked by a freshly signed manifest.
@@ -335,10 +339,30 @@ stale cache, or engine change can strand or subvert a client:
   manifest a rotated key signs legitimately sits at or below it — enforcing the old mark across that
   boundary would refuse every post-rotation manifest and strand the client at exactly the moment a
   compromised key makes rotation urgent.
-  Signing-key certificates, root-signed revocation, and the independently fresh revocation head remain
-  key-custody child 6, and the epoch's authoritative source is the signing-key certificate that
-  boundary introduces; until it exists the epoch is enforced but not yet root-anchored, exactly as the
-  bare sequence is.
+  **The epoch's source is the signing-key certificate.** When the manifest carries a `key` block,
+  `UpdateDecision` reads the epoch from `key.epoch` rather than the top-level field, and enforces the
+  certificate's half-open validity window `[not_before, not_after)` against the caller-supplied
+  observation time — refusing a manifest signed outside its key's window as `expired_key_certificate`,
+  a bound on the SIGNER that is independent of how long a publication stays fresh. A certificate
+  epoch that disagrees with a top-level `key_epoch` is an incoherent manifest, so a signer cannot
+  present both and let the client choose; a malformed certificate is refused rather than degrading to
+  "no certificate" and handing the epoch back to the free field it supersedes.
+  **Adoption ratchets, and that is what makes the binding real rather than advisory.** A manifest with
+  no certificate decides exactly as before *until* the client accepts its first certificate-backed
+  one; the updater then latches `key_certificate_required`, and from that point a manifest carrying no
+  certificate is refused as `uncertified_manifest`. Without that latch the certificate is decorative:
+  a superseded or compromised key never has to defeat it, only to OMIT it and name any top-level
+  `key_epoch` it likes — which would clear the high-water mark *and* start a fresh sequence line. That
+  downgrade survives root verification too, because signing a certificate cannot constrain an attacker
+  who never sends one. The latch is caller-owned state like the high-water marks, one-way by
+  construction, and an unreadable value blocks rather than reopening the path. Clients that never
+  adopted certificates are unaffected, so pre-certificate publications stay readable.
+  **Root verification of that certificate remains key-custody child 6**, together with root-signed
+  revocation and the independently fresh revocation head. The decision core verifies no signatures —
+  it performs no I/O at all — so a certificate is trusted exactly as far as the manifest signature
+  carrying it: enough to stop a keyless replayer, not yet enough to stop a compromised key minting
+  its own certificate. Reading the epoch from the certificate is what confines closing that gap to
+  the crypto boundary, with no further change to the decision core.
   - **The persisted sequence alone is NOT enough, so contraction waits out the TTL.** A returning or
     freshly-installed client has no high-water mark, so an unexpired cached manifest at sequence `N`
     looks perfectly valid to it even after the server contracted per `N+1` — every signature and expiry

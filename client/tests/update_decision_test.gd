@@ -17,6 +17,22 @@ var _failed := false
 const OBSERVED_AT := "2026-07-27T12:00:00Z"
 const FUTURE_NOT_AFTER := "2026-07-27T12:00:01Z"
 
+# A signing-key certificate window that straddles OBSERVED_AT, so a case that
+# perturbs the window is the only reason a certificate case can fail.
+const CERT_NOT_BEFORE := "2026-07-27T00:00:00Z"
+const CERT_NOT_AFTER := "2026-07-28T00:00:00Z"
+
+
+# A WELL-FORMED signing-key certificate: the id revocation will name, the epoch
+# anti-rollback reads, and the validity window that bounds both.
+func _certificate(epoch: int) -> Dictionary:
+	return {
+		"id": "signing-key-2026-07",
+		"epoch": epoch,
+		"not_before": CERT_NOT_BEFORE,
+		"not_after": CERT_NOT_AFTER,
+	}
+
 
 # A complete, valid manifest whose latest build == `installed_current`, so each
 # case perturbs one thing from a known-good baseline.
@@ -71,6 +87,16 @@ func _ready() -> void:
 	_test_same_epoch_sequence_still_refused()
 	_test_absent_epoch_reads_as_zero()
 	_test_epoch_state_fails_closed()
+	_test_certificate_carries_the_epoch()
+	_test_certificate_epoch_and_free_field_must_agree()
+	_test_expired_certificate_refused()
+	_test_not_yet_valid_certificate_refused()
+	_test_certificate_window_boundaries()
+	_test_malformed_certificate_fails_closed()
+	_test_certificate_epoch_survives_json_parsing()
+	_test_stripping_the_certificate_is_refused_after_adoption()
+	_test_adoption_latch_fails_closed()
+	_test_absent_certificate_keeps_legacy_behaviour()
 	_test_expired_manifest_refused()
 	_test_freshness_fields_are_required()
 	_test_freshness_boundaries()
@@ -191,6 +217,189 @@ func _test_epoch_state_fails_closed() -> void:
 	bad_epoch["key_epoch"] = 1.5
 	_expect(_installed_current(), bad_epoch, UpdateDecision.INVALID_MANIFEST,
 		"a fractional manifest epoch is refused as malformed")
+
+
+func _test_certificate_carries_the_epoch() -> void:
+	# The epoch that gates anti-rollback is read from the CERTIFICATE, not from a
+	# top-level field the signer picks freely. The certificate is where a root
+	# signature will anchor it, so the decision core must already read it there.
+	var installed := _installed_current()
+	installed["key_epoch_high_water"] = 2
+
+	var superseded := _base_manifest()
+	superseded["key"] = _certificate(1)
+	_expect(installed, superseded, "stale_key_epoch",
+		"a certificate epoch below the accepted mark is refused as a key-trust event")
+
+	# And a rotated certificate starts its own sequence line, exactly as the free
+	# field did — scoping the sequence mark to the epoch must survive the move.
+	var rotated := _base_manifest()
+	rotated["key"] = _certificate(3)
+	rotated["sequence"] = 1
+	_expect(installed, rotated, UpdateDecision.UP_TO_DATE,
+		"a higher certificate epoch is not gated by the superseded epoch's sequence mark")
+
+
+func _test_certificate_epoch_and_free_field_must_agree() -> void:
+	# A signer must not be able to present two epochs and let the client choose
+	# the convenient one. Disagreement is incoherent, not a precedence puzzle.
+	var disagree := _base_manifest()
+	disagree["key"] = _certificate(3)
+	disagree["key_epoch"] = 5
+	_expect(_installed_current(), disagree, UpdateDecision.INVALID_MANIFEST,
+		"a certificate epoch disagreeing with the top-level field is refused")
+
+	# Agreement is fine — a publisher may emit both while clients are mixed.
+	var agree := _base_manifest()
+	agree["key"] = _certificate(3)
+	agree["key_epoch"] = 3
+	_expect(_installed_current(), agree, UpdateDecision.UP_TO_DATE,
+		"a certificate epoch matching the top-level field is accepted")
+
+
+func _test_expired_certificate_refused() -> void:
+	# The manifest's OWN not_after is still in the future here, so only the
+	# certificate window can produce this refusal — a key stops being usable when
+	# its certificate lapses, independently of how long a manifest stays fresh.
+	var lapsed := _base_manifest()
+	var cert := _certificate(1)
+	cert["not_before"] = "2026-07-25T00:00:00Z"
+	cert["not_after"] = "2026-07-26T00:00:00Z"
+	lapsed["key"] = cert
+	_expect(_installed_current(), lapsed, "expired_key_certificate",
+		"a lapsed signing-key certificate is refused while the manifest itself is still fresh")
+
+
+func _test_not_yet_valid_certificate_refused() -> void:
+	# The other half of the window. A certificate minted for a future rotation
+	# must not be usable early.
+	var early := _base_manifest()
+	var cert := _certificate(1)
+	cert["not_before"] = "2026-07-28T00:00:00Z"
+	cert["not_after"] = "2026-07-29T00:00:00Z"
+	early["key"] = cert
+	_expect(_installed_current(), early, "expired_key_certificate",
+		"a certificate whose validity window has not begun is refused")
+
+
+func _test_certificate_window_boundaries() -> void:
+	# Half-open [not_before, not_after) — the same convention the manifest's own
+	# expiry already uses, where observation AT not_after is already expired.
+	var at_start := _base_manifest()
+	var c_start := _certificate(1)
+	c_start["not_before"] = OBSERVED_AT
+	at_start["key"] = c_start
+	_expect(_installed_current(), at_start, UpdateDecision.UP_TO_DATE,
+		"observation exactly at not_before is inside the certificate window")
+
+	var at_end := _base_manifest()
+	var c_end := _certificate(1)
+	c_end["not_after"] = OBSERVED_AT
+	at_end["key"] = c_end
+	_expect(_installed_current(), at_end, "expired_key_certificate",
+		"observation exactly at not_after is outside the certificate window")
+
+
+func _test_malformed_certificate_fails_closed() -> void:
+	# A malformed certificate must never read as "no certificate" and silently
+	# hand the epoch back to the free field it was introduced to replace — the
+	# rule `key_epoch` already follows in `_envelope_error`.
+	var bad: Array[Variant] = [
+		"not-an-object",
+		{},
+		{"id": "k", "epoch": "one", "not_before": CERT_NOT_BEFORE, "not_after": CERT_NOT_AFTER},
+		{"id": "k", "epoch": 1.5, "not_before": CERT_NOT_BEFORE, "not_after": CERT_NOT_AFTER},
+		{"id": "k", "epoch": 1, "not_before": "yesterday", "not_after": CERT_NOT_AFTER},
+		{"id": "k", "epoch": 1, "not_before": CERT_NOT_BEFORE},
+		{"id": "k", "epoch": 1, "not_before": CERT_NOT_AFTER, "not_after": CERT_NOT_BEFORE},
+		{"id": "", "epoch": 1, "not_before": CERT_NOT_BEFORE, "not_after": CERT_NOT_AFTER},
+	]
+	for c: Variant in bad:
+		var m := _base_manifest()
+		m["key"] = c
+		var got: Dictionary = UpdateDecision.decide(_installed_current(), m)
+		if got.get("action") != UpdateDecision.INVALID_MANIFEST:
+			_fail("malformed certificate %s -> %s, expected invalid_manifest" % [c, got.get("action")])
+			return
+		# The ACTION alone does not prove the certificate validator ran: a
+		# half-formed certificate reaching the decision path aborts on an engine
+		# type error, which also surfaces as invalid_manifest — an incidental
+		# catch that spams the log and is not a contract. Pin the REASON, which
+		# only `_certificate_error` produces, so the refusal is a deliberate one.
+		var why := str(got.get("reason", ""))
+		if not why.begins_with("key"):
+			_fail("malformed certificate %s was refused, but not by the certificate validator — reason: %s" % [c, why])
+			return
+
+
+func _test_certificate_epoch_survives_json_parsing() -> void:
+	# A manifest reaches the client as PARSED JSON, and Godot's JSON numbers are
+	# always floats — a real certificate epoch is 1.0, never 1. Every fixture here
+	# is built from int literals, so none of them can catch a validator that
+	# rejects the shape the client actually receives. Parse it for real instead.
+	var parsed: Variant = JSON.parse_string('{"id":"signing-2026-07","epoch":3,"not_before":"%s","not_after":"%s"}' % [
+		CERT_NOT_BEFORE, CERT_NOT_AFTER])
+	var installed := _installed_current()
+	installed["key_epoch_high_water"] = 2
+	var m := _base_manifest()
+	m["key"] = parsed
+	m["sequence"] = 1
+	_expect(installed, m, UpdateDecision.UP_TO_DATE,
+		"a certificate epoch that arrived as a JSON float is read as a whole number")
+
+
+func _test_stripping_the_certificate_is_refused_after_adoption() -> void:
+	# The downgrade the certificate binding would otherwise invite (Codex P1 on
+	# PR #561). A superseded or compromised key does not have to defeat the
+	# certificate — it can just OMIT it and name any top-level epoch it likes.
+	# Without the adoption latch that manifest is not merely accepted, it clears
+	# the high-water mark AND starts a fresh sequence line, so the certificate
+	# would be decorative and root-signing it later would change nothing: an
+	# attacker who never sends a certificate is unaffected by how well it is signed.
+	var adopted := _installed_current()
+	adopted["key_epoch_high_water"] = 5
+	adopted["key_certificate_required"] = true
+
+	var stripped := _base_manifest()
+	stripped["key_epoch"] = 9000
+	stripped["sequence"] = 1
+	_expect(adopted, stripped, "uncertified_manifest",
+		"once a certificate has been adopted, a manifest that omits it cannot downgrade to a self-declared epoch")
+
+	# The latch must not refuse a properly certified manifest.
+	var certified := _base_manifest()
+	certified["key"] = _certificate(5)
+	_expect(adopted, certified, UpdateDecision.UP_TO_DATE,
+		"an adopted client still accepts a certificate-backed manifest")
+
+	# And a client that has NOT adopted certificates is unaffected — the ratchet
+	# only ever tightens, so pre-certificate clients keep updating.
+	var not_adopted := _installed_current()
+	not_adopted["key_epoch_high_water"] = 5
+	var legacy := _base_manifest()
+	legacy["key_epoch"] = 5
+	_expect(not_adopted, legacy, UpdateDecision.UP_TO_DATE,
+		"a client that never adopted certificates still accepts a certificate-less manifest")
+
+
+func _test_adoption_latch_fails_closed() -> void:
+	# Unreadable latch state blocks rather than silently reopening the downgrade,
+	# the rule every other piece of freshness state here already follows.
+	var bad := _installed_current()
+	bad["key_certificate_required"] = "yes"
+	_expect(bad, _base_manifest(), UpdateDecision.BLOCKED_INCOMPATIBLE,
+		"a non-boolean certificate-adoption latch blocks rather than defaulting to permissive")
+
+
+func _test_absent_certificate_keeps_legacy_behaviour() -> void:
+	# Every manifest published before certificates existed carries none, and must
+	# decide exactly as it does today.
+	var installed := _installed_current()
+	installed["key_epoch_high_water"] = 2
+	var legacy := _base_manifest()
+	legacy["key_epoch"] = 2
+	_expect(installed, legacy, UpdateDecision.UP_TO_DATE,
+		"a manifest with no certificate still decides on its top-level epoch field")
 
 
 func _test_expired_manifest_refused() -> void:

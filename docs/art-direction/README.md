@@ -422,6 +422,13 @@ nothing transitions.
 settled into terrain over centuries and for cave interiors that are composed rather than tubular;
 Diablo IV's **Fractured Peaks** for weathered worked stone.
 
+**Current implementation.** The cave hull and entrance boulders inherit the local ground region at
+their contact seam. `WAR_CAVE_FOOT_TALUS=1` additionally derives a deterministic, render-only rubble
+skirt from the sky-exposed `TerrainContact` triangles, drops it onto the supplied ground and leaves
+the mouth corridor clear. It remains a default-off taste preview pending #563. The massif still
+lacks the target's planar fractures, and the seam still lacks drifted ash, dirt buildup and
+returning vegetation.
+
 ### Characters, clothing and equipment (#222, #224, #228)
 
 **Target — silhouette first.** An AAA character is recognisable at 30 metres as a black shape.

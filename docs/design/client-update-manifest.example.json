@@ -73,6 +73,7 @@
   "key": {
     "id": "signing-2026-07",
     "epoch": 1,
+    "not_before": "2026-07-01T00:00:00Z",
     "not_after": "2026-10-01T00:00:00Z",
     "certificate": "BASE64_SIGNING_KEY_CERT_SIGNED_BY_THE_OFFLINE_ROOT_KEY"
   },
