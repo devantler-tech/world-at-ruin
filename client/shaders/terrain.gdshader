@@ -542,9 +542,10 @@ void fragment() {
 	// The THIRD candidate's version of the same gate. The variance is split
 	// across all three by `plate_w`, exactly as the substance, the slab mask,
 	// the roughness and the crack are — so it needs the third cell's height as
-	// well. Away from a triple junction `plate_w.z` is 0 and this term costs
-	// nothing; at one it is what keeps the cavity from inheriting the
-	// second-nearest cell's identity swap.
+	// well. Away from a triple junction `plate_w.z` is 0, so this term
+	// contributes nothing to the result (it is still computed — the cost is one
+	// multiply, unconditionally); at one it is what keeps the cavity from
+	// inheriting the second-nearest cell's identity swap.
 	float plate_mask_relief_nb3 = sheet * slab_nb3;
 	float rock_exposure = max(rock_mix, plate_mask);
 
