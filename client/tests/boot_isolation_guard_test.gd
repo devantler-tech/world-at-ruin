@@ -27,7 +27,10 @@ extends Node
 ## permanent negative control on exactly that confusion.
 ##
 ## Pure logic only — reads test sources, boots nothing, writes nothing — so it is
-## safe to run locally and deterministic in CI.
+## safe to run locally and deterministic in CI. The failure and success laws use
+## a small indentation-and-token control-flow parse: receivers stay tied to the
+## one active redirect owner, `_fail()` callers cannot fall through to success,
+## and the false guarantee result has to reach breach handling on both outcomes.
 ##
 ## Run: godot --headless --path client res://tests/boot_isolation_guard_test.tscn
 
@@ -124,6 +127,8 @@ const VERDICT_UNLOCATABLE := "unlocatable"
 const VERDICT_UNGUARDED := "unguarded"
 const VERDICT_NONTERMINAL := "nonterminal"
 const VERDICT_STRAY := "stray:"
+const VERDICT_FALLTHROUGH := "fallthrough"
+const VERDICT_SUCCESS_UNGUARDED := "success-unguarded"
 
 ## Callable spellings that invoke a method without a direct `name(` — normalised
 ## back to a direct call before scanning, so one scanner covers them all.
@@ -270,6 +275,13 @@ const IGNORED_ASSIGNMENT_FIXTURE := """func _fail(message: String) -> void:
 	get_tree().quit(1)
 """
 
+## Negating the result gives it the right meaning but still asserts nothing when
+## the bound name is never read.
+const IGNORED_NEGATED_ASSIGNMENT_FIXTURE := """func _fail(message: String) -> void:
+	var breached = not _save.real_save_untouched()
+	get_tree().quit(1)
+"""
+
 ## A `_fail` that asserts correctly and then exits SUCCESS. Every other law here
 ## assumes `_fail` is the failure funnel; if it quits 0 the suite reports a pass
 ## on an assertion failure.
@@ -305,6 +317,74 @@ static var _late_exit := func() -> void:
 	get_tree().quit(2)
 """
 
+## A positive-only branch reads the result but ignores the breach case. The
+## guarantee is satisfied only when false reaches the failure outcome.
+const POSITIVE_ONLY_GUARANTEE_FIXTURE := """var _save: SaveIsolation
+
+
+func _fail(message: String) -> void:
+	if _save != null and _save.real_save_untouched():
+		push_error("save stayed isolated")
+	get_tree().quit(1)
+"""
+
+## The result comes from a SaveIsolation object, but not the one whose begin()
+## owns the active redirects. Type alone cannot prove the live scope was clean.
+const STALE_OWNER_GUARANTEE_FIXTURE := """var _active: SaveIsolation
+var _stale: SaveIsolation
+
+
+func _ready() -> void:
+	_stale = SaveIsolation.new("user://stale.json")
+	_stale.begin()
+	_stale.real_save_untouched()
+	_active = SaveIsolation.new("user://active.json")
+	_active.begin()
+
+
+func _fail(message: String) -> void:
+	if _stale != null and not _stale.real_save_untouched():
+		message += " breached"
+	get_tree().quit(1)
+"""
+
+## SceneTree.quit() does not halt the frame. A caller that invokes _fail() and
+## then remains able to reach quit(0) can repaint a real failure as success.
+const FAIL_CALL_FALLTHROUGH_FIXTURE := """var _save: SaveIsolation
+
+
+func _ready() -> void:
+	if _save == null:
+		_fail("save owner missing")
+	get_tree().quit(0)
+
+
+func _fail(message: String) -> void:
+	if _save != null and not _save.real_save_untouched():
+		message += " breached"
+	get_tree().quit(1)
+"""
+
+## The failure funnel is compliant, but the successful exit never checks the
+## active owner. Every booter must assert the guarantee on both outcomes.
+const SUCCESS_PATH_UNGUARDED_FIXTURE := """var _save: SaveIsolation
+
+
+func _ready() -> void:
+	_save = SaveIsolation.new("user://success-path.json")
+	_save.begin()
+	if _save == null:
+		_fail("save owner missing")
+		return
+	get_tree().quit(0)
+
+
+func _fail(message: String) -> void:
+	if _save != null and not _save.real_save_untouched():
+		message += " breached"
+	get_tree().quit(1)
+"""
+
 
 func _ready() -> void:
 	var sources := _test_sources()
@@ -318,6 +398,8 @@ func _ready() -> void:
 	var unlocatable := PackedStringArray()
 	var stray_exit := PackedStringArray()
 	var nonterminal := PackedStringArray()
+	var fallthrough := PackedStringArray()
+	var success_unguarded := PackedStringArray()
 	for file: String in sources:
 		if file in EXEMPT:
 			continue
@@ -345,6 +427,8 @@ func _ready() -> void:
 			VERDICT_UNLOCATABLE: unlocatable.append(file)
 			VERDICT_UNGUARDED: unguarded.append(file)
 			VERDICT_NONTERMINAL: nonterminal.append(file)
+			VERDICT_FALLTHROUGH: fallthrough.append(file)
+			VERDICT_SUCCESS_UNGUARDED: success_unguarded.append(file)
 			_:
 				if verdict.begins_with(VERDICT_STRAY):
 					stray_exit.append("%s (quit(%s))"
@@ -381,6 +465,18 @@ func _ready() -> void:
 			+ "that quits 0, or does not quit at all, is not a failure funnel, and every other law "
 			+ "here assumes it is one: an assertion failure would report success or hang (#326)")
 			% [nonterminal.size(), FAIL_FUNC, ", ".join(nonterminal)])
+		return
+	if not fallthrough.is_empty():
+		_fail(("%d booter(s) can continue from `%s` into a success exit: %s — SceneTree.quit() "
+			+ "does not halt the current frame, so return from the caller's path before a later "
+			+ "quit(0) can overwrite the failure status")
+			% [fallthrough.size(), FAIL_FUNC, ", ".join(fallthrough)])
+		return
+	if not success_unguarded.is_empty():
+		_fail(("%d booter(s) reach a success exit without asserting the active isolation owner: "
+			+ "%s — every quit(0) path must handle a false real_save_untouched() result before "
+			+ "reporting success")
+			% [success_unguarded.size(), ", ".join(success_unguarded)])
 		return
 	if not stray_exit.is_empty():
 		_fail(("%d booter(s) exit failing WITHOUT going through `%s`: %s — a nonzero quit outside "
@@ -486,6 +582,10 @@ func _ready() -> void:
 		_fail(("the guard accepted a `_fail` that assigns the guarantee's result to a variable it "
 			+ "never reads — an assignment token alone cannot stand for a use (#326)"))
 		return
+	if _verdict(IGNORED_NEGATED_ASSIGNMENT_FIXTURE) != VERDICT_UNGUARDED:
+		_fail(("the guard accepted a negated guarantee stored in a variable that is never read — "
+			+ "`not` gives the value breach semantics but does not assert it"))
+		return
 
 	# --- negative control: `_fail` must itself exit nonzero ---
 	if _verdict(NONTERMINAL_FAIL_FIXTURE) != VERDICT_NONTERMINAL:
@@ -507,6 +607,30 @@ func _ready() -> void:
 		_fail(("a `static var` initializer after `_fail` was absorbed into its body (stray exit "
 			+ "read '%s', expected '2') — the body boundary must treat `static var` as a "
 			+ "declaration, or subtracting the body also hides the exit") % sv_stray)
+		return
+
+	# --- negative control: the clean case cannot stand in for breach handling ---
+	if _verdict(POSITIVE_ONLY_GUARANTEE_FIXTURE) != VERDICT_UNGUARDED:
+		_fail(("the guard accepted a positive-only `real_save_untouched()` branch — printing when "
+			+ "the save is clean does not handle the false breach case"))
+		return
+
+	# --- negative control: the guarantee must come from the active owner ---
+	if _verdict(STALE_OWNER_GUARANTEE_FIXTURE) != VERDICT_UNGUARDED:
+		_fail(("the guard accepted `real_save_untouched()` from a stale SaveIsolation instance — "
+			+ "the receiver must be the object whose begin()/boot() owns the active redirects"))
+		return
+
+	# --- negative control: `_fail()` must stop its caller's path ---
+	if _verdict(FAIL_CALL_FALLTHROUGH_FIXTURE) != VERDICT_FALLTHROUGH:
+		_fail(("the guard accepted a `_fail()` call that falls through to quit(0) — "
+			+ "SceneTree.quit() does not stop the current frame, so success can overwrite failure"))
+		return
+
+	# --- negative control: every booter checks the successful exit too ---
+	if _verdict(SUCCESS_PATH_UNGUARDED_FIXTURE) != VERDICT_SUCCESS_UNGUARDED:
+		_fail(("the guard accepted a booter whose `_fail` is guarded but whose success path reaches "
+			+ "quit(0) without asserting the active isolation owner's guarantee"))
 		return
 
 	# --- negative control: a nonzero quit is not only `quit(1)` ---
@@ -550,9 +674,10 @@ func _ready() -> void:
 			+ "against real files"))
 		return
 
-	print(("TEST PASS — %d test(s) boot %s, all isolated and all asserting the guarantee on their "
-		+ "failure path; prose-only mention in %s correctly ignored, and pass-path-only code is "
-		+ "correctly rejected (%d booter(s) assert on the pass path too)")
+	print(("TEST PASS — %d test(s) boot %s through one active isolation owner, every failure and "
+		+ "success exit handles a false guarantee, and no `_fail()` call falls through to success; "
+		+ "prose-only mention in %s is ignored and pass-path-only code is rejected "
+		+ "(%d booter(s) assert on the pass path too)")
 		% [booters.size(), MAIN_SCENE, COMMENT_ONLY_CONTROL, pass_path_assertors])
 	get_tree().quit(0)
 
@@ -589,10 +714,132 @@ func _verdict(code: String) -> String:
 	# and every other law here assumes it is one.
 	if _nonzero_quit(fail_body).is_empty():
 		return VERDICT_NONTERMINAL
+	if _fail_call_falls_through(executable):
+		return VERDICT_FALLTHROUGH
+	if not _success_paths_guarded(executable):
+		return VERDICT_SUCCESS_UNGUARDED
 	# A guarded `_fail` proves nothing if some other path also exits failing
 	# without going through it.
 	var stray := _nonzero_quit(executable.replace(fail_body, ""))
 	return "" if stray.is_empty() else VERDICT_STRAY + stray
+
+
+## Whether any `_fail()` caller can keep running until a success quit in the
+## same function. This is an indentation-and-token control-flow parse, not a
+## "next line must be return" shape: a call at a function's end is terminal,
+## and a call in one branch does not execute a sibling else/elif branch.
+func _fail_call_falls_through(code: String) -> bool:
+	var lines := code.split("\n")
+	var current_function := ""
+	for i in lines.size():
+		var line: String = lines[i]
+		if _starts_function(line):
+			current_function = _function_name(line)
+			continue
+		if _starts_declaration(line):
+			current_function = ""
+		if current_function.is_empty() or current_function == "_fail":
+			continue
+		var call_at := line.find("_fail(")
+		if call_at < 0:
+			continue
+		var before := line.substr(0, call_at)
+		if _mentions_identifier(before, "return"):
+			continue
+		var function_end := _function_end(lines, i)
+		var statement_end := _statement_end(lines, i, function_end)
+		var call_indent := _indent_of(line)
+		var j := statement_end + 1
+		while j < function_end:
+			var following: String = lines[j]
+			var trimmed := following.strip_edges()
+			if trimmed.is_empty():
+				j += 1
+				continue
+			var indent := _indent_of(following)
+			if indent < call_indent and (trimmed.begins_with("else:")
+					or trimmed.begins_with("elif ")):
+				j = _block_end(lines, j, function_end)
+				continue
+			if indent <= call_indent and _starts_return(trimmed):
+				break
+			if _has_success_quit(following):
+				return true
+			j += 1
+	return false
+
+
+func _starts_function(line: String) -> bool:
+	return not line.begins_with(" ") and not line.begins_with("\t") \
+		and (line.begins_with("func ") or line.begins_with("static func "))
+
+
+func _function_name(line: String) -> String:
+	var declaration := line.trim_prefix("static ").trim_prefix("func ")
+	var open := declaration.find("(")
+	return declaration.substr(0, open).strip_edges() if open >= 0 else ""
+
+
+func _function_end(lines: PackedStringArray, from: int) -> int:
+	for i in range(from + 1, lines.size()):
+		if _starts_declaration(lines[i]):
+			return i
+	return lines.size()
+
+
+func _statement_end(lines: PackedStringArray, start: int, limit: int) -> int:
+	var depth := 0
+	for i in range(start, limit):
+		for ch: String in lines[i]:
+			if ch == "(":
+				depth += 1
+			elif ch == ")":
+				depth -= 1
+		if depth <= 0:
+			return i
+	return limit - 1
+
+
+func _block_end(lines: PackedStringArray, start: int, limit: int) -> int:
+	var block_indent := _indent_of(lines[start])
+	for i in range(start + 1, limit):
+		var line: String = lines[i]
+		if line.strip_edges().is_empty():
+			continue
+		if _indent_of(line) <= block_indent:
+			return i
+	return limit
+
+
+func _indent_of(line: String) -> int:
+	var indent := 0
+	for ch: String in line:
+		if ch == "\t":
+			indent += 1
+		elif ch == " ":
+			indent += 1
+		else:
+			break
+	return indent
+
+
+func _starts_return(line: String) -> bool:
+	return line == "return" or line.begins_with("return ")
+
+
+func _has_success_quit(line: String) -> bool:
+	var direct := line
+	for form: String in DEFERRED_CALL_FORMS:
+		direct = direct.replace(form, "(")
+	var parts := direct.split(QUIT_CALL)
+	for i in range(1, parts.size()):
+		var close := (parts[i] as String).find(")")
+		if close < 0:
+			continue
+		var arg := (parts[i] as String).substr(0, close).strip_edges()
+		if arg in SUCCESS_QUIT_ARGS:
+			return true
+	return false
 
 
 ## Does this code assert the isolation guarantee on its FAILURE path?
@@ -602,12 +849,37 @@ func _verdict(code: String) -> String:
 ## whole-file match makes that control fail immediately instead of silently
 ## passing every harness in the repo.
 func _guards_failure_path(code: String) -> bool:
-	var lines := _fail_body(_executable(code)).split("\n")
+	var executable := _executable(code)
+	var active_owners := _active_isolation_owners(executable)
+	if active_owners.size() > 1:
+		return false
+	var lines := _fail_body(executable).split("\n")
 	for i in lines.size():
 		var line: String = lines[i]
 		if not line.contains(GUARANTEE_CALL):
 			continue
+		var receiver := _call_receiver(line, "." + GUARANTEE_CALL)
+		# Full harnesses identify the active redirect owner by the receiver that
+		# actually invokes begin()/boot(). A same-typed stale object proves
+		# nothing about the live scope. Partial synthetic fixtures without a
+		# setup path keep exercising their narrower classification law.
+		if not active_owners.is_empty() and receiver not in active_owners:
+			continue
 		var before := line.substr(0, line.find(GUARANTEE_CALL))
+		# `true` means clean; the assertion has to route the FALSE result into
+		# the failure outcome. Merely reading the positive case is observational
+		# logging, not breach handling.
+		if not _mentions_identifier(before, "not"):
+			continue
+		# Stored in a variable. That counts only if a LATER line reads it:
+		# `var untouched = not _save.real_save_untouched()` with no further
+		# mention still discards the answer.
+		var name := _assigned_name(before)
+		if not name.is_empty():
+			for j in range(i + 1, lines.size()):
+				if _mentions_identifier(lines[j], name):
+					return true
+			continue
 		# Used directly in a condition — the answer is read on this line.
 		# 🔴 Word-boundary matched, not `contains`: `var error = ` ends with
 		# "or ", so a substring test reads an ordinary assignment as a boolean
@@ -615,16 +887,90 @@ func _guards_failure_path(code: String) -> bool:
 		for token: String in CONDITION_TOKENS:
 			if _mentions_identifier(before, token.strip_edges()):
 				return true
-		# Stored in a variable. That counts only if a LATER line reads it:
-		# `var untouched = _save.real_save_untouched()` with no further mention
-		# discards the answer exactly as a bare call would.
-		var name := _assigned_name(before)
-		if name.is_empty():
-			continue
-		for j in range(i + 1, lines.size()):
-			if _mentions_identifier(lines[j], name):
-				return true
 	return false
+
+
+## Every success quit in a full booter is immediately dominated by a negative
+## guarantee check on the same active owner. Partial unit fixtures without a
+## begin()/boot() setup keep testing their narrower failure-path laws.
+func _success_paths_guarded(code: String) -> bool:
+	var active_owners := _active_isolation_owners(code)
+	if active_owners.is_empty():
+		return true
+	if active_owners.size() > 1:
+		return false
+	var lines := code.split("\n")
+	var current_function := ""
+	var function_start := 0
+	for i in lines.size():
+		var line: String = lines[i]
+		if _starts_function(line):
+			current_function = _function_name(line)
+			function_start = i
+			continue
+		if _starts_declaration(line):
+			current_function = ""
+		if current_function.is_empty() or current_function == "_fail" \
+				or not _has_success_quit(line):
+			continue
+		if not _success_exit_has_guard(lines, function_start, i, active_owners):
+			return false
+	return true
+
+
+func _success_exit_has_guard(
+		lines: PackedStringArray,
+		function_start: int,
+		success_line: int,
+		active_owners: PackedStringArray,
+) -> bool:
+	var success_indent := _indent_of(lines[success_line])
+	for i in range(success_line - 1, function_start, -1):
+		var line: String = lines[i]
+		if _indent_of(line) != success_indent or not line.contains(GUARANTEE_CALL):
+			continue
+		var receiver := _call_receiver(line, "." + GUARANTEE_CALL)
+		var before := line.substr(0, line.find(GUARANTEE_CALL))
+		if receiver not in active_owners or not _mentions_identifier(before, "not") \
+				or not line.strip_edges().begins_with("if "):
+			continue
+		var block_end := _block_end(lines, i, success_line + 1)
+		var calls_fail := false
+		var returns := false
+		for j in range(i + 1, block_end):
+			var branch_line := lines[j].strip_edges()
+			calls_fail = calls_fail or branch_line.contains("_fail(")
+			returns = returns or _starts_return(branch_line)
+		if calls_fail and returns:
+			return true
+	return false
+
+
+## Receivers that actually invoke an isolation boundary in executable code.
+## The caller still checks the class/call pair through [_claims_isolation]; this
+## list adds the object identity that the old bare-token match discarded.
+func _active_isolation_owners(code: String) -> PackedStringArray:
+	var owners := PackedStringArray()
+	for line: String in code.split("\n"):
+		for owner: String in ISOLATION_CLAIMS:
+			var receiver := _call_receiver(line, ISOLATION_CLAIMS[owner])
+			if not receiver.is_empty() and receiver not in owners:
+				owners.append(receiver)
+	return owners
+
+
+## The simple identifier immediately receiving `call`, or "" for a computed
+## receiver. Isolation owners in this corpus are named fields by design; a
+## computed receiver cannot be tied across begin()/boot() and teardown safely.
+func _call_receiver(line: String, call: String) -> String:
+	var call_at := line.find(call)
+	if call_at <= 0:
+		return ""
+	var start := call_at - 1
+	while start >= 0 and _is_ident_char(line[start]):
+		start -= 1
+	var receiver := line.substr(start + 1, call_at - start - 1)
+	return receiver if receiver.is_valid_identifier() else ""
 
 
 ## Does `line` use `name` as a whole identifier?
