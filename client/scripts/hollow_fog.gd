@@ -18,6 +18,29 @@ class_name HollowFog
 ## `--headless`, where volumetrics never initialise and a FogVolume would
 ## contribute no pixels to read back.
 
+const FIELD_DRIFT_ENV := "WAR_ASH_FIELD_DRIFT"
+const FIELD_SHADER: Shader = preload("res://shaders/hollow_fog_field.gdshader")
+## Metres per radian of the field's primary band. A full primary wave is about
+## 15.7 m, so more than two pockets cross a 36 m pool. The first GPU draft used
+## one wave per pool and still read as a basin-sized dimmer from inside.
+const FIELD_WAVELENGTH := 2.5
+## Crosswind scale, in metres per radian. Deliberately different from the
+## primary scale so a pool is mottled across the wind rather than striped.
+const FIELD_CROSS_WAVELENGTH := 1.7
+## Metres per second at which the whole static density pattern travels.
+const FIELD_SPEED := 1.08
+## Maximum fractional departure from the pool's placed density. The four
+## harmonics are normalised to [-1, 1], so density stays in [0.48, 1.52] of the
+## tuned placement and never blinks out.
+const FIELD_SWING := 0.52
+
+
+## The spatial density field is unsettled player-visible work, so it is
+## available only to players who explicitly opt in.
+static func field_drift_enabled() -> bool:
+	return OS.get_environment(FIELD_DRIFT_ENV) == "1"
+
+
 ## Whether pools should actually be BUILT this boot.
 ##
 ## One condition now, and it is a hardware fact rather than a player choice.
@@ -50,7 +73,11 @@ const CAPTURE_MARKER := "HOLLOW FOG"
 ## `off`; the rest is for a human reading the log.
 static func marker(built: bool, volumetrics_on: bool, pools: int) -> String:
 	if built:
-		return "%s on — %d drifting ash pools" % [CAPTURE_MARKER, pools]
+		var motion := (
+			"spatial field drift" if field_drift_enabled()
+			else "whole-pool density swell"
+		)
+		return "%s on — %d ash pools with %s" % [CAPTURE_MARKER, pools, motion]
 	var reason: String = (
 		"volumetrics unavailable" if not volumetrics_on
 		else "no hollow clears the relief threshold"
@@ -298,6 +325,19 @@ static func build_volume(placement: Dictionary) -> FogVolume:
 	var extents: Vector3 = placement["extents"]
 	vol.size = extents * 2.0
 	vol.position = placement["pos"]
+	if field_drift_enabled():
+		var field_material := ShaderMaterial.new()
+		field_material.shader = FIELD_SHADER
+		field_material.set_shader_parameter("placed_density", placement["density"])
+		field_material.set_shader_parameter("wind_dir", Wind.axis())
+		field_material.set_shader_parameter("field_wavelength", FIELD_WAVELENGTH)
+		field_material.set_shader_parameter("cross_wavelength", FIELD_CROSS_WAVELENGTH)
+		field_material.set_shader_parameter("field_speed", FIELD_SPEED)
+		field_material.set_shader_parameter("field_swing", FIELD_SWING)
+		field_material.set_shader_parameter("ash_albedo", Volumetrics.ALBEDO)
+		field_material.set_shader_parameter("field_time", 0.0)
+		vol.material = field_material
+		return vol
 	var mat := FogMaterial.new()
 	mat.density = placement["density"]
 	# Same ash the environment volume uses, so a pool reads as more of the same
@@ -400,6 +440,28 @@ static func drift_density(placed_density: float, pos: Vector3, time: float) -> f
 	return placed_density * (1.0 + DRIFT_SWING * sin(at))
 
 
+## Density at one world-space point in the opted-in travelling field.
+##
+## This is the CPU statement of the fog shader's arithmetic: it gives headless
+## tests a real behavior to exercise while the renderer evaluates the same
+## pattern per froxel. Every harmonic is a whole-number multiple of the primary
+## downwind phase, so their temporal mean is exactly zero over one primary
+## period. The pool's placed density therefore remains its resting mean.
+static func field_density(placed_density: float, world_pos: Vector3, time: float) -> float:
+	var along := Wind.axis()
+	var across := Vector3(-along.z, 0.0, along.x).normalized()
+	var advected := world_pos - along * FIELD_SPEED * time
+	var wind_phase := advected.dot(along) / FIELD_WAVELENGTH
+	var cross_phase := advected.dot(across) / FIELD_CROSS_WAVELENGTH
+	var pattern := (
+		0.45 * sin(wind_phase)
+		+ 0.25 * sin(2.0 * wind_phase + cross_phase + 1.3)
+		+ 0.18 * cos(3.0 * wind_phase - 2.0 * cross_phase + 0.4)
+		+ 0.12 * cos(2.0 * wind_phase + world_pos.y / 1.4 + 0.7)
+	)
+	return placed_density * (1.0 + FIELD_SWING * pattern)
+
+
 ## Re-densifies one built volume for [param time]. Lives here beside
 ## [method build_volume] for the same reason that does: the shape the player
 ## sees and the shape the tests reason about must not drift apart.
@@ -408,6 +470,10 @@ static func drift_density(placed_density: float, pos: Vector3, time: float) -> f
 ## placement put it, so the resting world the goldens and the headless placement
 ## record describe is the world on screen at every phase but its density.
 static func apply_drift(volume: FogVolume, placement: Dictionary, time: float) -> void:
+	var field_material := volume.material as ShaderMaterial
+	if field_material != null:
+		field_material.set_shader_parameter("field_time", time)
+		return
 	var mat := volume.material as FogMaterial
 	if mat == null:
 		return
