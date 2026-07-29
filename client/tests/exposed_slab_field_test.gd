@@ -56,6 +56,7 @@ func _ready() -> void:
 	_test_shader_boundary_fixture(field)
 	_test_shader_triple_fixture(field)
 	_test_exposure_fixture(field)
+	_test_smoothstep_precision_fixture(field)
 	_test_seeded_identity(field)
 	_test_region_context(field)
 	_test_candidate_bound(field, field_script)
@@ -148,6 +149,21 @@ func _test_exposure_fixture(field: RefCounted) -> void:
 	var drift := float(result.get(&"drift", -1.0))
 	if absf(drift - 0.50994616746902) > EPS:
 		_fail("shader exposure fixture drift %.9f != 0.509946167" % drift)
+
+
+## This threshold-neighbour was evaluated independently with binary32 shader
+## operations. Float64 smoothstep rounds the sheet to 0.5 and buries the slab;
+## the shader rounds it one ULP lower before adding rock_mix and exposes it.
+func _test_smoothstep_precision_fixture(field: RefCounted) -> void:
+	var result := field.call("sample", 1409, Vector2(-100.0, -110.0), {
+		&"rock_mix": 0.06429079174995,
+		&"exposure_width": 0.20760688185692,
+	}) as Dictionary
+	var drift := float(result.get(&"drift", -1.0))
+	if absf(drift - 0.45215979218483) > EPS:
+		_fail("smoothstep precision fixture drift %.9f != 0.452159792" % drift)
+	if result.get(&"exposed") != true:
+		_fail("binary32 smoothstep fixture is buried, expected exposed")
 
 
 ## The shipping shader's cells are world-coordinate based, so changing the

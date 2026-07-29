@@ -46,7 +46,8 @@ func sample(world_seed: int, world_xz: Vector2, region_context: Dictionary) -> D
 		ASH_CONTACT,
 		EXPOSURE_WIDTH_MAX))
 	var sheet := _f32(clampf(_f32(
-		smoothstep(-exposure_width, exposure_width, _f32(drift - EXPOSED_THRESHOLD))
+		_smoothstep_f32(
+			-exposure_width, exposure_width, _f32(drift - EXPOSED_THRESHOLD))
 		+ rock_mix), 0.0, 1.0))
 	var is_slab := _hash3(Vector3(float(id.x), float(id.y), 0.0) * Vector3(2.3, 2.3, 0.0)
 		+ Vector3(0.0, 0.0, 19.0)) >= 0.60
@@ -229,6 +230,12 @@ func _hash3(p: Vector3) -> float:
 func _lerp_f32(from: float, to: float, weight: float) -> float:
 	var delta := _f32(to - from)
 	return _f32(from + _f32(delta * weight))
+
+
+func _smoothstep_f32(from: float, to: float, value: float) -> float:
+	var weight := _f32(_f32(value - from) / _f32(to - from))
+	weight = _f32(clampf(weight, 0.0, 1.0))
+	return _f32(_f32(weight * weight) * _f32(3.0 - _f32(2.0 * weight)))
 
 
 ## Standard Godot vectors store binary32 components. Round-tripping one scalar
