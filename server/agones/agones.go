@@ -4,11 +4,12 @@
 //
 // Agones's contract is hard: a GameServer that never calls Ready is never
 // allocated, and one that stops calling Health is killed as unhealthy. This
-// package speaks exactly that contract through the official Agones Go SDK —
-// Ready once the serving loop is up, Health heartbeats on a fixed cadence,
-// Shutdown when the process exits — and nothing else. It never touches the
-// simulation: lifecycle signalling cannot move a tick, so every settled
-// golden is structurally out of its reach.
+// package speaks that contract through the official Agones Go SDK — optional
+// identity-bound admission metadata while the resource is Starting, Ready once
+// the serving loop is up, Health heartbeats on a fixed cadence, and Shutdown
+// when the process exits. It never touches the simulation: lifecycle
+// signalling cannot move a tick, so every settled golden is structurally out
+// of its reach.
 //
 // The whole package is opt-in (the zone command's -agones flag, default
 // off). Flag off means no SDK dial at all — a local or CI run is
@@ -22,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	sdkproto "agones.dev/agones/pkg/sdk"
 	gosdk "agones.dev/agones/sdks/go"
 )
 
@@ -38,6 +40,10 @@ type sidecar interface {
 	Ready() error
 	Health() error
 	Shutdown() error
+	GameServer() (*sdkproto.GameServer, error)
+	WatchGameServer(gosdk.GameServerCallback) error
+	SetAnnotation(key, value string) error
+	SetLabel(key, value string) error
 }
 
 // dial connects to the local sidecar. A package variable only so tests can
@@ -97,7 +103,10 @@ func Start(ctx context.Context, cfg Config) (*Lifecycle, error) {
 	if err := s.Ready(); err != nil {
 		return nil, fmt.Errorf("agones: mark ready: %w", err)
 	}
+	return startHealth(ctx, s, cfg), nil
+}
 
+func startHealth(ctx context.Context, s sidecar, cfg Config) *Lifecycle {
 	interval := cfg.HealthInterval
 	if interval <= 0 {
 		interval = DefaultHealthInterval
@@ -112,7 +121,7 @@ func Start(ctx context.Context, cfg Config) (*Lifecycle, error) {
 	hctx, cancel := context.WithCancel(ctx)
 	l := &Lifecycle{sdk: s, logf: logf, stop: cancel, done: make(chan struct{})}
 	go l.healthLoop(hctx, interval)
-	return l, nil
+	return l
 }
 
 // healthLoop beats immediately and then on every interval tick, so a

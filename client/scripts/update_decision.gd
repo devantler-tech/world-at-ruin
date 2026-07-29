@@ -113,12 +113,13 @@ static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 	# certificates existed keeps deciding exactly as it did.
 	#
 	# The residual, stated plainly: this core verifies no signatures (it performs no
-	# I/O at all), and the Ed25519 root that would sign a certificate is unstarted.
-	# So a certificate is still only as trustworthy as the manifest signature
-	# carrying it — this defends against a KEYLESS replayer, who can only resend
-	# manifests as published, and NOT yet against a compromised key minting its own
-	# certificate. Reading the epoch from the certificate is what makes closing that
-	# gap a change to the crypto boundary alone, with no further change here.
+	# I/O at all). [UpdateTrust] now supplies the production ECDSA-P256 verifier, but
+	# no updater caller or root material invokes it yet. So a certificate is still
+	# only as trustworthy as the manifest signature carrying it — this defends
+	# against a KEYLESS replayer, who can only resend manifests as published, and
+	# NOT yet against a compromised key minting its own certificate. Reading the
+	# epoch from the certificate makes closing that gap a change to the trust-chain
+	# caller alone, with no further change here.
 	# Adoption RATCHETS, and without that the binding above is decorative. Once a
 	# client has accepted a certificate-backed epoch, a manifest that simply OMITS
 	# the certificate must be refused — otherwise a superseded or compromised key
@@ -549,10 +550,10 @@ static func _envelope_error(m: Dictionary) -> String:
 ## It deliberately does NOT verify the offline root's signature over this block.
 ## This core performs no I/O and verifies no signatures — it already trusts the
 ## caller to have verified the manifest's own — so root verification belongs to
-## the same crypto boundary that will introduce Ed25519 signing. What this
-## validator guarantees is that a certificate is either wholly usable or refused:
-## every field the decision path reads is present and coherent, so no downstream
-## check has to re-derive a default from a half-formed certificate.
+## the trust-chain caller built on [UpdateTrust]. What this validator guarantees
+## is that a certificate is either wholly usable or refused: every field the
+## decision path reads is present and coherent, so no downstream check has to
+## re-derive a default from a half-formed certificate.
 static func _certificate_error(raw: Variant) -> String:
 	if not (raw is Dictionary):
 		return "key is present but not an object"

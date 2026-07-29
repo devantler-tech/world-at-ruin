@@ -6,6 +6,7 @@ package agonestest
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"strconv"
 	"sync"
@@ -14,20 +15,30 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
+
+const sdkMetadataPrefix = "agones.dev/sdk-"
 
 // Sidecar is a fake Agones SDK server. It records how the lifecycle drove
 // it; tests read the counters through the mutex-guarded accessors.
 type Sidecar struct {
 	sdkproto.UnimplementedSDKServer
 
-	mu           sync.Mutex
-	ready        int
-	health       int
-	shutdown     int
-	readyErr     error
-	killStreamAt int
-	killed       bool
+	mu            sync.Mutex
+	ready         int
+	health        int
+	shutdown      int
+	readyErr      error
+	killStreamAt  int
+	killed        bool
+	gameServer    *sdkproto.GameServer
+	watchers      map[int]chan *sdkproto.GameServer
+	nextWatcher   int
+	holdWatches   bool
+	watchCalls    int
+	annotationErr error
+	labelErr      error
 
 	// Port the fake listens on (loopback only).
 	Port int
@@ -38,14 +49,20 @@ type Sidecar struct {
 // (test cleanup); a caller then points the real SDK at it via the
 // AGONES_SDK_GRPC_HOST/PORT environment variables.
 func Start(readyErr error) (*Sidecar, error) {
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	lis, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, err
 	}
+	tcpAddr, ok := lis.Addr().(*net.TCPAddr)
+	if !ok {
+		_ = lis.Close()
+		return nil, fmt.Errorf("agonestest: loopback listener has unexpected address type %T", lis.Addr())
+	}
 	f := &Sidecar{
 		readyErr: readyErr,
-		Port:     lis.Addr().(*net.TCPAddr).Port,
+		Port:     tcpAddr.Port,
 		srv:      grpc.NewServer(),
+		watchers: make(map[int]chan *sdkproto.GameServer),
 	}
 	sdkproto.RegisterSDKServer(f.srv, f)
 	go func() { _ = f.srv.Serve(lis) }()
@@ -67,6 +84,121 @@ func (f *Sidecar) Ready(_ context.Context, _ *sdkproto.Empty) (*sdkproto.Empty, 
 		return nil, f.readyErr
 	}
 	return &sdkproto.Empty{}, nil
+}
+
+// SetGameServer supplies the identity and lifecycle state returned by the real
+// SDK's GameServer and WatchGameServer calls.
+func (f *Sidecar) SetGameServer(namespace, name, uid, state string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.gameServer = &sdkproto.GameServer{
+		ObjectMeta: &sdkproto.GameServer_ObjectMeta{
+			Namespace:   namespace,
+			Name:        name,
+			Uid:         uid,
+			Annotations: make(map[string]string),
+			Labels:      make(map[string]string),
+		},
+		Status: &sdkproto.GameServer_Status{State: state},
+	}
+	f.broadcastLocked()
+}
+
+// HoldWatchEvents prevents WatchGameServer from yielding snapshots until
+// ReleaseWatchEvents. It lets tests prove callers really wait for the
+// observed metadata barrier rather than trusting SetAnnotation/SetLabel.
+func (f *Sidecar) HoldWatchEvents() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.holdWatches = true
+}
+
+// ReleaseWatchEvents publishes the current GameServer to every active watcher.
+func (f *Sidecar) ReleaseWatchEvents() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.holdWatches = false
+	f.broadcastLocked()
+}
+
+// GetGameServer returns the configured GameServer snapshot.
+func (f *Sidecar) GetGameServer(_ context.Context, _ *sdkproto.Empty) (*sdkproto.GameServer, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.gameServer == nil {
+		return nil, status.Error(codes.NotFound, "agonestest: GameServer is not configured")
+	}
+	return proto.CloneOf(f.gameServer), nil
+}
+
+// SetAnnotation applies the same metadata prefix as the real Agones sidecar.
+func (f *Sidecar) SetAnnotation(_ context.Context, kv *sdkproto.KeyValue) (*sdkproto.Empty, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.annotationErr != nil {
+		return nil, f.annotationErr
+	}
+	if f.gameServer == nil {
+		return nil, status.Error(codes.NotFound, "agonestest: GameServer is not configured")
+	}
+	f.gameServer.GetObjectMeta().Annotations[sdkMetadataPrefix+kv.GetKey()] = kv.GetValue()
+	f.broadcastLocked()
+	return &sdkproto.Empty{}, nil
+}
+
+// SetLabel applies the same metadata prefix as the real Agones sidecar.
+func (f *Sidecar) SetLabel(_ context.Context, kv *sdkproto.KeyValue) (*sdkproto.Empty, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.labelErr != nil {
+		return nil, f.labelErr
+	}
+	if f.gameServer == nil {
+		return nil, status.Error(codes.NotFound, "agonestest: GameServer is not configured")
+	}
+	f.gameServer.GetObjectMeta().Labels[sdkMetadataPrefix+kv.GetKey()] = kv.GetValue()
+	f.broadcastLocked()
+	return &sdkproto.Empty{}, nil
+}
+
+// WatchGameServer streams the current resource and every later metadata
+// update, matching the sidecar contract exercised by the production SDK.
+func (f *Sidecar) WatchGameServer(_ *sdkproto.Empty, stream sdkproto.SDK_WatchGameServerServer) error {
+	f.mu.Lock()
+	id := f.nextWatcher
+	f.nextWatcher++
+	f.watchCalls++
+	ch := make(chan *sdkproto.GameServer, 8)
+	f.watchers[id] = ch
+	if !f.holdWatches && f.gameServer != nil {
+		ch <- proto.CloneOf(f.gameServer)
+	}
+	f.mu.Unlock()
+	defer func() {
+		f.mu.Lock()
+		delete(f.watchers, id)
+		f.mu.Unlock()
+	}()
+
+	for {
+		select {
+		case <-stream.Context().Done():
+			return stream.Context().Err()
+		case gs := <-ch:
+			if err := stream.Send(gs); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func (f *Sidecar) broadcastLocked() {
+	if f.holdWatches || f.gameServer == nil {
+		return
+	}
+	for _, ch := range f.watchers {
+		ch <- proto.CloneOf(f.gameServer)
+	}
 }
 
 // Shutdown records the call.
@@ -113,3 +245,40 @@ func (f *Sidecar) HealthBeats() int { f.mu.Lock(); defer f.mu.Unlock(); return f
 
 // ShutdownCalls returns how many Shutdown RPCs arrived.
 func (f *Sidecar) ShutdownCalls() int { f.mu.Lock(); defer f.mu.Unlock(); return f.shutdown }
+
+// WatchCalls returns how many WatchGameServer streams were opened.
+func (f *Sidecar) WatchCalls() int { f.mu.Lock(); defer f.mu.Unlock(); return f.watchCalls }
+
+// FailSetAnnotation makes metadata publication fail with err.
+func (f *Sidecar) FailSetAnnotation(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.annotationErr = err
+}
+
+// FailSetLabel makes readiness-label publication fail with err.
+func (f *Sidecar) FailSetLabel(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.labelErr = err
+}
+
+// Annotation returns one fully-qualified GameServer annotation.
+func (f *Sidecar) Annotation(key string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.gameServer == nil {
+		return ""
+	}
+	return f.gameServer.GetObjectMeta().GetAnnotations()[key]
+}
+
+// Label returns one fully-qualified GameServer label.
+func (f *Sidecar) Label(key string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.gameServer == nil {
+		return ""
+	}
+	return f.gameServer.GetObjectMeta().GetLabels()[key]
+}
