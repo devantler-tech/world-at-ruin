@@ -5,10 +5,6 @@ extends Node3D
 ## premise means an agent can author any part of this world in a text diff.
 
 const SUN_COLOR := Color(1.0, 0.72, 0.5)
-const SKY_TOP := Color(0.23, 0.18, 0.22)
-const SKY_HORIZON := Color(0.55, 0.35, 0.24)
-const GROUND_BOTTOM := Color(0.1, 0.09, 0.09)
-const FOG_COLOR := Color(0.35, 0.28, 0.24)
 ## Stable save-vault ids. Renaming either strands a shipped discovery forever;
 ## the boot test and immutable v2 golden fixture therefore pin these spellings.
 const DISCOVERY_STARTER_CAVE := SaveVault.DISCOVERY_STARTER_CAVE
@@ -822,93 +818,20 @@ func _build_environment() -> void:
 	sun.shadow_normal_bias = 1.5
 	add_child(sun)
 
-	var sky_mat := ProceduralSkyMaterial.new()
-	sky_mat.sky_top_color = SKY_TOP
-	sky_mat.sky_horizon_color = SKY_HORIZON
-	sky_mat.ground_bottom_color = GROUND_BOTTOM
-	sky_mat.ground_horizon_color = SKY_HORIZON
-	sky_mat.sun_angle_max = 40.0
-	var sky := Sky.new()
-	sky.sky_material = sky_mat
-
-	var env := Environment.new()
-	env.background_mode = Environment.BG_SKY
-	env.sky = sky
-	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	env.ambient_light_energy = 0.9
-	# SDFGI: sky ambient must not reach underground — cave systems get their
-	# darkness from occlusion and their light from torches.
-	env.sdfgi_enabled = true
-	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
-	env.tonemap_exposure = 1.05
-	env.tonemap_white = 6.0
-
-	# Contact occlusion. Without it nothing darkens where geometry meets
-	# geometry, so props read as pasted onto the terrain rather than sitting in
-	# it — the single biggest reason untextured shapes look flat. Kept tight
-	# (small radius, moderate intensity) so it seats objects without painting
-	# grey haloes; `light_affect` at 0 keeps direct sunlight clean and lets the
-	# occlusion live in the ambient term where it belongs.
-	env.ssao_enabled = true
-	env.ssao_radius = 1.4
-	env.ssao_intensity = 2.4
-	env.ssao_power = 1.7
-	env.ssao_detail = 0.6
-	env.ssao_light_affect = 0.0
-	env.ssao_ao_channel_affect = 0.35
-
-	# Emissive bloom. The world is lit by embers — brazier flames and the cave
-	# torches — and without glow they are merely orange pixels rather than things
-	# giving off light. The HDR threshold is above 1.0 on purpose: only genuinely
-	# over-bright emissive surfaces bloom, so the ashen mid-tones stay crisp
-	# instead of the whole frame going soft (the usual over-bloom mistake).
-	env.glow_enabled = true
-	env.glow_normalized = true
-	env.glow_intensity = 0.32
-	env.glow_strength = 1.0
-	env.glow_bloom = 0.05
-	env.glow_blend_mode = Environment.GLOW_BLEND_MODE_SOFTLIGHT
-	env.glow_hdr_threshold = 1.45
-	env.glow_hdr_scale = 2.0
-
-	# Depth fog, now with a height falloff: ash does not hang at uniform density,
-	# it pools in the hollows and thins as you climb. Aerial perspective bleeds
-	# the fog colour into distant geometry so far ruins separate from near ones.
-	env.fog_enabled = true
-	env.fog_light_color = FOG_COLOR
-	env.fog_light_energy = 0.9
-	env.fog_sun_scatter = 0.06
-	env.fog_density = 0.010
-	env.fog_aerial_perspective = 0.35
-	env.fog_sky_affect = 0.4
-	# The downward pooling is [CaveAtmosphere]'s to write — at build time under
-	# an open sky, and again each frame for wherever the view has moved to.
-	CaveAtmosphere.apply(env, 0.0)
-
 	# Volumetric fog is gated on a GPU capability probe. Godot's froxel
 	# volumetrics need an R32_Uint atomic storage image, which some GPUs do not
 	# support — the CI runner's virtualised Apple adapter reports "Format
 	# 'R32_Uint' does not support usage as atomic storage image" and the frame
 	# then fails to render at all. Where the device affirmatively supports the
 	# format the Reach gets a real air volume (sun shafts through the ash);
-	# everywhere else keeps the height-fog fallback above, which is broadly
-	# supported and carries most of the visible gain anyway.
+	# everywhere else keeps the shared builder's height-fog fallback.
 	_volumetrics_on = Volumetrics.probe()
-	Volumetrics.apply(env, _volumetrics_on)
+	var env := ReachAtmosphere.build(_volumetrics_on)
 	# The line itself is built by Volumetrics so that CI's frame-capture job and
 	# the game agree on one string (#232): the capture job records this verdict
 	# in the evidence artifact, because a frame captured with the probe OFF
 	# depicts the height-fog fallback and cannot evidence the volumetric path.
 	print(Volumetrics.marker(_volumetrics_on))
-
-	# A restrained grading pass so the palette reads as a deliberate choice
-	# rather than whatever the tonemapper returned: a little more contrast to
-	# keep the ash from going milky, a little less saturation so the ember
-	# highlights are the only truly warm thing in frame.
-	env.adjustment_enabled = true
-	env.adjustment_brightness = 1.0
-	env.adjustment_contrast = 1.08
-	env.adjustment_saturation = 0.94
 
 	var world_env := WorldEnvironment.new()
 	world_env.name = "WorldEnvironment"
