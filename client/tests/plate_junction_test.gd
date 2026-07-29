@@ -134,6 +134,14 @@ func _plates(uv: Vector2) -> Dictionary:
 	var f1 := 1000.0
 	var f2 := 1000.0
 	var f3 := 1000.0
+	# The FOURTH distance. The shaders do not compute it and nothing below blends
+	# with it — it exists only so the probe can tell an isolated triple junction
+	# from a degenerate vertex where four plates meet at once, which are different
+	# cases with different guarantees (see `_check_junction_*`). Carried in this
+	# same loop rather than a second pass over the window: the searches below
+	# evaluate this tens of thousands of times, and a duplicate nine-cell loop
+	# doubled the whole test's runtime against CI's 180 s budget.
+	var f4 := 1000.0
 	var id := base
 	var c1 := base
 	var c2 := base
@@ -148,6 +156,7 @@ func _plates(uv: Vector2) -> Dictionary:
 			var centre := cell + Vector2(0.15, 0.15) + 0.7 * jitter
 			var d := uv.distance_to(centre)
 			if d < f1:
+				f4 = f3
 				f3 = f2
 				id3 = id2
 				f2 = f1
@@ -157,37 +166,23 @@ func _plates(uv: Vector2) -> Dictionary:
 				c1 = centre
 				id = cell
 			elif d < f2:
+				f4 = f3
 				f3 = f2
 				id3 = id2
 				f2 = d
 				c2 = centre
 				id2 = cell
 			elif d < f3:
+				f4 = f3
 				f3 = d
 				id3 = cell
+			elif d < f4:
+				f4 = d
 	return {
 		"id": id, "id2": id2, "id3": id3,
-		"f1": f1, "f2": f2, "f3": f3,
+		"f1": f1, "f2": f2, "f3": f3, "f4": f4,
 		"c1": c1, "c2": c2,
-		"f4": _fourth_distance(uv, base),
 	}
-
-
-## The FOURTH-nearest distance. The shaders do not compute it and this mirror
-## does not blend with it — it exists only so the probe can tell an isolated
-## triple junction from a degenerate vertex where four plates meet at once, which
-## are different cases with different guarantees (see `_check_junction_*`).
-func _fourth_distance(uv: Vector2, base: Vector2) -> float:
-	var ds: Array[float] = []
-	for j in range(-1, 2):
-		for i in range(-1, 2):
-			var cell := base + Vector2(float(i), float(j))
-			var jitter := Vector2(
-				_hash3(Vector3(cell.x, cell.y, 0.0)),
-				_hash3(Vector3(cell.x, cell.y, 7.0)))
-			ds.append(uv.distance_to(cell + Vector2(0.15, 0.15) + 0.7 * jitter))
-	ds.sort()
-	return ds[3]
 
 
 ## `terrain_plate_substance`, as a colour. Chained mixes with GLSL `step`, so
@@ -543,13 +538,16 @@ func _fail(msg: String) -> void:
 	_failures.append(msg)
 
 
+## `tools/run-client-test.sh` greps the log for the literal `TEST PASS`, and
+## fails the run when it is absent even on a zero exit — so the verdict has to be
+## spelled exactly that way, and `TEST FAIL` likewise.
 func _report() -> void:
 	if _failures.is_empty():
-		print("PLATE JUNCTION OK — the neighbour blend is continuous across a "
-			+ "triple junction and unchanged away from one")
+		print("TEST PASS — the neighbour blend is continuous across a triple "
+			+ "junction and unchanged away from one")
 		get_tree().quit(0)
 		return
 	for msg in _failures:
 		push_error(msg)
-		print("PLATE JUNCTION FAIL — %s" % msg)
+		print("TEST FAIL — %s" % msg)
 	get_tree().quit(1)
