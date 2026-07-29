@@ -113,11 +113,12 @@ introducing_commit() {
 total=0
 wrong=0
 mislabelled=0
-never_cut=0
 no_anchor=0
 # Each never-cut entry as `version<TAB>containing release`. The verdict for one
 # of them depends on what the OTHERS want, so the decision cannot be made in the
-# loop that discovers them and is deferred until the whole set is known.
+# loop that discovers them and is deferred until the whole set is known. This
+# doubles as the never-cut count, so there is no separate counter to keep in
+# step with it.
 never_cut_rows=()
 printf '%-10s  %-9s  %-9s  %s\n' ENTRY ANCHOR SHIPPED VERDICT
 while IFS= read -r file; do
@@ -153,7 +154,6 @@ while IFS= read -r file; do
 			printf '%-10s  %-9s  %-9s  %s\n' "$version" "$anchor" "$shipped" 'PRE-RELEASE'
 		else
 			wrong=$((wrong + 1))
-			never_cut=$((never_cut + 1))
 			never_cut_rows+=("$version"$'\t'"$shipped")
 			printf '%-10s  %-9s  %-9s  %s\n' "$version" "$anchor" "$shipped" 'NEVER-CUT'
 		fi
@@ -166,7 +166,10 @@ done < <(find "$ENTRY_DIR" -name '*.json' | sort)
 
 printf '\n%d of %d entries name a release that does not contain them.\n' "$wrong" "$total"
 
+[ "$gate" -eq 1 ] || exit 0
+
 # Split the never-cut set by whether a one-to-one correction actually exists.
+# Only the gate consumes this, so it is computed after the survey has returned.
 #
 # A release is available to an entry when no entry file occupies it AND exactly
 # one never-cut entry wants it. Both conditions are required: the occupancy test
@@ -204,8 +207,6 @@ if [ "${#never_cut_rows[@]}" -gt 0 ]; then
 		fi
 	done
 fi
-
-[ "$gate" -eq 1 ] || exit 0
 
 # The exclusion is stated on every gate run, passing or failing. A count that is
 # only mentioned when it happens to be non-zero is an exclusion nobody can see,
