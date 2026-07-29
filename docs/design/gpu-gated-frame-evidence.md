@@ -78,7 +78,7 @@ confident wrong answer rather than a failure:
 
 `Frame capture (lavapipe volumetrics)` runs on hosted Ubuntu 24.04 only when the player-visible gate
 marks a change as GPU-gated. It installs Mesa and Xvfb, resolves the lavapipe ICD by glob, selects
-the Vulkan driver explicitly, and runs the same four-vantage capture with the repository's pinned,
+the Vulkan driver explicitly, and runs the same fixed-vantage capture with the repository's pinned,
 checksum-verified Godot build. Its guard requires all of the following before an artifact exists:
 
 - the Godot renderer line names the lavapipe Vulkan device;

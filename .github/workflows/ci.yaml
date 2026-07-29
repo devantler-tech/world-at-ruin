@@ -1490,9 +1490,10 @@ jobs:
     needs: [detect-visual-changes]
     if: needs.detect-visual-changes.outputs.gpu_gated == 'true'
     runs-on: ubuntu-24.04
-    # The GPU capture is bounded at 30 minutes. Lavapipe renders on the CPU, so
-    # this first measured lane gets a larger but still finite budget; the actual
-    # duration is written into the artifact and job summary for later tuning.
+    # The existing GPU captures are bounded at 30 minutes. Lavapipe renders on
+    # the CPU, so this first measured lane gets a larger but still finite budget;
+    # the actual duration is written into the artifact and job summary for later
+    # tuning.
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1552,7 +1553,8 @@ jobs:
           WAR_VAULT_PATH="${RUNNER_TEMP}/lavapipe-vault.json" \
           WAR_BOOT_RECOVERY_PATH="${RUNNER_TEMP}/lavapipe-recovery.json" \
             xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" \
-              godot --rendering-driver vulkan --path client res://tools/frame_capture.tscn \
+              godot --rendering-driver vulkan --audio-driver Dummy \
+              --path client res://tools/frame_capture.tscn \
               2>&1 | tee capture-lavapipe.log
           elapsed=$((SECONDS - started))
           echo "seconds=${elapsed}" >> "$GITHUB_OUTPUT"

@@ -16,7 +16,7 @@ die() {
 [ -n "$shots" ] && [ -d "$shots" ] ||
 	die "shot directory is missing"
 
-grep -Eq '^Vulkan .*Using Device #[0-9]+: llvmpipe([[:space:]]|$)' "$log" ||
+grep -Eq '^Vulkan .*Using Device #[0-9]+: (Unknown - )?llvmpipe([[:space:]]|\()' "$log" ||
 	die "capture did not prove it used the lavapipe Vulkan device"
 
 read_verdict() {

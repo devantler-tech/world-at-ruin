@@ -22,11 +22,11 @@ make_valid_fixture() {
 	mkdir -p "$fixture/shots"
 	cat >"$fixture/capture.log" <<'EOF'
 Godot Engine v4.7.1.stable.official
-Vulkan 1.4.318 - Forward+ - Using Device #0: llvmpipe (LLVM 20.1.2, 256 bits)
+Vulkan 1.4.318 - Forward+ - Using Device #0: Unknown - llvmpipe (LLVM 20.1.2, 256 bits)
 VOLUMETRICS on — R32_Uint atomic storage image supported
 HOLLOW FOG on — 3 drifting ash pools
 BOOT_OK vdev
-CAPTURE PASS — 4 vantages written
+CAPTURE PASS — 5 vantages written
 EOF
 	printf 'not-a-real-png-but-nonempty' >"$fixture/shots/world.png"
 	printf '%s' "$fixture"
@@ -56,7 +56,7 @@ sed -i.bak '/Vulkan .*Using Device/d' "$non_vulkan/capture.log"
 expect_refusal "a capture with no Vulkan device proof" "$non_vulkan"
 
 wrong_device="$(make_valid_fixture wrong-device)"
-sed -i.bak 's/llvmpipe (LLVM 20.1.2, 256 bits)/SwiftShader Device/' "$wrong_device/capture.log"
+sed -i.bak 's/Unknown - llvmpipe (LLVM 20.1.2, 256 bits)/SwiftShader Device/' "$wrong_device/capture.log"
 expect_refusal "a Vulkan capture that did not use lavapipe" "$wrong_device"
 
 probe_off="$(make_valid_fixture probe-off)"
