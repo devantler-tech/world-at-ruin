@@ -190,6 +190,13 @@ raise writes to 2 and append 2 to the capability ledger. The raw preview remains
 `WAR_LAYERED_OUTFIT_PICKERS=1` until #336 delivers an authored wardrobe surface; the flag controls
 exposure, not the already-completed two-release compatibility sequence.
 
+The current character-vocabulary expansion is capability 5. The reader registry contains
+`ashen_bindings` at `hands/armor`, so a future recipe that already carries the stable name renders
+and survives ordinary edits. Production origination remains the capability-4 writer vocabulary in
+both `WAR_LAYERED_OUTFIT_PICKERS` states. #544 owns activation after a retained capability-5 reader
+release exists; that contract change adds the writer-vocabulary entry, raises writes to 5, and
+appends capability 5 to the shipped ledger.
+
 ### Progression vault
 
 For vault version `N`, the expansion pull request must:
@@ -245,7 +252,7 @@ boot verifies the live registry against the ledger.
 Ordinary attunement and discovery writes preserve an already-present v3 document and its claims;
 discovery-only documents remain v2.
 
-Capability 5 is the reader expansion for vault v4 quest progress. Its optional `quests` object maps
+Capability 6 is the reader expansion for vault v4 quest progress. Its optional `quests` object maps
 stable quest IDs to stable objective IDs and progress in the exact JSON integer range `0..2^53-1`.
 `SaveVault` validates and preserves the whole nested shape; `Main` restores it into a boot-owned
 `QuestLog` before any quest definition registers. Known objectives get a clamped live view, while
@@ -254,7 +261,7 @@ Restored completion is latched
 silently and can never be announced or granted again. The production writer remains vault v3 at
 capability 4: empty state and ordinary attunement, discovery and reward writes cannot originate
 `quests`, but they preserve an already-present v4 document. Activating vault-v4 writes is the separate
-contract child #560, gated on retaining the capability-5 reader release as a whole-app rollback target.
+contract child #560, gated on retaining the capability-6 reader release as a whole-app rollback target.
 
 ### Boot recovery
 

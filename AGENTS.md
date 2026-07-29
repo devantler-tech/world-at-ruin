@@ -511,7 +511,7 @@ everything shipped afterwards is held to.
   base-compares complete rows. The retained v0.61.0 capability-4 reader is the rollback target that
   permits this writer. The vault reader now accepts optional v4 `quests` as
   `quest_id → objective_id → progress in the exact JSON integer range 0..2^53-1`, and the manifest
-  advertises save-capability reads 5 while writes remain capability 4 and vault v3. `Main` restores that data
+  advertises save-capability reads 6 while writes remain capability 4 and vault v3. `Main` restores that data
   into its boot-owned `QuestLog` before definitions register; the tracker preserves opaque future
   IDs and raw progress, clamps only its live known view, and latches restored completion without
   announcing it again. Existing production writers preserve an already-present v4 document but
@@ -607,9 +607,11 @@ everything shipped afterwards is held to.
   preserves caller movement when that flag is off, and the integer-speed floor remains mobile on
   diagonals; threat from damage, dead-target
   filtering, real navmesh pathfinding and cast replication remain later children — with its own
-  cross-platform golden), with the concrete Agones/secret resource adapter, expiry-loop
-  supervision, zone claim adapter, Nakama RPC registration and broader persistence arriving as later children of the
-  server-foundation epic (#4); `deploy/` (platform manifests) arrives later per the roadmap.
+  cross-platform golden), with the production admission-secret lifecycle selected in
+  `docs/adr/0002-seal-zone-admission-secrets-before-readiness.md` but its concrete Agones sealed-envelope
+  resource adapter, expiry/orphan supervision, zone claim adapter, Nakama RPC registration and
+  broader persistence still arriving as later children of the server-foundation epic (#4);
+  `deploy/` (platform manifests) arrives later per the roadmap.
 - **Changing any persisted player-data format:** follow the
   [forward-only save-data migration contract](docs/design/save-data.md). It defines the staged
   expand → bake → contract rollout, the version-bump checklist, and the refusal rules for the

@@ -6,3 +6,4 @@ shoes_cloth
 boots_worn
 relic_goggles
 ruin_drake_helm
+ashen_bindings

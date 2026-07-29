@@ -107,11 +107,15 @@ const SAVE_CAPABILITY_WRITES := 4
 ## needlessly routed away from a pack update despite a valid fallback existing.
 ##
 ## Must always be >= the write capability (a build must read what it writes).
-## Capability 5 is vault-v4 forward-only quest-objective progress. This is its
+## Capability 5 reads the `ashen_bindings` character-vocabulary expansion while
+## production writers remain at capability 4. The writer may advance only after
+## a retained release advertises this ceiling; #544 owns that contract stage.
+##
+## Capability 6 is vault-v4 forward-only quest-objective progress. This is its
 ## expand release: the reader accepts and applies the shape while the production
 ## writer remains on retained capability 4. Once this release is retained, the
-## separate writer stage may activate capability 5.
-const SAVE_CAPABILITY_READS := 5
+## separate writer stage may activate capability 6.
+const SAVE_CAPABILITY_READS := 6
 
 ## The oldest shell this manifest still supports updating FROM.
 ##
