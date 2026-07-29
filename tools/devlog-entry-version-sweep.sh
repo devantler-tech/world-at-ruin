@@ -99,27 +99,54 @@ done
 [ -n "$(released_versions | newest_version)" ] ||
 	fail 'no release tags are visible in this checkout — every entry would read as never-cut (a shallow fetch hides them)'
 
-# The commit that first introduced this version string, in either era.
+# The commit whose containment answers "which release first carried this entry",
+# in either era.
 #
-# `--full-history` because the answer must not depend on the topology the branch
-# reached its history through. A pathspec-restricted `git log` simplifies by
-# default: where a merge is TREESAME to a parent it follows only that parent, and
-# where it is TREESAME to several it follows the FIRST. So a branch that carries
-# its own copy of an entry — a duplicate authored in parallel, a cherry-pick, a
-# re-applied correction — makes its own later commit the first parent of the
-# merge, and the earlier commit that really introduced the string is pruned. The
-# lookup then answers with the branch's copy, and every verdict downstream is
-# taken against the wrong commit: an entry that shipped in the tagged release
-# reads UNRELEASED, which is a vacuous PASS rather than a visible refusal.
+# TWO INDEPENDENT DECISIONS, and getting either wrong buys a vacuous PASS.
+#
+# WHICH COMMITS ARE VISIBLE. `--full-history`, because the answer must not depend
+# on the topology the branch reached its history through. A pathspec-restricted
+# `git log` simplifies by default: where a merge is TREESAME to a parent it
+# follows only that parent, and where it is TREESAME to SEVERAL it follows the
+# first. A branch carrying its own copy of an entry — a duplicate authored in
+# parallel, a cherry-pick, a re-applied correction — makes a merge TREESAME to
+# both sides, so which introduction survives is decided by which side happens to
+# be the first parent. That is a property of how the merge was typed, not of the
+# log.
+#
+# WHICH OF THEM TO ANSWER WITH. Once several introductions are visible, walk
+# order cannot choose between them: `--reverse` reverses the walk, it does not
+# rank by release. Taking the oldest picks an unreleased branch commit over the
+# tagged one whenever the branch authored its copy first, and the entry then
+# reads UNRELEASED though the release demonstrably contains it. So the candidates
+# are ranked by CONTAINMENT — the earliest release any of them reaches — which is
+# the question the verdict actually asks and is answered the same way whichever
+# side of the merge each commit sits on.
 #
 # Takes the first line by expansion rather than by piping to `head`: under
 # `pipefail` the early close sends git SIGPIPE, which reads as a failed lookup
 # and aborts the sweep on its first entry.
 introducing_commit() {
-	local out
+	local out candidate release best='' best_release=''
 	out=$(git log --full-history --reverse --format='%h' -S"\"version\": \"$1\"" \
 		-- client/scripts/devlog.gd "$ENTRY_DIR") || return 0
-	printf '%s' "${out%%$'\n'*}"
+	[ -n "$out" ] || return 0
+	while IFS= read -r candidate; do
+		[ -n "$candidate" ] || continue
+		release=$(first_release_containing "$candidate")
+		[ -n "$release" ] || continue
+		# Same shape as the guard's oldest_version: an `if` rather than `&&`, so
+		# a final non-match cannot leave the loop non-zero for `set -e`.
+		if [ -z "$best_release" ] || version_gt "$best_release" "$release"; then
+			best_release="$release"
+			best="$candidate"
+		fi
+	done <<<"$out"
+	# No candidate has reached a release at all, so the change is genuinely
+	# unshipped and every candidate answers containment identically. The oldest
+	# is taken so the report is stable rather than dependent on the walk.
+	[ -n "$best" ] || best="${out%%$'\n'*}"
+	printf '%s' "$best"
 }
 
 total=0

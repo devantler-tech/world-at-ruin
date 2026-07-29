@@ -254,6 +254,35 @@ expect_row 'an entry anchored past a merge that is TREESAME to both parents' \
 	"$(run_sweep "$d")" \
 	"^0\.2\.0 +${main_anchor} +0\.2\.0 +OK\$"
 
+# RED, and the MIRROR of the case above — the one that decides the lookup cannot
+# rank its candidates by walk order. Here the BRANCH authors the entry first and
+# is never tagged; the release is cut on the copy that lands on `main` after it.
+#
+# Both introductions are visible, and the older of the two is the branch commit
+# no release contains. Answering with it reports UNRELEASED for an entry the
+# tagged release demonstrably carries — and UNRELEASED PASSES, so this is a
+# vacuous pass rather than a visible refusal. Only ranking the candidates by the
+# release they reach picks the tagged one.
+#
+# Kept alongside its mirror deliberately: each case alone is satisfied by a rule
+# that gets the other wrong, so the pair is what pins the ranking.
+d="$(new_repo)"
+printf 'x\n' >"$d/base.txt"
+step "$d" base v0.1.0
+git -C "$d" checkout -q -b feature
+mkdir -p "$d/client/devlog"
+entry 0.2.0 >"$d/client/devlog/0.2.0.json"
+step "$d" 'the branch authors the entry first, and is never tagged'
+git -C "$d" checkout -q main
+mkdir -p "$d/client/devlog"
+entry 0.2.0 >"$d/client/devlog/0.2.0.json"
+step "$d" 'the release is cut on the copy that lands on main' v0.2.0
+released_anchor="$(git -C "$d" rev-parse --short HEAD)"
+git -C "$d" merge -q --no-edit feature -m 'merge the branch into main'
+expect_row 'an entry anchored to the released copy, not the older unreleased one' \
+	"$(run_sweep "$d")" \
+	"^0\.2\.0 +${released_anchor} +0\.2\.0 +OK\$"
+
 # GREEN: a correction is verified by CONTAINMENT through the corrections file.
 # Its own introducing commit would make it MISLABELLED, so this passes only if
 # the listed anchor is actually consulted.
