@@ -1,8 +1,8 @@
 # First-party World at Ruin captures and source media reviewed in this repository.
 # Format: SHA-256, two spaces, repository-relative path.
 0c468c8c56231ff675ba2a99684344d9efc6d56e16eb8634238e18bd03adc4bf  client/icon.svg
-8a8cd538a9703ded2a16c5de2980cfafae5e1fe28407728fd7d030411737d6e8  docs/evidence/issue-327-high-ground/cinderreach-approach-after.png
-39aa725eebe1f4d1037c4213f19de2e97bad9a5af32105e722368b7b21e5137b  docs/evidence/issue-327-high-ground/cinderreach-approach-before.png
+b38c2232a115d826535412e502ca326dbc4f027edecc39532df13c885d8231b2  docs/evidence/issue-327-high-ground/cinderreach-after.png
+200dde2b311bf373a75520e6779214f3e4a7df396cc46226ea8bed43744d07be  docs/evidence/issue-327-high-ground/cinderreach-before.png
 3af54af540bd9d29f4222609013cc6e0f228c1f321cb5bf6d7ee5a66e378765b  docs/evidence/issue-346-light-response/ash-far-side.png
 b53e850a61be8cbc75824c38c24fd0c576281c389146e30438bb0cfcfe2f7e0e  docs/evidence/issue-346-light-response/ash-source-side.png
 e2f1ed5a09bdb3131d817b4a988f5fdedd16c5506414d77098ce799c54d2750e  docs/evidence/issue-346-light-response/foliage-far-side.png
