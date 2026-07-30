@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tests/relief_read_test.gd" id="1_relief"]
+
+[node name="ReliefReadTest" type="Node"]
+script = ExtResource("1_relief")
