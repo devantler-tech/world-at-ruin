@@ -48,6 +48,8 @@ jobs:
         run: ./tools/save-capability-vocabulary-guard.test.sh
       - name: Player-visible gate diffs from the PR's own base
         run: ./tools/pr-diff-base.test.sh
+      - name: Exported-frame change report is pinned and advisory
+        run: ./tools/exported-frame-change-report.test.sh
       - name: Opt-in preview flag list is pinned and fail-closed
         run: ./tools/preview-flags.test.sh
       - name: Manifest sequence is monotonic in release order and fail-closed
@@ -2543,11 +2545,12 @@ jobs:
     # never uses. The export job already proves the shipped build STARTS; this
     # one proves it still LOOKS RIGHT (#174).
     #
-    # It REUSES the artifact client-export-macos already built — exporting is
-    # the multi-minute half, so a second export would double the slowest job in
-    # CI for a narrow class of regression (#145's cost constraint). And it runs
-    # only when export-affecting paths changed, so the default player-visible
-    # PR pays nothing for it.
+    # It REUSES the HEAD artifact client-export-macos already built. A second,
+    # base-tip export is made here only because comparing editor frames cannot
+    # expose an export-only regression: the change report must photograph the
+    # same shipped entry path on both sides (#296). That extra work remains
+    # reporting-only, records its own wall-clock cost, and runs only when
+    # export-affecting paths changed, so every other PR pays nothing for it.
     #
     # The exported binary CANNOT take the positional scene argument the editor
     # run uses: the official export template is compiled with
@@ -2573,12 +2576,19 @@ jobs:
     if: needs.detect-visual-changes.outputs.export_affecting == 'true'
     runs-on: macos-latest
     timeout-minutes: 30
+    env:
+      # The hosted display cannot realise the shipped 1600x900 window and has
+      # clamped identical exports to both 1024x642 and 1024x645. Pin a smaller
+      # 16:9 viewport on BOTH sides so frame_diff measures product pixels
+      # instead of refusing a runner-window mismatch.
+      EXPORTED_CAPTURE_RESOLUTION: 1024x576
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        # The checkout exists only to seed the capture save from
-        # client/recipes/wanderer.json — the game itself comes exclusively from
-        # the export artifact.
         with:
+          # The head game still comes exclusively from the export artifact.
+          # Full history is for the advisory BASE export below: a depth-1
+          # checkout cannot materialise github.event.pull_request.base.sha.
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -2603,7 +2613,8 @@ jobs:
           WAR_SAVE_PATH="${RUNNER_TEMP}/probe_save.json" \
           WAR_VAULT_PATH="${RUNNER_TEMP}/probe_save_vault.json" \
           WAR_BOOT_RECOVERY_PATH="${RUNNER_TEMP}/probe_save_recovery.json" \
-            "build/app/World at Ruin.app/Contents/MacOS/World at Ruin" 2>&1 | tee exported-capture.log
+            "build/app/World at Ruin.app/Contents/MacOS/World at Ruin" \
+            --resolution "${EXPORTED_CAPTURE_RESOLUTION}" 2>&1 | tee exported-capture.log
           if ! grep -q "CAPTURE PASS" exported-capture.log; then
             echo "::error::exported-client capture did not report PASS — see log"; tail -40 exported-capture.log; exit 1
           fi
@@ -2656,7 +2667,8 @@ jobs:
           WAR_SAVE_PATH="${RUNNER_TEMP}/exported_preview_save.json" \
           WAR_VAULT_PATH="${RUNNER_TEMP}/exported_preview_save_vault.json" \
           WAR_BOOT_RECOVERY_PATH="${RUNNER_TEMP}/exported_preview_save_recovery.json" \
-            "build/app/World at Ruin.app/Contents/MacOS/World at Ruin" 2>&1 | tee exported-previews.log
+            "build/app/World at Ruin.app/Contents/MacOS/World at Ruin" \
+            --resolution "${EXPORTED_CAPTURE_RESOLUTION}" 2>&1 | tee exported-previews.log
           if ! grep -q "CAPTURE PASS" exported-previews.log; then
             echo "::error::exported opt-in preview capture did not report PASS"
             tail -40 exported-previews.log
@@ -2696,7 +2708,8 @@ jobs:
           WAR_SAVE_PATH="${RUNNER_TEMP}/no_such_save.json" \
           WAR_VAULT_PATH="${RUNNER_TEMP}/no_such_save_vault.json" \
           WAR_BOOT_RECOVERY_PATH="${RUNNER_TEMP}/no_such_save_recovery.json" \
-            "build/app/World at Ruin.app/Contents/MacOS/World at Ruin" 2>&1 | tee exported-first-run.log
+            "build/app/World at Ruin.app/Contents/MacOS/World at Ruin" \
+            --resolution "${EXPORTED_CAPTURE_RESOLUTION}" 2>&1 | tee exported-first-run.log
           # Require the FIRST-RUN marker, not a bare PASS — the world scenario
           # prints "CAPTURE PASS" too, and its PNGs already sit in the same
           # directory, so a silent fall-back to the default scenario would
@@ -2811,6 +2824,46 @@ jobs:
             echo
             echo "Volumetric fog path: **${probe}** · hollow ash pools: **${pools}**"
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Install Godot and templates for the exported base comparison
+        # Advisory with the base render below. A transient download or old-base
+        # export failure must not turn this required evidence job red; the
+        # report step names the missing comparison explicitly instead.
+        continue-on-error: true
+        run: |
+          started="$(date +%s)"
+          curl -fsSL -o godot-base.zip "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_macos.universal.zip"
+          echo "${GODOT_MACOS_SHA512}  godot-base.zip" | shasum -a 512 -c -
+          unzip -q godot-base.zip
+          printf '#!/bin/sh\nexec "%s/Godot.app/Contents/MacOS/Godot" "$@"\n' "${PWD}" | sudo tee /usr/local/bin/godot >/dev/null
+          sudo chmod +x /usr/local/bin/godot
+          curl -fsSL -o base-templates.tpz "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+          echo "${GODOT_TEMPLATES_SHA512}  base-templates.tpz" | shasum -a 512 -c -
+          unzip -q base-templates.tpz
+          mkdir -p "${HOME}/Library/Application Support/Godot/export_templates/${GODOT_VERSION}.stable"
+          mv templates/* "${HOME}/Library/Application Support/Godot/export_templates/${GODOT_VERSION}.stable/"
+          elapsed=$(( $(date +%s) - started ))
+          echo "ADDED CI COST: base Godot and templates install ${elapsed}s"
+          {
+            echo "### Exported-client comparison setup"
+            echo
+            echo "Pinned Godot and templates install: **${elapsed}s**."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Render the PR base through the exported client
+        continue-on-error: true
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          tools/exported-frame-change-report.sh render-base \
+            "$BASE_SHA" "${RUNNER_TEMP}/exported-frame-report"
+      - name: Report exported frames against the PR base
+        # Reporting only: no visual threshold and no required-job failure. The
+        # helper warns when the base export failed, when nothing compared, or
+        # when a head frame carries no matching base measurement.
+        continue-on-error: true
+        run: |
+          tools/exported-frame-change-report.sh report \
+            "${RUNNER_TEMP}/exported-frame-report" \
+            "${RUNNER_TEMP}/exported-shots"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: exported-frames-${{ github.event.pull_request.head.sha }}
