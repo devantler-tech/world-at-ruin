@@ -1,6 +1,6 @@
 extends Node
-## Proves the plate boundary average stays CONTINUOUS where three plates meet
-## (#499), and that it is unchanged everywhere else.
+## Proves the plate boundary average stays CONTINUOUS where any number of plates
+## meet (#573), and that it is unchanged everywhere else.
 ##
 ## `terrain_plate_edge_blend` decides how much of a fragment belongs to a
 ## neighbouring plate. It does not decide WHICH neighbour, and #482 took `id2`
@@ -28,10 +28,11 @@ extends Node
 ## hash, which is why the mirror's precision does not enter into it.
 ##
 ## What keeps the mirror honest about the shader is the SOURCE GUARD below: if
-## the shaders stop calling `terrain_plate_junction_split`, or stop feeding it
-## the isotropic footprint, this test fails even though its own arithmetic is
-## untouched. Continuity proven here plus that call proven present in both
-## shaders is the join.
+## the shaders stop calling the three-way split, stop feeding it the isotropic
+## footprint, or stop folding the whole search window in at a higher-order
+## junction, this test fails even though its own arithmetic is untouched.
+## Continuity proven here plus those calls proven present in both shaders is the
+## join.
 ##
 ## Run: godot --headless --path client res://tests/plate_junction_test.tscn
 
@@ -74,19 +75,6 @@ const CONTINUOUS_STEP_MAX := 0.01
 ## The control must clear this, or the probe is not actually crossing a junction
 ## and the whole test is vacuous.
 const CONTROL_STEP_MIN := 0.02
-## At a degenerate four-plate vertex the remaining step must stay under the
-## pairwise rule's. Measured at 49% at a true four-fold vertex — the fourth plate
-## is exactly equidistant there, so the third's label swap carries as much weight
-## as it ever can, and three carried candidates cannot cover it at all.
-##
-## This bound is a REGRESSION GUARD, not a target: it is set to catch the blend
-## falling back toward the unfixed 100%, not to encode 49% as acceptable. Such
-## vertices are also measure-zero in a jittered grid — a generic Voronoi diagram
-## has only three-fold vertices, and a fourth plate exactly equidistant needs
-## cocircularity — so this is an isolated point, against the junction LINES the
-## isolated arm covers exactly.
-const DEGENERATE_STEP_RATIO_MAX := 0.60
-
 var _failures: PackedStringArray = []
 
 
@@ -134,11 +122,10 @@ func _plates(uv: Vector2) -> Dictionary:
 	var f1 := 1000.0
 	var f2 := 1000.0
 	var f3 := 1000.0
-	# The FOURTH distance. The shaders do not compute it and nothing below blends
-	# with it — it exists only so the probe can tell an isolated triple junction
-	# from a degenerate vertex where four plates meet at once, which are different
-	# cases with different guarantees (see `_check_junction_*`). Carried in this
-	# same loop rather than a second pass over the window: the searches below
+	# The FOURTH distance. Its identity is deliberately not carried: the distance
+	# tells production and this mirror when the fixed three-candidate list reaches
+	# its tail and the symmetric whole-window answer must take over. Carried in
+	# this same loop rather than a second pass over the window: the searches below
 	# evaluate this tens of thousands of times, and a duplicate nine-cell loop
 	# doubled the whole test's runtime against CI's 180 s budget.
 	var f4 := 1000.0
@@ -245,6 +232,56 @@ func _blend(uv: Vector2, use_third: bool) -> PackedFloat64Array:
 	return PackedFloat64Array([col.x, col.y, col.z, mask])
 
 
+## The symmetric whole-window answer. Every candidate in the same nine-cell
+## search as `_plates` receives a weight derived only from its distance excess
+## over the nearest cell. No ordered "last carried candidate" exists, so swapping
+## any equidistant labels cannot move the result.
+func _full_window_blend(uv: Vector2, p: Dictionary) -> PackedFloat64Array:
+	var base := Vector2(floor(uv.x), floor(uv.y))
+	var w: float = maxf(FOOTPRINT, 1e-6)
+	var total := 0.0
+	var out := PackedFloat64Array([0.0, 0.0, 0.0, 0.0])
+	for j in range(-1, 2):
+		for i in range(-1, 2):
+			var cell := base + Vector2(float(i), float(j))
+			var jitter := Vector2(
+				_hash3(Vector3(cell.x, cell.y, 0.0)),
+				_hash3(Vector3(cell.x, cell.y, 7.0)))
+			var centre := cell + Vector2(0.15, 0.15) + 0.7 * jitter
+			var d := uv.distance_to(centre)
+			var weight: float = 1.0 - smoothstep(
+				0.0, w, d - float(p["f1"]))
+			var col := _substance(cell)
+			out[0] += col.x * weight
+			out[1] += col.y * weight
+			out[2] += col.z * weight
+			out[3] += _is_slab(cell) * weight
+			total += weight
+	if total <= 0.0:
+		_fail("the whole-window blend accumulated no coverage — the nearest "
+			+ "cell must always contribute one")
+		return out
+	for k in range(0, out.size()):
+		out[k] /= total
+	return out
+
+
+## Keep the established three-way answer bit-identical except where the fourth
+## candidate enters the same pixel footprint. At the exact third/fourth identity
+## swap this is wholly the symmetric window answer, so the discontinuous
+## fixed-list term has zero authority.
+func _window_blend(uv: Vector2) -> PackedFloat64Array:
+	var p := _plates(uv)
+	var current := _blend(uv, true)
+	var full := _full_window_blend(uv, p)
+	var w: float = maxf(FOOTPRINT, 1e-6)
+	var junction: float = 1.0 - smoothstep(
+		0.0, w, float(p["f4"]) - float(p["f3"]))
+	for k in range(0, current.size()):
+		current[k] = lerpf(current[k], full[k], junction)
+	return current
+
+
 # ---------------------------------------------------------------------------
 # The probe
 # ---------------------------------------------------------------------------
@@ -322,6 +359,22 @@ func _max_adjacent_step(centre: Vector2, samples: int, use_third: bool) -> float
 		var a := TAU * float(i) / float(samples)
 		var uv := centre + Vector2(cos(a), sin(a)) * ARC_RADIUS
 		var cur := _blend(uv, use_third)
+		if not prev.is_empty():
+			var d := 0.0
+			for k in range(0, cur.size()):
+				d = maxf(d, absf(cur[k] - prev[k]))
+			worst = maxf(worst, d)
+		prev = cur
+	return worst
+
+
+func _max_adjacent_window_step(centre: Vector2, samples: int) -> float:
+	var worst := 0.0
+	var prev := PackedFloat64Array()
+	for i in range(0, samples + 1):
+		var a := TAU * float(i) / float(samples)
+		var uv := centre + Vector2(cos(a), sin(a)) * ARC_RADIUS
+		var cur := _window_blend(uv)
 		if not prev.is_empty():
 			var d := 0.0
 			for k in range(0, cur.size()):
@@ -410,16 +463,9 @@ func _check_junction_continuity(centre: Vector2) -> void:
 		% [fixed_coarse, fixed_fine])
 
 
-## The four-plate case, where the guarantee is a BOUND rather than continuity.
-##
-## The shaders carry three candidates. At a vertex where a fourth plate is
-## equidistant with the third, the third's LABEL swaps with that uncarried fourth
-## while it still holds weight, so a step survives — this is the tail of any
-## fixed-size candidate list, not the second/third swap #499 names, and removing
-## it needs a weighting with no ordering at all (a coverage sum over the whole
-## search window). Recorded here as a measured bound so the remaining step is a
-## number rather than a surprise, and so a regression in the three carried
-## candidates still shows up.
+## The four-plate case. The three-candidate answer is the positive control: its
+## third label swaps with an uncarried fourth and the step does not shrink under
+## refinement. The whole-window answer must turn that jump into smooth variation.
 func _check_degenerate_vertex_bound(centre: Vector2) -> void:
 	var live := _arc_is_live(centre)
 	if int(live["swaps"]) < 2 or float(live["max_weight"]) <= 0.0:
@@ -427,23 +473,36 @@ func _check_degenerate_vertex_bound(centre: Vector2) -> void:
 			% [centre.x, centre.y, int(live["swaps"]),
 				float(live["max_weight"])])
 		return
-	var fixed := _max_adjacent_step(centre, ARC_SAMPLES * 4, true)
-	var old := _max_adjacent_step(centre, ARC_SAMPLES * 4, false)
-	if old <= 0.0:
-		print("DEGENERATE arc at (%.4f, %.4f) shows no pairwise step to improve "
-			% [centre.x, centre.y] + "on")
-		return
-	var ratio := fixed / old
-	if ratio > DEGENERATE_STEP_RATIO_MAX:
-		_fail("at the four-plate vertex the three-candidate blend still steps "
-			+ "%.5f against the pairwise rule's %.5f (%.0f%%, over the %.0f%% "
-			% [fixed, old, ratio * 100.0, DEGENERATE_STEP_RATIO_MAX * 100.0]
-			+ "this bound allows) — the three carried candidates are no longer "
-			+ "sharing coverage symmetrically")
-	print("DEGENERATE uv=(%.4f, %.4f) pairwise %.5f -> three-way %.5f (%.0f%% "
-		% [centre.x, centre.y, old, fixed, ratio * 100.0]
-		+ "of the original step; the remainder is the third/fourth label swap, "
-		+ "which three candidates cannot cover)")
+	var limited_coarse := _max_adjacent_step(centre, ARC_SAMPLES, true)
+	var limited_fine := _max_adjacent_step(centre, ARC_SAMPLES * 4, true)
+	var window_coarse := _max_adjacent_window_step(centre, ARC_SAMPLES)
+	var window_fine := _max_adjacent_window_step(centre, ARC_SAMPLES * 4)
+	if limited_fine < CONTROL_STEP_MIN:
+		_fail("control: the three-candidate rule's four-plate step is %.5f, "
+			% limited_fine
+			+ "under the %.5f this probe needs to see — the arc cannot prove "
+			% CONTROL_STEP_MIN
+			+ "that the whole-window rule removed the carried-list tail")
+	if limited_fine < limited_coarse * CONTINUITY_RATIO:
+		_fail("control: the three-candidate four-plate step FELL from %.5f to "
+			% limited_coarse
+			+ "%.5f under 4x refinement — the probe is seeing smooth variation, "
+			% limited_fine
+			+ "not the third/fourth identity jump #573 requires")
+	if window_fine > window_coarse * CONTINUITY_RATIO:
+		_fail("the whole-window rule's four-plate step did not shrink under "
+			+ "refinement (%.5f at %d samples, %.5f at %d) — the blend still "
+			% [window_coarse, ARC_SAMPLES, window_fine, ARC_SAMPLES * 4]
+			+ "depends on an ordered candidate identity")
+	if window_fine > CONTINUOUS_STEP_MAX:
+		_fail("the whole-window rule still steps %.5f at the four-plate vertex, "
+			% window_fine
+			+ "above the %.5f a continuous blend may show at this density"
+			% CONTINUOUS_STEP_MAX)
+	print("DEGENERATE uv=(%.4f, %.4f) three-way step %.5f -> %.5f; "
+		% [centre.x, centre.y, limited_coarse, limited_fine]
+		+ "whole-window step %.5f -> %.5f under 4x refinement"
+		% [window_coarse, window_fine])
 
 
 ## Acceptance criterion 3, proven by construction rather than by frame evidence:
@@ -508,6 +567,11 @@ func _check_source_guards() -> void:
 			% PARTITION_PATH
 			+ "longer split across the three nearest plates, so the junction "
 			+ "step this test measures is back (#499)")
+	if not partition.contains("float terrain_plate_window_activation("):
+		_fail("`terrain_plate_window_activation` is absent from %s — coverage "
+			% PARTITION_PATH
+			+ "still ends at a fixed candidate list, so a four-fold vertex "
+			+ "retains the third/fourth identity jump (#573)")
 	# Both callers must pass the ISOTROPIC footprint. A width built from `c1`
 	# survives the owner swap on the OWNING separator only because it negates
 	# there and the projection takes absolute values; against the third candidate
@@ -525,6 +589,18 @@ func _check_source_guards() -> void:
 				+ "plate outright again, or it keys the split on a footprint "
 				+ "built from `c1`, which jumps when the owning cell swaps and "
 				+ "puts the defect back (#499)")
+		if not src.contains(
+				"terrain_plate_window_activation(f3, f4, plate_fw)"):
+			_fail("%s does not activate whole-window coverage from "
+				% path
+				+ "`terrain_plate_window_activation(f3, f4, plate_fw)` — the "
+				+ "fourth candidate still has no continuous path into the "
+				+ "surface (#573)")
+		if not src.contains("terrain_plate_window_weight(d, f1, plate_fw)"):
+			_fail("%s does not weight every search-window cell with "
+				% path
+				+ "`terrain_plate_window_weight(d, f1, plate_fw)` — the fix "
+				+ "still has an ordered last candidate whose label can swap")
 
 
 func _source(path: String) -> String:
@@ -543,8 +619,8 @@ func _fail(msg: String) -> void:
 ## spelled exactly that way, and `TEST FAIL` likewise.
 func _report() -> void:
 	if _failures.is_empty():
-		print("TEST PASS — the neighbour blend is continuous across a triple "
-			+ "junction and unchanged away from one")
+		print("TEST PASS — the neighbour blend is continuous across triple and "
+			+ "four-fold junctions and unchanged away from them")
 		get_tree().quit(0)
 		return
 	for msg in _failures:

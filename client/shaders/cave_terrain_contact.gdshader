@@ -98,11 +98,15 @@ void fragment() {
 	float f1 = 0.0;
 	float f2 = 1.0;
 	float f3 = 1.0;
+	float f4 = 1.0;
 	float plate_resolved = 0.0;
 	float plate_edge_w = 0.0;
 	// Coverage split across the three nearest plates, (owning, second, third).
 	// The third is 0.0 everywhere except at a triple junction (#499).
 	vec3 plate_w = vec3(1.0, 0.0, 0.0);
+	// A fourth candidate activates a symmetric whole-window resolve only within
+	// the same fragment footprint (#573).
+	float plate_window_w = 0.0;
 	vec4 sub = vec4(rock_color, rock_roughness);
 	vec4 sub_nb = vec4(rock_color, rock_roughness);
 	vec4 sub_nb3 = vec4(rock_color, rock_roughness);
@@ -118,7 +122,7 @@ void fragment() {
 	vec2 plate_c2 = vec2(0.0);
 	if (plates_enabled) {
 		terrain_plates(plate_uv, plate_id, f1, f2, plate_c1, plate_c2, plate_id2,
-			f3, plate_id3);
+			f3, plate_id3, f4);
 		plate_fw = max(fwidth(plate_uv.x), fwidth(plate_uv.y));
 		plate_resolved = 1.0 - smoothstep(0.30, 0.85, plate_fw);
 		crack_fw = fwidth(f2 - f1);
@@ -141,6 +145,7 @@ void fragment() {
 		// have to agree about WHICH plates they are blending as well as how much,
 		// or they part company at a triple junction that straddles the contact.
 		plate_w = terrain_plate_blend_weights(f1, f2, f3, plate_edge_w, plate_fw);
+		plate_window_w = terrain_plate_window_activation(f3, f4, plate_fw);
 		// The same footprint average as the ground (#306). This path exists to
 		// resolve the IDENTICAL substance at the same world XZ, so leaving the
 		// step unfiltered here would reintroduce the crawl at the cave contact
@@ -204,6 +209,36 @@ void fragment() {
 	// previous two-cell blend exactly.
 	float slab = slab_own * plate_w.x + slab_nb * plate_w.y
 		+ slab_nb3 * plate_w.z;
+	// Mirror the ground shader's symmetric sum over the same nine-cell search
+	// window. It has authority only where the fourth candidate enters this
+	// fragment's footprint, so the established answer remains bit-identical
+	// everywhere else.
+	if (plates_enabled && plate_window_w > 0.0) {
+		vec2 window_base = floor(plate_uv);
+		float window_total = 0.0;
+		float window_slab = 0.0;
+		for (int j = -1; j <= 1; j++) {
+			for (int i = -1; i <= 1; i++) {
+				vec2 cell = window_base + vec2(float(i), float(j));
+				vec2 jitter = vec2(
+					terrain_hash3(vec3(cell, 0.0)),
+					terrain_hash3(vec3(cell, 7.0)));
+				vec2 centre = cell + 0.15 + 0.7 * jitter;
+				float d = length(plate_uv - centre);
+				float weight = terrain_plate_window_weight(d, f1, plate_fw);
+				float cell_slab = mix(
+					0.40,
+					step(0.60, terrain_hash3(vec3(cell * 2.3, 19.0))),
+					plate_resolved);
+				window_slab += cell_slab * weight;
+				window_total += weight;
+			}
+		}
+		slab = mix(
+			slab,
+			window_slab / max(window_total, 1e-6),
+			plate_window_w);
+	}
 	float plate_mask = sheet * slab;
 	float plate_mask_relief = sheet * slab_own;
 	// The neighbour cell's gate, for the seam variance only — same split as
@@ -240,12 +275,15 @@ void fragment() {
 	float crack_own;
 	float crack_nb;
 	float crack_nb3;
-	plate_cell_surface(sub, slab_own, sheet, rock_mix, scorch_k, crack,
+	float plate_crack_field = crack;
+	plate_cell_surface(sub, slab_own, sheet, rock_mix, scorch_k, plate_crack_field,
 		region_rough, grain, detail, surf_own, rough_own, crack_own);
-	plate_cell_surface(sub_nb, slab_nb, sheet, rock_mix, scorch_k, crack,
+	plate_cell_surface(sub_nb, slab_nb, sheet, rock_mix, scorch_k,
+		plate_crack_field,
 		region_rough, grain, detail, surf_nb, rough_nb, crack_nb);
 	// The third candidate, which carries weight only at a triple junction.
-	plate_cell_surface(sub_nb3, slab_nb3, sheet, rock_mix, scorch_k, crack,
+	plate_cell_surface(sub_nb3, slab_nb3, sheet, rock_mix, scorch_k,
+		plate_crack_field,
 		region_rough, grain, detail, surf_nb3, rough_nb3, crack_nb3);
 	// A weighted average of the three finished surfaces, as the ground does.
 	surface = surf_own * plate_w.x + surf_nb * plate_w.y + surf_nb3 * plate_w.z;
@@ -253,6 +291,63 @@ void fragment() {
 		+ rough_nb3 * plate_w.z;
 	crack = crack_own * plate_w.x + crack_nb * plate_w.y
 		+ crack_nb3 * plate_w.z;
+	if (plate_window_w > 0.0) {
+		vec2 window_base = floor(plate_uv);
+		vec3 window_surface = vec3(0.0);
+		float window_rough = 0.0;
+		float window_crack = 0.0;
+		float window_total = 0.0;
+		vec3 window_mean_col = rock_color * 0.38 + plate_basalt * 0.28
+			+ plate_ferric * 0.20 + plate_pale * 0.14;
+		float window_mean_rough = rock_roughness * 0.38 + 0.88 * 0.28
+			+ 0.72 * 0.20 + 0.94 * 0.14;
+		vec4 window_mean = vec4(window_mean_col, window_mean_rough);
+		for (int j = -1; j <= 1; j++) {
+			for (int i = -1; i <= 1; i++) {
+				vec2 cell = window_base + vec2(float(i), float(j));
+				vec2 jitter = vec2(
+					terrain_hash3(vec3(cell, 0.0)),
+					terrain_hash3(vec3(cell, 7.0)));
+				vec2 centre = cell + 0.15 + 0.7 * jitter;
+				float d = length(plate_uv - centre);
+				float weight = terrain_plate_window_weight(d, f1, plate_fw);
+				vec4 cell_sub = mix(
+					window_mean,
+					terrain_plate_substance(
+						cell, rock_color, rock_roughness,
+						plate_basalt, plate_ferric, plate_pale),
+					plate_resolved);
+				float cell_slab = mix(
+					0.40,
+					step(0.60, terrain_hash3(vec3(cell * 2.3, 19.0))),
+					plate_resolved);
+				vec3 cell_surface;
+				float cell_rough;
+				float cell_crack;
+				plate_cell_surface(
+					cell_sub, cell_slab, sheet, rock_mix, scorch_k,
+					plate_crack_field, region_rough, grain, detail,
+					cell_surface, cell_rough, cell_crack);
+				window_surface += cell_surface * weight;
+				window_rough += cell_rough * weight;
+				window_crack += cell_crack * weight;
+				window_total += weight;
+			}
+		}
+		float inverse_window_total = 1.0 / max(window_total, 1e-6);
+		surface = mix(
+			surface,
+			window_surface * inverse_window_total,
+			plate_window_w);
+		stone_rough = mix(
+			stone_rough,
+			window_rough * inverse_window_total,
+			plate_window_w);
+		crack = mix(
+			crack,
+			window_crack * inverse_window_total,
+			plate_window_w);
+	}
 	} else {
 	surface = mix(mix(ash_color, rock_color, rock_mix), scorch_color, scorch_k);
 	stone_rough = clamp(mix(ash_roughness, rock_roughness, rock_mix)

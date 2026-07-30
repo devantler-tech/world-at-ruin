@@ -67,14 +67,21 @@ float terrain_ground_noise(vec2 xz, float scale) {
 // what lets that swap be made harmless; see `terrain_plate_junction_split`. It
 // costs two more out-parameters and no additional distance evaluation — the
 // nine-cell search already visits every candidate.
+//
+// `f4` is the FOURTH-nearest distance. No fourth identity is carried: its only
+// job is to say when the fixed three-candidate answer has reached its own tail.
+// At `f3 == f4`, the third label can swap with an uncarried fourth while still
+// holding coverage. Callers use that distance to fold the symmetric whole
+// search window in exactly there (#573).
 void terrain_plates(
 		vec2 uv, out vec2 id, out float f1, out float f2,
 		out vec2 c1, out vec2 c2, out vec2 id2,
-		out float f3, out vec2 id3) {
+		out float f3, out vec2 id3, out float f4) {
 	vec2 base = floor(uv);
 	f1 = 1000.0;
 	f2 = 1000.0;
 	f3 = 1000.0;
+	f4 = 1000.0;
 	id = base;
 	c1 = base;
 	c2 = base;
@@ -89,6 +96,7 @@ void terrain_plates(
 			vec2 centre = cell + 0.15 + 0.7 * jitter;
 			float d = length(uv - centre);
 			if (d < f1) {
+				f4 = f3;
 				f3 = f2;
 				id3 = id2;
 				f2 = f1;
@@ -98,14 +106,18 @@ void terrain_plates(
 				c1 = centre;
 				id = cell;
 			} else if (d < f2) {
+				f4 = f3;
 				f3 = f2;
 				id3 = id2;
 				f2 = d;
 				c2 = centre;
 				id2 = cell;
 			} else if (d < f3) {
+				f4 = f3;
 				f3 = d;
 				id3 = cell;
+			} else if (d < f4) {
+				f4 = d;
 			}
 		}
 	}
@@ -175,6 +187,22 @@ vec3 terrain_plate_blend_weights(
 	vec3 symmetric = vec3(1.0, g2, g3) / (1.0 + g2 + g3);
 	float j = 1.0 - smoothstep(0.0, w, f3 - f2);
 	return mix(pairwise, symmetric, j);
+}
+
+// How much the symmetric whole-window answer replaces the established
+// three-candidate answer. It is zero while the fourth cell lies outside the
+// fragment footprint and one at the exact third/fourth identity swap, where a
+// fixed candidate list is discontinuous by construction.
+float terrain_plate_window_activation(float f3, float f4, float fw) {
+	return 1.0 - smoothstep(0.0, max(fw, 1e-6), f4 - f3);
+}
+
+// One search-window cell's symmetric coverage. This depends only on the cell's
+// distance excess over the nearest centre, never on its sorted position or
+// identity, so exchanging any equidistant labels cannot move the answer. The
+// caller normalises the nine weights after composing each cell independently.
+float terrain_plate_window_weight(float d, float f1, float fw) {
+	return 1.0 - smoothstep(0.0, max(fw, 1e-6), d - f1);
 }
 
 // How much of the NEIGHBOURING plate belongs in this fragment.
