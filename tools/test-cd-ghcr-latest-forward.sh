@@ -27,6 +27,7 @@ calls_file="${test_dir}/calls"
 repo_tags_rc=0
 publish_newer_after_first_tag=""
 manifest_json_override=""
+manifest_fetch_error=""
 
 fail() {
 	echo "FAIL: $*" >&2
@@ -40,6 +41,7 @@ reset_registry() {
 	repo_tags_rc=0
 	publish_newer_after_first_tag=""
 	manifest_json_override=""
+	manifest_fetch_error=""
 }
 
 set_tags() {
@@ -74,13 +76,20 @@ oras() {
 	fi
 
 	if [ "$1" = "manifest" ] && [ "$2" = "fetch" ]; then
+		if [ -n "${manifest_fetch_error}" ]; then
+			printf '%s\n' "${manifest_fetch_error}" >&2
+			return 1
+		fi
 		if [ -n "${manifest_json_override}" ]; then
 			printf '%s\n' "${manifest_json_override}"
 			return 0
 		fi
 		local current
 		current="$(latest)"
-		[ -n "${current}" ] || return 1
+		if [ -z "${current}" ]; then
+			echo "Error response from registry: manifest unknown: latest is not found" >&2
+			return 1
+		fi
 		printf '{"annotations":{"org.opencontainers.image.version":"%s"}}\n' "${current}"
 		return 0
 	fi
@@ -153,7 +162,7 @@ fi
 # A present latest tag with an unreadable manifest is not the first-publication
 # case. It must fail closed rather than treating parser failure as absence.
 reset_registry
-set_tags "0.79.0" "0.80.0" "latest"
+set_tags "0.79.0"
 set_latest "0.80.0"
 manifest_json_override='{"annotations":'
 if advance_latest_tag "${artifact}" "0.79.0" >/dev/null 2>&1; then
@@ -163,6 +172,20 @@ fi
 	fail "unreadable latest manifest still issued a tag write"
 [ "$(latest)" = "0.80.0" ] ||
 	fail "unreadable latest manifest changed latest"
+
+# A partial catalogue plus a transient fetch failure is unknown state. Only the
+# registry's positive MANIFEST_UNKNOWN response may establish first publication.
+reset_registry
+set_tags "0.79.0"
+set_latest "0.80.0"
+manifest_fetch_error="dial tcp: transient registry read failure"
+if advance_latest_tag "${artifact}" "0.79.0" >/dev/null 2>&1; then
+	fail "a transient latest fetch failure was treated as first publication"
+fi
+[ "$(tag_calls)" -eq 0 ] ||
+	fail "transient latest fetch failure still issued a tag write"
+[ "$(latest)" = "0.80.0" ] ||
+	fail "transient latest fetch failure changed latest"
 
 # A newer publication advances latest.
 reset_registry

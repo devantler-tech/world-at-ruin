@@ -565,22 +565,16 @@ jobs:
               return 1
             fi
             RELEASE_CATALOG_NEWEST="${published}"
-            RELEASE_CATALOG_HAS_LATEST=0
-            RELEASE_CATALOG_HAS_OTHER_STABLE=0
             if ! tags="$(oras repo tags "${artifact}")"; then
               echo "::error::could not read immutable release tags for ${artifact}"
               return 1
             fi
             while IFS= read -r tag; do
               if [ "${tag}" = "latest" ]; then
-                RELEASE_CATALOG_HAS_LATEST=1
                 continue
               fi
               if ! key="$(release_version_key "${tag}")"; then
                 continue
-              fi
-              if [ "${tag}" != "${published}" ]; then
-                RELEASE_CATALOG_HAS_OTHER_STABLE=1
               fi
               if [[ "${key}" > "${newest_key}" ]]; then
                 RELEASE_CATALOG_NEWEST="${tag}"
@@ -591,15 +585,41 @@ jobs:
 
           latest_release_version() {
             local artifact="$1"
-            oras manifest fetch "${artifact}:latest" 2>/dev/null |
-              jq -er '.annotations["org.opencontainers.image.version"] // empty'
+            local manifest_file error_file manifest_version
+
+            manifest_file="$(mktemp)"
+            error_file="$(mktemp)"
+            if ! oras manifest fetch "${artifact}:latest" >"${manifest_file}" 2>"${error_file}"; then
+              # MANIFEST_UNKNOWN is the registry's positive absence signal.
+              # Every transport, authentication and server failure remains
+              # unknown and must never be normalized into first publication.
+              if grep -qiE '(^|[^[:alnum:]_])(MANIFEST_UNKNOWN|manifest unknown)([^[:alnum:]_]|$)' \
+                "${error_file}"; then
+                rm -f "${manifest_file}" "${error_file}"
+                return 2
+              fi
+              echo "::error::could not read ${artifact}:latest; refusing to infer absence"
+              sed 's/^/  /' "${error_file}" >&2
+              rm -f "${manifest_file}" "${error_file}"
+              return 1
+            fi
+            if ! manifest_version="$(
+              jq -er '.annotations["org.opencontainers.image.version"] // empty' \
+                <"${manifest_file}"
+            )"; then
+              echo "::error::latest manifest has no readable release-version annotation"
+              rm -f "${manifest_file}" "${error_file}"
+              return 1
+            fi
+            rm -f "${manifest_file}" "${error_file}"
+            printf '%s\n' "${manifest_version}"
           }
 
           advance_latest_tag() {
             local artifact="$1"
             local published="$2"
             local attempts=0
-            local newest current newest_key current_key
+            local newest current newest_key current_key current_status
 
             # Re-read after every write. If a newer immutable version appears
             # while this run is tagging, the next pass repairs latest to that
@@ -609,18 +629,14 @@ jobs:
               read_release_catalog "${artifact}" "${published}" || return 1
               newest="${RELEASE_CATALOG_NEWEST}"
               current=""
-              if ! current="$(latest_release_version "${artifact}")"; then
-                # A missing latest is expected only for the first publication:
-                # no latest tag and no other stable version can already exist.
-                # Any established catalogue plus an unreadable manifest is
-                # unknown state, never permission to replace the tag.
-                if [ "${RELEASE_CATALOG_HAS_LATEST}" -eq 1 ] ||
-                  [ "${RELEASE_CATALOG_HAS_OTHER_STABLE}" -eq 1 ]; then
-                  echo "::error::could not read a valid latest manifest for established ${artifact}"
-                  return 1
-                fi
-                current=""
-              fi
+              current_status=0
+              current="$(latest_release_version "${artifact}")" ||
+                current_status=$?
+              case "${current_status}" in
+                0) ;;
+                2) current="" ;;
+                *) return 1 ;;
+              esac
               if [ -n "${current}" ]; then
                 if ! current_key="$(release_version_key "${current}")"; then
                   echo "::error::latest exposes unorderable version '${current}'; refusing to replace it"
