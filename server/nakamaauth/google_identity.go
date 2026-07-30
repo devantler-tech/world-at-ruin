@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"strings"
 
@@ -17,13 +18,23 @@ type googleIDTokenVerifier struct {
 	validate func(context.Context, string, string) (*idtoken.Payload, error)
 }
 
+const maxGoogleIDTokenBytes = 16 * 1024
+
 func validateGoogleCredentialShape(credential string) error {
-	segments := strings.Split(credential, ".")
-	if len(segments) != 3 || segments[0] == "" || segments[1] == "" || segments[2] == "" {
+	if len(credential) > maxGoogleIDTokenBytes {
+		return status.Error(codes.Unauthenticated, "google ID token is too large")
+	}
+	headerSegment, remainder, ok := strings.Cut(credential, ".")
+	if !ok {
+		return status.Error(codes.Unauthenticated, "google ID token has an invalid shape")
+	}
+	payloadSegment, signatureSegment, ok := strings.Cut(remainder, ".")
+	if !ok || headerSegment == "" || payloadSegment == "" || signatureSegment == "" ||
+		strings.Contains(signatureSegment, ".") {
 		return status.Error(codes.Unauthenticated, "google ID token has an invalid shape")
 	}
 
-	encodedHeader, err := base64.RawURLEncoding.DecodeString(segments[0])
+	encodedHeader, err := base64.RawURLEncoding.DecodeString(headerSegment)
 	if err != nil {
 		return status.Error(codes.Unauthenticated, "google ID token has an invalid header")
 	}
@@ -36,7 +47,37 @@ func validateGoogleCredentialShape(credential string) error {
 	if header.Algorithm != "RS256" {
 		return status.Error(codes.Unauthenticated, "google ID token has an unsupported algorithm")
 	}
+
+	encodedPayload, err := base64.RawURLEncoding.DecodeString(payloadSegment)
+	if err != nil {
+		return status.Error(codes.Unauthenticated, "google ID token has an invalid payload")
+	}
+	var payload idtoken.Payload
+	if err := json.Unmarshal(encodedPayload, &payload); err != nil {
+		return status.Error(codes.Unauthenticated, "google ID token has an invalid payload")
+	}
+	var claims map[string]any
+	if err := json.Unmarshal(encodedPayload, &claims); err != nil {
+		return status.Error(codes.Unauthenticated, "google ID token has an invalid payload")
+	}
+	if _, err := base64.RawURLEncoding.DecodeString(signatureSegment); err != nil {
+		return status.Error(codes.Unauthenticated, "google ID token has an invalid signature")
+	}
 	return nil
+}
+
+func googleVerificationUnavailable(err error) bool {
+	var networkError net.Error
+	var syntaxError *json.SyntaxError
+	var typeError *json.UnmarshalTypeError
+	var encodingError base64.CorruptInputError
+	return errors.As(err, &networkError) ||
+		errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.As(err, &syntaxError) ||
+		errors.As(err, &typeError) ||
+		errors.As(err, &encodingError) ||
+		strings.HasPrefix(err.Error(), "idtoken: unable to retrieve cert")
 }
 
 func (v googleIDTokenVerifier) VerifyGoogleIDToken(
@@ -63,9 +104,7 @@ func (v googleIDTokenVerifier) VerifyGoogleIDToken(
 				"google ID token verification deadline exceeded",
 			)
 		default:
-			var networkError net.Error
-			if errors.As(err, &networkError) ||
-				strings.HasPrefix(err.Error(), "idtoken: unable to retrieve cert") {
+			if googleVerificationUnavailable(err) {
 				return "", status.Error(
 					codes.Unavailable,
 					"google ID token verification unavailable",

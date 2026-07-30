@@ -24,13 +24,14 @@ const (
 	testIdentityProof     = "eyJhbGciOiJSUzI1NiJ9.e30.c2lnbmF0dXJl"
 	testGoogleClientID    = "world-at-ruin.apps.googleusercontent.com"
 	testGoogleSubject     = "google-player-subject"
-	testNakamaCustomIDKey = "nakama-custom-id-key-with-at-least-32-bytes"
+	testNakamaIdentityKey = "nakama-identity-key-with-at-least-32-bytes"
 	testNakamaServerKey   = "nakama-server-key"
 	testNakamaSession     = "nakama-session"
 )
 
-type customAuthentication struct {
-	customID             string
+type emailAuthentication struct {
+	email                string
+	password             string
 	create               bool
 	username             string
 	authorization        []string
@@ -68,11 +69,11 @@ type provisioningServer struct {
 	apigrpc.UnimplementedNakamaServer
 
 	mu                          sync.Mutex
-	authentication              []customAuthentication
+	authentication              []emailAuthentication
 	accountCalls                int
 	accountGatewayAuthorization []string
-	rejectCustom                bool
-	failCustomInternal          bool
+	rejectEmail                 bool
+	failEmailInternal           bool
 	ambiguousCreate             bool
 	emptySession                bool
 	emptyUserID                 bool
@@ -80,14 +81,15 @@ type provisioningServer struct {
 	provisionedUser             string
 }
 
-func (s *provisioningServer) AuthenticateCustom(
+func (s *provisioningServer) AuthenticateEmail(
 	ctx context.Context,
-	request *api.AuthenticateCustomRequest,
+	request *api.AuthenticateEmailRequest,
 ) (*api.Session, error) {
 	md, _ := metadata.FromIncomingContext(ctx)
 	account := request.GetAccount()
-	authentication := customAuthentication{
-		customID:      account.GetId(),
+	authentication := emailAuthentication{
+		email:         account.GetEmail(),
+		password:      account.GetPassword(),
 		create:        request.GetCreate().GetValue(),
 		username:      request.GetUsername(),
 		authorization: append([]string(nil), md.Get("authorization")...),
@@ -101,16 +103,18 @@ func (s *provisioningServer) AuthenticateCustom(
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.authentication = append(s.authentication, authentication)
-	if s.failCustomInternal {
-		return nil, status.Error(codes.Internal, "custom identity storage unavailable")
+	if s.failEmailInternal {
+		return nil, status.Error(codes.Internal, "email identity storage unavailable")
 	}
 	if s.ambiguousCreate && len(s.authentication) == 1 && authentication.create {
-		return nil, status.Error(codes.Internal, "custom identity insert raced")
+		return nil, status.Error(codes.Internal, "email identity insert raced")
 	}
-	if s.rejectCustom {
+	if s.rejectEmail {
 		return nil, status.Error(
 			codes.Unauthenticated,
-			"rejected custom identity "+account.GetId()+" with server key "+testNakamaServerKey,
+			"rejected email identity "+account.GetEmail()+
+				" with password "+account.GetPassword()+
+				" and server key "+testNakamaServerKey,
 		)
 	}
 	if s.emptySession {
@@ -145,10 +149,10 @@ func (s *provisioningServer) GetAccount(
 	return &api.Account{User: &api.User{Id: s.provisionedUser}}, nil
 }
 
-func (s *provisioningServer) observed() ([]customAuthentication, int) {
+func (s *provisioningServer) observed() ([]emailAuthentication, int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return append([]customAuthentication(nil), s.authentication...), s.accountCalls
+	return append([]emailAuthentication(nil), s.authentication...), s.accountCalls
 }
 
 func (s *provisioningServer) observedAccountGatewayAuthorization() []string {
@@ -173,7 +177,7 @@ func provisionerAgainst(
 			info *grpc.UnaryServerInfo,
 			handler grpc.UnaryHandler,
 		) (any, error) {
-			if info.FullMethod == apigrpc.Nakama_AuthenticateCustom_FullMethodName {
+			if info.FullMethod == apigrpc.Nakama_AuthenticateEmail_FullMethodName {
 				md, _ := metadata.FromIncomingContext(ctx)
 				if gatewayAuthorization := md.Get("grpcgateway-authorization"); len(
 					gatewayAuthorization,
@@ -227,7 +231,7 @@ func enabledProvisionerConfig() ProvisionerConfig {
 	return ProvisionerConfig{
 		GoogleProvisioningEnabled: true,
 		GoogleClientID:            testGoogleClientID,
-		NakamaCustomIDKey:         []byte(testNakamaCustomIDKey),
+		NakamaIdentityKey:         []byte(testNakamaIdentityKey),
 		NakamaServerKey:           testNakamaServerKey,
 	}
 }
@@ -292,7 +296,7 @@ func TestProvisionGoogleReturnsStableUserID(t *testing.T) {
 
 	authentication, accountCalls := server.observed()
 	if len(authentication) != 2 {
-		t.Fatalf("AuthenticateGoogle calls = %d, want 2", len(authentication))
+		t.Fatalf("AuthenticateEmail calls = %d, want 2", len(authentication))
 	}
 	if accountCalls != 2 {
 		t.Fatalf("GetAccount calls = %d, want 2", accountCalls)
@@ -305,22 +309,31 @@ func TestProvisionGoogleReturnsStableUserID(t *testing.T) {
 		)
 	}
 	for index, request := range authentication {
-		if request.customID != googleCustomID(
-			[]byte(testNakamaCustomIDKey),
+		wantEmail := googleNakamaEmail([]byte(testNakamaIdentityKey), testGoogleSubject)
+		wantPassword := googleNakamaPassword(
+			[]byte(testNakamaIdentityKey),
 			testGoogleSubject,
-		) {
+		)
+		if request.email != wantEmail {
 			t.Fatalf(
-				"AuthenticateCustom call %d custom ID = %q, want derived identity",
+				"AuthenticateEmail call %d email = %q, want %q",
 				index+1,
-				request.customID,
+				request.email,
+				wantEmail,
+			)
+		}
+		if request.password != wantPassword {
+			t.Fatalf(
+				"AuthenticateEmail call %d password did not match derived secret",
+				index+1,
 			)
 		}
 		if !request.create {
-			t.Fatalf("AuthenticateGoogle call %d did not permit account creation", index+1)
+			t.Fatalf("AuthenticateEmail call %d did not permit account creation", index+1)
 		}
 		if request.username != "" {
 			t.Fatalf(
-				"AuthenticateGoogle call %d generated username %q, want Nakama default",
+				"AuthenticateEmail call %d generated username %q, want Nakama default",
 				index+1,
 				request.username,
 			)
@@ -365,19 +378,24 @@ func TestProvisionGoogleReconcilesConcurrentFirstUse(t *testing.T) {
 
 	authentication, accountCalls := server.observed()
 	if len(authentication) != 2 {
-		t.Fatalf("AuthenticateCustom calls = %d, want 2", len(authentication))
+		t.Fatalf("AuthenticateEmail calls = %d, want 2", len(authentication))
 	}
 	if !authentication[0].create {
-		t.Fatal("first AuthenticateCustom call did not permit account creation")
+		t.Fatal("first AuthenticateEmail call did not permit account creation")
 	}
 	if authentication[1].create {
-		t.Fatal("reconciliation AuthenticateCustom call permitted account creation")
+		t.Fatal("reconciliation AuthenticateEmail call permitted account creation")
 	}
-	if authentication[0].customID != authentication[1].customID {
+	if authentication[0].email != authentication[1].email {
 		t.Fatalf(
-			"reconciliation custom ID = %q, want first custom ID %q",
-			authentication[1].customID,
-			authentication[0].customID,
+			"reconciliation email = %q, want first email %q",
+			authentication[1].email,
+			authentication[0].email,
+		)
+	}
+	if authentication[0].password != authentication[1].password {
+		t.Fatalf(
+			"reconciliation password changed between attempts",
 		)
 	}
 	if accountCalls != 1 {
@@ -385,22 +403,31 @@ func TestProvisionGoogleReconcilesConcurrentFirstUse(t *testing.T) {
 	}
 }
 
-func TestGoogleCustomIDIsKeyedAndStable(t *testing.T) {
-	first := googleCustomID([]byte(testNakamaCustomIDKey), testGoogleSubject)
-	repeated := googleCustomID([]byte(testNakamaCustomIDKey), testGoogleSubject)
-	otherKey := googleCustomID(
-		[]byte("different-custom-id-key-with-at-least-32-bytes"),
+func TestGoogleNakamaCredentialsAreSeparatedKeyedAndStable(t *testing.T) {
+	key := []byte(testNakamaIdentityKey)
+	firstEmail := googleNakamaEmail(key, testGoogleSubject)
+	repeatedEmail := googleNakamaEmail(key, testGoogleSubject)
+	password := googleNakamaPassword(key, testGoogleSubject)
+	repeatedPassword := googleNakamaPassword(key, testGoogleSubject)
+	otherKeyEmail := googleNakamaEmail(
+		[]byte("different-identity-key-with-at-least-32-bytes"),
 		testGoogleSubject,
 	)
 
-	if first != repeated {
-		t.Fatalf("googleCustomID repeated value changed: %q != %q", first, repeated)
+	if firstEmail != repeatedEmail {
+		t.Fatalf("googleNakamaEmail repeated value changed: %q != %q", firstEmail, repeatedEmail)
 	}
-	if first == otherKey {
-		t.Fatalf("googleCustomID ignored the backend key: %q", first)
+	if password != repeatedPassword {
+		t.Fatal("googleNakamaPassword repeated value changed")
 	}
-	if strings.Contains(first, testGoogleSubject) {
-		t.Fatalf("googleCustomID exposed the Google subject: %q", first)
+	if firstEmail == otherKeyEmail {
+		t.Fatalf("googleNakamaEmail ignored the backend key: %q", firstEmail)
+	}
+	if strings.Contains(firstEmail, testGoogleSubject) {
+		t.Fatalf("googleNakamaEmail exposed the Google subject: %q", firstEmail)
+	}
+	if strings.Contains(password, firstEmail) || strings.Contains(firstEmail, password) {
+		t.Fatal("logged email and authentication password were not domain-separated")
 	}
 }
 
@@ -431,7 +458,7 @@ func TestProvisionGoogleReplacesInheritedAuthorizationWithServerKey(t *testing.T
 
 	authentication, _ := server.observed()
 	if len(authentication) != 1 {
-		t.Fatalf("AuthenticateGoogle calls = %d, want 1", len(authentication))
+		t.Fatalf("AuthenticateEmail calls = %d, want 1", len(authentication))
 	}
 	wantAuthorization := "Basic " + base64.StdEncoding.EncodeToString(
 		[]byte(testNakamaServerKey+":"),
@@ -439,13 +466,13 @@ func TestProvisionGoogleReplacesInheritedAuthorizationWithServerKey(t *testing.T
 	if len(authentication[0].authorization) != 1 ||
 		authentication[0].authorization[0] != wantAuthorization {
 		t.Fatalf(
-			"AuthenticateGoogle authorization metadata = %q, want Nakama server key",
+			"AuthenticateEmail authorization metadata = %q, want Nakama server key",
 			authentication[0].authorization,
 		)
 	}
 	if len(authentication[0].gatewayAuthorization) != 0 {
 		t.Fatalf(
-			"AuthenticateCustom gRPC-Gateway authorization metadata = %q, want stripped",
+			"AuthenticateEmail gRPC-Gateway authorization metadata = %q, want stripped",
 			authentication[0].gatewayAuthorization,
 		)
 	}
@@ -457,7 +484,7 @@ func TestProvisionGoogleReplacesInheritedAuthorizationWithServerKey(t *testing.T
 	}
 	if len(authentication[0].trace) != 1 || authentication[0].trace[0] != "trace-9" {
 		t.Fatalf(
-			"AuthenticateGoogle trace metadata = %q, want preserved trace-9",
+			"AuthenticateEmail trace metadata = %q, want preserved trace-9",
 			authentication[0].trace,
 		)
 	}
@@ -488,7 +515,7 @@ func TestProvisionGoogleFailsClosed(t *testing.T) {
 			config: ProvisionerConfig{
 				GoogleProvisioningEnabled: true,
 				GoogleClientID:            testGoogleClientID,
-				NakamaCustomIDKey:         []byte(testNakamaCustomIDKey),
+				NakamaIdentityKey:         []byte(testNakamaIdentityKey),
 			},
 			wantCode:  codes.Unknown,
 			wantError: "server key is empty",
@@ -498,14 +525,14 @@ func TestProvisionGoogleFailsClosed(t *testing.T) {
 			credential: testIdentityProof,
 			config: ProvisionerConfig{
 				GoogleProvisioningEnabled: true,
-				NakamaCustomIDKey:         []byte(testNakamaCustomIDKey),
+				NakamaIdentityKey:         []byte(testNakamaIdentityKey),
 				NakamaServerKey:           testNakamaServerKey,
 			},
 			wantCode:  codes.Unknown,
 			wantError: "Google client ID is empty",
 		},
 		{
-			name:       "empty Nakama custom ID key",
+			name:       "empty Nakama identity key",
 			credential: testIdentityProof,
 			config: ProvisionerConfig{
 				GoogleProvisioningEnabled: true,
@@ -513,19 +540,19 @@ func TestProvisionGoogleFailsClosed(t *testing.T) {
 				NakamaServerKey:           testNakamaServerKey,
 			},
 			wantCode:  codes.Unknown,
-			wantError: "custom ID key must be at least 32 bytes",
+			wantError: "identity key must be at least 32 bytes",
 		},
 		{
-			name:       "short Nakama custom ID key",
+			name:       "short Nakama identity key",
 			credential: testIdentityProof,
 			config: ProvisionerConfig{
 				GoogleProvisioningEnabled: true,
 				GoogleClientID:            testGoogleClientID,
-				NakamaCustomIDKey:         []byte("too-short"),
+				NakamaIdentityKey:         []byte("too-short"),
 				NakamaServerKey:           testNakamaServerKey,
 			},
 			wantCode:  codes.Unknown,
-			wantError: "custom ID key must be at least 32 bytes",
+			wantError: "identity key must be at least 32 bytes",
 		},
 		{
 			name:       "Google verifier rejects credential",
@@ -569,14 +596,14 @@ func TestProvisionGoogleFailsClosed(t *testing.T) {
 			wantError:  "Google identity has no subject",
 		},
 		{
-			name:       "Nakama rejects custom identity",
+			name:       "Nakama rejects email identity",
 			credential: testIdentityProof,
 			config:     enabledProvisionerConfig(),
 			configure: func(server *provisioningServer) {
-				server.rejectCustom = true
+				server.rejectEmail = true
 			},
 			wantCode:      codes.Unauthenticated,
-			wantError:     "AuthenticateCustom rejected identity",
+			wantError:     "AuthenticateEmail rejected identity",
 			wantAuthCalls: 1,
 		},
 		{
@@ -584,10 +611,10 @@ func TestProvisionGoogleFailsClosed(t *testing.T) {
 			credential: testIdentityProof,
 			config:     enabledProvisionerConfig(),
 			configure: func(server *provisioningServer) {
-				server.failCustomInternal = true
+				server.failEmailInternal = true
 			},
 			wantCode:      codes.Internal,
-			wantError:     "AuthenticateCustom rejected identity",
+			wantError:     "AuthenticateEmail rejected identity",
 			wantAuthCalls: 2,
 		},
 		{
@@ -653,8 +680,15 @@ func TestProvisionGoogleFailsClosed(t *testing.T) {
 			if strings.Contains(err.Error(), testNakamaServerKey) {
 				t.Fatalf("ProvisionGoogle error leaked the Nakama server key: %q", err)
 			}
-			if strings.Contains(err.Error(), testNakamaCustomIDKey) {
-				t.Fatalf("ProvisionGoogle error leaked the Nakama custom ID key: %q", err)
+			if strings.Contains(err.Error(), testNakamaIdentityKey) {
+				t.Fatalf("ProvisionGoogle error leaked the Nakama identity key: %q", err)
+			}
+			derivedPassword := googleNakamaPassword(
+				[]byte(testNakamaIdentityKey),
+				testGoogleSubject,
+			)
+			if strings.Contains(err.Error(), derivedPassword) {
+				t.Fatalf("ProvisionGoogle error leaked the Nakama email password: %q", err)
 			}
 			if code := status.Code(err); code != test.wantCode {
 				t.Fatalf(
@@ -666,7 +700,7 @@ func TestProvisionGoogleFailsClosed(t *testing.T) {
 			authentication, accountCalls := server.observed()
 			if len(authentication) != test.wantAuthCalls {
 				t.Fatalf(
-					"AuthenticateGoogle calls = %d, want %d",
+					"AuthenticateEmail calls = %d, want %d",
 					len(authentication),
 					test.wantAuthCalls,
 				)

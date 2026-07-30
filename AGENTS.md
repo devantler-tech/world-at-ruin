@@ -585,9 +585,9 @@ everything shipped afterwards is held to.
   `WatchGameServer`, and only then permits the serving command to call `Ready`; an allocatable
   restart calls `Shutdown` without rotating metadata), the first **Nakama identity boundary**
   (`server/nakamaauth/` — locally validates audience-bound Google ID tokens, derives a
-  server-keyed custom credential, provisions through Nakama's generated `AuthenticateCustom` API,
-  then verifies the returned session and exposes only the authenticated user ID; default-off), the
-  **player handoff core**
+  server-keyed opaque email/password pair whose logged identifier is not replayable alone,
+  provisions through Nakama's generated `AuthenticateEmail` API, then verifies the returned
+  session and exposes only the authenticated user ID; default-off), the **player handoff core**
   (`server/handoff/` — gives only that verified identity plus a caller-stable reservation key and
   server-generated attempt ID to an allocation boundary, conditionally reconciles ambiguous
   outcomes by that owned attempt, constrains the returned endpoint to the configured managed DNS

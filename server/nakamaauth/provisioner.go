@@ -23,9 +23,9 @@ var ErrGoogleProvisioningDisabled = errors.New(
 
 type provisioningClient interface {
 	accountClient
-	AuthenticateCustom(
+	AuthenticateEmail(
 		context.Context,
-		*api.AuthenticateCustomRequest,
+		*api.AuthenticateEmailRequest,
 		...grpc.CallOption,
 	) (*api.Session, error)
 }
@@ -39,8 +39,8 @@ type ProvisionerConfig struct {
 	GoogleProvisioningEnabled bool
 	// GoogleClientID audience-binds accepted Google ID tokens.
 	GoogleClientID string
-	// NakamaCustomIDKey makes the custom-auth credential unguessable.
-	NakamaCustomIDKey []byte
+	// NakamaIdentityKey separates the logged identifier from its password.
+	NakamaIdentityKey []byte
 	// NakamaServerKey authenticates account-creation RPCs with Nakama.
 	NakamaServerKey string
 }
@@ -63,7 +63,7 @@ func newProvisioner(
 	identityVerifier googleIdentityVerifier,
 	config ProvisionerConfig,
 ) *Provisioner {
-	config.NakamaCustomIDKey = bytes.Clone(config.NakamaCustomIDKey)
+	config.NakamaIdentityKey = bytes.Clone(config.NakamaIdentityKey)
 	return &Provisioner{
 		client:           client,
 		sessionVerifier:  NewVerifier(client),
@@ -72,10 +72,20 @@ func newProvisioner(
 	}
 }
 
-func googleCustomID(key []byte, subject string) string {
+func googleNakamaHMAC(key []byte, purpose string, subject string) []byte {
 	mac := hmac.New(sha256.New, key)
-	_, _ = mac.Write([]byte("google:" + subject))
-	return hex.EncodeToString(mac.Sum(nil))
+	_, _ = mac.Write([]byte("google:" + purpose + ":" + subject))
+	return mac.Sum(nil)
+}
+
+func googleNakamaEmail(key []byte, subject string) string {
+	identifier := googleNakamaHMAC(key, "email", subject)
+	return hex.EncodeToString(identifier) + "@identity.world-at-ruin.invalid"
+}
+
+func googleNakamaPassword(key []byte, subject string) string {
+	password := googleNakamaHMAC(key, "password", subject)
+	return base64.RawURLEncoding.EncodeToString(password)
 }
 
 func sanitizedGoogleIdentityError(err error) error {
@@ -104,14 +114,18 @@ func sanitizedGoogleIdentityError(err error) error {
 	}
 }
 
-func (p *Provisioner) authenticateCustom(
+func (p *Provisioner) authenticateEmail(
 	ctx context.Context,
-	customID string,
+	email string,
+	password string,
 	create bool,
 ) (*api.Session, error) {
-	return p.client.AuthenticateCustom(ctx, &api.AuthenticateCustomRequest{
-		Account: &api.AccountCustom{Id: customID},
-		Create:  wrapperspb.Bool(create),
+	return p.client.AuthenticateEmail(ctx, &api.AuthenticateEmailRequest{
+		Account: &api.AccountEmail{
+			Email:    email,
+			Password: password,
+		},
+		Create: wrapperspb.Bool(create),
 	})
 }
 
@@ -132,8 +146,8 @@ func (p *Provisioner) ProvisionGoogle(
 	if p.config.NakamaServerKey == "" {
 		return "", errors.New("nakama auth: Nakama server key is empty")
 	}
-	if len(p.config.NakamaCustomIDKey) < 32 {
-		return "", errors.New("nakama auth: Nakama custom ID key must be at least 32 bytes")
+	if len(p.config.NakamaIdentityKey) < 32 {
+		return "", errors.New("nakama auth: Nakama identity key must be at least 32 bytes")
 	}
 
 	subject, err := p.identityVerifier.VerifyGoogleIDToken(
@@ -153,14 +167,15 @@ func (p *Provisioner) ProvisionGoogle(
 		"Basic "+base64.StdEncoding.EncodeToString([]byte(p.config.NakamaServerKey+":")),
 	)
 
-	customID := googleCustomID(p.config.NakamaCustomIDKey, subject)
-	session, err := p.authenticateCustom(ctx, customID, true)
+	email := googleNakamaEmail(p.config.NakamaIdentityKey, subject)
+	password := googleNakamaPassword(p.config.NakamaIdentityKey, subject)
+	session, err := p.authenticateEmail(ctx, email, password, true)
 	if status.Code(err) == codes.Internal {
-		// Nakama v3.40 reports the losing side of concurrent custom-ID
+		// Nakama v3.40 reports the losing side of concurrent email
 		// creation as Internal after the winning insert commits. One
 		// create=false lookup adopts that winner without opening another
 		// account-creation race.
-		reconciled, reconcileErr := p.authenticateCustom(ctx, customID, false)
+		reconciled, reconcileErr := p.authenticateEmail(ctx, email, password, false)
 		if reconcileErr == nil {
 			session = reconciled
 			err = nil
@@ -172,11 +187,11 @@ func (p *Provisioner) ProvisionGoogle(
 	if err != nil {
 		return "", status.Error(
 			status.Code(err),
-			"nakama auth: AuthenticateCustom rejected identity",
+			"nakama auth: AuthenticateEmail rejected identity",
 		)
 	}
 	if session.GetToken() == "" {
-		return "", errors.New("nakama auth: AuthenticateCustom response has no session")
+		return "", errors.New("nakama auth: AuthenticateEmail response has no session")
 	}
 
 	return p.sessionVerifier.VerifySession(ctx, session.GetToken())

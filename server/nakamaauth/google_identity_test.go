@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/url"
 	"strings"
@@ -15,7 +16,12 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-func unsignedGoogleTokenForTest(t *testing.T, algorithm string, signature []byte) string {
+func unsignedGoogleTokenWithPayloadForTest(
+	t *testing.T,
+	algorithm string,
+	payload []byte,
+	signature []byte,
+) string {
 	t.Helper()
 	header, err := json.Marshal(map[string]string{"alg": algorithm})
 	if err != nil {
@@ -24,11 +30,16 @@ func unsignedGoogleTokenForTest(t *testing.T, algorithm string, signature []byte
 	return strings.Join(
 		[]string{
 			base64.RawURLEncoding.EncodeToString(header),
-			base64.RawURLEncoding.EncodeToString([]byte("{}")),
+			base64.RawURLEncoding.EncodeToString(payload),
 			base64.RawURLEncoding.EncodeToString(signature),
 		},
 		".",
 	)
+}
+
+func unsignedGoogleTokenForTest(t *testing.T, algorithm string, signature []byte) string {
+	t.Helper()
+	return unsignedGoogleTokenWithPayloadForTest(t, algorithm, []byte("{}"), signature)
 }
 
 func TestGoogleIDTokenVerifierAudienceBindsCredential(t *testing.T) {
@@ -70,20 +81,39 @@ func TestGoogleIDTokenVerifierAudienceBindsCredential(t *testing.T) {
 
 func TestGoogleIDTokenVerifierRejectsUnsafeTokenShapeBeforeValidation(t *testing.T) {
 	tests := []struct {
-		name  string
-		token string
+		name      string
+		token     string
+		wantError string
 	}{
 		{
-			name:  "not a JWT",
-			token: "not-a-jwt",
+			name:      "not a JWT",
+			token:     "not-a-jwt",
+			wantError: "invalid shape",
 		},
 		{
-			name:  "missing algorithm",
-			token: unsignedGoogleTokenForTest(t, "", []byte("signature")),
+			name:      "missing algorithm",
+			token:     unsignedGoogleTokenForTest(t, "", []byte("signature")),
+			wantError: "unsupported algorithm",
 		},
 		{
-			name:  "ES256 short signature",
-			token: unsignedGoogleTokenForTest(t, "ES256", []byte{1}),
+			name:      "ES256 short signature",
+			token:     unsignedGoogleTokenForTest(t, "ES256", []byte{1}),
+			wantError: "unsupported algorithm",
+		},
+		{
+			name: "malformed payload",
+			token: unsignedGoogleTokenWithPayloadForTest(
+				t,
+				"RS256",
+				[]byte("not-json"),
+				[]byte("signature"),
+			),
+			wantError: "invalid payload",
+		},
+		{
+			name:      "oversized token",
+			token:     strings.Repeat(".", 64*1024),
+			wantError: "too large",
 		},
 	}
 
@@ -116,6 +146,13 @@ func TestGoogleIDTokenVerifierRejectsUnsafeTokenShapeBeforeValidation(t *testing
 			}
 			if validateCalled {
 				t.Fatal("VerifyGoogleIDToken called the validator for an unsafe token shape")
+			}
+			if !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf(
+					"VerifyGoogleIDToken error = %q, want it to contain %q",
+					err,
+					test.wantError,
+				)
 			}
 			if strings.Contains(err.Error(), test.token) {
 				t.Fatalf("VerifyGoogleIDToken error leaked the credential: %q", err)
@@ -157,6 +194,16 @@ func TestGoogleIDTokenVerifierClassifiesValidationFailures(t *testing.T) {
 		{
 			name:     "certificate endpoint failure",
 			err:      errors.New("idtoken: unable to retrieve cert, got status code 503"),
+			wantCode: codes.Unavailable,
+		},
+		{
+			name:     "truncated certificate body",
+			err:      io.ErrUnexpectedEOF,
+			wantCode: codes.Unavailable,
+		},
+		{
+			name:     "malformed certificate body",
+			err:      &json.SyntaxError{Offset: 1},
 			wantCode: codes.Unavailable,
 		},
 	}
