@@ -10,14 +10,21 @@ extends RefCounted
 ## Prefix shared by every private staging path.
 const WRITE_TMP_SUFFIX := ".tmp-"
 
+## Disambiguates attempts when the monotonic clock returns the same microsecond
+## twice. The process id keeps other processes separate; the clock keeps a
+## recycled process id separate from abandoned files left by an older process.
+static var _attempt_sequence := 0
+
 
 ## A staging file PRIVATE to one write attempt.
 static func write_path(path: String) -> String:
-	return "%s%s%d-%d" % [
+	_attempt_sequence += 1
+	return "%s%s%d-%d-%d" % [
 		path,
 		WRITE_TMP_SUFFIX,
 		OS.get_process_id(),
 		Time.get_ticks_usec(),
+		_attempt_sequence,
 	]
 
 

@@ -43,6 +43,16 @@ func _check_name_shape() -> void:
 		_fail("staging name does not carry the shared sweepable prefix (%s)" % first)
 	if not first.contains(str(OS.get_process_id())):
 		_fail("staging name does not carry this process id (%s)" % first)
+	# A clock is not a uniqueness source: two attempts can begin inside one
+	# microsecond. Require the process-local attempt sequence as the third stamp
+	# component so the old pid-plus-tick shape fails deterministically.
+	var stamp_parts := first.trim_prefix(_probe + ".tmp-").split("-")
+	if stamp_parts.size() != 3:
+		_fail("staging name has no process-local attempt sequence (%s)" % first)
+	else:
+		var second_parts := second.trim_prefix(_probe + ".tmp-").split("-")
+		if second_parts.size() != 3 or second_parts[2] == stamp_parts[2]:
+			_fail("process-local attempt sequence did not advance (%s, %s)" % [first, second])
 
 
 func _check_predicate_controls_reclamation() -> void:
