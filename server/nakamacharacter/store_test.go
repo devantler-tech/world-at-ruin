@@ -17,7 +17,29 @@ import (
 	"github.com/heroiclabs/nakama-common/runtime"
 )
 
-const testSubjectID = "11111111-1111-4111-8111-111111111111"
+const (
+	testSubjectID      = "11111111-1111-4111-8111-111111111111"
+	testOtherSubjectID = "22222222-2222-4222-8222-222222222222"
+)
+
+type nakamaSessionContext struct {
+	context.Context
+	userID string
+}
+
+func (c nakamaSessionContext) Value(key any) any {
+	if key == runtime.RUNTIME_CTX_USER_ID {
+		return c.userID
+	}
+	return c.Context.Value(key)
+}
+
+func authenticatedContext(userID string) context.Context {
+	return nakamaSessionContext{
+		Context: context.Background(),
+		userID:  userID,
+	}
+}
 
 type storedObject struct {
 	collection      string
@@ -103,14 +125,26 @@ func (f *fakeStorage) StorageWrite(
 		}
 	}
 
-	acks := make([]*api.StorageObjectAck, 0, len(writes))
-	for _, write := range writes {
+	type permissions struct {
+		read  int32
+		write int32
+	}
+	validatedPermissions := make([]permissions, len(writes))
+	for index, write := range writes {
 		if write.PermissionRead < math.MinInt32 ||
 			write.PermissionRead > math.MaxInt32 ||
 			write.PermissionWrite < math.MinInt32 ||
 			write.PermissionWrite > math.MaxInt32 {
 			return nil, errors.New("invalid permission")
 		}
+		validatedPermissions[index] = permissions{
+			read:  int32(write.PermissionRead),
+			write: int32(write.PermissionWrite),
+		}
+	}
+
+	acks := make([]*api.StorageObjectAck, 0, len(writes))
+	for index, write := range writes {
 		version := fmt.Sprintf("v%d", f.next)
 		f.next++
 		f.objects[storageObjectID(
@@ -123,8 +157,8 @@ func (f *fakeStorage) StorageWrite(
 			userID:          write.UserID,
 			value:           write.Value,
 			version:         version,
-			permissionRead:  int32(write.PermissionRead),
-			permissionWrite: int32(write.PermissionWrite),
+			permissionRead:  validatedPermissions[index].read,
+			permissionWrite: validatedPermissions[index].write,
 		}
 		acks = append(acks, &api.StorageObjectAck{
 			Collection: write.Collection,
@@ -138,6 +172,41 @@ func (f *fakeStorage) StorageWrite(
 
 func storageObjectID(collection, key, userID string) string {
 	return collection + "\x00" + key + "\x00" + userID
+}
+
+func TestFakeStorageRejectsAnInvalidBatchBeforeAnyMutation(t *testing.T) {
+	t.Parallel()
+
+	storage := newFakeStorage()
+	_, err := storage.StorageWrite(context.Background(), []*runtime.StorageWrite{
+		{
+			Collection:      Collection,
+			Key:             RecordKey,
+			UserID:          testSubjectID,
+			Value:           `{}`,
+			Version:         "*",
+			PermissionRead:  0,
+			PermissionWrite: 0,
+		},
+		{
+			Collection:     "invalid-permission",
+			Key:            "audit",
+			UserID:         testSubjectID,
+			Value:          `{}`,
+			Version:        "*",
+			PermissionRead: math.MaxInt32 + 1,
+		},
+	})
+	if err == nil {
+		t.Fatal("StorageWrite() error = nil")
+	}
+	if len(storage.objects) != 0 || storage.next != 1 {
+		t.Fatalf(
+			"failed batch mutated storage: objects %d, next %d",
+			len(storage.objects),
+			storage.next,
+		)
+	}
 }
 
 func TestSavePersistsPrivateVersionedCharacterForVerifiedAccount(t *testing.T) {
@@ -155,7 +224,7 @@ func TestSavePersistsPrivateVersionedCharacterForVerifiedAccount(t *testing.T) {
 			`{"body_type":"hero","version":3}`,
 		),
 	}
-	err = firstSession.Save(context.Background(), SaveRequest{
+	err = firstSession.Save(authenticatedContext(testSubjectID), SaveRequest{
 		SubjectID:       testSubjectID,
 		IdempotencyKey:  "character:create:warden-1",
 		ExpectedVersion: "*",
@@ -191,7 +260,10 @@ func TestSavePersistsPrivateVersionedCharacterForVerifiedAccount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("later NewStore() error = %v", err)
 	}
-	record, err := laterSession.Load(context.Background(), testSubjectID)
+	record, err := laterSession.Load(
+		authenticatedContext(testSubjectID),
+		testSubjectID,
+	)
 	if err != nil {
 		t.Fatalf("later Load() error = %v", err)
 	}
@@ -200,7 +272,9 @@ func TestSavePersistsPrivateVersionedCharacterForVerifiedAccount(t *testing.T) {
 	}
 }
 
-func TestSaveRejectsAnUnverifiedSubjectBeforeStorage(t *testing.T) {
+func TestSaveRejectsAnOwnerDifferentFromAuthenticatedCallerBeforeStorage(
+	t *testing.T,
+) {
 	t.Parallel()
 
 	storage := newFakeStorage()
@@ -208,8 +282,8 @@ func TestSaveRejectsAnUnverifiedSubjectBeforeStorage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStore() error = %v", err)
 	}
-	err = store.Save(context.Background(), SaveRequest{
-		SubjectID:       "client-picked-subject",
+	err = store.Save(authenticatedContext(testOtherSubjectID), SaveRequest{
+		SubjectID:       testSubjectID,
 		IdempotencyKey:  "character:create:warden-1",
 		ExpectedVersion: "*",
 		Character: Character{
@@ -238,7 +312,7 @@ func TestSaveRejectsAnEmptyObservedVersionBeforeStorage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStore() error = %v", err)
 	}
-	err = store.Save(context.Background(), SaveRequest{
+	err = store.Save(authenticatedContext(testSubjectID), SaveRequest{
 		SubjectID:      testSubjectID,
 		IdempotencyKey: "character:create:warden-1",
 		Character: Character{
@@ -272,7 +346,7 @@ func TestSaveRefusesAStaleObservedVersion(t *testing.T) {
 		DisplayName: "Asha",
 		Recipe:      json.RawMessage(`{"version":3}`),
 	}
-	if err := store.Save(context.Background(), SaveRequest{
+	if err := store.Save(authenticatedContext(testSubjectID), SaveRequest{
 		SubjectID:       testSubjectID,
 		IdempotencyKey:  "character:create:warden-1",
 		ExpectedVersion: "*",
@@ -282,7 +356,7 @@ func TestSaveRefusesAStaleObservedVersion(t *testing.T) {
 	}
 
 	character.DisplayName = "Asha the Restorer"
-	err = store.Save(context.Background(), SaveRequest{
+	err = store.Save(authenticatedContext(testSubjectID), SaveRequest{
 		SubjectID:       testSubjectID,
 		IdempotencyKey:  "character:rename:warden-1",
 		ExpectedVersion: "stale-version",
@@ -294,7 +368,7 @@ func TestSaveRefusesAStaleObservedVersion(t *testing.T) {
 	if len(storage.writeCalls) != 2 {
 		t.Fatalf("StorageWrite() calls = %d, want 2", len(storage.writeCalls))
 	}
-	record, err := store.Load(context.Background(), testSubjectID)
+	record, err := store.Load(authenticatedContext(testSubjectID), testSubjectID)
 	if err != nil {
 		t.Fatalf("Load() after stale write error = %v", err)
 	}
@@ -320,7 +394,7 @@ func TestSaveRejectsIdempotencyKeyReuseForDifferentCharacterState(t *testing.T) 
 		Recipe:      json.RawMessage(`{"version":3}`),
 	}
 	const idempotencyKey = "character:create:warden-1"
-	if err := store.Save(context.Background(), SaveRequest{
+	if err := store.Save(authenticatedContext(testSubjectID), SaveRequest{
 		SubjectID:       testSubjectID,
 		IdempotencyKey:  idempotencyKey,
 		ExpectedVersion: "*",
@@ -328,13 +402,13 @@ func TestSaveRejectsIdempotencyKeyReuseForDifferentCharacterState(t *testing.T) 
 	}); err != nil {
 		t.Fatalf("initial Save() error = %v", err)
 	}
-	record, err := store.Load(context.Background(), testSubjectID)
+	record, err := store.Load(authenticatedContext(testSubjectID), testSubjectID)
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
 
 	character.Recipe = json.RawMessage(`{"body_type":"hero","version":3}`)
-	err = store.Save(context.Background(), SaveRequest{
+	err = store.Save(authenticatedContext(testSubjectID), SaveRequest{
 		SubjectID:       testSubjectID,
 		IdempotencyKey:  idempotencyKey,
 		ExpectedVersion: record.Version,
@@ -370,7 +444,7 @@ func TestSaveReplaysACommittedReplacementWithItsStaleObservedVersion(
 		DisplayName: "Asha",
 		Recipe:      json.RawMessage(`{"version":3}`),
 	}
-	if err := store.Save(context.Background(), SaveRequest{
+	if err := store.Save(authenticatedContext(testSubjectID), SaveRequest{
 		SubjectID:       testSubjectID,
 		IdempotencyKey:  "character:create:warden-1",
 		ExpectedVersion: "*",
@@ -378,7 +452,7 @@ func TestSaveReplaysACommittedReplacementWithItsStaleObservedVersion(
 	}); err != nil {
 		t.Fatalf("initial Save() error = %v", err)
 	}
-	record, err := store.Load(context.Background(), testSubjectID)
+	record, err := store.Load(authenticatedContext(testSubjectID), testSubjectID)
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
@@ -390,10 +464,10 @@ func TestSaveReplaysACommittedReplacementWithItsStaleObservedVersion(
 		ExpectedVersion: record.Version,
 		Character:       character,
 	}
-	if err := store.Save(context.Background(), request); err != nil {
+	if err := store.Save(authenticatedContext(testSubjectID), request); err != nil {
 		t.Fatalf("replacement Save() error = %v", err)
 	}
-	if err := store.Save(context.Background(), request); err != nil {
+	if err := store.Save(authenticatedContext(testSubjectID), request); err != nil {
 		t.Fatalf("replayed Save() error = %v, want nil", err)
 	}
 	if len(storage.writeCalls) != 2 {
@@ -421,7 +495,7 @@ func TestSaveCannotOverwriteMalformedDurableCharacterWithItsVersion(t *testing.T
 	if err != nil {
 		t.Fatalf("NewStore() error = %v", err)
 	}
-	err = store.Save(context.Background(), SaveRequest{
+	err = store.Save(authenticatedContext(testSubjectID), SaveRequest{
 		SubjectID:       testSubjectID,
 		IdempotencyKey:  "character:repair:warden-1",
 		ExpectedVersion: "observed-version",
@@ -485,13 +559,27 @@ func TestLoadKeepsEveryShippedCharacterSchemaReadable(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewStore() error = %v", err)
 		}
-		record, err := store.Load(context.Background(), testSubjectID)
+		record, err := store.Load(
+			authenticatedContext(testSubjectID),
+			testSubjectID,
+		)
 		if err != nil {
 			t.Fatalf("Load(schema %d) error = %v", version, err)
 		}
-		if record.Character.ID != "warden-1" ||
-			record.Character.DisplayName != "Asha" {
-			t.Fatalf("Load(schema %d) = %#v", version, record)
+		want := Character{
+			ID:          "warden-1",
+			DisplayName: "Asha",
+			Recipe: json.RawMessage(
+				`{"body_type":"hero","version":3}`,
+			),
+		}
+		if !reflect.DeepEqual(record.Character, want) {
+			t.Fatalf(
+				"Load(schema %d) = %#v, want %#v",
+				version,
+				record.Character,
+				want,
+			)
 		}
 	}
 }
@@ -566,7 +654,10 @@ func TestLoadRejectsMalformedOrPublicCharacterRecords(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NewStore() error = %v", err)
 			}
-			_, err = store.Load(context.Background(), testSubjectID)
+			_, err = store.Load(
+				authenticatedContext(testSubjectID),
+				testSubjectID,
+			)
 			if !errors.Is(err, test.wantErr) {
 				t.Fatalf("Load() error = %v, want %v", err, test.wantErr)
 			}
@@ -574,7 +665,9 @@ func TestLoadRejectsMalformedOrPublicCharacterRecords(t *testing.T) {
 	}
 }
 
-func TestLoadRejectsAnUnverifiedSubjectBeforeStorage(t *testing.T) {
+func TestLoadRejectsAnOwnerDifferentFromAuthenticatedCallerBeforeStorage(
+	t *testing.T,
+) {
 	t.Parallel()
 
 	storage := newFakeStorage()
@@ -583,8 +676,8 @@ func TestLoadRejectsAnUnverifiedSubjectBeforeStorage(t *testing.T) {
 		t.Fatalf("NewStore() error = %v", err)
 	}
 	if _, err := store.Load(
-		context.Background(),
-		"client-picked-subject",
+		authenticatedContext(testOtherSubjectID),
+		testSubjectID,
 	); err == nil {
 		t.Fatal("Load() error = nil")
 	}
@@ -627,7 +720,10 @@ func TestLoadSanitizesStorageFailuresAndPreservesCancellation(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NewStore() error = %v", err)
 			}
-			_, err = store.Load(context.Background(), testSubjectID)
+			_, err = store.Load(
+				authenticatedContext(testSubjectID),
+				testSubjectID,
+			)
 			if !errors.Is(err, test.wantErr) {
 				t.Fatalf("Load() error = %v, want %v", err, test.wantErr)
 			}

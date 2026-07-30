@@ -93,10 +93,9 @@ func NewStore(storage storageClient) (*Store, error) {
 
 // Load reads the private character belonging to one verified Nakama subject.
 func (s *Store) Load(ctx context.Context, subjectID string) (Record, error) {
-	if !validSubjectID(subjectID) {
-		return Record{}, errors.New(
-			"nakama character: valid subject is required",
-		)
+	subjectID, err := authenticatedSubjectID(ctx, subjectID)
+	if err != nil {
+		return Record{}, err
 	}
 	objects, err := s.storage.StorageRead(ctx, []*runtime.StorageRead{
 		{
@@ -137,14 +136,15 @@ func (s *Store) Load(ctx context.Context, subjectID string) (Record, error) {
 // Save atomically commits one conditional character replacement and its
 // append-only mutation evidence.
 func (s *Store) Save(ctx context.Context, request SaveRequest) error {
-	if !validSubjectID(request.SubjectID) {
-		return errors.New("nakama character: valid subject is required")
+	subjectID, err := authenticatedSubjectID(ctx, request.SubjectID)
+	if err != nil {
+		return err
 	}
 	if request.ExpectedVersion == "" {
 		return errors.New("nakama character: observed version is required")
 	}
 	if request.ExpectedVersion != "*" {
-		_, err := s.Load(ctx, request.SubjectID)
+		_, err := s.Load(ctx, subjectID)
 		if err != nil && !errors.Is(err, ErrNotFound) {
 			return err
 		}
@@ -162,7 +162,7 @@ func (s *Store) Save(ctx context.Context, request SaveRequest) error {
 		return errors.New("nakama character: encode mutation outcome")
 	}
 	_, err = s.mutations.Apply(ctx, playerstate.Mutation{
-		SubjectID:      request.SubjectID,
+		SubjectID:      subjectID,
 		IdempotencyKey: request.IdempotencyKey,
 		Operation:      "save_character",
 		Payload:        value,
@@ -329,6 +329,29 @@ func validSubjectID(subjectID string) bool {
 		}
 	}
 	return true
+}
+
+func authenticatedSubjectID(
+	ctx context.Context,
+	requestedSubjectID string,
+) (string, error) {
+	if ctx == nil {
+		return "", errors.New(
+			"nakama character: authenticated subject is required",
+		)
+	}
+	callerSubjectID, ok := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
+	callerSubjectID = strings.ToLower(callerSubjectID)
+	requestedSubjectID = strings.ToLower(requestedSubjectID)
+	if !ok ||
+		!validSubjectID(callerSubjectID) ||
+		!validSubjectID(requestedSubjectID) ||
+		callerSubjectID != requestedSubjectID {
+		return "", errors.New(
+			"nakama character: authenticated subject must own the character",
+		)
+	}
+	return callerSubjectID, nil
 }
 
 func isHexDigit(char rune) bool {
