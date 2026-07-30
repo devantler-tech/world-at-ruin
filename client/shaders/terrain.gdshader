@@ -340,10 +340,6 @@ void fragment() {
 	edge_fw = terrain_plate_separator_footprint(
 		plate_uv, plate_c1, plate_c2, plate_c3,
 		f1, f2, f3, f4, plate_fw, plate_uv_dx, plate_uv_dy);
-	vec2 e1 = plate_uv - plate_c1;
-	vec2 e2 = plate_uv - plate_c2;
-	vec2 gsep_e = e2 * inversesqrt(max(dot(e2, e2), 1e-12))
-		- e1 * inversesqrt(max(dot(e1, e1), 1e-12));
 	plate_edge_w = terrain_plate_edge_blend(f1, f2, edge_fw * 0.5);
 	// ...and WHICH plates that share belongs to. Away from a triple junction this
 	// is exactly `(1 - plate_edge_w, plate_edge_w, 0)` — the two-cell answer,

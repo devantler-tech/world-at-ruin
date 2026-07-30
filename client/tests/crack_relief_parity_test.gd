@@ -55,7 +55,8 @@ const JUNCTION_GAIN_PATTERN := \
 	"junction_read_authority\\s*=\\s*terrain_plate_covered_junction\\(\\s*" \
 	+ "f1\\s*,\\s*f2\\s*,\\s*f3\\s*,\\s*plate_fw\\s*\\)\\s*;\\s*" \
 	+ "float\\s+junction_read_gain\\s*=\\s*terrain_plate_junction_read_gain\\(\\s*" \
-	+ "junction_read_authority\\s*\\)"
+	+ "junction_read_authority\\s*\\)\\s*;\\s*" \
+	+ "mean_tilt\\s*\\*=\\s*junction_read_gain\\s*;"
 
 ## A screen-space derivative taken OF a crack quantity — the form this must not
 ## regress to. Deliberately anchored on the crack operand rather than on
@@ -232,7 +233,7 @@ func _ready() -> void:
 		var path: String = named[0]
 		var src: String = named[1]
 		if not _matches(src, SEPARATOR_FOOTPRINT_PATTERN):
-			_fail("%s does not derive `edge_fw` through the shared three-centre separator footprint — the second/third plate-label swap can change the seam scale at a junction, so the ground and cave contact no longer share the #589 continuity law" % path)
+			_fail("%s does not derive `edge_fw` through the shared whole-window separator footprint — an outer plate-label swap can change the seam scale at a junction, so the ground and cave contact no longer share the #589 continuity law" % path)
 			return
 		if not _matches(src, JUNCTION_GAIN_PATTERN):
 			_fail("%s does not apply the shared read-preserving junction gain — closing the old footprint jump can soften the 6 m relief control on only one side of the cave contact" % path)

@@ -619,6 +619,18 @@ func _cavity_parts(uv: Vector2, use_third: bool) -> Dictionary:
 	var a2: float = minf(k * _is_slab(p["id2"]), AMP_CEILING)
 	var a3: float = minf(k * _is_slab(p["id3"]), AMP_CEILING)
 	var edge_fw := _separator_footprint(p, uv)
+	var spread := _cavity_spread(p, edge_fw)
+	return {
+		"amps": a1 * a1 * w.x + a2 * a2 * w.y + a3 * a3 * w.z,
+		"spread": spread,
+		"read_gain": _junction_read_gain(p),
+	}
+
+
+## The integrated top-hat variance for a supplied separator footprint. Keeping
+## this separate lets the regression arm feed the old c1/c2-only footprint
+## through the same cavity algebra as the fixed path.
+func _cavity_spread(p: Dictionary, edge_fw: float) -> float:
 	var seam_h: float = maxf(edge_fw, 1e-6)
 	var half_h: float = 0.5 * seam_h
 	var s_sep: float = p["f2"] - p["f1"]
@@ -626,11 +638,13 @@ func _cavity_parts(uv: Vector2, use_third: bool) -> Dictionary:
 		- minf(absf(s_sep - half_h), CRACK_WIDTH)) / seam_h
 	var covered: float = clampf(maxf(minf(s_sep + half_h, CRACK_WIDTH)
 		- maxf(s_sep - half_h, -CRACK_WIDTH), 0.0) / seam_h, 0.0, 1.0)
-	return {
-		"amps": a1 * a1 * w.x + a2 * a2 * w.y + a3 * a3 * w.z,
-		"spread": maxf(covered - prof * prof, 0.0),
-		"read_gain": _junction_read_gain(p),
-	}
+	return maxf(covered - prof * prof, 0.0)
+
+
+func _legacy_cavity_spread(uv: Vector2) -> float:
+	var p := _plates(uv)
+	var edge_fw := _pair_separator_footprint(uv, p["c1"], p["c2"])
+	return _cavity_spread(p, edge_fw)
 
 
 ## `seam_slope_var` as both shaders compute it — the product of the two factors
@@ -850,6 +864,19 @@ func _max_step_of(centre: Vector2, samples: int, use_third: bool,
 	return worst
 
 
+func _max_legacy_spread_step(centre: Vector2, samples: int) -> float:
+	var worst := 0.0
+	var prev := INF
+	for i in range(0, samples + 1):
+		var a := TAU * float(i) / float(samples)
+		var uv := centre + Vector2(cos(a), sin(a)) * ARC_RADIUS
+		var cur := _legacy_cavity_spread(uv)
+		if prev != INF:
+			worst = maxf(worst, absf(cur - prev))
+		prev = cur
+	return worst
+
+
 func _max_adjacent_cavity_step(centre: Vector2, samples: int,
 		use_third: bool) -> float:
 	var worst := 0.0
@@ -889,11 +916,8 @@ func _max_cavity(centre: Vector2) -> float:
 ##     second-nearest cell's identity swap; under `plate_w` it does not. That is
 ##     the fix, and it is asserted as continuity — a step that shrinks under
 ##     refinement, against a control that does not.
-##   - `spread` is a footprint quantity, identical under both rules, and it
-##     carries its own jump (see `_cavity_parts`). No weighting rule reaches it,
-##     so the FULL cavity still steps. That residual is bounded and recorded
-##     here rather than claimed absent — the same treatment the four-plate arm
-##     gives its own irreducible remainder.
+##   - `spread` is a footprint quantity. Its legacy c1/c2-only answer is the
+##     control; the symmetric footprint is the fix.
 func _check_cavity_continuity(centre: Vector2) -> void:
 	var peak := _max_cavity(centre)
 	if peak <= 0.0:
@@ -940,6 +964,21 @@ func _check_cavity_continuity(centre: Vector2) -> void:
 
 	# THE FOOTPRINT FIX. Refining the same arc must now shrink both the spread
 	# step and the composed cavity step. A label-swap jump stays flat.
+	var legacy_spread_coarse := _max_legacy_spread_step(
+		centre, ARC_SAMPLES)
+	var legacy_spread_fine := _max_legacy_spread_step(
+		centre, ARC_SAMPLES * 4)
+	if legacy_spread_fine < CAVITY_CONTROL_STEP_MIN:
+		_fail("control: the c1/c2-only seam footprint's spread step is %.5f, "
+			% legacy_spread_fine
+			+ "under the %.5f this probe needs to see — the arc cannot prove "
+			% CAVITY_CONTROL_STEP_MIN
+			+ "that the symmetric footprint removed the identity jump")
+	if legacy_spread_fine < legacy_spread_coarse * CONTINUITY_RATIO:
+		_fail("control: the c1/c2-only seam footprint's spread step FELL from "
+			+ "%.5f to %.5f under 4x refinement — the probe is seeing smooth "
+			% [legacy_spread_coarse, legacy_spread_fine]
+			+ "variation rather than the #589 label jump")
 	var spread_coarse := _max_step_of(
 		centre, ARC_SAMPLES, true, "spread")
 	var spread_fine := _max_step_of(
@@ -949,6 +988,12 @@ func _check_cavity_continuity(centre: Vector2) -> void:
 			+ "(%.5f at %d samples, %.5f at %d) — `edge_fw` still jumps when "
 			% [spread_coarse, ARC_SAMPLES, spread_fine, ARC_SAMPLES * 4]
 			+ "the second- and third-nearest plate labels exchange (#589)")
+	if spread_fine > CAVITY_CONTINUOUS_STEP_MAX:
+		_fail("the symmetric seam footprint still steps %.5f across the "
+			% spread_fine
+			+ "junction, above the %.5f a continuous spread may show at this "
+			% CAVITY_CONTINUOUS_STEP_MAX
+			+ "sampling density")
 	var full_coarse := _max_adjacent_cavity_step(
 		centre, ARC_SAMPLES, true)
 	var full_fine := _max_adjacent_cavity_step(
@@ -958,9 +1003,17 @@ func _check_cavity_continuity(centre: Vector2) -> void:
 			+ "(%.5f at %d samples, %.5f at %d) — the footprint still leaves "
 			% [full_coarse, ARC_SAMPLES, full_fine, ARC_SAMPLES * 4]
 			+ "a visible identity step at the plate junction (#589)")
+	if full_fine > CAVITY_CONTINUOUS_STEP_MAX:
+		_fail("the composed seam cavity still steps %.5f across the junction, "
+			% full_fine
+			+ "above the %.5f a continuous cavity may show at this sampling "
+			% CAVITY_CONTINUOUS_STEP_MAX
+			+ "density")
 	print("CAVITY peak %.5f on the arc" % peak)
 	print("CAVITY amps pairwise(#554) %.5f -> %.5f, three-way(#584) %.5f -> %.5f"
 		% [amp_old_coarse, amp_old_fine, amp_new_coarse, amp_new_fine])
+	print("CAVITY spread control(#589) %.5f -> %.5f"
+		% [legacy_spread_coarse, legacy_spread_fine])
 	print("CAVITY spread(#589) %.5f -> %.5f under 4x refinement"
 		% [spread_coarse, spread_fine])
 	print("CAVITY full(#589) %.5f -> %.5f under 4x refinement"
@@ -1366,6 +1419,8 @@ func _check_source_guards() -> void:
 				or not src.contains(
 					"junction_read_gain = terrain_plate_junction_read_gain(") \
 				or not src.contains("junction_read_authority);") \
+				or not src.contains(
+					"mean_tilt *= junction_read_gain") \
 				or not src.contains(
 					"seam_slope_var *= junction_read_gain * junction_read_gain"):
 			_fail("%s does not restore the measured near-field seam read under "
