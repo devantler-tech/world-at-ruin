@@ -165,11 +165,11 @@ const QUARANTINE_MIN_AGE_SECONDS := 300
 ## SHORTENED by a malformed value — the direction that could destroy progression.
 const QUARANTINE_MIN_AGE_ENV := "WAR_VAULT_QUARANTINE_MIN_AGE_SECONDS"
 
-## Highest schema emitted by a production writer. v3 is used only when the
-## document actually carries claimed exploration rewards; a discovery-only
-## vault stays on v2 and an empty or attunement-only vault stays on v1, so old
-## state is never rewritten merely to look current.
-const VAULT_VERSION := 3
+## Highest schema emitted by a production writer. v4 is used only when the
+## document actually carries quest-objective progress; reward-only state stays
+## on v3, discovery-only state stays on v2, and an empty or attunement-only
+## vault stays on v1, so old state is never rewritten merely to look current.
+const VAULT_VERSION := 4
 
 ## The minimal vault shape. Kept separate from [constant VAULT_VERSION] because
 ## a fresh or attunement-only document has no later-version field to describe.
@@ -180,10 +180,11 @@ const BASE_VAULT_VERSION := 1
 ## because this build can now originate a different, later field.
 const DISCOVERY_VAULT_VERSION := 2
 const REWARD_CLAIM_VAULT_VERSION := 3
+const QUEST_PROGRESS_VAULT_VERSION := 4
 
-## Highest vault schema this build can READ. v4 adds forward-only quest
-## objective progress, but the production writer stays on v3 until this reader
-## release is retained as a safe rollback target.
+## Highest vault schema this build can READ. The retained v4 reader now also has
+## its production writer; read and write constants remain separate so the next
+## expansion can bake before its own writer activates.
 const VAULT_READ_VERSION := 4
 
 ## The vault format, exhaustively. Unknown top-level fields are refused for the
@@ -941,6 +942,41 @@ static func record_reward_claims(doc: Dictionary, names: Array) -> Dictionary:
 	return next
 
 
+## `doc` with the live QuestLog snapshot merged into its forward-only objective
+## map. Existing raw progress always wins over a stale/lower incoming value, and
+## opaque quest/objective ids from either side survive. An empty first snapshot
+## leaves an older vault byte-shaped; v4 is stamped only when quest state exists.
+static func record_quests(doc: Dictionary, progress: Variant) -> Dictionary:
+	var reason := validate(doc)
+	if not reason.is_empty():
+		push_error("SaveVault: refusing to add quest progress to an invalid vault — %s" % reason)
+		return {}
+	var progress_reason := validate({
+		"version": QUEST_PROGRESS_VAULT_VERSION,
+		"quests": progress,
+	})
+	if not progress_reason.is_empty():
+		push_error("SaveVault: refusing invalid quest progress — %s" % progress_reason)
+		return {}
+	var next: Dictionary = doc.duplicate(true)
+	if (progress as Dictionary).is_empty() and not next.has("quests"):
+		return next
+	var merged: Dictionary = (next.get("quests", {}) as Dictionary).duplicate(true)
+	for quest_id: String in progress:
+		if not merged.has(quest_id):
+			merged[quest_id] = {}
+		var stored: Dictionary = merged[quest_id]
+		var incoming: Dictionary = progress[quest_id]
+		for objective_id: String in incoming:
+			stored[objective_id] = maxi(
+				int(stored.get(objective_id, 0)),
+				int(incoming[objective_id]))
+	next["version"] = maxi(
+		int(next.get("version", BASE_VAULT_VERSION)), QUEST_PROGRESS_VAULT_VERSION)
+	next["quests"] = merged
+	return next
+
+
 static func load_saved() -> Variant:
 	return load_from(vault_path())
 
@@ -1047,6 +1083,34 @@ static func _persist_reward_claims_locked(path: String, names: Array) -> bool:
 	if current is not Dictionary:
 		return false
 	var next := record_reward_claims(current, names)
+	if next.is_empty():
+		return false
+	return replace_if_unchanged(path, next, expected)
+
+
+## Persist the live quest snapshot at the active vault path. False leaves the
+## session state intact; Main retries transient failures while a refused newer
+## or unreadable vault remains read-only.
+static func persist_quests(progress: Dictionary) -> bool:
+	var path := vault_path()
+	if not FileLock.acquire(path):
+		return false
+	var stored := _persist_quests_locked(path, progress)
+	FileLock.release(path)
+	return stored
+
+
+## persist_quests()'s forward-only read-merge-write under the same whole-sequence
+## lock and document-identity comparison as every other progression mutation.
+static func _persist_quests_locked(path: String, progress: Dictionary) -> bool:
+	if not can_write(path):
+		push_error("SaveVault: %s exists but is unreadable — refusing to overwrite it" % path)
+		return false
+	var expected := document_identity(path)
+	var current = load_or_empty()
+	if current is not Dictionary:
+		return false
+	var next := record_quests(current, progress)
 	if next.is_empty():
 		return false
 	return replace_if_unchanged(path, next, expected)

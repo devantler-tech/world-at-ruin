@@ -408,6 +408,14 @@ below.
 **Checkable tells.** From one screenshot, can you say where you are and point toward somewhere
 else? Can you tell two locations apart at all?
 
+**Current implementation.** Ashflats, Cinderreach, Bonepale and Rustmoor already own distinct
+palette and landform profiles. With `WAR_REGION_FOLIAGE=1`, those same continuous region shares now
+shape the fixed-budget ground cover too: Cinderreach is sparse and rubble-led, Bonepale favours
+exposed bone and stone, Rustmoor gathers dense scrub, and Ashflats preserves the shipped baseline.
+The treatment remains default-off pending the art decision in #613. It reinforces local character,
+but all four regions still draw from one small generated prop family, and the zone still lacks the
+target's colossal inherited landmark and the world's eventual contrast with a genuinely lush zone.
+
 ### Structures, caves and blending (#225)
 
 **Target.** Rock **fractures** rather than curves — planar faces, bedding planes, sharp broken

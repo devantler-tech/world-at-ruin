@@ -44,6 +44,20 @@ const CEILING_PATTERN := \
 ## and compare the wrong quantity across the two files.
 const EDGE_BLEND_PATTERN := \
 	"terrain_plate_edge_blend\\(\\s*f1\\s*,\\s*f2\\s*,\\s*edge_fw\\s*\\*\\s*([0-9.]+)\\s*\\)"
+## Both surfaces must derive that width through the shared permutation-safe
+## helper. Merely agreeing on the `edge_fw * 0.5` consumer would still let one
+## side use only `c2`, recreating the #589 junction step along the cave contact.
+const SEPARATOR_FOOTPRINT_PATTERN := \
+	"edge_fw\\s*=\\s*terrain_plate_separator_footprint\\(\\s*plate_uv\\s*,\\s*" \
+	+ "plate_c1\\s*,\\s*plate_c2\\s*,\\s*plate_c3\\s*,\\s*f1\\s*,\\s*f2\\s*,\\s*" \
+	+ "f3\\s*,\\s*f4\\s*,\\s*plate_fw\\s*,\\s*plate_resolved\\s*,\\s*" \
+	+ "plate_uv_dx\\s*,\\s*plate_uv_dy\\s*\\)"
+const JUNCTION_GAIN_PATTERN := \
+	"junction_read_authority\\s*=\\s*terrain_plate_covered_junction\\(\\s*" \
+	+ "f1\\s*,\\s*f2\\s*,\\s*f3\\s*,\\s*plate_fw\\s*\\)\\s*;\\s*" \
+	+ "float\\s+junction_read_gain\\s*=\\s*terrain_plate_junction_read_gain\\(\\s*" \
+	+ "junction_read_authority\\s*\\)\\s*;\\s*" \
+	+ "mean_tilt\\s*\\*=\\s*junction_read_gain\\s*;"
 
 ## A screen-space derivative taken OF a crack quantity — the form this must not
 ## regress to. Deliberately anchored on the crack operand rather than on
@@ -216,6 +230,15 @@ func _ready() -> void:
 			_num(ground_edge), _num(contact_edge)
 		])
 		return
+	for named in [[GROUND_SHADER_PATH, ground], [CONTACT_SHADER_PATH, contact]]:
+		var path: String = named[0]
+		var src: String = named[1]
+		if not _matches(src, SEPARATOR_FOOTPRINT_PATTERN):
+			_fail("%s does not derive `edge_fw` through the shared whole-window separator footprint — an outer plate-label swap can change the seam scale at a junction, so the ground and cave contact no longer share the #589 continuity law" % path)
+			return
+		if not _matches(src, JUNCTION_GAIN_PATTERN):
+			_fail("%s does not apply the shared read-preserving junction gain — closing the old footprint jump can soften the 6 m relief control on only one side of the cave contact" % path)
+			return
 
 	# 4. THE GRADIENT IS TAKEN IN CLOSED FORM, on both surfaces. A screen-space
 	# difference of the crack field is only a gradient while the crack is wider
@@ -336,7 +359,7 @@ func _ready() -> void:
 			_fail("%s does not take the plate-resolution cutoff on the seam variance SQUARED (`seam_slope_var *= plate_resolved * plate_resolved`) — a variance scales as the square of its amplitude, so a single factor leaves a seam read the plates no longer justify" % path)
 			return
 
-	print("TEST PASS — %s and %s apply the same crack-relief guards: seam-slope ceiling %s, crack-footprint fade over (%s, %s), plate-boundary footprint %s, gradient in closed form on both, seam variance integrated as a top hat of height %s and carried as a saturating cavity at strength %s with a squared plate cutoff" % [
+	print("TEST PASS — %s and %s apply the same crack-relief guards: seam-slope ceiling %s, crack-footprint fade over (%s, %s), junction-safe plate-boundary footprint %s, gradient in closed form on both, seam variance integrated as a top hat of height %s and carried as a saturating cavity at strength %s with a squared plate cutoff" % [
 		GROUND_SHADER_PATH, CONTACT_SHADER_PATH,
 		_num(ground_ceiling[0]), _num(ground_fade[0]), _num(ground_fade[1]),
 		_num(ground_edge), _num(ground_amp), _num(ground_cavity)

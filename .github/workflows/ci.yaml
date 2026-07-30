@@ -48,6 +48,8 @@ jobs:
         run: ./tools/devlog-entry-version-guard.test.sh
       - name: Save-capability vocabulary guard is pinned and fail-closed
         run: ./tools/save-capability-vocabulary-guard.test.sh
+      - name: Google identity binding durability guard is pinned and fail-closed
+        run: ./tools/google-binding-durability-guard.test.sh
       - name: Player-visible gate diffs from the PR's own base
         run: ./tools/pr-diff-base.test.sh
       - name: Exported-frame change report is pinned and advisory
@@ -58,6 +60,8 @@ jobs:
         run: ./tools/manifest-sequence.test.sh
       - name: Lavapipe evidence refuses a fallback capture
         run: ./tools/lavapipe-capture-guard.test.sh
+      - name: Client test runner is portable and verdicts are non-vacuous
+        run: ./tools/run-client-test.test.sh
       - name: Dev-log entry names an unreleased version
         # An entry's version is a hand-written prediction of the next release.
         # Checked here, at the last point before the change merges, so the tag
@@ -65,6 +69,7 @@ jobs:
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
         run: ./tools/devlog-entry-version-guard.sh
       - name: Dev-log entry version sweep is pinned and fail-closed
         run: ./tools/devlog-entry-version-sweep.test.sh
@@ -1236,6 +1241,11 @@ jobs:
       - name: Vet
         working-directory: server
         run: go vet ./...
+      - name: Google identity binding schemas and fixtures are permanent
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: ./tools/google-binding-durability-guard.sh
       # The lint gate is scoped to changed files against the merge base. That
       # scoping FAILS OPEN on its own: with nothing to filter, golangci-lint
       # never resolves the base ref, so an unresolvable `origin/main` prints

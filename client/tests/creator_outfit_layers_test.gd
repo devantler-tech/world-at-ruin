@@ -56,8 +56,8 @@ func _ready() -> void:
 		return
 
 	if UpdateManifest.SAVE_CAPABILITY_READS != 6 \
-			or UpdateManifest.SAVE_CAPABILITY_WRITES != 5:
-		_fail("the active contracts advertise capabilities %d/%d instead of 6/5" % [
+			or UpdateManifest.SAVE_CAPABILITY_WRITES != 6:
+		_fail("the active contracts advertise capabilities %d/%d instead of 6/6" % [
 			UpdateManifest.SAVE_CAPABILITY_READS,
 			UpdateManifest.SAVE_CAPABILITY_WRITES,
 		])

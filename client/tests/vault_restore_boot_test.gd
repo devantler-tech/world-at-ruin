@@ -82,9 +82,10 @@ var _restored := 0
 ## The reward boots then apply the retained v3 reader, activate a real
 ## cave-to-shrine waypoint claim, restore its outcome after logout, and prove a
 ## transient first claim write retries without granting twice in-session.
-## The final pair is the vault-v4 QUEST reader's non-vacuous proof: the control
-## boot has zero quest progress, while the otherwise-identical seeded boot
-## restores opaque future ids and known progress without activating a writer.
+## The final boots activate the vault-v4 QUEST writer: a control boot proves
+## quest state is not invented, a seeded boot advances and persists without
+## dropping opaque future ids, a real logout restores completion silently, and
+## a deliberately transient first write retries before another logout/restore.
 var _discovery_phase := ""
 var _retry_probe_dir := ""
 var _retry_vault := ""
@@ -361,6 +362,29 @@ func _begin_quest_reader_boot(seeded: bool) -> void:
 	add_child(_main)
 
 
+## Boot on a vault path whose parent does not exist, then advance a production
+## QuestLog objective. The first v4 write must fail, remain queued, and converge
+## after the parent appears without replaying the completed quest.
+func _begin_quest_retry_boot() -> void:
+	_discovery_phase = "quest_retry"
+	_ticks = 0
+	if _main != null:
+		_main.queue_free()
+		_main = null
+	_cleanup_retry_probe()
+	_save = SaveIsolation.new(RETRY_CHARACTER_PROBE)
+	if not _save.begin():
+		_fail("save isolation did not take for the transient quest-progress boot")
+		return
+	OS.set_environment(SaveVault.VAULT_PATH_ENV, _retry_vault)
+	if SaveVault.vault_path() != _retry_vault:
+		_fail("the transient quest-progress vault seam did not take")
+		return
+	SaveVault.clear_refusals_for_test()
+	_main = (load(MAIN_SCENE_PATH) as PackedScene).instantiate()
+	add_child(_main)
+
+
 func _physics_process(_delta: float) -> void:
 	# _fail() requests tree shutdown but does not end this frame. A setup helper
 	# can fail after clearing the previous scene and before assigning the next;
@@ -388,12 +412,29 @@ func _physics_process(_delta: float) -> void:
 			_fail("the reward-retry approach did not take before the persistence retry")
 			return
 		_reward_retry_reposition_tick = _ticks
+	if _discovery_phase == "quest_retry" and _ticks == 1:
+		var quest_tracker := _quest_tracker()
+		if quest_tracker == null:
+			return
+		if not quest_tracker.add(
+			"retry_hunt",
+			[{"id": "hounds", "tag": "defeat:ash_hound", "count": 1}]):
+			_fail("the transient quest boot could not register its definition")
+			return
+		if quest_tracker.record("defeat:ash_hound") != ["retry_hunt"]:
+			_fail("the transient quest boot did not complete on its real event")
+			return
+		if not quest_tracker.record("defeat:ash_hound").is_empty():
+			_fail("the transient quest boot replayed completion before persistence")
+			return
 	var retry_path_due := (
 		_discovery_phase == "retry" and _ticks == 3
 	) or (
 		_discovery_phase == "reward_retry"
 		and _reward_retry_reposition_tick >= 0
 		and _ticks == _reward_retry_reposition_tick + 2
+	) or (
+		_discovery_phase == "quest_retry" and _ticks == 3
 	)
 	if retry_path_due:
 		if FileAccess.file_exists(_retry_vault):
@@ -428,7 +469,7 @@ func _physics_process(_delta: float) -> void:
 		_main.set("_reward_persistence_pending", pending)
 		_main.set("_reward_persistence_retry_in", 0.0)
 	var assert_tick := ASSERT_TICK
-	if _discovery_phase in ["retry", "reward_retry", "reward_drift"]:
+	if _discovery_phase in ["retry", "reward_retry", "reward_drift", "quest_retry"]:
 		assert_tick = RETRY_ASSERT_TICK
 	elif _discovery_phase == "drift":
 		assert_tick = DRIFT_ASSERT_TICK
@@ -468,6 +509,18 @@ func _physics_process(_delta: float) -> void:
 			return
 		"quest_control", "quest_restore":
 			_assert_quest_reader()
+			return
+		"quest_write_wait":
+			_assert_quest_write()
+			return
+		"quest_reboot":
+			_assert_quest_reboot()
+			return
+		"quest_retry":
+			_assert_quest_retry()
+			return
+		"quest_retry_reboot":
+			_assert_quest_retry_reboot()
 			return
 
 	var shrine_point := world.shrine_respawn_point()
@@ -607,8 +660,8 @@ func _assert_discovery_write() -> void:
 	if vault is not Dictionary:
 		_fail("the production discovery boot wrote no readable vault")
 		return
-	if vault.get("version") != SaveVault.VAULT_VERSION:
-		_fail("the production cave-to-shrine walk did not emit the current vault contract")
+	if int(vault.get("version", -1)) != SaveVault.REWARD_CLAIM_VAULT_VERSION:
+		_fail("the reward-only cave-to-shrine walk did not remain on vault v3")
 		return
 	var expected: Array[String] = ["starter_cave", "wardens_shrine"]
 	if vault.get("discoveries", []) != expected:
@@ -828,9 +881,8 @@ func _assert_reward_claim_drift(player: Player, world: WorldGen) -> void:
 
 ## The test adds the same definition after both real boots. The unseeded boot
 ## must begin at zero; only the v4 document can make the seeded boot resume at
-## two. Completing from there also proves restored completion is announced once
-## now, while an already-restored completion would stay silent in QuestLog's
-## focused test.
+## two. Completing from there queues the production writer; the next phase waits
+## for disk before rebooting so the test cannot pass on session-only state.
 func _assert_quest_reader() -> void:
 	var tracker := _quest_tracker()
 	if tracker == null:
@@ -868,21 +920,96 @@ func _assert_quest_reader() -> void:
 	if not tracker.record("defeat:ash_hound").is_empty():
 		_fail("the restored quest announced completion more than once")
 		return
+	_discovery_phase = "quest_write_wait"
+	_ticks = 0
+
+
+func _assert_quest_write() -> void:
 	var vault = SaveVault.load_saved()
 	var persisted_quests := QuestLog.new()
+	var expected := QUEST_PROBE.duplicate(true)
+	expected["restored_hunt"]["hounds"] = 3
 	if vault is not Dictionary \
 			or int(vault.get("version", -1)) != 4 \
 			or not persisted_quests.restore(vault.get("quests", {})) \
-			or persisted_quests.snapshot() != QUEST_PROBE:
-		_fail("ordinary production writes changed or downgraded the v4 quest document")
+			or persisted_quests.snapshot() != expected:
+		_fail("the production quest writer did not persist the advance losslessly: %s"
+			% str(vault))
+		return
+	_discovery_phase = "quest_reboot"
+	_ticks = 0
+	_main.queue_free()
+	_main = (load(MAIN_SCENE_PATH) as PackedScene).instantiate()
+	add_child(_main)
+
+
+func _assert_quest_reboot() -> void:
+	var tracker := _quest_tracker()
+	if tracker == null:
+		return
+	if not tracker.add(
+		"restored_hunt",
+		[{"id": "hounds", "tag": "defeat:ash_hound", "count": 3}]):
+		_fail("the quest writer reboot could not register its known definition")
+		return
+	if tracker.progress_of("restored_hunt", "hounds") != 3 \
+			or not tracker.is_complete("restored_hunt"):
+		_fail("logout did not restore the persisted completed quest (progress=%d complete=%s snapshot=%s)"
+			% [
+				tracker.progress_of("restored_hunt", "hounds"),
+				str(tracker.is_complete("restored_hunt")),
+				str(tracker.snapshot()),
+			])
+		return
+	if not tracker.record("defeat:ash_hound").is_empty():
+		_fail("the persisted completed quest replayed completion after logout")
+		return
+	if tracker.snapshot().get("future_quest", {}) != QUEST_PROBE["future_quest"]:
+		_fail("logout dropped opaque future quest progress")
 		return
 	if not _save.real_save_untouched():
-		_fail("the quest reader restore boot touched the player's real save or vault")
+		_fail("the quest writer/reboot touched the player's real save or vault")
+		return
+	_begin_quest_retry_boot()
+
+
+func _assert_quest_retry() -> void:
+	var vault = SaveVault.load_saved()
+	var persisted := QuestLog.new()
+	if vault is not Dictionary \
+			or int(vault.get("version", -1)) != 4 \
+			or not persisted.restore(vault.get("quests", {})) \
+			or persisted.snapshot() != {"retry_hunt": {"hounds": 1}}:
+		_fail("the transient quest write never converged after the path became writable: %s"
+			% str(vault))
+		return
+	_discovery_phase = "quest_retry_reboot"
+	_ticks = 0
+	_main.queue_free()
+	_main = (load(MAIN_SCENE_PATH) as PackedScene).instantiate()
+	add_child(_main)
+
+
+func _assert_quest_retry_reboot() -> void:
+	var tracker := _quest_tracker()
+	if tracker == null:
+		return
+	if not tracker.add(
+		"retry_hunt",
+		[{"id": "hounds", "tag": "defeat:ash_hound", "count": 1}]):
+		_fail("the transient quest reboot could not register its definition")
+		return
+	if not tracker.is_complete("retry_hunt") \
+			or tracker.record("defeat:ash_hound") != []:
+		_fail("the retried completed quest replayed after logout")
+		return
+	if not _save.real_save_untouched():
+		_fail("the quest retry/reboot touched the player's real save or vault")
 		return
 	print(("TEST PASS — %d shipped attunement(s) and vault-v2 discovery state survive "
 		+ "a logout, transient writes retry, rollback-only ids cannot poison known writes, "
 		+ "vault-v3 waypoint claims survive reboot and cloud replacement without re-granting, "
-		+ "and vault-v4 quest progress restores without activating a writer "
+		+ "and vault-v4 quest progress persists, retries and restores exactly once "
 		+ "(control woke at %s)")
 		% [_restored, str(_control_spawn)])
 	get_tree().quit(0)

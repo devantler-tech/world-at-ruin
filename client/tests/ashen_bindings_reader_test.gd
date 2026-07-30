@@ -3,8 +3,8 @@ extends Node
 ##
 ## Capability 5 has a retained reader and an explicitly guarded writer:
 ##  1. the real reader registry and CharacterFactory can render `ashen_bindings`;
-##  2. the stable update envelope advertises capability 5 writes below the
-##     project-wide capability 6 read ceiling;
+##  2. the stable update envelope advertises project-wide capability 6
+##     reads/writes without removing the capability-5 character vocabulary;
 ##  3. the shipped default creator cannot originate the preview-only hand piece;
 ##  4. the explicit layered-outfit preview can select, apply, save and reload it.
 ##
@@ -59,15 +59,16 @@ func _ready() -> void:
 		return
 
 	# Test the published behavior, not only the source constants: capability 5
-	# remains readable and writable below the later capability-6 read ceiling.
+	# character vocabulary remains writable after the separate vault contract
+	# advances the project-wide envelope to capability 6.
 	var built_manifest := UpdateManifest.build(MANIFEST_SEQUENCE, MANIFEST_NOT_AFTER)
 	var manifest := built_manifest.get("manifest", {}) as Dictionary
 	if not String(built_manifest.get("error", "")).is_empty() or manifest.is_empty():
 		_fail("the reader build could not produce its stable update envelope")
 		return
 	if int((manifest["shell"] as Dictionary).get("reads_capability_max", -1)) != 6 \
-			or int((manifest["save_schema"] as Dictionary).get("capability", -1)) != 5:
-		_fail("reader expansion advertises the wrong read/write capabilities: %s/%s" % [
+			or int((manifest["save_schema"] as Dictionary).get("capability", -1)) != 6:
+		_fail("active contracts advertise the wrong read/write capabilities: %s/%s" % [
 			(manifest["shell"] as Dictionary).get("reads_capability_max"),
 			(manifest["save_schema"] as Dictionary).get("capability"),
 		])

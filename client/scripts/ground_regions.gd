@@ -107,6 +107,11 @@ const REGIONS: Array[Dictionary] = [
 		# already captured there reading as itself.
 		&"amp": 1.0,
 		&"ridged": 0.0,
+		# The baseline cover profile. Keeping every multiplier neutral makes
+		# the region preview byte-for-byte equivalent where ashflats owns the
+		# ground, and gives the other regions an honest reference.
+		&"foliage_density": 1.0,
+		&"foliage_kinds": [1.0, 1.0, 1.0, 1.0],
 	},
 	{
 		# Where the burn sat longest: much darker, and warm rather than neutral.
@@ -130,6 +135,10 @@ const REGIONS: Array[Dictionary] = [
 		# arithmetic budget could not see that and the measurement can.
 		&"amp": 1.15,
 		&"ridged": 0.0,
+		# Burnt high ground is sparse and rubble-led: little living cover
+		# survived, while exposed debris remains legible at a distance.
+		&"foliage_density": 0.55,
+		&"foliage_kinds": [0.35, 0.45, 0.85, 1.45],
 	},
 	{
 		# Ash scoured off down to the pale stone beneath: much lighter, and the
@@ -148,6 +157,10 @@ const REGIONS: Array[Dictionary] = [
 		# took away is gone, and the spines are what it could not move.
 		&"amp": 0.55,
 		&"ridged": 0.85,
+		# Wind-scoured stone carries bone and rubble decisions instead of
+		# generic grass, with enough bare ground for the pale rock to read.
+		&"foliage_density": 0.70,
+		&"foliage_kinds": [0.45, 0.30, 1.65, 1.25],
 	},
 	{
 		# Ground stained by the inherited machines rusting into it — ochre, the
@@ -168,6 +181,10 @@ const REGIONS: Array[Dictionary] = [
 		# rises were within a whisker of flattening into plateaus.
 		&"amp": 0.80,
 		&"ridged": 0.20,
+		# The low moor shelters the densest scrub; grass thins while corroded
+		# rubble still punctuates the hollows.
+		&"foliage_density": 1.25,
+		&"foliage_kinds": [1.25, 0.75, 0.55, 1.15],
 	},
 ]
 
@@ -421,6 +438,34 @@ static func palette_for(region_sites: Array[Site], x: float, z: float) -> Dictio
 		scorch += s * w
 		rough += float(reg[&"rough"]) * w
 	return {&"ash": ash, &"rock": rock, &"scorch": scorch, &"rough": rough}
+
+
+## The cover profile at a place: `{ density, kinds }`, cross-faded through the
+## same continuous region shares as palette and landform. Blending the knobs
+## before scatter keeps the fixed prop budget and removes a density or kind
+## step at every boundary, including a three-region meeting.
+static func foliage_for(region_sites: Array[Site], x: float, z: float) -> Dictionary:
+	var at := region_for(region_sites, x, z)
+	var owner: int = at[&"region"]
+	if at[&"blend"] >= 1.0:
+		var only: Dictionary = REGIONS[owner]
+		return {
+			&"density": float(only[&"foliage_density"]),
+			&"kinds": (only[&"foliage_kinds"] as Array).duplicate(),
+		}
+	var shares: PackedFloat32Array = at[&"shares"]
+	var density := 0.0
+	var kinds := [0.0, 0.0, 0.0, 0.0]
+	for r in REGIONS.size():
+		var w := shares[r]
+		if w <= 0.0:
+			continue
+		var region: Dictionary = REGIONS[r]
+		density += float(region[&"foliage_density"]) * w
+		var region_kinds: Array = region[&"foliage_kinds"]
+		for kind in kinds.size():
+			kinds[kind] += float(region_kinds[kind]) * w
+	return {&"density": density, &"kinds": kinds}
 
 
 ## The landform at a place: `{ amp, ridged }`, cross-faded across every region
