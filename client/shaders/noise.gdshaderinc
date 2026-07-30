@@ -1,10 +1,8 @@
 // Shared procedural noise for the "as code" materials — no textures, the look
 // is arithmetic.
 //
-// `terrain.gdshader` and `cave_rock.gdshader` each carry their own byte-identical
-// copy of these three functions. Rather than add a third, masonry.gdshader
-// includes this file; migrating the other two is tracked separately so a
-// refactor does not ride along inside a feature change.
+// Terrain, cave rock, and masonry include this file so every arithmetic
+// material uses the same hash, value-noise, and fBm contract.
 
 float hash3(vec3 p) {
 	return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453);
