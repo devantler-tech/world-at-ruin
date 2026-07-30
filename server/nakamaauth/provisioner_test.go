@@ -22,39 +22,67 @@ import (
 
 const (
 	testIdentityProof   = "google-oidc-fixture"
+	testGoogleClientID  = "world-at-ruin.apps.googleusercontent.com"
+	testGoogleSubject   = "google-player-subject"
 	testNakamaServerKey = "nakama-server-key"
 	testNakamaSession   = "nakama-session"
 )
 
-type googleAuthentication struct {
-	credential    string
+type customAuthentication struct {
+	customID      string
 	create        bool
 	username      string
 	authorization []string
 	trace         []string
 }
 
+type fakeGoogleIdentityVerifier struct {
+	mu          sync.Mutex
+	credentials []string
+	audiences   []string
+	subject     string
+	err         error
+}
+
+func (v *fakeGoogleIdentityVerifier) VerifyGoogleIDToken(
+	_ context.Context,
+	credential string,
+	audience string,
+) (string, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.credentials = append(v.credentials, credential)
+	v.audiences = append(v.audiences, audience)
+	return v.subject, v.err
+}
+
+func (v *fakeGoogleIdentityVerifier) observed() ([]string, []string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return append([]string(nil), v.credentials...), append([]string(nil), v.audiences...)
+}
+
 type provisioningServer struct {
 	apigrpc.UnimplementedNakamaServer
 
 	mu              sync.Mutex
-	authentication  []googleAuthentication
+	authentication  []customAuthentication
 	accountCalls    int
-	rejectGoogle    bool
+	rejectCustom    bool
 	emptySession    bool
 	emptyUserID     bool
 	issuedSession   string
 	provisionedUser string
 }
 
-func (s *provisioningServer) AuthenticateGoogle(
+func (s *provisioningServer) AuthenticateCustom(
 	ctx context.Context,
-	request *api.AuthenticateGoogleRequest,
+	request *api.AuthenticateCustomRequest,
 ) (*api.Session, error) {
 	md, _ := metadata.FromIncomingContext(ctx)
 	account := request.GetAccount()
-	authentication := googleAuthentication{
-		credential:    account.GetToken(),
+	authentication := customAuthentication{
+		customID:      account.GetId(),
 		create:        request.GetCreate().GetValue(),
 		username:      request.GetUsername(),
 		authorization: append([]string(nil), md.Get("authorization")...),
@@ -64,11 +92,10 @@ func (s *provisioningServer) AuthenticateGoogle(
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.authentication = append(s.authentication, authentication)
-	if s.rejectGoogle {
+	if s.rejectCustom {
 		return nil, status.Error(
 			codes.Unauthenticated,
-			"rejected Google credential "+account.GetToken()+
-				" with server key "+testNakamaServerKey,
+			"rejected custom identity "+account.GetId()+" with server key "+testNakamaServerKey,
 		)
 	}
 	if s.emptySession {
@@ -99,15 +126,16 @@ func (s *provisioningServer) GetAccount(
 	return &api.Account{User: &api.User{Id: s.provisionedUser}}, nil
 }
 
-func (s *provisioningServer) observed() ([]googleAuthentication, int) {
+func (s *provisioningServer) observed() ([]customAuthentication, int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return append([]googleAuthentication(nil), s.authentication...), s.accountCalls
+	return append([]customAuthentication(nil), s.authentication...), s.accountCalls
 }
 
 func provisionerAgainst(
 	t *testing.T,
 	server *provisioningServer,
+	identityVerifier googleIdentityVerifier,
 	config ProvisionerConfig,
 ) *Provisioner {
 	t.Helper()
@@ -120,7 +148,7 @@ func provisionerAgainst(
 			info *grpc.UnaryServerInfo,
 			handler grpc.UnaryHandler,
 		) (any, error) {
-			if info.FullMethod == apigrpc.Nakama_AuthenticateGoogle_FullMethodName {
+			if info.FullMethod == apigrpc.Nakama_AuthenticateCustom_FullMethodName {
 				md, _ := metadata.FromIncomingContext(ctx)
 				authorization := md.Get("authorization")
 				wantAuthorization := "Basic " + base64.StdEncoding.EncodeToString(
@@ -159,14 +187,19 @@ func provisionerAgainst(
 		_ = conn.Close()
 	})
 
-	return NewProvisioner(apigrpc.NewNakamaClient(conn), config)
+	return newProvisioner(apigrpc.NewNakamaClient(conn), identityVerifier, config)
 }
 
 func enabledProvisionerConfig() ProvisionerConfig {
 	return ProvisionerConfig{
 		GoogleProvisioningEnabled: true,
+		GoogleClientID:            testGoogleClientID,
 		NakamaServerKey:           testNakamaServerKey,
 	}
+}
+
+func acceptingGoogleVerifier() *fakeGoogleIdentityVerifier {
+	return &fakeGoogleIdentityVerifier{subject: testGoogleSubject}
 }
 
 func TestProvisionGoogleIsDefaultOff(t *testing.T) {
@@ -174,7 +207,8 @@ func TestProvisionGoogleIsDefaultOff(t *testing.T) {
 		issuedSession:   testNakamaSession,
 		provisionedUser: "player-42",
 	}
-	provisioner := provisionerAgainst(t, server, ProvisionerConfig{})
+	identityVerifier := acceptingGoogleVerifier()
+	provisioner := provisionerAgainst(t, server, identityVerifier, ProvisionerConfig{})
 
 	userID, err := provisioner.ProvisionGoogle(context.Background(), testIdentityProof)
 	if !errors.Is(err, ErrGoogleProvisioningDisabled) {
@@ -191,6 +225,13 @@ func TestProvisionGoogleIsDefaultOff(t *testing.T) {
 			accountCalls,
 		)
 	}
+	credentials, audiences := identityVerifier.observed()
+	if len(credentials) != 0 || len(audiences) != 0 {
+		t.Fatalf(
+			"disabled provisioning made %d identity-verification calls",
+			len(credentials),
+		)
+	}
 }
 
 func TestProvisionGoogleReturnsStableUserID(t *testing.T) {
@@ -198,7 +239,8 @@ func TestProvisionGoogleReturnsStableUserID(t *testing.T) {
 		issuedSession:   testNakamaSession,
 		provisionedUser: "player-42",
 	}
-	provisioner := provisionerAgainst(t, server, enabledProvisionerConfig())
+	identityVerifier := acceptingGoogleVerifier()
+	provisioner := provisionerAgainst(t, server, identityVerifier, enabledProvisionerConfig())
 
 	for attempt := 1; attempt <= 2; attempt++ {
 		userID, err := provisioner.ProvisionGoogle(context.Background(), testIdentityProof)
@@ -221,12 +263,19 @@ func TestProvisionGoogleReturnsStableUserID(t *testing.T) {
 	if accountCalls != 2 {
 		t.Fatalf("GetAccount calls = %d, want 2", accountCalls)
 	}
+	credentials, audiences := identityVerifier.observed()
+	if len(credentials) != 2 || len(audiences) != 2 {
+		t.Fatalf(
+			"Google identity-verification calls = %d, want 2",
+			len(credentials),
+		)
+	}
 	for index, request := range authentication {
-		if request.credential != testIdentityProof {
+		if request.customID != googleCustomID(testGoogleSubject) {
 			t.Fatalf(
-				"AuthenticateGoogle call %d credential = %q, want supplied credential",
+				"AuthenticateCustom call %d custom ID = %q, want derived identity",
 				index+1,
-				request.credential,
+				request.customID,
 			)
 		}
 		if !request.create {
@@ -239,6 +288,20 @@ func TestProvisionGoogleReturnsStableUserID(t *testing.T) {
 				request.username,
 			)
 		}
+		if credentials[index] != testIdentityProof {
+			t.Fatalf(
+				"identity-verification call %d credential = %q, want supplied credential",
+				index+1,
+				credentials[index],
+			)
+		}
+		if audiences[index] != testGoogleClientID {
+			t.Fatalf(
+				"identity-verification call %d audience = %q, want Google client ID",
+				index+1,
+				audiences[index],
+			)
+		}
 	}
 }
 
@@ -247,7 +310,12 @@ func TestProvisionGoogleReplacesInheritedAuthorizationWithServerKey(t *testing.T
 		issuedSession:   testNakamaSession,
 		provisionedUser: "player-42",
 	}
-	provisioner := provisionerAgainst(t, server, enabledProvisionerConfig())
+	provisioner := provisionerAgainst(
+		t,
+		server,
+		acceptingGoogleVerifier(),
+		enabledProvisionerConfig(),
+	)
 	ctx := metadata.NewOutgoingContext(
 		context.Background(),
 		metadata.Pairs(
@@ -289,6 +357,7 @@ func TestProvisionGoogleFailsClosed(t *testing.T) {
 		credential    string
 		config        ProvisionerConfig
 		configure     func(*provisioningServer)
+		verifier      *fakeGoogleIdentityVerifier
 		wantCode      codes.Code
 		wantError     string
 		wantAuthCalls int
@@ -306,19 +375,48 @@ func TestProvisionGoogleFailsClosed(t *testing.T) {
 			credential: testIdentityProof,
 			config: ProvisionerConfig{
 				GoogleProvisioningEnabled: true,
+				GoogleClientID:            testGoogleClientID,
 			},
 			wantCode:  codes.Unknown,
 			wantError: "server key is empty",
 		},
 		{
-			name:       "Nakama rejects credential",
+			name:       "empty Google client ID",
+			credential: testIdentityProof,
+			config: ProvisionerConfig{
+				GoogleProvisioningEnabled: true,
+				NakamaServerKey:           testNakamaServerKey,
+			},
+			wantCode:  codes.Unknown,
+			wantError: "Google client ID is empty",
+		},
+		{
+			name:       "Google verifier rejects credential",
+			credential: testIdentityProof,
+			config:     enabledProvisionerConfig(),
+			verifier: &fakeGoogleIdentityVerifier{
+				err: errors.New("rejected credential " + testIdentityProof),
+			},
+			wantCode:  codes.Unauthenticated,
+			wantError: "Google identity rejected credential",
+		},
+		{
+			name:       "Google verifier returns no subject",
+			credential: testIdentityProof,
+			config:     enabledProvisionerConfig(),
+			verifier:   &fakeGoogleIdentityVerifier{},
+			wantCode:   codes.Unknown,
+			wantError:  "Google identity has no subject",
+		},
+		{
+			name:       "Nakama rejects custom identity",
 			credential: testIdentityProof,
 			config:     enabledProvisionerConfig(),
 			configure: func(server *provisioningServer) {
-				server.rejectGoogle = true
+				server.rejectCustom = true
 			},
 			wantCode:      codes.Unauthenticated,
-			wantError:     "AuthenticateGoogle rejected credential",
+			wantError:     "AuthenticateCustom rejected identity",
 			wantAuthCalls: 1,
 		},
 		{
@@ -355,7 +453,11 @@ func TestProvisionGoogleFailsClosed(t *testing.T) {
 			if test.configure != nil {
 				test.configure(server)
 			}
-			provisioner := provisionerAgainst(t, server, test.config)
+			identityVerifier := test.verifier
+			if identityVerifier == nil {
+				identityVerifier = acceptingGoogleVerifier()
+			}
+			provisioner := provisionerAgainst(t, server, identityVerifier, test.config)
 
 			userID, err := provisioner.ProvisionGoogle(
 				context.Background(),
