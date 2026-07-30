@@ -165,6 +165,32 @@ recorded_checksum_for() {
 	return 1
 }
 
+indexed_section_value_is() {
+	local import_file="$1"
+	local target_section="$2"
+	local target_key="$3"
+	local expected_value="$4"
+
+	awk \
+		-v target_section="$target_section" \
+		-v target_key="$target_key" \
+		-v expected_value="$expected_value" '
+		/^\[[^]]+\]$/ {
+			current_section = $0
+			next
+		}
+		current_section == target_section {
+			separator = index($0, "=")
+			if (separator > 1 && substr($0, 1, separator - 1) == target_key) {
+				value = substr($0, separator + 1)
+			}
+		}
+		END {
+			exit(value == expected_value ? 0 : 1)
+		}
+	' < <(git show ":$import_file")
+}
+
 stray=()
 uncovered=()
 unaccounted=()
@@ -252,8 +278,8 @@ if [ -d "$ASSET_ROOT" ]; then
 		import_file="$texture_file.import"
 		if ! git cat-file -e ":$import_file" 2>/dev/null; then
 			missing_mipmaps+=("$texture_file (track $import_file with mipmaps/generate=true)")
-		elif ! grep -Fqx 'importer="texture"' < <(git show ":$import_file") ||
-			! grep -Fqx 'mipmaps/generate=true' < <(git show ":$import_file"); then
+		elif ! indexed_section_value_is "$import_file" '[remap]' importer '"texture"' ||
+			! indexed_section_value_is "$import_file" '[params]' mipmaps/generate true; then
 			missing_mipmaps+=("$texture_file (set mipmaps/generate=true in $import_file)")
 		fi
 	done < <(git ls-files -z -- "$ASSET_ROOT")

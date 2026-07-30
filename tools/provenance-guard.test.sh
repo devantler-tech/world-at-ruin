@@ -179,6 +179,26 @@ expect_failure \
 	"mipmaps/generate=true" \
 	"$repo"
 
+repo=$(new_repo runtime_texture_with_decoy_mipmaps)
+printf 'texture-v1\n' >"$repo/client/assets/pack/runtime_skin.png"
+printf '%s\n' \
+	'[remap]' \
+	'importer="texture"' \
+	'mipmaps/generate=true' \
+	'type="CompressedTexture2D"' \
+	'' \
+	'[params]' \
+	'mipmaps/generate=false' \
+	>"$repo/client/assets/pack/runtime_skin.png.import"
+git -C "$repo" add \
+	client/assets/pack/runtime_skin.png \
+	client/assets/pack/runtime_skin.png.import
+write_pack_provenance "$repo" runtime_skin.png runtime_skin.png.import
+expect_failure \
+	"mipmap setting must be true in the params section" \
+	"mipmaps/generate=true" \
+	"$repo"
+
 repo=$(new_repo runtime_texture_without_import_metadata)
 mkdir -p "$repo/client/scripts"
 printf 'texture-v1\n' >"$repo/client/assets/pack/runtime_skin.png"
