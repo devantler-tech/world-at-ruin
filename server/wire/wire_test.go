@@ -203,6 +203,36 @@ func TestDecodeCountCap(t *testing.T) {
 	}
 }
 
+func TestEncodeRejectsNegativeRadius(t *testing.T) {
+	s := sim.Snapshot{
+		Entities: []sim.EntityState{{ID: 1, Radius: -1}},
+	}
+
+	_, err := EncodeSnapshot(s)
+	if !errors.Is(err, ErrRadius) {
+		t.Fatalf("negative radius: got %v, want ErrRadius", err)
+	}
+}
+
+func TestDecodeRejectsNegativeRadius(t *testing.T) {
+	var b []byte
+	b = binary.LittleEndian.AppendUint16(b, Version)
+	b = append(b, KindSnapshot)
+	b = binary.LittleEndian.AppendUint64(b, 1)          // tick
+	b = binary.LittleEndian.AppendUint64(b, 1)          // observer
+	b = binary.LittleEndian.AppendUint32(b, 1)          // entities
+	b = binary.LittleEndian.AppendUint64(b, 2)          // entity ID
+	b = binary.LittleEndian.AppendUint64(b, 0)          // X
+	b = binary.LittleEndian.AppendUint64(b, 0)          // Y
+	b = binary.LittleEndian.AppendUint64(b, 0)          // Z
+	b = binary.LittleEndian.AppendUint64(b, ^uint64(0)) // radius -1
+
+	_, err := Decode(b)
+	if !errors.Is(err, ErrRadius) {
+		t.Fatalf("negative radius: got %v, want ErrRadius", err)
+	}
+}
+
 // TestOrderEnforcedBothSides proves the ascending-ID contract is refused on
 // encode AND decode — never silently repaired on either side.
 func TestOrderEnforcedBothSides(t *testing.T) {
