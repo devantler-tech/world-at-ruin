@@ -2,6 +2,7 @@ package nakamaauth
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"net"
 	"strings"
@@ -20,8 +21,9 @@ import (
 )
 
 const (
-	testIdentityProof = "google-oidc-fixture"
-	testNakamaSession = "nakama-session"
+	testIdentityProof   = "google-oidc-fixture"
+	testNakamaServerKey = "nakama-server-key"
+	testNakamaSession   = "nakama-session"
 )
 
 type googleAuthentication struct {
@@ -65,7 +67,8 @@ func (s *provisioningServer) AuthenticateGoogle(
 	if s.rejectGoogle {
 		return nil, status.Error(
 			codes.Unauthenticated,
-			"rejected Google credential "+account.GetToken(),
+			"rejected Google credential "+account.GetToken()+
+				" with server key "+testNakamaServerKey,
 		)
 	}
 	if s.emptySession {
@@ -110,7 +113,29 @@ func provisionerAgainst(
 	t.Helper()
 
 	listener := bufconn.Listen(1024 * 1024)
-	grpcServer := grpc.NewServer()
+	grpcServer := grpc.NewServer(grpc.UnaryInterceptor(
+		func(
+			ctx context.Context,
+			request any,
+			info *grpc.UnaryServerInfo,
+			handler grpc.UnaryHandler,
+		) (any, error) {
+			if info.FullMethod == apigrpc.Nakama_AuthenticateGoogle_FullMethodName {
+				md, _ := metadata.FromIncomingContext(ctx)
+				authorization := md.Get("authorization")
+				wantAuthorization := "Basic " + base64.StdEncoding.EncodeToString(
+					[]byte(testNakamaServerKey+":"),
+				)
+				if len(authorization) != 1 || authorization[0] != wantAuthorization {
+					return nil, status.Error(
+						codes.Unauthenticated,
+						"invalid Nakama server-key authorization",
+					)
+				}
+			}
+			return handler(ctx, request)
+		},
+	))
 	apigrpc.RegisterNakamaServer(grpcServer, server)
 	go func() {
 		_ = grpcServer.Serve(listener)
@@ -135,6 +160,13 @@ func provisionerAgainst(
 	})
 
 	return NewProvisioner(apigrpc.NewNakamaClient(conn), config)
+}
+
+func enabledProvisionerConfig() ProvisionerConfig {
+	return ProvisionerConfig{
+		GoogleProvisioningEnabled: true,
+		NakamaServerKey:           testNakamaServerKey,
+	}
 }
 
 func TestProvisionGoogleIsDefaultOff(t *testing.T) {
@@ -166,9 +198,7 @@ func TestProvisionGoogleReturnsStableUserID(t *testing.T) {
 		issuedSession:   testNakamaSession,
 		provisionedUser: "player-42",
 	}
-	provisioner := provisionerAgainst(t, server, ProvisionerConfig{
-		GoogleProvisioningEnabled: true,
-	})
+	provisioner := provisionerAgainst(t, server, enabledProvisionerConfig())
 
 	for attempt := 1; attempt <= 2; attempt++ {
 		userID, err := provisioner.ProvisionGoogle(context.Background(), testIdentityProof)
@@ -212,14 +242,12 @@ func TestProvisionGoogleReturnsStableUserID(t *testing.T) {
 	}
 }
 
-func TestProvisionGoogleStripsInheritedAuthorization(t *testing.T) {
+func TestProvisionGoogleReplacesInheritedAuthorizationWithServerKey(t *testing.T) {
 	server := &provisioningServer{
 		issuedSession:   testNakamaSession,
 		provisionedUser: "player-42",
 	}
-	provisioner := provisionerAgainst(t, server, ProvisionerConfig{
-		GoogleProvisioningEnabled: true,
-	})
+	provisioner := provisionerAgainst(t, server, enabledProvisionerConfig())
 	ctx := metadata.NewOutgoingContext(
 		context.Background(),
 		metadata.Pairs(
@@ -237,9 +265,13 @@ func TestProvisionGoogleStripsInheritedAuthorization(t *testing.T) {
 	if len(authentication) != 1 {
 		t.Fatalf("AuthenticateGoogle calls = %d, want 1", len(authentication))
 	}
-	if len(authentication[0].authorization) != 0 {
+	wantAuthorization := "Basic " + base64.StdEncoding.EncodeToString(
+		[]byte(testNakamaServerKey+":"),
+	)
+	if len(authentication[0].authorization) != 1 ||
+		authentication[0].authorization[0] != wantAuthorization {
 		t.Fatalf(
-			"AuthenticateGoogle authorization metadata = %q, want none",
+			"AuthenticateGoogle authorization metadata = %q, want Nakama server key",
 			authentication[0].authorization,
 		)
 	}
@@ -264,15 +296,24 @@ func TestProvisionGoogleFailsClosed(t *testing.T) {
 	}{
 		{
 			name:       "empty credential",
-			config:     ProvisionerConfig{GoogleProvisioningEnabled: true},
+			config:     enabledProvisionerConfig(),
 			wantCode:   codes.Unknown,
 			wantError:  "credential is empty",
 			credential: "",
 		},
 		{
+			name:       "empty Nakama server key",
+			credential: testIdentityProof,
+			config: ProvisionerConfig{
+				GoogleProvisioningEnabled: true,
+			},
+			wantCode:  codes.Unknown,
+			wantError: "server key is empty",
+		},
+		{
 			name:       "Nakama rejects credential",
 			credential: testIdentityProof,
-			config:     ProvisionerConfig{GoogleProvisioningEnabled: true},
+			config:     enabledProvisionerConfig(),
 			configure: func(server *provisioningServer) {
 				server.rejectGoogle = true
 			},
@@ -283,7 +324,7 @@ func TestProvisionGoogleFailsClosed(t *testing.T) {
 		{
 			name:       "Nakama returns no session",
 			credential: testIdentityProof,
-			config:     ProvisionerConfig{GoogleProvisioningEnabled: true},
+			config:     enabledProvisionerConfig(),
 			configure: func(server *provisioningServer) {
 				server.emptySession = true
 			},
@@ -294,7 +335,7 @@ func TestProvisionGoogleFailsClosed(t *testing.T) {
 		{
 			name:       "verified account has no user ID",
 			credential: testIdentityProof,
-			config:     ProvisionerConfig{GoogleProvisioningEnabled: true},
+			config:     enabledProvisionerConfig(),
 			configure: func(server *provisioningServer) {
 				server.emptyUserID = true
 			},
@@ -335,6 +376,9 @@ func TestProvisionGoogleFailsClosed(t *testing.T) {
 			}
 			if strings.Contains(err.Error(), testIdentityProof) {
 				t.Fatalf("ProvisionGoogle error leaked the Google credential: %q", err)
+			}
+			if strings.Contains(err.Error(), testNakamaServerKey) {
+				t.Fatalf("ProvisionGoogle error leaked the Nakama server key: %q", err)
 			}
 			if code := status.Code(err); code != test.wantCode {
 				t.Fatalf(

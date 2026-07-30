@@ -2,6 +2,7 @@ package nakamaauth
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 
 	"github.com/heroiclabs/nakama-common/api"
@@ -28,6 +29,8 @@ type provisioningClient interface {
 // ProvisionerConfig controls opt-in account provisioning paths.
 type ProvisionerConfig struct {
 	GoogleProvisioningEnabled bool
+	// NakamaServerKey authenticates account-creation RPCs with Nakama.
+	NakamaServerKey string
 }
 
 // Provisioner creates or resolves stable Nakama accounts from external identities.
@@ -57,10 +60,16 @@ func (p *Provisioner) ProvisionGoogle(
 	if credential == "" {
 		return "", errors.New("nakama auth: Google credential is empty")
 	}
+	if p.config.NakamaServerKey == "" {
+		return "", errors.New("nakama auth: Nakama server key is empty")
+	}
 
 	outgoing, _ := metadata.FromOutgoingContext(ctx)
 	outgoing = outgoing.Copy()
-	delete(outgoing, "authorization")
+	outgoing.Set(
+		"authorization",
+		"Basic "+base64.StdEncoding.EncodeToString([]byte(p.config.NakamaServerKey+":")),
+	)
 	ctx = metadata.NewOutgoingContext(ctx, outgoing)
 
 	session, err := p.client.AuthenticateGoogle(ctx, &api.AuthenticateGoogleRequest{

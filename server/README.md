@@ -163,8 +163,10 @@ zone/dungeon server:
   to `AuthenticateGoogle` with account creation allowed, then resolves the
   returned Nakama session through that same verifier. Repeating one identity
   therefore resolves the same stable Nakama user rather than creating a
-  client-chosen identity. `ProvisionerConfig.GoogleProvisioningEnabled` is false by
-  default, so no caller can use the new path without opting in explicitly.
+  client-chosen identity. `ProvisionerConfig.GoogleProvisioningEnabled` is false
+  by default, and enabling it also requires `NakamaServerKey`; the provisioner
+  uses that key only for Nakama's Basic-authenticated account-creation RPC,
+  then replaces it with the returned session bearer for account verification.
   Both paths fail closed on empty or malformed responses, strip unrelated
   authorization metadata at their respective boundaries, and expose only
   stable gRPC status codes so an upstream message cannot reflect a credential
