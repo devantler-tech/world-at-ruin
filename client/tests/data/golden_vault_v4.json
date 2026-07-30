@@ -1,0 +1,23 @@
+{
+  "version": 4,
+  "comment": "GOLDEN VAULT v4 — the reader contract for forward-only quest progress. This build reads and preserves stable quest and objective ids without originating the shape.",
+  "attuned": [
+    "wardens_shrine"
+  ],
+  "discoveries": [
+    "starter_cave",
+    "wardens_shrine"
+  ],
+  "reward_claims": [
+    "wardens_shrine"
+  ],
+  "quests": {
+    "future_quest": {
+      "future_objective": 11
+    },
+    "reach_shrine": {
+      "arrive": 2,
+      "return": 1
+    }
+  }
+}

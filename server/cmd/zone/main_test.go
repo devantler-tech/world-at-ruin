@@ -4,9 +4,11 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"fmt"
 	"math/big"
 	"net"
 	"os"
@@ -32,27 +34,50 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	zoneBin = filepath.Join(dir, "zone")
-	build := exec.Command("go", "build", "-o", zoneBin, ".")
+	goBinary, err := exec.LookPath("go")
+	if err != nil {
+		panic("find go binary: " + err.Error())
+	}
+	build := &exec.Cmd{
+		Path: goBinary,
+		Args: []string{"go", "build", "-o", zoneBin, "."},
+	}
 	build.Stderr = os.Stderr
 	if err := build.Run(); err != nil {
-		os.RemoveAll(dir)
+		if cleanupErr := os.RemoveAll(dir); cleanupErr != nil {
+			panic("build zone binary: " + err.Error() + "; cleanup: " + cleanupErr.Error())
+		}
 		panic("build zone binary: " + err.Error())
 	}
 	code := m.Run()
-	os.RemoveAll(dir)
+	if err := os.RemoveAll(dir); err != nil {
+		fmt.Fprintf(os.Stderr, "remove zone test binary: %v\n", err)
+		code = 1
+	}
 	os.Exit(code)
+}
+
+func zoneCommand(t *testing.T, args ...string) *exec.Cmd {
+	t.Helper()
+	return &exec.Cmd{
+		Path: "./zone",
+		Args: append([]string{"./zone"}, args...),
+		Dir:  filepath.Dir(zoneBin),
+	}
 }
 
 // closedPort returns a loopback port that was just released, so nothing is
 // listening on it for the duration of a short test.
 func closedPort(t *testing.T) string {
 	t.Helper()
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	lis, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("probe port: %v", err)
 	}
 	_, port, _ := net.SplitHostPort(lis.Addr().String())
-	lis.Close()
+	if err := lis.Close(); err != nil {
+		t.Fatalf("close probe listener: %v", err)
+	}
 	return port
 }
 
@@ -62,7 +87,7 @@ func closedPort(t *testing.T) string {
 // fail against the closed port and the exit code would flip — so this test
 // goes red if anyone flips the default on.
 func TestRealtimeWithoutAgonesNeverDials(t *testing.T) {
-	cmd := exec.Command(zoneBin, "-realtime", "-duration", "150ms")
+	cmd := zoneCommand(t, "-realtime", "-duration", "150ms")
 	cmd.Env = append(os.Environ(),
 		"AGONES_SDK_GRPC_HOST=127.0.0.1",
 		"AGONES_SDK_GRPC_PORT="+closedPort(t),
@@ -114,6 +139,138 @@ func writeSelfSignedCert(t *testing.T, notBefore, notAfter time.Time) (certFile,
 	return certFile, keyFile
 }
 
+func writeWrappingPublicKey(t *testing.T, bits int) string {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, bits)
+	if err != nil {
+		t.Fatalf("generate wrapping key: %v", err)
+	}
+	der, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	if err != nil {
+		t.Fatalf("marshal wrapping key: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "admission-wrapping-public.pem")
+	if err := os.WriteFile(
+		path,
+		pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}),
+		0o600,
+	); err != nil {
+		t.Fatalf("write wrapping public key: %v", err)
+	}
+	return path
+}
+
+func TestAgonesSealedAdmissionUsesObservedGameServerIdentity(t *testing.T) {
+	f, err := agonestest.Start(nil)
+	if err != nil {
+		t.Fatalf("start fake sidecar: %v", err)
+	}
+	t.Cleanup(f.Stop)
+	f.SetGameServer("games", "zone-17", "uid-17", "Starting")
+	publicKeyFile := writeWrappingPublicKey(t, 3072)
+
+	cmd := zoneCommand(t,
+		"-listen", "127.0.0.1:0", "-insecure-plaintext",
+		"-duration", "400ms",
+		"-agones", "-agones-health-interval", "50ms",
+		"-agones-admission-public-key", publicKeyFile,
+	)
+	cmd.Env = append(os.Environ(),
+		"AGONES_SDK_GRPC_HOST=127.0.0.1",
+		"AGONES_SDK_GRPC_PORT="+f.PortString(),
+		"WAR_ZONE_ADMISSION_SECRET=",
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("sealed-admission run failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "zone: listening on ws://") {
+		t.Fatalf("socket never came up:\n%s", out)
+	}
+	if got := f.Annotation("agones.dev/sdk-war-admission-envelope"); !strings.HasPrefix(got, "v1.") {
+		t.Fatalf("envelope annotation = %q, want versioned ciphertext", got)
+	}
+	keyFingerprint := f.Annotation("agones.dev/sdk-war-admission-key")
+	if keyFingerprint == "" {
+		t.Fatal("wrapping-key fingerprint annotation is empty")
+	}
+	if got := f.Label("agones.dev/sdk-war-admission-ready"); got != "v1-"+keyFingerprint {
+		t.Fatalf("admission-ready label = %q, want v1 fingerprint", got)
+	}
+	if got := f.ReadyCalls(); got != 1 {
+		t.Fatalf("Ready calls = %d, want exactly 1", got)
+	}
+	if got := f.ShutdownCalls(); got != 1 {
+		t.Fatalf("Shutdown calls = %d, want exactly 1", got)
+	}
+}
+
+func TestAgonesSealedAdmissionRefusesAllocatableRestart(t *testing.T) {
+	f, err := agonestest.Start(nil)
+	if err != nil {
+		t.Fatalf("start fake sidecar: %v", err)
+	}
+	t.Cleanup(f.Stop)
+	f.SetGameServer("games", "zone-17", "uid-17", "Allocated")
+
+	cmd := zoneCommand(t,
+		"-listen", "127.0.0.1:0", "-insecure-plaintext",
+		"-duration", "300ms",
+		"-agones",
+		"-agones-admission-public-key", writeWrappingPublicKey(t, 3072),
+	)
+	cmd.Env = append(os.Environ(),
+		"AGONES_SDK_GRPC_HOST=127.0.0.1",
+		"AGONES_SDK_GRPC_PORT="+f.PortString(),
+	)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("Allocated restart succeeded; want a loud refusal\n%s", out)
+	}
+	if !strings.Contains(string(out), "expected Starting") {
+		t.Fatalf("restart refusal did not name the state boundary:\n%s", out)
+	}
+	if got := f.ReadyCalls(); got != 0 {
+		t.Fatalf("Ready calls = %d, want 0", got)
+	}
+	if got := f.ShutdownCalls(); got != 1 {
+		t.Fatalf("Shutdown calls = %d, want exactly 1", got)
+	}
+	if got := f.Annotation("agones.dev/sdk-war-admission-envelope"); got != "" {
+		t.Fatalf("Allocated restart replaced the envelope with %q", got)
+	}
+}
+
+func TestAgonesSealedAdmissionRefusesUndersizedWrappingKey(t *testing.T) {
+	f, err := agonestest.Start(nil)
+	if err != nil {
+		t.Fatalf("start fake sidecar: %v", err)
+	}
+	t.Cleanup(f.Stop)
+	f.SetGameServer("games", "zone-17", "uid-17", "Starting")
+
+	cmd := zoneCommand(t,
+		"-listen", "127.0.0.1:0", "-insecure-plaintext",
+		"-duration", "300ms",
+		"-agones",
+		"-agones-admission-public-key", writeWrappingPublicKey(t, 2048),
+	)
+	cmd.Env = append(os.Environ(),
+		"AGONES_SDK_GRPC_HOST=127.0.0.1",
+		"AGONES_SDK_GRPC_PORT="+f.PortString(),
+	)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("undersized wrapping key succeeded; want a loud refusal\n%s", out)
+	}
+	if !strings.Contains(string(out), "at least 3072 bits") {
+		t.Fatalf("key refusal did not name the minimum:\n%s", out)
+	}
+	if got := f.ReadyCalls(); got != 0 {
+		t.Fatalf("Ready calls = %d, want 0", got)
+	}
+}
+
 // TestAgonesServesRealTLSWhenCertValid is the fleet shape end-to-end with
 // nothing faked but the sidecar: a valid certificate, the real wss listener,
 // Ready exactly once, live heartbeats, and a Shutdown on the deadline exit.
@@ -125,7 +282,7 @@ func TestAgonesServesRealTLSWhenCertValid(t *testing.T) {
 	t.Cleanup(f.Stop)
 	certFile, keyFile := writeSelfSignedCert(t, time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
 
-	cmd := exec.Command(zoneBin,
+	cmd := zoneCommand(t,
 		"-allocation-id", "allocation-a", "-listen", "127.0.0.1:0", "-tls-cert", certFile, "-tls-key", keyFile,
 		"-duration", "400ms",
 		"-agones", "-agones-health-interval", "50ms",
@@ -166,7 +323,7 @@ func TestAgonesRefusesReadyWhenCertExpired(t *testing.T) {
 	t.Cleanup(f.Stop)
 	certFile, keyFile := writeSelfSignedCert(t, time.Now().Add(-2*time.Hour), time.Now().Add(-time.Hour))
 
-	cmd := exec.Command(zoneBin,
+	cmd := zoneCommand(t,
 		"-allocation-id", "allocation-a", "-listen", "127.0.0.1:0", "-tls-cert", certFile, "-tls-key", keyFile,
 		// The gate refuses before serving, so the deadline never matters on
 		// the intended path — it exists so a REGRESSION (gate gone, process
@@ -201,7 +358,7 @@ func TestAgonesSigtermShutsDownCleanly(t *testing.T) {
 	}
 	t.Cleanup(f.Stop)
 
-	cmd := exec.Command(zoneBin,
+	cmd := zoneCommand(t,
 		"-allocation-id", "allocation-a", "-listen", "127.0.0.1:0", "-insecure-plaintext",
 		"-duration", "30s",
 		"-agones", "-agones-health-interval", "50ms",
@@ -246,7 +403,7 @@ func TestAgonesRefusesReadyWhenTLSBroken(t *testing.T) {
 	}
 	t.Cleanup(f.Stop)
 
-	cmd := exec.Command(zoneBin,
+	cmd := zoneCommand(t,
 		"-allocation-id", "allocation-a", "-listen", "127.0.0.1:0",
 		"-tls-cert", filepath.Join(t.TempDir(), "missing-cert.pem"),
 		"-tls-key", filepath.Join(t.TempDir(), "missing-key.pem"),
@@ -275,7 +432,7 @@ func TestAgonesRequiresListen(t *testing.T) {
 		{"-agones"},
 		{"-agones", "-realtime", "-duration", "100ms"},
 	} {
-		out, err := exec.Command(zoneBin, args...).CombinedOutput()
+		out, err := zoneCommand(t, args...).CombinedOutput()
 		if err == nil {
 			t.Fatalf("%v succeeded; want a usage error\n%s", args, out)
 		}
@@ -297,7 +454,7 @@ func TestAgonesComposesWithListen(t *testing.T) {
 	}
 	t.Cleanup(f.Stop)
 
-	cmd := exec.Command(zoneBin,
+	cmd := zoneCommand(t,
 		"-allocation-id", "allocation-a", "-listen", "127.0.0.1:0", "-insecure-plaintext",
 		"-duration", "400ms",
 		"-agones", "-agones-health-interval", "50ms",

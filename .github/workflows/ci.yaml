@@ -40,6 +40,8 @@ jobs:
         run: tools/test-cd-cask-rest-delivery.sh
       - name: Cask disarm survives an exhausted GraphQL budget
         run: tools/test-cd-cask-disarm-budget.sh
+      - name: GHCR latest converges to the newest immutable release
+        run: tools/test-cd-ghcr-latest-forward.sh
       - name: Retained boot-recovery reader gate is pinned and fail-closed
         run: ./tools/retained-boot-recovery-reader-guard.test.sh
       - name: Dev-log entry version guard is pinned and fail-closed
@@ -48,8 +50,12 @@ jobs:
         run: ./tools/save-capability-vocabulary-guard.test.sh
       - name: Player-visible gate diffs from the PR's own base
         run: ./tools/pr-diff-base.test.sh
+      - name: Exported-frame change report is pinned and advisory
+        run: ./tools/exported-frame-change-report.test.sh
       - name: Opt-in preview flag list is pinned and fail-closed
         run: ./tools/preview-flags.test.sh
+      - name: Manifest sequence is monotonic in release order and fail-closed
+        run: ./tools/manifest-sequence.test.sh
       - name: Dev-log entry names an unreleased version
         # An entry's version is a hand-written prediction of the next release.
         # Checked here, at the last point before the change merges, so the tag
@@ -1150,7 +1156,7 @@ jobs:
   # container's Go can lag.
   lint:
     name: Lint
-    uses: devantler-tech/actions/.github/workflows/lint.yaml@6ed1f44e8f10e4a87746e99159e30b215b9fe8e6 # v11.0.2
+    uses: devantler-tech/actions/.github/workflows/lint.yaml@625b7c0cd5ad4a04f9eb7494298c6d0fa44521ef # v11.0.4
     permissions:
       contents: read
     with:
@@ -1669,6 +1675,42 @@ jobs:
             grep -nE "SHADER ERROR|Shader compilation failed" capture-replication.log | head -20
             exit 1
           fi
+      - name: Capture the authoritative mob chase
+        # #357. The committed sequence is generated from the real Go World.Step
+        # and wire encoder, then folded through ZoneConnection before
+        # ReplicaView draws it. Seven fixed-camera frames show the approach,
+        # cast-range arrival and two held-cast ticks; a still cannot evidence
+        # motion, so the whole sequence travels in the artifact.
+        run: |
+          set -o pipefail
+          mkdir -p "${RUNNER_TEMP}/shots/mob-chase"
+          if ! cp client/recipes/wanderer.json "${RUNNER_TEMP}/mob_chase_save.json"; then
+            echo "::error::could not seed the mob-chase capture save"
+            exit 1
+          fi
+          WAR_SCENARIO=mob_chase \
+          WAR_SHOT_DIR="${RUNNER_TEMP}/shots/mob-chase" \
+          WAR_SAVE_PATH="${RUNNER_TEMP}/mob_chase_save.json" \
+          WAR_VAULT_PATH="${RUNNER_TEMP}/mob_chase_vault.json" \
+          WAR_BOOT_RECOVERY_PATH="${RUNNER_TEMP}/mob_chase_recovery.json" \
+            godot --path client res://tools/frame_capture.tscn 2>&1 | tee capture-mob-chase.log
+          if ! grep -q "^MOB CHASE on " capture-mob-chase.log; then
+            echo "::error::mob-chase capture did not report an authoritative moving sequence"
+            tail -40 capture-mob-chase.log
+            exit 1
+          fi
+          if ! grep -q "BOOT_OK" capture-mob-chase.log; then
+            echo "::error::mob-chase capture never reached BOOT_OK"
+            tail -40 capture-mob-chase.log
+            exit 1
+          fi
+          grep -vE "timeout waiting for fence|drivers/metal/rendering_device_driver_metal" \
+            capture-mob-chase.log > capture-mob-chase.filtered.log || true
+          if grep -qE "SCRIPT ERROR|^ERROR" capture-mob-chase.filtered.log; then
+            echo "::error::errors during mob-chase capture — the sequence may depict a degraded world"
+            grep -nE "SCRIPT ERROR|^ERROR" capture-mob-chase.filtered.log | head -20
+            exit 1
+          fi
       - name: Record what these frames can evidence
         # #232. Volumetric fog is gated on an R32_Uint atomic storage image and
         # this runner's virtualised Apple adapter does not support it, so every
@@ -1724,8 +1766,10 @@ jobs:
           # silent about what it contains.
           world_replication="$(read_verdict REPLICATION capture.log)" || exit 1
           replication="$(read_verdict REPLICATION capture-replication.log)" || exit 1
+          mob_chase="$(read_verdict 'MOB CHASE' capture-mob-chase.log)" || exit 1
           echo "volumetric fog path: ${probe}; hollow ash pools: ${pools}"
           echo "replication — world frames: ${world_replication}; replication scenario: ${replication}"
+          echo "authoritative mob chase: ${mob_chase}"
 
           # The replication scenario exists ONLY to publish frames containing a
           # replicated population. An 'off' there is not a degraded runner or a
@@ -1734,6 +1778,10 @@ jobs:
           # evidence of the exact absence it was built to end. Fail, loudly.
           if [ "${replication}" != "on" ]; then
             echo "::error::the replication scenario reported REPLICATION ${replication} — its frames contain no replicated entity, which is the failure #325 exists to close" >&2
+            exit 1
+          fi
+          if [ "${mob_chase}" != "on" ]; then
+            echo "::error::the mob-chase scenario reported ${mob_chase} — its sequence cannot evidence the default chase" >&2
             exit 1
           fi
           # And the world frames must NOT claim a population: they are captured
@@ -1754,8 +1802,9 @@ jobs:
             echo "hollow_ash_pools: ${pools}"
             echo "replicated_entities_in_world_frames: ${world_replication}"
             echo "replicated_entities_in_replication_frames: ${replication}"
+            echo "authoritative_mob_chase: ${mob_chase}"
             echo
-            echo "Only the frames under replication/ contain replicated entities."
+            echo "Only the frames under replication/ and mob-chase/ contain replicated entities."
             echo "Every other frame here was captured with no zone configured, so"
             echo "its replica table is empty by construction and it evidences"
             echo "nothing about remote-entity appearance, interpolation or culling."
@@ -1933,6 +1982,10 @@ jobs:
           # would let the tool stop working and still go green.
           if ! grep -qE "[0-9]+ first-run vantages? written" first-run.log; then
             echo "::error::first-run capture did not report a first-run vantage — see log"; tail -40 first-run.log; exit 1
+          fi
+          if ! grep -Fxq "BACKDROP PINNED — scenery clocks fixed before first-run capture" first-run.log; then
+            echo "::error::first-run capture did not pin its live scenery clock before boot"
+            tail -40 first-run.log; exit 1
           fi
           # Require the FULL expected set, not merely a plausible count. A
           # capture-tool change that dropped the lower-panel shot or the preset
@@ -2135,6 +2188,48 @@ jobs:
             grep -nE "SCRIPT ERROR|^ERROR" run.filtered.log | head -20
             exit 1
           fi
+      - name: Capture the walk-to-run transition
+        # #496. The settled walk and run sequences above cannot show the input
+        # edge that used to replace the whole pose in one physics frame. Drive
+        # a real sprint press and release through WalkLocomotion with both
+        # existing opt-ins enabled, and publish every transition step.
+        run: |
+          set -o pipefail
+          mkdir -p "${RUNNER_TEMP}/shots/gait-transition"
+          if ! cp client/recipes/wanderer.json "${RUNNER_TEMP}/gait_transition_save.json"; then
+            echo "::error::could not seed the gait-transition save from client/recipes/wanderer.json"
+            exit 1
+          fi
+          WAR_SCENARIO=gait_transition \
+          WAR_WALK_CYCLE=1 \
+          WAR_RUN_CYCLE=1 \
+          WAR_SHOT_DIR="${RUNNER_TEMP}/shots/gait-transition" \
+          WAR_SAVE_PATH="${RUNNER_TEMP}/gait_transition_save.json" \
+          WAR_VAULT_PATH="${RUNNER_TEMP}/gait_transition_vault.json" \
+          WAR_BOOT_RECOVERY_PATH="${RUNNER_TEMP}/gait_transition_recovery.json" \
+            godot --path client res://tools/frame_capture.tscn 2>&1 | tee gait-transition.log
+          if ! grep -qE "[0-9]+ gait transition frames written" gait-transition.log; then
+            echo "::error::gait-transition capture did not report a complete sequence — see log"
+            tail -40 gait-transition.log
+            exit 1
+          fi
+          if ! grep -q "BOOT_OK" gait-transition.log; then
+            echo "::error::gait-transition capture never reached BOOT_OK — frames depict a partially booted game"
+            tail -40 gait-transition.log
+            exit 1
+          fi
+          grep -vE "timeout waiting for fence|drivers/metal/rendering_device_driver_metal" \
+            gait-transition.log > gait-transition.filtered.log || true
+          if grep -qE "SCRIPT ERROR|^ERROR" gait-transition.filtered.log; then
+            echo "::error::errors during the gait-transition capture — the sequence may not depict a healthy game"
+            grep -nE "SCRIPT ERROR|^ERROR" gait-transition.filtered.log | head -20
+            exit 1
+          fi
+          if grep -qE "SHADER ERROR|Shader compilation failed" gait-transition.log; then
+            echo "::error::shader compilation failed during the gait-transition capture — the frames show a fallback material"
+            grep -nE "SHADER ERROR|Shader compilation failed" gait-transition.log | head -20
+            exit 1
+          fi
       - name: Frames actually exist
         # The tool fails closed on a uniform frame, but never trust a single
         # signal: confirm real files landed before advertising an artifact.
@@ -2309,8 +2404,12 @@ jobs:
             ${{ runner.temp }}/shots/breath/*.txt
             ${{ runner.temp }}/shots/run/*.png
             ${{ runner.temp }}/shots/run/*.txt
+            ${{ runner.temp }}/shots/gait-transition/*.png
+            ${{ runner.temp }}/shots/gait-transition/*.txt
             ${{ runner.temp }}/shots/replication/*.png
             ${{ runner.temp }}/shots/replication/*.txt
+            ${{ runner.temp }}/shots/mob-chase/*.png
+            ${{ runner.temp }}/shots/mob-chase/*.txt
           if-no-files-found: error
 
   frame-capture-exported:
@@ -2322,11 +2421,12 @@ jobs:
     # never uses. The export job already proves the shipped build STARTS; this
     # one proves it still LOOKS RIGHT (#174).
     #
-    # It REUSES the artifact client-export-macos already built — exporting is
-    # the multi-minute half, so a second export would double the slowest job in
-    # CI for a narrow class of regression (#145's cost constraint). And it runs
-    # only when export-affecting paths changed, so the default player-visible
-    # PR pays nothing for it.
+    # It REUSES the HEAD artifact client-export-macos already built. A second,
+    # base-tip export is made here only because comparing editor frames cannot
+    # expose an export-only regression: the change report must photograph the
+    # same shipped entry path on both sides (#296). That extra work remains
+    # reporting-only, records its own wall-clock cost, and runs only when
+    # export-affecting paths changed, so every other PR pays nothing for it.
     #
     # The exported binary CANNOT take the positional scene argument the editor
     # run uses: the official export template is compiled with
@@ -2352,12 +2452,19 @@ jobs:
     if: needs.detect-visual-changes.outputs.export_affecting == 'true'
     runs-on: macos-latest
     timeout-minutes: 30
+    env:
+      # The hosted display cannot realise the shipped 1600x900 window and has
+      # clamped identical exports to both 1024x642 and 1024x645. Pin a smaller
+      # 16:9 viewport on BOTH sides so frame_diff measures product pixels
+      # instead of refusing a runner-window mismatch.
+      EXPORTED_CAPTURE_RESOLUTION: 1024x576
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        # The checkout exists only to seed the capture save from
-        # client/recipes/wanderer.json — the game itself comes exclusively from
-        # the export artifact.
         with:
+          # The head game still comes exclusively from the export artifact.
+          # Full history is for the advisory BASE export below: a depth-1
+          # checkout cannot materialise github.event.pull_request.base.sha.
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -2382,7 +2489,8 @@ jobs:
           WAR_SAVE_PATH="${RUNNER_TEMP}/probe_save.json" \
           WAR_VAULT_PATH="${RUNNER_TEMP}/probe_save_vault.json" \
           WAR_BOOT_RECOVERY_PATH="${RUNNER_TEMP}/probe_save_recovery.json" \
-            "build/app/World at Ruin.app/Contents/MacOS/World at Ruin" 2>&1 | tee exported-capture.log
+            "build/app/World at Ruin.app/Contents/MacOS/World at Ruin" \
+            --resolution "${EXPORTED_CAPTURE_RESOLUTION}" 2>&1 | tee exported-capture.log
           if ! grep -q "CAPTURE PASS" exported-capture.log; then
             echo "::error::exported-client capture did not report PASS — see log"; tail -40 exported-capture.log; exit 1
           fi
@@ -2435,7 +2543,8 @@ jobs:
           WAR_SAVE_PATH="${RUNNER_TEMP}/exported_preview_save.json" \
           WAR_VAULT_PATH="${RUNNER_TEMP}/exported_preview_save_vault.json" \
           WAR_BOOT_RECOVERY_PATH="${RUNNER_TEMP}/exported_preview_save_recovery.json" \
-            "build/app/World at Ruin.app/Contents/MacOS/World at Ruin" 2>&1 | tee exported-previews.log
+            "build/app/World at Ruin.app/Contents/MacOS/World at Ruin" \
+            --resolution "${EXPORTED_CAPTURE_RESOLUTION}" 2>&1 | tee exported-previews.log
           if ! grep -q "CAPTURE PASS" exported-previews.log; then
             echo "::error::exported opt-in preview capture did not report PASS"
             tail -40 exported-previews.log
@@ -2475,13 +2584,18 @@ jobs:
           WAR_SAVE_PATH="${RUNNER_TEMP}/no_such_save.json" \
           WAR_VAULT_PATH="${RUNNER_TEMP}/no_such_save_vault.json" \
           WAR_BOOT_RECOVERY_PATH="${RUNNER_TEMP}/no_such_save_recovery.json" \
-            "build/app/World at Ruin.app/Contents/MacOS/World at Ruin" 2>&1 | tee exported-first-run.log
+            "build/app/World at Ruin.app/Contents/MacOS/World at Ruin" \
+            --resolution "${EXPORTED_CAPTURE_RESOLUTION}" 2>&1 | tee exported-first-run.log
           # Require the FIRST-RUN marker, not a bare PASS — the world scenario
           # prints "CAPTURE PASS" too, and its PNGs already sit in the same
           # directory, so a silent fall-back to the default scenario would
           # otherwise go green.
           if ! grep -qE "[0-9]+ first-run vantages? written" exported-first-run.log; then
             echo "::error::exported first-run capture did not report a first-run vantage — see log"; tail -40 exported-first-run.log; exit 1
+          fi
+          if ! grep -Fxq "BACKDROP PINNED — scenery clocks fixed before first-run capture" exported-first-run.log; then
+            echo "::error::exported first-run capture did not pin its live scenery clock before boot"
+            tail -40 exported-first-run.log; exit 1
           fi
           # Require the FULL expected set, for the editor job's reason: a
           # regression that dropped the lower-panel shot or the preset loop
@@ -2586,6 +2700,46 @@ jobs:
             echo
             echo "Volumetric fog path: **${probe}** · hollow ash pools: **${pools}**"
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Install Godot and templates for the exported base comparison
+        # Advisory with the base render below. A transient download or old-base
+        # export failure must not turn this required evidence job red; the
+        # report step names the missing comparison explicitly instead.
+        continue-on-error: true
+        run: |
+          started="$(date +%s)"
+          curl -fsSL -o godot-base.zip "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_macos.universal.zip"
+          echo "${GODOT_MACOS_SHA512}  godot-base.zip" | shasum -a 512 -c -
+          unzip -q godot-base.zip
+          printf '#!/bin/sh\nexec "%s/Godot.app/Contents/MacOS/Godot" "$@"\n' "${PWD}" | sudo tee /usr/local/bin/godot >/dev/null
+          sudo chmod +x /usr/local/bin/godot
+          curl -fsSL -o base-templates.tpz "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+          echo "${GODOT_TEMPLATES_SHA512}  base-templates.tpz" | shasum -a 512 -c -
+          unzip -q base-templates.tpz
+          mkdir -p "${HOME}/Library/Application Support/Godot/export_templates/${GODOT_VERSION}.stable"
+          mv templates/* "${HOME}/Library/Application Support/Godot/export_templates/${GODOT_VERSION}.stable/"
+          elapsed=$(( $(date +%s) - started ))
+          echo "ADDED CI COST: base Godot and templates install ${elapsed}s"
+          {
+            echo "### Exported-client comparison setup"
+            echo
+            echo "Pinned Godot and templates install: **${elapsed}s**."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Render the PR base through the exported client
+        continue-on-error: true
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          tools/exported-frame-change-report.sh render-base \
+            "$BASE_SHA" "${RUNNER_TEMP}/exported-frame-report"
+      - name: Report exported frames against the PR base
+        # Reporting only: no visual threshold and no required-job failure. The
+        # helper warns when the base export failed, when nothing compared, or
+        # when a head frame carries no matching base measurement.
+        continue-on-error: true
+        run: |
+          tools/exported-frame-change-report.sh report \
+            "${RUNNER_TEMP}/exported-frame-report" \
+            "${RUNNER_TEMP}/exported-shots"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: exported-frames-${{ github.event.pull_request.head.sha }}
@@ -2621,7 +2775,7 @@ jobs:
       ]
     if: ${{ always() }}
     steps:
-      - uses: devantler-tech/actions/aggregate-job-checks@6ed1f44e8f10e4a87746e99159e30b215b9fe8e6 # v11.0.2
+      - uses: devantler-tech/actions/aggregate-job-checks@625b7c0cd5ad4a04f9eb7494298c6d0fa44521ef # v11.0.4
         with:
           # frame-capture, frame-capture-exported and detect-visual-changes are
           # conditional and report `skipped` on PRs with no player-visible

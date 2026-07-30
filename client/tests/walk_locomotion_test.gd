@@ -12,11 +12,13 @@ extends Node
 ##     arms, and a flexed knee.
 ##  3. DISTANCE-DRIVEN — equal travelled distances land on the same pose even
 ##     when speed and delta differ.
-##  4. HONEST STATES — stop and airborne restore the standing pose; the gaits do
-##     not impersonate the jump work still missing.
+##  4. HONEST STATES — stop and an airborne tick without the separate jump
+##     opt-in restore the standing pose; the gaits never impersonate a jump.
 ##  5. SPRINT RUNS — sprinting poses the run rather than restoring rest, and the
 ##     run is AUTHORED rather than the walk scaled up.
-##  6. SEAMLESS + DETERMINISTIC — phase 0 and TAU agree, and identical travel
+##  6. GAIT CHANGES BLEND — pressing and releasing sprint while moving keeps
+##     every driven channel continuous, then reaches the unchanged target gait.
+##  7. SEAMLESS + DETERMINISTIC — phase 0 and TAU agree, and identical travel
 ##     produces byte-equivalent bone rotations on separate player bodies.
 ##
 ## Each assertion names a real break: deleting the Player hook, inverting a
@@ -28,6 +30,7 @@ extends Node
 
 const FLAG := "WAR_WALK_CYCLE"
 const RUN_FLAG := "WAR_RUN_CYCLE"
+const JUMP_FLAG := "WAR_JUMP_MOTION"
 const RECIPE_PATH := "res://recipes/wanderer.json"
 const DRIVEN_BONES := [
 	"thigh_l", "thigh_r",
@@ -52,6 +55,12 @@ const MIN_ELBOW_CARRIAGE_DEG := 20.0
 ## How far apart two channels' run/walk ratios must sit before the run is
 ## provably not the walk times a constant.
 const MIN_RATIO_SPREAD := 0.25
+## A one-millisecond input edge advances the authored gait by less than one
+## degree. Two degrees leaves room for imported-skeleton dust while remaining
+## far below the current 35-49 degree elbow and 14 degree knee steps.
+const MAX_SWITCH_STEP_DEG := 2.0
+const SETTLE_STEPS := 20
+const SETTLE_DELTA := 0.02
 ## Most of the walk's phase the run may turn through over the same ground. The
 ## stride ratio 2.4/3.6 puts the real gaits at 0.71 (sin 30 over sin 45), and
 ## equal strides put them at 1.0, so the floor sits between the two rather than
@@ -62,6 +71,8 @@ var _had_flag := false
 var _original_flag := ""
 var _had_run_flag := false
 var _original_run_flag := ""
+var _had_jump_flag := false
+var _original_jump_flag := ""
 var _recipe: Dictionary = {}
 
 
@@ -70,6 +81,8 @@ func _ready() -> void:
 	_original_flag = OS.get_environment(FLAG)
 	_had_run_flag = OS.has_environment(RUN_FLAG)
 	_original_run_flag = OS.get_environment(RUN_FLAG)
+	_had_jump_flag = OS.has_environment(JUMP_FLAG)
+	_original_jump_flag = OS.get_environment(JUMP_FLAG)
 	var loaded = CharacterFactory.load_recipe(RECIPE_PATH)
 	if not (loaded is Dictionary):
 		_fail("could not load %s" % RECIPE_PATH)
@@ -90,6 +103,8 @@ func _ready() -> void:
 		return
 	if not _check_gaits_are_independently_opt_in():
 		return
+	if not _check_gait_switch_blends():
+		return
 	if not _check_run_is_authored_not_scaled():
 		return
 	if not _check_run_stride_is_longer():
@@ -98,7 +113,7 @@ func _ready() -> void:
 		return
 
 	_restore_flag()
-	print("TEST PASS — grounded locomotion is default-off, distance-driven and deterministic; walk and run each pose opposed limbs, sprint runs on an authored gait that is not the walk scaled, and stop/air restore rest")
+	print("TEST PASS — grounded locomotion is default-off, distance-driven and deterministic; walk and run are authored, gait changes blend continuously, and stop/air restore rest")
 	get_tree().quit(0)
 
 
@@ -221,9 +236,8 @@ func _check_distance_drives_phase() -> bool:
 ## stops, leaves at least one driven pose away from rest.
 ##
 ## Sprint is deliberately NOT in this list any more (#481): it now selects the
-## run. Airborne stays, because the jump pose is still unwritten — that is the
-## honest-state law this assertion exists to keep, and #224's remaining jump
-## criterion depends on it not quietly lapsing.
+## run. Airborne stays because this gait-only subject explicitly leaves the
+## separate jump opt-in off — that is the honest-state law this assertion keeps.
 func _check_non_walk_states_restore_rest() -> bool:
 	var subject := _player_with_flag("1")
 	if subject.is_empty():
@@ -331,7 +345,56 @@ func _check_gaits_are_independently_opt_in() -> bool:
 	return true
 
 
-## 7. Redefining the run as the walk times a constant — the cheap fix this slice
+## 7. Restoring the direct `sprinting ? run : walk` pose selection makes this
+## fail on both input edges. The test drives the real bound skeleton: pure-angle
+## arithmetic cannot prove that the runtime applied the blended pose.
+func _check_gait_switch_blends() -> bool:
+	var subject := _player_with_flag("1")
+	if subject.is_empty():
+		return false
+	var skeleton: Skeleton3D = subject["skeleton"]
+	var animator: Node = subject["animator"]
+
+	# Establish a real moving walk before the input edge. Starting from rest is
+	# deliberately not the contract: there is no prior gait to blend from.
+	animator.call("advance_motion", Player.WALK_SPEED, true, false, 0.1)
+	var before_press := _snapshot(skeleton)
+	animator.call("advance_motion", Player.SPRINT_SPEED, true, true, 0.001)
+	var press_step := _max_pose_delta_deg(before_press, _snapshot(skeleton))
+	if press_step > MAX_SWITCH_STEP_DEG:
+		_free_subject(subject)
+		return _fail(("sprint press stepped a driven bone by %.2f deg in one millisecond " +
+			"(limit %.1f deg) — walk changed directly to the run pose") %
+			[press_step, MAX_SWITCH_STEP_DEG])
+
+	for _i in SETTLE_STEPS:
+		animator.call(
+			"advance_motion", Player.SPRINT_SPEED, true, true, SETTLE_DELTA)
+	var run_offsets := _offset_angles(skeleton)
+	if minf(run_offsets["lowerarm_l"], run_offsets["lowerarm_r"]) < MIN_ELBOW_CARRIAGE_DEG:
+		_free_subject(subject)
+		return _fail("the gait blend never converged to the authored run elbow carriage")
+
+	var before_release := _snapshot(skeleton)
+	animator.call("advance_motion", Player.WALK_SPEED, true, false, 0.001)
+	var release_step := _max_pose_delta_deg(before_release, _snapshot(skeleton))
+	if release_step > MAX_SWITCH_STEP_DEG:
+		_free_subject(subject)
+		return _fail(("sprint release stepped a driven bone by %.2f deg in one millisecond " +
+			"(limit %.1f deg) — run changed directly to the walk pose") %
+			[release_step, MAX_SWITCH_STEP_DEG])
+
+	for _i in SETTLE_STEPS:
+		animator.call(
+			"advance_motion", Player.WALK_SPEED, true, false, SETTLE_DELTA)
+	var walk_offsets := _offset_angles(skeleton)
+	_free_subject(subject)
+	if maxf(absf(walk_offsets["lowerarm_l"]), absf(walk_offsets["lowerarm_r"])) > POSE_EPSILON:
+		return _fail("the gait blend never converged to the walk's straight elbows")
+	return true
+
+
+## 8. Redefining the run as the walk times a constant — the cheap fix this slice
 ## exists to refuse — makes these disagree.
 ##
 ## Held against the pure functions, so it is a statement about the AUTHORED
@@ -388,7 +451,7 @@ func _check_run_is_authored_not_scaled() -> bool:
 	return true
 
 
-## 8. Shortening the run's stride to the walk's turns sprint speed into a
+## 9. Shortening the run's stride to the walk's turns sprint speed into a
 ## blur of steps rather than longer ground-covering strides.
 func _check_run_stride_is_longer() -> bool:
 	var walking := _player_with_flag("1")
@@ -422,7 +485,7 @@ func _check_run_stride_is_longer() -> bool:
 	return true
 
 
-## 9. A phase seam or non-deterministic clock/counter makes these literal
+## 10. A phase seam or non-deterministic clock/counter makes these literal
 ## comparisons disagree.
 func _check_seamless_and_deterministic() -> bool:
 	var a := _player_with_flag("1")
@@ -460,6 +523,7 @@ func _player_with_flag(value: String) -> Dictionary:
 
 ## Independent opt-in, for the laws that are ABOUT the flags.
 func _player_with_flags(walk_value: String, run_value: String) -> Dictionary:
+	OS.unset_environment(JUMP_FLAG)
 	for pair: Array in [[FLAG, walk_value], [RUN_FLAG, run_value]]:
 		if (pair[1] as String).is_empty():
 			OS.unset_environment(pair[0] as String)
@@ -525,6 +589,15 @@ func _same_pose(
 	return true
 
 
+func _max_pose_delta_deg(a: Dictionary, b: Dictionary) -> float:
+	var largest := 0.0
+	for bone_name: String in DRIVEN_BONES:
+		largest = maxf(
+			largest,
+			rad_to_deg((a[bone_name] as Quaternion).angle_to(b[bone_name] as Quaternion)))
+	return largest
+
+
 func _free_subject(subject: Dictionary) -> void:
 	if not subject.is_empty() and is_instance_valid(subject.get("player")):
 		(subject["player"] as Player).free()
@@ -539,6 +612,10 @@ func _restore_flag() -> void:
 		OS.set_environment(RUN_FLAG, _original_run_flag)
 	else:
 		OS.unset_environment(RUN_FLAG)
+	if _had_jump_flag:
+		OS.set_environment(JUMP_FLAG, _original_jump_flag)
+	else:
+		OS.unset_environment(JUMP_FLAG)
 
 
 func _fail(message: String) -> bool:

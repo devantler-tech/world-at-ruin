@@ -31,10 +31,13 @@ class_name UpdateManifest
 ##     shell replacement — the most dangerous thing this manifest could carry.
 ##     (This is also why the monolithic ZIP cannot simply be re-labelled a shell
 ##     artifact instead of a pack: that is the same unauthorized download.)
-##   * `signature` / `key` / `revocation` — the Ed25519 + RFC-8785-JCS root of
-##     trust is unstarted (ADR child 6). The published OCI artifact IS
-##     cosign-signed by digest, which is a real integrity property, but it is a
-##     different one and this module does not pretend otherwise.
+##   * `signature` / `key` / `revocation` — [UpdateTrust] provides both the
+##     ECDSA-P256 primitive and the pure root-certificate → manifest → decision
+##     composition. No production root public key, signing custody,
+##     certificate/revocation publisher, or runtime updater caller activates it
+##     yet (ADR child 6), and revocation is not implemented. The published OCI
+##     artifact IS cosign-signed by digest, which is a real integrity property,
+##     but it is a different one and this module does not pretend otherwise.
 ##   * `rollback_targets` — no MOUNTABLE CONTENT PACK is retained yet. The
 ##     v0.52.0 monolithic app release is the whole-app rollback for capability 3,
 ##     but its `.app` ZIP is deliberately not a pack target: recovery would hand
@@ -88,13 +91,13 @@ const SAVE_SCHEMA_MAX := CharacterFactory.RECIPE_VERSION
 ## earlier. A build claiming to write LESS than it once did is exactly the
 ## stranding the no-resets law forbids.
 ##
-## Capability 4 is vault-v3 claimed exploration-reward state. Its v0.61.0 reader
-## release is retained as the whole-app rollback while client delivery remains
-## monolithic; this build now writes the contract too. The separate
+## Capability 5 is the writable `ashen_bindings` character-vocabulary expansion.
+## Its v0.69.0 reader release is retained as the whole-app rollback while client
+## delivery remains monolithic. The separate
 ## `rollback_targets` catalogue stays empty until a mountable pack exists;
 ## advertising the app ZIP there would make pack recovery select an artifact it
 ## cannot mount.
-const SAVE_CAPABILITY_WRITES := 4
+const SAVE_CAPABILITY_WRITES := 5
 
 ## The highest content capability this build can READ.
 ##
@@ -107,10 +110,11 @@ const SAVE_CAPABILITY_WRITES := 4
 ## needlessly routed away from a pack update despite a valid fallback existing.
 ##
 ## Must always be >= the write capability (a build must read what it writes).
-## Capability 5 reads the `ashen_bindings` character-vocabulary expansion while
-## production writers remain at capability 4. The writer may advance only after
-## a retained release advertises this ceiling; #544 owns that contract stage.
-const SAVE_CAPABILITY_READS := 5
+## Capability 6 is vault-v4 forward-only quest-objective progress. This is its
+## reader state: the reader accepts and applies the shape while the production
+## writer remains on retained capability 5. A later contract stage may activate
+## capability 6 after a retained release advertises this ceiling.
+const SAVE_CAPABILITY_READS := 6
 
 ## The oldest shell this manifest still supports updating FROM.
 ##

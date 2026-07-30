@@ -61,8 +61,9 @@ const HAND_RELAX_DEG := 8.0
 ## as bone POSES, leaving every rest edit here untouched — so the stance is what
 ## the body IS and the idle is what it is DOING. `WalkLocomotion` can decorate
 ## grounded travel with a walk behind `WAR_WALK_CYCLE` and a run behind
-## `WAR_RUN_CYCLE`; jump, landing and turn motion remain absent and stay with
-## the parent #224.
+## `WAR_RUN_CYCLE`, plus the controller's airborne arc behind
+## `WAR_JUMP_MOTION`. Landing impact, turn motion and state blending remain
+## absent and stay with the parent #224.
 ##
 ## This shipped opt-in (`WAR_REST_STANCE`) while the pose stood still, because a
 ## motionless stance was only half of what the art direction asks for. #243
@@ -607,7 +608,7 @@ static func fingerprint(instance: Node3D) -> String:
 	var total_verts := 0
 	for mesh_name in names:
 		ctx.update(mesh_name.to_utf8_buffer())
-		var mixed := _mixed_vertices(meshes[mesh_name])
+		var mixed := KitAssembly.mixed_vertices(meshes[mesh_name])
 		total_verts += mixed.size()
 		ctx.update(mixed.to_byte_array())
 	# The skin changes no geometry but IS the character's identity too.
@@ -615,30 +616,12 @@ static func fingerprint(instance: Node3D) -> String:
 	return "bones=%d meshes=%d verts=%d sha256=%s" % [
 		skeleton.get_bone_count(), names.size(), total_verts, ctx.finish().hex_encode()]
 
-
-static func _mixed_vertices(mesh_instance: MeshInstance3D) -> PackedVector3Array:
-	var mesh := mesh_instance.mesh
-	var base: PackedVector3Array = mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
-	var mixed := PackedVector3Array(base)
-	var blends := mesh.surface_get_blend_shape_arrays(0)
-	var normalized: bool = mesh is ArrayMesh \
-		and (mesh as ArrayMesh).blend_shape_mode == Mesh.BLEND_SHAPE_MODE_NORMALIZED
-	for shape_index in mesh.get_blend_shape_count():
-		var weight := mesh_instance.get_blend_shape_value(shape_index)
-		if is_zero_approx(weight):
-			continue
-		var targets: PackedVector3Array = blends[shape_index][Mesh.ARRAY_VERTEX]
-		for v in mixed.size():
-			var delta := targets[v] - base[v] if normalized else targets[v]
-			mixed[v] += delta * weight
-	return mixed
-
-
 ## CPU linear-blend skinning of a MeshInstance3D against its skeleton's
 ## current global poses. Returns the deformed vertex stream, surface-ordered.
-## `_mixed_vertices` above answers "what shape is this mesh in its own space";
-## this answers "where does that shape actually land once the skeleton moves"
-## — which is what an equipment piece has to agree with to sit on the body.
+## `KitAssembly.mixed_vertices` answers "what shape is this mesh in its own
+## space"; this answers "where does that shape actually land once the skeleton
+## moves" — which is what an equipment piece has to agree with to sit on the
+## body.
 static func cpu_skin(skel: Skeleton3D, mi: MeshInstance3D) -> PackedVector3Array:
 	var out := PackedVector3Array()
 	var skin := mi.skin

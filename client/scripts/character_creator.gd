@@ -30,11 +30,11 @@ const WRITER_VOCABULARY_PATH := "res://registries/character_writer_vocabulary.js
 ## with an authored wardrobe surface suitable for every player.
 const LAYERED_OUTFIT_PICKERS_ENV := "WAR_LAYERED_OUTFIT_PICKERS"
 const LAYERED_OUTFIT_CAPABILITY := 2
-## The first head pair proves the authoring and occlusion path, but its flat
-## bake materials do not yet clear the character-art bar. Keep this new region
+## The first head and hand pieces prove their authoring paths, but their flat
+## bake materials do not yet clear the character-art bar. Keep these new regions
 ## on the same guarded preview as the raw layered controls; saved recipes remain
-## readable because this list gates origination only (#329, #336).
-const PREVIEW_ONLY_OUTFIT_REGIONS := ["head"]
+## readable because this list gates origination only (#329, #544).
+const PREVIEW_ONLY_OUTFIT_REGIONS := ["head", "hands"]
 
 ## What each archetype is, in the player's terms. The recipes carry their own
 ## `comment`, but those are written for whoever maintains the kit ("first recipe

@@ -1,6 +1,6 @@
 class_name WalkLocomotion
 extends Node
-## The wanderer's grounded locomotion: an authored walk and an authored run.
+## The wanderer's recipe-skeleton motion: walk, run, and an airborne arc.
 ##
 ## The controller owns translation and this node owns only the recipe-built
 ## skeleton pose. Phase advances from horizontal DISTANCE, not elapsed render
@@ -38,26 +38,32 @@ extends Node
 ##
 ## ## What this still does not author
 ##
-## Airborne, landing and turning cues stay in the standing pose until they have
-## their own slices — [method advance_motion] resets rather than reusing a gait
-## for them, so #224's remaining jump criterion cannot read as finished.
-## There is also no vertical bob on the run's flight phase: bob is TRANSLATION,
-## and this node poses a skeleton the controller moves. It belongs with the
-## controller work, not here.
+## `WAR_JUMP_MOTION=1` adds the first airborne slice: takeoff, apex, and descent
+## follow the controller's actual vertical velocity. Landing still resets
+## directly to the grounded state, with no anticipation, impact, directional
+## lean or turn cue. Walk and run crossfade while both gait previews are opted
+## in; stop, ground/air and jump transitions remain unauthored. There is also no
+## vertical bob on the run's flight phase: bob is TRANSLATION, and this node
+## poses a skeleton the controller moves.
 ##
 ## The class name is deliberately unchanged: the opt-in flag and its retirement
 ## issue (#405) both name the walk, and renaming a class is a refactor that has
 ## no business riding along with a behaviour change.
 ##
-## Experimental and default-off per product law, and the two gaits are opted
+## Experimental and default-off per product law, and all three slices are opted
 ## into SEPARATELY: `WAR_WALK_CYCLE=1` for the walk, `WAR_RUN_CYCLE=1` for the
-## run. One flag covering both would enrol everyone already testing the walk
-## into an unfinished run the moment they updated, which product law 2 forbids;
-## it would also tie #405's "has the walk cleared the bar?" judgement to a gait
-## that has not been judged at all.
+## run, and `WAR_JUMP_MOTION=1` for the airborne arc. One shared flag would
+## silently enrol an existing gait tester into motion they did not choose. The
+## jump flag is short-lived and tracked for retirement by #562.
 
 const FLAG_ENV := "WAR_WALK_CYCLE"
 const RUN_FLAG_ENV := "WAR_RUN_CYCLE"
+const JUMP_FLAG_ENV := "WAR_JUMP_MOTION"
+
+## Walk↔run pose crossfade. Short enough to keep sprint input responsive, but
+## long enough to show a dozen-plus intermediate frames at 60 Hz. Smoothstep is
+## applied to this linear progress before the authored channels are mixed.
+const GAIT_BLEND_SECONDS := 0.24
 
 ## Metres travelled per complete left/right cycle. The amplitude stays fixed
 ## while the cadence follows speed, avoiding short-input foot sliding without
@@ -109,6 +115,41 @@ const RUN_ELBOW_FLEX_DEG := 42.0
 ## a mannequin holding a fixed angle.
 const RUN_ELBOW_PUMP_DEG := 7.0
 
+## The controller launches at 7.2 m/s. Clamping to that shipped envelope keeps
+## a bad external velocity from folding the skeleton further while preserving a
+## continuous, deterministic pose through the whole arc.
+const JUMP_REFERENCE_SPEED := 7.2
+const JUMP_TAKEOFF_ANGLES := {
+	"thigh_l": -12.0,
+	"thigh_r": 12.0,
+	"calf_l": 18.0,
+	"calf_r": 18.0,
+	"upperarm_l": 8.0,
+	"upperarm_r": -8.0,
+	"lowerarm_l": 20.0,
+	"lowerarm_r": 20.0,
+}
+const JUMP_APEX_ANGLES := {
+	"thigh_l": 28.0,
+	"thigh_r": -28.0,
+	"calf_l": 52.0,
+	"calf_r": 52.0,
+	"upperarm_l": 0.0,
+	"upperarm_r": 0.0,
+	"lowerarm_l": 24.0,
+	"lowerarm_r": 24.0,
+}
+const JUMP_DESCENT_ANGLES := {
+	"thigh_l": 8.0,
+	"thigh_r": -8.0,
+	"calf_l": 16.0,
+	"calf_r": 16.0,
+	"upperarm_l": -8.0,
+	"upperarm_r": 8.0,
+	"lowerarm_l": 18.0,
+	"lowerarm_r": 18.0,
+}
+
 const DRIVEN_BONES := [
 	"thigh_l", "thigh_r",
 	"calf_l", "calf_r",
@@ -118,7 +159,10 @@ const DRIVEN_BONES := [
 
 var _walk_enabled := false
 var _run_enabled := false
+var _jump_enabled := false
 var _phase := 0.0
+var _run_blend := 0.0
+var _has_active_gait := false
 var _skeleton: Skeleton3D = null
 
 
@@ -127,18 +171,23 @@ var _skeleton: Skeleton3D = null
 func bind(body: Node3D) -> void:
 	_skeleton = CharacterFactory.find_skeleton(body)
 	_phase = 0.0
+	_run_blend = 0.0
+	_has_active_gait = false
 	_walk_enabled = OS.get_environment(FLAG_ENV) == "1"
 	_run_enabled = OS.get_environment(RUN_FLAG_ENV) == "1"
+	_jump_enabled = OS.get_environment(JUMP_FLAG_ENV) == "1"
 	if _skeleton == null:
 		push_error("WalkLocomotion: character body has no skeleton")
 		_walk_enabled = false
 		_run_enabled = false
+		_jump_enabled = false
 		return
 	for bone_name: String in DRIVEN_BONES:
 		if _skeleton.find_bone(bone_name) < 0:
 			push_error("WalkLocomotion: rig has no bone %s" % bone_name)
 			_walk_enabled = false
 			_run_enabled = false
+			_jump_enabled = false
 
 
 ## Whether any gait is opted in — the node has nothing to do when neither is.
@@ -150,8 +199,8 @@ func _any_gait_enabled() -> bool:
 ##
 ## `grounded` and `sprinting` are explicit inputs so neither gait can quietly
 ## become a placeholder for a state it does not author. `sprinting` SELECTS the
-## run; `grounded` suppresses both, because the airborne pose is genuinely
-## unwritten.
+## run; leaving the ground suppresses both gaits and selects the separately
+## opted-in jump treatment, if present.
 ##
 ## Each gait answers to its OWN flag. A player who opted into the walk gets
 ## exactly the pre-run behaviour — sprint returns to the standing pose — because
@@ -161,11 +210,26 @@ func advance_motion(
 		horizontal_speed: float,
 		grounded: bool,
 		sprinting: bool,
-		delta: float) -> void:
-	if not _any_gait_enabled() or _skeleton == null:
+		delta: float,
+		vertical_speed: float = 0.0) -> void:
+	if _skeleton == null:
 		return
-	if not grounded or horizontal_speed < MIN_WALK_SPEED:
+	if not grounded:
 		_phase = 0.0
+		_has_active_gait = false
+		if _jump_enabled:
+			apply_jump(vertical_speed)
+		elif _any_gait_enabled():
+			_reset_pose()
+		return
+	if not _any_gait_enabled():
+		_has_active_gait = false
+		if _jump_enabled:
+			_reset_pose()
+		return
+	if horizontal_speed < MIN_WALK_SPEED:
+		_phase = 0.0
+		_has_active_gait = false
 		_reset_pose()
 		return
 	# The gait this state needs, and whether its own flag is on. An un-opted-in
@@ -173,16 +237,59 @@ func advance_motion(
 	# airborne state gets.
 	if not (_run_enabled if sprinting else _walk_enabled):
 		_phase = 0.0
+		_has_active_gait = false
 		_reset_pose()
 		return
+	var target_blend := 1.0 if sprinting else 0.0
+	if not _has_active_gait:
+		# There is no prior moving gait to blend from after a bind, stop, jump or
+		# un-opted state. Snap the first active gait so steady walk/run behavior
+		# stays exactly as authored; only a live gait CHANGE crossfades.
+		_run_blend = target_blend
+		_has_active_gait = true
+	else:
+		_run_blend = move_toward(
+			_run_blend,
+			target_blend,
+			maxf(delta, 0.0) / GAIT_BLEND_SECONDS)
 	var distance := maxf(horizontal_speed, 0.0) * maxf(delta, 0.0)
 	# Phase is continuous across a gait change — the stride LENGTH switches, so
 	# cadence changes without the legs jumping to a different point in the
-	# cycle. The POSE is not continuous: the elbows and the knee bias step in
-	# and out, which is a transition cue this slice does not author (#496).
+	# cycle. Every pose channel crossfades from that shared phase.
 	var stride_length := RUN_STRIDE_LENGTH_M if sprinting else STRIDE_LENGTH_M
 	_phase = fposmod(_phase + TAU * distance / stride_length, TAU)
-	apply_phase(_phase, sprinting)
+	apply_blended_phase(_phase, smoothstep(0.0, 1.0, _run_blend))
+
+
+## Pose one exact point on the airborne arc. Runtime and evidence capture share
+## this method so a deterministic frame sequence cannot drift into preview-only
+## animation. Positive speed blends from the compact apex to push-off; negative
+## speed opens into a landing-ready descent.
+func apply_jump(vertical_speed: float) -> void:
+	if _skeleton == null:
+		push_error("WalkLocomotion: cannot pose an unbound skeleton")
+		return
+	var angles := jump_angles(vertical_speed)
+	for bone_name: String in DRIVEN_BONES:
+		var bone := _skeleton.find_bone(bone_name)
+		var rest_rotation := _skeleton.get_bone_rest(bone).basis.get_rotation_quaternion()
+		_skeleton.set_bone_pose_rotation(
+			bone,
+			rest_rotation * Quaternion(Vector3.RIGHT, deg_to_rad(angles[bone_name])))
+
+
+## Pure airborne angles for a vertical speed in metres per second.
+static func jump_angles(vertical_speed: float) -> Dictionary:
+	var travel := clampf(vertical_speed / JUMP_REFERENCE_SPEED, -1.0, 1.0)
+	var target: Dictionary = JUMP_TAKEOFF_ANGLES if travel >= 0.0 else JUMP_DESCENT_ANGLES
+	var weight := absf(travel)
+	var result := {}
+	for bone_name: String in DRIVEN_BONES:
+		result[bone_name] = lerpf(
+			JUMP_APEX_ANGLES[bone_name],
+			target[bone_name],
+			weight)
+	return result
 
 
 ## Pose one exact phase. The fixed-phase evidence capture uses the same method
@@ -202,6 +309,25 @@ func apply_phase(phase: float, running: bool = false) -> void:
 		_skeleton.set_bone_pose_rotation(
 			bone,
 			rest_rotation * Quaternion(Vector3.RIGHT, deg_to_rad(now[bone_name])))
+
+
+## Pose an interpolation between the authored walk and run at one shared phase.
+## The runtime supplies an eased weight; keeping the interpolation itself pure
+## makes every driven channel explicit, including the walk's zeroed elbows.
+func apply_blended_phase(phase: float, run_weight: float) -> void:
+	if _skeleton == null:
+		push_error("WalkLocomotion: cannot pose an unbound skeleton")
+		return
+	var walk := angles(fposmod(phase, TAU))
+	var run := run_angles(fposmod(phase, TAU))
+	var weight := clampf(run_weight, 0.0, 1.0)
+	for bone_name: String in DRIVEN_BONES:
+		var bone := _skeleton.find_bone(bone_name)
+		var rest_rotation := _skeleton.get_bone_rest(bone).basis.get_rotation_quaternion()
+		var angle := lerpf(walk[bone_name], run[bone_name], weight)
+		_skeleton.set_bone_pose_rotation(
+			bone,
+			rest_rotation * Quaternion(Vector3.RIGHT, deg_to_rad(angle)))
 
 
 ## The selected gait's angles for a phase in radians. Both gaits answer for

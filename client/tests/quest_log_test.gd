@@ -22,6 +22,10 @@ func _ready() -> void:
 		return
 	if not _malformed_definitions_refused():
 		return
+	if not _malformed_restore_refused():
+		return
+	if not _restore_before_and_after_registration():
+		return
 	if not _advance_and_clamp():
 		return
 	if not _completion_announced_once():
@@ -35,7 +39,7 @@ func _ready() -> void:
 	if not _deterministic_replay():
 		return
 
-	print("TEST PASS — quest log holds (forward-only, clamped, complete-once, deterministic, malformed-safe)")
+	print("TEST PASS — quest log holds (forward-only, clamped, restored losslessly, complete-once, deterministic, malformed-safe)")
 	get_tree().quit(0)
 
 
@@ -73,6 +77,11 @@ func _malformed_definitions_refused() -> bool:
 		"empty tag": [{"id": "a", "tag": "", "count": 1}],
 		"zero count": [{"id": "a", "tag": "x", "count": 0}],
 		"negative count": [{"id": "a", "tag": "x", "count": -2}],
+		"count above exact JSON integer range": [{
+			"id": "a",
+			"tag": "x",
+			"count": 9_007_199_254_740_992,
+		}],
 		"non-int count": [{"id": "a", "tag": "x", "count": "three"}],
 		# Unexpected keys are refused so a field this library does not understand
 		# can never be silently ignored — and so an objective cannot smuggle a grant.
@@ -84,6 +93,96 @@ func _malformed_definitions_refused() -> bool:
 		var objectives: Array = bad[label]
 		_check(q.add("quest_" + label, objectives), false, "malformed refused: %s" % label)
 	_check(q.total() == 0, true, "malformed: nothing was registered")
+	return not _failed
+
+
+## A persisted snapshot is untrusted input. Reject the whole shape before
+## changing state so one malformed objective cannot launder or erase the valid
+## progress beside it.
+func _malformed_restore_refused() -> bool:
+	var api_probe := QuestLog.new()
+	if not api_probe.has_method("restore") or not api_probe.has_method("snapshot"):
+		_fail("QuestLog has no restore/snapshot boundary for persisted progress")
+		return false
+	var bad := {
+		"not a dictionary": [],
+		"empty quest id": {"": {"step": 1}},
+		"quest progress not a dictionary": {"hunt": []},
+		"empty objective id": {"hunt": {"": 1}},
+		"negative progress": {"hunt": {"step": -1}},
+		"fractional progress": {"hunt": {"step": 1.5}},
+		"string progress": {"hunt": {"step": "1"}},
+		"progress above exact JSON integer range": {
+			"hunt": {"step": 9_007_199_254_740_992},
+		},
+		"valid branch beside malformed branch": {
+			"future_quest": {"future_step": 7},
+			"hunt": {"step": -1},
+		},
+	}
+	for label: String in bad:
+		var q := QuestLog.new()
+		_check(bool(q.call("restore", bad[label])), false,
+			"restore malformed refused: %s" % label)
+		_check((q.call("snapshot") as Dictionary).is_empty(), true,
+			"restore malformed left the log unchanged: %s" % label)
+	return not _failed
+
+
+## Restore must work on either side of definition registration. Raw progress for
+## unknown future ids remains in the snapshot, while the live view clamps to the
+## definition this rollback build knows and a restored completion is never
+## announced as new.
+func _restore_before_and_after_registration() -> bool:
+	var before := QuestLog.new()
+	var persisted := {
+		"future_quest": {"future_step": 7},
+		"hunt": {"future_objective": 9, "hounds": 2},
+	}
+	_check(bool(before.call("restore", persisted)), true,
+		"restore-before: accepted the persisted snapshot")
+	_check(before.add(
+		"hunt", [{"id": "hounds", "tag": "defeat:ash_hound", "count": 3}]),
+		true, "restore-before: registered the known definition")
+	_check(before.progress_of("hunt", "hounds") == 2, true,
+		"restore-before: applied known objective progress")
+	_check(before.call("snapshot") == persisted, true,
+		"restore-before: preserved unknown quest and objective progress exactly")
+	_eq_list(before.record("defeat:ash_hound"), "hunt",
+		"restore-before: the next real event completed the restored quest")
+	_eq_list(before.record("defeat:ash_hound"), "",
+		"restore-before: the completed quest was not announced twice")
+	var advanced := persisted.duplicate(true)
+	advanced["hunt"]["hounds"] = 3
+	_check(before.call("snapshot") == advanced, true,
+		"restore-before: snapshot merged the live advance without dropping future ids")
+
+	var after := QuestLog.new()
+	_check(after.add(
+		"pilgrimage", [{"id": "steps", "tag": "reach:shrine", "count": 3}]),
+		true, "restore-after: registered before loading")
+	_check(bool(after.call("restore", {"pilgrimage": {"steps": 8}})), true,
+		"restore-after: accepted progress above this build's requirement")
+	_check(after.progress_of("pilgrimage", "steps") == 3, true,
+		"restore-after: clamped the live view to the known requirement")
+	_check(after.is_complete("pilgrimage"), true,
+		"restore-after: marked a fully restored quest complete")
+	_eq_list(after.record("reach:shrine"), "",
+		"restore-after: a restored completion was never announced as new")
+	_check(after.call("snapshot") == {"pilgrimage": {"steps": 8}}, true,
+		"restore-after: preserved the newer client's raw progress instead of truncating it")
+	_check(bool(after.call("restore", {"pilgrimage": {"steps": 1}})), true,
+		"restore-after: accepted a stale duplicate snapshot")
+	_check(after.call("snapshot") == {"pilgrimage": {"steps": 8}}, true,
+		"restore-after: stale restore could not drive persisted progress backwards")
+
+	var exact_json_boundary := QuestLog.new()
+	_check(bool(exact_json_boundary.call("restore", {
+		"future_quest": {"future_step": 9_007_199_254_740_991},
+	})), true, "restore boundary: accepted the largest exactly representable JSON integer")
+	_check(exact_json_boundary.call("snapshot") == {
+		"future_quest": {"future_step": 9_007_199_254_740_991},
+	}, true, "restore boundary: preserved the exact JSON integer ceiling")
 	return not _failed
 
 

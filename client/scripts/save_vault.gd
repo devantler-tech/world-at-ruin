@@ -96,10 +96,9 @@ const DEFAULT_PATH := "user://vault.json"
 ## player's progression.
 const VAULT_PATH_ENV := "WAR_VAULT_PATH"
 
-## Prefix for the private staging file a write commits from. What follows it is a
-## per-attempt unique stamp, so no two writers — and no two attempts — ever stage
-## through the same path (see [method _write_tmp_path]).
-const WRITE_TMP_SUFFIX := ".tmp-"
+## Compatibility alias for the shared private-staging prefix. Existing callers
+## may inspect it, while [PrivateStaging] remains its single declaration.
+const WRITE_TMP_SUFFIX := PrivateStaging.WRITE_TMP_SUFFIX
 
 ## The identity of a vault path that holds no file. Distinct from
 ## [constant IDENTITY_UNCHECKED]: "absent" is a real state to compare against, and
@@ -182,9 +181,10 @@ const BASE_VAULT_VERSION := 1
 const DISCOVERY_VAULT_VERSION := 2
 const REWARD_CLAIM_VAULT_VERSION := 3
 
-## Highest vault schema this build can READ. Kept separate from the production
-## writer so future expand-before-write releases remain representable.
-const VAULT_READ_VERSION := 3
+## Highest vault schema this build can READ. v4 adds forward-only quest
+## objective progress, but the production writer stays on v3 until this reader
+## release is retained as a safe rollback target.
+const VAULT_READ_VERSION := 4
 
 ## The vault format, exhaustively. Unknown top-level fields are refused for the
 ## same reason the recipe refuses them: a client that silently ignored a field
@@ -194,6 +194,9 @@ const VAULT_FIELDS_V1 := ["version", "comment", "attuned"]
 const VAULT_FIELDS_V2 := ["version", "comment", "attuned", "discoveries"]
 const VAULT_FIELDS_V3 := [
 	"version", "comment", "attuned", "discoveries", "reward_claims",
+]
+const VAULT_FIELDS_V4 := [
+	"version", "comment", "attuned", "discoveries", "reward_claims", "quests",
 ]
 
 ## The Wardens' Shrine, the first attunable respawn point. Names are forward-only
@@ -268,6 +271,8 @@ static func validate(doc: Dictionary) -> String:
 		allowed_fields = VAULT_FIELDS_V2
 	elif schema == 3:
 		allowed_fields = VAULT_FIELDS_V3
+	elif schema == 4:
+		allowed_fields = VAULT_FIELDS_V4
 	for field: String in doc:
 		if field not in allowed_fields:
 			return "unknown vault field '%s' — this client cannot apply it, refusing a half-truth" % field
@@ -293,6 +298,27 @@ static func validate(doc: Dictionary) -> String:
 				return "reward_claims entries must be strings (names are forward-only, never indices)"
 			if (name as String).is_empty():
 				return "reward_claims entries must be non-empty stable names"
+	if doc.has("quests"):
+		if doc["quests"] is not Dictionary:
+			return "quests must be an object keyed by stable quest ids"
+		for quest_id: Variant in doc["quests"]:
+			if quest_id is not String or (quest_id as String).is_empty():
+				return "quest ids must be non-empty stable strings"
+			var objectives: Variant = doc["quests"][quest_id]
+			if objectives is not Dictionary:
+				return "quest '%s' progress must be an object keyed by objective id" % quest_id
+			for objective_id: Variant in objectives:
+				if objective_id is not String or (objective_id as String).is_empty():
+					return "quest objective ids must be non-empty stable strings"
+				var progress: Variant = objectives[objective_id]
+				if not (progress is int \
+						or (progress is float and progress == floorf(progress))):
+					return "quest objective progress must be a whole number"
+				if int(progress) < 0:
+					return "quest objective progress must be non-negative"
+				if progress > QuestLog.MAX_PERSISTED_PROGRESS:
+					return (
+						"quest objective progress exceeds JSON's exact-integer range")
 	return ""
 
 
@@ -390,7 +416,7 @@ static func document_identity(path: String) -> String:
 ##
 ## Process id plus microsecond ticks, matching [method _free_quarantine_path].
 static func _write_tmp_path(path: String) -> String:
-	return "%s%s%d-%d" % [path, WRITE_TMP_SUFFIX, OS.get_process_id(), Time.get_ticks_usec()]
+	return PrivateStaging.write_path(path)
 
 
 ## Remove staging files abandoned by a crashed writer.
@@ -406,12 +432,11 @@ static func _write_tmp_path(path: String) -> String:
 ## another client is mid-write on is the kind of cross-writer damage this whole
 ## area exists to avoid.
 static func _sweep_abandoned_writes(path: String) -> void:
-	var parent := path.get_base_dir()
-	var prefix := path.get_file() + WRITE_TMP_SUFFIX
-	for entry: String in DirAccess.get_files_at(parent):
-		if entry.begins_with(prefix):
-			DirAccess.remove_absolute(
-				ProjectSettings.globalize_path(parent.path_join(entry)))
+	# Unconditional is safe HERE because every released writer that can create
+	# this prefix takes the same lock, and this call runs while holding it.
+	PrivateStaging.sweep(
+		path,
+		func(_candidate: String) -> bool: return true)
 
 
 ## The expectation the most recent [method replace_if_unchanged] call ran under.
