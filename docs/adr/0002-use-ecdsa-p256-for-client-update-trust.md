@@ -46,14 +46,15 @@ itself, and returns success only when `Crypto.verify()` accepts the signature.
 Callers never supply a digest.
 
 The same primitive is used for the offline root and short-lived signing keys.
-The root verifies signing-key certificates, revocation lists, revocation heads,
-and shell authorizations. A verified signing key then verifies the manifest.
-Those compositions remain children of #490; this decision supplies their
-cryptographic substrate.
+`UpdateTrust.verify_and_decide()` verifies the signing-key certificate with a
+caller-supplied offline-root public key, verifies the manifest with only that
+certified signing key, and enters `UpdateDecision` last. Root-signed revocation
+lists, independently fresh revocation heads, and shell authorizations remain
+children of #490.
 
 The client still publishes no signing fields and activates no updater. A root
-public key, certificate/revocation schemas, signing custody, and the trust-chain
-caller must exist before signed delivery is enabled.
+public key, signing custody, revocation publisher, and runtime updater
+integration must exist before signed delivery is enabled.
 
 ## Verification boundary
 
