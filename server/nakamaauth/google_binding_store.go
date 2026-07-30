@@ -10,6 +10,8 @@ import (
 
 	"github.com/heroiclabs/nakama-common/api"
 	"github.com/heroiclabs/nakama-common/runtime"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 const (
@@ -25,6 +27,7 @@ var ErrGoogleBindingStorage = errors.New("nakama auth: Google binding storage fa
 type googleBindingStorageClient interface {
 	StorageRead(context.Context, []*runtime.StorageRead) ([]*api.StorageObject, error)
 	StorageWrite(context.Context, []*runtime.StorageWrite) ([]*api.StorageObjectAck, error)
+	AccountGetId(context.Context, string) (*api.Account, error)
 }
 
 // NakamaGoogleBindingStore persists immutable provider bindings in private,
@@ -63,7 +66,7 @@ func (s *NakamaGoogleBindingStore) ResolveGoogleBinding(
 		UserID:     "",
 	}})
 	if err != nil {
-		return "", false, sanitizeGoogleBindingStorageError(err)
+		return "", false, sanitizeGoogleBindingStorageError(ctx, err)
 	}
 	if len(objects) == 0 {
 		return "", false, nil
@@ -144,12 +147,40 @@ func (s *NakamaGoogleBindingStore) BindGoogleIdentity(
 		return winner, nil
 	}
 	if writeErr != nil {
-		return "", sanitizeGoogleBindingStorageError(writeErr)
+		return "", sanitizeGoogleBindingStorageError(ctx, writeErr)
 	}
 	return "", ErrGoogleBindingStorage
 }
 
+// VerifyGoogleBoundAccount confirms the immutable winner still names an active
+// Nakama account without relying on its mutable email credential.
+func (s *NakamaGoogleBindingStore) VerifyGoogleBoundAccount(
+	ctx context.Context,
+	userID string,
+) error {
+	if !validNakamaUserID(userID) {
+		return ErrGoogleBindingStorage
+	}
+	userID = strings.ToLower(userID)
+	account, err := s.storage.AccountGetId(ctx, userID)
+	if err != nil {
+		return sanitizeGoogleBindingStorageError(ctx, err)
+	}
+	if account == nil ||
+		account.GetUser() == nil ||
+		!strings.EqualFold(account.GetUser().GetId(), userID) {
+		return ErrGoogleBindingStorage
+	}
+	if account.GetDisableTime() != nil {
+		return status.Error(codes.PermissionDenied, "Google-bound account is disabled")
+	}
+	return nil
+}
+
 func decodeGoogleBindingDocument(value string) (googleBindingDocument, error) {
+	if err := rejectDuplicateGoogleBindingMembers(value); err != nil {
+		return googleBindingDocument{}, err
+	}
 	decoder := json.NewDecoder(strings.NewReader(value))
 	decoder.DisallowUnknownFields()
 	var document googleBindingDocument
@@ -163,6 +194,40 @@ func decodeGoogleBindingDocument(value string) (googleBindingDocument, error) {
 		return googleBindingDocument{}, ErrGoogleBindingStorage
 	}
 	return document, nil
+}
+
+func rejectDuplicateGoogleBindingMembers(value string) error {
+	decoder := json.NewDecoder(strings.NewReader(value))
+	token, err := decoder.Token()
+	delimiter, ok := token.(json.Delim)
+	if err != nil || !ok || delimiter != '{' {
+		return ErrGoogleBindingStorage
+	}
+	seen := make(map[string]struct{}, 2)
+	for decoder.More() {
+		token, err = decoder.Token()
+		key, ok := token.(string)
+		if err != nil || !ok {
+			return ErrGoogleBindingStorage
+		}
+		if _, duplicate := seen[key]; duplicate {
+			return ErrGoogleBindingStorage
+		}
+		seen[key] = struct{}{}
+		var raw json.RawMessage
+		if err := decoder.Decode(&raw); err != nil {
+			return ErrGoogleBindingStorage
+		}
+	}
+	token, err = decoder.Token()
+	delimiter, ok = token.(json.Delim)
+	if err != nil || !ok || delimiter != '}' {
+		return ErrGoogleBindingStorage
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return ErrGoogleBindingStorage
+	}
+	return nil
 }
 
 func validGoogleBindingKey(value string) bool {
@@ -192,12 +257,14 @@ func validNakamaUserID(value string) bool {
 	return true
 }
 
-func sanitizeGoogleBindingStorageError(err error) error {
+func sanitizeGoogleBindingStorageError(ctx context.Context, err error) error {
 	switch {
 	case errors.Is(err, context.Canceled):
 		return context.Canceled
 	case errors.Is(err, context.DeadlineExceeded):
 		return context.DeadlineExceeded
+	case ctx.Err() != nil:
+		return ctx.Err()
 	default:
 		return ErrGoogleBindingStorage
 	}

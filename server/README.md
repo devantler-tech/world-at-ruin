@@ -173,10 +173,12 @@ zone/dungeon server:
   create-only mapping to the user ID in private, system-owned Nakama runtime
   storage. Later sign-ins resolve that immutable binding before touching
   Nakama's mutable email field, so ordinary email link/unlink operations cannot
-  detach the Google identity or strand the original account. Both the email
-  insert and binding write reconcile one concurrent winner without overwriting
-  it, and neither the binding API nor its production store exposes an update or
-  delete operation.
+  detach the Google identity or strand the original account; the production
+  store then asks Nakama for that exact account and refuses a missing,
+  mismatched, or disabled user, so the stable-ID fast path cannot bypass a ban.
+  Both the email insert and binding write reconcile one concurrent winner
+  without overwriting it, and neither the binding API nor its production store
+  exposes an update or delete operation.
   `ProvisionerConfig.GoogleProvisioningEnabled` is false by default, and
   enabling it also requires `GoogleClientID`, a stable and backed-up
   `NakamaIdentityKey` of at least 32 bytes, `NakamaServerKey`, and a durable
@@ -184,14 +186,18 @@ zone/dungeon server:
   implementation over Nakama's authoritative runtime storage surface. The
   identity key and binding collection are durable identity roots: rotating,
   losing, deleting, or rewriting either requires an explicit account migration.
+  Binding documents use a strict schema that rejects unknown, duplicate,
+  missing, trailing, public, or client-writable data; schema 1 is permanently
+  pinned by `nakamaauth/testdata/shipped_google_binding_versions.txt` and its
+  matching golden before this default-off writer can be composed and enabled.
   The provisioner uses the Nakama server key only for Nakama's
   Basic-authenticated account-creation RPC, then replaces it with the returned
   session bearer for account verification. Binding operations receive neither
   bearer nor server-key metadata. Every path fails closed on empty, malformed,
-  corrupt, or unavailable responses, preserves only actionable transport status
-  codes, and exposes no upstream credential, server key, binding key, user ID,
-  or Nakama error text. Hermetic tests exercise the real generated gRPC
-  client/server and authoritative-storage paths.
+  corrupt, disabled, or unavailable responses, preserves only actionable
+  transport status codes, and exposes no upstream credential, server key,
+  binding key, user ID, or Nakama error text. Hermetic tests exercise the real
+  generated gRPC client/server and authoritative-storage paths.
 - **`agonesalloc/`** — the typed **Agones allocation API boundary**: it sends
   one current-format `AllocationRequest` through Agones's generated gRPC client,
   selecting only Ready GameServers from the configured namespace and fleet.

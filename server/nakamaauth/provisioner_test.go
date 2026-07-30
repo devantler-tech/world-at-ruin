@@ -58,6 +58,8 @@ type fakeGoogleBindingStore struct {
 	bindGatewayAuth      []string
 	resolveTrace         []string
 	bindTrace            []string
+	verifyBoundErr       error
+	verifyBoundCalls     int
 }
 
 func newFakeGoogleBindingStore() *fakeGoogleBindingStore {
@@ -106,6 +108,16 @@ func (s *fakeGoogleBindingStore) BindGoogleIdentity(
 	}
 	s.bindings[key] = userID
 	return userID, nil
+}
+
+func (s *fakeGoogleBindingStore) VerifyGoogleBoundAccount(
+	_ context.Context,
+	_ string,
+) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.verifyBoundCalls++
+	return s.verifyBoundErr
 }
 
 func (s *fakeGoogleBindingStore) observedMetadata() (
@@ -498,6 +510,54 @@ func TestProvisionGoogleKeepsBindingAfterNakamaEmailIsDetached(t *testing.T) {
 	if len(authentication) != 1 || accountCalls != 1 {
 		t.Fatalf(
 			"detached email caused %d authentication and %d account calls; want 1 each",
+			len(authentication),
+			accountCalls,
+		)
+	}
+}
+
+func TestProvisionGoogleRejectsDisabledBoundAccount(t *testing.T) {
+	server := &provisioningServer{
+		issuedSession:   testNakamaSession,
+		provisionedUser: "player-42",
+	}
+	bindings := newFakeGoogleBindingStore()
+	provisioner := provisionerAgainstWithBindings(
+		t,
+		server,
+		acceptingGoogleVerifier(),
+		bindings,
+		enabledProvisionerConfig(),
+	)
+
+	if _, err := provisioner.ProvisionGoogle(
+		context.Background(),
+		testIdentityProof,
+	); err != nil {
+		t.Fatalf("first ProvisionGoogle returned an error: %v", err)
+	}
+	bindings.mu.Lock()
+	bindings.verifyBoundErr = status.Error(
+		codes.PermissionDenied,
+		"disabled account player-42",
+	)
+	bindings.mu.Unlock()
+
+	userID, err := provisioner.ProvisionGoogle(context.Background(), testIdentityProof)
+	if status.Code(err) != codes.PermissionDenied {
+		t.Fatalf(
+			"disabled ProvisionGoogle = (%q, %v), want PermissionDenied",
+			userID,
+			err,
+		)
+	}
+	if userID != "" || strings.Contains(err.Error(), "player-42") {
+		t.Fatalf("disabled ProvisionGoogle exposed identity: (%q, %v)", userID, err)
+	}
+	authentication, accountCalls := server.observed()
+	if len(authentication) != 1 || accountCalls != 1 {
+		t.Fatalf(
+			"disabled repeat made %d authentication and %d account calls; want 1 each",
 			len(authentication),
 			accountCalls,
 		)

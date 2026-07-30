@@ -4,11 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/heroiclabs/nakama-common/api"
 	"github.com/heroiclabs/nakama-common/runtime"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const (
@@ -17,12 +25,16 @@ const (
 )
 
 type bindingMemoryStorage struct {
-	mu             sync.Mutex
-	object         *api.StorageObject
-	writes         []*runtime.StorageWrite
-	readErr        error
-	writeErr       error
-	conflictWinner string
+	mu              sync.Mutex
+	object          *api.StorageObject
+	writes          []*runtime.StorageWrite
+	readErr         error
+	writeErr        error
+	conflictWinner  string
+	accountErr      error
+	accountDisabled bool
+	accountUserID   string
+	accountCalls    int
 }
 
 func (s *bindingMemoryStorage) StorageRead(
@@ -79,6 +91,26 @@ func (s *bindingMemoryStorage) StorageWrite(
 		UserId:     googleBindingSystemOwnerID,
 		Version:    "created-version",
 	}}, nil
+}
+
+func (s *bindingMemoryStorage) AccountGetId(
+	_ context.Context,
+	userID string,
+) (*api.Account, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.accountCalls++
+	if s.accountErr != nil {
+		return nil, s.accountErr
+	}
+	if s.accountUserID != "" {
+		userID = s.accountUserID
+	}
+	account := &api.Account{User: &api.User{Id: userID}}
+	if s.accountDisabled {
+		account.DisableTime = timestamppb.Now()
+	}
+	return account, nil
 }
 
 func bindingObjectForTest(key string, userID string, version string) *api.StorageObject {
@@ -140,6 +172,13 @@ func TestNakamaGoogleBindingStoreCreatesPrivateImmutableBinding(t *testing.T) {
 		write.PermissionWrite != 0 {
 		t.Fatalf("binding write was not system-owned create-only private storage: %+v", write)
 	}
+	document, err := decodeGoogleBindingDocument(write.Value)
+	if err != nil {
+		t.Fatalf("binding write value is invalid: %v", err)
+	}
+	if document.Schema != googleBindingSchema || document.UserID != testBoundUserID {
+		t.Fatalf("binding write document = %+v, want schema and bound user", document)
+	}
 }
 
 func TestNakamaGoogleBindingStoreAdoptsConcurrentWinner(t *testing.T) {
@@ -159,6 +198,113 @@ func TestNakamaGoogleBindingStoreAdoptsConcurrentWinner(t *testing.T) {
 	}
 }
 
+func TestNakamaGoogleBindingStoreChecksAuthoritativeAccountStatus(t *testing.T) {
+	tests := []struct {
+		name        string
+		configure   func(*bindingMemoryStorage)
+		wantCode    codes.Code
+		wantStorage bool
+	}{
+		{
+			name: "active",
+		},
+		{
+			name: "disabled",
+			configure: func(storage *bindingMemoryStorage) {
+				storage.accountDisabled = true
+			},
+			wantCode: codes.PermissionDenied,
+		},
+		{
+			name: "mismatched account",
+			configure: func(storage *bindingMemoryStorage) {
+				storage.accountUserID = testWinnerUserID
+			},
+			wantStorage: true,
+		},
+		{
+			name: "lookup failure",
+			configure: func(storage *bindingMemoryStorage) {
+				storage.accountErr = errors.New("database details")
+			},
+			wantStorage: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			storage := &bindingMemoryStorage{}
+			if test.configure != nil {
+				test.configure(storage)
+			}
+			store, err := NewNakamaGoogleBindingStore(storage)
+			if err != nil {
+				t.Fatalf("NewNakamaGoogleBindingStore returned an error: %v", err)
+			}
+
+			err = store.VerifyGoogleBoundAccount(context.Background(), testBoundUserID)
+			switch {
+			case test.wantStorage && !errors.Is(err, ErrGoogleBindingStorage):
+				t.Fatalf("VerifyGoogleBoundAccount error = %v, want storage error", err)
+			case test.wantCode != codes.OK && status.Code(err) != test.wantCode:
+				t.Fatalf(
+					"VerifyGoogleBoundAccount code = %s, want %s",
+					status.Code(err),
+					test.wantCode,
+				)
+			case !test.wantStorage && test.wantCode == codes.OK && err != nil:
+				t.Fatalf("VerifyGoogleBoundAccount returned an error: %v", err)
+			}
+			if storage.accountCalls != 1 {
+				t.Fatalf("AccountGetId calls = %d, want 1", storage.accountCalls)
+			}
+		})
+	}
+}
+
+func TestNakamaGoogleBindingStorePreservesContextCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	key := googleBindingKey([]byte(testNakamaIdentityKey), testGoogleSubject)
+
+	readStorage := &bindingMemoryStorage{readErr: errors.New("read details")}
+	readStore, err := NewNakamaGoogleBindingStore(readStorage)
+	if err != nil {
+		t.Fatalf("NewNakamaGoogleBindingStore returned an error: %v", err)
+	}
+	if _, _, err := readStore.ResolveGoogleBinding(ctx, key); !errors.Is(
+		err,
+		context.Canceled,
+	) {
+		t.Fatalf("canceled ResolveGoogleBinding error = %v, want context.Canceled", err)
+	}
+
+	writeStorage := &bindingMemoryStorage{writeErr: errors.New("write details")}
+	writeStore, err := NewNakamaGoogleBindingStore(writeStorage)
+	if err != nil {
+		t.Fatalf("NewNakamaGoogleBindingStore returned an error: %v", err)
+	}
+	if _, err := writeStore.BindGoogleIdentity(
+		ctx,
+		key,
+		testBoundUserID,
+	); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled BindGoogleIdentity error = %v, want context.Canceled", err)
+	}
+
+	accountStorage := &bindingMemoryStorage{accountErr: errors.New("account details")}
+	accountStore, err := NewNakamaGoogleBindingStore(accountStorage)
+	if err != nil {
+		t.Fatalf("NewNakamaGoogleBindingStore returned an error: %v", err)
+	}
+	if err := accountStore.VerifyGoogleBoundAccount(
+		ctx,
+		testBoundUserID,
+	); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled VerifyGoogleBoundAccount error = %v, want context.Canceled", err)
+	}
+}
+
 func TestNakamaGoogleBindingStoreRejectsMalformedDurableRecord(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -171,9 +317,51 @@ func TestNakamaGoogleBindingStoreRejectsMalformedDurableRecord(t *testing.T) {
 			},
 		},
 		{
+			name: "client readable",
+			configure: func(object *api.StorageObject) {
+				object.PermissionRead = 1
+			},
+		},
+		{
 			name: "system owner as player",
 			configure: func(object *api.StorageObject) {
 				object.Value = `{"schema":1,"user_id":"00000000-0000-0000-0000-000000000000"}`
+			},
+		},
+		{
+			name: "duplicate user ID",
+			configure: func(object *api.StorageObject) {
+				object.Value = `{"schema":1,"user_id":"11111111-1111-4111-8111-111111111111","user_id":"22222222-2222-4222-8222-222222222222"}`
+			},
+		},
+		{
+			name: "duplicate schema",
+			configure: func(object *api.StorageObject) {
+				object.Value = `{"schema":1,"schema":1,"user_id":"11111111-1111-4111-8111-111111111111"}`
+			},
+		},
+		{
+			name: "unknown JSON field",
+			configure: func(object *api.StorageObject) {
+				object.Value = `{"schema":1,"user_id":"11111111-1111-4111-8111-111111111111","future":true}`
+			},
+		},
+		{
+			name: "missing schema",
+			configure: func(object *api.StorageObject) {
+				object.Value = `{"user_id":"11111111-1111-4111-8111-111111111111"}`
+			},
+		},
+		{
+			name: "missing user ID",
+			configure: func(object *api.StorageObject) {
+				object.Value = `{"schema":1}`
+			},
+		},
+		{
+			name: "trailing JSON",
+			configure: func(object *api.StorageObject) {
+				object.Value = `{"schema":1,"user_id":"11111111-1111-4111-8111-111111111111"} {}`
 			},
 		},
 	}
@@ -198,5 +386,61 @@ func TestNakamaGoogleBindingStoreRejectsMalformedDurableRecord(t *testing.T) {
 				)
 			}
 		})
+	}
+}
+
+func TestEveryShippedGoogleBindingSchemaStaysReadable(t *testing.T) {
+	ledgerBytes, err := os.ReadFile(filepath.Join(
+		"testdata",
+		"shipped_google_binding_versions.txt",
+	))
+	if err != nil {
+		t.Fatalf("read Google binding schema ledger: %v", err)
+	}
+	versions := strings.Fields(string(ledgerBytes))
+	if len(versions) == 0 {
+		t.Fatal("Google binding schema ledger is empty")
+	}
+	for index, entry := range versions {
+		version, err := strconv.Atoi(entry)
+		if err != nil {
+			t.Fatalf("Google binding schema ledger entry %q: %v", entry, err)
+		}
+		if version != index+1 {
+			t.Fatalf(
+				"Google binding schema ledger[%d] = %d, want %d",
+				index,
+				version,
+				index+1,
+			)
+		}
+		golden, err := os.ReadFile(filepath.Join(
+			"testdata",
+			fmt.Sprintf("golden_google_binding_v%d.json", version),
+		))
+		if err != nil {
+			t.Fatalf("read Google binding schema %d golden: %v", version, err)
+		}
+		document, err := decodeGoogleBindingDocument(
+			strings.TrimSpace(string(golden)),
+		)
+		if err != nil {
+			t.Fatalf("decode Google binding schema %d golden: %v", version, err)
+		}
+		if document.Schema != version {
+			t.Fatalf(
+				"Google binding schema %d golden declares %d",
+				version,
+				document.Schema,
+			)
+		}
+	}
+	head, err := strconv.Atoi(versions[len(versions)-1])
+	if err != nil || head != googleBindingSchema {
+		t.Fatalf(
+			"Google binding schema ledger head = %q, writer = %d",
+			versions[len(versions)-1],
+			googleBindingSchema,
+		)
 	}
 }

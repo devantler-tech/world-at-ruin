@@ -44,6 +44,7 @@ type googleIdentityVerifier interface {
 type GoogleBindingStore interface {
 	ResolveGoogleBinding(context.Context, string) (userID string, found bool, err error)
 	BindGoogleIdentity(context.Context, string, string) (boundUserID string, err error)
+	VerifyGoogleBoundAccount(context.Context, string) error
 }
 
 // ProvisionerConfig controls opt-in account provisioning paths.
@@ -156,6 +157,11 @@ func sanitizedGoogleBindingError(operation string, err error) error {
 			codes.Unavailable,
 			"nakama auth: Google identity binding "+operation+" unavailable",
 		)
+	case status.Code(err) == codes.PermissionDenied:
+		return status.Error(
+			codes.PermissionDenied,
+			"nakama auth: Google-bound account is disabled",
+		)
 	default:
 		return status.Error(
 			codes.Internal,
@@ -228,6 +234,9 @@ func (p *Provisioner) ProvisionGoogle(
 				"nakama auth: Google identity binding has no user ID",
 			)
 		}
+		if err := p.bindings.VerifyGoogleBoundAccount(bindingCtx, boundUserID); err != nil {
+			return "", sanitizedGoogleBindingError("account check", err)
+		}
 		return boundUserID, nil
 	}
 
@@ -280,6 +289,9 @@ func (p *Provisioner) ProvisionGoogle(
 			codes.Internal,
 			"nakama auth: Google identity binding write returned no user ID",
 		)
+	}
+	if err := p.bindings.VerifyGoogleBoundAccount(bindingCtx, boundUserID); err != nil {
+		return "", sanitizedGoogleBindingError("account check", err)
 	}
 	return boundUserID, nil
 }

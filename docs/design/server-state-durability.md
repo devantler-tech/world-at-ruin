@@ -11,9 +11,10 @@ concurrent, and outlives any single process, so its guarantees are about *orderi
 
 ## Scope
 
-Server-held state is any record the server writes and treats as authoritative. Today that is the
-handoff leases in `server/nakamalease`. Phase 4 (#11) adds player-owned records — characters,
-inventory, progression — and every one of them answers the questions below.
+Server-held state is any record the server writes and treats as authoritative. Today that includes
+the handoff leases in `server/nakamalease`, Google-to-player identity bindings in
+`server/nakamaauth`, and player-mutation audit records in `server/playerstate`. Phase 4 (#11) adds
+characters, inventory and progression, and every one of them answers the questions below.
 
 A record is in scope the moment the server writes it. A value the server merely reads from a client,
 or recomputes each tick, is not server-held state and carries none of these obligations.
@@ -26,7 +27,7 @@ unaffordable or dishonest.
 | Class | Lifetime | What loss costs a player | Present example |
 |---|---|---|---|
 | **Session-scoped** | one allocation or connection | a reconnect | handoff leases (`nakamalease`) |
-| **Player-owned** | forever | **unrecoverable** — no wipe exists | characters (#473), inventory (#474) |
+| **Player-owned** | forever | **unrecoverable** — no wipe exists | Google identity bindings (`nakamaauth`), characters (#473), inventory (#474) |
 | **World-owned** | forever, shared | affects every player at once | none yet |
 
 The classes rank strictly: a player-owned record may never be given a session-scoped guarantee
@@ -439,6 +440,11 @@ needs to write a guard for.
 
 | Promise | Runtime owner | Permanent guard |
 |---|---|---|
+| Google identity bindings are unreadable and unwritable by clients | `nakamaauth.NakamaGoogleBindingStore` | `TestNakamaGoogleBindingStoreCreatesPrivateImmutableBinding`, `TestNakamaGoogleBindingStoreRejectsMalformedDurableRecord` |
+| Google identity binding creation is conditional and adopts one winner | `nakamaauth.NakamaGoogleBindingStore` | `TestNakamaGoogleBindingStoreAdoptsConcurrentWinner` |
+| Google identity bindings reject unknown, duplicate, missing and trailing fields | `nakamaauth` binding decode | `TestNakamaGoogleBindingStoreRejectsMalformedDurableRecord` |
+| Every shipped Google identity binding schema stays readable permanently | `nakamaauth` binding decode | `TestEveryShippedGoogleBindingSchemaStaysReadable` plus `server/nakamaauth/testdata/shipped_google_binding_versions.txt` and its matching golden |
+| A resolved Google binding still names an enabled Nakama account | `nakamaauth.NakamaGoogleBindingStore` | `TestNakamaGoogleBindingStoreChecksAuthoritativeAccountStatus`, `TestProvisionGoogleRejectsDisabledBoundAccount` |
 | Server-authoritative state is unreadable and unwritable by clients | `nakamalease.Store` | `TestCreatePersistsPrivateVersionedLeaseByHashedKey`, `TestCreateIgnoresAClientOwnedObjectAtTheDerivedKey`, `TestLoadRejectsMalformedOrPublicStoredObjects` |
 | Player mutation records and audit evidence are unreadable and unwritable by clients | `playerstate.Store` | `TestApplyCommitsPlayerRecordAndAuditInOneAtomicWrite` |
 | No blind **create** — create is conditional | `nakamalease.Store` | `TestConcurrentIdenticalCreateReconcilesTheDurableWinner` |
