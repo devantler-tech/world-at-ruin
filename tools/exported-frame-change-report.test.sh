@@ -129,6 +129,15 @@ fi
 if ! grep -q 'run_timed 420 env' "$REPORTER"; then
 	t_fail "the base world capture timeout no longer clears the measured hosted 296s runtime"
 fi
+if ! grep -Fq "capture_resolution=\"\${EXPORTED_CAPTURE_RESOLUTION:-1024x576}\"" "$REPORTER"; then
+	t_fail "the base exporter does not default to the hosted-safe 16:9 capture resolution"
+fi
+base_resolution_uses="$(
+	grep -Fc -- "\"\$app_path\" --resolution \"\$capture_resolution\"" "$REPORTER" || true
+)"
+if [ "$base_resolution_uses" -ne 2 ]; then
+	t_fail "the base world and first-run captures do not share one pinned resolution"
+fi
 
 # Missing CAPTURE PASS is a real base-render failure. The production script
 # must return non-zero so the workflow can annotate it through an explicitly
@@ -190,7 +199,18 @@ if ! printf '%s\n' "$exported_block" | grep -q 'fetch-depth: 0'; then
 	t_fail "frame-capture-exported cannot reach the PR base because its checkout is shallow"
 fi
 if ! printf '%s\n' "$exported_block" |
-		grep -q 'ADDED CI COST: base Godot and templates install'; then
+	grep -Fq 'EXPORTED_CAPTURE_RESOLUTION: 1024x576'; then
+	t_fail "frame-capture-exported does not pin a hosted-safe 16:9 resolution"
+fi
+head_resolution_uses="$(
+	printf '%s\n' "$exported_block" |
+		grep -Fc -- "--resolution \"\${EXPORTED_CAPTURE_RESOLUTION}\"" || true
+)"
+if [ "$head_resolution_uses" -ne 3 ]; then
+	t_fail "the exported world, preview, and first-run captures do not share one pinned resolution"
+fi
+if ! printf '%s\n' "$exported_block" |
+	grep -q 'ADDED CI COST: base Godot and templates install'; then
 	t_fail "the added Godot and export-template installation cost is not recorded"
 fi
 if ! printf '%s\n' "$export_gate" |

@@ -21,11 +21,12 @@ usage() {
 
 render_base() {
 	local base_sha="$1" work_dir="$2"
-	local started base_dir build_dir base_shots app_path elapsed
+	local started base_dir build_dir base_shots app_path elapsed capture_resolution
 	started="$(date +%s)"
 	base_dir="$work_dir/base"
 	build_dir="$work_dir/base-build"
 	base_shots="$work_dir/exported-shots-base"
+	capture_resolution="${EXPORTED_CAPTURE_RESOLUTION:-1024x576}"
 
 	if ! git cat-file -e "${base_sha}^{commit}" 2>/dev/null; then
 		printf '::warning::PR base %s is unavailable; exported frames will carry no base comparison\n' "$base_sha" >&2
@@ -77,7 +78,8 @@ render_base() {
 		WAR_SAVE_PATH="$work_dir/probe_save_base.json" \
 		WAR_VAULT_PATH="$work_dir/probe_save_base_vault.json" \
 		WAR_BOOT_RECOVERY_PATH="$work_dir/probe_save_base_recovery.json" \
-		"$app_path" 2>&1 | tee "$work_dir/base-exported-capture.log"
+		"$app_path" --resolution "$capture_resolution" 2>&1 |
+		tee "$work_dir/base-exported-capture.log"
 	if ! grep -q 'CAPTURE PASS' "$work_dir/base-exported-capture.log"; then
 		printf '::warning::the PR base export did not report CAPTURE PASS\n' >&2
 		return 1
@@ -104,7 +106,8 @@ render_base() {
 		WAR_SAVE_PATH="$work_dir/no_such_save_base.json" \
 		WAR_VAULT_PATH="$work_dir/no_such_save_base_vault.json" \
 		WAR_BOOT_RECOVERY_PATH="$work_dir/no_such_save_base_recovery.json" \
-		"$app_path" 2>&1 | tee "$work_dir/base-exported-first-run.log"
+		"$app_path" --resolution "$capture_resolution" 2>&1 |
+		tee "$work_dir/base-exported-first-run.log"
 	if ! grep -qE '[0-9]+ first-run vantages? written' \
 		"$work_dir/base-exported-first-run.log"; then
 		printf '::warning::the PR base export did not render its first-run UI\n' >&2

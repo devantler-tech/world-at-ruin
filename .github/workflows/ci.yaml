@@ -2450,6 +2450,12 @@ jobs:
     if: needs.detect-visual-changes.outputs.export_affecting == 'true'
     runs-on: macos-latest
     timeout-minutes: 30
+    env:
+      # The hosted display cannot realise the shipped 1600x900 window and has
+      # clamped identical exports to both 1024x642 and 1024x645. Pin a smaller
+      # 16:9 viewport on BOTH sides so frame_diff measures product pixels
+      # instead of refusing a runner-window mismatch.
+      EXPORTED_CAPTURE_RESOLUTION: 1024x576
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -2481,7 +2487,8 @@ jobs:
           WAR_SAVE_PATH="${RUNNER_TEMP}/probe_save.json" \
           WAR_VAULT_PATH="${RUNNER_TEMP}/probe_save_vault.json" \
           WAR_BOOT_RECOVERY_PATH="${RUNNER_TEMP}/probe_save_recovery.json" \
-            "build/app/World at Ruin.app/Contents/MacOS/World at Ruin" 2>&1 | tee exported-capture.log
+            "build/app/World at Ruin.app/Contents/MacOS/World at Ruin" \
+            --resolution "${EXPORTED_CAPTURE_RESOLUTION}" 2>&1 | tee exported-capture.log
           if ! grep -q "CAPTURE PASS" exported-capture.log; then
             echo "::error::exported-client capture did not report PASS — see log"; tail -40 exported-capture.log; exit 1
           fi
@@ -2534,7 +2541,8 @@ jobs:
           WAR_SAVE_PATH="${RUNNER_TEMP}/exported_preview_save.json" \
           WAR_VAULT_PATH="${RUNNER_TEMP}/exported_preview_save_vault.json" \
           WAR_BOOT_RECOVERY_PATH="${RUNNER_TEMP}/exported_preview_save_recovery.json" \
-            "build/app/World at Ruin.app/Contents/MacOS/World at Ruin" 2>&1 | tee exported-previews.log
+            "build/app/World at Ruin.app/Contents/MacOS/World at Ruin" \
+            --resolution "${EXPORTED_CAPTURE_RESOLUTION}" 2>&1 | tee exported-previews.log
           if ! grep -q "CAPTURE PASS" exported-previews.log; then
             echo "::error::exported opt-in preview capture did not report PASS"
             tail -40 exported-previews.log
@@ -2574,7 +2582,8 @@ jobs:
           WAR_SAVE_PATH="${RUNNER_TEMP}/no_such_save.json" \
           WAR_VAULT_PATH="${RUNNER_TEMP}/no_such_save_vault.json" \
           WAR_BOOT_RECOVERY_PATH="${RUNNER_TEMP}/no_such_save_recovery.json" \
-            "build/app/World at Ruin.app/Contents/MacOS/World at Ruin" 2>&1 | tee exported-first-run.log
+            "build/app/World at Ruin.app/Contents/MacOS/World at Ruin" \
+            --resolution "${EXPORTED_CAPTURE_RESOLUTION}" 2>&1 | tee exported-first-run.log
           # Require the FIRST-RUN marker, not a bare PASS — the world scenario
           # prints "CAPTURE PASS" too, and its PNGs already sit in the same
           # directory, so a silent fall-back to the default scenario would
