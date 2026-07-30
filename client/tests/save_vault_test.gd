@@ -3,7 +3,7 @@ extends Node
 ## sibling of character_persistence_test. Where save_vault_guard_test pins the
 ## forward-only LAW against shipped fixtures, this pins the API's behaviour:
 ##  1. The path seam (WAR_VAULT_PATH) resolves and is inert when unset.
-##  2. An empty vault stays v1 even after the v3 writer activates: unrelated
+##  2. An empty vault stays v1 even after the v4 writer activates: unrelated
 ##     state is never rewritten merely to look current, and discovery-only
 ##     state remains v2.
 ##  3. attune() is additive, idempotent, and does not mutate its input.
@@ -38,15 +38,15 @@ func _ready() -> void:
 		return
 	var vault_api := load("res://scripts/save_vault.gd") as Script
 
-	# 2. The writer remains on v3 while the reader expands through v4. Empty
-	# state remains v1: a schema version describes fields actually present; it
-	# is not a "latest client" marker.
+	# 2. The retained reader now has its v4 writer contract. Empty state remains
+	# v1: a schema version describes fields actually present; it is not a
+	# "latest client" marker.
 	var empty := SaveVault.empty()
 	if SaveVault.validate(empty) != "":
 		_fail("the empty vault does not validate: %s" % SaveVault.validate(empty))
 		return
-	if SaveVault.VAULT_VERSION != 3:
-		_fail("the reward-claim writer is still capped at vault v%d; expected the retained v3 contract" % SaveVault.VAULT_VERSION)
+	if SaveVault.VAULT_VERSION != 4:
+		_fail("the quest-progress writer is capped at vault v%d; expected the retained v4 contract" % SaveVault.VAULT_VERSION)
 		return
 	if int(empty["version"]) != 1:
 		_fail("an empty vault was churned to v%d even though it carries no v2 discovery state" % int(empty["version"]))
@@ -193,6 +193,45 @@ func _ready() -> void:
 	if int(quest_expanded_reward_write.get("version", -1)) != 4 \
 			or quest_expanded_reward_write.get("quests", {}) != quest_expanded["quests"]:
 		_fail("an ordinary reward write downgraded or changed an existing v4 vault")
+		return
+	if not vault_api.has_method("record_quests"):
+		_fail("the retained quest reader has no production record_quests() writer")
+		return
+	var incoming_quests := {
+		"future_quest": {"future_objective": 7, "new_objective": 3},
+		"reach_shrine": {"arrive": 3},
+		"new_quest": {"step": 1},
+	}
+	var incoming_copy := incoming_quests.duplicate(true)
+	var quest_written: Dictionary = vault_api.call(
+		"record_quests", quest_expanded, incoming_quests)
+	var expected_quests := {
+		"future_quest": {"future_objective": 11, "new_objective": 3},
+		"reach_shrine": {"arrive": 3, "return": 1},
+		"new_quest": {"step": 1},
+	}
+	if int(quest_written.get("version", -1)) != 4 \
+			or not _quest_progress_equal(quest_written.get("quests", {}), expected_quests):
+		_fail("the quest writer did not merge every objective monotonically: %s"
+			% str(quest_written))
+		return
+	if incoming_quests != incoming_copy:
+		_fail("record_quests() mutated its caller's snapshot")
+		return
+	if String(quest_written.get("comment", "")) != "future quest progress writer" \
+			or quest_written.get("discoveries", []) != quest_expanded["discoveries"] \
+			or quest_written.get("reward_claims", []) != quest_expanded["reward_claims"]:
+		_fail("the quest writer dropped an older or unknown accepted field")
+		return
+	var no_quest_progress: Dictionary = vault_api.call(
+		"record_quests", {"version": 1, "attuned": []}, {})
+	if int(no_quest_progress.get("version", -1)) != 1 or no_quest_progress.has("quests"):
+		_fail("recording no quest progress churned a v1 vault to v4")
+		return
+	if not (vault_api.call(
+		"record_quests", quest_expanded, {"hunt": {"step": -1}})
+		as Dictionary).is_empty():
+		_fail("the quest writer accepted malformed progress")
 		return
 
 	# The expansion must not leak into old state: loading and attuning a v1
@@ -385,6 +424,28 @@ func _ready() -> void:
 	if with_claims.get("discoveries", []) != ["starter_cave", "wardens_shrine"]:
 		_fail("the production reward write lost earlier discoveries")
 		return
+	if not vault_api.has_method("persist_quests"):
+		_fail("the quest-progress writer has no production persistence path")
+		return
+	if not bool(vault_api.call("persist_quests", {
+		"future_quest": {"future_objective": 11},
+		"restored_hunt": {"hounds": 3},
+	})):
+		_fail("persist_quests() failed")
+		return
+	var with_quests = SaveVault.load_saved()
+	if with_quests is not Dictionary \
+			or int(with_quests.get("version", -1)) != 4 \
+			or not _quest_progress_equal(with_quests.get("quests", {}), {
+				"future_quest": {"future_objective": 11},
+				"restored_hunt": {"hounds": 3},
+			}):
+		_fail("the production quest write did not survive its disk round-trip")
+		return
+	if with_quests.get("discoveries", []) != ["starter_cave", "wardens_shrine"] \
+			or with_quests.get("reward_claims", []) != ["wardens_shrine"]:
+		_fail("the production quest write lost earlier progression sections")
+		return
 
 	# persist_attunement() must also work from nothing — a player's very first
 	# attunement, with no vault on disk yet.
@@ -543,7 +604,7 @@ func _ready() -> void:
 
 	_cleanup_probe()
 	OS.set_environment(SaveVault.VAULT_PATH_ENV, "")
-	print("TEST PASS — vault seam, attunement, discovery/reward writers, quest reader, round-trip and refusals hold")
+	print("TEST PASS — vault seam, attunement, discovery/reward/quest writers, round-trip and refusals hold")
 	get_tree().quit(0)
 
 
