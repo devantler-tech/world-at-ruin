@@ -414,7 +414,8 @@ static func document_identity(path: String) -> String:
 ## instead of trying to detect it: a writer that never took the lock cannot name
 ## the file we are committing from.
 ##
-## Process id plus monotonic ticks and a process-local attempt sequence.
+## Process id plus a process-start nonce, monotonic ticks, and a process-local
+## attempt sequence.
 static func _write_tmp_path(path: String) -> String:
 	return PrivateStaging.write_path(path)
 

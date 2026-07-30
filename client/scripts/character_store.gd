@@ -260,9 +260,9 @@ static func write_tmp_min_age_seconds() -> int:
 ##
 ## A per-attempt name removes the sharing instead of trying to detect it: a
 ## writer that never cooperated cannot name the file we are committing from. The
-## process id separates processes, the monotonic tick separates recycled process
-## ids from abandoned files, and a process-local sequence separates attempts
-## inside one tick.
+## process id and a process-start nonce separate process lifetimes, while the
+## monotonic tick and a process-local sequence separate attempts inside one
+## lifetime.
 static func _write_tmp_path(path: String) -> String:
 	return PrivateStaging.write_path(path)
 

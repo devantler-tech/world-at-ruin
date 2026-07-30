@@ -433,8 +433,9 @@ static func document_identity(path: String) -> String:
 ## detect it — a writer that never cooperated cannot name the file we commit
 ## from.
 ##
-## Process id plus monotonic ticks and a process-local attempt sequence, matching
-## [method SaveVault._write_tmp_path] and [method CharacterStore._write_tmp_path].
+## Process id plus a process-start nonce, monotonic ticks, and a process-local
+## attempt sequence, matching [method SaveVault._write_tmp_path] and
+## [method CharacterStore._write_tmp_path].
 static func _write_tmp_path(path: String) -> String:
 	return PrivateStaging.write_path(path)
 

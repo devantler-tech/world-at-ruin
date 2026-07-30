@@ -41,18 +41,28 @@ func _check_name_shape() -> void:
 		_fail("two staging attempts share one name (%s)" % first)
 	if not first.begins_with(_probe + ".tmp-"):
 		_fail("staging name does not carry the shared sweepable prefix (%s)" % first)
-	if not first.contains(str(OS.get_process_id())):
-		_fail("staging name does not carry this process id (%s)" % first)
 	# A clock is not a uniqueness source: two attempts can begin inside one
-	# microsecond. Require the process-local attempt sequence as the third stamp
-	# component so the old pid-plus-tick shape fails deterministically.
+	# microsecond, and a later process can reuse a pid after the monotonic clock
+	# restarts. Require pid, process-start nonce, tick, and attempt sequence so
+	# either incomplete identity shape fails deterministically.
 	var stamp_parts := first.trim_prefix(_probe + ".tmp-").split("-")
-	if stamp_parts.size() != 3:
-		_fail("staging name has no process-local attempt sequence (%s)" % first)
-	else:
-		var second_parts := second.trim_prefix(_probe + ".tmp-").split("-")
-		if second_parts.size() != 3 or second_parts[2] == stamp_parts[2]:
-			_fail("process-local attempt sequence did not advance (%s, %s)" % [first, second])
+	var second_parts := second.trim_prefix(_probe + ".tmp-").split("-")
+	if stamp_parts.size() != 4 or second_parts.size() != 4:
+		_fail("staging name has no complete process-lifetime identity (%s, %s)" % [first, second])
+		return
+	if stamp_parts[0] != str(OS.get_process_id()) or second_parts[0] != stamp_parts[0]:
+		_fail("staging name does not carry this process id (%s, %s)" % [first, second])
+	if stamp_parts[1].length() != 16 or second_parts[1] != stamp_parts[1]:
+		_fail("staging process nonce is absent or unstable (%s, %s)" % [first, second])
+	if not stamp_parts[2].is_valid_int() or not second_parts[2].is_valid_int():
+		_fail("staging monotonic tick is malformed (%s, %s)" % [first, second])
+	if not stamp_parts[3].is_valid_int() or not second_parts[3].is_valid_int():
+		_fail("process-local attempt sequence is malformed (%s, %s)" % [first, second])
+		return
+	var first_sequence := stamp_parts[3].to_int()
+	var second_sequence := second_parts[3].to_int()
+	if second_sequence <= first_sequence:
+		_fail("process-local attempt sequence did not advance (%s, %s)" % [first, second])
 
 
 func _check_predicate_controls_reclamation() -> void:
