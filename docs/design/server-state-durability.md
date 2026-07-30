@@ -443,7 +443,8 @@ needs to write a guard for.
 | Google identity bindings are unreadable and unwritable by clients | `nakamaauth.NakamaGoogleBindingStore` | `TestNakamaGoogleBindingStoreCreatesPrivateImmutableBinding`, `TestNakamaGoogleBindingStoreRejectsMalformedDurableRecord` |
 | Google identity binding creation is conditional and adopts one winner | `nakamaauth.NakamaGoogleBindingStore` | `TestNakamaGoogleBindingStoreAdoptsConcurrentWinner` |
 | Google identity bindings reject unknown, duplicate, missing and trailing fields | `nakamaauth` binding decode | `TestNakamaGoogleBindingStoreRejectsMalformedDurableRecord` |
-| Every shipped Google identity binding schema stays readable permanently | `nakamaauth` binding decode | `TestEveryShippedGoogleBindingSchemaStaysReadable` plus `server/nakamaauth/testdata/shipped_google_binding_versions.txt` and its matching golden |
+| Every shipped Google identity binding schema stays readable permanently | `nakamaauth` binding decode | `TestEveryShippedGoogleBindingSchemaStaysReadable` plus the base-anchored ledger and goldens enforced by `tools/google-binding-durability-guard.sh` |
+| Google credential and binding address derivations stay stable permanently | `nakamaauth` HMAC derivation | `TestGoogleNakamaCredentialsAreSeparatedKeyedAndStable` exact output vectors |
 | A resolved Google binding still names an enabled Nakama account | `nakamaauth.NakamaGoogleBindingStore` | `TestNakamaGoogleBindingStoreChecksAuthoritativeAccountStatus`, `TestProvisionGoogleRejectsDisabledBoundAccount` |
 | Server-authoritative state is unreadable and unwritable by clients | `nakamalease.Store` | `TestCreatePersistsPrivateVersionedLeaseByHashedKey`, `TestCreateIgnoresAClientOwnedObjectAtTheDerivedKey`, `TestLoadRejectsMalformedOrPublicStoredObjects` |
 | Player mutation records and audit evidence are unreadable and unwritable by clients | `playerstate.Store` | `TestApplyCommitsPlayerRecordAndAuditInOneAtomicWrite` |

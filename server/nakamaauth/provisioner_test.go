@@ -727,11 +727,28 @@ func TestGoogleNakamaCredentialsAreSeparatedKeyedAndStable(t *testing.T) {
 	repeatedEmail := googleNakamaEmail(key, testGoogleSubject)
 	password := googleNakamaPassword(key, testGoogleSubject)
 	repeatedPassword := googleNakamaPassword(key, testGoogleSubject)
+	bindingKey := googleBindingKey(key, testGoogleSubject)
 	otherKeyEmail := googleNakamaEmail(
 		[]byte("different-identity-key-with-at-least-32-bytes"),
 		testGoogleSubject,
 	)
 
+	const wantEmail = "7585ff3e544449972330e735f4ab8f3ad88bbbe2ef96766f892ed080f72a3a38@identity.world-at-ruin.invalid"
+	const wantPassword = "YuUmmQb-INiKfauMUNr6TvfjFk0LADh6NUtE4ktpzRI" // #nosec G101 -- fixed public test vector
+	const wantBindingKey = "bf1dc2ae94914dc60bf88526e2a4077481fb7d1d7bde6cad17af4fd8f8428bda"
+	if firstEmail != wantEmail {
+		t.Fatalf("googleNakamaEmail = %q, want permanent identity address %q", firstEmail, wantEmail)
+	}
+	if password != wantPassword {
+		t.Fatalf("googleNakamaPassword = %q, want permanent identity password", password)
+	}
+	if bindingKey != wantBindingKey {
+		t.Fatalf(
+			"googleBindingKey = %q, want permanent binding address %q",
+			bindingKey,
+			wantBindingKey,
+		)
+	}
 	if firstEmail != repeatedEmail {
 		t.Fatalf("googleNakamaEmail repeated value changed: %q != %q", firstEmail, repeatedEmail)
 	}

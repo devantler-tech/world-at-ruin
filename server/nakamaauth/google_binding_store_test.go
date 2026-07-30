@@ -341,6 +341,18 @@ func TestNakamaGoogleBindingStoreRejectsMalformedDurableRecord(t *testing.T) {
 			},
 		},
 		{
+			name: "case-aliased schema",
+			configure: func(object *api.StorageObject) {
+				object.Value = `{"Schema":1,"user_id":"11111111-1111-4111-8111-111111111111"}`
+			},
+		},
+		{
+			name: "case-aliased duplicate user ID",
+			configure: func(object *api.StorageObject) {
+				object.Value = `{"schema":1,"user_id":"11111111-1111-4111-8111-111111111111","USER_ID":"22222222-2222-4222-8222-222222222222"}`
+			},
+		},
+		{
 			name: "unknown JSON field",
 			configure: func(object *api.StorageObject) {
 				object.Value = `{"schema":1,"user_id":"11111111-1111-4111-8111-111111111111","future":true}`

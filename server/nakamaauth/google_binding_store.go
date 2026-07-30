@@ -210,6 +210,14 @@ func rejectDuplicateGoogleBindingMembers(value string) error {
 		if err != nil || !ok {
 			return ErrGoogleBindingStorage
 		}
+		switch key {
+		case "schema", "user_id":
+		default:
+			// encoding/json matches struct fields case-insensitively. Refuse
+			// aliases here so a differently-cased member cannot bypass strict
+			// schema names or overwrite a canonical member.
+			return ErrGoogleBindingStorage
+		}
 		if _, duplicate := seen[key]; duplicate {
 			return ErrGoogleBindingStorage
 		}
