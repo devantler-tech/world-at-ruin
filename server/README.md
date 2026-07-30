@@ -252,6 +252,16 @@ zone/dungeon server:
   credentials never enter returned errors. Hermetic tests drive the real
   generated Nakama gRPC path through the service and then verify its token
   through the real zone verifier.
+- **`admissionref/`** — the sealed-admission material boundary. A
+  rotation-capable RSA keyring indexes retained unwrap keys by the canonical
+  SubjectPublicKeyInfo fingerprint. It opens only a canonical version-1
+  envelope whose OAEP label binds the namespace, GameServer name, UID and key,
+  requires exactly 32 plaintext bytes, and returns isolated secret copies.
+  The same boundary derives and verifies the durable DNS-safe reference that
+  pins the key, UID digest, ciphertext digest and TLS port. Recovery refuses a
+  changed identity, envelope, key or port through one sanitized error. It is
+  pure and remains uncomposed until the concrete GameServer resource adapter
+  owns the Agones and Kubernetes calls.
 - **`handoffalloc/`** — the durable **handoff allocation coordinator**: it
   implements `handoff.Allocator` over the real `nakamalease` store and an
   injected GameServer-resource boundary. It persists a staging intent before
@@ -266,11 +276,12 @@ zone/dungeon server:
   including a crash that left only an attempt ID. Claimed and stale attempts
   remain untouched, external errors are sanitized, and raw admission-secret
   bytes never enter the lease. The coordinator is inert until a concrete
-  `GameServerResources` adapter will provision Agones GameServers and
-  resolve their zone-generated sealed admission envelopes according to
-  [ADR 0002](../docs/adr/0002-seal-zone-admission-secrets-before-readiness.md),
-  its expiry loop will be supervised, and a Nakama RPC will register the
-  resulting handoff service.
+  `GameServerResources` adapter provisions Agones GameServers, composes the
+  `admissionref` boundary, and resolves their zone-generated envelopes
+  according to [ADR
+  0002](../docs/adr/0002-seal-zone-admission-secrets-before-readiness.md), its
+  expiry loop will be supervised, and a Nakama RPC will register the resulting
+  handoff service.
 - **`cmd/zone/`** — a runnable skeleton server. It boots the demo zone and either
   runs a fixed number of deterministic ticks (printing the state hash) or drives
   the loop from the wall clock. With `-replicate` it also runs the full
