@@ -156,6 +156,8 @@ expect_row 'an agreeing declaration reads PRE-RELEASE' "$out" \
 	"^0\\.1\\.5 +${anchor} +0\\.2\\.0 +PRE-RELEASE\$"
 expect_output_matching 'a PRE-RELEASE entry is not counted as excluded' "$out" \
 	'0 NEVER-CUT entries excluded'
+expect_output_matching 'a PRE-RELEASE entry is not counted as wrong' "$out" \
+	'0 of 1 entries name a release that does not contain them.'
 
 # RED CONTROL: a declaration is evidence, not authority. The entry says 0.3.0,
 # a real release cut later, but its anchor first reached players in v0.2.0. It
@@ -174,6 +176,25 @@ out="$(run_sweep "$d")"
 expect_row 'a disagreeing declaration stays NEVER-CUT' "$out" \
 	"^0\\.1\\.5 +${anchor} +0\\.2\\.0 +NEVER-CUT\$"
 expect_gate_fail 'a pre-release declaration disagreeing with containment' "$d" \
+	'has one release that contains it and nothing else claims'
+
+# RED CONTROL: release succession and commit containment are separate claims.
+# v0.2.0 is already cut when the entry is introduced, so it is the first release
+# after the authored 0.1.5 version; the entry's anchor does not actually reach
+# players until v0.3.0. A declaration of 0.2.0 therefore satisfies succession
+# alone but not containment and must remain NEVER-CUT.
+d="$(new_repo)"
+printf 'x\n' >"$d/base.txt"
+step "$d" base v0.1.0
+printf 'second release\n' >"$d/second.txt"
+step "$d" 'the declared release exists before the entry' v0.2.0
+declared_entry 0.1.5 0.2.0 >"$d/client/devlog/0.1.5.json"
+step "$d" 'the entry first reaches players in a later release' v0.3.0
+anchor="$(git -C "$d" rev-parse --short HEAD)"
+out="$(run_sweep "$d")"
+expect_row 'a succession-only declaration stays NEVER-CUT' "$out" \
+	"^0\\.1\\.5 +${anchor} +0\\.3\\.0 +NEVER-CUT\$"
+expect_gate_fail 'a declaration matching succession but not containment' "$d" \
 	'has one release that contains it and nothing else claims'
 
 # RED: the drift this gate exists for. The entry names v0.1.0, a release that
