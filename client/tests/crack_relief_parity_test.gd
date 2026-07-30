@@ -96,16 +96,31 @@ const CAVITY_DEFAULT_PATTERN := \
 	"uniform\\s+float\\s+seam_cavity\\s*:[^=]*=\\s*([0-9.]+)"
 const VAR_CUTOFF_PATTERN := \
 	"seam_slope_var\\s*\\*=\\s*plate_resolved\\s*\\*\\s*plate_resolved"
-## The TWO-CELL blend on the variance. The relief's mean is gated by the owning
-## cell's binary slab mask, and that is correct for the mean — past the distance
-## a contact resolves the mean has already faded, so the hard step multiplies a
-## term that is not there. The variance is largest exactly there, so the same
-## step lands on its peak: without this blend the cavity flips between full and
-## zero as the pixel centre crosses a slab-to-bare boundary whose seam the
+## The THREE-WAY coverage split on the variance. The relief's mean is gated by
+## the owning cell's binary slab mask, and that is correct for the mean — past
+## the distance a contact resolves the mean has already faded, so the hard step
+## multiplies a term that is not there. The variance is largest exactly there, so
+## the same step lands on its peak: without a blend the cavity flips between full
+## and zero as the pixel centre crosses a slab-to-bare boundary whose seam the
 ## footprint still straddles, which is a zero-width step reintroduced into the
-## quantity this whole change exists to filter. Both files must blend, or the
-## contact band steps where the ground does not.
-const CAVITY_TWO_CELL_PATTERN := \
+## quantity this whole change exists to filter.
+##
+## The blend must be the SAME three-candidate coverage split every other per-cell
+## quantity on this surface uses (`plate_w`, from `terrain_plate_blend_weights`),
+## not a pairwise `mix` over `plate_edge_w`. Away from a junction the two are
+## arithmetically identical — `plate_w` reduces to `(1 - plate_edge_w,
+## plate_edge_w, 0)` there — so the difference is confined to a triple junction,
+## which is precisely where the second-nearest cell changes IDENTITY while its
+## weight is still near a half (#499). A pairwise cavity inherits that swap: a
+## zero-width step in the very quantity the seam filter exists to remove.
+const CAVITY_THREE_WAY_PATTERN := \
+	"amp\\s*\\*\\s*amp\\s*\\*\\s*plate_w\\.x\\s*\\+\\s*amp_nb\\s*\\*\\s*amp_nb" \
+	+ "\\s*\\*\\s*plate_w\\.y\\s*\\+\\s*amp_nb3\\s*\\*\\s*amp_nb3\\s*\\*\\s*plate_w\\.z"
+## The superseded pairwise form, which must be GONE rather than merely joined by
+## the three-way one. A file carrying both would satisfy a presence-only law
+## while a dead assignment sat above the live one, and whichever ran last would
+## decide the surface — so absence is checked as its own law.
+const CAVITY_PAIRWISE_PATTERN := \
 	"mix\\(\\s*amp\\s*\\*\\s*amp\\s*,\\s*amp_nb\\s*\\*\\s*amp_nb\\s*,\\s*plate_edge_w\\s*\\)"
 
 
@@ -293,14 +308,19 @@ func _ready() -> void:
 		])
 		return
 
-	# 5d. The variance must be blended across BOTH cells over the boundary
-	# footprint on each file. Gating the symmetric integral by the owning cell
-	# alone steps the cavity at every slab-to-bare contact.
+	# 5d. The variance must be split across all THREE candidates by the same
+	# coverage weights every other per-cell quantity on this surface uses.
+	# Gating the symmetric integral by the owning cell alone steps the cavity at
+	# every slab-to-bare contact; blending only the nearest two carries the
+	# second-nearest cell's identity swap straight into it at a triple junction.
 	for named in [[GROUND_SHADER_PATH, ground], [CONTACT_SHADER_PATH, contact]]:
 		var path: String = named[0]
 		var src: String = named[1]
-		if not _matches(src, CAVITY_TWO_CELL_PATTERN):
-			_fail("%s does not blend the seam variance across both cells over the boundary footprint (`mix(amp * amp, amp_nb * amp_nb, plate_edge_w)`) — gating the symmetric integral by whichever cell owns the pixel centre flips the cavity between full and zero as that centre crosses a slab-to-bare contact, which is a zero-width step in the very quantity the filter exists to remove" % path)
+		if not _matches(src, CAVITY_THREE_WAY_PATTERN):
+			_fail("%s does not split the seam variance across all three candidates by the coverage weights (`amp * amp * plate_w.x + amp_nb * amp_nb * plate_w.y + amp_nb3 * amp_nb3 * plate_w.z`) — every other per-cell quantity on this surface uses `plate_w`, and a cavity that does not inherits the second-nearest cell's identity swap at a triple junction, which is a zero-width step in the very quantity the filter exists to remove" % path)
+			return
+		if _matches(src, CAVITY_PAIRWISE_PATTERN):
+			_fail("%s still carries the superseded pairwise seam-variance blend (`mix(amp * amp, amp_nb * amp_nb, plate_edge_w)`) alongside the three-way split — two assignments to the same value leave the surface decided by whichever runs last, so the dead one must go rather than be left for a reader to reconcile" % path)
 			return
 
 	# 5e. The cutoff must be SQUARED on both. `seam_slope_var *= plate_resolved`

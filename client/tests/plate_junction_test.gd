@@ -33,6 +33,21 @@ extends Node
 ## untouched. Continuity proven here plus that call proven present in both
 ## shaders is the join.
 ##
+## ## The seam cavity arm (#584)
+##
+## `_check_cavity_continuity` probes the SEAM CAVITY as well as the substance,
+## because the cavity is not a linear blend — each cell's height is clamped and
+## squared before the weights apply. It reports the cavity DECOMPOSED, since its
+## two factors fail differently: the per-cell amplitudes are made continuous by
+## the three-way split, while `spread` carries an identity jump of its own that
+## no weighting rule reaches (`edge_fw` is built from the direction to `c2`, and
+## that direction changes abruptly when the second-nearest label swaps, even
+## though `f2` itself stays smooth). So the full cavity still steps at a
+## junction, and this test bounds that remainder rather than claiming it absent.
+## The mirror-to-shader join for the cavity is `crack_relief_parity_test`'s law
+## 5d, which pins the three-way form in both shader files; it is not repeated
+## here, so that the pattern has one owner rather than two to keep in sync.
+##
 ## Run: godot --headless --path client res://tests/plate_junction_test.tscn
 
 const GROUND_SHADER_PATH := "res://shaders/terrain.gdshader"
@@ -87,6 +102,30 @@ const CONTROL_STEP_MIN := 0.02
 ## isolated arm covers exactly.
 const DEGENERATE_STEP_RATIO_MAX := 0.60
 
+## The seam cavity's shipped constants, read from the uniform defaults both
+## shaders declare. `AMP_GAIN / CRACK_WIDTH * PLATE_SCALE` is ~40 against a
+## ceiling of 0.4, so the clamp binds wherever a cell draws a slab at all — the
+## per-cell height is effectively the ceiling gated by the binary slab mask, and
+## the cavity is that squared, split by coverage, times `spread`.
+const PLATE_SCALE := 0.85
+const CRACK_WIDTH := 0.032
+const AMP_GAIN := 1.5
+const AMP_CEILING := 0.4
+
+## The cavity's own step thresholds. It is bounded by `AMP_CEILING^2` = 0.16
+## rather than by a substance contrast, so it needs its own scale rather than
+## reusing the substance arm's. Both are set the same way: the control must clear
+## a floor the probe can actually resolve, and a continuous result must land an
+## order of magnitude below the jump it replaces.
+const CAVITY_CONTROL_STEP_MIN := 0.01
+const CAVITY_CONTINUOUS_STEP_MAX := 0.005
+## The FULL cavity keeps a step under either rule, because `spread` carries an
+## identity jump no weighting rule reaches. This is a REGRESSION GUARD on the
+## part the split does control: measured at 53% of the pairwise step, so the
+## bound catches the split falling back toward parity without encoding 53% as a
+## target. The remainder belongs to the footprint and is tracked separately.
+const CAVITY_FULL_STEP_RATIO_MAX := 0.75
+
 var _failures: PackedStringArray = []
 
 
@@ -99,6 +138,7 @@ func _ready() -> void:
 			+ "pass vacuously")
 	else:
 		_check_junction_continuity(isolated["uv"])
+		_check_cavity_continuity(isolated["uv"])
 	var degenerate := _find_triple_junction(false)
 	if degenerate.is_empty():
 		# Not a failure. A region may genuinely contain no four-plate vertex; the
@@ -243,6 +283,67 @@ func _blend(uv: Vector2, use_third: bool) -> PackedFloat64Array:
 	var mask: float = _is_slab(p["id"]) * w.x + _is_slab(p["id2"]) * w.y \
 		+ _is_slab(p["id3"]) * w.z
 	return PackedFloat64Array([col.x, col.y, col.z, mask])
+
+
+## The SEAM CAVITY's per-fragment value, `seam_slope_var` (#554, #584).
+##
+## This is a separate probe from `_blend` rather than another component of it,
+## because the cavity is not a linear blend of a per-cell quantity. Each cell's
+## contribution passes through a CEILING (`min(..., 0.4)`) and is then SQUARED,
+## and it is scaled by `spread` — a property of the footprint and the seam that
+## every candidate shares. A rule that is continuous for a linear blend is not
+## automatically continuous once the per-cell term is clamped and squared, so
+## the cavity is measured as the shader actually computes it.
+##
+## `sheet` and `plate_resolved` are 1.0 here, exactly as `_blend` assumes: that
+## is the resolved case, where the per-cell contrast — and so the step being
+## probed — is largest.
+## The cavity splits into two factors that fail differently, so it is returned
+## decomposed and the arms below assert against each:
+##
+##   `amps`   — the coverage-weighted sum of squared per-cell heights. This is
+##              the per-cell quantity #584 re-points at `plate_w`, and it is what
+##              that change makes continuous.
+##   `spread` — the top hat's variance over the pixel, common to every candidate.
+##              It is a property of the FOOTPRINT, so no weighting rule touches
+##              it, and it carries its own identity discontinuity: `edge_fw` is
+##              built from `gsep`, whose second term is `normalize(uv - c2)`, and
+##              `c2` swaps at a junction. `f2` itself is continuous there (the
+##              two candidates are equidistant, so the min is smooth even as the
+##              label changes) — it is the DIRECTION to that centre that jumps.
+func _cavity_parts(uv: Vector2, use_third: bool) -> Dictionary:
+	var p := _plates(uv)
+	var pair_w: float = _edge_weight(p, uv)
+	var w := (_blend_weights(p, pair_w) if use_third
+		else Vector3(1.0 - pair_w, pair_w, 0.0))
+	var e1 := uv - p["c1"] as Vector2
+	var e2 := uv - p["c2"] as Vector2
+	var gsep := e2.normalized() - e1.normalized()
+	# The per-cell plateau, through the shipped ceiling. `plate_mask_relief*` is
+	# `sheet * slab_*`, and `sheet` is 1.0 here, so the gate is the binary slab.
+	var k: float = gsep.length() * (AMP_GAIN / CRACK_WIDTH) * PLATE_SCALE
+	var a1: float = minf(k * _is_slab(p["id"]), AMP_CEILING)
+	var a2: float = minf(k * _is_slab(p["id2"]), AMP_CEILING)
+	var a3: float = minf(k * _is_slab(p["id3"]), AMP_CEILING)
+	var edge_fw: float = FOOTPRINT * (absf(gsep.x) + absf(gsep.y))
+	var seam_h: float = maxf(edge_fw, 1e-6)
+	var half_h: float = 0.5 * seam_h
+	var s_sep: float = p["f2"] - p["f1"]
+	var prof: float = (minf(s_sep + half_h, CRACK_WIDTH)
+		- minf(absf(s_sep - half_h), CRACK_WIDTH)) / seam_h
+	var covered: float = clampf(maxf(minf(s_sep + half_h, CRACK_WIDTH)
+		- maxf(s_sep - half_h, -CRACK_WIDTH), 0.0) / seam_h, 0.0, 1.0)
+	return {
+		"amps": a1 * a1 * w.x + a2 * a2 * w.y + a3 * a3 * w.z,
+		"spread": maxf(covered - prof * prof, 0.0),
+	}
+
+
+## `seam_slope_var` as both shaders compute it — the product of the two factors
+## above, written once so the closed form has a single copy.
+func _cavity(uv: Vector2, use_third: bool) -> float:
+	var parts := _cavity_parts(uv, use_third)
+	return float(parts["amps"]) * float(parts["spread"])
 
 
 # ---------------------------------------------------------------------------
@@ -408,6 +509,131 @@ func _check_junction_continuity(centre: Vector2) -> void:
 		% [old_coarse, old_fine])
 	print("JUNCTION three-way(#499) step %.5f -> %.5f under 4x refinement"
 		% [fixed_coarse, fixed_fine])
+
+
+func _max_step_of(centre: Vector2, samples: int, use_third: bool,
+		key: String) -> float:
+	var worst := 0.0
+	var prev := INF
+	for i in range(0, samples + 1):
+		var a := TAU * float(i) / float(samples)
+		var uv := centre + Vector2(cos(a), sin(a)) * ARC_RADIUS
+		var cur: float = _cavity_parts(uv, use_third)[key]
+		if prev != INF:
+			worst = maxf(worst, absf(cur - prev))
+		prev = cur
+	return worst
+
+
+func _max_adjacent_cavity_step(centre: Vector2, samples: int,
+		use_third: bool) -> float:
+	var worst := 0.0
+	var prev := INF
+	for i in range(0, samples + 1):
+		var a := TAU * float(i) / float(samples)
+		var uv := centre + Vector2(cos(a), sin(a)) * ARC_RADIUS
+		var cur := _cavity(uv, use_third)
+		if prev != INF:
+			worst = maxf(worst, absf(cur - prev))
+		prev = cur
+	return worst
+
+
+## The largest cavity value anywhere on the arc. A vacuity guard: if the cavity
+## is zero everywhere the probe circles, every step below is zero under both
+## rules and the arm would pass while proving nothing.
+func _max_cavity(centre: Vector2) -> float:
+	var peak := 0.0
+	for i in range(0, ARC_SAMPLES + 1):
+		var a := TAU * float(i) / float(ARC_SAMPLES)
+		var uv := centre + Vector2(cos(a), sin(a)) * ARC_RADIUS
+		peak = maxf(peak, _cavity(uv, true))
+	return peak
+
+
+## Acceptance criterion 1 of #584, measured on the CAVITY rather than inferred
+## from the substance arm above.
+##
+## That arm proves the three-way weighting is continuous for a LINEAR per-cell
+## blend. The cavity is not one: each cell's height passes through a ceiling and
+## is then squared before the weights apply, and the whole thing is scaled by
+## `spread`. So the cavity is measured directly, and DECOMPOSED, because the two
+## factors fail differently and only one of them is #584's to fix:
+##
+##   - `amps` is the per-cell quantity. Under the pairwise rule it inherits the
+##     second-nearest cell's identity swap; under `plate_w` it does not. That is
+##     the fix, and it is asserted as continuity — a step that shrinks under
+##     refinement, against a control that does not.
+##   - `spread` is a footprint quantity, identical under both rules, and it
+##     carries its own jump (see `_cavity_parts`). No weighting rule reaches it,
+##     so the FULL cavity still steps. That residual is bounded and recorded
+##     here rather than claimed absent — the same treatment the four-plate arm
+##     gives its own irreducible remainder.
+func _check_cavity_continuity(centre: Vector2) -> void:
+	var peak := _max_cavity(centre)
+	if peak <= 0.0:
+		_fail("the cavity is zero everywhere on the probe arc, so both rules "
+			+ "would report no step and this arm would be vacuous — the arc is "
+			+ "not sitting where the seam variance is live")
+		return
+
+	var amp_old_coarse := _max_step_of(centre, ARC_SAMPLES, false, "amps")
+	var amp_old_fine := _max_step_of(centre, ARC_SAMPLES * 4, false, "amps")
+	var amp_new_coarse := _max_step_of(centre, ARC_SAMPLES, true, "amps")
+	var amp_new_fine := _max_step_of(centre, ARC_SAMPLES * 4, true, "amps")
+
+	# THE CONTROL. The pairwise per-cell term must actually jump here, or the
+	# three-way result below is measuring nothing and this arm cannot fail.
+	if amp_old_fine < CAVITY_CONTROL_STEP_MIN:
+		_fail("control: the pairwise cavity amplitudes' largest step across the "
+			+ "junction is %.5f, under the %.5f this probe needs to see — the "
+			% [amp_old_fine, CAVITY_CONTROL_STEP_MIN]
+			+ "arc is not resolving the identity jump, so the three-way result "
+			+ "proves nothing")
+	if amp_old_fine < amp_old_coarse * CONTINUITY_RATIO:
+		_fail("control: the pairwise cavity amplitudes' step FELL from %.5f to "
+			% amp_old_coarse
+			+ "%.5f when the sampling was refined 4x — a jump does not shrink "
+			% amp_old_fine
+			+ "under refinement, so this is smooth variation and the probe is "
+			+ "not on the junction")
+
+	# THE FIX. Splitting the squared heights over `plate_w` must make the
+	# per-cell term continuous.
+	if amp_new_fine > amp_new_coarse * CONTINUITY_RATIO:
+		_fail("the three-way cavity amplitudes' largest step did not shrink "
+			+ "under refinement (%.5f at %d samples, %.5f at %d) — the seam "
+			% [amp_new_coarse, ARC_SAMPLES, amp_new_fine, ARC_SAMPLES * 4]
+			+ "variance still carries the second-nearest cell's identity swap "
+			+ "(#584)")
+	if amp_new_fine > CAVITY_CONTINUOUS_STEP_MAX:
+		_fail("the three-way cavity amplitudes still step %.5f across the "
+			% amp_new_fine
+			+ "junction, above the %.5f a continuous per-cell blend may show at "
+			% CAVITY_CONTINUOUS_STEP_MAX
+			+ "this sampling density")
+
+	# THE RESIDUAL, bounded rather than claimed absent. `spread` jumps under
+	# either rule, so the full cavity still steps; what the fix must do is not
+	# make it WORSE, and measurably reduce it.
+	var full_old := _max_adjacent_cavity_step(centre, ARC_SAMPLES * 4, false)
+	var full_new := _max_adjacent_cavity_step(centre, ARC_SAMPLES * 4, true)
+	if full_new > full_old * CAVITY_FULL_STEP_RATIO_MAX:
+		_fail("the full cavity's step across the junction is %.5f under the "
+			% full_new
+			+ "three-way split against %.5f under the pairwise one — the split "
+			% full_old
+			+ "must reduce it, and the remainder is the footprint's own jump "
+			+ "(`spread`), not the per-cell blend's")
+	print("CAVITY peak %.5f on the arc" % peak)
+	print("CAVITY amps pairwise(#554) %.5f -> %.5f, three-way(#584) %.5f -> %.5f"
+		% [amp_old_coarse, amp_old_fine, amp_new_coarse, amp_new_fine])
+	print("CAVITY spread (footprint, rule-independent) %.5f -> %.5f — its own "
+		% [_max_step_of(centre, ARC_SAMPLES, true, "spread"),
+			_max_step_of(centre, ARC_SAMPLES * 4, true, "spread")]
+		+ "identity jump, tracked separately")
+	print("CAVITY full pairwise %.5f -> three-way %.5f (%d%% of it)"
+		% [full_old, full_new, int(round(100.0 * full_new / maxf(full_old, 1e-9)))])
 
 
 ## The four-plate case, where the guarantee is a BOUND rather than continuity.

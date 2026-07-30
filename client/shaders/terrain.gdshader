@@ -508,6 +508,14 @@ void fragment() {
 	// That is a zero-width step reintroduced into the very quantity this change
 	// exists to filter.
 	float plate_mask_relief_nb = sheet * slab_nb;
+	// The THIRD candidate's version of the same gate. The variance is split
+	// across all three by `plate_w`, exactly as the substance, the slab mask,
+	// the roughness and the crack are — so it needs the third cell's height as
+	// well. Away from a triple junction `plate_w.z` is 0, so this term
+	// contributes nothing to the result (it is still computed — the cost is one
+	// multiply, unconditionally); at one it is what keeps the cavity from
+	// inheriting the second-nearest cell's identity swap.
+	float plate_mask_relief_nb3 = sheet * slab_nb3;
 	float rock_exposure = max(rock_mix, plate_mask);
 
 	// The vertex tint stays the base layer (as cave_rock does with COLOR), so
@@ -714,6 +722,9 @@ void fragment() {
 	// does not need this and the variance does.
 	float amp_nb = min(length(gsep) * (1.5 / cw_relief) * plate_scale
 		* plate_mask_relief_nb, 0.4);
+	// And the third candidate's, for the coverage split below.
+	float amp_nb3 = min(length(gsep) * (1.5 / cw_relief) * plate_scale
+		* plate_mask_relief_nb3, 0.4);
 	// The footprint is `edge_fw`, the ANALYTIC separator's screen rate — never
 	// `fwidth(f2 - f1)`. That quantity is a cusp at the seam, so its screen
 	// difference collapses on exactly the quads that straddle one: a filter
@@ -750,17 +761,25 @@ void fragment() {
 	// cannot soften a seam a player can still resolve, which is #306's third
 	// acceptance criterion.
 	float spread = max(covered - prof * prof, 0.0);
-	// Blend the two cells' variances over the boundary's own footprint, exactly
-	// as the substance and the slab mask are blended above, and for the same
-	// reason: a pixel straddling a contact contains BOTH cells' seams, so
-	// gating the whole symmetric integral by whichever cell owns the pixel
-	// centre steps the cavity between full and zero as that centre crosses.
-	// `spread` is common to both, so blending the squared heights is
-	// arithmetically identical to blending the two variances, one multiply
-	// cheaper. With `plate_edge_w` at 0 — every contact a player can resolve —
-	// this is exactly the owning cell's own variance, so the near field is
-	// untouched.
-	seam_slope_var = mix(amp * amp, amp_nb * amp_nb, plate_edge_w) * spread;
+	// Split the cells' variances over the SAME three-candidate coverage weights
+	// the substance, the slab mask, the roughness and the crack are split over
+	// above, and for the same reason: a pixel straddling a contact contains
+	// every one of those cells' seams, so gating the whole symmetric integral by
+	// whichever cell owns the pixel centre steps the cavity between full and
+	// zero as that centre crosses.
+	//
+	// `plate_w` rather than a pairwise `mix(..., plate_edge_w)`. Away from a
+	// triple junction the two are arithmetically identical — the weights reduce
+	// to `(1 - plate_edge_w, plate_edge_w, 0)` there — so this changes nothing a
+	// player can resolve and nothing off a junction. At one, the pairwise form
+	// takes the second-nearest cell outright, and that cell changes IDENTITY
+	// abruptly while still holding near half the fragment's weight, so the
+	// cavity inherits a zero-width step in exactly the quantity it exists to
+	// filter. `spread` is common to all three, so splitting the squared heights
+	// is arithmetically identical to splitting the three variances, two
+	// multiplies cheaper.
+	seam_slope_var = (amp * amp * plate_w.x + amp_nb * amp_nb * plate_w.y
+		+ amp_nb3 * amp_nb3 * plate_w.z) * spread;
 	// The tilt is INTO the groove, so it opposes the separator's gradient —
 	// the same sign the differenced form and the closed-form `dcrack` both
 	// carried, the latter by being negative by construction.
