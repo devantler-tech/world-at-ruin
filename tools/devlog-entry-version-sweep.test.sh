@@ -158,15 +158,18 @@ expect_output_matching 'a PRE-RELEASE entry is not counted as excluded' "$out" \
 	'0 NEVER-CUT entries excluded'
 
 # RED CONTROL: a declaration is evidence, not authority. The entry says 0.3.0,
-# but its anchor first reached a release in v0.2.0. It must stay NEVER-CUT and
-# fail as a one-to-one correction; otherwise the sweep merely trusts shipped_in
-# and loses its independent containment check.
+# a real release cut later, but its anchor first reached players in v0.2.0. It
+# must stay NEVER-CUT and fail as a one-to-one correction; otherwise the sweep
+# merely checks that shipped_in names some tag and loses its independent
+# containment check.
 d="$(new_repo)"
 printf 'x\n' >"$d/base.txt"
 step "$d" base v0.1.0
 declared_entry 0.9.9 0.3.0 >"$d/client/devlog/0.9.9.json"
 step "$d" 'a pre-release entry whose declaration disagrees with containment' v0.2.0
 anchor="$(git -C "$d" rev-parse --short HEAD)"
+printf 'later\n' >"$d/later.txt"
+step "$d" 'the declared release is cut after the entry already shipped' v0.3.0
 out="$(run_sweep "$d")"
 expect_row 'a disagreeing declaration stays NEVER-CUT' "$out" \
 	"^0\\.9\\.9 +${anchor} +0\\.2\\.0 +NEVER-CUT\$"
