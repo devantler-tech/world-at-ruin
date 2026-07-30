@@ -147,13 +147,13 @@ expect_gate_pass 'an entry naming the release that contains it' "$d"
 d="$(new_repo)"
 printf 'x\n' >"$d/base.txt"
 step "$d" base v0.1.0
-declared_entry 0.9.9 0.2.0 >"$d/client/devlog/0.9.9.json"
+declared_entry 0.1.5 0.2.0 >"$d/client/devlog/0.1.5.json"
 step "$d" 'a pre-release entry whose declaration agrees with containment' v0.2.0
 anchor="$(git -C "$d" rev-parse --short HEAD)"
 expect_gate_pass 'a pre-release declaration agreeing with containment' "$d"
 out="$(run_sweep "$d" --gate)"
 expect_row 'an agreeing declaration reads PRE-RELEASE' "$out" \
-	"^0\\.9\\.9 +${anchor} +0\\.2\\.0 +PRE-RELEASE\$"
+	"^0\\.1\\.5 +${anchor} +0\\.2\\.0 +PRE-RELEASE\$"
 expect_output_matching 'a PRE-RELEASE entry is not counted as excluded' "$out" \
 	'0 NEVER-CUT entries excluded'
 
@@ -165,14 +165,14 @@ expect_output_matching 'a PRE-RELEASE entry is not counted as excluded' "$out" \
 d="$(new_repo)"
 printf 'x\n' >"$d/base.txt"
 step "$d" base v0.1.0
-declared_entry 0.9.9 0.3.0 >"$d/client/devlog/0.9.9.json"
+declared_entry 0.1.5 0.3.0 >"$d/client/devlog/0.1.5.json"
 step "$d" 'a pre-release entry whose declaration disagrees with containment' v0.2.0
 anchor="$(git -C "$d" rev-parse --short HEAD)"
 printf 'later\n' >"$d/later.txt"
 step "$d" 'the declared release is cut after the entry already shipped' v0.3.0
 out="$(run_sweep "$d")"
 expect_row 'a disagreeing declaration stays NEVER-CUT' "$out" \
-	"^0\\.9\\.9 +${anchor} +0\\.2\\.0 +NEVER-CUT\$"
+	"^0\\.1\\.5 +${anchor} +0\\.2\\.0 +NEVER-CUT\$"
 expect_gate_fail 'a pre-release declaration disagreeing with containment' "$d" \
 	'has one release that contains it and nothing else claims'
 
