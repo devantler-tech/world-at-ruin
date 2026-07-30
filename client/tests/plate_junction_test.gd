@@ -328,6 +328,43 @@ func _full_window_blend(
 	return out
 
 
+## The whole-window equivalent of the cavity's per-cell factor. The plateau
+## height is clamped and squared BEFORE weighting, exactly as the shaders do;
+## averaging the slab mask first would be a different nonlinear operation.
+func _full_window_cavity_amps(
+		uv: Vector2,
+		p: Dictionary,
+		footprint: float = FOOTPRINT,
+		radius: int = 2) -> float:
+	var e1 := uv - p["c1"] as Vector2
+	var e2 := uv - p["c2"] as Vector2
+	var k: float = (
+		e2.normalized() - e1.normalized()
+	).length() * (AMP_GAIN / CRACK_WIDTH) * PLATE_SCALE
+	var base := Vector2(floor(uv.x), floor(uv.y))
+	var w: float = maxf(footprint, 1e-6)
+	var total := 0.0
+	var out := 0.0
+	for j in range(-radius, radius + 1):
+		for i in range(-radius, radius + 1):
+			var cell := base + Vector2(float(i), float(j))
+			var jitter := Vector2(
+				_hash3(Vector3(cell.x, cell.y, 0.0)),
+				_hash3(Vector3(cell.x, cell.y, 7.0)))
+			var centre := cell + Vector2(0.15, 0.15) + 0.7 * jitter
+			var d := uv.distance_to(centre)
+			var weight: float = 1.0 - smoothstep(
+				0.0, w, d - float(p["f1"]))
+			var amp := minf(k * _is_slab(cell), AMP_CEILING)
+			out += amp * amp * weight
+			total += weight
+	if total <= 0.0:
+		_fail("the whole-window cavity accumulated no coverage — the nearest "
+			+ "cell must always contribute one")
+		return out
+	return out / total
+
+
 func _window_activation(p: Dictionary, footprint: float) -> float:
 	var w: float = maxf(footprint, 1e-6)
 	var reach_margin: float = maxf(
@@ -413,6 +450,20 @@ func _window_blend(uv: Vector2) -> PackedFloat64Array:
 	for k in range(0, current.size()):
 		current[k] = lerpf(pairwise[k], full[k], junction)
 	return current
+
+
+## Generalize the nonlinear per-cell cavity factor through the same composition
+## as slab/surface/roughness/crack: pairwise base toward the normalized 5x5
+## window under the junction ramp. The reach check may skip work only after the
+## fourth candidate's weight has converged to zero.
+func _window_cavity_amps(uv: Vector2) -> float:
+	var p := _plates(uv)
+	var current: float = _cavity_parts(uv, true)["amps"]
+	if not _window_reachable(p, FOOTPRINT):
+		return current
+	var pairwise: float = _cavity_parts(uv, false)["amps"]
+	var full := _full_window_cavity_amps(uv, p)
+	return lerpf(pairwise, full, _window_junction(p, FOOTPRINT))
 
 
 ## The SEAM CAVITY's per-fragment value, `seam_slope_var` (#554, #584).
@@ -574,6 +625,20 @@ func _max_adjacent_window_step(centre: Vector2, samples: int) -> float:
 			for k in range(0, cur.size()):
 				d = maxf(d, absf(cur[k] - prev[k]))
 			worst = maxf(worst, d)
+		prev = cur
+	return worst
+
+
+func _max_adjacent_window_cavity_amp_step(
+		centre: Vector2, samples: int) -> float:
+	var worst := 0.0
+	var prev := INF
+	for i in range(0, samples + 1):
+		var a := TAU * float(i) / float(samples)
+		var uv := centre + Vector2(cos(a), sin(a)) * ARC_RADIUS
+		var cur := _window_cavity_amps(uv)
+		if prev != INF:
+			worst = maxf(worst, absf(cur - prev))
 		prev = cur
 	return worst
 
@@ -796,6 +861,14 @@ func _check_degenerate_vertex_bound(centre: Vector2) -> void:
 	var limited_fine := _max_adjacent_step(centre, ARC_SAMPLES * 4, true)
 	var window_coarse := _max_adjacent_window_step(centre, ARC_SAMPLES)
 	var window_fine := _max_adjacent_window_step(centre, ARC_SAMPLES * 4)
+	var cavity_limited_coarse := _max_step_of(
+		centre, ARC_SAMPLES, true, "amps")
+	var cavity_limited_fine := _max_step_of(
+		centre, ARC_SAMPLES * 4, true, "amps")
+	var cavity_window_coarse := _max_adjacent_window_cavity_amp_step(
+		centre, ARC_SAMPLES)
+	var cavity_window_fine := _max_adjacent_window_cavity_amp_step(
+		centre, ARC_SAMPLES * 4)
 	if limited_fine < CONTROL_STEP_MIN:
 		_fail("control: the three-candidate rule's four-plate step is %.5f, "
 			% limited_fine
@@ -818,10 +891,37 @@ func _check_degenerate_vertex_bound(centre: Vector2) -> void:
 			% window_fine
 			+ "above the %.5f a continuous blend may show at this density"
 			% CONTINUOUS_STEP_MAX)
+	if cavity_limited_fine < CAVITY_CONTROL_STEP_MIN:
+		_fail("control: the three-candidate cavity amplitudes' four-plate step "
+			+ "is %.5f, under the %.5f this probe needs to see — the arc cannot "
+			% [cavity_limited_fine, CAVITY_CONTROL_STEP_MIN]
+			+ "prove that the whole-window rule removed the fixed third-cell "
+			+ "tail")
+	if cavity_limited_fine < cavity_limited_coarse * CONTINUITY_RATIO:
+		_fail("control: the three-candidate cavity amplitudes' four-plate step "
+			+ "FELL from %.5f to %.5f under 4x refinement — the probe is seeing "
+			% [cavity_limited_coarse, cavity_limited_fine]
+			+ "smooth variation, not the third/fourth identity jump")
+	if cavity_window_fine > cavity_window_coarse * CONTINUITY_RATIO:
+		_fail("the whole-window cavity amplitudes' four-plate step did not "
+			+ "shrink under refinement (%.5f at %d samples, %.5f at %d) — the "
+			% [cavity_window_coarse, ARC_SAMPLES, cavity_window_fine,
+				ARC_SAMPLES * 4]
+			+ "variance still depends on the fixed third candidate")
+	if cavity_window_fine > CAVITY_CONTINUOUS_STEP_MAX:
+		_fail("the whole-window cavity amplitudes still step %.5f at the "
+			% cavity_window_fine
+			+ "four-plate vertex, above the %.5f a continuous per-cell blend "
+			% CAVITY_CONTINUOUS_STEP_MAX
+			+ "may show at this density")
 	print("DEGENERATE uv=(%.4f, %.4f) three-way step %.5f -> %.5f; "
 		% [centre.x, centre.y, limited_coarse, limited_fine]
 		+ "whole-window step %.5f -> %.5f under 4x refinement"
 		% [window_coarse, window_fine])
+	print("DEGENERATE cavity amps three-way %.5f -> %.5f; whole-window "
+		% [cavity_limited_coarse, cavity_limited_fine]
+		+ "%.5f -> %.5f under 4x refinement"
+		% [cavity_window_coarse, cavity_window_fine])
 
 
 ## The fourth-candidate reach must fade continuously. A hard cutoff at
@@ -1080,6 +1180,15 @@ func _check_source_guards() -> void:
 				% path
 				+ "established pairwise base — it cannot converge to the "
 				+ "three-way answer before the fourth-cell cutoff")
+		if not src.contains(
+				"window_slab_share += cell_is_slab * weight") \
+				or not src.contains("float window_amp_sq = mix(") \
+				or not src.contains("seam_amp_sq = mix(") \
+				or not src.contains("pair_amp_sq,"):
+			_fail("%s does not compose the nonlinear seam-cavity amplitude "
+				% path
+				+ "through the same symmetric whole-window weights — the fixed "
+				+ "third amplitude can still swap with an uncarried fourth")
 
 
 func _source(path: String) -> String:

@@ -464,6 +464,11 @@ void fragment() {
 	float pair_slab = mix(slab_own, slab_nb, plate_edge_w);
 	float slab = slab_own * plate_w.x + slab_nb * plate_w.y
 		+ slab_nb3 * plate_w.z;
+	// Fraction of the symmetric window whose source cells actually drew a slab.
+	// Retained for the nonlinear seam-cavity composition below: the amplitude
+	// is clamped and squared per cell, so the already-averaged `slab` cannot be
+	// reused without changing the operation's order.
+	float plate_window_slab_share = 0.0;
 	// A fixed candidate list has a tail: at a four-fold vertex the third label
 	// swaps with an uncarried fourth while still holding coverage. Compose the
 	// same pairwise answer directly toward a symmetric sum over every weighted
@@ -474,6 +479,7 @@ void fragment() {
 		vec2 window_base = floor(plate_uv);
 		float window_total = 0.0;
 		float window_slab = 0.0;
+		float window_slab_share = 0.0;
 		for (int j = -2; j <= 2; j++) {
 			for (int i = -2; i <= 2; i++) {
 				vec2 cell = window_base + vec2(float(i), float(j));
@@ -483,14 +489,19 @@ void fragment() {
 				vec2 centre = cell + 0.15 + 0.7 * jitter;
 				float d = length(plate_uv - centre);
 				float weight = terrain_plate_window_weight(d, f1, plate_fw);
+				float cell_is_slab = step(
+					0.60, hash3(vec3(cell * 2.3, 19.0)));
 				float cell_slab = mix(
 					0.40,
-					step(0.60, hash3(vec3(cell * 2.3, 19.0))),
+					cell_is_slab,
 					plate_resolved);
 				window_slab += cell_slab * weight;
+				window_slab_share += cell_is_slab * weight;
 				window_total += weight;
 			}
 		}
+		plate_window_slab_share =
+			window_slab_share / max(window_total, 1e-6);
 		slab = mix(
 			pair_slab,
 			window_slab / max(window_total, 1e-6),
@@ -814,19 +825,17 @@ void fragment() {
 	// sign at the seam. `amp` is that plateau, reached through the same ceiling,
 	// so the model follows the code rather than assuming it: open `crack_width`
 	// far enough that the clamp stops binding and `amp` becomes the true peak.
-	float amp = min(length(gsep) * (1.5 / cw_relief) * plate_scale
-		* plate_mask_relief, 0.4);
+	float amp_scale = length(gsep) * (1.5 / cw_relief) * plate_scale;
+	float amp = min(amp_scale * plate_mask_relief, 0.4);
 	// The same plateau for the NEIGHBOURING cell. The profile below is shared —
 	// it is a property of the footprint and the seam, not of either cell — so
 	// the only per-cell quantity is this height, and blending the two over the
 	// boundary footprint is what keeps the cavity continuous across a
 	// slab-to-bare contact. See `plate_mask_relief_nb` above for why the mean
 	// does not need this and the variance does.
-	float amp_nb = min(length(gsep) * (1.5 / cw_relief) * plate_scale
-		* plate_mask_relief_nb, 0.4);
+	float amp_nb = min(amp_scale * plate_mask_relief_nb, 0.4);
 	// And the third candidate's, for the coverage split below.
-	float amp_nb3 = min(length(gsep) * (1.5 / cw_relief) * plate_scale
-		* plate_mask_relief_nb3, 0.4);
+	float amp_nb3 = min(amp_scale * plate_mask_relief_nb3, 0.4);
 	// The footprint is `edge_fw`, the ANALYTIC separator's screen rate — never
 	// `fwidth(f2 - f1)`. That quantity is a cusp at the seam, so its screen
 	// difference collapses on exactly the quads that straddle one: a filter
@@ -863,14 +872,15 @@ void fragment() {
 	// cannot soften a seam a player can still resolve, which is #306's third
 	// acceptance criterion.
 	float spread = max(covered - prof * prof, 0.0);
-	// Split the cells' variances over the SAME three-candidate coverage weights
-	// the substance, the slab mask, the roughness and the crack are split over
-	// above, and for the same reason: a pixel straddling a contact contains
-	// every one of those cells' seams, so gating the whole symmetric integral by
-	// whichever cell owns the pixel centre steps the cavity between full and
-	// zero as that centre crosses.
+	// Start from the SAME three-candidate coverage split the substance, slab
+	// mask, roughness and crack use above. A pixel straddling a contact contains
+	// every one of those cells' seams, so gating the integral by whichever cell
+	// owns the pixel centre steps the cavity between full and zero as that
+	// centre crosses. The higher-order branch below then generalizes this
+	// per-cell factor through the same symmetric window as those quantities.
 	//
-	// `plate_w` rather than a pairwise `mix(..., plate_edge_w)`. Away from a
+	// The baseline uses `plate_w` rather than a pairwise
+	// `mix(..., plate_edge_w)`. Away from a
 	// triple junction the two are arithmetically identical — the weights reduce
 	// to `(1 - plate_edge_w, plate_edge_w, 0)` there — so this changes nothing a
 	// player can resolve and nothing off a junction. At one, the pairwise form
@@ -880,8 +890,33 @@ void fragment() {
 	// filter. `spread` is common to all three, so splitting the squared heights
 	// is arithmetically identical to splitting the three variances, two
 	// multiplies cheaper.
-	seam_slope_var = (amp * amp * plate_w.x + amp_nb * amp_nb * plate_w.y
-		+ amp_nb3 * amp_nb3 * plate_w.z) * spread;
+	float seam_amp_sq = amp * amp * plate_w.x + amp_nb * amp_nb * plate_w.y
+		+ amp_nb3 * amp_nb3 * plate_w.z;
+	if (plate_window_gate > 0.0 && plate_window_w > 0.0) {
+		// Every resolved cell has one of two slab states, so the retained
+		// `plate_window_slab_share` composes their already-clamped squared
+		// amplitudes exactly without paying for a second 5x5 hash loop here.
+		float low_amp = min(
+			amp_scale * sheet * mix(0.40, 0.0, plate_resolved), 0.4);
+		float high_amp = min(
+			amp_scale * sheet * mix(0.40, 1.0, plate_resolved), 0.4);
+		float window_amp_sq = mix(
+			low_amp * low_amp,
+			high_amp * high_amp,
+			plate_window_slab_share);
+		// This pairwise expression is only the base of the generalized
+		// composition. At the fourth-cell reach cutoff the normalized window
+		// has become the established symmetric three-way term, so mixing from
+		// the pairwise base with the common junction ramp converges to the
+		// assignment above before the performance gate skips the work.
+		float pair_amp_sq = amp * amp * (1.0 - plate_edge_w)
+			+ amp_nb * amp_nb * plate_edge_w;
+		seam_amp_sq = mix(
+			pair_amp_sq,
+			window_amp_sq,
+			plate_window_w);
+	}
+	seam_slope_var = seam_amp_sq * spread;
 	// The tilt is INTO the groove, so it opposes the separator's gradient —
 	// the same sign the differenced form and the closed-form `dcrack` both
 	// carried, the latter by being negative by construction.

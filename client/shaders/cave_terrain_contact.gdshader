@@ -212,6 +212,10 @@ void fragment() {
 	float pair_slab = mix(slab_own, slab_nb, plate_edge_w);
 	float slab = slab_own * plate_w.x + slab_nb * plate_w.y
 		+ slab_nb3 * plate_w.z;
+	// Preserve the normalized share of source cells that drew a slab for the
+	// nonlinear seam-cavity composition below. The amplitude is clamped and
+	// squared per cell, so it cannot be reconstructed from averaged `slab`.
+	float plate_window_slab_share = 0.0;
 	// Mirror the ground shader's symmetric sum over every cell that can carry
 	// footprint weight. During the active 0.30–0.85 resolution fade that support
 	// fits inside this 5x5 domain; outside it `plate_window_gate` is already zero.
@@ -223,6 +227,7 @@ void fragment() {
 		vec2 window_base = floor(plate_uv);
 		float window_total = 0.0;
 		float window_slab = 0.0;
+		float window_slab_share = 0.0;
 		for (int j = -2; j <= 2; j++) {
 			for (int i = -2; i <= 2; i++) {
 				vec2 cell = window_base + vec2(float(i), float(j));
@@ -232,14 +237,19 @@ void fragment() {
 				vec2 centre = cell + 0.15 + 0.7 * jitter;
 				float d = length(plate_uv - centre);
 				float weight = terrain_plate_window_weight(d, f1, plate_fw);
+				float cell_is_slab = step(
+					0.60, terrain_hash3(vec3(cell * 2.3, 19.0)));
 				float cell_slab = mix(
 					0.40,
-					step(0.60, terrain_hash3(vec3(cell * 2.3, 19.0))),
+					cell_is_slab,
 					plate_resolved);
 				window_slab += cell_slab * weight;
+				window_slab_share += cell_is_slab * weight;
 				window_total += weight;
 			}
 		}
+		plate_window_slab_share =
+			window_slab_share / max(window_total, 1e-6);
 		slab = mix(
 			pair_slab,
 			window_slab / max(window_total, 1e-6),
@@ -405,12 +415,10 @@ void fragment() {
 		// pixel spanning a whole groove sees its two walls cancel. The full
 		// derivation, the top-hat justification and the limits are in
 		// terrain.gdshader — this is the same integral over the same profile.
-		float amp = min(length(gsep) * (1.5 / cw_relief) * plate_scale
-			* plate_mask_relief, 0.4);
-		float amp_nb = min(length(gsep) * (1.5 / cw_relief) * plate_scale
-			* plate_mask_relief_nb, 0.4);
-		float amp_nb3 = min(length(gsep) * (1.5 / cw_relief) * plate_scale
-			* plate_mask_relief_nb3, 0.4);
+		float amp_scale = length(gsep) * (1.5 / cw_relief) * plate_scale;
+		float amp = min(amp_scale * plate_mask_relief, 0.4);
+		float amp_nb = min(amp_scale * plate_mask_relief_nb, 0.4);
+		float amp_nb3 = min(amp_scale * plate_mask_relief_nb3, 0.4);
 		float seam_h = max(edge_fw, 1e-6);
 		float half_h = 0.5 * seam_h;
 		float s_sep = f2 - f1;
@@ -420,16 +428,35 @@ void fragment() {
 		float covered = clamp(max(min(s_sep + half_h, cw_relief)
 			- max(s_sep - half_h, -cw_relief), 0.0) / seam_h, 0.0, 1.0);
 		float spread = max(covered - prof * prof, 0.0);
-		// Same three-candidate coverage split as terrain.gdshader, over the same
-		// weights every per-cell quantity above uses: a pixel straddling a
+		// Same three-candidate baseline as terrain.gdshader, over the same
+		// weights every per-cell quantity above uses. A pixel straddling a
 		// slab-to-bare contact contains all of those cells' seams, and gating the
-		// symmetric integral by whichever cell owns the pixel centre steps the
-		// cavity as that centre crosses. `plate_w` rather than a pairwise mix,
-		// because the pairwise form takes the second-nearest cell outright and
-		// that cell's identity swaps abruptly at a triple junction while it still
-		// holds weight. Identical away from one.
-		seam_slope_var = (amp * amp * plate_w.x + amp_nb * amp_nb * plate_w.y
-			+ amp_nb3 * amp_nb3 * plate_w.z) * spread;
+		// integral by whichever cell owns the pixel centre steps the cavity as
+		// that centre crosses. `plate_w` rather than a pairwise mix keeps the
+		// triple junction continuous; the branch below then generalizes the
+		// per-cell factor through the same symmetric window as the surface.
+		float seam_amp_sq = amp * amp * plate_w.x
+			+ amp_nb * amp_nb * plate_w.y + amp_nb3 * amp_nb3 * plate_w.z;
+		if (plate_window_gate > 0.0 && plate_window_w > 0.0) {
+			// The resolved cell has one of two slab states. Their normalized
+			// window share lets this nonlinear, already-clamped square use the
+			// existing 5x5 work rather than repeating the hash loop.
+			float low_amp = min(
+				amp_scale * sheet * mix(0.40, 0.0, plate_resolved), 0.4);
+			float high_amp = min(
+				amp_scale * sheet * mix(0.40, 1.0, plate_resolved), 0.4);
+			float window_amp_sq = mix(
+				low_amp * low_amp,
+				high_amp * high_amp,
+				plate_window_slab_share);
+			float pair_amp_sq = amp * amp * (1.0 - plate_edge_w)
+				+ amp_nb * amp_nb * plate_edge_w;
+			seam_amp_sq = mix(
+				pair_amp_sq,
+				window_amp_sq,
+				plate_window_w);
+		}
+		seam_slope_var = seam_amp_sq * spread;
 		vec2 ghat = gsep * inversesqrt(max(dot(gsep, gsep), 1e-12));
 		grad = -ghat * mean_tilt;
 		grad *= 1.0 - smoothstep(0.30, 0.85, plate_fw);
