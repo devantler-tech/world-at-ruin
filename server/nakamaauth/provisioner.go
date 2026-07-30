@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"sync"
 
 	"github.com/heroiclabs/nakama-common/api"
 	"google.golang.org/grpc"
@@ -47,6 +48,61 @@ type GoogleBindingStore interface {
 	VerifyGoogleBoundAccount(context.Context, string) error
 }
 
+type googleProvisioningGateEntry struct {
+	token chan struct{}
+	users int
+}
+
+type googleProvisioningGate struct {
+	mu      sync.Mutex
+	entries map[string]*googleProvisioningGateEntry
+}
+
+func (g *googleProvisioningGate) acquire(
+	ctx context.Context,
+	key string,
+) (func(), error) {
+	g.mu.Lock()
+	if g.entries == nil {
+		g.entries = make(map[string]*googleProvisioningGateEntry)
+	}
+	entry := g.entries[key]
+	if entry == nil {
+		entry = &googleProvisioningGateEntry{token: make(chan struct{}, 1)}
+		entry.token <- struct{}{}
+		g.entries[key] = entry
+	}
+	entry.users++
+	g.mu.Unlock()
+
+	if err := ctx.Err(); err != nil {
+		g.done(key, entry)
+		return nil, err
+	}
+	select {
+	case <-ctx.Done():
+		g.done(key, entry)
+		return nil, ctx.Err()
+	case <-entry.token:
+		return func() {
+			entry.token <- struct{}{}
+			g.done(key, entry)
+		}, nil
+	}
+}
+
+func (g *googleProvisioningGate) done(
+	key string,
+	entry *googleProvisioningGateEntry,
+) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	entry.users--
+	if entry.users == 0 && g.entries[key] == entry {
+		delete(g.entries, key)
+	}
+}
+
 // ProvisionerConfig controls opt-in account provisioning paths.
 type ProvisionerConfig struct {
 	GoogleProvisioningEnabled bool
@@ -65,6 +121,7 @@ type Provisioner struct {
 	identityVerifier googleIdentityVerifier
 	bindings         GoogleBindingStore
 	config           ProvisionerConfig
+	provisioningGate googleProvisioningGate
 }
 
 // NewProvisioner builds a default-off account provisioner.
@@ -185,6 +242,29 @@ func (p *Provisioner) authenticateEmail(
 	})
 }
 
+func (p *Provisioner) resolveGoogleBinding(
+	ctx context.Context,
+	bindingKey string,
+) (string, bool, error) {
+	boundUserID, found, err := p.bindings.ResolveGoogleBinding(ctx, bindingKey)
+	if err != nil {
+		return "", false, sanitizedGoogleBindingError("lookup", err)
+	}
+	if !found {
+		return "", false, nil
+	}
+	if boundUserID == "" {
+		return "", false, status.Error(
+			codes.Internal,
+			"nakama auth: Google identity binding has no user ID",
+		)
+	}
+	if err := p.bindings.VerifyGoogleBoundAccount(ctx, boundUserID); err != nil {
+		return "", false, sanitizedGoogleBindingError("account check", err)
+	}
+	return boundUserID, true, nil
+}
+
 // ProvisionGoogle creates or resolves the Nakama account for a Google identity.
 func (p *Provisioner) ProvisionGoogle(
 	ctx context.Context,
@@ -226,20 +306,30 @@ func (p *Provisioner) ProvisionGoogle(
 
 	bindingCtx := outgoingContextWithoutAuthorization(ctx)
 	bindingKey := googleBindingKey(p.config.NakamaIdentityKey, subject)
-	boundUserID, found, err := p.bindings.ResolveGoogleBinding(bindingCtx, bindingKey)
+	boundUserID, found, err := p.resolveGoogleBinding(bindingCtx, bindingKey)
+	if err != nil {
+		return "", err
+	}
+	if found {
+		return boundUserID, nil
+	}
+
+	// Nakama's optional single-session mode revokes the previous token when a
+	// second authentication succeeds. Serialize the absent-binding path per
+	// opaque identity key so one in-process first sign-in can authenticate,
+	// verify, and publish the durable winner before another issues a token.
+	release, err := p.provisioningGate.acquire(bindingCtx, bindingKey)
 	if err != nil {
 		return "", sanitizedGoogleBindingError("lookup", err)
 	}
+	defer release()
+
+	// Another request may have published the binding while this request waited.
+	boundUserID, found, err = p.resolveGoogleBinding(bindingCtx, bindingKey)
+	if err != nil {
+		return "", err
+	}
 	if found {
-		if boundUserID == "" {
-			return "", status.Error(
-				codes.Internal,
-				"nakama auth: Google identity binding has no user ID",
-			)
-		}
-		if err := p.bindings.VerifyGoogleBoundAccount(bindingCtx, boundUserID); err != nil {
-			return "", sanitizedGoogleBindingError("account check", err)
-		}
 		return boundUserID, nil
 	}
 

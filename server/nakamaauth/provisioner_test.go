@@ -65,8 +65,45 @@ type fakeGoogleBindingStore struct {
 	bindingWrites        int
 }
 
+type barrierGoogleBindingStore struct {
+	*fakeGoogleBindingStore
+	mu       sync.Mutex
+	arrived  int
+	target   int
+	released chan struct{}
+}
+
 func newFakeGoogleBindingStore() *fakeGoogleBindingStore {
 	return &fakeGoogleBindingStore{bindings: make(map[string]string)}
+}
+
+func newBarrierGoogleBindingStore(target int) *barrierGoogleBindingStore {
+	return &barrierGoogleBindingStore{
+		fakeGoogleBindingStore: newFakeGoogleBindingStore(),
+		target:                 target,
+		released:               make(chan struct{}),
+	}
+}
+
+func (s *barrierGoogleBindingStore) ResolveGoogleBinding(
+	ctx context.Context,
+	key string,
+) (string, bool, error) {
+	s.mu.Lock()
+	s.arrived++
+	arrival := s.arrived
+	if arrival == s.target {
+		close(s.released)
+	}
+	s.mu.Unlock()
+	if arrival <= s.target {
+		select {
+		case <-s.released:
+		case <-ctx.Done():
+			return "", false, ctx.Err()
+		}
+	}
+	return s.fakeGoogleBindingStore.ResolveGoogleBinding(ctx, key)
 }
 
 func (s *fakeGoogleBindingStore) ResolveGoogleBinding(
@@ -765,7 +802,8 @@ func TestProvisionGoogleConvergesConcurrentFirstSignIns(t *testing.T) {
 		issuedSession:   testNakamaSession,
 		provisionedUser: "player-42",
 	}
-	bindings := newFakeGoogleBindingStore()
+	const attempts = 8
+	bindings := newBarrierGoogleBindingStore(attempts)
 	provisioner := provisionerAgainstWithBindings(
 		t,
 		server,
@@ -774,7 +812,6 @@ func TestProvisionGoogleConvergesConcurrentFirstSignIns(t *testing.T) {
 		enabledProvisionerConfig(),
 	)
 
-	const attempts = 8
 	type result struct {
 		userID string
 		err    error
@@ -810,13 +847,20 @@ func TestProvisionGoogleConvergesConcurrentFirstSignIns(t *testing.T) {
 		}
 	}
 
-	bindings.mu.Lock()
+	authentication, _ := server.observed()
+	if len(authentication) != 1 {
+		t.Fatalf(
+			"concurrent first sign-ins made %d AuthenticateEmail calls; want 1 so single-session mode cannot revoke an in-flight verification",
+			len(authentication),
+		)
+	}
+	bindings.fakeGoogleBindingStore.mu.Lock()
 	bindingWrites := bindings.bindingWrites
 	boundUserID := bindings.bindings[googleBindingKey(
 		[]byte(testNakamaIdentityKey),
 		testGoogleSubject,
 	)]
-	bindings.mu.Unlock()
+	bindings.fakeGoogleBindingStore.mu.Unlock()
 	if bindingWrites != 1 || boundUserID != "player-42" {
 		t.Fatalf(
 			"concurrent binding state = %d write(s), user %q; want one player-42 binding",

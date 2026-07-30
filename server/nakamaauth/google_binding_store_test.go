@@ -406,6 +406,10 @@ func TestNakamaGoogleBindingStoreRejectsMalformedDurableRecord(t *testing.T) {
 }
 
 func TestEveryShippedGoogleBindingSchemaStaysReadable(t *testing.T) {
+	wantDocuments := []googleBindingDocument{{
+		Schema: 1,
+		UserID: testBoundUserID,
+	}}
 	ledgerBytes, err := os.ReadFile(filepath.Join(
 		"testdata",
 		"shipped_google_binding_versions.txt",
@@ -416,6 +420,13 @@ func TestEveryShippedGoogleBindingSchemaStaysReadable(t *testing.T) {
 	versions := strings.Fields(string(ledgerBytes))
 	if len(versions) == 0 {
 		t.Fatal("Google binding schema ledger is empty")
+	}
+	if len(versions) != len(wantDocuments) {
+		t.Fatalf(
+			"Google binding schema ledger has %d version(s), but historical semantics pin %d document(s)",
+			len(versions),
+			len(wantDocuments),
+		)
 	}
 	for index, entry := range versions {
 		version, err := strconv.Atoi(entry)
@@ -443,11 +454,12 @@ func TestEveryShippedGoogleBindingSchemaStaysReadable(t *testing.T) {
 		if err != nil {
 			t.Fatalf("decode Google binding schema %d golden: %v", version, err)
 		}
-		if document.Schema != version {
+		if document != wantDocuments[index] {
 			t.Fatalf(
-				"Google binding schema %d golden declares %d",
+				"Google binding schema %d golden = %+v, want historical document %+v",
 				version,
-				document.Schema,
+				document,
+				wantDocuments[index],
 			)
 		}
 	}
