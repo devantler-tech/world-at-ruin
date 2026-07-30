@@ -346,7 +346,8 @@ void fragment() {
 	// (#499). Keyed on the isotropic `plate_fw`, not `edge_fw`; see the
 	// function's own note on why a width built from `c1` puts the defect back.
 	plate_w = terrain_plate_blend_weights(f1, f2, f3, plate_edge_w, plate_fw);
-	plate_window_w = terrain_plate_window_activation(f1, f3, f4, plate_fw);
+	plate_window_w = plate_resolved * terrain_plate_window_activation(
+		f1, f3, f4, plate_fw);
 
 	// Both cells' substances are kept SEPARATE here and composed with their own
 	// slab masks below. Blending the substances here and the masks there would
@@ -461,16 +462,18 @@ void fragment() {
 		+ slab_nb3 * plate_w.z;
 	// A fixed candidate list has a tail: at a four-fold vertex the third label
 	// swaps with an uncarried fourth while still holding coverage. Fold in a
-	// symmetric sum over the SAME nine-cell search window only where the fourth
-	// enters this pixel's footprint. Everywhere else `plate_window_w` is
-	// exactly zero and the established two-/three-cell answer stays
-	// bit-identical.
+	// symmetric sum over every cell that can carry footprint weight, only where
+	// the fourth enters this pixel's footprint. Everywhere else
+	// `plate_window_w` is exactly zero and the established two-/three-cell answer
+	// stays bit-identical. During the active 0.30–0.85 resolution fade that
+	// support fits inside this 5x5 domain; outside it `plate_window_w` is already
+	// zero.
 	if (plates_enabled && plate_window_w > 0.0) {
 		vec2 window_base = floor(plate_uv);
 		float window_total = 0.0;
 		float window_slab = 0.0;
-		for (int j = -1; j <= 1; j++) {
-			for (int i = -1; i <= 1; i++) {
+		for (int j = -2; j <= 2; j++) {
+			for (int i = -2; i <= 2; i++) {
 				vec2 cell = window_base + vec2(float(i), float(j));
 				vec2 jitter = vec2(
 					hash3(vec3(cell, 0.0)),
@@ -635,8 +638,8 @@ void fragment() {
 		float window_mean_rough = rock_roughness * 0.38 + 0.88 * 0.28
 			+ 0.72 * 0.20 + 0.94 * 0.14;
 		vec4 window_mean = vec4(window_mean_col, window_mean_rough);
-		for (int j = -1; j <= 1; j++) {
-			for (int i = -1; i <= 1; i++) {
+		for (int j = -2; j <= 2; j++) {
+			for (int i = -2; i <= 2; i++) {
 				vec2 cell = window_base + vec2(float(i), float(j));
 				vec2 jitter = vec2(
 					hash3(vec3(cell, 0.0)),

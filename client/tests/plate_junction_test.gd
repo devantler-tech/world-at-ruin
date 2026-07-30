@@ -95,6 +95,8 @@ func _ready() -> void:
 			+ "four-plate bound")
 	else:
 		_check_degenerate_vertex_bound(degenerate["uv"])
+	_check_window_activation_continuity()
+	_check_window_grid_boundary_continuity()
 	_check_two_cell_reduction()
 	_report()
 
@@ -237,13 +239,17 @@ func _blend(uv: Vector2, use_third: bool) -> PackedFloat64Array:
 ## search as `_plates` receives a weight derived only from its distance excess
 ## over the nearest cell. No ordered "last carried candidate" exists, so swapping
 ## any equidistant labels cannot move the result.
-func _full_window_blend(uv: Vector2, p: Dictionary) -> PackedFloat64Array:
+func _full_window_blend(
+		uv: Vector2,
+		p: Dictionary,
+		footprint: float = FOOTPRINT,
+		radius: int = 2) -> PackedFloat64Array:
 	var base := Vector2(floor(uv.x), floor(uv.y))
-	var w: float = maxf(FOOTPRINT, 1e-6)
+	var w: float = maxf(footprint, 1e-6)
 	var total := 0.0
 	var out := PackedFloat64Array([0.0, 0.0, 0.0, 0.0])
-	for j in range(-1, 2):
-		for i in range(-1, 2):
+	for j in range(-radius, radius + 1):
+		for i in range(-radius, radius + 1):
 			var cell := base + Vector2(float(i), float(j))
 			var jitter := Vector2(
 				_hash3(Vector3(cell.x, cell.y, 0.0)),
@@ -267,6 +273,16 @@ func _full_window_blend(uv: Vector2, p: Dictionary) -> PackedFloat64Array:
 	return out
 
 
+func _window_activation(p: Dictionary, footprint: float) -> float:
+	var w: float = maxf(footprint, 1e-6)
+	var reach_margin: float = maxf(
+		w - (float(p["f4"]) - float(p["f1"])), 0.0)
+	var within_reach := _glsl_step(1e-6, reach_margin)
+	return within_reach * (1.0 - smoothstep(
+		0.0, maxf(reach_margin, 1e-6),
+		float(p["f4"]) - float(p["f3"])))
+
+
 ## Keep the established three-way answer bit-identical except where the fourth
 ## candidate enters the same pixel footprint. At the exact third/fourth identity
 ## swap this is wholly the symmetric window answer, so the discontinuous
@@ -275,11 +291,7 @@ func _window_blend(uv: Vector2) -> PackedFloat64Array:
 	var p := _plates(uv)
 	var current := _blend(uv, true)
 	var full := _full_window_blend(uv, p)
-	var w: float = maxf(FOOTPRINT, 1e-6)
-	var fourth_reaches_fragment: float = 1.0 - _glsl_step(
-		w, float(p["f4"]) - float(p["f1"]))
-	var junction: float = fourth_reaches_fragment * (1.0 - smoothstep(
-		0.0, w, float(p["f4"]) - float(p["f3"])))
+	var junction := _window_activation(p, FOOTPRINT)
 	for k in range(0, current.size()):
 		current[k] = lerpf(current[k], full[k], junction)
 	return current
@@ -508,6 +520,74 @@ func _check_degenerate_vertex_bound(centre: Vector2) -> void:
 		% [window_coarse, window_fine])
 
 
+## The fourth-candidate reach must fade continuously. A hard cutoff at
+## `f4 - f1 == footprint` creates a zero-width contour even though the
+## whole-window and three-candidate answers are still different there.
+func _check_window_activation_continuity() -> void:
+	var w := 0.60
+	var epsilon := 0.000001
+	var before := {
+		"f1": 0.0,
+		"f3": w * 0.75,
+		"f4": w - epsilon,
+	}
+	var after := before.duplicate()
+	after["f4"] = w + epsilon
+	var a := _window_activation(before, w)
+	var b := _window_activation(after, w)
+	var jump := absf(a - b)
+	if jump > 0.001:
+		_fail("the fourth-candidate reach activation jumps %.9f across "
+			% jump
+			+ "`f4 - f1 == footprint` — the whole-window handoff must fade "
+			+ "continuously instead of drawing a zero-width contour")
+	print("WINDOW ACTIVATION reach-boundary jump %.9f" % jump)
+
+
+func _max_window_grid_boundary_jump(radius: int, footprint: float) -> Dictionary:
+	var worst := 0.0
+	var worst_uv := Vector2.ZERO
+	var epsilon := 0.000001
+	for grid_x in range(3, 13):
+		for gy in range(0, 180):
+			var y := 2.3 + float(gy) * 0.05
+			var left := Vector2(float(grid_x) - epsilon, y)
+			var right := Vector2(float(grid_x) + epsilon, y)
+			var a := _full_window_blend(
+				left, _plates(left), footprint, radius)
+			var b := _full_window_blend(
+				right, _plates(right), footprint, radius)
+			for k in range(0, a.size()):
+				var d: float = absf(a[k] - b[k])
+				if d > worst:
+					worst = d
+					worst_uv = Vector2(float(grid_x), y)
+	return {"jump": worst, "uv": worst_uv}
+
+
+## During the 0.30–0.85 resolution fade, weights can reach beyond the 3x3
+## nearest-candidate search. The whole-window sum must cover every cell that can
+## receive non-zero weight; otherwise `floor(plate_uv)` drops a weighted outer
+## column and inserts another at every integer grid boundary.
+func _check_window_grid_boundary_continuity() -> void:
+	var footprint := 0.60
+	var three := _max_window_grid_boundary_jump(1, footprint)
+	var five := _max_window_grid_boundary_jump(2, footprint)
+	if float(three["jump"]) < 0.01:
+		_fail("control: the 3x3 whole-window sum jumps only %.9f at grid "
+			% float(three["jump"])
+			+ "boundaries — the probe cannot see the weighted-column seam it "
+			+ "claims the larger domain removes")
+	if float(five["jump"]) > 0.001:
+		var uv: Vector2 = five["uv"]
+		_fail("the expanded whole-window sum still jumps %.9f at grid boundary "
+			% float(five["jump"])
+			+ "uv=(%.4f, %.4f) while the resolution fade is active"
+			% [uv.x, uv.y])
+	print("WINDOW GRID 3x3 jump %.9f; 5x5 jump %.9f"
+		% [float(three["jump"]), float(five["jump"])])
+
+
 ## Acceptance criterion 3, proven by construction rather than by frame evidence:
 ## away from a junction the third candidate carries no weight, so the blend is
 ## the two-cell one EXACTLY. Anything else would mean the fix had reached
@@ -595,12 +675,10 @@ func _check_source_guards() -> void:
 				+ "plate outright again, or it keys the split on a footprint "
 				+ "built from `c1`, which jumps when the owning cell swaps and "
 				+ "puts the defect back (#499)")
-		if not src.contains(
-				"terrain_plate_window_activation(f1, f3, f4, plate_fw)"):
+		if not src.contains("terrain_plate_window_activation("):
 			_fail("%s does not activate whole-window coverage from "
 				% path
-				+ "`terrain_plate_window_activation(f1, f3, f4, plate_fw)` — "
-				+ "the "
+				+ "`terrain_plate_window_activation(...)` — the "
 				+ "fourth candidate still has no continuous path into the "
 				+ "surface (#573)")
 		if not src.contains("terrain_plate_window_weight(d, f1, plate_fw)"):
@@ -608,6 +686,19 @@ func _check_source_guards() -> void:
 				% path
 				+ "`terrain_plate_window_weight(d, f1, plate_fw)` — the fix "
 				+ "still has an ordered last candidate whose label can swap")
+		if src.count("for (int j = -2; j <= 2; j++)") < 2 \
+				or src.count("for (int i = -2; i <= 2; i++)") < 2:
+			_fail("%s does not use the proven 5x5 domain for both whole-window "
+				% path
+				+ "sums — a 3x3 domain drops weighted columns at integer grid "
+				+ "boundaries while the resolution fade is active")
+		if not src.contains(
+				"plate_window_w = plate_resolved * "
+				+ "terrain_plate_window_activation("):
+			_fail("%s does not retire whole-window sampling with the plate "
+				% path
+				+ "resolution fade — outside the 0.30–0.85 active range there "
+				+ "is no cell-specific plate signal left to resolve")
 
 
 func _source(path: String) -> String:

@@ -193,13 +193,18 @@ vec3 terrain_plate_blend_weights(
 // three-candidate answer. A close third/fourth gap is relevant only when the
 // fourth cell also reaches the nearest cell's fragment footprint: two distant
 // candidates can be close to EACH OTHER without contributing anything here.
-// Inside that reach the activation is one at the exact identity swap, where a
-// fixed candidate list is discontinuous by construction.
+// The closeness ramp narrows continuously as the fourth candidate approaches
+// the edge of that reach. It has therefore already reached zero before the
+// reach ends whenever `f4 - f3` is non-zero; a hard cutoff cannot draw a contour
+// while the two answers still differ. At an exact third/fourth identity swap
+// the ramp remains one. Its final cutoff is harmless there because, as the reach
+// margin vanishes, both candidates' coverage vanishes with it.
 float terrain_plate_window_activation(float f1, float f3, float f4, float fw) {
 	float w = max(fw, 1e-6);
-	float fourth_reaches_fragment = 1.0 - step(w, f4 - f1);
-	return fourth_reaches_fragment
-		* (1.0 - smoothstep(0.0, w, f4 - f3));
+	float reach_margin = max(w - (f4 - f1), 0.0);
+	float within_reach = step(1e-6, reach_margin);
+	return within_reach * (1.0 - smoothstep(
+		0.0, max(reach_margin, 1e-6), f4 - f3));
 }
 
 // One search-window cell's symmetric coverage. This depends only on the cell's

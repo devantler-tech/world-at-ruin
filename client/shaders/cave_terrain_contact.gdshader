@@ -145,7 +145,8 @@ void fragment() {
 		// have to agree about WHICH plates they are blending as well as how much,
 		// or they part company at a triple junction that straddles the contact.
 		plate_w = terrain_plate_blend_weights(f1, f2, f3, plate_edge_w, plate_fw);
-		plate_window_w = terrain_plate_window_activation(f1, f3, f4, plate_fw);
+		plate_window_w = plate_resolved * terrain_plate_window_activation(
+			f1, f3, f4, plate_fw);
 		// The same footprint average as the ground (#306). This path exists to
 		// resolve the IDENTICAL substance at the same world XZ, so leaving the
 		// step unfiltered here would reintroduce the crawl at the cave contact
@@ -209,16 +210,17 @@ void fragment() {
 	// previous two-cell blend exactly.
 	float slab = slab_own * plate_w.x + slab_nb * plate_w.y
 		+ slab_nb3 * plate_w.z;
-	// Mirror the ground shader's symmetric sum over the same nine-cell search
-	// window. It has authority only where the fourth candidate enters this
-	// fragment's footprint, so the established answer remains bit-identical
-	// everywhere else.
+	// Mirror the ground shader's symmetric sum over every cell that can carry
+	// footprint weight. During the active 0.30–0.85 resolution fade that support
+	// fits inside this 5x5 domain; outside it `plate_window_w` is already zero.
+	// It has authority only where the fourth candidate enters this fragment's
+	// footprint, so the established answer remains bit-identical everywhere else.
 	if (plates_enabled && plate_window_w > 0.0) {
 		vec2 window_base = floor(plate_uv);
 		float window_total = 0.0;
 		float window_slab = 0.0;
-		for (int j = -1; j <= 1; j++) {
-			for (int i = -1; i <= 1; i++) {
+		for (int j = -2; j <= 2; j++) {
+			for (int i = -2; i <= 2; i++) {
 				vec2 cell = window_base + vec2(float(i), float(j));
 				vec2 jitter = vec2(
 					terrain_hash3(vec3(cell, 0.0)),
@@ -302,8 +304,8 @@ void fragment() {
 		float window_mean_rough = rock_roughness * 0.38 + 0.88 * 0.28
 			+ 0.72 * 0.20 + 0.94 * 0.14;
 		vec4 window_mean = vec4(window_mean_col, window_mean_rough);
-		for (int j = -1; j <= 1; j++) {
-			for (int i = -1; i <= 1; i++) {
+		for (int j = -2; j <= 2; j++) {
+			for (int i = -2; i <= 2; i++) {
 				vec2 cell = window_base + vec2(float(i), float(j));
 				vec2 jitter = vec2(
 					terrain_hash3(vec3(cell, 0.0)),
