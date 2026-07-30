@@ -1,0 +1,12 @@
+{
+	"date": "2026-07-30",
+	"notes": [
+		"The last note said the grooves between stone slabs are now kept as shadow so seams read into the distance. That shadow was still being shared between two slabs at a time, which is one too few wherever three slabs meet.",
+		"At those meeting points the darkening handed off abruptly from one neighbour to another — a fresh hard line sitting exactly where the softening was supposed to be. The hollow shading now shares across all three slabs that meet, the same way their surfaces already did, so the handover happens gradually instead of snapping.",
+		"Measured across a three-way meeting point, the part of the darkening that used to step is roughly halved, and off a meeting point nothing changes at all — ordinary ground is untouched.",
+		"Still rough, and deliberately named: where four slabs meet at once the step shrinks but does not disappear, and one component of the seam's shape still hands over abruptly rather than fading. Both are written down as open work rather than called finished.",
+		"The slabbed ground remains a preview: set WAR_GROUND_PLATES=1 before launch to see it."
+	],
+	"title": "Stone seams stop snapping where three slabs meet",
+	"version": "0.80.3"
+}

@@ -27,6 +27,13 @@
 #       This binds the prose licence/source chain to every shipped file and
 #       catches both an unrecorded addition and a silent replacement.
 #
+#   R4  Every tracked Godot-supported image under client/assets/ must have
+#       indexed texture import metadata that explicitly generates mipmaps.
+#       Runtime load() calls do not trigger Godot's 3D-use detection, so
+#       accepting the 2D import default silently ships distant textures without
+#       a mip chain. The asset catalogue is entirely 3D; a blanket rule is
+#       fail-closed and cannot miss a new runtime-only path.
+#
 # WHY BINARY-BY-CONTENT RATHER THAN BY EXTENSION: an extension allowlist fails
 # open the first time a new format lands, and has to be maintained forever.
 # Testing for a NUL byte needs no list and catches any future binary format on
@@ -158,11 +165,48 @@ recorded_checksum_for() {
 	return 1
 }
 
+indexed_section_value_is() {
+	local import_file="$1"
+	local target_section="$2"
+	local target_key="$3"
+	local expected_value="$4"
+
+	awk \
+		-v target_section="$target_section" \
+		-v target_key="$target_key" \
+		-v expected_value="$expected_value" '
+		/^\[[^]]+\]$/ {
+			current_section = $0
+			next
+		}
+		current_section == target_section {
+			separator = index($0, "=")
+			if (separator > 1 && substr($0, 1, separator - 1) == target_key) {
+				value = substr($0, separator + 1)
+			}
+		}
+		END {
+			exit(value == expected_value ? 0 : 1)
+		}
+	' < <(git show ":$import_file")
+}
+
+is_supported_texture_source() (
+	# Godot recognizes image suffixes case-insensitively. Keep nocasematch
+	# scoped to this subshell so the guard never rewrites or normalizes a path.
+	shopt -s nocasematch
+	case "$1" in
+	*.bmp | *.dds | *.exr | *.hdr | *.jpeg | *.jpg | *.ktx | *.png | *.svg | *.tga | *.webp) return 0 ;;
+	*) return 1 ;;
+	esac
+)
+
 stray=()
 uncovered=()
 unaccounted=()
 checksum_mismatch=()
 unrepresentable=()
+missing_mipmaps=()
 checked=0
 accounted=0
 
@@ -231,6 +275,21 @@ if [ -d "$ASSET_ROOT" ]; then
 			unaccounted+=("$file (expected in $record)")
 		fi
 	done < <(git ls-files -z -- "$ASSET_ROOT")
+
+	# R4 — every Godot-supported image in the shipped asset catalogue has an
+	# indexed texture import that declares its mip chain. Enumerating sources,
+	# rather than existing sidecars, makes a missing .import file fail closed.
+	while IFS= read -r -d '' texture_file; do
+		is_supported_texture_source "$texture_file" || continue
+
+		import_file="$texture_file.import"
+		if ! git cat-file -e ":$import_file" 2>/dev/null; then
+			missing_mipmaps+=("$texture_file (track $import_file with mipmaps/generate=true)")
+		elif ! indexed_section_value_is "$import_file" '[remap]' importer '"texture"' ||
+			! indexed_section_value_is "$import_file" '[params]' mipmaps/generate true; then
+			missing_mipmaps+=("$texture_file (set mipmaps/generate=true in $import_file)")
+		fi
+	done < <(git ls-files -z -- "$ASSET_ROOT")
 fi
 
 failed=0
@@ -287,6 +346,17 @@ if [ ${#unrepresentable[@]} -gt 0 ]; then
 	printf '  - %q\n' "${unrepresentable[@]}"
 	echo
 	echo "Rename the tracked asset to a line-safe path, then account for it in PROVENANCE.md."
+	echo
+fi
+
+if [ ${#missing_mipmaps[@]} -gt 0 ]; then
+	failed=1
+	echo "::error::tracked textures without indexed mipmap metadata — runtime load() does not trigger Godot's 3D import detection"
+	printf '  - %s\n' "${missing_mipmaps[@]}"
+	echo
+	echo "Track each texture's .import file with importer=\"texture\" and"
+	echo "mipmaps/generate=true. This keeps distant runtime-loaded textures from"
+	echo "aliasing after the editor import pass."
 	echo
 fi
 

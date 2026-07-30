@@ -166,13 +166,19 @@ zone/dungeon server:
   generated gRPC client/server path.
 - **`agonesalloc/`** — the typed **Agones allocation API boundary**: it sends
   one current-format `AllocationRequest` through Agones's generated gRPC client,
-  selecting only Ready GameServers from the configured namespace and fleet.
-  Reservation and attempt values enter GameServer labels only as full
-  SHA-256-derived, label-safe correlation values; the caller's raw identifiers
-  never cross this boundary. A response is usable only when it names a valid
-  GameServer and carries exactly one in-range configured TLS port. Allocation
-  refusals preserve the stable gRPC code without reflecting upstream text.
-  Hermetic tests exercise the real generated client/server path.
+  selecting only Ready GameServers whose fleet and admission-ready label match
+  the configured wrapping-key fingerprint exactly. Reservation and attempt
+  values enter GameServer labels only as full SHA-256-derived, label-safe
+  correlation values; a versioned claim locator combines the private lease
+  object ID with the attempt digest without exposing the caller's raw
+  identifiers. A response is usable only when it names a valid GameServer,
+  carries exactly one in-range configured TLS port, echoes the exact fleet,
+  readiness, wrapping-key and claim metadata, and supplies a bounded canonical
+  version-one admission envelope. The returned endpoint includes the validated
+  fingerprint and sealed envelope so an allocated lease remains resolvable
+  across wrapping-key rotation. Allocation refusals preserve the stable gRPC
+  code without reflecting upstream text. Hermetic tests exercise the real
+  generated client/server path.
 - **`nakamalease/`** — the private **Nakama handoff lease store**: one
   server-owned object per SHA-256-derived user/reservation key owns the current
   allocation attempt, including its pre-provision staging intent, observer
@@ -208,6 +214,16 @@ zone/dungeon server:
   credentials never enter returned errors. Hermetic tests drive the real
   generated Nakama gRPC path through the service and then verify its token
   through the real zone verifier.
+- **`admissionref/`** — the sealed-admission material boundary. A
+  rotation-capable RSA keyring indexes retained unwrap keys by the canonical
+  SubjectPublicKeyInfo fingerprint. It opens only a canonical version-1
+  envelope whose OAEP label binds the namespace, GameServer name, UID and key,
+  requires exactly 32 plaintext bytes, and returns isolated secret copies.
+  The same boundary derives and verifies the durable DNS-safe reference that
+  pins the key, UID digest, ciphertext digest and TLS port. Recovery refuses a
+  changed identity, envelope, key or port through one sanitized error. It is
+  pure and remains uncomposed until the concrete GameServer resource adapter
+  owns the Agones and Kubernetes calls.
 - **`handoffalloc/`** — the durable **handoff allocation coordinator**: it
   implements `handoff.Allocator` over the real `nakamalease` store and an
   injected GameServer-resource boundary. It persists a staging intent before
@@ -222,11 +238,12 @@ zone/dungeon server:
   including a crash that left only an attempt ID. Claimed and stale attempts
   remain untouched, external errors are sanitized, and raw admission-secret
   bytes never enter the lease. The coordinator is inert until a concrete
-  `GameServerResources` adapter will provision Agones GameServers and
-  resolve their zone-generated sealed admission envelopes according to
-  [ADR 0002](../docs/adr/0002-seal-zone-admission-secrets-before-readiness.md),
-  its expiry loop will be supervised, and a Nakama RPC will register the
-  resulting handoff service.
+  `GameServerResources` adapter provisions Agones GameServers, composes the
+  `admissionref` boundary, and resolves their zone-generated envelopes
+  according to [ADR
+  0002](../docs/adr/0002-seal-zone-admission-secrets-before-readiness.md), its
+  expiry loop will be supervised, and a Nakama RPC will register the resulting
+  handoff service.
 - **`cmd/zone/`** — a runnable skeleton server. It boots the demo zone and either
   runs a fixed number of deterministic ticks (printing the state hash) or drives
   the loop from the wall clock. With `-replicate` it also runs the full

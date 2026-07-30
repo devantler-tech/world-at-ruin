@@ -24,6 +24,7 @@ const (
 	AdmissionEnvelopeAnnotation = "agones.dev/sdk-war-admission-envelope"
 	AdmissionKeyAnnotation      = "agones.dev/sdk-war-admission-key"
 	AdmissionReadyLabel         = "agones.dev/sdk-war-admission-ready"
+	ClaimLocatorAnnotation      = "world-at-ruin.dev/handoff-claim"
 
 	admissionEnvelopeSuffix = "war-admission-envelope"
 	admissionKeySuffix      = "war-admission-key"

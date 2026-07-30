@@ -1,12 +1,12 @@
 # Frame evidence for GPU-gated rendering
 
-> Status: **accepted** · 2026-07-20 · delivers #232 (Part of the quality-bar epic #123). The draft
-> PR is the steering surface — the maintainer redirects there.
+> Status: **accepted and implemented** · 2026-07-20 · delivers #232 and #314 (Part of the
+> quality-bar epic #123). The draft PR is the steering surface — the maintainer redirects there.
 >
 > This is an architecture decision record. It settles *how a change to GPU-probe-gated rendering
 > gets inspectable frame evidence* when the required capture runner cannot render the gated path.
-> It does not build the software-rasteriser lane: the child that follows cites this document and
-> implements it.
+> CI carries both halves: the required macOS artifact states its fallback conditions, and an
+> advisory Ubuntu/lavapipe job publishes the enabled path in a separate artifact.
 
 ## The problem, stated precisely
 
@@ -48,7 +48,7 @@ groups) reduce the risk but do not restore the property, and each one is a stand
 rots quietly. This option is declined on security grounds, not on cost — so no runner is added and
 the ownership question it would raise does not arise.
 
-### 2. A software-rasteriser lane — **viable, and now measured**
+### 2. A software-rasteriser lane — **adopted as advisory evidence**
 
 Mesa's **lavapipe** is a CPU Vulkan implementation. Whether it advertises R32_Uint as an atomic
 storage image is not stated in Mesa's llvmpipe documentation, the lavapipe extension changelogs, or
@@ -76,11 +76,23 @@ confident wrong answer rather than a failure:
 - `--rendering-driver vulkan` is required. Without it Godot selects the GL Compatibility renderer,
   which has **no `RenderingDevice` at all**, so the probe returns false trivially.
 
-What is **not** yet known, and is the child's job: whether a full capture (150 warm-up + 120 settle
-frames across four vantages, plus volumetrics) completes on a CPU rasteriser inside a sane timeout,
-and whether the frames are useful to a reviewer. A different rasteriser produces different pixels,
-so such a lane is **additive** — its frames are comparable to each other across commits, never to
-the macOS runner's. It does not replace the required job.
+`Frame capture (lavapipe volumetrics)` runs on hosted Ubuntu 24.04 only when the player-visible gate
+marks a change as GPU-gated. It installs Mesa and Xvfb, resolves the lavapipe ICD by glob, selects
+the Vulkan driver explicitly, and runs the same fixed-vantage capture with the repository's pinned,
+checksum-verified Godot build. Its guard requires all of the following before an artifact exists:
+
+- the Godot renderer line names the lavapipe Vulkan device;
+- `VOLUMETRICS on` appears exactly and unambiguously;
+- `HOLLOW FOG on` reports a positive number of built ash pools;
+- the real boot and capture completion markers are present;
+- no runtime or shader error appears; and
+- at least one non-empty PNG exists.
+
+The job has a 45-minute upper bound and records its measured capture duration beside the frames and
+in the job summary. It is **advisory** until it earns the #142/#214 promotion gate: at least ten
+consecutive green runs with no runner-attributable flake. Its artifact is an independent lavapipe
+baseline, comparable only with later lavapipe artifacts — never with the macOS/Metal pixels. It does
+not replace or feed the required job's change report.
 
 ### 3. State the degradation and enforce that it stays known — **adopted now**
 
@@ -90,9 +102,9 @@ Needed regardless of option 2, and independently of when that lands.
 
 1. **No self-hosted runner.** Declined on security grounds; revisit only if the repository stops
    being public *and* the runner is not the agent host.
-2. **Pursue the lavapipe lane** as an additive, probe-gated-only capture, in its own child issue,
-   on the measurement above.
-3. **Until then, the degradation is stated rather than assumed.** **Both** capture jobs — the
+2. **Run the lavapipe lane as advisory evidence.** It is additive, probe-gated-only, bounded,
+   fail-closed on fallback, and publishes an independent artifact.
+3. **The macOS degradation is stated rather than assumed.** **Both** required capture jobs — the
    editor-project `Frame capture (evidence)` and `Frame capture (exported client)` — now:
    - parses the probe verdict from the capture log and **fails closed when it is absent** — an
      unknown verdict is a failure, not a default. Before this the verdict lived only in a CI log

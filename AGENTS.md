@@ -391,8 +391,13 @@ everything shipped afterwards is held to.
   SHA-256 manifest of every tracked non-Markdown file it covers (enforced by
   `tools/provenance-guard.sh` in the `license-guard` job — a directory holding any non-Markdown
   file must be covered by a `PROVENANCE.md` at itself or an ancestor, and every addition or byte
-  replacement must be deliberately accounted for there), and
-  bakes must be deterministic (the artgen workflow re-bakes and byte-compares). Characters are
+  replacement must be deliberately accounted for there). The same guard requires every tracked
+  Godot-supported image under `client/assets/` to carry an indexed texture `.import` sidecar with
+  `mipmaps/generate=true`: this is a 3D asset catalogue, and a texture reached only through runtime
+  `load()` never triggers the editor's 3D-use detection. `skin_texture_mipmaps_test` remains the
+  runtime proof that the shipped skin images actually carry a mip chain and that their material
+  samples it; the static guard prevents the next registry from escaping that proof class. Bakes must
+  be deterministic (the artgen workflow re-bakes and byte-compares). Characters are
   composed at runtime by `CharacterFactory` from **recipes** (`client/recipes/*.json`, versioned
   and name-keyed — names are forward-only per the no-resets law; `tests/save_fixture_guard_test`
   enforces it: every historical golden fixture must load with zero loss, every recipe version up
@@ -807,7 +812,11 @@ everything shipped afterwards is held to.
   - **GHCR is the origin of record for updates** (maintainer direction 2026-07-18, closing the open
     host decision in `docs/design/distribution-and-self-update.md`). CD publishes the released
     client to `ghcr.io/devantler-tech/world-at-ruin/client` as an **OCI artifact**, tagged with the
-    bare version plus `latest`, and **cosign-signs it by digest** (keyless, GitHub OIDC). The
+    bare version plus `latest`, and **cosign-signs it by digest** (keyless, GitHub OIDC). The bare
+    version is immutable; after pushing it, a successful `publish-ghcr` job enumerates every stable
+    release tag and completes only once `latest` exposes the greatest version. It re-reads after
+    each tag write, so an older overlapping run either leaves a newer `latest` untouched or repairs
+    its own stale write when the newer immutable version becomes visible. The
     **digest** is what the updater pins — never the mutable tag. OCI is required rather than merely
     preferred: GitHub Packages has no generic/raw-file registry, so an OCI artifact is the only way
     a `.app` zip enters it. The GitHub Release asset remains the *install* download; GHCR is the
