@@ -12,8 +12,8 @@ extends Node
 ##     arms, and a flexed knee.
 ##  3. DISTANCE-DRIVEN — equal travelled distances land on the same pose even
 ##     when speed and delta differ.
-##  4. HONEST STATES — stop and an airborne tick without the separate jump
-##     opt-in restore the standing pose; the gaits never impersonate a jump.
+##  4. HONEST STATES — stop restores the standing pose; an airborne tick
+##     selects the permanent jump arc rather than reusing a grounded gait.
 ##  5. SPRINT RUNS — sprinting poses the run rather than restoring rest, and the
 ##     run is AUTHORED rather than the walk scaled up.
 ##  6. GAIT CHANGES BLEND — pressing and releasing sprint while moving keeps
@@ -30,7 +30,6 @@ extends Node
 
 const FLAG := "WAR_WALK_CYCLE"
 const RUN_FLAG := "WAR_RUN_CYCLE"
-const JUMP_FLAG := "WAR_JUMP_MOTION"
 const RECIPE_PATH := "res://recipes/wanderer.json"
 const DRIVEN_BONES := [
 	"thigh_l", "thigh_r",
@@ -71,8 +70,6 @@ var _had_flag := false
 var _original_flag := ""
 var _had_run_flag := false
 var _original_run_flag := ""
-var _had_jump_flag := false
-var _original_jump_flag := ""
 var _recipe: Dictionary = {}
 
 
@@ -81,8 +78,6 @@ func _ready() -> void:
 	_original_flag = OS.get_environment(FLAG)
 	_had_run_flag = OS.has_environment(RUN_FLAG)
 	_original_run_flag = OS.get_environment(RUN_FLAG)
-	_had_jump_flag = OS.has_environment(JUMP_FLAG)
-	_original_jump_flag = OS.get_environment(JUMP_FLAG)
 	var loaded = CharacterFactory.load_recipe(RECIPE_PATH)
 	if not (loaded is Dictionary):
 		_fail("could not load %s" % RECIPE_PATH)
@@ -97,7 +92,7 @@ func _ready() -> void:
 		return
 	if not _check_distance_drives_phase():
 		return
-	if not _check_non_walk_states_restore_rest():
+	if not _check_stop_restores_and_air_selects_jump():
 		return
 	if not _check_sprint_runs():
 		return
@@ -113,7 +108,7 @@ func _ready() -> void:
 		return
 
 	_restore_flag()
-	print("TEST PASS — grounded locomotion is default-off, distance-driven and deterministic; walk and run are authored, gait changes blend continuously, and stop/air restore rest")
+	print("TEST PASS — grounded locomotion is default-off, distance-driven and deterministic; walk and run are authored, gait changes blend continuously, stop restores rest, and air selects the jump arc")
 	get_tree().quit(0)
 
 
@@ -232,13 +227,12 @@ func _check_distance_drives_phase() -> bool:
 		CROSS_BODY_EPSILON)
 
 
-## 5. Reusing a gait as fake jump motion, or failing to clear one when movement
-## stops, leaves at least one driven pose away from rest.
+## 5. Failing to clear a gait when movement stops leaves at least one driven
+## channel away from rest. Reusing that gait in air makes the jump equal the
+## preceding walk pose instead of the permanent airborne arc.
 ##
-## Sprint is deliberately NOT in this list any more (#481): it now selects the
-## run. Airborne stays because this gait-only subject explicitly leaves the
-## separate jump opt-in off — that is the honest-state law this assertion keeps.
-func _check_non_walk_states_restore_rest() -> bool:
+## Sprint is deliberately not in this check (#481): it selects the run.
+func _check_stop_restores_and_air_selects_jump() -> bool:
 	var subject := _player_with_flag("1")
 	if subject.is_empty():
 		return false
@@ -252,15 +246,26 @@ func _check_non_walk_states_restore_rest() -> bool:
 	if _same_pose(rest, _snapshot(skeleton), ""):
 		_free_subject(subject)
 		return _fail("enabled grounded walk produced no pose change")
+	var walk_pose := _snapshot(skeleton)
 	animator.call("advance_motion", 0.0, true, false, 0.1)
 	if not _same_pose(rest, _snapshot(skeleton), "stopping left a walk pose stuck on the body"):
 		_free_subject(subject)
 		return false
 
-	animator.call("advance_motion", Player.WALK_SPEED, false, false, 0.2)
-	if not _same_pose(rest, _snapshot(skeleton), "airborne movement reused the walk as a fake jump"):
+	animator.call(
+		"advance_motion",
+		Player.WALK_SPEED,
+		false,
+		false,
+		0.2,
+		Player.JUMP_VELOCITY)
+	var jump_pose := _snapshot(skeleton)
+	if _same_pose(rest, jump_pose, ""):
 		_free_subject(subject)
-		return false
+		return _fail("airborne movement left the permanent jump pose at rest")
+	if _same_pose(walk_pose, jump_pose, ""):
+		_free_subject(subject)
+		return _fail("airborne movement reused the grounded walk pose")
 
 	_free_subject(subject)
 	return true
@@ -523,7 +528,6 @@ func _player_with_flag(value: String) -> Dictionary:
 
 ## Independent opt-in, for the laws that are ABOUT the flags.
 func _player_with_flags(walk_value: String, run_value: String) -> Dictionary:
-	OS.unset_environment(JUMP_FLAG)
 	for pair: Array in [[FLAG, walk_value], [RUN_FLAG, run_value]]:
 		if (pair[1] as String).is_empty():
 			OS.unset_environment(pair[0] as String)
@@ -612,12 +616,6 @@ func _restore_flag() -> void:
 		OS.set_environment(RUN_FLAG, _original_run_flag)
 	else:
 		OS.unset_environment(RUN_FLAG)
-	if _had_jump_flag:
-		OS.set_environment(JUMP_FLAG, _original_jump_flag)
-	else:
-		OS.unset_environment(JUMP_FLAG)
-
-
 func _fail(message: String) -> bool:
 	Input.action_release("move_forward")
 	Input.action_release("sprint")

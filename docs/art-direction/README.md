@@ -454,10 +454,10 @@ sprinting gets a distinct run rather than that walk played faster: the elbows ca
 walk's planted pose, with a longer stride so speed comes from ground covered per step rather than
 step rate. When both gait previews are enabled, pressing or releasing sprint crossfades every driven
 bone channel over 0.24 seconds while the shared stride phase continues, so the silhouette no longer
-snaps between the two authored poses. `WAR_JUMP_MOTION=1` separately poses the controller's real
-airborne arc from its vertical velocity: the body pushes off, tucks both legs at the apex, opens for
-descent and returns to rest on landing. The ordinary game keeps the standing body during travel while
-all three previews are default-off. Authored starts and stops, landing anticipation/impact,
+snaps between the two authored poses. The controller's real airborne arc is permanent: vertical
+velocity drives push-off, a bilateral apex tuck and a landing-ready descent, then grounded play
+returns the body to rest. The ordinary game keeps the standing body during grounded travel while the
+walk and run previews remain default-off. Authored starts and stops, landing anticipation/impact,
 directional lean and turning remain unauthored, and neither gait invents a flight phase of its own.
 
 **Motion reference.** The [Kingmakers announcement trailer from
