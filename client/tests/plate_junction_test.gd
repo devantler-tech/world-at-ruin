@@ -144,6 +144,7 @@ func _ready() -> void:
 		_check_degenerate_vertex_bound(degenerate["uv"])
 	_check_footprint_coverage_authority()
 	_check_exact_pair_swap_footprint()
+	_check_combined_pair_higher_swap_footprint()
 	_check_exact_higher_order_swap_footprint()
 	_check_window_activation_continuity()
 	_check_exact_swap_reach_handoff()
@@ -357,13 +358,21 @@ func _separator_footprint(p: Dictionary, uv: Vector2) -> float:
 	var fourth_coverage := _candidate_coverage(
 		float(p["f4"]), float(p["f1"]))
 	var fourth_authority := _coverage_authority(fourth_coverage)
-	var identity_safe_tail := pair_fw
-	if fourth_authority > 0.0:
-		identity_safe_tail = lerpf(
-			pair_fw,
-			_full_window_separator_footprint(uv, p),
-			fourth_authority)
-	return lerpf(footprint, identity_safe_tail, higher_junction)
+	var higher_coverage_authority := higher_junction * fourth_authority
+	if higher_coverage_authority <= 0.0:
+		return footprint
+	var higher_identity_denominator := (
+		1.0 - higher_junction + higher_coverage_authority)
+	var higher_identity_authority := (
+		higher_coverage_authority / higher_identity_denominator)
+	var window_footprint := (
+		float(p["window_footprint"]) if p.has("window_footprint")
+		else _full_window_separator_footprint(uv, p))
+	var symmetric_tail := lerpf(
+		triple,
+		window_footprint,
+		higher_identity_authority)
+	return lerpf(pair_fw, symmetric_tail, triple_identity_authority)
 
 
 ## Mirrors the current shader read compensation. The coverage-authority probe
@@ -1202,6 +1211,45 @@ func _check_exact_pair_swap_footprint() -> void:
 			+ "authority at the swap independently of coverage")
 	print("FOOTPRINT PAIR SWAP coverage authority %.6f, jump %.9f"
 		% [coverage_authority, jump])
+
+
+## The pair swap must remain symmetric while the higher-order path is also
+## active. Its coverage-faded fallback cannot be the ordered c1/c2 separator,
+## because c2 is precisely the identity exchanged in this probe.
+func _check_combined_pair_higher_swap_footprint() -> void:
+	var uv := Vector2.ZERO
+	var before := {
+		"c1": Vector2(0.70, 0.20),
+		"c2": Vector2(-1.00, 0.10),
+		"c3": Vector2(0.15, 1.00),
+		"f1": 0.0,
+		"f2": FOOTPRINT * 0.94,
+		"f3": FOOTPRINT * 0.94,
+		"f4": FOOTPRINT * 0.96,
+		# Algebra-only identity-free whole-window result. The real 5x5 helper
+		# is independently covered by the vertex and grid-boundary probes.
+		"window_footprint": FOOTPRINT * 0.80,
+	}
+	var after := before.duplicate()
+	after["c2"] = before["c3"]
+	after["c3"] = before["c2"]
+	var fourth_coverage := _candidate_coverage(
+		float(before["f4"]), float(before["f1"]))
+	var fourth_authority := _coverage_authority(fourth_coverage)
+	if fourth_authority <= 0.0 or fourth_authority >= 1.0:
+		_fail("control: the combined pair/higher probe has fourth authority "
+			+ "%.9f — it must exercise the interior of the fade" % fourth_authority)
+	var a := _separator_footprint(before, uv)
+	var b := _separator_footprint(after, uv)
+	var jump := absf(a - b)
+	if jump > 0.000000001:
+		_fail("the c2/c3 swap leaves %.9f of ordered pair footprint while the "
+			% jump
+			+ "higher path is inside its %.6f coverage fade — the higher tail "
+			% fourth_authority
+			+ "must be pair-swap symmetric")
+	print("FOOTPRINT COMBINED SWAP fourth authority %.6f, jump %.9f"
+		% [fourth_authority, jump])
 
 
 ## At an exact c3/c4 identity swap the carried c3 centre may change while every

@@ -360,13 +360,24 @@ float terrain_plate_separator_footprint(
 		f4, f1, plate_fw);
 	float fourth_authority = terrain_plate_coverage_authority(
 		fourth_coverage);
-	float identity_safe_tail = edge12;
-	if (fourth_authority > 0.0) {
-		float window = terrain_plate_window_separator_footprint(
-			uv, f1, plate_fw, uv_dx, uv_dy);
-		identity_safe_tail = mix(edge12, window, fourth_authority);
+	float higher_coverage_authority = (
+		higher_junction * fourth_authority);
+	if (higher_coverage_authority <= 0.0) {
+		return footprint;
 	}
-	return mix(footprint, identity_safe_tail, higher_junction);
+	float higher_identity_denominator = (
+		1.0 - higher_junction + higher_coverage_authority);
+	float higher_identity_authority = (
+		higher_coverage_authority / higher_identity_denominator);
+	float window = terrain_plate_window_separator_footprint(
+		uv, f1, plate_fw, uv_dx, uv_dy);
+	// Factor the ordered list explicitly: edge12 is valid until c2/c3 swap,
+	// the symmetric triple is valid until c3/c4 swap, and only the full window
+	// is valid when both identity ramps overlap.
+	float symmetric_tail = mix(
+		triple, window, higher_identity_authority);
+	return mix(
+		edge12, symmetric_tail, triple_identity_authority);
 }
 
 // Closing the old footprint jump also removes the energy that hard step
