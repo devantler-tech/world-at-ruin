@@ -16,9 +16,9 @@ import (
 )
 
 const (
-	fleetLabel       = "agones.dev/fleet"
+	fleetLabel       = agones.FleetLabel
 	reservationLabel = "world-at-ruin.dev/handoff-reservation"
-	attemptLabel     = "world-at-ruin.dev/handoff-attempt"
+	attemptLabel     = agones.AttemptLabel
 
 	wrappingKeyFingerprintLength = 52
 	leaseObjectIDLength          = 64
@@ -93,23 +93,25 @@ func NewClient(api allocationpb.AllocationServiceClient, cfg Config) (*Client, e
 // Reserve allocates one envelope-ready GameServer and returns its endpoint
 // together with the validated sealed admission material.
 func (c *Client) Reserve(ctx context.Context, request Request) (GameServer, error) {
-	if !validCorrelationID(request.ReservationID) {
+	reservationValue, err := agones.CorrelationLabel(request.ReservationID)
+	if err != nil {
 		return GameServer{}, errors.New("agonesalloc: reservation ID is invalid")
 	}
-	if !validCorrelationID(request.AttemptID) {
+	attemptValue, err := agones.CorrelationLabel(request.AttemptID)
+	if err != nil {
 		return GameServer{}, errors.New("agonesalloc: attempt ID is invalid")
 	}
 	if !validLeaseObjectID(request.LeaseObjectID) {
 		return GameServer{}, errors.New("agonesalloc: private lease object ID is invalid")
 	}
-	claimLocator := claimLocator(request.LeaseObjectID, request.AttemptID)
+	claimLocator := claimLocator(request.LeaseObjectID, attemptValue)
 	response, err := c.api.Allocate(ctx, &allocationpb.AllocationRequest{
 		Namespace:  c.namespace,
 		Scheduling: allocationpb.AllocationRequest_Packed,
 		Metadata: &allocationpb.MetaPatch{
 			Labels: map[string]string{
-				reservationLabel: correlationLabel(request.ReservationID),
-				attemptLabel:     correlationLabel(request.AttemptID),
+				reservationLabel: reservationValue,
+				attemptLabel:     attemptValue,
 			},
 			Annotations: map[string]string{
 				agones.ClaimLocatorAnnotation: claimLocator,
@@ -175,15 +177,8 @@ func (c *Client) validateAdmissionMetadata(
 	return envelope, nil
 }
 
-func correlationLabel(value string) string {
-	digest := sha256.Sum256([]byte(value))
-	return strings.ToLower(
-		base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(digest[:]),
-	)
-}
-
-func claimLocator(leaseObjectID, attemptID string) string {
-	return claimLocatorPrefix + leaseObjectID + "." + correlationLabel(attemptID)
+func claimLocator(leaseObjectID, attemptValue string) string {
+	return claimLocatorPrefix + leaseObjectID + "." + attemptValue
 }
 
 func validWrappingKeyFingerprint(value string) bool {
@@ -224,22 +219,6 @@ func validAdmissionEnvelope(value string) bool {
 		return false
 	}
 	return base64.RawURLEncoding.EncodeToString(ciphertext) == encoded
-}
-
-func validCorrelationID(value string) bool {
-	if value == "" || len(value) > 128 {
-		return false
-	}
-	for _, char := range value {
-		if (char < 'a' || char > 'z') &&
-			(char < 'A' || char > 'Z') &&
-			(char < '0' || char > '9') &&
-			char != '-' &&
-			char != '_' {
-			return false
-		}
-	}
-	return true
 }
 
 func validDNSSubdomain(value string) bool {

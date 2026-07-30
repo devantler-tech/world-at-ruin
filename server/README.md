@@ -217,6 +217,18 @@ zone/dungeon server:
   across wrapping-key rotation. Allocation refusals preserve the stable gRPC
   code without reflecting upstream text. Hermetic tests exercise the real
   generated client/server path.
+- **`gameserverapi/`** — the least-privilege **Agones GameServer resource
+  boundary** used by durable handoff reconciliation. Its Kubernetes seam
+  exposes only namespaced `get`, `list`, and `delete`: no create, update, patch,
+  watch, or access to another resource kind. Exact-name reads pin namespace,
+  name, UID, Fleet, full attempt digest, `Allocated` state, and one named TLS
+  status port; exact-attempt listing uses the same shared full SHA-256 label
+  contract as allocation and returns every match so duplicates stay explicit.
+  Cleanup accepts only a complete identity and sends its UID as a Kubernetes
+  deletion precondition, preventing stale cleanup from deleting a recreated
+  GameServer. Returned metadata maps are detached snapshots. Hermetic tests
+  drive the generated Agones fake client through zero, one, duplicate,
+  changed-identity, and exact-UID paths.
 - **`nakamalease/`** — the private **Nakama handoff lease store**: one
   server-owned object per SHA-256-derived user/reservation key owns the current
   allocation attempt, including its pre-provision staging intent, observer
@@ -310,8 +322,8 @@ go run ./cmd/zone -listen :8443 -tls-cert cert.pem -tls-key key.pem -agones \
 Later children of the server-foundation epic
 ([#4](https://github.com/devantler-tech/world-at-ruin/issues/4), the first child
 of the Phase 1 epic [#8](https://github.com/devantler-tech/world-at-ruin/issues/8)):
-the concrete resource adapter that composes `agonesalloc` with
-the zone-side sealed-envelope lifecycle in
+the concrete resource adapter that composes `agonesalloc`, `gameserverapi`,
+`admissionref`, and the zone-side sealed-envelope lifecycle in
 [ADR 0002](../docs/adr/0002-seal-zone-admission-secrets-before-readiness.md),
 the zone admission claim adapter, Nakama RPC registration that exposes the
 handoff service, the client entry point that enables Google account
@@ -321,9 +333,10 @@ persistence. Zone boot already generates, publishes and observes the sealed
 envelope; allocation metadata validation, coordinator unwrap/recovery and
 private claim behavior are not composed yet. The tick core, socket, client
 replica store, Agones lifecycle, default-off Nakama account provisioning and
-session verification, allocation API boundary, private lease store, durable
-handoff coordinator and fail-closed handoff core are in place; later slices
-build on those tested seams instead of creating a parallel meta service.
+session verification, allocation API boundary, exact-UID GameServer resource
+boundary, private lease store, durable handoff coordinator and fail-closed
+handoff core are in place; later slices build on those tested seams instead of
+creating a parallel meta service.
 
 ## Validate
 
