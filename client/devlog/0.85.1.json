@@ -1,0 +1,10 @@
+{
+	"date": "2026-07-30",
+	"notes": [
+		"The opt-in ground-plate preview now keeps each seam's cavity footprint continuous where three plate regions meet, instead of letting the groove jump when two neighbouring plates exchange identity.",
+		"The same junction treatment reaches the cave-to-ground contact band, preserves the plates-off crawl floor exactly, and holds the measured six-metre relief read above its previous level.",
+		"Still short of the mark: the ground remains an arithmetic material without convincing physical texture character, the plate field still lacks authored fracture patterns and wear, and WAR_GROUND_PLATES stays off by default pending art review."
+	],
+	"title": "Plate seams hold together at junctions",
+	"version": "0.85.1"
+}
