@@ -156,14 +156,52 @@ zone/dungeon server:
   only in the zone container; the sidecar retains its credential, the public
   wrapping key is a read-only ConfigMap projection, and no Kubernetes Secret
   volume is part of the shape.
-- **`nakamaauth/`** — the first **Nakama meta-tier seam**: a player session is
-  presented to Nakama's generated gRPC `GetAccount` API as bearer metadata, and
-  only Nakama's authenticated user ID crosses back into World at Ruin. It does
-  not reimplement JWT verification or trust a client-provided account ID.
-  Empty sessions, RPC refusals and malformed account responses fail closed, and
-  rejection errors expose only the gRPC status code so an upstream message
-  cannot reflect the credential into logs. Hermetic tests exercise the real
-  generated gRPC client/server path.
+- **`nakamaauth/`** — the first **Nakama meta-tier seam**. Its session verifier
+  presents a Nakama session to the generated gRPC `GetAccount` API as bearer
+  metadata, and only Nakama's authenticated user ID crosses back into World at
+  Ruin. Its default-off Google OIDC provisioner validates the ID token locally
+  against the configured `GoogleClientID`, rejects unsafe/non-RS256 JWT shapes
+  before entering the pinned validator, bounds token size before segment
+  parsing, accepts only Google's issuer and a non-empty subject, and sends
+  Nakama `AuthenticateEmail` a domain-separated opaque address plus a separately
+  derived password. Both derive from the subject and server-only
+  `NakamaIdentityKey`; the identifier Nakama may log cannot authenticate without
+  the unlogged password. The raw Google credential therefore never reaches
+  Nakama's credential-logging Google path, while the public Google subject
+  cannot be guessed into Nakama credentials. After first-use account
+  verification, an independently domain-separated HMAC key owns a strict,
+  create-only mapping to the user ID in private, system-owned Nakama runtime
+  storage. Later sign-ins resolve that immutable binding before touching
+  Nakama's mutable email field, so ordinary email link/unlink operations cannot
+  detach the Google identity or strand the original account; the production
+  store then asks Nakama for that exact account and refuses a missing,
+  mismatched, or disabled user, so the stable-ID fast path cannot bypass a ban.
+  Both the email insert and binding write reconcile one concurrent winner
+  without overwriting it, and neither the binding API nor its production store
+  exposes an update or delete operation.
+  `ProvisionerConfig.GoogleProvisioningEnabled` is false by default, and
+  enabling it also requires `GoogleClientID`, a stable and backed-up
+  `NakamaIdentityKey` of at least 32 bytes, `NakamaServerKey`, and a durable
+  `GoogleBindingStore`; `NewNakamaGoogleBindingStore` is the production
+  implementation over Nakama's authoritative runtime storage surface. The
+  identity key and binding collection are durable identity roots: rotating,
+  losing, deleting, or rewriting either requires an explicit account migration.
+  Binding documents use a strict schema that rejects unknown, duplicate,
+  missing, trailing, public, or client-writable data; schema 1 is permanently
+  pinned by `nakamaauth/testdata/shipped_google_binding_versions.txt` and its
+  matching golden. The complete identity-address contract—including the
+  collection and exact HMAC-derived email, password and binding address—is
+  pinned by `nakamaauth/testdata/golden_google_identity_address_v1.json`.
+  CI compares those permanent fixtures against the base revision before this
+  default-off writer can be composed and enabled.
+  The provisioner uses the Nakama server key only for Nakama's
+  Basic-authenticated account-creation RPC, then replaces it with the returned
+  session bearer for account verification. Binding operations receive neither
+  bearer nor server-key metadata. Every path fails closed on empty, malformed,
+  corrupt, disabled, or unavailable responses, preserves only actionable
+  transport status codes, and exposes no upstream credential, server key,
+  binding key, user ID, or Nakama error text. Hermetic tests exercise the real
+  generated gRPC client/server and authoritative-storage paths.
 - **`agonesalloc/`** — the typed **Agones allocation API boundary**: it sends
   one current-format `AllocationRequest` through Agones's generated gRPC client,
   selecting only Ready GameServers whose fleet and admission-ready label match
@@ -276,15 +314,16 @@ the concrete resource adapter that composes `agonesalloc` with
 the zone-side sealed-envelope lifecycle in
 [ADR 0002](../docs/adr/0002-seal-zone-admission-secrets-before-readiness.md),
 the zone admission claim adapter, Nakama RPC registration that exposes the
-handoff service, the rest of the Nakama auth/social/chat/storage surface,
-client prediction and reconciliation, real navmesh geometry, and Postgres/CNPG
+handoff service, the client entry point that enables Google account
+provisioning, the rest of the Nakama social/chat/storage surface, client
+prediction and reconciliation, real navmesh geometry, and Postgres/CNPG
 persistence. Zone boot already generates, publishes and observes the sealed
 envelope; allocation metadata validation, coordinator unwrap/recovery and
 private claim behavior are not composed yet. The tick core, socket, client
-replica store, Agones lifecycle, Nakama identity boundary, allocation API
-boundary, private lease store, durable handoff coordinator and fail-closed
-handoff core are in place; later slices build on those tested seams instead of
-creating a parallel meta service.
+replica store, Agones lifecycle, default-off Nakama account provisioning and
+session verification, allocation API boundary, private lease store, durable
+handoff coordinator and fail-closed handoff core are in place; later slices
+build on those tested seams instead of creating a parallel meta service.
 
 ## Validate
 
