@@ -4,9 +4,11 @@
 
 This raw 1600×900 Godot 4.7.1 Metal frame shows the real opt-in
 `CharacterCreator` after its `hands · armour` picker selected
-`ashen_bindings`. The same test applies that visible picker state through the
-creator's real signal, saves the resulting recipe with `CharacterStore`, reloads
-it, and rebuilds it with `CharacterFactory`.
+`ashen_bindings`. Its deterministic runtime pose brings both equipped forearm
+pieces in front of the torso, so the frame proves the attachment and silhouette
+as well as the picker value. The same test applies that visible picker state
+through the creator's real signal, saves the resulting recipe with
+`CharacterStore`, reloads it, and rebuilds it with `CharacterFactory`.
 
 Regenerate it with:
 

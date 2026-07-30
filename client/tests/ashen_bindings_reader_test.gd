@@ -151,6 +151,9 @@ func _capture_writer_frame(creator: CharacterCreator, shot_path: String) -> Stri
 	creator.expand_all_sections()
 	for frame in 12:
 		await get_tree().process_frame
+	var pose_problem := _pose_writer_evidence(creator)
+	if not pose_problem.is_empty():
+		return pose_problem
 	await RenderingServer.frame_post_draw
 	var image := get_viewport().get_texture().get_image()
 	if image == null or image.get_width() < 1 or image.get_height() < 1:
@@ -160,6 +163,20 @@ func _capture_writer_frame(creator: CharacterCreator, shot_path: String) -> Stri
 		return "could not write reader evidence to '%s' (error %d)" % [shot_path, error]
 	print("CAPTURED ashen_bindings writer -> %s (%dx%d)" % [
 		shot_path, image.get_width(), image.get_height()])
+	return ""
+
+
+func _pose_writer_evidence(creator: CharacterCreator) -> String:
+	# The rest pose hides both hand slots behind the torso from the portrait
+	# camera. Pose the SAME runtime skeleton through its shipped locomotion
+	# driver so the captured frame proves the selected bindings render on the
+	# character instead of proving only that the OptionButton says they do.
+	if creator._player == null:
+		return "writer evidence has no preview player to pose"
+	var locomotion := creator._player.get_node_or_null("WalkLocomotion") as WalkLocomotion
+	if locomotion == null:
+		return "writer evidence has no runtime locomotion driver"
+	locomotion.apply_phase(0.0, true)
 	return ""
 
 
