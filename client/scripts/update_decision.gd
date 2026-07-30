@@ -112,14 +112,13 @@ static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 	# legacy top-level field still applies, so every manifest published before
 	# certificates existed keeps deciding exactly as it did.
 	#
-	# The residual, stated plainly: this core verifies no signatures (it performs no
-	# I/O at all). [UpdateTrust] now supplies the production ECDSA-P256 verifier, but
-	# no updater caller or root material invokes it yet. So a certificate is still
-	# only as trustworthy as the manifest signature carrying it — this defends
-	# against a KEYLESS replayer, who can only resend manifests as published, and
-	# NOT yet against a compromised key minting its own certificate. Reading the
-	# epoch from the certificate makes closing that gap a change to the trust-chain
-	# caller alone, with no further change here.
+	# This core verifies no signatures (it performs no I/O at all). The authenticated
+	# entry point is [method UpdateTrust.verify_and_decide]: it verifies the
+	# certificate with a caller-supplied offline-root public key, verifies the
+	# manifest with only that certified key, and calls this method last. Production
+	# root material, revocation and the runtime updater remain outside that pure
+	# boundary, so a direct call here is correct only after its caller has established
+	# equivalent trust.
 	# Adoption RATCHETS, and without that the binding above is decorative. Once a
 	# client has accepted a certificate-backed epoch, a manifest that simply OMITS
 	# the certificate must be refused — otherwise a superseded or compromised key

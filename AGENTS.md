@@ -812,7 +812,11 @@ everything shipped afterwards is held to.
   - **GHCR is the origin of record for updates** (maintainer direction 2026-07-18, closing the open
     host decision in `docs/design/distribution-and-self-update.md`). CD publishes the released
     client to `ghcr.io/devantler-tech/world-at-ruin/client` as an **OCI artifact**, tagged with the
-    bare version plus `latest`, and **cosign-signs it by digest** (keyless, GitHub OIDC). The
+    bare version plus `latest`, and **cosign-signs it by digest** (keyless, GitHub OIDC). The bare
+    version is immutable; after pushing it, a successful `publish-ghcr` job enumerates every stable
+    release tag and completes only once `latest` exposes the greatest version. It re-reads after
+    each tag write, so an older overlapping run either leaves a newer `latest` untouched or repairs
+    its own stale write when the newer immutable version becomes visible. The
     **digest** is what the updater pins — never the mutable tag. OCI is required rather than merely
     preferred: GitHub Packages has no generic/raw-file registry, so an OCI artifact is the only way
     a `.app` zip enters it. The GitHub Release asset remains the *install* download; GHCR is the
@@ -881,10 +885,12 @@ everything shipped afterwards is held to.
     tap once fell six releases behind (#169).
     **`auto_updates` is deliberately ABSENT**: it tells Homebrew "this app updates itself, do not
     upgrade it", and there is no working in-client updater yet. `UpdateDecision` is pure decision
-    logic and `UpdateTrust` is only the Godot-native ECDSA P-256 verification primitive; no caller
-    fetches or promotes an update, and no root material is published. Declaring `auto_updates` now
-    would make `brew upgrade` skip the cask and strand players on the version they installed. Add
-    it only once the self-updater ships (#106). The `postflight`
+    logic; `UpdateTrust.verify_and_decide()` authenticates a signing-key certificate with a
+    caller-supplied offline-root public key, then authenticates the manifest with that certified
+    key before entering the decision core. No runtime caller fetches or promotes an update, no
+    production root or signing material is published, and revocation is not wired. Declaring
+    `auto_updates` now would make `brew upgrade` skip the cask and strand players on the version
+    they installed. Add it only once the self-updater ships (#106). The `postflight`
     quarantine strip is **mandatory, not cosmetic** — the build is ad-hoc signed
     (`codesign/codesign=1` with an empty identity), so Gatekeeper blocks it otherwise.
     No `verified:` on the `url`: `brew audit --strict` rejects it when the download and homepage
