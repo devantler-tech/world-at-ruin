@@ -96,7 +96,8 @@ func (f *fakeStorage) StorageWrite(
 		switch {
 		case write.Version == "*" && exists:
 			return nil, runtime.ErrStorageRejectedVersion
-		case write.Version != "*" &&
+		case write.Version != "" &&
+			write.Version != "*" &&
 			(!exists || write.Version != current.version):
 			return nil, runtime.ErrStorageRejectedVersion
 		}
@@ -196,6 +197,65 @@ func TestSavePersistsPrivateVersionedCharacterForVerifiedAccount(t *testing.T) {
 	}
 	if record.Version == "" || !reflect.DeepEqual(record.Character, character) {
 		t.Fatalf("later Load() = %#v, want %#v", record, character)
+	}
+}
+
+func TestSaveRejectsAnUnverifiedSubjectBeforeStorage(t *testing.T) {
+	t.Parallel()
+
+	storage := newFakeStorage()
+	store, err := NewStore(storage)
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	err = store.Save(context.Background(), SaveRequest{
+		SubjectID:       "client-picked-subject",
+		IdempotencyKey:  "character:create:warden-1",
+		ExpectedVersion: "*",
+		Character: Character{
+			ID:          "warden-1",
+			DisplayName: "Asha",
+			Recipe:      json.RawMessage(`{"version":3}`),
+		},
+	})
+	if err == nil {
+		t.Fatal("Save() error = nil")
+	}
+	if storage.readCalls != 0 || len(storage.writeCalls) != 0 {
+		t.Fatalf(
+			"storage calls before rejection = reads %d, writes %d",
+			storage.readCalls,
+			len(storage.writeCalls),
+		)
+	}
+}
+
+func TestSaveRejectsAnEmptyObservedVersionBeforeStorage(t *testing.T) {
+	t.Parallel()
+
+	storage := newFakeStorage()
+	store, err := NewStore(storage)
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	err = store.Save(context.Background(), SaveRequest{
+		SubjectID:      testSubjectID,
+		IdempotencyKey: "character:create:warden-1",
+		Character: Character{
+			ID:          "warden-1",
+			DisplayName: "Asha",
+			Recipe:      json.RawMessage(`{"version":3}`),
+		},
+	})
+	if err == nil {
+		t.Fatal("Save() error = nil")
+	}
+	if storage.readCalls != 0 || len(storage.writeCalls) != 0 {
+		t.Fatalf(
+			"storage calls before rejection = reads %d, writes %d",
+			storage.readCalls,
+			len(storage.writeCalls),
+		)
 	}
 }
 

@@ -140,13 +140,16 @@ func (s *Store) Save(ctx context.Context, request SaveRequest) error {
 	if !validSubjectID(request.SubjectID) {
 		return errors.New("nakama character: valid subject is required")
 	}
+	if request.ExpectedVersion == "" {
+		return errors.New("nakama character: observed version is required")
+	}
 	if request.ExpectedVersion != "*" {
 		_, err := s.Load(ctx, request.SubjectID)
 		if err != nil && !errors.Is(err, ErrNotFound) {
 			return err
 		}
 	}
-	value, _, err := encodeCharacterDocument(request.Character)
+	value, err := encodeCharacterDocument(request.Character)
 	if err != nil {
 		return err
 	}
@@ -183,16 +186,16 @@ type characterDocument struct {
 
 func encodeCharacterDocument(
 	character Character,
-) (json.RawMessage, Character, error) {
+) (json.RawMessage, error) {
 	if invalidIdentityPart(character.ID) ||
 		strings.TrimSpace(character.DisplayName) == "" {
-		return nil, Character{}, errors.New(
+		return nil, errors.New(
 			"nakama character: valid character is required",
 		)
 	}
 	recipe, err := canonicalObject(character.Recipe)
 	if err != nil {
-		return nil, Character{}, errors.New(
+		return nil, errors.New(
 			"nakama character: recipe must be a JSON object",
 		)
 	}
@@ -213,11 +216,11 @@ func encodeCharacterDocument(
 		Recipe:      normalized.Recipe,
 	})
 	if err != nil {
-		return nil, Character{}, errors.New(
+		return nil, errors.New(
 			"nakama character: encode character",
 		)
 	}
-	return value, normalized, nil
+	return value, nil
 }
 
 func decodeCharacterDocument(value string) (Character, error) {
