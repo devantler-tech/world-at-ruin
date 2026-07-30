@@ -204,13 +204,19 @@ zone/dungeon server:
   generated gRPC client/server and authoritative-storage paths.
 - **`agonesalloc/`** — the typed **Agones allocation API boundary**: it sends
   one current-format `AllocationRequest` through Agones's generated gRPC client,
-  selecting only Ready GameServers from the configured namespace and fleet.
-  Reservation and attempt values enter GameServer labels only as full
-  SHA-256-derived, label-safe correlation values; the caller's raw identifiers
-  never cross this boundary. A response is usable only when it names a valid
-  GameServer and carries exactly one in-range configured TLS port. Allocation
-  refusals preserve the stable gRPC code without reflecting upstream text.
-  Hermetic tests exercise the real generated client/server path.
+  selecting only Ready GameServers whose fleet and admission-ready label match
+  the configured wrapping-key fingerprint exactly. Reservation and attempt
+  values enter GameServer labels only as full SHA-256-derived, label-safe
+  correlation values; a versioned claim locator combines the private lease
+  object ID with the attempt digest without exposing the caller's raw
+  identifiers. A response is usable only when it names a valid GameServer,
+  carries exactly one in-range configured TLS port, echoes the exact fleet,
+  readiness, wrapping-key and claim metadata, and supplies a bounded canonical
+  version-one admission envelope. The returned endpoint includes the validated
+  fingerprint and sealed envelope so an allocated lease remains resolvable
+  across wrapping-key rotation. Allocation refusals preserve the stable gRPC
+  code without reflecting upstream text. Hermetic tests exercise the real
+  generated client/server path.
 - **`nakamalease/`** — the private **Nakama handoff lease store**: one
   server-owned object per SHA-256-derived user/reservation key owns the current
   allocation attempt, including its pre-provision staging intent, observer
