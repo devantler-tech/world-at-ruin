@@ -27,11 +27,12 @@
 #       This binds the prose licence/source chain to every shipped file and
 #       catches both an unrecorded addition and a silent replacement.
 #
-#   R4  Every tracked Godot texture import under client/assets/ must explicitly
-#       generate mipmaps. Runtime load() calls do not trigger Godot's 3D-use
-#       detection, so accepting the 2D import default silently ships distant
-#       textures without a mip chain. The asset catalogue is entirely 3D; a
-#       blanket rule is fail-closed and cannot miss a new runtime-only path.
+#   R4  Every tracked Godot-supported image under client/assets/ must have
+#       indexed texture import metadata that explicitly generates mipmaps.
+#       Runtime load() calls do not trigger Godot's 3D-use detection, so
+#       accepting the 2D import default silently ships distant textures without
+#       a mip chain. The asset catalogue is entirely 3D; a blanket rule is
+#       fail-closed and cannot miss a new runtime-only path.
 #
 # WHY BINARY-BY-CONTENT RATHER THAN BY EXTENSION: an extension allowlist fails
 # open the first time a new format lands, and has to be maintained forever.
@@ -239,18 +240,21 @@ if [ -d "$ASSET_ROOT" ]; then
 		fi
 	done < <(git ls-files -z -- "$ASSET_ROOT")
 
-	# R4 — every Godot texture import in the shipped asset catalogue declares
-	# its mip chain. Read the indexed bytes, matching the tracked-file scope of
-	# the other rules rather than trusting an unstaged working-tree edit.
-	while IFS= read -r -d '' import_file; do
-		case "$import_file" in
-		*.import) ;;
+	# R4 — every Godot-supported image in the shipped asset catalogue has an
+	# indexed texture import that declares its mip chain. Enumerating sources,
+	# rather than existing sidecars, makes a missing .import file fail closed.
+	while IFS= read -r -d '' texture_file; do
+		case "$texture_file" in
+		*.bmp | *.dds | *.exr | *.hdr | *.jpeg | *.jpg | *.ktx | *.png | *.svg | *.tga | *.webp) ;;
 		*) continue ;;
 		esac
 
-		if grep -Fqx 'importer="texture"' < <(git show ":$import_file") &&
+		import_file="$texture_file.import"
+		if ! git cat-file -e ":$import_file" 2>/dev/null; then
+			missing_mipmaps+=("$texture_file (track $import_file with mipmaps/generate=true)")
+		elif ! grep -Fqx 'importer="texture"' < <(git show ":$import_file") ||
 			! grep -Fqx 'mipmaps/generate=true' < <(git show ":$import_file"); then
-			missing_mipmaps+=("${import_file%.import} (set mipmaps/generate=true in $import_file)")
+			missing_mipmaps+=("$texture_file (set mipmaps/generate=true in $import_file)")
 		fi
 	done < <(git ls-files -z -- "$ASSET_ROOT")
 fi
@@ -314,11 +318,12 @@ fi
 
 if [ ${#missing_mipmaps[@]} -gt 0 ]; then
 	failed=1
-	echo "::error::tracked textures without mipmaps — runtime load() does not trigger Godot's 3D import detection"
+	echo "::error::tracked textures without indexed mipmap metadata — runtime load() does not trigger Godot's 3D import detection"
 	printf '  - %s\n' "${missing_mipmaps[@]}"
 	echo
-	echo "Set mipmaps/generate=true in each texture's tracked .import file. This keeps"
-	echo "distant runtime-loaded textures from aliasing after the editor import pass."
+	echo "Track each texture's .import file with importer=\"texture\" and"
+	echo "mipmaps/generate=true. This keeps distant runtime-loaded textures from"
+	echo "aliasing after the editor import pass."
 	echo
 fi
 

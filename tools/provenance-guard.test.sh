@@ -179,6 +179,22 @@ expect_failure \
 	"mipmaps/generate=true" \
 	"$repo"
 
+repo=$(new_repo runtime_texture_without_import_metadata)
+mkdir -p "$repo/client/scripts"
+printf 'texture-v1\n' >"$repo/client/assets/pack/runtime_skin.png"
+printf '%s\n' \
+	'extends Node' \
+	'var runtime_skin := load("res://assets/pack/runtime_skin.png")' \
+	>"$repo/client/scripts/runtime_loader.gd"
+git -C "$repo" add \
+	client/assets/pack/runtime_skin.png \
+	client/scripts/runtime_loader.gd
+write_pack_provenance "$repo" runtime_skin.png
+expect_failure \
+	"runtime-loaded texture needs indexed import metadata" \
+	"runtime_skin.png.import" \
+	"$repo"
+
 repo=$(new_repo runtime_texture_with_mipmaps)
 mkdir -p "$repo/client/scripts"
 printf 'texture-v1\n' >"$repo/client/assets/pack/runtime_skin.png"
