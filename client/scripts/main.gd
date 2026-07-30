@@ -44,6 +44,8 @@ const DISCOVERY_PERSIST_RETRY_INITIAL_SECONDS := 1.0
 const DISCOVERY_PERSIST_RETRY_MAX_SECONDS := 30.0
 const REWARD_PERSIST_RETRY_INITIAL_SECONDS := 1.0
 const REWARD_PERSIST_RETRY_MAX_SECONDS := 30.0
+const QUEST_PERSIST_RETRY_INITIAL_SECONDS := 1.0
+const QUEST_PERSIST_RETRY_MAX_SECONDS := 30.0
 
 var _player: Player
 var _hud: Hud
@@ -105,8 +107,8 @@ var _discovery := Discovery.new()
 ## when this rollback build does not register the newer place yet, so a reward
 ## already granted by a newer client can never be granted twice.
 var _exploration_rewards := ExplorationRewards.new()
-## Boot-owned quest progress. The v4 reader restores this state, while the
-## retained v3 writer deliberately cannot originate quest data yet.
+## Boot-owned quest progress. The retained v4 reader restores this state and
+## every later monotonic advance queues the complete forward-only snapshot.
 var _quest_log := QuestLog.new()
 ## A discovery enters the live tracker before persistence is attempted. Keep
 ## the locally observed IDs themselves so a transient filesystem failure can
@@ -124,6 +126,14 @@ var _reward_persistence_pending: Array[String] = []
 var _reward_persistence_retry_in := 0.0
 var _reward_persistence_retry_delay := REWARD_PERSIST_RETRY_INITIAL_SECONDS
 var _reward_persistence_warning_shown := false
+## QuestLog signals only after a real objective advance, never on restore or a
+## no-op. Persisting its complete snapshot lets several events coalesce without
+## losing progress, while the vault writer's monotonic merge protects opaque
+## future ids and an already-higher on-disk value.
+var _quest_persistence_pending := false
+var _quest_persistence_retry_in := 0.0
+var _quest_persistence_retry_delay := QUEST_PERSIST_RETRY_INITIAL_SECONDS
+var _quest_persistence_warning_shown := false
 ## Notices raised while _ready() is still running, delivered together at the end
 ## of it. The HUD has ONE toast label and a later toast replaces an earlier one
 ## before a frame renders, so a boot that has several things to say would
@@ -182,6 +192,8 @@ func _ready() -> void:
 		set_process_unhandled_input(false)
 		get_tree().change_scene_to_file.call_deferred("res://tools/frame_capture.tscn")
 		return
+
+	_quest_log.progress_advanced.connect(_queue_quest_progress_persistence)
 
 	# Recovery memory FIRST, before any world work: a marker left by the previous
 	# launch must be acted on before this launch does anything that could itself
@@ -530,6 +542,7 @@ func _process(delta: float) -> void:
 	_drift_hollow_fog(delta)
 	_track_cave_atmosphere()
 	_observe_discoveries(delta)
+	_persist_pending_quest_progress(delta)
 	if _zone == null:
 		return
 	_zone.poll()
@@ -701,6 +714,40 @@ func _persist_pending_reward_claims(delta: float) -> void:
 	if not _reward_persistence_warning_shown:
 		_reward_persistence_warning_shown = true
 		_notify("This way back is known for now — though the Reach may not remember next waking.")
+
+
+## Queue the newest coherent QuestLog snapshot. Resetting the timer on a later
+## event attempts that newer state promptly rather than waiting on an older
+## failure's backoff.
+func _queue_quest_progress_persistence() -> void:
+	_quest_persistence_pending = true
+	_quest_persistence_retry_in = 0.0
+	_quest_persistence_retry_delay = QUEST_PERSIST_RETRY_INITIAL_SECONDS
+
+
+func _persist_pending_quest_progress(delta: float) -> void:
+	if not _quest_persistence_pending:
+		return
+	if _quest_persistence_retry_in > 0.0:
+		_quest_persistence_retry_in = maxf(
+			0.0, _quest_persistence_retry_in - delta)
+		if _quest_persistence_retry_in > 0.0:
+			return
+	if SaveVault.persist_quests(_quest_log.snapshot()):
+		_quest_persistence_pending = false
+		_quest_persistence_retry_in = 0.0
+		_quest_persistence_retry_delay = QUEST_PERSIST_RETRY_INITIAL_SECONDS
+		return
+	if SaveVault.can_write(SaveVault.vault_path()):
+		_quest_persistence_retry_in = _quest_persistence_retry_delay
+		_quest_persistence_retry_delay = minf(
+			_quest_persistence_retry_delay * 2.0,
+			QUEST_PERSIST_RETRY_MAX_SECONDS)
+	else:
+		_quest_persistence_pending = false
+	if not _quest_persistence_warning_shown:
+		_quest_persistence_warning_shown = true
+		_notify("Your quest progress holds for now — though the Reach may not remember next waking.")
 
 
 func _unhandled_input(event: InputEvent) -> void:

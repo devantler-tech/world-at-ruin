@@ -1978,10 +1978,6 @@ func _capture_jump(dir: String, main: Node) -> void:
 	if animator == null or not animator.has_method("apply_jump"):
 		_fail("the shipped Wanderer has no exact jump-pose seam")
 		return
-	if OS.get_environment(WalkLocomotion.JUMP_FLAG_ENV) != "1":
-		_fail("%s is not opted in — refusing to advertise disabled jump motion" %
-			WalkLocomotion.JUMP_FLAG_ENV)
-		return
 	var world := main.get_node_or_null("World") as WorldGen
 	if world == null:
 		_fail("the shipped scene has no WorldGen for the daylight jump vantage")

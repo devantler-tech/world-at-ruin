@@ -38,27 +38,26 @@ extends Node
 ##
 ## ## What this still does not author
 ##
-## `WAR_JUMP_MOTION=1` adds the first airborne slice: takeoff, apex, and descent
-## follow the controller's actual vertical velocity. Landing still resets
-## directly to the grounded state, with no anticipation, impact, directional
-## lean or turn cue. Walk and run crossfade while both gait previews are opted
-## in; stop, ground/air and jump transitions remain unauthored. There is also no
-## vertical bob on the run's flight phase: bob is TRANSLATION, and this node
-## poses a skeleton the controller moves.
+## The airborne slice is the ordinary jump: takeoff, apex, and descent follow
+## the controller's actual vertical velocity. Landing still resets directly to
+## the grounded state, with no anticipation, impact, directional lean or turn
+## cue. Walk and run crossfade while both gait previews are opted in; stop,
+## ground/air and jump transitions remain unauthored. There is also no vertical
+## bob on the run's flight phase: bob is TRANSLATION, and this node poses a
+## skeleton the controller moves.
 ##
-## The class name is deliberately unchanged: the opt-in flag and its retirement
-## issue (#405) both name the walk, and renaming a class is a refactor that has
-## no business riding along with a behaviour change.
+## The class name is deliberately unchanged: the remaining opt-in flag and its
+## retirement issue (#405) both name the walk, and renaming a class is a
+## refactor that has no business riding along with a behaviour change.
 ##
-## Experimental and default-off per product law, and all three slices are opted
-## into SEPARATELY: `WAR_WALK_CYCLE=1` for the walk, `WAR_RUN_CYCLE=1` for the
-## run, and `WAR_JUMP_MOTION=1` for the airborne arc. One shared flag would
-## silently enrol an existing gait tester into motion they did not choose. The
-## jump flag is short-lived and tracked for retirement by #562.
+## The grounded gaits remain experimental and default-off per product law:
+## `WAR_WALK_CYCLE=1` opts into the walk and `WAR_RUN_CYCLE=1` opts into the
+## run. One shared flag would silently enrol an existing gait tester into
+## motion they did not choose. The accepted airborne arc is permanent and
+## independent of both grounded previews.
 
 const FLAG_ENV := "WAR_WALK_CYCLE"
 const RUN_FLAG_ENV := "WAR_RUN_CYCLE"
-const JUMP_FLAG_ENV := "WAR_JUMP_MOTION"
 
 ## Walk↔run pose crossfade. Short enough to keep sprint input responsive, but
 ## long enough to show a dozen-plus intermediate frames at 60 Hz. Smoothstep is
@@ -159,7 +158,6 @@ const DRIVEN_BONES := [
 
 var _walk_enabled := false
 var _run_enabled := false
-var _jump_enabled := false
 var _phase := 0.0
 var _run_blend := 0.0
 var _has_active_gait := false
@@ -175,19 +173,18 @@ func bind(body: Node3D) -> void:
 	_has_active_gait = false
 	_walk_enabled = OS.get_environment(FLAG_ENV) == "1"
 	_run_enabled = OS.get_environment(RUN_FLAG_ENV) == "1"
-	_jump_enabled = OS.get_environment(JUMP_FLAG_ENV) == "1"
 	if _skeleton == null:
 		push_error("WalkLocomotion: character body has no skeleton")
 		_walk_enabled = false
 		_run_enabled = false
-		_jump_enabled = false
 		return
 	for bone_name: String in DRIVEN_BONES:
 		if _skeleton.find_bone(bone_name) < 0:
 			push_error("WalkLocomotion: rig has no bone %s" % bone_name)
 			_walk_enabled = false
 			_run_enabled = false
-			_jump_enabled = false
+			_skeleton = null
+			return
 
 
 ## Whether any gait is opted in — the node has nothing to do when neither is.
@@ -199,8 +196,8 @@ func _any_gait_enabled() -> bool:
 ##
 ## `grounded` and `sprinting` are explicit inputs so neither gait can quietly
 ## become a placeholder for a state it does not author. `sprinting` SELECTS the
-## run; leaving the ground suppresses both gaits and selects the separately
-## opted-in jump treatment, if present.
+## run; leaving the ground suppresses both gaits and selects the permanent jump
+## treatment.
 ##
 ## Each gait answers to its OWN flag. A player who opted into the walk gets
 ## exactly the pre-run behaviour — sprint returns to the standing pose — because
@@ -217,15 +214,11 @@ func advance_motion(
 	if not grounded:
 		_phase = 0.0
 		_has_active_gait = false
-		if _jump_enabled:
-			apply_jump(vertical_speed)
-		elif _any_gait_enabled():
-			_reset_pose()
+		apply_jump(vertical_speed)
 		return
 	if not _any_gait_enabled():
 		_has_active_gait = false
-		if _jump_enabled:
-			_reset_pose()
+		_reset_pose()
 		return
 	if horizontal_speed < MIN_WALK_SPEED:
 		_phase = 0.0

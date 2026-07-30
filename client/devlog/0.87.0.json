@@ -1,0 +1,10 @@
+{
+	"date": "2026-07-30",
+	"notes": [
+		"Jumping now gives the wanderer an authored airborne silhouette in ordinary play: the body pushes off, both legs tuck around the apex, and the pose opens again for descent before returning to rest on landing.",
+		"The motion follows the real jump's vertical velocity and no longer needs WAR_JUMP_MOTION; the optional walk and run previews remain separately gated.",
+		"Still short of the mark: starts, landing anticipation and impact, recovery, directional lean, turn cues, camera response, and blends into the optional grounded gaits remain unauthored."
+	],
+	"title": "Every jump carries its airborne arc",
+	"version": "0.87.0"
+}

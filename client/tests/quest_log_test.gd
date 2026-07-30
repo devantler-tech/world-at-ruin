@@ -26,6 +26,8 @@ func _ready() -> void:
 		return
 	if not _restore_before_and_after_registration():
 		return
+	if not _progress_change_signal_is_precise():
+		return
 	if not _advance_and_clamp():
 		return
 	if not _completion_announced_once():
@@ -183,6 +185,43 @@ func _restore_before_and_after_registration() -> bool:
 	_check(exact_json_boundary.call("snapshot") == {
 		"future_quest": {"future_step": 9_007_199_254_740_991},
 	}, true, "restore boundary: preserved the exact JSON integer ceiling")
+	return not _failed
+
+
+## Persistence owns no gameplay event and must not poll the whole tracker for
+## changes. QuestLog therefore emits exactly once after each record() call that
+## advances one or more objectives, and never for restore or a no-op. Removing
+## the production signal or emitting it for stale/completed events must fail
+## this test.
+func _progress_change_signal_is_precise() -> bool:
+	var q := QuestLog.new()
+	if not q.has_signal("progress_advanced"):
+		_fail("QuestLog has no progress_advanced signal for the production persistence queue")
+		return false
+	var notifications := [0]
+	q.connect("progress_advanced", func() -> void: notifications[0] += 1)
+	_check(q.restore({"future_quest": {"future_step": 7}}), true,
+		"progress signal: restore accepted")
+	_check(notifications[0] == 0, true,
+		"progress signal: restore did not queue an already-durable snapshot")
+	q.add("hunt", [
+		{"id": "hounds", "tag": "defeat:ash_hound", "count": 2},
+		{"id": "tracks", "tag": "defeat:ash_hound", "count": 3},
+	])
+	q.record("ignored")
+	q.record("defeat:ash_hound")
+	_check(notifications[0] == 1, true,
+		"progress signal: one event advancing two objectives queued one coherent snapshot")
+	q.record("defeat:ash_hound")
+	_check(notifications[0] == 2, true,
+		"progress signal: the next monotonic advance queued the newer snapshot")
+	q.record("defeat:ash_hound")
+	_check(notifications[0] == 3, true,
+		"progress signal: the final incomplete objective queued completion progress")
+	q.record("defeat:ash_hound")
+	q.record("defeat:ash_hound", 0)
+	_check(notifications[0] == 3, true,
+		"progress signal: completed and non-positive events queued nothing")
 	return not _failed
 
 

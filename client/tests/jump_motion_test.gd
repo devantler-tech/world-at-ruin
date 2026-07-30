@@ -1,17 +1,16 @@
 extends Node
-## Regression test for #553, the remaining jump slice of #224.
+## Regression test for #562, the permanent jump slice of #224.
 ##
-## The controller moves the capsule through a real jump, while this opt-in
+## The controller moves the capsule through a real jump while the shipping
 ## treatment gives the recipe skeleton an airborne pose. These laws exercise
 ## the production Player input path so a preview-only pose or a pure helper
 ## cannot satisfy them:
 ##
-##  1. DEFAULT-OFF — a normal jump leaves the shipped pose untouched.
-##  2. OPT-IN — WAR_JUMP_MOTION makes that same real jump move the body.
+##  1. ORDINARY PLAY — a normal jump moves the shipped recipe skeleton.
+##  2. LANDING — returning to the floor restores the standing pose.
 ##
 ## Run: godot --headless --path client res://tests/jump_motion_test.tscn
 
-const FLAG := "WAR_JUMP_MOTION"
 const WALK_FLAG := "WAR_WALK_CYCLE"
 const RUN_FLAG := "WAR_RUN_CYCLE"
 const RECIPE_PATH := "res://recipes/wanderer.json"
@@ -32,7 +31,7 @@ var _floor: StaticBody3D
 
 
 func _ready() -> void:
-	for key in [FLAG, WALK_FLAG, RUN_FLAG]:
+	for key in [WALK_FLAG, RUN_FLAG]:
 		_environment[key] = {
 			"had": OS.has_environment(key),
 			"value": OS.get_environment(key),
@@ -44,9 +43,7 @@ func _ready() -> void:
 	_recipe = loaded
 	_floor = _build_floor()
 
-	if not await _check_default_off():
-		return
-	if not await _check_real_player_jump_moves_the_opted_in_pose():
+	if not await _check_real_player_jump_moves_the_shipping_pose():
 		return
 	if not await _check_landing_restores_standing_pose():
 		return
@@ -56,29 +53,15 @@ func _ready() -> void:
 		return
 
 	_finish()
-	print("TEST PASS — jump motion is default-off; the real Player path moves and lands cleanly; takeoff, apex, and descent are bilateral, distinct, and deterministic")
+	print("TEST PASS — ordinary Player jumps move and land cleanly; takeoff, apex, and descent are bilateral, distinct, and deterministic")
 	get_tree().quit(0)
-
-
-## Removing the flag gate makes this fail: ordinary players would be enrolled
-## in an unfinished motion treatment without opting in.
-func _check_default_off() -> bool:
-	var subject := await _jump_subject("")
-	if subject.is_empty():
-		return false
-	var same := _same_pose(
-		subject["standing"],
-		_snapshot(subject["skeleton"]),
-		"flag unset: a normal jump changed the shipped skeleton pose")
-	_free_subject(subject)
-	return same
 
 
 ## Production break this catches: Player can still translate upward while the
 ## locomotion driver receives no airborne state, or receives it but never poses
 ## the bound recipe skeleton.
-func _check_real_player_jump_moves_the_opted_in_pose() -> bool:
-	var subject := await _jump_subject("1")
+func _check_real_player_jump_moves_the_shipping_pose() -> bool:
+	var subject := await _jump_subject()
 	if subject.is_empty():
 		return false
 	var player: Player = subject["player"]
@@ -98,7 +81,7 @@ func _check_real_player_jump_moves_the_opted_in_pose() -> bool:
 ## grounded no-gait path returns without clearing it, leaving the wanderer
 ## crouched forever after the first jump.
 func _check_landing_restores_standing_pose() -> bool:
-	var subject := await _jump_subject("1")
+	var subject := await _jump_subject()
 	if subject.is_empty():
 		return false
 	var player: Player = subject["player"]
@@ -123,8 +106,8 @@ func _check_phases_are_distinct_and_deterministic() -> bool:
 		return _fail(
 			"jump pose envelope %.2f m/s drifted from Player launch speed %.2f m/s" %
 				[WalkLocomotion.JUMP_REFERENCE_SPEED, Player.JUMP_VELOCITY])
-	var first := _bound_subject("1")
-	var second := _bound_subject("1")
+	var first := _bound_subject()
+	var second := _bound_subject()
 	if first.is_empty() or second.is_empty():
 		_free_subject(first)
 		_free_subject(second)
@@ -188,8 +171,8 @@ func _check_airborne_silhouettes_stay_bilateral() -> bool:
 	return true
 
 
-func _jump_subject(flag_value: String) -> Dictionary:
-	var subject := _bound_subject(flag_value)
+func _jump_subject() -> Dictionary:
+	var subject := _bound_subject()
 	if subject.is_empty():
 		return {}
 	var player: Player = subject["player"]
@@ -218,8 +201,7 @@ func _jump_subject(flag_value: String) -> Dictionary:
 	return subject
 
 
-func _bound_subject(flag_value: String) -> Dictionary:
-	_set_flag(FLAG, flag_value)
+func _bound_subject() -> Dictionary:
 	OS.unset_environment(WALK_FLAG)
 	OS.unset_environment(RUN_FLAG)
 	var player := Player.new()
@@ -292,14 +274,6 @@ func _pose_distance(a: Dictionary, b: Dictionary) -> float:
 			(a[bone_name] as Quaternion).angle_to(b[bone_name] as Quaternion))
 	return distance
 
-
-func _set_flag(key: String, value: String) -> void:
-	if value.is_empty():
-		OS.unset_environment(key)
-	else:
-		OS.set_environment(key, value)
-
-
 func _free_subject(subject: Dictionary) -> void:
 	if not subject.is_empty() and is_instance_valid(subject.get("player")):
 		(subject["player"] as Player).free()
@@ -319,6 +293,7 @@ func _finish() -> void:
 
 func _fail(message: String) -> bool:
 	_finish()
+	print("TEST FAIL — " + message)
 	push_error("jump_motion_test: " + message)
 	get_tree().quit(1)
 	return false

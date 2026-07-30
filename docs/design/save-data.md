@@ -190,12 +190,13 @@ raise writes to 2 and append 2 to the capability ledger. The raw preview remains
 `WAR_LAYERED_OUTFIT_PICKERS=1` until #336 delivers an authored wardrobe surface; the flag controls
 exposure, not the already-completed two-release compatibility sequence.
 
-The current character writer is capability 5. The reader registry and production writer vocabulary
+The current character writer vocabulary is capability 5. The reader registry and production writer vocabulary
 contain `ashen_bindings` at `hands/armor`, backed by the retained v0.69.0 capability-5 reader.
 The shipped default creator keeps this below-bar hand piece hidden, while
 `WAR_LAYERED_OUTFIT_PICKERS=1` exposes the raw armour-layer control that may originate, save and
-reload it. `SAVE_CAPABILITY_READS` remains at 6 for the independent quest-progress expansion, so a
-later quest writer stage cannot be conflated with this character-vocabulary contract.
+reload it. The project-wide read and write capability is now 6 because the independent vault-v4
+quest-progress contract is active; that does not change which character vocabulary capability 5
+permits the creator to originate.
 
 ### Progression vault
 
@@ -252,17 +253,19 @@ boot verifies the live registry against the ledger.
 Ordinary attunement and discovery writes preserve an already-present v3 document and its claims;
 discovery-only documents remain v2.
 
-Capability 6 is the reader expansion for vault v4 quest progress. Its optional `quests` object maps
+Capability 6 is the active vault-v4 quest-progress contract. Its optional `quests` object maps
 stable quest IDs to stable objective IDs and progress in the exact JSON integer range `0..2^53-1`.
 `SaveVault` validates and preserves the whole nested shape; `Main` restores it into a boot-owned
 `QuestLog` before any quest definition registers. Known objectives get a clamped live view, while
 snapshots retain raw values and opaque future IDs so a rollback build cannot truncate newer progress.
 Restored completion is latched
-silently and can never be announced or granted again. The production vault writer remains v3 while
-the project-wide write baseline is capability 5: empty state and ordinary attunement, discovery and
-reward writes cannot originate `quests`, but they preserve an already-present v4 document.
-Activating vault-v4 writes is the separate contract child #560, gated on retaining the capability-6
-reader release as a whole-app rollback target.
+silently and can never be announced or granted again. The retained v0.70.0 reader release is the
+whole-app rollback target for the writer. Every real objective advance queues the complete snapshot;
+the locked compare-and-swap writer merges each objective by maximum progress, preserves opaque IDs
+and older sections, and retries transient failures without replaying completion. A refused newer or
+unreadable vault remains session-only and byte-intact. The project-wide manifest advertises read and
+write capability 6, while conditional schema stamping keeps reward-only state on v3, discovery-only
+state on v2, and empty or attunement-only state on v1.
 
 ### Boot recovery
 
