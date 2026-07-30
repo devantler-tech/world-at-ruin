@@ -452,11 +452,13 @@ a flexed swing knee and counter-swung arms following distance travelled. With `W
 sprinting gets a distinct run rather than that walk played faster: the elbows carry folded and drive
 — a channel the walk holds straight — and the knees keep a standing bias so neither ever reaches the
 walk's planted pose, with a longer stride so speed comes from ground covered per step rather than
-step rate. `WAR_JUMP_MOTION=1` separately poses the controller's real airborne arc from its vertical
-velocity: the body pushes off, tucks both legs at the apex, opens for descent and returns to rest on
-landing. The ordinary game keeps the standing body during travel while all three previews are
-default-off. Landing anticipation/impact, directional lean, turning and blended state transitions
-remain unauthored, and neither gait invents a flight phase of its own.
+step rate. When both gait previews are enabled, pressing or releasing sprint crossfades every driven
+bone channel over 0.24 seconds while the shared stride phase continues, so the silhouette no longer
+snaps between the two authored poses. `WAR_JUMP_MOTION=1` separately poses the controller's real
+airborne arc from its vertical velocity: the body pushes off, tucks both legs at the apex, opens for
+descent and returns to rest on landing. The ordinary game keeps the standing body during travel while
+all three previews are default-off. Authored starts and stops, landing anticipation/impact,
+directional lean and turning remain unauthored, and neither gait invents a flight phase of its own.
 
 **Motion reference.** The [Kingmakers announcement trailer from
 1:06–1:10](https://www.youtube.com/watch?v=OvezgDni8z4&t=66s) anchors a readable full-body sprint and
@@ -525,6 +527,20 @@ because the value axis is currently doing so little; it is an option, not the ru
 
 **Checkable tell.** If the frame separates on neither value nor hue, it is flat regardless of how
 much geometry is in it.
+
+**Hollow-ash motion preview (#328).** The settled pools still use one whole-volume density swell.
+With `WAR_ASH_FIELD_DRIFT=1`, a default-off fog shader instead distributes each pool's placed
+density across four world-space harmonics and carries that field on the shared `Wind`; more than two
+primary pockets cross a pool and the placed density remains the temporal mean. The local
+`ash_motion` capture freezes every other scene animation, photographs three identical-field
+controls, then advances only the production fog clock through eight half-second phases from a
+player-height camera inside the hollow.
+
+This is an experiment, not a claimed reference match. Against
+[Fatekeeper's official gallery screenshot 02](https://fatekeeper.thqnordic.com/game-sites/fatekeeper/content/screenshots/screenshot-02.png),
+the current ash still reads as a broad warm veil rather than layered mist with clear gaps and fine
+billows. It stays default-off until a captured sequence, player judgement and performance evidence
+justify retiring the alternate path and its flag.
 
 ### VFX
 

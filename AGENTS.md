@@ -511,7 +511,8 @@ everything shipped afterwards is held to.
   base-compares complete rows. The retained v0.61.0 capability-4 reader is the rollback target that
   permits this writer. The vault reader now accepts optional v4 `quests` as
   `quest_id → objective_id → progress in the exact JSON integer range 0..2^53-1`, and the manifest
-  advertises save-capability reads 6 while writes remain capability 4 and vault v3. `Main` restores that data
+  advertises save-capability reads 6 while the project-wide writer is capability 5 and the vault
+  writer remains v3. `Main` restores that data
   into its boot-owned `QuestLog` before definitions register; the tracker preserves opaque future
   IDs and raw progress, clamps only its live known view, and latches restored completion without
   announcing it again. Existing production writers preserve an already-present v4 document but
@@ -596,7 +597,12 @@ everything shipped afterwards is held to.
   durable releasing barrier and private-collection expiry sweep that arbitrate zone claim against
   external cleanup, without persisting raw user or reservation IDs or admission secrets; the
   durability contract those objects follow — and that every later server-held record inherits — is
-  [`docs/design/server-state-durability.md`](docs/design/server-state-durability.md)), the
+  [`docs/design/server-state-durability.md`](docs/design/server-state-durability.md)), the private
+  **player-state mutation boundary** (`server/playerstate/` — atomically commits one private
+  conditional player-record write with one private create-only audit object, binds the caller's
+  stable mutation key to its operation and normalized payload, and returns the original outcome on
+  replay or an ambiguous committed response; its strict audit schema is permanently ledgered, and
+  it remains inert until a player-record owner calls it), the
   durable **handoff allocation coordinator**
   (`server/handoffalloc/` — implements `handoff.Allocator` over the real lease store and an injected
   GameServer-resource boundary; persists a recoverable intent before provisioning, finalizes the
@@ -806,6 +812,39 @@ everything shipped afterwards is held to.
     preferred: GitHub Packages has no generic/raw-file registry, so an OCI artifact is the only way
     a `.app` zip enters it. The GitHub Release asset remains the *install* download; GHCR is the
     *update* origin.
+  - **The update manifest is a SECOND LAYER of that same artifact, not a second tag** (#280). One
+    digest therefore covers the build and the contract describing it, so `cosign verify` attests to
+    both and there is nothing to keep in sync; a separate tag could be updated independently, which
+    is exactly how a manifest comes to describe a build it does not ship with. It is emitted by
+    `client/tools/update_manifest_emit.tscn` inside `publish-macos` — **not** `publish-ghcr`, which
+    has no checkout and no Godot, so it could only restate values instead of deriving them from the
+    stamped `DevLog.VERSION`. The bytes are JCS (RFC 8785) canonical with **no trailing newline**,
+    because they are what a signature will cover. Its layer media type is
+    `application/vnd.devantler.worldatruin.client.manifest.v1+json`.
+  - **The manifest publishes a contract, never a delivery, and that is not merely "not done yet."**
+    A GHCR blob is not a plain HTTPS download — reading one takes an OCI token exchange first, which
+    is exactly what `verify-ghcr-public` does — while the client's `RollbackSelection` gates every
+    target on a bare whitespace-free `https://` address. So no URL we could publish today would be
+    fetchable by the definition the client enforces, and `pack.full` / `shell.download` stay omitted
+    (which is also the fail-closed value: `UpdateDecision` refuses a capability-raising pack rather
+    than offering one no player could roll back from). Settling how delivery is fetched is a design
+    decision, tracked as **#611** — do not add a URL to the manifest before it lands.
+  - **The manifest's `sequence` is derived from the RELEASE VERSION, never from a clock** —
+    `tools/manifest-sequence.sh`, pinned by `tools/manifest-sequence.test.sh`. A client refuses any
+    manifest at or below the highest `sequence` it has accepted, so the mark must be monotonic in
+    *publication order*. **CD's concurrency group is scoped per tag** (`CD-<ref_name>`), so two
+    releases run concurrently and a mark sampled from each runner's own clock can be inverted by
+    whichever run reaches `oras tag … latest` last — publishing a HIGHER mark on an OLDER build,
+    which is a downgrade a client would accept. The version is already the publication order, so
+    ordering by it cannot be raced, cannot collide, and is idempotent across a CD re-run. Its known
+    limit: a second manifest for an already-released version cannot supersede the first. That is
+    unreachable while a manifest is only published as part of a release; if revocation ever needs
+    re-publishing between releases, the answer is a durable counter, not a return to the clock.
+  - **`not_after` is publication time + 24h**, matching the shape reference. A clock is the right
+    source for an expiry, which is a real instant, and the wrong one for an ordering. It is not
+    decoration: it is the clock the ADR derives the server's protocol-**contraction** schedule from
+    (a contraction may only happen once every manifest advertising the old range has expired), so
+    changing the 24h window changes that wait.
   - **The release publishes LAST, after the artifact jobs.** `publish-release` depends on both
     `publish-macos` and `publish-ghcr`, so the draft goes public only once the build is attached
     *and* the GHCR origin exists and is signed. Publishing earlier would leave a public, immutable

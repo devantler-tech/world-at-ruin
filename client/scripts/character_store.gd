@@ -32,10 +32,9 @@ const SAVE_PATH_ENV := "WAR_SAVE_PATH"
 ## upgrade. recover_legacy_backup() closes that one-time migration gap.
 const LEGACY_TEST_BACKUP := "user://character.json.test-backup"
 
-## Prefix for the private staging file a write commits from. What follows it is a
-## per-attempt unique stamp, so no two writers — and no two attempts — ever stage
-## through the same path (see [method _write_tmp_path]).
-const WRITE_TMP_SUFFIX := ".tmp-"
+## Compatibility alias for the shared private-staging prefix. Existing callers
+## may inspect it, while [PrivateStaging] remains its single declaration.
+const WRITE_TMP_SUFFIX := PrivateStaging.WRITE_TMP_SUFFIX
 
 ## How long an abandoned staging file must have sat UNCHANGED before this build
 ## reclaims it (see [method _sweep_abandoned_writes]).
@@ -265,7 +264,7 @@ static func write_tmp_min_age_seconds() -> int:
 ## stamp separates two attempts inside one process, matching
 ## [method SaveVault._free_quarantine_path].
 static func _write_tmp_path(path: String) -> String:
-	return "%s%s%d-%d" % [path, WRITE_TMP_SUFFIX, OS.get_process_id(), Time.get_ticks_usec()]
+	return PrivateStaging.write_path(path)
 
 
 ## Remove staging files abandoned by a crashed writer.
@@ -286,14 +285,11 @@ static func _write_tmp_path(path: String) -> String:
 ## — deleting a file another client is mid-write on is the kind of cross-writer
 ## damage this whole area exists to avoid.
 static func _sweep_abandoned_writes(path: String) -> void:
-	var parent := path.get_base_dir()
-	var prefix := path.get_file() + WRITE_TMP_SUFFIX
 	var min_age := write_tmp_min_age_seconds()
 	var now := int(Time.get_unix_time_from_system())
-	for entry: String in DirAccess.get_files_at(parent):
-		if not entry.begins_with(prefix):
-			continue
-		var candidate := parent.path_join(entry)
+	# The age floor is permanent HERE: private staging shipped before the lock,
+	# so retained builds can still create a live matching file without taking it.
+	PrivateStaging.sweep(path, func(candidate: String) -> bool:
 		var modified := int(FileAccess.get_modified_time(candidate))
 		# get_modified_time() answers 0 when it cannot stat the file, and 0 is
 		# also an epoch timestamp — so an age computed from it reads as ancient
@@ -301,10 +297,9 @@ static func _sweep_abandoned_writes(path: String) -> void:
 		# keeps the file: leaking one stale stage costs a launch, deleting a live
 		# one costs the character.
 		if modified <= 0:
-			continue
-		if now - modified < min_age:
-			continue
-		DirAccess.remove_absolute(ProjectSettings.globalize_path(candidate))
+			return false
+		return now - modified >= min_age
+	)
 
 
 ## Atomic: write a PRIVATE sibling staging file, then rename over the target. A

@@ -26,10 +26,10 @@ func (v googleIDTokenVerifier) VerifyGoogleIDToken(
 	}
 	if payload.Issuer != "accounts.google.com" &&
 		payload.Issuer != "https://accounts.google.com" {
-		return "", errors.New("Google ID token has an unexpected issuer")
+		return "", errors.New("google ID token has an unexpected issuer")
 	}
 	if payload.Subject == "" {
-		return "", errors.New("Google ID token has no subject")
+		return "", errors.New("google ID token has no subject")
 	}
 	return payload.Subject, nil
 }

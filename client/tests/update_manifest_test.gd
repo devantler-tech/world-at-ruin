@@ -45,7 +45,7 @@ func _ready() -> void:
 	_test_read_capability_covers_what_is_written()
 	_test_discovery_writer_activation_is_advertised()
 	_test_reward_claim_writer_activation_is_advertised()
-	_test_ashen_bindings_reader_expansion_is_advertised()
+	_test_ashen_bindings_writer_activation_is_advertised()
 	_test_quest_reader_expansion_is_advertised()
 	_test_save_floor_has_its_golden_fixture()
 	_test_save_capability_matches_its_ledger()
@@ -201,42 +201,41 @@ func _test_discovery_writer_activation_is_advertised() -> void:
 			% UpdateManifest.SAVE_CAPABILITY_WRITES)
 
 
-## Capability 4 is vault-v3 claimed exploration-reward state. The v0.61.0
-## reader release is retained, so this build must advertise the matching writer
-## without lowering its later read ceiling.
+## Capability 4 is vault-v3 claimed exploration-reward state. The writer stays
+## active after later character-vocabulary capabilities raise the ceiling.
 func _test_reward_claim_writer_activation_is_advertised() -> void:
 	if UpdateManifest.SAVE_CAPABILITY_READS < 4:
 		_fail("the reward-claim contract reads capability %d, expected at least 4"
 			% UpdateManifest.SAVE_CAPABILITY_READS)
 		return
-	if UpdateManifest.SAVE_CAPABILITY_WRITES != 4:
-		_fail("the retained reward-claim reader still advertises write capability %d; expected 4"
+	if UpdateManifest.SAVE_CAPABILITY_WRITES < 4:
+		_fail("the reward-claim writer regressed to capability %d; expected at least 4"
 			% UpdateManifest.SAVE_CAPABILITY_WRITES)
 
 
-## Capability 5 is the reader-only `ashen_bindings` equipment vocabulary. The
-## project-wide reader may advance again, but it must never regress below this
-## retained expansion while the write ceiling stays at 4.
-func _test_ashen_bindings_reader_expansion_is_advertised() -> void:
+## Capability 5 is the writable `ashen_bindings` equipment vocabulary. The
+## project-wide reader has advanced again, while this writer remains the latest
+## capability safe for production origination.
+func _test_ashen_bindings_writer_activation_is_advertised() -> void:
 	if UpdateManifest.SAVE_CAPABILITY_READS < 5:
 		_fail("the ashen-bindings expansion reads capability %d, expected at least 5"
 			% UpdateManifest.SAVE_CAPABILITY_READS)
 		return
-	if UpdateManifest.SAVE_CAPABILITY_WRITES != 4:
-		_fail("the reader expansion advertises write capability %d; expected retained 4"
+	if UpdateManifest.SAVE_CAPABILITY_WRITES != 5:
+		_fail("the ashen-bindings writer advertises capability %d; expected 5"
 			% UpdateManifest.SAVE_CAPABILITY_WRITES)
 
 
 ## Capability 6 is vault-v4 quest-objective progress. This is deliberately the
-## expand release: the manifest must advertise the new reader while the writer
-## remains on the retained capability-4 reward contract.
+## expand release: the manifest advertises the new reader while the production
+## writer remains on the retained capability-5 character contract.
 func _test_quest_reader_expansion_is_advertised() -> void:
 	if UpdateManifest.SAVE_CAPABILITY_READS != 6:
 		_fail("the quest-progress reader advertises capability %d, expected 6"
 			% UpdateManifest.SAVE_CAPABILITY_READS)
 		return
-	if UpdateManifest.SAVE_CAPABILITY_WRITES != 4:
-		_fail("the quest reader expansion moved write capability to %d; expected it to remain 4"
+	if UpdateManifest.SAVE_CAPABILITY_WRITES != 5:
+		_fail("the quest reader expansion moved write capability to %d; expected it to remain 5"
 			% UpdateManifest.SAVE_CAPABILITY_WRITES)
 		return
 	if SaveVault.VAULT_READ_VERSION != 4:

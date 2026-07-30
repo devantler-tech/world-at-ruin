@@ -50,8 +50,10 @@ const SCENARIOS: Array[String] = [
 	"breath",
 	"walk",
 	"run",
+	"gait_transition",
 	"jump",
 	"light_response",
+	"ash_motion",
 	"replication",
 	"mob_chase",
 ]
@@ -312,6 +314,22 @@ const WALK_CAM_RISE := 0.5
 const WALK_CAM_FRONT := 3.2
 const WALK_VANTAGE_Z := 18.0
 
+## Six equal runtime updates span the complete eased walk↔run crossfade. One
+## steady walk frame, six press frames and six release frames produce a compact
+## sequence that includes both input edges and both settled endpoints.
+const GAIT_TRANSITION_STEPS := 6
+const GAIT_TRANSITION_DELTA := (
+	WalkLocomotion.GAIT_BLEND_SECONDS / float(GAIT_TRANSITION_STEPS)
+)
+const GAIT_TRANSITION_REFERENCE := (
+	"Kingmakers Official Announcement Trailer 1:06-1:10 — " +
+	"https://www.youtube.com/watch?v=OvezgDni8z4&t=66s"
+)
+const GAIT_TRANSITION_REMAINING_GAP := (
+	"walk and run now crossfade; authored starts, stops, turns, directional lean " +
+	"and landing impact remain open"
+)
+
 ## Exact points on the shipped controller's airborne arc: launch, approach to
 ## apex, apex, approach to landing, and landing-ready descent. A five-frame
 ## sequence exposes continuity between the three authored silhouettes without
@@ -338,6 +356,18 @@ const UI_WARMUP_FRAMES := WARMUP_FRAMES
 ## Frames to settle after a preset switch: it rebuilds the portrait rig, so an
 ## immediate shot photographs the previous body.
 const UI_SETTLE_FRAMES := 30
+## Three frozen controls produce three within-run pairs. One pair can land at an
+## unusually quiet phase and understate the renderer's floor by an order of
+## magnitude; the maximum across all three pairs is the conservative control.
+const ASH_MOTION_CONTROL_FRAMES := 3
+## Seconds of the production field clock between the frozen control and moved
+## state. At FIELD_SPEED this carries the pattern 4.32 m downwind: large enough
+## to judge inside a hollow without jumping to an unrelated phase.
+const ASH_MOTION_SECONDS := 4.0
+## Real intermediate states in the evidence sequence. Eight at half-second
+## spacing show direction and continuity; interpolating two endpoint stills
+## would manufacture motion the renderer never produced.
+const ASH_MOTION_PHASE_STEPS := 8
 
 
 func _ready() -> void:
@@ -446,6 +476,9 @@ func _ready() -> void:
 	if scenario == "run":
 		await _capture_gait(dir, main, true)
 		return
+	if scenario == "gait_transition":
+		await _capture_gait_transition(dir, main)
+		return
 	if scenario == "jump":
 		await _capture_jump(dir, main)
 		return
@@ -469,6 +502,9 @@ func _ready() -> void:
 
 	if scenario == "light_response":
 		await _capture_light_response(dir, main, cam)
+		return
+	if scenario == "ash_motion":
+		await _capture_ash_motion(dir, main, cam)
 		return
 
 	for vantage: Array in VANTAGES:
@@ -579,6 +615,93 @@ static func ash_response_vantage(placement: Dictionary) -> Array:
 	return [eye, target]
 
 
+## Player-height camera INSIDE one real hollow, looking mostly crosswind and
+## slightly down. Wind therefore carries pockets ACROSS the frame instead of
+## compressing their travel into depth, while terrain behind translucent fog
+## gives them a readable backdrop.
+static func ash_motion_vantage(placement: Dictionary) -> Array:
+	var centre: Vector3 = placement["pos"]
+	var extents: Vector3 = placement["extents"]
+	var floor_y := centre.y - extents.y
+	var eye := Vector3(centre.x, floor_y + minf(1.7, extents.y * 1.4), centre.z)
+	var travel := minf(extents.x * 0.55, 8.0)
+	var along := Wind.axis()
+	var across := Vector3(-along.z, 0.0, along.x).normalized()
+	var target := (
+		eye + along * travel * 0.25 + across * travel * 0.85
+		+ Vector3(0.0, -1.1, 0.0)
+	)
+	return [eye, target]
+
+
+## Measures a moved ash frame against at least three frozen, identical-field
+## controls from the SAME run. Reporting only: issue #328 explicitly requires
+## quoted numbers rather than a guessed pass/fail threshold. The conservative
+## floor is the largest control-pair delta; the signal is the smallest delta
+## from the moved frame to any control, so neither number is cherry-picked.
+static func ash_motion_measurement(controls: Array, moved: Image) -> Dictionary:
+	var out := {
+		"ok": false,
+		"reason": "",
+		"control_pairs": 0,
+		"signal_pairs": 0,
+		"noise_mean_max": 0.0,
+		"noise_changed_max": 0.0,
+		"signal_mean_min": INF,
+		"signal_changed_min": INF,
+	}
+	if controls.size() < ASH_MOTION_CONTROL_FRAMES:
+		out["reason"] = "need at least %d identical-field controls, got %d" % [
+			ASH_MOTION_CONTROL_FRAMES, controls.size(),
+		]
+		return out
+	for first_index in controls.size() - 1:
+		if controls[first_index] is not Image:
+			out["reason"] = "control %d is not an image" % first_index
+			return out
+		for second_index in range(first_index + 1, controls.size()):
+			if controls[second_index] is not Image:
+				out["reason"] = "control %d is not an image" % second_index
+				return out
+			var noise := FrameDiff.compare_images(
+				controls[first_index] as Image, controls[second_index] as Image
+			)
+			if not bool(noise["ok"]):
+				out["reason"] = "control pair %d/%d: %s" % [
+					first_index, second_index, noise["reason"],
+				]
+				return out
+			out["control_pairs"] = int(out["control_pairs"]) + 1
+			out["noise_mean_max"] = maxf(
+				float(out["noise_mean_max"]), float(noise["mean"])
+			)
+			out["noise_changed_max"] = maxf(
+				float(out["noise_changed_max"]), float(noise["changed_fraction"])
+			)
+	for control_index in controls.size():
+		var moved_delta := FrameDiff.compare_images(controls[control_index] as Image, moved)
+		if not bool(moved_delta["ok"]):
+			out["reason"] = "moved/control %d: %s" % [control_index, moved_delta["reason"]]
+			return out
+		out["signal_pairs"] = int(out["signal_pairs"]) + 1
+		out["signal_mean_min"] = minf(
+			float(out["signal_mean_min"]), float(moved_delta["mean"])
+		)
+		out["signal_changed_min"] = minf(
+			float(out["signal_changed_min"]), float(moved_delta["changed_fraction"])
+		)
+	out["ok"] = true
+	return out
+
+
+## Production-clock offsets captured after the frozen controls.
+static func ash_motion_phase_times() -> Array[float]:
+	var times: Array[float] = []
+	for step in range(1, ASH_MOTION_PHASE_STEPS + 1):
+		times.append(ASH_MOTION_SECONDS * float(step) / float(ASH_MOTION_PHASE_STEPS))
+	return times
+
+
 ## Visible built volumes, not placement metadata. A capable device must return
 ## at least one before the capture may publish ash-response frames; an
 ## incapable hosted runner instead declares that evidence unavailable.
@@ -598,6 +721,145 @@ static func visible_fog_volume_count(root: Node) -> int:
 ## remain at one phase; only the Sun orientation changes between the images.
 static func freeze_light_response_animation() -> void:
 	Engine.time_scale = 0.0
+
+
+## Captures the opted-in intra-pool density field from the player's own
+## vantage. All scene animation is frozen for every frame; only the production
+## HollowFog clock advances between the controls and moved state. That makes
+## the reported signal attributable to the ash field, not foliage or torches.
+##
+## Run windowed with all save seams redirected:
+##   WAR_ASH_FIELD_DRIFT=1 WAR_SCENARIO=ash_motion \
+##     WAR_SHOT_DIR=/tmp/ash-motion WAR_SAVE_PATH=/tmp/probe_save.json \
+##     WAR_VAULT_PATH=/tmp/probe_vault.json \
+##     WAR_BOOT_RECOVERY_PATH=/tmp/probe_recovery.json \
+##     godot --path client res://tools/frame_capture.tscn
+func _capture_ash_motion(dir: String, main: Node, cam: Camera3D) -> void:
+	if not HollowFog.field_drift_enabled():
+		_fail("ash_motion requires WAR_ASH_FIELD_DRIFT=1 — refusing to photograph the settled whole-pool path")
+		return
+	var placements: Array = main.call("hollow_fog_placements")
+	if placements.is_empty():
+		_fail("ash_motion: the shipped world placed no hollow ash pool")
+		return
+	var fog_root := main.get_node_or_null("HollowFog") as Node3D
+	if visible_fog_volume_count(fog_root) < 1:
+		_fail("ash_motion: the renderer built no visible FogVolume")
+		return
+
+	var original_time_scale := Engine.time_scale
+	freeze_light_response_animation()
+	var field_time_value: Variant = main.get("_hollow_fog_time")
+	if field_time_value == null:
+		Engine.time_scale = original_time_scale
+		_fail("ash_motion: the shipped world exposes no HollowFog production clock")
+		return
+	var base_field_time := float(field_time_value)
+	main.set("_hollow_fog_time", base_field_time)
+
+	var vantage := ash_motion_vantage(placements[0])
+	var eye: Vector3 = vantage[0]
+	var target: Vector3 = vantage[1]
+	cam.global_position = eye
+	cam.look_at(target, Vector3.UP)
+
+	var controls: Array[Image] = []
+	var frame_names: Array[String] = []
+	for control_index in ASH_MOTION_CONTROL_FRAMES:
+		var frame_name := "ash-motion-control-%d" % (control_index + 1)
+		var settle := SETTLE_FRAMES if control_index == 0 else CONTRIB_GAP_FRAMES
+		var control := await _capture_ash_motion_frame(
+			dir, frame_name, cam, main, target, settle
+		)
+		if control == null:
+			Engine.time_scale = original_time_scale
+			return
+		controls.append(control)
+		frame_names.append(frame_name)
+
+	var moved: Image = null
+	var phase_times := ash_motion_phase_times()
+	for phase_index in phase_times.size():
+		main.set("_hollow_fog_time", base_field_time + phase_times[phase_index])
+		var phase_name := "ash-motion-phase-%02d" % (phase_index + 1)
+		var phase_image := await _capture_ash_motion_frame(
+			dir, phase_name, cam, main, target, CONTRIB_GAP_FRAMES
+		)
+		if phase_image == null:
+			Engine.time_scale = original_time_scale
+			return
+		moved = phase_image
+		frame_names.append(phase_name)
+	Engine.time_scale = original_time_scale
+
+	var measurement := ash_motion_measurement(controls, moved)
+	if not bool(measurement["ok"]):
+		_fail("ash_motion comparison failed: %s" % measurement["reason"])
+		return
+	var line := (
+		"same-run identical-field floor: max mean |dRGB| %.4f, changed %.2f%% "
+		+ "across %d pairs; 4 s field travel: min mean |dRGB| %.4f, changed %.2f%% "
+		+ "across %d pairs"
+	) % [
+		float(measurement["noise_mean_max"]),
+		float(measurement["noise_changed_max"]) * 100.0,
+		int(measurement["control_pairs"]),
+		float(measurement["signal_mean_min"]),
+		float(measurement["signal_changed_min"]) * 100.0,
+		int(measurement["signal_pairs"]),
+	]
+	print("ASH MOTION: %s" % line)
+	for frame_name in frame_names:
+		_append_capture_note(dir, frame_name, line)
+	print("CAPTURE PASS — player-height inside a hollow; only the spatial ash field advanced (%s)" % line)
+	get_tree().quit(0)
+
+
+func _capture_ash_motion_frame(
+	dir: String,
+	frame_name: String,
+	cam: Camera3D,
+	main: Node,
+	target: Vector3,
+	settle_frames: int
+) -> Image:
+	for i in settle_frames:
+		cam.current = true
+		await get_tree().process_frame
+	if not _sees_geometry(cam, target):
+		_fail("%s sees no world geometry — the ash frame is sky only" % frame_name)
+		return null
+	if not _camera_draws_world(cam, main):
+		_fail("%s cannot draw the world — the ash frame would be empty" % frame_name)
+		return null
+	await RenderingServer.frame_post_draw
+	var img := get_viewport().get_texture().get_image()
+	var spread := _luma_spread(img)
+	if spread < MIN_LUMA_SPREAD:
+		_fail("%s is a uniform frame (luma spread %.4f) — nothing rendered" % [
+			frame_name, spread,
+		])
+		return null
+	var out := "%s/%s.png" % [dir, frame_name]
+	var err := img.save_png(out)
+	if err != OK:
+		_fail("could not write %s (error %d)" % [out, err])
+		return null
+	print("CAPTURED %s -> %s (luma spread %.3f)" % [frame_name, out, spread])
+	_write_note(dir, frame_name, img, _size_note(img))
+	return img
+
+
+## Adds the shared field/noise measurement to every frame's provenance note.
+func _append_capture_note(dir: String, frame_name: String, line: String) -> void:
+	var path := "%s/%s.txt" % [dir, frame_name]
+	var f := FileAccess.open(path, FileAccess.READ_WRITE)
+	if f == null:
+		push_warning("could not append ash-motion measurement to %s" % frame_name)
+		return
+	f.seek_end()
+	f.store_line("ash motion: %s" % line)
+	f.close()
 
 
 ## The creator is motionless, but the world visible around and through it is
@@ -1538,6 +1800,157 @@ func _capture_gait(dir: String, main: Node, running: bool) -> void:
 
 	print("CAPTURE PASS — %d %s phases written to %s (left-foot travel %.1f cm)" %
 		[WALK_PHASES, gait, dir, travel * 100.0])
+	get_tree().quit(0)
+
+
+## The `gait_transition` scenario: a real runtime sprint press and release.
+##
+## Fixed-phase walk/run captures prove the settled endpoints and cannot show
+## the input edge #496 fixes. This sequence instead drives
+## [method WalkLocomotion.advance_motion] with both existing opt-ins enabled,
+## using deterministic deltas that span the complete transition in each
+## direction. Physics is paused only after the shipped player has booted.
+func _capture_gait_transition(dir: String, main: Node) -> void:
+	for i in WARMUP_FRAMES:
+		await get_tree().process_frame
+	if not _has_world(main):
+		_fail("the world did not build — a sky-only gait transition is not evidence")
+		return
+
+	var player := main.get_node_or_null("Wanderer") as Player
+	if player == null:
+		_fail("the shipped scene has no Wanderer Player — the gait path is not live")
+		return
+	var animator := player.get_node_or_null("WalkLocomotion")
+	if animator == null or not animator.has_method("advance_motion"):
+		_fail("the shipped Wanderer has no runtime locomotion driver")
+		return
+	for gait_flag: String in [
+		WalkLocomotion.FLAG_ENV,
+		WalkLocomotion.RUN_FLAG_ENV,
+	]:
+		if OS.get_environment(gait_flag) != "1":
+			_fail("%s is not opted in — refusing a partial gait transition" % gait_flag)
+			return
+	var world := main.get_node_or_null("World") as WorldGen
+	if world == null:
+		_fail("the shipped scene has no WorldGen for the gait-transition vantage")
+		return
+
+	player.set_physics_process(false)
+	player.control_enabled = false
+	var ground := world.surface_height_at(0.0, WALK_VANTAGE_Z)
+	if ground <= WorldGen.NO_GROUND + 1.0:
+		_fail("the committed gait-transition vantage has no terrain under it")
+		return
+	player.global_position = Vector3(0.0, ground + 0.1, WALK_VANTAGE_Z)
+	player.face_toward(Vector3.ZERO)
+	var skeleton := CharacterFactory.find_skeleton(player.get_node("Visual"))
+	if skeleton == null:
+		_fail("the shipped Wanderer has no recipe skeleton")
+		return
+
+	var body := skeleton.get_parent()
+	var idle := body.get_node_or_null("BreathingIdle") if body != null else null
+	if idle != null:
+		idle.set_process(false)
+		BreathingIdle.apply_at(skeleton, 0.0)
+
+	skeleton.force_update_all_bone_transforms()
+	var chest := skeleton.find_bone("spine_03")
+	var left_foot := skeleton.find_bone("foot_l")
+	if chest < 0 or left_foot < 0:
+		_fail("the gait-transition evidence rig lacks spine_03 or foot_l")
+		return
+	var focus: Vector3 = (
+		skeleton.global_transform * skeleton.get_bone_global_pose(chest).origin
+	)
+	var cam := Camera3D.new()
+	cam.far = 400.0
+	cam.fov = 42.0
+	get_tree().root.add_child(cam)
+	cam.global_position = (
+		focus + Vector3(WALK_CAM_SIDE, WALK_CAM_RISE, -WALK_CAM_FRONT)
+	)
+	cam.look_at(focus - Vector3(0.0, 0.45, 0.0), Vector3.UP)
+
+	var samples: Array[Dictionary] = [{
+		"event": "walk",
+		"sprinting": false,
+		"delta": 0.0,
+		"step": 0,
+	}]
+	for step in range(1, GAIT_TRANSITION_STEPS + 1):
+		samples.append({
+			"event": "press",
+			"sprinting": true,
+			"delta": GAIT_TRANSITION_DELTA,
+			"step": step,
+		})
+	for step in range(1, GAIT_TRANSITION_STEPS + 1):
+		samples.append({
+			"event": "release",
+			"sprinting": false,
+			"delta": GAIT_TRANSITION_DELTA,
+			"step": step,
+		})
+
+	var foot_positions: Array[Vector3] = []
+	for i in samples.size():
+		var sample: Dictionary = samples[i]
+		var sprinting: bool = sample["sprinting"]
+		var speed := Player.SPRINT_SPEED if sprinting else Player.WALK_SPEED
+		animator.call(
+			"advance_motion",
+			speed,
+			true,
+			sprinting,
+			sample["delta"])
+		skeleton.force_update_all_bone_transforms()
+		foot_positions.append(
+			skeleton.global_transform * skeleton.get_bone_global_pose(left_foot).origin)
+		for _settle in WALK_SETTLE_FRAMES:
+			cam.current = true
+			await get_tree().process_frame
+		var img := await _grab_frame()
+		var spread := _luma_spread(img)
+		if spread < MIN_LUMA_SPREAD:
+			_fail(("gait transition frame %d is uniform (luma spread %.4f) — " +
+				"nothing rendered") % [i, spread])
+			return
+		var frame_name := "gait_transition_%02d_%s_%02d" % [
+			i,
+			sample["event"],
+			sample["step"],
+		]
+		var err := img.save_png("%s/%s.png" % [dir, frame_name])
+		if err != OK:
+			_fail("could not write %s (error %d)" % [frame_name, err])
+			return
+		_write_note(dir, frame_name, img, _size_note(img), "", [
+			"input: %s" % sample["event"],
+			"transition step: %d/%d" % [
+				sample["step"],
+				GAIT_TRANSITION_STEPS,
+			],
+			"reference: %s" % GAIT_TRANSITION_REFERENCE,
+			"remaining gap: %s" % GAIT_TRANSITION_REMAINING_GAP,
+		])
+		print("CAPTURED %s" % frame_name)
+
+	var travel := 0.0
+	for a in foot_positions:
+		for b in foot_positions:
+			travel = maxf(travel, a.distance_to(b))
+	if travel < WALK_MIN_FOOT_TRAVEL_M:
+		_fail(("the gait transition photographs one lower-body pose: the left foot " +
+			"travels %.4f m, under the %.4f m floor") %
+			[travel, WALK_MIN_FOOT_TRAVEL_M])
+		return
+
+	print(("CAPTURE PASS — %d gait transition frames written to %s " +
+		"(left-foot travel %.1f cm)") %
+		[samples.size(), dir, travel * 100.0])
 	get_tree().quit(0)
 
 
