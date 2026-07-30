@@ -275,9 +275,23 @@ func (p *Provisioner) waitForGoogleBinding(
 	ctx context.Context,
 	bindingKey string,
 ) (string, bool, error) {
-	retry := time.NewTicker(googleBindingReconcileInterval)
+	return p.waitForGoogleBindingWithin(
+		ctx,
+		bindingKey,
+		googleBindingReconcileInterval,
+		googleBindingReconcileWindow,
+	)
+}
+
+func (p *Provisioner) waitForGoogleBindingWithin(
+	ctx context.Context,
+	bindingKey string,
+	retryInterval time.Duration,
+	reconcileWindow time.Duration,
+) (string, bool, error) {
+	retry := time.NewTicker(retryInterval)
 	defer retry.Stop()
-	deadline := time.NewTimer(googleBindingReconcileWindow)
+	deadline := time.NewTimer(reconcileWindow)
 	defer deadline.Stop()
 
 	for {
@@ -289,7 +303,10 @@ func (p *Provisioner) waitForGoogleBinding(
 		case <-ctx.Done():
 			return "", false, sanitizedGoogleBindingError("lookup", ctx.Err())
 		case <-deadline.C:
-			return "", false, nil
+			// The winner can commit after the last poll but before the
+			// deadline case wins selection. Close that edge with one final
+			// authoritative read.
+			return p.resolveGoogleBinding(ctx, bindingKey)
 		case <-retry.C:
 		}
 	}

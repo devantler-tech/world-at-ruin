@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/heroiclabs/nakama-common/api"
 	"github.com/heroiclabs/nakama/v3/apigrpc"
@@ -64,6 +65,41 @@ type fakeGoogleBindingStore struct {
 	verifyBoundErr       error
 	verifyBoundCalls     int
 	bindingWrites        int
+}
+
+type deadlineRaceGoogleBindingStore struct {
+	mu           sync.Mutex
+	resolveCalls int
+}
+
+func (s *deadlineRaceGoogleBindingStore) ResolveGoogleBinding(
+	_ context.Context,
+	_ string,
+) (string, bool, error) {
+	s.mu.Lock()
+	s.resolveCalls++
+	call := s.resolveCalls
+	s.mu.Unlock()
+	if call == 1 {
+		time.Sleep(5 * time.Millisecond)
+		return "", false, nil
+	}
+	return testBoundUserID, true, nil
+}
+
+func (*deadlineRaceGoogleBindingStore) BindGoogleIdentity(
+	context.Context,
+	string,
+	string,
+) (string, error) {
+	return "", errors.New("unexpected binding write")
+}
+
+func (*deadlineRaceGoogleBindingStore) VerifyGoogleBoundAccount(
+	context.Context,
+	string,
+) error {
+	return nil
 }
 
 type barrierGoogleBindingStore struct {
@@ -1000,6 +1036,33 @@ func TestProvisionGoogleConvergesAcrossProvisionerReplicasAfterSessionRevocation
 	bindings.fakeGoogleBindingStore.mu.Unlock()
 	if bindingWrites != 1 {
 		t.Fatalf("replica convergence made %d binding writes, want 1", bindingWrites)
+	}
+}
+
+func TestWaitForGoogleBindingRechecksAfterDeadline(t *testing.T) {
+	bindings := &deadlineRaceGoogleBindingStore{}
+	provisioner := &Provisioner{bindings: bindings}
+
+	userID, found, err := provisioner.waitForGoogleBindingWithin(
+		context.Background(),
+		googleBindingKey([]byte(testNakamaIdentityKey), testGoogleSubject),
+		time.Hour,
+		time.Millisecond,
+	)
+	if err != nil || !found || userID != testBoundUserID {
+		t.Fatalf(
+			"waitForGoogleBindingWithin = (%q, %t, %v), want final durable binding %q",
+			userID,
+			found,
+			err,
+			testBoundUserID,
+		)
+	}
+	bindings.mu.Lock()
+	resolveCalls := bindings.resolveCalls
+	bindings.mu.Unlock()
+	if resolveCalls != 2 {
+		t.Fatalf("ResolveGoogleBinding calls = %d, want initial and deadline reads", resolveCalls)
 	}
 }
 
