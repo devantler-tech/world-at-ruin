@@ -50,10 +50,12 @@ const EDGE_BLEND_PATTERN := \
 const SEPARATOR_FOOTPRINT_PATTERN := \
 	"edge_fw\\s*=\\s*terrain_plate_separator_footprint\\(\\s*plate_uv\\s*,\\s*" \
 	+ "plate_c1\\s*,\\s*plate_c2\\s*,\\s*plate_c3\\s*,\\s*f1\\s*,\\s*f2\\s*,\\s*" \
-	+ "f3\\s*,\\s*plate_fw\\s*,\\s*plate_uv_dx\\s*,\\s*plate_uv_dy\\s*\\)"
+	+ "f3\\s*,\\s*f4\\s*,\\s*plate_fw\\s*,\\s*plate_uv_dx\\s*,\\s*plate_uv_dy\\s*\\)"
 const JUNCTION_GAIN_PATTERN := \
-	"junction_read_gain\\s*=\\s*terrain_plate_junction_read_gain\\(\\s*" \
-	+ "plate_window_w\\s*\\)"
+	"junction_read_authority\\s*=\\s*terrain_plate_covered_junction\\(\\s*" \
+	+ "f1\\s*,\\s*f2\\s*,\\s*f3\\s*,\\s*plate_fw\\s*\\)\\s*;\\s*" \
+	+ "float\\s+junction_read_gain\\s*=\\s*terrain_plate_junction_read_gain\\(\\s*" \
+	+ "junction_read_authority\\s*\\)"
 
 ## A screen-space derivative taken OF a crack quantity — the form this must not
 ## regress to. Deliberately anchored on the crack operand rather than on

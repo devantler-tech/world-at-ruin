@@ -142,6 +142,7 @@ func _ready() -> void:
 			+ "four-plate bound")
 	else:
 		_check_degenerate_vertex_bound(degenerate["uv"])
+	_check_footprint_coverage_authority()
 	_check_window_activation_continuity()
 	_check_exact_swap_reach_handoff()
 	_check_window_grid_boundary_continuity()
@@ -255,28 +256,111 @@ func _pair_separator_footprint(
 	return FOOTPRINT * (absf(gsep.x) + absf(gsep.y))
 
 
+func _candidate_coverage(
+		d: float, f1: float, footprint: float = FOOTPRINT) -> float:
+	return 1.0 - smoothstep(
+		0.0, maxf(footprint, 1e-6), d - f1)
+
+
+func _coverage_authority(coverage: float) -> float:
+	return smoothstep(0.0, 0.05, coverage)
+
+
+func _covered_junction(
+		p: Dictionary, footprint: float = FOOTPRINT) -> float:
+	var coverage := _candidate_coverage(
+		float(p["f3"]), float(p["f1"]), footprint)
+	return _window_junction(p, footprint) * _coverage_authority(coverage)
+
+
+func _higher_junction(
+		p: Dictionary, footprint: float = FOOTPRINT) -> float:
+	return 1.0 - smoothstep(
+		0.0, maxf(footprint, 1e-6),
+		float(p["f4"]) - float(p["f3"]))
+
+
+## The identity-free whole-window separator mirror. Weighted pairwise RMS is
+## derived from moments, so all covered candidates contribute in O(n) and no
+## ordered final centre exists to swap at a higher-order vertex.
+func _full_window_separator_footprint(
+		uv: Vector2,
+		p: Dictionary,
+		footprint: float = FOOTPRINT,
+		radius: int = 2) -> float:
+	var base := Vector2(floor(uv.x), floor(uv.y))
+	var total := 0.0
+	var weight_sq_total := 0.0
+	var dx_total := 0.0
+	var dx_sq_total := 0.0
+	var dy_total := 0.0
+	var dy_sq_total := 0.0
+	for j in range(-radius, radius + 1):
+		for i in range(-radius, radius + 1):
+			var cell := base + Vector2(float(i), float(j))
+			var jitter := Vector2(
+				_hash3(Vector3(cell.x, cell.y, 0.0)),
+				_hash3(Vector3(cell.x, cell.y, 7.0)))
+			var centre := cell + Vector2(0.15, 0.15) + 0.7 * jitter
+			var e := uv - centre
+			var weight := _candidate_coverage(
+				e.length(), float(p["f1"]), footprint)
+			var n := e.normalized()
+			var px := n.x * footprint
+			var py := n.y * footprint
+			total += weight
+			weight_sq_total += weight * weight
+			dx_total += weight * px
+			dx_sq_total += weight * px * px
+			dy_total += weight * py
+			dy_sq_total += weight * py * py
+	var pair_total := 0.5 * (total * total - weight_sq_total)
+	if pair_total <= 1e-12:
+		return _pair_separator_footprint(uv, p["c1"], p["c2"])
+	var rms_dx := sqrt(maxf(
+		(total * dx_sq_total - dx_total * dx_total) / pair_total, 0.0))
+	var rms_dy := sqrt(maxf(
+		(total * dy_sq_total - dy_total * dy_total) / pair_total, 0.0))
+	return rms_dx + rms_dy
+
+
 ## Mirrors `terrain_plate_separator_footprint`. Pairwise authority is preserved
 ## exactly until the third plate enters the footprint. At a junction, all three
-## pair separators contribute through symmetric coverage weights, so exchanging
-## any two equally distant labels cannot change the result.
+## pair separators contribute through symmetric coverage weights; when a fourth
+## enters, the whole-window RMS removes the fixed-list tail.
 func _separator_footprint(p: Dictionary, uv: Vector2) -> float:
 	var pair_fw := _pair_separator_footprint(uv, p["c1"], p["c2"])
-	var junction := _window_junction(p, FOOTPRINT)
-	if junction <= 0.0:
+	var triple_authority := _covered_junction(p)
+	if triple_authority <= 0.0:
 		return pair_fw
 	var edge13 := _pair_separator_footprint(uv, p["c1"], p["c3"])
 	var edge23 := _pair_separator_footprint(uv, p["c2"], p["c3"])
-	var g2 := 1.0 - smoothstep(
-		0.0, FOOTPRINT, float(p["f2"]) - float(p["f1"]))
-	var g3 := 1.0 - smoothstep(
-		0.0, FOOTPRINT, float(p["f3"]) - float(p["f1"]))
+	var g2 := _candidate_coverage(float(p["f2"]), float(p["f1"]))
+	var g3 := _candidate_coverage(float(p["f3"]), float(p["f1"]))
 	var pair_sum := g2 + g3 + g2 * g3
-	if pair_sum <= 1e-6:
-		return pair_fw
-	var symmetric := pair_sum / (
+	var triple := pair_sum / (
 		g2 / maxf(pair_fw, 1e-6) + g3 / maxf(edge13, 1e-6)
 			+ g2 * g3 / maxf(edge23, 1e-6))
-	return lerpf(pair_fw, symmetric, junction)
+	var footprint := lerpf(pair_fw, triple, triple_authority)
+	var fourth_coverage := _candidate_coverage(
+		float(p["f4"]), float(p["f1"]))
+	var higher_authority := _higher_junction(p) \
+		* _coverage_authority(fourth_coverage)
+	if higher_authority <= 0.0:
+		return footprint
+	return lerpf(
+		footprint,
+		_full_window_separator_footprint(uv, p),
+		higher_authority)
+
+
+## Mirrors the current shader read compensation. The coverage-authority probe
+## below requires this to stay at 1.0 unless the third plate actually reaches
+## the fragment.
+func _junction_read_gain(
+		p: Dictionary, footprint: float = FOOTPRINT) -> float:
+	return lerpf(
+		1.0, JUNCTION_READ_GAIN, _covered_junction(p, footprint))
 
 
 ## `terrain_plate_edge_blend(f1, f2, edge_fw * 0.5)`, with `edge_fw`
@@ -488,13 +572,12 @@ func _window_cavity_amps(uv: Vector2) -> float:
 	var p := _plates(uv)
 	var current: float = _cavity_parts(uv, true)["amps"]
 	if not _window_reachable(p, FOOTPRINT):
-		var gain := lerpf(
-			1.0, JUNCTION_READ_GAIN, _window_junction(p, FOOTPRINT))
+		var gain := _junction_read_gain(p)
 		return current * gain * gain
 	var pairwise: float = _cavity_parts(uv, false)["amps"]
 	var full := _full_window_cavity_amps(uv, p)
 	var junction := _window_junction(p, FOOTPRINT)
-	var gain := lerpf(1.0, JUNCTION_READ_GAIN, junction)
+	var gain := _junction_read_gain(p)
 	return lerpf(pairwise, full, junction) * gain * gain
 
 
@@ -546,8 +629,7 @@ func _cavity_parts(uv: Vector2, use_third: bool) -> Dictionary:
 	return {
 		"amps": a1 * a1 * w.x + a2 * a2 * w.y + a3 * a3 * w.z,
 		"spread": maxf(covered - prof * prof, 0.0),
-		"read_gain": lerpf(
-			1.0, JUNCTION_READ_GAIN, _window_junction(p, FOOTPRINT)),
+		"read_gain": _junction_read_gain(p),
 	}
 
 
@@ -907,6 +989,10 @@ func _check_degenerate_vertex_bound(centre: Vector2) -> void:
 		centre, ARC_SAMPLES)
 	var cavity_window_fine := _max_adjacent_window_cavity_amp_step(
 		centre, ARC_SAMPLES * 4)
+	var footprint_coarse := _max_step_of(
+		centre, ARC_SAMPLES, true, "spread")
+	var footprint_fine := _max_step_of(
+		centre, ARC_SAMPLES * 4, true, "spread")
 	if limited_fine < CONTROL_STEP_MIN:
 		_fail("control: the three-candidate rule's four-plate step is %.5f, "
 			% limited_fine
@@ -952,6 +1038,13 @@ func _check_degenerate_vertex_bound(centre: Vector2) -> void:
 			+ "four-plate vertex, above the %.5f a continuous per-cell blend "
 			% CAVITY_CONTINUOUS_STEP_MAX
 			+ "may show at this density")
+	if footprint_fine > footprint_coarse * CONTINUITY_RATIO:
+		_fail("the seam footprint's four-plate step did not shrink under "
+			+ "refinement (%.5f at %d samples, %.5f at %d) — the harmonic "
+			% [footprint_coarse, ARC_SAMPLES, footprint_fine,
+				ARC_SAMPLES * 4]
+			+ "footprint still depends on the carried third centre when it "
+			+ "exchanges with an uncarried fourth")
 	print("DEGENERATE uv=(%.4f, %.4f) three-way step %.5f -> %.5f; "
 		% [centre.x, centre.y, limited_coarse, limited_fine]
 		+ "whole-window step %.5f -> %.5f under 4x refinement"
@@ -960,6 +1053,54 @@ func _check_degenerate_vertex_bound(centre: Vector2) -> void:
 		% [cavity_limited_coarse, cavity_limited_fine]
 		+ "%.5f -> %.5f under 4x refinement"
 		% [cavity_window_coarse, cavity_window_fine])
+	print("DEGENERATE footprint %.5f -> %.5f under 4x refinement"
+		% [footprint_coarse, footprint_fine])
+
+
+## A normalized symmetric width must lose authority continuously as the third
+## plate's coverage vanishes. The junction ramp alone only sees `f3 - f2`, so it
+## remains one when both remote candidates are mutually close but outside the
+## nearest plate's pixel footprint. That also must not activate the read gain.
+func _check_footprint_coverage_authority() -> void:
+	var uv := Vector2.ZERO
+	var high := {
+		"c1": Vector2(1.0, 0.0),
+		"c2": Vector2(-1.0, 0.0),
+		"c3": Vector2(-1.0, -1.0),
+		"f1": 0.0,
+		"f2": FOOTPRINT * 0.50,
+		"f3": FOOTPRINT * 0.50,
+		"f4": FOOTPRINT * 3.0,
+	}
+	var low := high.duplicate()
+	low["f2"] = FOOTPRINT * 0.99
+	low["f3"] = FOOTPRINT * 0.99
+	var pair := _pair_separator_footprint(uv, high["c1"], high["c2"])
+	var high_delta := absf(_separator_footprint(high, uv) - pair)
+	var low_delta := absf(_separator_footprint(low, uv) - pair)
+	if high_delta <= 0.0001:
+		_fail("control: the synthetic covered junction changes the footprint by "
+			+ "only %.9f — the probe cannot see the symmetric handoff"
+			% high_delta)
+	if low_delta > high_delta * 0.01:
+		_fail("the symmetric footprint keeps %.9f of authority as candidate "
+			% low_delta
+			+ "coverage vanishes, against %.9f while covered — fade the "
+			% high_delta
+			+ "handoff by actual third-plate coverage before its cutoff")
+	var remote := {
+		"f1": 0.0,
+		"f2": FOOTPRINT * 2.0,
+		"f3": FOOTPRINT * 2.0,
+	}
+	var remote_gain := _junction_read_gain(remote)
+	if remote_gain != 1.0:
+		_fail("two uncovered remote candidates activate junction read gain "
+			+ "%.6f — compensation must stay exactly 1.0 unless the third "
+			% remote_gain
+			+ "plate reaches the fragment")
+	print("FOOTPRINT COVERAGE high delta %.9f, tail %.9f; remote gain %.6f"
+		% [high_delta, low_delta, remote_gain])
 
 
 ## The fourth-candidate reach must fade continuously. A hard cutoff at
@@ -1209,15 +1350,22 @@ func _check_source_guards() -> void:
 				+ "puts the defect back (#499)")
 		if not src.contains("edge_fw = terrain_plate_separator_footprint(") \
 				or not src.contains(
-					"plate_uv, plate_c1, plate_c2, plate_c3,"):
-			_fail("%s does not derive `edge_fw` from all three carried plate "
+					"plate_uv, plate_c1, plate_c2, plate_c3,") \
+				or not src.contains(
+					"f1, f2, f3, f4, plate_fw, plate_uv_dx, plate_uv_dy"):
+			_fail("%s does not derive `edge_fw` from all four carried plate "
 				% path
 				+ "centres — its seam cavity can still inherit the "
-				+ "second/third label swap at a junction (#589)")
+				+ "ordered tail's label swap at a junction (#589)")
 		if not partition.contains(
-				"float terrain_plate_junction_read_gain(float junction)") \
+				"float terrain_plate_junction_read_gain(float covered_junction)") \
+				or not partition.contains(
+					"float terrain_plate_covered_junction(") \
 				or not src.contains(
-					"terrain_plate_junction_read_gain(") \
+					"junction_read_authority = terrain_plate_covered_junction(") \
+				or not src.contains(
+					"junction_read_gain = terrain_plate_junction_read_gain(") \
+				or not src.contains("junction_read_authority);") \
 				or not src.contains(
 					"seam_slope_var *= junction_read_gain * junction_read_gain"):
 			_fail("%s does not restore the measured near-field seam read under "

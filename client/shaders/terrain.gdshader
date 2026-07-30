@@ -339,7 +339,7 @@ void fragment() {
 	vec2 plate_uv_dy = dFdy(plate_uv);
 	edge_fw = terrain_plate_separator_footprint(
 		plate_uv, plate_c1, plate_c2, plate_c3,
-		f1, f2, f3, plate_fw, plate_uv_dx, plate_uv_dy);
+		f1, f2, f3, f4, plate_fw, plate_uv_dx, plate_uv_dy);
 	vec2 e1 = plate_uv - plate_c1;
 	vec2 e2 = plate_uv - plate_c2;
 	vec2 gsep_e = e2 * inversesqrt(max(dot(e2, e2), 1e-12))
@@ -924,7 +924,10 @@ void fragment() {
 	// Removing the old label-swap jump also removes the energy that hard step
 	// contributed. Preserve the measured 6 m read only under the same smooth,
 	// identity-free junction authority; off-junction this is exactly 1.0.
-	float junction_read_gain = terrain_plate_junction_read_gain(plate_window_w);
+	float junction_read_authority = terrain_plate_covered_junction(
+		f1, f2, f3, plate_fw);
+	float junction_read_gain = terrain_plate_junction_read_gain(
+		junction_read_authority);
 	mean_tilt *= junction_read_gain;
 	seam_slope_var *= junction_read_gain * junction_read_gain;
 	// The tilt is INTO the groove, so it opposes the separator's gradient —

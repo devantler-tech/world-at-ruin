@@ -205,22 +205,101 @@ float terrain_plate_window_junction(float f2, float f3, float fw) {
 	return 1.0 - smoothstep(0.0, w, f3 - f2);
 }
 
+// One search-window cell's symmetric coverage. This depends only on the cell's
+// distance excess over the nearest centre, never on its sorted position or
+// identity, so exchanging any equidistant labels cannot move the answer. The
+// caller normalises the weights after composing each cell independently.
+float terrain_plate_window_weight(float d, float f1, float fw) {
+	return 1.0 - smoothstep(0.0, max(fw, 1e-6), d - f1);
+}
+
+// Coverage is allowed to retire a junction correction only through a smooth
+// ramp. Normalising candidate weights and then dropping them at an epsilon
+// leaves a hard contour because the normalised answer does not approach the
+// pairwise one as all remote weights vanish together.
+float terrain_plate_coverage_authority(float coverage) {
+	return smoothstep(0.0, 0.05, coverage);
+}
+
+// A label swap matters only while the exchanged outer candidate reaches this
+// fragment. This authority is shared by the separator correction and its small
+// read compensation so the latter cannot light unrelated bands where two
+// uncovered remote candidates merely happen to be equidistant.
+float terrain_plate_covered_junction(
+		float f1, float f2, float f3, float fw) {
+	float coverage = terrain_plate_window_weight(f3, f1, fw);
+	return terrain_plate_window_junction(f2, f3, fw)
+		* terrain_plate_coverage_authority(coverage);
+}
+
+// The permutation-free separator width over every covered cell in the same 5x5
+// domain as `terrain_plates`. Pairwise weighted RMS is computable from first and
+// second moments, so this remains O(n) rather than comparing all n² pairs. With
+// only two covered cells it reduces to their established projected separator
+// exactly; with more, no ordered "last candidate" exists to swap.
+float terrain_plate_window_separator_footprint(
+		vec2 uv, float f1, float plate_fw, vec2 uv_dx, vec2 uv_dy) {
+	vec2 base = floor(uv);
+	float total = 0.0;
+	float weight_sq_total = 0.0;
+	float dx_total = 0.0;
+	float dx_sq_total = 0.0;
+	float dy_total = 0.0;
+	float dy_sq_total = 0.0;
+	for (int j = -2; j <= 2; j++) {
+		for (int i = -2; i <= 2; i++) {
+			vec2 cell = base + vec2(float(i), float(j));
+			vec2 jitter = vec2(
+				terrain_hash3(vec3(cell, 0.0)),
+				terrain_hash3(vec3(cell, 7.0)));
+			vec2 centre = cell + 0.15 + 0.7 * jitter;
+			vec2 e = uv - centre;
+			float d = length(e);
+			float weight = terrain_plate_window_weight(
+				d, f1, plate_fw);
+			vec2 n = e * inversesqrt(max(dot(e, e), 1e-12));
+			float px = dot(n, uv_dx);
+			float py = dot(n, uv_dy);
+			total += weight;
+			weight_sq_total += weight * weight;
+			dx_total += weight * px;
+			dx_sq_total += weight * px * px;
+			dy_total += weight * py;
+			dy_sq_total += weight * py * py;
+		}
+	}
+	float pair_total = 0.5 * (
+		total * total - weight_sq_total);
+	float rms_dx = sqrt(max(
+		(total * dx_sq_total - dx_total * dx_total)
+			/ max(pair_total, 1e-12),
+		0.0));
+	float rms_dy = sqrt(max(
+		(total * dy_sq_total - dy_total * dy_total)
+			/ max(pair_total, 1e-12),
+		0.0));
+	return rms_dx + rms_dy;
+}
+
 // The analytic screen footprint of the nearest/second-nearest separator,
-// made permutation-safe only where a third plate enters the pixel (#589).
+// made permutation-safe wherever more candidates enter the pixel (#589).
 //
 // The established two-cell answer is returned arithmetically unchanged until
 // the junction ramp is non-zero. Inside that ramp, all three pair separators
 // are averaged by the products of their candidates' coverage. At an identity
 // swap the exchanged candidates have equal coverage, so permuting their labels
 // cannot change the width. This covers both the second/third swap named by the
-// issue and the owner swap an arc around the same junction also crosses.
+// issue and the owner swap an arc around the same junction also crosses. When a
+// fourth candidate reaches the fragment, the same higher-order ramp already
+// used by the material folds in the identity-free 5x5 window footprint. That
+// removes the c3/c4 tail without carrying another ordered centre.
 //
 // `uv_dx` and `uv_dy` preserve the anisotropic projection used by the original
 // footprint. Falling back to isotropic `plate_fw` would also hide the label
 // jump, but it would misestimate diagonal and grazing-angle boundaries.
 float terrain_plate_separator_footprint(
 		vec2 uv, vec2 c1, vec2 c2, vec2 c3,
-		float f1, float f2, float f3, float plate_fw,
+		float f1, float f2, float f3, float f4, float plate_fw,
 		vec2 uv_dx, vec2 uv_dy) {
 	vec2 e1 = uv - c1;
 	vec2 e2 = uv - c2;
@@ -228,8 +307,9 @@ float terrain_plate_separator_footprint(
 	vec2 n2 = e2 * inversesqrt(max(dot(e2, e2), 1e-12));
 	vec2 g12 = n2 - n1;
 	float edge12 = abs(dot(g12, uv_dx)) + abs(dot(g12, uv_dy));
-	float junction = terrain_plate_window_junction(f2, f3, plate_fw);
-	if (junction <= 0.0) {
+	float triple_authority = terrain_plate_covered_junction(
+		f1, f2, f3, plate_fw);
+	if (triple_authority <= 0.0) {
 		return edge12;
 	}
 
@@ -239,20 +319,28 @@ float terrain_plate_separator_footprint(
 	vec2 g23 = n3 - n2;
 	float edge13 = abs(dot(g13, uv_dx)) + abs(dot(g13, uv_dy));
 	float edge23 = abs(dot(g23, uv_dx)) + abs(dot(g23, uv_dy));
-	float w = max(plate_fw, 1e-6);
-	float g2 = 1.0 - smoothstep(0.0, w, f2 - f1);
-	float g3 = 1.0 - smoothstep(0.0, w, f3 - f1);
+	float g2 = terrain_plate_window_weight(f2, f1, plate_fw);
+	float g3 = terrain_plate_window_weight(f3, f1, plate_fw);
 	float pair_sum = g2 + g3 + g2 * g3;
-	if (pair_sum <= 1e-6) {
-		return edge12;
-	}
 	// Coverage-weighted harmonic composition keeps the narrow anisotropic
 	// separator legible instead of letting a broad crossing orientation soften
 	// it. The three pair terms and their weights are permutation-symmetric.
-	float symmetric = pair_sum / (
+	float triple = pair_sum / (
 		g2 / max(edge12, 1e-6) + g3 / max(edge13, 1e-6)
 			+ g2 * g3 / max(edge23, 1e-6));
-	return mix(edge12, symmetric, junction);
+	float footprint = mix(edge12, triple, triple_authority);
+
+	float fourth_coverage = terrain_plate_window_weight(
+		f4, f1, plate_fw);
+	float higher_authority = terrain_plate_window_junction(
+		f3, f4, plate_fw)
+		* terrain_plate_coverage_authority(fourth_coverage);
+	if (higher_authority <= 0.0) {
+		return footprint;
+	}
+	float window = terrain_plate_window_separator_footprint(
+		uv, f1, plate_fw, uv_dx, uv_dy);
+	return mix(footprint, window, higher_authority);
 }
 
 // Closing the old footprint jump also removes the energy that hard step
@@ -261,8 +349,8 @@ float terrain_plate_separator_footprint(
 // 1.0. The 1.05 endpoint is measurement-derived: on Apple M2 Pro / Metal at
 // 1280x720, the 6 m relief coverage-strength product then holds above current
 // main while crawl remains identical against a zero plates-off floor (#589).
-float terrain_plate_junction_read_gain(float junction) {
-	return mix(1.0, 1.05, junction);
+float terrain_plate_junction_read_gain(float covered_junction) {
+	return mix(1.0, 1.05, covered_junction);
 }
 
 // A PERFORMANCE gate only, never a blend authority. Once the fourth cell is
@@ -272,14 +360,6 @@ float terrain_plate_junction_read_gain(float junction) {
 // answers are equal, including at an exact third/fourth identity swap.
 float terrain_plate_window_reachable(float f1, float f4, float fw) {
 	return step(f4 - f1, max(fw, 1e-6));
-}
-
-// One search-window cell's symmetric coverage. This depends only on the cell's
-// distance excess over the nearest centre, never on its sorted position or
-// identity, so exchanging any equidistant labels cannot move the answer. The
-// caller normalises the nine weights after composing each cell independently.
-float terrain_plate_window_weight(float d, float f1, float fw) {
-	return 1.0 - smoothstep(0.0, max(fw, 1e-6), d - f1);
 }
 
 // How much of the NEIGHBOURING plate belongs in this fragment.

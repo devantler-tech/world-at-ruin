@@ -135,7 +135,7 @@ void fragment() {
 		vec2 plate_uv_dy = dFdy(plate_uv);
 		edge_fw = terrain_plate_separator_footprint(
 			plate_uv, plate_c1, plate_c2, plate_c3,
-			f1, f2, f3, plate_fw, plate_uv_dx, plate_uv_dy);
+			f1, f2, f3, f4, plate_fw, plate_uv_dx, plate_uv_dy);
 		vec2 ce1 = plate_uv - plate_c1;
 		vec2 ce2 = plate_uv - plate_c2;
 		vec2 gsep_e = ce2 * inversesqrt(max(dot(ce2, ce2), 1e-12))
@@ -459,9 +459,11 @@ void fragment() {
 		}
 		seam_slope_var = seam_amp_sq * spread;
 		// Same read-preserving junction gain as the ground. It has zero
-		// authority away from a junction because `plate_window_w` is zero there.
+		// authority where the third candidate has no local coverage.
+		float junction_read_authority = terrain_plate_covered_junction(
+			f1, f2, f3, plate_fw);
 		float junction_read_gain = terrain_plate_junction_read_gain(
-			plate_window_w);
+			junction_read_authority);
 		mean_tilt *= junction_read_gain;
 		seam_slope_var *= junction_read_gain * junction_read_gain;
 		vec2 ghat = gsep * inversesqrt(max(dot(gsep, gsep), 1e-12));
