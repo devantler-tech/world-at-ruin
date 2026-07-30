@@ -143,6 +143,7 @@ func _ready() -> void:
 	else:
 		_check_degenerate_vertex_bound(degenerate["uv"])
 	_check_footprint_coverage_authority()
+	_check_exact_higher_order_swap_footprint()
 	_check_window_activation_continuity()
 	_check_exact_swap_reach_handoff()
 	_check_window_grid_boundary_continuity()
@@ -341,17 +342,16 @@ func _separator_footprint(p: Dictionary, uv: Vector2) -> float:
 	var triple := pair_sum / (
 		g2 / maxf(pair_fw, 1e-6) + g3 / maxf(edge13, 1e-6)
 			+ g2 * g3 / maxf(edge23, 1e-6))
+	var higher_junction := _higher_junction(p)
 	var footprint := lerpf(pair_fw, triple, triple_authority)
-	var fourth_coverage := _candidate_coverage(
-		float(p["f4"]), float(p["f1"]))
-	var higher_authority := _higher_junction(p) \
-		* _coverage_authority(fourth_coverage)
-	if higher_authority <= 0.0:
+	if float(p.get("plate_resolved", 1.0)) <= 0.0:
+		return footprint
+	if higher_junction <= 0.0:
 		return footprint
 	return lerpf(
 		footprint,
 		_full_window_separator_footprint(uv, p),
-		higher_authority)
+		higher_junction)
 
 
 ## Mirrors the current shader read compensation. The coverage-authority probe
@@ -1156,6 +1156,41 @@ func _check_footprint_coverage_authority() -> void:
 		% [high_delta, low_delta, remote_gain])
 
 
+## At an exact c3/c4 identity swap the carried c3 centre may change while every
+## sorted distance remains equal. Coverage fading may retire the correction,
+## but it cannot leave any coefficient on that ordered centre during the fade.
+func _check_exact_higher_order_swap_footprint() -> void:
+	var uv := Vector2.ZERO
+	var before := {
+		"c1": Vector2(0.70, 0.20),
+		"c2": Vector2(-1.00, 0.10),
+		"c3": Vector2(0.15, 1.00),
+		"f1": 0.0,
+		"f2": FOOTPRINT * 0.94,
+		"f3": FOOTPRINT * 0.94,
+		"f4": FOOTPRINT * 0.94,
+	}
+	var after := before.duplicate()
+	after["c3"] = Vector2(-0.80, -0.60)
+	var fourth_coverage := _candidate_coverage(
+		float(before["f4"]), float(before["f1"]))
+	var coverage_authority := _coverage_authority(fourth_coverage)
+	if coverage_authority <= 0.0 or coverage_authority >= 1.0:
+		_fail("control: the exact higher-order swap probe has coverage authority "
+			+ "%.9f — it must exercise the interior of the fade" % coverage_authority)
+	var a := _separator_footprint(before, uv)
+	var b := _separator_footprint(after, uv)
+	var jump := absf(a - b)
+	if jump > 0.000000001:
+		_fail("the exact c3/c4 swap leaves %.9f of ordered c3 footprint inside "
+			% jump
+			+ "the %.6f coverage-authority fade — the carried triple must have "
+			% coverage_authority
+			+ "zero authority at the swap independently of coverage")
+	print("FOOTPRINT HIGHER SWAP coverage authority %.6f, jump %.9f"
+		% [coverage_authority, jump])
+
+
 ## The fourth-candidate reach must fade continuously. A hard cutoff at
 ## `f4 - f1 == footprint` creates a zero-width contour even though the
 ## whole-window and three-candidate answers are still different there.
@@ -1378,6 +1413,13 @@ func _check_source_guards() -> void:
 			+ "%s — `edge_fw` can jump when the second and third plate labels "
 			% PARTITION_PATH
 			+ "exchange even while their distances remain continuous (#589)")
+	if not partition.contains(
+			"float f1, float f2, float f3, float f4, float plate_fw,\n"
+				+ "\t\tfloat plate_resolved, vec2 uv_dx, vec2 uv_dy)") \
+			or not partition.contains("if (plate_resolved <= 0.0)"):
+		_fail("the separator footprint does not take the plate-resolution "
+			+ "cutoff before its 5x5 higher-order search — fully unresolved "
+			+ "ground still pays for a result that cannot affect the material")
 	if not partition.contains("for (int j = -2; j <= 2; j++)") \
 			or not partition.contains("for (int i = -2; i <= 2; i++)"):
 		_fail("`terrain_plates` does not select its first four distances from "
@@ -1405,7 +1447,8 @@ func _check_source_guards() -> void:
 				or not src.contains(
 					"plate_uv, plate_c1, plate_c2, plate_c3,") \
 				or not src.contains(
-					"f1, f2, f3, f4, plate_fw, plate_uv_dx, plate_uv_dy"):
+					"f1, f2, f3, f4, plate_fw, plate_resolved,") \
+				or not src.contains("plate_uv_dx, plate_uv_dy"):
 			_fail("%s does not derive `edge_fw` from all four carried plate "
 				% path
 				+ "centres — its seam cavity can still inherit the "

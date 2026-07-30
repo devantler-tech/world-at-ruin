@@ -300,7 +300,7 @@ float terrain_plate_window_separator_footprint(
 float terrain_plate_separator_footprint(
 		vec2 uv, vec2 c1, vec2 c2, vec2 c3,
 		float f1, float f2, float f3, float f4, float plate_fw,
-		vec2 uv_dx, vec2 uv_dy) {
+		float plate_resolved, vec2 uv_dx, vec2 uv_dy) {
 	vec2 e1 = uv - c1;
 	vec2 e2 = uv - c2;
 	vec2 n1 = e1 * inversesqrt(max(dot(e1, e1), 1e-12));
@@ -328,19 +328,26 @@ float terrain_plate_separator_footprint(
 	float triple = pair_sum / (
 		g2 / max(edge12, 1e-6) + g3 / max(edge13, 1e-6)
 			+ g2 * g3 / max(edge23, 1e-6));
+	float higher_junction = terrain_plate_window_junction(
+		f3, f4, plate_fw);
 	float footprint = mix(edge12, triple, triple_authority);
 
-	float fourth_coverage = terrain_plate_window_weight(
-		f4, f1, plate_fw);
-	float higher_authority = terrain_plate_window_junction(
-		f3, f4, plate_fw)
-		* terrain_plate_coverage_authority(fourth_coverage);
-	if (higher_authority <= 0.0) {
+	// The material has already converged to its mean once this reaches zero.
+	// Preserve the cheap analytic answer for downstream dead expressions, but
+	// do not pay for another full 5x5 search whose result cannot be observed.
+	if (plate_resolved <= 0.0) {
+		return footprint;
+	}
+	// At the exact c3/c4 swap the carried c3 identity can change while all
+	// distances remain equal. The identity-only ramp must therefore hand fully
+	// to the permutation-free window independently of coverage; multiplying it
+	// by coverage leaves a residual coefficient on the ordered triple.
+	if (higher_junction <= 0.0) {
 		return footprint;
 	}
 	float window = terrain_plate_window_separator_footprint(
 		uv, f1, plate_fw, uv_dx, uv_dy);
-	return mix(footprint, window, higher_authority);
+	return mix(footprint, window, higher_junction);
 }
 
 // Closing the old footprint jump also removes the energy that hard step
