@@ -271,6 +271,71 @@ func TestListAllocatedRefusesAnOutOfContractReturnedObject(t *testing.T) {
 	}
 }
 
+func TestGetAllocatedRejectsInvalidInputBeforeAPI(t *testing.T) {
+	validIdentity := Identity{
+		Namespace: testNamespace,
+		Name:      "zone-1",
+		UID:       "uid-1",
+	}
+	tests := []struct {
+		name      string
+		identity  Identity
+		attemptID string
+	}{
+		{
+			name: "missing UID",
+			identity: Identity{
+				Namespace: testNamespace,
+				Name:      "zone-1",
+			},
+			attemptID: testAttemptID,
+		},
+		{
+			name: "wrong namespace",
+			identity: Identity{
+				Namespace: "other-namespace",
+				Name:      "zone-1",
+				UID:       "uid-1",
+			},
+			attemptID: testAttemptID,
+		},
+		{
+			name:      "malformed name",
+			identity:  Identity{Namespace: testNamespace, Name: "Zone_1", UID: "uid-1"},
+			attemptID: testAttemptID,
+		},
+		{
+			name:      "malformed attempt",
+			identity:  validIdentity,
+			attemptID: "attempt/7",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			clientset := agonesfake.NewSimpleClientset()
+			client := clientAgainst(t, clientset, validConfig())
+
+			got, err := client.GetAllocated(
+				context.Background(),
+				test.identity,
+				test.attemptID,
+			)
+			if err == nil || !isZeroGameServer(got) {
+				t.Fatalf(
+					"GetAllocated(%+v, %q) = %+v, %v; want refusal",
+					test.identity,
+					test.attemptID,
+					got,
+					err,
+				)
+			}
+			if actions := clientset.Actions(); len(actions) != 0 {
+				t.Fatalf("invalid input caused API actions: %#v", actions)
+			}
+		})
+	}
+}
+
 func TestGetAllocatedValidatesExactObservedIdentity(t *testing.T) {
 	wantIdentity := Identity{
 		Namespace: testNamespace,
