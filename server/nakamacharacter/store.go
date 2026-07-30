@@ -141,12 +141,9 @@ func (s *Store) Save(ctx context.Context, request SaveRequest) error {
 		return errors.New("nakama character: valid subject is required")
 	}
 	if request.ExpectedVersion != "*" {
-		observed, err := s.Load(ctx, request.SubjectID)
-		if err != nil {
+		_, err := s.Load(ctx, request.SubjectID)
+		if err != nil && !errors.Is(err, ErrNotFound) {
 			return err
-		}
-		if observed.Version != request.ExpectedVersion {
-			return ErrConflict
 		}
 	}
 	value, _, err := encodeCharacterDocument(request.Character)

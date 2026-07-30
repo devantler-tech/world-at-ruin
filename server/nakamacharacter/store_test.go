@@ -231,8 +231,18 @@ func TestSaveRefusesAStaleObservedVersion(t *testing.T) {
 	if !errors.Is(err, ErrConflict) {
 		t.Fatalf("stale Save() error = %v, want %v", err, ErrConflict)
 	}
-	if len(storage.writeCalls) != 1 {
-		t.Fatalf("StorageWrite() calls = %d, want 1", len(storage.writeCalls))
+	if len(storage.writeCalls) != 2 {
+		t.Fatalf("StorageWrite() calls = %d, want 2", len(storage.writeCalls))
+	}
+	record, err := store.Load(context.Background(), testSubjectID)
+	if err != nil {
+		t.Fatalf("Load() after stale write error = %v", err)
+	}
+	if record.Character.DisplayName != "Asha" {
+		t.Fatalf(
+			"character after stale write = %#v, want original",
+			record.Character,
+		)
 	}
 }
 
@@ -280,6 +290,55 @@ func TestSaveRejectsIdempotencyKeyReuseForDifferentCharacterState(t *testing.T) 
 	if len(storage.writeCalls) != 1 {
 		t.Fatalf(
 			"StorageWrite() calls after rejected reuse = %d, want 1",
+			len(storage.writeCalls),
+		)
+	}
+}
+
+func TestSaveReplaysACommittedReplacementWithItsStaleObservedVersion(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	storage := newFakeStorage()
+	store, err := NewStore(storage)
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	character := Character{
+		ID:          "warden-1",
+		DisplayName: "Asha",
+		Recipe:      json.RawMessage(`{"version":3}`),
+	}
+	if err := store.Save(context.Background(), SaveRequest{
+		SubjectID:       testSubjectID,
+		IdempotencyKey:  "character:create:warden-1",
+		ExpectedVersion: "*",
+		Character:       character,
+	}); err != nil {
+		t.Fatalf("initial Save() error = %v", err)
+	}
+	record, err := store.Load(context.Background(), testSubjectID)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	character.DisplayName = "Asha the Restorer"
+	request := SaveRequest{
+		SubjectID:       testSubjectID,
+		IdempotencyKey:  "character:rename:warden-1",
+		ExpectedVersion: record.Version,
+		Character:       character,
+	}
+	if err := store.Save(context.Background(), request); err != nil {
+		t.Fatalf("replacement Save() error = %v", err)
+	}
+	if err := store.Save(context.Background(), request); err != nil {
+		t.Fatalf("replayed Save() error = %v, want nil", err)
+	}
+	if len(storage.writeCalls) != 2 {
+		t.Fatalf(
+			"StorageWrite() calls after replay = %d, want 2",
 			len(storage.writeCalls),
 		)
 	}
