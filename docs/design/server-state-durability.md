@@ -448,6 +448,7 @@ needs to write a guard for.
 | A resolved Google binding still names an enabled Nakama account | `nakamaauth.NakamaGoogleBindingStore` | `TestNakamaGoogleBindingStoreChecksAuthoritativeAccountStatus`, `TestProvisionGoogleRejectsDisabledBoundAccount` |
 | Server-authoritative state is unreadable and unwritable by clients | `nakamalease.Store` | `TestCreatePersistsPrivateVersionedLeaseByHashedKey`, `TestCreateIgnoresAClientOwnedObjectAtTheDerivedKey`, `TestLoadRejectsMalformedOrPublicStoredObjects` |
 | Player mutation records and audit evidence are unreadable and unwritable by clients | `playerstate.Store` | `TestApplyCommitsPlayerRecordAndAuditInOneAtomicWrite` |
+| Character records are unreadable and unwritable by clients | `nakamacharacter.Store` | `TestSavePersistsPrivateVersionedCharacterForVerifiedAccount`, `TestLoadRejectsMalformedOrPublicCharacterRecords` |
 | No blind **create** — create is conditional | `nakamalease.Store` | `TestConcurrentIdenticalCreateReconcilesTheDurableWinner` |
 | No blind player-record **create** — create is conditional | `playerstate.Store` | `TestApplyCreatesAPlayerRecordConditionallyWithItsAudit` |
 | No blind **replace** — replace presents the observed version | `nakamalease.Store` | `TestReplaceUsesObservedVersionAndStaleRecordCannotOverwrite`, `TestConcurrentReplaceLeavesExactlyOneCurrentAttempt` |
@@ -468,12 +469,15 @@ needs to write a guard for.
 | Every shipped schema **shape** stays readable, permanently | every record owner, **incl. `nakamalease` today** | **gap (running code)** — schemas 1 and 2 have shipped with no ledger or goldens, and schema 2 alone admits staging, finalized, claimed and releasing shapes |
 | The player-mutation audit declares an exact schema and refuses unknown, repeated, missing or trailing fields | `playerstate` audit decode | `TestApplyRejectsMalformedAuditDocuments` |
 | Every shipped player-mutation audit schema stays readable, permanently | `playerstate` audit decode | `TestEveryShippedAuditSchemaStaysReadable` plus `server/playerstate/testdata/shipped_audit_versions.txt` and its matching golden |
+| The character writer declares an exact schema and its reader refuses unknown, repeated, missing, trailing or public records | `nakamacharacter` document encode/decode | `TestSavePersistsPrivateVersionedCharacterForVerifiedAccount`, `TestLoadRejectsMalformedOrPublicCharacterRecords` |
+| Every shipped character-record schema stays readable, permanently | `nakamacharacter` document decode | `TestLoadKeepsEveryShippedCharacterSchemaReadable` plus `server/nakamacharacter/testdata/shipped_character_versions.txt` and its matching golden |
 | A refusal quarantines the record **across replicas** | `nakamalease.Store` | **unguarded** — met by the operation-level form: every write presents `current.Version` from a strict `Load`, so an undecodable document yields no version and blocks every write. No composite refusal→write test pins it |
-| A refusal quarantines the record across replicas | future player-owned record owners | not yet built — `CharacterStore`'s process-local latch does not port; use the strict-read + version-match form |
+| A refusal quarantines a character record across replicas | `nakamacharacter.Store` | `TestSaveCannotOverwriteMalformedDurableCharacterWithItsVersion` pins the strict-read + version-match form |
 | A newer field on a legacy schema is refused **by presence, not by truth** | `nakamalease` document decode | **gap (#491)** — `staging`/`releasing` are plain booleans, so an explicit `false` is accepted; needs presence-aware decoding and a zero-value case |
 | Read support ships and bakes before its writer activates | every record owner, **incl. `nakamalease` today** | **gap (running code)** — no server-side equivalent of the client staging guard, and nothing registers the rollback target as carrying the expanded reader |
 | A player-record mutation and its audit entry commit atomically | `playerstate.Store` | `TestApplyCommitsPlayerRecordAndAuditInOneAtomicWrite`, `TestApplyCreatesAPlayerRecordConditionallyWithItsAudit` |
-| Every future player-owned mutation uses the atomic boundary | future player-record owners | not yet built — #473 and #474 have no record owner or caller yet |
+| Every character mutation uses the atomic player-state boundary | `nakamacharacter.Store` | `TestSavePersistsPrivateVersionedCharacterForVerifiedAccount` observes the character record and append-only audit in one storage write |
+| Every other future player-owned mutation uses the atomic boundary | future player-record owners | not yet built — #474 has no record owner or caller yet |
 | Any error or process loss after a player-state write is dispatched is reconciled by the durable identity | `playerstate.Store` | `TestApplyReconcilesACommittedMutationWhoseResponseWasLost`, `TestApplyReplayAfterProcessCrashDoesNotWriteAgain` |
 | Any error after a lease write is dispatched is reconciled, never read as failure | `nakamalease.Store` | **gap (running code)** — `writeKey` returns `sanitizeStorageError` immediately for any non-version error and `Create` propagates it without reconciling the durable record |
 | Read and write storage errors do not cross the boundary | `nakamalease` error sanitization | `TestStorageFailuresAreSanitized`, `TestStorageContextCancellationIsPreserved` |
@@ -481,7 +485,7 @@ needs to write a guard for.
 | **List** errors do not cross the boundary | `nakamalease` expiry sweep | **unguarded (#491)** — `ReclaimExpired` *does* call `sanitizeStorageError`; the fake's `listErr` field is never assigned by any test, so that path is unexercised |
 | A replay of an already-final operation returns without writing | `nakamalease.Store` | `TestCreateReplaysTheSameAttemptWithoutAnotherWrite`, `TestClaimReplayKeepsTheOriginalClaimWithoutWriting`, `TestBeginReleaseReplayKeepsTheExistingBarrier` |
 | A replay whose response was lost is reconciled to the durable outcome | `nakamalease.Store` | `TestClaimReconcilesAClaimCommittedFromTheSameObservedRecord`, `TestReplaceReconcilesAReplacementCommittedFromTheSameObservedRecord`, `TestReleaseReconcilesNakamaConditionalDeleteRejections`, `TestConcurrentIdenticalCreateReconcilesTheDurableWinner` |
-| Player-owned keys derive from the verified identity, never a client-supplied subject | player-owned record owners | not yet built — #472, #473, #474 |
+| Character ownership derives from the verified identity, never a client-supplied subject | `nakamacharacter.Store` | `TestSavePersistsPrivateVersionedCharacterForVerifiedAccount`, `TestLoadRejectsAnUnverifiedSubjectBeforeStorage` |
 | An idempotency key is bound to its subject, record, operation and payload; mismatched reuse is rejected | `playerstate.Store` | `TestApplyRejectsKeyReuseForADifferentMutation`, `TestApplyScopesTheSameRawKeyBySubjectAndRecord` |
 | Distinct mutation keys never collapse two identical legitimate mutations | `playerstate.Store` | `TestApplyKeepsDistinctKeysForTheSameEffectDistinct` |
 | A caller derives one unique key per logical mutation | future player-record callers | not yet built — the storage boundary cannot distinguish identical events whose caller reused one key |
@@ -489,7 +493,7 @@ needs to write a guard for.
 | A mutation is acknowledged only once evidence sufficient to re-apply it is durable | player-owned record owners | not yet built — **and conditional on the row above** |
 | Reconciliation can tell a committed mutation from an attempt | player-owned record owners | not yet built — needs an intent + commit-marker protocol; ordering alone inflates the economy or loses the evidence |
 | Within PostgreSQL, mutation identity and outcome commit with the record, so no half-applied intent exists | `playerstate.Store` | `TestApplyCommitsPlayerRecordAndAuditInOneAtomicWrite` |
-| An acknowledged player-owned mutation is never lost | player-owned record owners | not yet built — #473, #474, **and conditional on independent recovery evidence above** |
+| An acknowledged player-owned mutation is never lost | player-owned record callers | not yet active — the character boundary has no caller and independent recovery evidence is still absent; #474 is also unbuilt |
 | A replay **not** identified by its own content applies once | `playerstate.Store` | `TestApplyReplaysTheOriginalOutcomeWithoutWritingAgain`, `TestApplyReplayAfterProcessCrashDoesNotWriteAgain` |
 | A world-owned record states its own recovery invariant | first world-owned record owner | not yet built — no such record exists |
 
