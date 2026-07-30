@@ -96,10 +96,9 @@ const DEFAULT_PATH := "user://vault.json"
 ## player's progression.
 const VAULT_PATH_ENV := "WAR_VAULT_PATH"
 
-## Prefix for the private staging file a write commits from. What follows it is a
-## per-attempt unique stamp, so no two writers — and no two attempts — ever stage
-## through the same path (see [method _write_tmp_path]).
-const WRITE_TMP_SUFFIX := ".tmp-"
+## Compatibility alias for the shared private-staging prefix. Existing callers
+## may inspect it, while [PrivateStaging] remains its single declaration.
+const WRITE_TMP_SUFFIX := PrivateStaging.WRITE_TMP_SUFFIX
 
 ## The identity of a vault path that holds no file. Distinct from
 ## [constant IDENTITY_UNCHECKED]: "absent" is a real state to compare against, and
@@ -417,7 +416,7 @@ static func document_identity(path: String) -> String:
 ##
 ## Process id plus microsecond ticks, matching [method _free_quarantine_path].
 static func _write_tmp_path(path: String) -> String:
-	return "%s%s%d-%d" % [path, WRITE_TMP_SUFFIX, OS.get_process_id(), Time.get_ticks_usec()]
+	return PrivateStaging.write_path(path)
 
 
 ## Remove staging files abandoned by a crashed writer.
@@ -433,12 +432,11 @@ static func _write_tmp_path(path: String) -> String:
 ## another client is mid-write on is the kind of cross-writer damage this whole
 ## area exists to avoid.
 static func _sweep_abandoned_writes(path: String) -> void:
-	var parent := path.get_base_dir()
-	var prefix := path.get_file() + WRITE_TMP_SUFFIX
-	for entry: String in DirAccess.get_files_at(parent):
-		if entry.begins_with(prefix):
-			DirAccess.remove_absolute(
-				ProjectSettings.globalize_path(parent.path_join(entry)))
+	# Unconditional is safe HERE because every released writer that can create
+	# this prefix takes the same lock, and this call runs while holding it.
+	PrivateStaging.sweep(
+		path,
+		func(_candidate: String) -> bool: return true)
 
 
 ## The expectation the most recent [method replace_if_unchanged] call ran under.
