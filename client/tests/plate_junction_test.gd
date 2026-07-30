@@ -1,6 +1,6 @@
 extends Node
-## Proves the plate boundary average stays CONTINUOUS where three plates meet
-## (#499), and that it is unchanged everywhere else.
+## Proves the plate boundary average stays CONTINUOUS where any number of plates
+## meet (#573), and that it is unchanged everywhere else.
 ##
 ## `terrain_plate_edge_blend` decides how much of a fragment belongs to a
 ## neighbouring plate. It does not decide WHICH neighbour, and #482 took `id2`
@@ -28,10 +28,11 @@ extends Node
 ## hash, which is why the mirror's precision does not enter into it.
 ##
 ## What keeps the mirror honest about the shader is the SOURCE GUARD below: if
-## the shaders stop calling `terrain_plate_junction_split`, or stop feeding it
-## the isotropic footprint, this test fails even though its own arithmetic is
-## untouched. Continuity proven here plus that call proven present in both
-## shaders is the join.
+## the shaders stop calling the three-way split, stop feeding it the isotropic
+## footprint, or stop folding the whole search window in at a higher-order
+## junction, this test fails even though its own arithmetic is untouched.
+## Continuity proven here plus those calls proven present in both shaders is the
+## join.
 ##
 ## ## The seam cavity arm (#584)
 ##
@@ -147,6 +148,10 @@ func _ready() -> void:
 			+ "four-plate bound")
 	else:
 		_check_degenerate_vertex_bound(degenerate["uv"])
+	_check_window_activation_continuity()
+	_check_exact_swap_reach_handoff()
+	_check_window_grid_boundary_continuity()
+	_check_activation_order_domain()
 	_check_two_cell_reduction()
 	_report()
 
@@ -168,18 +173,18 @@ func _hash3(p: Vector3) -> float:
 	return s - floor(s)
 
 
-## The three nearest cells, as `terrain_plates` reports them.
-func _plates(uv: Vector2) -> Dictionary:
+## The three nearest identities plus the fourth-nearest distance, as
+## `terrain_plates` reports them.
+func _plates(uv: Vector2, radius: int = 2) -> Dictionary:
 	var base := Vector2(floor(uv.x), floor(uv.y))
 	var f1 := 1000.0
 	var f2 := 1000.0
 	var f3 := 1000.0
-	# The FOURTH distance. The shaders do not compute it and nothing below blends
-	# with it — it exists only so the probe can tell an isolated triple junction
-	# from a degenerate vertex where four plates meet at once, which are different
-	# cases with different guarantees (see `_check_junction_*`). Carried in this
-	# same loop rather than a second pass over the window: the searches below
-	# evaluate this tens of thousands of times, and a duplicate nine-cell loop
+	# The FOURTH distance. Its identity is deliberately not carried: the distance
+	# tells production and this mirror when the fixed three-candidate list reaches
+	# its tail and the symmetric whole-window answer must take over. Carried in
+	# this same loop rather than a second pass over the window: the searches below
+	# evaluate this tens of thousands of times, and a duplicate partition loop
 	# doubled the whole test's runtime against CI's 180 s budget.
 	var f4 := 1000.0
 	var id := base
@@ -187,8 +192,8 @@ func _plates(uv: Vector2) -> Dictionary:
 	var c2 := base
 	var id2 := base
 	var id3 := base
-	for j in range(-1, 2):
-		for i in range(-1, 2):
+	for j in range(-radius, radius + 1):
+		for i in range(-radius, radius + 1):
 			var cell := base + Vector2(float(i), float(j))
 			var jitter := Vector2(
 				_hash3(Vector3(cell.x, cell.y, 0.0)),
@@ -283,6 +288,182 @@ func _blend(uv: Vector2, use_third: bool) -> PackedFloat64Array:
 	var mask: float = _is_slab(p["id"]) * w.x + _is_slab(p["id2"]) * w.y \
 		+ _is_slab(p["id3"]) * w.z
 	return PackedFloat64Array([col.x, col.y, col.z, mask])
+
+
+## The symmetric whole-window answer. Every candidate in the same 5x5
+## search as `_plates` receives a weight derived only from its distance excess
+## over the nearest cell. No ordered "last carried candidate" exists, so swapping
+## any equidistant labels cannot move the result.
+func _full_window_blend(
+		uv: Vector2,
+		p: Dictionary,
+		footprint: float = FOOTPRINT,
+		radius: int = 2) -> PackedFloat64Array:
+	var base := Vector2(floor(uv.x), floor(uv.y))
+	var w: float = maxf(footprint, 1e-6)
+	var total := 0.0
+	var out := PackedFloat64Array([0.0, 0.0, 0.0, 0.0])
+	for j in range(-radius, radius + 1):
+		for i in range(-radius, radius + 1):
+			var cell := base + Vector2(float(i), float(j))
+			var jitter := Vector2(
+				_hash3(Vector3(cell.x, cell.y, 0.0)),
+				_hash3(Vector3(cell.x, cell.y, 7.0)))
+			var centre := cell + Vector2(0.15, 0.15) + 0.7 * jitter
+			var d := uv.distance_to(centre)
+			var weight: float = 1.0 - smoothstep(
+				0.0, w, d - float(p["f1"]))
+			var col := _substance(cell)
+			out[0] += col.x * weight
+			out[1] += col.y * weight
+			out[2] += col.z * weight
+			out[3] += _is_slab(cell) * weight
+			total += weight
+	if total <= 0.0:
+		_fail("the whole-window blend accumulated no coverage — the nearest "
+			+ "cell must always contribute one")
+		return out
+	for k in range(0, out.size()):
+		out[k] /= total
+	return out
+
+
+## The whole-window equivalent of the cavity's per-cell factor. The plateau
+## height is clamped and squared BEFORE weighting, exactly as the shaders do;
+## averaging the slab mask first would be a different nonlinear operation.
+func _full_window_cavity_amps(
+		uv: Vector2,
+		p: Dictionary,
+		footprint: float = FOOTPRINT,
+		radius: int = 2) -> float:
+	var e1 := uv - p["c1"] as Vector2
+	var e2 := uv - p["c2"] as Vector2
+	var k: float = (
+		e2.normalized() - e1.normalized()
+	).length() * (AMP_GAIN / CRACK_WIDTH) * PLATE_SCALE
+	var base := Vector2(floor(uv.x), floor(uv.y))
+	var w: float = maxf(footprint, 1e-6)
+	var total := 0.0
+	var out := 0.0
+	for j in range(-radius, radius + 1):
+		for i in range(-radius, radius + 1):
+			var cell := base + Vector2(float(i), float(j))
+			var jitter := Vector2(
+				_hash3(Vector3(cell.x, cell.y, 0.0)),
+				_hash3(Vector3(cell.x, cell.y, 7.0)))
+			var centre := cell + Vector2(0.15, 0.15) + 0.7 * jitter
+			var d := uv.distance_to(centre)
+			var weight: float = 1.0 - smoothstep(
+				0.0, w, d - float(p["f1"]))
+			var amp := minf(k * _is_slab(cell), AMP_CEILING)
+			out += amp * amp * weight
+			total += weight
+	if total <= 0.0:
+		_fail("the whole-window cavity accumulated no coverage — the nearest "
+			+ "cell must always contribute one")
+		return out
+	return out / total
+
+
+func _window_activation(p: Dictionary, footprint: float) -> float:
+	var w: float = maxf(footprint, 1e-6)
+	var reach_margin: float = maxf(
+		w - (float(p["f4"]) - float(p["f1"])), 0.0)
+	var within_reach := _glsl_step(1e-6, reach_margin)
+	return within_reach * (1.0 - smoothstep(
+		0.0, maxf(reach_margin, 1e-6),
+		float(p["f4"]) - float(p["f3"])))
+
+
+func _window_junction(p: Dictionary, footprint: float) -> float:
+	return 1.0 - smoothstep(
+		0.0, maxf(footprint, 1e-6),
+		float(p["f3"]) - float(p["f2"]))
+
+
+func _window_reachable(p: Dictionary, footprint: float) -> bool:
+	return float(p["f4"]) - float(p["f1"]) <= maxf(footprint, 1e-6)
+
+
+func _synthetic_three_way_value(
+		f2: float, f3: float, pair_w: float, footprint: float) -> float:
+	var g2 := 1.0 - smoothstep(0.0, footprint, f2)
+	var g3 := 1.0 - smoothstep(0.0, footprint, f3)
+	var symmetric := (
+		0.20 + 0.80 * g2 + 0.10 * g3
+	) / (1.0 + g2 + g3)
+	var pairwise := lerpf(0.20, 0.80, pair_w)
+	var junction := 1.0 - smoothstep(0.0, footprint, f3 - f2)
+	return lerpf(pairwise, symmetric, junction)
+
+
+func _synthetic_window_value(
+		f2: float, f3: float, f4: float, footprint: float) -> float:
+	var g2 := 1.0 - smoothstep(0.0, footprint, f2)
+	var g3 := 1.0 - smoothstep(0.0, footprint, f3)
+	var g4 := 1.0 - smoothstep(0.0, footprint, f4)
+	return (
+		0.20 + 0.80 * g2 + 0.10 * g3 + 0.90 * g4
+	) / (1.0 + g2 + g3 + g4)
+
+
+## The pre-fix scalar handoff. Kept as the positive control for the exact
+## third/fourth swap at the footprint boundary.
+func _synthetic_legacy_reach_value(
+		f3: float, f4: float, footprint: float) -> float:
+	var f2 := footprint * 0.50
+	var pair_w := 0.50
+	var current := _synthetic_three_way_value(
+		f2, f3, pair_w, footprint)
+	var full := _synthetic_window_value(f2, f3, f4, footprint)
+	var partition := {"f1": 0.0, "f3": f3, "f4": f4}
+	return lerpf(current, full, _window_activation(partition, footprint))
+
+
+## Mirrors the shipping composition at the reach cutoff.
+func _synthetic_reach_value(
+		f3: float, f4: float, footprint: float) -> float:
+	var f2 := footprint * 0.50
+	var pair_w := 0.50
+	var current := _synthetic_three_way_value(
+		f2, f3, pair_w, footprint)
+	var partition := {"f1": 0.0, "f2": f2, "f3": f3, "f4": f4}
+	if not _window_reachable(partition, footprint):
+		return current
+	var pairwise := lerpf(0.20, 0.80, pair_w)
+	var full := _synthetic_window_value(f2, f3, f4, footprint)
+	return lerpf(pairwise, full, _window_junction(partition, footprint))
+
+
+## Keep the established three-way answer bit-identical except where the fourth
+## candidate enters the same pixel footprint. At the exact third/fourth identity
+## swap this is wholly the symmetric window answer, so the discontinuous
+## fixed-list term has zero authority.
+func _window_blend(uv: Vector2) -> PackedFloat64Array:
+	var p := _plates(uv)
+	var current := _blend(uv, true)
+	if not _window_reachable(p, FOOTPRINT):
+		return current
+	var pairwise := _blend(uv, false)
+	var full := _full_window_blend(uv, p)
+	var junction := _window_junction(p, FOOTPRINT)
+	for k in range(0, current.size()):
+		current[k] = lerpf(pairwise[k], full[k], junction)
+	return current
+
+
+## Generalize the nonlinear per-cell cavity factor through the same composition
+## as slab/surface/roughness/crack: pairwise base toward the normalized 5x5
+## window under the junction ramp. The reach check may skip work only after the
+## fourth candidate's weight has converged to zero.
+func _window_cavity_amps(uv: Vector2) -> float:
+	var p := _plates(uv)
+	var current: float = _cavity_parts(uv, true)["amps"]
+	if not _window_reachable(p, FOOTPRINT):
+		return current
+	var pairwise: float = _cavity_parts(uv, false)["amps"]
+	var full := _full_window_cavity_amps(uv, p)
+	return lerpf(pairwise, full, _window_junction(p, FOOTPRINT))
 
 
 ## The SEAM CAVITY's per-fragment value, `seam_slope_var` (#554, #584).
@@ -428,6 +609,36 @@ func _max_adjacent_step(centre: Vector2, samples: int, use_third: bool) -> float
 			for k in range(0, cur.size()):
 				d = maxf(d, absf(cur[k] - prev[k]))
 			worst = maxf(worst, d)
+		prev = cur
+	return worst
+
+
+func _max_adjacent_window_step(centre: Vector2, samples: int) -> float:
+	var worst := 0.0
+	var prev := PackedFloat64Array()
+	for i in range(0, samples + 1):
+		var a := TAU * float(i) / float(samples)
+		var uv := centre + Vector2(cos(a), sin(a)) * ARC_RADIUS
+		var cur := _window_blend(uv)
+		if not prev.is_empty():
+			var d := 0.0
+			for k in range(0, cur.size()):
+				d = maxf(d, absf(cur[k] - prev[k]))
+			worst = maxf(worst, d)
+		prev = cur
+	return worst
+
+
+func _max_adjacent_window_cavity_amp_step(
+		centre: Vector2, samples: int) -> float:
+	var worst := 0.0
+	var prev := INF
+	for i in range(0, samples + 1):
+		var a := TAU * float(i) / float(samples)
+		var uv := centre + Vector2(cos(a), sin(a)) * ARC_RADIUS
+		var cur := _window_cavity_amps(uv)
+		if prev != INF:
+			worst = maxf(worst, absf(cur - prev))
 		prev = cur
 	return worst
 
@@ -636,16 +847,9 @@ func _check_cavity_continuity(centre: Vector2) -> void:
 		% [full_old, full_new, int(round(100.0 * full_new / maxf(full_old, 1e-9)))])
 
 
-## The four-plate case, where the guarantee is a BOUND rather than continuity.
-##
-## The shaders carry three candidates. At a vertex where a fourth plate is
-## equidistant with the third, the third's LABEL swaps with that uncarried fourth
-## while it still holds weight, so a step survives — this is the tail of any
-## fixed-size candidate list, not the second/third swap #499 names, and removing
-## it needs a weighting with no ordering at all (a coverage sum over the whole
-## search window). Recorded here as a measured bound so the remaining step is a
-## number rather than a surprise, and so a regression in the three carried
-## candidates still shows up.
+## The four-plate case. The three-candidate answer is the positive control: its
+## third label swaps with an uncarried fourth and the step does not shrink under
+## refinement. The whole-window answer must turn that jump into smooth variation.
 func _check_degenerate_vertex_bound(centre: Vector2) -> void:
 	var live := _arc_is_live(centre)
 	if int(live["swaps"]) < 2 or float(live["max_weight"]) <= 0.0:
@@ -653,23 +857,203 @@ func _check_degenerate_vertex_bound(centre: Vector2) -> void:
 			% [centre.x, centre.y, int(live["swaps"]),
 				float(live["max_weight"])])
 		return
-	var fixed := _max_adjacent_step(centre, ARC_SAMPLES * 4, true)
-	var old := _max_adjacent_step(centre, ARC_SAMPLES * 4, false)
-	if old <= 0.0:
-		print("DEGENERATE arc at (%.4f, %.4f) shows no pairwise step to improve "
-			% [centre.x, centre.y] + "on")
-		return
-	var ratio := fixed / old
-	if ratio > DEGENERATE_STEP_RATIO_MAX:
-		_fail("at the four-plate vertex the three-candidate blend still steps "
-			+ "%.5f against the pairwise rule's %.5f (%.0f%%, over the %.0f%% "
-			% [fixed, old, ratio * 100.0, DEGENERATE_STEP_RATIO_MAX * 100.0]
-			+ "this bound allows) — the three carried candidates are no longer "
-			+ "sharing coverage symmetrically")
-	print("DEGENERATE uv=(%.4f, %.4f) pairwise %.5f -> three-way %.5f (%.0f%% "
-		% [centre.x, centre.y, old, fixed, ratio * 100.0]
-		+ "of the original step; the remainder is the third/fourth label swap, "
-		+ "which three candidates cannot cover)")
+	var limited_coarse := _max_adjacent_step(centre, ARC_SAMPLES, true)
+	var limited_fine := _max_adjacent_step(centre, ARC_SAMPLES * 4, true)
+	var window_coarse := _max_adjacent_window_step(centre, ARC_SAMPLES)
+	var window_fine := _max_adjacent_window_step(centre, ARC_SAMPLES * 4)
+	var cavity_limited_coarse := _max_step_of(
+		centre, ARC_SAMPLES, true, "amps")
+	var cavity_limited_fine := _max_step_of(
+		centre, ARC_SAMPLES * 4, true, "amps")
+	var cavity_window_coarse := _max_adjacent_window_cavity_amp_step(
+		centre, ARC_SAMPLES)
+	var cavity_window_fine := _max_adjacent_window_cavity_amp_step(
+		centre, ARC_SAMPLES * 4)
+	if limited_fine < CONTROL_STEP_MIN:
+		_fail("control: the three-candidate rule's four-plate step is %.5f, "
+			% limited_fine
+			+ "under the %.5f this probe needs to see — the arc cannot prove "
+			% CONTROL_STEP_MIN
+			+ "that the whole-window rule removed the carried-list tail")
+	if limited_fine < limited_coarse * CONTINUITY_RATIO:
+		_fail("control: the three-candidate four-plate step FELL from %.5f to "
+			% limited_coarse
+			+ "%.5f under 4x refinement — the probe is seeing smooth variation, "
+			% limited_fine
+			+ "not the third/fourth identity jump #573 requires")
+	if window_fine > window_coarse * CONTINUITY_RATIO:
+		_fail("the whole-window rule's four-plate step did not shrink under "
+			+ "refinement (%.5f at %d samples, %.5f at %d) — the blend still "
+			% [window_coarse, ARC_SAMPLES, window_fine, ARC_SAMPLES * 4]
+			+ "depends on an ordered candidate identity")
+	if window_fine > CONTINUOUS_STEP_MAX:
+		_fail("the whole-window rule still steps %.5f at the four-plate vertex, "
+			% window_fine
+			+ "above the %.5f a continuous blend may show at this density"
+			% CONTINUOUS_STEP_MAX)
+	if cavity_limited_fine < CAVITY_CONTROL_STEP_MIN:
+		_fail("control: the three-candidate cavity amplitudes' four-plate step "
+			+ "is %.5f, under the %.5f this probe needs to see — the arc cannot "
+			% [cavity_limited_fine, CAVITY_CONTROL_STEP_MIN]
+			+ "prove that the whole-window rule removed the fixed third-cell "
+			+ "tail")
+	if cavity_limited_fine < cavity_limited_coarse * CONTINUITY_RATIO:
+		_fail("control: the three-candidate cavity amplitudes' four-plate step "
+			+ "FELL from %.5f to %.5f under 4x refinement — the probe is seeing "
+			% [cavity_limited_coarse, cavity_limited_fine]
+			+ "smooth variation, not the third/fourth identity jump")
+	if cavity_window_fine > cavity_window_coarse * CONTINUITY_RATIO:
+		_fail("the whole-window cavity amplitudes' four-plate step did not "
+			+ "shrink under refinement (%.5f at %d samples, %.5f at %d) — the "
+			% [cavity_window_coarse, ARC_SAMPLES, cavity_window_fine,
+				ARC_SAMPLES * 4]
+			+ "variance still depends on the fixed third candidate")
+	if cavity_window_fine > CAVITY_CONTINUOUS_STEP_MAX:
+		_fail("the whole-window cavity amplitudes still step %.5f at the "
+			% cavity_window_fine
+			+ "four-plate vertex, above the %.5f a continuous per-cell blend "
+			% CAVITY_CONTINUOUS_STEP_MAX
+			+ "may show at this density")
+	print("DEGENERATE uv=(%.4f, %.4f) three-way step %.5f -> %.5f; "
+		% [centre.x, centre.y, limited_coarse, limited_fine]
+		+ "whole-window step %.5f -> %.5f under 4x refinement"
+		% [window_coarse, window_fine])
+	print("DEGENERATE cavity amps three-way %.5f -> %.5f; whole-window "
+		% [cavity_limited_coarse, cavity_limited_fine]
+		+ "%.5f -> %.5f under 4x refinement"
+		% [cavity_window_coarse, cavity_window_fine])
+
+
+## The fourth-candidate reach must fade continuously. A hard cutoff at
+## `f4 - f1 == footprint` creates a zero-width contour even though the
+## whole-window and three-candidate answers are still different there.
+func _check_window_activation_continuity() -> void:
+	var w := 0.60
+	var epsilon := 0.000001
+	var before := {
+		"f1": 0.0,
+		"f3": w * 0.75,
+		"f4": w - epsilon,
+	}
+	var after := before.duplicate()
+	after["f4"] = w + epsilon
+	var a := _window_activation(before, w)
+	var b := _window_activation(after, w)
+	var jump := absf(a - b)
+	if jump > 0.001:
+		_fail("the fourth-candidate reach activation jumps %.9f across "
+			% jump
+			+ "`f4 - f1 == footprint` — the whole-window handoff must fade "
+			+ "continuously instead of drawing a zero-width contour")
+	print("WINDOW ACTIVATION reach-boundary jump %.9f" % jump)
+
+
+## At an exact third/fourth swap the old activation stays one until the fourth
+## distance leaves the footprint, then drops to zero. The complete window and
+## established three-way rules assign the first/second candidates differently,
+## so that scalar cutoff draws a contour even though the fourth candidate's own
+## coverage has converged to zero. The generalized composition must converge to
+## the established result before the cutoff is allowed to skip its window.
+func _check_exact_swap_reach_handoff() -> void:
+	var footprint := 0.60
+	var epsilon := 0.000001
+	var before := footprint - epsilon
+	var after := footprint + epsilon
+	var old_before := _synthetic_legacy_reach_value(
+		before, before, footprint)
+	var old_after := _synthetic_legacy_reach_value(
+		after, after, footprint)
+	var old_jump := absf(old_before - old_after)
+	var new_before := _synthetic_reach_value(before, before, footprint)
+	var new_after := _synthetic_reach_value(after, after, footprint)
+	var new_jump := absf(new_before - new_after)
+	if old_jump < 0.02:
+		_fail("control: the legacy exact-swap reach handoff jumps only %.9f — "
+			% old_jump
+			+ "the probe cannot see the differing first/second weighting on "
+			+ "either side of the cutoff")
+	if new_jump > 0.001:
+		_fail("the exact third/fourth reach handoff still jumps %.9f when the "
+			% new_jump
+			+ "fourth coverage leaves the footprint — the generalized window "
+			+ "must converge to the established answer before its cutoff")
+	print("WINDOW HANDOFF legacy jump %.9f; generalized jump %.9f"
+		% [old_jump, new_jump])
+
+
+func _max_window_grid_boundary_jump(radius: int, footprint: float) -> Dictionary:
+	var worst := 0.0
+	var worst_uv := Vector2.ZERO
+	var epsilon := 0.000001
+	for grid_x in range(3, 13):
+		for gy in range(0, 180):
+			var y := 2.3 + float(gy) * 0.05
+			var left := Vector2(float(grid_x) - epsilon, y)
+			var right := Vector2(float(grid_x) + epsilon, y)
+			var a := _full_window_blend(
+				left, _plates(left), footprint, radius)
+			var b := _full_window_blend(
+				right, _plates(right), footprint, radius)
+			for k in range(0, a.size()):
+				var d: float = absf(a[k] - b[k])
+				if d > worst:
+					worst = d
+					worst_uv = Vector2(float(grid_x), y)
+	return {"jump": worst, "uv": worst_uv}
+
+
+## During the 0.30–0.85 resolution fade, weights can reach beyond the 3x3
+## nearest-candidate search. The whole-window sum must cover every cell that can
+## receive non-zero weight; otherwise `floor(plate_uv)` drops a weighted outer
+## column and inserts another at every integer grid boundary.
+func _check_window_grid_boundary_continuity() -> void:
+	var footprint := 0.60
+	var three := _max_window_grid_boundary_jump(1, footprint)
+	var five := _max_window_grid_boundary_jump(2, footprint)
+	if float(three["jump"]) < 0.01:
+		_fail("control: the 3x3 whole-window sum jumps only %.9f at grid "
+			% float(three["jump"])
+			+ "boundaries — the probe cannot see the weighted-column seam it "
+			+ "claims the larger domain removes")
+	if float(five["jump"]) > 0.001:
+		var uv: Vector2 = five["uv"]
+		_fail("the expanded whole-window sum still jumps %.9f at grid boundary "
+			% float(five["jump"])
+			+ "uv=(%.4f, %.4f) while the resolution fade is active"
+			% [uv.x, uv.y])
+	print("WINDOW GRID 3x3 jump %.9f; 5x5 jump %.9f"
+		% [float(three["jump"]), float(five["jump"])])
+
+
+## The activation order statistics must come from the same invariant support as
+## the weighted sum. This shipping-hash point is the exact review reduction: an
+## outer-column centre is one of the true four nearest during the resolution
+## fade, so a 3x3 `f4` changes identity when `floor(plate_uv)` changes.
+func _check_activation_order_domain() -> void:
+	var footprint := 0.695
+	var epsilon := 0.000001
+	var left := Vector2(-3.0 - epsilon, 0.84255)
+	var right := Vector2(-3.0 + epsilon, 0.84255)
+	var three_left := _window_activation(_plates(left, 1), footprint)
+	var three_right := _window_activation(_plates(right, 1), footprint)
+	var five_left := _window_activation(_plates(left, 2), footprint)
+	var five_right := _window_activation(_plates(right, 2), footprint)
+	var three_jump := absf(three_left - three_right)
+	var five_jump := absf(five_left - five_right)
+	if three_jump < 0.10:
+		_fail("control: the 3x3 fourth-distance activation jumps only %.9f at "
+			% three_jump
+			+ "the shipping-hash grid boundary — the probe cannot see the "
+			+ "order-statistic seam it claims the invariant domain removes")
+	if five_jump > 0.001:
+		_fail("the 5x5 fourth-distance activation still jumps %.9f at the "
+			% five_jump
+			+ "shipping-hash grid boundary — activation and accumulation must "
+			+ "use the same invariant support")
+	print("ACTIVATION DOMAIN 3x3 %.9f -> %.9f (jump %.9f); "
+		% [three_left, three_right, three_jump]
+		+ "5x5 %.9f -> %.9f (jump %.9f)"
+		% [five_left, five_right, five_jump])
 
 
 ## Acceptance criterion 3, proven by construction rather than by frame evidence:
@@ -689,7 +1073,10 @@ func _check_two_cell_reduction() -> void:
 			if p["f3"] - p["f2"] <= FOOTPRINT:
 				continue
 			checked += 1
-			var a := _blend(uv, true)
+			# Exercise the production whole-window path too. Comparing only the
+			# established three-way answer cannot catch a fourth-cell gate that
+			# activates merely because two FAR candidates happen to be close.
+			var a := _window_blend(uv)
 			var b := _blend(uv, false)
 			for k in range(0, a.size()):
 				var d: float = absf(a[k] - b[k])
@@ -702,7 +1089,7 @@ func _check_two_cell_reduction() -> void:
 			+ "two-cell case is unchanged")
 		return
 	if worst != 0.0:
-		_fail("the three-way rule changed an off-junction fragment by %.9f at "
+		_fail("the whole-window rule changed an off-junction fragment by %.9f at "
 			% worst
 			+ "uv=(%.4f, %.4f) — away from a junction it must reduce to the "
 			% [worst_uv.x, worst_uv.y]
@@ -734,6 +1121,17 @@ func _check_source_guards() -> void:
 			% PARTITION_PATH
 			+ "longer split across the three nearest plates, so the junction "
 			+ "step this test measures is back (#499)")
+	if not partition.contains("float terrain_plate_window_junction(") \
+			or not partition.contains("float terrain_plate_window_reachable("):
+		_fail("the generalized junction weight or converged reach gate is absent "
+			+ "from %s — coverage either still ends at a fixed candidate list "
+			% PARTITION_PATH
+			+ "or cuts over before the two compositions agree (#573)")
+	if not partition.contains("for (int j = -2; j <= 2; j++)") \
+			or not partition.contains("for (int i = -2; i <= 2; i++)"):
+		_fail("`terrain_plates` does not select its first four distances from "
+			+ "the same 5x5 support as the whole-window sum — `f4` can jump "
+			+ "when the floor-based 3x3 candidate set changes")
 	# Both callers must pass the ISOTROPIC footprint. A width built from `c1`
 	# survives the owner swap on the OWNING separator only because it negates
 	# there and the projection takes absolute values; against the third candidate
@@ -751,6 +1149,46 @@ func _check_source_guards() -> void:
 				+ "plate outright again, or it keys the split on a footprint "
 				+ "built from `c1`, which jumps when the owning cell swaps and "
 				+ "puts the defect back (#499)")
+		if not src.contains("terrain_plate_window_junction(") \
+				or not src.contains("terrain_plate_window_reachable("):
+			_fail("%s does not derive whole-window junction authority separately "
+				% path
+				+ "from its converged reach gate — the fourth candidate either "
+				+ "has no continuous path into the surface or the cutoff can "
+				+ "still draw a contour (#573)")
+		if not src.contains("terrain_plate_window_weight(d, f1, plate_fw)"):
+			_fail("%s does not weight every search-window cell with "
+				% path
+				+ "`terrain_plate_window_weight(d, f1, plate_fw)` — the fix "
+				+ "still has an ordered last candidate whose label can swap")
+		if src.count("for (int j = -2; j <= 2; j++)") < 2 \
+				or src.count("for (int i = -2; i <= 2; i++)") < 2:
+			_fail("%s does not use the proven 5x5 domain for both whole-window "
+				% path
+				+ "sums — a 3x3 domain drops weighted columns at integer grid "
+				+ "boundaries while the resolution fade is active")
+		if not src.contains(
+				"plate_window_gate = plate_resolved * "
+				+ "terrain_plate_window_reachable("):
+			_fail("%s does not retire whole-window sampling with the plate "
+				% path
+				+ "resolution fade — outside the 0.30–0.85 active range there "
+				+ "is no cell-specific plate signal left to resolve")
+		if not src.contains("pair_surface = mix(surf_own, surf_nb, plate_edge_w)") \
+				or not src.contains("surface = mix(\n\t\t\tpair_surface,"):
+			_fail("%s does not compose the generalized window from the "
+				% path
+				+ "established pairwise base — it cannot converge to the "
+				+ "three-way answer before the fourth-cell cutoff")
+		if not src.contains(
+				"window_slab_share += cell_is_slab * weight") \
+				or not src.contains("float window_amp_sq = mix(") \
+				or not src.contains("seam_amp_sq = mix(") \
+				or not src.contains("pair_amp_sq,"):
+			_fail("%s does not compose the nonlinear seam-cavity amplitude "
+				% path
+				+ "through the same symmetric whole-window weights — the fixed "
+				+ "third amplitude can still swap with an uncarried fourth")
 
 
 func _source(path: String) -> String:
@@ -769,8 +1207,8 @@ func _fail(msg: String) -> void:
 ## spelled exactly that way, and `TEST FAIL` likewise.
 func _report() -> void:
 	if _failures.is_empty():
-		print("TEST PASS — the neighbour blend is continuous across a triple "
-			+ "junction and unchanged away from one")
+		print("TEST PASS — the neighbour blend is continuous across triple and "
+			+ "four-fold junctions and unchanged away from them")
 		get_tree().quit(0)
 		return
 	for msg in _failures:
