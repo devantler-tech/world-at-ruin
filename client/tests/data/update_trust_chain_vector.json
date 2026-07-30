@@ -1,0 +1,62 @@
+{
+  "_": [
+    "OpenSSL 3.6.3 root-to-signing-key-to-manifest fixture for issue #604.",
+    "The private keys were discarded. Godot consumes only the signed objects and public root keys.",
+    "The certificate signature covers RFC 8785 JCS of key with root_signature excluded.",
+    "The manifest signature covers RFC 8785 JCS of the manifest with signature excluded."
+  ],
+  "installed": {
+    "shell_version": "0.1.14",
+    "pack_version": "0.1.14",
+    "save_schema": 1,
+    "save_capability": 1,
+    "protocol": 1,
+    "manifest_sequence_high_water": 41,
+    "key_epoch_high_water": 6,
+    "key_certificate_required": true,
+    "observed_at": "2030-01-15T00:00:00Z"
+  },
+  "manifest": {
+    "schema": 1,
+    "sequence": 42,
+    "key_epoch": 7,
+    "not_after": "2030-02-01T00:00:00Z",
+    "channel": "live",
+    "shell": {
+      "current": "0.1.14",
+      "min_supported": "0.1.0",
+      "reads_min": 1,
+      "reads_max": 9,
+      "reads_capability_max": 9
+    },
+    "pack": {
+      "version": "0.1.14",
+      "min_shell": "0.1.14",
+      "url": "x",
+      "sha256": "y",
+      "size": 0
+    },
+    "protocol": {
+      "min": 1,
+      "max": 1
+    },
+    "save_schema": {
+      "min": 1,
+      "writes": 1,
+      "capability": 1
+    },
+    "key": {
+      "algorithm": "ecdsa-p256-sha256",
+      "id": "signing-key-2030-01",
+      "epoch": 7,
+      "not_before": "2030-01-01T00:00:00Z",
+      "not_after": "2030-04-01T00:00:00Z",
+      "public_key": "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEl5/QD4sUZ60rj4fHJMu9yTCOIcfp\nTO5HXFP5a+N3Djccc3mtRSpL2oZt/Dwhi6imO1AzRJttJbda7zLgouW6Ww==\n-----END PUBLIC KEY-----\n",
+      "root_signature": "MEYCIQCOTQLJlSkY25Ur+ZJYAGpIBJxl3pLPUui84HXfgVwrHAIhAOZTguQFr6vistLq6XcsjCNU1haNTP4skmHc7OLtZFRo"
+    },
+    "signature": "MEYCIQC5EiexspzOAwbx6+FrbJ9ux6T6TbL0XQ6p2j8/fqWK+wIhALtUXN7JvXNQ/Mae02nTGsnB42VLpmfne+2jn4rXEUOH"
+  },
+  "self_signed_certificate_signature": "MEUCICntMVCk+Dp2HVMlMSEk1Tjr8s1gjqDqna1wQ6SQsGDCAiEA2yvdJxMlFQc06QY1sYP/KVZLtRe/8nFsbRoodjXKhyA=",
+  "root_public_key_path": "res://tests/data/update_trust_chain_root_public.pem",
+  "wrong_root_public_key_path": "res://tests/data/update_trust_chain_wrong_root_public.pem"
+}
