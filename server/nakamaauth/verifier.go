@@ -21,11 +21,18 @@ type Verifier struct {
 	client accountClient
 }
 
-func outgoingAuthorizationContext(ctx context.Context, value string) context.Context {
+func outgoingContextWithoutAuthorization(ctx context.Context) context.Context {
 	outgoing, _ := metadata.FromOutgoingContext(ctx)
 	outgoing = outgoing.Copy()
 	outgoing.Delete("authorization")
 	outgoing.Delete("grpcgateway-authorization")
+	return metadata.NewOutgoingContext(ctx, outgoing)
+}
+
+func outgoingAuthorizationContext(ctx context.Context, value string) context.Context {
+	ctx = outgoingContextWithoutAuthorization(ctx)
+	outgoing, _ := metadata.FromOutgoingContext(ctx)
+	outgoing = outgoing.Copy()
 	outgoing.Set("authorization", value)
 	return metadata.NewOutgoingContext(ctx, outgoing)
 }

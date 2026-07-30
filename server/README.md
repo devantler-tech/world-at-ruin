@@ -168,22 +168,30 @@ zone/dungeon server:
   `NakamaIdentityKey`; the identifier Nakama may log cannot authenticate without
   the unlogged password. The raw Google credential therefore never reaches
   Nakama's credential-logging Google path, while the public Google subject
-  cannot be guessed into Nakama credentials. Repeating one identity resolves the
-  same stable Nakama user rather than creating a client-chosen identity; one
-  bounded create-free reconciliation makes concurrent first use adopt the
-  winning Nakama insert.
+  cannot be guessed into Nakama credentials. After first-use account
+  verification, an independently domain-separated HMAC key owns a strict,
+  create-only mapping to the user ID in private, system-owned Nakama runtime
+  storage. Later sign-ins resolve that immutable binding before touching
+  Nakama's mutable email field, so ordinary email link/unlink operations cannot
+  detach the Google identity or strand the original account. Both the email
+  insert and binding write reconcile one concurrent winner without overwriting
+  it, and neither the binding API nor its production store exposes an update or
+  delete operation.
   `ProvisionerConfig.GoogleProvisioningEnabled` is false by default, and
   enabling it also requires `GoogleClientID`, a stable and backed-up
-  `NakamaIdentityKey` of at least 32 bytes, and `NakamaServerKey`. The identity
-  key is a durable identity root: rotating or losing it changes every derived
-  identity and therefore requires an explicit account migration. The
-  provisioner uses the Nakama server key only for Nakama's Basic-authenticated
-  account-creation RPC, then replaces it with the returned session bearer for
-  account verification. Both paths fail closed on empty or malformed responses,
-  strip unrelated authorization metadata aliases at their respective
-  boundaries, preserve only actionable transport status codes, and expose no
-  upstream credential, server key, or Nakama error text. Hermetic tests exercise
-  the real generated gRPC client/server path.
+  `NakamaIdentityKey` of at least 32 bytes, `NakamaServerKey`, and a durable
+  `GoogleBindingStore`; `NewNakamaGoogleBindingStore` is the production
+  implementation over Nakama's authoritative runtime storage surface. The
+  identity key and binding collection are durable identity roots: rotating,
+  losing, deleting, or rewriting either requires an explicit account migration.
+  The provisioner uses the Nakama server key only for Nakama's
+  Basic-authenticated account-creation RPC, then replaces it with the returned
+  session bearer for account verification. Binding operations receive neither
+  bearer nor server-key metadata. Every path fails closed on empty, malformed,
+  corrupt, or unavailable responses, preserves only actionable transport status
+  codes, and exposes no upstream credential, server key, binding key, user ID,
+  or Nakama error text. Hermetic tests exercise the real generated gRPC
+  client/server and authoritative-storage paths.
 - **`agonesalloc/`** — the typed **Agones allocation API boundary**: it sends
   one current-format `AllocationRequest` through Agones's generated gRPC client,
   selecting only Ready GameServers from the configured namespace and fleet.

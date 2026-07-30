@@ -586,8 +586,11 @@ everything shipped afterwards is held to.
   restart calls `Shutdown` without rotating metadata), the first **Nakama identity boundary**
   (`server/nakamaauth/` — locally validates audience-bound Google ID tokens, derives a
   server-keyed opaque email/password pair whose logged identifier is not replayable alone,
-  provisions through Nakama's generated `AuthenticateEmail` API, then verifies the returned
-  session and exposes only the authenticated user ID; default-off), the **player handoff core**
+  provisions through Nakama's generated `AuthenticateEmail` API, verifies the returned session,
+  and atomically preserves that authenticated user ID in a private system-owned create-only
+  binding so mutable Nakama email link/unlink operations cannot detach the Google identity;
+  repeat sign-in resolves the durable binding without reusing the email field; default-off), the
+  **player handoff core**
   (`server/handoff/` — gives only that verified identity plus a caller-stable reservation key and
   server-generated attempt ID to an allocation boundary, conditionally reconciles ambiguous
   outcomes by that owned attempt, constrains the returned endpoint to the configured managed DNS

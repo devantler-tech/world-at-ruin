@@ -34,6 +34,18 @@ type googleIdentityVerifier interface {
 	VerifyGoogleIDToken(context.Context, string, string) (string, error)
 }
 
+// GoogleBindingStore owns the durable, immutable Google-subject-to-user binding.
+//
+// ResolveGoogleBinding receives only a server-keyed opaque binding key.
+// BindGoogleIdentity must atomically preserve the first user ID stored for that
+// key and return that winner on every later call. Production implementations
+// must keep bindings in server-owned storage that player sessions cannot
+// update or delete.
+type GoogleBindingStore interface {
+	ResolveGoogleBinding(context.Context, string) (userID string, found bool, err error)
+	BindGoogleIdentity(context.Context, string, string) (boundUserID string, err error)
+}
+
 // ProvisionerConfig controls opt-in account provisioning paths.
 type ProvisionerConfig struct {
 	GoogleProvisioningEnabled bool
@@ -50,17 +62,23 @@ type Provisioner struct {
 	client           provisioningClient
 	sessionVerifier  *Verifier
 	identityVerifier googleIdentityVerifier
+	bindings         GoogleBindingStore
 	config           ProvisionerConfig
 }
 
 // NewProvisioner builds a default-off account provisioner.
-func NewProvisioner(client provisioningClient, config ProvisionerConfig) *Provisioner {
-	return newProvisioner(client, googleIDTokenVerifier{}, config)
+func NewProvisioner(
+	client provisioningClient,
+	bindings GoogleBindingStore,
+	config ProvisionerConfig,
+) *Provisioner {
+	return newProvisioner(client, googleIDTokenVerifier{}, bindings, config)
 }
 
 func newProvisioner(
 	client provisioningClient,
 	identityVerifier googleIdentityVerifier,
+	bindings GoogleBindingStore,
 	config ProvisionerConfig,
 ) *Provisioner {
 	config.NakamaIdentityKey = bytes.Clone(config.NakamaIdentityKey)
@@ -68,6 +86,7 @@ func newProvisioner(
 		client:           client,
 		sessionVerifier:  NewVerifier(client),
 		identityVerifier: identityVerifier,
+		bindings:         bindings,
 		config:           config,
 	}
 }
@@ -86,6 +105,11 @@ func googleNakamaEmail(key []byte, subject string) string {
 func googleNakamaPassword(key []byte, subject string) string {
 	password := googleNakamaHMAC(key, "password", subject)
 	return base64.RawURLEncoding.EncodeToString(password)
+}
+
+func googleBindingKey(key []byte, subject string) string {
+	binding := googleNakamaHMAC(key, "binding", subject)
+	return hex.EncodeToString(binding)
 }
 
 func sanitizedGoogleIdentityError(err error) error {
@@ -110,6 +134,32 @@ func sanitizedGoogleIdentityError(err error) error {
 		return status.Error(
 			codes.Unauthenticated,
 			"nakama auth: Google identity rejected credential",
+		)
+	}
+}
+
+func sanitizedGoogleBindingError(operation string, err error) error {
+	switch {
+	case errors.Is(err, context.Canceled) || status.Code(err) == codes.Canceled:
+		return status.Error(
+			codes.Canceled,
+			"nakama auth: Google identity binding "+operation+" canceled",
+		)
+	case errors.Is(err, context.DeadlineExceeded) ||
+		status.Code(err) == codes.DeadlineExceeded:
+		return status.Error(
+			codes.DeadlineExceeded,
+			"nakama auth: Google identity binding "+operation+" deadline exceeded",
+		)
+	case status.Code(err) == codes.Unavailable:
+		return status.Error(
+			codes.Unavailable,
+			"nakama auth: Google identity binding "+operation+" unavailable",
+		)
+	default:
+		return status.Error(
+			codes.Internal,
+			"nakama auth: Google identity binding "+operation+" failed",
 		)
 	}
 }
@@ -149,6 +199,9 @@ func (p *Provisioner) ProvisionGoogle(
 	if len(p.config.NakamaIdentityKey) < 32 {
 		return "", errors.New("nakama auth: Nakama identity key must be at least 32 bytes")
 	}
+	if p.bindings == nil {
+		return "", errors.New("nakama auth: Google binding store is nil")
+	}
 
 	subject, err := p.identityVerifier.VerifyGoogleIDToken(
 		ctx,
@@ -160,6 +213,22 @@ func (p *Provisioner) ProvisionGoogle(
 	}
 	if subject == "" {
 		return "", errors.New("nakama auth: Google identity has no subject")
+	}
+
+	bindingCtx := outgoingContextWithoutAuthorization(ctx)
+	bindingKey := googleBindingKey(p.config.NakamaIdentityKey, subject)
+	boundUserID, found, err := p.bindings.ResolveGoogleBinding(bindingCtx, bindingKey)
+	if err != nil {
+		return "", sanitizedGoogleBindingError("lookup", err)
+	}
+	if found {
+		if boundUserID == "" {
+			return "", status.Error(
+				codes.Internal,
+				"nakama auth: Google identity binding has no user ID",
+			)
+		}
+		return boundUserID, nil
 	}
 
 	ctx = outgoingAuthorizationContext(
@@ -194,5 +263,23 @@ func (p *Provisioner) ProvisionGoogle(
 		return "", errors.New("nakama auth: AuthenticateEmail response has no session")
 	}
 
-	return p.sessionVerifier.VerifySession(ctx, session.GetToken())
+	candidateUserID, err := p.sessionVerifier.VerifySession(ctx, session.GetToken())
+	if err != nil {
+		return "", err
+	}
+	boundUserID, err = p.bindings.BindGoogleIdentity(
+		bindingCtx,
+		bindingKey,
+		candidateUserID,
+	)
+	if err != nil {
+		return "", sanitizedGoogleBindingError("write", err)
+	}
+	if boundUserID == "" {
+		return "", status.Error(
+			codes.Internal,
+			"nakama auth: Google identity binding write returned no user ID",
+		)
+	}
+	return boundUserID, nil
 }

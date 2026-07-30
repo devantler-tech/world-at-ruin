@@ -47,6 +47,85 @@ type fakeGoogleIdentityVerifier struct {
 	err         error
 }
 
+type fakeGoogleBindingStore struct {
+	mu                   sync.Mutex
+	bindings             map[string]string
+	resolveErr           error
+	bindErr              error
+	resolveAuthorization []string
+	resolveGatewayAuth   []string
+	bindAuthorization    []string
+	bindGatewayAuth      []string
+	resolveTrace         []string
+	bindTrace            []string
+}
+
+func newFakeGoogleBindingStore() *fakeGoogleBindingStore {
+	return &fakeGoogleBindingStore{bindings: make(map[string]string)}
+}
+
+func (s *fakeGoogleBindingStore) ResolveGoogleBinding(
+	ctx context.Context,
+	key string,
+) (string, bool, error) {
+	md, _ := metadata.FromOutgoingContext(ctx)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.resolveAuthorization = append([]string(nil), md.Get("authorization")...)
+	s.resolveGatewayAuth = append(
+		[]string(nil),
+		md.Get("grpcgateway-authorization")...,
+	)
+	s.resolveTrace = append([]string(nil), md.Get("x-trace-id")...)
+	if s.resolveErr != nil {
+		return "", false, s.resolveErr
+	}
+	userID, found := s.bindings[key]
+	return userID, found, nil
+}
+
+func (s *fakeGoogleBindingStore) BindGoogleIdentity(
+	ctx context.Context,
+	key string,
+	userID string,
+) (string, error) {
+	md, _ := metadata.FromOutgoingContext(ctx)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.bindAuthorization = append([]string(nil), md.Get("authorization")...)
+	s.bindGatewayAuth = append(
+		[]string(nil),
+		md.Get("grpcgateway-authorization")...,
+	)
+	s.bindTrace = append([]string(nil), md.Get("x-trace-id")...)
+	if s.bindErr != nil {
+		return "", s.bindErr
+	}
+	if boundUserID, found := s.bindings[key]; found {
+		return boundUserID, nil
+	}
+	s.bindings[key] = userID
+	return userID, nil
+}
+
+func (s *fakeGoogleBindingStore) observedMetadata() (
+	resolveAuthorization []string,
+	resolveGatewayAuth []string,
+	bindAuthorization []string,
+	bindGatewayAuth []string,
+	resolveTrace []string,
+	bindTrace []string,
+) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.resolveAuthorization...),
+		append([]string(nil), s.resolveGatewayAuth...),
+		append([]string(nil), s.bindAuthorization...),
+		append([]string(nil), s.bindGatewayAuth...),
+		append([]string(nil), s.resolveTrace...),
+		append([]string(nil), s.bindTrace...)
+}
+
 func (v *fakeGoogleIdentityVerifier) VerifyGoogleIDToken(
 	_ context.Context,
 	credential string,
@@ -168,6 +247,23 @@ func provisionerAgainst(
 	config ProvisionerConfig,
 ) *Provisioner {
 	t.Helper()
+	return provisionerAgainstWithBindings(
+		t,
+		server,
+		identityVerifier,
+		newFakeGoogleBindingStore(),
+		config,
+	)
+}
+
+func provisionerAgainstWithBindings(
+	t *testing.T,
+	server *provisioningServer,
+	identityVerifier googleIdentityVerifier,
+	bindings GoogleBindingStore,
+	config ProvisionerConfig,
+) *Provisioner {
+	t.Helper()
 
 	listener := bufconn.Listen(1024 * 1024)
 	grpcServer := grpc.NewServer(grpc.UnaryInterceptor(
@@ -224,7 +320,12 @@ func provisionerAgainst(
 		_ = conn.Close()
 	})
 
-	return newProvisioner(apigrpc.NewNakamaClient(conn), identityVerifier, config)
+	return newProvisioner(
+		apigrpc.NewNakamaClient(conn),
+		identityVerifier,
+		bindings,
+		config,
+	)
 }
 
 func enabledProvisionerConfig() ProvisionerConfig {
@@ -295,11 +396,11 @@ func TestProvisionGoogleReturnsStableUserID(t *testing.T) {
 	}
 
 	authentication, accountCalls := server.observed()
-	if len(authentication) != 2 {
-		t.Fatalf("AuthenticateEmail calls = %d, want 2", len(authentication))
+	if len(authentication) != 1 {
+		t.Fatalf("AuthenticateEmail calls = %d, want 1", len(authentication))
 	}
-	if accountCalls != 2 {
-		t.Fatalf("GetAccount calls = %d, want 2", accountCalls)
+	if accountCalls != 1 {
+		t.Fatalf("GetAccount calls = %d, want 1", accountCalls)
 	}
 	credentials, audiences := identityVerifier.observed()
 	if len(credentials) != 2 || len(audiences) != 2 {
@@ -352,6 +453,163 @@ func TestProvisionGoogleReturnsStableUserID(t *testing.T) {
 				audiences[index],
 			)
 		}
+	}
+}
+
+func TestProvisionGoogleKeepsBindingAfterNakamaEmailIsDetached(t *testing.T) {
+	server := &provisioningServer{
+		issuedSession:   testNakamaSession,
+		provisionedUser: "player-42",
+	}
+	bindings := newFakeGoogleBindingStore()
+	provisioner := provisionerAgainstWithBindings(
+		t,
+		server,
+		acceptingGoogleVerifier(),
+		bindings,
+		enabledProvisionerConfig(),
+	)
+
+	firstUserID, err := provisioner.ProvisionGoogle(context.Background(), testIdentityProof)
+	if err != nil {
+		t.Fatalf("first ProvisionGoogle returned an error: %v", err)
+	}
+
+	server.mu.Lock()
+	server.rejectEmail = true
+	server.provisionedUser = "duplicate-player"
+	server.mu.Unlock()
+
+	repeatedUserID, err := provisioner.ProvisionGoogle(
+		context.Background(),
+		testIdentityProof,
+	)
+	if err != nil {
+		t.Fatalf("repeated ProvisionGoogle returned an error: %v", err)
+	}
+	if firstUserID != "player-42" || repeatedUserID != firstUserID {
+		t.Fatalf(
+			"ProvisionGoogle user IDs = first %q, repeated %q; want stable player-42",
+			firstUserID,
+			repeatedUserID,
+		)
+	}
+	authentication, accountCalls := server.observed()
+	if len(authentication) != 1 || accountCalls != 1 {
+		t.Fatalf(
+			"detached email caused %d authentication and %d account calls; want 1 each",
+			len(authentication),
+			accountCalls,
+		)
+	}
+}
+
+func TestProvisionGoogleRequiresDurableBindingStore(t *testing.T) {
+	server := &provisioningServer{
+		issuedSession:   testNakamaSession,
+		provisionedUser: "player-42",
+	}
+	identityVerifier := acceptingGoogleVerifier()
+	provisioner := provisionerAgainstWithBindings(
+		t,
+		server,
+		identityVerifier,
+		nil,
+		enabledProvisionerConfig(),
+	)
+
+	userID, err := provisioner.ProvisionGoogle(context.Background(), testIdentityProof)
+	if err == nil || !strings.Contains(err.Error(), "binding store is nil") {
+		t.Fatalf("ProvisionGoogle error = %v, want missing binding store", err)
+	}
+	if userID != "" {
+		t.Fatalf("ProvisionGoogle user ID = %q, want empty", userID)
+	}
+	authentication, accountCalls := server.observed()
+	if len(authentication) != 0 || accountCalls != 0 {
+		t.Fatalf(
+			"missing binding store made %d authentication and %d account calls",
+			len(authentication),
+			accountCalls,
+		)
+	}
+	credentials, _ := identityVerifier.observed()
+	if len(credentials) != 0 {
+		t.Fatalf("missing binding store verified %d Google credentials", len(credentials))
+	}
+}
+
+func TestProvisionGoogleSanitizesBindingStoreFailures(t *testing.T) {
+	tests := []struct {
+		name       string
+		configure  func(*fakeGoogleBindingStore)
+		wantDetail string
+		wantAuth   int
+	}{
+		{
+			name: "lookup",
+			configure: func(store *fakeGoogleBindingStore) {
+				store.resolveErr = errors.New(
+					"lookup leaked " + testGoogleSubject + " " + testNakamaIdentityKey,
+				)
+			},
+			wantDetail: "binding lookup failed",
+		},
+		{
+			name: "write",
+			configure: func(store *fakeGoogleBindingStore) {
+				store.bindErr = errors.New(
+					"write leaked " + testGoogleSubject + " " + testNakamaIdentityKey,
+				)
+			},
+			wantDetail: "binding write failed",
+			wantAuth:   1,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := &provisioningServer{
+				issuedSession:   testNakamaSession,
+				provisionedUser: "player-42",
+			}
+			bindings := newFakeGoogleBindingStore()
+			test.configure(bindings)
+			provisioner := provisionerAgainstWithBindings(
+				t,
+				server,
+				acceptingGoogleVerifier(),
+				bindings,
+				enabledProvisionerConfig(),
+			)
+
+			userID, err := provisioner.ProvisionGoogle(
+				context.Background(),
+				testIdentityProof,
+			)
+			if err == nil ||
+				status.Code(err) != codes.Internal ||
+				!strings.Contains(err.Error(), test.wantDetail) {
+				t.Fatalf(
+					"ProvisionGoogle = (%q, %v), want sanitized Internal %q",
+					userID,
+					err,
+					test.wantDetail,
+				)
+			}
+			if strings.Contains(err.Error(), testGoogleSubject) ||
+				strings.Contains(err.Error(), testNakamaIdentityKey) {
+				t.Fatalf("ProvisionGoogle leaked binding details: %v", err)
+			}
+			authentication, _ := server.observed()
+			if len(authentication) != test.wantAuth {
+				t.Fatalf(
+					"AuthenticateEmail calls = %d, want %d",
+					len(authentication),
+					test.wantAuth,
+				)
+			}
+		})
 	}
 }
 
@@ -436,10 +694,12 @@ func TestProvisionGoogleReplacesInheritedAuthorizationWithServerKey(t *testing.T
 		issuedSession:   testNakamaSession,
 		provisionedUser: "player-42",
 	}
-	provisioner := provisionerAgainst(
+	bindings := newFakeGoogleBindingStore()
+	provisioner := provisionerAgainstWithBindings(
 		t,
 		server,
 		acceptingGoogleVerifier(),
+		bindings,
 		enabledProvisionerConfig(),
 	)
 	ctx := metadata.NewOutgoingContext(
@@ -486,6 +746,30 @@ func TestProvisionGoogleReplacesInheritedAuthorizationWithServerKey(t *testing.T
 		t.Fatalf(
 			"AuthenticateEmail trace metadata = %q, want preserved trace-9",
 			authentication[0].trace,
+		)
+	}
+	resolveAuthorization, resolveGatewayAuth, bindAuthorization, bindGatewayAuth,
+		resolveTrace, bindTrace := bindings.observedMetadata()
+	if len(resolveAuthorization) != 0 ||
+		len(resolveGatewayAuth) != 0 ||
+		len(bindAuthorization) != 0 ||
+		len(bindGatewayAuth) != 0 {
+		t.Fatalf(
+			"binding store received inherited authorization metadata: resolve=(%q, %q), bind=(%q, %q)",
+			resolveAuthorization,
+			resolveGatewayAuth,
+			bindAuthorization,
+			bindGatewayAuth,
+		)
+	}
+	if len(resolveTrace) != 1 ||
+		resolveTrace[0] != "trace-9" ||
+		len(bindTrace) != 1 ||
+		bindTrace[0] != "trace-9" {
+		t.Fatalf(
+			"binding store trace metadata = resolve %q, bind %q; want trace-9",
+			resolveTrace,
+			bindTrace,
 		)
 	}
 }
