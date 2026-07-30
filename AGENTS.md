@@ -511,7 +511,8 @@ everything shipped afterwards is held to.
   base-compares complete rows. The retained v0.61.0 capability-4 reader is the rollback target that
   permits this writer. The vault reader now accepts optional v4 `quests` as
   `quest_id → objective_id → progress in the exact JSON integer range 0..2^53-1`, and the manifest
-  advertises save-capability reads 6 while writes remain capability 4 and vault v3. `Main` restores that data
+  advertises save-capability reads 6 while the project-wide writer is capability 5 and the vault
+  writer remains v3. `Main` restores that data
   into its boot-owned `QuestLog` before definitions register; the tracker preserves opaque future
   IDs and raw progress, clamps only its live known view, and latches restored completion without
   announcing it again. Existing production writers preserve an already-present v4 document but
