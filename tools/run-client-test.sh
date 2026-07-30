@@ -111,9 +111,12 @@ test_pid=$!
 		exit 0
 	fi
 	watchdog_sleep_pid=""
-	if kill -0 "${test_pid}" 2>/dev/null \
-			&& kill -TERM "${test_pid}" 2>/dev/null; then
+	if kill -0 "${test_pid}" 2>/dev/null; then
+		# Publish the verdict before TERM can wake the wait below. Otherwise
+		# the waiter can cancel this watchdog before the marker is durable and
+		# misclassify an elapsed timeout as the child's exit status.
 		: >"${timeout_marker}"
+		kill -TERM "${test_pid}" 2>/dev/null || true
 		sleep 2
 		kill -KILL "${test_pid}" 2>/dev/null || true
 	fi

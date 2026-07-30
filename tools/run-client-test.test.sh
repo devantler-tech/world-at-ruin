@@ -39,6 +39,12 @@ hang)
 		sleep 1
 	done
 	;;
+term-pass)
+	trap 'printf "%s\n" "TEST PASS — fake Godot handled TERM"; exit 0' TERM
+	while :; do
+		:
+	done
+	;;
 *)
 	printf 'unknown fake mode: %s\n' "${FAKE_GODOT_MODE}" >&2
 	exit 64
@@ -55,6 +61,19 @@ fail() {
 	printf 'run-client-test regression: FAIL — %s\n' "$1" >&2
 	failures=$((failures + 1))
 }
+
+# The timeout marker is the verdict hand-off from the watchdog to the waiter.
+# It must exist before TERM can wake the waiter, otherwise the waiter can cancel
+# the watchdog and misclassify the elapsed timeout as a process result.
+marker_line="$(grep -n ": >\"\${timeout_marker}\"" "${runner}")"
+marker_line="${marker_line%%:*}"
+term_line="$(grep -n "kill -TERM \"\${test_pid}\"" "${runner}")"
+term_line="${term_line%%:*}"
+if [ -z "${marker_line}" ] || [ -z "${term_line}" ]; then
+	fail "the timeout verdict publication or TERM signal is missing"
+elif [ "${marker_line}" -ge "${term_line}" ]; then
+	fail "the timeout verdict is not published before TERM can wake the waiter"
+fi
 
 run_case() {
 	local label="$1"
@@ -99,6 +118,15 @@ elif [[ "${case_output}" != *"timed out (1s)"* ]]; then
 	fail "the portable watchdog did not report its timeout distinctly: ${case_output}"
 elif [[ "${case_output}" == *"failed (exit"* ]]; then
 	fail "a timeout was misreported as an ordinary process failure"
+fi
+
+run_case timeout-term-pass term-pass 1
+if [ "${case_status}" -eq 0 ]; then
+	fail "a scene that printed PASS while handling the timeout signal was accepted"
+elif [[ "${case_output}" != *"timed out (1s)"* ]]; then
+	fail "the timeout verdict was not published before signalling Godot: ${case_output}"
+elif [[ "${case_output}" == *"failed (exit"* ]]; then
+	fail "a signal-responsive timeout was misreported as an ordinary process failure"
 fi
 
 mv "${bin_dir}/godot" "${tmp_dir}/godot-disabled"
