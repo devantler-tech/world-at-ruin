@@ -116,7 +116,8 @@ func _hash3(p: Vector3) -> float:
 	return s - floor(s)
 
 
-## The three nearest cells, as `terrain_plates` reports them.
+## The three nearest identities plus the fourth-nearest distance, as
+## `terrain_plates` reports them.
 func _plates(uv: Vector2) -> Dictionary:
 	var base := Vector2(floor(uv.x), floor(uv.y))
 	var f1 := 1000.0

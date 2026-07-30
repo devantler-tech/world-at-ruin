@@ -64,7 +64,7 @@ float terrain_ground_noise(vec2 xz, float scale) {
 // same while the second- and third-nearest swap across their bisector, so a
 // caller blending toward `id2` sees its blend target change identity abruptly
 // while the weight is still near a half (#499). Carrying the third candidate is
-// what lets that swap be made harmless; see `terrain_plate_junction_split`. It
+// what lets that swap be made harmless; see `terrain_plate_blend_weights`. It
 // costs two more out-parameters and no additional distance evaluation — the
 // nine-cell search already visits every candidate.
 //
