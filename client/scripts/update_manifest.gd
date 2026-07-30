@@ -91,13 +91,13 @@ const SAVE_SCHEMA_MAX := CharacterFactory.RECIPE_VERSION
 ## earlier. A build claiming to write LESS than it once did is exactly the
 ## stranding the no-resets law forbids.
 ##
-## Capability 4 is vault-v3 claimed exploration-reward state. Its v0.61.0 reader
-## release is retained as the whole-app rollback while client delivery remains
-## monolithic; this build now writes the contract too. The separate
+## Capability 5 is the writable `ashen_bindings` character-vocabulary expansion.
+## Its v0.69.0 reader release is retained as the whole-app rollback while client
+## delivery remains monolithic. The separate
 ## `rollback_targets` catalogue stays empty until a mountable pack exists;
 ## advertising the app ZIP there would make pack recovery select an artifact it
 ## cannot mount.
-const SAVE_CAPABILITY_WRITES := 4
+const SAVE_CAPABILITY_WRITES := 5
 
 ## The highest content capability this build can READ.
 ##
@@ -110,14 +110,10 @@ const SAVE_CAPABILITY_WRITES := 4
 ## needlessly routed away from a pack update despite a valid fallback existing.
 ##
 ## Must always be >= the write capability (a build must read what it writes).
-## Capability 5 reads the `ashen_bindings` character-vocabulary expansion while
-## production writers remain at capability 4. The writer may advance only after
-## a retained release advertises this ceiling; #544 owns that contract stage.
-##
 ## Capability 6 is vault-v4 forward-only quest-objective progress. This is its
-## expand release: the reader accepts and applies the shape while the production
-## writer remains on retained capability 4. Once this release is retained, the
-## separate writer stage may activate capability 6.
+## reader state: the reader accepts and applies the shape while the production
+## writer remains on retained capability 5. A later contract stage may activate
+## capability 6 after a retained release advertises this ceiling.
 const SAVE_CAPABILITY_READS := 6
 
 ## The oldest shell this manifest still supports updating FROM.
