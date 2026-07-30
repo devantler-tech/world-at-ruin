@@ -59,14 +59,15 @@ float terrain_ground_noise(vec2 xz, float scale) {
 // it), and it is what lets a caller average the substance step across the
 // boundary rather than taking the owning cell's value outright.
 //
-// `f3`/`id3` are the THIRD-nearest, and they exist because `id2` alone is not a
-// continuous choice of neighbour. At a triple junction the owning cell stays the
-// same while the second- and third-nearest swap across their bisector, so a
-// caller blending toward `id2` sees its blend target change identity abruptly
-// while the weight is still near a half (#499). Carrying the third candidate is
-// what lets that swap be made harmless; see `terrain_plate_blend_weights`. It
-// costs two more out-parameters and no additional distance evaluation — the
-// partition search already visits every supported candidate.
+// `f3`/`c3`/`id3` are the THIRD-nearest, and they exist because `id2` alone is
+// not a continuous choice of neighbour. At a triple junction the owning cell
+// stays the same while the second- and third-nearest swap across their bisector,
+// so a caller blending toward `id2` sees its blend target change identity
+// abruptly while the weight is still near a half (#499). Carrying the third
+// candidate is what lets that swap be made harmless; see
+// `terrain_plate_blend_weights`. It costs three more out-parameters and no
+// additional distance evaluation — the partition search already visits every
+// supported candidate.
 //
 // `f4` is the FOURTH-nearest distance. No fourth identity is carried: its only
 // job is to say when the fixed three-candidate answer has reached its own tail.
@@ -76,7 +77,7 @@ float terrain_ground_noise(vec2 xz, float scale) {
 void terrain_plates(
 		vec2 uv, out vec2 id, out float f1, out float f2,
 		out vec2 c1, out vec2 c2, out vec2 id2,
-		out float f3, out vec2 id3, out float f4) {
+		out float f3, out vec2 c3, out vec2 id3, out float f4) {
 	vec2 base = floor(uv);
 	f1 = 1000.0;
 	f2 = 1000.0;
@@ -85,6 +86,7 @@ void terrain_plates(
 	id = base;
 	c1 = base;
 	c2 = base;
+	c3 = base;
 	id2 = base;
 	id3 = base;
 	for (int j = -2; j <= 2; j++) {
@@ -98,6 +100,7 @@ void terrain_plates(
 			if (d < f1) {
 				f4 = f3;
 				f3 = f2;
+				c3 = c2;
 				id3 = id2;
 				f2 = f1;
 				c2 = c1;
@@ -108,6 +111,7 @@ void terrain_plates(
 			} else if (d < f2) {
 				f4 = f3;
 				f3 = f2;
+				c3 = c2;
 				id3 = id2;
 				f2 = d;
 				c2 = centre;
@@ -115,6 +119,7 @@ void terrain_plates(
 			} else if (d < f3) {
 				f4 = f3;
 				f3 = d;
+				c3 = centre;
 				id3 = cell;
 			} else if (d < f4) {
 				f4 = d;
@@ -198,6 +203,66 @@ vec3 terrain_plate_blend_weights(
 float terrain_plate_window_junction(float f2, float f3, float fw) {
 	float w = max(fw, 1e-6);
 	return 1.0 - smoothstep(0.0, w, f3 - f2);
+}
+
+// The analytic screen footprint of the nearest/second-nearest separator,
+// made permutation-safe only where a third plate enters the pixel (#589).
+//
+// The established two-cell answer is returned arithmetically unchanged until
+// the junction ramp is non-zero. Inside that ramp, all three pair separators
+// are averaged by the products of their candidates' coverage. At an identity
+// swap the exchanged candidates have equal coverage, so permuting their labels
+// cannot change the width. This covers both the second/third swap named by the
+// issue and the owner swap an arc around the same junction also crosses.
+//
+// `uv_dx` and `uv_dy` preserve the anisotropic projection used by the original
+// footprint. Falling back to isotropic `plate_fw` would also hide the label
+// jump, but it would misestimate diagonal and grazing-angle boundaries.
+float terrain_plate_separator_footprint(
+		vec2 uv, vec2 c1, vec2 c2, vec2 c3,
+		float f1, float f2, float f3, float plate_fw,
+		vec2 uv_dx, vec2 uv_dy) {
+	vec2 e1 = uv - c1;
+	vec2 e2 = uv - c2;
+	vec2 n1 = e1 * inversesqrt(max(dot(e1, e1), 1e-12));
+	vec2 n2 = e2 * inversesqrt(max(dot(e2, e2), 1e-12));
+	vec2 g12 = n2 - n1;
+	float edge12 = abs(dot(g12, uv_dx)) + abs(dot(g12, uv_dy));
+	float junction = terrain_plate_window_junction(f2, f3, plate_fw);
+	if (junction <= 0.0) {
+		return edge12;
+	}
+
+	vec2 e3 = uv - c3;
+	vec2 n3 = e3 * inversesqrt(max(dot(e3, e3), 1e-12));
+	vec2 g13 = n3 - n1;
+	vec2 g23 = n3 - n2;
+	float edge13 = abs(dot(g13, uv_dx)) + abs(dot(g13, uv_dy));
+	float edge23 = abs(dot(g23, uv_dx)) + abs(dot(g23, uv_dy));
+	float w = max(plate_fw, 1e-6);
+	float g2 = 1.0 - smoothstep(0.0, w, f2 - f1);
+	float g3 = 1.0 - smoothstep(0.0, w, f3 - f1);
+	float pair_sum = g2 + g3 + g2 * g3;
+	if (pair_sum <= 1e-6) {
+		return edge12;
+	}
+	// Coverage-weighted harmonic composition keeps the narrow anisotropic
+	// separator legible instead of letting a broad crossing orientation soften
+	// it. The three pair terms and their weights are permutation-symmetric.
+	float symmetric = pair_sum / (
+		g2 / max(edge12, 1e-6) + g3 / max(edge13, 1e-6)
+			+ g2 * g3 / max(edge23, 1e-6));
+	return mix(edge12, symmetric, junction);
+}
+
+// Closing the old footprint jump also removes the energy that hard step
+// contributed to the measured relief read. Restore that small amount only under
+// the same smooth, identity-free junction authority; outside it this is exactly
+// 1.0. The 1.05 endpoint is measurement-derived: on Apple M2 Pro / Metal at
+// 1280x720, the 6 m relief coverage-strength product then holds above current
+// main while crawl remains identical against a zero plates-off floor (#589).
+float terrain_plate_junction_read_gain(float junction) {
+	return mix(1.0, 1.05, junction);
 }
 
 // A PERFORMANCE gate only, never a blend authority. Once the fourth cell is

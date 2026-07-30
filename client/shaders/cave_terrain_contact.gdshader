@@ -120,9 +120,10 @@ void fragment() {
 	float edge_fw = 0.0;
 	vec2 plate_c1 = vec2(0.0);
 	vec2 plate_c2 = vec2(0.0);
+	vec2 plate_c3 = vec2(0.0);
 	if (plates_enabled) {
 		terrain_plates(plate_uv, plate_id, f1, f2, plate_c1, plate_c2, plate_id2,
-			f3, plate_id3, f4);
+			f3, plate_c3, plate_id3, f4);
 		plate_fw = max(fwidth(plate_uv.x), fwidth(plate_uv.y));
 		plate_resolved = 1.0 - smoothstep(0.30, 0.85, plate_fw);
 		crack_fw = fwidth(f2 - f1);
@@ -130,15 +131,15 @@ void fragment() {
 		// `fwidth(f2 - f1)` collapses on a quad straddling the boundary,
 		// because that quantity is a cusp there rather than a signed
 		// coordinate. grad(f2 - f1) = normalize(uv - c2) - normalize(uv - c1).
+		vec2 plate_uv_dx = dFdx(plate_uv);
+		vec2 plate_uv_dy = dFdy(plate_uv);
+		edge_fw = terrain_plate_separator_footprint(
+			plate_uv, plate_c1, plate_c2, plate_c3,
+			f1, f2, f3, plate_fw, plate_uv_dx, plate_uv_dy);
 		vec2 ce1 = plate_uv - plate_c1;
 		vec2 ce2 = plate_uv - plate_c2;
-		// Projected through both screen derivatives, as terrain.gdshader does:
-		// scaling by a single footprint scalar discards the separator's
-		// orientation against the pixel.
 		vec2 gsep_e = ce2 * inversesqrt(max(dot(ce2, ce2), 1e-12))
 			- ce1 * inversesqrt(max(dot(ce1, ce1), 1e-12));
-		edge_fw = abs(dot(gsep_e, dFdx(plate_uv)))
-			+ abs(dot(gsep_e, dFdy(plate_uv)));
 		plate_edge_w = terrain_plate_edge_blend(f1, f2, edge_fw * 0.5);
 		// ...and the same three-way coverage split, keyed on the isotropic
 		// `plate_fw` for the reason the function gives. The ground and this band
@@ -457,6 +458,12 @@ void fragment() {
 				plate_window_w);
 		}
 		seam_slope_var = seam_amp_sq * spread;
+		// Same read-preserving junction gain as the ground. It has zero
+		// authority away from a junction because `plate_window_w` is zero there.
+		float junction_read_gain = terrain_plate_junction_read_gain(
+			plate_window_w);
+		mean_tilt *= junction_read_gain;
+		seam_slope_var *= junction_read_gain * junction_read_gain;
 		vec2 ghat = gsep * inversesqrt(max(dot(gsep, gsep), 1e-12));
 		grad = -ghat * mean_tilt;
 		grad *= 1.0 - smoothstep(0.30, 0.85, plate_fw);

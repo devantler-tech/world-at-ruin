@@ -178,9 +178,9 @@ float ground_noise(vec2 xz, float scale) {
 // meet (#499); `f4` says when the whole search window has to replace that fixed
 // list at a higher-order junction (#573).
 void plates(vec2 uv, out vec2 id, out float f1, out float f2,
-		out vec2 c1, out vec2 c2, out vec2 id2, out float f3, out vec2 id3,
-		out float f4) {
-	terrain_plates(uv, id, f1, f2, c1, c2, id2, f3, id3, f4);
+		out vec2 c1, out vec2 c2, out vec2 id2, out float f3, out vec2 c3,
+		out vec2 id3, out float f4) {
+	terrain_plates(uv, id, f1, f2, c1, c2, id2, f3, c3, id3, f4);
 }
 
 // One plate's substance, resolved from its cell id alone. rgb = colour,
@@ -285,9 +285,10 @@ void fragment() {
 	float edge_fw = 0.0;
 	vec2 plate_c1 = vec2(0.0);
 	vec2 plate_c2 = vec2(0.0);
+	vec2 plate_c3 = vec2(0.0);
 	if (plates_enabled) {
 	plates(plate_uv, plate_id, f1, f2, plate_c1, plate_c2, plate_id2, f3,
-		plate_id3, f4);
+		plate_c3, plate_id3, f4);
 
 	// Screen footprint of one plate. Unlike the grain, plates are NOT tied to
 	// the distance fade: a 1.8 m slab is still a resolvable feature well past
@@ -334,12 +335,15 @@ void fragment() {
 	// d(f2-f1)/dx = dot(grad, dFdx(plate_uv)) is the exact pixel-space rate, and
 	// |dx| + |dy| is then precisely what `fwidth` would have returned had the
 	// quantity not been a cusp.
+	vec2 plate_uv_dx = dFdx(plate_uv);
+	vec2 plate_uv_dy = dFdy(plate_uv);
+	edge_fw = terrain_plate_separator_footprint(
+		plate_uv, plate_c1, plate_c2, plate_c3,
+		f1, f2, f3, plate_fw, plate_uv_dx, plate_uv_dy);
 	vec2 e1 = plate_uv - plate_c1;
 	vec2 e2 = plate_uv - plate_c2;
 	vec2 gsep_e = e2 * inversesqrt(max(dot(e2, e2), 1e-12))
 		- e1 * inversesqrt(max(dot(e1, e1), 1e-12));
-	edge_fw = abs(dot(gsep_e, dFdx(plate_uv)))
-		+ abs(dot(gsep_e, dFdy(plate_uv)));
 	plate_edge_w = terrain_plate_edge_blend(f1, f2, edge_fw * 0.5);
 	// ...and WHICH plates that share belongs to. Away from a triple junction this
 	// is exactly `(1 - plate_edge_w, plate_edge_w, 0)` — the two-cell answer,
@@ -917,6 +921,12 @@ void fragment() {
 			plate_window_w);
 	}
 	seam_slope_var = seam_amp_sq * spread;
+	// Removing the old label-swap jump also removes the energy that hard step
+	// contributed. Preserve the measured 6 m read only under the same smooth,
+	// identity-free junction authority; off-junction this is exactly 1.0.
+	float junction_read_gain = terrain_plate_junction_read_gain(plate_window_w);
+	mean_tilt *= junction_read_gain;
+	seam_slope_var *= junction_read_gain * junction_read_gain;
 	// The tilt is INTO the groove, so it opposes the separator's gradient —
 	// the same sign the differenced form and the closed-form `dcrack` both
 	// carried, the latter by being negative by construction.

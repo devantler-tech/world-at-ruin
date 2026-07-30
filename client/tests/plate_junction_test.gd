@@ -34,20 +34,16 @@ extends Node
 ## Continuity proven here plus those calls proven present in both shaders is the
 ## join.
 ##
-## ## The seam cavity arm (#584)
+## ## The seam cavity arms (#584, #589)
 ##
 ## `_check_cavity_continuity` probes the SEAM CAVITY as well as the substance,
 ## because the cavity is not a linear blend — each cell's height is clamped and
-## squared before the weights apply. It reports the cavity DECOMPOSED, since its
-## two factors fail differently: the per-cell amplitudes are made continuous by
-## the three-way split, while `spread` carries an identity jump of its own that
-## no weighting rule reaches (`edge_fw` is built from the direction to `c2`, and
-## that direction changes abruptly when the second-nearest label swaps, even
-## though `f2` itself stays smooth). So the full cavity still steps at a
-## junction, and this test bounds that remainder rather than claiming it absent.
-## The mirror-to-shader join for the cavity is `crack_relief_parity_test`'s law
-## 5d, which pins the three-way form in both shader files; it is not repeated
-## here, so that the pattern has one owner rather than two to keep in sync.
+## squared before the weights apply. It reports the cavity DECOMPOSED: the
+## three-way split makes the per-cell amplitudes continuous, and the separator
+## footprint must likewise stay continuous when `c2` and `c3` exchange labels.
+## A footprint built only from the direction to `c2` jumps even though `f2`
+## itself stays smooth, so both `spread` and the full cavity are asserted under
+## 4x refinement rather than merely bounded.
 ##
 ## Run: godot --headless --path client res://tests/plate_junction_test.tscn
 
@@ -113,6 +109,11 @@ const CRACK_WIDTH := 0.032
 const AMP_GAIN := 1.5
 const AMP_CEILING := 0.4
 
+## Closing the old footprint jump removes energy the discontinuity itself
+## contributed. Both shaders restore the measured near-field read only inside
+## the smooth junction authority; away from it this factor is exactly 1.0.
+const JUNCTION_READ_GAIN := 1.05
+
 ## The cavity's own step thresholds. It is bounded by `AMP_CEILING^2` = 0.16
 ## rather than by a substance contrast, so it needs its own scale rather than
 ## reusing the substance arm's. Both are set the same way: the control must clear
@@ -120,13 +121,6 @@ const AMP_CEILING := 0.4
 ## order of magnitude below the jump it replaces.
 const CAVITY_CONTROL_STEP_MIN := 0.01
 const CAVITY_CONTINUOUS_STEP_MAX := 0.005
-## The FULL cavity keeps a step under either rule, because `spread` carries an
-## identity jump no weighting rule reaches. This is a REGRESSION GUARD on the
-## part the split does control: measured at 53% of the pairwise step, so the
-## bound catches the split falling back toward parity without encoding 53% as a
-## target. The remainder belongs to the footprint and is tracked separately.
-const CAVITY_FULL_STEP_RATIO_MAX := 0.75
-
 var _failures: PackedStringArray = []
 
 
@@ -190,6 +184,7 @@ func _plates(uv: Vector2, radius: int = 2) -> Dictionary:
 	var id := base
 	var c1 := base
 	var c2 := base
+	var c3 := base
 	var id2 := base
 	var id3 := base
 	for j in range(-radius, radius + 1):
@@ -203,6 +198,7 @@ func _plates(uv: Vector2, radius: int = 2) -> Dictionary:
 			if d < f1:
 				f4 = f3
 				f3 = f2
+				c3 = c2
 				id3 = id2
 				f2 = f1
 				c2 = c1
@@ -213,6 +209,7 @@ func _plates(uv: Vector2, radius: int = 2) -> Dictionary:
 			elif d < f2:
 				f4 = f3
 				f3 = f2
+				c3 = c2
 				id3 = id2
 				f2 = d
 				c2 = centre
@@ -220,13 +217,14 @@ func _plates(uv: Vector2, radius: int = 2) -> Dictionary:
 			elif d < f3:
 				f4 = f3
 				f3 = d
+				c3 = centre
 				id3 = cell
 			elif d < f4:
 				f4 = d
 	return {
 		"id": id, "id2": id2, "id3": id3,
 		"f1": f1, "f2": f2, "f3": f3, "f4": f4,
-		"c1": c1, "c2": c2,
+		"c1": c1, "c2": c2, "c3": c3,
 	}
 
 
@@ -247,15 +245,45 @@ func _is_slab(id: Vector2) -> float:
 	return _glsl_step(0.60, _hash3(Vector3(id.x * 2.3, id.y * 2.3, 19.0)))
 
 
-## `terrain_plate_edge_blend(f1, f2, edge_fw * 0.5)`, with `edge_fw` built from
-## the analytic separator exactly as both shaders build it: the separator
-## gradient projected through both screen derivatives. Axis-aligned derivatives
-## of magnitude FOOTPRINT stand in for the pixel.
-func _edge_weight(p: Dictionary, uv: Vector2) -> float:
-	var e1 := uv - p["c1"] as Vector2
-	var e2 := uv - p["c2"] as Vector2
+## The legacy two-cell separator footprint. This remains the exact answer away
+## from a junction and is the reduction control for the symmetric form below.
+func _pair_separator_footprint(
+		uv: Vector2, c1: Vector2, c2: Vector2) -> float:
+	var e1 := uv - c1
+	var e2 := uv - c2
 	var gsep := e2.normalized() - e1.normalized()
-	var edge_fw: float = FOOTPRINT * (absf(gsep.x) + absf(gsep.y))
+	return FOOTPRINT * (absf(gsep.x) + absf(gsep.y))
+
+
+## Mirrors `terrain_plate_separator_footprint`. Pairwise authority is preserved
+## exactly until the third plate enters the footprint. At a junction, all three
+## pair separators contribute through symmetric coverage weights, so exchanging
+## any two equally distant labels cannot change the result.
+func _separator_footprint(p: Dictionary, uv: Vector2) -> float:
+	var pair_fw := _pair_separator_footprint(uv, p["c1"], p["c2"])
+	var junction := _window_junction(p, FOOTPRINT)
+	if junction <= 0.0:
+		return pair_fw
+	var edge13 := _pair_separator_footprint(uv, p["c1"], p["c3"])
+	var edge23 := _pair_separator_footprint(uv, p["c2"], p["c3"])
+	var g2 := 1.0 - smoothstep(
+		0.0, FOOTPRINT, float(p["f2"]) - float(p["f1"]))
+	var g3 := 1.0 - smoothstep(
+		0.0, FOOTPRINT, float(p["f3"]) - float(p["f1"]))
+	var pair_sum := g2 + g3 + g2 * g3
+	if pair_sum <= 1e-6:
+		return pair_fw
+	var symmetric := pair_sum / (
+		g2 / maxf(pair_fw, 1e-6) + g3 / maxf(edge13, 1e-6)
+			+ g2 * g3 / maxf(edge23, 1e-6))
+	return lerpf(pair_fw, symmetric, junction)
+
+
+## `terrain_plate_edge_blend(f1, f2, edge_fw * 0.5)`, with `edge_fw`
+## symmetrized at a junction and projected through both screen derivatives.
+## Axis-aligned derivatives of magnitude FOOTPRINT stand in for the pixel.
+func _edge_weight(p: Dictionary, uv: Vector2) -> float:
+	var edge_fw := _separator_footprint(p, uv)
 	var half: float = maxf(edge_fw * 0.5, 1e-6)
 	return 0.5 * (1.0 - smoothstep(0.0, half, p["f2"] - p["f1"]))
 
@@ -460,10 +488,14 @@ func _window_cavity_amps(uv: Vector2) -> float:
 	var p := _plates(uv)
 	var current: float = _cavity_parts(uv, true)["amps"]
 	if not _window_reachable(p, FOOTPRINT):
-		return current
+		var gain := lerpf(
+			1.0, JUNCTION_READ_GAIN, _window_junction(p, FOOTPRINT))
+		return current * gain * gain
 	var pairwise: float = _cavity_parts(uv, false)["amps"]
 	var full := _full_window_cavity_amps(uv, p)
-	return lerpf(pairwise, full, _window_junction(p, FOOTPRINT))
+	var junction := _window_junction(p, FOOTPRINT)
+	var gain := lerpf(1.0, JUNCTION_READ_GAIN, junction)
+	return lerpf(pairwise, full, junction) * gain * gain
 
 
 ## The SEAM CAVITY's per-fragment value, `seam_slope_var` (#554, #584).
@@ -486,12 +518,9 @@ func _window_cavity_amps(uv: Vector2) -> float:
 ##              the per-cell quantity #584 re-points at `plate_w`, and it is what
 ##              that change makes continuous.
 ##   `spread` — the top hat's variance over the pixel, common to every candidate.
-##              It is a property of the FOOTPRINT, so no weighting rule touches
-##              it, and it carries its own identity discontinuity: `edge_fw` is
-##              built from `gsep`, whose second term is `normalize(uv - c2)`, and
-##              `c2` swaps at a junction. `f2` itself is continuous there (the
-##              two candidates are equidistant, so the min is smooth even as the
-##              label changes) — it is the DIRECTION to that centre that jumps.
+##              Its `edge_fw` must be symmetric in the second and third
+##              separator gradients at a junction so exchanging their labels
+##              cannot change the footprint.
 func _cavity_parts(uv: Vector2, use_third: bool) -> Dictionary:
 	var p := _plates(uv)
 	var pair_w: float = _edge_weight(p, uv)
@@ -506,7 +535,7 @@ func _cavity_parts(uv: Vector2, use_third: bool) -> Dictionary:
 	var a1: float = minf(k * _is_slab(p["id"]), AMP_CEILING)
 	var a2: float = minf(k * _is_slab(p["id2"]), AMP_CEILING)
 	var a3: float = minf(k * _is_slab(p["id3"]), AMP_CEILING)
-	var edge_fw: float = FOOTPRINT * (absf(gsep.x) + absf(gsep.y))
+	var edge_fw := _separator_footprint(p, uv)
 	var seam_h: float = maxf(edge_fw, 1e-6)
 	var half_h: float = 0.5 * seam_h
 	var s_sep: float = p["f2"] - p["f1"]
@@ -517,6 +546,8 @@ func _cavity_parts(uv: Vector2, use_third: bool) -> Dictionary:
 	return {
 		"amps": a1 * a1 * w.x + a2 * a2 * w.y + a3 * a3 * w.z,
 		"spread": maxf(covered - prof * prof, 0.0),
+		"read_gain": lerpf(
+			1.0, JUNCTION_READ_GAIN, _window_junction(p, FOOTPRINT)),
 	}
 
 
@@ -524,7 +555,8 @@ func _cavity_parts(uv: Vector2, use_third: bool) -> Dictionary:
 ## above, written once so the closed form has a single copy.
 func _cavity(uv: Vector2, use_third: bool) -> float:
 	var parts := _cavity_parts(uv, use_third)
-	return float(parts["amps"]) * float(parts["spread"])
+	var gain: float = parts["read_gain"]
+	return float(parts["amps"]) * float(parts["spread"]) * gain * gain
 
 
 # ---------------------------------------------------------------------------
@@ -824,27 +856,33 @@ func _check_cavity_continuity(centre: Vector2) -> void:
 			% CAVITY_CONTINUOUS_STEP_MAX
 			+ "this sampling density")
 
-	# THE RESIDUAL, bounded rather than claimed absent. `spread` jumps under
-	# either rule, so the full cavity still steps; what the fix must do is not
-	# make it WORSE, and measurably reduce it.
-	var full_old := _max_adjacent_cavity_step(centre, ARC_SAMPLES * 4, false)
-	var full_new := _max_adjacent_cavity_step(centre, ARC_SAMPLES * 4, true)
-	if full_new > full_old * CAVITY_FULL_STEP_RATIO_MAX:
-		_fail("the full cavity's step across the junction is %.5f under the "
-			% full_new
-			+ "three-way split against %.5f under the pairwise one — the split "
-			% full_old
-			+ "must reduce it, and the remainder is the footprint's own jump "
-			+ "(`spread`), not the per-cell blend's")
+	# THE FOOTPRINT FIX. Refining the same arc must now shrink both the spread
+	# step and the composed cavity step. A label-swap jump stays flat.
+	var spread_coarse := _max_step_of(
+		centre, ARC_SAMPLES, true, "spread")
+	var spread_fine := _max_step_of(
+		centre, ARC_SAMPLES * 4, true, "spread")
+	if spread_fine > spread_coarse * CONTINUITY_RATIO:
+		_fail("the seam footprint spread did not shrink under refinement "
+			+ "(%.5f at %d samples, %.5f at %d) — `edge_fw` still jumps when "
+			% [spread_coarse, ARC_SAMPLES, spread_fine, ARC_SAMPLES * 4]
+			+ "the second- and third-nearest plate labels exchange (#589)")
+	var full_coarse := _max_adjacent_cavity_step(
+		centre, ARC_SAMPLES, true)
+	var full_fine := _max_adjacent_cavity_step(
+		centre, ARC_SAMPLES * 4, true)
+	if full_fine > full_coarse * CONTINUITY_RATIO:
+		_fail("the full seam cavity did not shrink under refinement "
+			+ "(%.5f at %d samples, %.5f at %d) — the footprint still leaves "
+			% [full_coarse, ARC_SAMPLES, full_fine, ARC_SAMPLES * 4]
+			+ "a visible identity step at the plate junction (#589)")
 	print("CAVITY peak %.5f on the arc" % peak)
 	print("CAVITY amps pairwise(#554) %.5f -> %.5f, three-way(#584) %.5f -> %.5f"
 		% [amp_old_coarse, amp_old_fine, amp_new_coarse, amp_new_fine])
-	print("CAVITY spread (footprint, rule-independent) %.5f -> %.5f — its own "
-		% [_max_step_of(centre, ARC_SAMPLES, true, "spread"),
-			_max_step_of(centre, ARC_SAMPLES * 4, true, "spread")]
-		+ "identity jump, tracked separately")
-	print("CAVITY full pairwise %.5f -> three-way %.5f (%d%% of it)"
-		% [full_old, full_new, int(round(100.0 * full_new / maxf(full_old, 1e-9)))])
+	print("CAVITY spread(#589) %.5f -> %.5f under 4x refinement"
+		% [spread_coarse, spread_fine])
+	print("CAVITY full(#589) %.5f -> %.5f under 4x refinement"
+		% [full_coarse, full_fine])
 
 
 ## The four-plate case. The three-candidate answer is the positive control: its
@@ -1063,6 +1101,7 @@ func _check_activation_order_domain() -> void:
 func _check_two_cell_reduction() -> void:
 	var checked := 0
 	var worst := 0.0
+	var worst_footprint := 0.0
 	var worst_uv := Vector2.ZERO
 	for gy in range(0, 90):
 		for gx in range(0, 90):
@@ -1078,6 +1117,11 @@ func _check_two_cell_reduction() -> void:
 			# activates merely because two FAR candidates happen to be close.
 			var a := _window_blend(uv)
 			var b := _blend(uv, false)
+			var legacy_fw := _pair_separator_footprint(
+				uv, p["c1"], p["c2"])
+			worst_footprint = maxf(
+				worst_footprint,
+				absf(_separator_footprint(p, uv) - legacy_fw))
 			for k in range(0, a.size()):
 				var d: float = absf(a[k] - b[k])
 				if d > worst:
@@ -1095,8 +1139,14 @@ func _check_two_cell_reduction() -> void:
 			% [worst_uv.x, worst_uv.y]
 			+ "two-cell blend EXACTLY, or it is altering ground the fix has no "
 			+ "business touching")
+	if worst_footprint != 0.0:
+		_fail("the junction-safe separator changed an off-junction footprint by "
+			+ "%.9f — outside the third plate's reach it must return the "
+			% worst_footprint
+			+ "established two-cell width bit-identically (#589)")
 	print("REDUCTION %d off-junction samples, largest difference from the "
-		% checked + "two-cell rule: %.9f" % worst)
+		% checked + "two-cell rule: %.9f; footprint difference: %.9f"
+		% [worst, worst_footprint])
 
 
 # ---------------------------------------------------------------------------
@@ -1127,17 +1177,25 @@ func _check_source_guards() -> void:
 			+ "from %s — coverage either still ends at a fixed candidate list "
 			% PARTITION_PATH
 			+ "or cuts over before the two compositions agree (#573)")
+	if not partition.contains("float terrain_plate_separator_footprint(") \
+			or not partition.contains(
+				"g2 / max(edge12, 1e-6) + g3 / max(edge13, 1e-6)"):
+		_fail("the permutation-safe three-separator footprint is absent from "
+			+ "%s — `edge_fw` can jump when the second and third plate labels "
+			% PARTITION_PATH
+			+ "exchange even while their distances remain continuous (#589)")
 	if not partition.contains("for (int j = -2; j <= 2; j++)") \
 			or not partition.contains("for (int i = -2; i <= 2; i++)"):
 		_fail("`terrain_plates` does not select its first four distances from "
 			+ "the same 5x5 support as the whole-window sum — `f4` can jump "
 			+ "when the floor-based 3x3 candidate set changes")
-	# Both callers must pass the ISOTROPIC footprint. A width built from `c1`
-	# survives the owner swap on the OWNING separator only because it negates
-	# there and the projection takes absolute values; against the third candidate
-	# there is no such cancellation, so it would jump whenever the owner's label
-	# moved and put a smaller copy of the defect back inside the fix. Nothing
-	# else in the suite would notice.
+	# Both callers must pass the ISOTROPIC plate footprint to the junction
+	# authority. A width built from `c1` survives the owner swap on the OWNING
+	# separator only because it negates there and the projection takes absolute
+	# values; against the third candidate there is no such cancellation, so it
+	# would jump whenever the owner's label moved and put a smaller copy of the
+	# defect back inside the fix. The anisotropic derivatives belong only to the
+	# separator projection. Nothing else in the suite would notice.
 	for entry in [[GROUND_SHADER_PATH, ground], [CONTACT_SHADER_PATH, contact]]:
 		var path: String = entry[0]
 		var src: String = entry[1]
@@ -1149,6 +1207,23 @@ func _check_source_guards() -> void:
 				+ "plate outright again, or it keys the split on a footprint "
 				+ "built from `c1`, which jumps when the owning cell swaps and "
 				+ "puts the defect back (#499)")
+		if not src.contains("edge_fw = terrain_plate_separator_footprint(") \
+				or not src.contains(
+					"plate_uv, plate_c1, plate_c2, plate_c3,"):
+			_fail("%s does not derive `edge_fw` from all three carried plate "
+				% path
+				+ "centres — its seam cavity can still inherit the "
+				+ "second/third label swap at a junction (#589)")
+		if not partition.contains(
+				"float terrain_plate_junction_read_gain(float junction)") \
+				or not src.contains(
+					"terrain_plate_junction_read_gain(") \
+				or not src.contains(
+					"seam_slope_var *= junction_read_gain * junction_read_gain"):
+			_fail("%s does not restore the measured near-field seam read under "
+				% path
+				+ "the same smooth junction authority as the footprint fix — "
+				+ "closing the old jump may silently soften the 6 m control")
 		if not src.contains("terrain_plate_window_junction(") \
 				or not src.contains("terrain_plate_window_reachable("):
 			_fail("%s does not derive whole-window junction authority separately "
