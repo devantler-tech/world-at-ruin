@@ -597,7 +597,12 @@ everything shipped afterwards is held to.
   durable releasing barrier and private-collection expiry sweep that arbitrate zone claim against
   external cleanup, without persisting raw user or reservation IDs or admission secrets; the
   durability contract those objects follow — and that every later server-held record inherits — is
-  [`docs/design/server-state-durability.md`](docs/design/server-state-durability.md)), the
+  [`docs/design/server-state-durability.md`](docs/design/server-state-durability.md)), the private
+  **player-state mutation boundary** (`server/playerstate/` — atomically commits one private
+  conditional player-record write with one private create-only audit object, binds the caller's
+  stable mutation key to its operation and normalized payload, and returns the original outcome on
+  replay or an ambiguous committed response; its strict audit schema is permanently ledgered, and
+  it remains inert until a player-record owner calls it), the
   durable **handoff allocation coordinator**
   (`server/handoffalloc/` — implements `handoff.Allocator` over the real lease store and an injected
   GameServer-resource boundary; persists a recoverable intent before provisioning, finalizes the
@@ -871,10 +876,12 @@ everything shipped afterwards is held to.
     tap once fell six releases behind (#169).
     **`auto_updates` is deliberately ABSENT**: it tells Homebrew "this app updates itself, do not
     upgrade it", and there is no working in-client updater yet. `UpdateDecision` is pure decision
-    logic and `UpdateTrust` is only the Godot-native ECDSA P-256 verification primitive; no caller
-    fetches or promotes an update, and no root material is published. Declaring `auto_updates` now
-    would make `brew upgrade` skip the cask and strand players on the version they installed. Add
-    it only once the self-updater ships (#106). The `postflight`
+    logic; `UpdateTrust.verify_and_decide()` authenticates a signing-key certificate with a
+    caller-supplied offline-root public key, then authenticates the manifest with that certified
+    key before entering the decision core. No runtime caller fetches or promotes an update, no
+    production root or signing material is published, and revocation is not wired. Declaring
+    `auto_updates` now would make `brew upgrade` skip the cask and strand players on the version
+    they installed. Add it only once the self-updater ships (#106). The `postflight`
     quarantine strip is **mandatory, not cosmetic** — the build is ad-hoc signed
     (`codesign/codesign=1` with an empty identity), so Gatekeeper blocks it otherwise.
     No `verified:` on the `url`: `brew audit --strict` rejects it when the download and homepage

@@ -31,12 +31,13 @@ class_name UpdateManifest
 ##     shell replacement — the most dangerous thing this manifest could carry.
 ##     (This is also why the monolithic ZIP cannot simply be re-labelled a shell
 ##     artifact instead of a pack: that is the same unauthorized download.)
-##   * `signature` / `key` / `revocation` — [UpdateTrust] now provides the
-##     ECDSA-P256 + RFC-8785-JCS verification primitive, but no root public key,
-##     signing custody, certificate/revocation publisher, or updater caller
-##     exists yet (ADR child 6). The published OCI artifact IS cosign-signed by
-##     digest, which is a real integrity property, but it is a different one and
-##     this module does not pretend otherwise.
+##   * `signature` / `key` / `revocation` — [UpdateTrust] provides both the
+##     ECDSA-P256 primitive and the pure root-certificate → manifest → decision
+##     composition. No production root public key, signing custody,
+##     certificate/revocation publisher, or runtime updater caller activates it
+##     yet (ADR child 6), and revocation is not implemented. The published OCI
+##     artifact IS cosign-signed by digest, which is a real integrity property,
+##     but it is a different one and this module does not pretend otherwise.
 ##   * `rollback_targets` — no MOUNTABLE CONTENT PACK is retained yet. The
 ##     v0.52.0 monolithic app release is the whole-app rollback for capability 3,
 ##     but its `.app` ZIP is deliberately not a pack target: recovery would hand
