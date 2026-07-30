@@ -215,6 +215,15 @@ expect_failure \
 	"runtime_skin.png.import" \
 	"$repo"
 
+repo=$(new_repo uppercase_runtime_texture_without_import_metadata)
+printf 'texture-v1\n' >"$repo/client/assets/pack/runtime_skin.PNG"
+git -C "$repo" add client/assets/pack/runtime_skin.PNG
+write_pack_provenance "$repo" runtime_skin.PNG
+expect_failure \
+	"image extension matching follows Godot case-insensitively" \
+	"runtime_skin.PNG.import" \
+	"$repo"
+
 repo=$(new_repo runtime_texture_with_mipmaps)
 mkdir -p "$repo/client/scripts"
 printf 'texture-v1\n' >"$repo/client/assets/pack/runtime_skin.png"

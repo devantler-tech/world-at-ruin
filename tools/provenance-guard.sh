@@ -191,6 +191,16 @@ indexed_section_value_is() {
 	' < <(git show ":$import_file")
 }
 
+is_supported_texture_source() (
+	# Godot recognizes image suffixes case-insensitively. Keep nocasematch
+	# scoped to this subshell so the guard never rewrites or normalizes a path.
+	shopt -s nocasematch
+	case "$1" in
+	*.bmp | *.dds | *.exr | *.hdr | *.jpeg | *.jpg | *.ktx | *.png | *.svg | *.tga | *.webp) return 0 ;;
+	*) return 1 ;;
+	esac
+)
+
 stray=()
 uncovered=()
 unaccounted=()
@@ -270,10 +280,7 @@ if [ -d "$ASSET_ROOT" ]; then
 	# indexed texture import that declares its mip chain. Enumerating sources,
 	# rather than existing sidecars, makes a missing .import file fail closed.
 	while IFS= read -r -d '' texture_file; do
-		case "$texture_file" in
-		*.bmp | *.dds | *.exr | *.hdr | *.jpeg | *.jpg | *.ktx | *.png | *.svg | *.tga | *.webp) ;;
-		*) continue ;;
-		esac
+		is_supported_texture_source "$texture_file" || continue
 
 		import_file="$texture_file.import"
 		if ! git cat-file -e ":$import_file" 2>/dev/null; then
