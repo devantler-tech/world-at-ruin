@@ -9,8 +9,8 @@ extends Node
 ##     layered recipe unless the preview is explicitly enabled.
 ##  2. The opt-in surface exposes distinct clothing and armour controls.
 ##  3. Editing either real UI control preserves the untouched layer.
-##  4. The layered writer remains active when later discovery and reward-claim
-##     contracts raise writes to 4 and independent reader expansions raise the
+##  4. The layered writer remains active when later vocabulary contracts raise
+##     writes to 5 and independent reader expansions raise the
 ##     project-wide read ceiling to 6.
 ##
 ## Run: godot --headless --path client res://tests/creator_outfit_layers_test.tscn
@@ -56,8 +56,8 @@ func _ready() -> void:
 		return
 
 	if UpdateManifest.SAVE_CAPABILITY_READS != 6 \
-			or UpdateManifest.SAVE_CAPABILITY_WRITES != 4:
-		_fail("the reader expansions advertise capabilities %d/%d instead of 6/4" % [
+			or UpdateManifest.SAVE_CAPABILITY_WRITES != 5:
+		_fail("the active contracts advertise capabilities %d/%d instead of 6/5" % [
 			UpdateManifest.SAVE_CAPABILITY_READS,
 			UpdateManifest.SAVE_CAPABILITY_WRITES,
 		])

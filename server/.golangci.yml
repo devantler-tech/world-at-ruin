@@ -36,6 +36,28 @@ linters:
     - unparam
     - unused
     - wastedassign
+  exclusions:
+    warn-unused: true
+    rules:
+      # Counts are validated against MaxEntities before this private encoder
+      # helper runs, so the value is strictly inside the uint32 wire field.
+      - path: ^wire/wire\.go$
+        linters:
+          - gosec
+        text: "G115: integer overflow conversion int -> uint32"
+        source: 'return binary\.LittleEndian\.AppendUint32\(b, uint32\(n\)\)'
+      # Signed coordinates use the protocol word as an equal-width
+      # two's-complement representation; these two helpers are exact inverses.
+      - path: ^wire/wire\.go$
+        linters:
+          - gosec
+        text: "G115: integer overflow conversion int64 -> uint64"
+        source: 'return binary\.LittleEndian\.AppendUint64\(b, uint64\(v\)\)'
+      - path: ^wire/wire\.go$
+        linters:
+          - gosec
+        text: "G115: integer overflow conversion uint64 -> int64"
+        source: 'return int64\(v\)'
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
