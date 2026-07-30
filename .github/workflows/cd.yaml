@@ -531,12 +531,164 @@ jobs:
           TAG: ${{ steps.version.outputs.tag }}
         run: |
           set -euo pipefail
+
+          # BEGIN ghcr-latest-forward-helper
+          release_version_key() {
+            local release="$1"
+            local major minor patch rest component
+
+            if [[ ! "${release}" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+              return 1
+            fi
+            major="${release%%.*}"
+            rest="${release#*.}"
+            minor="${rest%%.*}"
+            patch="${rest##*.}"
+            for component in "${major}" "${minor}" "${patch}"; do
+              # The manifest sequence uses the same six-digit component bound.
+              # Keeping the key inside that contract makes lexical comparison
+              # exact without depending on GNU sort -V.
+              if [ "${#component}" -gt 6 ]; then
+                return 1
+              fi
+            done
+            printf '%06d%06d%06d\n' "${major}" "${minor}" "${patch}"
+          }
+
+          read_release_catalog() {
+            local artifact="$1"
+            local published="$2"
+            local tags tag key newest_key
+
+            if ! newest_key="$(release_version_key "${published}")"; then
+              echo "::error::published version '${published}' is outside the stable release contract"
+              return 1
+            fi
+            RELEASE_CATALOG_NEWEST="${published}"
+            if ! tags="$(oras repo tags "${artifact}")"; then
+              echo "::error::could not read immutable release tags for ${artifact}"
+              return 1
+            fi
+            while IFS= read -r tag; do
+              if [ "${tag}" = "latest" ]; then
+                continue
+              fi
+              if ! key="$(release_version_key "${tag}")"; then
+                continue
+              fi
+              if [[ "${key}" > "${newest_key}" ]]; then
+                RELEASE_CATALOG_NEWEST="${tag}"
+                newest_key="${key}"
+              fi
+            done <<<"${tags}"
+          }
+
+          latest_release_version() {
+            local artifact="$1"
+            local manifest_file error_file manifest_version
+
+            manifest_file="$(mktemp)"
+            error_file="$(mktemp)"
+            if ! oras manifest fetch "${artifact}:latest" >"${manifest_file}" 2>"${error_file}"; then
+              # MANIFEST_UNKNOWN is the registry's positive absence signal.
+              # Every transport, authentication and server failure remains
+              # unknown and must never be normalized into first publication.
+              if grep -qiE '(^|[^[:alnum:]_])(MANIFEST_UNKNOWN|manifest unknown)([^[:alnum:]_]|$)' \
+                "${error_file}"; then
+                rm -f "${manifest_file}" "${error_file}"
+                return 2
+              fi
+              echo "::error::could not read ${artifact}:latest; refusing to infer absence"
+              sed 's/^/  /' "${error_file}" >&2
+              rm -f "${manifest_file}" "${error_file}"
+              return 1
+            fi
+            if ! manifest_version="$(
+              jq -er '.annotations["org.opencontainers.image.version"] // empty' \
+                <"${manifest_file}"
+            )"; then
+              echo "::error::latest manifest has no readable release-version annotation"
+              rm -f "${manifest_file}" "${error_file}"
+              return 1
+            fi
+            rm -f "${manifest_file}" "${error_file}"
+            printf '%s\n' "${manifest_version}"
+          }
+
+          advance_latest_tag() {
+            local artifact="$1"
+            local published="$2"
+            local attempts=0
+            local newest current newest_key current_key current_status
+
+            # Re-read after every write. If a newer immutable version appears
+            # while this run is tagging, the next pass repairs latest to that
+            # version rather than returning after a stale read-then-write.
+            while [ "${attempts}" -lt 5 ]; do
+              attempts=$((attempts + 1))
+              read_release_catalog "${artifact}" "${published}" || return 1
+              newest="${RELEASE_CATALOG_NEWEST}"
+              current=""
+              current_status=0
+              current="$(latest_release_version "${artifact}")" ||
+                current_status=$?
+              case "${current_status}" in
+                0) ;;
+                2) current="" ;;
+                *) return 1 ;;
+              esac
+              if [ -n "${current}" ]; then
+                if ! current_key="$(release_version_key "${current}")"; then
+                  echo "::error::latest exposes unorderable version '${current}'; refusing to replace it"
+                  return 1
+                fi
+                newest_key="$(release_version_key "${newest}")"
+                if [[ "${current_key}" > "${newest_key}" ]]; then
+                  newest="${current}"
+                fi
+              fi
+              if [ "${current}" = "${newest}" ]; then
+                if [ "${published}" = "${newest}" ]; then
+                  echo "latest already exposes ${newest}"
+                else
+                  echo "left latest at newer ${newest}; ${published} cannot move it backward"
+                fi
+                return 0
+              fi
+              oras tag "${artifact}:${newest}" latest
+              echo "advanced latest to ${newest}"
+            done
+
+            read_release_catalog "${artifact}" "${published}" || return 1
+            newest="${RELEASE_CATALOG_NEWEST}"
+            current=""
+            if ! current="$(latest_release_version "${artifact}")"; then
+              echo "::error::latest could not be verified after ${attempts} attempts"
+              return 1
+            fi
+            if [ -n "${current}" ]; then
+              if ! current_key="$(release_version_key "${current}")"; then
+                echo "::error::latest exposes unorderable version '${current}'; refusing to replace it"
+                return 1
+              fi
+              newest_key="$(release_version_key "${newest}")"
+              if [[ "${current_key}" > "${newest_key}" ]]; then
+                newest="${current}"
+              fi
+            fi
+            if [ "${current}" != "${newest}" ]; then
+              echo "::error::latest did not converge to newest release ${newest} (found '${current}')"
+              return 1
+            fi
+          }
+          # END ghcr-latest-forward-helper
+
           # Registry paths must be lowercase. `tr` rather than bash's ${VAR@L}
           # so this does not silently depend on bash >= 4.4.
           ARTIFACT="$(printf 'ghcr.io/%s/client' "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
           cd oci
-          # Bare version (v stripped) plus `latest`, mirroring the convention in
-          # devantler-tech/actions' publish-manifests.
+          # Push the immutable bare version first. `latest` is advanced only
+          # after the registry's complete stable-version set can be compared.
           # The manifest is a SECOND LAYER of this artifact, not a second tag:
           # one digest then covers the build and the contract describing it, so
           # `cosign verify` attests to both at once and there is no second thing
@@ -550,7 +702,7 @@ jobs:
             --annotation "org.opencontainers.image.revision=${GITHUB_SHA}" \
             "WorldAtRuin-${VERSION}-macOS-universal.zip:application/zip" \
             "update-manifest.json:application/vnd.devantler.worldatruin.client.manifest.v1+json"
-          oras tag "${ARTIFACT}:${VERSION}" latest
+          advance_latest_tag "${ARTIFACT}" "${VERSION}"
           # `oras manifest fetch --descriptor` rather than `oras resolve`: the
           # latter is marked [Preview] and `--format` is [Experimental], so both
           # can change under us. This form is stable.
