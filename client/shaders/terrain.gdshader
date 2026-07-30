@@ -175,10 +175,12 @@ float ground_noise(vec2 xz, float scale) {
 // the cell they belong to, which is what lets the substance step across the
 // boundary be averaged over the pixel drawing it. `f3`/`id3` are the third
 // candidate, which is what keeps that averaging continuous where three plates
-// meet (#499).
+// meet (#499); `f4` says when the whole search window has to replace that fixed
+// list at a higher-order junction (#573).
 void plates(vec2 uv, out vec2 id, out float f1, out float f2,
-		out vec2 c1, out vec2 c2, out vec2 id2, out float f3, out vec2 id3) {
-	terrain_plates(uv, id, f1, f2, c1, c2, id2, f3, id3);
+		out vec2 c1, out vec2 c2, out vec2 id2, out float f3, out vec2 id3,
+		out float f4) {
+	terrain_plates(uv, id, f1, f2, c1, c2, id2, f3, id3, f4);
 }
 
 // One plate's substance, resolved from its cell id alone. rgb = colour,
@@ -244,7 +246,7 @@ void fragment() {
 	// ---- The plates, and the cracks between them -------------------------
 	// Everything from here to the end of this block is skipped entirely when
 	// the treatment is off. Masking the results later still made every terrain
-	// fragment pay for the nine-cell search, its hashes and its derivatives,
+	// fragment pay for the partition search, its hashes and its derivatives,
 	// and terrain fills most of the frame — so a player who never opted in was
 	// buying the experiment's GPU cost. `plates_enabled` is a uniform, so the
 	// branch is coherent across the whole draw and the derivatives taken
@@ -257,11 +259,17 @@ void fragment() {
 	float f1 = 0.0;
 	float f2 = 1.0;
 	float f3 = 1.0;
+	float f4 = 1.0;
 	float plate_resolved = 0.0;
 	float plate_edge_w = 0.0;
 	// Coverage split across the three nearest plates, (owning, second, third).
 	// The third is 0.0 everywhere except at a triple junction (#499).
 	vec3 plate_w = vec3(1.0, 0.0, 0.0);
+	// Junction authority for the generalized whole-window composition.
+	float plate_window_w = 0.0;
+	// Performance gate: once the fourth cell has zero footprint weight, the
+	// generalized answer is already exactly the established three-way answer.
+	float plate_window_gate = 0.0;
 	vec4 sub = vec4(rock_color, rock_roughness);
 	vec4 sub_nb = vec4(rock_color, rock_roughness);
 	vec4 sub_nb3 = vec4(rock_color, rock_roughness);
@@ -279,7 +287,7 @@ void fragment() {
 	vec2 plate_c2 = vec2(0.0);
 	if (plates_enabled) {
 	plates(plate_uv, plate_id, f1, f2, plate_c1, plate_c2, plate_id2, f3,
-		plate_id3);
+		plate_id3, f4);
 
 	// Screen footprint of one plate. Unlike the grain, plates are NOT tied to
 	// the distance fade: a 1.8 m slab is still a resolvable feature well past
@@ -340,6 +348,9 @@ void fragment() {
 	// (#499). Keyed on the isotropic `plate_fw`, not `edge_fw`; see the
 	// function's own note on why a width built from `c1` puts the defect back.
 	plate_w = terrain_plate_blend_weights(f1, f2, f3, plate_edge_w, plate_fw);
+	plate_window_w = terrain_plate_window_junction(f2, f3, plate_fw);
+	plate_window_gate = plate_resolved * terrain_plate_window_reachable(
+		f1, f4, plate_fw);
 
 	// Both cells' substances are kept SEPARATE here and composed with their own
 	// slab masks below. Blending the substances here and the masks there would
@@ -450,8 +461,52 @@ void fragment() {
 	// A weighted average over the three candidates. `plate_w` sums to one, and
 	// away from a junction it is `(1 - plate_edge_w, plate_edge_w, 0)` — so this
 	// is the previous two-cell blend term for term everywhere but a junction.
+	float pair_slab = mix(slab_own, slab_nb, plate_edge_w);
 	float slab = slab_own * plate_w.x + slab_nb * plate_w.y
 		+ slab_nb3 * plate_w.z;
+	// Fraction of the symmetric window whose source cells actually drew a slab.
+	// Retained for the nonlinear seam-cavity composition below: the amplitude
+	// is clamped and squared per cell, so the already-averaged `slab` cannot be
+	// reused without changing the operation's order.
+	float plate_window_slab_share = 0.0;
+	// A fixed candidate list has a tail: at a four-fold vertex the third label
+	// swaps with an uncarried fourth while still holding coverage. Compose the
+	// same pairwise answer directly toward a symmetric sum over every weighted
+	// cell. As the fourth weight reaches zero this becomes the existing
+	// three-way formula exactly, so the hard performance gate below is applied
+	// only after both answers have converged.
+	if (plates_enabled && plate_window_gate > 0.0 && plate_window_w > 0.0) {
+		vec2 window_base = floor(plate_uv);
+		float window_total = 0.0;
+		float window_slab = 0.0;
+		float window_slab_share = 0.0;
+		for (int j = -2; j <= 2; j++) {
+			for (int i = -2; i <= 2; i++) {
+				vec2 cell = window_base + vec2(float(i), float(j));
+				vec2 jitter = vec2(
+					hash3(vec3(cell, 0.0)),
+					hash3(vec3(cell, 7.0)));
+				vec2 centre = cell + 0.15 + 0.7 * jitter;
+				float d = length(plate_uv - centre);
+				float weight = terrain_plate_window_weight(d, f1, plate_fw);
+				float cell_is_slab = step(
+					0.60, hash3(vec3(cell * 2.3, 19.0)));
+				float cell_slab = mix(
+					0.40,
+					cell_is_slab,
+					plate_resolved);
+				window_slab += cell_slab * weight;
+				window_slab_share += cell_is_slab * weight;
+				window_total += weight;
+			}
+		}
+		plate_window_slab_share =
+			window_slab_share / max(window_total, 1e-6);
+		slab = mix(
+			pair_slab,
+			window_slab / max(window_total, 1e-6),
+			plate_window_w);
+	}
 	// ...but the SAME average must not reach the crack relief, and this is the
 	// one place the two uses of the mask have to part company.
 	//
@@ -508,6 +563,14 @@ void fragment() {
 	// That is a zero-width step reintroduced into the very quantity this change
 	// exists to filter.
 	float plate_mask_relief_nb = sheet * slab_nb;
+	// The THIRD candidate's version of the same gate. The variance is split
+	// across all three by `plate_w`, exactly as the substance, the slab mask,
+	// the roughness and the crack are — so it needs the third cell's height as
+	// well. Away from a triple junction `plate_w.z` is 0, so this term
+	// contributes nothing to the result (it is still computed — the cost is one
+	// multiply, unconditionally); at one it is what keeps the cavity from
+	// inheriting the second-nearest cell's identity swap.
+	float plate_mask_relief_nb3 = sheet * slab_nb3;
 	float rock_exposure = max(rock_mix, plate_mask);
 
 	// The vertex tint stays the base layer (as cave_rock does with COLOR), so
@@ -564,17 +627,22 @@ void fragment() {
 	float crack_own;
 	float crack_nb;
 	float crack_nb3;
-	plate_cell_surface(sub, slab_own, sheet, rock_mix, scorch_k, crack,
+	float plate_crack_field = crack;
+	plate_cell_surface(sub, slab_own, sheet, rock_mix, scorch_k, plate_crack_field,
 		region_rough, grain, detail, surf_own, rough_own, crack_own);
-	plate_cell_surface(sub_nb, slab_nb, sheet, rock_mix, scorch_k, crack,
+	plate_cell_surface(sub_nb, slab_nb, sheet, rock_mix, scorch_k, plate_crack_field,
 		region_rough, grain, detail, surf_nb, rough_nb, crack_nb);
 	// The third candidate, which carries weight only at a triple junction.
-	plate_cell_surface(sub_nb3, slab_nb3, sheet, rock_mix, scorch_k, crack,
+	plate_cell_surface(sub_nb3, slab_nb3, sheet, rock_mix, scorch_k,
+		plate_crack_field,
 		region_rough, grain, detail, surf_nb3, rough_nb3, crack_nb3);
 	// A weighted average of the three finished surfaces. `plate_w` sums to one
 	// and is `(1 - plate_edge_w, plate_edge_w, 0)` away from a junction, so this
 	// is the previous two-cell blend term for term there — and at a resolved
 	// contact, where it is `(1, 0, 0)`, it still composes the owning cell alone.
+	vec3 pair_surface = mix(surf_own, surf_nb, plate_edge_w);
+	float pair_rough = mix(rough_own, rough_nb, plate_edge_w);
+	float pair_crack = mix(crack_own, crack_nb, plate_edge_w);
 	surface = surf_own * plate_w.x + surf_nb * plate_w.y + surf_nb3 * plate_w.z;
 	// Roughness keeps its downstream terms in the original order too: the
 	// region/grain offsets and the clamp are applied per cell BEFORE the crack
@@ -583,6 +651,59 @@ void fragment() {
 		+ rough_nb3 * plate_w.z;
 	crack = crack_own * plate_w.x + crack_nb * plate_w.y
 		+ crack_nb3 * plate_w.z;
+	if (plate_window_gate > 0.0 && plate_window_w > 0.0) {
+		vec2 window_base = floor(plate_uv);
+		vec3 window_surface = vec3(0.0);
+		float window_rough = 0.0;
+		float window_crack = 0.0;
+		float window_total = 0.0;
+		vec3 window_mean_col = rock_color * 0.38 + plate_basalt * 0.28
+			+ plate_ferric * 0.20 + plate_pale * 0.14;
+		float window_mean_rough = rock_roughness * 0.38 + 0.88 * 0.28
+			+ 0.72 * 0.20 + 0.94 * 0.14;
+		vec4 window_mean = vec4(window_mean_col, window_mean_rough);
+		for (int j = -2; j <= 2; j++) {
+			for (int i = -2; i <= 2; i++) {
+				vec2 cell = window_base + vec2(float(i), float(j));
+				vec2 jitter = vec2(
+					hash3(vec3(cell, 0.0)),
+					hash3(vec3(cell, 7.0)));
+				vec2 centre = cell + 0.15 + 0.7 * jitter;
+				float d = length(plate_uv - centre);
+				float weight = terrain_plate_window_weight(d, f1, plate_fw);
+				vec4 cell_sub = mix(
+					window_mean, plate_substance(cell), plate_resolved);
+				float cell_slab = mix(
+					0.40,
+					step(0.60, hash3(vec3(cell * 2.3, 19.0))),
+					plate_resolved);
+				vec3 cell_surface;
+				float cell_rough;
+				float cell_crack;
+				plate_cell_surface(
+					cell_sub, cell_slab, sheet, rock_mix, scorch_k,
+					plate_crack_field, region_rough, grain, detail,
+					cell_surface, cell_rough, cell_crack);
+				window_surface += cell_surface * weight;
+				window_rough += cell_rough * weight;
+				window_crack += cell_crack * weight;
+				window_total += weight;
+			}
+		}
+		float inverse_window_total = 1.0 / max(window_total, 1e-6);
+		surface = mix(
+			pair_surface,
+			window_surface * inverse_window_total,
+			plate_window_w);
+		stone_rough = mix(
+			pair_rough,
+			window_rough * inverse_window_total,
+			plate_window_w);
+		crack = mix(
+			pair_crack,
+			window_crack * inverse_window_total,
+			plate_window_w);
+	}
 	} else {
 	surface = mix(mix(ash_color, rock_color, rock_mix), scorch_color,
 		smoothstep(0.62, 0.95, drift) * 0.35 * (1.0 - rock_mix));
@@ -704,16 +825,17 @@ void fragment() {
 	// sign at the seam. `amp` is that plateau, reached through the same ceiling,
 	// so the model follows the code rather than assuming it: open `crack_width`
 	// far enough that the clamp stops binding and `amp` becomes the true peak.
-	float amp = min(length(gsep) * (1.5 / cw_relief) * plate_scale
-		* plate_mask_relief, 0.4);
+	float amp_scale = length(gsep) * (1.5 / cw_relief) * plate_scale;
+	float amp = min(amp_scale * plate_mask_relief, 0.4);
 	// The same plateau for the NEIGHBOURING cell. The profile below is shared —
 	// it is a property of the footprint and the seam, not of either cell — so
 	// the only per-cell quantity is this height, and blending the two over the
 	// boundary footprint is what keeps the cavity continuous across a
 	// slab-to-bare contact. See `plate_mask_relief_nb` above for why the mean
 	// does not need this and the variance does.
-	float amp_nb = min(length(gsep) * (1.5 / cw_relief) * plate_scale
-		* plate_mask_relief_nb, 0.4);
+	float amp_nb = min(amp_scale * plate_mask_relief_nb, 0.4);
+	// And the third candidate's, for the coverage split below.
+	float amp_nb3 = min(amp_scale * plate_mask_relief_nb3, 0.4);
 	// The footprint is `edge_fw`, the ANALYTIC separator's screen rate — never
 	// `fwidth(f2 - f1)`. That quantity is a cusp at the seam, so its screen
 	// difference collapses on exactly the quads that straddle one: a filter
@@ -750,17 +872,51 @@ void fragment() {
 	// cannot soften a seam a player can still resolve, which is #306's third
 	// acceptance criterion.
 	float spread = max(covered - prof * prof, 0.0);
-	// Blend the two cells' variances over the boundary's own footprint, exactly
-	// as the substance and the slab mask are blended above, and for the same
-	// reason: a pixel straddling a contact contains BOTH cells' seams, so
-	// gating the whole symmetric integral by whichever cell owns the pixel
-	// centre steps the cavity between full and zero as that centre crosses.
-	// `spread` is common to both, so blending the squared heights is
-	// arithmetically identical to blending the two variances, one multiply
-	// cheaper. With `plate_edge_w` at 0 — every contact a player can resolve —
-	// this is exactly the owning cell's own variance, so the near field is
-	// untouched.
-	seam_slope_var = mix(amp * amp, amp_nb * amp_nb, plate_edge_w) * spread;
+	// Start from the SAME three-candidate coverage split the substance, slab
+	// mask, roughness and crack use above. A pixel straddling a contact contains
+	// every one of those cells' seams, so gating the integral by whichever cell
+	// owns the pixel centre steps the cavity between full and zero as that
+	// centre crosses. The higher-order branch below then generalizes this
+	// per-cell factor through the same symmetric window as those quantities.
+	//
+	// The baseline uses `plate_w` rather than a pairwise
+	// `mix(..., plate_edge_w)`. Away from a
+	// triple junction the two are arithmetically identical — the weights reduce
+	// to `(1 - plate_edge_w, plate_edge_w, 0)` there — so this changes nothing a
+	// player can resolve and nothing off a junction. At one, the pairwise form
+	// takes the second-nearest cell outright, and that cell changes IDENTITY
+	// abruptly while still holding near half the fragment's weight, so the
+	// cavity inherits a zero-width step in exactly the quantity it exists to
+	// filter. `spread` is common to all three, so splitting the squared heights
+	// is arithmetically identical to splitting the three variances, two
+	// multiplies cheaper.
+	float seam_amp_sq = amp * amp * plate_w.x + amp_nb * amp_nb * plate_w.y
+		+ amp_nb3 * amp_nb3 * plate_w.z;
+	if (plate_window_gate > 0.0 && plate_window_w > 0.0) {
+		// Every resolved cell has one of two slab states, so the retained
+		// `plate_window_slab_share` composes their already-clamped squared
+		// amplitudes exactly without paying for a second 5x5 hash loop here.
+		float low_amp = min(
+			amp_scale * sheet * mix(0.40, 0.0, plate_resolved), 0.4);
+		float high_amp = min(
+			amp_scale * sheet * mix(0.40, 1.0, plate_resolved), 0.4);
+		float window_amp_sq = mix(
+			low_amp * low_amp,
+			high_amp * high_amp,
+			plate_window_slab_share);
+		// This pairwise expression is only the base of the generalized
+		// composition. At the fourth-cell reach cutoff the normalized window
+		// has become the established symmetric three-way term, so mixing from
+		// the pairwise base with the common junction ramp converges to the
+		// assignment above before the performance gate skips the work.
+		float pair_amp_sq = amp * amp * (1.0 - plate_edge_w)
+			+ amp_nb * amp_nb * plate_edge_w;
+		seam_amp_sq = mix(
+			pair_amp_sq,
+			window_amp_sq,
+			plate_window_w);
+	}
+	seam_slope_var = seam_amp_sq * spread;
 	// The tilt is INTO the groove, so it opposes the separator's gradient —
 	// the same sign the differenced form and the closed-form `dcrack` both
 	// carried, the latter by being negative by construction.

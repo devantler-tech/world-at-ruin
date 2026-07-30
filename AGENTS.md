@@ -812,7 +812,11 @@ everything shipped afterwards is held to.
   - **GHCR is the origin of record for updates** (maintainer direction 2026-07-18, closing the open
     host decision in `docs/design/distribution-and-self-update.md`). CD publishes the released
     client to `ghcr.io/devantler-tech/world-at-ruin/client` as an **OCI artifact**, tagged with the
-    bare version plus `latest`, and **cosign-signs it by digest** (keyless, GitHub OIDC). The
+    bare version plus `latest`, and **cosign-signs it by digest** (keyless, GitHub OIDC). The bare
+    version is immutable; after pushing it, a successful `publish-ghcr` job enumerates every stable
+    release tag and completes only once `latest` exposes the greatest version. It re-reads after
+    each tag write, so an older overlapping run either leaves a newer `latest` untouched or repairs
+    its own stale write when the newer immutable version becomes visible. The
     **digest** is what the updater pins — never the mutable tag. OCI is required rather than merely
     preferred: GitHub Packages has no generic/raw-file registry, so an OCI artifact is the only way
     a `.app` zip enters it. The GitHub Release asset remains the *install* download; GHCR is the
