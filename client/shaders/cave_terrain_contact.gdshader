@@ -247,11 +247,13 @@ void fragment() {
 	}
 	float plate_mask = sheet * slab;
 	float plate_mask_relief = sheet * slab_own;
-	// The neighbour cell's gate, for the seam variance only — same split as
+	// The neighbour cells' gates, for the seam variance only — same split as
 	// terrain.gdshader: the mean keeps the owning cell's binary gate, the
-	// variance blends both, because the variance peaks exactly where the mean's
-	// hard step is harmless and so lands on the peak instead of on nothing.
+	// variance is split across all three candidates, because the variance peaks
+	// exactly where the mean's hard step is harmless and so lands on the peak
+	// instead of on nothing.
 	float plate_mask_relief_nb = sheet * slab_nb;
+	float plate_mask_relief_nb3 = sheet * slab_nb3;
 	float rock_exposure = max(rock_mix, plate_mask);
 
 	vec3 base = vec3(UV, UV2.x);
@@ -407,6 +409,8 @@ void fragment() {
 			* plate_mask_relief, 0.4);
 		float amp_nb = min(length(gsep) * (1.5 / cw_relief) * plate_scale
 			* plate_mask_relief_nb, 0.4);
+		float amp_nb3 = min(length(gsep) * (1.5 / cw_relief) * plate_scale
+			* plate_mask_relief_nb3, 0.4);
 		float seam_h = max(edge_fw, 1e-6);
 		float half_h = 0.5 * seam_h;
 		float s_sep = f2 - f1;
@@ -416,11 +420,16 @@ void fragment() {
 		float covered = clamp(max(min(s_sep + half_h, cw_relief)
 			- max(s_sep - half_h, -cw_relief), 0.0) / seam_h, 0.0, 1.0);
 		float spread = max(covered - prof * prof, 0.0);
-		// Same two-cell blend as terrain.gdshader, over the same boundary
-		// footprint: a pixel straddling a slab-to-bare contact contains both
-		// cells' seams, and gating the symmetric integral by whichever cell owns
-		// the pixel centre steps the cavity as that centre crosses.
-		seam_slope_var = mix(amp * amp, amp_nb * amp_nb, plate_edge_w) * spread;
+		// Same three-candidate coverage split as terrain.gdshader, over the same
+		// weights every per-cell quantity above uses: a pixel straddling a
+		// slab-to-bare contact contains all of those cells' seams, and gating the
+		// symmetric integral by whichever cell owns the pixel centre steps the
+		// cavity as that centre crosses. `plate_w` rather than a pairwise mix,
+		// because the pairwise form takes the second-nearest cell outright and
+		// that cell's identity swaps abruptly at a triple junction while it still
+		// holds weight. Identical away from one.
+		seam_slope_var = (amp * amp * plate_w.x + amp_nb * amp_nb * plate_w.y
+			+ amp_nb3 * amp_nb3 * plate_w.z) * spread;
 		vec2 ghat = gsep * inversesqrt(max(dot(gsep, gsep), 1e-12));
 		grad = -ghat * mean_tilt;
 		grad *= 1.0 - smoothstep(0.30, 0.85, plate_fw);
