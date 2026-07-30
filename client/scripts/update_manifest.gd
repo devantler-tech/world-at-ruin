@@ -91,13 +91,13 @@ const SAVE_SCHEMA_MAX := CharacterFactory.RECIPE_VERSION
 ## earlier. A build claiming to write LESS than it once did is exactly the
 ## stranding the no-resets law forbids.
 ##
-## Capability 5 is the writable `ashen_bindings` character-vocabulary expansion.
-## Its v0.69.0 reader release is retained as the whole-app rollback while client
-## delivery remains monolithic. The separate
+## Capability 6 is writable vault-v4 quest-objective progress. Its retained
+## reader release is the whole-app rollback while client delivery remains
+## monolithic. The separate
 ## `rollback_targets` catalogue stays empty until a mountable pack exists;
 ## advertising the app ZIP there would make pack recovery select an artifact it
 ## cannot mount.
-const SAVE_CAPABILITY_WRITES := 5
+const SAVE_CAPABILITY_WRITES := 6
 
 ## The highest content capability this build can READ.
 ##
@@ -110,10 +110,9 @@ const SAVE_CAPABILITY_WRITES := 5
 ## needlessly routed away from a pack update despite a valid fallback existing.
 ##
 ## Must always be >= the write capability (a build must read what it writes).
-## Capability 6 is vault-v4 forward-only quest-objective progress. This is its
-## reader state: the reader accepts and applies the shape while the production
-## writer remains on retained capability 5. A later contract stage may activate
-## capability 6 after a retained release advertises this ceiling.
+## Capability 6 is vault-v4 forward-only quest-objective progress. Its retained
+## reader now has a production writer; this ceiling remains separate so the next
+## capability can repeat expand-before-write.
 const SAVE_CAPABILITY_READS := 6
 
 ## The oldest shell this manifest still supports updating FROM.

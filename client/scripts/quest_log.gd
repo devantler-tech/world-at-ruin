@@ -30,6 +30,11 @@ extends RefCounted
 ## A quest also never silently redefines itself: registration is forward-only, so
 ## a definition is fixed once added.
 
+## Emitted once after a [method record] call advances one or more objectives.
+## Restore is deliberately silent: those bytes are already durable, and
+## re-queueing them at boot would churn a vault without a new player event.
+signal progress_advanced
+
 ## Largest integer JSON can round-trip exactly through Godot's float-backed
 ## parser. Persisted progress above this could be silently lowered before the
 ## no-resets guards ever see it.
@@ -97,6 +102,7 @@ func is_registered(quest_id: String) -> bool:
 ## nothing.
 func record(tag: String, amount: int = 1) -> Array[String]:
 	var newly: Array[String] = []
+	var any_advanced := false
 	if amount <= 0 or tag.is_empty():
 		return newly
 	for quest_id: String in _quests:
@@ -121,10 +127,13 @@ func record(tag: String, amount: int = 1) -> Array[String]:
 			progress[obj_id] = advanced_to
 			_remember_progress(quest_id, obj_id, advanced_to)
 			advanced = true
+			any_advanced = true
 		if advanced and _is_all_complete(quest_id):
 			_complete[quest_id] = true
 			newly.append(quest_id)
 	newly.sort()
+	if any_advanced:
+		progress_advanced.emit()
 	return newly
 
 

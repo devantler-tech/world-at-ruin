@@ -46,7 +46,7 @@ func _ready() -> void:
 	_test_discovery_writer_activation_is_advertised()
 	_test_reward_claim_writer_activation_is_advertised()
 	_test_ashen_bindings_writer_activation_is_advertised()
-	_test_quest_reader_expansion_is_advertised()
+	_test_quest_writer_activation_is_advertised()
 	_test_save_floor_has_its_golden_fixture()
 	_test_save_capability_matches_its_ledger()
 	_test_export_is_still_monolithic()
@@ -213,37 +213,35 @@ func _test_reward_claim_writer_activation_is_advertised() -> void:
 			% UpdateManifest.SAVE_CAPABILITY_WRITES)
 
 
-## Capability 5 is the writable `ashen_bindings` equipment vocabulary. The
-## project-wide reader has advanced again, while this writer remains the latest
-## capability safe for production origination.
+## Capability 5 is the writable `ashen_bindings` equipment vocabulary. It
+## remains writable after the project-wide writer advances again.
 func _test_ashen_bindings_writer_activation_is_advertised() -> void:
 	if UpdateManifest.SAVE_CAPABILITY_READS < 5:
 		_fail("the ashen-bindings expansion reads capability %d, expected at least 5"
 			% UpdateManifest.SAVE_CAPABILITY_READS)
 		return
-	if UpdateManifest.SAVE_CAPABILITY_WRITES != 5:
-		_fail("the ashen-bindings writer advertises capability %d; expected 5"
+	if UpdateManifest.SAVE_CAPABILITY_WRITES < 5:
+		_fail("the ashen-bindings writer regressed to capability %d; expected at least 5"
 			% UpdateManifest.SAVE_CAPABILITY_WRITES)
 
 
-## Capability 6 is vault-v4 quest-objective progress. This is deliberately the
-## expand release: the manifest advertises the new reader while the production
-## writer remains on the retained capability-5 character contract.
-func _test_quest_reader_expansion_is_advertised() -> void:
+## Capability 6 is vault-v4 quest-objective progress. Its retained reader now
+## has a production writer, so read and write capability must both advertise 6.
+func _test_quest_writer_activation_is_advertised() -> void:
 	if UpdateManifest.SAVE_CAPABILITY_READS != 6:
 		_fail("the quest-progress reader advertises capability %d, expected 6"
 			% UpdateManifest.SAVE_CAPABILITY_READS)
 		return
-	if UpdateManifest.SAVE_CAPABILITY_WRITES != 5:
-		_fail("the quest reader expansion moved write capability to %d; expected it to remain 5"
+	if UpdateManifest.SAVE_CAPABILITY_WRITES != 6:
+		_fail("the quest-progress writer advertises capability %d, expected 6"
 			% UpdateManifest.SAVE_CAPABILITY_WRITES)
 		return
 	if SaveVault.VAULT_READ_VERSION != 4:
 		_fail("the manifest advertises quest reads but SaveVault stops at v%d"
 			% SaveVault.VAULT_READ_VERSION)
 		return
-	if SaveVault.VAULT_VERSION != 3:
-		_fail("the reader expansion activated vault-v%d writes; expected the v3 writer to remain"
+	if SaveVault.VAULT_VERSION != 4:
+		_fail("the capability-6 manifest advertises vault-v%d writes; expected v4"
 			% SaveVault.VAULT_VERSION)
 
 
