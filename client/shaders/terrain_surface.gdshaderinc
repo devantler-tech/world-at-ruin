@@ -189,22 +189,24 @@ vec3 terrain_plate_blend_weights(
 	return mix(pairwise, symmetric, j);
 }
 
-// How much the symmetric whole-window answer replaces the established
-// three-candidate answer. A close third/fourth gap is relevant only when the
-// fourth cell also reaches the nearest cell's fragment footprint: two distant
-// candidates can be close to EACH OTHER without contributing anything here.
-// The closeness ramp narrows continuously as the fourth candidate approaches
-// the edge of that reach. It has therefore already reached zero before the
-// reach ends whenever `f4 - f3` is non-zero; a hard cutoff cannot draw a contour
-// while the two answers still differ. At an exact third/fourth identity swap
-// the ramp remains one. Its final cutoff is harmless there because, as the reach
-// margin vanishes, both candidates' coverage vanishes with it.
-float terrain_plate_window_activation(float f1, float f3, float f4, float fw) {
+// The same two-to-many junction ramp used by
+// `terrain_plate_blend_weights`. The whole-window result is composed DIRECTLY
+// from the established pairwise answer with this ramp, rather than mixed over
+// the already three-way result: when the fourth cell's coverage reaches zero,
+// the generalized window then becomes exactly the same three-candidate
+// symmetric answer before any search-window cutoff is applied.
+float terrain_plate_window_junction(float f2, float f3, float fw) {
 	float w = max(fw, 1e-6);
-	float reach_margin = max(w - (f4 - f1), 0.0);
-	float within_reach = step(1e-6, reach_margin);
-	return within_reach * (1.0 - smoothstep(
-		0.0, max(reach_margin, 1e-6), f4 - f3));
+	return 1.0 - smoothstep(0.0, w, f3 - f2);
+}
+
+// A PERFORMANCE gate only, never a blend authority. Once the fourth cell is
+// outside the nearest cell's footprint every later window weight is exactly
+// zero, so the generalized result has already converged to the established
+// three-way answer. The hard step is therefore applied only after the two
+// answers are equal, including at an exact third/fourth identity swap.
+float terrain_plate_window_reachable(float f1, float f4, float fw) {
+	return step(f4 - f1, max(fw, 1e-6));
 }
 
 // One search-window cell's symmetric coverage. This depends only on the cell's

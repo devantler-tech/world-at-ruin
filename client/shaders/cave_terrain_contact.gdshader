@@ -104,9 +104,9 @@ void fragment() {
 	// Coverage split across the three nearest plates, (owning, second, third).
 	// The third is 0.0 everywhere except at a triple junction (#499).
 	vec3 plate_w = vec3(1.0, 0.0, 0.0);
-	// A fourth candidate activates a symmetric whole-window resolve only within
-	// the same fragment footprint (#573).
+	// Junction authority plus a separate fourth-cell performance gate (#573).
 	float plate_window_w = 0.0;
+	float plate_window_gate = 0.0;
 	vec4 sub = vec4(rock_color, rock_roughness);
 	vec4 sub_nb = vec4(rock_color, rock_roughness);
 	vec4 sub_nb3 = vec4(rock_color, rock_roughness);
@@ -145,8 +145,9 @@ void fragment() {
 		// have to agree about WHICH plates they are blending as well as how much,
 		// or they part company at a triple junction that straddles the contact.
 		plate_w = terrain_plate_blend_weights(f1, f2, f3, plate_edge_w, plate_fw);
-		plate_window_w = plate_resolved * terrain_plate_window_activation(
-			f1, f3, f4, plate_fw);
+		plate_window_w = terrain_plate_window_junction(f2, f3, plate_fw);
+		plate_window_gate = plate_resolved * terrain_plate_window_reachable(
+			f1, f4, plate_fw);
 		// The same footprint average as the ground (#306). This path exists to
 		// resolve the IDENTICAL substance at the same world XZ, so leaving the
 		// step unfiltered here would reintroduce the crawl at the cave contact
@@ -208,14 +209,17 @@ void fragment() {
 	// A weighted average over the three candidates. `plate_w` sums to one, and
 	// away from a junction it is `(1 - plate_edge_w, plate_edge_w, 0)` — the
 	// previous two-cell blend exactly.
+	float pair_slab = mix(slab_own, slab_nb, plate_edge_w);
 	float slab = slab_own * plate_w.x + slab_nb * plate_w.y
 		+ slab_nb3 * plate_w.z;
 	// Mirror the ground shader's symmetric sum over every cell that can carry
 	// footprint weight. During the active 0.30–0.85 resolution fade that support
-	// fits inside this 5x5 domain; outside it `plate_window_w` is already zero.
+	// fits inside this 5x5 domain; outside it `plate_window_gate` is already zero.
 	// It has authority only where the fourth candidate enters this fragment's
-	// footprint, so the established answer remains bit-identical everywhere else.
-	if (plates_enabled && plate_window_w > 0.0) {
+	// footprint. The generalized answer is composed from the same pairwise base,
+	// so it converges to the established three-way result before the performance
+	// gate skips the window.
+	if (plates_enabled && plate_window_gate > 0.0 && plate_window_w > 0.0) {
 		vec2 window_base = floor(plate_uv);
 		float window_total = 0.0;
 		float window_slab = 0.0;
@@ -237,7 +241,7 @@ void fragment() {
 			}
 		}
 		slab = mix(
-			slab,
+			pair_slab,
 			window_slab / max(window_total, 1e-6),
 			plate_window_w);
 	}
@@ -288,12 +292,15 @@ void fragment() {
 		plate_crack_field,
 		region_rough, grain, detail, surf_nb3, rough_nb3, crack_nb3);
 	// A weighted average of the three finished surfaces, as the ground does.
+	vec3 pair_surface = mix(surf_own, surf_nb, plate_edge_w);
+	float pair_rough = mix(rough_own, rough_nb, plate_edge_w);
+	float pair_crack = mix(crack_own, crack_nb, plate_edge_w);
 	surface = surf_own * plate_w.x + surf_nb * plate_w.y + surf_nb3 * plate_w.z;
 	stone_rough = rough_own * plate_w.x + rough_nb * plate_w.y
 		+ rough_nb3 * plate_w.z;
 	crack = crack_own * plate_w.x + crack_nb * plate_w.y
 		+ crack_nb3 * plate_w.z;
-	if (plate_window_w > 0.0) {
+	if (plate_window_gate > 0.0 && plate_window_w > 0.0) {
 		vec2 window_base = floor(plate_uv);
 		vec3 window_surface = vec3(0.0);
 		float window_rough = 0.0;
@@ -338,15 +345,15 @@ void fragment() {
 		}
 		float inverse_window_total = 1.0 / max(window_total, 1e-6);
 		surface = mix(
-			surface,
+			pair_surface,
 			window_surface * inverse_window_total,
 			plate_window_w);
 		stone_rough = mix(
-			stone_rough,
+			pair_rough,
 			window_rough * inverse_window_total,
 			plate_window_w);
 		crack = mix(
-			crack,
+			pair_crack,
 			window_crack * inverse_window_total,
 			plate_window_w);
 	}

@@ -265,9 +265,11 @@ void fragment() {
 	// Coverage split across the three nearest plates, (owning, second, third).
 	// The third is 0.0 everywhere except at a triple junction (#499).
 	vec3 plate_w = vec3(1.0, 0.0, 0.0);
-	// Whole-window coverage is zero except where a fourth candidate enters the
-	// same fragment footprint. At the exact third/fourth swap it is one.
+	// Junction authority for the generalized whole-window composition.
 	float plate_window_w = 0.0;
+	// Performance gate: once the fourth cell has zero footprint weight, the
+	// generalized answer is already exactly the established three-way answer.
+	float plate_window_gate = 0.0;
 	vec4 sub = vec4(rock_color, rock_roughness);
 	vec4 sub_nb = vec4(rock_color, rock_roughness);
 	vec4 sub_nb3 = vec4(rock_color, rock_roughness);
@@ -346,8 +348,9 @@ void fragment() {
 	// (#499). Keyed on the isotropic `plate_fw`, not `edge_fw`; see the
 	// function's own note on why a width built from `c1` puts the defect back.
 	plate_w = terrain_plate_blend_weights(f1, f2, f3, plate_edge_w, plate_fw);
-	plate_window_w = plate_resolved * terrain_plate_window_activation(
-		f1, f3, f4, plate_fw);
+	plate_window_w = terrain_plate_window_junction(f2, f3, plate_fw);
+	plate_window_gate = plate_resolved * terrain_plate_window_reachable(
+		f1, f4, plate_fw);
 
 	// Both cells' substances are kept SEPARATE here and composed with their own
 	// slab masks below. Blending the substances here and the masks there would
@@ -458,17 +461,16 @@ void fragment() {
 	// A weighted average over the three candidates. `plate_w` sums to one, and
 	// away from a junction it is `(1 - plate_edge_w, plate_edge_w, 0)` — so this
 	// is the previous two-cell blend term for term everywhere but a junction.
+	float pair_slab = mix(slab_own, slab_nb, plate_edge_w);
 	float slab = slab_own * plate_w.x + slab_nb * plate_w.y
 		+ slab_nb3 * plate_w.z;
 	// A fixed candidate list has a tail: at a four-fold vertex the third label
-	// swaps with an uncarried fourth while still holding coverage. Fold in a
-	// symmetric sum over every cell that can carry footprint weight, only where
-	// the fourth enters this pixel's footprint. Everywhere else
-	// `plate_window_w` is exactly zero and the established two-/three-cell answer
-	// stays bit-identical. During the active 0.30–0.85 resolution fade that
-	// support fits inside this 5x5 domain; outside it `plate_window_w` is already
-	// zero.
-	if (plates_enabled && plate_window_w > 0.0) {
+	// swaps with an uncarried fourth while still holding coverage. Compose the
+	// same pairwise answer directly toward a symmetric sum over every weighted
+	// cell. As the fourth weight reaches zero this becomes the existing
+	// three-way formula exactly, so the hard performance gate below is applied
+	// only after both answers have converged.
+	if (plates_enabled && plate_window_gate > 0.0 && plate_window_w > 0.0) {
 		vec2 window_base = floor(plate_uv);
 		float window_total = 0.0;
 		float window_slab = 0.0;
@@ -490,7 +492,7 @@ void fragment() {
 			}
 		}
 		slab = mix(
-			slab,
+			pair_slab,
 			window_slab / max(window_total, 1e-6),
 			plate_window_w);
 	}
@@ -619,6 +621,9 @@ void fragment() {
 	// and is `(1 - plate_edge_w, plate_edge_w, 0)` away from a junction, so this
 	// is the previous two-cell blend term for term there — and at a resolved
 	// contact, where it is `(1, 0, 0)`, it still composes the owning cell alone.
+	vec3 pair_surface = mix(surf_own, surf_nb, plate_edge_w);
+	float pair_rough = mix(rough_own, rough_nb, plate_edge_w);
+	float pair_crack = mix(crack_own, crack_nb, plate_edge_w);
 	surface = surf_own * plate_w.x + surf_nb * plate_w.y + surf_nb3 * plate_w.z;
 	// Roughness keeps its downstream terms in the original order too: the
 	// region/grain offsets and the clamp are applied per cell BEFORE the crack
@@ -627,7 +632,7 @@ void fragment() {
 		+ rough_nb3 * plate_w.z;
 	crack = crack_own * plate_w.x + crack_nb * plate_w.y
 		+ crack_nb3 * plate_w.z;
-	if (plate_window_w > 0.0) {
+	if (plate_window_gate > 0.0 && plate_window_w > 0.0) {
 		vec2 window_base = floor(plate_uv);
 		vec3 window_surface = vec3(0.0);
 		float window_rough = 0.0;
@@ -668,15 +673,15 @@ void fragment() {
 		}
 		float inverse_window_total = 1.0 / max(window_total, 1e-6);
 		surface = mix(
-			surface,
+			pair_surface,
 			window_surface * inverse_window_total,
 			plate_window_w);
 		stone_rough = mix(
-			stone_rough,
+			pair_rough,
 			window_rough * inverse_window_total,
 			plate_window_w);
 		crack = mix(
-			crack,
+			pair_crack,
 			window_crack * inverse_window_total,
 			plate_window_w);
 	}

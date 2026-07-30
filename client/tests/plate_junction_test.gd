@@ -96,6 +96,7 @@ func _ready() -> void:
 	else:
 		_check_degenerate_vertex_bound(degenerate["uv"])
 	_check_window_activation_continuity()
+	_check_exact_swap_reach_handoff()
 	_check_window_grid_boundary_continuity()
 	_check_activation_order_domain()
 	_check_two_cell_reduction()
@@ -284,6 +285,66 @@ func _window_activation(p: Dictionary, footprint: float) -> float:
 		float(p["f4"]) - float(p["f3"])))
 
 
+func _window_junction(p: Dictionary, footprint: float) -> float:
+	return 1.0 - smoothstep(
+		0.0, maxf(footprint, 1e-6),
+		float(p["f3"]) - float(p["f2"]))
+
+
+func _window_reachable(p: Dictionary, footprint: float) -> bool:
+	return float(p["f4"]) - float(p["f1"]) <= maxf(footprint, 1e-6)
+
+
+func _synthetic_three_way_value(
+		f2: float, f3: float, pair_w: float, footprint: float) -> float:
+	var g2 := 1.0 - smoothstep(0.0, footprint, f2)
+	var g3 := 1.0 - smoothstep(0.0, footprint, f3)
+	var symmetric := (
+		0.20 + 0.80 * g2 + 0.10 * g3
+	) / (1.0 + g2 + g3)
+	var pairwise := lerpf(0.20, 0.80, pair_w)
+	var junction := 1.0 - smoothstep(0.0, footprint, f3 - f2)
+	return lerpf(pairwise, symmetric, junction)
+
+
+func _synthetic_window_value(
+		f2: float, f3: float, f4: float, footprint: float) -> float:
+	var g2 := 1.0 - smoothstep(0.0, footprint, f2)
+	var g3 := 1.0 - smoothstep(0.0, footprint, f3)
+	var g4 := 1.0 - smoothstep(0.0, footprint, f4)
+	return (
+		0.20 + 0.80 * g2 + 0.10 * g3 + 0.90 * g4
+	) / (1.0 + g2 + g3 + g4)
+
+
+## The pre-fix scalar handoff. Kept as the positive control for the exact
+## third/fourth swap at the footprint boundary.
+func _synthetic_legacy_reach_value(
+		f3: float, f4: float, footprint: float) -> float:
+	var f2 := footprint * 0.50
+	var pair_w := 0.50
+	var current := _synthetic_three_way_value(
+		f2, f3, pair_w, footprint)
+	var full := _synthetic_window_value(f2, f3, f4, footprint)
+	var partition := {"f1": 0.0, "f3": f3, "f4": f4}
+	return lerpf(current, full, _window_activation(partition, footprint))
+
+
+## Mirrors the shipping composition at the reach cutoff.
+func _synthetic_reach_value(
+		f3: float, f4: float, footprint: float) -> float:
+	var f2 := footprint * 0.50
+	var pair_w := 0.50
+	var current := _synthetic_three_way_value(
+		f2, f3, pair_w, footprint)
+	var partition := {"f1": 0.0, "f2": f2, "f3": f3, "f4": f4}
+	if not _window_reachable(partition, footprint):
+		return current
+	var pairwise := lerpf(0.20, 0.80, pair_w)
+	var full := _synthetic_window_value(f2, f3, f4, footprint)
+	return lerpf(pairwise, full, _window_junction(partition, footprint))
+
+
 ## Keep the established three-way answer bit-identical except where the fourth
 ## candidate enters the same pixel footprint. At the exact third/fourth identity
 ## swap this is wholly the symmetric window answer, so the discontinuous
@@ -291,10 +352,13 @@ func _window_activation(p: Dictionary, footprint: float) -> float:
 func _window_blend(uv: Vector2) -> PackedFloat64Array:
 	var p := _plates(uv)
 	var current := _blend(uv, true)
+	if not _window_reachable(p, FOOTPRINT):
+		return current
+	var pairwise := _blend(uv, false)
 	var full := _full_window_blend(uv, p)
-	var junction := _window_activation(p, FOOTPRINT)
+	var junction := _window_junction(p, FOOTPRINT)
 	for k in range(0, current.size()):
-		current[k] = lerpf(current[k], full[k], junction)
+		current[k] = lerpf(pairwise[k], full[k], junction)
 	return current
 
 
@@ -545,6 +609,39 @@ func _check_window_activation_continuity() -> void:
 	print("WINDOW ACTIVATION reach-boundary jump %.9f" % jump)
 
 
+## At an exact third/fourth swap the old activation stays one until the fourth
+## distance leaves the footprint, then drops to zero. The complete window and
+## established three-way rules assign the first/second candidates differently,
+## so that scalar cutoff draws a contour even though the fourth candidate's own
+## coverage has converged to zero. The generalized composition must converge to
+## the established result before the cutoff is allowed to skip its window.
+func _check_exact_swap_reach_handoff() -> void:
+	var footprint := 0.60
+	var epsilon := 0.000001
+	var before := footprint - epsilon
+	var after := footprint + epsilon
+	var old_before := _synthetic_legacy_reach_value(
+		before, before, footprint)
+	var old_after := _synthetic_legacy_reach_value(
+		after, after, footprint)
+	var old_jump := absf(old_before - old_after)
+	var new_before := _synthetic_reach_value(before, before, footprint)
+	var new_after := _synthetic_reach_value(after, after, footprint)
+	var new_jump := absf(new_before - new_after)
+	if old_jump < 0.02:
+		_fail("control: the legacy exact-swap reach handoff jumps only %.9f — "
+			% old_jump
+			+ "the probe cannot see the differing first/second weighting on "
+			+ "either side of the cutoff")
+	if new_jump > 0.001:
+		_fail("the exact third/fourth reach handoff still jumps %.9f when the "
+			% new_jump
+			+ "fourth coverage leaves the footprint — the generalized window "
+			+ "must converge to the established answer before its cutoff")
+	print("WINDOW HANDOFF legacy jump %.9f; generalized jump %.9f"
+		% [old_jump, new_jump])
+
+
 func _max_window_grid_boundary_jump(radius: int, footprint: float) -> Dictionary:
 	var worst := 0.0
 	var worst_uv := Vector2.ZERO
@@ -685,11 +782,12 @@ func _check_source_guards() -> void:
 			% PARTITION_PATH
 			+ "longer split across the three nearest plates, so the junction "
 			+ "step this test measures is back (#499)")
-	if not partition.contains("float terrain_plate_window_activation("):
-		_fail("`terrain_plate_window_activation` is absent from %s — coverage "
+	if not partition.contains("float terrain_plate_window_junction(") \
+			or not partition.contains("float terrain_plate_window_reachable("):
+		_fail("the generalized junction weight or converged reach gate is absent "
+			+ "from %s — coverage either still ends at a fixed candidate list "
 			% PARTITION_PATH
-			+ "still ends at a fixed candidate list, so a four-fold vertex "
-			+ "retains the third/fourth identity jump (#573)")
+			+ "or cuts over before the two compositions agree (#573)")
 	if not partition.contains("for (int j = -2; j <= 2; j++)") \
 			or not partition.contains("for (int i = -2; i <= 2; i++)"):
 		_fail("`terrain_plates` does not select its first four distances from "
@@ -712,12 +810,13 @@ func _check_source_guards() -> void:
 				+ "plate outright again, or it keys the split on a footprint "
 				+ "built from `c1`, which jumps when the owning cell swaps and "
 				+ "puts the defect back (#499)")
-		if not src.contains("terrain_plate_window_activation("):
-			_fail("%s does not activate whole-window coverage from "
+		if not src.contains("terrain_plate_window_junction(") \
+				or not src.contains("terrain_plate_window_reachable("):
+			_fail("%s does not derive whole-window junction authority separately "
 				% path
-				+ "`terrain_plate_window_activation(...)` — the "
-				+ "fourth candidate still has no continuous path into the "
-				+ "surface (#573)")
+				+ "from its converged reach gate — the fourth candidate either "
+				+ "has no continuous path into the surface or the cutoff can "
+				+ "still draw a contour (#573)")
 		if not src.contains("terrain_plate_window_weight(d, f1, plate_fw)"):
 			_fail("%s does not weight every search-window cell with "
 				% path
@@ -730,12 +829,18 @@ func _check_source_guards() -> void:
 				+ "sums — a 3x3 domain drops weighted columns at integer grid "
 				+ "boundaries while the resolution fade is active")
 		if not src.contains(
-				"plate_window_w = plate_resolved * "
-				+ "terrain_plate_window_activation("):
+				"plate_window_gate = plate_resolved * "
+				+ "terrain_plate_window_reachable("):
 			_fail("%s does not retire whole-window sampling with the plate "
 				% path
 				+ "resolution fade — outside the 0.30–0.85 active range there "
 				+ "is no cell-specific plate signal left to resolve")
+		if not src.contains("pair_surface = mix(surf_own, surf_nb, plate_edge_w)") \
+				or not src.contains("surface = mix(\n\t\t\tpair_surface,"):
+			_fail("%s does not compose the generalized window from the "
+				% path
+				+ "established pairwise base — it cannot converge to the "
+				+ "three-way answer before the fourth-cell cutoff")
 
 
 func _source(path: String) -> String:
