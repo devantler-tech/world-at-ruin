@@ -592,8 +592,15 @@ everything shipped afterwards is held to.
   identity-bound ciphertext/fingerprint/readiness metadata, observes those exact values through
   `WatchGameServer`, and only then permits the serving command to call `Ready`; an allocatable
   restart calls `Shutdown` without rotating metadata), the first **Nakama identity boundary**
-  (`server/nakamaauth/` — verifies a player session through Nakama's generated gRPC `GetAccount`
-  API and returns only the authenticated user ID), the **player handoff core**
+  (`server/nakamaauth/` — locally validates audience-bound Google ID tokens, derives a
+  server-keyed opaque email/password pair whose logged identifier is not replayable alone,
+  provisions through Nakama's generated `AuthenticateEmail` API, verifies the returned session,
+  and atomically preserves that authenticated user ID in a private system-owned create-only
+  binding so mutable Nakama email link/unlink operations cannot detach the Google identity;
+  repeat sign-in resolves the durable binding without reusing the email field, then checks the
+  exact Nakama account still exists and is enabled; the strict schema and complete
+  identity-address contract are base-anchored before this default-off writer is composed), the
+  **player handoff core**
   (`server/handoff/` — gives only that verified identity plus a caller-stable reservation key and
   server-generated attempt ID to an allocation boundary, conditionally reconciles ambiguous
   outcomes by that owned attempt, constrains the returned endpoint to the configured managed DNS

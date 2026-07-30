@@ -23,12 +23,13 @@ const testSession = "signed-session-token"
 type accountServer struct {
 	apigrpc.UnimplementedNakamaServer
 
-	mu         sync.Mutex
-	calls      int
-	auth       []string
-	trace      []string
-	account    *api.Account
-	accountErr error
+	mu          sync.Mutex
+	calls       int
+	auth        []string
+	gatewayAuth []string
+	trace       []string
+	account     *api.Account
+	accountErr  error
 }
 
 func (s *accountServer) GetAccount(ctx context.Context, _ *emptypb.Empty) (*api.Account, error) {
@@ -38,6 +39,7 @@ func (s *accountServer) GetAccount(ctx context.Context, _ *emptypb.Empty) (*api.
 	defer s.mu.Unlock()
 	s.calls++
 	s.auth = append([]string(nil), md.Get("authorization")...)
+	s.gatewayAuth = append([]string(nil), md.Get("grpcgateway-authorization")...)
 	s.trace = append([]string(nil), md.Get("x-trace-id")...)
 	return s.account, s.accountErr
 }
@@ -52,6 +54,12 @@ func (s *accountServer) observedTrace() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]string(nil), s.trace...)
+}
+
+func (s *accountServer) observedGatewayAuthorization() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.gatewayAuth...)
 }
 
 func verifierAgainst(t *testing.T, server *accountServer) *Verifier {
@@ -117,6 +125,7 @@ func TestVerifySessionReplacesInheritedAuthorizationMetadata(t *testing.T) {
 		context.Background(),
 		metadata.Pairs(
 			"authorization", "Bearer inherited-session",
+			"grpcgateway-authorization", "Bearer inherited-gateway-session",
 			"x-trace-id", "trace-7",
 		),
 	)
@@ -129,6 +138,12 @@ func TestVerifySessionReplacesInheritedAuthorizationMetadata(t *testing.T) {
 	_, auth := server.observed()
 	if len(auth) != 1 || auth[0] != "Bearer "+testSession {
 		t.Fatalf("authorization metadata = %q, want only supplied bearer credential", auth)
+	}
+	if gatewayAuth := server.observedGatewayAuthorization(); len(gatewayAuth) != 0 {
+		t.Fatalf(
+			"gRPC-Gateway authorization metadata = %q, want stripped",
+			gatewayAuth,
+		)
 	}
 	trace := server.observedTrace()
 	if len(trace) != 1 || trace[0] != "trace-7" {

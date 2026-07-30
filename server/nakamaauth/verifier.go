@@ -1,4 +1,4 @@
-// Package nakamaauth verifies player sessions against Nakama's account API.
+// Package nakamaauth provisions player accounts and verifies Nakama sessions.
 package nakamaauth
 
 import (
@@ -21,6 +21,22 @@ type Verifier struct {
 	client accountClient
 }
 
+func outgoingContextWithoutAuthorization(ctx context.Context) context.Context {
+	outgoing, _ := metadata.FromOutgoingContext(ctx)
+	outgoing = outgoing.Copy()
+	outgoing.Delete("authorization")
+	outgoing.Delete("grpcgateway-authorization")
+	return metadata.NewOutgoingContext(ctx, outgoing)
+}
+
+func outgoingAuthorizationContext(ctx context.Context, value string) context.Context {
+	ctx = outgoingContextWithoutAuthorization(ctx)
+	outgoing, _ := metadata.FromOutgoingContext(ctx)
+	outgoing = outgoing.Copy()
+	outgoing.Set("authorization", value)
+	return metadata.NewOutgoingContext(ctx, outgoing)
+}
+
 // NewVerifier builds a verifier over Nakama's generated gRPC client.
 func NewVerifier(client accountClient) *Verifier {
 	return &Verifier{client: client}
@@ -32,10 +48,7 @@ func (v *Verifier) VerifySession(ctx context.Context, session string) (string, e
 		return "", errors.New("nakama auth: session is empty")
 	}
 
-	outgoing, _ := metadata.FromOutgoingContext(ctx)
-	outgoing = outgoing.Copy()
-	outgoing.Set("authorization", "Bearer "+session)
-	ctx = metadata.NewOutgoingContext(ctx, outgoing)
+	ctx = outgoingAuthorizationContext(ctx, "Bearer "+session)
 	account, err := v.client.GetAccount(ctx, &emptypb.Empty{})
 	if err != nil {
 		// Nakama owns the detailed rejection reason. Only carry the stable
