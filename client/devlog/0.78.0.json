@@ -1,0 +1,9 @@
+{
+  "version": "0.78.0",
+  "date": "2026-07-30",
+  "title": "Ashen bindings enter the guarded wardrobe",
+  "notes": [
+    "Set WAR_LAYERED_OUTFIT_PICKERS=1 before launch to equip the ashen bindings in the hands armour slot; the selection now saves and returns on the next load.",
+    "The default creator still hides this raw preview. Its flat material lacks cloth grain, stitched seams, and age variation, and the wardrobe controls remain short of the authored equipment screen."
+  ]
+}
