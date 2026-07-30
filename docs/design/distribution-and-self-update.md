@@ -244,10 +244,12 @@ would tell a client where to *fetch* something is withheld, and each omission is
   monolithic ZIP cannot simply be re-labelled a *shell* artifact instead of a pack: that is the same
   unauthorized download. A client following the envelope to a `shell_update` finds nowhere to go and
   keeps playing — the safe failure.
-- **`signature` / `key` / `revocation`** — the Godot-native ECDSA P-256 verifier exists, but the root
-  public key, signing custody, certificate/revocation publisher, and trust-chain caller remain child 6.
-  The published OCI artifact is cosign-signed by digest, which is a real but *different* integrity
-  property.
+- **`signature` / `key` / `revocation`** — the Godot-native trust boundary verifies the signing-key
+  certificate with a caller-supplied offline-root public key, verifies the manifest with only that
+  certified key, and enters the pure decision core last. The production root public key, signing
+  custody, certificate/revocation publisher, runtime updater integration, and revocation checks remain
+  child 6. The published OCI artifact is cosign-signed by digest, which is a real but *different*
+  integrity property.
 - **`rollback_targets`** — empty, because no mountable content pack is retained. The published
   `v0.52.0` monolithic app is the whole-app rollback for save capability 3, but its `.app` ZIP is
   deliberately not advertised to the pack selector. Empty is the fail-closed pack value: it makes the
@@ -364,14 +366,14 @@ stale cache, or engine change can strand or subvert a client:
   who never sends one. The latch is caller-owned state like the high-water marks, one-way by
   construction, and an unreadable value blocks rather than reopening the path. Clients that never
   adopted certificates are unaffected, so pre-certificate publications stay readable.
-  **Root verification of that certificate remains key-custody child 6**, together with root-signed
-  revocation and the independently fresh revocation head. `UpdateTrust` supplies the production
-  ECDSA verification primitive, but no updater caller or root material invokes it yet. The decision
-  core verifies no signatures — it performs no I/O at all — so a certificate currently remains
-  trusted exactly as far as the manifest signature carrying it: enough to stop a keyless replayer,
-  not yet enough to stop a compromised key minting its own certificate. Reading the epoch from the
-  certificate confines closing that gap to the trust-chain caller, with no further change to the
-  decision core.
+  **The certificate is authenticated before its epoch is consumed.**
+  `UpdateTrust.verify_and_decide()` canonicalizes the certificate without `root_signature`, verifies
+  it with a caller-supplied offline-root public key, then canonicalizes the manifest without
+  `signature` and verifies it with only the certified signing key. `UpdateDecision` is called last;
+  every trust refusal returns an empty decision. The production root public key, signing custody,
+  publisher and runtime updater integration do not exist yet, so signed delivery remains inactive.
+  Root-signed revocation and the independently fresh revocation head remain #490 work and belong
+  between certificate authentication and manifest authentication.
   - **The persisted sequence alone is NOT enough, so contraction waits out the TTL.** A returning or
     freshly-installed client has no high-water mark, so an unexpired cached manifest at sequence `N`
     looks perfectly valid to it even after the server contracted per `N+1` — every signature and expiry

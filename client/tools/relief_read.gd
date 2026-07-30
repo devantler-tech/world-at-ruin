@@ -122,6 +122,10 @@ const WARMUP_FRAMES := 150
 ## a half-resolved frame — which would read as a relief difference the shader had
 ## nothing to do with.
 const SETTLE_FRAMES := 90
+## A transient camera hand-off restarts settling. If another camera keeps taking
+## the viewport for this many frames, refuse instead of sampling its image under
+## this tool's distance label.
+const MAX_SETTLE_ATTEMPTS := SETTLE_FRAMES * 2
 
 ## A pixel counts as carrying relief when switching the term off moves its luma
 ## more than this. Low, because relief is a normal perturbation seen through the
@@ -132,7 +136,8 @@ const SETTLE_FRAMES := 90
 const READ_STEP := 0.01
 
 ## Below this covered fraction the near sample is not photographing seams at all
-## and the sweep has no control. Reported as VACUOUS rather than as a pass.
+## and the sweep has no control. Reported as REFUSED rather than as a numeric
+## sample or pass.
 ##
 ## The number is set from what the two failure states actually measure, not from
 ## taste. A crop with no seam in it — the near end of an earlier sweep, which sat
@@ -152,6 +157,7 @@ var _cam: Camera3D
 ## written down, because where the rock is exposed is a property of the world.
 var _anchor := Vector3.ZERO
 var _main: Node
+var _last_refusal := ""
 
 
 func _ready() -> void:
@@ -201,11 +207,26 @@ func _ready() -> void:
 	for distance in DISTANCES:
 		_cam.global_position = _anchor + bearing * distance
 		var lit := await _settled_luma(mat, shipping_relief)
+		if _is_refused(lit):
+			covers.append(NAN)
+			strengths.append(NAN)
+			print("RELIEF_COVERED %s" % _row(covers))
+			print("RELIEF_STRENGTH %s" % _row(strengths))
+			_fail("REFUSED at %.0f m — %s" % [distance, _last_refusal])
+			return
 		# Taken HERE, while the relief is still on. Reading the viewport after the
 		# flat pass instead would save the relief-OFF frame under a name that says
 		# lit — evidence that quietly depicts the opposite of its own caption.
 		var lit_frame := get_viewport().get_texture().get_image()
 		var flat := await _settled_luma(mat, 0.0)
+		if _is_refused(flat):
+			mat.set_shader_parameter("crack_relief", shipping_relief)
+			covers.append(NAN)
+			strengths.append(NAN)
+			print("RELIEF_COVERED %s" % _row(covers))
+			print("RELIEF_STRENGTH %s" % _row(strengths))
+			_fail("REFUSED at %.0f m — %s" % [distance, _last_refusal])
+			return
 		if lit.is_empty() or flat.is_empty():
 			_fail("the crop sampled no pixels — the viewport is smaller than the crop")
 			return
@@ -215,8 +236,23 @@ func _ready() -> void:
 				+ "surface, and a flat surface carries no seam read whatever the shader does")
 				% [spread, distance])
 			return
-		covers.append(_covered_fraction(lit, flat))
-		strengths.append(_covered_strength(lit, flat))
+		var covered := _covered_fraction(lit, flat)
+		var strength := _covered_strength(lit, flat)
+		# The nearest sample is the control every comparison leans on. If it
+		# carries no seams, a numeric zero would look like a weak relief reading
+		# even though the instrument did not measure relief at all.
+		if covers.is_empty() and covered < MIN_COVERAGE:
+			mat.set_shader_parameter("crack_relief", shipping_relief)
+			covers.append(NAN)
+			strengths.append(NAN)
+			print("RELIEF_COVERED %s" % _row(covers))
+			print("RELIEF_STRENGTH %s" % _row(strengths))
+			_fail(("REFUSED at %.0f m — the nearest sample covers only %.5f of the crop "
+				+ "(need %.5f), so the sweep has no near-field control")
+				% [distance, covered, MIN_COVERAGE])
+			return
+		covers.append(covered)
+		strengths.append(strength)
 		_save_evidence(lit_frame, lit, flat, distance)
 		print("  relief d=%5.1fm covered=%.5f strength=%.5f spread=%.4f"
 			% [distance, covers[covers.size() - 1], strengths[strengths.size() - 1], spread])
@@ -227,24 +263,6 @@ func _ready() -> void:
 
 	print("RELIEF_COVERED %s" % _row(covers))
 	print("RELIEF_STRENGTH %s" % _row(strengths))
-
-	# Non-vacuity, and it is the NEAREST sample that has to carry seams, not the
-	# best one anywhere in the sweep.
-	#
-	# A peak-only guard was the first cut and it passes while reporting exactly
-	# the failure the tool exists to detect: the near sample read 0.00000 — no
-	# relief at the distance acceptance criterion 3 protects — and the run still
-	# printed a verdict, because a far sample carried the peak. That is a
-	# measurement that reads BEST when it is broken, which plate_crawl's own
-	# STATES-DIFFER guard was added for after the same class of silent pass.
-	# The near sample is the control every comparison leans on, so it is the one
-	# that must be non-empty.
-	if covers[0] < MIN_COVERAGE:
-		_fail(("VACUOUS — the nearest sample (%.0f m) covers only %.5f of the crop "
-			+ "(need %.5f), so the sweep has no near-field control and cannot say "
-			+ "whether a change softens the read acceptance criterion 3 protects")
-			% [DISTANCES[0], covers[0], MIN_COVERAGE])
-		return
 
 	print("RELIEF READ — near %.0f m covers %.5f at strength %.5f; far %.0f m covers %.5f"
 		% [DISTANCES[0], covers[0], strengths[0],
@@ -273,8 +291,10 @@ func _shipping_relief(mat: ShaderMaterial) -> float:
 
 ## Sets the relief term, lets the frame settle, and returns the crop's luma.
 func _settled_luma(mat: ShaderMaterial, relief: float) -> PackedFloat32Array:
+	_last_refusal = ""
 	mat.set_shader_parameter("crack_relief", relief)
-	for _f in SETTLE_FRAMES:
+	var settled := 0
+	for _attempt in MAX_SETTLE_ATTEMPTS:
 		# Re-assert every frame, exactly as frame_capture and plate_crawl do: the
 		# player's own camera otherwise takes `current` back and the tool measures
 		# the view from inside the starter cave instead of the vantage it names.
@@ -283,7 +303,19 @@ func _settled_luma(mat: ShaderMaterial, relief: float) -> PackedFloat32Array:
 		_cam.current = true
 		_cam.look_at(_anchor, Vector3.UP)
 		await get_tree().process_frame
-	return _crop_luma()
+		if get_viewport().get_camera_3d() != _cam:
+			settled = 0
+			continue
+		settled += 1
+		if settled == SETTLE_FRAMES:
+			return _crop_luma()
+	_last_refusal = ("the measurement camera could not hold the viewport for %d consecutive "
+		+ "frames; another camera kept replacing it") % SETTLE_FRAMES
+	return PackedFloat32Array([NAN])
+
+
+func _is_refused(values: PackedFloat32Array) -> bool:
+	return values.size() == 1 and is_nan(values[0])
 
 
 ## CROP resolved to whole pixels for a frame of this size — the ONE place that
@@ -428,7 +460,10 @@ func _spread(v: PackedFloat32Array) -> float:
 func _row(values: PackedFloat32Array) -> String:
 	var parts := PackedStringArray()
 	for i in values.size():
-		parts.append("%.0fm=%.5f" % [DISTANCES[i], values[i]])
+		if is_nan(values[i]):
+			parts.append("%.0fm=REFUSED" % DISTANCES[i])
+		else:
+			parts.append("%.0fm=%.5f" % [DISTANCES[i], values[i]])
 	return " ".join(parts)
 
 

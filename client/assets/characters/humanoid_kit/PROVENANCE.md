@@ -98,7 +98,7 @@ while its flat bake materials remain below the character-art bar. Baked GLB sha2
 `dc2764375ea9d74eae03ed393cc140794fca89902e21d28d3ca74cd5075520b9`
 (526 004 bytes).
 
-`ashen_bindings` is the reader-only first hand-slot armor piece: a dark, rough, scalloped binding
+`ashen_bindings` is the preview-only first hand-slot armor piece: a dark, rough, scalloped binding
 that fits the early worn-light-armor tier without exposing a production writer before the retained
 reader release. Baked GLB sha256:
 `fdd81071ee4762321ca3ce8ce5701405d983640949ab927e4143e2cbfce215da`

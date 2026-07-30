@@ -2,6 +2,8 @@ package zonesock
 
 import (
 	"context"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -87,13 +89,19 @@ func newTestHub(t *testing.T, cfg Config) (*Hub, []byte) {
 	return hub, secret
 }
 
-func dial(t *testing.T, ts *httptest.Server, secret []byte, observer sim.EntityID) (*websocket.Conn, *http.Response, error) {
+func dial(t *testing.T, ts *httptest.Server, secret []byte, observer sim.EntityID) (*websocket.Conn, error) {
 	t.Helper()
 	tok, err := MintToken(secret, "allocation-a", observer, time.Now().Add(time.Minute))
 	if err != nil {
 		t.Fatalf("MintToken: %v", err)
 	}
-	return dialToken(t, ts, "Bearer "+tok)
+	conn, resp, err := dialToken(t, ts, "Bearer "+tok)
+	if resp != nil && resp.Body != nil {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			t.Errorf("close dial response body: %v", closeErr)
+		}
+	}
+	return conn, err
 }
 
 func dialToken(t *testing.T, ts *httptest.Server, authorization string) (*websocket.Conn, *http.Response, error) {
@@ -105,6 +113,13 @@ func dialToken(t *testing.T, ts *httptest.Server, authorization string) (*websoc
 		hdr.Set("Authorization", authorization)
 	}
 	return websocket.Dial(ctx, ts.URL, &websocket.DialOptions{HTTPClient: ts.Client(), HTTPHeader: hdr})
+}
+
+func closeConnection(t *testing.T, conn *websocket.Conn) {
+	t.Helper()
+	if err := conn.CloseNow(); err != nil && !errors.Is(err, net.ErrClosed) {
+		t.Errorf("close WebSocket connection: %v", err)
+	}
 }
 
 func readMessage(t *testing.T, c *websocket.Conn) wire.Message {
@@ -136,11 +151,11 @@ func TestJoinAndDeltaStreamOverTLS(t *testing.T) {
 	defer ts.Close()
 	startSim(t, hub)
 
-	c, _, err := dial(t, ts, secret, 1)
+	c, err := dial(t, ts, secret, 1)
 	if err != nil {
 		t.Fatalf("Dial: %v", err)
 	}
-	defer c.CloseNow()
+	defer closeConnection(t, c)
 	c.SetReadLimit(4 << 20)
 
 	join := readMessage(t, c)
@@ -227,8 +242,15 @@ func TestAdmissionFailClosed(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			conn, resp, err := dialToken(t, ts, tc.authorization)
+			if resp != nil && resp.Body != nil {
+				defer func() {
+					if closeErr := resp.Body.Close(); closeErr != nil {
+						t.Errorf("close refusal response body: %v", closeErr)
+					}
+				}()
+			}
 			if err == nil {
-				conn.CloseNow()
+				closeConnection(t, conn)
 				t.Fatal("dial succeeded, want refusal")
 			}
 			if resp == nil || resp.StatusCode != http.StatusUnauthorized {
@@ -240,11 +262,11 @@ func TestAdmissionFailClosed(t *testing.T) {
 		t.Fatalf("Connected() = %d after refusals, want 0", hub.Connected())
 	}
 
-	c, _, err := dial(t, ts, secret, 1)
+	c, err := dial(t, ts, secret, 1)
 	if err != nil {
 		t.Fatalf("valid dial refused: %v", err)
 	}
-	defer c.CloseNow()
+	defer closeConnection(t, c)
 	if m := readMessage(t, c); m.Kind != wire.KindSnapshot {
 		t.Fatalf("admitted client's first message kind = %d, want KindSnapshot", m.Kind)
 	}
@@ -259,11 +281,11 @@ func TestUnknownObserverRefused(t *testing.T) {
 	defer ts.Close()
 	startSim(t, hub)
 
-	c, _, err := dial(t, ts, secret, 99)
+	c, err := dial(t, ts, secret, 99)
 	if err != nil {
 		t.Fatalf("Dial: %v", err)
 	}
-	defer c.CloseNow()
+	defer closeConnection(t, c)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if _, _, err := c.Read(ctx); websocket.CloseStatus(err) != websocket.StatusPolicyViolation {
@@ -282,21 +304,21 @@ func TestDuplicateObserverRefused(t *testing.T) {
 	defer ts.Close()
 	startSim(t, hub)
 
-	first, _, err := dial(t, ts, secret, 2)
+	first, err := dial(t, ts, secret, 2)
 	if err != nil {
 		t.Fatalf("first dial: %v", err)
 	}
-	defer first.CloseNow()
+	defer closeConnection(t, first)
 	first.SetReadLimit(4 << 20)
 	if m := readMessage(t, first); m.Kind != wire.KindSnapshot {
 		t.Fatalf("first connection join kind = %d, want KindSnapshot", m.Kind)
 	}
 
-	second, _, err := dial(t, ts, secret, 2)
+	second, err := dial(t, ts, secret, 2)
 	if err != nil {
 		t.Fatalf("second dial: %v", err)
 	}
-	defer second.CloseNow()
+	defer closeConnection(t, second)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if _, _, err := second.Read(ctx); websocket.CloseStatus(err) != websocket.StatusPolicyViolation {
@@ -321,11 +343,11 @@ func TestClientDataMessageRefused(t *testing.T) {
 	defer ts.Close()
 	startSim(t, hub)
 
-	c, _, err := dial(t, ts, secret, 3)
+	c, err := dial(t, ts, secret, 3)
 	if err != nil {
 		t.Fatalf("Dial: %v", err)
 	}
-	defer c.CloseNow()
+	defer closeConnection(t, c)
 	c.SetReadLimit(4 << 20)
 	if m := readMessage(t, c); m.Kind != wire.KindSnapshot {
 		t.Fatalf("join kind = %d, want KindSnapshot", m.Kind)
@@ -351,11 +373,11 @@ func TestInboundOversizeDisconnects(t *testing.T) {
 	defer ts.Close()
 	startSim(t, hub)
 
-	c, _, err := dial(t, ts, secret, 3)
+	c, err := dial(t, ts, secret, 3)
 	if err != nil {
 		t.Fatalf("Dial: %v", err)
 	}
-	defer c.CloseNow()
+	defer closeConnection(t, c)
 	c.SetReadLimit(4 << 20)
 	if m := readMessage(t, c); m.Kind != wire.KindSnapshot {
 		t.Fatalf("join kind = %d, want KindSnapshot", m.Kind)
@@ -391,11 +413,11 @@ func TestIdleDeadlineDisconnectsMutePeer(t *testing.T) {
 	h := startSim(t, hub)
 
 	// Control: a draining peer outlives several idle windows.
-	alive, _, err := dial(t, ts, secret, 1)
+	alive, err := dial(t, ts, secret, 1)
 	if err != nil {
 		t.Fatalf("dial (draining peer): %v", err)
 	}
-	defer alive.CloseNow()
+	defer closeConnection(t, alive)
 	alive.SetReadLimit(4 << 20)
 	drainCtx, drainCancel := context.WithCancel(context.Background())
 	defer drainCancel()
@@ -408,11 +430,11 @@ func TestIdleDeadlineDisconnectsMutePeer(t *testing.T) {
 	}()
 
 	// The mute peer: joins, then never reads again.
-	mute, _, err := dial(t, ts, secret, 2)
+	mute, err := dial(t, ts, secret, 2)
 	if err != nil {
 		t.Fatalf("dial (mute peer): %v", err)
 	}
-	defer mute.CloseNow()
+	defer closeConnection(t, mute)
 
 	// First wait for BOTH to attach — Connected()==1 is transiently true
 	// while the mute peer's attach is still pending, and polling for 1
