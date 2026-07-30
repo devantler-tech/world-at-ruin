@@ -160,13 +160,16 @@ zone/dungeon server:
   presents a Nakama session to the generated gRPC `GetAccount` API as bearer
   metadata, and only Nakama's authenticated user ID crosses back into World at
   Ruin. Its default-off Google OIDC provisioner validates the ID token locally
-  against the configured `GoogleClientID`, accepts only Google's issuer and a
+  against the configured `GoogleClientID`, rejects unsafe/non-RS256 JWT shapes
+  before entering the pinned validator, accepts only Google's issuer and a
   non-empty subject, and sends Nakama `AuthenticateCustom` a domain-separated
   HMAC-SHA-256 credential derived from that subject and the server-only
   `NakamaCustomIDKey`. The raw Google credential therefore never reaches
   Nakama's credential-logging Google path, while the public Google subject
   cannot be guessed into a Nakama credential. Repeating one identity resolves
-  the same stable Nakama user rather than creating a client-chosen identity.
+  the same stable Nakama user rather than creating a client-chosen identity;
+  one bounded create-free reconciliation makes concurrent first use adopt the
+  winning Nakama insert.
   `ProvisionerConfig.GoogleProvisioningEnabled` is false by default, and
   enabling it also requires `GoogleClientID`, a stable and backed-up
   `NakamaCustomIDKey` of at least 32 bytes, and `NakamaServerKey`. The custom-ID

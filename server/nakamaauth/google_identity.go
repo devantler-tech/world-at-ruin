@@ -2,6 +2,8 @@ package nakamaauth
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"net"
 	"strings"
@@ -15,11 +17,37 @@ type googleIDTokenVerifier struct {
 	validate func(context.Context, string, string) (*idtoken.Payload, error)
 }
 
+func validateGoogleCredentialShape(credential string) error {
+	segments := strings.Split(credential, ".")
+	if len(segments) != 3 || segments[0] == "" || segments[1] == "" || segments[2] == "" {
+		return status.Error(codes.Unauthenticated, "google ID token has an invalid shape")
+	}
+
+	encodedHeader, err := base64.RawURLEncoding.DecodeString(segments[0])
+	if err != nil {
+		return status.Error(codes.Unauthenticated, "google ID token has an invalid header")
+	}
+	var header struct {
+		Algorithm string `json:"alg"`
+	}
+	if err := json.Unmarshal(encodedHeader, &header); err != nil {
+		return status.Error(codes.Unauthenticated, "google ID token has an invalid header")
+	}
+	if header.Algorithm != "RS256" {
+		return status.Error(codes.Unauthenticated, "google ID token has an unsupported algorithm")
+	}
+	return nil
+}
+
 func (v googleIDTokenVerifier) VerifyGoogleIDToken(
 	ctx context.Context,
 	credential string,
 	audience string,
 ) (string, error) {
+	if err := validateGoogleCredentialShape(credential); err != nil {
+		return "", err
+	}
+
 	validate := v.validate
 	if validate == nil {
 		validate = idtoken.Validate

@@ -104,6 +104,17 @@ func sanitizedGoogleIdentityError(err error) error {
 	}
 }
 
+func (p *Provisioner) authenticateCustom(
+	ctx context.Context,
+	customID string,
+	create bool,
+) (*api.Session, error) {
+	return p.client.AuthenticateCustom(ctx, &api.AuthenticateCustomRequest{
+		Account: &api.AccountCustom{Id: customID},
+		Create:  wrapperspb.Bool(create),
+	})
+}
+
 // ProvisionGoogle creates or resolves the Nakama account for a Google identity.
 func (p *Provisioner) ProvisionGoogle(
 	ctx context.Context,
@@ -142,12 +153,22 @@ func (p *Provisioner) ProvisionGoogle(
 		"Basic "+base64.StdEncoding.EncodeToString([]byte(p.config.NakamaServerKey+":")),
 	)
 
-	session, err := p.client.AuthenticateCustom(ctx, &api.AuthenticateCustomRequest{
-		Account: &api.AccountCustom{
-			Id: googleCustomID(p.config.NakamaCustomIDKey, subject),
-		},
-		Create: wrapperspb.Bool(true),
-	})
+	customID := googleCustomID(p.config.NakamaCustomIDKey, subject)
+	session, err := p.authenticateCustom(ctx, customID, true)
+	if status.Code(err) == codes.Internal {
+		// Nakama v3.40 reports the losing side of concurrent custom-ID
+		// creation as Internal after the winning insert commits. One
+		// create=false lookup adopts that winner without opening another
+		// account-creation race.
+		reconciled, reconcileErr := p.authenticateCustom(ctx, customID, false)
+		if reconcileErr == nil {
+			session = reconciled
+			err = nil
+		} else if status.Code(reconcileErr) == codes.Canceled ||
+			status.Code(reconcileErr) == codes.DeadlineExceeded {
+			err = reconcileErr
+		}
+	}
 	if err != nil {
 		return "", status.Error(
 			status.Code(err),

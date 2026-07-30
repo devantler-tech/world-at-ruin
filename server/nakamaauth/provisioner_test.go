@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	testIdentityProof     = "google-oidc-fixture"
+	testIdentityProof     = "eyJhbGciOiJSUzI1NiJ9.e30.c2lnbmF0dXJl"
 	testGoogleClientID    = "world-at-ruin.apps.googleusercontent.com"
 	testGoogleSubject     = "google-player-subject"
 	testNakamaCustomIDKey = "nakama-custom-id-key-with-at-least-32-bytes"
@@ -72,6 +72,8 @@ type provisioningServer struct {
 	accountCalls                int
 	accountGatewayAuthorization []string
 	rejectCustom                bool
+	failCustomInternal          bool
+	ambiguousCreate             bool
 	emptySession                bool
 	emptyUserID                 bool
 	issuedSession               string
@@ -99,6 +101,12 @@ func (s *provisioningServer) AuthenticateCustom(
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.authentication = append(s.authentication, authentication)
+	if s.failCustomInternal {
+		return nil, status.Error(codes.Internal, "custom identity storage unavailable")
+	}
+	if s.ambiguousCreate && len(s.authentication) == 1 && authentication.create {
+		return nil, status.Error(codes.Internal, "custom identity insert raced")
+	}
 	if s.rejectCustom {
 		return nil, status.Error(
 			codes.Unauthenticated,
@@ -334,6 +342,49 @@ func TestProvisionGoogleReturnsStableUserID(t *testing.T) {
 	}
 }
 
+func TestProvisionGoogleReconcilesConcurrentFirstUse(t *testing.T) {
+	server := &provisioningServer{
+		ambiguousCreate: true,
+		issuedSession:   testNakamaSession,
+		provisionedUser: "player-42",
+	}
+	provisioner := provisionerAgainst(
+		t,
+		server,
+		acceptingGoogleVerifier(),
+		enabledProvisionerConfig(),
+	)
+
+	userID, err := provisioner.ProvisionGoogle(context.Background(), testIdentityProof)
+	if err != nil {
+		t.Fatalf("ProvisionGoogle returned an error: %v", err)
+	}
+	if userID != "player-42" {
+		t.Fatalf("ProvisionGoogle user ID = %q, want player-42", userID)
+	}
+
+	authentication, accountCalls := server.observed()
+	if len(authentication) != 2 {
+		t.Fatalf("AuthenticateCustom calls = %d, want 2", len(authentication))
+	}
+	if !authentication[0].create {
+		t.Fatal("first AuthenticateCustom call did not permit account creation")
+	}
+	if authentication[1].create {
+		t.Fatal("reconciliation AuthenticateCustom call permitted account creation")
+	}
+	if authentication[0].customID != authentication[1].customID {
+		t.Fatalf(
+			"reconciliation custom ID = %q, want first custom ID %q",
+			authentication[1].customID,
+			authentication[0].customID,
+		)
+	}
+	if accountCalls != 1 {
+		t.Fatalf("GetAccount calls = %d, want 1", accountCalls)
+	}
+}
+
 func TestGoogleCustomIDIsKeyedAndStable(t *testing.T) {
 	first := googleCustomID([]byte(testNakamaCustomIDKey), testGoogleSubject)
 	repeated := googleCustomID([]byte(testNakamaCustomIDKey), testGoogleSubject)
@@ -527,6 +578,17 @@ func TestProvisionGoogleFailsClosed(t *testing.T) {
 			wantCode:      codes.Unauthenticated,
 			wantError:     "AuthenticateCustom rejected identity",
 			wantAuthCalls: 1,
+		},
+		{
+			name:       "Nakama ambiguous create does not converge",
+			credential: testIdentityProof,
+			config:     enabledProvisionerConfig(),
+			configure: func(server *provisioningServer) {
+				server.failCustomInternal = true
+			},
+			wantCode:      codes.Internal,
+			wantError:     "AuthenticateCustom rejected identity",
+			wantAuthCalls: 2,
 		},
 		{
 			name:       "Nakama returns no session",

@@ -2,6 +2,8 @@ package nakamaauth
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"net"
 	"net/url"
@@ -12,6 +14,22 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+func unsignedGoogleTokenForTest(t *testing.T, algorithm string, signature []byte) string {
+	t.Helper()
+	header, err := json.Marshal(map[string]string{"alg": algorithm})
+	if err != nil {
+		t.Fatalf("marshal test JWT header: %v", err)
+	}
+	return strings.Join(
+		[]string{
+			base64.RawURLEncoding.EncodeToString(header),
+			base64.RawURLEncoding.EncodeToString([]byte("{}")),
+			base64.RawURLEncoding.EncodeToString(signature),
+		},
+		".",
+	)
+}
 
 func TestGoogleIDTokenVerifierAudienceBindsCredential(t *testing.T) {
 	var observedCredential string
@@ -47,6 +65,62 @@ func TestGoogleIDTokenVerifierAudienceBindsCredential(t *testing.T) {
 	}
 	if observedAudience != testGoogleClientID {
 		t.Fatalf("validated audience = %q, want Google client ID", observedAudience)
+	}
+}
+
+func TestGoogleIDTokenVerifierRejectsUnsafeTokenShapeBeforeValidation(t *testing.T) {
+	tests := []struct {
+		name  string
+		token string
+	}{
+		{
+			name:  "not a JWT",
+			token: "not-a-jwt",
+		},
+		{
+			name:  "missing algorithm",
+			token: unsignedGoogleTokenForTest(t, "", []byte("signature")),
+		},
+		{
+			name:  "ES256 short signature",
+			token: unsignedGoogleTokenForTest(t, "ES256", []byte{1}),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			validateCalled := false
+			verifier := googleIDTokenVerifier{
+				validate: func(
+					context.Context,
+					string,
+					string,
+				) (*idtoken.Payload, error) {
+					validateCalled = true
+					return nil, errors.New("validator should not be called")
+				},
+			}
+
+			_, err := verifier.VerifyGoogleIDToken(
+				context.Background(),
+				test.token,
+				testGoogleClientID,
+			)
+			if code := status.Code(err); code != codes.Unauthenticated {
+				t.Fatalf(
+					"VerifyGoogleIDToken status code = %s, want %s (error %v)",
+					code,
+					codes.Unauthenticated,
+					err,
+				)
+			}
+			if validateCalled {
+				t.Fatal("VerifyGoogleIDToken called the validator for an unsafe token shape")
+			}
+			if strings.Contains(err.Error(), test.token) {
+				t.Fatalf("VerifyGoogleIDToken error leaked the credential: %q", err)
+			}
+		})
 	}
 }
 
