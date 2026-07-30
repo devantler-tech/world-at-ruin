@@ -339,15 +339,23 @@ float terrain_plate_separator_footprint(
 		return footprint;
 	}
 	// At the exact c3/c4 swap the carried c3 identity can change while all
-	// distances remain equal. The identity-only ramp must therefore hand fully
-	// to the permutation-free window independently of coverage; multiplying it
-	// by coverage leaves a residual coefficient on the ordered triple.
+	// distances remain equal. The identity-only ramp therefore removes the
+	// ordered triple independently of coverage. Coverage still retires the
+	// expensive window smoothly into the stable c1/c2 pair as c4 leaves reach.
 	if (higher_junction <= 0.0) {
 		return footprint;
 	}
-	float window = terrain_plate_window_separator_footprint(
-		uv, f1, plate_fw, uv_dx, uv_dy);
-	return mix(footprint, window, higher_junction);
+	float fourth_coverage = terrain_plate_window_weight(
+		f4, f1, plate_fw);
+	float fourth_authority = terrain_plate_coverage_authority(
+		fourth_coverage);
+	float identity_safe_tail = edge12;
+	if (fourth_authority > 0.0) {
+		float window = terrain_plate_window_separator_footprint(
+			uv, f1, plate_fw, uv_dx, uv_dy);
+		identity_safe_tail = mix(edge12, window, fourth_authority);
+	}
+	return mix(footprint, identity_safe_tail, higher_junction);
 }
 
 // Closing the old footprint jump also removes the energy that hard step

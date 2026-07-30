@@ -348,10 +348,16 @@ func _separator_footprint(p: Dictionary, uv: Vector2) -> float:
 		return footprint
 	if higher_junction <= 0.0:
 		return footprint
-	return lerpf(
-		footprint,
-		_full_window_separator_footprint(uv, p),
-		higher_junction)
+	var fourth_coverage := _candidate_coverage(
+		float(p["f4"]), float(p["f1"]))
+	var fourth_authority := _coverage_authority(fourth_coverage)
+	var identity_safe_tail := pair_fw
+	if fourth_authority > 0.0:
+		identity_safe_tail = lerpf(
+			pair_fw,
+			_full_window_separator_footprint(uv, p),
+			fourth_authority)
+	return lerpf(footprint, identity_safe_tail, higher_junction)
 
 
 ## Mirrors the current shader read compensation. The coverage-authority probe
