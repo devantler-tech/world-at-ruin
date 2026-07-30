@@ -452,11 +452,13 @@ a flexed swing knee and counter-swung arms following distance travelled. With `W
 sprinting gets a distinct run rather than that walk played faster: the elbows carry folded and drive
 — a channel the walk holds straight — and the knees keep a standing bias so neither ever reaches the
 walk's planted pose, with a longer stride so speed comes from ground covered per step rather than
-step rate. `WAR_JUMP_MOTION=1` separately poses the controller's real airborne arc from its vertical
-velocity: the body pushes off, tucks both legs at the apex, opens for descent and returns to rest on
-landing. The ordinary game keeps the standing body during travel while all three previews are
-default-off. Landing anticipation/impact, directional lean, turning and blended state transitions
-remain unauthored, and neither gait invents a flight phase of its own.
+step rate. When both gait previews are enabled, pressing or releasing sprint crossfades every driven
+bone channel over 0.24 seconds while the shared stride phase continues, so the silhouette no longer
+snaps between the two authored poses. `WAR_JUMP_MOTION=1` separately poses the controller's real
+airborne arc from its vertical velocity: the body pushes off, tucks both legs at the apex, opens for
+descent and returns to rest on landing. The ordinary game keeps the standing body during travel while
+all three previews are default-off. Authored starts and stops, landing anticipation/impact,
+directional lean and turning remain unauthored, and neither gait invents a flight phase of its own.
 
 **Motion reference.** The [Kingmakers announcement trailer from
 1:06–1:10](https://www.youtube.com/watch?v=OvezgDni8z4&t=66s) anchors a readable full-body sprint and
