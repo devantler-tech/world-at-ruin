@@ -8,6 +8,17 @@ b53e850a61be8cbc75824c38c24fd0c576281c389146e30438bb0cfcfe2f7e0e  docs/evidence/
 e2f1ed5a09bdb3131d817b4a988f5fdedd16c5506414d77098ce799c54d2750e  docs/evidence/issue-346-light-response/foliage-far-side.png
 2becc2faed2e850b30c9f71289a3ca9171839bfb95868e6cd2c2b6ca7da02deb  docs/evidence/issue-346-light-response/foliage-source-side.png
 eaea63f05c629b328c2a54c470beee6060a6b83b4258dba10590323131a9ddce  docs/evidence/issue-359-originality/devlog-grounded-language.png
+d70f064ae728a7756a23860a2b4a0d60bdc2ad293ed95bf0053d380b9caec44b  docs/evidence/issue-328-ash-motion/ash-motion-control-1.png
+046f34b9ff3fdc79d54202ed7bfd3525f29162e34f764f90c0cc09fe11423d32  docs/evidence/issue-328-ash-motion/ash-motion-control-2.png
+587a4e8d2e87c6674b6ec4ddb5cada5c30be4a0cb92b66bf707393e7ebbbc49d  docs/evidence/issue-328-ash-motion/ash-motion-control-3.png
+4f42bdf7148cb076fbe6cfacb143c9554e61d1a91b5db590413633f4b9823681  docs/evidence/issue-328-ash-motion/ash-motion-phase-01.png
+330d365eb3ee55120bf15d1118abdeccfe7ffd2a0e8d7969e34bd082f3e11a25  docs/evidence/issue-328-ash-motion/ash-motion-phase-02.png
+f5dd2cae26ffb2ce9d8e84c3ec707f26237ff1ad9a8ae5f2b242d98179100300  docs/evidence/issue-328-ash-motion/ash-motion-phase-03.png
+63f9dd93576fd223b9ec91dd534375696baa93402b6e4f2d74ea9d1671aa9936  docs/evidence/issue-328-ash-motion/ash-motion-phase-04.png
+14f800034fe5adc4a02febb2626eab4e4bdb962ee958f1c4b9e99cd4827ff20c  docs/evidence/issue-328-ash-motion/ash-motion-phase-05.png
+e1a8d6516b8acf5a56045535c2a599800383e2904f3b4b2c73b902586d92a7a6  docs/evidence/issue-328-ash-motion/ash-motion-phase-06.png
+7912949c27defb14dcdb202b872110185e7f478e4d547ffb1bff3ee3a175b6e5  docs/evidence/issue-328-ash-motion/ash-motion-phase-07.png
+36b76b943041d9f61c287e31e136d86b6babb860a0ecd392539b0117765f4380  docs/evidence/issue-328-ash-motion/ash-motion-phase-08.png
 8958e9ad531fcf8b488cf0eb27cd57a75cea111495657994697b281900fbb648  docs/evidence/issue-558-cave-foot-talus/cave-mouth-off.png
 1b0cfa4d2000d7f4505a71162e1dc810bb6295e0838f173312a98b96f46f1e25  docs/evidence/issue-558-cave-foot-talus/cave-mouth-on.png
 0a08c6eb3e86edf8b061dabc7fb698226ff539e77981dfea94e1858a88de1647  docs/phase-0/cave-chamber.png
@@ -16,6 +27,7 @@ ccf317a7699cfe70a58889c0ea6423c9daeaeff5337db51407b6f06d5b4577ec  docs/phase-0/c
 c4ba3927e4af3a618a25de2450381845846055557d75ff3cd0b4fe7bf280f046  docs/phase-0/character-wanderer.png
 e2a417a8ddac36c9c98ffd9d226a9061353960886d0b9c51346a5556500d6cfd  docs/evidence/issue-466-prerelease-block/devlog-prerelease-block.png
 e107b2a777efa78ff20ce7db4f0cedaaa29f23f99c2bc7a61f780ddd3dc1272b  docs/evidence/issue-542-ashen-bindings/ashen-bindings-reader.png
+f0217da59ce0db3977f85d236d266bf67ef6ffa1b66ae688876234234e9a96c8  docs/evidence/issue-544-ashen-bindings-writer/ashen-bindings-writer.png
 8b69f28e8111d4312837b70a4f028cdb762a5a8c9b67816fdfc43170db2eaec5  docs/evidence/issue-553-jump-motion/jump-00-takeoff.png
 cfbcfe94cd1013348bdd173967dc7fdade4db117663fac2de768c9f35aaa9553  docs/evidence/issue-553-jump-motion/jump-01-rise.png
 b64de105e9a8bca4e7288dbcdcc5ee4f3474e2f2b5d529baf596d81b850f0622  docs/evidence/issue-553-jump-motion/jump-02-apex.png

@@ -2,10 +2,10 @@ extends Node
 ## Contract test for the kit-assembly primitives the two factories share (#276).
 ##
 ## `CharacterFactory` and `CreatureFactory` used to carry their own copies of
-## `find_skeleton`, `find_skinned_mesh` and the uniform subtree scale. They now
-## call one implementation in `KitAssembly`, so this pins what that shared
-## implementation promises — and, just as importantly, what each factory asks it
-## for.
+## `find_skeleton`, `find_skinned_mesh`, the uniform subtree scale and CPU morph
+## evaluation. They now call one implementation in `KitAssembly`, so this pins
+## what that shared implementation promises — and, just as importantly, what
+## each factory asks it for.
 ##
 ## THE WIRING IS TESTED SEPARATELY FROM THE LOGIC, deliberately. The one
 ## behavioural difference between the two callers is that the humanoid kit
@@ -36,10 +36,12 @@ func _ready() -> void:
 		return
 	if not _check_scale_bone_subtree():
 		return
+	if not _check_mixed_vertices():
+		return
 	if not _check_factory_wiring():
 		return
 
-	print("TEST PASS — KitAssembly's skeleton lookup, body-mesh lookup and uniform subtree scale hold, "
+	print("TEST PASS — KitAssembly's skeleton lookup, body-mesh lookup, subtree scale and morph evaluation hold, "
 		+ "and both factories ask for the exclusion their own kit needs (humanoid skips '%s', creature skips nothing)"
 		% EQUIP_PREFIX)
 	get_tree().quit(0)
@@ -175,7 +177,57 @@ func _check_scale_bone_subtree() -> bool:
 	return true
 
 
-## 4+5. THE WIRING. Each factory's public entry point must ask for the exclusion
+## 4. CPU morph evaluation: zero weights preserve the base, relative targets
+##    are deltas, normalized targets are absolute, and the source stays intact.
+func _check_mixed_vertices() -> bool:
+	var base := PackedVector3Array([
+		Vector3(1.0, 2.0, 3.0),
+		Vector3(-2.0, 0.5, 4.0),
+		Vector3(0.25, -1.0, 2.0),
+	])
+	var relative_targets := PackedVector3Array([
+		Vector3(2.0, 0.0, 0.0),
+		Vector3(0.0, -4.0, 2.0),
+		Vector3(1.0, 2.0, -2.0),
+	])
+	var relative := _mesh_with_blend_shape(base, relative_targets, Mesh.BLEND_SHAPE_MODE_RELATIVE)
+	if not _vectors_equal(KitAssembly.mixed_vertices(relative), base):
+		_fail("zero-weight relative morph must reproduce the base vertices")
+		relative.free()
+		return false
+	relative.set_blend_shape_value(0, 0.25)
+	var relative_expected := PackedVector3Array()
+	for vertex_index in base.size():
+		relative_expected.append(base[vertex_index] + relative_targets[vertex_index] * 0.25)
+	if not _vectors_equal(KitAssembly.mixed_vertices(relative), relative_expected):
+		_fail("relative morph targets must be applied as deltas")
+		relative.free()
+		return false
+	if not _vectors_equal(relative.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX], base):
+		_fail("morph evaluation must not mutate the source mesh vertices")
+		relative.free()
+		return false
+	relative.free()
+
+	var normalized_targets := PackedVector3Array([
+		Vector3(5.0, 4.0, 3.0),
+		Vector3(-4.0, 2.5, 6.0),
+		Vector3(2.25, -3.0, 0.0),
+	])
+	var normalized := _mesh_with_blend_shape(base, normalized_targets, Mesh.BLEND_SHAPE_MODE_NORMALIZED)
+	normalized.set_blend_shape_value(0, 0.5)
+	var normalized_expected := PackedVector3Array()
+	for vertex_index in base.size():
+		normalized_expected.append(base[vertex_index] + (normalized_targets[vertex_index] - base[vertex_index]) * 0.5)
+	if not _vectors_equal(KitAssembly.mixed_vertices(normalized), normalized_expected):
+		_fail("normalized morph targets must be converted from absolute positions to deltas")
+		normalized.free()
+		return false
+	normalized.free()
+	return true
+
+
+## 5+6. THE WIRING. Each factory's public entry point must ask for the exclusion
 ##      its own kit needs. This is what a direct KitAssembly test cannot see:
 ##      both meshes are skinned, so a factory passing the wrong prefix returns
 ##      the wrong mesh rather than failing.
@@ -213,6 +265,33 @@ func _skeleton_with_equip_then_body() -> Skeleton3D:
 	body.skin = Skin.new()
 	skeleton.add_child(body)
 	return skeleton
+
+
+func _mesh_with_blend_shape(
+	base: PackedVector3Array, targets: PackedVector3Array, mode: Mesh.BlendShapeMode
+) -> MeshInstance3D:
+	var base_arrays := []
+	base_arrays.resize(Mesh.ARRAY_MAX)
+	base_arrays[Mesh.ARRAY_VERTEX] = base
+	var target_arrays := []
+	target_arrays.resize(Mesh.ARRAY_MAX)
+	target_arrays[Mesh.ARRAY_VERTEX] = targets
+	var mesh := ArrayMesh.new()
+	mesh.add_blend_shape("probe")
+	mesh.blend_shape_mode = mode
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, base_arrays, [target_arrays])
+	var instance := MeshInstance3D.new()
+	instance.mesh = mesh
+	return instance
+
+
+func _vectors_equal(actual: PackedVector3Array, expected: PackedVector3Array) -> bool:
+	if actual.size() != expected.size():
+		return false
+	for vertex_index in actual.size():
+		if not actual[vertex_index].is_equal_approx(expected[vertex_index]):
+			return false
+	return true
 
 
 func _fail(message: String) -> void:
