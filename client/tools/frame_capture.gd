@@ -50,6 +50,7 @@ const SCENARIOS: Array[String] = [
 	"breath",
 	"walk",
 	"run",
+	"gait_transition",
 	"jump",
 	"light_response",
 	"ash_motion",
@@ -313,6 +314,22 @@ const WALK_CAM_RISE := 0.5
 const WALK_CAM_FRONT := 3.2
 const WALK_VANTAGE_Z := 18.0
 
+## Six equal runtime updates span the complete eased walk↔run crossfade. One
+## steady walk frame, six press frames and six release frames produce a compact
+## sequence that includes both input edges and both settled endpoints.
+const GAIT_TRANSITION_STEPS := 6
+const GAIT_TRANSITION_DELTA := (
+	WalkLocomotion.GAIT_BLEND_SECONDS / float(GAIT_TRANSITION_STEPS)
+)
+const GAIT_TRANSITION_REFERENCE := (
+	"Kingmakers Official Announcement Trailer 1:06-1:10 — " +
+	"https://www.youtube.com/watch?v=OvezgDni8z4&t=66s"
+)
+const GAIT_TRANSITION_REMAINING_GAP := (
+	"walk and run now crossfade; authored starts, stops, turns, directional lean " +
+	"and landing impact remain open"
+)
+
 ## Exact points on the shipped controller's airborne arc: launch, approach to
 ## apex, apex, approach to landing, and landing-ready descent. A five-frame
 ## sequence exposes continuity between the three authored silhouettes without
@@ -458,6 +475,9 @@ func _ready() -> void:
 		return
 	if scenario == "run":
 		await _capture_gait(dir, main, true)
+		return
+	if scenario == "gait_transition":
+		await _capture_gait_transition(dir, main)
 		return
 	if scenario == "jump":
 		await _capture_jump(dir, main)
@@ -1780,6 +1800,157 @@ func _capture_gait(dir: String, main: Node, running: bool) -> void:
 
 	print("CAPTURE PASS — %d %s phases written to %s (left-foot travel %.1f cm)" %
 		[WALK_PHASES, gait, dir, travel * 100.0])
+	get_tree().quit(0)
+
+
+## The `gait_transition` scenario: a real runtime sprint press and release.
+##
+## Fixed-phase walk/run captures prove the settled endpoints and cannot show
+## the input edge #496 fixes. This sequence instead drives
+## [method WalkLocomotion.advance_motion] with both existing opt-ins enabled,
+## using deterministic deltas that span the complete transition in each
+## direction. Physics is paused only after the shipped player has booted.
+func _capture_gait_transition(dir: String, main: Node) -> void:
+	for i in WARMUP_FRAMES:
+		await get_tree().process_frame
+	if not _has_world(main):
+		_fail("the world did not build — a sky-only gait transition is not evidence")
+		return
+
+	var player := main.get_node_or_null("Wanderer") as Player
+	if player == null:
+		_fail("the shipped scene has no Wanderer Player — the gait path is not live")
+		return
+	var animator := player.get_node_or_null("WalkLocomotion")
+	if animator == null or not animator.has_method("advance_motion"):
+		_fail("the shipped Wanderer has no runtime locomotion driver")
+		return
+	for gait_flag: String in [
+		WalkLocomotion.FLAG_ENV,
+		WalkLocomotion.RUN_FLAG_ENV,
+	]:
+		if OS.get_environment(gait_flag) != "1":
+			_fail("%s is not opted in — refusing a partial gait transition" % gait_flag)
+			return
+	var world := main.get_node_or_null("World") as WorldGen
+	if world == null:
+		_fail("the shipped scene has no WorldGen for the gait-transition vantage")
+		return
+
+	player.set_physics_process(false)
+	player.control_enabled = false
+	var ground := world.surface_height_at(0.0, WALK_VANTAGE_Z)
+	if ground <= WorldGen.NO_GROUND + 1.0:
+		_fail("the committed gait-transition vantage has no terrain under it")
+		return
+	player.global_position = Vector3(0.0, ground + 0.1, WALK_VANTAGE_Z)
+	player.face_toward(Vector3.ZERO)
+	var skeleton := CharacterFactory.find_skeleton(player.get_node("Visual"))
+	if skeleton == null:
+		_fail("the shipped Wanderer has no recipe skeleton")
+		return
+
+	var body := skeleton.get_parent()
+	var idle := body.get_node_or_null("BreathingIdle") if body != null else null
+	if idle != null:
+		idle.set_process(false)
+		BreathingIdle.apply_at(skeleton, 0.0)
+
+	skeleton.force_update_all_bone_transforms()
+	var chest := skeleton.find_bone("spine_03")
+	var left_foot := skeleton.find_bone("foot_l")
+	if chest < 0 or left_foot < 0:
+		_fail("the gait-transition evidence rig lacks spine_03 or foot_l")
+		return
+	var focus: Vector3 = (
+		skeleton.global_transform * skeleton.get_bone_global_pose(chest).origin
+	)
+	var cam := Camera3D.new()
+	cam.far = 400.0
+	cam.fov = 42.0
+	get_tree().root.add_child(cam)
+	cam.global_position = (
+		focus + Vector3(WALK_CAM_SIDE, WALK_CAM_RISE, -WALK_CAM_FRONT)
+	)
+	cam.look_at(focus - Vector3(0.0, 0.45, 0.0), Vector3.UP)
+
+	var samples: Array[Dictionary] = [{
+		"event": "walk",
+		"sprinting": false,
+		"delta": 0.0,
+		"step": 0,
+	}]
+	for step in range(1, GAIT_TRANSITION_STEPS + 1):
+		samples.append({
+			"event": "press",
+			"sprinting": true,
+			"delta": GAIT_TRANSITION_DELTA,
+			"step": step,
+		})
+	for step in range(1, GAIT_TRANSITION_STEPS + 1):
+		samples.append({
+			"event": "release",
+			"sprinting": false,
+			"delta": GAIT_TRANSITION_DELTA,
+			"step": step,
+		})
+
+	var foot_positions: Array[Vector3] = []
+	for i in samples.size():
+		var sample: Dictionary = samples[i]
+		var sprinting: bool = sample["sprinting"]
+		var speed := Player.SPRINT_SPEED if sprinting else Player.WALK_SPEED
+		animator.call(
+			"advance_motion",
+			speed,
+			true,
+			sprinting,
+			sample["delta"])
+		skeleton.force_update_all_bone_transforms()
+		foot_positions.append(
+			skeleton.global_transform * skeleton.get_bone_global_pose(left_foot).origin)
+		for _settle in WALK_SETTLE_FRAMES:
+			cam.current = true
+			await get_tree().process_frame
+		var img := await _grab_frame()
+		var spread := _luma_spread(img)
+		if spread < MIN_LUMA_SPREAD:
+			_fail(("gait transition frame %d is uniform (luma spread %.4f) — " +
+				"nothing rendered") % [i, spread])
+			return
+		var frame_name := "gait_transition_%02d_%s_%02d" % [
+			i,
+			sample["event"],
+			sample["step"],
+		]
+		var err := img.save_png("%s/%s.png" % [dir, frame_name])
+		if err != OK:
+			_fail("could not write %s (error %d)" % [frame_name, err])
+			return
+		_write_note(dir, frame_name, img, _size_note(img), "", [
+			"input: %s" % sample["event"],
+			"transition step: %d/%d" % [
+				sample["step"],
+				GAIT_TRANSITION_STEPS,
+			],
+			"reference: %s" % GAIT_TRANSITION_REFERENCE,
+			"remaining gap: %s" % GAIT_TRANSITION_REMAINING_GAP,
+		])
+		print("CAPTURED %s" % frame_name)
+
+	var travel := 0.0
+	for a in foot_positions:
+		for b in foot_positions:
+			travel = maxf(travel, a.distance_to(b))
+	if travel < WALK_MIN_FOOT_TRAVEL_M:
+		_fail(("the gait transition photographs one lower-body pose: the left foot " +
+			"travels %.4f m, under the %.4f m floor") %
+			[travel, WALK_MIN_FOOT_TRAVEL_M])
+		return
+
+	print(("CAPTURE PASS — %d gait transition frames written to %s " +
+		"(left-foot travel %.1f cm)") %
+		[samples.size(), dir, travel * 100.0])
 	get_tree().quit(0)
 
 
