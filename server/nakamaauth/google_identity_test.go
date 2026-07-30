@@ -80,6 +80,14 @@ func TestGoogleIDTokenVerifierAudienceBindsCredential(t *testing.T) {
 }
 
 func TestGoogleIDTokenVerifierRejectsUnsafeTokenShapeBeforeValidation(t *testing.T) {
+	invalidSignatureToken := unsignedGoogleTokenForTest(
+		t,
+		"RS256",
+		[]byte("signature"),
+	)
+	signatureSeparator := strings.LastIndex(invalidSignatureToken, ".")
+	invalidSignatureToken = invalidSignatureToken[:signatureSeparator+1] + "*"
+
 	tests := []struct {
 		name      string
 		token     string
@@ -96,9 +104,14 @@ func TestGoogleIDTokenVerifierRejectsUnsafeTokenShapeBeforeValidation(t *testing
 			wantError: "unsupported algorithm",
 		},
 		{
-			name:      "ES256 short signature",
-			token:     unsignedGoogleTokenForTest(t, "ES256", []byte{1}),
+			name:      "unsupported ES256 algorithm",
+			token:     unsignedGoogleTokenForTest(t, "ES256", []byte("signature")),
 			wantError: "unsupported algorithm",
+		},
+		{
+			name:      "invalid RS256 signature encoding",
+			token:     invalidSignatureToken,
+			wantError: "invalid signature",
 		},
 		{
 			name: "malformed payload",

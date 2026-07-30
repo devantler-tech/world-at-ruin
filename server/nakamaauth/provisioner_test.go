@@ -62,6 +62,7 @@ type fakeGoogleBindingStore struct {
 	bindTrace            []string
 	verifyBoundErr       error
 	verifyBoundCalls     int
+	bindingWrites        int
 }
 
 func newFakeGoogleBindingStore() *fakeGoogleBindingStore {
@@ -109,6 +110,7 @@ func (s *fakeGoogleBindingStore) BindGoogleIdentity(
 		return boundUserID, nil
 	}
 	s.bindings[key] = userID
+	s.bindingWrites++
 	return userID, nil
 }
 
@@ -393,7 +395,14 @@ func TestProvisionGoogleReturnsStableUserID(t *testing.T) {
 		provisionedUser: "player-42",
 	}
 	identityVerifier := acceptingGoogleVerifier()
-	provisioner := provisionerAgainst(t, server, identityVerifier, enabledProvisionerConfig())
+	bindings := newFakeGoogleBindingStore()
+	provisioner := provisionerAgainstWithBindings(
+		t,
+		server,
+		identityVerifier,
+		bindings,
+		enabledProvisionerConfig(),
+	)
 
 	for attempt := 1; attempt <= 2; attempt++ {
 		userID, err := provisioner.ProvisionGoogle(context.Background(), testIdentityProof)
@@ -415,6 +424,12 @@ func TestProvisionGoogleReturnsStableUserID(t *testing.T) {
 	}
 	if accountCalls != 1 {
 		t.Fatalf("GetAccount calls = %d, want 1", accountCalls)
+	}
+	bindings.mu.Lock()
+	verifyBoundCalls := bindings.verifyBoundCalls
+	bindings.mu.Unlock()
+	if verifyBoundCalls != 2 {
+		t.Fatalf("VerifyGoogleBoundAccount calls = %d, want 2", verifyBoundCalls)
 	}
 	credentials, audiences := identityVerifier.observed()
 	if len(credentials) != 2 || len(audiences) != 2 {
@@ -745,6 +760,72 @@ func TestProvisionGoogleReconcilesConcurrentFirstUse(t *testing.T) {
 	}
 }
 
+func TestProvisionGoogleConvergesConcurrentFirstSignIns(t *testing.T) {
+	server := &provisioningServer{
+		issuedSession:   testNakamaSession,
+		provisionedUser: "player-42",
+	}
+	bindings := newFakeGoogleBindingStore()
+	provisioner := provisionerAgainstWithBindings(
+		t,
+		server,
+		acceptingGoogleVerifier(),
+		bindings,
+		enabledProvisionerConfig(),
+	)
+
+	const attempts = 8
+	type result struct {
+		userID string
+		err    error
+	}
+	start := make(chan struct{})
+	results := make(chan result, attempts)
+	var wait sync.WaitGroup
+	for range attempts {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			<-start
+			userID, err := provisioner.ProvisionGoogle(
+				context.Background(),
+				testIdentityProof,
+			)
+			results <- result{userID: userID, err: err}
+		}()
+	}
+	close(start)
+	wait.Wait()
+	close(results)
+
+	for observed := range results {
+		if observed.err != nil {
+			t.Fatalf("concurrent ProvisionGoogle returned an error: %v", observed.err)
+		}
+		if observed.userID != "player-42" {
+			t.Fatalf(
+				"concurrent ProvisionGoogle user ID = %q, want player-42",
+				observed.userID,
+			)
+		}
+	}
+
+	bindings.mu.Lock()
+	bindingWrites := bindings.bindingWrites
+	boundUserID := bindings.bindings[googleBindingKey(
+		[]byte(testNakamaIdentityKey),
+		testGoogleSubject,
+	)]
+	bindings.mu.Unlock()
+	if bindingWrites != 1 || boundUserID != "player-42" {
+		t.Fatalf(
+			"concurrent binding state = %d write(s), user %q; want one player-42 binding",
+			bindingWrites,
+			boundUserID,
+		)
+	}
+}
+
 func TestGoogleNakamaCredentialsAreSeparatedKeyedAndStable(t *testing.T) {
 	contractData, err := os.ReadFile(
 		"testdata/golden_google_identity_address_v1.json",
@@ -753,13 +834,13 @@ func TestGoogleNakamaCredentialsAreSeparatedKeyedAndStable(t *testing.T) {
 		t.Fatalf("read permanent Google identity address contract: %v", err)
 	}
 	var contract struct {
-		Schema          int    `json:"schema"`
-		TestIdentityKey string `json:"test_identity_key"`
-		TestSubject     string `json:"test_subject"`
-		Collection      string `json:"collection"`
-		Email           string `json:"email"`
-		Password        string `json:"password"` // #nosec G117 -- fixed public test vector
-		BindingKey      string `json:"binding_key"`
+		Schema              int      `json:"schema"`
+		TestIdentityKey     string   `json:"test_identity_key"`
+		TestSubject         string   `json:"test_subject"`
+		Collection          string   `json:"collection"`
+		EmailParts          []string `json:"email_parts"`
+		ProofParts          []string `json:"proof_parts"`
+		BindingAddressParts []string `json:"binding_address_parts"`
 	}
 	if err := json.Unmarshal(contractData, &contract); err != nil {
 		t.Fatalf("decode permanent Google identity address contract: %v", err)
@@ -790,21 +871,24 @@ func TestGoogleNakamaCredentialsAreSeparatedKeyedAndStable(t *testing.T) {
 		contract.TestSubject,
 	)
 
-	if firstEmail != contract.Email {
+	wantEmail := strings.Join(contract.EmailParts, "")
+	wantPassword := strings.Join(contract.ProofParts, "")
+	wantBindingKey := strings.Join(contract.BindingAddressParts, "")
+	if firstEmail != wantEmail {
 		t.Fatalf(
 			"googleNakamaEmail = %q, want permanent identity address %q",
 			firstEmail,
-			contract.Email,
+			wantEmail,
 		)
 	}
-	if password != contract.Password {
+	if password != wantPassword {
 		t.Fatalf("googleNakamaPassword = %q, want permanent identity password", password)
 	}
-	if bindingKey != contract.BindingKey {
+	if bindingKey != wantBindingKey {
 		t.Fatalf(
 			"googleBindingKey = %q, want permanent binding address %q",
 			bindingKey,
-			contract.BindingKey,
+			wantBindingKey,
 		)
 	}
 	if firstEmail != repeatedEmail {

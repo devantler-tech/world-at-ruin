@@ -56,10 +56,6 @@ func validateGoogleCredentialShape(credential string) error {
 	if err := json.Unmarshal(encodedPayload, &payload); err != nil {
 		return status.Error(codes.Unauthenticated, "google ID token has an invalid payload")
 	}
-	var claims map[string]any
-	if err := json.Unmarshal(encodedPayload, &claims); err != nil {
-		return status.Error(codes.Unauthenticated, "google ID token has an invalid payload")
-	}
 	if _, err := base64.RawURLEncoding.DecodeString(signatureSegment); err != nil {
 		return status.Error(codes.Unauthenticated, "google ID token has an invalid signature")
 	}

@@ -67,8 +67,8 @@ func (s *bindingMemoryStorage) StorageWrite(
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, write := range writes {
-		copy := *write
-		s.writes = append(s.writes, &copy)
+		stored := *write
+		s.writes = append(s.writes, &stored)
 	}
 	if s.conflictWinner != "" && s.object == nil {
 		s.object = bindingObjectForTest(
@@ -84,7 +84,11 @@ func (s *bindingMemoryStorage) StorageWrite(
 	if s.object != nil {
 		return nil, runtime.ErrStorageRejectedVersion
 	}
-	s.object = bindingObjectForTest(writes[0].Key, testBoundUserID, "created-version")
+	document, err := decodeGoogleBindingDocument(writes[0].Value)
+	if err != nil {
+		return nil, err
+	}
+	s.object = bindingObjectForTest(writes[0].Key, document.UserID, "created-version")
 	return []*api.StorageObjectAck{{
 		Collection: googleBindingCollection,
 		Key:        writes[0].Key,

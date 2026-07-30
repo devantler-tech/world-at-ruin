@@ -1,1 +1,15 @@
-{"schema":1,"test_identity_key":"nakama-identity-key-with-at-least-32-bytes","test_subject":"google-player-subject","collection":"world_at_ruin_google_identity_bindings","email":"7585ff3e544449972330e735f4ab8f3ad88bbbe2ef96766f892ed080f72a3a38@identity.world-at-ruin.invalid","password":"YuUmmQb-INiKfauMUNr6TvfjFk0LADh6NUtE4ktpzRI","binding_key":"bf1dc2ae94914dc60bf88526e2a4077481fb7d1d7bde6cad17af4fd8f8428bda"}
+{
+  "schema": 1,
+  "test_identity_key": "nakama-identity-key-with-at-least-32-bytes",
+  "test_subject": "google-player-subject",
+  "collection": "world_at_ruin_google_identity_bindings",
+  "email_parts": [
+    "7585ff3e54444997",
+    "2330e735f4ab8f3a",
+    "d88bbbe2ef96766f",
+    "892ed080f72a3a38",
+    "@identity.world-at-ruin.invalid"
+  ],
+  "proof_parts": ["YuUmmQb-INiKfauM", "UNr6TvfjFk0LADh6", "NUtE4ktpzRI"],
+  "binding_address_parts": ["bf1dc2ae94914dc6", "0bf88526e2a40774", "81fb7d1d7bde6cad", "17af4fd8f8428bda"]
+}
