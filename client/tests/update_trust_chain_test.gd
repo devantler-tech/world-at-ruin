@@ -1,0 +1,183 @@
+extends Node
+## Trust-chain test for issue #604. It exercises the real production boundary
+## from an offline root through a signing-key certificate and manifest signature
+## into [UpdateDecision].
+##
+## The fixed signatures were generated with OpenSSL, independently of Godot.
+## Run: godot --headless --path client res://tests/update_trust_chain_test.tscn
+
+const VERIFIER_PATH := "res://scripts/update_trust.gd"
+const VECTOR_PATH := "res://tests/data/update_trust_chain_vector.json"
+const CHAIN_METHOD := "verify_and_decide"
+
+var _failed := false
+var _verifier: Script
+var _vector: Dictionary
+var _root_public_key := ""
+var _wrong_root_public_key := ""
+
+
+func _ready() -> void:
+	_load_inputs()
+	if _failed:
+		return
+	if not _has_script_method(CHAIN_METHOD):
+		_fail("UpdateTrust.%s is missing — certificate epochs can reach UpdateDecision without offline-root authentication" % CHAIN_METHOD)
+		return
+	_test_valid_chain_reaches_update_decision()
+	_test_wrong_root_and_self_signed_certificate_are_refused()
+	_test_tampered_certificate_is_refused()
+	_test_tampered_manifest_is_refused()
+	_test_malformed_or_unsupported_signing_inputs_fail_closed()
+	if _failed:
+		return
+	print("TEST PASS — only an offline-root-authenticated signing key can authorize a manifest decision")
+	get_tree().quit(0)
+
+
+func _load_inputs() -> void:
+	if not ResourceLoader.exists(VERIFIER_PATH):
+		_fail("%s is missing — there is no production update-trust boundary" % VERIFIER_PATH)
+		return
+	_verifier = load(VERIFIER_PATH)
+	if _verifier == null:
+		_fail("%s could not be loaded as a script" % VERIFIER_PATH)
+		return
+	if not FileAccess.file_exists(VECTOR_PATH):
+		_fail("%s is missing — the trust chain needs an independent fixed vector" % VECTOR_PATH)
+		return
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(VECTOR_PATH))
+	if not (parsed is Dictionary):
+		_fail("%s did not parse as a JSON object" % VECTOR_PATH)
+		return
+	_vector = parsed
+	_root_public_key = _read_key(str(_vector["root_public_key_path"]))
+	_wrong_root_public_key = _read_key(str(_vector["wrong_root_public_key_path"]))
+
+
+## Catches bypassing either signature and calling UpdateDecision directly.
+func _test_valid_chain_reaches_update_decision() -> void:
+	var got := _verify(_manifest(), _root_public_key)
+	if not bool(got.get("trusted", false)):
+		_fail("the fixed root → signing key → manifest chain was refused: %s" % str(got.get("error", "")))
+		return
+	var decision: Variant = got.get("decision")
+	if not (decision is Dictionary) or decision.get("action") != UpdateDecision.UP_TO_DATE:
+		_fail("the authenticated chain did not reach the existing decision core: %s" % str(decision))
+
+
+## Catches verifying a certificate with the leaf key, a global key, or merely
+## checking that its signature is well-formed.
+func _test_wrong_root_and_self_signed_certificate_are_refused() -> void:
+	_expect_refused(_verify(_manifest(), _wrong_root_public_key),
+		"a certificate presented under a different valid offline root")
+
+	var self_signed := _manifest()
+	self_signed["key"]["root_signature"] = str(_vector["self_signed_certificate_signature"])
+	_expect_refused(_verify(self_signed, _root_public_key),
+		"a signing key that signs its own certificate")
+
+
+## Catches trusting the certificate fields before authenticating the exact JCS
+## bytes. The altered epoch would start a fresh sequence line if it reached the
+## decision core.
+func _test_tampered_certificate_is_refused() -> void:
+	var changed_epoch := _manifest()
+	changed_epoch["key"]["epoch"] = 8
+	changed_epoch["key_epoch"] = 8
+	_expect_refused(_verify(changed_epoch, _root_public_key),
+		"a higher self-declared certificate epoch")
+
+	var changed_id := _manifest()
+	changed_id["key"]["id"] = "signing-key-attacker"
+	_expect_refused(_verify(changed_id, _root_public_key),
+		"a changed certificate identity")
+
+
+## Catches authenticating the signing key but never using it to verify the
+## manifest. Both mutations remain well-formed and would reach a normal decision.
+func _test_tampered_manifest_is_refused() -> void:
+	var changed_sequence := _manifest()
+	changed_sequence["sequence"] = 43
+	_expect_refused(_verify(changed_sequence, _root_public_key),
+		"a changed manifest sequence")
+
+	var changed_shell := _manifest()
+	changed_shell["shell"]["current"] = "0.1.15"
+	_expect_refused(_verify(changed_shell, _root_public_key),
+		"a changed shell target")
+
+
+## Catches permissive defaulting, algorithm confusion, and base64 decoders that
+## turn malformed signature input into an accidental success.
+func _test_malformed_or_unsupported_signing_inputs_fail_closed() -> void:
+	var no_root_signature := _manifest()
+	no_root_signature["key"].erase("root_signature")
+	_expect_refused(_verify(no_root_signature, _root_public_key),
+		"a certificate with no root signature")
+
+	var no_manifest_signature := _manifest()
+	no_manifest_signature.erase("signature")
+	_expect_refused(_verify(no_manifest_signature, _root_public_key),
+		"a manifest with no signature")
+
+	var unsupported := _manifest()
+	unsupported["key"]["algorithm"] = "ed25519"
+	_expect_refused(_verify(unsupported, _root_public_key),
+		"an unsupported certificate algorithm")
+
+	var noncanonical := _manifest()
+	noncanonical["signature"] = str(noncanonical["signature"]) + "="
+	_expect_refused(_verify(noncanonical, _root_public_key),
+		"a non-canonical base64 manifest signature")
+
+
+func _verify(manifest: Dictionary, root_public_key: String) -> Dictionary:
+	var got: Variant = _verifier.call(CHAIN_METHOD,
+		(_vector["installed"] as Dictionary).duplicate(true),
+		manifest,
+		root_public_key)
+	if not (got is Dictionary):
+		_fail("UpdateTrust.%s returned a non-object result" % CHAIN_METHOD)
+		return {"trusted": false, "error": "test call failed", "decision": {}}
+	return got
+
+
+func _manifest() -> Dictionary:
+	return (_vector["manifest"] as Dictionary).duplicate(true)
+
+
+func _expect_refused(got: Dictionary, case_name: String) -> void:
+	if bool(got.get("trusted", false)):
+		_fail("%s reached UpdateDecision as trusted" % case_name)
+		return
+	if str(got.get("error", "")).is_empty():
+		_fail("%s was refused without an error" % case_name)
+		return
+	var decision: Variant = got.get("decision", {})
+	if not (decision is Dictionary) or not decision.is_empty():
+		_fail("%s produced a decision before the trust chain was authenticated: %s" % [
+			case_name, str(decision)])
+
+
+func _has_script_method(method_name: String) -> bool:
+	for method: Dictionary in _verifier.get_script_method_list():
+		if str(method.get("name", "")) == method_name:
+			return true
+	return false
+
+
+func _read_key(path: String) -> String:
+	var value := FileAccess.get_file_as_string(path)
+	if value.is_empty():
+		_fail("could not read public-key fixture %s" % path)
+	return value
+
+
+func _fail(message: String) -> void:
+	if _failed:
+		return
+	_failed = true
+	push_error(message)
+	print("TEST FAIL — %s" % message)
+	get_tree().quit(1)
