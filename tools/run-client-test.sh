@@ -48,7 +48,15 @@ fi
 name="$1"
 context="${2:-}"
 log="${name}.log"
-timeout_seconds=180
+# Test-only override for the watchdog regression. Production and CI use 180s.
+timeout_seconds="${RUN_CLIENT_TEST_TIMEOUT_SECONDS:-180}"
+
+case "${timeout_seconds}" in
+	''|*[!0-9]*|0)
+		echo "::error::${name} could not execute: RUN_CLIENT_TEST_TIMEOUT_SECONDS must be a positive integer"
+		exit 2
+		;;
+esac
 
 # A scene that does not exist would otherwise surface as a godot parse error
 # buried in the log tail, and the reader would hunt a broken test rather than a
@@ -58,8 +66,99 @@ if [ ! -f "client/tests/${name}.tscn" ]; then
 	exit 1
 fi
 
-if ! timeout "${timeout_seconds}" godot --headless --path client "res://tests/${name}.tscn" 2>&1 | tee "${log}"; then
-	echo "::error::${name} failed or timed out (${timeout_seconds}s)${context:+ — ${context}}"
+if ! command -v godot >/dev/null 2>&1; then
+	echo "::error::${name} could not execute: godot was not found in PATH"
+	exit 2
+fi
+
+# GNU timeout is absent from stock macOS, so supervise the real Godot PID with
+# Bash and portable process primitives. A FIFO preserves the live tee output
+# while keeping the child PID available for the watchdog; supervising a
+# background pipeline would expose only tee's PID and leave a hung Godot alive.
+run_dir="$(mktemp -d "${TMPDIR:-/tmp}/run-client-test.XXXXXX")"
+output_fifo="${run_dir}/output"
+timeout_marker="${run_dir}/timed-out"
+test_pid=""
+tee_pid=""
+watchdog_pid=""
+
+cleanup() {
+	for pid in "${watchdog_pid}" "${test_pid}" "${tee_pid}"; do
+		if [ -n "${pid}" ]; then
+			kill "${pid}" 2>/dev/null || true
+			wait "${pid}" 2>/dev/null || true
+		fi
+	done
+	rm -rf "${run_dir}"
+}
+trap cleanup EXIT
+trap 'exit 130' INT TERM
+
+mkfifo "${output_fifo}"
+tee "${log}" <"${output_fifo}" &
+tee_pid=$!
+godot --headless --path client "res://tests/${name}.tscn" >"${output_fifo}" 2>&1 &
+test_pid=$!
+
+(
+	watchdog_sleep_pid=""
+	trap 'kill "${watchdog_sleep_pid}" 2>/dev/null || true
+		wait "${watchdog_sleep_pid}" 2>/dev/null || true
+		exit 0' INT TERM
+	sleep "${timeout_seconds}" &
+	watchdog_sleep_pid=$!
+	if ! wait "${watchdog_sleep_pid}"; then
+		exit 0
+	fi
+	watchdog_sleep_pid=""
+	if kill -0 "${test_pid}" 2>/dev/null \
+			&& kill -TERM "${test_pid}" 2>/dev/null; then
+		: >"${timeout_marker}"
+		sleep 2
+		kill -KILL "${test_pid}" 2>/dev/null || true
+	fi
+) &
+watchdog_pid=$!
+
+if wait "${test_pid}"; then
+	test_status=0
+else
+	test_status=$?
+fi
+test_pid=""
+
+kill "${watchdog_pid}" 2>/dev/null || true
+wait "${watchdog_pid}" 2>/dev/null || true
+watchdog_pid=""
+
+if wait "${tee_pid}"; then
+	tee_status=0
+else
+	tee_status=$?
+fi
+tee_pid=""
+
+timed_out=false
+if [ -f "${timeout_marker}" ]; then
+	timed_out=true
+fi
+
+trap - EXIT INT TERM
+rm -rf "${run_dir}"
+
+if [ "${tee_status}" -ne 0 ]; then
+	echo "::error::${name} could not execute: output capture failed (exit ${tee_status})"
+	exit 2
+fi
+
+if [ "${timed_out}" = true ]; then
+	echo "::error::${name} timed out (${timeout_seconds}s)${context:+ — ${context}}"
+	tail -40 "${log}"
+	exit 1
+fi
+
+if [ "${test_status}" -ne 0 ]; then
+	echo "::error::${name} failed (exit ${test_status})${context:+ — ${context}}"
 	tail -40 "${log}"
 	exit 1
 fi
