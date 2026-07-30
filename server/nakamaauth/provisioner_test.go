@@ -3,8 +3,10 @@ package nakamaauth
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -599,6 +601,28 @@ func TestProvisionGoogleRequiresDurableBindingStore(t *testing.T) {
 	}
 }
 
+func TestProvisionGoogleRequiresNakamaClientWhenEnabled(t *testing.T) {
+	identityVerifier := acceptingGoogleVerifier()
+	provisioner := newProvisioner(
+		nil,
+		identityVerifier,
+		newFakeGoogleBindingStore(),
+		enabledProvisionerConfig(),
+	)
+
+	userID, err := provisioner.ProvisionGoogle(context.Background(), testIdentityProof)
+	if err == nil || !strings.Contains(err.Error(), "Nakama client is nil") {
+		t.Fatalf("ProvisionGoogle error = %v, want missing Nakama client", err)
+	}
+	if userID != "" {
+		t.Fatalf("ProvisionGoogle user ID = %q, want empty", userID)
+	}
+	credentials, _ := identityVerifier.observed()
+	if len(credentials) != 0 {
+		t.Fatalf("missing Nakama client verified %d Google credentials", len(credentials))
+	}
+}
+
 func TestProvisionGoogleSanitizesBindingStoreFailures(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -722,31 +746,65 @@ func TestProvisionGoogleReconcilesConcurrentFirstUse(t *testing.T) {
 }
 
 func TestGoogleNakamaCredentialsAreSeparatedKeyedAndStable(t *testing.T) {
-	key := []byte(testNakamaIdentityKey)
-	firstEmail := googleNakamaEmail(key, testGoogleSubject)
-	repeatedEmail := googleNakamaEmail(key, testGoogleSubject)
-	password := googleNakamaPassword(key, testGoogleSubject)
-	repeatedPassword := googleNakamaPassword(key, testGoogleSubject)
-	bindingKey := googleBindingKey(key, testGoogleSubject)
+	contractData, err := os.ReadFile(
+		"testdata/golden_google_identity_address_v1.json",
+	)
+	if err != nil {
+		t.Fatalf("read permanent Google identity address contract: %v", err)
+	}
+	var contract struct {
+		Schema          int    `json:"schema"`
+		TestIdentityKey string `json:"test_identity_key"`
+		TestSubject     string `json:"test_subject"`
+		Collection      string `json:"collection"`
+		Email           string `json:"email"`
+		Password        string `json:"password"` // #nosec G117 -- fixed public test vector
+		BindingKey      string `json:"binding_key"`
+	}
+	if err := json.Unmarshal(contractData, &contract); err != nil {
+		t.Fatalf("decode permanent Google identity address contract: %v", err)
+	}
+	if contract.Schema != 1 {
+		t.Fatalf("Google identity address contract schema = %d, want 1", contract.Schema)
+	}
+	if contract.TestIdentityKey != testNakamaIdentityKey ||
+		contract.TestSubject != testGoogleSubject {
+		t.Fatal("Google identity address contract no longer pins the canonical test inputs")
+	}
+	if contract.Collection != googleBindingCollection {
+		t.Fatalf(
+			"googleBindingCollection = %q, want permanent collection %q",
+			googleBindingCollection,
+			contract.Collection,
+		)
+	}
+
+	key := []byte(contract.TestIdentityKey)
+	firstEmail := googleNakamaEmail(key, contract.TestSubject)
+	repeatedEmail := googleNakamaEmail(key, contract.TestSubject)
+	password := googleNakamaPassword(key, contract.TestSubject)
+	repeatedPassword := googleNakamaPassword(key, contract.TestSubject)
+	bindingKey := googleBindingKey(key, contract.TestSubject)
 	otherKeyEmail := googleNakamaEmail(
 		[]byte("different-identity-key-with-at-least-32-bytes"),
-		testGoogleSubject,
+		contract.TestSubject,
 	)
 
-	const wantEmail = "7585ff3e544449972330e735f4ab8f3ad88bbbe2ef96766f892ed080f72a3a38@identity.world-at-ruin.invalid"
-	const wantPassword = "YuUmmQb-INiKfauMUNr6TvfjFk0LADh6NUtE4ktpzRI" // #nosec G101 -- fixed public test vector
-	const wantBindingKey = "bf1dc2ae94914dc60bf88526e2a4077481fb7d1d7bde6cad17af4fd8f8428bda"
-	if firstEmail != wantEmail {
-		t.Fatalf("googleNakamaEmail = %q, want permanent identity address %q", firstEmail, wantEmail)
+	if firstEmail != contract.Email {
+		t.Fatalf(
+			"googleNakamaEmail = %q, want permanent identity address %q",
+			firstEmail,
+			contract.Email,
+		)
 	}
-	if password != wantPassword {
+	if password != contract.Password {
 		t.Fatalf("googleNakamaPassword = %q, want permanent identity password", password)
 	}
-	if bindingKey != wantBindingKey {
+	if bindingKey != contract.BindingKey {
 		t.Fatalf(
 			"googleBindingKey = %q, want permanent binding address %q",
 			bindingKey,
-			wantBindingKey,
+			contract.BindingKey,
 		)
 	}
 	if firstEmail != repeatedEmail {
@@ -758,7 +816,7 @@ func TestGoogleNakamaCredentialsAreSeparatedKeyedAndStable(t *testing.T) {
 	if firstEmail == otherKeyEmail {
 		t.Fatalf("googleNakamaEmail ignored the backend key: %q", firstEmail)
 	}
-	if strings.Contains(firstEmail, testGoogleSubject) {
+	if strings.Contains(firstEmail, contract.TestSubject) {
 		t.Fatalf("googleNakamaEmail exposed the Google subject: %q", firstEmail)
 	}
 	if strings.Contains(password, firstEmail) || strings.Contains(firstEmail, password) {

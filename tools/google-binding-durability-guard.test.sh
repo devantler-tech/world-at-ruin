@@ -27,6 +27,8 @@ pre_binding_base="$(git -C "$repo" rev-parse HEAD)"
 printf '1\n' >"$data/shipped_google_binding_versions.txt"
 printf '%s\n' '{"schema":1,"user_id":"11111111-1111-4111-8111-111111111111"}' \
 	>"$data/golden_google_binding_v1.json"
+printf '%s\n' '{"schema":1,"collection":"world_at_ruin_google_identity_bindings"}' \
+	>"$data/golden_google_identity_address_v1.json"
 git -C "$repo" add server/nakamaauth/testdata
 git -C "$repo" commit -qm 'ship binding schema one'
 base="$(git -C "$repo" rev-parse HEAD)"
@@ -39,6 +41,16 @@ reset_tree() {
 run_guard_from() {
 	local anchor="$1" out rc=0
 	out="$(cd "$repo" && BASE_SHA="$anchor" bash "$GUARD" 2>&1)" || rc=$?
+	printf '%s' "$out"
+	return "$rc"
+}
+
+run_guard_from_with_strict_comm() {
+	local anchor="$1" out rc=0
+	out="$(
+		cd "$repo" &&
+			PATH="$scratch/bin:$PATH" BASE_SHA="$anchor" bash "$GUARD" 2>&1
+	)" || rc=$?
 	printf '%s' "$out"
 	return "$rc"
 }
@@ -70,6 +82,28 @@ printf '%s\n' '{"schema":2,"user_id":"22222222-2222-4222-8222-222222222222"}' \
 expect_pass 'additive schema and fixture'
 
 reset_tree
+for version in 2 3 4 5 6 7 8 9 10; do
+	printf '%s\n' "$version" >>"$data/shipped_google_binding_versions.txt"
+	printf '{"schema":%s,"user_id":"22222222-2222-4222-8222-222222222222"}\n' \
+		"$version" >"$data/golden_google_binding_v${version}.json"
+done
+git -C "$repo" add server/nakamaauth/testdata
+git -C "$repo" commit -qm 'ship binding schemas through ten'
+version_ten_base="$(git -C "$repo" rev-parse HEAD)"
+mkdir -p "$scratch/bin"
+system_comm="$(command -v comm)"
+printf '%s\n' \
+	'#!/usr/bin/env bash' \
+	'set -euo pipefail' \
+	"LC_ALL=C sort -c \"\$2\"" \
+	"LC_ALL=C sort -c \"\$3\"" \
+	"exec '$system_comm' \"\$@\"" \
+	>"$scratch/bin/comm"
+chmod +x "$scratch/bin/comm"
+version_ten_out="$(run_guard_from_with_strict_comm "$version_ten_base")" ||
+	t_fail "unchanged schemas through version 10 were refused: $version_ten_out"
+
+reset_tree
 printf '2\n' >"$data/shipped_google_binding_versions.txt"
 expect_fail_matching 'removed ledger entry' 'shipped schema version(s) removed'
 
@@ -81,6 +115,11 @@ expect_fail_matching 'rewritten shipped fixture' 'changed after it shipped'
 reset_tree
 rm "$data/golden_google_binding_v1.json"
 expect_fail_matching 'deleted shipped fixture' 'was deleted'
+
+reset_tree
+printf '%s\n' '{"schema":1,"collection":"rewritten_identity_bindings"}' \
+	>"$data/golden_google_identity_address_v1.json"
+expect_fail_matching 'rewritten identity address contract' 'identity address contract changed'
 
 reset_tree
 baseline_out="$(run_guard_from "$pre_binding_base")" ||

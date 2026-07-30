@@ -205,6 +205,9 @@ func (p *Provisioner) ProvisionGoogle(
 	if len(p.config.NakamaIdentityKey) < 32 {
 		return "", errors.New("nakama auth: Nakama identity key must be at least 32 bytes")
 	}
+	if p.client == nil {
+		return "", errors.New("nakama auth: Nakama client is nil")
+	}
 	if p.bindings == nil {
 		return "", errors.New("nakama auth: Google binding store is nil")
 	}

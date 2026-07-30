@@ -189,9 +189,11 @@ zone/dungeon server:
   Binding documents use a strict schema that rejects unknown, duplicate,
   missing, trailing, public, or client-writable data; schema 1 is permanently
   pinned by `nakamaauth/testdata/shipped_google_binding_versions.txt` and its
-  matching golden, with CI comparing both against the base revision. Exact test
-  vectors likewise pin the HMAC-derived email, password and binding address
-  before this default-off writer can be composed and enabled.
+  matching golden. The complete identity-address contract—including the
+  collection and exact HMAC-derived email, password and binding address—is
+  pinned by `nakamaauth/testdata/golden_google_identity_address_v1.json`.
+  CI compares those permanent fixtures against the base revision before this
+  default-off writer can be composed and enabled.
   The provisioner uses the Nakama server key only for Nakama's
   Basic-authenticated account-creation RPC, then replaces it with the returned
   session bearer for account verification. Binding operations receive neither
