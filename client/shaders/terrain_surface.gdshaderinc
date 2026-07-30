@@ -307,9 +307,9 @@ float terrain_plate_separator_footprint(
 	vec2 n2 = e2 * inversesqrt(max(dot(e2, e2), 1e-12));
 	vec2 g12 = n2 - n1;
 	float edge12 = abs(dot(g12, uv_dx)) + abs(dot(g12, uv_dy));
-	float triple_authority = terrain_plate_covered_junction(
+	float triple_coverage_authority = terrain_plate_covered_junction(
 		f1, f2, f3, plate_fw);
-	if (triple_authority <= 0.0) {
+	if (triple_coverage_authority <= 0.0) {
 		return edge12;
 	}
 
@@ -328,9 +328,20 @@ float terrain_plate_separator_footprint(
 	float triple = pair_sum / (
 		g2 / max(edge12, 1e-6) + g3 / max(edge13, 1e-6)
 			+ g2 * g3 / max(edge23, 1e-6));
+	float triple_junction = terrain_plate_window_junction(
+		f2, f3, plate_fw);
+	// Coverage retires the correction away from the identity boundary. At the
+	// exact c2/c3 swap, however, any non-zero coverage must give the symmetric
+	// triple full authority or the remaining edge12 coefficient still changes
+	// identity. Normalising the covered authority against the complementary
+	// identity gap satisfies both limits without activating off-junction cells.
+	float triple_identity_denominator = (
+		1.0 - triple_junction + triple_coverage_authority);
+	float triple_identity_authority = (
+		triple_coverage_authority / triple_identity_denominator);
 	float higher_junction = terrain_plate_window_junction(
 		f3, f4, plate_fw);
-	float footprint = mix(edge12, triple, triple_authority);
+	float footprint = mix(edge12, triple, triple_identity_authority);
 
 	// The material has already converged to its mean once this reaches zero.
 	// Preserve the cheap analytic answer for downstream dead expressions, but

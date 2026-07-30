@@ -143,6 +143,7 @@ func _ready() -> void:
 	else:
 		_check_degenerate_vertex_bound(degenerate["uv"])
 	_check_footprint_coverage_authority()
+	_check_exact_pair_swap_footprint()
 	_check_exact_higher_order_swap_footprint()
 	_check_window_activation_continuity()
 	_check_exact_swap_reach_handoff()
@@ -331,8 +332,8 @@ func _full_window_separator_footprint(
 ## enters, the whole-window RMS removes the fixed-list tail.
 func _separator_footprint(p: Dictionary, uv: Vector2) -> float:
 	var pair_fw := _pair_separator_footprint(uv, p["c1"], p["c2"])
-	var triple_authority := _covered_junction(p)
-	if triple_authority <= 0.0:
+	var triple_coverage_authority := _covered_junction(p)
+	if triple_coverage_authority <= 0.0:
 		return pair_fw
 	var edge13 := _pair_separator_footprint(uv, p["c1"], p["c3"])
 	var edge23 := _pair_separator_footprint(uv, p["c2"], p["c3"])
@@ -342,8 +343,13 @@ func _separator_footprint(p: Dictionary, uv: Vector2) -> float:
 	var triple := pair_sum / (
 		g2 / maxf(pair_fw, 1e-6) + g3 / maxf(edge13, 1e-6)
 			+ g2 * g3 / maxf(edge23, 1e-6))
+	var triple_junction := _window_junction(p, FOOTPRINT)
+	var triple_identity_denominator := (
+		1.0 - triple_junction + triple_coverage_authority)
+	var triple_identity_authority := (
+		triple_coverage_authority / triple_identity_denominator)
 	var higher_junction := _higher_junction(p)
-	var footprint := lerpf(pair_fw, triple, triple_authority)
+	var footprint := lerpf(pair_fw, triple, triple_identity_authority)
 	if float(p.get("plate_resolved", 1.0)) <= 0.0:
 		return footprint
 	if higher_junction <= 0.0:
@@ -1132,7 +1138,7 @@ func _check_footprint_coverage_authority() -> void:
 		"f4": FOOTPRINT * 3.0,
 	}
 	var low := high.duplicate()
-	low["f2"] = FOOTPRINT * 0.99
+	low["f2"] = FOOTPRINT * 0.50
 	low["f3"] = FOOTPRINT * 0.99
 	var pair := _pair_separator_footprint(uv, high["c1"], high["c2"])
 	var high_delta := absf(_separator_footprint(high, uv) - pair)
@@ -1160,6 +1166,42 @@ func _check_footprint_coverage_authority() -> void:
 			+ "plate reaches the fragment")
 	print("FOOTPRINT COVERAGE high delta %.9f, tail %.9f; remote gain %.6f"
 		% [high_delta, low_delta, remote_gain])
+
+
+## At an exact c2/c3 identity swap, the pair separator itself changes identity.
+## Third-cell coverage may retire the correction away from that bisector, but
+## it cannot leave any coefficient on the ordered c2 centre at the swap.
+func _check_exact_pair_swap_footprint() -> void:
+	var uv := Vector2.ZERO
+	var before := {
+		"c1": Vector2(0.70, 0.20),
+		"c2": Vector2(-1.00, 0.10),
+		"c3": Vector2(0.15, 1.00),
+		"f1": 0.0,
+		"f2": FOOTPRINT * 0.94,
+		"f3": FOOTPRINT * 0.94,
+		"f4": FOOTPRINT * 3.0,
+	}
+	var after := before.duplicate()
+	after["c2"] = before["c3"]
+	after["c3"] = before["c2"]
+	var third_coverage := _candidate_coverage(
+		float(before["f3"]), float(before["f1"]))
+	var coverage_authority := _coverage_authority(third_coverage)
+	if coverage_authority <= 0.0 or coverage_authority >= 1.0:
+		_fail("control: the exact pair swap probe has coverage authority "
+			+ "%.9f — it must exercise the interior of the fade" % coverage_authority)
+	var a := _separator_footprint(before, uv)
+	var b := _separator_footprint(after, uv)
+	var jump := absf(a - b)
+	if jump > 0.000000001:
+		_fail("the exact c2/c3 swap leaves %.9f of ordered c2 footprint inside "
+			% jump
+			+ "the %.6f coverage-authority fade — the pair must have zero "
+			% coverage_authority
+			+ "authority at the swap independently of coverage")
+	print("FOOTPRINT PAIR SWAP coverage authority %.6f, jump %.9f"
+		% [coverage_authority, jump])
 
 
 ## At an exact c3/c4 identity swap the carried c3 centre may change while every
