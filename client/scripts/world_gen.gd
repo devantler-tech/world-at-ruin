@@ -76,6 +76,7 @@ var _noise := FastNoiseLite.new()
 var _detail := FastNoiseLite.new()
 var _tint := FastNoiseLite.new()
 var _foliage_density := FastNoiseLite.new()
+var _region_foliage_enabled := false
 var _heights := PackedFloat32Array()
 ## The ground regions this world was dealt, built once at generation and read
 ## for every terrain vertex. See [GroundRegions].
@@ -109,6 +110,9 @@ const CAPTURE_ANIMATION_TIME := 1.0
 func _ready() -> void:
 	# Dealt before anything is baked: the terrain colour bake reads them.
 	_region_sites = GroundRegions.sites(WORLD_SEED, SIZE)
+	# Default-off preview for #612. Keep the literal here: preview-flags.test.sh
+	# proves every registered capture flag has an executable client consumer.
+	_region_foliage_enabled = OS.get_environment("WAR_REGION_FOLIAGE") == "1"
 	_noise.seed = WORLD_SEED
 	_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX
 	_noise.frequency = 0.011
@@ -1089,7 +1093,10 @@ func _foliage_density_at(x: float, z: float) -> float:
 	var d := smoothstep(FOLIAGE_BARE_BELOW, FOLIAGE_FULL_ABOVE, n01)
 	var exposure := smoothstep(FOLIAGE_LOW_GROUND, FOLIAGE_HIGH_GROUND, h)
 	d *= 1.0 - FOLIAGE_EXPOSURE_THIN * exposure
-	return d * (1.0 - 0.65 * _foliage_slope01(x, z))
+	d *= 1.0 - 0.65 * _foliage_slope01(x, z)
+	if _region_foliage_enabled:
+		d *= float(GroundRegions.foliage_for(_region_sites, x, z)[&"density"])
+	return clampf(d, 0.0, 1.0)
 
 
 ## Terrain grade at (x, z) mapped to [0, 1]: 0 on the flat, 1 at or past
@@ -1119,12 +1126,17 @@ func _foliage_slope01(x: float, z: float) -> float:
 func _foliage_kind_weights_at(x: float, z: float) -> Array:
 	var s := _foliage_slope01(x, z)
 	var debris01 := _foliage_density.get_noise_2d(x + 512.0, z - 512.0) * 0.5 + 0.5
-	return [
+	var weights := [
 		(1.0 - 0.75 * s) * (0.6 + 0.8 * (1.0 - debris01)), # ASH_SHRUB — flats, clear of debris fields
 		1.0 - 0.55 * s,                                    # DEAD_GRASS — broad, thinning on grades
 		0.2 + 0.9 * debris01,                              # BONE_PILE — where something happened
 		0.25 + 0.75 * s + 0.5 * debris01,                  # RUBBLE — slopes and debris fields
 	]
+	if _region_foliage_enabled:
+		var profile: Array = GroundRegions.foliage_for(_region_sites, x, z)[&"kinds"]
+		for kind in FoliageGen.KIND_COUNT:
+			weights[kind] *= float(profile[kind])
+	return weights
 
 
 ## Every circle foliage must stay out of: the shrine clearing, each ruin site's
