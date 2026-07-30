@@ -260,9 +260,9 @@ static func write_tmp_min_age_seconds() -> int:
 ##
 ## A per-attempt name removes the sharing instead of trying to detect it: a
 ## writer that never cooperated cannot name the file we are committing from. The
-## process id makes a cross-process collision impossible and the microsecond
-## stamp separates two attempts inside one process, matching
-## [method SaveVault._free_quarantine_path].
+## process id and a process-start nonce separate process lifetimes, while the
+## monotonic tick and a process-local sequence separate attempts inside one
+## lifetime.
 static func _write_tmp_path(path: String) -> String:
 	return PrivateStaging.write_path(path)
 
