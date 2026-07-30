@@ -97,6 +97,7 @@ func _ready() -> void:
 		_check_degenerate_vertex_bound(degenerate["uv"])
 	_check_window_activation_continuity()
 	_check_window_grid_boundary_continuity()
+	_check_activation_order_domain()
 	_check_two_cell_reduction()
 	_report()
 
@@ -120,7 +121,7 @@ func _hash3(p: Vector3) -> float:
 
 ## The three nearest identities plus the fourth-nearest distance, as
 ## `terrain_plates` reports them.
-func _plates(uv: Vector2) -> Dictionary:
+func _plates(uv: Vector2, radius: int = 2) -> Dictionary:
 	var base := Vector2(floor(uv.x), floor(uv.y))
 	var f1 := 1000.0
 	var f2 := 1000.0
@@ -129,7 +130,7 @@ func _plates(uv: Vector2) -> Dictionary:
 	# tells production and this mirror when the fixed three-candidate list reaches
 	# its tail and the symmetric whole-window answer must take over. Carried in
 	# this same loop rather than a second pass over the window: the searches below
-	# evaluate this tens of thousands of times, and a duplicate nine-cell loop
+	# evaluate this tens of thousands of times, and a duplicate partition loop
 	# doubled the whole test's runtime against CI's 180 s budget.
 	var f4 := 1000.0
 	var id := base
@@ -137,8 +138,8 @@ func _plates(uv: Vector2) -> Dictionary:
 	var c2 := base
 	var id2 := base
 	var id3 := base
-	for j in range(-1, 2):
-		for i in range(-1, 2):
+	for j in range(-radius, radius + 1):
+		for i in range(-radius, radius + 1):
 			var cell := base + Vector2(float(i), float(j))
 			var jitter := Vector2(
 				_hash3(Vector3(cell.x, cell.y, 0.0)),
@@ -235,7 +236,7 @@ func _blend(uv: Vector2, use_third: bool) -> PackedFloat64Array:
 	return PackedFloat64Array([col.x, col.y, col.z, mask])
 
 
-## The symmetric whole-window answer. Every candidate in the same nine-cell
+## The symmetric whole-window answer. Every candidate in the same 5x5
 ## search as `_plates` receives a weight derived only from its distance excess
 ## over the nearest cell. No ordered "last carried candidate" exists, so swapping
 ## any equidistant labels cannot move the result.
@@ -588,6 +589,37 @@ func _check_window_grid_boundary_continuity() -> void:
 		% [float(three["jump"]), float(five["jump"])])
 
 
+## The activation order statistics must come from the same invariant support as
+## the weighted sum. This shipping-hash point is the exact review reduction: an
+## outer-column centre is one of the true four nearest during the resolution
+## fade, so a 3x3 `f4` changes identity when `floor(plate_uv)` changes.
+func _check_activation_order_domain() -> void:
+	var footprint := 0.695
+	var epsilon := 0.000001
+	var left := Vector2(-3.0 - epsilon, 0.84255)
+	var right := Vector2(-3.0 + epsilon, 0.84255)
+	var three_left := _window_activation(_plates(left, 1), footprint)
+	var three_right := _window_activation(_plates(right, 1), footprint)
+	var five_left := _window_activation(_plates(left, 2), footprint)
+	var five_right := _window_activation(_plates(right, 2), footprint)
+	var three_jump := absf(three_left - three_right)
+	var five_jump := absf(five_left - five_right)
+	if three_jump < 0.10:
+		_fail("control: the 3x3 fourth-distance activation jumps only %.9f at "
+			% three_jump
+			+ "the shipping-hash grid boundary — the probe cannot see the "
+			+ "order-statistic seam it claims the invariant domain removes")
+	if five_jump > 0.001:
+		_fail("the 5x5 fourth-distance activation still jumps %.9f at the "
+			% five_jump
+			+ "shipping-hash grid boundary — activation and accumulation must "
+			+ "use the same invariant support")
+	print("ACTIVATION DOMAIN 3x3 %.9f -> %.9f (jump %.9f); "
+		% [three_left, three_right, three_jump]
+		+ "5x5 %.9f -> %.9f (jump %.9f)"
+		% [five_left, five_right, five_jump])
+
+
 ## Acceptance criterion 3, proven by construction rather than by frame evidence:
 ## away from a junction the third candidate carries no weight, so the blend is
 ## the two-cell one EXACTLY. Anything else would mean the fix had reached
@@ -658,6 +690,11 @@ func _check_source_guards() -> void:
 			% PARTITION_PATH
 			+ "still ends at a fixed candidate list, so a four-fold vertex "
 			+ "retains the third/fourth identity jump (#573)")
+	if not partition.contains("for (int j = -2; j <= 2; j++)") \
+			or not partition.contains("for (int i = -2; i <= 2; i++)"):
+		_fail("`terrain_plates` does not select its first four distances from "
+			+ "the same 5x5 support as the whole-window sum — `f4` can jump "
+			+ "when the floor-based 3x3 candidate set changes")
 	# Both callers must pass the ISOTROPIC footprint. A width built from `c1`
 	# survives the owner swap on the OWNING separator only because it negates
 	# there and the projection takes absolute values; against the third candidate

@@ -51,7 +51,7 @@ float terrain_ground_noise(vec2 xz, float scale) {
 // crack field with dFdx/dFdy instead is sampling a step whose width can be far
 // under one pixel, and that is the aliasing rather than a measurement of it.
 // The search already computes both centres, so returning them costs two
-// out-parameters rather than another nine-cell evaluation.
+// out-parameters rather than another partition evaluation.
 //
 // `id2` is the CELL those second-nearest values belong to — the plate this
 // fragment would have belonged to had it fallen a little further across. It
@@ -66,7 +66,7 @@ float terrain_ground_noise(vec2 xz, float scale) {
 // while the weight is still near a half (#499). Carrying the third candidate is
 // what lets that swap be made harmless; see `terrain_plate_blend_weights`. It
 // costs two more out-parameters and no additional distance evaluation — the
-// nine-cell search already visits every candidate.
+// partition search already visits every supported candidate.
 //
 // `f4` is the FOURTH-nearest distance. No fourth identity is carried: its only
 // job is to say when the fixed three-candidate answer has reached its own tail.
@@ -87,8 +87,8 @@ void terrain_plates(
 	c2 = base;
 	id2 = base;
 	id3 = base;
-	for (int j = -1; j <= 1; j++) {
-		for (int i = -1; i <= 1; i++) {
+	for (int j = -2; j <= 2; j++) {
+		for (int i = -2; i <= 2; i++) {
 			vec2 cell = base + vec2(float(i), float(j));
 			vec2 jitter = vec2(
 				terrain_hash3(vec3(cell, 0.0)),

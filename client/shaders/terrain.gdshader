@@ -246,7 +246,7 @@ void fragment() {
 	// ---- The plates, and the cracks between them -------------------------
 	// Everything from here to the end of this block is skipped entirely when
 	// the treatment is off. Masking the results later still made every terrain
-	// fragment pay for the nine-cell search, its hashes and its derivatives,
+	// fragment pay for the partition search, its hashes and its derivatives,
 	// and terrain fills most of the frame — so a player who never opted in was
 	// buying the experiment's GPU cost. `plates_enabled` is a uniform, so the
 	// branch is coherent across the whole draw and the derivatives taken

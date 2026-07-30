@@ -89,7 +89,7 @@ void fragment() {
 	float grain = terrain_ground_noise(terrain_world_pos.xz, grain_scale);
 
 	// Same coherent uniform-gated plate path as terrain.gdshader. Default-off
-	// pays no nine-cell search; opt-in resolves the identical cells, substances,
+	// pays no partition search; opt-in resolves the identical cells, substances,
 	// contacts and crack relief at the same world XZ.
 	vec2 plate_uv = terrain_world_pos.xz * plate_scale;
 	vec2 plate_id = vec2(0.0);
