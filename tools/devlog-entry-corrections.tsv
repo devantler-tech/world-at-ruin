@@ -94,3 +94,7 @@ client/devlog/0.67.1.json	3dfad578639a284a319470463fe488c38860beb4	Authored as 0
 # The seam-occlusion entry merged while the cave-foot correction was in CI,
 # occupying v0.67.1 even though its own change first appeared in v0.68.2.
 client/devlog/0.68.2.json	ae0ba27d8275f184aff9804bfdcff402d1bdc689	Authored as 0.67.1, but the change it describes first shipped in v0.68.2 (#585).
+
+# The ordinary-jump entry merged after the exact-GameServer boundary had
+# already cut v0.86.0, so its predicted path named a release without the jump.
+client/devlog/0.87.0.json	487d1d24fea1dbcab0d9d8f8f8dc3981782d3377	Authored as 0.86.0, but the change it describes first shipped in v0.87.0; v0.86.0 was cut without it (#647).
