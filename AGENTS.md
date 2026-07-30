@@ -617,7 +617,12 @@ everything shipped afterwards is held to.
   conditional player-record write with one private create-only audit object, binds the caller's
   stable mutation key to its operation and normalized payload, and returns the original outcome on
   replay or an ambiguous committed response; its strict audit schema is permanently ledgered, and
-  it remains inert until a player-record owner calls it), the
+  it remains inert until a player-record owner calls it), the private **Nakama character-record
+  owner** (`server/nakamacharacter/` — stores one strict-schema character document at a fixed key
+  under the account identity authenticated by Nakama's runtime context, refuses a requested owner
+  that differs from that caller plus public, malformed or stale observations, keeps every shipped
+  schema readable through a ledgered golden, and delegates every conditional write to the atomic
+  `playerstate` record-plus-audit boundary; it remains inert until a server caller composes it), the
   durable **handoff allocation coordinator**
   (`server/handoffalloc/` — implements `handoff.Allocator` over the real lease store and an injected
   GameServer-resource boundary; persists a recoverable intent before provisioning, finalizes the
