@@ -21,19 +21,21 @@ import (
 )
 
 const (
-	testIdentityProof   = "google-oidc-fixture"
-	testGoogleClientID  = "world-at-ruin.apps.googleusercontent.com"
-	testGoogleSubject   = "google-player-subject"
-	testNakamaServerKey = "nakama-server-key"
-	testNakamaSession   = "nakama-session"
+	testIdentityProof     = "google-oidc-fixture"
+	testGoogleClientID    = "world-at-ruin.apps.googleusercontent.com"
+	testGoogleSubject     = "google-player-subject"
+	testNakamaCustomIDKey = "nakama-custom-id-key-with-at-least-32-bytes"
+	testNakamaServerKey   = "nakama-server-key"
+	testNakamaSession     = "nakama-session"
 )
 
 type customAuthentication struct {
-	customID      string
-	create        bool
-	username      string
-	authorization []string
-	trace         []string
+	customID             string
+	create               bool
+	username             string
+	authorization        []string
+	gatewayAuthorization []string
+	trace                []string
 }
 
 type fakeGoogleIdentityVerifier struct {
@@ -65,14 +67,15 @@ func (v *fakeGoogleIdentityVerifier) observed() ([]string, []string) {
 type provisioningServer struct {
 	apigrpc.UnimplementedNakamaServer
 
-	mu              sync.Mutex
-	authentication  []customAuthentication
-	accountCalls    int
-	rejectCustom    bool
-	emptySession    bool
-	emptyUserID     bool
-	issuedSession   string
-	provisionedUser string
+	mu                          sync.Mutex
+	authentication              []customAuthentication
+	accountCalls                int
+	accountGatewayAuthorization []string
+	rejectCustom                bool
+	emptySession                bool
+	emptyUserID                 bool
+	issuedSession               string
+	provisionedUser             string
 }
 
 func (s *provisioningServer) AuthenticateCustom(
@@ -86,7 +89,11 @@ func (s *provisioningServer) AuthenticateCustom(
 		create:        request.GetCreate().GetValue(),
 		username:      request.GetUsername(),
 		authorization: append([]string(nil), md.Get("authorization")...),
-		trace:         append([]string(nil), md.Get("x-trace-id")...),
+		gatewayAuthorization: append(
+			[]string(nil),
+			md.Get("grpcgateway-authorization")...,
+		),
+		trace: append([]string(nil), md.Get("x-trace-id")...),
 	}
 
 	s.mu.Lock()
@@ -116,6 +123,10 @@ func (s *provisioningServer) GetAccount(
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.accountCalls++
+	s.accountGatewayAuthorization = append(
+		[]string(nil),
+		md.Get("grpcgateway-authorization")...,
+	)
 	authorization := md.Get("authorization")
 	if len(authorization) != 1 || authorization[0] != "Bearer "+s.issuedSession {
 		return nil, status.Error(codes.Unauthenticated, "unknown Nakama session")
@@ -130,6 +141,12 @@ func (s *provisioningServer) observed() ([]customAuthentication, int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]customAuthentication(nil), s.authentication...), s.accountCalls
+}
+
+func (s *provisioningServer) observedAccountGatewayAuthorization() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.accountGatewayAuthorization...)
 }
 
 func provisionerAgainst(
@@ -150,6 +167,14 @@ func provisionerAgainst(
 		) (any, error) {
 			if info.FullMethod == apigrpc.Nakama_AuthenticateCustom_FullMethodName {
 				md, _ := metadata.FromIncomingContext(ctx)
+				if gatewayAuthorization := md.Get("grpcgateway-authorization"); len(
+					gatewayAuthorization,
+				) != 0 {
+					return nil, status.Error(
+						codes.Unauthenticated,
+						"inherited gRPC-Gateway authorization",
+					)
+				}
 				authorization := md.Get("authorization")
 				wantAuthorization := "Basic " + base64.StdEncoding.EncodeToString(
 					[]byte(testNakamaServerKey+":"),
@@ -194,6 +219,7 @@ func enabledProvisionerConfig() ProvisionerConfig {
 	return ProvisionerConfig{
 		GoogleProvisioningEnabled: true,
 		GoogleClientID:            testGoogleClientID,
+		NakamaCustomIDKey:         []byte(testNakamaCustomIDKey),
 		NakamaServerKey:           testNakamaServerKey,
 	}
 }
@@ -271,7 +297,10 @@ func TestProvisionGoogleReturnsStableUserID(t *testing.T) {
 		)
 	}
 	for index, request := range authentication {
-		if request.customID != googleCustomID(testGoogleSubject) {
+		if request.customID != googleCustomID(
+			[]byte(testNakamaCustomIDKey),
+			testGoogleSubject,
+		) {
 			t.Fatalf(
 				"AuthenticateCustom call %d custom ID = %q, want derived identity",
 				index+1,
@@ -305,6 +334,25 @@ func TestProvisionGoogleReturnsStableUserID(t *testing.T) {
 	}
 }
 
+func TestGoogleCustomIDIsKeyedAndStable(t *testing.T) {
+	first := googleCustomID([]byte(testNakamaCustomIDKey), testGoogleSubject)
+	repeated := googleCustomID([]byte(testNakamaCustomIDKey), testGoogleSubject)
+	otherKey := googleCustomID(
+		[]byte("different-custom-id-key-with-at-least-32-bytes"),
+		testGoogleSubject,
+	)
+
+	if first != repeated {
+		t.Fatalf("googleCustomID repeated value changed: %q != %q", first, repeated)
+	}
+	if first == otherKey {
+		t.Fatalf("googleCustomID ignored the backend key: %q", first)
+	}
+	if strings.Contains(first, testGoogleSubject) {
+		t.Fatalf("googleCustomID exposed the Google subject: %q", first)
+	}
+}
+
 func TestProvisionGoogleReplacesInheritedAuthorizationWithServerKey(t *testing.T) {
 	server := &provisioningServer{
 		issuedSession:   testNakamaSession,
@@ -320,6 +368,7 @@ func TestProvisionGoogleReplacesInheritedAuthorizationWithServerKey(t *testing.T
 		context.Background(),
 		metadata.Pairs(
 			"authorization", "Bearer unrelated-session",
+			"grpcgateway-authorization", "Bearer unrelated-gateway-session",
 			"x-trace-id", "trace-9",
 		),
 	)
@@ -341,6 +390,18 @@ func TestProvisionGoogleReplacesInheritedAuthorizationWithServerKey(t *testing.T
 		t.Fatalf(
 			"AuthenticateGoogle authorization metadata = %q, want Nakama server key",
 			authentication[0].authorization,
+		)
+	}
+	if len(authentication[0].gatewayAuthorization) != 0 {
+		t.Fatalf(
+			"AuthenticateCustom gRPC-Gateway authorization metadata = %q, want stripped",
+			authentication[0].gatewayAuthorization,
+		)
+	}
+	if gatewayAuth := server.observedAccountGatewayAuthorization(); len(gatewayAuth) != 0 {
+		t.Fatalf(
+			"GetAccount gRPC-Gateway authorization metadata = %q, want stripped",
+			gatewayAuth,
 		)
 	}
 	if len(authentication[0].trace) != 1 || authentication[0].trace[0] != "trace-9" {
@@ -376,6 +437,7 @@ func TestProvisionGoogleFailsClosed(t *testing.T) {
 			config: ProvisionerConfig{
 				GoogleProvisioningEnabled: true,
 				GoogleClientID:            testGoogleClientID,
+				NakamaCustomIDKey:         []byte(testNakamaCustomIDKey),
 			},
 			wantCode:  codes.Unknown,
 			wantError: "server key is empty",
@@ -385,10 +447,34 @@ func TestProvisionGoogleFailsClosed(t *testing.T) {
 			credential: testIdentityProof,
 			config: ProvisionerConfig{
 				GoogleProvisioningEnabled: true,
+				NakamaCustomIDKey:         []byte(testNakamaCustomIDKey),
 				NakamaServerKey:           testNakamaServerKey,
 			},
 			wantCode:  codes.Unknown,
 			wantError: "Google client ID is empty",
+		},
+		{
+			name:       "empty Nakama custom ID key",
+			credential: testIdentityProof,
+			config: ProvisionerConfig{
+				GoogleProvisioningEnabled: true,
+				GoogleClientID:            testGoogleClientID,
+				NakamaServerKey:           testNakamaServerKey,
+			},
+			wantCode:  codes.Unknown,
+			wantError: "custom ID key must be at least 32 bytes",
+		},
+		{
+			name:       "short Nakama custom ID key",
+			credential: testIdentityProof,
+			config: ProvisionerConfig{
+				GoogleProvisioningEnabled: true,
+				GoogleClientID:            testGoogleClientID,
+				NakamaCustomIDKey:         []byte("too-short"),
+				NakamaServerKey:           testNakamaServerKey,
+			},
+			wantCode:  codes.Unknown,
+			wantError: "custom ID key must be at least 32 bytes",
 		},
 		{
 			name:       "Google verifier rejects credential",
@@ -399,6 +485,29 @@ func TestProvisionGoogleFailsClosed(t *testing.T) {
 			},
 			wantCode:  codes.Unauthenticated,
 			wantError: "Google identity rejected credential",
+		},
+		{
+			name:       "Google verification is unavailable",
+			credential: testIdentityProof,
+			config:     enabledProvisionerConfig(),
+			verifier: &fakeGoogleIdentityVerifier{
+				err: status.Error(
+					codes.Unavailable,
+					"Google unavailable for "+testIdentityProof,
+				),
+			},
+			wantCode:  codes.Unavailable,
+			wantError: "Google identity verification unavailable",
+		},
+		{
+			name:       "Google verification is canceled",
+			credential: testIdentityProof,
+			config:     enabledProvisionerConfig(),
+			verifier: &fakeGoogleIdentityVerifier{
+				err: context.Canceled,
+			},
+			wantCode:  codes.Canceled,
+			wantError: "Google identity verification canceled",
 		},
 		{
 			name:       "Google verifier returns no subject",
@@ -481,6 +590,9 @@ func TestProvisionGoogleFailsClosed(t *testing.T) {
 			}
 			if strings.Contains(err.Error(), testNakamaServerKey) {
 				t.Fatalf("ProvisionGoogle error leaked the Nakama server key: %q", err)
+			}
+			if strings.Contains(err.Error(), testNakamaCustomIDKey) {
+				t.Fatalf("ProvisionGoogle error leaked the Nakama custom ID key: %q", err)
 			}
 			if code := status.Code(err); code != test.wantCode {
 				t.Fatalf(

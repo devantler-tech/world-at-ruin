@@ -162,18 +162,23 @@ zone/dungeon server:
   Ruin. Its default-off Google OIDC provisioner validates the ID token locally
   against the configured `GoogleClientID`, accepts only Google's issuer and a
   non-empty subject, and sends Nakama `AuthenticateCustom` a domain-separated
-  SHA-256 identity derived from that subject. The raw Google credential
-  therefore never reaches Nakama's credential-logging Google path. Repeating
-  one identity resolves the same stable Nakama user rather than creating a
-  client-chosen identity. `ProvisionerConfig.GoogleProvisioningEnabled` is false
-  by default, and enabling it also requires `GoogleClientID` and
-  `NakamaServerKey`; the provisioner uses that key only for Nakama's
-  Basic-authenticated account-creation RPC, then replaces it with the returned
-  session bearer for account verification. Both paths fail closed on empty or
-  malformed responses, strip unrelated authorization metadata at their
-  respective boundaries, and expose only stable gRPC status codes so an
-  upstream message cannot reflect a credential into logs. Hermetic tests
-  exercise the real generated gRPC client/server path.
+  HMAC-SHA-256 credential derived from that subject and the server-only
+  `NakamaCustomIDKey`. The raw Google credential therefore never reaches
+  Nakama's credential-logging Google path, while the public Google subject
+  cannot be guessed into a Nakama credential. Repeating one identity resolves
+  the same stable Nakama user rather than creating a client-chosen identity.
+  `ProvisionerConfig.GoogleProvisioningEnabled` is false by default, and
+  enabling it also requires `GoogleClientID`, a stable and backed-up
+  `NakamaCustomIDKey` of at least 32 bytes, and `NakamaServerKey`. The custom-ID
+  key is a durable identity root: rotating or losing it changes every derived
+  identity and therefore requires an explicit account migration. The
+  provisioner uses the Nakama server key only for Nakama's Basic-authenticated
+  account-creation RPC, then replaces it with the returned session bearer for
+  account verification. Both paths fail closed on empty or malformed responses,
+  strip unrelated authorization metadata aliases at their respective
+  boundaries, preserve only actionable transport status codes, and expose no
+  upstream credential, server key, or Nakama error text. Hermetic tests exercise
+  the real generated gRPC client/server path.
 - **`agonesalloc/`** — the typed **Agones allocation API boundary**: it sends
   one current-format `AllocationRequest` through Agones's generated gRPC client,
   selecting only Ready GameServers from the configured namespace and fleet.

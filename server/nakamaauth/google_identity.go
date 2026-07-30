@@ -3,8 +3,12 @@ package nakamaauth
 import (
 	"context"
 	"errors"
+	"net"
+	"strings"
 
 	"google.golang.org/api/idtoken"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type googleIDTokenVerifier struct {
@@ -22,14 +26,38 @@ func (v googleIDTokenVerifier) VerifyGoogleIDToken(
 	}
 	payload, err := validate(ctx, credential, audience)
 	if err != nil {
-		return "", err
+		switch {
+		case errors.Is(err, context.Canceled):
+			return "", status.Error(codes.Canceled, "google ID token verification canceled")
+		case errors.Is(err, context.DeadlineExceeded):
+			return "", status.Error(
+				codes.DeadlineExceeded,
+				"google ID token verification deadline exceeded",
+			)
+		default:
+			var networkError net.Error
+			if errors.As(err, &networkError) ||
+				strings.HasPrefix(err.Error(), "idtoken: unable to retrieve cert") {
+				return "", status.Error(
+					codes.Unavailable,
+					"google ID token verification unavailable",
+				)
+			}
+			return "", status.Error(
+				codes.Unauthenticated,
+				"google ID token rejected credential",
+			)
+		}
 	}
 	if payload.Issuer != "accounts.google.com" &&
 		payload.Issuer != "https://accounts.google.com" {
-		return "", errors.New("google ID token has an unexpected issuer")
+		return "", status.Error(
+			codes.Unauthenticated,
+			"google ID token has an unexpected issuer",
+		)
 	}
 	if payload.Subject == "" {
-		return "", errors.New("google ID token has no subject")
+		return "", status.Error(codes.Unauthenticated, "google ID token has no subject")
 	}
 	return payload.Subject, nil
 }

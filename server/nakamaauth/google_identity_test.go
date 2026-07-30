@@ -2,10 +2,15 @@ package nakamaauth
 
 import (
 	"context"
+	"errors"
+	"net"
+	"net/url"
 	"strings"
 	"testing"
 
 	"google.golang.org/api/idtoken"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestGoogleIDTokenVerifierAudienceBindsCredential(t *testing.T) {
@@ -42,6 +47,75 @@ func TestGoogleIDTokenVerifierAudienceBindsCredential(t *testing.T) {
 	}
 	if observedAudience != testGoogleClientID {
 		t.Fatalf("validated audience = %q, want Google client ID", observedAudience)
+	}
+}
+
+func TestGoogleIDTokenVerifierClassifiesValidationFailures(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		wantCode codes.Code
+	}{
+		{
+			name:     "invalid token",
+			err:      errors.New("idtoken: token expired"),
+			wantCode: codes.Unauthenticated,
+		},
+		{
+			name:     "canceled certificate request",
+			err:      context.Canceled,
+			wantCode: codes.Canceled,
+		},
+		{
+			name:     "timed out certificate request",
+			err:      context.DeadlineExceeded,
+			wantCode: codes.DeadlineExceeded,
+		},
+		{
+			name: "network certificate failure",
+			err: &url.Error{
+				Op:  "Get",
+				URL: "https://www.googleapis.com/oauth2/v3/certs",
+				Err: &net.DNSError{IsTimeout: true},
+			},
+			wantCode: codes.Unavailable,
+		},
+		{
+			name:     "certificate endpoint failure",
+			err:      errors.New("idtoken: unable to retrieve cert, got status code 503"),
+			wantCode: codes.Unavailable,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			verifier := googleIDTokenVerifier{
+				validate: func(
+					context.Context,
+					string,
+					string,
+				) (*idtoken.Payload, error) {
+					return nil, test.err
+				},
+			}
+
+			_, err := verifier.VerifyGoogleIDToken(
+				context.Background(),
+				testIdentityProof,
+				testGoogleClientID,
+			)
+			if code := status.Code(err); code != test.wantCode {
+				t.Fatalf(
+					"VerifyGoogleIDToken status code = %s, want %s (error %v)",
+					code,
+					test.wantCode,
+					err,
+				)
+			}
+			if strings.Contains(err.Error(), testIdentityProof) {
+				t.Fatalf("VerifyGoogleIDToken error leaked the credential: %q", err)
+			}
+		})
 	}
 }
 

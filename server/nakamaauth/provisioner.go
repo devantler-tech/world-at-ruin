@@ -1,7 +1,9 @@
 package nakamaauth
 
 import (
+	"bytes"
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -10,7 +12,6 @@ import (
 	"github.com/heroiclabs/nakama-common/api"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
@@ -38,6 +39,8 @@ type ProvisionerConfig struct {
 	GoogleProvisioningEnabled bool
 	// GoogleClientID audience-binds accepted Google ID tokens.
 	GoogleClientID string
+	// NakamaCustomIDKey makes the custom-auth credential unguessable.
+	NakamaCustomIDKey []byte
 	// NakamaServerKey authenticates account-creation RPCs with Nakama.
 	NakamaServerKey string
 }
@@ -60,6 +63,7 @@ func newProvisioner(
 	identityVerifier googleIdentityVerifier,
 	config ProvisionerConfig,
 ) *Provisioner {
+	config.NakamaCustomIDKey = bytes.Clone(config.NakamaCustomIDKey)
 	return &Provisioner{
 		client:           client,
 		sessionVerifier:  NewVerifier(client),
@@ -68,9 +72,36 @@ func newProvisioner(
 	}
 }
 
-func googleCustomID(subject string) string {
-	sum := sha256.Sum256([]byte("google:" + subject))
-	return hex.EncodeToString(sum[:])
+func googleCustomID(key []byte, subject string) string {
+	mac := hmac.New(sha256.New, key)
+	_, _ = mac.Write([]byte("google:" + subject))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func sanitizedGoogleIdentityError(err error) error {
+	switch {
+	case errors.Is(err, context.Canceled) || status.Code(err) == codes.Canceled:
+		return status.Error(
+			codes.Canceled,
+			"nakama auth: Google identity verification canceled",
+		)
+	case errors.Is(err, context.DeadlineExceeded) ||
+		status.Code(err) == codes.DeadlineExceeded:
+		return status.Error(
+			codes.DeadlineExceeded,
+			"nakama auth: Google identity verification deadline exceeded",
+		)
+	case status.Code(err) == codes.Unavailable:
+		return status.Error(
+			codes.Unavailable,
+			"nakama auth: Google identity verification unavailable",
+		)
+	default:
+		return status.Error(
+			codes.Unauthenticated,
+			"nakama auth: Google identity rejected credential",
+		)
+	}
 }
 
 // ProvisionGoogle creates or resolves the Nakama account for a Google identity.
@@ -90,6 +121,9 @@ func (p *Provisioner) ProvisionGoogle(
 	if p.config.NakamaServerKey == "" {
 		return "", errors.New("nakama auth: Nakama server key is empty")
 	}
+	if len(p.config.NakamaCustomIDKey) < 32 {
+		return "", errors.New("nakama auth: Nakama custom ID key must be at least 32 bytes")
+	}
 
 	subject, err := p.identityVerifier.VerifyGoogleIDToken(
 		ctx,
@@ -97,26 +131,22 @@ func (p *Provisioner) ProvisionGoogle(
 		p.config.GoogleClientID,
 	)
 	if err != nil {
-		return "", status.Error(
-			codes.Unauthenticated,
-			"nakama auth: Google identity rejected credential",
-		)
+		return "", sanitizedGoogleIdentityError(err)
 	}
 	if subject == "" {
 		return "", errors.New("nakama auth: Google identity has no subject")
 	}
 
-	outgoing, _ := metadata.FromOutgoingContext(ctx)
-	outgoing = outgoing.Copy()
-	outgoing.Set(
-		"authorization",
+	ctx = outgoingAuthorizationContext(
+		ctx,
 		"Basic "+base64.StdEncoding.EncodeToString([]byte(p.config.NakamaServerKey+":")),
 	)
-	ctx = metadata.NewOutgoingContext(ctx, outgoing)
 
 	session, err := p.client.AuthenticateCustom(ctx, &api.AuthenticateCustomRequest{
-		Account: &api.AccountCustom{Id: googleCustomID(subject)},
-		Create:  wrapperspb.Bool(true),
+		Account: &api.AccountCustom{
+			Id: googleCustomID(p.config.NakamaCustomIDKey, subject),
+		},
+		Create: wrapperspb.Bool(true),
 	})
 	if err != nil {
 		return "", status.Error(
