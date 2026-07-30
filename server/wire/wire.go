@@ -81,6 +81,7 @@ var (
 	ErrCount     = errors.New("wire: list length exceeds MaxEntities")
 	ErrOrder     = errors.New("wire: list not in strictly ascending EntityID order")
 	ErrOverlap   = errors.New("wire: delta lists share an EntityID")
+	ErrRadius    = errors.New("wire: entity radius is negative")
 )
 
 // Message is one decoded frame: the kind tag plus the one payload field that
@@ -125,7 +126,7 @@ func EncodeSnapshotDelta(d sim.SnapshotDelta) ([]byte, error) {
 	b = binary.LittleEndian.AppendUint64(b, d.Tick)
 	b = appendStates(b, d.Entered)
 	b = appendStates(b, d.Moved)
-	b = binary.LittleEndian.AppendUint32(b, uint32(len(d.Left)))
+	b = appendCount(b, len(d.Left))
 	for _, id := range d.Left {
 		b = binary.LittleEndian.AppendUint64(b, uint64(id))
 	}
@@ -220,14 +221,18 @@ func validateDelta(d sim.SnapshotDelta) error {
 	return nil
 }
 
-// validateStates enforces the list contract sim documents: at most MaxEntities
-// entries, strictly ascending by EntityID (which also forbids duplicates).
+// validateStates enforces the replicated-state contract: at most MaxEntities
+// entries, non-negative radii, and strictly ascending EntityIDs (which also
+// forbids duplicates).
 func validateStates(list string, es []sim.EntityState) error {
 	if len(es) > MaxEntities {
 		return fmt.Errorf("%w: %s has %d entries", ErrCount, list, len(es))
 	}
-	for i := 1; i < len(es); i++ {
-		if es[i].ID <= es[i-1].ID {
+	for i, state := range es {
+		if state.Radius < 0 {
+			return fmt.Errorf("%w: %s at index %d", ErrRadius, list, i)
+		}
+		if i > 0 && state.ID <= es[i-1].ID {
 			return fmt.Errorf("%w: %s at index %d", ErrOrder, list, i)
 		}
 	}
@@ -257,15 +262,33 @@ func appendHeader(b []byte, kind uint8) []byte {
 // appendStates appends a uint32 count followed by each state's fixed-width
 // fields. Callers validate the list first, so the count always fits uint32.
 func appendStates(b []byte, es []sim.EntityState) []byte {
-	b = binary.LittleEndian.AppendUint32(b, uint32(len(es)))
+	b = appendCount(b, len(es))
 	for _, s := range es {
 		b = binary.LittleEndian.AppendUint64(b, uint64(s.ID))
-		b = binary.LittleEndian.AppendUint64(b, uint64(s.Pos.X))
-		b = binary.LittleEndian.AppendUint64(b, uint64(s.Pos.Y))
-		b = binary.LittleEndian.AppendUint64(b, uint64(s.Pos.Z))
-		b = binary.LittleEndian.AppendUint64(b, uint64(s.Radius))
+		b = appendSigned64(b, s.Pos.X)
+		b = appendSigned64(b, s.Pos.Y)
+		b = appendSigned64(b, s.Pos.Z)
+		b = appendSigned64(b, s.Radius)
 	}
 	return b
+}
+
+// appendCount records a validated list length. Every caller runs the shared
+// validity predicate first, so n is non-negative and at most MaxEntities,
+// which is strictly smaller than the uint32 wire field's ceiling.
+func appendCount(b []byte, n int) []byte {
+	return binary.LittleEndian.AppendUint32(b, uint32(n))
+}
+
+// appendSigned64 preserves an int64's two's-complement bits in the protocol's
+// uint64 storage word. This is an equal-width representation, not arithmetic
+// narrowing; signed64 performs the exact inverse after decoding.
+func appendSigned64(b []byte, v int64) []byte {
+	return binary.LittleEndian.AppendUint64(b, uint64(v))
+}
+
+func signed64(v uint64) int64 {
+	return int64(v)
 }
 
 // --- decoding helpers -------------------------------------------------------
@@ -383,8 +406,8 @@ func (r *reader) states(list string) ([]sim.EntityState, error) {
 		radius, _ := r.u64()
 		es[i] = sim.EntityState{
 			ID:     sim.EntityID(id),
-			Pos:    sim.Vec3{X: int64(x), Y: int64(y), Z: int64(z)},
-			Radius: int64(radius),
+			Pos:    sim.Vec3{X: signed64(x), Y: signed64(y), Z: signed64(z)},
+			Radius: signed64(radius),
 		}
 	}
 	return es, nil
