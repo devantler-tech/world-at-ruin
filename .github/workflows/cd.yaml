@@ -555,30 +555,38 @@ jobs:
             printf '%06d%06d%06d\n' "${major}" "${minor}" "${patch}"
           }
 
-          newest_release_tag() {
+          read_release_catalog() {
             local artifact="$1"
             local published="$2"
-            local tags tag key newest newest_key
+            local tags tag key newest_key
 
             if ! newest_key="$(release_version_key "${published}")"; then
               echo "::error::published version '${published}' is outside the stable release contract"
               return 1
             fi
-            newest="${published}"
+            RELEASE_CATALOG_NEWEST="${published}"
+            RELEASE_CATALOG_HAS_LATEST=0
+            RELEASE_CATALOG_HAS_OTHER_STABLE=0
             if ! tags="$(oras repo tags "${artifact}")"; then
               echo "::error::could not read immutable release tags for ${artifact}"
               return 1
             fi
             while IFS= read -r tag; do
+              if [ "${tag}" = "latest" ]; then
+                RELEASE_CATALOG_HAS_LATEST=1
+                continue
+              fi
               if ! key="$(release_version_key "${tag}")"; then
                 continue
               fi
+              if [ "${tag}" != "${published}" ]; then
+                RELEASE_CATALOG_HAS_OTHER_STABLE=1
+              fi
               if [[ "${key}" > "${newest_key}" ]]; then
-                newest="${tag}"
+                RELEASE_CATALOG_NEWEST="${tag}"
                 newest_key="${key}"
               fi
             done <<<"${tags}"
-            printf '%s\n' "${newest}"
           }
 
           latest_release_version() {
@@ -598,10 +606,21 @@ jobs:
             # version rather than returning after a stale read-then-write.
             while [ "${attempts}" -lt 5 ]; do
               attempts=$((attempts + 1))
-              newest="$(newest_release_tag "${artifact}" "${published}")" ||
-                return 1
+              read_release_catalog "${artifact}" "${published}" || return 1
+              newest="${RELEASE_CATALOG_NEWEST}"
               current=""
-              current="$(latest_release_version "${artifact}")" || current=""
+              if ! current="$(latest_release_version "${artifact}")"; then
+                # A missing latest is expected only for the first publication:
+                # no latest tag and no other stable version can already exist.
+                # Any established catalogue plus an unreadable manifest is
+                # unknown state, never permission to replace the tag.
+                if [ "${RELEASE_CATALOG_HAS_LATEST}" -eq 1 ] ||
+                  [ "${RELEASE_CATALOG_HAS_OTHER_STABLE}" -eq 1 ]; then
+                  echo "::error::could not read a valid latest manifest for established ${artifact}"
+                  return 1
+                fi
+                current=""
+              fi
               if [ -n "${current}" ]; then
                 if ! current_key="$(release_version_key "${current}")"; then
                   echo "::error::latest exposes unorderable version '${current}'; refusing to replace it"
@@ -624,10 +643,13 @@ jobs:
               echo "advanced latest to ${newest}"
             done
 
-            newest="$(newest_release_tag "${artifact}" "${published}")" ||
-              return 1
+            read_release_catalog "${artifact}" "${published}" || return 1
+            newest="${RELEASE_CATALOG_NEWEST}"
             current=""
-            current="$(latest_release_version "${artifact}")" || current=""
+            if ! current="$(latest_release_version "${artifact}")"; then
+              echo "::error::latest could not be verified after ${attempts} attempts"
+              return 1
+            fi
             if [ -n "${current}" ]; then
               if ! current_key="$(release_version_key "${current}")"; then
                 echo "::error::latest exposes unorderable version '${current}'; refusing to replace it"

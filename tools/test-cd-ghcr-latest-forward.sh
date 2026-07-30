@@ -26,6 +26,7 @@ latest_file="${test_dir}/latest"
 calls_file="${test_dir}/calls"
 repo_tags_rc=0
 publish_newer_after_first_tag=""
+manifest_json_override=""
 
 fail() {
 	echo "FAIL: $*" >&2
@@ -38,6 +39,7 @@ reset_registry() {
 	: >"${calls_file}"
 	repo_tags_rc=0
 	publish_newer_after_first_tag=""
+	manifest_json_override=""
 }
 
 set_tags() {
@@ -72,6 +74,10 @@ oras() {
 	fi
 
 	if [ "$1" = "manifest" ] && [ "$2" = "fetch" ]; then
+		if [ -n "${manifest_json_override}" ]; then
+			printf '%s\n' "${manifest_json_override}"
+			return 0
+		fi
 		local current
 		current="$(latest)"
 		[ -n "${current}" ] || return 1
@@ -143,6 +149,20 @@ fi
 	fail "malformed current latest still issued a tag write"
 [ "$(latest)" = "not-a-version" ] ||
 	fail "malformed current latest was replaced"
+
+# A present latest tag with an unreadable manifest is not the first-publication
+# case. It must fail closed rather than treating parser failure as absence.
+reset_registry
+set_tags "0.79.0" "0.80.0" "latest"
+set_latest "0.80.0"
+manifest_json_override='{"annotations":'
+if advance_latest_tag "${artifact}" "0.79.0" >/dev/null 2>&1; then
+	fail "an unreadable latest manifest was treated as an absent tag"
+fi
+[ "$(tag_calls)" -eq 0 ] ||
+	fail "unreadable latest manifest still issued a tag write"
+[ "$(latest)" = "0.80.0" ] ||
+	fail "unreadable latest manifest changed latest"
 
 # A newer publication advances latest.
 reset_registry
