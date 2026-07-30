@@ -43,6 +43,10 @@ third-party media is committed, traced, downloaded, transformed or used as
 generator input. These five images are first-party captures of World at Ruin;
 their hashes are recorded in `docs/first-party-captures.sha256`.
 
+The remaining similarity risk is limited to the generic tuck-and-return motion
+relationship: the reference character, animation, camera, rig and scene
+expression are not reproduced.
+
 ## Evaluation and remaining gap
 
 Takeoff, rise, apex, fall and descent read as one airborne cue at gameplay

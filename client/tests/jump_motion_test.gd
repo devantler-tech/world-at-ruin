@@ -293,6 +293,7 @@ func _finish() -> void:
 
 func _fail(message: String) -> bool:
 	_finish()
+	print("TEST FAIL — " + message)
 	push_error("jump_motion_test: " + message)
 	get_tree().quit(1)
 	return false

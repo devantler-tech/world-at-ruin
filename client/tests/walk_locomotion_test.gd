@@ -20,6 +20,8 @@ extends Node
 ##     every driven channel continuous, then reaches the unchanged target gait.
 ##  7. SEAMLESS + DETERMINISTIC — phase 0 and TAU agree, and identical travel
 ##     produces byte-equivalent bone rotations on separate player bodies.
+##  8. INVALID RIGS FAIL CLOSED — a missing driven bone disarms the whole
+##     skeleton before the permanent airborne path can pose an invalid index.
 ##
 ## Each assertion names a real break: deleting the Player hook, inverting a
 ## limb, driving from render time, leaving a gait pose stuck at rest, reaching
@@ -86,6 +88,8 @@ func _ready() -> void:
 
 	if not _check_default_off():
 		return
+	if not _check_invalid_rig_disarms_airborne():
+		return
 	if not await _check_real_player_hook():
 		return
 	if not _check_opt_in_gait():
@@ -127,6 +131,28 @@ func _check_default_off() -> bool:
 	player.free()
 	return _same_pose(before, after,
 		"flag unset: ordinary movement changed the shipped skeleton pose")
+
+
+## The permanent jump no longer has a feature gate that happened to suppress
+## malformed rigs. Keeping the partial skeleton bound would send bone index -1
+## into the pose API on the first airborne tick.
+func _check_invalid_rig_disarms_airborne() -> bool:
+	var body := Node3D.new()
+	var skeleton := Skeleton3D.new()
+	body.add_child(skeleton)
+	for bone_name: String in DRIVEN_BONES:
+		if bone_name != "lowerarm_r":
+			skeleton.add_bone(bone_name)
+	var animator := WalkLocomotion.new()
+	animator.bind(body)
+	if animator.get("_skeleton") != null:
+		animator.free()
+		body.free()
+		return _fail("a rig missing lowerarm_r stayed bound for the permanent airborne path")
+	animator.call("advance_motion", 0.0, false, false, 0.016, Player.JUMP_VELOCITY)
+	animator.free()
+	body.free()
+	return true
 
 
 ## 2. Deleting the call from Player._physics_process makes this fail: the
@@ -620,6 +646,7 @@ func _fail(message: String) -> bool:
 	Input.action_release("move_forward")
 	Input.action_release("sprint")
 	_restore_flag()
+	print("TEST FAIL — " + message)
 	push_error("walk_locomotion_test: " + message)
 	get_tree().quit(1)
 	return false

@@ -183,6 +183,8 @@ func bind(body: Node3D) -> void:
 			push_error("WalkLocomotion: rig has no bone %s" % bone_name)
 			_walk_enabled = false
 			_run_enabled = false
+			_skeleton = null
+			return
 
 
 ## Whether any gait is opted in — the node has nothing to do when neither is.

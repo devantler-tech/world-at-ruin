@@ -472,9 +472,9 @@ directional lean and turning remain unauthored, and neither gait invents a fligh
 1:06–1:10](https://www.youtube.com/watch?v=OvezgDni8z4&t=66s) anchors a readable full-body sprint and
 stable third-person tracking. Both gait previews borrow only that readable full-body
 locomotion/camera relationship; they do not copy the modern protagonist or claim a reference match
-for the current rough gaits, and the camera side of that relationship is untouched. The jump preview
-uses [Guild Wars 2 “Cubic Riddle” at
-1:29–1:32](https://www.youtube.com/watch?v=WgZJuFse9TI&t=89s) for the separate airborne cue: the
+for the current rough gaits, and the camera side of that relationship is untouched. The ordinary
+airborne cue uses [Guild Wars 2 “Cubic Riddle” at
+1:29–1:32](https://www.youtube.com/watch?v=WgZJuFse9TI&t=89s) as its moving reference: the
 silhouette tucks promptly after takeoff, keeps the limbs close enough to read against the level, and
 returns cleanly to traversal after landing. Our velocity-driven three-pose arc, bilateral rig
 mapping, ashland setting and fixed evidence camera are independent choices; no third-party frame is
