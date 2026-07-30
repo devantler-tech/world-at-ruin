@@ -18,7 +18,7 @@ const EPS := 0.000001
 const WORLD_SIZE := 220.0
 const EXPECTED_WORLD_CANDIDATES := 36_100
 ## An owner can meet any of the other 24 cells in its owner-relative 5×5
-## window: two-apart cells can both occur in a fragment's local 3×3 search.
+## window: two-apart cells can both occur in a fragment's local 5×5 search.
 const EXPECTED_MAX_VERTICES := 24
 
 var _failures: Array[String] = []
@@ -397,8 +397,8 @@ func _test_shader_source_contract() -> void:
 		"p*=2.03;",
 		"amp*=0.5;",
 		"returnterrain_fbm(vec3(xz.x,0.0,xz.y)*scale);",
-		"for(intj=-1;j<=1;j++){",
-		"for(inti=-1;i<=1;i++){",
+		"for(intj=-2;j<=2;j++){",
+		"for(inti=-2;i<=2;i++){",
 		"vec2cell=base+vec2(float(i),float(j));",
 		"terrain_hash3(vec3(cell,0.0)),terrain_hash3(vec3(cell,7.0)));",
 		"vec2centre=cell+0.15+0.7*jitter;",

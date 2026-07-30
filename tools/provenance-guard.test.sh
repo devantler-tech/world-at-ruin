@@ -30,6 +30,27 @@ index_sha256() {
 	git -C "$repo" cat-file blob ":$path" | shasum -a 256 | awk '{print $1}'
 }
 
+write_pack_provenance() {
+	local repo="$1"
+	shift
+	local path sha
+
+	{
+		printf '%s\n' \
+			'# Provenance' \
+			'' \
+			'Source: original work. Licence: owned outright.' \
+			'' \
+			'```text'
+		for path in "$@"; do
+			sha=$(index_sha256 "$repo" "client/assets/pack/$path")
+			printf '%s  %s\n' "$sha" "$path"
+		done
+		printf '%s\n' '```'
+	} >"$repo/client/assets/pack/PROVENANCE.md"
+	git -C "$repo" add client/assets/pack/PROVENANCE.md
+}
+
 expect_failure() {
 	local name="$1"
 	local expected="$2"
@@ -128,6 +149,102 @@ printf '%s\n' \
 	>"$repo/client/assets/pack/PROVENANCE.md"
 git -C "$repo" add client/assets/pack/PROVENANCE.md
 expect_success "ancestor record uses a record-relative path" "$repo"
+
+# R4 — a texture the editor cannot detect in a committed 3D resource must
+# declare its mip chain explicitly. A runtime load() alone does not trigger
+# Godot's detect_3d import pass, so accepting this fixture would ship the same
+# permanent non-mipmapped import that caused #489.
+repo=$(new_repo runtime_texture_without_mipmaps)
+mkdir -p "$repo/client/scripts"
+printf 'texture-v1\n' >"$repo/client/assets/pack/runtime_skin.png"
+printf '%s\n' \
+	'[remap]' \
+	'importer="texture"' \
+	'type="CompressedTexture2D"' \
+	'' \
+	'[params]' \
+	'mipmaps/generate=false' \
+	>"$repo/client/assets/pack/runtime_skin.png.import"
+printf '%s\n' \
+	'extends Node' \
+	'var runtime_skin := load("res://assets/pack/runtime_skin.png")' \
+	>"$repo/client/scripts/runtime_loader.gd"
+git -C "$repo" add \
+	client/assets/pack/runtime_skin.png \
+	client/assets/pack/runtime_skin.png.import \
+	client/scripts/runtime_loader.gd
+write_pack_provenance "$repo" runtime_skin.png runtime_skin.png.import
+expect_failure \
+	"runtime-loaded texture needs an explicit mip chain" \
+	"mipmaps/generate=true" \
+	"$repo"
+
+repo=$(new_repo runtime_texture_with_decoy_mipmaps)
+printf 'texture-v1\n' >"$repo/client/assets/pack/runtime_skin.png"
+printf '%s\n' \
+	'[remap]' \
+	'importer="texture"' \
+	'mipmaps/generate=true' \
+	'type="CompressedTexture2D"' \
+	'' \
+	'[params]' \
+	'mipmaps/generate=false' \
+	>"$repo/client/assets/pack/runtime_skin.png.import"
+git -C "$repo" add \
+	client/assets/pack/runtime_skin.png \
+	client/assets/pack/runtime_skin.png.import
+write_pack_provenance "$repo" runtime_skin.png runtime_skin.png.import
+expect_failure \
+	"mipmap setting must be true in the params section" \
+	"mipmaps/generate=true" \
+	"$repo"
+
+repo=$(new_repo runtime_texture_without_import_metadata)
+mkdir -p "$repo/client/scripts"
+printf 'texture-v1\n' >"$repo/client/assets/pack/runtime_skin.png"
+printf '%s\n' \
+	'extends Node' \
+	'var runtime_skin := load("res://assets/pack/runtime_skin.png")' \
+	>"$repo/client/scripts/runtime_loader.gd"
+git -C "$repo" add \
+	client/assets/pack/runtime_skin.png \
+	client/scripts/runtime_loader.gd
+write_pack_provenance "$repo" runtime_skin.png
+expect_failure \
+	"runtime-loaded texture needs indexed import metadata" \
+	"runtime_skin.png.import" \
+	"$repo"
+
+repo=$(new_repo uppercase_runtime_texture_without_import_metadata)
+printf 'texture-v1\n' >"$repo/client/assets/pack/runtime_skin.PNG"
+git -C "$repo" add client/assets/pack/runtime_skin.PNG
+write_pack_provenance "$repo" runtime_skin.PNG
+expect_failure \
+	"image extension matching follows Godot case-insensitively" \
+	"runtime_skin.PNG.import" \
+	"$repo"
+
+repo=$(new_repo runtime_texture_with_mipmaps)
+mkdir -p "$repo/client/scripts"
+printf 'texture-v1\n' >"$repo/client/assets/pack/runtime_skin.png"
+printf '%s\n' \
+	'[remap]' \
+	'importer="texture"' \
+	'type="CompressedTexture2D"' \
+	'' \
+	'[params]' \
+	'mipmaps/generate=true' \
+	>"$repo/client/assets/pack/runtime_skin.png.import"
+printf '%s\n' \
+	'extends Node' \
+	'var runtime_skin := load("res://assets/pack/runtime_skin.png")' \
+	>"$repo/client/scripts/runtime_loader.gd"
+git -C "$repo" add \
+	client/assets/pack/runtime_skin.png \
+	client/assets/pack/runtime_skin.png.import \
+	client/scripts/runtime_loader.gd
+write_pack_provenance "$repo" runtime_skin.png runtime_skin.png.import
+expect_success "runtime-loaded texture with an explicit mip chain is accepted" "$repo"
 
 repo=$(new_repo newline)
 newline_path='client/assets/pack/hero
