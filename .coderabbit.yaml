@@ -1,0 +1,9 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+#
+# Keep inherited organization and UI review policy while pinning the repository-specific
+# override below.
+inheritance: true
+reviews:
+  # Provider quota or service failures are advisory, not evidence that the change is bad.
+  # Pin the schema default so an inherited override cannot make otherwise-green PRs fail.
+  fail_commit_status: false
