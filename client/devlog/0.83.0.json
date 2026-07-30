@@ -1,0 +1,10 @@
+{
+	"date": "2026-07-29",
+	"notes": [
+		"Each part of Ashfall Reach can now carry its own ground cover: sparse rubble in Cinderreach, exposed bone and stone across Bonepale, and denser scrub in Rustmoor. It is an opt-in preview; set WAR_REGION_FOLIAGE=1 before launch, while ordinary play remains unchanged.",
+		"The cover changes continuously at region boundaries and keeps the same deterministic 2,400-prop budget, clear landmarks, grounded placement, and collision-free traversal.",
+		"Still short of the mark: every region uses the same small generated prop family, the treatment has not cleared its art review, and the zone still lacks the colossal inherited landmark that should make it navigable by memory."
+	],
+	"title": "The ground regions can grow apart",
+	"version": "0.83.0"
+}
