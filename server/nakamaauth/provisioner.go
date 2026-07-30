@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/heroiclabs/nakama-common/api"
 	"google.golang.org/grpc"
@@ -20,6 +21,11 @@ import (
 // ErrGoogleProvisioningDisabled reports that the opt-in Google path is off.
 var ErrGoogleProvisioningDisabled = errors.New(
 	"nakama auth: Google account provisioning is disabled",
+)
+
+const (
+	googleBindingReconcileInterval = 10 * time.Millisecond
+	googleBindingReconcileWindow   = time.Second
 )
 
 type provisioningClient interface {
@@ -265,6 +271,30 @@ func (p *Provisioner) resolveGoogleBinding(
 	return boundUserID, true, nil
 }
 
+func (p *Provisioner) waitForGoogleBinding(
+	ctx context.Context,
+	bindingKey string,
+) (string, bool, error) {
+	retry := time.NewTicker(googleBindingReconcileInterval)
+	defer retry.Stop()
+	deadline := time.NewTimer(googleBindingReconcileWindow)
+	defer deadline.Stop()
+
+	for {
+		boundUserID, found, err := p.resolveGoogleBinding(ctx, bindingKey)
+		if err != nil || found {
+			return boundUserID, found, err
+		}
+		select {
+		case <-ctx.Done():
+			return "", false, sanitizedGoogleBindingError("lookup", ctx.Err())
+		case <-deadline.C:
+			return "", false, nil
+		case <-retry.C:
+		}
+	}
+}
+
 // ProvisionGoogle creates or resolves the Nakama account for a Google identity.
 func (p *Provisioner) ProvisionGoogle(
 	ctx context.Context,
@@ -367,6 +397,23 @@ func (p *Provisioner) ProvisionGoogle(
 
 	candidateUserID, err := p.sessionVerifier.VerifySession(ctx, session.GetToken())
 	if err != nil {
+		if status.Code(err) == codes.Unauthenticated {
+			// A first sign-in on another replica can revoke this session before
+			// verification when Nakama single-session mode is enabled. That
+			// concurrent winner has the same derived identity and publishes the
+			// authoritative binding; wait briefly for it instead of returning a
+			// transient failure from this replica.
+			reconciledUserID, found, reconcileErr := p.waitForGoogleBinding(
+				bindingCtx,
+				bindingKey,
+			)
+			if reconcileErr != nil {
+				return "", reconcileErr
+			}
+			if found {
+				return reconciledUserID, nil
+			}
+		}
 		return "", err
 	}
 	boundUserID, err = p.bindings.BindGoogleIdentity(

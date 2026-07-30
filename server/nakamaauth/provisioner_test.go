@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"strings"
@@ -213,6 +214,67 @@ type provisioningServer struct {
 	provisionedUser             string
 }
 
+type revokingProvisioningServer struct {
+	apigrpc.UnimplementedNakamaServer
+
+	mu                  sync.Mutex
+	authenticationCalls int
+	accountCalls        int
+	currentSession      string
+	secondAuthenticated chan struct{}
+}
+
+func newRevokingProvisioningServer() *revokingProvisioningServer {
+	return &revokingProvisioningServer{
+		secondAuthenticated: make(chan struct{}),
+	}
+}
+
+func (s *revokingProvisioningServer) AuthenticateEmail(
+	_ context.Context,
+	_ *api.AuthenticateEmailRequest,
+) (*api.Session, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.authenticationCalls++
+	session := fmt.Sprintf("single-session-%d", s.authenticationCalls)
+	s.currentSession = session
+	if s.authenticationCalls == 2 {
+		close(s.secondAuthenticated)
+	}
+	return &api.Session{
+		Created: s.authenticationCalls == 1,
+		Token:   session,
+	}, nil
+}
+
+func (s *revokingProvisioningServer) GetAccount(
+	ctx context.Context,
+	_ *emptypb.Empty,
+) (*api.Account, error) {
+	md, _ := metadata.FromIncomingContext(ctx)
+	authorization := md.Get("authorization")
+	if len(authorization) != 1 {
+		return nil, status.Error(codes.Unauthenticated, "missing Nakama session")
+	}
+	session := strings.TrimPrefix(authorization[0], "Bearer ")
+	if session == "single-session-1" {
+		select {
+		case <-s.secondAuthenticated:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.accountCalls++
+	if session != s.currentSession {
+		return nil, status.Error(codes.Unauthenticated, "revoked Nakama session")
+	}
+	return &api.Account{User: &api.User{Id: testBoundUserID}}, nil
+}
+
 func (s *provisioningServer) AuthenticateEmail(
 	ctx context.Context,
 	request *api.AuthenticateEmailRequest,
@@ -311,7 +373,7 @@ func provisionerAgainst(
 
 func provisionerAgainstWithBindings(
 	t *testing.T,
-	server *provisioningServer,
+	server apigrpc.NakamaServer,
 	identityVerifier googleIdentityVerifier,
 	bindings GoogleBindingStore,
 	config ProvisionerConfig,
@@ -867,6 +929,77 @@ func TestProvisionGoogleConvergesConcurrentFirstSignIns(t *testing.T) {
 			bindingWrites,
 			boundUserID,
 		)
+	}
+}
+
+func TestProvisionGoogleConvergesAcrossProvisionerReplicasAfterSessionRevocation(
+	t *testing.T,
+) {
+	server := newRevokingProvisioningServer()
+	bindings := newBarrierGoogleBindingStore(2)
+	first := provisionerAgainstWithBindings(
+		t,
+		server,
+		acceptingGoogleVerifier(),
+		bindings,
+		enabledProvisionerConfig(),
+	)
+	second := provisionerAgainstWithBindings(
+		t,
+		server,
+		acceptingGoogleVerifier(),
+		bindings,
+		enabledProvisionerConfig(),
+	)
+
+	type result struct {
+		userID string
+		err    error
+	}
+	start := make(chan struct{})
+	results := make(chan result, 2)
+	for _, provisioner := range []*Provisioner{first, second} {
+		go func() {
+			<-start
+			userID, err := provisioner.ProvisionGoogle(
+				context.Background(),
+				testIdentityProof,
+			)
+			results <- result{userID: userID, err: err}
+		}()
+	}
+	close(start)
+
+	for range 2 {
+		observed := <-results
+		if observed.err != nil {
+			t.Fatalf("replica ProvisionGoogle returned an error: %v", observed.err)
+		}
+		if observed.userID != testBoundUserID {
+			t.Fatalf(
+				"replica ProvisionGoogle user ID = %q, want %q",
+				observed.userID,
+				testBoundUserID,
+			)
+		}
+	}
+
+	server.mu.Lock()
+	authenticationCalls := server.authenticationCalls
+	accountCalls := server.accountCalls
+	server.mu.Unlock()
+	if authenticationCalls != 2 || accountCalls != 2 {
+		t.Fatalf(
+			"replica convergence made %d authentication and %d account calls; want 2 each",
+			authenticationCalls,
+			accountCalls,
+		)
+	}
+	bindings.fakeGoogleBindingStore.mu.Lock()
+	bindingWrites := bindings.bindingWrites
+	bindings.fakeGoogleBindingStore.mu.Unlock()
+	if bindingWrites != 1 {
+		t.Fatalf("replica convergence made %d binding writes, want 1", bindingWrites)
 	}
 }
 
