@@ -145,7 +145,7 @@ void fragment() {
 		// have to agree about WHICH plates they are blending as well as how much,
 		// or they part company at a triple junction that straddles the contact.
 		plate_w = terrain_plate_blend_weights(f1, f2, f3, plate_edge_w, plate_fw);
-		plate_window_w = terrain_plate_window_activation(f3, f4, plate_fw);
+		plate_window_w = terrain_plate_window_activation(f1, f3, f4, plate_fw);
 		// The same footprint average as the ground (#306). This path exists to
 		// resolve the IDENTICAL substance at the same world XZ, so leaving the
 		// step unfiltered here would reintroduce the crawl at the cave contact

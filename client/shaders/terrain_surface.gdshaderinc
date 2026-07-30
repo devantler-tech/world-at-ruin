@@ -190,11 +190,16 @@ vec3 terrain_plate_blend_weights(
 }
 
 // How much the symmetric whole-window answer replaces the established
-// three-candidate answer. It is zero while the fourth cell lies outside the
-// fragment footprint and one at the exact third/fourth identity swap, where a
+// three-candidate answer. A close third/fourth gap is relevant only when the
+// fourth cell also reaches the nearest cell's fragment footprint: two distant
+// candidates can be close to EACH OTHER without contributing anything here.
+// Inside that reach the activation is one at the exact identity swap, where a
 // fixed candidate list is discontinuous by construction.
-float terrain_plate_window_activation(float f3, float f4, float fw) {
-	return 1.0 - smoothstep(0.0, max(fw, 1e-6), f4 - f3);
+float terrain_plate_window_activation(float f1, float f3, float f4, float fw) {
+	float w = max(fw, 1e-6);
+	float fourth_reaches_fragment = 1.0 - step(w, f4 - f1);
+	return fourth_reaches_fragment
+		* (1.0 - smoothstep(0.0, w, f4 - f3));
 }
 
 // One search-window cell's symmetric coverage. This depends only on the cell's

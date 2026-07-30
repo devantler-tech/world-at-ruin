@@ -275,8 +275,10 @@ func _window_blend(uv: Vector2) -> PackedFloat64Array:
 	var current := _blend(uv, true)
 	var full := _full_window_blend(uv, p)
 	var w: float = maxf(FOOTPRINT, 1e-6)
-	var junction: float = 1.0 - smoothstep(
-		0.0, w, float(p["f4"]) - float(p["f3"]))
+	var fourth_reaches_fragment: float = 1.0 - _glsl_step(
+		w, float(p["f4"]) - float(p["f1"]))
+	var junction: float = fourth_reaches_fragment * (1.0 - smoothstep(
+		0.0, w, float(p["f4"]) - float(p["f3"])))
 	for k in range(0, current.size()):
 		current[k] = lerpf(current[k], full[k], junction)
 	return current
@@ -522,7 +524,10 @@ func _check_two_cell_reduction() -> void:
 			if p["f3"] - p["f2"] <= FOOTPRINT:
 				continue
 			checked += 1
-			var a := _blend(uv, true)
+			# Exercise the production whole-window path too. Comparing only the
+			# established three-way answer cannot catch a fourth-cell gate that
+			# activates merely because two FAR candidates happen to be close.
+			var a := _window_blend(uv)
 			var b := _blend(uv, false)
 			for k in range(0, a.size()):
 				var d: float = absf(a[k] - b[k])
@@ -535,7 +540,7 @@ func _check_two_cell_reduction() -> void:
 			+ "two-cell case is unchanged")
 		return
 	if worst != 0.0:
-		_fail("the three-way rule changed an off-junction fragment by %.9f at "
+		_fail("the whole-window rule changed an off-junction fragment by %.9f at "
 			% worst
 			+ "uv=(%.4f, %.4f) — away from a junction it must reduce to the "
 			% [worst_uv.x, worst_uv.y]
@@ -590,10 +595,11 @@ func _check_source_guards() -> void:
 				+ "built from `c1`, which jumps when the owning cell swaps and "
 				+ "puts the defect back (#499)")
 		if not src.contains(
-				"terrain_plate_window_activation(f3, f4, plate_fw)"):
+				"terrain_plate_window_activation(f1, f3, f4, plate_fw)"):
 			_fail("%s does not activate whole-window coverage from "
 				% path
-				+ "`terrain_plate_window_activation(f3, f4, plate_fw)` — the "
+				+ "`terrain_plate_window_activation(f1, f3, f4, plate_fw)` — "
+				+ "the "
 				+ "fourth candidate still has no continuous path into the "
 				+ "surface (#573)")
 		if not src.contains("terrain_plate_window_weight(d, f1, plate_fw)"):

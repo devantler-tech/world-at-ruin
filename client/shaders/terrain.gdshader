@@ -346,7 +346,7 @@ void fragment() {
 	// (#499). Keyed on the isotropic `plate_fw`, not `edge_fw`; see the
 	// function's own note on why a width built from `c1` puts the defect back.
 	plate_w = terrain_plate_blend_weights(f1, f2, f3, plate_edge_w, plate_fw);
-	plate_window_w = terrain_plate_window_activation(f3, f4, plate_fw);
+	plate_window_w = terrain_plate_window_activation(f1, f3, f4, plate_fw);
 
 	// Both cells' substances are kept SEPARATE here and composed with their own
 	// slab masks below. Blending the substances here and the masks there would
