@@ -905,9 +905,10 @@ everything shipped afterwards is held to.
     key before entering the decision core. No runtime caller fetches or promotes an update, no
     production root or signing material is published, and revocation is not wired. Declaring
     `auto_updates` now would make `brew upgrade` skip the cask and strand players on the version
-    they installed. Add it only once the self-updater ships (#106). The `postflight`
-    quarantine strip is **mandatory, not cosmetic** — the build is ad-hoc signed
-    (`codesign/codesign=1` with an empty identity), so Gatekeeper blocks it otherwise.
+    they installed. Add it only once the self-updater ships (#106). The cask must preserve the
+    download quarantine so macOS Gatekeeper can enforce its first-launch checks. Until the build
+    has a Developer ID signature and notarization, users must explicitly approve the app through
+    macOS rather than CD bypassing that platform protection.
     No `verified:` on the `url`: `brew audit --strict` rejects it when the download and homepage
     domains match, which they do here.
   - The version is therefore **derived, never maintained**. The in-tree constants are dev values;
