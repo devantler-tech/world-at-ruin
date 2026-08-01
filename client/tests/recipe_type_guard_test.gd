@@ -54,6 +54,8 @@ func _ready() -> void:
 		{ "version": 1, "joint_push": { "upperarm": CharacterFactory.BONE_FACTOR_MIN - 0.01 } },
 		{ "version": 1, "shapes": { 1: 0.5 } },
 		{ "version": 1, "bone_girth": { 1: 1.0 } },
+		{ "version": 1, "bone_scale": { 1: 1.0 } },
+		{ "version": 1, "joint_push": { 1: 1.0 } },
 	]:
 		var built := CharacterFactory.build(bad)
 		if built != null:
