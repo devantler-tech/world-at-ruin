@@ -150,6 +150,22 @@ printf '%s\n' \
 git -C "$repo" add client/assets/pack/PROVENANCE.md
 expect_success "ancestor record uses a record-relative path" "$repo"
 
+# A filesystem regular-file test follows links. Provenance coverage instead
+# requires a real record in the index; a link to unrelated repository prose
+# must not bless assets that have no provenance record of their own.
+repo=$(new_repo symlinked_provenance)
+printf 'asset-v1\n' >"$repo/client/assets/pack/hero.bin"
+printf '# Unrelated documentation\n' >"$repo/README.md"
+ln -s ../../../README.md "$repo/client/assets/pack/PROVENANCE.md"
+git -C "$repo" add \
+	README.md \
+	client/assets/pack/hero.bin \
+	client/assets/pack/PROVENANCE.md
+expect_failure \
+	"symlinked provenance records do not provide coverage" \
+	"client/assets/pack" \
+	"$repo"
+
 # R4 — a texture the editor cannot detect in a committed 3D resource must
 # declare its mip chain explicitly. A runtime load() alone does not trigger
 # Godot's detect_3d import pass, so accepting this fixture would ship the same

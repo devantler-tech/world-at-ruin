@@ -122,10 +122,16 @@ is_binary() {
 # ended on.
 provenance_record_for() {
 	local candidate="$1"
-	local parent
+	local parent record index_entry index_mode
 	while :; do
-		if [ -f "$candidate/PROVENANCE.md" ]; then
-			printf '%s\n' "$candidate/PROVENANCE.md"
+		record="$candidate/PROVENANCE.md"
+		# Coverage is a property of the Git index, and a provenance record must
+		# be an actual file in that index. `test -f` follows symlinks, allowing a
+		# tracked PROVENANCE.md link to make unrelated text look like a record.
+		index_entry=$(git ls-files -s -- "$record")
+		index_mode="${index_entry%% *}"
+		if [ "$index_mode" = "100644" ] || [ "$index_mode" = "100755" ]; then
+			printf '%s\n' "$record"
 			return 0
 		fi
 		[ "$candidate" = "$ASSET_ROOT" ] && return 1
