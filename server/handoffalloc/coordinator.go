@@ -130,6 +130,7 @@ func (c *Coordinator) Allocate(
 	request handoff.AllocationRequest,
 ) (handoff.Allocation, error) {
 	now := c.now()
+	requestedAttemptID := request.AttemptID
 	current, err := c.leases.Load(ctx, request.UserID, request.ReservationID)
 	hasCurrent := err == nil
 	switch {
@@ -161,21 +162,28 @@ func (c *Coordinator) Allocate(
 	}
 	if hasCurrent && current.Lease.AttemptID != request.AttemptID {
 		if current.Lease.Staging && current.Lease.Dispatched {
-			return handoff.Allocation{}, nakamalease.ErrDispatched
-		}
-		if current.State(now) == nakamalease.StateClaimed {
-			return handoff.Allocation{}, nakamalease.ErrClaimed
-		}
-		current, err = c.leases.BeginRelease(
-			ctx,
-			current,
-			current.Lease.AttemptID,
-		)
-		if err != nil {
-			return handoff.Allocation{}, err
-		}
-		if err := c.releaseResource(ctx, current.Lease); err != nil {
-			return handoff.Allocation{}, ErrReconciliation
+			if current.Lease.Releasing {
+				return handoff.Allocation{}, nakamalease.ErrReleasing
+			}
+			// A transport retry creates a fresh transient attempt ID. Adopt the
+			// durable dispatch owner so the retry observes that exact external
+			// operation instead of wedging the quarantine forever.
+			request.AttemptID = current.Lease.AttemptID
+		} else {
+			if current.State(now) == nakamalease.StateClaimed {
+				return handoff.Allocation{}, nakamalease.ErrClaimed
+			}
+			current, err = c.leases.BeginRelease(
+				ctx,
+				current,
+				current.Lease.AttemptID,
+			)
+			if err != nil {
+				return handoff.Allocation{}, err
+			}
+			if err := c.releaseResource(ctx, current.Lease); err != nil {
+				return handoff.Allocation{}, ErrReconciliation
+			}
 		}
 	}
 
@@ -235,6 +243,9 @@ func (c *Coordinator) Allocate(
 			ctx,
 			request,
 		); progressed {
+			if winnerErr == nil && requestedAttemptID != request.AttemptID {
+				winner.CleanupAttemptID = request.AttemptID
+			}
 			return winner, winnerErr
 		} else if winnerErr != nil {
 			return handoff.Allocation{}, winnerErr
@@ -265,6 +276,9 @@ func (c *Coordinator) Allocate(
 			return handoff.Allocation{}, ErrReconciliation
 		}
 		return handoff.Allocation{}, err
+	}
+	if requestedAttemptID != request.AttemptID {
+		provisioned.Allocation.CleanupAttemptID = request.AttemptID
 	}
 	return provisioned.Allocation, nil
 }

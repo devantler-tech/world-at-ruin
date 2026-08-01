@@ -205,6 +205,7 @@ type recordingResources struct {
 	releases               []nakamalease.Lease
 	events                 []string
 	provisionErr           error
+	reconcileErr           error
 	provisionCheck         func(handoff.AllocationRequest, time.Time) error
 	resolveErr             error
 	releaseErr             error
@@ -318,7 +319,7 @@ func (r *recordingResources) Reconcile(
 ) (Provisioned, error) {
 	r.reconciliations = append(r.reconciliations, request)
 	r.events = append(r.events, "reconcile:"+request.AttemptID)
-	return r.provisioned, nil
+	return r.provisioned, r.reconcileErr
 }
 
 func (r *recordingResources) Resolve(
@@ -757,6 +758,132 @@ func TestServiceFailureCleanupPreservesAmbiguousDispatchQuarantine(t *testing.T)
 	}
 }
 
+func TestServiceRetryReconcilesTheQuarantinedAttemptWithoutRedispatch(t *testing.T) {
+	storage := newMemoryStorage()
+	store := newLeaseStore(t, storage)
+	resources := &recordingResources{
+		provisionErr: status.Error(codes.Unavailable, "ambiguous allocation result"),
+	}
+	coordinator, err := NewCoordinator(
+		resources,
+		store,
+		Config{LeaseTTL: time.Minute, Now: func() time.Time { return testNow }},
+	)
+	if err != nil {
+		t.Fatalf("NewCoordinator returned an error: %v", err)
+	}
+	attempts := []string{testAttemptID, "attempt-8"}
+	service, err := handoff.NewService(
+		fixedVerifier(testUserID),
+		coordinator,
+		handoff.Config{
+			ZoneDomain: "edge.example",
+			Now:        func() time.Time { return testNow },
+			NewAttemptID: func() (string, error) {
+				attempt := attempts[0]
+				attempts = attempts[1:]
+				return attempt, nil
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("handoff.NewService returned an error: %v", err)
+	}
+	request := handoff.Request{
+		Session:       "signed-session",
+		ReservationID: testReservationID,
+	}
+
+	if _, err := service.CreateHandoff(context.Background(), request); status.Code(err) != codes.Unavailable {
+		t.Fatalf("first CreateHandoff status = %s, want Unavailable", status.Code(err))
+	}
+	resources.provisionErr = nil
+	resources.provisioned = Provisioned{
+		Allocation: validAllocation(),
+		SecretRef:  "zone-admission-gameserver-17",
+	}
+	handoffResult, err := service.CreateHandoff(context.Background(), request)
+	if err != nil {
+		t.Fatalf("retry CreateHandoff returned an error: %v", err)
+	}
+	if handoffResult.ServerName != validAllocation().ServerName {
+		t.Fatalf("retry handoff = %+v, want reconciled allocation", handoffResult)
+	}
+	if len(resources.provisions) != 1 ||
+		len(resources.reconciliations) != 1 ||
+		resources.reconciliations[0].AttemptID != testAttemptID {
+		t.Fatalf(
+			"retry calls = provisions %+v/reconciliations %+v, want one dispatch then attempt-7 observation",
+			resources.provisions,
+			resources.reconciliations,
+		)
+	}
+}
+
+func TestServiceRetryCleansAReconciledAttemptByItsPersistedOwner(t *testing.T) {
+	storage := newMemoryStorage()
+	store := newLeaseStore(t, storage)
+	resources := &recordingResources{
+		provisionErr: status.Error(codes.Unavailable, "ambiguous allocation result"),
+	}
+	coordinator, err := NewCoordinator(
+		resources,
+		store,
+		Config{LeaseTTL: time.Minute, Now: func() time.Time { return testNow }},
+	)
+	if err != nil {
+		t.Fatalf("NewCoordinator returned an error: %v", err)
+	}
+	attempts := []string{testAttemptID, "attempt-8"}
+	service, err := handoff.NewService(
+		fixedVerifier(testUserID),
+		coordinator,
+		handoff.Config{
+			ZoneDomain: "edge.example",
+			Now:        func() time.Time { return testNow },
+			NewAttemptID: func() (string, error) {
+				attempt := attempts[0]
+				attempts = attempts[1:]
+				return attempt, nil
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("handoff.NewService returned an error: %v", err)
+	}
+	request := handoff.Request{
+		Session:       "signed-session",
+		ReservationID: testReservationID,
+	}
+	if _, err := service.CreateHandoff(context.Background(), request); status.Code(err) != codes.Unavailable {
+		t.Fatalf("first CreateHandoff status = %s, want Unavailable", status.Code(err))
+	}
+	invalid := validAllocation()
+	invalid.ServerName = "outside.example"
+	resources.provisionErr = nil
+	resources.provisioned = Provisioned{
+		Allocation: invalid,
+		SecretRef:  "zone-admission-gameserver-17",
+	}
+
+	if _, err := service.CreateHandoff(context.Background(), request); err == nil {
+		t.Fatal("retry with an invalid reconciled endpoint returned nil, want an error")
+	}
+	if len(resources.releases) != 1 || resources.releases[0].AttemptID != testAttemptID {
+		t.Fatalf(
+			"retry cleanup releases = %+v, want persisted attempt-7 owner",
+			resources.releases,
+		)
+	}
+	if _, err := store.Load(
+		context.Background(),
+		testUserID,
+		testReservationID,
+	); !errors.Is(err, nakamalease.ErrNotFound) {
+		t.Fatalf("invalid reconciled attempt survived cleanup: %v", err)
+	}
+}
+
 func TestAllocateNeverDispatchesWhenBarrierWriteFails(t *testing.T) {
 	storage := newMemoryStorage()
 	storage.writeErrAt = 2
@@ -918,11 +1045,13 @@ func TestAllocateConcurrentCoordinatorsDispatchOnce(t *testing.T) {
 	}
 }
 
-func TestAllocateBlocksNewAttemptWhileDispatchIsQuarantined(t *testing.T) {
+func TestAllocateAdoptsQuarantinedDispatchWithoutRedispatch(t *testing.T) {
+	ambiguous := status.Error(codes.Unavailable, "ambiguous allocation result")
 	storage := newMemoryStorage()
 	store := newLeaseStore(t, storage)
 	resources := &recordingResources{
-		provisionErr: status.Error(codes.Unavailable, "ambiguous allocation result"),
+		provisionErr: ambiguous,
+		reconcileErr: ambiguous,
 	}
 	coordinator, err := NewCoordinator(
 		resources,
@@ -945,13 +1074,20 @@ func TestAllocateBlocksNewAttemptWhileDispatchIsQuarantined(t *testing.T) {
 	newer := validRequest()
 	newer.AttemptID = "attempt-8"
 	if _, err := coordinator.Allocate(context.Background(), newer); err == nil {
-		t.Fatal("newer attempt replaced an ambiguous dispatch, want refusal")
+		t.Fatal("transport retry reconciled an unavailable dispatch, want refusal")
 	}
 	if len(resources.provisions) != 1 {
-		t.Fatalf("resource dispatches = %+v, want no newer dispatch", resources.provisions)
+		t.Fatalf("resource dispatches = %+v, want exactly one dispatch", resources.provisions)
+	}
+	if len(resources.reconciliations) != 1 ||
+		resources.reconciliations[0].AttemptID != testAttemptID {
+		t.Fatalf(
+			"resource reconciliations = %+v, want persisted attempt-7 observation",
+			resources.reconciliations,
+		)
 	}
 	if len(resources.releases) != 0 {
-		t.Fatalf("newer attempt released ambiguous resources: %+v", resources.releases)
+		t.Fatalf("transport retry released ambiguous resources: %+v", resources.releases)
 	}
 	record, err := store.Load(context.Background(), testUserID, testReservationID)
 	if err != nil {
@@ -959,6 +1095,55 @@ func TestAllocateBlocksNewAttemptWhileDispatchIsQuarantined(t *testing.T) {
 	}
 	if record.Lease.AttemptID != testAttemptID {
 		t.Fatalf("durable attempt = %q, want %q", record.Lease.AttemptID, testAttemptID)
+	}
+}
+
+func TestAllocateRetryCannotAdoptAQuarantineWhoseReleaseHasBegun(t *testing.T) {
+	storage := newMemoryStorage()
+	store := newLeaseStore(t, storage)
+	resources := &recordingResources{
+		provisionErr: status.Error(codes.Unavailable, "ambiguous allocation result"),
+	}
+	coordinator, err := NewCoordinator(
+		resources,
+		store,
+		Config{LeaseTTL: time.Minute, Now: func() time.Time { return testNow }},
+	)
+	if err != nil {
+		t.Fatalf("NewCoordinator returned an error: %v", err)
+	}
+	if _, err := coordinator.Allocate(
+		context.Background(),
+		validRequest(),
+	); status.Code(err) != codes.Unavailable {
+		t.Fatalf("first ambiguous dispatch status = %s, want Unavailable", status.Code(err))
+	}
+	current, err := store.Load(context.Background(), testUserID, testReservationID)
+	if err != nil {
+		t.Fatalf("load quarantined dispatch: %v", err)
+	}
+	if _, err := store.BeginRelease(
+		context.Background(),
+		current,
+		testAttemptID,
+	); err != nil {
+		t.Fatalf("BeginRelease returned an error: %v", err)
+	}
+	resources.events = nil
+	resources.reconciliations = nil
+	resources.releases = nil
+
+	retry := validRequest()
+	retry.AttemptID = "attempt-8"
+	got, err := coordinator.Allocate(context.Background(), retry)
+	if !errors.Is(err, nakamalease.ErrReleasing) {
+		t.Fatalf("retry during release error = %v, want ErrReleasing", err)
+	}
+	if !reflect.DeepEqual(got, handoff.Allocation{}) {
+		t.Fatalf("retry during release returned %+v, want zero allocation", got)
+	}
+	if len(resources.events) != 0 {
+		t.Fatalf("retry during release touched resources: %v", resources.events)
 	}
 }
 

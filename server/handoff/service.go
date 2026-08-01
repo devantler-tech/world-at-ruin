@@ -71,6 +71,10 @@ type Allocation struct {
 	Observer        sim.EntityID
 	AdmissionSecret []byte
 	LeaseExpiresAt  time.Time
+	// CleanupAttemptID is the server-internal durable owner to use if a later
+	// handoff stage fails after the allocator adopted a quarantined attempt.
+	// It is never included in the player-facing Handoff.
+	CleanupAttemptID string
 }
 
 // Handoff is the only connection material returned to a player.
@@ -172,6 +176,16 @@ func (s *Service) CreateHandoff(ctx context.Context, request Request) (Handoff, 
 			allocationRequest,
 			status.Error(status.Code(err), "handoff: allocate GameServer"),
 		)
+	}
+	if allocation.CleanupAttemptID != "" {
+		if !validAllocationID(allocation.CleanupAttemptID) {
+			return Handoff{}, s.releaseReservationAfterFailure(
+				ctx,
+				allocationRequest,
+				errors.New("handoff: allocation cleanup attempt ID is invalid"),
+			)
+		}
+		allocationRequest.AttemptID = allocation.CleanupAttemptID
 	}
 	if err := ctx.Err(); err != nil {
 		return Handoff{}, s.releaseReservationAfterFailure(
