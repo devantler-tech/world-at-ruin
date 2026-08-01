@@ -2,39 +2,74 @@
 set -euo pipefail
 
 workflow=${1:-.github/workflows/cla.yaml}
+workflow_text=$(cat "$workflow")
 
-concurrency_block=$(
+if grep -Eq '^concurrency:[[:space:]]*$' <<<"$workflow_text"; then
+  echo "CLA workflow must not let non-actionable events enter a shared pending queue" >&2
+  exit 1
+fi
+
+job_body() {
+  local job=$1
+  awk -v job="$job" '
+    $0 == "  " job ":" { in_job = 1; next }
+    in_job && /^  [[:alnum:]_-]+:[[:space:]]*$/ { exit }
+    in_job { print }
+  ' <<<"$workflow_text"
+}
+
+job_concurrency() {
   awk '
-    /^concurrency:[[:space:]]*$/ {
+    /^    concurrency:[[:space:]]*$/ {
       found = 1
       in_block = 1
       next
     }
-    in_block && /^[^[:space:]#]/ { exit }
+    in_block && /^    [^[:space:]#]/ { exit }
     in_block { print }
     END { if (!found) exit 2 }
-  ' "$workflow"
-) || {
-  echo "CLA workflow must declare a top-level concurrency block" >&2
+  '
+}
+
+check_job=$(job_body cla-check)
+sign_job=$(job_body cla-sign)
+check_block=$(job_concurrency <<<"$check_job") || {
+  echo "CLA gate must declare job-level concurrency after its event filter" >&2
+  exit 1
+}
+sign_block=$(job_concurrency <<<"$sign_job") || {
+  echo "CLA signer must declare job-level concurrency after its comment filter" >&2
   exit 1
 }
 
-# Literal GitHub expression; the runner expands it, this test must not.
+if ! grep -Fq 'github.event.comment.user.id == github.event.issue.user.id' <<<"$sign_job"; then
+  echo "CLA signer must filter non-author signatures before they enter concurrency" >&2
+  exit 1
+fi
+
+# Literal GitHub expressions; the runner expands them, this test must not.
 # shellcheck disable=SC2016
-expected_group='  group: cla-${{ github.event.pull_request.number || github.event.issue.number }}'
-if ! grep -Fqx "$expected_group" <<<"$concurrency_block"; then
-  echo "CLA workflow must serialize runs per pull request" >&2
+expected_check_group='      group: cla-check-${{ github.event.pull_request.number }}'
+# shellcheck disable=SC2016
+expected_sign_group="      group: cla-sign-\${{ github.event.issue.number }}-\${{ github.event.comment.body == 'recheck' }}"
+if ! grep -Fqx "$expected_check_group" <<<"$check_block"; then
+  echo "CLA gate must collapse only redundant pull_request checks" >&2
+  exit 1
+fi
+if ! grep -Fqx "$expected_sign_group" <<<"$sign_block"; then
+  echo "CLA signer must keep signature and recheck queues independent" >&2
   exit 1
 fi
 
-if ! grep -Fqx '  cancel-in-progress: false' <<<"$concurrency_block"; then
-  echo "CLA workflow must not cancel an active ledger write" >&2
-  exit 1
-fi
-
-if grep -Eq '^[[:space:]]+queue:' <<<"$concurrency_block"; then
-  echo "CLA workflow must keep the default single-pending queue" >&2
-  exit 1
-fi
+for block in "$check_block" "$sign_block"; do
+  if ! grep -Fqx '      cancel-in-progress: false' <<<"$block"; then
+    echo "CLA jobs must not cancel active checks or ledger writes" >&2
+    exit 1
+  fi
+  if grep -Eq '^[[:space:]]+queue:' <<<"$block"; then
+    echo "CLA jobs must keep the default single-pending queue" >&2
+    exit 1
+  fi
+done
 
 echo "CLA concurrency guard passed"

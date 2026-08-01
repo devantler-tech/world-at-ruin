@@ -21,10 +21,8 @@ on:
   issue_comment:
     types: [created]
 
-# One run per PR at a time; never cancel a sign run mid-ledger-write.
-concurrency:
-  group: cla-${{ github.event.pull_request.number || github.event.issue.number }}
-  cancel-in-progress: false
+# Concurrency belongs to the filtered jobs below. Keeping it out of workflow scope prevents an
+# ordinary PR comment from replacing a pending signature before the cla-sign filter can skip it.
 
 permissions: {}
 
@@ -37,6 +35,9 @@ jobs:
   cla-check:
     name: CLA gate
     if: github.event_name == 'pull_request'
+    concurrency:
+      group: cla-check-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     permissions:
       contents: read # read the signature ledger from the cla-signatures branch
@@ -85,8 +86,13 @@ jobs:
     name: Record CLA signature
     if: >-
       github.event_name == 'issue_comment' && github.event.issue.pull_request &&
-      (github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA' ||
+      ((github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA' &&
+        github.event.comment.user.id == github.event.issue.user.id) ||
        github.event.comment.body == 'recheck')
+    concurrency:
+      # Signature writes and read-only rechecks cannot replace each other's pending event.
+      group: cla-sign-${{ github.event.issue.number }}-${{ github.event.comment.body == 'recheck' }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     permissions:
       contents: write # append the signature to the ledger on the cla-signatures branch
