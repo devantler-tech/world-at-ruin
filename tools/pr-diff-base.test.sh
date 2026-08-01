@@ -271,6 +271,15 @@ if [ ! -f "$ROOT/$resolver_rel" ]; then
 	t_fail "the guarded path $resolver_rel does not exist — the guard would match nothing"
 fi
 
+# Once the independent guard establishes that the PR changes the resolver, the
+# PR-controlled resolver must not execute at all. Even a diagnostic invocation
+# inherits GITHUB_OUTPUT and could replace or redirect it before the fail-open
+# outputs are appended, making the capture jobs appear safely skippable.
+resolver_guard_branch="$(printf '%s' "$detect_block" | sed -n "/if grep -qE '\^tools\/pr-diff-base\\\\\.sh\$'/,/^          fi$/p")"
+if printf '%s' "$resolver_guard_branch" | grep -q '\./tools/pr-diff-base\.sh'; then
+	t_fail "the resolver-change guard executes the untrusted PR resolver before emitting fail-open outputs"
+fi
+
 if [ "$failures" -ne 0 ]; then
 	printf 'pr diff base test: %d failure(s)\n' "$failures" >&2
 	exit 1
