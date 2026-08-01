@@ -916,10 +916,12 @@ everything shipped afterwards is held to.
     upgrade it", and there is no working in-client updater yet. `UpdateDecision` is pure decision
     logic; `UpdateTrust.verify_and_decide()` authenticates a signing-key certificate with a
     caller-supplied offline-root public key, authenticates the root-signed embedded revocation list,
-    refuses a listed certificate id, then authenticates the manifest with the remaining certified
-    key before entering the decision core. No runtime caller fetches or promotes an update, no
-    production root or signing material is published, and no independently fresh revocation head is
-    fetched. Declaring
+    refuses a listed certificate id, refuses an embedded list that a caller-supplied
+    independently fetched revocation head does not vouch for as current, then authenticates the
+    manifest with the remaining certified key before entering the decision core. No runtime caller
+    fetches or promotes an update, no production root or signing material is published, and nothing
+    fetches a revocation head — which the boundary treats as fail-closed, so no update can currently
+    be authorized at all. Declaring
     `auto_updates` now would make `brew upgrade` skip the cask and strand players on the version
     they installed. Add it only once the self-updater ships (#106). The `postflight`
     quarantine strip is **mandatory, not cosmetic** — the build is ad-hoc signed

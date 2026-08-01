@@ -28,6 +28,11 @@ const CAVITY_DEFAULT_PATTERN := \
 	"uniform\\s+float\\s+seam_cavity\\s*:[^=]*=\\s*([0-9.]+)"
 const CAVITY_CALL := \
 	"terrain_plate_cavity_spread(s_sep, seam_h, cw_relief)"
+## Both surfaces reach the reconstruction through the shared relief helper
+## (#464), so the chain to prove is shader -> helper -> cavity call. Asserting
+## the cavity call in each shader would now fail on code that is correct, and
+## asserting it only in the include would stop binding the two surfaces to it.
+const RELIEF_CALL := "terrain_plate_seam_relief("
 
 const ROCK := Vector3(0.30, 0.27, 0.25)
 const BASALT := Vector3(0.22, 0.21, 0.22)
@@ -84,8 +89,10 @@ func _check_edge_reconstruction(ground: String, contact: String) -> void:
 func _check_cavity_reconstruction(
 		ground: String, contact: String, surface: String) -> void:
 	for entry in [[GROUND_SHADER, ground], [CONTACT_SHADER, contact]]:
-		if not String(entry[1]).contains(CAVITY_CALL):
-			_fail("%s does not use the shared temporal cavity reconstruction — its unresolved seam is still sampled over one pixel" % String(entry[0]))
+		if not String(entry[1]).contains(RELIEF_CALL):
+			_fail("%s does not call the shared seam relief — its unresolved seam is no longer bound to the reconstruction the other surface uses" % String(entry[0]))
+	if not surface.contains(CAVITY_CALL):
+		_fail("%s does not use the shared temporal cavity reconstruction — the unresolved seam is still sampled over one pixel" % SURFACE_INCLUDE)
 
 	var scale := _single_number(surface, CAVITY_SCALE_PATTERN, SURFACE_INCLUDE)
 	var ground_gain := _single_number(
