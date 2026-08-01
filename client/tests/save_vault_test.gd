@@ -524,7 +524,34 @@ func _ready() -> void:
 	_cleanup_probe()
 	SaveVault.clear_refusals_for_test()
 
-	# 8b. The data layer and the behaviour layer must not drift: every name
+	# 8b. Fractional source tokens must be rejected BEFORE JSON's float-backed
+	# parser can round them into apparently whole values. This particular value
+	# used to pass post-parse validation as 9007199254740990 and could then be
+	# written back permanently lowered.
+	var rounded_fractional_progress := (
+		'{"version":4,"quests":{"future_quest":{"future_step":9007199254740990.5}}}')
+	var rounded_fractional_file := FileAccess.open(PROBE, FileAccess.WRITE)
+	if rounded_fractional_file == null:
+		_fail("could not stage the parser-rounded fractional vault")
+		return
+	rounded_fractional_file.store_string(rounded_fractional_progress)
+	rounded_fractional_file.close()
+	if SaveVault.load_from(PROBE) is Dictionary:
+		_fail("the v4 reader accepted fractional progress rounded whole by JSON")
+		return
+	var fractional_reread := FileAccess.open(PROBE, FileAccess.READ)
+	if fractional_reread == null:
+		_fail("refusing parser-rounded progress removed its source document")
+		return
+	var fractional_source := fractional_reread.get_as_text()
+	fractional_reread.close()
+	if fractional_source != rounded_fractional_progress:
+		_fail("refusing parser-rounded progress did not preserve its source bytes")
+		return
+	_cleanup_probe()
+	SaveVault.clear_refusals_for_test()
+
+	# 8c. The data layer and the behaviour layer must not drift: every name
 	# SaveVault claims to know must have a RespawnPoints branch, and vice versa.
 	# Without this, a name could be added to the ledger and KNOWN_ATTUNEMENTS
 	# while nothing ever restored it — every guard green, the attunement dead.
