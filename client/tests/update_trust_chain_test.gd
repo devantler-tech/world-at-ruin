@@ -33,6 +33,8 @@ func _ready() -> void:
 	_test_malformed_revocation_head_fields_are_refused()
 	_test_embedded_revocation_below_the_head_floor_is_refused()
 	_test_expired_or_foreign_revocation_head_is_refused()
+	_test_cross_channel_revocation_stream_is_refused()
+	_test_installation_without_a_trusted_endpoint_is_refused()
 	_test_head_is_enforced_before_manifest_authentication()
 	_test_wrong_root_and_self_signed_certificate_are_refused()
 	_test_tampered_certificate_is_refused()
@@ -203,6 +205,35 @@ func _test_expired_or_foreign_revocation_head_is_refused() -> void:
 		"independently fetched", "a revocation head published for another endpoint")
 
 
+## Catches binding the head to the endpoint the MANIFEST names instead of the one
+## the INSTALLATION follows. Both objects here are genuine and agree with each
+## other: a live-labelled manifest carrying the beta channel's real root-signed
+## revocation stream (lower version, never listed the live signing key), paired
+## with beta's real current head (matching lower floor). Comparing the two to each
+## other accepts them, because a stolen key selected both. Only anchoring to
+## `installed.revocation_head_url` refuses, so a compromised key cannot sidestep
+## the live revocation by pointing the client at another channel's stream. The
+## manifest's own `channel` is no defence — it is signer-chosen and checked later.
+func _test_cross_channel_revocation_stream_is_refused() -> void:
+	_expect_refusal_stage(
+		_verify_with_head(
+			(_vector["cross_channel_manifest"] as Dictionary).duplicate(true),
+			_root_public_key, _head_variant("beta_revocation_head")),
+		"revocation stream",
+		"a live-labelled manifest carrying another channel's revocation stream and its matching head")
+
+
+## Catches defaulting the trusted endpoint. Guessing one is precisely what the
+## binding above exists to prevent, so an installation that declares none refuses.
+func _test_installation_without_a_trusted_endpoint_is_refused() -> void:
+	var unpinned := (_vector["installed"] as Dictionary).duplicate(true)
+	unpinned.erase("revocation_head_url")
+	_expect_refusal_stage(
+		_verify_with_installed(unpinned, _manifest(), _root_public_key, _head()),
+		"revocation_head_url",
+		"an installation declaring no revocation endpoint")
+
+
 ## Catches enforcing the floor only after the manifest verifies. A replayed list
 ## must be a trust refusal, not something the manifest signature gets to answer.
 func _test_head_is_enforced_before_manifest_authentication() -> void:
@@ -287,8 +318,14 @@ func _verify(manifest: Dictionary, root_public_key: String) -> Dictionary:
 
 func _verify_with_head(manifest: Dictionary, root_public_key: String,
 		revocation_head: Variant) -> Dictionary:
+	return _verify_with_installed((_vector["installed"] as Dictionary).duplicate(true),
+		manifest, root_public_key, revocation_head)
+
+
+func _verify_with_installed(installed: Dictionary, manifest: Dictionary,
+		root_public_key: String, revocation_head: Variant) -> Dictionary:
 	var got: Variant = _verifier.call(CHAIN_METHOD,
-		(_vector["installed"] as Dictionary).duplicate(true),
+		installed,
 		manifest,
 		root_public_key,
 		revocation_head)

@@ -45,6 +45,11 @@ const _PUBLIC_KEY_END := "-----END PUBLIC KEY-----"
 ## publisher's own endpoint rather than from the manifest, so its floor cannot be
 ## rewound by the manifest's signer.
 ##
+## Both the head and the embedded list are anchored to
+## `installed.revocation_head_url` — caller-owned installation state — and never
+## merely to each other, so the manifest cannot choose which channel's revocation
+## stream it is judged against.
+##
 ## `revocation_head` is a caller-supplied object, not a fetch: this boundary stays
 ## free of network, disk, clock and scene dependencies, and freshness is judged
 ## against `installed.observed_at` exactly as manifest and certificate validity
@@ -201,12 +206,29 @@ static func _verify_revocation_head(raw: Variant, revocation: Dictionary,
 		return _refused("independently fetched revocation head is not authenticated by the offline root: %s" %
 			str(root_verification["error"]))
 
-	# A head is only evidence about the endpoint it was served from. Without this
-	# binding, a still-valid head for another channel — which legitimately carries
-	# a lower floor — would satisfy this channel's freshness requirement.
-	if str(head["head_url"]) != str(revocation["head_url"]):
-		return _refused("independently fetched revocation head is published for '%s', not for this manifest's revocation endpoint '%s'" % [
-			str(head["head_url"]), str(revocation["head_url"])])
+	# A head is only evidence about the endpoint it was served from, and the
+	# endpoint must be chosen by the INSTALLATION rather than by the manifest.
+	# Binding the head to `revocation.head_url` alone would compare two objects
+	# the manifest's signer selected: a stolen key can embed a genuinely
+	# root-signed revocation object belonging to another channel — whose stream
+	# legitimately carries a lower floor and never listed the stolen key — and
+	# name that channel's endpoint, so the client fetches that channel's real
+	# head and the two agree with each other while the live revocation is never
+	# consulted. The manifest's own `channel` is no defence: it is signer-chosen
+	# too, and is checked later, in the decision core.
+	#
+	# `revocation_head_url` is caller-owned installation state, like the
+	# high-water marks and `channel`. It has no safe default: guessing an
+	# endpoint is what this check exists to prevent, so its absence refuses.
+	var trusted_head_url: Variant = installed.get("revocation_head_url")
+	if not (trusted_head_url is String) or (trusted_head_url as String).is_empty():
+		return _refused("this installation declares no revocation_head_url, so an independently fetched revocation head cannot be bound to an endpoint the manifest did not choose")
+	if str(revocation["head_url"]) != str(trusted_head_url):
+		return _refused("the embedded revocation list belongs to endpoint '%s', but this installation follows '%s' — a manifest cannot redirect the client to another channel's revocation stream" % [
+			str(revocation["head_url"]), str(trusted_head_url)])
+	if str(head["head_url"]) != str(trusted_head_url):
+		return _refused("independently fetched revocation head is published for '%s', not for this installation's revocation endpoint '%s'" % [
+			str(head["head_url"]), str(trusted_head_url)])
 
 	# Both timestamps are canonical fixed-width `YYYY-MM-DDTHH:MM:SSZ`, so string
 	# order is calendar order and no clock is read. `observed_at` is revalidated

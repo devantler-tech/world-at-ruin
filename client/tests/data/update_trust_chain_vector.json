@@ -5,7 +5,8 @@
     "Certificate, revocation and revocation-head signatures cover RFC 8785 JCS with root_signature excluded.",
     "Manifest signatures cover RFC 8785 JCS with signature excluded.",
     "Every revocation_head_* OBJECT is genuinely root-signed, so each is refused for its stated reason and not for a broken signature.",
-    "revocation_head_forged_root_signature is the deliberate exception: it signs a LOWERED floor with the wrong root, so every other check passes and only root authentication can refuse it."
+    "revocation_head_forged_root_signature is the deliberate exception: it signs a LOWERED floor with the wrong root, so every other check passes and only root authentication can refuse it.",
+    "cross_channel_manifest + beta_revocation_head are BOTH genuine: a live-labelled manifest embedding the beta channel real root-signed revocation stream, paired with the beta real current head. They agree with each other, so only binding to installed.revocation_head_url refuses them."
   ],
   "installed": {
     "key_certificate_required": true,
@@ -14,6 +15,7 @@
     "observed_at": "2030-01-15T00:00:00Z",
     "pack_version": "0.1.14",
     "protocol": 1,
+    "revocation_head_url": "https://updates.worldatruin.example/live/revocation-head.json",
     "save_capability": 1,
     "save_schema": 1,
     "shell_version": "0.1.14"
@@ -26,8 +28,8 @@
       "id": "signing-key-2030-01",
       "not_after": "2030-04-01T00:00:00Z",
       "not_before": "2030-01-01T00:00:00Z",
-      "public_key": "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEweX9xn08kxjeqR3mrmqc+dgDw7lV\naE0EPVviqIbIhvgT02Na+uMlOkEcEZMrxIY1QAVH+2+d396FjwiumnQhbQ==\n-----END PUBLIC KEY-----",
-      "root_signature": "MEUCIEq5jaDE6MuCkSAf28+mn5DXz6E37Apz9s/6DIkQmUbOAiEAquaDWy9NFeal+fej3Z8Lolu+mQtYITDy0oCXTBQBY70="
+      "public_key": "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEoNL28cDUAMvAjR12FjNGT5FUOwUi\nR2EmHVJuVfMaEkaI47mXuchu1pjmHRHrlWrOgjE9JACYbMhCJeenIUuuOA==\n-----END PUBLIC KEY-----",
+      "root_signature": "MEUCIGmWpEA4airwMt6ed3ZsTKbUxcBKaq49eikd0xYP8BP1AiEAxVOtJ6X4qLDxDyE91xMPWIBr44ZjeDFq5Pbil9k37Ls="
     },
     "key_epoch": 7,
     "not_after": "2030-02-01T00:00:00Z",
@@ -45,7 +47,7 @@
     "revocation": {
       "head_url": "https://updates.worldatruin.example/live/revocation-head.json",
       "revoked_ids": [],
-      "root_signature": "MEUCIQC6S08s4aqKuHNPdDv3jW8VMa+j0/9Ce0rWX1dNHL6L6AIgVQIDnASQ7SZowySkOoy2yLaQRRWB0h/yATp3qKXzA6o=",
+      "root_signature": "MEUCIHcC5GSekaC/ypev8zOunecc4dCeR8mOwG9WCvzqxS3dAiEAldNJuXEjsBFV/VBBTsKZdzRqPUOQY2Gi3kLhUY6Taak=",
       "version": 4
     },
     "save_schema": {
@@ -62,7 +64,7 @@
       "reads_max": 9,
       "reads_min": 1
     },
-    "signature": "MEUCIGiVhKHK0trbbsyCNNs93h4bEvzJ6lRTyKC1csk5lpL1AiEA+baw76Ybh4oBbSPS6T4WCh3Vi9QyR8i4dXz5Cv0sE1c="
+    "signature": "MEYCIQCOQSxIxKKA6sank1yX2+EEfGiYk7GPLUNJuS7H1RnKkQIhAKuC6XA/SZ2CgJ+L/rfVguRP9EbjhMjVOyvtMyJQ4tR3"
   },
   "revoked_manifest": {
     "channel": "live",
@@ -72,8 +74,8 @@
       "id": "signing-key-2030-01",
       "not_after": "2030-04-01T00:00:00Z",
       "not_before": "2030-01-01T00:00:00Z",
-      "public_key": "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEweX9xn08kxjeqR3mrmqc+dgDw7lV\naE0EPVviqIbIhvgT02Na+uMlOkEcEZMrxIY1QAVH+2+d396FjwiumnQhbQ==\n-----END PUBLIC KEY-----",
-      "root_signature": "MEUCIEq5jaDE6MuCkSAf28+mn5DXz6E37Apz9s/6DIkQmUbOAiEAquaDWy9NFeal+fej3Z8Lolu+mQtYITDy0oCXTBQBY70="
+      "public_key": "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEoNL28cDUAMvAjR12FjNGT5FUOwUi\nR2EmHVJuVfMaEkaI47mXuchu1pjmHRHrlWrOgjE9JACYbMhCJeenIUuuOA==\n-----END PUBLIC KEY-----",
+      "root_signature": "MEUCIGmWpEA4airwMt6ed3ZsTKbUxcBKaq49eikd0xYP8BP1AiEAxVOtJ6X4qLDxDyE91xMPWIBr44ZjeDFq5Pbil9k37Ls="
     },
     "key_epoch": 7,
     "not_after": "2030-02-01T00:00:00Z",
@@ -93,7 +95,7 @@
       "revoked_ids": [
         "signing-key-2030-01"
       ],
-      "root_signature": "MEUCICcoooCon6HyJr+Ac7ucym2O+9rxpuY+DFe+GiMDDr5xAiEA1z8LlQ46zMXM4+sAyXmCMZiL8XvuwsDGGvd+ZkNp1Qo=",
+      "root_signature": "MEUCIEcKU59A5XEKSYHWBENgW6GyLTGtQp0J66A5NCn0K1ujAiEA72iRGT3W12I+xN4ScZfrM76DvX23woqScri7HeW/XiM=",
       "version": 4
     },
     "save_schema": {
@@ -110,47 +112,99 @@
       "reads_max": 9,
       "reads_min": 1
     },
-    "signature": "MEQCIBHTJRSocU0uxseiKxzk0i4vrNBwoWPyUx7V+1p8F4LoAiAKdkG1+4Otid6Z8r5Oib+c7gGav4fAVRRnlNFC5g8ssQ=="
+    "signature": "MEQCIDyADrYH8UkaGNFo4fIcpb2/RUvBgyhatFl8Nz2XUOxlAiAGxRj03s7NkAbKZpf635Hs2w2tMl0elE7nsDQyhkREFQ=="
   },
   "revocation_head": {
     "head_url": "https://updates.worldatruin.example/live/revocation-head.json",
     "not_after": "2030-02-01T00:00:00Z",
     "version_floor": 4,
-    "root_signature": "MEUCIQDUXpWIpoOPwFePMrkc9XemFpikO74taNxYAPXMUMdppAIgJdS77347BuJ9cJXlL+USwEcCy66TITNTq9ubz24tpPA="
+    "root_signature": "MEUCIGnvIxJzaqz9NbgZBszus3A2Vs3elIA7f2SAYdK9M7y1AiEAjYqNaMd1s4j/iJItivsMt2DHYg5OcWdNJ341ym52Q4U="
   },
   "revocation_head_expired": {
     "head_url": "https://updates.worldatruin.example/live/revocation-head.json",
     "not_after": "2030-01-01T00:00:00Z",
     "version_floor": 4,
-    "root_signature": "MEUCIFTzzfSlEQEcfhIG0rOoCcesqW4+c4FZX/5Hy3y+jtleAiEA8Ej7mqVQDMyOlLBks0VM9EANusySM7iU4BPWOU/f7JA="
+    "root_signature": "MEUCIQCGoQ4BTTg3FA4ZRQWt+znelRLCvDG3R0InZQbBTSJjHgIgPvas7Uv1U/2XUYJeEqywuq1cSwzQnE/Fqda8/EqysQs="
   },
   "revocation_head_other_url": {
     "head_url": "https://updates.worldatruin.example/beta/revocation-head.json",
     "not_after": "2030-02-01T00:00:00Z",
     "version_floor": 4,
-    "root_signature": "MEUCIQCtyod3F5spBODU6ibRDdPnshi7YbJt8L+oh3ZeKE1QVwIgFxIw7nS0WIFFXvbXMh1DKD/RXTDHM1MaS64fCZQM+gI="
+    "root_signature": "MEUCIQC/FiJti7mWhevFR0/c+ehxl4yJmW5IfE8YTmgabKjysgIgLC1W2FGRyaW1Rb1id99ctSv7loNxeNn7sgPCnqu6SY4="
   },
   "revocation_head_floor_above_embedded": {
     "head_url": "https://updates.worldatruin.example/live/revocation-head.json",
     "not_after": "2030-02-01T00:00:00Z",
     "version_floor": 5,
-    "root_signature": "MEUCIG3b3SL5bGD93ZTZHe12Dblnk46+Ujnomsvr6ctGcCVpAiEAycBPkgvqpBPY+WZ552D34SKnsgoF+8A8OAYOAFSNDPY="
+    "root_signature": "MEQCIGRRgnqJp0zNHNxpxgxZ8u1dUE+GrT9nfaCWHKBYCWeNAiAGqzHtOTMhhqDEhcs9GHNRp+Z8FT3kytARmPHTSzdYQQ=="
   },
-  "revocation_head_forged_root_signature": "MEUCIH4PT+IW89UCdVNFdTPwboJ0pXxKEDUu4+fkXJc8RTYGAiEAmmiDkptv7RL2XRfzy5Tglve2rIJtuSzN2SvImySmwjA=",
+  "revocation_head_forged_root_signature": "MEUCIQCL9CVa+cT2eKqj/mLnMDCbMwKv25e4XKbhogQdKys2UQIgKWsKVihVkVfqOZkLuDF9Hb/1cyveH/g15VepOsCmB5I=",
   "revocation_head_malformed_not_after": {
     "head_url": "https://updates.worldatruin.example/live/revocation-head.json",
     "not_after": "9999",
     "version_floor": 4,
-    "root_signature": "MEQCIAyuP1zpn/UMZW2QNHkSCLqoaGpSRhJS28sSJnaSLtv8AiAyttE7qWhDemrIxS+E2LxIniQMXgfGXaodBJ488peRiA=="
+    "root_signature": "MEUCIQCfwytS0Hv8fktEDwjQzsSesYvConcpWNYg0hFPQ/LDQwIgcNF0qH3RXmEBoQqYNv3aaUPhy5z9FS9cxhwWY0PslsQ="
   },
   "revocation_head_malformed_floor": {
     "head_url": "https://updates.worldatruin.example/live/revocation-head.json",
     "not_after": "2030-02-01T00:00:00Z",
     "version_floor": "abc",
-    "root_signature": "MEUCIQCBVtvG4h2tm96ve4Xu8q4TDPr9UsjLIoUlM96DFZ64zwIgF1pbjfOPGzUqilVs1zIApFnjOr7+hdf2wvjJBlQdNXo="
+    "root_signature": "MEUCIBGURI0o8De3dZC3w4yGb/bHatcF6CfCc3MFsUFDrNNOAiEA4oXfvSQ+hJT5gFW88WvpQWxrECK3yuIJl4HP/8sh+M0="
   },
-  "duplicate_revocation_root_signature": "MEUCIBIEBkX2qBmW7dyPvsX2sviIjM7atfLbRJn+bNJNxVssAiEAtXeuCUENLq7sUOSVjkmUtRpoYKqK7Rw4D+7tT+CG1YM=",
-  "self_signed_certificate_signature": "MEUCIQDcKmeHArQhWjmfTVshbQ76j8KzYxiUubrndSgBHmJawAIgXMQoQEnbWZsoVN6+Umoiho33xJnAZzfYpQG5JUGQdqo=",
+  "cross_channel_manifest": {
+    "channel": "live",
+    "key": {
+      "algorithm": "ecdsa-p256-sha256",
+      "epoch": 7,
+      "id": "signing-key-2030-01",
+      "not_after": "2030-04-01T00:00:00Z",
+      "not_before": "2030-01-01T00:00:00Z",
+      "public_key": "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEoNL28cDUAMvAjR12FjNGT5FUOwUi\nR2EmHVJuVfMaEkaI47mXuchu1pjmHRHrlWrOgjE9JACYbMhCJeenIUuuOA==\n-----END PUBLIC KEY-----",
+      "root_signature": "MEUCIGmWpEA4airwMt6ed3ZsTKbUxcBKaq49eikd0xYP8BP1AiEAxVOtJ6X4qLDxDyE91xMPWIBr44ZjeDFq5Pbil9k37Ls="
+    },
+    "key_epoch": 7,
+    "not_after": "2030-02-01T00:00:00Z",
+    "pack": {
+      "min_shell": "0.1.14",
+      "sha256": "y",
+      "size": 0,
+      "url": "x",
+      "version": "0.1.14"
+    },
+    "protocol": {
+      "max": 1,
+      "min": 1
+    },
+    "revocation": {
+      "head_url": "https://updates.worldatruin.example/beta/revocation-head.json",
+      "revoked_ids": [],
+      "root_signature": "MEUCICofB2ThWSqRDR+ges6hpwsUREWizePUiN8WiLlPlNylAiEAnhlmG2Jz9NoSB5EgfCO8QX/Zrlwrx/Tx+dFPp/HOpps=",
+      "version": 2
+    },
+    "save_schema": {
+      "capability": 1,
+      "min": 1,
+      "writes": 1
+    },
+    "schema": 1,
+    "sequence": 42,
+    "shell": {
+      "current": "0.1.14",
+      "min_supported": "0.1.0",
+      "reads_capability_max": 9,
+      "reads_max": 9,
+      "reads_min": 1
+    },
+    "signature": "MEUCIQCqfvzDqMC7eFaRc8YG1O/2EDrKoCs0QoXi4Wrlcy5BrQIgGiOU1m8JjbA2miHsbRBWWNusWLynsTSBrJoCrigRtFE="
+  },
+  "beta_revocation_head": {
+    "head_url": "https://updates.worldatruin.example/beta/revocation-head.json",
+    "not_after": "2030-02-01T00:00:00Z",
+    "version_floor": 2,
+    "root_signature": "MEYCIQCSpBAMZYjp9P0uEaqvEqio6bPTwiBLFZGOsKAsJ6/MBwIhALo02CvRQ9TVKVaNKH8dkKzv7+AyJSDbjt9prc90tNc+"
+  },
+  "duplicate_revocation_root_signature": "MEYCIQCuV9d1YNqc7EPO5S6jhiiTzMJ3PJTkSxPttCD8chB8wAIhAJX7r+G+paHLp//k/6r3KPedSMJfkGKeTWHEwJl5HxMT",
+  "self_signed_certificate_signature": "MEUCIAkzLuCkUOhlXzlRR+C+jIcg9qMPGvKSpB7aXf27WTQsAiEAqi4VCFH6XFNuoWRH1rjJBTitjR/c8x4jKbnZEMNIxKM=",
   "root_public_key_path": "res://tests/data/update_trust_chain_root_public.pem",
   "wrong_root_public_key_path": "res://tests/data/update_trust_chain_wrong_root_public.pem"
 }

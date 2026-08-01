@@ -388,9 +388,18 @@ stale cache, or engine change can strand or subvert a client:
   older — but still validly root-signed — list issued before the theft, which therefore does not name
   the stolen key. `verify_and_decide()` therefore takes a `revocation_head` obtained from the
   publisher's own endpoint rather than from the manifest, authenticates it with the same offline root,
-  and refuses the manifest when the head is expired against `installed.observed_at`, when its
-  `head_url` is not the endpoint the embedded list names, or when the embedded `revocation.version` is
-  below the head's `version_floor`. The head is enforced before the manifest signature, so a replayed
+  and refuses the manifest when the head is expired against `installed.observed_at` or when the
+  embedded `revocation.version` is below the head's `version_floor`.
+  **Both objects are anchored to `installed.revocation_head_url`, never to each other.** Binding the
+  head to the endpoint the *manifest* names would compare two objects the manifest's signer selected:
+  a stolen key can embed another channel's genuinely root-signed revocation stream — which
+  legitimately carries a lower floor and never listed that key — and name that channel's endpoint, so
+  the client fetches that channel's real head and the two agree with each other while the live
+  revocation is never consulted. The manifest's own `channel` is no defence, being signer-chosen and
+  checked later in the decision core. `revocation_head_url` is caller-owned installation state like
+  the high-water marks and `channel`, and it has **no safe default**: guessing an endpoint is exactly
+  what this binding prevents, so an installation declaring none refuses.
+  The head is enforced before the manifest signature, so a replayed
   list never reaches manifest authentication. A head the caller could not fetch is passed as `null`
   and refuses the update — falling back to embedded-only trust is the attack, not a degraded mode.
   Refusing an update never blocks launching the installed build, which does not call this boundary.
