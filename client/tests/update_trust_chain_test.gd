@@ -30,6 +30,7 @@ func _ready() -> void:
 	_test_revocation_is_required_and_root_authenticated()
 	_test_malformed_root_signed_revocation_is_refused()
 	_test_revocation_head_is_required_and_root_authenticated()
+	_test_malformed_revocation_head_fields_are_refused()
 	_test_embedded_revocation_below_the_head_floor_is_refused()
 	_test_expired_or_foreign_revocation_head_is_refused()
 	_test_head_is_enforced_before_manifest_authentication()
@@ -137,10 +138,36 @@ func _test_revocation_head_is_required_and_root_authenticated() -> void:
 	_expect_refusal_stage(_verify_with_head(_manifest(), _root_public_key, unsigned),
 		"independently fetched", "a revocation head carrying no offline-root signature")
 
+	# The floor is LOWERED, not raised: a raised floor is refused by the floor
+	# comparison too, so it would keep passing with signature verification
+	# deleted. A lowered floor satisfies every other check, so only the root
+	# signature can refuse it — which is what this case has to prove.
 	var tampered := _head()
-	tampered["version_floor"] = 9
+	tampered["version_floor"] = 3
 	_expect_refusal_stage(_verify_with_head(_manifest(), _root_public_key, tampered),
-		"independently fetched", "a raised head floor under the old root signature")
+		"independently fetched", "a lowered head floor under the old root signature")
+
+	var forged := _head()
+	forged["version_floor"] = 3
+	forged["root_signature"] = str(_vector["revocation_head_forged_root_signature"])
+	_expect_refusal_stage(_verify_with_head(_manifest(), _root_public_key, forged),
+		"independently fetched", "a head floor lowered and re-signed by a different offline root")
+
+
+## Catches trusting a root-signed head's field SHAPES. Both variants are genuinely
+## root-signed and chosen so every later check would accept them: "9999" sorts
+## below the observed clock so it never reads as expired, and a non-numeric floor
+## coerces to 0 so any embedded version clears it.
+func _test_malformed_revocation_head_fields_are_refused() -> void:
+	_expect_refusal_stage(
+		_verify_with_head(_manifest(), _root_public_key,
+			_head_variant("revocation_head_malformed_not_after")),
+		"independently fetched", "a root-signed head whose not_after is not a canonical timestamp")
+
+	_expect_refusal_stage(
+		_verify_with_head(_manifest(), _root_public_key,
+			_head_variant("revocation_head_malformed_floor")),
+		"independently fetched", "a root-signed head whose version_floor is not a whole number")
 
 
 ## The floor check, ablated in BOTH directions: the identical manifest is
