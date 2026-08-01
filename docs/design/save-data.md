@@ -270,9 +270,12 @@ state on v2, and empty or attunement-only state on v1.
 Capability 7 is the reader-only vault-v5 weapon-mastery expansion. Its required `mastery` object
 contains exactly `weapons` and `bloodstain`: each stable weapon ID maps to exact JSON-safe integer
 `banked` and `unbanked` points, while the standing bloodstain maps tracked weapon IDs to the points
-that can still be reclaimed. Banked values are whole mastery bars, unbanked values remain below one
-bar, and the bloodstain remains within that open bar; malformed or partial state is refused before
-anything is applied. Unknown future weapon IDs are valid because rollback must preserve and apply
+that can still be reclaimed. Vault-v5 freezes its persisted bar unit at 100 points: banked values are
+multiples of 100, while each unbanked value and bloodstain value stays below 100 independently.
+Their sum may cross a bar because play can award more mastery while a prior bloodstain stands, and
+reclaim banks that completed bar normally. The retained reader uses this frozen unit instead of live
+bar tuning; malformed or partial state is refused before anything is applied. Unknown future weapon
+IDs are valid because rollback must preserve and apply
 them without reinterpreting their meaning. `Main` restores the complete snapshot atomically into its
 boot-owned `Mastery`, and the real boot guard proves both the live tracks and bloodstain are present.
 The manifest advertises read capability 7, while `SaveVault.VAULT_VERSION` and

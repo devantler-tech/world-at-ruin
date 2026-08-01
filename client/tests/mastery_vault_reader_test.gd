@@ -6,6 +6,7 @@ extends Node
 ## rollback gate: a later writer can activate only after this reader ships.
 
 const JSON_SAFE_MAX := Mastery.MAX_PERSISTED_POINTS
+const VAULT_V5_BANK_STEP := Mastery.VAULT_V5_BANK_STEP
 
 var _failed := false
 
@@ -19,6 +20,8 @@ func _ready() -> void:
 		"the expansion build advanced the production save writer")
 	_check(UpdateManifest.SAVE_CAPABILITY_READS == 7,
 		"the expansion build does not advertise mastery read capability 7")
+	_check(VAULT_V5_BANK_STEP == 100,
+		"vault-v5's shipped mastery unit changed with live bar tuning")
 	if _failed:
 		return
 
@@ -74,6 +77,7 @@ func _ready() -> void:
 		return
 
 	_check_invalid_shapes()
+	_check_reachable_bloodstain_snapshot()
 	_check_reader_only_writeback()
 	if _failed:
 		return
@@ -103,21 +107,42 @@ func _check_invalid_shapes() -> void:
 		"unsafe banked": {"weapons": {"sword": {"banked": JSON_SAFE_MAX + 1, "unbanked": 1}}, "bloodstain": {}},
 		"partial banked step": {"weapons": {"sword": {"banked": 101, "unbanked": 1}}, "bloodstain": {}},
 		"negative unbanked": {"weapons": {"sword": {"banked": 100, "unbanked": -1}}, "bloodstain": {}},
-		"full unbanked bar": {"weapons": {"sword": {"banked": 100, "unbanked": Mastery.BANK_STEP}}, "bloodstain": {}},
+		"full unbanked bar": {"weapons": {"sword": {"banked": 100, "unbanked": VAULT_V5_BANK_STEP}}, "bloodstain": {}},
 		"bloodstain is not an object": {"weapons": {}, "bloodstain": []},
 		"empty bloodstain id": {"weapons": {"sword": {"banked": 0, "unbanked": 0}}, "bloodstain": {"": 1}},
 		"untracked bloodstain weapon": {"weapons": {}, "bloodstain": {"sword": 1}},
 		"zero bloodstain": {"weapons": {"sword": {"banked": 0, "unbanked": 0}}, "bloodstain": {"sword": 0}},
 		"fractional bloodstain": {"weapons": {"sword": {"banked": 0, "unbanked": 0}}, "bloodstain": {"sword": 1.5}},
 		"unsafe bloodstain": {"weapons": {"sword": {"banked": 0, "unbanked": 0}}, "bloodstain": {"sword": JSON_SAFE_MAX + 1}},
-		"bloodstain fills a bar": {"weapons": {"sword": {"banked": 0, "unbanked": 0}}, "bloodstain": {"sword": Mastery.BANK_STEP}},
-		"track plus bloodstain fills a bar": {"weapons": {"sword": {"banked": 0, "unbanked": 60}}, "bloodstain": {"sword": 40}},
+		"bloodstain fills a bar": {"weapons": {"sword": {"banked": 0, "unbanked": 0}}, "bloodstain": {"sword": VAULT_V5_BANK_STEP}},
 	}
 	for label: String in cases:
 		var reason := SaveVault.validate(_vault(cases[label]))
 		if reason.is_empty():
 			_fail("vault validation accepted malformed mastery: %s" % label)
 			return
+
+
+func _check_reachable_bloodstain_snapshot() -> void:
+	# A player can earn more mastery while an earlier bloodstain is standing.
+	# Reclaim then banks any completed bar, so the persisted current pool and
+	# stain do not have to fit inside one bar together.
+	var reachable := {
+		"weapons": {"sword": {"banked": 100, "unbanked": 90}},
+		"bloodstain": {"sword": 40},
+	}
+	var reason := SaveVault.validate(_vault(reachable))
+	if not reason.is_empty():
+		_fail("vault validation refused reachable mastery earned after death: %s" % reason)
+		return
+	var mastery := Mastery.new()
+	if not mastery.restore(reachable):
+		_fail("Mastery refused a reachable current-pool plus bloodstain snapshot")
+		return
+	_check(mastery.reclaim() == 40
+			and mastery.banked("sword") == 200
+			and mastery.unbanked("sword") == 30,
+		"restored bloodstain did not reclaim through ordinary banking")
 
 
 func _check_reader_only_writeback() -> void:

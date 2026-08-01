@@ -50,11 +50,16 @@ extends RefCounted
 ## serialization + persistence (gated on the save schema); and the sidegrade
 ## "no strict dominance" arsenal rule (that lives with the ability schema).
 
-## The bar size: every whole BANK_STEP points of unbanked mastery is locked into
-## the banked floor. A tuning placeholder until combat pacing is real — kept a
-## named constant, never a magic number, so the banking law reads clearly and the
-## value can move in one place without touching the logic.
-const BANK_STEP := 100
+## Vault-v5 shipped with 100-point mastery bars. Historical readers validate
+## against this frozen unit so later combat-pacing changes cannot reinterpret
+## already-written player state.
+const VAULT_V5_BANK_STEP := 100
+
+## The live bar size: every whole BANK_STEP points of unbanked mastery is locked
+## into the banked floor. A tuning placeholder until combat pacing is real — kept
+## separate from the shipped vault-v5 unit so this value can move without
+## invalidating retained saves.
+const BANK_STEP := VAULT_V5_BANK_STEP
 
 ## Largest integer JSON can carry without rounding. Vault-v5 mastery snapshots
 ## stay inside this boundary so a stored point can never change value merely by
@@ -76,8 +81,8 @@ var _bloodstain: Dictionary = {}
 ## "" when `snapshot` is the complete vault-v5 mastery shape, else why it must
 ## be refused. Weapon ids are stable strings but deliberately not registry-
 ## checked: a retained rollback reader must preserve and apply a weapon a newer
-## build introduced. The numeric invariants are the same ones the live ledger
-## enforces, so restoring cannot mint a state ordinary play could never reach.
+## build introduced. Numeric bounds use vault-v5's frozen bar unit rather than
+## mutable live tuning, so a later pacing change cannot invalidate shipped data.
 static func snapshot_refusal_reason(snapshot: Variant) -> String:
 	if snapshot is not Dictionary:
 		return "mastery must be an object"
@@ -109,9 +114,9 @@ static func snapshot_refusal_reason(snapshot: Variant) -> String:
 			track["unbanked"], "mastery unbanked points for '%s'" % weapon_id)
 		if not unbanked_reason.is_empty():
 			return unbanked_reason
-		if int(track["banked"]) % BANK_STEP != 0:
+		if int(track["banked"]) % VAULT_V5_BANK_STEP != 0:
 			return "mastery banked points for '%s' must be whole bank steps" % weapon_id
-		if int(track["unbanked"]) >= BANK_STEP:
+		if int(track["unbanked"]) >= VAULT_V5_BANK_STEP:
 			return "mastery unbanked points for '%s' must stay below one bank step" % weapon_id
 
 	var bloodstain: Variant = snapshot["bloodstain"]
@@ -127,11 +132,8 @@ static func snapshot_refusal_reason(snapshot: Variant) -> String:
 		if not stain_reason.is_empty():
 			return stain_reason
 		var points := int(bloodstain[weapon_id])
-		if points <= 0 or points >= BANK_STEP:
+		if points <= 0 or points >= VAULT_V5_BANK_STEP:
 			return "mastery bloodstain points for '%s' must be within one open bank bar" % weapon_id
-		var track: Dictionary = weapons[weapon_id]
-		if int(track["unbanked"]) + points >= BANK_STEP:
-			return "mastery current and bloodstain points for '%s' must fit one open bank bar" % weapon_id
 	return ""
 
 
