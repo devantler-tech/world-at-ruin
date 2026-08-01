@@ -146,16 +146,30 @@ func restore(snapshot: Variant) -> bool:
 	var next_tracks := {}
 	for weapon_id: String in snapshot["weapons"]:
 		var source: Dictionary = snapshot["weapons"][weapon_id]
-		next_tracks[weapon_id] = {
-			"banked": int(source["banked"]),
-			"unbanked": int(source["unbanked"]),
-		}
+		next_tracks[weapon_id] = _normalized_restored_track(source, BANK_STEP)
 	var next_bloodstain := {}
 	for weapon_id: String in snapshot["bloodstain"]:
 		next_bloodstain[weapon_id] = int(snapshot["bloodstain"][weapon_id])
 	_tracks = next_tracks
 	_bloodstain = next_bloodstain
 	return true
+
+
+## Convert any completed bars in a retained snapshot to the current live banked
+## floor before gameplay can expose them to death. Vault-v5 validation keeps its
+## historical 100-point unit; this normalization is deliberately separate so a
+## later, smaller live BANK_STEP cannot leave already-earned complete bars at
+## risk. The returned track is freshly owned by the restore path.
+static func _normalized_restored_track(source: Dictionary, live_bank_step: int) -> Dictionary:
+	if live_bank_step <= 0:
+		return {}
+	var banked_points := int(source["banked"])
+	var unbanked_points := int(source["unbanked"])
+	var completed_bars: int = unbanked_points / live_bank_step
+	return {
+		"banked": banked_points + completed_bars * live_bank_step,
+		"unbanked": unbanked_points - completed_bars * live_bank_step,
+	}
 
 
 static func _persisted_points_refusal_reason(value: Variant, label: String) -> String:

@@ -274,8 +274,9 @@ that can still be reclaimed. Vault-v5 freezes its persisted bar unit at 100 poin
 multiples of 100, while each unbanked value and bloodstain value stays below 100 independently.
 Their sum may cross a bar because play can award more mastery while a prior bloodstain stands, and
 reclaim banks that completed bar normally. The retained reader uses this frozen unit instead of live
-bar tuning; malformed or partial state is refused before anything is applied. Unknown future weapon
-IDs are valid because rollback must preserve and apply
+bar tuning; malformed or partial state is refused before anything is applied. Restore then banks any
+unbanked points that already complete a smaller current live bar before the death loop can expose
+them. Unknown future weapon IDs are valid because rollback must preserve and apply
 them without reinterpreting their meaning. `Main` restores the complete snapshot atomically into its
 boot-owned `Mastery`, and the real boot guard proves both the live tracks and bloodstain are present.
 The manifest advertises read capability 7, while `SaveVault.VAULT_VERSION` and

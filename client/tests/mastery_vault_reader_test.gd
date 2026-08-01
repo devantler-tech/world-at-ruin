@@ -78,6 +78,7 @@ func _ready() -> void:
 
 	_check_invalid_shapes()
 	_check_reachable_bloodstain_snapshot()
+	_check_lower_live_bar_normalization()
 	_check_reader_only_writeback()
 	if _failed:
 		return
@@ -143,6 +144,16 @@ func _check_reachable_bloodstain_snapshot() -> void:
 			and mastery.banked("sword") == 200
 			and mastery.unbanked("sword") == 30,
 		"restored bloodstain did not reclaim through ordinary banking")
+
+
+func _check_lower_live_bar_normalization() -> void:
+	# Vault-v5 keeps its 100-point persisted unit, but live tuning may later use
+	# smaller bars. Restore must bank every already-completed live bar before a
+	# death can treat those points as at-risk progress.
+	var normalized := Mastery._normalized_restored_track(
+		{"banked": 100, "unbanked": 90}, 80)
+	_check(normalized == {"banked": 180, "unbanked": 10},
+		"restore left a completed lower live bar exposed to the death loop")
 
 
 func _check_reader_only_writeback() -> void:
