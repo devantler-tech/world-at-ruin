@@ -26,6 +26,8 @@ extends Node
 ##  5. A v2 fixture's discoveries restore through the real Discovery tracker,
 ##     proving the expansion has an application path rather than parser-only
 ##     support.
+##     A v5 fixture likewise restores banked/unbanked weapon tracks and the one
+##     standing bloodstain through the real Mastery ledger.
 ##
 ## Then the LIVE-NAME law (added after review — the gap a zero-loss guard cannot
 ## see on its own):
@@ -176,6 +178,30 @@ func _check_fixture(version: int, path: String) -> String:
 		expected_discoveries.sort()
 		if tracker.discovered() != expected_discoveries:
 			return "the Discovery application path did not restore the v2 fixture exactly"
+	if version >= SaveVault.MASTERY_VAULT_VERSION:
+		var mastery_snapshot: Variant = loaded.get("mastery", {})
+		var mastery := Mastery.new()
+		if not mastery.restore(mastery_snapshot):
+			return "the Mastery application path refused a valid v5 fixture"
+		var expected_weapons: Array[String] = []
+		for weapon_id: String in mastery_snapshot["weapons"]:
+			expected_weapons.append(weapon_id)
+		expected_weapons.sort()
+		if mastery.weapons() != expected_weapons:
+			return "the Mastery application path did not restore the v5 weapon set exactly"
+		for weapon_id: String in expected_weapons:
+			var expected_track: Dictionary = mastery_snapshot["weapons"][weapon_id]
+			if mastery.banked(weapon_id) != int(expected_track["banked"]) \
+					or mastery.unbanked(weapon_id) != int(expected_track["unbanked"]):
+				return "the Mastery application path changed the v5 track for '%s'" % weapon_id
+		var expected_stain: Dictionary = mastery_snapshot["bloodstain"]
+		var actual_stain := mastery.bloodstain()
+		if actual_stain.size() != expected_stain.size():
+			return "the Mastery application path changed the v5 bloodstain weapon set"
+		for weapon_id: String in expected_stain:
+			if not actual_stain.has(weapon_id) \
+					or int(actual_stain[weapon_id]) != int(expected_stain[weapon_id]):
+				return "the Mastery application path changed the v5 bloodstain for '%s'" % weapon_id
 
 	# Write-back: re-saving a loaded vault must preserve everything, including
 	# fields and names this build does not itself use. A load-only check cannot

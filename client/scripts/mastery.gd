@@ -56,6 +56,11 @@ extends RefCounted
 ## value can move in one place without touching the logic.
 const BANK_STEP := 100
 
+## Largest integer JSON can carry without rounding. Vault-v5 mastery snapshots
+## stay inside this boundary so a stored point can never change value merely by
+## crossing the JSON seam.
+const MAX_PERSISTED_POINTS := 9_007_199_254_740_991
+
 ## weapon id (String) -> {"banked": int, "unbanked": int}. A weapon appears here
 ## only once it has been accrued to; an untracked weapon reads as all-zero.
 var _tracks: Dictionary = {}
@@ -66,6 +71,96 @@ var _tracks: Dictionary = {}
 ## the ledger instead of rules a caller has to remember — the dupe vectors are
 ## designed out, which is the only safe posture in a game with no undo.
 var _bloodstain: Dictionary = {}
+
+
+## "" when `snapshot` is the complete vault-v5 mastery shape, else why it must
+## be refused. Weapon ids are stable strings but deliberately not registry-
+## checked: a retained rollback reader must preserve and apply a weapon a newer
+## build introduced. The numeric invariants are the same ones the live ledger
+## enforces, so restoring cannot mint a state ordinary play could never reach.
+static func snapshot_refusal_reason(snapshot: Variant) -> String:
+	if snapshot is not Dictionary:
+		return "mastery must be an object"
+	var allowed_fields := ["weapons", "bloodstain"]
+	for field: Variant in snapshot:
+		if field is not String or field not in allowed_fields:
+			return "unknown mastery field '%s'" % str(field)
+	if not snapshot.has("weapons") or not snapshot.has("bloodstain"):
+		return "mastery must contain weapons and bloodstain"
+	var weapons: Variant = snapshot["weapons"]
+	if weapons is not Dictionary:
+		return "mastery weapons must be an object keyed by stable weapon ids"
+	for weapon_id: Variant in weapons:
+		if weapon_id is not String or (weapon_id as String).is_empty():
+			return "mastery weapon ids must be non-empty stable strings"
+		var track: Variant = weapons[weapon_id]
+		if track is not Dictionary:
+			return "mastery track '%s' must be an object" % weapon_id
+		for field: Variant in track:
+			if field is not String or field not in ["banked", "unbanked"]:
+				return "unknown mastery track field '%s' for '%s'" % [str(field), weapon_id]
+		if not track.has("banked") or not track.has("unbanked"):
+			return "mastery track '%s' must contain banked and unbanked" % weapon_id
+		var banked_reason := _persisted_points_refusal_reason(
+			track["banked"], "mastery banked points for '%s'" % weapon_id)
+		if not banked_reason.is_empty():
+			return banked_reason
+		var unbanked_reason := _persisted_points_refusal_reason(
+			track["unbanked"], "mastery unbanked points for '%s'" % weapon_id)
+		if not unbanked_reason.is_empty():
+			return unbanked_reason
+		if int(track["banked"]) % BANK_STEP != 0:
+			return "mastery banked points for '%s' must be whole bank steps" % weapon_id
+		if int(track["unbanked"]) >= BANK_STEP:
+			return "mastery unbanked points for '%s' must stay below one bank step" % weapon_id
+
+	var bloodstain: Variant = snapshot["bloodstain"]
+	if bloodstain is not Dictionary:
+		return "mastery bloodstain must be an object keyed by stable weapon ids"
+	for weapon_id: Variant in bloodstain:
+		if weapon_id is not String or (weapon_id as String).is_empty():
+			return "mastery bloodstain weapon ids must be non-empty stable strings"
+		if not weapons.has(weapon_id):
+			return "mastery bloodstain weapon '%s' has no track" % weapon_id
+		var stain_reason := _persisted_points_refusal_reason(
+			bloodstain[weapon_id], "mastery bloodstain points for '%s'" % weapon_id)
+		if not stain_reason.is_empty():
+			return stain_reason
+		var points := int(bloodstain[weapon_id])
+		if points <= 0 or points >= BANK_STEP:
+			return "mastery bloodstain points for '%s' must be within one open bank bar" % weapon_id
+	return ""
+
+
+## Replace this ledger atomically from a validated vault-v5 snapshot. Refusal
+## leaves the prior live ledger untouched; successful restore owns fresh nested
+## dictionaries so later mutation of the parsed JSON cannot edit progression.
+func restore(snapshot: Variant) -> bool:
+	if not snapshot_refusal_reason(snapshot).is_empty():
+		return false
+	var next_tracks := {}
+	for weapon_id: String in snapshot["weapons"]:
+		var source: Dictionary = snapshot["weapons"][weapon_id]
+		next_tracks[weapon_id] = {
+			"banked": int(source["banked"]),
+			"unbanked": int(source["unbanked"]),
+		}
+	var next_bloodstain := {}
+	for weapon_id: String in snapshot["bloodstain"]:
+		next_bloodstain[weapon_id] = int(snapshot["bloodstain"][weapon_id])
+	_tracks = next_tracks
+	_bloodstain = next_bloodstain
+	return true
+
+
+static func _persisted_points_refusal_reason(value: Variant, label: String) -> String:
+	if not (value is int or (value is float and value == floorf(value))):
+		return "%s must be a whole number" % label
+	if int(value) < 0:
+		return "%s must be non-negative" % label
+	if value > MAX_PERSISTED_POINTS:
+		return "%s exceeds JSON's exact-integer range" % label
+	return ""
 
 
 ## Award `amount` mastery points to `weapon`, then lock every whole bar the

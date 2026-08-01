@@ -517,7 +517,7 @@ everything shipped afterwards is held to.
   base-compares complete rows. The retained v0.61.0 capability-4 reader is the rollback target that
   permits the reward writer. The vault reader accepts optional v4 `quests` as
   `quest_id → objective_id → progress in the exact JSON integer range 0..2^53-1`, and the manifest
-  advertises save-capability reads and writes 6. The retained v0.70.0 capability-6 reader is the
+  advertises save-capability writes 6. The retained v0.70.0 capability-6 reader is the
   whole-app rollback target that permits this writer. `Main` restores that data
   into its boot-owned `QuestLog` before definitions register; the tracker preserves opaque future
   IDs and raw progress, clamps only its live known view, and latches restored completion without
@@ -525,7 +525,12 @@ everything shipped afterwards is held to.
   same locked, compare-and-swap vault path; transient failures retry with bounded exponential backoff,
   while an unreadable or newer vault remains session-only and byte-intact. The writer merges progress
   by maximum value, so retry, rollback-only IDs and a higher concurrent value can never be driven
-  backwards. **The lock lives in
+  backwards. The vault-v5 reader additionally accepts a complete `mastery` snapshot whose stable
+  weapon IDs map to exact banked and unbanked points and whose standing bloodstain is restored as
+  part of the same ledger. `Main` applies that snapshot to its boot-owned `Mastery` before content
+  registration; unknown future weapon IDs stay live. The manifest advertises read capability 7 while
+  the production vault and project-wide writers remain capped at v4/capability 6, so an ordinary boot
+  cannot originate mastery until this whole-app reader is retained. **The lock lives in
   `FileLock`, not in the vault, and `BootRecovery` persistence takes it too**
   (`tests/boot_recovery_lock_test`) — that file's two writers, the updater and the game, both exist
   today, and a lost update there discards the evidence deciding whether a client rolls back. One

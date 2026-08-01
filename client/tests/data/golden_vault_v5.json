@@ -1,0 +1,38 @@
+{
+  "version": 5,
+  "comment": "GOLDEN VAULT v5 — the reader contract for complete weapon-mastery state. This build reads, applies and preserves the shape but cannot originate it until the retained reader release bakes.",
+  "attuned": [
+    "wardens_shrine"
+  ],
+  "discoveries": [
+    "starter_cave",
+    "wardens_shrine"
+  ],
+  "reward_claims": [
+    "wardens_shrine"
+  ],
+  "quests": {
+    "future_quest": {
+      "future_objective": 11
+    },
+    "reach_shrine": {
+      "arrive": 2,
+      "return": 1
+    }
+  },
+  "mastery": {
+    "weapons": {
+      "future_blade": {
+        "banked": 200,
+        "unbanked": 37
+      },
+      "staff": {
+        "banked": 0,
+        "unbanked": 75
+      }
+    },
+    "bloodstain": {
+      "future_blade": 12
+    }
+  }
+}

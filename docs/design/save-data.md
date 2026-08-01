@@ -194,9 +194,9 @@ The current character writer vocabulary is capability 5. The reader registry and
 contain `ashen_bindings` at `hands/armor`, backed by the retained v0.69.0 capability-5 reader.
 The shipped default creator keeps this below-bar hand piece hidden, while
 `WAR_LAYERED_OUTFIT_PICKERS=1` exposes the raw armour-layer control that may originate, save and
-reload it. The project-wide read and write capability is now 6 because the independent vault-v4
-quest-progress contract is active; that does not change which character vocabulary capability 5
-permits the creator to originate.
+reload it. The project-wide write capability remains 6 because the independent vault-v4
+quest-progress contract is active; the read ceiling is 7 for the vault-v5 mastery expansion. That
+does not change which character vocabulary capability 5 permits the creator to originate.
 
 ### Progression vault
 
@@ -266,6 +266,19 @@ and older sections, and retries transient failures without replaying completion.
 unreadable vault remains session-only and byte-intact. The project-wide manifest advertises read and
 write capability 6, while conditional schema stamping keeps reward-only state on v3, discovery-only
 state on v2, and empty or attunement-only state on v1.
+
+Capability 7 is the reader-only vault-v5 weapon-mastery expansion. Its required `mastery` object
+contains exactly `weapons` and `bloodstain`: each stable weapon ID maps to exact JSON-safe integer
+`banked` and `unbanked` points, while the standing bloodstain maps tracked weapon IDs to the points
+that can still be reclaimed. Banked values are whole mastery bars, unbanked values remain below one
+bar, and the bloodstain remains within that open bar; malformed or partial state is refused before
+anything is applied. Unknown future weapon IDs are valid because rollback must preserve and apply
+them without reinterpreting their meaning. `Main` restores the complete snapshot atomically into its
+boot-owned `Mastery`, and the real boot guard proves both the live tracks and bloodstain are present.
+The manifest advertises read capability 7, while `SaveVault.VAULT_VERSION` and
+`SAVE_CAPABILITY_WRITES` stay at v4/capability 6. Existing older writers preserve an already-present
+v5 snapshot but never originate one; writer activation waits for a retained whole-app capability-7
+reader release.
 
 ### Boot recovery
 

@@ -55,9 +55,9 @@ func _ready() -> void:
 		_fail("the contract build did not expose distinct enabled clothing and armour controls")
 		return
 
-	if UpdateManifest.SAVE_CAPABILITY_READS != 6 \
+	if UpdateManifest.SAVE_CAPABILITY_READS != 7 \
 			or UpdateManifest.SAVE_CAPABILITY_WRITES != 6:
-		_fail("the active contracts advertise capabilities %d/%d instead of 6/6" % [
+		_fail("the active contracts advertise capabilities %d/%d instead of 7/6" % [
 			UpdateManifest.SAVE_CAPABILITY_READS,
 			UpdateManifest.SAVE_CAPABILITY_WRITES,
 		])

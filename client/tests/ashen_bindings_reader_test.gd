@@ -59,14 +59,14 @@ func _ready() -> void:
 		return
 
 	# Test the published behavior, not only the source constants: capability 5
-	# character vocabulary remains writable after the separate vault contract
-	# advances the project-wide envelope to capability 6.
+	# character vocabulary remains writable while the reader-only mastery vault
+	# expansion advances the project-wide read ceiling to capability 7.
 	var built_manifest := UpdateManifest.build(MANIFEST_SEQUENCE, MANIFEST_NOT_AFTER)
 	var manifest := built_manifest.get("manifest", {}) as Dictionary
 	if not String(built_manifest.get("error", "")).is_empty() or manifest.is_empty():
 		_fail("the reader build could not produce its stable update envelope")
 		return
-	if int((manifest["shell"] as Dictionary).get("reads_capability_max", -1)) != 6 \
+	if int((manifest["shell"] as Dictionary).get("reads_capability_max", -1)) != 7 \
 			or int((manifest["save_schema"] as Dictionary).get("capability", -1)) != 6:
 		_fail("active contracts advertise the wrong read/write capabilities: %s/%s" % [
 			(manifest["shell"] as Dictionary).get("reads_capability_max"),
