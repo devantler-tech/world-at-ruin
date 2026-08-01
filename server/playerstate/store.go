@@ -22,7 +22,8 @@ const (
 	// authenticated owner.
 	AuditCollection = "world_at_ruin_player_mutations"
 
-	auditSchema = 1
+	auditSchema   = 1
+	systemOwnerID = "00000000-0000-0000-0000-000000000000"
 )
 
 var (
@@ -51,12 +52,14 @@ type storageClient interface {
 }
 
 // RecordWrite is one conditional create or version-checked replacement of a
-// player-owned document.
+// player record. SystemOwned keeps authoritative records outside the client's
+// writable user namespace while their audit remains associated with the player.
 type RecordWrite struct {
 	Collection      string
 	Key             string
 	ExpectedVersion string
 	Value           json.RawMessage
+	SystemOwned     bool
 }
 
 // Mutation binds one caller-stable logical identity to the exact operation
@@ -146,7 +149,7 @@ func (s *Store) Apply(ctx context.Context, mutation Mutation) (Result, error) {
 		{
 			Collection:      normalized.record.Collection,
 			Key:             normalized.record.Key,
-			UserID:          normalized.subjectID,
+			UserID:          recordOwner(normalized),
 			Value:           string(normalized.record.Value),
 			Version:         normalized.record.ExpectedVersion,
 			PermissionRead:  0,
@@ -170,6 +173,13 @@ func (s *Store) Apply(ctx context.Context, mutation Mutation) (Result, error) {
 		return s.resolveAfterWrite(ctx, normalized, ErrIndeterminate)
 	}
 	return Result{Outcome: cloneRaw(normalized.outcome)}, nil
+}
+
+func recordOwner(mutation normalizedMutation) string {
+	if mutation.record.SystemOwned {
+		return ""
+	}
+	return mutation.subjectID
 }
 
 func (s *Store) resolveAfterWrite(
@@ -434,10 +444,14 @@ func validAcks(
 		return false
 	}
 	for index, ack := range acks {
+		expectedOwner := writes[index].UserID
+		if expectedOwner == "" {
+			expectedOwner = systemOwnerID
+		}
 		if ack == nil ||
 			ack.GetCollection() != writes[index].Collection ||
 			ack.GetKey() != writes[index].Key ||
-			ack.GetUserId() != writes[index].UserID ||
+			ack.GetUserId() != expectedOwner ||
 			ack.GetVersion() == "" {
 			return false
 		}

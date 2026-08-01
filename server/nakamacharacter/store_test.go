@@ -80,10 +80,14 @@ func (f *fakeStorage) StorageRead(
 	}
 	objects := make([]*api.StorageObject, 0, len(reads))
 	for _, read := range reads {
+		ownerID := read.UserID
+		if ownerID == "" {
+			ownerID = systemOwnerID
+		}
 		object, ok := f.objects[storageObjectID(
 			read.Collection,
 			read.Key,
-			read.UserID,
+			ownerID,
 		)]
 		if !ok {
 			continue
@@ -110,10 +114,14 @@ func (f *fakeStorage) StorageWrite(
 	f.writeCalls = append(f.writeCalls, call)
 
 	for _, write := range writes {
+		ownerID := write.UserID
+		if ownerID == "" {
+			ownerID = systemOwnerID
+		}
 		current, exists := f.objects[storageObjectID(
 			write.Collection,
 			write.Key,
-			write.UserID,
+			ownerID,
 		)]
 		switch {
 		case write.Version == "*" && exists:
@@ -145,16 +153,20 @@ func (f *fakeStorage) StorageWrite(
 
 	acks := make([]*api.StorageObjectAck, 0, len(writes))
 	for index, write := range writes {
+		ownerID := write.UserID
+		if ownerID == "" {
+			ownerID = systemOwnerID
+		}
 		version := fmt.Sprintf("v%d", f.next)
 		f.next++
 		f.objects[storageObjectID(
 			write.Collection,
 			write.Key,
-			write.UserID,
+			ownerID,
 		)] = storedObject{
 			collection:      write.Collection,
 			key:             write.Key,
-			userID:          write.UserID,
+			userID:          ownerID,
 			value:           write.Value,
 			version:         version,
 			permissionRead:  validatedPermissions[index].read,
@@ -163,7 +175,7 @@ func (f *fakeStorage) StorageWrite(
 		acks = append(acks, &api.StorageObjectAck{
 			Collection: write.Collection,
 			Key:        write.Key,
-			UserId:     write.UserID,
+			UserId:     ownerID,
 			Version:    version,
 		})
 	}
@@ -243,8 +255,8 @@ func TestSavePersistsPrivateVersionedCharacterForVerifiedAccount(t *testing.T) {
 	}
 	recordWrite := storage.writeCalls[0][0]
 	if recordWrite.Collection != Collection ||
-		recordWrite.Key != RecordKey ||
-		recordWrite.UserID != testSubjectID ||
+		recordWrite.Key != characterRecordKey(testSubjectID) ||
+		recordWrite.UserID != "" ||
 		recordWrite.Version != "*" ||
 		recordWrite.PermissionRead != 0 ||
 		recordWrite.PermissionWrite != 0 {
@@ -484,8 +496,8 @@ func TestSaveCannotOverwriteMalformedDurableCharacterWithItsVersion(t *testing.T
 	storage := newFakeStorage()
 	storage.seed(storedObject{
 		collection:      Collection,
-		key:             RecordKey,
-		userID:          testSubjectID,
+		key:             characterRecordKey(testSubjectID),
+		userID:          systemOwnerID,
 		value:           `{"schema":1,"character_id":"warden-1"}`,
 		version:         "observed-version",
 		permissionRead:  0,
@@ -513,6 +525,51 @@ func TestSaveCannotOverwriteMalformedDurableCharacterWithItsVersion(t *testing.T
 			"StorageWrite() calls after quarantine = %d, want 0",
 			len(storage.writeCalls),
 		)
+	}
+}
+
+func TestClientOwnedCharacterPreseedCannotBecomeAuthoritative(t *testing.T) {
+	t.Parallel()
+
+	storage := newFakeStorage()
+	storage.seed(storedObject{
+		collection: Collection,
+		key:        RecordKey,
+		userID:     testSubjectID,
+		value: `{"schema":1,"character_id":"attacker-seeded",` +
+			`"display_name":"Mallory","recipe":{"gold":999999}}`,
+		version:         "client-created-version",
+		permissionRead:  0,
+		permissionWrite: 0,
+	})
+	store, err := NewStore(storage)
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	if _, err := store.Load(
+		authenticatedContext(testSubjectID),
+		testSubjectID,
+	); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Load() error = %v, want %v", err, ErrNotFound)
+	}
+	if err := store.Save(authenticatedContext(testSubjectID), SaveRequest{
+		SubjectID:       testSubjectID,
+		IdempotencyKey:  "character:create:warden-1",
+		ExpectedVersion: "*",
+		Character: Character{
+			ID:          "warden-1",
+			DisplayName: "Asha",
+			Recipe:      json.RawMessage(`{"version":3}`),
+		},
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	record, err := store.Load(authenticatedContext(testSubjectID), testSubjectID)
+	if err != nil {
+		t.Fatalf("Load() after Save error = %v", err)
+	}
+	if record.Character.ID != "warden-1" {
+		t.Fatalf("authoritative character ID = %q", record.Character.ID)
 	}
 }
 
@@ -548,8 +605,8 @@ func TestLoadKeepsEveryShippedCharacterSchemaReadable(t *testing.T) {
 		storage := newFakeStorage()
 		storage.seed(storedObject{
 			collection:      Collection,
-			key:             RecordKey,
-			userID:          testSubjectID,
+			key:             characterRecordKey(testSubjectID),
+			userID:          systemOwnerID,
 			value:           strings.TrimSpace(string(goldenBytes)),
 			version:         "durable-version",
 			permissionRead:  0,
@@ -643,8 +700,8 @@ func TestLoadRejectsMalformedOrPublicCharacterRecords(t *testing.T) {
 			storage := newFakeStorage()
 			storage.seed(storedObject{
 				collection:      Collection,
-				key:             RecordKey,
-				userID:          testSubjectID,
+				key:             characterRecordKey(testSubjectID),
+				userID:          systemOwnerID,
 				value:           test.value,
 				version:         "durable-version",
 				permissionRead:  test.permissionRead,
