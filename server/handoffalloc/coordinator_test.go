@@ -195,6 +195,12 @@ type recordingResources struct {
 	releaseContextCheck    func(context.Context) error
 }
 
+type fixedVerifier string
+
+func (v fixedVerifier) VerifySession(context.Context, string) (string, error) {
+	return string(v), nil
+}
+
 type concurrentResources struct {
 	provisioned      Provisioned
 	provisionStarted chan struct{}
@@ -636,6 +642,64 @@ func TestAllocateQuarantinesCanceledAndAmbiguousDispatchOutcomes(t *testing.T) {
 				t.Fatalf("ambiguous dispatch released resources: %+v", resources.releases)
 			}
 		})
+	}
+}
+
+func TestServiceFailureCleanupPreservesAmbiguousDispatchQuarantine(t *testing.T) {
+	storage := newMemoryStorage()
+	store := newLeaseStore(t, storage)
+	resources := &recordingResources{
+		provisionErr: status.Error(codes.Unavailable, "ambiguous allocation result"),
+	}
+	coordinator, err := NewCoordinator(
+		resources,
+		store,
+		Config{
+			LeaseTTL: time.Minute,
+			Now:      func() time.Time { return testNow },
+		},
+	)
+	if err != nil {
+		t.Fatalf("NewCoordinator returned an error: %v", err)
+	}
+	service, err := handoff.NewService(
+		fixedVerifier(testUserID),
+		coordinator,
+		handoff.Config{
+			ZoneDomain: "edge.example",
+			Now:        func() time.Time { return testNow },
+			NewAttemptID: func() (string, error) {
+				return testAttemptID, nil
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("handoff.NewService returned an error: %v", err)
+	}
+
+	if _, err := service.CreateHandoff(
+		context.Background(),
+		handoff.Request{
+			Session:       "signed-session",
+			ReservationID: testReservationID,
+		},
+	); status.Code(err) != codes.Unavailable {
+		t.Fatalf("CreateHandoff status = %s, want Unavailable", status.Code(err))
+	}
+	record, err := store.Load(context.Background(), testUserID, testReservationID)
+	if err != nil {
+		t.Fatalf("load outer-service dispatch quarantine: %v", err)
+	}
+	if !record.Lease.Staging ||
+		!record.Lease.Dispatched ||
+		record.Lease.Releasing {
+		t.Fatalf(
+			"outer-service dispatch quarantine = %+v, want dispatched staging",
+			record.Lease,
+		)
+	}
+	if len(resources.releases) != 0 {
+		t.Fatalf("outer-service failure released ambiguous resources: %+v", resources.releases)
 	}
 }
 

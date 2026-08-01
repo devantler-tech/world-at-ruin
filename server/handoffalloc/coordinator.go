@@ -398,6 +398,17 @@ func (c *Coordinator) reconcileAttempt(
 	if current.State(c.now()) == nakamalease.StateClaimed {
 		return nakamalease.ErrClaimed
 	}
+	// Release is also the handoff service's best-effort response to an
+	// allocation error. Once dispatch has crossed its durable barrier, that
+	// error cannot prove that no resource was created. Preserve the quarantine
+	// until observation supplies the resource identity or a fenced cleanup is
+	// already in progress.
+	if resource == nil &&
+		current.Lease.Staging &&
+		current.Lease.Dispatched &&
+		!current.Lease.Releasing {
+		return nil
+	}
 	releasing, err := c.leases.BeginRelease(ctx, current, request.AttemptID)
 	if err != nil {
 		return err

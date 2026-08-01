@@ -629,9 +629,10 @@ everything shipped afterwards is held to.
   (`server/handoffalloc/` — implements `handoff.Allocator` over the real lease store and an injected
   GameServer-resource boundary; exact-version persists a dispatched barrier before the one allowed
   external allocation call, makes replays and concurrent losers reconcile only that exact attempt,
-  quarantines ambiguous dispatches against newer attempts and expiry cleanup, finalizes the
-  allocation before returning connection material, protects claimed/stale ownership and supervises
-  exact no-show cleanup; it remains inert until the concrete adapter is composed), and
+  quarantines ambiguous dispatches against newer attempts, expiry cleanup and unverified outer
+  failure cleanup, finalizes the allocation before returning connection material, protects
+  claimed/stale ownership and supervises exact no-show cleanup; it remains inert until the concrete
+  adapter is composed), and
   the **combat first slice** (`server/sim/combat.go` — the telegraph cast
   lifecycle: painted at cast start, resolved once after a tick-counted cast time against
   positions at resolution, health/damage application, and one mob AI that deterministically

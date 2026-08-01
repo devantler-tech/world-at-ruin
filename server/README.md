@@ -286,9 +286,11 @@ zone/dungeon server:
   restart or concurrent loser reconciles only that attempt and never issues a
   second allocation call. Timeout, cancellation and other ambiguous outcomes
   retain the dispatched attempt in quarantine; newer attempts and expiry
-  cleanup cannot pass it without the later allocator-generation fence. An old
-  unambiguous attempt is atomically marked `releasing` before external cleanup
-  so a concurrent zone claim cannot win after reclamation begins.
+  cleanup cannot pass it without the later allocator-generation fence, and the
+  handoff service's best-effort failure cleanup cannot erase that quarantine
+  without an observed resource identity. An old unambiguous attempt is
+  atomically marked `releasing` before external cleanup so a concurrent zone
+  claim cannot win after reclamation begins.
   Replacement and release retry from that barrier; cleanup uses a bounded
   context that survives caller cancellation. Its supervised expiry reconciler
   lists the private lease collection and automatically reclaims no-shows,
