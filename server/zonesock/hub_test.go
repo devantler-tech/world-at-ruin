@@ -193,10 +193,10 @@ func TestWireVersionNegotiationPreservesV1AndSelectsCastBearingV2(t *testing.T) 
 		t.Fatalf("no-header peer received %+v, want cast-free wire v%d", legacyJoin, wire.LegacyVersion)
 	}
 
-	v2, resp, err := dialVersion(t, ts, secret, 2, wire.Version)
-	if resp != nil && resp.Body != nil {
+	v2, v2Resp, err := dialVersion(t, ts, secret, 2, wire.Version)
+	if v2Resp != nil && v2Resp.Body != nil {
 		defer func() {
-			if closeErr := resp.Body.Close(); closeErr != nil {
+			if closeErr := v2Resp.Body.Close(); closeErr != nil {
 				t.Errorf("close v2 dial response: %v", closeErr)
 			}
 		}()
@@ -210,19 +210,39 @@ func TestWireVersionNegotiationPreservesV1AndSelectsCastBearingV2(t *testing.T) 
 		t.Fatalf("v2 peer did not receive the authoritative cast: %+v", latestJoin)
 	}
 
-	unsupported, resp, err := dialVersion(t, ts, secret, 2, wire.Version+1)
+	unsupported, unsupportedResp, unsupportedErr := dialVersion(t, ts, secret, 2, wire.Version+1)
 	if unsupported != nil {
 		closeConnection(t, unsupported)
 	}
-	if resp != nil && resp.Body != nil {
+	if unsupportedResp != nil && unsupportedResp.Body != nil {
 		defer func() {
-			if closeErr := resp.Body.Close(); closeErr != nil {
+			if closeErr := unsupportedResp.Body.Close(); closeErr != nil {
 				t.Errorf("close unsupported-version response: %v", closeErr)
 			}
 		}()
 	}
-	if err == nil || resp == nil || resp.StatusCode != http.StatusUpgradeRequired {
-		t.Fatalf("unsupported version response = %+v, err = %v; want pre-upgrade 426", resp, err)
+	if unsupportedErr == nil || unsupportedResp == nil || unsupportedResp.StatusCode != http.StatusUpgradeRequired {
+		t.Fatalf("unsupported version response = %+v, err = %v; want pre-upgrade 426", unsupportedResp, unsupportedErr)
+	}
+}
+
+func TestDeltaProjectionKeepsLegacyConnectedAcrossCastOnlyTicks(t *testing.T) {
+	cast := sim.ActiveCast{Caster: 2, Shape: sim.CircleTelegraph(sim.Vec3{}, 500), StartTick: 1, ResolveTick: 3}
+	castOnly := sim.SnapshotDelta{Tick: 2, StartedCasts: []sim.ActiveCast{cast}, EndedCasts: []sim.EntityID{2}}
+	legacy := projectDeltaForVersion(castOnly, wire.LegacyVersion)
+	if !legacy.Empty() {
+		t.Fatalf("legacy projection retained cast-only data: %+v", legacy)
+	}
+	latest := projectDeltaForVersion(castOnly, wire.Version)
+	if latest.Empty() || len(latest.StartedCasts) != 1 || len(latest.EndedCasts) != 1 {
+		t.Fatalf("latest projection lost cast lifecycle: %+v", latest)
+	}
+
+	withMovement := castOnly
+	withMovement.Moved = []sim.EntityState{{ID: 2, Radius: 300}}
+	legacy = projectDeltaForVersion(withMovement, wire.LegacyVersion)
+	if legacy.Empty() || len(legacy.Moved) != 1 || len(legacy.StartedCasts) != 0 || len(legacy.EndedCasts) != 0 {
+		t.Fatalf("legacy projection did not preserve entity movement only: %+v", legacy)
 	}
 }
 

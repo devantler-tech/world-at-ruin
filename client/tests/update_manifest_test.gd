@@ -126,6 +126,11 @@ func _test_freshness_inputs_fail_closed() -> void:
 		if str(built.get("error", "")).is_empty() or not (built.get("manifest", {}) as Dictionary).is_empty():
 			_fail("build() emitted a manifest for invalid protocol_min %s" % str(bad_protocol))
 			return
+	for out_of_range: Array in [[65536, WireCodec.VERSION], [WireCodec.LEGACY_VERSION, 65536]]:
+		var built := UpdateManifest.build(MANIFEST_SEQUENCE, MANIFEST_NOT_AFTER, out_of_range[0], out_of_range[1])
+		if str(built.get("error", "")).is_empty() or not (built.get("manifest", {}) as Dictionary).is_empty():
+			_fail("build() emitted a manifest for out-of-uint16 protocol range %s" % str(out_of_range))
+			return
 	for range_pair: Array in [[2, 1], [3, 3]]:
 		var built := UpdateManifest.build(MANIFEST_SEQUENCE, MANIFEST_NOT_AFTER, range_pair[0], range_pair[1])
 		if str(built.get("error", "")).is_empty() or not (built.get("manifest", {}) as Dictionary).is_empty():

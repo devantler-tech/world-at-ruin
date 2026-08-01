@@ -128,6 +128,26 @@ func TestCastValidationFailsClosedOnBothSides(t *testing.T) {
 	if _, err := Decode(b); !errors.Is(err, ErrCount) {
 		t.Fatalf("decode hostile cast count: got %v, want ErrCount", err)
 	}
+
+	b, err = EncodeSnapshot(valid)
+	if err != nil {
+		t.Fatalf("encode timing control: %v", err)
+	}
+	startTickOffset := castOffset + activeCastSize - 2*tickSize
+	resolveTickOffset := startTickOffset + tickSize
+	binary.LittleEndian.PutUint64(b[resolveTickOffset:], binary.LittleEndian.Uint64(b[startTickOffset:]))
+	if _, err := Decode(b); !errors.Is(err, ErrCastTiming) {
+		t.Fatalf("decode zero-duration cast: got %v, want ErrCastTiming", err)
+	}
+
+	b, err = EncodeSnapshot(valid)
+	if err != nil {
+		t.Fatalf("encode caster control: %v", err)
+	}
+	binary.LittleEndian.PutUint64(b[castOffset:], 3)
+	if _, err := Decode(b); !errors.Is(err, ErrCastCaster) {
+		t.Fatalf("decode cast outside snapshot: got %v, want ErrCastCaster", err)
+	}
 }
 
 func TestCastOrderAndCanonicalRingFailClosedOnBothSides(t *testing.T) {

@@ -180,10 +180,7 @@ func TestCrossTierStreamFixture(t *testing.T) {
 		return
 	}
 
-	raw, err := os.ReadFile(wireFixturePath)
-	if err != nil {
-		t.Fatalf("reading shared fixture: %v", err)
-	}
+	raw := readWireFixture(t)
 	var f wireFixtureWithStream
 	if err := json.Unmarshal(raw, &f); err != nil {
 		t.Fatalf("parsing shared fixture: %v", err)

@@ -290,9 +290,10 @@ will expire:
    generator refuses an absent, malformed, inverted, or client-excluding range, so it cannot silently
    fall back to the client's own version and strand a retained target.
    `tools/wire-protocol-rollout-guard.sh` compares every PR and merge-group head with its exact base:
-   a higher maximum is admitted only when both tiers explicitly retain the base protocol and CD reads
-   the published range from the released server source. Raising the minimum or removing a maximum is
-   still refused because a source diff cannot prove the manifest-expiry evidence contraction requires.
+   CD must read the published range from the released server source on every comparison, including an
+   unchanged range. A higher maximum is admitted only when both tiers explicitly retain the base
+   protocol. Raising the minimum or removing a maximum is still refused because a source diff cannot
+   prove the manifest-expiry evidence contraction requires.
 3. `DevLog.VERSION` must be a dotted-integer version. `cd.yaml` accepts prerelease tags
    (`v0.2.0-rc.1`), which `UpdateDecision.is_version` does not, so `build()` refuses to emit a manifest
    no client could accept rather than publishing one dead on arrival.

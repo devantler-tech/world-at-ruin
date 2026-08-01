@@ -200,7 +200,7 @@ func (h *Hub) detach(w *sim.World, c *conn) {
 // pump sends c its delta for the current tick, skipping empty deltas so a
 // still world costs no bandwidth.
 func (h *Hub) pump(w *sim.World, c *conn) {
-	d := c.tracker.Update(w)
+	d := projectDeltaForVersion(c.tracker.Update(w), c.wireVersion())
 	if d.Empty() {
 		return
 	}
@@ -211,6 +211,18 @@ func (h *Hub) pump(w *sim.World, c *conn) {
 		return
 	}
 	h.send(w, c, b)
+}
+
+// projectDeltaForVersion removes fields the negotiated decoder cannot
+// represent before the empty check and encoder. A cast-only tick therefore
+// costs a retained v1 peer no bandwidth and, crucially, cannot disconnect it
+// by reaching the v1 encoder with v2-only data.
+func projectDeltaForVersion(d sim.SnapshotDelta, version uint16) sim.SnapshotDelta {
+	if version == wire.LegacyVersion {
+		d.StartedCasts = nil
+		d.EndedCasts = nil
+	}
+	return d
 }
 
 // send enqueues one encoded frame without ever blocking the sim goroutine. On
@@ -277,19 +289,20 @@ func (h *Hub) Handler() http.Handler {
 			return
 		}
 		ws.SetReadLimit(h.cfg.MaxInboundBytes)
-		ctx, cancel := context.WithCancel(context.Background())
+		// The upgraded socket outlives ServeHTTP, so ignore request cancellation
+		// while preserving request-scoped values for the connection lifetime.
+		ctx, cancel := context.WithCancel(context.WithoutCancel(r.Context()))
 		c := &conn{
 			hub:      h,
 			ws:       ws,
 			observer: observer,
 			version:  version,
 			out:      make(chan []byte, h.cfg.SendQueue),
-			ctx:      ctx,
 			cancel:   cancel,
 		}
 		h.enqueue(func(w *sim.World) { h.attach(w, c) })
-		go c.writeLoop(h.cfg) //nolint:contextcheck // conn owns the cancellation context
-		go c.readLoop()
+		go c.writeLoop(ctx, h.cfg)
+		go c.readLoop(ctx)
 	})
 }
 
@@ -327,7 +340,6 @@ type conn struct {
 	observer sim.EntityID
 	version  uint16
 	out      chan []byte
-	ctx      context.Context
 	cancel   context.CancelFunc
 	once     sync.Once
 	tracker  *sim.SnapshotTracker // sim-goroutine-owned
@@ -368,23 +380,23 @@ func (c *conn) close(code websocket.StatusCode, reason string) {
 // idle deadline armed: it pings every IdleTimeout/2 and requires each ping
 // answered within IdleTimeout/2, so a peer that neither drains nor responds is
 // torn down within roughly IdleTimeout.
-func (c *conn) writeLoop(cfg Config) {
+func (c *conn) writeLoop(parent context.Context, cfg Config) {
 	defer c.teardown()
 	ping := time.NewTicker(cfg.IdleTimeout / 2)
 	defer ping.Stop()
 	for {
 		select {
-		case <-c.ctx.Done():
+		case <-parent.Done():
 			return
 		case b := <-c.out:
-			ctx, cancel := context.WithTimeout(c.ctx, cfg.WriteTimeout)
+			ctx, cancel := context.WithTimeout(parent, cfg.WriteTimeout)
 			err := c.ws.Write(ctx, websocket.MessageBinary, b)
 			cancel()
 			if err != nil {
 				return
 			}
 		case <-ping.C:
-			ctx, cancel := context.WithTimeout(c.ctx, cfg.IdleTimeout/2)
+			ctx, cancel := context.WithTimeout(parent, cfg.IdleTimeout/2)
 			err := c.ws.Ping(ctx)
 			cancel()
 			if err != nil {
@@ -399,8 +411,8 @@ func (c *conn) writeLoop(cfg Config) {
 // bounds how much a hostile peer can make the server assemble. Wire v1
 // defines no client→server kinds, so any inbound data message is a protocol
 // violation.
-func (c *conn) readLoop() {
-	if _, _, err := c.ws.Read(c.ctx); err != nil {
+func (c *conn) readLoop(ctx context.Context) {
+	if _, _, err := c.ws.Read(ctx); err != nil {
 		c.teardown()
 		return
 	}

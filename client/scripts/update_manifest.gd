@@ -122,6 +122,7 @@ const SAVE_CAPABILITY_READS := 6
 ## the honest floor today is "everything". Raising it is a deliberate,
 ## player-visible act — it strands anyone below it.
 const SHELL_MIN_SUPPORTED := "0.1.0"
+const MAX_PROTOCOL_VERSION := 65535
 
 
 ## Build the update manifest for this build.
@@ -143,9 +144,9 @@ static func build(sequence: Variant, not_after: Variant, protocol_min: Variant, 
 		return {"manifest": {}, "error": "sequence is not a non-negative whole number"}
 	if not UpdateDecision.is_utc_datetime(not_after):
 		return {"manifest": {}, "error": "not_after is not a canonical UTC timestamp (YYYY-MM-DDTHH:MM:SSZ)"}
-	if not UpdateDecision.is_int_id(protocol_min) or int(protocol_min) < 1:
+	if not UpdateDecision.is_int_id(protocol_min) or int(protocol_min) < 1 or int(protocol_min) > MAX_PROTOCOL_VERSION:
 		return {"manifest": {}, "error": "protocol_min is not a positive whole-number protocol version"}
-	if not UpdateDecision.is_int_id(protocol_max) or int(protocol_max) < 1:
+	if not UpdateDecision.is_int_id(protocol_max) or int(protocol_max) < 1 or int(protocol_max) > MAX_PROTOCOL_VERSION:
 		return {"manifest": {}, "error": "protocol_max is not a positive whole-number protocol version"}
 	if int(protocol_min) > int(protocol_max):
 		return {"manifest": {}, "error": "live protocol range is inverted (%d..%d)" % [int(protocol_min), int(protocol_max)]}

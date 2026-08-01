@@ -218,10 +218,7 @@ func TestMobChaseStreamFixture(t *testing.T) {
 		return
 	}
 
-	raw, err := os.ReadFile(wireFixturePath)
-	if err != nil {
-		t.Fatalf("reading shared fixture: %v", err)
-	}
+	raw := readWireFixture(t)
 	var fixture wireFixtureWithMobChase
 	if err := json.Unmarshal(raw, &fixture); err != nil {
 		t.Fatalf("parsing shared fixture: %v", err)
