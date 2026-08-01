@@ -1340,11 +1340,9 @@ jobs:
           git diff --name-only "$BASE_SHA" HEAD > gate_machinery.txt
           if grep -qE '^tools/pr-diff-base\.sh$' gate_machinery.txt; then
             echo "This PR changes the gate's own base resolver — capturing everything."
-            # Diagnostic ONLY, and deliberately after the decision above: report
-            # what this PR's resolver would have said, so it can be inspected
-            # without being trusted. `|| true` because a resolver that cannot run
-            # must not fail the job here — it has already been overruled.
-            echo "  resolver would have reported base: $(./tools/pr-diff-base.sh "$HEAD_SHA" "$BASE_SHA" 2>/dev/null || echo unresolved)"
+            # Do not execute the PR's resolver here, even for diagnostics. It is
+            # untrusted in this branch and inherits GITHUB_OUTPUT, so it could
+            # corrupt the output file before these fail-open values are written.
             capture_everything
             exit 0
           fi
