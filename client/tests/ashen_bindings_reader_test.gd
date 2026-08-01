@@ -3,8 +3,8 @@ extends Node
 ##
 ## Capability 5 has a retained reader and an explicitly guarded writer:
 ##  1. the real reader registry and CharacterFactory can render `ashen_bindings`;
-##  2. the stable update envelope advertises project-wide capability 6
-##     reads/writes without removing the capability-5 character vocabulary;
+##  2. the stable update envelope advertises project-wide capability 7 reads
+##     and capability 6 writes without removing capability-5 vocabulary;
 ##  3. the shipped default creator cannot originate the preview-only hand piece;
 ##  4. the explicit layered-outfit preview can select, apply, save and reload it.
 ##

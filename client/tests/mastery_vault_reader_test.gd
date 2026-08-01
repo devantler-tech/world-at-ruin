@@ -5,7 +5,7 @@ extends Node
 ## production vault writer remains capped at v4/capability 6. The split is the
 ## rollback gate: a later writer can activate only after this reader ships.
 
-const JSON_SAFE_MAX := 9_007_199_254_740_991
+const JSON_SAFE_MAX := Mastery.MAX_PERSISTED_POINTS
 
 var _failed := false
 

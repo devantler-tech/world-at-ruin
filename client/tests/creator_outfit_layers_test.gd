@@ -11,7 +11,7 @@ extends Node
 ##  3. Editing either real UI control preserves the untouched layer.
 ##  4. The layered writer remains active when later vocabulary contracts raise
 ##     writes to 5 and independent reader expansions raise the
-##     project-wide read ceiling to 6.
+##     project-wide read ceiling to 7.
 ##
 ## Run: godot --headless --path client res://tests/creator_outfit_layers_test.tscn
 
