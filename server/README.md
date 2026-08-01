@@ -238,10 +238,12 @@ zone/dungeon server:
   (`PermissionRead: 0`, `PermissionWrite: 0`), use a strict versioned JSON
   schema, omit the raw user/reservation identifiers and admission-secret bytes,
   and expose only sanitized errors. The reader permanently accepts every
-  ledgered schema-one through schema-three lifecycle shape; schema-three writes
-  add a durable `dispatched` point of no return, while the existing durable
-  `releasing` barrier atomically decides whether zone admission or external
-  cleanup owns an attempt. A paginated private-collection sweep exact-version
+  ledgered schema-one through schema-three lifecycle shape, with base-anchored
+  ledgers and complete goldens preventing a shipped shape from being rewritten
+  or removed. Schema-three writes add a durable `dispatched` point of no return
+  and unique dispatch-call identity, while the existing durable `releasing`
+  barrier atomically decides whether zone admission or external cleanup owns
+  an attempt. A paginated private-collection sweep exact-version
   fences expired staging and allocated attempts before idempotent external
   cleanup, deletes only the fenced version, and preserves a dispatched staging
   attempt for exact reconciliation instead of guessing that an expired RPC did
@@ -280,19 +282,22 @@ zone/dungeon server:
 - **`handoffalloc/`** — the durable **handoff allocation coordinator**: it
   implements `handoff.Allocator` over the real `nakamalease` store and an
   injected GameServer-resource boundary. It persists a staging intent and an
-  exact-version `dispatched` barrier before the one permitted external
-  allocation call, then returns connection material only after the exact
-  allocation and secret reference replace the intent durably. A replay,
-  restart or concurrent loser reconciles only that attempt and never issues a
-  second allocation call. Timeout, cancellation and other ambiguous outcomes
+  exact-version `dispatched` barrier with a unique call identity before the one
+  permitted external allocation call. A lost or malformed barrier
+  acknowledgement is re-read so only the caller whose identity committed may
+  dispatch; then connection material returns only after the exact allocation
+  and secret reference replace the intent durably. A replay, restart or
+  concurrent loser reconciles only that attempt and never issues a second
+  allocation call. Timeout, cancellation and other ambiguous outcomes
   retain the dispatched attempt in quarantine; newer attempts and expiry
   cleanup cannot pass it without the later allocator-generation fence, and the
   handoff service's best-effort failure cleanup cannot erase that quarantine
   without an observed resource identity. An old unambiguous attempt is
   atomically marked `releasing` before external cleanup so a concurrent zone
   claim cannot win after reclamation begins.
-  Replacement and release retry from that barrier; cleanup uses a bounded
-  context that survives caller cancellation. Its supervised expiry reconciler
+  Replacement and release retry from that barrier; once a concrete resource is
+  observed, the complete fence-and-cleanup transaction uses a bounded context
+  that survives caller cancellation. Its supervised expiry reconciler
   lists the private lease collection and automatically reclaims no-shows,
   including a crash that left only an attempt ID. Claimed and stale attempts
   remain untouched, external errors are sanitized, and raw admission-secret

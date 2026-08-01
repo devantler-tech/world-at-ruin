@@ -152,9 +152,10 @@ a schema admits**, not one representative per version number.
 **That refusal is only as good as the reader's ability to see a field is present**, and a
 zero-valued field is where it fails. A boolean decoded into a plain `bool` reads `false` whether it
 was absent or explicitly written as `false`. The lease reader therefore checks raw, case-folded JSON
-keys before accepting an older schema: schema one refuses `staging`, `dispatched` and `releasing`,
-and schema two refuses `dispatched`, even when the carried value is `false` or `null`. New record
-owners need the same **presence-aware** check rather than a truth-value test.
+keys before accepting an older schema: schema one refuses `staging`, `dispatched`, `dispatch_id` and
+`releasing`, and schema two refuses `dispatched` and `dispatch_id`, even when the carried value is
+`false` or `null`. New record owners need the same **presence-aware** check rather than a truth-value
+test.
 
 **A pointer is not a complete presence check, so do not copy it as one.** `*int64` separates absent
 from numeric zero, but an explicit JSON `null` decodes to `nil` as well — absence and a present-null
@@ -303,9 +304,12 @@ mutation and duplicate the value.
 
 So: any error after dispatch, whatever its class, is reconciled by stable identity — re-read the
 record, or resolve its audit identity through `playerstate.Store` — before reporting an outcome or
-issuing another mutation. Only a *pre-dispatch* rejection (a validation refusal, a refused
-connection) is safe to treat as "nothing happened". Reading an ambiguous error as failure is how a
-player is told a reward did not arrive after it already did.
+issuing another mutation. The lease dispatch barrier persists a unique call identity so the caller
+whose acknowledgement was lost can prove it owns the one permitted external dispatch, while a
+concurrent loser observes a different identity and reconciles instead. Only a *pre-dispatch*
+rejection (a validation refusal, a refused connection) is safe to treat as "nothing happened".
+Reading an ambiguous error as failure is how a player is told a reward did not arrive after it
+already did.
 
 ## What survives a failure
 
@@ -456,8 +460,9 @@ needs to write a guard for.
 | No blind **finalize** — finalize requires the dispatched barrier and presents its observed version | `nakamalease.Store` | `TestFinalizeRefusesAStagingAttemptThatWasNeverDispatched`; coordinator success and conflict paths exercise exact-version finalization |
 | No blind **release** — release deletes conditionally | `nakamalease.Store` | `TestReleaseRejectsAStaleAttemptWithoutDeleting`, `TestReleaseReconcilesNakamaConditionalDeleteRejections` |
 | No blind **begin-release** — the fencing write presents the observed version | `nakamalease.Store` | `TestBeginReleaseMarksTheCurrentAttemptBeforeExternalCleanup`, `TestBeginReleaseReplayKeepsTheExistingBarrier`, `TestClaimAndBeginReleaseLeaveExactlyOneOwner` |
-| No blind **begin-dispatch** — exactly one caller exact-version persists the point of no return before the external call | `nakamalease.Store` + `handoffalloc.Coordinator` | `TestBeginDispatchUsesObservedVersionAndReplaysTheWinner`, `TestAllocatePersistsDispatchBarrierBeforeProvisioning`, `TestAllocateNeverDispatchesWhenBarrierWriteFails`, `TestAllocateConcurrentCoordinatorsDispatchOnce` |
+| No blind **begin-dispatch** — exactly one uniquely identified caller exact-version persists and reconciles the point of no return before the external call | `nakamalease.Store` + `handoffalloc.Coordinator` | `TestBeginDispatchUsesObservedVersionAndReplaysTheWinner`, `TestBeginDispatchReconcilesACommittedBarrierWhoseAcknowledgementWasLost`, `TestAllocatePersistsDispatchBarrierBeforeProvisioning`, `TestAllocateProvisionsAfterACommittedDispatchBarrierLosesItsAcknowledgement`, `TestAllocateNeverDispatchesWhenBarrierWriteFails`, `TestAllocateConcurrentCoordinatorsDispatchOnce` |
 | An outer failure cleanup cannot erase an ambiguous dispatched attempt without an observed resource identity | `handoff.Service` + `handoffalloc.Coordinator` | `TestServiceFailureCleanupPreservesAmbiguousDispatchQuarantine` |
+| Once a resource identity is observed, its complete fence-and-cleanup path survives caller cancellation | `handoffalloc.Coordinator` | `TestAllocateDetachesKnownResourceCleanupFromCallerCancellation` |
 | No blind **expiry reclaim** — the sweep fences with the listed version, then deletes conditionally | `nakamalease.Store` | **unguarded** — `TestReclaimExpiredContinuesAfterOneResourceTimesOut` covers per-object error tolerance, not a stale-version reclaim |
 | The writer declares the current schema | `nakamalease` document encode | `TestCreatePersistsPrivateVersionedLeaseByHashedKey` (asserts `schema: 3` on the stored value) |
 | The reader accepts the legacy end of the range | `nakamalease` document decode | `TestLoadKeepsSchemaOneLeaseReadableAsNotReleasing` |
@@ -467,7 +472,7 @@ needs to write a guard for.
 | A required nullable field cannot be omitted or nulled undetected | every record owner, **incl. `nakamalease` today** | **gap (running code)** — `claimed_at_nanos` is a `*int64`, so absent and explicit `null` are indistinguishable |
 | Trailing content is refused | `nakamalease` document decode | **unguarded (#491)** — `leaseFrom` *does* enforce this via its second decode and `io.EOF` check; no test appends a trailing token, so a regression would leave every named guard green |
 | A required field omitted from its own schema is refused | every record owner, **incl. `nakamalease` today** | **gap (running code)** — no schema declares a required-field set, so an omitted required field decodes as an implicit zero |
-| Every shipped lease schema **shape** stays readable, permanently | `nakamalease` document decode | `TestEveryShippedLeaseSchemaShapeStaysReadable` plus `server/nakamalease/testdata/shipped_lease_versions.txt` and the schema-one through schema-three lifecycle-shape goldens |
+| Every shipped lease schema **shape** stays readable, permanently | `nakamalease` document decode | `TestEveryShippedLeaseSchemaShapeStaysReadable` plus the base-anchored ledger and complete schema-one through schema-three lifecycle-shape goldens enforced by `tools/google-binding-durability-guard.sh` (the legacy required Server CI entry point) |
 | The player-mutation audit declares an exact schema and refuses unknown, repeated, missing or trailing fields | `playerstate` audit decode | `TestApplyRejectsMalformedAuditDocuments` |
 | Every shipped player-mutation audit schema stays readable, permanently | `playerstate` audit decode | `TestEveryShippedAuditSchemaStaysReadable` plus `server/playerstate/testdata/shipped_audit_versions.txt` and its matching golden |
 | The character writer declares an exact schema and its reader refuses unknown, repeated, missing, trailing or public records | `nakamacharacter` document encode/decode | `TestSavePersistsPrivateVersionedCharacterForVerifiedAccount`, `TestLoadRejectsMalformedOrPublicCharacterRecords` |

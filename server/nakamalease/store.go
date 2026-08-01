@@ -4,6 +4,7 @@ package nakamalease
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -25,6 +26,7 @@ const (
 	previousSchemaVersion = 2
 	legacySchemaVersion   = 1
 	systemOwnerID         = "00000000-0000-0000-0000-000000000000"
+	dispatchReconcileTTL  = 5 * time.Second
 )
 
 var (
@@ -77,6 +79,7 @@ type Lease struct {
 	ClaimedAt     time.Time
 	Staging       bool
 	Dispatched    bool
+	DispatchID    string
 	Releasing     bool
 }
 
@@ -200,9 +203,11 @@ func sameAttemptIdentity(left, right Lease) bool {
 func sameAllocationOwner(left, right Lease) bool {
 	left.ClaimedAt = time.Time{}
 	left.Dispatched = false
+	left.DispatchID = ""
 	left.Releasing = false
 	right.ClaimedAt = time.Time{}
 	right.Dispatched = false
+	right.DispatchID = ""
 	right.Releasing = false
 	return left == right
 }
@@ -235,17 +240,32 @@ func (s *Store) BeginDispatch(
 		}
 		return latest, false, nil
 	}
-	observed.Dispatched = true
-	dispatched, err := s.write(ctx, observed, current.Version)
-	if err == nil {
-		return dispatched, true, nil
-	}
-	if !errors.Is(err, ErrConflict) {
+	dispatchID, err := secureDispatchID()
+	if err != nil {
 		return Record{}, false, err
 	}
-	latest, loadErr := s.Load(ctx, observed.UserID, observed.ReservationID)
+	beforeDispatch := observed
+	observed.Dispatched = true
+	observed.DispatchID = dispatchID
+	dispatched, writeErr := s.write(ctx, observed, current.Version)
+	if writeErr == nil {
+		return dispatched, true, nil
+	}
+	reconcileCtx, cancel := context.WithTimeout(
+		context.WithoutCancel(ctx),
+		dispatchReconcileTTL,
+	)
+	defer cancel()
+	latest, loadErr := s.Load(
+		reconcileCtx,
+		observed.UserID,
+		observed.ReservationID,
+	)
 	if errors.Is(loadErr, ErrNotFound) {
-		return Record{}, false, ErrConflict
+		if errors.Is(writeErr, ErrConflict) {
+			return Record{}, false, ErrConflict
+		}
+		return Record{}, false, writeErr
 	}
 	if loadErr != nil {
 		return Record{}, false, loadErr
@@ -255,9 +275,22 @@ func (s *Store) BeginDispatch(
 		latest.Lease.Dispatched &&
 		!latest.Lease.Releasing &&
 		latest.Lease.ClaimedAt.IsZero() {
-		return latest, false, nil
+		return latest, latest.Lease.DispatchID == dispatchID, nil
+	}
+	if !errors.Is(writeErr, ErrConflict) &&
+		latest.Version == current.Version &&
+		latest.Lease == beforeDispatch {
+		return Record{}, false, writeErr
 	}
 	return Record{}, false, ErrConflict
+}
+
+func secureDispatchID() (string, error) {
+	var material [16]byte
+	if _, err := rand.Read(material[:]); err != nil {
+		return "", errors.New("nakama lease: create dispatch identity")
+	}
+	return hex.EncodeToString(material[:]), nil
 }
 
 // Finalize atomically replaces a durable staging intent with the exact
@@ -763,14 +796,15 @@ type document struct {
 	ClaimedAtNanos *int64 `json:"claimed_at_nanos"`
 	Staging        bool   `json:"staging,omitempty"`
 	Dispatched     bool   `json:"dispatched,omitempty"`
+	DispatchID     string `json:"dispatch_id,omitempty"`
 	Releasing      bool   `json:"releasing,omitempty"`
 }
 
 // postLegacySchemaKeys are the document keys that postdate the legacy schema.
-var postLegacySchemaKeys = [...]string{"staging", "dispatched", "releasing"}
+var postLegacySchemaKeys = [...]string{"staging", "dispatched", "dispatch_id", "releasing"}
 
 // postPreviousSchemaKeys are fields schema two readers cannot interpret.
-var postPreviousSchemaKeys = [...]string{"dispatched"}
+var postPreviousSchemaKeys = [...]string{"dispatched", "dispatch_id"}
 
 // carriesSchemaKey reports whether the encoded document contains one of the
 // named keys, whatever its value. Presence is read from the raw keys rather
@@ -812,6 +846,7 @@ func documentFrom(lease Lease) document {
 		ClaimedAtNanos: claimedAtNanos,
 		Staging:        lease.Staging,
 		Dispatched:     lease.Dispatched,
+		DispatchID:     lease.DispatchID,
 		Releasing:      lease.Releasing,
 	}
 }
@@ -860,6 +895,7 @@ func leaseFrom(value, userID, reservationID string) (Lease, error) {
 		ExpiresAt:     time.Unix(0, stored.ExpiresAtNanos).UTC(),
 		Staging:       stored.Staging,
 		Dispatched:    stored.Dispatched,
+		DispatchID:    stored.DispatchID,
 		Releasing:     stored.Releasing,
 	}
 	if stored.ClaimedAtNanos != nil {
@@ -896,7 +932,11 @@ func normalizeLease(lease Lease) (Lease, error) {
 		!validSecretRef(lease.SecretRef) {
 		return Lease{}, errors.New("nakama lease: invalid lease")
 	}
-	if lease.Dispatched && !lease.Staging {
+	if lease.Dispatched &&
+		(!lease.Staging || !validOpaqueID(lease.DispatchID)) {
+		return Lease{}, errors.New("nakama lease: invalid lease")
+	}
+	if !lease.Dispatched && lease.DispatchID != "" {
 		return Lease{}, errors.New("nakama lease: invalid lease")
 	}
 	lease.UserID = strings.ToLower(lease.UserID)

@@ -40,6 +40,8 @@ type memoryStorage struct {
 	readErr                error
 	listErr                error
 	writeErr               error
+	writeAfterCommitErr    error
+	writeAfterCommitErrAt  int
 	deleteErr              error
 	createConflictMutation func(map[string]*api.StorageObject, string)
 	deleteFault            func(map[string]*api.StorageObject, []*runtime.StorageDelete) error
@@ -173,6 +175,12 @@ func (s *memoryStorage) StorageWrite(
 			UserId:     ownerID,
 			Version:    version,
 		})
+		if s.writeAfterCommitErr != nil &&
+			(s.writeAfterCommitErrAt == 0 || s.version == s.writeAfterCommitErrAt) {
+			err := s.writeAfterCommitErr
+			s.writeAfterCommitErr = nil
+			return nil, err
+		}
 	}
 	return acks, nil
 }
@@ -1093,7 +1101,10 @@ func TestBeginDispatchUsesObservedVersionAndReplaysTheWinner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BeginDispatch returned an error: %v", err)
 	}
-	if !mayDispatch || !dispatched.Lease.Dispatched || dispatched.Version != "v2" {
+	if !mayDispatch ||
+		!dispatched.Lease.Dispatched ||
+		dispatched.Lease.DispatchID == "" ||
+		dispatched.Version != "v2" {
 		t.Fatalf(
 			"dispatch barrier = %+v/%t, want dispatched v2 winner",
 			dispatched,
@@ -1125,6 +1136,44 @@ func TestBeginDispatchUsesObservedVersionAndReplaysTheWinner(t *testing.T) {
 	}
 	if len(storage.writes) != 2 {
 		t.Fatalf("replayed BeginDispatch writes = %d, want 2", len(storage.writes))
+	}
+}
+
+func TestBeginDispatchReconcilesACommittedBarrierWhoseAcknowledgementWasLost(t *testing.T) {
+	storage := newMemoryStorage()
+	store, err := NewStore(storage)
+	if err != nil {
+		t.Fatalf("NewStore returned an error: %v", err)
+	}
+	staging := validLease()
+	staging.AllocationID = ""
+	staging.Observer = 0
+	staging.SecretRef = ""
+	staging.Staging = true
+	current, err := store.Create(context.Background(), staging)
+	if err != nil {
+		t.Fatalf("Create staging lease returned an error: %v", err)
+	}
+	storage.writeAfterCommitErrAt = 2
+	storage.writeAfterCommitErr = errors.New("lost dispatch acknowledgement")
+
+	dispatched, mayDispatch, err := store.BeginDispatch(
+		context.Background(),
+		current,
+		testAttemptID,
+	)
+	if err != nil {
+		t.Fatalf("BeginDispatch after lost acknowledgement returned an error: %v", err)
+	}
+	if !mayDispatch ||
+		!dispatched.Lease.Dispatched ||
+		dispatched.Lease.DispatchID == "" ||
+		dispatched.Version != "v2" {
+		t.Fatalf(
+			"reconciled dispatch barrier = %+v/%t, want identified v2 dispatcher",
+			dispatched,
+			mayDispatch,
+		)
 	}
 }
 
@@ -2035,6 +2084,35 @@ func TestLoadRefusesSchemaTwoCarryingDispatched(t *testing.T) {
 				t.Fatalf("schema-two dispatched=%s loaded, want an error", value)
 			}
 		})
+	}
+	if _, err := leaseFrom(
+		`{"schema":2,"attempt_id":"attempt-7","allocation_id":"gameserver-17",`+
+			`"observer":42,"secret_ref":"zone-admission-gameserver-17",`+
+			`"expires_at_nanos":2000000000123456789,"claimed_at_nanos":null,`+
+			`"dispatch_id":"00112233445566778899aabbccddeeff"}`,
+		testUserID,
+		testReservationID,
+	); err == nil {
+		t.Fatal("schema-two dispatch identity loaded, want an error")
+	}
+}
+
+func TestLoadRequiresDispatchIdentityToMatchTheDispatchFlag(t *testing.T) {
+	for _, member := range []string{
+		`"dispatched":true`,
+		`"dispatch_id":"00112233445566778899aabbccddeeff"`,
+	} {
+		_, err := leaseFrom(
+			`{"schema":3,"attempt_id":"attempt-7","allocation_id":"",`+
+				`"observer":0,"secret_ref":"",`+
+				`"expires_at_nanos":2000000000123456789,"claimed_at_nanos":null,`+
+				`"staging":true,`+member+`}`,
+			testUserID,
+			testReservationID,
+		)
+		if err == nil {
+			t.Fatalf("schema-three mismatched dispatch member %s loaded, want an error", member)
+		}
 	}
 }
 

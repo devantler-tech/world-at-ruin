@@ -379,6 +379,14 @@ func (c *Coordinator) reconcileAttempt(
 	request handoff.AllocationRequest,
 	resource *nakamalease.Lease,
 ) error {
+	if resource != nil {
+		cleanupCtx, cancel := context.WithTimeout(
+			context.WithoutCancel(ctx),
+			stagedCleanupTimeout,
+		)
+		defer cancel()
+		ctx = cleanupCtx
+	}
 	current, err := c.leases.Load(ctx, request.UserID, request.ReservationID)
 	if errors.Is(err, nakamalease.ErrNotFound) {
 		if resource != nil {

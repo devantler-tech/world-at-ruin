@@ -33,13 +33,16 @@ const (
 var testNow = time.Unix(2_000_000_000, 123_456_789).UTC()
 
 type memoryStorage struct {
-	mu         sync.Mutex
-	objects    map[string]*api.StorageObject
-	version    int
-	readErr    error
-	writeErr   error
-	writeErrAt int
-	deleteErr  error
+	mu                    sync.Mutex
+	objects               map[string]*api.StorageObject
+	version               int
+	readErr               error
+	writeErr              error
+	writeErrAt            int
+	writeAfterCommitErr   error
+	writeAfterCommitErrAt int
+	deleteErr             error
+	respectContext        bool
 }
 
 func newMemoryStorage() *memoryStorage {
@@ -79,11 +82,14 @@ func (s *memoryStorage) StorageList(
 }
 
 func (s *memoryStorage) StorageRead(
-	_ context.Context,
+	ctx context.Context,
 	reads []*runtime.StorageRead,
 ) ([]*api.StorageObject, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.respectContext && ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 	if s.readErr != nil {
 		return nil, s.readErr
 	}
@@ -104,11 +110,14 @@ func (s *memoryStorage) StorageRead(
 }
 
 func (s *memoryStorage) StorageWrite(
-	_ context.Context,
+	ctx context.Context,
 	writes []*runtime.StorageWrite,
 ) ([]*api.StorageObjectAck, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.respectContext && ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 	if s.writeErr != nil {
 		return nil, s.writeErr
 	}
@@ -143,6 +152,12 @@ func (s *memoryStorage) StorageWrite(
 		PermissionRead:  0,
 		PermissionWrite: 0,
 	}
+	if s.writeAfterCommitErr != nil &&
+		(s.writeAfterCommitErrAt == 0 || s.version == s.writeAfterCommitErrAt) {
+		err := s.writeAfterCommitErr
+		s.writeAfterCommitErr = nil
+		return nil, err
+	}
 	return []*api.StorageObjectAck{
 		{
 			Collection: write.Collection,
@@ -154,11 +169,14 @@ func (s *memoryStorage) StorageWrite(
 }
 
 func (s *memoryStorage) StorageDelete(
-	_ context.Context,
+	ctx context.Context,
 	deletes []*runtime.StorageDelete,
 ) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.respectContext && ctx.Err() != nil {
+		return ctx.Err()
+	}
 	if s.deleteErr != nil {
 		return s.deleteErr
 	}
@@ -540,6 +558,7 @@ func TestAllocatePersistsDispatchBarrierBeforeProvisioning(t *testing.T) {
 	storage := newMemoryStorage()
 	store := newLeaseStore(t, storage)
 	sawDispatched := false
+	sawDispatchID := false
 	resources := &recordingResources{}
 	resources.provisionCheck = func(
 		_ handoff.AllocationRequest,
@@ -554,6 +573,8 @@ func TestAllocatePersistsDispatchBarrierBeforeProvisioning(t *testing.T) {
 				return fmt.Errorf("decode pre-dispatch lease: %w", err)
 			}
 			sawDispatched, _ = document["dispatched"].(bool)
+			dispatchID, _ := document["dispatch_id"].(string)
+			sawDispatchID = dispatchID != ""
 		}
 		return status.Error(codes.Unavailable, "ambiguous allocation result")
 	}
@@ -575,8 +596,8 @@ func TestAllocatePersistsDispatchBarrierBeforeProvisioning(t *testing.T) {
 	); status.Code(err) != codes.Unavailable {
 		t.Fatalf("ambiguous dispatch status = %s, want Unavailable", status.Code(err))
 	}
-	if !sawDispatched {
-		t.Fatal("external dispatch ran before its durable dispatched barrier")
+	if !sawDispatched || !sawDispatchID {
+		t.Fatal("external dispatch ran before its durable identified dispatch barrier")
 	}
 	record, err := store.Load(context.Background(), testUserID, testReservationID)
 	if err != nil {
@@ -587,6 +608,39 @@ func TestAllocatePersistsDispatchBarrierBeforeProvisioning(t *testing.T) {
 	}
 	if len(resources.releases) != 0 {
 		t.Fatalf("ambiguous dispatch released resources: %+v", resources.releases)
+	}
+}
+
+func TestAllocateProvisionsAfterACommittedDispatchBarrierLosesItsAcknowledgement(t *testing.T) {
+	storage := newMemoryStorage()
+	storage.writeAfterCommitErrAt = 2
+	storage.writeAfterCommitErr = errors.New("lost dispatch acknowledgement")
+	store := newLeaseStore(t, storage)
+	resources := &recordingResources{
+		provisioned: Provisioned{
+			Allocation: validAllocation(),
+			SecretRef:  "zone-admission-gameserver-17",
+		},
+	}
+	coordinator, err := NewCoordinator(
+		resources,
+		store,
+		Config{LeaseTTL: time.Minute, Now: func() time.Time { return testNow }},
+	)
+	if err != nil {
+		t.Fatalf("NewCoordinator returned an error: %v", err)
+	}
+
+	got, err := coordinator.Allocate(context.Background(), validRequest())
+	if err != nil {
+		t.Fatalf("Allocate after lost barrier acknowledgement returned an error: %v", err)
+	}
+	if !reflect.DeepEqual(got, validAllocation()) || len(resources.provisions) != 1 {
+		t.Fatalf(
+			"lost-ack allocation = %+v with %d provisions, want one exact provision",
+			got,
+			len(resources.provisions),
+		)
 	}
 }
 
@@ -1940,6 +1994,52 @@ func TestAllocateFailsClosedWhenFinalizationCleanupCannotBeReconciled(t *testing
 		if strings.Contains(err.Error(), leaked) {
 			t.Fatalf("finalization cleanup leaked %q: %v", leaked, err)
 		}
+	}
+}
+
+func TestAllocateDetachesKnownResourceCleanupFromCallerCancellation(t *testing.T) {
+	storage := newMemoryStorage()
+	storage.respectContext = true
+	store := newLeaseStore(t, storage)
+	ctx, cancel := context.WithCancel(context.Background())
+	resources := &recordingResources{
+		provisioned: Provisioned{
+			Allocation: validAllocation(),
+			SecretRef:  "zone-admission-gameserver-17",
+		},
+		provisionCheck: func(handoff.AllocationRequest, time.Time) error {
+			cancel()
+			return nil
+		},
+		releaseContextCheck: func(releaseCtx context.Context) error {
+			return releaseCtx.Err()
+		},
+	}
+	coordinator, err := NewCoordinator(
+		resources,
+		store,
+		Config{LeaseTTL: time.Minute, Now: func() time.Time { return testNow }},
+	)
+	if err != nil {
+		t.Fatalf("NewCoordinator returned an error: %v", err)
+	}
+
+	got, err := coordinator.Allocate(ctx, validRequest())
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Allocate after caller cancellation error = %v, want context.Canceled", err)
+	}
+	if !reflect.DeepEqual(got, handoff.Allocation{}) {
+		t.Fatalf("canceled allocation returned %+v, want zero allocation", got)
+	}
+	if len(resources.releases) != 1 {
+		t.Fatalf("known resource releases = %d, want 1", len(resources.releases))
+	}
+	if _, err := store.Load(
+		context.Background(),
+		testUserID,
+		testReservationID,
+	); !errors.Is(err, nakamalease.ErrNotFound) {
+		t.Fatalf("known resource lease survived detached cleanup: %v", err)
 	}
 }
 

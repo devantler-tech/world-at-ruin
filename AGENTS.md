@@ -609,8 +609,8 @@ everything shipped afterwards is held to.
   **Nakama handoff lease store** (`server/nakamalease/` — server-owned, strict-schema objects keyed
   by a SHA-256-derived user/reservation key; unique create and exact-version
   staging/dispatch/finalization/replacement/claim/release preserve one current attempt under retries,
-  with permanently ledgered schema shapes, a durable dispatched point of no return and a durable
-  releasing barrier; its private-collection expiry sweep arbitrates zone claim against external
+  with base-anchored permanent schema-shape goldens, a durable uniquely identified dispatched point
+  of no return and a durable releasing barrier; its private-collection expiry sweep arbitrates zone claim against external
   cleanup while retaining ambiguous dispatches for exact reconciliation, without persisting raw user
   or reservation IDs or admission secrets; the
   durability contract those objects follow — and that every later server-held record inherits — is
@@ -627,12 +627,13 @@ everything shipped afterwards is held to.
   `playerstate` record-plus-audit boundary; it remains inert until a server caller composes it), the
   durable **handoff allocation coordinator**
   (`server/handoffalloc/` — implements `handoff.Allocator` over the real lease store and an injected
-  GameServer-resource boundary; exact-version persists a dispatched barrier before the one allowed
-  external allocation call, makes replays and concurrent losers reconcile only that exact attempt,
-  quarantines ambiguous dispatches against newer attempts, expiry cleanup and unverified outer
-  failure cleanup, finalizes the allocation before returning connection material, protects
-  claimed/stale ownership and supervises exact no-show cleanup; it remains inert until the concrete
-  adapter is composed), and
+  GameServer-resource boundary; exact-version persists a uniquely identified dispatched barrier
+  before the one allowed external allocation call, reconciles lost barrier acknowledgements so only
+  the persisted caller dispatches, makes replays and concurrent losers reconcile only that exact
+  attempt, quarantines ambiguous dispatches against newer attempts, expiry cleanup and unverified
+  outer failure cleanup, detaches known-resource fence-and-cleanup from caller cancellation,
+  finalizes the allocation before returning connection material, protects claimed/stale ownership
+  and supervises exact no-show cleanup; it remains inert until the concrete adapter is composed), and
   the **combat first slice** (`server/sim/combat.go` — the telegraph cast
   lifecycle: painted at cast start, resolved once after a tick-counted cast time against
   positions at resolution, health/damage application, and one mob AI that deterministically
