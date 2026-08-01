@@ -109,11 +109,11 @@ func sync(store: ReplicaStore) -> void:
 		_clear()
 		return
 	# Check the O(1) table count before ids() copies and sorts the keys, and
-	# before a single MeshInstance3D or CapsuleMesh can be allocated. Clearing
-	# rather than drawing a partial, ID-selected population avoids presenting a
-	# misleading view of an over-cap authoritative state.
+	# before a single MeshInstance3D or CapsuleMesh can be allocated. Retain the
+	# last valid bounded population while the authoritative table is oversized:
+	# selecting a partial set would misrepresent that table, while clearing here
+	# would turn a 512/513 oscillation into a 512-node free/rebuild loop.
 	if store.count() > MAX_VISIBLE_ENTITIES:
-		_clear()
 		return
 	var live: Dictionary = {}
 	for id: int in store.ids():

@@ -2236,13 +2236,60 @@ func _capture_replication(dir: String, main: Node) -> void:
 		await get_tree().process_frame
 	var populated_again := await _grab_frame()
 
+	# Exercise the render cap through the shipped store and per-frame view sync,
+	# then publish the state a player actually sees. The over-cap snapshot keeps
+	# the three visible fixture entities and adds protocol-valid remote entries;
+	# the renderer must retain the complete last-valid population without
+	# allocating or rebuilding it.
+	var retained_instance_ids: Dictionary = {}
+	for e_var: Variant in entities:
+		var e: Dictionary = e_var
+		var marker := view.marker_for(e["id"] as int)
+		retained_instance_ids[e["id"] as int] = marker.get_instance_id()
+	var overcap_entities: Array = entities.duplicate(true)
+	while overcap_entities.size() <= ReplicaView.MAX_VISIBLE_ENTITIES:
+		var extra_id := 1000 + overcap_entities.size()
+		overcap_entities.append({"id": extra_id, "x": 0, "y": 0, "z": 0, "radius": 400})
+	var oversized: Dictionary = zone.store().apply({
+		"ok": true,
+		"kind": WireCodec.KIND_SNAPSHOT,
+		"snapshot": {
+			"tick": int(fixture["tick"]) + 1,
+			"observer": int(fixture["observer"]),
+			"entities": overcap_entities,
+		},
+	})
+	if oversized.get("ok") != true:
+		_fail("the over-cap evidence snapshot was refused by the store (%s: %s)" %
+			[str(oversized.get("error")), str(oversized.get("detail"))])
+		return
+	for i in CONTRIB_GAP_FRAMES:
+		cam.current = true
+		await get_tree().process_frame
+	if zone.store().count() != ReplicaView.MAX_VISIBLE_ENTITIES + 1:
+		_fail("the over-cap evidence store does not hold exactly one entity past the render budget")
+		return
+	if view.count() != entities.size():
+		_fail(("the over-cap view holds %d markers instead of retaining the last %d-marker population") %
+			[view.count(), entities.size()])
+		return
+	for e_var: Variant in entities:
+		var e: Dictionary = e_var
+		var marker := view.marker_for(e["id"] as int)
+		if marker == null or marker.get_instance_id() != retained_instance_ids[e["id"] as int]:
+			_fail("the over-cap update rebuilt or removed retained marker %d" % (e["id"] as int))
+			return
+	var overcap_retained := await _grab_frame()
+	if not _write_frame(dir, "replication_overcap_retained", overcap_retained):
+		return
+
 	# The control. A resync snapshot with no entities is the store's own
 	# wholesale-replacement semantics, so the table empties through the same
 	# path a server resync would use rather than through a test-only reset.
 	var cleared: Dictionary = zone.store().apply({
 		"ok": true,
 		"kind": WireCodec.KIND_SNAPSHOT,
-		"snapshot": {"tick": int(fixture["tick"]) + 1, "observer": int(fixture["observer"]), "entities": []},
+		"snapshot": {"tick": int(fixture["tick"]) + 2, "observer": int(fixture["observer"]), "entities": []},
 	})
 	if cleared.get("ok") != true:
 		_fail("the empty control snapshot was refused by the store (%s: %s)" %
