@@ -91,6 +91,16 @@ func _ready() -> void:
 		# A real bone OUTSIDE the guarded set — accepting it would dodge the
 		# golden recipe's forward-compat guarantee.
 		{ "version": 1, "bone_girth": { "index_01_l": 1.1 } },
+		# Persisted JSON is attacker-controlled: values must not reach blend-shape
+		# setters or rest-transform arithmetic unless they are finite numbers in
+		# the safe envelope. In particular, girth zero reaches a divisor.
+		{ "version": 1, "shapes": { "torso_vshape": "large" } },
+		{ "version": 1, "shapes": { "torso_vshape": INF } },
+		{ "version": 1, "shapes": { "torso_vshape": 1.21 } },
+		{ "version": 1, "bone_girth": { "lowerarm": 0.0 } },
+		{ "version": 1, "bone_girth": { "lowerarm": INF } },
+		{ "version": 1, "bone_scale": { "hand": "huge" } },
+		{ "version": 1, "joint_push": { "upperarm": 2.01 } },
 		# equipment entered the format at v2; a v1 recipe carrying it was
 		# always invalid and must stay invalid forever (a client that cannot
 		# render everything a recipe says refuses, never a half-truth).

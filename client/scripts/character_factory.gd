@@ -184,6 +184,14 @@ const GUARDED_BONE_KEYS := {
 	"joint_push": ["upperarm", "hand"],
 }
 
+## Persisted numeric inputs are untrusted. These limits deliberately surround
+## the creator's authored ranges while keeping corrupt saves away from
+## non-finite engine state and the zero divisor in [_apply_girth].
+const SHAPE_WEIGHT_MIN := -0.5
+const SHAPE_WEIGHT_MAX := 1.2
+const BONE_FACTOR_MIN := 0.5
+const BONE_FACTOR_MAX := 2.0
+
 
 ## Builds a character instance from a recipe, or returns null after
 ## push_error when the recipe is invalid. The caller owns the instance.
@@ -517,6 +525,10 @@ static func validate(recipe: Dictionary, skeleton: Skeleton3D, mesh_instance: Me
 			return "unknown blend shape '%s' — shipped kit shapes may never be removed" % shape_name
 		if shape_name.begins_with(HIDE_SHAPE_PREFIX):
 			return "shape '%s' is composition plumbing, not a recipe shape" % shape_name
+		var weight = recipe["shapes"][shape_name]
+		if not _finite_number_in_range(weight, SHAPE_WEIGHT_MIN, SHAPE_WEIGHT_MAX):
+			return "blend shape '%s' weight must be finite and within [%s, %s]" % [
+				shape_name, SHAPE_WEIGHT_MIN, SHAPE_WEIGHT_MAX]
 	for field: String in GUARDED_BONE_KEYS:
 		if recipe.has(field) and recipe[field] is not Dictionary:
 			return "%s must be a dictionary of bone name -> factor" % field
@@ -525,6 +537,10 @@ static func validate(recipe: Dictionary, skeleton: Skeleton3D, mesh_instance: Me
 				return "bone key '%s' in %s is outside the guarded set — only golden-guarded keys may persist" % [key, field]
 			if _bones_for(skeleton, key).is_empty():
 				return "unknown bone '%s' in %s" % [key, field]
+			var factor = recipe[field][key]
+			if not _finite_number_in_range(factor, BONE_FACTOR_MIN, BONE_FACTOR_MAX):
+				return "%s factor for '%s' must be finite, non-zero, and within [%s, %s]" % [
+					field, key, BONE_FACTOR_MIN, BONE_FACTOR_MAX]
 	if recipe.has("equipment"):
 		if recipe["equipment"] is not Dictionary:
 			return "equipment must be a dictionary of slot -> piece name"
@@ -537,6 +553,13 @@ static func validate(recipe: Dictionary, skeleton: Skeleton3D, mesh_instance: Me
 		if String(recipe["skin"]) not in (skins_registry()["skins"] as Dictionary):
 			return "unknown skin '%s' — shipped skins may never be removed" % recipe["skin"]
 	return ""
+
+
+static func _finite_number_in_range(value: Variant, minimum: float, maximum: float) -> bool:
+	if not (value is int or value is float):
+		return false
+	var number := float(value)
+	return is_finite(number) and number >= minimum and number <= maximum
 
 
 ## Why this build cannot accept `recipe`, or "" when it can.
