@@ -27,6 +27,8 @@ extends Node
 ##                      instead of being silently clamped by the engine
 ##   * empty          — a store with no base snapshot draws nothing
 ##   * cleared        — a null store (no zone) removes everything
+##   * render cap     — an oversized but protocol-valid table allocates no
+##                      markers and clears the previously drawn population
 ##
 ## Pure scene-tree work — no socket, no save, no GPU read-back — so it is
 ## deterministic headless and safe to run locally.
@@ -52,6 +54,8 @@ func _ready() -> void:
 	if not _check_empty_store_draws_nothing():
 		return
 	if not _check_null_store_clears():
+		return
+	if not _check_render_cap_refuses_oversized_table():
 		return
 	if not _check_placement_is_world_absolute():
 		return
@@ -308,6 +312,37 @@ func _check_null_store_clears() -> bool:
 		return false
 	if view.count() != 0:
 		_fail("a null store must clear the view's index too, it still reports %d" % view.count())
+		return false
+	view.free()
+	return true
+
+
+## The wire cap is a serialization bound, not permission to allocate that many
+## scene nodes. Exercise one past the independent render budget (but still far
+## below WireCodec.MAX_ENTITIES), after first drawing a valid population so the
+## test also proves stale markers do not survive the refusal.
+func _check_render_cap_refuses_oversized_table() -> bool:
+	var view := _mounted_view()
+	var store := _based_store()
+	if _failed:
+		return false
+	view.sync(store)
+	if view.get_child_count() != 2:
+		_fail("fixture did not draw, so the render-cap clear below would prove nothing")
+		return false
+
+	var entities: Array = []
+	# Observer 1 is intentionally absent: the store correctly refuses snapshots
+	# that list the observing player among remote replicas.
+	for id: int in range(2, ReplicaView.MAX_VISIBLE_ENTITIES + 3):
+		entities.append(_entity(id, id, 0, 0, 300))
+	store = ReplicaStore.new()
+	if not _apply(store, _snapshot_result(10, 1, entities)):
+		return false
+	view.sync(store)
+
+	if view.get_child_count() != 0 or view.count() != 0:
+		_fail("a %d-entity table above the %d-marker render cap must draw nothing, found %d markers" % [store.count(), ReplicaView.MAX_VISIBLE_ENTITIES, view.count()])
 		return false
 	view.free()
 	return true
