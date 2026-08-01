@@ -246,11 +246,13 @@ would tell a client where to *fetch* something is withheld, and each omission is
   keeps playing — the safe failure.
 - **`signature` / `key` / `revocation`** — the Godot-native trust boundary verifies the signing-key
   certificate with a caller-supplied offline-root public key, authenticates the embedded revocation
-  list with that root, refuses a listed certificate id, verifies the manifest with only the remaining
-  certified key, and enters the pure decision core last. The production root public key, signing
-  custody, certificate/revocation publisher, independently fresh revocation head, and runtime updater
-  integration remain child 6. The published OCI artifact is cosign-signed by digest, which is a real
-  but *different* integrity property.
+  list with that root, refuses a listed certificate id, refuses an embedded list that the
+  caller-supplied independently fetched revocation head does not vouch for as current, verifies the
+  manifest with only the remaining certified key, and enters the pure decision core last. The
+  production root public key, signing custody, certificate/revocation publisher, revocation-head
+  endpoint, and runtime updater integration remain child 6 — and because an absent head is
+  fail-closed, no update can be authorized until they land. The published OCI artifact is
+  cosign-signed by digest, which is a real but *different* integrity property.
 - **`rollback_targets`** — empty, because no mountable content pack is retained. The published
   `v0.52.0` monolithic app is the whole-app rollback for save capability 3, but its `.app` ZIP is
   deliberately not advertised to the pack selector. Empty is the fail-closed pack value: it makes the
@@ -381,8 +383,27 @@ stale cache, or engine change can strand or subvert a client:
   `signature` and verifying it with only the certified signing key. `UpdateDecision` is called last;
   every trust refusal returns an empty decision. The production root public key, signing custody,
   publisher and runtime updater integration do not exist yet, so signed delivery remains inactive.
-  The independently fresh revocation head remains #490 work and belongs between embedded-list
-  authentication and trusting that list's version as current.
+  **An embedded revocation list is only believed as current when an independently fetched head says
+  so.** Everything the manifest carries is chosen by whoever signed it, so a stolen key can embed an
+  older — but still validly root-signed — list issued before the theft, which therefore does not name
+  the stolen key. `verify_and_decide()` therefore takes a `revocation_head` obtained from the
+  publisher's own endpoint rather than from the manifest, authenticates it with the same offline root,
+  and refuses the manifest when the head is expired against `installed.observed_at` or when the
+  embedded `revocation.version` is below the head's `version_floor`.
+  **Both objects are anchored to `installed.revocation_head_url`, never to each other.** Binding the
+  head to the endpoint the *manifest* names would compare two objects the manifest's signer selected:
+  a stolen key can embed another channel's genuinely root-signed revocation stream — which
+  legitimately carries a lower floor and never listed that key — and name that channel's endpoint, so
+  the client fetches that channel's real head and the two agree with each other while the live
+  revocation is never consulted. The manifest's own `channel` is no defence, being signer-chosen and
+  checked later in the decision core. `revocation_head_url` is caller-owned installation state like
+  the high-water marks and `channel`, and it has **no safe default**: guessing an endpoint is exactly
+  what this binding prevents, so an installation declaring none refuses.
+  The head is enforced before the manifest signature, so a replayed
+  list never reaches manifest authentication. A head the caller could not fetch is passed as `null`
+  and refuses the update — falling back to embedded-only trust is the attack, not a degraded mode.
+  Refusing an update never blocks launching the installed build, which does not call this boundary.
+  The head endpoint, its publication cadence and the runtime fetch remain #490 work.
   - **The persisted sequence alone is NOT enough, so contraction waits out the TTL.** A returning or
     freshly-installed client has no high-water mark, so an unexpired cached manifest at sequence `N`
     looks perfectly valid to it even after the server contracted per `N+1` — every signature and expiry
