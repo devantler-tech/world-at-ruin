@@ -157,6 +157,9 @@ func TestSetIntentSanitizesHostileInput(t *testing.T) {
 		w.Add(Entity{ID: 1, Pos: Vec3{}, MaxSpeed: 4000})
 		w.SetIntent(1, hostile)
 		w.Step() // must not panic
+		if got := w.Get(1).Pos.Y; got != 0 {
+			t.Fatalf("hostile intent %+v moved vertically by %d mm", hostile, got)
+		}
 		if got := w.Get(1).Pos.HorizontalLen(); got > perTick {
 			t.Fatalf("hostile intent %+v bypassed the speed cap: moved %d mm/tick, budget %d",
 				hostile, got, perTick)
@@ -168,8 +171,11 @@ func TestSetIntentSanitizesHostileInput(t *testing.T) {
 // (an entity spawned with a hostile Intent field), not only SetIntent.
 func TestAddSanitizesHostileIntent(t *testing.T) {
 	w := NewWorld(DemoBounds)
-	w.Add(Entity{ID: 1, Pos: Vec3{}, Intent: Vec3{X: math.MaxInt64, Z: math.MaxInt64}, MaxSpeed: 4000})
+	w.Add(Entity{ID: 1, Pos: Vec3{}, Intent: Vec3{X: math.MaxInt64, Y: math.MaxInt64, Z: math.MaxInt64}, MaxSpeed: 4000})
 	w.Step() // must not panic
+	if got := w.Get(1).Pos.Y; got != 0 {
+		t.Fatalf("Add preserved hostile vertical intent: moved %d mm", got)
+	}
 	if got := w.Get(1).Pos.HorizontalLen(); got > int64(4000/TickHz)+1 {
 		t.Fatalf("Add did not sanitise a hostile intent: moved %d mm/tick", got)
 	}
