@@ -90,8 +90,9 @@ func _check_malformed_casts(root: Dictionary) -> bool:
 	const FACING_SIZE := 3 * 8
 	const OUTER_OFFSET := KIND_OFFSET + 1 + ORIGIN_SIZE + FACING_SIZE
 	const INNER_OFFSET := OUTER_OFFSET + 8
-	const START_TICK_OFFSET := INNER_OFFSET + 3 * 8
-	const RESOLVE_TICK_OFFSET := START_TICK_OFFSET + 8
+	const CAST_END_OFFSET := CAST_OFFSET + WireCodec.ACTIVE_CAST_SIZE
+	const RESOLVE_TICK_OFFSET := CAST_END_OFFSET - 8
+	const START_TICK_OFFSET := RESOLVE_TICK_OFFSET - 8
 
 	var bad_shape: PackedByteArray = valid.duplicate()
 	bad_shape.encode_u8(KIND_OFFSET, 99)
