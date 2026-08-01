@@ -42,6 +42,8 @@ jobs:
         run: tools/test-cd-cask-disarm-budget.sh
       - name: GHCR latest converges to the newest immutable release
         run: tools/test-cd-ghcr-latest-forward.sh
+      - name: CLA comment concurrency collapses pending runs
+        run: ./tools/cla-concurrency-guard.test.sh
       - name: Retained boot-recovery reader gate is pinned and fail-closed
         run: ./tools/retained-boot-recovery-reader-guard.test.sh
       - name: Dev-log entry version guard is pinned and fail-closed
