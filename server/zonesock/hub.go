@@ -28,6 +28,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -75,6 +76,11 @@ const (
 	DefaultWriteTimeout    = 10 * time.Second
 	DefaultIdleTimeout     = 30 * time.Second
 )
+
+// WireVersionHeader selects the protocol a connection speaks for its entire
+// lifetime. Its absence retains v1 for already-shipped clients; new clients
+// name the newest version explicitly during the HTTP upgrade handshake.
+const WireVersionHeader = "X-WAR-Wire-Version"
 
 func (c Config) withDefaults() Config {
 	if c.InterestMM <= 0 {
@@ -167,7 +173,7 @@ func (h *Hub) attach(w *sim.World, c *conn) {
 	join := w.Snapshot(c.observer)
 	c.tracker = sim.NewSnapshotTracker(c.observer)
 	c.tracker.Update(w) // prime: the join snapshot already carries this state
-	b, err := wire.EncodeSnapshot(join)
+	b, err := wire.EncodeSnapshotVersion(join, c.wireVersion())
 	if err != nil {
 		// Sim guarantees canonical snapshots, so this is an upstream
 		// determinism bug — fail loudly for this peer, keep the zone alive.
@@ -194,17 +200,29 @@ func (h *Hub) detach(w *sim.World, c *conn) {
 // pump sends c its delta for the current tick, skipping empty deltas so a
 // still world costs no bandwidth.
 func (h *Hub) pump(w *sim.World, c *conn) {
-	d := c.tracker.Update(w)
+	d := projectDeltaForVersion(c.tracker.Update(w), c.wireVersion())
 	if d.Empty() {
 		return
 	}
-	b, err := wire.EncodeSnapshotDelta(d)
+	b, err := wire.EncodeSnapshotDeltaVersion(d, c.wireVersion())
 	if err != nil {
 		log.Printf("zonesock: encode delta for observer %d: %v", c.observer, err)
 		go c.close(websocket.StatusInternalError, "encode failure")
 		return
 	}
 	h.send(w, c, b)
+}
+
+// projectDeltaForVersion removes fields the negotiated decoder cannot
+// represent before the empty check and encoder. A cast-only tick therefore
+// costs a retained v1 peer no bandwidth and, crucially, cannot disconnect it
+// by reaching the v1 encoder with v2-only data.
+func projectDeltaForVersion(d sim.SnapshotDelta, version uint16) sim.SnapshotDelta {
+	if version == wire.LegacyVersion {
+		d.StartedCasts = nil
+		d.EndedCasts = nil
+	}
+	return d
 }
 
 // send enqueues one encoded frame without ever blocking the sim goroutine. On
@@ -228,7 +246,7 @@ drain:
 	resync := w.Snapshot(c.observer)
 	c.tracker = sim.NewSnapshotTracker(c.observer)
 	c.tracker.Update(w)
-	b, err := wire.EncodeSnapshot(resync)
+	b, err := wire.EncodeSnapshotVersion(resync, c.wireVersion())
 	if err != nil {
 		log.Printf("zonesock: encode resync snapshot for observer %d: %v", c.observer, err)
 		go c.close(websocket.StatusInternalError, "encode failure")
@@ -261,24 +279,47 @@ func (h *Hub) Handler() http.Handler {
 			http.Error(rw, "admission refused", http.StatusUnauthorized)
 			return
 		}
+		version, status, err := requestedWireVersion(r)
+		if err != nil {
+			http.Error(rw, "wire version refused", status)
+			return
+		}
 		ws, err := websocket.Accept(rw, r, nil)
 		if err != nil {
 			return
 		}
 		ws.SetReadLimit(h.cfg.MaxInboundBytes)
-		ctx, cancel := context.WithCancel(context.Background())
+		// The upgraded socket outlives ServeHTTP, so ignore request cancellation
+		// while preserving request-scoped values for the connection lifetime.
+		ctx, cancel := context.WithCancel(context.WithoutCancel(r.Context()))
 		c := &conn{
 			hub:      h,
 			ws:       ws,
 			observer: observer,
+			version:  version,
 			out:      make(chan []byte, h.cfg.SendQueue),
-			ctx:      ctx,
 			cancel:   cancel,
 		}
 		h.enqueue(func(w *sim.World) { h.attach(w, c) })
-		go c.writeLoop(h.cfg)
-		go c.readLoop()
+		go c.writeLoop(ctx, h.cfg)
+		go c.readLoop(ctx)
 	})
+}
+
+func requestedWireVersion(r *http.Request) (uint16, int, error) {
+	raw := r.Header.Get(WireVersionHeader)
+	if raw == "" {
+		return wire.LegacyVersion, 0, nil
+	}
+	parsed, err := strconv.ParseUint(raw, 10, 16)
+	if err != nil {
+		return 0, http.StatusBadRequest, errors.New("malformed wire version")
+	}
+	version := uint16(parsed)
+	if version < wire.LegacyVersion || version > wire.Version {
+		return 0, http.StatusUpgradeRequired, errors.New("unsupported wire version")
+	}
+	return version, 0, nil
 }
 
 // bearerToken extracts the token from an Authorization: Bearer header.
@@ -297,11 +338,18 @@ type conn struct {
 	hub      *Hub
 	ws       *websocket.Conn
 	observer sim.EntityID
+	version  uint16
 	out      chan []byte
-	ctx      context.Context
 	cancel   context.CancelFunc
 	once     sync.Once
 	tracker  *sim.SnapshotTracker // sim-goroutine-owned
+}
+
+func (c *conn) wireVersion() uint16 {
+	if c.version == 0 {
+		return wire.LegacyVersion
+	}
+	return c.version
 }
 
 // teardown severs the connection immediately, without a close handshake, and
@@ -311,7 +359,7 @@ func (c *conn) teardown() {
 	c.once.Do(func() {
 		c.cancel()
 		c.hub.enqueue(func(w *sim.World) { c.hub.detach(w, c) })
-		c.ws.CloseNow()
+		_ = c.ws.CloseNow()
 	})
 }
 
@@ -323,7 +371,7 @@ func (c *conn) teardown() {
 func (c *conn) close(code websocket.StatusCode, reason string) {
 	c.once.Do(func() {
 		c.hub.enqueue(func(w *sim.World) { c.hub.detach(w, c) })
-		c.ws.Close(code, reason)
+		_ = c.ws.Close(code, reason)
 		c.cancel()
 	})
 }
@@ -332,23 +380,23 @@ func (c *conn) close(code websocket.StatusCode, reason string) {
 // idle deadline armed: it pings every IdleTimeout/2 and requires each ping
 // answered within IdleTimeout/2, so a peer that neither drains nor responds is
 // torn down within roughly IdleTimeout.
-func (c *conn) writeLoop(cfg Config) {
+func (c *conn) writeLoop(parent context.Context, cfg Config) {
 	defer c.teardown()
 	ping := time.NewTicker(cfg.IdleTimeout / 2)
 	defer ping.Stop()
 	for {
 		select {
-		case <-c.ctx.Done():
+		case <-parent.Done():
 			return
 		case b := <-c.out:
-			ctx, cancel := context.WithTimeout(c.ctx, cfg.WriteTimeout)
+			ctx, cancel := context.WithTimeout(parent, cfg.WriteTimeout)
 			err := c.ws.Write(ctx, websocket.MessageBinary, b)
 			cancel()
 			if err != nil {
 				return
 			}
 		case <-ping.C:
-			ctx, cancel := context.WithTimeout(c.ctx, cfg.IdleTimeout/2)
+			ctx, cancel := context.WithTimeout(parent, cfg.IdleTimeout/2)
 			err := c.ws.Ping(ctx)
 			cancel()
 			if err != nil {
@@ -363,8 +411,8 @@ func (c *conn) writeLoop(cfg Config) {
 // bounds how much a hostile peer can make the server assemble. Wire v1
 // defines no client→server kinds, so any inbound data message is a protocol
 // violation.
-func (c *conn) readLoop() {
-	if _, _, err := c.ws.Read(c.ctx); err != nil {
+func (c *conn) readLoop(ctx context.Context) {
+	if _, _, err := c.ws.Read(ctx); err != nil {
 		c.teardown()
 		return
 	}

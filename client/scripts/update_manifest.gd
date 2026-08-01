@@ -122,6 +122,7 @@ const SAVE_CAPABILITY_READS := 6
 ## the honest floor today is "everything". Raising it is a deliberate,
 ## player-visible act — it strands anyone below it.
 const SHELL_MIN_SUPPORTED := "0.1.0"
+const MAX_PROTOCOL_VERSION := 65535
 
 
 ## Build the update manifest for this build.
@@ -138,11 +139,19 @@ const SHELL_MIN_SUPPORTED := "0.1.0"
 ## otherwise `manifest` is empty and `error` says what was wrong. It FAILS CLOSED
 ## rather than emitting something [UpdateDecision] would refuse in the field,
 ## where the failure is expensive and invisible.
-static func build(sequence: Variant, not_after: Variant) -> Dictionary:
+static func build(sequence: Variant, not_after: Variant, protocol_min: Variant, protocol_max: Variant) -> Dictionary:
 	if not UpdateDecision.is_int_id(sequence):
 		return {"manifest": {}, "error": "sequence is not a non-negative whole number"}
 	if not UpdateDecision.is_utc_datetime(not_after):
 		return {"manifest": {}, "error": "not_after is not a canonical UTC timestamp (YYYY-MM-DDTHH:MM:SSZ)"}
+	if not UpdateDecision.is_int_id(protocol_min) or int(protocol_min) < 1 or int(protocol_min) > MAX_PROTOCOL_VERSION:
+		return {"manifest": {}, "error": "protocol_min is not a positive whole-number protocol version"}
+	if not UpdateDecision.is_int_id(protocol_max) or int(protocol_max) < 1 or int(protocol_max) > MAX_PROTOCOL_VERSION:
+		return {"manifest": {}, "error": "protocol_max is not a positive whole-number protocol version"}
+	if int(protocol_min) > int(protocol_max):
+		return {"manifest": {}, "error": "live protocol range is inverted (%d..%d)" % [int(protocol_min), int(protocol_max)]}
+	if WireCodec.VERSION < int(protocol_min) or WireCodec.VERSION > int(protocol_max):
+		return {"manifest": {}, "error": "this client speaks %d outside the live protocol range %d..%d" % [WireCodec.VERSION, int(protocol_min), int(protocol_max)]}
 
 	# `cd.yaml` accepts a prerelease tag (`^v[0-9]+\.[0-9]+\.[0-9]+(-.+)?$`) and
 	# stamps `DevLog.VERSION` from it, so a `v0.2.0-rc.1` release would put
@@ -202,13 +211,10 @@ static func build(sequence: Variant, not_after: Variant) -> Dictionary:
 			# retained v1 target the server would still have talked to — defeating
 			# last-known-good recovery.
 			#
-			# Sourcing it from the client codec is correct ONLY because both sides are
-			# pinned to a single version today: `wire_codec.gd` and the server's
-			# `wire.go` each hard-reject anything but their own, and
-			# `update_manifest_test.gd` guards that the two constants remain equal.
-			# When the expansion begins this MUST become a CD-supplied input read from
-			# deployment state; the guard test is what will force that conversation.
-			"protocol": {"min": WireCodec.VERSION, "max": WireCodec.VERSION},
+			# The accepted range is a publication/deployment fact, not a property of
+			# this client artifact. CD supplies it explicitly from the released server
+			# contract; build() validates that this client can actually connect.
+			"protocol": {"min": int(protocol_min), "max": int(protocol_max)},
 			"save_schema": {
 				"min": SAVE_SCHEMA_MIN,
 				# What a freshly-written save carries, straight from the writer.
