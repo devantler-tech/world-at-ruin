@@ -258,14 +258,16 @@ static func build(recipe: Dictionary) -> Node3D:
 
 ## A stable phase offset in [0, BREATH_PERIOD) for this body recipe.
 ##
-## Equipment is deliberately excluded: CharacterCreator rebuilds the body when
-## an outfit picker changes, and seeding from the outfit makes that rebuild jump
-## to a different animation phase. Everything else stays serialised rather than
-## using a counter or the clock, so the same character breathes identically on
-## every boot while different bodies need not move in lockstep.
+## Equipment and the recipe schema version are deliberately excluded:
+## CharacterCreator rebuilds the body when an outfit picker changes, and that
+## edit can restamp the version as well as changing the outfit. Neither value
+## describes the body whose phase this seeds. Everything else stays serialised
+## rather than using a counter or the clock, so the same character breathes
+## identically on every boot while different bodies need not move in lockstep.
 static func _idle_phase_for(recipe: Dictionary) -> float:
 	var body_recipe := recipe.duplicate(true)
 	body_recipe.erase("equipment")
+	body_recipe.erase("version")
 	var key := JSON.stringify(body_recipe)
 	return float(key.hash() % 1000) / 1000.0 * BreathingIdle.BREATH_PERIOD
 

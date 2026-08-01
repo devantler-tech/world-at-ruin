@@ -196,6 +196,24 @@ func _process(delta: float) -> void:
 	apply_at(_skeleton, _t)
 
 
+## The absolute point on this body's idle clock. Player uses it when a creator
+## edit replaces the body, so rebuilding a mesh does not rewind a motion that
+## was already in progress.
+func current_time() -> float:
+	return _t
+
+
+## Continue a replacement body at an existing idle time and pose it before the
+## next rendered frame. Returns false when the node has no usable skeleton,
+## matching [method freeze_at]'s fail-closed contract.
+func synchronize_to(time: float) -> bool:
+	_t = time
+	if _skeleton == null:
+		return false
+	apply_at(_skeleton, _t)
+	return true
+
+
 ## Pin this body to a fixed breath phase and stop advancing it, so a captured
 ## frame is reproducible.
 ##
