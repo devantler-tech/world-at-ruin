@@ -381,8 +381,18 @@ stale cache, or engine change can strand or subvert a client:
   `signature` and verifying it with only the certified signing key. `UpdateDecision` is called last;
   every trust refusal returns an empty decision. The production root public key, signing custody,
   publisher and runtime updater integration do not exist yet, so signed delivery remains inactive.
-  The independently fresh revocation head remains #490 work and belongs between embedded-list
-  authentication and trusting that list's version as current.
+  **An embedded revocation list is only believed as current when an independently fetched head says
+  so.** Everything the manifest carries is chosen by whoever signed it, so a stolen key can embed an
+  older — but still validly root-signed — list issued before the theft, which therefore does not name
+  the stolen key. `verify_and_decide()` therefore takes a `revocation_head` obtained from the
+  publisher's own endpoint rather than from the manifest, authenticates it with the same offline root,
+  and refuses the manifest when the head is expired against `installed.observed_at`, when its
+  `head_url` is not the endpoint the embedded list names, or when the embedded `revocation.version` is
+  below the head's `version_floor`. The head is enforced before the manifest signature, so a replayed
+  list never reaches manifest authentication. A head the caller could not fetch is passed as `null`
+  and refuses the update — falling back to embedded-only trust is the attack, not a degraded mode.
+  Refusing an update never blocks launching the installed build, which does not call this boundary.
+  The head endpoint, its publication cadence and the runtime fetch remain #490 work.
   - **The persisted sequence alone is NOT enough, so contraction waits out the TTL.** A returning or
     freshly-installed client has no high-water mark, so an unexpired cached manifest at sequence `N`
     looks perfectly valid to it even after the server contracted per `N+1` — every signature and expiry

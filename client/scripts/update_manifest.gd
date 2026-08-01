@@ -33,10 +33,12 @@ class_name UpdateManifest
 ##     artifact instead of a pack: that is the same unauthorized download.)
 ##   * `signature` / `key` / `revocation` — [UpdateTrust] provides both the
 ##     ECDSA-P256 primitive and the pure root-certificate → root-signed embedded
-##     revocation → manifest → decision composition. No production root public
-##     key, signing custody, certificate/revocation publisher, independently
-##     fresh revocation head, or runtime updater caller activates it yet (ADR
-##     child 6). The published OCI artifact IS cosign-signed by digest, which is
+##     revocation → independently fetched revocation head → manifest → decision
+##     composition. No production root public key, signing custody,
+##     certificate/revocation publisher, revocation-head endpoint, or runtime
+##     updater caller activates it yet (ADR child 6). The head is a caller-supplied
+##     input here; nothing fetches one, so no update can currently be authorized.
+##     The published OCI artifact IS cosign-signed by digest, which is
 ##     a real integrity property, but it is a different one and this module does
 ##     not pretend otherwise.
 ##   * `rollback_targets` — no MOUNTABLE CONTENT PACK is retained yet. The

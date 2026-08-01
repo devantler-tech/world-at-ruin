@@ -1,7 +1,8 @@
 extends Node
-## Trust-chain test for issues #604 and #660. It exercises the real production
-## boundary from an offline root through a signing-key certificate and root-signed
-## revocation list, then through the manifest signature into [UpdateDecision].
+## Trust-chain test for issues #604, #660 and #693. It exercises the real
+## production boundary from an offline root through a signing-key certificate, a
+## root-signed revocation list and the independently fetched revocation head that
+## dates it, then through the manifest signature into [UpdateDecision].
 ##
 ## The fixed signatures were generated with OpenSSL, independently of Godot.
 ## Run: godot --headless --path client res://tests/update_trust_chain_test.tscn
@@ -28,13 +29,17 @@ func _ready() -> void:
 	_test_revoked_key_is_refused_before_manifest_authentication()
 	_test_revocation_is_required_and_root_authenticated()
 	_test_malformed_root_signed_revocation_is_refused()
+	_test_revocation_head_is_required_and_root_authenticated()
+	_test_embedded_revocation_below_the_head_floor_is_refused()
+	_test_expired_or_foreign_revocation_head_is_refused()
+	_test_head_is_enforced_before_manifest_authentication()
 	_test_wrong_root_and_self_signed_certificate_are_refused()
 	_test_tampered_certificate_is_refused()
 	_test_tampered_manifest_is_refused()
 	_test_malformed_or_unsupported_signing_inputs_fail_closed()
 	if _failed:
 		return
-	print("TEST PASS — only an unrevoked offline-root-authenticated signing key can authorize a manifest decision")
+	print("TEST PASS — only an unrevoked offline-root-authenticated signing key, presenting a revocation list a current independently fetched head vouches for, can authorize a manifest decision")
 	get_tree().quit(0)
 
 
@@ -120,6 +125,69 @@ func _test_malformed_root_signed_revocation_is_refused() -> void:
 		"a revocation list whose revoked_ids value is not an array")
 
 
+## Catches accepting embedded-only revocation. Without an independently fetched
+## head, a stolen key replays an older — but validly root-signed — list issued
+## before the theft, and every other check on this boundary still passes.
+func _test_revocation_head_is_required_and_root_authenticated() -> void:
+	_expect_refusal_stage(_verify_with_head(_manifest(), _root_public_key, null),
+		"independently fetched", "a manifest verified with no revocation head")
+
+	var unsigned := _head()
+	unsigned.erase("root_signature")
+	_expect_refusal_stage(_verify_with_head(_manifest(), _root_public_key, unsigned),
+		"independently fetched", "a revocation head carrying no offline-root signature")
+
+	var tampered := _head()
+	tampered["version_floor"] = 9
+	_expect_refusal_stage(_verify_with_head(_manifest(), _root_public_key, tampered),
+		"independently fetched", "a raised head floor under the old root signature")
+
+
+## The floor check, ablated in BOTH directions: the identical manifest is
+## accepted under a head whose floor it meets and refused under a head that has
+## moved past it. Asserting only the refusal would still pass with the comparison
+## inverted, and asserting only the acceptance would pass with it deleted.
+func _test_embedded_revocation_below_the_head_floor_is_refused() -> void:
+	var accepted := _verify_with_head(_manifest(), _root_public_key, _head())
+	if not bool(accepted.get("trusted", false)):
+		_fail("an embedded revocation list at the published head floor was refused: %s"
+			% str(accepted.get("error", "")))
+		return
+
+	_expect_refusal_stage(
+		_verify_with_head(_manifest(), _root_public_key,
+			_head_variant("revocation_head_floor_above_embedded")),
+		"independently fetched",
+		"an embedded revocation list older than the published head floor")
+
+
+## Catches a head that authenticates but is no longer evidence about this
+## endpoint: expired, or published for another channel whose floor is
+## legitimately lower.
+func _test_expired_or_foreign_revocation_head_is_refused() -> void:
+	_expect_refusal_stage(
+		_verify_with_head(_manifest(), _root_public_key,
+			_head_variant("revocation_head_expired")),
+		"independently fetched", "a revocation head that has expired")
+
+	_expect_refusal_stage(
+		_verify_with_head(_manifest(), _root_public_key,
+			_head_variant("revocation_head_other_url")),
+		"independently fetched", "a revocation head published for another endpoint")
+
+
+## Catches enforcing the floor only after the manifest verifies. A replayed list
+## must be a trust refusal, not something the manifest signature gets to answer.
+func _test_head_is_enforced_before_manifest_authentication() -> void:
+	var replayed := _manifest()
+	replayed["signature"] = "%%%"
+	_expect_refusal_stage(
+		_verify_with_head(replayed, _root_public_key,
+			_head_variant("revocation_head_floor_above_embedded")),
+		"independently fetched",
+		"a stale embedded revocation paired with a malformed manifest signature")
+
+
 ## Catches verifying a certificate with the leaf key, a global key, or merely
 ## checking that its signature is well-formed.
 func _test_wrong_root_and_self_signed_certificate_are_refused() -> void:
@@ -187,10 +255,16 @@ func _test_malformed_or_unsupported_signing_inputs_fail_closed() -> void:
 
 
 func _verify(manifest: Dictionary, root_public_key: String) -> Dictionary:
+	return _verify_with_head(manifest, root_public_key, _head())
+
+
+func _verify_with_head(manifest: Dictionary, root_public_key: String,
+		revocation_head: Variant) -> Dictionary:
 	var got: Variant = _verifier.call(CHAIN_METHOD,
 		(_vector["installed"] as Dictionary).duplicate(true),
 		manifest,
-		root_public_key)
+		root_public_key,
+		revocation_head)
 	if not (got is Dictionary):
 		_fail("UpdateTrust.%s returned a non-object result" % CHAIN_METHOD)
 		return {"trusted": false, "error": "test call failed", "decision": {}}
@@ -199,6 +273,14 @@ func _verify(manifest: Dictionary, root_public_key: String) -> Dictionary:
 
 func _manifest() -> Dictionary:
 	return (_vector["manifest"] as Dictionary).duplicate(true)
+
+
+func _head() -> Dictionary:
+	return (_vector["revocation_head"] as Dictionary).duplicate(true)
+
+
+func _head_variant(name: String) -> Dictionary:
+	return (_vector[name] as Dictionary).duplicate(true)
 
 
 func _expect_refused(got: Dictionary, case_name: String) -> void:
