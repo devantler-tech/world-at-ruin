@@ -18,8 +18,8 @@ import (
 
 const (
 	// AuditCollection stores private mutation identities, bindings, and
-	// outcomes. Audit objects are create-only and share the player record's
-	// authenticated owner.
+	// outcomes. Audit objects are create-only and have no client owner, so an
+	// authenticated player cannot pre-create evidence for a server mutation.
 	AuditCollection = "world_at_ruin_player_mutations"
 
 	auditSchema = 1
@@ -120,7 +120,6 @@ func (s *Store) Apply(ctx context.Context, mutation Mutation) (Result, error) {
 		{
 			Collection: AuditCollection,
 			Key:        normalized.auditKey,
-			UserID:     normalized.subjectID,
 		},
 	})
 	if err != nil {
@@ -155,7 +154,6 @@ func (s *Store) Apply(ctx context.Context, mutation Mutation) (Result, error) {
 		{
 			Collection:      AuditCollection,
 			Key:             normalized.auditKey,
-			UserID:          normalized.subjectID,
 			Value:           string(auditValue),
 			Version:         "*",
 			PermissionRead:  0,
@@ -181,7 +179,6 @@ func (s *Store) resolveAfterWrite(
 		{
 			Collection: AuditCollection,
 			Key:        mutation.auditKey,
-			UserID:     mutation.subjectID,
 		},
 	})
 	if readErr != nil {
@@ -284,7 +281,7 @@ func resolveExistingAudit(
 	if object == nil ||
 		object.GetCollection() != AuditCollection ||
 		object.GetKey() != mutation.auditKey ||
-		object.GetUserId() != mutation.subjectID ||
+		object.GetUserId() != "" ||
 		object.GetVersion() == "" ||
 		object.GetPermissionRead() != 0 ||
 		object.GetPermissionWrite() != 0 {

@@ -117,9 +117,10 @@ cannot distinguish a committed mutation from an attempt.
 
 `playerstate.Store` is the current commit boundary for that obligation. It submits the private
 conditional player-record write and a private create-only audit object in one Nakama
-`StorageWrite` batch, which Nakama executes as one PostgreSQL transaction. Either both objects
-commit or neither does. No player record calls this boundary yet, so it changes no live player
-state on its own.
+`StorageWrite` batch, which Nakama executes as one PostgreSQL transaction. The audit object has no
+client owner; permission bits alone do not establish server provenance for an object in a player's
+namespace. Either both objects commit or neither does. No live endpoint calls this boundary yet,
+so it changes no live player state on its own.
 
 That audit object shares PostgreSQL's failure domain. It prevents a retry or a lost response from
 applying the same logical mutation twice; it does **not** restore an acknowledged mutation after
@@ -447,7 +448,7 @@ needs to write a guard for.
 | Google credential and binding address derivations plus the storage collection stay stable permanently | `nakamaauth` HMAC derivation and binding store | `TestGoogleNakamaCredentialsAreSeparatedKeyedAndStable` reads the exact output and collection contract from `golden_google_identity_address_v1.json`; `tools/google-binding-durability-guard.sh` anchors that complete golden to the base revision |
 | A resolved Google binding still names an enabled Nakama account | `nakamaauth.NakamaGoogleBindingStore` | `TestNakamaGoogleBindingStoreChecksAuthoritativeAccountStatus`, `TestProvisionGoogleRejectsDisabledBoundAccount` |
 | Server-authoritative state is unreadable and unwritable by clients | `nakamalease.Store` | `TestCreatePersistsPrivateVersionedLeaseByHashedKey`, `TestCreateIgnoresAClientOwnedObjectAtTheDerivedKey`, `TestLoadRejectsMalformedOrPublicStoredObjects` |
-| Player mutation records and audit evidence are unreadable and unwritable by clients | `playerstate.Store` | `TestApplyCommitsPlayerRecordAndAuditInOneAtomicWrite` |
+| Player mutation records and audit evidence are unreadable and unwritable by clients; client-owned lookalike audits are ignored | `playerstate.Store` | `TestApplyCommitsPlayerRecordAndAuditInOneAtomicWrite`, `TestApplyIgnoresClientOwnedAuditAtDerivedKey` |
 | Character records are unreadable and unwritable by clients | `nakamacharacter.Store` | `TestSavePersistsPrivateVersionedCharacterForVerifiedAccount`, `TestLoadRejectsMalformedOrPublicCharacterRecords` |
 | No blind **create** — create is conditional | `nakamalease.Store` | `TestConcurrentIdenticalCreateReconcilesTheDurableWinner` |
 | No blind player-record **create** — create is conditional | `playerstate.Store` | `TestApplyCreatesAPlayerRecordConditionallyWithItsAudit` |
