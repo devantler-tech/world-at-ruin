@@ -1128,6 +1128,34 @@ func TestBeginDispatchUsesObservedVersionAndReplaysTheWinner(t *testing.T) {
 	}
 }
 
+func TestFinalizeRefusesAStagingAttemptThatWasNeverDispatched(t *testing.T) {
+	storage := newMemoryStorage()
+	store, err := NewStore(storage)
+	if err != nil {
+		t.Fatalf("NewStore returned an error: %v", err)
+	}
+	staging := validLease()
+	staging.AllocationID = ""
+	staging.Observer = 0
+	staging.SecretRef = ""
+	staging.Staging = true
+	current, err := store.Create(context.Background(), staging)
+	if err != nil {
+		t.Fatalf("Create staging lease returned an error: %v", err)
+	}
+
+	if _, err := store.Finalize(
+		context.Background(),
+		current,
+		validLease(),
+	); err == nil {
+		t.Fatal("Finalize before BeginDispatch returned nil, want refusal")
+	}
+	if len(storage.writes) != 1 {
+		t.Fatalf("pre-dispatch Finalize writes = %d, want 1", len(storage.writes))
+	}
+}
+
 func TestBeginReleaseMarksTheCurrentAttemptBeforeExternalCleanup(t *testing.T) {
 	storage := newMemoryStorage()
 	store, err := NewStore(storage)

@@ -276,6 +276,7 @@ func (s *Store) Finalize(
 		return Record{}, err
 	}
 	if !observed.Staging ||
+		!observed.Dispatched ||
 		observed.Releasing ||
 		!observed.ClaimedAt.IsZero() ||
 		normalized.Staging ||
