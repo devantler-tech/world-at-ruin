@@ -204,8 +204,13 @@ func (c *Coordinator) Allocate(
 		staging.Lease.ExpiresAt,
 	)
 	if err != nil {
+		cleanupCtx, cancel := context.WithTimeout(
+			context.WithoutCancel(ctx),
+			stagedCleanupTimeout,
+		)
+		defer cancel()
 		if winner, progressed, winnerErr := c.resolveProgressedAttempt(
-			ctx,
+			cleanupCtx,
 			request,
 		); progressed {
 			return winner, winnerErr
@@ -225,7 +230,7 @@ func (c *Coordinator) Allocate(
 			)
 			staged = &stagedLease
 		}
-		if releaseErr := c.reconcileAttempt(ctx, request, staged); releaseErr != nil {
+		if releaseErr := c.reconcileAttempt(cleanupCtx, request, staged); releaseErr != nil {
 			return handoff.Allocation{}, ErrReconciliation
 		}
 		return handoff.Allocation{}, sanitizedResourceError(
@@ -372,6 +377,13 @@ func (c *Coordinator) reconcileAttempt(
 	request handoff.AllocationRequest,
 	resource *nakamalease.Lease,
 ) error {
+	cleanupCtx, cancel := context.WithTimeout(
+		context.WithoutCancel(ctx),
+		stagedCleanupTimeout,
+	)
+	defer cancel()
+	ctx = cleanupCtx
+
 	current, err := c.leases.Load(ctx, request.UserID, request.ReservationID)
 	if errors.Is(err, nakamalease.ErrNotFound) {
 		if resource != nil {

@@ -33,6 +33,7 @@ var testNow = time.Unix(2_000_000_000, 123_456_789).UTC()
 type memoryStorage struct {
 	objects    map[string]*api.StorageObject
 	version    int
+	checkCtx   bool
 	readErr    error
 	writeErr   error
 	writeErrAt int
@@ -74,9 +75,12 @@ func (s *memoryStorage) StorageList(
 }
 
 func (s *memoryStorage) StorageRead(
-	_ context.Context,
+	ctx context.Context,
 	reads []*runtime.StorageRead,
 ) ([]*api.StorageObject, error) {
+	if s.checkCtx && ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 	if s.readErr != nil {
 		return nil, s.readErr
 	}
@@ -97,9 +101,12 @@ func (s *memoryStorage) StorageRead(
 }
 
 func (s *memoryStorage) StorageWrite(
-	_ context.Context,
+	ctx context.Context,
 	writes []*runtime.StorageWrite,
 ) ([]*api.StorageObjectAck, error) {
+	if s.checkCtx && ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 	if s.writeErr != nil {
 		return nil, s.writeErr
 	}
@@ -145,9 +152,12 @@ func (s *memoryStorage) StorageWrite(
 }
 
 func (s *memoryStorage) StorageDelete(
-	_ context.Context,
+	ctx context.Context,
 	deletes []*runtime.StorageDelete,
 ) error {
+	if s.checkCtx && ctx.Err() != nil {
+		return ctx.Err()
+	}
 	if s.deleteErr != nil {
 		return s.deleteErr
 	}
@@ -1117,6 +1127,78 @@ func TestAllocateProvisionFailureReclaimsTheReportedStagedResource(t *testing.T)
 			"staged provision failure released %+v, want exact staged resource",
 			resources.releases,
 		)
+	}
+}
+
+func TestAllocateProvisionFailureReconcilesAfterCallerCancellation(t *testing.T) {
+	storage := newMemoryStorage()
+	storage.checkCtx = true
+	store := newLeaseStore(t, storage)
+	ctx, cancel := context.WithCancel(context.Background())
+	resources := &recordingResources{
+		provisioned: Provisioned{
+			Allocation: validAllocation(),
+			SecretRef:  "zone-admission-gameserver-17",
+		},
+		provisionErr:           status.Error(codes.Unavailable, "backend detail"),
+		stagedOnProvisionError: true,
+		provisionCheck: func(handoff.AllocationRequest, time.Time) error {
+			cancel()
+			return nil
+		},
+	}
+	coordinator, err := NewCoordinator(
+		resources,
+		store,
+		Config{LeaseTTL: time.Minute, Now: func() time.Time { return testNow }},
+	)
+	if err != nil {
+		t.Fatalf("NewCoordinator returned an error: %v", err)
+	}
+
+	if _, err := coordinator.Allocate(ctx, validRequest()); status.Code(err) != codes.Unavailable {
+		t.Fatalf("canceled provision failure = %v, want Unavailable", err)
+	}
+	if len(resources.releases) != 1 || resources.releases[0].AllocationID != "gameserver-17" {
+		t.Fatalf("canceled provision cleanup releases = %+v, want staged resource", resources.releases)
+	}
+	if _, err := store.Load(context.Background(), testUserID, testReservationID); !errors.Is(err, nakamalease.ErrNotFound) {
+		t.Fatalf("load reconciled provision attempt = %v, want ErrNotFound", err)
+	}
+}
+
+func TestAllocateFinalizeFailureReconcilesAfterCallerCancellation(t *testing.T) {
+	storage := newMemoryStorage()
+	storage.checkCtx = true
+	store := newLeaseStore(t, storage)
+	ctx, cancel := context.WithCancel(context.Background())
+	resources := &recordingResources{
+		provisioned: Provisioned{
+			Allocation: validAllocation(),
+			SecretRef:  "zone-admission-gameserver-17",
+		},
+		provisionCheck: func(handoff.AllocationRequest, time.Time) error {
+			cancel()
+			return nil
+		},
+	}
+	coordinator, err := NewCoordinator(
+		resources,
+		store,
+		Config{LeaseTTL: time.Minute, Now: func() time.Time { return testNow }},
+	)
+	if err != nil {
+		t.Fatalf("NewCoordinator returned an error: %v", err)
+	}
+
+	if _, err := coordinator.Allocate(ctx, validRequest()); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled finalize failure = %v, want context.Canceled", err)
+	}
+	if len(resources.releases) != 1 || resources.releases[0].AllocationID != "gameserver-17" {
+		t.Fatalf("canceled finalize cleanup releases = %+v, want provisioned resource", resources.releases)
+	}
+	if _, err := store.Load(context.Background(), testUserID, testReservationID); !errors.Is(err, nakamalease.ErrNotFound) {
+		t.Fatalf("load reconciled finalize attempt = %v, want ErrNotFound", err)
 	}
 }
 
