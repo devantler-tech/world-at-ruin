@@ -1341,6 +1341,31 @@ func _under_rock(cam: Camera3D) -> bool:
 	return not space.intersect_ray(query).is_empty()
 
 
+## One real creator-authored state for every production-activated wardrobe
+## region/layer. Registry slot order and kit layer order are the stable visual
+## evidence order; pieces within one pair use the creator's sorted writer list.
+## The first piece keeps the established region/layer frame name, while later
+## pieces add their own name so activating a second option cannot overwrite the
+## first one's evidence.
+func outfit_capture_states(registry: Dictionary) -> Array[Dictionary]:
+	var states: Array[Dictionary] = []
+	for slot: String in CharacterCreator.pickable_regions(registry):
+		for layer: String in CharacterCreator.pickable_layers(registry, slot):
+			var pieces := CharacterCreator._pieces_in_slot(registry, slot, layer)
+			for index in pieces.size():
+				var piece_name := pieces[index]
+				var shot_name := "first_run_%s_%s" % [slot, layer]
+				if index > 0:
+					shot_name += "_%s" % piece_name
+				states.append({
+					"slot": slot,
+					"layer": layer,
+					"piece": piece_name,
+					"shot": shot_name,
+				})
+	return states
+
+
 ## The character creator as a new player meets it — the surface a first-run UI
 ## change actually alters, and the one the world scenario deliberately seeds away.
 func _capture_first_run(dir: String, main: Node) -> void:
@@ -1410,31 +1435,31 @@ func _capture_first_run(dir: String, main: Node) -> void:
 	shots += 1
 
 	# A row of names is not frame evidence for the wearable meshes behind those
-	# names. Drive the opted-in creator through the first head pair one layer at
-	# a time while the controls are visible: the clothing frame shows eyewear,
-	# then the armour frame shows the helm suppressing it. These are real player
-	# authoring calls, not meshes instanced around the creator (#329).
+	# names. Drive the opted-in creator through every production-active
+	# region/layer while its real control is visible. This includes the head pair
+	# in layer order (eyewear, then the helm suppressing it) and the activated
+	# hand armour; these are real player authoring calls, not meshes instanced
+	# around the creator (#329, #653).
 	if CharacterCreator.layered_outfit_pickers_enabled():
 		var capture_player := creator.get("_player") as Player
 		if capture_player == null:
-			_fail("the first-run creator lost its player — cannot render the head-layer evidence")
+			_fail("the first-run creator lost its player — cannot render the wardrobe evidence")
 			return
-		var head_states := [
-			["clothing", "relic_goggles", "first_run_head_clothing"],
-			["armor", "ruin_drake_helm", "first_run_head_armor"],
-		]
-		for state: Array in head_states:
-			var head_pickers: Variant = (creator.get("_outfit_pickers") as Dictionary).get("head")
-			if not (head_pickers is Dictionary) or not (head_pickers as Dictionary).has(state[0]):
-				_fail("the opted-in creator has no head %s control — cannot render its evidence" % state[0])
+		for state: Dictionary in outfit_capture_states(CharacterFactory.equipment_registry()):
+			var slot := String(state["slot"])
+			var layer := String(state["layer"])
+			var slot_pickers: Variant = (creator.get("_outfit_pickers") as Dictionary).get(slot)
+			if not (slot_pickers is Dictionary) or not (slot_pickers as Dictionary).has(layer):
+				_fail("the opted-in creator has no %s %s control — cannot render its evidence"
+					% [slot, layer])
 				return
-			creator.call("_set_recipe_equipment", "head", state[0], state[1])
+			creator.call("_set_recipe_equipment", slot, layer, state["piece"])
 			capture_player.set_character(creator.get("_recipe"))
 			creator.call("_sync_sliders_from_recipe")
-			scroll.ensure_control_visible((head_pickers as Dictionary)[state[0]] as Control)
+			scroll.ensure_control_visible((slot_pickers as Dictionary)[layer] as Control)
 			for i in UI_SETTLE_FRAMES:
 				await get_tree().process_frame
-			if not await _shoot(dir, state[2], creator):
+			if not await _shoot(dir, state["shot"], creator):
 				return
 			shots += 1
 	scroll.scroll_vertical = 0
