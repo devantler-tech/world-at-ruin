@@ -1,0 +1,10 @@
+{
+	"date": "2026-08-01",
+	"notes": [
+		"Equipping the ashen bindings now keeps the wanderer at the same point in the breathing idle, so the hands and arms no longer jump behind the torso when the garment appears.",
+		"Wardrobe rebuilds now derive their deterministic idle phase from the body alone: the bindings remain visible and skinned while only their intended garment and body-coverage changes are applied.",
+		"Still short of the mark: the bindings and first-run wardrobe remain early-production surfaces without a fully authored equip transition, high-fidelity cloth deformation, or final character-creator presentation."
+	],
+	"title": "Changing gloves no longer changes the pose",
+	"version": "0.88.1"
+}
