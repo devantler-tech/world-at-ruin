@@ -111,10 +111,10 @@ const SAVE_CAPABILITY_WRITES := 6
 ## needlessly routed away from a pack update despite a valid fallback existing.
 ##
 ## Must always be >= the write capability (a build must read what it writes).
-## Capability 6 is vault-v4 forward-only quest-objective progress. Its retained
-## reader now has a production writer; this ceiling remains separate so the next
-## capability can repeat expand-before-write.
-const SAVE_CAPABILITY_READS := 6
+## Capability 7 is the reader-only vault-v5 mastery snapshot. Production still
+## writes capability 6 until this whole-app reader is retained as the rollback
+## target for the later mastery writer.
+const SAVE_CAPABILITY_READS := 7
 
 ## The oldest shell this manifest still supports updating FROM.
 ##

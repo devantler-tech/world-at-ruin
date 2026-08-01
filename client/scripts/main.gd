@@ -110,6 +110,10 @@ var _exploration_rewards := ExplorationRewards.new()
 ## Boot-owned quest progress. The retained v4 reader restores this state and
 ## every later monotonic advance queues the complete forward-only snapshot.
 var _quest_log := QuestLog.new()
+## Boot-owned weapon mastery. The retained v5 reader applies the complete
+## ledger, including unknown future weapon ids and its standing bloodstain.
+## This release remains reader-only: no production path originates a snapshot.
+var _mastery := Mastery.new()
 ## A discovery enters the live tracker before persistence is attempted. Keep
 ## the locally observed IDs themselves so a transient filesystem failure can
 ## retry them without also re-originating rollback-only names restored into the
@@ -303,6 +307,10 @@ func _ready() -> void:
 	# (a newer client's) resolves to null and is skipped — never a crash.
 	var vault = SaveVault.load_saved()
 	if vault is Dictionary:
+		# The v5 reader accepts and applies complete mastery before any weapon
+		# content exists. Stable unknown ids remain live through a rollback build.
+		if vault.has("mastery") and not _mastery.restore(vault["mastery"]):
+			push_error("Main: SaveVault accepted mastery that Mastery refused")
 		# The v4 reader accepts forward-only quest progress before any quest
 		# definitions exist. QuestLog applies it when content registers later.
 		_quest_log.restore(vault.get("quests", {}))
