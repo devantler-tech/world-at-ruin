@@ -2658,6 +2658,89 @@ func TestReconcileExpiredReclaimsTheExactNoShowAllocation(t *testing.T) {
 	}
 }
 
+func TestRunExpiryReconcilerRetriesTransientCleanupFailure(t *testing.T) {
+	storage := newMemoryStorage()
+	store := newLeaseStore(t, storage)
+	now := testNow
+	releaseCalls := make(chan int, 2)
+	releaseAttempt := 0
+	resources := &recordingResources{
+		provisioned: Provisioned{
+			Allocation: validAllocation(),
+			SecretRef:  "zone-admission-gameserver-17",
+		},
+		releaseCheck: func(nakamalease.Lease) error {
+			releaseAttempt++
+			releaseCalls <- releaseAttempt
+			if releaseAttempt == 1 {
+				return errors.New("transient resource cleanup failure")
+			}
+			return nil
+		},
+	}
+	coordinator, err := NewCoordinator(
+		resources,
+		store,
+		Config{LeaseTTL: time.Minute, Now: func() time.Time { return now }},
+	)
+	if err != nil {
+		t.Fatalf("NewCoordinator returned an error: %v", err)
+	}
+	if _, err := coordinator.Allocate(context.Background(), validRequest()); err != nil {
+		t.Fatalf("Allocate returned an error: %v", err)
+	}
+	now = testNow.Add(time.Minute)
+	coordinator.sweepInterval = time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	result := make(chan error, 1)
+	go func() {
+		result <- coordinator.RunExpiryReconciler(ctx)
+	}()
+	select {
+	case attempt := <-releaseCalls:
+		if attempt != 1 {
+			t.Fatalf("first cleanup attempt = %d, want 1", attempt)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("reconciler did not start no-show cleanup")
+	}
+	select {
+	case err := <-result:
+		t.Fatalf("reconciler stopped after a transient cleanup failure: %v", err)
+	case attempt := <-releaseCalls:
+		if attempt != 2 {
+			t.Fatalf("retried cleanup attempt = %d, want 2", attempt)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("reconciler did not retry transient cleanup failure")
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		_, loadErr := store.Load(
+			context.Background(),
+			testUserID,
+			testReservationID,
+		)
+		if errors.Is(loadErr, nakamalease.ErrNotFound) {
+			break
+		}
+		if loadErr != nil {
+			t.Fatalf("load lease after cleanup retry: %v", loadErr)
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("successful cleanup retry did not remove the durable lease")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	if err := <-result; !errors.Is(err, context.Canceled) {
+		t.Fatalf("reconciler stop error = %v, want context.Canceled", err)
+	}
+}
+
 func TestReconcileExpiredRecoversACrashedPreProvisionAttempt(t *testing.T) {
 	storage := newMemoryStorage()
 	store := newLeaseStore(t, storage)

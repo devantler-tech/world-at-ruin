@@ -93,6 +93,10 @@ func (e retainedAllocationOutcomeError) Unwrap() error {
 }
 
 func (e retainedAllocationOutcomeError) GRPCStatus() *status.Status {
+	if errors.Is(e.cause, context.Canceled) ||
+		errors.Is(e.cause, context.DeadlineExceeded) {
+		return status.FromContextError(e.cause)
+	}
 	if grpcStatus, ok := status.FromError(e.cause); ok {
 		return grpcStatus
 	}

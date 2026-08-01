@@ -633,10 +633,10 @@ everything shipped afterwards is held to.
   attempt, lets transport retries observe ambiguous dispatches or reuse finalized unclaimed
   allocations without redispatch, retains every published resource and ambiguous post-dispatch
   outcome against overlapping response-failure cleanup, quarantines unresolved dispatches against
-  expiry and unverified outer cleanup, detaches
-  known-resource fence-and-cleanup from caller cancellation, finalizes the allocation before
-  returning connection material, protects claimed/stale ownership and supervises exact no-show
-  cleanup; it remains inert until the concrete adapter is composed), and
+  expiry and unverified outer cleanup, detaches known-resource fence-and-cleanup from caller
+  cancellation, finalizes the allocation before returning connection material, protects
+  claimed/stale ownership and supervises exact no-show cleanup without stopping after transient
+  sweep failures; it remains inert until the concrete adapter is composed), and
   the **combat first slice** (`server/sim/combat.go` — the telegraph cast
   lifecycle: painted at cast start, resolved once after a tick-counted cast time against
   positions at resolution, health/damage application, and one mob AI that deterministically

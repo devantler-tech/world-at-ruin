@@ -364,19 +364,18 @@ func (c *Coordinator) ReconcileExpired(ctx context.Context) error {
 // RunExpiryReconciler supervises no-show cleanup until the host context ends.
 // A concrete Nakama composition must run this loop for the Allocator contract.
 func (c *Coordinator) RunExpiryReconciler(ctx context.Context) error {
-	if err := c.ReconcileExpired(ctx); err != nil {
-		return err
-	}
 	ticker := time.NewTicker(c.sweepInterval)
 	defer ticker.Stop()
 	for {
+		if err := c.ReconcileExpired(ctx); err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
+		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			if err := c.ReconcileExpired(ctx); err != nil {
-				return err
-			}
 		}
 	}
 }

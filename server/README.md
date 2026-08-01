@@ -292,7 +292,7 @@ zone/dungeon server:
   the dispatched attempt in quarantine. A transport retry with the same
   reservation adopts that durable attempt for observation-only reconciliation;
   a retry after finalization resolves the same unclaimed allocation. Reused
-  every published allocation is retained on downstream response failure so
+  and newly published allocations are retained on downstream response failure so
   overlapping callers cannot tear down a GameServer another caller received;
   its no-show lease is the sole bounded cleanup owner. Ambiguous post-dispatch
   errors carry the same non-destructive marker through the outer handoff service.
@@ -305,12 +305,13 @@ zone/dungeon server:
   Replacement and release retry from that barrier; once a concrete resource is
   observed, the complete fence-and-cleanup transaction uses a bounded context
   that survives caller cancellation. Its supervised expiry reconciler
-  lists the private lease collection and automatically reclaims no-shows,
-  including a crash that left only an attempt ID. Claimed and stale attempts
-  remain untouched, external errors are sanitized, and raw admission-secret
-  bytes never enter the lease. The coordinator is inert until a concrete
-  `GameServerResources` adapter provisions Agones GameServers, composes the
-  `admissionref` boundary, and resolves their zone-generated envelopes
+  lists the private lease collection, automatically reclaims no-shows, and
+  retries transient storage or resource cleanup failures without stopping the
+  supervisor. This includes a crash that left only an attempt ID. Claimed and
+  stale attempts remain untouched, external errors are sanitized, and raw
+  admission-secret bytes never enter the lease. The coordinator is inert until
+  a concrete `GameServerResources` adapter provisions Agones GameServers,
+  composes the `admissionref` boundary, and resolves their zone-generated envelopes
   according to [ADR
   0002](../docs/adr/0002-seal-zone-admission-secrets-before-readiness.md), its
   expiry loop will be supervised, and a Nakama RPC will register the resulting
