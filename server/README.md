@@ -237,15 +237,20 @@ zone/dungeon server:
   a lease; objects are also server-only
   (`PermissionRead: 0`, `PermissionWrite: 0`), use a strict versioned JSON
   schema, omit the raw user/reservation identifiers and admission-secret bytes,
-  and expose only sanitized errors. The reader accepts schema one while every
-  write emits schema two, whose durable `releasing` barrier atomically decides
-  whether zone admission or external cleanup owns an attempt. A paginated
-  private-collection sweep exact-version fences expired staging and allocated
-  attempts before idempotent external cleanup, and deletes only the fenced
-  version. Nakama's unique-create marker and exact storage versions make
-  create, staging finalization, replacement, claim and release safe under
-  retries and overlapping attempts; a stale attempt cannot overwrite, claim or
-  delete the current owner. Hermetic
+  and expose only sanitized errors. The reader permanently accepts every
+  ledgered schema-one through schema-three lifecycle shape, with base-anchored
+  ledgers and complete goldens preventing a shipped shape from being rewritten
+  or removed. Schema-three writes add a durable `dispatched` point of no return
+  and unique dispatch-call identity, while the existing durable `releasing`
+  barrier atomically decides whether zone admission or external cleanup owns
+  an attempt. A paginated private-collection sweep exact-version
+  fences expired staging and allocated attempts before idempotent external
+  cleanup, deletes only the fenced version, and preserves a dispatched staging
+  attempt for exact reconciliation instead of guessing that an expired RPC did
+  not commit. Nakama's unique-create marker and exact storage versions make
+  create, dispatch, staging finalization, replacement, claim and release safe
+  under retries and overlapping attempts; a stale attempt cannot overwrite,
+  claim or delete the current owner. Hermetic
   race-enabled tests exercise Nakama's real runtime storage request, object and
   acknowledgement shapes.
 - **`handoff/`** — the transport-neutral **player handoff core**: it consumes
@@ -276,20 +281,37 @@ zone/dungeon server:
   owns the Agones and Kubernetes calls.
 - **`handoffalloc/`** — the durable **handoff allocation coordinator**: it
   implements `handoff.Allocator` over the real `nakamalease` store and an
-  injected GameServer-resource boundary. It persists a staging intent before
-  provisioning, idempotently recovers that attempt after a process crash, and
-  returns connection material only after the exact allocation and secret
-  reference replace the intent durably. Same-attempt retries do not allocate
-  twice, and an old attempt is atomically marked `releasing` before external
-  cleanup so a concurrent zone claim cannot win after reclamation begins.
-  Replacement and release retry from that barrier; cleanup uses a bounded
-  context that survives caller cancellation. Its supervised expiry reconciler
-  lists the private lease collection and automatically reclaims no-shows,
-  including a crash that left only an attempt ID. Claimed and stale attempts
-  remain untouched, external errors are sanitized, and raw admission-secret
-  bytes never enter the lease. The coordinator is inert until a concrete
-  `GameServerResources` adapter provisions Agones GameServers, composes the
-  `admissionref` boundary, and resolves their zone-generated envelopes
+  injected GameServer-resource boundary. It persists a staging intent and an
+  exact-version `dispatched` barrier with a unique call identity before the one
+  permitted external allocation call. A lost or malformed barrier
+  acknowledgement is re-read so only the caller whose identity committed may
+  dispatch; then connection material returns only after the exact allocation
+  and secret reference replace the intent durably. A replay, restart or
+  concurrent loser reconciles only that attempt and never issues a second
+  allocation call. Timeout, cancellation and other ambiguous outcomes retain
+  the dispatched attempt in quarantine. A transport retry with the same
+  reservation adopts that durable attempt for observation-only reconciliation;
+  a retry after finalization resolves the same unclaimed allocation. Reused
+  and newly published allocations are retained on downstream response failure so
+  overlapping callers cannot tear down a GameServer another caller received;
+  its no-show lease is the sole bounded cleanup owner. Ambiguous post-dispatch
+  errors carry the same non-destructive marker through the outer handoff service.
+  This remains safe in either finalization order: an adopter or the original
+  dispatcher may publish first, and neither response receives cleanup authority.
+  Expiry cleanup cannot pass an unresolved quarantine without the later
+  allocator-generation fence, and unverified outer cleanup cannot erase it. An
+  expired attempt is atomically marked `releasing` before external cleanup so a
+  concurrent zone claim cannot win after reclamation begins.
+  Replacement and release retry from that barrier; once a concrete resource is
+  observed, the complete fence-and-cleanup transaction uses a bounded context
+  that survives caller cancellation. Its supervised expiry reconciler
+  lists the private lease collection, automatically reclaims no-shows, and
+  retries transient storage or resource cleanup failures without stopping the
+  supervisor. This includes a crash that left only an attempt ID. Claimed and
+  stale attempts remain untouched, external errors are sanitized, and raw
+  admission-secret bytes never enter the lease. The coordinator is inert until
+  a concrete `GameServerResources` adapter provisions Agones GameServers,
+  composes the `admissionref` boundary, and resolves their zone-generated envelopes
   according to [ADR
   0002](../docs/adr/0002-seal-zone-admission-secrets-before-readiness.md), its
   expiry loop will be supervised, and a Nakama RPC will register the resulting
