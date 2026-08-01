@@ -1859,18 +1859,21 @@ func TestEveryShippedLeaseSchemaShapeStaysReadable(t *testing.T) {
 		}
 		goldenBytes, err := os.ReadFile(filepath.Join(
 			"testdata",
-			fmt.Sprintf("golden_lease_v%d.jsonl", version),
+			fmt.Sprintf("golden_lease_v%d.json", version),
 		))
 		if err != nil {
 			t.Fatalf("read lease schema %d goldens: %v", version, err)
 		}
-		goldens := strings.Split(strings.TrimSpace(string(goldenBytes)), "\n")
-		if len(goldens) == 0 || goldens[0] == "" {
+		var goldens []json.RawMessage
+		if err := json.Unmarshal(goldenBytes, &goldens); err != nil {
+			t.Fatalf("decode lease schema %d golden set: %v", version, err)
+		}
+		if len(goldens) == 0 {
 			t.Fatalf("lease schema %d has no golden shapes", version)
 		}
 		for shapeIndex, golden := range goldens {
 			var stored document
-			if err := json.Unmarshal([]byte(golden), &stored); err != nil {
+			if err := json.Unmarshal(golden, &stored); err != nil {
 				t.Fatalf(
 					"decode lease schema %d shape %d: %v",
 					version,
@@ -1886,7 +1889,11 @@ func TestEveryShippedLeaseSchemaShapeStaysReadable(t *testing.T) {
 					stored.Schema,
 				)
 			}
-			if _, err := leaseFrom(golden, testUserID, testReservationID); err != nil {
+			if _, err := leaseFrom(
+				string(golden),
+				testUserID,
+				testReservationID,
+			); err != nil {
 				t.Fatalf(
 					"read lease schema %d shape %d: %v",
 					version,

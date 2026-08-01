@@ -1,5 +1,0 @@
-{"schema":2,"attempt_id":"attempt-7","allocation_id":"","observer":0,"secret_ref":"","expires_at_nanos":2000000000123456789,"claimed_at_nanos":null,"staging":true}
-{"schema":2,"attempt_id":"attempt-7","allocation_id":"gameserver-17","observer":42,"secret_ref":"zone-admission-gameserver-17","expires_at_nanos":2000000000123456789,"claimed_at_nanos":null}
-{"schema":2,"attempt_id":"attempt-7","allocation_id":"gameserver-17","observer":42,"secret_ref":"zone-admission-gameserver-17","expires_at_nanos":2000000000123456789,"claimed_at_nanos":1999999999123456789}
-{"schema":2,"attempt_id":"attempt-7","allocation_id":"gameserver-17","observer":42,"secret_ref":"zone-admission-gameserver-17","expires_at_nanos":2000000000123456789,"claimed_at_nanos":null,"releasing":true}
-{"schema":2,"attempt_id":"attempt-7","allocation_id":"","observer":0,"secret_ref":"","expires_at_nanos":2000000000123456789,"claimed_at_nanos":null,"staging":true,"releasing":true}
