@@ -170,6 +170,13 @@ func _build_body() -> void:
 ## away the moment a real character exists). Collision stays the capsule —
 ## physics never depends on the body's shape (product law: capsules only).
 func set_character(recipe: Dictionary) -> void:
+	var previous_idle_time := 0.0
+	var has_previous_idle_time := false
+	if _character_body != null:
+		var previous_idle := _character_body.get_node_or_null("BreathingIdle") as BreathingIdle
+		if previous_idle != null:
+			previous_idle_time = previous_idle.current_time()
+			has_previous_idle_time = true
 	var body := CharacterFactory.build(recipe)
 	if body == null:
 		return
@@ -188,6 +195,10 @@ func set_character(recipe: Dictionary) -> void:
 	body.rotation.y = PI  # The kit body faces +Z; the visual's forward is -Z.
 	_visual.add_child(body)
 	_character_body = body
+	if has_previous_idle_time:
+		var replacement_idle := body.get_node_or_null("BreathingIdle") as BreathingIdle
+		if replacement_idle == null or not replacement_idle.synchronize_to(previous_idle_time):
+			push_error("Player: replacement body could not preserve its live idle clock")
 	if _walk_locomotion == null:
 		_walk_locomotion = WalkLocomotion.new()
 		_walk_locomotion.name = "WalkLocomotion"
