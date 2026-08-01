@@ -1,0 +1,9 @@
+{
+	"date": "2026-08-01",
+	"notes": [
+		"Opt-in ground plates now hold their pale-stone, basalt, ferric, and rock contacts steady as the camera moves through the middle distance instead of flashing between cells.",
+		"The wider temporal reconstruction keeps seams and plate-to-ash contrast readable; the treatment remains behind WAR_GROUND_PLATES while the wider terrain direction is still being proven."
+	],
+	"title": "Ground plates hold their shape while walking",
+	"version": "0.88.2"
+}
