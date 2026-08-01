@@ -41,17 +41,10 @@ if your Homebrew is set to require trusting third-party taps — running it eith
 It's scoped to this one cask on purpose: trusting the whole tap would also cover everything else
 it ships, now and in future.)
 
-**Or download the app yourself:** take `WorldAtRuin-<version>-macOS-universal.zip` from the
-[latest release](https://github.com/devantler-tech/world-at-ruin/releases/latest), unzip it, and
-move `World at Ruin.app` into `/Applications`. The build is ad-hoc signed rather than notarized,
-so macOS quarantines the download and refuses to open it — clear that flag once and it starts
-normally:
-
-```sh
-xattr -dr com.apple.quarantine "/Applications/World at Ruin.app"
-```
-
-The Homebrew cask runs exactly that for you, which is why it needs no extra step.
+Manual GitHub Release downloads are not currently supported. The build is ad-hoc signed rather
+than notarized, so macOS will quarantine it; do not bypass Gatekeeper by clearing that quarantine.
+Use the Homebrew cask above, which verifies the release checksum before installation, or run the
+game from source below.
 
 **Or run it from source** — requires [Godot 4.7+](https://godotengine.org)
 (macOS: `brew install --cask godot`):
