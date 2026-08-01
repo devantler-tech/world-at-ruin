@@ -21,11 +21,8 @@ on:
   issue_comment:
     types: [created]
 
-# One run per PR at a time; never cancel a sign run mid-ledger-write.
-concurrency:
-  group: cla-${{ github.event.pull_request.number || github.event.issue.number }}
-  cancel-in-progress: false
-  queue: max # pending runs wait FIFO; the default replaces them
+# Concurrency belongs to the filtered jobs below. Keeping it out of workflow scope prevents an
+# ordinary PR comment from replacing a pending signature before the cla-sign filter can skip it.
 
 permissions: {}
 
@@ -38,6 +35,9 @@ jobs:
   cla-check:
     name: CLA gate
     if: github.event_name == 'pull_request'
+    concurrency:
+      group: cla-check-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     permissions:
       contents: read # read the signature ledger from the cla-signatures branch
@@ -86,8 +86,13 @@ jobs:
     name: Record CLA signature
     if: >-
       github.event_name == 'issue_comment' && github.event.issue.pull_request &&
-      (github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA' ||
+      ((github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA' &&
+        github.event.comment.user.id == github.event.issue.user.id) ||
        github.event.comment.body == 'recheck')
+    concurrency:
+      # Signature writes and read-only rechecks cannot replace each other's pending event.
+      group: cla-sign-${{ github.event.issue.number }}-${{ github.event.comment.body == 'recheck' }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     permissions:
       contents: write # append the signature to the ledger on the cla-signatures branch
@@ -105,7 +110,6 @@ jobs:
           set -euo pipefail
           pr=$(gh api "repos/$REPO/pulls/$PR_NUMBER")
           author=$(printf '%s' "$pr" | jq -r '.user.login')
-          head_sha=$(printf '%s' "$pr" | jq -r '.head.sha')
           if [ "$COMMENT_BODY" != "recheck" ]; then
             if [ "$COMMENTER" != "$author" ]; then
               echo "::notice::only the pull request author's signature is recorded" \
@@ -151,9 +155,29 @@ jobs:
               echo "recorded $COMMENTER in $LEDGER_PATH on $LEDGER_BRANCH"
             fi
           fi
-          run_id=$(gh api "repos/$REPO/actions/runs?event=pull_request&head_sha=$head_sha" \
-            --jq '[.workflow_runs[] | select(.name == "CLA")] | first | .id // empty')
-          if [ -n "$run_id" ]; then
+          # A pull_request check may have raced the ledger write. Refresh after that write path so
+          # the signer reruns the newest head; any still-later check starts against the new ledger.
+          head_sha=$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq .head.sha)
+          run_id=""
+          run_status=""
+          for attempt in {1..30}; do
+            run_id=$(gh api "repos/$REPO/actions/runs?event=pull_request&head_sha=$head_sha" \
+              --jq '[.workflow_runs[] | select(.name == "CLA")] | first | .id // empty')
+            if [ -n "$run_id" ]; then
+              run_status=$(gh api "repos/$REPO/actions/runs/$run_id" --jq .status)
+              if [ "$run_status" = "completed" ]; then
+                break
+              fi
+            fi
+            echo "waiting for CLA gate on $head_sha to become rerunnable ($attempt/30)"
+            sleep 2
+          done
+          if [ -z "$run_id" ] || [ "$run_status" != "completed" ]; then
+            echo "::error::CLA gate for current head $head_sha did not become rerunnable"
+            exit 1
+          fi
+          run_conclusion=$(gh api "repos/$REPO/actions/runs/$run_id" --jq .conclusion)
+          if [ "$run_conclusion" != "success" ]; then
             gh run rerun "$run_id" --repo "$REPO" --failed \
-              || gh run rerun "$run_id" --repo "$REPO" || true
+              || gh run rerun "$run_id" --repo "$REPO"
           fi

@@ -1,7 +1,7 @@
 extends Node
-## Trust-chain test for issue #604. It exercises the real production boundary
-## from an offline root through a signing-key certificate and manifest signature
-## into [UpdateDecision].
+## Trust-chain test for issues #604 and #660. It exercises the real production
+## boundary from an offline root through a signing-key certificate and root-signed
+## revocation list, then through the manifest signature into [UpdateDecision].
 ##
 ## The fixed signatures were generated with OpenSSL, independently of Godot.
 ## Run: godot --headless --path client res://tests/update_trust_chain_test.tscn
@@ -25,13 +25,16 @@ func _ready() -> void:
 		_fail("UpdateTrust.%s is missing — certificate epochs can reach UpdateDecision without offline-root authentication" % CHAIN_METHOD)
 		return
 	_test_valid_chain_reaches_update_decision()
+	_test_revoked_key_is_refused_before_manifest_authentication()
+	_test_revocation_is_required_and_root_authenticated()
+	_test_malformed_root_signed_revocation_is_refused()
 	_test_wrong_root_and_self_signed_certificate_are_refused()
 	_test_tampered_certificate_is_refused()
 	_test_tampered_manifest_is_refused()
 	_test_malformed_or_unsupported_signing_inputs_fail_closed()
 	if _failed:
 		return
-	print("TEST PASS — only an offline-root-authenticated signing key can authorize a manifest decision")
+	print("TEST PASS — only an unrevoked offline-root-authenticated signing key can authorize a manifest decision")
 	get_tree().quit(0)
 
 
@@ -64,6 +67,57 @@ func _test_valid_chain_reaches_update_decision() -> void:
 	var decision: Variant = got.get("decision")
 	if not (decision is Dictionary) or decision.get("action") != UpdateDecision.UP_TO_DATE:
 		_fail("the authenticated chain did not reach the existing decision core: %s" % str(decision))
+
+
+## Catches omitting revocation, checking it after manifest authentication, or
+## treating a valid leaf signature as authority after the root revoked that leaf.
+func _test_revoked_key_is_refused_before_manifest_authentication() -> void:
+	var revoked := (_vector["revoked_manifest"] as Dictionary).duplicate(true)
+	_expect_revoked(_verify(revoked, _root_public_key),
+		"a valid manifest signed by a root-revoked key")
+
+	# The revoked-key classification must win before the manifest signature is
+	# parsed. Otherwise a compromised key still reaches its own authentication
+	# boundary before the root's control signal is consumed.
+	revoked["signature"] = "%%%"
+	_expect_revoked(_verify(revoked, _root_public_key),
+		"a revoked key paired with a malformed manifest signature")
+
+
+## Catches accepting certificate-backed manifests that omit the list, trusting
+## an unsigned list, or failing to bind the root signature to its exact JCS bytes.
+func _test_revocation_is_required_and_root_authenticated() -> void:
+	var absent := _manifest()
+	absent.erase("revocation")
+	_expect_refusal_stage(_verify(absent, _root_public_key), "revocation",
+		"a manifest carrying no revocation list")
+
+	var unsigned := _manifest()
+	unsigned["revocation"].erase("root_signature")
+	_expect_refusal_stage(_verify(unsigned, _root_public_key), "revocation",
+		"a revocation list carrying no offline-root signature")
+
+	var tampered := _manifest()
+	tampered["revocation"]["version"] = 5
+	_expect_refusal_stage(_verify(tampered, _root_public_key), "revocation",
+		"a changed revocation version under the old root signature")
+
+
+## Catches accepting an ambiguous set representation that could let publisher
+## and client disagree about whether a key id is present.
+func _test_malformed_root_signed_revocation_is_refused() -> void:
+	var duplicate := _manifest()
+	var key_id := str(duplicate["key"]["id"])
+	duplicate["revocation"]["revoked_ids"] = [key_id, key_id]
+	duplicate["revocation"]["root_signature"] = \
+		str(_vector["duplicate_revocation_root_signature"])
+	_expect_refusal_stage(_verify(duplicate, _root_public_key), "duplicate",
+		"a root-signed revocation list carrying the same key id twice")
+
+	var malformed := _manifest()
+	malformed["revocation"]["revoked_ids"] = "signing-key-2030-01"
+	_expect_refusal_stage(_verify(malformed, _root_public_key), "revocation",
+		"a revocation list whose revoked_ids value is not an array")
 
 
 ## Catches verifying a certificate with the leaf key, a global key, or merely
@@ -158,6 +212,19 @@ func _expect_refused(got: Dictionary, case_name: String) -> void:
 	if not (decision is Dictionary) or not decision.is_empty():
 		_fail("%s produced a decision before the trust chain was authenticated: %s" % [
 			case_name, str(decision)])
+
+
+func _expect_revoked(got: Dictionary, case_name: String) -> void:
+	_expect_refusal_stage(got, "revoked", case_name)
+
+
+func _expect_refusal_stage(got: Dictionary, stage: String, case_name: String) -> void:
+	_expect_refused(got, case_name)
+	if _failed:
+		return
+	if not str(got.get("error", "")).contains(stage):
+		_fail("%s was not classified at the %s stage: %s" % [
+			case_name, stage, str(got.get("error", ""))])
 
 
 func _has_script_method(method_name: String) -> bool:

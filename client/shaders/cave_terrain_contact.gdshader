@@ -35,7 +35,7 @@ uniform float crack_relief: hint_range(0.0, 3.0) = 1.1;
 // the same default: this band blends into that ground, so a contact darkening
 // its sub-pixel seams harder or softer than the ground would draw a visible
 // join exactly where the two meet.
-uniform float seam_cavity: hint_range(0.0, 8.0) = 3.5;
+uniform float seam_cavity: hint_range(0.0, 8.0) = 7.0;
 uniform float ash_contact: hint_range(0.002, 0.3) = 0.035;
 uniform float lip_lift: hint_range(0.0, 1.0) = 0.18;
 
@@ -137,7 +137,7 @@ void fragment() {
 			plate_uv, plate_c1, plate_c2, plate_c3,
 			f1, f2, f3, f4, plate_fw, plate_resolved,
 			plate_uv_dx, plate_uv_dy);
-		plate_edge_w = terrain_plate_edge_blend(f1, f2, edge_fw * 0.5);
+		plate_edge_w = terrain_plate_edge_blend(f1, f2, edge_fw * 2.0);
 		// ...and the same three-way coverage split, keyed on the isotropic
 		// `plate_fw` for the reason the function gives. The ground and this band
 		// have to agree about WHICH plates they are blending as well as how much,
@@ -423,9 +423,7 @@ void fragment() {
 		float prof = (min(s_sep + half_h, cw_relief)
 			- min(abs(s_sep - half_h), cw_relief)) / seam_h;
 		float mean_tilt = amp * prof;
-		float covered = clamp(max(min(s_sep + half_h, cw_relief)
-			- max(s_sep - half_h, -cw_relief), 0.0) / seam_h, 0.0, 1.0);
-		float spread = max(covered - prof * prof, 0.0);
+		float spread = terrain_plate_cavity_spread(s_sep, seam_h, cw_relief);
 		// Same three-candidate baseline as terrain.gdshader, over the same
 		// weights every per-cell quantity above uses. A pixel straddling a
 		// slab-to-bare contact contains all of those cells' seams, and gating the

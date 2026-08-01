@@ -253,9 +253,11 @@ static func build(recipe: Dictionary) -> Node3D:
 	# drifters and the creator's preview — instead of the wanderer moving while
 	# a village of statues watches.
 	#
-	# The phase comes from the RECIPE, so it is stable for a given character
-	# across runs (determinism, #58) while different people are still out of
-	# step with each other. A crowd inhaling in unison reads as a machine.
+	# The phase comes from the body recipe, so it is stable for a given
+	# character across runs and outfit changes (determinism, #58) while
+	# different bodies are still out of step with each other. A crowd inhaling
+	# in unison reads as a machine, but changing gloves must not jump the body
+	# to a different point in its idle.
 	var idle := BreathingIdle.new()
 	idle.name = "BreathingIdle"
 	idle.phase_offset = _idle_phase_for(recipe)
@@ -263,13 +265,19 @@ static func build(recipe: Dictionary) -> Node3D:
 	return instance
 
 
-## A stable phase offset in [0, BREATH_PERIOD) for this recipe.
+## A stable phase offset in [0, BREATH_PERIOD) for this body recipe.
 ##
-## Hashed from the serialised recipe rather than from a counter or the clock:
-## the same character must breathe identically on every boot, and two different
-## people must not.
+## Equipment and the recipe schema version are deliberately excluded:
+## CharacterCreator rebuilds the body when an outfit picker changes, and that
+## edit can restamp the version as well as changing the outfit. Neither value
+## describes the body whose phase this seeds. Everything else stays serialised
+## rather than using a counter or the clock, so the same character breathes
+## identically on every boot while different bodies need not move in lockstep.
 static func _idle_phase_for(recipe: Dictionary) -> float:
-	var key := JSON.stringify(recipe)
+	var body_recipe := recipe.duplicate(true)
+	body_recipe.erase("equipment")
+	body_recipe.erase("version")
+	var key := JSON.stringify(body_recipe)
 	return float(key.hash() % 1000) / 1000.0 * BreathingIdle.BREATH_PERIOD
 
 

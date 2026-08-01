@@ -368,8 +368,23 @@ if out="$(merge_cask_pr_when_green "${tap}" 1337 "${branch}" "0.65.7" 2>&1)"; th
 	fail "merged without knowing what the tap requires"
 fi
 [ "$(merge_calls)" -eq 0 ] || fail "an unreadable ruleset must not reach a merge"
-[[ "${out}" == *"required status checks"* ]] ||
+[[ "${out}" == *"branch rules"* ]] ||
 	fail "the refusal did not name the unreadable gate"
+
+# The token can bypass every ruleset rule, while the REST helper can reproduce
+# only required status checks. Any other applicable rule must therefore disable
+# the fallback rather than being silently discarded, even when all checks are
+# green. Reviews and deployments are representative policy gates that cannot be
+# inferred from the commit-status surfaces below.
+reset_mocks
+mock_required='[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"CI - Required Checks"}]}},{"type":"pull_request","parameters":{"required_approving_review_count":2}},{"type":"required_deployments","parameters":{"required_deployment_environments":["production"]}}]'
+mock_checks=("${green_checks}")
+if out="$(merge_cask_pr_when_green "${tap}" 1337 "${branch}" "0.65.7" 2>&1)"; then
+	fail "non-status branch rules were bypassed by the REST merge"
+fi
+[ "$(merge_calls)" -eq 0 ] || fail "an unsupported branch rule must not reach a merge"
+[[ "${out}" == *"pull_request"* && "${out}" == *"required_deployments"* ]] ||
+	fail "the refusal did not identify the unsupported branch rules"
 
 # A page that did not return every check run is a PARTIAL answer: the pending
 # or failing run this page never showed would be invisible, and the head would

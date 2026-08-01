@@ -236,9 +236,18 @@ jobs:
           SEQUENCE=$(./tools/manifest-sequence.sh "${VERSION}")
           # BSD `date -r <epoch>`: this job runs on macOS.
           NOT_AFTER=$(date -u -r "$(( $(date -u +%s) + 86400 ))" +%Y-%m-%dT%H:%M:%SZ)
-          echo "sequence=${SEQUENCE} not_after=${NOT_AFTER}"
+          PROTOCOL_MIN="$(awk '$1 == "const" && $2 == "LegacyVersion" && $3 == "uint16" && $4 == "=" { print $5 }' server/wire/wire.go)"
+          PROTOCOL_MAX="$(awk '$1 == "const" && $2 == "Version" && $3 == "uint16" && $4 == "=" { print $5 }' server/wire/wire.go)"
+          if [[ ! "${PROTOCOL_MIN}" =~ ^[1-9][0-9]{0,4}$ ]] || (( PROTOCOL_MIN > 65535 )) ||
+            [[ ! "${PROTOCOL_MAX}" =~ ^[1-9][0-9]{0,4}$ ]] || (( PROTOCOL_MAX > 65535 )); then
+            echo "::error::server wire protocol range is not two positive uint16 literals: min='${PROTOCOL_MIN}' max='${PROTOCOL_MAX}'"
+            exit 1
+          fi
+          echo "sequence=${SEQUENCE} not_after=${NOT_AFTER} protocol_range=${PROTOCOL_MIN}..${PROTOCOL_MAX}"
           WAR_MANIFEST_SEQUENCE="${SEQUENCE}" \
           WAR_MANIFEST_NOT_AFTER="${NOT_AFTER}" \
+          WAR_MANIFEST_PROTOCOL_MIN="${PROTOCOL_MIN}" \
+          WAR_MANIFEST_PROTOCOL_MAX="${PROTOCOL_MAX}" \
           WAR_MANIFEST_OUT="${PWD}/build/update-manifest.json" \
             godot --headless --path client res://tools/update_manifest_emit.tscn 2>&1 | tee manifest.log
           # The emitter exits non-zero and writes nothing on any refusal, and
@@ -1064,8 +1073,12 @@ jobs:
           # hourly, far beyond this job's 15-minute timeout, so there is nothing
           # worth retrying: doing auto-merge's waiting here is what delivers.
           #
-          # The gate is the tap's OWN REQUIRED CONTEXTS, read from the ruleset
-          # that governs its main. Nothing weaker works. "Some check run exists
+          # The gate is the tap's OWN RULES, read from the ruleset that governs
+          # its main. This fallback can enforce required status checks, but it
+          # cannot faithfully reproduce reviews, deployments, merge queues or
+          # any other rule type. Refuse the REST merge when one is present;
+          # bypassing a rule that this helper does not model is never safe.
+          # Nothing weaker works. "Some check run exists
           # and none of the ones I can see are pending" is not the same claim:
           # runs are created asynchronously as workflows start, so a snapshot
           # taken moments after the PR moved can contain one fast completed run
@@ -1104,14 +1117,30 @@ jobs:
             local pr="$2"
             local branch="$3"
             local expected_version="$4"
-            local attempt pr_state head runs statuses required verdict
+            local attempt pr_state head runs statuses rules required unsupported verdict
             local declared returned failed_any unsatisfied
 
             # What the tap actually requires. Read ONCE: it is branch policy,
-            # not per-head state. An unreadable or empty answer fails CLOSED —
-            # "no required checks" and "the read failed" are indistinguishable
-            # here, and merging on the second would bypass the gate entirely.
-            required="$(gh api "repos/${tap}/rules/branches/main" 2>/dev/null \
+            # not per-head state. First reject every rule this helper cannot
+            # enforce itself; the token can bypass those rules at the merge
+            # endpoint, so merely discarding them would turn this fallback into
+            # a policy bypass. An unreadable or empty answer also fails CLOSED.
+            rules="$(gh api "repos/${tap}/rules/branches/main" 2>/dev/null || true)"
+            unsupported="$(printf '%s' "${rules}" \
+              | jq -c '[.[] | select(.type != "required_status_checks") | .type] | unique' \
+                  2>/dev/null || true)"
+            case "${unsupported}" in
+              '[]') : ;;
+              '' | 'null')
+                echo "::error::could not read the branch rules for ${tap} main; refusing to merge ${tap}#${pr} without knowing the full gate"
+                return 1
+                ;;
+              *)
+                echo "::error::${tap} main has branch rule type(s) this REST fallback cannot enforce: ${unsupported}; refusing to bypass them while merging ${tap}#${pr}"
+                return 1
+                ;;
+            esac
+            required="$(printf '%s' "${rules}" \
               | jq -c '[.[] | select(.type == "required_status_checks")
                        | .parameters.required_status_checks[]?
                        | {context, integration_id}] | unique' 2>/dev/null || true)"
