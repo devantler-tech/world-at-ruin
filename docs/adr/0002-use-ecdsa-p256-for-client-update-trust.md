@@ -47,9 +47,10 @@ Callers never supply a digest.
 
 The same primitive is used for the offline root and short-lived signing keys.
 `UpdateTrust.verify_and_decide()` verifies the signing-key certificate with a
-caller-supplied offline-root public key, verifies the manifest with only that
-certified signing key, and enters `UpdateDecision` last. Root-signed revocation
-lists, independently fresh revocation heads, and shell authorizations remain
+caller-supplied offline-root public key, authenticates the embedded revocation
+list with that root, refuses a listed certificate id, verifies the manifest
+with only the remaining certified signing key, and enters `UpdateDecision`
+last. Independently fresh revocation heads and shell authorizations remain
 children of #490.
 
 The client still publishes no signing fields and activates no updater. A root

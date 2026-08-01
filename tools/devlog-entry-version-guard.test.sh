@@ -441,6 +441,24 @@ printf 'client/devlog/0.60.0.json\n' >"$repo/tools/devlog-entry-corrections.tsv"
 commit_all 'a listing with no anchor commit'
 expect_fail_matching 'a listing with no anchor commit' 'with no anchor commit'
 
+# RED: symbolic commit-ish values can resolve successfully, but they do not
+# identify the immutable commit the correction describes. In particular, using
+# the target release tag would make containment prove only that a release
+# contains itself and turn the correction listing into an exemption.
+reset_tree
+entry 0.60.0 >"$repo/client/devlog/0.60.0.json"
+corrections client/devlog/0.60.0.json v0.60.0
+commit_all 'a correction anchored to a release tag'
+expect_fail_matching 'a correction anchored to a release tag' 'is not a full 40-character commit SHA'
+
+# RED: abbreviated SHAs are commit-ish too, but can become ambiguous as history
+# grows and violate the corrections file's full-SHA contract.
+reset_tree
+entry 0.60.0 >"$repo/client/devlog/0.60.0.json"
+corrections client/devlog/0.60.0.json "${feature:0:12}"
+commit_all 'a correction anchored to an abbreviated SHA'
+expect_fail_matching 'a correction anchored to an abbreviated SHA' 'is not a full 40-character commit SHA'
+
 # GREEN control: the ordinary forward-looking path still passes with a
 # corrections file present, so the lookup itself has not broken authoring.
 reset_tree
