@@ -158,6 +158,11 @@ func cast_progress(caster: int, at_tick: int) -> float:
 	var value: Dictionary = active
 	var start_tick := int(value["start_tick"])
 	var resolve_tick := int(value["resolve_tick"])
+	# WireCodec refuses this before a real frame reaches the store. Keep the
+	# read API total as defence in depth for direct callers that construct an
+	# otherwise-ok decode Dictionary themselves.
+	if resolve_tick <= start_tick:
+		return 1.0
 	return clampf(float(at_tick - start_tick) / float(resolve_tick - start_tick), 0.0, 1.0)
 
 

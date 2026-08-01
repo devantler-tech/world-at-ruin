@@ -233,7 +233,9 @@ static func _validate_cast_shape(cast: Dictionary) -> Dictionary:
 			if not facing_zero or not outer_valid or inner != 0 or half_width != 0 or cos_half != 0:
 				return {"error": ERR_CAST_SHAPE, "detail": "non-canonical circle"}
 		SHAPE_RING:
-			if not facing_zero or not outer_valid or inner < 0 or inner > MAX_TELEGRAPH_EXTENT_MM or half_width != 0 or cos_half != 0:
+			var inverted_positive_ring := outer >= 0 and inner > outer
+			var noncanonical_degenerate_ring := outer < 0 and inner != 0
+			if not facing_zero or not outer_valid or inner < 0 or inner > MAX_TELEGRAPH_EXTENT_MM or inverted_positive_ring or noncanonical_degenerate_ring or half_width != 0 or cos_half != 0:
 				return {"error": ERR_CAST_SHAPE, "detail": "non-canonical ring"}
 		SHAPE_CONE:
 			if not outer_valid or inner != 0 or half_width != 0 or not _within_symmetric_limit(cos_half, COS_SCALE):
@@ -413,13 +415,29 @@ class _Reader:
 			return []
 		var out: Array = []
 		for _i in n:
+			# Keep cursor advancement explicit. Dictionary literal evaluation order
+			# is not part of the wire contract and must not define field offsets.
+			var caster := u64()
+			var kind := u8()
+			var origin_x := s64()
+			var origin_y := s64()
+			var origin_z := s64()
+			var facing_x := s64()
+			var facing_y := s64()
+			var facing_z := s64()
+			var outer := s64()
+			var inner := s64()
+			var half_width := s64()
+			var cos_half := s64()
+			var start_tick := u64()
+			var resolve_tick := u64()
 			out.append({
-				"caster": u64(),
-				"kind": u8(),
-				"origin_x": s64(), "origin_y": s64(), "origin_z": s64(),
-				"facing_x": s64(), "facing_y": s64(), "facing_z": s64(),
-				"outer": s64(), "inner": s64(), "half_width": s64(), "cos_half": s64(),
-				"start_tick": u64(), "resolve_tick": u64(),
+				"caster": caster,
+				"kind": kind,
+				"origin_x": origin_x, "origin_y": origin_y, "origin_z": origin_z,
+				"facing_x": facing_x, "facing_y": facing_y, "facing_z": facing_z,
+				"outer": outer, "inner": inner, "half_width": half_width, "cos_half": cos_half,
+				"start_tick": start_tick, "resolve_tick": resolve_tick,
 			})
 		if not error.is_empty():
 			return []

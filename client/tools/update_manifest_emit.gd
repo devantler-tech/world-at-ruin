@@ -125,13 +125,15 @@ static func parse_sequence(text: String) -> Dictionary:
 	return {"error": "", "value": text.to_int()}
 
 
+## Parse the positive uint16 domain used by the binary wire header. Values
+## outside it are not future versions: they cannot be represented on the wire.
 static func parse_protocol_version(text: String, env_name: String) -> Dictionary:
 	if text.is_empty():
 		return {"error": "%s is not set — the live server range has no default" % env_name, "value": 0}
 	var pattern := RegEx.new()
 	assert(pattern.compile(SEQUENCE_PATTERN) == OK, "protocol-version pattern must compile")
-	if pattern.search(text) == null or text.to_int() < 1:
-		return {"error": "%s='%s' is not a positive protocol version" % [env_name, text], "value": 0}
+	if pattern.search(text) == null or text.to_int() < 1 or text.to_int() > 65535:
+		return {"error": "%s='%s' is not a positive uint16 protocol version" % [env_name, text], "value": 0}
 	return {"error": "", "value": text.to_int()}
 
 

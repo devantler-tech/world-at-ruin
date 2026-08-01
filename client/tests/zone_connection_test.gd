@@ -258,6 +258,16 @@ func _check_cast_stream_pump() -> bool:
 	if frames.size() != 3:
 		_fail("cast stream has %d frames, want join + start + end" % frames.size())
 		return false
+	var start_decoded := WireCodec.decode(frames[1])
+	if start_decoded.get("ok") != true:
+		_fail("cast start fixture did not decode: %s" % str(start_decoded))
+		return false
+	var start_delta: Dictionary = start_decoded["delta"]
+	var started: Dictionary = (start_delta["started_casts"] as Array)[0]
+	var caster := int(stream["caster"])
+	var start_tick := int(start_delta["tick"])
+	var expected_progress := float(start_tick - int(started["start_tick"])) / float(int(started["resolve_tick"]) - int(started["start_tick"]))
+	var end_tick := int((stream["end_state"] as Dictionary)["tick"] as float)
 	var transport := FakeTransport.new()
 	var conn := ZoneConnection.new(transport)
 	if not conn.connect_to(URL):
@@ -266,16 +276,16 @@ func _check_cast_stream_pump() -> bool:
 	transport.ready_state = WebSocketPeer.STATE_OPEN
 	transport.packets = [frames[0], frames[1]]
 	conn.poll()
-	if conn.error() != "" or conn.store().tick() != 1 or conn.store().cast_count() != 1:
-		_fail("ZoneConnection did not apply the cast start at exact tick 1: %s" % conn.error_detail())
+	if conn.error() != "" or conn.store().tick() != start_tick or conn.store().cast_count() != 1:
+		_fail("ZoneConnection did not apply the cast start at fixture tick %d: %s" % [start_tick, conn.error_detail()])
 		return false
-	if not is_equal_approx(conn.store().cast_progress(100, 1), 1.0 / 3.0):
+	if not is_equal_approx(conn.store().cast_progress(caster, start_tick), expected_progress):
 		_fail("ZoneConnection store lost authoritative cast progress")
 		return false
 	transport.packets = [frames[2]]
 	conn.poll()
-	if conn.error() != "" or conn.store().tick() != 4 or conn.store().cast_count() != 0:
-		_fail("ZoneConnection did not apply the cast end at exact tick 4: %s" % conn.error_detail())
+	if conn.error() != "" or conn.store().tick() != end_tick or conn.store().cast_count() != 0:
+		_fail("ZoneConnection did not apply the cast end at fixture tick %d: %s" % [end_tick, conn.error_detail()])
 		return false
 	return true
 

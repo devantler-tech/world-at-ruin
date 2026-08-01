@@ -100,25 +100,36 @@ if [ "$hc_max" -lt "$bc_max" ]; then
 	die "this change removes protocol maximum $bc_max (head ends at $hc_max) — version retirement is a contraction, not an expansion"
 fi
 
+# Manifest provenance is a standing invariant, not merely a condition of the
+# commit that first expands the range. Checking every invocation stops a later
+# unchanged-range edit from silently rewiring compatibility to client claims.
+cd_file=.github/workflows/cd.yaml
+min_parser_line="$(sed -n '/^[[:space:]]*PROTOCOL_MIN=/p' "$cd_file")"
+max_parser_line="$(sed -n '/^[[:space:]]*PROTOCOL_MAX=/p' "$cd_file")"
+min_env_line="$(sed -n '/^[[:space:]]*WAR_MANIFEST_PROTOCOL_MIN=/p' "$cd_file")"
+max_env_line="$(sed -n '/^[[:space:]]*WAR_MANIFEST_PROTOCOL_MAX=/p' "$cd_file")"
+min_source="\$2 == \"LegacyVersion\""
+max_source="\$2 == \"Version\""
+min_env_source="\${PROTOCOL_MIN}"
+max_env_source="\${PROTOCOL_MAX}"
+if [ "$(printf '%s\n' "$min_parser_line" | grep -c . || true)" -ne 1 ] ||
+	[ "$(printf '%s\n' "$max_parser_line" | grep -c . || true)" -ne 1 ] ||
+	[ "$(printf '%s\n' "$min_env_line" | grep -c . || true)" -ne 1 ] ||
+	[ "$(printf '%s\n' "$max_env_line" | grep -c . || true)" -ne 1 ] ||
+	[[ "$min_parser_line" != *'server/wire/wire.go'* ]] ||
+	[[ "$min_parser_line" != *"$min_source"* ]] ||
+	[[ "$max_parser_line" != *'server/wire/wire.go'* ]] ||
+	[[ "$max_parser_line" != *"$max_source"* ]] ||
+	[[ "$min_env_line" != *"$min_env_source"* ]] ||
+	[[ "$max_env_line" != *"$max_env_source"* ]]; then
+	die 'cd.yaml does not publish the retained range from server/wire/wire.go — the manifest must not infer live compatibility from the client'
+fi
+
 if [ "$hc_max" -gt "$bc_max" ]; then
 	# Old server/new client and new server/old client must both have an overlap.
 	if [ "$bs_max" -lt "$hc_min" ] || [ "$bs_max" -gt "$hc_max" ] ||
 		[ "$bc_max" -lt "$hs_min" ] || [ "$bc_max" -gt "$hs_max" ]; then
 		die "expanded range $hc_min..$hc_max does not retain base protocol $bc_max for both deployment orders"
-	fi
-
-	cd_file=.github/workflows/cd.yaml
-	min_line="$(sed -n '/^[[:space:]]*WAR_MANIFEST_PROTOCOL_MIN=/p' "$cd_file")"
-	max_line="$(sed -n '/^[[:space:]]*WAR_MANIFEST_PROTOCOL_MAX=/p' "$cd_file")"
-	min_source="\$2 == \"LegacyVersion\""
-	max_source="\$2 == \"Version\""
-	if [ "$(printf '%s\n' "$min_line" | grep -c . || true)" -ne 1 ] ||
-		[ "$(printf '%s\n' "$max_line" | grep -c . || true)" -ne 1 ] ||
-		[[ "$min_line" != *'server/wire/wire.go'* ]] ||
-		[[ "$min_line" != *"$min_source"* ]] ||
-		[[ "$max_line" != *'server/wire/wire.go'* ]] ||
-		[[ "$max_line" != *"$max_source"* ]]; then
-		die 'cd.yaml does not publish the retained range from server/wire/wire.go — the manifest must not infer live compatibility from the client'
 	fi
 
 	printf 'Wire protocol expansion verified: %s..%s -> %s..%s; base protocol remains reachable in both deployment orders.\n' \

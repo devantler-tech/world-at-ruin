@@ -129,3 +129,42 @@ func TestCastValidationFailsClosedOnBothSides(t *testing.T) {
 		t.Fatalf("decode hostile cast count: got %v, want ErrCount", err)
 	}
 }
+
+func TestCastOrderAndCanonicalRingFailClosedOnBothSides(t *testing.T) {
+	cast := func(caster sim.EntityID) sim.ActiveCast {
+		return sim.ActiveCast{
+			Caster: caster, Shape: sim.CircleTelegraph(sim.Vec3{}, 500), StartTick: 4, ResolveTick: 8,
+		}
+	}
+	for name, casts := range map[string][]sim.ActiveCast{
+		"duplicate":  {cast(2), cast(2)},
+		"descending": {cast(3), cast(2)},
+	} {
+		snapshot := sim.Snapshot{Tick: 5, Observer: 1, Entities: []sim.EntityState{{ID: 2}, {ID: 3}}, Casts: casts}
+		if _, err := EncodeSnapshot(snapshot); !errors.Is(err, ErrOrder) {
+			t.Fatalf("encode %s cast order: got %v, want ErrOrder", name, err)
+		}
+	}
+
+	valid := sim.Snapshot{
+		Tick: 5, Observer: 1, Entities: []sim.EntityState{{ID: 2}}, Casts: []sim.ActiveCast{cast(2)},
+	}
+	b, err := EncodeSnapshot(valid)
+	if err != nil {
+		t.Fatalf("encode valid cast control: %v", err)
+	}
+	castCountOffset := headerSize + tickSize + observerSize + countSize + len(valid.Entities)*entityStateSize
+	castOffset := castCountOffset + countSize
+	binary.LittleEndian.PutUint32(b[castCountOffset:], 2)
+	b = append(b, b[castOffset:castOffset+activeCastSize]...)
+	if _, err := Decode(b); !errors.Is(err, ErrOrder) {
+		t.Fatalf("decode duplicate casts: got %v, want ErrOrder", err)
+	}
+
+	inverted := valid
+	inverted.Casts = append([]sim.ActiveCast(nil), valid.Casts...)
+	inverted.Casts[0].Shape = sim.Telegraph{Kind: sim.ShapeRing, Outer: 500, Inner: 501}
+	if _, err := EncodeSnapshot(inverted); !errors.Is(err, ErrCastShape) {
+		t.Fatalf("encode inverted positive ring: got %v, want ErrCastShape", err)
+	}
+}

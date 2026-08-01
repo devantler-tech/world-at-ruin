@@ -336,7 +336,9 @@ func validateCastShape(shape sim.Telegraph) error {
 			return errors.New("non-canonical circle")
 		}
 	case sim.ShapeRing:
-		if !zeroFacing || !extent(shape.Outer) || shape.Inner < 0 || shape.Inner > maxWireTelegraphExtentMM || shape.HalfWidth != 0 || shape.CosHalf != 0 {
+		invertedPositiveRing := shape.Outer >= 0 && shape.Inner > shape.Outer
+		noncanonicalDegenerateRing := shape.Outer < 0 && shape.Inner != 0
+		if !zeroFacing || !extent(shape.Outer) || shape.Inner < 0 || shape.Inner > maxWireTelegraphExtentMM || invertedPositiveRing || noncanonicalDegenerateRing || shape.HalfWidth != 0 || shape.CosHalf != 0 {
 			return errors.New("non-canonical ring")
 		}
 	case sim.ShapeCone:

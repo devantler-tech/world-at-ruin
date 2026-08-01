@@ -147,11 +147,14 @@ func _test_a_malformed_envelope_publishes_nothing() -> void:
 			_fail("%s reported an error but still returned %d bytes to publish" % [row[3], text.length()])
 			return
 
-	for bad_protocol: String in ["", "0", "abc", "1.5", " 1"]:
-		var emitted := Emit.emit(SEQUENCE_TEXT, NOT_AFTER, bad_protocol, str(WireCodec.VERSION))
-		if emitted["error"] == "" or emitted["text"] != "":
-			_fail("malformed live protocol version '%s' left publishable bytes" % bad_protocol)
-			return
+	for bad_protocol: String in ["", "0", "abc", "1.5", " 1", "65536"]:
+		for position: String in ["minimum", "maximum"]:
+			var minimum := bad_protocol if position == "minimum" else str(WireCodec.LEGACY_VERSION)
+			var maximum := bad_protocol if position == "maximum" else str(WireCodec.VERSION)
+			var emitted := Emit.emit(SEQUENCE_TEXT, NOT_AFTER, minimum, maximum)
+			if emitted["error"] == "" or emitted["text"] != "":
+				_fail("malformed live protocol %s '%s' left publishable bytes" % [position, bad_protocol])
+				return
 	var inverted := Emit.emit(SEQUENCE_TEXT, NOT_AFTER, "2", "1")
 	if inverted["error"] == "" or inverted["text"] != "":
 		_fail("an inverted live protocol range left publishable bytes")

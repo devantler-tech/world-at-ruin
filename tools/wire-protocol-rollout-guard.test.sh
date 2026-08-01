@@ -44,21 +44,25 @@ write_server() {
 
 write_cd_server_range() {
 	printf '%s\n' \
-		"WAR_MANIFEST_PROTOCOL_MIN=\"\$(awk '\$1 == \"const\" && \$2 == \"LegacyVersion\" { print \$5 }' server/wire/wire.go)\" \\" \
-		"WAR_MANIFEST_PROTOCOL_MAX=\"\$(awk '\$1 == \"const\" && \$2 == \"Version\" { print \$5 }' server/wire/wire.go)\" \\" \
+		"PROTOCOL_MIN=\"\$(awk '\$1 == \"const\" && \$2 == \"LegacyVersion\" { print \$5 }' server/wire/wire.go)\"" \
+		"PROTOCOL_MAX=\"\$(awk '\$1 == \"const\" && \$2 == \"Version\" { print \$5 }' server/wire/wire.go)\"" \
+		"WAR_MANIFEST_PROTOCOL_MIN=\"\${PROTOCOL_MIN}\" \\" \
+		"WAR_MANIFEST_PROTOCOL_MAX=\"\${PROTOCOL_MAX}\" \\" \
 		>"$repo/.github/workflows/cd.yaml"
 }
 
 write_cd_client_range() {
 	printf '%s\n' \
-		"WAR_MANIFEST_PROTOCOL_MIN=\"\$(awk '\$2 == \"LEGACY_VERSION\" { print \$4 }' client/scripts/wire_codec.gd)\" \\" \
-		"WAR_MANIFEST_PROTOCOL_MAX=\"\$(awk '\$2 == \"VERSION\" { print \$4 }' client/scripts/wire_codec.gd)\" \\" \
+		"PROTOCOL_MIN=\"\$(awk '\$2 == \"LEGACY_VERSION\" { print \$4 }' client/scripts/wire_codec.gd)\"" \
+		"PROTOCOL_MAX=\"\$(awk '\$2 == \"VERSION\" { print \$4 }' client/scripts/wire_codec.gd)\"" \
+		"WAR_MANIFEST_PROTOCOL_MIN=\"\${PROTOCOL_MIN}\" \\" \
+		"WAR_MANIFEST_PROTOCOL_MAX=\"\${PROTOCOL_MAX}\" \\" \
 		>"$repo/.github/workflows/cd.yaml"
 }
 
 write_client 1
 write_server 1
-printf 'name: base without a protocol publication range\n' >"$repo/.github/workflows/cd.yaml"
+write_cd_server_range
 git -C "$repo" add -A
 git -C "$repo" commit -qm 'v1 baseline'
 base="$(git -C "$repo" rev-parse HEAD)"
@@ -74,8 +78,8 @@ commit_case() {
 }
 
 run_guard() {
-	local out rc=0
-	out="$(cd "$repo" && BASE_SHA="$base" bash "$GUARD" 2>&1)" || rc=$?
+	local compare_base="${1:-$base}" out rc=0
+	out="$(cd "$repo" && BASE_SHA="$compare_base" bash "$GUARD" 2>&1)" || rc=$?
 	printf '%s' "$out"
 	return "$rc"
 }
@@ -89,8 +93,8 @@ expect_pass() {
 }
 
 expect_fail() {
-	local label="$1" needle="$2" out rc=0
-	out="$(run_guard)" || rc=$?
+	local label="$1" needle="$2" compare_base="${3:-$base}" out rc=0
+	out="$(run_guard "$compare_base")" || rc=$?
 	if [ "$rc" -eq 0 ]; then
 		fail "$label: expected a refusal, but the guard passed"
 	elif ! printf '%s' "$out" | grep -qF "$needle"; then
@@ -107,10 +111,15 @@ write_cd_server_range
 commit_case 'safe v1 to v2 expansion'
 expect_pass 'explicit cross-order-safe expansion'
 
-# No movement remains legal without retroactively requiring the publication
-# wiring that this expansion introduces.
+# No movement remains legal when the publication still comes from authority.
 reset_tree
 expect_pass 'unchanged implicit singleton range'
+
+# The publication provenance is invariant, not merely an expansion-time check.
+reset_tree
+write_cd_client_range
+commit_case 'rewire unchanged range to client source'
+expect_fail 'unchanged client-derived publication range' 'does not publish the retained range from server/wire/wire.go'
 
 reset_tree
 write_client 2
@@ -122,6 +131,7 @@ expect_fail 'new version with no retained endpoint' 'does not declare an explici
 reset_tree
 write_client 2 1
 write_server 2 1
+printf 'name: expansion without a protocol publication range\n' >"$repo/.github/workflows/cd.yaml"
 commit_case 'expansion without CD range'
 expect_fail 'expansion with no publication source' 'does not publish the retained range from server/wire/wire.go'
 
@@ -145,6 +155,24 @@ write_server 2 2
 write_cd_server_range
 commit_case 'contract away v1 immediately'
 expect_fail 'same-change contraction' 'contracts the protocol minimum from 1 to 2'
+
+for bad_version in 0 70000 abc; do
+	reset_tree
+	write_client "$bad_version"
+	write_server "$bad_version"
+	write_cd_server_range
+	commit_case "malformed protocol version $bad_version"
+	expect_fail "malformed protocol version $bad_version" 'is not one positive uint16 literal'
+done
+
+# Even an unchanged head cannot make an incoherent base a trustworthy rollout
+# anchor; this is checked before any head comparison.
+reset_tree
+write_server 2
+write_cd_server_range
+commit_case 'incoherent historical anchor'
+incoherent_base="$(git -C "$repo" rev-parse HEAD)"
+expect_fail 'incoherent base range' 'there is no coherent rollout anchor' "$incoherent_base"
 
 # Missing immutable evidence must fail closed.
 missing_rc=0

@@ -279,6 +279,18 @@ func _check_count_cap() -> bool:
 	_u32(lie, WireCodec.MAX_ENTITIES + 1)
 	if not _expect_error(WireCodec.decode(lie), WireCodec.ERR_COUNT, "count claiming %d" % (WireCodec.MAX_ENTITIES + 1)):
 		return false
+	# The independently capped cast table must reject its count before asking
+	# for even one cast payload byte too.
+	var cast_lie := PackedByteArray()
+	_u16(cast_lie, WireCodec.VERSION)
+	_u8(cast_lie, WireCodec.KIND_SNAPSHOT_DELTA)
+	_u64(cast_lie, 1)
+	_u32(cast_lie, 0) # entered
+	_u32(cast_lie, 0) # moved
+	_u32(cast_lie, 0) # left
+	_u32(cast_lie, WireCodec.MAX_CASTS + 1)
+	if not _expect_error(WireCodec.decode(cast_lie), WireCodec.ERR_COUNT, "cast count claiming %d" % (WireCodec.MAX_CASTS + 1)):
+		return false
 	# The boundary from the other side: exactly MAX_ENTITIES ids is accepted
 	# (the cap is exclusive). Preallocate once — 64Ki incremental resizes are
 	# quadratic in copied bytes.

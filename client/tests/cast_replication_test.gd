@@ -79,30 +79,55 @@ func _check_authoritative_cast_stream(root: Dictionary) -> bool:
 func _check_malformed_casts(root: Dictionary) -> bool:
 	var start_hex: String = (((root["cast_stream"] as Dictionary)["frames"] as Array)[1] as Dictionary)["hex"]
 	var valid := start_hex.hex_decode()
+	const DELTA_HEADER_SIZE := 2 + 1 + 8
+	const EMPTY_ENTITY_LIST_SIZE := 4
+	const EMPTY_ID_LIST_SIZE := 4
+	const STARTED_COUNT_OFFSET := DELTA_HEADER_SIZE + 2 * EMPTY_ENTITY_LIST_SIZE + EMPTY_ID_LIST_SIZE
+	const CAST_OFFSET := STARTED_COUNT_OFFSET + 4
+	const CASTER_SIZE := 8
+	const KIND_OFFSET := CAST_OFFSET + CASTER_SIZE
+	const ORIGIN_SIZE := 3 * 8
+	const FACING_SIZE := 3 * 8
+	const OUTER_OFFSET := KIND_OFFSET + 1 + ORIGIN_SIZE + FACING_SIZE
+	const INNER_OFFSET := OUTER_OFFSET + 8
+	const START_TICK_OFFSET := INNER_OFFSET + 3 * 8
+	const RESOLVE_TICK_OFFSET := START_TICK_OFFSET + 8
 
 	var bad_shape: PackedByteArray = valid.duplicate()
-	bad_shape.encode_u8(35, 99) # started-cast offset 27 + caster id 8
+	bad_shape.encode_u8(KIND_OFFSET, 99)
 	if not _expect_decode_error(bad_shape, WireCodec.ERR_CAST_SHAPE, "unknown cast kind"):
 		return false
 
 	var bad_count: PackedByteArray = valid.duplicate()
-	bad_count.encode_u32(23, WireCodec.MAX_CASTS + 1)
+	bad_count.encode_u32(STARTED_COUNT_OFFSET, WireCodec.MAX_CASTS + 1)
 	if not _expect_decode_error(bad_count, WireCodec.ERR_COUNT, "hostile started-cast count"):
 		return false
 
 	var bad_extent: PackedByteArray = valid.duplicate()
-	bad_extent.encode_s64(84, -9223372036854775808)
+	bad_extent.encode_s64(OUTER_OFFSET, -9223372036854775808)
 	if not _expect_decode_error(bad_extent, WireCodec.ERR_CAST_SHAPE, "minimum-int cast extent"):
 		return false
 
+	var inverted_ring: PackedByteArray = valid.duplicate()
+	inverted_ring.encode_u8(KIND_OFFSET, WireCodec.SHAPE_RING)
+	inverted_ring.encode_s64(INNER_OFFSET, inverted_ring.decode_s64(OUTER_OFFSET) + 1)
+	if not _expect_decode_error(inverted_ring, WireCodec.ERR_CAST_SHAPE, "positive ring with inner radius beyond outer"):
+		return false
+
 	var bad_timing: PackedByteArray = valid.duplicate()
-	bad_timing.encode_u64(124, bad_timing.decode_u64(116))
+	bad_timing.encode_u64(RESOLVE_TICK_OFFSET, bad_timing.decode_u64(START_TICK_OFFSET))
 	if not _expect_decode_error(bad_timing, WireCodec.ERR_CAST_TIMING, "zero-duration cast"):
 		return false
 	return true
 
 
 func _check_store_atomicity_and_replacement() -> bool:
+	var hostile_store := ReplicaStore.new()
+	var hostile := hostile_store.apply(_snapshot(1, [_entity(2)], [_cast(2, 0, 0, 500)]))
+	if hostile.get("ok") != true or not is_equal_approx(hostile_store.cast_progress(2, 1), 1.0):
+		_fail("cast_progress did not contain a zero-duration direct-input cast: %s" % str(hostile))
+		return false
+
 	var store := ReplicaStore.new()
 	var base := _snapshot(1, [_entity(2)], [_cast(2, 0, 5, 500)])
 	if store.apply(base).get("ok") != true:
