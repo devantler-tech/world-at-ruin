@@ -4,8 +4,8 @@ class_name ReplicaStore
 ## socket's frame stream folds into, and the one surface every later
 ## client-networking child (socket consumption, remote-entity rendering,
 ## interpolation) reads. Sits directly downstream of `WireCodec.decode`: a
-## decoded snapshot resyncs the table wholesale, a decoded delta applies
-## entered/moved/left — and nothing else ever mutates it.
+## decoded snapshot resyncs entity and cast tables wholesale, while a decoded
+## delta applies entered/moved/left plus cast start/end atomically.
 ##
 ## Contract, mirroring the server's replication semantics
 ## (`server/sim/snapshot.go` tracker + `server/zonesock` lifecycle) WHOLE:
@@ -33,6 +33,10 @@ class_name ReplicaStore
 ##     list caps bound one frame, not the accumulation, and a table the
 ##     server could never re-snapshot (its encoder enforces the same cap per
 ##     message) is divergence by construction.
+##   * Every active cast belongs to a replicated caster. Cast replacements end
+##     and restart that caster in one atomic delta; a leaving caster must end
+##     its cast in the same frame. `cast_progress` derives rendering progress
+##     from the authoritative start/resolve ticks without mutating the record.
 ##
 ## Deliberately tolerated, matching server behaviour rather than tightening
 ## past it: an EMPTY delta (zonesock skips them as a bandwidth choice, not a
@@ -60,11 +64,16 @@ const ERR_ENTERED_PRESENT := "entered_present"  # entered id already in table
 const ERR_MOVED_ABSENT := "moved_absent"        # moved id not in table
 const ERR_LEFT_ABSENT := "left_absent"          # left id not in table
 const ERR_CAPACITY := "capacity"  # fold would exceed WireCodec.MAX_ENTITIES
+const ERR_CAST_CASTER := "cast_caster"          # cast caster absent after fold
+const ERR_CAST_STARTED_PRESENT := "cast_started_present"  # start without ending active cast
+const ERR_CAST_ENDED_ABSENT := "cast_ended_absent"         # end for no active cast
+const ERR_CAST_CAPACITY := "cast_capacity"      # folded cast table exceeds MAX_CASTS
 
 var _has_base := false
 var _observer: int = 0
 var _tick: int = 0
 var _entities: Dictionary = {}  # id -> {"x": int, "y": int, "z": int, "radius": int}
+var _casts: Dictionary = {}  # caster id -> decoded authoritative cast
 
 
 ## Fold one decoded frame into the table. `result` is exactly what
@@ -120,6 +129,38 @@ func ids() -> Array[int]:
 	return out
 
 
+func cast_count() -> int:
+	return _casts.size()
+
+
+func cast(caster: int) -> Dictionary:
+	var active: Variant = _casts.get(caster)
+	if active == null:
+		return {}
+	return (active as Dictionary).duplicate()
+
+
+func cast_casters() -> Array[int]:
+	var out: Array[int] = []
+	for caster: Variant in _casts.keys():
+		out.append(caster as int)
+	out.sort()
+	return out
+
+
+## Authoritative tick progress for rendering: 0 at paint, 1 at resolve.
+## The caller may pass a locally-interpolated tick between received frames;
+## geometry and endpoints remain the server's exact integer values.
+func cast_progress(caster: int, at_tick: int) -> float:
+	var active: Variant = _casts.get(caster)
+	if active == null:
+		return -1.0
+	var value: Dictionary = active
+	var start_tick := int(value["start_tick"])
+	var resolve_tick := int(value["resolve_tick"])
+	return clampf(float(at_tick - start_tick) / float(resolve_tick - start_tick), 0.0, 1.0)
+
+
 func _apply_snapshot(snapshot: Dictionary) -> Dictionary:
 	var s_tick: int = snapshot["tick"]
 	var s_observer: int = snapshot["observer"]
@@ -128,6 +169,7 @@ func _apply_snapshot(snapshot: Dictionary) -> Dictionary:
 	if _has_base and s_tick <= _tick:
 		return _refuse(ERR_TICK, "snapshot tick %d does not advance past %d" % [s_tick, _tick])
 	var entities: Array = snapshot["entities"]
+	var casts: Array = snapshot.get("casts", [])
 	var next: Dictionary = {}
 	for e_var: Variant in entities:
 		var e: Dictionary = e_var
@@ -135,8 +177,16 @@ func _apply_snapshot(snapshot: Dictionary) -> Dictionary:
 		if id == s_observer:
 			return _refuse(ERR_SELF, "snapshot lists the observer %d" % id)
 		next[id] = {"x": e["x"], "y": e["y"], "z": e["z"], "radius": e["radius"]}
+	var next_casts: Dictionary = {}
+	for cast_var: Variant in casts:
+		var active: Dictionary = cast_var
+		var caster := int(active["caster"])
+		if caster == s_observer or not next.has(caster):
+			return _refuse(ERR_CAST_CASTER, "snapshot cast caster %d is not replicated" % caster)
+		next_casts[caster] = active.duplicate()
 	# Commit — wholesale replacement is the resync semantics.
 	_entities = next
+	_casts = next_casts
 	_observer = s_observer
 	_tick = s_tick
 	_has_base = true
@@ -152,6 +202,8 @@ func _apply_delta(delta: Dictionary) -> Dictionary:
 	var entered: Array = delta["entered"]
 	var moved: Array = delta["moved"]
 	var left: Array = delta["left"]
+	var started_casts: Array = delta.get("started_casts", [])
+	var ended_casts: Array = delta.get("ended_casts", [])
 
 	# Validate the WHOLE frame against the table before touching it — a
 	# refusal after a partial commit would be a silent desync.
@@ -181,6 +233,34 @@ func _apply_delta(delta: Dictionary) -> Dictionary:
 	if folded_size > WireCodec.MAX_ENTITIES:
 		return _refuse(ERR_CAPACITY, "fold would hold %d entities, cap is %d" % [folded_size, WireCodec.MAX_ENTITIES])
 
+	var entered_ids: Dictionary = {}
+	for e_var: Variant in entered:
+		entered_ids[int((e_var as Dictionary)["id"])] = true
+	var left_ids: Dictionary = {}
+	for id_var: Variant in left:
+		left_ids[int(id_var)] = true
+	var ended_ids: Dictionary = {}
+	for id_var: Variant in ended_casts:
+		var caster := int(id_var)
+		if not _casts.has(caster):
+			return _refuse(ERR_CAST_ENDED_ABSENT, "ended cast caster %d is not active" % caster)
+		ended_ids[caster] = true
+	for cast_var: Variant in started_casts:
+		var active: Dictionary = cast_var
+		var caster := int(active["caster"])
+		var caster_present := entered_ids.has(caster) or (_entities.has(caster) and not left_ids.has(caster))
+		if caster == _observer or not caster_present:
+			return _refuse(ERR_CAST_CASTER, "started cast caster %d is not replicated after fold" % caster)
+		if _casts.has(caster) and not ended_ids.has(caster):
+			return _refuse(ERR_CAST_STARTED_PRESENT, "started cast caster %d is already active" % caster)
+	for caster_var: Variant in _casts.keys():
+		var caster := int(caster_var)
+		if left_ids.has(caster) and not ended_ids.has(caster):
+			return _refuse(ERR_CAST_CASTER, "leaving caster %d still has an active cast" % caster)
+	var folded_casts := _casts.size() + started_casts.size() - ended_casts.size()
+	if folded_casts > WireCodec.MAX_CASTS:
+		return _refuse(ERR_CAST_CAPACITY, "fold would hold %d casts, cap is %d" % [folded_casts, WireCodec.MAX_CASTS])
+
 	# Commit.
 	for e_var: Variant in entered:
 		var e: Dictionary = e_var
@@ -190,6 +270,11 @@ func _apply_delta(delta: Dictionary) -> Dictionary:
 		_entities[e["id"] as int] = {"x": e["x"], "y": e["y"], "z": e["z"], "radius": e["radius"]}
 	for id_var: Variant in left:
 		_entities.erase(id_var as int)
+	for id_var: Variant in ended_casts:
+		_casts.erase(id_var as int)
+	for cast_var: Variant in started_casts:
+		var active: Dictionary = cast_var
+		_casts[int(active["caster"])] = active.duplicate()
 	_tick = d_tick
 	return {"ok": true, "kind": WireCodec.KIND_SNAPSHOT_DELTA, "tick": _tick}
 

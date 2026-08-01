@@ -239,6 +239,8 @@ jobs:
           echo "sequence=${SEQUENCE} not_after=${NOT_AFTER}"
           WAR_MANIFEST_SEQUENCE="${SEQUENCE}" \
           WAR_MANIFEST_NOT_AFTER="${NOT_AFTER}" \
+          WAR_MANIFEST_PROTOCOL_MIN="$(awk '$1 == "const" && $2 == "LegacyVersion" && $3 == "uint16" && $4 == "=" { print $5 }' server/wire/wire.go)" \
+          WAR_MANIFEST_PROTOCOL_MAX="$(awk '$1 == "const" && $2 == "Version" && $3 == "uint16" && $4 == "=" { print $5 }' server/wire/wire.go)" \
           WAR_MANIFEST_OUT="${PWD}/build/update-manifest.json" \
             godot --headless --path client res://tools/update_manifest_emit.tscn 2>&1 | tee manifest.log
           # The emitter exits non-zero and writes nothing on any refusal, and

@@ -95,7 +95,7 @@ func runStreamScenario(t *testing.T) ([]streamFixtureFrame, sim.Snapshot) {
 	// Join: exactly Hub.attach — full snapshot, then prime the tracker so the
 	// first delta is relative to the join payload.
 	join := w.Snapshot(streamObserver)
-	b, err := EncodeSnapshot(join)
+	b, err := EncodeSnapshotVersion(join, LegacyVersion)
 	encode("snapshot", b, err)
 	tr := sim.NewSnapshotTracker(streamObserver)
 	tr.Update(w)
@@ -121,12 +121,12 @@ func runStreamScenario(t *testing.T) ([]streamFixtureFrame, sim.Snapshot) {
 			// tick is the dropped delta's, always past the last delivered
 			// frame.
 			resync := w.Snapshot(streamObserver)
-			b, err := EncodeSnapshot(resync)
+			b, err := EncodeSnapshotVersion(resync, LegacyVersion)
 			encode("snapshot", b, err)
 			tr = sim.NewSnapshotTracker(streamObserver)
 			tr.Update(w)
 		} else if !d.Empty() { // exactly Hub.pump: empty deltas are never sent
-			b, err := EncodeSnapshotDelta(d)
+			b, err := EncodeSnapshotDeltaVersion(d, LegacyVersion)
 			encode("delta", b, err)
 		}
 	}

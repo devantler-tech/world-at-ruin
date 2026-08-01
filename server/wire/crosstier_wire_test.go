@@ -63,6 +63,7 @@ type wireFixture struct {
 
 func loadWireFixture(t *testing.T) wireFixture {
 	t.Helper()
+	// #nosec G304 -- the path is a fixed repository-relative committed fixture.
 	raw, err := os.ReadFile(wireFixturePath)
 	if err != nil {
 		t.Fatalf("reading shared fixture: %v", err)
@@ -123,7 +124,7 @@ func TestWireFixtureAgreesWithCodec(t *testing.T) {
 				Observer: sim.EntityID(m.Snapshot.Observer),
 				Entities: fixtureStates(m.Snapshot.Entities),
 			}
-			encoded, err := EncodeSnapshot(want)
+			encoded, err := EncodeSnapshotVersion(want, LegacyVersion)
 			if err != nil {
 				t.Fatalf("encoding fixture snapshot: %v", err)
 			}
@@ -147,7 +148,7 @@ func TestWireFixtureAgreesWithCodec(t *testing.T) {
 				Moved:   fixtureStates(m.Delta.Moved),
 				Left:    fixtureIDs(m.Delta.Left),
 			}
-			encoded, err := EncodeSnapshotDelta(want)
+			encoded, err := EncodeSnapshotDeltaVersion(want, LegacyVersion)
 			if err != nil {
 				t.Fatalf("encoding fixture delta: %v", err)
 			}

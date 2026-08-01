@@ -28,6 +28,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -75,6 +76,11 @@ const (
 	DefaultWriteTimeout    = 10 * time.Second
 	DefaultIdleTimeout     = 30 * time.Second
 )
+
+// WireVersionHeader selects the protocol a connection speaks for its entire
+// lifetime. Its absence retains v1 for already-shipped clients; new clients
+// name the newest version explicitly during the HTTP upgrade handshake.
+const WireVersionHeader = "X-WAR-Wire-Version"
 
 func (c Config) withDefaults() Config {
 	if c.InterestMM <= 0 {
@@ -167,7 +173,7 @@ func (h *Hub) attach(w *sim.World, c *conn) {
 	join := w.Snapshot(c.observer)
 	c.tracker = sim.NewSnapshotTracker(c.observer)
 	c.tracker.Update(w) // prime: the join snapshot already carries this state
-	b, err := wire.EncodeSnapshot(join)
+	b, err := wire.EncodeSnapshotVersion(join, c.wireVersion())
 	if err != nil {
 		// Sim guarantees canonical snapshots, so this is an upstream
 		// determinism bug — fail loudly for this peer, keep the zone alive.
@@ -198,7 +204,7 @@ func (h *Hub) pump(w *sim.World, c *conn) {
 	if d.Empty() {
 		return
 	}
-	b, err := wire.EncodeSnapshotDelta(d)
+	b, err := wire.EncodeSnapshotDeltaVersion(d, c.wireVersion())
 	if err != nil {
 		log.Printf("zonesock: encode delta for observer %d: %v", c.observer, err)
 		go c.close(websocket.StatusInternalError, "encode failure")
@@ -228,7 +234,7 @@ drain:
 	resync := w.Snapshot(c.observer)
 	c.tracker = sim.NewSnapshotTracker(c.observer)
 	c.tracker.Update(w)
-	b, err := wire.EncodeSnapshot(resync)
+	b, err := wire.EncodeSnapshotVersion(resync, c.wireVersion())
 	if err != nil {
 		log.Printf("zonesock: encode resync snapshot for observer %d: %v", c.observer, err)
 		go c.close(websocket.StatusInternalError, "encode failure")
@@ -261,6 +267,11 @@ func (h *Hub) Handler() http.Handler {
 			http.Error(rw, "admission refused", http.StatusUnauthorized)
 			return
 		}
+		version, status, err := requestedWireVersion(r)
+		if err != nil {
+			http.Error(rw, "wire version refused", status)
+			return
+		}
 		ws, err := websocket.Accept(rw, r, nil)
 		if err != nil {
 			return
@@ -271,14 +282,31 @@ func (h *Hub) Handler() http.Handler {
 			hub:      h,
 			ws:       ws,
 			observer: observer,
+			version:  version,
 			out:      make(chan []byte, h.cfg.SendQueue),
 			ctx:      ctx,
 			cancel:   cancel,
 		}
 		h.enqueue(func(w *sim.World) { h.attach(w, c) })
-		go c.writeLoop(h.cfg)
+		go c.writeLoop(h.cfg) //nolint:contextcheck // conn owns the cancellation context
 		go c.readLoop()
 	})
+}
+
+func requestedWireVersion(r *http.Request) (uint16, int, error) {
+	raw := r.Header.Get(WireVersionHeader)
+	if raw == "" {
+		return wire.LegacyVersion, 0, nil
+	}
+	parsed, err := strconv.ParseUint(raw, 10, 16)
+	if err != nil {
+		return 0, http.StatusBadRequest, errors.New("malformed wire version")
+	}
+	version := uint16(parsed)
+	if version < wire.LegacyVersion || version > wire.Version {
+		return 0, http.StatusUpgradeRequired, errors.New("unsupported wire version")
+	}
+	return version, 0, nil
 }
 
 // bearerToken extracts the token from an Authorization: Bearer header.
@@ -297,11 +325,19 @@ type conn struct {
 	hub      *Hub
 	ws       *websocket.Conn
 	observer sim.EntityID
+	version  uint16
 	out      chan []byte
 	ctx      context.Context
 	cancel   context.CancelFunc
 	once     sync.Once
 	tracker  *sim.SnapshotTracker // sim-goroutine-owned
+}
+
+func (c *conn) wireVersion() uint16 {
+	if c.version == 0 {
+		return wire.LegacyVersion
+	}
+	return c.version
 }
 
 // teardown severs the connection immediately, without a close handshake, and
@@ -311,7 +347,7 @@ func (c *conn) teardown() {
 	c.once.Do(func() {
 		c.cancel()
 		c.hub.enqueue(func(w *sim.World) { c.hub.detach(w, c) })
-		c.ws.CloseNow()
+		_ = c.ws.CloseNow()
 	})
 }
 
@@ -323,7 +359,7 @@ func (c *conn) teardown() {
 func (c *conn) close(code websocket.StatusCode, reason string) {
 	c.once.Do(func() {
 		c.hub.enqueue(func(w *sim.World) { c.hub.detach(w, c) })
-		c.ws.Close(code, reason)
+		_ = c.ws.Close(code, reason)
 		c.cancel()
 	})
 }

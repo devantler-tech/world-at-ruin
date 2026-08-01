@@ -25,6 +25,8 @@ extends Node
 ## Run:
 ##   WAR_MANIFEST_SEQUENCE=1780000000 \
 ##   WAR_MANIFEST_NOT_AFTER=2026-07-31T12:00:00Z \
+##   WAR_MANIFEST_PROTOCOL_MIN=1 \
+##   WAR_MANIFEST_PROTOCOL_MAX=2 \
 ##   WAR_MANIFEST_OUT=/tmp/manifest.json \
 ##   godot --headless --path client res://tools/update_manifest_emit.tscn
 ##
@@ -38,6 +40,8 @@ extends Node
 const SEQUENCE_ENV := "WAR_MANIFEST_SEQUENCE"
 const NOT_AFTER_ENV := "WAR_MANIFEST_NOT_AFTER"
 const OUT_ENV := "WAR_MANIFEST_OUT"
+const PROTOCOL_MIN_ENV := "WAR_MANIFEST_PROTOCOL_MIN"
+const PROTOCOL_MAX_ENV := "WAR_MANIFEST_PROTOCOL_MAX"
 
 ## Digits only. Deliberately narrower than [method String.is_valid_int], which
 ## accepts a leading sign: `"-1"` would parse cleanly here and then be refused
@@ -50,12 +54,14 @@ func _ready() -> void:
 	var sequence_text := OS.get_environment(SEQUENCE_ENV)
 	var not_after_text := OS.get_environment(NOT_AFTER_ENV)
 	var out_path := OS.get_environment(OUT_ENV)
+	var protocol_min_text := OS.get_environment(PROTOCOL_MIN_ENV)
+	var protocol_max_text := OS.get_environment(PROTOCOL_MAX_ENV)
 
 	if out_path.is_empty():
 		_fail("%s is not set — nowhere to write the manifest" % OUT_ENV)
 		return
 
-	var emitted := emit(sequence_text, not_after_text)
+	var emitted := emit(sequence_text, not_after_text, protocol_min_text, protocol_max_text)
 	if emitted["error"] != "":
 		_fail(emitted["error"])
 		return
@@ -74,16 +80,22 @@ func _ready() -> void:
 ## Returns `{ error: String, text: String }` — the shape [UpdateManifest] uses.
 ## `error` is "" on success; otherwise `text` is EMPTY, so a caller that ignores
 ## the error still cannot publish a partial manifest.
-static func emit(sequence_text: String, not_after_text: String) -> Dictionary:
+static func emit(sequence_text: String, not_after_text: String, protocol_min_text: String, protocol_max_text: String) -> Dictionary:
 	var sequence := parse_sequence(sequence_text)
 	if sequence["error"] != "":
 		return {"error": sequence["error"], "text": ""}
+	var protocol_min := parse_protocol_version(protocol_min_text, PROTOCOL_MIN_ENV)
+	if protocol_min["error"] != "":
+		return {"error": protocol_min["error"], "text": ""}
+	var protocol_max := parse_protocol_version(protocol_max_text, PROTOCOL_MAX_ENV)
+	if protocol_max["error"] != "":
+		return {"error": protocol_max["error"], "text": ""}
 
 	# `not_after` passes through as text on purpose: `UpdateManifest.build`
 	# validates it with the same `UpdateDecision.is_utc_datetime` the client
 	# enforces in the field, so re-checking the grammar here would be a second
 	# implementation of it that could disagree.
-	var built := UpdateManifest.build(sequence["value"], not_after_text)
+	var built := UpdateManifest.build(sequence["value"], not_after_text, protocol_min["value"], protocol_max["value"])
 	if built["error"] != "":
 		return {"error": "manifest: %s" % built["error"], "text": ""}
 
@@ -110,6 +122,16 @@ static func parse_sequence(text: String) -> Dictionary:
 	if pattern.search(text) == null:
 		return {"error": "%s='%s' is not a sequence of digits" % [SEQUENCE_ENV, text], "value": 0}
 
+	return {"error": "", "value": text.to_int()}
+
+
+static func parse_protocol_version(text: String, env_name: String) -> Dictionary:
+	if text.is_empty():
+		return {"error": "%s is not set — the live server range has no default" % env_name, "value": 0}
+	var pattern := RegEx.new()
+	assert(pattern.compile(SEQUENCE_PATTERN) == OK, "protocol-version pattern must compile")
+	if pattern.search(text) == null or text.to_int() < 1:
+		return {"error": "%s='%s' is not a positive protocol version" % [env_name, text], "value": 0}
 	return {"error": "", "value": text.to_int()}
 
 

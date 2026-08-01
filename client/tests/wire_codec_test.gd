@@ -14,7 +14,7 @@ extends Node
 ## class (a control failing for the wrong reason proves nothing):
 ##   * truncated  — every strict prefix of both goldens is refused as such
 ##   * trailing   — one extra byte after a valid frame
-##   * version    — versions 0 and 2 refused before any payload read
+##   * version    — versions 0 and 3 refused before any payload read
 ##   * kind       — kind 3 refused as `kind`, not as truncation (order proof)
 ##   * count      — a count claiming 65537 refuses as `count` with NO list
 ##                  bytes present (cap-before-need proof); 65536 is accepted
@@ -253,7 +253,7 @@ func _check_trailing(bytes: PackedByteArray) -> bool:
 
 
 func _check_version_refused(snapshot_bytes: PackedByteArray) -> bool:
-	for bad_version in [0, 2]:
+	for bad_version in [0, WireCodec.VERSION + 1]:
 		var b := snapshot_bytes.duplicate()
 		b.encode_u16(0, bad_version)
 		if not _expect_error(WireCodec.decode(b), WireCodec.ERR_VERSION, "version %d frame" % bad_version):
@@ -293,6 +293,8 @@ func _check_count_cap() -> bool:
 	full.resize(base + WireCodec.MAX_ENTITIES * 8)
 	for i in WireCodec.MAX_ENTITIES:
 		full.encode_u64(base + i * 8, i)
+	_u32(full, 0) # started casts
+	_u32(full, 0) # ended casts
 	var res := WireCodec.decode(full)
 	if not _expect_ok(res, "delta with exactly MAX_ENTITIES left ids"):
 		return false
@@ -395,6 +397,7 @@ func _snapshot_frame(tick: int, observer: int, entities: Array) -> PackedByteArr
 	_u64(b, tick)
 	_u64(b, observer)
 	_states(b, entities)
+	_u32(b, 0) # casts
 	return b
 
 
@@ -408,6 +411,8 @@ func _delta_frame(tick: int, entered: Array, moved: Array, left: Array) -> Packe
 	_u32(b, left.size())
 	for id: int in left:
 		_u64(b, id)
+	_u32(b, 0) # started casts
+	_u32(b, 0) # ended casts
 	return b
 
 

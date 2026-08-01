@@ -84,7 +84,7 @@ func newMobChaseFixtureWorld(chaseSpeed int64) *sim.World {
 
 func encodeMobChaseFrame(t *testing.T, w *sim.World, phase string) mobChaseFixtureFrame {
 	t.Helper()
-	encoded, err := EncodeSnapshot(w.Snapshot(mobChaseObserver))
+	encoded, err := EncodeSnapshotVersion(w.Snapshot(mobChaseObserver), LegacyVersion)
 	if err != nil {
 		t.Fatalf("encode %s frame at tick %d: %v", phase, w.Tick, err)
 	}

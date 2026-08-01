@@ -171,6 +171,8 @@ func _ready() -> void:
 		return
 	if not _check_cross_tier_pump(stream):
 		return
+	if not _check_cast_stream_pump():
+		return
 	if not _check_connect_lifecycle(stream):
 		return
 	if not _check_transport_contract_law():
@@ -244,6 +246,38 @@ func _frame_bytes(stream: Dictionary) -> Array[PackedByteArray]:
 	for frame: Variant in (stream["frames"] as Array):
 		out.append(((frame as Dictionary)["hex"] as String).hex_decode())
 	return out
+
+
+func _check_cast_stream_pump() -> bool:
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(FIXTURE))
+	if parsed is not Dictionary or (parsed as Dictionary).get("cast_stream") is not Dictionary:
+		_fail("fixture has no cast_stream for the ZoneConnection proof")
+		return false
+	var stream: Dictionary = (parsed as Dictionary)["cast_stream"]
+	var frames := _frame_bytes(stream)
+	if frames.size() != 3:
+		_fail("cast stream has %d frames, want join + start + end" % frames.size())
+		return false
+	var transport := FakeTransport.new()
+	var conn := ZoneConnection.new(transport)
+	if not conn.connect_to(URL):
+		_fail("cast stream connection refused: %s" % conn.error())
+		return false
+	transport.ready_state = WebSocketPeer.STATE_OPEN
+	transport.packets = [frames[0], frames[1]]
+	conn.poll()
+	if conn.error() != "" or conn.store().tick() != 1 or conn.store().cast_count() != 1:
+		_fail("ZoneConnection did not apply the cast start at exact tick 1: %s" % conn.error_detail())
+		return false
+	if not is_equal_approx(conn.store().cast_progress(100, 1), 1.0 / 3.0):
+		_fail("ZoneConnection store lost authoritative cast progress")
+		return false
+	transport.packets = [frames[2]]
+	conn.poll()
+	if conn.error() != "" or conn.store().tick() != 4 or conn.store().cast_count() != 0:
+		_fail("ZoneConnection did not apply the cast end at exact tick 4: %s" % conn.error_detail())
+		return false
+	return true
 
 
 ## Deliver the whole committed stream through the seam and require the SAME
@@ -484,6 +518,11 @@ func _check_admission_token_law() -> bool:
 	var got := Array(transport.handshake_headers)
 	if not got.has(want):
 		_fail("handshake headers %s carry no %s — the hub refuses the upgrade with 401" % [str(got), want])
+		OS.set_environment(ZoneConnection.ZONE_TOKEN_ENV, original)
+		return false
+	var want_version := "%s: %d" % [ZoneConnection.WIRE_VERSION_HEADER, WireCodec.VERSION]
+	if not got.has(want_version):
+		_fail("handshake headers %s carry no %s — the hub would retain entity-only v1" % [str(got), want_version])
 		OS.set_environment(ZoneConnection.ZONE_TOKEN_ENV, original)
 		return false
 

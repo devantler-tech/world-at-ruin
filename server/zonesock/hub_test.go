@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strconv"
 	"testing"
 	"time"
 
@@ -115,6 +116,20 @@ func dialToken(t *testing.T, ts *httptest.Server, authorization string) (*websoc
 	return websocket.Dial(ctx, ts.URL, &websocket.DialOptions{HTTPClient: ts.Client(), HTTPHeader: hdr})
 }
 
+func dialVersion(t *testing.T, ts *httptest.Server, secret []byte, observer sim.EntityID, version uint16) (*websocket.Conn, *http.Response, error) {
+	t.Helper()
+	tok, err := MintToken(secret, "allocation-a", observer, time.Now().Add(time.Minute))
+	if err != nil {
+		t.Fatalf("MintToken: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	hdr := http.Header{}
+	hdr.Set("Authorization", "Bearer "+tok)
+	hdr.Set(WireVersionHeader, strconv.FormatUint(uint64(version), 10))
+	return websocket.Dial(ctx, ts.URL, &websocket.DialOptions{HTTPClient: ts.Client(), HTTPHeader: hdr})
+}
+
 func closeConnection(t *testing.T, conn *websocket.Conn) {
 	t.Helper()
 	if err := conn.CloseNow(); err != nil && !errors.Is(err, net.ErrClosed) {
@@ -138,6 +153,77 @@ func readMessage(t *testing.T, c *websocket.Conn) wire.Message {
 		t.Fatalf("wire.Decode: %v", err)
 	}
 	return m
+}
+
+func TestWireVersionNegotiationPreservesV1AndSelectsCastBearingV2(t *testing.T) {
+	hub, secret := newTestHub(t, Config{})
+	ts := httptest.NewTLSServer(hub.Handler())
+	defer ts.Close()
+
+	w := sim.NewWorld(sim.DemoBounds)
+	w.Add(sim.Entity{ID: 1, Pos: sim.Vec3{}, Radius: 400})
+	w.Add(sim.Entity{ID: 2, Pos: sim.Vec3{X: 100}, Radius: 400})
+	w.Add(sim.Entity{ID: 100, Pos: sim.Vec3{X: 2_000}, Radius: 300})
+	w.AddMob(100, sim.MobParams{AggroRadiusMM: 10_000, CastTicks: 30, CircleRadiusMM: 1_500})
+	w.Step() // paint a real authoritative cast before either observer joins
+
+	quit := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-quit:
+				return
+			default:
+				hub.Tick(w)
+				time.Sleep(time.Millisecond)
+			}
+		}
+	}()
+	defer func() { close(quit); <-done }()
+
+	v1, err := dial(t, ts, secret, 1)
+	if err != nil {
+		t.Fatalf("dial retained v1: %v", err)
+	}
+	defer closeConnection(t, v1)
+	legacyJoin := readMessage(t, v1)
+	if legacyJoin.Version != wire.LegacyVersion || len(legacyJoin.Snapshot.Casts) != 0 {
+		t.Fatalf("no-header peer received %+v, want cast-free wire v%d", legacyJoin, wire.LegacyVersion)
+	}
+
+	v2, resp, err := dialVersion(t, ts, secret, 2, wire.Version)
+	if resp != nil && resp.Body != nil {
+		defer func() {
+			if closeErr := resp.Body.Close(); closeErr != nil {
+				t.Errorf("close v2 dial response: %v", closeErr)
+			}
+		}()
+	}
+	if err != nil {
+		t.Fatalf("dial v2: %v", err)
+	}
+	defer closeConnection(t, v2)
+	latestJoin := readMessage(t, v2)
+	if latestJoin.Version != wire.Version || len(latestJoin.Snapshot.Casts) != 1 || latestJoin.Snapshot.Casts[0].Caster != 100 {
+		t.Fatalf("v2 peer did not receive the authoritative cast: %+v", latestJoin)
+	}
+
+	unsupported, resp, err := dialVersion(t, ts, secret, 2, wire.Version+1)
+	if unsupported != nil {
+		closeConnection(t, unsupported)
+	}
+	if resp != nil && resp.Body != nil {
+		defer func() {
+			if closeErr := resp.Body.Close(); closeErr != nil {
+				t.Errorf("close unsupported-version response: %v", closeErr)
+			}
+		}()
+	}
+	if err == nil || resp == nil || resp.StatusCode != http.StatusUpgradeRequired {
+		t.Fatalf("unsupported version response = %+v, err = %v; want pre-upgrade 426", resp, err)
+	}
 }
 
 // TestJoinAndDeltaStreamOverTLS is the end-to-end proof of the ADR's happy
