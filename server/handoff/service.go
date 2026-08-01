@@ -36,11 +36,12 @@ type SessionVerifier interface {
 // reservation ID, scoped to the verified user ID, is the idempotency key for
 // an allocation attempt: repeated Allocate calls must not create duplicates,
 // and Release must idempotently reconcile that owner/key pair even when
-// Allocate returned an ambiguous timeout after the fleet committed it. A
-// newer AttemptID conditionally owns the same lease; Release from a stale
-// attempt must be a no-op so overlapping retries cannot tear down the winner.
-// Unclaimed allocations must be reclaimed automatically at LeaseExpiresAt;
-// the zone admission adapter claims the current attempt on first valid use.
+// Allocate returned an ambiguous timeout after the fleet committed it. A fresh
+// AttemptID for the same reservation reuses its unexpired durable allocation;
+// overlapping retries must not tear it down after either caller can receive a
+// handoff. Expired attempts may be fenced and replaced. Unclaimed allocations
+// must be reclaimed automatically at LeaseExpiresAt; the zone admission
+// adapter claims the current attempt on first valid use.
 // Concrete Agones allocation is deliberately outside this transport-neutral
 // core; an adapter must return the allocation that owns the endpoint.
 type Allocator interface {
@@ -71,10 +72,11 @@ type Allocation struct {
 	Observer        sim.EntityID
 	AdmissionSecret []byte
 	LeaseExpiresAt  time.Time
-	// CleanupAttemptID is the server-internal durable owner to use if a later
-	// handoff stage fails after the allocator adopted a quarantined attempt.
-	// It is never included in the player-facing Handoff.
-	CleanupAttemptID string
+	// RetainOnFailure tells the server that this allocation existed before the
+	// current transport attempt. A later failure must leave its durable no-show
+	// lease to arbitrate concurrent retries and eventual cleanup. It is never
+	// included in the player-facing Handoff.
+	RetainOnFailure bool
 }
 
 // Handoff is the only connection material returned to a player.
@@ -177,29 +179,21 @@ func (s *Service) CreateHandoff(ctx context.Context, request Request) (Handoff, 
 			status.Error(status.Code(err), "handoff: allocate GameServer"),
 		)
 	}
-	if allocation.CleanupAttemptID != "" {
-		if !validAllocationID(allocation.CleanupAttemptID) {
-			return Handoff{}, s.releaseReservationAfterFailure(
-				ctx,
-				allocationRequest,
-				errors.New("handoff: allocation cleanup attempt ID is invalid"),
-			)
-		}
-		allocationRequest.AttemptID = allocation.CleanupAttemptID
-	}
 	if err := ctx.Err(); err != nil {
-		return Handoff{}, s.releaseReservationAfterFailure(
+		return Handoff{}, s.failAfterAllocation(
 			ctx,
 			allocationRequest,
+			allocation,
 			err,
 		)
 	}
 	allocation.ServerName = strings.TrimSuffix(allocation.ServerName, ".")
 	now := s.now()
 	if err := s.validateAllocation(allocation, now); err != nil {
-		return Handoff{}, s.releaseReservationAfterFailure(
+		return Handoff{}, s.failAfterAllocation(
 			ctx,
 			allocationRequest,
+			allocation,
 			err,
 		)
 	}
@@ -216,16 +210,18 @@ func (s *Service) CreateHandoff(ctx context.Context, request Request) (Handoff, 
 		expiresAt,
 	)
 	if err != nil {
-		return Handoff{}, s.releaseReservationAfterFailure(
+		return Handoff{}, s.failAfterAllocation(
 			ctx,
 			allocationRequest,
+			allocation,
 			errors.New("handoff: mint allocation token"),
 		)
 	}
 	if err := ctx.Err(); err != nil {
-		return Handoff{}, s.releaseReservationAfterFailure(
+		return Handoff{}, s.failAfterAllocation(
 			ctx,
 			allocationRequest,
+			allocation,
 			err,
 		)
 	}
@@ -258,6 +254,18 @@ func (s *Service) validateAllocation(allocation Allocation, now time.Time) error
 		return errors.New("handoff: unclaimed allocation lease is expired")
 	}
 	return nil
+}
+
+func (s *Service) failAfterAllocation(
+	ctx context.Context,
+	request AllocationRequest,
+	allocation Allocation,
+	handoffErr error,
+) error {
+	if allocation.RetainOnFailure {
+		return handoffErr
+	}
+	return s.releaseReservationAfterFailure(ctx, request, handoffErr)
 }
 
 func (s *Service) releaseReservationAfterFailure(

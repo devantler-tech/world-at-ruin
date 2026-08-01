@@ -231,6 +231,66 @@ type concurrentResources struct {
 	reconcileCalls   int
 }
 
+type overlappingReconcileResources struct {
+	provisioned       Provisioned
+	reconcilesReady   chan struct{}
+	allowReconciles   chan struct{}
+	mu                sync.Mutex
+	reconcileRequests []handoff.AllocationRequest
+	releases          []nakamalease.Lease
+}
+
+func newOverlappingReconcileResources() *overlappingReconcileResources {
+	return &overlappingReconcileResources{
+		provisioned: Provisioned{
+			Allocation: validAllocation(),
+			SecretRef:  "zone-admission-gameserver-17",
+		},
+		reconcilesReady: make(chan struct{}),
+		allowReconciles: make(chan struct{}),
+	}
+}
+
+func (r *overlappingReconcileResources) Provision(
+	context.Context,
+	handoff.AllocationRequest,
+	time.Time,
+) (Provisioned, error) {
+	return Provisioned{}, errors.New("test resources: unexpected redispatch")
+}
+
+func (r *overlappingReconcileResources) Reconcile(
+	_ context.Context,
+	request handoff.AllocationRequest,
+	_ time.Time,
+) (Provisioned, error) {
+	r.mu.Lock()
+	r.reconcileRequests = append(r.reconcileRequests, request)
+	if len(r.reconcileRequests) == 2 {
+		close(r.reconcilesReady)
+	}
+	r.mu.Unlock()
+	<-r.allowReconciles
+	return r.provisioned, nil
+}
+
+func (r *overlappingReconcileResources) Resolve(
+	context.Context,
+	nakamalease.Lease,
+) (handoff.Allocation, error) {
+	return r.provisioned.Allocation, nil
+}
+
+func (r *overlappingReconcileResources) Release(
+	_ context.Context,
+	lease nakamalease.Lease,
+) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.releases = append(r.releases, lease)
+	return nil
+}
+
 func newConcurrentResources() *concurrentResources {
 	return &concurrentResources{
 		provisioned: Provisioned{
@@ -820,7 +880,7 @@ func TestServiceRetryReconcilesTheQuarantinedAttemptWithoutRedispatch(t *testing
 	}
 }
 
-func TestServiceRetryCleansAReconciledAttemptByItsPersistedOwner(t *testing.T) {
+func TestServiceRetryRetainsAReconciledAttemptWhenLaterStageFails(t *testing.T) {
 	storage := newMemoryStorage()
 	store := newLeaseStore(t, storage)
 	resources := &recordingResources{
@@ -869,18 +929,166 @@ func TestServiceRetryCleansAReconciledAttemptByItsPersistedOwner(t *testing.T) {
 	if _, err := service.CreateHandoff(context.Background(), request); err == nil {
 		t.Fatal("retry with an invalid reconciled endpoint returned nil, want an error")
 	}
-	if len(resources.releases) != 1 || resources.releases[0].AttemptID != testAttemptID {
+	if len(resources.releases) != 0 {
 		t.Fatalf(
-			"retry cleanup releases = %+v, want persisted attempt-7 owner",
+			"retry cleanup releases = %+v, want the reused allocation retained",
 			resources.releases,
 		)
 	}
-	if _, err := store.Load(
+	record, err := store.Load(
 		context.Background(),
 		testUserID,
 		testReservationID,
-	); !errors.Is(err, nakamalease.ErrNotFound) {
-		t.Fatalf("invalid reconciled attempt survived cleanup: %v", err)
+	)
+	if err != nil {
+		t.Fatalf("load retained reconciled attempt: %v", err)
+	}
+	if record.Lease.AttemptID != testAttemptID ||
+		record.State(testNow) != nakamalease.StateUnclaimed {
+		t.Fatalf("retained reconciled attempt = %+v, want unclaimed attempt-7", record.Lease)
+	}
+}
+
+func TestServiceRetryReusesFinalizedAllocationWithoutRedispatch(t *testing.T) {
+	storage := newMemoryStorage()
+	store := newLeaseStore(t, storage)
+	resources := &recordingResources{
+		provisioned: Provisioned{
+			Allocation: validAllocation(),
+			SecretRef:  "zone-admission-gameserver-17",
+		},
+	}
+	coordinator, err := NewCoordinator(
+		resources,
+		store,
+		Config{LeaseTTL: time.Minute, Now: func() time.Time { return testNow }},
+	)
+	if err != nil {
+		t.Fatalf("NewCoordinator returned an error: %v", err)
+	}
+	attempts := []string{testAttemptID, "attempt-8"}
+	service, err := handoff.NewService(
+		fixedVerifier(testUserID),
+		coordinator,
+		handoff.Config{
+			ZoneDomain: "edge.example",
+			Now:        func() time.Time { return testNow },
+			NewAttemptID: func() (string, error) {
+				attempt := attempts[0]
+				attempts = attempts[1:]
+				return attempt, nil
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("handoff.NewService returned an error: %v", err)
+	}
+	request := handoff.Request{
+		Session:       "signed-session",
+		ReservationID: testReservationID,
+	}
+	if _, err := service.CreateHandoff(context.Background(), request); err != nil {
+		t.Fatalf("first CreateHandoff returned an error: %v", err)
+	}
+	resources.events = nil
+	resources.resolutions = nil
+
+	got, err := service.CreateHandoff(context.Background(), request)
+	if err != nil {
+		t.Fatalf("transport retry returned an error: %v", err)
+	}
+	if got.ServerName != validAllocation().ServerName {
+		t.Fatalf("transport retry handoff = %+v, want durable allocation", got)
+	}
+	if len(resources.provisions) != 1 ||
+		len(resources.resolutions) != 1 ||
+		resources.resolutions[0].AttemptID != testAttemptID {
+		t.Fatalf(
+			"transport retry calls = provisions %+v/resolutions %+v, want one dispatch then attempt-7 resolve",
+			resources.provisions,
+			resources.resolutions,
+		)
+	}
+	if len(resources.releases) != 0 {
+		t.Fatalf("transport retry released durable allocation: %+v", resources.releases)
+	}
+}
+
+func TestOverlappingTransportRetriesRetainTheSharedDurableAllocation(t *testing.T) {
+	storage := newMemoryStorage()
+	store := newLeaseStore(t, storage)
+	staging, err := store.Create(context.Background(), nakamalease.Lease{
+		UserID:        testUserID,
+		ReservationID: testReservationID,
+		AttemptID:     testAttemptID,
+		ExpiresAt:     testNow.Add(time.Minute),
+		Staging:       true,
+	})
+	if err != nil {
+		t.Fatalf("create staging lease: %v", err)
+	}
+	if _, dispatch, err := store.BeginDispatch(
+		context.Background(),
+		staging,
+		testAttemptID,
+	); err != nil || !dispatch {
+		t.Fatalf("begin durable dispatch = %t, %v; want dispatch owner", dispatch, err)
+	}
+	resources := newOverlappingReconcileResources()
+	coordinator, err := NewCoordinator(
+		resources,
+		store,
+		Config{LeaseTTL: time.Minute, Now: func() time.Time { return testNow }},
+	)
+	if err != nil {
+		t.Fatalf("NewCoordinator returned an error: %v", err)
+	}
+
+	type result struct {
+		allocation handoff.Allocation
+		err        error
+	}
+	results := make(chan result, 2)
+	for _, attemptID := range []string{"attempt-8", "attempt-9"} {
+		request := validRequest()
+		request.AttemptID = attemptID
+		go func() {
+			allocation, allocateErr := coordinator.Allocate(context.Background(), request)
+			results <- result{allocation: allocation, err: allocateErr}
+		}()
+	}
+	<-resources.reconcilesReady
+	close(resources.allowReconciles)
+
+	for range 2 {
+		got := <-results
+		if got.err != nil {
+			t.Fatalf("overlapping transport retry returned an error: %v", got.err)
+		}
+		if got.allocation.ID != validAllocation().ID || !got.allocation.RetainOnFailure {
+			t.Fatalf("overlapping retry allocation = %+v, want retained durable allocation", got.allocation)
+		}
+	}
+	record, err := store.Load(context.Background(), testUserID, testReservationID)
+	if err != nil {
+		t.Fatalf("load shared durable allocation: %v", err)
+	}
+	if record.Lease.AttemptID != testAttemptID ||
+		record.State(testNow) != nakamalease.StateUnclaimed {
+		t.Fatalf("shared durable allocation = %+v, want unclaimed attempt-7", record.Lease)
+	}
+	resources.mu.Lock()
+	defer resources.mu.Unlock()
+	if len(resources.reconcileRequests) != 2 {
+		t.Fatalf("reconcile requests = %+v, want two observations", resources.reconcileRequests)
+	}
+	for _, request := range resources.reconcileRequests {
+		if request.AttemptID != testAttemptID {
+			t.Fatalf("reconcile request = %+v, want persisted attempt-7", request)
+		}
+	}
+	if len(resources.releases) != 0 {
+		t.Fatalf("overlapping retry released shared allocation: %+v", resources.releases)
 	}
 }
 
@@ -1397,9 +1605,10 @@ func TestAllocateReplayRefusesResourceMaterialOutsideTheDurableLease(t *testing.
 	}
 }
 
-func TestAllocateNewAttemptReleasesAndReplacesTheUnclaimedLease(t *testing.T) {
+func TestAllocateExpiredAttemptReleasesAndReplacesTheLease(t *testing.T) {
 	storage := newMemoryStorage()
 	store := newLeaseStore(t, storage)
+	now := testNow
 	resources := &recordingResources{
 		provisioned: Provisioned{
 			Allocation: validAllocation(),
@@ -1411,7 +1620,7 @@ func TestAllocateNewAttemptReleasesAndReplacesTheUnclaimedLease(t *testing.T) {
 		store,
 		Config{
 			LeaseTTL: time.Minute,
-			Now:      func() time.Time { return testNow },
+			Now:      func() time.Time { return now },
 		},
 	)
 	if err != nil {
@@ -1424,12 +1633,14 @@ func TestAllocateNewAttemptReleasesAndReplacesTheUnclaimedLease(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load first allocation lease: %v", err)
 	}
+	now = testNow.Add(2 * time.Minute)
 
 	nextAllocation := validAllocation()
 	nextAllocation.ID = "gameserver-18"
 	nextAllocation.ServerName = "zone-18.edge.example"
 	nextAllocation.Observer = sim.EntityID(84)
 	nextAllocation.AdmissionSecret = bytes.Repeat([]byte{0x84}, 32)
+	nextAllocation.LeaseExpiresAt = now.Add(time.Minute)
 	resources.provisioned = Provisioned{
 		Allocation: nextAllocation,
 		SecretRef:  "zone-admission-gameserver-18",
@@ -1444,10 +1655,10 @@ func TestAllocateNewAttemptReleasesAndReplacesTheUnclaimedLease(t *testing.T) {
 		switch {
 		case loadErr != nil:
 			return fmt.Errorf("load replacement barrier: %w", loadErr)
-		case durable.State(testNow) != nakamalease.StateReleasing:
+		case durable.State(now) != nakamalease.StateReleasing:
 			return fmt.Errorf(
 				"replacement barrier state = %q, want %q",
-				durable.State(testNow),
+				durable.State(now),
 				nakamalease.StateReleasing,
 			)
 		case released != durable.Lease:
@@ -1503,9 +1714,10 @@ func TestAllocateNewAttemptReleasesAndReplacesTheUnclaimedLease(t *testing.T) {
 	}
 }
 
-func TestAllocateDetachesSupersededResourceCleanupFromCallerCancellation(t *testing.T) {
+func TestAllocateDetachesExpiredResourceCleanupFromCallerCancellation(t *testing.T) {
 	storage := newMemoryStorage()
 	store := newLeaseStore(t, storage)
+	now := testNow
 	resources := &recordingResources{
 		provisioned: Provisioned{
 			Allocation: validAllocation(),
@@ -1517,7 +1729,7 @@ func TestAllocateDetachesSupersededResourceCleanupFromCallerCancellation(t *test
 		store,
 		Config{
 			LeaseTTL: time.Minute,
-			Now:      func() time.Time { return testNow },
+			Now:      func() time.Time { return now },
 		},
 	)
 	if err != nil {
@@ -1526,6 +1738,7 @@ func TestAllocateDetachesSupersededResourceCleanupFromCallerCancellation(t *test
 	if _, err := coordinator.Allocate(context.Background(), validRequest()); err != nil {
 		t.Fatalf("first Allocate returned an error: %v", err)
 	}
+	now = testNow.Add(2 * time.Minute)
 	ctx, cancel := context.WithCancel(context.Background())
 	resources.releaseContextCheck = func(cleanupCtx context.Context) error {
 		cancel()
@@ -1534,6 +1747,7 @@ func TestAllocateDetachesSupersededResourceCleanupFromCallerCancellation(t *test
 	next := validRequest()
 	next.AttemptID = "attempt-8"
 	resources.provisioned.Allocation.ID = "gameserver-18"
+	resources.provisioned.Allocation.LeaseExpiresAt = now.Add(time.Minute)
 	resources.provisioned.SecretRef = "zone-admission-gameserver-18"
 
 	if _, err := coordinator.Allocate(ctx, next); errors.Is(err, ErrReconciliation) {
@@ -1610,9 +1824,10 @@ func TestAllocateNewAttemptCannotTouchAClaimedLease(t *testing.T) {
 	}
 }
 
-func TestAllocateReplacementKeepsTheReleasingLeaseWhenResourceReleaseFails(t *testing.T) {
+func TestAllocateExpiredReplacementKeepsTheReleasingLeaseWhenResourceReleaseFails(t *testing.T) {
 	storage := newMemoryStorage()
 	store := newLeaseStore(t, storage)
+	now := testNow
 	resources := &recordingResources{
 		provisioned: Provisioned{
 			Allocation: validAllocation(),
@@ -1624,7 +1839,7 @@ func TestAllocateReplacementKeepsTheReleasingLeaseWhenResourceReleaseFails(t *te
 		store,
 		Config{
 			LeaseTTL: time.Minute,
-			Now:      func() time.Time { return testNow },
+			Now:      func() time.Time { return now },
 		},
 	)
 	if err != nil {
@@ -1637,6 +1852,7 @@ func TestAllocateReplacementKeepsTheReleasingLeaseWhenResourceReleaseFails(t *te
 	if err != nil {
 		t.Fatalf("load first allocation lease: %v", err)
 	}
+	now = testNow.Add(2 * time.Minute)
 	resources.events = nil
 	resources.provisions = nil
 	resources.releases = nil

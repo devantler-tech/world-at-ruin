@@ -161,18 +161,25 @@ func (c *Coordinator) Allocate(
 		return handoff.Allocation{}, nakamalease.ErrExpired
 	}
 	if hasCurrent && current.Lease.AttemptID != request.AttemptID {
-		if current.Lease.Staging && current.Lease.Dispatched {
-			if current.Lease.Releasing {
-				return handoff.Allocation{}, nakamalease.ErrReleasing
+		switch {
+		case current.State(now) == nakamalease.StateUnclaimed:
+			allocation, resolveErr := c.resolveDurable(ctx, current.Lease)
+			if resolveErr == nil {
+				allocation.RetainOnFailure = true
 			}
+			return allocation, resolveErr
+		case current.Lease.Staging &&
+			current.Lease.Dispatched &&
+			current.Lease.Releasing:
+			return handoff.Allocation{}, nakamalease.ErrReleasing
+		case current.Lease.Staging && current.Lease.Dispatched:
 			// A transport retry creates a fresh transient attempt ID. Adopt the
 			// durable dispatch owner so the retry observes that exact external
 			// operation instead of wedging the quarantine forever.
 			request.AttemptID = current.Lease.AttemptID
-		} else {
-			if current.State(now) == nakamalease.StateClaimed {
-				return handoff.Allocation{}, nakamalease.ErrClaimed
-			}
+		case current.State(now) == nakamalease.StateClaimed:
+			return handoff.Allocation{}, nakamalease.ErrClaimed
+		default:
 			current, err = c.leases.BeginRelease(
 				ctx,
 				current,
@@ -244,7 +251,7 @@ func (c *Coordinator) Allocate(
 			request,
 		); progressed {
 			if winnerErr == nil && requestedAttemptID != request.AttemptID {
-				winner.CleanupAttemptID = request.AttemptID
+				winner.RetainOnFailure = true
 			}
 			return winner, winnerErr
 		} else if winnerErr != nil {
@@ -272,13 +279,29 @@ func (c *Coordinator) Allocate(
 	}
 	_, err = c.leases.Finalize(ctx, staging, next)
 	if err != nil {
-		if releaseErr := c.reconcileAttempt(ctx, request, &next); releaseErr != nil {
+		progressCtx, cancel := context.WithTimeout(
+			context.WithoutCancel(ctx),
+			stagedCleanupTimeout,
+		)
+		defer cancel()
+		if winner, progressed, winnerErr := c.resolveProgressedAttempt(
+			progressCtx,
+			request,
+		); progressed {
+			if winnerErr == nil && requestedAttemptID != request.AttemptID {
+				winner.RetainOnFailure = true
+			}
+			return winner, winnerErr
+		} else if winnerErr != nil {
+			return handoff.Allocation{}, winnerErr
+		}
+		if releaseErr := c.reconcileAttempt(progressCtx, request, &next); releaseErr != nil {
 			return handoff.Allocation{}, ErrReconciliation
 		}
 		return handoff.Allocation{}, err
 	}
 	if requestedAttemptID != request.AttemptID {
-		provisioned.Allocation.CleanupAttemptID = request.AttemptID
+		provisioned.Allocation.RetainOnFailure = true
 	}
 	return provisioned.Allocation, nil
 }
