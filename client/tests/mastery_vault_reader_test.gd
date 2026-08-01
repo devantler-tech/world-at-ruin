@@ -38,13 +38,18 @@ func _ready() -> void:
 		return
 	_check(bool(mastery.call("restore", snapshot)),
 		"Mastery refused the vault-v5 snapshot after SaveVault accepted it")
+	var future_blade_live := Mastery._normalized_restored_track(
+		snapshot["weapons"]["future_blade"], Mastery.BANK_STEP)
+	var staff_live := Mastery._normalized_restored_track(
+		snapshot["weapons"]["staff"], Mastery.BANK_STEP)
 	_check(mastery.weapons() == ["future_blade", "staff"],
 		"restore did not preserve stable future weapon ids")
-	_check(mastery.banked("future_blade") == 200,
-		"restore changed the banked ratchet floor")
-	_check(mastery.unbanked("future_blade") == 37,
-		"restore changed the at-risk current bar")
-	_check(mastery.banked("staff") == 0 and mastery.unbanked("staff") == 75,
+	_check(mastery.banked("future_blade") == int(future_blade_live["banked"]),
+		"restore did not apply the live banked ratchet floor")
+	_check(mastery.unbanked("future_blade") == int(future_blade_live["unbanked"]),
+		"restore did not apply the live at-risk current bar")
+	_check(mastery.banked("staff") == int(staff_live["banked"])
+			and mastery.unbanked("staff") == int(staff_live["unbanked"]),
 		"restore lost an independent weapon track")
 	_check(mastery.bloodstain() == {"future_blade": 12},
 		"restore lost or changed the one standing bloodstain")
@@ -55,7 +60,7 @@ func _ready() -> void:
 	# the live progression ledger behind its API.
 	snapshot["weapons"]["future_blade"]["banked"] = 0
 	snapshot["bloodstain"]["future_blade"] = 99
-	_check(mastery.banked("future_blade") == 200,
+	_check(mastery.banked("future_blade") == int(future_blade_live["banked"]),
 		"the live mastery ledger aliases the parsed vault track")
 	_check(mastery.bloodstain() == {"future_blade": 12},
 		"the live mastery ledger aliases the parsed vault bloodstain")
@@ -150,10 +155,12 @@ func _check_lower_live_bar_normalization() -> void:
 	# Vault-v5 keeps its 100-point persisted unit, but live tuning may later use
 	# smaller bars. Restore must bank every already-completed live bar before a
 	# death can treat those points as at-risk progress.
-	var normalized := Mastery._normalized_restored_track(
-		{"banked": 100, "unbanked": 90}, 80)
+	var persisted := {"banked": 100, "unbanked": 90}
+	var normalized := Mastery._normalized_restored_track(persisted, 80)
 	_check(normalized == {"banked": 180, "unbanked": 10},
 		"restore left a completed lower live bar exposed to the death loop")
+	_check(persisted == {"banked": 100, "unbanked": 90},
+		"live normalization mutated the retained vault-v5 track")
 
 
 func _check_reader_only_writeback() -> void:

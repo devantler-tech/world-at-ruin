@@ -191,8 +191,10 @@ func _check_fixture(version: int, path: String) -> String:
 			return "the Mastery application path did not restore the v5 weapon set exactly"
 		for weapon_id: String in expected_weapons:
 			var expected_track: Dictionary = mastery_snapshot["weapons"][weapon_id]
-			if mastery.banked(weapon_id) != int(expected_track["banked"]) \
-					or mastery.unbanked(weapon_id) != int(expected_track["unbanked"]):
+			var expected_live_track := Mastery._normalized_restored_track(
+				expected_track, Mastery.BANK_STEP)
+			if mastery.banked(weapon_id) != int(expected_live_track["banked"]) \
+					or mastery.unbanked(weapon_id) != int(expected_live_track["unbanked"]):
 				return "the Mastery application path changed the v5 track for '%s'" % weapon_id
 		var expected_stain: Dictionary = mastery_snapshot["bloodstain"]
 		var actual_stain := mastery.bloodstain()

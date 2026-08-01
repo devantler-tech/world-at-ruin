@@ -87,11 +87,15 @@ func _assert_boot() -> void:
 		_begin_boot(true)
 		return
 
+	var future_blade_live := Mastery._normalized_restored_track(
+		MASTERY_PROBE["weapons"]["future_blade"], Mastery.BANK_STEP)
+	var staff_live := Mastery._normalized_restored_track(
+		MASTERY_PROBE["weapons"]["staff"], Mastery.BANK_STEP)
 	if mastery.weapons() != ["future_blade", "staff"] \
-			or mastery.banked("future_blade") != 200 \
-			or mastery.unbanked("future_blade") != 37 \
-			or mastery.banked("staff") != 0 \
-			or mastery.unbanked("staff") != 75 \
+			or mastery.banked("future_blade") != int(future_blade_live["banked"]) \
+			or mastery.unbanked("future_blade") != int(future_blade_live["unbanked"]) \
+			or mastery.banked("staff") != int(staff_live["banked"]) \
+			or mastery.unbanked("staff") != int(staff_live["unbanked"]) \
 			or mastery.bloodstain() != {"future_blade": 12}:
 		_fail("the production boot did not restore the complete mastery snapshot")
 		return
