@@ -31,12 +31,13 @@ const _PUBLIC_KEY_END := "-----END PUBLIC KEY-----"
 ##
 ## The order is the trust contract:
 ##   1. the offline root verifies the signing-key certificate;
-##   2. only that authenticated signing key verifies the manifest;
-##   3. only an authenticated manifest reaches the decision core.
+##   2. the offline root verifies the embedded revocation list and the
+##      authenticated certificate id is refused when that list names it;
+##   3. only an unrevoked authenticated signing key verifies the manifest;
+##   4. only an authenticated manifest reaches the decision core.
 ##
-## Revocation belongs between steps 1 and 2 and is deliberately not claimed
-## here yet. Keeping this boundary pure makes that insertion testable without
-## network, disk, clock, or scene dependencies.
+## The independently fetched revocation head remains outside this pure boundary;
+## adding it later does not change the embedded-list authentication order here.
 ##
 ## Returns `{trusted: bool, error: String, decision: Dictionary}`. A trust
 ## refusal always carries an empty decision so a caller cannot accidentally act
@@ -65,6 +66,12 @@ static func verify_and_decide(installed: Dictionary, manifest: Dictionary,
 		return _untrusted("signing-key certificate is not authenticated by the offline root: %s" %
 			str(certificate_verification["error"]))
 
+	var revocation_verification := _verify_revocation(
+		manifest.get("revocation"), certificate.get("id"),
+		certificate.get("algorithm"), root_public_key_pem)
+	if not bool(revocation_verification["valid"]):
+		return _untrusted(str(revocation_verification["error"]))
+
 	if not manifest.has("signature"):
 		return _untrusted("manifest carries no signing-key signature")
 	var manifest_payload := manifest.duplicate(true)
@@ -88,6 +95,53 @@ static func verify_and_decide(installed: Dictionary, manifest: Dictionary,
 		"error": "",
 		"decision": UpdateDecision.decide(installed, manifest),
 	}
+
+
+## Authenticate the embedded root-signed revocation set and refuse the current
+## certificate id before its key can authenticate the surrounding manifest.
+static func _verify_revocation(raw: Variant, certificate_id: Variant,
+		algorithm: Variant, root_public_key_pem: Variant) -> Dictionary:
+	if not (raw is Dictionary):
+		return _refused("manifest carries no root-signed revocation object")
+	var revocation: Dictionary = raw
+	if not UpdateDecision.is_int_id(revocation.get("version")):
+		return _refused("revocation version is missing or not a whole number")
+	if not (revocation.get("head_url") is String) \
+			or (revocation["head_url"] as String).is_empty():
+		return _refused("revocation head_url is missing or not a non-empty string")
+	if not (revocation.get("revoked_ids") is Array):
+		return _refused("revocation revoked_ids is missing or not an array")
+	if not revocation.has("root_signature"):
+		return _refused("revocation object carries no offline-root signature")
+
+	var seen_ids := {}
+	for raw_id: Variant in revocation["revoked_ids"]:
+		if not (raw_id is String) or (raw_id as String).is_empty():
+			return _refused("revocation contains an empty or non-string key id")
+		var key_id := str(raw_id)
+		if seen_ids.has(key_id):
+			return _refused("revocation contains duplicate key id '%s'" % key_id)
+		seen_ids[key_id] = true
+
+	var revocation_payload := revocation.duplicate(true)
+	revocation_payload.erase("root_signature")
+	var revocation_jcs := JCS.canonicalize(revocation_payload)
+	if str(revocation_jcs["error"]) != "":
+		return _refused("revocation object cannot be canonicalized: %s" %
+			str(revocation_jcs["error"]))
+	var root_verification := verify_signature(
+		algorithm,
+		root_public_key_pem,
+		str(revocation_jcs["text"]).to_utf8_buffer(),
+		revocation.get("root_signature"),
+	)
+	if not bool(root_verification["valid"]):
+		return _refused("revocation object is not authenticated by the offline root: %s" %
+			str(root_verification["error"]))
+	if seen_ids.has(str(certificate_id)):
+		return _refused("certified signing key '%s' is revoked by the offline root" %
+			str(certificate_id))
+	return {"valid": true, "error": ""}
 
 
 ## Verify an ECDSA P-256/SHA-256 signature over the exact message bytes.

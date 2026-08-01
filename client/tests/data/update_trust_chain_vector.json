@@ -1,62 +1,117 @@
 {
   "_": [
-    "OpenSSL 3.6.3 root-to-signing-key-to-manifest fixture for issue #604.",
-    "The private keys were discarded. Godot consumes only the signed objects and public root keys.",
-    "The certificate signature covers RFC 8785 JCS of key with root_signature excluded.",
-    "The manifest signature covers RFC 8785 JCS of the manifest with signature excluded."
+    "OpenSSL 3 root-to-signing-key-to-revocation-to-manifest fixture for issue #660.",
+    "Private keys are discarded. Godot consumes only signed objects and public root keys.",
+    "Certificate and revocation signatures cover RFC 8785 JCS with root_signature excluded.",
+    "Manifest signatures cover RFC 8785 JCS with signature excluded."
   ],
+  "duplicate_revocation_root_signature": "MEUCIQC4ejWLWpaj/jQxVhPV9SL7DwkSxfs7j85ZTftlbSNlzwIgPLesqH/qv735jlyslHwaWa8+xD319qxhZyB5VfeF2/o=",
   "installed": {
-    "shell_version": "0.1.14",
-    "pack_version": "0.1.14",
-    "save_schema": 1,
-    "save_capability": 1,
-    "protocol": 1,
-    "manifest_sequence_high_water": 41,
-    "key_epoch_high_water": 6,
     "key_certificate_required": true,
-    "observed_at": "2030-01-15T00:00:00Z"
+    "key_epoch_high_water": 6,
+    "manifest_sequence_high_water": 41,
+    "observed_at": "2030-01-15T00:00:00Z",
+    "pack_version": "0.1.14",
+    "protocol": 1,
+    "save_capability": 1,
+    "save_schema": 1,
+    "shell_version": "0.1.14"
   },
   "manifest": {
-    "schema": 1,
-    "sequence": 42,
+    "channel": "live",
+    "key": {
+      "algorithm": "ecdsa-p256-sha256",
+      "epoch": 7,
+      "id": "signing-key-2030-01",
+      "not_after": "2030-04-01T00:00:00Z",
+      "not_before": "2030-01-01T00:00:00Z",
+      "public_key": "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEjLk/JZ7QH2nQs68u8U3WqB5PipRb\nJZynbgeoJy5kzt9arTPGULMJsIbbY3ok2hkzuVUL0H2r4WFUEvFaM+fl9g==\n-----END PUBLIC KEY-----",
+      "root_signature": "MEUCICc6OlWWHXa+JxgmrYsUQ9hTP9oykPJojzLznqD036GcAiEA4DyM5X5BUaZveFxXrkF2o/IjLgj2KV7muzptu5V4D7M="
+    },
     "key_epoch": 7,
     "not_after": "2030-02-01T00:00:00Z",
-    "channel": "live",
+    "pack": {
+      "min_shell": "0.1.14",
+      "sha256": "y",
+      "size": 0,
+      "url": "x",
+      "version": "0.1.14"
+    },
+    "protocol": {
+      "max": 1,
+      "min": 1
+    },
+    "revocation": {
+      "head_url": "https://updates.worldatruin.example/live/revocation-head.json",
+      "revoked_ids": [],
+      "root_signature": "MEUCIC2ZUGP0QLbz2pTC7kGbAla2HO1aJEJq4cCT1udrPRDsAiEAmbnolmdQ4gMjYLO+bmAfKcgJ+2oxjUIhdrfiijrCyOw=",
+      "version": 4
+    },
+    "save_schema": {
+      "capability": 1,
+      "min": 1,
+      "writes": 1
+    },
+    "schema": 1,
+    "sequence": 42,
     "shell": {
       "current": "0.1.14",
       "min_supported": "0.1.0",
-      "reads_min": 1,
+      "reads_capability_max": 9,
       "reads_max": 9,
-      "reads_capability_max": 9
+      "reads_min": 1
     },
-    "pack": {
-      "version": "0.1.14",
-      "min_shell": "0.1.14",
-      "url": "x",
-      "sha256": "y",
-      "size": 0
-    },
-    "protocol": {
-      "min": 1,
-      "max": 1
-    },
-    "save_schema": {
-      "min": 1,
-      "writes": 1,
-      "capability": 1
-    },
+    "signature": "MEUCIGC/L4+4OxUXXQ7afnkzSKO5s+1Xx3mRmbAYnpQI1iICAiEAsLkpSqE8CSLivVOf4mG0TTYkviPuYY4jojF50YylzgA="
+  },
+  "revoked_manifest": {
+    "channel": "live",
     "key": {
       "algorithm": "ecdsa-p256-sha256",
-      "id": "signing-key-2030-01",
       "epoch": 7,
-      "not_before": "2030-01-01T00:00:00Z",
+      "id": "signing-key-2030-01",
       "not_after": "2030-04-01T00:00:00Z",
-      "public_key": "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEl5/QD4sUZ60rj4fHJMu9yTCOIcfp\nTO5HXFP5a+N3Djccc3mtRSpL2oZt/Dwhi6imO1AzRJttJbda7zLgouW6Ww==\n-----END PUBLIC KEY-----\n",
-      "root_signature": "MEYCIQCOTQLJlSkY25Ur+ZJYAGpIBJxl3pLPUui84HXfgVwrHAIhAOZTguQFr6vistLq6XcsjCNU1haNTP4skmHc7OLtZFRo"
+      "not_before": "2030-01-01T00:00:00Z",
+      "public_key": "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEjLk/JZ7QH2nQs68u8U3WqB5PipRb\nJZynbgeoJy5kzt9arTPGULMJsIbbY3ok2hkzuVUL0H2r4WFUEvFaM+fl9g==\n-----END PUBLIC KEY-----",
+      "root_signature": "MEUCICc6OlWWHXa+JxgmrYsUQ9hTP9oykPJojzLznqD036GcAiEA4DyM5X5BUaZveFxXrkF2o/IjLgj2KV7muzptu5V4D7M="
     },
-    "signature": "MEYCIQC5EiexspzOAwbx6+FrbJ9ux6T6TbL0XQ6p2j8/fqWK+wIhALtUXN7JvXNQ/Mae02nTGsnB42VLpmfne+2jn4rXEUOH"
+    "key_epoch": 7,
+    "not_after": "2030-02-01T00:00:00Z",
+    "pack": {
+      "min_shell": "0.1.14",
+      "sha256": "y",
+      "size": 0,
+      "url": "x",
+      "version": "0.1.14"
+    },
+    "protocol": {
+      "max": 1,
+      "min": 1
+    },
+    "revocation": {
+      "head_url": "https://updates.worldatruin.example/live/revocation-head.json",
+      "revoked_ids": [
+        "signing-key-2030-01"
+      ],
+      "root_signature": "MEUCIQCUJYK1dBfnn4W2ttkk1Uwul6ts12m39bMXh2e2ipuYxAIgCMtT39yBpWQHKFY62KDG0aIG1+i1GxSWAyOO4KccnRU=",
+      "version": 4
+    },
+    "save_schema": {
+      "capability": 1,
+      "min": 1,
+      "writes": 1
+    },
+    "schema": 1,
+    "sequence": 42,
+    "shell": {
+      "current": "0.1.14",
+      "min_supported": "0.1.0",
+      "reads_capability_max": 9,
+      "reads_max": 9,
+      "reads_min": 1
+    },
+    "signature": "MEYCIQCkLTKA/fkwaTEjvmaaATbkmeResS5jYBh0FHoUFZ32dQIhAKvYibimX9ue1aFnCJ+BCSDGNPAH+pb10ddlLgwDr+Xk"
   },
-  "self_signed_certificate_signature": "MEUCICntMVCk+Dp2HVMlMSEk1Tjr8s1gjqDqna1wQ6SQsGDCAiEA2yvdJxMlFQc06QY1sYP/KVZLtRe/8nFsbRoodjXKhyA=",
   "root_public_key_path": "res://tests/data/update_trust_chain_root_public.pem",
+  "self_signed_certificate_signature": "MEUCID4ARexHSH18wZ6H4xcPLQXFNGo9mAvRUi1L9FBww0f3AiEA8QLpNHnnK02olfdCnOGOjF0y1XNprgSr+Q0aXN9Tpq0=",
   "wrong_root_public_key_path": "res://tests/data/update_trust_chain_wrong_root_public.pem"
 }
