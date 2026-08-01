@@ -42,6 +42,7 @@ func _ready() -> void:
 	_check_refusal("a future-version recipe", _future_version_recipe())
 	_check_refusal("an unknown-field recipe", _unknown_field_recipe())
 	_check_refusal("an unknown-name recipe", _unknown_name_recipe())
+	_check_refusal("a singular deformation recipe", _singular_deformation_recipe())
 	_check_malformed_recipe_is_refused()
 	_check_latch_survives_the_file_disappearing()
 
@@ -191,6 +192,17 @@ func _unknown_name_recipe() -> Dictionary:
 	if recipe.is_empty():
 		return {}
 	recipe["skin"] = "no_such_skin"
+	return recipe
+
+
+## A persisted recipe can be structurally valid while carrying a scalar that
+## makes skeleton transforms singular. It must take the same path-latched,
+## byte-preserving refusal path as every other unreadable character (#692).
+func _singular_deformation_recipe() -> Dictionary:
+	var recipe := _wanderer()
+	if recipe.is_empty():
+		return {}
+	recipe["bone_girth"] = { "upperarm": 0.0 }
 	return recipe
 
 
