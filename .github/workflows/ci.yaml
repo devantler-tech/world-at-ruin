@@ -752,7 +752,7 @@ jobs:
             max_budget=$(cut -d= -f2 /tmp/scale-budget-base | sort -n | tail -1)
             while IFS= read -r line; do
               key=${line%%=*}; value=${line#*=}
-              if grep -q "^${key}=" /tmp/scale-budget-base; then continue; fi
+              if cut -d= -f1 /tmp/scale-budget-base | grep -Fxq -- "$key"; then continue; fi
               if [ "$value" -gt "$max_budget" ]; then
                 echo "::error::New category [$key] claims power budget $value, above the highest shipped budget ($max_budget) — a new category may not widen the power scale"
                 exit 1
@@ -765,7 +765,7 @@ jobs:
             min_floor=$(cut -d= -f2 /tmp/scale-floor-base | sort -n | head -1)
             while IFS= read -r line; do
               key=${line%%=*}; value=${line#*=}
-              if grep -q "^${key}=" /tmp/scale-floor-base; then continue; fi
+              if cut -d= -f1 /tmp/scale-floor-base | grep -Fxq -- "$key"; then continue; fi
               if [ "$value" -lt "$min_floor" ]; then
                 echo "::error::New category [$key] claims cycle floor ${value}ms, below the fastest shipped floor (${min_floor}ms) — a new category may not widen the throughput scale"
                 exit 1
