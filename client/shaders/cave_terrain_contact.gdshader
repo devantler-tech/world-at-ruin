@@ -389,97 +389,22 @@ void fragment() {
 	float hx = terrain_ground_noise(terrain_world_pos.xz + vec2(e, 0.0), grain_scale);
 	float hz = terrain_ground_noise(terrain_world_pos.xz + vec2(0.0, e), grain_scale);
 	vec2 grad = vec2(0.0);
-	// Same seam-slope variance as terrain.gdshader, carried as cavity darkening
-	// below. This band blends into that ground, so a contact whose seams
-	// stopped reading at the distance the ground's still read would draw a
-	// visible join exactly where the two meet.
+	// The seam-slope variance, carried as cavity darkening below.
 	float seam_slope_var = 0.0;
+	// The same shared relief the ground uses (terrain_surface.gdshaderinc). This
+	// band blends into that ground, so a contact whose seams stopped reading at
+	// the distance the ground's still read would draw a visible join exactly
+	// where the two meet — which is why it is one helper and not a copy (#464).
 	if (plates_enabled) {
-		// Same closed-form crack gradient as terrain.gdshader, for the same
-		// reason: differencing the crack field samples a step narrower than a
-		// pixel past a few metres, which IS the aliasing rather than a reading
-		// of it. grad(f2 - f1) = normalize(uv - c2) - normalize(uv - c1).
-		vec2 d1 = plate_uv - plate_c1;
-		vec2 d2 = plate_uv - plate_c2;
-		vec2 gsep = d2 * inversesqrt(max(dot(d2, d2), 1e-12))
-			- d1 * inversesqrt(max(dot(d1, d1), 1e-12));
-		float cw_relief = max(crack_width, 1e-6);
-		// Same footprint-integrated groove as terrain.gdshader, for the same
-		// reason and necessarily the same form: the relief was read at the
-		// pixel centre while the thing being read (the crack profile's slope,
-		// which peaks at w/2 and is zero at both ends) is finer than the mark
-		// the guards below are keyed on. The mean tilt is what a normal can
-		// carry; the variance about it is what a normal cannot, because a
-		// pixel spanning a whole groove sees its two walls cancel. The full
-		// derivation, the top-hat justification and the limits are in
-		// terrain.gdshader — this is the same integral over the same profile.
-		float amp_scale = length(gsep) * (1.5 / cw_relief) * plate_scale;
-		float amp = min(amp_scale * plate_mask_relief, 0.4);
-		float amp_nb = min(amp_scale * plate_mask_relief_nb, 0.4);
-		float amp_nb3 = min(amp_scale * plate_mask_relief_nb3, 0.4);
-		float seam_h = max(edge_fw, 1e-6);
-		float half_h = 0.5 * seam_h;
-		float s_sep = f2 - f1;
-		float prof = (min(s_sep + half_h, cw_relief)
-			- min(abs(s_sep - half_h), cw_relief)) / seam_h;
-		float mean_tilt = amp * prof;
-		float spread = terrain_plate_cavity_spread(s_sep, seam_h, cw_relief);
-		// Same three-candidate baseline as terrain.gdshader, over the same
-		// weights every per-cell quantity above uses. A pixel straddling a
-		// slab-to-bare contact contains all of those cells' seams, and gating the
-		// integral by whichever cell owns the pixel centre steps the cavity as
-		// that centre crosses. `plate_w` rather than a pairwise mix keeps the
-		// triple junction continuous; the branch below then generalizes the
-		// per-cell factor through the same symmetric window as the surface.
-		float seam_amp_sq = amp * amp * plate_w.x
-			+ amp_nb * amp_nb * plate_w.y + amp_nb3 * amp_nb3 * plate_w.z;
-		if (plate_window_gate > 0.0 && plate_window_w > 0.0) {
-			// The resolved cell has one of two slab states. Their normalized
-			// window share lets this nonlinear, already-clamped square use the
-			// existing 5x5 work rather than repeating the hash loop.
-			float low_amp = min(
-				amp_scale * sheet * mix(0.40, 0.0, plate_resolved), 0.4);
-			float high_amp = min(
-				amp_scale * sheet * mix(0.40, 1.0, plate_resolved), 0.4);
-			float window_amp_sq = mix(
-				low_amp * low_amp,
-				high_amp * high_amp,
-				plate_window_slab_share);
-			float pair_amp_sq = amp * amp * (1.0 - plate_edge_w)
-				+ amp_nb * amp_nb * plate_edge_w;
-			seam_amp_sq = mix(
-				pair_amp_sq,
-				window_amp_sq,
-				plate_window_w);
-		}
-		seam_slope_var = seam_amp_sq * spread;
-		// Same read-preserving junction gain as the ground. It has zero
-		// authority where the third candidate has no local coverage.
-		float junction_read_authority = terrain_plate_covered_junction(
-			f1, f2, f3, plate_fw);
-		float junction_read_gain = terrain_plate_junction_read_gain(
-			junction_read_authority);
-		mean_tilt *= junction_read_gain;
-		seam_slope_var *= junction_read_gain * junction_read_gain;
-		vec2 ghat = gsep * inversesqrt(max(dot(gsep, gsep), 1e-12));
-		grad = -ghat * mean_tilt;
-		grad *= 1.0 - smoothstep(0.30, 0.85, plate_fw);
-		// Same crack-footprint dissolve as terrain.gdshader, for the same
-		// reason: `plate_fw` is a whole plate's footprint and cannot stand in
-		// for the much narrower seam whose relief this is.
-		grad *= 1.0 - smoothstep(0.7, 1.3, crack_fw * 1.2 / max(crack_width, 1e-6));
-		// Same seam-slope ceiling as terrain.gdshader, for the same reason and
-		// necessarily the same number: this band blends into that ground, so a
-		// contact whose seams may tilt further than the ground's would shimmer
-		// exactly where the two meet.
-		float grad_len = length(grad);
-		grad = grad_len > 0.4 ? grad * (0.4 / grad_len) : grad;
-		// Same plate-resolution cutoff on the variance as terrain.gdshader,
-		// and the same two guards deliberately left off it: the crack fade and
-		// the slope ceiling bound what the NORMAL may claim, and the read they
-		// give up is what this term carries instead. Squared, because it is a
-		// variance of the amplitude the cutoff scales.
-		seam_slope_var *= plate_resolved * plate_resolved;
+		terrain_plate_seam_relief(
+			plate_uv, plate_c1, plate_c2,
+			crack_width, plate_scale,
+			plate_mask_relief, plate_mask_relief_nb, plate_mask_relief_nb3,
+			edge_fw, f1, f2, f3,
+			plate_fw, crack_fw, plate_w,
+			plate_window_gate, plate_window_w, plate_window_slab_share,
+			sheet, plate_resolved, plate_edge_w,
+			grad, seam_slope_var);
 	}
 	vec3 bump = vec3(
 		(h0 - hx) * bump_strength + grad.x * crack_relief,
