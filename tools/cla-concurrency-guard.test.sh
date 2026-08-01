@@ -58,6 +58,17 @@ if [[ -z "$write_line" || -z "$refresh_line" || "$refresh_line" -le "$write_line
   echo "CLA signer must refresh the current PR head after the ledger-write path" >&2
   exit 1
 fi
+# Literal shell source; the workflow runner expands these variables, not this test.
+# shellcheck disable=SC2016
+if ! grep -Fq 'for attempt in {1..30}; do' <<<"$sign_job" ||
+  ! grep -Fq 'run_status=$(gh api "repos/$REPO/actions/runs/$run_id" --jq .status)' <<<"$sign_job"; then
+  echo "CLA signer must wait boundedly for the current-head gate to become rerunnable" >&2
+  exit 1
+fi
+if grep -Fq '|| true' <<<"$sign_job"; then
+  echo "CLA signer must fail loudly when the current-head gate cannot be rerun" >&2
+  exit 1
+fi
 
 # Literal GitHub expressions; the runner expands them, this test must not.
 # shellcheck disable=SC2016

@@ -158,9 +158,26 @@ jobs:
           # A pull_request check may have raced the ledger write. Refresh after that write path so
           # the signer reruns the newest head; any still-later check starts against the new ledger.
           head_sha=$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq .head.sha)
-          run_id=$(gh api "repos/$REPO/actions/runs?event=pull_request&head_sha=$head_sha" \
-            --jq '[.workflow_runs[] | select(.name == "CLA")] | first | .id // empty')
-          if [ -n "$run_id" ]; then
+          run_id=""
+          run_status=""
+          for attempt in {1..30}; do
+            run_id=$(gh api "repos/$REPO/actions/runs?event=pull_request&head_sha=$head_sha" \
+              --jq '[.workflow_runs[] | select(.name == "CLA")] | first | .id // empty')
+            if [ -n "$run_id" ]; then
+              run_status=$(gh api "repos/$REPO/actions/runs/$run_id" --jq .status)
+              if [ "$run_status" = "completed" ]; then
+                break
+              fi
+            fi
+            echo "waiting for CLA gate on $head_sha to become rerunnable ($attempt/30)"
+            sleep 2
+          done
+          if [ -z "$run_id" ] || [ "$run_status" != "completed" ]; then
+            echo "::error::CLA gate for current head $head_sha did not become rerunnable"
+            exit 1
+          fi
+          run_conclusion=$(gh api "repos/$REPO/actions/runs/$run_id" --jq .conclusion)
+          if [ "$run_conclusion" != "success" ]; then
             gh run rerun "$run_id" --repo "$REPO" --failed \
-              || gh run rerun "$run_id" --repo "$REPO" || true
+              || gh run rerun "$run_id" --repo "$REPO"
           fi
