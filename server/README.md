@@ -119,16 +119,21 @@ zone/dungeon server:
     application-ablated twin proving the golden is not blind to health.
 - **`wire/`** — the **versioned wire codec**: the transport-agnostic binary
   encoding of the replication payload (the full join snapshot and the per-tick
-  delta stream). Every message opens with an explicit protocol version — product
-  law requires backward-compatible protocols, so the format is born versioned and
-  the decoder refuses anything it does not speak. The layout is canonical
-  (fixed-width little-endian, one byte encoding per message value) and the
+  delta stream). Every message opens with an explicit protocol version. The
+  server currently retains entity-only v1 and adds v2, whose snapshot tail
+  carries active telegraph casts and whose delta tail carries cast starts and
+  ends. A WebSocket peer without `X-WAR-Wire-Version` stays on v1; the v2
+  Godot client requests version 2 during its authenticated upgrade, and that
+  selection is fixed for the connection lifetime. This is the expand half of
+  the product's expand-then-contract law: old clients remain serviceable while
+  new clients receive authoritative cast geometry and timing. The layout is
+  canonical (fixed-width little-endian, one-byte encoding per message value) and the
   decoder fails closed on untrusted bytes: counts are capped before any
   allocation, every read is bounds-checked, truncated or trailing bytes are
   refused, and the sim's ascending-ID list contract is enforced — never
   silently repaired — on both encode and decode. Committed hex goldens pin the
-  exact byte layout (the fixture the client-side decoder will be written
-  against), and a stream golden pins the codec over the live demo scenario.
+  exact byte layout, while shared entity and cast-stream goldens prove the Go
+  tracker/encoder and Godot decoder/store/connection agree on exact frames.
   It exists as a pinned contract *before* transport selection, so the socket
   child builds against a settled format instead of inventing one.
 - **`agones/`** — the **Agones GameServer lifecycle**: what makes the zone

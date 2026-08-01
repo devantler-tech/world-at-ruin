@@ -282,11 +282,18 @@ will expire:
    artifact**. The test fails the moment `export_presets.cfg` declares a pack split (child 3), forcing
    the shell to get its own source of record in that same change.
 2. The top-level `protocol` range is **what the live server accepts**, not what the client speaks.
-   Sourcing it from `WireCodec.VERSION` is valid *only* because client and server are both pinned to one
-   version, so a test asserts the server's `wire.Version` still equals the client's. When the two-phase
-   expansion begins (server accepts `[1,2]`, newest client speaks only `2`) that test fails — and the
-   range must become a CD-supplied input read from deployment state, or a retained `v1` target would be
-   rejected even though the server would still talk to it.
+   It is a required CD-supplied publication input and has no generator default. During today's first
+   expansion the publisher reads the released server source's individually pinned `LegacyVersion`
+   and `Version` constants (`[1,2]`); a cross-language test proves those endpoints remain readable and
+   match the client fixture. When the server tier gains an independently deployed control surface,
+   that deployment query replaces the released-source read without changing the manifest API. The
+   generator refuses an absent, malformed, inverted, or client-excluding range, so it cannot silently
+   fall back to the client's own version and strand a retained target.
+   `tools/wire-protocol-rollout-guard.sh` compares every PR and merge-group head with its exact base:
+   CD must read the published range from the released server source on every comparison, including an
+   unchanged range. A higher maximum is admitted only when both tiers explicitly retain the base
+   protocol. Raising the minimum or removing a maximum is still refused because a source diff cannot
+   prove the manifest-expiry evidence contraction requires.
 3. `DevLog.VERSION` must be a dotted-integer version. `cd.yaml` accepts prerelease tags
    (`v0.2.0-rc.1`), which `UpdateDecision.is_version` does not, so `build()` refuses to emit a manifest
    no client could accept rather than publishing one dead on arrival.

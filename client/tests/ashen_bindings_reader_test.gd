@@ -61,7 +61,9 @@ func _ready() -> void:
 	# Test the published behavior, not only the source constants: capability 5
 	# character vocabulary remains writable while the reader-only mastery vault
 	# expansion advances the project-wide read ceiling to capability 7.
-	var built_manifest := UpdateManifest.build(MANIFEST_SEQUENCE, MANIFEST_NOT_AFTER)
+	var built_manifest := UpdateManifest.build(
+		MANIFEST_SEQUENCE, MANIFEST_NOT_AFTER,
+		WireCodec.LEGACY_VERSION, WireCodec.VERSION)
 	var manifest := built_manifest.get("manifest", {}) as Dictionary
 	if not String(built_manifest.get("error", "")).is_empty() or manifest.is_empty():
 		_fail("the reader build could not produce its stable update envelope")

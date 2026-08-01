@@ -45,6 +45,7 @@ type Snapshot struct {
 	Tick     uint64
 	Observer EntityID
 	Entities []EntityState // ascending ID, in-interest, excludes the observer
+	Casts    []ActiveCast  // ascending caster ID, caster is in-interest
 }
 
 // Snapshot returns the observer's full replication snapshot for the current
@@ -59,9 +60,16 @@ func (w *World) Snapshot(observer EntityID) Snapshot {
 		return s
 	}
 	s.Entities = make([]EntityState, 0, len(interest))
+	activeByCaster := make(map[EntityID]ActiveCast, len(w.casts))
+	for _, cast := range w.casts {
+		activeByCaster[cast.Caster] = cast
+	}
 	for _, id := range interest {
 		e := w.ents[id]
 		s.Entities = append(s.Entities, EntityState{ID: id, Pos: e.Pos, Radius: e.Radius})
+		if cast, active := activeByCaster[id]; active {
+			s.Casts = append(s.Casts, cast)
+		}
 	}
 	return s
 }
@@ -73,16 +81,19 @@ func (w *World) Snapshot(observer EntityID) Snapshot {
 // in ascending EntityID order. An in-interest entity whose state is unchanged
 // appears in none of them — the bandwidth win over resending a full snapshot.
 type SnapshotDelta struct {
-	Tick    uint64
-	Entered []EntityState
-	Moved   []EntityState
-	Left    []EntityID
+	Tick         uint64
+	Entered      []EntityState
+	Moved        []EntityState
+	Left         []EntityID
+	StartedCasts []ActiveCast // ascending caster ID
+	EndedCasts   []EntityID   // ascending caster ID
 }
 
 // Empty reports whether the delta carries no changes at all, so a caller can
 // skip sending anything for this observer this tick.
 func (d SnapshotDelta) Empty() bool {
-	return len(d.Entered) == 0 && len(d.Moved) == 0 && len(d.Left) == 0
+	return len(d.Entered) == 0 && len(d.Moved) == 0 && len(d.Left) == 0 &&
+		len(d.StartedCasts) == 0 && len(d.EndedCasts) == 0
 }
 
 // SnapshotTracker follows one observer's replication snapshot across ticks and
@@ -92,15 +103,20 @@ func (d SnapshotDelta) Empty() bool {
 // where that reports interest-set membership changes, this reports the entity
 // STATE the client must apply — spawn, update and despawn — in one pass.
 type SnapshotTracker struct {
-	observer EntityID
-	prev     map[EntityID]EntityState
+	observer  EntityID
+	prev      map[EntityID]EntityState
+	prevCasts map[EntityID]ActiveCast
 }
 
 // NewSnapshotTracker returns a tracker for the given observer with an empty
 // prior snapshot, so its first Update reports every in-interest entity as
 // entered and nothing as moved or left.
 func NewSnapshotTracker(observer EntityID) *SnapshotTracker {
-	return &SnapshotTracker{observer: observer, prev: make(map[EntityID]EntityState)}
+	return &SnapshotTracker{
+		observer:  observer,
+		prev:      make(map[EntityID]EntityState),
+		prevCasts: make(map[EntityID]ActiveCast),
+	}
 }
 
 // Update recomputes the observer's snapshot from the world's current state and
@@ -129,9 +145,27 @@ func (t *SnapshotTracker) Update(w *World) SnapshotDelta {
 			d.Left = append(d.Left, id)
 		}
 	}
+	nextCasts := make(map[EntityID]ActiveCast, len(snap.Casts))
+	for _, cast := range snap.Casts { // ascending caster ID
+		nextCasts[cast.Caster] = cast
+		prev, was := t.prevCasts[cast.Caster]
+		if !was || prev != cast {
+			d.StartedCasts = append(d.StartedCasts, cast)
+		}
+		if was && prev != cast {
+			d.EndedCasts = append(d.EndedCasts, cast.Caster)
+		}
+	}
+	for caster := range t.prevCasts {
+		if _, still := nextCasts[caster]; !still {
+			d.EndedCasts = append(d.EndedCasts, caster)
+		}
+	}
 	t.prev = next
+	t.prevCasts = nextCasts
 	// Left is drained from a map, whose iteration order Go randomises, so sort it
 	// to stay deterministic. Entered and Moved are already ascending.
 	sort.Slice(d.Left, func(i, j int) bool { return d.Left[i] < d.Left[j] })
+	sort.Slice(d.EndedCasts, func(i, j int) bool { return d.EndedCasts[i] < d.EndedCasts[j] })
 	return d
 }

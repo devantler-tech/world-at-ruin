@@ -84,7 +84,7 @@ func newMobChaseFixtureWorld(chaseSpeed int64) *sim.World {
 
 func encodeMobChaseFrame(t *testing.T, w *sim.World, phase string) mobChaseFixtureFrame {
 	t.Helper()
-	encoded, err := EncodeSnapshot(w.Snapshot(mobChaseObserver))
+	encoded, err := EncodeSnapshotVersion(w.Snapshot(mobChaseObserver), LegacyVersion)
 	if err != nil {
 		t.Fatalf("encode %s frame at tick %d: %v", phase, w.Tick, err)
 	}
@@ -218,10 +218,7 @@ func TestMobChaseStreamFixture(t *testing.T) {
 		return
 	}
 
-	raw, err := os.ReadFile(wireFixturePath)
-	if err != nil {
-		t.Fatalf("reading shared fixture: %v", err)
-	}
+	raw := readWireFixture(t)
 	var fixture wireFixtureWithMobChase
 	if err := json.Unmarshal(raw, &fixture); err != nil {
 		t.Fatalf("parsing shared fixture: %v", err)
