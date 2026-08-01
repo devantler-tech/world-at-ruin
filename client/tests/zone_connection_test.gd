@@ -265,8 +265,10 @@ func _check_cast_stream_pump() -> bool:
 	var start_delta: Dictionary = start_decoded["delta"]
 	var started: Dictionary = (start_delta["started_casts"] as Array)[0]
 	var caster := int(stream["caster"])
-	var start_tick := int(start_delta["tick"])
-	var expected_progress := float(start_tick - int(started["start_tick"])) / float(int(started["resolve_tick"]) - int(started["start_tick"]))
+	var start_frame_tick := int(start_delta["tick"])
+	var cast_start := int(started["start_tick"])
+	var cast_resolve := int(started["resolve_tick"])
+	var expected_progress := float(start_frame_tick - cast_start) / float(cast_resolve - cast_start)
 	var end_tick := int((stream["end_state"] as Dictionary)["tick"] as float)
 	var transport := FakeTransport.new()
 	var conn := ZoneConnection.new(transport)
@@ -276,10 +278,10 @@ func _check_cast_stream_pump() -> bool:
 	transport.ready_state = WebSocketPeer.STATE_OPEN
 	transport.packets = [frames[0], frames[1]]
 	conn.poll()
-	if conn.error() != "" or conn.store().tick() != start_tick or conn.store().cast_count() != 1:
-		_fail("ZoneConnection did not apply the cast start at fixture tick %d: %s" % [start_tick, conn.error_detail()])
+	if conn.error() != "" or conn.store().tick() != start_frame_tick or conn.store().cast_count() != 1:
+		_fail("ZoneConnection did not apply the cast start at fixture tick %d: %s" % [start_frame_tick, conn.error_detail()])
 		return false
-	if not is_equal_approx(conn.store().cast_progress(caster, start_tick), expected_progress):
+	if not is_equal_approx(conn.store().cast_progress(caster, start_frame_tick), expected_progress):
 		_fail("ZoneConnection store lost authoritative cast progress")
 		return false
 	transport.packets = [frames[2]]

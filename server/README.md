@@ -127,7 +127,7 @@ zone/dungeon server:
   selection is fixed for the connection lifetime. This is the expand half of
   the product's expand-then-contract law: old clients remain serviceable while
   new clients receive authoritative cast geometry and timing. The layout is
-  canonical (fixed-width little-endian, one byte encoding per message value) and the
+  canonical (fixed-width little-endian, one-byte encoding per message value) and the
   decoder fails closed on untrusted bytes: counts are capped before any
   allocation, every read is bounds-checked, truncated or trailing bytes are
   refused, and the sim's ascending-ID list contract is enforced — never

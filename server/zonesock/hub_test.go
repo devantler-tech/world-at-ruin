@@ -118,6 +118,11 @@ func dialToken(t *testing.T, ts *httptest.Server, authorization string) (*websoc
 
 func dialVersion(t *testing.T, ts *httptest.Server, secret []byte, observer sim.EntityID, version uint16) (*websocket.Conn, *http.Response, error) {
 	t.Helper()
+	return dialVersionHeader(t, ts, secret, observer, strconv.FormatUint(uint64(version), 10))
+}
+
+func dialVersionHeader(t *testing.T, ts *httptest.Server, secret []byte, observer sim.EntityID, version string) (*websocket.Conn, *http.Response, error) {
+	t.Helper()
 	tok, err := MintToken(secret, "allocation-a", observer, time.Now().Add(time.Minute))
 	if err != nil {
 		t.Fatalf("MintToken: %v", err)
@@ -126,7 +131,7 @@ func dialVersion(t *testing.T, ts *httptest.Server, secret []byte, observer sim.
 	defer cancel()
 	hdr := http.Header{}
 	hdr.Set("Authorization", "Bearer "+tok)
-	hdr.Set(WireVersionHeader, strconv.FormatUint(uint64(version), 10))
+	hdr.Set(WireVersionHeader, version)
 	return websocket.Dial(ctx, ts.URL, &websocket.DialOptions{HTTPClient: ts.Client(), HTTPHeader: hdr})
 }
 
@@ -223,6 +228,21 @@ func TestWireVersionNegotiationPreservesV1AndSelectsCastBearingV2(t *testing.T) 
 	}
 	if unsupportedErr == nil || unsupportedResp == nil || unsupportedResp.StatusCode != http.StatusUpgradeRequired {
 		t.Fatalf("unsupported version response = %+v, err = %v; want pre-upgrade 426", unsupportedResp, unsupportedErr)
+	}
+
+	malformed, malformedResp, malformedErr := dialVersionHeader(t, ts, secret, 2, "two")
+	if malformed != nil {
+		closeConnection(t, malformed)
+	}
+	if malformedResp != nil && malformedResp.Body != nil {
+		defer func() {
+			if closeErr := malformedResp.Body.Close(); closeErr != nil {
+				t.Errorf("close malformed-version response: %v", closeErr)
+			}
+		}()
+	}
+	if malformedErr == nil || malformedResp == nil || malformedResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("malformed version response = %+v, err = %v; want pre-upgrade 400", malformedResp, malformedErr)
 	}
 }
 

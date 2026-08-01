@@ -32,6 +32,9 @@ func _load_fixture() -> Dictionary:
 
 
 func _check_retained_v1(root: Dictionary) -> bool:
+	if root.get("messages") is not Array or (root["messages"] as Array).is_empty():
+		_fail("shared wire fixture has no messages section for the retained-v1 proof")
+		return false
 	var legacy: Dictionary = (root["messages"] as Array)[0]
 	var decoded := WireCodec.decode((legacy["hex"] as String).hex_decode())
 	if decoded.get("ok") != true or int(decoded.get("version", 0)) != WireCodec.LEGACY_VERSION:
@@ -49,6 +52,7 @@ func _check_authoritative_cast_stream(root: Dictionary) -> bool:
 	if frames.size() != 3:
 		_fail("cast stream must carry join + start + end, got %d frames" % frames.size())
 		return false
+	var caster := int(stream["caster"])
 	var store := ReplicaStore.new()
 	for i in frames.size():
 		var decoded := WireCodec.decode(((frames[i] as Dictionary)["hex"] as String).hex_decode())
@@ -63,11 +67,21 @@ func _check_authoritative_cast_stream(root: Dictionary) -> bool:
 			if store.cast_count() != 1:
 				_fail("cast start left %d active casts, want 1" % store.cast_count())
 				return false
-			var cast := store.cast(100)
-			if int(cast.get("kind", -1)) != WireCodec.SHAPE_CIRCLE or int(cast.get("outer", -1)) != 1_500:
+			var delta: Dictionary = decoded["delta"]
+			var started: Array = delta["started_casts"]
+			if started.size() != 1:
+				_fail("cast start frame carries %d starts, want 1" % started.size())
+				return false
+			var wire_cast: Dictionary = started[0]
+			var cast := store.cast(caster)
+			if int(cast.get("kind", -1)) != WireCodec.SHAPE_CIRCLE or int(cast.get("outer", -1)) != int(wire_cast["outer"]):
 				_fail("decoded cast geometry diverged: %s" % str(cast))
 				return false
-			if not is_equal_approx(store.cast_progress(100, 1), 1.0 / 3.0) or not is_equal_approx(store.cast_progress(100, 3), 1.0):
+			var cast_start := int(wire_cast["start_tick"])
+			var cast_resolve := int(wire_cast["resolve_tick"])
+			var frame_tick := int(delta["tick"])
+			var expected_progress := float(frame_tick - cast_start) / float(cast_resolve - cast_start)
+			if not is_equal_approx(store.cast_progress(caster, frame_tick), expected_progress) or not is_equal_approx(store.cast_progress(caster, cast_resolve), 1.0):
 				_fail("cast progress is not derived from authoritative start/resolve ticks")
 				return false
 	if store.tick() != int((stream["end_state"] as Dictionary)["tick"] as float) or store.cast_count() != 0:
