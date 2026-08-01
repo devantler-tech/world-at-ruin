@@ -162,8 +162,9 @@ jobs:
         # both live in the same checkout: one change can lower the constant AND
         # delete the matching lines, and every in-repo check still passes because
         # the ledger's newest entry falls with it. That test is also in the
-        # auto-discovered suite, so `ci-skip.txt` can silence it. CI is therefore
-        # the only immutable anchor — against the BASE commit, lines may only be
+        # auto-discovered suite, so a checkout-local test alone cannot anchor
+        # it. CI is therefore the immutable anchor — against the BASE commit,
+        # lines may only be
         # added. A removed capability is a build claiming to write less than it
         # already has, which strands the vaults that hold it.
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
@@ -958,41 +959,37 @@ jobs:
         run: ./tools/run-client-test.sh save_fixture_guard_test "a historical save no longer loads with zero loss"
       - name: Creature recipe guard (every shipped version has a buildable fixture)
         # The non-humanoid sibling of the save-fixture guard (#259). Its own
-        # named step keeps the ledger-to-fixture contract loud and prevents a
-        # ci-skip.txt entry from silencing the only runtime check that binds
+        # named step keeps the ledger-to-fixture contract loud and preserves the
+        # only runtime check that binds
         # CreatureFactory.RECIPE_VERSION to shipped history.
         run: ./tools/run-client-test.sh creature_factory_test "a shipped creature recipe version lost its fixture or no longer builds"
       - name: Save-vault guard (every historical vault loads with zero loss)
         # THE product-law surface for PROGRESSION state (#249, parent #3), the
-        # sibling of the save-fixture guard above. Its own named step, outside
-        # the auto-discovered loop, so it is loud and NOT skippable via
-        # ci-skip.txt: silently dropping a player's progression must never be
-        # one line of config away.
+        # sibling of the save-fixture guard above. Its own named step keeps a
+        # player-data failure loud rather than burying it in the discovered set.
         run: ./tools/run-client-test.sh save_vault_guard_test "a historical vault no longer loads with zero loss"
       - name: Boot-recovery guard (every historical recovery document loads with zero loss)
         # THE product-law surface for the immutable shell's recovery memory
         # (#342, parent #256). The ledger and base-fixture checks above anchor
         # history, while this scene proves every schema still loads, acts and
-        # re-saves without loss. It must never be silenced through ci-skip.txt.
+        # re-saves without loss.
         run: ./tools/run-client-test.sh boot_recovery_guard_test "a historical boot-recovery document no longer loads with zero loss"
       - name: Vault restore guard (an attuned point still restores on boot)
         # The BEHAVIOURAL half of the vault product law (#254 review). The
         # save-vault guard above proves shipped vaults persist and their names
         # are still recognised — it never boots the game, so it cannot see a
-        # resolver branch that was removed or repointed. This one does, and it
-        # must be as non-skippable as its siblings: left in the auto-discovered
-        # loop it honours ci-skip.txt, so one line of config could disable the
-        # only guard that checks a player actually wakes where they attuned.
+        # resolver branch that was removed or repointed. This one does, so its
+        # dedicated step makes the restore guarantee explicit and avoids a
+        # duplicate run in the auto-discovered suite.
         run: ./tools/run-client-test.sh vault_restore_boot_test "an attuned respawn point no longer restores on boot"
       - name: Ability law guard (sidegrade + no power/throughput inflation)
         # THE combat product-law surface (#70), and the ONLY place the sidegrade
         # and budget/cycle-floor matching actually run — the ledger steps above
         # anchor the ledgers against the base revision, but they never call
         # find_strict_dominance or match an ability to its budget. Kept in its own
-        # named step, deliberately OUTSIDE the auto-discovered loop, because that
-        # loop honours client/tests/ci-skip.txt: a later PR could otherwise skip
-        # this scene and merge a same-class strict upgrade. Power inflation is
-        # permanent, so this guard must not be skippable.
+        # named step, deliberately OUTSIDE the auto-discovered loop, so a
+        # same-class strict upgrade fails under an explicit product-law check.
+        # Power inflation is permanent, so this guard remains prominent.
         run: ./tools/run-client-test.sh ability_registry_test "a combat product law is broken"
       - name: Regression tests
         # Auto-discover every client/tests/*_test.tscn scene, so adding a test
@@ -1005,30 +1002,17 @@ jobs:
         #     save_vault_guard_test, boot_recovery_guard_test,
         #     vault_restore_boot_test and ability_registry_test are deliberately
         #     excluded: each runs in its own named step above (the product-law
-        #     surfaces, kept loud, separate and NON-SKIPPABLE), so discovering
-        #     them here would both run them twice and expose them to ci-skip.
-        #   - A test can be temporarily excluded by adding its basename (no
-        #     .tscn) on its own line in client/tests/ci-skip.txt (edited rarely;
-        #     the RUN line stops changing per-test). Blank/`#`-comment lines are
-        #     ignored. The file is optional — absent means nothing is skipped.
+        #     surfaces, kept loud and separate), so discovering them here would
+        #     run them twice. Every other discovered scene always runs: the PR
+        #     checkout cannot provide test-selection policy that bypasses CI.
         run: |
           set -o pipefail
           shopt -s nullglob
-          skip_file=client/tests/ci-skip.txt
-          is_skipped() {
-            [ -f "$skip_file" ] || return 1
-            grep -vE '^[[:space:]]*(#|$)' "$skip_file" | grep -qxF "$1"
-          }
           ran=0
           for scene in $(printf '%s\n' client/tests/*_test.tscn | sort); do
             t=$(basename "$scene" .tscn)
-            # Run in their own dedicated steps above — never twice, and never
-            # skippable via ci-skip.txt (they are the product-law surfaces).
+            # Run in their own dedicated steps above, never twice.
             case "$t" in save_fixture_guard_test|creature_factory_test|save_vault_guard_test|boot_recovery_guard_test|vault_restore_boot_test|ability_registry_test) continue ;; esac
-            if is_skipped "$t"; then
-              echo "::notice::skipping ${t} (listed in ${skip_file})"
-              continue
-            fi
             # `|| exit 1` rather than relying on the step shell's `-e`: the rest
             # of this workflow propagates failure explicitly, and a discovered
             # test that fails must never be counted into `ran`.

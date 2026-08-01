@@ -671,14 +671,13 @@ everything shipped afterwards is held to.
   under `client/tests/` — CI's "Regression tests" step auto-discovers `client/tests/*_test.tscn`
   (issue #50; the old hardcoded list forced every parallel test-adding PR to collide on one line).
   Each scene must print a `TEST PASS` marker on success and run within the 180 s per-test timeout.
-  Five exclusions: `save_fixture_guard_test`, `save_vault_guard_test`,
+  Six exclusions: `save_fixture_guard_test`, `creature_factory_test`, `save_vault_guard_test`,
   `boot_recovery_guard_test`, `vault_restore_boot_test` and `ability_registry_test` each run in
-  their own dedicated named step (the product-law surfaces for character, progression, recovery and
-  combat state — the restore test is the BEHAVIOURAL check that an attuned point still restores on
-  boot, which the persistence guards cannot see; all kept loud/separate and NOT skippable), and a test can be
-  temporarily skipped by adding its basename (no
-  `.tscn`) on its own line in the optional `client/tests/ci-skip.txt` (blank/`#`-comment lines
-  ignored) — a rarely-edited escape hatch, so the run line itself stops changing per-test.
+  their own dedicated named step (the product-law surfaces for character, creature, progression,
+  recovery and combat state — the restore test is the BEHAVIOURAL check that an attuned point still
+  restores on boot, which the persistence guards cannot see; all are kept loud and separate).
+  Every other discovered scene always runs; repository-controlled skip lists are forbidden because
+  pull requests must not be able to select which required regression checks they exercise.
 - **Boot tests go through `IsolatedBoot` — booting and isolating are ONE act:** a test that
   instantiates `main.tscn` runs the real launch path, which reads — and on the first-run path
   writes — every file the player's state lives in: `user://character.json` and the progression
