@@ -47,6 +47,18 @@ if ! grep -Fq 'github.event.comment.user.id == github.event.issue.user.id' <<<"$
   exit 1
 fi
 
+# A pull_request check can fail while a signature write is active. Refreshing the head after the
+# write path makes the signer rerun that latest check instead of the stale head seen at job start.
+# shellcheck disable=SC2016
+expected_head_refresh='head_sha=$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq .head.sha)'
+# shellcheck disable=SC2016
+write_line=$(grep -nF 'gh api -X PUT "repos/$REPO/contents/$LEDGER_PATH"' <<<"$sign_job" | cut -d: -f1 || true)
+refresh_line=$(grep -nF "$expected_head_refresh" <<<"$sign_job" | cut -d: -f1 || true)
+if [[ -z "$write_line" || -z "$refresh_line" || "$refresh_line" -le "$write_line" ]]; then
+  echo "CLA signer must refresh the current PR head after the ledger-write path" >&2
+  exit 1
+fi
+
 # Literal GitHub expressions; the runner expands them, this test must not.
 # shellcheck disable=SC2016
 expected_check_group='      group: cla-check-${{ github.event.pull_request.number }}'

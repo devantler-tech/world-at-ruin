@@ -110,7 +110,6 @@ jobs:
           set -euo pipefail
           pr=$(gh api "repos/$REPO/pulls/$PR_NUMBER")
           author=$(printf '%s' "$pr" | jq -r '.user.login')
-          head_sha=$(printf '%s' "$pr" | jq -r '.head.sha')
           if [ "$COMMENT_BODY" != "recheck" ]; then
             if [ "$COMMENTER" != "$author" ]; then
               echo "::notice::only the pull request author's signature is recorded" \
@@ -156,6 +155,9 @@ jobs:
               echo "recorded $COMMENTER in $LEDGER_PATH on $LEDGER_BRANCH"
             fi
           fi
+          # A pull_request check may have raced the ledger write. Refresh after that write path so
+          # the signer reruns the newest head; any still-later check starts against the new ledger.
+          head_sha=$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq .head.sha)
           run_id=$(gh api "repos/$REPO/actions/runs?event=pull_request&head_sha=$head_sha" \
             --jq '[.workflow_runs[] | select(.name == "CLA")] | first | .id // empty')
           if [ -n "$run_id" ]; then
