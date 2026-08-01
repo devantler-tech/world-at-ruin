@@ -111,6 +111,7 @@ func _check_invalid_shapes() -> void:
 		"fractional bloodstain": {"weapons": {"sword": {"banked": 0, "unbanked": 0}}, "bloodstain": {"sword": 1.5}},
 		"unsafe bloodstain": {"weapons": {"sword": {"banked": 0, "unbanked": 0}}, "bloodstain": {"sword": JSON_SAFE_MAX + 1}},
 		"bloodstain fills a bar": {"weapons": {"sword": {"banked": 0, "unbanked": 0}}, "bloodstain": {"sword": Mastery.BANK_STEP}},
+		"track plus bloodstain fills a bar": {"weapons": {"sword": {"banked": 0, "unbanked": 60}}, "bloodstain": {"sword": 40}},
 	}
 	for label: String in cases:
 		var reason := SaveVault.validate(_vault(cases[label]))

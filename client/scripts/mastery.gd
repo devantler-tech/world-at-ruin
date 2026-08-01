@@ -129,6 +129,9 @@ static func snapshot_refusal_reason(snapshot: Variant) -> String:
 		var points := int(bloodstain[weapon_id])
 		if points <= 0 or points >= BANK_STEP:
 			return "mastery bloodstain points for '%s' must be within one open bank bar" % weapon_id
+		var track: Dictionary = weapons[weapon_id]
+		if int(track["unbanked"]) + points >= BANK_STEP:
+			return "mastery current and bloodstain points for '%s' must fit one open bank bar" % weapon_id
 	return ""
 
 
