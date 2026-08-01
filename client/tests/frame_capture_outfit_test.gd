@@ -30,6 +30,17 @@ func _ready() -> void:
 	var capture := capture_script.new() as Node
 	_check(capture.has_method("outfit_capture_states"), true,
 		"the frame-capture tool exposes its real wardrobe plan")
+	_check(capture.has_method("outfit_capture_shot"), true,
+		"the frame-capture tool exposes its stable wardrobe frame naming")
+	if _failed:
+		capture.free()
+		return
+	_check(capture.call("outfit_capture_shot", "feet", "armor", "boots_worn")
+		== "first_run_feet_armor", true,
+		"the established boots frame keeps its unsuffixed comparison name")
+	_check(capture.call("outfit_capture_shot", "feet", "armor", "boots_polished")
+		== "first_run_feet_armor_boots_polished", true,
+		"a lexicographically earlier future boot cannot steal the established frame name")
 	if _failed:
 		capture.free()
 		return

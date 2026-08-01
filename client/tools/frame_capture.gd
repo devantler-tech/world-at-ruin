@@ -58,6 +58,20 @@ const SCENARIOS: Array[String] = [
 	"mob_chase",
 ]
 
+## The piece each established unsuffixed first-run frame depicts. These are
+## comparison identities, not defaults: a newly activated piece must receive a
+## piece-specific filename even when it sorts before the incumbent, otherwise
+## the change report silently compares two different garments under one name.
+const FIRST_RUN_WARDROBE_FRAME_INCUMBENTS := {
+	"torso/clothing": "shirt_ragged",
+	"legs/clothing": "pants_wool",
+	"feet/clothing": "shoes_cloth",
+	"feet/armor": "boots_worn",
+	"head/clothing": "relic_goggles",
+	"head/armor": "ruin_drake_helm",
+	"hands/armor": "ashen_bindings",
+}
+
 ## The committed vantages. Fixed on purpose — evidence is only comparable across
 ## commits if the camera does not move between them. Each is [name, eye, target].
 const VANTAGES: Array = [
@@ -1344,9 +1358,8 @@ func _under_rock(cam: Camera3D) -> bool:
 ## One real creator-authored state for every production-activated wardrobe
 ## region/layer. Registry slot order and kit layer order are the stable visual
 ## evidence order; pieces within one pair use the creator's sorted writer list.
-## The first piece keeps the established region/layer frame name, while later
-## pieces add their own name so activating a second option cannot overwrite the
-## first one's evidence.
+## Established comparison identities keep their unsuffixed frame names, while
+## every other piece adds its own name regardless of sort order.
 func outfit_capture_states(registry: Dictionary) -> Array[Dictionary]:
 	var states: Array[Dictionary] = []
 	for slot: String in CharacterCreator.pickable_regions(registry):
@@ -1354,16 +1367,22 @@ func outfit_capture_states(registry: Dictionary) -> Array[Dictionary]:
 			var pieces := CharacterCreator._pieces_in_slot(registry, slot, layer)
 			for index in pieces.size():
 				var piece_name := pieces[index]
-				var shot_name := "first_run_%s_%s" % [slot, layer]
-				if index > 0:
-					shot_name += "_%s" % piece_name
 				states.append({
 					"slot": slot,
 					"layer": layer,
 					"piece": piece_name,
-					"shot": shot_name,
+					"shot": outfit_capture_shot(slot, layer, piece_name),
 				})
 	return states
+
+
+func outfit_capture_shot(slot: String, layer: String, piece: String) -> String:
+	var base_name := "first_run_%s_%s" % [slot, layer]
+	var incumbent := String(FIRST_RUN_WARDROBE_FRAME_INCUMBENTS.get(
+		"%s/%s" % [slot, layer], ""))
+	if piece == incumbent:
+		return base_name
+	return "%s_%s" % [base_name, piece]
 
 
 ## The character creator as a new player meets it — the surface a first-run UI
