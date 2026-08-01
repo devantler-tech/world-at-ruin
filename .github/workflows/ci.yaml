@@ -60,6 +60,8 @@ jobs:
         run: ./tools/preview-flags.test.sh
       - name: Manifest sequence is monotonic in release order and fail-closed
         run: ./tools/manifest-sequence.test.sh
+      - name: Wire protocol rollout guard is expand-first and fail-closed
+        run: ./tools/wire-protocol-rollout-guard.test.sh
       - name: Lavapipe evidence refuses a fallback capture
         run: ./tools/lavapipe-capture-guard.test.sh
       - name: Client test runner is portable and verdicts are non-vacuous
@@ -437,58 +439,16 @@ jobs:
             echo "::error::Shipped reward mapping(s) removed or changed in $LEDGER ($(echo "$removed" | tr '\n' ' ')) — earned progression would be reinterpreted (no-resets law)"
             exit 1
           fi
-      - name: Wire protocol may not move without a two-phase rollout
-        # The manifest publishes the CLIENT's protocol constant as the range the
-        # LIVE SERVER accepts, which is honest only while both sides are pinned to
-        # one version. update_manifest_test asserts the two constants are EQUAL —
-        # but equality survives bumping BOTH in one change, and that is precisely
-        # the unsafe rollout: whichever side deploys first strands the other
-        # population (a v2 client rejects the live v1 server's frames; a v2 server
-        # makes every retained v1 client unreachable).
-        #
-        # The ADR requires expand-then-contract instead, and that needs the
-        # manifest's accepted range to become a CD-supplied input read from
-        # deployment state — work that does not exist yet. So movement itself is
-        # the gate: this fails on ANY change to either constant, and the fix is to
-        # do the rollout design, not to edit this step.
+      - name: Wire protocol moves only through an expand-first rollout
+        # The guard compares the exact PR/merge-group base to this tree. It
+        # admits a new maximum only when both tiers explicitly retain the base
+        # version and CD publishes that released-server range; either deployment
+        # order then has a common protocol. Raising the minimum remains blocked:
+        # source alone cannot prove every old-range manifest has expired.
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
-        run: |
-          if ! git cat-file -e "$BASE_SHA" 2>/dev/null; then
-            echo "::error::base commit $BASE_SHA not present in the checkout — cannot verify the protocol version"
-            exit 1
-          fi
-          client_pat='s/^[[:space:]]*const VERSION[[:space:]]*:=[[:space:]]*\([0-9][0-9]*\).*$/\1/p'
-          server_pat='s/^[[:space:]]*const Version uint16[[:space:]]*=[[:space:]]*\([0-9][0-9]*\).*$/\1/p'
-          # Materialise each read FIRST and test its own status, following the
-          # ledger steps above: a pipeline's status is sed's or head's, so a
-          # failed read would yield an empty value and be reported as an
-          # unparseable constant rather than the read failure it is.
-          read_at() {
-            if ! git show "$1:$2" > /tmp/proto-raw 2>/dev/null; then
-              echo "::error::could not read $2 at $1 — the guard cannot verify a rollout it cannot read"
-              exit 1
-            fi
-            sed -n "$3" /tmp/proto-raw | head -1
-          }
-          cb=$(read_at "$BASE_SHA" client/scripts/wire_codec.gd "$client_pat")
-          sb=$(read_at "$BASE_SHA" server/wire/wire.go "$server_pat")
-          ch=$(sed -n "$client_pat" client/scripts/wire_codec.gd | head -1)
-          sh=$(sed -n "$server_pat" server/wire/wire.go | head -1)
-          # Fail closed: an unreadable constant means the guard cannot prove
-          # anything, and silently passing is how a guard becomes decoration.
-          for pair in "base-client:$cb" "base-server:$sb" "head-client:$ch" "head-server:$sh"; do
-            name=${pair%%:*}; val=${pair##*:}
-            if [ -z "$val" ]; then
-              echo "::error::could not read the $name protocol version — the guard cannot verify a rollout it cannot parse"
-              exit 1
-            fi
-          done
-          if [ "$ch" != "$cb" ] || [ "$sh" != "$sb" ]; then
-            echo "::error::Wire protocol moved (client $cb→$ch, server $sb→$sh). Both codecs hard-reject every other version, so a simultaneous bump strands whichever population deploys second. The ADR requires expand-then-contract, and the manifest's accepted protocol range must first become a CD-supplied input read from deployment state — see docs/design/distribution-and-self-update.md."
-            exit 1
-          fi
+        run: ./tools/wire-protocol-rollout-guard.sh
       - name: Piece-slot ledger is append-only (no-resets law)
         # shipped_piece_slots_test compares the registry to the ledger in the
         # SAME checkout, so a change that edits equipment.json and the ledger
