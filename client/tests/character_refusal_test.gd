@@ -15,11 +15,12 @@ extends Node
 ## Both are the rollback case: the file may hold perfectly good state written by
 ## a NEWER build. Refusing has to preserve those bytes and stop writing.
 ##
-## The five controls the contract names are exercised here — future version,
-## unknown field, malformed, disappearing after refusal, and missing file — plus
-## the control that keeps the whole set from passing vacuously: a CORRECT recipe
-## must still load and still be writable. A guard that refused everything would
-## satisfy every refusal assertion below and break the game.
+## The contract's refusal controls are exercised here — future version, unknown
+## field/name, malformed bytes, disappearing after refusal, and missing file —
+## plus two boundary controls: legacy finite deformations remain readable, and
+## a malformed write candidate is refused without latching or changing bytes.
+## A CORRECT recipe must still load and stay writable; a guard that refused
+## everything would satisfy every refusal assertion below and break the game.
 ##
 ## Pure and headless: every case runs against throwaway probe paths through
 ## load_from/save_to, so the player's own user://character.json is never read or
@@ -42,7 +43,8 @@ func _ready() -> void:
 	_check_refusal("a future-version recipe", _future_version_recipe())
 	_check_refusal("an unknown-field recipe", _unknown_field_recipe())
 	_check_refusal("an unknown-name recipe", _unknown_name_recipe())
-	_check_refusal("a singular deformation recipe", _singular_deformation_recipe())
+	_check_legacy_finite_deformations_remain_readable()
+	_check_malformed_candidate_is_refused()
 	_check_malformed_recipe_is_refused()
 	_check_latch_survives_the_file_disappearing()
 
@@ -195,15 +197,105 @@ func _unknown_name_recipe() -> Dictionary:
 	return recipe
 
 
-## A persisted recipe can be structurally valid while carrying a scalar that
-## makes skeleton transforms singular. It must take the same path-latched,
-## byte-preserving refusal path as every other unreadable character (#692).
-func _singular_deformation_recipe() -> Dictionary:
+## Every finite deformation value was accepted by the v1..v4 reader. Tightening
+## the writer must not strand one of those existing files or change its bytes.
+func _check_legacy_finite_deformations_remain_readable() -> void:
+	_clear(PROBE)
+	CharacterStore.clear_refusals_for_test()
 	var recipe := _wanderer()
 	if recipe.is_empty():
-		return {}
-	recipe["bone_girth"] = { "upperarm": 0.0 }
-	return recipe
+		return
+	recipe["shapes"] = { "torso_vshape": CharacterFactory.SHAPE_WEIGHT_MAX + 0.01 }
+	recipe["bone_girth"] = { "upperarm": CharacterFactory.BONE_FACTOR_MIN - 0.01 }
+	if not _write_text(PROBE, JSON.stringify(recipe, "  ")):
+		_fail("legacy finite deformation: could not seed the probe")
+		return
+	var before := FileAccess.get_sha256(PROBE)
+	var loaded = CharacterStore.load_from(PROBE)
+	if loaded is not Dictionary:
+		_fail("legacy finite deformation: a previously accepted recipe was refused")
+		return
+	if CharacterStore.is_refused(PROBE):
+		_fail("legacy finite deformation: the path latched a refusal")
+	if not CharacterStore.can_write(PROBE):
+		_fail("legacy finite deformation: the accepted path became unwritable")
+	if FileAccess.get_sha256(PROBE) != before:
+		_fail("legacy finite deformation: merely reading changed the recipe bytes")
+
+	# An ordinary in-range edit must preserve the already-present legacy values.
+	# Accepting the load but refusing every later save would still strand the
+	# character in practice.
+	var edited: Dictionary = (loaded as Dictionary).duplicate(true)
+	edited["shapes"]["torso_muscle"] = 0.61
+	var identity := CharacterStore.document_identity(PROBE)
+	if not CharacterStore.save_to(PROBE, edited, identity):
+		_fail("legacy finite deformation: an ordinary edit could not preserve the old values")
+		return
+	var reloaded = CharacterStore.load_from(PROBE)
+	if reloaded is not Dictionary:
+		_fail("legacy finite deformation: the preserved edit no longer loaded")
+	elif (
+			float(reloaded["shapes"]["torso_vshape"])
+				!= CharacterFactory.SHAPE_WEIGHT_MAX + 0.01
+			or float(reloaded["bone_girth"]["upperarm"])
+				!= CharacterFactory.BONE_FACTOR_MIN - 0.01):
+		_fail("legacy finite deformation: the ordinary edit rewrote the old values")
+
+	# Grandfathering is exact preservation, not permission to move an already
+	# out-of-range scalar. The rejected mutation must leave the accepted edit
+	# byte-for-byte intact and keep the path usable for a corrected retry.
+	var preserved_bytes := FileAccess.get_sha256(PROBE)
+	var changed_legacy: Dictionary = (reloaded as Dictionary).duplicate(true)
+	changed_legacy["shapes"]["torso_vshape"] = CharacterFactory.SHAPE_WEIGHT_MAX + 0.02
+	identity = CharacterStore.document_identity(PROBE)
+	if CharacterStore.save_to(PROBE, changed_legacy, identity):
+		_fail("legacy finite deformation: an out-of-range value remained mutable")
+	if FileAccess.get_sha256(PROBE) != preserved_bytes:
+		_fail("legacy finite deformation: rejecting a changed old value altered the save")
+	if CharacterStore.last_refusal() != CharacterStore.REFUSAL_CANDIDATE:
+		_fail("legacy finite deformation: changed old value did not report candidate refusal")
+	if CharacterStore.is_refused(PROBE) or not CharacterStore.can_write(PROBE):
+		_fail("legacy finite deformation: rejecting a changed old value latched the path")
+	_clear(PROBE)
+
+
+## A writer must refuse an invalid candidate before staging it, without
+## latching or changing the valid document already at the target path.
+func _check_malformed_candidate_is_refused() -> void:
+	_clear(PROBE)
+	CharacterStore.clear_refusals_for_test()
+	var recipe := _wanderer()
+	if recipe.is_empty():
+		return
+	var invalid := recipe.duplicate(true)
+	invalid["bone_girth"] = { "upperarm": 0.0 }
+	if CharacterStore.save_to(PROBE, invalid):
+		_fail("candidate refusal: a singular first-write candidate was persisted")
+	if FileAccess.file_exists(PROBE):
+		_fail("candidate refusal: the refused first-write candidate created a file")
+	if CharacterStore.last_refusal() != CharacterStore.REFUSAL_CANDIDATE:
+		_fail("candidate refusal: the write did not report the candidate outcome")
+	if CharacterStore.is_refused(PROBE) or not CharacterStore.can_write(PROBE):
+		_fail("candidate refusal: rejecting input latched an otherwise writable path")
+
+	if not CharacterStore.save_to(PROBE, recipe):
+		_fail("candidate refusal: could not seed the valid target")
+		return
+	var before := FileAccess.get_sha256(PROBE)
+	var identity := CharacterStore.document_identity(PROBE)
+	var invalid_shape := recipe.duplicate(true)
+	invalid_shape["shapes"] = {
+		"torso_vshape": CharacterFactory.SHAPE_WEIGHT_MAX + 0.01,
+	}
+	if CharacterStore.save_to(PROBE, invalid_shape, identity):
+		_fail("candidate refusal: an out-of-range candidate replaced a valid save")
+	if FileAccess.get_sha256(PROBE) != before:
+		_fail("candidate refusal: rejecting the candidate changed the valid save bytes")
+	if CharacterStore.last_refusal() != CharacterStore.REFUSAL_CANDIDATE:
+		_fail("candidate refusal: replacement did not report the candidate outcome")
+	if CharacterStore.is_refused(PROBE) or not CharacterStore.can_write(PROBE):
+		_fail("candidate refusal: rejecting a replacement latched the valid target")
+	_clear(PROBE)
 
 
 func _write_text(path: String, text: String) -> bool:
