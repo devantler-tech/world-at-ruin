@@ -279,7 +279,8 @@ func validAllocationID(id string) bool {
 			(char < 'A' || char > 'Z') &&
 			(char < '0' || char > '9') &&
 			char != '-' &&
-			char != '_' {
+			char != '_' &&
+			char != '.' {
 			return false
 		}
 	}
