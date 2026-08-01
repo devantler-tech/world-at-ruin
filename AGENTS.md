@@ -631,8 +631,9 @@ everything shipped afterwards is held to.
   before the one allowed external allocation call, reconciles lost barrier acknowledgements so only
   the persisted caller dispatches, makes replays and concurrent losers reconcile only that exact
   attempt, lets transport retries observe ambiguous dispatches or reuse finalized unclaimed
-  allocations without redispatch, retains reused resources against overlapping failure cleanup,
-  quarantines unresolved dispatches against expiry and unverified outer cleanup, detaches
+  allocations without redispatch, retains every published resource and ambiguous post-dispatch
+  outcome against overlapping response-failure cleanup, quarantines unresolved dispatches against
+  expiry and unverified outer cleanup, detaches
   known-resource fence-and-cleanup from caller cancellation, finalizes the allocation before
   returning connection material, protects claimed/stale ownership and supervises exact no-show
   cleanup; it remains inert until the concrete adapter is composed), and

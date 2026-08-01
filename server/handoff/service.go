@@ -13,6 +13,7 @@ import (
 
 	"github.com/devantler-tech/world-at-ruin/server/sim"
 	"github.com/devantler-tech/world-at-ruin/server/zonesock"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
@@ -72,11 +73,42 @@ type Allocation struct {
 	Observer        sim.EntityID
 	AdmissionSecret []byte
 	LeaseExpiresAt  time.Time
-	// RetainOnFailure tells the server that this allocation existed before the
-	// current transport attempt. A later failure must leave its durable no-show
-	// lease to arbitrate concurrent retries and eventual cleanup. It is never
-	// included in the player-facing Handoff.
+	// RetainOnFailure tells the server that this allocation is durably published.
+	// A later response failure must leave its no-show lease to arbitrate
+	// concurrent callers and eventual cleanup. It is never included in the
+	// player-facing Handoff.
 	RetainOnFailure bool
+}
+
+type retainedAllocationOutcomeError struct {
+	cause error
+}
+
+func (e retainedAllocationOutcomeError) Error() string {
+	return e.cause.Error()
+}
+
+func (e retainedAllocationOutcomeError) Unwrap() error {
+	return e.cause
+}
+
+func (e retainedAllocationOutcomeError) GRPCStatus() *status.Status {
+	if grpcStatus, ok := status.FromError(e.cause); ok {
+		return grpcStatus
+	}
+	return status.New(codes.Unknown, e.cause.Error())
+}
+
+func (retainedAllocationOutcomeError) retainAllocationOutcome() {}
+
+// RetainAllocationOutcome marks an allocation error whose durable external
+// outcome must not be released by the outer handoff service. Allocators use it
+// after dispatch has crossed an ambiguous point of no return.
+func RetainAllocationOutcome(err error) error {
+	if err == nil {
+		return nil
+	}
+	return retainedAllocationOutcomeError{cause: err}
 }
 
 // Handoff is the only connection material returned to a player.
@@ -173,10 +205,14 @@ func (s *Service) CreateHandoff(ctx context.Context, request Request) (Handoff, 
 	}
 	allocation, err := s.allocator.Allocate(ctx, allocationRequest)
 	if err != nil {
+		handoffErr := status.Error(status.Code(err), "handoff: allocate GameServer")
+		if shouldRetainAllocationOutcome(err) {
+			return Handoff{}, handoffErr
+		}
 		return Handoff{}, s.releaseReservationAfterFailure(
 			ctx,
 			allocationRequest,
-			status.Error(status.Code(err), "handoff: allocate GameServer"),
+			handoffErr,
 		)
 	}
 	if err := ctx.Err(); err != nil {
@@ -254,6 +290,11 @@ func (s *Service) validateAllocation(allocation Allocation, now time.Time) error
 		return errors.New("handoff: unclaimed allocation lease is expired")
 	}
 	return nil
+}
+
+func shouldRetainAllocationOutcome(err error) bool {
+	var retained interface{ retainAllocationOutcome() }
+	return errors.As(err, &retained)
 }
 
 func (s *Service) failAfterAllocation(

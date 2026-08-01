@@ -669,6 +669,36 @@ func TestAllocationFailureReturnsNoHandoff(t *testing.T) {
 	}
 }
 
+func TestRetainedAllocationFailureSkipsOuterRelease(t *testing.T) {
+	nakama := &accountServer{
+		account: &api.Account{User: &api.User{Id: "player-42"}},
+	}
+	allocator := &recordingAllocator{
+		err: RetainAllocationOutcome(
+			status.Error(codes.Unavailable, "durable dispatch outcome is ambiguous"),
+		),
+	}
+	service, err := NewService(
+		verifierAgainst(t, nakama),
+		allocator,
+		validConfig(),
+	)
+	if err != nil {
+		t.Fatalf("NewService returned an error: %v", err)
+	}
+
+	got, err := service.CreateHandoff(context.Background(), validRequest())
+	if status.Code(err) != codes.Unavailable {
+		t.Fatalf("CreateHandoff status = %s, want Unavailable", status.Code(err))
+	}
+	if got != (Handoff{}) {
+		t.Fatalf("failed retained handoff = %+v, want zero value", got)
+	}
+	if len(allocator.releases) != 0 {
+		t.Fatalf("retained allocation error released outcome: %+v", allocator.releases)
+	}
+}
+
 func TestMalformedAllocationReturnsNoHandoff(t *testing.T) {
 	tests := []struct {
 		name   string

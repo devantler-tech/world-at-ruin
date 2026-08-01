@@ -130,7 +130,6 @@ func (c *Coordinator) Allocate(
 	request handoff.AllocationRequest,
 ) (handoff.Allocation, error) {
 	now := c.now()
-	requestedAttemptID := request.AttemptID
 	current, err := c.leases.Load(ctx, request.UserID, request.ReservationID)
 	hasCurrent := err == nil
 	switch {
@@ -163,11 +162,7 @@ func (c *Coordinator) Allocate(
 	if hasCurrent && current.Lease.AttemptID != request.AttemptID {
 		switch {
 		case current.State(now) == nakamalease.StateUnclaimed:
-			allocation, resolveErr := c.resolveDurable(ctx, current.Lease)
-			if resolveErr == nil {
-				allocation.RetainOnFailure = true
-			}
-			return allocation, resolveErr
+			return c.resolveDurable(ctx, current.Lease)
 		case current.Lease.Staging &&
 			current.Lease.Dispatched &&
 			current.Lease.Releasing:
@@ -246,20 +241,24 @@ func (c *Coordinator) Allocate(
 		)
 	}
 	if err != nil {
+		progressCtx, cancel := context.WithTimeout(
+			context.WithoutCancel(ctx),
+			stagedCleanupTimeout,
+		)
+		defer cancel()
 		if winner, progressed, winnerErr := c.resolveProgressedAttempt(
-			ctx,
+			progressCtx,
 			request,
 		); progressed {
-			if winnerErr == nil && requestedAttemptID != request.AttemptID {
-				winner.RetainOnFailure = true
+			if winnerErr != nil {
+				return handoff.Allocation{}, handoff.RetainAllocationOutcome(winnerErr)
 			}
 			return winner, winnerErr
 		} else if winnerErr != nil {
-			return handoff.Allocation{}, winnerErr
+			return handoff.Allocation{}, handoff.RetainAllocationOutcome(winnerErr)
 		}
-		return handoff.Allocation{}, sanitizedResourceError(
-			err,
-			resourceOperation,
+		return handoff.Allocation{}, handoff.RetainAllocationOutcome(
+			sanitizedResourceError(err, resourceOperation),
 		)
 	}
 	resourceExpiry := provisioned.Allocation.LeaseExpiresAt
@@ -277,7 +276,7 @@ func (c *Coordinator) Allocate(
 		}
 		return handoff.Allocation{}, ErrInvalidResource
 	}
-	_, committed, err := c.leases.Finalize(ctx, staging, next)
+	_, err = c.leases.Finalize(ctx, staging, next)
 	if err != nil {
 		progressCtx, cancel := context.WithTimeout(
 			context.WithoutCancel(ctx),
@@ -288,21 +287,19 @@ func (c *Coordinator) Allocate(
 			progressCtx,
 			request,
 		); progressed {
-			if winnerErr == nil && requestedAttemptID != request.AttemptID {
-				winner.RetainOnFailure = true
+			if winnerErr != nil {
+				return handoff.Allocation{}, handoff.RetainAllocationOutcome(winnerErr)
 			}
 			return winner, winnerErr
 		} else if winnerErr != nil {
-			return handoff.Allocation{}, winnerErr
+			return handoff.Allocation{}, handoff.RetainAllocationOutcome(winnerErr)
 		}
 		if releaseErr := c.reconcileAttempt(progressCtx, request, &next); releaseErr != nil {
 			return handoff.Allocation{}, ErrReconciliation
 		}
 		return handoff.Allocation{}, err
 	}
-	if !committed || requestedAttemptID != request.AttemptID {
-		provisioned.Allocation.RetainOnFailure = true
-	}
+	provisioned.Allocation.RetainOnFailure = true
 	return provisioned.Allocation, nil
 }
 
@@ -340,6 +337,7 @@ func (c *Coordinator) resolveDurable(
 	if !matchesLease(allocation, lease) {
 		return handoff.Allocation{}, ErrInvalidResource
 	}
+	allocation.RetainOnFailure = true
 	return allocation, nil
 }
 

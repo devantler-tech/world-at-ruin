@@ -244,6 +244,7 @@ type adopterWinsResources struct {
 	provisioned      Provisioned
 	provisionStarted chan struct{}
 	allowProvision   chan struct{}
+	provisionErr     error
 }
 
 func newAdopterWinsResources() *adopterWinsResources {
@@ -264,7 +265,7 @@ func (r *adopterWinsResources) Provision(
 ) (Provisioned, error) {
 	close(r.provisionStarted)
 	<-r.allowProvision
-	return r.provisioned, nil
+	return r.provisioned, r.provisionErr
 }
 
 func (r *adopterWinsResources) Reconcile(
@@ -470,6 +471,11 @@ func validAllocation() handoff.Allocation {
 	}
 }
 
+func retainedAllocation(allocation handoff.Allocation) handoff.Allocation {
+	allocation.RetainOnFailure = true
+	return allocation
+}
+
 func validRequest() handoff.AllocationRequest {
 	return handoff.AllocationRequest{
 		UserID:        testUserID,
@@ -562,8 +568,8 @@ func TestAllocateReturnsOnlyAfterTheAttemptLeaseIsDurable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Allocate returned an error: %v", err)
 	}
-	if !reflect.DeepEqual(got, validAllocation()) {
-		t.Fatalf("allocated resource = %+v, want %+v", got, validAllocation())
+	if !reflect.DeepEqual(got, retainedAllocation(validAllocation())) {
+		t.Fatalf("allocated resource = %+v, want retained %+v", got, validAllocation())
 	}
 	record, err := store.Load(context.Background(), testUserID, testReservationID)
 	if err != nil {
@@ -742,7 +748,7 @@ func TestAllocateProvisionsAfterACommittedDispatchBarrierLosesItsAcknowledgement
 	if err != nil {
 		t.Fatalf("Allocate after lost barrier acknowledgement returned an error: %v", err)
 	}
-	if !reflect.DeepEqual(got, validAllocation()) || len(resources.provisions) != 1 {
+	if !reflect.DeepEqual(got, retainedAllocation(validAllocation())) || len(resources.provisions) != 1 {
 		t.Fatalf(
 			"lost-ack allocation = %+v with %d provisions, want one exact provision",
 			got,
@@ -1187,6 +1193,50 @@ func TestDispatchOwnerRetainsTheWinnerWhenAnAdopterFinalizesFirst(t *testing.T) 
 	}
 }
 
+func TestCanceledDispatchOwnerRetainsTheAdopterWinner(t *testing.T) {
+	storage := newMemoryStorage()
+	storage.respectContext = true
+	store := newLeaseStore(t, storage)
+	resources := newAdopterWinsResources()
+	resources.provisionErr = context.Canceled
+	coordinator, err := NewCoordinator(
+		resources,
+		store,
+		Config{LeaseTTL: time.Minute, Now: func() time.Time { return testNow }},
+	)
+	if err != nil {
+		t.Fatalf("NewCoordinator returned an error: %v", err)
+	}
+
+	type result struct {
+		allocation handoff.Allocation
+		err        error
+	}
+	ownerCtx, cancelOwner := context.WithCancel(context.Background())
+	ownerResult := make(chan result, 1)
+	go func() {
+		allocation, allocateErr := coordinator.Allocate(ownerCtx, validRequest())
+		ownerResult <- result{allocation: allocation, err: allocateErr}
+	}()
+	<-resources.provisionStarted
+
+	adopterRequest := validRequest()
+	adopterRequest.AttemptID = "attempt-8"
+	adopter, err := coordinator.Allocate(context.Background(), adopterRequest)
+	if err != nil || !adopter.RetainOnFailure {
+		t.Fatalf("adopter allocation = %+v/%v, want retained winner", adopter, err)
+	}
+	cancelOwner()
+	close(resources.allowProvision)
+	owner := <-ownerResult
+	if owner.err != nil {
+		t.Fatalf("canceled dispatch owner did not resolve adopter winner: %v", owner.err)
+	}
+	if !owner.allocation.RetainOnFailure {
+		t.Fatalf("canceled dispatch owner allocation = %+v, want retained winner", owner.allocation)
+	}
+}
+
 func TestAllocateNeverDispatchesWhenBarrierWriteFails(t *testing.T) {
 	storage := newMemoryStorage()
 	storage.writeErrAt = 2
@@ -1264,8 +1314,8 @@ func TestAllocateReconcilesDispatchedAttemptAfterRestartWithoutRedispatch(t *tes
 	if err != nil {
 		t.Fatalf("restart reconciliation returned an error: %v", err)
 	}
-	if !reflect.DeepEqual(got, validAllocation()) {
-		t.Fatalf("restart reconciliation = %+v, want %+v", got, validAllocation())
+	if !reflect.DeepEqual(got, retainedAllocation(validAllocation())) {
+		t.Fatalf("restart reconciliation = %+v, want retained %+v", got, validAllocation())
 	}
 	if len(resources.provisions) != 1 {
 		t.Fatalf("resource dispatches = %d, want exactly one", len(resources.provisions))
@@ -1343,8 +1393,8 @@ func TestAllocateConcurrentCoordinatorsDispatchOnce(t *testing.T) {
 			t.Fatalf("concurrent allocation = %+v, want %+v", got.allocation, validAllocation())
 		}
 	}
-	if retained != 1 {
-		t.Fatalf("retained concurrent results = %d, want one replay and one writer", retained)
+	if retained != 2 {
+		t.Fatalf("retained concurrent results = %d, want both published responses retained", retained)
 	}
 	provisions, reconciliations := resources.calls()
 	if provisions != 1 || reconciliations != 1 {
@@ -1535,8 +1585,8 @@ func TestAllocateRecoversAStagingIntentAfterProcessRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("recovered Allocate returned an error: %v", err)
 	}
-	if !reflect.DeepEqual(got, validAllocation()) {
-		t.Fatalf("recovered allocation = %+v, want %+v", got, validAllocation())
+	if !reflect.DeepEqual(got, retainedAllocation(validAllocation())) {
+		t.Fatalf("recovered allocation = %+v, want retained %+v", got, validAllocation())
 	}
 	after, err := store.Load(
 		context.Background(),
@@ -1781,8 +1831,8 @@ func TestAllocateExpiredAttemptReleasesAndReplacesTheLease(t *testing.T) {
 	if err != nil {
 		t.Fatalf("replacement Allocate returned an error: %v", err)
 	}
-	if !reflect.DeepEqual(got, nextAllocation) {
-		t.Fatalf("replacement allocation = %+v, want %+v", got, nextAllocation)
+	if !reflect.DeepEqual(got, retainedAllocation(nextAllocation)) {
+		t.Fatalf("replacement allocation = %+v, want retained %+v", got, nextAllocation)
 	}
 	if !reflect.DeepEqual(
 		resources.events,
@@ -2278,7 +2328,7 @@ func TestAllocateProvisionFailureAdoptsAProgressedSameAttemptWinner(t *testing.T
 		if err != nil {
 			return fmt.Errorf("load staging winner: %w", err)
 		}
-		_, _, err = store.Finalize(
+		_, err = store.Finalize(
 			context.Background(),
 			current,
 			leaseFromProvisioned(
@@ -2305,8 +2355,8 @@ func TestAllocateProvisionFailureAdoptsAProgressedSameAttemptWinner(t *testing.T
 	if err != nil {
 		t.Fatalf("Allocate did not adopt the progressed winner: %v", err)
 	}
-	if !reflect.DeepEqual(got, validAllocation()) {
-		t.Fatalf("adopted allocation = %+v, want %+v", got, validAllocation())
+	if !reflect.DeepEqual(got, retainedAllocation(validAllocation())) {
+		t.Fatalf("adopted allocation = %+v, want retained %+v", got, validAllocation())
 	}
 	if !reflect.DeepEqual(
 		resources.events,

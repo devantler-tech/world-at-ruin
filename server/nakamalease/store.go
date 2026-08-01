@@ -294,21 +294,19 @@ func secureDispatchID() (string, error) {
 }
 
 // Finalize atomically replaces a durable staging intent with the exact
-// external allocation material returned for the same attempt. Committed is
-// true only when this call won the conditional write; an idempotent replay
-// returns the durable winner with committed false.
+// external allocation material returned for the same attempt.
 func (s *Store) Finalize(
 	ctx context.Context,
 	current Record,
 	next Lease,
-) (Record, bool, error) {
+) (Record, error) {
 	observed, err := normalizeLease(current.Lease)
 	if err != nil || current.Version == "" || current.Version == "*" {
-		return Record{}, false, errors.New("nakama lease: invalid observed record")
+		return Record{}, errors.New("nakama lease: invalid observed record")
 	}
 	normalized, err := normalizeLease(next)
 	if err != nil {
-		return Record{}, false, err
+		return Record{}, err
 	}
 	if !observed.Staging ||
 		!observed.Dispatched ||
@@ -317,35 +315,35 @@ func (s *Store) Finalize(
 		normalized.Staging ||
 		normalized.Releasing ||
 		!normalized.ClaimedAt.IsZero() {
-		return Record{}, false, errors.New("nakama lease: invalid finalization")
+		return Record{}, errors.New("nakama lease: invalid finalization")
 	}
 	if observed.UserID != normalized.UserID ||
 		observed.ReservationID != normalized.ReservationID ||
 		observed.AttemptID != normalized.AttemptID ||
 		normalized.ExpiresAt.After(observed.ExpiresAt) {
-		return Record{}, false, errors.New("nakama lease: finalization identity changed")
+		return Record{}, errors.New("nakama lease: finalization identity changed")
 	}
 	finalized, err := s.write(ctx, normalized, current.Version)
 	if !errors.Is(err, ErrConflict) {
-		return finalized, err == nil, err
+		return finalized, err
 	}
 	latest, loadErr := s.Load(ctx, observed.UserID, observed.ReservationID)
 	if errors.Is(loadErr, ErrNotFound) {
-		return Record{}, false, ErrConflict
+		return Record{}, ErrConflict
 	}
 	if loadErr != nil {
-		return Record{}, false, loadErr
+		return Record{}, loadErr
 	}
 	if latest.Lease.AttemptID != normalized.AttemptID {
-		return Record{}, false, ErrConflict
+		return Record{}, ErrConflict
 	}
 	switch {
 	case latest.Lease.Releasing:
-		return Record{}, false, ErrReleasing
+		return Record{}, ErrReleasing
 	case sameAllocationOwner(latest.Lease, normalized):
-		return latest, false, nil
+		return latest, nil
 	default:
-		return Record{}, false, ErrConflict
+		return Record{}, ErrConflict
 	}
 }
 

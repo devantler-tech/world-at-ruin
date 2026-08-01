@@ -292,16 +292,16 @@ zone/dungeon server:
   the dispatched attempt in quarantine. A transport retry with the same
   reservation adopts that durable attempt for observation-only reconciliation;
   a retry after finalization resolves the same unclaimed allocation. Reused
-  allocations are retained on downstream handoff failure so overlapping
-  retries cannot tear down a GameServer another caller received; their existing
-  no-show lease owns bounded cleanup. Finalization reports whether the current
-  caller won the conditional write, so even the original dispatcher is retained
-  when an adopter finalized the same durable resource first. Expiry cleanup
-  cannot pass an unresolved quarantine without the later allocator-generation
-  fence, and the handoff service's best-effort failure cleanup cannot erase it
-  without an observed resource identity. An expired attempt is atomically
-  marked `releasing` before external cleanup so a concurrent zone claim cannot
-  win after reclamation begins.
+  every published allocation is retained on downstream response failure so
+  overlapping callers cannot tear down a GameServer another caller received;
+  its no-show lease is the sole bounded cleanup owner. Ambiguous post-dispatch
+  errors carry the same non-destructive marker through the outer handoff service.
+  This remains safe in either finalization order: an adopter or the original
+  dispatcher may publish first, and neither response receives cleanup authority.
+  Expiry cleanup cannot pass an unresolved quarantine without the later
+  allocator-generation fence, and unverified outer cleanup cannot erase it. An
+  expired attempt is atomically marked `releasing` before external cleanup so a
+  concurrent zone claim cannot win after reclamation begins.
   Replacement and release retry from that barrier; once a concrete resource is
   observed, the complete fence-and-cleanup transaction uses a bounded context
   that survives caller cancellation. Its supervised expiry reconciler
