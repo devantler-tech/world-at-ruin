@@ -246,11 +246,13 @@ would tell a client where to *fetch* something is withheld, and each omission is
   keeps playing — the safe failure.
 - **`signature` / `key` / `revocation`** — the Godot-native trust boundary verifies the signing-key
   certificate with a caller-supplied offline-root public key, authenticates the embedded revocation
-  list with that root, refuses a listed certificate id, verifies the manifest with only the remaining
-  certified key, and enters the pure decision core last. The production root public key, signing
-  custody, certificate/revocation publisher, independently fresh revocation head, and runtime updater
-  integration remain child 6. The published OCI artifact is cosign-signed by digest, which is a real
-  but *different* integrity property.
+  list with that root, refuses a listed certificate id, refuses an embedded list that the
+  caller-supplied independently fetched revocation head does not vouch for as current, verifies the
+  manifest with only the remaining certified key, and enters the pure decision core last. The
+  production root public key, signing custody, certificate/revocation publisher, revocation-head
+  endpoint, and runtime updater integration remain child 6 — and because an absent head is
+  fail-closed, no update can be authorized until they land. The published OCI artifact is
+  cosign-signed by digest, which is a real but *different* integrity property.
 - **`rollback_targets`** — empty, because no mountable content pack is retained. The published
   `v0.52.0` monolithic app is the whole-app rollback for save capability 3, but its `.app` ZIP is
   deliberately not advertised to the pack selector. Empty is the fail-closed pack value: it makes the
