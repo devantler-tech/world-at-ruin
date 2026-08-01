@@ -608,9 +608,11 @@ everything shipped afterwards is held to.
   and mints the nanosecond-expiry token only that allocated zone verifier accepts), the private
   **Nakama handoff lease store** (`server/nakamalease/` — server-owned, strict-schema objects keyed
   by a SHA-256-derived user/reservation key; unique create and exact-version
-  staging/finalization/replacement/claim/release preserve one current attempt under retries, with a
-  durable releasing barrier and private-collection expiry sweep that arbitrate zone claim against
-  external cleanup, without persisting raw user or reservation IDs or admission secrets; the
+  staging/dispatch/finalization/replacement/claim/release preserve one current attempt under retries,
+  with permanently ledgered schema shapes, a durable dispatched point of no return and a durable
+  releasing barrier; its private-collection expiry sweep arbitrates zone claim against external
+  cleanup while retaining ambiguous dispatches for exact reconciliation, without persisting raw user
+  or reservation IDs or admission secrets; the
   durability contract those objects follow — and that every later server-held record inherits — is
   [`docs/design/server-state-durability.md`](docs/design/server-state-durability.md)), the private
   **player-state mutation boundary** (`server/playerstate/` — atomically commits one private
@@ -625,9 +627,11 @@ everything shipped afterwards is held to.
   `playerstate` record-plus-audit boundary; it remains inert until a server caller composes it), the
   durable **handoff allocation coordinator**
   (`server/handoffalloc/` — implements `handoff.Allocator` over the real lease store and an injected
-  GameServer-resource boundary; persists a recoverable intent before provisioning, finalizes the
-  allocation before returning connection material, resolves retries, protects claimed/stale
-  ownership and supervises exact no-show cleanup), and
+  GameServer-resource boundary; exact-version persists a dispatched barrier before the one allowed
+  external allocation call, makes replays and concurrent losers reconcile only that exact attempt,
+  quarantines ambiguous dispatches against newer attempts and expiry cleanup, finalizes the
+  allocation before returning connection material, protects claimed/stale ownership and supervises
+  exact no-show cleanup; it remains inert until the concrete adapter is composed), and
   the **combat first slice** (`server/sim/combat.go` — the telegraph cast
   lifecycle: painted at cast start, resolved once after a tick-counted cast time against
   positions at resolution, health/damage application, and one mob AI that deterministically

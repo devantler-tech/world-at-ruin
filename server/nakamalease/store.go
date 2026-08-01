@@ -21,9 +21,10 @@ const (
 	// Collection is the private Nakama collection that owns handoff leases.
 	Collection = "world_at_ruin_handoff_leases"
 
-	schemaVersion       = 2
-	legacySchemaVersion = 1
-	systemOwnerID       = "00000000-0000-0000-0000-000000000000"
+	schemaVersion         = 3
+	previousSchemaVersion = 2
+	legacySchemaVersion   = 1
+	systemOwnerID         = "00000000-0000-0000-0000-000000000000"
 )
 
 var (
@@ -41,6 +42,9 @@ var (
 	ErrReleasing = errors.New("nakama lease: releasing")
 	// ErrStaging means external allocation material is not durable yet.
 	ErrStaging = errors.New("nakama lease: staging")
+	// ErrDispatched means an allocation RPC may have committed and the attempt
+	// must remain quarantined until exact-attempt reconciliation settles it.
+	ErrDispatched = errors.New("nakama lease: allocation dispatched")
 	// ErrStorage means Nakama storage did not complete the requested operation.
 	ErrStorage = errors.New("nakama lease: storage operation failed")
 )
@@ -72,6 +76,7 @@ type Lease struct {
 	ExpiresAt     time.Time
 	ClaimedAt     time.Time
 	Staging       bool
+	Dispatched    bool
 	Releasing     bool
 }
 
@@ -194,10 +199,65 @@ func sameAttemptIdentity(left, right Lease) bool {
 
 func sameAllocationOwner(left, right Lease) bool {
 	left.ClaimedAt = time.Time{}
+	left.Dispatched = false
 	left.Releasing = false
 	right.ClaimedAt = time.Time{}
+	right.Dispatched = false
 	right.Releasing = false
 	return left == right
+}
+
+// BeginDispatch exact-version persists the allocation point of no return.
+// The bool is true only for the caller that won the write and may issue the
+// external allocation RPC; replays and concurrent losers reconcile instead.
+func (s *Store) BeginDispatch(
+	ctx context.Context,
+	current Record,
+	attemptID string,
+) (Record, bool, error) {
+	observed, err := normalizeLease(current.Lease)
+	if err != nil || current.Version == "" || current.Version == "*" {
+		return Record{}, false, errors.New("nakama lease: invalid observed record")
+	}
+	if attemptID != observed.AttemptID {
+		return Record{}, false, ErrStaleAttempt
+	}
+	if !observed.Staging || observed.Releasing || !observed.ClaimedAt.IsZero() {
+		return Record{}, false, errors.New("nakama lease: invalid dispatch transition")
+	}
+	if observed.Dispatched {
+		latest, loadErr := s.Load(ctx, observed.UserID, observed.ReservationID)
+		if loadErr != nil {
+			return Record{}, false, loadErr
+		}
+		if latest.Version != current.Version || latest.Lease != observed {
+			return Record{}, false, ErrConflict
+		}
+		return latest, false, nil
+	}
+	observed.Dispatched = true
+	dispatched, err := s.write(ctx, observed, current.Version)
+	if err == nil {
+		return dispatched, true, nil
+	}
+	if !errors.Is(err, ErrConflict) {
+		return Record{}, false, err
+	}
+	latest, loadErr := s.Load(ctx, observed.UserID, observed.ReservationID)
+	if errors.Is(loadErr, ErrNotFound) {
+		return Record{}, false, ErrConflict
+	}
+	if loadErr != nil {
+		return Record{}, false, loadErr
+	}
+	if latest.Lease.AttemptID == attemptID &&
+		latest.Lease.Staging &&
+		latest.Lease.Dispatched &&
+		!latest.Lease.Releasing &&
+		latest.Lease.ClaimedAt.IsZero() {
+		return latest, false, nil
+	}
+	return Record{}, false, ErrConflict
 }
 
 // Finalize atomically replaces a durable staging intent with the exact
@@ -277,6 +337,9 @@ func (s *Store) Replace(
 	if observed.UserID != normalized.UserID ||
 		observed.ReservationID != normalized.ReservationID {
 		return Record{}, errors.New("nakama lease: replacement identity changed")
+	}
+	if observed.AttemptID != normalized.AttemptID && observed.Dispatched {
+		return Record{}, ErrDispatched
 	}
 	if observed.AttemptID == normalized.AttemptID {
 		if observed != normalized {
@@ -535,6 +598,7 @@ func (s *Store) reclaimExpiredObject(
 		return err
 	}
 	if !lease.ClaimedAt.IsZero() ||
+		(lease.Dispatched && !lease.Releasing) ||
 		(!lease.Releasing && now.Before(lease.ExpiresAt)) {
 		return nil
 	}
@@ -697,14 +761,18 @@ type document struct {
 	ExpiresAtNanos int64  `json:"expires_at_nanos"`
 	ClaimedAtNanos *int64 `json:"claimed_at_nanos"`
 	Staging        bool   `json:"staging,omitempty"`
+	Dispatched     bool   `json:"dispatched,omitempty"`
 	Releasing      bool   `json:"releasing,omitempty"`
 }
 
 // postLegacySchemaKeys are the document keys that postdate the legacy schema.
-var postLegacySchemaKeys = [...]string{"staging", "releasing"}
+var postLegacySchemaKeys = [...]string{"staging", "dispatched", "releasing"}
 
-// carriesPostLegacySchemaKey reports whether the encoded document contains one
-// of those keys, whatever its value. Presence is read from the raw keys rather
+// postPreviousSchemaKeys are fields schema two readers cannot interpret.
+var postPreviousSchemaKeys = [...]string{"dispatched"}
+
+// carriesSchemaKey reports whether the encoded document contains one of the
+// named keys, whatever its value. Presence is read from the raw keys rather
 // than inferred from a decoded field: a decoded value cannot separate an absent
 // key from one written as null, and duplicate keys resolve to the last
 // occurrence, so an earlier flag would be hidden by a later null.
@@ -712,13 +780,13 @@ var postLegacySchemaKeys = [...]string{"staging", "releasing"}
 // Casing is folded because encoding/json matches a field name
 // case-insensitively, so "Releasing" reaches the same field an exact lookup for
 // "releasing" would miss.
-func carriesPostLegacySchemaKey(value string) (bool, error) {
+func carriesSchemaKey(value string, keys []string) (bool, error) {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(value), &raw); err != nil {
 		return false, err
 	}
 	for key := range raw {
-		for _, flag := range postLegacySchemaKeys {
+		for _, flag := range keys {
 			if strings.EqualFold(key, flag) {
 				return true, nil
 			}
@@ -742,6 +810,7 @@ func documentFrom(lease Lease) document {
 		ExpiresAtNanos: lease.ExpiresAt.UnixNano(),
 		ClaimedAtNanos: claimedAtNanos,
 		Staging:        lease.Staging,
+		Dispatched:     lease.Dispatched,
 		Releasing:      lease.Releasing,
 	}
 }
@@ -756,13 +825,21 @@ func leaseFrom(value, userID, reservationID string) (Lease, error) {
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return Lease{}, errors.New("nakama lease: invalid stored lease")
 	}
-	if (stored.Schema != schemaVersion && stored.Schema != legacySchemaVersion) ||
+	if (stored.Schema != schemaVersion &&
+		stored.Schema != previousSchemaVersion &&
+		stored.Schema != legacySchemaVersion) ||
 		stored.ExpiresAtNanos <= 0 ||
 		(stored.ClaimedAtNanos != nil && *stored.ClaimedAtNanos <= 0) {
 		return Lease{}, errors.New("nakama lease: invalid stored lease")
 	}
 	if stored.Schema == legacySchemaVersion {
-		carried, err := carriesPostLegacySchemaKey(value)
+		carried, err := carriesSchemaKey(value, postLegacySchemaKeys[:])
+		if err != nil || carried {
+			return Lease{}, errors.New("nakama lease: invalid stored lease")
+		}
+	}
+	if stored.Schema == previousSchemaVersion {
+		carried, err := carriesSchemaKey(value, postPreviousSchemaKeys[:])
 		if err != nil || carried {
 			return Lease{}, errors.New("nakama lease: invalid stored lease")
 		}
@@ -781,6 +858,7 @@ func leaseFrom(value, userID, reservationID string) (Lease, error) {
 		SecretRef:     stored.SecretRef,
 		ExpiresAt:     time.Unix(0, stored.ExpiresAtNanos).UTC(),
 		Staging:       stored.Staging,
+		Dispatched:    stored.Dispatched,
 		Releasing:     stored.Releasing,
 	}
 	if stored.ClaimedAtNanos != nil {
@@ -815,6 +893,9 @@ func normalizeLease(lease Lease) (Lease, error) {
 	} else if !validOpaqueID(lease.AllocationID) ||
 		lease.Observer == 0 ||
 		!validSecretRef(lease.SecretRef) {
+		return Lease{}, errors.New("nakama lease: invalid lease")
+	}
+	if lease.Dispatched && !lease.Staging {
 		return Lease{}, errors.New("nakama lease: invalid lease")
 	}
 	lease.UserID = strings.ToLower(lease.UserID)

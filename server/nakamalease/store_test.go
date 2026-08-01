@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -298,7 +301,7 @@ func TestCreatePersistsPrivateVersionedLeaseByHashedKey(t *testing.T) {
 		t.Fatalf("decode stored lease: %v", err)
 	}
 	want := map[string]any{
-		"schema":           float64(2),
+		"schema":           float64(3),
 		"attempt_id":       testAttemptID,
 		"allocation_id":    testAllocationID,
 		"observer":         float64(42),
@@ -1066,6 +1069,65 @@ func TestConcurrentStagingReplaceReusesTheDurableWinnerExpiry(t *testing.T) {
 	}
 }
 
+func TestBeginDispatchUsesObservedVersionAndReplaysTheWinner(t *testing.T) {
+	storage := newMemoryStorage()
+	store, err := NewStore(storage)
+	if err != nil {
+		t.Fatalf("NewStore returned an error: %v", err)
+	}
+	staging := validLease()
+	staging.AllocationID = ""
+	staging.Observer = 0
+	staging.SecretRef = ""
+	staging.Staging = true
+	current, err := store.Create(context.Background(), staging)
+	if err != nil {
+		t.Fatalf("Create staging lease returned an error: %v", err)
+	}
+
+	dispatched, mayDispatch, err := store.BeginDispatch(
+		context.Background(),
+		current,
+		testAttemptID,
+	)
+	if err != nil {
+		t.Fatalf("BeginDispatch returned an error: %v", err)
+	}
+	if !mayDispatch || !dispatched.Lease.Dispatched || dispatched.Version != "v2" {
+		t.Fatalf(
+			"dispatch barrier = %+v/%t, want dispatched v2 winner",
+			dispatched,
+			mayDispatch,
+		)
+	}
+	if len(storage.writes) != 2 || storage.writes[1].Version != current.Version {
+		t.Fatalf(
+			"begin-dispatch writes = %+v, want exact observed version %q",
+			storage.writes,
+			current.Version,
+		)
+	}
+
+	replayed, mayRedispatch, err := store.BeginDispatch(
+		context.Background(),
+		dispatched,
+		testAttemptID,
+	)
+	if err != nil {
+		t.Fatalf("replayed BeginDispatch returned an error: %v", err)
+	}
+	if replayed != dispatched || mayRedispatch {
+		t.Fatalf(
+			"replayed dispatch barrier = %+v/%t, want existing non-dispatching winner",
+			replayed,
+			mayRedispatch,
+		)
+	}
+	if len(storage.writes) != 2 {
+		t.Fatalf("replayed BeginDispatch writes = %d, want 2", len(storage.writes))
+	}
+}
+
 func TestBeginReleaseMarksTheCurrentAttemptBeforeExternalCleanup(t *testing.T) {
 	storage := newMemoryStorage()
 	store, err := NewStore(storage)
@@ -1768,6 +1830,82 @@ func TestLoadKeepsSchemaOneLeaseReadableAsNotReleasing(t *testing.T) {
 	}
 }
 
+func TestEveryShippedLeaseSchemaShapeStaysReadable(t *testing.T) {
+	t.Parallel()
+
+	ledgerBytes, err := os.ReadFile(filepath.Join(
+		"testdata",
+		"shipped_lease_versions.txt",
+	))
+	if err != nil {
+		t.Fatalf("read lease schema ledger: %v", err)
+	}
+	versions := strings.Fields(string(ledgerBytes))
+	if len(versions) == 0 {
+		t.Fatal("lease schema ledger is empty")
+	}
+	for index, rawVersion := range versions {
+		version, err := strconv.Atoi(rawVersion)
+		if err != nil {
+			t.Fatalf("lease schema ledger entry %q: %v", rawVersion, err)
+		}
+		if version != index+1 {
+			t.Fatalf(
+				"lease schema ledger[%d] = %d, want %d",
+				index,
+				version,
+				index+1,
+			)
+		}
+		goldenBytes, err := os.ReadFile(filepath.Join(
+			"testdata",
+			fmt.Sprintf("golden_lease_v%d.jsonl", version),
+		))
+		if err != nil {
+			t.Fatalf("read lease schema %d goldens: %v", version, err)
+		}
+		goldens := strings.Split(strings.TrimSpace(string(goldenBytes)), "\n")
+		if len(goldens) == 0 || goldens[0] == "" {
+			t.Fatalf("lease schema %d has no golden shapes", version)
+		}
+		for shapeIndex, golden := range goldens {
+			var stored document
+			if err := json.Unmarshal([]byte(golden), &stored); err != nil {
+				t.Fatalf(
+					"decode lease schema %d shape %d: %v",
+					version,
+					shapeIndex+1,
+					err,
+				)
+			}
+			if stored.Schema != version {
+				t.Fatalf(
+					"lease schema %d shape %d declares %d",
+					version,
+					shapeIndex+1,
+					stored.Schema,
+				)
+			}
+			if _, err := leaseFrom(golden, testUserID, testReservationID); err != nil {
+				t.Fatalf(
+					"read lease schema %d shape %d: %v",
+					version,
+					shapeIndex+1,
+					err,
+				)
+			}
+		}
+	}
+	lastVersion, err := strconv.Atoi(versions[len(versions)-1])
+	if err != nil || lastVersion != schemaVersion {
+		t.Fatalf(
+			"lease schema ledger head = %q, writer = %d",
+			versions[len(versions)-1],
+			schemaVersion,
+		)
+	}
+}
+
 // The legacy refusal keys on whether the document carries the newer keys at
 // all, so a value that decodes to the zero flag still counts as carried. A
 // duplicate key is the case a decoded field cannot see: encoding/json keeps the
@@ -1811,7 +1949,7 @@ func TestLoadRefusesLegacySchemaCarryingPostLegacyKeys(t *testing.T) {
 	}
 }
 
-func TestLoadKeepsCurrentSchemaLeaseCarryingExplicitFalseFlags(t *testing.T) {
+func TestLoadKeepsSchemaTwoLeaseCarryingExplicitFalseFlags(t *testing.T) {
 	storage := newMemoryStorage()
 	store, err := NewStore(storage)
 	if err != nil {
@@ -1847,6 +1985,24 @@ func TestLoadKeepsCurrentSchemaLeaseCarryingExplicitFalseFlags(t *testing.T) {
 	}
 }
 
+func TestLoadRefusesSchemaTwoCarryingDispatched(t *testing.T) {
+	for _, value := range []string{"true", "false", "null"} {
+		t.Run(value, func(t *testing.T) {
+			_, err := leaseFrom(
+				`{"schema":2,"attempt_id":"attempt-7","allocation_id":"gameserver-17",`+
+					`"observer":42,"secret_ref":"zone-admission-gameserver-17",`+
+					`"expires_at_nanos":2000000000123456789,"claimed_at_nanos":null,`+
+					`"dispatched":`+value+`}`,
+				testUserID,
+				testReservationID,
+			)
+			if err == nil {
+				t.Fatalf("schema-two dispatched=%s loaded, want an error", value)
+			}
+		})
+	}
+}
+
 func TestLoadRejectsMalformedOrPublicStoredObjects(t *testing.T) {
 	for _, test := range []struct {
 		name   string
@@ -1868,8 +2024,8 @@ func TestLoadRejectsMalformedOrPublicStoredObjects(t *testing.T) {
 			tamper: func(object *api.StorageObject) {
 				object.Value = strings.Replace(
 					object.GetValue(),
-					`"schema":2`,
 					`"schema":3`,
+					`"schema":4`,
 					1,
 				)
 			},
@@ -1879,7 +2035,7 @@ func TestLoadRejectsMalformedOrPublicStoredObjects(t *testing.T) {
 			tamper: func(object *api.StorageObject) {
 				object.Value = strings.Replace(
 					object.GetValue(),
-					`"schema":2`,
+					`"schema":3`,
 					`"schema":1`,
 					1,
 				)
@@ -1896,7 +2052,7 @@ func TestLoadRejectsMalformedOrPublicStoredObjects(t *testing.T) {
 			tamper: func(object *api.StorageObject) {
 				object.Value = strings.Replace(
 					object.GetValue(),
-					`"schema":2`,
+					`"schema":3`,
 					`"schema":1`,
 					1,
 				)
@@ -1913,7 +2069,7 @@ func TestLoadRejectsMalformedOrPublicStoredObjects(t *testing.T) {
 			tamper: func(object *api.StorageObject) {
 				object.Value = strings.Replace(
 					object.GetValue(),
-					`"schema":2`,
+					`"schema":3`,
 					`"schema":1`,
 					1,
 				)
@@ -1930,7 +2086,7 @@ func TestLoadRejectsMalformedOrPublicStoredObjects(t *testing.T) {
 			tamper: func(object *api.StorageObject) {
 				object.Value = strings.Replace(
 					object.GetValue(),
-					`"schema":2`,
+					`"schema":3`,
 					`"schema":1`,
 					1,
 				)

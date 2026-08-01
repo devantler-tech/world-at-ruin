@@ -47,15 +47,16 @@ type Provisioned struct {
 }
 
 // GameServerResources owns the external GameServer and admission-secret
-// lifecycle. Provision is idempotent by AttemptID and reports any resource
-// staged before an error so the coordinator can reclaim it. Resolve must return
-// the exact durable resource, while Release must be idempotent for that exact
-// resource. Its concrete Agones and Kubernetes implementation is a later
-// server-foundation child. Release must also discover an attempt from AttemptID
-// alone when a staging lease has no allocation material yet; this makes a crash
-// after Provision recoverable.
+// lifecycle. Provision performs the one external allocation dispatch permitted
+// for an attempt. Reconcile observes only that exact attempt and never
+// dispatches. Resolve must return the exact durable resource, while Release must
+// be idempotent for that exact resource. Its concrete Agones and Kubernetes
+// implementation is a later server-foundation child. Release must also discover
+// an attempt from AttemptID alone when a staging lease has no allocation material
+// yet; this makes a crash after Provision recoverable.
 type GameServerResources interface {
 	Provision(context.Context, handoff.AllocationRequest, time.Time) (Provisioned, error)
+	Reconcile(context.Context, handoff.AllocationRequest, time.Time) (Provisioned, error)
 	Resolve(context.Context, nakamalease.Lease) (handoff.Allocation, error)
 	Release(context.Context, nakamalease.Lease) error
 }
@@ -151,6 +152,7 @@ func (c *Coordinator) Allocate(
 	if hasCurrent &&
 		current.Lease.AttemptID == request.AttemptID &&
 		current.Lease.Staging &&
+		!current.Lease.Dispatched &&
 		!now.Before(current.Lease.ExpiresAt) {
 		if releaseErr := c.reconcileAttempt(ctx, request, nil); releaseErr != nil {
 			return handoff.Allocation{}, ErrReconciliation
@@ -158,6 +160,9 @@ func (c *Coordinator) Allocate(
 		return handoff.Allocation{}, nakamalease.ErrExpired
 	}
 	if hasCurrent && current.Lease.AttemptID != request.AttemptID {
+		if current.Lease.Staging && current.Lease.Dispatched {
+			return handoff.Allocation{}, nakamalease.ErrDispatched
+		}
 		if current.State(now) == nakamalease.StateClaimed {
 			return handoff.Allocation{}, nakamalease.ErrClaimed
 		}
@@ -198,11 +203,33 @@ func (c *Coordinator) Allocate(
 		return c.resolveDurable(ctx, staging.Lease)
 	}
 
-	provisioned, err := c.resources.Provision(
-		ctx,
-		request,
-		staging.Lease.ExpiresAt,
-	)
+	dispatch := false
+	if !staging.Lease.Dispatched {
+		staging, dispatch, err = c.leases.BeginDispatch(
+			ctx,
+			staging,
+			request.AttemptID,
+		)
+		if err != nil {
+			return handoff.Allocation{}, err
+		}
+	}
+	var provisioned Provisioned
+	resourceOperation := "handoff allocation: reconcile GameServer resource"
+	if dispatch {
+		resourceOperation = "handoff allocation: provision GameServer resource"
+		provisioned, err = c.resources.Provision(
+			ctx,
+			request,
+			staging.Lease.ExpiresAt,
+		)
+	} else {
+		provisioned, err = c.resources.Reconcile(
+			ctx,
+			request,
+			staging.Lease.ExpiresAt,
+		)
+	}
 	if err != nil {
 		if winner, progressed, winnerErr := c.resolveProgressedAttempt(
 			ctx,
@@ -212,25 +239,9 @@ func (c *Coordinator) Allocate(
 		} else if winnerErr != nil {
 			return handoff.Allocation{}, winnerErr
 		}
-		var staged *nakamalease.Lease
-		if hasReportedStagedResource(provisioned) {
-			stagedExpiry := provisioned.Allocation.LeaseExpiresAt
-			if stagedExpiry.IsZero() {
-				stagedExpiry = staging.Lease.ExpiresAt
-			}
-			stagedLease := leaseFromProvisioned(
-				request,
-				provisioned,
-				stagedExpiry,
-			)
-			staged = &stagedLease
-		}
-		if releaseErr := c.reconcileAttempt(ctx, request, staged); releaseErr != nil {
-			return handoff.Allocation{}, ErrReconciliation
-		}
 		return handoff.Allocation{}, sanitizedResourceError(
 			err,
-			"handoff allocation: provision GameServer resource",
+			resourceOperation,
 		)
 	}
 	resourceExpiry := provisioned.Allocation.LeaseExpiresAt
@@ -349,10 +360,6 @@ func leaseFromProvisioned(
 		SecretRef:     provisioned.SecretRef,
 		ExpiresAt:     expiresAt,
 	}
-}
-
-func hasReportedStagedResource(provisioned Provisioned) bool {
-	return provisioned.Allocation.ID != "" || provisioned.SecretRef != ""
 }
 
 func (c *Coordinator) releaseResource(

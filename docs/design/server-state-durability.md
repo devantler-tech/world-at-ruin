@@ -151,11 +151,10 @@ a schema admits**, not one representative per version number.
 
 **That refusal is only as good as the reader's ability to see a field is present**, and a
 zero-valued field is where it fails. A boolean decoded into a plain `bool` reads `false` whether it
-was absent or explicitly written as `false`, so a legacy document carrying `"staging": false` is
-accepted today even though `staging` postdates that schema. A newer field must therefore be decoded
-**presence-aware** — a pointer or an explicit presence flag — not by testing its value for truth.
-The same package already does this **partly** for `claimed_at_nanos`, which is a pointer precisely so
-that absent and zero are distinguishable; the two booleans beside it are the gap, not the pattern.
+was absent or explicitly written as `false`. The lease reader therefore checks raw, case-folded JSON
+keys before accepting an older schema: schema one refuses `staging`, `dispatched` and `releasing`,
+and schema two refuses `dispatched`, even when the carried value is `false` or `null`. New record
+owners need the same **presence-aware** check rather than a truth-value test.
 
 **A pointer is not a complete presence check, so do not copy it as one.** `*int64` separates absent
 from numeric zero, but an explicit JSON `null` decodes to `nil` as well — absence and a present-null
@@ -457,8 +456,9 @@ needs to write a guard for.
 | No blind **finalize** — finalize presents the observed version | `nakamalease.Store` | **unguarded** — `Finalize` writes with `current.Version`, but the only direct call site (`handoffalloc/coordinator_test.go`) finalizes a freshly loaded record and never supplies a stale version |
 | No blind **release** — release deletes conditionally | `nakamalease.Store` | `TestReleaseRejectsAStaleAttemptWithoutDeleting`, `TestReleaseReconcilesNakamaConditionalDeleteRejections` |
 | No blind **begin-release** — the fencing write presents the observed version | `nakamalease.Store` | `TestBeginReleaseMarksTheCurrentAttemptBeforeExternalCleanup`, `TestBeginReleaseReplayKeepsTheExistingBarrier`, `TestClaimAndBeginReleaseLeaveExactlyOneOwner` |
+| No blind **begin-dispatch** — exactly one caller exact-version persists the point of no return before the external call | `nakamalease.Store` + `handoffalloc.Coordinator` | `TestBeginDispatchUsesObservedVersionAndReplaysTheWinner`, `TestAllocatePersistsDispatchBarrierBeforeProvisioning`, `TestAllocateNeverDispatchesWhenBarrierWriteFails`, `TestAllocateConcurrentCoordinatorsDispatchOnce` |
 | No blind **expiry reclaim** — the sweep fences with the listed version, then deletes conditionally | `nakamalease.Store` | **unguarded** — `TestReclaimExpiredContinuesAfterOneResourceTimesOut` covers per-object error tolerance, not a stale-version reclaim |
-| The writer declares the current schema | `nakamalease` document encode | `TestCreatePersistsPrivateVersionedLeaseByHashedKey` (asserts `schema: 2` on the stored value) |
+| The writer declares the current schema | `nakamalease` document encode | `TestCreatePersistsPrivateVersionedLeaseByHashedKey` (asserts `schema: 3` on the stored value) |
 | The reader accepts the legacy end of the range | `nakamalease` document decode | `TestLoadKeepsSchemaOneLeaseReadableAsNotReleasing` |
 | The reader rejects a schema outside the range | `nakamalease` document decode | `TestLoadRejectsMalformedOrPublicStoredObjects` (`unsupported schema`) |
 | Unknown fields are refused | `nakamalease` document decode | `TestLoadRejectsMalformedOrPublicStoredObjects` (`unknown JSON field`) |
@@ -466,15 +466,15 @@ needs to write a guard for.
 | A required nullable field cannot be omitted or nulled undetected | every record owner, **incl. `nakamalease` today** | **gap (running code)** — `claimed_at_nanos` is a `*int64`, so absent and explicit `null` are indistinguishable |
 | Trailing content is refused | `nakamalease` document decode | **unguarded (#491)** — `leaseFrom` *does* enforce this via its second decode and `io.EOF` check; no test appends a trailing token, so a regression would leave every named guard green |
 | A required field omitted from its own schema is refused | every record owner, **incl. `nakamalease` today** | **gap (running code)** — no schema declares a required-field set, so an omitted required field decodes as an implicit zero |
-| Every shipped schema **shape** stays readable, permanently | every record owner, **incl. `nakamalease` today** | **gap (running code)** — schemas 1 and 2 have shipped with no ledger or goldens, and schema 2 alone admits staging, finalized, claimed and releasing shapes |
+| Every shipped lease schema **shape** stays readable, permanently | `nakamalease` document decode | `TestEveryShippedLeaseSchemaShapeStaysReadable` plus `server/nakamalease/testdata/shipped_lease_versions.txt` and the schema-one through schema-three lifecycle-shape goldens |
 | The player-mutation audit declares an exact schema and refuses unknown, repeated, missing or trailing fields | `playerstate` audit decode | `TestApplyRejectsMalformedAuditDocuments` |
 | Every shipped player-mutation audit schema stays readable, permanently | `playerstate` audit decode | `TestEveryShippedAuditSchemaStaysReadable` plus `server/playerstate/testdata/shipped_audit_versions.txt` and its matching golden |
 | The character writer declares an exact schema and its reader refuses unknown, repeated, missing, trailing or public records | `nakamacharacter` document encode/decode | `TestSavePersistsPrivateVersionedCharacterForVerifiedAccount`, `TestLoadRejectsMalformedOrPublicCharacterRecords` |
 | Every shipped character-record schema stays readable, permanently | `nakamacharacter` document decode | `TestLoadKeepsEveryShippedCharacterSchemaReadable` plus `server/nakamacharacter/testdata/shipped_character_versions.txt` and its matching golden |
 | A refusal quarantines the record **across replicas** | `nakamalease.Store` | **unguarded** — met by the operation-level form: every write presents `current.Version` from a strict `Load`, so an undecodable document yields no version and blocks every write. No composite refusal→write test pins it |
 | A refusal quarantines a character record across replicas | `nakamacharacter.Store` | `TestSaveCannotOverwriteMalformedDurableCharacterWithItsVersion` pins the strict-read + version-match form |
-| A newer field on a legacy schema is refused **by presence, not by truth** | `nakamalease` document decode | **gap (#491)** — `staging`/`releasing` are plain booleans, so an explicit `false` is accepted; needs presence-aware decoding and a zero-value case |
-| Read support ships and bakes before its writer activates | every record owner, **incl. `nakamalease` today** | **gap (running code)** — no server-side equivalent of the client staging guard, and nothing registers the rollback target as carrying the expanded reader |
+| A newer field on a legacy schema is refused **by presence, not by truth** | `nakamalease` document decode | `TestLoadRefusesLegacySchemaCarryingPostLegacyKeys`, `TestLoadRefusesSchemaTwoCarryingDispatched` |
+| Read support ships and bakes before its writer activates | every record owner, **incl. `nakamalease` today** | **gap (running code)** — schema-three read/write code is inert because no concrete `GameServerResources` adapter or production coordinator caller exists, but no server-side guard yet registers a rollback target carrying that reader before the adapter activates it |
 | A player-record mutation and its audit entry commit atomically | `playerstate.Store` | `TestApplyCommitsPlayerRecordAndAuditInOneAtomicWrite`, `TestApplyCreatesAPlayerRecordConditionallyWithItsAudit` |
 | Every character mutation uses the atomic player-state boundary | `nakamacharacter.Store` | `TestSavePersistsPrivateVersionedCharacterForVerifiedAccount` observes the character record and append-only audit in one storage write |
 | Every other future player-owned mutation uses the atomic boundary | future player-record owners | not yet built — #474 has no record owner or caller yet |
