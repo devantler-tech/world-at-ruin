@@ -1,0 +1,10 @@
+{
+	"date": "2026-08-01",
+	"notes": [
+		"Crowded zones now keep the last complete marker population visible when a replica snapshot exceeds the 512-marker render budget, instead of blanking and rebuilding the whole crowd.",
+		"Oversized snapshots allocate no new markers; ordinary reconciliation resumes as soon as the population returns within the rendering budget.",
+		"Still short of the mark: remote players remain placeholder capsules, and crowded zones have no authored level-of-detail treatment or player-facing overload cue."
+	],
+	"title": "Crowds hold their last stable frame",
+	"version": "0.89.3"
+}

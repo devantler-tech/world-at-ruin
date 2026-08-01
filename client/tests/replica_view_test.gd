@@ -27,6 +27,11 @@ extends Node
 ##                      instead of being silently clamped by the engine
 ##   * empty          — a store with no base snapshot draws nothing
 ##   * cleared        — a null store (no zone) removes everything
+##   * render boundary — a table exactly at the independent marker budget draws
+##                       and survives an over-cap update without rebuilding,
+##                       then resumes ordinary reconciliation
+##   * render cap     — a first oversized but protocol-valid table allocates no
+##                      markers
 ##
 ## Pure scene-tree work — no socket, no save, no GPU read-back — so it is
 ## deterministic headless and safe to run locally.
@@ -52,6 +57,10 @@ func _ready() -> void:
 	if not _check_empty_store_draws_nothing():
 		return
 	if not _check_null_store_clears():
+		return
+	if not _check_render_cap_accepts_boundary():
+		return
+	if not _check_render_cap_skips_first_oversized_table():
 		return
 	if not _check_placement_is_world_absolute():
 		return
@@ -308,6 +317,86 @@ func _check_null_store_clears() -> bool:
 		return false
 	if view.count() != 0:
 		_fail("a null store must clear the view's index too, it still reports %d" % view.count())
+		return false
+	view.free()
+	return true
+
+
+## The budget is inclusive. A `>=` guard would look equivalent under every
+## small fixture and the first-oversized refusal below, but would hide the final
+## protocol-valid marker the renderer explicitly budgets for. Once that bounded
+## population exists, a one-over-cap update must retain those exact nodes: a
+## clear/rebuild cycle at the boundary is the allocation spike this cap prevents.
+func _check_render_cap_accepts_boundary() -> bool:
+	var view := _mounted_view()
+	var store := ReplicaStore.new()
+	var entities: Array = []
+	for id: int in range(2, ReplicaView.MAX_VISIBLE_ENTITIES + 2):
+		entities.append(_entity(id, id, 0, 0, 300))
+	if not _apply(store, _snapshot_result(10, 1, entities)):
+		return false
+	view.sync(store)
+
+	var tree_count := view.get_child_count()
+	var index_count := view.count()
+	if tree_count != ReplicaView.MAX_VISIBLE_ENTITIES or index_count != ReplicaView.MAX_VISIBLE_ENTITIES:
+		_fail("a table at the %d-marker render cap must draw every marker, found %d in the tree and %d in the index" % [ReplicaView.MAX_VISIBLE_ENTITIES, tree_count, index_count])
+		return false
+	var marker_ids: Dictionary = {}
+	for id: int in range(2, ReplicaView.MAX_VISIBLE_ENTITIES + 2):
+		marker_ids[id] = view.marker_for(id).get_instance_id()
+
+	entities.append(_entity(ReplicaView.MAX_VISIBLE_ENTITIES + 2, 0, 0, 0, 300))
+	store = ReplicaStore.new()
+	if not _apply(store, _snapshot_result(11, 1, entities)):
+		return false
+	view.sync(store)
+
+	if view.get_child_count() != ReplicaView.MAX_VISIBLE_ENTITIES or view.count() != ReplicaView.MAX_VISIBLE_ENTITIES:
+		_fail("a one-over-cap update must retain the last %d-marker population, found %d markers" % [ReplicaView.MAX_VISIBLE_ENTITIES, view.count()])
+		return false
+	for id: int in range(2, ReplicaView.MAX_VISIBLE_ENTITIES + 2):
+		var marker := view.marker_for(id)
+		if marker == null or marker.get_instance_id() != marker_ids[id]:
+			_fail("a one-over-cap update rebuilt or removed marker %d" % id)
+			return false
+
+	var recovered_entities: Array = entities.slice(0, ReplicaView.MAX_VISIBLE_ENTITIES)
+	recovered_entities[0] = _entity(2, 9000, 0, 0, 300)
+	store = ReplicaStore.new()
+	if not _apply(store, _snapshot_result(12, 1, recovered_entities)):
+		return false
+	view.sync(store)
+	if not _positions_match(view.marker_for(2).position, Vector3(9.0, 0.0, 0.0)):
+		_fail("returning within the render cap must resume position reconciliation")
+		return false
+	for id: int in range(2, ReplicaView.MAX_VISIBLE_ENTITIES + 2):
+		var marker := view.marker_for(id)
+		if marker == null or marker.get_instance_id() != marker_ids[id]:
+			_fail("returning within the render cap rebuilt or removed marker %d" % id)
+			return false
+	view.free()
+	return true
+
+
+## The wire cap is a serialization bound, not permission to allocate that many
+## scene nodes. Exercise one past the independent render budget (but still far
+## below WireCodec.MAX_ENTITIES) before any valid population exists. The view
+## must not allocate even one marker from an oversized authoritative table.
+func _check_render_cap_skips_first_oversized_table() -> bool:
+	var view := _mounted_view()
+	var store := ReplicaStore.new()
+	var entities: Array = []
+	# Observer 1 is intentionally absent: the store correctly refuses snapshots
+	# that list the observing player among remote replicas.
+	for id: int in range(2, ReplicaView.MAX_VISIBLE_ENTITIES + 3):
+		entities.append(_entity(id, id, 0, 0, 300))
+	if not _apply(store, _snapshot_result(10, 1, entities)):
+		return false
+	view.sync(store)
+
+	if view.get_child_count() != 0 or view.count() != 0:
+		_fail("a first %d-entity table above the %d-marker render cap must allocate nothing, found %d markers" % [store.count(), ReplicaView.MAX_VISIBLE_ENTITIES, view.count()])
 		return false
 	view.free()
 	return true
