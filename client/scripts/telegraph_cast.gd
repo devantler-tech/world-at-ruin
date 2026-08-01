@@ -17,8 +17,8 @@ extends RefCounted
 ##    answer by construction.
 ##  - ILLEGAL CASTS ARE UNREPRESENTABLE. The only constructors are the
 ##    validating factories below; a shape that could silently catch nothing
-##    (zero radius, degenerate facing, out-of-range threshold, non-positive
-##    cast time, non-finite input) is refused loudly at creation, never
+##    (zero radius, non-positive cast time, non-finite input) is refused
+##    loudly at creation, never
 ##    carried into play as a no-op (the closed-schema idiom the settled laws
 ##    use everywhere else).
 ##
@@ -32,11 +32,10 @@ extends RefCounted
 ## them, each with its own validating factory.
 enum Shape { CIRCLE, CONE }
 
-## Facings whose planar length is at or below this are refused at creation.
-## The geometry lib tolerates a degenerate facing (falls back to world
-## forward) because it must never NaN mid-resolution; a CAST authored with one
-## is an author error and gets a loud refusal instead of a silent default.
-## Mirrors `Telegraph._MIN_FACING`.
+## Facings whose planar length is at or below this use world-forward, exactly
+## as the shared client geometry and authoritative resolver do. Keeping that
+## normalization at the factory boundary ensures every authority-resolved
+## cone also has a visible client representation.
 const MIN_FACING := 0.0001
 
 ## The authoritative tier bounds every telegraph's linear extent —
@@ -110,22 +109,15 @@ static func cone(apex: Vector3, cone_facing: Vector3, reach_m: float,
 	if reach_m <= 0.0:
 		push_error("TelegraphCast.cone: range must be > 0 (got %f)" % reach_m)
 		return null
-	if threshold_scaled < -Telegraph.COS_SCALE or threshold_scaled > Telegraph.COS_SCALE:
-		push_error("TelegraphCast.cone: cos_half_scaled %d is outside [-%d, %d] — refusing rather than clamping an authoring error"
-			% [threshold_scaled, Telegraph.COS_SCALE, Telegraph.COS_SCALE])
-		return null
-	if Vector2(cone_facing.x, cone_facing.z).length() <= MIN_FACING:
-		push_error("TelegraphCast.cone: facing has no planar direction — a cone cast needs a real heading")
-		return null
 	if time <= 0.0:
 		push_error("TelegraphCast.cone: cast_time must be > 0 (got %f)" % time)
 		return null
 	var c := TelegraphCast.new()
 	c.shape = Shape.CONE
 	c.origin_point = apex
-	c.facing = cone_facing
+	c.facing = Vector3(0, 0, -1) if Vector2(cone_facing.x, cone_facing.z).length() <= MIN_FACING else cone_facing
 	c.range_m = minf(reach_m, MAX_EXTENT_M)
-	c.cos_half_scaled = threshold_scaled
+	c.cos_half_scaled = clampi(threshold_scaled, -Telegraph.COS_SCALE, Telegraph.COS_SCALE)
 	c.cast_time = time
 	return c
 
@@ -144,9 +136,7 @@ func is_valid() -> bool:
 		Shape.CIRCLE:
 			return is_finite(radius) and radius > 0.0 and radius <= MAX_EXTENT_M
 		Shape.CONE:
-			if not facing.is_finite() or Vector2(facing.x, facing.z).length() <= MIN_FACING:
-				return false
-			if cos_half_scaled < -Telegraph.COS_SCALE or cos_half_scaled > Telegraph.COS_SCALE:
+			if not facing.is_finite():
 				return false
 			return is_finite(range_m) and range_m > 0.0 and range_m <= MAX_EXTENT_M
 	return false

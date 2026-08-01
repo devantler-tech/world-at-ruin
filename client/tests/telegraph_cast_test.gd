@@ -41,10 +41,6 @@ func _factory_refusals() -> void:
 		TelegraphCast.circle(Vector3(INF, 0, 0), 5.0, 1.0),
 		TelegraphCast.cone(Vector3.ZERO, Vector3(0, 0, -1), 0.0, 500_000, 1.0),
 		TelegraphCast.cone(Vector3.ZERO, Vector3(0, 0, -1), -2.0, 500_000, 1.0),
-		TelegraphCast.cone(Vector3.ZERO, Vector3(0, 0, -1), 8.0, Telegraph.COS_SCALE + 1, 1.0),
-		TelegraphCast.cone(Vector3.ZERO, Vector3(0, 0, -1), 8.0, -Telegraph.COS_SCALE - 1, 1.0),
-		TelegraphCast.cone(Vector3.ZERO, Vector3(0, 5, 0), 8.0, 500_000, 1.0),
-		TelegraphCast.cone(Vector3.ZERO, Vector3.ZERO, 8.0, 500_000, 1.0),
 		TelegraphCast.cone(Vector3.ZERO, Vector3(0, 0, -1), 8.0, 500_000, 0.0),
 		TelegraphCast.cone(Vector3.ZERO, Vector3(0, 0, NAN), 8.0, 500_000, 1.0),
 	]
@@ -72,6 +68,28 @@ func _factory_accepts() -> void:
 		return
 	if TelegraphCast.cone(Vector3.ZERO, Vector3(1, 0, 0), 8.0, -Telegraph.COS_SCALE, 1.0) == null:
 		_fail("cos_half_scaled == -COS_SCALE must be accepted")
+		return
+	# The authority clamps thresholds and gives a degenerate planar facing the
+	# world-forward fallback. The presentation factory must normalize those
+	# same inputs so an authority-resolved attack can never become invisible.
+	var normalized_cone := TelegraphCast.cone(
+			Vector3.ZERO, Vector3(0, 5, 0), 8.0, Telegraph.COS_SCALE + 1, 1.0)
+	if normalized_cone == null:
+		_fail("authority-normalized cone inputs must be accepted")
+		return
+	if normalized_cone.facing != Vector3(0, 0, -1):
+		_fail("degenerate planar facing must normalize to world-forward")
+		return
+	if normalized_cone.cos_half_scaled != Telegraph.COS_SCALE:
+		_fail("cos_half_scaled above the authority limit must clamp")
+		return
+	var normalized_low := TelegraphCast.cone(
+			Vector3.ZERO, Vector3.ZERO, 8.0, -Telegraph.COS_SCALE - 1, 1.0)
+	if normalized_low == null or normalized_low.cos_half_scaled != -Telegraph.COS_SCALE:
+		_fail("cos_half_scaled below the authority limit must clamp")
+		return
+	if not normalized_cone.contains(Vector3(0, 0, -5)):
+		_fail("normalized cone must resolve along the authority's fallback direction")
 		return
 	# Over-cap extents CLAMP to the authoritative limit (the server's
 	# maxTelegraphExtentMM clamps, never refuses — refusing here would leave
