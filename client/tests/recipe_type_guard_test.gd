@@ -12,7 +12,8 @@ extends Node
 ##
 ## character_factory_test covers the VALUE-level rejections (unknown shape/
 ## bone/version, unguarded bone, v1-carrying-equipment); this pins the
-## TYPE-level ones so the two factories stay at parity.
+## TYPE-level ones, plus finite bounded scalar values, so malformed persisted
+## input never reaches blend-shape or skeleton mutation.
 ##
 ## Run: godot --headless --path client res://tests/recipe_type_guard_test.tscn
 
@@ -43,6 +44,16 @@ func _ready() -> void:
 		{ "version": 1, "bone_scale": true },
 		{ "version": 1, "joint_push": 1 },
 		{ "version": 1, "joint_push": [] },
+		{ "version": 1, "shapes": { "torso_vshape": "heavy" } },
+		{ "version": 1, "shapes": { "torso_vshape": NAN } },
+		{ "version": 1, "shapes": { "torso_vshape": CharacterFactory.SHAPE_WEIGHT_MAX + 0.01 } },
+		{ "version": 1, "bone_girth": { "upperarm": "wide" } },
+		{ "version": 1, "bone_girth": { "upperarm": INF } },
+		{ "version": 1, "bone_girth": { "upperarm": 0.0 } },
+		{ "version": 1, "bone_scale": { "hand": CharacterFactory.BONE_FACTOR_MAX + 0.01 } },
+		{ "version": 1, "joint_push": { "upperarm": CharacterFactory.BONE_FACTOR_MIN - 0.01 } },
+		{ "version": 1, "shapes": { 1: 0.5 } },
+		{ "version": 1, "bone_girth": { 1: 1.0 } },
 	]:
 		var built := CharacterFactory.build(bad)
 		if built != null:
@@ -50,7 +61,7 @@ func _ready() -> void:
 			_fail("malformed recipe was accepted (must refuse loudly): %s" % JSON.stringify(bad))
 			return
 
-	print("TEST PASS — malformed character recipes refuse loudly (type guards hold)")
+	print("TEST PASS — malformed character recipes refuse loudly (schema and scalar guards hold)")
 	get_tree().quit(0)
 
 
