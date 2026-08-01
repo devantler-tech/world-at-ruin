@@ -277,7 +277,7 @@ func (c *Coordinator) Allocate(
 		}
 		return handoff.Allocation{}, ErrInvalidResource
 	}
-	_, err = c.leases.Finalize(ctx, staging, next)
+	_, committed, err := c.leases.Finalize(ctx, staging, next)
 	if err != nil {
 		progressCtx, cancel := context.WithTimeout(
 			context.WithoutCancel(ctx),
@@ -300,7 +300,7 @@ func (c *Coordinator) Allocate(
 		}
 		return handoff.Allocation{}, err
 	}
-	if requestedAttemptID != request.AttemptID {
+	if !committed || requestedAttemptID != request.AttemptID {
 		provisioned.Allocation.RetainOnFailure = true
 	}
 	return provisioned.Allocation, nil

@@ -240,6 +240,52 @@ type overlappingReconcileResources struct {
 	releases          []nakamalease.Lease
 }
 
+type adopterWinsResources struct {
+	provisioned      Provisioned
+	provisionStarted chan struct{}
+	allowProvision   chan struct{}
+}
+
+func newAdopterWinsResources() *adopterWinsResources {
+	return &adopterWinsResources{
+		provisioned: Provisioned{
+			Allocation: validAllocation(),
+			SecretRef:  "zone-admission-gameserver-17",
+		},
+		provisionStarted: make(chan struct{}),
+		allowProvision:   make(chan struct{}),
+	}
+}
+
+func (r *adopterWinsResources) Provision(
+	context.Context,
+	handoff.AllocationRequest,
+	time.Time,
+) (Provisioned, error) {
+	close(r.provisionStarted)
+	<-r.allowProvision
+	return r.provisioned, nil
+}
+
+func (r *adopterWinsResources) Reconcile(
+	context.Context,
+	handoff.AllocationRequest,
+	time.Time,
+) (Provisioned, error) {
+	return r.provisioned, nil
+}
+
+func (r *adopterWinsResources) Resolve(
+	context.Context,
+	nakamalease.Lease,
+) (handoff.Allocation, error) {
+	return r.provisioned.Allocation, nil
+}
+
+func (r *adopterWinsResources) Release(context.Context, nakamalease.Lease) error {
+	return errors.New("test resources: shared winner was released")
+}
+
 func newOverlappingReconcileResources() *overlappingReconcileResources {
 	return &overlappingReconcileResources{
 		provisioned: Provisioned{
@@ -1092,6 +1138,55 @@ func TestOverlappingTransportRetriesRetainTheSharedDurableAllocation(t *testing.
 	}
 }
 
+func TestDispatchOwnerRetainsTheWinnerWhenAnAdopterFinalizesFirst(t *testing.T) {
+	storage := newMemoryStorage()
+	store := newLeaseStore(t, storage)
+	resources := newAdopterWinsResources()
+	coordinator, err := NewCoordinator(
+		resources,
+		store,
+		Config{LeaseTTL: time.Minute, Now: func() time.Time { return testNow }},
+	)
+	if err != nil {
+		t.Fatalf("NewCoordinator returned an error: %v", err)
+	}
+
+	type result struct {
+		allocation handoff.Allocation
+		err        error
+	}
+	ownerResult := make(chan result, 1)
+	go func() {
+		allocation, allocateErr := coordinator.Allocate(
+			context.Background(),
+			validRequest(),
+		)
+		ownerResult <- result{allocation: allocation, err: allocateErr}
+	}()
+	<-resources.provisionStarted
+
+	adopterRequest := validRequest()
+	adopterRequest.AttemptID = "attempt-8"
+	adopter, err := coordinator.Allocate(context.Background(), adopterRequest)
+	if err != nil {
+		t.Fatalf("adopter Allocate returned an error: %v", err)
+	}
+	if !adopter.RetainOnFailure {
+		t.Fatalf("adopter allocation = %+v, want retained durable winner", adopter)
+	}
+	close(resources.allowProvision)
+	owner := <-ownerResult
+	if owner.err != nil {
+		t.Fatalf("dispatch owner Allocate returned an error: %v", owner.err)
+	}
+	if !owner.allocation.RetainOnFailure {
+		t.Fatalf(
+			"dispatch owner allocation = %+v, want replayed winner retained",
+			owner.allocation,
+		)
+	}
+}
+
 func TestAllocateNeverDispatchesWhenBarrierWriteFails(t *testing.T) {
 	storage := newMemoryStorage()
 	storage.writeErrAt = 2
@@ -1234,14 +1329,22 @@ func TestAllocateConcurrentCoordinatorsDispatchOnce(t *testing.T) {
 	<-resources.reconcileStarted
 	close(resources.allowProvision)
 
+	retained := 0
 	for range 2 {
 		got := <-results
 		if got.err != nil {
 			t.Fatalf("concurrent Allocate returned an error: %v", got.err)
 		}
+		if got.allocation.RetainOnFailure {
+			retained++
+			got.allocation.RetainOnFailure = false
+		}
 		if !reflect.DeepEqual(got.allocation, validAllocation()) {
 			t.Fatalf("concurrent allocation = %+v, want %+v", got.allocation, validAllocation())
 		}
+	}
+	if retained != 1 {
+		t.Fatalf("retained concurrent results = %d, want one replay and one writer", retained)
 	}
 	provisions, reconciliations := resources.calls()
 	if provisions != 1 || reconciliations != 1 {
@@ -2175,7 +2278,7 @@ func TestAllocateProvisionFailureAdoptsAProgressedSameAttemptWinner(t *testing.T
 		if err != nil {
 			return fmt.Errorf("load staging winner: %w", err)
 		}
-		_, err = store.Finalize(
+		_, _, err = store.Finalize(
 			context.Background(),
 			current,
 			leaseFromProvisioned(
