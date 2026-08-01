@@ -14,7 +14,7 @@ extends Node
 ##  7. All production persistence helpers write through the seam.
 ##  8. save_to() refuses to REPLACE an unreadable vault, leaves it byte-intact,
 ##     and cleans up its temp file.
-##  9. Validation refuses each malformed shape, naming the reason.
+##  9. Validation refuses each malformed or resource-exhausting shape.
 ##
 ## Everything runs against a throwaway path via the seam, so the player's own
 ## user://vault.json is never read or written (no-resets law).
@@ -579,6 +579,28 @@ func _ready() -> void:
 		return
 	if SaveVault.validate({ "version": 1, "comment": "x", "attuned": ["a"] }) != "":
 		_fail("validation refused a fully-populated valid vault")
+		return
+	var too_many_names := []
+	too_many_names.resize(SaveVault.MAX_PERSISTED_NAMES + 1)
+	too_many_names.fill("a")
+	if SaveVault.validate({"version": 1, "attuned": too_many_names}) == "":
+		_fail("validation accepted an unbounded attunement set")
+		return
+	if SaveVault.validate({
+		"version": 1,
+		"attuned": ["a".repeat(SaveVault.MAX_PERSISTED_NAME_LENGTH + 1)],
+	}) == "":
+		_fail("validation accepted an unbounded attunement name")
+		return
+	var oversized := FileAccess.open(PROBE, FileAccess.WRITE)
+	if oversized == null:
+		_fail("could not create the oversized-vault probe")
+		return
+	oversized.seek(SaveVault.MAX_VAULT_BYTES)
+	oversized.store_8(0)
+	oversized.close()
+	if SaveVault.load_from(PROBE) != null:
+		_fail("load_from() accepted an oversized vault")
 		return
 	if SaveVault.validate({ "version": 2, "discoveries": ["starter_cave"] }) != "":
 		_fail("validation refused a valid v2 discovery vault")

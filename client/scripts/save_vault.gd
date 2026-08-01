@@ -133,6 +133,17 @@ const QUARANTINE_SUFFIX := ".unreadable-"
 ## the only direction that cannot destroy bytes.
 const QUARANTINE_MAX_ATTEMPTS := 100
 
+## Hard ceiling for bytes accepted from an untrusted local/cloud-synced vault.
+## Check this before get_as_text()/JSON parsing so a corrupt file cannot make
+## normal boot allocate and process an arbitrarily large document.
+const MAX_VAULT_BYTES := 1024 * 1024
+
+## Persisted name sets are intentionally generous but bounded. The vault keeps
+## unknown future names for forward compatibility; these limits constrain only
+## pathological documents, not the vocabulary a later client may introduce.
+const MAX_PERSISTED_NAMES := 4096
+const MAX_PERSISTED_NAME_LENGTH := 256
+
 ## How long an unparseable vault must have sat UNCHANGED before it is set aside.
 ##
 ## Quarantine exists because bytes no client can parse otherwise wedge
@@ -280,25 +291,37 @@ static func validate(doc: Dictionary) -> String:
 	if doc.has("attuned"):
 		if doc["attuned"] is not Array:
 			return "attuned must be an array of respawn-point names"
+		if (doc["attuned"] as Array).size() > MAX_PERSISTED_NAMES:
+			return "attuned has too many respawn-point names"
 		for name in (doc["attuned"] as Array):
 			if name is not String:
 				return "attuned entries must be strings (names are forward-only, never indices)"
+			if (name as String).length() > MAX_PERSISTED_NAME_LENGTH:
+				return "attuned entries must not exceed %d characters" % MAX_PERSISTED_NAME_LENGTH
 	if doc.has("discoveries"):
 		if doc["discoveries"] is not Array:
 			return "discoveries must be an array of place names"
+		if (doc["discoveries"] as Array).size() > MAX_PERSISTED_NAMES:
+			return "discoveries has too many place names"
 		for name in (doc["discoveries"] as Array):
 			if name is not String:
 				return "discoveries entries must be strings (names are forward-only, never indices)"
 			if (name as String).is_empty():
 				return "discoveries entries must be non-empty stable names"
+			if (name as String).length() > MAX_PERSISTED_NAME_LENGTH:
+				return "discoveries entries must not exceed %d characters" % MAX_PERSISTED_NAME_LENGTH
 	if doc.has("reward_claims"):
 		if doc["reward_claims"] is not Array:
 			return "reward_claims must be an array of place names"
+		if (doc["reward_claims"] as Array).size() > MAX_PERSISTED_NAMES:
+			return "reward_claims has too many place names"
 		for name in (doc["reward_claims"] as Array):
 			if name is not String:
 				return "reward_claims entries must be strings (names are forward-only, never indices)"
 			if (name as String).is_empty():
 				return "reward_claims entries must be non-empty stable names"
+			if (name as String).length() > MAX_PERSISTED_NAME_LENGTH:
+				return "reward_claims entries must not exceed %d characters" % MAX_PERSISTED_NAME_LENGTH
 	if doc.has("quests"):
 		if doc["quests"] is not Dictionary:
 			return "quests must be an object keyed by stable quest ids"
@@ -333,6 +356,11 @@ static func load_from(path: String) -> Variant:
 	var file := FileAccess.open(path, FileAccess.READ)
 	if file == null:
 		return _refuse(path, "cannot read %s" % path)
+	var length := file.get_length()
+	if length > MAX_VAULT_BYTES:
+		file.close()
+		return _refuse(path, "refusing %s — vault is too large (%d bytes; maximum %d)"
+			% [path, length, MAX_VAULT_BYTES])
 	var parsed = JSON.parse_string(file.get_as_text())
 	file.close()
 	if parsed is not Dictionary:
