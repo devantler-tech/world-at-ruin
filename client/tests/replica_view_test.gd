@@ -27,6 +27,7 @@ extends Node
 ##                      instead of being silently clamped by the engine
 ##   * empty          — a store with no base snapshot draws nothing
 ##   * cleared        — a null store (no zone) removes everything
+##   * render boundary — a table exactly at the independent marker budget draws
 ##   * render cap     — an oversized but protocol-valid table allocates no
 ##                      markers and clears the previously drawn population
 ##
@@ -54,6 +55,8 @@ func _ready() -> void:
 	if not _check_empty_store_draws_nothing():
 		return
 	if not _check_null_store_clears():
+		return
+	if not _check_render_cap_accepts_boundary():
 		return
 	if not _check_render_cap_refuses_oversized_table():
 		return
@@ -312,6 +315,28 @@ func _check_null_store_clears() -> bool:
 		return false
 	if view.count() != 0:
 		_fail("a null store must clear the view's index too, it still reports %d" % view.count())
+		return false
+	view.free()
+	return true
+
+
+## The budget is inclusive. A `>=` guard would look equivalent under every
+## small fixture and the oversized refusal below, but would hide the final
+## protocol-valid marker the renderer explicitly budgets for.
+func _check_render_cap_accepts_boundary() -> bool:
+	var view := _mounted_view()
+	var store := ReplicaStore.new()
+	var entities: Array = []
+	for id: int in range(2, ReplicaView.MAX_VISIBLE_ENTITIES + 2):
+		entities.append(_entity(id, id, 0, 0, 300))
+	if not _apply(store, _snapshot_result(10, 1, entities)):
+		return false
+	view.sync(store)
+
+	var tree_count := view.get_child_count()
+	var index_count := view.count()
+	if tree_count != ReplicaView.MAX_VISIBLE_ENTITIES or index_count != ReplicaView.MAX_VISIBLE_ENTITIES:
+		_fail("a table at the %d-marker render cap must draw every marker, found %d in the tree and %d in the index" % [ReplicaView.MAX_VISIBLE_ENTITIES, tree_count, index_count])
 		return false
 	view.free()
 	return true
