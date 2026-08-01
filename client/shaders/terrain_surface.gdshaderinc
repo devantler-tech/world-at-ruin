@@ -401,24 +401,38 @@ float terrain_plate_window_reachable(float f1, float f4, float fw) {
 
 // How much of the NEIGHBOURING plate belongs in this fragment.
 //
-// `f2 - f1` is the distance to the boundary and `fw` is the HALF-footprint —
-// how far the pixel reaches toward one side. Callers pass half of the full
-// per-pixel variation, because that variation spans the pixel and so reaches
-// only half of it either way. Ramping over the full width instead would still
-// hand ~8% of the neighbour to a pixel lying wholly inside its own plate, which
-// is a soft band rather than a coverage average, and would soften named
-// substances at resolved contacts — the opposite of this term's purpose.
-// On the boundary the two plates are equally present and the answer is a half;
-// a half-footprint away it is entirely the owning plate's. That is the
-// whole term: it is an analytic average over the pixel, not a soft edge, so it
-// is exactly 0.0 wherever the boundary is resolved and only engages once the
-// step is narrower than the pixel drawing it.
+// `f2 - f1` is the distance to the boundary and `fw` is the reconstruction
+// reach. On the boundary the two plates are equally present and at `fw` the
+// answer is entirely the owning plate's. Callers use twice the analytic
+// separator footprint: a one-pixel box reconstruction still moves the shipped
+// pale/basalt contrast by 0.10285 luma under plate_crawl's quarter-pixel step,
+// while the four-pixel support keeps that move below its 0.05 crawl line. Cell
+// interiors remain bit-identical; only the contact's reconstruction support
+// changes, so the named substances keep their full contrast.
 //
 // Both the substance and the slab mask are step functions of the SAME cell id,
 // so both step at exactly this boundary and both take this one weight — fixing
 // only the substance would leave half the contrast still snapping.
 float terrain_plate_edge_blend(float f1, float f2, float fw) {
 	return 0.5 * (1.0 - smoothstep(0.0, max(fw, 1e-6), f2 - f1));
+}
+
+// The second moment of a sign-flipping seam slope after a temporal-stability
+// reconstruction. `seam_h` is the analytic one-pixel separator footprint used
+// by the mean normal. The cavity is unsigned luma energy rather than a signed
+// direction, so it can use four footprints without moving the mean or softening
+// the resolved normal. The wider support spreads the same unresolved groove
+// across the pixels that can see it instead of letting one pixel take the whole
+// occlusion step as the camera advances a fraction of a pixel (#306).
+float terrain_plate_cavity_spread(
+		float s_sep, float seam_h, float groove_width) {
+	float cavity_h = max(seam_h * 4.0, 1e-6);
+	float half_h = 0.5 * cavity_h;
+	float prof = (min(s_sep + half_h, groove_width)
+		- min(abs(s_sep - half_h), groove_width)) / cavity_h;
+	float covered = clamp(max(min(s_sep + half_h, groove_width)
+		- max(s_sep - half_h, -groove_width), 0.0) / cavity_h, 0.0, 1.0);
+	return max(covered - prof * prof, 0.0);
 }
 
 vec4 terrain_plate_substance(

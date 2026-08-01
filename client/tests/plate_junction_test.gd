@@ -384,13 +384,14 @@ func _junction_read_gain(
 		1.0, JUNCTION_READ_GAIN, _covered_junction(p, footprint))
 
 
-## `terrain_plate_edge_blend(f1, f2, edge_fw * 0.5)`, with `edge_fw`
+## `terrain_plate_edge_blend(f1, f2, edge_fw * 2.0)`, with `edge_fw`
 ## symmetrized at a junction and projected through both screen derivatives.
 ## Axis-aligned derivatives of magnitude FOOTPRINT stand in for the pixel.
 func _edge_weight(p: Dictionary, uv: Vector2) -> float:
 	var edge_fw := _separator_footprint(p, uv)
-	var half: float = maxf(edge_fw * 0.5, 1e-6)
-	return 0.5 * (1.0 - smoothstep(0.0, half, p["f2"] - p["f1"]))
+	var reconstruction: float = maxf(edge_fw * 2.0, 1e-6)
+	return 0.5 * (1.0 - smoothstep(
+		0.0, reconstruction, p["f2"] - p["f1"]))
 
 
 ## `terrain_plate_blend_weights(f1, f2, f3, pair_w, plate_fw)` — the coverage
@@ -652,7 +653,7 @@ func _cavity_parts(uv: Vector2, use_third: bool) -> Dictionary:
 ## this separate lets the regression arm feed the old c1/c2-only footprint
 ## through the same cavity algebra as the fixed path.
 func _cavity_spread(p: Dictionary, edge_fw: float) -> float:
-	var seam_h: float = maxf(edge_fw, 1e-6)
+	var seam_h: float = maxf(edge_fw * 4.0, 1e-6)
 	var half_h: float = 0.5 * seam_h
 	var s_sep: float = p["f2"] - p["f1"]
 	var prof: float = (minf(s_sep + half_h, CRACK_WIDTH)

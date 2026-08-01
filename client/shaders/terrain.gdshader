@@ -99,31 +99,15 @@ uniform float crack_relief: hint_range(0.0, 3.0) = 1.1;
 // far-field statistical shading rather than a mid-field drawn mark, and it
 // cannot outline a seam a player can still see.
 //
-// 3.5 is the KNEE, swept on-GPU (both instruments, one machine, one sitting,
-// plates-off control 0.0000 on every arm). It is the smallest value that
-// restores the near-field read the mean filter costs, measured as 6 m coverage
-// x strength — the two move in opposite directions, so neither alone decides:
-//
-//   cavity   crawl    6 m       12 m      24 m      48 m      6 m read
-//   off      0.0000   0.00028   0.00022   0.00004   0.00011   -42%
-//   3.0      0.0000   0.00053   0.00113   0.00043   0.00420   -13%
-//   3.5      0.0000   0.00066   0.00149   0.00070   0.00547    +7%
-//   4.0      0.0000   0.00079   0.00180   0.00100   0.00661   +27%
-//   8.0      0.0002   0.00151   0.00395   0.00449   0.01367  +180%
-//   (main)   0.0005   0.00034   0.00050   0.00028   0.00056     0%
-//
-// The aim is a near field left AS IT WAS, not maximised, so the smallest value
-// that clears `main` is the right one rather than the largest that still holds
-// the floor. Below 3.5 the near field is still being paid away; at 8.0 the
-// crawl floor gives.
-//
-// The crawl column is only this flat because the variance is blended across
-// both cells at a contact (see `plate_mask_relief_nb`). Gated by the owning
-// cell alone it read 0.0001 at 4.0 and 0.0007 at 8.0 — worse than `main` — and
-// removing that step is what let the knee move up to where the near field is
-// whole. Absolute levels are not portable between machines and both tools say
-// so; the ORDERING is what carries.
-uniform float seam_cavity: hint_range(0.0, 8.0) = 3.5;
+// The four-footprint reconstruction below spreads this energy over a wider
+// support, so its per-pixel coefficient is doubled to 7.0. The analytic test
+// measures the unresolved-cavity move at 0.03767 luma under plate_crawl's
+// quarter-pixel step (the old one-footprint control is 0.10154) while retaining
+// more integrated seam energy than the old path. On the current Metal frame the
+// complete treatment also moves the worst pixel from 0.0584 to 0.0428, across
+// the instrument's 0.05 flicker line. Absolute GPU levels are not portable;
+// compare both builds in one environment as plate_crawl requires.
+uniform float seam_cavity: hint_range(0.0, 8.0) = 7.0;
 // How hard the ash sheet ends. This used to be a 0.24-wide smoothstep ramp,
 // which is precisely the "smooth interpolation" the diagnosis names — wind
 // leaves a boundary, not a gradient.
@@ -341,7 +325,7 @@ void fragment() {
 		plate_uv, plate_c1, plate_c2, plate_c3,
 		f1, f2, f3, f4, plate_fw, plate_resolved,
 		plate_uv_dx, plate_uv_dy);
-	plate_edge_w = terrain_plate_edge_blend(f1, f2, edge_fw * 0.5);
+	plate_edge_w = terrain_plate_edge_blend(f1, f2, edge_fw * 2.0);
 	// ...and WHICH plates that share belongs to. Away from a triple junction this
 	// is exactly `(1 - plate_edge_w, plate_edge_w, 0)` — the two-cell answer,
 	// unchanged — and at one it becomes symmetric in the candidates so an
@@ -864,15 +848,11 @@ void fragment() {
 	// Second moment. The top hat has magnitude `amp` wherever the footprint
 	// overlaps the groove [-w, w], so E[u^2] is amp^2 times the covered
 	// fraction of the pixel.
-	float covered = clamp(max(min(s_sep + half_h, cw_relief)
-		- max(s_sep - half_h, -cw_relief), 0.0) / seam_h, 0.0, 1.0);
-	// Var = E[u^2] - E[u]^2, floored for float safety, with amp^2 factored out.
-	// It is zero for a pixel that resolves one wall (covered 1, prof 1) and zero
-	// for one that misses the groove entirely (both terms zero) — non-zero ONLY
-	// where a pixel holds relief the mean is discarding. That is why carrying it
-	// cannot soften a seam a player can still resolve, which is #306's third
-	// acceptance criterion.
-	float spread = max(covered - prof * prof, 0.0);
+	// Var = E[u^2] - E[u]^2, reconstructed over a wider support than the signed
+	// mean. The shared helper keeps this ground and the cave-contact band on the
+	// same temporal filter; it is zero outside the groove and never changes the
+	// mean normal above.
+	float spread = terrain_plate_cavity_spread(s_sep, seam_h, cw_relief);
 	// Start from the SAME three-candidate coverage split the substance, slab
 	// mask, roughness and crack use above. A pixel straddling a contact contains
 	// every one of those cells' seams, so gating the integral by whichever cell
