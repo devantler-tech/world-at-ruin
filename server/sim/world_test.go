@@ -186,6 +186,9 @@ func TestSetIntentSanitizesHostileInput(t *testing.T) {
 		w := NewWorld(DemoBounds)
 		w.Add(Entity{ID: 1, Pos: Vec3{}, MaxSpeed: 4000})
 		w.SetIntent(1, hostile)
+		if got := w.Get(1).Intent.Y; got != 0 {
+			t.Fatalf("SetIntent preserved hostile vertical intent: got %d mm/s", got)
+		}
 		w.Step() // must not panic
 		if got := w.Get(1).Pos.Y; got != 0 {
 			t.Fatalf("hostile intent %+v moved vertically by %d mm", hostile, got)
@@ -202,6 +205,9 @@ func TestSetIntentSanitizesHostileInput(t *testing.T) {
 func TestAddSanitizesHostileIntent(t *testing.T) {
 	w := NewWorld(DemoBounds)
 	w.Add(Entity{ID: 1, Pos: Vec3{}, Intent: Vec3{X: math.MaxInt64, Y: math.MaxInt64, Z: math.MaxInt64}, MaxSpeed: 4000})
+	if got := w.Get(1).Intent.Y; got != 0 {
+		t.Fatalf("Add preserved hostile vertical intent: got %d mm/s", got)
+	}
 	w.Step() // must not panic
 	if got := w.Get(1).Pos.Y; got != 0 {
 		t.Fatalf("Add preserved hostile vertical intent: moved %d mm", got)
