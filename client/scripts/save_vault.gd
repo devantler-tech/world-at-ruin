@@ -133,16 +133,12 @@ const QUARANTINE_SUFFIX := ".unreadable-"
 ## the only direction that cannot destroy bytes.
 const QUARANTINE_MAX_ATTEMPTS := 100
 
-## Hard ceiling for bytes accepted from an untrusted local/cloud-synced vault.
-## Check this before get_as_text()/JSON parsing so a corrupt file cannot make
-## normal boot allocate and process an arbitrarily large document.
+## Maximum bytes one vault load will read from an untrusted local/cloud-synced
+## file. The document-wide bound covers present and future nested collections
+## without narrowing any accepted field shape. Reading one byte beyond the
+## ceiling makes the size decision atomic with the bounded read: a file that
+## grows after opening cannot make get_as_text() allocate without limit.
 const MAX_VAULT_BYTES := 1024 * 1024
-
-## Persisted name sets are intentionally generous but bounded. The vault keeps
-## unknown future names for forward compatibility; these limits constrain only
-## pathological documents, not the vocabulary a later client may introduce.
-const MAX_PERSISTED_NAMES := 4096
-const MAX_PERSISTED_NAME_LENGTH := 256
 
 ## How long an unparseable vault must have sat UNCHANGED before it is set aside.
 ##
@@ -192,11 +188,12 @@ const BASE_VAULT_VERSION := 1
 const DISCOVERY_VAULT_VERSION := 2
 const REWARD_CLAIM_VAULT_VERSION := 3
 const QUEST_PROGRESS_VAULT_VERSION := 4
+const MASTERY_VAULT_VERSION := 5
 
-## Highest vault schema this build can READ. The retained v4 reader now also has
-## its production writer; read and write constants remain separate so the next
-## expansion can bake before its own writer activates.
-const VAULT_READ_VERSION := 4
+## Highest vault schema this build can READ. Vault v5 mastery is the expanded,
+## reader-only shape: production writers remain capped at v4 until this build is
+## retained as a safe rollback target.
+const VAULT_READ_VERSION := 5
 
 ## The vault format, exhaustively. Unknown top-level fields are refused for the
 ## same reason the recipe refuses them: a client that silently ignored a field
@@ -209,6 +206,9 @@ const VAULT_FIELDS_V3 := [
 ]
 const VAULT_FIELDS_V4 := [
 	"version", "comment", "attuned", "discoveries", "reward_claims", "quests",
+]
+const VAULT_FIELDS_V5 := [
+	"version", "comment", "attuned", "discoveries", "reward_claims", "quests", "mastery",
 ]
 
 ## The Wardens' Shrine, the first attunable respawn point. Names are forward-only
@@ -285,43 +285,35 @@ static func validate(doc: Dictionary) -> String:
 		allowed_fields = VAULT_FIELDS_V3
 	elif schema == 4:
 		allowed_fields = VAULT_FIELDS_V4
+	elif schema == 5:
+		allowed_fields = VAULT_FIELDS_V5
 	for field: String in doc:
 		if field not in allowed_fields:
 			return "unknown vault field '%s' — this client cannot apply it, refusing a half-truth" % field
+	if schema >= MASTERY_VAULT_VERSION and not doc.has("mastery"):
+		return "vault v%d must contain the complete mastery snapshot" % schema
 	if doc.has("attuned"):
 		if doc["attuned"] is not Array:
 			return "attuned must be an array of respawn-point names"
-		if (doc["attuned"] as Array).size() > MAX_PERSISTED_NAMES:
-			return "attuned has too many respawn-point names"
 		for name in (doc["attuned"] as Array):
 			if name is not String:
 				return "attuned entries must be strings (names are forward-only, never indices)"
-			if (name as String).length() > MAX_PERSISTED_NAME_LENGTH:
-				return "attuned entries must not exceed %d characters" % MAX_PERSISTED_NAME_LENGTH
 	if doc.has("discoveries"):
 		if doc["discoveries"] is not Array:
 			return "discoveries must be an array of place names"
-		if (doc["discoveries"] as Array).size() > MAX_PERSISTED_NAMES:
-			return "discoveries has too many place names"
 		for name in (doc["discoveries"] as Array):
 			if name is not String:
 				return "discoveries entries must be strings (names are forward-only, never indices)"
 			if (name as String).is_empty():
 				return "discoveries entries must be non-empty stable names"
-			if (name as String).length() > MAX_PERSISTED_NAME_LENGTH:
-				return "discoveries entries must not exceed %d characters" % MAX_PERSISTED_NAME_LENGTH
 	if doc.has("reward_claims"):
 		if doc["reward_claims"] is not Array:
 			return "reward_claims must be an array of place names"
-		if (doc["reward_claims"] as Array).size() > MAX_PERSISTED_NAMES:
-			return "reward_claims has too many place names"
 		for name in (doc["reward_claims"] as Array):
 			if name is not String:
 				return "reward_claims entries must be strings (names are forward-only, never indices)"
 			if (name as String).is_empty():
 				return "reward_claims entries must be non-empty stable names"
-			if (name as String).length() > MAX_PERSISTED_NAME_LENGTH:
-				return "reward_claims entries must not exceed %d characters" % MAX_PERSISTED_NAME_LENGTH
 	if doc.has("quests"):
 		if doc["quests"] is not Dictionary:
 			return "quests must be an object keyed by stable quest ids"
@@ -343,6 +335,10 @@ static func validate(doc: Dictionary) -> String:
 				if progress > QuestLog.MAX_PERSISTED_PROGRESS:
 					return (
 						"quest objective progress exceeds JSON's exact-integer range")
+	if doc.has("mastery"):
+		var mastery_reason := Mastery.snapshot_refusal_reason(doc["mastery"])
+		if not mastery_reason.is_empty():
+			return mastery_reason
 	return ""
 
 
@@ -356,19 +352,98 @@ static func load_from(path: String) -> Variant:
 	var file := FileAccess.open(path, FileAccess.READ)
 	if file == null:
 		return _refuse(path, "cannot read %s" % path)
-	var length := file.get_length()
-	if length > MAX_VAULT_BYTES:
-		file.close()
-		return _refuse(path, "refusing %s — vault is too large (%d bytes; maximum %d)"
-			% [path, length, MAX_VAULT_BYTES])
-	var parsed = JSON.parse_string(file.get_as_text())
+	var source_bytes := file.get_buffer(MAX_VAULT_BYTES + 1)
 	file.close()
+	if source_bytes.size() > MAX_VAULT_BYTES:
+		return _refuse(path, "refusing %s — vault exceeds the %d-byte read limit"
+			% [path, MAX_VAULT_BYTES])
+	var source := source_bytes.get_string_from_utf8()
+	# JSON.parse_string() converts numbers to floating point before validate()
+	# sees them. Inspect their exact source spelling first so a fractional token
+	# near 2^53 cannot round to a whole, apparently safe progress value.
+	if _json_has_fractional_number(source):
+		return _refuse(path, "%s contains a non-whole JSON number" % path)
+	var parsed = JSON.parse_string(source)
 	if parsed is not Dictionary:
 		return _refuse(path, "%s is not a JSON object" % path)
 	var reason := validate(parsed)
 	if reason != "":
 		return _refuse(path, "refusing %s — %s" % [path, reason])
 	return parsed
+
+
+## Whether any number token in `source` is mathematically fractional. Every
+## numeric field in every shipped vault schema is integer-valued. This lexical
+## pass deliberately runs before Godot's lossy JSON parser; strings are skipped
+## (including escaped quotes), while decimal/exponent spellings such as `1.0`
+## and `10e-1` retain their existing whole-number behaviour.
+static func _json_has_fractional_number(source: String) -> bool:
+	var index := 0
+	var in_string := false
+	var escaped := false
+	while index < source.length():
+		var character := source[index]
+		if in_string:
+			if escaped:
+				escaped = false
+			elif character == "\\":
+				escaped = true
+			elif character == '"':
+				in_string = false
+			index += 1
+			continue
+		if character == '"':
+			in_string = true
+			index += 1
+			continue
+		if character != "-" and character not in "0123456789":
+			index += 1
+			continue
+		var start := index
+		index += 1
+		while index < source.length() and source[index] in "0123456789.eE+-":
+			index += 1
+		if not _json_number_token_is_whole(source.substr(start, index - start)):
+			return true
+	return false
+
+
+static func _json_number_token_is_whole(token: String) -> bool:
+	var exponent_at := token.find("e")
+	if exponent_at < 0:
+		exponent_at = token.find("E")
+	var mantissa := token if exponent_at < 0 else token.left(exponent_at)
+	var decimal_at := mantissa.find(".")
+	var decimal_places := 0 if decimal_at < 0 else mantissa.length() - decimal_at - 1
+	var digits := mantissa.replace("-", "").replace(".", "")
+	var zero_mantissa := digits.replace("0", "").is_empty()
+	var exponent := 0
+	if exponent_at >= 0:
+		var exponent_text := token.substr(exponent_at + 1)
+		var negative := exponent_text.begins_with("-")
+		exponent_text = exponent_text.trim_prefix("-").trim_prefix("+")
+		var normalized_exponent := exponent_text.lstrip("0")
+		if normalized_exponent.is_empty():
+			normalized_exponent = "0"
+		# Only magnitudes that can still affect the trailing-digit check need
+		# conversion. Larger positive exponents are necessarily whole; larger
+		# negative exponents are fractional unless the mantissa is zero.
+		var exponent_limit := digits.length() - decimal_places if negative else decimal_places
+		if normalized_exponent.length() > str(exponent_limit).length():
+			return zero_mantissa if negative else true
+		exponent = normalized_exponent.to_int()
+		if exponent > exponent_limit:
+			return zero_mantissa if negative else true
+		if negative:
+			exponent = -exponent
+	var places_requiring_zero := decimal_places - exponent
+	if places_requiring_zero <= 0:
+		return true
+	if zero_mantissa:
+		return true
+	if places_requiring_zero > digits.length():
+		return false
+	return digits.right(places_requiring_zero).replace("0", "").is_empty()
 
 
 ## Latch `path` as refused, log why, and return null.
@@ -688,19 +763,24 @@ static func _is_unownable(path: String) -> bool:
 	return _is_unownable_bytes(data)
 
 
-## The document's raw bytes, or null when it cannot be opened.
+## The document's raw bytes, or null when it cannot be opened or exceeds the
+## safe inspection ceiling.
 ##
 ## Quarantine judges and re-verifies from BYTES rather than re-reading through a
 ## parser each time, because the bytes are the identity of the document being
 ## moved (see [method _quarantine_locked]). Null and an empty array are different
 ## answers: a zero-length file is a real, unownable document, while an unopenable
-## one is a fault about this process and must not be judged at all.
+## one is a fault about this process and must not be judged at all. An over-limit
+## document is equally unjudged: bounded inspection cannot prove that no client
+## owns the bytes, so quarantine must leave them intact and read-only.
 static func _read_document(path: String) -> Variant:
 	var file := FileAccess.open(path, FileAccess.READ)
 	if file == null:
 		return null
-	var data := file.get_buffer(file.get_length())
+	var data := file.get_buffer(MAX_VAULT_BYTES + 1)
 	file.close()
+	if data.size() > MAX_VAULT_BYTES:
+		return null
 	return data
 
 

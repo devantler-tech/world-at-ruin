@@ -38,6 +38,9 @@ extends Node
 ##     shared safely; it does NOT reach `_slot_is_free()`'s directory branch,
 ##     which is unreachable by construction and intentionally left so (the case
 ##     explains why testing it would undo the property it protects).
+## 12. An over-limit document is left untouched. Quarantine cannot inspect its
+##     complete shape inside the resource ceiling, so it cannot prove that no
+##     client owns the bytes; guessing there would turn a safe refusal into loss.
 ##
 ## Everything runs through the WAR_VAULT_PATH seam against a throwaway path, so
 ## the player's own user://vault.json is never read, written or moved
@@ -48,6 +51,7 @@ extends Node
 const PROBE := "user://vault_quarantine_probe.json"
 const CORRUPT_BYTES := "{\"version\": 1, \"attu"
 const SENTINEL_BYTES := "an earlier corruption, already preserved"
+const MAX_ACCEPTED_VAULT_BYTES := 1024 * 1024
 
 
 func _ready() -> void:
@@ -284,6 +288,27 @@ func _ready() -> void:
 		return
 	if not DirAccess.dir_exists_absolute(ProjectSettings.globalize_path(junk_dir)):
 		_fail("quarantine destroyed a leftover directory it should have left alone")
+		return
+
+	# 12. Resource-bounded inspection cannot establish ownership for a document
+	#     whose complete shape lies beyond the ceiling. Leave every byte in place
+	#     and keep the path read-only; quarantine is only safe after proving that
+	#     no versioned client could have written the document.
+	_reset_state()
+	OS.set_environment(SaveVault.QUARANTINE_MIN_AGE_ENV, "0")
+	var oversized := "x".repeat(MAX_ACCEPTED_VAULT_BYTES + 1)
+	_write(PROBE, oversized)
+	if not SaveVault.quarantine_unreadable(PROBE).is_empty():
+		_fail("an over-limit vault was quarantined without a bounded ownership judgment")
+		return
+	if not FileAccess.file_exists(PROBE):
+		_fail("an over-limit vault was removed instead of being left read-only")
+		return
+	if SaveVault.can_write(PROBE):
+		_fail("an over-limit vault remained writable after quarantine left it in place")
+		return
+	if _read(PROBE) != oversized:
+		_fail("an over-limit vault's refused bytes changed")
 		return
 
 	_cleanup()

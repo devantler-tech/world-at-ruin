@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tests/plate_temporal_reconstruction_test.gd" id="1_plate_temporal"]
+
+[node name="PlateTemporalReconstructionTest" type="Node"]
+script = ExtResource("1_plate_temporal")

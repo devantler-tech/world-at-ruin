@@ -17,8 +17,8 @@ extends Node
 ## The partition is reimplemented HERE, in GDScript. It is not the shader. Those
 ## values are fragment-local expressions inside a `plates_enabled` branch, never
 ## uniforms, so nothing can read them back, and observing them needs a windowed
-## GPU run of an opt-in treatment that `--headless` CI cannot do (the same
-## constraint `crack_relief_parity_test` records). GDScript is also double
+## GPU run of an opt-in treatment that `--headless` CI cannot do. GDScript is
+## also double
 ## precision where the GPU is single, so this mirror does NOT reproduce the
 ## shader's partition bit for bit and no assertion here depends on it doing so.
 ##
@@ -384,13 +384,14 @@ func _junction_read_gain(
 		1.0, JUNCTION_READ_GAIN, _covered_junction(p, footprint))
 
 
-## `terrain_plate_edge_blend(f1, f2, edge_fw * 0.5)`, with `edge_fw`
+## `terrain_plate_edge_blend(f1, f2, edge_fw * 2.0)`, with `edge_fw`
 ## symmetrized at a junction and projected through both screen derivatives.
 ## Axis-aligned derivatives of magnitude FOOTPRINT stand in for the pixel.
 func _edge_weight(p: Dictionary, uv: Vector2) -> float:
 	var edge_fw := _separator_footprint(p, uv)
-	var half: float = maxf(edge_fw * 0.5, 1e-6)
-	return 0.5 * (1.0 - smoothstep(0.0, half, p["f2"] - p["f1"]))
+	var reconstruction: float = maxf(edge_fw * 2.0, 1e-6)
+	return 0.5 * (1.0 - smoothstep(
+		0.0, reconstruction, p["f2"] - p["f1"]))
 
 
 ## `terrain_plate_blend_weights(f1, f2, f3, pair_w, plate_fw)` — the coverage
@@ -652,7 +653,7 @@ func _cavity_parts(uv: Vector2, use_third: bool) -> Dictionary:
 ## this separate lets the regression arm feed the old c1/c2-only footprint
 ## through the same cavity algebra as the fixed path.
 func _cavity_spread(p: Dictionary, edge_fw: float) -> float:
-	var seam_h: float = maxf(edge_fw, 1e-6)
+	var seam_h: float = maxf(edge_fw * 4.0, 1e-6)
 	var half_h: float = 0.5 * seam_h
 	var s_sep: float = p["f2"] - p["f1"]
 	var prof: float = (minf(s_sep + half_h, CRACK_WIDTH)
@@ -1482,9 +1483,9 @@ func _check_source_guards() -> void:
 	var partition := _source(PARTITION_PATH)
 	var ground := _source(GROUND_SHADER_PATH)
 	var contact := _source(CONTACT_SHADER_PATH)
-	# MISSING-SOURCE GUARD, same reasoning as crack_relief_parity_test: a file
-	# that cannot be read satisfies every "contains" check below, so a rename
-	# would turn these guards green while checking nothing.
+	# MISSING-SOURCE GUARD: a file that cannot be read satisfies every "contains"
+	# check below, so a rename would turn these guards green while checking
+	# nothing.
 	if partition == "" or ground == "" or contact == "":
 		_fail("a shader source could not be read (partition=%d ground=%d "
 			% [partition.length(), ground.length()]
@@ -1549,21 +1550,31 @@ func _check_source_guards() -> void:
 				% path
 				+ "centres — its seam cavity can still inherit the "
 				+ "ordered tail's label swap at a junction (#589)")
+		# The junction authority, the footprint fade and the slope ceiling moved into
+		# the shared relief helper with the rest of the block (#464). They are proven
+		# once in the include, and each surface is bound to them by calling it.
+		# Asserting the terms per-shader would now fail on correct code; asserting
+		# them only in the include would let one surface stop calling it unnoticed.
+		if not src.contains("terrain_plate_seam_relief("):
+			_fail("%s does not call the shared seam relief — its near-field read "
+				% path
+				+ "is no longer bound to the same junction authority, footprint "
+				+ "fade and slope ceiling as the other surface (#464)")
 		if not partition.contains(
 				"float terrain_plate_junction_read_gain(float covered_junction)") \
 				or not partition.contains(
 					"float terrain_plate_covered_junction(") \
-				or not src.contains(
+				or not partition.contains(
 					"junction_read_authority = terrain_plate_covered_junction(") \
-				or not src.contains(
+				or not partition.contains(
 					"junction_read_gain = terrain_plate_junction_read_gain(") \
-				or not src.contains("junction_read_authority);") \
-				or not src.contains(
+				or not partition.contains("junction_read_authority);") \
+				or not partition.contains(
 					"mean_tilt *= junction_read_gain") \
-				or not src.contains(
+				or not partition.contains(
 					"seam_slope_var *= junction_read_gain * junction_read_gain"):
 			_fail("%s does not restore the measured near-field seam read under "
-				% path
+				% PARTITION_PATH
 				+ "the same smooth junction authority as the footprint fix — "
 				+ "closing the old jump may silently soften the 6 m control")
 		if not src.contains("terrain_plate_window_junction(") \
@@ -1597,13 +1608,20 @@ func _check_source_guards() -> void:
 				% path
 				+ "established pairwise base — it cannot converge to the "
 				+ "three-way answer before the fourth-cell cutoff")
-		if not src.contains(
-				"window_slab_share += cell_is_slab * weight") \
-				or not src.contains("float window_amp_sq = mix(") \
-				or not src.contains("seam_amp_sq = mix(") \
-				or not src.contains("pair_amp_sq,"):
-			_fail("%s does not compose the nonlinear seam-cavity amplitude "
+		# The whole-window slab share is still computed per-surface, in each shader's
+		# own 5x5 sum; only its NONLINEAR composition into the seam-cavity amplitude
+		# moved into the shared helper (#464). So the share is asserted per-shader and
+		# the composition once in the include.
+		if not src.contains("window_slab_share += cell_is_slab * weight"):
+			_fail("%s does not accumulate the whole-window slab share over the "
 				% path
+				+ "symmetric weights — its resolved-cell state can still swap with "
+				+ "an uncarried fourth candidate")
+		if not partition.contains("float window_amp_sq = mix(") \
+				or not partition.contains("seam_amp_sq = mix(") \
+				or not partition.contains("pair_amp_sq,"):
+			_fail("%s does not compose the nonlinear seam-cavity amplitude "
+				% PARTITION_PATH
 				+ "through the same symmetric whole-window weights — the fixed "
 				+ "third amplitude can still swap with an uncarried fourth")
 

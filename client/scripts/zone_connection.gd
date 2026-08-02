@@ -8,9 +8,11 @@ extends RefCounted
 ## connection lifecycle, drains whatever the transport delivers, and drives
 ## every frame through `WireCodec.decode` then `ReplicaStore.apply`.
 ##
-## It adds NO wire or fold semantics of its own. Both of those contracts are
-## settled and pinned by cross-tier goldens; this class only decides WHEN to
-## feed them and WHAT to do when they refuse.
+## It adds no payload or fold semantics of its own. It does select wire v2 in
+## the authenticated WebSocket handshake; servers retain omitted headers as
+## v1, so old clients remain serviceable during protocol expansion. Payload
+## semantics stay pinned by cross-tier goldens; this class only decides WHEN
+## to feed them and WHAT to do when they refuse.
 ##
 ## ## The transport seam
 ##
@@ -95,6 +97,10 @@ const ZONE_URL_ENV := "WAR_ZONE_URL"
 ## a credential: it is never echoed into an error detail or a log.
 const ZONE_TOKEN_ENV := "WAR_ZONE_TOKEN"
 
+## Negotiates the newest protocol with zonesock. Older clients omit this
+## header and are deliberately retained on wire v1 during expansion.
+const WIRE_VERSION_HEADER := "X-WAR-Wire-Version"
+
 ## The only accepted URL scheme, per `docs/design/zone-transport.md`.
 const URL_SCHEME := "wss://"
 
@@ -132,7 +138,11 @@ const ERR_TEXT := "text"            # a TEXT message; the ADR settles binary
 ## or resync snapshot would be dropped by the transport before `WireCodec` ever
 ## saw it, and a correct server talking to a correct client would fail to
 ## converge with nothing in either log to say why.
-const MAX_FRAME_BYTES := WireCodec.MAX_ENTITIES * (WireCodec.ENTITY_STATE_SIZE * 2 + 8) + 64
+const MAX_FRAME_BYTES := (
+	WireCodec.MAX_ENTITIES * (WireCodec.ENTITY_STATE_SIZE * 2 + 8)
+	+ WireCodec.MAX_CASTS * (WireCodec.ACTIVE_CAST_SIZE + 8)
+	+ 96
+)
 
 ## The transport contract: exactly the `WebSocketPeer` methods used below.
 const REQUIRED_TRANSPORT_METHODS: Array[String] = [
@@ -244,7 +254,10 @@ func connect_to(url: String) -> bool:
 
 	# Admission runs before the upgrade, so the credential has to ride along
 	# with the handshake itself; there is no post-connect place to present it.
-	_transport.call("set_handshake_headers", PackedStringArray(["Authorization: Bearer %s" % token]))
+	_transport.call("set_handshake_headers", PackedStringArray([
+		"Authorization: Bearer %s" % token,
+		"%s: %d" % [WIRE_VERSION_HEADER, WireCodec.VERSION],
+	]))
 
 	# Both of these have to be set BEFORE the connection is opened: they size
 	# the peer's buffers for the socket it is about to create. A frame the

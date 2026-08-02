@@ -194,9 +194,9 @@ The current character writer vocabulary is capability 5. The reader registry and
 contain `ashen_bindings` at `hands/armor`, backed by the retained v0.69.0 capability-5 reader.
 The shipped default creator keeps this below-bar hand piece hidden, while
 `WAR_LAYERED_OUTFIT_PICKERS=1` exposes the raw armour-layer control that may originate, save and
-reload it. The project-wide read and write capability is now 6 because the independent vault-v4
-quest-progress contract is active; that does not change which character vocabulary capability 5
-permits the creator to originate.
+reload it. The project-wide write capability remains 6 because the independent vault-v4
+quest-progress contract is active; the read ceiling is 7 for the vault-v5 mastery expansion. That
+does not change which character vocabulary capability 5 permits the creator to originate.
 
 ### Progression vault
 
@@ -267,6 +267,23 @@ unreadable vault remains session-only and byte-intact. The project-wide manifest
 write capability 6, while conditional schema stamping keeps reward-only state on v3, discovery-only
 state on v2, and empty or attunement-only state on v1.
 
+Capability 7 is the reader-only vault-v5 weapon-mastery expansion. Its required `mastery` object
+contains exactly `weapons` and `bloodstain`: each stable weapon ID maps to exact JSON-safe integer
+`banked` and `unbanked` points, while the standing bloodstain maps tracked weapon IDs to the points
+that can still be reclaimed. Vault-v5 freezes its persisted bar unit at 100 points: banked values are
+multiples of 100, while each unbanked value and bloodstain value stays below 100 independently.
+Their sum may cross a bar because play can award more mastery while a prior bloodstain stands, and
+reclaim banks that completed bar normally. The retained reader uses this frozen unit instead of live
+bar tuning; malformed or partial state is refused before anything is applied. Restore then banks any
+unbanked points that already complete a smaller current live bar before the death loop can expose
+them. Unknown future weapon IDs are valid because rollback must preserve and apply
+them without reinterpreting their meaning. `Main` restores the complete snapshot atomically into its
+boot-owned `Mastery`, and the real boot guard proves both the live tracks and bloodstain are present.
+The manifest advertises read capability 7, while `SaveVault.VAULT_VERSION` and
+`SAVE_CAPABILITY_WRITES` stay at v4/capability 6. Existing older writers preserve an already-present
+v5 snapshot but never originate one; writer activation waits for a retained whole-app capability-7
+reader release.
+
 ### Boot recovery
 
 Boot recovery follows the same sequence, with its own read ceiling and write version. It reads and
@@ -306,6 +323,11 @@ The character recipe and vault deliberately fail differently:
   later disappears, so an older client cannot overwrite newer progression after cloud sync changes
   the path. The one document that does not stay latched forever is one no client could own, which is
   set aside at boot instead — see the next section.
+- A vault read consumes at most 1 MiB plus one probe byte before JSON parsing. A larger document is
+  refused without reading or parsing the remainder, stays byte-for-byte intact, and leaves its path
+  read-only. This document-wide ceiling covers every present and future nested collection without
+  narrowing any accepted field shape. Quarantine uses the same bounded inspection; an over-limit
+  document cannot be proven unownable inside the ceiling, so it is left in place rather than moved.
 
 ### Setting aside a document no client could own
 

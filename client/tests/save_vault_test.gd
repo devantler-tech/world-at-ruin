@@ -14,7 +14,8 @@ extends Node
 ##  7. All production persistence helpers write through the seam.
 ##  8. save_to() refuses to REPLACE an unreadable vault, leaves it byte-intact,
 ##     and cleans up its temp file.
-##  9. Validation refuses each malformed or resource-exhausting shape.
+##  9. Loading bounds untrusted bytes without narrowing accepted collection
+##     shapes, and validation refuses each malformed shape.
 ##
 ## Everything runs against a throwaway path via the seam, so the player's own
 ## user://vault.json is never read or written (no-resets law).
@@ -22,6 +23,7 @@ extends Node
 ## Run: godot --headless --path client res://tests/save_vault_test.tscn
 
 const PROBE := "user://vault_behaviour_probe.json"
+const MAX_ACCEPTED_VAULT_BYTES := 1024 * 1024
 
 
 func _ready() -> void:
@@ -37,10 +39,12 @@ func _ready() -> void:
 		_fail("WAR_VAULT_PATH override was not honoured")
 		return
 	var vault_api := load("res://scripts/save_vault.gd") as Script
+	if not _resource_boundaries():
+		return
 
-	# 2. The retained reader now has its v4 writer contract. Empty state remains
-	# v1: a schema version describes fields actually present; it is not a
-	# "latest client" marker.
+	# 2. The writer remains on its retained v4 quest contract while the reader
+	# expands through v5 mastery. Empty state remains v1: a schema version
+	# describes fields actually present; it is not a "latest client" marker.
 	var empty := SaveVault.empty()
 	if SaveVault.validate(empty) != "":
 		_fail("the empty vault does not validate: %s" % SaveVault.validate(empty))
@@ -51,8 +55,8 @@ func _ready() -> void:
 	if int(empty["version"]) != 1:
 		_fail("an empty vault was churned to v%d even though it carries no v2 discovery state" % int(empty["version"]))
 		return
-	if SaveVault.VAULT_READ_VERSION != 4:
-		_fail("the vault reader ceiling is v%d, expected the v4 quest-progress expansion"
+	if SaveVault.VAULT_READ_VERSION != 5:
+		_fail("the vault reader ceiling is v%d, expected the v5 mastery expansion"
 			% SaveVault.VAULT_READ_VERSION)
 		return
 	if not SaveVault.attuned(empty).is_empty():
@@ -524,7 +528,81 @@ func _ready() -> void:
 	_cleanup_probe()
 	SaveVault.clear_refusals_for_test()
 
-	# 8b. The data layer and the behaviour layer must not drift: every name
+	# 8b. Fractional source tokens must be rejected BEFORE JSON's float-backed
+	# parser can round them into apparently whole values. This particular value
+	# used to pass post-parse validation as 9007199254740990 and could then be
+	# written back permanently lowered.
+	var rounded_fractional_progress := (
+		'{"version":4,"quests":{"future_quest":{"future_step":9007199254740990.5}}}')
+	var rounded_fractional_file := FileAccess.open(PROBE, FileAccess.WRITE)
+	if rounded_fractional_file == null:
+		_fail("could not stage the parser-rounded fractional vault")
+		return
+	rounded_fractional_file.store_string(rounded_fractional_progress)
+	rounded_fractional_file.close()
+	if SaveVault.load_from(PROBE) is Dictionary:
+		_fail("the v4 reader accepted fractional progress rounded whole by JSON")
+		return
+	var fractional_reread := FileAccess.open(PROBE, FileAccess.READ)
+	if fractional_reread == null:
+		_fail("refusing parser-rounded progress removed its source document")
+		return
+	var fractional_source := fractional_reread.get_as_text()
+	fractional_reread.close()
+	if fractional_source != rounded_fractional_progress:
+		_fail("refusing parser-rounded progress did not preserve its source bytes")
+		return
+	_cleanup_probe()
+	SaveVault.clear_refusals_for_test()
+
+	# 8c. Exponents larger than the old safety cap must retain their exact
+	# magnitude. This token equals 9007199254740990.5: clamping -10001 to
+	# -10000 hides the final 5 behind 10,000 zeros and accepts rounded progress.
+	var over_cap_fractional_progress := (
+		'{"version":4,"quests":{"future_quest":{"future_step":90071992547409905'
+		+ "0".repeat(10_000) + 'e-10001}}}')
+	var over_cap_fractional_file := FileAccess.open(PROBE, FileAccess.WRITE)
+	if over_cap_fractional_file == null:
+		_fail("could not stage the over-cap fractional vault")
+		return
+	over_cap_fractional_file.store_string(over_cap_fractional_progress)
+	over_cap_fractional_file.close()
+	if SaveVault.load_from(PROBE) is Dictionary:
+		_fail("the v4 reader accepted fractional progress after capping its exponent")
+		return
+	_cleanup_probe()
+	SaveVault.clear_refusals_for_test()
+
+	# 8d. Mathematically whole decimal and exponent spellings remain readable.
+	# The exact-number preflight must not turn a valid retained vault into a
+	# refused, session-only path merely because an older writer used them.
+	var whole_spelled_progress := (
+		'{"version":4,"quests":{"future_quest":'
+		+ '{"zero":0e-2,"decimal":1.0,"scaled":10e-1}}}')
+	var whole_spelled_file := FileAccess.open(PROBE, FileAccess.WRITE)
+	if whole_spelled_file == null:
+		_fail("could not stage the whole-valued exponent vault")
+		return
+	whole_spelled_file.store_string(whole_spelled_progress)
+	whole_spelled_file.close()
+	var loaded_whole_spelled: Variant = SaveVault.load_from(PROBE)
+	if loaded_whole_spelled is not Dictionary:
+		_fail("the v4 reader refused mathematically whole JSON number spellings")
+		return
+	var spelled_objectives: Dictionary = loaded_whole_spelled["quests"]["future_quest"]
+	if spelled_objectives["zero"] != 0:
+		_fail("the v4 reader did not preserve exponent-spelled zero as zero")
+		return
+	if spelled_objectives["decimal"] != 1:
+		_fail("the v4 reader did not preserve decimal-spelled one as one")
+		return
+	if spelled_objectives["scaled"] != 1:
+		_fail("the v4 reader did not preserve exponent-scaled ten as one")
+		return
+	_cleanup_probe()
+	SaveVault.clear_refusals_for_test()
+
+	# 8e. The data layer and the behaviour layer must not drift: every name
 	# SaveVault claims to know must have a RespawnPoints branch, and vice versa.
 	# Without this, a name could be added to the ledger and KNOWN_ATTUNEMENTS
 	# while nothing ever restored it — every guard green, the attunement dead.
@@ -580,28 +658,6 @@ func _ready() -> void:
 	if SaveVault.validate({ "version": 1, "comment": "x", "attuned": ["a"] }) != "":
 		_fail("validation refused a fully-populated valid vault")
 		return
-	var too_many_names := []
-	too_many_names.resize(SaveVault.MAX_PERSISTED_NAMES + 1)
-	too_many_names.fill("a")
-	if SaveVault.validate({"version": 1, "attuned": too_many_names}) == "":
-		_fail("validation accepted an unbounded attunement set")
-		return
-	if SaveVault.validate({
-		"version": 1,
-		"attuned": ["a".repeat(SaveVault.MAX_PERSISTED_NAME_LENGTH + 1)],
-	}) == "":
-		_fail("validation accepted an unbounded attunement name")
-		return
-	var oversized := FileAccess.open(PROBE, FileAccess.WRITE)
-	if oversized == null:
-		_fail("could not create the oversized-vault probe")
-		return
-	oversized.seek(SaveVault.MAX_VAULT_BYTES)
-	oversized.store_8(0)
-	oversized.close()
-	if SaveVault.load_from(PROBE) != null:
-		_fail("load_from() accepted an oversized vault")
-		return
 	if SaveVault.validate({ "version": 2, "discoveries": ["starter_cave"] }) != "":
 		_fail("validation refused a valid v2 discovery vault")
 		return
@@ -628,6 +684,68 @@ func _ready() -> void:
 	OS.set_environment(SaveVault.VAULT_PATH_ENV, "")
 	print("TEST PASS — vault seam, attunement, discovery/reward/quest writers, round-trip and refusals hold")
 	get_tree().quit(0)
+
+
+## The missing bound accepts the valid over-limit document. An off-by-one
+## bound rejects the exact-limit control. Per-field caps fail the final two
+## compatibility controls even though the complete documents fit the byte cap.
+func _resource_boundaries() -> bool:
+	SaveVault.clear_refusals_for_test()
+	for accepted_size: int in [MAX_ACCEPTED_VAULT_BYTES - 1, MAX_ACCEPTED_VAULT_BYTES]:
+		var accepted_source := _vault_source_of_size(accepted_size)
+		if not _write_probe_source(accepted_source):
+			return false
+		if SaveVault.load_from(PROBE) is not Dictionary:
+			_fail("load_from() refused a valid %d-byte vault" % accepted_size)
+			return false
+		_cleanup_probe()
+
+	var oversized_source := _vault_source_of_size(MAX_ACCEPTED_VAULT_BYTES + 1)
+	if not _write_probe_source(oversized_source):
+		return false
+	if SaveVault.load_from(PROBE) is Dictionary:
+		_fail("load_from() accepted a valid over-limit vault")
+		return false
+	var preserved := FileAccess.open(PROBE, FileAccess.READ)
+	if preserved == null or preserved.get_as_text() != oversized_source:
+		if preserved != null:
+			preserved.close()
+		_fail("refusing an over-limit vault changed or removed its source bytes")
+		return false
+	preserved.close()
+	if SaveVault.can_write(PROBE):
+		_fail("an over-limit vault did not latch the path read-only")
+		return false
+	_cleanup_probe()
+	SaveVault.clear_refusals_for_test()
+
+	var many_names: Array = []
+	many_names.resize(4097)
+	many_names.fill("a")
+	if SaveVault.validate({"version": 1, "attuned": many_names}) != "":
+		_fail("the resource bound contracted the previously accepted attunement shape")
+		return false
+	if SaveVault.validate({"version": 1, "attuned": ["a".repeat(257)]}) != "":
+		_fail("the resource bound contracted a previously accepted stable name")
+		return false
+	return true
+
+
+func _vault_source_of_size(size: int) -> String:
+	var prefix := '{"version":1,"comment":"'
+	var suffix := '"}'
+	var padding := size - prefix.length() - suffix.length()
+	return prefix + "x".repeat(padding) + suffix
+
+
+func _write_probe_source(source: String) -> bool:
+	var file := FileAccess.open(PROBE, FileAccess.WRITE)
+	if file == null:
+		_fail("could not create the vault resource-bound probe")
+		return false
+	file.store_string(source)
+	file.close()
+	return true
 
 
 func _fail(message: String) -> void:
