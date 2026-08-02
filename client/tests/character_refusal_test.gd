@@ -205,9 +205,13 @@ func _check_legacy_finite_deformations_remain_readable() -> void:
 	var recipe := _wanderer()
 	if recipe.is_empty():
 		return
-	recipe["shapes"] = { "torso_vshape": CharacterFactory.SHAPE_WEIGHT_MAX + 0.01 }
+	# The next representable doubles above the boundary catch JSON.stringify's
+	# reduced-precision default: exact legacy preservation is meaningless if an
+	# ordinary save silently rounds an untouched value back onto the boundary.
+	var precise_legacy_shape := CharacterFactory.SHAPE_WEIGHT_MAX + 0.0000000000000004
+	recipe["shapes"] = { "torso_vshape": precise_legacy_shape }
 	recipe["bone_girth"] = { "upperarm": CharacterFactory.BONE_FACTOR_MIN - 0.01 }
-	if not _write_text(PROBE, JSON.stringify(recipe, "  ")):
+	if not _write_text(PROBE, JSON.stringify(recipe, "  ", true, true)):
 		_fail("legacy finite deformation: could not seed the probe")
 		return
 	var before := FileAccess.get_sha256(PROBE)
@@ -236,7 +240,7 @@ func _check_legacy_finite_deformations_remain_readable() -> void:
 		_fail("legacy finite deformation: the preserved edit no longer loaded")
 	elif (
 			float(reloaded["shapes"]["torso_vshape"])
-				!= CharacterFactory.SHAPE_WEIGHT_MAX + 0.01
+				!= precise_legacy_shape
 			or float(reloaded["bone_girth"]["upperarm"])
 				!= CharacterFactory.BONE_FACTOR_MIN - 0.01):
 		_fail("legacy finite deformation: the ordinary edit rewrote the old values")
@@ -246,7 +250,8 @@ func _check_legacy_finite_deformations_remain_readable() -> void:
 	# byte-for-byte intact and keep the path usable for a corrected retry.
 	var preserved_bytes := FileAccess.get_sha256(PROBE)
 	var changed_legacy: Dictionary = (reloaded as Dictionary).duplicate(true)
-	changed_legacy["shapes"]["torso_vshape"] = CharacterFactory.SHAPE_WEIGHT_MAX + 0.02
+	changed_legacy["shapes"]["torso_vshape"] = (
+		CharacterFactory.SHAPE_WEIGHT_MAX + 0.0000000000000009)
 	identity = CharacterStore.document_identity(PROBE)
 	if CharacterStore.save_to(PROBE, changed_legacy, identity):
 		_fail("legacy finite deformation: an out-of-range value remained mutable")

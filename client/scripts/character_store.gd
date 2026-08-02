@@ -382,7 +382,9 @@ static func _save_to_locked(
 		push_error("CharacterStore: cannot write %s" % tmp_path)
 		_last_refusal = REFUSAL_WRITE
 		return false
-	file.store_string(JSON.stringify(recipe, "  "))
+	# Exact legacy preservation is load-bearing in write_refusal_reason(): do not
+	# round an untouched grandfathered float while rewriting the whole document.
+	file.store_string(JSON.stringify(recipe, "  ", true, true))
 	file.close()
 	# Re-check immediately before the replacement. The check above is a
 	# point-in-time reading, and the actors this store is written against — cloud
