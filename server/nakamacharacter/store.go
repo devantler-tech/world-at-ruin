@@ -1,5 +1,5 @@
-// Package nakamacharacter persists server-authoritative character records
-// under their verified Nakama account owner.
+// Package nakamacharacter persists server-authoritative character records in
+// Nakama's system-owned namespace, keyed by verified account identity.
 package nakamacharacter
 
 import (
@@ -18,8 +18,9 @@ import (
 const (
 	// Collection is the private Nakama collection for character records.
 	Collection = "world_at_ruin_characters"
-	// RecordKey is the one account-owned character document.
-	RecordKey = "character"
+	// RecordKey is the prefix for account-bound system-owned character documents.
+	RecordKey     = "character"
+	systemOwnerID = "00000000-0000-0000-0000-000000000000"
 
 	schemaVersion = 1
 )
@@ -68,8 +69,8 @@ type SaveRequest struct {
 	Character       Character
 }
 
-// Store owns character records through Nakama storage. Player-owned writes use
-// playerstate.Store so the record and its private audit evidence commit
+// Store owns system-owned character records through Nakama storage. Writes use
+// playerstate.Store so the record and its system-owned audit evidence commit
 // atomically, as required by docs/design/server-state-durability.md.
 type Store struct {
 	storage   storageClient
@@ -100,8 +101,8 @@ func (s *Store) Load(ctx context.Context, subjectID string) (Record, error) {
 	objects, err := s.storage.StorageRead(ctx, []*runtime.StorageRead{
 		{
 			Collection: Collection,
-			Key:        RecordKey,
-			UserID:     subjectID,
+			Key:        characterRecordKey(subjectID),
+			UserID:     "",
 		},
 	})
 	if err != nil {
@@ -116,8 +117,8 @@ func (s *Store) Load(ctx context.Context, subjectID string) (Record, error) {
 	object := objects[0]
 	if object == nil ||
 		object.GetCollection() != Collection ||
-		object.GetKey() != RecordKey ||
-		object.GetUserId() != subjectID ||
+		object.GetKey() != characterRecordKey(subjectID) ||
+		object.GetUserId() != systemOwnerID ||
 		object.GetVersion() == "" ||
 		object.GetPermissionRead() != 0 ||
 		object.GetPermissionWrite() != 0 {
@@ -168,13 +169,18 @@ func (s *Store) Save(ctx context.Context, request SaveRequest) error {
 		Payload:        value,
 		Record: playerstate.RecordWrite{
 			Collection:      Collection,
-			Key:             RecordKey,
+			Key:             characterRecordKey(subjectID),
 			ExpectedVersion: request.ExpectedVersion,
 			Value:           value,
+			SystemOwned:     true,
 		},
 		Outcome: outcome,
 	})
 	return err
+}
+
+func characterRecordKey(subjectID string) string {
+	return RecordKey + ":" + subjectID
 }
 
 type characterDocument struct {

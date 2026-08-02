@@ -86,6 +86,14 @@ bits closed, so Nakama attributes it to the system account and no client API can
 read path re-verifies collection, key, owner, version and both permission bits before trusting the
 object it was handed.
 
+The character store uses the same system-owner boundary. Its key includes the authenticated Nakama
+subject, while the storage owner remains the system account, so one account's document stays
+addressable without giving that account a client-writable object at the authoritative identity.
+Its create-only mutation audit uses that system owner too, so a client cannot pre-create replay
+evidence. The character boundary is still inert and has no composed runtime or shipped player data;
+therefore legacy player-owned character objects are not authoritative in this namespace and are never
+promoted into it. This avoids treating an object's age as proof that the server created it.
+
 ### Every write is a compare-and-swap
 
 A writer presents the exact version it observed. A write whose version no longer matches is
@@ -450,8 +458,8 @@ needs to write a guard for.
 | Google credential and binding address derivations plus the storage collection stay stable permanently | `nakamaauth` HMAC derivation and binding store | `TestGoogleNakamaCredentialsAreSeparatedKeyedAndStable` reads the exact output and collection contract from `golden_google_identity_address_v1.json`; `tools/google-binding-durability-guard.sh` anchors that complete golden to the base revision |
 | A resolved Google binding still names an enabled Nakama account | `nakamaauth.NakamaGoogleBindingStore` | `TestNakamaGoogleBindingStoreChecksAuthoritativeAccountStatus`, `TestProvisionGoogleRejectsDisabledBoundAccount` |
 | Server-authoritative state is unreadable and unwritable by clients | `nakamalease.Store` | `TestCreatePersistsPrivateVersionedLeaseByHashedKey`, `TestCreateIgnoresAClientOwnedObjectAtTheDerivedKey`, `TestLoadRejectsMalformedOrPublicStoredObjects` |
-| Player mutation records and audit evidence are unreadable and unwritable by clients | `playerstate.Store` | `TestApplyCommitsPlayerRecordAndAuditInOneAtomicWrite` |
-| Character records are unreadable and unwritable by clients | `nakamacharacter.Store` | `TestSavePersistsPrivateVersionedCharacterForVerifiedAccount`, `TestLoadRejectsMalformedOrPublicCharacterRecords` |
+| System-owned player mutations keep their record and replay evidence unreadable and unwritable by clients | `playerstate.Store` | `TestApplyCommitsPlayerRecordAndAuditInOneAtomicWrite`, `TestClientOwnedAuditPreseedCannotReplayASystemMutation` |
+| Character records use an account-specific system-owned identity that clients cannot occupy | `nakamacharacter.Store` | `TestSavePersistsPrivateVersionedCharacterForVerifiedAccount`, `TestClientOwnedCharacterPreseedCannotBecomeAuthoritative`, `TestLegacyPlayerOwnedCharacterCannotBecomeAuthoritative`, `TestLoadRejectsMalformedOrPublicCharacterRecords` |
 | No blind **create** — create is conditional | `nakamalease.Store` | `TestConcurrentIdenticalCreateReconcilesTheDurableWinner` |
 | No blind player-record **create** — create is conditional | `playerstate.Store` | `TestApplyCreatesAPlayerRecordConditionallyWithItsAudit` |
 | No blind **replace** — replace presents the observed version | `nakamalease.Store` | `TestReplaceUsesObservedVersionAndStaleRecordCannotOverwrite`, `TestConcurrentReplaceLeavesExactlyOneCurrentAttempt` |
