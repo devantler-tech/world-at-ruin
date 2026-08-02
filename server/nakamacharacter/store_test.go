@@ -12,11 +12,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/heroiclabs/nakama-common/api"
 	"github.com/heroiclabs/nakama-common/runtime"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const (
@@ -51,8 +49,6 @@ type storedObject struct {
 	version         string
 	permissionRead  int32
 	permissionWrite int32
-	createTime      time.Time
-	updateTime      time.Time
 }
 
 type fakeStorage struct {
@@ -61,12 +57,6 @@ type fakeStorage struct {
 	readErr                  error
 	writeCalls               [][]*runtime.StorageWrite
 	next                     int
-	clock                    time.Time
-	cutoverReadCalls         int
-	cutoverDeadlineObserved  bool
-	cutoverWriteErr          error
-	seedCutoverOnWriteError  bool
-	corruptCutoverAck        bool
 	systemReadOverride       []*api.StorageObject
 	systemReadOverrideActive bool
 }
@@ -75,34 +65,18 @@ func newFakeStorage() *fakeStorage {
 	return &fakeStorage{
 		objects: make(map[string]storedObject),
 		next:    1,
-		clock:   time.Date(2026, 8, 2, 15, 0, 0, 0, time.UTC),
 	}
 }
 
 func (f *fakeStorage) seed(object storedObject) {
-	if object.createTime.IsZero() {
-		object.createTime = f.clock.Add(-time.Hour)
-	}
-	if object.updateTime.IsZero() {
-		object.updateTime = object.createTime
-	}
 	f.objects[storageObjectID(object.collection, object.key, object.userID)] = object
 }
 
 func (f *fakeStorage) StorageRead(
-	ctx context.Context,
+	_ context.Context,
 	reads []*runtime.StorageRead,
 ) ([]*api.StorageObject, error) {
-	cutoverRead := len(reads) == 1 &&
-		reads[0].Collection == Collection &&
-		reads[0].Key == ownerCutoverKey &&
-		reads[0].UserID == ""
-	if cutoverRead {
-		f.cutoverReadCalls++
-		_, f.cutoverDeadlineObserved = ctx.Deadline()
-	} else {
-		f.readCalls++
-	}
+	f.readCalls++
 	if f.readErr != nil {
 		return nil, f.readErr
 	}
@@ -134,45 +108,18 @@ func (f *fakeStorage) StorageRead(
 			Version:         object.version,
 			PermissionRead:  object.permissionRead,
 			PermissionWrite: object.permissionWrite,
-			CreateTime:      timestamppb.New(object.createTime),
-			UpdateTime:      timestamppb.New(object.updateTime),
 		})
 	}
 	return objects, nil
 }
 
 func (f *fakeStorage) StorageWrite(
-	ctx context.Context,
+	_ context.Context,
 	writes []*runtime.StorageWrite,
 ) ([]*api.StorageObjectAck, error) {
-	cutoverWrite := len(writes) == 1 &&
-		writes[0].Collection == Collection &&
-		writes[0].Key == ownerCutoverKey &&
-		writes[0].UserID == ""
-	if cutoverWrite {
-		_, f.cutoverDeadlineObserved = ctx.Deadline()
-		if f.cutoverWriteErr != nil {
-			if f.seedCutoverOnWriteError {
-				f.seed(storedObject{
-					collection:      Collection,
-					key:             ownerCutoverKey,
-					userID:          systemOwnerID,
-					value:           ownerCutoverValue,
-					version:         "concurrent-cutover-version",
-					permissionRead:  0,
-					permissionWrite: 0,
-					createTime:      f.clock,
-					updateTime:      f.clock,
-				})
-			}
-			return nil, f.cutoverWriteErr
-		}
-	}
-	if !cutoverWrite {
-		call := make([]*runtime.StorageWrite, len(writes))
-		copy(call, writes)
-		f.writeCalls = append(f.writeCalls, call)
-	}
+	call := make([]*runtime.StorageWrite, len(writes))
+	copy(call, writes)
+	f.writeCalls = append(f.writeCalls, call)
 
 	for _, write := range writes {
 		ownerID := write.UserID
@@ -212,8 +159,6 @@ func (f *fakeStorage) StorageWrite(
 		}
 	}
 
-	writeTime := f.clock
-	f.clock = f.clock.Add(time.Second)
 	acks := make([]*api.StorageObjectAck, 0, len(writes))
 	for index, write := range writes {
 		ownerID := write.UserID
@@ -222,14 +167,6 @@ func (f *fakeStorage) StorageWrite(
 		}
 		version := fmt.Sprintf("v%d", f.next)
 		f.next++
-		createTime := writeTime
-		if current, exists := f.objects[storageObjectID(
-			write.Collection,
-			write.Key,
-			ownerID,
-		)]; exists {
-			createTime = current.createTime
-		}
 		f.objects[storageObjectID(
 			write.Collection,
 			write.Key,
@@ -242,8 +179,6 @@ func (f *fakeStorage) StorageWrite(
 			version:         version,
 			permissionRead:  validatedPermissions[index].read,
 			permissionWrite: validatedPermissions[index].write,
-			createTime:      createTime,
-			updateTime:      writeTime,
 		}
 		acks = append(acks, &api.StorageObjectAck{
 			Collection: write.Collection,
@@ -251,9 +186,6 @@ func (f *fakeStorage) StorageWrite(
 			UserId:     ownerID,
 			Version:    version,
 		})
-	}
-	if cutoverWrite && f.corruptCutoverAck {
-		acks[0].UserId = testSubjectID
 	}
 	return acks, nil
 }
@@ -295,83 +227,6 @@ func TestFakeStorageRejectsAnInvalidBatchBeforeAnyMutation(t *testing.T) {
 			storage.next,
 		)
 	}
-}
-
-func TestNewStoreBoundsOwnershipCutoverIO(t *testing.T) {
-	t.Parallel()
-
-	storage := newFakeStorage()
-	if _, err := NewStore(storage); err != nil {
-		t.Fatalf("NewStore() error = %v", err)
-	}
-	if !storage.cutoverDeadlineObserved {
-		t.Fatal("ownership cutover storage I/O had no deadline")
-	}
-}
-
-func TestLoadReusesTheInitializedOwnershipCutover(t *testing.T) {
-	t.Parallel()
-
-	storage := newFakeStorage()
-	store, err := NewStore(storage)
-	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
-	}
-	initialReads := storage.cutoverReadCalls
-	if _, err := store.Load(
-		authenticatedContext(testSubjectID),
-		testSubjectID,
-	); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("Load() error = %v, want %v", err, ErrNotFound)
-	}
-	if storage.cutoverReadCalls != initialReads {
-		t.Fatalf(
-			"cutover reads after Load = %d, want %d",
-			storage.cutoverReadCalls,
-			initialReads,
-		)
-	}
-}
-
-func TestOwnerCutoverRecoveryConvergesOrFailsClosed(t *testing.T) {
-	t.Parallel()
-
-	t.Run("concurrent creator", func(t *testing.T) {
-		t.Parallel()
-
-		storage := newFakeStorage()
-		storage.cutoverWriteErr = runtime.ErrStorageRejectedVersion
-		storage.seedCutoverOnWriteError = true
-		if _, err := NewStore(storage); err != nil {
-			t.Fatalf("NewStore() error = %v", err)
-		}
-	})
-
-	t.Run("invalid acknowledgement", func(t *testing.T) {
-		t.Parallel()
-
-		storage := newFakeStorage()
-		storage.corruptCutoverAck = true
-		if _, err := NewStore(storage); err != nil {
-			t.Fatalf("NewStore() error = %v", err)
-		}
-	})
-
-	t.Run("failed write without durable marker", func(t *testing.T) {
-		t.Parallel()
-
-		storage := newFakeStorage()
-		storage.cutoverWriteErr = errors.New(
-			"database host and credential detail",
-		)
-		_, err := NewStore(storage)
-		if !errors.Is(err, ErrStorage) {
-			t.Fatalf("NewStore() error = %v, want %v", err, ErrStorage)
-		}
-		if strings.Contains(err.Error(), "database host") {
-			t.Fatalf("NewStore() leaked storage detail: %v", err)
-		}
-	})
 }
 
 func TestSavePersistsPrivateVersionedCharacterForVerifiedAccount(t *testing.T) {
@@ -749,7 +604,7 @@ func TestClientOwnedCharacterPreseedCannotBecomeAuthoritative(t *testing.T) {
 	}
 }
 
-func TestLoadMigratesAValidLegacyCharacterWithoutChangingItsState(t *testing.T) {
+func TestLegacyPlayerOwnedCharacterCannotBecomeAuthoritative(t *testing.T) {
 	t.Parallel()
 
 	storage := newFakeStorage()
@@ -757,66 +612,12 @@ func TestLoadMigratesAValidLegacyCharacterWithoutChangingItsState(t *testing.T) 
 		collection: Collection,
 		key:        RecordKey,
 		userID:     testSubjectID,
-		value: `{"schema":1,"character_id":"warden-1",` +
-			`"display_name":"Asha","recipe":{"version":3}}`,
-		version:         "legacy-version",
+		value: `{"schema":1,"character_id":"attacker-seeded",` +
+			`"display_name":"Mallory","recipe":{"gold":999999}}`,
+		version:         "client-created-version",
 		permissionRead:  0,
 		permissionWrite: 0,
 	})
-	store, err := NewStore(storage)
-	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
-	}
-	record, err := store.Load(authenticatedContext(testSubjectID), testSubjectID)
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	if record.Character.ID != "warden-1" ||
-		record.Character.DisplayName != "Asha" ||
-		string(record.Character.Recipe) != `{"version":3}` {
-		t.Fatalf("migrated character = %#v", record.Character)
-	}
-	if record.Version == "" || record.Version == "legacy-version" {
-		t.Fatalf("migrated version = %q", record.Version)
-	}
-	if len(storage.writeCalls) != 1 || len(storage.writeCalls[0]) != 1 {
-		t.Fatalf("migration writes = %#v", storage.writeCalls)
-	}
-	migration := storage.writeCalls[0][0]
-	if migration.Collection != Collection ||
-		migration.Key != "character:"+testSubjectID ||
-		migration.UserID != "" ||
-		migration.Value != storage.objects[storageObjectID(
-			Collection,
-			RecordKey,
-			testSubjectID,
-		)].value ||
-		migration.Version != "*" ||
-		migration.PermissionRead != 0 ||
-		migration.PermissionWrite != 0 {
-		t.Fatalf("migration write = %#v", migration)
-	}
-	legacy := storage.objects[storageObjectID(
-		Collection,
-		RecordKey,
-		testSubjectID,
-	)]
-	if legacy.version != "legacy-version" {
-		t.Fatalf("legacy version after migration = %q", legacy.version)
-	}
-	if _, exists := storage.objects[storageObjectID(
-		Collection,
-		"character:"+testSubjectID,
-		systemOwnerID,
-	)]; !exists {
-		t.Fatal("system-owned migrated character is missing")
-	}
-}
-
-func TestLegacyCharacterCreatedAfterOwnerCutoverIsNeverMigrated(t *testing.T) {
-	t.Parallel()
-
-	storage := newFakeStorage()
 	store, err := NewStore(storage)
 	if err != nil {
 		t.Fatalf("NewStore() error = %v", err)
@@ -825,36 +626,10 @@ func TestLegacyCharacterCreatedAfterOwnerCutoverIsNeverMigrated(t *testing.T) {
 		authenticatedContext(testSubjectID),
 		testSubjectID,
 	); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("first Load() error = %v, want %v", err, ErrNotFound)
+		t.Fatalf("Load() error = %v, want %v", err, ErrNotFound)
 	}
-	storage.seed(storedObject{
-		collection: Collection,
-		key:        RecordKey,
-		userID:     testSubjectID,
-		value: `{"schema":1,"character_id":"attacker-seeded",` +
-			`"display_name":"Mallory","recipe":{"gold":999999}}`,
-		version:         "post-cutover-version",
-		permissionRead:  0,
-		permissionWrite: 0,
-		createTime:      storage.clock,
-		updateTime:      storage.clock,
-	})
-	restarted, err := NewStore(storage)
-	if err != nil {
-		t.Fatalf("restarted NewStore() error = %v", err)
-	}
-	if _, err := restarted.Load(
-		authenticatedContext(testSubjectID),
-		testSubjectID,
-	); !errors.Is(err, ErrStorage) {
-		t.Fatalf("Load() error = %v, want %v", err, ErrStorage)
-	}
-	if _, exists := storage.objects[storageObjectID(
-		Collection,
-		"character:"+testSubjectID,
-		systemOwnerID,
-	)]; exists {
-		t.Fatal("post-cutover legacy object became authoritative")
+	if len(storage.writeCalls) != 0 {
+		t.Fatalf("legacy object triggered writes: %#v", storage.writeCalls)
 	}
 }
 

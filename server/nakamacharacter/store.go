@@ -1,5 +1,5 @@
-// Package nakamacharacter persists server-authoritative character records
-// under their verified Nakama account owner.
+// Package nakamacharacter persists server-authoritative character records in
+// Nakama's system-owned namespace, keyed by verified account identity.
 package nakamacharacter
 
 import (
@@ -9,7 +9,6 @@ import (
 	"errors"
 	"io"
 	"strings"
-	"time"
 
 	"github.com/devantler-tech/world-at-ruin/server/playerstate"
 	"github.com/heroiclabs/nakama-common/api"
@@ -19,15 +18,11 @@ import (
 const (
 	// Collection is the private Nakama collection for character records.
 	Collection = "world_at_ruin_characters"
-	// RecordKey is the legacy account-owned character key and the prefix for
-	// account-bound system-owned character documents.
-	RecordKey       = "character"
-	systemOwnerID   = "00000000-0000-0000-0000-000000000000"
-	ownerCutoverKey = "character-system-owner-cutover"
+	// RecordKey is the prefix for account-bound system-owned character documents.
+	RecordKey     = "character"
+	systemOwnerID = "00000000-0000-0000-0000-000000000000"
 
-	schemaVersion     = 1
-	ownerCutoverValue = `{"schema":1}`
-	storeInitTimeout  = 5 * time.Second
+	schemaVersion = 1
 )
 
 var (
@@ -74,25 +69,16 @@ type SaveRequest struct {
 	Character       Character
 }
 
-// Store owns system-owned character records through Nakama storage. Player
-// mutations use playerstate.Store so the record and its player-associated audit
-// evidence commit atomically. The one-time legacy migration is a conditional
-// create whose source remains intact for retry and rollback.
+// Store owns system-owned character records through Nakama storage. Writes use
+// playerstate.Store so the record and its system-owned audit evidence commit
+// atomically, as required by docs/design/server-state-durability.md.
 type Store struct {
 	storage   storageClient
 	mutations *playerstate.Store
-	cutover   time.Time
 }
 
-// NewStore builds a character store and establishes the persistent ownership
-// cutover before any authenticated request can observe legacy state.
+// NewStore builds a character store over Nakama's runtime storage surface.
 func NewStore(storage storageClient) (*Store, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), storeInitTimeout)
-	defer cancel()
-	return newStore(ctx, storage)
-}
-
-func newStore(ctx context.Context, storage storageClient) (*Store, error) {
 	if storage == nil {
 		return nil, errors.New("nakama character: storage is required")
 	}
@@ -100,16 +86,10 @@ func newStore(ctx context.Context, storage storageClient) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	store := &Store{
+	return &Store{
 		storage:   storage,
 		mutations: mutations,
-	}
-	cutover, err := store.ownerCutover(ctx)
-	if err != nil {
-		return nil, err
-	}
-	store.cutover = cutover
-	return store, nil
+	}, nil
 }
 
 // Load reads the private character belonging to one verified Nakama subject.
@@ -118,15 +98,11 @@ func (s *Store) Load(ctx context.Context, subjectID string) (Record, error) {
 	if err != nil {
 		return Record{}, err
 	}
-	record, found, err := s.readSystemCharacter(ctx, subjectID)
-	if err != nil || found {
-		return record, err
-	}
 	objects, err := s.storage.StorageRead(ctx, []*runtime.StorageRead{
 		{
 			Collection: Collection,
-			Key:        RecordKey,
-			UserID:     subjectID,
+			Key:        characterRecordKey(subjectID),
+			UserID:     "",
 		},
 	})
 	if err != nil {
@@ -141,59 +117,21 @@ func (s *Store) Load(ctx context.Context, subjectID string) (Record, error) {
 	object := objects[0]
 	if object == nil ||
 		object.GetCollection() != Collection ||
-		object.GetKey() != RecordKey ||
-		object.GetUserId() != subjectID ||
-		object.GetVersion() == "" ||
-		object.GetPermissionRead() != 0 ||
-		object.GetPermissionWrite() != 0 ||
-		!createdBeforeCutover(object, s.cutover) {
-		return Record{}, ErrStorage
-	}
-	character, err := decodeCharacterDocument(object.GetValue())
-	if err != nil {
-		return Record{}, ErrStorage
-	}
-	return s.migrateLegacyCharacter(ctx, subjectID, object, character)
-}
-
-func (s *Store) readSystemCharacter(
-	ctx context.Context,
-	subjectID string,
-) (Record, bool, error) {
-	objects, err := s.storage.StorageRead(ctx, []*runtime.StorageRead{
-		{
-			Collection: Collection,
-			Key:        characterRecordKey(subjectID),
-			UserID:     "",
-		},
-	})
-	if err != nil {
-		return Record{}, false, sanitizeStorageError(ctx, err)
-	}
-	if len(objects) == 0 {
-		return Record{}, false, nil
-	}
-	if len(objects) != 1 {
-		return Record{}, false, ErrStorage
-	}
-	object := objects[0]
-	if object == nil ||
-		object.GetCollection() != Collection ||
 		object.GetKey() != characterRecordKey(subjectID) ||
 		object.GetUserId() != systemOwnerID ||
 		object.GetVersion() == "" ||
 		object.GetPermissionRead() != 0 ||
 		object.GetPermissionWrite() != 0 {
-		return Record{}, false, ErrStorage
+		return Record{}, ErrStorage
 	}
 	character, err := decodeCharacterDocument(object.GetValue())
 	if err != nil {
-		return Record{}, false, ErrStorage
+		return Record{}, ErrStorage
 	}
 	return Record{
 		Character: character,
 		Version:   object.GetVersion(),
-	}, true, nil
+	}, nil
 }
 
 // Save atomically commits one conditional character replacement and its
@@ -243,122 +181,6 @@ func (s *Store) Save(ctx context.Context, request SaveRequest) error {
 
 func characterRecordKey(subjectID string) string {
 	return RecordKey + ":" + subjectID
-}
-
-func (s *Store) ownerCutover(ctx context.Context) (time.Time, error) {
-	cutover, found, err := s.readOwnerCutover(ctx)
-	if err != nil || found {
-		return cutover, err
-	}
-	acks, writeErr := s.storage.StorageWrite(ctx, []*runtime.StorageWrite{
-		{
-			Collection:      Collection,
-			Key:             ownerCutoverKey,
-			UserID:          "",
-			Value:           ownerCutoverValue,
-			Version:         "*",
-			PermissionRead:  0,
-			PermissionWrite: 0,
-		},
-	})
-	if writeErr == nil && !validSystemAck(acks, ownerCutoverKey) {
-		writeErr = ErrStorage
-	}
-	cutover, found, readErr := s.readOwnerCutover(ctx)
-	if readErr != nil {
-		return time.Time{}, readErr
-	}
-	if found {
-		return cutover, nil
-	}
-	if writeErr != nil {
-		return time.Time{}, sanitizeStorageError(ctx, writeErr)
-	}
-	return time.Time{}, ErrStorage
-}
-
-func (s *Store) readOwnerCutover(
-	ctx context.Context,
-) (time.Time, bool, error) {
-	objects, err := s.storage.StorageRead(ctx, []*runtime.StorageRead{
-		{
-			Collection: Collection,
-			Key:        ownerCutoverKey,
-			UserID:     "",
-		},
-	})
-	if err != nil {
-		return time.Time{}, false, sanitizeStorageError(ctx, err)
-	}
-	if len(objects) == 0 {
-		return time.Time{}, false, nil
-	}
-	if len(objects) != 1 {
-		return time.Time{}, false, ErrStorage
-	}
-	object := objects[0]
-	createdAt := object.GetCreateTime()
-	if object == nil ||
-		object.GetCollection() != Collection ||
-		object.GetKey() != ownerCutoverKey ||
-		object.GetUserId() != systemOwnerID ||
-		object.GetValue() != ownerCutoverValue ||
-		object.GetVersion() == "" ||
-		object.GetPermissionRead() != 0 ||
-		object.GetPermissionWrite() != 0 ||
-		createdAt == nil || createdAt.CheckValid() != nil {
-		return time.Time{}, false, ErrStorage
-	}
-	return createdAt.AsTime(), true, nil
-}
-
-func createdBeforeCutover(object *api.StorageObject, cutover time.Time) bool {
-	createdAt := object.GetCreateTime()
-	return createdAt != nil &&
-		createdAt.CheckValid() == nil &&
-		createdAt.AsTime().Before(cutover)
-}
-
-func (s *Store) migrateLegacyCharacter(
-	ctx context.Context,
-	subjectID string,
-	legacy *api.StorageObject,
-	character Character,
-) (Record, error) {
-	acks, writeErr := s.storage.StorageWrite(ctx, []*runtime.StorageWrite{
-		{
-			Collection:      Collection,
-			Key:             characterRecordKey(subjectID),
-			UserID:          "",
-			Value:           legacy.GetValue(),
-			Version:         "*",
-			PermissionRead:  0,
-			PermissionWrite: 0,
-		},
-	})
-	if writeErr == nil && validSystemAck(acks, characterRecordKey(subjectID)) {
-		return Record{Character: character, Version: acks[0].GetVersion()}, nil
-	}
-	record, found, readErr := s.readSystemCharacter(ctx, subjectID)
-	if readErr != nil {
-		return Record{}, readErr
-	}
-	if found {
-		return record, nil
-	}
-	if writeErr != nil {
-		return Record{}, sanitizeStorageError(ctx, writeErr)
-	}
-	return Record{}, ErrStorage
-}
-
-func validSystemAck(acks []*api.StorageObjectAck, key string) bool {
-	return len(acks) == 1 &&
-		acks[0] != nil &&
-		acks[0].GetCollection() == Collection &&
-		acks[0].GetKey() == key &&
-		acks[0].GetUserId() == systemOwnerID &&
-		acks[0].GetVersion() != ""
 }
 
 type characterDocument struct {

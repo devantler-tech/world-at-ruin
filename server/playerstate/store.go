@@ -18,8 +18,8 @@ import (
 
 const (
 	// AuditCollection stores private mutation identities, bindings, and
-	// outcomes. Audit objects are create-only and belong to the authenticated
-	// player even when the mutated record belongs to the system owner.
+	// outcomes. Audit objects are create-only and use the same protected owner
+	// boundary as their mutated record.
 	AuditCollection = "world_at_ruin_player_mutations"
 
 	auditSchema   = 1
@@ -52,8 +52,8 @@ type storageClient interface {
 }
 
 // RecordWrite is one conditional create or version-checked replacement of a
-// player record. SystemOwned keeps authoritative records outside the client's
-// writable user namespace while their audit remains associated with the player.
+// player record. SystemOwned keeps the authoritative record and its replay
+// evidence outside the client's writable user namespace.
 type RecordWrite struct {
 	Collection      string
 	Key             string
@@ -123,7 +123,7 @@ func (s *Store) Apply(ctx context.Context, mutation Mutation) (Result, error) {
 		{
 			Collection: AuditCollection,
 			Key:        normalized.auditKey,
-			UserID:     normalized.subjectID,
+			UserID:     auditOwner(normalized),
 		},
 	})
 	if err != nil {
@@ -158,7 +158,7 @@ func (s *Store) Apply(ctx context.Context, mutation Mutation) (Result, error) {
 		{
 			Collection:      AuditCollection,
 			Key:             normalized.auditKey,
-			UserID:          normalized.subjectID,
+			UserID:          auditOwner(normalized),
 			Value:           string(auditValue),
 			Version:         "*",
 			PermissionRead:  0,
@@ -182,6 +182,10 @@ func recordOwner(mutation normalizedMutation) string {
 	return mutation.subjectID
 }
 
+func auditOwner(mutation normalizedMutation) string {
+	return recordOwner(mutation)
+}
+
 func (s *Store) resolveAfterWrite(
 	ctx context.Context,
 	mutation normalizedMutation,
@@ -191,7 +195,7 @@ func (s *Store) resolveAfterWrite(
 		{
 			Collection: AuditCollection,
 			Key:        mutation.auditKey,
-			UserID:     mutation.subjectID,
+			UserID:     auditOwner(mutation),
 		},
 	})
 	if readErr != nil {
@@ -291,10 +295,14 @@ func resolveExistingAudit(
 		return Result{}, ErrStorage
 	}
 	object := objects[0]
+	expectedOwner := auditOwner(mutation)
+	if expectedOwner == "" {
+		expectedOwner = systemOwnerID
+	}
 	if object == nil ||
 		object.GetCollection() != AuditCollection ||
 		object.GetKey() != mutation.auditKey ||
-		object.GetUserId() != mutation.subjectID ||
+		object.GetUserId() != expectedOwner ||
 		object.GetVersion() == "" ||
 		object.GetPermissionRead() != 0 ||
 		object.GetPermissionWrite() != 0 {

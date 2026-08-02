@@ -621,15 +621,16 @@ everything shipped afterwards is held to.
   durability contract those objects follow — and that every later server-held record inherits — is
   [`docs/design/server-state-durability.md`](docs/design/server-state-durability.md)), the private
   **player-state mutation boundary** (`server/playerstate/` — atomically commits one private
-  conditional player-record write with one private create-only audit object, binds the caller's
-  stable mutation key to its operation and normalized payload, and returns the original outcome on
-  replay or an ambiguous committed response; its strict audit schema is permanently ledgered, and
-  it remains inert until a player-record owner calls it), the private **Nakama character-record
-  owner** (`server/nakamacharacter/` — stores one strict-schema character document at a fixed key
-  under the account identity authenticated by Nakama's runtime context, refuses a requested owner
-  that differs from that caller plus public, malformed or stale observations, keeps every shipped
-  schema readable through a ledgered golden, and delegates every conditional write to the atomic
-  `playerstate` record-plus-audit boundary; it remains inert until a server caller composes it), the
+  conditional record write with one private create-only audit object under the same player or system
+  owner boundary, binds the caller's stable mutation key to its operation and normalized payload,
+  and returns the original outcome on replay or an ambiguous committed response; its strict audit
+  schema is permanently ledgered, and it remains inert until a record owner calls it), the private
+  **Nakama character-record owner** (`server/nakamacharacter/` — stores one strict-schema character
+  document at an account-derived key under Nakama's system owner, authenticates the requested account
+  against the runtime caller, rejects client-owned preseeds plus public, malformed or stale
+  observations, keeps every shipped schema readable through a ledgered golden, and delegates every
+  conditional write and system-owned replay audit to the atomic `playerstate` boundary; it remains
+  inert until a server caller composes it), the
   durable **handoff allocation coordinator**
   (`server/handoffalloc/` — implements `handoff.Allocator` over the real lease store and an injected
   GameServer-resource boundary; exact-version persists a uniquely identified dispatched barrier
