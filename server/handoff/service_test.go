@@ -331,6 +331,7 @@ func TestInvalidReservationNeverAuthenticates(t *testing.T) {
 		reservationID string
 	}{
 		{name: "empty", reservationID: ""},
+		{name: "token separator", reservationID: "handoff.42"},
 		{name: "header unsafe", reservationID: "handoff-42\r\nX-Injected: yes"},
 	}
 	for _, test := range tests {
@@ -681,6 +682,10 @@ func TestMalformedAllocationReturnsNoHandoff(t *testing.T) {
 		{
 			name:   "header-unsafe allocation ID",
 			mutate: func(a *Allocation) { a.ID = "gameserver-17\r\nX-Injected: yes" },
+		},
+		{
+			name:   "empty allocation DNS label",
+			mutate: func(a *Allocation) { a.ID = "gameserver..17" },
 		},
 		{
 			name:   "empty server name",

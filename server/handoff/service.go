@@ -225,7 +225,7 @@ func (s *Service) CreateHandoff(ctx context.Context, request Request) (Handoff, 
 }
 
 func (s *Service) validateAllocation(allocation Allocation, now time.Time) error {
-	if !validAllocationID(allocation.ID) {
+	if !validGameServerName(allocation.ID) {
 		return errors.New("handoff: allocation ID is invalid")
 	}
 	if !validDNSName(allocation.ServerName) {
@@ -279,12 +279,15 @@ func validAllocationID(id string) bool {
 			(char < 'A' || char > 'Z') &&
 			(char < '0' || char > '9') &&
 			char != '-' &&
-			char != '_' &&
-			char != '.' {
+			char != '_' {
 			return false
 		}
 	}
 	return true
+}
+
+func validGameServerName(name string) bool {
+	return name == strings.ToLower(name) && validDNSName(name)
 }
 
 func validDNSName(name string) bool {
