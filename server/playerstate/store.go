@@ -186,6 +186,13 @@ func auditOwner(mutation normalizedMutation) string {
 	return recordOwner(mutation)
 }
 
+func expectedStorageOwner(owner string) string {
+	if owner == "" {
+		return systemOwnerID
+	}
+	return owner
+}
+
 func (s *Store) resolveAfterWrite(
 	ctx context.Context,
 	mutation normalizedMutation,
@@ -295,10 +302,7 @@ func resolveExistingAudit(
 		return Result{}, ErrStorage
 	}
 	object := objects[0]
-	expectedOwner := auditOwner(mutation)
-	if expectedOwner == "" {
-		expectedOwner = systemOwnerID
-	}
+	expectedOwner := expectedStorageOwner(auditOwner(mutation))
 	if object == nil ||
 		object.GetCollection() != AuditCollection ||
 		object.GetKey() != mutation.auditKey ||
@@ -452,10 +456,7 @@ func validAcks(
 		return false
 	}
 	for index, ack := range acks {
-		expectedOwner := writes[index].UserID
-		if expectedOwner == "" {
-			expectedOwner = systemOwnerID
-		}
+		expectedOwner := expectedStorageOwner(writes[index].UserID)
 		if ack == nil ||
 			ack.GetCollection() != writes[index].Collection ||
 			ack.GetKey() != writes[index].Key ||

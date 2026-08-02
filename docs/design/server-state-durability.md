@@ -91,8 +91,8 @@ subject, while the storage owner remains the system account, so one account's do
 addressable without giving that account a client-writable object at the authoritative identity.
 Its create-only mutation audit uses that system owner too, so a client cannot pre-create replay
 evidence. The character boundary is still inert and has no composed runtime or shipped player data;
-therefore player-owned character objects have never been authoritative and are never promoted into
-this namespace. This avoids treating an object's age as proof that the server created it.
+therefore legacy player-owned character objects are not authoritative in this namespace and are never
+promoted into it. This avoids treating an object's age as proof that the server created it.
 
 ### Every write is a compare-and-swap
 
