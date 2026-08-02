@@ -15,6 +15,7 @@ import (
 	"github.com/devantler-tech/world-at-ruin/server/zonesock"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 )
 
 const (
@@ -275,7 +276,7 @@ func (s *Service) CreateHandoff(ctx context.Context, request Request) (Handoff, 
 }
 
 func (s *Service) validateAllocation(allocation Allocation, now time.Time) error {
-	if !validAllocationID(allocation.ID) {
+	if !validGameServerName(allocation.ID) {
 		return errors.New("handoff: allocation ID is invalid")
 	}
 	if !validDNSName(allocation.ServerName) {
@@ -353,8 +354,16 @@ func validAllocationID(id string) bool {
 	return true
 }
 
+func validGameServerName(name string) bool {
+	return len(k8svalidation.IsDNS1123Subdomain(name)) == 0
+}
+
 func validDNSName(name string) bool {
-	if name == "" || len(name) > 253 || net.ParseIP(name) != nil {
+	return net.ParseIP(name) == nil && validDNSSubdomain(name)
+}
+
+func validDNSSubdomain(name string) bool {
+	if name == "" || len(name) > 253 {
 		return false
 	}
 
