@@ -551,7 +551,25 @@ func _ready() -> void:
 	_cleanup_probe()
 	SaveVault.clear_refusals_for_test()
 
-	# 8c. Mathematically whole decimal and exponent spellings remain readable.
+	# 8c. Exponents larger than the old safety cap must retain their exact
+	# magnitude. This token equals 9007199254740990.5: clamping -10001 to
+	# -10000 hides the final 5 behind 10,000 zeros and accepts rounded progress.
+	var over_cap_fractional_progress := (
+		'{"version":4,"quests":{"future_quest":{"future_step":90071992547409905'
+		+ "0".repeat(10_000) + 'e-10001}}}')
+	var over_cap_fractional_file := FileAccess.open(PROBE, FileAccess.WRITE)
+	if over_cap_fractional_file == null:
+		_fail("could not stage the over-cap fractional vault")
+		return
+	over_cap_fractional_file.store_string(over_cap_fractional_progress)
+	over_cap_fractional_file.close()
+	if SaveVault.load_from(PROBE) is Dictionary:
+		_fail("the v4 reader accepted fractional progress after capping its exponent")
+		return
+	_cleanup_probe()
+	SaveVault.clear_refusals_for_test()
+
+	# 8d. Mathematically whole decimal and exponent spellings remain readable.
 	# The exact-number preflight must not turn a valid retained vault into a
 	# refused, session-only path merely because an older writer used them.
 	var whole_spelled_progress := (
@@ -580,7 +598,7 @@ func _ready() -> void:
 	_cleanup_probe()
 	SaveVault.clear_refusals_for_test()
 
-	# 8d. The data layer and the behaviour layer must not drift: every name
+	# 8e. The data layer and the behaviour layer must not drift: every name
 	# SaveVault claims to know must have a RespawnPoints branch, and vice versa.
 	# Without this, a name could be added to the ledger and KNOWN_ATTUNEMENTS
 	# while nothing ever restored it — every guard green, the attunement dead.

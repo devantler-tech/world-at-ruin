@@ -402,24 +402,33 @@ static func _json_number_token_is_whole(token: String) -> bool:
 	if exponent_at < 0:
 		exponent_at = token.find("E")
 	var mantissa := token if exponent_at < 0 else token.left(exponent_at)
+	var decimal_at := mantissa.find(".")
+	var decimal_places := 0 if decimal_at < 0 else mantissa.length() - decimal_at - 1
+	var digits := mantissa.replace("-", "").replace(".", "")
+	var zero_mantissa := digits.replace("0", "").is_empty()
 	var exponent := 0
 	if exponent_at >= 0:
 		var exponent_text := token.substr(exponent_at + 1)
-		# Validity remains JSON.parse_string()'s job. Capping here avoids an
-		# absurd exponent overflowing this exactness-only preflight.
 		var negative := exponent_text.begins_with("-")
 		exponent_text = exponent_text.trim_prefix("-").trim_prefix("+")
-		for digit: String in exponent_text:
-			exponent = mini(10_000, exponent * 10 + digit.to_int())
+		var normalized_exponent := exponent_text.lstrip("0")
+		if normalized_exponent.is_empty():
+			normalized_exponent = "0"
+		# Only magnitudes that can still affect the trailing-digit check need
+		# conversion. Larger positive exponents are necessarily whole; larger
+		# negative exponents are fractional unless the mantissa is zero.
+		var exponent_limit := digits.length() - decimal_places if negative else decimal_places
+		if normalized_exponent.length() > str(exponent_limit).length():
+			return zero_mantissa if negative else true
+		exponent = normalized_exponent.to_int()
+		if exponent > exponent_limit:
+			return zero_mantissa if negative else true
 		if negative:
 			exponent = -exponent
-	var decimal_at := mantissa.find(".")
-	var decimal_places := 0 if decimal_at < 0 else mantissa.length() - decimal_at - 1
 	var places_requiring_zero := decimal_places - exponent
 	if places_requiring_zero <= 0:
 		return true
-	var digits := mantissa.replace("-", "").replace(".", "")
-	if digits.replace("0", "").is_empty():
+	if zero_mantissa:
 		return true
 	if places_requiring_zero > digits.length():
 		return false
