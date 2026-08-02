@@ -287,11 +287,15 @@ func validAllocationID(id string) bool {
 }
 
 func validGameServerName(name string) bool {
-	return name == strings.ToLower(name) && validDNSName(name)
+	return name == strings.ToLower(name) && validDNSSubdomain(name)
 }
 
 func validDNSName(name string) bool {
-	if name == "" || len(name) > 253 || net.ParseIP(name) != nil {
+	return net.ParseIP(name) == nil && validDNSSubdomain(name)
+}
+
+func validDNSSubdomain(name string) bool {
+	if name == "" || len(name) > 253 {
 		return false
 	}
 

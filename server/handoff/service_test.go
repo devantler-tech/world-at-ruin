@@ -217,6 +217,35 @@ func TestServiceCreatesAllocationScopedHandoffThroughRealNakama(t *testing.T) {
 	}
 }
 
+func TestNumericDNSSubdomainAllocationCreatesHandoff(t *testing.T) {
+	nakama := &accountServer{
+		account: &api.Account{User: &api.User{Id: "player-42"}},
+	}
+	allocation := validAllocation()
+	allocation.ID = "1.2.3.4"
+	allocator := &recordingAllocator{allocation: allocation}
+	service, err := NewService(
+		verifierAgainst(t, nakama),
+		allocator,
+		validConfig(),
+	)
+	if err != nil {
+		t.Fatalf("NewService returned an error: %v", err)
+	}
+
+	handoff, err := service.CreateHandoff(context.Background(), validRequest())
+	if err != nil {
+		t.Fatalf("CreateHandoff rejected a valid numeric DNS subdomain: %v", err)
+	}
+	zoneVerifier, err := zonesock.NewHMACVerifier(allocation.AdmissionSecret, allocation.ID)
+	if err != nil {
+		t.Fatalf("NewHMACVerifier returned an error: %v", err)
+	}
+	if _, err := zoneVerifier.Verify(handoff.Token); err != nil {
+		t.Fatalf("zone refused numeric DNS-subdomain handoff token: %v", err)
+	}
+}
+
 func TestRetriesUseDistinctAttemptOwnership(t *testing.T) {
 	nakama := &accountServer{
 		account: &api.Account{User: &api.User{Id: "player-42"}},
