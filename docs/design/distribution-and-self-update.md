@@ -245,11 +245,14 @@ would tell a client where to *fetch* something is withheld, and each omission is
   unauthorized download. A client following the envelope to a `shell_update` finds nowhere to go and
   keeps playing — the safe failure.
 - **`signature` / `key` / `revocation`** — the Godot-native trust boundary verifies the signing-key
-  certificate with a caller-supplied offline-root public key, verifies the manifest with only that
-  certified key, and enters the pure decision core last. The production root public key, signing
-  custody, certificate/revocation publisher, runtime updater integration, and revocation checks remain
-  child 6. The published OCI artifact is cosign-signed by digest, which is a real but *different*
-  integrity property.
+  certificate with a caller-supplied offline-root public key, authenticates the embedded revocation
+  list with that root, refuses a listed certificate id, refuses an embedded list that the
+  caller-supplied independently fetched revocation head does not vouch for as current, verifies the
+  manifest with only the remaining certified key, and enters the pure decision core last. The
+  production root public key, signing custody, certificate/revocation publisher, revocation-head
+  endpoint, and runtime updater integration remain child 6 — and because an absent head is
+  fail-closed, no update can be authorized until they land. The published OCI artifact is
+  cosign-signed by digest, which is a real but *different* integrity property.
 - **`rollback_targets`** — empty, because no mountable content pack is retained. The published
   `v0.52.0` monolithic app is the whole-app rollback for save capability 3, but its `.app` ZIP is
   deliberately not advertised to the pack selector. Empty is the fail-closed pack value: it makes the
@@ -281,11 +284,18 @@ will expire:
    artifact**. The test fails the moment `export_presets.cfg` declares a pack split (child 3), forcing
    the shell to get its own source of record in that same change.
 2. The top-level `protocol` range is **what the live server accepts**, not what the client speaks.
-   Sourcing it from `WireCodec.VERSION` is valid *only* because client and server are both pinned to one
-   version, so a test asserts the server's `wire.Version` still equals the client's. When the two-phase
-   expansion begins (server accepts `[1,2]`, newest client speaks only `2`) that test fails — and the
-   range must become a CD-supplied input read from deployment state, or a retained `v1` target would be
-   rejected even though the server would still talk to it.
+   It is a required CD-supplied publication input and has no generator default. During today's first
+   expansion the publisher reads the released server source's individually pinned `LegacyVersion`
+   and `Version` constants (`[1,2]`); a cross-language test proves those endpoints remain readable and
+   match the client fixture. When the server tier gains an independently deployed control surface,
+   that deployment query replaces the released-source read without changing the manifest API. The
+   generator refuses an absent, malformed, inverted, or client-excluding range, so it cannot silently
+   fall back to the client's own version and strand a retained target.
+   `tools/wire-protocol-rollout-guard.sh` compares every PR and merge-group head with its exact base:
+   CD must read the published range from the released server source on every comparison, including an
+   unchanged range. A higher maximum is admitted only when both tiers explicitly retain the base
+   protocol. Raising the minimum or removing a maximum is still refused because a source diff cannot
+   prove the manifest-expiry evidence contraction requires.
 3. `DevLog.VERSION` must be a dotted-integer version. `cd.yaml` accepts prerelease tags
    (`v0.2.0-rc.1`), which `UpdateDecision.is_version` does not, so `build()` refuses to emit a manifest
    no client could accept rather than publishing one dead on arrival.
@@ -368,12 +378,32 @@ stale cache, or engine change can strand or subvert a client:
   adopted certificates are unaffected, so pre-certificate publications stay readable.
   **The certificate is authenticated before its epoch is consumed.**
   `UpdateTrust.verify_and_decide()` canonicalizes the certificate without `root_signature`, verifies
-  it with a caller-supplied offline-root public key, then canonicalizes the manifest without
-  `signature` and verifies it with only the certified signing key. `UpdateDecision` is called last;
+  it with a caller-supplied offline-root public key, authenticates the embedded revocation block with
+  the same root, and refuses a listed certificate id before canonicalizing the manifest without
+  `signature` and verifying it with only the certified signing key. `UpdateDecision` is called last;
   every trust refusal returns an empty decision. The production root public key, signing custody,
   publisher and runtime updater integration do not exist yet, so signed delivery remains inactive.
-  Root-signed revocation and the independently fresh revocation head remain #490 work and belong
-  between certificate authentication and manifest authentication.
+  **An embedded revocation list is only believed as current when an independently fetched head says
+  so.** Everything the manifest carries is chosen by whoever signed it, so a stolen key can embed an
+  older — but still validly root-signed — list issued before the theft, which therefore does not name
+  the stolen key. `verify_and_decide()` therefore takes a `revocation_head` obtained from the
+  publisher's own endpoint rather than from the manifest, authenticates it with the same offline root,
+  and refuses the manifest when the head is expired against `installed.observed_at` or when the
+  embedded `revocation.version` is below the head's `version_floor`.
+  **Both objects are anchored to `installed.revocation_head_url`, never to each other.** Binding the
+  head to the endpoint the *manifest* names would compare two objects the manifest's signer selected:
+  a stolen key can embed another channel's genuinely root-signed revocation stream — which
+  legitimately carries a lower floor and never listed that key — and name that channel's endpoint, so
+  the client fetches that channel's real head and the two agree with each other while the live
+  revocation is never consulted. The manifest's own `channel` is no defence, being signer-chosen and
+  checked later in the decision core. `revocation_head_url` is caller-owned installation state like
+  the high-water marks and `channel`, and it has **no safe default**: guessing an endpoint is exactly
+  what this binding prevents, so an installation declaring none refuses.
+  The head is enforced before the manifest signature, so a replayed
+  list never reaches manifest authentication. A head the caller could not fetch is passed as `null`
+  and refuses the update — falling back to embedded-only trust is the attack, not a degraded mode.
+  Refusing an update never blocks launching the installed build, which does not call this boundary.
+  The head endpoint, its publication cadence and the runtime fetch remain #490 work.
   - **The persisted sequence alone is NOT enough, so contraction waits out the TTL.** A returning or
     freshly-installed client has no high-water mark, so an unexpired cached manifest at sequence `N`
     looks perfectly valid to it even after the server contracted per `N+1` — every signature and expiry

@@ -181,11 +181,12 @@ const BASE_VAULT_VERSION := 1
 const DISCOVERY_VAULT_VERSION := 2
 const REWARD_CLAIM_VAULT_VERSION := 3
 const QUEST_PROGRESS_VAULT_VERSION := 4
+const MASTERY_VAULT_VERSION := 5
 
-## Highest vault schema this build can READ. The retained v4 reader now also has
-## its production writer; read and write constants remain separate so the next
-## expansion can bake before its own writer activates.
-const VAULT_READ_VERSION := 4
+## Highest vault schema this build can READ. Vault v5 mastery is the expanded,
+## reader-only shape: production writers remain capped at v4 until this build is
+## retained as a safe rollback target.
+const VAULT_READ_VERSION := 5
 
 ## The vault format, exhaustively. Unknown top-level fields are refused for the
 ## same reason the recipe refuses them: a client that silently ignored a field
@@ -198,6 +199,9 @@ const VAULT_FIELDS_V3 := [
 ]
 const VAULT_FIELDS_V4 := [
 	"version", "comment", "attuned", "discoveries", "reward_claims", "quests",
+]
+const VAULT_FIELDS_V5 := [
+	"version", "comment", "attuned", "discoveries", "reward_claims", "quests", "mastery",
 ]
 
 ## The Wardens' Shrine, the first attunable respawn point. Names are forward-only
@@ -274,9 +278,13 @@ static func validate(doc: Dictionary) -> String:
 		allowed_fields = VAULT_FIELDS_V3
 	elif schema == 4:
 		allowed_fields = VAULT_FIELDS_V4
+	elif schema == 5:
+		allowed_fields = VAULT_FIELDS_V5
 	for field: String in doc:
 		if field not in allowed_fields:
 			return "unknown vault field '%s' — this client cannot apply it, refusing a half-truth" % field
+	if schema >= MASTERY_VAULT_VERSION and not doc.has("mastery"):
+		return "vault v%d must contain the complete mastery snapshot" % schema
 	if doc.has("attuned"):
 		if doc["attuned"] is not Array:
 			return "attuned must be an array of respawn-point names"
@@ -320,6 +328,10 @@ static func validate(doc: Dictionary) -> String:
 				if progress > QuestLog.MAX_PERSISTED_PROGRESS:
 					return (
 						"quest objective progress exceeds JSON's exact-integer range")
+	if doc.has("mastery"):
+		var mastery_reason := Mastery.snapshot_refusal_reason(doc["mastery"])
+		if not mastery_reason.is_empty():
+			return mastery_reason
 	return ""
 
 

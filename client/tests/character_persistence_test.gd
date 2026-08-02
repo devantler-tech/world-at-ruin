@@ -50,7 +50,11 @@ func _ready() -> void:
 	# A future-version recipe must be refused, not half-applied.
 	var future: Dictionary = recipe.duplicate(true)
 	future["version"] = CharacterFactory.RECIPE_VERSION + 1
-	CharacterStore.save_to(PROBE, future)
+	# Written raw because the production writer must reject a document this
+	# build cannot read back; this fixture must already exist before load_from().
+	if not _write_text(PROBE, JSON.stringify(future, "  ")):
+		_fail("could not seed the future-version recipe")
+		return
 	var reloaded = CharacterStore.load_from(PROBE)
 	if reloaded is Dictionary:
 		var built := CharacterFactory.build(reloaded)
@@ -78,3 +82,12 @@ func _exit_tree() -> void:
 func _cleanup_probe() -> void:
 	if FileAccess.file_exists(PROBE):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(PROBE))
+
+
+func _write_text(path: String, text: String) -> bool:
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	if file == null:
+		return false
+	file.store_string(text)
+	file.close()
+	return true

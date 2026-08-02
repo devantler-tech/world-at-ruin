@@ -38,9 +38,9 @@ func _ready() -> void:
 		return
 	var vault_api := load("res://scripts/save_vault.gd") as Script
 
-	# 2. The retained reader now has its v4 writer contract. Empty state remains
-	# v1: a schema version describes fields actually present; it is not a
-	# "latest client" marker.
+	# 2. The writer remains on its retained v4 quest contract while the reader
+	# expands through v5 mastery. Empty state remains v1: a schema version
+	# describes fields actually present; it is not a "latest client" marker.
 	var empty := SaveVault.empty()
 	if SaveVault.validate(empty) != "":
 		_fail("the empty vault does not validate: %s" % SaveVault.validate(empty))
@@ -51,8 +51,8 @@ func _ready() -> void:
 	if int(empty["version"]) != 1:
 		_fail("an empty vault was churned to v%d even though it carries no v2 discovery state" % int(empty["version"]))
 		return
-	if SaveVault.VAULT_READ_VERSION != 4:
-		_fail("the vault reader ceiling is v%d, expected the v4 quest-progress expansion"
+	if SaveVault.VAULT_READ_VERSION != 5:
+		_fail("the vault reader ceiling is v%d, expected the v5 mastery expansion"
 			% SaveVault.VAULT_READ_VERSION)
 		return
 	if not SaveVault.attuned(empty).is_empty():
