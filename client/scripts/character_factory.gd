@@ -42,6 +42,16 @@ const ARM_HANG_DEG := 62.0
 const FOREARM_RELAX_DEG := 10.0
 const HAND_RELAX_DEG := 8.0
 
+## New deformation WRITES stay inside these bounds. The v1..v4 reader shipped
+## without range limits, so it must keep accepting every finite numeric value;
+## narrowing those versions would strand existing characters. The bounds still
+## contain the creator's authored ranges (shapes -0.5..1.2, bones 0.9..1.35)
+## with migration headroom.
+const SHAPE_WEIGHT_MIN := -1.0
+const SHAPE_WEIGHT_MAX := 2.0
+const BONE_FACTOR_MIN := 0.5
+const BONE_FACTOR_MAX := 2.0
+
 ## Contrapposto — the rest stance (#237, first slice of #224).
 ##
 ## Arms hanging from a T-pose fixed the arms and left the rest symmetric, and
@@ -520,19 +530,31 @@ static func validate(recipe: Dictionary, skeleton: Skeleton3D, mesh_instance: Me
 		return "unknown recipe field '%s' — this client cannot render it, refusing a half-truth" % field
 	if recipe.has("shapes") and recipe["shapes"] is not Dictionary:
 		return "shapes must be a dictionary of shape name -> weight"
-	for shape_name: String in recipe.get("shapes", {}):
+	for shape_key: Variant in recipe.get("shapes", {}):
+		if shape_key is not String:
+			return "shapes keys must be shape names"
+		var shape_name := String(shape_key)
 		if mesh_instance.find_blend_shape_by_name(shape_name) < 0:
 			return "unknown blend shape '%s' — shipped kit shapes may never be removed" % shape_name
 		if shape_name.begins_with(HIDE_SHAPE_PREFIX):
 			return "shape '%s' is composition plumbing, not a recipe shape" % shape_name
+		var weight: Variant = recipe["shapes"][shape_name]
+		if not (weight is int or weight is float) or not is_finite(float(weight)):
+			return "blend shape '%s' weight must be a finite number" % shape_name
 	for field: String in GUARDED_BONE_KEYS:
 		if recipe.has(field) and recipe[field] is not Dictionary:
 			return "%s must be a dictionary of bone name -> factor" % field
-		for key: String in recipe.get(field, {}):
+		for bone_key: Variant in recipe.get(field, {}):
+			if bone_key is not String:
+				return "%s keys must be bone names" % field
+			var key := String(bone_key)
 			if key not in (GUARDED_BONE_KEYS[field] as Array):
 				return "bone key '%s' in %s is outside the guarded set — only golden-guarded keys may persist" % [key, field]
 			if _bones_for(skeleton, key).is_empty():
 				return "unknown bone '%s' in %s" % [key, field]
+			var factor: Variant = recipe[field][key]
+			if not (factor is int or factor is float) or not is_finite(float(factor)):
+				return "bone factor '%s' in %s must be a finite number" % [key, field]
 	if recipe.has("equipment"):
 		if recipe["equipment"] is not Dictionary:
 			return "equipment must be a dictionary of slot -> piece name"
@@ -577,6 +599,59 @@ static func refusal_reason(recipe: Dictionary) -> String:
 	var problem := validate(recipe, skeleton, mesh_instance)
 	instance.free()
 	return problem
+
+
+## Why this build must not WRITE `recipe`, or "" when it may.
+##
+## Reading and writing deliberately differ at the scalar range boundary. Every
+## v1..v4 client accepted arbitrary finite numeric deformation values, so those
+## documents remain readable forever under the no-resets law. A new writer has
+## no compatibility reason to originate singular or unbounded values, but an
+## ordinary edit must still preserve an exact legacy value already present in
+## the target document. `preserved` is that accepted base recipe; an empty base
+## makes the check strict for a first write or a standalone validation.
+##
+## Schema/type/name validation stays shared with the reader; only these
+## authored-value bounds and exact legacy preservation are write-specific.
+static func write_refusal_reason(
+		recipe: Dictionary, preserved: Dictionary = {}) -> String:
+	var problem := refusal_reason(recipe)
+	if problem != "":
+		return problem
+	for shape_name: String in recipe.get("shapes", {}):
+		var weight := float(recipe["shapes"][shape_name])
+		if (
+				(weight < SHAPE_WEIGHT_MIN or weight > SHAPE_WEIGHT_MAX)
+				and not _preserves_deformation_value(
+					preserved, "shapes", shape_name, weight)):
+			return "blend shape '%s' weight must be between %s and %s" % [
+				shape_name, SHAPE_WEIGHT_MIN, SHAPE_WEIGHT_MAX]
+	for field: String in GUARDED_BONE_KEYS:
+		for key: String in recipe.get(field, {}):
+			var factor := float(recipe[field][key])
+			if (
+					(factor < BONE_FACTOR_MIN or factor > BONE_FACTOR_MAX)
+					and not _preserves_deformation_value(
+						preserved, field, key, factor)):
+				return "bone factor '%s' in %s must be between %s and %s" % [
+					key, field, BONE_FACTOR_MIN, BONE_FACTOR_MAX]
+	return ""
+
+
+## Whether an out-of-range candidate value is the exact finite scalar this
+## accepted base already carried. Only exact preservation is grandfathered:
+## adding, changing, or worsening an out-of-range value remains a refused write.
+static func _preserves_deformation_value(
+		preserved: Dictionary, field: String, key: String, candidate: float) -> bool:
+	var values: Variant = preserved.get(field)
+	if values is not Dictionary or not (values as Dictionary).has(key):
+		return false
+	var existing: Variant = (values as Dictionary)[key]
+	return (
+		(existing is int or existing is float)
+		and is_finite(float(existing))
+		and float(existing) == candidate
+	)
 
 
 ## Loads a recipe JSON from disk; null on parse failure (with an error).

@@ -90,17 +90,19 @@ const IDENTITY_UNCHECKED := "*"
 ## Why the most recent write refused, or [constant REFUSAL_NONE] when it wrote.
 ##
 ## A caller handed one undifferentiated `false` cannot choose what to do next, and
-## the three outcomes want three different answers. [constant REFUSAL_UNACCEPTABLE]
+## the outcomes want different answers. [constant REFUSAL_UNACCEPTABLE]
 ## is PERMANENT — the recipe on disk is not this build's to replace, the refusal
 ## latches, and the creator must lock shut. [constant REFUSAL_LOCK] and
 ## [constant REFUSAL_STALE] are both momentary and retryable, and latching on
 ## either would lock the player out of their own character for the rest of the
 ## session over a collision the next attempt resolves. That is the distinction
-## #423 established for contention; the compare-and-swap adds a third outcome to
-## the same side of it rather than a second permanent one.
+## #423 established for contention. [constant REFUSAL_CANDIDATE] means the
+## proposed document is invalid: that edit cannot be retried unchanged, but the
+## target path remains readable and writable after the caller corrects it.
 const REFUSAL_NONE := ""
 const REFUSAL_LOCK := "lock"
 const REFUSAL_UNACCEPTABLE := "unacceptable"
+const REFUSAL_CANDIDATE := "candidate"
 const REFUSAL_STALE := "stale"
 const REFUSAL_WRITE := "write"
 
@@ -357,6 +359,22 @@ static func _save_to_locked(
 		push_error("CharacterStore: refusing to write %s — the recipe there is not this build's to replace" % path)
 		_last_refusal = REFUSAL_UNACCEPTABLE
 		return false
+	# Preserve exact finite legacy deformation values that this path already
+	# carries, while refusing a first write or edit that introduces a new
+	# out-of-range value. can_write() above proved any existing recipe acceptable;
+	# this second read supplies the base values rather than another verdict.
+	var preserved: Dictionary = {}
+	if FileAccess.file_exists(path):
+		var existing = CharacterFactory.load_recipe(path)
+		if existing is Dictionary:
+			preserved = existing
+	var candidate_problem := CharacterFactory.write_refusal_reason(recipe, preserved)
+	if candidate_problem != "":
+		push_error(
+			"CharacterStore: refusing to write %s — candidate recipe is invalid: %s"
+			% [path, candidate_problem])
+		_last_refusal = REFUSAL_CANDIDATE
+		return false
 	_sweep_abandoned_writes(path)
 	var tmp_path := _write_tmp_path(path)
 	var file := FileAccess.open(tmp_path, FileAccess.WRITE)
@@ -364,7 +382,9 @@ static func _save_to_locked(
 		push_error("CharacterStore: cannot write %s" % tmp_path)
 		_last_refusal = REFUSAL_WRITE
 		return false
-	file.store_string(JSON.stringify(recipe, "  "))
+	# Exact legacy preservation is load-bearing in write_refusal_reason(): do not
+	# round an untouched grandfathered float while rewriting the whole document.
+	file.store_string(JSON.stringify(recipe, "  ", true, true))
 	file.close()
 	# Re-check immediately before the replacement. The check above is a
 	# point-in-time reading, and the actors this store is written against — cloud
