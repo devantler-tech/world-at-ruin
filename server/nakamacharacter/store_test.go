@@ -255,7 +255,7 @@ func TestSavePersistsPrivateVersionedCharacterForVerifiedAccount(t *testing.T) {
 	}
 	recordWrite := storage.writeCalls[0][0]
 	if recordWrite.Collection != Collection ||
-		recordWrite.Key != characterRecordKey(testSubjectID) ||
+		recordWrite.Key != "character:"+testSubjectID ||
 		recordWrite.UserID != "" ||
 		recordWrite.Version != "*" ||
 		recordWrite.PermissionRead != 0 ||
@@ -534,7 +534,7 @@ func TestClientOwnedCharacterPreseedCannotBecomeAuthoritative(t *testing.T) {
 	storage := newFakeStorage()
 	storage.seed(storedObject{
 		collection: Collection,
-		key:        RecordKey,
+		key:        "character:" + testSubjectID,
 		userID:     testSubjectID,
 		value: `{"schema":1,"character_id":"attacker-seeded",` +
 			`"display_name":"Mallory","recipe":{"gold":999999}}`,

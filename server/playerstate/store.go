@@ -18,8 +18,8 @@ import (
 
 const (
 	// AuditCollection stores private mutation identities, bindings, and
-	// outcomes. Audit objects are create-only and share the player record's
-	// authenticated owner.
+	// outcomes. Audit objects are create-only and belong to the authenticated
+	// player even when the mutated record belongs to the system owner.
 	AuditCollection = "world_at_ruin_player_mutations"
 
 	auditSchema   = 1

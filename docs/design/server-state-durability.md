@@ -86,6 +86,10 @@ bits closed, so Nakama attributes it to the system account and no client API can
 read path re-verifies collection, key, owner, version and both permission bits before trusting the
 object it was handed.
 
+The character store uses the same system-owner boundary. Its key includes the authenticated Nakama
+subject, while the storage owner remains the system account, so one account's document stays
+addressable without giving that account a client-writable object at the authoritative identity.
+
 ### Every write is a compare-and-swap
 
 A writer presents the exact version it observed. A write whose version no longer matches is
@@ -451,7 +455,7 @@ needs to write a guard for.
 | A resolved Google binding still names an enabled Nakama account | `nakamaauth.NakamaGoogleBindingStore` | `TestNakamaGoogleBindingStoreChecksAuthoritativeAccountStatus`, `TestProvisionGoogleRejectsDisabledBoundAccount` |
 | Server-authoritative state is unreadable and unwritable by clients | `nakamalease.Store` | `TestCreatePersistsPrivateVersionedLeaseByHashedKey`, `TestCreateIgnoresAClientOwnedObjectAtTheDerivedKey`, `TestLoadRejectsMalformedOrPublicStoredObjects` |
 | Player mutation records and audit evidence are unreadable and unwritable by clients | `playerstate.Store` | `TestApplyCommitsPlayerRecordAndAuditInOneAtomicWrite` |
-| Character records are unreadable and unwritable by clients | `nakamacharacter.Store` | `TestSavePersistsPrivateVersionedCharacterForVerifiedAccount`, `TestLoadRejectsMalformedOrPublicCharacterRecords` |
+| Character records use an account-specific system-owned identity that clients cannot occupy | `nakamacharacter.Store` | `TestSavePersistsPrivateVersionedCharacterForVerifiedAccount`, `TestClientOwnedCharacterPreseedCannotBecomeAuthoritative`, `TestLoadRejectsMalformedOrPublicCharacterRecords` |
 | No blind **create** — create is conditional | `nakamalease.Store` | `TestConcurrentIdenticalCreateReconcilesTheDurableWinner` |
 | No blind player-record **create** — create is conditional | `playerstate.Store` | `TestApplyCreatesAPlayerRecordConditionallyWithItsAudit` |
 | No blind **replace** — replace presents the observed version | `nakamalease.Store` | `TestReplaceUsesObservedVersionAndStaleRecordCannotOverwrite`, `TestConcurrentReplaceLeavesExactlyOneCurrentAttempt` |

@@ -69,9 +69,9 @@ type SaveRequest struct {
 	Character       Character
 }
 
-// Store owns character records through Nakama storage. Player-owned writes use
-// playerstate.Store so the record and its private audit evidence commit
-// atomically, as required by docs/design/server-state-durability.md.
+// Store owns system-owned character records through Nakama storage. Writes use
+// playerstate.Store so the record and its player-associated audit evidence
+// commit atomically, as required by docs/design/server-state-durability.md.
 type Store struct {
 	storage   storageClient
 	mutations *playerstate.Store
