@@ -323,6 +323,13 @@ The character recipe and vault deliberately fail differently:
   later disappears, so an older client cannot overwrite newer progression after cloud sync changes
   the path. The one document that does not stay latched forever is one no client could own, which is
   set aside at boot instead — see the next section.
+- A vault read consumes at most 1 MiB plus one probe byte before JSON parsing. A larger document is
+  refused without reading or parsing the remainder, stays byte-for-byte intact, and leaves its path
+  read-only. This document-wide ceiling covers every present and future nested collection without
+  narrowing any accepted field shape. Quarantine uses the same bounded inspection; an over-limit
+  document cannot be proven unownable inside the ceiling, so it is left in place rather than moved.
+  Writers measure their exact encoded bytes against the same ceiling before staging; an over-limit
+  mutation is refused while the accepted vault already on disk stays unchanged and writable.
 
 ### Setting aside a document no client could own
 

@@ -133,6 +133,13 @@ const QUARANTINE_SUFFIX := ".unreadable-"
 ## the only direction that cannot destroy bytes.
 const QUARANTINE_MAX_ATTEMPTS := 100
 
+## Maximum bytes one vault load will read from an untrusted local/cloud-synced
+## file. The document-wide bound covers present and future nested collections
+## without narrowing any accepted field shape. Reading one byte beyond the
+## ceiling makes the size decision atomic with the bounded read: a file that
+## grows after opening cannot make get_as_text() allocate without limit.
+const MAX_VAULT_BYTES := 1024 * 1024
+
 ## How long an unparseable vault must have sat UNCHANGED before it is set aside.
 ##
 ## Quarantine exists because bytes no client can parse otherwise wedge
@@ -345,8 +352,12 @@ static func load_from(path: String) -> Variant:
 	var file := FileAccess.open(path, FileAccess.READ)
 	if file == null:
 		return _refuse(path, "cannot read %s" % path)
-	var source := file.get_as_text()
+	var source_bytes := file.get_buffer(MAX_VAULT_BYTES + 1)
 	file.close()
+	if source_bytes.size() > MAX_VAULT_BYTES:
+		return _refuse(path, "refusing %s — vault exceeds the %d-byte read limit"
+			% [path, MAX_VAULT_BYTES])
+	var source := source_bytes.get_string_from_utf8()
 	# JSON.parse_string() converts numbers to floating point before validate()
 	# sees them. Inspect their exact source spelling first so a fractional token
 	# near 2^53 cannot round to a whole, apparently safe progress value.
@@ -581,13 +592,22 @@ static func _save_to_locked(
 	if reason != "":
 		push_error("SaveVault: refusing to write an invalid vault — %s" % reason)
 		return false
+	# A successful writer must never create a document its own reader refuses.
+	# Measure the exact UTF-8 bytes once, before creating a staging file, so an
+	# over-limit mutation leaves the accepted vault already on disk untouched.
+	var encoded := JSON.stringify(doc, "  ").to_utf8_buffer()
+	if encoded.size() > MAX_VAULT_BYTES:
+		push_error(
+			"SaveVault: refusing to write %s — encoded vault exceeds the %d-byte read limit"
+			% [path, MAX_VAULT_BYTES])
+		return false
 	_sweep_abandoned_writes(path)
 	var tmp_path := _write_tmp_path(path)
 	var file := FileAccess.open(tmp_path, FileAccess.WRITE)
 	if file == null:
 		push_error("SaveVault: cannot write %s" % tmp_path)
 		return false
-	file.store_string(JSON.stringify(doc, "  "))
+	file.store_buffer(encoded)
 	file.close()
 	# Re-check readability IMMEDIATELY before the replace. A caller's earlier
 	# can_write() is a point-in-time answer, and everything between it and here
@@ -752,19 +772,24 @@ static func _is_unownable(path: String) -> bool:
 	return _is_unownable_bytes(data)
 
 
-## The document's raw bytes, or null when it cannot be opened.
+## The document's raw bytes, or null when it cannot be opened or exceeds the
+## safe inspection ceiling.
 ##
 ## Quarantine judges and re-verifies from BYTES rather than re-reading through a
 ## parser each time, because the bytes are the identity of the document being
 ## moved (see [method _quarantine_locked]). Null and an empty array are different
 ## answers: a zero-length file is a real, unownable document, while an unopenable
-## one is a fault about this process and must not be judged at all.
+## one is a fault about this process and must not be judged at all. An over-limit
+## document is equally unjudged: bounded inspection cannot prove that no client
+## owns the bytes, so quarantine must leave them intact and read-only.
 static func _read_document(path: String) -> Variant:
 	var file := FileAccess.open(path, FileAccess.READ)
 	if file == null:
 		return null
-	var data := file.get_buffer(file.get_length())
+	var data := file.get_buffer(MAX_VAULT_BYTES + 1)
 	file.close()
+	if data.size() > MAX_VAULT_BYTES:
+		return null
 	return data
 
 

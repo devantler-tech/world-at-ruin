@@ -14,7 +14,8 @@ extends Node
 ##  7. All production persistence helpers write through the seam.
 ##  8. save_to() refuses to REPLACE an unreadable vault, leaves it byte-intact,
 ##     and cleans up its temp file.
-##  9. Validation refuses each malformed shape, naming the reason.
+##  9. Loading bounds untrusted bytes without narrowing accepted collection
+##     shapes, and validation refuses each malformed shape.
 ##
 ## Everything runs against a throwaway path via the seam, so the player's own
 ## user://vault.json is never read or written (no-resets law).
@@ -22,6 +23,7 @@ extends Node
 ## Run: godot --headless --path client res://tests/save_vault_test.tscn
 
 const PROBE := "user://vault_behaviour_probe.json"
+const MAX_ACCEPTED_VAULT_BYTES := 1024 * 1024
 
 
 func _ready() -> void:
@@ -37,6 +39,8 @@ func _ready() -> void:
 		_fail("WAR_VAULT_PATH override was not honoured")
 		return
 	var vault_api := load("res://scripts/save_vault.gd") as Script
+	if not _resource_boundaries():
+		return
 
 	# 2. The writer remains on its retained v4 quest contract while the reader
 	# expands through v5 mastery. Empty state remains v1: a schema version
@@ -680,6 +684,109 @@ func _ready() -> void:
 	OS.set_environment(SaveVault.VAULT_PATH_ENV, "")
 	print("TEST PASS — vault seam, attunement, discovery/reward/quest writers, round-trip and refusals hold")
 	get_tree().quit(0)
+
+
+## The missing bound accepts the valid over-limit document. An off-by-one
+## bound rejects the exact-limit control. Per-field caps fail the final two
+## compatibility controls even though the complete documents fit the byte cap.
+func _resource_boundaries() -> bool:
+	SaveVault.clear_refusals_for_test()
+	for accepted_size: int in [MAX_ACCEPTED_VAULT_BYTES - 1, MAX_ACCEPTED_VAULT_BYTES]:
+		var accepted_source := _vault_source_of_size(accepted_size)
+		if not _write_probe_source(accepted_source):
+			return false
+		if SaveVault.load_from(PROBE) is not Dictionary:
+			_fail("load_from() refused a valid %d-byte vault" % accepted_size)
+			return false
+		_cleanup_probe()
+
+	var oversized_source := _vault_source_of_size(MAX_ACCEPTED_VAULT_BYTES + 1)
+	if not _write_probe_source(oversized_source):
+		return false
+	if SaveVault.load_from(PROBE) is Dictionary:
+		_fail("load_from() accepted a valid over-limit vault")
+		return false
+	var preserved := FileAccess.open(PROBE, FileAccess.READ)
+	if preserved == null or preserved.get_as_text() != oversized_source:
+		if preserved != null:
+			preserved.close()
+		_fail("refusing an over-limit vault changed or removed its source bytes")
+		return false
+	preserved.close()
+	if SaveVault.can_write(PROBE):
+		_fail("an over-limit vault did not latch the path read-only")
+		return false
+	_cleanup_probe()
+	SaveVault.clear_refusals_for_test()
+
+	var exact_output := _vault_doc_of_written_size(MAX_ACCEPTED_VAULT_BYTES)
+	if JSON.stringify(exact_output, "  ").to_utf8_buffer().size() != MAX_ACCEPTED_VAULT_BYTES:
+		_fail("the exact-limit writer control does not encode to the intended byte size")
+		return false
+	if not SaveVault.save_to(PROBE, exact_output):
+		_fail("save_to() refused a vault whose encoded output is exactly the read limit")
+		return false
+	if SaveVault.load_from(PROBE) is not Dictionary:
+		_fail("save_to() reported success for an exact-limit vault that cannot be read back")
+		return false
+	var preserved_writer := FileAccess.open(PROBE, FileAccess.READ)
+	if preserved_writer == null:
+		_fail("could not read the exact-limit writer control")
+		return false
+	var preserved_source := preserved_writer.get_as_text()
+	preserved_writer.close()
+
+	var oversized_output := _vault_doc_of_written_size(MAX_ACCEPTED_VAULT_BYTES + 1)
+	if SaveVault.save_to(PROBE, oversized_output):
+		_fail("save_to() committed a vault larger than its own reader accepts")
+		return false
+	var after_refusal := FileAccess.open(PROBE, FileAccess.READ)
+	if after_refusal == null or after_refusal.get_as_text() != preserved_source:
+		if after_refusal != null:
+			after_refusal.close()
+		_fail("refusing an over-limit write changed the accepted vault already on disk")
+		return false
+	after_refusal.close()
+	if not SaveVault.can_write(PROBE):
+		_fail("an over-limit write refusal latched the accepted vault read-only")
+		return false
+	_cleanup_probe()
+	SaveVault.clear_refusals_for_test()
+
+	var many_names: Array = []
+	many_names.resize(4097)
+	many_names.fill("a")
+	if SaveVault.validate({"version": 1, "attuned": many_names}) != "":
+		_fail("the resource bound contracted the previously accepted attunement shape")
+		return false
+	if SaveVault.validate({"version": 1, "attuned": ["a".repeat(257)]}) != "":
+		_fail("the resource bound contracted a previously accepted stable name")
+		return false
+	return true
+
+
+func _vault_source_of_size(size: int) -> String:
+	var prefix := '{"version":1,"comment":"'
+	var suffix := '"}'
+	var padding := size - prefix.length() - suffix.length()
+	return prefix + "x".repeat(padding) + suffix
+
+
+func _vault_doc_of_written_size(size: int) -> Dictionary:
+	var doc: Dictionary = {"version": 1, "comment": "", "attuned": []}
+	var fixed_size := JSON.stringify(doc, "  ").to_utf8_buffer().size()
+	doc.comment = "x".repeat(size - fixed_size)
+	return doc
+
+
+func _write_probe_source(source: String) -> bool:
+	var file := FileAccess.open(PROBE, FileAccess.WRITE)
+	if file == null:
+		_fail("could not create the vault resource-bound probe")
+		return false
+	file.store_string(source)
+	file.close()
+	return true
 
 
 func _fail(message: String) -> void:
