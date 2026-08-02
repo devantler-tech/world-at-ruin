@@ -214,7 +214,7 @@ func _test_utf16_order_is_not_code_point_order() -> void:
 ## and the bytes must still parse back to the same structure — a canonicalizer that
 ## produced unparseable output would be caught nowhere else.
 func _test_manifest_serialises_canonically() -> void:
-	var built := UpdateManifest.build(42, "2026-07-27T12:00:01Z")
+	var built := UpdateManifest.build(42, "2026-07-27T12:00:01Z", WireCodec.LEGACY_VERSION, WireCodec.VERSION)
 	if str(built.get("error", "")) != "":
 		_fail("build() refused to emit a manifest for this build: %s" % str(built["error"]))
 		return

@@ -87,7 +87,7 @@ func _test_the_emitter_adds_nothing_to_the_canonical_form() -> void:
 	if _failed:
 		return
 
-	var built := UpdateManifest.build(SEQUENCE, NOT_AFTER)
+	var built := UpdateManifest.build(SEQUENCE, NOT_AFTER, WireCodec.LEGACY_VERSION, WireCodec.VERSION)
 	if built["error"] != "":
 		_fail("UpdateManifest.build refused the test envelope: %s" % built["error"])
 		return
@@ -127,7 +127,7 @@ func _test_a_malformed_envelope_publishes_nothing() -> void:
 	]
 
 	for row: Array in rows:
-		var emitted := Emit.emit(row[0], row[1])
+		var emitted := Emit.emit(row[0], row[1], str(WireCodec.LEGACY_VERSION), str(WireCodec.VERSION))
 		var errored: bool = str(emitted["error"]) != ""
 		var text: String = emitted["text"]
 
@@ -146,6 +146,19 @@ func _test_a_malformed_envelope_publishes_nothing() -> void:
 		if not text.is_empty():
 			_fail("%s reported an error but still returned %d bytes to publish" % [row[3], text.length()])
 			return
+
+	for bad_protocol: String in ["", "0", "abc", "1.5", " 1", "65536"]:
+		for position: String in ["minimum", "maximum"]:
+			var minimum := bad_protocol if position == "minimum" else str(WireCodec.LEGACY_VERSION)
+			var maximum := bad_protocol if position == "maximum" else str(WireCodec.VERSION)
+			var emitted := Emit.emit(SEQUENCE_TEXT, NOT_AFTER, minimum, maximum)
+			if emitted["error"] == "" or emitted["text"] != "":
+				_fail("malformed live protocol %s '%s' left publishable bytes" % [position, bad_protocol])
+				return
+	var inverted := Emit.emit(SEQUENCE_TEXT, NOT_AFTER, "2", "1")
+	if inverted["error"] == "" or inverted["text"] != "":
+		_fail("an inverted live protocol range left publishable bytes")
+		return
 
 
 # --- what CD actually pushes ---
@@ -187,7 +200,7 @@ func _test_the_written_file_is_the_signed_bytes() -> void:
 
 
 func _emit_ok() -> String:
-	var emitted := Emit.emit(SEQUENCE_TEXT, NOT_AFTER)
+	var emitted := Emit.emit(SEQUENCE_TEXT, NOT_AFTER, str(WireCodec.LEGACY_VERSION), str(WireCodec.VERSION))
 	if emitted["error"] != "":
 		_fail("the emitter refused a well-formed envelope: %s" % emitted["error"])
 		return ""
