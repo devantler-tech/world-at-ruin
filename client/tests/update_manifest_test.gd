@@ -13,10 +13,9 @@ extends Node
 ## turn and demands `invalid_manifest`, so "the manifest was accepted" cannot be
 ## the trivial consequence of a decision core that accepts anything.
 ##
-## The remaining tests guard the three assumptions that are true TODAY and will
-## expire: that the build is a single artifact, that no pack exists to point at,
-## and that client and server speak one pinned protocol version. Each fails when
-## its assumption does, which is the only way a comment about it stays honest.
+## The remaining tests guard today's artifact and deployment facts: the build is
+## monolithic, no pack exists to point at, and the publisher-supplied live
+## protocol range matches the released server source while covering this client.
 ##
 ## Pure logic — no network, no scene, no boot, no save file touched — so it is
 ## safe to run locally and deterministic in CI.
@@ -47,6 +46,7 @@ func _ready() -> void:
 	_test_reward_claim_writer_activation_is_advertised()
 	_test_ashen_bindings_writer_activation_is_advertised()
 	_test_quest_writer_activation_is_advertised()
+	_test_mastery_reader_expansion_is_advertised()
 	_test_save_floor_has_its_golden_fixture()
 	_test_save_capability_matches_its_ledger()
 	_test_export_is_still_monolithic()
@@ -111,15 +111,31 @@ func _test_every_required_field_is_load_bearing() -> void:
 ## every real client refuses, so build() must fail before serialization.
 func _test_freshness_inputs_fail_closed() -> void:
 	for bad_sequence: Variant in [-1, 1.5, true, "42"]:
-		var built := UpdateManifest.build(bad_sequence, MANIFEST_NOT_AFTER)
+		var built := UpdateManifest.build(bad_sequence, MANIFEST_NOT_AFTER, WireCodec.LEGACY_VERSION, WireCodec.VERSION)
 		if str(built.get("error", "")).is_empty() or not (built.get("manifest", {}) as Dictionary).is_empty():
 			_fail("build() emitted a manifest for invalid sequence %s" % str(bad_sequence))
 			return
 
 	for bad_expiry: Variant in ["", "2026-02-30T12:00:00Z", "2026-07-27 12:00:01", 42]:
-		var built := UpdateManifest.build(MANIFEST_SEQUENCE, bad_expiry)
+		var built := UpdateManifest.build(MANIFEST_SEQUENCE, bad_expiry, WireCodec.LEGACY_VERSION, WireCodec.VERSION)
 		if str(built.get("error", "")).is_empty() or not (built.get("manifest", {}) as Dictionary).is_empty():
 			_fail("build() emitted a manifest for invalid not_after %s" % str(bad_expiry))
+			return
+
+	for bad_protocol: Variant in [0, -1, 1.5, true, "1"]:
+		var built := UpdateManifest.build(MANIFEST_SEQUENCE, MANIFEST_NOT_AFTER, bad_protocol, WireCodec.VERSION)
+		if str(built.get("error", "")).is_empty() or not (built.get("manifest", {}) as Dictionary).is_empty():
+			_fail("build() emitted a manifest for invalid protocol_min %s" % str(bad_protocol))
+			return
+	for out_of_range: Array in [[65536, WireCodec.VERSION], [WireCodec.LEGACY_VERSION, 65536]]:
+		var built := UpdateManifest.build(MANIFEST_SEQUENCE, MANIFEST_NOT_AFTER, out_of_range[0], out_of_range[1])
+		if str(built.get("error", "")).is_empty() or not (built.get("manifest", {}) as Dictionary).is_empty():
+			_fail("build() emitted a manifest for out-of-uint16 protocol range %s" % str(out_of_range))
+			return
+	for range_pair: Array in [[2, 1], [3, 3]]:
+		var built := UpdateManifest.build(MANIFEST_SEQUENCE, MANIFEST_NOT_AFTER, range_pair[0], range_pair[1])
+		if str(built.get("error", "")).is_empty() or not (built.get("manifest", {}) as Dictionary).is_empty():
+			_fail("build() emitted a manifest for unusable live protocol range %s" % str(range_pair))
 			return
 
 
@@ -137,7 +153,7 @@ func _test_values_track_their_sources() -> void:
 		"sequence": [m["sequence"], MANIFEST_SEQUENCE],
 		"not_after": [m["not_after"], MANIFEST_NOT_AFTER],
 		"pack.version": [m["pack"]["version"], DevLog.VERSION],
-		"protocol.min": [m["protocol"]["min"], WireCodec.VERSION],
+		"protocol.min": [m["protocol"]["min"], WireCodec.LEGACY_VERSION],
 		"protocol.max": [m["protocol"]["max"], WireCodec.VERSION],
 		"save_schema.writes": [m["save_schema"]["writes"], CharacterFactory.RECIPE_VERSION],
 		"save_schema.min": [m["save_schema"]["min"], UpdateManifest.SAVE_SCHEMA_MIN],
@@ -225,23 +241,43 @@ func _test_ashen_bindings_writer_activation_is_advertised() -> void:
 			% UpdateManifest.SAVE_CAPABILITY_WRITES)
 
 
-## Capability 6 is vault-v4 quest-objective progress. Its retained reader now
-## has a production writer, so read and write capability must both advertise 6.
+## Capability 6 is vault-v4 quest-objective progress. Its retained reader has a
+## production writer; later reader expansions may raise reads but writes stay 6.
 func _test_quest_writer_activation_is_advertised() -> void:
-	if UpdateManifest.SAVE_CAPABILITY_READS != 6:
-		_fail("the quest-progress reader advertises capability %d, expected 6"
+	if UpdateManifest.SAVE_CAPABILITY_READS < 6:
+		_fail("the quest-progress reader advertises capability %d, expected at least 6"
 			% UpdateManifest.SAVE_CAPABILITY_READS)
 		return
 	if UpdateManifest.SAVE_CAPABILITY_WRITES != 6:
 		_fail("the quest-progress writer advertises capability %d, expected 6"
 			% UpdateManifest.SAVE_CAPABILITY_WRITES)
 		return
-	if SaveVault.VAULT_READ_VERSION != 4:
-		_fail("the manifest advertises quest reads but SaveVault stops at v%d"
+	if SaveVault.VAULT_READ_VERSION < 4:
+		_fail("the manifest advertises quest reads but SaveVault stops before v4 at v%d"
 			% SaveVault.VAULT_READ_VERSION)
 		return
 	if SaveVault.VAULT_VERSION != 4:
 		_fail("the capability-6 manifest advertises vault-v%d writes; expected v4"
+			% SaveVault.VAULT_VERSION)
+
+
+## Capability 7 is the reader-only vault-v5 mastery snapshot. The manifest must
+## publish that read ceiling without claiming the production writer is active.
+func _test_mastery_reader_expansion_is_advertised() -> void:
+	if UpdateManifest.SAVE_CAPABILITY_READS != 7:
+		_fail("the mastery expansion advertises read capability %d, expected 7"
+			% UpdateManifest.SAVE_CAPABILITY_READS)
+		return
+	if UpdateManifest.SAVE_CAPABILITY_WRITES != 6:
+		_fail("the mastery expansion advanced write capability to %d; expected 6"
+			% UpdateManifest.SAVE_CAPABILITY_WRITES)
+		return
+	if SaveVault.VAULT_READ_VERSION != 5:
+		_fail("the mastery expansion advertises reads but SaveVault stops at v%d"
+			% SaveVault.VAULT_READ_VERSION)
+		return
+	if SaveVault.VAULT_VERSION != 4:
+		_fail("the reader-only mastery expansion writes vault v%d; expected v4"
 			% SaveVault.VAULT_VERSION)
 
 
@@ -318,33 +354,30 @@ func _test_export_is_still_monolithic() -> void:
 			return
 
 
-## THE CROSS-LANGUAGE GUARD. The manifest's top-level `protocol` range is what the
-## LIVE SERVER accepts. Sourcing it from the client codec is defensible only
-## because both sides are pinned to the same single version, so this asserts that
-## directly against the server's Go source.
-##
-## When the two-phase expansion begins the server will accept a RANGE the client
-## constant cannot express, this test will fail, and the range will have to become
-## a CD-supplied input read from deployment state. That is the intended outcome —
-## the failure is the design conversation, not a nuisance.
+## THE CROSS-LANGUAGE GUARD. CD supplies the live accepted range from these
+## individually-readable Go constants. Prove both endpoints remain parseable and
+## match the values this test passes into UpdateManifest.
 func _test_protocol_matches_the_server() -> void:
 	var text := _read_text(SERVER_WIRE)
 	if _failed:
 		return
-	var found := -1
+	var found_min := -1
+	var found_max := -1
 	for line in text.split("\n"):
 		var trimmed := line.strip_edges()
-		if trimmed.begins_with("const Version uint16"):
+		if trimmed.begins_with("const LegacyVersion uint16"):
 			var parts := trimmed.split("=")
 			if parts.size() == 2 and parts[1].strip_edges().is_valid_int():
-				found = int(parts[1].strip_edges())
-			break
-	if found < 0:
-		_fail("could not read `const Version uint16` from %s — the manifest's protocol range claims to match the server and can no longer prove it" % SERVER_WIRE)
+				found_min = int(parts[1].strip_edges())
+		elif trimmed.begins_with("const Version uint16"):
+			var parts := trimmed.split("=")
+			if parts.size() == 2 and parts[1].strip_edges().is_valid_int():
+				found_max = int(parts[1].strip_edges())
+	if found_min < 0 or found_max < 0:
+		_fail("could not read the server's LegacyVersion/Version constants from %s" % SERVER_WIRE)
 		return
-	if found != WireCodec.VERSION:
-		_fail("server wire.Version is %d but the client's WireCodec.VERSION is %d — the manifest publishes the CLIENT value as the range the SERVER accepts, which is only valid while they agree. The accepted range must now come from deployment state, not from the client codec." % [
-			found, WireCodec.VERSION])
+	if found_min != WireCodec.LEGACY_VERSION or found_max != WireCodec.VERSION:
+		_fail("server accepts %d..%d but the test publisher supplies %d..%d" % [found_min, found_max, WireCodec.LEGACY_VERSION, WireCodec.VERSION])
 
 
 ## The serialised bytes are what a signature will one day cover, so they must be
@@ -374,7 +407,7 @@ func _test_json_is_stable_and_parseable() -> void:
 # --- helpers ---
 
 func _manifest() -> Dictionary:
-	var built := UpdateManifest.build(MANIFEST_SEQUENCE, MANIFEST_NOT_AFTER)
+	var built := UpdateManifest.build(MANIFEST_SEQUENCE, MANIFEST_NOT_AFTER, WireCodec.LEGACY_VERSION, WireCodec.VERSION)
 	if str(built.get("error", "")) != "":
 		_fail("build() refused to emit a manifest for this build: %s" % str(built["error"]))
 		return {}
