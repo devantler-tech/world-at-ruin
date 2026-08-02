@@ -19,13 +19,15 @@ import (
 const (
 	// Collection is the private Nakama collection for character records.
 	Collection = "world_at_ruin_characters"
-	// RecordKey is the prefix for account-bound system-owned character documents.
+	// RecordKey is the legacy account-owned character key and the prefix for
+	// account-bound system-owned character documents.
 	RecordKey       = "character"
 	systemOwnerID   = "00000000-0000-0000-0000-000000000000"
 	ownerCutoverKey = "character-system-owner-cutover"
 
 	schemaVersion     = 1
 	ownerCutoverValue = `{"schema":1}`
+	storeInitTimeout  = 5 * time.Second
 )
 
 var (
@@ -79,12 +81,15 @@ type SaveRequest struct {
 type Store struct {
 	storage   storageClient
 	mutations *playerstate.Store
+	cutover   time.Time
 }
 
 // NewStore builds a character store and establishes the persistent ownership
 // cutover before any authenticated request can observe legacy state.
 func NewStore(storage storageClient) (*Store, error) {
-	return newStore(context.Background(), storage)
+	ctx, cancel := context.WithTimeout(context.Background(), storeInitTimeout)
+	defer cancel()
+	return newStore(ctx, storage)
 }
 
 func newStore(ctx context.Context, storage storageClient) (*Store, error) {
@@ -99,9 +104,11 @@ func newStore(ctx context.Context, storage storageClient) (*Store, error) {
 		storage:   storage,
 		mutations: mutations,
 	}
-	if _, err := store.ownerCutover(ctx); err != nil {
+	cutover, err := store.ownerCutover(ctx)
+	if err != nil {
 		return nil, err
 	}
+	store.cutover = cutover
 	return store, nil
 }
 
@@ -114,10 +121,6 @@ func (s *Store) Load(ctx context.Context, subjectID string) (Record, error) {
 	record, found, err := s.readSystemCharacter(ctx, subjectID)
 	if err != nil || found {
 		return record, err
-	}
-	cutover, err := s.ownerCutover(ctx)
-	if err != nil {
-		return Record{}, err
 	}
 	objects, err := s.storage.StorageRead(ctx, []*runtime.StorageRead{
 		{
@@ -143,7 +146,7 @@ func (s *Store) Load(ctx context.Context, subjectID string) (Record, error) {
 		object.GetVersion() == "" ||
 		object.GetPermissionRead() != 0 ||
 		object.GetPermissionWrite() != 0 ||
-		!createdBeforeCutover(object, cutover) {
+		!createdBeforeCutover(object, s.cutover) {
 		return Record{}, ErrStorage
 	}
 	character, err := decodeCharacterDocument(object.GetValue())

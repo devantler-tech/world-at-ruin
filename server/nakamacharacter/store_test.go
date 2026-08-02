@@ -56,12 +56,19 @@ type storedObject struct {
 }
 
 type fakeStorage struct {
-	objects    map[string]storedObject
-	readCalls  int
-	readErr    error
-	writeCalls [][]*runtime.StorageWrite
-	next       int
-	clock      time.Time
+	objects                  map[string]storedObject
+	readCalls                int
+	readErr                  error
+	writeCalls               [][]*runtime.StorageWrite
+	next                     int
+	clock                    time.Time
+	cutoverReadCalls         int
+	cutoverDeadlineObserved  bool
+	cutoverWriteErr          error
+	seedCutoverOnWriteError  bool
+	corruptCutoverAck        bool
+	systemReadOverride       []*api.StorageObject
+	systemReadOverrideActive bool
 }
 
 func newFakeStorage() *fakeStorage {
@@ -83,18 +90,27 @@ func (f *fakeStorage) seed(object storedObject) {
 }
 
 func (f *fakeStorage) StorageRead(
-	_ context.Context,
+	ctx context.Context,
 	reads []*runtime.StorageRead,
 ) ([]*api.StorageObject, error) {
 	cutoverRead := len(reads) == 1 &&
 		reads[0].Collection == Collection &&
 		reads[0].Key == ownerCutoverKey &&
 		reads[0].UserID == ""
-	if !cutoverRead {
+	if cutoverRead {
+		f.cutoverReadCalls++
+		_, f.cutoverDeadlineObserved = ctx.Deadline()
+	} else {
 		f.readCalls++
 	}
 	if f.readErr != nil {
 		return nil, f.readErr
+	}
+	if f.systemReadOverrideActive && len(reads) == 1 &&
+		reads[0].Collection == Collection &&
+		reads[0].Key == characterRecordKey(testSubjectID) &&
+		reads[0].UserID == "" {
+		return f.systemReadOverride, nil
 	}
 	objects := make([]*api.StorageObject, 0, len(reads))
 	for _, read := range reads {
@@ -126,13 +142,32 @@ func (f *fakeStorage) StorageRead(
 }
 
 func (f *fakeStorage) StorageWrite(
-	_ context.Context,
+	ctx context.Context,
 	writes []*runtime.StorageWrite,
 ) ([]*api.StorageObjectAck, error) {
 	cutoverWrite := len(writes) == 1 &&
 		writes[0].Collection == Collection &&
 		writes[0].Key == ownerCutoverKey &&
 		writes[0].UserID == ""
+	if cutoverWrite {
+		_, f.cutoverDeadlineObserved = ctx.Deadline()
+		if f.cutoverWriteErr != nil {
+			if f.seedCutoverOnWriteError {
+				f.seed(storedObject{
+					collection:      Collection,
+					key:             ownerCutoverKey,
+					userID:          systemOwnerID,
+					value:           ownerCutoverValue,
+					version:         "concurrent-cutover-version",
+					permissionRead:  0,
+					permissionWrite: 0,
+					createTime:      f.clock,
+					updateTime:      f.clock,
+				})
+			}
+			return nil, f.cutoverWriteErr
+		}
+	}
 	if !cutoverWrite {
 		call := make([]*runtime.StorageWrite, len(writes))
 		copy(call, writes)
@@ -217,6 +252,9 @@ func (f *fakeStorage) StorageWrite(
 			Version:    version,
 		})
 	}
+	if cutoverWrite && f.corruptCutoverAck {
+		acks[0].UserId = testSubjectID
+	}
 	return acks, nil
 }
 
@@ -257,6 +295,83 @@ func TestFakeStorageRejectsAnInvalidBatchBeforeAnyMutation(t *testing.T) {
 			storage.next,
 		)
 	}
+}
+
+func TestNewStoreBoundsOwnershipCutoverIO(t *testing.T) {
+	t.Parallel()
+
+	storage := newFakeStorage()
+	if _, err := NewStore(storage); err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	if !storage.cutoverDeadlineObserved {
+		t.Fatal("ownership cutover storage I/O had no deadline")
+	}
+}
+
+func TestLoadReusesTheInitializedOwnershipCutover(t *testing.T) {
+	t.Parallel()
+
+	storage := newFakeStorage()
+	store, err := NewStore(storage)
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	initialReads := storage.cutoverReadCalls
+	if _, err := store.Load(
+		authenticatedContext(testSubjectID),
+		testSubjectID,
+	); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Load() error = %v, want %v", err, ErrNotFound)
+	}
+	if storage.cutoverReadCalls != initialReads {
+		t.Fatalf(
+			"cutover reads after Load = %d, want %d",
+			storage.cutoverReadCalls,
+			initialReads,
+		)
+	}
+}
+
+func TestOwnerCutoverRecoveryConvergesOrFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	t.Run("concurrent creator", func(t *testing.T) {
+		t.Parallel()
+
+		storage := newFakeStorage()
+		storage.cutoverWriteErr = runtime.ErrStorageRejectedVersion
+		storage.seedCutoverOnWriteError = true
+		if _, err := NewStore(storage); err != nil {
+			t.Fatalf("NewStore() error = %v", err)
+		}
+	})
+
+	t.Run("invalid acknowledgement", func(t *testing.T) {
+		t.Parallel()
+
+		storage := newFakeStorage()
+		storage.corruptCutoverAck = true
+		if _, err := NewStore(storage); err != nil {
+			t.Fatalf("NewStore() error = %v", err)
+		}
+	})
+
+	t.Run("failed write without durable marker", func(t *testing.T) {
+		t.Parallel()
+
+		storage := newFakeStorage()
+		storage.cutoverWriteErr = errors.New(
+			"database host and credential detail",
+		)
+		_, err := NewStore(storage)
+		if !errors.Is(err, ErrStorage) {
+			t.Fatalf("NewStore() error = %v, want %v", err, ErrStorage)
+		}
+		if strings.Contains(err.Error(), "database host") {
+			t.Fatalf("NewStore() leaked storage detail: %v", err)
+		}
+	})
 }
 
 func TestSavePersistsPrivateVersionedCharacterForVerifiedAccount(t *testing.T) {
@@ -590,6 +705,29 @@ func TestClientOwnedCharacterPreseedCannotBecomeAuthoritative(t *testing.T) {
 	); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("Load() error = %v, want %v", err, ErrNotFound)
 	}
+	storage.systemReadOverrideActive = true
+	storage.systemReadOverride = []*api.StorageObject{
+		{
+			Collection: Collection,
+			Key:        "character:" + testSubjectID,
+			UserId:     testSubjectID,
+			Value: storage.objects[storageObjectID(
+				Collection,
+				"character:"+testSubjectID,
+				testSubjectID,
+			)].value,
+			Version:         "wrong-owner-version",
+			PermissionRead:  0,
+			PermissionWrite: 0,
+		},
+	}
+	if _, err := store.Load(
+		authenticatedContext(testSubjectID),
+		testSubjectID,
+	); !errors.Is(err, ErrStorage) {
+		t.Fatalf("Load() wrong-owner error = %v, want %v", err, ErrStorage)
+	}
+	storage.systemReadOverrideActive = false
 	if err := store.Save(authenticatedContext(testSubjectID), SaveRequest{
 		SubjectID:       testSubjectID,
 		IdempotencyKey:  "character:create:warden-1",
