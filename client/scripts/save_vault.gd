@@ -345,14 +345,94 @@ static func load_from(path: String) -> Variant:
 	var file := FileAccess.open(path, FileAccess.READ)
 	if file == null:
 		return _refuse(path, "cannot read %s" % path)
-	var parsed = JSON.parse_string(file.get_as_text())
+	var source := file.get_as_text()
 	file.close()
+	# JSON.parse_string() converts numbers to floating point before validate()
+	# sees them. Inspect their exact source spelling first so a fractional token
+	# near 2^53 cannot round to a whole, apparently safe progress value.
+	if _json_has_fractional_number(source):
+		return _refuse(path, "%s contains a non-whole JSON number" % path)
+	var parsed = JSON.parse_string(source)
 	if parsed is not Dictionary:
 		return _refuse(path, "%s is not a JSON object" % path)
 	var reason := validate(parsed)
 	if reason != "":
 		return _refuse(path, "refusing %s — %s" % [path, reason])
 	return parsed
+
+
+## Whether any number token in `source` is mathematically fractional. Every
+## numeric field in every shipped vault schema is integer-valued. This lexical
+## pass deliberately runs before Godot's lossy JSON parser; strings are skipped
+## (including escaped quotes), while decimal/exponent spellings such as `1.0`
+## and `10e-1` retain their existing whole-number behaviour.
+static func _json_has_fractional_number(source: String) -> bool:
+	var index := 0
+	var in_string := false
+	var escaped := false
+	while index < source.length():
+		var character := source[index]
+		if in_string:
+			if escaped:
+				escaped = false
+			elif character == "\\":
+				escaped = true
+			elif character == '"':
+				in_string = false
+			index += 1
+			continue
+		if character == '"':
+			in_string = true
+			index += 1
+			continue
+		if character != "-" and character not in "0123456789":
+			index += 1
+			continue
+		var start := index
+		index += 1
+		while index < source.length() and source[index] in "0123456789.eE+-":
+			index += 1
+		if not _json_number_token_is_whole(source.substr(start, index - start)):
+			return true
+	return false
+
+
+static func _json_number_token_is_whole(token: String) -> bool:
+	var exponent_at := token.find("e")
+	if exponent_at < 0:
+		exponent_at = token.find("E")
+	var mantissa := token if exponent_at < 0 else token.left(exponent_at)
+	var decimal_at := mantissa.find(".")
+	var decimal_places := 0 if decimal_at < 0 else mantissa.length() - decimal_at - 1
+	var digits := mantissa.replace("-", "").replace(".", "")
+	var zero_mantissa := digits.replace("0", "").is_empty()
+	var exponent := 0
+	if exponent_at >= 0:
+		var exponent_text := token.substr(exponent_at + 1)
+		var negative := exponent_text.begins_with("-")
+		exponent_text = exponent_text.trim_prefix("-").trim_prefix("+")
+		var normalized_exponent := exponent_text.lstrip("0")
+		if normalized_exponent.is_empty():
+			normalized_exponent = "0"
+		# Only magnitudes that can still affect the trailing-digit check need
+		# conversion. Larger positive exponents are necessarily whole; larger
+		# negative exponents are fractional unless the mantissa is zero.
+		var exponent_limit := digits.length() - decimal_places if negative else decimal_places
+		if normalized_exponent.length() > str(exponent_limit).length():
+			return zero_mantissa if negative else true
+		exponent = normalized_exponent.to_int()
+		if exponent > exponent_limit:
+			return zero_mantissa if negative else true
+		if negative:
+			exponent = -exponent
+	var places_requiring_zero := decimal_places - exponent
+	if places_requiring_zero <= 0:
+		return true
+	if zero_mantissa:
+		return true
+	if places_requiring_zero > digits.length():
+		return false
+	return digits.right(places_requiring_zero).replace("0", "").is_empty()
 
 
 ## Latch `path` as refused, log why, and return null.
