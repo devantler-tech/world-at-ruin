@@ -592,13 +592,22 @@ static func _save_to_locked(
 	if reason != "":
 		push_error("SaveVault: refusing to write an invalid vault — %s" % reason)
 		return false
+	# A successful writer must never create a document its own reader refuses.
+	# Measure the exact UTF-8 bytes once, before creating a staging file, so an
+	# over-limit mutation leaves the accepted vault already on disk untouched.
+	var encoded := JSON.stringify(doc, "  ").to_utf8_buffer()
+	if encoded.size() > MAX_VAULT_BYTES:
+		push_error(
+			"SaveVault: refusing to write %s — encoded vault exceeds the %d-byte read limit"
+			% [path, MAX_VAULT_BYTES])
+		return false
 	_sweep_abandoned_writes(path)
 	var tmp_path := _write_tmp_path(path)
 	var file := FileAccess.open(tmp_path, FileAccess.WRITE)
 	if file == null:
 		push_error("SaveVault: cannot write %s" % tmp_path)
 		return false
-	file.store_string(JSON.stringify(doc, "  "))
+	file.store_buffer(encoded)
 	file.close()
 	# Re-check readability IMMEDIATELY before the replace. A caller's earlier
 	# can_write() is a point-in-time answer, and everything between it and here

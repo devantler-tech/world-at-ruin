@@ -719,6 +719,40 @@ func _resource_boundaries() -> bool:
 	_cleanup_probe()
 	SaveVault.clear_refusals_for_test()
 
+	var exact_output := _vault_doc_of_written_size(MAX_ACCEPTED_VAULT_BYTES)
+	if JSON.stringify(exact_output, "  ").to_utf8_buffer().size() != MAX_ACCEPTED_VAULT_BYTES:
+		_fail("the exact-limit writer control does not encode to the intended byte size")
+		return false
+	if not SaveVault.save_to(PROBE, exact_output):
+		_fail("save_to() refused a vault whose encoded output is exactly the read limit")
+		return false
+	if SaveVault.load_from(PROBE) is not Dictionary:
+		_fail("save_to() reported success for an exact-limit vault that cannot be read back")
+		return false
+	var preserved_writer := FileAccess.open(PROBE, FileAccess.READ)
+	if preserved_writer == null:
+		_fail("could not read the exact-limit writer control")
+		return false
+	var preserved_source := preserved_writer.get_as_text()
+	preserved_writer.close()
+
+	var oversized_output := _vault_doc_of_written_size(MAX_ACCEPTED_VAULT_BYTES + 1)
+	if SaveVault.save_to(PROBE, oversized_output):
+		_fail("save_to() committed a vault larger than its own reader accepts")
+		return false
+	var after_refusal := FileAccess.open(PROBE, FileAccess.READ)
+	if after_refusal == null or after_refusal.get_as_text() != preserved_source:
+		if after_refusal != null:
+			after_refusal.close()
+		_fail("refusing an over-limit write changed the accepted vault already on disk")
+		return false
+	after_refusal.close()
+	if not SaveVault.can_write(PROBE):
+		_fail("an over-limit write refusal latched the accepted vault read-only")
+		return false
+	_cleanup_probe()
+	SaveVault.clear_refusals_for_test()
+
 	var many_names: Array = []
 	many_names.resize(4097)
 	many_names.fill("a")
@@ -736,6 +770,13 @@ func _vault_source_of_size(size: int) -> String:
 	var suffix := '"}'
 	var padding := size - prefix.length() - suffix.length()
 	return prefix + "x".repeat(padding) + suffix
+
+
+func _vault_doc_of_written_size(size: int) -> Dictionary:
+	var doc: Dictionary = {"version": 1, "comment": "", "attuned": []}
+	var fixed_size := JSON.stringify(doc, "  ").to_utf8_buffer().size()
+	doc.comment = "x".repeat(size - fixed_size)
+	return doc
 
 
 func _write_probe_source(source: String) -> bool:

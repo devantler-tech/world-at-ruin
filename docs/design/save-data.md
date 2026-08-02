@@ -328,6 +328,8 @@ The character recipe and vault deliberately fail differently:
   read-only. This document-wide ceiling covers every present and future nested collection without
   narrowing any accepted field shape. Quarantine uses the same bounded inspection; an over-limit
   document cannot be proven unownable inside the ceiling, so it is left in place rather than moved.
+  Writers measure their exact encoded bytes against the same ceiling before staging; an over-limit
+  mutation is refused while the accepted vault already on disk stays unchanged and writable.
 
 ### Setting aside a document no client could own
 
