@@ -407,6 +407,8 @@ static func _json_number_token_is_whole(token: String) -> bool:
 	if places_requiring_zero <= 0:
 		return true
 	var digits := mantissa.replace("-", "").replace(".", "")
+	if digits.replace("0", "").is_empty():
+		return true
 	if places_requiring_zero > digits.length():
 		return false
 	return digits.right(places_requiring_zero).replace("0", "").is_empty()

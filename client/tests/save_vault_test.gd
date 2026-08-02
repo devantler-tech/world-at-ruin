@@ -551,7 +551,36 @@ func _ready() -> void:
 	_cleanup_probe()
 	SaveVault.clear_refusals_for_test()
 
-	# 8c. The data layer and the behaviour layer must not drift: every name
+	# 8c. Mathematically whole decimal and exponent spellings remain readable.
+	# The exact-number preflight must not turn a valid retained vault into a
+	# refused, session-only path merely because an older writer used them.
+	var whole_spelled_progress := (
+		'{"version":4,"quests":{"future_quest":'
+		+ '{"zero":0e-2,"decimal":1.0,"scaled":10e-1}}}')
+	var whole_spelled_file := FileAccess.open(PROBE, FileAccess.WRITE)
+	if whole_spelled_file == null:
+		_fail("could not stage the whole-valued exponent vault")
+		return
+	whole_spelled_file.store_string(whole_spelled_progress)
+	whole_spelled_file.close()
+	var loaded_whole_spelled: Variant = SaveVault.load_from(PROBE)
+	if loaded_whole_spelled is not Dictionary:
+		_fail("the v4 reader refused mathematically whole JSON number spellings")
+		return
+	var spelled_objectives: Dictionary = loaded_whole_spelled["quests"]["future_quest"]
+	if spelled_objectives["zero"] != 0:
+		_fail("the v4 reader did not preserve exponent-spelled zero as zero")
+		return
+	if spelled_objectives["decimal"] != 1:
+		_fail("the v4 reader did not preserve decimal-spelled one as one")
+		return
+	if spelled_objectives["scaled"] != 1:
+		_fail("the v4 reader did not preserve exponent-scaled ten as one")
+		return
+	_cleanup_probe()
+	SaveVault.clear_refusals_for_test()
+
+	# 8d. The data layer and the behaviour layer must not drift: every name
 	# SaveVault claims to know must have a RespawnPoints branch, and vice versa.
 	# Without this, a name could be added to the ledger and KNOWN_ATTUNEMENTS
 	# while nothing ever restored it — every guard green, the attunement dead.
