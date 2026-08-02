@@ -31,18 +31,38 @@ const _PUBLIC_KEY_END := "-----END PUBLIC KEY-----"
 ##
 ## The order is the trust contract:
 ##   1. the offline root verifies the signing-key certificate;
-##   2. only that authenticated signing key verifies the manifest;
-##   3. only an authenticated manifest reaches the decision core.
+##   2. the offline root verifies the embedded revocation list and the
+##      authenticated certificate id is refused when that list names it;
+##   3. the offline root verifies the independently fetched revocation head, and
+##      the embedded list is refused when it is older than the head's floor;
+##   4. only an unrevoked, currently-published signing key verifies the manifest;
+##   5. only an authenticated manifest reaches the decision core.
 ##
-## Revocation belongs between steps 1 and 2 and is deliberately not claimed
-## here yet. Keeping this boundary pure makes that insertion testable without
-## network, disk, clock, or scene dependencies.
+## Step 3 is what makes the embedded list unforgeable by replay. Everything the
+## manifest carries is chosen by whoever signed it, so a stolen key can embed an
+## older — but still validly root-signed — list issued before the theft, which
+## therefore does not name the stolen key. `revocation_head` is obtained from the
+## publisher's own endpoint rather than from the manifest, so its floor cannot be
+## rewound by the manifest's signer.
+##
+## Both the head and the embedded list are anchored to
+## `installed.revocation_head_url` — caller-owned installation state — and never
+## merely to each other, so the manifest cannot choose which channel's revocation
+## stream it is judged against.
+##
+## `revocation_head` is a caller-supplied object, not a fetch: this boundary stays
+## free of network, disk, clock and scene dependencies, and freshness is judged
+## against `installed.observed_at` exactly as manifest and certificate validity
+## already are. A head the caller could not fetch is passed as `null` and refuses
+## the update — fail-closed, because silently falling back to embedded-only trust
+## is precisely the attack. Refusing an update never blocks launching the
+## installed build; that path does not come through here.
 ##
 ## Returns `{trusted: bool, error: String, decision: Dictionary}`. A trust
 ## refusal always carries an empty decision so a caller cannot accidentally act
 ## on unauthenticated certificate fields.
 static func verify_and_decide(installed: Dictionary, manifest: Dictionary,
-		root_public_key_pem: Variant) -> Dictionary:
+		root_public_key_pem: Variant, revocation_head: Variant) -> Dictionary:
 	if not (manifest.get("key") is Dictionary):
 		return _untrusted("manifest carries no signing-key certificate")
 	var certificate: Dictionary = manifest["key"]
@@ -64,6 +84,17 @@ static func verify_and_decide(installed: Dictionary, manifest: Dictionary,
 	if not bool(certificate_verification["valid"]):
 		return _untrusted("signing-key certificate is not authenticated by the offline root: %s" %
 			str(certificate_verification["error"]))
+
+	var revocation_verification := _verify_revocation(
+		manifest.get("revocation"), certificate.get("id"),
+		certificate.get("algorithm"), root_public_key_pem)
+	if not bool(revocation_verification["valid"]):
+		return _untrusted(str(revocation_verification["error"]))
+
+	var head_verification := _verify_revocation_head(
+		revocation_head, manifest["revocation"], installed, root_public_key_pem)
+	if not bool(head_verification["valid"]):
+		return _untrusted(str(head_verification["error"]))
 
 	if not manifest.has("signature"):
 		return _untrusted("manifest carries no signing-key signature")
@@ -88,6 +119,130 @@ static func verify_and_decide(installed: Dictionary, manifest: Dictionary,
 		"error": "",
 		"decision": UpdateDecision.decide(installed, manifest),
 	}
+
+
+## Authenticate the embedded root-signed revocation set and refuse the current
+## certificate id before its key can authenticate the surrounding manifest.
+static func _verify_revocation(raw: Variant, certificate_id: Variant,
+		algorithm: Variant, root_public_key_pem: Variant) -> Dictionary:
+	if not (raw is Dictionary):
+		return _refused("manifest carries no root-signed revocation object")
+	var revocation: Dictionary = raw
+	if not UpdateDecision.is_int_id(revocation.get("version")):
+		return _refused("revocation version is missing or not a whole number")
+	if not (revocation.get("head_url") is String) \
+			or (revocation["head_url"] as String).is_empty():
+		return _refused("revocation head_url is missing or not a non-empty string")
+	if not (revocation.get("revoked_ids") is Array):
+		return _refused("revocation revoked_ids is missing or not an array")
+	if not revocation.has("root_signature"):
+		return _refused("revocation object carries no offline-root signature")
+
+	var seen_ids := {}
+	for raw_id: Variant in revocation["revoked_ids"]:
+		if not (raw_id is String) or (raw_id as String).is_empty():
+			return _refused("revocation contains an empty or non-string key id")
+		var key_id := str(raw_id)
+		if seen_ids.has(key_id):
+			return _refused("revocation contains duplicate key id '%s'" % key_id)
+		seen_ids[key_id] = true
+
+	var revocation_payload := revocation.duplicate(true)
+	revocation_payload.erase("root_signature")
+	var revocation_jcs := JCS.canonicalize(revocation_payload)
+	if str(revocation_jcs["error"]) != "":
+		return _refused("revocation object cannot be canonicalized: %s" %
+			str(revocation_jcs["error"]))
+	var root_verification := verify_signature(
+		algorithm,
+		root_public_key_pem,
+		str(revocation_jcs["text"]).to_utf8_buffer(),
+		revocation.get("root_signature"),
+	)
+	if not bool(root_verification["valid"]):
+		return _refused("revocation object is not authenticated by the offline root: %s" %
+			str(root_verification["error"]))
+	if seen_ids.has(str(certificate_id)):
+		return _refused("certified signing key '%s' is revoked by the offline root" %
+			str(certificate_id))
+	return {"valid": true, "error": ""}
+
+
+## Authenticate the independently fetched revocation head and refuse an embedded
+## revocation list that is older than the floor it publishes.
+##
+## The head is verified under [constant ALGORITHM] rather than the algorithm the
+## manifest's certificate names: the head is evidence ABOUT that certificate, so
+## letting the manifest choose how it is checked would hand the replayer the very
+## control this step removes.
+static func _verify_revocation_head(raw: Variant, revocation: Dictionary,
+		installed: Dictionary, root_public_key_pem: Variant) -> Dictionary:
+	if not (raw is Dictionary):
+		return _refused("no independently fetched revocation head is available, so the embedded revocation list cannot be shown to be current")
+	var head: Dictionary = raw
+	if not UpdateDecision.is_int_id(head.get("version_floor")):
+		return _refused("independently fetched revocation head version_floor is missing or not a whole number")
+	if not UpdateDecision.is_utc_datetime(head.get("not_after")):
+		return _refused("independently fetched revocation head not_after is missing or not a canonical UTC timestamp")
+	if not (head.get("head_url") is String) \
+			or (head["head_url"] as String).is_empty():
+		return _refused("independently fetched revocation head head_url is missing or not a non-empty string")
+	if not head.has("root_signature"):
+		return _refused("independently fetched revocation head carries no offline-root signature")
+
+	var head_payload := head.duplicate(true)
+	head_payload.erase("root_signature")
+	var head_jcs := JCS.canonicalize(head_payload)
+	if str(head_jcs["error"]) != "":
+		return _refused("independently fetched revocation head cannot be canonicalized: %s" %
+			str(head_jcs["error"]))
+	var root_verification := verify_signature(
+		ALGORITHM,
+		root_public_key_pem,
+		str(head_jcs["text"]).to_utf8_buffer(),
+		head.get("root_signature"),
+	)
+	if not bool(root_verification["valid"]):
+		return _refused("independently fetched revocation head is not authenticated by the offline root: %s" %
+			str(root_verification["error"]))
+
+	# A head is only evidence about the endpoint it was served from, and the
+	# endpoint must be chosen by the INSTALLATION rather than by the manifest.
+	# Binding the head to `revocation.head_url` alone would compare two objects
+	# the manifest's signer selected: a stolen key can embed a genuinely
+	# root-signed revocation object belonging to another channel — whose stream
+	# legitimately carries a lower floor and never listed the stolen key — and
+	# name that channel's endpoint, so the client fetches that channel's real
+	# head and the two agree with each other while the live revocation is never
+	# consulted. The manifest's own `channel` is no defence: it is signer-chosen
+	# too, and is checked later, in the decision core.
+	#
+	# `revocation_head_url` is caller-owned installation state, like the
+	# high-water marks and `channel`. It has no safe default: guessing an
+	# endpoint is what this check exists to prevent, so its absence refuses.
+	var trusted_head_url: Variant = installed.get("revocation_head_url")
+	if not (trusted_head_url is String) or (trusted_head_url as String).is_empty():
+		return _refused("this installation declares no revocation_head_url, so an independently fetched revocation head cannot be bound to an endpoint the manifest did not choose")
+	if str(revocation["head_url"]) != str(trusted_head_url):
+		return _refused("the embedded revocation list belongs to endpoint '%s', but this installation follows '%s' — a manifest cannot redirect the client to another channel's revocation stream" % [
+			str(revocation["head_url"]), str(trusted_head_url)])
+	if str(head["head_url"]) != str(trusted_head_url):
+		return _refused("independently fetched revocation head is published for '%s', not for this installation's revocation endpoint '%s'" % [
+			str(head["head_url"]), str(trusted_head_url)])
+
+	# Both timestamps are canonical fixed-width `YYYY-MM-DDTHH:MM:SSZ`, so string
+	# order is calendar order and no clock is read. `observed_at` is revalidated
+	# here rather than assumed: this step must fail closed on its own.
+	if not UpdateDecision.is_utc_datetime(installed.get("observed_at")):
+		return _refused("independently fetched revocation head cannot be dated because the installation's observed_at is missing or not a canonical UTC timestamp")
+	if str(installed["observed_at"]) >= str(head["not_after"]):
+		return _refused("independently fetched revocation head expired at %s and this installation has already observed %s" % [
+			str(head["not_after"]), str(installed["observed_at"])])
+
+	if int(revocation["version"]) < int(head["version_floor"]):
+		return _refused("embedded revocation version %d is below the independently fetched revocation head floor %d, so it predates a revocation the publisher has already issued" % [
+			int(revocation["version"]), int(head["version_floor"])])
+	return {"valid": true, "error": ""}
 
 
 ## Verify an ECDSA P-256/SHA-256 signature over the exact message bytes.

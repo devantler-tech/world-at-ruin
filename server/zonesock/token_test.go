@@ -154,12 +154,31 @@ func TestShortSecretRefused(t *testing.T) {
 
 func TestInvalidAllocationRefused(t *testing.T) {
 	secret := testSecret(0xA5)
-	for _, allocation := range []string{"", "contains.dot"} {
+	for _, allocation := range []string{""} {
 		if _, err := NewHMACVerifier(secret, allocation); err == nil {
 			t.Errorf("NewHMACVerifier accepted allocation %q", allocation)
 		}
 		if _, err := MintToken(secret, allocation, 1, time.Now().Add(time.Minute)); err == nil {
 			t.Errorf("MintToken accepted allocation %q", allocation)
 		}
+	}
+}
+
+func TestDNSSubdomainAllocationRoundTrip(t *testing.T) {
+	secret := testSecret(0xA5)
+	verifier, err := NewHMACVerifier(secret, "zone-17.games")
+	if err != nil {
+		t.Fatalf("NewHMACVerifier: %v", err)
+	}
+	token, err := MintToken(secret, "zone-17.games", 17, time.Now().Add(time.Minute))
+	if err != nil {
+		t.Fatalf("MintToken: %v", err)
+	}
+	observer, err := verifier.Verify(token)
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if observer != 17 {
+		t.Fatalf("observer = %d, want 17", observer)
 	}
 }

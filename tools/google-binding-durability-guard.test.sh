@@ -17,7 +17,8 @@ scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
 repo="$scratch/repo"
 data="$repo/server/nakamaauth/testdata"
-mkdir -p "$data"
+lease_data="$repo/server/nakamalease/testdata"
+mkdir -p "$data" "$lease_data"
 git -C "$repo" init -q -b main
 git -C "$repo" config user.email t@example.com
 git -C "$repo" config user.name t
@@ -29,7 +30,12 @@ printf '%s\n' '{"schema":1,"user_id":"11111111-1111-4111-8111-111111111111"}' \
 	>"$data/golden_google_binding_v1.json"
 printf '%s\n' '{"schema":1,"collection":"world_at_ruin_google_identity_bindings"}' \
 	>"$data/golden_google_identity_address_v1.json"
-git -C "$repo" add server/nakamaauth/testdata
+printf '1\n2\n' >"$lease_data/shipped_lease_versions.txt"
+printf '%s\n' '[{"schema":1,"attempt_id":"attempt-1"}]' \
+	>"$lease_data/golden_lease_v1.json"
+printf '%s\n' '[{"schema":2,"attempt_id":"attempt-1","staging":true}]' \
+	>"$lease_data/golden_lease_v2.json"
+git -C "$repo" add server/nakamaauth/testdata server/nakamalease/testdata
 git -C "$repo" commit -qm 'ship binding schema one'
 base="$(git -C "$repo" rev-parse HEAD)"
 
@@ -120,6 +126,25 @@ reset_tree
 printf '%s\n' '{"schema":1,"collection":"rewritten_identity_bindings"}' \
 	>"$data/golden_google_identity_address_v1.json"
 expect_fail_matching 'rewritten identity address contract' 'identity address contract changed'
+
+reset_tree
+printf '2\n' >"$lease_data/shipped_lease_versions.txt"
+expect_fail_matching 'removed lease ledger entry' 'shipped lease schema version(s) removed'
+
+reset_tree
+printf '3\n' >>"$lease_data/shipped_lease_versions.txt"
+printf '%s\n' '[{"schema":3,"attempt_id":"attempt-1","staging":true}]' \
+	>"$lease_data/golden_lease_v3.json"
+expect_pass 'additive lease schema and fixture'
+
+reset_tree
+printf '%s\n' '[{"schema":2,"attempt_id":"rewritten"}]' \
+	>"$lease_data/golden_lease_v2.json"
+expect_fail_matching 'rewritten shipped lease fixture' 'historical lease fixtures are immutable'
+
+reset_tree
+rm "$lease_data/golden_lease_v1.json"
+expect_fail_matching 'deleted shipped lease fixture' 'shipped lease must remain readable'
 
 reset_tree
 baseline_out="$(run_guard_from "$pre_binding_base")" ||

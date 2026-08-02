@@ -35,11 +35,12 @@ import (
 	"github.com/devantler-tech/world-at-ruin/server/sim"
 )
 
-// Version is the wire-protocol version this build speaks, and the decoder's
-// ceiling: Decode refuses any other version, loudly. It starts at 1 and only
-// ever grows; bumping it is a deliberate, reviewed act (the protocol is
-// forward-only, like every other versioned surface in this product).
-const Version uint16 = 1
+// LegacyVersion is the retained entity-only protocol. Version is the newest
+// protocol this build speaks. Decode accepts the inclusive range so the zone
+// can expand before it contracts; outbound connections select one version at
+// handshake and keep it for their lifetime.
+const LegacyVersion uint16 = 1
+const Version uint16 = 2
 
 // Message kinds. Values are part of the wire contract — never renumber one.
 const (
@@ -59,6 +60,11 @@ const (
 // decode alike.
 const MaxEntities = 1 << 16
 
+// MaxCasts is independently enforced for every cast list. One authoritative
+// entity can own at most one active cast, so the entity ceiling is also the
+// natural cast ceiling.
+const MaxCasts = MaxEntities
+
 // Fixed byte widths of the layout. These are contract, not implementation
 // detail: the committed hex golden in wire_test.go pins them for the future
 // client-side decoder.
@@ -69,25 +75,33 @@ const (
 	countSize       = 4                // uint32 list length
 	idSize          = 8                // uint64 EntityID
 	entityStateSize = idSize + 3*8 + 8 // id + pos.{x,y,z} + radius
+	activeCastSize  = idSize + 1 + 3*8 + 3*8 + 4*8 + 2*8
+
+	maxWireWorldExtentMM     = 1_000_000
+	maxWireTelegraphExtentMM = 4 * maxWireWorldExtentMM
 )
 
 // Decode failures wrap exactly one of these sentinel errors, so a transport
 // can classify a bad frame without string-matching.
 var (
-	ErrTruncated = errors.New("wire: truncated message")
-	ErrTrailing  = errors.New("wire: trailing bytes after message")
-	ErrVersion   = errors.New("wire: unsupported protocol version")
-	ErrKind      = errors.New("wire: unknown message kind")
-	ErrCount     = errors.New("wire: list length exceeds MaxEntities")
-	ErrOrder     = errors.New("wire: list not in strictly ascending EntityID order")
-	ErrOverlap   = errors.New("wire: delta lists share an EntityID")
-	ErrRadius    = errors.New("wire: entity radius is negative")
+	ErrTruncated  = errors.New("wire: truncated message")
+	ErrTrailing   = errors.New("wire: trailing bytes after message")
+	ErrVersion    = errors.New("wire: unsupported protocol version")
+	ErrKind       = errors.New("wire: unknown message kind")
+	ErrCount      = errors.New("wire: list length exceeds MaxEntities")
+	ErrOrder      = errors.New("wire: list not in strictly ascending EntityID order")
+	ErrOverlap    = errors.New("wire: delta lists share an EntityID")
+	ErrRadius     = errors.New("wire: entity radius is negative")
+	ErrCastShape  = errors.New("wire: invalid cast shape")
+	ErrCastTiming = errors.New("wire: invalid cast timing")
+	ErrCastCaster = errors.New("wire: cast caster is not replicated")
 )
 
 // Message is one decoded frame: the kind tag plus the one payload field that
 // kind selects (the other stays zero). A tagged value rather than an interface
 // keeps the transport's receive loop allocation-light and switch-friendly.
 type Message struct {
+	Version  uint16
 	Kind     uint8
 	Snapshot sim.Snapshot      // set when Kind == KindSnapshot
 	Delta    sim.SnapshotDelta // set when Kind == KindSnapshotDelta
@@ -99,14 +113,28 @@ type Message struct {
 // violation here is an upstream determinism bug that must fail loudly, not be
 // sorted into silence.
 func EncodeSnapshot(s sim.Snapshot) ([]byte, error) {
-	if err := validateSnapshot(s); err != nil {
+	return EncodeSnapshotVersion(s, Version)
+}
+
+// EncodeSnapshotVersion encodes s for a negotiated protocol version. Version
+// 1 deliberately omits casts and remains byte-identical to the retained
+// entity-only contract; version 2 carries the authoritative active-cast set.
+func EncodeSnapshotVersion(s sim.Snapshot, version uint16) ([]byte, error) {
+	if err := validateSnapshotVersion(s, version); err != nil {
 		return nil, err
 	}
-	b := make([]byte, 0, headerSize+tickSize+observerSize+countSize+len(s.Entities)*entityStateSize)
-	b = appendHeader(b, KindSnapshot)
+	capacity := headerSize + tickSize + observerSize + countSize + len(s.Entities)*entityStateSize
+	if version >= 2 {
+		capacity += countSize + len(s.Casts)*activeCastSize
+	}
+	b := make([]byte, 0, capacity)
+	b = appendHeader(b, version, KindSnapshot)
 	b = binary.LittleEndian.AppendUint64(b, s.Tick)
 	b = binary.LittleEndian.AppendUint64(b, uint64(s.Observer))
 	b = appendStates(b, s.Entities)
+	if version >= 2 {
+		b = appendCasts(b, s.Casts)
+	}
 	return b, nil
 }
 
@@ -115,20 +143,34 @@ func EncodeSnapshot(s sim.Snapshot) ([]byte, error) {
 // (a transport may choose to skip sending it — sim.SnapshotDelta.Empty is the
 // test — but the codec does not decide transport policy).
 func EncodeSnapshotDelta(d sim.SnapshotDelta) ([]byte, error) {
-	if err := validateDelta(d); err != nil {
+	return EncodeSnapshotDeltaVersion(d, Version)
+}
+
+// EncodeSnapshotDeltaVersion is the delta counterpart to
+// EncodeSnapshotVersion. Version 2 appends started and ended cast lists.
+func EncodeSnapshotDeltaVersion(d sim.SnapshotDelta, version uint16) ([]byte, error) {
+	if err := validateDeltaVersion(d, version); err != nil {
 		return nil, err
 	}
-	b := make([]byte, 0, headerSize+tickSize+
-		countSize+len(d.Entered)*entityStateSize+
-		countSize+len(d.Moved)*entityStateSize+
-		countSize+len(d.Left)*idSize)
-	b = appendHeader(b, KindSnapshotDelta)
+	capacity := headerSize + tickSize +
+		countSize + len(d.Entered)*entityStateSize +
+		countSize + len(d.Moved)*entityStateSize +
+		countSize + len(d.Left)*idSize
+	if version >= 2 {
+		capacity += countSize + len(d.StartedCasts)*activeCastSize + countSize + len(d.EndedCasts)*idSize
+	}
+	b := make([]byte, 0, capacity)
+	b = appendHeader(b, version, KindSnapshotDelta)
 	b = binary.LittleEndian.AppendUint64(b, d.Tick)
 	b = appendStates(b, d.Entered)
 	b = appendStates(b, d.Moved)
 	b = appendCount(b, len(d.Left))
 	for _, id := range d.Left {
 		b = binary.LittleEndian.AppendUint64(b, uint64(id))
+	}
+	if version >= 2 {
+		b = appendCasts(b, d.StartedCasts)
+		b = appendIDs(b, d.EndedCasts)
 	}
 	return b, nil
 }
@@ -144,27 +186,27 @@ func Decode(b []byte) (Message, error) {
 	if err != nil {
 		return Message{}, err
 	}
-	if version != Version {
-		return Message{}, fmt.Errorf("%w: message speaks %d, this build speaks %d", ErrVersion, version, Version)
+	if version < LegacyVersion || version > Version {
+		return Message{}, fmt.Errorf("%w: message speaks %d, this build speaks %d-%d", ErrVersion, version, LegacyVersion, Version)
 	}
 	kind, err := r.u8()
 	if err != nil {
 		return Message{}, err
 	}
-	m := Message{Kind: kind}
+	m := Message{Version: version, Kind: kind}
 	switch kind {
 	case KindSnapshot:
-		if m.Snapshot, err = r.snapshot(); err != nil {
+		if m.Snapshot, err = r.snapshot(version); err != nil {
 			return Message{}, err
 		}
-		if err := validateSnapshot(m.Snapshot); err != nil {
+		if err := validateSnapshotVersion(m.Snapshot, version); err != nil {
 			return Message{}, err
 		}
 	case KindSnapshotDelta:
-		if m.Delta, err = r.delta(); err != nil {
+		if m.Delta, err = r.delta(version); err != nil {
 			return Message{}, err
 		}
-		if err := validateDelta(m.Delta); err != nil {
+		if err := validateDeltaVersion(m.Delta, version); err != nil {
 			return Message{}, err
 		}
 	default:
@@ -178,11 +220,35 @@ func Decode(b []byte) (Message, error) {
 
 // --- shared validity predicate (one source for both directions) ------------
 
-func validateSnapshot(s sim.Snapshot) error {
-	return validateStates("entities", s.Entities)
+func validateSnapshotVersion(s sim.Snapshot, version uint16) error {
+	if err := validateVersion(version); err != nil {
+		return err
+	}
+	if err := validateStates("entities", s.Entities); err != nil {
+		return err
+	}
+	if version == LegacyVersion {
+		return nil
+	}
+	if err := validateCasts("casts", s.Tick, s.Casts); err != nil {
+		return err
+	}
+	entity := 0
+	for _, cast := range s.Casts {
+		for entity < len(s.Entities) && s.Entities[entity].ID < cast.Caster {
+			entity++
+		}
+		if entity == len(s.Entities) || s.Entities[entity].ID != cast.Caster {
+			return fmt.Errorf("%w: caster %d", ErrCastCaster, cast.Caster)
+		}
+	}
+	return nil
 }
 
-func validateDelta(d sim.SnapshotDelta) error {
+func validateDeltaVersion(d sim.SnapshotDelta, version uint16) error {
+	if err := validateVersion(version); err != nil {
+		return err
+	}
 	if err := validateStates("entered", d.Entered); err != nil {
 		return err
 	}
@@ -217,6 +283,74 @@ func validateDelta(d sim.SnapshotDelta) error {
 		if err := claim("left", id); err != nil {
 			return err
 		}
+	}
+	if version >= 2 {
+		if err := validateCasts("started casts", d.Tick, d.StartedCasts); err != nil {
+			return err
+		}
+		if err := validateIDs("ended casts", d.EndedCasts); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateVersion(version uint16) error {
+	if version < LegacyVersion || version > Version {
+		return fmt.Errorf("%w: %d", ErrVersion, version)
+	}
+	return nil
+}
+
+func validateCasts(list string, tick uint64, casts []sim.ActiveCast) error {
+	if len(casts) > MaxCasts {
+		return fmt.Errorf("%w: %s has %d entries", ErrCount, list, len(casts))
+	}
+	for i, cast := range casts {
+		if i > 0 && cast.Caster <= casts[i-1].Caster {
+			return fmt.Errorf("%w: %s at index %d", ErrOrder, list, i)
+		}
+		if cast.StartTick >= cast.ResolveTick || cast.StartTick >= tick || cast.ResolveTick < tick {
+			return fmt.Errorf("%w: %s at index %d is [%d,%d] at tick %d", ErrCastTiming, list, i, cast.StartTick, cast.ResolveTick, tick)
+		}
+		if err := validateCastShape(cast.Shape); err != nil {
+			return fmt.Errorf("%w: %s at index %d: %w", ErrCastShape, list, i, err)
+		}
+	}
+	return nil
+}
+
+func validateCastShape(shape sim.Telegraph) error {
+	if shape.Origin.X < -maxWireWorldExtentMM || shape.Origin.X > maxWireWorldExtentMM ||
+		shape.Origin.Z < -maxWireWorldExtentMM || shape.Origin.Z > maxWireWorldExtentMM {
+		return errors.New("origin outside world bounds")
+	}
+	if shape.Facing.Y != 0 {
+		return errors.New("facing is not planar")
+	}
+	extent := func(v int64) bool { return v >= -maxWireTelegraphExtentMM && v <= maxWireTelegraphExtentMM }
+	zeroFacing := shape.Facing.X == 0 && shape.Facing.Z == 0
+	switch shape.Kind {
+	case sim.ShapeCircle:
+		if !zeroFacing || !extent(shape.Outer) || shape.Inner != 0 || shape.HalfWidth != 0 || shape.CosHalf != 0 {
+			return errors.New("non-canonical circle")
+		}
+	case sim.ShapeRing:
+		invertedPositiveRing := shape.Outer >= 0 && shape.Inner > shape.Outer
+		noncanonicalDegenerateRing := shape.Outer < 0 && shape.Inner != 0
+		if !zeroFacing || !extent(shape.Outer) || shape.Inner < 0 || shape.Inner > maxWireTelegraphExtentMM || invertedPositiveRing || noncanonicalDegenerateRing || shape.HalfWidth != 0 || shape.CosHalf != 0 {
+			return errors.New("non-canonical ring")
+		}
+	case sim.ShapeCone:
+		if !extent(shape.Outer) || shape.Inner != 0 || shape.HalfWidth != 0 || shape.CosHalf < -sim.CosScale || shape.CosHalf > sim.CosScale {
+			return errors.New("non-canonical cone")
+		}
+	case sim.ShapeRect:
+		if !extent(shape.Outer) || shape.Inner != 0 || !extent(shape.HalfWidth) || shape.CosHalf != 0 {
+			return errors.New("non-canonical rect")
+		}
+	default:
+		return fmt.Errorf("unknown kind %d", shape.Kind)
 	}
 	return nil
 }
@@ -254,8 +388,8 @@ func validateIDs(list string, ids []sim.EntityID) error {
 
 // --- encoding helpers -------------------------------------------------------
 
-func appendHeader(b []byte, kind uint8) []byte {
-	b = binary.LittleEndian.AppendUint16(b, Version)
+func appendHeader(b []byte, version uint16, kind uint8) []byte {
+	b = binary.LittleEndian.AppendUint16(b, version)
 	return append(b, kind)
 }
 
@@ -269,6 +403,37 @@ func appendStates(b []byte, es []sim.EntityState) []byte {
 		b = appendSigned64(b, s.Pos.Y)
 		b = appendSigned64(b, s.Pos.Z)
 		b = appendSigned64(b, s.Radius)
+	}
+	return b
+}
+
+func appendCasts(b []byte, casts []sim.ActiveCast) []byte {
+	b = appendCount(b, len(casts))
+	for _, cast := range casts {
+		b = binary.LittleEndian.AppendUint64(b, uint64(cast.Caster))
+		b = append(b, uint8(cast.Shape.Kind))
+		b = appendVec3(b, cast.Shape.Origin)
+		b = appendVec3(b, cast.Shape.Facing)
+		b = appendSigned64(b, cast.Shape.Outer)
+		b = appendSigned64(b, cast.Shape.Inner)
+		b = appendSigned64(b, cast.Shape.HalfWidth)
+		b = appendSigned64(b, cast.Shape.CosHalf)
+		b = binary.LittleEndian.AppendUint64(b, cast.StartTick)
+		b = binary.LittleEndian.AppendUint64(b, cast.ResolveTick)
+	}
+	return b
+}
+
+func appendVec3(b []byte, v sim.Vec3) []byte {
+	b = appendSigned64(b, v.X)
+	b = appendSigned64(b, v.Y)
+	return appendSigned64(b, v.Z)
+}
+
+func appendIDs(b []byte, ids []sim.EntityID) []byte {
+	b = appendCount(b, len(ids))
+	for _, id := range ids {
+		b = binary.LittleEndian.AppendUint64(b, uint64(id))
 	}
 	return b
 }
@@ -343,7 +508,7 @@ func (r *reader) u64() (uint64, error) {
 	return v, nil
 }
 
-func (r *reader) snapshot() (sim.Snapshot, error) {
+func (r *reader) snapshot(version uint16) (sim.Snapshot, error) {
 	var s sim.Snapshot
 	tick, err := r.u64()
 	if err != nil {
@@ -358,10 +523,15 @@ func (r *reader) snapshot() (sim.Snapshot, error) {
 	if s.Entities, err = r.states("entities"); err != nil {
 		return sim.Snapshot{}, err
 	}
+	if version >= 2 {
+		if s.Casts, err = r.casts("casts"); err != nil {
+			return sim.Snapshot{}, err
+		}
+	}
 	return s, nil
 }
 
-func (r *reader) delta() (sim.SnapshotDelta, error) {
+func (r *reader) delta(version uint16) (sim.SnapshotDelta, error) {
 	var d sim.SnapshotDelta
 	tick, err := r.u64()
 	if err != nil {
@@ -377,7 +547,60 @@ func (r *reader) delta() (sim.SnapshotDelta, error) {
 	if d.Left, err = r.ids("left"); err != nil {
 		return sim.SnapshotDelta{}, err
 	}
+	if version >= 2 {
+		if d.StartedCasts, err = r.casts("started casts"); err != nil {
+			return sim.SnapshotDelta{}, err
+		}
+		if d.EndedCasts, err = r.ids("ended casts"); err != nil {
+			return sim.SnapshotDelta{}, err
+		}
+	}
 	return d, nil
+}
+
+func (r *reader) casts(list string) ([]sim.ActiveCast, error) {
+	n, err := r.u32()
+	if err != nil {
+		return nil, err
+	}
+	if n > MaxCasts {
+		return nil, fmt.Errorf("%w: %s claims %d entries", ErrCount, list, n)
+	}
+	if err := r.need(int(n) * activeCastSize); err != nil {
+		return nil, err
+	}
+	if n == 0 {
+		return nil, nil
+	}
+	casts := make([]sim.ActiveCast, n)
+	for i := range casts {
+		caster, _ := r.u64()
+		kind, _ := r.u8()
+		origin := r.vec3Unchecked()
+		facing := r.vec3Unchecked()
+		outer, _ := r.u64()
+		inner, _ := r.u64()
+		halfWidth, _ := r.u64()
+		cosHalf, _ := r.u64()
+		startTick, _ := r.u64()
+		resolveTick, _ := r.u64()
+		casts[i] = sim.ActiveCast{
+			Caster: sim.EntityID(caster),
+			Shape: sim.Telegraph{
+				Kind: sim.ShapeKind(kind), Origin: origin, Facing: facing,
+				Outer: signed64(outer), Inner: signed64(inner), HalfWidth: signed64(halfWidth), CosHalf: signed64(cosHalf),
+			},
+			StartTick: startTick, ResolveTick: resolveTick,
+		}
+	}
+	return casts, nil
+}
+
+func (r *reader) vec3Unchecked() sim.Vec3 {
+	x, _ := r.u64()
+	y, _ := r.u64()
+	z, _ := r.u64()
+	return sim.Vec3{X: signed64(x), Y: signed64(y), Z: signed64(z)}
 }
 
 // states reads a count-prefixed EntityState list. The cap check runs BEFORE

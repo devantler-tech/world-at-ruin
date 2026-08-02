@@ -48,6 +48,8 @@ const minSecretBytes = 32
 
 // MintToken mints an admission token binding one observer to one allocation:
 // "v3.<allocation>.<observer>.<unix-nanosecond expiry>.<hex hmac-sha256>".
+// Allocation may contain dots; parsing works backwards from the three fixed
+// trailing fields so DNS-subdomain GameServer names remain unambiguous.
 // Nanosecond precision preserves the configured TTL without extending its
 // replay window. Exported for the handoff service and for tests; the zone
 // server itself never mints, and the supplied secret must belong only to this
@@ -56,8 +58,8 @@ func MintToken(secret []byte, allocation string, observer sim.EntityID, expiry t
 	if len(secret) < minSecretBytes {
 		return "", fmt.Errorf("zonesock: admission secret is %d bytes, need at least %d", len(secret), minSecretBytes)
 	}
-	if allocation == "" || strings.Contains(allocation, ".") {
-		return "", fmt.Errorf("zonesock: allocation must be non-empty and contain no dots")
+	if allocation == "" {
+		return "", fmt.Errorf("zonesock: allocation must be non-empty")
 	}
 	payload := fmt.Sprintf(
 		"%s.%s.%d.%d",
@@ -87,8 +89,8 @@ func NewHMACVerifier(secret []byte, allocation string) (*HMACVerifier, error) {
 	if len(secret) < minSecretBytes {
 		return nil, fmt.Errorf("zonesock: admission secret is %d bytes, need at least %d", len(secret), minSecretBytes)
 	}
-	if allocation == "" || strings.Contains(allocation, ".") {
-		return nil, fmt.Errorf("zonesock: allocation must be non-empty and contain no dots")
+	if allocation == "" {
+		return nil, fmt.Errorf("zonesock: allocation must be non-empty")
 	}
 	return &HMACVerifier{secret: append([]byte(nil), secret...), allocation: allocation, now: time.Now}, nil
 }
@@ -98,29 +100,36 @@ func NewHMACVerifier(secret []byte, allocation string) (*HMACVerifier, error) {
 // controls every unverified field.
 func (v *HMACVerifier) Verify(token string) (sim.EntityID, error) {
 	parts := strings.Split(token, ".")
-	if len(parts) != 5 ||
+	if len(parts) < 5 ||
 		(parts[0] != tokenPrefix && parts[0] != legacyTokenPrefix) {
 		return 0, ErrTokenFormat
 	}
-	observer, err := strconv.ParseUint(parts[2], 10, 64)
+	observerIndex := len(parts) - 3
+	expiryIndex := len(parts) - 2
+	signatureIndex := len(parts) - 1
+	allocation := strings.Join(parts[1:observerIndex], ".")
+	if allocation == "" {
+		return 0, ErrTokenFormat
+	}
+	observer, err := strconv.ParseUint(parts[observerIndex], 10, 64)
 	if err != nil {
 		return 0, ErrTokenFormat
 	}
-	expiry, err := strconv.ParseInt(parts[3], 10, 64)
+	expiry, err := strconv.ParseInt(parts[expiryIndex], 10, 64)
 	if err != nil {
 		return 0, ErrTokenFormat
 	}
-	sig, err := hex.DecodeString(parts[4])
+	sig, err := hex.DecodeString(parts[signatureIndex])
 	if err != nil {
 		return 0, ErrTokenFormat
 	}
-	payload := strings.Join(parts[:4], ".")
+	payload := strings.Join(parts[:signatureIndex], ".")
 	mac := hmac.New(sha256.New, v.secret)
 	mac.Write([]byte(payload))
 	if !hmac.Equal(sig, mac.Sum(nil)) {
 		return 0, ErrTokenForged
 	}
-	if parts[1] != v.allocation {
+	if allocation != v.allocation {
 		return 0, ErrTokenForged
 	}
 	expiresAt := time.Unix(0, expiry)
