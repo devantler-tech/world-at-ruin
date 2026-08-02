@@ -89,6 +89,11 @@ object it was handed.
 The character store uses the same system-owner boundary. Its key includes the authenticated Nakama
 subject, while the storage owner remains the system account, so one account's document stays
 addressable without giving that account a client-writable object at the authoritative identity.
+Store initialization establishes a persistent system-owned cutover marker before requests are served.
+A valid legacy character created before that marker is copied conditionally into the new
+identity and the legacy bytes remain available for rollback; a legacy object created after cutover is
+refused rather than promoted. If the conditional create races or its acknowledgement is lost, the next
+read selects the existing system-owned winner, so retries converge without deleting the rollback copy.
 
 ### Every write is a compare-and-swap
 
@@ -455,7 +460,8 @@ needs to write a guard for.
 | A resolved Google binding still names an enabled Nakama account | `nakamaauth.NakamaGoogleBindingStore` | `TestNakamaGoogleBindingStoreChecksAuthoritativeAccountStatus`, `TestProvisionGoogleRejectsDisabledBoundAccount` |
 | Server-authoritative state is unreadable and unwritable by clients | `nakamalease.Store` | `TestCreatePersistsPrivateVersionedLeaseByHashedKey`, `TestCreateIgnoresAClientOwnedObjectAtTheDerivedKey`, `TestLoadRejectsMalformedOrPublicStoredObjects` |
 | Player mutation records and audit evidence are unreadable and unwritable by clients | `playerstate.Store` | `TestApplyCommitsPlayerRecordAndAuditInOneAtomicWrite` |
-| Character records use an account-specific system-owned identity that clients cannot occupy | `nakamacharacter.Store` | `TestSavePersistsPrivateVersionedCharacterForVerifiedAccount`, `TestClientOwnedCharacterPreseedCannotBecomeAuthoritative`, `TestLoadRejectsMalformedOrPublicCharacterRecords` |
+| Character records use an account-specific system-owned identity that clients cannot occupy | `nakamacharacter.Store` | `TestSavePersistsPrivateVersionedCharacterForVerifiedAccount`, `TestClientOwnedCharacterPreseedCannotBecomeAuthoritative`, `TestLegacyCharacterCreatedAfterOwnerCutoverIsNeverMigrated`, `TestLoadRejectsMalformedOrPublicCharacterRecords` |
+| Legacy character ownership migrates without stranding or rewriting the old document | `nakamacharacter.Store` | `TestLoadMigratesAValidLegacyCharacterWithoutChangingItsState` |
 | No blind **create** — create is conditional | `nakamalease.Store` | `TestConcurrentIdenticalCreateReconcilesTheDurableWinner` |
 | No blind player-record **create** — create is conditional | `playerstate.Store` | `TestApplyCreatesAPlayerRecordConditionallyWithItsAudit` |
 | No blind **replace** — replace presents the observed version | `nakamalease.Store` | `TestReplaceUsesObservedVersionAndStaleRecordCannotOverwrite`, `TestConcurrentReplaceLeavesExactlyOneCurrentAttempt` |
