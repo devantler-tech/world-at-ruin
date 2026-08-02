@@ -40,8 +40,8 @@ base_of() {
 
 contains_key() {
 	local key="$1" ledger="$2"
-	awk -F= -v candidate="$key" '
-		$1 == candidate { found = 1 }
+	ABILITY_SCALE_CANDIDATE="$key" awk -F= '
+		$1 == ENVIRON["ABILITY_SCALE_CANDIDATE"] { found = 1 }
 		END { exit(found ? 0 : 1) }
 	' "$ledger"
 }

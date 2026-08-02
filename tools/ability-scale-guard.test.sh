@@ -74,6 +74,12 @@ else
 	printf '%s\n' 'damage|damage.*=101' >>"$data/shipped_class_power.txt"
 	expect_fail_matching 'metacharacter power key' 'above the highest shipped budget'
 
+	# awk -v assignment decoding must not let an escaped key collapse to an
+	# existing literal key and skip the production budget comparison.
+	reset_tree
+	printf '%s\n' 'damage|dam\141ge=101' >>"$data/shipped_class_power.txt"
+	expect_fail_matching 'backslash power key' 'above the highest shipped budget'
+
 	reset_tree
 	printf '%s\n' 'damage|damage.*=999' >>"$data/shipped_class_cycle_floor.txt"
 	expect_fail_matching 'metacharacter cycle key' 'below the fastest shipped floor'
