@@ -14,6 +14,7 @@ import (
 	"github.com/devantler-tech/world-at-ruin/server/sim"
 	"github.com/devantler-tech/world-at-ruin/server/zonesock"
 	"google.golang.org/grpc/status"
+	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 )
 
 const (
@@ -287,7 +288,7 @@ func validAllocationID(id string) bool {
 }
 
 func validGameServerName(name string) bool {
-	return name == strings.ToLower(name) && validDNSSubdomain(name)
+	return len(k8svalidation.IsDNS1123Subdomain(name)) == 0
 }
 
 func validDNSName(name string) bool {
