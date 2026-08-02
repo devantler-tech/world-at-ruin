@@ -104,6 +104,36 @@ func TestSpeedClampDiagonalBound(t *testing.T) {
 	}
 }
 
+func TestClampSpeedRejectsVerticalMotion(t *testing.T) {
+	tests := []struct {
+		name     string
+		intent   Vec3
+		maxSpeed int64
+		want     Vec3
+	}{
+		{
+			name:     "under horizontal cap",
+			intent:   Vec3{X: 1000, Y: 2000, Z: -500},
+			maxSpeed: 4000,
+			want:     Vec3{X: 1000, Z: -500},
+		},
+		{
+			name:     "over horizontal cap",
+			intent:   Vec3{X: 4000, Y: -2000, Z: 3000},
+			maxSpeed: 2500,
+			want:     Vec3{X: 2000, Z: 1500},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := clampSpeed(tt.intent, tt.maxSpeed); got != tt.want {
+				t.Fatalf("clampSpeed(%+v, %d) = %+v, want %+v",
+					tt.intent, tt.maxSpeed, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestBoundsClampKeepsInside drives an actor hard into a wall and asserts it
 // stops exactly at the boundary and never escapes.
 func TestBoundsClampKeepsInside(t *testing.T) {
