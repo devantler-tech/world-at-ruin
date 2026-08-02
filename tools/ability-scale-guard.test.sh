@@ -94,7 +94,8 @@ fi
 
 grep -Fq './tools/ability-scale-guard.test.sh' "$WORKFLOW" ||
 	t_fail 'CI does not run the ability scale guard regression'
-grep -Fq './tools/ability-scale-guard.sh "$BASE_SHA"' "$WORKFLOW" ||
+guard_invocation="./tools/ability-scale-guard.sh \"\$BASE_SHA\""
+grep -Fq "$guard_invocation" "$WORKFLOW" ||
 	t_fail 'CI does not run the production ability scale guard'
 
 if [ "$failures" -ne 0 ]; then
