@@ -43,6 +43,7 @@ distance:
 |---|---|---|---|---|
 | shipped ceiling `0.4`, run 1 | 0.02416 | 0.02002 | 0.01549 | 0.01678 |
 | shipped ceiling `0.4`, run 2 | 0.02416 | 0.02002 | 0.01549 | 0.01678 |
+| shipped ceiling `0.4`, run 3 | 0.02416 | 0.02002 | 0.01549 | 0.01678 |
 | ceiling `0.30` | 0.02406 | 0.02001 | 0.01549 | 0.01678 |
 | ceiling `0.02` — **ablation control** | 0.14249 | 0.01945 | 0.01527 | 0.01669 |
 
@@ -50,22 +51,30 @@ distance:
 
 | Build | 6 m | 12 m | 24 m | 48 m |
 |---|---|---|---|---|
-| shipped ceiling `0.4` | 0.00471 | 0.01098 | 0.00920 | 0.02781 |
+| shipped ceiling `0.4`, runs 1-2 | 0.00471 | 0.01098 | 0.00920 | 0.02781 |
+| shipped ceiling `0.4`, run 3 | 0.00471 | 0.01098 | 0.00920 | 0.02782 |
 | ceiling `0.30` | 0.00471 | 0.01098 | 0.00920 | 0.02781 |
 | ceiling `0.02` — **ablation control** | 0.99780 | 0.01107 | 0.00932 | 0.02788 |
 
 Three things follow, and the third is the reason this file exists.
 
-**The tool repeats.** Two runs of the shipped build agree to every printed digit
-at all four distances, so the run-to-run term is 0.00000 at this precision. That
-is what makes a 1e-4 move readable at all, and it is the property
-`frame_capture` does not have.
+**The measured quantity repeats — but the tool is not globally bit-stable.**
+Across three runs of the shipped build, `RELIEF_STRENGTH` is identical at all
+four distances. `RELIEF_COVERED` is identical at 6, 12 and 24 m and moved one
+unit in the last printed digit at 48 m on the third run, 0.02781 → 0.02782.
 
-⚠️ Those are **two runs on one machine**, which is exactly the back-to-back
-shape `frame_diff.gd`'s second lesson warns reads too low. It is not an
-independent-build floor and must not be quoted as one. It establishes that the
-run-to-run term does not swamp the move measured below; a CI gate on this tool
-would need the across-builds figure first, which nothing here supplies.
+That distinction is the whole reason the comparison below is made on
+**strength**: it is the stable quantity, and it is the one the relief term
+actually perturbs. It is also worth noting how it was found — two runs looked
+like perfect determinism and a third produced the wobble, so "it repeated"
+is a statement about the runs taken, not a property proven.
+
+⚠️ These are **runs on one machine**, which is exactly the back-to-back shape
+`frame_diff.gd`'s second lesson warns reads too low. This is not an
+independent-build floor and must not be quoted as one. It establishes only that
+the run-to-run term does not swamp the move measured below; a CI gate on this
+tool would need the across-builds figure first, which nothing here supplies
+(tracked in #715).
 
 **It resolves the ceiling change the vantages cannot.** `0.4`→`0.30` moves the
 6 m strength by 1e-4 against that zero floor. The signal lives in the near
