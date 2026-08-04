@@ -8,6 +8,21 @@ extends Node
 ## rule is meant to replace. CI runs this and uploads the frames as a build
 ## artifact.
 ##
+## THESE FRAMES ARE NOT BIT-REPRODUCIBLE, so never compare them by checksum or
+## by byte equality — a comparison that looks perfectly reasonable and is not.
+## Two runs of ONE checkout move pixels at every vantage: `frame_diff.gd`'s
+## back-to-back column runs from 0.02% (sunward) to 35.66% (cave-walkout),
+## because temporal antialiasing, SDFGI convergence, fog reprojection, wind and
+## animated torches all resolve differently between renders. Compare with
+## `frame_diff.gd`, which measures how far apart two frames are rather than
+## whether they are identical.
+##
+## They also cannot resolve a change to the plate/crack RELIEF term (#696): the
+## committed vantages read such a change the same as a provable no-op, so
+## "captured before and after, no change" is vacuous for that class. Use
+## `tools/relief_read.gd` with an ablation arm instead — see its docstring and
+## `docs/evidence/issue-696-relief-instrument/`.
+##
 ## Run (must be WINDOWED — a headless run renders nothing at all):
 ##   WAR_SHOT_DIR=/tmp/shots \
 ##     WAR_SAVE_PATH=/tmp/probe_save.json WAR_VAULT_PATH=/tmp/probe_vault.json \

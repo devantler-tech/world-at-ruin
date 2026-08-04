@@ -80,6 +80,17 @@ extends Node
 ## The numbers are comparable for the SAME vantage across builds, which is the
 ## comparison a reviewer makes; they are not comparable between vantages.
 ##
+## Fifth — and this bounds even sunward and crossfield — the separation above is
+## for a change of the class that MOVED 22.57%. It does not generalise to every
+## visual change, and for shader RELIEF it fails outright: measured on the
+## seam-slope ceiling `0.4`->`0.30`, shrine moves 0.28% against a provable
+## NO-OP's 0.27% and crossfield 0.13% against 0.14%, so on four of the eight
+## vantages the real change moves LESS than the no-op (#696). No vantage here
+## discriminates that class, and reporting one as "unchanged" is a vacuous
+## claim rather than a weak one. `tools/relief_read.gd` is the instrument for
+## it; `docs/evidence/issue-696-relief-instrument/` carries both measurements
+## and the ablation control that makes its reading mean anything.
+##
 ## ## The first_run_* set (#519, part of #485)
 ##
 ## Those frames are mostly a LIVE 3D PORTRAIT — the creator's panel takes the

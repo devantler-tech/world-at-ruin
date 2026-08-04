@@ -41,6 +41,26 @@ extends Node
 ## honour, so every distance label would carry the terrain's undulation as error.
 ## Here the distances are exact by construction.
 ##
+## ## This is the named instrument for a RELIEF-affecting change (#696)
+##
+## The eight committed `frame_capture` vantages cannot discriminate one. On the
+## seam-slope ceiling `0.4`->`0.30` they move 0.28% (shrine) and 0.13%
+## (crossfield) against a provable NO-OP's 0.27% and 0.14% — and on four of the
+## eight the real change moves LESS than the no-op. This tool resolves the same
+## change because it differences against `crack_relief = 0` rather than against
+## another render, and because it is bit-identical run over run: two runs of one
+## build agree to every printed digit at all four distances.
+##
+## ALWAYS TAKE AN ABLATION ARM, and treat it as part of the measurement rather
+## than a courtesy. The ceiling change moves the 6 m strength by 1e-4 — ten
+## units of the last printed digit — and a build whose shader never recompiled
+## reports a near-identical number, so a thin real move and a dead pipeline are
+## the SAME observation until a control separates them. Setting the ceiling to
+## `0.02` moves that strength 0.02416 -> 0.14249 and coverage 0.00471 -> 0.99780;
+## because that fires, the edit is reaching the GPU and the thin reading is a
+## measurement. Without it the honest conclusion is "no information".
+## Measurements and the reproduction in `docs/evidence/issue-696-relief-instrument/`.
+##
 ## Run (must be WINDOWED — a headless run renders nothing at all):
 ##   WAR_SAVE_PATH=/tmp/probe_save.json WAR_VAULT_PATH=/tmp/probe_vault.json \
 ##     WAR_BOOT_RECOVERY_PATH=/tmp/probe_recovery.json \
