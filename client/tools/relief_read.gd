@@ -48,8 +48,14 @@ extends Node
 ## (crossfield) against a provable NO-OP's 0.27% and 0.14% — and on four of the
 ## eight the real change moves LESS than the no-op. This tool resolves the same
 ## change because it differences against `crack_relief = 0` rather than against
-## another render, and because it is bit-identical run over run: two runs of one
-## build agree to every printed digit at all four distances.
+## another render, and because it repeats: two runs of one build on one machine
+## agree to every printed digit at all four distances.
+##
+## That repeat figure is TWO RUNS ON ONE MACHINE, which is the same shape
+## `frame_diff.gd`'s second lesson warns reads too low, so it is not an
+## independent-build floor and must not be quoted as one. It is enough to
+## establish that the run-to-run term does not swamp a 1e-4 move here; a CI
+## gate on this tool would need the across-builds measurement first.
 ##
 ## ALWAYS TAKE AN ABLATION ARM, and treat it as part of the measurement rather
 ## than a courtesy. The ceiling change moves the 6 m strength by 1e-4 — ten

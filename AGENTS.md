@@ -204,7 +204,9 @@ four of the eight the real change moves *less* than the no-op. Frames are not bi
 — `frame_diff.gd`'s own back-to-back table runs from 0.02% to 35.66% on unchanged code — so a
 checksum or byte comparison of captures is invalid as well, however reasonable it looks.
 For this class the instrument is [`client/tools/relief_read.gd`](client/tools/relief_read.gd), which
-differences the build against `crack_relief = 0` and is bit-identical run over run.
+differences the build against `crack_relief = 0` rather than against another render, and repeats to
+every printed digit across two runs on one machine (that figure is not an independent-build floor —
+it is the shape `frame_diff.gd`'s second lesson warns reads too low — so do not gate on it).
 **Any "capture before and after" criterion must name an ABLATION alongside the instrument** — a
 deliberate wrong build the instrument has to distinguish — because a blind instrument and a correct
 change read the same, and only the ablation tells them apart. Both measurements, including the

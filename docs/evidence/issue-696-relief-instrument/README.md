@@ -56,10 +56,16 @@ distance:
 
 Three things follow, and the third is the reason this file exists.
 
-**The tool is bit-identical run over run.** Two runs of the shipped build agree
-to every printed digit at all four distances, so the run-to-run floor is
-0.00000 at this precision. That is what makes a 1e-4 move readable at all, and
-it is the property `frame_capture` does not have.
+**The tool repeats.** Two runs of the shipped build agree to every printed digit
+at all four distances, so the run-to-run term is 0.00000 at this precision. That
+is what makes a 1e-4 move readable at all, and it is the property
+`frame_capture` does not have.
+
+⚠️ Those are **two runs on one machine**, which is exactly the back-to-back
+shape `frame_diff.gd`'s second lesson warns reads too low. It is not an
+independent-build floor and must not be quoted as one. It establishes that the
+run-to-run term does not swamp the move measured below; a CI gate on this tool
+would need the across-builds figure first, which nothing here supplies.
 
 **It resolves the ceiling change the vantages cannot.** `0.4`→`0.30` moves the
 6 m strength by 1e-4 against that zero floor. The signal lives in the near
