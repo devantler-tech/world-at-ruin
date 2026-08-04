@@ -195,6 +195,26 @@ over run, moving only when the world itself moves (which `cave_capture_vantage_t
 named failure and the capture log declares as a `CAVE VANTAGE` coordinate delta, never a quietly
 different frame).
 
+**What the vantages cannot resolve: shader RELIEF (#696).** None of the eight committed vantages
+discriminates a change to the plate/crack relief term, so "captured before and after, no change" is a
+**vacuous** claim for that class — the frames would have matched had the change been wrong. Measured
+on the seam-slope ceiling `0.4`→`0.30`, which alters how every seam rakes light: the committed frames
+move 0.28% at shrine and 0.13% at crossfield against a **provable no-op's** 0.27% and 0.14%, and on
+four of the eight the real change moves *less* than the no-op. Frames are not bit-reproducible either
+— `frame_diff.gd`'s own back-to-back table runs from 0.02% to 35.66% on unchanged code — so a
+checksum or byte comparison of captures is invalid as well, however reasonable it looks.
+For this class the instrument is [`client/tools/relief_read.gd`](client/tools/relief_read.gd), which
+differences the build against `crack_relief = 0` rather than against another render, and whose
+`RELIEF_STRENGTH` repeats to every printed digit across three runs on one machine. Compare on
+strength, not coverage: coverage moved a unit in its last digit at 48 m on the third of those runs,
+and that figure is runs-on-one-machine anyway — the shape `frame_diff.gd`'s second lesson warns reads
+too low — so it is not an independent-build floor and nothing here may gate on it (#715).
+**Any "capture before and after" criterion must name an ABLATION alongside the instrument** — a
+deliberate wrong build the instrument has to distinguish — because a blind instrument and a correct
+change read the same, and only the ablation tells them apart. Both measurements, including the
+control that makes the relief reading mean anything, are in
+[`docs/evidence/issue-696-relief-instrument/`](docs/evidence/issue-696-relief-instrument/README.md).
+
 **What that artifact cannot show you (#232).** Volumetric fog is gated on an R32_Uint atomic storage
 image, and the hosted macOS capture runner's GPU does not support it — so **every frame CI publishes
 shows the height-fog fallback**, never the volumetric path or the hollow ash pools built on it. The
