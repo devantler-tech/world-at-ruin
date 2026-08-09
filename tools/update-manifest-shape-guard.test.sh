@@ -234,10 +234,15 @@ rm -rf "${dir}"
 
 # --- the regression that motivated tracking array frames ---
 
-# A rollback catalogue with MORE THAN ONE element is valid and must pass. Popping
-# the array key with the first element's closing brace emits the second element's
-# fields at the manifest root, where the guard rejects them as undocumented — a
-# false refusal that would land exactly when the pack pipeline delivers targets.
+# A rollback catalogue with MORE THAN ONE element must keep every element's
+# fields UNDER the array key. Popping the array key with the first element's
+# closing brace emits the second element's fields at the manifest root instead.
+#
+# The needle is what distinguishes the two parsers. With the array frame held,
+# the refusal is about `rollback_targets.version` — a deferred block that started
+# publishing. With the key popped, the second element's fields land at the root
+# and the refusal instead names a bare `version`/`url` as undocumented, never
+# mentioning the qualified path.
 dir="$(scratch_tree)"
 cp "${dir}/${MANIFEST_REL}" "${dir}/before"
 awk '
@@ -258,18 +263,7 @@ awk '
 ' "${dir}/before" >"${dir}/mutated"
 mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
 if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'multi-element rollback catalogue'; then
-	multi_status=0
-	multi_output="$(cd "${dir}" && ./"${GUARD_REL}" 2>&1)" || multi_status=$?
-	if [ "${multi_status}" -ne 0 ]; then
-		fail "multi-element rollback catalogue: a valid two-target catalogue was REFUSED — the array key is being popped by its first element. Got: ${multi_output}"
-	else
-		# Exit status alone would accept a zero exit with unexpected output, making
-		# this case weaker than the positive control it depends on.
-		case "${multi_output}" in
-		*PASS*) ;;
-		*) fail "multi-element rollback catalogue: exited 0 without a PASS line, got: ${multi_output}" ;;
-		esac
-	fi
+	expect_refusal "${dir}" 'rollback_targets.version' 'multi-element rollback catalogue'
 fi
 rm -rf "${dir}"
 
@@ -303,15 +297,37 @@ rm -rf "${dir}"
 
 # --- overlapping ledger rows ---
 
-# Two rows may legitimately cover the same field, e.g. a broad `pack` beside the
-# existing `pack.full`. Recording only the first match would leave the other
-# looking unused, and the stale-row check would refuse while naming a row that is
-# entirely correct.
+# Two rows may legitimately cover the same field — a narrower `key.epoch` nested
+# under the broader `key`, where NEITHER is published. Recording only the first
+# match would leave the other looking unused, and the stale-row check would
+# refuse while naming a row that is entirely correct.
 dir="$(scratch_tree)"
 cp "${dir}/${LEDGER_REL}" "${dir}/before"
-printf 'pack\ta broad row covering the whole withheld pack block\n' >>"${dir}/${LEDGER_REL}"
+printf 'key.epoch\ta narrower row nested under the broader key row\n' >>"${dir}/${LEDGER_REL}"
 if assert_changed "${dir}/before" "${dir}/${LEDGER_REL}" 'overlapping ledger rows'; then
 	expect_pass "${dir}" 'overlapping ledger rows'
+fi
+rm -rf "${dir}"
+
+# A row may only excuse what is actually withheld. Once the block publishes one
+# of those fields the row is excusing shipping content, and the guard would
+# report agreement about something nobody checked.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+awk '
+	/"rollback_targets": \[\],/ {
+		print "\t\t\t\"rollback_targets\": ["
+		print "\t\t\t\t{"
+		print "\t\t\t\t\t\"version\": \"0.1.13\","
+		print "\t\t\t\t},"
+		print "\t\t\t],"
+		next
+	}
+	{ print }
+' "${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'deferred block started publishing'; then
+	expect_refusal "${dir}" 'rollback_targets.version' 'deferred block started publishing'
 fi
 rm -rf "${dir}"
 
@@ -319,4 +335,4 @@ if [ "${failures}" -ne 0 ]; then
 	echo "update-manifest shape guard test: ${failures} FAILED" >&2
 	exit 1
 fi
-echo "update-manifest shape guard test: PASS — drift in either direction is refused, the ledger must stay complete, current and actually explanatory, a block that stops being a literal refuses rather than being excused unseen, a valid multi-element rollback catalogue is accepted, and a misread field set refuses instead of passing vacuously"
+echo "update-manifest shape guard test: PASS — drift in either direction is refused, the ledger must stay complete, current and actually explanatory, a row may not excuse a field the build publishes, every element of a multi-element array is attributed to its array key, a block that stops being a literal refuses rather than being excused unseen, '#' is treated as a comment only where it is one, and a misread field set refuses instead of passing vacuously"

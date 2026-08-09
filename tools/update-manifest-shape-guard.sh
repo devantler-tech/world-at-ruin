@@ -56,7 +56,7 @@ cleanup() {
 emitted_paths() {
 	local source="$1"
 	awk '
-		BEGIN { started = 0; depth = 0; np = 0; pending = "" }
+		BEGIN { started = 0; depth = 0; np = 0; pending = ""; nout = 0 }
 		!started && /"manifest"[[:space:]]*:[[:space:]]*\{[[:space:]]*$/ {
 			started = 1; depth = 1; next
 		}
@@ -72,8 +72,8 @@ emitted_paths() {
 					i += j
 					if (substr(line, i + 1) ~ /^[[:space:]]*:/) pending = tok
 				} else if (c == "{" || c == "[") {
-					if (pending != "") { emit(pending, "C"); push(pending); pending = "" }
-					else push("")
+					if (pending != "") { emit(pending, "C"); push(pending, nout); pending = "" }
+					else push("", nout)
 					depth++
 				} else if (c == "}" || c == "]") {
 					if (pending != "") { emit(pending, "V"); pending = "" }
@@ -92,12 +92,17 @@ emitted_paths() {
 				}
 			}
 		}
-		function push(name) { stack[np++] = name }
+		function push(name, mark) { stack[np] = name; np++ }
 		function pop() { if (np > 0) np-- }
 		function emit(key, kind,   p, k) {
 			p = ""
 			for (k = 0; k < np; k++) if (stack[k] != "") p = p stack[k] "."
-			print p key "\t" kind
+			pathout[nout] = p key
+			kindout[nout] = kind
+			nout++
+		}
+		END {
+			for (k = 0; k < nout; k++) print pathout[k] "\t" kindout[k]
 		}
 	' "$source" | LC_ALL=C sort -u
 }
@@ -240,6 +245,24 @@ main() {
 	done <"$SCRATCH_DIR/covered-unique"
 	if [ -n "$opaque" ]; then
 		fail "$DEFERRED_LEDGER defers the contents of$opaque, but $MANIFEST_SOURCE no longer builds it as a literal this guard can read. Its element fields are now invisible here while the row still excuses them. Either build it as a literal, or extend this guard to inspect the emitted manifest before that block starts shipping data."
+	fi
+
+	# A row may only excuse fields that are actually WITHHELD. The moment the
+	# block starts publishing one of them, the row is excusing a field that is
+	# shipping — so the guard would report agreement about content nobody checked,
+	# most confidently at the moment delivery switched on. Covering the entry
+	# itself is fine and expected: `rollback_targets` ships as an empty array
+	# while every element field stays withheld.
+	local shipped=''
+	while IFS= read -r entry; do
+		while IFS= read -r path; do
+			[ "$path" = "$entry" ] && continue
+			covers "$path" "$entry" || continue
+			shipped="$shipped $path"
+		done <"$SCRATCH_DIR/emitted"
+	done <"$SCRATCH_DIR/covered-unique"
+	if [ -n "$shipped" ]; then
+		fail "$DEFERRED_LEDGER excuses$shipped, but $MANIFEST_SOURCE publishes those fields. A row may only defer what is actually withheld — drop it so the published contents are checked against $SHAPE_REFERENCE."
 	fi
 
 	# A ledger entry that explains nothing is stale: the field graduated or was
