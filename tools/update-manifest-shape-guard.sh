@@ -84,7 +84,7 @@ emitted_paths() {
 						# scan the rest of the file as structure and emit paths under
 						# the wrong parent with no error — the same silent drift the
 						# escaped-quote handling above exists to prevent.
-						print "!unterminated-string\t" tok
+						print "D\tunterminated-string\t" tok
 						exit
 					}
 					i = k
@@ -93,12 +93,16 @@ emitted_paths() {
 						# `schema` both read as `schema` and dedup into one field while
 						# JCS would publish two. Decoding escapes here would mean
 						# reimplementing them; refusing says so instead.
-						if (escaped) print "!escaped-key\t" tok
+						if (escaped) print "D\tescaped-key\t" tok
 						# A `.` in a member NAME is indistinguishable from the path
 						# separator once paths are flattened, so a top-level
 						# `"save_schema.min"` collapses onto the nested one and dedups
 						# away, leaving an undeclared field unchecked.
-						if (index(tok, ".") > 0) print "!dotted-key\t" tok
+						if (index(tok, ".") > 0) print "D\tdotted-key\t" tok
+						# An EMPTY member name is valid JSON and JCS publishes it, but it
+						# is also the value this scanner uses to mean "no key pending",
+						# so it would never be emitted at all.
+						if (tok == "") print "D\tempty-key\t(empty)"
 						pending = tok
 					}
 				} else if (c == SQ) {
@@ -110,7 +114,7 @@ emitted_paths() {
 					# is valid and this scanner would not see it at all. Reached only
 					# OUTSIDE a double-quoted token and outside a comment, both of which
 					# are consumed before this branch.
-					print "!single-quoted\t" substr(line, i, 24)
+					print "D\tsingle-quoted\t" substr(line, i, 24)
 					exit
 				} else if (c == "(") {
 					# The value is a CALL, so any `[`/`{` after this belongs to its
@@ -146,7 +150,20 @@ emitted_paths() {
 					word = ""; k = i
 					while (k <= n && substr(line, k, 1) ~ /[A-Za-z0-9_]/) { word = word substr(line, k, 1); k++ }
 					rest = substr(line, k)
-					if (rest ~ /^[[:space:]]*:/) print "!nonliteral-key\t" word
+					if (rest ~ /^[[:space:]]*:/) print "D\tnonliteral-key\t" word
+					# A CALL used as a key — `StringName("x"): 1`. The identifier is
+					# followed by `(` rather than `:`, and the quoted token inside is
+					# followed by `)`, so neither branch sees a key while JCS publishes
+					# whatever the call returns.
+					else if (rest ~ /^\(/) {
+						d2 = 0
+						for (q = k; q <= n; q++) {
+							cq = substr(line, q, 1)
+							if (cq == "(") d2++
+							else if (cq == ")") { d2--; if (d2 == 0) break }
+						}
+						if (substr(line, q + 1) ~ /^[[:space:]]*:/) print "D\tkey-expression\t" word
+					}
 					i = k - 1
 				} else if (c == "#") {
 					# A comment runs to end of line. Handled HERE rather than by
@@ -172,7 +189,7 @@ emitted_paths() {
 			nout++
 		}
 		END {
-			for (k = 0; k < nout; k++) print pathout[k] "\t" kindout[k]
+			for (k = 0; k < nout; k++) print "P\t" pathout[k] "\t" kindout[k]
 		}
 	' "$source" | LC_ALL=C sort -u
 }
@@ -185,6 +202,19 @@ reference_paths() {
 		[paths | map(select(type == "string")) | join(".")]
 		| unique | .[] | select(length > 0)
 	' "$source" | LC_ALL=C sort -u
+}
+
+# Member names in the reference that the flattening cannot represent. A name
+# containing the separator collapses onto a nested path — a top-level
+# `save_schema.min` becomes the documented nested one and dedups away, so the
+# reference could promise a field that is neither emitted nor ledgered and the
+# reverse-direction check would never see it. An empty name vanishes entirely.
+reference_unrepresentable_keys() {
+	local source="$1"
+	jq -er '
+		[paths | map(select(type == "string")) | .[]]
+		| unique | .[] | select(length == 0 or (index(".") != null))
+	' "$source" 2>/dev/null || true
 }
 
 # A ledger entry covers the path it names and everything nested under it, so one
@@ -256,10 +286,14 @@ main() {
 	# scan reads one literal; an additional success branch returning a populated
 	# manifest inline — the same shape `build()` already uses for its refusals —
 	# would publish fields this guard never looks at.
+	#
+	# Both spellings, because GDScript accepts single quotes and a branch written
+	# `return {'manifest': {'x': 1}, 'error': ''}` is code this scan never visits.
+	local q="[\"']"
 	local other_manifests
-	other_manifests="$(grep -nE '"manifest"[[:space:]]*:[[:space:]]*\{' "$MANIFEST_SOURCE" |
-		grep -vE '"manifest"[[:space:]]*:[[:space:]]*\{[[:space:]]*\}' |
-		grep -vE '"manifest"[[:space:]]*:[[:space:]]*\{[[:space:]]*$' || true)"
+	other_manifests="$(grep -nE "${q}manifest${q}[[:space:]]*:[[:space:]]*\{" "$MANIFEST_SOURCE" |
+		grep -vE "${q}manifest${q}[[:space:]]*:[[:space:]]*\{[[:space:]]*\}" |
+		grep -vE "${q}manifest${q}[[:space:]]*:[[:space:]]*\{[[:space:]]*$" || true)"
 	if [ -n "$other_manifests" ]; then
 		fail "$MANIFEST_SOURCE has a \"manifest\" dictionary this guard does not read, at line(s) $(printf '%s' "$other_manifests" | cut -d: -f1 | tr '\n' ' '). Only the multi-line literal is scanned, so any other branch returning a populated manifest would publish fields unchecked. Every other \"manifest\" must be empty."
 	fi
@@ -267,30 +301,42 @@ main() {
 	SCRATCH_DIR="$(mktemp -d)"
 	trap cleanup EXIT
 
+	# Rows are TYPED — `D` for a parser diagnostic, `P` for a field path — rather
+	# than distinguished by a reserved prefix on the path itself. A field legitimately
+	# named `"!x"` would otherwise be indistinguishable from a diagnostic and get
+	# filtered away as one.
 	emitted_paths "$MANIFEST_SOURCE" >"$SCRATCH_DIR/raw-kinds"
-	local computed
-	computed="$(awk -F '\t' '$1 == "!nonliteral-key" { printf "%s ", $2 }' "$SCRATCH_DIR/raw-kinds")"
-	if [ -n "$computed" ]; then
+	diagnosed() { awk -F '\t' -v want="$1" '$1 == "D" && $2 == want { printf "%s ", $3 }' "$SCRATCH_DIR/raw-kinds"; }
+
+	local computed escaped_keys dotted empty_key key_expr
+	computed="$(diagnosed nonliteral-key)"
+	[ -z "$computed" ] ||
 		fail "the manifest literal in $MANIFEST_SOURCE keys a field on the identifier(s) ${computed}rather than a quoted name. This guard cannot resolve what field that publishes, so it would ship unchecked against $SHAPE_REFERENCE. Use a quoted key."
-	fi
-	local escaped_keys
-	escaped_keys="$(awk -F '\t' '$1 == "!escaped-key" { printf "%s ", $2 }' "$SCRATCH_DIR/raw-kinds")"
-	if [ -n "$escaped_keys" ]; then
+	key_expr="$(diagnosed key-expression)"
+	[ -z "$key_expr" ] ||
+		fail "the manifest literal in $MANIFEST_SOURCE keys a field on the call(s) ${key_expr}(...). Only a direct quoted literal is readable here, so whatever the call returns would be published unchecked against $SHAPE_REFERENCE. Use a quoted key."
+	escaped_keys="$(diagnosed escaped-key)"
+	[ -z "$escaped_keys" ] ||
 		fail "the manifest literal in $MANIFEST_SOURCE names a field with an escape sequence (read here as ${escaped_keys}with the escape dropped). Two keys differing only by an escape would collapse into one here while the published JSON carries both, so the extra field would never be checked against $SHAPE_REFERENCE. Use a key with no escapes."
-	fi
-	local dotted
-	dotted="$(awk -F '\t' '$1 == "!dotted-key" { printf "%s ", $2 }' "$SCRATCH_DIR/raw-kinds")"
-	if [ -n "$dotted" ]; then
+	dotted="$(diagnosed dotted-key)"
+	[ -z "$dotted" ] ||
 		fail "the manifest literal in $MANIFEST_SOURCE names the field(s) ${dotted}with a '.' in the member name. Paths are compared flattened, so such a name is indistinguishable from a nested path and would collapse onto it — leaving an undeclared field unchecked against $SHAPE_REFERENCE. Use a name without a dot."
-	fi
-	if grep -q '^!single-quoted' "$SCRATCH_DIR/raw-kinds"; then
+	empty_key="$(diagnosed empty-key)"
+	[ -z "$empty_key" ] ||
+		fail "the manifest literal in $MANIFEST_SOURCE names a field with an EMPTY member name. It is publishable, but it is also the value this scanner uses to mean 'no key pending', so the field would never be emitted or checked. Give it a name."
+	[ -z "$(diagnosed single-quoted)" ] ||
 		fail "the manifest literal in $MANIFEST_SOURCE contains a single-quoted string. GDScript accepts them as member names, and this guard reads only double-quoted keys, so such a field would ship entirely unseen. Use double quotes."
-	fi
-	if grep -q '^!unterminated-string' "$SCRATCH_DIR/raw-kinds"; then
+	[ -z "$(diagnosed unterminated-string)" ] ||
 		fail "a quoted value in the manifest literal of $MANIFEST_SOURCE does not close on its own line. This guard reads the literal line by line, so it cannot tell where such a value ends — everything after it would be scanned as structure and attributed to the wrong field. Keep manifest values on one line."
-	fi
-	grep -v '^!' <"$SCRATCH_DIR/raw-kinds" >"$SCRATCH_DIR/emitted-kinds" || true
+
+	awk -F '\t' '$1 == "P" { print $2 "\t" $3 }' "$SCRATCH_DIR/raw-kinds" >"$SCRATCH_DIR/emitted-kinds"
 	cut -f1 <"$SCRATCH_DIR/emitted-kinds" | LC_ALL=C sort -u >"$SCRATCH_DIR/emitted"
+
+	local bad_ref_keys
+	bad_ref_keys="$(reference_unrepresentable_keys "$SHAPE_REFERENCE" | tr '\n' ' ')"
+	if [ -n "${bad_ref_keys// /}" ]; then
+		fail "$SHAPE_REFERENCE declares the member name(s) ${bad_ref_keys}which this comparison cannot represent — a name carrying the path separator collapses onto the nested path of the same spelling, and an empty name disappears. The reference could then promise a field that is never checked. Rename it."
+	fi
 	reference_paths "$SHAPE_REFERENCE" >"$SCRATCH_DIR/reference" ||
 		fail "$SHAPE_REFERENCE is not readable JSON"
 

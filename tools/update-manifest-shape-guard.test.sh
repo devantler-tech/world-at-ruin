@@ -497,6 +497,76 @@ if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'second populated man
 fi
 rm -rf "${dir}"
 
+# --- keys the scanner must not silently skip ---
+
+# Inserts a line into the manifest literal, just above `schema`.
+insert_field() {
+	local dir="$1" line="$2"
+	cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+	awk -v L="${line}" '!seen && /"schema": SCHEMA,/ { print L; seen = 1 } { print }' \
+		"${dir}/before" >"${dir}/mutated"
+	mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+}
+
+# A CALL used as a key. The identifier is followed by `(` and the quoted token by
+# `)`, so neither the identifier branch nor the quoted branch sees a key, while
+# the published JSON carries whatever the call returns.
+dir="$(scratch_tree)"
+insert_field "${dir}" '			StringName("smuggled_field"): 1,'
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'call used as a key'; then
+	expect_refusal "${dir}" 'keys a field on the call' 'call used as a key'
+fi
+rm -rf "${dir}"
+
+# An EMPTY member name is publishable, and it is also the value the scanner uses
+# to mean "no key pending", so it would never be emitted or compared.
+dir="$(scratch_tree)"
+insert_field "${dir}" '			"": 1,'
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'empty member name'; then
+	expect_refusal "${dir}" 'EMPTY member name' 'empty member name'
+fi
+rm -rf "${dir}"
+
+# A field whose name begins with the character the parser once used to mark its
+# own diagnostics. It is an ordinary undocumented field and must be reported as
+# one, not silently filtered away as a diagnostic.
+dir="$(scratch_tree)"
+insert_field "${dir}" '			"!smuggled_field": 1,'
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'field named like a diagnostic'; then
+	expect_refusal "${dir}" '!smuggled_field' 'field named like a diagnostic'
+fi
+rm -rf "${dir}"
+
+# The REFERENCE side of the dotted-name collapse: a top-level `save_schema.min`
+# flattens onto the documented nested path and dedups away, so the reference
+# could promise a field that is neither emitted nor ledgered.
+dir="$(scratch_tree)"
+cp "${dir}/${REFERENCE_REL}" "${dir}/before"
+jq '. + {"save_schema.min": 999}' "${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${REFERENCE_REL}"
+if assert_changed "${dir}/before" "${dir}/${REFERENCE_REL}" 'dotted reference member'; then
+	expect_refusal "${dir}" 'cannot represent' 'dotted reference member'
+fi
+rm -rf "${dir}"
+
+# A second populated manifest written with SINGLE quotes. Valid GDScript, and a
+# double-quoted-only search never sees it.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+awk '
+	!seen && /^\tvar version: String = DevLog.VERSION$/ {
+		print "\tif false:"
+		printf "\t\treturn {%cmanifest%c: {%csmuggled%c: 1}, %cerror%c: %c%c}\n", 39, 39, 39, 39, 39, 39, 39, 39
+		seen = 1
+	}
+	{ print }
+' "${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'single-quoted second manifest'; then
+	expect_refusal "${dir}" 'does not read' 'single-quoted second manifest'
+fi
+rm -rf "${dir}"
+
 if [ "${failures}" -ne 0 ]; then
 	echo "update-manifest shape guard test: ${failures} FAILED" >&2
 	exit 1
