@@ -38,12 +38,21 @@ cleanup() {
 	[ -n "$SCRATCH_DIR" ] && [ -d "$SCRATCH_DIR" ] && rm -rf "$SCRATCH_DIR"
 }
 
-# The dotted field paths of the manifest dictionary literal in `build()`.
+# The dotted field paths of the manifest dictionary literal in `build()`, each
+# tagged with the KIND of value it carries: `C` when the key opens a literal
+# collection the parser then walks, `V` for anything else (a scalar, a constant,
+# or a call).
 #
 # Anchored on `"manifest": {` at END of line: `build()` also returns several
 # early `{"manifest": {}, "error": ...}` refusals, and anchoring on the bare key
 # would latch onto the first of those and extract an empty manifest — which would
 # make the subset check below pass vacuously forever.
+#
+# Frames carry a NAME and are pushed for `{` and `[` alike. An array's elements
+# are anonymous frames, so an array key stays on the stack across ALL of its
+# elements: popping it with the first element's `}` would emit the second
+# element's fields at the manifest root, and the guard would reject a valid
+# multi-element `rollback_targets` catalogue as undocumented.
 emitted_paths() {
 	local source="$1"
 	awk '
@@ -63,22 +72,25 @@ emitted_paths() {
 					tok = substr(line, i + 1, j - 1)
 					i += j
 					if (substr(line, i + 1) ~ /^[[:space:]]*:/) pending = tok
-				} else if (c == "{") {
-					if (pending != "") { emit(pending); stack[np++] = pending; pending = "" }
+				} else if (c == "{" || c == "[") {
+					if (pending != "") { emit(pending, "C"); push(pending); pending = "" }
+					else push("")
 					depth++
-				} else if (c == "}") {
-					if (pending != "") { emit(pending); pending = "" }
-					depth--; if (np > 0) np--
+				} else if (c == "}" || c == "]") {
+					if (pending != "") { emit(pending, "V"); pending = "" }
+					depth--; pop()
 					if (depth == 0) { started = 2; exit }
 				} else if (c == ",") {
-					if (pending != "") { emit(pending); pending = "" }
+					if (pending != "") { emit(pending, "V"); pending = "" }
 				}
 			}
 		}
-		function emit(key,   p, k) {
+		function push(name) { stack[np++] = name }
+		function pop() { if (np > 0) np-- }
+		function emit(key, kind,   p, k) {
 			p = ""
-			for (k = 0; k < np; k++) p = p stack[k] "."
-			print p key
+			for (k = 0; k < np; k++) if (stack[k] != "") p = p stack[k] "."
+			print p key "\t" kind
 		}
 	' "$source" | LC_ALL=C sort -u
 }
@@ -105,10 +117,30 @@ covers() {
 	return 1
 }
 
+# A row is `<path><TAB><reason>`. The reason must carry non-whitespace text: a
+# bare `signature<TAB>` would otherwise satisfy a field-count test and let an
+# omission be silenced by an empty explanation, which is the one thing the ledger
+# exists to prevent.
+ledger_rows_without_reason() {
+	local source="$1"
+	sed -e 's/#.*$//' "$source" |
+		awk '
+			/^[[:space:]]*$/ { next }
+			{
+				rest = $0
+				if (sub(/^[^\t]*\t/, "", rest) == 0) rest = ""
+				path = $0
+				sub(/\t.*$/, "", path)
+				if (path ~ /^[[:space:]]*$/) next
+				if (rest !~ /[^[:space:]]/) print path
+			}
+		'
+}
+
 ledger_paths() {
 	local source="$1"
 	sed -e 's/#.*$//' "$source" |
-		awk -F '\t' 'NF >= 2 && $1 != "" { print $1 }' |
+		awk -F '\t' 'NF >= 2 && $1 != "" && $2 ~ /[^[:space:]]/ { print $1 }' |
 		LC_ALL=C sort -u
 }
 
@@ -125,7 +157,8 @@ main() {
 	SCRATCH_DIR="$(mktemp -d)"
 	trap cleanup EXIT
 
-	emitted_paths "$MANIFEST_SOURCE" >"$SCRATCH_DIR/emitted"
+	emitted_paths "$MANIFEST_SOURCE" >"$SCRATCH_DIR/emitted-kinds"
+	cut -f1 <"$SCRATCH_DIR/emitted-kinds" | LC_ALL=C sort -u >"$SCRATCH_DIR/emitted"
 	reference_paths "$SHAPE_REFERENCE" >"$SCRATCH_DIR/reference" ||
 		fail "$SHAPE_REFERENCE is not readable JSON"
 
@@ -143,6 +176,12 @@ main() {
 	undocumented="$(LC_ALL=C comm -23 "$SCRATCH_DIR/emitted" "$SCRATCH_DIR/reference")"
 	if [ -n "$undocumented" ]; then
 		fail "the manifest publishes $(printf '%s' "$undocumented" | tr '\n' ' ')— absent from $SHAPE_REFERENCE. Add the field to the shape reference so the contract an implementer reads matches what the origin serves."
+	fi
+
+	local reasonless
+	reasonless="$(ledger_rows_without_reason "$DEFERRED_LEDGER" | tr '\n' ' ')"
+	if [ -n "${reasonless// /}" ]; then
+		fail "$DEFERRED_LEDGER withholds ${reasonless}with no explanation. An empty reason silences a field without accounting for it, which is the one thing this ledger exists to prevent."
 	fi
 
 	ledger_paths "$DEFERRED_LEDGER" >"$SCRATCH_DIR/ledger"
@@ -174,6 +213,24 @@ main() {
 
 	if [ -n "$unaccounted" ]; then
 		fail "$SHAPE_REFERENCE declares$unaccounted, which this build does not publish and $DEFERRED_LEDGER does not explain. Either emit the field from $MANIFEST_SOURCE, or record why it is withheld — a documented field with no owner is a promise the origin never keeps."
+	fi
+
+	LC_ALL=C sort -u "$covered_any" >"$SCRATCH_DIR/covered-unique"
+
+	# A ledger row excusing a block's contents is only trustworthy while that
+	# block is an EMPTY LITERAL this parser can see into. The moment the key is
+	# fed by an expression — `rollback_targets: build_targets()` — its real
+	# element fields become invisible here, while the row goes on excusing every
+	# documented descendant. The guard would then pass most confidently at the
+	# exact moment delivery switched on. Refuse instead, and say what to do.
+	local opaque='' entry_kind
+	while IFS= read -r entry; do
+		grep -qxF "$entry" "$SCRATCH_DIR/emitted" || continue
+		entry_kind="$(awk -F '\t' -v p="$entry" '$1 == p { print $2; exit }' "$SCRATCH_DIR/emitted-kinds")"
+		[ "$entry_kind" = "C" ] || opaque="$opaque $entry"
+	done <"$SCRATCH_DIR/covered-unique"
+	if [ -n "$opaque" ]; then
+		fail "$DEFERRED_LEDGER defers the contents of$opaque, but $MANIFEST_SOURCE no longer builds it as a literal this guard can read. Its element fields are now invisible here while the row still excuses them. Either build it as a literal, or extend this guard to inspect the emitted manifest before that block starts shipping data."
 	fi
 
 	# A ledger entry that explains nothing is stale: the field graduated or was

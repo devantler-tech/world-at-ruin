@@ -184,8 +184,68 @@ if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'manifest lost schema
 fi
 rm -rf "${dir}"
 
+# --- the ledger must actually explain, and only while it can see ---
+
+# An empty reason satisfies a field-count test while accounting for nothing.
+dir="$(scratch_tree)"
+cp "${dir}/${LEDGER_REL}" "${dir}/before"
+awk -F '\t' 'BEGIN { OFS = "\t" } $1 == "signature" { print $1, ""; next } { print }' \
+	"${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${LEDGER_REL}"
+if assert_changed "${dir}/before" "${dir}/${LEDGER_REL}" 'withheld field carries an empty reason'; then
+	expect_refusal "${dir}" 'no explanation' 'withheld field carries an empty reason'
+fi
+rm -rf "${dir}"
+
+# A deferred block fed by an expression is invisible to this parser, so the row
+# excusing its contents would go on excusing fields nobody can see — passing most
+# confidently at the moment delivery switches on.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+sed 's/"rollback_targets": \[\],/"rollback_targets": build_targets(),/' \
+	"${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'deferred block stopped being a literal'; then
+	expect_refusal "${dir}" 'rollback_targets' 'deferred block stopped being a literal'
+fi
+rm -rf "${dir}"
+
+# --- the regression that motivated tracking array frames ---
+
+# A rollback catalogue with MORE THAN ONE element is valid and must pass. Popping
+# the array key with the first element's closing brace emits the second element's
+# fields at the manifest root, where the guard rejects them as undocumented — a
+# false refusal that would land exactly when the pack pipeline delivers targets.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+awk '
+	/"rollback_targets": \[\],/ {
+		print "\t\t\t\"rollback_targets\": ["
+		print "\t\t\t\t{"
+		print "\t\t\t\t\t\"version\": \"0.1.13\","
+		print "\t\t\t\t\t\"url\": \"u1\","
+		print "\t\t\t\t},"
+		print "\t\t\t\t{"
+		print "\t\t\t\t\t\"version\": \"0.1.12\","
+		print "\t\t\t\t\t\"url\": \"u2\","
+		print "\t\t\t\t},"
+		print "\t\t\t],"
+		next
+	}
+	{ print }
+' "${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'multi-element rollback catalogue'; then
+	multi_status=0
+	multi_output="$(cd "${dir}" && ./"${GUARD_REL}" 2>&1)" || multi_status=$?
+	if [ "${multi_status}" -ne 0 ]; then
+		fail "multi-element rollback catalogue: a valid two-target catalogue was REFUSED — the array key is being popped by its first element. Got: ${multi_output}"
+	fi
+fi
+rm -rf "${dir}"
+
 if [ "${failures}" -ne 0 ]; then
 	echo "update-manifest shape guard test: ${failures} FAILED" >&2
 	exit 1
 fi
-echo "update-manifest shape guard test: PASS — drift in either direction is refused, the ledger must stay complete and current, and a misread field set refuses instead of passing vacuously"
+echo "update-manifest shape guard test: PASS — drift in either direction is refused, the ledger must stay complete, current and actually explanatory, a block that stops being a literal refuses rather than being excused unseen, a valid multi-element rollback catalogue is accepted, and a misread field set refuses instead of passing vacuously"
