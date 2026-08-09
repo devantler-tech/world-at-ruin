@@ -242,12 +242,12 @@ main() {
 
 	LC_ALL=C sort -u "$covered_any" >"$SCRATCH_DIR/covered-unique"
 
-	# A ledger row excusing a block's contents is only trustworthy while that
-	# block is an EMPTY LITERAL this parser can see into. The moment the key is
-	# fed by an expression — `rollback_targets: build_targets()` — its real
-	# element fields become invisible here, while the row goes on excusing every
-	# documented descendant. The guard would then pass most confidently at the
-	# exact moment delivery switched on. Refuse instead, and say what to do.
+	# A row may only excuse a block this parser can still READ. That is the first
+	# of the two ways a row stops being trustworthy, and they are complementary:
+	# here the block is fed by an EXPRESSION — `rollback_targets: build_targets()`
+	# — so it emits no descendants at all and the check below has nothing to catch,
+	# while the row goes on excusing every documented one. The second way, a block
+	# that is a literal but has started PUBLISHING those fields, is caught below.
 	local opaque='' entry_kind
 	while IFS= read -r entry; do
 		grep -qxF "$entry" "$SCRATCH_DIR/emitted" || continue
