@@ -453,6 +453,50 @@ if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'literal is only the 
 fi
 rm -rf "${dir}"
 
+# A single-quoted member name. GDScript accepts it and the scanner reads only
+# double-quoted keys, so the field would ship entirely unseen. The apostrophes
+# are emitted by code point, because this test is itself shell.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+awk '!seen && /"schema": SCHEMA,/ { printf "\t\t\t%csmuggled_field%c: 1,\n", 39, 39; seen = 1 } { print }' \
+	"${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'single-quoted member name'; then
+	expect_refusal "${dir}" 'single-quoted string' 'single-quoted member name'
+fi
+rm -rf "${dir}"
+
+# A member name containing the path separator. Flattened, a top-level
+# `save_schema.min` is indistinguishable from the nested one and dedups onto it.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+awk '!seen && /"schema": SCHEMA,/ { print "\t\t\t\"save_schema.min\": 999,"; seen = 1 } { print }' \
+	"${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'dotted member name'; then
+	expect_refusal "${dir}" 'in the member name' 'dotted member name'
+fi
+rm -rf "${dir}"
+
+# A second, POPULATED manifest returned from another branch, in the same inline
+# form build() already uses for its refusals. Only one literal is scanned, so
+# that branch would publish fields no check here ever sees.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+awk '
+	!seen && /^\tvar version: String = DevLog.VERSION$/ {
+		print "\tif false:"
+		print "\t\treturn {\"manifest\": {\"smuggled_field\": 1}, \"error\": \"\"}"
+		seen = 1
+	}
+	{ print }
+' "${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'second populated manifest return'; then
+	expect_refusal "${dir}" 'does not read' 'second populated manifest return'
+fi
+rm -rf "${dir}"
+
 if [ "${failures}" -ne 0 ]; then
 	echo "update-manifest shape guard test: ${failures} FAILED" >&2
 	exit 1

@@ -56,7 +56,7 @@ cleanup() {
 emitted_paths() {
 	local source="$1"
 	awk '
-		BEGIN { started = 0; depth = 0; np = 0; pending = ""; nout = 0 }
+		BEGIN { started = 0; depth = 0; np = 0; pending = ""; nout = 0; SQ = sprintf("%c", 39) }
 		!started && /"manifest"[[:space:]]*:[[:space:]]*\{[[:space:]]*$/ {
 			started = 1; depth = 1; next
 		}
@@ -94,8 +94,24 @@ emitted_paths() {
 						# JCS would publish two. Decoding escapes here would mean
 						# reimplementing them; refusing says so instead.
 						if (escaped) print "!escaped-key\t" tok
+						# A `.` in a member NAME is indistinguishable from the path
+						# separator once paths are flattened, so a top-level
+						# `"save_schema.min"` collapses onto the nested one and dedups
+						# away, leaving an undeclared field unchecked.
+						if (index(tok, ".") > 0) print "!dotted-key\t" tok
 						pending = tok
 					}
+				} else if (c == SQ) {
+					# SQ is the apostrophe, built from its code point because this awk
+					# program lives inside a single-quoted shell string — writing the
+					# character here would end that string.
+					#
+					# GDScript accepts single-quoted strings, so a member named that way
+					# is valid and this scanner would not see it at all. Reached only
+					# OUTSIDE a double-quoted token and outside a comment, both of which
+					# are consumed before this branch.
+					print "!single-quoted\t" substr(line, i, 24)
+					exit
 				} else if (c == "(") {
 					# The value is a CALL, so any `[`/`{` after this belongs to its
 					# arguments, not to the key. Without this, `build_targets([])`
@@ -236,6 +252,18 @@ main() {
 		fail "the manifest literal in $MANIFEST_SOURCE is not returned directly — it opens under '$(printf '%s' "$opener" | sed 's/^[[:space:]]*//')'. A literal bound to a local can be mutated before it is returned, and neither this guard nor the emitter's canonical-form test would see the addition. Return the literal directly."
 	fi
 
+	# Every OTHER `"manifest":` in the file must carry an empty dictionary. The
+	# scan reads one literal; an additional success branch returning a populated
+	# manifest inline — the same shape `build()` already uses for its refusals —
+	# would publish fields this guard never looks at.
+	local other_manifests
+	other_manifests="$(grep -nE '"manifest"[[:space:]]*:[[:space:]]*\{' "$MANIFEST_SOURCE" |
+		grep -vE '"manifest"[[:space:]]*:[[:space:]]*\{[[:space:]]*\}' |
+		grep -vE '"manifest"[[:space:]]*:[[:space:]]*\{[[:space:]]*$' || true)"
+	if [ -n "$other_manifests" ]; then
+		fail "$MANIFEST_SOURCE has a \"manifest\" dictionary this guard does not read, at line(s) $(printf '%s' "$other_manifests" | cut -d: -f1 | tr '\n' ' '). Only the multi-line literal is scanned, so any other branch returning a populated manifest would publish fields unchecked. Every other \"manifest\" must be empty."
+	fi
+
 	SCRATCH_DIR="$(mktemp -d)"
 	trap cleanup EXIT
 
@@ -249,6 +277,14 @@ main() {
 	escaped_keys="$(awk -F '\t' '$1 == "!escaped-key" { printf "%s ", $2 }' "$SCRATCH_DIR/raw-kinds")"
 	if [ -n "$escaped_keys" ]; then
 		fail "the manifest literal in $MANIFEST_SOURCE names a field with an escape sequence (read here as ${escaped_keys}with the escape dropped). Two keys differing only by an escape would collapse into one here while the published JSON carries both, so the extra field would never be checked against $SHAPE_REFERENCE. Use a key with no escapes."
+	fi
+	local dotted
+	dotted="$(awk -F '\t' '$1 == "!dotted-key" { printf "%s ", $2 }' "$SCRATCH_DIR/raw-kinds")"
+	if [ -n "$dotted" ]; then
+		fail "the manifest literal in $MANIFEST_SOURCE names the field(s) ${dotted}with a '.' in the member name. Paths are compared flattened, so such a name is indistinguishable from a nested path and would collapse onto it — leaving an undeclared field unchecked against $SHAPE_REFERENCE. Use a name without a dot."
+	fi
+	if grep -q '^!single-quoted' "$SCRATCH_DIR/raw-kinds"; then
+		fail "the manifest literal in $MANIFEST_SOURCE contains a single-quoted string. GDScript accepts them as member names, and this guard reads only double-quoted keys, so such a field would ship entirely unseen. Use double quotes."
 	fi
 	if grep -q '^!unterminated-string' "$SCRATCH_DIR/raw-kinds"; then
 		fail "a quoted value in the manifest literal of $MANIFEST_SOURCE does not close on its own line. This guard reads the literal line by line, so it cannot tell where such a value ends — everything after it would be scanned as structure and attributed to the wrong field. Keep manifest values on one line."
