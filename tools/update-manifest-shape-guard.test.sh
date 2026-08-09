@@ -173,7 +173,11 @@ rm -rf "${dir}"
 # The manifest lost the field every client reads first.
 dir="$(scratch_tree)"
 cp "${dir}/${MANIFEST_REL}" "${dir}/before"
-grep -v '^\t\t\t"schema": SCHEMA,$' "${dir}/before" >"${dir}/mutated"
+# Matched WITHOUT a `\t` escape or an anchor: BSD grep reads `\t` as a tab and
+# GNU grep reads it as a literal `t`, so an indented pattern written that way
+# matches on macOS, matches nothing in CI, and leaves the case proving nothing.
+# This substring occurs exactly once.
+grep -v '"schema": SCHEMA,' "${dir}/before" >"${dir}/mutated"
 mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
 if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'manifest lost schema'; then
 	expect_refusal "${dir}" 'schema' 'manifest lost schema'
