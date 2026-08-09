@@ -147,9 +147,20 @@ emitted_paths() {
 					# key to unreadable.
 					tail = substr(line, i + 1)
 					sub(/^[[:space:]]+/, "", tail)
-					if (tail != "" && tail !~ /^[,}\]]/ && tail !~ /^#/) demote()
+					# A collection followed by `:` was used AS A KEY — `["x"][0]: 1`,
+					# whose brackets are otherwise just anonymous frames and produce no
+					# diagnostic at all.
+					if (tail ~ /^:/) print "D\tkey-expression\t(collection)"
+					if (tail != "" && tail !~ /^[,}\]:]/ && tail !~ /^#/) demote()
 					pop()
-					if (depth == 0) { started = 2; exit }
+					if (depth == 0) {
+						# The ROOT literal can be the first operand of an expression too —
+						# `} if false else {...}` — and at depth zero there is no owner row
+						# left to demote, so the scan would simply stop and validate a
+						# dictionary the build never publishes.
+						if (tail != "" && tail !~ /^[,}\]]/ && tail !~ /^#/) print "D\troot-expression\t" substr(tail, 1, 24)
+						started = 2; exit
+					}
 				} else if (c == ",") {
 					if (pending != "") { emit(pending, "V"); pending = "" }
 				} else if (c ~ /[A-Za-z_]/) {
@@ -234,7 +245,14 @@ reference_unrepresentable_keys() {
 	jq -er '
 		[paths | map(select(type == "string")) | .[]]
 		| unique | .[]
-		| select(length == 0 or (index(".") != null) or test("[\\n\\r\\t]"))
+		| select(
+			length == 0
+			or (index(".") != null)
+			# Codepoints, not a regex class: NUL cannot be written into a jq regex,
+			# and an escape misread as literal characters would match ordinary names.
+			# 0 NUL, 9 tab, 10 newline, 13 carriage return.
+			or (explode | any(. == 0 or . == 9 or . == 10 or . == 13))
+		)
 	' "$source" 2>/dev/null || true
 }
 
@@ -357,6 +375,8 @@ main() {
 	empty_key="$(diagnosed empty-key)"
 	[ -z "$empty_key" ] ||
 		fail "the manifest literal in $MANIFEST_SOURCE names a field with an EMPTY member name. It is publishable, but it is also the value this scanner uses to mean 'no key pending', so the field would never be emitted or checked. Give it a name."
+	[ -z "$(diagnosed root-expression)" ] ||
+		fail "the manifest literal in $MANIFEST_SOURCE is only the first operand of a larger expression. The scan validates the literal, but the build would publish whatever the expression evaluates to. Make the literal the whole value."
 	[ -z "$(diagnosed single-quoted)" ] ||
 		fail "the manifest literal in $MANIFEST_SOURCE contains a single-quoted string. GDScript accepts them as member names, and this guard reads only double-quoted keys, so such a field would ship entirely unseen. Use double quotes."
 	[ -z "$(diagnosed unterminated-string)" ] ||

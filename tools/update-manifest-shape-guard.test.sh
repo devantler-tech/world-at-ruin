@@ -662,6 +662,40 @@ if assert_changed "${dir}/before" "${dir}/${REFERENCE_REL}" 'option-like referen
 fi
 rm -rf "${dir}"
 
+# The ROOT literal as the first operand of an expression. At depth zero there is
+# no owner row left to demote, so the scan would simply stop and go on validating
+# a dictionary the build never publishes.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+perl -0pe 's/("rollback_targets": \[\],\n\t\t)\}/$1} if false else {"smuggled_field": 1}/' \
+	"${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'root literal is one operand'; then
+	expect_refusal "${dir}" 'first operand of a larger expression' 'root literal is one operand'
+fi
+rm -rf "${dir}"
+
+# An INDEXED expression used as a key. Its brackets are ordinary anonymous frames
+# and produce no diagnostic; only the `:` after the final closer reveals it.
+dir="$(scratch_tree)"
+insert_field "${dir}" '			["smuggled_field"][0]: 1,'
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'indexed expression key'; then
+	expect_refusal "${dir}" 'keys a field on the call' 'indexed expression key'
+fi
+rm -rf "${dir}"
+
+# NUL in a reference member name. The shell drops it while reading the flattened
+# path, so the name collapses onto the plain `schema` field. Built from
+# codepoints so no control character appears in this file.
+dir="$(scratch_tree)"
+cp "${dir}/${REFERENCE_REL}" "${dir}/before"
+jq '. + { (([0] + ("schema" | explode)) | implode): 1 }' "${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${REFERENCE_REL}"
+if assert_changed "${dir}/before" "${dir}/${REFERENCE_REL}" 'NUL in a reference member name'; then
+	expect_refusal "${dir}" 'cannot represent' 'NUL in a reference member name'
+fi
+rm -rf "${dir}"
+
 if [ "${failures}" -ne 0 ]; then
 	echo "update-manifest shape guard test: ${failures} FAILED" >&2
 	exit 1
