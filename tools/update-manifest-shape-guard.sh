@@ -71,10 +71,10 @@ emitted_paths() {
 					# early leaves the remainder of the string being scanned as
 					# structure, where its `,`/`}`/`]`/`#` desynchronize depth and
 					# fields are emitted under the wrong parent — silently.
-					tok = ""; k = i + 1; closed = 0
+					tok = ""; k = i + 1; closed = 0; escaped = 0
 					while (k <= n) {
 						ch = substr(line, k, 1)
-						if (ch == "\\") { k += 2; continue }
+						if (ch == "\\") { escaped = 1; k += 2; continue }
 						if (ch == "\"") { closed = 1; break }
 						tok = tok ch
 						k++
@@ -88,7 +88,14 @@ emitted_paths() {
 						exit
 					}
 					i = k
-					if (substr(line, i + 1) ~ /^[[:space:]]*:/) pending = tok
+					if (substr(line, i + 1) ~ /^[[:space:]]*:/) {
+						# The escape is DROPPED by the walk above, so `"\tschema"` and
+						# `schema` both read as `schema` and dedup into one field while
+						# JCS would publish two. Decoding escapes here would mean
+						# reimplementing them; refusing says so instead.
+						if (escaped) print "!escaped-key\t" tok
+						pending = tok
+					}
 				} else if (c == "(") {
 					# The value is a CALL, so any `[`/`{` after this belongs to its
 					# arguments, not to the key. Without this, `build_targets([])`
@@ -96,12 +103,21 @@ emitted_paths() {
 					# parser can read — and it cannot read what the helper returns.
 					if (pending != "") { emit(pending, "V"); pending = "" }
 				} else if (c == "{" || c == "[") {
-					if (pending != "") { emit(pending, "C"); push(pending, nout); pending = "" }
-					else push("", nout)
+					if (pending != "") { emit(pending, "C"); push(pending, nout - 1); pending = "" }
+					else push("", -1)
 					depth++
 				} else if (c == "}" || c == "]") {
 					if (pending != "") { emit(pending, "V"); pending = "" }
-					depth--; pop()
+					depth--
+					# A literal only classifies the value when it IS the whole value.
+					# `[] if false else TARGETS` opens with one, and the runtime branch
+					# can return populated targets whose fields never appear here — so
+					# anything other than a separator after the closer downgrades the
+					# key to unreadable.
+					tail = substr(line, i + 1)
+					sub(/^[[:space:]]+/, "", tail)
+					if (tail != "" && tail !~ /^[,}\]]/ && tail !~ /^#/) demote()
+					pop()
 					if (depth == 0) { started = 2; exit }
 				} else if (c == ",") {
 					if (pending != "") { emit(pending, "V"); pending = "" }
@@ -127,8 +143,11 @@ emitted_paths() {
 				}
 			}
 		}
-		function push(name, mark) { stack[np] = name; np++ }
+		# Frames remember which output row is their own key, so a collection that
+		# turns out not to be the whole value can downgrade that row on close.
+		function push(name, mark) { stack[np] = name; owner[np] = mark; np++ }
 		function pop() { if (np > 0) np-- }
+		function demote() { if (np > 0 && owner[np - 1] >= 0) kindout[owner[np - 1]] = "V" }
 		function emit(key, kind,   p, k) {
 			p = ""
 			for (k = 0; k < np; k++) if (stack[k] != "") p = p stack[k] "."
@@ -225,6 +244,11 @@ main() {
 	computed="$(awk -F '\t' '$1 == "!nonliteral-key" { printf "%s ", $2 }' "$SCRATCH_DIR/raw-kinds")"
 	if [ -n "$computed" ]; then
 		fail "the manifest literal in $MANIFEST_SOURCE keys a field on the identifier(s) ${computed}rather than a quoted name. This guard cannot resolve what field that publishes, so it would ship unchecked against $SHAPE_REFERENCE. Use a quoted key."
+	fi
+	local escaped_keys
+	escaped_keys="$(awk -F '\t' '$1 == "!escaped-key" { printf "%s ", $2 }' "$SCRATCH_DIR/raw-kinds")"
+	if [ -n "$escaped_keys" ]; then
+		fail "the manifest literal in $MANIFEST_SOURCE names a field with an escape sequence (read here as ${escaped_keys}with the escape dropped). Two keys differing only by an escape would collapse into one here while the published JSON carries both, so the extra field would never be checked against $SHAPE_REFERENCE. Use a key with no escapes."
 	fi
 	if grep -q '^!unterminated-string' "$SCRATCH_DIR/raw-kinds"; then
 		fail "a quoted value in the manifest literal of $MANIFEST_SOURCE does not close on its own line. This guard reads the literal line by line, so it cannot tell where such a value ends — everything after it would be scanned as structure and attributed to the wrong field. Keep manifest values on one line."

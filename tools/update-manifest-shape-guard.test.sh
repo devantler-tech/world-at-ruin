@@ -427,6 +427,32 @@ if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'local named like a r
 fi
 rm -rf "${dir}"
 
+# A key carrying an escape. The walk drops the escape, so `"\tschema"` reads as
+# `schema`, collapses onto the real one, and the extra field the published JSON
+# actually carries is never checked.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+awk '!seen && /"schema": SCHEMA,/ { print "\t\t\t\"\\tschema\": 999,"; seen = 1 } { print }' \
+	"${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'escaped manifest key'; then
+	expect_refusal "${dir}" 'escape sequence' 'escaped manifest key'
+fi
+rm -rf "${dir}"
+
+# A composite value that merely OPENS with a literal. Classifying the value at
+# its opener accepts `[] if false else TARGETS`, whose runtime branch can return
+# populated targets that never appear here.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+sed 's/"rollback_targets": \[\],/"rollback_targets": [] if false else TARGETS,/' \
+	"${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'literal is only the start of the value'; then
+	expect_refusal "${dir}" 'no longer builds it as a literal' 'literal is only the start of the value'
+fi
+rm -rf "${dir}"
+
 if [ "${failures}" -ne 0 ]; then
 	echo "update-manifest shape guard test: ${failures} FAILED" >&2
 	exit 1
