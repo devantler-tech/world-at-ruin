@@ -355,7 +355,7 @@ sed 's/"rollback_targets": \[\],/"rollback_targets": build_targets([]),/' \
 	"${dir}/before" >"${dir}/mutated"
 mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
 if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'call with a literal argument'; then
-	expect_refusal "${dir}" 'rollback_targets' 'call with a literal argument'
+	expect_refusal "${dir}" 'no longer builds it as a literal' 'call with a literal argument'
 fi
 rm -rf "${dir}"
 
@@ -389,7 +389,7 @@ rm -rf "${dir}"
 # refused for the fields it no longer explains, BY NAME.
 dir="$(scratch_tree)"
 cp "${dir}/${LEDGER_REL}" "${dir}/before"
-grep '^#' "${dir}/before" >"${dir}/mutated"
+grep '^#' "${dir}/before" >"${dir}/mutated" || true
 mv "${dir}/mutated" "${dir}/${LEDGER_REL}"
 if assert_changed "${dir}/before" "${dir}/${LEDGER_REL}" 'emptied ledger'; then
 	expect_refusal "${dir}" 'does not explain' 'emptied ledger'
@@ -399,6 +399,31 @@ if assert_changed "${dir}/before" "${dir}/${LEDGER_REL}" 'emptied ledger'; then
 		fail "emptied ledger: refused for being empty rather than for the fields it stopped explaining — an empty ledger is the valid fully-graduated end state"
 		;;
 	esac
+fi
+rm -rf "${dir}"
+
+# A quoted value that never closes on its line. Abandoning the line silently
+# leaves the rest of the file scanned as structure, attributing fields to the
+# wrong parent — the same silent drift the escaped-quote handling prevents.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+sed 's|"channel": CHANNEL,|"channel": "unterminated,|' "${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'unterminated quoted value'; then
+	expect_refusal "${dir}" 'does not close on its own line' 'unterminated quoted value'
+fi
+rm -rf "${dir}"
+
+# A local whose NAME contains "return". Matching the opener as a substring would
+# accept `var returned_manifest := {` — precisely the construct the direct-return
+# check exists to refuse.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+awk '/^\treturn \{$/ && !seen { print "\tvar returned_manifest := {"; seen = 1; next } { print }' \
+	"${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'local named like a return'; then
+	expect_refusal "${dir}" 'not returned directly' 'local named like a return'
 fi
 rm -rf "${dir}"
 

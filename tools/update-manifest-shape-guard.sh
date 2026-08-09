@@ -79,7 +79,14 @@ emitted_paths() {
 						tok = tok ch
 						k++
 					}
-					if (!closed) break
+					if (!closed) {
+						# The token never terminated on this line. Continuing would
+						# scan the rest of the file as structure and emit paths under
+						# the wrong parent with no error — the same silent drift the
+						# escaped-quote handling above exists to prevent.
+						print "!unterminated-string\t" tok
+						exit
+					}
 					i = k
 					if (substr(line, i + 1) ~ /^[[:space:]]*:/) pending = tok
 				} else if (c == "(") {
@@ -204,12 +211,11 @@ main() {
 		/"manifest"[[:space:]]*:[[:space:]]*\{[[:space:]]*$/ { print last; exit }
 		/\{[[:space:]]*$/ { last = $0 }
 	' "$MANIFEST_SOURCE")"
-	case "$opener" in
-	*return*) ;;
-	*)
+	# Matched as a STATEMENT, not a substring: `var returned_manifest := {`
+	# contains "return" and is exactly the construct this refuses.
+	if ! printf '%s' "$opener" | grep -qE '^[[:space:]]*return[[:space:]]*\{[[:space:]]*$'; then
 		fail "the manifest literal in $MANIFEST_SOURCE is not returned directly — it opens under '$(printf '%s' "$opener" | sed 's/^[[:space:]]*//')'. A literal bound to a local can be mutated before it is returned, and neither this guard nor the emitter's canonical-form test would see the addition. Return the literal directly."
-		;;
-	esac
+	fi
 
 	SCRATCH_DIR="$(mktemp -d)"
 	trap cleanup EXIT
@@ -219,6 +225,9 @@ main() {
 	computed="$(awk -F '\t' '$1 == "!nonliteral-key" { printf "%s ", $2 }' "$SCRATCH_DIR/raw-kinds")"
 	if [ -n "$computed" ]; then
 		fail "the manifest literal in $MANIFEST_SOURCE keys a field on the identifier(s) ${computed}rather than a quoted name. This guard cannot resolve what field that publishes, so it would ship unchecked against $SHAPE_REFERENCE. Use a quoted key."
+	fi
+	if grep -q '^!unterminated-string' "$SCRATCH_DIR/raw-kinds"; then
+		fail "a quoted value in the manifest literal of $MANIFEST_SOURCE does not close on its own line. This guard reads the literal line by line, so it cannot tell where such a value ends — everything after it would be scanned as structure and attributed to the wrong field. Keep manifest values on one line."
 	fi
 	grep -v '^!' <"$SCRATCH_DIR/raw-kinds" >"$SCRATCH_DIR/emitted-kinds" || true
 	cut -f1 <"$SCRATCH_DIR/emitted-kinds" | LC_ALL=C sort -u >"$SCRATCH_DIR/emitted"
