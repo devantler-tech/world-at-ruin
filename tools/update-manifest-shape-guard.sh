@@ -156,13 +156,17 @@ emitted_paths() {
 					# followed by `)`, so neither branch sees a key while JCS publishes
 					# whatever the call returns.
 					else if (rest ~ /^\(/) {
-						d2 = 0
+						d2 = 0; balanced = 0
 						for (q = k; q <= n; q++) {
 							cq = substr(line, q, 1)
 							if (cq == "(") d2++
-							else if (cq == ")") { d2--; if (d2 == 0) break }
+							else if (cq == ")") { d2--; if (d2 == 0) { balanced = 1; break } }
 						}
-						if (substr(line, q + 1) ~ /^[[:space:]]*:/) print "D\tkey-expression\t" word
+						# Unbalanced on this line means the expression continues onto the
+						# next — `StringName(` … `): 1`. The scan is line-oriented, so it
+						# cannot tell whether a key follows; refuse rather than skip.
+						if (!balanced) print "D\tkey-expression\t" word "(unterminated)"
+						else if (substr(line, q + 1) ~ /^[[:space:]]*:/) print "D\tkey-expression\t" word
 					}
 					i = k - 1
 				} else if (c == "#") {
@@ -209,11 +213,17 @@ reference_paths() {
 # `save_schema.min` becomes the documented nested one and dedups away, so the
 # reference could promise a field that is neither emitted nor ledgered and the
 # reverse-direction check would never see it. An empty name vanishes entirely.
+#
+# A RECORD DELIMITER is the same problem one level down: paths travel between
+# these checks as lines in a file, so a name carrying a newline splits into two
+# rows and can match two unrelated existing paths — `"key\nsignature"` becomes
+# the deferred `key` and `signature` and disappears.
 reference_unrepresentable_keys() {
 	local source="$1"
 	jq -er '
 		[paths | map(select(type == "string")) | .[]]
-		| unique | .[] | select(length == 0 or (index(".") != null))
+		| unique | .[]
+		| select(length == 0 or (index(".") != null) or test("[\\n\\r\\t]"))
 	' "$source" 2>/dev/null || true
 }
 
@@ -287,15 +297,18 @@ main() {
 	# manifest inline — the same shape `build()` already uses for its refusals —
 	# would publish fields this guard never looks at.
 	#
-	# Both spellings, because GDScript accepts single quotes and a branch written
-	# `return {'manifest': {'x': 1}, 'error': ''}` is code this scan never visits.
-	local q="[\"']"
-	local other_manifests
-	other_manifests="$(grep -nE "${q}manifest${q}[[:space:]]*:[[:space:]]*\{" "$MANIFEST_SOURCE" |
-		grep -vE "${q}manifest${q}[[:space:]]*:[[:space:]]*\{[[:space:]]*\}" |
-		grep -vE "${q}manifest${q}[[:space:]]*:[[:space:]]*\{[[:space:]]*$" || true)"
-	if [ -n "$other_manifests" ]; then
-		fail "$MANIFEST_SOURCE has a \"manifest\" dictionary this guard does not read, at line(s) $(printf '%s' "$other_manifests" | cut -d: -f1 | tr '\n' ' '). Only the multi-line literal is scanned, so any other branch returning a populated manifest would publish fields unchecked. Every other \"manifest\" must be empty."
+	# Stated as a WHITELIST over every dictionary-returning statement rather than
+	# a search for other `"manifest"` keys. A blacklist has to anticipate each
+	# spelling the key could take — single quotes, `StringName("manifest")`, any
+	# other expression — and each one missed is a branch publishing an unchecked
+	# manifest. A return is acceptable only if it is the scanned literal itself or
+	# the exact empty-manifest refusal shape; anything else refuses by line.
+	local unexpected_returns
+	unexpected_returns="$(grep -nE '^[[:space:]]*return[[:space:]]*\{' "$MANIFEST_SOURCE" |
+		grep -vE '^[0-9]+:[[:space:]]*return[[:space:]]*\{[[:space:]]*$' |
+		grep -vE '^[0-9]+:[[:space:]]*return[[:space:]]*\{"manifest":[[:space:]]*\{\},[[:space:]]*"error":' || true)"
+	if [ -n "$unexpected_returns" ]; then
+		fail "$MANIFEST_SOURCE returns a dictionary this guard does not read, at line(s) $(printf '%s' "$unexpected_returns" | cut -d: -f1 | tr '\n' ' '). Only the multi-line literal is scanned, so any other branch returning a populated manifest would publish fields unchecked. A return must be either that literal or the empty-manifest refusal form \`return {\"manifest\": {}, \"error\": …}\`."
 	fi
 
 	SCRATCH_DIR="$(mktemp -d)"

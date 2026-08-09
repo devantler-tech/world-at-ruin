@@ -567,6 +567,56 @@ if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'single-quoted second
 fi
 rm -rf "${dir}"
 
+# A call key split across LINES. The scan is line-oriented, so it cannot see the
+# closing parenthesis and must refuse rather than skip the entry.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+awk '
+	!seen && /"schema": SCHEMA,/ {
+		print "\t\t\tStringName("
+		print "\t\t\t\t\"smuggled_field\""
+		print "\t\t\t): 1,"
+		seen = 1
+	}
+	{ print }
+' "${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'multiline call key'; then
+	expect_refusal "${dir}" 'keys a field on the call' 'multiline call key'
+fi
+rm -rf "${dir}"
+
+# An alternate return whose `manifest` key is itself an expression. Searching for
+# spellings of the key cannot anticipate them all; only the two accepted return
+# shapes are allowed, so this refuses without needing to recognise the key.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+awk '
+	!seen && /^\tvar version: String = DevLog.VERSION$/ {
+		print "\tif false:"
+		print "\t\treturn {StringName(\"manifest\"): {\"smuggled_field\": 1}, \"error\": \"\"}"
+		seen = 1
+	}
+	{ print }
+' "${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'computed key on an alternate return'; then
+	expect_refusal "${dir}" 'returns a dictionary this guard does not read' 'computed key on an alternate return'
+fi
+rm -rf "${dir}"
+
+# A reference member name carrying a RECORD DELIMITER. Paths travel between these
+# checks as lines, so `"key\nsignature"` splits into two rows and matches the two
+# unrelated deferred paths of those names, disappearing entirely.
+dir="$(scratch_tree)"
+cp "${dir}/${REFERENCE_REL}" "${dir}/before"
+jq '. + {"key\nsignature": 1}' "${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${REFERENCE_REL}"
+if assert_changed "${dir}/before" "${dir}/${REFERENCE_REL}" 'newline in a reference member name'; then
+	expect_refusal "${dir}" 'cannot represent' 'newline in a reference member name'
+fi
+rm -rf "${dir}"
+
 if [ "${failures}" -ne 0 ]; then
 	echo "update-manifest shape guard test: ${failures} FAILED" >&2
 	exit 1
