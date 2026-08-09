@@ -52,6 +52,12 @@ class_name UpdateManifest
 ## manifest can learn it is out of date and say so, and can go no further. That is
 ## the correct state while there is genuinely nothing to deliver.
 ##
+## Each omission above is also recorded, machine-readably, in
+## tools/update-manifest-deferred-fields.tsv. `update-manifest-shape-guard.sh`
+## holds the two in agreement: a field emitted here must be declared by the shape
+## reference, and a field the reference declares must be emitted here or carry a
+## reason there. Adding a field below without updating both fails CI.
+##
 ## See docs/design/distribution-and-self-update.md and the shape reference
 ## docs/design/client-update-manifest.example.json.
 

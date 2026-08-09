@@ -62,6 +62,8 @@ jobs:
         run: ./tools/preview-flags.test.sh
       - name: Manifest sequence is monotonic in release order and fail-closed
         run: ./tools/manifest-sequence.test.sh
+      - name: Update-manifest shape guard refuses drift and never passes vacuously
+        run: ./tools/update-manifest-shape-guard.test.sh
       - name: Wire protocol rollout guard is expand-first and fail-closed
         run: ./tools/wire-protocol-rollout-guard.test.sh
       - name: Lavapipe evidence refuses a fallback capture
@@ -222,6 +224,11 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
         run: ./tools/save-capability-vocabulary-guard.sh
+      - name: Published manifest and its shape reference agree
+        # Unconditional, unlike its base-anchored neighbours: this is an
+        # invariant over the tree as it stands, not a question about what a
+        # change added, so there is no base commit to anchor it to.
+        run: ./tools/update-manifest-shape-guard.sh
       - name: Vault ledger is append-only (no-resets law)
         # The progression sibling of the recipe ledger above (#249). Same
         # reasoning: the in-game guard anchors the required vault-fixture range
