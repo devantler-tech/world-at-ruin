@@ -617,6 +617,51 @@ if assert_changed "${dir}/before" "${dir}/${REFERENCE_REL}" 'newline in a refere
 fi
 rm -rf "${dir}"
 
+# A bare PARENTHESISED key, with no leading identifier. The opening parenthesis
+# reads as the start of a value and the quoted token is followed by `)`, so
+# neither branch sees a key.
+dir="$(scratch_tree)"
+insert_field "${dir}" '			("smuggled_field"): 1,'
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'parenthesised key'; then
+	expect_refusal "${dir}" 'keys a field on the call' 'parenthesised key'
+fi
+rm -rf "${dir}"
+
+# A SECOND multi-line dictionary return. The refusal-shape check exempts any
+# `return {` at end of line, so a second one keyed by an expression would be
+# whitelisted there and never visited by the scan.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+awk '
+	!seen && /^\tvar version: String = DevLog.VERSION$/ {
+		print "\tif false:"
+		print "\t\treturn {"
+		print "\t\t\tStringName(\"manifest\"): {\"smuggled_field\": 1},"
+		print "\t\t\t\"error\": \"\","
+		print "\t\t}"
+		seen = 1
+	}
+	{ print }
+' "${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'second multi-line return'; then
+	expect_refusal "${dir}" 'multi-line dictionary returns' 'second multi-line return'
+fi
+rm -rf "${dir}"
+
+# A reference member whose name looks like a command-line OPTION. Passed to grep
+# without `--`, GNU grep parses it as a flag: `--help` prints help and exits 0,
+# so the path reads as emitted and the promise is never checked. BSD grep does
+# not, which is exactly why this needs a case rather than a local spot-check.
+dir="$(scratch_tree)"
+cp "${dir}/${REFERENCE_REL}" "${dir}/before"
+jq '. + {"--help": 1}' "${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${REFERENCE_REL}"
+if assert_changed "${dir}/before" "${dir}/${REFERENCE_REL}" 'option-like reference member'; then
+	expect_refusal "${dir}" '--help' 'option-like reference member'
+fi
+rm -rf "${dir}"
+
 if [ "${failures}" -ne 0 ]; then
 	echo "update-manifest shape guard test: ${failures} FAILED" >&2
 	exit 1

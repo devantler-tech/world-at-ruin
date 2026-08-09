@@ -122,6 +122,17 @@ emitted_paths() {
 					# would classify the call result as a literal collection the
 					# parser can read — and it cannot read what the helper returns.
 					if (pending != "") { emit(pending, "V"); pending = "" }
+					# A parenthesised expression can also BE the key — `("x"): 1`, with
+					# or without a leading identifier. Checked here rather than only
+					# after an identifier, so the bare form is covered too.
+					d3 = 0; bal = 0
+					for (q = i; q <= n; q++) {
+						cq = substr(line, q, 1)
+						if (cq == "(") d3++
+						else if (cq == ")") { d3--; if (d3 == 0) { bal = 1; break } }
+					}
+					if (!bal) print "D\tkey-expression\t(unterminated)"
+					else if (substr(line, q + 1) ~ /^[[:space:]]*:/) print "D\tkey-expression\t" substr(line, i, (q - i) + 1)
 				} else if (c == "{" || c == "[") {
 					if (pending != "") { emit(pending, "C"); push(pending, nout - 1); pending = "" }
 					else push("", -1)
@@ -311,6 +322,15 @@ main() {
 		fail "$MANIFEST_SOURCE returns a dictionary this guard does not read, at line(s) $(printf '%s' "$unexpected_returns" | cut -d: -f1 | tr '\n' ' '). Only the multi-line literal is scanned, so any other branch returning a populated manifest would publish fields unchecked. A return must be either that literal or the empty-manifest refusal form \`return {\"manifest\": {}, \"error\": …}\`."
 	fi
 
+	# …and exactly ONE of those returns may be the multi-line form. The exemption
+	# above admits any `return {` at end of line, which would whitelist a SECOND
+	# multi-line dictionary — one keyed by an expression, carrying a populated
+	# manifest, and never visited by the scan because it has no literal anchor.
+	local multiline_returns
+	multiline_returns="$(grep -cE '^[[:space:]]*return[[:space:]]*\{[[:space:]]*$' "$MANIFEST_SOURCE" || true)"
+	[ "$multiline_returns" -eq 1 ] ||
+		fail "$MANIFEST_SOURCE has $multiline_returns multi-line dictionary returns; exactly one is readable here. A second would be exempted from the refusal-shape check above while the scan never visits it, so it could carry a populated manifest unchecked."
+
 	SCRATCH_DIR="$(mktemp -d)"
 	trap cleanup EXIT
 
@@ -387,7 +407,7 @@ main() {
 	: >"$covered_any"
 	local path entry matched
 	while IFS= read -r path; do
-		if grep -qxF "$path" "$SCRATCH_DIR/emitted"; then
+		if grep -qxF -- "$path" "$SCRATCH_DIR/emitted"; then
 			continue
 		fi
 		matched=''
@@ -420,7 +440,7 @@ main() {
 	# that is a literal but has started PUBLISHING those fields, is caught below.
 	local opaque='' entry_kind
 	while IFS= read -r entry; do
-		grep -qxF "$entry" "$SCRATCH_DIR/emitted" || continue
+		grep -qxF -- "$entry" "$SCRATCH_DIR/emitted" || continue
 		entry_kind="$(awk -F '\t' -v p="$entry" '$1 == p { print $2; exit }' "$SCRATCH_DIR/emitted-kinds")"
 		[ "$entry_kind" = "C" ] || opaque="$opaque $entry"
 	done <"$SCRATCH_DIR/covered-unique"
@@ -450,7 +470,7 @@ main() {
 	# renamed, and the row outlived it.
 	local dead=''
 	while IFS= read -r entry; do
-		grep -qxF "$entry" "$covered_any" || dead="$dead $entry"
+		grep -qxF -- "$entry" "$covered_any" || dead="$dead $entry"
 	done <"$SCRATCH_DIR/ledger"
 	if [ -n "$dead" ]; then
 		fail "$DEFERRED_LEDGER explains$dead, which $SHAPE_REFERENCE no longer declares as unpublished. Drop the stale row."
