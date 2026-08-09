@@ -73,6 +73,23 @@ expect_refusal() {
 	esac
 }
 
+# Run the guard in a scratch tree; expect it to ACCEPT. Asserts the PASS line
+# rather than the exit status alone, so a zero exit with unexpected output cannot
+# be read as acceptance.
+expect_pass() {
+	local dir="$1" what="$2"
+	local output status=0
+	output="$(cd "${dir}" && ./"${GUARD_REL}" 2>&1)" || status=$?
+	if [ "${status}" -ne 0 ]; then
+		fail "${what}: the guard REFUSED valid input. Got: ${output}"
+		return
+	fi
+	case "${output}" in
+	*PASS*) ;;
+	*) fail "${what}: exited 0 without a PASS line, got: ${output}" ;;
+	esac
+}
+
 # --- the positive control: the harness itself works ---
 
 control_dir="$(scratch_tree)"
@@ -179,8 +196,13 @@ cp "${dir}/${MANIFEST_REL}" "${dir}/before"
 # This substring occurs exactly once.
 grep -v '"schema": SCHEMA,' "${dir}/before" >"${dir}/mutated"
 mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+# The needle is the guard's own distinctive phrase, NOT the bare word `schema`:
+# the shape reference declares `save_schema` and `save_schema.min`, so a bare
+# match would also be satisfied by an unrelated refusal that merely lists one of
+# those paths — the case would then pass while reporting a failure it did not
+# cause, which is the exact defect this file's header sets out to prevent.
 if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'manifest lost schema'; then
-	expect_refusal "${dir}" 'schema' 'manifest lost schema'
+	expect_refusal "${dir}" 'reads first' 'manifest lost schema'
 fi
 rm -rf "${dir}"
 
@@ -240,7 +262,56 @@ if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'multi-element rollba
 	multi_output="$(cd "${dir}" && ./"${GUARD_REL}" 2>&1)" || multi_status=$?
 	if [ "${multi_status}" -ne 0 ]; then
 		fail "multi-element rollback catalogue: a valid two-target catalogue was REFUSED — the array key is being popped by its first element. Got: ${multi_output}"
+	else
+		# Exit status alone would accept a zero exit with unexpected output, making
+		# this case weaker than the positive control it depends on.
+		case "${multi_output}" in
+		*PASS*) ;;
+		*) fail "multi-element rollback catalogue: exited 0 without a PASS line, got: ${multi_output}" ;;
+		esac
 	fi
+fi
+rm -rf "${dir}"
+
+# --- inputs where `#` is not a comment ---
+
+# A `#` inside a quoted manifest value. Stripping comments line-wide before the
+# quote-aware scan cuts the string short, takes the terminating `,` with it, and
+# the field silently vanishes from the guard's view — measured: `channel`
+# disappeared, leaving 20 paths instead of 21, with no error anywhere.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+sed 's|"channel": CHANNEL,|"channel": "live#anchor",|' "${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'hash inside a quoted value'; then
+	expect_pass "${dir}" 'hash inside a quoted value'
+fi
+rm -rf "${dir}"
+
+# A `#` inside a ledger REASON is free text, not a comment. Issue references are
+# the common case, and truncating there can empty a reason that was written.
+dir="$(scratch_tree)"
+cp "${dir}/${LEDGER_REL}" "${dir}/before"
+printf 'shell_authorization\tblocked on the offline root #490 and nothing else\n' \
+	>"${dir}/extra"
+grep -v '^shell_authorization	' "${dir}/before" >"${dir}/kept"
+cat "${dir}/kept" "${dir}/extra" >"${dir}/${LEDGER_REL}"
+if assert_changed "${dir}/before" "${dir}/${LEDGER_REL}" 'hash inside a ledger reason'; then
+	expect_pass "${dir}" 'hash inside a ledger reason'
+fi
+rm -rf "${dir}"
+
+# --- overlapping ledger rows ---
+
+# Two rows may legitimately cover the same field, e.g. a broad `pack` beside the
+# existing `pack.full`. Recording only the first match would leave the other
+# looking unused, and the stale-row check would refuse while naming a row that is
+# entirely correct.
+dir="$(scratch_tree)"
+cp "${dir}/${LEDGER_REL}" "${dir}/before"
+printf 'pack\ta broad row covering the whole withheld pack block\n' >>"${dir}/${LEDGER_REL}"
+if assert_changed "${dir}/before" "${dir}/${LEDGER_REL}" 'overlapping ledger rows'; then
+	expect_pass "${dir}" 'overlapping ledger rows'
 fi
 rm -rf "${dir}"
 

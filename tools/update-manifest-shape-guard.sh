@@ -62,7 +62,6 @@ emitted_paths() {
 		}
 		started == 1 {
 			line = $0
-			sub(/#.*$/, "", line)
 			n = length(line)
 			for (i = 1; i <= n; i++) {
 				c = substr(line, i, 1)
@@ -82,6 +81,14 @@ emitted_paths() {
 					if (depth == 0) { started = 2; exit }
 				} else if (c == ",") {
 					if (pending != "") { emit(pending, "V"); pending = "" }
+				} else if (c == "#") {
+					# A comment runs to end of line. Handled HERE rather than by
+					# stripping the line first: a `#` inside a quoted value is
+					# consumed by the quote branch above, so stripping ahead of the
+					# scan would cut a string short, drop the terminating `,`/`}`/`]`
+					# with it, and desynchronize depth — emitting paths under the
+					# wrong parent with no error at all.
+					break
 				}
 			}
 		}
@@ -123,7 +130,7 @@ covers() {
 # exists to prevent.
 ledger_rows_without_reason() {
 	local source="$1"
-	sed -e 's/#.*$//' "$source" |
+	sed -e 's/^[[:space:]]*#.*$//' "$source" |
 		awk '
 			/^[[:space:]]*$/ { next }
 			{
@@ -139,7 +146,7 @@ ledger_rows_without_reason() {
 
 ledger_paths() {
 	local source="$1"
-	sed -e 's/#.*$//' "$source" |
+	sed -e 's/^[[:space:]]*#.*$//' "$source" |
 		awk -F '\t' 'NF >= 2 && $1 != "" && $2 ~ /[^[:space:]]/ { print $1 }' |
 		LC_ALL=C sort -u
 }
@@ -198,16 +205,18 @@ main() {
 			continue
 		fi
 		matched=''
+		# EVERY covering entry is recorded, not just the first. Stopping at the
+		# first match would leave a second, equally-correct row unrecorded, and
+		# the stale-row check below would then refuse while naming a row that is
+		# right — reachable as soon as a broad `pack` row joins `pack.full`.
 		while IFS= read -r entry; do
 			if covers "$path" "$entry"; then
 				matched="$entry"
-				break
+				printf '%s\n' "$entry" >>"$covered_any"
 			fi
 		done <"$SCRATCH_DIR/ledger"
 		if [ -z "$matched" ]; then
 			unaccounted="$unaccounted $path"
-		else
-			printf '%s\n' "$matched" >>"$covered_any"
 		fi
 	done <"$SCRATCH_DIR/reference"
 
