@@ -66,10 +66,21 @@ emitted_paths() {
 			for (i = 1; i <= n; i++) {
 				c = substr(line, i, 1)
 				if (c == "\"") {
-					j = index(substr(line, i + 1), "\"")
-					if (j == 0) break
-					tok = substr(line, i + 1, j - 1)
-					i += j
+					# Walked rather than found with index(), so a BACKSLASH-ESCAPED
+					# quote inside the string does not end the token early. Ending it
+					# early leaves the remainder of the string being scanned as
+					# structure, where its `,`/`}`/`]`/`#` desynchronize depth and
+					# fields are emitted under the wrong parent — silently.
+					tok = ""; k = i + 1; closed = 0
+					while (k <= n) {
+						ch = substr(line, k, 1)
+						if (ch == "\\") { k += 2; continue }
+						if (ch == "\"") { closed = 1; break }
+						tok = tok ch
+						k++
+					}
+					if (!closed) break
+					i = k
 					if (substr(line, i + 1) ~ /^[[:space:]]*:/) pending = tok
 				} else if (c == "{" || c == "[") {
 					if (pending != "") { emit(pending, "C"); push(pending, nout); pending = "" }

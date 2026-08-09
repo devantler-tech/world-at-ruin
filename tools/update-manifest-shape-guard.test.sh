@@ -282,6 +282,18 @@ if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'hash inside a quoted
 fi
 rm -rf "${dir}"
 
+# A backslash-escaped quote inside a manifest value. Ending the token at the
+# escaped quote leaves the rest of the string scanned as structure, where its
+# punctuation desynchronizes depth and fields land under the wrong parent.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+sed 's|"channel": CHANNEL,|"channel": "li\\"ve, }] #x",|' "${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'escaped quote inside a value'; then
+	expect_pass "${dir}" 'escaped quote inside a value'
+fi
+rm -rf "${dir}"
+
 # A `#` inside a ledger REASON is free text, not a comment. Issue references are
 # the common case, and truncating there can empty a reason that was written.
 dir="$(scratch_tree)"
