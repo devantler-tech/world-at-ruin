@@ -343,6 +343,65 @@ if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'deferred block start
 fi
 rm -rf "${dir}"
 
+# --- constructs the parser cannot resolve must fail closed ---
+
+# A CALL whose argument is a literal. The `[` belongs to the argument, not to the
+# key, so treating it as the key's own collection classifies whatever the helper
+# returns as readable — and its element fields stay invisible while the row
+# excuses them.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+sed 's/"rollback_targets": \[\],/"rollback_targets": build_targets([]),/' \
+	"${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'call with a literal argument'; then
+	expect_refusal "${dir}" 'rollback_targets' 'call with a literal argument'
+fi
+rm -rf "${dir}"
+
+# A key named by an identifier rather than a quoted string. GDScript allows it,
+# and the field would ship entirely invisible to every check here.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+sed 's/"schema": SCHEMA,/SMUGGLED_KEY: 1,\
+\t\t\t"schema": SCHEMA,/' "${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'computed manifest key'; then
+	expect_refusal "${dir}" 'SMUGGLED_KEY' 'computed manifest key'
+fi
+rm -rf "${dir}"
+
+# The literal bound to a local instead of returned. It can then be mutated before
+# it is returned, and the emitter's canonical-form test cannot catch that either:
+# a builder-side addition moves both sides of its comparison together.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+awk '/^\treturn \{$/ && !seen { print "\tvar built := {"; seen = 1; next } { print }' \
+	"${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'literal not returned directly'; then
+	expect_refusal "${dir}" 'not returned directly' 'literal not returned directly'
+fi
+rm -rf "${dir}"
+
+# An emptied ledger must not be refused merely for being empty — that is the
+# valid end state once every documented field has graduated. It must still be
+# refused for the fields it no longer explains, BY NAME.
+dir="$(scratch_tree)"
+cp "${dir}/${LEDGER_REL}" "${dir}/before"
+grep '^#' "${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${LEDGER_REL}"
+if assert_changed "${dir}/before" "${dir}/${LEDGER_REL}" 'emptied ledger'; then
+	expect_refusal "${dir}" 'does not explain' 'emptied ledger'
+	emptied_output="$(cd "${dir}" && ./"${GUARD_REL}" 2>&1 || true)"
+	case "${emptied_output}" in
+	*"lists no fields"*)
+		fail "emptied ledger: refused for being empty rather than for the fields it stopped explaining — an empty ledger is the valid fully-graduated end state"
+		;;
+	esac
+fi
+rm -rf "${dir}"
+
 if [ "${failures}" -ne 0 ]; then
 	echo "update-manifest shape guard test: ${failures} FAILED" >&2
 	exit 1

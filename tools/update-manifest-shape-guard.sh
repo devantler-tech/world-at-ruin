@@ -82,6 +82,12 @@ emitted_paths() {
 					if (!closed) break
 					i = k
 					if (substr(line, i + 1) ~ /^[[:space:]]*:/) pending = tok
+				} else if (c == "(") {
+					# The value is a CALL, so any `[`/`{` after this belongs to its
+					# arguments, not to the key. Without this, `build_targets([])`
+					# would classify the call result as a literal collection the
+					# parser can read — and it cannot read what the helper returns.
+					if (pending != "") { emit(pending, "V"); pending = "" }
 				} else if (c == "{" || c == "[") {
 					if (pending != "") { emit(pending, "C"); push(pending, nout); pending = "" }
 					else push("", nout)
@@ -92,6 +98,17 @@ emitted_paths() {
 					if (depth == 0) { started = 2; exit }
 				} else if (c == ",") {
 					if (pending != "") { emit(pending, "V"); pending = "" }
+				} else if (c ~ /[A-Za-z_]/) {
+					# An identifier. Harmless as a VALUE (`SCHEMA`, `int(...)`), but as
+					# a KEY it names a field this parser cannot resolve — GDScript
+					# allows `SOME_CONST: 1`, and that field would ship completely
+					# invisible to every check here. Fail closed on it rather than
+					# report agreement about a shape we could not read.
+					word = ""; k = i
+					while (k <= n && substr(line, k, 1) ~ /[A-Za-z0-9_]/) { word = word substr(line, k, 1); k++ }
+					rest = substr(line, k)
+					if (rest ~ /^[[:space:]]*:/) print "!nonliteral-key\t" word
+					i = k - 1
 				} else if (c == "#") {
 					# A comment runs to end of line. Handled HERE rather than by
 					# stripping the line first: a `#` inside a quoted value is
@@ -177,10 +194,33 @@ main() {
 	[ "$anchors" -eq 1 ] ||
 		fail "expected exactly one multi-line \"manifest\": { literal in $MANIFEST_SOURCE, found $anchors — the emitted field set cannot be read unambiguously"
 
+	# The literal must be RETURNED DIRECTLY. Bound to a local first, it can be
+	# mutated before it is returned — `built["manifest"]["x"] = 1` — and this scan
+	# would still see only the original literal and report agreement. The emitter
+	# test cannot catch that either: a builder-side addition changes the canonical
+	# bytes it compares against, so both sides move together and it passes.
+	local opener
+	opener="$(awk '
+		/"manifest"[[:space:]]*:[[:space:]]*\{[[:space:]]*$/ { print last; exit }
+		/\{[[:space:]]*$/ { last = $0 }
+	' "$MANIFEST_SOURCE")"
+	case "$opener" in
+	*return*) ;;
+	*)
+		fail "the manifest literal in $MANIFEST_SOURCE is not returned directly — it opens under '$(printf '%s' "$opener" | sed 's/^[[:space:]]*//')'. A literal bound to a local can be mutated before it is returned, and neither this guard nor the emitter's canonical-form test would see the addition. Return the literal directly."
+		;;
+	esac
+
 	SCRATCH_DIR="$(mktemp -d)"
 	trap cleanup EXIT
 
-	emitted_paths "$MANIFEST_SOURCE" >"$SCRATCH_DIR/emitted-kinds"
+	emitted_paths "$MANIFEST_SOURCE" >"$SCRATCH_DIR/raw-kinds"
+	local computed
+	computed="$(awk -F '\t' '$1 == "!nonliteral-key" { printf "%s ", $2 }' "$SCRATCH_DIR/raw-kinds")"
+	if [ -n "$computed" ]; then
+		fail "the manifest literal in $MANIFEST_SOURCE keys a field on the identifier(s) ${computed}rather than a quoted name. This guard cannot resolve what field that publishes, so it would ship unchecked against $SHAPE_REFERENCE. Use a quoted key."
+	fi
+	grep -v '^!' <"$SCRATCH_DIR/raw-kinds" >"$SCRATCH_DIR/emitted-kinds" || true
 	cut -f1 <"$SCRATCH_DIR/emitted-kinds" | LC_ALL=C sort -u >"$SCRATCH_DIR/emitted"
 	reference_paths "$SHAPE_REFERENCE" >"$SCRATCH_DIR/reference" ||
 		fail "$SHAPE_REFERENCE is not readable JSON"
@@ -207,9 +247,11 @@ main() {
 		fail "$DEFERRED_LEDGER withholds ${reasonless}with no explanation. An empty reason silences a field without accounting for it, which is the one thing this ledger exists to prevent."
 	fi
 
+	# An EMPTY ledger is a valid end state, not a failure: it means every
+	# documented field has graduated into publication, which is exactly what
+	# removing the last row is supposed to achieve. A field that is withheld
+	# without a row is caught below, by name, so nothing is lost by allowing it.
 	ledger_paths "$DEFERRED_LEDGER" >"$SCRATCH_DIR/ledger"
-	[ -s "$SCRATCH_DIR/ledger" ] ||
-		fail "$DEFERRED_LEDGER lists no fields — every withheld field must carry a reason"
 
 	# Every reference field that is not emitted has to be covered by a ledger
 	# entry: the entry itself, or an ancestor of it.
