@@ -103,6 +103,11 @@ emitted_paths() {
 						# is also the value this scanner uses to mean "no key pending",
 						# so it would never be emitted at all.
 						if (tok == "") print "D\tempty-key\t(empty)"
+						# A RAW delimiter, as opposed to the escape handled above. The
+						# rows this parser emits are tab-separated, so a literal tab in a
+						# member name splits the row into extra columns and the name is
+						# read as something else entirely.
+						if (index(tok, "\t") > 0) print "D\traw-delimiter-key\t(tab)"
 						pending = tok
 					}
 				} else if (c == SQ) {
@@ -173,6 +178,12 @@ emitted_paths() {
 					while (k <= n && substr(line, k, 1) ~ /[A-Za-z0-9_]/) { word = word substr(line, k, 1); k++ }
 					rest = substr(line, k)
 					if (rest ~ /^[[:space:]]*:/) print "D\tnonliteral-key\t" word
+					# An identifier in VALUE position means the value did not begin with
+					# a literal collection, so a `[`/`{` appearing later belongs to an
+					# expression — `TARGETS + []`. Settle the key as unreadable HERE, or
+					# that later bracket would classify the whole expression as a literal
+					# this parser can read.
+					else if (pending != "") { emit(pending, "V"); pending = "" }
 					# A CALL used as a key — `StringName("x"): 1`. The identifier is
 					# followed by `(` rather than `:`, and the quoted token inside is
 					# followed by `)`, so neither branch sees a key while JCS publishes
@@ -333,7 +344,7 @@ main() {
 	# manifest. A return is acceptable only if it is the scanned literal itself or
 	# the exact empty-manifest refusal shape; anything else refuses by line.
 	local unexpected_returns
-	unexpected_returns="$(grep -nE '^[[:space:]]*return[[:space:]]*\{' "$MANIFEST_SOURCE" |
+	unexpected_returns="$(grep -nE '^[[:space:]]*return[[:space:]]*[({]' "$MANIFEST_SOURCE" |
 		grep -vE '^[0-9]+:[[:space:]]*return[[:space:]]*\{[[:space:]]*$' |
 		grep -vE '^[0-9]+:[[:space:]]*return[[:space:]]*\{"manifest":[[:space:]]*\{\},[[:space:]]*"error":' || true)"
 	if [ -n "$unexpected_returns" ]; then
@@ -375,6 +386,8 @@ main() {
 	empty_key="$(diagnosed empty-key)"
 	[ -z "$empty_key" ] ||
 		fail "the manifest literal in $MANIFEST_SOURCE names a field with an EMPTY member name. It is publishable, but it is also the value this scanner uses to mean 'no key pending', so the field would never be emitted or checked. Give it a name."
+	[ -z "$(diagnosed raw-delimiter-key)" ] ||
+		fail "the manifest literal in $MANIFEST_SOURCE names a field containing a RAW tab. The rows this guard emits are tab-separated, so such a name splits into extra columns and is read as a different field entirely. Use a name without one."
 	[ -z "$(diagnosed root-expression)" ] ||
 		fail "the manifest literal in $MANIFEST_SOURCE is only the first operand of a larger expression. The scan validates the literal, but the build would publish whatever the expression evaluates to. Make the literal the whole value."
 	[ -z "$(diagnosed single-quoted)" ] ||

@@ -696,6 +696,52 @@ if assert_changed "${dir}/before" "${dir}/${REFERENCE_REL}" 'NUL in a reference 
 fi
 rm -rf "${dir}"
 
+# A literal as a LATER operand — `TARGETS + []`. The value did not begin with a
+# collection, so the bracket that appears later belongs to an expression whose
+# first operand this parser never inspects.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+sed 's/"rollback_targets": \[\],/"rollback_targets": TARGETS + [],/' "${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'literal as a later operand'; then
+	expect_refusal "${dir}" 'no longer builds it as a literal' 'literal as a later operand'
+fi
+rm -rf "${dir}"
+
+# A PARENTHESISED alternate return. The accepted-shape check has to capture it
+# before it can reject it, so the capture matches `return (` as well as `return {`.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+awk '
+	!seen && /^\tvar version: String = DevLog.VERSION$/ {
+		print "\tif false:"
+		print "\t\treturn ({\"manifest\": {\"smuggled_field\": 1}, \"error\": \"\"})"
+		seen = 1
+	}
+	{ print }
+' "${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'parenthesised alternate return'; then
+	expect_refusal "${dir}" 'returns a dictionary this guard does not read' 'parenthesised alternate return'
+fi
+rm -rf "${dir}"
+
+# A RAW tab inside a member name, as opposed to the escape. The rows this parser
+# emits are tab-separated, so the name splits into extra columns and is read as a
+# different field. Written via awk's `sprintf` so no control character appears here.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+awk '
+	BEGIN { TAB = sprintf("%c", 9) }
+	!seen && /"schema": SCHEMA,/ { print "\t\t\t\"" TAB "schema\": 999,"; seen = 1 }
+	{ print }
+' "${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'raw tab in a member name'; then
+	expect_refusal "${dir}" 'RAW tab' 'raw tab in a member name'
+fi
+rm -rf "${dir}"
+
 if [ "${failures}" -ne 0 ]; then
 	echo "update-manifest shape guard test: ${failures} FAILED" >&2
 	exit 1
