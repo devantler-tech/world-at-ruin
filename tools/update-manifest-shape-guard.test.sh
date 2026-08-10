@@ -111,8 +111,38 @@ awk '
 	{ print }
 ' "${dir}/before" >"${dir}/mutated"
 mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+# The needle carries the SEPARATOR, not the bare field name. A bare `smuggled_field`
+# is satisfied by `smuggled_field— absent from …` exactly as well as by the readable
+# form, so it cannot tell a named field from one run together with its reason — and
+# for a while it could not: every refusal of this kind arrived with the separator
+# missing, and this case passed throughout.
 if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'undeclared emitted field'; then
-	expect_refusal "${dir}" 'smuggled_field' 'undeclared emitted field'
+	expect_refusal "${dir}" 'smuggled_field — absent from' 'undeclared emitted field'
+fi
+rm -rf "${dir}"
+
+# The same refusal carrying MORE THAN ONE undeclared field. The list is built by
+# translating newlines to spaces, and command substitution then strips the trailing
+# one — so the separator can never arrive from the list itself, at either arity.
+# This case pins the multi-field spelling exactly: one space between the two names,
+# and one before the dash. A fix that instead appended a space to each entry would
+# emit `smuggled_one smuggled_two  — absent`, satisfying the single-field case above
+# while doubling the space here.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+awk '
+	!done && /"schema"[[:space:]]*:/ {
+		print
+		print "\t\t\t\"smuggled_one\": 1,"
+		print "\t\t\t\"smuggled_two\": 2,"
+		done = 1
+		next
+	}
+	{ print }
+' "${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'two undeclared emitted fields'; then
+	expect_refusal "${dir}" 'smuggled_one smuggled_two — absent from' 'two undeclared emitted fields'
 fi
 rm -rf "${dir}"
 

@@ -437,7 +437,7 @@ main() {
 	local undocumented
 	undocumented="$(LC_ALL=C comm -23 "$SCRATCH_DIR/emitted" "$SCRATCH_DIR/reference")"
 	if [ -n "$undocumented" ]; then
-		fail "the manifest publishes $(printf '%s' "$undocumented" | tr '\n' ' ')— absent from $SHAPE_REFERENCE. Add the field to the shape reference so the contract an implementer reads matches what the origin serves."
+		fail "the manifest publishes $(printf '%s' "$undocumented" | tr '\n' ' ') — absent from $SHAPE_REFERENCE. Add the field to the shape reference so the contract an implementer reads matches what the origin serves."
 	fi
 
 	local reasonless
