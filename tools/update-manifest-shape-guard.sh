@@ -156,7 +156,25 @@ emitted_paths() {
 					# whose brackets are otherwise just anonymous frames and produce no
 					# diagnostic at all.
 					if (tail ~ /^:/) print "D\tkey-expression\t(collection)"
-					if (tail != "" && tail !~ /^[,}\]:]/ && tail !~ /^#/) demote()
+					# The downgrade alone is not enough, so a diagnostic is emitted
+					# beside it. `demote()` rewrites the kind of the OWNER row to `V`,
+					# and that kind is read in exactly one place: the opaque-block check,
+					# which only ever looks at entries the deferred ledger covers. A
+					# composed block that no ledger row mentions — `"save_schema":
+					# {...} if flag else OTHER` — therefore keeps every child path the
+					# literal already emitted, and those children are then checked
+					# against the shape reference as though they were the published
+					# fields, while the build publishes whatever the expression
+					# evaluates to. The diagnostic makes the case fail closed wherever
+					# it appears, which is the same treatment `root-expression` gets
+					# one branch below for the depth-zero form of the identical defect.
+					# It also covers the frames `demote()` cannot reach at all: an
+					# anonymous frame carries owner -1, so the downgrade is silently
+					# dropped there even when a row would have read it.
+					if (tail != "" && tail !~ /^[,}\]:]/ && tail !~ /^#/) {
+						demote()
+						print "D\tpartial-collection\t" substr(tail, 1, 24)
+					}
 					pop()
 					if (depth == 0) {
 						# The ROOT literal can be the first operand of an expression too —
@@ -498,6 +516,25 @@ main() {
 	if [ -n "$shipped" ]; then
 		fail "$DEFERRED_LEDGER excuses$shipped, but $MANIFEST_SOURCE publishes those fields. A row may only defer what is actually withheld — drop it so the published contents are checked against $SHAPE_REFERENCE."
 	fi
+
+	# The same defect as the two checks above, for a block NO ledger row mentions.
+	# Both of those read the kind that `demote()` writes, and both consult it only
+	# for ledger-covered entries — so `"save_schema": {...} if flag else OTHER`
+	# passes them untouched while every child path the literal emitted is still
+	# compared against the shape reference, reporting agreement about fields the
+	# build never publishes. It is the depth-above-zero twin of `root-expression`.
+	#
+	# 🔴 DELIBERATELY LAST, AND THE ORDER IS THE POINT.
+	#
+	# This diagnostic fires on every composed closer, including the ones the two
+	# checks above diagnose far more precisely — a covered block built by a call,
+	# or opening with a literal. Raised in the diagnostics phase it would preempt
+	# them and answer "make the collection the whole value" where the actual
+	# problem is a ledger row excusing a block that stopped being readable. Running
+	# it here leaves every specific message in front of it and catches exactly the
+	# uncovered remainder that nothing else sees.
+	[ -z "$(diagnosed partial-collection)" ] ||
+		fail "a nested collection in the manifest literal of $MANIFEST_SOURCE is only the first operand of a larger expression. Its element fields are read from the literal while the build publishes whatever that expression evaluates to, so checking them against $SHAPE_REFERENCE proves nothing about what ships. Make the collection the whole value."
 
 	# A ledger entry that explains nothing is stale: the field graduated or was
 	# renamed, and the row outlived it.

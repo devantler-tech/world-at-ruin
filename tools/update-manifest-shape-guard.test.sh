@@ -675,6 +675,27 @@ if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'root literal is one 
 fi
 rm -rf "${dir}"
 
+# A NESTED block as the first operand of an expression, where no deferred-ledger
+# row covers it. The downgrade `demote()` performs is recorded only on the owner
+# row, and that row is consulted for ledger-covered entries alone — so before this
+# was a diagnostic, the block kept every child path the literal emitted and the
+# guard checked those against the reference while the build published whatever the
+# expression returned. Verified to PASS with the diagnostic removed.
+#
+# The replacement operand is deliberately an identifier rather than another
+# dictionary: `else {"smuggled_field": 1}` would introduce an undocumented field
+# and the guard would refuse for THAT reason instead, so the case would pass while
+# proving nothing about this one.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+perl -0pe 's/("capability": SAVE_CAPABILITY_WRITES,\n\t\t\t)\},/$1} if false else SCHEMA,/' \
+	"${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'nested block is one operand'; then
+	expect_refusal "${dir}" 'a nested collection' 'nested block is one operand'
+fi
+rm -rf "${dir}"
+
 # An INDEXED expression used as a key. Its brackets are ordinary anonymous frames
 # and produce no diagnostic; only the `:` after the final closer reveals it.
 dir="$(scratch_tree)"
