@@ -41,6 +41,40 @@ extends Node
 ## honour, so every distance label would carry the terrain's undulation as error.
 ## Here the distances are exact by construction.
 ##
+## ## This is the named instrument for a RELIEF-affecting change (#696)
+##
+## The eight committed `frame_capture` vantages cannot discriminate one. On the
+## seam-slope ceiling `0.4`->`0.30` they move 0.28% (shrine) and 0.13%
+## (crossfield) against a provable NO-OP's 0.27% and 0.14% — and on four of the
+## eight the real change moves LESS than the no-op. This tool resolves the same
+## change because it differences against `crack_relief = 0` rather than against
+## another render, and because the quantity it is compared on repeats: across
+## three runs of one build on one machine, `RELIEF_STRENGTH` is identical at all
+## four distances.
+##
+## COMPARE ON STRENGTH, NOT COVERAGE. The tool is not globally bit-stable:
+## over those same three runs `RELIEF_COVERED` held at 6, 12 and 24 m but moved
+## a unit in the last printed digit at 48 m (0.02781 -> 0.02782). Two runs had
+## looked perfectly stable and the third produced the wobble, so treat "it
+## repeated" as a statement about the runs taken rather than a property proven.
+##
+## Those are RUNS ON ONE MACHINE, which is the same shape `frame_diff.gd`'s
+## second lesson warns reads too low, so this is not an independent-build floor
+## and must not be quoted as one. It establishes only that the run-to-run term
+## does not swamp a 1e-4 move here; a CI gate on this tool would need the
+## across-builds measurement first (#715).
+##
+## ALWAYS TAKE AN ABLATION ARM, and treat it as part of the measurement rather
+## than a courtesy. The ceiling change moves the 6 m strength by 1e-4 — ten
+## units of the last printed digit — and a build whose shader never recompiled
+## reports a near-identical number, so a thin real move and a dead pipeline are
+## the SAME observation until a control separates them. Setting the ceiling to
+## `0.02` moves that strength 0.02416 -> 0.14249 and coverage 0.00471 -> 0.99780;
+## because that fires, the edit is reaching the GPU and the thin reading is a
+## measurement. Without it the honest conclusion is "no information".
+## The measurements and the reproduction steps are recorded in
+## `docs/evidence/issue-696-relief-instrument/`.
+##
 ## Run (must be WINDOWED — a headless run renders nothing at all):
 ##   WAR_SAVE_PATH=/tmp/probe_save.json WAR_VAULT_PATH=/tmp/probe_vault.json \
 ##     WAR_BOOT_RECOVERY_PATH=/tmp/probe_recovery.json \

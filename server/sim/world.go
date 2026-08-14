@@ -42,7 +42,8 @@ const TickHz = 30
 // a zone a tractable size. NewWorld rejects bounds outside it.
 const maxWorldExtentMM = 1_000_000
 
-// maxIntentComponentMM bounds each component of a stored movement intent.
+// maxIntentComponentMM bounds each ground-plane component of a stored movement
+// intent; sanitizeIntent discards the unsupported vertical component.
 // Intent is the one untrusted, client-supplied field on an entity, so it is
 // sanitised the moment it enters the world (SetIntent, Add). The bound is
 // astronomically above any legitimate speed (1e9 mm/s = 1000 km/s) yet small
@@ -266,15 +267,14 @@ func (w *World) SetInterestRadius(id EntityID, radius int64) {
 	}
 }
 
-// sanitizeIntent clamps every component of an untrusted intent into
+// sanitizeIntent clamps each ground-plane component of an untrusted intent into
 // [-maxIntentComponentMM, maxIntentComponentMM], upholding the world invariant
-// that stored intent can never overflow HorizontalLen or clampSpeed. Direction
-// is preserved for any realistic value (all far below the bound); only
-// pathological garbage is trimmed, and clampSpeed then enforces the real speed.
+// that stored intent can never overflow HorizontalLen or clampSpeed. Vertical
+// intent is rejected because actors are constrained to the navmesh's XZ plane;
+// preserving it would let client input bypass the horizontal speed cap.
 func sanitizeIntent(v Vec3) Vec3 {
 	return Vec3{
 		X: clampAxis(v.X, -maxIntentComponentMM, maxIntentComponentMM),
-		Y: clampAxis(v.Y, -maxIntentComponentMM, maxIntentComponentMM),
 		Z: clampAxis(v.Z, -maxIntentComponentMM, maxIntentComponentMM),
 	}
 }
@@ -318,20 +318,19 @@ func (w *World) integrate() {
 }
 
 // clampSpeed limits the horizontal (ground-plane) speed of v to maxSpeed mm/s,
-// preserving direction by integer scaling. The vertical component passes
-// through unchanged (there is no vertical speed cap yet). A non-positive
-// maxSpeed pins the actor.
+// preserving direction by integer scaling. The vertical component is rejected:
+// movement is constrained to the navmesh's XZ plane. A non-positive maxSpeed
+// pins the actor.
 func clampSpeed(v Vec3, maxSpeed int64) Vec3 {
 	if maxSpeed <= 0 {
 		return Vec3{}
 	}
 	speed := v.HorizontalLen()
 	if speed <= maxSpeed {
-		return v
+		return Vec3{X: v.X, Z: v.Z}
 	}
 	return Vec3{
 		X: v.X * maxSpeed / speed,
-		Y: v.Y,
 		Z: v.Z * maxSpeed / speed,
 	}
 }

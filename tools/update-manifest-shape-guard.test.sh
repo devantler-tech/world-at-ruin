@@ -1,0 +1,800 @@
+#!/usr/bin/env bash
+# Proves tools/update-manifest-shape-guard.sh actually catches drift between the
+# published manifest and its documented shape reference — in BOTH directions.
+#
+# THE GUARD IS A SUBSET CHECK, WHICH IS EXACTLY THE SHAPE THAT PASSES VACUOUSLY.
+# If the field extractor silently matched nothing, "everything emitted is
+# documented" would hold forever and the guard would look perfect while proving
+# nothing. So the emitter's field set is misread deliberately here — an ambiguous
+# anchor, no anchor, and a manifest that lost `schema` — and each case must be
+# REFUSED rather than waved through.
+#
+# EVERY CASE MUTATES A REAL COPY AND ASSERTS THE MUTATION LANDED. A sed pattern
+# that quietly matched nothing would leave the tree untouched, the guard would
+# pass, and a test asserting only "non-zero exit" would report a clean failure it
+# never actually caused. Each case therefore checks the file changed before it
+# checks the guard, and then checks the failure MESSAGE NAMES THE FIELD — a guard
+# that failed for some unrelated reason must not be read as having caught this.
+#
+# The positive control runs the same harness over an UNMUTATED copy. Without it a
+# broken scratch tree — a missing file, a bad path — would fail every case above
+# and look like a perfect score.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+GUARD_REL='tools/update-manifest-shape-guard.sh'
+MANIFEST_REL='client/scripts/update_manifest.gd'
+REFERENCE_REL='docs/design/client-update-manifest.example.json'
+LEDGER_REL='tools/update-manifest-deferred-fields.tsv'
+failures=0
+
+fail() {
+	echo "  FAIL: $*" >&2
+	failures=$((failures + 1))
+}
+
+# A throwaway copy of just the files the guard reads.
+scratch_tree() {
+	local dir
+	dir="$(mktemp -d)"
+	mkdir -p "${dir}/client/scripts" "${dir}/docs/design" "${dir}/tools"
+	cp "${ROOT}/${MANIFEST_REL}" "${dir}/${MANIFEST_REL}"
+	cp "${ROOT}/${REFERENCE_REL}" "${dir}/${REFERENCE_REL}"
+	cp "${ROOT}/${LEDGER_REL}" "${dir}/${LEDGER_REL}"
+	cp "${ROOT}/${GUARD_REL}" "${dir}/${GUARD_REL}"
+	chmod +x "${dir}/${GUARD_REL}"
+	printf '%s' "${dir}"
+}
+
+# Assert a mutation actually changed the file it targeted.
+assert_changed() {
+	local before="$1" after="$2" what="$3"
+	if cmp -s "${before}" "${after}"; then
+		fail "${what}: the mutation changed nothing, so the case that follows proves nothing"
+		return 1
+	fi
+	return 0
+}
+
+# Run the guard in a scratch tree; expect refusal whose message names `needle`.
+expect_refusal() {
+	local dir="$1" needle="$2" what="$3"
+	local output status=0
+	output="$(cd "${dir}" && ./"${GUARD_REL}" 2>&1)" || status=$?
+	if [ "${status}" -eq 0 ]; then
+		fail "${what}: the guard PASSED — the drift went undetected"
+		return
+	fi
+	case "${output}" in
+	*"${needle}"*) ;;
+	*)
+		fail "${what}: the guard refused, but its message never named '${needle}' — it may have failed for an unrelated reason. Got: ${output}"
+		;;
+	esac
+}
+
+# Run the guard in a scratch tree; expect it to ACCEPT. Asserts the PASS line
+# rather than the exit status alone, so a zero exit with unexpected output cannot
+# be read as acceptance.
+expect_pass() {
+	local dir="$1" what="$2"
+	local output status=0
+	output="$(cd "${dir}" && ./"${GUARD_REL}" 2>&1)" || status=$?
+	if [ "${status}" -ne 0 ]; then
+		fail "${what}: the guard REFUSED valid input. Got: ${output}"
+		return
+	fi
+	case "${output}" in
+	*PASS*) ;;
+	*) fail "${what}: exited 0 without a PASS line, got: ${output}" ;;
+	esac
+}
+
+# --- the positive control: the harness itself works ---
+
+control_dir="$(scratch_tree)"
+if ! control_output="$(cd "${control_dir}" && ./"${GUARD_REL}" 2>&1)"; then
+	fail "positive control: the guard refused an UNMUTATED tree (${control_output}) — every refusal below would be meaningless"
+fi
+case "${control_output}" in
+*PASS*) ;;
+*) fail "positive control: expected a PASS line, got: ${control_output}" ;;
+esac
+rm -rf "${control_dir}"
+
+# --- direction 1: the emitter invents a field the reference never declared ---
+
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+awk '
+	!done && /"schema"[[:space:]]*:/ { print; print "\t\t\t\"smuggled_field\": 1,"; done = 1; next }
+	{ print }
+' "${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+# The needle carries the SEPARATOR, not the bare field name. A bare `smuggled_field`
+# is satisfied by `smuggled_field— absent from …` exactly as well as by the readable
+# form, so it cannot tell a named field from one run together with its reason — and
+# for a while it could not: every refusal of this kind arrived with the separator
+# missing, and this case passed throughout.
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'undeclared emitted field'; then
+	expect_refusal "${dir}" 'smuggled_field — absent from' 'undeclared emitted field'
+fi
+rm -rf "${dir}"
+
+# The same refusal carrying MORE THAN ONE undeclared field. The list is built by
+# translating newlines to spaces, and command substitution then strips the trailing
+# one — so the separator can never arrive from the list itself, at either arity.
+# This case pins the multi-field spelling exactly: one space between the two names,
+# and one before the dash. A fix that instead appended a space to each entry would
+# emit `smuggled_one smuggled_two  — absent`, satisfying the single-field case above
+# while doubling the space here.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+awk '
+	!done && /"schema"[[:space:]]*:/ {
+		print
+		print "\t\t\t\"smuggled_one\": 1,"
+		print "\t\t\t\"smuggled_two\": 2,"
+		done = 1
+		next
+	}
+	{ print }
+' "${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'two undeclared emitted fields'; then
+	expect_refusal "${dir}" 'smuggled_one smuggled_two — absent from' 'two undeclared emitted fields'
+fi
+rm -rf "${dir}"
+
+# --- direction 2: the reference promises a field nothing emits or explains ---
+
+dir="$(scratch_tree)"
+cp "${dir}/${REFERENCE_REL}" "${dir}/before"
+jq '. + {"unowned_promise": "nothing emits this"}' "${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${REFERENCE_REL}"
+if assert_changed "${dir}/before" "${dir}/${REFERENCE_REL}" 'unowned documented field'; then
+	expect_refusal "${dir}" 'unowned_promise' 'unowned documented field'
+fi
+rm -rf "${dir}"
+
+# --- the ledger must stay both complete and current ---
+
+# A withheld field whose reason was deleted is a silent promise again.
+dir="$(scratch_tree)"
+cp "${dir}/${LEDGER_REL}" "${dir}/before"
+grep -v '^signature	' "${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${LEDGER_REL}"
+if assert_changed "${dir}/before" "${dir}/${LEDGER_REL}" 'withheld field lost its reason'; then
+	expect_refusal "${dir}" 'signature' 'withheld field lost its reason'
+fi
+rm -rf "${dir}"
+
+# One row covers a whole withheld block, so losing it must surface the NESTED
+# fields too — not just the block's own name. A guard matching entries exactly
+# would still refuse here, on `key` alone, and leave every `key.*` field silently
+# unexplained.
+dir="$(scratch_tree)"
+cp "${dir}/${LEDGER_REL}" "${dir}/before"
+grep -v '^key	' "${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${LEDGER_REL}"
+if assert_changed "${dir}/before" "${dir}/${LEDGER_REL}" 'withheld block lost its reason'; then
+	expect_refusal "${dir}" 'key.epoch' 'withheld block lost its reason'
+fi
+rm -rf "${dir}"
+
+# A row that explains nothing outlived the field it described.
+dir="$(scratch_tree)"
+cp "${dir}/${LEDGER_REL}" "${dir}/before"
+printf 'retired_field\ta reason for a field that no longer exists\n' >>"${dir}/${LEDGER_REL}"
+if assert_changed "${dir}/before" "${dir}/${LEDGER_REL}" 'stale ledger row'; then
+	expect_refusal "${dir}" 'retired_field' 'stale ledger row'
+fi
+rm -rf "${dir}"
+
+# --- the vacuity guards: a misread field set must REFUSE, never pass ---
+
+# Two multi-line literals: which one is the manifest is no longer decidable.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+awk '
+	{ print }
+	!done && /"manifest"[[:space:]]*:[[:space:]]*\{[[:space:]]*$/ { print "\t\t\"manifest\": {"; done = 1 }
+' "${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'ambiguous manifest literal'; then
+	expect_refusal "${dir}" 'exactly one' 'ambiguous manifest literal'
+fi
+rm -rf "${dir}"
+
+# No multi-line literal at all — the extractor can read nothing.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+sed 's/"manifest"\([[:space:]]*\):\([[:space:]]*\){[[:space:]]*$/"manifest"\1:\2{ "schema": 1 }/' \
+	"${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'unreadable manifest literal'; then
+	expect_refusal "${dir}" 'found 0' 'unreadable manifest literal'
+fi
+rm -rf "${dir}"
+
+# The manifest lost the field every client reads first.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+# Matched WITHOUT a `\t` escape or an anchor: BSD grep reads `\t` as a tab and
+# GNU grep reads it as a literal `t`, so an indented pattern written that way
+# matches on macOS, matches nothing in CI, and leaves the case proving nothing.
+# This substring occurs exactly once.
+grep -v '"schema": SCHEMA,' "${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+# The needle is the guard's own distinctive phrase, NOT the bare word `schema`:
+# the shape reference declares `save_schema` and `save_schema.min`, so a bare
+# match would also be satisfied by an unrelated refusal that merely lists one of
+# those paths — the case would then pass while reporting a failure it did not
+# cause, which is the exact defect this file's header sets out to prevent.
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'manifest lost schema'; then
+	expect_refusal "${dir}" 'reads first' 'manifest lost schema'
+fi
+rm -rf "${dir}"
+
+# --- the ledger must actually explain, and only while it can see ---
+
+# An empty reason satisfies a field-count test while accounting for nothing.
+dir="$(scratch_tree)"
+cp "${dir}/${LEDGER_REL}" "${dir}/before"
+awk -F '\t' 'BEGIN { OFS = "\t" } $1 == "signature" { print $1, ""; next } { print }' \
+	"${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${LEDGER_REL}"
+if assert_changed "${dir}/before" "${dir}/${LEDGER_REL}" 'withheld field carries an empty reason'; then
+	expect_refusal "${dir}" 'no explanation' 'withheld field carries an empty reason'
+fi
+rm -rf "${dir}"
+
+# A deferred block fed by an expression is invisible to this parser, so the row
+# excusing its contents would go on excusing fields nobody can see — passing most
+# confidently at the moment delivery switches on.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+sed 's/"rollback_targets": \[\],/"rollback_targets": build_targets(),/' \
+	"${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'deferred block stopped being a literal'; then
+	expect_refusal "${dir}" 'rollback_targets' 'deferred block stopped being a literal'
+fi
+rm -rf "${dir}"
+
+# --- the regression that motivated tracking array frames ---
+
+# A rollback catalogue with MORE THAN ONE element must keep every element's
+# fields UNDER the array key. Popping the array key with the first element's
+# closing brace emits the second element's fields at the manifest root instead.
+#
+# The needle is what distinguishes the two parsers. With the array frame held,
+# the refusal is about `rollback_targets.version` — a deferred block that started
+# publishing. With the key popped, the second element's fields land at the root
+# and the refusal instead names a bare `version`/`url` as undocumented, never
+# mentioning the qualified path.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+awk '
+	/"rollback_targets": \[\],/ {
+		print "\t\t\t\"rollback_targets\": ["
+		print "\t\t\t\t{"
+		print "\t\t\t\t\t\"version\": \"0.1.13\","
+		print "\t\t\t\t\t\"url\": \"u1\","
+		print "\t\t\t\t},"
+		print "\t\t\t\t{"
+		print "\t\t\t\t\t\"version\": \"0.1.12\","
+		print "\t\t\t\t\t\"url\": \"u2\","
+		print "\t\t\t\t},"
+		print "\t\t\t],"
+		next
+	}
+	{ print }
+' "${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'multi-element rollback catalogue'; then
+	expect_refusal "${dir}" 'rollback_targets.version' 'multi-element rollback catalogue'
+fi
+rm -rf "${dir}"
+
+# --- inputs where `#` is not a comment ---
+
+# A `#` inside a quoted manifest value. Stripping comments line-wide before the
+# quote-aware scan cuts the string short, takes the terminating `,` with it, and
+# the field silently vanishes from the guard's view — measured: `channel`
+# disappeared, leaving 20 paths instead of 21, with no error anywhere.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+sed 's|"channel": CHANNEL,|"channel": "live#anchor",|' "${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'hash inside a quoted value'; then
+	expect_pass "${dir}" 'hash inside a quoted value'
+fi
+rm -rf "${dir}"
+
+# A backslash-escaped quote inside a manifest value. Ending the token at the
+# escaped quote leaves the rest of the string scanned as structure, where its
+# punctuation desynchronizes depth and fields land under the wrong parent.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+sed 's|"channel": CHANNEL,|"channel": "li\\"ve, }] #x",|' "${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'escaped quote inside a value'; then
+	expect_pass "${dir}" 'escaped quote inside a value'
+fi
+rm -rf "${dir}"
+
+# A `#` inside a ledger REASON is free text, not a comment. Issue references are
+# the common case, and truncating there can empty a reason that was written.
+dir="$(scratch_tree)"
+cp "${dir}/${LEDGER_REL}" "${dir}/before"
+printf 'shell_authorization\tblocked on the offline root #490 and nothing else\n' \
+	>"${dir}/extra"
+grep -v '^shell_authorization	' "${dir}/before" >"${dir}/kept"
+cat "${dir}/kept" "${dir}/extra" >"${dir}/${LEDGER_REL}"
+if assert_changed "${dir}/before" "${dir}/${LEDGER_REL}" 'hash inside a ledger reason'; then
+	expect_pass "${dir}" 'hash inside a ledger reason'
+fi
+rm -rf "${dir}"
+
+# --- overlapping ledger rows ---
+
+# Two rows may legitimately cover the same field — a narrower `key.epoch` nested
+# under the broader `key`, where NEITHER is published. Recording only the first
+# match would leave the other looking unused, and the stale-row check would
+# refuse while naming a row that is entirely correct.
+dir="$(scratch_tree)"
+cp "${dir}/${LEDGER_REL}" "${dir}/before"
+printf 'key.epoch\ta narrower row nested under the broader key row\n' >>"${dir}/${LEDGER_REL}"
+if assert_changed "${dir}/before" "${dir}/${LEDGER_REL}" 'overlapping ledger rows'; then
+	expect_pass "${dir}" 'overlapping ledger rows'
+fi
+rm -rf "${dir}"
+
+# A row may only excuse what is actually withheld. Once the block publishes one
+# of those fields the row is excusing shipping content, and the guard would
+# report agreement about something nobody checked.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+awk '
+	/"rollback_targets": \[\],/ {
+		print "\t\t\t\"rollback_targets\": ["
+		print "\t\t\t\t{"
+		print "\t\t\t\t\t\"version\": \"0.1.13\","
+		print "\t\t\t\t},"
+		print "\t\t\t],"
+		next
+	}
+	{ print }
+' "${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'deferred block started publishing'; then
+	expect_refusal "${dir}" 'rollback_targets.version' 'deferred block started publishing'
+fi
+rm -rf "${dir}"
+
+# --- constructs the parser cannot resolve must fail closed ---
+
+# A CALL whose argument is a literal. The `[` belongs to the argument, not to the
+# key, so treating it as the key's own collection classifies whatever the helper
+# returns as readable — and its element fields stay invisible while the row
+# excuses them.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+sed 's/"rollback_targets": \[\],/"rollback_targets": build_targets([]),/' \
+	"${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'call with a literal argument'; then
+	expect_refusal "${dir}" 'no longer builds it as a literal' 'call with a literal argument'
+fi
+rm -rf "${dir}"
+
+# A key named by an identifier rather than a quoted string. GDScript allows it,
+# and the field would ship entirely invisible to every check here.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+sed 's/"schema": SCHEMA,/SMUGGLED_KEY: 1,\
+\t\t\t"schema": SCHEMA,/' "${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'computed manifest key'; then
+	expect_refusal "${dir}" 'SMUGGLED_KEY' 'computed manifest key'
+fi
+rm -rf "${dir}"
+
+# The literal bound to a local instead of returned. It can then be mutated before
+# it is returned, and the emitter's canonical-form test cannot catch that either:
+# a builder-side addition moves both sides of its comparison together.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+awk '/^\treturn \{$/ && !seen { print "\tvar built := {"; seen = 1; next } { print }' \
+	"${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'literal not returned directly'; then
+	expect_refusal "${dir}" 'not returned directly' 'literal not returned directly'
+fi
+rm -rf "${dir}"
+
+# An emptied ledger must not be refused merely for being empty — that is the
+# valid end state once every documented field has graduated. It must still be
+# refused for the fields it no longer explains, BY NAME.
+dir="$(scratch_tree)"
+cp "${dir}/${LEDGER_REL}" "${dir}/before"
+grep '^#' "${dir}/before" >"${dir}/mutated" || true
+mv "${dir}/mutated" "${dir}/${LEDGER_REL}"
+if assert_changed "${dir}/before" "${dir}/${LEDGER_REL}" 'emptied ledger'; then
+	expect_refusal "${dir}" 'does not explain' 'emptied ledger'
+	emptied_output="$(cd "${dir}" && ./"${GUARD_REL}" 2>&1 || true)"
+	case "${emptied_output}" in
+	*"lists no fields"*)
+		fail "emptied ledger: refused for being empty rather than for the fields it stopped explaining — an empty ledger is the valid fully-graduated end state"
+		;;
+	esac
+fi
+rm -rf "${dir}"
+
+# A quoted value that never closes on its line. Abandoning the line silently
+# leaves the rest of the file scanned as structure, attributing fields to the
+# wrong parent — the same silent drift the escaped-quote handling prevents.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+sed 's|"channel": CHANNEL,|"channel": "unterminated,|' "${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'unterminated quoted value'; then
+	expect_refusal "${dir}" 'does not close on its own line' 'unterminated quoted value'
+fi
+rm -rf "${dir}"
+
+# A local whose NAME contains "return". Matching the opener as a substring would
+# accept `var returned_manifest := {` — precisely the construct the direct-return
+# check exists to refuse.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+awk '/^\treturn \{$/ && !seen { print "\tvar returned_manifest := {"; seen = 1; next } { print }' \
+	"${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'local named like a return'; then
+	expect_refusal "${dir}" 'not returned directly' 'local named like a return'
+fi
+rm -rf "${dir}"
+
+# A key carrying an escape. The walk drops the escape, so `"\tschema"` reads as
+# `schema`, collapses onto the real one, and the extra field the published JSON
+# actually carries is never checked.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+awk '!seen && /"schema": SCHEMA,/ { print "\t\t\t\"\\tschema\": 999,"; seen = 1 } { print }' \
+	"${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'escaped manifest key'; then
+	expect_refusal "${dir}" 'escape sequence' 'escaped manifest key'
+fi
+rm -rf "${dir}"
+
+# A composite value that merely OPENS with a literal. Classifying the value at
+# its opener accepts `[] if false else TARGETS`, whose runtime branch can return
+# populated targets that never appear here.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+sed 's/"rollback_targets": \[\],/"rollback_targets": [] if false else TARGETS,/' \
+	"${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'literal is only the start of the value'; then
+	expect_refusal "${dir}" 'no longer builds it as a literal' 'literal is only the start of the value'
+fi
+rm -rf "${dir}"
+
+# A single-quoted member name. GDScript accepts it and the scanner reads only
+# double-quoted keys, so the field would ship entirely unseen. The apostrophes
+# are emitted by code point, because this test is itself shell.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+awk '!seen && /"schema": SCHEMA,/ { printf "\t\t\t%csmuggled_field%c: 1,\n", 39, 39; seen = 1 } { print }' \
+	"${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'single-quoted member name'; then
+	expect_refusal "${dir}" 'single-quoted string' 'single-quoted member name'
+fi
+rm -rf "${dir}"
+
+# A member name containing the path separator. Flattened, a top-level
+# `save_schema.min` is indistinguishable from the nested one and dedups onto it.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+awk '!seen && /"schema": SCHEMA,/ { print "\t\t\t\"save_schema.min\": 999,"; seen = 1 } { print }' \
+	"${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'dotted member name'; then
+	expect_refusal "${dir}" 'in the member name' 'dotted member name'
+fi
+rm -rf "${dir}"
+
+# A second, POPULATED manifest returned from another branch, in the same inline
+# form build() already uses for its refusals. Only one literal is scanned, so
+# that branch would publish fields no check here ever sees.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+awk '
+	!seen && /^\tvar version: String = DevLog.VERSION$/ {
+		print "\tif false:"
+		print "\t\treturn {\"manifest\": {\"smuggled_field\": 1}, \"error\": \"\"}"
+		seen = 1
+	}
+	{ print }
+' "${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'second populated manifest return'; then
+	expect_refusal "${dir}" 'does not read' 'second populated manifest return'
+fi
+rm -rf "${dir}"
+
+# --- keys the scanner must not silently skip ---
+
+# Inserts a line into the manifest literal, just above `schema`.
+insert_field() {
+	local dir="$1" line="$2"
+	cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+	awk -v L="${line}" '!seen && /"schema": SCHEMA,/ { print L; seen = 1 } { print }' \
+		"${dir}/before" >"${dir}/mutated"
+	mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+}
+
+# A CALL used as a key. The identifier is followed by `(` and the quoted token by
+# `)`, so neither the identifier branch nor the quoted branch sees a key, while
+# the published JSON carries whatever the call returns.
+dir="$(scratch_tree)"
+insert_field "${dir}" '			StringName("smuggled_field"): 1,'
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'call used as a key'; then
+	expect_refusal "${dir}" 'keys a field on the call' 'call used as a key'
+fi
+rm -rf "${dir}"
+
+# An EMPTY member name is publishable, and it is also the value the scanner uses
+# to mean "no key pending", so it would never be emitted or compared.
+dir="$(scratch_tree)"
+insert_field "${dir}" '			"": 1,'
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'empty member name'; then
+	expect_refusal "${dir}" 'EMPTY member name' 'empty member name'
+fi
+rm -rf "${dir}"
+
+# A field whose name begins with the character the parser once used to mark its
+# own diagnostics. It is an ordinary undocumented field and must be reported as
+# one, not silently filtered away as a diagnostic.
+dir="$(scratch_tree)"
+insert_field "${dir}" '			"!smuggled_field": 1,'
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'field named like a diagnostic'; then
+	expect_refusal "${dir}" '!smuggled_field' 'field named like a diagnostic'
+fi
+rm -rf "${dir}"
+
+# The REFERENCE side of the dotted-name collapse: a top-level `save_schema.min`
+# flattens onto the documented nested path and dedups away, so the reference
+# could promise a field that is neither emitted nor ledgered.
+dir="$(scratch_tree)"
+cp "${dir}/${REFERENCE_REL}" "${dir}/before"
+jq '. + {"save_schema.min": 999}' "${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${REFERENCE_REL}"
+if assert_changed "${dir}/before" "${dir}/${REFERENCE_REL}" 'dotted reference member'; then
+	expect_refusal "${dir}" 'cannot represent' 'dotted reference member'
+fi
+rm -rf "${dir}"
+
+# A second populated manifest written with SINGLE quotes. Valid GDScript, and a
+# double-quoted-only search never sees it.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+awk '
+	!seen && /^\tvar version: String = DevLog.VERSION$/ {
+		print "\tif false:"
+		printf "\t\treturn {%cmanifest%c: {%csmuggled%c: 1}, %cerror%c: %c%c}\n", 39, 39, 39, 39, 39, 39, 39, 39
+		seen = 1
+	}
+	{ print }
+' "${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'single-quoted second manifest'; then
+	expect_refusal "${dir}" 'does not read' 'single-quoted second manifest'
+fi
+rm -rf "${dir}"
+
+# A call key split across LINES. The scan is line-oriented, so it cannot see the
+# closing parenthesis and must refuse rather than skip the entry.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+awk '
+	!seen && /"schema": SCHEMA,/ {
+		print "\t\t\tStringName("
+		print "\t\t\t\t\"smuggled_field\""
+		print "\t\t\t): 1,"
+		seen = 1
+	}
+	{ print }
+' "${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'multiline call key'; then
+	expect_refusal "${dir}" 'keys a field on the call' 'multiline call key'
+fi
+rm -rf "${dir}"
+
+# An alternate return whose `manifest` key is itself an expression. Searching for
+# spellings of the key cannot anticipate them all; only the two accepted return
+# shapes are allowed, so this refuses without needing to recognise the key.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+awk '
+	!seen && /^\tvar version: String = DevLog.VERSION$/ {
+		print "\tif false:"
+		print "\t\treturn {StringName(\"manifest\"): {\"smuggled_field\": 1}, \"error\": \"\"}"
+		seen = 1
+	}
+	{ print }
+' "${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'computed key on an alternate return'; then
+	expect_refusal "${dir}" 'returns a dictionary this guard does not read' 'computed key on an alternate return'
+fi
+rm -rf "${dir}"
+
+# A reference member name carrying a RECORD DELIMITER. Paths travel between these
+# checks as lines, so `"key\nsignature"` splits into two rows and matches the two
+# unrelated deferred paths of those names, disappearing entirely.
+dir="$(scratch_tree)"
+cp "${dir}/${REFERENCE_REL}" "${dir}/before"
+jq '. + {"key\nsignature": 1}' "${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${REFERENCE_REL}"
+if assert_changed "${dir}/before" "${dir}/${REFERENCE_REL}" 'newline in a reference member name'; then
+	expect_refusal "${dir}" 'cannot represent' 'newline in a reference member name'
+fi
+rm -rf "${dir}"
+
+# A bare PARENTHESISED key, with no leading identifier. The opening parenthesis
+# reads as the start of a value and the quoted token is followed by `)`, so
+# neither branch sees a key.
+dir="$(scratch_tree)"
+insert_field "${dir}" '			("smuggled_field"): 1,'
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'parenthesised key'; then
+	expect_refusal "${dir}" 'keys a field on the call' 'parenthesised key'
+fi
+rm -rf "${dir}"
+
+# A SECOND multi-line dictionary return. The refusal-shape check exempts any
+# `return {` at end of line, so a second one keyed by an expression would be
+# whitelisted there and never visited by the scan.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+awk '
+	!seen && /^\tvar version: String = DevLog.VERSION$/ {
+		print "\tif false:"
+		print "\t\treturn {"
+		print "\t\t\tStringName(\"manifest\"): {\"smuggled_field\": 1},"
+		print "\t\t\t\"error\": \"\","
+		print "\t\t}"
+		seen = 1
+	}
+	{ print }
+' "${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'second multi-line return'; then
+	expect_refusal "${dir}" 'multi-line dictionary returns' 'second multi-line return'
+fi
+rm -rf "${dir}"
+
+# A reference member whose name looks like a command-line OPTION. Passed to grep
+# without `--`, GNU grep parses it as a flag: `--help` prints help and exits 0,
+# so the path reads as emitted and the promise is never checked. BSD grep does
+# not, which is exactly why this needs a case rather than a local spot-check.
+dir="$(scratch_tree)"
+cp "${dir}/${REFERENCE_REL}" "${dir}/before"
+jq '. + {"--help": 1}' "${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${REFERENCE_REL}"
+if assert_changed "${dir}/before" "${dir}/${REFERENCE_REL}" 'option-like reference member'; then
+	expect_refusal "${dir}" '--help' 'option-like reference member'
+fi
+rm -rf "${dir}"
+
+# The ROOT literal as the first operand of an expression. At depth zero there is
+# no owner row left to demote, so the scan would simply stop and go on validating
+# a dictionary the build never publishes.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+perl -0pe 's/("rollback_targets": \[\],\n\t\t)\}/$1} if false else {"smuggled_field": 1}/' \
+	"${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'root literal is one operand'; then
+	expect_refusal "${dir}" 'first operand of a larger expression' 'root literal is one operand'
+fi
+rm -rf "${dir}"
+
+# A NESTED block as the first operand of an expression, where no deferred-ledger
+# row covers it. The downgrade `demote()` performs is recorded only on the owner
+# row, and that row is consulted for ledger-covered entries alone — so before this
+# was a diagnostic, the block kept every child path the literal emitted and the
+# guard checked those against the reference while the build published whatever the
+# expression returned. Verified to PASS with the diagnostic removed.
+#
+# The replacement operand is deliberately an identifier rather than another
+# dictionary: `else {"smuggled_field": 1}` would introduce an undocumented field
+# and the guard would refuse for THAT reason instead, so the case would pass while
+# proving nothing about this one.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+perl -0pe 's/("capability": SAVE_CAPABILITY_WRITES,\n\t\t\t)\},/$1} if false else SCHEMA,/' \
+	"${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'nested block is one operand'; then
+	expect_refusal "${dir}" 'a nested collection' 'nested block is one operand'
+fi
+rm -rf "${dir}"
+
+# An INDEXED expression used as a key. Its brackets are ordinary anonymous frames
+# and produce no diagnostic; only the `:` after the final closer reveals it.
+dir="$(scratch_tree)"
+insert_field "${dir}" '			["smuggled_field"][0]: 1,'
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'indexed expression key'; then
+	expect_refusal "${dir}" 'keys a field on the call' 'indexed expression key'
+fi
+rm -rf "${dir}"
+
+# NUL in a reference member name. The shell drops it while reading the flattened
+# path, so the name collapses onto the plain `schema` field. Built from
+# codepoints so no control character appears in this file.
+dir="$(scratch_tree)"
+cp "${dir}/${REFERENCE_REL}" "${dir}/before"
+jq '. + { (([0] + ("schema" | explode)) | implode): 1 }' "${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${REFERENCE_REL}"
+if assert_changed "${dir}/before" "${dir}/${REFERENCE_REL}" 'NUL in a reference member name'; then
+	expect_refusal "${dir}" 'cannot represent' 'NUL in a reference member name'
+fi
+rm -rf "${dir}"
+
+# A literal as a LATER operand — `TARGETS + []`. The value did not begin with a
+# collection, so the bracket that appears later belongs to an expression whose
+# first operand this parser never inspects.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+sed 's/"rollback_targets": \[\],/"rollback_targets": TARGETS + [],/' "${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'literal as a later operand'; then
+	expect_refusal "${dir}" 'no longer builds it as a literal' 'literal as a later operand'
+fi
+rm -rf "${dir}"
+
+# A PARENTHESISED alternate return. The accepted-shape check has to capture it
+# before it can reject it, so the capture matches `return (` as well as `return {`.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+awk '
+	!seen && /^\tvar version: String = DevLog.VERSION$/ {
+		print "\tif false:"
+		print "\t\treturn ({\"manifest\": {\"smuggled_field\": 1}, \"error\": \"\"})"
+		seen = 1
+	}
+	{ print }
+' "${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'parenthesised alternate return'; then
+	expect_refusal "${dir}" 'returns a dictionary this guard does not read' 'parenthesised alternate return'
+fi
+rm -rf "${dir}"
+
+# A RAW tab inside a member name, as opposed to the escape. The rows this parser
+# emits are tab-separated, so the name splits into extra columns and is read as a
+# different field. Written via awk's `sprintf` so no control character appears here.
+dir="$(scratch_tree)"
+cp "${dir}/${MANIFEST_REL}" "${dir}/before"
+awk '
+	BEGIN { TAB = sprintf("%c", 9) }
+	!seen && /"schema": SCHEMA,/ { print "\t\t\t\"" TAB "schema\": 999,"; seen = 1 }
+	{ print }
+' "${dir}/before" >"${dir}/mutated"
+mv "${dir}/mutated" "${dir}/${MANIFEST_REL}"
+if assert_changed "${dir}/before" "${dir}/${MANIFEST_REL}" 'raw tab in a member name'; then
+	expect_refusal "${dir}" 'RAW tab' 'raw tab in a member name'
+fi
+rm -rf "${dir}"
+
+if [ "${failures}" -ne 0 ]; then
+	echo "update-manifest shape guard test: ${failures} FAILED" >&2
+	exit 1
+fi
+echo "update-manifest shape guard test: PASS — drift in either direction is refused, the ledger must stay complete, current and actually explanatory, a row may not excuse a field the build publishes, every element of a multi-element array is attributed to its array key, a block that stops being a literal refuses rather than being excused unseen, '#' is treated as a comment only where it is one, and a misread field set refuses instead of passing vacuously"

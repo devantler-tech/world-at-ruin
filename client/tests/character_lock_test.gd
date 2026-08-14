@@ -157,7 +157,7 @@ func _check_read_survives_contention(_recipe: Dictionary) -> void:
 func _check_write_resumes_after_release(recipe: Dictionary) -> void:
 	var baseline := _read_text(_probe)
 	var changed := recipe.duplicate(true)
-	changed["name"] = "lock-probe-resumed"
+	changed["shapes"]["torso_vshape"] = 0.71
 	if not CharacterStore.save_to(_probe, changed):
 		_fail("the save did not resume once the competing writer released the lock")
 		return
@@ -245,7 +245,7 @@ func _check_lost_lock_refuses_write(recipe: Dictionary) -> void:
 	if FileLock.owns(_probe):
 		_fail("a REPLACED ownership stamp still read as ours")
 	var changed := recipe.duplicate(true)
-	changed["name"] = "lock-probe-hijacked"
+	changed["shapes"]["torso_vshape"] = 0.72
 	if CharacterStore._save_to_locked(_probe, changed):
 		_fail("a write proceeded while the lock was no longer ours")
 	if _read_text(_probe) != before:

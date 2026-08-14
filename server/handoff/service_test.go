@@ -116,7 +116,7 @@ func (a *recordingAllocator) Release(
 
 func validAllocation() Allocation {
 	return Allocation{
-		ID:              "gameserver-17",
+		ID:              "gameserver-17.games",
 		ServerName:      "zone-17.edge.example",
 		Port:            8443,
 		Observer:        sim.EntityID(42),
@@ -203,7 +203,7 @@ func TestServiceCreatesAllocationScopedHandoffThroughRealNakama(t *testing.T) {
 
 	zoneVerifier, err := zonesock.NewHMACVerifier(
 		allocator.allocation.AdmissionSecret,
-		"gameserver-17",
+		"gameserver-17.games",
 	)
 	if err != nil {
 		t.Fatalf("NewHMACVerifier returned an error: %v", err)
@@ -214,6 +214,46 @@ func TestServiceCreatesAllocationScopedHandoffThroughRealNakama(t *testing.T) {
 	}
 	if observer != sim.EntityID(42) {
 		t.Fatalf("zone token observer = %d, want 42", observer)
+	}
+}
+
+func TestKubernetesDNSSubdomainAllocationCreatesHandoff(t *testing.T) {
+	tests := []struct {
+		name         string
+		allocationID string
+	}{
+		{name: "numeric labels", allocationID: "1.2.3.4"},
+		{name: "long label", allocationID: strings.Repeat("a", 64) + ".games"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			nakama := &accountServer{
+				account: &api.Account{User: &api.User{Id: "player-42"}},
+			}
+			allocation := validAllocation()
+			allocation.ID = test.allocationID
+			allocator := &recordingAllocator{allocation: allocation}
+			service, err := NewService(
+				verifierAgainst(t, nakama),
+				allocator,
+				validConfig(),
+			)
+			if err != nil {
+				t.Fatalf("NewService returned an error: %v", err)
+			}
+
+			handoff, err := service.CreateHandoff(context.Background(), validRequest())
+			if err != nil {
+				t.Fatalf("CreateHandoff rejected a valid Kubernetes DNS subdomain: %v", err)
+			}
+			zoneVerifier, err := zonesock.NewHMACVerifier(allocation.AdmissionSecret, allocation.ID)
+			if err != nil {
+				t.Fatalf("NewHMACVerifier returned an error: %v", err)
+			}
+			if _, err := zoneVerifier.Verify(handoff.Token); err != nil {
+				t.Fatalf("zone refused Kubernetes DNS-subdomain handoff token: %v", err)
+			}
+		})
 	}
 }
 
@@ -331,6 +371,7 @@ func TestInvalidReservationNeverAuthenticates(t *testing.T) {
 		reservationID string
 	}{
 		{name: "empty", reservationID: ""},
+		{name: "token separator", reservationID: "handoff.42"},
 		{name: "header unsafe", reservationID: "handoff-42\r\nX-Injected: yes"},
 	}
 	for _, test := range tests {
@@ -396,10 +437,10 @@ func TestReportedExpiryMatchesTokenNanosecondPrecision(t *testing.T) {
 		t.Fatalf("CreateHandoff returned an error: %v", err)
 	}
 	parts := strings.Split(got.Token, ".")
-	if len(parts) != 5 {
-		t.Fatalf("token has %d fields, want 5", len(parts))
+	if len(parts) < 5 {
+		t.Fatalf("token has %d fields, want at least 5", len(parts))
 	}
-	tokenExpiryNanos, err := strconv.ParseInt(parts[3], 10, 64)
+	tokenExpiryNanos, err := strconv.ParseInt(parts[len(parts)-2], 10, 64)
 	if err != nil {
 		t.Fatalf("parse token expiry: %v", err)
 	}
@@ -669,6 +710,55 @@ func TestAllocationFailureReturnsNoHandoff(t *testing.T) {
 	}
 }
 
+func TestRetainedAllocationFailureSkipsOuterRelease(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		code codes.Code
+	}{
+		{
+			name: "unavailable",
+			err:  status.Error(codes.Unavailable, "durable dispatch outcome is ambiguous"),
+			code: codes.Unavailable,
+		},
+		{name: "canceled", err: context.Canceled, code: codes.Canceled},
+		{
+			name: "deadline exceeded",
+			err:  context.DeadlineExceeded,
+			code: codes.DeadlineExceeded,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			nakama := &accountServer{
+				account: &api.Account{User: &api.User{Id: "player-42"}},
+			}
+			allocator := &recordingAllocator{
+				err: RetainAllocationOutcome(test.err),
+			}
+			service, err := NewService(
+				verifierAgainst(t, nakama),
+				allocator,
+				validConfig(),
+			)
+			if err != nil {
+				t.Fatalf("NewService returned an error: %v", err)
+			}
+
+			got, err := service.CreateHandoff(context.Background(), validRequest())
+			if status.Code(err) != test.code {
+				t.Fatalf("CreateHandoff status = %s, want %s", status.Code(err), test.code)
+			}
+			if got != (Handoff{}) {
+				t.Fatalf("failed retained handoff = %+v, want zero value", got)
+			}
+			if len(allocator.releases) != 0 {
+				t.Fatalf("retained allocation error released outcome: %+v", allocator.releases)
+			}
+		})
+	}
+}
+
 func TestMalformedAllocationReturnsNoHandoff(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -679,12 +769,12 @@ func TestMalformedAllocationReturnsNoHandoff(t *testing.T) {
 			mutate: func(a *Allocation) { a.ID = "" },
 		},
 		{
-			name:   "token-ambiguous allocation ID",
-			mutate: func(a *Allocation) { a.ID = "gameserver.17" },
-		},
-		{
 			name:   "header-unsafe allocation ID",
 			mutate: func(a *Allocation) { a.ID = "gameserver-17\r\nX-Injected: yes" },
+		},
+		{
+			name:   "empty allocation DNS label",
+			mutate: func(a *Allocation) { a.ID = "gameserver..17" },
 		},
 		{
 			name:   "empty server name",
