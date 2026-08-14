@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
-# Keep every shipped Google identity-binding schema and identity address
-# reachable by preserving their exact historical contracts across revisions.
+# Keep every shipped Google identity-binding and handoff-lease schema reachable
+# by preserving their exact historical contracts across revisions. The legacy
+# filename remains the required Server CI entry point.
 set -euo pipefail
 
 LEDGER='server/nakamaauth/testdata/shipped_google_binding_versions.txt'
 GOLDEN_PREFIX='server/nakamaauth/testdata/golden_google_binding_v'
 ADDRESS_CONTRACT='server/nakamaauth/testdata/golden_google_identity_address_v1.json'
+LEASE_LEDGER='server/nakamalease/testdata/shipped_lease_versions.txt'
+LEASE_GOLDEN_PREFIX='server/nakamalease/testdata/golden_lease_v'
 SCRATCH_DIR=''
 
 fail() {
@@ -20,6 +23,45 @@ cleanup() {
 extract_versions() {
 	sed -n 's/^[[:space:]]*\([0-9][0-9]*\)[[:space:]]*$/\1/p' "$1" |
 		LC_ALL=C sort -u
+}
+
+guard_lease_schemas() {
+	local base="$1"
+	[ -f "$LEASE_LEDGER" ] ||
+		fail "$LEASE_LEDGER was deleted — the permanent lease schema ledger must exist"
+	extract_versions "$LEASE_LEDGER" >"$SCRATCH_DIR/head-lease-versions"
+
+	if ! git cat-file -e "$base:$LEASE_LEDGER" 2>/dev/null; then
+		printf '%s\n' \
+			'Lease durability guard: PASS — establishing the base-comparable lease schema ledger'
+		return 0
+	fi
+
+	git show "$base:$LEASE_LEDGER" >"$SCRATCH_DIR/base-lease-ledger" ||
+		fail "could not read $LEASE_LEDGER at base commit $base"
+	extract_versions "$SCRATCH_DIR/base-lease-ledger" >"$SCRATCH_DIR/base-lease-versions"
+	local removed
+	removed="$(comm -23 "$SCRATCH_DIR/base-lease-versions" "$SCRATCH_DIR/head-lease-versions")"
+	if [ -n "$removed" ]; then
+		fail "shipped lease schema version(s) removed from $LEASE_LEDGER ($(printf '%s' "$removed" | tr '\n' ' '))"
+	fi
+
+	local version golden
+	while IFS= read -r version; do
+		[ -n "$version" ] || continue
+		golden="${LEASE_GOLDEN_PREFIX}${version}.json"
+		git cat-file -e "$base:$golden" 2>/dev/null ||
+			fail "$golden is missing at base commit $base — the shipped lease ledger was unanchored"
+		[ -f "$golden" ] ||
+			fail "$golden was deleted — a shipped lease must remain readable"
+		git show "$base:$golden" >"$SCRATCH_DIR/base-lease-golden-$version" ||
+			fail "could not read $golden at base commit $base"
+		cmp -s "$SCRATCH_DIR/base-lease-golden-$version" "$golden" ||
+			fail "$golden changed after it shipped — historical lease fixtures are immutable"
+	done <"$SCRATCH_DIR/base-lease-versions"
+
+	printf 'Lease durability guard: PASS — %s shipped schema fixture(s) are unchanged\n' \
+		"$(wc -l <"$SCRATCH_DIR/base-lease-versions" | tr -d ' ')"
 }
 
 main() {
@@ -40,6 +82,7 @@ main() {
 	# This feature introduces the ledger and its first fixture together. Once
 	# merged, base absence can never recur because head deletion fails above.
 	if ! git cat-file -e "$base:$LEDGER" 2>/dev/null; then
+		guard_lease_schemas "$base"
 		printf '%s\n' \
 			'Google binding durability guard: PASS — establishing the base-comparable binding schema ledger'
 		return 0
@@ -73,6 +116,7 @@ main() {
 		cmp -s "$SCRATCH_DIR/base-golden-$version" "$golden" ||
 			fail "$golden changed after it shipped — historical identity fixtures are immutable"
 	done <"$SCRATCH_DIR/base-versions"
+	guard_lease_schemas "$base"
 
 	printf 'Google binding durability guard: PASS — %s shipped schema fixture(s) are unchanged\n' \
 		"$(wc -l <"$SCRATCH_DIR/base-versions" | tr -d ' ')"

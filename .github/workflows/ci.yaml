@@ -42,6 +42,8 @@ jobs:
         run: tools/test-cd-cask-disarm-budget.sh
       - name: GHCR latest converges to the newest immutable release
         run: tools/test-cd-ghcr-latest-forward.sh
+      - name: CLA comment concurrency collapses pending runs
+        run: ./tools/cla-concurrency-guard.test.sh
       - name: Retained boot-recovery reader gate is pinned and fail-closed
         run: ./tools/retained-boot-recovery-reader-guard.test.sh
       - name: Dev-log entry version guard is pinned and fail-closed
@@ -50,6 +52,8 @@ jobs:
         run: ./tools/save-capability-vocabulary-guard.test.sh
       - name: Google identity binding durability guard is pinned and fail-closed
         run: ./tools/google-binding-durability-guard.test.sh
+      - name: Ability scale category matching is literal and fail-closed
+        run: ./tools/ability-scale-guard.test.sh
       - name: Player-visible gate diffs from the PR's own base
         run: ./tools/pr-diff-base.test.sh
       - name: Exported-frame change report is pinned and advisory
@@ -58,6 +62,10 @@ jobs:
         run: ./tools/preview-flags.test.sh
       - name: Manifest sequence is monotonic in release order and fail-closed
         run: ./tools/manifest-sequence.test.sh
+      - name: Update-manifest shape guard refuses drift and never passes vacuously
+        run: ./tools/update-manifest-shape-guard.test.sh
+      - name: Wire protocol rollout guard is expand-first and fail-closed
+        run: ./tools/wire-protocol-rollout-guard.test.sh
       - name: Lavapipe evidence refuses a fallback capture
         run: ./tools/lavapipe-capture-guard.test.sh
       - name: Client test runner is portable and verdicts are non-vacuous
@@ -216,6 +224,11 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
         run: ./tools/save-capability-vocabulary-guard.sh
+      - name: Published manifest and its shape reference agree
+        # Unconditional, unlike its base-anchored neighbours: this is an
+        # invariant over the tree as it stands, not a question about what a
+        # change added, so there is no base commit to anchor it to.
+        run: ./tools/update-manifest-shape-guard.sh
       - name: Vault ledger is append-only (no-resets law)
         # The progression sibling of the recipe ledger above (#249). Same
         # reasoning: the in-game guard anchors the required vault-fixture range
@@ -435,58 +448,16 @@ jobs:
             echo "::error::Shipped reward mapping(s) removed or changed in $LEDGER ($(echo "$removed" | tr '\n' ' ')) — earned progression would be reinterpreted (no-resets law)"
             exit 1
           fi
-      - name: Wire protocol may not move without a two-phase rollout
-        # The manifest publishes the CLIENT's protocol constant as the range the
-        # LIVE SERVER accepts, which is honest only while both sides are pinned to
-        # one version. update_manifest_test asserts the two constants are EQUAL —
-        # but equality survives bumping BOTH in one change, and that is precisely
-        # the unsafe rollout: whichever side deploys first strands the other
-        # population (a v2 client rejects the live v1 server's frames; a v2 server
-        # makes every retained v1 client unreachable).
-        #
-        # The ADR requires expand-then-contract instead, and that needs the
-        # manifest's accepted range to become a CD-supplied input read from
-        # deployment state — work that does not exist yet. So movement itself is
-        # the gate: this fails on ANY change to either constant, and the fix is to
-        # do the rollout design, not to edit this step.
+      - name: Wire protocol moves only through an expand-first rollout
+        # The guard compares the exact PR/merge-group base to this tree. It
+        # admits a new maximum only when both tiers explicitly retain the base
+        # version and CD publishes that released-server range; either deployment
+        # order then has a common protocol. Raising the minimum remains blocked:
+        # source alone cannot prove every old-range manifest has expired.
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
-        run: |
-          if ! git cat-file -e "$BASE_SHA" 2>/dev/null; then
-            echo "::error::base commit $BASE_SHA not present in the checkout — cannot verify the protocol version"
-            exit 1
-          fi
-          client_pat='s/^[[:space:]]*const VERSION[[:space:]]*:=[[:space:]]*\([0-9][0-9]*\).*$/\1/p'
-          server_pat='s/^[[:space:]]*const Version uint16[[:space:]]*=[[:space:]]*\([0-9][0-9]*\).*$/\1/p'
-          # Materialise each read FIRST and test its own status, following the
-          # ledger steps above: a pipeline's status is sed's or head's, so a
-          # failed read would yield an empty value and be reported as an
-          # unparseable constant rather than the read failure it is.
-          read_at() {
-            if ! git show "$1:$2" > /tmp/proto-raw 2>/dev/null; then
-              echo "::error::could not read $2 at $1 — the guard cannot verify a rollout it cannot read"
-              exit 1
-            fi
-            sed -n "$3" /tmp/proto-raw | head -1
-          }
-          cb=$(read_at "$BASE_SHA" client/scripts/wire_codec.gd "$client_pat")
-          sb=$(read_at "$BASE_SHA" server/wire/wire.go "$server_pat")
-          ch=$(sed -n "$client_pat" client/scripts/wire_codec.gd | head -1)
-          sh=$(sed -n "$server_pat" server/wire/wire.go | head -1)
-          # Fail closed: an unreadable constant means the guard cannot prove
-          # anything, and silently passing is how a guard becomes decoration.
-          for pair in "base-client:$cb" "base-server:$sb" "head-client:$ch" "head-server:$sh"; do
-            name=${pair%%:*}; val=${pair##*:}
-            if [ -z "$val" ]; then
-              echo "::error::could not read the $name protocol version — the guard cannot verify a rollout it cannot parse"
-              exit 1
-            fi
-          done
-          if [ "$ch" != "$cb" ] || [ "$sh" != "$sb" ]; then
-            echo "::error::Wire protocol moved (client $cb→$ch, server $sb→$sh). Both codecs hard-reject every other version, so a simultaneous bump strands whichever population deploys second. The ADR requires expand-then-contract, and the manifest's accepted protocol range must first become a CD-supplied input read from deployment state — see docs/design/distribution-and-self-update.md."
-            exit 1
-          fi
+        run: ./tools/wire-protocol-rollout-guard.sh
       - name: Piece-slot ledger is append-only (no-resets law)
         # shipped_piece_slots_test compares the registry to the ledger in the
         # SAME checkout, so a change that edits equipment.json and the ledger
@@ -727,51 +698,7 @@ jobs:
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
-        run: |
-          BUDGETS=client/tests/data/shipped_class_power.txt
-          FLOORS=client/tests/data/shipped_class_cycle_floor.txt
-          # sed strips whitespace WITHIN each line; `tr -d` would delete the
-          # newlines too and collapse the whole ledger into one blob, which
-          # silently disables the duplicate-key check and makes a legitimate
-          # new-category ADD look like a changed line.
-          # `|| true`: grep exits 1 on no-match, and under `set -o pipefail` a
-          # ledger that is empty or comments-only would abort the step with no
-          # diagnostic. As a pure filter, "no pairs" is a valid result.
-          pairs() { grep -v '^[[:space:]]*#' | sed 's/[[:space:]]//g' | grep -v '^$' || true; }
-          base_of() {
-            if git cat-file -e "$BASE_SHA:$1" 2>/dev/null; then
-              git show "$BASE_SHA:$1" | pairs
-            fi
-          }
-          # The PR that INTRODUCES a ledger has an empty base and therefore no
-          # established scale to measure against — that bootstrap is allowed, and
-          # every later addition is bounded by it.
-          base_of "$BUDGETS" > /tmp/scale-budget-base
-          pairs < "$BUDGETS" > /tmp/scale-budget-head
-          if [ -s /tmp/scale-budget-base ]; then
-            max_budget=$(cut -d= -f2 /tmp/scale-budget-base | sort -n | tail -1)
-            while IFS= read -r line; do
-              key=${line%%=*}; value=${line#*=}
-              if grep -q "^${key}=" /tmp/scale-budget-base; then continue; fi
-              if [ "$value" -gt "$max_budget" ]; then
-                echo "::error::New category [$key] claims power budget $value, above the highest shipped budget ($max_budget) — a new category may not widen the power scale"
-                exit 1
-              fi
-            done < /tmp/scale-budget-head
-          fi
-          base_of "$FLOORS" > /tmp/scale-floor-base
-          pairs < "$FLOORS" > /tmp/scale-floor-head
-          if [ -s /tmp/scale-floor-base ]; then
-            min_floor=$(cut -d= -f2 /tmp/scale-floor-base | sort -n | head -1)
-            while IFS= read -r line; do
-              key=${line%%=*}; value=${line#*=}
-              if grep -q "^${key}=" /tmp/scale-floor-base; then continue; fi
-              if [ "$value" -lt "$min_floor" ]; then
-                echo "::error::New category [$key] claims cycle floor ${value}ms, below the fastest shipped floor (${min_floor}ms) — a new category may not widen the throughput scale"
-                exit 1
-              fi
-            done < /tmp/scale-floor-head
-          fi
+        run: ./tools/ability-scale-guard.sh "$BASE_SHA"
       - name: Shipped ability identity is frozen (migration transparency)
         # shipped_abilities.txt anchors only the ID SET. But a later PR could keep
         # an ID while rewriting its JSON's weapon/role/effect/telegraph — silently
@@ -1163,7 +1090,7 @@ jobs:
   # container's Go can lag.
   lint:
     name: Lint
-    uses: devantler-tech/actions/.github/workflows/lint.yaml@625b7c0cd5ad4a04f9eb7494298c6d0fa44521ef # v11.0.4
+    uses: devantler-tech/actions/.github/workflows/lint.yaml@cf66636f30170e30cc00b19ddc54b4101b4e8516 # v13.0.5
     permissions:
       contents: read
     with:
@@ -1189,8 +1116,10 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.13"
-      - name: Install the pinned GDScript linter
-        run: python -m pip install --disable-pip-version-check "gdtoolkit==4.5.0"
+      - name: Install the pinned, hash-verified GDScript linter
+        run: >-
+          python -m pip install --disable-pip-version-check --require-hashes
+          --only-binary=:all: -r tools/gdscript-lint-requirements.txt
       - name: Prove the lint policy catches a real defect
         run: ./tools/gdscript-lint.test.sh
       - name: Lint GDScript
@@ -1336,11 +1265,9 @@ jobs:
           git diff --name-only "$BASE_SHA" HEAD > gate_machinery.txt
           if grep -qE '^tools/pr-diff-base\.sh$' gate_machinery.txt; then
             echo "This PR changes the gate's own base resolver — capturing everything."
-            # Diagnostic ONLY, and deliberately after the decision above: report
-            # what this PR's resolver would have said, so it can be inspected
-            # without being trusted. `|| true` because a resolver that cannot run
-            # must not fail the job here — it has already been overruled.
-            echo "  resolver would have reported base: $(./tools/pr-diff-base.sh "$HEAD_SHA" "$BASE_SHA" 2>/dev/null || echo unresolved)"
+            # Do not execute the PR's resolver here, even for diagnostics. It is
+            # untrusted in this branch and inherits GITHUB_OUTPUT, so it could
+            # corrupt the output file before these fail-open values are written.
             capture_everything
             exit 0
           fi
@@ -2140,7 +2067,7 @@ jobs:
             echo "::error::could not read PRESETS from client/scripts/character_creator.gd — cannot tell which frames to require"
             exit 1
           fi
-          expected="first_run first_run_outfit first_run_head_clothing first_run_head_armor first_run_lower"
+          expected="first_run first_run_outfit first_run_torso_clothing first_run_legs_clothing first_run_feet_clothing first_run_feet_armor first_run_head_clothing first_run_head_armor first_run_hands_armor first_run_lower"
           for p in $presets; do expected="$expected first_run_$p"; done
           missing=""
           for f in $expected; do
@@ -2744,7 +2671,7 @@ jobs:
             echo "::error::could not read PRESETS from client/scripts/character_creator.gd — cannot tell which frames to require"
             exit 1
           fi
-          expected="first_run first_run_outfit first_run_head_clothing first_run_head_armor first_run_lower"
+          expected="first_run first_run_outfit first_run_torso_clothing first_run_legs_clothing first_run_feet_clothing first_run_feet_armor first_run_head_clothing first_run_head_armor first_run_hands_armor first_run_lower"
           for p in $presets; do expected="$expected first_run_$p"; done
           missing=""
           for f in $expected; do
@@ -2911,7 +2838,7 @@ jobs:
       ]
     if: ${{ always() }}
     steps:
-      - uses: devantler-tech/actions/aggregate-job-checks@625b7c0cd5ad4a04f9eb7494298c6d0fa44521ef # v11.0.4
+      - uses: devantler-tech/actions/aggregate-job-checks@cf66636f30170e30cc00b19ddc54b4101b4e8516 # v13.0.5
         with:
           # frame-capture, frame-capture-exported and detect-visual-changes are
           # conditional and report `skipped` on PRs with no player-visible

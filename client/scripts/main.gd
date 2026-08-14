@@ -110,6 +110,10 @@ var _exploration_rewards := ExplorationRewards.new()
 ## Boot-owned quest progress. The retained v4 reader restores this state and
 ## every later monotonic advance queues the complete forward-only snapshot.
 var _quest_log := QuestLog.new()
+## Boot-owned weapon mastery. The retained v5 reader applies the complete
+## ledger, including unknown future weapon ids and its standing bloodstain.
+## This release remains reader-only: no production path originates a snapshot.
+var _mastery := Mastery.new()
 ## A discovery enters the live tracker before persistence is attempted. Keep
 ## the locally observed IDs themselves so a transient filesystem failure can
 ## retry them without also re-originating rollback-only names restored into the
@@ -303,6 +307,10 @@ func _ready() -> void:
 	# (a newer client's) resolves to null and is skipped — never a crash.
 	var vault = SaveVault.load_saved()
 	if vault is Dictionary:
+		# The v5 reader accepts and applies complete mastery before any weapon
+		# content exists. Stable unknown ids remain live through a rollback build.
+		if vault.has("mastery") and not _mastery.restore(vault["mastery"]):
+			push_error("Main: SaveVault accepted mastery that Mastery refused")
 		# The v4 reader accepts forward-only quest progress before any quest
 		# definitions exist. QuestLog applies it when content registers later.
 		_quest_log.restore(vault.get("quests", {}))
@@ -802,16 +810,18 @@ func _open_creator(first_run: bool) -> void:
 			# A refused write and a CONTENDED one both answer false, and they must
 			# not be treated alike. A refusal is permanent — the recipe on disk is
 			# not this build's to replace — so the creator latches shut. Contention
-			# is momentary, and now has two shapes: another copy of the game held the
+			# is momentary, and has two shapes: another copy of the game held the
 			# write lock (or this attempt freed an abandoned one and deliberately
 			# refused that pass), or the recipe changed under this edit and the
 			# compare-and-swap refused rather than discarding whoever wrote it
-			# (#469). Latching on either would lock the player out of their own
+			# (#469). A malformed candidate is a third non-latching failure: the
+			# proposed edit is not persistable, but the existing path is still
+			# readable. Latching on any of these would lock the player out of their own
 			# character for the rest of the session over a collision the next
 			# attempt resolves. The store's refusal latch is what tells the
 			# permanent case from both momentary ones; it is never set by a lock
-			# failure or by a stale identity, and CharacterStore.last_refusal()
-			# names which of the three occurred.
+			# failure, stale identity, or rejected candidate, and
+			# CharacterStore.last_refusal() names the precise outcome.
 			# Put the BODY back to what is actually on disk. The creator previews
 			# every edit on the live player as it is made, and _close(true) goes on
 			# to tear itself down whether or not this callback returned early — so

@@ -16,7 +16,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -26,7 +25,7 @@ import (
 // wireFixturePath is deliberately the client's data directory: the fixture
 // must live somewhere Godot can reach over res:// (the client test runs with
 // --path client), matching the cross-tier cone fixture's placement.
-var wireFixturePath = filepath.Join("..", "..", "client", "tests", "data", "wire_goldens.json")
+const wireFixturePath = "../../client/tests/data/wire_goldens.json"
 
 type wireFixtureEntity struct {
 	ID     uint64 `json:"id"`
@@ -61,12 +60,18 @@ type wireFixture struct {
 	Messages []wireFixtureMessage `json:"messages"`
 }
 
-func loadWireFixture(t *testing.T) wireFixture {
+func readWireFixture(t *testing.T) []byte {
 	t.Helper()
 	raw, err := os.ReadFile(wireFixturePath)
 	if err != nil {
 		t.Fatalf("reading shared fixture: %v", err)
 	}
+	return raw
+}
+
+func loadWireFixture(t *testing.T) wireFixture {
+	t.Helper()
+	raw := readWireFixture(t)
 	var f wireFixture
 	if err := json.Unmarshal(raw, &f); err != nil {
 		t.Fatalf("parsing shared fixture: %v", err)
@@ -123,7 +128,7 @@ func TestWireFixtureAgreesWithCodec(t *testing.T) {
 				Observer: sim.EntityID(m.Snapshot.Observer),
 				Entities: fixtureStates(m.Snapshot.Entities),
 			}
-			encoded, err := EncodeSnapshot(want)
+			encoded, err := EncodeSnapshotVersion(want, LegacyVersion)
 			if err != nil {
 				t.Fatalf("encoding fixture snapshot: %v", err)
 			}
@@ -147,7 +152,7 @@ func TestWireFixtureAgreesWithCodec(t *testing.T) {
 				Moved:   fixtureStates(m.Delta.Moved),
 				Left:    fixtureIDs(m.Delta.Left),
 			}
-			encoded, err := EncodeSnapshotDelta(want)
+			encoded, err := EncodeSnapshotDeltaVersion(want, LegacyVersion)
 			if err != nil {
 				t.Fatalf("encoding fixture delta: %v", err)
 			}

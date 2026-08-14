@@ -48,6 +48,11 @@ const MM_PER_M := 1000.0
 ## replicated quantity.
 const MARKER_HEIGHT_M := 1.8
 
+## A protocol-valid table may contain far more entities than the renderer can
+## safely expand into scene nodes. Keep that serialization ceiling separate
+## from this deliberately conservative scene-tree budget.
+const MAX_VISIBLE_ENTITIES := 512
+
 ## Flat stand-in colour. Deliberately readable against the Reach's ash palette
 ## without reading as authored art.
 const MARKER_COLOR := Color(0.62, 0.78, 0.9)
@@ -102,6 +107,13 @@ static var _marker_material: StandardMaterial3D = null
 func sync(store: ReplicaStore) -> void:
 	if store == null:
 		_clear()
+		return
+	# Check the O(1) table count before ids() copies and sorts the keys, and
+	# before a single MeshInstance3D or CapsuleMesh can be allocated. Retain the
+	# last valid bounded population while the authoritative table is oversized:
+	# selecting a partial set would misrepresent that table, while clearing here
+	# would turn a 512/513 oscillation into a 512-node free/rebuild loop.
+	if store.count() > MAX_VISIBLE_ENTITIES:
 		return
 	var live: Dictionary = {}
 	for id: int in store.ids():

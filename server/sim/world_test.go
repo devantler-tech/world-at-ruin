@@ -104,6 +104,36 @@ func TestSpeedClampDiagonalBound(t *testing.T) {
 	}
 }
 
+func TestClampSpeedRejectsVerticalMotion(t *testing.T) {
+	tests := []struct {
+		name     string
+		intent   Vec3
+		maxSpeed int64
+		want     Vec3
+	}{
+		{
+			name:     "under horizontal cap",
+			intent:   Vec3{X: 1000, Y: 2000, Z: -500},
+			maxSpeed: 4000,
+			want:     Vec3{X: 1000, Z: -500},
+		},
+		{
+			name:     "over horizontal cap",
+			intent:   Vec3{X: 4000, Y: -2000, Z: 3000},
+			maxSpeed: 2500,
+			want:     Vec3{X: 2000, Z: 1500},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := clampSpeed(tt.intent, tt.maxSpeed); got != tt.want {
+				t.Fatalf("clampSpeed(%+v, %d) = %+v, want %+v",
+					tt.intent, tt.maxSpeed, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestBoundsClampKeepsInside drives an actor hard into a wall and asserts it
 // stops exactly at the boundary and never escapes.
 func TestBoundsClampKeepsInside(t *testing.T) {
@@ -156,7 +186,13 @@ func TestSetIntentSanitizesHostileInput(t *testing.T) {
 		w := NewWorld(DemoBounds)
 		w.Add(Entity{ID: 1, Pos: Vec3{}, MaxSpeed: 4000})
 		w.SetIntent(1, hostile)
+		if got := w.Get(1).Intent.Y; got != 0 {
+			t.Fatalf("SetIntent preserved hostile vertical intent: got %d mm/s", got)
+		}
 		w.Step() // must not panic
+		if got := w.Get(1).Pos.Y; got != 0 {
+			t.Fatalf("hostile intent %+v moved vertically by %d mm", hostile, got)
+		}
 		if got := w.Get(1).Pos.HorizontalLen(); got > perTick {
 			t.Fatalf("hostile intent %+v bypassed the speed cap: moved %d mm/tick, budget %d",
 				hostile, got, perTick)
@@ -168,8 +204,14 @@ func TestSetIntentSanitizesHostileInput(t *testing.T) {
 // (an entity spawned with a hostile Intent field), not only SetIntent.
 func TestAddSanitizesHostileIntent(t *testing.T) {
 	w := NewWorld(DemoBounds)
-	w.Add(Entity{ID: 1, Pos: Vec3{}, Intent: Vec3{X: math.MaxInt64, Z: math.MaxInt64}, MaxSpeed: 4000})
+	w.Add(Entity{ID: 1, Pos: Vec3{}, Intent: Vec3{X: math.MaxInt64, Y: math.MaxInt64, Z: math.MaxInt64}, MaxSpeed: 4000})
+	if got := w.Get(1).Intent.Y; got != 0 {
+		t.Fatalf("Add preserved hostile vertical intent: got %d mm/s", got)
+	}
 	w.Step() // must not panic
+	if got := w.Get(1).Pos.Y; got != 0 {
+		t.Fatalf("Add preserved hostile vertical intent: moved %d mm", got)
+	}
 	if got := w.Get(1).Pos.HorizontalLen(); got > int64(4000/TickHz)+1 {
 		t.Fatalf("Add did not sanitise a hostile intent: moved %d mm/tick", got)
 	}

@@ -263,8 +263,8 @@ func _walk(mat: ShaderMaterial, plates: bool) -> float:
 			# identical, so the crawl figure comes out at a perfect 0.0000.
 			_cam.current = true
 			await get_tree().process_frame
+		_save_frame(plates, i)
 		if i == 0:
-			_save_frame(plates)
 			_reference[plates] = _crop_luma()
 		var current := _crop_luma()
 		if current.is_empty():
@@ -364,14 +364,17 @@ func _world_per_pixel() -> float:
 	return 2.0 * CROP_DISTANCE * tan(deg_to_rad(_cam.fov) * 0.5) / h
 
 
-## Writes the frame each state was measured on, with the crop outlined, to
-## WAR_CRAWL_SHOT_DIR. This is not a debug aid: a crawl figure is only worth as
+## Writes every measured frame, with the crop outlined, to WAR_CRAWL_SHOT_DIR.
+## Step zero keeps the original `plates-on.png` / `plates-off.png` names so
+## existing fixed-vantage evidence stays addressable; later steps form the
+## captured sequence a motion claim requires. This is not a debug aid: a crawl
+## figure is only worth as
 ## much as the crop it was taken over, so the evidence has to let a reader see
 ## that the measured band really is ground. A crop that had strayed onto a
 ## silhouette or the horizon would report a large, real, and entirely irrelevant
 ## number ([[evidence-jobs-must-depict-the-change]] — evidence that cannot
 ## depict its claim is worse than none, because it looks like proof).
-func _save_frame(plates: bool) -> void:
+func _save_frame(plates: bool, step: int) -> void:
 	var dir := OS.get_environment("WAR_CRAWL_SHOT_DIR")
 	if dir.is_empty():
 		return
@@ -388,7 +391,10 @@ func _save_frame(plates: bool) -> void:
 	for y in range(y0, y1 + 1):
 		img.set_pixel(x0, y, Color.RED)
 		img.set_pixel(x1, y, Color.RED)
-	var path := "%s/plates-%s.png" % [dir, "on" if plates else "off"]
+	var state := "on" if plates else "off"
+	var filename := "plates-%s.png" % state if step == 0 \
+		else "plates-%s-step-%d.png" % [state, step]
+	var path := "%s/%s" % [dir, filename]
 	if img.save_png(path) != OK:
 		push_warning("could not write %s" % path)
 

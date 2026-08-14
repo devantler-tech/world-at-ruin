@@ -225,6 +225,8 @@ validate_corrections() {
 		case "$path" in '' | '#'*) continue ;; esac
 		[ -n "$commit" ] ||
 			fail "$CORRECTIONS_FILE line $lineno lists $path with no anchor commit — a correction is verified against the commit it describes, so the listing is unusable without one"
+		[[ "$commit" =~ ^[0-9a-f]{40}$ ]] ||
+			fail "$CORRECTIONS_FILE line $lineno lists $path with anchor '$commit', which is not a full 40-character commit SHA"
 	done <"$CORRECTIONS_FILE"
 }
 

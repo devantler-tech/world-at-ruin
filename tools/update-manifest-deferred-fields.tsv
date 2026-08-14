@@ -1,0 +1,23 @@
+# Fields the update-manifest SHAPE REFERENCE declares but this build does not publish.
+#
+# docs/design/client-update-manifest.example.json is the shape the ADR and three
+# code files point implementers at, so it describes the FULL eventual manifest —
+# including delivery fields that do not exist yet. `update-manifest-shape-guard.sh`
+# requires every such field to be listed here with the reason it is withheld, so a
+# field can never sit in the published contract with no owner and no explanation.
+#
+# An entry covers the path itself and everything nested under it.
+# Format: <path><TAB><why it is not published yet>
+#
+# Removing an entry is how a field graduates: emit it from
+# client/scripts/update_manifest.gd and the guard requires the row to go.
+
+generated_at	Nothing consumes it. Ordering is by `sequence`, deliberately clock-free (cd.yaml: a clock is the right source for an expiry and the wrong one for an ordering), and `not_after` is already the one clock fact the manifest needs.
+pack.full	There is no pack. CD builds a macOS .app ZIP, not a mountable cumulative .pck; recording that ZIP here would let recovery hand an application archive to the pack-mount path. Waits on the pack pipeline (ADR child 3).
+pack.deltas	Same missing pack pipeline as pack.full — there is no base artifact to compute a delta against.
+shell.download	A shell replacement must be authorized by the offline root, carried in shell_authorization. That root does not exist, so any download offered here would be an unauthorized shell replacement.
+shell_authorization	The offline root that would sign a shell download does not exist yet (ADR child 6).
+key	No production signing key, custody or certificate publisher exists yet (ADR child 6, tracked by #490).
+revocation	No revocation publisher or revocation-head endpoint exists yet (ADR child 6, tracked by #490).
+signature	Nothing signs the manifest yet. The published OCI artifact IS cosign-signed by digest, which is a real but different integrity property.
+rollback_targets	No mountable content pack is retained yet, so the array ships empty and its element fields are unreachable. Empty is the fail-closed value: UpdateDecision refuses a capability-raising pack rather than shipping one no player could roll back from.
