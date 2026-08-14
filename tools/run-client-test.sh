@@ -83,6 +83,10 @@ tee_pid=""
 watchdog_pid=""
 
 cleanup() {
+	if [ -n "${test_pid}" ]; then
+		kill -TERM -- "-${test_pid}" 2>/dev/null || true
+		kill -KILL -- "-${test_pid}" 2>/dev/null || true
+	fi
 	for pid in "${watchdog_pid}" "${test_pid}" "${tee_pid}"; do
 		if [ -n "${pid}" ]; then
 			kill "${pid}" 2>/dev/null || true
@@ -97,8 +101,14 @@ trap 'exit 130' INT TERM
 mkfifo "${output_fifo}"
 tee "${log}" <"${output_fifo}" &
 tee_pid=$!
+# Give Godot a dedicated process group. Tests may start descendants which
+# inherit the FIFO writer, so supervising only Godot's direct PID can leave tee
+# waiting forever after Godot exits. Job control is the portable Bash way to
+# create that group on both Linux and macOS (where setsid is not available).
+set -m
 godot --headless --path client "res://tests/${name}.tscn" >"${output_fifo}" 2>&1 &
 test_pid=$!
+set +m
 
 (
 	watchdog_sleep_pid=""
@@ -116,9 +126,9 @@ test_pid=$!
 		# the waiter can cancel this watchdog before the marker is durable and
 		# misclassify an elapsed timeout as the child's exit status.
 		: >"${timeout_marker}"
-		kill -TERM "${test_pid}" 2>/dev/null || true
+		kill -TERM -- "-${test_pid}" 2>/dev/null || true
 		sleep 2
-		kill -KILL "${test_pid}" 2>/dev/null || true
+		kill -KILL -- "-${test_pid}" 2>/dev/null || true
 	fi
 ) &
 watchdog_pid=$!
@@ -128,6 +138,11 @@ if wait "${test_pid}"; then
 else
 	test_status=$?
 fi
+# A completed test does not own background work. Terminate its entire process
+# group before waiting for tee so an inherited FIFO writer cannot outlive the
+# per-test bound (or leak into later tests).
+kill -TERM -- "-${test_pid}" 2>/dev/null || true
+kill -KILL -- "-${test_pid}" 2>/dev/null || true
 test_pid=""
 
 kill "${watchdog_pid}" 2>/dev/null || true
