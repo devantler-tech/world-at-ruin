@@ -42,7 +42,7 @@ hang)
 descendant)
 	/bin/bash -c '
 		trap "" TERM
-		printf "%s\n" "$BASHPID" >"${FAKE_GODOT_CHILD_PID_FILE}"
+		printf "%s\n" "$$" >"${FAKE_GODOT_CHILD_PID_FILE}"
 		while :; do sleep 1; done
 	' &
 	while [ ! -s "${FAKE_GODOT_CHILD_PID_FILE}" ]; do sleep 0.01; done
@@ -152,11 +152,13 @@ elif [ ! -s "${child_pid_file}" ]; then
 	fail "the descendant fixture did not publish its PID"
 else
 	child_pid="$(<"${child_pid_file}")"
-	if kill -0 "${child_pid}" 2>/dev/null; then
+	if [[ ! "${child_pid}" =~ ^[1-9][0-9]*$ ]]; then
+		fail "the descendant fixture published a PID that is not a process id: ${child_pid}"
+	elif kill -0 -- "${child_pid}" 2>/dev/null; then
 		child_state="$(ps -o stat= -p "${child_pid}" 2>/dev/null || true)"
 		if [[ "${child_state}" != Z* ]]; then
 			fail "a descendant that inherited the output FIFO survived its test"
-			kill -KILL "${child_pid}" 2>/dev/null || true
+			kill -KILL -- "${child_pid}" 2>/dev/null || true
 		fi
 	fi
 fi
