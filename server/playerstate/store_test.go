@@ -244,7 +244,7 @@ func TestApplyCommitsPlayerRecordAndAuditInOneAtomicWrite(t *testing.T) {
 	if recordWrite.Value != `{"items":["ash-blade"],"schema":1}` {
 		t.Fatalf("record write value = %s", recordWrite.Value)
 	}
-	if auditWrite.UserID != testSubjectID ||
+	if auditWrite.UserID != "" ||
 		auditWrite.Key !=
 			"afd3896d75f47b66b0be65e77e3f40aede48b01b772292b29c9525779cc76233" ||
 		auditWrite.Version != "*" ||
@@ -362,6 +362,55 @@ func TestApplyReplaysTheOriginalOutcomeWithoutWritingAgain(t *testing.T) {
 			"StorageWrite() calls after replay = %d, want 1",
 			len(storage.writeCalls),
 		)
+	}
+}
+
+func TestApplyIgnoresClientOwnedAuditAtDerivedKey(t *testing.T) {
+	t.Parallel()
+
+	storage := seededInventoryStorage()
+	mutation := inventoryMutation(testSubjectID, "quest:ember:reward")
+	auditObjectKey := auditKey(
+		testSubjectID,
+		mutation.Record.Collection,
+		mutation.Record.Key,
+		mutation.IdempotencyKey,
+	)
+	storage.seed(storedObject{
+		collection: AuditCollection,
+		key:        auditObjectKey,
+		userID:     testSubjectID,
+		value: `{"schema":1,` +
+			`"idempotency_key":"quest:ember:reward",` +
+			`"record_collection":"world_at_ruin_inventory",` +
+			`"record_key":"carried","operation":"grant_item",` +
+			`"payload":{"item_id":"ash-blade","quantity":1},` +
+			`"outcome":{"item_count":999}}`,
+		version:         "client-owned",
+		permissionRead:  0,
+		permissionWrite: 0,
+	})
+	store, err := NewStore(storage)
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+
+	result, err := store.Apply(context.Background(), mutation)
+	if err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	if string(result.Outcome) != `{"item_count":1}` {
+		t.Fatalf("Apply() outcome = %s, want authoritative outcome", result.Outcome)
+	}
+	if len(storage.writeCalls) != 1 {
+		t.Fatalf("StorageWrite() calls = %d, want 1", len(storage.writeCalls))
+	}
+	if _, ok := storage.objects[storageObjectID(
+		AuditCollection,
+		auditObjectKey,
+		systemOwnerID,
+	)]; !ok {
+		t.Fatal("Apply() did not create server-owned audit evidence")
 	}
 }
 
@@ -788,7 +837,7 @@ func TestApplyRejectsMalformedAuditDocuments(t *testing.T) {
 					"carried",
 					"quest:ember:reward",
 				),
-				userID:          testSubjectID,
+				userID:          systemOwnerID,
 				value:           test.value,
 				version:         "audit-version",
 				permissionRead:  0,

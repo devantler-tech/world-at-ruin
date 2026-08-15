@@ -18,8 +18,8 @@ import (
 
 const (
 	// AuditCollection stores private mutation identities, bindings, and
-	// outcomes. Audit objects are create-only and use the same protected owner
-	// boundary as their mutated record.
+	// outcomes. Audit objects are create-only and have no client owner, so an
+	// authenticated player cannot pre-create evidence for a server mutation.
 	AuditCollection = "world_at_ruin_player_mutations"
 
 	auditSchema   = 1
@@ -182,8 +182,8 @@ func recordOwner(mutation normalizedMutation) string {
 	return mutation.subjectID
 }
 
-func auditOwner(mutation normalizedMutation) string {
-	return recordOwner(mutation)
+func auditOwner(_ normalizedMutation) string {
+	return ""
 }
 
 func expectedStorageOwner(owner string) string {
