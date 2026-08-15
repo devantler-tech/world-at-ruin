@@ -62,7 +62,11 @@ expect_failure() {
 		failures=$((failures + 1))
 		return
 	fi
-	if ! printf '%s\n' "$output" | grep -Fq -- "$expected"; then
+	# Substring test in the shell, NOT `printf | grep -q`: under `pipefail` grep
+	# exits on the first match, printf takes SIGPIPE, and the pipeline reports
+	# 141 instead of 0 — so an expectation that matches EARLY in the output is
+	# reported missing. `$expected` is quoted, so it matches literally.
+	if [[ "$output" != *"$expected"* ]]; then
 		printf 'FAIL: %s — missing diagnostic %s\n%s\n' "$name" "$expected" "$output" >&2
 		failures=$((failures + 1))
 		return
@@ -149,6 +153,28 @@ printf '%s\n' \
 	>"$repo/client/assets/pack/PROVENANCE.md"
 git -C "$repo" add client/assets/pack/PROVENANCE.md
 expect_success "ancestor record uses a record-relative path" "$repo"
+
+# A filesystem regular-file test follows links. Provenance coverage instead
+# requires a real record in the index; a link to unrelated repository prose
+# must not bless assets that have no provenance record of their own.
+repo=$(new_repo symlinked_provenance)
+printf 'asset-v1\n' >"$repo/client/assets/pack/hero.bin"
+printf '# Unrelated documentation\n' >"$repo/README.md"
+ln -s ../../../README.md "$repo/client/assets/pack/PROVENANCE.md"
+git -C "$repo" add \
+	README.md \
+	client/assets/pack/hero.bin \
+	client/assets/pack/PROVENANCE.md
+# The expectation names the "no record at all" error class deliberately. The
+# unfixed guard also fails this fixture, but for the wrong reason: `test -f`
+# follows the link, accepts unrelated prose as the record, and then reports the
+# asset as merely missing a checksum entry. A looser expectation such as the
+# directory path appears in BOTH diagnostics, so it would pass with the symlink
+# bypass still present.
+expect_failure \
+	"symlinked provenance records do not provide coverage" \
+	"asset directories without a PROVENANCE.md" \
+	"$repo"
 
 # R4 — a texture the editor cannot detect in a committed 3D resource must
 # declare its mip chain explicitly. A runtime load() alone does not trigger
