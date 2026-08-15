@@ -22,7 +22,8 @@ const (
 	// authenticated player cannot pre-create evidence for a server mutation.
 	AuditCollection = "world_at_ruin_player_mutations"
 
-	auditSchema = 1
+	auditSchema   = 1
+	systemOwnerID = "00000000-0000-0000-0000-000000000000"
 )
 
 var (
@@ -51,12 +52,14 @@ type storageClient interface {
 }
 
 // RecordWrite is one conditional create or version-checked replacement of a
-// player-owned document.
+// player record. SystemOwned keeps the authoritative record and its replay
+// evidence outside the client's writable user namespace.
 type RecordWrite struct {
 	Collection      string
 	Key             string
 	ExpectedVersion string
 	Value           json.RawMessage
+	SystemOwned     bool
 }
 
 // Mutation binds one caller-stable logical identity to the exact operation
@@ -120,6 +123,7 @@ func (s *Store) Apply(ctx context.Context, mutation Mutation) (Result, error) {
 		{
 			Collection: AuditCollection,
 			Key:        normalized.auditKey,
+			UserID:     auditOwner(normalized),
 		},
 	})
 	if err != nil {
@@ -145,7 +149,7 @@ func (s *Store) Apply(ctx context.Context, mutation Mutation) (Result, error) {
 		{
 			Collection:      normalized.record.Collection,
 			Key:             normalized.record.Key,
-			UserID:          normalized.subjectID,
+			UserID:          recordOwner(normalized),
 			Value:           string(normalized.record.Value),
 			Version:         normalized.record.ExpectedVersion,
 			PermissionRead:  0,
@@ -154,6 +158,7 @@ func (s *Store) Apply(ctx context.Context, mutation Mutation) (Result, error) {
 		{
 			Collection:      AuditCollection,
 			Key:             normalized.auditKey,
+			UserID:          auditOwner(normalized),
 			Value:           string(auditValue),
 			Version:         "*",
 			PermissionRead:  0,
@@ -170,6 +175,24 @@ func (s *Store) Apply(ctx context.Context, mutation Mutation) (Result, error) {
 	return Result{Outcome: cloneRaw(normalized.outcome)}, nil
 }
 
+func recordOwner(mutation normalizedMutation) string {
+	if mutation.record.SystemOwned {
+		return ""
+	}
+	return mutation.subjectID
+}
+
+func auditOwner(_ normalizedMutation) string {
+	return ""
+}
+
+func expectedStorageOwner(owner string) string {
+	if owner == "" {
+		return systemOwnerID
+	}
+	return owner
+}
+
 func (s *Store) resolveAfterWrite(
 	ctx context.Context,
 	mutation normalizedMutation,
@@ -179,6 +202,7 @@ func (s *Store) resolveAfterWrite(
 		{
 			Collection: AuditCollection,
 			Key:        mutation.auditKey,
+			UserID:     auditOwner(mutation),
 		},
 	})
 	if readErr != nil {
@@ -278,10 +302,11 @@ func resolveExistingAudit(
 		return Result{}, ErrStorage
 	}
 	object := objects[0]
+	expectedOwner := expectedStorageOwner(auditOwner(mutation))
 	if object == nil ||
 		object.GetCollection() != AuditCollection ||
 		object.GetKey() != mutation.auditKey ||
-		object.GetUserId() != "" ||
+		object.GetUserId() != expectedOwner ||
 		object.GetVersion() == "" ||
 		object.GetPermissionRead() != 0 ||
 		object.GetPermissionWrite() != 0 {
@@ -431,10 +456,11 @@ func validAcks(
 		return false
 	}
 	for index, ack := range acks {
+		expectedOwner := expectedStorageOwner(writes[index].UserID)
 		if ack == nil ||
 			ack.GetCollection() != writes[index].Collection ||
 			ack.GetKey() != writes[index].Key ||
-			ack.GetUserId() != writes[index].UserID ||
+			ack.GetUserId() != expectedOwner ||
 			ack.GetVersion() == "" {
 			return false
 		}

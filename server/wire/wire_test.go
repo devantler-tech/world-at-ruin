@@ -62,7 +62,7 @@ func mustDecodeHex(t *testing.T, s string) []byte {
 }
 
 func TestGoldenSnapshotBytes(t *testing.T) {
-	got, err := EncodeSnapshot(goldenSnapshot)
+	got, err := EncodeSnapshotVersion(goldenSnapshot, LegacyVersion)
 	if err != nil {
 		t.Fatalf("EncodeSnapshot: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestGoldenSnapshotBytes(t *testing.T) {
 }
 
 func TestGoldenDeltaBytes(t *testing.T) {
-	got, err := EncodeSnapshotDelta(goldenDelta)
+	got, err := EncodeSnapshotDeltaVersion(goldenDelta, LegacyVersion)
 	if err != nil {
 		t.Fatalf("EncodeSnapshotDelta: %v", err)
 	}
@@ -216,7 +216,7 @@ func TestEncodeRejectsNegativeRadius(t *testing.T) {
 
 func TestDecodeRejectsNegativeRadius(t *testing.T) {
 	var b []byte
-	b = binary.LittleEndian.AppendUint16(b, Version)
+	b = binary.LittleEndian.AppendUint16(b, LegacyVersion)
 	b = append(b, KindSnapshot)
 	b = binary.LittleEndian.AppendUint64(b, 1)          // tick
 	b = binary.LittleEndian.AppendUint64(b, 1)          // observer
@@ -247,7 +247,7 @@ func TestOrderEnforcedBothSides(t *testing.T) {
 
 	// Craft the descending bytes by hand (the encoder refuses to produce them).
 	var b []byte
-	b = binary.LittleEndian.AppendUint16(b, Version)
+	b = binary.LittleEndian.AppendUint16(b, LegacyVersion)
 	b = append(b, KindSnapshotDelta)
 	b = binary.LittleEndian.AppendUint64(b, 1) // tick
 	b = binary.LittleEndian.AppendUint32(b, 0) // entered
@@ -273,7 +273,7 @@ func TestDeltaDisjointEnforcedBothSides(t *testing.T) {
 	}
 
 	var b []byte
-	b = binary.LittleEndian.AppendUint16(b, Version)
+	b = binary.LittleEndian.AppendUint16(b, LegacyVersion)
 	b = append(b, KindSnapshotDelta)
 	b = binary.LittleEndian.AppendUint64(b, 1) // tick
 	b = binary.LittleEndian.AppendUint32(b, 1) // entered: entity 3
@@ -329,7 +329,7 @@ func TestDemoGoldenWireStream(t *testing.T) {
 			continue
 		}
 		eventful++
-		b, err := EncodeSnapshotDelta(d)
+		b, err := EncodeSnapshotDeltaVersion(d, LegacyVersion)
 		if err != nil {
 			t.Fatalf("tick %d: encode: %v", w.Tick, err)
 		}
@@ -352,7 +352,7 @@ func TestDemoGoldenWireStream(t *testing.T) {
 	if len(s.Entities) == 0 {
 		t.Fatal("final full snapshot is empty — the join-payload half of the golden would be vacuous")
 	}
-	b, err := EncodeSnapshot(s)
+	b, err := EncodeSnapshotVersion(s, LegacyVersion)
 	if err != nil {
 		t.Fatalf("encode full snapshot: %v", err)
 	}

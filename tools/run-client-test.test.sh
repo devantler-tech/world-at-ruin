@@ -39,6 +39,15 @@ hang)
 		sleep 1
 	done
 	;;
+descendant)
+	/bin/bash -c '
+		trap "" TERM
+		printf "%s\n" "$$" >"${FAKE_GODOT_CHILD_PID_FILE}"
+		while :; do sleep 1; done
+	' &
+	while [ ! -s "${FAKE_GODOT_CHILD_PID_FILE}" ]; do sleep 0.01; done
+	printf '%s\n' "TEST PASS — fake Godot completed with a descendant"
+	;;
 term-pass)
 	trap 'printf "%s\n" "TEST PASS — fake Godot handled TERM"; exit 0' TERM
 	while :; do
@@ -67,8 +76,13 @@ fail() {
 # the watchdog and misclassify the elapsed timeout as a process result.
 marker_line="$(grep -n ": >\"\${timeout_marker}\"" "${runner}")"
 marker_line="${marker_line%%:*}"
-term_line="$(grep -n "kill -TERM \"\${test_pid}\"" "${runner}")"
-term_line="${term_line%%:*}"
+term_line=""
+while IFS=: read -r candidate _; do
+	if [ "${candidate}" -gt "${marker_line:-0}" ]; then
+		term_line="${candidate}"
+		break
+	fi
+done < <(grep -n "kill -TERM -- \"-\${test_pid}\"" "${runner}")
 if [ -z "${marker_line}" ] || [ -z "${term_line}" ]; then
 	fail "the timeout verdict publication or TERM signal is missing"
 elif [ "${marker_line}" -ge "${term_line}" ]; then
@@ -128,6 +142,27 @@ elif [[ "${case_output}" != *"timed out (1s)"* ]]; then
 elif [[ "${case_output}" == *"failed (exit"* ]]; then
 	fail "a signal-responsive timeout was misreported as an ordinary process failure"
 fi
+
+child_pid_file="${tmp_dir}/descendant.pid"
+export FAKE_GODOT_CHILD_PID_FILE="${child_pid_file}"
+run_case descendant descendant 2
+if [ "${case_status}" -ne 0 ]; then
+	fail "a completed scene with a descendant did not finish cleanly: ${case_output}"
+elif [ ! -s "${child_pid_file}" ]; then
+	fail "the descendant fixture did not publish its PID"
+else
+	child_pid="$(<"${child_pid_file}")"
+	if [[ ! "${child_pid}" =~ ^[1-9][0-9]*$ ]]; then
+		fail "the descendant fixture published a PID that is not a process id: ${child_pid}"
+	elif kill -0 -- "${child_pid}" 2>/dev/null; then
+		child_state="$(ps -o stat= -p "${child_pid}" 2>/dev/null || true)"
+		if [[ "${child_state}" != Z* ]]; then
+			fail "a descendant that inherited the output FIFO survived its test"
+			kill -KILL -- "${child_pid}" 2>/dev/null || true
+		fi
+	fi
+fi
+unset FAKE_GODOT_CHILD_PID_FILE
 
 mv "${bin_dir}/godot" "${tmp_dir}/godot-disabled"
 run_case missing-godot success 2

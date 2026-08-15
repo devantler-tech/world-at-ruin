@@ -8,9 +8,8 @@ extends RefCounted
 ##
 ## Contract parity with the Go decoder, mirrored WHOLE rather than sampled:
 ##   * Born versioned. Every frame opens with an explicit protocol version and
-##     this decoder refuses anything other than `VERSION` — a bump is a
-##     deliberate, reviewed act on both tiers, never a silent re-read of old
-##     bytes.
+##     this decoder accepts the retained `LEGACY_VERSION` through `VERSION`;
+##     a bump is a deliberate, reviewed expansion on both tiers.
 ##   * Canonical bytes only. Fixed-width little-endian integers, fixed field
 ##     order, list lengths up front, strictly ascending EntityID lists, and
 ##     pairwise-disjoint delta lists — violations are refused, never repaired,
@@ -33,9 +32,11 @@ extends RefCounted
 ##   ok:    {"ok": true, "kind": KIND_SNAPSHOT, "snapshot": {...}}
 ##          {"ok": true, "kind": KIND_SNAPSHOT_DELTA, "delta": {...}}
 ##   fail:  {"ok": false, "error": ERR_*, "detail": String}
-## Snapshot: {"tick": int, "observer": int, "entities": [entity, ...]}
+## Snapshot: {"tick": int, "observer": int, "entities": [entity, ...],
+##            "casts": [cast, ...]}
 ## Delta:    {"tick": int, "entered": [entity, ...], "moved": [entity, ...],
-##            "left": [int, ...]}
+##            "left": [int, ...], "started_casts": [cast, ...],
+##            "ended_casts": [caster_id, ...]}
 ## Entity:   {"id": int, "x": int, "y": int, "z": int, "radius": int}
 ## (positions/radius are integer millimetres, exactly as the server speaks).
 ##
@@ -44,9 +45,10 @@ extends RefCounted
 ## and `client/tests/wire_codec_test.gd` — so the byte layout cannot drift
 ## between them without both test suites moving together.
 
-## The wire-protocol version this build speaks, and the decoder's ceiling.
-## Mirrors `wire.Version`; forward-only, bumped only as a reviewed act.
-const VERSION := 1
+## The inclusive wire-protocol range this build decodes. Outbound negotiation
+## requests VERSION; LEGACY_VERSION remains readable during expansion.
+const LEGACY_VERSION := 1
+const VERSION := 2
 
 ## Message kinds. Values are wire contract (mirror `wire.KindSnapshot` /
 ## `wire.KindSnapshotDelta`) — never renumber one.
@@ -57,10 +59,20 @@ const KIND_SNAPSHOT_DELTA := 2
 ## allocation so a hostile length prefix cannot size a buffer. Mirrors
 ## `wire.MaxEntities` (1 << 16).
 const MAX_ENTITIES := 65536
+const MAX_CASTS := MAX_ENTITIES
 
 ## Fixed byte width of one encoded entity state: id + x + y + z + radius,
 ## each 8 bytes. Mirrors the server's `entityStateSize`.
 const ENTITY_STATE_SIZE := 40
+const ACTIVE_CAST_SIZE := 105
+
+const SHAPE_CIRCLE := 0
+const SHAPE_RING := 1
+const SHAPE_CONE := 2
+const SHAPE_RECT := 3
+const COS_SCALE := 1_000_000
+const MAX_WORLD_EXTENT_MM := 1_000_000
+const MAX_TELEGRAPH_EXTENT_MM := 4_000_000
 
 ## Error classes, mirroring the server codec's sentinel errors one-for-one so
 ## a transport can classify a bad frame without string-matching. `ERR_RANGE`
@@ -73,6 +85,9 @@ const ERR_COUNT := "count"
 const ERR_ORDER := "order"
 const ERR_OVERLAP := "overlap"
 const ERR_RANGE := "range"
+const ERR_CAST_SHAPE := "cast_shape"
+const ERR_CAST_TIMING := "cast_timing"
+const ERR_CAST_CASTER := "cast_caster"
 
 
 ## Parse one wire frame. Fails closed: unknown version or kind, truncation at
@@ -85,18 +100,18 @@ static func decode(bytes: PackedByteArray) -> Dictionary:
 	var version := r.u16()
 	if not r.error.is_empty():
 		return _reader_fail(r)
-	if version != VERSION:
+	if version < LEGACY_VERSION or version > VERSION:
 		return {
 			"ok": false,
 			"error": ERR_VERSION,
-			"detail": "message speaks %d, this build speaks %d" % [version, VERSION],
+			"detail": "message speaks %d, this build speaks %d-%d" % [version, LEGACY_VERSION, VERSION],
 		}
 	var kind := r.u8()
 	if not r.error.is_empty():
 		return _reader_fail(r)
 
 	if kind == KIND_SNAPSHOT:
-		var snapshot := r.read_snapshot()
+		var snapshot := r.read_snapshot(version)
 		if not r.error.is_empty():
 			return _reader_fail(r)
 		var verr := _validate_snapshot(snapshot)
@@ -105,10 +120,10 @@ static func decode(bytes: PackedByteArray) -> Dictionary:
 		var trailing := _check_no_trailing(r)
 		if not trailing.is_empty():
 			return trailing
-		return {"ok": true, "kind": KIND_SNAPSHOT, "snapshot": snapshot}
+		return {"ok": true, "version": version, "kind": KIND_SNAPSHOT, "snapshot": snapshot}
 
 	if kind == KIND_SNAPSHOT_DELTA:
-		var delta := r.read_delta()
+		var delta := r.read_delta(version)
 		if not r.error.is_empty():
 			return _reader_fail(r)
 		var verr := _validate_delta(delta)
@@ -117,7 +132,7 @@ static func decode(bytes: PackedByteArray) -> Dictionary:
 		var trailing := _check_no_trailing(r)
 		if not trailing.is_empty():
 			return trailing
-		return {"ok": true, "kind": KIND_SNAPSHOT_DELTA, "delta": delta}
+		return {"ok": true, "version": version, "kind": KIND_SNAPSHOT_DELTA, "delta": delta}
 
 	return {"ok": false, "error": ERR_KIND, "detail": "unknown message kind %d" % kind}
 
@@ -131,13 +146,29 @@ static func decode(bytes: PackedByteArray) -> Dictionary:
 
 static func _validate_snapshot(snapshot: Dictionary) -> Dictionary:
 	var entities: Array = snapshot["entities"]
-	return _validate_states("entities", entities)
+	var verr := _validate_states("entities", entities)
+	if not verr.is_empty():
+		return verr
+	var casts: Array = snapshot["casts"]
+	verr = _validate_casts("casts", int(snapshot["tick"]), casts)
+	if not verr.is_empty():
+		return verr
+	var entity_ids: Dictionary = {}
+	for e_var: Variant in entities:
+		entity_ids[int((e_var as Dictionary)["id"])] = true
+	for cast_var: Variant in casts:
+		var caster := int((cast_var as Dictionary)["caster"])
+		if not entity_ids.has(caster):
+			return {"error": ERR_CAST_CASTER, "detail": "caster %d is not replicated" % caster}
+	return {}
 
 
 static func _validate_delta(delta: Dictionary) -> Dictionary:
 	var entered: Array = delta["entered"]
 	var moved: Array = delta["moved"]
 	var left: Array = delta["left"]
+	var started_casts: Array = delta["started_casts"]
+	var ended_casts: Array = delta["ended_casts"]
 	var verr := _validate_states("entered", entered)
 	if not verr.is_empty():
 		return verr
@@ -160,7 +191,67 @@ static func _validate_delta(delta: Dictionary) -> Dictionary:
 	verr = _claim_ids(seen, "left", left, false)
 	if not verr.is_empty():
 		return verr
+	verr = _validate_casts("started casts", int(delta["tick"]), started_casts)
+	if not verr.is_empty():
+		return verr
+	return _validate_ids("ended casts", ended_casts)
+
+
+static func _validate_casts(list_name: String, tick: int, casts: Array) -> Dictionary:
+	if casts.size() > MAX_CASTS:
+		return {"error": ERR_COUNT, "detail": "%s has %d entries" % [list_name, casts.size()]}
+	for i in casts.size():
+		var cast: Dictionary = casts[i]
+		if i > 0 and int(cast["caster"]) <= int((casts[i - 1] as Dictionary)["caster"]):
+			return {"error": ERR_ORDER, "detail": "%s at index %d" % [list_name, i]}
+		var start_tick := int(cast["start_tick"])
+		var resolve_tick := int(cast["resolve_tick"])
+		if start_tick >= resolve_tick or start_tick >= tick or resolve_tick < tick:
+			return {"error": ERR_CAST_TIMING, "detail": "%s at index %d has invalid timing" % [list_name, i]}
+		var shape_error := _validate_cast_shape(cast)
+		if not shape_error.is_empty():
+			return shape_error
 	return {}
+
+
+static func _validate_cast_shape(cast: Dictionary) -> Dictionary:
+	var origin_x := int(cast["origin_x"])
+	var origin_z := int(cast["origin_z"])
+	if not _within_symmetric_limit(origin_x, MAX_WORLD_EXTENT_MM) or not _within_symmetric_limit(origin_z, MAX_WORLD_EXTENT_MM):
+		return {"error": ERR_CAST_SHAPE, "detail": "cast origin is outside world bounds"}
+	if int(cast["facing_y"]) != 0:
+		return {"error": ERR_CAST_SHAPE, "detail": "cast facing is not planar"}
+	var kind := int(cast["kind"])
+	var facing_zero := int(cast["facing_x"]) == 0 and int(cast["facing_z"]) == 0
+	var outer := int(cast["outer"])
+	var inner := int(cast["inner"])
+	var half_width := int(cast["half_width"])
+	var cos_half := int(cast["cos_half"])
+	var outer_valid := _within_symmetric_limit(outer, MAX_TELEGRAPH_EXTENT_MM)
+	match kind:
+		SHAPE_CIRCLE:
+			if not facing_zero or not outer_valid or inner != 0 or half_width != 0 or cos_half != 0:
+				return {"error": ERR_CAST_SHAPE, "detail": "non-canonical circle"}
+		SHAPE_RING:
+			var inverted_positive_ring := outer >= 0 and inner > outer
+			var noncanonical_degenerate_ring := outer < 0 and inner != 0
+			if not facing_zero or not outer_valid or inner < 0 or inner > MAX_TELEGRAPH_EXTENT_MM or inverted_positive_ring or noncanonical_degenerate_ring or half_width != 0 or cos_half != 0:
+				return {"error": ERR_CAST_SHAPE, "detail": "non-canonical ring"}
+		SHAPE_CONE:
+			if not outer_valid or inner != 0 or half_width != 0 or not _within_symmetric_limit(cos_half, COS_SCALE):
+				return {"error": ERR_CAST_SHAPE, "detail": "non-canonical cone"}
+		SHAPE_RECT:
+			if not outer_valid or inner != 0 or not _within_symmetric_limit(half_width, MAX_TELEGRAPH_EXTENT_MM) or cos_half != 0:
+				return {"error": ERR_CAST_SHAPE, "detail": "non-canonical rect"}
+		_:
+			return {"error": ERR_CAST_SHAPE, "detail": "unknown cast kind %d" % kind}
+	return {}
+
+
+static func _within_symmetric_limit(value: int, limit: int) -> bool:
+	# Avoid abs(INT64_MIN), which remains negative in GDScript and could make a
+	# hostile minimum-int extent appear to be inside a positive bound.
+	return value >= -limit and value <= limit
 
 
 ## Enforce the list contract on an entity-state list: at most MAX_ENTITIES
@@ -297,18 +388,60 @@ class _Reader:
 		off += 8
 		return v
 
-	func read_snapshot() -> Dictionary:
+	func read_snapshot(version: int) -> Dictionary:
 		var tick := u64()
 		var observer := u64()
 		var entities := read_states("entities")
-		return {"tick": tick, "observer": observer, "entities": entities}
+		var casts: Array = read_casts("casts") if version >= 2 else []
+		return {"tick": tick, "observer": observer, "entities": entities, "casts": casts}
 
-	func read_delta() -> Dictionary:
+	func read_delta(version: int) -> Dictionary:
 		var tick := u64()
 		var entered := read_states("entered")
 		var moved := read_states("moved")
 		var left := read_ids("left")
-		return {"tick": tick, "entered": entered, "moved": moved, "left": left}
+		var started_casts: Array = read_casts("started casts") if version >= 2 else []
+		var ended_casts: Array = read_ids("ended casts") if version >= 2 else []
+		return {"tick": tick, "entered": entered, "moved": moved, "left": left, "started_casts": started_casts, "ended_casts": ended_casts}
+
+	func read_casts(list_name: String) -> Array:
+		var n := u32()
+		if not error.is_empty():
+			return []
+		if n > WireCodec.MAX_CASTS:
+			record_fail(WireCodec.ERR_COUNT, "%s claims %d entries" % [list_name, n])
+			return []
+		if not need(n * WireCodec.ACTIVE_CAST_SIZE):
+			return []
+		var out: Array = []
+		for _i in n:
+			# Keep cursor advancement explicit. Dictionary literal evaluation order
+			# is not part of the wire contract and must not define field offsets.
+			var caster := u64()
+			var kind := u8()
+			var origin_x := s64()
+			var origin_y := s64()
+			var origin_z := s64()
+			var facing_x := s64()
+			var facing_y := s64()
+			var facing_z := s64()
+			var outer := s64()
+			var inner := s64()
+			var half_width := s64()
+			var cos_half := s64()
+			var start_tick := u64()
+			var resolve_tick := u64()
+			out.append({
+				"caster": caster,
+				"kind": kind,
+				"origin_x": origin_x, "origin_y": origin_y, "origin_z": origin_z,
+				"facing_x": facing_x, "facing_y": facing_y, "facing_z": facing_z,
+				"outer": outer, "inner": inner, "half_width": half_width, "cos_half": cos_half,
+				"start_tick": start_tick, "resolve_tick": resolve_tick,
+			})
+		if not error.is_empty():
+			return []
+		return out
 
 	## Read a count-prefixed entity-state list. The cap check runs BEFORE the
 	## byte-availability check and BEFORE any allocation, so a hostile count is

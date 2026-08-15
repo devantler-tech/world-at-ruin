@@ -8,6 +8,21 @@ extends Node
 ## rule is meant to replace. CI runs this and uploads the frames as a build
 ## artifact.
 ##
+## THESE FRAMES ARE NOT BIT-REPRODUCIBLE, so never compare them by checksum or
+## by byte equality — a comparison that looks perfectly reasonable and is not.
+## Two runs of ONE checkout move pixels at every vantage: `frame_diff.gd`'s
+## back-to-back column runs from 0.02% (sunward) to 35.66% (cave-walkout),
+## because temporal antialiasing, SDFGI convergence, fog reprojection, wind and
+## animated torches all resolve differently between renders. Compare with
+## `frame_diff.gd`, which measures how far apart two frames are rather than
+## whether they are identical.
+##
+## They also cannot resolve a change to the plate/crack RELIEF term (#696): the
+## committed vantages read such a change the same as a provable no-op, so
+## "captured before and after, no change" is vacuous for that class. Use
+## `tools/relief_read.gd` with an ablation arm instead — see its docstring and
+## `docs/evidence/issue-696-relief-instrument/`.
+##
 ## Run (must be WINDOWED — a headless run renders nothing at all):
 ##   WAR_SHOT_DIR=/tmp/shots \
 ##     WAR_SAVE_PATH=/tmp/probe_save.json WAR_VAULT_PATH=/tmp/probe_vault.json \
@@ -57,6 +72,20 @@ const SCENARIOS: Array[String] = [
 	"replication",
 	"mob_chase",
 ]
+
+## The piece each established unsuffixed first-run frame depicts. These are
+## comparison identities, not defaults: a newly activated piece must receive a
+## piece-specific filename even when it sorts before the incumbent, otherwise
+## the change report silently compares two different garments under one name.
+const FIRST_RUN_WARDROBE_FRAME_INCUMBENTS := {
+	"torso/clothing": "shirt_ragged",
+	"legs/clothing": "pants_wool",
+	"feet/clothing": "shoes_cloth",
+	"feet/armor": "boots_worn",
+	"head/clothing": "relic_goggles",
+	"head/armor": "ruin_drake_helm",
+	"hands/armor": "ashen_bindings",
+}
 
 ## The committed vantages. Fixed on purpose — evidence is only comparable across
 ## commits if the camera does not move between them. Each is [name, eye, target].
@@ -1341,6 +1370,36 @@ func _under_rock(cam: Camera3D) -> bool:
 	return not space.intersect_ray(query).is_empty()
 
 
+## One real creator-authored state for every production-activated wardrobe
+## region/layer. Registry slot order and kit layer order are the stable visual
+## evidence order; pieces within one pair use the creator's sorted writer list.
+## Established comparison identities keep their unsuffixed frame names, while
+## every other piece adds its own name regardless of sort order.
+func outfit_capture_states(registry: Dictionary) -> Array[Dictionary]:
+	var states: Array[Dictionary] = []
+	for slot: String in CharacterCreator.pickable_regions(registry):
+		for layer: String in CharacterCreator.pickable_layers(registry, slot):
+			var pieces := CharacterCreator._pieces_in_slot(registry, slot, layer)
+			for index in pieces.size():
+				var piece_name := pieces[index]
+				states.append({
+					"slot": slot,
+					"layer": layer,
+					"piece": piece_name,
+					"shot": outfit_capture_shot(slot, layer, piece_name),
+				})
+	return states
+
+
+func outfit_capture_shot(slot: String, layer: String, piece: String) -> String:
+	var base_name := "first_run_%s_%s" % [slot, layer]
+	var incumbent := String(FIRST_RUN_WARDROBE_FRAME_INCUMBENTS.get(
+		"%s/%s" % [slot, layer], ""))
+	if piece == incumbent:
+		return base_name
+	return "%s_%s" % [base_name, piece]
+
+
 ## The character creator as a new player meets it — the surface a first-run UI
 ## change actually alters, and the one the world scenario deliberately seeds away.
 func _capture_first_run(dir: String, main: Node) -> void:
@@ -1410,31 +1469,31 @@ func _capture_first_run(dir: String, main: Node) -> void:
 	shots += 1
 
 	# A row of names is not frame evidence for the wearable meshes behind those
-	# names. Drive the opted-in creator through the first head pair one layer at
-	# a time while the controls are visible: the clothing frame shows eyewear,
-	# then the armour frame shows the helm suppressing it. These are real player
-	# authoring calls, not meshes instanced around the creator (#329).
+	# names. Drive the opted-in creator through every production-active
+	# region/layer while its real control is visible. This includes the head pair
+	# in layer order (eyewear, then the helm suppressing it) and the activated
+	# hand armour; these are real player authoring calls, not meshes instanced
+	# around the creator (#329, #653).
 	if CharacterCreator.layered_outfit_pickers_enabled():
 		var capture_player := creator.get("_player") as Player
 		if capture_player == null:
-			_fail("the first-run creator lost its player — cannot render the head-layer evidence")
+			_fail("the first-run creator lost its player — cannot render the wardrobe evidence")
 			return
-		var head_states := [
-			["clothing", "relic_goggles", "first_run_head_clothing"],
-			["armor", "ruin_drake_helm", "first_run_head_armor"],
-		]
-		for state: Array in head_states:
-			var head_pickers: Variant = (creator.get("_outfit_pickers") as Dictionary).get("head")
-			if not (head_pickers is Dictionary) or not (head_pickers as Dictionary).has(state[0]):
-				_fail("the opted-in creator has no head %s control — cannot render its evidence" % state[0])
+		for state: Dictionary in outfit_capture_states(CharacterFactory.equipment_registry()):
+			var slot := String(state["slot"])
+			var layer := String(state["layer"])
+			var slot_pickers: Variant = (creator.get("_outfit_pickers") as Dictionary).get(slot)
+			if not (slot_pickers is Dictionary) or not (slot_pickers as Dictionary).has(layer):
+				_fail("the opted-in creator has no %s %s control — cannot render its evidence"
+					% [slot, layer])
 				return
-			creator.call("_set_recipe_equipment", "head", state[0], state[1])
+			creator.call("_set_recipe_equipment", slot, layer, state["piece"])
 			capture_player.set_character(creator.get("_recipe"))
 			creator.call("_sync_sliders_from_recipe")
-			scroll.ensure_control_visible((head_pickers as Dictionary)[state[0]] as Control)
+			scroll.ensure_control_visible((slot_pickers as Dictionary)[layer] as Control)
 			for i in UI_SETTLE_FRAMES:
 				await get_tree().process_frame
-			if not await _shoot(dir, state[2], creator):
+			if not await _shoot(dir, state["shot"], creator):
 				return
 			shots += 1
 	scroll.scroll_vertical = 0
@@ -2236,6 +2295,80 @@ func _capture_replication(dir: String, main: Node) -> void:
 	# here, which is exactly why the verdict above is sampled instead.
 	var whole_frame: Dictionary = FrameDiff.compare_images(empty, populated)
 	var whole_drift: Dictionary = FrameDiff.compare_images(populated, populated_again)
+
+	# Only after the populated/empty ablation verdict is complete may the
+	# over-cap evidence advance time. Putting this sequence between
+	# `populated_again` and `empty` would double the signal interval without
+	# doubling the noise interval, allowing animated background pixels to vouch
+	# for a marker that contributed none.
+	var restored: Dictionary = zone.store().apply({
+		"ok": true,
+		"kind": WireCodec.KIND_SNAPSHOT,
+		"snapshot": {
+			"tick": int(fixture["tick"]) + 2,
+			"observer": int(fixture["observer"]),
+			"entities": entities,
+		},
+	})
+	if restored.get("ok") != true:
+		_fail("the bounded evidence population could not be restored after the ablation (%s: %s)" %
+			[str(restored.get("error")), str(restored.get("detail"))])
+		return
+	for i in CONTRIB_GAP_FRAMES:
+		cam.current = true
+		await get_tree().process_frame
+	if view.count() != entities.size():
+		_fail("the bounded evidence population did not return before the over-cap transition")
+		return
+	if not _replicas_are_framed(cam, view, entities):
+		return
+
+	# Exercise the render cap through the shipped store and per-frame view sync,
+	# then publish the state a player actually sees. The over-cap snapshot keeps
+	# the three visible fixture entities and adds protocol-valid remote entries;
+	# the renderer must retain the complete last-valid population without
+	# allocating or rebuilding it.
+	var retained_instance_ids: Dictionary = {}
+	for e_var: Variant in entities:
+		var e: Dictionary = e_var
+		var marker := view.marker_for(e["id"] as int)
+		retained_instance_ids[e["id"] as int] = marker.get_instance_id()
+	var overcap_entities: Array = entities.duplicate(true)
+	while overcap_entities.size() <= ReplicaView.MAX_VISIBLE_ENTITIES:
+		var extra_id := 1000 + overcap_entities.size()
+		overcap_entities.append({"id": extra_id, "x": 0, "y": 0, "z": 0, "radius": 400})
+	var oversized: Dictionary = zone.store().apply({
+		"ok": true,
+		"kind": WireCodec.KIND_SNAPSHOT,
+		"snapshot": {
+			"tick": int(fixture["tick"]) + 3,
+			"observer": int(fixture["observer"]),
+			"entities": overcap_entities,
+		},
+	})
+	if oversized.get("ok") != true:
+		_fail("the over-cap evidence snapshot was refused by the store (%s: %s)" %
+			[str(oversized.get("error")), str(oversized.get("detail"))])
+		return
+	for i in CONTRIB_GAP_FRAMES:
+		cam.current = true
+		await get_tree().process_frame
+	if zone.store().count() != ReplicaView.MAX_VISIBLE_ENTITIES + 1:
+		_fail("the over-cap evidence store does not hold exactly one entity past the render budget")
+		return
+	if view.count() != entities.size():
+		_fail(("the over-cap view holds %d markers instead of retaining the last %d-marker population") %
+			[view.count(), entities.size()])
+		return
+	for e_var: Variant in entities:
+		var e: Dictionary = e_var
+		var marker := view.marker_for(e["id"] as int)
+		if marker == null or marker.get_instance_id() != retained_instance_ids[e["id"] as int]:
+			_fail("the over-cap update rebuilt or removed retained marker %d" % (e["id"] as int))
+			return
+	var overcap_retained := await _grab_frame()
+	if not _write_frame(dir, "replication_overcap_retained", overcap_retained):
+		return
 
 	print(ReplicaView.marker(entities.size()))
 	print(("CAPTURE PASS — %d replicated entities written to %s (%.0f%% of %d quiet on-capsule samples " +

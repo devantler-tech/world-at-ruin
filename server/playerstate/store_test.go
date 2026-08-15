@@ -65,10 +65,11 @@ func (f *fakeStorage) StorageRead(
 	}
 	objects := make([]*api.StorageObject, 0, len(reads))
 	for _, read := range reads {
+		ownerID := storageOwnerID(read.UserID)
 		object, ok := f.objects[storageObjectID(
 			read.Collection,
 			read.Key,
-			read.UserID,
+			ownerID,
 		)]
 		if !ok {
 			continue
@@ -100,10 +101,11 @@ func (f *fakeStorage) StorageWrite(
 	}
 
 	for _, write := range writes {
+		ownerID := storageOwnerID(write.UserID)
 		current, exists := f.objects[storageObjectID(
 			write.Collection,
 			write.Key,
-			write.UserID,
+			ownerID,
 		)]
 		switch {
 		case write.Version == "*" && exists:
@@ -116,6 +118,7 @@ func (f *fakeStorage) StorageWrite(
 
 	acks := make([]*api.StorageObjectAck, 0, len(writes))
 	for _, write := range writes {
+		ownerID := storageOwnerID(write.UserID)
 		if write.PermissionRead < math.MinInt32 ||
 			write.PermissionRead > math.MaxInt32 ||
 			write.PermissionWrite < math.MinInt32 ||
@@ -127,11 +130,11 @@ func (f *fakeStorage) StorageWrite(
 		f.objects[storageObjectID(
 			write.Collection,
 			write.Key,
-			write.UserID,
+			ownerID,
 		)] = storedObject{
 			collection:      write.Collection,
 			key:             write.Key,
-			userID:          write.UserID,
+			userID:          ownerID,
 			value:           write.Value,
 			version:         version,
 			permissionRead:  int32(write.PermissionRead),
@@ -140,7 +143,7 @@ func (f *fakeStorage) StorageWrite(
 		acks = append(acks, &api.StorageObjectAck{
 			Collection: write.Collection,
 			Key:        write.Key,
-			UserId:     write.UserID,
+			UserId:     ownerID,
 			Version:    version,
 		})
 	}
@@ -158,6 +161,13 @@ func (f *fakeStorage) StorageWrite(
 
 func storageObjectID(collection, key, userID string) string {
 	return collection + "\x00" + key + "\x00" + userID
+}
+
+func storageOwnerID(ownerID string) string {
+	if ownerID == "" {
+		return systemOwnerID
+	}
+	return ownerID
 }
 
 func TestApplyCommitsPlayerRecordAndAuditInOneAtomicWrite(t *testing.T) {
@@ -245,6 +255,55 @@ func TestApplyCommitsPlayerRecordAndAuditInOneAtomicWrite(t *testing.T) {
 	if auditWrite.Value !=
 		`{"schema":1,"idempotency_key":"quest:ember:reward","record_collection":"world_at_ruin_inventory","record_key":"carried","operation":"grant_item","payload":{"item_id":"ash-blade","quantity":1},"outcome":{"item_count":1}}` {
 		t.Fatalf("audit write value = %s", auditWrite.Value)
+	}
+}
+
+func TestClientOwnedAuditPreseedCannotReplayASystemMutation(t *testing.T) {
+	t.Parallel()
+
+	storage := newFakeStorage()
+	mutation := inventoryMutation(
+		testSubjectID,
+		"quest:ember:reward",
+	)
+	mutation.Record.ExpectedVersion = "*"
+	mutation.Record.SystemOwned = true
+	storage.seed(storedObject{
+		collection: AuditCollection,
+		key: auditKey(
+			testSubjectID,
+			mutation.Record.Collection,
+			mutation.Record.Key,
+			mutation.IdempotencyKey,
+		),
+		userID: testSubjectID,
+		value: `{"schema":1,` + testAuditIdentityFields +
+			`"operation":"grant_item",` +
+			`"payload":{"item_id":"ash-blade","quantity":1},` +
+			`"outcome":{"item_count":999}}`,
+		version:         "attacker-version",
+		permissionRead:  0,
+		permissionWrite: 0,
+	})
+
+	store, err := NewStore(storage)
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	result, err := store.Apply(context.Background(), mutation)
+	if err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	if string(result.Outcome) != `{"item_count":1}` {
+		t.Fatalf("Apply() outcome = %s", result.Outcome)
+	}
+	if len(storage.writeCalls) != 1 {
+		t.Fatalf("StorageWrite() calls = %d, want 1", len(storage.writeCalls))
+	}
+	writes := storage.writeCalls[0]
+	if len(writes) != 2 || writes[1].Collection != AuditCollection ||
+		writes[1].UserID != "" {
+		t.Fatalf("system mutation writes = %#v", writes)
 	}
 }
 
@@ -349,7 +408,7 @@ func TestApplyIgnoresClientOwnedAuditAtDerivedKey(t *testing.T) {
 	if _, ok := storage.objects[storageObjectID(
 		AuditCollection,
 		auditObjectKey,
-		"",
+		systemOwnerID,
 	)]; !ok {
 		t.Fatal("Apply() did not create server-owned audit evidence")
 	}
@@ -778,7 +837,7 @@ func TestApplyRejectsMalformedAuditDocuments(t *testing.T) {
 					"carried",
 					"quest:ember:reward",
 				),
-				userID:          "",
+				userID:          systemOwnerID,
 				value:           test.value,
 				version:         "audit-version",
 				permissionRead:  0,

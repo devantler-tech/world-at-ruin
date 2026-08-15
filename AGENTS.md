@@ -195,6 +195,26 @@ over run, moving only when the world itself moves (which `cave_capture_vantage_t
 named failure and the capture log declares as a `CAVE VANTAGE` coordinate delta, never a quietly
 different frame).
 
+**What the vantages cannot resolve: shader RELIEF (#696).** None of the eight committed vantages
+discriminates a change to the plate/crack relief term, so "captured before and after, no change" is a
+**vacuous** claim for that class — the frames would have matched had the change been wrong. Measured
+on the seam-slope ceiling `0.4`→`0.30`, which alters how every seam rakes light: the committed frames
+move 0.28% at shrine and 0.13% at crossfield against a **provable no-op's** 0.27% and 0.14%, and on
+four of the eight the real change moves *less* than the no-op. Frames are not bit-reproducible either
+— `frame_diff.gd`'s own back-to-back table runs from 0.02% to 35.66% on unchanged code — so a
+checksum or byte comparison of captures is invalid as well, however reasonable it looks.
+For this class the instrument is [`client/tools/relief_read.gd`](client/tools/relief_read.gd), which
+differences the build against `crack_relief = 0` rather than against another render, and whose
+`RELIEF_STRENGTH` repeats to every printed digit across three runs on one machine. Compare on
+strength, not coverage: coverage moved a unit in its last digit at 48 m on the third of those runs,
+and that figure is runs-on-one-machine anyway — the shape `frame_diff.gd`'s second lesson warns reads
+too low — so it is not an independent-build floor and nothing here may gate on it (#715).
+**Any "capture before and after" criterion must name an ABLATION alongside the instrument** — a
+deliberate wrong build the instrument has to distinguish — because a blind instrument and a correct
+change read the same, and only the ablation tells them apart. Both measurements, including the
+control that makes the relief reading mean anything, are in
+[`docs/evidence/issue-696-relief-instrument/`](docs/evidence/issue-696-relief-instrument/README.md).
+
 **What that artifact cannot show you (#232).** Volumetric fog is gated on an R32_Uint atomic storage
 image, and the hosted macOS capture runner's GPU does not support it — so **every frame CI publishes
 shows the height-fog fallback**, never the volumetric path or the hollow ash pools built on it. The
@@ -517,7 +537,7 @@ everything shipped afterwards is held to.
   base-compares complete rows. The retained v0.61.0 capability-4 reader is the rollback target that
   permits the reward writer. The vault reader accepts optional v4 `quests` as
   `quest_id → objective_id → progress in the exact JSON integer range 0..2^53-1`, and the manifest
-  advertises save-capability reads and writes 6. The retained v0.70.0 capability-6 reader is the
+  advertises save-capability writes 6. The retained v0.70.0 capability-6 reader is the
   whole-app rollback target that permits this writer. `Main` restores that data
   into its boot-owned `QuestLog` before definitions register; the tracker preserves opaque future
   IDs and raw progress, clamps only its live known view, and latches restored completion without
@@ -525,7 +545,12 @@ everything shipped afterwards is held to.
   same locked, compare-and-swap vault path; transient failures retry with bounded exponential backoff,
   while an unreadable or newer vault remains session-only and byte-intact. The writer merges progress
   by maximum value, so retry, rollback-only IDs and a higher concurrent value can never be driven
-  backwards. **The lock lives in
+  backwards. The vault-v5 reader additionally accepts a complete `mastery` snapshot whose stable
+  weapon IDs map to exact banked and unbanked points and whose standing bloodstain is restored as
+  part of the same ledger. `Main` applies that snapshot to its boot-owned `Mastery` before content
+  registration; unknown future weapon IDs stay live. The manifest advertises read capability 7 while
+  the production vault and project-wide writers remain capped at v4/capability 6, so an ordinary boot
+  cannot originate mastery until this whole-app reader is retained. **The lock lives in
   `FileLock`, not in the vault, and `BootRecovery` persistence takes it too**
   (`tests/boot_recovery_lock_test`) — that file's two writers, the updater and the game, both exist
   today, and a lost update there discards the evidence deciding whether a client rolls back. One
@@ -608,26 +633,36 @@ everything shipped afterwards is held to.
   and mints the nanosecond-expiry token only that allocated zone verifier accepts), the private
   **Nakama handoff lease store** (`server/nakamalease/` — server-owned, strict-schema objects keyed
   by a SHA-256-derived user/reservation key; unique create and exact-version
-  staging/finalization/replacement/claim/release preserve one current attempt under retries, with a
-  durable releasing barrier and private-collection expiry sweep that arbitrate zone claim against
-  external cleanup, without persisting raw user or reservation IDs or admission secrets; the
+  staging/dispatch/finalization/replacement/claim/release preserve one current attempt under retries,
+  with base-anchored permanent schema-shape goldens, a durable uniquely identified dispatched point
+  of no return and a durable releasing barrier; its private-collection expiry sweep arbitrates zone claim against external
+  cleanup while retaining ambiguous dispatches for exact reconciliation, without persisting raw user
+  or reservation IDs or admission secrets; the
   durability contract those objects follow — and that every later server-held record inherits — is
   [`docs/design/server-state-durability.md`](docs/design/server-state-durability.md)), the private
   **player-state mutation boundary** (`server/playerstate/` — atomically commits one private
-  conditional player-record write with one private create-only audit object, binds the caller's
-  stable mutation key to its operation and normalized payload, and returns the original outcome on
-  replay or an ambiguous committed response; its strict audit schema is permanently ledgered, and
-  it remains inert until a player-record owner calls it), the private **Nakama character-record
-  owner** (`server/nakamacharacter/` — stores one strict-schema character document at a fixed key
-  under the account identity authenticated by Nakama's runtime context, refuses a requested owner
-  that differs from that caller plus public, malformed or stale observations, keeps every shipped
-  schema readable through a ledgered golden, and delegates every conditional write to the atomic
-  `playerstate` record-plus-audit boundary; it remains inert until a server caller composes it), the
+  conditional record write with one private create-only audit object under the same player or system
+  owner boundary, binds the caller's stable mutation key to its operation and normalized payload,
+  and returns the original outcome on replay or an ambiguous committed response; its strict audit
+  schema is permanently ledgered, and it remains inert until a record owner calls it), the private
+  **Nakama character-record owner** (`server/nakamacharacter/` — stores one strict-schema character
+  document at an account-derived key under Nakama's system owner, authenticates the requested account
+  against the runtime caller, rejects client-owned preseeds plus public, malformed or stale
+  observations, keeps every shipped schema readable through a ledgered golden, and delegates every
+  conditional write and system-owned replay audit to the atomic `playerstate` boundary; it remains
+  inert until a server caller composes it), the
   durable **handoff allocation coordinator**
   (`server/handoffalloc/` — implements `handoff.Allocator` over the real lease store and an injected
-  GameServer-resource boundary; persists a recoverable intent before provisioning, finalizes the
-  allocation before returning connection material, resolves retries, protects claimed/stale
-  ownership and supervises exact no-show cleanup), and
+  GameServer-resource boundary; exact-version persists a uniquely identified dispatched barrier
+  before the one allowed external allocation call, reconciles lost barrier acknowledgements so only
+  the persisted caller dispatches, makes replays and concurrent losers reconcile only that exact
+  attempt, lets transport retries observe ambiguous dispatches or reuse finalized unclaimed
+  allocations without redispatch, retains every published resource and ambiguous post-dispatch
+  outcome against overlapping response-failure cleanup, quarantines unresolved dispatches against
+  expiry and unverified outer cleanup, detaches known-resource fence-and-cleanup from caller
+  cancellation, finalizes the allocation before returning connection material, protects
+  claimed/stale ownership and supervises exact no-show cleanup without stopping after transient
+  sweep failures; it remains inert until the concrete adapter is composed), and
   the **combat first slice** (`server/sim/combat.go` — the telegraph cast
   lifecycle: painted at cast start, resolved once after a tick-counted cast time against
   positions at resolution, health/damage application, and one mob AI that deterministically
@@ -901,9 +936,13 @@ everything shipped afterwards is held to.
     **`auto_updates` is deliberately ABSENT**: it tells Homebrew "this app updates itself, do not
     upgrade it", and there is no working in-client updater yet. `UpdateDecision` is pure decision
     logic; `UpdateTrust.verify_and_decide()` authenticates a signing-key certificate with a
-    caller-supplied offline-root public key, then authenticates the manifest with that certified
-    key before entering the decision core. No runtime caller fetches or promotes an update, no
-    production root or signing material is published, and revocation is not wired. Declaring
+    caller-supplied offline-root public key, authenticates the root-signed embedded revocation list,
+    refuses a listed certificate id, refuses an embedded list that a caller-supplied
+    independently fetched revocation head does not vouch for as current, then authenticates the
+    manifest with the remaining certified key before entering the decision core. No runtime caller
+    fetches or promotes an update, no production root or signing material is published, and nothing
+    fetches a revocation head — which the boundary treats as fail-closed, so no update can currently
+    be authorized at all. Declaring
     `auto_updates` now would make `brew upgrade` skip the cask and strand players on the version
     they installed. Add it only once the self-updater ships (#106). The `postflight`
     quarantine strip is **mandatory, not cosmetic** — the build is ad-hoc signed
