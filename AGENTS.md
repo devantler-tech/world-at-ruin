@@ -706,7 +706,7 @@ everything shipped afterwards is held to.
   under `client/tests/` — CI's "Regression tests" step auto-discovers `client/tests/*_test.tscn`
   (issue #50; the old hardcoded list forced every parallel test-adding PR to collide on one line).
   Each scene must print a `TEST PASS` marker on success and run within the 180 s per-test timeout.
-  Five exclusions: `save_fixture_guard_test`, `save_vault_guard_test`,
+  Six exclusions: `save_fixture_guard_test`, `creature_factory_test`, `save_vault_guard_test`,
   `boot_recovery_guard_test`, `vault_restore_boot_test` and `ability_registry_test` each run in
   their own dedicated named step (the product-law surfaces for character, progression, recovery and
   combat state — the restore test is the BEHAVIOURAL check that an attuned point still restores on
@@ -714,6 +714,20 @@ everything shipped afterwards is held to.
   temporarily skipped by adding its basename (no
   `.tscn`) on its own line in the optional `client/tests/ci-skip.txt` (blank/`#`-comment lines
   ignored) — a rarely-edited escape hatch, so the run line itself stops changing per-test.
+  **That candidate-owned discovery loop is not the immutable product-law boundary.** The repository
+  ruleset `Require workflow - World at Ruin trusted regressions` separately requires
+  `.github/workflows/required-regressions.yaml` at one exact reviewed source SHA. That workflow
+  checks out its own pinned snapshot beside the proposed change, copies only the candidate's product
+  tree into a throwaway evaluation root, replaces `client/tests/` with the pinned snapshot, and
+  invokes the pinned `tools/run-client-test.sh` over every pinned `*_test.tscn`. A pull request can
+  add, edit, delete or skip a checkout-local scene without changing which trusted scenes execute or
+  how their verdict is judged; the ruleset workflow itself is the aggregate required gate for both
+  `pull_request` and `merge_group`.
+  Rotate the ruleset's source SHA only after the replacement workflow, controller and harness have
+  merged, passed `tools/required-regression-control.test.sh`, received exact-head review, and passed
+  a live missing-scene negative control. Read the ruleset back after every rotation. Pin a commit
+  SHA, never `main`: a moving ref would let the candidate-controlled repository change the control
+  used by later candidates merely by merging first.
 - **Boot tests go through `IsolatedBoot` — booting and isolating are ONE act:** a test that
   instantiates `main.tscn` runs the real launch path, which reads — and on the first-run path
   writes — every file the player's state lives in: `user://character.json` and the progression
@@ -825,6 +839,12 @@ everything shipped afterwards is held to.
     change. Its required aggregate includes a reachable-vulnerability scan for both Go modules.
     Its macOS export job is **build verification** — proof the project still exports and the
     exported app boots — not a distribution channel; that artifact has no version identity.
+  - `required-regressions.yaml` (`pull_request` + `merge_group`, invoked by the repository ruleset)
+    runs the exact-SHA trusted client regression snapshot against the candidate product tree. Its
+    selection, harness, runner and aggregate come from `github.workflow_sha`, not from the candidate
+    checkout; `tools/required-regression-control.test.sh` proves candidate deletion/skip content
+    cannot remove a trusted scene, runner failure reaches the aggregate, and an empty trusted suite
+    fails closed.
   - `go-vulnerability-scan.yaml` (`push` to `main`) scans both Go modules under their own declared
     toolchains. It is the post-merge liveness signal for newly published advisories against code
     already on the default branch.
@@ -960,8 +980,10 @@ everything shipped afterwards is held to.
     domains match, which they do here.
   - The version is therefore **derived, never maintained**. The in-tree constants are dev values;
     only a released build carries a real version.
-  - **`CI - Required Checks` is the repo's single required status context.** Renaming or removing
-    that job wedges every PR in the repo — treat its name as load-bearing.
+  - **`CI - Required Checks` is the repo's single repository-authored required status context.**
+    Renaming or removing that job wedges every PR in the repo — treat its name as load-bearing. The
+    ruleset-pinned `Required regression control / Trusted client regressions` workflow is an
+    additional required workflow, not a second candidate-authored status context.
 - **Scripting:** GDScript in the Godot project; **bash or Go everywhere else — never Python**
   (portfolio constitution). The Phase-0 Blender pipeline is the sole, explicitly-settled exception
   (`bpy` is Python by nature); keep it isolated under `tools/artgen/` when it lands.

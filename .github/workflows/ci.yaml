@@ -70,6 +70,8 @@ jobs:
         run: ./tools/lavapipe-capture-guard.test.sh
       - name: Client test runner is portable and verdicts are non-vacuous
         run: ./tools/run-client-test.test.sh
+      - name: Required regression control is candidate-independent and fail-closed
+        run: ./tools/required-regression-control.test.sh
       - name: Dev-log entry names an unreleased version
         # An entry's version is a hand-written prediction of the next release.
         # Checked here, at the last point before the change merges, so the tag
