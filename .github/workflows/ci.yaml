@@ -1125,6 +1125,51 @@ jobs:
       - name: Lint GDScript
         run: ./tools/gdscript-lint.sh client
 
+  go-vulnerability-scan:
+    name: Go vulnerability scan (${{ matrix.module.name }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - name: server
+            directory: server
+            go-version-file: server/go.mod
+            cache-dependency-path: server/go.sum
+          - name: release credential guard
+            directory: .github/scripts/release-credential-boundary
+            go-version-file: .github/scripts/release-credential-boundary/go.mod
+            cache-dependency-path: .github/scripts/release-credential-boundary/go.sum
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          # Each matrix leg installs the exact toolchain its module declares,
+          # so standard-library findings describe the binary that module ships.
+          go-version-file: ${{ matrix.module.go-version-file }}
+          cache: true
+          cache-dependency-path: ${{ matrix.module.cache-dependency-path }}
+      - name: Install the pinned vulnerability scanner
+        run: |
+          for attempt in 1 2 3; do
+            if go install golang.org/x/vuln/cmd/govulncheck@v1.7.0; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              echo "::warning::govulncheck install failed (attempt ${attempt}/3); retrying in $((attempt * 5))s..."
+              sleep "$((attempt * 5))"
+            fi
+          done
+          echo "::error::Failed to install govulncheck after 3 attempts."
+          exit 1
+      - name: Scan for reachable vulnerabilities
+        working-directory: ${{ matrix.module.directory }}
+        run: govulncheck ./...
+
   server-ci:
     name: Server CI (Go)
     runs-on: ubuntu-latest
@@ -2831,6 +2876,7 @@ jobs:
         license-guard,
         lint,
         gdscript-lint,
+        go-vulnerability-scan,
         server-ci,
         detect-visual-changes,
         frame-capture,
@@ -2854,6 +2900,7 @@ jobs:
             ${{ needs.license-guard.result }}
             ${{ needs.lint.result }}
             ${{ needs.gdscript-lint.result }}
+            ${{ needs.go-vulnerability-scan.result }}
             ${{ needs.server-ci.result }}
             ${{ needs.detect-visual-changes.result }}
             ${{ needs.frame-capture.result }}

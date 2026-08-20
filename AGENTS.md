@@ -737,8 +737,13 @@ everything shipped afterwards is held to.
   three fully out of reach.
 - **Validate the server before every PR:** from `server/`, `gofmt -l .` (must print nothing),
   `go vet ./...`, `golangci-lint run ./...`, `go test -race ./...` (includes the tick-determinism
-  and golden-hash tests), and `go build ./...`. The `Server CI (Go)` job runs exactly this and feeds
-  the `CI - Required Checks` aggregate. `server/.golangci.yml` enables a correctness-focused linter
+  and golden-hash tests), `go build ./...`, and `govulncheck ./...`; run `govulncheck ./...` from
+  `.github/scripts/release-credential-boundary/` too. CI installs the pinned scanner and runs both
+  modules under the exact Go toolchain each `go.mod` declares. The pull-request and merge-group
+  matrix feeds `CI - Required Checks`; `go-vulnerability-scan.yaml` repeats the same two scans on
+  every `main` push so an advisory published after merge makes branch health red. The `Server CI
+  (Go)` job runs the format, vet, lint, test and build commands above. `server/.golangci.yml` enables
+  a correctness-focused linter
   set by name — the classes that bite a process expected to stay up (an unchecked error return, a
   response body never closed, a request with no context, an unguarded integer conversion on the
   wire) — rather than inheriting a default set. It is scoped to the **files** a change touches,
@@ -817,8 +822,12 @@ everything shipped afterwards is held to.
   `NEVER-CUT`.
 - **CI, CD and releases:**
   - `ci.yaml` (`pull_request` + `merge_group`) lints, tests and analyses. It is the gate on a
-    change. Its macOS export job is **build verification** — proof the project still exports and
-    the exported app boots — not a distribution channel; that artifact has no version identity.
+    change. Its required aggregate includes a reachable-vulnerability scan for both Go modules.
+    Its macOS export job is **build verification** — proof the project still exports and the
+    exported app boots — not a distribution channel; that artifact has no version identity.
+  - `go-vulnerability-scan.yaml` (`push` to `main`) scans both Go modules under their own declared
+    toolchains. It is the post-merge liveness signal for newly published advisories against code
+    already on the default branch.
   - `release.yaml` (`push` to `main`) calls the shared
     `devantler-tech/actions/.github/workflows/create-release.yaml`, which runs **semantic-release**
     against the root `.releaserc`. Conventional-Commit types decide the bump (`fix:` → patch,
