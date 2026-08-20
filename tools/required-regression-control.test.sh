@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Pins the required-regression boundary to the trusted workflow snapshot rather
-# than to the pull-request checkout it evaluates.
+# Pins the required-regression boundary to externally selected trusted bytes
+# rather than to the pull-request checkout it evaluates.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -73,6 +73,17 @@ fail() {
 	failures=$((failures + 1))
 }
 
+find_local_controller_workflows() {
+	local workflows_dir="$1"
+	local workflow_file
+	for workflow_file in "${workflows_dir}"/*.yaml "${workflows_dir}"/*.yml; do
+		[ -f "${workflow_file}" ] || continue
+		if grep -Fq 'tools/required-regression-control.sh' "${workflow_file}"; then
+			basename "${workflow_file}"
+		fi
+	done
+}
+
 if [ ! -x "${control}" ]; then
 	fail "the required-regression control is missing or not executable"
 else
@@ -114,6 +125,30 @@ else
 		fail "the empty-selection refusal was not explicit: $(<"${control_output}")"
 	fi
 fi
+
+workflow_fixture_dir="${tmp_dir}/workflow-fixture"
+mkdir -p "${workflow_fixture_dir}"
+printf '%s\n' 'run: trusted/tools/required-regression-control.sh trusted candidate' \
+	>"${workflow_fixture_dir}/renamed-gate.yaml"
+if ! find_local_controller_workflows "${workflow_fixture_dir}" |
+	grep -Fq 'renamed-gate.yaml'; then
+	fail "a renamed candidate-repository workflow can evade the source guard"
+fi
+
+local_workflows="$(find_local_controller_workflows "${repo_root}/.github/workflows")"
+if [ -n "${local_workflows}" ]; then
+	fail "candidate-repository workflows invoke the required-regression controller: ${local_workflows}"
+fi
+
+external_workflow='.github/workflows/world-at-ruin-required-regressions.yaml'
+for contract in "${repo_root}/AGENTS.md" \
+	"${repo_root}/docs/adr/0003-pin-required-regressions-outside-candidate-control.md"; do
+	if ! grep -Fq 'devantler-tech/actions' "${contract}" ||
+		! grep -Fq "${external_workflow}" "${contract}" ||
+		! grep -Fq 'refs/heads/main' "${contract}"; then
+		fail "$(basename "${contract}") does not name the live external workflow source contract"
+	fi
+done
 
 if [ "${failures}" -ne 0 ]; then
 	printf 'required-regression-control regression: %d failure(s)\n' "${failures}" >&2

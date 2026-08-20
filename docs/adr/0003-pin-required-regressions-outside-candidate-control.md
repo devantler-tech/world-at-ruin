@@ -1,4 +1,4 @@
-# ADR 0003: Pin required regressions outside candidate control
+# ADR 0003: Host required regressions outside candidate control
 
 - Status: Accepted
 - Date: 2026-08-20
@@ -15,22 +15,28 @@ The product-law regressions protect forward-only player state, recovery and
 combat economy. Their selection and aggregate verdict therefore need an
 authority outside the candidate checkout while still exercising the candidate
 product tree. GitHub ruleset workflows provide that authority: a ruleset names
-a source repository, workflow path and exact source commit, and runs the source
-workflow for pull-request and merge-group events.
+a source repository, workflow path and source ref, and runs that workflow for
+pull-request and merge-group events.
 
 ## Decision
 
-The repository ruleset `Require workflow - World at Ruin trusted regressions`
-requires `.github/workflows/required-regressions.yaml` at one exact reviewed
-commit SHA. The source workflow is disabled for ordinary repository event
-dispatch; its ruleset invocation is the required authority.
+The organization ruleset `Require workflow - World at Ruin trusted regressions`
+is managed declaratively in `devantler-tech/.github`. It targets only World at
+Ruin's default branch, declares no bypass actors, and requires
+`devantler-tech/actions/.github/workflows/world-at-ruin-required-regressions.yaml`
+at `refs/heads/main`. The World repository does not carry a second copy of that
+workflow.
 
 The workflow checks out two trees:
 
 1. the candidate merge or merge-group commit, which supplies product code;
-2. `github.workflow_sha`, which supplies the selector, every trusted
-   `client/tests/*_test.tscn` scene and fixture, and
-   `tools/run-client-test.sh`.
+2. the GitHub-supplied pull-request or merge-group base SHA, which supplies
+   every trusted `client/tests/*_test.tscn` scene and fixture,
+   `tools/required-regression-control.sh`, and `tools/run-client-test.sh`.
+
+The ruleset workflow and its trusted-base resolver come from the reviewed
+Actions source. `github.workflow_sha` identifies the exact Actions revision
+executing one run; it is not candidate-controlled.
 
 `tools/required-regression-control.sh` copies the candidate into a throwaway
 evaluation root, excludes repository metadata, replaces the candidate's
@@ -46,12 +52,14 @@ scene in `ci-skip.txt`; both trusted scenes must still execute with trusted
 harness bytes against candidate product bytes. Separate arms require a runner
 failure to fail the aggregate and an empty trusted suite to fail closed.
 
-The ruleset source uses a commit SHA, never a moving branch. A source rotation
-is complete only when the replacement workflow, controller and harness are on
-the default branch, their local contract and exact-head review are green, a
-live candidate-deletes-scene control fails as expected, and the active ruleset
-readback names the replacement SHA. The previous SHA remains active until all
-of those conditions hold.
+provider-upjet-github v0.19.1 exposes the required workflow's repository, path
+and branch/tag `ref`, but not GitHub's immutable workflow SHA selector. The
+strongest declarative binding available to this deployment is therefore the
+reviewed Actions `main` branch. Changes to the external workflow require an
+exact-head-reviewed Actions PR, compatibility with the World base controller
+and harness, the local contract proof, and live positive and negative controls.
+Changes to the rule require a reviewed `.github` PR, a released signed manifest
+bundle, successful reconciliation, and a live ruleset readback.
 
 ## Consequences
 
@@ -60,11 +68,12 @@ test harness, alter the pass marker rules, or replace the aggregate job that
 the ruleset requires. Ordinary `ci.yaml` discovery remains useful for new and
 candidate-authored tests, but it is not the immutable product-law boundary.
 
-The trusted snapshot advances deliberately. A change that needs a different
-regression contract must preserve compatibility with the active snapshot while
-the replacement is reviewed and activated; feature-flagged expand-first
-delivery is the normal path. The ruleset rotation is an explicit deployment
-step and its exact-SHA readback is release evidence, not repository prose.
+The trusted snapshot advances with the World base branch, while its externally
+hosted selector prevents the candidate under evaluation from choosing a weaker
+snapshot. A change that needs a different regression contract must preserve
+compatibility with the active base while the replacement is reviewed and
+activated; feature-flagged expand-first delivery is the normal path. The live
+ruleset readback and canaries are release evidence, not repository prose.
 
 The required workflow duplicates the client regression execution on proposed
 changes. That runner cost is accepted because the second execution establishes
