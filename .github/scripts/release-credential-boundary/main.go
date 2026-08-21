@@ -18,8 +18,8 @@ import (
 const (
 	canonicalArtifact                = "client-macos-universal"
 	canonicalArtifactPath            = "build/WorldAtRuin-${{ steps.version.outputs.version }}-macOS-universal.zip"
-	expectedAttachReleaseSHA256      = "190e86bef7d107b2da75ca9c1603f671d271b1ef4ddf9390294174dfce7bde6b"
-	expectedPublishReleaseSHA256     = "dc6e02a9fa8ca3bef86ab903bf4839b78d56e3c363a0a852d1cfa2930d5802d2"
+	expectedAttachReleaseSHA256      = "e81894d7b66e7686a02aa96acbfd49f0b3910c4a9d97b8ab3fee3c0f63859e40"
+	expectedPublishReleaseSHA256     = "b3e69fe4818d6596ed64d99d88f31abacdf30f53ffaf0bc62c1ac28f933a1d09"
 	attachReleaseJob                 = "attach-release"
 	publishReleaseJob                = "publish-release"
 	publishMacOSJob                  = "publish-macos"
