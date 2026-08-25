@@ -2886,7 +2886,7 @@ jobs:
       ]
     if: ${{ always() }}
     steps:
-      - uses: devantler-tech/actions/aggregate-job-checks@d72ecd5e8b680c2066a490a2b761a8913c454575 # v13.1.3
+      - uses: devantler-tech/actions/aggregate-job-checks@78ce1aca1e4736f4c4fe24975b085938805421f7 # v13.1.5
         with:
           # frame-capture, frame-capture-exported and detect-visual-changes are
           # conditional and report `skipped` on PRs with no player-visible
