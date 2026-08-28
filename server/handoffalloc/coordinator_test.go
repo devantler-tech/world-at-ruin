@@ -2606,8 +2606,8 @@ func TestAllocateDetachesKnownResourceCleanupFromCallerCancellation(t *testing.T
 }
 
 // TestAllocateDetachesFinalizeFailureCleanupFromCallerCancellation pins the
-// detachment on the Finalize error path for a Finalize failure that is NOT
-// itself the caller's cancellation.
+// Finalize error path's detachment, for a Finalize failure that is not itself
+// the caller's cancellation.
 //
 // TestAllocateDetachesKnownResourceCleanupFromCallerCancellation already covers
 // this site, but only for a Finalize error produced BY the cancellation, so it
