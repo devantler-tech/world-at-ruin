@@ -43,6 +43,7 @@ type memoryStorage struct {
 	writeAfterCommitErrAt int
 	deleteErr             error
 	respectContext        bool
+	beforeWrite           func(version int) error
 }
 
 func newMemoryStorage() *memoryStorage {
@@ -115,6 +116,13 @@ func (s *memoryStorage) StorageWrite(
 ) ([]*api.StorageObjectAck, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Runs ahead of the context check so a test can fail a specific write for a
+	// reason that is independent of caller cancellation.
+	if s.beforeWrite != nil {
+		if err := s.beforeWrite(s.version + 1); err != nil {
+			return nil, err
+		}
+	}
 	if s.respectContext && ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
@@ -2594,6 +2602,74 @@ func TestAllocateDetachesKnownResourceCleanupFromCallerCancellation(t *testing.T
 		testReservationID,
 	); !errors.Is(err, nakamalease.ErrNotFound) {
 		t.Fatalf("known resource lease survived detached cleanup: %v", err)
+	}
+}
+
+// TestAllocateDetachesFinalizeFailureCleanupFromCallerCancellation pins the
+// detachment on the Finalize error path for a Finalize failure that is NOT
+// itself the caller's cancellation.
+//
+// TestAllocateDetachesKnownResourceCleanupFromCallerCancellation already covers
+// this site, but only for a Finalize error produced BY the cancellation, so it
+// stays green if cleanup is ever made conditional on a canceled context. Here
+// the write fails for an independent reason while the caller context is already
+// canceled, so the staged GameServer and the durable lease must still be
+// reclaimed under the detached progress context.
+func TestAllocateDetachesFinalizeFailureCleanupFromCallerCancellation(t *testing.T) {
+	storage := newMemoryStorage()
+	storage.respectContext = true
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	finalizeErr := errors.New("test storage: injected finalize failure")
+	// The finalize write is the third: two staging writes precede it. Fire once,
+	// so the detached cleanup writes that follow are free to succeed.
+	finalizeFailed := false
+	storage.beforeWrite = func(version int) error {
+		if version == 3 && !finalizeFailed {
+			finalizeFailed = true
+			cancel()
+			return finalizeErr
+		}
+		return nil
+	}
+	store := newLeaseStore(t, storage)
+	resources := &recordingResources{
+		provisioned: Provisioned{
+			Allocation: validAllocation(),
+			SecretRef:  "zone-admission-gameserver-17",
+		},
+	}
+	coordinator, err := NewCoordinator(
+		resources,
+		store,
+		Config{LeaseTTL: time.Minute, Now: func() time.Time { return testNow }},
+	)
+	if err != nil {
+		t.Fatalf("NewCoordinator returned an error: %v", err)
+	}
+
+	got, err := coordinator.Allocate(ctx, validRequest())
+	if !errors.Is(err, nakamalease.ErrStorage) {
+		t.Fatalf("finalize failure error = %v, want nakamalease.ErrStorage", err)
+	}
+	// The point of this test: the failure is a storage fault, not the
+	// cancellation. If this ever reports context.Canceled the scenario has
+	// collapsed back into the coverage the sibling test already provides.
+	if errors.Is(err, context.Canceled) {
+		t.Fatalf("finalize failure error = %v, want a fault independent of cancellation", err)
+	}
+	if !reflect.DeepEqual(got, handoff.Allocation{}) {
+		t.Fatalf("finalize failure returned %+v, want zero allocation", got)
+	}
+	if len(resources.releases) != 1 {
+		t.Fatalf("staged resource releases = %d, want 1", len(resources.releases))
+	}
+	if _, err := store.Load(
+		context.Background(),
+		testUserID,
+		testReservationID,
+	); !errors.Is(err, nakamalease.ErrNotFound) {
+		t.Fatalf("durable lease survived detached cleanup: %v", err)
 	}
 }
 
