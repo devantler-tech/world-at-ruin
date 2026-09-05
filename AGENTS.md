@@ -766,7 +766,9 @@ everything shipped afterwards is held to.
 - **Server save history:** every persisted server schema uses
   `server/<package>/testdata/shipped_<family>_versions.txt` and
   `golden_<family>_v<N>.json`. The server durability check discovers ledgers in both the reviewed base
-  and candidate tree, preserves all historical fixture bytes, and validates complete additions.
+  and candidate tree, preserves all historical fixture bytes, validates complete additions, and refuses
+  any `server/` package whose production Go code names a Nakama collection without a ledger of its
+  own — a new store is registered by the code that persists, not by a ledger it may never write.
   Run `BASE_SHA=<reviewed-base> ./tools/google-binding-durability-guard.sh` from the repository root
   and its adjacent `.test.sh` regression suite. Store tests separately check historical readers:
   character, binding and audit tests assert preserved fields; lease fixtures assert acceptance

@@ -92,6 +92,25 @@ guard_family() {
 	done <"$SCRATCH_DIR/base-versions"
 }
 
+# register_persisted_families refuses any server package whose production Go
+# code names a Nakama collection without a schema ledger under its own testdata.
+# Discovery above starts from ledgers that already exist, so without this a new
+# store could persist records while staying outside the gate entirely.
+register_persisted_families() {
+	local file dir name
+	while IFS= read -r file; do
+		[ -f "$file" ] || continue
+		name="$(grep -oE '"world_at_ruin_[a-z0-9_]+"' "$file" | head -n1)" || true
+		[ -n "$name" ] || continue
+		dir="${file%/*}"
+		awk -v prefix="$dir/testdata/shipped_" '
+			index($0, prefix) == 1 && /_versions\.txt$/ { found = 1 }
+			END { exit found ? 0 : 1 }
+		' "$SCRATCH_DIR/head-ledgers" ||
+			fail "$dir persists records in Nakama collection $name but registers no schema ledger ($dir/testdata/shipped_<family>_versions.txt) — every persisted server family must join this gate"
+	done < <(awk '/^server\/.*\.go$/ && !/_test\.go$/ { print }' "$SCRATCH_DIR/head-paths")
+}
+
 # main anchors discovery to BASE_SHA and checks every base or candidate family.
 main() {
 	local base="${BASE_SHA:-}" ledger count=0
@@ -113,6 +132,10 @@ main() {
 		guard_family "$base" "$ledger"
 		count=$((count + 1))
 	done <"$SCRATCH_DIR/ledgers"
+
+	# A persisted family is registered by the code that persists it, so a store
+	# without a ledger is refused instead of never being discovered.
+	register_persisted_families
 
 	# Identity addressing has its own immutable fixture outside a version ledger.
 	require_file "$ADDRESS_CONTRACT"

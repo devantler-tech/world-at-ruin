@@ -151,6 +151,26 @@ if [ "$future_rc" -eq 0 ] || ! printf '%s' "$future_out" | grep -qF 'shipped_pro
 fi
 
 reset_tree
+# A store that persists records in a Nakama collection cannot stay outside the
+# gate by never writing a ledger: persisted families are registered from the
+# production code that names the collection, not from ledgers that already exist.
+reset_tree
+mkdir -p "$repo/server/orphanstore"
+printf '%s\n' 'package orphanstore' '' 'const Collection = "world_at_ruin_orphans"' \
+	>"$repo/server/orphanstore/store.go"
+expect_fail_matching 'persisted family without a ledger' 'registers no schema ledger'
+rm "$repo/server/orphanstore/store.go"
+printf '%s\n' 'package orphanstore' '' 'const collection = "world_at_ruin_orphans"' \
+	>"$repo/server/orphanstore/store_test.go"
+expect_pass 'a collection literal in test code alone registers nothing'
+printf '%s\n' 'package orphanstore' '' 'const Collection = "world_at_ruin_orphans"' \
+	>"$repo/server/orphanstore/store.go"
+mkdir -p "$repo/server/orphanstore/testdata"
+printf '1\n' >"$repo/server/orphanstore/testdata/shipped_orphan_versions.txt"
+printf '{"schema":1,"orphans":[]}\n' >"$repo/server/orphanstore/testdata/golden_orphan_v1.json"
+expect_pass 'registered new persisted family'
+reset_tree
+
 git -C "$repo" rm -qr -- server
 empty_out="$(run_guard_from "$pre_binding_base")" && empty_rc=0 || empty_rc=$?
 if [ "$empty_rc" -eq 0 ] || ! printf '%s' "$empty_out" | grep -qF 'no server schema ledgers'; then
