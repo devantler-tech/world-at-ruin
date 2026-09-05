@@ -179,6 +179,11 @@ expect_failure \
 	"encoded reference media cannot move to another documentation path" \
 	"encoded or inline media in repository text" \
 	"$repo"
+# An inline marker is reported on the line it sits on.
+expect_failure \
+	"an inline payload is reported with its line number, not only its file" \
+	"docs/evidence/reference.md:3" \
+	"$repo"
 
 repo=$(new_repo wrapped_encoded_media)
 write_valid_contract "$repo"
@@ -192,6 +197,12 @@ git -C "$repo" add docs/evidence/reference.md
 expect_failure \
 	"line-wrapped base64 reference media is rejected" \
 	"encoded or inline media in repository text" \
+	"$repo"
+# The diagnostic names the block's line range, not only the file: a report
+# naming only the file leaves the reader to reverse-engineer the heuristic.
+expect_failure \
+	"a wrapped payload is reported with its line range, not only its file" \
+	"docs/evidence/reference.md:3-4" \
 	"$repo"
 
 repo=$(new_repo encoded_artgen_source)
@@ -403,15 +414,13 @@ expect_failure \
 	"story proposal is missing the exact ORIGINALITY HOLD directive" \
 	"$repo"
 
-# Prose is not a payload. The wrapped-base64 heuristic used to strip EVERY
-# whitespace character before testing a line, so a comment whose words happened
-# to carry no punctuation matched the base64 alphabet, and two adjacent lines of
-# that shape crossed the 128-character threshold. Go doc comments here open with
-# a long CamelCase test name, so ordinary test files tripped it (#768). The Go
-# lines are the exact pair that failed the guard on #767; the Markdown pair is
-# the same shape in prose, and the GDScript pair pins that judging a comment on
-# its own text (after its marker) does not turn a punctuation-free comment into
-# a match either.
+# Prose is not a payload: a punctuation-free comment or paragraph never matches
+# the base64 alphabet, however long, and adjacent lines of that shape never
+# accumulate into a wrapped block. Go doc comments here open with a long
+# CamelCase test name, so ordinary test files carry exactly this shape (#768);
+# the Go lines are the pair from #767. The Markdown pair is the same shape in
+# prose, and the GDScript pair pins that judging a comment on its own text,
+# after its marker, does not turn a punctuation-free comment into a match.
 repo=$(new_repo prose_comment_lines)
 write_valid_contract "$repo"
 mkdir -p "$repo/server"
@@ -439,9 +448,9 @@ expect_success \
 	"punctuation-free prose comments and paragraphs are not encoded media" \
 	"$repo"
 
-# A payload does not stop being one because each wrapped line is commented out.
-# Judging the comment's own text is what lets prose through above; the same
-# rule must not let a marker hide a payload the guard would otherwise reject.
+# A payload does not stop being one because each wrapped line is commented out:
+# a line is judged on its own text after its marker, which is what admits prose
+# above, and the same rule must not let a marker hide a payload.
 repo=$(new_repo commented_encoded_media)
 write_valid_contract "$repo"
 printf '%s\n' \
@@ -452,36 +461,7 @@ printf '%s\n' \
 git -C "$repo" add tools/reference.sh
 expect_failure \
 	"wrapped base64 hidden behind comment markers is still rejected" \
-	"encoded or inline media in repository text" \
-	"$repo"
-
-# A diagnosis that names only the file sends the reader off to reverse-engineer
-# the heuristic. A wrapped block is reported as the line range that crossed the
-# threshold; an inline marker as the line it sits on.
-repo=$(new_repo located_encoded_media)
-write_valid_contract "$repo"
-printf '%s\n' \
-	'# Evidence' \
-	'' \
-	'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' \
-	'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB' \
-	>"$repo/docs/evidence/reference.md"
-git -C "$repo" add docs/evidence/reference.md
-expect_failure \
-	"a wrapped payload is reported with its line range, not only its file" \
-	"docs/evidence/reference.md:3-4" \
-	"$repo"
-
-repo=$(new_repo located_inline_media)
-write_valid_contract "$repo"
-{
-	printf '%s\n' '# Evidence' '' ''
-	printf '%s%s\n' 'data:image/png;' 'base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB'
-} >"$repo/docs/evidence/reference.md"
-git -C "$repo" add docs/evidence/reference.md
-expect_failure \
-	"an inline payload is reported with its line number, not only its file" \
-	"docs/evidence/reference.md:4" \
+	"tools/reference.sh:2-3" \
 	"$repo"
 
 repo=$(new_repo valid)

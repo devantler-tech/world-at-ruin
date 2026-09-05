@@ -53,15 +53,15 @@ is_binary() {
 
 # Prints where the first encoded payload sits — the line of an inline marker,
 # or the START-END line range of a wrapped block — and returns 0. Prints
-# nothing and returns 1 when the file is clean. A diagnosis naming only the
-# file sends the reader off to reverse-engineer the heuristic (#768).
+# nothing and returns 1 when the file is clean. The location is part of the
+# diagnostic: a report naming only the file leaves the reader to
+# reverse-engineer the heuristic (#768).
 has_encoded_media() {
 	local file="$1" match
 
-	match=$(grep -Enm1 \
+	if match=$(grep -Enm1 \
 		'(<[sS][vV][gG]([[:space:]>])|<[cC][oO][lL][lL][aA][dD][aA]([[:space:]>])|<[xX]3[dD]([[:space:]>])|[dD][aA][tT][aA]:(image|audio|video|model)/[^;,]+;base64,|^[[:space:]]*(v|vn|vt|f)[[:space:]]+(-?[0-9]+([.][0-9]+)?[[:space:]]+){2}|^[[:space:]]*(ply|#[uU][sS][dD][aA]([[:space:]]|$)|OFF([[:space:]]|$)))' \
-		"$file") || true
-	if [ -n "$match" ]; then
+		"$file"); then
 		printf '%s\n' "${match%%:*}"
 		return 0
 	fi
@@ -70,12 +70,13 @@ has_encoded_media() {
 	# base64-only lines so wrapping cannot turn one payload into safe fragments.
 	#
 	# A wrapped line is ONE run of alphabet characters: no encoder breaks a line
-	# with spaces, so internal whitespace is what separates a payload from prose.
-	# Only the surrounding whitespace is trimmed — stripping every space first
-	# made any punctuation-free sentence match the alphabet, and two adjacent
-	# doc-comment lines then crossed the threshold on ordinary Go tests (#768).
-	# One leading comment marker is dropped so the line is judged on its own
-	# text: prose stays prose, and commenting a payload out does not hide it.
+	# with spaces, so internal whitespace is what separates a payload from prose,
+	# and only the surrounding whitespace is trimmed before the test. A
+	# punctuation-free sentence must never match the alphabet — Go doc comments
+	# here open with a long CamelCase test name, and two adjacent lines of that
+	# shape are longer than the threshold (#768). One leading comment marker is
+	# dropped so the line is judged on its own text: prose stays prose, and a
+	# payload commented out line by line is still a payload.
 	awk '
 		{
 			line = $0
