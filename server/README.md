@@ -167,6 +167,13 @@ zone/dungeon server:
   validation, strict object decoding, and the sanitising of a storage error so a
   caller learns about its own cancellation and nothing about the store. A new store
   calls through to it rather than carrying its own copy (#780).
+- **`nakamainventory/`** — the private **inventory container**: one versioned,
+  conflict-checked document of opaque item stacks per account, stored under the
+  system owner and written only through the `playerstate` boundary so the
+  container and its replay evidence commit together. It bounds stacks and counts
+  so no write can mint an unbounded amount of anything, and every shipped schema
+  stays readable through a ledgered golden. What an item *is* — loot tables,
+  equipment slots, trade — is a later phase's concern, not the container's.
 - **`nakamaauth/`** — the first **Nakama meta-tier seam**. Its session verifier
   presents a Nakama session to the generated gRPC `GetAccount` API as bearer
   metadata, and only Nakama's authenticated user ID crosses back into World at
