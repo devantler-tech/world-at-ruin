@@ -8,6 +8,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/devantler-tech/world-at-ruin/server/nakamastorage"
 	"github.com/heroiclabs/nakama-common/api"
 	"github.com/heroiclabs/nakama-common/runtime"
 	"google.golang.org/grpc/codes"
@@ -16,7 +17,7 @@ import (
 
 const (
 	googleBindingCollection    = "world_at_ruin_google_identity_bindings"
-	googleBindingSystemOwnerID = "00000000-0000-0000-0000-000000000000"
+	googleBindingSystemOwnerID = nakamastorage.SystemOwnerID
 	googleBindingSchema        = 1
 )
 
@@ -25,8 +26,7 @@ const (
 var ErrGoogleBindingStorage = errors.New("nakama auth: Google binding storage failed")
 
 type googleBindingStorageClient interface {
-	StorageRead(context.Context, []*runtime.StorageRead) ([]*api.StorageObject, error)
-	StorageWrite(context.Context, []*runtime.StorageWrite) ([]*api.StorageObjectAck, error)
+	nakamastorage.Client
 	AccountGetId(context.Context, string) (*api.Account, error)
 }
 
@@ -66,7 +66,7 @@ func (s *NakamaGoogleBindingStore) ResolveGoogleBinding(
 		UserID:     "",
 	}})
 	if err != nil {
-		return "", false, sanitizeGoogleBindingStorageError(ctx, err)
+		return "", false, nakamastorage.SanitizeError(ctx, err, ErrGoogleBindingStorage)
 	}
 	if len(objects) == 0 {
 		return "", false, nil
@@ -98,7 +98,7 @@ func (s *NakamaGoogleBindingStore) BindGoogleIdentity(
 	key string,
 	userID string,
 ) (string, error) {
-	if !validGoogleBindingKey(key) || !validNakamaUserID(userID) {
+	if !validGoogleBindingKey(key) || !nakamastorage.ValidSubjectID(userID) {
 		return "", errors.New("nakama auth: invalid Google binding")
 	}
 	userID = strings.ToLower(userID)
@@ -147,7 +147,7 @@ func (s *NakamaGoogleBindingStore) BindGoogleIdentity(
 		return winner, nil
 	}
 	if writeErr != nil {
-		return "", sanitizeGoogleBindingStorageError(ctx, writeErr)
+		return "", nakamastorage.SanitizeError(ctx, writeErr, ErrGoogleBindingStorage)
 	}
 	return "", ErrGoogleBindingStorage
 }
@@ -158,13 +158,13 @@ func (s *NakamaGoogleBindingStore) VerifyGoogleBoundAccount(
 	ctx context.Context,
 	userID string,
 ) error {
-	if !validNakamaUserID(userID) {
+	if !nakamastorage.ValidSubjectID(userID) {
 		return ErrGoogleBindingStorage
 	}
 	userID = strings.ToLower(userID)
 	account, err := s.storage.AccountGetId(ctx, userID)
 	if err != nil {
-		return sanitizeGoogleBindingStorageError(ctx, err)
+		return nakamastorage.SanitizeError(ctx, err, ErrGoogleBindingStorage)
 	}
 	if account == nil ||
 		account.GetUser() == nil ||
@@ -190,7 +190,7 @@ func decodeGoogleBindingDocument(value string) (googleBindingDocument, error) {
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return googleBindingDocument{}, ErrGoogleBindingStorage
 	}
-	if document.Schema != googleBindingSchema || !validNakamaUserID(document.UserID) {
+	if document.Schema != googleBindingSchema || !nakamastorage.ValidSubjectID(document.UserID) {
 		return googleBindingDocument{}, ErrGoogleBindingStorage
 	}
 	return document, nil
@@ -244,36 +244,4 @@ func validGoogleBindingKey(value string) bool {
 	}
 	decoded, err := hex.DecodeString(value)
 	return err == nil && len(decoded) == 32
-}
-
-func validNakamaUserID(value string) bool {
-	if len(value) != 36 || strings.EqualFold(value, googleBindingSystemOwnerID) {
-		return false
-	}
-	for index, character := range value {
-		switch index {
-		case 8, 13, 18, 23:
-			if character != '-' {
-				return false
-			}
-		default:
-			if !strings.ContainsRune("0123456789abcdefABCDEF", character) {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-func sanitizeGoogleBindingStorageError(ctx context.Context, err error) error {
-	switch {
-	case errors.Is(err, context.Canceled):
-		return context.Canceled
-	case errors.Is(err, context.DeadlineExceeded):
-		return context.DeadlineExceeded
-	case ctx.Err() != nil:
-		return ctx.Err()
-	default:
-		return ErrGoogleBindingStorage
-	}
 }
