@@ -9,9 +9,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"io"
-	"strings"
 
+	"github.com/devantler-tech/world-at-ruin/server/nakamastorage"
 	"github.com/heroiclabs/nakama-common/api"
 	"github.com/heroiclabs/nakama-common/runtime"
 )
@@ -23,7 +22,7 @@ const (
 	AuditCollection = "world_at_ruin_player_mutations"
 
 	auditSchema   = 1
-	systemOwnerID = "00000000-0000-0000-0000-000000000000"
+	systemOwnerID = nakamastorage.SystemOwnerID
 )
 
 var (
@@ -39,17 +38,6 @@ var (
 	// returned malformed durable state.
 	ErrStorage = errors.New("player state: storage operation failed")
 )
-
-type storageClient interface {
-	StorageRead(
-		context.Context,
-		[]*runtime.StorageRead,
-	) ([]*api.StorageObject, error)
-	StorageWrite(
-		context.Context,
-		[]*runtime.StorageWrite,
-	) ([]*api.StorageObjectAck, error)
-}
 
 // RecordWrite is one conditional create or version-checked replacement of a
 // player record. SystemOwned keeps the authoritative record and its replay
@@ -80,12 +68,12 @@ type Result struct {
 
 // Store commits player record mutations through Nakama storage.
 type Store struct {
-	storage storageClient
+	storage nakamastorage.Client
 }
 
 // NewStore builds a player mutation store over Nakama's runtime storage
 // surface.
-func NewStore(storage storageClient) (*Store, error) {
+func NewStore(storage nakamastorage.Client) (*Store, error) {
 	if storage == nil {
 		return nil, errors.New("player state: storage is required")
 	}
@@ -127,7 +115,7 @@ func (s *Store) Apply(ctx context.Context, mutation Mutation) (Result, error) {
 		},
 	})
 	if err != nil {
-		return Result{}, sanitizeReadError(ctx, err)
+		return Result{}, nakamastorage.SanitizeError(ctx, err, ErrStorage)
 	}
 	if len(objects) != 0 {
 		return resolveExistingAudit(objects, normalized)
@@ -218,42 +206,42 @@ func (s *Store) resolveAfterWrite(
 }
 
 func normalizeMutation(mutation Mutation) (normalizedMutation, error) {
-	if !validSubjectID(mutation.SubjectID) {
+	if !nakamastorage.ValidSubjectID(mutation.SubjectID) {
 		return normalizedMutation{}, errors.New(
 			"player state: valid subject is required",
 		)
 	}
-	if invalidIdentityPart(mutation.IdempotencyKey) {
+	if nakamastorage.InvalidIdentityPart(mutation.IdempotencyKey) {
 		return normalizedMutation{}, errors.New(
 			"player state: idempotency key is required",
 		)
 	}
-	if invalidIdentityPart(mutation.Operation) {
+	if nakamastorage.InvalidIdentityPart(mutation.Operation) {
 		return normalizedMutation{}, errors.New(
 			"player state: operation is required",
 		)
 	}
-	if invalidIdentityPart(mutation.Record.Collection) ||
+	if nakamastorage.InvalidIdentityPart(mutation.Record.Collection) ||
 		mutation.Record.Collection == AuditCollection ||
-		invalidIdentityPart(mutation.Record.Key) ||
+		nakamastorage.InvalidIdentityPart(mutation.Record.Key) ||
 		mutation.Record.ExpectedVersion == "" {
 		return normalizedMutation{}, errors.New(
 			"player state: valid observed record is required",
 		)
 	}
-	payload, err := canonicalObject(mutation.Payload)
+	payload, err := nakamastorage.CanonicalObject(mutation.Payload)
 	if err != nil {
 		return normalizedMutation{}, errors.New(
 			"player state: payload must be a JSON object",
 		)
 	}
-	value, err := canonicalObject(mutation.Record.Value)
+	value, err := nakamastorage.CanonicalObject(mutation.Record.Value)
 	if err != nil {
 		return normalizedMutation{}, errors.New(
 			"player state: record value must be a JSON object",
 		)
 	}
-	outcome, err := canonicalObject(mutation.Outcome)
+	outcome, err := nakamastorage.CanonicalObject(mutation.Outcome)
 	if err != nil {
 		return normalizedMutation{}, errors.New(
 			"player state: outcome must be a JSON object",
@@ -275,23 +263,6 @@ func normalizeMutation(mutation Mutation) (normalizedMutation, error) {
 			mutation.IdempotencyKey,
 		),
 	}, nil
-}
-
-func canonicalObject(raw json.RawMessage) (json.RawMessage, error) {
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	var object map[string]any
-	if err := decoder.Decode(&object); err != nil || object == nil {
-		return nil, errors.New("invalid JSON object")
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return nil, errors.New("trailing JSON content")
-	}
-	encoded, err := json.Marshal(object)
-	if err != nil {
-		return nil, err
-	}
-	return encoded, nil
 }
 
 func resolveExistingAudit(
@@ -316,11 +287,11 @@ func resolveExistingAudit(
 	if err != nil || document.Schema != auditSchema {
 		return Result{}, ErrStorage
 	}
-	payload, err := canonicalObject(document.Payload)
+	payload, err := nakamastorage.CanonicalObject(document.Payload)
 	if err != nil {
 		return Result{}, ErrStorage
 	}
-	outcome, err := canonicalObject(document.Outcome)
+	outcome, err := nakamastorage.CanonicalObject(document.Outcome)
 	if err != nil {
 		return Result{}, ErrStorage
 	}
@@ -335,11 +306,9 @@ func resolveExistingAudit(
 }
 
 func decodeAuditDocument(value string) (auditDocument, error) {
-	decoder := json.NewDecoder(strings.NewReader(value))
-	decoder.UseNumber()
-	start, err := decoder.Token()
-	if err != nil || start != json.Delim('{') {
-		return auditDocument{}, errors.New("invalid audit object")
+	decoder, err := nakamastorage.BeginObject(value)
+	if err != nil {
+		return auditDocument{}, err
 	}
 	document := auditDocument{}
 	seen := make(map[string]struct{}, 7)
@@ -378,12 +347,8 @@ func decodeAuditDocument(value string) (auditDocument, error) {
 			return auditDocument{}, err
 		}
 	}
-	end, err := decoder.Token()
-	if err != nil || end != json.Delim('}') {
-		return auditDocument{}, errors.New("invalid audit object")
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return auditDocument{}, errors.New("trailing audit content")
+	if err := nakamastorage.EndObject(decoder); err != nil {
+		return auditDocument{}, err
 	}
 	for _, required := range []string{
 		"schema",
@@ -398,11 +363,11 @@ func decodeAuditDocument(value string) (auditDocument, error) {
 			return auditDocument{}, errors.New("missing audit field")
 		}
 	}
-	if invalidIdentityPart(document.IdempotencyKey) ||
-		invalidIdentityPart(document.RecordCollection) ||
+	if nakamastorage.InvalidIdentityPart(document.IdempotencyKey) ||
+		nakamastorage.InvalidIdentityPart(document.RecordCollection) ||
 		document.RecordCollection == AuditCollection ||
-		invalidIdentityPart(document.RecordKey) ||
-		invalidIdentityPart(document.Operation) {
+		nakamastorage.InvalidIdentityPart(document.RecordKey) ||
+		nakamastorage.InvalidIdentityPart(document.Operation) {
 		return auditDocument{}, errors.New("invalid audit identity")
 	}
 	return document, nil
@@ -416,36 +381,6 @@ func auditKey(subjectID, collection, recordKey, idempotencyKey string) string {
 			idempotencyKey,
 	))
 	return hex.EncodeToString(sum[:])
-}
-
-func invalidIdentityPart(value string) bool {
-	return strings.TrimSpace(value) == "" || strings.ContainsRune(value, '\x00')
-}
-
-func validSubjectID(subjectID string) bool {
-	if len(subjectID) != 36 ||
-		subjectID == "00000000-0000-0000-0000-000000000000" {
-		return false
-	}
-	for index, char := range subjectID {
-		switch index {
-		case 8, 13, 18, 23:
-			if char != '-' {
-				return false
-			}
-		default:
-			if !isHexDigit(char) {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-func isHexDigit(char rune) bool {
-	return (char >= '0' && char <= '9') ||
-		(char >= 'a' && char <= 'f') ||
-		(char >= 'A' && char <= 'F')
 }
 
 func validAcks(
@@ -468,28 +403,8 @@ func validAcks(
 	return true
 }
 
-func sanitizeReadError(ctx context.Context, err error) error {
-	if cancellation := contextError(ctx, err); cancellation != nil {
-		return cancellation
-	}
-	return ErrStorage
-}
-
-func contextError(ctx context.Context, err error) error {
-	switch {
-	case errors.Is(err, context.Canceled):
-		return context.Canceled
-	case errors.Is(err, context.DeadlineExceeded):
-		return context.DeadlineExceeded
-	case ctx.Err() != nil:
-		return ctx.Err()
-	default:
-		return nil
-	}
-}
-
 func indeterminateError(ctx context.Context, err error) error {
-	if cancellation := contextError(ctx, err); cancellation != nil {
+	if cancellation := nakamastorage.ContextError(ctx, err); cancellation != nil {
 		return errors.Join(ErrIndeterminate, cancellation)
 	}
 	return ErrIndeterminate

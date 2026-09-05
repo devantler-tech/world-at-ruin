@@ -3,15 +3,13 @@
 package nakamacharacter
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"strings"
 
+	"github.com/devantler-tech/world-at-ruin/server/nakamastorage"
 	"github.com/devantler-tech/world-at-ruin/server/playerstate"
-	"github.com/heroiclabs/nakama-common/api"
 	"github.com/heroiclabs/nakama-common/runtime"
 )
 
@@ -20,7 +18,7 @@ const (
 	Collection = "world_at_ruin_characters"
 	// RecordKey is the prefix for account-bound system-owned character documents.
 	RecordKey     = "character"
-	systemOwnerID = "00000000-0000-0000-0000-000000000000"
+	systemOwnerID = nakamastorage.SystemOwnerID
 
 	schemaVersion = 1
 )
@@ -35,17 +33,6 @@ var (
 	// ErrStorage means Nakama returned an invalid record or storage failure.
 	ErrStorage = playerstate.ErrStorage
 )
-
-type storageClient interface {
-	StorageRead(
-		context.Context,
-		[]*runtime.StorageRead,
-	) ([]*api.StorageObject, error)
-	StorageWrite(
-		context.Context,
-		[]*runtime.StorageWrite,
-	) ([]*api.StorageObjectAck, error)
-}
 
 // Character is the server-owned identity and versioned client recipe for one
 // player character.
@@ -73,12 +60,12 @@ type SaveRequest struct {
 // playerstate.Store so the record and its system-owned audit evidence commit
 // atomically, as required by docs/design/server-state-durability.md.
 type Store struct {
-	storage   storageClient
+	storage   nakamastorage.Client
 	mutations *playerstate.Store
 }
 
 // NewStore builds a character store over Nakama's runtime storage surface.
-func NewStore(storage storageClient) (*Store, error) {
+func NewStore(storage nakamastorage.Client) (*Store, error) {
 	if storage == nil {
 		return nil, errors.New("nakama character: storage is required")
 	}
@@ -106,7 +93,7 @@ func (s *Store) Load(ctx context.Context, subjectID string) (Record, error) {
 		},
 	})
 	if err != nil {
-		return Record{}, sanitizeStorageError(ctx, err)
+		return Record{}, nakamastorage.SanitizeError(ctx, err, ErrStorage)
 	}
 	if len(objects) == 0 {
 		return Record{}, ErrNotFound
@@ -193,13 +180,13 @@ type characterDocument struct {
 func encodeCharacterDocument(
 	character Character,
 ) (json.RawMessage, error) {
-	if invalidIdentityPart(character.ID) ||
+	if nakamastorage.InvalidIdentityPart(character.ID) ||
 		strings.TrimSpace(character.DisplayName) == "" {
 		return nil, errors.New(
 			"nakama character: valid character is required",
 		)
 	}
-	recipe, err := canonicalObject(character.Recipe)
+	recipe, err := nakamastorage.CanonicalObject(character.Recipe)
 	if err != nil {
 		return nil, errors.New(
 			"nakama character: recipe must be a JSON object",
@@ -230,11 +217,9 @@ func encodeCharacterDocument(
 }
 
 func decodeCharacterDocument(value string) (Character, error) {
-	decoder := json.NewDecoder(strings.NewReader(value))
-	decoder.UseNumber()
-	start, err := decoder.Token()
-	if err != nil || start != json.Delim('{') {
-		return Character{}, errors.New("invalid character object")
+	decoder, err := nakamastorage.BeginObject(value)
+	if err != nil {
+		return Character{}, err
 	}
 	document := characterDocument{}
 	seen := make(map[string]struct{}, 4)
@@ -267,12 +252,8 @@ func decodeCharacterDocument(value string) (Character, error) {
 			return Character{}, err
 		}
 	}
-	end, err := decoder.Token()
-	if err != nil || end != json.Delim('}') {
-		return Character{}, errors.New("invalid character object")
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return Character{}, errors.New("trailing character content")
+	if err := nakamastorage.EndObject(decoder); err != nil {
+		return Character{}, err
 	}
 	for _, required := range []string{
 		"schema",
@@ -285,11 +266,11 @@ func decodeCharacterDocument(value string) (Character, error) {
 		}
 	}
 	if document.Schema != schemaVersion ||
-		invalidIdentityPart(document.CharacterID) ||
+		nakamastorage.InvalidIdentityPart(document.CharacterID) ||
 		strings.TrimSpace(document.DisplayName) == "" {
 		return Character{}, errors.New("invalid character identity")
 	}
-	recipe, err := canonicalObject(document.Recipe)
+	recipe, err := nakamastorage.CanonicalObject(document.Recipe)
 	if err != nil {
 		return Character{}, err
 	}
@@ -298,43 +279,6 @@ func decodeCharacterDocument(value string) (Character, error) {
 		DisplayName: document.DisplayName,
 		Recipe:      recipe,
 	}, nil
-}
-
-func canonicalObject(raw json.RawMessage) (json.RawMessage, error) {
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	var object map[string]any
-	if err := decoder.Decode(&object); err != nil || object == nil {
-		return nil, errors.New("invalid JSON object")
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return nil, errors.New("trailing JSON content")
-	}
-	encoded, err := json.Marshal(object)
-	if err != nil {
-		return nil, err
-	}
-	return encoded, nil
-}
-
-func validSubjectID(subjectID string) bool {
-	if len(subjectID) != 36 ||
-		subjectID == "00000000-0000-0000-0000-000000000000" {
-		return false
-	}
-	for index, char := range subjectID {
-		switch index {
-		case 8, 13, 18, 23:
-			if char != '-' {
-				return false
-			}
-		default:
-			if !isHexDigit(char) {
-				return false
-			}
-		}
-	}
-	return true
 }
 
 func authenticatedSubjectID(
@@ -350,36 +294,12 @@ func authenticatedSubjectID(
 	callerSubjectID = strings.ToLower(callerSubjectID)
 	requestedSubjectID = strings.ToLower(requestedSubjectID)
 	if !ok ||
-		!validSubjectID(callerSubjectID) ||
-		!validSubjectID(requestedSubjectID) ||
+		!nakamastorage.ValidSubjectID(callerSubjectID) ||
+		!nakamastorage.ValidSubjectID(requestedSubjectID) ||
 		callerSubjectID != requestedSubjectID {
 		return "", errors.New(
 			"nakama character: authenticated subject must own the character",
 		)
 	}
 	return callerSubjectID, nil
-}
-
-func isHexDigit(char rune) bool {
-	return (char >= '0' && char <= '9') ||
-		(char >= 'a' && char <= 'f') ||
-		(char >= 'A' && char <= 'F')
-}
-
-func invalidIdentityPart(value string) bool {
-	return strings.TrimSpace(value) == "" ||
-		strings.ContainsRune(value, '\x00')
-}
-
-func sanitizeStorageError(ctx context.Context, err error) error {
-	switch {
-	case errors.Is(err, context.Canceled):
-		return context.Canceled
-	case errors.Is(err, context.DeadlineExceeded):
-		return context.DeadlineExceeded
-	case ctx.Err() != nil:
-		return ctx.Err()
-	default:
-		return ErrStorage
-	}
 }

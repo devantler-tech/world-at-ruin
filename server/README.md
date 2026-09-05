@@ -161,6 +161,12 @@ zone/dungeon server:
   only in the zone container; the sidecar retains its credential, the public
   wrapping key is a read-only ConfigMap projection, and no Kubernetes Secret
   volume is part of the shape.
+- **`nakamastorage/`** — the primitives every Nakama-backed store is built on: the
+  slice of the runtime storage surface a store depends on, the system owner private
+  records live under, canonical JSON encoding of a document, subject-identity
+  validation, strict object decoding, and the sanitising of a storage error so a
+  caller learns about its own cancellation and nothing about the store. A new store
+  calls through to it rather than carrying its own copy (#780).
 - **`nakamaauth/`** — the first **Nakama meta-tier seam**. Its session verifier
   presents a Nakama session to the generated gRPC `GetAccount` API as bearer
   metadata, and only Nakama's authenticated user ID crosses back into World at
