@@ -59,6 +59,7 @@ type PreparedAdmission struct {
 	allocationID string
 	activated    bool
 	shutDown     bool
+	binding      *claimBindingState
 }
 
 // PrepareAdmission generates, seals, publishes, and observes one
@@ -105,16 +106,28 @@ func PrepareAdmission(ctx context.Context, lifecycleCfg Config, cfg AdmissionCon
 	}
 	envelope := admissionEnvelopePrefix + base64.RawURLEncoding.EncodeToString(ciphertext)
 	readyValue := admissionReadyPrefix + fingerprint
+	watchCtx, stopWatch := context.WithCancel(ctx)
+	keepWatch := false
+	defer func() {
+		if !keepWatch {
+			stopWatch()
+		}
+	}()
+	binding := &claimBindingState{
+		ctx: watchCtx, cancel: stopWatch, identity: identity, envelope: envelope,
+		fingerprint: fingerprint, readyValue: readyValue,
+	}
 
 	observed := make(chan struct{}, 1)
-	if err := s.WatchGameServer(func(current *sdkproto.GameServer) {
+	if err := s.WatchGameServer(watchCtx, func(current *sdkproto.GameServer) {
+		binding.observe(current)
 		if admissionMetadataMatches(current, identity, envelope, fingerprint, readyValue) {
 			select {
 			case observed <- struct{}{}:
 			default:
 			}
 		}
-	}); err != nil {
+	}, binding.close); err != nil {
 		return nil, fail(errors.New("agones: watch GameServer admission metadata failed"))
 	}
 	if err := s.SetAnnotation(admissionEnvelopeSuffix, envelope); err != nil {
@@ -134,19 +147,24 @@ func PrepareAdmission(ctx context.Context, lifecycleCfg Config, cfg AdmissionCon
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	select {
-	case <-ctx.Done():
-		return nil, fail(fmt.Errorf("agones: observe admission metadata: %w", context.Cause(ctx)))
+	case <-watchCtx.Done():
+		return nil, fail(fmt.Errorf("agones: observe admission metadata: %w", context.Cause(watchCtx)))
 	case <-timer.C:
 		return nil, fail(fmt.Errorf("agones: observe admission metadata: timed out after %s", timeout))
 	case <-observed:
 	}
+	if !binding.live() {
+		return nil, fail(errors.New("agones: admission observation watch ended"))
+	}
 
+	keepWatch = true
 	return &PreparedAdmission{
 		ctx:          ctx,
 		lifecycleCfg: lifecycleCfg,
 		sdk:          s,
 		secret:       secret,
 		allocationID: identity.name,
+		binding:      binding,
 	}, nil
 }
 
@@ -227,6 +245,17 @@ func admissionMetadataMatches(
 	fingerprint string,
 	readyValue string,
 ) bool {
+	return admissionIdentityMetadataMatches(gs, identity, envelope, fingerprint, readyValue) &&
+		gs.GetStatus().GetState() == "Starting"
+}
+
+func admissionIdentityMetadataMatches(
+	gs *sdkproto.GameServer,
+	identity gameServerIdentity,
+	envelope string,
+	fingerprint string,
+	readyValue string,
+) bool {
 	if gs == nil || gs.GetObjectMeta() == nil || gs.GetStatus() == nil {
 		return false
 	}
@@ -234,7 +263,6 @@ func admissionMetadataMatches(
 	return meta.GetNamespace() == identity.namespace &&
 		meta.GetName() == identity.name &&
 		meta.GetUid() == identity.uid &&
-		gs.GetStatus().GetState() == "Starting" &&
 		meta.GetAnnotations()[AdmissionEnvelopeAnnotation] == envelope &&
 		meta.GetAnnotations()[AdmissionKeyAnnotation] == fingerprint &&
 		meta.GetLabels()[AdmissionReadyLabel] == readyValue
@@ -261,11 +289,14 @@ func (p *PreparedAdmission) Ready() (*Lifecycle, error) {
 	if p.activated {
 		return nil, errors.New("agones: prepared admission is already ready")
 	}
+	if !p.binding.live() {
+		return nil, errors.New("agones: admission observation watch ended before readiness")
+	}
 	if err := p.sdk.Ready(); err != nil {
 		return nil, errors.New("agones: mark ready failed")
 	}
 	p.activated = true
-	return startHealth(p.ctx, p.sdk, p.lifecycleCfg), nil
+	return startHealthWithBinding(p.ctx, p.sdk, p.lifecycleCfg, p.binding), nil
 }
 
 // Shutdown abandons an unactivated prepared GameServer. Once Ready succeeds,
@@ -280,6 +311,7 @@ func (p *PreparedAdmission) Shutdown() error {
 		return errors.New("agones: prepared admission is already shut down")
 	}
 	p.shutDown = true
+	p.binding.close()
 	defer clear(p.secret[:])
 	if err := p.sdk.Shutdown(); err != nil {
 		return errors.New("agones: shutdown prepared admission failed")

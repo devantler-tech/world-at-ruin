@@ -106,7 +106,9 @@ func (c Config) withDefaults() Config {
 // sim goroutine calls Tick once per simulation tick to attach, detach and pump
 // replication frames. The conns map is owned by the sim goroutine exclusively.
 type Hub struct {
-	cfg Config
+	cfg          Config
+	claim        AdmissionClaimer
+	claimTimeout time.Duration
 
 	mu      sync.Mutex
 	pending []func(w *sim.World)
@@ -283,6 +285,16 @@ func (h *Hub) Handler() http.Handler {
 		if err != nil {
 			http.Error(rw, "wire version refused", status)
 			return
+		}
+		if h.claim != nil {
+			if !validClaimHandshake(r) {
+				http.Error(rw, "WebSocket handshake refused", http.StatusBadRequest)
+				return
+			}
+			if !h.claimAdmission(r.Context(), token, observer) {
+				http.Error(rw, "admission refused", http.StatusUnauthorized)
+				return
+			}
 		}
 		ws, err := websocket.Accept(rw, r, nil)
 		if err != nil {

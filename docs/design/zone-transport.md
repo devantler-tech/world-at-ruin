@@ -146,9 +146,21 @@ Consequences:
   [ADR 0002](../adr/0002-seal-zone-admission-secrets-before-readiness.md) now selects the
   production secret lifecycle: each zone seals its own in-memory key before Ready, and the
   coordinator resolves only that allocated GameServer's identity-bound ciphertext. The concrete
-  envelope publisher, Agones resource adapter, expiry/orphan supervision, zone claim adapter and
-  Nakama RPC registration remain later server-foundation children; the current environment secret
-  is still a developer-only helper.
+  envelope publisher and allocation metadata now support a zone-side admission gate:
+  `PreparedAdmission.ClaimBinding` exposes only the exact sealed GameServer's observed
+  `Allocated` identity, canonical lease locator and attempt digest. Changed metadata, deletion,
+  watch termination, health recovery and shutdown invalidate that binding; restoring an old
+  snapshot does not restore its observation revision.
+  `server/zoneclaim` binds a private claimant to that observation before and after its request.
+  `zonesock.NewClaimedHub` checks the token, wire version and upgrade handshake before calling
+  it, then rechecks cancellation and token validity before admitting the socket. The claim has a
+  five-second default deadline and a configurable maximum of thirty seconds. Claimants must honor
+  cancellation and independently authenticate the workload, resolve the exact lease and verify the
+  token. An ambiguous or failed upgrade never releases a potentially committed claim.
+  The private Nakama endpoint, authenticated transport, fenced session-end recovery and command
+  wiring remain server-foundation children. This composition is latent: `NewHub` and the current
+  environment secret remain developer-only helpers, and this gate does not activate production
+  admission by itself.
 - **One transport discipline across tiers.** Nakama's own realtime API is WebSocket; client
   networking, platform ingress, and TLS handling follow a single pattern instead of two.
 - **The wire codec is unchanged.** Nothing in this decision touches `server/wire/` — the goldens
