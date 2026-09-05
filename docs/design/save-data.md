@@ -282,10 +282,10 @@ them. Unknown future weapon IDs are valid because rollback must preserve and app
 them without reinterpreting their meaning. `Main` restores the complete snapshot atomically into its
 boot-owned `Mastery`, and the real boot guard proves both the live tracks and bloodstain are present.
 The manifest advertises read and write capability 7. Its rollback gate requires a retained whole-app
-reader with full-precision vault serialization. The v0.91.0
+reader with full-precision vault serialization. The retained v0.93.1
 [reader evidence and reproduction steps](../evidence/issue-658-mastery-retention/README.md)
-bind the archive checksum and restoration assertions, and record the counter-rounding defect that
-requires a corrected reader release before activation.
+bind the immutable archive checksum, exact-counter preservation and real-game restoration assertions.
+The earlier v0.91.0 baseline rounds a maximum quest counter on rewrite and is not a lossless target.
 Only a real mastery mutation originates v5. Ordinary boot, attunement, discovery, reward and quest
 writes retain their historical schema requirements and preserve an existing mastery section.
 
