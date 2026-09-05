@@ -218,6 +218,8 @@ func (c *Client) Locate(
 	}, nil
 }
 
+// getError adds read context while retaining Kubernetes error classification;
+// an absent object additionally matches this package's ErrNotFound sentinel.
 func getError(err error) error {
 	if apierrors.IsNotFound(err) {
 		return fmt.Errorf("%w: %w", ErrNotFound, err)
@@ -253,6 +255,8 @@ func (c *Client) validateIdentity(identity Identity) error {
 	return nil
 }
 
+// snapshot validates the observed allocation and optional pinned identity,
+// returning detached metadata only for the configured Fleet, attempt and port.
 func (c *Client) snapshot(
 	gameServer *agonesv1.GameServer,
 	expected *Identity,

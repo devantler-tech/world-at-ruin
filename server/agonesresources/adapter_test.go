@@ -73,6 +73,7 @@ var (
 	testKeyErr  error
 )
 
+// testPrivateKey generates one shared wrapping key for hermetic envelope tests.
 func testPrivateKey(t *testing.T) *rsa.PrivateKey {
 	t.Helper()
 	testKeyOnce.Do(func() {
@@ -84,6 +85,8 @@ func testPrivateKey(t *testing.T) *rsa.PrivateKey {
 	return testKey
 }
 
+// fingerprintOf derives the lowercase base32 SPKI digest used by the fixture's
+// allocation selector and sealed GameServer metadata.
 func fingerprintOf(t *testing.T, key *rsa.PrivateKey) string {
 	t.Helper()
 	der, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
@@ -103,6 +106,8 @@ func secretFor(name string) []byte {
 	return digest[:]
 }
 
+// sealedEnvelope encrypts a fixture secret with the exact namespace, name, UID
+// and fingerprint binding expected by the production admission keyring.
 func sealedEnvelope(
 	t *testing.T,
 	key *rsa.PrivateKey,
@@ -138,6 +143,8 @@ type allocationServer struct {
 	calls  []*allocationpb.AllocationRequest
 }
 
+// Allocate records each real gRPC dispatch and invokes the configured fixture
+// handler under a mutex so concurrent requests remain observable in order.
 func (s *allocationServer) Allocate(
 	_ context.Context,
 	request *allocationpb.AllocationRequest,
@@ -148,12 +155,14 @@ func (s *allocationServer) Allocate(
 	return s.handle(request)
 }
 
+// count returns the recorded dispatch count under the server's mutex.
 func (s *allocationServer) count() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.calls)
 }
 
+// setHandler replaces the allocation behavior without racing an active request.
 func (s *allocationServer) setHandler(handle allocationHandler) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -170,6 +179,8 @@ type fixture struct {
 	fingerprint string
 }
 
+// newFixture composes the real allocation gRPC client, fake GameServer API and
+// keyring, with optional adapter configuration changes and test-owned cleanup.
 func newFixture(t *testing.T, mutate func(*Config)) *fixture {
 	t.Helper()
 	key := testPrivateKey(t)
@@ -244,6 +255,8 @@ func newFixture(t *testing.T, mutate func(*Config)) *fixture {
 	return f
 }
 
+// config binds the fixture's namespace, wrapping key, zone domain and observer
+// with short observation windows that keep timeout tests bounded.
 func (f *fixture) config() Config {
 	return Config{
 		Namespace:              testNamespace,
@@ -257,6 +270,7 @@ func (f *fixture) config() Config {
 	}
 }
 
+// request supplies the stable user, reservation and attempt used by fixtures.
 func request() handoff.AllocationRequest {
 	return handoff.AllocationRequest{
 		UserID:        testUserID,
@@ -265,6 +279,7 @@ func request() handoff.AllocationRequest {
 	}
 }
 
+// attemptDigest derives the production correlation label for fixture metadata.
 func attemptDigest(t *testing.T, attemptID string) string {
 	t.Helper()
 	digest, err := agones.CorrelationLabel(attemptID)
@@ -303,6 +318,8 @@ func (f *fixture) readyGameServer(name string, uid types.UID) *agonesv1.GameServ
 	}
 }
 
+// allocatedGameServer turns an envelope-ready fixture into an Allocated object
+// carrying the supplied attempt and the fixture's reservation correlation.
 func (f *fixture) allocatedGameServer(
 	name string,
 	uid types.UID,
@@ -326,6 +343,8 @@ func (f *fixture) seed(gameServers ...*agonesv1.GameServer) {
 	}
 }
 
+// replace swaps a tracker object without recording fixture writes as adapter
+// API calls, allowing tests to model recreation or changed metadata.
 func (f *fixture) replace(gameServer *agonesv1.GameServer) {
 	f.t.Helper()
 	tracker := f.clientset.Tracker()
@@ -338,6 +357,8 @@ func (f *fixture) replace(gameServer *agonesv1.GameServer) {
 	}
 }
 
+// stored reads a required GameServer directly from the fixture tracker and
+// fails the test if it is absent or has an unexpected resource type.
 func (f *fixture) stored(name string) *agonesv1.GameServer {
 	f.t.Helper()
 	object, err := f.clientset.Tracker().Get(gameServerResource, testNamespace, name)
@@ -351,6 +372,7 @@ func (f *fixture) stored(name string) *agonesv1.GameServer {
 	return gameServer
 }
 
+// exists reports whether the fixture tracker can still read the named object.
 func (f *fixture) exists(name string) bool {
 	_, err := f.clientset.Tracker().Get(gameServerResource, testNamespace, name)
 	return err == nil
@@ -373,6 +395,8 @@ func (f *fixture) commitAllocation(
 	return responseFor(gameServer), nil
 }
 
+// selectReady chooses a Ready fixture matching every requested selector,
+// returning an independent copy or the allocator's exhausted-pool status.
 func (f *fixture) selectReady(
 	request *allocationpb.AllocationRequest,
 ) (*agonesv1.GameServer, error) {
@@ -404,6 +428,8 @@ func (f *fixture) selectReady(
 	return nil, status.Error(codes.ResourceExhausted, "no Ready GameServer matches")
 }
 
+// applyPatch copies allocation-request labels and annotations to the selected
+// fixture and transitions its state to Allocated.
 func (f *fixture) applyPatch(
 	gameServer *agonesv1.GameServer,
 	request *allocationpb.AllocationRequest,
@@ -417,6 +443,8 @@ func (f *fixture) applyPatch(
 	gameServer.Status.State = agonesv1.GameServerStateAllocated
 }
 
+// responseFor builds an allocation response from an observed GameServer with
+// detached ports, labels and annotations for response-tampering tests.
 func responseFor(gameServer *agonesv1.GameServer) *allocationpb.AllocationResponse {
 	ports := make([]*allocationpb.AllocationResponse_GameServerStatusPort, 0, len(gameServer.Status.Ports))
 	for _, port := range gameServer.Status.Ports {
@@ -444,6 +472,7 @@ func responseFor(gameServer *agonesv1.GameServer) *allocationpb.AllocationRespon
 	}
 }
 
+// actions counts adapter API calls of one verb, excluding direct tracker setup.
 func (f *fixture) actions(verb string) int {
 	count := 0
 	for _, action := range f.clientset.Actions() {
@@ -473,6 +502,8 @@ func (f *fixture) deletedUIDs() []types.UID {
 	return uids
 }
 
+// expectedReference derives the durable reference from the fixture's stored
+// object so adapter results can be compared with the admission boundary.
 func (f *fixture) expectedReference(name string) string {
 	f.t.Helper()
 	gameServer := f.stored(name)
@@ -490,6 +521,8 @@ func (f *fixture) expectedReference(name string) string {
 	return reference
 }
 
+// assertAllocation verifies the returned object, DNS endpoint, observer,
+// opened secret, expiry and failure-retention flag against the fixture.
 func assertAllocation(
 	t *testing.T,
 	got handoff.Allocation,
@@ -509,6 +542,8 @@ func assertAllocation(
 	}
 }
 
+// assertCode checks sentinel identity and gRPC classification both directly
+// and after an additional error wrapper.
 func assertCode(t *testing.T, err error, want error, code codes.Code) {
 	t.Helper()
 	if !errors.Is(err, want) {
@@ -523,6 +558,8 @@ func assertCode(t *testing.T, err error, want error, code codes.Code) {
 	}
 }
 
+// TestProvisionDispatchesOnceAndOpensTheSealedEnvelope verifies one allocation
+// RPC, exact correlation metadata and usable secret material without cleanup.
 func TestProvisionDispatchesOnceAndOpensTheSealedEnvelope(t *testing.T) {
 	f := newFixture(t, nil)
 	f.seed(f.readyGameServer("zone-1", "uid-1"))
@@ -559,6 +596,8 @@ func TestProvisionDispatchesOnceAndOpensTheSealedEnvelope(t *testing.T) {
 	}
 }
 
+// TestProvisionAdoptsTheAttemptsGameServerWithoutRedispatch verifies that
+// provision replay and reconciliation reuse the first allocation and reference.
 func TestProvisionAdoptsTheAttemptsGameServerWithoutRedispatch(t *testing.T) {
 	f := newFixture(t, nil)
 	f.seed(f.readyGameServer("zone-1", "uid-1"), f.readyGameServer("zone-2", "uid-2"))
@@ -589,6 +628,8 @@ func TestProvisionAdoptsTheAttemptsGameServerWithoutRedispatch(t *testing.T) {
 	}
 }
 
+// TestDuplicateMatchesAreReleasedByTheirOwnUIDAndFailClosed checks both entry
+// points delete each duplicate by its own UID without consuming another server.
 func TestDuplicateMatchesAreReleasedByTheirOwnUIDAndFailClosed(t *testing.T) {
 	for _, operation := range []string{"Provision", "Reconcile"} {
 		t.Run(operation, func(t *testing.T) {
@@ -623,6 +664,9 @@ func TestDuplicateMatchesAreReleasedByTheirOwnUIDAndFailClosed(t *testing.T) {
 	}
 }
 
+// TestProvisionReportsAnUnobservableDispatchAsAmbiguous checks bounded
+// observation retries and ensures later reconciliation neither deletes nor
+// reissues an allocation that may still commit.
 func TestProvisionReportsAnUnobservableDispatchAsAmbiguous(t *testing.T) {
 	f := newFixture(t, nil)
 	f.allocations.setHandler(f.ghostAllocation)
@@ -652,6 +696,8 @@ func TestProvisionReportsAnUnobservableDispatchAsAmbiguous(t *testing.T) {
 	}
 }
 
+// TestProvisionReportsCallerCancellationAsCancellation distinguishes the
+// caller's deadline from expiry of the adapter's longer observation budget.
 func TestProvisionReportsCallerCancellationAsCancellation(t *testing.T) {
 	f := newFixture(t, func(cfg *Config) {
 		cfg.ObservationTimeout = 2 * time.Second
@@ -669,6 +715,8 @@ func TestProvisionReportsCallerCancellationAsCancellation(t *testing.T) {
 	}
 }
 
+// TestProvisionRecoversALateCommitThroughReconcile preserves an allocation
+// committed before a lost response and recovers it without redispatch or delete.
 func TestProvisionRecoversALateCommitThroughReconcile(t *testing.T) {
 	f := newFixture(t, nil)
 	f.seed(f.readyGameServer("zone-1", "uid-1"))
@@ -700,6 +748,8 @@ func TestProvisionRecoversALateCommitThroughReconcile(t *testing.T) {
 	}
 }
 
+// TestProvisionRefusesAnObjectThatDisagreesWithTheResponse refuses mismatched
+// envelope evidence without exposing material or deleting the committed server.
 func TestProvisionRefusesAnObjectThatDisagreesWithTheResponse(t *testing.T) {
 	f := newFixture(t, nil)
 	f.seed(f.readyGameServer("zone-1", "uid-1"))
@@ -724,6 +774,8 @@ func TestProvisionRefusesAnObjectThatDisagreesWithTheResponse(t *testing.T) {
 	}
 }
 
+// TestAllocationFailureNeverObservesOrReleases checks that allocator refusal
+// ends provisioning after its initial discovery, with no cleanup or material.
 func TestAllocationFailureNeverObservesOrReleases(t *testing.T) {
 	f := newFixture(t, nil)
 	f.allocations.setHandler(func(*allocationpb.AllocationRequest) (*allocationpb.AllocationResponse, error) {
@@ -739,6 +791,8 @@ func TestAllocationFailureNeverObservesOrReleases(t *testing.T) {
 	}
 }
 
+// TestReconcileNeverDispatches leaves a Ready pool member untouched when no
+// allocated object matches the attempt, reporting only an ambiguous outcome.
 func TestReconcileNeverDispatches(t *testing.T) {
 	f := newFixture(t, nil)
 	f.seed(f.readyGameServer("zone-1", "uid-1"))
@@ -756,6 +810,8 @@ func TestReconcileNeverDispatches(t *testing.T) {
 	}
 }
 
+// TestAdoptionRefusesTamperedMaterial checks metadata, identity-bound envelope,
+// node and port refusals without returning secrets or deleting the object.
 func TestAdoptionRefusesTamperedMaterial(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -819,6 +875,8 @@ func TestAdoptionRefusesTamperedMaterial(t *testing.T) {
 	}
 }
 
+// provisionedLease builds a durable lease from a successful provision and
+// clears recorded API calls so subsequent resolve or release actions stand out.
 func provisionedLease(t *testing.T, f *fixture) (nakamalease.Lease, handoffalloc.Provisioned) {
 	t.Helper()
 	provisioned, err := f.adapter.Provision(context.Background(), request(), testExpiry)
@@ -837,6 +895,8 @@ func provisionedLease(t *testing.T, f *fixture) (nakamalease.Lease, handoffalloc
 	}, provisioned
 }
 
+// TestResolveReturnsTheExactDurableResource checks a single exact-name read
+// restores the secret while preserving the durable lease's observer and expiry.
 func TestResolveReturnsTheExactDurableResource(t *testing.T) {
 	f := newFixture(t, nil)
 	f.seed(f.readyGameServer("zone-1", "uid-1"))
@@ -863,6 +923,8 @@ func TestResolveReturnsTheExactDurableResource(t *testing.T) {
 	}
 }
 
+// TestResolveRefusesAnyChangedComponent verifies that changed resource or lease
+// evidence returns no allocation material and never triggers repair by deletion.
 func TestResolveRefusesAnyChangedComponent(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -966,6 +1028,9 @@ func TestResolveRefusesAnyChangedComponent(t *testing.T) {
 	}
 }
 
+// TestReleaseDeletesOnlyTheExactPinnedObject checks UID-precondition cleanup,
+// harmless repeats, staging discovery and refusal to delete another owner,
+// while retaining retryable API failures.
 func TestReleaseDeletesOnlyTheExactPinnedObject(t *testing.T) {
 	t.Run("pinned lease deletes with its UID precondition", func(t *testing.T) {
 		f := newFixture(t, nil)
@@ -1090,6 +1155,8 @@ func TestReleaseDeletesOnlyTheExactPinnedObject(t *testing.T) {
 	})
 }
 
+// TestObserverBindingFailuresNeverDispatch ensures binding errors and the zero
+// entity are rejected before any allocator or GameServer API call.
 func TestObserverBindingFailuresNeverDispatch(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -1126,6 +1193,8 @@ func TestObserverBindingFailuresNeverDispatch(t *testing.T) {
 	}
 }
 
+// TestNewAdapterRefusesAnInvalidComposition checks dependency, identity, key and
+// timing validation, plus normalization of a trailing dot in the zone domain.
 func TestNewAdapterRefusesAnInvalidComposition(t *testing.T) {
 	f := newFixture(t, nil)
 	otherKey, err := rsa.GenerateKey(rand.Reader, 3072)
@@ -1176,6 +1245,8 @@ func TestNewAdapterRefusesAnInvalidComposition(t *testing.T) {
 	}
 }
 
+// TestFailuresNeverCarrySealedOrOpenedMaterial checks representative resolve
+// and reconciliation errors for leaked ciphertext or raw and encoded secrets.
 func TestFailuresNeverCarrySealedOrOpenedMaterial(t *testing.T) {
 	f := newFixture(t, nil)
 	f.seed(f.readyGameServer("zone-1", "uid-1"))
@@ -1210,10 +1281,13 @@ func TestFailuresNeverCarrySealedOrOpenedMaterial(t *testing.T) {
 	}
 }
 
+// isZeroProvisioned requires an empty durable reference and no allocation data
+// so failure-path tests detect accidentally returned connection material.
 func isZeroProvisioned(provisioned handoffalloc.Provisioned) bool {
 	return provisioned.SecretRef == "" && isZeroAllocation(provisioned.Allocation)
 }
 
+// isZeroAllocation checks every connection and lease field for its empty value.
 func isZeroAllocation(allocation handoff.Allocation) bool {
 	return allocation.ID == "" &&
 		allocation.ServerName == "" &&
@@ -1240,6 +1314,7 @@ var (
 	previousKeyErr  error
 )
 
+// previousPrivateKey generates one independent wrapping key for rotation tests.
 func previousPrivateKey(t *testing.T) *rsa.PrivateKey {
 	t.Helper()
 	previousKeyOnce.Do(func() {
@@ -1268,6 +1343,8 @@ func (f *fixture) allocatedUnder(
 	return gameServer
 }
 
+// TestARetainedPreviousKeyStillResolvesAndReleases checks that a pre-rotation
+// object can be adopted, resolved and deleted without any new allocation RPC.
 func TestARetainedPreviousKeyStillResolvesAndReleases(t *testing.T) {
 	f := newFixture(t, nil)
 	previous := previousPrivateKey(t)
@@ -1314,6 +1391,9 @@ func TestARetainedPreviousKeyStillResolvesAndReleases(t *testing.T) {
 	}
 }
 
+// TestAKeyTheKeyringNoLongerHoldsIsRefusedButStillReleasable checks that a retired
+// key blocks secret recovery while attempt-only cleanup can still remove its
+// object without needing the retired private key.
 func TestAKeyTheKeyringNoLongerHoldsIsRefusedButStillReleasable(t *testing.T) {
 	f := newFixture(t, nil)
 	retired := previousPrivateKey(t)

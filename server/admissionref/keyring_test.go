@@ -446,6 +446,8 @@ func assertSanitizedError(t *testing.T, err error, envelope string) {
 	}
 }
 
+// TestReferenceDerivesTheDurableReferenceWithoutAKey checks that key-free
+// derivation agrees with Open and changes when the GameServer UID changes.
 func TestReferenceDerivesTheDurableReferenceWithoutAKey(t *testing.T) {
 	key := generatedKeys(t)[0]
 	material := validMaterial(t, key, testAdmissionSecret())
@@ -472,6 +474,8 @@ func TestReferenceDerivesTheDurableReferenceWithoutAKey(t *testing.T) {
 	}
 }
 
+// TestReferenceRefusesMalformedMaterial checks that malformed identity,
+// fingerprint, envelope and port fields cannot produce a durable reference.
 func TestReferenceRefusesMalformedMaterial(t *testing.T) {
 	key := generatedKeys(t)[0]
 	tests := []struct {
@@ -497,6 +501,8 @@ func TestReferenceRefusesMalformedMaterial(t *testing.T) {
 	}
 }
 
+// TestHoldsReportsOnlyRetainedKeys checks retained-key membership and refuses
+// unknown or malformed fingerprints, including on a nil keyring.
 func TestHoldsReportsOnlyRetainedKeys(t *testing.T) {
 	keys := generatedKeys(t)
 	keyring := newTestKeyring(t, keys[0])

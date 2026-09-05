@@ -159,6 +159,8 @@ func (k *Keyring) open(expectedReference string, material Material) (Opened, err
 	}, nil
 }
 
+// validateMaterial requires a retained key and canonical identity and envelope
+// fields, then returns the ciphertext and durable reference without decrypting.
 func (k *Keyring) validateMaterial(
 	material Material,
 ) (*rsa.PrivateKey, []byte, string, bool) {
@@ -181,6 +183,8 @@ func (k *Keyring) validateMaterial(
 	return privateKey, ciphertext, reference(material, ciphertext), true
 }
 
+// reference binds the key fingerprint, UID digest, ciphertext digest and TLS
+// port into a versioned reference after the caller has validated the material.
 func reference(material Material, ciphertext []byte) string {
 	return strings.Join([]string{
 		referencePrefix,

@@ -89,6 +89,7 @@ type codedError struct {
 	message string
 }
 
+// Error returns the fixed public outcome message without resource details.
 func (e *codedError) Error() string {
 	return e.message
 }
@@ -335,6 +336,8 @@ func (a *Adapter) Release(ctx context.Context, lease nakamalease.Lease) error {
 	return first
 }
 
+// observerFor applies the injected binding policy and refuses a missing entity
+// before the adapter can dispatch or adopt a GameServer.
 func (a *Adapter) observerFor(request handoff.AllocationRequest) (sim.EntityID, error) {
 	observer, err := a.observer(request)
 	if err != nil {
@@ -379,6 +382,8 @@ func (a *Adapter) observeDispatched(
 	}
 }
 
+// adopt rereads the pinned identity, checks any allocation response against the
+// observed material, and opens the envelope before returning connection data.
 func (a *Adapter) adopt(
 	ctx context.Context,
 	request handoff.AllocationRequest,
@@ -438,6 +443,8 @@ func (a *Adapter) material(gameServer gameserverapi.GameServer) (admissionref.Ma
 	}, nil
 }
 
+// referenceMatches proves that the observed object's sealed material still
+// derives the lease's reference without needing its private wrapping key.
 func (a *Adapter) referenceMatches(gameServer gameserverapi.GameServer, secretRef string) bool {
 	material, err := a.material(gameServer)
 	if err != nil {
@@ -447,6 +454,8 @@ func (a *Adapter) referenceMatches(gameServer gameserverapi.GameServer, secretRe
 	return err == nil && reference == secretRef
 }
 
+// allocation combines validated GameServer material with the bound observer and
+// lease expiry, advertising the node's name under the configured zone domain.
 func (a *Adapter) allocation(
 	gameServer gameserverapi.GameServer,
 	observer sim.EntityID,
@@ -520,6 +529,7 @@ func classifyResourceError(err error) error {
 	}
 }
 
+// wait paces observation retries and returns promptly when their context ends.
 func wait(ctx context.Context, interval time.Duration) error {
 	timer := time.NewTimer(interval)
 	defer timer.Stop()
@@ -531,6 +541,8 @@ func wait(ctx context.Context, interval time.Duration) error {
 	}
 }
 
+// validFingerprint checks the fixed length and lowercase base32 alphabet used
+// by wrapping-key fingerprints in GameServer metadata.
 func validFingerprint(value string) bool {
 	if len(value) != fingerprintLength {
 		return false
@@ -543,6 +555,8 @@ func validFingerprint(value string) bool {
 	return true
 }
 
+// validZoneDomain accepts a nonempty lowercase DNS subdomain and excludes IP
+// literals, since the advertised endpoint must carry a DNS certificate name.
 func validZoneDomain(value string) bool {
 	return value != "" &&
 		net.ParseIP(value) == nil &&

@@ -687,6 +687,8 @@ func validListedObject(object *api.StorageObject) bool {
 	return err == nil && len(decoded) == sha256.Size
 }
 
+// write derives the lease's private reservation key and delegates the write
+// with the caller's create-only or exact-version precondition.
 func (s *Store) write(
 	ctx context.Context,
 	lease Lease,

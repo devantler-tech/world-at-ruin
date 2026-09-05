@@ -322,6 +322,8 @@ func TestCreatePersistsPrivateVersionedLeaseByHashedKey(t *testing.T) {
 	}
 }
 
+// TestCreateIgnoresAClientOwnedObjectAtTheDerivedKey checks that a player's decoy
+// cannot satisfy or redirect the system-owned lease create and stays untouched.
 func TestCreateIgnoresAClientOwnedObjectAtTheDerivedKey(t *testing.T) {
 	storage := newMemoryStorage()
 	store, err := NewStore(storage)
@@ -1872,6 +1874,8 @@ func TestReclaimExpiredContinuesAfterOneResourceTimesOut(t *testing.T) {
 	}
 }
 
+// TestLoadKeepsSchemaOneLeaseReadableAsNotReleasing verifies the oldest stored
+// shape retains its lease and version without acquiring a later cleanup flag.
 func TestLoadKeepsSchemaOneLeaseReadableAsNotReleasing(t *testing.T) {
 	storage := newMemoryStorage()
 	store, err := NewStore(storage)
@@ -2094,6 +2098,8 @@ func TestLoadRefusesLegacySchemaCarryingPostLegacyKeys(t *testing.T) {
 	}
 }
 
+// TestLoadKeepsSchemaTwoLeaseCarryingExplicitFalseFlags checks that explicit
+// false staging and releasing fields remain readable with their stored version.
 func TestLoadKeepsSchemaTwoLeaseCarryingExplicitFalseFlags(t *testing.T) {
 	storage := newMemoryStorage()
 	store, err := NewStore(storage)
@@ -2177,6 +2183,8 @@ func TestLoadRequiresDispatchIdentityToMatchTheDispatchFlag(t *testing.T) {
 	}
 }
 
+// TestLoadRejectsMalformedOrPublicStoredObjects refuses unsupported schema
+// fields, public permissions and inconsistent claim or cleanup state at read.
 func TestLoadRejectsMalformedOrPublicStoredObjects(t *testing.T) {
 	for _, test := range []struct {
 		name   string
@@ -2475,6 +2483,8 @@ func TestStorageFailuresAreSanitized(t *testing.T) {
 	}
 }
 
+// TestReservationKeyIsAUserScopedDigest checks normalized user spelling and
+// distinct user or reservation inputs in the fixed-length lowercase key.
 func TestReservationKeyIsAUserScopedDigest(t *testing.T) {
 	key := ReservationKey("User-1", testReservationID)
 	if len(key) != 64 || strings.ToLower(key) != key {

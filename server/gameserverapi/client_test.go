@@ -562,6 +562,8 @@ func TestDeleteRejectsEmptyOrMismatchedIdentityBeforeAPI(t *testing.T) {
 	}
 }
 
+// TestGetAllocatedByNameReportsTheObservedUIDAndNode checks that one exact-name
+// read returns the observed identity, node and validated TLS port.
 func TestGetAllocatedByNameReportsTheObservedUIDAndNode(t *testing.T) {
 	observed := validGameServer("zone-1", "uid-1")
 	observed.Status.NodeName = "node-a"
@@ -581,6 +583,8 @@ func TestGetAllocatedByNameReportsTheObservedUIDAndNode(t *testing.T) {
 	}
 }
 
+// TestGetAllocatedByNameRefusesAbsentOrOutOfContractObjects distinguishes absence
+// from invalid state or attempt ownership and returns no resource on failure.
 func TestGetAllocatedByNameRefusesAbsentOrOutOfContractObjects(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -624,6 +628,8 @@ func TestGetAllocatedByNameRefusesAbsentOrOutOfContractObjects(t *testing.T) {
 	}
 }
 
+// TestGetAllocatedTranslatesAbsenceToErrNotFound checks that a missing object
+// retains both the package sentinel and Kubernetes NotFound classification.
 func TestGetAllocatedTranslatesAbsenceToErrNotFound(t *testing.T) {
 	client := clientAgainst(t, agonesfake.NewSimpleClientset(), validConfig())
 
@@ -637,6 +643,8 @@ func TestGetAllocatedTranslatesAbsenceToErrNotFound(t *testing.T) {
 	}
 }
 
+// TestLocateAcceptsAnyStateButNeverAnotherOwner allows cleanup of a Shutdown
+// object without a port while refusing foreign Fleet or attempt ownership.
 func TestLocateAcceptsAnyStateButNeverAnotherOwner(t *testing.T) {
 	shutdown := validGameServer("zone-1", "uid-1")
 	shutdown.Status.State = agonesv1.GameServerStateShutdown
@@ -674,6 +682,8 @@ func TestLocateAcceptsAnyStateButNeverAnotherOwner(t *testing.T) {
 	}
 }
 
+// TestLocateRejectsInvalidInputBeforeAPI checks both name-based read paths reject
+// malformed names and attempts without issuing a Kubernetes request.
 func TestLocateRejectsInvalidInputBeforeAPI(t *testing.T) {
 	clientset := agonesfake.NewSimpleClientset()
 	client := clientAgainst(t, clientset, validConfig())
