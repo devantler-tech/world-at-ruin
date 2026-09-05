@@ -1,0 +1,11 @@
+{
+	"date": "2026-09-05",
+	"notes": [
+		"The opt-in slabbed ground now has thickness. With WAR_GROUND_PLATES=1 set before launch, every exposed stone slab stands 6 to 14 centimetres proud of the ash as real geometry, with side faces that close the lip and bury their edge in the ground, so a slab occludes what lies behind it and a grazing view sees a silhouette instead of brighter paint.",
+		"The raised tops follow the ground exactly: each slab is split along the terrain's own creases before it is lifted, so no top floats above the ash on one side and sinks into it on the other. All of it is one batched mesh sharing the ground's material, and the ordinary game — with the flag unset — is unchanged.",
+		"Not yet walkable: the lifted tops carry no collision, so feet still stand on the base ground beneath a raised slab. That is the next step before this treatment can ever ship on by default, and until then it stays opt-in for judging.",
+		"Still short of the mark: a slab whose ash sheet ends halfway across it stays flat, the lips cast no shadow onto the ash behind them, and nothing has crumbled at their edges yet."
+	],
+	"title": "Exposed stone stands proud of the ash",
+	"version": "0.94.0"
+}

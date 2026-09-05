@@ -423,6 +423,14 @@ func _test_shader_source_contract() -> void:
 		"floatsheet=clamp(smoothstep(-ew,ew,exposed_edge)+rock_mix,0.0,1.0);",
 		"floatslab_pick=hash3(vec3(plate_id*2.3,19.0));",
 		"floatis_slab=step(0.60,slab_pick);",
+		# The slope-aware bare-rock term ExposedSlabField.rock_mix_for mirrors (#547).
+		# Built FROM the mirror's constants, so editing the shader literal and the
+		# pinned string together still fails until the GDScript constant follows.
+		"uniformfloatrock_slope:hint_range(0.0,1.0)=%s;" % ExposedSlabField.ROCK_SLOPE,
+		"floatslope=clamp(1.0-n.y,0.0,1.0);",
+		"floatash_edge=slope+(drift-0.5)*%s-rock_slope;" % ExposedSlabField.DRIFT_TILT,
+		"floataw=clamp(max(ash_contact,fwidth(ash_edge)*1.2),ash_contact,max(ash_contact,0.25));",
+		"floatrock_mix=plates_enabled?smoothstep(-aw,aw,ash_edge):smoothstep(rock_slope-0.12,rock_slope+0.12,slope+(drift-0.5)*0.22);",
 	]
 	for law in ground_laws:
 		if not compact_ground.contains(law):

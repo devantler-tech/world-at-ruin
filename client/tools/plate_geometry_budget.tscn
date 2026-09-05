@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tools/plate_geometry_budget.gd" id="1_budget"]
+
+[node name="PlateGeometryBudget" type="Node"]
+script = ExtResource("1_budget")

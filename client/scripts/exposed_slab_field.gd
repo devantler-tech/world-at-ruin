@@ -16,6 +16,13 @@ const DRIFT_SCALE := 0.055
 const ASH_CONTACT := 0.035
 const EXPOSED_THRESHOLD := 0.47
 const EXPOSURE_WIDTH_MAX := 0.25
+## The terrain shader's `rock_slope` default: above this slope (1 = vertical) a face
+## is treated as scoured rock, ash or no ash.
+const ROCK_SLOPE := 0.34
+## How far the drift field tilts that threshold either way: the shader's
+## `(drift - 0.5) * 0.22`, named so the parity test can build its pinned shader
+## text from the same number the mirror computes with.
+const DRIFT_TILT := 0.22
 ## The shader literal rounded to the binary32 value its scalar path receives.
 const HASH_SCALE_F32 := 43758.546875
 ## A fragment searches 3×3 cells around itself. Relative to one possible owner,
@@ -29,6 +36,12 @@ const CANDIDATE_HALO := 1
 const CLIP_RADIUS := 2.0
 const CLIP_EPSILON := 0.0000001
 
+## Jittered cell sites, memoised per identity: a site is asked for by every
+## fragment-style sample in its 3×3 window, by every neighbour clip in
+## `polygon_for`, and once by `site_for`, so a 36,100-cell world would otherwise
+## recompute each of its two sin-hashes some sixteen times over.
+var _centres := {}
+
 
 ## Resolve the field at one world-space XZ point. `region_context.rock_mix`
 ## carries the slope-aware exposed-rock term that the terrain shader receives.
@@ -36,9 +49,13 @@ const CLIP_EPSILON := 0.0000001
 ## `fwidth`-expanded transition, clamped to the shader's 0.035..0.25 range.
 ## Static geometry uses the 0.035 default so its topology is camera-independent;
 ## a rendered parity probe supplies the measured footprint explicitly.
+## `region_context.drift`, when present, is the caller's own `ground_drift()` of
+## this point — the geometry builder needs it to form `rock_mix` and would
+## otherwise pay its 24 hashes twice; absent, it is computed here as before.
 func sample(world_seed: int, world_xz: Vector2, region_context: Dictionary) -> Dictionary:
 	var id := _plate_id(world_xz * PLATE_SCALE)
-	var drift := _ground_noise(world_xz, DRIFT_SCALE)
+	var drift := float(region_context[&"drift"]) if region_context.has(&"drift") \
+		else _ground_noise(world_xz, DRIFT_SCALE)
 	var rock_mix := _f32(clampf(
 		float(region_context.get(&"rock_mix", 0.0)), 0.0, 1.0))
 	var exposure_width := _f32(clampf(
@@ -49,8 +66,7 @@ func sample(world_seed: int, world_xz: Vector2, region_context: Dictionary) -> D
 		_smoothstep_f32(
 			-exposure_width, exposure_width, _f32(drift - EXPOSED_THRESHOLD))
 		+ rock_mix), 0.0, 1.0))
-	var is_slab := _hash3(Vector3(float(id.x), float(id.y), 0.0) * Vector3(2.3, 2.3, 0.0)
-		+ Vector3(0.0, 0.0, 19.0)) >= 0.60
+	var is_slab := is_slab_identity(Vector3i(world_seed, id.x, id.y))
 	return {
 		&"world_seed": world_seed,
 		&"id": id,
@@ -107,6 +123,47 @@ func polygon_for(identity: Vector3i) -> PackedVector2Array:
 	return world_polygon
 
 
+
+## Whether one seeded identity carries stone at all — the shader's
+## `step(0.60, hash3(vec3(plate_id * 2.3, 19.0)))` slab pick, resolved from the
+## cell id alone. Geometry asks this before spending a full `sample()` on a cell:
+## a cell that is not a slab has no top or lip whatever the ash sheet does.
+func is_slab_identity(identity: Vector3i) -> bool:
+	return _hash3(Vector3(float(identity.y), float(identity.z), 0.0) * Vector3(2.3, 2.3, 0.0)
+		+ Vector3(0.0, 0.0, 19.0)) >= 0.60
+
+
+## The jittered site one seeded identity's cell is measured from, in world XZ
+## metres. It lies inside its own Voronoi cell by construction, so it is the one
+## point whose owner is known without a search.
+func site_for(identity: Vector3i) -> Vector2:
+	return _centre(Vector2i(identity.y, identity.z)) / PLATE_SCALE
+
+
+## The shader's broad drift field at one world XZ point — the same three-octave
+## value noise `sample()` folds into its exposure decision, exposed so a caller
+## can build the region context that decision takes.
+func ground_drift(world_xz: Vector2) -> float:
+	return _ground_noise(world_xz, DRIFT_SCALE)
+
+
+## The terrain shader's slope-aware bare-rock term on the opt-in path, mirrored
+## in binary32: `smoothstep(-aw, aw, slope + (drift - 0.5) * 0.22 - rock_slope)`
+## with `aw` the ash contact width. `slope` is `1 - normal.y` of the flat-shaded
+## terrain triangle, which is what the shader's `world_normal` carries, so static
+## geometry sampling the same triangle normal receives the same answer the
+## fragment does. The contact width defaults to the shader's `ash_contact`;
+## a rendered probe may pass its measured `fwidth`-expanded width instead, and a
+## material that overrides the `rock_slope` uniform passes its value.
+func rock_mix_for(slope: float, drift: float, contact_width: float = ASH_CONTACT,
+		rock_slope: float = ROCK_SLOPE) -> float:
+	var aw := _f32(clampf(contact_width, ASH_CONTACT, EXPOSURE_WIDTH_MAX))
+	var ash_edge := _f32(_f32(_f32(clampf(slope, 0.0, 1.0))
+		+ _f32(_f32(drift - 0.5) * DRIFT_TILT)) - rock_slope)
+	return _smoothstep_f32(-aw, aw, ash_edge)
+
+
+
 func _plate_id(uv: Vector2) -> Vector2i:
 	var base := Vector2i(floori(uv.x), floori(uv.y))
 	var nearest := base
@@ -122,51 +179,65 @@ func _plate_id(uv: Vector2) -> Vector2i:
 	return nearest
 
 
-func _clip_to_bisector(
-		polygon: PackedVector2Array,
-		own_centre: Vector2,
-		other_centre: Vector2) -> PackedVector2Array:
+## Keep the part of `polygon` on the inner side of the line through `point` whose
+## outward direction is `outside` — Sutherland–Hodgman against one half-plane.
+## A vertex within `inside_epsilon` of the line counts as inside; consecutive
+## output points closer than `weld` are one point. The one clipper the slab
+## field and the slab geometry share: the field clips cells to bisectors at its
+## own float precision, the geometry clips polygons to terrain cells with a
+## coarser weld, and neither carries a second copy of the algorithm.
+static func clip_half_plane(polygon: PackedVector2Array, point: Vector2, outside: Vector2,
+		inside_epsilon: float, weld: float) -> PackedVector2Array:
 	var clipped := PackedVector2Array()
 	if polygon.is_empty():
 		return clipped
-	var normal := other_centre - own_centre
-	var midpoint := (own_centre + other_centre) * 0.5
 	var previous := polygon[polygon.size() - 1]
-	var previous_distance := (previous - midpoint).dot(normal)
-	var previous_inside := previous_distance <= CLIP_EPSILON
+	var previous_distance := (previous - point).dot(outside)
+	var previous_inside := previous_distance <= inside_epsilon
 	for current in polygon:
-		var current_distance := (current - midpoint).dot(normal)
-		var current_inside := current_distance <= CLIP_EPSILON
+		var current_distance := (current - point).dot(outside)
+		var current_inside := current_distance <= inside_epsilon
 		if current_inside != previous_inside:
 			var denominator := previous_distance - current_distance
-			if absf(denominator) > CLIP_EPSILON:
-				var t := previous_distance / denominator
-				_append_distinct(clipped, previous.lerp(current, t))
+			if absf(denominator) > inside_epsilon:
+				_append_distinct(
+					clipped, previous.lerp(current, previous_distance / denominator), weld)
 		if current_inside:
-			_append_distinct(clipped, current)
+			_append_distinct(clipped, current, weld)
 		previous = current
 		previous_distance = current_distance
 		previous_inside = current_inside
 	if clipped.size() > 1 \
-			and clipped[0].distance_squared_to(clipped[clipped.size() - 1]) \
-				<= CLIP_EPSILON * CLIP_EPSILON:
+			and clipped[0].distance_squared_to(clipped[clipped.size() - 1]) <= weld * weld:
 		clipped.remove_at(clipped.size() - 1)
 	return clipped
 
 
-func _append_distinct(points: PackedVector2Array, point: Vector2) -> void:
+func _clip_to_bisector(
+		polygon: PackedVector2Array,
+		own_centre: Vector2,
+		other_centre: Vector2) -> PackedVector2Array:
+	return clip_half_plane(
+		polygon, (own_centre + other_centre) * 0.5, other_centre - own_centre,
+		CLIP_EPSILON, CLIP_EPSILON)
+
+
+static func _append_distinct(points: PackedVector2Array, point: Vector2, weld: float) -> void:
 	if points.is_empty() \
-			or points[points.size() - 1].distance_squared_to(point) \
-				> CLIP_EPSILON * CLIP_EPSILON:
+			or points[points.size() - 1].distance_squared_to(point) > weld * weld:
 		points.append(point)
 
 
 func _centre(id: Vector2i) -> Vector2:
+	if _centres.has(id):
+		return _centres[id]
 	var cell := Vector2(id)
 	var jitter := Vector2(
 		_hash3(Vector3(cell.x, cell.y, 0.0)),
 		_hash3(Vector3(cell.x, cell.y, 7.0)))
-	return cell + Vector2(0.15, 0.15) + 0.7 * jitter
+	var centre := cell + Vector2(0.15, 0.15) + 0.7 * jitter
+	_centres[id] = centre
+	return centre
 
 
 func _substance(id: Vector2i) -> StringName:

@@ -71,6 +71,9 @@ const TORCH_MIN_WALL := 1.0 ## Nearer than this the torch would block the spine.
 			rebuild()
 
 var _built: Array[Node] = []
+## The terrain-contact ring's material, kept so `set_plates_enabled()` can follow the
+## ground's plate uniform at runtime; null until the contact mesh is built.
+var _contact_material: ShaderMaterial
 var _torch_lights: Array[OmniLight3D] = []
 var _torch_flames: Array[MeshInstance3D] = []
 var _torch_phases := PackedFloat32Array()
@@ -134,6 +137,18 @@ func _apply_flicker() -> void:
 ##
 ## In-game behaviour is deliberately NOT changed: nothing calls this except the
 ## capture tool, so the torches flicker for players exactly as before.
+## Follow the ground's plate treatment at runtime. The contact ring exists to hide
+## the seam between the massif and the terrain, so when `WorldGen` flips its
+## `plates_enabled` uniform in a running world (a measurement tool comparing two
+## states of one build) this ring must flip with it, or it keeps painting slabs
+## over ash-only ground at exactly the seam it exists to hide. Boot still reads
+## the same `WAR_GROUND_PLATES` flag the world does, so the two agree from the
+## first frame.
+func set_plates_enabled(on: bool) -> void:
+	if _contact_material != null:
+		_contact_material.set_shader_parameter("plates_enabled", on)
+
+
 func freeze_flicker(at_time: float = FLICKER_CAPTURE_TIME) -> void:
 	_time = at_time
 	set_process(false)
@@ -1008,6 +1023,7 @@ func rebuild(terrain_h: Callable = func(_x: float, _z: float) -> float: return 0
 			"plates_enabled", OS.get_environment("WAR_GROUND_PLATES") == "1")
 		contact_mat.render_priority = 1
 		contact_mesh.surface_set_material(0, contact_mat)
+		_contact_material = contact_mat
 		var contact_mi := MeshInstance3D.new()
 		contact_mi.name = "TerrainContact"
 		contact_mi.mesh = contact_mesh

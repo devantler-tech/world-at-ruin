@@ -359,6 +359,14 @@ channels are being touched, and the
 result still measures flat. So the gap is **the magnitude and character of the variation, not its
 absence** — the same trap as the torch below, where the layers exist but do not read.
 
+**What the opt-in slabs now carry (#547).** Under `WAR_GROUND_PLATES=1` the decided slabs are no
+longer paint alone: `ExposedSlabGeometry` lifts every slab the field exposes at its site and corners
+by 6–14 cm as real batched geometry, with side faces buried in the ash, so a lip occludes what lies
+behind it and a grazing view sees a silhouette. Judge it at walking distance on the close-range
+frames in [`docs/evidence/issue-547-ground-plate-geometry/`](../evidence/issue-547-ground-plate-geometry/README.md);
+the mid-field crawl instrument above is unchanged by it, and nothing walks on the lifted tops until
+#548 gives them collision.
+
 **What genuinely is absent, and it is the cheap win.** Painted AAA art bakes light into the surface:
 crevices darken, raised and worn edges brighten. In a procedural shader that is **curvature-driven
 darkening plus convexity-driven edge wear** — two terms derivable from geometry already available.
