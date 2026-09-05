@@ -130,11 +130,16 @@ func _ready() -> void:
 	var refresh := DisplayServer.screen_get_refresh_rate()
 	var period := 1000.0 / refresh if refresh > 0.0 else 0.0
 	var medians := [float(off[&"wall_p50"]), float(shader[&"wall_p50"]), float(on[&"wall_p50"])]
+	# Pinned medians alone prove nothing — three states could genuinely cost the
+	# same — so the verdict keys on the DISPLAY PERIOD: a median within 2% of it is
+	# the display. When the period cannot be read, pinned medians are the only
+	# tell left, and the run is refused as unmeasurable rather than passed.
 	var pinned := absf(medians[0] - medians[1]) < 0.05 and absf(medians[0] - medians[2]) < 0.05
-	if pinned or (period > 0.0 and absf(medians[0] - period) < period * 0.02):
+	var paced := period > 0.0 and absf(medians[0] - period) < period * 0.02
+	if paced or (pinned and period <= 0.0):
 		_unusable(("wall-clock frame time is PACED — medians %.3f / %.3f / %.3f ms against a "
-			+ "%.3f ms display period — so the proxy measures the display, not the overlay; "
-			+ "rerun with the display awake and the window focused and unoccluded")
+			+ "%.3f ms display period (0 = unreadable) — so the proxy measures the display, "
+			+ "not the overlay; rerun with the display awake and the window focused and unoccluded")
 			% [medians[0], medians[1], medians[2], period])
 		return
 

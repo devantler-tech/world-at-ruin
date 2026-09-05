@@ -68,9 +68,12 @@ The overlay itself added **0.52 ms p95** over the shader-only state and **one** 
 call; the shader's plate path — which shipped before this child — is the other 2.75 ms.
 With shadow casting left on, the same overlay cost 1.34 ms and 11 pass-level draw
 calls, so the lips cast no shadow; their side faces darken by the sun's angle instead.
-That run rendered the same slab set and triangle count as the shipped build but before
-the mesh was indexed (350,277 emitted corners; the shipped mesh has 190,436 vertices),
-so the shipped overlay can only cost the same or less.
+**That reading is HISTORICAL, not a bound on the shipped build.** It rendered the same
+slab set and triangle count, but before the mesh was indexed (350,277 emitted corners;
+the shipped mesh has 190,436 vertices). Fewer vertex-buffer entries do not establish a
+non-increasing end-to-end p95 on this renderer, so the shipped overlay's wall-clock cost
+is **unmeasured** until `plate_geometry_budget.gd` runs against the indexed mesh in an
+unpaced window — which every later attempt on this host was not (below).
 
 Every later run on this host — including the one that produced the frames above — was
 **paced at exactly 13.333 ms in every state, the display's 75 Hz period**, although

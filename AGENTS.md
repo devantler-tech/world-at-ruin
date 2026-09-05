@@ -707,8 +707,9 @@ everything shipped afterwards is held to.
   EXACTLY: each polygon is split along the terrain grid lines and quad diagonals it crosses so every
   piece lies in one terrain triangle, and the side strips split at the same crossings.
   `exposed_slab_geometry_test` holds that law on a hand-built creased ground and on the real world,
-  proves two fresh builds agree, and proves the flag-off world — terrain mesh, collision, heights,
-  foliage, node tree — is byte-identical with the flag on. **Nothing walks on the lifted tops yet:**
+  proves two fresh builds agree, and proves the flag-off world's terrain mesh, collision, heights and
+  foliage are byte-identical with the flag on — the flag-on node tree is the flag-off tree plus that one
+  overlay node. **Nothing walks on the lifted tops yet:**
   collision and surface queries are #548, so with the flag on a player's feet still stand on the base
   ground beneath a raised top, and the treatment stays opt-in until that lands. The overlay keeps out
   of `cave_protects`. `WorldGen.set_ground_plates_enabled()` flips the terrain uniform, the cave's terrain-contact

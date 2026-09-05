@@ -44,13 +44,12 @@ var _failures: Array[String] = []
 
 
 func _ready() -> void:
-	var geometry := ExposedSlabGeometry.new()
 	var field := ExposedSlabField.new()
 	_test_field_additions(field)
-	_test_edge_crossings(geometry)
-	_test_grid_split(geometry)
-	_test_thickness(geometry)
-	_test_unit_conformance(geometry)
+	_test_edge_crossings()
+	_test_grid_split()
+	_test_thickness()
+	_test_unit_conformance()
 	if _failures.is_empty():
 		_test_world()
 	_report()
@@ -81,8 +80,8 @@ func _test_field_additions(field: ExposedSlabField) -> void:
 
 ## Crossings of one segment with the 2 m grid: x = 0 at t = 0.5, z = 0 at
 ## t = 1/3, and the diagonal x - z = 0 at t = 2/3.
-func _test_edge_crossings(geometry: ExposedSlabGeometry) -> void:
-	var ts := geometry.edge_crossings(
+func _test_edge_crossings() -> void:
+	var ts := ExposedSlabGeometry.edge_crossings(
 		Vector2(-1.5, -0.5), Vector2(1.5, 1.0), UNIT_HALF, UNIT_STEP)
 	var expected := PackedFloat64Array([0.0, 1.0 / 3.0, 0.5, 2.0 / 3.0, 1.0])
 	if ts.size() != expected.size():
@@ -91,16 +90,16 @@ func _test_edge_crossings(geometry: ExposedSlabGeometry) -> void:
 	for index in ts.size():
 		if absf(ts[index] - expected[index]) > EPS:
 			_fail("edge crossing %d is %.6f, expected %.6f" % [index, ts[index], expected[index]])
-	var along := geometry.edge_crossings(
+	var along := ExposedSlabGeometry.edge_crossings(
 		Vector2(-1.0, 0.0), Vector2(1.0, 0.0), UNIT_HALF, UNIT_STEP)
 	if along.size() != 3 or absf(along[1] - 0.5) > EPS:
 		_fail("a segment along a grid line still splits at its x crossing: %s" % [along])
 
 
 ## Splitting conserves area, and every piece lies inside one terrain triangle.
-func _test_grid_split(geometry: ExposedSlabGeometry) -> void:
+func _test_grid_split() -> void:
 	var polygon := _unit_polygon()
-	var pieces := geometry.split_by_terrain_grid(polygon, UNIT_HALF, UNIT_STEP)
+	var pieces := ExposedSlabGeometry.split_by_terrain_grid(polygon, UNIT_HALF, UNIT_STEP)
 	if pieces.size() < 4:
 		_fail("a hexagon across two grid lines and a diagonal split into %d piece(s)"
 			% pieces.size())
@@ -127,10 +126,10 @@ func _test_grid_split(geometry: ExposedSlabGeometry) -> void:
 		_fail("split pieces cover %.6f m², the polygon covers %.6f m²" % [total, ExposedSlabGeometry.area(polygon)])
 
 
-func _test_thickness(geometry: ExposedSlabGeometry) -> void:
-	var a := geometry.thickness_for(Vector3i(1409, 3, -7))
-	var again := geometry.thickness_for(Vector3i(1409, 3, -7))
-	var neighbour := geometry.thickness_for(Vector3i(1409, 4, -7))
+func _test_thickness() -> void:
+	var a := ExposedSlabGeometry.thickness_for(Vector3i(1409, 3, -7))
+	var again := ExposedSlabGeometry.thickness_for(Vector3i(1409, 3, -7))
+	var neighbour := ExposedSlabGeometry.thickness_for(Vector3i(1409, 4, -7))
 	if a != again:
 		_fail("thickness_for is not deterministic")
 	if a < ExposedSlabGeometry.MIN_THICKNESS or a > ExposedSlabGeometry.MAX_THICKNESS:
@@ -146,17 +145,17 @@ func _test_thickness(geometry: ExposedSlabGeometry) -> void:
 ## the field's own winding AND its reverse. The field emits one orientation, so
 ## without the reversed case the winding and outward-flip branches that make
 ## the module orientation-proof run only one way and an ablation of either passes.
-func _test_unit_conformance(geometry: ExposedSlabGeometry) -> void:
-	_test_unit_conformance_for(geometry, _unit_polygon(), "field winding")
+func _test_unit_conformance() -> void:
+	_test_unit_conformance_for(_unit_polygon(), "field winding")
 	var reversed := _unit_polygon()
 	reversed.reverse()
-	_test_unit_conformance_for(geometry, reversed, "reversed winding")
+	_test_unit_conformance_for(reversed, "reversed winding")
 
 
-func _test_unit_conformance_for(geometry: ExposedSlabGeometry, polygon: PackedVector2Array,
+func _test_unit_conformance_for(polygon: PackedVector2Array,
 		label: String) -> void:
 	var tag := "[%s] " % label
-	var result := geometry.slab_triangles(
+	var result := ExposedSlabGeometry.slab_triangles(
 		polygon, UNIT_THICKNESS, UNIT_HALF, UNIT_STEP,
 		_unit_height, _unit_normal, _unit_color)
 	var vertices: PackedVector3Array = result[&"vertices"]
@@ -173,7 +172,7 @@ func _test_unit_conformance_for(geometry: ExposedSlabGeometry, polygon: PackedVe
 	for index in polygon.size():
 		var a := polygon[index]
 		var b := polygon[(index + 1) % polygon.size()]
-		expected_sides += 2 * (geometry.edge_crossings(a, b, UNIT_HALF, UNIT_STEP).size() - 1)
+		expected_sides += 2 * (ExposedSlabGeometry.edge_crossings(a, b, UNIT_HALF, UNIT_STEP).size() - 1)
 	for tri in triangles:
 		var p0 := vertices[tri * 3]
 		var p1 := vertices[tri * 3 + 1]
@@ -483,8 +482,9 @@ func _unit_color(_x: float, _z: float) -> Color:
 func _child_names(world: Node) -> Array[String]:
 	var names: Array[String] = []
 	for child in world.get_children():
-		var name := String(child.name)
-		names.append(("@" + child.get_class()) if name.begins_with("@") else name)
+		var child_name := String(child.name)
+		names.append(
+			("@" + child.get_class()) if child_name.begins_with("@") else child_name)
 	return names
 
 

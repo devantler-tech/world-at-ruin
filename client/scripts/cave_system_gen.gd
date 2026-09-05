@@ -992,6 +992,7 @@ func rebuild(terrain_h: Callable = func(_x: float, _z: float) -> float: return 0
 			remove_child(node)
 		node.queue_free()
 	_built.clear()
+	_contact_material = null
 	_torch_lights.clear()
 	_torch_flames.clear()
 	_torch_phases = PackedFloat32Array()
