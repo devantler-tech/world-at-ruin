@@ -445,3 +445,73 @@ func assertSanitizedError(t *testing.T, err error, envelope string) {
 		}
 	}
 }
+
+func TestReferenceDerivesTheDurableReferenceWithoutAKey(t *testing.T) {
+	key := generatedKeys(t)[0]
+	material := validMaterial(t, key, testAdmissionSecret())
+
+	got, err := Reference(material)
+	if err != nil {
+		t.Fatalf("Reference returned error: %v", err)
+	}
+	if want := expectedReference(t, material); got != want {
+		t.Fatalf("Reference = %q, want %q", got, want)
+	}
+	opened, err := newTestKeyring(t, key).Open(material)
+	if err != nil {
+		t.Fatalf("Open returned error: %v", err)
+	}
+	if opened.SecretRef() != got {
+		t.Fatalf("Open reference %q differs from Reference %q", opened.SecretRef(), got)
+	}
+
+	changed := material
+	changed.GameServerUID = "other-uid"
+	if other, err := Reference(changed); err != nil || other == got {
+		t.Fatalf("Reference ignored a changed UID: %q, %v", other, err)
+	}
+}
+
+func TestReferenceRefusesMalformedMaterial(t *testing.T) {
+	key := generatedKeys(t)[0]
+	tests := []struct {
+		name   string
+		mutate func(*Material)
+	}{
+		{name: "namespace", mutate: func(m *Material) { m.Namespace = "World" }},
+		{name: "name", mutate: func(m *Material) { m.GameServerName = "" }},
+		{name: "uid", mutate: func(m *Material) { m.GameServerUID = "uid/1" }},
+		{name: "fingerprint", mutate: func(m *Material) { m.WrappingKeyFingerprint = "short" }},
+		{name: "envelope", mutate: func(m *Material) { m.AdmissionEnvelope = "v2.abc" }},
+		{name: "port", mutate: func(m *Material) { m.TLSPort = 0 }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			material := validMaterial(t, key, testAdmissionSecret())
+			test.mutate(&material)
+			got, err := Reference(material)
+			if got != "" || !errorsIsInvalidMaterial(err) {
+				t.Fatalf("Reference = %q, %v; want ErrInvalidMaterial", got, err)
+			}
+		})
+	}
+}
+
+func TestHoldsReportsOnlyRetainedKeys(t *testing.T) {
+	keys := generatedKeys(t)
+	keyring := newTestKeyring(t, keys[0])
+
+	if !keyring.Holds(keyFingerprint(t, keys[0])) {
+		t.Fatal("Holds refused the retained key")
+	}
+	if keyring.Holds(keyFingerprint(t, keys[1])) {
+		t.Fatal("Holds accepted a key the keyring never retained")
+	}
+	if keyring.Holds("") || keyring.Holds(strings.Repeat("A", 52)) {
+		t.Fatal("Holds accepted a malformed fingerprint")
+	}
+	var absent *Keyring
+	if absent.Holds(keyFingerprint(t, keys[0])) {
+		t.Fatal("a nil keyring reported a key")
+	}
+}

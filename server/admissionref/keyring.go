@@ -87,6 +87,36 @@ func NewKeyring(privateKeys ...*rsa.PrivateKey) (*Keyring, error) {
 	return &Keyring{keys: keys}, nil
 }
 
+// Holds reports whether the keyring retains the unwrap key for one canonical
+// wrapping-key fingerprint, so a composition can refuse to allocate against a
+// current fingerprint it could never open.
+func (k *Keyring) Holds(fingerprint string) bool {
+	if k == nil || !validFingerprint(fingerprint) {
+		return false
+	}
+	_, exists := k.keys[fingerprint]
+	return exists
+}
+
+// Reference derives the durable DNS-safe reference for sealed material without
+// opening it, so a release path can prove that an object still carries the
+// exact UID, envelope, key and port a lease pinned before deleting it. It
+// refuses malformed material with ErrInvalidMaterial and never needs a key.
+func Reference(material Material) (string, error) {
+	if !validDNSLabel(material.Namespace) ||
+		!validDNSSubdomain(material.GameServerName) ||
+		!validGameServerUID(material.GameServerUID) ||
+		!validFingerprint(material.WrappingKeyFingerprint) ||
+		material.TLSPort == 0 {
+		return "", ErrInvalidMaterial
+	}
+	ciphertext, ok := decodeEnvelope(material.AdmissionEnvelope)
+	if !ok {
+		return "", ErrInvalidMaterial
+	}
+	return reference(material, ciphertext), nil
+}
+
 // Open validates, decrypts, and derives the durable reference for newly
 // allocated GameServer material.
 func (k *Keyring) Open(material Material) (Opened, error) {
@@ -148,14 +178,17 @@ func (k *Keyring) validateMaterial(
 	if !ok || len(ciphertext) != privateKey.Size() {
 		return nil, nil, "", false
 	}
-	secretRef := strings.Join([]string{
+	return privateKey, ciphertext, reference(material, ciphertext), true
+}
+
+func reference(material Material, ciphertext []byte) string {
+	return strings.Join([]string{
 		referencePrefix,
 		"k" + material.WrappingKeyFingerprint,
 		"u" + base32Digest([]byte(material.GameServerUID)),
 		"e" + base32Digest(ciphertext),
 		"p" + strconv.FormatUint(uint64(material.TLSPort), 10),
 	}, ".")
-	return privateKey, ciphertext, secretRef, true
 }
 
 func decodeEnvelope(value string) ([]byte, bool) {

@@ -333,7 +333,7 @@ func TestCreateIgnoresAClientOwnedObjectAtTheDerivedKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal client object: %v", err)
 	}
-	key := reservationKey(testUserID, testReservationID)
+	key := ReservationKey(testUserID, testReservationID)
 	storage.objects[storageID(testUserID, Collection, key)] = &api.StorageObject{
 		Collection:      Collection,
 		Key:             key,
@@ -1878,7 +1878,7 @@ func TestLoadKeepsSchemaOneLeaseReadableAsNotReleasing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStore returned an error: %v", err)
 	}
-	key := reservationKey(testUserID, testReservationID)
+	key := ReservationKey(testUserID, testReservationID)
 	storage.objects[storageID(testSystemUserID, Collection, key)] = &api.StorageObject{
 		Collection: Collection,
 		Key:        key,
@@ -2039,7 +2039,7 @@ func TestLoadKeepsSchemaTwoLeaseCarryingExplicitFalseFlags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStore returned an error: %v", err)
 	}
-	key := reservationKey(testUserID, testReservationID)
+	key := ReservationKey(testUserID, testReservationID)
 	storage.objects[storageID(testSystemUserID, Collection, key)] = &api.StorageObject{
 		Collection: Collection,
 		Key:        key,
@@ -2264,7 +2264,7 @@ func TestLoadRejectsMalformedOrPublicStoredObjects(t *testing.T) {
 			id := storageID(
 				testSystemUserID,
 				Collection,
-				reservationKey(testUserID, testReservationID),
+				ReservationKey(testUserID, testReservationID),
 			)
 			storage.mu.Lock()
 			test.tamper(storage.objects[id])
@@ -2411,5 +2411,19 @@ func TestStorageFailuresAreSanitized(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestReservationKeyIsAUserScopedDigest(t *testing.T) {
+	key := ReservationKey("User-1", testReservationID)
+	if len(key) != 64 || strings.ToLower(key) != key {
+		t.Fatalf("ReservationKey = %q, want 64 lowercase hex characters", key)
+	}
+	if key != ReservationKey("user-1", testReservationID) {
+		t.Fatal("ReservationKey did not normalize the user ID case")
+	}
+	if key == ReservationKey("user-2", testReservationID) ||
+		key == ReservationKey("user-1", "other-reservation") {
+		t.Fatal("ReservationKey collided across a different user or reservation")
 	}
 }

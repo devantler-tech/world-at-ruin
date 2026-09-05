@@ -543,7 +543,7 @@ func (s *Store) Release(
 	if !current.Lease.ClaimedAt.IsZero() {
 		return ErrClaimed
 	}
-	key := reservationKey(userID, reservationID)
+	key := ReservationKey(userID, reservationID)
 	err = s.storage.StorageDelete(ctx, []*runtime.StorageDelete{
 		{
 			Collection: Collection,
@@ -694,7 +694,7 @@ func (s *Store) write(
 ) (Record, error) {
 	return s.writeKey(
 		ctx,
-		reservationKey(lease.UserID, lease.ReservationID),
+		ReservationKey(lease.UserID, lease.ReservationID),
 		lease,
 		version,
 	)
@@ -750,7 +750,7 @@ func (s *Store) Load(
 		return Record{}, errors.New("nakama lease: invalid identity")
 	}
 	userID = strings.ToLower(userID)
-	key := reservationKey(userID, reservationID)
+	key := ReservationKey(userID, reservationID)
 	objects, err := s.storage.StorageRead(ctx, []*runtime.StorageRead{
 		{
 			Collection: Collection,
@@ -953,7 +953,10 @@ func normalizeLease(lease Lease) (Lease, error) {
 	return lease, nil
 }
 
-func reservationKey(userID, reservationID string) string {
+// ReservationKey is the private Nakama storage key that owns one user's
+// reservation. It is derived, never stored, so an allocation boundary can carry
+// it as the non-secret claim locator without learning the raw identifiers.
+func ReservationKey(userID, reservationID string) string {
 	digest := sha256.Sum256([]byte(strings.ToLower(userID) + "\x00" + reservationID))
 	return hex.EncodeToString(digest[:])
 }

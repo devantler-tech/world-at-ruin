@@ -9,10 +9,19 @@ import (
 
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 	"github.com/devantler-tech/world-at-ruin/server/agones"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation"
+)
+
+var (
+	// ErrNotFound means no GameServer carries the requested name.
+	ErrNotFound = errors.New("gameserverapi: GameServer not found")
+	// ErrNotOwned means the named GameServer exists but belongs to a different
+	// Fleet or attempt, so a caller must leave it untouched.
+	ErrNotOwned = errors.New("gameserverapi: GameServer belongs to a different Fleet or attempt")
 )
 
 // ResourceAPI is the complete Kubernetes capability granted to this boundary.
@@ -42,8 +51,11 @@ type Identity struct {
 // GameServer is a detached snapshot of the allocated resource material the
 // durable handoff coordinator is allowed to consume.
 type GameServer struct {
-	Identity    Identity
-	State       agonesv1.GameServerState
+	Identity Identity
+	State    agonesv1.GameServerState
+	// NodeName is the Kubernetes node hosting the GameServer, which carries the
+	// stable DNS identity a handoff advertises under the zone domain.
+	NodeName    string
 	TLSPort     uint16
 	Labels      map[string]string
 	Annotations map[string]string
@@ -96,7 +108,7 @@ func (c *Client) GetAllocated(
 	}
 	gameServer, err := c.api.Get(ctx, expected.Name, metav1.GetOptions{})
 	if err != nil {
-		return GameServer{}, fmt.Errorf("gameserverapi: get GameServer: %w", err)
+		return GameServer{}, getError(err)
 	}
 	return c.snapshot(gameServer, &expected, attemptValue)
 }
@@ -127,6 +139,90 @@ func (c *Client) ListAllocated(
 		}
 	}
 	return gameServers, nil
+}
+
+// GetAllocatedByName reads the one GameServer with an exact name and refuses
+// any changed Fleet membership, allocation correlation, state, or TLS port.
+// The observed UID is reported rather than required, so a caller that pins
+// identity through a durable digest can verify it downstream; an absent object
+// is ErrNotFound.
+func (c *Client) GetAllocatedByName(
+	ctx context.Context,
+	name string,
+	attemptID string,
+) (GameServer, error) {
+	if len(validation.IsDNS1123Subdomain(name)) != 0 {
+		return GameServer{}, errors.New("gameserverapi: GameServer name is invalid")
+	}
+	attemptValue, err := agones.CorrelationLabel(attemptID)
+	if err != nil {
+		return GameServer{}, errors.New("gameserverapi: attempt ID is invalid")
+	}
+	gameServer, err := c.api.Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return GameServer{}, getError(err)
+	}
+	return c.snapshot(gameServer, nil, attemptValue)
+}
+
+// Locate reads the one GameServer with an exact name for cleanup. Unlike the
+// allocated reads it accepts any state and a missing TLS port, because a
+// stale attempt must still be able to delete an object Agones has already
+// moved on from. It still refuses to report an object that belongs to another
+// Fleet or attempt (ErrNotOwned), and an absent object is ErrNotFound.
+func (c *Client) Locate(
+	ctx context.Context,
+	name string,
+	attemptID string,
+) (GameServer, error) {
+	if len(validation.IsDNS1123Subdomain(name)) != 0 {
+		return GameServer{}, errors.New("gameserverapi: GameServer name is invalid")
+	}
+	attemptValue, err := agones.CorrelationLabel(attemptID)
+	if err != nil {
+		return GameServer{}, errors.New("gameserverapi: attempt ID is invalid")
+	}
+	gameServer, err := c.api.Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return GameServer{}, getError(err)
+	}
+	if gameServer == nil {
+		return GameServer{}, errors.New("gameserverapi: GameServer response is missing")
+	}
+	identity := Identity{
+		Namespace: gameServer.Namespace,
+		Name:      gameServer.Name,
+		UID:       gameServer.UID,
+	}
+	if err := c.validateIdentity(identity); err != nil {
+		return GameServer{}, err
+	}
+	if identity.Name != name {
+		return GameServer{}, errors.New("gameserverapi: GameServer identity changed")
+	}
+	if gameServer.Labels[agones.FleetLabel] != c.fleet ||
+		gameServer.Labels[agones.AttemptLabel] != attemptValue {
+		return GameServer{}, ErrNotOwned
+	}
+	tlsPort, err := c.tlsPort(gameServer.Status.Ports)
+	if err != nil {
+		tlsPort = 0
+	}
+	return GameServer{
+		Identity:    identity,
+		State:       gameServer.Status.State,
+		NodeName:    gameServer.Status.NodeName,
+		TLSPort:     tlsPort,
+		Labels:      copyStringMap(gameServer.Labels),
+		Annotations: copyStringMap(gameServer.Annotations),
+	}, nil
+}
+
+func getError(err error) error {
+	if apierrors.IsNotFound(err) {
+		return fmt.Errorf("%w: %w", ErrNotFound, err)
+	}
+	return fmt.Errorf("gameserverapi: get GameServer: %w", err)
 }
 
 // Delete removes one exact GameServer with its observed UID as a Kubernetes
@@ -192,6 +288,7 @@ func (c *Client) snapshot(
 	return GameServer{
 		Identity:    identity,
 		State:       gameServer.Status.State,
+		NodeName:    gameServer.Status.NodeName,
 		TLSPort:     tlsPort,
 		Labels:      copyStringMap(gameServer.Labels),
 		Annotations: copyStringMap(gameServer.Annotations),

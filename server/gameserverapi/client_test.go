@@ -561,3 +561,138 @@ func TestDeleteRejectsEmptyOrMismatchedIdentityBeforeAPI(t *testing.T) {
 		})
 	}
 }
+
+func TestGetAllocatedByNameReportsTheObservedUIDAndNode(t *testing.T) {
+	observed := validGameServer("zone-1", "uid-1")
+	observed.Status.NodeName = "node-a"
+	clientset := agonesfake.NewSimpleClientset(observed)
+	client := clientAgainst(t, clientset, validConfig())
+
+	got, err := client.GetAllocatedByName(context.Background(), "zone-1", testAttemptID)
+	if err != nil {
+		t.Fatalf("GetAllocatedByName returned an error: %v", err)
+	}
+	want := Identity{Namespace: testNamespace, Name: "zone-1", UID: "uid-1"}
+	if got.Identity != want || got.NodeName != "node-a" || got.TLSPort != 8443 {
+		t.Fatalf("GetAllocatedByName = %+v, want identity %+v on node-a:8443", got, want)
+	}
+	if actions := clientset.Actions(); len(actions) != 1 || actions[0].GetVerb() != "get" {
+		t.Fatalf("client actions = %#v, want one get", actions)
+	}
+}
+
+func TestGetAllocatedByNameRefusesAbsentOrOutOfContractObjects(t *testing.T) {
+	tests := []struct {
+		name         string
+		seed         *agonesv1.GameServer
+		wantNotFound bool
+	}{
+		{name: "absent", wantNotFound: true},
+		{
+			name: "other attempt",
+			seed: func() *agonesv1.GameServer {
+				gameServer := validGameServer("zone-1", "uid-1")
+				gameServer.Labels[agones.AttemptLabel] = strings.Repeat("a", 52)
+				return gameServer
+			}(),
+		},
+		{
+			name: "not Allocated",
+			seed: func() *agonesv1.GameServer {
+				gameServer := validGameServer("zone-1", "uid-1")
+				gameServer.Status.State = agonesv1.GameServerStateShutdown
+				return gameServer
+			}(),
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var objects []runtime.Object
+			if test.seed != nil {
+				objects = append(objects, test.seed)
+			}
+			client := clientAgainst(t, agonesfake.NewSimpleClientset(objects...), validConfig())
+
+			got, err := client.GetAllocatedByName(context.Background(), "zone-1", testAttemptID)
+			if err == nil || !isZeroGameServer(got) {
+				t.Fatalf("GetAllocatedByName = %+v, %v; want refusal", got, err)
+			}
+			if errors.Is(err, ErrNotFound) != test.wantNotFound {
+				t.Fatalf("GetAllocatedByName error = %v, want ErrNotFound=%t", err, test.wantNotFound)
+			}
+		})
+	}
+}
+
+func TestGetAllocatedTranslatesAbsenceToErrNotFound(t *testing.T) {
+	client := clientAgainst(t, agonesfake.NewSimpleClientset(), validConfig())
+
+	_, err := client.GetAllocated(
+		context.Background(),
+		Identity{Namespace: testNamespace, Name: "zone-1", UID: "uid-1"},
+		testAttemptID,
+	)
+	if !errors.Is(err, ErrNotFound) || !apierrors.IsNotFound(err) {
+		t.Fatalf("GetAllocated error = %v, want ErrNotFound wrapping the API NotFound", err)
+	}
+}
+
+func TestLocateAcceptsAnyStateButNeverAnotherOwner(t *testing.T) {
+	shutdown := validGameServer("zone-1", "uid-1")
+	shutdown.Status.State = agonesv1.GameServerStateShutdown
+	shutdown.Status.Ports = nil
+	shutdown.Status.NodeName = "node-a"
+	otherAttempt := validGameServer("zone-2", "uid-2")
+	otherAttempt.Labels[agones.AttemptLabel] = strings.Repeat("a", 52)
+	otherFleet := validGameServer("zone-3", "uid-3")
+	otherFleet.Labels[agones.FleetLabel] = "other-zone"
+	client := clientAgainst(
+		t,
+		agonesfake.NewSimpleClientset(shutdown, otherAttempt, otherFleet),
+		validConfig(),
+	)
+
+	got, err := client.Locate(context.Background(), "zone-1", testAttemptID)
+	if err != nil {
+		t.Fatalf("Locate returned an error: %v", err)
+	}
+	if got.Identity.UID != "uid-1" ||
+		got.State != agonesv1.GameServerStateShutdown ||
+		got.TLSPort != 0 ||
+		got.NodeName != "node-a" {
+		t.Fatalf("Locate = %+v, want the Shutdown object with no TLS port", got)
+	}
+	for _, name := range []string{"zone-2", "zone-3"} {
+		got, err := client.Locate(context.Background(), name, testAttemptID)
+		if !errors.Is(err, ErrNotOwned) || !isZeroGameServer(got) {
+			t.Fatalf("Locate(%q) = %+v, %v; want ErrNotOwned", name, got, err)
+		}
+	}
+	got, err = client.Locate(context.Background(), "zone-9", testAttemptID)
+	if !errors.Is(err, ErrNotFound) || !isZeroGameServer(got) {
+		t.Fatalf("Locate(absent) = %+v, %v; want ErrNotFound", got, err)
+	}
+}
+
+func TestLocateRejectsInvalidInputBeforeAPI(t *testing.T) {
+	clientset := agonesfake.NewSimpleClientset()
+	client := clientAgainst(t, clientset, validConfig())
+
+	for _, input := range [][2]string{
+		{"Zone_1", testAttemptID},
+		{"", testAttemptID},
+		{"zone-1", "attempt/7"},
+	} {
+		got, err := client.Locate(context.Background(), input[0], input[1])
+		if err == nil || !isZeroGameServer(got) {
+			t.Errorf("Locate(%q, %q) = %+v, %v; want refusal", input[0], input[1], got, err)
+		}
+		got, err = client.GetAllocatedByName(context.Background(), input[0], input[1])
+		if err == nil || !isZeroGameServer(got) {
+			t.Errorf("GetAllocatedByName(%q, %q) = %+v, %v; want refusal", input[0], input[1], got, err)
+		}
+	}
+	if actions := clientset.Actions(); len(actions) != 0 {
+		t.Fatalf("invalid input caused API actions: %#v", actions)
+	}
+}
