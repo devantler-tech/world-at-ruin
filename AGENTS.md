@@ -674,7 +674,12 @@ everything shipped afterwards is held to.
   cancellation, finalizes the allocation before returning connection material, protects
   claimed/stale ownership and supervises exact no-show cleanup without stopping after transient
   sweep failures; it remains inert until the concrete adapter is composed), and
-  the **combat first slice** (`server/sim/combat.go` — the telegraph cast
+  the **orphan reconciler** (`server/orphanreaper/` — completes bounded resource
+  and private lease scans, protects every stored attempt regardless of expiry,
+  requires consecutive orphan observations plus grace, and deletes only the
+  revalidated UID and resource version; startup/periodic supervision is explicit
+  and remains inactive until production composition), and the **combat first
+  slice** (`server/sim/combat.go` — the telegraph cast
   lifecycle: painted at cast start, resolved once after a tick-counted cast time against
   positions at resolution, health/damage application, and one mob AI that deterministically
   aggros the nearest entity; a mob with positive `ChaseSpeedMM` closes through the existing
