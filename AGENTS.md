@@ -913,14 +913,21 @@ everything shipped afterwards is held to.
     stamped `DevLog.VERSION`. The bytes are JCS (RFC 8785) canonical with **no trailing newline**,
     because they are what a signature will cover. Its layer media type is
     `application/vnd.devantler.worldatruin.client.manifest.v1+json`.
-  - **The manifest publishes a contract, never a delivery, and that is not merely "not done yet."**
-    A GHCR blob is not a plain HTTPS download — reading one takes an OCI token exchange first, which
-    is exactly what `verify-ghcr-public` does — while the client's `RollbackSelection` gates every
-    target on a bare whitespace-free `https://` address. So no URL we could publish today would be
-    fetchable by the definition the client enforces, and `pack.full` / `shell.download` stay omitted
-    (which is also the fail-closed value: `UpdateDecision` refuses a capability-raising pack rather
-    than offering one no player could roll back from). Settling how delivery is fetched is a design
-    decision, tracked as **#611** — do not add a URL to the manifest before it lands.
+  - **The manifest publishes a contract; a delivery, when there is one, is a PLAIN HTTPS download
+    and never a registry blob** ([ADR 0004](docs/adr/0004-serve-delivery-bytes-from-a-plain-https-origin.md),
+    closing #611). A GHCR blob is not a plain HTTPS download — reading one takes an OCI token exchange
+    first, which is exactly what `verify-ghcr-public` does — while the client's `RollbackSelection`
+    gates every target on a bare whitespace-free `https://` address. So the registry is never a
+    delivery origin: `pack.full` / `pack.deltas` / `shell.download` name the channel's delivery
+    origin — a GitHub Release asset while Releases is the interim origin, the platform's object store
+    behind its CDN edge later — pinned by `sha256` and `size`. GHCR keeps its role as the
+    digest-pinned contract origin, which the updater reads anonymously **by digest** (token exchange,
+    then manifest); that bounded read is the client's only registry interaction. Today the manifest
+    still omits delivery, which is the fail-closed value (`UpdateDecision` refuses a
+    capability-raising pack rather than offering one no player could roll back from), until the pack
+    pipeline produces something to deliver (#788). `_is_fetchable_url` is a shape check that guards
+    only rollback targets and is deliberately not widened: the updater applies it to every delivery
+    field, and CD proves credential-free reachability of each delivery URL (#789).
   - **The manifest's `sequence` is derived from the RELEASE VERSION, never from a clock** —
     `tools/manifest-sequence.sh`, pinned by `tools/manifest-sequence.test.sh`. A client refuses any
     manifest at or below the highest `sequence` it has accepted, so the mark must be monotonic in
