@@ -312,9 +312,10 @@ will expire:
   ([ADR 0004](../adr/0004-serve-delivery-bytes-from-a-plain-https-origin.md)).
 - **Edge:** a **CDN** in front of the pack/shell bytes (adjacent tooling, cacheable, bounded blast
   radius — an acceptable SaaS use under the self-host-the-control-plane boundary).
-- **One channel, two origins the client is told:** the client knows its channel's contract reference
-  and delivery origin and nothing else, so either origin can migrate from GitHub to the platform
-  without a client change.
+- **One channel:** the client knows its channel's contract reference and nothing else, because the
+  manifest omits delivery today. Once delivery fields are introduced, the channel also names its
+  delivery origin, and either origin can then migrate from GitHub to the platform without a client
+  change.
 - **Channel model:** one rolling **`live`** channel by default — one world, continuously delivered,
   consistent with no-seasons/no-resets. The schema permits named channels for a future `canary`.
 - **Signing & a rotatable root of trust.** Packs and manifests are signed in CI; the client verifies the

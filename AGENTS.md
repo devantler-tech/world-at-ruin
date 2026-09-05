@@ -926,9 +926,12 @@ everything shipped afterwards is held to.
     still omits delivery, which is the fail-closed value (`UpdateDecision` refuses a
     capability-raising pack rather than offering one no player could roll back from), until the pack
     pipeline produces something to deliver (#788). `_is_fetchable_url` is a shape check that guards
-    only rollback targets and is deliberately not widened. Neither enforcement exists yet: when
-    delivery fields are introduced, the updater must apply the predicate to every delivery field
-    before fetching, and CD must prove credential-free reachability of each delivery URL (#789).
+    only rollback targets and is deliberately not widened. Neither enforcement exists yet. When
+    delivery fields are introduced, three gates apply in order: the updater applies the predicate to
+    every delivery field before fetching; CD proves, before the release leaves draft and with its own
+    credentials, that the uploaded asset matches the pinned `sha256` and `size` (#788); and after
+    publication a credential-free download of each delivery URL must verify the same `sha256` and
+    `size`, turning the release red on failure (#789).
   - **The manifest's `sequence` is derived from the RELEASE VERSION, never from a clock** —
     `tools/manifest-sequence.sh`, pinned by `tools/manifest-sequence.test.sh`. A client refuses any
     manifest at or below the highest `sequence` it has accepted, so the mark must be monotonic in

@@ -74,7 +74,7 @@ Two origins holding the same bytes is the failure mode #280 refused for the
 *manifest*, and it is acceptable for *delivery* only because the client verifies
 every delivered byte against the manifest's hash before mounting, and the
 publish pipeline proves — with its own credentials, before the release leaves
-draft — that the asset it uploaded hashes to the digest the manifest pins.
+draft — that the asset it uploaded matches the `sha256` and `size` the manifest pins.
 Credential-free reachability is a different property and cannot be proven
 before publication: a draft release's assets answer an unauthenticated request
 with 404. It is therefore verified after publication, the way
@@ -95,11 +95,11 @@ rather than the only line.
   distribution design) produces a mountable pack, CD publishes it as a release
   asset alongside the OCI artifact, writes its release-asset URL, `sha256` and
   `size` into the manifest's `pack.full` entry, and — before the release leaves draft, with
-  CD's own credentials — fails the release if the uploaded asset's hash does not equal the pinned
-  digest (#788).
+  CD's own credentials — fails the release if the uploaded asset's `sha256` or byte count does not equal
+  the pinned `sha256` and `size` (#788).
 - The anonymous GHCR reachability check keeps guarding the contract origin; a
-  sibling check that runs after publication, downloads each published delivery URL with no credentials
-  and verifies its hash guards the delivery origin from the first delivery on
+  sibling check that runs after publication, downloads each published delivery URL with no credentials,
+  and verifies its `sha256` and `size` guards the delivery origin from the first delivery on
   (#789), and both become blocking when the updater consumes them (#141).
 - The updater applies `_is_fetchable_url` to every delivery field, not only to
   rollback targets, before it fetches anything.
