@@ -309,6 +309,9 @@ will expire:
 - **Interim bootstrap:** until the platform CD path exists, **GitHub Releases** is the origin (CI can
   already publish there; the macOS export artifact #6 is the seed). The client only ever knows a
   *channel URL*, so the origin can migrate from Releases → platform without a client change.
+  Whatever serves it, a delivery URL is a **plain HTTPS download** the client can fetch with no
+  registry token exchange; the registry stays the digest-pinned contract origin and never a
+  delivery origin ([ADR 0004](../adr/0004-serve-delivery-bytes-from-a-plain-https-origin.md)).
 - **Channel model:** one rolling **`live`** channel by default — one world, continuously delivered,
   consistent with no-seasons/no-resets. The schema permits named channels for a future `canary`.
 - **Signing & a rotatable root of trust.** Packs and manifests are signed in CI; the client verifies the
