@@ -167,6 +167,15 @@ zone/dungeon server:
   validation, strict object decoding, and the sanitising of a storage error so a
   caller learns about its own cancellation and nothing about the store. A new store
   calls through to it rather than carrying its own copy (#780).
+- **`nakamafriends/`** — the server-owned **friends boundary**, the first slice of
+  the social tier (#476): `Invite`, `Remove`, `Block`, `Status` and `List` over
+  Nakama's own friend graph. The acting player is always the verified session
+  identity and the target is only ever another well-formed player, so a deputy
+  cannot be pointed at someone else's graph; the edge transitions themselves stay
+  Nakama's. Inviting a player you have blocked is an explicit refusal rather than
+  Nakama's silent drop, reads come back in a closed five-state vocabulary, and a
+  graph failure never carries Nakama's text. Stateless and inert until an RPC
+  composes it; the package doc carries the details.
 - **`nakamaauth/`** — the first **Nakama meta-tier seam**. Its session verifier
   presents a Nakama session to the generated gRPC `GetAccount` API as bearer
   metadata, and only Nakama's authenticated user ID crosses back into World at
@@ -360,13 +369,13 @@ the concrete resource adapter that composes `agonesalloc`, `gameserverapi`,
 [ADR 0002](../docs/adr/0002-seal-zone-admission-secrets-before-readiness.md),
 the zone admission claim adapter, Nakama RPC registration that exposes the
 handoff service, the client entry point that enables Google account
-provisioning, the rest of the Nakama social/chat/storage surface, client
+provisioning, the party and chat half of the Nakama social surface, client
 prediction and reconciliation, real navmesh geometry, and Postgres/CNPG
 persistence. Zone boot already generates, publishes and observes the sealed
 envelope; allocation metadata validation, coordinator unwrap/recovery and
 private claim behavior are not composed yet. The tick core, socket, client
 replica store, Agones lifecycle, default-off Nakama account provisioning and
-session verification, allocation API boundary, exact-UID GameServer resource
+session verification, friends boundary, allocation API boundary, exact-UID GameServer resource
 boundary, private lease store, durable handoff coordinator and fail-closed
 handoff core are in place; later slices build on those tested seams instead of
 creating a parallel meta service.
