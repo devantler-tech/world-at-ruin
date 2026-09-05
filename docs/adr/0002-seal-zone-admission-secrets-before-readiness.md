@@ -292,6 +292,37 @@ cannot release a newer session.
 The sweep may list managed GameServer metadata and private Nakama leases. It
 never lists Kubernetes Secrets because this protocol creates none.
 
+`server/orphanreaper` implements this sweep without activating it in the zone
+command or Nakama runtime. `New` performs no I/O; composition explicitly calls
+`Run` for a startup sweep followed by periodic reconciliation. Defaults are a
+two-minute grace, thirty-second interval and sweep deadline, and 100 pages of
+100 objects for each store. Configured grace is bounded to 30 seconds–1 hour,
+interval to 1 second–1 hour, deadline to 1 millisecond–1 minute, and each scan to
+1–1000 pages. Exhausting any budget is incomplete evidence, never absence.
+
+Each sweep enumerates GameServers first, using current Kubernetes reads and
+continuations at one resource version, then reads the complete private lease
+collection. **These stores do not share a transaction.** The ordering relies on
+the durable lease preceding allocation, attempt identities never being reused,
+and exact resource cleanup preceding lease removal. Grace and two observations
+are additional protection; they do not replace those lifecycle guarantees.
+Every extant lease protects all GameServers with its full attempt digest,
+including expired, dispatched, claimed and releasing records. Expiry cleanup
+and ambiguous dispatch resolution remain exclusively the coordinator's work.
+
+The observer retains only candidate identity, attempt digest and first successful
+observation time in process memory. A restart, failed scan, absent candidate or
+protecting lease requires fresh consecutive observations and grace. The private
+scan refuses malformed records, duplicate JSON members, repeated object keys,
+cursor cycles, overlarge pages, values above 64 KiB and cursors above 16 KiB.
+No partial scan authorizes a delete. Before deletion, a fresh get revalidates
+namespace, name, UID, Fleet, attempt and Allocated state. UID **and resource
+version** preconditions fence changes between that read and the delete. A lost
+delete response triggers one read: absence completes cleanup; a recreated UID is
+left untouched; a surviving exact UID retries through a later complete sweep.
+Independent cleanup failures do not stall other orphans. Counts and sanitized
+error states are the only observability output; no identities become metric labels.
+
 ### RBAC and network authority
 
 The production identities are deliberately asymmetric:

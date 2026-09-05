@@ -271,6 +271,20 @@ zone/dungeon server:
   claim or delete the current owner. Hermetic
   race-enabled tests exercise Nakama's real runtime storage request, object and
   acknowledgement shapes.
+- **`orphanreaper/`** — bounded orphan reconciliation over managed, Allocated
+  GameServers and the real private lease store. A complete, consistently paginated
+  Fleet scan precedes a complete lease scan. Every stored lease protects its
+  attempt, including expired, dispatched and releasing records; the coordinator
+  retains their cleanup authority. Only the same UID and attempt observed orphaned
+  in consecutive complete sweeps after a grace period may be deleted. Cleanup
+  rechecks state and metadata and carries UID plus resource-version preconditions;
+  ambiguous outcomes are observed once and retried on a later sweep. Restart,
+  missing observations and failed scans require fresh evidence. Reports contain
+  counts only, and errors are sanitized. Construction performs no I/O; explicit
+  `Run` provides startup and periodic sweeps under a per-sweep deadline. Defaults
+  are a two-minute grace, thirty-second interval/deadline, and 100 pages of 100
+  objects per store. The package remains inactive until Nakama composition (#569)
+  starts it. See ADR 0002 for the ordering assumptions and operational bounds.
 - **`handoff/`** — the transport-neutral **player handoff core**: it consumes
   `nakamaauth` rather than accepting a client-provided identity, gives only that
   verified user ID plus a caller-stable reservation key and server-generated
