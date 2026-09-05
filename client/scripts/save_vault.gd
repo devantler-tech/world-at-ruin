@@ -595,7 +595,9 @@ static func _save_to_locked(
 	# A successful writer must never create a document its own reader refuses.
 	# Measure the exact UTF-8 bytes once, before creating a staging file, so an
 	# over-limit mutation leaves the accepted vault already on disk untouched.
-	var encoded := JSON.stringify(doc, "  ").to_utf8_buffer()
+	# Loaded counters are floats. The default JSON precision can round a valid
+	# 2^53-1 counter when this transaction preserves an unrelated section.
+	var encoded := JSON.stringify(doc, "  ", true, true).to_utf8_buffer()
 	if encoded.size() > MAX_VAULT_BYTES:
 		push_error(
 			"SaveVault: refusing to write %s — encoded vault exceeds the %d-byte read limit"

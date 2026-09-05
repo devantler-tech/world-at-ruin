@@ -616,7 +616,13 @@ everything shipped afterwards is held to.
   key, generates one in-memory 32-byte secret while the GameServer is `Starting`, publishes the
   identity-bound ciphertext/fingerprint/readiness metadata, observes those exact values through
   `WatchGameServer`, and only then permits the serving command to call `Ready`; an allocatable
-  restart calls `Shutdown` without rotating metadata), the first **Nakama identity boundary**
+  restart calls `Shutdown` without rotating metadata), the latent **zone claim gate**
+  (`server/zoneclaim/` plus `zonesock.NewClaimedHub` — claims through a private boundary before
+  upgrading a socket, using only the exact sealed GameServer's observed allocation locator;
+  cancellation, token expiry, metadata changes, watch termination and lifecycle shutdown refuse
+  admission, and an invalidated observation cannot be reused after restoration; the authenticated
+  private endpoint, session-end recovery and production command wiring remain separate work),
+  the first **Nakama identity boundary**
   (`server/nakamaauth/` — locally validates audience-bound Google ID tokens, derives a
   server-keyed opaque email/password pair whose logged identifier is not replayable alone,
   provisions through Nakama's generated `AuthenticateEmail` API, verifies the returned session,

@@ -1,0 +1,8 @@
+{
+  "version": "0.93.1",
+  "date": "2026-09-05",
+  "title": "Every point stays counted",
+  "notes": [
+    "Saving an attunement, discovery, reward or quest now preserves every point in existing quest progress, even at the largest supported totals. This prevents rounding during a save from silently subtracting progress."
+  ]
+}
