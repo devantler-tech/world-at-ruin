@@ -661,7 +661,13 @@ everything shipped afterwards is held to.
   account-derived key under the system owner, bounds stacks and counts so no write can mint an
   unbounded amount of anything, refuses a stale observation or a malformed durable container, keeps
   every shipped schema readable through a ledgered golden, and commits every replacement with its
-  replay audit through the same atomic `playerstate` boundary; the item model is not its concern), the
+  replay audit through the same atomic `playerstate` boundary; the item model is not its concern), the server-owned
+  **friends boundary** (`server/nakamafriends/` — edits and reads one player's Nakama friend graph
+  acting only for the verified session identity, names only another well-formed player, refuses an
+  invite towards a target that player has blocked rather than letting Nakama drop it silently, maps
+  Nakama's four friend states onto a closed vocabulary and refuses any other shape, and sanitises every
+  graph failure so a caller learns its own cancellation and nothing about the store; it holds no state
+  and is inert until an RPC composes it), the
   durable **handoff allocation coordinator**
   (`server/handoffalloc/` — implements `handoff.Allocator` over the real lease store and an injected
   GameServer-resource boundary; exact-version persists a uniquely identified dispatched barrier
@@ -675,7 +681,12 @@ everything shipped afterwards is held to.
   claimed/stale ownership and supervises exact no-show cleanup without stopping after transient
   sweep failures; its concrete Agones adapter is `server/agonesresources/`, and it remains inert
   until a Nakama composition supervises its expiry loop and registers the handoff RPC), and
-  the **combat first slice** (`server/sim/combat.go` — the telegraph cast
+  the **orphan reconciler** (`server/orphanreaper/` — completes bounded resource
+  and private lease scans, protects every stored attempt regardless of expiry,
+  requires consecutive orphan observations plus grace, and deletes only the
+  revalidated UID and resource version; startup/periodic supervision is explicit
+  and remains inactive until production composition), and the **combat first
+  slice** (`server/sim/combat.go` — the telegraph cast
   lifecycle: painted at cast start, resolved once after a tick-counted cast time against
   positions at resolution, health/damage application, and one mob AI that deterministically
   aggros the nearest entity; a mob with positive `ChaseSpeedMM` closes through the existing

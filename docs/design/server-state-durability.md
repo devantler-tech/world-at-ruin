@@ -13,7 +13,8 @@ concurrent, and outlives any single process, so its guarantees are about *orderi
 
 Server-held state is any record the server writes and treats as authoritative. Today that includes
 the handoff leases in `server/nakamalease`, Google-to-player identity bindings in
-`server/nakamaauth`, and player-mutation audit records in `server/playerstate`. Phase 4 (#11) adds
+`server/nakamaauth`, player-mutation audit records in `server/playerstate`, and the friend-graph
+edges Nakama writes on the server's behalf through `server/nakamafriends`. Phase 4 (#11) adds
 characters, inventory and progression, and every one of them answers the questions below.
 
 A record is in scope the moment the server writes it. A value the server merely reads from a client,
@@ -27,7 +28,7 @@ unaffordable or dishonest.
 | Class | Lifetime | What loss costs a player | Present example |
 |---|---|---|---|
 | **Session-scoped** | one allocation or connection | a reconnect | handoff leases (`nakamalease`) |
-| **Player-owned** | forever | **unrecoverable** — no wipe exists | Google identity bindings (`nakamaauth`), characters (#473), inventory (#474) |
+| **Player-owned** | forever | **unrecoverable** — no wipe exists | Google identity bindings (`nakamaauth`), friend edges (`nakamafriends`), characters (#473), inventory (#474) |
 | **World-owned** | forever, shared | affects every player at once | none yet |
 
 The classes rank strictly: a player-owned record may never be given a session-scoped guarantee
@@ -513,6 +514,9 @@ needs to write a guard for.
 | Within PostgreSQL, mutation identity and outcome commit with the record, so no half-applied intent exists | `playerstate.Store` | `TestApplyCommitsPlayerRecordAndAuditInOneAtomicWrite` |
 | An acknowledged player-owned mutation is never lost | player-owned record callers | not yet active — the character boundary has no caller and independent recovery evidence is still absent; #474 is also unbuilt |
 | A replay **not** identified by its own content applies once | `playerstate.Store` | `TestApplyReplaysTheOriginalOutcomeWithoutWritingAgain`, `TestApplyReplayAfterProcessCrashDoesNotWriteAgain` |
+| A friend-graph edit acts only for the verified session identity and names only another player, never the caller or the system owner | `nakamafriends.Boundary` | `TestEveryOperationRefusesActingForAnotherSubject`, `TestEveryOperationRefusesAnInvalidTargetBeforeTheGraph` |
+| A friend-graph read is a closed vocabulary — any other shape, or another player's edge where the caller's was asked for, is refused rather than trusted | `nakamafriends.Boundary` | `TestStatusAndListRejectMalformedGraphOutput` |
+| A friend edge is written by Nakama's own friends API, so its versioning and conflict handling are Nakama's; the boundary holds no storage client and adds no blind write of its own, and every graph failure reaches the caller as its own cancellation or `ErrGraph`, never as Nakama's text | `nakamafriends.Boundary` | structural — the boundary depends on `nakamafriends.Graph` only; `TestGraphFailuresAreSanitizedAndCancellationIsPreserved` |
 | A world-owned record states its own recovery invariant | first world-owned record owner | not yet built — no such record exists |
 
 The four labels mean different things, and the difference is the point of the table:
