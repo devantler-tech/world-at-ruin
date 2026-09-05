@@ -533,9 +533,11 @@ handshake (child 5), and key custody (child 6) implement them, and the manifest 
    last-good pack selection. It **must ship before the first overlay can be delivered**, because a pack
    that crashes at startup cannot recover itself; without this in place a single bad overlay would
    strand every client that received it.
-3. **Pack build & publish pipeline** — CI publishes the signed manifest to the contract origin and
-   the signed `full` + `deltas` `.pck` set to the delivery origin ([ADR 0004](../adr/0004-serve-delivery-bytes-from-a-plain-https-origin.md));
-   base+overlay split; a committed pack-overlay load-order test (the live-verified piece).
+3. **Pack build & publish pipeline** — CI publishes one signed OCI artifact — build, `full` + `deltas`
+   `.pck` layers and manifest under a single cosign digest — to the contract origin, and mirrors the
+   pack bytes to the delivery origin as plain HTTPS downloads pinned by that manifest
+   ([ADR 0004](../adr/0004-serve-delivery-bytes-from-a-plain-https-origin.md)); base+overlay split;
+   a committed pack-overlay load-order test (the live-verified piece).
 4. **In-client updater** — fetch → verify signature/sha → stage → hand promotion/rollback to the
    bootstrap (child 2). Never promotes a pack that raises the save write-schema beyond the rollback
    target's read ceiling (that routes to the shell tier).

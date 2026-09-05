@@ -892,7 +892,7 @@ everything shipped afterwards is held to.
     attachment job alone may upload assets. Neither checks out project code, so project code never
     shares a runner with a release-write token. `workflow_dispatch` with a `tag` input re-runs it
     for an existing release.
-  - **GHCR is the origin of record for updates** (maintainer direction 2026-07-18, closing the open
+  - **GHCR is the contract origin of record for updates** (maintainer direction 2026-07-18, closing the open
     host decision in `docs/design/distribution-and-self-update.md`). CD publishes the released
     client to `ghcr.io/devantler-tech/world-at-ruin/client` as an **OCI artifact**, tagged with the
     bare version plus `latest`, and **cosign-signs it by digest** (keyless, GitHub OIDC). The bare
@@ -902,8 +902,9 @@ everything shipped afterwards is held to.
     its own stale write when the newer immutable version becomes visible. The
     **digest** is what the updater pins — never the mutable tag. OCI is required rather than merely
     preferred: GitHub Packages has no generic/raw-file registry, so an OCI artifact is the only way
-    a `.app` zip enters it. The GitHub Release asset remains the *install* download; GHCR is the
-    *update* origin.
+    a `.app` zip enters it. The GitHub Release asset remains the *install* download and, once delivery
+    fields exist, the *delivery* origin for pack and shell bytes (ADR 0004); GHCR is the *contract*
+    origin, never a delivery origin.
   - **The update manifest is a SECOND LAYER of that same artifact, not a second tag** (#280). One
     digest therefore covers the build and the contract describing it, so `cosign verify` attests to
     both and there is nothing to keep in sync; a separate tag could be updated independently, which

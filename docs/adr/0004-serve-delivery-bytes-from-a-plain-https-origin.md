@@ -104,8 +104,9 @@ rather than the only line.
 - Option 3 is rejected: a redirector adds infrastructure and a new trust
   surface on the delivery path to solve a problem option 2 solves with none.
 - When the pack build and publish pipeline (decomposition child 3 of the
-  distribution design) produces a mountable pack, CD publishes it as a release
-  asset alongside the OCI artifact, writes its release-asset URL, `sha256` and
+  distribution design) produces a mountable pack, it stays a layer of the cosign-signed
+  OCI artifact — one digest keeps attesting build, pack and contract — and CD mirrors it to the
+  delivery origin as a release asset, writes that asset's URL, `sha256` and
   `size` into the manifest's `pack.full` entry, and — before the release leaves draft, with
   CD's own credentials — fails the release if the uploaded asset's `sha256` or byte count does not equal
   the pinned `sha256` and `size` (#788).
