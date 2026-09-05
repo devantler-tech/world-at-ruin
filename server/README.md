@@ -9,7 +9,9 @@ Server CI anchors every shipped schema ledger and historical fixture to the revi
 including character records, mutation audit evidence, identity bindings and handoff leases. The
 store tests separately check historical reader behavior, including complete character, binding and
 audit-field preservation; lease fixtures check acceptance alongside separate transition tests. A new store
-joins the durability check through the same ledger and fixture naming convention.
+joins the durability check through the same ledger and fixture naming convention, with a sibling
+`shipped_<family>_collection.txt` mapping its exact Nakama collection to that family. Each collection
+requires its own mapped ledger, including collections in a package that already persists other records.
 
 ## What is here now
 

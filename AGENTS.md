@@ -778,8 +778,10 @@ everything shipped afterwards is held to.
   `server/<package>/testdata/shipped_<family>_versions.txt` and
   `golden_<family>_v<N>.json`. The server durability check discovers ledgers in both the reviewed base
   and candidate tree, preserves all historical fixture bytes, validates complete additions, and refuses
-  any `server/` package whose production Go code names a Nakama collection without a ledger of its
-  own — a new store is registered by the code that persists, not by a ledger it may never write.
+  any Nakama collection literal in production Go files without its own family ledger in the same
+  package. Each ledger has a sibling `shipped_<family>_collection.txt` containing the exact collection
+  name; mappings are unique within the package and immutable once shipped. The lexical scan includes
+  double-quoted and raw literals; dynamically constructed names require store review.
   Run `BASE_SHA=<reviewed-base> ./tools/google-binding-durability-guard.sh` from the repository root
   and its adjacent `.test.sh` regression suite. Store tests separately check historical readers:
   character, binding and audit tests assert preserved fields; lease fixtures assert acceptance

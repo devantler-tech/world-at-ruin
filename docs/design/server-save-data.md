@@ -19,12 +19,21 @@ because it defines a permanent lookup contract rather than a versioned record fa
   each declaring that version in its numeric `schema` field.
 - Historical fixture bytes are immutable. Add a new version and its fixture when expanding a
   schema; do not rewrite the evidence for an already-shipped document.
-- Ledger and fixture paths must be ordinary files, with no symbolic-link component.
+- Ledger, fixture and collection-mapping paths must be ordinary files, with no symbolic-link component.
 
 The naming convention is `server/<package>/testdata/shipped_<family>_versions.txt` with sibling
 `golden_<family>_v<N>.json` files. Nested package directories are supported. Package names use
 letters, digits, underscores and hyphens; family names use lowercase letters, digits and underscores.
 Record families use this convention and join the check without editing an allowlist.
+
+Each ledger also has a sibling `shipped_<family>_collection.txt` containing exactly one
+`world_at_ruin_<name>` collection name on one line. The mapping connects the family to its
+production collection without guessing from the family name. Two ledgers in the same package
+cannot map to the same collection, and a mapping present in the reviewed base is immutable.
+The guard checks every double-quoted or raw collection literal in production Go files against
+the package's mappings, including multiple collections in one file. This is a lexical check:
+comments can also contain matching literals, and dynamically constructed names require store
+review. Historical reader tests remain necessary for each family.
 
 The second check is behavioral: the stores' Go tests load their historical fixtures through the
 production reader. Character tests retain the character identity and recipe; audit tests retain

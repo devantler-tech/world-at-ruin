@@ -92,22 +92,45 @@ guard_family() {
 	done <"$SCRATCH_DIR/base-versions"
 }
 
-# register_persisted_families refuses any server package whose production Go
-# code names a Nakama collection without a schema ledger under its own testdata.
-# Discovery above starts from ledgers that already exist, so without this a new
-# store could persist records while staying outside the gate entirely.
+# register_persisted_families binds each collection literal to its own ledger.
+# A sibling mapping names the collection explicitly because collection names and
+# family names differ. Mappings become immutable once present in the reviewed base.
 register_persisted_families() {
-	local file dir name
+	local base="$1" file dir name ledger mapping collection_pattern
+	# Go raw strings use literal backticks, not shell command substitution.
+	# shellcheck disable=SC2016
+	collection_pattern='"world_at_ruin_[a-z0-9_]+"|`world_at_ruin_[a-z0-9_]+`'
+	: >"$SCRATCH_DIR/registrations"
+	while IFS= read -r ledger; do
+		mapping="${ledger%_versions.txt}_collection.txt"
+		require_file "$mapping"
+		name="$(awk '
+			NR != 1 || $0 !~ /^world_at_ruin_[a-z0-9_]+$/ { exit 1 }
+			{ print }
+			END { if (NR != 1) exit 1 }
+		' "$mapping")" || fail "$mapping has an empty or malformed collection mapping"
+		if grep -Fxq "$mapping" "$SCRATCH_DIR/base-paths"; then
+			git show "$base:$mapping" >"$SCRATCH_DIR/base-mapping" ||
+				fail "could not read $mapping at base commit $base"
+			cmp -s "$SCRATCH_DIR/base-mapping" "$mapping" ||
+				fail "$mapping collection mapping changed after it shipped"
+		fi
+		dir="${ledger%/testdata/*}"
+		printf '%s\t%s\n' "$dir" "$name" >>"$SCRATCH_DIR/registrations"
+	done <"$SCRATCH_DIR/head-ledgers"
+	awk '!seen[$0]++ { next } { exit 1 }' "$SCRATCH_DIR/registrations" ||
+		fail 'a collection is registered by multiple schema ledgers in the same package'
+
+	# Inspect every double-quoted or raw collection literal in production files,
+	# including multiple occurrences on one line. This lexical check does not
+	# evaluate dynamically constructed collection names; store review covers those.
 	while IFS= read -r file; do
 		[ -f "$file" ] || continue
-		name="$(grep -oE '"world_at_ruin_[a-z0-9_]+"' "$file" | head -n1)" || true
-		[ -n "$name" ] || continue
 		dir="${file%/*}"
-		awk -v prefix="$dir/testdata/shipped_" '
-			index($0, prefix) == 1 && /_versions\.txt$/ { found = 1 }
-			END { exit found ? 0 : 1 }
-		' "$SCRATCH_DIR/head-ledgers" ||
-			fail "$dir persists records in Nakama collection $name but registers no schema ledger ($dir/testdata/shipped_<family>_versions.txt) — every persisted server family must join this gate"
+		while IFS= read -r name; do
+			grep -Fxq "$(printf '%s\t%s' "$dir" "$name")" "$SCRATCH_DIR/registrations" ||
+				fail "$dir names Nakama collection $name but registers no schema ledger for that collection ($dir/testdata/shipped_<family>_collection.txt) — every persisted server family must join this gate"
+		done < <(grep -oE "$collection_pattern" "$file" | tr -d '"`' | sort -u)
 	done < <(awk '/^server\/.*\.go$/ && !/_test\.go$/ { print }' "$SCRATCH_DIR/head-paths")
 }
 
@@ -135,7 +158,7 @@ main() {
 
 	# A persisted family is registered by the code that persists it, so a store
 	# without a ledger is refused instead of never being discovered.
-	register_persisted_families
+	register_persisted_families "$base"
 
 	# Identity addressing has its own immutable fixture outside a version ledger.
 	require_file "$ADDRESS_CONTRACT"

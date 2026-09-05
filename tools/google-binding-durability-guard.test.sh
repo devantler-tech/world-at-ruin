@@ -45,6 +45,10 @@ printf '%s\n' '{"schema":1,"recipe":{"version":3,"body_type":"hero"}}' \
 printf '1\n' >"$audit_data/shipped_audit_versions.txt"
 printf '%s\n' '{"schema":1,"payload":{"item":"ash-blade"},"outcome":{"count":1}}' \
 	>"$audit_data/golden_audit_v1.json"
+printf 'world_at_ruin_google_identity_bindings\n' >"$data/shipped_google_binding_collection.txt"
+printf 'world_at_ruin_handoff_leases\n' >"$lease_data/shipped_lease_collection.txt"
+printf 'world_at_ruin_characters\n' >"$character_data/shipped_character_collection.txt"
+printf 'world_at_ruin_player_mutations\n' >"$audit_data/shipped_audit_collection.txt"
 git -C "$repo" add server/nakamaauth/testdata server/nakamalease/testdata \
 	server/nakamacharacter/testdata server/playerstate/testdata
 git -C "$repo" commit -qm 'ship binding schema one'
@@ -139,6 +143,7 @@ for invalid in 'not-json' '{}' '[]' '[{"schema":1},{"schema":2}]' '{"schema":"1"
 	expect_fail_matching "invalid new fixture [$invalid]" 'golden_progress_v1.json'
 done
 printf '{"schema":1,"progress":{"quest":7}}\n' >"$new_data/golden_progress_v1.json"
+printf 'world_at_ruin_progress\n' >"$new_data/shipped_progress_collection.txt"
 expect_pass 'complete new record family'
 
 git -C "$repo" add server/futurestore/testdata
@@ -168,7 +173,46 @@ printf '%s\n' 'package orphanstore' '' 'const Collection = "world_at_ruin_orphan
 mkdir -p "$repo/server/orphanstore/testdata"
 printf '1\n' >"$repo/server/orphanstore/testdata/shipped_orphan_versions.txt"
 printf '{"schema":1,"orphans":[]}\n' >"$repo/server/orphanstore/testdata/golden_orphan_v1.json"
+printf 'world_at_ruin_orphans\n' >"$repo/server/orphanstore/testdata/shipped_orphan_collection.txt"
 expect_pass 'registered new persisted family'
+
+# The actual collection, not merely the package, determines registration. An
+# existing ledger cannot hide a second family, even on the same source line.
+printf '%s\n' 'const Second = "world_at_ruin_unregistered"; const Third = "world_at_ruin_unregistered_raw"' \
+	>>"$repo/server/orphanstore/store.go"
+expect_fail_matching 'second collection in the same source file' 'world_at_ruin_unregistered'
+printf '%s\n' 'package orphanstore' 'const Collection = "world_at_ruin_orphans"' \
+	>"$repo/server/orphanstore/store.go"
+# The fixture contains a Go raw string, not shell command substitution.
+# shellcheck disable=SC2016
+printf '%s\n' 'package orphanstore' 'const Second = `world_at_ruin_unregistered`' \
+	>"$repo/server/orphanstore/second.go"
+expect_fail_matching 'raw collection in another file in the same package' 'world_at_ruin_unregistered'
+printf '1\n' >"$repo/server/orphanstore/testdata/shipped_second_versions.txt"
+printf '{"schema":1,"records":[]}\n' >"$repo/server/orphanstore/testdata/golden_second_v1.json"
+printf 'world_at_ruin_unrelated\n' >"$repo/server/orphanstore/testdata/shipped_second_collection.txt"
+expect_fail_matching 'an unrelated mapped ledger cannot cover a collection' 'world_at_ruin_unregistered'
+printf 'world_at_ruin_unregistered\n' >"$repo/server/orphanstore/testdata/shipped_second_collection.txt"
+expect_pass 'two collections with their own complete families'
+printf '%s\n' 'const Repeated = "world_at_ruin_orphans"' >>"$repo/server/orphanstore/second.go"
+expect_pass 'repeated collection use shares its one family'
+# shellcheck disable=SC2016
+printf '%s\n' 'const AlsoSecond = `world_at_ruin_unregistered`' >>"$repo/server/orphanstore/store.go"
+expect_pass 'both registered collections in one file'
+printf 'world_at_ruin_orphans\n' >"$repo/server/orphanstore/testdata/shipped_second_collection.txt"
+expect_fail_matching 'two ledgers cannot ambiguously register the same collection' 'registered by multiple schema ledgers'
+printf 'world_at_ruin_unregistered\n' >"$repo/server/orphanstore/testdata/shipped_second_collection.txt"
+for invalid in '' 'world_at_ruin_orphans\nworld_at_ruin_unregistered' 'world_at_ruin_orphans\n' 'garbage'; do
+	printf '%b\n' "$invalid" >"$repo/server/orphanstore/testdata/shipped_orphan_collection.txt"
+	expect_fail_matching "malformed collection mapping [$invalid]" 'malformed collection mapping'
+done
+rm "$repo/server/orphanstore/testdata/shipped_orphan_collection.txt"
+expect_fail_matching 'every ledger requires its collection mapping' 'shipped_orphan_collection.txt'
+ln -s "$data/shipped_google_binding_collection.txt" "$repo/server/orphanstore/testdata/shipped_orphan_collection.txt"
+expect_fail_matching 'collection mappings cannot be symlinks' 'symbolic link'
+reset_tree
+printf 'world_at_ruin_replacement\n' >"$audit_data/shipped_audit_collection.txt"
+expect_fail_matching 'shipped collection identity is immutable' 'collection mapping changed after it shipped'
 reset_tree
 
 git -C "$repo" rm -qr -- server
