@@ -41,7 +41,7 @@ type sidecar interface {
 	Health() error
 	Shutdown() error
 	GameServer() (*sdkproto.GameServer, error)
-	WatchGameServer(gosdk.GameServerCallback) error
+	WatchGameServer(context.Context, gosdk.GameServerCallback, func()) error
 	SetAnnotation(key, value string) error
 	SetLabel(key, value string) error
 }
@@ -53,7 +53,7 @@ var dial = func() (sidecar, error) {
 	if err != nil {
 		return nil, err
 	}
-	return s, nil
+	return &sdkSidecar{SDK: s}, nil
 }
 
 // Config tunes a Lifecycle. The zero value is production-correct.
@@ -68,11 +68,12 @@ type Config struct {
 // Lifecycle is a started conversation with the sidecar: Ready has been
 // sent and the health loop is beating. Stop it with Shutdown, exactly once.
 type Lifecycle struct {
-	mu   sync.Mutex // guards sdk: the health loop re-dials on stream loss
-	sdk  sidecar
-	logf func(format string, args ...any)
-	stop context.CancelFunc
-	done chan struct{}
+	mu      sync.Mutex // guards sdk: the health loop re-dials on stream loss
+	sdk     sidecar
+	logf    func(format string, args ...any)
+	stop    context.CancelFunc
+	done    chan struct{}
+	binding *claimBindingState
 }
 
 func (l *Lifecycle) getSDK() sidecar {
@@ -107,6 +108,10 @@ func Start(ctx context.Context, cfg Config) (*Lifecycle, error) {
 }
 
 func startHealth(ctx context.Context, s sidecar, cfg Config) *Lifecycle {
+	return startHealthWithBinding(ctx, s, cfg, nil)
+}
+
+func startHealthWithBinding(ctx context.Context, s sidecar, cfg Config, binding *claimBindingState) *Lifecycle {
 	interval := cfg.HealthInterval
 	if interval <= 0 {
 		interval = DefaultHealthInterval
@@ -119,7 +124,7 @@ func startHealth(ctx context.Context, s sidecar, cfg Config) *Lifecycle {
 	}
 
 	hctx, cancel := context.WithCancel(ctx)
-	l := &Lifecycle{sdk: s, logf: logf, stop: cancel, done: make(chan struct{})}
+	l := &Lifecycle{sdk: s, logf: logf, stop: cancel, done: make(chan struct{}), binding: binding}
 	go l.healthLoop(hctx, interval)
 	return l
 }
@@ -139,6 +144,9 @@ func (l *Lifecycle) healthLoop(ctx context.Context, interval time.Duration) {
 	defer t.Stop()
 	for {
 		if err := l.getSDK().Health(); err != nil {
+			// A re-dial does not reinstall the preparation watch. Its last
+			// snapshot cannot authorize new claims after sidecar continuity is lost.
+			l.binding.close()
 			l.logf("agones: health beat failed (%v) — re-dialling the sidecar", err)
 			if s, ok := l.redial(ctx); ok {
 				l.setSDK(s)
@@ -188,6 +196,7 @@ func (l *Lifecycle) redial(ctx context.Context) (sidecar, bool) {
 // sidecar the process is done — Agones then deletes the GameServer. Call it
 // exactly once, on every exit path of a flagged-on process.
 func (l *Lifecycle) Shutdown() error {
+	l.binding.close()
 	l.stop()
 	<-l.done
 	if err := l.getSDK().Shutdown(); err != nil {

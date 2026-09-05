@@ -39,6 +39,7 @@ type Sidecar struct {
 	watchCalls    int
 	annotationErr error
 	labelErr      error
+	watchEnd      chan struct{}
 
 	// Port the fake listens on (loopback only).
 	Port int
@@ -63,6 +64,7 @@ func Start(readyErr error) (*Sidecar, error) {
 		Port:     tcpAddr.Port,
 		srv:      grpc.NewServer(),
 		watchers: make(map[int]chan *sdkproto.GameServer),
+		watchEnd: make(chan struct{}),
 	}
 	sdkproto.RegisterSDKServer(f.srv, f)
 	go func() { _ = f.srv.Serve(lis) }()
@@ -102,6 +104,22 @@ func (f *Sidecar) SetGameServer(namespace, name, uid, state string) {
 		Status: &sdkproto.GameServer_Status{State: state},
 	}
 	f.broadcastLocked()
+}
+
+// PublishGameServer delivers a complete independent API snapshot to SDK watches.
+func (f *Sidecar) PublishGameServer(gs *sdkproto.GameServer) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.gameServer = proto.CloneOf(gs)
+	f.broadcastLocked()
+}
+
+// EndWatchStreams terminates watches without interrupting the health stream.
+func (f *Sidecar) EndWatchStreams() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	close(f.watchEnd)
+	f.watchEnd = make(chan struct{})
 }
 
 // HoldWatchEvents prevents WatchGameServer from yielding snapshots until
@@ -170,6 +188,7 @@ func (f *Sidecar) WatchGameServer(_ *sdkproto.Empty, stream sdkproto.SDK_WatchGa
 	f.watchCalls++
 	ch := make(chan *sdkproto.GameServer, 8)
 	f.watchers[id] = ch
+	watchEnd := f.watchEnd
 	if !f.holdWatches && f.gameServer != nil {
 		ch <- proto.CloneOf(f.gameServer)
 	}
@@ -182,6 +201,8 @@ func (f *Sidecar) WatchGameServer(_ *sdkproto.Empty, stream sdkproto.SDK_WatchGa
 
 	for {
 		select {
+		case <-watchEnd:
+			return nil
 		case <-stream.Context().Done():
 			return stream.Context().Err()
 		case gs := <-ch:

@@ -255,6 +255,8 @@ discovery-only documents remain v2.
 
 Capability 6 is the active vault-v4 quest-progress contract. Its optional `quests` object maps
 stable quest IDs to stable objective IDs and progress in the exact JSON integer range `0..2^53-1`.
+Vault writes use full numeric precision: parsed counters are floats, and the default JSON encoding
+can otherwise round an unrelated counter when an attunement, discovery, reward or quest is saved.
 `SaveVault` validates and preserves the whole nested shape; `Main` restores it into a boot-owned
 `QuestLog` before any quest definition registers. Known objectives get a clamped live view, while
 snapshots retain raw values and opaque future IDs so a rollback build cannot truncate newer progress.

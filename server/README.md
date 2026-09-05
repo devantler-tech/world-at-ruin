@@ -136,6 +136,20 @@ zone/dungeon server:
   tracker/encoder and Godot decoder/store/connection agree on exact frames.
   It exists as a pinned contract *before* transport selection, so the socket
   child builds against a settled format instead of inventing one.
+- **`zoneclaim/`** — the latent **zone handoff admission gate**: compose
+  `zoneclaim.New(prepared, privateClaimer)` with `zonesock.NewClaimedHub` to
+  require a private durable claim before upgrading a socket. The prepared
+  Agones watch supplies the exact sealed resource identity, canonical lease
+  locator and attempt digest; player requests cannot choose that route.
+  The gate rechecks the observation revision after the claim, including an
+  invalidation followed by identical metadata. The hub refuses malformed
+  upgrades before claiming and rechecks token expiry and cancellation before
+  admission. Its default claim deadline is five seconds (maximum thirty).
+  The injected claimant must honor its context, authenticate the workload,
+  independently verify the token and conditionally claim the exact lease.
+  Ambiguous or failed upgrades retain any committed claim for fenced
+  session-end recovery. No production endpoint or command selects this
+  composition yet; `zonesock.NewHub` retains local token-only admission.
 - **`agones/`** — the **Agones GameServer lifecycle**: what makes the zone
   binary deployable on the fleet. Agones's contract is hard — a GameServer that
   never calls `Ready` is never allocated, and one that stops calling `Health`
@@ -365,13 +379,15 @@ of the Phase 1 epic [#8](https://github.com/devantler-tech/world-at-ruin/issues/
 the concrete resource adapter that composes `agonesalloc`, `gameserverapi`,
 `admissionref`, and the zone-side sealed-envelope lifecycle in
 [ADR 0002](../docs/adr/0002-seal-zone-admission-secrets-before-readiness.md),
-the zone admission claim adapter, Nakama RPC registration that exposes the
+the authenticated private zone claim endpoint and fenced session-end recovery,
+Nakama RPC registration that exposes the
 handoff service, the client entry point that enables Google account
 provisioning, the rest of the Nakama social/chat/storage surface, client
 prediction and reconciliation, real navmesh geometry, and Postgres/CNPG
 persistence. Zone boot already generates, publishes and observes the sealed
 envelope; allocation metadata validation, coordinator unwrap/recovery and
-private claim behavior are not composed yet. The tick core, socket, client
+production claim behavior are not composed yet. The zone's observed-locator
+claim gate is available for that composition. The tick core, socket, client
 replica store, Agones lifecycle, default-off Nakama account provisioning and
 session verification, allocation API boundary, exact-UID GameServer resource
 boundary, private lease store, durable handoff coordinator and fail-closed
