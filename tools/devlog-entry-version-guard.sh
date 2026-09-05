@@ -85,9 +85,14 @@ version_gt() {
 	return 1
 }
 
+# The glob every release-tag lookup in this file uses, so the forward-looking
+# rule, the containment index and its fallback cannot disagree about what counts
+# as a release. It admits a prerelease suffix; is_version refuses that.
+RELEASE_TAG_GLOB='v[0-9]*.[0-9]*.[0-9]*'
+
 # The release tags this checkout can see, as bare versions.
 released_versions() {
-	git tag --list 'v[0-9]*.[0-9]*.[0-9]*' | sed 's/^v//'
+	git tag --list "$RELEASE_TAG_GLOB" | sed 's/^v//'
 }
 
 # The highest version on stdin. Empty when nothing on stdin is a version, which
@@ -116,12 +121,131 @@ oldest_version() {
 	printf '%s' "$oldest"
 }
 
+# Every release tag this checkout can see, one `<commit> <version>` per line
+# with annotated tags peeled to the commit they name. Empty when the checkout
+# has no release tag; non-zero when git could not read the tags, which a caller
+# must treat as "no index", never as "no releases". is_version drops what the
+# glob admits but oldest_version would refuse, so the index only ever answers
+# with a version the per-anchor lookup it stands in for could return.
+release_tag_commits() {
+	local refs sha peeled name version
+	refs=$(git for-each-ref --format='%(objectname)|%(*objectname)|%(refname:short)' \
+		"refs/tags/$RELEASE_TAG_GLOB") || return 1
+	while IFS='|' read -r sha peeled name; do
+		[ -n "$name" ] || continue
+		version=${name#v}
+		is_version "$version" || continue
+		printf '%s %s\n' "${peeled:-$sha}" "$version"
+	done <<<"$refs"
+}
+
+# One `<commit> <version>` line for every commit some release contains, naming
+# the LOWEST release that contains it — what `git tag --contains` piped through
+# oldest_version answers, computed for the whole history in one walk instead of
+# once per anchor (#602). `git rev-list --children --topo-order` over every
+# tagged commit prints each commit after all of its children, so a commit's
+# answer is the lowest of the tag on itself and its children's answers;
+# containment is exactly reachability through children, across a fork in the
+# history as much as along a straight line. A commit no release contains gets
+# no line. Non-zero when git could not enumerate the tags or the history, and
+# then NOTHING is printed: a partial index would be a wrong one.
+build_containment_index() {
+	local tags commits
+	tags=$(release_tag_commits) || return 1
+	[ -n "$tags" ] || return 0
+	# shellcheck disable=SC2046 # commit ids never contain whitespace
+	commits=$(git rev-list --children --topo-order $(printf '%s\n' "$tags" | cut -d' ' -f1)) || return 1
+	# lt orders versions exactly as version_gt does; the equivalence case in
+	# devlog-entry-version-guard.test.sh holds the two together.
+	awk '
+		function lt(a, b,   x, y, i) {
+			split(a, x, "."); split(b, y, ".")
+			for (i = 1; i <= 3; i++) {
+				if (x[i] + 0 < y[i] + 0) return 1
+				if (x[i] + 0 > y[i] + 0) return 0
+			}
+			return 0
+		}
+		function take(sha, v) {
+			if (v != "" && (first[sha] == "" || lt(v, first[sha]))) first[sha] = v
+		}
+		FNR == NR { take($1, $2); next }
+		{
+			for (i = 2; i <= NF; i++) take($1, first[$i])
+			if (first[$1] != "") print $1, first[$1]
+		}' <(printf '%s\n' "$tags") <(printf '%s\n' "$commits")
+}
+
+# Path of the index file for the release tags this checkout sees RIGHT NOW,
+# built when absent. It lives under the repository's common git directory,
+# named by the hash of every release-tag ref and the object it points at, so a
+# tag created, moved or deleted while a run is under way hashes to a name no
+# file has and the next lookup rebuilds — never an answer from a stale index.
+# The key reads refs only, never objects, so it cannot fail on a checkout whose
+# history is incomplete. A file rather than a shell variable because every
+# caller reads this through a command substitution, whose subshell discards a
+# variable the moment it returns, and the whole saving is that one walk serves
+# every lookup. Only the current tag set's file is kept, so the cache never
+# grows; a concurrent run in another worktree that loses its file to that sweep
+# simply rebuilds. Non-zero when no index can be had — the tags or history
+# unreadable, or nowhere writable to keep the file — and then nothing is cached,
+# so a broken build is never remembered as an answer.
+containment_index_file() {
+	local refs key dir file tmp index
+	refs=$(git for-each-ref --format='%(objectname) %(refname)' "refs/tags/$RELEASE_TAG_GLOB" 2>/dev/null) || return 1
+	key=$(printf '%s\n' "$refs" | git hash-object --stdin 2>/dev/null) || return 1
+	dir=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+	dir="$dir/devlog-containment-index"
+	file="$dir/$key"
+	if [ -f "$file" ]; then
+		printf '%s\n' "$file"
+		return 0
+	fi
+	index=$(build_containment_index 2>/dev/null) || return 1
+	mkdir -p "$dir" 2>/dev/null || return 1
+	tmp=$(mktemp "$dir/.tmp.XXXXXX" 2>/dev/null) || return 1
+	if printf '%s\n' "$index" >"$tmp" 2>/dev/null && mv -f "$tmp" "$file" 2>/dev/null; then
+		find "$dir" -type f ! -name "$key" ! -name '.tmp.*' -delete 2>/dev/null || true
+		printf '%s\n' "$file"
+		return 0
+	fi
+	rm -f "$tmp" 2>/dev/null || true
+	return 1
+}
+
+# Resolves the index once for this process and exports its path, so every
+# later first_release_containing in the process opens the file directly instead
+# of re-deriving the key: two processes per lookup instead of five. Each entry
+# point calls this once, outside any command substitution, before its first
+# lookup. A process that changed tags after priming would keep reading the file
+# it primed; neither entry point writes a tag, and a caller that does must not
+# prime. Harmless when no index can be had — lookups then fall back.
+prime_containment_index() {
+	local file
+	if file=$(containment_index_file 2>/dev/null); then
+		export DEVLOG_CONTAINMENT_INDEX_FILE="$file"
+	fi
+}
+
 # The first release containing $1, as a bare version. Empty when no release
 # contains it — which is the honest answer for a change that has not shipped,
-# not a reason to pass.
+# not a reason to pass — and empty for a name that is not a commit here. Reads
+# the primed index when there is one, else the index for the current tags, else
+# asks git the one-walk way for this call alone: a lookup never fails and never
+# answers from an index it could not build. Always exits 0, because callers
+# assign its output under `set -e`.
 first_release_containing() {
-	git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --contains "$1" 2>/dev/null |
-		sed 's/^v//' | oldest_version
+	local sha file
+	sha=$(git rev-parse -q --verify "$1^{commit}" 2>/dev/null) || return 0
+	file=${DEVLOG_CONTAINMENT_INDEX_FILE:-}
+	if [ -z "$file" ] || [ ! -f "$file" ]; then
+		file=$(containment_index_file 2>/dev/null) || file=''
+	fi
+	if [ -n "$file" ] && awk -v sha="$sha" '$1 == sha { print $2; exit }' "$file" 2>/dev/null; then
+		return 0
+	fi
+	git tag --list "$RELEASE_TAG_GLOB" --contains "$sha" 2>/dev/null |
+		sed 's/^v//' | oldest_version || return 0
 }
 
 # The lowest release strictly above $1. Empty when $1 is above every release.
@@ -304,6 +428,7 @@ main() {
 	[ -n "$base" ] || fail 'BASE_SHA is unset — cannot tell which entries this change adds'
 	git cat-file -e "$base" 2>/dev/null ||
 		fail "base commit $base is not present in the checkout — cannot verify entry versions"
+	prime_containment_index
 
 	# The shared resolver distinguishes the forge's merge ref from a contributor
 	# whose own head is a merge commit. CI supplies the event head explicitly.

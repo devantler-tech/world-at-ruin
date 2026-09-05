@@ -84,6 +84,8 @@ cd "$ROOT"
 # so the sweep can never disagree with the check it feeds.
 # shellcheck source=/dev/null
 source "$ROOT/tools/devlog-entry-version-guard.sh"
+# One index for the whole run: every lookup below reads it directly.
+prime_containment_index
 
 # An unrecognised argument is an error rather than a silent survey: a typo'd
 # `--gate` in CI would otherwise exit 0 on every run and read as a passing gate
@@ -208,9 +210,9 @@ introducing_commit() {
 	# A lone candidate cannot be ranked against anything, and both branches below
 	# select it regardless of what it contains — so the containment lookup is
 	# skipped rather than computed and discarded. This is the ordinary case (every
-	# entry in this repository today) and the lookup is the expensive half: it
-	# shells out to `git tag --contains` per candidate, which the caller then
-	# repeats on the anchor it gets back.
+	# entry in this repository today). The lookup reads the guard's containment
+	# index, built once per tag set, so the skip is about not asking a question
+	# whose answer is unused rather than about its cost.
 	if [ "$out" = "${out%%$'\n'*}" ]; then
 		printf '%s' "$out"
 		return 0

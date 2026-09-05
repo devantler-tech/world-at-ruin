@@ -509,6 +509,110 @@ corrections client/devlog/0.59.0.json "$feature"
 commit_all 'edit the prose of a shipped, unlisted entry'
 expect_pass 'an unlisted entry modified in place is still unchecked'
 
+# --- Containment index: one walk per tag set, never a stale answer --------
+# first_release_containing answers from an index built by one history walk and
+# keyed to the tag refs it saw (#602). Three properties are pinned here, driving
+# the sourced function directly. Equivalence: on every commit the index gives
+# exactly what `git tag --contains` piped through oldest_version gives — the
+# property every caller relies on — including across a fork in the history.
+# Freshness: a tag created, deleted or moved between two lookups in ONE shell is
+# seen by the second, so a release cut while a run is under way is never
+# answered from the walk that predates it. Safety: a lookup while the index
+# cannot be built still answers, from the tags directly, and caches nothing. A
+# private clone keeps these tags out of the corrections fixture the cases above
+# share.
+index_repo="$scratch/containment"
+git clone -q "$repo" "$index_repo"
+git -C "$index_repo" config user.email t@example.com
+git -C "$index_repo" config user.name t
+old_first_release_containing() {
+	git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --contains "$1" 2>/dev/null |
+		sed 's/^v//' | oldest_version
+}
+expect_containment() {
+	local got
+	got="$(first_release_containing "$2")"
+	[ "$got" = "$3" ] || t_fail "$1: first_release_containing gave '$got', want '$3'"
+}
+expect_index_matches_old_lookup() {
+	local sha
+	while IFS= read -r sha; do
+		[ "$(first_release_containing "$sha")" = "$(old_first_release_containing "$sha")" ] ||
+			t_fail "$1: index and \`git tag --contains\` disagree on $sha"
+	done < <(git rev-list --all)
+}
+pushd "$index_repo" >/dev/null
+# Priming resolves the index once for the process and exports its path under
+# the common git directory; a primed lookup answers exactly as an unprimed one.
+unset DEVLOG_CONTAINMENT_INDEX_FILE
+prime_containment_index
+[ -f "${DEVLOG_CONTAINMENT_INDEX_FILE:-}" ] ||
+	t_fail "priming did not export an existing index file: '${DEVLOG_CONTAINMENT_INDEX_FILE:-}'"
+case "${DEVLOG_CONTAINMENT_INDEX_FILE:-}" in
+"$(git rev-parse --path-format=absolute --git-common-dir)/devlog-containment-index/"*) ;;
+*) t_fail "the primed index is not under the common git directory: '${DEVLOG_CONTAINMENT_INDEX_FILE:-}'" ;;
+esac
+# The anchored change is in v0.60.0 AND v0.61.4; the lowest wins, as before.
+expect_containment 'a primed lookup: the lowest of several containing releases' "$feature" 0.60.0
+unset DEVLOG_CONTAINMENT_INDEX_FILE
+expect_containment 'the lowest of several containing releases' "$feature" 0.60.0
+expect_index_matches_old_lookup 'the fixture history as cloned'
+# A second child on the feature commit, tagged lower than anything on the main
+# line: containment follows every child of a fork, not only the first.
+main_branch="$(git branch --show-current)"
+git checkout -q -b side "$feature"
+git commit -q --allow-empty -m 'side'
+git tag v0.59.5
+git checkout -q "$main_branch"
+expect_containment 'a lower release on a second child' "$feature" 0.59.5
+expect_containment 'a commit the side branch does not reach' "$base" 0.61.4
+# While the index cannot be built, a lookup answers from the tags directly for
+# that call and leaves no cache file behind, so a broken build is never
+# remembered as an answer.
+index_dir="$(git rev-parse --path-format=absolute --git-common-dir)/devlog-containment-index"
+rm -rf "$index_dir"
+# shellcheck disable=SC2329 # invoked indirectly: it shadows git for the lookups below
+git() {
+	[ "${1:-}" != rev-list ] || return 128
+	command git "$@"
+}
+expect_containment 'a lookup while the index cannot be built' "$feature" 0.59.5
+unset -f git
+[ -z "$(ls -A "$index_dir" 2>/dev/null)" ] || t_fail 'a failed index build left a cache file behind'
+expect_containment 'the lookup once the index builds again' "$feature" 0.59.5
+# A commit no release contains, then a lightweight tag cut on it after the
+# index was already built for this shell.
+git commit -q --allow-empty -m 'pending'
+pending="$(git rev-parse HEAD)"
+expect_containment 'an unreleased commit' "$pending" ''
+git tag v0.61.5
+expect_containment 'a tag created after the first lookup' "$pending" 0.61.5
+# An annotated tag names a tag object; the index must peel it to the commit.
+git commit -q --allow-empty -m 'annotated'
+annotated="$(git rev-parse HEAD)"
+git tag -a v0.61.6 -m 'release'
+expect_containment 'an annotated tag, peeled' "$annotated" 0.61.6
+# A prerelease matches the tag glob and must still not count, exactly as
+# oldest_version refuses it in the old lookup.
+git commit -q --allow-empty -m 'candidate'
+candidate="$(git rev-parse HEAD)"
+git tag v0.61.7-rc.1
+expect_containment 'a prerelease tag is not a release' "$candidate" ''
+git tag v0.61.7
+expect_containment 'the stable tag beside the prerelease' "$candidate" 0.61.7
+# Deleting a tag re-answers from the next release that contains the commit.
+git tag -d v0.61.5 >/dev/null
+expect_containment 'a tag deleted after a lookup' "$pending" 0.61.6
+# Moving a tag is a delete plus a create: v0.61.6 pulled back onto the base no
+# longer contains the commits after it, so they fall through to v0.61.7.
+git tag -f v0.61.6 "$base" >/dev/null
+expect_containment 'a tag moved after a lookup' "$annotated" 0.61.7
+expect_containment 'a tag moved after a lookup, earlier commit' "$pending" 0.61.7
+expect_containment 'a tag moved onto a commit already released' "$base" 0.61.4
+expect_containment 'a name that is not a commit' not-a-commit ''
+expect_index_matches_old_lookup 'the fixture history after every tag change'
+popd >/dev/null
+
 # --- Layer 3: wiring ------------------------------------------------------
 # A correct guard that CI never runs passes all of the above and protects
 # nothing, so the wiring is asserted rather than assumed.
