@@ -521,3 +521,59 @@ func TestHoldsReportsOnlyRetainedKeys(t *testing.T) {
 		t.Fatal("a nil keyring reported a key")
 	}
 }
+
+// TestFingerprintMatchesTheMetadataDigest checks the exported derivation equals
+// the digest the zone publishes and the keyring indexes by.
+func TestFingerprintMatchesTheMetadataDigest(t *testing.T) {
+	key := generatedKeys(t)[0]
+	got, err := Fingerprint(&key.PublicKey)
+	if err != nil {
+		t.Fatalf("Fingerprint returned error: %v", err)
+	}
+	if want := keyFingerprint(t, key); got != want {
+		t.Fatalf("Fingerprint = %q, want %q", got, want)
+	}
+	if !newTestKeyring(t, key).Holds(got) {
+		t.Fatal("the keyring does not hold the fingerprint it was built from")
+	}
+}
+
+// TestReferenceBindsPinsUIDAndEnvelopeOnly checks that the cleanup-side proof
+// keys on the UID digest and ciphertext digest alone, so a changed port, key
+// or node never blocks a release while a changed UID or envelope always does.
+func TestReferenceBindsPinsUIDAndEnvelopeOnly(t *testing.T) {
+	key := generatedKeys(t)[0]
+	material := validMaterial(t, key, testAdmissionSecret())
+	reference := expectedReference(t, material)
+
+	if !ReferenceBinds(reference, material.GameServerUID, material.AdmissionEnvelope) {
+		t.Fatal("ReferenceBinds refused the material the reference was minted from")
+	}
+	otherPort := strings.Replace(reference, ".p"+"8443", ".p9443", 1)
+	if otherPort == reference {
+		t.Fatalf("test reference %q did not carry the expected port", reference)
+	}
+	if !ReferenceBinds(otherPort, material.GameServerUID, material.AdmissionEnvelope) {
+		t.Fatal("ReferenceBinds demanded the port, which cleanup must not need")
+	}
+	otherKey := strings.Replace(reference, ".k"+material.WrappingKeyFingerprint, ".k"+strings.Repeat("a", 52), 1)
+	if !ReferenceBinds(otherKey, material.GameServerUID, material.AdmissionEnvelope) {
+		t.Fatal("ReferenceBinds demanded the key, which cleanup must not need")
+	}
+	if ReferenceBinds(reference, "other-uid", material.AdmissionEnvelope) {
+		t.Fatal("ReferenceBinds accepted a changed UID")
+	}
+	resealed := validMaterial(t, key, []byte("fedcba9876543210fedcba9876543210"))
+	if ReferenceBinds(reference, material.GameServerUID, resealed.AdmissionEnvelope) {
+		t.Fatal("ReferenceBinds accepted a re-sealed envelope")
+	}
+	for _, malformed := range []string{"", "v1.k.u.e", "v2." + reference[3:], reference + ".x"} {
+		if ReferenceBinds(malformed, material.GameServerUID, material.AdmissionEnvelope) {
+			t.Fatalf("ReferenceBinds accepted malformed reference %q", malformed)
+		}
+	}
+	if ReferenceBinds(reference, material.GameServerUID, "v1.not-base64!") ||
+		ReferenceBinds(reference, "uid/1", material.AdmissionEnvelope) {
+		t.Fatal("ReferenceBinds accepted malformed material")
+	}
+}

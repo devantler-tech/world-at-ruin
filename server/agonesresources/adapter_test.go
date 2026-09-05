@@ -6,8 +6,6 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
-	"crypto/x509"
-	"encoding/base32"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -85,18 +83,15 @@ func testPrivateKey(t *testing.T) *rsa.PrivateKey {
 	return testKey
 }
 
-// fingerprintOf derives the lowercase base32 SPKI digest used by the fixture's
-// allocation selector and sealed GameServer metadata.
+// fingerprintOf derives the canonical wrapping-key fingerprint the fixture's
+// allocation selector and sealed GameServer metadata carry.
 func fingerprintOf(t *testing.T, key *rsa.PrivateKey) string {
 	t.Helper()
-	der, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	fingerprint, err := admissionref.Fingerprint(&key.PublicKey)
 	if err != nil {
-		t.Fatalf("marshal test public key: %v", err)
+		t.Fatalf("fingerprint test key: %v", err)
 	}
-	digest := sha256.Sum256(der)
-	return strings.ToLower(
-		base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(digest[:]),
-	)
+	return fingerprint
 }
 
 // secretFor is the admission secret the fixture seals for one GameServer name,
@@ -259,9 +254,7 @@ func newFixture(t *testing.T, mutate func(*Config)) *fixture {
 // with short observation windows that keep timeout tests bounded.
 func (f *fixture) config() Config {
 	return Config{
-		Namespace:              testNamespace,
-		WrappingKeyFingerprint: f.fingerprint,
-		ZoneDomain:             testZoneDomain,
+		ZoneDomain: testZoneDomain,
 		Observer: func(handoff.AllocationRequest) (sim.EntityID, error) {
 			return testObserver, nil
 		},
@@ -299,7 +292,7 @@ func (f *fixture) readyGameServer(name string, uid types.UID) *agonesv1.GameServ
 			UID:       uid,
 			Labels: map[string]string{
 				agones.FleetLabel:          testFleet,
-				agones.AdmissionReadyLabel: "v1-" + f.fingerprint,
+				agones.AdmissionReadyLabel: agones.AdmissionReadyValue(f.fingerprint),
 			},
 			Annotations: map[string]string{
 				agones.AdmissionEnvelopeAnnotation: sealedEnvelope(
@@ -1193,24 +1186,17 @@ func TestObserverBindingFailuresNeverDispatch(t *testing.T) {
 	}
 }
 
-// TestNewAdapterRefusesAnInvalidComposition checks dependency, identity, key and
-// timing validation, plus normalization of a trailing dot in the zone domain.
+// TestNewAdapterRefusesAnInvalidComposition checks dependency, key and timing
+// validation, plus normalization of case and a trailing dot in the zone domain.
 func TestNewAdapterRefusesAnInvalidComposition(t *testing.T) {
 	f := newFixture(t, nil)
-	otherKey, err := rsa.GenerateKey(rand.Reader, 3072)
-	if err != nil {
-		t.Fatalf("generate second key: %v", err)
-	}
 	tests := []struct {
 		name   string
 		mutate func(*Config)
 	}{
-		{name: "namespace", mutate: func(cfg *Config) { cfg.Namespace = "World" }},
-		{name: "fingerprint shape", mutate: func(cfg *Config) { cfg.WrappingKeyFingerprint = "short" }},
-		{name: "fingerprint not held", mutate: func(cfg *Config) { cfg.WrappingKeyFingerprint = fingerprintOf(t, otherKey) }},
 		{name: "zone domain empty", mutate: func(cfg *Config) { cfg.ZoneDomain = "" }},
 		{name: "zone domain is an address", mutate: func(cfg *Config) { cfg.ZoneDomain = "10.0.0.1" }},
-		{name: "zone domain uppercase", mutate: func(cfg *Config) { cfg.ZoneDomain = "Zones.Example" }},
+		{name: "zone domain malformed", mutate: func(cfg *Config) { cfg.ZoneDomain = "zones_example" }},
 		{name: "observer", mutate: func(cfg *Config) { cfg.Observer = nil }},
 		{name: "timeout too long", mutate: func(cfg *Config) { cfg.ObservationTimeout = 2 * time.Minute }},
 		{name: "interval longer than timeout", mutate: func(cfg *Config) {
@@ -1237,11 +1223,18 @@ func TestNewAdapterRefusesAnInvalidComposition(t *testing.T) {
 	if _, err := NewAdapter(f.adapter.allocator, f.adapter.resources, nil, f.config()); err == nil {
 		t.Fatal("NewAdapter accepted a nil keyring")
 	}
+	foreign, err := admissionref.NewKeyring(previousPrivateKey(t))
+	if err != nil {
+		t.Fatalf("NewKeyring: %v", err)
+	}
+	if _, err := NewAdapter(f.adapter.allocator, f.adapter.resources, foreign, f.config()); err == nil {
+		t.Fatal("NewAdapter accepted a keyring that cannot open the pool the allocator selects")
+	}
 	cfg := f.config()
-	cfg.ZoneDomain = testZoneDomain + "."
+	cfg.ZoneDomain = "Zones.Example."
 	adapter, err := NewAdapter(f.adapter.allocator, f.adapter.resources, f.keyring, cfg)
 	if err != nil || adapter.zoneDomain != testZoneDomain {
-		t.Fatalf("a trailing dot was not normalized: %+v, %v", adapter, err)
+		t.Fatalf("case and a trailing dot were not normalized like the handoff service: %+v, %v", adapter, err)
 	}
 }
 
@@ -1335,7 +1328,7 @@ func (f *fixture) allocatedUnder(
 ) *agonesv1.GameServer {
 	fingerprint := fingerprintOf(f.t, key)
 	gameServer := f.allocatedGameServer(name, uid, testAttemptID)
-	gameServer.Labels[agones.AdmissionReadyLabel] = "v1-" + fingerprint
+	gameServer.Labels[agones.AdmissionReadyLabel] = agones.AdmissionReadyValue(fingerprint)
 	gameServer.Annotations[agones.AdmissionKeyAnnotation] = fingerprint
 	gameServer.Annotations[agones.AdmissionEnvelopeAnnotation] = sealedEnvelope(
 		f.t, key, name, uid, fingerprint, secretFor(name),
@@ -1417,4 +1410,78 @@ func TestAKeyTheKeyringNoLongerHoldsIsRefusedButStillReleasable(t *testing.T) {
 	if err != nil || f.exists("zone-retired") {
 		t.Fatalf("attempt-only release left the retired-key object: %v", err)
 	}
+}
+
+// TestReleaseNeedsOnlyTheUIDAndEnvelopeDigests checks that release proves
+// what the lease pinned — UID digest and envelope digest — without demanding
+// the state, port, node or key that adoption needs, so an object Agones has
+// moved on from, or one sealed under a key the keyring no longer holds, is
+// still deleted; while a re-sealed object under the same UID is left alone.
+func TestReleaseNeedsOnlyTheUIDAndEnvelopeDigests(t *testing.T) {
+	t.Run("port-less object is still deleted", func(t *testing.T) {
+		f := newFixture(t, nil)
+		f.seed(f.readyGameServer("zone-1", "uid-1"))
+		lease, _ := provisionedLease(t, f)
+		gs := f.stored("zone-1").DeepCopy()
+		gs.Status.State = agonesv1.GameServerStateShutdown
+		gs.Status.Ports = nil
+		gs.Status.NodeName = ""
+		f.replace(gs)
+
+		if err := f.adapter.Release(context.Background(), lease); err != nil {
+			t.Fatalf("Release returned an error: %v", err)
+		}
+		if uids := f.deletedUIDs(); len(uids) != 1 || uids[0] != "uid-1" {
+			t.Fatalf("deleted UIDs = %v, want [uid-1]", uids)
+		}
+		if f.exists("zone-1") {
+			t.Fatal("Release orphaned an owned object because its port was gone")
+		}
+	})
+	t.Run("retired key object is still deleted by its lease", func(t *testing.T) {
+		f := newFixture(t, nil)
+		retired := previousPrivateKey(t)
+		f.seed(f.allocatedUnder(retired, "zone-retired", "uid-retired"))
+		reference, err := admissionref.Reference(admissionref.Material{
+			Namespace:              testNamespace,
+			GameServerName:         "zone-retired",
+			GameServerUID:          "uid-retired",
+			WrappingKeyFingerprint: fingerprintOf(t, retired),
+			AdmissionEnvelope:      f.stored("zone-retired").Annotations[agones.AdmissionEnvelopeAnnotation],
+			TLSPort:                testTLSPort,
+		})
+		if err != nil {
+			t.Fatalf("Reference: %v", err)
+		}
+
+		err = f.adapter.Release(context.Background(), nakamalease.Lease{
+			UserID:        testUserID,
+			ReservationID: testReservationID,
+			AttemptID:     testAttemptID,
+			AllocationID:  "zone-retired",
+			Observer:      testObserver,
+			SecretRef:     reference,
+			ExpiresAt:     testExpiry,
+		})
+		if err != nil || f.exists("zone-retired") {
+			t.Fatalf("Release refused an object whose key was retired: %v", err)
+		}
+	})
+	t.Run("re-sealed object under the same UID is untouched", func(t *testing.T) {
+		f := newFixture(t, nil)
+		f.seed(f.readyGameServer("zone-1", "uid-1"))
+		lease, _ := provisionedLease(t, f)
+		gs := f.stored("zone-1").DeepCopy()
+		gs.Annotations[agones.AdmissionEnvelopeAnnotation] = sealedEnvelope(
+			f.t, f.key, "zone-1", "uid-1", f.fingerprint, secretFor("re-sealed"),
+		)
+		f.replace(gs)
+
+		if err := f.adapter.Release(context.Background(), lease); err != nil {
+			t.Fatalf("Release returned an error: %v", err)
+		}
+		if f.actions("delete") != 0 || !f.exists("zone-1") {
+			t.Fatal("Release deleted an object whose envelope the lease never pinned")
+		}
+	})
 }

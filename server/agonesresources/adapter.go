@@ -44,73 +44,50 @@ const (
 	MaxObservationTimeout = time.Minute
 	// DefaultObservationInterval paces the read-after-allocation retries.
 	DefaultObservationInterval = 250 * time.Millisecond
-
-	// duplicateCleanupTimeout bounds the release of duplicate matches so it
-	// survives the caller's cancellation, mirroring the coordinator's own
-	// staged-cleanup budget.
-	duplicateCleanupTimeout = 5 * time.Second
-	admissionReadyPrefix    = "v1-"
-	fingerprintLength       = 52
 )
 
-// Sentinel outcomes carry the gRPC code the coordinator sanitizes them to, so
-// a caller learns whether to retry without receiving any resource detail.
+// Sentinel outcomes are gRPC status errors, so status.Code reports the class
+// through the coordinator's sanitized error path and errors.Is still matches
+// them after wrapping, without any resource detail reaching a caller.
 var (
 	// ErrAmbiguousDispatch means an allocation may have committed but no exact
 	// attempt-labelled GameServer is observable yet. The attempt stays
 	// quarantined; the adapter never dispatches it again.
-	ErrAmbiguousDispatch = &codedError{
-		code:    codes.Unavailable,
-		message: "agones resources: allocation outcome is not yet observable",
-	}
+	ErrAmbiguousDispatch = status.Error(
+		codes.Unavailable,
+		"agones resources: allocation outcome is not yet observable",
+	)
 	// ErrDuplicateAttempt means more than one GameServer carried the exact
 	// attempt label. Every match was released by its own UID precondition and
 	// the attempt fails closed.
-	ErrDuplicateAttempt = &codedError{
-		code:    codes.Aborted,
-		message: "agones resources: attempt matched more than one GameServer",
-	}
+	ErrDuplicateAttempt = status.Error(
+		codes.Aborted,
+		"agones resources: attempt matched more than one GameServer",
+	)
 	// ErrInvalidResource means the exact GameServer exists but its identity,
 	// state, label, port, key or envelope no longer matches what the attempt or
 	// lease pinned. It is never repaired in place.
-	ErrInvalidResource = &codedError{
-		code:    codes.FailedPrecondition,
-		message: "agones resources: GameServer does not match the durable attempt",
-	}
+	ErrInvalidResource = status.Error(
+		codes.FailedPrecondition,
+		"agones resources: GameServer does not match the durable attempt",
+	)
 	// ErrNotFound means the exact GameServer a lease names no longer exists.
-	ErrNotFound = &codedError{
-		code:    codes.NotFound,
-		message: "agones resources: GameServer not found",
-	}
+	ErrNotFound = status.Error(codes.NotFound, "agones resources: GameServer not found")
+
+	errAPIUnavailable = status.Error(
+		codes.Unavailable,
+		"agones resources: GameServer API is unavailable",
+	)
 )
 
-type codedError struct {
-	code    codes.Code
-	message string
-}
-
-// Error returns the fixed public outcome message without resource details.
-func (e *codedError) Error() string {
-	return e.message
-}
-
-// GRPCStatus lets status.Code report the outcome class through the
-// coordinator's sanitized error path.
-func (e *codedError) GRPCStatus() *status.Status {
-	return status.New(e.code, e.message)
-}
-
-// Config binds the adapter to one namespace, one current wrapping key, the
-// managed zone domain and the observer-binding policy.
+// Config binds the adapter to the managed zone domain and the observer-binding
+// policy. The namespace, Fleet and current wrapping key come from the composed
+// clients, so there is no second copy to keep in agreement.
 type Config struct {
-	// Namespace is the GameServer namespace both boundaries operate in.
-	Namespace string
-	// WrappingKeyFingerprint selects the current envelope-ready pool and must
-	// name a key the keyring holds.
-	WrappingKeyFingerprint string
 	// ZoneDomain is the managed zone-edge domain; a handoff advertises
 	// <node name>.<ZoneDomain> because certificates bind node names, never a
-	// GameServer's address.
+	// GameServer's address. It is lower-cased and a trailing dot is dropped,
+	// exactly as the handoff service normalizes the same value.
 	ZoneDomain string
 	// Observer decides which simulated entity an allocation binds the player
 	// to. Observer binding is a composition decision this adapter does not own,
@@ -129,8 +106,6 @@ type Adapter struct {
 	allocator           *agonesalloc.Client
 	resources           *gameserverapi.Client
 	keyring             *admissionref.Keyring
-	namespace           string
-	fingerprint         string
 	zoneDomain          string
 	observer            func(handoff.AllocationRequest) (sim.EntityID, error)
 	observationTimeout  time.Duration
@@ -139,9 +114,9 @@ type Adapter struct {
 
 var _ handoffalloc.GameServerResources = (*Adapter)(nil)
 
-// NewAdapter validates the composition and refuses a current fingerprint the
-// keyring cannot open, so the adapter never allocates a GameServer whose
-// envelope it could not resolve.
+// NewAdapter validates the composition and refuses a keyring that cannot open
+// the pool the allocation client selects, so the adapter never allocates a
+// GameServer whose envelope it could not resolve.
 func NewAdapter(
 	allocator *agonesalloc.Client,
 	resources *gameserverapi.Client,
@@ -157,16 +132,10 @@ func NewAdapter(
 	if keyring == nil {
 		return nil, errors.New("agones resources: admission keyring is required")
 	}
-	if len(validation.IsDNS1123Label(cfg.Namespace)) != 0 {
-		return nil, errors.New("agones resources: namespace is invalid")
-	}
-	if !validFingerprint(cfg.WrappingKeyFingerprint) {
-		return nil, errors.New("agones resources: wrapping-key fingerprint is invalid")
-	}
-	if !keyring.Holds(cfg.WrappingKeyFingerprint) {
+	if !keyring.Holds(allocator.WrappingKeyFingerprint()) {
 		return nil, errors.New("agones resources: keyring does not hold the current wrapping key")
 	}
-	zoneDomain := strings.TrimSuffix(cfg.ZoneDomain, ".")
+	zoneDomain := strings.ToLower(strings.TrimSuffix(cfg.ZoneDomain, "."))
 	if !validZoneDomain(zoneDomain) {
 		return nil, errors.New("agones resources: zone domain is invalid")
 	}
@@ -195,8 +164,6 @@ func NewAdapter(
 		allocator:           allocator,
 		resources:           resources,
 		keyring:             keyring,
-		namespace:           cfg.Namespace,
-		fingerprint:         cfg.WrappingKeyFingerprint,
 		zoneDomain:          zoneDomain,
 		observer:            cfg.Observer,
 		observationTimeout:  observationTimeout,
@@ -216,37 +183,7 @@ func (a *Adapter) Provision(
 	request handoff.AllocationRequest,
 	expiresAt time.Time,
 ) (handoffalloc.Provisioned, error) {
-	observer, err := a.observerFor(request)
-	if err != nil {
-		return handoffalloc.Provisioned{}, err
-	}
-	observed, err := a.resources.ListAllocated(ctx, request.AttemptID)
-	if err != nil {
-		return handoffalloc.Provisioned{}, classifyResourceError(err)
-	}
-	switch len(observed) {
-	case 0:
-	case 1:
-		return a.adopt(ctx, request, observed[0].Identity, nil, observer, expiresAt)
-	default:
-		return handoffalloc.Provisioned{}, a.releaseDuplicates(ctx, observed)
-	}
-	reserved, err := a.allocator.Reserve(ctx, agonesalloc.Request{
-		ReservationID: request.ReservationID,
-		AttemptID:     request.AttemptID,
-		LeaseObjectID: nakamalease.ReservationKey(request.UserID, request.ReservationID),
-	})
-	if err != nil {
-		return handoffalloc.Provisioned{}, err
-	}
-	if reserved.WrappingKeyFingerprint != a.fingerprint {
-		return handoffalloc.Provisioned{}, ErrInvalidResource
-	}
-	identity, err := a.observeDispatched(ctx, request.AttemptID, reserved.Name)
-	if err != nil {
-		return handoffalloc.Provisioned{}, err
-	}
-	return a.adopt(ctx, request, identity, &reserved, observer, expiresAt)
+	return a.observe(ctx, request, expiresAt, true)
 }
 
 // Reconcile observes an already-dispatched attempt and never allocates. Zero
@@ -258,6 +195,20 @@ func (a *Adapter) Reconcile(
 	request handoff.AllocationRequest,
 	expiresAt time.Time,
 ) (handoffalloc.Provisioned, error) {
+	return a.observe(ctx, request, expiresAt, false)
+}
+
+// observe is the one reconciliation both entry points share: exactly one
+// attempt-labelled Allocated GameServer is adopted, duplicates are released and
+// fail closed, and zero matches either dispatches the single permitted
+// allocation — when the caller holds the coordinator's dispatch barrier — or
+// reports the ambiguous outcome.
+func (a *Adapter) observe(
+	ctx context.Context,
+	request handoff.AllocationRequest,
+	expiresAt time.Time,
+	dispatch bool,
+) (handoffalloc.Provisioned, error) {
 	observer, err := a.observerFor(request)
 	if err != nil {
 		return handoffalloc.Provisioned{}, err
@@ -267,13 +218,28 @@ func (a *Adapter) Reconcile(
 		return handoffalloc.Provisioned{}, classifyResourceError(err)
 	}
 	switch len(observed) {
-	case 0:
-		return handoffalloc.Provisioned{}, ErrAmbiguousDispatch
 	case 1:
 		return a.adopt(ctx, request, observed[0].Identity, nil, observer, expiresAt)
+	case 0:
+		if !dispatch {
+			return handoffalloc.Provisioned{}, ErrAmbiguousDispatch
+		}
 	default:
 		return handoffalloc.Provisioned{}, a.releaseDuplicates(ctx, observed)
 	}
+	reserved, err := a.allocator.Reserve(ctx, agonesalloc.Request{
+		ReservationID: request.ReservationID,
+		AttemptID:     request.AttemptID,
+		LeaseObjectID: nakamalease.ReservationKey(request.UserID, request.ReservationID),
+	})
+	if err != nil {
+		return handoffalloc.Provisioned{}, err
+	}
+	identity, err := a.observeDispatched(ctx, request.AttemptID, reserved.Name)
+	if err != nil {
+		return handoffalloc.Provisioned{}, err
+	}
+	return a.adopt(ctx, request, identity, &reserved, observer, expiresAt)
 }
 
 // Resolve reads the exact GameServer a durable lease names and recomputes
@@ -291,7 +257,7 @@ func (a *Adapter) Resolve(
 	if err != nil {
 		return handoff.Allocation{}, classifyResourceError(err)
 	}
-	material, err := a.material(gameServer)
+	material, err := material(gameServer)
 	if err != nil {
 		return handoff.Allocation{}, err
 	}
@@ -305,9 +271,11 @@ func (a *Adapter) Resolve(
 // Release deletes the exact GameServer a lease owns with that object's UID as
 // a precondition. A lease that names its allocation is verified against the
 // attempt label, the UID digest and the envelope digest first, so a stale
-// release never deletes a newer attempt's object; a staging lease that carries
-// only an attempt ID is discovered by the attempt label alone. Absence and a
-// changed UID are success, because the object this lease owned is gone.
+// release never deletes a newer attempt's object; the object's state, port and
+// node are deliberately not required, because an object Agones has already
+// moved on from must still be deletable. A staging lease that carries only an
+// attempt ID is discovered by the attempt label alone. Absence and a changed
+// UID are success, because the object this lease owned is gone.
 func (a *Adapter) Release(ctx context.Context, lease nakamalease.Lease) error {
 	if lease.AllocationID != "" {
 		located, err := a.resources.Locate(ctx, lease.AllocationID, lease.AttemptID)
@@ -318,7 +286,11 @@ func (a *Adapter) Release(ctx context.Context, lease nakamalease.Lease) error {
 		case err != nil:
 			return classifyResourceError(err)
 		}
-		if lease.SecretRef != "" && !a.referenceMatches(located, lease.SecretRef) {
+		if lease.SecretRef != "" && !admissionref.ReferenceBinds(
+			lease.SecretRef,
+			string(located.Identity.UID),
+			located.Annotations[agones.AdmissionEnvelopeAnnotation],
+		) {
 			return nil
 		}
 		return a.delete(ctx, located.Identity)
@@ -396,13 +368,12 @@ func (a *Adapter) adopt(
 	if err != nil {
 		return handoffalloc.Provisioned{}, classifyResourceError(err)
 	}
-	material, err := a.material(pinned)
+	material, err := material(pinned)
 	if err != nil {
 		return handoffalloc.Provisioned{}, err
 	}
 	if reserved != nil &&
-		(pinned.Identity.Name != reserved.Name ||
-			material.WrappingKeyFingerprint != reserved.WrappingKeyFingerprint ||
+		(material.WrappingKeyFingerprint != reserved.WrappingKeyFingerprint ||
 			material.TLSPort != reserved.Port ||
 			material.AdmissionEnvelope != reserved.AdmissionEnvelope) {
 		return handoffalloc.Provisioned{}, ErrInvalidResource
@@ -419,39 +390,28 @@ func (a *Adapter) adopt(
 
 // material rebuilds the exact sealed-admission material from one observed
 // GameServer, refusing any object whose ready label, key fingerprint, envelope,
-// node name or TLS port is malformed or inconsistent. The fingerprint is the
+// node name or TLS port is missing or inconsistent. The fingerprint is the
 // object's own, not the current pool's: a lease sealed under a retained
-// previous key must keep resolving and releasing across a rotation, and the
-// keyring decides whether it still holds that key.
-func (a *Adapter) material(gameServer gameserverapi.GameServer) (admissionref.Material, error) {
+// previous key must keep resolving across a rotation, and the keyring decides
+// whether it still holds that key.
+func material(gameServer gameserverapi.GameServer) (admissionref.Material, error) {
 	fingerprint := gameServer.Annotations[agones.AdmissionKeyAnnotation]
 	envelope := gameServer.Annotations[agones.AdmissionEnvelopeAnnotation]
-	if !validFingerprint(fingerprint) ||
-		gameServer.Labels[agones.AdmissionReadyLabel] != admissionReadyPrefix+fingerprint ||
+	if fingerprint == "" ||
+		gameServer.Labels[agones.AdmissionReadyLabel] != agones.AdmissionReadyValue(fingerprint) ||
 		envelope == "" ||
 		gameServer.TLSPort == 0 ||
 		len(validation.IsDNS1123Subdomain(gameServer.NodeName)) != 0 {
 		return admissionref.Material{}, ErrInvalidResource
 	}
 	return admissionref.Material{
-		Namespace:              a.namespace,
+		Namespace:              gameServer.Identity.Namespace,
 		GameServerName:         gameServer.Identity.Name,
 		GameServerUID:          string(gameServer.Identity.UID),
 		WrappingKeyFingerprint: fingerprint,
 		AdmissionEnvelope:      envelope,
 		TLSPort:                gameServer.TLSPort,
 	}, nil
-}
-
-// referenceMatches proves that the observed object's sealed material still
-// derives the lease's reference without needing its private wrapping key.
-func (a *Adapter) referenceMatches(gameServer gameserverapi.GameServer, secretRef string) bool {
-	material, err := a.material(gameServer)
-	if err != nil {
-		return false
-	}
-	reference, err := admissionref.Reference(material)
-	return err == nil && reference == secretRef
 }
 
 // allocation combines validated GameServer material with the bound observer and
@@ -473,15 +433,16 @@ func (a *Adapter) allocation(
 }
 
 // releaseDuplicates moves every duplicate match through release with its own
-// UID precondition on a bounded context that survives caller cancellation,
-// then fails closed whatever the individual outcomes were.
+// UID precondition on the coordinator's staged-cleanup budget, which survives
+// the caller's cancellation, then fails closed whatever the individual
+// outcomes were.
 func (a *Adapter) releaseDuplicates(
 	ctx context.Context,
 	observed []gameserverapi.GameServer,
 ) error {
 	cleanupCtx, cancel := context.WithTimeout(
 		context.WithoutCancel(ctx),
-		duplicateCleanupTimeout,
+		handoffalloc.StagedCleanupTimeout,
 	)
 	defer cancel()
 	for _, gameServer := range observed {
@@ -497,7 +458,7 @@ func (a *Adapter) delete(ctx context.Context, identity gameserverapi.Identity) e
 	err := a.resources.Delete(ctx, identity)
 	switch {
 	case err == nil,
-		apierrors.IsNotFound(err),
+		errors.Is(err, gameserverapi.ErrNotFound),
 		apierrors.IsConflict(err):
 		return nil
 	default:
@@ -515,7 +476,7 @@ func classifyResourceError(err error) error {
 		return context.Canceled
 	case errors.Is(err, context.DeadlineExceeded):
 		return context.DeadlineExceeded
-	case errors.Is(err, gameserverapi.ErrNotFound), apierrors.IsNotFound(err):
+	case errors.Is(err, gameserverapi.ErrNotFound):
 		return ErrNotFound
 	case apierrors.IsServerTimeout(err),
 		apierrors.IsTimeout(err),
@@ -523,7 +484,7 @@ func classifyResourceError(err error) error {
 		apierrors.IsTooManyRequests(err),
 		apierrors.IsInternalError(err),
 		apierrors.IsUnexpectedServerError(err):
-		return status.Error(codes.Unavailable, "agones resources: GameServer API is unavailable")
+		return errAPIUnavailable
 	default:
 		return ErrInvalidResource
 	}
@@ -541,25 +502,10 @@ func wait(ctx context.Context, interval time.Duration) error {
 	}
 }
 
-// validFingerprint checks the fixed length and lowercase base32 alphabet used
-// by wrapping-key fingerprints in GameServer metadata.
-func validFingerprint(value string) bool {
-	if len(value) != fingerprintLength {
-		return false
-	}
-	for _, char := range value {
-		if (char < 'a' || char > 'z') && (char < '2' || char > '7') {
-			return false
-		}
-	}
-	return true
-}
-
-// validZoneDomain accepts a nonempty lowercase DNS subdomain and excludes IP
-// literals, since the advertised endpoint must carry a DNS certificate name.
+// validZoneDomain accepts a nonempty DNS subdomain and excludes IP literals,
+// since the advertised endpoint must carry a DNS certificate name.
 func validZoneDomain(value string) bool {
 	return value != "" &&
 		net.ParseIP(value) == nil &&
-		strings.ToLower(value) == value &&
 		len(validation.IsDNS1123Subdomain(value)) == 0
 }

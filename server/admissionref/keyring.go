@@ -75,7 +75,7 @@ func NewKeyring(privateKeys ...*rsa.PrivateKey) (*Keyring, error) {
 			privateKey.Validate() != nil {
 			return nil, ErrInvalidMaterial
 		}
-		fingerprint, err := wrappingKeyFingerprint(&privateKey.PublicKey)
+		fingerprint, err := Fingerprint(&privateKey.PublicKey)
 		if err != nil {
 			return nil, ErrInvalidMaterial
 		}
@@ -98,23 +98,50 @@ func (k *Keyring) Holds(fingerprint string) bool {
 	return exists
 }
 
+// Fingerprint is the canonical identifier of one wrapping key: the lowercase,
+// unpadded base32 SHA-256 of the DER SubjectPublicKeyInfo. It is what the zone
+// publishes in GameServer metadata, what an allocation selects on, and what a
+// keyring indexes by, so a composition derives it from the key it holds rather
+// than configuring a second copy.
+func Fingerprint(publicKey *rsa.PublicKey) (string, error) {
+	der, err := x509.MarshalPKIXPublicKey(publicKey)
+	if err != nil {
+		return "", fmt.Errorf("marshal wrapping public key: %w", err)
+	}
+	return base32Digest(der), nil
+}
+
 // Reference derives the durable DNS-safe reference for sealed material without
-// opening it, so a release path can prove that an object still carries the
-// exact UID, envelope, key and port a lease pinned before deleting it. It
+// opening it. It attests the shape of the material only — not that any key can
+// open it — which is enough to compare against a reference Open minted. It
 // refuses malformed material with ErrInvalidMaterial and never needs a key.
 func Reference(material Material) (string, error) {
-	if !validDNSLabel(material.Namespace) ||
-		!validDNSSubdomain(material.GameServerName) ||
-		!validGameServerUID(material.GameServerUID) ||
-		!validFingerprint(material.WrappingKeyFingerprint) ||
-		material.TLSPort == 0 {
-		return "", ErrInvalidMaterial
-	}
-	ciphertext, ok := decodeEnvelope(material.AdmissionEnvelope)
+	ciphertext, ok := materialCiphertext(material)
 	if !ok {
 		return "", ErrInvalidMaterial
 	}
 	return reference(material, ciphertext), nil
+}
+
+// ReferenceBinds reports whether a durable reference pins exactly this
+// GameServer UID and this sealed envelope. It is the cleanup-side proof: a
+// release must not delete a recreated or re-sealed object under the name a
+// lease remembers, and it must not need the key, the TLS port or the node —
+// an object Agones has already moved on from is still the lease's to delete.
+func ReferenceBinds(secretRef string, gameServerUID string, envelope string) bool {
+	parts := strings.Split(secretRef, ".")
+	if len(parts) != 5 || parts[0] != referencePrefix {
+		return false
+	}
+	if !validGameServerUID(gameServerUID) {
+		return false
+	}
+	ciphertext, ok := decodeEnvelope(envelope)
+	if !ok {
+		return false
+	}
+	return parts[2] == "u"+base32Digest([]byte(gameServerUID)) &&
+		parts[3] == "e"+base32Digest(ciphertext)
 }
 
 // Open validates, decrypts, and derives the durable reference for newly
@@ -164,23 +191,32 @@ func (k *Keyring) open(expectedReference string, material Material) (Opened, err
 func (k *Keyring) validateMaterial(
 	material Material,
 ) (*rsa.PrivateKey, []byte, string, bool) {
-	if k == nil ||
-		!validDNSLabel(material.Namespace) ||
+	if k == nil {
+		return nil, nil, "", false
+	}
+	ciphertext, ok := materialCiphertext(material)
+	if !ok {
+		return nil, nil, "", false
+	}
+	privateKey, exists := k.keys[material.WrappingKeyFingerprint]
+	if !exists || len(ciphertext) != privateKey.Size() {
+		return nil, nil, "", false
+	}
+	return privateKey, ciphertext, reference(material, ciphertext), true
+}
+
+// materialCiphertext is the one shape rule for sealed material: every identity
+// field canonical, a port present, and a canonical version-1 envelope. It
+// returns the decoded ciphertext so callers never decode twice.
+func materialCiphertext(material Material) ([]byte, bool) {
+	if !validDNSLabel(material.Namespace) ||
 		!validDNSSubdomain(material.GameServerName) ||
 		!validGameServerUID(material.GameServerUID) ||
 		!validFingerprint(material.WrappingKeyFingerprint) ||
 		material.TLSPort == 0 {
-		return nil, nil, "", false
+		return nil, false
 	}
-	privateKey, exists := k.keys[material.WrappingKeyFingerprint]
-	if !exists {
-		return nil, nil, "", false
-	}
-	ciphertext, ok := decodeEnvelope(material.AdmissionEnvelope)
-	if !ok || len(ciphertext) != privateKey.Size() {
-		return nil, nil, "", false
-	}
-	return privateKey, ciphertext, reference(material, ciphertext), true
+	return decodeEnvelope(material.AdmissionEnvelope)
 }
 
 // reference binds the key fingerprint, UID digest, ciphertext digest and TLS
@@ -219,14 +255,6 @@ func admissionOAEPLabel(material Material) []byte {
 		material.GameServerUID,
 		material.WrappingKeyFingerprint,
 	}, "\x00"))
-}
-
-func wrappingKeyFingerprint(publicKey *rsa.PublicKey) (string, error) {
-	der, err := x509.MarshalPKIXPublicKey(publicKey)
-	if err != nil {
-		return "", fmt.Errorf("marshal wrapping public key: %w", err)
-	}
-	return base32Digest(der), nil
 }
 
 func base32Digest(value []byte) string {

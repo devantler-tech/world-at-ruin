@@ -252,9 +252,13 @@ zone/dungeon server:
 - **`gameserverapi/`** — the least-privilege **Agones GameServer resource
   boundary** used by durable handoff reconciliation. Its Kubernetes seam
   exposes only namespaced `get`, `list`, and `delete`: no create, update, patch,
-  watch, or access to another resource kind. Exact-name reads pin namespace,
-  name, UID, Fleet, full attempt digest, `Allocated` state, and one named TLS
-  status port; exact-attempt listing uses the same shared full SHA-256 label
+  watch, or access to another resource kind. Every read refuses an object
+  outside the configured Fleet or attempt: an identity-pinned read also
+  requires the exact UID, the name-keyed allocated read reports the observed
+  UID for a durable digest to verify, and both require `Allocated` state and
+  one named TLS status port, while the cleanup-side locate accepts any state
+  and a missing port so a stale attempt can still delete what Agones has moved
+  on from; exact-attempt listing uses the same shared full SHA-256 label
   contract as allocation and returns every match so duplicates stay explicit.
   Cleanup accepts only a complete identity and sends its UID as a Kubernetes
   deletion precondition, preventing stale cleanup from deleting a recreated
@@ -413,7 +417,7 @@ the fence, authenticated private claim endpoint and the Nakama composition are
 not in place yet. The zone's observed-locator claim gate is available for that
 composition. The tick core, socket, client replica store, Agones lifecycle,
 default-off Nakama account provisioning and session verification, allocation
-API boundary, exact-UID GameServer resource boundary, private lease store,
+API boundary, GameServer resource boundary, private lease store,
 concrete Agones resource adapter, durable handoff coordinator and fail-closed
 handoff core are in place; later slices build on those tested seams instead of
 creating a parallel meta service.

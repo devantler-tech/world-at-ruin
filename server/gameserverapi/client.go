@@ -102,15 +102,7 @@ func (c *Client) GetAllocated(
 	if err := c.validateIdentity(expected); err != nil {
 		return GameServer{}, err
 	}
-	attemptValue, err := agones.CorrelationLabel(attemptID)
-	if err != nil {
-		return GameServer{}, errors.New("gameserverapi: attempt ID is invalid")
-	}
-	gameServer, err := c.api.Get(ctx, expected.Name, metav1.GetOptions{})
-	if err != nil {
-		return GameServer{}, getError(err)
-	}
-	return c.snapshot(gameServer, &expected, attemptValue)
+	return c.read(ctx, expected.Name, &expected, attemptID, true)
 }
 
 // ListAllocated returns every GameServer that matches the exact Fleet and full
@@ -129,11 +121,11 @@ func (c *Client) ListAllocated(
 	}.String()
 	list, err := c.api.List(ctx, metav1.ListOptions{LabelSelector: selector})
 	if err != nil {
-		return nil, fmt.Errorf("gameserverapi: list GameServers: %w", err)
+		return nil, apiError("list", err)
 	}
 	gameServers := make([]GameServer, len(list.Items))
 	for i := range list.Items {
-		gameServers[i], err = c.snapshot(&list.Items[i], nil, attemptValue)
+		gameServers[i], err = c.snapshot(&list.Items[i], nil, attemptValue, true)
 		if err != nil {
 			return nil, err
 		}
@@ -151,18 +143,7 @@ func (c *Client) GetAllocatedByName(
 	name string,
 	attemptID string,
 ) (GameServer, error) {
-	if len(validation.IsDNS1123Subdomain(name)) != 0 {
-		return GameServer{}, errors.New("gameserverapi: GameServer name is invalid")
-	}
-	attemptValue, err := agones.CorrelationLabel(attemptID)
-	if err != nil {
-		return GameServer{}, errors.New("gameserverapi: attempt ID is invalid")
-	}
-	gameServer, err := c.api.Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		return GameServer{}, getError(err)
-	}
-	return c.snapshot(gameServer, nil, attemptValue)
+	return c.read(ctx, name, nil, attemptID, true)
 }
 
 // Locate reads the one GameServer with an exact name for cleanup. Unlike the
@@ -175,6 +156,19 @@ func (c *Client) Locate(
 	name string,
 	attemptID string,
 ) (GameServer, error) {
+	return c.read(ctx, name, nil, attemptID, false)
+}
+
+// read is the one name-keyed get behind every exact read: it validates the
+// inputs before touching the API, translates absence to ErrNotFound, and hands
+// the object to snapshot with the caller's state requirement.
+func (c *Client) read(
+	ctx context.Context,
+	name string,
+	expected *Identity,
+	attemptID string,
+	allocatedOnly bool,
+) (GameServer, error) {
 	if len(validation.IsDNS1123Subdomain(name)) != 0 {
 		return GameServer{}, errors.New("gameserverapi: GameServer name is invalid")
 	}
@@ -184,51 +178,31 @@ func (c *Client) Locate(
 	}
 	gameServer, err := c.api.Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
-		return GameServer{}, getError(err)
+		return GameServer{}, apiError("get", err)
 	}
-	if gameServer == nil {
-		return GameServer{}, errors.New("gameserverapi: GameServer response is missing")
-	}
-	identity := Identity{
-		Namespace: gameServer.Namespace,
-		Name:      gameServer.Name,
-		UID:       gameServer.UID,
-	}
-	if err := c.validateIdentity(identity); err != nil {
+	observed, err := c.snapshot(gameServer, expected, attemptValue, allocatedOnly)
+	if err != nil {
 		return GameServer{}, err
 	}
-	if identity.Name != name {
+	if observed.Identity.Name != name {
 		return GameServer{}, errors.New("gameserverapi: GameServer identity changed")
 	}
-	if gameServer.Labels[agones.FleetLabel] != c.fleet ||
-		gameServer.Labels[agones.AttemptLabel] != attemptValue {
-		return GameServer{}, ErrNotOwned
-	}
-	tlsPort, err := c.tlsPort(gameServer.Status.Ports)
-	if err != nil {
-		tlsPort = 0
-	}
-	return GameServer{
-		Identity:    identity,
-		State:       gameServer.Status.State,
-		NodeName:    gameServer.Status.NodeName,
-		TLSPort:     tlsPort,
-		Labels:      copyStringMap(gameServer.Labels),
-		Annotations: copyStringMap(gameServer.Annotations),
-	}, nil
+	return observed, nil
 }
 
-// getError adds read context while retaining Kubernetes error classification;
-// an absent object additionally matches this package's ErrNotFound sentinel.
-func getError(err error) error {
+// apiError adds operation context while retaining Kubernetes error
+// classification; an absent object additionally matches this package's
+// ErrNotFound sentinel.
+func apiError(operation string, err error) error {
 	if apierrors.IsNotFound(err) {
 		return fmt.Errorf("%w: %w", ErrNotFound, err)
 	}
-	return fmt.Errorf("gameserverapi: get GameServer: %w", err)
+	return fmt.Errorf("gameserverapi: %s GameServer: %w", operation, err)
 }
 
 // Delete removes one exact GameServer with its observed UID as a Kubernetes
 // precondition, so a recreated object can never be deleted by stale cleanup.
+// An already-absent object is ErrNotFound.
 func (c *Client) Delete(ctx context.Context, identity Identity) error {
 	if err := c.validateIdentity(identity); err != nil {
 		return err
@@ -237,7 +211,7 @@ func (c *Client) Delete(ctx context.Context, identity Identity) error {
 	if err := c.api.Delete(ctx, identity.Name, metav1.DeleteOptions{
 		Preconditions: &metav1.Preconditions{UID: &uid},
 	}); err != nil {
-		return fmt.Errorf("gameserverapi: delete GameServer: %w", err)
+		return apiError("delete", err)
 	}
 	return nil
 }
@@ -255,12 +229,16 @@ func (c *Client) validateIdentity(identity Identity) error {
 	return nil
 }
 
-// snapshot validates the observed allocation and optional pinned identity,
-// returning detached metadata only for the configured Fleet, attempt and port.
+// snapshot validates the observed object and any pinned identity, refuses an
+// object that belongs to another Fleet or attempt with ErrNotOwned, and — when
+// the caller needs an allocation rather than a cleanup target — requires the
+// Allocated state and exactly one valid TLS port. Returned metadata maps are
+// detached copies.
 func (c *Client) snapshot(
 	gameServer *agonesv1.GameServer,
 	expected *Identity,
 	attemptValue string,
+	allocatedOnly bool,
 ) (GameServer, error) {
 	if gameServer == nil {
 		return GameServer{}, errors.New("gameserverapi: GameServer response is missing")
@@ -276,18 +254,18 @@ func (c *Client) snapshot(
 	if expected != nil && identity != *expected {
 		return GameServer{}, errors.New("gameserverapi: GameServer identity changed")
 	}
-	if gameServer.Labels[agones.FleetLabel] != c.fleet {
-		return GameServer{}, errors.New("gameserverapi: GameServer Fleet changed")
-	}
-	if gameServer.Labels[agones.AttemptLabel] != attemptValue {
-		return GameServer{}, errors.New("gameserverapi: GameServer attempt changed")
-	}
-	if gameServer.Status.State != agonesv1.GameServerStateAllocated {
-		return GameServer{}, errors.New("gameserverapi: GameServer is not Allocated")
+	if gameServer.Labels[agones.FleetLabel] != c.fleet ||
+		gameServer.Labels[agones.AttemptLabel] != attemptValue {
+		return GameServer{}, ErrNotOwned
 	}
 	tlsPort, err := c.tlsPort(gameServer.Status.Ports)
-	if err != nil {
-		return GameServer{}, err
+	if allocatedOnly {
+		if gameServer.Status.State != agonesv1.GameServerStateAllocated {
+			return GameServer{}, errors.New("gameserverapi: GameServer is not Allocated")
+		}
+		if err != nil {
+			return GameServer{}, err
+		}
 	}
 	return GameServer{
 		Identity:    identity,

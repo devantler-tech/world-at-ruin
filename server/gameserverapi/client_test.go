@@ -706,3 +706,38 @@ func TestLocateRejectsInvalidInputBeforeAPI(t *testing.T) {
 		t.Fatalf("invalid input caused API actions: %#v", actions)
 	}
 }
+
+// TestDeleteTranslatesAbsenceToErrNotFound checks that deleting an object that
+// is already gone carries the package sentinel, so cleanup can treat absence
+// as success without inspecting Kubernetes error reasons.
+func TestDeleteTranslatesAbsenceToErrNotFound(t *testing.T) {
+	client := clientAgainst(t, agonesfake.NewSimpleClientset(), validConfig())
+
+	err := client.Delete(
+		context.Background(),
+		Identity{Namespace: testNamespace, Name: "zone-1", UID: "uid-1"},
+	)
+	if !errors.Is(err, ErrNotFound) || !apierrors.IsNotFound(err) {
+		t.Fatalf("Delete error = %v, want ErrNotFound wrapping the API NotFound", err)
+	}
+}
+
+// TestReadsRefuseAnotherOwnerWithErrNotOwned checks that every read path, not
+// only Locate, reports a foreign Fleet or attempt through the one sentinel.
+func TestReadsRefuseAnotherOwnerWithErrNotOwned(t *testing.T) {
+	foreign := validGameServer("zone-1", "uid-1")
+	foreign.Labels[agones.AttemptLabel] = strings.Repeat("a", 52)
+	client := clientAgainst(t, agonesfake.NewSimpleClientset(foreign), validConfig())
+
+	_, err := client.GetAllocated(
+		context.Background(),
+		Identity{Namespace: testNamespace, Name: "zone-1", UID: "uid-1"},
+		testAttemptID,
+	)
+	if !errors.Is(err, ErrNotOwned) {
+		t.Fatalf("GetAllocated error = %v, want ErrNotOwned", err)
+	}
+	if _, err := client.GetAllocatedByName(context.Background(), "zone-1", testAttemptID); !errors.Is(err, ErrNotOwned) {
+		t.Fatalf("GetAllocatedByName error = %v, want ErrNotOwned", err)
+	}
+}
