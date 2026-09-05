@@ -118,7 +118,14 @@ rather than the only line.
   manifest carrying a delivery URL would be live while that URL still answers
   404. CD must stage the digest without advancing the live channel, publish and
   verify the release asset, and only then promote that digest to `latest`; a
-  failed publication or verification leaves the previous contract live (#788).
+  failed publication or verification leaves the previous contract live. Promotion
+  is **monotonic and eligibility-aware**: per-tag CD runs overlap, so `latest`
+  converges on the greatest release that has passed both gates — never on a newer
+  immutable tag that has not yet been verified, and never backwards onto an older
+  one whose verification finished late. That needs verification recorded durably
+  per version and the same re-read-after-write convergence the current `latest`
+  helper performs, keyed on verified releases instead of every immutable tag; the
+  record's shape is #788's to design.
 - The updater applies `_is_fetchable_url` to every delivery field, not only to
   rollback targets, before it fetches anything.
 - A shell download follows the same rule and additionally needs the offline
