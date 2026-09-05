@@ -136,6 +136,20 @@ zone/dungeon server:
   tracker/encoder and Godot decoder/store/connection agree on exact frames.
   It exists as a pinned contract *before* transport selection, so the socket
   child builds against a settled format instead of inventing one.
+- **`zoneclaim/`** — the latent **zone handoff admission gate**: compose
+  `zoneclaim.New(prepared, privateClaimer)` with `zonesock.NewClaimedHub` to
+  require a private durable claim before upgrading a socket. The prepared
+  Agones watch supplies the exact sealed resource identity, canonical lease
+  locator and attempt digest; player requests cannot choose that route.
+  The gate rechecks the observation revision after the claim, including an
+  invalidation followed by identical metadata. The hub refuses malformed
+  upgrades before claiming and rechecks token expiry and cancellation before
+  admission. Its default claim deadline is five seconds (maximum thirty).
+  The injected claimant must honor its context, authenticate the workload,
+  independently verify the token and conditionally claim the exact lease.
+  Ambiguous or failed upgrades retain any committed claim for fenced
+  session-end recovery. No production endpoint or command selects this
+  composition yet; `zonesock.NewHub` retains local token-only admission.
 - **`agones/`** — the **Agones GameServer lifecycle**: what makes the zone
   binary deployable on the fleet. Agones's contract is hard — a GameServer that
   never calls `Ready` is never allocated, and one that stops calling `Health`
@@ -167,6 +181,13 @@ zone/dungeon server:
   validation, strict object decoding, and the sanitising of a storage error so a
   caller learns about its own cancellation and nothing about the store. A new store
   calls through to it rather than carrying its own copy (#780).
+- **`nakamainventory/`** — the private **inventory container**: one versioned,
+  conflict-checked document of opaque item stacks per account, stored under the
+  system owner and written only through the `playerstate` boundary so the
+  container and its replay evidence commit together. It bounds stacks and counts
+  so no write can mint an unbounded amount of anything, and every shipped schema
+  stays readable through a ledgered golden. What an item *is* — loot tables,
+  equipment slots, trade — is a later phase's concern, not the container's.
 - **`nakamafriends/`** — the server-owned **friends boundary**, the first slice of
   the social tier (#476): `Invite`, `Remove`, `Block`, `Status` and `List` over
   Nakama's own friend graph. The acting player is always the verified session
@@ -273,6 +294,20 @@ zone/dungeon server:
   claim or delete the current owner. Hermetic
   race-enabled tests exercise Nakama's real runtime storage request, object and
   acknowledgement shapes.
+- **`orphanreaper/`** — bounded orphan reconciliation over managed, Allocated
+  GameServers and the real private lease store. A complete, consistently paginated
+  Fleet scan precedes a complete lease scan. Every stored lease protects its
+  attempt, including expired, dispatched and releasing records; the coordinator
+  retains their cleanup authority. Only the same UID and attempt observed orphaned
+  in consecutive complete sweeps after a grace period may be deleted. Cleanup
+  rechecks state and metadata and carries UID plus resource-version preconditions;
+  ambiguous outcomes are observed once and retried on a later sweep. Restart,
+  missing observations and failed scans require fresh evidence. Reports contain
+  counts only, and errors are sanitized. Construction performs no I/O; explicit
+  `Run` provides startup and periodic sweeps under a per-sweep deadline. Defaults
+  are a two-minute grace, thirty-second interval/deadline, and 100 pages of 100
+  objects per store. The package remains inactive until Nakama composition (#569)
+  starts it. See ADR 0002 for the ordering assumptions and operational bounds.
 - **`handoff/`** — the transport-neutral **player handoff core**: it consumes
   `nakamaauth` rather than accepting a client-provided identity, gives only that
   verified user ID plus a caller-stable reservation key and server-generated
@@ -367,13 +402,15 @@ of the Phase 1 epic [#8](https://github.com/devantler-tech/world-at-ruin/issues/
 the concrete resource adapter that composes `agonesalloc`, `gameserverapi`,
 `admissionref`, and the zone-side sealed-envelope lifecycle in
 [ADR 0002](../docs/adr/0002-seal-zone-admission-secrets-before-readiness.md),
-the zone admission claim adapter, Nakama RPC registration that exposes the
+the authenticated private zone claim endpoint and fenced session-end recovery,
+Nakama RPC registration that exposes the
 handoff service, the client entry point that enables Google account
 provisioning, the party and chat half of the Nakama social surface, client
 prediction and reconciliation, real navmesh geometry, and Postgres/CNPG
 persistence. Zone boot already generates, publishes and observes the sealed
 envelope; allocation metadata validation, coordinator unwrap/recovery and
-private claim behavior are not composed yet. The tick core, socket, client
+production claim behavior are not composed yet. The zone's observed-locator
+claim gate is available for that composition. The tick core, socket, client
 replica store, Agones lifecycle, default-off Nakama account provisioning and
 session verification, friends boundary, allocation API boundary, exact-UID GameServer resource
 boundary, private lease store, durable handoff coordinator and fail-closed

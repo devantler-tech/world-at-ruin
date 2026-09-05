@@ -306,24 +306,17 @@ func (b *Boundary) resolve(
 	return who, target, nil
 }
 
-// actingFor derives the acting identity from the runtime session and requires
-// the caller to have named that same subject, so a deputy cannot be pointed
-// at another player's graph.
+// actingFor derives the acting identity from the runtime session through the
+// shared subject check — the caller must have named the session's own subject,
+// so a deputy cannot be pointed at another player's graph — and additionally
+// requires the username Nakama shows the other player on an invite.
 func (b *Boundary) actingFor(ctx context.Context, requestedSubjectID string) (actor, error) {
-	if ctx == nil {
-		return actor{}, ErrUnauthenticated
-	}
-	callerID, ok := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
+	callerID, ok := nakamastorage.AuthenticatedSubjectID(ctx, requestedSubjectID)
 	if !ok {
 		return actor{}, ErrUnauthenticated
 	}
 	username, ok := ctx.Value(runtime.RUNTIME_CTX_USERNAME).(string)
 	if !ok || nakamastorage.InvalidIdentityPart(username) {
-		return actor{}, ErrUnauthenticated
-	}
-	callerID = strings.ToLower(callerID)
-	if !nakamastorage.ValidSubjectID(callerID) ||
-		callerID != strings.ToLower(requestedSubjectID) {
 		return actor{}, ErrUnauthenticated
 	}
 	return actor{subjectID: callerID, username: username}, nil

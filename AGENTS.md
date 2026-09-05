@@ -616,7 +616,13 @@ everything shipped afterwards is held to.
   key, generates one in-memory 32-byte secret while the GameServer is `Starting`, publishes the
   identity-bound ciphertext/fingerprint/readiness metadata, observes those exact values through
   `WatchGameServer`, and only then permits the serving command to call `Ready`; an allocatable
-  restart calls `Shutdown` without rotating metadata), the first **Nakama identity boundary**
+  restart calls `Shutdown` without rotating metadata), the latent **zone claim gate**
+  (`server/zoneclaim/` plus `zonesock.NewClaimedHub` — claims through a private boundary before
+  upgrading a socket, using only the exact sealed GameServer's observed allocation locator;
+  cancellation, token expiry, metadata changes, watch termination and lifecycle shutdown refuse
+  admission, and an invalidated observation cannot be reused after restoration; the authenticated
+  private endpoint, session-end recovery and production command wiring remain separate work),
+  the first **Nakama identity boundary**
   (`server/nakamaauth/` — locally validates audience-bound Google ID tokens, derives a
   server-keyed opaque email/password pair whose logged identifier is not replayable alone,
   provisions through Nakama's generated `AuthenticateEmail` API, verifies the returned session,
@@ -650,7 +656,12 @@ everything shipped afterwards is held to.
   against the runtime caller, rejects client-owned preseeds plus public, malformed or stale
   observations, keeps every shipped schema readable through a ledgered golden, and delegates every
   conditional write and system-owned replay audit to the atomic `playerstate` boundary; it remains
-  inert until a server caller composes it), the server-owned
+  inert until a server caller composes it), the private **Nakama inventory-container owner**
+  (`server/nakamainventory/` — stores one strict-schema container of opaque item stacks at an
+  account-derived key under the system owner, bounds stacks and counts so no write can mint an
+  unbounded amount of anything, refuses a stale observation or a malformed durable container, keeps
+  every shipped schema readable through a ledgered golden, and commits every replacement with its
+  replay audit through the same atomic `playerstate` boundary; the item model is not its concern), the server-owned
   **friends boundary** (`server/nakamafriends/` — edits and reads one player's Nakama friend graph
   acting only for the verified session identity, names only another well-formed player, refuses an
   invite towards a target that player has blocked rather than letting Nakama drop it silently, maps
@@ -669,7 +680,12 @@ everything shipped afterwards is held to.
   cancellation, finalizes the allocation before returning connection material, protects
   claimed/stale ownership and supervises exact no-show cleanup without stopping after transient
   sweep failures; it remains inert until the concrete adapter is composed), and
-  the **combat first slice** (`server/sim/combat.go` — the telegraph cast
+  the **orphan reconciler** (`server/orphanreaper/` — completes bounded resource
+  and private lease scans, protects every stored attempt regardless of expiry,
+  requires consecutive orphan observations plus grace, and deletes only the
+  revalidated UID and resource version; startup/periodic supervision is explicit
+  and remains inactive until production composition), and the **combat first
+  slice** (`server/sim/combat.go` — the telegraph cast
   lifecycle: painted at cast start, resolved once after a tick-counted cast time against
   positions at resolution, health/damage application, and one mob AI that deterministically
   aggros the nearest entity; a mob with positive `ChaseSpeedMM` closes through the existing
