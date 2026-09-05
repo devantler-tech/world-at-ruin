@@ -752,6 +752,15 @@ everything shipped afterwards is held to.
   suite on a machine with a played save can also `export WAR_SAVE_PATH=/tmp/probe.json
   WAR_VAULT_PATH=/tmp/probe_vault.json WAR_BOOT_RECOVERY_PATH=/tmp/probe_recovery.json` to keep all
   three fully out of reach.
+- **Server save history:** every persisted server schema uses
+  `server/<package>/testdata/shipped_<family>_versions.txt` and
+  `golden_<family>_v<N>.json`. The server durability check discovers ledgers in both the reviewed base
+  and candidate tree, preserves all historical fixture bytes, and validates complete additions.
+  Run `BASE_SHA=<reviewed-base> ./tools/google-binding-durability-guard.sh` from the repository root
+  and its adjacent `.test.sh` regression suite. Store tests separately check historical readers:
+  character, binding and audit tests assert preserved fields; lease fixtures assert acceptance
+  alongside separate transition tests. Fixture immutability alone does not prove lossless reading.
+  Follow [the server save-data contract](docs/design/server-save-data.md) for schema changes.
 - **Validate the server before every PR:** from `server/`, `gofmt -l .` (must print nothing),
   `go vet ./...`, `golangci-lint run ./...`, `go test -race ./...` (includes the tick-determinism
   and golden-hash tests), `go build ./...`, and `govulncheck ./...`; run `govulncheck ./...` from

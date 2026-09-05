@@ -1217,7 +1217,7 @@ jobs:
       - name: Vet
         working-directory: server
         run: go vet ./...
-      - name: Google identity binding schemas and fixtures are permanent
+      - name: Every shipped server save schema and fixture is permanent
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Proves shipped Google identity-binding schemas and fixtures are anchored to
+# Proves every shipped server schema and fixture is anchored to
 # the immutable base revision rather than only to files edited in the same PR.
 set -euo pipefail
 
@@ -18,10 +18,13 @@ trap 'rm -rf "$scratch"' EXIT
 repo="$scratch/repo"
 data="$repo/server/nakamaauth/testdata"
 lease_data="$repo/server/nakamalease/testdata"
-mkdir -p "$data" "$lease_data"
+character_data="$repo/server/nakamacharacter/testdata"
+audit_data="$repo/server/playerstate/testdata"
+mkdir -p "$data" "$lease_data" "$character_data" "$audit_data"
 git -C "$repo" init -q -b main
 git -C "$repo" config user.email t@example.com
 git -C "$repo" config user.name t
+git -C "$repo" config commit.gpgsign false
 
 git -C "$repo" commit --allow-empty -qm 'base before bindings'
 pre_binding_base="$(git -C "$repo" rev-parse HEAD)"
@@ -35,7 +38,14 @@ printf '%s\n' '[{"schema":1,"attempt_id":"attempt-1"}]' \
 	>"$lease_data/golden_lease_v1.json"
 printf '%s\n' '[{"schema":2,"attempt_id":"attempt-1","staging":true}]' \
 	>"$lease_data/golden_lease_v2.json"
-git -C "$repo" add server/nakamaauth/testdata server/nakamalease/testdata
+printf '1\n' >"$character_data/shipped_character_versions.txt"
+printf '%s\n' '{"schema":1,"recipe":{"version":3,"body_type":"hero"}}' \
+	>"$character_data/golden_character_v1.json"
+printf '1\n' >"$audit_data/shipped_audit_versions.txt"
+printf '%s\n' '{"schema":1,"payload":{"item":"ash-blade"},"outcome":{"count":1}}' \
+	>"$audit_data/golden_audit_v1.json"
+git -C "$repo" add server/nakamaauth/testdata server/nakamalease/testdata \
+	server/nakamacharacter/testdata server/playerstate/testdata
 git -C "$repo" commit -qm 'ship binding schema one'
 base="$(git -C "$repo" rev-parse HEAD)"
 
@@ -81,6 +91,71 @@ expect_fail_matching() {
 
 expect_pass 'unchanged shipped schema'
 
+# A new store must join the gate without a handwritten family allowlist.
+# Discovery also uses the base tree: deleting the complete candidate family
+# must not erase the historical promise from the input set.
+for family in character audit; do
+	case "$family" in
+	character) family_data="$character_data" ;;
+	audit) family_data="$audit_data" ;;
+	esac
+	reset_tree
+	git -C "$repo" rm -qr -- "${family_data#"$repo/"}"
+	expect_fail_matching "deleted $family family" "shipped_${family}_versions.txt"
+	reset_tree
+	printf '2\n' >"$family_data/shipped_${family}_versions.txt"
+	rm "$family_data/golden_${family}_v1.json"
+	printf '{"schema":2}\n' >"$family_data/golden_${family}_v2.json"
+	expect_fail_matching "coordinated $family history removal" "shipped_${family}_versions.txt"
+	reset_tree
+	printf '{"schema":1}\n' >"$family_data/golden_${family}_v1.json"
+	expect_fail_matching "rewritten $family history" "golden_${family}_v1.json"
+	reset_tree
+	printf '2\n' >>"$family_data/shipped_${family}_versions.txt"
+	expect_fail_matching "$family version without a fixture" "golden_${family}_v2.json"
+	printf '{"schema":2}\n' >"$family_data/golden_${family}_v2.json"
+	expect_pass "additive $family schema"
+done
+
+for invalid in '' 'garbage' '1\ninvalid' '1\n1' '1\n3' '01' '0'; do
+	reset_tree
+	printf '%b\n' "$invalid" >"$audit_data/shipped_audit_versions.txt"
+	expect_fail_matching "malformed ledger [$invalid]" 'shipped_audit_versions.txt'
+done
+
+reset_tree
+new_data="$repo/server/futurestore/testdata"
+mkdir -p "$new_data"
+printf '1\n' >"$new_data/shipped_progress_versions.txt"
+expect_fail_matching 'new family without its first fixture' 'golden_progress_v1.json'
+for invalid in 'not-json' '{}' '[]' '[{"schema":1},{"schema":2}]' '{"schema":"1"}' 'null' '{"schema":1} {"schema":1}'; do
+	printf '%s\n' "$invalid" >"$new_data/golden_progress_v1.json"
+	expect_fail_matching "invalid new fixture [$invalid]" 'golden_progress_v1.json'
+done
+printf '{"schema":1,"progress":{"quest":7}}\n' >"$new_data/golden_progress_v1.json"
+expect_pass 'complete new record family'
+
+git -C "$repo" add server/futurestore/testdata
+git -C "$repo" commit -qm 'ship a previously unknown family'
+future_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" rm -qr -- server/futurestore
+future_out="$(run_guard_from "$future_base")" && future_rc=0 || future_rc=$?
+if [ "$future_rc" -eq 0 ] || ! printf '%s' "$future_out" | grep -qF 'shipped_progress_versions.txt'; then
+	t_fail "base-only discovery lost a future family: $future_out"
+fi
+
+reset_tree
+git -C "$repo" rm -qr -- server
+empty_out="$(run_guard_from "$pre_binding_base")" && empty_rc=0 || empty_rc=$?
+if [ "$empty_rc" -eq 0 ] || ! printf '%s' "$empty_out" | grep -qF 'no server schema ledgers'; then
+	t_fail "empty discovery did not fail closed: $empty_out"
+fi
+
+reset_tree
+rm "$audit_data/golden_audit_v1.json"
+ln -s "$data/golden_google_binding_v1.json" "$audit_data/golden_audit_v1.json"
+expect_fail_matching 'symlink cannot replace a shipped fixture' 'golden_audit_v1.json'
+
 reset_tree
 printf '2\n' >>"$data/shipped_google_binding_versions.txt"
 printf '%s\n' '{"schema":2,"user_id":"22222222-2222-4222-8222-222222222222"}' \
@@ -111,7 +186,7 @@ version_ten_out="$(run_guard_from_with_strict_comm "$version_ten_base")" ||
 
 reset_tree
 printf '2\n' >"$data/shipped_google_binding_versions.txt"
-expect_fail_matching 'removed ledger entry' 'shipped schema version(s) removed'
+expect_fail_matching 'removed ledger entry' 'shipped_google_binding_versions.txt'
 
 reset_tree
 printf '%s\n' '{"schema":1,"user_id":"22222222-2222-4222-8222-222222222222"}' \
@@ -129,7 +204,7 @@ expect_fail_matching 'rewritten identity address contract' 'identity address con
 
 reset_tree
 printf '2\n' >"$lease_data/shipped_lease_versions.txt"
-expect_fail_matching 'removed lease ledger entry' 'shipped lease schema version(s) removed'
+expect_fail_matching 'removed lease ledger entry' 'shipped_lease_versions.txt'
 
 reset_tree
 printf '3\n' >>"$lease_data/shipped_lease_versions.txt"
@@ -140,17 +215,17 @@ expect_pass 'additive lease schema and fixture'
 reset_tree
 printf '%s\n' '[{"schema":2,"attempt_id":"rewritten"}]' \
 	>"$lease_data/golden_lease_v2.json"
-expect_fail_matching 'rewritten shipped lease fixture' 'historical lease fixtures are immutable'
+expect_fail_matching 'rewritten shipped lease fixture' 'historical fixtures are immutable'
 
 reset_tree
 rm "$lease_data/golden_lease_v1.json"
-expect_fail_matching 'deleted shipped lease fixture' 'shipped lease must remain readable'
+expect_fail_matching 'deleted shipped lease fixture' 'golden_lease_v1.json'
 
 reset_tree
 baseline_out="$(run_guard_from "$pre_binding_base")" ||
 	t_fail "first binding baseline was refused: $baseline_out"
-printf '%s' "$baseline_out" | grep -qF 'establishing the base-comparable binding schema ledger' ||
-	t_fail "first binding baseline did not report its one-time state: $baseline_out"
+printf '%s' "$baseline_out" | grep -qF '4 schema families' ||
+	t_fail "first baseline did not check every complete schema family: $baseline_out"
 
 missing_base_out="$(
 	cd "$repo" &&

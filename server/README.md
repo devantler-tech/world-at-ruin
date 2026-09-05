@@ -4,6 +4,13 @@ The Go server that owns the world. The client renders and predicts; **the server
 decides**. This directory is the start of that tier, per the settled server
 design in the repo [`AGENTS.md`](../AGENTS.md).
 
+Persisted records follow the [server save-data contract](../docs/design/server-save-data.md).
+Server CI anchors every shipped schema ledger and historical fixture to the reviewed base revision,
+including character records, mutation audit evidence, identity bindings and handoff leases. The
+store tests separately check historical reader behavior, including complete character, binding and
+audit-field preservation; lease fixtures check acceptance alongside separate transition tests. A new store
+joins the durability check through the same ledger and fixture naming convention.
+
 ## What is here now
 
 The **zone tick core** — the deterministic simulation heart of a single
