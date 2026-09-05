@@ -1,9 +1,8 @@
 extends Node
-## Reader-expansion contract for vault-v5 weapon mastery (issue #655).
+## Permanent reader contract for vault-v5 weapon mastery (issue #655).
 ##
-## This release may READ and APPLY the complete mastery snapshot while every
-## production vault writer remains capped at v4/capability 6. The split is the
-## rollback gate: a later writer can activate only after this reader ships.
+## Reading, applying and preserving older mastery remains mandatory after the
+## writer activates. Unrelated writers must still originate only their own fields.
 
 const JSON_SAFE_MAX := Mastery.MAX_PERSISTED_POINTS
 const VAULT_V5_BANK_STEP := Mastery.VAULT_V5_BANK_STEP
@@ -12,12 +11,12 @@ var _failed := false
 
 
 func _ready() -> void:
-	_check(SaveVault.VAULT_VERSION == 4,
-		"the expansion build started writing vault v5")
+	_check(SaveVault.VAULT_VERSION == 5,
+		"the mastery writer does not advertise vault v5")
 	_check(SaveVault.VAULT_READ_VERSION == 5,
 		"the expansion build does not advertise vault-v5 reads")
-	_check(UpdateManifest.SAVE_CAPABILITY_WRITES == 6,
-		"the expansion build advanced the production save writer")
+	_check(UpdateManifest.SAVE_CAPABILITY_WRITES == 7,
+		"the mastery writer does not advertise save capability 7")
 	_check(UpdateManifest.SAVE_CAPABILITY_READS == 7,
 		"the expansion build does not advertise mastery read capability 7")
 	_check(VAULT_V5_BANK_STEP == 100,
@@ -88,7 +87,7 @@ func _ready() -> void:
 	if _failed:
 		return
 
-	print("TEST PASS — vault-v5 mastery reads and applies complete state while every production writer remains on v4/capability 6")
+	print("TEST PASS — vault-v5 mastery reads and applies complete state while unrelated writes preserve it")
 	get_tree().quit(0)
 
 

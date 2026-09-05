@@ -194,8 +194,8 @@ The current character writer vocabulary is capability 5. The reader registry and
 contain `ashen_bindings` at `hands/armor`, backed by the retained v0.69.0 capability-5 reader.
 The shipped default creator keeps this below-bar hand piece hidden, while
 `WAR_LAYERED_OUTFIT_PICKERS=1` exposes the raw armour-layer control that may originate, save and
-reload it. The project-wide write capability remains 6 because the independent vault-v4
-quest-progress contract is active; the read ceiling is 7 for the vault-v5 mastery expansion. That
+reload it. The project-wide read and write capabilities are 7 because the independent vault-v5
+mastery contract is active. That
 does not change which character vocabulary capability 5 permits the creator to originate.
 
 ### Progression vault
@@ -265,11 +265,11 @@ silently and can never be announced or granted again. The retained v0.70.0 reade
 whole-app rollback target for the writer. Every real objective advance queues the complete snapshot;
 the locked compare-and-swap writer merges each objective by maximum progress, preserves opaque IDs
 and older sections, and retries transient failures without replaying completion. A refused newer or
-unreadable vault remains session-only and byte-intact. The project-wide manifest advertises read and
-write capability 6, while conditional schema stamping keeps reward-only state on v3, discovery-only
+unreadable vault remains session-only and byte-intact. Quest progress requires capability 6,
+while conditional schema stamping keeps reward-only state on v3, discovery-only
 state on v2, and empty or attunement-only state on v1.
 
-Capability 7 is the reader-only vault-v5 weapon-mastery expansion. Its required `mastery` object
+Capability 7 is writable vault-v5 weapon mastery. Its required `mastery` object
 contains exactly `weapons` and `bloodstain`: each stable weapon ID maps to exact JSON-safe integer
 `banked` and `unbanked` points, while the standing bloodstain maps tracked weapon IDs to the points
 that can still be reclaimed. Vault-v5 freezes its persisted bar unit at 100 points: banked values are
@@ -281,10 +281,29 @@ unbanked points that already complete a smaller current live bar before the deat
 them. Unknown future weapon IDs are valid because rollback must preserve and apply
 them without reinterpreting their meaning. `Main` restores the complete snapshot atomically into its
 boot-owned `Mastery`, and the real boot guard proves both the live tracks and bloodstain are present.
-The manifest advertises read capability 7, while `SaveVault.VAULT_VERSION` and
-`SAVE_CAPABILITY_WRITES` stay at v4/capability 6. Existing older writers preserve an already-present
-v5 snapshot but never originate one; writer activation waits for a retained whole-app capability-7
-reader release.
+The manifest advertises read and write capability 7. The retained v0.91.0 whole app is the rollback
+reader; its [release evidence and reproduction steps](../evidence/issue-658-mastery-retention/README.md)
+bind the archive checksum, real app boot, and shipped-content restoration assertions.
+Only a real mastery mutation originates v5. Ordinary boot, attunement, discovery, reward and quest
+writes retain their historical schema requirements and preserve an existing mastery section.
+
+`Mastery.changed` publishes one complete transition after accrual, death, or reclaim, never on
+restore or a no-op. `MasteryPersistence` saves that snapshot synchronously through the vault's
+existing cross-process lock and byte-identity compare-and-swap. Reclaim consumes the stain in the
+same snapshot that returns its points; a partially reclaimed state is never published. Awards and
+reclaims that exceed the exact persisted integer range are refused before any part mutates.
+
+The writer also compares the complete prior mastery snapshot that populated this session's ledger.
+A different on-disk mastery snapshot stops further mastery writes for that session and raises a
+notice; it cannot be merged by maximum, union, or blind replacement without losing or duplicating
+economic state. Unrelated sections use the latest document and stay intact. Canonical JSON comparison
+equates the parsed numeric representation with the live ledger's exact integers.
+
+Transient failures retain the latest in-memory snapshot and retry after 1, 2, 4, 8, 16 and at most
+30 seconds. Further mutations do not bypass the wait or replay previous awards. A clean exit attempts
+one final flush. A hard termination preserves completed writes; progress still awaiting a successful
+write is session-only, as the failure notice states. The process-loss regression kills the writer
+after real mutations and verifies banking and one-time reclaim from fresh processes.
 
 ### Boot recovery
 

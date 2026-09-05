@@ -172,11 +172,11 @@ const QUARANTINE_MIN_AGE_SECONDS := 300
 ## SHORTENED by a malformed value — the direction that could destroy progression.
 const QUARANTINE_MIN_AGE_ENV := "WAR_VAULT_QUARANTINE_MIN_AGE_SECONDS"
 
-## Highest schema emitted by a production writer. v4 is used only when the
-## document actually carries quest-objective progress; reward-only state stays
+## Highest schema emitted by a production writer. v5 is used only when the
+## document carries mastery; quest-only state stays on v4, reward-only state stays
 ## on v3, discovery-only state stays on v2, and an empty or attunement-only
 ## vault stays on v1, so old state is never rewritten merely to look current.
-const VAULT_VERSION := 4
+const VAULT_VERSION := 5
 
 ## The minimal vault shape. Kept separate from [constant VAULT_VERSION] because
 ## a fresh or attunement-only document has no later-version field to describe.
@@ -190,9 +190,8 @@ const REWARD_CLAIM_VAULT_VERSION := 3
 const QUEST_PROGRESS_VAULT_VERSION := 4
 const MASTERY_VAULT_VERSION := 5
 
-## Highest vault schema this build can READ. Vault v5 mastery is the expanded,
-## reader-only shape: production writers remain capped at v4 until this build is
-## retained as a safe rollback target.
+## Highest readable vault schema. The retained v0.91.0 whole app reads and
+## applies v5, permitting the complete-mastery writer.
 const VAULT_READ_VERSION := 5
 
 ## The vault format, exhaustively. Unknown top-level fields are refused for the
@@ -1233,3 +1232,47 @@ static func _persist_quests_locked(path: String, progress: Dictionary) -> bool:
 	if next.is_empty():
 		return false
 	return replace_if_unchanged(path, next, expected)
+
+
+## Replace complete economic state only if its prior snapshot still matches.
+## Unlike append-only progress, a bloodstain cannot be merged by union or maximum:
+## reclaim transfers its points and consumes it in the SAME write. Null means
+## the caller observed no mastery section, not permission to overwrite one.
+## OK acknowledges persistence; ERR_BUSY is retryable; ERR_ALREADY_IN_USE means
+## a different mastery snapshot won and must never be overwritten by a retry.
+static func persist_mastery(snapshot: Dictionary, expected_mastery: Variant) -> Error:
+	if not Mastery.snapshot_refusal_reason(snapshot).is_empty():
+		return ERR_INVALID_DATA
+	if expected_mastery != null and not Mastery.snapshot_refusal_reason(expected_mastery).is_empty():
+		return ERR_INVALID_DATA
+	var path := vault_path()
+	if not FileLock.acquire(path):
+		return ERR_BUSY
+	var result := _persist_mastery_locked(path, snapshot, expected_mastery)
+	FileLock.release(path)
+	return result
+
+
+static func _persist_mastery_locked(
+		path: String, snapshot: Dictionary, expected_mastery: Variant) -> Error:
+	if not can_write(path):
+		return ERR_FILE_UNRECOGNIZED
+	# Capture before loading, as for every vault transaction. A non-cooperating
+	# writer between this read and replacement is refused by the byte identity.
+	var identity := document_identity(path)
+	var current = load_or_empty()
+	if current is not Dictionary:
+		return ERR_FILE_UNRECOGNIZED
+	# Parsed JSON uses floats, while a live ledger uses ints. Canonicalization
+	# compares the exact values and stable keys rather than Variant storage types.
+	var observed := JCS.canonicalize(current.get("mastery"))["text"] as String
+	if observed != JCS.canonicalize(expected_mastery)["text"]:
+		return ERR_ALREADY_IN_USE
+	if observed == JCS.canonicalize(snapshot)["text"]:
+		return OK
+	var next: Dictionary = current.duplicate(true)
+	next["version"] = MASTERY_VAULT_VERSION
+	next["mastery"] = snapshot.duplicate(true)
+	if replace_if_unchanged(path, next, identity):
+		return OK
+	return ERR_BUSY if can_write(path) else ERR_FILE_UNRECOGNIZED

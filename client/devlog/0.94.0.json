@@ -1,0 +1,10 @@
+{
+  "version": "0.94.0",
+  "date": "2026-09-05",
+  "title": "Mastery survives the waking",
+  "notes": [
+    "Weapon mastery now remembers banked progress, the current bar, and the one standing bloodstain across restarts. Reclaiming consumes the stain and returns its points in one save.",
+    "Temporary save failures retry without granting points again. If another session changes the saved mastery, this waking leaves that progress untouched and tells you to reopen the game.",
+    "This completes the mastery save path. Combat awards, mastery bars, and a world-visible bloodstain are still separate work; the pre-alpha world does not yet award combat mastery."
+  ]
+}

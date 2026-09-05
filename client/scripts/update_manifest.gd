@@ -100,13 +100,13 @@ const SAVE_SCHEMA_MAX := CharacterFactory.RECIPE_VERSION
 ## earlier. A build claiming to write LESS than it once did is exactly the
 ## stranding the no-resets law forbids.
 ##
-## Capability 6 is writable vault-v4 quest-objective progress. Its retained
+## Capability 7 is writable vault-v5 weapon mastery. The retained v0.91.0
 ## reader release is the whole-app rollback while client delivery remains
 ## monolithic. The separate
 ## `rollback_targets` catalogue stays empty until a mountable pack exists;
 ## advertising the app ZIP there would make pack recovery select an artifact it
 ## cannot mount.
-const SAVE_CAPABILITY_WRITES := 6
+const SAVE_CAPABILITY_WRITES := 7
 
 ## The highest content capability this build can READ.
 ##
@@ -119,9 +119,7 @@ const SAVE_CAPABILITY_WRITES := 6
 ## needlessly routed away from a pack update despite a valid fallback existing.
 ##
 ## Must always be >= the write capability (a build must read what it writes).
-## Capability 7 is the reader-only vault-v5 mastery snapshot. Production still
-## writes capability 6 until this whole-app reader is retained as the rollback
-## target for the later mastery writer.
+## Capability 7 reads and writes the complete vault-v5 mastery snapshot.
 const SAVE_CAPABILITY_READS := 7
 
 ## The oldest shell this manifest still supports updating FROM.

@@ -261,23 +261,23 @@ func _test_quest_writer_activation_is_advertised() -> void:
 			% SaveVault.VAULT_VERSION)
 
 
-## Capability 7 is the reader-only vault-v5 mastery snapshot. The manifest must
-## publish that read ceiling without claiming the production writer is active.
+## Capability 7 is the active vault-v5 mastery contract. Its write capability
+## must agree with what real play can originate, not merely its read ceiling.
 func _test_mastery_reader_expansion_is_advertised() -> void:
 	if UpdateManifest.SAVE_CAPABILITY_READS != 7:
 		_fail("the mastery expansion advertises read capability %d, expected 7"
 			% UpdateManifest.SAVE_CAPABILITY_READS)
 		return
-	if UpdateManifest.SAVE_CAPABILITY_WRITES != 6:
-		_fail("the mastery expansion advanced write capability to %d; expected 6"
+	if UpdateManifest.SAVE_CAPABILITY_WRITES != 7:
+		_fail("the mastery writer advertises capability %d; expected 7"
 			% UpdateManifest.SAVE_CAPABILITY_WRITES)
 		return
 	if SaveVault.VAULT_READ_VERSION != 5:
 		_fail("the mastery expansion advertises reads but SaveVault stops at v%d"
 			% SaveVault.VAULT_READ_VERSION)
 		return
-	if SaveVault.VAULT_VERSION != 4:
-		_fail("the reader-only mastery expansion writes vault v%d; expected v4"
+	if SaveVault.VAULT_VERSION != 5:
+		_fail("the mastery writer advertises vault v%d; expected v5"
 			% SaveVault.VAULT_VERSION)
 
 

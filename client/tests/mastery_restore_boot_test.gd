@@ -3,7 +3,7 @@ extends Node
 ##
 ## A pure SaveVault/Mastery test can prove both pieces in isolation while the
 ## shipped scene silently ignores the accepted state. These two isolated boots
-## prove the production wiring: an empty boot originates no reader-only mastery,
+## prove the production wiring: an empty boot originates no mastery,
 ## then a seeded v5 boot applies every track and the standing bloodstain without
 ## letting ordinary older writers discard the opaque snapshot.
 
@@ -108,7 +108,7 @@ func _assert_boot() -> void:
 		_fail("the mastery reader boot touched the player's real save or vault")
 		return
 	_save = null
-	print("TEST PASS — the production boot restores vault-v5 mastery while ordinary boots remain on the v4 writer")
+	print("TEST PASS — the production boot restores vault-v5 mastery while ordinary boots originate no mastery")
 	get_tree().quit(0)
 
 

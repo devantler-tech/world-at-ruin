@@ -110,10 +110,10 @@ var _exploration_rewards := ExplorationRewards.new()
 ## Boot-owned quest progress. The retained v4 reader restores this state and
 ## every later monotonic advance queues the complete forward-only snapshot.
 var _quest_log := QuestLog.new()
-## Boot-owned weapon mastery. The retained v5 reader applies the complete
-## ledger, including unknown future weapon ids and its standing bloodstain.
-## This release remains reader-only: no production path originates a snapshot.
+## Boot-owned mastery and its conditional save owner. Restore is silent; only
+## real ledger transitions can originate the v5 section.
 var _mastery := Mastery.new()
+var _mastery_persistence: MasteryPersistence
 ## A discovery enters the live tracker before persistence is attempted. Keep
 ## the locally observed IDs themselves so a transient filesystem failure can
 ## retry them without also re-originating rollback-only names restored into the
@@ -334,6 +334,14 @@ func _ready() -> void:
 		var preferred_attunement: Variant = _preferred_attuned_respawn(vault, world)
 		if preferred_attunement != null:
 			_player.set_respawn_point(preferred_attunement)
+	# Bind to the SAME snapshot that populated the live ledger, not a fresh
+	# observation that could silently authorize overwriting another session.
+	_mastery_persistence = MasteryPersistence.new(
+		_mastery, vault.get("mastery") if vault is Dictionary else null)
+	_mastery_persistence.saving_failed.connect(func(conflict: bool) -> void:
+		_notify("Another session changed your mastery. This waking cannot save further mastery; reopen the game to continue from the saved progress."
+			if conflict else
+			"Your mastery holds for now — though the Reach may not remember next waking."))
 	# Observe only after restore. A persisted place then stays idempotent, while
 	# the cave under a new wanderer's feet becomes the first v2 write.
 	_observe_discoveries()
@@ -551,6 +559,8 @@ func _process(delta: float) -> void:
 	_track_cave_atmosphere()
 	_observe_discoveries(delta)
 	_persist_pending_quest_progress(delta)
+	if _mastery_persistence != null:
+		_mastery_persistence.tick(delta)
 	if _zone == null:
 		return
 	_zone.poll()
@@ -756,6 +766,11 @@ func _persist_pending_quest_progress(delta: float) -> void:
 	if not _quest_persistence_warning_shown:
 		_quest_persistence_warning_shown = true
 		_notify("Your quest progress holds for now — though the Reach may not remember next waking.")
+
+
+func _exit_tree() -> void:
+	if _mastery_persistence != null:
+		_mastery_persistence.flush()
 
 
 func _unhandled_input(event: InputEvent) -> void:
