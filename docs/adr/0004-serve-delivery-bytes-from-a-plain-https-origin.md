@@ -124,9 +124,13 @@ rather than the only line.
   converges on the greatest release that has passed both gates — never on a newer
   immutable tag that has not yet been verified, and never backwards onto an older
   one whose verification finished late. That needs verification recorded durably
-  per version and the same re-read-after-write convergence the current `latest`
-  helper performs, keyed on verified releases instead of every immutable tag; the
-  record's shape is #788's to design.
+  per version and a promotion that is **serialized or a genuine compare-and-swap**:
+  one writer at a time — a workflow concurrency group or an equivalent lease — that
+  re-reads the verified set inside its critical section and writes `latest` once.
+  A read followed by an unconditional `oras tag`, as the current `latest` helper
+  does, is not a compare-and-swap: a newer run can promote between the read and the
+  write and a bounded retry can end on the stale write. The record's shape and the
+  fence are #788's to design.
 - The updater applies `_is_fetchable_url` to every delivery field, not only to
   rollback targets, before it fetches anything.
 - A shell download follows the same rule and additionally needs the offline
