@@ -210,7 +210,7 @@ func encodeDocument(inventory Inventory) (json.RawMessage, error) {
 	}
 	documents := make([]stackDocument, len(stacks))
 	for index, stack := range stacks {
-		documents[index] = stackDocument{ItemID: stack.ItemID, Count: stack.Count}
+		documents[index] = stackDocument(stack)
 	}
 	value, err := json.Marshal(struct {
 		Schema int             `json:"schema"`

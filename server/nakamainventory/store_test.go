@@ -319,9 +319,10 @@ func TestLoadRejectsMalformedOrPublicContainers(t *testing.T) {
 			storage := nakamastoragetest.New()
 			object.Collection = Collection
 			object.Key = recordKey(testSubjectID)
-			if object.Version == "" {
+			switch object.Version {
+			case "":
 				object.Version = "durable"
-			} else if object.Version == "-" {
+			case "-":
 				object.Version = ""
 			}
 			storage.Seed(object)
@@ -401,7 +402,7 @@ func TestLoadSanitizesStorageFailuresAndPreservesCancellation(t *testing.T) {
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("Load() error = %v, want %v", err, tc.want)
 			}
-			if tc.want == ErrStorage && strings.Contains(err.Error(), "table") {
+			if errors.Is(tc.want, ErrStorage) && strings.Contains(err.Error(), "table") {
 				t.Fatalf("Load() leaked the storage error: %v", err)
 			}
 		})

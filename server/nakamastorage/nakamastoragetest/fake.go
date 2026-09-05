@@ -115,7 +115,9 @@ func (f *Fake) StorageWrite(
 	if f.WriteErr != nil {
 		return nil, f.WriteErr
 	}
-	for _, write := range writes {
+	type permissions struct{ read, write int32 }
+	validated := make([]permissions, len(writes))
+	for index, write := range writes {
 		current, exists := f.objects[id(write.Collection, write.Key, owner(write.UserID))]
 		switch {
 		case write.Version == "*" && exists:
@@ -128,9 +130,10 @@ func (f *Fake) StorageWrite(
 			write.PermissionWrite < math.MinInt32 || write.PermissionWrite > math.MaxInt32 {
 			return nil, errors.New("nakamastoragetest: permission out of range")
 		}
+		validated[index] = permissions{int32(write.PermissionRead), int32(write.PermissionWrite)}
 	}
 	acks := make([]*api.StorageObjectAck, 0, len(writes))
-	for _, write := range writes {
+	for index, write := range writes {
 		ownerID := owner(write.UserID)
 		version := fmt.Sprintf("v%d", f.next)
 		f.next++
@@ -140,8 +143,8 @@ func (f *Fake) StorageWrite(
 			UserID:          ownerID,
 			Value:           write.Value,
 			Version:         version,
-			PermissionRead:  int32(write.PermissionRead),
-			PermissionWrite: int32(write.PermissionWrite),
+			PermissionRead:  validated[index].read,
+			PermissionWrite: validated[index].write,
 		}
 		acks = append(acks, &api.StorageObjectAck{
 			Collection: write.Collection,
