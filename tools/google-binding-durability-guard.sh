@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # Preserve every server schema ledger and its historical fixtures against the
-# reviewed base. Store tests separately prove that production readers preserve
-# those documents. This entry point is shared by local validation and Server CI.
+# reviewed base, then execute each family's registered production-reader test
+# against every historical fixture. Shared by local validation and Server CI.
 set -euo pipefail
 export LC_ALL=C
 
 ADDRESS_CONTRACT='server/nakamaauth/testdata/golden_google_identity_address_v1.json'
 SCRATCH_DIR=''
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # fail prints the supplied refusal reason to stderr and exits unsuccessfully.
 fail() {
@@ -170,6 +171,10 @@ main() {
 	elif grep -Fxq 'server/nakamaauth/testdata/shipped_google_binding_versions.txt' "$SCRATCH_DIR/base-ledgers"; then
 		fail "$ADDRESS_CONTRACT is missing at base — the shipped identity contract was unanchored"
 	fi
+	while IFS= read -r ledger; do
+		bash "$SCRIPT_DIR/server-reader-contract.sh" "$ledger" "$SCRATCH_DIR" ||
+			fail "$ledger does not have a verified historical reader contract"
+	done <"$SCRATCH_DIR/ledgers"
 	printf 'Server save durability guard: PASS — %d schema families retain their complete history\n' "$count"
 }
 

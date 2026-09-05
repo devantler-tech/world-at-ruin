@@ -22,6 +22,40 @@ lease_data="$repo/server/nakamalease/testdata"
 character_data="$repo/server/nakamacharacter/testdata"
 audit_data="$repo/server/playerstate/testdata"
 mkdir -p "$data" "$lease_data" "$character_data" "$audit_data"
+printf 'module example.com/historyguard\n\ngo 1.26.6\n' >"$repo/server/go.mod"
+
+# Provide executable fixture readers to the structural-guard fixture packages.
+# The separate reader-contract suite supplies missing, skipped and lossy controls.
+add_reader_contract() {
+	local family_data="$1" family="$2" package_dir="${1%/testdata}"
+	printf 'TestHistoricalReader reader.go Read\n' >"$family_data/shipped_${family}_reader.txt"
+	cat >"$package_dir/reader.go" <<'GO'
+package fixture
+import "encoding/json"
+func Read(data []byte) (any, error) {
+ var document any
+ err := json.Unmarshal(data, &document)
+ return document, err
+}
+GO
+	cat >"$package_dir/reader_test.go" <<'GO'
+package fixture
+import ("encoding/json"; "os"; "path/filepath"; "reflect"; "testing")
+func TestHistoricalReader(t *testing.T) {
+ paths, err := filepath.Glob("testdata/golden_*_v*.json")
+ if err != nil || len(paths) == 0 { t.Fatalf("fixtures: %v", err) }
+ for _, path := range paths {
+  data, err := os.ReadFile(path)
+  if err != nil { t.Fatal(err) }
+  got, err := Read(data)
+  if err != nil { t.Fatal(err) }
+  var want any
+  if err := json.Unmarshal(data, &want); err != nil { t.Fatal(err) }
+  if !reflect.DeepEqual(got, want) { t.Fatal("lost fixture state") }
+ }
+}
+GO
+}
 git -C "$repo" init -q -b main
 git -C "$repo" config user.email t@example.com
 git -C "$repo" config user.name t
@@ -49,8 +83,12 @@ printf 'world_at_ruin_google_identity_bindings\n' >"$data/shipped_google_binding
 printf 'world_at_ruin_handoff_leases\n' >"$lease_data/shipped_lease_collection.txt"
 printf 'world_at_ruin_characters\n' >"$character_data/shipped_character_collection.txt"
 printf 'world_at_ruin_player_mutations\n' >"$audit_data/shipped_audit_collection.txt"
-git -C "$repo" add server/nakamaauth/testdata server/nakamalease/testdata \
-	server/nakamacharacter/testdata server/playerstate/testdata
+add_reader_contract "$data" google_binding
+add_reader_contract "$lease_data" lease
+add_reader_contract "$character_data" character
+add_reader_contract "$audit_data" audit
+git -C "$repo" add server/go.mod server/nakamaauth server/nakamalease \
+	server/nakamacharacter server/playerstate
 git -C "$repo" commit -qm 'ship binding schema one'
 base="$(git -C "$repo" rev-parse HEAD)"
 
@@ -144,6 +182,7 @@ for invalid in 'not-json' '{}' '[]' '[{"schema":1},{"schema":2}]' '{"schema":"1"
 done
 printf '{"schema":1,"progress":{"quest":7}}\n' >"$new_data/golden_progress_v1.json"
 printf 'world_at_ruin_progress\n' >"$new_data/shipped_progress_collection.txt"
+add_reader_contract "$new_data" progress
 expect_pass 'complete new record family'
 
 git -C "$repo" add server/futurestore/testdata
@@ -174,7 +213,14 @@ mkdir -p "$repo/server/orphanstore/testdata"
 printf '1\n' >"$repo/server/orphanstore/testdata/shipped_orphan_versions.txt"
 printf '{"schema":1,"orphans":[]}\n' >"$repo/server/orphanstore/testdata/golden_orphan_v1.json"
 printf 'world_at_ruin_orphans\n' >"$repo/server/orphanstore/testdata/shipped_orphan_collection.txt"
-expect_pass 'registered new persisted family'
+expect_fail_matching 'registration without a historical reader' 'reader.txt is missing'
+add_reader_contract "$repo/server/orphanstore/testdata" orphan
+# Existing collection fixtures must share their package with the reader fixture.
+sed 's/package fixture/package orphanstore/' "$repo/server/orphanstore/reader.go" >"$scratch/reader.go"
+mv "$scratch/reader.go" "$repo/server/orphanstore/reader.go"
+sed 's/package fixture/package orphanstore/' "$repo/server/orphanstore/reader_test.go" >"$scratch/reader_test.go"
+mv "$scratch/reader_test.go" "$repo/server/orphanstore/reader_test.go"
+expect_pass 'registered persisted family with its tested reader'
 
 # The actual collection, not merely the package, determines registration. An
 # existing ledger cannot hide a second family, even on the same source line.
@@ -193,6 +239,7 @@ printf '{"schema":1,"records":[]}\n' >"$repo/server/orphanstore/testdata/golden_
 printf 'world_at_ruin_unrelated\n' >"$repo/server/orphanstore/testdata/shipped_second_collection.txt"
 expect_fail_matching 'an unrelated mapped ledger cannot cover a collection' 'world_at_ruin_unregistered'
 printf 'world_at_ruin_unregistered\n' >"$repo/server/orphanstore/testdata/shipped_second_collection.txt"
+printf 'TestHistoricalReader reader.go Read\n' >"$repo/server/orphanstore/testdata/shipped_second_reader.txt"
 expect_pass 'two collections with their own complete families'
 printf '%s\n' 'const Repeated = "world_at_ruin_orphans"' >>"$repo/server/orphanstore/second.go"
 expect_pass 'repeated collection use shares its one family'

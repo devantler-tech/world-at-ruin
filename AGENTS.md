@@ -783,7 +783,12 @@ everything shipped afterwards is held to.
   name; mappings are unique within the package and immutable once shipped. The lexical scan includes
   double-quoted and raw literals; dynamically constructed names require store review.
   Run `BASE_SHA=<reviewed-base> ./tools/google-binding-durability-guard.sh` from the repository root
-  and its adjacent `.test.sh` regression suite. Store tests separately check historical readers:
+  and its adjacent `.test.sh` regression suite. Each family also names its exact historical Go test,
+  production source file and reader function in `shipped_<family>_reader.txt`. The guard compiles the
+  package test binary, requires that test to pass without skips and cover the named production reader,
+  then proves every declared fixture affects it by corrupting each fixture in a private copy and
+  requiring the test to fail. `tools/server-reader-contract.test.sh` exercises that registration.
+  Store tests retain the semantic assertions:
   character, binding and audit tests assert preserved fields; lease fixtures assert acceptance
   alongside separate transition tests. Fixture immutability alone does not prove lossless reading.
   Follow [the server save-data contract](docs/design/server-save-data.md) for schema changes.

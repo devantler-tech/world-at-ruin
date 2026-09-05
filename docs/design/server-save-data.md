@@ -33,7 +33,22 @@ cannot map to the same collection, and a mapping present in the reviewed base is
 The guard checks every double-quoted or raw collection literal in production Go files against
 the package's mappings, including multiple collections in one file. This is a lexical check:
 comments can also contain matching literals, and dynamically constructed names require store
-review. Historical reader tests remain necessary for each family.
+review.
+
+Each family registers its historical reader in `shipped_<family>_reader.txt`, one line containing
+the exact top-level Go test name, production Go filename, and reader function name. For example:
+
+```text
+TestLoadKeepsEveryShippedCharacterSchemaReadable store.go Load
+```
+
+The guard compiles an instrumented package test binary and runs only that test against a private
+copy of the package's `testdata`. The test must execute and pass without skipped subtests, and
+coverage must identify exactly one matching production reader with executed statements. An absent
+test, an empty test, a skipped test, a missing reader, and a test-only reader cannot satisfy this
+contract. Every declared fixture is then made unreadable individually in that private copy; the
+named test must fail each time. A test using constants instead of its fixtures, or ignoring a new
+fixture, therefore cannot pass. Checkout files and historical fixture bytes remain untouched.
 
 The second check is behavioral: the stores' Go tests load their historical fixtures through the
 production reader. Character tests retain the character identity and recipe; audit tests retain
@@ -41,7 +56,9 @@ the idempotency identity, target record, operation, payload
 and committed outcome; identity-binding tests pin the historical binding fields. Lease fixtures
 prove historical acceptance, with ownership and transitions covered by separate tests. A JSON-shape
 check cannot prove these semantics, and a checkout-local test cannot alone prove that its historical
-fixture was preserved.
+fixture was preserved. Coverage and fixture probes enforce participation, not arbitrary semantic
+correctness: the registered tests still need independently specified expected fields and meaningful
+loss/refusal assertions. Reader or test renames update the registration together with that evidence.
 
 ## Expanding a server schema
 
@@ -68,6 +85,7 @@ From the repository root, with `BASE_SHA` set to the immutable reviewed base com
 ```sh
 BASE_SHA=<reviewed-base-commit> ./tools/google-binding-durability-guard.sh
 ./tools/google-binding-durability-guard.test.sh
+bash tools/server-reader-contract.test.sh
 go -C server test -race ./...
 ```
 
@@ -75,5 +93,8 @@ The shell suite runs the real guard against temporary Git repositories. It prove
 families, coordinated ledger/fixture removal, altered historical records, malformed input and
 incomplete additions fail, while unchanged history and complete expansions pass. Server CI invokes
 the same guard for pull requests and merge groups; its required aggregate also includes the store
-tests. The guard compares data against the supplied base; it does not make candidate-owned CI
+tests. The reader-registration suite runs real miniature Go packages and includes lossy readers,
+unread fixtures, empty/skipped/missing tests, and a valid two-version extension. The guard requires
+the server's declared Go toolchain; CI runs both regression suites after installing it.
+The guard compares data against the supplied base; it does not make candidate-owned CI
 instructions immutable or replace review of the workflow itself.
