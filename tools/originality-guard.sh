@@ -51,25 +51,46 @@ is_binary() {
 	esac
 }
 
+# Prints where the first encoded payload sits — the line of an inline marker,
+# or the START-END line range of a wrapped block — and returns 0. Prints
+# nothing and returns 1 when the file is clean. A diagnosis naming only the
+# file sends the reader off to reverse-engineer the heuristic (#768).
 has_encoded_media() {
-	local file="$1"
+	local file="$1" match
 
-	if grep -En \
+	match=$(grep -Enm1 \
 		'(<[sS][vV][gG]([[:space:]>])|<[cC][oO][lL][lL][aA][dD][aA]([[:space:]>])|<[xX]3[dD]([[:space:]>])|[dD][aA][tT][aA]:(image|audio|video|model)/[^;,]+;base64,|^[[:space:]]*(v|vn|vt|f)[[:space:]]+(-?[0-9]+([.][0-9]+)?[[:space:]]+){2}|^[[:space:]]*(ply|#[uU][sS][dD][aA]([[:space:]]|$)|OFF([[:space:]]|$)))' \
-		"$file" >/dev/null; then
+		"$file") || true
+	if [ -n "$match" ]; then
+		printf '%s\n' "${match%%:*}"
 		return 0
 	fi
 
 	# Encoders commonly wrap base64 at 64 or 76 columns. Accumulate adjacent
 	# base64-only lines so wrapping cannot turn one payload into safe fragments.
+	#
+	# A wrapped line is ONE run of alphabet characters: no encoder breaks a line
+	# with spaces, so internal whitespace is what separates a payload from prose.
+	# Only the surrounding whitespace is trimmed — stripping every space first
+	# made any punctuation-free sentence match the alphabet, and two adjacent
+	# doc-comment lines then crossed the threshold on ordinary Go tests (#768).
+	# One leading comment marker is dropped so the line is judged on its own
+	# text: prose stays prose, and commenting a payload out does not hide it.
 	awk '
 		{
 			line = $0
-			gsub(/[[:space:]]/, "", line)
+			sub(/^[[:space:]]+/, "", line)
+			sub(/[[:space:]]+$/, "", line)
+			sub(/^(\/\/|#|--|;)[[:space:]]*/, "", line)
 			if (line ~ /^[A-Za-z0-9+\/=]+$/ && length(line) >= 32) {
+				if (block_length == 0) {
+					block_start = NR
+				}
 				block_length += length(line)
 				if (block_length >= 128) {
+					printf "%d-%d\n", block_start, NR
 					found = 1
+					exit
 				}
 			} else {
 				block_length = 0
@@ -111,8 +132,8 @@ while IFS= read -r -d '' file; do
 		hash=$(shasum -a 256 "$file" | awk '{print $1}')
 		grep -Fqx "$hash  $file" "$CAPTURE_MANIFEST" && continue
 	fi
-	if ! is_binary "$file" && has_encoded_media "$file"; then
-		encoded_documentation_media+=("$file")
+	if ! is_binary "$file" && location=$(has_encoded_media "$file"); then
+		encoded_documentation_media+=("$file:$location")
 	fi
 done < <(git ls-files -z)
 
@@ -265,6 +286,8 @@ if [ ${#encoded_documentation_media[@]} -gt 0 ]; then
 	echo
 	echo "Tracked text may contain prose, code and external links, never inline SVG, encoded media"
 	echo "or text-encoded model data."
+	echo "A location is path:line for an inline marker, or path:start-end for the adjacent lines of a"
+	echo "wrapped block."
 	echo
 fi
 

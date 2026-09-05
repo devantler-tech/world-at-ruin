@@ -403,6 +403,87 @@ expect_failure \
 	"story proposal is missing the exact ORIGINALITY HOLD directive" \
 	"$repo"
 
+# Prose is not a payload. The wrapped-base64 heuristic used to strip EVERY
+# whitespace character before testing a line, so a comment whose words happened
+# to carry no punctuation matched the base64 alphabet, and two adjacent lines of
+# that shape crossed the 128-character threshold. Go doc comments here open with
+# a long CamelCase test name, so ordinary test files tripped it (#768). The Go
+# lines are the exact pair that failed the guard on #767; the Markdown pair is
+# the same shape in prose, and the GDScript pair pins that judging a comment on
+# its own text (after its marker) does not turn a punctuation-free comment into
+# a match either.
+repo=$(new_repo prose_comment_lines)
+write_valid_contract "$repo"
+mkdir -p "$repo/server"
+printf '%s\n' \
+	'package handoffalloc' \
+	'' \
+	'// TestAllocateDetachesFinalizeFailureCleanupFromCallerCancellation pins the' \
+	'// detachment on the Finalize error path for a Finalize failure that is NOT' \
+	'// the caller cancellation.' \
+	'func TestAllocateDetachesFinalizeFailureCleanupFromCallerCancellation() {}' \
+	>"$repo/server/coordinator_test.go"
+printf '%s\n' \
+	'# Godot comment lines share the same shape when their prose carries no punctuation' \
+	'# and this second neighbour is also long enough to have crossed the old threshold' \
+	'extends Node' \
+	>"$repo/client/scripts/prose.gd"
+printf '%s\n' \
+	'# Evidence' \
+	'' \
+	'Markdown prose with no punctuation at all is still prose and must never read as media' \
+	'nor may a second paragraph line of the same shape turn the first one into a payload' \
+	>"$repo/docs/evidence/prose.md"
+git -C "$repo" add server/coordinator_test.go client/scripts/prose.gd docs/evidence/prose.md
+expect_success \
+	"punctuation-free prose comments and paragraphs are not encoded media" \
+	"$repo"
+
+# A payload does not stop being one because each wrapped line is commented out.
+# Judging the comment's own text is what lets prose through above; the same
+# rule must not let a marker hide a payload the guard would otherwise reject.
+repo=$(new_repo commented_encoded_media)
+write_valid_contract "$repo"
+printf '%s\n' \
+	'#!/usr/bin/env bash' \
+	'# AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' \
+	'# BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB' \
+	>"$repo/tools/reference.sh"
+git -C "$repo" add tools/reference.sh
+expect_failure \
+	"wrapped base64 hidden behind comment markers is still rejected" \
+	"encoded or inline media in repository text" \
+	"$repo"
+
+# A diagnosis that names only the file sends the reader off to reverse-engineer
+# the heuristic. A wrapped block is reported as the line range that crossed the
+# threshold; an inline marker as the line it sits on.
+repo=$(new_repo located_encoded_media)
+write_valid_contract "$repo"
+printf '%s\n' \
+	'# Evidence' \
+	'' \
+	'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' \
+	'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB' \
+	>"$repo/docs/evidence/reference.md"
+git -C "$repo" add docs/evidence/reference.md
+expect_failure \
+	"a wrapped payload is reported with its line range, not only its file" \
+	"docs/evidence/reference.md:3-4" \
+	"$repo"
+
+repo=$(new_repo located_inline_media)
+write_valid_contract "$repo"
+{
+	printf '%s\n' '# Evidence' '' ''
+	printf '%s%s\n' 'data:image/png;' 'base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB'
+} >"$repo/docs/evidence/reference.md"
+git -C "$repo" add docs/evidence/reference.md
+expect_failure \
+	"an inline payload is reported with its line number, not only its file" \
+	"docs/evidence/reference.md:4" \
+	"$repo"
+
 repo=$(new_repo valid)
 write_valid_contract "$repo"
 expect_success "link-only references and required policy anchors pass" "$repo"
