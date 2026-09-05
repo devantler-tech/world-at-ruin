@@ -302,16 +302,19 @@ will expire:
 
 ## Delivery substrate (decided; open to steer)
 
-- **Origin of record:** self-hosted on the platform — an **OCI registry / object store**, published by
-  CI through the same Flux-based CD the rest of the platform uses. Control-plane material stays ours.
+- **Contract origin of record:** an **OCI registry** — GHCR today, the platform's own registry once
+  the platform CD path exists — holding the digest-pinned, cosign-signed build and the manifest that
+  describes it. The updater reads that contract anonymously **by digest**; it is the client's only
+  registry interaction. Control-plane material stays ours.
+- **Delivery origin:** a **plain HTTPS origin** the channel names — **GitHub Releases** during
+  bootstrap, the platform's **object store behind a CDN edge** later — serving pack and shell bytes
+  pinned by `sha256` and `size` in the manifest. The registry is never a delivery origin
+  ([ADR 0004](../adr/0004-serve-delivery-bytes-from-a-plain-https-origin.md)).
 - **Edge:** a **CDN** in front of the pack/shell bytes (adjacent tooling, cacheable, bounded blast
   radius — an acceptable SaaS use under the self-host-the-control-plane boundary).
-- **Interim bootstrap:** until the platform CD path exists, **GitHub Releases** is the origin (CI can
-  already publish there; the macOS export artifact #6 is the seed). The client only ever knows a
-  *channel URL*, so the origin can migrate from Releases → platform without a client change.
-  Whatever serves it, a delivery URL is a **plain HTTPS download**; the registry stays the
-  digest-pinned contract origin the updater reads anonymously by digest and is never a delivery
-  origin ([ADR 0004](../adr/0004-serve-delivery-bytes-from-a-plain-https-origin.md)).
+- **One channel, two origins the client is told:** the client knows its channel's contract reference
+  and delivery origin and nothing else, so either origin can migrate from GitHub to the platform
+  without a client change.
 - **Channel model:** one rolling **`live`** channel by default — one world, continuously delivered,
   consistent with no-seasons/no-resets. The schema permits named channels for a future `canary`.
 - **Signing & a rotatable root of trust.** Packs and manifests are signed in CI; the client verifies the
