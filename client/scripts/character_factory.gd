@@ -235,12 +235,7 @@ static func build(recipe: Dictionary) -> Node3D:
 	for hand in ["hand_l", "hand_r"]:
 		_hang_toward_down(skeleton, skeleton.find_bone(hand), HAND_RELAX_DEG)
 	_apply_contrapposto(skeleton)
-	skeleton.reset_bone_poses()
-	skeleton.force_update_all_bone_transforms()
-
-	for shape_name: String in recipe.get("shapes", {}):
-		var idx := mesh_instance.find_blend_shape_by_name(shape_name)
-		mesh_instance.set_blend_shape_value(idx, recipe["shapes"][shape_name])
+	KitAssembly.commit_rests_and_apply_shapes(skeleton, mesh_instance, recipe.get("shapes", {}))
 
 	for piece_name in pieces_to_wear(recipe.get("equipment", {})):
 		_equip_piece(skeleton, mesh_instance, piece_name, recipe.get("shapes", {}))
@@ -513,19 +508,16 @@ static func weapon_socket(instance: Node3D, hand_bone: String) -> BoneAttachment
 ## silently skipping unknown fields would render a character that is not what
 ## its recipe says (a forward-compat lie).
 static func validate(recipe: Dictionary, skeleton: Skeleton3D, mesh_instance: MeshInstance3D) -> String:
-	var version = recipe.get("version")
-	if not (version is int or (version is float and version == floorf(version))):
-		return "recipe has no integer version"
-	if int(version) < 1:
-		return "recipe version %d is not positive" % int(version)
-	if int(version) > RECIPE_VERSION:
-		return "recipe version %d is newer than this client understands (%d)" % [int(version), RECIPE_VERSION]
+	var version_problem := KitAssembly.recipe_version_problem(recipe, RECIPE_VERSION)
+	if version_problem != "":
+		return version_problem
+	var version := int(recipe["version"])
 	for field: String in recipe:
 		if field in RECIPE_FIELDS:
 			continue
-		if field in RECIPE_FIELDS_V2 and int(version) >= 2:
+		if field in RECIPE_FIELDS_V2 and version >= 2:
 			continue
-		if field in RECIPE_FIELDS_V3 and int(version) >= 3:
+		if field in RECIPE_FIELDS_V3 and version >= 3:
 			continue
 		return "unknown recipe field '%s' — this client cannot render it, refusing a half-truth" % field
 	if recipe.has("shapes") and recipe["shapes"] is not Dictionary:
@@ -558,7 +550,7 @@ static func validate(recipe: Dictionary, skeleton: Skeleton3D, mesh_instance: Me
 	if recipe.has("equipment"):
 		if recipe["equipment"] is not Dictionary:
 			return "equipment must be a dictionary of slot -> piece name"
-		var problem := String(_resolve_equipment(recipe["equipment"], int(version))["problem"])
+		var problem := String(_resolve_equipment(recipe["equipment"], version)["problem"])
 		if problem != "":
 			return problem
 	if recipe.has("skin"):
@@ -676,11 +668,7 @@ static func fingerprint(instance: Node3D) -> String:
 	var skeleton := find_skeleton(instance)
 	if skeleton == null or find_skinned_mesh(skeleton) == null:
 		return "no-skeleton-or-mesh"
-	skeleton.force_update_all_bone_transforms()
-	var ctx := HashingContext.new()
-	ctx.start(HashingContext.HASH_SHA256)
-	for i in skeleton.get_bone_count():
-		ctx.update(var_to_bytes(skeleton.get_bone_global_rest(i)))
+	var ctx := KitAssembly.rest_hash_context(skeleton)
 	var names := PackedStringArray()
 	var meshes := {}
 	for child in skeleton.get_children():
@@ -794,10 +782,7 @@ static func _hang_toward_down(skeleton: Skeleton3D, bone: int, deg: float) -> vo
 	var axis := dir.cross(Vector3.DOWN)
 	if axis.length_squared() < 0.000001:
 		return
-	var world_rot := Basis(axis.normalized(), deg_to_rad(deg))
-	var local_rot := global_rest.basis.inverse() * (world_rot * global_rest.basis)
-	var rest := skeleton.get_bone_rest(bone)
-	skeleton.set_bone_rest(bone, Transform3D(rest.basis * local_rot, rest.origin))
+	_rotate_rest(skeleton, bone, global_rest, axis, deg)
 
 
 ## Shifts the body's weight onto one leg (#237). Runs AFTER the arm hang and
@@ -868,12 +853,10 @@ static func _level_head(skeleton: Skeleton3D) -> void:
 	_rotate_rest_world(skeleton, neck, Vector3.FORWARD, -rad_to_deg(roll_rad))
 
 
-## Rotates a bone's rest by `deg` about a WORLD axis, conjugated into bone
-## space — the same manoeuvre as [method _hang_toward_down], but about an axis
-## the caller chooses rather than always swinging toward world-down. Pure
-## rotation, so no shear can enter the rest (the TRS law), and the global rest
-## is composed manually because reading engine globals mid-edit desyncs Godot
-## 4.7's caches.
+## Rotates a bone's rest by `deg` about a WORLD axis of the caller's choosing —
+## the stance edits use it for the pelvis, spine and neck. Guards the bone and a
+## zero angle, composes the global rest, and hands the rotation itself to
+## [method _rotate_rest], which [method _hang_toward_down] shares.
 static func _rotate_rest_world(
 	skeleton: Skeleton3D, bone: int, world_axis: Vector3, deg: float
 ) -> void:
@@ -883,6 +866,17 @@ static func _rotate_rest_world(
 	if is_zero_approx(deg):
 		return
 	var global_rest := _composed_global_rest(skeleton, bone)
+	_rotate_rest(skeleton, bone, global_rest, world_axis, deg)
+
+
+## Rotates `bone`'s rest by `deg` about a WORLD axis, conjugated through the
+## bone's composed `global_rest` into bone space. Pure rotation, so no shear can
+## enter the rest (the TRS law); the caller composes `global_rest` manually
+## because reading engine globals mid-edit desyncs Godot 4.7's caches. Every rest
+## rotation in this factory ends here.
+static func _rotate_rest(
+	skeleton: Skeleton3D, bone: int, global_rest: Transform3D, world_axis: Vector3, deg: float
+) -> void:
 	var world_rot := Basis(world_axis.normalized(), deg_to_rad(deg))
 	var local_rot := global_rest.basis.inverse() * (world_rot * global_rest.basis)
 	var rest := skeleton.get_bone_rest(bone)

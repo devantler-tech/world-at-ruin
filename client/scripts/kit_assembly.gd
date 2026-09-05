@@ -3,13 +3,13 @@ class_name KitAssembly
 ##
 ## `CharacterFactory` (humanoid) and `CreatureFactory` (quadruped) compose
 ## different kits from different recipe vocabularies, but they reach INTO a
-## baked kit the same way: find the one skeleton, find the body mesh hanging
-## under it, scale a bone's subtree around its own joint, and evaluate the
-## current morph mix on the CPU. Those four operations were copied between the
-## two factories, so a fix applied to the character path did not reach the
-## creature path — the drift this file exists to end. Each factory keeps its
-## own public entry points and calls through to here, so callers are unaffected
-## and there is one implementation to fix.
+## baked kit the same way: gate a recipe on its version, find the one skeleton,
+## find the body mesh hanging under it, scale a bone's subtree around its own
+## joint, commit the rests and apply the morph weights, evaluate the current
+## morph mix on the CPU, and hash the rests for a fingerprint. Each factory
+## keeps its own public entry points and calls through to here, so callers are
+## unaffected and there is ONE implementation to fix — a change to the character
+## path reaches the creature path by construction.
 ##
 ## Static-only: there is nothing here to instantiate.
 
@@ -87,3 +87,45 @@ static func mixed_vertices(mesh_instance: MeshInstance3D) -> PackedVector3Array:
 			var delta := targets[vertex_index] - base[vertex_index] if normalized else targets[vertex_index]
 			mixed[vertex_index] += delta * weight
 	return mixed
+
+
+## The version gate every recipe passes before any other field is read: "" when
+## `recipe` carries an integer `version` from 1 up to `newest`, else the reason a
+## caller reports. A newer version is refused outright rather than rendered in
+## part, so a client never shows a body that is not what its recipe says, and
+## both factories refuse it with the same words.
+static func recipe_version_problem(recipe: Dictionary, newest: int) -> String:
+	var version = recipe.get("version")
+	if not (version is int or (version is float and version == floorf(version))):
+		return "recipe has no integer version"
+	if int(version) < 1:
+		return "recipe version %d is not positive" % int(version)
+	if int(version) > newest:
+		return "recipe version %d is newer than this client understands (%d)" % [int(version), newest]
+	return ""
+
+
+## Commits every rest edit, then applies the recipe's morph weights — in that
+## order, because rest edits and engine global reads must not interleave, and
+## the morph pass is the first thing a factory does once the rests are final.
+static func commit_rests_and_apply_shapes(
+	skeleton: Skeleton3D, mesh_instance: MeshInstance3D, shapes: Dictionary
+) -> void:
+	skeleton.reset_bone_poses()
+	skeleton.force_update_all_bone_transforms()
+	for shape_name: String in shapes:
+		var idx := mesh_instance.find_blend_shape_by_name(shape_name)
+		mesh_instance.set_blend_shape_value(idx, shapes[shape_name])
+
+
+## A SHA-256 context primed with every bone's global rest, in bone order, after
+## the transforms are brought up to date — the prefix both factory fingerprints
+## share before each adds its own meshes and identity. Byte order is part of the
+## fingerprint contract: the golden fixtures pin it.
+static func rest_hash_context(skeleton: Skeleton3D) -> HashingContext:
+	skeleton.force_update_all_bone_transforms()
+	var ctx := HashingContext.new()
+	ctx.start(HashingContext.HASH_SHA256)
+	for i in skeleton.get_bone_count():
+		ctx.update(var_to_bytes(skeleton.get_bone_global_rest(i)))
+	return ctx

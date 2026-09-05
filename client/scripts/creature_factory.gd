@@ -68,12 +68,7 @@ static func build(recipe: Dictionary) -> Node3D:
 		var bone := skeleton.find_bone(key)
 		if bone >= 0:
 			KitAssembly.scale_bone_subtree(skeleton, bone, recipe["bone_scale"][key])
-	skeleton.reset_bone_poses()
-	skeleton.force_update_all_bone_transforms()
-
-	for shape_name: String in recipe.get("shapes", {}):
-		var idx := mesh_instance.find_blend_shape_by_name(shape_name)
-		mesh_instance.set_blend_shape_value(idx, recipe["shapes"][shape_name])
+	KitAssembly.commit_rests_and_apply_shapes(skeleton, mesh_instance, recipe.get("shapes", {}))
 
 	if recipe.has("tint"):
 		mesh_instance.set_surface_override_material(0, _tint_material(String(recipe["tint"])))
@@ -120,13 +115,9 @@ static func tints_registry() -> Dictionary:
 ## is deliberate — silently skipping them would render a creature that is not
 ## what its recipe says (a forward-compat lie).
 static func validate(recipe: Dictionary, skeleton: Skeleton3D, mesh_instance: MeshInstance3D) -> String:
-	var version = recipe.get("version")
-	if not (version is int or (version is float and version == floorf(version))):
-		return "recipe has no integer version"
-	if int(version) < 1:
-		return "recipe version %d is not positive" % int(version)
-	if int(version) > RECIPE_VERSION:
-		return "recipe version %d is newer than this client understands (%d)" % [int(version), RECIPE_VERSION]
+	var problem := KitAssembly.recipe_version_problem(recipe, RECIPE_VERSION)
+	if problem != "":
+		return problem
 	for field: String in recipe:
 		if field not in RECIPE_FIELDS:
 			return "unknown recipe field '%s' — this client cannot render it, refusing a half-truth" % field
@@ -175,11 +166,7 @@ static func fingerprint(instance: Node3D) -> String:
 	var mesh_instance := find_skinned_mesh(skeleton)
 	if skeleton == null or mesh_instance == null:
 		return "no-skeleton-or-mesh"
-	skeleton.force_update_all_bone_transforms()
-	var ctx := HashingContext.new()
-	ctx.start(HashingContext.HASH_SHA256)
-	for i in skeleton.get_bone_count():
-		ctx.update(var_to_bytes(skeleton.get_bone_global_rest(i)))
+	var ctx := KitAssembly.rest_hash_context(skeleton)
 	var mixed := KitAssembly.mixed_vertices(mesh_instance)
 	ctx.update(mixed.to_byte_array())
 	ctx.update(String(instance.get_meta("tint", "")).to_utf8_buffer())
