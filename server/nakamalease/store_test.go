@@ -1907,8 +1907,45 @@ func TestLoadKeepsSchemaOneLeaseReadableAsNotReleasing(t *testing.T) {
 	}
 }
 
+// TestEveryShippedLeaseSchemaShapeStaysReadable checks that Store.Load preserves
+// each historical ownership and cleanup state without rewriting its document.
 func TestEveryShippedLeaseSchemaShapeStaysReadable(t *testing.T) {
 	t.Parallel()
+
+	// These expectations are independent of the fixture decoder and writer.
+	// Each row follows the immutable shape order in that schema's golden file.
+	unclaimed := Lease{
+		UserID:        testUserID,
+		ReservationID: testReservationID,
+		AttemptID:     "attempt-7",
+		AllocationID:  "gameserver-17",
+		Observer:      42,
+		SecretRef:     "zone-admission-gameserver-17",
+		ExpiresAt:     time.Unix(2_000_000_000, 123_456_789).UTC(),
+	}
+	claimed := unclaimed
+	claimed.ClaimedAt = time.Unix(1_999_999_999, 123_456_789).UTC()
+	staging := Lease{
+		UserID:        testUserID,
+		ReservationID: testReservationID,
+		AttemptID:     "attempt-7",
+		ExpiresAt:     time.Unix(2_000_000_000, 123_456_789).UTC(),
+		Staging:       true,
+	}
+	dispatched := staging
+	dispatched.Dispatched = true
+	dispatched.DispatchID = "00112233445566778899aabbccddeeff"
+	releasing := unclaimed
+	releasing.Releasing = true
+	stagingReleasing := staging
+	stagingReleasing.Releasing = true
+	dispatchedReleasing := dispatched
+	dispatchedReleasing.Releasing = true
+	wantSchemas := [][]Lease{
+		{unclaimed, claimed},
+		{staging, unclaimed, claimed, releasing, stagingReleasing},
+		{staging, dispatched, unclaimed, claimed, releasing, stagingReleasing, dispatchedReleasing},
+	}
 
 	ledgerBytes, err := os.ReadFile(filepath.Join(
 		"testdata",
@@ -1918,8 +1955,9 @@ func TestEveryShippedLeaseSchemaShapeStaysReadable(t *testing.T) {
 		t.Fatalf("read lease schema ledger: %v", err)
 	}
 	versions := strings.Fields(string(ledgerBytes))
-	if len(versions) == 0 {
-		t.Fatal("lease schema ledger is empty")
+	if len(versions) != len(wantSchemas) {
+		t.Fatalf("lease schema ledger has %d versions, want %d independent expectation sets",
+			len(versions), len(wantSchemas))
 	}
 	for index, rawVersion := range versions {
 		version, err := strconv.Atoi(rawVersion)
@@ -1945,39 +1983,62 @@ func TestEveryShippedLeaseSchemaShapeStaysReadable(t *testing.T) {
 		if err := json.Unmarshal(goldenBytes, &goldens); err != nil {
 			t.Fatalf("decode lease schema %d golden set: %v", version, err)
 		}
-		if len(goldens) == 0 {
-			t.Fatalf("lease schema %d has no golden shapes", version)
+		if len(goldens) != len(wantSchemas[index]) {
+			t.Fatalf("lease schema %d has %d shapes, want %d independent expectations",
+				version, len(goldens), len(wantSchemas[index]))
 		}
 		for shapeIndex, golden := range goldens {
-			var stored document
-			if err := json.Unmarshal(golden, &stored); err != nil {
-				t.Fatalf(
-					"decode lease schema %d shape %d: %v",
-					version,
-					shapeIndex+1,
-					err,
-				)
-			}
-			if stored.Schema != version {
-				t.Fatalf(
-					"lease schema %d shape %d declares %d",
-					version,
-					shapeIndex+1,
-					stored.Schema,
-				)
-			}
-			if _, err := leaseFrom(
-				string(golden),
-				testUserID,
-				testReservationID,
-			); err != nil {
-				t.Fatalf(
-					"read lease schema %d shape %d: %v",
-					version,
-					shapeIndex+1,
-					err,
-				)
-			}
+			t.Run(fmt.Sprintf("schema-%d/shape-%d", version, shapeIndex+1), func(t *testing.T) {
+				t.Parallel()
+
+				var stored document
+				if err := json.Unmarshal(golden, &stored); err != nil {
+					t.Fatalf(
+						"decode lease schema %d shape %d: %v",
+						version,
+						shapeIndex+1,
+						err,
+					)
+				}
+				if stored.Schema != version {
+					t.Fatalf(
+						"lease schema %d shape %d declares %d",
+						version,
+						shapeIndex+1,
+						stored.Schema,
+					)
+				}
+				storage := newMemoryStorage()
+				store, err := NewStore(storage)
+				if err != nil {
+					t.Fatalf("NewStore returned an error: %v", err)
+				}
+				key := ReservationKey(testUserID, testReservationID)
+				objectID := storageID(testSystemUserID, Collection, key)
+				storageVersion := fmt.Sprintf("historical-v%d-shape%d", version, shapeIndex+1)
+				storage.objects[objectID] = &api.StorageObject{
+					Collection: Collection,
+					Key:        key,
+					UserId:     testSystemUserID,
+					Value:      string(golden),
+					Version:    storageVersion,
+				}
+				got, err := store.Load(context.Background(), testUserID, testReservationID)
+				if err != nil {
+					t.Fatalf("load historical lease: %v", err)
+				}
+				want := Record{Lease: wantSchemas[index][shapeIndex], Version: storageVersion}
+				if got != want {
+					t.Errorf("historical lease lost persisted state: got %+v, want %+v", got, want)
+				}
+				if len(storage.writes) != 0 || len(storage.deletes) != 0 {
+					t.Errorf("loading historical lease performed %d writes and %d deletes",
+						len(storage.writes), len(storage.deletes))
+				}
+				if storage.objects[objectID].GetValue() != string(golden) {
+					t.Error("loading historical lease changed its stored document")
+				}
+			})
 		}
 	}
 	lastVersion, err := strconv.Atoi(versions[len(versions)-1])

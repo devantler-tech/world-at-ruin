@@ -616,7 +616,13 @@ everything shipped afterwards is held to.
   key, generates one in-memory 32-byte secret while the GameServer is `Starting`, publishes the
   identity-bound ciphertext/fingerprint/readiness metadata, observes those exact values through
   `WatchGameServer`, and only then permits the serving command to call `Ready`; an allocatable
-  restart calls `Shutdown` without rotating metadata), the first **Nakama identity boundary**
+  restart calls `Shutdown` without rotating metadata), the latent **zone claim gate**
+  (`server/zoneclaim/` plus `zonesock.NewClaimedHub` — claims through a private boundary before
+  upgrading a socket, using only the exact sealed GameServer's observed allocation locator;
+  cancellation, token expiry, metadata changes, watch termination and lifecycle shutdown refuse
+  admission, and an invalidated observation cannot be reused after restoration; the authenticated
+  private endpoint, session-end recovery and production command wiring remain separate work),
+  the first **Nakama identity boundary**
   (`server/nakamaauth/` — locally validates audience-bound Google ID tokens, derives a
   server-keyed opaque email/password pair whose logged identifier is not replayable alone,
   provisions through Nakama's generated `AuthenticateEmail` API, verifies the returned session,
@@ -650,7 +656,12 @@ everything shipped afterwards is held to.
   against the runtime caller, rejects client-owned preseeds plus public, malformed or stale
   observations, keeps every shipped schema readable through a ledgered golden, and delegates every
   conditional write and system-owned replay audit to the atomic `playerstate` boundary; it remains
-  inert until a server caller composes it), the
+  inert until a server caller composes it), the private **Nakama inventory-container owner**
+  (`server/nakamainventory/` — stores one strict-schema container of opaque item stacks at an
+  account-derived key under the system owner, bounds stacks and counts so no write can mint an
+  unbounded amount of anything, refuses a stale observation or a malformed durable container, keeps
+  every shipped schema readable through a ledgered golden, and commits every replacement with its
+  replay audit through the same atomic `playerstate` boundary; the item model is not its concern), the
   durable **handoff allocation coordinator**
   (`server/handoffalloc/` — implements `handoff.Allocator` over the real lease store and an injected
   GameServer-resource boundary; exact-version persists a uniquely identified dispatched barrier
