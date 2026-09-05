@@ -314,8 +314,9 @@ will expire:
   radius — an acceptable SaaS use under the self-host-the-control-plane boundary).
 - **One channel:** the client knows its channel's contract reference and nothing else, because the
   manifest omits delivery today. Once delivery fields are introduced, the channel also names its
-  delivery origin, and either origin can then migrate from GitHub to the platform without a client
-  change.
+  delivery origin, and that origin can migrate from GitHub to the platform without a client change
+  because its URL travels inside the fetched contract. The contract origin cannot move the same way
+  until a project-controlled channel-discovery reference exists (#810).
 - **Channel model:** one rolling **`live`** channel by default — one world, continuously delivered,
   consistent with no-seasons/no-resets. The schema permits named channels for a future `canary`.
 - **Signing & a rotatable root of trust.** Packs and manifests are signed in CI; the client verifies the
@@ -532,8 +533,9 @@ handshake (child 5), and key custody (child 6) implement them, and the manifest 
    last-good pack selection. It **must ship before the first overlay can be delivered**, because a pack
    that crashes at startup cannot recover itself; without this in place a single bad overlay would
    strand every client that received it.
-3. **Pack build & publish pipeline** — CI exports a signed `full` + `deltas` `.pck` set + manifest to
-   the origin; base+overlay split; a committed pack-overlay load-order test (the live-verified piece).
+3. **Pack build & publish pipeline** — CI publishes the signed manifest to the contract origin and
+   the signed `full` + `deltas` `.pck` set to the delivery origin ([ADR 0004](../adr/0004-serve-delivery-bytes-from-a-plain-https-origin.md));
+   base+overlay split; a committed pack-overlay load-order test (the live-verified piece).
 4. **In-client updater** — fetch → verify signature/sha → stage → hand promotion/rollback to the
    bootstrap (child 2). Never promotes a pack that raises the save write-schema beyond the rollback
    target's read ceiling (that routes to the shell tier).
@@ -556,7 +558,8 @@ handshake (child 5), and key custody (child 6) implement them, and the manifest 
 
 Still made defensibly above from the settled stack, open to redirect on this PR:
 
-1. **Origin:** platform-hosted OCI/object store (interim: GitHub Releases). Or a specific CDN/host from
-   the start?
+1. ✅ **Origin — DECIDED** ([ADR 0004](../adr/0004-serve-delivery-bytes-from-a-plain-https-origin.md), #611):
+   the contract stays on an OCI registry (GHCR now, the platform registry later) and delivery bytes
+   come from a plain HTTPS origin (GitHub Releases now, the platform object store behind a CDN later).
 2. **Channel model:** a single rolling `live` channel (schema allows a future `canary`). Or a
    stable/beta split now?

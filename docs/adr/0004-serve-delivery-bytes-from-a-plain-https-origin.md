@@ -49,8 +49,11 @@ Three answers were on the table:
 the registry is never a delivery origin.** The channel's delivery origin is a
 GitHub release asset while GitHub Releases is the interim bootstrap origin the
 distribution design already names, and the platform's object store behind its
-CDN edge once the platform CD path exists. The client knows one channel, so that
-migration needs no client change.
+CDN edge once the platform CD path exists. Because the delivery URL travels inside the
+fetched contract, that migration needs no client change. The contract origin itself is
+not yet free to move: the updater reaches it through a registry reference the shell carries,
+so retiring GHCR needs either a project-controlled channel-discovery reference or a shell
+update — tracked under the distribution epic, not settled here.
 
 **The contract stays where it is and is read the way the design already
 intends.** GHCR remains the digest-pinned, cosign-signed contract origin for the
@@ -69,6 +72,15 @@ a shape check. Enforcement is that the updater applies the same predicate to
 every delivery field before fetching, and that the publishing pipeline proves,
 with no credentials, that every published delivery URL downloads and hashes to
 the digest the manifest pins.
+
+A delivery URL is **durable and public**: no userinfo, no signed or expiring
+query parameters, nothing that stops answering once a token lapses. The shape
+check accepts optional userinfo and any query string, and a presigned
+object-store or CDN URL also passes a credential-free fetch on publication day —
+then expires, leaving retained manifests and rollback targets pointing at bytes
+nobody can fetch. The publishing pipeline therefore refuses a delivery URL that
+carries userinfo or a signed-URL parameter (#788); reachability checks alone
+cannot catch it.
 
 Two origins holding the same bytes is the failure mode #280 refused for the
 *manifest*, and it is acceptable for *delivery* only because the client verifies
@@ -101,6 +113,12 @@ rather than the only line.
   sibling check that runs after publication, downloads each published delivery URL with no credentials,
   and verifies its `sha256` and `size` guards the delivery origin from the first delivery on
   (#789), and both become blocking when the updater consumes them (#141).
+- Publication order changes once delivery fields exist: today `publish-ghcr`
+  advances the `latest` tag before `publish-release` makes the asset public, so a
+  manifest carrying a delivery URL would be live while that URL still answers
+  404. CD must stage the digest without advancing the live channel, publish and
+  verify the release asset, and only then promote that digest to `latest`; a
+  failed publication or verification leaves the previous contract live (#788).
 - The updater applies `_is_fetchable_url` to every delivery field, not only to
   rollback targets, before it fetches anything.
 - A shell download follows the same rule and additionally needs the offline
