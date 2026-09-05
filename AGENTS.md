@@ -650,7 +650,12 @@ everything shipped afterwards is held to.
   against the runtime caller, rejects client-owned preseeds plus public, malformed or stale
   observations, keeps every shipped schema readable through a ledgered golden, and delegates every
   conditional write and system-owned replay audit to the atomic `playerstate` boundary; it remains
-  inert until a server caller composes it), the
+  inert until a server caller composes it), the private **Nakama inventory-container owner**
+  (`server/nakamainventory/` — stores one strict-schema container of opaque item stacks at an
+  account-derived key under the system owner, bounds stacks and counts so no write can mint an
+  unbounded amount of anything, refuses a stale observation or a malformed durable container, keeps
+  every shipped schema readable through a ledgered golden, and commits every replacement with its
+  replay audit through the same atomic `playerstate` boundary; the item model is not its concern), the
   durable **handoff allocation coordinator**
   (`server/handoffalloc/` — implements `handoff.Allocator` over the real lease store and an injected
   GameServer-resource boundary; exact-version persists a uniquely identified dispatched barrier
