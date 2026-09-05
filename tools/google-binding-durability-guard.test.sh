@@ -8,6 +8,7 @@ GUARD="$ROOT/tools/google-binding-durability-guard.sh"
 WORKFLOW="$ROOT/.github/workflows/ci.yaml"
 failures=0
 
+# t_fail records a failed assertion while allowing the remaining cases to run.
 t_fail() {
 	printf 'Google binding durability guard test: FAIL — %s\n' "$1" >&2
 	failures=$((failures + 1))
@@ -49,11 +50,13 @@ git -C "$repo" add server/nakamaauth/testdata server/nakamalease/testdata \
 git -C "$repo" commit -qm 'ship binding schema one'
 base="$(git -C "$repo" rev-parse HEAD)"
 
+# reset_tree restores only the temporary fixture repository to its shipped base.
 reset_tree() {
 	git -C "$repo" reset -q --hard "$base"
 	git -C "$repo" clean -qfd
 }
 
+# run_guard_from captures the real guard's output and status at a supplied base.
 run_guard_from() {
 	local anchor="$1" out rc=0
 	out="$(cd "$repo" && BASE_SHA="$anchor" bash "$GUARD" 2>&1)" || rc=$?
@@ -61,6 +64,7 @@ run_guard_from() {
 	return "$rc"
 }
 
+# run_guard_from_with_strict_comm exposes order-sensitive comparisons through PATH.
 run_guard_from_with_strict_comm() {
 	local anchor="$1" out rc=0
 	out="$(
@@ -71,6 +75,7 @@ run_guard_from_with_strict_comm() {
 	return "$rc"
 }
 
+# expect_pass requires the candidate fixture tree to satisfy the real guard.
 expect_pass() {
 	local label="$1" out rc=0
 	out="$(run_guard_from "$base")" || rc=$?
@@ -79,6 +84,7 @@ expect_pass() {
 	fi
 }
 
+# expect_fail_matching requires refusal for the specified reason, not any failure.
 expect_fail_matching() {
 	local label="$1" needle="$2" out rc=0
 	out="$(run_guard_from "$base")" || rc=$?

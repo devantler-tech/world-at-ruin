@@ -8,17 +8,20 @@ export LC_ALL=C
 ADDRESS_CONTRACT='server/nakamaauth/testdata/golden_google_identity_address_v1.json'
 SCRATCH_DIR=''
 
+# fail prints the supplied refusal reason to stderr and exits unsuccessfully.
 fail() {
 	printf 'Server save durability guard: FAIL — %s\n' "$1" >&2
 	exit 1
 }
 
+# cleanup removes only this invocation's temporary comparison files on exit.
 cleanup() {
 	if [ -n "$SCRATCH_DIR" ] && [ -d "$SCRATCH_DIR" ]; then
 		rm -rf "$SCRATCH_DIR"
 	fi
 }
 
+# require_file refuses missing paths and symbolic links in any path component.
 require_file() {
 	local path="$1" part="$1"
 	[ -f "$path" ] || fail "$path was deleted or is missing"
@@ -29,6 +32,7 @@ require_file() {
 	[ ! -L "$part" ] || fail "$path must not depend on a symbolic link"
 }
 
+# read_versions emits a ledger's consecutive versions or refuses it by label.
 read_versions() {
 	local file="$1" label="$2"
 	# One canonical positive decimal version per line, starting at one. Reject
@@ -40,10 +44,12 @@ read_versions() {
 	' "$file" || fail "$label has an empty, malformed or non-contiguous schema ledger"
 }
 
+# ledger_paths selects conventionally named server ledgers from stdin paths.
 ledger_paths() {
 	awk '/^server\/([a-zA-Z0-9_-]+\/)+testdata\/shipped_[a-z0-9_]+_versions\.txt$/ { print }'
 }
 
+# validate_fixture requires one object or a nonempty object array at the given schema.
 validate_fixture() {
 	local golden="$1" version="$2"
 	require_file "$golden"
@@ -57,6 +63,7 @@ validate_fixture() {
 	' "$golden" >/dev/null 2>&1 || fail "$golden is not a complete schema-$version fixture"
 }
 
+# guard_family validates one ledger's fixtures and preserves its base history.
 guard_family() {
 	local base="$1" ledger="$2" stem prefix version golden
 	require_file "$ledger"
@@ -85,6 +92,7 @@ guard_family() {
 	done <"$SCRATCH_DIR/base-versions"
 }
 
+# main anchors discovery to BASE_SHA and checks every base or candidate family.
 main() {
 	local base="${BASE_SHA:-}" ledger count=0
 	[ -n "$base" ] || fail 'BASE_SHA is unset — cannot anchor shipped server schemas'

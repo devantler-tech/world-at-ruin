@@ -980,6 +980,8 @@ func TestApplyCreatesAPlayerRecordConditionallyWithItsAudit(t *testing.T) {
 	}
 }
 
+// TestEveryShippedAuditSchemaStaysReadable pins every persisted audit field to
+// independent expectations, including the outcome used to replay a mutation.
 func TestEveryShippedAuditSchemaStaysReadable(t *testing.T) {
 	t.Parallel()
 

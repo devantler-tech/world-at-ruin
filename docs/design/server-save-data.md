@@ -24,16 +24,15 @@ because it defines a permanent lookup contract rather than a versioned record fa
 The naming convention is `server/<package>/testdata/shipped_<family>_versions.txt` with sibling
 `golden_<family>_v<N>.json` files. Nested package directories are supported. Package names use
 letters, digits, underscores and hyphens; family names use lowercase letters, digits and underscores.
-New record families use this convention and join the check without editing an allowlist.
+Record families use this convention and join the check without editing an allowlist.
 
 The second check is behavioral: the stores' Go tests load their historical fixtures through the
-production reader. Character tests retain the character
-identity and recipe; audit tests retain the idempotency identity, target record, operation, payload
+production reader. Character tests retain the character identity and recipe; audit tests retain
+the idempotency identity, target record, operation, payload
 and committed outcome; identity-binding tests pin the historical binding fields. Lease fixtures
-prove historical acceptance, with ownership and transitions covered by separate tests; they do not
-yet assert field-by-field preservation for every historical lease shape. A JSON-shape check cannot
-prove these semantics, and a checkout-local test cannot alone
-prove that its historical fixture was preserved.
+prove historical acceptance, with ownership and transitions covered by separate tests. A JSON-shape
+check cannot prove these semantics, and a checkout-local test cannot alone prove that its historical
+fixture was preserved.
 
 ## Expanding a server schema
 
