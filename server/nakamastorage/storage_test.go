@@ -95,7 +95,7 @@ func TestSanitizeErrorPrefersTheCallersOwnCancellation(t *testing.T) {
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
 	expired, expire := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
-	defer expire()
+	t.Cleanup(expire)
 
 	cases := map[string]struct {
 		ctx  context.Context
