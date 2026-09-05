@@ -770,6 +770,8 @@ func _persist_pending_quest_progress(delta: float) -> void:
 
 func _exit_tree() -> void:
 	if _mastery_persistence != null:
+		# Child HUD nodes have already exited; a final refusal cannot show a toast.
+		_mastery_persistence.set_block_signals(true)
 		_mastery_persistence.flush()
 
 

@@ -549,7 +549,8 @@ everything shipped afterwards is held to.
   weapon IDs map to exact banked and unbanked points and whose standing bloodstain is restored as
   part of the same ledger. `Main` applies that snapshot to its boot-owned `Mastery` before content
   registration; unknown future weapon IDs stay live. The manifest advertises read and write
-  capability 7, backed by the retained v0.91.0 whole-app reader. Only a real mastery transition
+  capability 7, requiring a retained whole-app reader with full-precision vault serialization.
+  The v0.91.0 baseline reads mastery but rounds a maximum quest counter on rewrite. Only a real mastery transition
   originates v5: `MasteryPersistence` saves one complete snapshot per award, death or reclaim, retries
   temporary failures with bounded backoff, and makes one final attempt on clean exit. Its additional
   exact-prior-mastery comparison stops a stale session overwriting another session's economic state;

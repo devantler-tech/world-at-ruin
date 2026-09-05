@@ -1,6 +1,6 @@
 # Retained mastery reader
 
-The whole-app rollback target for capability-7 mastery writes is the published
+The whole-app reader compatibility baseline for capability-7 mastery is the published
 [v0.91.0 release](https://github.com/devantler-tech/world-at-ruin/releases/tag/v0.91.0).
 Its immutable asset is `WorldAtRuin-0.91.0-macOS-universal.zip`, with SHA-256:
 
@@ -40,4 +40,12 @@ WAR_SAVE_PATH="$probe/assert-character.json" \
 Require `BOOT_OK v0.91.0` from the first command and `TEST PASS` from the second, with no
 `TEST FAIL`, `SCRIPT ERROR` or `ERROR` in either log. Compare the first command's resulting
 `mastery` object with the golden as an additional preservation check. Keep the verified archive
-available as the whole-app rollback; it is not a mountable-pack rollback target.
+available to reproduce this whole-app reader baseline; it is not a mountable-pack target.
+
+The baseline above does not clear v0.91.0 as a lossless rollback target. A separate
+literal-boundary probe seeds quest progress `9007199254740991` alongside valid vault-v5
+mastery. The unmodified v0.91.0 app boots successfully, but its rewritten quest token is
+`9007199254740991.0`, which Godot decodes as `9007199254740990`. The candidate's exported
+app, using full-precision vault serialization, preserves `9007199254740991` through the
+same boot. A release containing that precision repair must be retained and checked before
+mastery writer activation; a clean `BOOT_OK` alone does not prove progression preservation.

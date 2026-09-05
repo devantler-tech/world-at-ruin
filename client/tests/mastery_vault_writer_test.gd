@@ -55,6 +55,7 @@ func _ready() -> void:
 	foreign["weapons"]["future_weapon"] = {"banked": 100, "unbanked": 3}
 	_check(_persist(foreign, first) == OK, "future weapon seed failed")
 	_check(_persist(died, first) == ERR_ALREADY_IN_USE, "a stale snapshot dropped future weapon state")
+	_check_large_quest_progress()
 	var file := FileAccess.open(SaveVault.vault_path(), FileAccess.WRITE)
 	file.store_string('{"version":999,"mastery":{"future":true}}')
 	file.close()
@@ -67,6 +68,20 @@ func _ready() -> void:
 		return
 	print("TEST PASS — mastery replaces only its observed snapshot and preserves unrelated progression")
 	get_tree().quit(0)
+
+
+func _check_large_quest_progress() -> void:
+	# Seed literal historical bytes: encoding a parsed float with the same writer
+	# under test would hide rounding before the mastery transaction even begins.
+	var file := FileAccess.open(SaveVault.vault_path(), FileAccess.WRITE)
+	file.store_string('{"version":4,"attuned":[],"discoveries":[],"reward_claims":[],"quests":{"future_quest":{"arrive":9007199254740991}}}')
+	file.close()
+	var before: Dictionary = SaveVault.load_saved()
+	_check(int(before["quests"]["future_quest"]["arrive"]) == 9007199254740991, "literal quest seed was not exact")
+	_check(_persist(_snapshot(1, {}), null) == OK, "mastery could not preserve a large quest counter")
+	var after: Dictionary = SaveVault.load_saved()
+	_check(int(after["quests"]["future_quest"]["arrive"]) == 9007199254740991,
+		"mastery serialization rounded unrelated progression")
 
 
 func _snapshot(points: int, stain: Dictionary) -> Dictionary:

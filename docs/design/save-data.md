@@ -281,9 +281,11 @@ unbanked points that already complete a smaller current live bar before the deat
 them. Unknown future weapon IDs are valid because rollback must preserve and apply
 them without reinterpreting their meaning. `Main` restores the complete snapshot atomically into its
 boot-owned `Mastery`, and the real boot guard proves both the live tracks and bloodstain are present.
-The manifest advertises read and write capability 7. The retained v0.91.0 whole app is the rollback
-reader; its [release evidence and reproduction steps](../evidence/issue-658-mastery-retention/README.md)
-bind the archive checksum, real app boot, and shipped-content restoration assertions.
+The manifest advertises read and write capability 7. Its rollback gate requires a retained whole-app
+reader with full-precision vault serialization. The v0.91.0
+[reader evidence and reproduction steps](../evidence/issue-658-mastery-retention/README.md)
+bind the archive checksum and restoration assertions, and record the counter-rounding defect that
+requires a corrected reader release before activation.
 Only a real mastery mutation originates v5. Ordinary boot, attunement, discovery, reward and quest
 writes retain their historical schema requirements and preserve an existing mastery section.
 
@@ -298,6 +300,8 @@ A different on-disk mastery snapshot stops further mastery writes for that sessi
 notice; it cannot be merged by maximum, union, or blind replacement without losing or duplicating
 economic state. Unrelated sections use the latest document and stay intact. Canonical JSON comparison
 equates the parsed numeric representation with the live ledger's exact integers.
+Vault serialization uses full numeric precision so rewriting one section also preserves unrelated
+quest counters at the exact `2^53-1` boundary.
 
 Transient failures retain the latest in-memory snapshot and retry after 1, 2, 4, 8, 16 and at most
 30 seconds. Further mutations do not bypass the wait or replay previous awards. A clean exit attempts
