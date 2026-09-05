@@ -334,7 +334,8 @@ zone/dungeon server:
   object named by the response, pins it by UID with an exact get, validates its
   Fleet, state, attempt label, ready label, key fingerprint, envelope and TLS
   port against the response, and opens the envelope into the durable
-  `SecretRef`. Reconcile never dispatches: zero matches is the ambiguous
+  `SecretRef`. An object sealed under a retained previous key keeps resolving
+  and releasing across a rotation. Reconcile never dispatches: zero matches is the ambiguous
   outcome the coordinator quarantines, and more than one match releases every
   match by its own UID precondition and fails closed. Resolve gets the exact
   named GameServer and recomputes every reference component, refusing any

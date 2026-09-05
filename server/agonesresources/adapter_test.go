@@ -1233,3 +1233,108 @@ func (f *fixture) ghostAllocation(
 	f.applyPatch(ghost, request)
 	return responseFor(ghost), nil
 }
+
+var (
+	previousKeyOnce sync.Once
+	previousKey     *rsa.PrivateKey
+	previousKeyErr  error
+)
+
+func previousPrivateKey(t *testing.T) *rsa.PrivateKey {
+	t.Helper()
+	previousKeyOnce.Do(func() {
+		previousKey, previousKeyErr = rsa.GenerateKey(rand.Reader, 3072)
+	})
+	if previousKeyErr != nil {
+		t.Fatalf("generate previous RSA test key: %v", previousKeyErr)
+	}
+	return previousKey
+}
+
+// allocatedUnder is an Allocated attempt object sealed under an arbitrary
+// key, as a pool member allocated before a rotation still is.
+func (f *fixture) allocatedUnder(
+	key *rsa.PrivateKey,
+	name string,
+	uid types.UID,
+) *agonesv1.GameServer {
+	fingerprint := fingerprintOf(f.t, key)
+	gameServer := f.allocatedGameServer(name, uid, testAttemptID)
+	gameServer.Labels[agones.AdmissionReadyLabel] = "v1-" + fingerprint
+	gameServer.Annotations[agones.AdmissionKeyAnnotation] = fingerprint
+	gameServer.Annotations[agones.AdmissionEnvelopeAnnotation] = sealedEnvelope(
+		f.t, key, name, uid, fingerprint, secretFor(name),
+	)
+	return gameServer
+}
+
+func TestARetainedPreviousKeyStillResolvesAndReleases(t *testing.T) {
+	f := newFixture(t, nil)
+	previous := previousPrivateKey(t)
+	keyring, err := admissionref.NewKeyring(previous, f.key)
+	if err != nil {
+		t.Fatalf("NewKeyring: %v", err)
+	}
+	adapter, err := NewAdapter(f.adapter.allocator, f.adapter.resources, keyring, f.config())
+	if err != nil {
+		t.Fatalf("NewAdapter: %v", err)
+	}
+	f.seed(f.allocatedUnder(previous, "zone-old", "uid-old"))
+
+	adopted, err := adapter.Reconcile(context.Background(), request(), testExpiry)
+	if err != nil {
+		t.Fatalf("Reconcile refused an object sealed under the retained key: %v", err)
+	}
+	assertAllocation(t, adopted.Allocation, "zone-old", testExpiry)
+	if !strings.HasPrefix(adopted.SecretRef, "v1.k"+fingerprintOf(t, previous)+".") {
+		t.Fatalf("SecretRef %q does not pin the previous key", adopted.SecretRef)
+	}
+	lease := nakamalease.Lease{
+		UserID:        testUserID,
+		ReservationID: testReservationID,
+		AttemptID:     testAttemptID,
+		AllocationID:  "zone-old",
+		Observer:      testObserver,
+		SecretRef:     adopted.SecretRef,
+		ExpiresAt:     testExpiry,
+	}
+	resolved, err := adapter.Resolve(context.Background(), lease)
+	if err != nil {
+		t.Fatalf("Resolve refused the retained key: %v", err)
+	}
+	assertAllocation(t, resolved, "zone-old", testExpiry)
+	if err := adapter.Release(context.Background(), lease); err != nil {
+		t.Fatalf("Release refused the retained key: %v", err)
+	}
+	if f.exists("zone-old") {
+		t.Fatal("Release left the pre-rotation object in place")
+	}
+	if f.allocations.count() != 0 {
+		t.Fatal("a retained-key object caused a dispatch")
+	}
+}
+
+func TestAKeyTheKeyringNoLongerHoldsIsRefusedButStillReleasable(t *testing.T) {
+	f := newFixture(t, nil)
+	retired := previousPrivateKey(t)
+	f.seed(f.allocatedUnder(retired, "zone-retired", "uid-retired"))
+
+	got, err := f.adapter.Reconcile(context.Background(), request(), testExpiry)
+	assertCode(t, err, ErrInvalidResource, codes.FailedPrecondition)
+	if !isZeroProvisioned(got) {
+		t.Fatalf("a retired key yielded material: %+v", got)
+	}
+	if f.actions("delete") != 0 {
+		t.Fatal("a retired key caused a delete during reconciliation")
+	}
+
+	err = f.adapter.Release(context.Background(), nakamalease.Lease{
+		UserID:        testUserID,
+		ReservationID: testReservationID,
+		AttemptID:     testAttemptID,
+		Staging:       true,
+	})
+	if err != nil || f.exists("zone-retired") {
+		t.Fatalf("attempt-only release left the retired-key object: %v", err)
+	}
+}

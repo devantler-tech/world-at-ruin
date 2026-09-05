@@ -130,7 +130,6 @@ type Adapter struct {
 	keyring             *admissionref.Keyring
 	namespace           string
 	fingerprint         string
-	readyValue          string
 	zoneDomain          string
 	observer            func(handoff.AllocationRequest) (sim.EntityID, error)
 	observationTimeout  time.Duration
@@ -197,7 +196,6 @@ func NewAdapter(
 		keyring:             keyring,
 		namespace:           cfg.Namespace,
 		fingerprint:         cfg.WrappingKeyFingerprint,
-		readyValue:          admissionReadyPrefix + cfg.WrappingKeyFingerprint,
 		zoneDomain:          zoneDomain,
 		observer:            cfg.Observer,
 		observationTimeout:  observationTimeout,
@@ -399,6 +397,7 @@ func (a *Adapter) adopt(
 	}
 	if reserved != nil &&
 		(pinned.Identity.Name != reserved.Name ||
+			material.WrappingKeyFingerprint != reserved.WrappingKeyFingerprint ||
 			material.TLSPort != reserved.Port ||
 			material.AdmissionEnvelope != reserved.AdmissionEnvelope) {
 		return handoffalloc.Provisioned{}, ErrInvalidResource
@@ -415,11 +414,15 @@ func (a *Adapter) adopt(
 
 // material rebuilds the exact sealed-admission material from one observed
 // GameServer, refusing any object whose ready label, key fingerprint, envelope,
-// node name or TLS port is not what the current pool publishes.
+// node name or TLS port is malformed or inconsistent. The fingerprint is the
+// object's own, not the current pool's: a lease sealed under a retained
+// previous key must keep resolving and releasing across a rotation, and the
+// keyring decides whether it still holds that key.
 func (a *Adapter) material(gameServer gameserverapi.GameServer) (admissionref.Material, error) {
+	fingerprint := gameServer.Annotations[agones.AdmissionKeyAnnotation]
 	envelope := gameServer.Annotations[agones.AdmissionEnvelopeAnnotation]
-	if gameServer.Labels[agones.AdmissionReadyLabel] != a.readyValue ||
-		gameServer.Annotations[agones.AdmissionKeyAnnotation] != a.fingerprint ||
+	if !validFingerprint(fingerprint) ||
+		gameServer.Labels[agones.AdmissionReadyLabel] != admissionReadyPrefix+fingerprint ||
 		envelope == "" ||
 		gameServer.TLSPort == 0 ||
 		len(validation.IsDNS1123Subdomain(gameServer.NodeName)) != 0 {
@@ -429,7 +432,7 @@ func (a *Adapter) material(gameServer gameserverapi.GameServer) (admissionref.Ma
 		Namespace:              a.namespace,
 		GameServerName:         gameServer.Identity.Name,
 		GameServerUID:          string(gameServer.Identity.UID),
-		WrappingKeyFingerprint: a.fingerprint,
+		WrappingKeyFingerprint: fingerprint,
 		AdmissionEnvelope:      envelope,
 		TLSPort:                gameServer.TLSPort,
 	}, nil
