@@ -179,6 +179,11 @@ expect_failure \
 	"encoded reference media cannot move to another documentation path" \
 	"encoded or inline media in repository text" \
 	"$repo"
+# An inline marker is reported on the line it sits on.
+expect_failure \
+	"an inline payload is reported with its line number, not only its file" \
+	"docs/evidence/reference.md:3" \
+	"$repo"
 
 repo=$(new_repo wrapped_encoded_media)
 write_valid_contract "$repo"
@@ -192,6 +197,12 @@ git -C "$repo" add docs/evidence/reference.md
 expect_failure \
 	"line-wrapped base64 reference media is rejected" \
 	"encoded or inline media in repository text" \
+	"$repo"
+# The diagnostic names the block's line range, not only the file: a report
+# naming only the file leaves the reader to reverse-engineer the heuristic.
+expect_failure \
+	"a wrapped payload is reported with its line range, not only its file" \
+	"docs/evidence/reference.md:3-4" \
 	"$repo"
 
 repo=$(new_repo encoded_artgen_source)
@@ -401,6 +412,56 @@ git -C "$repo" add docs/design/story-and-progression.md
 expect_failure \
 	"story quarantine cannot be satisfied by saying the hold was lifted" \
 	"story proposal is missing the exact ORIGINALITY HOLD directive" \
+	"$repo"
+
+# Prose is not a payload: a punctuation-free comment or paragraph never matches
+# the base64 alphabet, however long, and adjacent lines of that shape never
+# accumulate into a wrapped block. Go doc comments here open with a long
+# CamelCase test name, so ordinary test files carry exactly this shape (#768);
+# the Go lines are the pair from #767. The Markdown pair is the same shape in
+# prose, and the GDScript pair pins that judging a comment on its own text,
+# after its marker, does not turn a punctuation-free comment into a match.
+repo=$(new_repo prose_comment_lines)
+write_valid_contract "$repo"
+mkdir -p "$repo/server"
+printf '%s\n' \
+	'package handoffalloc' \
+	'' \
+	'// TestAllocateDetachesFinalizeFailureCleanupFromCallerCancellation pins the' \
+	'// detachment on the Finalize error path for a Finalize failure that is NOT' \
+	'// the caller cancellation.' \
+	'func TestAllocateDetachesFinalizeFailureCleanupFromCallerCancellation() {}' \
+	>"$repo/server/coordinator_test.go"
+printf '%s\n' \
+	'# Godot comment lines share the same shape when their prose carries no punctuation' \
+	'# and this second neighbour is also long enough to have crossed the old threshold' \
+	'extends Node' \
+	>"$repo/client/scripts/prose.gd"
+printf '%s\n' \
+	'# Evidence' \
+	'' \
+	'Markdown prose with no punctuation at all is still prose and must never read as media' \
+	'nor may a second paragraph line of the same shape turn the first one into a payload' \
+	>"$repo/docs/evidence/prose.md"
+git -C "$repo" add server/coordinator_test.go client/scripts/prose.gd docs/evidence/prose.md
+expect_success \
+	"punctuation-free prose comments and paragraphs are not encoded media" \
+	"$repo"
+
+# A payload does not stop being one because each wrapped line is commented out:
+# a line is judged on its own text after its marker, which is what admits prose
+# above, and the same rule must not let a marker hide a payload.
+repo=$(new_repo commented_encoded_media)
+write_valid_contract "$repo"
+printf '%s\n' \
+	'#!/usr/bin/env bash' \
+	'# AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' \
+	'# BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB' \
+	>"$repo/tools/reference.sh"
+git -C "$repo" add tools/reference.sh
+expect_failure \
+	"wrapped base64 hidden behind comment markers is still rejected" \
+	"tools/reference.sh:2-3" \
 	"$repo"
 
 repo=$(new_repo valid)
