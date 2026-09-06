@@ -88,7 +88,7 @@ func (s *Store) CreateOpen(ctx context.Context, generationID string, memberPodUI
 	defer cancel()
 	existing, err = s.Load(reconcileCtx, generationID)
 	if err != nil {
-		return Record{}, ErrIndeterminate
+		return Record{}, errors.Join(ErrIndeterminate, nakamastorage.ContextError(ctx, writeErr))
 	}
 	return adopt(existing, want)
 }

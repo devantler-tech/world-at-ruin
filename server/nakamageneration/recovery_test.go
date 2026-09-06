@@ -194,3 +194,31 @@ func TestLoadPreservesCancellationDuringAnEmptyRead(t *testing.T) {
 		t.Fatalf("cancelled read reported absence: %v", err)
 	}
 }
+
+func TestUnresolvedCreatePreservesCancellationWithoutBackendDetails(t *testing.T) {
+	t.Parallel()
+	for _, cause := range []error{context.Canceled, context.DeadlineExceeded} {
+		t.Run(cause.Error(), func(t *testing.T) {
+			t.Parallel()
+			storage := &faultStorage{Fake: nakamastoragetest.New()}
+			storage.write = func(context.Context, []*runtime.StorageWrite) ([]*api.StorageObjectAck, error) {
+				return nil, errors.Join(cause, errors.New("private backend detail"))
+			}
+			_, err := newTestStore(t, storage).CreateOpen(t.Context(), "generation-1", []string{"pod-a"})
+			if !errors.Is(err, ErrIndeterminate) || !errors.Is(err, cause) || strings.Contains(err.Error(), "private backend detail") {
+				t.Fatalf("uncertain cancellation lost or exposed backend detail: %v", err)
+			}
+		})
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	storage := &faultStorage{Fake: nakamastoragetest.New()}
+	storage.write = func(context.Context, []*runtime.StorageWrite) ([]*api.StorageObjectAck, error) {
+		cancel()
+		return nil, errors.New("private backend detail")
+	}
+	_, err := newTestStore(t, storage).CreateOpen(ctx, "generation-1", []string{"pod-a"})
+	if !errors.Is(err, ErrIndeterminate) || !errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "private backend detail") {
+		t.Fatalf("caller cancellation lost or exposed backend detail: %v", err)
+	}
+}
