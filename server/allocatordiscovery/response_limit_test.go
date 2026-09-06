@@ -31,17 +31,23 @@ type trackingBody struct {
 	closed bool
 }
 
+// Read counts the bytes consumed from the injected response reader.
 func (b *trackingBody) Read(p []byte) (int, error) {
 	n, err := b.Reader.Read(p)
 	b.read += n
 	return n, err
 }
+
+// Close records whether the transport released its response body.
 func (b *trackingBody) Close() error { b.closed = true; return nil }
 
 type transportFunc func(*http.Request) (*http.Response, error)
 
+// RoundTrip delegates each request to the test's injected transport behavior.
 func (f transportFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
+// readerFromRESTConfig constructs the production bounded transport and fails immediately on
+// invalid fixture configuration.
 func readerFromRESTConfig(t *testing.T, cfg *rest.Config) *Reader {
 	t.Helper()
 	r, err := New(cfg, config())
@@ -51,6 +57,7 @@ func readerFromRESTConfig(t *testing.T, cfg *rest.Config) *Reader {
 	return r
 }
 
+// listJSON builds a versioned empty Kubernetes list with controlled pagination and padding.
 func listJSON(kind, cursor string, padding int) string {
 	const version = "rv"
 	apiVersion := "v1"
@@ -60,6 +67,8 @@ func listJSON(kind, cursor string, padding int) string {
 	return "{\"apiVersion\":\"" + apiVersion + "\",\"kind\":\"" + kind + "\",\"metadata\":{\"resourceVersion\":\"" + version + "\",\"continue\":\"" + cursor + "\"},\"items\":[],\"padding\":\"" + strings.Repeat("x", padding) + "\"}"
 }
 
+// TestDiscoveryLimitsResponseBytesBeforeDecode checks the byte cap and body closure for both
+// declared and unknown response lengths.
 func TestDiscoveryLimitsResponseBytesBeforeDecode(t *testing.T) {
 	for _, knownLength := range []bool{false, true} {
 		t.Run(map[bool]string{false: "unknown-length", true: "declared-length"}[knownLength], func(t *testing.T) {
@@ -90,6 +99,8 @@ func TestDiscoveryLimitsResponseBytesBeforeDecode(t *testing.T) {
 	}
 }
 
+// TestDiscoverySharesResponseBudgetAcrossCollections charges Pod and EndpointSlice bodies against
+// one operation allowance.
 func TestDiscoverySharesResponseBudgetAcrossCollections(t *testing.T) {
 	var bodies []*trackingBody
 	transport := transportFunc(func(req *http.Request) (*http.Response, error) {
@@ -119,6 +130,8 @@ func TestDiscoverySharesResponseBudgetAcrossCollections(t *testing.T) {
 	}
 }
 
+// TestDiscoveryRejectsAddressBudgetBeforeFetchingMorePages stops at the page that exhausts the
+// cumulative address allowance.
 func TestDiscoveryRejectsAddressBudgetBeforeFetchingMorePages(t *testing.T) {
 	p := pod("allocator-a", "uid-a", "10.0.0.1")
 	r, client := fixture(t, []corev1.Pod{p}, nil)
@@ -142,6 +155,8 @@ func TestDiscoveryRejectsAddressBudgetBeforeFetchingMorePages(t *testing.T) {
 	}
 }
 
+// TestDiscoverySharesResponseBudgetAcrossPages prevents continuation responses from obtaining a
+// fresh byte allowance.
 func TestDiscoverySharesResponseBudgetAcrossPages(t *testing.T) {
 	var bodies []*trackingBody
 	transport := transportFunc(func(req *http.Request) (*http.Response, error) {
@@ -163,10 +178,13 @@ func TestDiscoverySharesResponseBudgetAcrossPages(t *testing.T) {
 	}
 }
 
+// jsonResponse wraps an injected body as an unknown-length successful JSON response.
 func jsonResponse(req *http.Request, body io.ReadCloser) *http.Response {
 	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: body, ContentLength: -1, Request: req}
 }
 
+// TestDiscoveryResponseBudgetRecoversAndIsIndependent gives later and concurrent operations fresh
+// budgets after an oversized response.
 func TestDiscoveryResponseBudgetRecoversAndIsIndependent(t *testing.T) {
 	var mu sync.Mutex
 	first := true
@@ -200,10 +218,12 @@ func TestDiscoveryResponseBudgetRecoversAndIsIndependent(t *testing.T) {
 	workers.Wait()
 }
 
+// TestDiscoveryBoundsGzipExpansion charges decompressed JSON bytes while accepting compressed
+// responses within the allowance.
 func TestDiscoveryBoundsGzipExpansion(t *testing.T) {
 	for _, oversized := range []bool{false, true} {
 		t.Run(map[bool]string{false: "within-limit", true: "oversized"}[oversized], func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 				kind := "PodList"
 				if strings.Contains(req.URL.Path, "endpointslices") {
 					kind = "EndpointSliceList"
@@ -227,7 +247,7 @@ func TestDiscoveryBoundsGzipExpansion(t *testing.T) {
 				}
 			}))
 			t.Cleanup(server.Close)
-			r := readerFromRESTConfig(t, &rest.Config{Host: server.URL, Timeout: 5 * time.Second})
+			r := readerFromRESTConfig(t, tlsRESTConfig(server, 5*time.Second))
 			got, err := r.Discover(t.Context())
 			if oversized {
 				if !errors.Is(err, ErrObservation) || !reflect.DeepEqual(got, Snapshot{}) {
@@ -240,6 +260,8 @@ func TestDiscoveryBoundsGzipExpansion(t *testing.T) {
 	}
 }
 
+// TestObservePodBoundsResponsesAndRecovers rejects a one-byte overflow and then accepts an
+// exact-limit response on the same reader.
 func TestObservePodBoundsResponsesAndRecovers(t *testing.T) {
 	p := pod("allocator-a", "uid-a", "10.0.0.1")
 	p.TypeMeta = metav1.TypeMeta{APIVersion: "v1", Kind: "Pod"}
@@ -272,6 +294,8 @@ func TestObservePodBoundsResponsesAndRecovers(t *testing.T) {
 	}
 }
 
+// TestDiscoveryChargesErrorResponsesBeforeRetry includes a retryable error body in the next
+// request's remaining allowance.
 func TestDiscoveryChargesErrorResponsesBeforeRetry(t *testing.T) {
 	var bodies []*trackingBody
 	transport := transportFunc(func(req *http.Request) (*http.Response, error) {
@@ -296,8 +320,11 @@ func TestDiscoveryChargesErrorResponsesBeforeRetry(t *testing.T) {
 
 type failedReader struct{}
 
+// Read injects a private body-read failure to exercise error sanitization and closure.
 func (failedReader) Read([]byte) (int, error) { return 0, errors.New("private read failure") }
 
+// TestDiscoveryClosesFailedAndUnresolvedEncodedBodies releases failed bodies and rejects
+// unresolved encodings before reading their bytes.
 func TestDiscoveryClosesFailedAndUnresolvedEncodedBodies(t *testing.T) {
 	for _, encoded := range []bool{false, true} {
 		t.Run(map[bool]string{false: "read-error", true: "unresolved-encoding"}[encoded], func(t *testing.T) {
@@ -325,9 +352,11 @@ func TestDiscoveryClosesFailedAndUnresolvedEncodedBodies(t *testing.T) {
 	}
 }
 
+// TestDiscoveryRequestTimeoutClosesSlowResponse preserves the deadline error and verifies
+// cancellation reaches the API response.
 func TestDiscoveryRequestTimeoutClosesSlowResponse(t *testing.T) {
 	closed := make(chan struct{})
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		if err := http.NewResponseController(w).Flush(); err != nil {
@@ -338,7 +367,7 @@ func TestDiscoveryRequestTimeoutClosesSlowResponse(t *testing.T) {
 		close(closed)
 	}))
 	t.Cleanup(server.Close)
-	r := readerFromRESTConfig(t, &rest.Config{Host: server.URL, Timeout: 50 * time.Millisecond})
+	r := readerFromRESTConfig(t, tlsRESTConfig(server, 50*time.Millisecond))
 	got, err := r.Discover(t.Context())
 	if !errors.Is(err, context.DeadlineExceeded) || !reflect.DeepEqual(got, Snapshot{}) {
 		t.Fatalf("slow response lost deadline classification: %+v, %v", got, err)
@@ -350,6 +379,8 @@ func TestDiscoveryRequestTimeoutClosesSlowResponse(t *testing.T) {
 	}
 }
 
+// TestDiscoveryConstructorRequiresBoundedRequests refuses missing, zero and negative per-request
+// timeouts.
 func TestDiscoveryConstructorRequiresBoundedRequests(t *testing.T) {
 	for _, cfg := range []*rest.Config{nil, {Host: "https://api.example"}, {Host: "https://api.example", Timeout: -time.Second}} {
 		if r, err := New(cfg, config()); !errors.Is(err, ErrInvalidArgument) || r != nil {

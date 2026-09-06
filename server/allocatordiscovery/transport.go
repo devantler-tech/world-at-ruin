@@ -19,8 +19,9 @@ const maxResponseBytes = 4 << 20
 // pages, collections and retries, including decompressed and error responses.
 // kubeConfig.Timeout must be positive and bounds each request; callers supply
 // an operation context to bound the entire discovery. No watcher is registered.
+// The API connection must use TLS with verification enabled; redirects are refused.
 func New(kubeConfig *rest.Config, config Config) (*Reader, error) {
-	if kubeConfig == nil || kubeConfig.Timeout <= 0 {
+	if kubeConfig == nil || kubeConfig.Timeout <= 0 || kubeConfig.Insecure || !rest.IsConfigTransportTLS(*kubeConfig) {
 		return nil, ErrInvalidArgument
 	}
 	cfg := rest.CopyConfig(kubeConfig)
@@ -30,6 +31,8 @@ func New(kubeConfig *rest.Config, config Config) (*Reader, error) {
 	}
 	// HTTPClientFor may return a shared client. Never mutate its transport.
 	owned := *client
+	// A redirect is not authority to send API credentials to another endpoint.
+	owned.CheckRedirect = func(*http.Request, []*http.Request) error { return ErrObservation }
 	transport := owned.Transport
 	if transport == nil {
 		transport = http.DefaultTransport

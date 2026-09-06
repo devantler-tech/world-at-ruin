@@ -14,6 +14,13 @@ The REST configuration must set a positive request timeout; pass an operation
 context to bound the whole paginated discovery. There is no watch,
 background loop or internal restart after an expired continuation token.
 
+The API connection must use HTTPS with certificate verification enabled. `New`
+rejects plaintext configurations and `Insecure`, and the owned client refuses all
+redirects, including redirects to another path on the same API server. Credentials
+are sent only to the original API endpoint. Caller-supplied `Transport` and
+`WrapTransport` implementations are trusted executable extensions; the constructor
+does not inspect or certify their internal TLS behavior.
+
 ## Complete observations
 
 `Discover` completes both collections before returning anything. Each list uses

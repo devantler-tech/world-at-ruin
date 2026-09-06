@@ -10,6 +10,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// TestIneligibleEndpointsRetainMembershipAndConditions keeps observed members and endpoints
+// visible while excluding unsafe connection candidates.
 func TestIneligibleEndpointsRetainMembershipAndConditions(t *testing.T) {
 	t.Parallel()
 	for name, mutate := range map[string]func(*corev1.Pod, *discoveryv1.EndpointSlice){
@@ -39,6 +41,8 @@ func TestIneligibleEndpointsRetainMembershipAndConditions(t *testing.T) {
 	}
 }
 
+// TestDiscoveryRejectsConflictingDuplicates refuses ambiguous object identities, readiness
+// conditions and shared sockets.
 func TestDiscoveryRejectsConflictingDuplicates(t *testing.T) {
 	t.Parallel()
 	for _, scenario := range []string{"duplicate-pod", "pod-name-reused", "duplicate-slice", "duplicate-condition", "socket-two-uids", "socket-two-conditions"} {

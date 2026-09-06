@@ -19,6 +19,8 @@ import (
 	ktesting "k8s.io/client-go/testing"
 )
 
+// TestDiscoverCompletesEveryCollectionBeforePublishing checks both cursors, selectors and
+// namespaces before accepting the joined result.
 func TestDiscoverCompletesEveryCollectionBeforePublishing(t *testing.T) {
 	t.Parallel()
 	p := pod("allocator-a", "uid-a", "10.0.0.1")
@@ -68,6 +70,8 @@ func TestDiscoverCompletesEveryCollectionBeforePublishing(t *testing.T) {
 	}
 }
 
+// TestDiscoverDiscardsPartialCollections checks exact stopping points and discards all evidence
+// on pagination faults or cancellation.
 func TestDiscoverDiscardsPartialCollections(t *testing.T) {
 	t.Parallel()
 	for _, resource := range []string{"pods", "endpointslices"} {
@@ -161,6 +165,8 @@ func TestDiscoverDiscardsPartialCollections(t *testing.T) {
 	}
 }
 
+// TestNewRefusesUnscopedOrUnboundedDiscovery requires complete scope, a bounded valid selector
+// and a finite page budget.
 func TestNewRefusesUnscopedOrUnboundedDiscovery(t *testing.T) {
 	t.Parallel()
 	for name, mutate := range map[string]func(*Config){
@@ -189,6 +195,8 @@ func TestNewRefusesUnscopedOrUnboundedDiscovery(t *testing.T) {
 	}
 }
 
+// TestObservePodInvalidIdentityDoesNotCallAPI keeps invalid identities and canceled operations
+// from issuing Kubernetes reads.
 func TestObservePodInvalidIdentityDoesNotCallAPI(t *testing.T) {
 	t.Parallel()
 	r, client := fixture(t, nil, nil)

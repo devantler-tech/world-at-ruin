@@ -11,7 +11,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/rest"
 )
 
 // This exercises generated clients, URL/query construction and API decoding;
@@ -24,7 +23,7 @@ func TestGeneratedClientsUseOnlyNamespacedReadEndpoints(t *testing.T) {
 	s.Endpoints[0].TargetRef.APIVersion = ""
 	var mu sync.Mutex
 	var paths []string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
 		paths = append(paths, r.URL.Path)
@@ -61,7 +60,7 @@ func TestGeneratedClientsUseOnlyNamespacedReadEndpoints(t *testing.T) {
 		}
 	}))
 	t.Cleanup(server.Close)
-	transport := &rest.Config{Host: server.URL, Timeout: time.Second}
+	transport := tlsRESTConfig(server, time.Second)
 	r, err := New(transport, config())
 	if err != nil {
 		t.Fatal(err)

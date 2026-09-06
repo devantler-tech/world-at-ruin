@@ -19,12 +19,15 @@ import (
 	ktesting "k8s.io/client-go/testing"
 )
 
+// ptr returns a pointer to a fixture value for optional Kubernetes fields.
 func ptr[T any](value T) *T { return &value }
 
+// config pins the fixture namespace, Service UID, selector and three-page budget.
 func config() Config {
 	return Config{Namespace: "allocation", PodSelector: "app=allocator", ServiceName: "allocator", ServiceUID: "service-uid", PortName: "grpc", MaxPages: 3}
 }
 
+// pod builds a ready allocator Pod with an explicit identity and observed IP.
 func pod(name, uid, ip string) corev1.Pod {
 	return corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "allocation", UID: types.UID(uid), ResourceVersion: "pod-rv", Labels: map[string]string{"app": "allocator"}},
@@ -32,6 +35,7 @@ func pod(name, uid, ip string) corev1.Pod {
 	}
 }
 
+// endpointSlice binds a TLS endpoint to the fixture Service and the supplied Pod UID and IP.
 func endpointSlice(name string, p corev1.Pod) discoveryv1.EndpointSlice {
 	return discoveryv1.EndpointSlice{
 		ObjectMeta:  metav1.ObjectMeta{Name: name, Namespace: "allocation", UID: types.UID(name + "-uid"), ResourceVersion: "slice-rv", Labels: map[string]string{discoveryv1.LabelServiceName: "allocator"}, OwnerReferences: []metav1.OwnerReference{{APIVersion: "v1", Kind: "Service", Name: "allocator", UID: "service-uid", Controller: ptr(true)}}},
@@ -41,6 +45,7 @@ func endpointSlice(name string, p corev1.Pod) discoveryv1.EndpointSlice {
 	}
 }
 
+// fixture installs complete list responses and exposes the fake for scenario-specific faults.
 func fixture(t *testing.T, pods []corev1.Pod, slices []discoveryv1.EndpointSlice) (*Reader, *ktesting.Fake) {
 	t.Helper()
 	client := &ktesting.Fake{}
@@ -57,6 +62,8 @@ func fixture(t *testing.T, pods []corev1.Pod, slices []discoveryv1.EndpointSlice
 	return reader, client
 }
 
+// TestDiscoverJoinsAllMembersAndDeduplicatesDualStack checks complete, detached observations,
+// duplicate removal and read-only API scope.
 func TestDiscoverJoinsAllMembersAndDeduplicatesDualStack(t *testing.T) {
 	t.Parallel()
 	a, b := pod("allocator-a", "uid-a", "10.0.0.1"), pod("allocator-b", "uid-b", "10.0.0.2")
@@ -103,6 +110,8 @@ func TestDiscoverJoinsAllMembersAndDeduplicatesDualStack(t *testing.T) {
 	}
 }
 
+// TestDiscoverAcceptsDNSLabelServicePortNames keeps valid Service port names longer than the
+// container-port limit discoverable.
 func TestDiscoverAcceptsDNSLabelServicePortNames(t *testing.T) {
 	t.Parallel()
 	p := pod("allocator-a", "uid-a", "10.0.0.1")
@@ -122,6 +131,8 @@ func TestDiscoverAcceptsDNSLabelServicePortNames(t *testing.T) {
 	}
 }
 
+// TestDiscoverAcceptsCorePodReferenceVersions accepts both omitted and explicit v1 target
+// references for core Pods.
 func TestDiscoverAcceptsCorePodReferenceVersions(t *testing.T) {
 	t.Parallel()
 	for _, version := range []string{"", "v1"} {
@@ -139,6 +150,8 @@ func TestDiscoverAcceptsCorePodReferenceVersions(t *testing.T) {
 	}
 }
 
+// TestDiscoveryRefusesUnsafeEndpointJoins rejects mismatched owners, Pod identities, addresses
+// and port metadata without evidence.
 func TestDiscoveryRefusesUnsafeEndpointJoins(t *testing.T) {
 	t.Parallel()
 	cases := map[string]func(*corev1.Pod, *discoveryv1.EndpointSlice){
@@ -180,6 +193,8 @@ func TestDiscoveryRefusesUnsafeEndpointJoins(t *testing.T) {
 	}
 }
 
+// TestObservePodReportsIdentityWithoutInferringProcessDeath preserves API presence and raw
+// lifecycle state while withholding evidence on failures.
 func TestObservePodReportsIdentityWithoutInferringProcessDeath(t *testing.T) {
 	t.Parallel()
 	for _, scenario := range []string{"present", "deleting", "failed", "replaced", "absent", "unavailable", "canceled"} {
