@@ -55,6 +55,13 @@ check() {
 	fi
 }
 check pass 'valid registered production reader'
+printf 'TestHistoricalReader store.go Read' >"$data/shipped_progress_reader.txt"
+check pass 'valid reader registration without a final newline'
+printf 'TestHistoricalReader store.go' >"$data/shipped_progress_reader.txt"
+check fail 'incomplete reader registration without a final newline'
+printf 'TestHistoricalReader store.go Read extra' >"$data/shipped_progress_reader.txt"
+check fail 'extra reader registration field without a final newline'
+printf 'TestHistoricalReader store.go Read\n' >"$data/shipped_progress_reader.txt"
 # A fixture assertion must depend on the production reader's returned state.
 cat >"$repo/server/futurestore/store_test.go" <<'GO'
 package futurestore

@@ -32,7 +32,10 @@ awk 'NR != 1 || NF != 3 || $1 !~ /^Test[A-Z][A-Za-z0-9_]*$/ ||
  $2 !~ /^[A-Za-z0-9_]+\.go$/ || $2 ~ /_test\.go$/ ||
  $3 !~ /^[A-Za-z_][A-Za-z0-9_]*$/ { exit 1 }
  END { if (NR != 1) exit 1 }' "$contract" || fail 'malformed test / production file / reader registration'
-read -r test_name source reader <"$contract"
+# read populates the validated fields even when EOF terminates the final line.
+read -r test_name source reader <"$contract" ||
+	{ [ -n "${test_name:-}" ] && [ -n "${source:-}" ] && [ -n "${reader:-}" ]; } ||
+	fail 'malformed test / production file / reader registration'
 require_file "$dir/$source"
 work="$(mktemp -d "$scratch/reader.XXXXXX")"
 binary="$work/reader.test"
