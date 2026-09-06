@@ -39,25 +39,34 @@ Each family registers its historical reader in `shipped_<family>_reader.txt`, on
 the exact top-level Go test name, production Go filename, and reader function name. For example:
 
 ```text
-TestLoadKeepsEveryShippedCharacterSchemaReadable store.go Load
+TestLoadKeepsEveryShippedCharacterSchemaReadable store.go decodeCharacterDocument
 ```
 
 The guard compiles an instrumented package test binary and runs only that test against a private
 copy of the package's `testdata`. The test must execute and pass without skipped subtests, and
 coverage must identify exactly one matching production reader with executed statements. An absent
 test, an empty test, a skipped test, a missing reader, and a test-only reader cannot satisfy this
-contract. Every declared fixture is then made unreadable individually in that private copy; the
-named test must fail each time. A test using constants instead of its fixtures, or ignoring a new
-fixture, therefore cannot pass. Checkout files and historical fixture bytes remain untouched.
+contract. The registered reader is a plain decoder function whose first named parameter accepts
+raw JSON as `string` or `[]byte` and whose return values include the decoded state.
+
+For each fixture, the guard inserts unique JSON whitespace inside its first object. A control
+build must still pass. A private source overlay then returns zero values only when that marked
+input reaches the registered decoder; the same test must fail. Both comparison builds use matching
+flags without coverage instrumentation. This binds assertions to reader output from the fixture:
+independent fixture parsing and unrelated reader calls cannot satisfy the probe. The test must
+preserve raw JSON through the decoder call; reserializing it first removes the marker and fails
+closed. Finally, making that fixture unreadable must also fail the test. Checkout files and
+historical fixture bytes remain untouched.
 
 The second check is behavioral: the stores' Go tests load their historical fixtures through the
 production reader. Character tests retain the character identity and recipe; audit tests retain
 the idempotency identity, target record, operation, payload
 and committed outcome; identity-binding tests pin the historical binding fields. Lease fixtures
-prove historical acceptance, with ownership and transitions covered by separate tests. A JSON-shape
+retain complete fields for every shipped shape, with transitions covered by separate tests. A JSON-shape
 check cannot prove these semantics, and a checkout-local test cannot alone prove that its historical
-fixture was preserved. Coverage and fixture probes enforce participation, not arbitrary semantic
-correctness: the registered tests still need independently specified expected fields and meaningful
+fixture was preserved. The probes establish fixture participation and dependence on decoder output;
+they do not prove every field or every shape within an array. The registered tests still need
+independently specified expected fields and meaningful
 loss/refusal assertions. Reader or test renames update the registration together with that evidence.
 
 ## Expanding a server schema
@@ -94,7 +103,8 @@ families, coordinated ledger/fixture removal, altered historical records, malfor
 incomplete additions fail, while unchanged history and complete expansions pass. Server CI invokes
 the same guard for pull requests and merge groups; its required aggregate also includes the store
 tests. The reader-registration suite runs real miniature Go packages and includes lossy readers,
-unread fixtures, empty/skipped/missing tests, and a valid two-version extension. The guard requires
+unread fixtures, independently parsed fixtures with ignored or unrelated reader results,
+unterminated ledger lines, empty/skipped/missing tests, and a valid two-version extension. The guard requires
 the server's declared Go toolchain; CI runs both regression suites after installing it.
 The guard compares data against the supplied base; it does not make candidate-owned CI
 instructions immutable or replace review of the workflow itself.

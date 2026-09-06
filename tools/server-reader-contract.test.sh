@@ -54,6 +54,37 @@ check() {
 	fi
 }
 check pass 'valid registered production reader'
+# A fixture assertion must depend on the production reader's returned state.
+cat >"$repo/server/futurestore/store_test.go" <<'GO'
+package futurestore
+import ("encoding/json"; "os"; "testing")
+func TestHistoricalReader(t *testing.T) {
+ data, err := os.ReadFile("testdata/golden_progress_v1.json")
+ if err != nil { t.Fatal(err) }
+ var saved Record
+ if err := json.Unmarshal(data, &saved); err != nil { t.Fatal(err) }
+ if saved.Schema != 1 || saved.Quest != 7 { t.Fatalf("lost fixture: %+v", saved) }
+ _, err = Read([]byte(`{"schema":1,"quest":99}`))
+ if err != nil { t.Fatal(err) }
+}
+GO
+check fail 'fixture parsed independently while reader output is ignored'
+# Even meaningful assertions about unrelated constant input do not cover the fixture.
+sed 's/_, err = Read/record, err := Read/' \
+	"$repo/server/futurestore/store_test.go" >"$scratch/unrelated"
+sed '/record, err := Read/a\
+ if record.Quest != 99 { t.Fatalf("constant read: %+v", record) }
+' "$scratch/unrelated" >"$repo/server/futurestore/store_test.go"
+check fail 'asserted reader output is unrelated to the historical fixture'
+cp "$scratch/test" "$repo/server/futurestore/store_test.go"
+printf '1' >"$data/shipped_progress_versions.txt"
+check pass 'valid final ledger entry without a newline'
+# A missing newline must not drop the final version from the runtime probes.
+# shellcheck disable=SC2016
+sed 's/os.ReadFile("testdata\/golden_progress_v1.json")/func() ([]byte, error) { return []byte(`{"schema":1,"quest":7}`), nil }()/' "$scratch/test" | sed 's/"os"; //' >"$repo/server/futurestore/store_test.go"
+check fail 'unterminated ledger still probes its last fixture'
+printf '1\n' >"$data/shipped_progress_versions.txt"
+cp "$scratch/test" "$repo/server/futurestore/store_test.go"
 rm "$data/shipped_progress_reader.txt"
 check fail 'family without reader registration'
 printf 'TestHistoricalReader store.go Read\n' >"$data/shipped_progress_reader.txt"

@@ -1,1 +1,1 @@
-TestEveryShippedLeaseSchemaShapeStaysReadable store.go Load
+TestEveryShippedLeaseSchemaShapeStaysReadable store.go leaseFrom

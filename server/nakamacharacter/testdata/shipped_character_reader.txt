@@ -1,1 +1,1 @@
-TestLoadKeepsEveryShippedCharacterSchemaReadable store.go Load
+TestLoadKeepsEveryShippedCharacterSchemaReadable store.go decodeCharacterDocument

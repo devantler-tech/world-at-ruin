@@ -1,1 +1,1 @@
-TestLoadKeepsEveryShippedInventorySchemaReadable store.go Load
+TestLoadKeepsEveryShippedInventorySchemaReadable store.go decodeDocument
