@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -15,195 +14,19 @@ import (
 
 	"github.com/devantler-tech/world-at-ruin/server/handoff"
 	"github.com/devantler-tech/world-at-ruin/server/nakamalease"
+	"github.com/devantler-tech/world-at-ruin/server/nakamastorage/nakamastoragetest"
 	"github.com/devantler-tech/world-at-ruin/server/sim"
-	"github.com/heroiclabs/nakama-common/api"
-	"github.com/heroiclabs/nakama-common/runtime"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/proto"
 )
 
 const (
 	testUserID        = "d95d6008-7542-4a3b-9519-0e2c9b66c50a"
 	testReservationID = "handoff-42"
 	testAttemptID     = "attempt-7"
-	testSystemOwnerID = "00000000-0000-0000-0000-000000000000"
 )
 
 var testNow = time.Unix(2_000_000_000, 123_456_789).UTC()
-
-type memoryStorage struct {
-	mu                    sync.Mutex
-	objects               map[string]*api.StorageObject
-	version               int
-	readErr               error
-	writeErr              error
-	writeErrAt            int
-	writeAfterCommitErr   error
-	writeAfterCommitErrAt int
-	deleteErr             error
-	respectContext        bool
-	beforeWrite           func(version int) error
-}
-
-func newMemoryStorage() *memoryStorage {
-	return &memoryStorage{objects: make(map[string]*api.StorageObject)}
-}
-
-func (s *memoryStorage) StorageList(
-	_ context.Context,
-	_ string,
-	userID string,
-	collection string,
-	_ int,
-	_ string,
-) ([]*api.StorageObject, string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.readErr != nil {
-		return nil, "", s.readErr
-	}
-	objects := make([]*api.StorageObject, 0, len(s.objects))
-	for _, object := range s.objects {
-		if object.GetUserId() == userID &&
-			object.GetCollection() == collection {
-			cloned, ok := proto.Clone(object).(*api.StorageObject)
-			if !ok {
-				return nil, "", errors.New(
-					"test storage: cloned object has an unexpected type",
-				)
-			}
-			objects = append(objects, cloned)
-		}
-	}
-	sort.Slice(objects, func(left, right int) bool {
-		return objects[left].GetKey() < objects[right].GetKey()
-	})
-	return objects, "", nil
-}
-
-func (s *memoryStorage) StorageRead(
-	ctx context.Context,
-	reads []*runtime.StorageRead,
-) ([]*api.StorageObject, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.respectContext && ctx.Err() != nil {
-		return nil, ctx.Err()
-	}
-	if s.readErr != nil {
-		return nil, s.readErr
-	}
-	if len(reads) != 1 {
-		return nil, errors.New("test storage: expected one read")
-	}
-	object, ok := s.objects[storageKey(reads[0].Collection, reads[0].Key)]
-	if !ok {
-		return nil, nil
-	}
-	cloned, ok := proto.Clone(object).(*api.StorageObject)
-	if !ok {
-		return nil, errors.New("test storage: cloned object has an unexpected type")
-	}
-	return []*api.StorageObject{
-		cloned,
-	}, nil
-}
-
-func (s *memoryStorage) StorageWrite(
-	ctx context.Context,
-	writes []*runtime.StorageWrite,
-) ([]*api.StorageObjectAck, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	// Runs ahead of the context check so a test can fail a specific write for a
-	// reason that is independent of caller cancellation.
-	if s.beforeWrite != nil {
-		if err := s.beforeWrite(s.version + 1); err != nil {
-			return nil, err
-		}
-	}
-	if s.respectContext && ctx.Err() != nil {
-		return nil, ctx.Err()
-	}
-	if s.writeErr != nil {
-		return nil, s.writeErr
-	}
-	if s.writeErrAt > 0 && s.version+1 == s.writeErrAt {
-		s.writeErrAt = 0
-		return nil, errors.New("test storage: injected write failure")
-	}
-	if len(writes) != 1 {
-		return nil, errors.New("test storage: expected one write")
-	}
-	write := writes[0]
-	if write.PermissionRead != 0 || write.PermissionWrite != 0 {
-		return nil, errors.New("test storage: expected server-only permissions")
-	}
-	key := storageKey(write.Collection, write.Key)
-	current, exists := s.objects[key]
-	switch {
-	case write.Version == "*" && exists:
-		return nil, runtime.ErrStorageRejectedVersion
-	case write.Version != "*" && (!exists || current.GetVersion() != write.Version):
-		return nil, runtime.ErrStorageRejectedVersion
-	}
-
-	s.version++
-	version := fmt.Sprintf("v%d", s.version)
-	s.objects[key] = &api.StorageObject{
-		Collection:      write.Collection,
-		Key:             write.Key,
-		UserId:          testSystemOwnerID,
-		Value:           write.Value,
-		Version:         version,
-		PermissionRead:  0,
-		PermissionWrite: 0,
-	}
-	if s.writeAfterCommitErr != nil &&
-		(s.writeAfterCommitErrAt == 0 || s.version == s.writeAfterCommitErrAt) {
-		err := s.writeAfterCommitErr
-		s.writeAfterCommitErr = nil
-		return nil, err
-	}
-	return []*api.StorageObjectAck{
-		{
-			Collection: write.Collection,
-			Key:        write.Key,
-			UserId:     testSystemOwnerID,
-			Version:    version,
-		},
-	}, nil
-}
-
-func (s *memoryStorage) StorageDelete(
-	ctx context.Context,
-	deletes []*runtime.StorageDelete,
-) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.respectContext && ctx.Err() != nil {
-		return ctx.Err()
-	}
-	if s.deleteErr != nil {
-		return s.deleteErr
-	}
-	if len(deletes) != 1 {
-		return errors.New("test storage: expected one delete")
-	}
-	deletion := deletes[0]
-	key := storageKey(deletion.Collection, deletion.Key)
-	current, exists := s.objects[key]
-	if !exists || current.GetVersion() != deletion.Version {
-		return runtime.ErrStorageRejectedVersion
-	}
-	delete(s.objects, key)
-	return nil
-}
-
-func storageKey(collection, key string) string {
-	return collection + "\x00" + key
-}
 
 type recordingResources struct {
 	provisioned            Provisioned
@@ -492,7 +315,7 @@ func validRequest() handoff.AllocationRequest {
 	}
 }
 
-func newLeaseStore(t *testing.T, storage *memoryStorage) *nakamalease.Store {
+func newLeaseStore(t *testing.T, storage *nakamastoragetest.Fake) *nakamalease.Store {
 	t.Helper()
 	store, err := nakamalease.NewStore(storage)
 	if err != nil {
@@ -502,7 +325,7 @@ func newLeaseStore(t *testing.T, storage *memoryStorage) *nakamalease.Store {
 }
 
 func TestNewCoordinatorRejectsMissingDependenciesAndUnsafeLeaseDurations(t *testing.T) {
-	storage := newMemoryStorage()
+	storage := nakamastoragetest.New()
 	store := newLeaseStore(t, storage)
 	resources := &recordingResources{}
 
@@ -552,7 +375,7 @@ func TestNewCoordinatorRejectsMissingDependenciesAndUnsafeLeaseDurations(t *test
 }
 
 func TestAllocateReturnsOnlyAfterTheAttemptLeaseIsDurable(t *testing.T) {
-	storage := newMemoryStorage()
+	storage := nakamastoragetest.New()
 	store := newLeaseStore(t, storage)
 	resources := &recordingResources{
 		provisioned: Provisioned{
@@ -595,9 +418,9 @@ func TestAllocateReturnsOnlyAfterTheAttemptLeaseIsDurable(t *testing.T) {
 	if record.Lease != wantLease {
 		t.Fatalf("durable allocation lease = %+v, want %+v", record.Lease, wantLease)
 	}
-	for _, object := range storage.objects {
+	for _, object := range storage.Objects() {
 		if bytes.Contains(
-			[]byte(object.GetValue()),
+			[]byte(object.Value),
 			resources.provisioned.Allocation.AdmissionSecret,
 		) {
 			t.Fatal("durable allocation lease persisted raw admission-secret bytes")
@@ -612,7 +435,7 @@ func TestAllocateReturnsOnlyAfterTheAttemptLeaseIsDurable(t *testing.T) {
 }
 
 func TestAllocatePersistsARecoverableIntentBeforeProvisioning(t *testing.T) {
-	storage := newMemoryStorage()
+	storage := nakamastoragetest.New()
 	store := newLeaseStore(t, storage)
 	resources := &recordingResources{
 		provisioned: Provisioned{
@@ -676,7 +499,7 @@ func TestAllocatePersistsARecoverableIntentBeforeProvisioning(t *testing.T) {
 }
 
 func TestAllocatePersistsDispatchBarrierBeforeProvisioning(t *testing.T) {
-	storage := newMemoryStorage()
+	storage := nakamastoragetest.New()
 	store := newLeaseStore(t, storage)
 	sawDispatched := false
 	sawDispatchID := false
@@ -685,12 +508,12 @@ func TestAllocatePersistsDispatchBarrierBeforeProvisioning(t *testing.T) {
 		_ handoff.AllocationRequest,
 		_ time.Time,
 	) error {
-		if len(storage.objects) != 1 {
-			return fmt.Errorf("stored lease count = %d, want 1", len(storage.objects))
+		if len(storage.Objects()) != 1 {
+			return fmt.Errorf("stored lease count = %d, want 1", len(storage.Objects()))
 		}
-		for _, object := range storage.objects {
+		for _, object := range storage.Objects() {
 			var document map[string]any
-			if err := json.Unmarshal([]byte(object.GetValue()), &document); err != nil {
+			if err := json.Unmarshal([]byte(object.Value), &document); err != nil {
 				return fmt.Errorf("decode pre-dispatch lease: %w", err)
 			}
 			sawDispatched, _ = document["dispatched"].(bool)
@@ -733,9 +556,13 @@ func TestAllocatePersistsDispatchBarrierBeforeProvisioning(t *testing.T) {
 }
 
 func TestAllocateProvisionsAfterACommittedDispatchBarrierLosesItsAcknowledgement(t *testing.T) {
-	storage := newMemoryStorage()
-	storage.writeAfterCommitErrAt = 2
-	storage.writeAfterCommitErr = errors.New("lost dispatch acknowledgement")
+	storage := nakamastoragetest.New()
+	storage.AfterWrite = func(version int) error {
+		if version == 2 {
+			return errors.New("lost dispatch acknowledgement")
+		}
+		return nil
+	}
 	store := newLeaseStore(t, storage)
 	resources := &recordingResources{
 		provisioned: Provisioned{
@@ -775,7 +602,7 @@ func TestAllocateQuarantinesCanceledAndAmbiguousDispatchOutcomes(t *testing.T) {
 		{name: "ambiguous backend failure", err: errors.New("unknown allocation outcome")},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			storage := newMemoryStorage()
+			storage := nakamastoragetest.New()
 			store := newLeaseStore(t, storage)
 			resources := &recordingResources{provisionErr: test.err}
 			coordinator, err := NewCoordinator(
@@ -821,7 +648,7 @@ func TestAllocateQuarantinesCanceledAndAmbiguousDispatchOutcomes(t *testing.T) {
 }
 
 func TestServiceFailureCleanupPreservesAmbiguousDispatchQuarantine(t *testing.T) {
-	storage := newMemoryStorage()
+	storage := nakamastoragetest.New()
 	store := newLeaseStore(t, storage)
 	resources := &recordingResources{
 		provisionErr: status.Error(codes.Unavailable, "ambiguous allocation result"),
@@ -879,7 +706,7 @@ func TestServiceFailureCleanupPreservesAmbiguousDispatchQuarantine(t *testing.T)
 }
 
 func TestServiceRetryReconcilesTheQuarantinedAttemptWithoutRedispatch(t *testing.T) {
-	storage := newMemoryStorage()
+	storage := nakamastoragetest.New()
 	store := newLeaseStore(t, storage)
 	resources := &recordingResources{
 		provisionErr: status.Error(codes.Unavailable, "ambiguous allocation result"),
@@ -941,7 +768,7 @@ func TestServiceRetryReconcilesTheQuarantinedAttemptWithoutRedispatch(t *testing
 }
 
 func TestServiceRetryRetainsAReconciledAttemptWhenLaterStageFails(t *testing.T) {
-	storage := newMemoryStorage()
+	storage := nakamastoragetest.New()
 	store := newLeaseStore(t, storage)
 	resources := &recordingResources{
 		provisionErr: status.Error(codes.Unavailable, "ambiguous allocation result"),
@@ -1010,7 +837,7 @@ func TestServiceRetryRetainsAReconciledAttemptWhenLaterStageFails(t *testing.T) 
 }
 
 func TestServiceRetryReusesFinalizedAllocationWithoutRedispatch(t *testing.T) {
-	storage := newMemoryStorage()
+	storage := nakamastoragetest.New()
 	store := newLeaseStore(t, storage)
 	resources := &recordingResources{
 		provisioned: Provisioned{
@@ -1075,7 +902,7 @@ func TestServiceRetryReusesFinalizedAllocationWithoutRedispatch(t *testing.T) {
 }
 
 func TestOverlappingTransportRetriesRetainTheSharedDurableAllocation(t *testing.T) {
-	storage := newMemoryStorage()
+	storage := nakamastoragetest.New()
 	store := newLeaseStore(t, storage)
 	staging, err := store.Create(context.Background(), nakamalease.Lease{
 		UserID:        testUserID,
@@ -1153,7 +980,7 @@ func TestOverlappingTransportRetriesRetainTheSharedDurableAllocation(t *testing.
 }
 
 func TestDispatchOwnerRetainsTheWinnerWhenAnAdopterFinalizesFirst(t *testing.T) {
-	storage := newMemoryStorage()
+	storage := nakamastoragetest.New()
 	store := newLeaseStore(t, storage)
 	resources := newAdopterWinsResources()
 	coordinator, err := NewCoordinator(
@@ -1202,8 +1029,7 @@ func TestDispatchOwnerRetainsTheWinnerWhenAnAdopterFinalizesFirst(t *testing.T) 
 }
 
 func TestCanceledDispatchOwnerRetainsTheAdopterWinner(t *testing.T) {
-	storage := newMemoryStorage()
-	storage.respectContext = true
+	storage := nakamastoragetest.New()
 	store := newLeaseStore(t, storage)
 	resources := newAdopterWinsResources()
 	resources.provisionErr = context.Canceled
@@ -1246,8 +1072,15 @@ func TestCanceledDispatchOwnerRetainsTheAdopterWinner(t *testing.T) {
 }
 
 func TestAllocateNeverDispatchesWhenBarrierWriteFails(t *testing.T) {
-	storage := newMemoryStorage()
-	storage.writeErrAt = 2
+	storage := nakamastoragetest.New()
+	writeFailed := false
+	storage.BeforeWrite = func(version int) error {
+		if version == 2 && !writeFailed {
+			writeFailed = true
+			return errors.New("test storage: injected write failure")
+		}
+		return nil
+	}
 	store := newLeaseStore(t, storage)
 	resources := &recordingResources{
 		provisioned: Provisioned{
@@ -1279,7 +1112,7 @@ func TestAllocateNeverDispatchesWhenBarrierWriteFails(t *testing.T) {
 }
 
 func TestAllocateReconcilesDispatchedAttemptAfterRestartWithoutRedispatch(t *testing.T) {
-	storage := newMemoryStorage()
+	storage := nakamastoragetest.New()
 	store := newLeaseStore(t, storage)
 	resources := &recordingResources{
 		provisioned: Provisioned{
@@ -1344,7 +1177,7 @@ func TestAllocateReconcilesDispatchedAttemptAfterRestartWithoutRedispatch(t *tes
 }
 
 func TestAllocateConcurrentCoordinatorsDispatchOnce(t *testing.T) {
-	storage := newMemoryStorage()
+	storage := nakamastoragetest.New()
 	store := newLeaseStore(t, storage)
 	resources := newConcurrentResources()
 	first, err := NewCoordinator(
@@ -1416,7 +1249,7 @@ func TestAllocateConcurrentCoordinatorsDispatchOnce(t *testing.T) {
 
 func TestAllocateAdoptsQuarantinedDispatchWithoutRedispatch(t *testing.T) {
 	ambiguous := status.Error(codes.Unavailable, "ambiguous allocation result")
-	storage := newMemoryStorage()
+	storage := nakamastoragetest.New()
 	store := newLeaseStore(t, storage)
 	resources := &recordingResources{
 		provisionErr: ambiguous,
@@ -1468,7 +1301,7 @@ func TestAllocateAdoptsQuarantinedDispatchWithoutRedispatch(t *testing.T) {
 }
 
 func TestAllocateRetryCannotAdoptAQuarantineWhoseReleaseHasBegun(t *testing.T) {
-	storage := newMemoryStorage()
+	storage := nakamastoragetest.New()
 	store := newLeaseStore(t, storage)
 	resources := &recordingResources{
 		provisionErr: status.Error(codes.Unavailable, "ambiguous allocation result"),
@@ -1517,7 +1350,7 @@ func TestAllocateRetryCannotAdoptAQuarantineWhoseReleaseHasBegun(t *testing.T) {
 }
 
 func TestReconcileExpiredRetainsAmbiguousDispatchUntilFence(t *testing.T) {
-	storage := newMemoryStorage()
+	storage := nakamastoragetest.New()
 	store := newLeaseStore(t, storage)
 	now := testNow
 	resources := &recordingResources{
@@ -1558,7 +1391,7 @@ func TestReconcileExpiredRetainsAmbiguousDispatchUntilFence(t *testing.T) {
 }
 
 func TestAllocateRecoversAStagingIntentAfterProcessRestart(t *testing.T) {
-	storage := newMemoryStorage()
+	storage := nakamastoragetest.New()
 	store := newLeaseStore(t, storage)
 	staging := nakamalease.Lease{
 		UserID:        testUserID,
@@ -1621,7 +1454,7 @@ func TestAllocateRecoversAStagingIntentAfterProcessRestart(t *testing.T) {
 }
 
 func TestAllocateReplayResolvesTheDurableAttemptWithoutProvisioningAgain(t *testing.T) {
-	storage := newMemoryStorage()
+	storage := nakamastoragetest.New()
 	store := newLeaseStore(t, storage)
 	resources := &recordingResources{
 		provisioned: Provisioned{
@@ -1681,7 +1514,7 @@ func TestAllocateReplayResolvesTheDurableAttemptWithoutProvisioningAgain(t *test
 }
 
 func TestAllocateReplayCannotResolveAnAttemptWhoseReleaseHasBegun(t *testing.T) {
-	storage := newMemoryStorage()
+	storage := nakamastoragetest.New()
 	store := newLeaseStore(t, storage)
 	resources := &recordingResources{
 		provisioned: Provisioned{
@@ -1730,7 +1563,7 @@ func TestAllocateReplayCannotResolveAnAttemptWhoseReleaseHasBegun(t *testing.T) 
 }
 
 func TestAllocateReplayRefusesResourceMaterialOutsideTheDurableLease(t *testing.T) {
-	storage := newMemoryStorage()
+	storage := nakamastoragetest.New()
 	store := newLeaseStore(t, storage)
 	resources := &recordingResources{
 		provisioned: Provisioned{
@@ -1767,7 +1600,7 @@ func TestAllocateReplayRefusesResourceMaterialOutsideTheDurableLease(t *testing.
 }
 
 func TestAllocateExpiredAttemptReleasesAndReplacesTheLease(t *testing.T) {
-	storage := newMemoryStorage()
+	storage := nakamastoragetest.New()
 	store := newLeaseStore(t, storage)
 	now := testNow
 	resources := &recordingResources{
@@ -1876,7 +1709,7 @@ func TestAllocateExpiredAttemptReleasesAndReplacesTheLease(t *testing.T) {
 }
 
 func TestAllocateDetachesExpiredResourceCleanupFromCallerCancellation(t *testing.T) {
-	storage := newMemoryStorage()
+	storage := nakamastoragetest.New()
 	store := newLeaseStore(t, storage)
 	now := testNow
 	resources := &recordingResources{
@@ -1925,7 +1758,7 @@ func TestAllocateDetachesExpiredResourceCleanupFromCallerCancellation(t *testing
 }
 
 func TestAllocateNewAttemptCannotTouchAClaimedLease(t *testing.T) {
-	storage := newMemoryStorage()
+	storage := nakamastoragetest.New()
 	store := newLeaseStore(t, storage)
 	resources := &recordingResources{
 		provisioned: Provisioned{
@@ -1986,7 +1819,7 @@ func TestAllocateNewAttemptCannotTouchAClaimedLease(t *testing.T) {
 }
 
 func TestAllocateExpiredReplacementKeepsTheReleasingLeaseWhenResourceReleaseFails(t *testing.T) {
-	storage := newMemoryStorage()
+	storage := nakamastoragetest.New()
 	store := newLeaseStore(t, storage)
 	now := testNow
 	resources := &recordingResources{
@@ -2060,8 +1893,8 @@ func TestAllocateExpiredReplacementKeepsTheReleasingLeaseWhenResourceReleaseFail
 }
 
 func TestAllocateLeaseWriteFailureReleasesOnlyTheStagedResource(t *testing.T) {
-	storage := newMemoryStorage()
-	storage.writeErr = errors.New(
+	storage := nakamastoragetest.New()
+	storage.WriteErr = errors.New(
 		"storage exposed " + testReservationID + " and zone-admission-gameserver-17",
 	)
 	store := newLeaseStore(t, storage)
@@ -2107,9 +1940,9 @@ func TestAllocateLeaseWriteFailureReleasesOnlyTheStagedResource(t *testing.T) {
 	}
 }
 
-func TestAllocateCleansAStagedResourceAfterTheRequestIsCanceled(t *testing.T) {
-	storage := newMemoryStorage()
-	storage.writeErr = errors.New("storage unavailable")
+func TestAllocateRefusesAPreCanceledRequestBeforeTouchingResources(t *testing.T) {
+	storage := nakamastoragetest.New()
+	storage.WriteErr = errors.New("storage unavailable")
 	store := newLeaseStore(t, storage)
 	resources := &recordingResources{
 		provisioned: Provisioned{
@@ -2135,8 +1968,8 @@ func TestAllocateCleansAStagedResourceAfterTheRequestIsCanceled(t *testing.T) {
 	cancel()
 
 	got, err := coordinator.Allocate(ctx, validRequest())
-	if !errors.Is(err, nakamalease.ErrStorage) {
-		t.Fatalf("Allocate canceled storage failure = %v, want ErrStorage", err)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Allocate canceled storage failure = %v, want context.Canceled", err)
 	}
 	if errors.Is(err, ErrReconciliation) {
 		t.Fatalf("canceled request prevented staged cleanup: %v", err)
@@ -2153,7 +1986,7 @@ func TestAllocateCleansAStagedResourceAfterTheRequestIsCanceled(t *testing.T) {
 }
 
 func TestAllocateProvisionFailurePreservesStatusWithoutBackendText(t *testing.T) {
-	storage := newMemoryStorage()
+	storage := nakamastoragetest.New()
 	store := newLeaseStore(t, storage)
 	resources := &recordingResources{
 		provisionErr: status.Error(
@@ -2198,7 +2031,7 @@ func TestAllocateProvisionFailurePreservesStatusWithoutBackendText(t *testing.T)
 }
 
 func TestAllocateProvisionFailureQuarantinesTheReportedStagedResource(t *testing.T) {
-	storage := newMemoryStorage()
+	storage := nakamastoragetest.New()
 	store := newLeaseStore(t, storage)
 	resources := &recordingResources{
 		provisioned: Provisioned{
@@ -2255,7 +2088,7 @@ func TestAllocateProvisionFailureQuarantinesTheReportedStagedResource(t *testing
 }
 
 func TestAllocateProvisionFailureKeepsTheDurableQuarantineExpiry(t *testing.T) {
-	storage := newMemoryStorage()
+	storage := nakamastoragetest.New()
 	store := newLeaseStore(t, storage)
 	allocation := validAllocation()
 	allocation.LeaseExpiresAt = testNow.Add(59 * time.Second)
@@ -2305,7 +2138,7 @@ func TestAllocateProvisionFailureKeepsTheDurableQuarantineExpiry(t *testing.T) {
 }
 
 func TestAllocateProvisionFailureAdoptsAProgressedSameAttemptWinner(t *testing.T) {
-	storage := newMemoryStorage()
+	storage := nakamastoragetest.New()
 	store := newLeaseStore(t, storage)
 	staging := nakamalease.Lease{
 		UserID:        testUserID,
@@ -2384,7 +2217,7 @@ func TestAllocateProvisionFailureAdoptsAProgressedSameAttemptWinner(t *testing.T
 }
 
 func TestAllocateRechecksExpiryAfterSlowProvisioning(t *testing.T) {
-	storage := newMemoryStorage()
+	storage := nakamastoragetest.New()
 	store := newLeaseStore(t, storage)
 	now := testNow
 	resources := &recordingResources{
@@ -2429,7 +2262,7 @@ func TestAllocateRechecksExpiryAfterSlowProvisioning(t *testing.T) {
 }
 
 func TestAllocatePersistsTheCanonicalExpiryReturnedByAnIdempotentResource(t *testing.T) {
-	storage := newMemoryStorage()
+	storage := nakamastoragetest.New()
 	store := newLeaseStore(t, storage)
 	allocation := validAllocation()
 	allocation.LeaseExpiresAt = testNow.Add(59 * time.Second)
@@ -2476,7 +2309,7 @@ func TestAllocatePersistsTheCanonicalExpiryReturnedByAnIdempotentResource(t *tes
 }
 
 func TestAllocateRefusesAProvisionedResourceWithADifferentLeaseExpiry(t *testing.T) {
-	storage := newMemoryStorage()
+	storage := nakamastoragetest.New()
 	store := newLeaseStore(t, storage)
 	allocation := validAllocation()
 	allocation.LeaseExpiresAt = testNow.Add(2 * time.Minute)
@@ -2521,8 +2354,15 @@ func TestAllocateRefusesAProvisionedResourceWithADifferentLeaseExpiry(t *testing
 }
 
 func TestAllocateFailsClosedWhenFinalizationCleanupCannotBeReconciled(t *testing.T) {
-	storage := newMemoryStorage()
-	storage.writeErrAt = 3
+	storage := nakamastoragetest.New()
+	writeFailed := false
+	storage.BeforeWrite = func(version int) error {
+		if version == 3 && !writeFailed {
+			writeFailed = true
+			return errors.New("test storage: injected write failure")
+		}
+		return nil
+	}
 	store := newLeaseStore(t, storage)
 	resources := &recordingResources{
 		provisioned: Provisioned{
@@ -2560,8 +2400,7 @@ func TestAllocateFailsClosedWhenFinalizationCleanupCannotBeReconciled(t *testing
 }
 
 func TestAllocateDetachesKnownResourceCleanupFromCallerCancellation(t *testing.T) {
-	storage := newMemoryStorage()
-	storage.respectContext = true
+	storage := nakamastoragetest.New()
 	store := newLeaseStore(t, storage)
 	ctx, cancel := context.WithCancel(context.Background())
 	resources := &recordingResources{
@@ -2616,15 +2455,14 @@ func TestAllocateDetachesKnownResourceCleanupFromCallerCancellation(t *testing.T
 // canceled, so the staged GameServer and the durable lease must still be
 // reclaimed under the detached progress context.
 func TestAllocateDetachesFinalizeFailureCleanupFromCallerCancellation(t *testing.T) {
-	storage := newMemoryStorage()
-	storage.respectContext = true
+	storage := nakamastoragetest.New()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	finalizeErr := errors.New("test storage: injected finalize failure")
 	// The finalize write is the third: two staging writes precede it. Fire once,
 	// so the detached cleanup writes that follow are free to succeed.
 	finalizeFailed := false
-	storage.beforeWrite = func(version int) error {
+	storage.BeforeWrite = func(version int) error {
 		if version == 3 && !finalizeFailed {
 			finalizeFailed = true
 			cancel()
@@ -2674,7 +2512,7 @@ func TestAllocateDetachesFinalizeFailureCleanupFromCallerCancellation(t *testing
 }
 
 func TestReconcileExpiredReclaimsTheExactNoShowAllocation(t *testing.T) {
-	storage := newMemoryStorage()
+	storage := nakamastoragetest.New()
 	store := newLeaseStore(t, storage)
 	now := testNow
 	resources := &recordingResources{
@@ -2735,7 +2573,7 @@ func TestReconcileExpiredReclaimsTheExactNoShowAllocation(t *testing.T) {
 }
 
 func TestRunExpiryReconcilerRetriesTransientCleanupFailure(t *testing.T) {
-	storage := newMemoryStorage()
+	storage := nakamastoragetest.New()
 	store := newLeaseStore(t, storage)
 	now := testNow
 	releaseCalls := make(chan int, 2)
@@ -2818,7 +2656,7 @@ func TestRunExpiryReconcilerRetriesTransientCleanupFailure(t *testing.T) {
 }
 
 func TestReconcileExpiredRecoversACrashedPreProvisionAttempt(t *testing.T) {
-	storage := newMemoryStorage()
+	storage := nakamastoragetest.New()
 	store := newLeaseStore(t, storage)
 	now := testNow.Add(time.Minute)
 	staging := nakamalease.Lease{
@@ -2867,7 +2705,7 @@ func TestReconcileExpiredRecoversACrashedPreProvisionAttempt(t *testing.T) {
 }
 
 func TestReconcileExpiredCannotReclaimAClaimedAllocation(t *testing.T) {
-	storage := newMemoryStorage()
+	storage := nakamastoragetest.New()
 	store := newLeaseStore(t, storage)
 	now := testNow
 	resources := &recordingResources{
@@ -2940,7 +2778,7 @@ func TestReconcileExpiredCannotReclaimAClaimedAllocation(t *testing.T) {
 }
 
 func TestReleaseMarksTheLeaseBeforeExactResourceCleanup(t *testing.T) {
-	storage := newMemoryStorage()
+	storage := nakamastoragetest.New()
 	store := newLeaseStore(t, storage)
 	resources := &recordingResources{
 		provisioned: Provisioned{
@@ -3015,7 +2853,7 @@ func TestReleaseMarksTheLeaseBeforeExactResourceCleanup(t *testing.T) {
 }
 
 func TestReleaseResourceFailureKeepsTheReleasingLeaseAndSanitizesTheError(t *testing.T) {
-	storage := newMemoryStorage()
+	storage := nakamastoragetest.New()
 	store := newLeaseStore(t, storage)
 	resources := &recordingResources{
 		provisioned: Provisioned{
@@ -3072,7 +2910,7 @@ func TestReleaseResourceFailureKeepsTheReleasingLeaseAndSanitizesTheError(t *tes
 }
 
 func TestReleaseRetriesCleanupFromTheDurableBarrier(t *testing.T) {
-	storage := newMemoryStorage()
+	storage := nakamastoragetest.New()
 	store := newLeaseStore(t, storage)
 	resources := &recordingResources{
 		provisioned: Provisioned{
@@ -3124,7 +2962,7 @@ func TestReleaseRetriesCleanupFromTheDurableBarrier(t *testing.T) {
 }
 
 func TestReleaseStaleAttemptCannotTouchTheCurrentResource(t *testing.T) {
-	storage := newMemoryStorage()
+	storage := nakamastoragetest.New()
 	store := newLeaseStore(t, storage)
 	resources := &recordingResources{
 		provisioned: Provisioned{
@@ -3171,7 +3009,7 @@ func TestReleaseStaleAttemptCannotTouchTheCurrentResource(t *testing.T) {
 }
 
 func TestReleaseClaimedAttemptCannotTouchThePlayerResource(t *testing.T) {
-	storage := newMemoryStorage()
+	storage := nakamastoragetest.New()
 	store := newLeaseStore(t, storage)
 	resources := &recordingResources{
 		provisioned: Provisioned{
@@ -3228,7 +3066,7 @@ func TestReleaseClaimedAttemptCannotTouchThePlayerResource(t *testing.T) {
 }
 
 func TestReleaseReplayIsIdempotentAfterTheLeaseIsGone(t *testing.T) {
-	storage := newMemoryStorage()
+	storage := nakamastoragetest.New()
 	store := newLeaseStore(t, storage)
 	resources := &recordingResources{
 		provisioned: Provisioned{
