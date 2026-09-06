@@ -31,9 +31,9 @@ Each ledger also has a sibling `shipped_<family>_collection.txt` containing exac
 production collection without guessing from the family name. Two ledgers in the same package
 cannot map to the same collection, and a mapping present in the reviewed base is immutable.
 The guard checks every double-quoted or raw collection literal in production Go files against
-the package's mappings, including multiple collections in one file. This is a lexical check:
-comments can also contain matching literals, and dynamically constructed names require store
-review.
+the package's mappings, including multiple collections in one file and escaped literals.
+Comments and larger string values do not register collections. Dynamically constructed names
+require store review.
 
 Each family registers its historical reader in `shipped_<family>_reader.txt`, one line containing
 the exact top-level Go test name, production Go filename, and reader function name. For example:
@@ -72,13 +72,17 @@ loss/refusal assertions. Reader or test renames update the registration together
 ## Expanding a server schema
 
 1. Add read support for the new version while retaining all historical reader paths. Keep the
-   production writer on the supported version until every serving reader can accept the expansion.
+   production writer on the supported version until every serving reader and the retained rollback
+   artifact can accept the expansion, as required by the
+   [server-state durability contract](server-state-durability.md#read-support-ships-and-bakes-before-the-writer-that-needs-it).
 2. Append the new version to its ledger and add a complete fixture. Extend the store's behavioral
    test with independently specified expected fields and an observable loss/refusal regression.
-3. Validate the unchanged historical fixtures, the new reader and the old writer together. Record
-   the supported reader/writer combination and its rollback constraint in the delivery issue.
-4. Activate the writer in a separate reversible step after that compatibility evidence exists.
-   Keep the old readers. Do not rewrite old records solely to raise their schema number.
+3. Validate the unchanged historical fixtures, the new reader and the old writer together. Identify
+   the retained rollback artifact and prove that its reader accepts the proposed writes. Record
+   that evidence and the supported reader/writer combination in the delivery issue.
+4. Activate the writer in a separate reversible step after the serving-reader and retained-target
+   evidence exists. Keep the old readers. Do not rewrite old records solely to raise their schema
+   number.
 
 Player-state records and their idempotency evidence commit through the existing player-state
 mutation boundary. Identity bindings and handoff leases retain their own storage-write contracts.
