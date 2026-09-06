@@ -69,9 +69,9 @@ the plain origin and pins the bytes by `sha256` and `size`.
 plain download. It is deliberately **not** widened. It is also not the
 enforcement of this decision: it guards only rollback targets today, and it is
 a shape check. Enforcement is that the updater applies the same predicate to
-every delivery field before fetching, and that the publishing pipeline proves,
-with no credentials, that every published delivery URL downloads and hashes to
-the digest the manifest pins.
+every delivery field before fetching, and that the publishing pipeline verifies
+every published delivery URL against the `sha256` and `size` the manifest pins —
+in the two stages the Consequences below set out.
 
 A delivery URL is **durable and public**: no userinfo, no signed or expiring
 query parameters, nothing that stops answering once a token lapses. The shape
