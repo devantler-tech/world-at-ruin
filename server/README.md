@@ -270,9 +270,13 @@ zone/dungeon server:
 - **`gameserverapi/`** — the least-privilege **Agones GameServer resource
   boundary** used by durable handoff reconciliation. Its Kubernetes seam
   exposes only namespaced `get`, `list`, and `delete`: no create, update, patch,
-  watch, or access to another resource kind. Exact-name reads pin namespace,
-  name, UID, Fleet, full attempt digest, `Allocated` state, and one named TLS
-  status port; exact-attempt listing uses the same shared full SHA-256 label
+  watch, or access to another resource kind. Every read refuses an object
+  outside the configured Fleet or attempt: an identity-pinned read also
+  requires the exact UID, the name-keyed allocated read reports the observed
+  UID for a durable digest to verify, and both require `Allocated` state and
+  one named TLS status port, while the cleanup-side locate accepts any state
+  and a missing port so a stale attempt can still delete what Agones has moved
+  on from; exact-attempt listing uses the same shared full SHA-256 label
   contract as allocation and returns every match so duplicates stay explicit.
   Cleanup accepts only a complete identity and sends its UID as a Kubernetes
   deletion precondition, preventing stale cleanup from deleting a recreated
@@ -340,9 +344,10 @@ zone/dungeon server:
   requires exactly 32 plaintext bytes, and returns isolated secret copies.
   The same boundary derives and verifies the durable DNS-safe reference that
   pins the key, UID digest, ciphertext digest and TLS port. Recovery refuses a
-  changed identity, envelope, key or port through one sanitized error. It is
-  pure and remains uncomposed until the concrete GameServer resource adapter
-  owns the Agones and Kubernetes calls.
+  changed identity, envelope, key or port through one sanitized error. The
+  same derivation is exported key-free so a release path can prove an object
+  still carries what a lease pinned. It is pure; `agonesresources/` owns the
+  Agones and Kubernetes calls around it.
 - **`handoffalloc/`** — the durable **handoff allocation coordinator**: it
   implements `handoff.Allocator` over the real `nakamalease` store and an
   injected GameServer-resource boundary. It persists a staging intent and an
@@ -373,13 +378,36 @@ zone/dungeon server:
   retries transient storage or resource cleanup failures without stopping the
   supervisor. This includes a crash that left only an attempt ID. Claimed and
   stale attempts remain untouched, external errors are sanitized, and raw
-  admission-secret bytes never enter the lease. The coordinator is inert until
-  a concrete `GameServerResources` adapter provisions Agones GameServers,
-  composes the `admissionref` boundary, and resolves their zone-generated envelopes
-  according to [ADR
-  0002](../docs/adr/0002-seal-zone-admission-secrets-before-readiness.md), its
-  expiry loop will be supervised, and a Nakama RPC will register the resulting
-  handoff service.
+  admission-secret bytes never enter the lease. Its concrete adapter is
+  `agonesresources/`; the coordinator stays inert until a Nakama composition
+  supervises its expiry loop and registers the resulting handoff service.
+- **`agonesresources/`** — the concrete **Agones GameServer resource adapter**
+  behind the coordinator, composing `agonesalloc`, `gameserverapi` and
+  `admissionref` the way [ADR
+  0002](../docs/adr/0002-seal-zone-admission-secrets-before-readiness.md)
+  prescribes. Provision first adopts any Allocated GameServer already carrying
+  the exact attempt label, dispatches exactly one allocation otherwise, then
+  waits within a bounded observation budget for exactly one attempt-labelled
+  object named by the response, pins it by UID with an exact get, validates its
+  Fleet, state, attempt label, ready label, key fingerprint, envelope and TLS
+  port against the response, and opens the envelope into the durable
+  `SecretRef`. An object sealed under a retained previous key keeps resolving
+  and releasing across a rotation. Reconcile never dispatches: zero matches is the ambiguous
+  outcome the coordinator quarantines, and more than one match releases every
+  match by its own UID precondition and fails closed. Resolve gets the exact
+  named GameServer and recomputes every reference component, refusing any
+  changed UID, envelope, key, label, port or state. Release proves the attempt
+  digest, UID digest and envelope digest before deleting with a UID
+  precondition, leaves absence and a changed UID untouched, and discovers a
+  staging lease by its attempt label alone. Observer binding is an injected
+  policy the adapter does not own, and a handoff advertises
+  `<node name>.<zone domain>` because certificates bind node names. The
+  allocator-generation fence ADR 0002 names as the only other way to clear a
+  dispatched-no-match quarantine is a separate authority that is not composed
+  yet. Hermetic tests drive the real generated allocation gRPC path and the
+  Agones fake clientset through success, replay, duplicates, an unobservable
+  dispatch, a late commit, a response that disagrees with the object, caller
+  cancellation, every changed reference component, and stale release.
 - **`cmd/zone/`** — a runnable skeleton server. It boots the demo zone and either
   runs a fixed number of deterministic ticks (printing the state hash) or drives
   the loop from the wall clock. With `-replicate` it also runs the full
@@ -408,8 +436,7 @@ go run ./cmd/zone -listen :8443 -tls-cert cert.pem -tls-key key.pem -agones \
 Later children of the server-foundation epic
 ([#4](https://github.com/devantler-tech/world-at-ruin/issues/4), the first child
 of the Phase 1 epic [#8](https://github.com/devantler-tech/world-at-ruin/issues/8)):
-the concrete resource adapter that composes `agonesalloc`, `gameserverapi`,
-`admissionref`, and the zone-side sealed-envelope lifecycle in
+the allocator-generation fence supervisor of
 [ADR 0002](../docs/adr/0002-seal-zone-admission-secrets-before-readiness.md),
 the authenticated private zone claim endpoint and fenced session-end recovery,
 Nakama RPC registration that exposes the
@@ -417,12 +444,13 @@ handoff service, the client entry point that enables Google account
 provisioning, the party and chat half of the Nakama social surface, client
 prediction and reconciliation, real navmesh geometry, and Postgres/CNPG
 persistence. Zone boot already generates, publishes and observes the sealed
-envelope; allocation metadata validation, coordinator unwrap/recovery and
-production claim behavior are not composed yet. The zone's observed-locator
-claim gate is available for that composition. The tick core, socket, client
-replica store, Agones lifecycle, default-off Nakama account provisioning and
-session verification, friends boundary, allocation API boundary, exact-UID GameServer resource
-boundary, private lease store, durable handoff coordinator and fail-closed
+envelope, and the concrete resource adapter validates, unwraps and recovers it;
+the fence, authenticated private claim endpoint and the Nakama composition are
+not in place yet. The zone's observed-locator claim gate is available for that
+composition. The tick core, socket, client replica store, Agones lifecycle,
+default-off Nakama account provisioning and session verification, friends
+boundary, allocation API boundary, GameServer resource boundary, private lease
+store, concrete Agones resource adapter, durable handoff coordinator and fail-closed
 handoff core are in place; later slices build on those tested seams instead of
 creating a parallel meta service.
 

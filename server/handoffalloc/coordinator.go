@@ -23,7 +23,11 @@ const (
 	// before the supervised reconciler retries exact cleanup.
 	DefaultSweepInterval = 15 * time.Second
 
-	stagedCleanupTimeout = 5 * time.Second
+	// StagedCleanupTimeout bounds the external cleanup of a resource whose
+	// identity is already known, on a context that survives the caller's
+	// cancellation. The concrete resource adapter shares it for the same
+	// reason, so the two budgets cannot drift apart.
+	StagedCleanupTimeout = 5 * time.Second
 )
 
 var (
@@ -51,7 +55,7 @@ type Provisioned struct {
 // for an attempt. Reconcile observes only that exact attempt and never
 // dispatches. Resolve must return the exact durable resource, while Release must
 // be idempotent for that exact resource. Its concrete Agones and Kubernetes
-// implementation is a later server-foundation child. Release must also discover
+// implementation is the agonesresources package. Release must also discover
 // an attempt from AttemptID alone when a staging lease has no allocation material
 // yet; this makes a crash after Provision recoverable.
 type GameServerResources interface {
@@ -243,7 +247,7 @@ func (c *Coordinator) Allocate(
 	if err != nil {
 		progressCtx, cancel := context.WithTimeout(
 			context.WithoutCancel(ctx),
-			stagedCleanupTimeout,
+			StagedCleanupTimeout,
 		)
 		defer cancel()
 		if winner, progressed, winnerErr := c.resolveProgressedAttempt(
@@ -280,7 +284,7 @@ func (c *Coordinator) Allocate(
 	if err != nil {
 		progressCtx, cancel := context.WithTimeout(
 			context.WithoutCancel(ctx),
-			stagedCleanupTimeout,
+			StagedCleanupTimeout,
 		)
 		defer cancel()
 		if winner, progressed, winnerErr := c.resolveProgressedAttempt(
@@ -402,7 +406,7 @@ func (c *Coordinator) releaseResource(
 ) error {
 	cleanupCtx, cancel := context.WithTimeout(
 		context.WithoutCancel(ctx),
-		stagedCleanupTimeout,
+		StagedCleanupTimeout,
 	)
 	defer cancel()
 	return c.resources.Release(cleanupCtx, lease)
@@ -416,7 +420,7 @@ func (c *Coordinator) reconcileAttempt(
 	if resource != nil {
 		cleanupCtx, cancel := context.WithTimeout(
 			context.WithoutCancel(ctx),
-			stagedCleanupTimeout,
+			StagedCleanupTimeout,
 		)
 		defer cancel()
 		ctx = cleanupCtx

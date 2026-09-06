@@ -322,6 +322,8 @@ func TestCreatePersistsPrivateVersionedLeaseByHashedKey(t *testing.T) {
 	}
 }
 
+// TestCreateIgnoresAClientOwnedObjectAtTheDerivedKey checks that a player's decoy
+// cannot satisfy or redirect the system-owned lease create and stays untouched.
 func TestCreateIgnoresAClientOwnedObjectAtTheDerivedKey(t *testing.T) {
 	storage := newMemoryStorage()
 	store, err := NewStore(storage)
@@ -333,7 +335,7 @@ func TestCreateIgnoresAClientOwnedObjectAtTheDerivedKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal client object: %v", err)
 	}
-	key := reservationKey(testUserID, testReservationID)
+	key := ReservationKey(testUserID, testReservationID)
 	storage.objects[storageID(testUserID, Collection, key)] = &api.StorageObject{
 		Collection:      Collection,
 		Key:             key,
@@ -1872,13 +1874,15 @@ func TestReclaimExpiredContinuesAfterOneResourceTimesOut(t *testing.T) {
 	}
 }
 
+// TestLoadKeepsSchemaOneLeaseReadableAsNotReleasing verifies the oldest stored
+// shape retains its lease and version without acquiring a later cleanup flag.
 func TestLoadKeepsSchemaOneLeaseReadableAsNotReleasing(t *testing.T) {
 	storage := newMemoryStorage()
 	store, err := NewStore(storage)
 	if err != nil {
 		t.Fatalf("NewStore returned an error: %v", err)
 	}
-	key := reservationKey(testUserID, testReservationID)
+	key := ReservationKey(testUserID, testReservationID)
 	storage.objects[storageID(testSystemUserID, Collection, key)] = &api.StorageObject{
 		Collection: Collection,
 		Key:        key,
@@ -2013,7 +2017,7 @@ func TestEveryShippedLeaseSchemaShapeStaysReadable(t *testing.T) {
 				if err != nil {
 					t.Fatalf("NewStore returned an error: %v", err)
 				}
-				key := reservationKey(testUserID, testReservationID)
+				key := ReservationKey(testUserID, testReservationID)
 				objectID := storageID(testSystemUserID, Collection, key)
 				storageVersion := fmt.Sprintf("historical-v%d-shape%d", version, shapeIndex+1)
 				storage.objects[objectID] = &api.StorageObject{
@@ -2094,13 +2098,15 @@ func TestLoadRefusesLegacySchemaCarryingPostLegacyKeys(t *testing.T) {
 	}
 }
 
+// TestLoadKeepsSchemaTwoLeaseCarryingExplicitFalseFlags checks that explicit
+// false staging and releasing fields remain readable with their stored version.
 func TestLoadKeepsSchemaTwoLeaseCarryingExplicitFalseFlags(t *testing.T) {
 	storage := newMemoryStorage()
 	store, err := NewStore(storage)
 	if err != nil {
 		t.Fatalf("NewStore returned an error: %v", err)
 	}
-	key := reservationKey(testUserID, testReservationID)
+	key := ReservationKey(testUserID, testReservationID)
 	storage.objects[storageID(testSystemUserID, Collection, key)] = &api.StorageObject{
 		Collection: Collection,
 		Key:        key,
@@ -2177,6 +2183,8 @@ func TestLoadRequiresDispatchIdentityToMatchTheDispatchFlag(t *testing.T) {
 	}
 }
 
+// TestLoadRejectsMalformedOrPublicStoredObjects refuses unsupported schema
+// fields, public permissions and inconsistent claim or cleanup state at read.
 func TestLoadRejectsMalformedOrPublicStoredObjects(t *testing.T) {
 	for _, test := range []struct {
 		name   string
@@ -2325,7 +2333,7 @@ func TestLoadRejectsMalformedOrPublicStoredObjects(t *testing.T) {
 			id := storageID(
 				testSystemUserID,
 				Collection,
-				reservationKey(testUserID, testReservationID),
+				ReservationKey(testUserID, testReservationID),
 			)
 			storage.mu.Lock()
 			test.tamper(storage.objects[id])
@@ -2472,5 +2480,21 @@ func TestStorageFailuresAreSanitized(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestReservationKeyIsAUserScopedDigest checks normalized user spelling and
+// distinct user or reservation inputs in the fixed-length lowercase key.
+func TestReservationKeyIsAUserScopedDigest(t *testing.T) {
+	key := ReservationKey("User-1", testReservationID)
+	if len(key) != 64 || strings.ToLower(key) != key {
+		t.Fatalf("ReservationKey = %q, want 64 lowercase hex characters", key)
+	}
+	if key != ReservationKey("user-1", testReservationID) {
+		t.Fatal("ReservationKey did not normalize the user ID case")
+	}
+	if key == ReservationKey("user-2", testReservationID) ||
+		key == ReservationKey("user-1", "other-reservation") {
+		t.Fatal("ReservationKey collided across a different user or reservation")
 	}
 }

@@ -445,3 +445,143 @@ func assertSanitizedError(t *testing.T, err error, envelope string) {
 		}
 	}
 }
+
+// TestReferenceDerivesTheDurableReferenceWithoutAKey checks that key-free
+// derivation agrees with Open and changes when the GameServer UID changes.
+func TestReferenceDerivesTheDurableReferenceWithoutAKey(t *testing.T) {
+	key := generatedKeys(t)[0]
+	material := validMaterial(t, key, testAdmissionSecret())
+
+	got, err := Reference(material)
+	if err != nil {
+		t.Fatalf("Reference returned error: %v", err)
+	}
+	if want := expectedReference(t, material); got != want {
+		t.Fatalf("Reference = %q, want %q", got, want)
+	}
+	opened, err := newTestKeyring(t, key).Open(material)
+	if err != nil {
+		t.Fatalf("Open returned error: %v", err)
+	}
+	if opened.SecretRef() != got {
+		t.Fatalf("Open reference %q differs from Reference %q", opened.SecretRef(), got)
+	}
+
+	changed := material
+	changed.GameServerUID = "other-uid"
+	if other, err := Reference(changed); err != nil || other == got {
+		t.Fatalf("Reference ignored a changed UID: %q, %v", other, err)
+	}
+}
+
+// TestReferenceRefusesMalformedMaterial checks that malformed identity,
+// fingerprint, envelope and port fields cannot produce a durable reference.
+func TestReferenceRefusesMalformedMaterial(t *testing.T) {
+	key := generatedKeys(t)[0]
+	tests := []struct {
+		name   string
+		mutate func(*Material)
+	}{
+		{name: "namespace", mutate: func(m *Material) { m.Namespace = "World" }},
+		{name: "name", mutate: func(m *Material) { m.GameServerName = "" }},
+		{name: "uid", mutate: func(m *Material) { m.GameServerUID = "uid/1" }},
+		{name: "fingerprint", mutate: func(m *Material) { m.WrappingKeyFingerprint = "short" }},
+		{name: "envelope", mutate: func(m *Material) { m.AdmissionEnvelope = "v2.abc" }},
+		{name: "port", mutate: func(m *Material) { m.TLSPort = 0 }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			material := validMaterial(t, key, testAdmissionSecret())
+			test.mutate(&material)
+			got, err := Reference(material)
+			if got != "" || !errorsIsInvalidMaterial(err) {
+				t.Fatalf("Reference = %q, %v; want ErrInvalidMaterial", got, err)
+			}
+		})
+	}
+}
+
+// TestHoldsReportsOnlyRetainedKeys checks retained-key membership and refuses
+// unknown or malformed fingerprints, including on a nil keyring.
+func TestHoldsReportsOnlyRetainedKeys(t *testing.T) {
+	keys := generatedKeys(t)
+	keyring := newTestKeyring(t, keys[0])
+
+	if !keyring.Holds(keyFingerprint(t, keys[0])) {
+		t.Fatal("Holds refused the retained key")
+	}
+	if keyring.Holds(keyFingerprint(t, keys[1])) {
+		t.Fatal("Holds accepted a key the keyring never retained")
+	}
+	if keyring.Holds("") || keyring.Holds(strings.Repeat("A", 52)) {
+		t.Fatal("Holds accepted a malformed fingerprint")
+	}
+	var absent *Keyring
+	if absent.Holds(keyFingerprint(t, keys[0])) {
+		t.Fatal("a nil keyring reported a key")
+	}
+}
+
+// TestFingerprintMatchesTheMetadataDigest checks the exported derivation equals
+// the digest the zone publishes and the keyring indexes by.
+func TestFingerprintMatchesTheMetadataDigest(t *testing.T) {
+	key := generatedKeys(t)[0]
+	got, err := Fingerprint(&key.PublicKey)
+	if err != nil {
+		t.Fatalf("Fingerprint returned error: %v", err)
+	}
+	if want := keyFingerprint(t, key); got != want {
+		t.Fatalf("Fingerprint = %q, want %q", got, want)
+	}
+	if !newTestKeyring(t, key).Holds(got) {
+		t.Fatal("the keyring does not hold the fingerprint it was built from")
+	}
+}
+
+// TestReferenceBindsPinsTheUIDAlone checks that the cleanup-side proof keys on
+// the UID digest only, so a changed port, key or re-sealed envelope never
+// blocks a release — the zone controls its own sealed material and must not be
+// able to veto its own cleanup — while a changed UID always does.
+func TestReferenceBindsPinsTheUIDAlone(t *testing.T) {
+	key := generatedKeys(t)[0]
+	material := validMaterial(t, key, testAdmissionSecret())
+	reference := expectedReference(t, material)
+
+	if !ReferenceBinds(reference, material.GameServerUID) {
+		t.Fatal("ReferenceBinds refused the material the reference was minted from")
+	}
+	otherPort := strings.Replace(reference, ".p8443", ".p9443", 1)
+	if otherPort == reference {
+		t.Fatalf("test reference %q did not carry the expected port", reference)
+	}
+	if !ReferenceBinds(otherPort, material.GameServerUID) {
+		t.Fatal("ReferenceBinds demanded the port, which cleanup must not need")
+	}
+	otherKey := strings.Replace(
+		reference,
+		".k"+material.WrappingKeyFingerprint,
+		".k"+strings.Repeat("a", 52),
+		1,
+	)
+	if !ReferenceBinds(otherKey, material.GameServerUID) {
+		t.Fatal("ReferenceBinds demanded the key, which cleanup must not need")
+	}
+	resealed := validMaterial(t, key, []byte("fedcba9876543210fedcba9876543210"))
+	if resealed.AdmissionEnvelope == material.AdmissionEnvelope {
+		t.Fatal("test re-seal produced an identical envelope")
+	}
+	if !ReferenceBinds(expectedReference(t, resealed), material.GameServerUID) {
+		t.Fatal("ReferenceBinds demanded the envelope, which the zone itself controls")
+	}
+	if ReferenceBinds(reference, "other-uid") {
+		t.Fatal("ReferenceBinds accepted a changed UID")
+	}
+	for _, malformed := range []string{"", "v1.k.u.e", "v2." + reference[3:], reference + ".x"} {
+		if ReferenceBinds(malformed, material.GameServerUID) {
+			t.Fatalf("ReferenceBinds accepted malformed reference %q", malformed)
+		}
+	}
+	if ReferenceBinds(reference, "uid/1") {
+		t.Fatal("ReferenceBinds accepted a malformed UID")
+	}
+}

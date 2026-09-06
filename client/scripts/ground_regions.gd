@@ -276,8 +276,11 @@ static func _hash_u32(value: int) -> int:
 	return x
 
 
-## `_hash_u32` mapped to [0, 1).
-static func _unit(value: int) -> float:
+## `_hash_u32` mapped to [0, 1) — the one platform-independent "unit hash" every
+## deterministic per-cell attribute in the client derives from (region layout
+## here, slab lip thickness in `ExposedSlabGeometry`), so no second integer mixer
+## with its own constants ever needs auditing.
+static func unit_hash(value: int) -> float:
 	return float(_hash_u32(value)) / 4294967296.0
 
 
@@ -293,7 +296,7 @@ static func _region_assignment(world_seed: int) -> PackedInt32Array:
 		out.append(i % REGIONS.size())
 	# Fisher-Yates, hashed. Descending so each draw is over a shrinking range.
 	for i in range(SITE_COUNT - 1, 0, -1):
-		var j := int(_unit(world_seed * 7919 + i * 104729 + 17) * float(i + 1))
+		var j := int(unit_hash(world_seed * 7919 + i * 104729 + 17) * float(i + 1))
 		j = clampi(j, 0, i)
 		var tmp := out[i]
 		out[i] = out[j]
@@ -322,8 +325,8 @@ static func sites(world_seed: int, extent: float) -> Array[Site]:
 			# Cell centre, then jittered inside the cell.
 			var cx := (float(ix) + 0.5) * cell - extent * 0.5
 			var cz := (float(iz) + 0.5) * cell - extent * 0.5
-			var jx := (_unit(world_seed * 2654435761 + index * 2 + 1) - 0.5) * 2.0 * JITTER * cell
-			var jz := (_unit(world_seed * 2654435761 + index * 2 + 2) - 0.5) * 2.0 * JITTER * cell
+			var jx := (unit_hash(world_seed * 2654435761 + index * 2 + 1) - 0.5) * 2.0 * JITTER * cell
+			var jz := (unit_hash(world_seed * 2654435761 + index * 2 + 2) - 0.5) * 2.0 * JITTER * cell
 			out.append(Site.new(cx + jx, cz + jz, regions[index]))
 	return out
 
