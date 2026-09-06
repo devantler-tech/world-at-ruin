@@ -898,8 +898,12 @@ everything shipped afterwards is held to.
     bare version plus `latest`, and **cosign-signs it by digest** (keyless, GitHub OIDC). The bare
     version is immutable; after pushing it, a successful `publish-ghcr` job enumerates every stable
     release tag and completes only once `latest` exposes the greatest version. It re-reads after
-    each tag write, so an older overlapping run either leaves a newer `latest` untouched or repairs
-    its own stale write when the newer immutable version becomes visible. The
+    each tag write, which usually repairs a stale write once the newer immutable version becomes
+    visible — but that read-then-`oras tag` sequence is **NOT a compare-and-swap**: a newer run can
+    promote between an older run's read and write, and the bounded retry can end on the stale
+    write, leaving the older contract live while the job goes red. Promotion therefore has to be
+    **serialized or a genuine compare-and-swap** once anything depends on `latest` being the
+    greatest verified release ([ADR 0004](docs/adr/0004-serve-delivery-bytes-from-a-plain-https-origin.md), #788). The
     **digest** is what the updater pins — never the mutable tag. OCI is required rather than merely
     preferred: GitHub Packages has no generic/raw-file registry, so an OCI artifact is the only way
     a `.app` zip enters it. The GitHub Release asset remains the *install* download and, once delivery
