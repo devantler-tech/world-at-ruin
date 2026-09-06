@@ -24,16 +24,32 @@ because it defines a permanent lookup contract rather than a versioned record fa
 The naming convention is `server/<package>/testdata/shipped_<family>_versions.txt` with sibling
 `golden_<family>_v<N>.json` files. Nested package directories are supported. Package names use
 letters, digits, underscores and hyphens; family names use lowercase letters, digits and underscores.
-Record families use this convention and join the check without editing an allowlist.
+Record families use this convention; their write sites also declare the owning ledgers below.
 
 Each ledger also has a sibling `shipped_<family>_collection.txt` containing exactly one
 `world_at_ruin_<name>` collection name on one line. The mapping connects the family to its
-production collection without guessing from the family name. Two ledgers in the same package
-cannot map to the same collection, and a mapping present in the reviewed base is immutable.
+production collection without guessing from the family name. Independent schemas can share a
+physical collection while retaining separate ledgers and readers. A mapping present in the reviewed
+base is immutable.
 The guard checks every double-quoted or raw collection literal in production Go files against
 the package's mappings, including multiple collections in one file and escaped literals.
 Comments and larger string values do not register collections. Dynamically constructed names
 require store review.
+
+Collection literals alone cannot inventory writers that import constants or reuse a collection.
+The independent `server/persisted-write-sites.txt` manifest binds every production `StorageWrite`
+method reference and imported `playerstate.RecordWrite` reference to its declared schema ledgers.
+Each site is identified by source file, receiver/function, boundary and ordinal. The scanner includes
+method values, closures, package initializers, aliased imports and files under every build tag.
+Missing, stale or duplicate site registrations and references to missing ledgers fail the guard.
+The manifest is updated when a writer is introduced or refactored; it does not replace permanent
+schema history. The [write-site format](../../tools/server-write-sites/README.md) describes the contract.
+
+This explicit inventory makes persistence-boundary changes reviewable; it is not semantic schema
+inference. Review must verify that every serialized format and discriminated shape belongs to its
+declared family, including multiplexing within an existing site, aliases and new persistence APIs.
+New forwarding or persistence boundaries extend the scanner before use. A known generic boundary's
+registration cannot substitute for a new schema owner's ledger and reader.
 
 Each family registers its historical reader in `shipped_<family>_reader.txt`, one line containing
 the exact top-level Go test name, production Go filename, and reader function name. For example:

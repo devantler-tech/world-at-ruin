@@ -116,8 +116,6 @@ register_persisted_families() {
 		dir="${ledger%/testdata/*}"
 		printf '%s\t%s\n' "$dir" "$name" >>"$SCRATCH_DIR/registrations"
 	done <"$SCRATCH_DIR/head-ledgers"
-	awk '!seen[$0]++ { next } { exit 1 }' "$SCRATCH_DIR/registrations" ||
-		fail 'a collection is registered by multiple schema ledgers in the same package'
 
 	# Decode actual Go string tokens, including interpreted escapes. Comments and
 	# collection-looking substrings inside larger strings are data. This lexical
@@ -137,6 +135,40 @@ register_persisted_families() {
 				fail "$dir names Nakama collection $name but registers no schema ledger for that collection ($dir/testdata/shipped_<family>_collection.txt) — every persisted server family must join this gate"
 		done <"$SCRATCH_DIR/collection-names"
 	done < <(awk '/^server\/.*\.go$/ && !/_test\.go$/ { print }' "$SCRATCH_DIR/head-paths")
+}
+
+# register_write_sites inventories persistence references independently of
+# collection spelling. The manifest binds each site to its declared schemas;
+# multiple families may share a physical collection or one atomic batch.
+register_write_sites() {
+	local manifest='server/persisted-write-sites.txt' scanner file site ledger
+	require_file "$manifest"
+	awk '
+		/^[[:space:]]*(#|$)/ { next }
+		NF < 2 || $1 !~ /^server\/([A-Za-z0-9_-]+\/)*[A-Za-z0-9_.-]+\.go\|[A-Za-z0-9_.]+\|(StorageWrite|RecordWrite)\|[1-9][0-9]*$/ || seen[$1]++ { exit 1 }
+		{
+			for (i = 2; i <= NF; i++) {
+				if ($i !~ /^server\/([A-Za-z0-9_-]+\/)+testdata\/shipped_[a-z0-9_]+_versions\.txt$/ || pair[$1 SUBSEP $i]++) exit 1
+				print $1 "\t" $i
+			}
+		}
+	' "$manifest" >"$SCRATCH_DIR/write-registrations" || fail "$manifest has malformed or duplicate write-site registrations"
+	while IFS=$'\t' read -r site ledger; do
+		grep -Fxq "$ledger" "$SCRATCH_DIR/head-ledgers" || fail "$site registers missing schema ledger $ledger"
+	done <"$SCRATCH_DIR/write-registrations"
+	scanner="$SCRATCH_DIR/write-sites"
+	go build -o "$scanner" "$SCRIPT_DIR/server-write-sites/main.go" || fail 'write-site scanner did not compile'
+	: >"$SCRATCH_DIR/write-sites-found"
+	while IFS= read -r file; do
+		[ -f "$file" ] || continue
+		"$scanner" "$file" >>"$SCRATCH_DIR/write-sites-found" || fail "could not scan persistence write sites in $file"
+	done < <(awk '/^server\/.*\.go$/ && !/_test\.go$/ { print }' "$SCRATCH_DIR/head-paths")
+	sort -u "$SCRATCH_DIR/write-sites-found" >"$SCRATCH_DIR/write-sites-sorted"
+	awk '{ print $1 }' "$SCRATCH_DIR/write-registrations" | sort -u >"$SCRATCH_DIR/write-sites-registered"
+	comm -23 "$SCRATCH_DIR/write-sites-sorted" "$SCRATCH_DIR/write-sites-registered" >"$SCRATCH_DIR/write-sites-missing"
+	[ ! -s "$SCRATCH_DIR/write-sites-missing" ] || fail "unregistered persistence write site: $(head -n 1 "$SCRATCH_DIR/write-sites-missing")"
+	comm -13 "$SCRATCH_DIR/write-sites-sorted" "$SCRATCH_DIR/write-sites-registered" >"$SCRATCH_DIR/write-sites-stale"
+	[ ! -s "$SCRATCH_DIR/write-sites-stale" ] || fail "stale persistence write-site registration: $(head -n 1 "$SCRATCH_DIR/write-sites-stale")"
 }
 
 # main anchors discovery to BASE_SHA and checks every base or candidate family.
@@ -164,6 +196,7 @@ main() {
 	# A persisted family is registered by the code that persists it, so a store
 	# without a ledger is refused instead of never being discovered.
 	register_persisted_families "$base"
+	register_write_sites
 
 	# Identity addressing has its own immutable fixture outside a version ledger.
 	require_file "$ADDRESS_CONTRACT"

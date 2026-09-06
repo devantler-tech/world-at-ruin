@@ -14,6 +14,7 @@ git -C "$repo" config commit.gpgsign false
 git -C "$repo" commit --allow-empty -qm base
 base="$(git -C "$repo" rev-parse HEAD)"
 printf 'module example.com/readerfixture\n\ngo 1.26.6\n' >"$repo/server/go.mod"
+: >"$repo/server/persisted-write-sites.txt"
 printf '1\n' >"$data/shipped_progress_versions.txt"
 printf 'world_at_ruin_progress\n' >"$data/shipped_progress_collection.txt"
 printf '{"schema":1,"quest":7}\n' >"$data/golden_progress_v1.json"

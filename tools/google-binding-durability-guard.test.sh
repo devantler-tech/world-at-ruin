@@ -11,6 +11,7 @@ failures=0
 # The standalone helper has no module or dependencies; explicit files keep its
 # lexical and I/O regressions on the same Go toolchain as this CI guard suite.
 go test "$ROOT/tools/server-collection-literals/main.go" "$ROOT/tools/server-collection-literals/main_test.go"
+go test "$ROOT/tools/server-write-sites/main.go" "$ROOT/tools/server-write-sites/main_test.go"
 
 # t_fail records a failed assertion while allowing the remaining cases to run.
 t_fail() {
@@ -27,6 +28,7 @@ character_data="$repo/server/nakamacharacter/testdata"
 audit_data="$repo/server/playerstate/testdata"
 mkdir -p "$data" "$lease_data" "$character_data" "$audit_data"
 printf 'module example.com/historyguard\n\ngo 1.26.6\n' >"$repo/server/go.mod"
+: >"$repo/server/persisted-write-sites.txt"
 
 # Provide executable fixture readers to the structural-guard fixture packages.
 # The separate reader-contract suite supplies missing, skipped and lossy controls.
@@ -91,7 +93,7 @@ add_reader_contract "$data" google_binding
 add_reader_contract "$lease_data" lease
 add_reader_contract "$character_data" character
 add_reader_contract "$audit_data" audit
-git -C "$repo" add server/go.mod server/nakamaauth server/nakamalease \
+git -C "$repo" add server/go.mod server/persisted-write-sites.txt server/nakamaauth server/nakamalease \
 	server/nakamacharacter server/playerstate
 git -C "$repo" commit -qm 'ship binding schema one'
 base="$(git -C "$repo" rev-parse HEAD)"
@@ -189,7 +191,43 @@ GO
 	reset_tree
 }
 
+# write_site_cases prove existing collection registrations cannot hide another
+# persistence boundary, including one that obtains its collection through imports.
+write_site_cases() {
+	reset_tree
+	printf 'package fixture\nconst Collection = "world_at_ruin_google_identity_bindings"\n' >"$data/../collection.go"
+	mkdir -p "$repo/server/newwriter"
+	cat >"$repo/server/newwriter/store.go" <<'GO'
+package newwriter
+import shared "example.com/historyguard/nakamaauth"
+var storage struct { StorageWrite func(string) }
+func Save() { storage.StorageWrite(shared.Collection) }
+GO
+	expect_fail_matching 'imported existing collection still registers a new writer' 'unregistered persistence write site: server/newwriter/store.go|Save|StorageWrite|1'
+	printf '%s\n' 'server/newwriter/store.go|Save|StorageWrite|1 server/nakamaauth/testdata/shipped_google_binding_versions.txt' >"$repo/server/persisted-write-sites.txt"
+	expect_pass 'explicitly registered writer using an imported collection'
+	printf '\nfunc Second() { storage.StorageWrite(shared.Collection) }\n' >>"$repo/server/newwriter/store.go"
+	expect_fail_matching 'second writer sharing the same collection' 'unregistered persistence write site: server/newwriter/store.go|Second|StorageWrite|1'
+	printf '%s\n' 'server/newwriter/store.go|Second|StorageWrite|1 server/nakamaauth/testdata/shipped_google_binding_versions.txt' >>"$repo/server/persisted-write-sites.txt"
+	expect_pass 'same schema at two explicitly registered write sites'
+	printf '%s\n' 'server/missing.go|Save|StorageWrite|1 server/nakamaauth/testdata/shipped_google_binding_versions.txt' >>"$repo/server/persisted-write-sites.txt"
+	expect_fail_matching 'stale site cannot remain in inventory' 'stale persistence write-site registration'
+	printf '%s\n' 'server/newwriter/store.go|Save|StorageWrite|1 server/missing/testdata/shipped_missing_versions.txt' >"$repo/server/persisted-write-sites.txt"
+	expect_fail_matching 'site must bind a complete registered family' 'registers missing schema ledger'
+	printf '%s\n' 'server/newwriter/store.go|Save|StorageWrite|1 server/nakamaauth/testdata/shipped_google_binding_versions.txt' 'server/newwriter/store.go|Save|StorageWrite|1 server/nakamaauth/testdata/shipped_google_binding_versions.txt' >"$repo/server/persisted-write-sites.txt"
+	expect_fail_matching 'duplicate manifest sites are invalid' 'malformed or duplicate write-site registrations'
+	reset_tree
+}
+
+if [ "$#" -gt 0 ] && [ "$1" = --write-sites-only ]; then
+	write_site_cases
+	[ "$failures" -eq 0 ] || exit 1
+	printf 'Server write-site tests: PASS\n'
+	exit 0
+fi
+
 collection_literal_cases
+write_site_cases
 if [ "$#" -gt 0 ] && [ "$1" = --collection-literals-only ]; then
 	if [ "$failures" -ne 0 ]; then
 		printf 'Google collection literal tests: %d failure(s)\n' "$failures" >&2
@@ -309,7 +347,11 @@ expect_pass 'repeated collection use shares its one family'
 printf '%s\n' 'const AlsoSecond = `world_at_ruin_unregistered`' >>"$repo/server/orphanstore/store.go"
 expect_pass 'both registered collections in one file'
 printf 'world_at_ruin_orphans\n' >"$repo/server/orphanstore/testdata/shipped_second_collection.txt"
-expect_fail_matching 'two ledgers cannot ambiguously register the same collection' 'registered by multiple schema ledgers'
+# Remove the other collection literals: two independent schemas can legitimately
+# use the same physical collection, while retaining their own fixture and reader.
+printf '%s\n' 'package orphanstore' 'const Collection = "world_at_ruin_orphans"' >"$repo/server/orphanstore/store.go"
+printf '%s\n' 'package orphanstore' >"$repo/server/orphanstore/second.go"
+expect_pass 'independent schema families can share a collection'
 printf 'world_at_ruin_unregistered\n' >"$repo/server/orphanstore/testdata/shipped_second_collection.txt"
 for invalid in '' 'world_at_ruin_orphans\nworld_at_ruin_unregistered' 'world_at_ruin_orphans\n' 'garbage'; do
 	printf '%b\n' "$invalid" >"$repo/server/orphanstore/testdata/shipped_orphan_collection.txt"

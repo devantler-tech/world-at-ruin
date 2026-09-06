@@ -810,8 +810,15 @@ everything shipped afterwards is held to.
   and candidate tree, preserves all historical fixture bytes, validates complete additions, and refuses
   any Nakama collection literal in production Go files without its own family ledger in the same
   package. Each ledger has a sibling `shipped_<family>_collection.txt` containing the exact collection
-  name; mappings are unique within the package and immutable once shipped. The lexical scan includes
-  double-quoted and raw literals; dynamically constructed names require store review.
+  name; mappings are immutable once shipped, and independent schemas may share a collection.
+  `server/persisted-write-sites.txt` separately binds each production `StorageWrite` method reference
+  and imported `playerstate.RecordWrite` reference to its schema ledger(s), by source file, enclosing
+  receiver/function, boundary and ordinal. Missing, stale or duplicate registrations fail. This includes
+  imported collection constants, method values, closures, package initializers and aliased imports;
+  persistence-boundary dot imports are refused. The collection-literal scan remains an additional check.
+  This inventory is a review tripwire, not semantic schema inference: multiplexing formats inside an
+  existing site, type aliases or a new persistence API still require explicit schema-owner review and
+  complete family registration. New persistence boundaries must extend the scanner before use.
   Run `BASE_SHA=<reviewed-base> ./tools/google-binding-durability-guard.sh` from the repository root
   and its adjacent `.test.sh` regression suite. Each family also names its exact historical Go test,
   production source file and raw-JSON decoder function in `shipped_<family>_reader.txt`. The guard compiles the

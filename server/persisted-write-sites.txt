@@ -1,0 +1,7 @@
+# source|receiver.function|boundary|ordinal followed by the declared schema ledgers
+# RecordWrite sites identify schema owners before playerstate performs the atomic batch.
+server/nakamaauth/google_binding_store.go|NakamaGoogleBindingStore.BindGoogleIdentity|StorageWrite|1 server/nakamaauth/testdata/shipped_google_binding_versions.txt
+server/nakamalease/store.go|Store.writeKey|StorageWrite|1 server/nakamalease/testdata/shipped_lease_versions.txt
+server/playerstate/store.go|Store.Apply|StorageWrite|1 server/playerstate/testdata/shipped_audit_versions.txt server/nakamacharacter/testdata/shipped_character_versions.txt server/nakamainventory/testdata/shipped_inventory_versions.txt
+server/nakamacharacter/store.go|Store.Save|RecordWrite|1 server/nakamacharacter/testdata/shipped_character_versions.txt
+server/nakamainventory/store.go|Store.Save|RecordWrite|1 server/nakamainventory/testdata/shipped_inventory_versions.txt
