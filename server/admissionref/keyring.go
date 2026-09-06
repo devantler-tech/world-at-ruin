@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/devantler-tech/world-at-ruin/server/internal/handoffidentity"
 )
 
 const (
@@ -20,7 +22,6 @@ const (
 	oaepDomain          = "world-at-ruin/zone-admission/v1"
 	admissionSecretSize = 32
 	minimumRSAKeyBits   = 3072
-	fingerprintLength   = 52
 )
 
 // ErrInvalidMaterial refuses malformed, unknown, or identity-mismatched
@@ -269,61 +270,17 @@ func base32Digest(value []byte) string {
 }
 
 func validFingerprint(value string) bool {
-	if len(value) != fingerprintLength {
-		return false
-	}
-	decoded, err := base32.StdEncoding.WithPadding(base32.NoPadding).
-		DecodeString(strings.ToUpper(value))
-	if err != nil || len(decoded) != sha256.Size {
-		return false
-	}
-	return strings.ToLower(
-		base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(decoded),
-	) == value
+	return handoffidentity.Fingerprint(value)
 }
 
 func validGameServerUID(value string) bool {
-	if value == "" || len(value) > 128 {
-		return false
-	}
-	for _, char := range value {
-		if (char < 'a' || char > 'z') &&
-			(char < 'A' || char > 'Z') &&
-			(char < '0' || char > '9') &&
-			char != '-' &&
-			char != '_' &&
-			char != '.' {
-			return false
-		}
-	}
-	return true
+	return handoffidentity.GameServerUID(value)
 }
 
 func validDNSSubdomain(value string) bool {
-	if value == "" || len(value) > 253 {
-		return false
-	}
-	for _, label := range strings.Split(value, ".") {
-		if !validDNSLabel(label) {
-			return false
-		}
-	}
-	return true
+	return handoffidentity.DNSSubdomain(value)
 }
 
 func validDNSLabel(value string) bool {
-	if value == "" ||
-		len(value) > 63 ||
-		value[0] == '-' ||
-		value[len(value)-1] == '-' {
-		return false
-	}
-	for _, char := range value {
-		if (char < 'a' || char > 'z') &&
-			(char < '0' || char > '9') &&
-			char != '-' {
-			return false
-		}
-	}
-	return true
+	return handoffidentity.DNSLabel(value)
 }

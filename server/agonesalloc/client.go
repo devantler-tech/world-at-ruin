@@ -4,14 +4,13 @@ package agonesalloc
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/base32"
 	"encoding/base64"
 	"errors"
 	"strings"
 
 	allocationpb "agones.dev/agones/pkg/allocation/go"
 	"github.com/devantler-tech/world-at-ruin/server/agones"
+	"github.com/devantler-tech/world-at-ruin/server/internal/handoffidentity"
 	"google.golang.org/grpc/status"
 )
 
@@ -20,12 +19,11 @@ const (
 	reservationLabel = "world-at-ruin.dev/handoff-reservation"
 	attemptLabel     = agones.AttemptLabel
 
-	wrappingKeyFingerprintLength = 52
-	leaseObjectIDLength          = 64
-	admissionEnvelopePrefix      = "v1."
-	claimLocatorPrefix           = "v1."
-	minAdmissionEnvelopeBytes    = 384
-	maxAdmissionEnvelopeBytes    = 4096
+	leaseObjectIDLength       = 64
+	admissionEnvelopePrefix   = "v1."
+	claimLocatorPrefix        = "v1."
+	minAdmissionEnvelopeBytes = 384
+	maxAdmissionEnvelopeBytes = 4096
 )
 
 // Config identifies the envelope-ready GameServer pool and its player-facing
@@ -198,17 +196,7 @@ func claimLocator(leaseObjectID, attemptValue string) string {
 }
 
 func validWrappingKeyFingerprint(value string) bool {
-	if len(value) != wrappingKeyFingerprintLength {
-		return false
-	}
-	decoded, err := base32.StdEncoding.WithPadding(base32.NoPadding).
-		DecodeString(strings.ToUpper(value))
-	if err != nil || len(decoded) != sha256.Size {
-		return false
-	}
-	return strings.ToLower(
-		base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(decoded),
-	) == value
+	return handoffidentity.Fingerprint(value)
 }
 
 func validLeaseObjectID(value string) bool {
@@ -238,15 +226,7 @@ func validAdmissionEnvelope(value string) bool {
 }
 
 func validDNSSubdomain(value string) bool {
-	if value == "" || len(value) > 253 {
-		return false
-	}
-	for _, label := range strings.Split(value, ".") {
-		if !validDNSLabel(label) {
-			return false
-		}
-	}
-	return true
+	return handoffidentity.DNSSubdomain(value)
 }
 
 func validFleetName(value string) bool {
@@ -254,16 +234,5 @@ func validFleetName(value string) bool {
 }
 
 func validDNSLabel(value string) bool {
-	if value == "" || len(value) > 63 ||
-		value[0] == '-' || value[len(value)-1] == '-' {
-		return false
-	}
-	for _, char := range value {
-		if (char < 'a' || char > 'z') &&
-			(char < '0' || char > '9') &&
-			char != '-' {
-			return false
-		}
-	}
-	return true
+	return handoffidentity.DNSLabel(value)
 }

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/devantler-tech/world-at-ruin/server/internal/handoffidentity"
 	"github.com/devantler-tech/world-at-ruin/server/sim"
 	"github.com/heroiclabs/nakama-common/api"
 	"github.com/heroiclabs/nakama-common/runtime"
@@ -138,6 +139,54 @@ func NewStore(storage storageClient) (*Store, error) {
 	return &Store{storage: storage}, nil
 }
 
+// normalizeObserved validates the caller's lease and exact storage version.
+// Its error deliberately describes the observation, not the embedded lease.
+func normalizeObserved(current Record) (Lease, error) {
+	observed, err := normalizeLease(current.Lease)
+	if err != nil || current.Version == "" || current.Version == "*" {
+		return Lease{}, errors.New("nakama lease: invalid observed record")
+	}
+	return observed, nil
+}
+
+// normalizeTransition checks the observation before the proposed replacement,
+// preserving which invalid input wins when both are malformed.
+func normalizeTransition(current Record, next Lease) (Lease, Lease, error) {
+	observed, err := normalizeObserved(current)
+	if err != nil {
+		return Lease{}, Lease{}, err
+	}
+	normalized, err := normalizeLease(next)
+	return observed, normalized, err
+}
+
+// loadExact verifies no-op transitions against both durable version and content.
+func (s *Store) loadExact(ctx context.Context, expected Record) (Record, error) {
+	latest, err := s.Load(ctx, expected.Lease.UserID, expected.Lease.ReservationID)
+	if err != nil {
+		return Record{}, err
+	}
+	if latest != expected {
+		return Record{}, ErrConflict
+	}
+	return latest, nil
+}
+
+// writeOrLoad performs one write, reloading only a rejected compare-and-swap.
+// The bool distinguishes a concurrent record from a successful write; callers
+// retain their own rules for accepting that record. It never retries the write.
+func (s *Store) writeOrLoad(ctx context.Context, lease Lease, version string) (Record, bool, error) {
+	written, err := s.write(ctx, lease, version)
+	if !errors.Is(err, ErrConflict) {
+		return written, false, err
+	}
+	latest, err := s.Load(ctx, lease.UserID, lease.ReservationID)
+	if errors.Is(err, ErrNotFound) {
+		return Record{}, true, ErrConflict
+	}
+	return latest, true, err
+}
+
 // Create writes a new private lease only when no object already owns the same
 // user/reservation key.
 func (s *Store) Create(ctx context.Context, lease Lease) (Record, error) {
@@ -168,16 +217,9 @@ func (s *Store) Create(ctx context.Context, lease Lease) (Record, error) {
 		return Record{}, err
 	}
 
-	created, err := s.write(ctx, normalized, "*")
-	if !errors.Is(err, ErrConflict) {
-		return created, err
-	}
-	latest, loadErr := s.Load(ctx, normalized.UserID, normalized.ReservationID)
-	if errors.Is(loadErr, ErrNotFound) {
-		return Record{}, ErrConflict
-	}
-	if loadErr != nil {
-		return Record{}, loadErr
+	latest, conflicted, err := s.writeOrLoad(ctx, normalized, "*")
+	if err != nil || !conflicted {
+		return latest, err
 	}
 	if sameAllocationOwner(latest.Lease, normalized) {
 		if latest.Lease.Releasing {
@@ -220,9 +262,9 @@ func (s *Store) BeginDispatch(
 	current Record,
 	attemptID string,
 ) (Record, bool, error) {
-	observed, err := normalizeLease(current.Lease)
-	if err != nil || current.Version == "" || current.Version == "*" {
-		return Record{}, false, errors.New("nakama lease: invalid observed record")
+	observed, err := normalizeObserved(current)
+	if err != nil {
+		return Record{}, false, err
 	}
 	if attemptID != observed.AttemptID {
 		return Record{}, false, ErrStaleAttempt
@@ -231,14 +273,8 @@ func (s *Store) BeginDispatch(
 		return Record{}, false, errors.New("nakama lease: invalid dispatch transition")
 	}
 	if observed.Dispatched {
-		latest, loadErr := s.Load(ctx, observed.UserID, observed.ReservationID)
-		if loadErr != nil {
-			return Record{}, false, loadErr
-		}
-		if latest.Version != current.Version || latest.Lease != observed {
-			return Record{}, false, ErrConflict
-		}
-		return latest, false, nil
+		latest, err := s.loadExact(ctx, Record{Lease: observed, Version: current.Version})
+		return latest, false, err
 	}
 	dispatchID, err := secureDispatchID()
 	if err != nil {
@@ -300,11 +336,7 @@ func (s *Store) Finalize(
 	current Record,
 	next Lease,
 ) (Record, error) {
-	observed, err := normalizeLease(current.Lease)
-	if err != nil || current.Version == "" || current.Version == "*" {
-		return Record{}, errors.New("nakama lease: invalid observed record")
-	}
-	normalized, err := normalizeLease(next)
+	observed, normalized, err := normalizeTransition(current, next)
 	if err != nil {
 		return Record{}, err
 	}
@@ -323,16 +355,9 @@ func (s *Store) Finalize(
 		normalized.ExpiresAt.After(observed.ExpiresAt) {
 		return Record{}, errors.New("nakama lease: finalization identity changed")
 	}
-	finalized, err := s.write(ctx, normalized, current.Version)
-	if !errors.Is(err, ErrConflict) {
-		return finalized, err
-	}
-	latest, loadErr := s.Load(ctx, observed.UserID, observed.ReservationID)
-	if errors.Is(loadErr, ErrNotFound) {
-		return Record{}, ErrConflict
-	}
-	if loadErr != nil {
-		return Record{}, loadErr
+	latest, conflicted, err := s.writeOrLoad(ctx, normalized, current.Version)
+	if err != nil || !conflicted {
+		return latest, err
 	}
 	if latest.Lease.AttemptID != normalized.AttemptID {
 		return Record{}, ErrConflict
@@ -354,11 +379,7 @@ func (s *Store) Replace(
 	current Record,
 	next Lease,
 ) (Record, error) {
-	observed, err := normalizeLease(current.Lease)
-	if err != nil || current.Version == "" || current.Version == "*" {
-		return Record{}, errors.New("nakama lease: invalid observed record")
-	}
-	normalized, err := normalizeLease(next)
+	observed, normalized, err := normalizeTransition(current, next)
 	if err != nil {
 		return Record{}, err
 	}
@@ -379,28 +400,14 @@ func (s *Store) Replace(
 		if observed != normalized {
 			return Record{}, ErrConflict
 		}
-		latest, err := s.Load(ctx, observed.UserID, observed.ReservationID)
-		if err != nil {
-			return Record{}, err
-		}
-		if latest.Version != current.Version || latest.Lease != observed {
-			return Record{}, ErrConflict
-		}
-		return latest, nil
+		return s.loadExact(ctx, Record{Lease: observed, Version: current.Version})
 	}
 	if !observed.ClaimedAt.IsZero() {
 		return Record{}, ErrClaimed
 	}
-	replaced, err := s.write(ctx, normalized, current.Version)
-	if !errors.Is(err, ErrConflict) {
-		return replaced, err
-	}
-	latest, loadErr := s.Load(ctx, observed.UserID, observed.ReservationID)
-	if errors.Is(loadErr, ErrNotFound) {
-		return Record{}, ErrConflict
-	}
-	if loadErr != nil {
-		return Record{}, loadErr
+	latest, conflicted, err := s.writeOrLoad(ctx, normalized, current.Version)
+	if err != nil || !conflicted {
+		return latest, err
 	}
 	if latest.Lease == normalized {
 		return latest, nil
@@ -421,37 +428,23 @@ func (s *Store) BeginRelease(
 	current Record,
 	attemptID string,
 ) (Record, error) {
-	observed, err := normalizeLease(current.Lease)
-	if err != nil || current.Version == "" || current.Version == "*" {
-		return Record{}, errors.New("nakama lease: invalid observed record")
+	observed, err := normalizeObserved(current)
+	if err != nil {
+		return Record{}, err
 	}
 	if attemptID != observed.AttemptID {
 		return Record{}, ErrStaleAttempt
 	}
 	if observed.Releasing {
-		latest, loadErr := s.Load(ctx, observed.UserID, observed.ReservationID)
-		if loadErr != nil {
-			return Record{}, loadErr
-		}
-		if latest.Version != current.Version || latest.Lease != observed {
-			return Record{}, ErrConflict
-		}
-		return latest, nil
+		return s.loadExact(ctx, Record{Lease: observed, Version: current.Version})
 	}
 	if !observed.ClaimedAt.IsZero() {
 		return Record{}, ErrClaimed
 	}
 	observed.Releasing = true
-	releasing, err := s.write(ctx, observed, current.Version)
-	if !errors.Is(err, ErrConflict) {
-		return releasing, err
-	}
-	latest, loadErr := s.Load(ctx, observed.UserID, observed.ReservationID)
-	if errors.Is(loadErr, ErrNotFound) {
-		return Record{}, ErrConflict
-	}
-	if loadErr != nil {
-		return Record{}, loadErr
+	latest, conflicted, err := s.writeOrLoad(ctx, observed, current.Version)
+	if err != nil || !conflicted {
+		return latest, err
 	}
 	if latest.Lease.AttemptID != attemptID {
 		return Record{}, ErrConflict
@@ -473,9 +466,9 @@ func (s *Store) Claim(
 	attemptID string,
 	claimedAt time.Time,
 ) (Record, error) {
-	observed, err := normalizeLease(current.Lease)
-	if err != nil || current.Version == "" || current.Version == "*" {
-		return Record{}, errors.New("nakama lease: invalid observed record")
+	observed, err := normalizeObserved(current)
+	if err != nil {
+		return Record{}, err
 	}
 	if attemptID != observed.AttemptID {
 		return Record{}, ErrStaleAttempt
@@ -500,16 +493,9 @@ func (s *Store) Claim(
 	if err != nil {
 		return Record{}, err
 	}
-	record, err := s.write(ctx, claimed, current.Version)
-	if !errors.Is(err, ErrConflict) {
-		return record, err
-	}
-	latest, loadErr := s.Load(ctx, observed.UserID, observed.ReservationID)
-	if errors.Is(loadErr, ErrNotFound) {
-		return Record{}, ErrConflict
-	}
-	if loadErr != nil {
-		return Record{}, loadErr
+	latest, conflicted, err := s.writeOrLoad(ctx, claimed, current.Version)
+	if err != nil || !conflicted {
+		return latest, err
 	}
 	if latest.Lease.AttemptID == attemptID && latest.Lease.Releasing {
 		return Record{}, ErrReleasing
@@ -1001,44 +987,9 @@ func validUserID(value string) bool {
 }
 
 func validOpaqueID(value string) bool {
-	if value == "" || len(value) > 128 {
-		return false
-	}
-	for _, char := range value {
-		if (char < 'a' || char > 'z') &&
-			(char < 'A' || char > 'Z') &&
-			(char < '0' || char > '9') &&
-			char != '-' &&
-			char != '_' {
-			return false
-		}
-	}
-	return true
+	return handoffidentity.CorrelationID(value)
 }
 
 func validSecretRef(value string) bool {
-	if value == "" || len(value) > 253 {
-		return false
-	}
-	for _, label := range strings.Split(value, ".") {
-		if !validSecretLabel(label) {
-			return false
-		}
-	}
-	return true
-}
-
-func validSecretLabel(value string) bool {
-	if value == "" || len(value) > 63 ||
-		value[0] == '-' || value[len(value)-1] == '-' {
-		return false
-	}
-	for _, char := range value {
-		if (char < 'a' || char > 'z') &&
-			(char < '0' || char > '9') &&
-			char != '-' {
-			return false
-		}
-	}
-	return true
+	return handoffidentity.DNSSubdomain(value)
 }
