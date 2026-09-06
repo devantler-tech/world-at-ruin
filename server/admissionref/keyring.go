@@ -112,9 +112,10 @@ func Fingerprint(publicKey *rsa.PublicKey) (string, error) {
 }
 
 // Reference derives the durable DNS-safe reference for sealed material without
-// opening it. It attests the shape of the material only — not that any key can
-// open it — which is enough to compare against a reference Open minted. It
-// refuses malformed material with ErrInvalidMaterial and never needs a key.
+// opening it, so a caller outside this package can construct the reference a
+// lease stores. It attests the shape of the material only — not that any key
+// can open it — so it is never on its own evidence that a secret is
+// recoverable. It refuses malformed material with ErrInvalidMaterial.
 func Reference(material Material) (string, error) {
 	ciphertext, ok := materialCiphertext(material)
 	if !ok {
@@ -124,11 +125,19 @@ func Reference(material Material) (string, error) {
 }
 
 // ReferenceBinds reports whether a durable reference pins exactly this
-// GameServer UID and this sealed envelope. It is the cleanup-side proof: a
-// release must not delete a recreated or re-sealed object under the name a
-// lease remembers, and it must not need the key, the TLS port or the node —
-// an object Agones has already moved on from is still the lease's to delete.
-func ReferenceBinds(secretRef string, gameServerUID string, envelope string) bool {
+// GameServer UID. It is the cleanup-side proof of ownership: a release must not
+// delete a recreated object under the name a lease remembers, and a Kubernetes
+// UID is unique per object, never reused, and not writable by the zone — so it
+// alone settles "is this the object that lease owned".
+//
+// It deliberately does NOT require the envelope, key or port segments to still
+// agree. Those describe the object's sealed admission material, which the zone
+// process itself publishes through the Agones SDK and therefore controls for
+// the object's lifetime; requiring them would let an untrusted zone veto its own
+// cleanup by rewriting one annotation, and would equally strand an object whose
+// annotation is merely absent or unreadable. Both leave an allocated GameServer
+// with no lease naming it. Identity is the proof; the material is not.
+func ReferenceBinds(secretRef string, gameServerUID string) bool {
 	parts := strings.Split(secretRef, ".")
 	if len(parts) != 5 || parts[0] != referencePrefix {
 		return false
@@ -136,12 +145,7 @@ func ReferenceBinds(secretRef string, gameServerUID string, envelope string) boo
 	if !validGameServerUID(gameServerUID) {
 		return false
 	}
-	ciphertext, ok := decodeEnvelope(envelope)
-	if !ok {
-		return false
-	}
-	return parts[2] == "u"+base32Digest([]byte(gameServerUID)) &&
-		parts[3] == "e"+base32Digest(ciphertext)
+	return parts[2] == "u"+base32Digest([]byte(gameServerUID))
 }
 
 // Open validates, decrypts, and derives the durable reference for newly

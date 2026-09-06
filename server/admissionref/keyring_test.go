@@ -538,42 +538,50 @@ func TestFingerprintMatchesTheMetadataDigest(t *testing.T) {
 	}
 }
 
-// TestReferenceBindsPinsUIDAndEnvelopeOnly checks that the cleanup-side proof
-// keys on the UID digest and ciphertext digest alone, so a changed port, key
-// or node never blocks a release while a changed UID or envelope always does.
-func TestReferenceBindsPinsUIDAndEnvelopeOnly(t *testing.T) {
+// TestReferenceBindsPinsTheUIDAlone checks that the cleanup-side proof keys on
+// the UID digest only, so a changed port, key or re-sealed envelope never
+// blocks a release — the zone controls its own sealed material and must not be
+// able to veto its own cleanup — while a changed UID always does.
+func TestReferenceBindsPinsTheUIDAlone(t *testing.T) {
 	key := generatedKeys(t)[0]
 	material := validMaterial(t, key, testAdmissionSecret())
 	reference := expectedReference(t, material)
 
-	if !ReferenceBinds(reference, material.GameServerUID, material.AdmissionEnvelope) {
+	if !ReferenceBinds(reference, material.GameServerUID) {
 		t.Fatal("ReferenceBinds refused the material the reference was minted from")
 	}
-	otherPort := strings.Replace(reference, ".p"+"8443", ".p9443", 1)
+	otherPort := strings.Replace(reference, ".p8443", ".p9443", 1)
 	if otherPort == reference {
 		t.Fatalf("test reference %q did not carry the expected port", reference)
 	}
-	if !ReferenceBinds(otherPort, material.GameServerUID, material.AdmissionEnvelope) {
+	if !ReferenceBinds(otherPort, material.GameServerUID) {
 		t.Fatal("ReferenceBinds demanded the port, which cleanup must not need")
 	}
-	otherKey := strings.Replace(reference, ".k"+material.WrappingKeyFingerprint, ".k"+strings.Repeat("a", 52), 1)
-	if !ReferenceBinds(otherKey, material.GameServerUID, material.AdmissionEnvelope) {
+	otherKey := strings.Replace(
+		reference,
+		".k"+material.WrappingKeyFingerprint,
+		".k"+strings.Repeat("a", 52),
+		1,
+	)
+	if !ReferenceBinds(otherKey, material.GameServerUID) {
 		t.Fatal("ReferenceBinds demanded the key, which cleanup must not need")
 	}
-	if ReferenceBinds(reference, "other-uid", material.AdmissionEnvelope) {
+	resealed := validMaterial(t, key, []byte("fedcba9876543210fedcba9876543210"))
+	if resealed.AdmissionEnvelope == material.AdmissionEnvelope {
+		t.Fatal("test re-seal produced an identical envelope")
+	}
+	if !ReferenceBinds(expectedReference(t, resealed), material.GameServerUID) {
+		t.Fatal("ReferenceBinds demanded the envelope, which the zone itself controls")
+	}
+	if ReferenceBinds(reference, "other-uid") {
 		t.Fatal("ReferenceBinds accepted a changed UID")
 	}
-	resealed := validMaterial(t, key, []byte("fedcba9876543210fedcba9876543210"))
-	if ReferenceBinds(reference, material.GameServerUID, resealed.AdmissionEnvelope) {
-		t.Fatal("ReferenceBinds accepted a re-sealed envelope")
-	}
 	for _, malformed := range []string{"", "v1.k.u.e", "v2." + reference[3:], reference + ".x"} {
-		if ReferenceBinds(malformed, material.GameServerUID, material.AdmissionEnvelope) {
+		if ReferenceBinds(malformed, material.GameServerUID) {
 			t.Fatalf("ReferenceBinds accepted malformed reference %q", malformed)
 		}
 	}
-	if ReferenceBinds(reference, material.GameServerUID, "v1.not-base64!") ||
-		ReferenceBinds(reference, "uid/1", material.AdmissionEnvelope) {
-		t.Fatal("ReferenceBinds accepted malformed material")
+	if ReferenceBinds(reference, "uid/1") {
+		t.Fatal("ReferenceBinds accepted a malformed UID")
 	}
 }

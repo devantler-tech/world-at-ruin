@@ -96,6 +96,16 @@ func (c *Client) WrappingKeyFingerprint() string {
 	return c.fingerprint
 }
 
+// Namespace, Fleet and TLSPortName report the pool this client allocates from,
+// so a composition can prove every client it wires names the same one.
+func (c *Client) Namespace() string { return c.namespace }
+
+// Fleet reports the configured Fleet this client allocates from.
+func (c *Client) Fleet() string { return c.fleet }
+
+// TLSPortName reports the configured player-facing TLS port name.
+func (c *Client) TLSPortName() string { return c.tlsPortName }
+
 // Reserve allocates one envelope-ready GameServer and returns its endpoint
 // together with the validated sealed admission material.
 func (c *Client) Reserve(ctx context.Context, request Request) (GameServer, error) {

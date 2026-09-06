@@ -662,7 +662,7 @@ func TestDuplicateMatchesAreReleasedByTheirOwnUIDAndFailClosed(t *testing.T) {
 // reissues an allocation that may still commit.
 func TestProvisionReportsAnUnobservableDispatchAsAmbiguous(t *testing.T) {
 	f := newFixture(t, nil)
-	f.allocations.setHandler(f.ghostAllocation)
+	f.allocations.setHandler(f.ghostAllocation())
 
 	got, err := f.adapter.Provision(context.Background(), request(), testExpiry)
 	assertCode(t, err, ErrAmbiguousDispatch, codes.Unavailable)
@@ -695,7 +695,7 @@ func TestProvisionReportsCallerCancellationAsCancellation(t *testing.T) {
 	f := newFixture(t, func(cfg *Config) {
 		cfg.ObservationTimeout = 2 * time.Second
 	})
-	f.allocations.setHandler(f.ghostAllocation)
+	f.allocations.setHandler(f.ghostAllocation())
 	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
 	defer cancel()
 
@@ -746,14 +746,17 @@ func TestProvisionRecoversALateCommitThroughReconcile(t *testing.T) {
 func TestProvisionRefusesAnObjectThatDisagreesWithTheResponse(t *testing.T) {
 	f := newFixture(t, nil)
 	f.seed(f.readyGameServer("zone-1", "uid-1"))
+	// Sealed on the test's own goroutine: t.Fatalf may only be called there,
+	// and the handler below runs on the gRPC server's.
+	foreignEnvelope := sealedEnvelope(
+		f.t, f.key, "zone-1", "uid-1", f.fingerprint, secretFor("someone-else"),
+	)
 	f.allocations.setHandler(func(request *allocationpb.AllocationRequest) (*allocationpb.AllocationResponse, error) {
 		response, err := f.commitAllocation(request)
 		if err != nil {
 			return nil, err
 		}
-		response.Metadata.Annotations[agones.AdmissionEnvelopeAnnotation] = sealedEnvelope(
-			f.t, f.key, "zone-1", "uid-1", f.fingerprint, secretFor("someone-else"),
-		)
+		response.Metadata.Annotations[agones.AdmissionEnvelopeAnnotation] = foreignEnvelope
 		return response, nil
 	})
 
@@ -1292,13 +1295,16 @@ func isZeroAllocation(allocation handoff.Allocation) bool {
 }
 
 // ghostAllocation answers like a committed allocation whose object never
-// becomes observable through the Kubernetes API.
-func (f *fixture) ghostAllocation(
-	request *allocationpb.AllocationRequest,
-) (*allocationpb.AllocationResponse, error) {
+// becomes observable through the Kubernetes API. The response is built once on
+// the caller's goroutine — sealing calls t.Fatalf, which may only run on the
+// test's own goroutine, never the gRPC server's.
+func (f *fixture) ghostAllocation() allocationHandler {
 	ghost := f.readyGameServer("zone-ghost", "uid-ghost")
-	f.applyPatch(ghost, request)
-	return responseFor(ghost), nil
+	return func(request *allocationpb.AllocationRequest) (*allocationpb.AllocationResponse, error) {
+		patched := ghost.DeepCopy()
+		f.applyPatch(patched, request)
+		return responseFor(patched), nil
+	}
 }
 
 var (
@@ -1412,12 +1418,12 @@ func TestAKeyTheKeyringNoLongerHoldsIsRefusedButStillReleasable(t *testing.T) {
 	}
 }
 
-// TestReleaseNeedsOnlyTheUIDAndEnvelopeDigests checks that release proves
+// TestReleaseProvesOwnershipByUIDAlone checks that release proves ownership
 // what the lease pinned — UID digest and envelope digest — without demanding
 // the state, port, node or key that adoption needs, so an object Agones has
 // moved on from, or one sealed under a key the keyring no longer holds, is
 // still deleted; while a re-sealed object under the same UID is left alone.
-func TestReleaseNeedsOnlyTheUIDAndEnvelopeDigests(t *testing.T) {
+func TestReleaseProvesOwnershipByUIDAlone(t *testing.T) {
 	t.Run("port-less object is still deleted", func(t *testing.T) {
 		f := newFixture(t, nil)
 		f.seed(f.readyGameServer("zone-1", "uid-1"))
@@ -1467,7 +1473,7 @@ func TestReleaseNeedsOnlyTheUIDAndEnvelopeDigests(t *testing.T) {
 			t.Fatalf("Release refused an object whose key was retired: %v", err)
 		}
 	})
-	t.Run("re-sealed object under the same UID is untouched", func(t *testing.T) {
+	t.Run("re-sealed object under the same UID is still deleted", func(t *testing.T) {
 		f := newFixture(t, nil)
 		f.seed(f.readyGameServer("zone-1", "uid-1"))
 		lease, _ := provisionedLease(t, f)
@@ -1480,8 +1486,162 @@ func TestReleaseNeedsOnlyTheUIDAndEnvelopeDigests(t *testing.T) {
 		if err := f.adapter.Release(context.Background(), lease); err != nil {
 			t.Fatalf("Release returned an error: %v", err)
 		}
-		if f.actions("delete") != 0 || !f.exists("zone-1") {
-			t.Fatal("Release deleted an object whose envelope the lease never pinned")
+		if uids := f.deletedUIDs(); len(uids) != 1 || uids[0] != "uid-1" {
+			t.Fatalf("deleted UIDs = %v, want [uid-1]", uids)
+		}
+		if f.exists("zone-1") {
+			t.Fatal("a zone that rewrote its own envelope vetoed its own cleanup")
 		}
 	})
+	t.Run("object with no envelope at all is still deleted", func(t *testing.T) {
+		f := newFixture(t, nil)
+		f.seed(f.readyGameServer("zone-1", "uid-1"))
+		lease, _ := provisionedLease(t, f)
+		gs := f.stored("zone-1").DeepCopy()
+		delete(gs.Annotations, agones.AdmissionEnvelopeAnnotation)
+		f.replace(gs)
+
+		if err := f.adapter.Release(context.Background(), lease); err != nil {
+			t.Fatalf("Release returned an error: %v", err)
+		}
+		if f.exists("zone-1") {
+			t.Fatal("an unreadable envelope was mistaken for someone else's object")
+		}
+	})
+	t.Run("a lease naming an allocation with no reference fails closed", func(t *testing.T) {
+		f := newFixture(t, nil)
+		f.seed(f.readyGameServer("zone-1", "uid-1"))
+		lease, _ := provisionedLease(t, f)
+		lease.SecretRef = ""
+
+		if err := f.adapter.Release(context.Background(), lease); !errors.Is(err, ErrInvalidResource) {
+			t.Fatalf("Release error = %v, want ErrInvalidResource", err)
+		}
+		if f.actions("delete") != 0 || !f.exists("zone-1") {
+			t.Fatal("Release deleted on an unpinned read")
+		}
+	})
+}
+
+// TestAStaleObjectNeverPoisonsTheAttempt checks that an attempt-labelled
+// GameServer Agones has moved on from — the shape a crashed zone leaves behind,
+// which keeps its labels until the object is collected — neither blocks
+// adopting the attempt's live allocation nor blocks the attempt-only cleanup
+// path. Refusing the whole listing over such a leftover would make a live
+// attempt permanently unadoptable and its lease immortal.
+func TestAStaleObjectNeverPoisonsTheAttempt(t *testing.T) {
+	t.Run("adoption ignores it", func(t *testing.T) {
+		f := newFixture(t, nil)
+		stale := f.allocatedGameServer("zone-stale", "uid-stale", testAttemptID)
+		stale.Status.State = agonesv1.GameServerStateShutdown
+		stale.Status.Ports = nil
+		f.seed(stale, f.allocatedGameServer("zone-live", "uid-live", testAttemptID))
+
+		got, err := f.adapter.Reconcile(context.Background(), request(), testExpiry)
+		if err != nil {
+			t.Fatalf("Reconcile refused a live attempt over a stale leftover: %v", err)
+		}
+		assertAllocation(t, got.Allocation, "zone-live", testExpiry)
+		if f.actions("delete") != 0 {
+			t.Fatal("a stale leftover was mistaken for a duplicate and deleted")
+		}
+	})
+	t.Run("attempt-only release deletes it", func(t *testing.T) {
+		f := newFixture(t, nil)
+		stale := f.allocatedGameServer("zone-stale", "uid-stale", testAttemptID)
+		stale.Status.State = agonesv1.GameServerStateShutdown
+		stale.Status.Ports = nil
+		f.seed(stale, f.allocatedGameServer("zone-live", "uid-live", testAttemptID))
+
+		err := f.adapter.Release(context.Background(), nakamalease.Lease{
+			UserID:        testUserID,
+			ReservationID: testReservationID,
+			AttemptID:     testAttemptID,
+			Staging:       true,
+		})
+		if err != nil {
+			t.Fatalf("attempt-only Release returned an error: %v", err)
+		}
+		if f.exists("zone-stale") || f.exists("zone-live") {
+			t.Fatal("attempt-only Release left an object behind")
+		}
+	})
+}
+
+// TestATransientAPIFailureStaysRetryable checks that a failure which never
+// reached a server verdict — the shape client-go returns for a refused
+// connection or a TLS error, which carries no APIStatus and so matches none of
+// the reason predicates — is reported as retryable rather than as a permanent
+// contract refusal a caller must not retry.
+func TestATransientAPIFailureStaysRetryable(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		err  error
+		want codes.Code
+	}{
+		{name: "transport", err: errors.New("dial tcp 10.0.0.1:443: connect: connection refused"), want: codes.Unavailable},
+		{name: "server timeout", err: apierrors.NewServerTimeout(gameServerResource.GroupResource(), "get", 1), want: codes.Unavailable},
+		{name: "too many requests", err: apierrors.NewTooManyRequestsError("slow down"), want: codes.Unavailable},
+		{name: "forbidden", err: apierrors.NewForbidden(gameServerResource.GroupResource(), "zone-1", errors.New("rbac")), want: codes.FailedPrecondition},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newFixture(t, nil)
+			f.seed(f.readyGameServer("zone-1", "uid-1"))
+			lease, _ := provisionedLease(t, f)
+			f.clientset.PrependReactor("get", "gameservers", func(clienttesting.Action) (bool, runtime.Object, error) {
+				return true, nil, test.err
+			})
+
+			_, err := f.adapter.Resolve(context.Background(), lease)
+			if status.Code(err) != test.want {
+				t.Fatalf("Resolve code = %s, want %s (err %v)", status.Code(err), test.want, err)
+			}
+		})
+	}
+}
+
+// TestObservationDoesNotLaunderAHardFailure checks that a read which will not
+// resolve by waiting is returned as itself instead of being retried for the
+// whole budget and reported as an ambiguous dispatch — the outcome that
+// quarantines an attempt permanently and would name the wrong cause.
+func TestObservationDoesNotLaunderAHardFailure(t *testing.T) {
+	f := newFixture(t, nil)
+	f.seed(f.readyGameServer("zone-1", "uid-1"))
+	f.clientset.PrependReactor("list", "gameservers", func(clienttesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewForbidden(gameServerResource.GroupResource(), "", errors.New("rbac"))
+	})
+
+	got, err := f.adapter.Provision(context.Background(), request(), testExpiry)
+	if errors.Is(err, ErrAmbiguousDispatch) {
+		t.Fatal("a permanent read failure was laundered into an ambiguous dispatch")
+	}
+	assertCode(t, err, ErrInvalidResource, codes.FailedPrecondition)
+	if !isZeroProvisioned(got) {
+		t.Fatalf("a refused read returned material: %+v", got)
+	}
+	if f.allocations.count() != 0 {
+		t.Fatal("a refused pre-dispatch read still dispatched an allocation")
+	}
+}
+
+// TestNewAdapterRefusesClientsNamingDifferentPools checks the composition
+// cross-check: two independently configured clients that disagree about the
+// pool would otherwise allocate against one and reconcile against another,
+// leaking a GameServer per attempt with no runtime symptom.
+func TestNewAdapterRefusesClientsNamingDifferentPools(t *testing.T) {
+	f := newFixture(t, nil)
+	other, err := gameserverapi.NewClient(
+		f.clientset.AgonesV1().GameServers(testNamespace),
+		gameserverapi.Config{
+			Namespace:   testNamespace,
+			Fleet:       "other-zone",
+			TLSPortName: testTLSPortName,
+		},
+	)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	if adapter, err := NewAdapter(f.adapter.allocator, other, f.keyring, f.config()); err == nil || adapter != nil {
+		t.Fatalf("NewAdapter accepted clients naming different Fleets: %+v, %v", adapter, err)
+	}
 }

@@ -22,6 +22,9 @@ var (
 	// ErrNotOwned means the named GameServer exists but belongs to a different
 	// Fleet or attempt, so a caller must leave it untouched.
 	ErrNotOwned = errors.New("gameserverapi: GameServer belongs to a different Fleet or attempt")
+	// ErrUnavailable means the API could not answer for this object, so its
+	// state is unknown rather than refused and the call may be retried.
+	ErrUnavailable = errors.New("gameserverapi: GameServer API is unavailable")
 )
 
 // ResourceAPI is the complete Kubernetes capability granted to this boundary.
@@ -105,9 +108,14 @@ func (c *Client) GetAllocated(
 	return c.read(ctx, expected.Name, &expected, attemptID, true)
 }
 
-// ListAllocated returns every GameServer that matches the exact Fleet and full
-// attempt digest. It never chooses a winner when duplicates exist.
-func (c *Client) ListAllocated(
+// ListAttempt returns every GameServer carrying the exact Fleet and full
+// attempt digest, in WHATEVER state Agones currently has it. It never chooses a
+// winner when duplicates exist, and it never refuses the whole listing because
+// one object has moved on: an attempt's GameServer that has gone Unhealthy or
+// Shutdown still carries its labels, and cleanup must be able to see and delete
+// it. A caller that needs an allocation rather than a cleanup target filters on
+// State itself.
+func (c *Client) ListAttempt(
 	ctx context.Context,
 	attemptID string,
 ) ([]GameServer, error) {
@@ -125,7 +133,7 @@ func (c *Client) ListAllocated(
 	}
 	gameServers := make([]GameServer, len(list.Items))
 	for i := range list.Items {
-		gameServers[i], err = c.snapshot(&list.Items[i], nil, attemptValue, true)
+		gameServers[i], err = c.snapshot(&list.Items[i], nil, attemptValue, false)
 		if err != nil {
 			return nil, err
 		}
@@ -160,8 +168,8 @@ func (c *Client) Locate(
 }
 
 // read is the one name-keyed get behind every exact read: it validates the
-// inputs before touching the API, translates absence to ErrNotFound, and hands
-// the object to snapshot with the caller's state requirement.
+// inputs before touching the API, classifies the API failure, and hands the
+// object to snapshot with the caller's state requirement.
 func (c *Client) read(
 	ctx context.Context,
 	name string,
@@ -190,19 +198,44 @@ func (c *Client) read(
 	return observed, nil
 }
 
-// apiError adds operation context while retaining Kubernetes error
-// classification; an absent object additionally matches this package's
-// ErrNotFound sentinel.
+// apiError classifies one Kubernetes API failure at the boundary that owns
+// those errors, so a caller never has to interpret them: an absent object
+// carries ErrNotFound, and anything that says nothing about this object's
+// contract — a transport, DNS or TLS failure with no server response at all,
+// or a server response that is explicitly transient — carries ErrUnavailable
+// so the caller can retry rather than treat it as a permanent refusal.
 func apiError(operation string, err error) error {
-	if apierrors.IsNotFound(err) {
+	switch {
+	case apierrors.IsNotFound(err):
 		return fmt.Errorf("%w: %w", ErrNotFound, err)
+	case transientAPIError(err):
+		return fmt.Errorf("%w: %s GameServer: %w", ErrUnavailable, operation, err)
+	default:
+		return fmt.Errorf("gameserverapi: %s GameServer: %w", operation, err)
 	}
-	return fmt.Errorf("gameserverapi: %s GameServer: %w", operation, err)
+}
+
+// transientAPIError reports whether a failure leaves this object's state
+// unknown rather than refused. An error carrying no APIStatus never reached a
+// server verdict at all — connection refused, EOF, TLS or DNS — which is the
+// case the reason-based predicates below silently miss, because every one of
+// them resolves through an APIStatus and returns false without one.
+func transientAPIError(err error) bool {
+	var status apierrors.APIStatus
+	if !errors.As(err, &status) {
+		return true
+	}
+	return apierrors.IsServerTimeout(err) ||
+		apierrors.IsTimeout(err) ||
+		apierrors.IsServiceUnavailable(err) ||
+		apierrors.IsTooManyRequests(err) ||
+		apierrors.IsInternalError(err) ||
+		apierrors.IsUnexpectedServerError(err)
 }
 
 // Delete removes one exact GameServer with its observed UID as a Kubernetes
 // precondition, so a recreated object can never be deleted by stale cleanup.
-// An already-absent object is ErrNotFound.
+// An already-absent object carries ErrNotFound.
 func (c *Client) Delete(ctx context.Context, identity Identity) error {
 	if err := c.validateIdentity(identity); err != nil {
 		return err
@@ -215,6 +248,17 @@ func (c *Client) Delete(ctx context.Context, identity Identity) error {
 	}
 	return nil
 }
+
+// Namespace, Fleet and TLSPortName report the pool this boundary is bound to,
+// so a composition can prove its other clients name the same one instead of
+// discovering a mismatch as a leaked GameServer per attempt.
+func (c *Client) Namespace() string { return c.namespace }
+
+// Fleet reports the configured Fleet this boundary reconciles.
+func (c *Client) Fleet() string { return c.fleet }
+
+// TLSPortName reports the configured player-facing TLS port name.
+func (c *Client) TLSPortName() string { return c.tlsPortName }
 
 func (c *Client) validateIdentity(identity Identity) error {
 	if identity.Namespace != c.namespace {

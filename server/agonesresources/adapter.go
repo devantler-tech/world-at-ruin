@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 	"github.com/devantler-tech/world-at-ruin/server/admissionref"
 	"github.com/devantler-tech/world-at-ruin/server/agones"
 	"github.com/devantler-tech/world-at-ruin/server/agonesalloc"
@@ -48,7 +49,10 @@ const (
 
 // Sentinel outcomes are gRPC status errors, so status.Code reports the class
 // through the coordinator's sanitized error path and errors.Is still matches
-// them after wrapping, without any resource detail reaching a caller.
+// them after wrapping, without any resource detail reaching a caller. Note the
+// coordinator rebuilds the status with its own message, so only the CODE
+// survives that boundary; the identities below are for callers inside this
+// composition.
 var (
 	// ErrAmbiguousDispatch means an allocation may have committed but no exact
 	// attempt-labelled GameServer is observable yet. The attempt stays
@@ -63,6 +67,15 @@ var (
 	ErrDuplicateAttempt = status.Error(
 		codes.Aborted,
 		"agones resources: attempt matched more than one GameServer",
+	)
+	// ErrDuplicateAttemptRetained is ErrDuplicateAttempt's worse half: the
+	// attempt matched more than one GameServer and at least one of them could
+	// not be deleted, so a duplicate survives. It is reported separately
+	// because the two need different operator attention, and a silently
+	// swallowed cleanup failure is how a leak becomes invisible.
+	ErrDuplicateAttemptRetained = status.Error(
+		codes.Aborted,
+		"agones resources: attempt matched more than one GameServer and one could not be released",
 	)
 	// ErrInvalidResource means the exact GameServer exists but its identity,
 	// state, label, port, key or envelope no longer matches what the attempt or
@@ -81,13 +94,16 @@ var (
 )
 
 // Config binds the adapter to the managed zone domain and the observer-binding
-// policy. The namespace, Fleet and current wrapping key come from the composed
-// clients, so there is no second copy to keep in agreement.
+// policy. Everything about the pool — namespace, Fleet, TLS port name and the
+// current wrapping key — is read back from the composed clients and
+// cross-checked, so there is no second copy of it to keep in agreement.
 type Config struct {
 	// ZoneDomain is the managed zone-edge domain; a handoff advertises
 	// <node name>.<ZoneDomain> because certificates bind node names, never a
 	// GameServer's address. It is lower-cased and a trailing dot is dropped,
-	// exactly as the handoff service normalizes the same value.
+	// exactly as the handoff service normalizes the same value — and it must be
+	// the SAME value that service is given, because it validates the name this
+	// adapter mints against its own copy.
 	ZoneDomain string
 	// Observer decides which simulated entity an allocation binds the player
 	// to. Observer binding is a composition decision this adapter does not own,
@@ -134,6 +150,17 @@ func NewAdapter(
 	}
 	if !keyring.Holds(allocator.WrappingKeyFingerprint()) {
 		return nil, errors.New("agones resources: keyring does not hold the current wrapping key")
+	}
+	// The two clients are configured independently, and a disagreement between
+	// them is invisible at runtime except as a GameServer leaked per attempt:
+	// allocation succeeds against one pool while the resource reads look in
+	// another, find nothing, and leave the allocated object with no owner.
+	if allocator.Namespace() != resources.Namespace() ||
+		allocator.Fleet() != resources.Fleet() ||
+		allocator.TLSPortName() != resources.TLSPortName() {
+		return nil, errors.New(
+			"agones resources: allocation and resource clients name different pools",
+		)
 	}
 	zoneDomain := strings.ToLower(strings.TrimSuffix(cfg.ZoneDomain, "."))
 	if !validZoneDomain(zoneDomain) {
@@ -213,9 +240,9 @@ func (a *Adapter) observe(
 	if err != nil {
 		return handoffalloc.Provisioned{}, err
 	}
-	observed, err := a.resources.ListAllocated(ctx, request.AttemptID)
+	observed, err := a.allocatedForAttempt(ctx, request.AttemptID)
 	if err != nil {
-		return handoffalloc.Provisioned{}, classifyResourceError(err)
+		return handoffalloc.Provisioned{}, err
 	}
 	switch len(observed) {
 	case 1:
@@ -240,6 +267,29 @@ func (a *Adapter) observe(
 		return handoffalloc.Provisioned{}, err
 	}
 	return a.adopt(ctx, request, identity, &reserved, observer, expiresAt)
+}
+
+// allocatedForAttempt lists every object carrying the exact attempt label and
+// keeps only those Agones still has Allocated. The filter is deliberate: an
+// attempt's GameServer that has gone Unhealthy or Shutdown keeps its labels
+// until the object is collected, and refusing the whole listing over one such
+// leftover would make a live attempt permanently unadoptable and its cleanup
+// permanently stuck.
+func (a *Adapter) allocatedForAttempt(
+	ctx context.Context,
+	attemptID string,
+) ([]gameserverapi.GameServer, error) {
+	observed, err := a.resources.ListAttempt(ctx, attemptID)
+	if err != nil {
+		return nil, classifyResourceError(err)
+	}
+	allocated := observed[:0]
+	for _, gameServer := range observed {
+		if gameServer.State == agonesv1.GameServerStateAllocated {
+			allocated = append(allocated, gameServer)
+		}
+	}
+	return allocated, nil
 }
 
 // Resolve reads the exact GameServer a durable lease names and recomputes
@@ -269,15 +319,22 @@ func (a *Adapter) Resolve(
 }
 
 // Release deletes the exact GameServer a lease owns with that object's UID as
-// a precondition. A lease that names its allocation is verified against the
-// attempt label, the UID digest and the envelope digest first, so a stale
-// release never deletes a newer attempt's object; the object's state, port and
-// node are deliberately not required, because an object Agones has already
-// moved on from must still be deletable. A staging lease that carries only an
+// a precondition. A lease that names its allocation is proven against the
+// attempt label and the UID digest its reference pins, so a stale release never
+// deletes a newer attempt's object or a recreated incarnation; the object's
+// state, port, node and sealed material are deliberately NOT required, because
+// an object Agones has already moved on from must still be deletable and the
+// zone controls its own annotations. A staging lease that carries only an
 // attempt ID is discovered by the attempt label alone. Absence and a changed
 // UID are success, because the object this lease owned is gone.
 func (a *Adapter) Release(ctx context.Context, lease nakamalease.Lease) error {
 	if lease.AllocationID != "" {
+		// A lease that names an allocation but pins no reference cannot prove
+		// which object it owned, so it fails closed rather than deleting on an
+		// unpinned read. The lease store never writes that shape.
+		if lease.SecretRef == "" {
+			return ErrInvalidResource
+		}
 		located, err := a.resources.Locate(ctx, lease.AllocationID, lease.AttemptID)
 		switch {
 		case errors.Is(err, gameserverapi.ErrNotFound),
@@ -286,16 +343,12 @@ func (a *Adapter) Release(ctx context.Context, lease nakamalease.Lease) error {
 		case err != nil:
 			return classifyResourceError(err)
 		}
-		if lease.SecretRef != "" && !admissionref.ReferenceBinds(
-			lease.SecretRef,
-			string(located.Identity.UID),
-			located.Annotations[agones.AdmissionEnvelopeAnnotation],
-		) {
+		if !admissionref.ReferenceBinds(lease.SecretRef, string(located.Identity.UID)) {
 			return nil
 		}
 		return a.delete(ctx, located.Identity)
 	}
-	observed, err := a.resources.ListAllocated(ctx, lease.AttemptID)
+	observed, err := a.resources.ListAttempt(ctx, lease.AttemptID)
 	if err != nil {
 		return classifyResourceError(err)
 	}
@@ -324,7 +377,11 @@ func (a *Adapter) observerFor(request handoff.AllocationRequest) (sim.EntityID, 
 // observeDispatched waits, within the observation budget, for exactly one
 // attempt-labelled Allocated GameServer carrying the name the allocation
 // response returned. The caller's own cancellation is reported as such; the
-// adapter's bound elapsing is the ambiguous outcome.
+// adapter's bound elapsing is the ambiguous outcome. A read that fails for a
+// reason that will not resolve by waiting — an RBAC denial, a refused
+// contract — is returned as itself rather than retried into an ambiguous
+// dispatch, because that outcome quarantines the attempt permanently and
+// "not yet observable" would name the wrong cause.
 func (a *Adapter) observeDispatched(
 	ctx context.Context,
 	attemptID string,
@@ -333,8 +390,9 @@ func (a *Adapter) observeDispatched(
 	observeCtx, cancel := context.WithTimeout(ctx, a.observationTimeout)
 	defer cancel()
 	for {
-		observed, err := a.resources.ListAllocated(observeCtx, attemptID)
-		if err == nil {
+		observed, err := a.allocatedForAttempt(observeCtx, attemptID)
+		switch {
+		case err == nil:
 			switch len(observed) {
 			case 0:
 			case 1:
@@ -344,6 +402,12 @@ func (a *Adapter) observeDispatched(
 			default:
 				return gameserverapi.Identity{}, a.releaseDuplicates(ctx, observed)
 			}
+		case errors.Is(err, errAPIUnavailable):
+			// The object's state is unknown, which is what waiting is for.
+		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+			// Resolved below against the caller's own context.
+		default:
+			return gameserverapi.Identity{}, err
 		}
 		if err := wait(observeCtx, a.observationInterval); err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
@@ -434,8 +498,10 @@ func (a *Adapter) allocation(
 
 // releaseDuplicates moves every duplicate match through release with its own
 // UID precondition on the coordinator's staged-cleanup budget, which survives
-// the caller's cancellation, then fails closed whatever the individual
-// outcomes were.
+// the caller's cancellation, then fails closed. A delete that did not succeed
+// is reported through a distinct outcome rather than swallowed: a surviving
+// duplicate is a leaked GameServer, and nothing else in this composition is
+// looking for it.
 func (a *Adapter) releaseDuplicates(
 	ctx context.Context,
 	observed []gameserverapi.GameServer,
@@ -445,8 +511,14 @@ func (a *Adapter) releaseDuplicates(
 		handoffalloc.StagedCleanupTimeout,
 	)
 	defer cancel()
+	retained := false
 	for _, gameServer := range observed {
-		_ = a.delete(cleanupCtx, gameServer.Identity)
+		if err := a.delete(cleanupCtx, gameServer.Identity); err != nil {
+			retained = true
+		}
+	}
+	if retained {
+		return ErrDuplicateAttemptRetained
 	}
 	return ErrDuplicateAttempt
 }
@@ -467,9 +539,10 @@ func (a *Adapter) delete(ctx context.Context, identity gameserverapi.Identity) e
 }
 
 // classifyResourceError maps a resource-boundary failure to the outcome class
-// a caller may act on without carrying any Kubernetes detail forward: an
-// absent object is NotFound, a transient API failure stays retryable, and every
-// contract refusal is an invalid resource.
+// a caller may act on without carrying any Kubernetes detail forward. The
+// boundary itself decides which failures left this object's state merely
+// unknown, so a transport failure or a transient server response stays
+// retryable here instead of being reported as a permanent contract refusal.
 func classifyResourceError(err error) error {
 	switch {
 	case errors.Is(err, context.Canceled):
@@ -478,12 +551,7 @@ func classifyResourceError(err error) error {
 		return context.DeadlineExceeded
 	case errors.Is(err, gameserverapi.ErrNotFound):
 		return ErrNotFound
-	case apierrors.IsServerTimeout(err),
-		apierrors.IsTimeout(err),
-		apierrors.IsServiceUnavailable(err),
-		apierrors.IsTooManyRequests(err),
-		apierrors.IsInternalError(err),
-		apierrors.IsUnexpectedServerError(err):
+	case errors.Is(err, gameserverapi.ErrUnavailable):
 		return errAPIUnavailable
 	default:
 		return ErrInvalidResource

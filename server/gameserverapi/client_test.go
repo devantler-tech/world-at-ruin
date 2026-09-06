@@ -134,7 +134,7 @@ func TestNewClientRejectsInvalidConfiguration(t *testing.T) {
 	}
 }
 
-func TestListAllocatedUsesExactAttemptAndFleetSelector(t *testing.T) {
+func TestListAttemptUsesExactAttemptAndFleetSelector(t *testing.T) {
 	otherAttempt := validGameServer("zone-other-attempt", "uid-other-attempt")
 	otherAttempt.Labels[agones.AttemptLabel] = strings.Repeat("a", 52)
 	otherFleet := validGameServer("zone-other-fleet", "uid-other-fleet")
@@ -173,12 +173,12 @@ func TestListAllocatedUsesExactAttemptAndFleetSelector(t *testing.T) {
 			clientset := agonesfake.NewSimpleClientset(objects...)
 			client := clientAgainst(t, clientset, validConfig())
 
-			got, err := client.ListAllocated(context.Background(), testAttemptID)
+			got, err := client.ListAttempt(context.Background(), testAttemptID)
 			if err != nil {
-				t.Fatalf("ListAllocated returned an error: %v", err)
+				t.Fatalf("ListAttempt returned an error: %v", err)
 			}
 			if len(got) != len(test.want) {
-				t.Fatalf("ListAllocated count = %d, want %d: %+v", len(got), len(test.want), got)
+				t.Fatalf("ListAttempt count = %d, want %d: %+v", len(got), len(test.want), got)
 			}
 			wantIdentities := make(map[Identity]bool, len(test.want))
 			for _, identity := range test.want {
@@ -186,10 +186,10 @@ func TestListAllocatedUsesExactAttemptAndFleetSelector(t *testing.T) {
 			}
 			for i := range got {
 				if !wantIdentities[got[i].Identity] {
-					t.Errorf("ListAllocated[%d] identity = %+v, want one of %+v", i, got[i].Identity, test.want)
+					t.Errorf("ListAttempt[%d] identity = %+v, want one of %+v", i, got[i].Identity, test.want)
 				}
 				if got[i].State != agonesv1.GameServerStateAllocated || got[i].TLSPort != 8443 {
-					t.Errorf("ListAllocated[%d] = %+v, want Allocated on TLS port 8443", i, got[i])
+					t.Errorf("ListAttempt[%d] = %+v, want Allocated on TLS port 8443", i, got[i])
 				}
 			}
 
@@ -234,13 +234,13 @@ func (m mapLabels) Lookup(label string) (string, bool) {
 	return value, ok
 }
 
-func TestListAllocatedRejectsInvalidAttemptBeforeAPI(t *testing.T) {
+func TestListAttemptRejectsInvalidAttemptBeforeAPI(t *testing.T) {
 	clientset := agonesfake.NewSimpleClientset()
 	client := clientAgainst(t, clientset, validConfig())
 
 	for _, attemptID := range []string{"", "attempt/7", strings.Repeat("a", 129)} {
-		if got, err := client.ListAllocated(context.Background(), attemptID); err == nil || got != nil {
-			t.Errorf("ListAllocated(%q) = %+v, %v; want refusal", attemptID, got, err)
+		if got, err := client.ListAttempt(context.Background(), attemptID); err == nil || got != nil {
+			t.Errorf("ListAttempt(%q) = %+v, %v; want refusal", attemptID, got, err)
 		}
 	}
 	if actions := clientset.Actions(); len(actions) != 0 {
@@ -248,26 +248,38 @@ func TestListAllocatedRejectsInvalidAttemptBeforeAPI(t *testing.T) {
 	}
 }
 
-func TestListAllocatedRefusesAnOutOfContractReturnedObject(t *testing.T) {
-	changed := validGameServer("zone-1", "uid-1")
-	changed.Status.State = agonesv1.GameServerStateReady
-	clientset := agonesfake.NewSimpleClientset()
-	clientset.PrependReactor(
-		"list",
-		"gameservers",
-		func(clienttesting.Action) (bool, runtime.Object, error) {
-			return true, &agonesv1.GameServerList{
-				Items: []agonesv1.GameServer{*changed.DeepCopy()},
-			}, nil
-		},
-	)
-	client := clientAgainst(t, clientset, validConfig())
+// TestListAttemptReportsObjectsAgonesHasMovedOn checks that the listing keeps
+// an attempt-labelled object whose state has left Allocated, because cleanup
+// must be able to see and delete it. Ownership is not exercised here and
+// cannot be: the label selector already restricts the query to this Fleet and
+// attempt, so a foreign object never reaches the snapshot through this path —
+// the name-keyed reads are where ErrNotOwned is reachable and tested.
+func TestListAttemptReportsObjectsAgonesHasMovedOn(t *testing.T) {
+	moved := validGameServer("zone-1", "uid-1")
+	moved.Status.State = agonesv1.GameServerStateShutdown
+	moved.Status.Ports = nil
+	allocated := validGameServer("zone-2", "uid-2")
+	client := clientAgainst(t, agonesfake.NewSimpleClientset(moved, allocated), validConfig())
 
-	if got, err := client.ListAllocated(
-		context.Background(),
-		testAttemptID,
-	); err == nil || got != nil {
-		t.Fatalf("ListAllocated accepted Ready object: %+v, %v", got, err)
+	got, err := client.ListAttempt(context.Background(), testAttemptID)
+	if err != nil {
+		t.Fatalf("ListAttempt refused a Shutdown object cleanup still owns: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("ListAttempt count = %d, want both objects: %+v", len(got), got)
+	}
+	states := map[types.UID]agonesv1.GameServerState{}
+	ports := map[types.UID]uint16{}
+	for _, gameServer := range got {
+		states[gameServer.Identity.UID] = gameServer.State
+		ports[gameServer.Identity.UID] = gameServer.TLSPort
+	}
+	if states["uid-1"] != agonesv1.GameServerStateShutdown ||
+		states["uid-2"] != agonesv1.GameServerStateAllocated {
+		t.Fatalf("ListAttempt reported states %+v, want the observed ones", states)
+	}
+	if ports["uid-1"] != 0 || ports["uid-2"] != 8443 {
+		t.Fatalf("ListAttempt reported ports %+v, want the port-less object tolerated", ports)
 	}
 }
 
