@@ -22,6 +22,8 @@ func TestGeneratedClientsUseOnlyNamespacedReadEndpoints(t *testing.T) {
 	t.Parallel()
 	p := pod("allocator-a", "uid-a", "10.0.0.1")
 	s := endpointSlice("slice", p)
+	// ObjectReference permits an omitted API version; retain exact Pod identity.
+	s.Endpoints[0].TargetRef.APIVersion = ""
 	var mu sync.Mutex
 	var paths []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

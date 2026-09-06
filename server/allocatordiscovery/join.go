@@ -47,7 +47,9 @@ func (r *Reader) join(pods []corev1.Pod, slices []discoveryv1.EndpointSlice) ([]
 		seenNames[slice.Name] = true
 		for _, endpoint := range slice.Endpoints {
 			ref := endpoint.TargetRef
-			if ref == nil || ref.APIVersion != "v1" || ref.Kind != "Pod" || ref.Namespace != r.config.Namespace || len(endpoint.Addresses) == 0 || len(endpoint.Addresses) > 100 {
+			// ObjectReference's API version is optional. A supplied version must
+			// still name core/v1; the exact Pod identity is required in both forms.
+			if ref == nil || (ref.APIVersion != "" && ref.APIVersion != "v1") || ref.Kind != "Pod" || ref.Namespace != r.config.Namespace || len(endpoint.Addresses) == 0 || len(endpoint.Addresses) > 100 {
 				return nil, ErrObservation
 			}
 			index, ok := byUID[string(ref.UID)]

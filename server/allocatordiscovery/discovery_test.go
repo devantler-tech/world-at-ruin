@@ -37,7 +37,7 @@ func endpointSlice(name string, p corev1.Pod) discoveryv1.EndpointSlice {
 		ObjectMeta:  metav1.ObjectMeta{Name: name, Namespace: "allocation", UID: types.UID(name + "-uid"), ResourceVersion: "slice-rv", Labels: map[string]string{discoveryv1.LabelServiceName: "allocator"}, OwnerReferences: []metav1.OwnerReference{{APIVersion: "v1", Kind: "Service", Name: "allocator", UID: "service-uid", Controller: ptr(true)}}},
 		AddressType: discoveryv1.AddressTypeIPv4,
 		Ports:       []discoveryv1.EndpointPort{{Name: ptr("grpc"), Port: ptr(int32(443)), Protocol: ptr(corev1.ProtocolTCP)}},
-		Endpoints:   []discoveryv1.Endpoint{{Addresses: []string{p.Status.PodIP}, TargetRef: &corev1.ObjectReference{APIVersion: "v1", Kind: "Pod", Namespace: p.Namespace, Name: p.Name, UID: p.UID}, Conditions: discoveryv1.EndpointConditions{Ready: ptr(true), Serving: ptr(true), Terminating: ptr(false)}}},
+		Endpoints:   []discoveryv1.Endpoint{{Addresses: []string{p.Status.PodIP}, TargetRef: &corev1.ObjectReference{Kind: "Pod", Namespace: p.Namespace, Name: p.Name, UID: p.UID}, Conditions: discoveryv1.EndpointConditions{Ready: ptr(true), Serving: ptr(true), Terminating: ptr(false)}}},
 	}
 }
 
@@ -122,6 +122,23 @@ func TestDiscoverAcceptsDNSLabelServicePortNames(t *testing.T) {
 	}
 }
 
+func TestDiscoverAcceptsCorePodReferenceVersions(t *testing.T) {
+	t.Parallel()
+	for _, version := range []string{"", "v1"} {
+		t.Run("version="+version, func(t *testing.T) {
+			t.Parallel()
+			p := pod("allocator-a", "uid-a", "10.0.0.1")
+			s := endpointSlice("slice", p)
+			s.Endpoints[0].TargetRef.APIVersion = version
+			r, _ := fixture(t, []corev1.Pod{p}, []discoveryv1.EndpointSlice{s})
+			got, err := r.Discover(t.Context())
+			if err != nil || len(got.Members) != 1 || got.Members[0].Identity.UID != "uid-a" || len(got.Members[0].EligibleEndpoints()) != 1 {
+				t.Fatalf("core Pod reference rejected: %+v, %v", got, err)
+			}
+		})
+	}
+}
+
 func TestDiscoveryRefusesUnsafeEndpointJoins(t *testing.T) {
 	t.Parallel()
 	cases := map[string]func(*corev1.Pod, *discoveryv1.EndpointSlice){
@@ -130,6 +147,10 @@ func TestDiscoveryRefusesUnsafeEndpointJoins(t *testing.T) {
 		"owner-controller":     func(_ *corev1.Pod, s *discoveryv1.EndpointSlice) { s.OwnerReferences[0].Controller = nil },
 		"foreign-slice":        func(_ *corev1.Pod, s *discoveryv1.EndpointSlice) { s.Namespace = "foreign" },
 		"missing-ref":          func(_ *corev1.Pod, s *discoveryv1.EndpointSlice) { s.Endpoints[0].TargetRef = nil },
+		"foreign-ref-version":  func(_ *corev1.Pod, s *discoveryv1.EndpointSlice) { s.Endpoints[0].TargetRef.APIVersion = "apps/v1" },
+		"future-ref-version":   func(_ *corev1.Pod, s *discoveryv1.EndpointSlice) { s.Endpoints[0].TargetRef.APIVersion = "v2" },
+		"wrong-ref-kind":       func(_ *corev1.Pod, s *discoveryv1.EndpointSlice) { s.Endpoints[0].TargetRef.Kind = "Service" },
+		"empty-ref-kind":       func(_ *corev1.Pod, s *discoveryv1.EndpointSlice) { s.Endpoints[0].TargetRef.Kind = "" },
 		"foreign-ref":          func(_ *corev1.Pod, s *discoveryv1.EndpointSlice) { s.Endpoints[0].TargetRef.Namespace = "foreign" },
 		"reused-pod-name":      func(_ *corev1.Pod, s *discoveryv1.EndpointSlice) { s.Endpoints[0].TargetRef.UID = "old-pod" },
 		"wrong-pod-name":       func(_ *corev1.Pod, s *discoveryv1.EndpointSlice) { s.Endpoints[0].TargetRef.Name = "another" },

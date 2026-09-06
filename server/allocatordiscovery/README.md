@@ -32,6 +32,8 @@ owner reference. Every endpoint must reference an observed Pod's exact namespace
 name and UID, carry one configured named TCP port, and use an IP found on that Pod
 with the matching IPv4/IPv6 address family. Missing targets, foreign resources,
 reused identities and conflicting socket ownership fail the entire result.
+The Pod target reference may omit its optional API version or explicitly use `v1`;
+other versions and missing or different kinds are rejected in both cases.
 
 Identical endpoints across slices are deduplicated; dual-stack addresses aggregate
 under one Pod UID. Conflicting conditions for the same socket are rejected rather
