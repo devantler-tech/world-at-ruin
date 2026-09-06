@@ -8,6 +8,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 )
 
+// join rejects ambiguous identity or socket ownership instead of choosing a page.
 func (r *Reader) join(pods []corev1.Pod, slices []discoveryv1.EndpointSlice) ([]Member, error) {
 	members := make([]Member, 0, len(pods))
 	byUID := make(map[string]int, len(pods))
@@ -82,6 +83,7 @@ func (r *Reader) join(pods []corev1.Pod, slices []discoveryv1.EndpointSlice) ([]
 	return members, nil
 }
 
+// slicePort binds the configured TCP port to the exact controlling Service UID.
 func (r *Reader) slicePort(slice discoveryv1.EndpointSlice) (uint16, error) {
 	if !validIdentity(Identity{slice.Namespace, slice.Name, string(slice.UID)}) || slice.Namespace != r.config.Namespace || !token(slice.ResourceVersion, 1024) ||
 		slice.Labels[discoveryv1.LabelServiceName] != r.config.ServiceName || len(slice.Endpoints) > 1000 || len(slice.Ports) > 100 ||
@@ -116,6 +118,8 @@ func (r *Reader) slicePort(slice discoveryv1.EndpointSlice) (uint16, error) {
 	return port, nil
 }
 
+// podAddresses reconciles the primary and dual-stack status fields without
+// accepting contradictory or duplicate addresses.
 func podAddresses(pod corev1.Pod) (map[netip.Addr]bool, error) {
 	if len(pod.Status.PodIPs) > 2 {
 		return nil, ErrObservation
@@ -138,6 +142,7 @@ func podAddresses(pod corev1.Pod) (map[netip.Addr]bool, error) {
 	return ips, nil
 }
 
+// parseAddress permits only canonical address families usable for remote Pods.
 func parseAddress(raw string) (netip.Addr, error) {
 	if len(raw) > 45 {
 		return netip.Addr{}, ErrObservation
@@ -149,6 +154,7 @@ func parseAddress(raw string) (netip.Addr, error) {
 	return ip, nil
 }
 
+// condition preserves an omitted API boolean as unknown, not false.
 func condition(value *bool) corev1.ConditionStatus {
 	if value == nil {
 		return corev1.ConditionUnknown

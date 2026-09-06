@@ -50,7 +50,7 @@ func fixture(t *testing.T, pods []corev1.Pod, slices []discoveryv1.EndpointSlice
 	client.PrependReactor("list", "endpointslices", func(ktesting.Action) (bool, runtime.Object, error) {
 		return true, &discoveryv1.EndpointSliceList{ListMeta: metav1.ListMeta{ResourceVersion: "slices-rv"}, Items: slices}, nil
 	})
-	reader, err := New(&corefake.FakeCoreV1{Fake: client}, &discoveryfake.FakeDiscoveryV1{Fake: client}, config())
+	reader, err := newReader(&corefake.FakeCoreV1{Fake: client}, &discoveryfake.FakeDiscoveryV1{Fake: client}, config())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +112,7 @@ func TestDiscoverAcceptsDNSLabelServicePortNames(t *testing.T) {
 	_, client := fixture(t, []corev1.Pod{p}, []discoveryv1.EndpointSlice{s})
 	c := config()
 	c.PortName = portName
-	r, err := New(&corefake.FakeCoreV1{Fake: client}, &discoveryfake.FakeDiscoveryV1{Fake: client}, c)
+	r, err := newReader(&corefake.FakeCoreV1{Fake: client}, &discoveryfake.FakeDiscoveryV1{Fake: client}, c)
 	if err != nil {
 		t.Fatal(err)
 	}

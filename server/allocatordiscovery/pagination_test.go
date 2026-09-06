@@ -179,12 +179,12 @@ func TestNewRefusesUnscopedOrUnboundedDiscovery(t *testing.T) {
 			t.Parallel()
 			c := config()
 			mutate(&c)
-			if _, err := New(&corefake.FakeCoreV1{Fake: &ktesting.Fake{}}, &discoveryfake.FakeDiscoveryV1{Fake: &ktesting.Fake{}}, c); !errors.Is(err, ErrInvalidArgument) {
+			if _, err := newReader(&corefake.FakeCoreV1{Fake: &ktesting.Fake{}}, &discoveryfake.FakeDiscoveryV1{Fake: &ktesting.Fake{}}, c); !errors.Is(err, ErrInvalidArgument) {
 				t.Fatalf("invalid config accepted: %v", err)
 			}
 		})
 	}
-	if _, err := New(nil, nil, config()); !errors.Is(err, ErrInvalidArgument) {
+	if _, err := newReader(nil, nil, config()); !errors.Is(err, ErrInvalidArgument) {
 		t.Fatal("nil client accepted")
 	}
 }

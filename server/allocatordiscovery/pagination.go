@@ -3,10 +3,31 @@ package allocatordiscovery
 import (
 	"context"
 
+	discoveryv1 "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 const pageSize = 100
+
+// countAddresses refuses excessive nested data before collect retains a page.
+// Duplicate addresses count too: deduplication does not refund memory or work.
+func countAddresses(page []discoveryv1.EndpointSlice, total *int) error {
+	for _, slice := range page {
+		if len(slice.Endpoints) > 1000 || len(slice.Ports) > 100 {
+			return ErrObservation
+		}
+		for _, endpoint := range slice.Endpoints {
+			if len(endpoint.Addresses) == 0 || len(endpoint.Addresses) > 100 {
+				return ErrObservation
+			}
+			*total += len(endpoint.Addresses)
+			if *total > 10000 {
+				return ErrObservation
+			}
+		}
+	}
+	return nil
+}
 
 // collect never restarts an expired list internally or returns its partial data.
 // The empty resourceVersion requests a current consistent read, never cache RV 0.

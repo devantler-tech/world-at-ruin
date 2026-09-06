@@ -4,12 +4,14 @@
 generation milestone (#793). It is not registered with a running supervisor and
 does not dispatch, persist generations, mutate Kubernetes objects or clear quarantine.
 
-`New` takes typed Core V1 and Discovery V1 clients and explicit namespace, Pod label
-selector, Service name/UID, named TCP port and page budget. It retains only Pod
-`List`/`Get` and EndpointSlice `List` capabilities, bound to that namespace. The
+`New` takes a Kubernetes REST configuration and explicit namespace, Pod label
+selector, Service name/UID, named TCP port and page budget. It constructs an owned,
+bounded HTTP client and retains only Pod `List`/`Get` and EndpointSlice `List`
+capabilities, bound to that namespace. The
 eventual Kubernetes role needs only namespaced `get/list` on Pods and `list` on
 EndpointSlices; this component never reads Secrets, GameServers or ReplicaSets.
-Configure a bounded transport and pass an operation context. There is no watch,
+The REST configuration must set a positive request timeout; pass an operation
+context to bound the whole paginated discovery. There is no watch,
 background loop or internal restart after an expired continuation token.
 
 ## Complete observations
@@ -20,6 +22,15 @@ must remain nonempty and identical within each list. Repeated or oversized curso
 oversized pages, expiration, errors, cancellation and exhausted budgets discard the
 entire observation. A failed API call returns a stable error without backend details;
 cancellation and deadlines remain distinguishable.
+
+Each `Discover` or `ObservePod` call has an independent 4 MiB response budget,
+shared across its pages, collections and retries, including error responses. The
+owned transport limits bytes before the typed clients decode API objects, closes
+the original bodies, and refuses excess data without publishing partial evidence.
+Standard HTTP gzip decoding happens before this limit; an unresolved content
+encoding from a custom transport is refused. Concurrent and later calls receive
+fresh budgets. This bounds cumulative decoded response bytes, not total Go heap
+usage; decoded objects and the returned snapshot require additional memory.
 
 The two collection resource versions are returned separately: Kubernetes pagination
 provides consistency **within one collection**, not an atomic snapshot across Pods
@@ -43,8 +54,10 @@ deterministically, and returned slices are detached from API objects.
 
 Limits also include 1,000 endpoint entries and 100 ports per slice, 100 addresses per
 endpoint, two addresses per Pod, and 10,000 processed endpoint addresses across the
-observation (including duplicates). Identity tokens are bounded to 128 bytes,
-resource versions to 1,024 bytes, continuation tokens to 16 KiB, and selectors to
+observation (including duplicates). Nested slice limits and the cumulative address
+count are checked before retaining each page or requesting the next one.
+Identity tokens are bounded to 128 bytes, resource versions to 1,024 bytes,
+continuation tokens to 16 KiB, and selectors to
 4 KiB. These are intentional application bounds, not claims about all possible
 Kubernetes deployments. Oversized data produces no usable observation.
 
@@ -77,6 +90,8 @@ proof or persisted proof schema is introduced here. See the corrected boundary i
 
 The tests use the generated typed clients both through Kubernetes fake reactors and
 an HTTP API fixture. They cover pagination and late failures, exact selectors and
-URLs, identity reuse, duplicate and dual-stack endpoints, readiness, cancellation,
+URLs, bounded bodies and gzip expansion, page/collection/retry budgets, independent
+concurrent reads, request-timeout closure, identity reuse, duplicate and dual-stack
+endpoints, readiness, cancellation,
 private-error suppression and detached observations. They do not contact a cluster
 or claim that a process can no longer commit an allocation.

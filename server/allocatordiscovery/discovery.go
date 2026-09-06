@@ -94,9 +94,9 @@ type Reader struct {
 	selector labels.Selector
 }
 
-// New binds all future reads to the configured namespace. The caller supplies
-// a bounded API transport and per-operation context; no watcher is registered.
-func New(core coreclient.CoreV1Interface, discovery discoveryclient.DiscoveryV1Interface, config Config) (*Reader, error) {
+// newReader binds typed read capabilities after the public constructor has
+// installed the response budget. Tests can supply narrow in-memory clients.
+func newReader(core coreclient.CoreV1Interface, discovery discoveryclient.DiscoveryV1Interface, config Config) (*Reader, error) {
 	if len(config.PodSelector) > 4096 {
 		return nil, ErrInvalidArgument
 	}
@@ -112,6 +112,7 @@ func New(core coreclient.CoreV1Interface, discovery discoveryclient.DiscoveryV1I
 
 // Discover publishes only after every page and identity join succeeds.
 func (r *Reader) Discover(ctx context.Context) (Snapshot, error) {
+	ctx = withResponseBudget(ctx)
 	pods, podVersion, err := collect(ctx, r.config.MaxPages, r.selector.String(), func(ctx context.Context, options metav1.ListOptions) ([]corev1.Pod, metav1.ListMeta, error) {
 		list, err := r.pods.List(ctx, options)
 		if err != nil {
@@ -125,6 +126,7 @@ func (r *Reader) Discover(ctx context.Context) (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, err
 	}
+	addresses := 0
 	slicesList, sliceVersion, err := collect(ctx, r.config.MaxPages, labels.Set{discoveryv1.LabelServiceName: r.config.ServiceName}.String(), func(ctx context.Context, options metav1.ListOptions) ([]discoveryv1.EndpointSlice, metav1.ListMeta, error) {
 		list, err := r.slices.List(ctx, options)
 		if err != nil {
@@ -132,6 +134,9 @@ func (r *Reader) Discover(ctx context.Context) (Snapshot, error) {
 		}
 		if list == nil {
 			return nil, metav1.ListMeta{}, ErrObservation
+		}
+		if err := countAddresses(list.Items, &addresses); err != nil {
+			return nil, metav1.ListMeta{}, err
 		}
 		return list.Items, list.ListMeta, nil
 	})
@@ -151,6 +156,7 @@ func (r *Reader) Discover(ctx context.Context) (Snapshot, error) {
 // ObservePod performs a fresh exact-name read, comparing the result with the
 // expected UID. Even Absent and a terminal Pod phase cannot clear quarantine.
 func (r *Reader) ObservePod(ctx context.Context, expected Identity) (Observation, error) {
+	ctx = withResponseBudget(ctx)
 	if expected.Namespace != r.config.Namespace || !validIdentity(expected) {
 		return Observation{}, ErrInvalidArgument
 	}
@@ -197,6 +203,7 @@ func (m Member) EligibleEndpoints() []Endpoint {
 	return endpoints
 }
 
+// observe preserves unknown readiness and rejects contradictory Pod conditions.
 func observe(pod corev1.Pod) (Member, error) {
 	identity := Identity{pod.Namespace, pod.Name, string(pod.UID)}
 	if !validIdentity(identity) || !token(pod.ResourceVersion, 1024) {
@@ -216,14 +223,17 @@ func observe(pod corev1.Pod) (Member, error) {
 	return Member{Identity: identity, ResourceVersion: pod.ResourceVersion, Phase: pod.Status.Phase, Ready: ready, Deleting: pod.DeletionTimestamp != nil}, nil
 }
 
+// validIdentity requires a namespaced object name plus a bounded opaque UID.
 func validIdentity(identity Identity) bool {
 	return len(validation.IsDNS1123Label(identity.Namespace)) == 0 && len(validation.IsDNS1123Subdomain(identity.Name)) == 0 && token(identity.UID, 128)
 }
 
+// token bounds opaque API identifiers without assuming a numeric encoding.
 func token(value string, maximum int) bool {
 	return value != "" && len(value) <= maximum && utf8.ValidString(value) && !strings.ContainsFunc(value, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) })
 }
 
+// observationError preserves cancellation while withholding private backend text.
 func observationError(err error) error {
 	if errors.Is(err, context.Canceled) {
 		return context.Canceled
@@ -234,6 +244,7 @@ func observationError(err error) error {
 	return ErrObservation
 }
 
+// sortMembers makes output stable across API page order and address families.
 func sortMembers(members []Member) {
 	slices.SortFunc(members, func(a, b Member) int { return strings.Compare(a.Identity.UID, b.Identity.UID) })
 	for i := range members {

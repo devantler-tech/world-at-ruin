@@ -11,8 +11,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	coreclient "k8s.io/client-go/kubernetes/typed/core/v1"
-	discoveryclient "k8s.io/client-go/kubernetes/typed/discovery/v1"
 	"k8s.io/client-go/rest"
 )
 
@@ -64,15 +62,7 @@ func TestGeneratedClientsUseOnlyNamespacedReadEndpoints(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	transport := &rest.Config{Host: server.URL, Timeout: time.Second}
-	core, err := coreclient.NewForConfig(transport)
-	if err != nil {
-		t.Fatal(err)
-	}
-	discovery, err := discoveryclient.NewForConfig(transport)
-	if err != nil {
-		t.Fatal(err)
-	}
-	r, err := New(core, discovery, config())
+	r, err := New(transport, config())
 	if err != nil {
 		t.Fatal(err)
 	}
