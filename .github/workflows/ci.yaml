@@ -50,8 +50,6 @@ jobs:
         run: ./tools/devlog-entry-version-guard.test.sh
       - name: Save-capability vocabulary guard is pinned and fail-closed
         run: ./tools/save-capability-vocabulary-guard.test.sh
-      - name: Google identity binding durability guard is pinned and fail-closed
-        run: ./tools/google-binding-durability-guard.test.sh
       - name: Ability scale category matching is literal and fail-closed
         run: ./tools/ability-scale-guard.test.sh
       - name: Player-visible gate diffs from the PR's own base
@@ -1217,11 +1215,15 @@ jobs:
       - name: Vet
         working-directory: server
         run: go vet ./...
-      - name: Google identity binding schemas and fixtures are permanent
+      - name: Every shipped server save schema and fixture is permanent
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
         run: ./tools/google-binding-durability-guard.sh
+      - name: Server history and executable reader registration regressions
+        run: |
+          bash tools/google-binding-durability-guard.test.sh
+          bash tools/server-reader-contract.test.sh
       # The lint gate is scoped to changed files against the merge base. That
       # scoping FAILS OPEN on its own: with nothing to filter, golangci-lint
       # never resolves the base ref, so an unresolvable `origin/main` prints
