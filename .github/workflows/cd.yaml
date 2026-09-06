@@ -976,12 +976,13 @@ jobs:
 
             app "World at Ruin.app"
 
-            postflight do
+            postflight_steps do
               # The build is AD-HOC signed (Godot's built-in codesign, no
               # Developer ID), so Gatekeeper quarantines it on download and it
               # will not launch without this.
-              system_command "/usr/bin/xattr",
-                             args: ["-dr", "com.apple.quarantine", "#{appdir}/World at Ruin.app"]
+              run "/usr/bin/xattr",
+                  args: ["-dr", "com.apple.quarantine", "{{appdir}}/World at Ruin.app"],
+                  must_succeed: false
             end
 
             uninstall quit: "tech.devantler.worldatruin"
