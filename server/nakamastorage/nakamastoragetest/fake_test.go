@@ -4,11 +4,17 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/devantler-tech/world-at-ruin/server/nakamastorage"
 	"github.com/heroiclabs/nakama-common/api"
 	"github.com/heroiclabs/nakama-common/runtime"
+)
+
+const (
+	aliceID = "d95d6008-7542-4a3b-9519-0e2c9b66c50a"
+	bobID   = "b4612819-0400-4bd6-bd06-fcf0bc85060e"
 )
 
 type listingStorage interface {
@@ -33,7 +39,7 @@ func TestListContinuesAfterDeletingThePreviousPage(t *testing.T) {
 		fake.Seed(Object{Collection: "leases", Key: key, Version: "v1", Value: `{}`})
 	}
 	fake.Seed(Object{Collection: "other", Key: "a", Version: "v1"})
-	fake.Seed(Object{Collection: "leases", Key: "a", UserID: "player", Version: "v1"})
+	fake.Seed(Object{Collection: "leases", Key: "a", UserID: aliceID, Version: "v1"})
 	ctx := context.Background()
 	var keys []string
 	cursor := ""
@@ -61,7 +67,7 @@ func TestListContinuesAfterDeletingThePreviousPage(t *testing.T) {
 	if !reflect.DeepEqual(keys, []string{"a", "b", "c", "d", "e"}) {
 		t.Fatalf("visited keys = %v", keys)
 	}
-	for _, object := range []Object{{Collection: "other", Key: "a"}, {Collection: "leases", Key: "a", UserID: "player"}} {
+	for _, object := range []Object{{Collection: "other", Key: "a"}, {Collection: "leases", Key: "a", UserID: aliceID}} {
 		if _, ok := fake.Get(object.Collection, object.Key, object.UserID); !ok {
 			t.Fatal("cleanup deleted an object outside its owner/collection")
 		}
@@ -79,8 +85,8 @@ func TestDeleteIsConditionalAndAtomic(t *testing.T) {
 		{Collection: "leases", Key: "a", Version: "v1"},
 		{Collection: "leases", Key: "b", Version: "stale"},
 	}
-	if err := storage.StorageDelete(context.Background(), batch); !errors.Is(err, runtime.ErrStorageRejectedVersion) {
-		t.Fatalf("stale delete = %v", err)
+	if err := storage.StorageDelete(context.Background(), batch); err == nil || errors.Is(err, runtime.ErrStorageRejectedVersion) {
+		t.Fatalf("stale delete = %v, want an ordinary delete error rather than a write-conflict sentinel", err)
 	}
 	for _, key := range []string{"a", "b"} {
 		if _, ok := fake.Get("leases", key, ""); !ok {
@@ -99,13 +105,13 @@ func TestDeleteIsConditionalAndAtomic(t *testing.T) {
 	}
 }
 
-func TestListHonorsOwnerPermissionsAndBindsItsCursor(t *testing.T) {
+func TestListHonorsOwnerPermissions(t *testing.T) {
 	fake := New()
 	for _, object := range []Object{
-		{Key: "a", UserID: "alice", PermissionRead: 0},
-		{Key: "b", UserID: "alice", PermissionRead: 1},
-		{Key: "c", UserID: "alice", PermissionRead: 2},
-		{Key: "d", UserID: "bob", PermissionRead: 2},
+		{Key: "a", UserID: aliceID, PermissionRead: 0},
+		{Key: "b", UserID: aliceID, PermissionRead: 1},
+		{Key: "c", UserID: aliceID, PermissionRead: 2},
+		{Key: "d", UserID: bobID, PermissionRead: 2},
 		{Key: "e", PermissionRead: 0},
 	} {
 		object.Collection = "records"
@@ -116,10 +122,12 @@ func TestListHonorsOwnerPermissionsAndBindsItsCursor(t *testing.T) {
 		name, caller, user string
 		keys               []string
 	}{
-		{"system can see private player records", "", "alice", []string{"a", "b", "c"}},
-		{"owner cannot see server-only records", "alice", "alice", []string{"b", "c"}},
-		{"other player only sees public records", "bob", "alice", []string{"c"}},
-		{"public collection crosses owners", "alice", "", []string{"c", "d"}},
+		{"system can see private player records", "", aliceID, []string{"a", "b", "c"}},
+		{"system can scan every owner", "", "", []string{"a", "b", "c", "d", "e"}},
+		{"explicit system caller bypasses permissions", nakamastorage.SystemOwnerID, "", []string{"a", "b", "c", "d", "e"}},
+		{"owner cannot see server-only records", aliceID, aliceID, []string{"b", "c"}},
+		{"other player only sees public records", bobID, aliceID, []string{"c"}},
+		{"public collection crosses owners", aliceID, "", []string{"c", "d"}},
 		{"system records have an explicit owner", "", nakamastorage.SystemOwnerID, []string{"e"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -142,18 +150,56 @@ func TestListHonorsOwnerPermissionsAndBindsItsCursor(t *testing.T) {
 			t.Fatal("mutating a list response changed storage")
 		}
 	}
-	_, cursor, err := fake.StorageList(context.Background(), "", "alice", "records", 1, "")
+	_, cursor, err := fake.StorageList(context.Background(), "", aliceID, "records", 1, "")
 	if err != nil || cursor == "" {
 		t.Fatalf("first page = %q, %v", cursor, err)
 	}
-	for _, tc := range []struct{ caller, user, collection, cursor string }{
-		{"", "bob", "records", cursor},
-		{"alice", "alice", "records", cursor},
-		{"", "alice", "other", cursor},
-		{"", "alice", "records", "invalid cursor"},
+	for _, tc := range []struct{ caller, user, collection string }{
+		{"", bobID, "records"},
+		{aliceID, aliceID, "records"},
+		{"", aliceID, "other"},
 	} {
-		if _, _, err := fake.StorageList(context.Background(), tc.caller, tc.user, tc.collection, 1, tc.cursor); err == nil {
-			t.Fatal("list accepted an invalid cursor or one from another query")
+		if _, _, err := fake.StorageList(context.Background(), tc.caller, tc.user, tc.collection, 1, cursor); err != nil {
+			t.Fatal("fake added query-binding validation to a storage cursor")
+		}
+	}
+	if _, _, err := fake.StorageList(context.Background(), "", aliceID, "records", 1, "invalid cursor"); err == nil {
+		t.Fatal("list accepted a malformed cursor")
+	}
+}
+
+func TestListRejectsMalformedUUIDs(t *testing.T) {
+	fake := New()
+	for _, tc := range []struct{ caller, user string }{
+		{"alice", ""}, {"", "alice"}, {aliceID, "invalid"}, {"invalid", aliceID},
+	} {
+		objects, cursor, err := fake.StorageList(context.Background(), tc.caller, tc.user, "records", 100, "")
+		if err == nil || objects != nil || cursor != "" {
+			t.Fatal("list accepted a malformed caller or owner UUID")
+		}
+	}
+}
+
+func TestListFindsObjectsWrittenWithEquivalentUUIDText(t *testing.T) {
+	fake := New()
+	ctx := context.Background()
+	upper := strings.ToUpper(aliceID)
+	if _, err := fake.StorageWrite(ctx, []*runtime.StorageWrite{{
+		Collection: "records", Key: "written", UserID: upper, Value: `{}`,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	fake.Seed(Object{Collection: "records", Key: "seeded", UserID: upper, Version: "v1"})
+	objects, _, err := fake.StorageList(ctx, "", upper, "records", 100, "")
+	if err != nil || len(objects) != 2 {
+		t.Fatalf("equivalent owner UUID did not find both objects: count=%d err=%v", len(objects), err)
+	}
+	for _, object := range objects {
+		if object.GetUserId() != aliceID {
+			t.Fatal("storage did not normalize the owner UUID")
+		}
+		if _, ok := fake.Get("records", object.GetKey(), aliceID); !ok {
+			t.Fatal("canonical owner UUID did not identify the listed object")
 		}
 	}
 }

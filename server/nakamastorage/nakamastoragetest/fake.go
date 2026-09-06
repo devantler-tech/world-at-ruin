@@ -15,6 +15,7 @@ import (
 	"sync"
 
 	"github.com/devantler-tech/world-at-ruin/server/nakamastorage"
+	"github.com/gofrs/uuid/v5"
 	"github.com/heroiclabs/nakama-common/api"
 	"github.com/heroiclabs/nakama-common/runtime"
 )
@@ -195,15 +196,13 @@ func (f *Fake) StorageWrite(
 }
 
 type listCursor struct {
-	Caller     string
-	Owner      string
-	Collection string
-	After      string
+	After string
 }
 
 // StorageList implements owner/permission filtering and keyset pagination.
 // A cursor remains usable when an expiry sweep deletes a preceding page. It
-// is bound to its query and is a test-only encoding, not a Nakama wire cursor.
+// uses a test-only encoding, not a Nakama wire cursor. Callers must treat it
+// as opaque; it carries no query identity or query-binding guarantee.
 func (f *Fake) StorageList(
 	ctx context.Context, callerID, userID, collection string, limit int, cursor string,
 ) ([]*api.StorageObject, string, error) {
@@ -218,28 +217,38 @@ func (f *Fake) StorageList(
 	if limit < 1 || limit > 100 {
 		return nil, "", errors.New("nakamastoragetest: invalid list limit")
 	}
-	query := listCursor{Caller: callerID, Owner: userID, Collection: collection}
+	for _, user := range []*string{&callerID, &userID} {
+		if *user == "" {
+			continue
+		}
+		parsed, err := uuid.FromString(*user)
+		if err != nil {
+			return nil, "", errors.New("nakamastoragetest: invalid list UUID")
+		}
+		*user = parsed.String()
+	}
+	query := listCursor{}
 	if cursor != "" {
 		raw, err := base64.RawURLEncoding.DecodeString(cursor)
 		var previous listCursor
-		if err != nil || json.Unmarshal(raw, &previous) != nil || previous.After == "" ||
-			previous.Caller != callerID || previous.Owner != userID || previous.Collection != collection {
+		if err != nil || json.Unmarshal(raw, &previous) != nil || previous.After == "" {
 			return nil, "", errors.New("nakamastoragetest: invalid list cursor")
 		}
 		query.After = previous.After
 	}
+	authoritative := callerID == "" || callerID == nakamastorage.SystemOwnerID
 	keys := make([]string, 0, len(f.objects))
 	for key, object := range f.objects {
-		if object.Collection != collection || key <= query.After {
+		if object.Collection != collection || listKey(object) <= query.After {
 			continue
 		}
 		if userID != "" && object.UserID != userID {
 			continue
 		}
-		if userID == "" && object.PermissionRead != 2 {
+		if !authoritative && userID == "" && object.PermissionRead != 2 {
 			continue
 		}
-		if callerID != "" && callerID != nakamastorage.SystemOwnerID && object.PermissionRead != 2 &&
+		if !authoritative && object.PermissionRead != 2 &&
 			(object.UserID != callerID || object.PermissionRead != 1) {
 			continue
 		}
@@ -249,7 +258,7 @@ func (f *Fake) StorageList(
 	next := ""
 	if len(keys) > limit {
 		keys = keys[:limit]
-		query.After = keys[len(keys)-1]
+		query.After = listKey(f.objects[keys[len(keys)-1]])
 		raw, err := json.Marshal(query)
 		if err != nil {
 			return nil, "", err
@@ -282,7 +291,7 @@ func (f *Fake) StorageDelete(ctx context.Context, deletes []*runtime.StorageDele
 	for _, deletion := range deletes {
 		current, exists := f.objects[id(deletion.Collection, deletion.Key, owner(deletion.UserID))]
 		if deletion.Version != "" && (!exists || current.Version != deletion.Version) {
-			return runtime.ErrStorageRejectedVersion
+			return errors.New("nakamastoragetest: storage delete rejected")
 		}
 	}
 	for _, deletion := range deletes {
@@ -313,9 +322,17 @@ func owner(userID string) string {
 	if userID == "" {
 		return nakamastorage.SystemOwnerID
 	}
+	if parsed, err := uuid.FromString(userID); err == nil {
+		return parsed.String()
+	}
+	// Seed may deliberately contain malformed durable data for refusal tests.
 	return userID
 }
 
 func id(collection, key, userID string) string {
 	return collection + "\x00" + key + "\x00" + userID
+}
+
+func listKey(object Object) string {
+	return object.Key + "\x00" + object.UserID
 }

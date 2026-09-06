@@ -68,11 +68,35 @@ func assertPrivateLeaseValue(t *testing.T, value string, private bool, names []s
 	}
 	for _, name := range names {
 		secret := secretFor(name)
-		if bytes.Contains([]byte(value), secret) ||
-			strings.Contains(value, base64.StdEncoding.EncodeToString(secret)) ||
-			strings.Contains(value, base64.RawURLEncoding.EncodeToString(secret)) {
+		if containsAdmissionSecret(value, secret) {
 			t.Fatal("handoff wrote raw or encoded admission-secret bytes")
 		}
+	}
+}
+
+func containsAdmissionSecret(value string, secret []byte) bool {
+	if bytes.Contains([]byte(value), secret) {
+		return true
+	}
+	for _, encoding := range []*base64.Encoding{
+		base64.StdEncoding, base64.RawStdEncoding, base64.URLEncoding, base64.RawURLEncoding,
+	} {
+		if strings.Contains(value, encoding.EncodeToString(secret)) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestHandoffSecretAssertionRejectsEveryBase64Variant(t *testing.T) {
+	secret := []byte{0xfb, 0xff}
+	for _, value := range []string{string(secret), `{"value":"+/8="}`, `{"value":"+/8"}`, `{"value":"-_8="}`, `{"value":"-_8"}`} {
+		if !containsAdmissionSecret(value, secret) {
+			t.Fatal("secret assertion missed raw or Base64-encoded secret bytes")
+		}
+	}
+	if containsAdmissionSecret(`{"secret_ref":"keyring://zone-one"}`, secret) {
+		t.Fatal("secret assertion rejected an opaque reference")
 	}
 }
 
@@ -163,7 +187,9 @@ func TestHandoffIntegrationRecoversAnAmbiguousCommittedDispatch(t *testing.T) {
 		t.Fatalf("ambiguous dispatch lost its durable quarantine: %v", err)
 	}
 	restarted, _ := handoffCoordinator(t, f, storage, &now)
-	got, err = restarted.Allocate(context.Background(), request())
+	retry := request()
+	retry.AttemptID = "transport-retry-after-lost-response"
+	got, err = restarted.Allocate(context.Background(), retry)
 	if err != nil {
 		t.Fatal(err)
 	}
