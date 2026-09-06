@@ -944,18 +944,23 @@ everything shipped afterwards is held to.
     attachment job alone may upload assets. Neither checks out project code, so project code never
     shares a runner with a release-write token. `workflow_dispatch` with a `tag` input re-runs it
     for an existing release.
-  - **GHCR is the origin of record for updates** (maintainer direction 2026-07-18, closing the open
+  - **GHCR is the contract origin of record for updates** (maintainer direction 2026-07-18, closing the open
     host decision in `docs/design/distribution-and-self-update.md`). CD publishes the released
     client to `ghcr.io/devantler-tech/world-at-ruin/client` as an **OCI artifact**, tagged with the
     bare version plus `latest`, and **cosign-signs it by digest** (keyless, GitHub OIDC). The bare
     version is immutable; after pushing it, a successful `publish-ghcr` job enumerates every stable
     release tag and completes only once `latest` exposes the greatest version. It re-reads after
-    each tag write, so an older overlapping run either leaves a newer `latest` untouched or repairs
-    its own stale write when the newer immutable version becomes visible. The
+    each tag write, which usually repairs a stale write once the newer immutable version becomes
+    visible — but that read-then-`oras tag` sequence is **NOT a compare-and-swap**: a newer run can
+    promote between an older run's read and write, and the bounded retry can end on the stale
+    write, leaving the older contract live while the job goes red. Promotion therefore has to be
+    **serialized or a genuine compare-and-swap** once anything depends on `latest` being the
+    greatest verified release ([ADR 0004](docs/adr/0004-serve-delivery-bytes-from-a-plain-https-origin.md), #788). The
     **digest** is what the updater pins — never the mutable tag. OCI is required rather than merely
     preferred: GitHub Packages has no generic/raw-file registry, so an OCI artifact is the only way
-    a `.app` zip enters it. The GitHub Release asset remains the *install* download; GHCR is the
-    *update* origin.
+    a `.app` zip enters it. The GitHub Release asset remains the *install* download and, once delivery
+    fields exist, the *delivery* origin for pack and shell bytes (ADR 0004); GHCR is the *contract*
+    origin, never a delivery origin.
   - **The update manifest is a SECOND LAYER of that same artifact, not a second tag** (#280). One
     digest therefore covers the build and the contract describing it, so `cosign verify` attests to
     both and there is nothing to keep in sync; a separate tag could be updated independently, which
@@ -965,14 +970,25 @@ everything shipped afterwards is held to.
     stamped `DevLog.VERSION`. The bytes are JCS (RFC 8785) canonical with **no trailing newline**,
     because they are what a signature will cover. Its layer media type is
     `application/vnd.devantler.worldatruin.client.manifest.v1+json`.
-  - **The manifest publishes a contract, never a delivery, and that is not merely "not done yet."**
-    A GHCR blob is not a plain HTTPS download — reading one takes an OCI token exchange first, which
-    is exactly what `verify-ghcr-public` does — while the client's `RollbackSelection` gates every
-    target on a bare whitespace-free `https://` address. So no URL we could publish today would be
-    fetchable by the definition the client enforces, and `pack.full` / `shell.download` stay omitted
-    (which is also the fail-closed value: `UpdateDecision` refuses a capability-raising pack rather
-    than offering one no player could roll back from). Settling how delivery is fetched is a design
-    decision, tracked as **#611** — do not add a URL to the manifest before it lands.
+  - **The manifest publishes a contract; a delivery, when there is one, is a PLAIN HTTPS download
+    and never a registry blob** ([ADR 0004](docs/adr/0004-serve-delivery-bytes-from-a-plain-https-origin.md),
+    closing #611). A GHCR blob is not a plain HTTPS download — reading one takes an OCI token exchange
+    first, which is exactly what `verify-ghcr-public` does — while the client's `RollbackSelection`
+    gates every target on a bare whitespace-free `https://` address. So the registry is never a
+    delivery origin: `pack.full` / `pack.deltas` / `shell.download` name the channel's delivery
+    origin — a GitHub Release asset while Releases is the interim origin, the platform's object store
+    behind its CDN edge later — pinned by `sha256` and `size`. GHCR keeps its role as the
+    digest-pinned contract origin, which the updater reads anonymously **by digest** (token exchange,
+    then manifest); that bounded read is the client's only registry interaction. Today the manifest
+    still omits delivery, which is the fail-closed value (`UpdateDecision` refuses a
+    capability-raising pack rather than offering one no player could roll back from), until the pack
+    pipeline produces something to deliver (#788). `_is_fetchable_url` is a shape check that guards
+    only rollback targets and is deliberately not widened. Neither enforcement exists yet. When
+    delivery fields are introduced, three gates apply in order: the updater applies the predicate to
+    every delivery field before fetching; CD proves, before the release leaves draft and with its own
+    credentials, that the uploaded asset matches the pinned `sha256` and `size` (#788); and after
+    publication a credential-free download of each delivery URL must verify the same `sha256` and
+    `size`, turning the release red on failure (#789).
   - **The manifest's `sequence` is derived from the RELEASE VERSION, never from a clock** —
     `tools/manifest-sequence.sh`, pinned by `tools/manifest-sequence.test.sh`. A client refuses any
     manifest at or below the highest `sequence` it has accepted, so the mark must be monotonic in
