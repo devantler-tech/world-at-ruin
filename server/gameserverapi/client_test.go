@@ -134,7 +134,7 @@ func TestNewClientRejectsInvalidConfiguration(t *testing.T) {
 	}
 }
 
-func TestListAllocatedUsesExactAttemptAndFleetSelector(t *testing.T) {
+func TestListAttemptUsesExactAttemptAndFleetSelector(t *testing.T) {
 	otherAttempt := validGameServer("zone-other-attempt", "uid-other-attempt")
 	otherAttempt.Labels[agones.AttemptLabel] = strings.Repeat("a", 52)
 	otherFleet := validGameServer("zone-other-fleet", "uid-other-fleet")
@@ -173,12 +173,12 @@ func TestListAllocatedUsesExactAttemptAndFleetSelector(t *testing.T) {
 			clientset := agonesfake.NewSimpleClientset(objects...)
 			client := clientAgainst(t, clientset, validConfig())
 
-			got, err := client.ListAllocated(context.Background(), testAttemptID)
+			got, err := client.ListAttempt(context.Background(), testAttemptID)
 			if err != nil {
-				t.Fatalf("ListAllocated returned an error: %v", err)
+				t.Fatalf("ListAttempt returned an error: %v", err)
 			}
 			if len(got) != len(test.want) {
-				t.Fatalf("ListAllocated count = %d, want %d: %+v", len(got), len(test.want), got)
+				t.Fatalf("ListAttempt count = %d, want %d: %+v", len(got), len(test.want), got)
 			}
 			wantIdentities := make(map[Identity]bool, len(test.want))
 			for _, identity := range test.want {
@@ -186,10 +186,10 @@ func TestListAllocatedUsesExactAttemptAndFleetSelector(t *testing.T) {
 			}
 			for i := range got {
 				if !wantIdentities[got[i].Identity] {
-					t.Errorf("ListAllocated[%d] identity = %+v, want one of %+v", i, got[i].Identity, test.want)
+					t.Errorf("ListAttempt[%d] identity = %+v, want one of %+v", i, got[i].Identity, test.want)
 				}
 				if got[i].State != agonesv1.GameServerStateAllocated || got[i].TLSPort != 8443 {
-					t.Errorf("ListAllocated[%d] = %+v, want Allocated on TLS port 8443", i, got[i])
+					t.Errorf("ListAttempt[%d] = %+v, want Allocated on TLS port 8443", i, got[i])
 				}
 			}
 
@@ -234,13 +234,13 @@ func (m mapLabels) Lookup(label string) (string, bool) {
 	return value, ok
 }
 
-func TestListAllocatedRejectsInvalidAttemptBeforeAPI(t *testing.T) {
+func TestListAttemptRejectsInvalidAttemptBeforeAPI(t *testing.T) {
 	clientset := agonesfake.NewSimpleClientset()
 	client := clientAgainst(t, clientset, validConfig())
 
 	for _, attemptID := range []string{"", "attempt/7", strings.Repeat("a", 129)} {
-		if got, err := client.ListAllocated(context.Background(), attemptID); err == nil || got != nil {
-			t.Errorf("ListAllocated(%q) = %+v, %v; want refusal", attemptID, got, err)
+		if got, err := client.ListAttempt(context.Background(), attemptID); err == nil || got != nil {
+			t.Errorf("ListAttempt(%q) = %+v, %v; want refusal", attemptID, got, err)
 		}
 	}
 	if actions := clientset.Actions(); len(actions) != 0 {
@@ -248,26 +248,38 @@ func TestListAllocatedRejectsInvalidAttemptBeforeAPI(t *testing.T) {
 	}
 }
 
-func TestListAllocatedRefusesAnOutOfContractReturnedObject(t *testing.T) {
-	changed := validGameServer("zone-1", "uid-1")
-	changed.Status.State = agonesv1.GameServerStateReady
-	clientset := agonesfake.NewSimpleClientset()
-	clientset.PrependReactor(
-		"list",
-		"gameservers",
-		func(clienttesting.Action) (bool, runtime.Object, error) {
-			return true, &agonesv1.GameServerList{
-				Items: []agonesv1.GameServer{*changed.DeepCopy()},
-			}, nil
-		},
-	)
-	client := clientAgainst(t, clientset, validConfig())
+// TestListAttemptReportsObjectsAgonesHasMovedOn checks that the listing keeps
+// an attempt-labelled object whose state has left Allocated, because cleanup
+// must be able to see and delete it. Ownership is not exercised here and
+// cannot be: the label selector already restricts the query to this Fleet and
+// attempt, so a foreign object never reaches the snapshot through this path —
+// the name-keyed reads are where ErrNotOwned is reachable and tested.
+func TestListAttemptReportsObjectsAgonesHasMovedOn(t *testing.T) {
+	moved := validGameServer("zone-1", "uid-1")
+	moved.Status.State = agonesv1.GameServerStateShutdown
+	moved.Status.Ports = nil
+	allocated := validGameServer("zone-2", "uid-2")
+	client := clientAgainst(t, agonesfake.NewSimpleClientset(moved, allocated), validConfig())
 
-	if got, err := client.ListAllocated(
-		context.Background(),
-		testAttemptID,
-	); err == nil || got != nil {
-		t.Fatalf("ListAllocated accepted Ready object: %+v, %v", got, err)
+	got, err := client.ListAttempt(context.Background(), testAttemptID)
+	if err != nil {
+		t.Fatalf("ListAttempt refused a Shutdown object cleanup still owns: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("ListAttempt count = %d, want both objects: %+v", len(got), got)
+	}
+	states := map[types.UID]agonesv1.GameServerState{}
+	ports := map[types.UID]uint16{}
+	for _, gameServer := range got {
+		states[gameServer.Identity.UID] = gameServer.State
+		ports[gameServer.Identity.UID] = gameServer.TLSPort
+	}
+	if states["uid-1"] != agonesv1.GameServerStateShutdown ||
+		states["uid-2"] != agonesv1.GameServerStateAllocated {
+		t.Fatalf("ListAttempt reported states %+v, want the observed ones", states)
+	}
+	if ports["uid-1"] != 0 || ports["uid-2"] != 8443 {
+		t.Fatalf("ListAttempt reported ports %+v, want the port-less object tolerated", ports)
 	}
 }
 
@@ -559,5 +571,185 @@ func TestDeleteRejectsEmptyOrMismatchedIdentityBeforeAPI(t *testing.T) {
 				t.Fatalf("Delete(%+v) caused API actions: %#v", identity, actions)
 			}
 		})
+	}
+}
+
+// TestGetAllocatedByNameReportsTheObservedUIDAndNode checks that one exact-name
+// read returns the observed identity, node and validated TLS port.
+func TestGetAllocatedByNameReportsTheObservedUIDAndNode(t *testing.T) {
+	observed := validGameServer("zone-1", "uid-1")
+	observed.Status.NodeName = "node-a"
+	clientset := agonesfake.NewSimpleClientset(observed)
+	client := clientAgainst(t, clientset, validConfig())
+
+	got, err := client.GetAllocatedByName(context.Background(), "zone-1", testAttemptID)
+	if err != nil {
+		t.Fatalf("GetAllocatedByName returned an error: %v", err)
+	}
+	want := Identity{Namespace: testNamespace, Name: "zone-1", UID: "uid-1"}
+	if got.Identity != want || got.NodeName != "node-a" || got.TLSPort != 8443 {
+		t.Fatalf("GetAllocatedByName = %+v, want identity %+v on node-a:8443", got, want)
+	}
+	if actions := clientset.Actions(); len(actions) != 1 || actions[0].GetVerb() != "get" {
+		t.Fatalf("client actions = %#v, want one get", actions)
+	}
+}
+
+// TestGetAllocatedByNameRefusesAbsentOrOutOfContractObjects distinguishes absence
+// from invalid state or attempt ownership and returns no resource on failure.
+func TestGetAllocatedByNameRefusesAbsentOrOutOfContractObjects(t *testing.T) {
+	tests := []struct {
+		name         string
+		seed         *agonesv1.GameServer
+		wantNotFound bool
+	}{
+		{name: "absent", wantNotFound: true},
+		{
+			name: "other attempt",
+			seed: func() *agonesv1.GameServer {
+				gameServer := validGameServer("zone-1", "uid-1")
+				gameServer.Labels[agones.AttemptLabel] = strings.Repeat("a", 52)
+				return gameServer
+			}(),
+		},
+		{
+			name: "not Allocated",
+			seed: func() *agonesv1.GameServer {
+				gameServer := validGameServer("zone-1", "uid-1")
+				gameServer.Status.State = agonesv1.GameServerStateShutdown
+				return gameServer
+			}(),
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var objects []runtime.Object
+			if test.seed != nil {
+				objects = append(objects, test.seed)
+			}
+			client := clientAgainst(t, agonesfake.NewSimpleClientset(objects...), validConfig())
+
+			got, err := client.GetAllocatedByName(context.Background(), "zone-1", testAttemptID)
+			if err == nil || !isZeroGameServer(got) {
+				t.Fatalf("GetAllocatedByName = %+v, %v; want refusal", got, err)
+			}
+			if errors.Is(err, ErrNotFound) != test.wantNotFound {
+				t.Fatalf("GetAllocatedByName error = %v, want ErrNotFound=%t", err, test.wantNotFound)
+			}
+		})
+	}
+}
+
+// TestGetAllocatedTranslatesAbsenceToErrNotFound checks that a missing object
+// retains both the package sentinel and Kubernetes NotFound classification.
+func TestGetAllocatedTranslatesAbsenceToErrNotFound(t *testing.T) {
+	client := clientAgainst(t, agonesfake.NewSimpleClientset(), validConfig())
+
+	_, err := client.GetAllocated(
+		context.Background(),
+		Identity{Namespace: testNamespace, Name: "zone-1", UID: "uid-1"},
+		testAttemptID,
+	)
+	if !errors.Is(err, ErrNotFound) || !apierrors.IsNotFound(err) {
+		t.Fatalf("GetAllocated error = %v, want ErrNotFound wrapping the API NotFound", err)
+	}
+}
+
+// TestLocateAcceptsAnyStateButNeverAnotherOwner allows cleanup of a Shutdown
+// object without a port while refusing foreign Fleet or attempt ownership.
+func TestLocateAcceptsAnyStateButNeverAnotherOwner(t *testing.T) {
+	shutdown := validGameServer("zone-1", "uid-1")
+	shutdown.Status.State = agonesv1.GameServerStateShutdown
+	shutdown.Status.Ports = nil
+	shutdown.Status.NodeName = "node-a"
+	otherAttempt := validGameServer("zone-2", "uid-2")
+	otherAttempt.Labels[agones.AttemptLabel] = strings.Repeat("a", 52)
+	otherFleet := validGameServer("zone-3", "uid-3")
+	otherFleet.Labels[agones.FleetLabel] = "other-zone"
+	client := clientAgainst(
+		t,
+		agonesfake.NewSimpleClientset(shutdown, otherAttempt, otherFleet),
+		validConfig(),
+	)
+
+	got, err := client.Locate(context.Background(), "zone-1", testAttemptID)
+	if err != nil {
+		t.Fatalf("Locate returned an error: %v", err)
+	}
+	if got.Identity.UID != "uid-1" ||
+		got.State != agonesv1.GameServerStateShutdown ||
+		got.TLSPort != 0 ||
+		got.NodeName != "node-a" {
+		t.Fatalf("Locate = %+v, want the Shutdown object with no TLS port", got)
+	}
+	for _, name := range []string{"zone-2", "zone-3"} {
+		got, err := client.Locate(context.Background(), name, testAttemptID)
+		if !errors.Is(err, ErrNotOwned) || !isZeroGameServer(got) {
+			t.Fatalf("Locate(%q) = %+v, %v; want ErrNotOwned", name, got, err)
+		}
+	}
+	got, err = client.Locate(context.Background(), "zone-9", testAttemptID)
+	if !errors.Is(err, ErrNotFound) || !isZeroGameServer(got) {
+		t.Fatalf("Locate(absent) = %+v, %v; want ErrNotFound", got, err)
+	}
+}
+
+// TestLocateRejectsInvalidInputBeforeAPI checks both name-based read paths reject
+// malformed names and attempts without issuing a Kubernetes request.
+func TestLocateRejectsInvalidInputBeforeAPI(t *testing.T) {
+	clientset := agonesfake.NewSimpleClientset()
+	client := clientAgainst(t, clientset, validConfig())
+
+	for _, input := range [][2]string{
+		{"Zone_1", testAttemptID},
+		{"", testAttemptID},
+		{"zone-1", "attempt/7"},
+	} {
+		got, err := client.Locate(context.Background(), input[0], input[1])
+		if err == nil || !isZeroGameServer(got) {
+			t.Errorf("Locate(%q, %q) = %+v, %v; want refusal", input[0], input[1], got, err)
+		}
+		got, err = client.GetAllocatedByName(context.Background(), input[0], input[1])
+		if err == nil || !isZeroGameServer(got) {
+			t.Errorf("GetAllocatedByName(%q, %q) = %+v, %v; want refusal", input[0], input[1], got, err)
+		}
+	}
+	if actions := clientset.Actions(); len(actions) != 0 {
+		t.Fatalf("invalid input caused API actions: %#v", actions)
+	}
+}
+
+// TestDeleteTranslatesAbsenceToErrNotFound checks that deleting an object that
+// is already gone carries the package sentinel, so cleanup can treat absence
+// as success without inspecting Kubernetes error reasons.
+func TestDeleteTranslatesAbsenceToErrNotFound(t *testing.T) {
+	client := clientAgainst(t, agonesfake.NewSimpleClientset(), validConfig())
+
+	err := client.Delete(
+		context.Background(),
+		Identity{Namespace: testNamespace, Name: "zone-1", UID: "uid-1"},
+	)
+	if !errors.Is(err, ErrNotFound) || !apierrors.IsNotFound(err) {
+		t.Fatalf("Delete error = %v, want ErrNotFound wrapping the API NotFound", err)
+	}
+}
+
+// TestReadsRefuseAnotherOwnerWithErrNotOwned checks that every read path, not
+// only Locate, reports a foreign Fleet or attempt through the one sentinel.
+func TestReadsRefuseAnotherOwnerWithErrNotOwned(t *testing.T) {
+	foreign := validGameServer("zone-1", "uid-1")
+	foreign.Labels[agones.AttemptLabel] = strings.Repeat("a", 52)
+	client := clientAgainst(t, agonesfake.NewSimpleClientset(foreign), validConfig())
+
+	_, err := client.GetAllocated(
+		context.Background(),
+		Identity{Namespace: testNamespace, Name: "zone-1", UID: "uid-1"},
+		testAttemptID,
+	)
+	if !errors.Is(err, ErrNotOwned) {
+		t.Fatalf("GetAllocated error = %v, want ErrNotOwned", err)
+	}
+	if _, err := client.GetAllocatedByName(context.Background(), "zone-1", testAttemptID); !errors.Is(err, ErrNotOwned) {
+		t.Fatalf("GetAllocatedByName error = %v, want ErrNotOwned", err)
 	}
 }

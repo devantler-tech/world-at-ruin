@@ -75,7 +75,7 @@ func NewKeyring(privateKeys ...*rsa.PrivateKey) (*Keyring, error) {
 			privateKey.Validate() != nil {
 			return nil, ErrInvalidMaterial
 		}
-		fingerprint, err := wrappingKeyFingerprint(&privateKey.PublicKey)
+		fingerprint, err := Fingerprint(&privateKey.PublicKey)
 		if err != nil {
 			return nil, ErrInvalidMaterial
 		}
@@ -85,6 +85,67 @@ func NewKeyring(privateKeys ...*rsa.PrivateKey) (*Keyring, error) {
 		keys[fingerprint] = privateKey
 	}
 	return &Keyring{keys: keys}, nil
+}
+
+// Holds reports whether the keyring retains the unwrap key for one canonical
+// wrapping-key fingerprint, so a composition can refuse to allocate against a
+// current fingerprint it could never open.
+func (k *Keyring) Holds(fingerprint string) bool {
+	if k == nil || !validFingerprint(fingerprint) {
+		return false
+	}
+	_, exists := k.keys[fingerprint]
+	return exists
+}
+
+// Fingerprint is the canonical identifier of one wrapping key: the lowercase,
+// unpadded base32 SHA-256 of the DER SubjectPublicKeyInfo. It is what the zone
+// publishes in GameServer metadata, what an allocation selects on, and what a
+// keyring indexes by, so a composition derives it from the key it holds rather
+// than configuring a second copy.
+func Fingerprint(publicKey *rsa.PublicKey) (string, error) {
+	der, err := x509.MarshalPKIXPublicKey(publicKey)
+	if err != nil {
+		return "", fmt.Errorf("marshal wrapping public key: %w", err)
+	}
+	return base32Digest(der), nil
+}
+
+// Reference derives the durable DNS-safe reference for sealed material without
+// opening it, so a caller outside this package can construct the reference a
+// lease stores. It attests the shape of the material only — not that any key
+// can open it — so it is never on its own evidence that a secret is
+// recoverable. It refuses malformed material with ErrInvalidMaterial.
+func Reference(material Material) (string, error) {
+	ciphertext, ok := materialCiphertext(material)
+	if !ok {
+		return "", ErrInvalidMaterial
+	}
+	return reference(material, ciphertext), nil
+}
+
+// ReferenceBinds reports whether a durable reference pins exactly this
+// GameServer UID. It is the cleanup-side proof of ownership: a release must not
+// delete a recreated object under the name a lease remembers, and a Kubernetes
+// UID is unique per object, never reused, and not writable by the zone — so it
+// alone settles "is this the object that lease owned".
+//
+// It deliberately does NOT require the envelope, key or port segments to still
+// agree. Those describe the object's sealed admission material, which the zone
+// process itself publishes through the Agones SDK and therefore controls for
+// the object's lifetime; requiring them would let an untrusted zone veto its own
+// cleanup by rewriting one annotation, and would equally strand an object whose
+// annotation is merely absent or unreadable. Both leave an allocated GameServer
+// with no lease naming it. Identity is the proof; the material is not.
+func ReferenceBinds(secretRef string, gameServerUID string) bool {
+	parts := strings.Split(secretRef, ".")
+	if len(parts) != 5 || parts[0] != referencePrefix {
+		return false
+	}
+	if !validGameServerUID(gameServerUID) {
+		return false
+	}
+	return parts[2] == "u"+base32Digest([]byte(gameServerUID))
 }
 
 // Open validates, decrypts, and derives the durable reference for newly
@@ -129,33 +190,49 @@ func (k *Keyring) open(expectedReference string, material Material) (Opened, err
 	}, nil
 }
 
+// validateMaterial requires a retained key and canonical identity and envelope
+// fields, then returns the ciphertext and durable reference without decrypting.
 func (k *Keyring) validateMaterial(
 	material Material,
 ) (*rsa.PrivateKey, []byte, string, bool) {
-	if k == nil ||
-		!validDNSLabel(material.Namespace) ||
+	if k == nil {
+		return nil, nil, "", false
+	}
+	ciphertext, ok := materialCiphertext(material)
+	if !ok {
+		return nil, nil, "", false
+	}
+	privateKey, exists := k.keys[material.WrappingKeyFingerprint]
+	if !exists || len(ciphertext) != privateKey.Size() {
+		return nil, nil, "", false
+	}
+	return privateKey, ciphertext, reference(material, ciphertext), true
+}
+
+// materialCiphertext is the one shape rule for sealed material: every identity
+// field canonical, a port present, and a canonical version-1 envelope. It
+// returns the decoded ciphertext so callers never decode twice.
+func materialCiphertext(material Material) ([]byte, bool) {
+	if !validDNSLabel(material.Namespace) ||
 		!validDNSSubdomain(material.GameServerName) ||
 		!validGameServerUID(material.GameServerUID) ||
 		!validFingerprint(material.WrappingKeyFingerprint) ||
 		material.TLSPort == 0 {
-		return nil, nil, "", false
+		return nil, false
 	}
-	privateKey, exists := k.keys[material.WrappingKeyFingerprint]
-	if !exists {
-		return nil, nil, "", false
-	}
-	ciphertext, ok := decodeEnvelope(material.AdmissionEnvelope)
-	if !ok || len(ciphertext) != privateKey.Size() {
-		return nil, nil, "", false
-	}
-	secretRef := strings.Join([]string{
+	return decodeEnvelope(material.AdmissionEnvelope)
+}
+
+// reference binds the key fingerprint, UID digest, ciphertext digest and TLS
+// port into a versioned reference after the caller has validated the material.
+func reference(material Material, ciphertext []byte) string {
+	return strings.Join([]string{
 		referencePrefix,
 		"k" + material.WrappingKeyFingerprint,
 		"u" + base32Digest([]byte(material.GameServerUID)),
 		"e" + base32Digest(ciphertext),
 		"p" + strconv.FormatUint(uint64(material.TLSPort), 10),
 	}, ".")
-	return privateKey, ciphertext, secretRef, true
 }
 
 func decodeEnvelope(value string) ([]byte, bool) {
@@ -182,14 +259,6 @@ func admissionOAEPLabel(material Material) []byte {
 		material.GameServerUID,
 		material.WrappingKeyFingerprint,
 	}, "\x00"))
-}
-
-func wrappingKeyFingerprint(publicKey *rsa.PublicKey) (string, error) {
-	der, err := x509.MarshalPKIXPublicKey(publicKey)
-	if err != nil {
-		return "", fmt.Errorf("marshal wrapping public key: %w", err)
-	}
-	return base32Digest(der), nil
 }
 
 func base32Digest(value []byte) string {

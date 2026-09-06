@@ -367,6 +367,32 @@ tests must prove that deletion proceeds only after the managed-resource and
 attempt checks and carries the exact UID precondition. Public callers cannot
 reach the claim boundary, and one allocation's token cannot claim another.
 
+### Amendment 2026-09-06 — the envelope digest is not part of the release proof
+
+The stale-attempt release row above names four proofs: attempt digest, allocation
+ID, UID digest and envelope digest. Implementing it (#792) showed the envelope
+digest cannot be one of them, and the implementation deliberately omits it. The
+row stands as the original decision; this is what supersedes it.
+
+The envelope is published by the zone process through the Agones SDK, and the
+SDK sidecar keeps that credential for the object's whole lifetime — this ADR
+says so where it sets the Pod's authority. The zone is an untrusted principal
+here. Requiring the envelope digest to still match therefore hands that
+principal a veto over its own cleanup: one `SetAnnotation` after allocation and
+the digest never matches again, so release reports "not mine", the coordinator
+treats the lease as reclaimed and deletes it, and an Allocated GameServer is
+left with nothing naming it. The same happens without an adversary whenever the
+annotation is absent or unreadable, which is exactly the state of an object
+Agones has already moved on from.
+
+The UID digest already carries the whole property the row exists for. A
+Kubernetes UID is unique per object and never reused, so a newer attempt is a
+different UID and a recreated object under the same name is a different UID;
+the attempt label is checked separately and is not SDK-writable. Identity is
+the proof, and the sealed material — which the object's own process controls —
+is not. `Resolve` is unchanged and still requires the complete reference,
+because there the point is recovering the secret, not proving ownership.
+
 ## Rejected alternatives
 
 ### One Fleet-wide HMAC key

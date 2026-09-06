@@ -679,7 +679,8 @@ everything shipped afterwards is held to.
   expiry and unverified outer cleanup, detaches known-resource fence-and-cleanup from caller
   cancellation, finalizes the allocation before returning connection material, protects
   claimed/stale ownership and supervises exact no-show cleanup without stopping after transient
-  sweep failures; it remains inert until the concrete adapter is composed), and
+  sweep failures; its concrete Agones adapter is `server/agonesresources/`, and it remains inert
+  until a Nakama composition supervises its expiry loop and registers the handoff RPC), and
   the **orphan reconciler** (`server/orphanreaper/` — completes bounded resource
   and private lease scans, protects every stored attempt regardless of expiry,
   requires consecutive orphan observations plus grace, and deletes only the

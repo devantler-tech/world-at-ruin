@@ -36,6 +36,13 @@ const (
 	defaultObserveTimeout   = 10 * time.Second
 )
 
+// AdmissionReadyValue is the exact AdmissionReadyLabel value a zone publishes
+// for one wrapping-key fingerprint and an allocation selects on, so every
+// party composes it from one definition.
+func AdmissionReadyValue(fingerprint string) string {
+	return admissionReadyPrefix + fingerprint
+}
+
 type AdmissionConfig struct {
 	// WrappingPublicKeyPEM is one PEM-encoded PKIX RSA public key. PKCS #1
 	// input is deliberately refused because the protocol fingerprints the
@@ -105,7 +112,7 @@ func PrepareAdmission(ctx context.Context, lifecycleCfg Config, cfg AdmissionCon
 		return nil, fail(errors.New("agones: seal admission secret failed"))
 	}
 	envelope := admissionEnvelopePrefix + base64.RawURLEncoding.EncodeToString(ciphertext)
-	readyValue := admissionReadyPrefix + fingerprint
+	readyValue := AdmissionReadyValue(fingerprint)
 	watchCtx, stopWatch := context.WithCancel(ctx)
 	keepWatch := false
 	defer func() {

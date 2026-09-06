@@ -23,7 +23,6 @@ const (
 	wrappingKeyFingerprintLength = 52
 	leaseObjectIDLength          = 64
 	admissionEnvelopePrefix      = "v1."
-	admissionReadyPrefix         = "v1-"
 	claimLocatorPrefix           = "v1."
 	minAdmissionEnvelopeBytes    = 384
 	maxAdmissionEnvelopeBytes    = 4096
@@ -86,9 +85,26 @@ func NewClient(api allocationpb.AllocationServiceClient, cfg Config) (*Client, e
 		fleet:       cfg.Fleet,
 		tlsPortName: cfg.TLSPortName,
 		fingerprint: cfg.WrappingKeyFingerprint,
-		readyValue:  admissionReadyPrefix + cfg.WrappingKeyFingerprint,
+		readyValue:  agones.AdmissionReadyValue(cfg.WrappingKeyFingerprint),
 	}, nil
 }
+
+// WrappingKeyFingerprint is the envelope-ready pool this client selects, so a
+// composition can prove its keyring opens what it allocates instead of
+// configuring a second copy of the value.
+func (c *Client) WrappingKeyFingerprint() string {
+	return c.fingerprint
+}
+
+// Namespace, Fleet and TLSPortName report the pool this client allocates from,
+// so a composition can prove every client it wires names the same one.
+func (c *Client) Namespace() string { return c.namespace }
+
+// Fleet reports the configured Fleet this client allocates from.
+func (c *Client) Fleet() string { return c.fleet }
+
+// TLSPortName reports the configured player-facing TLS port name.
+func (c *Client) TLSPortName() string { return c.tlsPortName }
 
 // Reserve allocates one envelope-ready GameServer and returns its endpoint
 // together with the validated sealed admission material.
