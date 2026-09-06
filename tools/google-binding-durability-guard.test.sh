@@ -8,6 +8,10 @@ GUARD="$ROOT/tools/google-binding-durability-guard.sh"
 WORKFLOW="$ROOT/.github/workflows/ci.yaml"
 failures=0
 
+# The standalone helper has no module or dependencies; explicit files keep its
+# lexical and I/O regressions on the same Go toolchain as this CI guard suite.
+go test "$ROOT/tools/server-collection-literals/main.go" "$ROOT/tools/server-collection-literals/main_test.go"
+
 # t_fail records a failed assertion while allowing the remaining cases to run.
 t_fail() {
 	printf 'Google binding durability guard test: FAIL — %s\n' "$1" >&2
@@ -136,6 +140,64 @@ expect_fail_matching() {
 		t_fail "$label: refused for the wrong reason — wanted '$needle', got: $out"
 	fi
 }
+
+# collection_literal_cases bind registration to decoded Go string tokens, while
+# comments and larger strings containing collection-looking text remain data.
+collection_literal_cases() {
+	local literal
+	for literal in \
+		'"\x77orld_at_ruin_missing"' \
+		'"\167orld_at_ruin_missing"' \
+		'"\u0077orld_at_ruin_missing"' \
+		'"\U00000077orld_at_ruin_missing"' \
+		'"world_at_ruin_miss\u0069ng"'; do
+		reset_tree
+		printf 'package fixture\nconst Collection = %s\n' "$literal" >"$data/../collection.go"
+		expect_fail_matching "escaped unregistered collection [$literal]" 'world_at_ruin_missing but registers no schema ledger'
+	done
+
+	reset_tree
+	cat >"$data/../collection.go" <<'GO'
+package fixture
+const Hex = "\x77orld_at_ruin_google_identity_bindings"
+const Octal = "\167orld_at_ruin_google_identity_bindings"
+const Unicode = "\u0077orld_at_ruin_google_identity_bindings"
+const UnicodeLong = "\U00000077orld_at_ruin_google_identity_bindings"
+const Suffix = "world_at_ruin_google_identity_binding\u0073"
+GO
+	expect_pass 'escaped registered collections use their decoded mapping'
+
+	reset_tree
+	cat >"$data/../collection.go" <<'GO'
+package fixture
+// "world_at_ruin_missing"
+/* `world_at_ruin_missing` */
+const Message = "\"world_at_ruin_missing\""
+const RawMessage = `documentation: "world_at_ruin_missing"`
+const RawEscapes = `world_at_ruin_\x6dissing`
+GO
+	expect_pass 'comments and quoted collection-looking data register nothing'
+
+	reset_tree
+	printf '%s\n' 'package fixture' 'const Collection = "\x77orld_at_ruin_missing"' >"$data/../collection_test.go"
+	expect_pass 'escaped collections in test code register nothing'
+
+	reset_tree
+	mkdir -p "$repo/server/brokenstore"
+	printf '%s\n' 'package brokenstore' 'const Invalid = "\q"' >"$repo/server/brokenstore/store.go"
+	expect_fail_matching 'malformed Go literal fails closed' 'could not scan collection literals'
+	reset_tree
+}
+
+collection_literal_cases
+if [ "$#" -gt 0 ] && [ "$1" = --collection-literals-only ]; then
+	if [ "$failures" -ne 0 ]; then
+		printf 'Google collection literal tests: %d failure(s)\n' "$failures" >&2
+		exit 1
+	fi
+	printf 'Google collection literal tests: PASS\n'
+	exit 0
+fi
 
 expect_pass 'unchanged shipped schema'
 

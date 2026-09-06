@@ -97,10 +97,7 @@ guard_family() {
 # A sibling mapping names the collection explicitly because collection names and
 # family names differ. Mappings become immutable once present in the reviewed base.
 register_persisted_families() {
-	local base="$1" file dir name ledger mapping collection_pattern
-	# Go raw strings use literal backticks, not shell command substitution.
-	# shellcheck disable=SC2016
-	collection_pattern='"world_at_ruin_[a-z0-9_]+"|`world_at_ruin_[a-z0-9_]+`'
+	local base="$1" file dir name ledger mapping scanner
 	: >"$SCRATCH_DIR/registrations"
 	while IFS= read -r ledger; do
 		mapping="${ledger%_versions.txt}_collection.txt"
@@ -122,16 +119,23 @@ register_persisted_families() {
 	awk '!seen[$0]++ { next } { exit 1 }' "$SCRATCH_DIR/registrations" ||
 		fail 'a collection is registered by multiple schema ledgers in the same package'
 
-	# Inspect every double-quoted or raw collection literal in production files,
-	# including multiple occurrences on one line. This lexical check does not
-	# evaluate dynamically constructed collection names; store review covers those.
+	# Decode actual Go string tokens, including interpreted escapes. Comments and
+	# collection-looking substrings inside larger strings are data. This lexical
+	# check does not evaluate constructed names; store review still covers those.
+	scanner="$SCRATCH_DIR/collection-literals"
+	go build -o "$scanner" "$SCRIPT_DIR/server-collection-literals/main.go" ||
+		fail 'collection literal scanner did not compile'
 	while IFS= read -r file; do
 		[ -f "$file" ] || continue
 		dir="${file%/*}"
+		# Capture the scanner in the foreground so lexical/read errors cannot be
+		# hidden by process substitution and mistaken for an empty inventory.
+		"$scanner" "$file" >"$SCRATCH_DIR/collection-names" ||
+			fail "could not scan collection literals in $file"
 		while IFS= read -r name; do
 			grep -Fxq "$(printf '%s\t%s' "$dir" "$name")" "$SCRATCH_DIR/registrations" ||
 				fail "$dir names Nakama collection $name but registers no schema ledger for that collection ($dir/testdata/shipped_<family>_collection.txt) — every persisted server family must join this gate"
-		done < <(grep -oE "$collection_pattern" "$file" | tr -d '"`' | sort -u)
+		done <"$SCRATCH_DIR/collection-names"
 	done < <(awk '/^server\/.*\.go$/ && !/_test\.go$/ { print }' "$SCRATCH_DIR/head-paths")
 }
 
