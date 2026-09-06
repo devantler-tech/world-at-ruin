@@ -10,6 +10,7 @@ family="${ledger##*/shipped_}"
 family="${family%_versions.txt}"
 contract="${ledger%_versions.txt}_reader.txt"
 
+# fail reports the affected ledger and refusal reason, then exits unsuccessfully.
 fail() {
 	printf 'Server reader contract: FAIL — %s: %s\n' "$ledger" "$1" >&2
 	exit 1

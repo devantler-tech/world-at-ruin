@@ -16,6 +16,7 @@ import (
 	"strings"
 )
 
+// main reports invalid probe inputs or failed private-file instrumentation.
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "server reader probe:", err)
@@ -23,6 +24,7 @@ func main() {
 	}
 }
 
+// run dispatches the reader or fixture probe after checking its argument count.
 func run(args []string) error {
 	if len(args) == 5 && args[0] == "reader" {
 		return instrumentReader(args[1], args[2], args[3], args[4])
@@ -33,6 +35,8 @@ func run(args []string) error {
 	return fmt.Errorf("usage: reader SOURCE FUNCTION OUTPUT MARKER | fixture SOURCE OUTPUT MARKER")
 }
 
+// instrumentReader writes a private reader copy that returns zero state only for
+// marked JSON input, plus the whitespace marker used to identify that input.
 func instrumentReader(source, name, output, markerPath string) error {
 	data, err := os.ReadFile(source)
 	if err != nil {
@@ -119,6 +123,8 @@ func instrumentReader(source, name, output, markerPath string) error {
 	return os.WriteFile(markerPath, []byte(marker), 0600)
 }
 
+// markFixture inserts the reader's whitespace marker into a private fixture copy
+// while preserving valid JSON and leaving its historical field values unchanged.
 func markFixture(source, output, markerPath string) error {
 	data, err := os.ReadFile(source)
 	if err != nil {

@@ -44,6 +44,7 @@ printf 'TestHistoricalReader store.go Read\n' >"$data/shipped_progress_reader.tx
 cp "$repo/server/futurestore/store.go" "$scratch/reader"
 cp "$repo/server/futurestore/store_test.go" "$scratch/test"
 failures=0
+# check compares the real durability guard's exit status with the expected verdict.
 check() {
 	local expected="$1" label="$2" out rc=0
 	out="$(cd "$repo" && BASE_SHA="$base" bash "$ROOT/tools/google-binding-durability-guard.sh" 2>&1)" || rc=$?
