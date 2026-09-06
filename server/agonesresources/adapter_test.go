@@ -46,7 +46,7 @@ const (
 	testTLSPort       = uint16(8443)
 	testZoneDomain    = "zones.example"
 	testNodeName      = "node-a"
-	testUserID        = "user-1"
+	testUserID        = "d95d6008-7542-4a3b-9519-0e2c9b66c50a"
 	testReservationID = "handoff-42"
 	testAttemptID     = "attempt-7"
 	testObserver      = sim.EntityID(42)
