@@ -87,6 +87,7 @@ func _ready() -> void:
 			[CAVE_FRAME, img.get_width(), img.get_height(), CAVE_WIDTH, CAVE_HEIGHT])
 		_finish()
 		return
+	_check_shared_helpers()
 	var cave: Dictionary = Metrics.measure(img)
 	if int(cave["samples"]) <= 0:
 		_fail("fixture yielded no samples at all — the metric never ran")
@@ -314,3 +315,25 @@ func _finish() -> void:
 		return
 	print("TEST PASS — frame separation metric matches its recorded baseline and can report the opposite")
 	get_tree().quit(0)
+
+
+## Law 7: the helpers every measurement tool shares. `luma_buffer` is Rec. 709
+## over the raw RGB8 bytes, `changed_fraction` counts only moves strictly above
+## its step, and `percentile` is the same nearest-rank statistic as `_percentile`.
+func _check_shared_helpers() -> void:
+	var img := Image.create(2, 1, false, Image.FORMAT_RGB8)
+	img.set_pixel(0, 0, Color(1.0, 1.0, 1.0))
+	img.set_pixel(1, 0, Color(0.0, 0.0, 1.0))
+	var lumas := Metrics.luma_buffer(img)
+	if lumas.size() != 2 or absf(lumas[0] - 1.0) > 0.005 or absf(lumas[1] - 0.0722) > 0.005:
+		_fail("luma_buffer of a white and a blue pixel is %s, expected [1.0, 0.0722]" % [lumas])
+	var before := PackedFloat32Array([0.1, 0.2, 0.3, 0.4])
+	var after := PackedFloat32Array([0.1, 0.26, 0.5, 0.4])
+	if absf(Metrics.changed_fraction(before, after, 0.05) - 0.5) > 0.0001:
+		_fail("changed_fraction over 0.05 is %.4f, expected 0.5 (one move of exactly 0.06, one of 0.2)"
+			% Metrics.changed_fraction(before, after, 0.05))
+	if Metrics.changed_fraction(before, after, 0.25) != 0.0:
+		_fail("changed_fraction over 0.25 counted a move that did not exceed it")
+	var ramp := PackedFloat32Array([1.0, 2.0, 3.0, 4.0, 5.0])
+	if Metrics.percentile(ramp, 0.95) != Metrics._percentile(ramp, 0.95):
+		_fail("percentile and _percentile disagree on the same population")

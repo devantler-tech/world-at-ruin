@@ -72,12 +72,20 @@ const COL_EMBER := Color(1.0, 0.55, 0.18)
 ## Returned by surface_height_at outside the terrain grid: "no ground here".
 const NO_GROUND := -1.0e6
 
+## The opt-in raised exposed-stone overlay (#547, ADR 0001): one batched render-only
+## `MeshInstance3D` sharing the terrain material, present only under
+## `WAR_GROUND_PLATES=1`. Collision for its tops is #548.
+const GROUND_PLATES_NODE := "GroundPlates"
+
 var _noise := FastNoiseLite.new()
 var _detail := FastNoiseLite.new()
 var _tint := FastNoiseLite.new()
 var _foliage_density := FastNoiseLite.new()
 var _region_foliage_enabled := false
 var _heights := PackedFloat32Array()
+var _terrain_material: ShaderMaterial
+var _ground_plates_enabled := false
+var _ground_plates_stats := {}
 ## The ground regions this world was dealt, built once at generation and read
 ## for every terrain vertex. See [GroundRegions].
 var _region_sites: Array[GroundRegions.Site] = []
@@ -140,6 +148,10 @@ func _ready() -> void:
 	# LAST: foliage keeps out of every landmark, so it needs the ruin sites and
 	# the shrine to already exist in the tree.
 	_scatter_foliage()
+	# LAST of all, and only opted in: the raised slab overlay keeps out of the
+	# starter cave, so its hull padding has to be known (#547).
+	if _ground_plates_enabled:
+		_build_ground_plates()
 
 func _process(delta: float) -> void:
 	_time += delta
@@ -329,7 +341,9 @@ func _build_terrain() -> void:
 	# default-on (product law 2). With it off the shader folds every
 	# plate-derived term back to the previous ash/rock surface, so a default
 	# boot is unchanged.
-	mat.set_shader_parameter("plates_enabled", OS.get_environment("WAR_GROUND_PLATES") == "1")
+	_ground_plates_enabled = OS.get_environment("WAR_GROUND_PLATES") == "1"
+	mat.set_shader_parameter("plates_enabled", _ground_plates_enabled)
+	_terrain_material = mat
 	mesh.surface_set_material(0, mat)
 
 	var mi := MeshInstance3D.new()
@@ -373,6 +387,66 @@ func _add_tri(st: SurfaceTool, a: Vector3, b: Vector3, c: Vector3) -> void:
 	for v: Vector3 in [a, c, b]:
 		st.set_color(_ground_color(centre, v))
 		st.add_vertex(v)
+
+## The raised exposed-stone overlay (#547): one batched, render-only mesh built
+## from the same deterministic slab field the terrain shader paints, sharing the
+## terrain's ShaderMaterial so every lifted top renders as the slab beneath it.
+## Nothing here touches the base terrain, its collision or any height query —
+## the overlay only ADDS geometry above the ground, which is what keeps every
+## plates-off golden byte-identical. Tops gain collision in #548.
+func _build_ground_plates() -> void:
+	var geometry := ExposedSlabGeometry.new()
+	var result := geometry.build(
+		ExposedSlabField.new(), WORLD_SEED, SIZE, QUADS,
+		surface_height_at, surface_normal_at, rendered_ground_color_at, cave_protects)
+	_ground_plates_stats = result[&"stats"] as Dictionary
+	var mesh := result[&"mesh"] as ArrayMesh
+	if mesh == null:
+		return
+	mesh.surface_set_material(0, _terrain_material)
+	var mi := MeshInstance3D.new()
+	mi.name = GROUND_PLATES_NODE
+	mi.mesh = mesh
+	# No cast shadow: the lips are 6–14 cm, their side faces already darken by
+	# the sun's angle, and the shadow passes were most of the overlay's cost —
+	# measured with plate_geometry_budget at 1280×720 on Apple M2 Pro, the
+	# overlay's p95 wall-clock delta over the shader-only state fell from
+	# 1.34 ms (11 extra pass-level draw calls) to 0.52 ms (one draw call) when
+	# shadow casting was switched off. The lost contact shadow behind a lip is a
+	# recorded remaining gap, not an accident.
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(mi)
+
+
+## Flip the plate treatment in a RUNNING world — the shader uniform and the
+## raised overlay together, so a measurement tool can compare both states of one
+## build under one set of lights (`plate_crawl` and the geometry budget tool).
+## The overlay is built on the first `true` if the world booted with the flag
+## off; afterwards it is only shown or hidden. The ordinary game never calls
+## this: it reads `WAR_GROUND_PLATES` once at generation.
+func set_ground_plates_enabled(on: bool) -> void:
+	_ground_plates_enabled = on
+	if _terrain_material != null:
+		_terrain_material.set_shader_parameter("plates_enabled", on)
+	# The cave's terrain-contact ring carries the same uniform and must not be
+	# left painting slabs over ash-only ground at the seam it exists to hide.
+	for cave in find_children("*", "CaveSystemGen", true, false):
+		(cave as CaveSystemGen).set_plates_enabled(on)
+	var overlay := get_node_or_null(GROUND_PLATES_NODE) as MeshInstance3D
+	if overlay == null:
+		if on:
+			_build_ground_plates()
+		return
+	overlay.visible = on
+
+
+## What the overlay build counted — candidates, slabs, exposed, built, vertices,
+## triangles, surfaces and the per-slab triangle maximum — or an empty dictionary
+## when the flag was off and nothing was built. A copy: callers cannot edit the
+## record the budget tool reports from.
+func ground_plates_stats() -> Dictionary:
+	return _ground_plates_stats.duplicate()
+
 
 ## `shade` decides the height blend and the scorch pooling; `palette_at` decides
 ## WHICH ground's colours those are drawn from. They are separate arguments so

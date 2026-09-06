@@ -127,6 +127,64 @@ static func _collect(img: Image, lumas: PackedFloat32Array, hues: PackedFloat32A
 ## or below which at least `q` of the population falls, i.e. 1-based rank
 ## `ceil(q * n)`.
 ##
+## Nearest-rank percentile of an already-sorted population — the one definition
+## every capture tool shares (see `_percentile` for why it is spelled this way).
+static func percentile(sorted_values: PackedFloat32Array, q: float) -> float:
+	return _percentile(sorted_values, q)
+
+
+## Rec. 709 luma of every pixel of `img`, row-major, read out of the raw RGB8
+## buffer rather than through `get_pixel()` — a 1280×720 frame is ~920k pixels
+## and a tool compares several of them per run.
+static func luma_buffer(img: Image) -> PackedFloat32Array:
+	var rgb := img.duplicate() as Image
+	rgb.convert(Image.FORMAT_RGB8)
+	var data := rgb.get_data()
+	var out := PackedFloat32Array()
+	out.resize(rgb.get_width() * rgb.get_height())
+	for i in out.size():
+		var o := i * 3
+		out[i] = (float(data[o]) * 0.2126 + float(data[o + 1]) * 0.7152
+			+ float(data[o + 2]) * 0.0722) / 255.0
+	return out
+
+
+## What FRACTION of two equal-length luma buffers moved by more than `step`.
+## A count rather than a mean or a maximum: a mean averages a local artifact
+## away against the calm ground around it, and a maximum is decided by one
+## pixel on any thin high-contrast feature; many pixels flipping at once is
+## what a real change — or a real flicker — looks like.
+static func changed_fraction(a: PackedFloat32Array, b: PackedFloat32Array, step: float) -> float:
+	var n := mini(a.size(), b.size())
+	if n == 0:
+		return 0.0
+	var moved := 0
+	for i in n:
+		if absf(a[i] - b[i]) > step:
+			moved += 1
+	return float(moved) / float(n)
+
+
+## Hide everything that could move or draw over a measured frame between two
+## states of one build: the named movers under `main`, and every 2D surface main
+## has opened over the frame, matched by TYPE rather than by name — on a first
+## run that is the character creator, added unnamed as `@CharacterCreator@nnn`,
+## which a name list silently misses (it did, for three runs' worth of
+## `relief_read` readings). Returns what was hidden, for the tool's log.
+static func quiet(main: Node, mover_names: Array[String]) -> Array[String]:
+	var hidden: Array[String] = []
+	for node_name in mover_names:
+		var node := main.get_node_or_null(NodePath(node_name))
+		if node != null and "visible" in node:
+			node.set("visible", false)
+			hidden.append(node_name)
+	for child in main.get_children():
+		if (child is CanvasLayer or child is Control) and not String(child.name) in hidden:
+			child.set("visible", false)
+			hidden.append(String(child.name))
+	return hidden
+
+
 ## Spelled out because the obvious-looking `int(q * (n - 1))` is a DIFFERENT
 ## statistic — linear interpolation's index, truncated — and the two diverge by
 ## one sample on most populations. They happen to coincide at the 57600 samples

@@ -51,7 +51,7 @@ func _ready() -> void:
 		_report()
 		return
 
-	_test_shader_source_contract()
+	_test_shader_source_contract(field_script.get_script_constant_map())
 	_test_shader_interior_fixture(field)
 	_test_shader_boundary_fixture(field)
 	_test_shader_triple_fixture(field)
@@ -367,7 +367,7 @@ func _distance_to_vertices(point: Vector2, polygon: PackedVector2Array) -> float
 ## Runtime GPU values are not readable in headless Godot. The fixed CPU
 ## fixtures therefore join to these whitespace-independent shader guards, the
 ## same pattern used by plate_junction_test for the fragment-only partition.
-func _test_shader_source_contract() -> void:
+func _test_shader_source_contract(constants: Dictionary) -> void:
 	var partition := _source(PARTITION_PATH)
 	var ground := _source(GROUND_SHADER_PATH)
 	var noise := _source(NOISE_PATH)
@@ -423,6 +423,16 @@ func _test_shader_source_contract() -> void:
 		"floatsheet=clamp(smoothstep(-ew,ew,exposed_edge)+rock_mix,0.0,1.0);",
 		"floatslab_pick=hash3(vec3(plate_id*2.3,19.0));",
 		"floatis_slab=step(0.60,slab_pick);",
+		# The slope-aware bare-rock term ExposedSlabField.rock_mix_for mirrors (#547).
+		# Built FROM the mirror's constants — read through the loaded script, never a
+		# parse-time class reference, so a missing field still reports TEST FAIL — so
+		# editing the shader literal and the pinned string together still fails until
+		# the GDScript constant follows.
+		"uniformfloatrock_slope:hint_range(0.0,1.0)=%s;" % constants.get(&"ROCK_SLOPE"),
+		"floatslope=clamp(1.0-n.y,0.0,1.0);",
+		"floatash_edge=slope+(drift-0.5)*%s-rock_slope;" % constants.get(&"DRIFT_TILT"),
+		"floataw=clamp(max(ash_contact,fwidth(ash_edge)*1.2),ash_contact,max(ash_contact,0.25));",
+		"floatrock_mix=plates_enabled?smoothstep(-aw,aw,ash_edge):smoothstep(rock_slope-0.12,rock_slope+0.12,slope+(drift-0.5)*0.22);",
 	]
 	for law in ground_laws:
 		if not compact_ground.contains(law):

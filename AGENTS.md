@@ -701,6 +701,35 @@ everything shipped afterwards is held to.
   Nakama RPC registration and broader persistence remain later children of the server-foundation
   epic (#4);
   `deploy/` (platform manifests) arrives later per the roadmap.
+- **Raised exposed-stone overlay (#547, ADR 0001) — render-only, default-off, one batch.** Under
+  `WAR_GROUND_PLATES=1` `WorldGen` adds one `GroundPlates` `MeshInstance3D` after the rest of the
+  world is built: `ExposedSlabGeometry` walks the deterministic `ExposedSlabField`, lifts every slab
+  whose site and enough of whose corners the field decides are exposed (`MIN_EXPOSED_CORNER_SHARE`)
+  by a per-slab integer-hashed thickness, closes the lip with side strips buried below the ground,
+  and packs all of it into ONE `ArrayMesh` surface sharing the terrain's `ShaderMaterial` — the
+  shader derives plate identity, substance and exposure from world position, so a lifted top renders
+  as the slab beneath it and no slab owns a node, material or draw call. The overlay casts no shadow:
+  measured, the shadow passes were most of its cost (p95 wall-clock delta 1.34 ms → 0.52 ms at
+  1280×720 on Apple M2 Pro), and a 6–14 cm side face already darkens by the sun's angle. Tops conform to the ground
+  EXACTLY: each polygon is split along the terrain grid lines and quad diagonals it crosses so every
+  piece lies in one terrain triangle, and the side strips split at the same crossings.
+  `exposed_slab_geometry_test` holds that law on a hand-built creased ground and on the real world,
+  proves two fresh builds agree, and proves the flag-off world's terrain mesh, collision, heights and
+  foliage are byte-identical with the flag on — the flag-on node tree is the flag-off tree plus that one
+  overlay node. **Nothing walks on the lifted tops yet:**
+  collision and surface queries are #548, so with the flag on a player's feet still stand on the base
+  ground beneath a raised top, and the treatment stays opt-in until that lands. The overlay keeps out
+  of `cave_protects`. `WorldGen.set_ground_plates_enabled()` flips the terrain uniform, the cave's terrain-contact
+  uniform and the overlay together in a running world so a measurement tool can compare both
+  states of one build; the ordinary game reads the flag once at generation. The cost instrument is
+  [`client/tools/plate_geometry_budget.gd`](client/tools/plate_geometry_budget.gd) (windowed only,
+  1280×720, VSync off, shipping volumetrics): it reads the viewport's measured GPU frame time for
+  600 steady frames per state and reports candidate/slab/exposed/built counts, vertices, triangles,
+  surfaces and draw calls. **On Metal that GPU timer reads 0.0 in every frame, as ADR 0001 already
+  recorded for the command-line profiler, and the tool reports UNAVAILABLE rather than a pass** —
+  it prints wall-clock frame time beside it as a GPU-bound *proxy* for what a player feels, never as
+  the budget measurement. Its frames are the close-range evidence under
+  `docs/evidence/issue-547-ground-plate-geometry/`.
 - **Changing any persisted player-data format:** follow the
   [forward-only save-data migration contract](docs/design/save-data.md). It defines the staged
   expand → bake → contract rollout, the version-bump checklist, and the refusal rules for the
