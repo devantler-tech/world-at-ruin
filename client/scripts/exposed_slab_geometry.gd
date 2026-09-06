@@ -324,6 +324,10 @@ static func _emit_slab(st: SurfaceTool, polygon: PackedVector2Array, thickness: 
 	for index in polygon.size():
 		var a := polygon[index]
 		var b := polygon[(index + 1) % polygon.size()]
+		# An edge at or below WELD collapses `edge_crossings` to a single parameter, so
+		# it emits no side quad at all — deliberately, since a sub-tenth-of-a-millimetre
+		# face is far below anything a frame resolves. This guard is the coarser EPS one
+		# only because a zero-length edge must not reach `normalized()` below.
 		var edge := b - a
 		if edge.length_squared() <= EPS * EPS:
 			continue

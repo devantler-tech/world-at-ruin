@@ -243,7 +243,6 @@ func _measure(state: String, plates: bool, overlay_visible: bool) -> Dictionary:
 		&"gpu_p95": FrameMetrics.percentile(gpu, 0.95),
 		&"gpu_max": gpu[gpu.size() - 1],
 		&"cpu_p95": FrameMetrics.percentile(cpu, 0.95),
-		&"wall_p5": FrameMetrics.percentile(wall, 0.05),
 		&"wall_p50": FrameMetrics.percentile(wall, 0.50),
 		&"wall_p95": FrameMetrics.percentile(wall, 0.95),
 		&"zero_fraction": float(zeros) / float(MEASURE_FRAMES),
