@@ -1065,7 +1065,7 @@ everything shipped afterwards is held to.
     fetches a revocation head — which the boundary treats as fail-closed, so no update can currently
     be authorized at all. Declaring
     `auto_updates` now would make `brew upgrade` skip the cask and strand players on the version
-    they installed. Add it only once the self-updater ships (#106). The `postflight`
+    they installed. Add it only once the self-updater ships (#106). The `postflight_steps`
     quarantine strip is **mandatory, not cosmetic** — the build is ad-hoc signed
     (`codesign/codesign=1` with an empty identity), so Gatekeeper blocks it otherwise.
     No `verified:` on the `url`: `brew audit --strict` rejects it when the download and homepage

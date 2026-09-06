@@ -408,6 +408,13 @@ zone/dungeon server:
   Agones fake clientset through success, replay, duplicates, an unobservable
   dispatch, a late commit, a response that disagrees with the object, caller
   cancellation, every changed reference component, and stale release.
+  The handoff integration suite composes the real coordinator, lease store,
+  allocation client, resource adapter and keyring over that same fake cluster
+  and the shared Nakama storage fake. It checks durable finalization before
+  returning connection material, restart without redispatch, recovery after a
+  committed allocation loses its response, exact-UID expiry/replacement, and
+  cleanup across multiple storage pages. Stored records remain private and
+  contain neither raw nor base64-encoded admission secrets.
 - **`cmd/zone/`** — a runnable skeleton server. It boots the demo zone and either
   runs a fixed number of deterministic ticks (printing the state hash) or drives
   the loop from the wall clock. With `-replicate` it also runs the full
