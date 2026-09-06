@@ -285,21 +285,11 @@ func authenticatedSubjectID(
 	ctx context.Context,
 	requestedSubjectID string,
 ) (string, error) {
-	if ctx == nil {
-		return "", errors.New(
-			"nakama character: authenticated subject is required",
-		)
-	}
-	callerSubjectID, ok := ctx.Value(runtime.RUNTIME_CTX_USER_ID).(string)
-	callerSubjectID = strings.ToLower(callerSubjectID)
-	requestedSubjectID = strings.ToLower(requestedSubjectID)
-	if !ok ||
-		!nakamastorage.ValidSubjectID(callerSubjectID) ||
-		!nakamastorage.ValidSubjectID(requestedSubjectID) ||
-		callerSubjectID != requestedSubjectID {
+	subjectID, ok := nakamastorage.AuthenticatedSubjectID(ctx, requestedSubjectID)
+	if !ok {
 		return "", errors.New(
 			"nakama character: authenticated subject must own the character",
 		)
 	}
-	return callerSubjectID, nil
+	return subjectID, nil
 }
