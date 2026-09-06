@@ -118,10 +118,14 @@ rather than the only line.
   advances the `latest` tag before `publish-release` makes the asset public, so a
   manifest carrying a delivery URL would be live while that URL still answers
   404. CD must stage the digest without advancing the live channel, publish and
-  verify the release asset, and only then promote that digest to `latest`; a
-  failed publication or verification leaves the previous contract live. Promotion
+  verify the release asset, confirm the contract itself is anonymously readable at that
+  digest — the `verify-ghcr-public` check, which a private package fails — and only then
+  promote that digest to `latest`. Both verifications enter the durable eligibility record,
+  because promoting on the delivery check alone can expose a contract every client gets a
+  401 fetching. A failed publication or verification of either kind leaves the
+  previous contract live. Promotion
   is **monotonic and eligibility-aware**: per-tag CD runs overlap, so `latest`
-  converges on the greatest release that has passed both gates — never on a newer
+  converges on the greatest release that has passed every gate — never on a newer
   immutable tag that has not yet been verified, and never backwards onto an older
   one whose verification finished late. That needs verification recorded durably
   per version and a promotion that is **serialized or a genuine compare-and-swap**:
