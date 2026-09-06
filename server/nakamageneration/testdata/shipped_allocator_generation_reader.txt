@@ -1,0 +1,1 @@
+TestEveryShippedGenerationSchemaStaysReadable document.go decodeDocument
