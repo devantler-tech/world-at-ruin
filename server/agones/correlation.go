@@ -5,6 +5,8 @@ import (
 	"encoding/base32"
 	"errors"
 	"strings"
+
+	"github.com/devantler-tech/world-at-ruin/server/internal/handoffidentity"
 )
 
 const (
@@ -28,17 +30,5 @@ func CorrelationLabel(value string) (string, error) {
 }
 
 func validCorrelationID(value string) bool {
-	if value == "" || len(value) > 128 {
-		return false
-	}
-	for _, char := range value {
-		if (char < 'a' || char > 'z') &&
-			(char < 'A' || char > 'Z') &&
-			(char < '0' || char > '9') &&
-			char != '-' &&
-			char != '_' {
-			return false
-		}
-	}
-	return true
+	return handoffidentity.CorrelationID(value)
 }
