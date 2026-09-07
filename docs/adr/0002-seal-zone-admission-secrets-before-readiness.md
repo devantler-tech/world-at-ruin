@@ -203,13 +203,15 @@ than a timeout heuristic:
   selected allocator Pod UID. The RPC connects to that exact endpoint rather
   than a Service that could route it to an unrecorded process. Any membership
   change opens a new generation; it never mutates an existing member set.
-- To close a generation, the supervisor first persists `draining`, which
-  prevents new dispatches from selecting it. It then records a termination
-  proof for every immutable member UID: either the exact Pod reached a
-  terminal phase or that exact UID is absent after its owning ReplicaSet is
-  scaled to zero or superseded. A replacement Pod has a different UID and
-  belongs to a new generation. Only the complete proof set permits the
-  exact-version transition to `fenced`.
+- To close a generation, the supervisor must serialize admission against
+  persisting `draining`; reading `open` and independently writing a lease is
+  insufficient because draining can occur between those operations. It then
+  requires proof that every actor capable of committing an old allocation
+  has lost that ability. Pod API absence, terminal phase, or ReplicaSet desired
+  count zero alone do not establish this proof. A replacement Pod has a
+  different UID and belongs to a new generation, but does not prove the old
+  process stopped. Only a complete, trustworthy proof set permits the
+  exact-version transition to `fenced`; the proof mechanism remains unimplemented.
 - A coordinator restart re-reads the lease's pinned generation and the
   matching durable fence record. It accepts the fence only when the generation
   ID and member-set digest match and every recorded member UID has a
@@ -218,6 +220,18 @@ than a timeout heuristic:
   exact-attempt list: a match is reconciled or released; zero matches makes the
   old attempt definitively unallocated and permits a newer attempt. It still
   never dispatches the fenced attempt again.
+
+**Correction recorded with #825:** the original termination criterion above
+accepted a terminal Pod phase or UID absence after ReplicaSet scale-down. That
+criterion was insufficient: Kubernetes can remove a force-deleted Pod without
+confirmation that its process stopped, and can mark Pods Failed after losing a node.
+This means those API observations cannot establish that a late allocation is
+impossible. The read-only `allocatordiscovery` component preserves these observations
+without converting them into fence evidence. It also cannot authenticate the RPC
+process behind an observed IP; address reuse and shared certificates still require
+an identity binding at dispatch. No replacement fencing mechanism is adopted here;
+quarantine remains until the authority boundary is implemented and proved.
+[Kubernetes Pod lifecycle](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#forced-pod-termination).
 
 The reference is a lowercase DNS-subdomain value compatible with the current
 Nakama schema:
