@@ -804,6 +804,33 @@ everything shipped afterwards is held to.
   suite on a machine with a played save can also `export WAR_SAVE_PATH=/tmp/probe.json
   WAR_VAULT_PATH=/tmp/probe_vault.json WAR_BOOT_RECOVERY_PATH=/tmp/probe_recovery.json` to keep all
   three fully out of reach.
+- **Server save history:** every persisted server schema uses
+  `server/<package>/testdata/shipped_<family>_versions.txt` and
+  `golden_<family>_v<N>.json`. The server durability check discovers ledgers in both the reviewed base
+  and candidate tree, preserves all historical fixture bytes, validates complete additions, and refuses
+  any Nakama collection literal in production Go files without its own family ledger in the same
+  package. Each ledger has a sibling `shipped_<family>_collection.txt` containing the exact collection
+  name; mappings are immutable once shipped, and independent schemas may share a collection.
+  `server/persisted-write-sites.txt` separately binds each production `StorageWrite` method reference
+  and imported `playerstate.RecordWrite` reference to its schema ledger(s), by source file, enclosing
+  receiver/function, boundary and ordinal. Missing, stale or duplicate registrations fail. This includes
+  imported collection constants, method values, closures, package initializers and aliased imports;
+  persistence-boundary dot imports are refused. The collection-literal scan remains an additional check.
+  This inventory is a review tripwire, not semantic schema inference: multiplexing formats inside an
+  existing site, type aliases or a new persistence API still require explicit schema-owner review and
+  complete family registration. New persistence boundaries must extend the scanner before use.
+  Run `BASE_SHA=<reviewed-base> ./tools/google-binding-durability-guard.sh` from the repository root
+  and its adjacent `.test.sh` regression suite. Each family also names its exact historical Go test,
+  production source file and raw-JSON decoder function in `shipped_<family>_reader.txt`. The guard compiles the
+  package test binary, requires that test to pass without skips and cover the named production reader,
+  then marks each private fixture with harmless internal JSON whitespace. The marked control must pass;
+  returning zero values only for marked decoder input must fail the same test. Corrupting each fixture
+  must also fail. These probes bind fixture input and reader-output assertions; they do not certify
+  every field or array shape. `tools/server-reader-contract.test.sh` exercises that registration.
+  Store tests retain the semantic assertions:
+  character, binding and audit tests assert preserved fields; lease fixtures retain each shipped shape's fields
+  alongside separate transition tests. Fixture immutability alone does not prove lossless reading.
+  Follow [the server save-data contract](docs/design/server-save-data.md) for schema changes.
 - **Validate the server before every PR:** from `server/`, `gofmt -l .` (must print nothing),
   `go vet ./...`, `golangci-lint run ./...`, `go test -race ./...` (includes the tick-determinism
   and golden-hash tests), `go build ./...`, and `govulncheck ./...`; run `govulncheck ./...` from

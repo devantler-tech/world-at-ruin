@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -979,6 +980,8 @@ func TestApplyCreatesAPlayerRecordConditionallyWithItsAudit(t *testing.T) {
 	}
 }
 
+// TestEveryShippedAuditSchemaStaysReadable pins every persisted audit field to
+// independent expectations, including the outcome used to replay a mutation.
 func TestEveryShippedAuditSchemaStaysReadable(t *testing.T) {
 	t.Parallel()
 
@@ -992,6 +995,20 @@ func TestEveryShippedAuditSchemaStaysReadable(t *testing.T) {
 	lines := strings.Fields(string(ledgerBytes))
 	if len(lines) == 0 {
 		t.Fatal("audit schema ledger is empty")
+	}
+	wantDocuments := []auditDocument{
+		{
+			Schema:           1,
+			IdempotencyKey:   "quest:ember:reward",
+			RecordCollection: "world_at_ruin_inventory",
+			RecordKey:        "carried",
+			Operation:        "grant_item",
+			Payload:          json.RawMessage(`{"item_id":"ash-blade","quantity":1}`),
+			Outcome:          json.RawMessage(`{"item_count":1}`),
+		},
+	}
+	if len(lines) != len(wantDocuments) {
+		t.Fatalf("audit ledger has %d versions, but preservation is checked for %d", len(lines), len(wantDocuments))
 	}
 	for index, line := range lines {
 		version, err := strconv.Atoi(line)
@@ -1019,11 +1036,12 @@ func TestEveryShippedAuditSchemaStaysReadable(t *testing.T) {
 		if err != nil {
 			t.Fatalf("decode audit schema %d golden: %v", version, err)
 		}
-		if document.Schema != version {
+		if !reflect.DeepEqual(document, wantDocuments[index]) {
 			t.Fatalf(
-				"audit schema %d golden declares %d",
+				"audit schema %d lost historical semantics: got %+v, want %+v",
 				version,
-				document.Schema,
+				document,
+				wantDocuments[index],
 			)
 		}
 	}
