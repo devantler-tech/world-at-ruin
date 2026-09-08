@@ -8,7 +8,7 @@ require (
 	github.com/gofrs/uuid/v5 v5.5.1
 	github.com/heroiclabs/nakama-common v1.47.0
 	github.com/heroiclabs/nakama/v3 v3.40.0
-	google.golang.org/api v0.295.0
+	google.golang.org/api v0.296.0
 	google.golang.org/grpc v1.83.2
 	google.golang.org/protobuf v1.36.12
 	k8s.io/api v0.37.0
