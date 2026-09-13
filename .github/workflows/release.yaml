@@ -31,5 +31,11 @@ jobs:
   release:
     name: 🎉 Create Release
     uses: devantler-tech/actions/.github/workflows/create-release.yaml@a147ead8b8bc937fbfb1974e3698c7e32f95517d # v13.5.1
+    with:
+      # Skip semantic-release's success/fail hooks, which comment on referenced
+      # issues and PRs. A bare `fix #N` meant for another repository otherwise
+      # fails the run after the tag and draft release already exist
+      # (devantler-tech/actions#610). Publishing the draft is unaffected.
+      disable-issue-side-effects: true
     secrets:
       APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
