@@ -1,5 +1,6 @@
-# lychee reads this file from the repository root on its own; MegaLinter passes no --config.
-# Command-line settings (the timeout in .mega-linter.yml) still apply on top of it.
+# MegaLinter passes this file to lychee with --config when it exists at the repository root
+# (verified: an invalid value here fails the lint job). The timeout in .mega-linter.yml is
+# passed on the command line alongside it and still applies.
 
 # docs.godotengine.org rate-limits bursts. Several Godot class pages are cited from the same
 # documents, and lychee fetches URLs concurrently, so the host answers the first request and
@@ -9,4 +10,4 @@
 # changes, and only for this host.
 [hosts."docs.godotengine.org"]
 concurrency = 1
-request_interval = "PROOF-deliberately-invalid"
+request_interval = "1s"
