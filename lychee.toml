@@ -1,0 +1,12 @@
+# lychee reads this file from the repository root on its own; MegaLinter passes no --config.
+# Command-line settings (the timeout in .mega-linter.yml) still apply on top of it.
+
+# docs.godotengine.org rate-limits bursts. Several Godot class pages are cited from the same
+# documents, and lychee fetches URLs concurrently, so the host answers the first request and
+# returns 429 Too Many Requests for the next. A 429 describes our request rate, not the link,
+# so the answer is to pace requests to that host, not a .lycheeignore entry that would stop
+# checking valid links for good. Both links are still checked on every run; only the rate
+# changes, and only for this host.
+[hosts."docs.godotengine.org"]
+concurrency = 1
+request_interval = "PROOF-deliberately-invalid"
