@@ -307,7 +307,7 @@ cannot release a newer session.
 |---|---|
 | Successful handoff | Finalize the exact GameServer and `SecretRef` before returning an endpoint or token. |
 | Agones timeout after allocation | Keep the dispatch quarantined and list managed GameServers with the exact attempt digest. Reconcile one match, or release it if the lease expired. For duplicates, release each matching object individually with its own exact-UID precondition. Never retry allocation for that attempt. No-match observation alone is not a completion fence. |
-| Empty pool (definitive unallocated answer) | Fence the dispatched version as `releasing`, release by the exact attempt label, then delete the lease and return `ResourceExhausted`; a fresh attempt may follow. Never allocate the same attempt again. If the fence loses to an adopter that finalized a commit the answer hid, return that winner. A failed release leaves a `releasing` lease the next expiry sweep reclaims without waiting for expiry. |
+| Empty pool (definitive unallocated answer; refinement recorded with #818, 2026-09-22) | Fence the dispatched version as `releasing`, release by the exact attempt label, then delete the lease and return `ResourceExhausted`; a fresh attempt may follow. Never allocate the same attempt again. If the fence loses to an adopter that finalized a commit the answer hid, return that winner. A failed release leaves a `releasing` lease the next expiry sweep reclaims without waiting for expiry. |
 | Same-attempt replay | Reuse the staging expiry and the exact attempt-labelled GameServer. A dispatched no-match attempt remains ambiguous and does not allocate again. |
 | Same reservation, newer transport attempt | Adopt an ambiguous older dispatch as the durable owner and observe only its exact attempt, or resolve its unexpired finalized allocation; never dispatch the transient retry. Every published allocation and ambiguous post-dispatch error refuses outer response cleanup, so either finalization order is safe and the existing no-show lease is the sole bounded cleanup owner. Only an expired older lease is marked `releasing`, deleted by exact UID, and replaced. A new logical operation uses a new reservation. |
 | Stale-attempt release | Validate the attempt digest, allocation ID, UID digest, and envelope digest; never delete a newer attempt's GameServer. |
@@ -517,14 +517,16 @@ Secret, or namespace-wide Secret authority is introduced.
 An ambiguous Agones dispatch can temporarily quarantine one reservation until
 the labelled GameServer appears or an allocator-generation fence proves the
 operation dead. This deliberately trades availability for the guarantee that a
-late server-side commit cannot race a second allocation. An empty pool is not
-ambiguous and does not quarantine: the allocator's definitive answer releases
-the attempt at once (see the #818 refinement), accepting that a write the answer
-hid and that lands after the release is briefly a leaked, never-admitted
-GameServer until the orphan reconciler's grace elapses. The
-Agones SDK sidecar retains its official Kubernetes credential, but the zone
-container's token path is shadowed and raw admission material never enters
-Kubernetes credentials or Secrets.
+late server-side commit cannot race a second allocation. The Agones SDK sidecar
+retains its official Kubernetes credential, but the zone container's token path
+is shadowed and raw admission material never enters Kubernetes credentials or
+Secrets.
+
+**Refinement recorded with #818 (2026-09-22):** an empty pool is not ambiguous
+and does not quarantine: the allocator's definitive answer releases the attempt
+at once, accepting that a write the answer hid and that lands after the release
+is briefly a leaked, never-admitted GameServer until the orphan reconciler's
+grace elapses.
 
 The result preserves the current HMAC token and durable lease seams while
 making each GameServer its own admission authority. A compromised zone can

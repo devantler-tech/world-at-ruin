@@ -2286,7 +2286,7 @@ func requireLeaseAbsent(t *testing.T, store *nakamalease.Store, failure string) 
 	}
 }
 
-// requireAttemptLabelRelease asserts the terminal release discovered the
+// releaseWhileFenced asserts the terminal release discovered the
 // attempt by its label alone while the durable lease still fenced it, because
 // the orphan reconciler relies on resource cleanup preceding lease removal.
 func releaseWhileFenced(store *nakamalease.Store) func(nakamalease.Lease) error {
