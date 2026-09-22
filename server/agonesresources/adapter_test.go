@@ -15,8 +15,10 @@ import (
 	"testing"
 	"time"
 
+	"agones.dev/agones/pkg/allocation/converters"
 	allocationpb "agones.dev/agones/pkg/allocation/go"
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
+	allocationv1 "agones.dev/agones/pkg/apis/allocation/v1"
 	agonesfake "agones.dev/agones/pkg/client/clientset/versioned/fake"
 	"github.com/devantler-tech/world-at-ruin/server/admissionref"
 	"github.com/devantler-tech/world-at-ruin/server/agones"
@@ -418,7 +420,24 @@ func (f *fixture) selectReady(
 			return candidate.DeepCopy(), nil
 		}
 	}
-	return nil, status.Error(codes.ResourceExhausted, "no Ready GameServer matches")
+	return nil, emptyPoolAnswer()
+}
+
+// emptyPoolAnswer is the exact error the pinned Agones allocator returns when
+// no Ready GameServer matches the selector, built through Agones's own
+// converter with its default unallocated code so the fixture cannot drift from
+// the real answer. It takes no *testing.T because gRPC handlers call it off
+// the test goroutine.
+func emptyPoolAnswer() error {
+	_, err := converters.ConvertGSAToAllocationResponse(
+		&allocationv1.GameServerAllocation{
+			Status: allocationv1.GameServerAllocationStatus{
+				State: allocationv1.GameServerAllocationUnAllocated,
+			},
+		},
+		codes.ResourceExhausted,
+	)
+	return err
 }
 
 // applyPatch copies allocation-request labels and annotations to the selected
@@ -772,6 +791,8 @@ func TestProvisionRefusesAnObjectThatDisagreesWithTheResponse(t *testing.T) {
 
 // TestAllocationFailureNeverObservesOrReleases checks that allocator refusal
 // ends provisioning after its initial discovery, with no cleanup or material.
+// A status that shares the empty-pool code without being the allocator's own
+// answer stays ambiguous, because it cannot prove nothing was allocated.
 func TestAllocationFailureNeverObservesOrReleases(t *testing.T) {
 	f := newFixture(t, nil)
 	f.allocations.setHandler(func(*allocationpb.AllocationRequest) (*allocationpb.AllocationResponse, error) {
@@ -782,8 +803,36 @@ func TestAllocationFailureNeverObservesOrReleases(t *testing.T) {
 	if status.Code(err) != codes.ResourceExhausted || !isZeroProvisioned(got) {
 		t.Fatalf("Provision = %+v, %v; want the allocator's refusal", got, err)
 	}
+	if errors.Is(err, handoffalloc.ErrUnallocated) {
+		t.Fatal("a foreign refusal was reported as definitively unallocated")
+	}
 	if f.actions("list") != 1 || f.actions("delete") != 0 {
 		t.Fatalf("a refused dispatch performed %d lists and %d deletes", f.actions("list"), f.actions("delete"))
+	}
+}
+
+// TestProvisionReportsAnEmptyPoolAsDefinitivelyUnallocated maps the allocator's
+// own empty-pool answer to the coordinator's terminal outcome, after exactly
+// one dispatch, while observation of the same attempt stays ambiguous.
+func TestProvisionReportsAnEmptyPoolAsDefinitivelyUnallocated(t *testing.T) {
+	f := newFixture(t, nil)
+
+	got, err := f.adapter.Provision(context.Background(), request(), testExpiry)
+	assertCode(t, err, handoffalloc.ErrUnallocated, codes.ResourceExhausted)
+	if !isZeroProvisioned(got) {
+		t.Fatalf("unallocated outcome returned material: %+v", got)
+	}
+	if f.allocations.count() != 1 || f.actions("list") != 1 || f.actions("delete") != 0 {
+		t.Fatalf(
+			"empty pool made %d dispatches, %d lists and %d deletes; want one dispatch after one discovery",
+			f.allocations.count(), f.actions("list"), f.actions("delete"),
+		)
+	}
+
+	_, err = f.adapter.Reconcile(context.Background(), request(), testExpiry)
+	assertCode(t, err, ErrAmbiguousDispatch, codes.Unavailable)
+	if f.allocations.count() != 1 {
+		t.Fatalf("allocation RPCs = %d, want observation never to dispatch", f.allocations.count())
 	}
 }
 

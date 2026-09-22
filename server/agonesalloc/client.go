@@ -11,8 +11,54 @@ import (
 	allocationpb "agones.dev/agones/pkg/allocation/go"
 	"github.com/devantler-tech/world-at-ruin/server/agones"
 	"github.com/devantler-tech/world-at-ruin/server/internal/handoffidentity"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+// ErrUnallocated is the allocator's own answer that one allocation request
+// allocated no GameServer: Agones's UnAllocated state (no Ready GameServer
+// matched the selector — an empty pool) or its Contention state. Every other
+// failure, including a transport-generated status that shares one of those
+// codes, keeps its own status because it cannot prove nothing was allocated.
+//
+// Agones retries a request whose GameServer update it saw fail, and answers
+// UnAllocated once a retry finds no Ready GameServer — yet a failed update can
+// still have committed. So this proves the allocator completed no allocation
+// for the request, not that no write it sent can still land. A caller that
+// treats it as terminal must release by the exact attempt label before
+// forgetting the attempt.
+var ErrUnallocated = status.Error(
+	codes.ResourceExhausted,
+	"agonesalloc: no GameServer was allocated",
+)
+
+// unallocatedAnswers are the exact statuses the pinned Agones allocator
+// returns for those two states (pkg/allocation/converters). UnAllocated
+// carries the allocator's configured unallocated code, ResourceExhausted by
+// default; an allocator configured with another code falls back to the
+// ambiguous outcome, which only costs availability. Matching the message as
+// well as the code keeps a gRPC transport limit or a proxy's rate limit, which
+// also report ResourceExhausted, out of the terminal outcome.
+var unallocatedAnswers = []struct {
+	code    codes.Code
+	message string
+}{
+	{codes.ResourceExhausted, "there is no available GameServer to allocate"},
+	{codes.Aborted, "too many concurrent requests have overwhelmed the system"},
+}
+
+func unallocated(err error) bool {
+	answer, ok := status.FromError(err)
+	if !ok {
+		return false
+	}
+	for _, known := range unallocatedAnswers {
+		if answer.Code() == known.code && answer.Message() == known.message {
+			return true
+		}
+	}
+	return false
+}
 
 const (
 	fleetLabel       = agones.FleetLabel
@@ -142,6 +188,9 @@ func (c *Client) Reserve(ctx context.Context, request Request) (GameServer, erro
 		},
 	})
 	if err != nil {
+		if unallocated(err) {
+			return GameServer{}, ErrUnallocated
+		}
 		return GameServer{}, status.Error(
 			status.Code(err),
 			"agonesalloc: reserve GameServer",

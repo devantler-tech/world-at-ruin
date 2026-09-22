@@ -676,7 +676,9 @@ everything shipped afterwards is held to.
   attempt, lets transport retries observe ambiguous dispatches or reuse finalized unclaimed
   allocations without redispatch, retains every published resource and ambiguous post-dispatch
   outcome against overlapping response-failure cleanup, quarantines unresolved dispatches against
-  expiry and unverified outer cleanup, detaches known-resource fence-and-cleanup from caller
+  expiry and unverified outer cleanup, releases at once a dispatch the allocator answered
+  definitively unallocated (an empty pool — fenced, released by attempt label, then forgotten, so a
+  fresh attempt may follow), detaches known-resource fence-and-cleanup from caller
   cancellation, finalizes the allocation before returning connection material, protects
   claimed/stale ownership and supervises exact no-show cleanup without stopping after transient
   sweep failures; its concrete Agones adapter is `server/agonesresources/`, and it remains inert

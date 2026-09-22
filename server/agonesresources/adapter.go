@@ -6,9 +6,12 @@
 // resolve that recomputes every durable reference component, and release that
 // deletes only with each target's own UID precondition.
 //
-// The allocator-generation fence that ADR 0002 names as the only other way to
-// clear a dispatched-no-match quarantine is a separate authority and is not
-// composed here; until it exists an ambiguous dispatch stays quarantined
+// A dispatch the allocator answered without allocating anything — an empty
+// pool, or allocation contention — is reported as handoffalloc.ErrUnallocated,
+// which the coordinator treats as terminal. Every other dispatch failure stays
+// ambiguous. The allocator-generation fence that ADR 0002 names as the other
+// way to clear a dispatched-no-match quarantine is a separate authority and is
+// not composed here; until it exists an ambiguous dispatch stays quarantined
 // exactly as the coordinator already keeps it.
 package agonesresources
 
@@ -259,6 +262,13 @@ func (a *Adapter) observe(
 		AttemptID:     request.AttemptID,
 		LeaseObjectID: nakamalease.ReservationKey(request.UserID, request.ReservationID),
 	})
+	if errors.Is(err, agonesalloc.ErrUnallocated) {
+		// The allocator's own answer for this one dispatch: terminal, not
+		// ambiguous. Anything a failed-but-committed update left behind is
+		// deleted by the coordinator's attempt-label release before it forgets
+		// the attempt.
+		return handoffalloc.Provisioned{}, handoffalloc.ErrUnallocated
+	}
 	if err != nil {
 		return handoffalloc.Provisioned{}, err
 	}

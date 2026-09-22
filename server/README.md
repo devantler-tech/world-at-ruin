@@ -265,8 +265,12 @@ zone/dungeon server:
   version-one admission envelope. The returned endpoint includes the validated
   fingerprint and sealed envelope so an allocated lease remains resolvable
   across wrapping-key rotation. Allocation refusals preserve the stable gRPC
-  code without reflecting upstream text. Hermetic tests exercise the real
-  generated client/server path.
+  code without reflecting upstream text. The allocator's own answer that it
+  allocated nothing — Agones's exact UnAllocated (empty pool) and Contention
+  statuses — is reported as `ErrUnallocated`; a status that merely shares one of
+  those codes, such as a transport size limit, is not. Hermetic tests exercise
+  the real generated client/server path and build those answers through
+  Agones's own converter.
 - **`gameserverapi/`** — the least-privilege **Agones GameServer resource
   boundary** used by durable handoff reconciliation. Its Kubernetes seam
   exposes only namespaced `get`, `list`, and `delete`: no create, update, patch,
@@ -358,7 +362,13 @@ zone/dungeon server:
   and secret reference replace the intent durably. A replay, restart or
   concurrent loser reconciles only that attempt and never issues a second
   allocation call. Timeout, cancellation and other ambiguous outcomes retain
-  the dispatched attempt in quarantine. A transport retry with the same
+  the dispatched attempt in quarantine. The allocator's own answer that the one
+  dispatch allocated nothing (`ErrUnallocated` — an empty pool) is terminal
+  instead: the attempt is fenced as `releasing`, released by its attempt label,
+  and its lease deleted, so ordinary capacity pressure answers the player with
+  `ResourceExhausted` and a fresh attempt may follow rather than bricking the
+  reservation. Only the dispatch can carry that answer; the same value from
+  observation stays ambiguous. A transport retry with the same
   reservation adopts that durable attempt for observation-only reconciliation;
   a retry after finalization resolves the same unclaimed allocation. Reused
   and newly published allocations are retained on downstream response failure so
@@ -401,18 +411,22 @@ zone/dungeon server:
   precondition, leaves absence and a changed UID untouched, and discovers a
   staging lease by its attempt label alone. Observer binding is an injected
   policy the adapter does not own, and a handoff advertises
-  `<node name>.<zone domain>` because certificates bind node names. The
-  allocator-generation fence ADR 0002 names as the only other way to clear a
-  dispatched-no-match quarantine is a separate authority that is not composed
-  yet. Hermetic tests drive the real generated allocation gRPC path and the
-  Agones fake clientset through success, replay, duplicates, an unobservable
-  dispatch, a late commit, a response that disagrees with the object, caller
-  cancellation, every changed reference component, and stale release.
+  `<node name>.<zone domain>` because certificates bind node names. An empty
+  pool's allocator answer is reported as the coordinator's terminal
+  `ErrUnallocated`. The allocator-generation fence ADR 0002 names as the other
+  way to clear a dispatched-no-match quarantine is a separate authority that is
+  not composed yet. Hermetic tests drive the real generated allocation gRPC path
+  and the Agones fake clientset through success, replay, duplicates, an
+  unobservable dispatch, a late commit, an empty pool, a response that
+  disagrees with the object, caller cancellation, every changed reference
+  component, and stale release.
   The handoff integration suite composes the real coordinator, lease store,
   allocation client, resource adapter and keyring over that same fake cluster
   and the shared Nakama storage fake. It checks durable finalization before
   returning connection material, restart without redispatch, recovery after a
-  committed allocation loses its response, exact-UID expiry/replacement, and
+  committed allocation loses its response, exact-UID expiry/replacement, an
+  empty pool releasing its attempt and admitting the next one, the exact-UID
+  deletion of a commit an unallocated answer hid, and
   cleanup across multiple storage pages. Stored records remain private and
   contain neither raw nor base64-encoded admission secrets.
 - **`cmd/zone/`** — a runnable skeleton server. It boots the demo zone and either

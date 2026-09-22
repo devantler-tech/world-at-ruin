@@ -252,3 +252,67 @@ func TestHandoffIntegrationExpiryPreservesARecreatedGameServer(t *testing.T) {
 		t.Fatalf("old lease remained after its exact resource was gone: %v", err)
 	}
 }
+
+// An empty pool is terminal for its one dispatch: the lease is gone at once,
+// and the next attempt allocates once capacity returns.
+func TestHandoffIntegrationEmptyPoolReleasesTheAttemptAndPermitsTheNext(t *testing.T) {
+	f := newFixture(t, nil)
+	storage := nakamastoragetest.New()
+	now := testExpiry.Add(-time.Minute)
+	coordinator, store := handoffCoordinator(t, f, storage, &now)
+	got, err := coordinator.Allocate(context.Background(), request())
+	if !errors.Is(err, handoffalloc.ErrUnallocated) || status.Code(err) != codes.ResourceExhausted ||
+		!isZeroAllocation(got) {
+		t.Fatalf("empty pool = %v, want the terminal unallocated outcome without material", err)
+	}
+	if _, err := store.Load(context.Background(), testUserID, testReservationID); !errors.Is(err, nakamalease.ErrNotFound) {
+		t.Fatalf("empty pool left a lease behind: %v", err)
+	}
+	if len(storage.Objects()) != 0 || f.allocations.count() != 1 || f.actions("delete") != 0 {
+		t.Fatal("empty pool left storage, redispatched or deleted something")
+	}
+
+	f.seed(f.readyGameServer("zone-one", "uid-one"))
+	next := request()
+	next.AttemptID = "attempt-after-capacity"
+	got, err = coordinator.Allocate(context.Background(), next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertHandoffAllocation(t, got, "zone-one", testExpiry)
+	if f.allocations.count() != 2 {
+		t.Fatalf("allocation RPCs = %d, want one per attempt", f.allocations.count())
+	}
+}
+
+// Agones can answer UnAllocated after a GameServer update it saw fail had in
+// fact committed, so the terminal release must delete, by its own UID, anything
+// the answer hid before the lease that protects its attempt from the orphan
+// sweep is removed.
+func TestHandoffIntegrationUnallocatedAnswerDeletesAHiddenCommit(t *testing.T) {
+	f := newFixture(t, nil)
+	f.seed(f.readyGameServer("zone-hidden", "uid-hidden"))
+	storage := nakamastoragetest.New()
+	now := testExpiry.Add(-time.Minute)
+	coordinator, store := handoffCoordinator(t, f, storage, &now)
+	f.allocations.setHandler(func(req *allocationpb.AllocationRequest) (*allocationpb.AllocationResponse, error) {
+		if _, err := f.commitAllocation(req); err != nil {
+			return nil, err
+		}
+		return nil, emptyPoolAnswer()
+	})
+	got, err := coordinator.Allocate(context.Background(), request())
+	if !errors.Is(err, handoffalloc.ErrUnallocated) || !isZeroAllocation(got) {
+		t.Fatalf("hidden commit = %v, want the terminal unallocated outcome without material", err)
+	}
+	if f.exists("zone-hidden") || !reflect.DeepEqual(f.deletedUIDs(), []types.UID{"uid-hidden"}) {
+		t.Fatal("the terminal release did not delete the hidden commit by its own UID")
+	}
+	if _, err := store.Load(context.Background(), testUserID, testReservationID); !errors.Is(err, nakamalease.ErrNotFound) {
+		t.Fatalf("hidden commit left a lease behind: %v", err)
+	}
+	if f.allocations.count() != 1 {
+		t.Fatalf("allocation RPCs = %d, want the single dispatch", f.allocations.count())
+	}
+	assertSecretsAbsent(t, storage, "zone-hidden")
+}

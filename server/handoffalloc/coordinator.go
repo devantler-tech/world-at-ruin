@@ -9,6 +9,7 @@ import (
 
 	"github.com/devantler-tech/world-at-ruin/server/handoff"
 	"github.com/devantler-tech/world-at-ruin/server/nakamalease"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
@@ -41,6 +42,14 @@ var (
 	ErrInvalidResource = errors.New(
 		"handoff allocation: resource does not match durable lease",
 	)
+	// ErrUnallocated is the terminal outcome of a dispatch the allocator
+	// answered without allocating anything; see GameServerResources for who may
+	// report it. It carries ResourceExhausted so a player's client can back off
+	// and ask again, and the attempt it names is already gone when it returns.
+	ErrUnallocated = status.Error(
+		codes.ResourceExhausted,
+		"handoff allocation: no GameServer is available",
+	)
 )
 
 // Provisioned pairs player connection material with the durable reference to
@@ -58,6 +67,24 @@ type Provisioned struct {
 // implementation is the agonesresources package. Release must also discover
 // an attempt from AttemptID alone when a staging lease has no allocation material
 // yet; this makes a crash after Provision recoverable.
+//
+// A Provision failure is ambiguous by default: once the dispatch barrier is
+// durable, a timeout, cancellation, connection loss, unavailable response or
+// any other error cannot prove that nothing was allocated, so the coordinator
+// keeps the attempt quarantined. Provision reports ErrUnallocated (matched with
+// errors.Is) only for the allocator's own answer that this one dispatch
+// allocated nothing — for Agones, the UnAllocated answer an empty pool
+// produces, or the Contention answer. That is terminal for the dispatch: the
+// coordinator fences the attempt as releasing, releases it by AttemptID alone,
+// deletes its lease and lets a fresh attempt allocate, never sending the same
+// attempt a second allocation. The answer proves the allocator completed no
+// allocation, not that no write it sent can still land — Agones can answer
+// UnAllocated after an update it saw fail, and that update may have committed —
+// which is why that release precedes the lease's removal: anything that did
+// commit is deleted by its own UID, and a write landing afterwards is a
+// lease-less orphan for the orphan reconciler.
+// Reconcile never dispatches, so it never holds that answer; the coordinator
+// treats ErrUnallocated from Reconcile as ambiguous.
 type GameServerResources interface {
 	Provision(context.Context, handoff.AllocationRequest, time.Time) (Provisioned, error)
 	Reconcile(context.Context, handoff.AllocationRequest, time.Time) (Provisioned, error)
@@ -250,6 +277,17 @@ func (c *Coordinator) Allocate(
 			StagedCleanupTimeout,
 		)
 		defer cancel()
+		// Only the one dispatch can carry the allocator's answer. It exists in
+		// this process alone, so settling it survives caller cancellation.
+		if dispatch && errors.Is(err, ErrUnallocated) {
+			if fenced, settleErr := c.releaseUnallocated(
+				progressCtx,
+				request,
+				staging,
+			); fenced {
+				return handoff.Allocation{}, settleErr
+			}
+		}
 		if winner, progressed, winnerErr := c.resolveProgressedAttempt(
 			progressCtx,
 			request,
@@ -305,6 +343,29 @@ func (c *Coordinator) Allocate(
 	}
 	provisioned.Allocation.RetainOnFailure = true
 	return provisioned.Allocation, nil
+}
+
+// releaseUnallocated settles a dispatch the allocator answered without
+// allocating anything: it fences the exact dispatched version as releasing,
+// then completes the release through the ordinary attempt reconciliation, which
+// deletes anything carrying the attempt label before removing the lease. It
+// reports fenced=false, leaving the ambiguous path to decide, when that version
+// can no longer be fenced — a concurrent adopter may already have finalized an
+// object the allocator committed while answering unallocated. Once the fence
+// holds, a failed completion is still finished by the expiry sweep, which
+// reclaims a releasing lease without waiting for its expiry.
+func (c *Coordinator) releaseUnallocated(
+	ctx context.Context,
+	request handoff.AllocationRequest,
+	staging nakamalease.Record,
+) (fenced bool, err error) {
+	if _, fenceErr := c.leases.BeginRelease(ctx, staging, request.AttemptID); fenceErr == nil {
+		if releaseErr := c.reconcileAttempt(ctx, request, nil); releaseErr != nil {
+			return true, ErrReconciliation
+		}
+		return true, ErrUnallocated
+	}
+	return false, nil
 }
 
 func (c *Coordinator) resolveProgressedAttempt(

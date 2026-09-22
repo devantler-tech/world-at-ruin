@@ -663,6 +663,10 @@ func TestAllocateQuarantinesCanceledAndAmbiguousDispatchOutcomes(t *testing.T) {
 		{name: "canceled", err: context.Canceled},
 		{name: "deadline exceeded", err: context.DeadlineExceeded},
 		{name: "ambiguous backend failure", err: errors.New("unknown allocation outcome")},
+		{name: "unavailable", err: status.Error(codes.Unavailable, "allocator unreachable")},
+		// Shares ErrUnallocated's code but is not that answer: a transport limit
+		// or a proxy's rate limit cannot prove nothing was allocated.
+		{name: "foreign resource exhausted", err: status.Error(codes.ResourceExhausted, "rate limited")},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			storage := nakamastoragetest.New()
@@ -2270,3 +2274,228 @@ func TestReleaseReplayIsIdempotentAfterTheLeaseIsGone(t *testing.T) {
 }
 
 var _ handoff.Allocator = (*Coordinator)(nil)
+
+func requireLeaseAbsent(t *testing.T, store *nakamalease.Store, failure string) {
+	t.Helper()
+	if _, err := store.Load(
+		context.Background(),
+		testUserID,
+		testReservationID,
+	); !errors.Is(err, nakamalease.ErrNotFound) {
+		t.Fatalf(failure, err)
+	}
+}
+
+// requireAttemptLabelRelease asserts the terminal release discovered the
+// attempt by its label alone while the durable lease still fenced it, because
+// the orphan reconciler relies on resource cleanup preceding lease removal.
+func releaseWhileFenced(store *nakamalease.Store) func(nakamalease.Lease) error {
+	return func(lease nakamalease.Lease) error {
+		record, err := loadReleaseLease(store)
+		if err != nil {
+			return err
+		}
+		if !record.Lease.Releasing || !record.Lease.Dispatched {
+			return fmt.Errorf("released before the attempt was fenced: %+v", record.Lease)
+		}
+		if lease.AllocationID != "" || !lease.Staging {
+			return fmt.Errorf("release named an allocation the allocator never made: %+v", lease)
+		}
+		return nil
+	}
+}
+
+func TestAllocateReleasesADefinitivelyUnallocatedDispatch(t *testing.T) {
+	f := newCoordinatorFixture(t)
+	f.resources.provisionErr = ErrUnallocated
+	f.resources.releaseCheck = releaseWhileFenced(f.store)
+
+	got, err := f.coordinator.Allocate(context.Background(), validRequest())
+	if !errors.Is(err, ErrUnallocated) || status.Code(err) != codes.ResourceExhausted {
+		t.Fatalf("unallocated dispatch error = %v, want ErrUnallocated", err)
+	}
+	if !reflect.DeepEqual(got, handoff.Allocation{}) {
+		t.Fatalf("unallocated dispatch returned material: %+v", got)
+	}
+	requireLeaseAbsent(t, f.store, "unallocated dispatch kept its lease: %v")
+	if !reflect.DeepEqual(
+		f.resources.events,
+		[]string{"provision:attempt-7", "release:attempt-7"},
+	) {
+		t.Fatalf("unallocated events = %v, want one dispatch then its release", f.resources.events)
+	}
+
+	// The terminal outcome leaves nothing for the no-show sweep to wait on.
+	f.resources.events = nil
+	later := newTestCoordinatorAt(t, f.resources, f.store, func() time.Time {
+		return testNow.Add(10 * time.Minute)
+	})
+	reconcileTestExpiry(t, later)
+	if len(f.resources.events) != 0 {
+		t.Fatalf("expiry sweep found unallocated work: %v", f.resources.events)
+	}
+
+	// A fresh attempt proceeds, and each attempt dispatches exactly once.
+	f.resources.provisionErr = nil
+	f.resources.releaseCheck = nil
+	next, err := f.coordinator.Allocate(context.Background(), requestForAttempt("attempt-8"))
+	if err != nil {
+		t.Fatalf("fresh attempt after an unallocated dispatch returned an error: %v", err)
+	}
+	if !reflect.DeepEqual(next, retainedAllocation(validAllocation())) {
+		t.Fatalf("fresh attempt allocation = %+v, want %+v", next, validAllocation())
+	}
+	if len(f.resources.provisions) != 2 ||
+		f.resources.provisions[0].AttemptID != testAttemptID ||
+		f.resources.provisions[1].AttemptID != "attempt-8" ||
+		len(f.resources.reconciliations) != 0 {
+		t.Fatalf(
+			"dispatches = %+v, reconciliations = %+v; want one per attempt",
+			f.resources.provisions,
+			f.resources.reconciliations,
+		)
+	}
+}
+
+func TestServiceHandoffAfterAnEmptyPoolSucceedsOnTheNextAttempt(t *testing.T) {
+	f := newCoordinatorFixture(t)
+	f.resources.provisionErr = ErrUnallocated
+	service := newTestHandoffService(t, f.coordinator, testAttemptID, "attempt-8")
+
+	if _, err := service.CreateHandoff(
+		context.Background(),
+		validHandoffRequest(),
+	); status.Code(err) != codes.ResourceExhausted {
+		t.Fatalf("empty-pool CreateHandoff status = %s, want ResourceExhausted", status.Code(err))
+	}
+	requireLeaseAbsent(t, f.store, "empty-pool handoff kept its lease: %v")
+
+	f.resources.provisionErr = nil
+	if _, err := service.CreateHandoff(
+		context.Background(),
+		validHandoffRequest(),
+	); err != nil {
+		t.Fatalf("retry after capacity returned an error: %v", err)
+	}
+	if len(f.resources.provisions) != 2 ||
+		f.resources.provisions[0].AttemptID != testAttemptID ||
+		f.resources.provisions[1].AttemptID != "attempt-8" ||
+		len(f.resources.reconciliations) != 0 {
+		t.Fatalf(
+			"dispatches = %+v, reconciliations = %+v; want one per attempt",
+			f.resources.provisions,
+			f.resources.reconciliations,
+		)
+	}
+}
+
+// TestReconcileCannotReportAnAttemptUnallocated keeps the quarantine when the
+// terminal answer arrives from observation: only the one dispatch can carry
+// the allocator's answer, so the same value from Reconcile is ambiguous.
+func TestReconcileCannotReportAnAttemptUnallocated(t *testing.T) {
+	f := newAmbiguousCoordinatorFixture(t)
+	if _, err := f.coordinator.Allocate(
+		context.Background(),
+		validRequest(),
+	); status.Code(err) != codes.Unavailable {
+		t.Fatalf("first ambiguous dispatch status = %s, want Unavailable", status.Code(err))
+	}
+	f.resources.reconcileErr = ErrUnallocated
+
+	for _, retry := range []handoff.AllocationRequest{
+		validRequest(),
+		requestForAttempt("transport-retry"),
+	} {
+		if _, err := f.coordinator.Allocate(context.Background(), retry); err == nil {
+			t.Fatalf("reconciled %s returned nil, want the retained quarantine", retry.AttemptID)
+		}
+		record := loadTestLease(t, f.store, "load quarantine after reconciliation: %v")
+		if record.Lease.AttemptID != testAttemptID ||
+			!record.Lease.Staging ||
+			!record.Lease.Dispatched ||
+			record.Lease.Releasing {
+			t.Fatalf("quarantine after %s = %+v, want dispatched staging", retry.AttemptID, record.Lease)
+		}
+	}
+	if len(f.resources.provisions) != 1 || len(f.resources.releases) != 0 {
+		t.Fatalf(
+			"reconciled unallocated answer dispatched %d times and released %+v",
+			len(f.resources.provisions),
+			f.resources.releases,
+		)
+	}
+}
+
+// TestUnallocatedReleaseFailureIsFinishedByTheExpirySweep keeps the empty-pool
+// guarantee when the terminal release itself fails: the fenced attempt is
+// reclaimed by the next sweep without waiting for its expiry.
+func TestUnallocatedReleaseFailureIsFinishedByTheExpirySweep(t *testing.T) {
+	f := newCoordinatorFixture(t)
+	f.resources.provisionErr = ErrUnallocated
+	f.resources.releaseErr = errors.New("transient cleanup failure")
+
+	if _, err := f.coordinator.Allocate(
+		context.Background(),
+		validRequest(),
+	); !errors.Is(err, ErrReconciliation) {
+		t.Fatalf("failed unallocated release error = %v, want ErrReconciliation", err)
+	}
+	record := loadTestLease(t, f.store, "load fenced unallocated attempt: %v")
+	if !record.Lease.Releasing || !record.Lease.Dispatched {
+		t.Fatalf("failed unallocated release left %+v, want a fenced attempt", record.Lease)
+	}
+
+	f.resources.releaseErr = nil
+	reconcileTestExpiry(t, f.coordinator)
+	requireLeaseAbsent(t, f.store, "expiry sweep kept the fenced unallocated attempt: %v")
+	if len(f.resources.provisions) != 1 {
+		t.Fatalf("recovery dispatched %d times, want the one unallocated dispatch", len(f.resources.provisions))
+	}
+}
+
+// TestUnallocatedAnswerYieldsToAnAdopterThatObservedAHiddenCommit covers an
+// unallocated answer that hid an update which did commit: a
+// transport retry that adopted the attempt and finalized the observed object
+// wins, and the unallocated answer never releases it.
+func TestUnallocatedAnswerYieldsToAnAdopterThatObservedAHiddenCommit(t *testing.T) {
+	f := newCoordinatorFixture(t)
+	f.resources.provisionErr = ErrUnallocated
+	f.resources.provisionCheck = func(
+		request handoff.AllocationRequest,
+		_ time.Time,
+	) error {
+		current, err := f.store.Load(
+			context.Background(),
+			request.UserID,
+			request.ReservationID,
+		)
+		if err != nil {
+			return fmt.Errorf("load dispatched attempt: %w", err)
+		}
+		_, err = f.store.Finalize(
+			context.Background(),
+			current,
+			leaseFromProvisioned(
+				request,
+				f.resources.provisioned,
+				f.resources.provisioned.Allocation.LeaseExpiresAt,
+			),
+		)
+		return err
+	}
+
+	got, err := f.coordinator.Allocate(context.Background(), validRequest())
+	if err != nil {
+		t.Fatalf("Allocate did not yield to the finalized adopter: %v", err)
+	}
+	if !reflect.DeepEqual(got, retainedAllocation(validAllocation())) {
+		t.Fatalf("yielded allocation = %+v, want retained %+v", got, validAllocation())
+	}
+	if len(f.resources.releases) != 0 {
+		t.Fatalf("unallocated answer released the adopter's allocation: %+v", f.resources.releases)
+	}
+	record := loadTestLease(t, f.store, "load adopter's allocation: %v")
+	if record.Lease.Staging || record.Lease.Releasing || record.Lease.AllocationID != validAllocation().ID {
+		t.Fatalf("adopter's allocation = %+v, want the finalized lease", record.Lease)
+	}
+}
