@@ -34,6 +34,10 @@ const SHARED: Array[String] = [
 
 
 func _ready() -> void:
+	var broken := _normaliser_self_check()
+	if broken != "":
+		_fail(broken)
+		return
 	var ground := _declarations(GROUND_SHADER_PATH)
 	if ground.has("error"):
 		_fail(ground["error"])
@@ -77,8 +81,9 @@ func _ready() -> void:
 
 
 ## Every top-level `uniform` declaration in [param path], keyed by name, with the
-## declaration normalised so a reformat is not a divergence: whitespace collapsed
-## and every numeric literal rewritten as its value, so `0.50` and `0.5` agree.
+## declaration normalised so a reformat is not a divergence: whitespace collapsed,
+## spacing around punctuation dropped, and every numeric literal rewritten as its
+## 32-bit value, so `0.50` and `0.5` agree while `1e-7` and `2e-7` do not.
 ## Returns `{"decls": {...}}`, or `{"error": message}` when the file cannot be
 ## read or a declaration cannot be parsed. A declaration the parser skipped would
 ## otherwise be one this test never compared.
@@ -111,15 +116,43 @@ func _normalise(text: String) -> String:
 	var spaces := RegEx.new()
 	spaces.compile("\\s+")
 	var collapsed := spaces.sub(text, " ", true)
+	var punctuation := RegEx.new()
+	punctuation.compile(" ?([,()=:\\[\\]]) ?")
+	collapsed = punctuation.sub(collapsed, "$1", true)
 	var number := RegEx.new()
 	number.compile("(?<![\\w.])\\d+(?:\\.\\d*)?(?:[eE][-+]?\\d+)?")
 	var out := ""
 	var at := 0
 	for m: RegExMatch in number.search_all(collapsed):
 		out += collapsed.substr(at, m.get_start() - at)
-		out += String.num(float(m.get_string()), 6)
+		# Shader floats are 32-bit: two literals the GPU stores identically agree,
+		# and any two it stores differently stay distinct.
+		out += String.num(PackedFloat32Array([float(m.get_string())])[0])
 		at = m.get_end()
 	return out + collapsed.substr(at)
+
+
+## The comparison is only as good as _normalise(): a reformat must compare equal,
+## and two values the GPU stores differently must not. Returns "" when both hold.
+func _normaliser_self_check() -> String:
+	var same := [
+		["uniform float x : hint_range(0.0, 1.0) = 0.5", "uniform float x:hint_range(0.0,1.0)=0.50"],
+		["uniform vec3 c = vec3( 0.2 , 0.1, 1 )", "uniform vec3 c=vec3(0.2,0.1,1.0)"],
+		["uniform float x = 0.1", "uniform float x = 0.10000000001"],
+	]
+	for pair: Array in same:
+		if _normalise(pair[0]) != _normalise(pair[1]):
+			return "the normaliser reads a reformat as a divergence: `%s` became `%s` but `%s` became `%s`" % [
+				pair[0], _normalise(pair[0]), pair[1], _normalise(pair[1])]
+	var different := [
+		["uniform float x = 0.0000001", "uniform float x = 0.0000002"],
+		["uniform float x = 130.0", "uniform float x = 131.0"],
+	]
+	for pair: Array in different:
+		if _normalise(pair[0]) == _normalise(pair[1]):
+			return "the normaliser hides a real difference: `%s` and `%s` both became `%s`" % [
+				pair[0], pair[1], _normalise(pair[0])]
+	return ""
 
 
 func _fail(message: String) -> void:
