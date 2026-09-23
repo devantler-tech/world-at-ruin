@@ -16,6 +16,8 @@ import (
 	"github.com/devantler-tech/world-at-ruin/server/nakamalease"
 	"github.com/devantler-tech/world-at-ruin/server/nakamastorage/nakamastoragetest"
 	"github.com/devantler-tech/world-at-ruin/server/sim"
+	"github.com/heroiclabs/nakama-common/api"
+	"github.com/heroiclabs/nakama-common/runtime"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -2450,6 +2452,138 @@ func TestUnallocatedReleaseFailureIsFinishedByTheExpirySweep(t *testing.T) {
 	requireLeaseAbsent(t, f.store, "expiry sweep kept the fenced unallocated attempt: %v")
 	if len(f.resources.provisions) != 1 {
 		t.Fatalf("recovery dispatched %d times, want the one unallocated dispatch", len(f.resources.provisions))
+	}
+}
+
+// TestUnallocatedFenceWriteFailureIsRetried keeps the empty-pool guarantee when
+// the fence write itself fails. Nothing else fences a dispatched attempt, so
+// giving up after one storage failure would leave the reservation quarantined
+// for good; a fence that committed but lost its acknowledgement is finished at
+// once rather than left for the sweep.
+func TestUnallocatedFenceWriteFailureIsRetried(t *testing.T) {
+	// Versions 1 and 2 are the staging lease and its dispatch barrier, so the
+	// unallocated fence is the third write.
+	const fenceWrite = 3
+	for _, test := range []struct {
+		name   string
+		inject func(*nakamastoragetest.Fake, func(int) error)
+	}{
+		{
+			name: "rejected before commit",
+			inject: func(storage *nakamastoragetest.Fake, fail func(int) error) {
+				storage.BeforeWrite = fail
+			},
+		},
+		{
+			name: "committed with a lost acknowledgement",
+			inject: func(storage *nakamastoragetest.Fake, fail func(int) error) {
+				storage.AfterWrite = fail
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newCoordinatorFixture(t)
+			f.resources.provisionErr = ErrUnallocated
+			f.resources.releaseCheck = releaseWhileFenced(f.store)
+			failed := false
+			test.inject(f.storage, func(version int) error {
+				if version == fenceWrite && !failed {
+					failed = true
+					return errors.New("test storage: injected fence write failure")
+				}
+				return nil
+			})
+
+			got, err := f.coordinator.Allocate(context.Background(), validRequest())
+			if !errors.Is(err, ErrUnallocated) || status.Code(err) != codes.ResourceExhausted {
+				t.Fatalf("unallocated dispatch after a fence write failure = %v, want ErrUnallocated", err)
+			}
+			if !failed {
+				t.Fatal("the fence write failure was never injected")
+			}
+			if !reflect.DeepEqual(got, handoff.Allocation{}) {
+				t.Fatalf("unallocated dispatch returned material: %+v", got)
+			}
+			requireLeaseAbsent(t, f.store, "fence write failure left the attempt quarantined: %v")
+			if !reflect.DeepEqual(
+				f.resources.events,
+				[]string{"provision:attempt-7", "release:attempt-7"},
+			) {
+				t.Fatalf("events = %v, want one dispatch then its release", f.resources.events)
+			}
+		})
+	}
+}
+
+// failingFenceStorage fails one chosen write without committing it, running
+// during first so a concurrent writer can act while that write is failing.
+type failingFenceStorage struct {
+	*nakamastoragetest.Fake
+	writes    int
+	failWrite int
+	during    func()
+}
+
+func (s *failingFenceStorage) StorageWrite(
+	ctx context.Context,
+	writes []*runtime.StorageWrite,
+) ([]*api.StorageObjectAck, error) {
+	s.writes++
+	if s.writes == s.failWrite {
+		s.during()
+		return nil, errors.New("test storage: injected fence write failure")
+	}
+	return s.Fake.StorageWrite(ctx, writes)
+}
+
+// TestUnallocatedFenceRetryYieldsToAnAdopterThatFinalizedMeanwhile keeps the
+// retry from fencing a winner: when a transport retry finalizes the committed
+// object while the fence write is failing, the reloaded lease is no longer an
+// unfinalized dispatch, so the owner returns that winner and releases nothing.
+func TestUnallocatedFenceRetryYieldsToAnAdopterThatFinalizedMeanwhile(t *testing.T) {
+	// Writes 1 and 2 are the staging lease and its dispatch barrier.
+	storage := &failingFenceStorage{Fake: nakamastoragetest.New(), failWrite: 3}
+	store, err := nakamalease.NewStore(storage)
+	if err != nil {
+		t.Fatalf("NewStore returned an error: %v", err)
+	}
+	resources := &recordingResources{
+		provisioned:  validProvisioned(),
+		provisionErr: ErrUnallocated,
+	}
+	storage.during = func() {
+		current, loadErr := store.Load(context.Background(), testUserID, testReservationID)
+		if loadErr != nil {
+			t.Errorf("load dispatched attempt: %v", loadErr)
+			return
+		}
+		if _, finalizeErr := store.Finalize(
+			context.Background(),
+			current,
+			leaseFromProvisioned(
+				validRequest(),
+				resources.provisioned,
+				resources.provisioned.Allocation.LeaseExpiresAt,
+			),
+		); finalizeErr != nil {
+			t.Errorf("adopter finalize: %v", finalizeErr)
+		}
+	}
+	coordinator := newTestCoordinator(t, resources, store)
+
+	got, err := coordinator.Allocate(context.Background(), validRequest())
+	if err != nil {
+		t.Fatalf("Allocate did not yield to the adopter that finalized meanwhile: %v", err)
+	}
+	if !reflect.DeepEqual(got, retainedAllocation(validAllocation())) {
+		t.Fatalf("yielded allocation = %+v, want retained %+v", got, validAllocation())
+	}
+	if len(resources.releases) != 0 {
+		t.Fatalf("fence retry released the adopter's allocation: %+v", resources.releases)
+	}
+	record := loadTestLease(t, store, "load adopter's allocation: %v")
+	if record.Lease.Staging || record.Lease.Releasing || record.Lease.AllocationID != validAllocation().ID {
+		t.Fatalf("adopter's allocation = %+v, want the finalized lease", record.Lease)
 	}
 }
 

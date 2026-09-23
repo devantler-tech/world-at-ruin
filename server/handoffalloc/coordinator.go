@@ -29,6 +29,11 @@ const (
 	// cancellation. The concrete resource adapter shares it for the same
 	// reason, so the two budgets cannot drift apart.
 	StagedCleanupTimeout = 5 * time.Second
+
+	// unallocatedFenceRetryDelay spaces the retries of an unallocated
+	// dispatch's fence write after a storage failure, within the
+	// StagedCleanupTimeout budget.
+	unallocatedFenceRetryDelay = 50 * time.Millisecond
 )
 
 var (
@@ -354,18 +359,69 @@ func (c *Coordinator) Allocate(
 // object the allocator committed while answering unallocated. Once the fence
 // holds, a failed completion is still finished by the expiry sweep, which
 // reclaims a releasing lease without waiting for its expiry.
+//
+// Nothing else ever fences an unfinalized dispatch, so a fence write that fails
+// in storage, or commits but loses its acknowledgement, is retried within ctx
+// against the reloaded lease for as long as it is still this attempt's
+// unfinalized dispatch. Giving up after one storage failure would leave the
+// reservation quarantined for good.
 func (c *Coordinator) releaseUnallocated(
 	ctx context.Context,
 	request handoff.AllocationRequest,
 	staging nakamalease.Record,
 ) (fenced bool, err error) {
-	if _, fenceErr := c.leases.BeginRelease(ctx, staging, request.AttemptID); fenceErr == nil {
-		if releaseErr := c.reconcileAttempt(ctx, request, nil); releaseErr != nil {
-			return true, ErrReconciliation
+	record := staging
+	for {
+		_, fenceErr := c.leases.BeginRelease(ctx, record, request.AttemptID)
+		switch {
+		case fenceErr == nil:
+			if releaseErr := c.reconcileAttempt(ctx, request, nil); releaseErr != nil {
+				return true, ErrReconciliation
+			}
+			return true, ErrUnallocated
+		case errors.Is(fenceErr, nakamalease.ErrConflict),
+			errors.Is(fenceErr, nakamalease.ErrClaimed),
+			errors.Is(fenceErr, nakamalease.ErrStaleAttempt):
+			// Another writer moved the dispatched version first.
+			return false, nil
 		}
-		return true, ErrUnallocated
+		current, retry := c.reloadUnallocatedDispatch(ctx, request)
+		if !retry {
+			return false, nil
+		}
+		record = current
 	}
-	return false, nil
+}
+
+// reloadUnallocatedDispatch waits out a failed fence write, then reloads the
+// lease. It reports retry=false when ctx ends, or when the lease is no longer
+// this attempt's unfinalized dispatch: an adopter may have finalized it, and
+// fencing that version would release a winner.
+func (c *Coordinator) reloadUnallocatedDispatch(
+	ctx context.Context,
+	request handoff.AllocationRequest,
+) (nakamalease.Record, bool) {
+	for {
+		timer := time.NewTimer(unallocatedFenceRetryDelay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nakamalease.Record{}, false
+		case <-timer.C:
+		}
+		current, err := c.leases.Load(ctx, request.UserID, request.ReservationID)
+		switch {
+		case errors.Is(err, nakamalease.ErrNotFound):
+			return nakamalease.Record{}, false
+		case err != nil:
+			continue
+		case current.Lease.AttemptID != request.AttemptID ||
+			!current.Lease.Staging ||
+			!current.Lease.Dispatched:
+			return nakamalease.Record{}, false
+		}
+		return current, true
+	}
 }
 
 func (c *Coordinator) resolveProgressedAttempt(
