@@ -50,6 +50,26 @@ credentials, a ten-second request timeout and refuses redirects. Its service
 account needs namespaced GameServer get/list/delete only. Apply that restriction
 in deployment RBAC; a Go interface is not an RBAC grant.
 
+### Credential lifetime and rotation
+
+Allocator CA trust, the client certificate/key pair and unwrap keys are loaded
+**once at initialization**. Updating mounted files does not reload them. Before
+enabling this module, deployment must bound each pod's lifetime to end before
+its client certificate expires, with time for shutdown and replacement. A CA or
+client credential rotation requires a controlled restart before the old trust
+or certificate stops working; use an overlap period that covers the rollout.
+New allocator TLS connections fail after the loaded certificate expires, even
+if valid replacements are already mounted. Restart scheduling and expiry
+monitoring belong to deployment under #12. This package supplies neither an
+expiry alert nor an automatic reload controller; mounting a Secret does not
+provide either behavior.
+
+Unwrap-key rotation also requires restarting with the new key first and the old
+keys retained in `WAR_HANDOFF_UNWRAP_KEYS` for every still-live allocation.
+Removing an old key while an allocation still needs it makes that allocation
+unreadable. Persisted leases survive the controlled restart and are reconciled
+by the replacement module.
+
 ## RPC contract
 
 Send a Nakama-authenticated RPC with exactly one property:

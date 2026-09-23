@@ -700,8 +700,7 @@ everything shipped afterwards is held to.
   filtering, real navmesh pathfinding and cast replication remain later children — with its own
   cross-platform golden). The zone-side sealed-envelope boot from
   `docs/adr/0002-seal-zone-admission-secrets-before-readiness.md` is available through
-  `zone -agones -agones-admission-public-key <path>`; allocation-response validation, the concrete
-  GameServer resource adapter and unwrap path, expiry/orphan supervision, the zone claim adapter,
+  `zone -agones -agones-admission-public-key <path>`; orphan supervision, the zone claim adapter,
   platform deployment of the default-off Nakama RPC plugin and broader persistence remain later children of the server-foundation
   epic (#4);
   `deploy/` (platform manifests) arrives later per the roadmap.
