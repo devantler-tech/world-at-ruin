@@ -23,6 +23,10 @@ shader_type spatial;
 //      interpolation of noise, and the art-direction reference set
 //      (docs/art-direction/README.md) diagnoses exactly that as the reason
 //      surfaces do not read as authored: noise interpolates, it never DECIDES.
+//
+// cave_terrain_contact.gdshader declares the same surface parameters so the
+// cave foot reads as this ground. tests/ground_uniform_parity_test.gd fails if
+// a declaration here and its twin there differ in type, hint or default (#697).
 
 uniform vec3 ash_color: source_color = vec3(0.50, 0.46, 0.40);
 uniform vec3 rock_color: source_color = vec3(0.30, 0.27, 0.25);
