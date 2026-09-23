@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"net"
 	"strings"
 	"sync"
 	"testing"
 
+	"agones.dev/agones/pkg/allocation/converters"
 	allocationpb "agones.dev/agones/pkg/allocation/go"
+	allocationv1 "agones.dev/agones/pkg/apis/allocation/v1"
 	"github.com/devantler-tech/world-at-ruin/server/agones"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -706,5 +709,90 @@ func TestReservePreservesStatusWithoutUpstreamText(t *testing.T) {
 		if strings.Contains(err.Error(), leaked) {
 			t.Fatalf("Reserve error leaked %q: %q", leaked, err)
 		}
+	}
+}
+
+// agonesAnswer builds the exact error the pinned Agones allocator returns for a
+// GameServerAllocation that ended in state, through Agones's own converter, so
+// an Agones upgrade that rewords the answer fails here rather than silently
+// turning every empty pool back into a permanent quarantine. ResourceExhausted
+// is the allocator's default unallocated code (HTTP 429).
+func agonesAnswer(t *testing.T, state allocationv1.GameServerAllocationState) error {
+	t.Helper()
+	_, err := converters.ConvertGSAToAllocationResponse(
+		&allocationv1.GameServerAllocation{
+			Status: allocationv1.GameServerAllocationStatus{State: state},
+		},
+		codes.ResourceExhausted,
+	)
+	if err == nil {
+		t.Fatalf("Agones returned no error for allocation state %q", state)
+	}
+	return err
+}
+
+func TestReserveReportsTheAllocatorsUnallocatedAnswersAsUnallocated(t *testing.T) {
+	for _, state := range []allocationv1.GameServerAllocationState{
+		allocationv1.GameServerAllocationUnAllocated,
+		allocationv1.GameServerAllocationContention,
+	} {
+		t.Run(string(state), func(t *testing.T) {
+			server := &allocationServer{err: agonesAnswer(t, state)}
+			client := clientAgainst(t, server, validConfig())
+
+			got, err := client.Reserve(context.Background(), validRequest())
+			if !errors.Is(err, ErrUnallocated) {
+				t.Fatalf("Reserve error = %v, want ErrUnallocated", err)
+			}
+			if status.Code(err) != codes.ResourceExhausted {
+				t.Fatalf("Reserve status = %s, want ResourceExhausted", status.Code(err))
+			}
+			if got != (GameServer{}) {
+				t.Fatalf("unallocated Reserve GameServer = %+v, want zero value", got)
+			}
+			if len(server.observedRequests()) != 1 {
+				t.Fatalf("allocation requests = %d, want 1", len(server.observedRequests()))
+			}
+		})
+	}
+}
+
+// TestReserveNeverReportsAnAmbiguousFailureAsUnallocated keeps every answer
+// that cannot prove nothing was allocated out of the terminal outcome,
+// including a transport-generated status that shares the allocator's code.
+func TestReserveNeverReportsAnAmbiguousFailureAsUnallocated(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		err  error
+	}{
+		{name: "unavailable", err: status.Error(codes.Unavailable, "connection lost")},
+		{name: "deadline", err: status.Error(codes.DeadlineExceeded, "context deadline exceeded")},
+		{name: "canceled", err: status.Error(codes.Canceled, "context canceled")},
+		{
+			name: "transport resource exhausted",
+			err: status.Error(
+				codes.ResourceExhausted,
+				"grpc: received message larger than max (5000000 vs. 4194304)",
+			),
+		},
+		{name: "foreign abort", err: status.Error(codes.Aborted, "transaction aborted")},
+		{name: "unknown allocation state", err: agonesAnswer(t, "Pending")},
+		{
+			name: "unallocated wording under another code",
+			err:  status.Error(codes.Internal, "there is no available GameServer to allocate"),
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := &allocationServer{err: test.err}
+			client := clientAgainst(t, server, validConfig())
+
+			_, err := client.Reserve(context.Background(), validRequest())
+			if err == nil || errors.Is(err, ErrUnallocated) {
+				t.Fatalf("Reserve error = %v, want an ambiguous failure", err)
+			}
+			if status.Code(err) != status.Code(test.err) {
+				t.Fatalf("Reserve status = %s, want %s", status.Code(err), status.Code(test.err))
+			}
+		})
 	}
 }
