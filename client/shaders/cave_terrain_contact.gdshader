@@ -9,7 +9,9 @@ render_mode blend_mix, depth_draw_opaque, cull_back, diffuse_burley, specular_sc
 // This declares the same surface parameters as terrain.gdshader and consumes
 // the shared procedural fields below. The cave foot therefore receives the
 // ground's drift, grain, slope/scorch response, normal relief, and opted-in
-// plate substances—not a flat tint approximation.
+// plate substances—not a flat tint approximation. Keep each declaration
+// identical to terrain.gdshader's: tests/ground_uniform_parity_test.gd fails
+// on any difference in type, hint or default (#697).
 
 uniform vec3 ash_color: source_color = vec3(0.50, 0.46, 0.40);
 uniform vec3 rock_color: source_color = vec3(0.30, 0.27, 0.25);
