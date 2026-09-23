@@ -265,12 +265,8 @@ void fragment() {
 	float rock_exposure = max(rock_mix, plate_mask);
 
 	vec3 base = vec3(UV, UV2.x);
+	// The opt-in gate as a factor, for the ash lip's lift after the branch below.
 	float plate_gate = plates_enabled ? 1.0 : 0.0;
-	float eff_plate = plate_mask * plate_gate;
-	// Each cell's FINAL surface composed before averaging, as terrain.gdshader
-	// does and for the same reason: the ash-vs-stone choice is driven by the
-	// mask, so averaging before that resolve shows a material neither cell has.
-	float eff_exposure = mix(rock_mix, rock_exposure, plate_gate);
 
 	// Hoisted above the branch: both paths' roughness needs it.
 	float region_rough = UV2.y - ash_roughness;
@@ -279,7 +275,10 @@ void fragment() {
 	// Same opt-in branch and same per-cell ordering as terrain.gdshader: scorch
 	// is affine with a non-zero constant, so the crack must follow it rather
 	// than precede it, and the roughness offsets and clamp keep their original
-	// order too. Grain and lip below are pure multiplies and do commute.
+	// order too. Grain and lip below are pure multiplies and do commute. Each
+	// cell's FINAL surface is composed before averaging, for the same reason as
+	// there: the ash-vs-stone choice is driven by the mask, so averaging before
+	// that resolve shows a material neither cell has.
 	float scorch_k = smoothstep(0.62, 0.95, drift) * 0.35 * (1.0 - rock_mix);
 	if (plates_enabled) {
 	vec3 surf_own;

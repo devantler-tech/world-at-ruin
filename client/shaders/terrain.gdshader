@@ -561,11 +561,13 @@ void fragment() {
 	// The vertex tint stays the base layer (as cave_rock does with COLOR), so
 	// the world's existing ash/rock palette and its variation survive.
 	vec3 base = COLOR.rgb;
-	// The opt-in gate. With plates off these three collapse to rock_color,
-	// rock_roughness and rock_mix — which is the pre-#261 surface term for
-	// term, so a default boot renders exactly what it rendered before.
+	// The opt-in gate as a factor, for the one term outside the branch below that
+	// depends on it: the ash lip's lift.
 	float plate_gate = plates_enabled ? 1.0 : 0.0;
-	float eff_plate = plate_mask * plate_gate;
+	// Hoisted above the branch: both paths' roughness needs it.
+	float region_rough = COLOR.a - 0.5;
+	vec3 surface;
+	float stone_rough;
 	// Stone is rock_color unless this cell is a slab, in which case it is the
 	// slab's own substance. Then ash over the top of whichever it is.
 	// rock + K*(sub_pre - slab*rock) rather than mix(rock, sub, K*slab): the
@@ -585,11 +587,7 @@ void fragment() {
 	// exposure, and blend the two finished surfaces. With `plate_edge_w` at 0
 	// this is arithmetically identical to composing the owning cell alone, so a
 	// resolved contact and the plates-off path are both unchanged.
-	float eff_exposure = mix(rock_mix, rock_exposure, plate_gate);
-	// Hoisted above the branch: both paths' roughness needs it.
-	float region_rough = COLOR.a - 0.5;
-	vec3 surface;
-	float stone_rough;
+	//
 	// The whole per-cell composition sits on the opt-in path. Off, the ground
 	// resolves ash against rock exactly as it did before #261 and pays for none
 	// of the plate work — the coherent branch this file is built around.
