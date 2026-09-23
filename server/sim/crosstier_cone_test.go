@@ -33,7 +33,7 @@ type crossTierPoint struct {
 	Z int64 `json:"z"`
 }
 
-func (p crossTierPoint) vec() Vec3 { return Vec3{X: p.X, Y: p.Y, Z: p.Z} }
+func (p crossTierPoint) vec() Vec3 { return Vec3(p) }
 
 type crossTierProbe struct {
 	Point  crossTierPoint `json:"point_mm"`

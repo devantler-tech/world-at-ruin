@@ -307,6 +307,7 @@ func TestFloorDiv(t *testing.T) {
 // is a pure no-op scan — exactly where the O(n²) full scan hurts and the broad
 // phase wins. Comparing grid vs fullscan across n shows the scaling.
 func benchSeparation(b *testing.B, n int, full bool) {
+	b.Helper()
 	side := int(math.Ceil(math.Sqrt(float64(n))))
 	const r, spacing = 500, 2000
 	w := NewWorld(bigBounds)

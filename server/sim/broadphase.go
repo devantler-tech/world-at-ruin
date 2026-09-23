@@ -126,23 +126,25 @@ func (g *sepGrid) neighbours(a *Entity, buf []EntityID) []EntityID {
 	}
 
 	// K-way merge of the ascending lists (n ≤ 9): repeatedly take the smallest
-	// head. IDs are globally unique, so no de-duplication is needed.
+	// head. IDs are globally unique, so no de-duplication is needed. The merge
+	// works on the gathered prefix only, so best is always an index into it.
+	live := lists[:n]
 	for {
 		best := -1
 		var bestID EntityID
-		for i := 0; i < n; i++ {
-			if len(lists[i]) == 0 {
+		for i, l := range live {
+			if len(l) == 0 {
 				continue
 			}
-			if best == -1 || lists[i][0] < bestID {
-				best, bestID = i, lists[i][0]
+			if best == -1 || l[0] < bestID {
+				best, bestID = i, l[0]
 			}
 		}
 		if best == -1 {
 			break
 		}
 		buf = append(buf, bestID)
-		lists[best] = lists[best][1:]
+		live[best] = live[best][1:]
 	}
 	return buf
 }
