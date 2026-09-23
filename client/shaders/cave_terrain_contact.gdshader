@@ -23,7 +23,7 @@ uniform float rock_slope: hint_range(0.0, 1.0) = 0.34;
 uniform float ash_roughness: hint_range(0.0, 1.0) = 0.97;
 uniform float rock_roughness: hint_range(0.0, 1.0) = 0.78;
 uniform float detail_fade_start = 45.0;
-uniform float detail_fade_end = 130.0;
+uniform float detail_fade_end = 131.0;
 
 uniform vec3 plate_basalt: source_color = vec3(0.22, 0.21, 0.22);
 uniform vec3 plate_ferric: source_color = vec3(0.42, 0.26, 0.18);
