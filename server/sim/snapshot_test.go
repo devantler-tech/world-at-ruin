@@ -11,7 +11,7 @@ import (
 // state (id, position, radius) of exactly the in-interest entities, in
 // ascending-ID order, self excluded and out-of-range excluded.
 func TestSnapshotStateAndOrder(t *testing.T) {
-	w := newObserverWorld(1, 10_000)
+	w := newObserverWorld(10_000)
 	w.Add(Entity{ID: 3, Pos: Vec3{X: 5_000}, Radius: 300})  // 5 m — inside
 	w.Add(Entity{ID: 2, Pos: Vec3{X: -4_000}, Radius: 400}) // 4 m — inside
 	w.Add(Entity{ID: 4, Pos: Vec3{X: 15_000}, Radius: 500}) // 15 m — outside
@@ -32,7 +32,7 @@ func TestSnapshotStateAndOrder(t *testing.T) {
 // observer, or one that sees nothing, carries no entities (but still a valid
 // header).
 func TestSnapshotEmptyForUnknownAndZeroRadius(t *testing.T) {
-	w := newObserverWorld(1, 0) // zero radius: sees nothing
+	w := newObserverWorld(0) // zero radius: sees nothing
 	w.Add(Entity{ID: 2, Pos: Vec3{X: 1}, Radius: 300})
 	if snap := w.Snapshot(1); snap.Entities != nil {
 		t.Fatalf("zero-radius observer snapshot had entities: %+v", snap.Entities)
@@ -64,7 +64,7 @@ func TestSnapshotInsertionOrderIndependent(t *testing.T) {
 // contract: every in-interest entity is reported entered (with state), nothing
 // moved or left; a second still update produces nothing.
 func TestSnapshotTrackerFirstUpdateAllEntered(t *testing.T) {
-	w := newObserverWorld(1, 50_000)
+	w := newObserverWorld(50_000)
 	w.Add(Entity{ID: 2, Pos: Vec3{X: 1_000}, Radius: 300})
 	w.Add(Entity{ID: 3, Pos: Vec3{X: 2_000}, Radius: 400})
 	tr := NewSnapshotTracker(1)
@@ -166,10 +166,10 @@ func runSnapshotDemo(radius int64, n int) (uint64, int) {
 	}
 	putState := func(es EntityState) {
 		put(uint64(es.ID))
-		put(uint64(es.Pos.X))
-		put(uint64(es.Pos.Y))
-		put(uint64(es.Pos.Z))
-		put(uint64(es.Radius))
+		put(twosComplementBits(es.Pos.X))
+		put(twosComplementBits(es.Pos.Y))
+		put(twosComplementBits(es.Pos.Z))
+		put(twosComplementBits(es.Radius))
 	}
 
 	eventfulTicks := 0

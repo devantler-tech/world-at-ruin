@@ -58,16 +58,17 @@ linters:
           - gosec
         text: "G115: integer overflow conversion uint64 -> int64"
         source: 'return int64\(v\)'
+      # The simulation's determinism digests fold signed coordinates and health
+      # by their two's-complement bits. This one helper is an equal-width
+      # reinterpretation, not a narrowing, so nothing can be lost; every other
+      # signed-to-unsigned conversion in the package stays checked.
+      - path: ^sim/world\.go$
+        linters:
+          - gosec
+        text: "G115: integer overflow conversion int64 -> uint64"
+        source: 'func twosComplementBits\(v int64\) uint64 \{ return uint64\(v\) \}'
 issues:
+  # Every finding is reported, across the whole module: the gate is not scoped
+  # to what a change touches, so an untouched file cannot hide a regression.
   max-issues-per-linter: 0
   max-same-issues: 0
-  # Scoped to the FILES a change touches, so the findings that predate the gate
-  # (inventoried in #436) do not wall off unrelated work. Remove both keys once
-  # #436 reaches zero and the gate covers the whole module.
-  new-from-merge-base: origin/main
-  # Whole changed FILES, not just changed lines. Deleting a safeguard attaches
-  # the resulting diagnostic to the surviving unchanged line — dropping a
-  # `defer resp.Body.Close()` reports against the untouched `http.Get` — so a
-  # line-scoped gate lets a PR remove error, close or context handling and stay
-  # green. Editing a file makes you answerable for it.
-  whole-files: true

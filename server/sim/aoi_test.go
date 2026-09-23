@@ -8,16 +8,17 @@ import (
 	"testing"
 )
 
-// newObserverWorld returns a fresh demo-bounded world with a single observer at
-// the origin whose interest radius is r, ready for other entities to be added.
-func newObserverWorld(observer EntityID, r int64) *World {
+// newObserverWorld returns a fresh demo-bounded world with a single observer,
+// entity 1, at the origin whose interest radius is r, ready for other entities
+// to be added.
+func newObserverWorld(r int64) *World {
 	w := NewWorld(DemoBounds)
-	w.Add(Entity{ID: observer, Pos: Vec3{}, InterestRadius: r})
+	w.Add(Entity{ID: 1, Pos: Vec3{}, InterestRadius: r})
 	return w
 }
 
 func TestInterestExcludesSelfAndOutOfRange(t *testing.T) {
-	w := newObserverWorld(1, 10_000)
+	w := newObserverWorld(10_000)
 	w.Add(Entity{ID: 2, Pos: Vec3{X: 5_000}})  // 5 m away — inside
 	w.Add(Entity{ID: 3, Pos: Vec3{X: 15_000}}) // 15 m away — outside
 	w.Add(Entity{ID: 4, Pos: Vec3{Z: -9_999}}) // 9.999 m away — inside
@@ -32,7 +33,7 @@ func TestInterestExcludesSelfAndOutOfRange(t *testing.T) {
 // interest and one a single millimetre beyond is not.
 func TestInterestBoundaryInclusive(t *testing.T) {
 	const r = 10_000
-	w := newObserverWorld(1, r)
+	w := newObserverWorld(r)
 	w.Add(Entity{ID: 2, Pos: Vec3{X: r}})     // exactly on the boundary — inside
 	w.Add(Entity{ID: 3, Pos: Vec3{X: r + 1}}) // one mm past — outside
 	if got := w.Interest(1); !reflect.DeepEqual(got, []EntityID{2}) {
@@ -44,7 +45,7 @@ func TestInterestBoundaryInclusive(t *testing.T) {
 // vertical separation never removes an entity that is horizontally in range, and
 // zero vertical separation never rescues one that is horizontally out of range.
 func TestInterestIgnoresVertical(t *testing.T) {
-	w := newObserverWorld(1, 1_000)
+	w := newObserverWorld(1_000)
 	// Horizontally inside (500 mm), maximally separated vertically (top of the
 	// 4 m-tall demo bounds): still in interest.
 	w.Add(Entity{ID: 2, Pos: Vec3{X: 500, Y: 4_000}})
@@ -56,7 +57,7 @@ func TestInterestIgnoresVertical(t *testing.T) {
 }
 
 func TestInterestZeroRadiusSeesNothing(t *testing.T) {
-	w := newObserverWorld(1, 0)
+	w := newObserverWorld(0)
 	w.Add(Entity{ID: 2, Pos: Vec3{X: 1}})
 	if got := w.Interest(1); got != nil {
 		t.Fatalf("zero-radius observer saw %v, want nil", got)
@@ -64,7 +65,7 @@ func TestInterestZeroRadiusSeesNothing(t *testing.T) {
 }
 
 func TestInterestUnknownObserverEmpty(t *testing.T) {
-	w := newObserverWorld(1, 10_000)
+	w := newObserverWorld(10_000)
 	w.Add(Entity{ID: 2, Pos: Vec3{X: 1_000}})
 	if got := w.Interest(99); got != nil {
 		t.Fatalf("unknown observer returned %v, want nil", got)
@@ -140,7 +141,7 @@ func TestInterestSymmetricEqualRadius(t *testing.T) {
 }
 
 func TestInterestTrackerFirstUpdateAllEntered(t *testing.T) {
-	w := newObserverWorld(1, 50_000)
+	w := newObserverWorld(50_000)
 	w.Add(Entity{ID: 2, Pos: Vec3{X: 1_000}})
 	w.Add(Entity{ID: 3, Pos: Vec3{X: 2_000}})
 	tr := NewInterestTracker(1)

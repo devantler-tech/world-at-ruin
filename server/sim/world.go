@@ -356,11 +356,7 @@ func (w *World) Hash() uint64 {
 		binary.LittleEndian.PutUint64(buf[:], v)
 		_, _ = h.Write(buf[:])
 	}
-	putSigned := func(v int64) {
-		// The digest deliberately preserves the signed value's two's-complement
-		// bits; this is a representation, not an arithmetic narrowing.
-		put(uint64(v)) //nolint:gosec
-	}
+	putSigned := func(v int64) { put(twosComplementBits(v)) }
 	put(w.Tick)
 	for _, id := range w.order {
 		e := w.ents[id]
@@ -374,3 +370,9 @@ func (w *World) Hash() uint64 {
 	}
 	return h.Sum64()
 }
+
+// twosComplementBits returns v's two's-complement bit pattern as an unsigned
+// word, so a digest can fold negative coordinates and health. It reinterprets
+// between equal-width types rather than narrowing: every int64 maps to exactly
+// one uint64 and back, so nothing is lost and the conversion cannot wrap.
+func twosComplementBits(v int64) uint64 { return uint64(v) }
