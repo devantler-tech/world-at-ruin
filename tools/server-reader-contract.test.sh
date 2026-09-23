@@ -63,6 +63,20 @@ check fail 'incomplete reader registration without a final newline'
 printf 'TestHistoricalReader store.go Read extra' >"$data/shipped_progress_reader.txt"
 check fail 'extra reader registration field without a final newline'
 printf 'TestHistoricalReader store.go Read\n' >"$data/shipped_progress_reader.txt"
+# A contract must pin bytes inside the tree it guards. A registration or reader
+# source reached through a symbolic link can name content the checkout does not
+# own, so each is refused even though its target is otherwise valid.
+cp "$data/shipped_progress_reader.txt" "$scratch/registration"
+rm "$data/shipped_progress_reader.txt"
+ln -s "$scratch/registration" "$data/shipped_progress_reader.txt"
+check fail 'reader registration reached through a symbolic link'
+rm "$data/shipped_progress_reader.txt"
+cp "$scratch/registration" "$data/shipped_progress_reader.txt"
+rm "$repo/server/futurestore/store.go"
+ln -s "$scratch/reader" "$repo/server/futurestore/store.go"
+check fail 'production reader source reached through a symbolic link'
+rm "$repo/server/futurestore/store.go"
+cp "$scratch/reader" "$repo/server/futurestore/store.go"
 # A fixture assertion must depend on the production reader's returned state.
 cat >"$repo/server/futurestore/store_test.go" <<'GO'
 package futurestore
