@@ -203,9 +203,10 @@ the lease. A write that lands after that is an attempt no lease protects, which
 the orphan reconciler reclaims; it is never finalized, so no player receives it.
 If the dispatched version cannot be fenced, an adopter may already have finalized
 such a commit, and the ambiguous path decides. A fence write that fails in storage
-or loses its acknowledgement is not that race: nothing else fences an unfinalized
-dispatch, so it is reloaded and retried within the staged-cleanup budget while
-the lease is still that attempt's unfinalized dispatch.
+or loses its acknowledgement is not that race: no other path fences a dispatch
+whose resource was never observed, so it is reloaded and retried within the
+staged-cleanup budget while the lease is still that attempt's unfinalized
+dispatch.
 
 The allocator-generation fence is a separate, server-only authority rather
 than a timeout heuristic:

@@ -360,11 +360,11 @@ func (c *Coordinator) Allocate(
 // holds, a failed completion is still finished by the expiry sweep, which
 // reclaims a releasing lease without waiting for its expiry.
 //
-// Nothing else ever fences an unfinalized dispatch, so a fence write that fails
-// in storage, or commits but loses its acknowledgement, is retried within ctx
-// against the reloaded lease for as long as it is still this attempt's
-// unfinalized dispatch. Giving up after one storage failure would leave the
-// reservation quarantined for good.
+// No other path fences a dispatch whose resource was never observed, so a fence
+// write that fails in storage, or commits but loses its acknowledgement, is
+// retried within ctx against the reloaded lease for as long as it is still this
+// attempt's unfinalized dispatch. Giving up after one storage failure would
+// leave the reservation quarantined for good.
 func (c *Coordinator) releaseUnallocated(
 	ctx context.Context,
 	request handoff.AllocationRequest,
