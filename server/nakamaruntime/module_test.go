@@ -191,7 +191,9 @@ func TestModuleHandoffPersistsReplaysAndReclaimsNoShow(t *testing.T) {
 	if _, err := r.rpc(signedContext(), nil, nil, storage, `{"reservation_id":"another-zone"}`); err == nil || calls.Load() != 1 {
 		t.Fatalf("client-chosen reservation opened another allocation: %v", err)
 	}
-	for _, value := range append([]string{payload}, storageValues(storage.Fake)...) {
+	// Current objects alone miss a value a later write replaced or deleted.
+	values := append([]string{payload}, storageValues(storage.Fake)...)
+	for _, value := range append(values, storage.WrittenValues()...) {
 		for _, encoded := range []string{string(secret), base64.StdEncoding.EncodeToString(secret), base64.RawURLEncoding.EncodeToString(secret)} {
 			if strings.Contains(value, encoded) {
 				t.Fatal("admission secret escaped into RPC or storage")

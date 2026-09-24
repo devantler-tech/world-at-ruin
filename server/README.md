@@ -394,7 +394,8 @@ zone/dungeon server:
 - **[`nakamaruntime/`](nakamaruntime/README.md)** — the opt-in `war_handoff`
   RPC plugin, built from `cmd/nakama`. It authenticates the server-provided
   session identity, composes the real allocator, resource adapter and lease
-  store, and owns no-show cleanup through the shutdown hook. Configuration,
+  store, and supervises no-show cleanup in its expiry loop, which the shutdown
+  hook stops before closing dependencies. Configuration,
   mutual TLS, retained unwrap keys, the single-player observer policy and
   deployment prerequisites are documented alongside the package.
 - **`agonesresources/`** — the concrete **Agones GameServer resource adapter**
