@@ -107,11 +107,44 @@ func TestAllocatorConnectionUsesVerifiedMutualTLS(t *testing.T) {
 	untrustedClient := cfg
 	untrustedClient.allocatorCert, untrustedClient.allocatorKey = other.allocatorCert, other.allocatorKey
 	for name, broken := range map[string]config{"untrusted server": untrustedServer, "untrusted client": untrustedClient} {
-		if _, closeBroken, err := connectAllocator(broken); err == nil {
+		if _, closeBroken, err := connectAllocatorWithin(broken, time.Second); err == nil {
 			closeBroken()
 			t.Fatalf("%s: startup accepted an unverifiable allocator connection", name)
 		}
 	}
+}
+
+func TestAllocatorConnectionRidesOutTransientStartupFailures(t *testing.T) {
+	cfg, certificate, pool := certificateFixture(t, t.TempDir())
+	// Reserve a port, release it, and start the allocator only after the first
+	// connection attempt has been refused.
+	reserved, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := reserved.Addr().String()
+	_ = reserved.Close()
+	_, port, err := net.SplitHostPort(address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.allocatorAddress = net.JoinHostPort("localhost", port)
+	server := grpc.NewServer(grpc.Creds(credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate}, ClientCAs: pool, ClientAuth: tls.RequireAndVerifyClientCert})))
+	allocationpb.RegisterAllocationServiceServer(server, &tlsAllocationServer{})
+	t.Cleanup(server.Stop)
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", address)
+		if err != nil {
+			return
+		}
+		_ = server.Serve(listener)
+	}()
+	_, closeClient, err := connectAllocatorWithin(cfg, 8*time.Second)
+	if err != nil {
+		t.Fatalf("startup failed on a transient refusal the allocator recovered from: %v", err)
+	}
+	closeClient()
 }
 
 func TestTransportRefusesInvalidOrUnboundedMaterial(t *testing.T) {

@@ -60,6 +60,10 @@ func connectRuntime(cfg config) (dependencies, error) {
 }
 
 func connectAllocator(cfg config) (allocationpb.AllocationServiceClient, func(), error) {
+	return connectAllocatorWithin(cfg, allocatorConnectTimeout)
+}
+
+func connectAllocatorWithin(cfg config, timeout time.Duration) (allocationpb.AllocationServiceClient, func(), error) {
 	ca, err := readMaterial(cfg.allocatorCA)
 	if err != nil {
 		return nil, nil, errMaterial
@@ -96,7 +100,7 @@ func connectAllocator(cfg config) (allocationpb.AllocationServiceClient, func(),
 	if err != nil {
 		return nil, nil, errors.New("nakama handoff: allocator transport unavailable")
 	}
-	if err := awaitReady(conn, allocatorConnectTimeout); err != nil {
+	if err := awaitReady(conn, timeout); err != nil {
 		_ = conn.Close()
 		return nil, nil, err
 	}
@@ -106,7 +110,8 @@ func connectAllocator(cfg config) (allocationpb.AllocationServiceClient, func(),
 // allocatorConnectTimeout bounds the startup handshake with the allocator.
 const allocatorConnectTimeout = 10 * time.Second
 
-// awaitReady completes a verified TLS handshake before the RPC is registered.
+// awaitReady completes a verified TLS handshake before the RPC is registered,
+// riding out transient connection failures until the deadline.
 // grpc.NewClient performs no I/O, so an untrusted CA or client certificate
 // would otherwise surface only on a player's first dispatch, after its attempt
 // is durably dispatched and therefore quarantined as ambiguous.
@@ -116,7 +121,7 @@ func awaitReady(conn *grpc.ClientConn, timeout time.Duration) error {
 	defer cancel()
 	conn.Connect()
 	for state := conn.GetState(); state != connectivity.Ready; state = conn.GetState() {
-		if state == connectivity.TransientFailure || state == connectivity.Shutdown || !conn.WaitForStateChange(ctx, state) {
+		if state == connectivity.Shutdown || !conn.WaitForStateChange(ctx, state) {
 			return unavailable
 		}
 	}
