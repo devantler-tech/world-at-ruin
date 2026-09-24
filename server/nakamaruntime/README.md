@@ -107,8 +107,9 @@ is a later protocol change, not something this module infers.
 Initialization's context is detached after composition because its request
 lifetime is not the module lifetime. RPC and shutdown registration must both
 succeed before the expiry goroutine starts. Initialization failures close
-acquired clients. Shutdown cancels active RPCs and the reconciler, waits within
-the supplied shutdown context, and closes transports once. Storage clients must
+acquired clients. Shutdown refuses new RPCs, cancels active RPCs and the reconciler, waits within
+the supplied shutdown context for the reconciler and every in-flight RPC to
+return (including detached fence-and-cleanup work), and closes transports once. Storage clients must
 honor their contexts. A forced process kill cannot run a hook; persisted leases
 remain available to the next module's startup sweep.
 

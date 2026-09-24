@@ -71,17 +71,14 @@ func initialize(ctx context.Context, nk runtime.NakamaModule, initializer runtim
 	// registered shutdown hook exclusively owns this detached lifecycle.
 	life, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	done := make(chan struct{})
-	if err := initializer.RegisterRpc("war_handoff", rpcHandler(life, service, cfg.rpcTimeout)); err != nil {
+	handlers := &handlerGate{}
+	if err := initializer.RegisterRpc("war_handoff", rpcHandler(life, handlers, service, cfg.rpcTimeout)); err != nil {
 		cancel()
 		closeDependencies()
 		return errors.New("nakama handoff: register RPC")
 	}
 	if err := initializer.RegisterShutdown(func(shutdownCtx context.Context, _ runtime.Logger, _ *sql.DB, _ runtime.NakamaModule) {
-		cancel()
-		select {
-		case <-done:
-		case <-shutdownCtx.Done():
-		}
+		drain(shutdownCtx, cancel, handlers, done)
 		closeDependencies()
 	}); err != nil {
 		cancel()
@@ -134,11 +131,62 @@ func compose(cfg config, nk runtime.NakamaModule, deps dependencies) (*handoff.S
 	return service, coordinator, err
 }
 
-func rpcHandler(life context.Context, service *handoff.Service, timeout time.Duration) func(context.Context, runtime.Logger, *sql.DB, runtime.NakamaModule, string) (string, error) {
+// handlerGate admits RPC handlers until shutdown closes it, then reports when
+// every admitted handler has returned. Coordinator paths finish fence-and-
+// cleanup under a detached bounded context after caller cancellation, so the
+// shutdown hook must not close dependencies while a handler is still running.
+type handlerGate struct {
+	mu     sync.Mutex
+	closed bool
+	active sync.WaitGroup
+}
+
+func (g *handlerGate) enter() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.closed {
+		return false
+	}
+	g.active.Add(1)
+	return true
+}
+
+func (g *handlerGate) leave() { g.active.Done() }
+
+// close refuses new handlers and returns a channel closed once every admitted
+// handler has left.
+func (g *handlerGate) close() <-chan struct{} {
+	g.mu.Lock()
+	g.closed = true
+	g.mu.Unlock()
+	idle := make(chan struct{})
+	go func() {
+		g.active.Wait()
+		close(idle)
+	}()
+	return idle
+}
+
+// drain stops the module lifecycle, then waits within shutdownCtx for the
+// expiry reconciler and every in-flight handler before dependencies close.
+func drain(shutdownCtx context.Context, cancel context.CancelFunc, handlers *handlerGate, reconciler <-chan struct{}) {
+	idle := handlers.close()
+	cancel()
+	for _, finished := range []<-chan struct{}{reconciler, idle} {
+		select {
+		case <-finished:
+		case <-shutdownCtx.Done():
+			return
+		}
+	}
+}
+
+func rpcHandler(life context.Context, handlers *handlerGate, service *handoff.Service, timeout time.Duration) func(context.Context, runtime.Logger, *sql.DB, runtime.NakamaModule, string) (string, error) {
 	return func(ctx context.Context, _ runtime.Logger, _ *sql.DB, _ runtime.NakamaModule, payload string) (string, error) {
-		if life.Err() != nil {
+		if life.Err() != nil || !handlers.enter() {
 			return "", rpcError(status.Error(codes.Unavailable, "module stopped"))
 		}
+		defer handlers.leave()
 		reservation, err := reservationID(payload)
 		if err != nil {
 			return "", rpcError(status.Error(codes.InvalidArgument, "invalid request"))
