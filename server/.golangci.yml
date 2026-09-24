@@ -39,6 +39,21 @@ linters:
   exclusions:
     warn-unused: true
     rules:
+      # The private claim endpoint is immutable constructor configuration,
+      # validated as HTTPS with a fixed path and no redirects. Player payloads
+      # cannot influence its destination; private service addresses are intended.
+      - path: ^claimrpc/client\.go$
+        linters:
+          - gosec
+        text: "G704: SSRF via taint analysis"
+        source: 'response, err := c\.http\.Do\(req\)'
+      # This request targets only the loopback httptest server created by the
+      # test. Fuzzed JSON is the body, never a destination or redirect source.
+      - path: ^claimrpc/boundary_test\.go$
+        linters:
+          - gosec
+        text: "G704: SSRF via taint analysis"
+        source: 'response, err := client\.Do\(request\)'
       # Nakama's public context API uses these exact string constants. RPC
       # fixtures must reproduce it, not use private keys the server never sets.
       - path: ^(nakamaauth|nakamaruntime)/.*_test\.go$
