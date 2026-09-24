@@ -110,8 +110,14 @@ type Hub struct {
 	claim        AdmissionClaimer
 	claimTimeout time.Duration
 
-	mu      sync.Mutex
-	pending []func(w *sim.World)
+	mu       sync.Mutex
+	pending  []func(w *sim.World)
+	closing  bool
+	lifetime context.Context
+	stop     context.CancelFunc
+	drained  chan struct{}
+	workers  sync.WaitGroup
+	sockets  map[*conn]struct{} // includes upgraded sockets not attached yet
 
 	conns map[sim.EntityID]*conn // sim-goroutine-owned
 
@@ -124,7 +130,9 @@ func NewHub(cfg Config) (*Hub, error) {
 	if cfg.Verifier == nil {
 		return nil, errors.New("zonesock: Config.Verifier is required")
 	}
-	return &Hub{cfg: cfg.withDefaults(), conns: make(map[sim.EntityID]*conn)}, nil
+	lifetime, stop := context.WithCancel(context.Background())
+	return &Hub{cfg: cfg.withDefaults(), conns: make(map[sim.EntityID]*conn),
+		lifetime: lifetime, stop: stop, drained: make(chan struct{}), sockets: make(map[*conn]struct{})}, nil
 }
 
 // Connected reports how many observers are currently attached. It is safe from
@@ -134,7 +142,9 @@ func (h *Hub) Connected() int { return int(h.connected.Load()) }
 // enqueue schedules f to run on the simulation goroutine during the next Tick.
 func (h *Hub) enqueue(f func(w *sim.World)) {
 	h.mu.Lock()
-	h.pending = append(h.pending, f)
+	if !h.closing {
+		h.pending = append(h.pending, f)
+	}
 	h.mu.Unlock()
 }
 
@@ -269,6 +279,14 @@ drain:
 // serves whatever path it is mounted on.
 func (h *Hub) Handler() http.Handler {
 	return http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		ctx, cancelAdmission := context.WithCancel(r.Context())
+		defer cancelAdmission()
+		finish, ok := h.beginAdmission(cancelAdmission)
+		if !ok {
+			http.Error(rw, "zone unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		defer finish()
 		token, ok := bearerToken(r.Header.Get("Authorization"))
 		if !ok {
 			http.Error(rw, "missing bearer token", http.StatusUnauthorized)
@@ -291,19 +309,23 @@ func (h *Hub) Handler() http.Handler {
 				http.Error(rw, "WebSocket handshake refused", http.StatusBadRequest)
 				return
 			}
-			if !h.claimAdmission(r.Context(), token, observer) {
+			if !h.claimAdmission(ctx, token, observer) {
 				http.Error(rw, "admission refused", http.StatusUnauthorized)
 				return
 			}
 		}
-		ws, err := websocket.Accept(rw, r, nil)
+		if ctx.Err() != nil {
+			http.Error(rw, "zone unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		ws, err := websocket.Accept(rw, r.WithContext(ctx), nil)
 		if err != nil {
 			return
 		}
 		ws.SetReadLimit(h.cfg.MaxInboundBytes)
 		// The upgraded socket outlives ServeHTTP, so ignore request cancellation
 		// while preserving request-scoped values for the connection lifetime.
-		ctx, cancel := context.WithCancel(context.WithoutCancel(r.Context()))
+		socketCtx, cancel := context.WithCancel(context.WithoutCancel(r.Context()))
 		c := &conn{
 			hub:      h,
 			ws:       ws,
@@ -312,9 +334,13 @@ func (h *Hub) Handler() http.Handler {
 			out:      make(chan []byte, h.cfg.SendQueue),
 			cancel:   cancel,
 		}
-		h.enqueue(func(w *sim.World) { h.attach(w, c) })
-		go c.writeLoop(ctx, h.cfg)
-		go c.readLoop(ctx)
+		if !h.registerSocket(c) {
+			cancel()
+			_ = ws.CloseNow()
+			return
+		}
+		go func() { defer h.socketWorkerDone(c); c.writeLoop(socketCtx, h.cfg) }()
+		go func() { defer h.socketWorkerDone(c); c.readLoop(socketCtx) }()
 	})
 }
 
@@ -354,6 +380,7 @@ type conn struct {
 	out      chan []byte
 	cancel   context.CancelFunc
 	once     sync.Once
+	workers  atomic.Int32
 	tracker  *sim.SnapshotTracker // sim-goroutine-owned
 }
 

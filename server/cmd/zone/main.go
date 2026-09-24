@@ -35,6 +35,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
+	"errors"
 	"flag"
 	"fmt"
 	"io/fs"
@@ -150,7 +151,7 @@ func runMint(secretEnv, allocation string, observer sim.EntityID, ttl time.Durat
 // is signalled. It returns errors instead of exiting so every exit path runs
 // the deferred cleanup — with -agones that includes telling the sidecar to
 // recycle the GameServer, which os.Exit would silently skip.
-func runListen(w *sim.World, addr, certFile, keyFile, secretEnv, allocation string, insecurePlaintext bool, interestMM int64, d time.Duration, withAgones bool, healthInterval time.Duration, admissionPublicKeyFile string) error {
+func runListen(w *sim.World, addr, certFile, keyFile, secretEnv, allocation string, insecurePlaintext bool, interestMM int64, d time.Duration, withAgones bool, healthInterval time.Duration, admissionPublicKeyFile string) (result error) {
 	if insecurePlaintext && (certFile != "" || keyFile != "") {
 		return fmt.Errorf("-insecure-plaintext contradicts -tls-cert/-tls-key: choose one")
 	}
@@ -268,6 +269,8 @@ func runListen(w *sim.World, addr, certFile, keyFile, secretEnv, allocation stri
 	fmt.Printf("zone: listening on %s://%s/zone\n", scheme, ln.Addr())
 
 	serveCtx, serveFailed := context.WithCancelCause(ctx)
+	defer serveFailed(nil)
+	var lc *agones.Lifecycle
 	go func() {
 		var err error
 		if insecurePlaintext {
@@ -280,9 +283,17 @@ func runListen(w *sim.World, addr, certFile, keyFile, secretEnv, allocation stri
 		serveFailed(err)
 	}()
 	defer func() {
-		// Close also severs hijacked WebSocket connections.
-		if closeErr := srv.Close(); closeErr != nil {
-			fmt.Fprintf(os.Stderr, "zone: close server: %v\n", closeErr)
+		// HTTP Close stops the listener and ordinary HTTP requests, but it
+		// excludes hijacked WebSockets. The hub owns those transports and
+		// their pending admission work. World access remains on this owner.
+		result = errors.Join(result, srv.Close())
+		drainCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := hub.Shutdown(drainCtx, w); err != nil {
+			result = errors.Join(result, fmt.Errorf("drain zone sockets: %w", err))
+		}
+		if lc != nil {
+			result = errors.Join(result, lc.Shutdown())
 		}
 	}()
 
@@ -290,7 +301,6 @@ func runListen(w *sim.World, addr, certFile, keyFile, secretEnv, allocation stri
 	// goroutine is up, so "ready to be allocated" is true in the one sense
 	// that matters: a player the fleet routes here can actually connect.
 	if withAgones {
-		var lc *agones.Lifecycle
 		if prepared != nil {
 			lc, err = prepared.Ready()
 			preparedActivated = err == nil
@@ -300,11 +310,6 @@ func runListen(w *sim.World, addr, certFile, keyFile, secretEnv, allocation stri
 		if err != nil {
 			return err
 		}
-		defer func() {
-			if err := lc.Shutdown(); err != nil {
-				fmt.Fprintf(os.Stderr, "zone: %v\n", err)
-			}
-		}()
 	}
 
 	runLoop(serveCtx, d, func() {

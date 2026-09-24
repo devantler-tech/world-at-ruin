@@ -29,6 +29,7 @@ type Sidecar struct {
 	ready         int
 	health        int
 	shutdown      int
+	shutdownHook  func()
 	readyErr      error
 	killStreamAt  int
 	killed        bool
@@ -222,11 +223,23 @@ func (f *Sidecar) broadcastLocked() {
 	}
 }
 
-// Shutdown records the call.
-func (f *Sidecar) Shutdown(_ context.Context, _ *sdkproto.Empty) (*sdkproto.Empty, error) {
+// SetShutdownHook installs an observation at the real SDK shutdown boundary.
+// The hook runs without the fake's mutex so transport assertions may block.
+func (f *Sidecar) SetShutdownHook(hook func()) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.shutdownHook = hook
+}
+
+// Shutdown records the call and invokes the configured boundary observation.
+func (f *Sidecar) Shutdown(_ context.Context, _ *sdkproto.Empty) (*sdkproto.Empty, error) {
+	f.mu.Lock()
 	f.shutdown++
+	hook := f.shutdownHook
+	f.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
 	return &sdkproto.Empty{}, nil
 }
 
