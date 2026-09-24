@@ -77,6 +77,8 @@ func (s *Store) EndSession(ctx context.Context, fence SessionFence, reclaim func
 	return s.deleteEndedSession(ctx, fence.LeaseObjectID, barrier)
 }
 
+// validSessionFence rejects missing and malformed receipt material before any
+// idempotent absence result can be interpreted as a completed session.
 func validSessionFence(fence SessionFence) bool {
 	return fence.LeaseVersion != "" && fence.LeaseVersion != "*" && len(fence.LeaseVersion) <= 1024 &&
 		handoffidentity.Fingerprint(fence.AttemptDigest) &&
@@ -85,6 +87,8 @@ func validSessionFence(fence SessionFence) bool {
 		!fence.Generation.IsZero() && fence.Generation.UnixNano() > 0
 }
 
+// sessionMatches binds the original receipt to every durable ownership field;
+// possession of a current storage version alone cannot end another allocation.
 func sessionMatches(current Record, fence SessionFence) bool {
 	digest, err := agones.CorrelationLabel(current.Lease.AttemptID)
 	return err == nil && current.Version == fence.LeaseVersion &&
@@ -94,6 +98,8 @@ func sessionMatches(current Record, fence SessionFence) bool {
 		admissionref.ReferenceBinds(current.Lease.SecretRef, fence.GameServerUID)
 }
 
+// deleteEndedSession removes only the barrier whose resources were cleaned up,
+// resolving an uncertain response by readback without adopting a newer version.
 func (s *Store) deleteEndedSession(ctx context.Context, key string, barrier Record) error {
 	err := s.storage.StorageDelete(ctx, []*runtime.StorageDelete{{
 		Collection: Collection, Key: key, UserID: "", Version: barrier.Version,

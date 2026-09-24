@@ -15,6 +15,8 @@ import (
 	"github.com/heroiclabs/nakama-common/runtime"
 )
 
+// sessionFixture claims a real private lease and records its original receipt,
+// including a reference that independently pins the test GameServer UID.
 func sessionFixture(t *testing.T) (*Store, *nakamastoragetest.Fake, Record, SessionFence) {
 	t.Helper()
 	store, fake, original, key := claimFixture(t)
@@ -40,6 +42,8 @@ func sessionFixture(t *testing.T) (*Store, *nakamastoragetest.Fake, Record, Sess
 	return store, fake, claimed, fence
 }
 
+// TestEndSessionHandlesUncertainBarrierWithoutBlindRetry requires durable
+// readback before cleanup and preserves uncertain outcomes without another CAS.
 func TestEndSessionHandlesUncertainBarrierWithoutBlindRetry(t *testing.T) {
 	for _, scenario := range []string{"write refused", "lost acknowledgement", "unreadable acknowledgement", "canceled after commit"} {
 		t.Run(scenario, func(t *testing.T) {
@@ -86,6 +90,8 @@ type sessionDeleteStorage struct {
 	loseAcknowledgement bool
 }
 
+// StorageDelete injects response loss only after the real conditional fake
+// commits, separating transport uncertainty from durable deletion.
 func (s *sessionDeleteStorage) StorageDelete(ctx context.Context, deletes []*runtime.StorageDelete) error {
 	if err := s.Fake.StorageDelete(ctx, deletes); err != nil {
 		return err
@@ -96,6 +102,8 @@ func (s *sessionDeleteStorage) StorageDelete(ctx context.Context, deletes []*run
 	return nil
 }
 
+// TestEndSessionSettlesLostDeleteAcknowledgement recognizes completed deletion
+// through readback rather than retrying a destructive operation.
 func TestEndSessionSettlesLostDeleteAcknowledgement(t *testing.T) {
 	_, fake, _, fence := sessionFixture(t)
 	store, err := NewStore(&sessionDeleteStorage{Fake: fake, loseAcknowledgement: true})
@@ -110,6 +118,8 @@ func TestEndSessionSettlesLostDeleteAcknowledgement(t *testing.T) {
 	}
 }
 
+// TestEndSessionRetainsBarrierWhenDeleteFailsOrCleanupCancels requires durable
+// restart evidence whenever completion cannot be safely acknowledged.
 func TestEndSessionRetainsBarrierWhenDeleteFailsOrCleanupCancels(t *testing.T) {
 	for _, scenario := range []string{"delete refused", "cancel after cleanup"} {
 		t.Run(scenario, func(t *testing.T) {
@@ -136,6 +146,8 @@ func TestEndSessionRetainsBarrierWhenDeleteFailsOrCleanupCancels(t *testing.T) {
 	}
 }
 
+// TestEndSessionConcurrentReplayCannotUnlockReplacement overlaps a completion
+// with replacement ownership and checks that its stale delete version loses.
 func TestEndSessionConcurrentReplayCannotUnlockReplacement(t *testing.T) {
 	store, fake, claimed, fence := sessionFixture(t)
 	started, finish := make(chan struct{}), make(chan struct{})
@@ -212,6 +224,8 @@ func TestEndSessionFencesBeforeCleanupAndUnlocksAfterSuccess(t *testing.T) {
 	}
 }
 
+// TestEndSessionRejectsStaleOrUnprovenOwnership varies receipt and storage
+// evidence independently; refused calls must neither write nor invoke cleanup.
 func TestEndSessionRejectsStaleOrUnprovenOwnership(t *testing.T) {
 	for _, scenario := range []string{"version", "generation", "attempt", "allocation", "UID", "key", "unclaimed", "staging", "canceled", "unavailable", "nil cleanup"} {
 		t.Run(scenario, func(t *testing.T) {
@@ -258,6 +272,8 @@ func TestEndSessionRejectsStaleOrUnprovenOwnership(t *testing.T) {
 	}
 }
 
+// TestEndSessionRetainsBarrierAfterCleanupFailureForRestart constructs a fresh
+// store to prove recovery uses durable state rather than a worker's memory.
 func TestEndSessionRetainsBarrierAfterCleanupFailureForRestart(t *testing.T) {
 	store, fake, _, fence := sessionFixture(t)
 	ctx := context.Background()
