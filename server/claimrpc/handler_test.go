@@ -220,10 +220,18 @@ func TestPrivateHandlerRejectsPlainHTTPBeforeStorage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequest(http.MethodPost, "https://claim.example/v1/claim", strings.NewReader(`{}`))
-	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "http://claim.example/v1/claim", strings.NewReader(requestBody(t, f)))
+	request.Header.Set("Content-Type", "application/json")
+	response := &deadlineRecorder{httptest.NewRecorder()}
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusForbidden {
 		t.Fatalf("plain request status=%d", response.Code)
 	}
 }
+
+// Support the handler's I/O deadline contract so removing the TLS guard cannot
+// make this test pass through an unrelated unsupported-deadline refusal.
+type deadlineRecorder struct{ *httptest.ResponseRecorder }
+
+func (*deadlineRecorder) SetReadDeadline(time.Time) error  { return nil }
+func (*deadlineRecorder) SetWriteDeadline(time.Time) error { return nil }
