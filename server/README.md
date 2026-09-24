@@ -166,8 +166,8 @@ zone/dungeon server:
   The injected claimant must honor its context, authenticate the workload,
   independently verify the token and conditionally claim the exact lease.
   Ambiguous or failed upgrades retain any committed claim for fenced
-  session-end recovery. No production endpoint or command selects this
-  composition yet; `zonesock.NewHub` retains local token-only admission.
+  session-end recovery. The zone command selects this composition only with
+  `-private-claims`; `zonesock.NewHub` retains local token-only admission.
 - **`claimrpc/`** — the inert **private HTTPS claim boundary** behind that gate
   ([ADR 0005](../docs/adr/0005-authenticate-private-zone-claims.md)). Explicitly
   compose `NewHandler(store, resources, config)` and `NewClient(endpoint, tls)`;
@@ -474,6 +474,8 @@ zone/dungeon server:
   GameServer runs is `-listen` + `-agones`. Supplying
   `-agones-admission-public-key` makes the observed GameServer name the
   allocation ID and removes the local environment secret from that path.
+  `-private-claims` additionally requires the private durable claim before any
+  upgrade. It is experimental and default-off; see the configuration below.
 
 ```sh
 cd server
@@ -485,6 +487,40 @@ go run ./cmd/zone -allocation-id local-zone -listen :8443 -tls-cert cert.pem -tl
 go run ./cmd/zone -listen :8443 -tls-cert cert.pem -tls-key key.pem -agones \
   -agones-admission-public-key /var/run/world-at-ruin/admission/public.pem
 ```
+
+## Opt-in private claiming
+
+`-private-claims` joins the sealed SDK observation with the private mutual-TLS
+claim service. It requires `-listen`, TLS serving, `-agones`, the wrapping public
+key and all four claim settings. It refuses plaintext serving and developer token
+minting. Without the flag, the claim settings are ignored: no claim credential
+file is read and no private client is constructed.
+
+```sh
+go run ./cmd/zone -listen :8443 -tls-cert zone.pem -tls-key zone-key.pem -agones \
+  -agones-admission-public-key wrapping-public.pem -private-claims \
+  -claim-url https://claims.example/v1/claim -claim-ca claim-service-ca.pem \
+  -claim-cert workload.pem -claim-key workload-key.pem
+```
+
+The service root authenticates the configured endpoint hostname; the separate
+client certificate identifies `spiffe://<trust-domain>/zone/<namespace>/<uid>`
+to the private handler. Each material file is limited to 1 MiB. Missing, malformed,
+expired or unsuitable client credentials fail before SDK access or readiness.
+Certificates are loaded at startup; credential rotation requires a controlled
+process replacement under the sealed-admission restart contract.
+
+Only the exact GameServer's observed locator can route a claim. Missing metadata,
+changed observations and failed private requests refuse the player with a generic
+admission error. Requests have a five-second deadline and do not follow redirects.
+A failed upgrade never releases a possibly committed lease. Shutdown first drains
+socket/admission work and then retires idle private transport connections.
+
+This option is available for integration testing. Production activation still
+requires private listener deployment, workload credential issuance, fenced
+session-end/restart recovery and cluster acceptance under #567/#569. It supplies
+no allocator-generation fence. See
+[ADR 0008](../docs/adr/0008-compose-private-claims-in-the-zone-command.md).
 
 ## What is deliberately not here yet
 
