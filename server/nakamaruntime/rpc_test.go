@@ -41,7 +41,7 @@ func TestRPCBoundsCallsAndCancelsOnShutdown(t *testing.T) {
 			handler := rpcHandler(life, &handlerGate{}, service, timeout)
 			result := make(chan error, 1)
 			go func() {
-				_, err := handler(signedContext(), nil, nil, storage, `{"reservation_id":"deadline"}`)
+				_, err := handler(signedContext(), nil, nil, storage, `{}`)
 				result <- err
 			}()
 			select {
@@ -76,7 +76,7 @@ func TestRPCCannotAllocateWithoutAuthenticatedSession(t *testing.T) {
 	}
 	handler := rpcHandler(context.Background(), &handlerGate{}, service, time.Second)
 	for _, ctx := range []context.Context{context.Background(), context.WithValue(signedContext(), runtime.RUNTIME_CTX_USER_SESSION_EXP, time.Now().Add(-time.Minute).Unix())} {
-		result, err := handler(ctx, nil, nil, storage, `{"reservation_id":"unauthenticated"}`)
+		result, err := handler(ctx, nil, nil, storage, `{}`)
 		var failure *runtime.Error
 		if result != "" || !errors.As(err, &failure) || failure.Code != int(codes.Unauthenticated) {
 			t.Fatalf("anonymous/expired RPC: %#v", err)
@@ -116,7 +116,7 @@ func TestShutdownWaitsForInFlightHandlersAndRefusesNewOnes(t *testing.T) {
 	defer cancel()
 	handlers := &handlerGate{}
 	handler := rpcHandler(life, handlers, service, time.Minute)
-	go func() { _, _ = handler(signedContext(), nil, nil, storage, `{"reservation_id":"drain"}`) }()
+	go func() { _, _ = handler(signedContext(), nil, nil, storage, `{}`) }()
 	select {
 	case <-allocator.started:
 	case <-time.After(time.Second):
@@ -128,7 +128,7 @@ func TestShutdownWaitsForInFlightHandlersAndRefusesNewOnes(t *testing.T) {
 	if !allocator.finished.Load() {
 		t.Fatal("shutdown returned before the in-flight handler finished its cleanup")
 	}
-	_, err = handler(signedContext(), nil, nil, storage, `{"reservation_id":"late"}`)
+	_, err = handler(signedContext(), nil, nil, storage, `{}`)
 	var failure *runtime.Error
 	if !errors.As(err, &failure) || failure.Code != int(codes.Unavailable) {
 		t.Fatalf("handler admitted after shutdown: %#v", err)

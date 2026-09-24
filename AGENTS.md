@@ -683,7 +683,8 @@ everything shipped afterwards is held to.
   claimed/stale ownership and supervises exact no-show cleanup without stopping after transient
   sweep failures; its concrete Agones adapter is `server/agonesresources/`, and it remains inert
   until the default-off `server/nakamaruntime/` plugin is explicitly enabled to supervise its
-  expiry loop and register the authenticated `war_handoff` RPC; its configuration, observer-1
+  expiry loop and register the authenticated `war_handoff` RPC (empty payload; one server-owned
+  reservation per player, so a client cannot open parallel allocations); its configuration, observer-1
   binding, mutual TLS and shutdown requirements are documented in that package), and
   the **orphan reconciler** (`server/orphanreaper/` — completes bounded resource
   and private lease scans, protects every stored attempt regardless of expiry,

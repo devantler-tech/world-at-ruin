@@ -13,7 +13,6 @@ import (
 	"github.com/devantler-tech/world-at-ruin/server/gameserverapi"
 	"github.com/devantler-tech/world-at-ruin/server/handoff"
 	"github.com/devantler-tech/world-at-ruin/server/handoffalloc"
-	"github.com/devantler-tech/world-at-ruin/server/internal/handoffidentity"
 	"github.com/devantler-tech/world-at-ruin/server/nakamaauth"
 	"github.com/devantler-tech/world-at-ruin/server/nakamalease"
 	"github.com/devantler-tech/world-at-ruin/server/sim"
@@ -187,8 +186,7 @@ func rpcHandler(life context.Context, handlers *handlerGate, service *handoff.Se
 			return "", rpcError(status.Error(codes.Unavailable, "module stopped"))
 		}
 		defer handlers.leave()
-		reservation, err := reservationID(payload)
-		if err != nil {
+		if err := emptyRequest(payload); err != nil {
 			return "", rpcError(status.Error(codes.InvalidArgument, "invalid request"))
 		}
 		deadline := time.Now().Add(timeout)
@@ -202,7 +200,7 @@ func rpcHandler(life context.Context, handlers *handlerGate, service *handoff.Se
 		defer cancel()
 		stop := context.AfterFunc(life, cancel)
 		defer stop()
-		result, err := service.CreateHandoff(callCtx, handoff.Request{ReservationID: reservation})
+		result, err := service.CreateHandoff(callCtx, handoff.Request{ReservationID: playerReservation})
 		if err := callCtx.Err(); err != nil {
 			return "", rpcError(err)
 		}
@@ -217,35 +215,33 @@ func rpcHandler(life context.Context, handlers *handlerGate, service *handoff.Se
 	}
 }
 
-// Read exactly one named string. Duplicate, unknown, case-folded and null
-// members are refused instead of acquiring encoding/json's permissive aliases.
-func reservationID(payload string) (string, error) {
+// playerReservation is the server-owned reservation key for every RPC. Leases
+// are keyed by (user, reservation), so a single key per player bounds each
+// account to one live attempt: retries replay or adopt it, a claimed zone
+// refuses a second one, and only an expired attempt is replaced. A
+// client-chosen key would let one account reserve every Ready GameServer.
+const playerReservation = "zone"
+
+// Accept exactly an empty JSON object. Any member is refused, so the payload
+// cannot choose a reservation, user, session, observer, endpoint or key.
+func emptyRequest(payload string) error {
 	invalid := errors.New("nakama handoff: invalid request")
 	if len(payload) > 4096 || !utf8.ValidString(payload) {
-		return "", invalid
+		return invalid
 	}
 	decoder := json.NewDecoder(strings.NewReader(payload))
 	start, err := decoder.Token()
 	if err != nil || start != json.Delim('{') {
-		return "", invalid
-	}
-	key, err := decoder.Token()
-	if err != nil || key != "reservation_id" {
-		return "", invalid
-	}
-	value, err := decoder.Token()
-	id, ok := value.(string)
-	if err != nil || !ok || !handoffidentity.CorrelationID(id) {
-		return "", invalid
+		return invalid
 	}
 	end, err := decoder.Token()
 	if err != nil || end != json.Delim('}') {
-		return "", invalid
+		return invalid
 	}
 	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
-		return "", invalid
+		return invalid
 	}
-	return id, nil
+	return nil
 }
 
 func rpcError(err error) error {

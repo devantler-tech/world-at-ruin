@@ -21,6 +21,7 @@ import (
 	"github.com/devantler-tech/world-at-ruin/server/admissionref"
 	"github.com/devantler-tech/world-at-ruin/server/agones"
 	"github.com/devantler-tech/world-at-ruin/server/handoff"
+	"github.com/devantler-tech/world-at-ruin/server/internal/handoffidentity"
 	"github.com/devantler-tech/world-at-ruin/server/nakamalease"
 	"github.com/devantler-tech/world-at-ruin/server/nakamastorage/nakamastoragetest"
 	"github.com/devantler-tech/world-at-ruin/server/sim"
@@ -151,7 +152,7 @@ func TestModuleHandoffPersistsReplaysAndReclaimsNoShow(t *testing.T) {
 	t.Cleanup(func() { r.shutdown(context.Background(), nil, nil, storage) })
 	// Initialization's request lifetime is not the running module's lifetime.
 	cancelInit()
-	payload, err := r.rpc(signedContext(), nil, nil, storage, `{"reservation_id":"trip-one"}`)
+	payload, err := r.rpc(signedContext(), nil, nil, storage, `{}`)
 	if err != nil {
 		t.Fatalf("handoff: %#v; allocator calls=%d; stored=%v", err, calls.Load(), storageValues(storage.Fake))
 	}
@@ -170,7 +171,7 @@ func TestModuleHandoffPersistsReplaysAndReclaimsNoShow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	record, err := store.Load(context.Background(), moduleUser, "trip-one")
+	record, err := store.Load(context.Background(), moduleUser, playerReservation)
 	if err != nil || record.Lease.Staging || record.Lease.AllocationID != "zone-one" || record.Lease.Observer != 1 {
 		t.Fatalf("RPC returned before exact allocation was durable: %v", err)
 	}
@@ -182,8 +183,13 @@ func TestModuleHandoffPersistsReplaysAndReclaimsNoShow(t *testing.T) {
 	if err != nil || observer != 1 || sim.NewDemoWorld().Get(observer) == nil {
 		t.Fatalf("token cannot bind an existing zone observer: %v", err)
 	}
-	if _, err := r.rpc(signedContext(), nil, nil, storage, `{"reservation_id":"trip-one"}`); err != nil || calls.Load() != 1 {
+	if _, err := r.rpc(signedContext(), nil, nil, storage, `{}`); err != nil || calls.Load() != 1 {
 		t.Fatalf("transport retry redispatched allocation: %v", err)
+	}
+	// A client-chosen key used to open a fresh attempt per value, letting one
+	// account reserve every Ready GameServer.
+	if _, err := r.rpc(signedContext(), nil, nil, storage, `{"reservation_id":"another-zone"}`); err == nil || calls.Load() != 1 {
+		t.Fatalf("client-chosen reservation opened another allocation: %v", err)
 	}
 	for _, value := range append([]string{payload}, storageValues(storage.Fake)...) {
 		for _, encoded := range []string{string(secret), base64.StdEncoding.EncodeToString(secret), base64.RawURLEncoding.EncodeToString(secret)} {
@@ -208,7 +214,7 @@ func TestModuleHandoffPersistsReplaysAndReclaimsNoShow(t *testing.T) {
 	if closed.Load() != 1 {
 		t.Fatal("shutdown did not close its transport exactly once")
 	}
-	if result, err := r.rpc(signedContext(), nil, nil, storage, `{"reservation_id":"after-stop"}`); err == nil || result != "" || calls.Load() != 1 {
+	if result, err := r.rpc(signedContext(), nil, nil, storage, `{}`); err == nil || result != "" || calls.Load() != 1 {
 		t.Fatal("stopped module accepted a handoff")
 	}
 }
@@ -236,13 +242,18 @@ func TestModuleDisabledAndInvalidStartupHaveNoSideEffects(t *testing.T) {
 }
 
 func TestRPCRejectsPayloadAuthorityAndPreservesFailureCodes(t *testing.T) {
-	for _, payload := range []string{"", "null", "[]", `{}`, `{"reservation_id":null}`, `{"reservation_id":""}`, `{"reservation_id":"r","user_id":"victim"}`, `{"reservation_id":"r","session":"secret"}`, `{"reservation_id":"r","reservation_id":"r"}`, `{"Reservation_id":"r"}`, `{"reservation_id":"r"}{}`, `{"reservation_id":"bad/id"}`, strings.Repeat("x", 4097)} {
-		if _, err := reservationID(payload); err == nil {
+	// A client-chosen reservation would let one account open a fresh durable
+	// attempt per RPC, so every member — including reservation_id — is refused.
+	for _, payload := range []string{"", "null", "[]", `{"reservation_id":"r"}`, `{"reservation_id":"retry_1"}`, `{"user_id":"victim"}`, `{"session":"secret"}`, `{}{}`, `{} x`, "{" + strings.Repeat(" ", 4096) + "}"} {
+		if err := emptyRequest(payload); err == nil {
 			t.Fatalf("accepted invalid RPC payload %.80q", payload)
 		}
 	}
-	if id, err := reservationID(`{"reservation_id":"retry_1"}`); err != nil || id != "retry_1" {
-		t.Fatal("refused valid stable reservation")
+	if err := emptyRequest(` { } `); err != nil {
+		t.Fatal("refused the empty request")
+	}
+	if !handoffidentity.CorrelationID(playerReservation) {
+		t.Fatal("server-owned reservation is not a valid lease key")
 	}
 	for _, code := range []codes.Code{codes.Canceled, codes.DeadlineExceeded, codes.InvalidArgument, codes.Unauthenticated, codes.PermissionDenied, codes.NotFound, codes.AlreadyExists, codes.ResourceExhausted, codes.FailedPrecondition, codes.Aborted, codes.Unimplemented, codes.Internal, codes.Unavailable, codes.DataLoss, codes.Unknown} {
 		err := rpcError(status.Error(code, "private-key-or-token"))

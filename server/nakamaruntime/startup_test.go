@@ -49,7 +49,7 @@ func TestStartupFailureClosesDependenciesAndCannotServe(t *testing.T) {
 				t.Fatal("failed startup leaked an acquired transport")
 			}
 			if r.rpc != nil {
-				result, err := r.rpc(signedContext(), nil, nil, storage, `{"reservation_id":"failed-init"}`)
+				result, err := r.rpc(signedContext(), nil, nil, storage, `{}`)
 				if result != "" || err == nil {
 					t.Fatal("failed initialization left a serving RPC")
 				}

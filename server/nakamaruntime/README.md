@@ -72,16 +72,21 @@ by the replacement module.
 
 ## RPC contract
 
-Send a Nakama-authenticated RPC with exactly one property:
+Send a Nakama-authenticated RPC with an empty object:
 
 ```json
-{"reservation_id":"same-key-on-every-retry"}
+{}
 ```
 
-The key contains 1–128 ASCII letters, digits, underscores or hyphens. Request
-size is limited to 4096 bytes. Unknown, duplicate, null and case-aliased fields
-are rejected. The payload cannot select a user, session, observer, endpoint,
-attempt ID or key. Server-key/anonymous RPCs are refused.
+Any property is rejected, and request size is limited to 4096 bytes. The
+payload cannot select a user, session, observer, endpoint, attempt ID, key or
+reservation. Server-key/anonymous RPCs are refused.
+
+The server uses one fixed reservation key for every player, so each account
+holds at most one live attempt. A retry replays or adopts that attempt, a
+request while the player's zone is claimed is refused, and only an expired
+attempt is replaced. A client-chosen key would let one account start a fresh
+allocation per request and reserve every Ready GameServer.
 
 `nakamaauth.RuntimeVerifier` uses Nakama's authenticated user/expiry context,
 then checks that exact account still exists and is enabled. It accepts no
@@ -94,7 +99,7 @@ short-lived token. Raw admission secrets, lease references and account IDs do
 not enter the response. Failures use Nakama runtime errors with sanitized
 messages and the service's gRPC status class. Cancellation, shutdown and
 timeouts return no partial handoff. A lost response leaves the durable lease
-for an identical reservation retry or no-show cleanup.
+for a retry or no-show cleanup.
 
 ## Observer and lifetime policy
 
@@ -123,7 +128,8 @@ separate work. A returned handoff does not establish a deployed multiplayer path
 
 Tests invoke the registered RPC over the real service, coordinator, lease store,
 adapter and RSA envelope reader, replacing only external APIs. They check
-persistence before response, reservation replay without redispatch, token
+persistence before response, retry replay without redispatch, refusal of a
+client-chosen reservation, token
 acceptance by the zone verifier, an existing observer, automatic no-show
 reclamation, shutdown and secret absence. Separate tests send a real gRPC
 request over verified mutual TLS and reject an untrusted allocator.
