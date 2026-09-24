@@ -10,6 +10,8 @@ import (
 	"github.com/devantler-tech/world-at-ruin/server/nakamastorage/nakamastoragetest"
 )
 
+// claimFixture gives each test a private unclaimed lease and its opaque locator
+// while retaining the raw identity solely for independent owner-side assertions.
 func claimFixture(t *testing.T) (*Store, *nakamastoragetest.Fake, Record, string) {
 	t.Helper()
 	fake := nakamastoragetest.New()
@@ -24,6 +26,8 @@ func claimFixture(t *testing.T) (*Store, *nakamastoragetest.Fake, Record, string
 	return store, fake, record, ReservationKey(record.Lease.UserID, record.Lease.ReservationID)
 }
 
+// TestClaimByKeyPersistsAndWinsAgainstCleanup proves admission ownership is
+// durable, replay writes nothing, and no-show cleanup loses after the claim.
 func TestClaimByKeyPersistsAndWinsAgainstCleanup(t *testing.T) {
 	store, fake, original, key := claimFixture(t)
 	ctx := context.Background()
@@ -56,6 +60,8 @@ func TestClaimByKeyPersistsAndWinsAgainstCleanup(t *testing.T) {
 	}
 }
 
+// TestClaimByKeyRefusesReleaseAndStaleIdentity rejects callers whose observed
+// version or allocation no longer owns the private lease.
 func TestClaimByKeyRefusesReleaseAndStaleIdentity(t *testing.T) {
 	for _, name := range []string{"release wins", "changed allocation", "changed attempt", "changed version", "expired", "canceled"} {
 		t.Run(name, func(t *testing.T) {
@@ -96,6 +102,8 @@ func TestClaimByKeyRefusesReleaseAndStaleIdentity(t *testing.T) {
 	}
 }
 
+// TestClaimByKeyRecoversLostAcknowledgementWithoutRewriting distinguishes a
+// committed claim from its missing response by one readback, never another write.
 func TestClaimByKeyRecoversLostAcknowledgementWithoutRewriting(t *testing.T) {
 	store, fake, _, key := claimFixture(t)
 	located, err := store.LoadForClaim(context.Background(), key)
@@ -112,6 +120,8 @@ func TestClaimByKeyRecoversLostAcknowledgementWithoutRewriting(t *testing.T) {
 	}
 }
 
+// TestLoadForClaimRefusesMalformedOrPublicStorage prevents malformed routing,
+// ambiguous data and public permissions from becoming trusted lease evidence.
 func TestLoadForClaimRefusesMalformedOrPublicStorage(t *testing.T) {
 	for _, name := range []string{"uppercase key", "short key", "public", "wildcard version", "duplicate field", "missing"} {
 		t.Run(name, func(t *testing.T) {
@@ -139,6 +149,8 @@ func TestLoadForClaimRefusesMalformedOrPublicStorage(t *testing.T) {
 	}
 }
 
+// TestClaimByKeyAndCleanupHaveOneConcurrentWinner exercises the shared storage
+// version race rather than substituting a mocked success for either transition.
 func TestClaimByKeyAndCleanupHaveOneConcurrentWinner(t *testing.T) {
 	for range 32 {
 		store, _, original, key := claimFixture(t)
@@ -174,6 +186,8 @@ func TestClaimByKeyAndCleanupHaveOneConcurrentWinner(t *testing.T) {
 	}
 }
 
+// TestClaimByKeyRetainsUncertainCommittedClaim ensures cancellation cannot undo
+// ownership that must remain reserved until fenced session cleanup is authorized.
 func TestClaimByKeyRetainsUncertainCommittedClaim(t *testing.T) {
 	for _, scenario := range []string{"canceled after write", "lost write and read acknowledgements"} {
 		t.Run(scenario, func(t *testing.T) {

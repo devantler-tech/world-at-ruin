@@ -28,6 +28,7 @@ import (
 
 type resolverFunc func(context.Context, nakamalease.Lease) (handoff.Allocation, error)
 
+// Resolve exposes a controlled allocation outcome without replacing lease storage.
 func (f resolverFunc) Resolve(ctx context.Context, lease nakamalease.Lease) (handoff.Allocation, error) {
 	return f(ctx, lease)
 }
@@ -42,6 +43,8 @@ type fixture struct {
 	serverTLS, clientTLS *tls.Config
 }
 
+// newFixture seeds a private unclaimed lease and matching token, then issues
+// an isolated workload identity for real mutual-TLS tests.
 func newFixture(t *testing.T, identity string) *fixture {
 	t.Helper()
 	f := &fixture{storage: nakamastoragetest.New()}
@@ -71,6 +74,8 @@ func newFixture(t *testing.T, identity string) *fixture {
 	return f
 }
 
+// certificates creates a private test root and separate server/client leaves;
+// the client URI is the identity the claim handler must independently authorize.
 func certificates(t *testing.T, identity string) (*tls.Config, *tls.Config) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -113,6 +118,8 @@ func certificates(t *testing.T, identity string) (*tls.Config, *tls.Config) {
 	return &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{issue(2, false)}, ClientCAs: pool, ClientAuth: tls.RequireAndVerifyClientCert}, &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: pool, Certificates: []tls.Certificate{issue(3, true)}}
 }
 
+// serve runs the production handler and client over a verifying loopback TLS
+// listener, with cleanup tied to the test lifetime.
 func (f *fixture) serve(t *testing.T, resolve resolverFunc) (*Client, *httptest.Server) {
 	t.Helper()
 	handler, err := NewHandler(f.store, resolve, Config{Namespace: "world", TrustDomain: "claims.example", Timeout: time.Second})
@@ -131,6 +138,8 @@ func (f *fixture) serve(t *testing.T, resolve resolverFunc) (*Client, *httptest.
 	return client, server
 }
 
+// TestAuthenticatedClaimCommitsBeforeSuccess ties successful responses and
+// idempotent replay to persisted ownership that no-show cleanup cannot reclaim.
 func TestAuthenticatedClaimCommitsBeforeSuccess(t *testing.T) {
 	f := newFixture(t, "spiffe://claims.example/zone/world/uid-1")
 	client, _ := f.serve(t, func(_ context.Context, lease nakamalease.Lease) (handoff.Allocation, error) {
@@ -156,6 +165,8 @@ func TestAuthenticatedClaimCommitsBeforeSuccess(t *testing.T) {
 	}
 }
 
+// TestPrivateClaimRejectsWrongAuthorityAndBinding varies each authority and
+// ownership component independently and requires storage to remain untouched.
 func TestPrivateClaimRejectsWrongAuthorityAndBinding(t *testing.T) {
 	for _, name := range []string{"no workload URI", "wrong trust domain", "sibling workload", "wrong namespace", "wrong UID", "wrong allocation", "wrong attempt", "wrong observer", "sibling token", "wrong expiry", "changed resource", "staging", "releasing", "expired"} {
 		t.Run(name, func(t *testing.T) {
@@ -211,6 +222,8 @@ func TestPrivateClaimRejectsWrongAuthorityAndBinding(t *testing.T) {
 	}
 }
 
+// TestPrivateHandlerRejectsPlainHTTPBeforeStorage bypasses unrelated malformed
+// input failures so it directly detects removal of the verified-peer guard.
 func TestPrivateHandlerRejectsPlainHTTPBeforeStorage(t *testing.T) {
 	f := newFixture(t, "spiffe://claims.example/zone/world/uid-1")
 	handler, err := NewHandler(f.store, resolverFunc(func(context.Context, nakamalease.Lease) (handoff.Allocation, error) {
@@ -233,5 +246,9 @@ func TestPrivateHandlerRejectsPlainHTTPBeforeStorage(t *testing.T) {
 // make this test pass through an unrelated unsupported-deadline refusal.
 type deadlineRecorder struct{ *httptest.ResponseRecorder }
 
-func (*deadlineRecorder) SetReadDeadline(time.Time) error  { return nil }
+// SetReadDeadline accepts the handler deadline without introducing a refusal
+// that could conceal a missing TLS guard in this in-memory recorder.
+func (*deadlineRecorder) SetReadDeadline(time.Time) error { return nil }
+
+// SetWriteDeadline provides the corresponding write-side test capability.
 func (*deadlineRecorder) SetWriteDeadline(time.Time) error { return nil }

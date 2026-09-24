@@ -20,6 +20,8 @@ type claimRequest struct {
 	Observer      sim.EntityID `json:"observer"`
 }
 
+// decodeRequest accepts one bounded object with exact field spellings; aliases,
+// duplicate keys and trailing values cannot alter the identity being verified.
 func decodeRequest(reader io.Reader) (claimRequest, error) {
 	var request claimRequest
 	decoder := json.NewDecoder(reader)
@@ -58,6 +60,8 @@ func decodeRequest(reader io.Reader) (claimRequest, error) {
 	return request, nil
 }
 
+// validRequest rejects malformed routing and identity material before resource
+// lookup; valid syntax never establishes authority to claim an allocation.
 func validRequest(request claimRequest) bool {
 	key, err := hex.DecodeString(request.LeaseObjectID)
 	return err == nil && len(key) == 32 && strings.ToLower(request.LeaseObjectID) == request.LeaseObjectID &&

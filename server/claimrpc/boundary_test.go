@@ -18,6 +18,8 @@ import (
 	"github.com/devantler-tech/world-at-ruin/server/nakamalease"
 )
 
+// requestBody uses literal protocol keys so a production encoder regression
+// cannot silently change both sides of the decoding tests.
 func requestBody(t *testing.T, f *fixture) string {
 	t.Helper()
 	// Literal protocol field names keep decoding tests independent of the
@@ -29,6 +31,8 @@ func requestBody(t *testing.T, f *fixture) string {
 	return string(data)
 }
 
+// TestHandlerRefusesMalformedBodiesBeforeResolving proves malformed input has
+// no resource-lookup or storage side effects and receives only a generic refusal.
 func TestHandlerRefusesMalformedBodiesBeforeResolving(t *testing.T) {
 	f := newFixture(t, "spiffe://claims.example/zone/world/uid-1")
 	var calls atomic.Int32
@@ -73,6 +77,8 @@ func TestHandlerRefusesMalformedBodiesBeforeResolving(t *testing.T) {
 	}
 }
 
+// TestClientRefusesMissingOrUntrustedPeerCertificates exercises actual TLS
+// handshakes so a permissive HTTP test double cannot mask a missing trust check.
 func TestClientRefusesMissingOrUntrustedPeerCertificates(t *testing.T) {
 	f := newFixture(t, "spiffe://claims.example/zone/world/uid-1")
 	_, server := f.serve(t, func(context.Context, nakamalease.Lease) (handoff.Allocation, error) { return f.allocation, nil })
@@ -103,6 +109,8 @@ func TestClientRefusesMissingOrUntrustedPeerCertificates(t *testing.T) {
 	}
 }
 
+// TestClientRefusesRedirectAndUnsafeConfiguration protects workload credentials
+// from plaintext transport, unverified peers and redirected destinations.
 func TestClientRefusesRedirectAndUnsafeConfiguration(t *testing.T) {
 	f := newFixture(t, "spiffe://claims.example/zone/world/uid-1")
 	var redirected atomic.Int32
@@ -142,6 +150,8 @@ func TestClientRefusesRedirectAndUnsafeConfiguration(t *testing.T) {
 	}
 }
 
+// TestPrivateClaimFailsClosedAfterCancellationAndStorageAmbiguity distinguishes
+// a refused response from a claim that may already have committed durably.
 func TestPrivateClaimFailsClosedAfterCancellationAndStorageAmbiguity(t *testing.T) {
 	for _, name := range []string{"cancel while resolving", "cleanup while resolving", "lost acknowledgement", "storage unavailable"} {
 		t.Run(name, func(t *testing.T) {
@@ -186,6 +196,8 @@ func TestPrivateClaimFailsClosedAfterCancellationAndStorageAmbiguity(t *testing.
 	}
 }
 
+// TestHandlerRejectsExpiredPooledWorkload prevents an existing TLS connection
+// from extending the authority of its expired workload certificate.
 func TestHandlerRejectsExpiredPooledWorkload(t *testing.T) {
 	_, clientConfig := certificates(t, "spiffe://claims.example/zone/world/uid-1")
 	// The actual TLS connection tests exercise chain creation. Here the clock
@@ -200,6 +212,8 @@ func TestHandlerRejectsExpiredPooledWorkload(t *testing.T) {
 	}
 }
 
+// TestHandlerRefusesUnverifiedClientCertificateOverTLS checks that presenting a
+// certificate is insufficient when the listener has not verified its chain.
 func TestHandlerRefusesUnverifiedClientCertificateOverTLS(t *testing.T) {
 	f := newFixture(t, "spiffe://claims.example/zone/world/uid-1")
 	f.serverTLS.ClientAuth = tls.RequestClientCert
@@ -215,6 +229,8 @@ func TestHandlerRefusesUnverifiedClientCertificateOverTLS(t *testing.T) {
 	}
 }
 
+// TestClientRefusesUnexpectedResponsesWithoutLeakingDetails keeps remote error
+// bodies and malformed successes out of the zone's admission result.
 func TestClientRefusesUnexpectedResponsesWithoutLeakingDetails(t *testing.T) {
 	for _, body := range []string{"private storage details", strings.Repeat("s", 8192)} {
 		f := newFixture(t, "spiffe://claims.example/zone/world/uid-1")

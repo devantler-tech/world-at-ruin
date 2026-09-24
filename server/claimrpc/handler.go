@@ -46,6 +46,8 @@ func NewHandler(store *nakamalease.Store, resolver Resolver, cfg Config) (http.H
 	return &handler{store: store, resolver: resolver, config: cfg}, nil
 }
 
+// ServeHTTP admits only a verified workload request whose exact lease can be
+// claimed durably; every refusal uses the same response without private detail.
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	if r.Method != http.MethodPost || r.URL.Path != "/v1/claim" || r.URL.RawQuery != "" || r.Header.Get("Content-Type") != "application/json" || !verifiedPeer(r.TLS, time.Now()) {
@@ -78,6 +80,8 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// claim independently resolves the pinned allocation before comparing its token
+// and competing with cleanup on the observed lease version.
 func (h *handler) claim(ctx context.Context, request claimRequest) error {
 	record, err := h.store.LoadForClaim(ctx, request.LeaseObjectID)
 	if err != nil {
@@ -123,6 +127,8 @@ func verifiedPeer(state *tls.ConnectionState, now time.Time) bool {
 	return false
 }
 
+// refuse deliberately gives authentication, decoding and storage failures the
+// same public shape so they cannot disclose private workload or lease state.
 func refuse(w http.ResponseWriter) { http.Error(w, "zone claim refused", http.StatusForbidden) }
 
 // ErrRefused intentionally carries no workload, token or storage detail.

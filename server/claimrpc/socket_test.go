@@ -34,13 +34,17 @@ import (
 
 type observedBinding struct{ binding agones.ClaimBinding }
 
+// ClaimBinding supplies only server-owned metadata to the socket admission gate.
 func (b observedBinding) ClaimBinding() (agones.ClaimBinding, error) { return b.binding, nil }
+
+// ClaimBindingCurrent makes a changed observation invalidate an in-flight claim.
 func (b observedBinding) ClaimBindingCurrent(value agones.ClaimBinding) bool {
 	return value == b.binding
 }
 
 type forbiddenAllocator struct{}
 
+// Allocate refuses any accidental resource creation during claim verification.
 func (forbiddenAllocator) Allocate(context.Context, *allocationpb.AllocationRequest, ...grpc.CallOption) (*allocationpb.AllocationResponse, error) {
 	return nil, errors.New("claim must never allocate")
 }
@@ -95,6 +99,8 @@ func (f *fixture) resourceResolver(t *testing.T) (*agonesresources.Adapter, *ago
 	return adapter, kube, gs
 }
 
+// TestPrivateClaimControlsRealSocketWithPinnedResource requires the real resource
+// checks and durable claim to succeed before a TLS socket receives its snapshot.
 func TestPrivateClaimControlsRealSocketWithPinnedResource(t *testing.T) {
 	for _, scenario := range []string{"valid", "replacement UID", "changed envelope", "changed attempt", "cleanup won"} {
 		t.Run(scenario, func(t *testing.T) {

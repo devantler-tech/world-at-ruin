@@ -94,6 +94,8 @@ func (s *Store) ClaimByKey(ctx context.Context, key string, current Record, at t
 	return Record{}, err
 }
 
+// matchingClaim accepts a durable admission stamp only when all other allocation
+// ownership fields still equal the independently verified observation.
 func matchingClaim(latest, expected Record) bool {
 	if latest.Lease.ClaimedAt.IsZero() {
 		return false
