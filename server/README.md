@@ -159,6 +159,24 @@ zone/dungeon server:
   Ambiguous or failed upgrades retain any committed claim for fenced
   session-end recovery. No production endpoint or command selects this
   composition yet; `zonesock.NewHub` retains local token-only admission.
+- **`claimrpc/`** — the inert **private HTTPS claim boundary** behind that gate
+  ([ADR 0005](../docs/adr/0005-authenticate-private-zone-claims.md)). Explicitly
+  compose `NewHandler(store, resources, config)` and `NewClient(endpoint, tls)`;
+  construction starts no listener and registers no public Nakama RPC. A verified
+  client certificate must identify the exact namespace and GameServer UID through
+  `spiffe://<trust-domain>/zone/<namespace>/<gameserver-uid>`. The handler loads
+  the opaque lease key, resolves its pinned GameServer and sealed envelope, and
+  independently verifies the canonical allocation token and exact lease expiry.
+  `nakamalease.LoadForClaim`/`ClaimByKey` preserve the existing schema and exact
+  version race with no-show cleanup without receiving raw player or reservation
+  IDs. Identical claims replay from durable state; a lost acknowledgement causes
+  one read, and uncertain admission never releases a committed claim. Requests
+  are strictly decoded and size/deadline bounded; failures contain no private
+  details. The client requires verified mutual TLS and refuses redirects.
+  Actual TLS and socket tests cover the storage transition and real resource
+  adapter. Workload attestation/issuance, isolated keys, rotation, private listener
+  deployment, production composition and fenced session recovery remain required
+  before activation (#12, #569, #567).
 - **`agones/`** — the **Agones GameServer lifecycle**: what makes the zone
   binary deployable on the fleet. Agones's contract is hard — a GameServer that
   never calls `Ready` is never allocated, and one that stops calling `Health`
@@ -466,15 +484,16 @@ Later children of the server-foundation epic
 of the Phase 1 epic [#8](https://github.com/devantler-tech/world-at-ruin/issues/8)):
 the allocator-generation fence supervisor of
 [ADR 0002](../docs/adr/0002-seal-zone-admission-secrets-before-readiness.md),
-the authenticated private zone claim endpoint and fenced session-end recovery,
+production composition of the private zone claim endpoint and fenced session-end recovery,
 the client entry point that enables Google account
 provisioning, the party and chat half of the Nakama social surface, client
 prediction and reconciliation, real navmesh geometry, and Postgres/CNPG
 persistence. Zone boot already generates, publishes and observes the sealed
 envelope, and the concrete resource adapter validates, unwraps and recovers it;
-the fence, authenticated private claim endpoint and platform deployment of the
+the fence, private claim listener composition and platform deployment of the
 default-off Nakama composition remain outstanding. The zone's observed-locator
-claim gate is available for that integration. The tick core, socket, client replica store, Agones lifecycle,
+claim gate and authenticated HTTPS boundary are available for that integration.
+The tick core, socket, client replica store, Agones lifecycle,
 default-off Nakama account provisioning and session verification, friends
 boundary, allocation API boundary, GameServer resource boundary, private lease
 store, concrete Agones resource adapter, durable handoff coordinator and fail-closed

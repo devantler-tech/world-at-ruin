@@ -620,8 +620,14 @@ everything shipped afterwards is held to.
   (`server/zoneclaim/` plus `zonesock.NewClaimedHub` — claims through a private boundary before
   upgrading a socket, using only the exact sealed GameServer's observed allocation locator;
   cancellation, token expiry, metadata changes, watch termination and lifecycle shutdown refuse
-  admission, and an invalidated observation cannot be reused after restoration; the authenticated
-  private endpoint, session-end recovery and production command wiring remain separate work),
+  admission, and an invalidated observation cannot be reused after restoration), the inert
+  **private claim boundary** (`server/claimrpc/`, ADR 0005 — verified mutual TLS identifies the
+  exact namespace/GameServer UID; opaque lease lookup, pinned resource/envelope resolution and
+  canonical token verification precede a conditional claim in the existing schema; no-show cleanup
+  races on that same version, replay reads durable state, and ambiguous admission retains the claim;
+  strict bounded requests, generic refusals and a verified client with no redirects; attested
+  workload certificate issuance, private listener deployment, session-end recovery and production
+  command wiring remain separate work),
   the first **Nakama identity boundary**
   (`server/nakamaauth/` — locally validates audience-bound Google ID tokens, derives a
   server-keyed opaque email/password pair whose logged identifier is not replayable alone,
@@ -701,7 +707,7 @@ everything shipped afterwards is held to.
   filtering, real navmesh pathfinding and cast replication remain later children — with its own
   cross-platform golden). The zone-side sealed-envelope boot from
   `docs/adr/0002-seal-zone-admission-secrets-before-readiness.md` is available through
-  `zone -agones -agones-admission-public-key <path>`; orphan supervision, the zone claim adapter,
+  `zone -agones -agones-admission-public-key <path>`; orphan supervision, private claim composition,
   platform deployment of the default-off Nakama RPC plugin and broader persistence remain later children of the server-foundation
   epic (#4);
   `deploy/` (platform manifests) arrives later per the roadmap.
