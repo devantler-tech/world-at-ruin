@@ -45,7 +45,9 @@ Enabled initialization rejects missing/malformed settings before connection or
 registration. Material reads are capped at 1 MiB each. Invalid, expired or
 mismatched TLS credentials and invalid/duplicate unwrap keys fail startup;
 errors expose neither file contents nor paths. The allocator uses verified
-mutual TLS and disables configured gRPC retries. Kubernetes uses in-cluster
+mutual TLS and disables configured gRPC retries. Startup completes a verified
+handshake with the allocator within ten seconds and fails otherwise, so a
+credential the allocator rejects never reaches a player request. Kubernetes uses in-cluster
 credentials, a ten-second request timeout and refuses redirects. Its service
 account needs namespaced GameServer get/list/delete only. Apply that restriction
 in deployment RBAC; a Go interface is not an RBAC grant.

@@ -99,16 +99,18 @@ func TestAllocatorConnectionUsesVerifiedMutualTLS(t *testing.T) {
 	if err != nil || got.GetGameServerName() != "verified-mtls" {
 		t.Fatalf("mutually authenticated gRPC request failed: %v", err)
 	}
-	// Trust another authority: the same server must now fail authentication.
+	// Credentials the peer rejects must fail startup, before the RPC can accept
+	// a request whose first dispatch would then be quarantined as ambiguous.
 	other, _, _ := certificateFixture(t, t.TempDir())
-	cfg.allocatorCA = other.allocatorCA
-	untrusted, closeUntrusted, err := connectAllocator(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer closeUntrusted()
-	if _, err := untrusted.Allocate(ctx, &allocationpb.AllocationRequest{}); err == nil {
-		t.Fatal("allocator accepted an untrusted server")
+	untrustedServer := cfg
+	untrustedServer.allocatorCA = other.allocatorCA
+	untrustedClient := cfg
+	untrustedClient.allocatorCert, untrustedClient.allocatorKey = other.allocatorCert, other.allocatorKey
+	for name, broken := range map[string]config{"untrusted server": untrustedServer, "untrusted client": untrustedClient} {
+		if _, closeBroken, err := connectAllocator(broken); err == nil {
+			closeBroken()
+			t.Fatalf("%s: startup accepted an unverifiable allocator connection", name)
+		}
 	}
 }
 

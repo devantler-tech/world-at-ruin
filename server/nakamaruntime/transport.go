@@ -4,12 +4,14 @@ import (
 	allocationpb "agones.dev/agones/pkg/allocation/go"
 	agonesclient "agones.dev/agones/pkg/client/clientset/versioned/typed/agones/v1"
 	"bytes"
+	"context"
 	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials"
 	"io"
 	"k8s.io/client-go/rest"
@@ -94,7 +96,31 @@ func connectAllocator(cfg config) (allocationpb.AllocationServiceClient, func(),
 	if err != nil {
 		return nil, nil, errors.New("nakama handoff: allocator transport unavailable")
 	}
+	if err := awaitReady(conn, allocatorConnectTimeout); err != nil {
+		_ = conn.Close()
+		return nil, nil, err
+	}
 	return allocationpb.NewAllocationServiceClient(conn), func() { _ = conn.Close() }, nil
+}
+
+// allocatorConnectTimeout bounds the startup handshake with the allocator.
+const allocatorConnectTimeout = 10 * time.Second
+
+// awaitReady completes a verified TLS handshake before the RPC is registered.
+// grpc.NewClient performs no I/O, so an untrusted CA or client certificate
+// would otherwise surface only on a player's first dispatch, after its attempt
+// is durably dispatched and therefore quarantined as ambiguous.
+func awaitReady(conn *grpc.ClientConn, timeout time.Duration) error {
+	unavailable := errors.New("nakama handoff: allocator connection could not be verified")
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	conn.Connect()
+	for state := conn.GetState(); state != connectivity.Ready; state = conn.GetState() {
+		if state == connectivity.TransientFailure || state == connectivity.Shutdown || !conn.WaitForStateChange(ctx, state) {
+			return unavailable
+		}
+	}
+	return nil
 }
 
 func readPrivateKey(path string) (*rsa.PrivateKey, error) {
