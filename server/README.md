@@ -389,8 +389,15 @@ zone/dungeon server:
   supervisor. This includes a crash that left only an attempt ID. Claimed and
   stale attempts remain untouched, external errors are sanitized, and raw
   admission-secret bytes never enter the lease. Its concrete adapter is
-  `agonesresources/`; the coordinator stays inert until a Nakama composition
-  supervises its expiry loop and registers the resulting handoff service.
+  `agonesresources/`; the default-off `nakamaruntime/` composition supervises
+  its expiry loop and registers the resulting handoff service when enabled.
+- **[`nakamaruntime/`](nakamaruntime/README.md)** — the opt-in `war_handoff`
+  RPC plugin, built from `cmd/nakama`. It authenticates the server-provided
+  session identity, composes the real allocator, resource adapter and lease
+  store, and supervises no-show cleanup in its expiry loop, which the shutdown
+  hook stops before closing dependencies. Configuration,
+  mutual TLS, retained unwrap keys, the single-player observer policy and
+  deployment prerequisites are documented alongside the package.
 - **`agonesresources/`** — the concrete **Agones GameServer resource adapter**
   behind the coordinator, composing `agonesalloc`, `gameserverapi` and
   `admissionref` the way [ADR
@@ -460,15 +467,14 @@ of the Phase 1 epic [#8](https://github.com/devantler-tech/world-at-ruin/issues/
 the allocator-generation fence supervisor of
 [ADR 0002](../docs/adr/0002-seal-zone-admission-secrets-before-readiness.md),
 the authenticated private zone claim endpoint and fenced session-end recovery,
-Nakama RPC registration that exposes the
-handoff service, the client entry point that enables Google account
+the client entry point that enables Google account
 provisioning, the party and chat half of the Nakama social surface, client
 prediction and reconciliation, real navmesh geometry, and Postgres/CNPG
 persistence. Zone boot already generates, publishes and observes the sealed
 envelope, and the concrete resource adapter validates, unwraps and recovers it;
-the fence, authenticated private claim endpoint and the Nakama composition are
-not in place yet. The zone's observed-locator claim gate is available for that
-composition. The tick core, socket, client replica store, Agones lifecycle,
+the fence, authenticated private claim endpoint and platform deployment of the
+default-off Nakama composition remain outstanding. The zone's observed-locator
+claim gate is available for that integration. The tick core, socket, client replica store, Agones lifecycle,
 default-off Nakama account provisioning and session verification, friends
 boundary, allocation API boundary, GameServer resource boundary, private lease
 store, concrete Agones resource adapter, durable handoff coordinator and fail-closed

@@ -92,6 +92,21 @@ func (f *Fake) Objects() []Object {
 	return objects
 }
 
+// WrittenValues returns every value any recorded write carried, including
+// values a later write replaced or a delete removed. It is safe to call while
+// another goroutine is still writing.
+func (f *Fake) WrittenValues() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var values []string
+	for _, call := range f.WriteCalls {
+		for _, write := range call {
+			values = append(values, write.Value)
+		}
+	}
+	return values
+}
+
 // StorageRead returns the objects that exist among reads, in request order.
 func (f *Fake) StorageRead(
 	ctx context.Context,

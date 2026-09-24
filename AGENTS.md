@@ -682,7 +682,10 @@ everything shipped afterwards is held to.
   cancellation, finalizes the allocation before returning connection material, protects
   claimed/stale ownership and supervises exact no-show cleanup without stopping after transient
   sweep failures; its concrete Agones adapter is `server/agonesresources/`, and it remains inert
-  until a Nakama composition supervises its expiry loop and registers the handoff RPC), and
+  until the default-off `server/nakamaruntime/` plugin is explicitly enabled to supervise its
+  expiry loop and register the authenticated `war_handoff` RPC (empty payload; one server-owned
+  reservation per player, so a client cannot open parallel allocations); its configuration, observer-1
+  binding, mutual TLS and shutdown requirements are documented in that package), and
   the **orphan reconciler** (`server/orphanreaper/` — completes bounded resource
   and private lease scans, protects every stored attempt regardless of expiry,
   requires consecutive orphan observations plus grace, and deletes only the
@@ -698,9 +701,8 @@ everything shipped afterwards is held to.
   filtering, real navmesh pathfinding and cast replication remain later children — with its own
   cross-platform golden). The zone-side sealed-envelope boot from
   `docs/adr/0002-seal-zone-admission-secrets-before-readiness.md` is available through
-  `zone -agones -agones-admission-public-key <path>`; allocation-response validation, the concrete
-  GameServer resource adapter and unwrap path, expiry/orphan supervision, the zone claim adapter,
-  Nakama RPC registration and broader persistence remain later children of the server-foundation
+  `zone -agones -agones-admission-public-key <path>`; orphan supervision, the zone claim adapter,
+  platform deployment of the default-off Nakama RPC plugin and broader persistence remain later children of the server-foundation
   epic (#4);
   `deploy/` (platform manifests) arrives later per the roadmap.
 - **Raised exposed-stone overlay (#547, ADR 0001) — render-only, default-off, one batch.** Under

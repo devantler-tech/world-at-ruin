@@ -39,6 +39,13 @@ linters:
   exclusions:
     warn-unused: true
     rules:
+      # Nakama's public context API uses these exact string constants. RPC
+      # fixtures must reproduce it, not use private keys the server never sets.
+      - path: ^(nakamaauth|nakamaruntime)/.*_test\.go$
+        linters:
+          - staticcheck
+        text: "SA1029: should not use built-in type string as key"
+        source: 'context\.WithValue\(.*runtime\.RUNTIME_CTX_'
       # Counts are validated against MaxEntities before this private encoder
       # helper runs, so the value is strictly inside the uint32 wire field.
       - path: ^wire/wire\.go$
