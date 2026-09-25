@@ -20,7 +20,9 @@
 # to. Rename detection is held at 100% on purpose: entries share one JSON
 # skeleton, and at git's default 50% similarity a newer entry reads as a
 # "rename" of an older sibling and inherits its release. A move that also edits
-# the file is therefore a new entry, dated by that commit.
+# the file is therefore a new entry, dated by that commit. And it is the NEWEST
+# add in that history: a path an old entry was deleted from and a new one later
+# reused carries both adds, and the old one is not this entry's.
 # Pre-release tags (vX.Y.Z-rc.1) and anything that is not a plain vX.Y.Z tag are
 # ignored: a player never receives them as an update, so they are not a release
 # an entry could have shipped in.
@@ -108,9 +110,13 @@ for path in "$entry_dir"/*.json; do
 		continue
 	fi
 
-	# The oldest add is the original one; --follow at 100% similarity carries
-	# it across an exact rename and never across a similar sibling.
-	anchor="$(git log --follow -M100% --diff-filter=A --format=%H -- "$path" | tail -n 1)" || {
+	# The newest add is this file's own: history is newest first, an exact
+	# rename shows as a rename rather than an add, and an older add on a reused
+	# path belongs to the entry that was deleted from it. --follow at 100%
+	# similarity carries the lookup across an exact rename and never across a
+	# similar sibling. `--max-count` rather than a pipe to `head`, which would cut
+	# git off mid-write and fail the lookup under pipefail.
+	anchor="$(git log --follow -M100% --diff-filter=A --max-count=1 --format=%H -- "$path")" || {
 		printf '::error::devlog-stamp: could not read the history of %s\n' "$path" >&2
 		failed=$((failed + 1))
 		continue

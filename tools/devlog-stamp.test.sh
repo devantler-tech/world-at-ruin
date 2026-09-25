@@ -132,6 +132,22 @@ out="$(run_stamp "$d")" || t_fail "a renamed entry could not be stamped: $out"
 [ "$(version_of "$d/client/devlog/edited.json")" = "1.3.0" ] ||
 	t_fail "a moved-and-rewritten entry was stamped $(version_of "$d/client/devlog/edited.json"), not the release of its rewrite (1.3.0)"
 
+# --- 2b. A reused path belongs to the entry now on it, not the one deleted from it ---
+d="$(new_repo)"
+entry next "Old occupant" > "$d/client/devlog/reused.json"
+step "$d" "add the first entry" v5.0.0
+git -C "$d" rm -q client/devlog/reused.json
+printf 'gap\n' > "$d/README"
+step "$d" "delete it" v5.1.0
+printf 'more\n' >> "$d/README"
+step "$d" "unrelated work, so the reuse lands after a later edit" v5.2.0
+mkdir -p "$d/client/devlog"
+entry next "New occupant, different words entirely" > "$d/client/devlog/reused.json"
+step "$d" "reuse the path" v5.3.0
+out="$(run_stamp "$d")" || t_fail "a reused path could not be stamped: $out"
+[ "$(version_of "$d/client/devlog/reused.json")" = "5.3.0" ] ||
+	t_fail "an entry on a reused path was stamped $(version_of "$d/client/devlog/reused.json"), the release of the entry deleted from it, not its own 5.3.0"
+
 # --- 3. Unreleased: left alone, and fatal only when a release is being built ---
 d="$(new_repo)"
 printf 'seed\n' > "$d/README"
