@@ -177,6 +177,16 @@ frame sequence rather than a single still. The named reference must likewise be 
 with an exact time range, following the citation contract in
 [`docs/art-direction/`](docs/art-direction/README.md).
 
+**For locomotion, pick the instrument by what changed.** The `walk`, `run` and `gait_transition`
+capture scenarios pose `WalkLocomotion` with the body pinned, so they evidence the pose and nothing
+downstream of it. `WAR_SCENARIO=gait_drive` drives the shipped controller with real input at the
+fixed physics step and reports the cadence, foot slide and foot lift measured over every controller
+step in `gait_drive_summary.txt` — so a change to stride constants, controller wiring, sprint speed
+or the follow camera is judged there, not on the fixed-phase frames, which read a stride regression
+the same as a correct build. It fails itself if its photographed drive does not reproduce its
+rehearsal exactly. The measurements and ablations behind it are in
+[`docs/evidence/issue-516-gait-drive/`](docs/evidence/issue-516-gait-drive/README.md).
+
 **How to produce that frame.** CI runs `client/tools/frame_capture.tscn` on player-visible PRs and
 publishes the rendered vantages as a **build artifact** — so the evidence is reproducible on a known
 machine rather than dependent on whoever happened to run the game. Point a reviewer at that artifact.
