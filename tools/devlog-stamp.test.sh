@@ -148,6 +148,32 @@ out="$(run_stamp "$d")" || t_fail "a reused path could not be stamped: $out"
 [ "$(version_of "$d/client/devlog/reused.json")" = "5.3.0" ] ||
 	t_fail "an entry on a reused path was stamped $(version_of "$d/client/devlog/reused.json"), the release of the entry deleted from it, not its own 5.3.0"
 
+# --- 2c. Placeholders that ship together share their release; a copy does not pass ---
+d="$(new_repo)"
+printf 'seed\n' > "$d/README"
+step "$d" "seed" v6.0.0
+entry next "Ash drifts" > "$d/client/devlog/ash-drifts.json"
+step "$d" "one change"
+entry next "Stone holds" > "$d/client/devlog/stone-holds.json"
+step "$d" "another change, released with the first" v6.1.0
+out="$(run_stamp "$d" --require-all)" && rc=0 || rc=$?
+[ "$rc" = 0 ] || t_fail "two placeholders released together did not stamp (exit $rc): $out"
+for name in ash-drifts stone-holds; do
+	[ "$(version_of "$d/client/devlog/$name.json")" = "6.1.0" ] ||
+		t_fail "$name, released in v6.1.0 alongside another entry, was stamped $(version_of "$d/client/devlog/$name.json")"
+done
+# The #119 copy: the same entry under a second name ships the change twice.
+d="$(new_repo)"
+printf 'seed\n' > "$d/README"
+step "$d" "seed" v7.0.0
+entry next "Ash drifts" > "$d/client/devlog/ash-drifts.json"
+entry next "Ash drifts" > "$d/client/devlog/ash-drifts-again.json"
+step "$d" "the same entry twice" v7.1.0
+out="$(run_stamp "$d" --require-all)" && rc=0 || rc=$?
+[ "$rc" = 1 ] || t_fail "a copied entry was stamped without complaint (exit $rc): $out"
+printf '%s' "$out" | grep -q '7.1.0 — Ash drifts" more than once' ||
+	t_fail "a copied entry was refused for the wrong reason: $out"
+
 # --- 3. Unreleased: left alone, and fatal only when a release is being built ---
 d="$(new_repo)"
 printf 'seed\n' > "$d/README"

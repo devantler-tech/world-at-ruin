@@ -905,7 +905,10 @@ everything shipped afterwards is held to.
   tell the maintainer a change arrived in a build that does not contain it. The release build
   answers exactly instead — `tools/devlog-stamp.sh` rewrites every `"next"` entry to the first
   release containing the commit that added its file (#518) — and a development build lists these
-  entries at the top of the log under **Next release**. `tools/devlog-entry-version-guard.sh`
+  entries at the top of the log under **Next release**. Entries that ship together all receive that
+  release's number and are listed newest first; the same entry must never appear twice, which
+  `devlog_entries_test` checks before stamping and the stamp checks again after it.
+  `tools/devlog-entry-version-guard.sh`
   refuses a numbered new entry in CI and prints the `git mv` that fixes it; `devlog_storage_test`
   checks the file name. One file per entry is deliberate: entries used to share a single array, so
   **every** concurrent player-visible PR collided on the same lines and had to rebase behind each

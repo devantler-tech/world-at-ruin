@@ -10,15 +10,17 @@ extends Node
 ## log showed the same two releases twice and it read as a rendering bug.
 ##
 ## This pins the properties that make the log trustworthy as a record:
-##  1. UNIQUE VERSIONS — no released version ever appears twice. This is the
+##  1. NO ENTRY TWICE — no version and title appear together twice. This is the
 ##     guard the issue asks for, because the duplication is a recurring class of
-##     bug rather than a one-off: every player-visible PR appends here, and two
-##     PRs landing around each other is precisely how a block gets duplicated in
-##     a merge.
-##  2. NEWEST FIRST, NUMERICALLY — versions strictly descend. The comparison is
+##     bug rather than a one-off: two PRs landing around each other is precisely
+##     how an entry gets copied. A release may still carry SEVERAL entries (#518):
+##     every placeholder that ships in it is stamped with its number, so a
+##     shared version is two changes in one build, not a copy.
+##  2. NEWEST FIRST, NUMERICALLY — versions descend. The comparison is
 ##     component-wise integer, never string: lexically "0.1.9" sorts ABOVE
 ##     "0.1.10", so a string compare would call a correct log broken (and hide a
-##     real inversion once the patch number reaches double digits).
+##     real inversion once the patch number reaches double digits). Entries that
+##     share a release order by date, newest first, then by title.
 ##  3. WELL-FORMED — every entry carries version/date/title/notes, notes are
 ##     non-empty strings, and the version is a release number or the
 ##     placeholder, so a half-written entry cannot ship silently.
@@ -73,7 +75,7 @@ func _ready() -> void:
 	# the contract forbids touching.
 
 	var newest: String = entries[0]["version"]
-	print("TEST PASS — dev log holds (%d entries, %s down to %s: unique versions, strictly newest-first by numeric compare, all well-formed; placeholder entries order and validate)"
+	print("TEST PASS — dev log holds (%d entries, %s down to %s: no entry twice, newest-first by numeric compare, all well-formed; placeholder and shared-release entries order and validate)"
 		% [entries.size(), newest, entries[entries.size() - 1]["version"]])
 	get_tree().quit(0)
 
@@ -122,19 +124,17 @@ func _problem_in(entries: Array[Dictionary]) -> String:
 					"declares this because its own version was never cut, so the release that carried it is " +
 					"necessarily a later one.") % [version, shipped]
 
-	# --- 1. UNIQUE VERSIONS: the #119 guard ---
-	# Placeholders are exempt: several unreleased entries share it by design,
-	# and each gets its own release when the build stamps it.
+	# --- 1. NO ENTRY TWICE: the #119 guard ---
+	# Keyed on version AND title. A release can carry several entries, so a
+	# shared version alone is not a copy; the same entry twice is.
 	var seen: Dictionary = {}
 	for e: Dictionary in entries:
-		var v: String = e["version"]
-		if v == DevLog.NEXT_VERSION:
-			continue
-		if seen.has(v):
-			return ("dev log lists version '%s' TWICE — a duplicated entry makes the log show the same " +
-				"release twice and reads as a rendering bug (issue #119). Every player-visible PR " +
-				"appends here, so a merge can duplicate a block: keep exactly one entry per version.") % v
-		seen[v] = true
+		var key := "%s\n%s" % [e["version"], e["title"]]
+		if seen.has(key):
+			return ("dev log lists '%s — %s' TWICE — a duplicated entry makes the log show the same " +
+				"change twice and reads as a rendering bug (issue #119): keep exactly one copy of each " +
+				"entry.") % [e["version"], e["title"]]
+		seen[key] = true
 
 	# --- 2. NEWEST FIRST, compared numerically rather than as strings ---
 	for i in range(1, entries.size()):
@@ -151,7 +151,11 @@ func _problem_in(entries: Array[Dictionary]) -> String:
 			continue
 		var cmp := _compare_versions(newer, older)
 		if cmp == 0:
-			return "dev-log entries %d and %d report the same version '%s'" % [i - 1, i, newer]
+			# Two changes in one release: newest by date first, as the loader
+			# orders them.
+			if String(entries[i - 1]["date"]) < String(entries[i]["date"]):
+				return "entries %d and %d share release '%s' but are not newest-first by date" % [i - 1, i, newer]
+			continue
 		if cmp < 0:
 			return ("dev log is out of order: '%s' is listed above '%s' but is OLDER. Entries run " +
 				"newest first (note the comparison is numeric — 0.1.10 is newer than 0.1.9, which a " +
@@ -191,6 +195,33 @@ func _placeholder_cases() -> String:
 		var malformed: Array[Dictionary] = [_entry(bad, "2026-09-25", "Malformed")]
 		if _problem_in(malformed).is_empty():
 			return "version '%s' was accepted as either a release number or the placeholder" % bad
+
+	# What a release build holds once two placeholders ship together: both are
+	# stamped with the same number. That is two changes in one build, and the
+	# loader gives them a fixed order — newest by date, then by title.
+	var stamped_older := _entry("0.99.0", "2026-09-24", "Older change")
+	var stamped_newer := _entry("0.99.0", "2026-09-25", "Newer change")
+	var stamped_same_day := _entry("0.99.0", "2026-09-25", "Another change")
+	var shipped_together: Array[Dictionary] = [released, stamped_older, stamped_newer, stamped_same_day]
+	var together := DevLog.newest_first(shipped_together)
+	var together_expected: Array[Dictionary] = [stamped_same_day, stamped_newer, stamped_older, released]
+	if together != together_expected:
+		return "DevLog orders entries sharing a release as %s, not newest by date then by title" % [
+			together.map(func(e: Dictionary) -> String: return String(e["title"]))]
+	problem = _problem_in(together_expected)
+	if not problem.is_empty():
+		return "a release carrying three entries was refused: %s" % problem
+	var inverted: Array[Dictionary] = [stamped_older, stamped_newer, released]
+	if _problem_in(inverted).is_empty():
+		return "entries sharing a release, listed oldest first, were accepted"
+
+	# The #119 copy: the same entry twice, whether released or not.
+	var copied: Array[Dictionary] = [stamped_newer, stamped_newer.duplicate(), released]
+	if _problem_in(copied).is_empty():
+		return "a released entry listed twice was accepted"
+	var copied_next: Array[Dictionary] = [newer_next, newer_next.duplicate(), released]
+	if _problem_in(copied_next).is_empty():
+		return "an unreleased entry listed twice was accepted"
 	return ""
 
 
