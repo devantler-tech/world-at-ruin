@@ -641,7 +641,7 @@ everything shipped afterwards is held to.
   canonical token verification precede a conditional claim in the existing schema; no-show cleanup
   races on that same version, replay reads durable state, and ambiguous admission retains the claim;
   strict bounded requests, generic refusals and a verified client with no redirects; attested
-  workload certificate issuance, private listener deployment and session-end recovery remain
+  workload certificate issuance, platform listener deployment and session-end recovery remain
   separate work; the command composes the gate only through default-off `-private-claims`,
   requiring sealed Agones admission and separate verified mTLS credentials, loading bounded
   material before readiness and retiring transport after admission drains, per ADR 0008),
@@ -714,7 +714,10 @@ everything shipped afterwards is held to.
   until the default-off `server/nakamaruntime/` plugin is explicitly enabled to supervise its
   expiry loop and register the authenticated `war_handoff` RPC (empty payload; one server-owned
   reservation per player, so a client cannot open parallel allocations); its configuration, observer-1
-  binding, mutual TLS and shutdown requirements are documented in that package), and
+  binding, mutual TLS and shutdown requirements are documented in that package; its independent
+  default-off `WAR_HANDOFF_CLAIMS_ENABLED` listener composes the same lease store and resource
+  resolver over verified workload mutual TLS, with bounded connections/requests, startup rollback
+  and module-owned cancellation/drain, per ADR 0009), and
   the **orphan reconciler** (`server/orphanreaper/` — completes bounded resource
   and private lease scans, protects every stored attempt regardless of expiry,
   requires consecutive orphan observations plus grace, and deletes only the
@@ -730,7 +733,7 @@ everything shipped afterwards is held to.
   filtering, real navmesh pathfinding and cast replication remain later children — with its own
   cross-platform golden). The zone-side sealed-envelope boot from
   `docs/adr/0002-seal-zone-admission-secrets-before-readiness.md` is available through
-  `zone -agones -agones-admission-public-key <path>`; orphan supervision, private claim composition,
+  `zone -agones -agones-admission-public-key <path>`; orphan supervision, session-end recovery,
   platform deployment of the default-off Nakama RPC plugin and broader persistence remain later children of the server-foundation
   epic (#4);
   `deploy/` (platform manifests) arrives later per the roadmap.

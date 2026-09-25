@@ -54,6 +54,13 @@ linters:
           - gosec
         text: "G704: SSRF via taint analysis"
         source: 'response, err := client\.Do\(request\)'
+      # These requests target only the loopback private listener the test
+      # started, with a fixed empty body; nothing untrusted chooses the address.
+      - path: ^nakamaruntime/private_listener_test\.go$
+        linters:
+          - gosec
+        text: "G704: SSRF via taint analysis"
+        source: 'response, err := client\.Do\(request\)'
       # Nakama's public context API uses these exact string constants. RPC
       # fixtures must reproduce it, not use private keys the server never sets.
       - path: ^(nakamaauth|nakamaruntime)/.*_test\.go$

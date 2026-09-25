@@ -18,6 +18,7 @@ type config struct {
 	unwrapKeys                                                 []string
 	namespace, fleet, tlsPort, zoneDomain                      string
 	leaseTTL, rpcTimeout                                       time.Duration
+	claims                                                     privateConfig
 }
 
 func readConfig(env map[string]string) (config, error) {
@@ -80,7 +81,9 @@ func readConfig(env map[string]string) (config, error) {
 			return config{}, invalidConfig("WAR_HANDOFF_RPC_TIMEOUT")
 		}
 	}
-	return cfg, nil
+	cfg.claims, err = readPrivateConfig(env)
+	cfg.claims.allocatorCA, cfg.claims.allocatorCert = cfg.allocatorCA, cfg.allocatorCert
+	return cfg, err
 }
 
 func validPath(path string) bool {
