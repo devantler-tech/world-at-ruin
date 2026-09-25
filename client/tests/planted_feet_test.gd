@@ -31,6 +31,16 @@ const PHASE_SAMPLES := 48
 ## same 1 cm the drive's contact line uses.
 const CONTACT_SAMPLES := 400
 const CONTACT_LIFT_M := 0.01
+## The pelvis roll of the breathing idle still moves the hip joint itself by a few
+## millimetres; a leg that followed the roll moved the ankle by centimetres.
+const IDLE_TOLERANCE_M := 0.005
+## The gait-change check walks at a fixed speed in fine ticks and watches the
+## blend and a little past it.
+const BLEND_SPEED := 8.0
+const BLEND_DT := 1.0 / 120.0
+const BLEND_WINDOW_S := 0.36
+## The same 15% of body speed the gait is held to on the drive.
+const MAX_BLEND_SLIP := 0.15
 
 var _had_flag := false
 var _original_flag := ""
@@ -63,6 +73,10 @@ func _ready() -> void:
 		and _check_planted_ankle(subject, true)
 		and _check_contact_share(subject, false)
 		and _check_contact_share(subject, true)
+		and _check_toe_holds(subject, false)
+		and _check_toe_holds(subject, true)
+		and _check_idle_roll(subject)
+		and _check_blend_holds(subject)
 		and _check_no_sideways_step(subject)
 		and _check_running_knee_bends(subject)
 		and _check_pelvis_drop(subject))
@@ -172,6 +186,127 @@ func _check_planted_ankle(subject: Dictionary, running: bool) -> bool:
 			return _fail("the %s's planted foot slides %.4f m over the ground at %.3f of the cycle" %
 				[gait, over_ground - ground_position, cycle])
 	return true
+
+
+## 4c. The foot keeps its standing orientation, so the toe holds the ground
+## with the ankle. A foot left on the shin's rotation pitches about the ankle as
+## the knee flexes, sweeping its heel or toe through the ground.
+func _check_toe_holds(subject: Dictionary, running: bool) -> bool:
+	var animator: WalkLocomotion = subject["animator"]
+	var skeleton: Skeleton3D = subject["skeleton"]
+	var foot := skeleton.find_bone("foot_l")
+	var toe := skeleton.find_bone("ball_l")
+	var foot_rest := skeleton.get_bone_global_rest(foot).basis.get_rotation_quaternion()
+	var toe_rest_height := skeleton.get_bone_global_rest(toe).origin.y
+	var forward: Vector3 = animator.get("_forward")
+	var stride := WalkLocomotion.RUN_STRIDE_LENGTH_M if running else WalkLocomotion.STRIDE_LENGTH_M
+	var stance := WalkLocomotion.stance_fraction(
+		float(animator.get("_run_reach" if running else "_walk_reach")), stride)
+	var gait := "run" if running else "walk"
+	var ground_position := NAN
+	for i in 9:
+		var cycle := 0.25 - stance + stance * (0.05 + 0.9 * float(i) / 8.0)
+		animator.apply_phase(TAU * cycle, running)
+		var turned := _angle_between(skeleton.get_bone_global_pose(foot).basis.get_rotation_quaternion(), foot_rest)
+		if turned > 0.001:
+			return _fail("the %s's planted foot pitches %.2f° off its standing orientation at %.3f of the cycle" %
+				[gait, rad_to_deg(turned), cycle])
+		var tip := skeleton.get_bone_global_pose(toe).origin
+		if absf(tip.y - toe_rest_height) > POSITION_EPSILON_M:
+			return _fail("the %s's planted toe sits %.4f m off its standing height at %.3f of the cycle" %
+				[gait, tip.y - toe_rest_height, cycle])
+		var over_ground := tip.dot(forward) + cycle * stride
+		if is_nan(ground_position):
+			ground_position = over_ground
+		elif absf(over_ground - ground_position) > POSITION_EPSILON_M:
+			return _fail("the %s's planted toe slides %.4f m over the ground at %.3f of the cycle" %
+				[gait, over_ground - ground_position, cycle])
+	return true
+
+
+## 4d. The breathing idle rolls the pelvis to shift the body's weight. A planted
+## leg must not follow the roll: it would swing the foot sideways across the
+## ground. What remains is the hip joint moving a few millimetres with the pelvis.
+func _check_idle_roll(subject: Dictionary) -> bool:
+	var animator: WalkLocomotion = subject["animator"]
+	var skeleton: Skeleton3D = subject["skeleton"]
+	var pelvis := skeleton.find_bone("pelvis")
+	var pelvis_rest := skeleton.get_bone_rest(pelvis).basis.get_rotation_quaternion()
+	var foot := skeleton.find_bone("foot_l")
+	var lateral: Vector3 = animator.get("_lateral")
+	var stance := WalkLocomotion.stance_fraction(float(animator.get("_walk_reach")), WalkLocomotion.STRIDE_LENGTH_M)
+	var worst := 0.0
+	# The weight shift peaks a quarter and three quarters of the way round its loop.
+	for t: float in [BreathingIdle.SHIFT_PERIOD * 0.25, BreathingIdle.SHIFT_PERIOD * 0.75]:
+		for i in 5:
+			var phase := TAU * (0.25 - stance + stance * (0.1 + 0.8 * float(i) / 4.0))
+			skeleton.set_bone_pose_rotation(pelvis, pelvis_rest)
+			animator.apply_phase(phase)
+			var still := skeleton.get_bone_global_pose(foot).origin
+			BreathingIdle.apply_at(skeleton, t)
+			animator.apply_phase(phase)
+			var rolled := skeleton.get_bone_global_pose(foot).origin
+			worst = maxf(worst, (rolled - still).length())
+	skeleton.set_bone_pose_rotation(pelvis, pelvis_rest)
+	if worst > IDLE_TOLERANCE_M:
+		return _fail("the breathing idle's pelvis roll moves a planted ankle %.4f m, more than the %.3f m the hip itself moves" %
+			[worst, IDLE_TOLERANCE_M])
+	print("idle: the weight shift moves a planted ankle at most %.4f m" % worst)
+	return true
+
+
+## 4e. Pressing or releasing sprint mid-stride must not skid a planted foot. Each
+## gait's foot path holds the ground only while the phase advances at its own
+## stride's rate, so through the blend it must advance at the blended stride.
+## Measured the way the drive measures contact slip: over ticks where the same
+## foot is down at both ends, how far it moves over the ground against how far
+## the body moves.
+func _check_blend_holds(subject: Dictionary) -> bool:
+	var animator: WalkLocomotion = subject["animator"]
+	var skeleton: Skeleton3D = subject["skeleton"]
+	var forward: Vector3 = animator.get("_forward")
+	var feet: Array[int] = [skeleton.find_bone("foot_l"), skeleton.find_bone("foot_r")]
+	var rests: Array[float] = []
+	for foot in feet:
+		rests.append(skeleton.get_bone_global_rest(foot).origin.y)
+	var travelled := 0.0
+	var worst := 0.0
+	var was_down := [false, false]
+	var was_at := [0.0, 0.0]
+	# A settled walk, then the sprint press and the release, each measured
+	# across the blend and a little past it.
+	for segment: Array in [[false, 1.0, false], [true, BLEND_WINDOW_S, true], [false, BLEND_WINDOW_S, true]]:
+		var sprinting: bool = segment[0]
+		var slip := 0.0
+		var path := 0.0
+		for _tick in int(float(segment[1]) / BLEND_DT):
+			animator.advance_motion(BLEND_SPEED, true, sprinting, BLEND_DT)
+			travelled += BLEND_SPEED * BLEND_DT
+			for k in feet.size():
+				var ankle := skeleton.get_bone_global_pose(feet[k]).origin
+				var down: bool = ankle.y - rests[k] <= CONTACT_LIFT_M
+				var at := ankle.dot(forward) + travelled
+				if segment[2] and down and was_down[k]:
+					slip += absf(at - float(was_at[k]))
+					path += BLEND_SPEED * BLEND_DT
+				was_down[k] = down
+				was_at[k] = at
+		if segment[2]:
+			if path <= 0.0:
+				return _fail("no foot stayed down through a gait change, so its slip was never measured")
+			worst = maxf(worst, slip / path)
+	animator.advance_motion(0.0, true, false, BLEND_DT)
+	if worst > MAX_BLEND_SLIP:
+		return _fail("a planted foot moves at %.0f%% of body speed through a gait change, above %.0f%%" %
+			[worst * 100.0, MAX_BLEND_SLIP * 100.0])
+	print("blend: a planted foot moves at most %.1f%% of body speed through a gait change" % (worst * 100.0))
+	return true
+
+
+## The angle between two rotations, exact near zero where `angle_to` is not.
+func _angle_between(a: Quaternion, b: Quaternion) -> float:
+	var delta := a.inverse() * b
+	return 2.0 * atan2(Vector3(delta.x, delta.y, delta.z).length(), absf(delta.w))
 
 
 ## 4b. On the body's own ground plane each gait keeps a foot down for its whole

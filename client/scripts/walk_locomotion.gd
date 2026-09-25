@@ -282,6 +282,7 @@ func _capture_legs() -> bool:
 		_legs.append({
 			"thigh": thigh,
 			"calf": calf,
+			"foot": foot,
 			"upper_m": upper.length(),
 			"lower_m": lower.length(),
 			"thigh_rest_angle": atan2(upper.x, -upper.y),
@@ -289,6 +290,9 @@ func _capture_legs() -> bool:
 			"hip_over_ankle_m": -_sagittal(ankle - hip).y,
 			"thigh_rest": _skeleton.get_bone_rest(thigh).basis.get_rotation_quaternion(),
 			"calf_rest": _skeleton.get_bone_rest(calf).basis.get_rotation_quaternion(),
+			"foot_rest": _skeleton.get_bone_rest(foot).basis.get_rotation_quaternion(),
+			# The frame the whole leg is solved in: the pelvis as it stands at rest.
+			"hip_frame": _skeleton.get_bone_global_rest(_skeleton.get_bone_parent(thigh)).basis.get_rotation_quaternion(),
 		})
 	_walk_reach = _reach(WALK_PELVIS_DROP_M, WALK_LEG_REACH)
 	_run_reach = _reach(RUN_PELVIS_DROP_M, RUN_LEG_REACH)
@@ -373,12 +377,16 @@ func advance_motion(
 			target_blend,
 			maxf(delta, 0.0) / GAIT_BLEND_SECONDS)
 	var distance := maxf(horizontal_speed, 0.0) * maxf(delta, 0.0)
-	# Phase is continuous across a gait change — the stride LENGTH switches, so
+	# Phase is continuous across a gait change — the stride LENGTH changes, so
 	# cadence changes without the legs jumping to a different point in the
-	# cycle. Every pose channel crossfades from that shared phase.
-	var stride_length := RUN_STRIDE_LENGTH_M if sprinting else STRIDE_LENGTH_M
+	# cycle. Every pose channel crossfades from that shared phase, and the stride
+	# crossfades with them: a planted foot holds the ground only while the phase
+	# advances at the rate of the stride its path was drawn for, so during a
+	# blend it must advance at the blend of the two.
+	var weight := smoothstep(0.0, 1.0, _run_blend)
+	var stride_length := lerpf(STRIDE_LENGTH_M, RUN_STRIDE_LENGTH_M, weight)
 	_phase = fposmod(_phase + TAU * distance / stride_length, TAU)
-	apply_blended_phase(_phase, smoothstep(0.0, 1.0, _run_blend))
+	apply_blended_phase(_phase, weight)
 
 
 ## Pose one exact point on the airborne arc. Runtime and evidence capture share
@@ -389,8 +397,8 @@ func apply_jump(vertical_speed: float) -> void:
 	if _skeleton == null:
 		push_error("WalkLocomotion: cannot pose an unbound skeleton")
 		return
-	# The gaits lower the pelvis; the arc is posed from standing height.
-	_reset_pelvis()
+	# The gaits lower the pelvis and turn the feet; the arc is posed from standing.
+	_reset_plant()
 	var angles := jump_angles(vertical_speed)
 	for bone_name: String in DRIVEN_BONES:
 		var bone := _skeleton.find_bone(bone_name)
@@ -455,9 +463,12 @@ func apply_blended_phase(phase: float, run_weight: float) -> void:
 ## walk and run are each solved and their angles crossfaded, so a gait change
 ## blends exactly as the arms do.
 ##
-## The turn is composed against the pelvis as it stands NOW rather than at rest:
-## the breathing idle rolls the pelvis, and a leg turned about an axis measured in
-## the rest frame would tilt out of the sagittal plane with it.
+## Each leg is solved in the pelvis's REST frame and then carried into the frame
+## the pelvis stands in now. The breathing idle rolls the pelvis to shift the
+## body's weight; a leg that followed that roll would swing its planted foot
+## sideways, so the leg counter-rotates it instead. The foot counter-rotates the
+## leg's whole turn in the same way, keeping the orientation it stands in, so its
+## toe and heel cannot sweep the ground as the knee flexes.
 func _pose_legs(phase: float, run_weight: float) -> void:
 	var walk_stance := stance_fraction(_walk_reach, STRIDE_LENGTH_M)
 	var run_stance := stance_fraction(_run_reach, RUN_STRIDE_LENGTH_M)
@@ -472,18 +483,25 @@ func _pose_legs(phase: float, run_weight: float) -> void:
 		var turns := walk.lerp(run, run_weight)
 		var thigh: int = leg["thigh"]
 		var parent_now := _skeleton.get_bone_global_pose(_skeleton.get_bone_parent(thigh)).basis.get_rotation_quaternion()
+		var hip_frame: Quaternion = leg["hip_frame"]
 		var thigh_rest: Quaternion = leg["thigh_rest"]
-		# Axes and results are renormalised: a unit vector carried through a
-		# frame change drifts off unit length, and a rotation built on it would
-		# stop being exactly one.
+		# The thigh's pose is whatever carries the live pelvis to the turned rest
+		# chain. Axes and results are renormalised: a unit vector carried through a
+		# frame change drifts off unit length, and a rotation built on it would stop
+		# being exactly one.
 		_skeleton.set_bone_pose_rotation(thigh,
-			(Quaternion((parent_now.inverse() * _lateral).normalized(), turns.x) * thigh_rest).normalized())
-		# The knee turns about the same lateral axis, expressed in the thigh's
+			(parent_now.inverse() * Quaternion(_lateral, turns.x) * hip_frame * thigh_rest).normalized())
+		# The knee turns about the same lateral axis, expressed in the thigh's rest
 		# frame before its own turn, so the shin stays in the thigh's plane.
-		var thigh_frame := parent_now * thigh_rest
+		var thigh_frame := hip_frame * thigh_rest
 		var calf_rest: Quaternion = leg["calf_rest"]
 		_skeleton.set_bone_pose_rotation(int(leg["calf"]),
 			(Quaternion((thigh_frame.inverse() * _lateral).normalized(), turns.y) * calf_rest).normalized())
+		# The foot undoes the leg's whole turn, so it keeps its standing orientation.
+		var calf_frame := thigh_frame * calf_rest
+		var foot_rest: Quaternion = leg["foot_rest"]
+		_skeleton.set_bone_pose_rotation(int(leg["foot"]),
+			(Quaternion((calf_frame.inverse() * _lateral).normalized(), -(turns.x + turns.y)) * foot_rest).normalized())
 
 
 ## The thigh turn and the knee turn relative to it, in radians about the lateral
@@ -509,9 +527,14 @@ func _set_pelvis_drop(drop: float) -> void:
 		_pelvis_rest_origin + _pelvis_parent_rest.inverse() * (Vector3.DOWN * drop))
 
 
-func _reset_pelvis() -> void:
-	if _legs_ready:
-		_skeleton.set_bone_pose_position(_pelvis, _pelvis_rest_origin)
+## Stand the plant back up: the pelvis at its rest height and the feet, which
+## only the gaits pose, at their rest orientation.
+func _reset_plant() -> void:
+	if not _legs_ready:
+		return
+	_skeleton.set_bone_pose_position(_pelvis, _pelvis_rest_origin)
+	for leg: Dictionary in _legs:
+		_skeleton.set_bone_pose_rotation(int(leg["foot"]), leg["foot_rest"])
 
 
 ## How much of each cycle one foot can stay down: while it does, it sweeps from
@@ -626,7 +649,7 @@ static func run_angles(phase: float) -> Dictionary:
 
 
 func _reset_pose() -> void:
-	_reset_pelvis()
+	_reset_plant()
 	for bone_name: String in DRIVEN_BONES:
 		var bone := _skeleton.find_bone(bone_name)
 		var rest_rotation := _skeleton.get_bone_rest(bone).basis.get_rotation_quaternion()
