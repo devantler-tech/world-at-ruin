@@ -69,7 +69,7 @@ func _ready() -> void:
 	for case: Array in [
 		[{"version": "0.98.0"}, "v0.98.0"],
 		[{"version": "0.1.14", "shipped_in": "0.1.15"}, "0.1.14"],
-		[{"version": DevLog.NEXT_VERSION}, "Next release"],
+		[{"version": DevLog.NEXT_VERSION}, "Numbered at release"],
 	]:
 		if DevLog.heading(case[0]) != String(case[1]):
 			_fail("an entry declaring %s is headed '%s', not '%s'" % [
@@ -81,9 +81,9 @@ func _ready() -> void:
 		# Not yet stamped by a release build (#518): it names no build at all,
 		# so it must neither read as `vnext` nor claim a version.
 		if DevLog.is_next(entry):
-			if not rendered.contains("[b]Next release — %s" % entry["title"]) \
+			if not rendered.contains("[b]Numbered at release — %s" % entry["title"]) \
 					or rendered.contains("[b]v%s — " % version):
-				_fail("unreleased entry '%s' does not render as the next release" % entry["title"])
+				_fail("placeholder entry '%s' does not render as numbered at release" % entry["title"])
 				return
 			continue
 		var shipped_in := String(entry.get("shipped_in", ""))
