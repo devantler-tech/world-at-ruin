@@ -475,6 +475,10 @@ velocity drives push-off, a bilateral apex tuck and a landing-ready descent, the
 returns the body to rest. The ordinary game keeps the standing body during grounded travel while the
 walk and run previews remain default-off. Authored starts and stops, landing anticipation/impact,
 directional lean and turning remain unauthored, and neither gait invents a flight phase of its own.
+Neither gait plants a foot yet: driven through the real controller, both hold their authored cadence
+(300 and 350 steps a minute) while the foot nearest the ground travels slightly faster than the body,
+and both feet lift together at the ends of each stride so the body rides on average 4–7 cm above
+its standing height ([`gait_drive` evidence](../evidence/issue-516-gait-drive/README.md)).
 
 **Motion reference.** The [Kingmakers announcement trailer from
 1:06–1:10](https://www.youtube.com/watch?v=OvezgDni8z4&t=66s) anchors a readable full-body sprint and

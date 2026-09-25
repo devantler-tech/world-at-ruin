@@ -66,6 +66,7 @@ const SCENARIOS: Array[String] = [
 	"walk",
 	"run",
 	"gait_transition",
+	"gait_drive",
 	"jump",
 	"light_response",
 	"ash_motion",
@@ -359,6 +360,64 @@ const GAIT_TRANSITION_REMAINING_GAP := (
 	"and landing impact remain open"
 )
 
+## The `gait_drive` scenario (#516): the real controller, not posed phases.
+##
+## The `walk`, `run` and `gait_transition` sequences call WalkLocomotion
+## directly with the body pinned, so they evidence the POSE and nothing
+## downstream of it — not `Player._physics_process`, not the stride constants
+## turning speed into cadence, not sprint-speed translation, and not the follow
+## camera. This scenario holds real input actions and steps the shipped
+## controller itself, so all of those are in the frame.
+##
+## Reproducibility is the hard half, and it comes from three choices:
+## the controller is stepped by hand at the engine's FIXED physics step from a
+## physics-frame hook (so `move_and_slide` sees exactly the delta it sees in
+## play, and nothing reads wall-clock); frames are taken at DISTANCE marks,
+## never at times; and a rehearsal drive runs the whole plan first at a
+## different step-per-tick rate with no rendering in between, then the
+## photographed drive must reproduce its per-step trace exactly.
+##
+## Where it runs: a straight line on open ground north-east of the shrine,
+## chosen by sweeping every 2 m grid start within 40 m of the shrine against 16
+## headings for 21 m of clear ground — 3 m more than the drive covers. Its
+## surface varies 0.25 m end to end with no local grade above 4.2 degrees, it
+## stays 24 m from the shrine (outside its 14 m discovery reach, so no toast
+## lands mid-sequence), at least 9 m from every settler, drifter and hound, and
+## no static collider sits within a body's width of it.
+## Before it drives, the tool re-checks that line against the live world with
+## [method gait_drive_path_problems]; while it drives, a measured segment that
+## falls short of the controller's own speed fails as an obstructed path.
+const DRIVE_START := Vector2(22.0, 40.0)
+const DRIVE_HEADING := Vector2(-0.382683, -0.923880)
+## Steps with no input after placing the body, so both drives begin from the
+## same rest on the ground whatever the body was doing before.
+const DRIVE_SETTLE_STEPS := 30
+## Photographed marks per stride cycle, matching the fixed-phase sequences so
+## the two can be read side by side.
+const DRIVE_FRAMES_PER_CYCLE := 8
+## Cycles each measured gait runs for. The numbers come from every step of
+## them; only the first cycle is photographed.
+const DRIVE_MEASURE_CYCLES := 2
+## Marks across the sprint press. The pose crossfade and the speed ramp both
+## finish inside the first two thirds of one run cycle, so six marks put four
+## frames inside the change and two on the settled run after it.
+const DRIVE_PRESS_FRAMES := 6
+## The rehearsal takes this many controller steps per engine physics tick. The
+## photographed drive takes one, with renders between marks — so a trace that
+## depended on how steps fall across ticks, or on wall-clock, would disagree.
+const DRIVE_REHEARSAL_STEPS_PER_TICK := 8
+## Runaway guard only: a segment that has not covered its distance in this many
+## steps is stuck, not slow. The longest real segment needs ~50.
+const DRIVE_MAX_SEGMENT_STEPS := 900
+## A measured segment slower than this share of the controller's target speed
+## was held back by something on the path, and its cadence would describe the
+## obstruction rather than the gait.
+const DRIVE_MIN_SPEED_FRACTION := 0.9
+## A step is counted where the leading foot changes. The feet pass level for an
+## instant, so this much lead is needed before the other foot counts as ahead
+## and that instant cannot register as a burst of phantom steps.
+const DRIVE_LEAD_HYSTERESIS_M := 0.02
+
 ## Exact points on the shipped controller's airborne arc: launch, approach to
 ## apex, apex, approach to landing, and landing-ready descent. A five-frame
 ## sequence exposes continuity between the three authored silhouettes without
@@ -507,6 +566,9 @@ func _ready() -> void:
 		return
 	if scenario == "gait_transition":
 		await _capture_gait_transition(dir, main)
+		return
+	if scenario == "gait_drive":
+		await _capture_gait_drive(dir, main)
 		return
 	if scenario == "jump":
 		await _capture_jump(dir, main)
@@ -2011,6 +2073,638 @@ func _capture_gait_transition(dir: String, main: Node) -> void:
 		"(left-foot travel %.1f cm)") %
 		[samples.size(), dir, travel * 100.0])
 	get_tree().quit(0)
+
+
+## The `gait_drive` scenario — see the `DRIVE_*` constants for why and how.
+##
+## Needs BOTH gait opt-ins, like `gait_transition`: the plan walks, presses
+## sprint and runs, and each gait answers only to its own flag, so a drive with
+## `WAR_RUN_CYCLE` off would photograph a standing body sliding at sprint speed
+## and label it a run.
+func _capture_gait_drive(dir: String, main: Node) -> void:
+	for i in WARMUP_FRAMES:
+		await get_tree().process_frame
+	if not _has_world(main):
+		_fail("the world did not build — a sky-only driven gait is not evidence")
+		return
+
+	var player := main.get_node_or_null("Wanderer") as Player
+	if player == null:
+		_fail("the shipped scene has no Wanderer Player — the controller path is not live")
+		return
+	var animator := player.get_node_or_null("WalkLocomotion") as WalkLocomotion
+	if animator == null:
+		_fail("the shipped Wanderer has no WalkLocomotion driver")
+		return
+	for gait_flag: String in [WalkLocomotion.FLAG_ENV, WalkLocomotion.RUN_FLAG_ENV]:
+		if OS.get_environment(gait_flag) != "1":
+			_fail("%s is not opted in — refusing to drive a gait the build would not pose" %
+				gait_flag)
+			return
+	var world := main.get_node_or_null("World") as WorldGen
+	if world == null:
+		_fail("the shipped scene has no WorldGen for the drive path")
+		return
+	var visual := player.get_node_or_null("Visual")
+	var skeleton := CharacterFactory.find_skeleton(visual) if visual != null else null
+	if skeleton == null:
+		_fail("the shipped Wanderer has no recipe skeleton")
+		return
+	# The body root WalkLocomotion binds to: the child of Visual that holds the
+	# skeleton. Re-binding it is how each drive restarts the gait from rest.
+	var body: Node = skeleton
+	while body.get_parent() != visual:
+		body = body.get_parent()
+	var follow: Camera3D = null
+	for node: Node in player.find_children("*", "Camera3D", true, false):
+		follow = node as Camera3D
+		break
+	if follow == null:
+		_fail("the shipped Wanderer has no follow camera")
+		return
+	var bones := {}
+	for bone_name: String in ["spine_03", "foot_l", "foot_r"]:
+		bones[bone_name] = skeleton.find_bone(bone_name)
+		if bones[bone_name] < 0:
+			_fail("the driven-gait evidence rig lacks %s" % bone_name)
+			return
+
+	var people: Array[Vector3] = []
+	for group_name: String in ["Npcs", "Creatures"]:
+		var group := main.get_node_or_null(group_name)
+		if group == null:
+			continue
+		for person: Node in group.get_children():
+			if person is Node3D:
+				people.append((person as Node3D).global_position)
+	var terrain := world.get_node_or_null("TerrainBody") as CollisionObject3D
+	var exclude: Array[RID] = [player.get_rid()]
+	if terrain != null:
+		exclude.append(terrain.get_rid())
+	var problems := gait_drive_path_problems(
+		world, people, player.get_world_3d().direct_space_state, exclude)
+	if not problems.is_empty():
+		_fail("the committed drive path is no longer clear: %s" % "; ".join(problems))
+		return
+
+	# Keep the independently running breath on one fixed phase, exactly as the
+	# fixed-phase sequences do: it reads wall-clock, and the drive must not.
+	var idle := body.get_node_or_null("BreathingIdle")
+	if idle != null:
+		idle.set_process(false)
+		BreathingIdle.apply_at(skeleton, 0.0)
+
+	# The controller is stepped by hand below, so the engine must not step it
+	# too; and nothing but the held actions may steer it — mouse or right-stick
+	# look would turn the camera yaw that the movement input is relative to.
+	player.set_physics_process(false)
+	player.set_process(false)
+	player.set_process_unhandled_input(false)
+	player.control_enabled = true
+
+	var ground := world.surface_height_at(DRIVE_START.x, DRIVE_START.y)
+	var rig := {
+		"player": player,
+		"animator": animator,
+		"body": body,
+		"skeleton": skeleton,
+		"world": world,
+		"follow": follow,
+		"bones": bones,
+		"start": Vector3(DRIVE_START.x, ground + 0.1, DRIVE_START.y),
+		"heading": Vector3(DRIVE_HEADING.x, 0.0, DRIVE_HEADING.y).normalized(),
+	}
+
+	var rehearsal := await _drive_gait(rig, null, dir)
+	if rehearsal.is_empty():
+		return
+	var cam := Camera3D.new()
+	cam.far = 400.0
+	cam.fov = 42.0
+	get_tree().root.add_child(cam)
+	var drive := await _drive_gait(rig, cam, dir)
+	_release_drive_input()
+	if drive.is_empty():
+		return
+
+	var mismatch := gait_drive_replay_mismatch(rehearsal["trace"], drive["trace"])
+	if not mismatch.is_empty():
+		_fail(("the photographed drive did not reproduce its rehearsal (%s) — something in " +
+			"the controller path follows wall-clock or tick scheduling, so these frames " +
+			"would not be comparable across runs") % mismatch)
+		return
+
+	var dt: float = drive["dt"]
+	var fingerprint := gait_drive_fingerprint(drive["trace"])
+	var summary: Array[String] = [
+		"World at Ruin — controller-driven gait (#516)",
+		"Every number below comes from every controller step of the measured stretch,",
+		"not from the photographed marks.",
+		"",
+	]
+	for segment: Dictionary in drive["segments"]:
+		if not segment["measure"]:
+			continue
+		var first: int = segment["first"]
+		var last: int = segment["last"]
+		var metrics := gait_drive_metrics(
+			drive["body"].slice(first, last + 1),
+			drive["foot_l"].slice(first, last + 1),
+			drive["foot_r"].slice(first, last + 1),
+			drive["lift_l"].slice(first, last + 1),
+			drive["lift_r"].slice(first, last + 1),
+			rig["heading"],
+			dt)
+		if not metrics["ok"]:
+			_fail("the driven %s: %s" % [segment["label"], metrics["reason"]])
+			return
+		var target := Player.SPRINT_SPEED if segment["sprint"] else Player.WALK_SPEED
+		if metrics["speed_mps"] < target * DRIVE_MIN_SPEED_FRACTION:
+			_fail(("the driven %s held %.2f m/s against the controller's %.2f — the path is " +
+				"obstructed, so its cadence would describe the obstruction") %
+				[segment["label"], metrics["speed_mps"], target])
+			return
+		var line := gait_drive_report_line(segment["label"], metrics)
+		print("GAIT DRIVE %s" % line)
+		summary.append(line)
+	summary.append("")
+	summary.append("controller steps: %d at %.4f s (fixed physics step)" %
+		[drive["body"].size(), dt])
+	summary.append("rehearsal replay: identical trace at %d steps per tick and at 1 with renders" %
+		DRIVE_REHEARSAL_STEPS_PER_TICK)
+	summary.append("trace fingerprint: %s" % fingerprint)
+	summary.append("reference: %s (cue: full-body stride and camera tracking at speed)" %
+		GAIT_TRANSITION_REFERENCE)
+	var f := FileAccess.open("%s/gait_drive_summary.txt" % dir, FileAccess.WRITE)
+	if f == null:
+		_fail("could not write the gait-drive summary")
+		return
+	for summary_line: String in summary:
+		f.store_line(summary_line)
+	f.close()
+
+	print("GAIT DRIVE FINGERPRINT %s" % fingerprint)
+	print("CAPTURE PASS — %d gait drive frames written to %s (%d controller steps)" %
+		[drive["frames"], dir, drive["body"].size()])
+	get_tree().quit(0)
+
+
+## One pass of [method gait_drive_plan] through the shipped controller.
+##
+## With `cam` null this is the rehearsal: it steps
+## [constant DRIVE_REHEARSAL_STEPS_PER_TICK] times per physics tick and
+## photographs nothing. With a camera it steps once per tick and stops at each
+## distance mark to render. Returns the per-step trace, or an empty Dictionary
+## once it has failed the run.
+func _drive_gait(rig: Dictionary, cam: Camera3D, dir: String) -> Dictionary:
+	var player: Player = rig["player"]
+	var start: Vector3 = rig["start"]
+	var heading: Vector3 = rig["heading"]
+	_release_drive_input()
+	player.global_position = start
+	player.velocity = Vector3.ZERO
+	player.face_toward(start + heading * 100.0)
+	(rig["animator"] as WalkLocomotion).bind(rig["body"] as Node3D)
+
+	var dt := 1.0 / float(Engine.physics_ticks_per_second)
+	var per_tick := 1 if cam != null else DRIVE_REHEARSAL_STEPS_PER_TICK
+	# Plain Arrays, not Packed*: a packed array read out of a Dictionary is a
+	# copy, so appending to it would silently record nothing.
+	var run := {
+		"dt": dt,
+		"trace": [],
+		"body": [],
+		"foot_l": [],
+		"foot_r": [],
+		"clear_l": [],
+		"clear_r": [],
+		"lift_l": [],
+		"lift_r": [],
+		"segments": [],
+		"frames": 0,
+		"marks": 0,
+	}
+	var budget := 0
+	for _i in DRIVE_SETTLE_STEPS:
+		if budget == 0:
+			await get_tree().physics_frame
+			budget = per_tick
+		if not _drive_step(rig, dt, run):
+			return {}
+		budget -= 1
+	# The standing pose's own foot heights: lift is measured from here, so a
+	# foot that floats or sinks during the gait reads as exactly that.
+	var rest_l: float = run["clear_l"][-1]
+	var rest_r: float = run["clear_r"][-1]
+
+	for segment: Dictionary in gait_drive_plan():
+		Input.action_press("move_forward")
+		if segment["sprint"]:
+			Input.action_press("sprint")
+		else:
+			Input.action_release("sprint")
+		var first: int = run["body"].size()
+		var marks := gait_drive_marks(segment)
+		var next_mark := 0
+		var travelled := 0.0
+		var steps := 0
+		while travelled < float(segment["distance"]):
+			if steps >= DRIVE_MAX_SEGMENT_STEPS:
+				_fail("the driven %s covered %.2f of %.2f m in %d steps — the body is stuck" %
+					[segment["label"], travelled, segment["distance"], steps])
+				return {}
+			if budget == 0:
+				await get_tree().physics_frame
+				budget = per_tick
+			var before := player.global_position
+			if not _drive_step(rig, dt, run):
+				return {}
+			budget -= 1
+			steps += 1
+			var after := player.global_position
+			travelled += Vector2(after.x - before.x, after.z - before.z).length()
+			if cam != null and next_mark < marks.size() and travelled >= marks[next_mark]:
+				if not await _shoot_drive_frame(rig, cam, dir, run, segment, travelled):
+					return {}
+				next_mark += 1
+				# Rendering let engine ticks pass; resume on a fresh one.
+				budget = 0
+		run["segments"].append({
+			"label": segment["label"],
+			"sprint": segment["sprint"],
+			"measure": segment["measure"],
+			"first": first,
+			"last": run["body"].size() - 1,
+		})
+		if cam != null and segment["follow"]:
+			if not await _shoot_follow_frame(rig, cam, dir, run, segment):
+				return {}
+			budget = 0
+
+	for i in run["clear_l"].size():
+		run["lift_l"].append(float(run["clear_l"][i]) - rest_l)
+		run["lift_r"].append(float(run["clear_r"][i]) - rest_r)
+	return run
+
+
+## Step the real controller once and record where the body and both feet went.
+func _drive_step(rig: Dictionary, dt: float, run: Dictionary) -> bool:
+	# `move_and_slide` takes its own delta from the physics step only while a
+	# physics frame is in progress, and the render delta otherwise — so a step
+	# taken anywhere else would quietly make the drive follow wall-clock.
+	if not Engine.is_in_physics_frame():
+		_fail("the controller was stepped outside a physics frame — the drive would follow wall-clock")
+		return false
+	var player: Player = rig["player"]
+	# The shipped callback itself, not a copy of its logic: the point is to
+	# exercise the code a player runs.
+	player._physics_process(dt)
+	var skeleton: Skeleton3D = rig["skeleton"]
+	skeleton.force_update_all_bone_transforms()
+	var world: WorldGen = rig["world"]
+	var bones: Dictionary = rig["bones"]
+	var to_world := skeleton.global_transform
+	var body_at := player.global_position
+	var foot_l: Vector3 = to_world * skeleton.get_bone_global_pose(bones["foot_l"]).origin
+	var foot_r: Vector3 = to_world * skeleton.get_bone_global_pose(bones["foot_r"]).origin
+	run["body"].append(body_at)
+	run["foot_l"].append(foot_l)
+	run["foot_r"].append(foot_r)
+	run["clear_l"].append(foot_l.y - world.surface_height_at(foot_l.x, foot_l.z))
+	run["clear_r"].append(foot_r.y - world.surface_height_at(foot_r.x, foot_r.z))
+	for v: Vector3 in [body_at, foot_l, foot_r]:
+		run["trace"].append(v.x)
+		run["trace"].append(v.y)
+		run["trace"].append(v.z)
+	return true
+
+
+## A three-quarter-front frame that travels with the body: the same offset the
+## fixed-phase sequences use, so the two can be read side by side, but carried
+## along the drive so the ground moves under the feet the way a player sees it.
+func _shoot_drive_frame(
+		rig: Dictionary,
+		cam: Camera3D,
+		dir: String,
+		run: Dictionary,
+		segment: Dictionary,
+		travelled: float) -> bool:
+	var player: Player = rig["player"]
+	var skeleton: Skeleton3D = rig["skeleton"]
+	var heading: Vector3 = rig["heading"]
+	var chest: Vector3 = (
+		skeleton.global_transform
+		* skeleton.get_bone_global_pose(rig["bones"]["spine_03"]).origin
+	)
+	var right := heading.cross(Vector3.UP)
+	cam.global_position = (
+		chest + right * WALK_CAM_SIDE + Vector3.UP * WALK_CAM_RISE + heading * WALK_CAM_FRONT
+	)
+	cam.look_at(chest - Vector3(0.0, 0.45, 0.0), Vector3.UP)
+	for _s in WALK_SETTLE_FRAMES:
+		cam.current = true
+		await get_tree().process_frame
+	var img := await _grab_frame()
+	var frame_name := "gait_drive_%02d_%s" % [run["marks"], segment["label"]]
+	run["marks"] = int(run["marks"]) + 1
+	var speed := Vector2(player.velocity.x, player.velocity.z).length()
+	var step: int = run["body"].size()
+	return _save_drive_frame(dir, frame_name, img, [
+		"camera: three-quarter front, carried with the body",
+		"segment: %s (sprint %s)" % [segment["label"], "held" if segment["sprint"] else "released"],
+		"controller step: %d (%.3f s simulated)" % [step, float(step) * float(run["dt"])],
+		"travelled in segment: %.2f of %.2f m" % [travelled, segment["distance"]],
+		"speed: %.2f m/s" % speed,
+		"measured over every step: gait_drive_summary.txt",
+		"reference: %s" % GAIT_TRANSITION_REFERENCE,
+	], run)
+
+
+## The player's own follow camera at the end of a steady gait — what the
+## reference's camera-tracking cue is about, including the sprint's wider view.
+func _shoot_follow_frame(
+		rig: Dictionary,
+		cam: Camera3D,
+		dir: String,
+		run: Dictionary,
+		segment: Dictionary) -> bool:
+	var follow: Camera3D = rig["follow"]
+	for _s in WALK_SETTLE_FRAMES:
+		follow.current = true
+		await get_tree().process_frame
+	var img := await _grab_frame()
+	cam.current = true
+	return _save_drive_frame(dir, "gait_drive_follow_%s" % segment["label"], img, [
+		"camera: the Wanderer's own follow camera (fov %.1f)" % follow.fov,
+		"segment: end of %s (sprint %s)" % [
+			segment["label"], "held" if segment["sprint"] else "released"],
+		"reference: %s" % GAIT_TRANSITION_REFERENCE,
+	], run)
+
+
+func _save_drive_frame(
+		dir: String,
+		frame_name: String,
+		img: Image,
+		details: Array[String],
+		run: Dictionary) -> bool:
+	var spread := _luma_spread(img)
+	if spread < MIN_LUMA_SPREAD:
+		_fail("%s is a uniform frame (luma spread %.4f) — nothing rendered" % [frame_name, spread])
+		return false
+	var err := img.save_png("%s/%s.png" % [dir, frame_name])
+	if err != OK:
+		_fail("could not write %s (error %d)" % [frame_name, err])
+		return false
+	_write_note(dir, frame_name, img, _size_note(img), "", details)
+	run["frames"] = int(run["frames"]) + 1
+	print("CAPTURED %s" % frame_name)
+	return true
+
+
+func _release_drive_input() -> void:
+	Input.action_release("move_forward")
+	Input.action_release("sprint")
+
+
+## The drive, as data: a walk run-up from rest, a measured walk, the sprint
+## press, and a measured run. Pure so `gait_drive_capture_test` can pin that it
+## covers both gaits and the input edge between them.
+static func gait_drive_plan() -> Array[Dictionary]:
+	var walk := WalkLocomotion.STRIDE_LENGTH_M
+	var run := WalkLocomotion.RUN_STRIDE_LENGTH_M
+	return [
+		{"label": "walkup", "sprint": false, "distance": walk,
+			"frames": 0, "frame_span": 0.0, "measure": false, "follow": false},
+		{"label": "walk", "sprint": false, "distance": walk * DRIVE_MEASURE_CYCLES,
+			"frames": DRIVE_FRAMES_PER_CYCLE, "frame_span": walk, "measure": true, "follow": true},
+		{"label": "press", "sprint": true, "distance": run,
+			"frames": DRIVE_PRESS_FRAMES, "frame_span": run, "measure": false, "follow": false},
+		{"label": "run", "sprint": true, "distance": run * DRIVE_MEASURE_CYCLES,
+			"frames": DRIVE_FRAMES_PER_CYCLE, "frame_span": run, "measure": true, "follow": true},
+	]
+
+
+## Where a segment photographs: evenly spaced DISTANCES into it, never times.
+static func gait_drive_marks(segment: Dictionary) -> Array[float]:
+	var marks: Array[float] = []
+	var count: int = segment["frames"]
+	for k in count:
+		marks.append(float(segment["frame_span"]) * float(k) / float(count))
+	return marks
+
+
+## Total ground the plan covers, settle excluded.
+static func gait_drive_length() -> float:
+	var total := 0.0
+	for segment: Dictionary in gait_drive_plan():
+		total += float(segment["distance"])
+	return total
+
+
+## What would make the committed line unfit to drive on, checked against a live
+## world: the discovery reach, a cave, missing ground, a grade steep enough to
+## change the gait, a person or hound standing in the way, or a static collider
+## within a body's width. Pure apart from the physics query, so the headless
+## test can hold the same line against a freshly generated world.
+static func gait_drive_path_problems(
+		world: WorldGen,
+		people: Array[Vector3],
+		space: PhysicsDirectSpaceState3D,
+		exclude: Array[RID]) -> Array[String]:
+	var problems: Array[String] = []
+	var heading := Vector2(DRIVE_HEADING.x, DRIVE_HEADING.y).normalized()
+	# A metre of margin: each segment ends on the step that CROSSES its
+	# distance, so the drive overshoots by up to one step per segment.
+	var length := gait_drive_length() + 1.0
+	var shape := CapsuleShape3D.new()
+	shape.radius = 0.5
+	shape.height = 1.6
+	var query := PhysicsShapeQueryParameters3D.new()
+	query.shape = shape
+	query.exclude = exclude
+	var previous := 0.0
+	var d := 0.0
+	while d <= length:
+		var p := DRIVE_START + heading * d
+		if p.length() < WorldGen.SHRINE_CLEAR_RADIUS + 1.0:
+			problems.append("%.1f m in, it enters the shrine's discovery reach" % d)
+			break
+		if world.cave_protects(p.x, p.y):
+			problems.append("%.1f m in, it runs over a cave" % d)
+			break
+		var h := world.surface_height_at(p.x, p.y)
+		if h <= WorldGen.NO_GROUND + 1.0:
+			problems.append("%.1f m in, there is no ground" % d)
+			break
+		if d > 0.0:
+			var grade := rad_to_deg(atan(absf(h - previous) / 0.5))
+			if grade > 8.0:
+				problems.append("%.1f m in, the grade reaches %.1f degrees" % [d, grade])
+		previous = h
+		for person: Vector3 in people:
+			if Vector2(person.x, person.z).distance_to(p) < 4.0:
+				problems.append("%.1f m in, someone stands within 4 m at %s" % [d, person])
+		query.transform = Transform3D(Basis(), Vector3(p.x, h + 1.2, p.y))
+		if not space.intersect_shape(query, 1).is_empty():
+			problems.append("%.1f m in, a static collider sits on the line" % d)
+		d += 0.5
+	return problems
+
+
+## Cadence, speed and foot behaviour over one measured stretch of a drive.
+##
+## A STEP is counted where the leading foot changes — the passing moment —
+## measured along the heading with [constant DRIVE_LEAD_HYSTERESIS_M] so the
+## instant the feet are level cannot register twice. That is deliberately not
+## "the lower foot changes": the authored gaits lift both feet together at the
+## ends of each stride and set both down at the passing pose, so which foot is
+## lower barely alternates on the walk even though the legs plainly do.
+##
+## SLIDE is how fast the foot nearest the ground moves over it, as a share of
+## how fast the body moves: 0 is a foot that holds its place while the body
+## passes over it, 1 is a foot carried along like a skate. LIFT is that nearest
+## foot's height against the standing pose, so a body floating through its
+## stride reads as a positive lift rather than as a clean step.
+static func gait_drive_metrics(
+		body: Array,
+		foot_l: Array,
+		foot_r: Array,
+		lift_l: Array,
+		lift_r: Array,
+		heading: Vector3,
+		dt: float) -> Dictionary:
+	var n := body.size()
+	if n < 2 or foot_l.size() != n or foot_r.size() != n or lift_l.size() != n or lift_r.size() != n:
+		return {"ok": false, "reason": "the trace is empty or its channels disagree in length"}
+	var forward := Vector2(heading.x, heading.z).normalized()
+	# Each change is timed at the feet's actual crossing, interpolated between
+	# the two controller steps it falls between: at a run a step is only ~10
+	# controller steps long, so whole-step timing alone is several percent out.
+	var lead := 0
+	var crossing := -1.0
+	var previous := 0.0
+	var changes: Array[float] = []
+	for i in n:
+		var l: Vector3 = foot_l[i]
+		var r: Vector3 = foot_r[i]
+		var ahead := Vector2(l.x - r.x, l.z - r.z).dot(forward)
+		if i > 0 and (previous > 0.0) != (ahead > 0.0) and previous != ahead:
+			crossing = float(i - 1) + previous / (previous - ahead)
+		previous = ahead
+		var now := lead
+		if ahead > DRIVE_LEAD_HYSTERESIS_M:
+			now = 1
+		elif ahead < -DRIVE_LEAD_HYSTERESIS_M:
+			now = -1
+		if now != lead and lead != 0 and crossing >= 0.0:
+			changes.append(crossing)
+		lead = now
+	var steps := changes.size() - 1
+	if steps < 2:
+		return {"ok": false, "reason": ("only %d complete step(s) in %d controller steps — the " +
+			"feet are not alternating, so the lower body is not being driven") % [maxi(steps, 0), n]}
+
+	var path := 0.0
+	# Slide is taken only over intervals where ONE foot is the lower at both
+	# ends. On the interval where the other takes over, the newly lowered foot
+	# is still finishing its swing, and charging that to the planted foot made a
+	# foot that holds the ground perfectly read 9%.
+	var held_path := 0.0
+	var slide := 0.0
+	var lift_sum := 0.0
+	var lift_min := INF
+	var lift_max := -INF
+	var was_left_down := true
+	for i in n:
+		var left_down := float(lift_l[i]) <= float(lift_r[i])
+		var lift := float(lift_l[i]) if left_down else float(lift_r[i])
+		lift_sum += lift
+		lift_min = minf(lift_min, lift)
+		lift_max = maxf(lift_max, lift)
+		if i > 0:
+			var a: Vector3 = body[i - 1]
+			var b: Vector3 = body[i]
+			var moved := Vector2(b.x - a.x, b.z - a.z).length()
+			path += moved
+			if left_down == was_left_down:
+				var feet: Array = foot_l if left_down else foot_r
+				var foot_now: Vector3 = feet[i]
+				var foot_before: Vector3 = feet[i - 1]
+				slide += Vector2(foot_now.x - foot_before.x, foot_now.z - foot_before.z).length()
+				held_path += moved
+		was_left_down = left_down
+	if path <= 0.0 or held_path <= 0.0:
+		return {"ok": false, "reason": "the body did not move over the measured stretch"}
+	var speed := path / (float(n - 1) * dt)
+	# Whole stride cycles only. The standing pose leans on one leg, so the feet
+	# cross at uneven intervals (11 and 13 controller steps on the walk) and an
+	# odd count of steps would bias the rate toward whichever came last.
+	var cycles := int(steps / 2.0)
+	var cadence := float(cycles * 2) / ((changes[cycles * 2] - changes[0]) * dt) * 60.0
+	var per_step := speed / (cadence / 60.0)
+	var ratio := slide / held_path
+	return {
+		"ok": true,
+		"steps": steps,
+		"cycles": cycles,
+		"cadence_spm": cadence,
+		"speed_mps": speed,
+		"cycle_m": per_step * 2.0,
+		"slide_ratio": ratio,
+		"slide_per_step_m": ratio * per_step,
+		"lift_min_m": lift_min,
+		"lift_mean_m": lift_sum / float(n),
+		"lift_max_m": lift_max,
+	}
+
+
+static func gait_drive_report_line(label: String, metrics: Dictionary) -> String:
+	return ("%s: %d steps, %.0f steps/min over %d whole stride cycle(s), %.2f m/s, " +
+		"%.2f m per stride cycle; the foot nearest the ground moves at %.0f%% of body " +
+		"speed (%.0f cm per step) and sits " +
+		"%.1f cm off its standing height on average (%.1f to %.1f)") % [
+			label,
+			metrics["steps"],
+			metrics["cadence_spm"],
+			metrics["cycles"],
+			metrics["speed_mps"],
+			metrics["cycle_m"],
+			float(metrics["slide_ratio"]) * 100.0,
+			float(metrics["slide_per_step_m"]) * 100.0,
+			float(metrics["lift_mean_m"]) * 100.0,
+			float(metrics["lift_min_m"]) * 100.0,
+			float(metrics["lift_max_m"]) * 100.0,
+		]
+
+
+## Empty when two traces are identical, otherwise where they first part and by
+## how much. Exact on purpose: both drives run the same code on the same
+## machine from the same state, so ANY difference means something outside the
+## controller's own inputs reached it.
+static func gait_drive_replay_mismatch(a: Array, b: Array) -> String:
+	if a.size() != b.size():
+		return "%d values against %d" % [a.size(), b.size()]
+	var first := -1
+	var worst := 0.0
+	for i in a.size():
+		var diff := absf(float(a[i]) - float(b[i]))
+		if diff > 0.0 and first < 0:
+			first = i
+		worst = maxf(worst, diff)
+	if first < 0:
+		return ""
+	return "first differs at step %d, by up to %.6f m" % [int(first / 9.0), worst]
+
+
+## SHA-256 of the trace's exact values — equal on two runs only when every
+## controller step put the body and both feet in the same place.
+static func gait_drive_fingerprint(trace: Array) -> String:
+	var values := PackedFloat64Array(trace)
+	var ctx := HashingContext.new()
+	ctx.start(HashingContext.HASH_SHA256)
+	ctx.update(values.to_byte_array())
+	return ctx.finish().hex_encode()
 
 
 ## The `jump` scenario: a fixed-velocity full-body sequence of the REAL
