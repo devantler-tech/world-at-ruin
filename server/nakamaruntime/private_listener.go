@@ -76,9 +76,10 @@ func privateTLS(cfg privateConfig) (*tls.Config, error) {
 	}
 	pool := x509.NewCertPool()
 	for _, root := range roots {
-		// A stale or not-yet-valid root would start a listener that rejects every
-		// workload, so it fails startup and the module rolls back instead.
-		if !root.IsCA || now.Before(root.NotBefore) || !now.Before(root.NotAfter) {
+		// A root that is stale, not yet valid, or not allowed to sign certificates
+		// would start a listener that rejects every workload, so it fails startup
+		// and the module rolls back instead.
+		if !root.IsCA || !currentlyValid(root, now) || root.KeyUsage != 0 && root.KeyUsage&x509.KeyUsageCertSign == 0 {
 			return nil, errMaterial
 		}
 		pool.AddCert(root)
@@ -103,16 +104,25 @@ func privateTLS(cfg privateConfig) (*tls.Config, error) {
 	if err != nil {
 		return nil, errMaterial
 	}
-	leaf, err := x509.ParseCertificate(pair.Certificate[0])
-	if err != nil || now.Before(leaf.NotBefore) || !now.Before(leaf.NotAfter) {
-		return nil, errMaterial
+	// Zone clients reject the whole served chain if any certificate in it is
+	// unusable, so every one is checked, not only the leaf.
+	chain := make([]*x509.Certificate, 0, len(pair.Certificate))
+	for _, der := range pair.Certificate {
+		certificate, err := x509.ParseCertificate(der)
+		if err != nil || !currentlyValid(certificate, now) {
+			return nil, errMaterial
+		}
+		chain = append(chain, certificate)
 	}
+	leaf := chain[0]
 	allocatorCert, err := readMaterial(cfg.allocatorCert)
 	if err != nil {
 		return nil, errMaterial
 	}
 	allocatorLeaves, err := parseCertificates(allocatorCert)
-	if err != nil || sharesKey([]*x509.Certificate{leaf}, allocatorLeaves[:1]) {
+	// The server key is ordinary HTTPS material, so it may belong to neither the
+	// allocator nor any root that authorizes workload identities.
+	if err != nil || sharesKey([]*x509.Certificate{leaf}, allocatorLeaves[:1]) || sharesKey([]*x509.Certificate{leaf}, roots) {
 		return nil, errMaterial
 	}
 	if len(leaf.DNSNames)+len(leaf.IPAddresses) == 0 || len(leaf.ExtKeyUsage) > 0 && !slices.Contains(leaf.ExtKeyUsage, x509.ExtKeyUsageServerAuth) && !slices.Contains(leaf.ExtKeyUsage, x509.ExtKeyUsageAny) {
@@ -144,6 +154,11 @@ func parseCertificates(bundle []byte) ([]*x509.Certificate, error) {
 		return nil, errMaterial
 	}
 	return certificates, nil
+}
+
+// currentlyValid reports whether now falls inside the certificate's validity window.
+func currentlyValid(certificate *x509.Certificate, now time.Time) bool {
+	return !now.Before(certificate.NotBefore) && now.Before(certificate.NotAfter)
 }
 
 // sharesKey reports whether any certificate in a uses a public key from b. The

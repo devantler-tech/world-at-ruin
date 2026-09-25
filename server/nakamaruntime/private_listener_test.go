@@ -3,6 +3,7 @@ package nakamaruntime
 import (
 	"bytes"
 	"context"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -218,6 +219,43 @@ func TestPrivateListenerRejectsUnusableOrSharedTrust(t *testing.T) {
 		"unreadable allocator root": func(env map[string]string) {
 			env["WAR_HANDOFF_ALLOCATOR_CA_FILE"] = "/private-missing-allocator-root"
 		},
+		// Go's verifier rejects every chain from a CA whose key usage omits
+		// certificate signing, so no workload could ever claim.
+		"root that cannot sign certificates": func(env map[string]string) {
+			env["WAR_HANDOFF_CLAIMS_CA_FILE"] = rootFixtureWithKey(t, nil, x509.KeyUsageDigitalSignature)
+		},
+		// Zone clients reject a served chain carrying an expired certificate.
+		"expired certificate in server chain": func(env map[string]string) {
+			chain, err := os.ReadFile(env["WAR_HANDOFF_CLAIMS_CERT_FILE"])
+			if err != nil {
+				t.Fatal(err)
+			}
+			expired, err := os.ReadFile(rootFixture(t, time.Now().Add(-2*time.Hour), time.Now().Add(-time.Hour), true))
+			if err != nil {
+				t.Fatal(err)
+			}
+			env["WAR_HANDOFF_CLAIMS_CERT_FILE"] = writeMaterial(t, t.TempDir(), "chain.pem", append(chain, expired...))
+		},
+		// A leaked HTTPS key must not also be able to issue workload certificates.
+		"server key shared with a claims root": func(env map[string]string) {
+			pair, err := tls.LoadX509KeyPair(env["WAR_HANDOFF_CLAIMS_CERT_FILE"], env["WAR_HANDOFF_CLAIMS_KEY_FILE"])
+			if err != nil {
+				t.Fatal(err)
+			}
+			signer, ok := pair.PrivateKey.(crypto.Signer)
+			if !ok {
+				t.Fatal("server key cannot sign")
+			}
+			workload, err := os.ReadFile(env["WAR_HANDOFF_CLAIMS_CA_FILE"])
+			if err != nil {
+				t.Fatal(err)
+			}
+			shared, err := os.ReadFile(rootFixtureWithKey(t, signer, x509.KeyUsageCertSign))
+			if err != nil {
+				t.Fatal(err)
+			}
+			env["WAR_HANDOFF_CLAIMS_CA_FILE"] = writeMaterial(t, t.TempDir(), "bundle.pem", append(workload, shared...))
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			env := maps.Clone(f.env)
@@ -253,6 +291,25 @@ func rootFixture(t *testing.T, notBefore, notAfter time.Time, isCA bool) string 
 	}
 	root := &x509.Certificate{SerialNumber: big.NewInt(1), NotBefore: notBefore, NotAfter: notAfter, IsCA: isCA, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign}
 	der, err := x509.CreateCertificate(rand.Reader, root, root, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return writeMaterial(t, t.TempDir(), "root.pem", pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+}
+
+// rootFixtureWithKey writes a currently valid self-signed CA with the given key
+// usage, signed by signer, or by a fresh key when signer is nil.
+func rootFixtureWithKey(t *testing.T, signer crypto.Signer, usage x509.KeyUsage) string {
+	t.Helper()
+	if signer == nil {
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		signer = key
+	}
+	root := &x509.Certificate{SerialNumber: big.NewInt(2), NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), IsCA: true, BasicConstraintsValid: true, KeyUsage: usage}
+	der, err := x509.CreateCertificate(rand.Reader, root, root, signer.Public(), signer)
 	if err != nil {
 		t.Fatal(err)
 	}
