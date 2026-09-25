@@ -9,24 +9,41 @@ extends Node
 ##
 ## ## The run is authored, not the walk played faster
 ##
-## Sprint is the default travel verb, so it is on screen for most of a session —
-## and it used to be the one state that posed nothing, sliding a bolt-upright
-## body at [constant Player.SPRINT_SPEED] (issue #481). Scaling the walk's
-## amplitudes would have been the cheap fix and the wrong one: a run differs
-## from a walk in SHAPE, not size, and two channels carry that difference.
+## Sprint is the default travel verb, so it is on screen for most of a session.
+## Scaling the walk's amplitudes would be the wrong run: a run differs from a
+## walk in SHAPE, not size, and two things carry that difference.
 ##
 ## 1. THE ELBOWS BEND. The walk holds the arms straight and swings them from the
 ##    shoulder; a run carries them folded and drives them. `lowerarm_l/r` is a
 ##    channel the walk does not touch at all, which is why the run cannot be
 ##    mistaken for a louder walk.
-## 2. THE KNEES NEVER STRAIGHTEN. The walk's knee flexes only on the advancing
-##    leg and returns to exactly zero on the planted one, which is what reads as
-##    a planted step. A run has no planted phase — the trailing heel is still
-##    folded up when the leading foot lands — so its knee angle is a standing
-##    bias PLUS a swing, and never reaches rest.
+## 2. THE KNEES NEVER STRAIGHTEN. The walk's planted leg stretches to
+##    [constant WALK_LEG_REACH] of its length at the ends of contact; the run's
+##    stops at [constant RUN_LEG_REACH], so its stance knee stays bent even as a
+##    foot lands and leaves — the running leg's spring — and its pelvis rides
+##    lower.
 ##
-## Both are why [method run_angles] is not [method angles] times a constant, and
-## `walk_locomotion_test` asserts exactly that rather than trusting the wording.
+## The arm half is why [method run_angles] is not [method angles] times a
+## constant, and `walk_locomotion_test` asserts exactly that rather than trusting
+## the wording.
+##
+## ## Planted feet
+##
+## A leg is solved, not swung (#890). Each foot follows [method foot_path]:
+## while it is down it stays where it landed as the body passes over it, and in
+## swing it is carried forward on an arc, leaving and meeting the ground without
+## skidding. The thigh and knee angles are whatever put the ankle there
+## ([method solve_leg]), turned about the body's lateral axis so a stride never
+## walks a foot sideways, over a pelvis lowered by [constant WALK_PELVIS_DROP_M] or
+## [constant RUN_PELVIS_DROP_M].
+##
+## How long a foot stays down is geometry, not a choice. A planted foot sweeps
+## back under the hip by exactly the distance the body covers while it is down,
+## and a leg only reaches so far, so [method stance_fraction] is derived at bind
+## from the rig's leg length and that pelvis height: about a quarter of each cycle
+## per foot at the walk and a fifth at the run. At 6 and 10.5 m/s with these
+## strides, that leaves both gaits a flight phase, which is how a body actually
+## moves at those speeds.
 ##
 ## ## Speed comes from stride length, not cadence
 ##
@@ -44,7 +61,9 @@ extends Node
 ## cue. Walk and run crossfade while both gait previews are opted in; stop,
 ## ground/air and jump transitions remain unauthored. There is also no vertical
 ## bob on the run's flight phase: bob is TRANSLATION, and this node poses a
-## skeleton the controller moves.
+## skeleton the controller moves. The feet plant on the body's own flat ground
+## plane rather than the terrain under them, so on a slope a planted foot sits a
+## little above or below the ground it is standing on.
 ##
 ## The class name is deliberately unchanged: the remaining opt-in flag and its
 ## retirement issue (#405) both name the walk, and renaming a class is a
@@ -114,6 +133,28 @@ const RUN_ELBOW_FLEX_DEG := 42.0
 ## a mannequin holding a fixed angle.
 const RUN_ELBOW_PUMP_DEG := 7.0
 
+## How far the pelvis sits below its standing height while each gait moves. It
+## is what lets a planted leg reach far enough fore and aft to hold the ground
+## (see "Planted feet" in the class docs).
+const WALK_PELVIS_DROP_M := 0.06
+const RUN_PELVIS_DROP_M := 0.10
+
+## How far a swinging foot clears the ground at the top of its arc.
+const WALK_FOOT_CLEARANCE_M := 0.09
+const RUN_FOOT_CLEARANCE_M := 0.2
+
+## The longest a leg is stretched, as a share of its full length. The walk
+## nearly straightens its planted leg; the run never does — its stance knee
+## stays bent even at the ends of contact, which is the running leg's spring.
+const WALK_LEG_REACH := 0.995
+const RUN_LEG_REACH := 0.97
+
+## Bones the planted legs are solved against, beyond the eight that are posed:
+## the pelvis carries the height channel and the feet set the ground and the
+## body's forward direction.
+const PLANT_BONES := ["pelvis", "foot_l", "foot_r", "ball_l"]
+const ARM_BONES := ["upperarm_l", "upperarm_r", "lowerarm_l", "lowerarm_r"]
+
 ## The controller launches at 7.2 m/s. Clamping to that shipped envelope keeps
 ## a bad external velocity from folding the skeleton further while preserving a
 ## continuous, deterministic pose through the whole arc.
@@ -163,6 +204,17 @@ var _run_blend := 0.0
 var _has_active_gait := false
 var _skeleton: Skeleton3D = null
 
+# The rig facts the planted legs are solved from, captured at bind.
+var _legs_ready := false
+var _lateral := Vector3.LEFT
+var _forward := Vector3.BACK
+var _pelvis := -1
+var _pelvis_rest_origin := Vector3.ZERO
+var _pelvis_parent_rest := Quaternion.IDENTITY
+var _legs: Array[Dictionary] = []
+var _walk_reach := 0.0
+var _run_reach := 0.0
+
 
 ## Bind the driver to the newest recipe-built body. Character editing rebuilds
 ## that body in place, so the player keeps one driver and rebinds it.
@@ -185,6 +237,81 @@ func bind(body: Node3D) -> void:
 			_run_enabled = false
 			_skeleton = null
 			return
+	# The grounded gaits need the planted-leg facts; the airborne arc does not,
+	# so a rig lacking them loses only the gaits.
+	_legs_ready = _capture_legs()
+	if not _legs_ready:
+		_walk_enabled = false
+		_run_enabled = false
+
+
+## Read the leg geometry the planted gait is solved from, all from the REST
+## skeleton, so every body built from the same recipe solves identically.
+## Everything happens in the body's sagittal plane: the forward direction is
+## where the toes point, and each leg turns about the lateral axis through its
+## hip, so solving can never move a foot sideways.
+func _capture_legs() -> bool:
+	for bone_name: String in PLANT_BONES:
+		if _skeleton.find_bone(bone_name) < 0:
+			push_error("WalkLocomotion: rig has no bone %s, so the gaits cannot plant a foot" % bone_name)
+			return false
+	var toes := (_skeleton.get_bone_global_rest(_skeleton.find_bone("ball_l")).origin
+		- _skeleton.get_bone_global_rest(_skeleton.find_bone("foot_l")).origin)
+	toes.y = 0.0
+	if toes.length() < 0.001:
+		push_error("WalkLocomotion: the rig's toes do not point anywhere, so it has no forward")
+		return false
+	_forward = toes.normalized()
+	# A positive turn about this axis swings a leg forward.
+	_lateral = _forward.cross(Vector3.UP).normalized()
+	_pelvis = _skeleton.find_bone("pelvis")
+	_pelvis_rest_origin = _skeleton.get_bone_rest(_pelvis).origin
+	var pelvis_parent := _skeleton.get_bone_parent(_pelvis)
+	_pelvis_parent_rest = (_skeleton.get_bone_global_rest(pelvis_parent).basis.get_rotation_quaternion()
+		if pelvis_parent >= 0 else Quaternion.IDENTITY)
+	_legs.clear()
+	for side: String in ["l", "r"]:
+		var thigh := _skeleton.find_bone("thigh_" + side)
+		var calf := _skeleton.find_bone("calf_" + side)
+		var foot := _skeleton.find_bone("foot_" + side)
+		var hip := _skeleton.get_bone_global_rest(thigh).origin
+		var knee := _skeleton.get_bone_global_rest(calf).origin
+		var ankle := _skeleton.get_bone_global_rest(foot).origin
+		var upper := _sagittal(knee - hip)
+		var lower := _sagittal(ankle - knee)
+		_legs.append({
+			"thigh": thigh,
+			"calf": calf,
+			"upper_m": upper.length(),
+			"lower_m": lower.length(),
+			"thigh_rest_angle": atan2(upper.x, -upper.y),
+			"calf_rest_angle": atan2(lower.x, -lower.y),
+			"hip_over_ankle_m": -_sagittal(ankle - hip).y,
+			"thigh_rest": _skeleton.get_bone_rest(thigh).basis.get_rotation_quaternion(),
+			"calf_rest": _skeleton.get_bone_rest(calf).basis.get_rotation_quaternion(),
+		})
+	_walk_reach = _reach(WALK_PELVIS_DROP_M, WALK_LEG_REACH)
+	_run_reach = _reach(RUN_PELVIS_DROP_M, RUN_LEG_REACH)
+	if _walk_reach <= 0.0 or _run_reach <= 0.0:
+		push_error("WalkLocomotion: the legs cannot reach the ground at the gait's pelvis height")
+		return false
+	return true
+
+
+## A skeleton-space offset as (forward, up) in the body's sagittal plane.
+func _sagittal(offset: Vector3) -> Vector2:
+	return Vector2(offset.dot(_forward), offset.dot(Vector3.UP))
+
+
+## How far fore and aft of the hip a planted foot can sit with the pelvis
+## dropped by `drop`, on the shorter-reaching leg.
+func _reach(drop: float, limit: float) -> float:
+	var reach := INF
+	for leg: Dictionary in _legs:
+		var length := limit * (float(leg["upper_m"]) + float(leg["lower_m"]))
+		var height := float(leg["hip_over_ankle_m"]) - drop
+		reach = minf(reach, sqrt(maxf(length * length - height * height, 0.0)))
+	return reach
 
 
 ## Whether any gait is opted in — the node has nothing to do when neither is.
@@ -262,6 +389,8 @@ func apply_jump(vertical_speed: float) -> void:
 	if _skeleton == null:
 		push_error("WalkLocomotion: cannot pose an unbound skeleton")
 		return
+	# The gaits lower the pelvis; the arc is posed from standing height.
+	_reset_pelvis()
 	var angles := jump_angles(vertical_speed)
 	for bone_name: String in DRIVEN_BONES:
 		var bone := _skeleton.find_bone(bone_name)
@@ -292,35 +421,150 @@ static func jump_angles(vertical_speed: float) -> Dictionary:
 ## `running` defaults to the walk so existing single-argument callers keep
 ## posing the gait they asked for.
 func apply_phase(phase: float, running: bool = false) -> void:
-	if _skeleton == null:
-		push_error("WalkLocomotion: cannot pose an unbound skeleton")
-		return
-	var now := gait_angles(fposmod(phase, TAU), running)
-	for bone_name: String in DRIVEN_BONES:
-		var bone := _skeleton.find_bone(bone_name)
-		var rest_rotation := _skeleton.get_bone_rest(bone).basis.get_rotation_quaternion()
-		_skeleton.set_bone_pose_rotation(
-			bone,
-			rest_rotation * Quaternion(Vector3.RIGHT, deg_to_rad(now[bone_name])))
+	apply_blended_phase(phase, 1.0 if running else 0.0)
 
 
 ## Pose an interpolation between the authored walk and run at one shared phase.
 ## The runtime supplies an eased weight; keeping the interpolation itself pure
 ## makes every driven channel explicit, including the walk's zeroed elbows.
+##
+## The arms follow [method angles] and [method run_angles]. The legs are solved
+## (see [method _pose_legs]); only a rig without the bones that solve needs
+## falls back to the swung leg channels in those same tables.
 func apply_blended_phase(phase: float, run_weight: float) -> void:
 	if _skeleton == null:
 		push_error("WalkLocomotion: cannot pose an unbound skeleton")
 		return
-	var walk := angles(fposmod(phase, TAU))
-	var run := run_angles(fposmod(phase, TAU))
+	var at := fposmod(phase, TAU)
+	var walk := angles(at)
+	var run := run_angles(at)
 	var weight := clampf(run_weight, 0.0, 1.0)
-	for bone_name: String in DRIVEN_BONES:
+	for bone_name: String in (ARM_BONES if _legs_ready else DRIVEN_BONES):
 		var bone := _skeleton.find_bone(bone_name)
 		var rest_rotation := _skeleton.get_bone_rest(bone).basis.get_rotation_quaternion()
 		var angle := lerpf(walk[bone_name], run[bone_name], weight)
 		_skeleton.set_bone_pose_rotation(
 			bone,
 			rest_rotation * Quaternion(Vector3.RIGHT, deg_to_rad(angle)))
+	if _legs_ready:
+		_pose_legs(at, weight)
+
+
+## Plant the feet: lower the pelvis, then turn each thigh and knee about the
+## body's lateral axis so its ankle lands where [method foot_path] puts it. The
+## walk and run are each solved and their angles crossfaded, so a gait change
+## blends exactly as the arms do.
+##
+## The turn is composed against the pelvis as it stands NOW rather than at rest:
+## the breathing idle rolls the pelvis, and a leg turned about an axis measured in
+## the rest frame would tilt out of the sagittal plane with it.
+func _pose_legs(phase: float, run_weight: float) -> void:
+	var walk_stance := stance_fraction(_walk_reach, STRIDE_LENGTH_M)
+	var run_stance := stance_fraction(_run_reach, RUN_STRIDE_LENGTH_M)
+	_set_pelvis_drop(lerpf(WALK_PELVIS_DROP_M, RUN_PELVIS_DROP_M, run_weight))
+	for i in _legs.size():
+		var leg := _legs[i]
+		var right := i == 1
+		var walk := _leg_turns(leg, cycle_position(phase, walk_stance, right), walk_stance,
+			_walk_reach, WALK_FOOT_CLEARANCE_M, WALK_PELVIS_DROP_M, WALK_LEG_REACH)
+		var run := _leg_turns(leg, cycle_position(phase, run_stance, right), run_stance,
+			_run_reach, RUN_FOOT_CLEARANCE_M, RUN_PELVIS_DROP_M, RUN_LEG_REACH)
+		var turns := walk.lerp(run, run_weight)
+		var thigh: int = leg["thigh"]
+		var parent_now := _skeleton.get_bone_global_pose(_skeleton.get_bone_parent(thigh)).basis.get_rotation_quaternion()
+		var thigh_rest: Quaternion = leg["thigh_rest"]
+		# Axes and results are renormalised: a unit vector carried through a
+		# frame change drifts off unit length, and a rotation built on it would
+		# stop being exactly one.
+		_skeleton.set_bone_pose_rotation(thigh,
+			(Quaternion((parent_now.inverse() * _lateral).normalized(), turns.x) * thigh_rest).normalized())
+		# The knee turns about the same lateral axis, expressed in the thigh's
+		# frame before its own turn, so the shin stays in the thigh's plane.
+		var thigh_frame := parent_now * thigh_rest
+		var calf_rest: Quaternion = leg["calf_rest"]
+		_skeleton.set_bone_pose_rotation(int(leg["calf"]),
+			(Quaternion((thigh_frame.inverse() * _lateral).normalized(), turns.y) * calf_rest).normalized())
+
+
+## The thigh turn and the knee turn relative to it, in radians about the lateral
+## axis, that put this leg's ankle where the gait wants it at cycle position `u`.
+##
+## A foot leaving the ground keeps travelling back under the body for a moment,
+## further than the leg reaches at the gait's `limit`. There it rises instead of
+## the knee straightening: the heel lifts behind, as it does at lift-off.
+func _leg_turns(leg: Dictionary, u: float, stance: float, reach: float, clearance: float, drop: float, limit: float) -> Vector2:
+	var path := foot_path(u, stance, reach, clearance)
+	var target := Vector2(path.x, -(float(leg["hip_over_ankle_m"]) - drop) + path.y)
+	var longest := limit * (float(leg["upper_m"]) + float(leg["lower_m"]))
+	if target.length() > longest:
+		var forward := clampf(target.x, -longest, longest)
+		target = Vector2(forward, -sqrt(longest * longest - forward * forward))
+	var solved := solve_leg(float(leg["upper_m"]), float(leg["lower_m"]), target)
+	var thigh_turn := solved.x - float(leg["thigh_rest_angle"])
+	return Vector2(thigh_turn, solved.y - float(leg["calf_rest_angle"]) - thigh_turn)
+
+
+func _set_pelvis_drop(drop: float) -> void:
+	_skeleton.set_bone_pose_position(_pelvis,
+		_pelvis_rest_origin + _pelvis_parent_rest.inverse() * (Vector3.DOWN * drop))
+
+
+func _reset_pelvis() -> void:
+	if _legs_ready:
+		_skeleton.set_bone_pose_position(_pelvis, _pelvis_rest_origin)
+
+
+## How much of each cycle one foot can stay down: while it does, it sweeps from
+## `reach` ahead of the hip to `reach` behind it, and the body covers exactly that
+## much ground meanwhile, so a longer stance would drag the foot.
+static func stance_fraction(reach: float, stride_length: float) -> float:
+	return clampf(2.0 * reach / stride_length, 0.05, 0.95)
+
+
+## Where in its own cycle (0 to 1, stance first) one foot is at a gait phase. The
+## left foot leaves the ground at a quarter phase, the moment the swung gait had
+## that leg furthest back, so a phase names the same moment in both and a
+## fixed-phase capture frames what it always did; the right foot is half a cycle
+## behind.
+static func cycle_position(phase: float, stance: float, right: bool) -> float:
+	var u := fposmod(phase / TAU - 0.25 + stance, 1.0)
+	return fposmod(u + 0.5, 1.0) if right else u
+
+
+## One foot's place relative to its hip at cycle position `u`: how far forward,
+## and how far above its standing height. Down for the first `stance` of the
+## cycle, flat on the ground and moving from `reach` ahead to `reach` behind at
+## exactly the body's speed; then carried forward again on an arc `clearance`
+## high.
+##
+## The swing leaves and meets the ground still moving back under the body at the
+## stance's speed — standing still over the ground — so a foot neither skids as it
+## lifts nor as it lands: the forward travel is a cubic whose end slopes match the
+## stance. Its height is a half sine, which rises at a finite rate: a lift that
+## left the ground infinitely fast would snap a nearly straight knee through
+## several degrees in a single millisecond.
+static func foot_path(u: float, stance: float, reach: float, clearance: float) -> Vector2:
+	if u < stance:
+		return Vector2(reach * (1.0 - 2.0 * u / stance), 0.0)
+	var w := (u - stance) / (1.0 - stance)
+	var slope := -2.0 * reach * (1.0 - stance) / stance
+	var w2 := w * w
+	var w3 := w2 * w
+	var forward := ((2.0 * w3 - 3.0 * w2 + 1.0) * -reach + (w3 - 2.0 * w2 + w) * slope
+		+ (-2.0 * w3 + 3.0 * w2) * reach + (w3 - w2) * slope)
+	return Vector2(forward, clearance * sin(PI * w))
+
+
+## Absolute thigh and shin angles — from straight down, positive forward — that
+## put an ankle at `target` from the hip, with the knee bending forward. A target
+## out of reach is met at full stretch along the same line.
+static func solve_leg(upper: float, lower: float, target: Vector2) -> Vector2:
+	var distance := clampf(target.length(), absf(upper - lower) + 0.0001, upper + lower - 0.0001)
+	var toward := atan2(target.x, -target.y)
+	var opening := acos(clampf((upper * upper + distance * distance - lower * lower) / (2.0 * upper * distance), -1.0, 1.0))
+	var thigh := toward + opening
+	var knee := Vector2(upper * sin(thigh), -upper * cos(thigh))
+	return Vector2(thigh, atan2(target.x - knee.x, -(target.y - knee.y)))
 
 
 ## The selected gait's angles for a phase in radians. Both gaits answer for
@@ -331,6 +575,10 @@ static func gait_angles(phase: float, running: bool) -> Dictionary:
 
 
 ## Pure WALK angles for a phase in radians.
+##
+## The arm keys pose every rig. The leg keys pose only a rig lacking the bones
+## the planted solve needs ([constant PLANT_BONES]); a full rig takes its legs
+## from [method foot_path] instead. The same holds for [method run_angles].
 static func angles(phase: float) -> Dictionary:
 	var stride := sin(phase)
 	return {
@@ -378,6 +626,7 @@ static func run_angles(phase: float) -> Dictionary:
 
 
 func _reset_pose() -> void:
+	_reset_pelvis()
 	for bone_name: String in DRIVEN_BONES:
 		var bone := _skeleton.find_bone(bone_name)
 		var rest_rotation := _skeleton.get_bone_rest(bone).basis.get_rotation_quaternion()
