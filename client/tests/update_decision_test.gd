@@ -153,6 +153,7 @@ func _ready() -> void:
 	_test_pack_artifact_must_read_the_installed_save()
 	_test_pack_artifact_must_read_its_own_writes()
 	_test_malformed_pack_artifact_refused()
+	_test_unusable_pack_update_keeps_an_incompatibility_loud()
 	_test_incoherent_shell_floor_refused()
 	_test_fractional_identifiers_refused()
 	_test_malformed_manifests_refuse_cleanly()
@@ -1167,13 +1168,53 @@ func _test_pack_artifact_must_read_its_own_writes() -> void:
 
 
 func _test_malformed_pack_artifact_refused() -> void:
-	# Malformed is refused outright, never routed: a newer shell is offered here,
-	# and following an unprovable artifact anywhere would be trusting it.
+	# Malformed is refused outright, never routed: following an unprovable artifact
+	# anywhere would be trusting it. Each route a malformed one could otherwise
+	# take is covered — a newer shell on offer, a pack that NEEDS that newer shell
+	# (the minimum-shell route answers before the artifact is looked at), and no
+	# newer pack at all.
 	for bad: Variant in ["x", {}, _pack_artifact(1, 1).merged({"speaks_protocol": {"min": 2, "max": 1}}, true)]:
 		var m := _manifest_with_pack_artifact(bad)
 		m["shell"]["current"] = "0.2.0"
 		_expect_reason(_installed_current(), m, UpdateDecision.INVALID_MANIFEST, "'pack.full'",
 			"a malformed pack artifact (%s) is refused, not routed" % [str(bad).left(40)])
+		var needs_shell := _manifest_with_pack_artifact(bad)
+		needs_shell["shell"]["current"] = "0.2.0"
+		needs_shell["pack"]["min_shell"] = "0.2.0"
+		_expect_reason(_installed_current(), needs_shell, UpdateDecision.INVALID_MANIFEST, "'pack.full'",
+			"a malformed artifact on a pack that needs the newer shell (%s) is refused, not routed" % [str(bad).left(40)])
+		var current := _manifest_with_pack_artifact(bad)
+		current["pack"]["version"] = "0.1.14"
+		_expect_reason(_installed_current(), current, UpdateDecision.INVALID_MANIFEST, "'pack.full'",
+			"a malformed artifact on the installed pack (%s) is refused" % [str(bad).left(40)])
+
+
+func _test_unusable_pack_update_keeps_an_incompatibility_loud() -> void:
+	# The installed build speaks protocol 1 and the live tier now accepts only 2.
+	var m := _manifest_with_pack_artifact(_pack_artifact(1, 1))
+	m["protocol"] = {"min": 2, "max": 2}
+	# The pack still speaks only 1, and no newer shell is offered: nothing on offer
+	# fixes the connection, so the player must be told loudly, not left playing a
+	# build that cannot connect.
+	_expect_reason(_installed_current(), m, UpdateDecision.BLOCKED_INCOMPATIBLE, "cannot fix it",
+		"an unusable pack cannot hide an unresolved incompatibility")
+	# The pack that DOES speak the new protocol is exactly the update that fixes it.
+	var fixing := _pack_artifact(1, 1)
+	fixing["speaks_protocol"] = {"min": 1, "max": 2}
+	var m2 := _manifest_with_pack_artifact(fixing)
+	m2["protocol"] = {"min": 2, "max": 2}
+	_expect(_installed_current(), m2, UpdateDecision.PACK_UPDATE, "a pack that speaks the accepted protocol resolves it")
+	# The same holds for the pack refusals that predate the artifact: a write
+	# hazard with no newer shell, while the connection is already broken.
+	var hazard := _base_manifest()
+	hazard["pack"]["version"] = "0.1.15"
+	hazard["protocol"] = {"min": 2, "max": 2}
+	hazard["save_schema"] = {"min": 1, "writes": 4, "capability": 1}
+	hazard["shell"]["reads_max"] = 9
+	var inst := _installed_current()
+	inst["save_reads_max"] = 3
+	_expect_reason(inst, hazard, UpdateDecision.BLOCKED_INCOMPATIBLE, "cannot fix it",
+		"a write-hazard pack cannot hide an unresolved incompatibility")
 
 
 func _expect_reason(installed: Dictionary, manifest: Dictionary, want_action: String, needle: String, label: String) -> void:

@@ -133,9 +133,10 @@ A client-side **update manager** that, at boot and periodically:
      `pack.full`, `pack_update` is offered only if that artifact passes the same eligibility recovery
      applies to a rollback target — it runs on the installed shell and speaks a protocol the live tier
      accepts — and reads both the save it finds and the save it will write. Otherwise the step rides a
-     newer shell or is refused; a malformed artifact is always refused. A manifest that withholds
-     `pack.full`, as every manifest does until child 3 produces a pack, is decided on the release-wide
-     numbers alone (#901).
+     newer shell or is refused — loudly, as `blocked_incompatible`, when the installed build already
+     cannot connect. A malformed artifact makes the whole manifest malformed, whatever the route. A
+     manifest that withholds `pack.full`, as every manifest does until child 3 produces a pack, is
+     decided on the release-wide numbers alone (#901).
 
 This decision core is **pure, deterministic, and unit-testable** with no network or art — exactly like
 `Telegraph`/`Interactable`. It is the **first implementation increment**, because every correctness
