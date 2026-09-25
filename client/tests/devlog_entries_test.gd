@@ -10,16 +10,23 @@ extends Node
 ## log showed the same two releases twice and it read as a rendering bug.
 ##
 ## This pins the properties that make the log trustworthy as a record:
-##  1. UNIQUE VERSIONS — no version ever appears twice. This is the guard the
-##     issue asks for, because the duplication is a recurring class of bug rather
-##     than a one-off: every player-visible PR appends here, and two PRs landing
-##     around each other is precisely how a block gets duplicated in a merge.
+##  1. UNIQUE VERSIONS — no released version ever appears twice. This is the
+##     guard the issue asks for, because the duplication is a recurring class of
+##     bug rather than a one-off: every player-visible PR appends here, and two
+##     PRs landing around each other is precisely how a block gets duplicated in
+##     a merge.
 ##  2. NEWEST FIRST, NUMERICALLY — versions strictly descend. The comparison is
 ##     component-wise integer, never string: lexically "0.1.9" sorts ABOVE
 ##     "0.1.10", so a string compare would call a correct log broken (and hide a
 ##     real inversion once the patch number reaches double digits).
 ##  3. WELL-FORMED — every entry carries version/date/title/notes, notes are
-##     non-empty strings, so a half-written entry cannot ship silently.
+##     non-empty strings, and the version is a release number or the
+##     placeholder, so a half-written entry cannot ship silently.
+##  4. PLACEHOLDER ENTRIES (#518) — an entry may carry `DevLog.NEXT_VERSION`
+##     until the release build stamps it. Such entries are newer than every
+##     released one, may be several at once, and cannot declare `shipped_in`.
+##     No real entry is a placeholder yet, so these rules are also proven
+##     against constructed logs, where a rule that could never fail is caught.
 ##
 ## It deliberately does NOT tie the entries to `DevLog.VERSION`: an entry carries
 ## the version its change will SHIP in, while `DevLog.VERSION` is a dev
@@ -45,68 +52,15 @@ func _ready() -> void:
 			% [entries.size(), MIN_ENTRIES])
 		return
 
-	# --- 3. WELL-FORMED: every entry is a complete, readable record ---
-	for i in entries.size():
-		var e: Dictionary = entries[i]
-		for key: String in ["version", "date", "title", "notes"]:
-			if not e.has(key):
-				_fail("dev-log entry %d is missing '%s'" % [i, key])
-				return
-		for key: String in ["version", "date", "title"]:
-			var value: Variant = e[key]
-			if value is not String or (value as String).is_empty():
-				_fail("dev-log entry %d has an empty or non-string '%s'" % [i, key])
-				return
-		var notes: Variant = e["notes"]
-		if notes is not Array or (notes as Array).is_empty():
-			_fail("dev-log entry '%s' has no notes — an entry with nothing to say should not ship" % e["version"])
-			return
-		for note: Variant in (notes as Array):
-			if note is not String or (note as String).is_empty():
-				_fail("dev-log entry '%s' has an empty or non-string note" % e["version"])
-				return
-		# Optional, and only on an entry whose own version was never cut (#466).
-		# Which release it names is proved against the repository's tags by
-		# tools/devlog-entry-version-guard.sh, which can see them; the property
-		# checkable from the data alone is that it points FORWARD. A declaration
-		# at or below the entry's own number would render as "never released;
-		# first shipped in" an earlier build, which is unreadable rather than
-		# merely wrong.
-		if e.has("shipped_in"):
-			var shipped: Variant = e["shipped_in"]
-			if shipped is not String or (shipped as String).is_empty():
-				_fail("dev-log entry '%s' has an empty or non-string 'shipped_in'" % e["version"])
-				return
-			if _compare_versions(shipped as String, String(e["version"])) <= 0:
-				_fail(("dev-log entry '%s' declares it first shipped in '%s', which is not ABOVE it. An entry " +
-					"declares this because its own version was never cut, so the release that carried it is " +
-					"necessarily a later one.") % [e["version"], shipped])
-				return
+	var problem := _problem_in(entries)
+	if not problem.is_empty():
+		_fail(problem)
+		return
 
-	# --- 1. UNIQUE VERSIONS: the #119 guard ---
-	var seen: Dictionary = {}
-	for e: Dictionary in entries:
-		var v: String = e["version"]
-		if seen.has(v):
-			_fail(("dev log lists version '%s' TWICE — a duplicated entry makes the log show the same " +
-				"release twice and reads as a rendering bug (issue #119). Every player-visible PR " +
-				"appends here, so a merge can duplicate a block: keep exactly one entry per version.") % v)
-			return
-		seen[v] = true
-
-	# --- 2. NEWEST FIRST, compared numerically rather than as strings ---
-	for i in range(1, entries.size()):
-		var newer: String = entries[i - 1]["version"]
-		var older: String = entries[i]["version"]
-		var cmp := _compare_versions(newer, older)
-		if cmp == 0:
-			_fail("dev-log entries %d and %d report the same version '%s'" % [i - 1, i, newer])
-			return
-		if cmp < 0:
-			_fail(("dev log is out of order: '%s' is listed above '%s' but is OLDER. Entries run " +
-				"newest first (note the comparison is numeric — 0.1.10 is newer than 0.1.9, which a " +
-				"string sort gets backwards).") % [newer, older])
-			return
+	problem = _placeholder_cases()
+	if not problem.is_empty():
+		_fail(problem)
+		return
 
 	# NOTE — deliberately NOT asserted: that `DevLog.VERSION` equals the newest
 	# entry. They are meant to differ. `AGENTS.md` has an entry carry "the version
@@ -119,9 +73,129 @@ func _ready() -> void:
 	# to hand-edit exactly the constant the contract forbids touching.
 
 	var newest: String = entries[0]["version"]
-	print("TEST PASS — dev log holds (%d entries, %s down to %s: unique versions, strictly newest-first by numeric compare, all well-formed)"
+	print("TEST PASS — dev log holds (%d entries, %s down to %s: unique versions, strictly newest-first by numeric compare, all well-formed; placeholder entries order and validate)"
 		% [entries.size(), newest, entries[entries.size() - 1]["version"]])
 	get_tree().quit(0)
+
+
+## The first way `entries` breaks the log's rules, or empty when it keeps them.
+## Run over the real log and over constructed ones alike.
+func _problem_in(entries: Array[Dictionary]) -> String:
+	var release := RegEx.create_from_string("^[0-9]+\\.[0-9]+\\.[0-9]+$")
+
+	# --- 3. WELL-FORMED: every entry is a complete, readable record ---
+	for i in entries.size():
+		var e: Dictionary = entries[i]
+		for key: String in ["version", "date", "title", "notes"]:
+			if not e.has(key):
+				return "dev-log entry %d is missing '%s'" % [i, key]
+		for key: String in ["version", "date", "title"]:
+			var value: Variant = e[key]
+			if value is not String or (value as String).is_empty():
+				return "dev-log entry %d has an empty or non-string '%s'" % [i, key]
+		var version := String(e["version"])
+		if version != DevLog.NEXT_VERSION and release.search(version) == null:
+			return ("dev-log entry %d has version '%s', which is neither a release number (X.Y.Z) " +
+				"nor the placeholder '%s'") % [i, version, DevLog.NEXT_VERSION]
+		var notes: Variant = e["notes"]
+		if notes is not Array or (notes as Array).is_empty():
+			return "dev-log entry '%s' has no notes — an entry with nothing to say should not ship" % version
+		for note: Variant in (notes as Array):
+			if note is not String or (note as String).is_empty():
+				return "dev-log entry '%s' has an empty or non-string note" % version
+		# Optional, and only on an entry whose own version was never cut (#466).
+		# Which release it names is proved against the repository's tags by
+		# tools/devlog-entry-version-guard.sh, which can see them; the property
+		# checkable from the data alone is that it points FORWARD. A declaration
+		# at or below the entry's own number would render as "never released;
+		# first shipped in" an earlier build, which is unreadable rather than
+		# merely wrong.
+		if e.has("shipped_in"):
+			if version == DevLog.NEXT_VERSION:
+				return ("dev-log entry '%s' is a placeholder that declares 'shipped_in' — its release " +
+					"is stamped at build time, so there is no never-cut number to explain") % e["title"]
+			var shipped: Variant = e["shipped_in"]
+			if shipped is not String or (shipped as String).is_empty():
+				return "dev-log entry '%s' has an empty or non-string 'shipped_in'" % version
+			if _compare_versions(shipped as String, version) <= 0:
+				return ("dev-log entry '%s' declares it first shipped in '%s', which is not ABOVE it. An entry " +
+					"declares this because its own version was never cut, so the release that carried it is " +
+					"necessarily a later one.") % [version, shipped]
+
+	# --- 1. UNIQUE VERSIONS: the #119 guard ---
+	# Placeholders are exempt: several unreleased entries share it by design,
+	# and each gets its own release when the build stamps it.
+	var seen: Dictionary = {}
+	for e: Dictionary in entries:
+		var v: String = e["version"]
+		if v == DevLog.NEXT_VERSION:
+			continue
+		if seen.has(v):
+			return ("dev log lists version '%s' TWICE — a duplicated entry makes the log show the same " +
+				"release twice and reads as a rendering bug (issue #119). Every player-visible PR " +
+				"appends here, so a merge can duplicate a block: keep exactly one entry per version.") % v
+		seen[v] = true
+
+	# --- 2. NEWEST FIRST, compared numerically rather than as strings ---
+	for i in range(1, entries.size()):
+		var newer: String = entries[i - 1]["version"]
+		var older: String = entries[i]["version"]
+		if older == DevLog.NEXT_VERSION:
+			if newer != DevLog.NEXT_VERSION:
+				return ("dev log lists released '%s' above an unreleased entry — an entry not yet in any " +
+					"release is newer than all of them") % newer
+			if String(entries[i - 1]["date"]) < String(entries[i]["date"]):
+				return "unreleased entries %d and %d are not newest-first by date" % [i - 1, i]
+			continue
+		if newer == DevLog.NEXT_VERSION:
+			continue
+		var cmp := _compare_versions(newer, older)
+		if cmp == 0:
+			return "dev-log entries %d and %d report the same version '%s'" % [i - 1, i, newer]
+		if cmp < 0:
+			return ("dev log is out of order: '%s' is listed above '%s' but is OLDER. Entries run " +
+				"newest first (note the comparison is numeric — 0.1.10 is newer than 0.1.9, which a " +
+				"string sort gets backwards).") % [newer, older]
+	return ""
+
+
+## Constructed logs that exercise the placeholder rules, since the real log has
+## no placeholder entry to exercise them yet. Each rule must pass its good case
+## AND refuse its bad one, or it could not fail at all.
+func _placeholder_cases() -> String:
+	var older_next := _entry(DevLog.NEXT_VERSION, "2026-09-24", "Older unreleased")
+	var newer_next := _entry(DevLog.NEXT_VERSION, "2026-09-25", "Newer unreleased")
+	var released := _entry("0.98.0", "2026-09-05", "Released")
+	var earlier := _entry("0.93.1", "2026-09-01", "Released earlier")
+
+	# The loader's own ordering puts both placeholders first, newest by date.
+	var shuffled: Array[Dictionary] = [released, older_next, earlier, newer_next]
+	var ordered := DevLog.newest_first(shuffled)
+	var expected: Array[Dictionary] = [newer_next, older_next, released, earlier]
+	if ordered != expected:
+		return "DevLog orders placeholder entries as %s, not newest-first above every release" % [
+			ordered.map(func(e: Dictionary) -> String: return String(e["title"]))]
+	var problem := _problem_in(expected)
+	if not problem.is_empty():
+		return "a well-formed log with two placeholder entries was refused: %s" % problem
+
+	var below: Array[Dictionary] = [released, newer_next, earlier]
+	if _problem_in(below).is_empty():
+		return "a placeholder entry listed below a released one was accepted"
+	var declaring := _entry(DevLog.NEXT_VERSION, "2026-09-25", "Declares")
+	declaring["shipped_in"] = "0.99.0"
+	var with_declaring: Array[Dictionary] = [declaring, released]
+	if _problem_in(with_declaring).is_empty():
+		return "a placeholder entry declaring 'shipped_in' was accepted"
+	for bad: String in ["0.98", "v0.98.0", "Next"]:
+		var malformed: Array[Dictionary] = [_entry(bad, "2026-09-25", "Malformed")]
+		if _problem_in(malformed).is_empty():
+			return "version '%s' was accepted as either a release number or the placeholder" % bad
+	return ""
+
+
+func _entry(version: String, date: String, title: String) -> Dictionary:
+	return {"version": version, "date": date, "title": title, "notes": ["What changed, in one line."]}
 
 
 ## Compare two dotted version strings component-wise as INTEGERS. Returns >0 when

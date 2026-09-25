@@ -315,8 +315,7 @@ func _render_devlog() -> String:
 		# which is exactly what someone reading it to find when something
 		# appeared is misled by.
 		var shipped_in := String(entry.get("shipped_in", ""))
-		var tag := "v" if shipped_in.is_empty() else ""
-		out += "[color=#%s][b]%s%s — %s[/b]  ·  %s[/color]" % [ember, tag, entry["version"], entry["title"], entry["date"]]
+		out += "[color=#%s][b]%s — %s[/b]  ·  %s[/color]" % [ember, DevLog.heading(entry), entry["title"], entry["date"]]
 		if not shipped_in.is_empty():
 			out += "[color=#%s]  ·  never released; first shipped in v%s[/color]" % [dim, shipped_in]
 		out += "\n"
