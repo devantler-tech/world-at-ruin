@@ -988,7 +988,10 @@ everything shipped afterwards is held to.
     *before* creating the draft, CD polls for the draft (after the build, so it has normally
     appeared long since) and fails closed if it never does.
   - `cd.yaml` (`push: tags: v*`) production-builds the macOS client, **stamps the release
-    version** into `config/version` and `DevLog.VERSION` at build time, verifies the exported app
+    version** into `config/version` and `DevLog.VERSION` at build time — and, on a full-history
+    checkout, rewrites any dev-log entry still carrying the placeholder version `"next"` to the
+    first release containing the commit that added it (`tools/devlog-stamp.sh`, #518; a stable
+    release fails if one is left unstamped). None of these stamps is committed back. It verifies the exported app
     boots reporting `BOOT_OK v<version>` (the proof the stamp reached the shipped binary), and
     hands the zip to a checkout-free attachment job. The build job is read-only; only the
     checkout-free attachment and final publication jobs receive `contents: write`, and the

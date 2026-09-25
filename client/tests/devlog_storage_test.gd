@@ -17,7 +17,11 @@ extends Node
 ##  2. THE NAME IS THE VERSION — each file is named for the version it carries.
 ##     The filename is how an author finds the entry to edit and how two
 ##     concurrent PRs are guaranteed disjoint paths, so a file whose name and
-##     content disagree breaks the very property this storage exists for.
+##     content disagree breaks the very property this storage exists for. An
+##     entry still carrying `DevLog.NEXT_VERSION` has no version to be named
+##     for (#518), so it is named by a slug that can never look like one — the
+##     rule is `DevLog.name_problem`, proven below against constructed names
+##     too, since no real entry is a placeholder yet.
 ##
 ## Plus non-vacuity: the directory must actually hold entries. A guard that
 ## inspects an empty directory would pass while the in-game log renders blank —
@@ -61,12 +65,31 @@ func _ready() -> void:
 	# membership test, not a mapping one: swap the contents of two entry files and
 	# every name would still be found, so both violations would pass.
 	for file_name: String in entry_files:
-		var named := file_name.trim_suffix(".json")
-		var declared := _version_in(file_name)
-		if declared != named:
-			_fail(("%s%s declares version '%s' — the filename is how an author finds an entry and "
-				+ "how two concurrent PRs stay on disjoint paths, so the two must agree")
-				% [DevLog.ENTRY_DIR, file_name, declared])
+		var problem := DevLog.name_problem(file_name.trim_suffix(".json"), _entry_in(file_name))
+		if not problem.is_empty():
+			_fail(("%s%s %s — the filename is how an author finds an entry and how two "
+				+ "concurrent PRs stay on disjoint paths, so it must fit what the entry declares")
+				% [DevLog.ENTRY_DIR, file_name, problem])
+			return
+
+	# The same rule against names no real entry uses yet. Each must decide both
+	# ways, or it could never fail.
+	var next := {"version": DevLog.NEXT_VERSION}
+	var released := {"version": "0.98.0"}
+	for case: Array in [
+		["0.98.0", released, true],
+		["0.98.1", released, false],
+		["ash-settles", released, false],
+		["ash-settles", next, true],
+		["ash", next, true],
+		["0.99.0", next, false],
+		["Ash_Settles", next, false],
+		["ash--settles", next, false],
+	]:
+		var fits: bool = DevLog.name_problem(case[0], case[1]).is_empty()
+		if fits != bool(case[2]):
+			_fail("%s.json declaring '%s' was %s" % [
+				case[0], case[1]["version"], "refused" if case[2] else "accepted"])
 			return
 
 	print("TEST PASS — dev log is %d file(s) under %s, each named for the version it carries, all loaded"
@@ -74,17 +97,17 @@ func _ready() -> void:
 	get_tree().quit(0)
 
 
-## The version a file actually declares, for a failure message that names the
-## mismatch rather than restating the filename.
-func _version_in(file_name: String) -> String:
+## What a file actually declares, so a failure names the mismatch rather than
+## restating the filename.
+func _entry_in(file_name: String) -> Dictionary:
 	var file := FileAccess.open(DevLog.ENTRY_DIR + file_name, FileAccess.READ)
 	if file == null:
-		return "<unreadable>"
+		return {"version": "<unreadable>"}
 	var parsed: Variant = JSON.parse_string(file.get_as_text())
 	file.close()
 	if parsed is not Dictionary:
-		return "<unparseable>"
-	return String((parsed as Dictionary).get("version", "<missing>"))
+		return {"version": "<unparseable>"}
+	return parsed as Dictionary
 
 
 func _fail(message: String) -> void:

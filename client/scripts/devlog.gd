@@ -8,7 +8,8 @@ class_name DevLog
 const VERSION := "0.1.17"
 const CODENAME := "Ashfall Reach"
 
-## One file per entry, named by the version the change ships in.
+## One file per entry, named by the version the change ships in — or, for an
+## entry still carrying [constant NEXT_VERSION], by a slug.
 ##
 ## Every player-visible change adds an entry, and roughly seven agent sessions
 ## work in parallel, so a single shared list put every concurrent change on the
@@ -18,6 +19,21 @@ const CODENAME := "Ashfall Reach"
 ## without contest. Nothing about what an entry says or where it appears
 ## changes — only where it is stored.
 const ENTRY_DIR := "res://devlog/"
+
+## The version an entry carries until the release build stamps it (#518).
+##
+## Which release a change ships in cannot be known on its branch: several are
+## cut an hour, so a sibling can release first. An entry whose version is this
+## placeholder is rewritten by `tools/devlog-stamp.sh`, which `cd.yaml` runs, to
+## the first release containing the commit that added it — in the release build
+## only, as `VERSION` is. Anywhere that has not been through a release it stays
+## the placeholder and sorts above every released entry, because it is newer
+## than all of them.
+const NEXT_VERSION := "next"
+
+## A placeholder entry's filename: lowercase words joined by hyphens. Having no
+## dots, it can never collide with a released entry's `X.Y.Z.json`.
+const NEXT_ENTRY_NAME := "^[a-z0-9]+(-[a-z0-9]+)*$"
 
 ## Newest first. Keys: version, date, title, notes (Array[String]).
 ##
@@ -65,16 +81,68 @@ static func _load_entries() -> Array[Dictionary]:
 			push_error("dev log: %s%s is not a JSON object" % [ENTRY_DIR, stem])
 			continue
 		out.append(parsed as Dictionary)
-	out.sort_custom(_newer_first)
+	out = newest_first(out)
 	if out.is_empty():
 		push_error("dev log: no entries found under %s — the log would render empty" % ENTRY_DIR)
 	return out
 
 
-## Newest first. Versions are compared component-wise as integers through a
+## A copy of `entries`, newest first. The loader orders the log with this, and
+## the tests order constructed entries with it, so there is one ordering.
+static func newest_first(entries: Array[Dictionary]) -> Array[Dictionary]:
+	var ordered: Array[Dictionary] = entries.duplicate()
+	ordered.sort_custom(_newer_first)
+	return ordered
+
+
+## Whether an entry still carries [constant NEXT_VERSION] rather than a release.
+static func is_next(entry: Dictionary) -> bool:
+	return String(entry.get("version", "")) == NEXT_VERSION
+
+
+## What the log shows ahead of an entry's title. A released entry reads as the
+## build it shipped in (`v0.98.0`); one whose number was never cut drops the `v`
+## (#466); one not yet released says so instead of showing a placeholder.
+static func heading(entry: Dictionary) -> String:
+	if is_next(entry):
+		return "Next release"
+	var version := String(entry.get("version", ""))
+	if not String(entry.get("shipped_in", "")).is_empty():
+		return version
+	return "v" + version
+
+
+## Empty when an entry file's name fits what it declares, otherwise why not. A
+## released entry is named for its version, which is how an author finds it and
+## what keeps two releases on disjoint paths; a [constant NEXT_VERSION] entry has
+## no version yet, so it is named by a slug matching [constant NEXT_ENTRY_NAME].
+static func name_problem(stem: String, entry: Dictionary) -> String:
+	if is_next(entry):
+		if RegEx.create_from_string(NEXT_ENTRY_NAME).search(stem) == null:
+			return ("a \"%s\" entry is named by a lowercase-hyphen slug such as 'ash-settles', "
+				+ "not '%s'") % [NEXT_VERSION, stem]
+		return ""
+	var declared := String(entry.get("version", "<missing>"))
+	if declared != stem:
+		return "declares version '%s' but is named '%s'" % [declared, stem]
+	return ""
+
+
+## Newest first. A [constant NEXT_VERSION] entry is newer than every released
+## one; two of them order by date, newest first, then by title so the order is
+## total. Released versions are compared component-wise as integers through a
 ## zero-padded key, because "0.1.9" sorts ABOVE "0.1.10" as plain text and the
 ## patch number is already into double digits.
 static func _newer_first(a: Dictionary, b: Dictionary) -> bool:
+	var a_next := is_next(a)
+	if a_next != is_next(b):
+		return a_next
+	if a_next:
+		var a_date := String(a.get("date", ""))
+		var b_date := String(b.get("date", ""))
+		if a_date != b_date:
+			return a_date > b_date
+		return String(a.get("title", "")) < String(b.get("title", ""))
 	return _sort_key(String(a.get("version", ""))) > _sort_key(String(b.get("version", "")))
 
 
