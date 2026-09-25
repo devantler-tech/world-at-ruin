@@ -33,7 +33,8 @@ shrine. It writes:
 - `gait_drive_follow_walk.png` and `gait_drive_follow_run.png` — the Wanderer's
   own follow camera at the end of each measured gait;
 - `gait_drive_summary.txt` — cadence, speed, slide and lift over every
-  controller step of each measured gait, and the trace fingerprint.
+  controller step of each measured gait, each gait's contact line (#903), and
+  the trace fingerprint.
 
 ## What makes it reproducible
 
@@ -80,6 +81,22 @@ different trace, so a mismatch across machines is a question to investigate
 rather than proof of a regression. Between runs of one commit on one machine it
 must match.
 
+### Contact (#903)
+
+Measured on the same shipped gaits and the same fingerprint (2026-09-25):
+
+| Gait | A foot is down | A down foot moves at |
+|---|---|---|
+| walk | 31% of the stretch | **127%** of body speed |
+| run | 17% of the stretch | **140%** of body speed |
+
+The contact line answers the question the slide cannot. A planted gait at these
+speeds has flight phases, when the nearest foot is always one in swing, so the
+nearest-foot slide charges an honest gait for its airtime. The contact line
+measures only a foot that is down, and on the shipped gaits it shows that foot
+skating faster than the body. That is the baseline planted feet (#904) are
+judged against.
+
 ## Ablations — deliberate wrong builds the instrument must tell apart
 
 | Wrong build | What the drive reports |
@@ -87,6 +104,7 @@ must match.
 | The run's stride equalised to the walk's (`RUN_STRIDE_LENGTH_M` 3.6 → 2.4) | run reads **525** steps/min and **2.40 m** per cycle, against 350 and 3.60. The capture still passes: it is evidence for a reviewer, not a gate on tuning. |
 | Locomotion advanced by the render delta instead of the physics step | `CAPTURE FAIL` — the photographed drive differs from its rehearsal from the first moving step, by up to 0.81 m |
 | The controller never calls `advance_motion` | `CAPTURE FAIL` — no complete step in the measured walk: the feet are not alternating |
+| The gaits raise the pelvis 3 cm while moving, so no foot comes down | walk: **no foot comes down to within 1 cm**; run: a foot is down for 2% of the stretch but never two samples in a row, so its slip **cannot be measured**. The nearest-foot slide still reads **109%** and **111%**, the same as the shipped build: only the contact line and the lift show the feet never land. |
 
 ## How the numbers are defined
 
@@ -103,6 +121,11 @@ must match.
   ends. 0% is a foot that holds its place; 100% is a foot carried like a skate.
 - **Lift** is that nearest foot's height against the standing pose's own foot
   height at the same spot.
+- A foot is **down** when it is no more than 1 cm above its standing height. A
+  foot that sinks below it is still on the ground. The **contact share** is how
+  much of the stretch has a foot down. **Contact slip** is how far a down foot
+  moves over the ground, divided by how far the body moves, over intervals where
+  the same foot is down at both ends.
 
 `client/tests/gait_drive_capture_test.gd` pins all of these against constructed
 traces with known answers, and checks that the committed line is still clear on
