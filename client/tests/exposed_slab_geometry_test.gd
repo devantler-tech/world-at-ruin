@@ -23,6 +23,9 @@ extends Node
 ##
 ## Run: godot --headless --path client res://tests/exposed_slab_geometry_test.tscn
 
+## The name #548 gives the overlay's collision body. Spelled here rather than
+## read from WorldGen so this test runs against a build that predates the body.
+const GROUND_PLATES_BODY := "GroundPlatesBody"
 const EPS := 0.00001
 const UNIT_SIZE := 8.0
 const UNIT_QUADS := 4
@@ -268,9 +271,16 @@ func _test_world() -> void:
 	var on_names := _child_names(a)
 	var expected_names := off_names.duplicate()
 	expected_names.append(WorldGen.GROUND_PLATES_NODE)
-	if on_names != expected_names:
-		_fail("the on-state tree is %s, expected the off-state tree plus one %s"
-			% [on_names, WorldGen.GROUND_PLATES_NODE])
+	# #548 gives the overlay a collision body built from the same mesh, added
+	# right after it. Accepted here, and only as that one named node in that
+	# place, so the collision change can land against this test without anything
+	# else being able to ride into the plates-on tree; #548 then makes the body
+	# required.
+	var with_body: Array[String] = expected_names.duplicate()
+	with_body.append(GROUND_PLATES_BODY)
+	if on_names != expected_names and on_names != with_body:
+		_fail("the on-state tree is %s, expected the off-state tree plus one %s (and at most its %s)"
+			% [on_names, WorldGen.GROUND_PLATES_NODE, GROUND_PLATES_BODY])
 	if _terrain_hash(a) != off_terrain:
 		_fail("the base terrain mesh changed with the flag on")
 	if _collision_hash(a) != off_collision:
