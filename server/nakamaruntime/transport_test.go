@@ -11,6 +11,7 @@ import (
 	"encoding/pem"
 	"math/big"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,7 +40,7 @@ func writeMaterial(t *testing.T, dir, name string, data []byte) string {
 	return path
 }
 
-func certificateFixture(t *testing.T, dir string) (config, tls.Certificate, *x509.CertPool) {
+func certificateFixture(t *testing.T, dir string, identities ...string) (config, tls.Certificate, *x509.CertPool) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -54,6 +55,13 @@ func certificateFixture(t *testing.T, dir string) (config, tls.Certificate, *x50
 	pool := x509.NewCertPool()
 	pool.AppendCertsFromPEM(caPEM)
 	leaf := &x509.Certificate{SerialNumber: big.NewInt(2), DNSNames: []string{"localhost"}, NotBefore: ca.NotBefore, NotAfter: ca.NotAfter, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth}}
+	for _, identity := range identities {
+		uri, err := url.Parse(identity)
+		if err != nil {
+			t.Fatal(err)
+		}
+		leaf.URIs = append(leaf.URIs, uri)
+	}
 	der, err := x509.CreateCertificate(rand.Reader, leaf, ca, &key.PublicKey, key)
 	if err != nil {
 		t.Fatal(err)

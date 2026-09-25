@@ -10,6 +10,7 @@ import (
 	"github.com/devantler-tech/world-at-ruin/server/admissionref"
 	"github.com/devantler-tech/world-at-ruin/server/agonesalloc"
 	"github.com/devantler-tech/world-at-ruin/server/agonesresources"
+	"github.com/devantler-tech/world-at-ruin/server/claimrpc"
 	"github.com/devantler-tech/world-at-ruin/server/gameserverapi"
 	"github.com/devantler-tech/world-at-ruin/server/handoff"
 	"github.com/devantler-tech/world-at-ruin/server/handoffalloc"
@@ -20,6 +21,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"io"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -34,8 +36,9 @@ type dependencies struct {
 }
 type connector func(config) (dependencies, error)
 
-// Initialize registers the opt-in handoff RPC and its shutdown-owned expiry
-// reconciler. Deployment values come only from Nakama's runtime.env context.
+// Initialize registers the opt-in handoff RPC, expiry reconciler and optional
+// private claim listener under one shutdown-owned lifetime. Deployment values
+// come only from Nakama's runtime.env context.
 func Initialize(ctx context.Context, nk runtime.NakamaModule, initializer runtime.Initializer) error {
 	return initialize(ctx, nk, initializer, connectRuntime)
 }
@@ -61,7 +64,7 @@ func initialize(ctx context.Context, nk runtime.NakamaModule, initializer runtim
 			}
 		})
 	}
-	service, coordinator, err := compose(cfg, nk, deps)
+	service, coordinator, claim, err := compose(cfg, nk, deps)
 	if err != nil {
 		closeDependencies()
 		return errors.New("nakama handoff: compose dependencies")
@@ -71,42 +74,63 @@ func initialize(ctx context.Context, nk runtime.NakamaModule, initializer runtim
 	life, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	done := make(chan struct{})
 	handlers := &handlerGate{}
-	if err := initializer.RegisterRpc("war_handoff", rpcHandler(life, handlers, service, cfg.rpcTimeout)); err != nil {
+	private, err := preparePrivateListener(cfg.claims, life, handlers, claim)
+	if err != nil {
 		cancel()
 		closeDependencies()
+		return errors.New("nakama handoff: configure private listener")
+	}
+	rollback := func() {
+		cancel()
+		if private != nil {
+			_ = private.listener.Close()
+		}
+		closeDependencies()
+	}
+	if err := initializer.RegisterRpc("war_handoff", rpcHandler(life, handlers, service, cfg.rpcTimeout)); err != nil {
+		rollback()
 		return errors.New("nakama handoff: register RPC")
 	}
 	if err := initializer.RegisterShutdown(func(shutdownCtx context.Context, _ runtime.Logger, _ *sql.DB, _ runtime.NakamaModule) {
+		cancel()
+		if private != nil {
+			var stop context.CancelFunc
+			shutdownCtx, stop = context.WithTimeout(shutdownCtx, 5*time.Second)
+			defer stop()
+			private.stop(shutdownCtx)
+		}
 		drain(shutdownCtx, cancel, handlers, done)
 		closeDependencies()
 	}); err != nil {
-		cancel()
-		closeDependencies()
+		rollback()
 		return errors.New("nakama handoff: register shutdown")
 	}
 	go func() {
 		defer close(done)
 		_ = coordinator.RunExpiryReconciler(life) // Returns only on lifecycle cancellation.
 	}()
+	if private != nil {
+		private.start(cancel)
+	}
 	return nil
 }
 
-func compose(cfg config, nk runtime.NakamaModule, deps dependencies) (*handoff.Service, *handoffalloc.Coordinator, error) {
+func compose(cfg config, nk runtime.NakamaModule, deps dependencies) (*handoff.Service, *handoffalloc.Coordinator, http.Handler, error) {
 	keyring, err := admissionref.NewKeyring(deps.keys...)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	fingerprint, err := admissionref.Fingerprint(&deps.keys[0].PublicKey)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	allocator, err := agonesalloc.NewClient(deps.allocator, agonesalloc.Config{Namespace: cfg.namespace, Fleet: cfg.fleet, TLSPortName: cfg.tlsPort, WrappingKeyFingerprint: fingerprint})
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	resources, err := gameserverapi.NewClient(deps.resources, gameserverapi.Config{Namespace: cfg.namespace, Fleet: cfg.fleet, TLSPortName: cfg.tlsPort})
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	adapter, err := agonesresources.NewAdapter(allocator, resources, keyring, agonesresources.Config{
 		ZoneDomain: cfg.zoneDomain,
@@ -116,21 +140,28 @@ func compose(cfg config, nk runtime.NakamaModule, deps dependencies) (*handoff.S
 		Observer: func(handoff.AllocationRequest) (sim.EntityID, error) { return 1, nil },
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	leases, err := nakamalease.NewStore(nk)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	coordinator, err := handoffalloc.NewCoordinator(adapter, leases, handoffalloc.Config{LeaseTTL: cfg.leaseTTL})
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
+	}
+	var claim http.Handler
+	if cfg.claims.enabled {
+		claim, err = claimrpc.NewHandler(leases, adapter, claimrpc.Config{Namespace: cfg.namespace, TrustDomain: cfg.claims.trustDomain, Timeout: 5 * time.Second})
+		if err != nil {
+			return nil, nil, nil, err
+		}
 	}
 	service, err := handoff.NewService(nakamaauth.NewRuntimeVerifier(nk), coordinator, handoff.Config{ZoneDomain: cfg.zoneDomain})
-	return service, coordinator, err
+	return service, coordinator, claim, err
 }
 
-// handlerGate admits RPC handlers until shutdown closes it, then reports when
+// handlerGate admits public and private handlers until shutdown closes it, then reports when
 // every admitted handler has returned. Coordinator paths finish fence-and-
 // cleanup under a detached bounded context after caller cancellation, so the
 // shutdown hook must not close dependencies while a handler is still running.
