@@ -11,6 +11,7 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/asn1"
 	"encoding/base64"
 	"encoding/pem"
 	"errors"
@@ -224,6 +225,14 @@ func TestPrivateListenerRejectsUnusableOrSharedTrust(t *testing.T) {
 		"root that cannot sign certificates": func(env map[string]string) {
 			env["WAR_HANDOFF_CLAIMS_CA_FILE"] = rootFixtureWithKey(t, nil, x509.KeyUsageDigitalSignature)
 		},
+		// It also applies the root's extended key usage to a client chain, so a
+		// root restricted to other purposes admits no workload either.
+		"server-auth-only root": func(env map[string]string) {
+			env["WAR_HANDOFF_CLAIMS_CA_FILE"] = rootFixtureWithUsages(t, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, nil)
+		},
+		"root restricted to an unknown purpose": func(env map[string]string) {
+			env["WAR_HANDOFF_CLAIMS_CA_FILE"] = rootFixtureWithUsages(t, nil, []asn1.ObjectIdentifier{{1, 3, 6, 1, 4, 1, 99999, 1}})
+		},
 		// Zone clients reject a served chain carrying an expired certificate.
 		"expired certificate in server chain": func(env map[string]string) {
 			chain, err := os.ReadFile(env["WAR_HANDOFF_CLAIMS_CERT_FILE"])
@@ -290,6 +299,82 @@ func rootFixture(t *testing.T, notBefore, notAfter time.Time, isCA bool) string 
 		t.Fatal(err)
 	}
 	root := &x509.Certificate{SerialNumber: big.NewInt(1), NotBefore: notBefore, NotAfter: notAfter, IsCA: isCA, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign}
+	der, err := x509.CreateCertificate(rand.Reader, root, root, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return writeMaterial(t, t.TempDir(), "root.pem", pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+}
+
+// TestPrivateListenerAcceptsRootsThatAllowClientAuth keeps the extended key
+// usage check from over-reaching: a root that names client authentication, or
+// any purpose, anchors workload chains and must start the listener. It also
+// pins the premise the refusals rest on — Go's verifier really does reject a
+// client chain beneath a root restricted to server authentication.
+func TestPrivateListenerAcceptsRootsThatAllowClientAuth(t *testing.T) {
+	f := newListenerFixture(t)
+	for name, usages := range map[string][]x509.ExtKeyUsage{
+		"client-auth root": {x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		"any-purpose root": {x509.ExtKeyUsageAny},
+	} {
+		t.Run(name, func(t *testing.T) {
+			env := maps.Clone(f.env)
+			env["WAR_HANDOFF_CLAIMS_CA_FILE"] = rootFixtureWithUsages(t, usages, nil)
+			cfg, err := readConfig(env)
+			if err != nil {
+				t.Fatal(err)
+			}
+			private, err := preparePrivateListener(cfg.claims, t.Context(), &handlerGate{}, http.NotFoundHandler())
+			if err != nil {
+				t.Fatalf("root allowing client authentication rejected: %v", err)
+			}
+			_ = private.listener.Close()
+		})
+	}
+
+	t.Run("premise: a server-auth-only root verifies no client", func(t *testing.T) {
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		root := &x509.Certificate{SerialNumber: big.NewInt(1), NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
+			IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+		rootDER, err := x509.CreateCertificate(rand.Reader, root, root, &key.PublicKey, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parsedRoot, err := x509.ParseCertificate(rootDER)
+		if err != nil {
+			t.Fatal(err)
+		}
+		leaf := &x509.Certificate{SerialNumber: big.NewInt(2), NotBefore: root.NotBefore, NotAfter: root.NotAfter,
+			KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}
+		leafDER, err := x509.CreateCertificate(rand.Reader, leaf, parsedRoot, &key.PublicKey, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parsedLeaf, err := x509.ParseCertificate(leafDER)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pool := x509.NewCertPool()
+		pool.AddCert(parsedRoot)
+		if _, err := parsedLeaf.Verify(x509.VerifyOptions{Roots: pool, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}); err == nil {
+			t.Fatal("Go verified a client chain beneath a server-auth-only root; the startup refusal is no longer needed")
+		}
+	})
+}
+
+// rootFixtureWithUsages writes a currently valid self-signed CA that may sign
+// certificates, restricted to the given extended key usages.
+func rootFixtureWithUsages(t *testing.T, usages []x509.ExtKeyUsage, unknown []asn1.ObjectIdentifier) string {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := &x509.Certificate{SerialNumber: big.NewInt(3), NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
+		IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign, ExtKeyUsage: usages, UnknownExtKeyUsage: unknown}
 	der, err := x509.CreateCertificate(rand.Reader, root, root, &key.PublicKey, key)
 	if err != nil {
 		t.Fatal(err)

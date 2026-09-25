@@ -76,10 +76,11 @@ func privateTLS(cfg privateConfig) (*tls.Config, error) {
 	}
 	pool := x509.NewCertPool()
 	for _, root := range roots {
-		// A root that is stale, not yet valid, or not allowed to sign certificates
-		// would start a listener that rejects every workload, so it fails startup
-		// and the module rolls back instead.
-		if !root.IsCA || !currentlyValid(root, now) || root.KeyUsage != 0 && root.KeyUsage&x509.KeyUsageCertSign == 0 {
+		// A root that is stale, not yet valid, not allowed to sign certificates, or
+		// restricted to purposes other than client authentication would start a
+		// listener that rejects every workload, so it fails startup and the module
+		// rolls back instead.
+		if !root.IsCA || !currentlyValid(root, now) || root.KeyUsage != 0 && root.KeyUsage&x509.KeyUsageCertSign == 0 || !anchorsClientAuth(root) {
 			return nil, errMaterial
 		}
 		pool.AddCert(root)
@@ -159,6 +160,18 @@ func parseCertificates(bundle []byte) ([]*x509.Certificate, error) {
 // currentlyValid reports whether now falls inside the certificate's validity window.
 func currentlyValid(certificate *x509.Certificate, now time.Time) bool {
 	return !now.Before(certificate.NotBefore) && now.Before(certificate.NotAfter)
+}
+
+// anchorsClientAuth reports whether Go will verify a client-authentication chain
+// beneath root. The verifier applies every certificate's extended key usage, the
+// root's included, so a root restricted to other purposes — named or unknown —
+// rejects every workload beneath it. A root with no extended key usage restricts
+// nothing.
+func anchorsClientAuth(root *x509.Certificate) bool {
+	if len(root.ExtKeyUsage)+len(root.UnknownExtKeyUsage) == 0 {
+		return true
+	}
+	return slices.Contains(root.ExtKeyUsage, x509.ExtKeyUsageClientAuth) || slices.Contains(root.ExtKeyUsage, x509.ExtKeyUsageAny)
 }
 
 // sharesKey reports whether any certificate in a uses a public key from b. The
