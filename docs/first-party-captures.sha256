@@ -50,6 +50,9 @@ e4a9d443556ace884ed11f83c48e851a4df23b0719bc4da153ab805a5a467197  docs/evidence/
 14fb8062a2942dc157bb3e4d5cf143b1a1f39cb3163fcf75347fcaf0abd942dd  docs/evidence/issue-547-ground-plate-geometry/close-off.png
 818c0301778ab6f62878fffad42163598413736730d41ed9fb3a33601bbcb140  docs/evidence/issue-547-ground-plate-geometry/close-shader-only.png
 81f5486da1a891b3f4281e5a253592df3a61ec5c592f0736d1a557fecab9b53e  docs/evidence/issue-547-ground-plate-geometry/close-on.png
+e85bdf3ed50318952483bd43cc9e1bd88ad5f0170f4450b549ca52767a8d3ffe  docs/evidence/issue-548-slab-collision/lip-after-mid-step.png
+dfd328196bdeac30e29af9009c3a21f556cabd3be1e3f8cc6367ac543aea93e3  docs/evidence/issue-548-slab-collision/lip-after.png
+a7f59165fe6ce3e54df2908aa1eb0195767ee3853a9e39c3b12a6c99605c6b4b  docs/evidence/issue-548-slab-collision/lip-before.png
 68399354ec030b5fed0c77c68efe5ef9610283d1975afc61491afc5cd5ac2d6c  docs/evidence/issue-904-planted-feet/follow-run.png
 103dbc0f7a733d24eac5715f4ae03203eb55a9b60bc1c12ae0ff446e891765e5  docs/evidence/issue-904-planted-feet/follow-walk.png
 69cf9d1811f61ae664b00abe9150e76df871d28e8dc60e4e520a1cbcfeb6d09f  docs/evidence/issue-904-planted-feet/run-phases.png

@@ -24,16 +24,16 @@ extends RefCounted
 ## at the same crossings so their bottom edge follows the ground rather than
 ## cutting a chord through it.
 ##
-## Render-only and default-off. With `WAR_GROUND_PLATES` unset nothing here
-## runs; with it set the base terrain, its collision, world height, cave and
-## foliage placement are untouched, because this only ADDS an overlay above the
-## ground. Collision for the raised tops is #548, and until it lands a walking
-## player's feet still stand on the base ground beneath a lifted top.
+## Default-off. With `WAR_GROUND_PLATES` unset nothing here runs; with it set the
+## base terrain, its collision, world height, cave and foliage placement are
+## untouched, because this only ADDS an overlay above the ground. `WorldGen`
+## builds the tops' collision from this very mesh and reads their heights back
+## from the footprints [method build] returns (#548).
 
 ## Thickness range of a slab lip, metres. The lower bound is what a standing
 ## player reads as a step in stone rather than a paint edge at walking distance;
-## the upper bound keeps the tallest lip under the height a sole would catch on
-## before #548 gives the top collision.
+## the upper bound keeps the tallest lip a step a walker takes in stride — it is
+## what `WorldGen.ground_plates_step_height` sizes the player's step from.
 const MIN_THICKNESS := 0.06
 const MAX_THICKNESS := 0.14
 ## How far below the ground a side face reaches, metres. The bottom edge is
@@ -83,9 +83,13 @@ const MIN_TRIANGLE_AREA := 0.00000001
 ## a slab whose site it claims (the starter cave's hull padding, where a lifted
 ## top would poke through the massif's doorway).
 ##
-## Returns `{"mesh": ArrayMesh or null, "stats": Dictionary}`. The mesh is null
-## when no slab qualified; the stats always report every count the acceptance
-## criteria name, so a caller can tell an empty world from a broken build.
+## Returns `{"mesh": ArrayMesh or null, "stats": Dictionary, "tops": Array}`. The
+## mesh is null when no slab qualified; the stats always report every count the
+## acceptance criteria name, so a caller can tell an empty world from a broken
+## build. `tops` holds one `{"polygon", "thickness"}` record per built slab —
+## the clipped footprint and the lift that went into the mesh — so the world can
+## answer "how high is the walkable surface here" from the same numbers the
+## geometry was made of (#548).
 ## `vertices` counts the indexed mesh's distinct vertices, `triangles` its faces.
 func build(field: ExposedSlabField, world_seed: int, world_size: float, quads: int,
 		height: Callable, normal: Callable, color: Callable, keep_out: Callable) -> Dictionary:
@@ -104,7 +108,7 @@ func build(field: ExposedSlabField, world_seed: int, world_size: float, quads: i
 	}
 	if field == null or not is_finite(world_size) or world_size <= 0.0 or quads <= 0 \
 			or not height.is_valid() or not normal.is_valid() or not color.is_valid():
-		return {&"mesh": null, &"stats": stats}
+		return {&"mesh": null, &"stats": stats, &"tops": []}
 	var half := world_size * 0.5
 	var step := world_size / float(quads)
 	var identities := field.candidate_identities(world_seed, world_size)
@@ -113,6 +117,7 @@ func build(field: ExposedSlabField, world_seed: int, world_size: float, quads: i
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	var triangles := 0
+	var tops: Array[Dictionary] = []
 	var nearest_distance := INF
 	for identity in identities:
 		if not field.is_slab_identity(identity):
@@ -151,10 +156,11 @@ func build(field: ExposedSlabField, world_seed: int, world_size: float, quads: i
 		polygon = _clip_rect(polygon, Vector2(-inset, -inset), Vector2(inset, inset))
 		if polygon.size() < 3:
 			continue
-		var slab_triangles := _emit_slab(
-			st, polygon, thickness_for(identity), half, step, height, normal, color)
+		var thickness := thickness_for(identity)
+		var slab_triangles := _emit_slab(st, polygon, thickness, half, step, height, normal, color)
 		if slab_triangles <= 0:
 			continue
+		tops.append({&"polygon": polygon, &"thickness": thickness})
 		stats[&"built"] += 1
 		triangles += slab_triangles
 		stats[&"max_triangles_per_slab"] = maxi(
@@ -166,7 +172,7 @@ func build(field: ExposedSlabField, world_seed: int, world_size: float, quads: i
 				site.x, float(height.call(site.x, site.y)), site.y)
 	stats[&"triangles"] = triangles
 	if triangles == 0:
-		return {&"mesh": null, &"stats": stats}
+		return {&"mesh": null, &"stats": stats, &"tops": []}
 	# Index before committing: every top fan shares one normal and one colour per
 	# position and both triangles of a side quad share their corners, so the
 	# vertex buffer the GPU walks on every pass shrinks to the distinct tuples.
@@ -175,7 +181,7 @@ func build(field: ExposedSlabField, world_seed: int, world_size: float, quads: i
 	stats[&"surfaces"] = mesh.get_surface_count()
 	stats[&"vertices"] = (
 		mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX] as PackedVector3Array).size()
-	return {&"mesh": mesh, &"stats": stats}
+	return {&"mesh": mesh, &"stats": stats, &"tops": tops}
 
 
 ## One slab's lip thickness, metres — the client's shared platform-independent

@@ -217,9 +217,12 @@ func _ready() -> void:
 	var spawn := world.cave_spawn_point()
 	_player.spawn_point = spawn
 	_player.position = spawn
-	_player.ground_height_provider = world.surface_height_at
+	_player.ground_height_provider = world.walkable_height_at
 	_player.underground_provider = world.cave_protects
 	add_child(_player)
+	# With the raised exposed-stone preview on, its slab lips are ledges the
+	# wanderer has to be able to walk up (#548); 0 otherwise, which is no step.
+	_player.enable_step(world.ground_plates_step_height())
 	# The mouth faces the shrine, so facing the shrine faces the light.
 	_player.face_toward(Vector3.ZERO)
 	# Save only stable semantic ids, never generated coordinates: both places
