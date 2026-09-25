@@ -590,7 +590,12 @@ func TestPrivateListenerIdleClientsDoNotHoldTheBudget(t *testing.T) {
 		transport := &http.Transport{TLSClientConfig: f.tls.Clone()}
 		transports = append(transports, transport)
 		client := &http.Client{Transport: transport, Timeout: 2 * time.Second}
-		response, err := client.Post(url, "application/json", strings.NewReader("{}"))
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, url, strings.NewReader("{}"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Content-Type", "application/json")
+		response, err := client.Do(request)
 		if err != nil {
 			t.Fatalf("zone %d could not reach the listener: %v", zone+1, err)
 		}
