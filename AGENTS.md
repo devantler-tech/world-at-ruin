@@ -611,7 +611,10 @@ everything shipped afterwards is held to.
   (`server/zonesock/` — WebSocket over TLS per `docs/design/zone-transport.md`, one codec message
   per binary frame: token-gated fail-closed admission, bounded send queue with snapshot resync on
   overflow, write/idle deadlines, hard inbound size cap; opt-in via `zone -listen`, off by
-  default), the **Agones lifecycle** (`server/agones/` — Ready/Health/Shutdown through the
+  default; terminal hub shutdown cancels admission, drains upgraded sockets and clears observer
+  interest on the simulation owner before lifecycle shutdown, with bounded waits and visible
+  errors; no durable lease release or process-death proof, per ADR 0007),
+  the **Agones lifecycle** (`server/agones/` — Ready/Health/Shutdown through the
   official SDK, opt-in and default-off; its sealed-admission mode accepts a projected RSA public
   key, generates one in-memory 32-byte secret while the GameServer is `Starting`, publishes the
   identity-bound ciphertext/fingerprint/readiness metadata, observes those exact values through

@@ -145,6 +145,15 @@ zone/dungeon server:
   tracker/encoder and Godot decoder/store/connection agree on exact frames.
   It exists as a pinned contract *before* transport selection, so the socket
   child builds against a settled format instead of inventing one.
+- **Zone shutdown** — after the simulation loop stops, the command closes HTTP
+  ingress, calls `Hub.Shutdown` with a five-second budget, then notifies Agones.
+  The hub permanently refuses admission, cancels pending claims, closes upgraded
+  sockets and releases observer interest on the simulation owner. Success means
+  registered admission handlers and socket workers have exited. Deadline errors
+  stay visible and never reopen the hub; repeated calls await the same drain.
+  HTTP server shutdown alone does not own upgraded sockets. This transport
+  cleanup never releases a durable handoff or proves process death; see
+  [ADR 0007](../docs/adr/0007-drain-zone-sockets-before-lifecycle-shutdown.md).
 - **`zoneclaim/`** — the latent **zone handoff admission gate**: compose
   `zoneclaim.New(prepared, privateClaimer)` with `zonesock.NewClaimedHub` to
   require a private durable claim before upgrading a socket. The prepared
