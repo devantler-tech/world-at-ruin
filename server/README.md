@@ -434,7 +434,9 @@ zone/dungeon server:
   RPC plugin, built from `cmd/nakama`. It authenticates the server-provided
   session identity, composes the real allocator, resource adapter and lease
   store, and supervises no-show cleanup in its expiry loop, which the shutdown
-  hook stops before closing dependencies. Configuration,
+  hook stops before closing dependencies. Its independent default-off private
+  listener serves verified workload claims through the same store and resolver,
+  with bounded connections and module-owned cancellation/drain (ADR 0009). Configuration,
   mutual TLS, retained unwrap keys, the single-player observer policy and
   deployment prerequisites are documented alongside the package.
 - **`agonesresources/`** — the concrete **Agones GameServer resource adapter**

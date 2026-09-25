@@ -181,7 +181,9 @@ with an exact time range, following the citation contract in
 capture scenarios pose `WalkLocomotion` with the body pinned, so they evidence the pose and nothing
 downstream of it. `WAR_SCENARIO=gait_drive` drives the shipped controller with real input at the
 fixed physics step and reports the cadence, foot slide and foot lift measured over every controller
-step in `gait_drive_summary.txt` — so a change to stride constants, controller wiring, sprint speed
+step in `gait_drive_summary.txt`, plus how much of the stretch a foot is down and how far a down foot
+moves over the ground (its contact line — the one to judge a planted foot by, because the nearest-foot
+slide also charges a gait's airtime) — so a change to stride constants, controller wiring, sprint speed
 or the follow camera is judged there, not on the fixed-phase frames, which read a stride regression
 the same as a correct build. It fails itself if its photographed drive does not reproduce its
 rehearsal exactly. The measurements and ablations behind it are in
@@ -639,7 +641,7 @@ everything shipped afterwards is held to.
   canonical token verification precede a conditional claim in the existing schema; no-show cleanup
   races on that same version, replay reads durable state, and ambiguous admission retains the claim;
   strict bounded requests, generic refusals and a verified client with no redirects; attested
-  workload certificate issuance, private listener deployment and session-end recovery remain
+  workload certificate issuance, platform listener deployment and session-end recovery remain
   separate work; the command composes the gate only through default-off `-private-claims`,
   requiring sealed Agones admission and separate verified mTLS credentials, loading bounded
   material before readiness and retiring transport after admission drains, per ADR 0008),
@@ -712,7 +714,10 @@ everything shipped afterwards is held to.
   until the default-off `server/nakamaruntime/` plugin is explicitly enabled to supervise its
   expiry loop and register the authenticated `war_handoff` RPC (empty payload; one server-owned
   reservation per player, so a client cannot open parallel allocations); its configuration, observer-1
-  binding, mutual TLS and shutdown requirements are documented in that package), and
+  binding, mutual TLS and shutdown requirements are documented in that package; its independent
+  default-off `WAR_HANDOFF_CLAIMS_ENABLED` listener composes the same lease store and resource
+  resolver over verified workload mutual TLS, with bounded connections/requests, startup rollback
+  and module-owned cancellation/drain, per ADR 0009), and
   the **orphan reconciler** (`server/orphanreaper/` — completes bounded resource
   and private lease scans, protects every stored attempt regardless of expiry,
   requires consecutive orphan observations plus grace, and deletes only the
@@ -728,7 +733,7 @@ everything shipped afterwards is held to.
   filtering, real navmesh pathfinding and cast replication remain later children — with its own
   cross-platform golden). The zone-side sealed-envelope boot from
   `docs/adr/0002-seal-zone-admission-secrets-before-readiness.md` is available through
-  `zone -agones -agones-admission-public-key <path>`; orphan supervision, private claim composition,
+  `zone -agones -agones-admission-public-key <path>`; orphan supervision, session-end recovery,
   platform deployment of the default-off Nakama RPC plugin and broader persistence remain later children of the server-foundation
   epic (#4);
   `deploy/` (platform manifests) arrives later per the roadmap.
@@ -912,32 +917,34 @@ everything shipped afterwards is held to.
   improvement remains default-off under product law 2.
 - **Dev log is a contract:** every player-visible change adds a dev-log entry in the same PR — the
   maintainer watches progress by playing, and the dev log is that surface. **Add a new file
-  `client/devlog/<version>.json`** holding one object with `version`, `date`, `title` and `notes`
-  (an array of strings); copy the shape from any existing entry. Name the file for the version the
-  change will ship in (the next semantic-release bump implied by your commit type) and put the same
-  string in its `version` field — `devlog_storage_test` fails if the two disagree. One file per
-  entry is deliberate: entries used to share a single array, so **every** concurrent player-visible
-  PR collided on the same lines and had to rebase behind each sibling merge. Never reintroduce a
-  shared list. Ordering is by version, computed at load, so a new entry needs no edit to any
-  existing file.
-  **What this does and does not remove.** Two PRs whose commit types imply *different* bumps write
-  different filenames and merge without touching each other. Two PRs implying the *same* bump both
-  name their file for the same next version and still collide — but that collision is now a real
-  one rather than a bookkeeping accident: they are both claiming a release only one of them can
-  have, which needs a decision whatever the storage looks like. Resolve it by renaming your file to
-  the next free version and updating its `version` field to match; never merge two entries into one
-  file, and never make one file hold a list again.
-  ⚠️ **An entry's version must be above every release that already exists.** The version an entry
-  names is a prediction about the next release, and a sibling merging first invalidates it: from a
-  `0.58.0` base a `fix:` entry named `0.58.1` actually ships as `0.59.1` once someone else's `feat:`
-  lands ahead of it. `tools/devlog-entry-version-guard.sh` refuses that in CI — it checks every
-  entry a change **adds** against the release tags in the checkout and names the lowest version you
-  could legitimately use. When it fires, rename the file and its `version` field together. Editing
-  an entry that has already shipped stays legal; only added entries are checked.
-  The guard runs in the merge queue as well as on the PR, so the tags it measures against are as
-  close to final as CI can see. It is a floor rather than a guarantee: two PRs merging back-to-back
-  can each be above every tag that existed when they were checked and still release in an order that
-  leaves the second one low.
+  `client/devlog/<words-for-the-change>.json`** — lowercase words joined by hyphens, such as
+  `raised-stone-holds.json` — holding one object with `"version": "next"`, `date`, `title` and
+  `notes` (an array of strings); copy the shape from any existing entry. **Never write a release
+  number into a new entry.** Its release cannot be known on a branch: several releases are cut an
+  hour, so a predicted number is routinely overtaken before the PR merges, and the log would then
+  tell the maintainer a change arrived in a build that does not contain it. The release build
+  answers exactly instead — `tools/devlog-stamp.sh` rewrites every `"next"` entry to the first
+  release containing the commit that added its file (#518). A development build has not been
+  through a release, so it lists these entries at the top of the log under **Numbered at
+  release**, shipped or not. Entries that ship together all receive that release's number and are
+  listed newest first; the same entry must never appear twice, which `devlog_entries_test` checks
+  before stamping and the stamp checks again after it. `tools/devlog-entry-version-guard.sh`
+  refuses a numbered new entry in CI and prints the `git mv` that fixes it; `devlog_storage_test`
+  checks the file name. One file per entry is deliberate: entries used to share a single array, so
+  **every** concurrent player-visible PR collided on the same lines and had to rebase behind each
+  sibling merge. Never reintroduce a shared list. Two PRs now collide only when they pick the same
+  file name — choose another; never merge two entries into one file.
+  ⚠️ **Once an entry has merged, leave its file where it is.** The stamp dates an entry by the
+  commit that added its file and follows an exact rename only, so moving an entry while editing
+  it, or converting a numbered entry to `"next"`, re-dates it to a later release than the one that
+  carried it. The guard refuses a placeholder added in a change that also removes an existing
+  entry unless it is the same bytes under a new name. Editing an entry's prose in place stays
+  legal.
+  **Correcting an old numbered entry** is the one case where a new file names a released version:
+  list it in `tools/devlog-entry-corrections.tsv` with the anchor commit whose change it describes,
+  and the guard proves the number is the first release containing that commit.
+  `tools/devlog-entry-version-sweep.sh --gate` checks every numbered entry that way on each change
+  and reports each placeholder with the release its stamp will give.
   **Do NOT hand-edit `DevLog.VERSION` or `config/version` in `project.godot`** — release builds are
   stamped from the release tag (below), so a hand-bump only drifts from the real version.
   **`shipped_in` marks an entry whose version was never cut.** The seventeen oldest entries were
@@ -949,7 +956,7 @@ everything shipped afterwards is held to.
   where it landed, instead of presenting a build nobody could have played.
   **You will almost certainly never add one.** It records an already-released change, so
   `tools/devlog-entry-version-guard.sh` refuses it on a new entry — a fresh entry describes a build
-  that has not shipped and takes the forward-looking rule above. The guard checks every declaration
+  that has not shipped and carries `"next"`. The guard checks every declaration
   in the tree, not just added ones, against the tags in the checkout: the entry's own version must
   be untagged, the declared release must exist, and it must be the **first** release cut above the
   entry's version (a later one contains the change too, so only the first dates it).

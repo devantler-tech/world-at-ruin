@@ -417,6 +417,10 @@ const DRIVE_MIN_SPEED_FRACTION := 0.9
 ## instant, so this much lead is needed before the other foot counts as ahead
 ## and that instant cannot register as a burst of phantom steps.
 const DRIVE_LEAD_HYSTERESIS_M := 0.02
+## A foot no more than this above its standing height counts as DOWN — carrying
+## weight — for the contact figures (#903). A foot that sinks below it is still
+## on the ground, so the bound is one-sided.
+const DRIVE_CONTACT_LIFT_M := 0.01
 
 ## Exact points on the shipped controller's airborne arc: launch, approach to
 ## apex, apex, approach to landing, and landing-ready descent. A five-frame
@@ -2227,6 +2231,9 @@ func _capture_gait_drive(dir: String, main: Node) -> void:
 		var line := gait_drive_report_line(segment["label"], metrics)
 		print("GAIT DRIVE %s" % line)
 		summary.append(line)
+		var contact := gait_drive_contact_line(segment["label"], metrics)
+		print("GAIT DRIVE CONTACT %s" % contact)
+		summary.append(contact)
 	summary.append("")
 	summary.append("controller steps: %d at %.4f s (fixed physics step)" %
 		[drive["body"].size(), dt])
@@ -2566,6 +2573,16 @@ static func gait_drive_path_problems(
 ## passes over it, 1 is a foot carried along like a skate. LIFT is that nearest
 ## foot's height against the standing pose, so a body floating through its
 ## stride reads as a positive lift rather than as a clean step.
+##
+## CONTACT separates the two questions SLIDE runs together (#903). At these
+## speeds and strides a planted gait has flight phases, and mid-flight the
+## nearest foot is always one in swing, so SLIDE charges an honest run for its
+## airtime. A foot no higher than [constant DRIVE_CONTACT_LIFT_M] above its standing
+## height is DOWN: the contact SHARE is how much of the stretch has a foot down at all,
+## and contact SLIP is how far a down foot moves over the ground while it stays
+## down, as a share of how far the body moves meanwhile. Slip is -1 when no foot
+## stays down across two samples in a row, because then nothing has held the
+## ground long enough to measure.
 static func gait_drive_metrics(
 		body: Array,
 		foot_l: Array,
@@ -2636,6 +2653,30 @@ static func gait_drive_metrics(
 		was_left_down = left_down
 	if path <= 0.0 or held_path <= 0.0:
 		return {"ok": false, "reason": "the body did not move over the measured stretch"}
+	# Contact is judged per foot, over intervals where that foot is down at both
+	# ends, so a foot touching down or lifting off is never charged for the part
+	# of the interval it spent in the air.
+	var down_samples := 0
+	var contact_slip := 0.0
+	var contact_path := 0.0
+	for i in n:
+		var left_is_down := float(lift_l[i]) <= DRIVE_CONTACT_LIFT_M
+		var right_is_down := float(lift_r[i]) <= DRIVE_CONTACT_LIFT_M
+		if left_is_down or right_is_down:
+			down_samples += 1
+		if i == 0:
+			continue
+		var a: Vector3 = body[i - 1]
+		var b: Vector3 = body[i]
+		var moved := Vector2(b.x - a.x, b.z - a.z).length()
+		for side: Array in [[foot_l, lift_l], [foot_r, lift_r]]:
+			var feet: Array = side[0]
+			var lifts: Array = side[1]
+			if float(lifts[i - 1]) <= DRIVE_CONTACT_LIFT_M and float(lifts[i]) <= DRIVE_CONTACT_LIFT_M:
+				var foot_now: Vector3 = feet[i]
+				var foot_before: Vector3 = feet[i - 1]
+				contact_slip += Vector2(foot_now.x - foot_before.x, foot_now.z - foot_before.z).length()
+				contact_path += moved
 	var speed := path / (float(n - 1) * dt)
 	# Whole stride cycles only. The standing pose leans on one leg, so the feet
 	# cross at uneven intervals (11 and 13 controller steps on the walk) and an
@@ -2656,6 +2697,8 @@ static func gait_drive_metrics(
 		"lift_min_m": lift_min,
 		"lift_mean_m": lift_sum / float(n),
 		"lift_max_m": lift_max,
+		"contact_share": float(down_samples) / float(n),
+		"contact_slip_ratio": contact_slip / contact_path if contact_path > 0.0 else -1.0,
 	}
 
 
@@ -2676,6 +2719,22 @@ static func gait_drive_report_line(label: String, metrics: Dictionary) -> String
 			float(metrics["lift_min_m"]) * 100.0,
 			float(metrics["lift_max_m"]) * 100.0,
 		]
+
+
+## The contact figures for one stretch, on a line of their own so the line
+## above keeps reading exactly as it did (#903).
+static func gait_drive_contact_line(label: String, metrics: Dictionary) -> String:
+	var share := float(metrics["contact_share"]) * 100.0
+	var slip := float(metrics["contact_slip_ratio"])
+	if slip < 0.0 and share <= 0.0:
+		return "%s: no foot comes down to within %.0f cm of its standing height" % [
+			label, DRIVE_CONTACT_LIFT_M * 100.0]
+	if slip < 0.0:
+		return ("%s: a foot is down for %.0f%% of the stretch, but never for two samples in a row, " +
+			"so how far a down foot moves cannot be measured") % [label, share]
+	return ("%s: a foot is down (no more than %.0f cm above its standing height) for %.0f%% of the stretch, " +
+		"and while it stays down it moves at %.0f%% of body speed") % [
+			label, DRIVE_CONTACT_LIFT_M * 100.0, share, slip * 100.0]
 
 
 ## Empty when two traces are identical, otherwise where they first part and by
