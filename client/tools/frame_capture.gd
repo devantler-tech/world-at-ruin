@@ -417,8 +417,9 @@ const DRIVE_MIN_SPEED_FRACTION := 0.9
 ## instant, so this much lead is needed before the other foot counts as ahead
 ## and that instant cannot register as a burst of phantom steps.
 const DRIVE_LEAD_HYSTERESIS_M := 0.02
-## A foot this close to its standing height counts as DOWN — carrying weight —
-## for the contact figures (#903).
+## A foot no more than this above its standing height counts as DOWN — carrying
+## weight — for the contact figures (#903). A foot that sinks below it is still
+## on the ground, so the bound is one-sided.
 const DRIVE_CONTACT_LIFT_M := 0.01
 
 ## Exact points on the shipped controller's airborne arc: launch, approach to
@@ -2576,11 +2577,12 @@ static func gait_drive_path_problems(
 ## CONTACT separates the two questions SLIDE runs together (#903). At these
 ## speeds and strides a planted gait has flight phases, and mid-flight the
 ## nearest foot is always one in swing, so SLIDE charges an honest run for its
-## airtime. A foot within [constant DRIVE_CONTACT_LIFT_M] of its standing height
-## is DOWN: the contact SHARE is how much of the stretch has a foot down at all,
+## airtime. A foot no higher than [constant DRIVE_CONTACT_LIFT_M] above its standing
+## height is DOWN: the contact SHARE is how much of the stretch has a foot down at all,
 ## and contact SLIP is how far a down foot moves over the ground while it stays
 ## down, as a share of how far the body moves meanwhile. Slip is -1 when no foot
-## is ever down, because a gait that never touches the ground has not held it.
+## stays down across two samples in a row, because then nothing has held the
+## ground long enough to measure.
 static func gait_drive_metrics(
 		body: Array,
 		foot_l: Array,
@@ -2724,11 +2726,15 @@ static func gait_drive_report_line(label: String, metrics: Dictionary) -> String
 static func gait_drive_contact_line(label: String, metrics: Dictionary) -> String:
 	var share := float(metrics["contact_share"]) * 100.0
 	var slip := float(metrics["contact_slip_ratio"])
+	if slip < 0.0 and share <= 0.0:
+		return "%s: no foot comes down to within %.0f cm of its standing height" % [
+			label, DRIVE_CONTACT_LIFT_M * 100.0]
 	if slip < 0.0:
-		return "%s: no foot comes within %.0f cm of its standing height (%.0f%% of the stretch has a foot down)" % [
-			label, DRIVE_CONTACT_LIFT_M * 100.0, share]
-	return ("%s: a foot is within %.0f cm of its standing height for %.0f%% of the stretch, and while it " +
-		"stays down it moves at %.0f%% of body speed") % [label, DRIVE_CONTACT_LIFT_M * 100.0, share, slip * 100.0]
+		return ("%s: a foot is down for %.0f%% of the stretch, but never for two samples in a row, " +
+			"so how far a down foot moves cannot be measured") % [label, share]
+	return ("%s: a foot is down (no more than %.0f cm above its standing height) for %.0f%% of the stretch, " +
+		"and while it stays down it moves at %.0f%% of body speed") % [
+			label, DRIVE_CONTACT_LIFT_M * 100.0, share, slip * 100.0]
 
 
 ## Empty when two traces are identical, otherwise where they first part and by
