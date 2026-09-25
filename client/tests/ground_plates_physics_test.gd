@@ -24,6 +24,9 @@ extends Node
 ##  6. A STEP KEEPS THE STRIDE'S RAMP — no tick of any crossing raises the
 ##     body's horizontal speed faster than the controller accelerates, and one
 ##     crossing starts at rest beside the lip so the step lands mid-ramp.
+##  7. A SLOPE IS NOT A LEDGE — starting from rest up a plain 22° ramp with the
+##     world's step, the body's actual travel, not its reported velocity, never
+##     speeds up faster than the stride accelerates.
 
 const HALF_WORLD := 100.0
 const RAY_TOLERANCE := 0.002
@@ -41,6 +44,12 @@ const LIP_CANDIDATES := 20
 ## 0.4 m capsule, and closer than the 0.43 m a walker needs to reach full speed,
 ## so the step happens while the stride is still accelerating.
 const BESIDE_LIP := 0.42
+## The plain ramp for check 7: steep enough that a full stride lands clearly
+## higher than the ramped slide, well inside the floor's 45° limit, and far above
+## the world so nothing else is under it.
+const SLOPE_DEG := 22.0
+const RAMP_ALTITUDE := 400.0
+const SLOPE_TICKS := 30
 
 var _failed := false
 ## Everything solid in the world except the terrain and the raised stone: the
@@ -71,6 +80,8 @@ func _ready() -> void:
 	if not _check_query_both_ways(world, tops):
 		return
 	if not await _check_crossings(world, tops):
+		return
+	if not await _check_slope_is_not_a_ledge(world):
 		return
 	if not await _check_same_seed(world):
 		return
@@ -183,6 +194,67 @@ func _check_crossings(world: WorldGen, tops: Array[Dictionary]) -> bool:
 	if junction.is_empty():
 		return _fail("no point where three slabs meet was found")
 	return await _cross(world, "through a three-slab junction", junction[&"from"], junction[&"to"], false)
+
+
+## Walk up a plain ramp from rest, with and without the world's step, and
+## measure how fast the body actually travels each tick. Velocity is not the
+## measure: a step that moves the body by a full stride keeps the ramped velocity
+## it was handed, so only the position shows the snap.
+func _check_slope_is_not_a_ledge(world: WorldGen) -> bool:
+	var ramp := StaticBody3D.new()
+	var shape := CollisionShape3D.new()
+	var box := BoxShape3D.new()
+	box.size = Vector3(6.0, 0.4, 16.0)
+	shape.shape = box
+	ramp.add_child(shape)
+	add_child(ramp)
+	# Rotating about +X tilts the top so it climbs toward -Z.
+	var tilt := Basis(Vector3.RIGHT, deg_to_rad(SLOPE_DEG))
+	ramp.global_transform = Transform3D(tilt, Vector3(0.0, RAMP_ALTITUDE, 0.0))
+	await get_tree().physics_frame
+	var foot := ramp.global_transform * Vector3(0.0, 0.2, 5.0)
+	var uphill := ramp.global_transform * Vector3(0.0, 0.2, -5.0)
+	var ticks := float(Engine.physics_ticks_per_second)
+	var ramp_rate := Player.ACCEL / ticks
+	var ok := true
+	for step: float in [0.0, world.ground_plates_step_height()]:
+		var player := Player.new()
+		add_child(player)
+		player.enable_step(step)
+		player.global_position = foot + Vector3.UP * 0.05
+		player.face_toward(Vector3(uphill.x, player.global_position.y, uphill.z))
+		player.velocity = Vector3.ZERO
+		for _i in 10:
+			await get_tree().physics_frame
+		var before := player.global_position
+		var travel_speed := 0.0
+		var max_gain := 0.0
+		Input.action_press("move_forward")
+		for _tick in SLOPE_TICKS:
+			await get_tree().physics_frame
+			var now := player.global_position
+			var speed := Vector2(now.x - before.x, now.z - before.z).length() * ticks
+			max_gain = maxf(max_gain, speed - travel_speed)
+			travel_speed = speed
+			before = now
+		Input.action_release("move_forward")
+		var climbed := player.global_position.y - (foot.y + 0.05)
+		player.queue_free()
+		await get_tree().physics_frame
+		if climbed < 0.5:
+			ok = _fail("with a %.2f m step the body climbed only %.2f m up the ramp — the case walked nowhere"
+				% [step, climbed])
+			break
+		if max_gain > ramp_rate * 1.02:
+			ok = _fail(("up a plain %.0f° ramp with a %.2f m step the body's travel sped up %.3f m/s in one "
+				+ "tick, above the %.3f m/s the stride accelerates — the step fires on a slope") %
+				[SLOPE_DEG, step, max_gain, ramp_rate])
+			break
+		print("slope: up a plain %.0f° ramp with a %.2f m step, fastest travel speed-up %.3f m/s per tick" %
+			[SLOPE_DEG, step, max_gain])
+	ramp.queue_free()
+	await get_tree().physics_frame
+	return ok
 
 
 ## Walk with the world's own step and judge the crossing.

@@ -61,6 +61,13 @@ var step_height := 0.0
 ## ground can never turn an ordinary stride into a step.
 const STEP_MIN_RISE := 0.001
 const STEP_MIN_GAIN := 0.001
+## How far a lifted path's landing must stand above the ground the body is on,
+## carried forward to where it lands, before it counts as a ledge. A full stride
+## up a plain slope lands higher than the ramped slide, but on that same slope; a
+## lip's top stands clear of it. Small, because a body already riding up a lip's
+## rounded edge stands partway up it, and a lip then clears the plane through it
+## by only a few centimetres.
+const STEP_MIN_LEDGE := 0.01
 ## Set by a jump and cleared on landing, so a body falling from a jump is never
 ## mistaken for one walking off a ledge.
 var _jumped := false
@@ -304,9 +311,10 @@ func _physics_process(delta: float) -> void:
 	# with it would inch forward and never clear the edge.
 	var intended := wish * target_speed
 	var stepping := step_height > 0.0 and is_on_floor() and velocity.y <= 0.0
+	var standing_on := get_floor_normal()
 	move_and_slide()
 	if stepping:
-		_step_up(slide_from, intended, horizontal)
+		_step_up(slide_from, intended, horizontal, standing_on)
 	if _walk_locomotion != null:
 		_walk_locomotion.advance_motion(
 			Vector2(velocity.x, velocity.z).length(),
@@ -339,13 +347,16 @@ func enable_step(height: float) -> void:
 ## intended direction. That is what walking up a ledge looks like, and it holds
 ## however the body meets the lip: head-on, where the slide stops dead, or at an
 ## angle, where the slide glides along the edge at full speed and a "was I
-## stopped?" trigger would never fire. A landing that is not floor, or a lifted
-## path that gets no further than the slide, leaves the slide's result alone,
-## so level ground and ordinary slopes move exactly as without a step.
+## stopped?" trigger would never fire. A landing that is not floor, a lifted path
+## that gets no further than the slide, or one that lands on the same slope the
+## body is standing on ([constant STEP_MIN_LEDGE]) leaves the slide's result
+## alone, so level ground and ordinary slopes move exactly as without a step.
+## The last test is why a full stride up a hill is not taken for a ledge: it
+## lands higher than the ramped slide, but no higher than the hill.
 ## [param ramped] is this tick's accelerated velocity from before the slide: an
 ## accepted step keeps it, so the stride goes on ramping instead of snapping to
 ## full speed.
-func _step_up(from: Transform3D, intended: Vector3, ramped: Vector3) -> void:
+func _step_up(from: Transform3D, intended: Vector3, ramped: Vector3, standing_on: Vector3) -> void:
 	var motion := intended * get_physics_process_delta_time()
 	var along := Vector2(motion.x, motion.z)
 	if along.length() <= 0.0001:
@@ -365,6 +376,12 @@ func _step_up(from: Transform3D, intended: Vector3, ramped: Vector3) -> void:
 		return
 	var stepped := landed.origin - from.origin
 	if Vector2(stepped.x, stepped.z).dot(along) <= slid_progress + STEP_MIN_GAIN:
+		return
+	# Only a ledge: a full stride up a plain slope lands on the plane the body is
+	# standing on, carried forward; a lip's top stands clear of it.
+	if standing_on.y <= 0.0:
+		return
+	if rise + (standing_on.x * stepped.x + standing_on.z * stepped.z) / standing_on.y <= STEP_MIN_LEDGE:
 		return
 	global_transform = landed
 	# The slide spent this tick's speed against the lip; the step carried the

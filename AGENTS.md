@@ -754,7 +754,9 @@ everything shipped afterwards is held to.
   is what the player's anti-embed net and people and hound placement stand on — anything about the
   terrain itself keeps asking `surface_height_at()`. A capsule meets a lip taller than ~12 cm as a wall,
   so `main.gd` gives the wanderer a step (`Player.enable_step`) sized by
-  `WorldGen.ground_plates_step_height()`, and while stepping is on `Player.is_grounded()` keeps the gait
+  `WorldGen.ground_plates_step_height()`, which fires only on a ledge (a landing at least 1 cm above
+  the ground the body stands on, so a stride up a plain slope is never taken for a step), and while
+  stepping is on `Player.is_grounded()` keeps the gait
   out of the airborne pose as the capsule rolls off a lip edge — both 0/off with the flag off, so
   ordinary movement and animation are untouched. `ground_plates_physics_test` holds all of it on the real
   seed: collision equals the query at every top and just past every edge (and is the terrain where no
