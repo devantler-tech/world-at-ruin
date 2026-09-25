@@ -9,7 +9,8 @@ extends Node
 ##  2. the left foot lifts at a quarter phase and the right half a cycle later;
 ##  3. the solver puts an ankle where it was asked, with the knee bending forward;
 ##  4. on the real rig, a planted ankle stays at its standing height and moves
-##     back under the hip exactly as far as the body travels;
+##     back under the hip exactly as far as the body travels, and on flat ground
+##     each gait keeps a foot down for its whole geometric share of the cycle;
 ##  5. no phase of either gait moves a foot sideways;
 ##  6. the running knee never straightens;
 ##  7. the gaits lower the pelvis, and standing and jumping restore it;
@@ -26,6 +27,10 @@ const POSITION_EPSILON_M := 0.001
 ## contact; below this it has straightened.
 const MIN_RUN_KNEE_FLEX_DEG := 20.0
 const PHASE_SAMPLES := 48
+## The contact-share check samples finer, and counts a foot as down within the
+## same 1 cm the drive's contact line uses.
+const CONTACT_SAMPLES := 400
+const CONTACT_LIFT_M := 0.01
 
 var _had_flag := false
 var _original_flag := ""
@@ -56,6 +61,8 @@ func _ready() -> void:
 		return
 	var checks_passed: bool = (_check_planted_ankle(subject, false)
 		and _check_planted_ankle(subject, true)
+		and _check_contact_share(subject, false)
+		and _check_contact_share(subject, true)
 		and _check_no_sideways_step(subject)
 		and _check_running_knee_bends(subject)
 		and _check_pelvis_drop(subject))
@@ -164,6 +171,33 @@ func _check_planted_ankle(subject: Dictionary, running: bool) -> bool:
 		elif absf(over_ground - ground_position) > POSITION_EPSILON_M:
 			return _fail("the %s's planted foot slides %.4f m over the ground at %.3f of the cycle" %
 				[gait, over_ground - ground_position, cycle])
+	return true
+
+
+## 4b. On the body's own ground plane each gait keeps a foot down for its whole
+## geometric share of the cycle: twice the stance, one foot at a time. The drive
+## over real terrain reads less at the run, because the plant ignores slopes
+## (#909); here, with no terrain, anything short of the share is the gait's own.
+func _check_contact_share(subject: Dictionary, running: bool) -> bool:
+	var animator: WalkLocomotion = subject["animator"]
+	var skeleton: Skeleton3D = subject["skeleton"]
+	var stride := WalkLocomotion.RUN_STRIDE_LENGTH_M if running else WalkLocomotion.STRIDE_LENGTH_M
+	var stance := WalkLocomotion.stance_fraction(
+		float(animator.get("_run_reach" if running else "_walk_reach")), stride)
+	var feet := [skeleton.find_bone("foot_l"), skeleton.find_bone("foot_r")]
+	var rests := feet.map(func(foot: int) -> float: return skeleton.get_bone_global_rest(foot).origin.y)
+	var down := 0
+	for i in CONTACT_SAMPLES:
+		animator.apply_phase(TAU * float(i) / CONTACT_SAMPLES, running)
+		for k in feet.size():
+			if skeleton.get_bone_global_pose(feet[k]).origin.y - float(rests[k]) <= CONTACT_LIFT_M:
+				down += 1
+				break
+	var share := float(down) / CONTACT_SAMPLES
+	var bound := minf(2.0 * stance, 1.0)
+	if share < bound - 2.0 / CONTACT_SAMPLES:
+		return _fail("the %s keeps a foot down for %.1f%% of the cycle, short of its %.1f%% geometric share" %
+			["run" if running else "walk", share * 100.0, bound * 100.0])
 	return true
 
 

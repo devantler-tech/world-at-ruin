@@ -42,11 +42,37 @@ Cadence and speed are unchanged, because stride length and speed are
 unchanged. The trace fingerprint changes, because the feet move differently,
 to `3ba727c9470cce3e4391b08f063f20684a4f38737c89a65eff14f28320673c55`.
 
-The run's down share is below its geometric bound of about 38% because the
-drive crosses real terrain. The feet plant on the body's own flat ground plane,
-so on a slope a planted foot sits a few centimetres above or below the ground
-under it. On a downhill stretch it counts as lifted. Adapting the plant to the
-terrain is a separate slice.
+### How much of the time a foot is down
+
+A leg reaches only so far, so each gait can keep a foot down for at most twice
+its stance of each cycle: its geometric share. On flat ground, which is the
+body's own ground plane with no terrain under it, both gaits reach it:
+
+| Gait | A foot is down, flat ground | Geometric share | Over the drive's terrain |
+|---|---|---|---|
+| walk | 57.0% of the cycle | 49.5% | 52% of the stretch |
+| run | 41.5% of the cycle | 37.6% | 26% of the stretch |
+
+The flat-ground figures run above the share because a foot also counts as down
+for the moment it is within 1 cm of the ground as it lifts and lands.
+`planted_feet_test` holds both gaits to their share.
+
+Over the drive's real terrain the run reads lower. The feet plant on the body's
+own flat ground plane, so on a downhill stretch a planted foot hangs a few
+centimetres above the ground under it and counts as lifted, while its slip stays
+at 5%. Planting on the terrain itself is #909, so on the drive #904 is judged by
+slip, cadence and the flat-ground share, and the terrain share belongs to #909.
+
+## The follow camera
+
+![The follow camera at the end of the measured walk](follow-walk.png)
+
+![The follow camera at the end of the measured run](follow-run.png)
+
+The Wanderer's own follow camera at the end of each measured gait, from the same
+drive. It holds the body framed at both speeds, and from behind the legs read
+as a stride rather than a skate. At this distance whether a foot holds the
+ground cannot be judged by eye; the contact line above is the measure for that.
 
 ## What the tests pin
 
@@ -55,6 +81,7 @@ shipped rig, to the millimetre:
 
 - a planted ankle stays at its standing height and moves back under the hip
   exactly as far as the body travels;
+- on flat ground each gait keeps a foot down for its whole geometric share;
 - no phase of either gait moves a foot sideways;
 - a foot leaves and meets the ground standing still over it;
 - the running knee never straightens;
@@ -77,6 +104,7 @@ press without a jump in any bone.
 | The jump keeps the gaits' lowered pelvis | the jump is posed from a lowered pelvis |
 | A rig that cannot plant keeps its gaits enabled | a rig that cannot plant a foot kept a grounded gait enabled |
 | The foot lifts as `sqrt(sin)`, infinitely fast at lift-off | the sprint press steps a bone 7.2° in one millisecond |
+| The right foot floats 2 cm above the ground | the walk keeps a foot down for 27.0% of the cycle, short of its 49.5% share |
 
 The last two rows were real defects in earlier drafts of this change, and the
 tests found both.
