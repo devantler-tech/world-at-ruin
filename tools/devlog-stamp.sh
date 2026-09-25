@@ -152,6 +152,22 @@ for path in "$entry_dir"/*.json; do
 	stamped=$((stamped + 1))
 done
 
+# What ships is the stamped tree, and the log's tests ran before stamping. Two
+# placeholders that shipped together now share a version, which is two changes
+# in one release and allowed; the same entry twice is not (#119). Re-checked
+# here, on the set the build will carry.
+copies="$(jq -rs 'group_by([.version, .title]) | map(select(length > 1) | .[0] | "\(.version) — \(.title)") | .[]' \
+	"$entry_dir"/*.json 2>/dev/null)" || {
+	printf '::error::devlog-stamp: could not read the stamped entries back to check for copies\n' >&2
+	failed=$((failed + 1))
+}
+if [ -n "$copies" ]; then
+	while IFS= read -r copy; do
+		printf '::error::devlog-stamp: the release carries "%s" more than once — one entry was copied\n' "$copy" >&2
+	done <<<"$copies"
+	failed=$((failed + 1))
+fi
+
 printf 'devlog-stamp: %d stamped, %d unreleased, %d numbered untouched\n' \
 	"$stamped" "$unreleased" "$numbered"
 

@@ -28,7 +28,7 @@ const ENTRY_DIR := "res://devlog/"
 ## the first release containing the commit that added it — in the release build
 ## only, as `VERSION` is. Anywhere that has not been through a release it stays
 ## the placeholder and sorts above every released entry, because it is newer
-## than all of them.
+## than all of them. Placeholders that ship together receive the same number.
 const NEXT_VERSION := "next"
 
 ## A placeholder entry's filename: lowercase words joined by hyphens. Having no
@@ -102,10 +102,13 @@ static func is_next(entry: Dictionary) -> bool:
 
 ## What the log shows ahead of an entry's title. A released entry reads as the
 ## build it shipped in (`v0.98.0`); one whose number was never cut drops the `v`
-## (#466); one not yet released says so instead of showing a placeholder.
+## (#466). A [constant NEXT_VERSION] entry says it is numbered at release rather
+## than showing the placeholder. Only a build that has not been through a release
+## shows one, and there the entry may already have shipped — a development build
+## cannot tell — so the heading claims nothing about whether it has.
 static func heading(entry: Dictionary) -> String:
 	if is_next(entry):
-		return "Next release"
+		return "Numbered at release"
 	var version := String(entry.get("version", ""))
 	if not String(entry.get("shipped_in", "")).is_empty():
 		return version
@@ -129,21 +132,27 @@ static func name_problem(stem: String, entry: Dictionary) -> String:
 
 
 ## Newest first. A [constant NEXT_VERSION] entry is newer than every released
-## one; two of them order by date, newest first, then by title so the order is
-## total. Released versions are compared component-wise as integers through a
+## one. Released versions are compared component-wise as integers through a
 ## zero-padded key, because "0.1.9" sorts ABOVE "0.1.10" as plain text and the
 ## patch number is already into double digits.
+##
+## One release can carry several entries: every placeholder in it is stamped
+## with the same number. Entries in the same release, like unreleased ones,
+## order by date, newest first, then by title, so the order is total.
 static func _newer_first(a: Dictionary, b: Dictionary) -> bool:
 	var a_next := is_next(a)
 	if a_next != is_next(b):
 		return a_next
-	if a_next:
-		var a_date := String(a.get("date", ""))
-		var b_date := String(b.get("date", ""))
-		if a_date != b_date:
-			return a_date > b_date
-		return String(a.get("title", "")) < String(b.get("title", ""))
-	return _sort_key(String(a.get("version", ""))) > _sort_key(String(b.get("version", "")))
+	if not a_next:
+		var a_key := _sort_key(String(a.get("version", "")))
+		var b_key := _sort_key(String(b.get("version", "")))
+		if a_key != b_key:
+			return a_key > b_key
+	var a_date := String(a.get("date", ""))
+	var b_date := String(b.get("date", ""))
+	if a_date != b_date:
+		return a_date > b_date
+	return String(a.get("title", "")) < String(b.get("title", ""))
 
 
 static func _sort_key(version: String) -> String:

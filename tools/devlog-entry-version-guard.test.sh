@@ -35,12 +35,11 @@ expect_not_gt() {
 expect_gt 0.61.5 0.61.4
 expect_gt 0.62.0 0.61.9
 expect_gt 1.0.0 0.99.99
-# The distinction a lexical compare gets wrong. Without it the guard would wave
-# through an entry numbered 0.9.0 once 0.10.0 had shipped.
+# The distinction a lexical compare gets wrong. Corrections and pre-release
+# declarations are judged by it, so 0.9.0 must not outrank 0.10.0.
 expect_gt 0.10.0 0.9.0
 expect_not_gt 0.9.0 0.10.0
-# Equality is not "ahead": naming the release that just shipped is the exact
-# failure this guard exists for.
+# Equality is not "ahead".
 expect_not_gt 0.61.4 0.61.4
 expect_not_gt 0.59.0 0.60.0
 
@@ -54,9 +53,6 @@ expect_not_gt 0.59.0 0.60.0
 is_version 0.61.4 || t_fail 'is_version rejected a valid version'
 ! is_version 'v0.61.4' || t_fail 'is_version accepted a leading v'
 ! is_version '0.61' || t_fail 'is_version accepted a two-component version'
-
-[ "$(next_patch 0.61.4)" = '0.61.5' ] || t_fail 'next_patch is wrong'
-[ "$(next_patch 0.9.0)" = '0.9.1' ] || t_fail 'next_patch is wrong at a nine boundary'
 
 # oldest_version picks the FIRST release containing a change, so the same
 # numeric comparison has to hold in the other direction: lexically "0.10.0"
@@ -102,7 +98,7 @@ entry 0.58.0 >"$repo/client/devlog/0.58.0.json"
 # A second base entry on a version no tag ever names. The declaration cases edit
 # this one IN PLACE: a declaration lands on an entry that shipped long ago, which
 # the added-only rule leaves unchecked, so adding a fresh file instead would test
-# the forward-looking rule rather than the declaration.
+# the new-entry rule rather than the declaration.
 entry 0.58.5 >"$repo/client/devlog/0.58.5.json"
 git -C "$repo" add -A
 git -C "$repo" commit -qm 'base'
@@ -146,53 +142,95 @@ expect_fail_matching() {
 	fi
 }
 
-# GREEN: an entry above every existing release is what a correct author writes.
+# GREEN: what a correct author writes — a file named for the change, carrying the
+# placeholder the release build stamps.
+reset_tree
+entry next >"$repo/client/devlog/slabs-hold-weight.json"
+commit_all 'a placeholder entry'
+expect_pass 'a new entry carrying next'
+
+# The refusal every numbered new entry gets. Matched on the command that fixes
+# it: a refusal that does not say what to do is not actionable.
+NUMBERED_REFUSAL='then set its "version" to "next"'
+
+# RED, and the case that retires the old rule. 0.61.5 is above every release —
+# exactly what the guard used to accept — and is still a prediction a sibling
+# release can overtake before this merges (#467).
 reset_tree
 entry 0.61.5 >"$repo/client/devlog/0.61.5.json"
-commit_all 'correct entry'
-expect_pass 'entry above the newest release'
+commit_all 'a numbered entry above every release'
+expect_fail_matching 'a numbered entry above every release' "$NUMBERED_REFUSAL"
 
 # RED: the observed #427 failure — the predicted version was cut while the
 # branch was in flight, so the entry names a build that shipped without it.
 reset_tree
 entry 0.61.4 >"$repo/client/devlog/0.61.4.json"
 commit_all 'entry equal to newest release'
-expect_fail_matching 'entry equal to the newest release' 'v0.61.4 is already released'
+expect_fail_matching 'entry equal to the newest release' "$NUMBERED_REFUSAL"
 
 # RED: the observed #412 failure — a sibling released ahead, leaving the entry
-# below. This is the shape currently on main as 0.59.0 against v0.60.0.
+# below. The refusal names the exact rename to run.
 reset_tree
 entry 0.59.0 >"$repo/client/devlog/0.59.0.json"
 commit_all 'entry below newest release'
-expect_fail_matching 'entry below the newest release' 'must be above every existing release'
+expect_fail_matching 'refusal names the fix' \
+	'git mv client/devlog/0.59.0.json client/devlog/<words-for-the-change>.json'
 
-# RED, and the case that pins the comparison as NUMERIC end-to-end. Lexically
-# "0.9.0" sorts above "0.61.4", so a string compare at the decision would wave
-# this through. That is not hypothetical here: the project is already past
-# 0.10.0, so every minor is two digits and a stale entry from an older base is
-# exactly the shape that would slip past.
-reset_tree
-entry 0.9.0 >"$repo/client/devlog/0.9.0.json"
-commit_all 'entry that only a lexical compare would accept'
-expect_fail_matching 'entry below the newest release lexically above it' 'v0.61.4 is already released'
-
-# The refusal has to name the floor, or it is not actionable: the whole point is
-# turning a silent mislabelling into a one-line rename.
-reset_tree
-entry 0.59.0 >"$repo/client/devlog/0.59.0.json"
-commit_all 'entry below newest release'
-expect_fail_matching 'refusal names the minimum acceptable version' '0.61.5 at the lowest'
-
-# RED, and the reason rename detection must be off. Renaming an entry is what
-# this guard's own failure message asks an author to do, and entry files are
-# near-identical in shape, so git reports the rename as R rather than A. With
-# detection left on, a second rename onto a still-stale version is never
-# examined — the guard would refuse once and then wave the retry through.
+# RED, and the reason rename detection must be off. Entry files are
+# near-identical in shape, so git reports a moved entry as R rather than A; with
+# detection on, a shipped entry moved onto another number is never examined.
 reset_tree
 git -C "$repo" mv client/devlog/0.58.0.json client/devlog/0.59.0.json
 entry 0.59.0 >"$repo/client/devlog/0.59.0.json"
-commit_all 'rename a shipped entry onto another stale version'
-expect_fail_matching 'renamed entry landing on a stale version' 'v0.61.4 is already released'
+commit_all 'rename a shipped entry onto another number'
+expect_fail_matching 'renamed entry landing on another number' "$NUMBERED_REFUSAL"
+
+# RED: the one way a placeholder can lie. Converting a shipped entry to "next"
+# makes the stamp date it by THIS change, a later release than the one that
+# carried it.
+REDATE_REFUSAL='also removes an existing entry'
+reset_tree
+git -C "$repo" mv client/devlog/0.58.0.json client/devlog/slabs-hold-weight.json
+entry next >"$repo/client/devlog/slabs-hold-weight.json"
+commit_all 'convert a shipped entry to a placeholder'
+expect_fail_matching 'a shipped entry converted to a placeholder' "$REDATE_REFUSAL"
+
+# GREEN control for that rule: an exact rename is the one move the stamp follows
+# back to the original add, so a placeholder already on main may be renamed as
+# long as its bytes are untouched. Measured against its own base, where the
+# placeholder already exists.
+reset_tree
+entry next >"$repo/client/devlog/slabs-hold-weight.json"
+commit_all 'a placeholder lands'
+placeholder_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" mv client/devlog/slabs-hold-weight.json client/devlog/slabs-bear-weight.json
+commit_all 'rename it, bytes untouched'
+exact_out='' exact_rc=0
+exact_out="$(cd "$repo" && BASE_SHA="$placeholder_base" HEAD_SHA="$(git -C "$repo" rev-parse HEAD)" bash "$GUARD" 2>&1)" ||
+	exact_rc=$?
+[ "$exact_rc" -eq 0 ] ||
+	t_fail "an exact rename of a placeholder was refused: $exact_out"
+
+# RED: the same rename with an edit is a new add, dated by this change.
+git -C "$repo" reset -q --hard "$placeholder_base"
+git -C "$repo" mv client/devlog/slabs-hold-weight.json client/devlog/slabs-bear-weight.json
+entry next | sed 's/catch the light/catch the evening light/' >"$repo/client/devlog/slabs-bear-weight.json"
+commit_all 'rename it and edit it'
+edited_out='' edited_rc=0
+edited_out="$(cd "$repo" && BASE_SHA="$placeholder_base" HEAD_SHA="$(git -C "$repo" rev-parse HEAD)" bash "$GUARD" 2>&1)" ||
+	edited_rc=$?
+if [ "$edited_rc" -eq 0 ]; then
+	t_fail 'a placeholder moved and edited was accepted, so the stamp would re-date it'
+elif ! grep -qF "$REDATE_REFUSAL" <<<"$edited_out"; then
+	t_fail "a placeholder moved and edited was refused for the wrong reason: $edited_out"
+fi
+
+# RED: a placeholder's release is stamped, so a shipped_in on one has no
+# never-cut number to explain.
+reset_tree
+declared_entry next 0.59.0 >"$repo/client/devlog/slabs-hold-weight.json"
+commit_all 'a placeholder declaring shipped_in'
+expect_fail_matching 'a placeholder declaring shipped_in' 'declares shipped_in — its release is stamped'
 
 # GREEN control, and the reason only ADDED files are checked: correcting the
 # prose of an entry that shipped long ago must stay legal. Under a rule that
@@ -220,8 +258,8 @@ git -C "$repo" checkout -q -b sibling
 entry 0.61.4 >"$repo/client/devlog/0.61.4.json"
 commit_all 'a sibling lands an entry for a release that has since been cut'
 git -C "$repo" checkout -q -B pr "$base"
-entry 0.61.5 >"$repo/client/devlog/0.61.5.json"
-commit_all 'our own, correct, forward-looking entry'
+entry next >"$repo/client/devlog/slabs-hold-weight.json"
+commit_all 'our own placeholder entry'
 git -C "$repo" checkout -q sibling
 git -C "$repo" merge -q --no-ff pr -m 'forge merge commit'
 expect_pass 'a stale base, with a sibling entry landed since'
@@ -230,7 +268,7 @@ git -C "$repo" branch -qD sibling pr
 
 # RED, and the shape that distinguishes a contributor's own merge from the
 # forge's merge ref. The current base already carries a released sibling entry;
-# the contributor's branch adds only a forward-looking one, then merges current
+# the contributor's branch adds only a placeholder, then merges current
 # main. HEAD^1 is the contributor's PREVIOUS commit, so blindly diffing from it
 # reports the sibling entry as this branch's addition and refuses it.
 reset_tree
@@ -239,8 +277,8 @@ entry 0.61.4 >"$repo/client/devlog/0.61.4.json"
 commit_all 'a released sibling entry on current main'
 current_base="$(git -C "$repo" rev-parse HEAD)"
 git -C "$repo" checkout -q -B pr "$base"
-entry 0.61.5 >"$repo/client/devlog/0.61.5.json"
-commit_all 'our own, correct, forward-looking entry'
+entry next >"$repo/client/devlog/slabs-hold-weight.json"
+commit_all 'our own placeholder entry'
 git -C "$repo" merge -q --no-ff current-main -m 'contributor merges current main'
 own_head="$(git -C "$repo" rev-parse HEAD)"
 own_merge_out=''
@@ -274,7 +312,7 @@ git -C "$repo" branch -qD current-main pr merge-group
 # true. That is what a shallow fetch produces, so it must be an error and not a
 # pass — the failure mode this guard would otherwise share with a broken scanner.
 reset_tree
-entry 0.61.5 >"$repo/client/devlog/0.61.5.json"
+entry next >"$repo/client/devlog/slabs-hold-weight.json"
 commit_all 'correct entry'
 saved_tags="$(git -C "$repo" tag)"
 while IFS= read -r t; do [ -n "$t" ] && git -C "$repo" tag -d "$t" >/dev/null; done <<<"$saved_tags"
@@ -303,7 +341,7 @@ printf '%s' "$unset_base_out" | grep -qF 'BASE_SHA is unset' ||
 # trusted — these pin each way it can be false, because a declaration that is
 # merely believed would re-create the mislabelling it exists to remove.
 #
-# Deliberately placed while `$repo` is still the forward-looking fixture: these
+# Deliberately placed while `$repo` is still the first fixture: these
 # edit a base entry IN PLACE, and the corrections repo below rebinds both `$repo`
 # and `$base`, so a case appended after it would silently run against a tree that
 # has no 0.58.5 entry and a different tag set.
@@ -337,15 +375,15 @@ expect_fail_matching 'a declaration naming a version that was never released' 'n
 
 # RED: a freshly authored entry has not shipped at all, so it cannot know where
 # it landed. Without this, declaring shipped_in would be a way around the
-# forward-looking rule rather than a record of an already-released change.
+# new-entry rule rather than a record of an already-released change.
 reset_tree
 declared_entry 0.62.0 0.61.4 >"$repo/client/devlog/0.62.0.json"
 commit_all 'declare on a brand-new entry'
 expect_fail_matching 'a declaration on an entry that has not shipped' 'has not shipped at all'
 
 # --- Corrections: the containment proof -----------------------------------
-# A correction names a release that has already happened, so the forward-looking
-# rule above necessarily refuses it. These cases pin that the alternative proof
+# A correction names a release that has already happened, so the new-entry rule
+# above necessarily refuses it unless it is listed. These cases pin that the alternative proof
 # is a REAL check and not an exemption: the same listing that lets a correct
 # number through must refuse a wrong one, and an entry that is not listed must
 # be unaffected.
@@ -407,7 +445,7 @@ commit_all 'a correction onto the wrong release'
 expect_fail_matching 'a listed correction naming the wrong release' 'first shipped in v0.60.0'
 
 # RED: an anchor whose change has not shipped cannot support a correction —
-# there is no release to name, and the forward-looking rule is the right test.
+# there is no release to name, so it is a new entry and carries "next".
 reset_tree
 entry 0.60.0 >"$repo/client/devlog/0.60.0.json"
 corrections client/devlog/0.60.0.json "$unreleased"
@@ -429,7 +467,7 @@ reset_tree
 entry 0.60.0 >"$repo/client/devlog/0.60.0.json"
 corrections client/devlog/0.59.0.json "$feature"
 commit_all 'an unlisted entry alongside a valid corrections file'
-expect_fail_matching 'an entry that is not the listed one' 'is already released'
+expect_fail_matching 'an entry that is not the listed one' "$NUMBERED_REFUSAL"
 
 # RED: a listing with no anchor is unusable. Without this it would read as "not
 # listed", and the entry would be refused by the ordinary rule — a message about
@@ -459,13 +497,13 @@ corrections client/devlog/0.60.0.json "${feature:0:12}"
 commit_all 'a correction anchored to an abbreviated SHA'
 expect_fail_matching 'a correction anchored to an abbreviated SHA' 'is not a full 40-character commit SHA'
 
-# GREEN control: the ordinary forward-looking path still passes with a
+# GREEN control: an ordinary placeholder entry still passes with a
 # corrections file present, so the lookup itself has not broken authoring.
 reset_tree
-entry 0.61.5 >"$repo/client/devlog/0.61.5.json"
+entry next >"$repo/client/devlog/slabs-hold-weight.json"
 corrections client/devlog/0.60.0.json "$feature"
-commit_all 'a normal forward-looking entry with corrections present'
-expect_pass 'a forward-looking entry while a corrections file exists'
+commit_all 'a placeholder entry with corrections present'
+expect_pass 'a placeholder entry while a corrections file exists'
 
 # --- Corrections that OVERWRITE an existing entry path --------------------
 # A bulk correction is a permutation: entries move onto release numbers that

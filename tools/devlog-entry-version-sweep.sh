@@ -25,8 +25,15 @@
 #               containment, so it is a resolved entry rather than drift. This
 #               is what the entries written before the first tag look like once
 #               they say so; the log renders them as notes rather than builds.
-#   UNRELEASED  its change is not in any release yet, so the forward-looking
-#               rule applies and there is nothing to correct.
+#   UNRELEASED  its change is not in any release yet, so there is nothing to
+#               correct.
+#   PLACEHOLDER it carries "next" and names no release at all: the release build
+#               stamps it from the commit that added its file (tools/
+#               devlog-stamp.sh), so it is correct by construction. SHIPPED is
+#               the release that stamp gives it, or `-` while none contains it.
+#               Anchored per FILE, never through the version string — every
+#               placeholder shares that one string, so a string anchor would
+#               date them all by whichever was added first.
 #   NO-ANCHOR   the version string cannot be traced to an introducing commit, so
 #               this entry is not judged either way rather than guessed at.
 #
@@ -73,8 +80,9 @@
 #                they take one name; uniqueness alone would rename an entry onto
 #                a release whose own entry is already correct.
 #   OK           passes.
-#   UNRELEASED   passes. The entry's change has not shipped, so the
-#                forward-looking rule owns it and there is nothing to compare.
+#   UNRELEASED   passes. The entry's change has not shipped, so there is nothing
+#                to compare.
+#   PLACEHOLDER  passes. It claims no release, so it cannot name a wrong one.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -241,6 +249,7 @@ total=0
 wrong=0
 mislabelled=0
 no_anchor=0
+placeholders=0
 # Each never-cut entry as `version<TAB>containing release`. The verdict for one
 # of them depends on what the OTHERS want, so the decision cannot be made in the
 # loop that discovers them and is deferred until the whole set is known. This
@@ -255,6 +264,20 @@ while IFS= read -r file; do
 		printf '%-10s  %-9s  %-9s  %s\n' "$(basename "$file")" - - 'NO-ANCHOR (unreadable entry)'
 		continue
 	}
+
+	# Named by its file, since every placeholder carries the same version.
+	if [ "$version" = "$PLACEHOLDER_VERSION" ]; then
+		anchor=$(placeholder_anchor "$file")
+		if [ -z "$anchor" ]; then
+			no_anchor=$((no_anchor + 1))
+			printf '%-10s  %-9s  %-9s  %s\n' "$(basename "$file" .json)" - - 'NO-ANCHOR (placeholder never committed)'
+			continue
+		fi
+		placeholders=$((placeholders + 1))
+		shipped=$(first_release_containing "$anchor")
+		printf '%-10s  %-9s  %-9s  %s\n' "$(basename "$file" .json)" "$(git rev-parse --short "$anchor")" "${shipped:--}" PLACEHOLDER
+		continue
+	fi
 	total=$((total + 1))
 
 	anchor=$(correction_anchor "$file")
@@ -292,6 +315,10 @@ while IFS= read -r file; do
 done < <(find "$ENTRY_DIR" -name '*.json' | sort)
 
 printf '\n%d of %d entries name a release that does not contain them.\n' "$wrong" "$total"
+if [ "$placeholders" -gt 0 ]; then
+	printf '%d "%s" placeholder(s) name no release; the release build stamps each with its SHIPPED release above.\n' \
+		"$placeholders" "$PLACEHOLDER_VERSION"
+fi
 
 [ "$gate" -eq 1 ] || exit 0
 

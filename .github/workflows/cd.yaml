@@ -132,7 +132,7 @@ jobs:
             || { echo "::error::failed to stamp VERSION in client/scripts/devlog.gd"; exit 1; }
 
       - name: 📜 Stamp dev-log entries from the release that contains them
-        # #518. An entry may carry "next" rather than a guessed version, because
+        # #518. A new entry carries "next" rather than a guessed version, because
         # the release it ships in is only known here: the first plain vX.Y.Z tag
         # containing the commit that added it. Stamped into the build like the
         # version above, never committed back. A stable release requires every

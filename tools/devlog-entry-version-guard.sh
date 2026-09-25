@@ -1,43 +1,42 @@
 #!/usr/bin/env bash
-# Refuse a dev-log entry that names a version which has already been released.
+# Keep dev-log entry versions honest: a new entry never predicts its release, and
+# an entry that names a released version proves it.
 #
-# An entry's version is hand-written when a branch is authored — a prediction of
-# the next semantic-release bump. With several releases an hour that prediction
-# is routinely overtaken before the PR merges, and nothing downstream notices:
-# `devlog_storage_test` compares each file against its OWN declared version and
-# `devlog_entries_test` checks uniqueness and ordering, so a stale-but-consistent
-# version satisfies both. The log then tells the maintainer a change arrived in a
-# build that does not contain it.
+# A NEW ENTRY CARRIES "next". Its release cannot be known on its branch: several
+# releases are cut an hour, so any number written there is a prediction a
+# sibling can overtake before the branch merges, and the log then tells the
+# maintainer a change arrived in a build that does not contain it (`0.59.0` for
+# a change first contained in `v0.60.0`; an entry numbered `0.59.2` written after
+# `v0.59.2` was cut). The release build answers exactly instead:
+# tools/devlog-stamp.sh rewrites every "next" entry to the first release
+# containing the commit that added it (#518). So an entry a change ADDS must
+# carry the placeholder, and a numbered one is refused with the rename that
+# fixes it.
 #
-# The property pinned here is the one that needs no prediction: an entry
-# describes a build that HAS NOT SHIPPED YET, so its version must be strictly
-# greater than every release that already exists. That is provable from the tags
-# in the checkout rather than guessed, and it catches the observed failures —
-# `0.59.0` for a change first contained in `v0.60.0`, and an entry numbered
-# `0.59.2` written after `v0.59.2` had already been cut.
+# This replaces the rule this guard used to enforce — that a new entry's number
+# be above every existing release. That rule was a floor, never a guarantee: two
+# PRs merging back-to-back could both pass it and still release in an order that
+# left the second one low, because the tag it had to beat did not exist yet when
+# it was checked (#467). A placeholder has no number to be low.
 #
-# WHAT THIS DOES NOT CLAIM. Being ahead of every existing release is necessary,
-# not sufficient. Two PRs merging back-to-back can still both pass here and then
-# release in an order that leaves the second one's number low, because the tag it
-# would have to beat does not exist yet when it is checked. Closing that needs
-# the version stamped at release time from the tag actually cut, the way cd.yaml
-# already stamps `DevLog.VERSION` — a different change, tracked separately.
+# THE ONE WAY A PLACEHOLDER CAN STILL LIE is by being added in a change that also
+# removes an entry already on its base. Converting a shipped entry to "next", or
+# moving one while editing it, makes the stamp date it by THIS change rather than
+# by the change it describes. So a placeholder added alongside a removed entry is
+# refused unless it is a byte-identical copy of one of them — an exact rename,
+# which the stamp follows back to the original add.
 #
 # ADDED entry files are checked, and so is any entry a change overwrites in place
 # while LISTING it as a correction. Editing the prose of an entry that has long
 # since shipped is legitimate and must stay so, so an unlisted modification stays
-# unchecked; it is the freshly authored entry whose version is a guess, and the
-# listed correction whose number is a claim.
+# unchecked.
 #
-# CORRECTIONS take the other proof. Being ahead of every release is the right
-# test for an authored entry, and the wrong one for correcting an entry already
-# on main that carries the wrong number: the fix necessarily names a release that
-# has already happened. An entry listed in tools/devlog-entry-corrections.tsv is
-# therefore measured against CONTAINMENT instead — the release it names must be
-# the first release containing the anchor commit whose change it describes. That
-# is the property the forward-looking rule only approximates, so a listing
-# substitutes a stronger machine-checked proof rather than an exemption: a wrong
-# number still fails, and an entry that is not listed is unaffected.
+# CORRECTIONS are the one kind of new entry that names a released version: an
+# entry already on main that carries the wrong number, re-pointed at the right
+# one. An entry listed in tools/devlog-entry-corrections.tsv is measured against
+# CONTAINMENT — the release it names must be the first release containing the
+# anchor commit whose change it describes. The listing substitutes a
+# machine-checked proof rather than an exemption: a wrong number still fails.
 #
 # The anchor must be the commit the entry DESCRIBES. An entry's own add-commit
 # is useless for this — the one-file-per-entry migration created every existing
@@ -51,6 +50,9 @@ set -euo pipefail
 
 ENTRY_DIR='client/devlog'
 CORRECTIONS_FILE='tools/devlog-entry-corrections.tsv'
+# The version a new entry carries until the release build stamps it. The same
+# string as DevLog.NEXT_VERSION and tools/devlog-stamp.sh's PLACEHOLDER.
+PLACEHOLDER_VERSION='next'
 GUARD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=tools/pr-diff-base.sh
@@ -310,6 +312,8 @@ check_shipped_in() {
 		[ -n "$shipped" ] || continue
 
 		version=$(declared_version "$file")
+		[ "$version" != "$PLACEHOLDER_VERSION" ] ||
+			fail "$file carries \"$PLACEHOLDER_VERSION\" and declares shipped_in — its release is stamped at build time, so there is no never-cut number to explain; remove shipped_in"
 		is_version "$version" ||
 			fail "$file declares shipped_in but no readable version of its own"
 		is_version "$shipped" ||
@@ -329,7 +333,7 @@ check_shipped_in() {
 		# because the comparison below would otherwise refuse it against an
 		# empty release and read as the guard malfunctioning.
 		[ -n "$expected" ] ||
-			fail "$(printf '%s declares it first shipped in v%s, but no release above %s exists yet — this entry has not shipped at all. shipped_in records where an already-released change landed; a new entry takes the forward-looking rule instead.' \
+			fail "$(printf '%s declares it first shipped in v%s, but no release above %s exists yet — this entry has not shipped at all. shipped_in records where an already-released change landed; a new entry carries "next" instead.' \
 				"$file" "$shipped" "$version")"
 		[ "$shipped" = "$expected" ] ||
 			fail "$(printf '%s declares it first shipped in v%s, but the first release cut after %s is v%s. A later release contains the change too, so only the first one dates it.' \
@@ -414,13 +418,31 @@ declared_version() {
 	jq -er '.version // empty' "$1" 2>/dev/null || true
 }
 
-# The lowest version an entry could legitimately carry: one patch above the
-# newest release. A `feat:` needs the next MINOR instead, so this is named as a
-# floor rather than as the answer.
-next_patch() {
-	local -a v
-	IFS=. read -r -a v <<<"$1"
-	printf '%d.%d.%d' "$((10#${v[0]}))" "$((10#${v[1]}))" "$((10#${v[2]} + 1))"
+# The commit that ADDED an entry file: the newest add, following an exact rename
+# only. This is the anchor tools/devlog-stamp.sh stamps a placeholder from, and
+# it must stay the same question — devlog-entry-version-sweep.test.sh holds the
+# sweep's answer against the stamp's. Empty when git cannot say, which a caller
+# treats as "no anchor", never as an answer.
+placeholder_anchor() {
+	git log --follow -M100% --diff-filter=A --max-count=1 --format=%H -- "$1" 2>/dev/null || true
+}
+
+# The blob of every entry file this change REMOVES, one per line.
+#
+# A placeholder added in the same change as a removal is how a shipped entry
+# gets re-dated: converted to "next", or moved while edited, it is stamped by
+# this change instead of by the change it describes. Blobs rather than paths so
+# an exact rename — the one move the stamp follows back — can be recognised.
+# Non-zero when git could not answer: an empty list must mean "nothing removed",
+# never "could not tell".
+removed_entry_blobs() {
+	local base="$1" paths path blob
+	paths=$(git diff --no-renames --diff-filter=D --name-only "$base" HEAD -- "$ENTRY_DIR") || return 1
+	while IFS= read -r path; do
+		case "$path" in *.json) ;; *) continue ;; esac
+		blob=$(git rev-parse -q --verify "$base:$path") || return 1
+		printf '%s\n' "$blob"
+	done <<<"$paths"
 }
 
 main() {
@@ -458,39 +480,58 @@ main() {
 		return 0
 	fi
 
-	local file version floor anchor shipped
-	floor=$(next_patch "$newest")
+	local removed
+	removed=$(removed_entry_blobs "$change_base") ||
+		fail "could not list the entries this change removes, so a re-dated placeholder cannot be ruled out"
+
+	local file version anchor shipped blob placeholders=0 corrections=0
 	while IFS= read -r file; do
 		[ -n "$file" ] || continue
 		[ -f "$file" ] || fail "$file is added but missing from the working tree"
 		version=$(declared_version "$file")
 		[ -n "$version" ] ||
 			fail "$file declares no readable version — the field is missing or the file is not parseable JSON"
-		is_version "$version" ||
-			fail "$file declares version '$version', which is not an X.Y.Z release version"
 
-		# A sanctioned correction is held to containment instead: it must name
-		# the first release that actually contains the change it describes.
-		anchor=$(correction_anchor "$file")
-		if [ -n "$anchor" ]; then
-			git rev-parse -q --verify "$anchor^{commit}" >/dev/null 2>&1 ||
-				fail "$file is listed in $CORRECTIONS_FILE against '$anchor', which is not a commit in this checkout — the correction cannot be verified"
-			shipped=$(first_release_containing "$anchor")
-			[ -n "$shipped" ] ||
-				fail "$file is listed in $CORRECTIONS_FILE against $anchor, but no release contains that commit — an unshipped change takes the ordinary forward-looking rule, not a correction"
-			[ "$version" = "$shipped" ] ||
-				fail "$(printf '%s declares version %s, but the change it is anchored to (%s) first shipped in v%s. A correction must name the release that actually contains it.' \
-					"$file" "$version" "$anchor" "$shipped")"
-			printf 'dev-log entry version guard: %s verified by containment — first released in v%s\n' "$file" "$shipped"
+		if [ "$version" = "$PLACEHOLDER_VERSION" ]; then
+			# The stamp dates a placeholder by the commit that added its file, so
+			# one added while a base entry is removed is re-dating that entry
+			# unless it is the same bytes under a new name.
+			if [ -n "$removed" ]; then
+				blob=$(git rev-parse -q --verify "HEAD:$file") ||
+					fail "$file is added but not in HEAD, so its origin cannot be checked"
+				grep -qxF "$blob" <<<"$removed" ||
+					fail "$(printf '%s carries "%s" but this change also removes an existing entry. The release build dates a placeholder by the commit that added its file, so converting or rewriting an entry that already shipped would stamp it with a later release than the one that carried it. Keep the existing entry as it was; correct a wrong number through %s instead. Only a byte-identical rename keeps a placeholder dated by its original add.' \
+						"$file" "$PLACEHOLDER_VERSION" "$CORRECTIONS_FILE")"
+			fi
+			placeholders=$((placeholders + 1))
 			continue
 		fi
 
-		version_gt "$version" "$newest" ||
-			fail "$(printf '%s names version %s, but v%s is already released and does not contain this change. An entry describes a build that has not shipped yet, so it must be above every existing release — %s at the lowest, or the next minor for a feat:. Rename the file and its version field together.' \
-				"$file" "$version" "$newest" "$floor")"
+		# A sanctioned correction is the one new entry that names a release: it
+		# must name the first release that actually contains the change it
+		# describes.
+		anchor=$(correction_anchor "$file")
+		if [ -z "$anchor" ]; then
+			fail "$(printf '%s names version %s. A new entry does not predict its release — a sibling release cut before this merges makes that number wrong. Name the file for the change and let the release build stamp it:\n  git mv %s %s/<words-for-the-change>.json\nthen set its "version" to "%s". Only a correction listed in %s names a released version.' \
+				"$file" "$version" "$file" "$ENTRY_DIR" "$PLACEHOLDER_VERSION" "$CORRECTIONS_FILE")"
+		fi
+		is_version "$version" ||
+			fail "$file is listed in $CORRECTIONS_FILE but declares version '$version', which is not an X.Y.Z release version"
+		git rev-parse -q --verify "$anchor^{commit}" >/dev/null 2>&1 ||
+			fail "$file is listed in $CORRECTIONS_FILE against '$anchor', which is not a commit in this checkout — the correction cannot be verified"
+		shipped=$(first_release_containing "$anchor")
+		[ -n "$shipped" ] ||
+			fail "$file is listed in $CORRECTIONS_FILE against $anchor, but no release contains that commit — an unshipped change is a new entry, which carries \"$PLACEHOLDER_VERSION\", not a correction"
+		[ "$version" = "$shipped" ] ||
+			fail "$(printf '%s declares version %s, but the change it is anchored to (%s) first shipped in v%s. A correction must name the release that actually contains it.' \
+				"$file" "$version" "$anchor" "$shipped")"
+		printf 'dev-log entry version guard: %s verified by containment — first released in v%s\n' "$file" "$shipped"
+		corrections=$((corrections + 1))
 	done <<<"$added"
 
-	printf 'dev-log entry version guard: PASS — every new entry is above the newest release %s\n' "$newest"
+	printf 'dev-log entry version guard: PASS — %d new entr%s carrying "%s" for the release build to stamp, %d correction%s verified by containment (newest release %s)\n' \
+		"$placeholders" "$([ "$placeholders" -eq 1 ] && printf y || printf ies)" "$PLACEHOLDER_VERSION" \
+		"$corrections" "$([ "$corrections" -eq 1 ] || printf s)" "$newest"
 }
 
 # Sourced by tools/devlog-entry-version-guard.test.sh to drive these functions
