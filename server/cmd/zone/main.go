@@ -51,6 +51,7 @@ import (
 	"github.com/devantler-tech/world-at-ruin/server/agones"
 	"github.com/devantler-tech/world-at-ruin/server/sim"
 	"github.com/devantler-tech/world-at-ruin/server/wire"
+	"github.com/devantler-tech/world-at-ruin/server/zoneclaim"
 	"github.com/devantler-tech/world-at-ruin/server/zonesock"
 )
 
@@ -71,7 +72,16 @@ func main() {
 	withAgones := flag.Bool("agones", false, "register with the local Agones SDK sidecar (Ready/Health/Shutdown); requires -listen, since Ready must mean a connectable endpoint")
 	healthInterval := flag.Duration("agones-health-interval", agones.DefaultHealthInterval, "heartbeat cadence for -agones; keep it under half the fleet's health periodSeconds")
 	admissionPublicKey := flag.String("agones-admission-public-key", "", "PEM RSA public-key file for sealed per-GameServer admission; requires -agones (empty keeps the local environment-secret path)")
+	var claims claimOptions
+	flag.BoolVar(&claims.enabled, "private-claims", false, "require a private durable claim before socket admission (experimental; default off)")
+	flag.StringVar(&claims.endpoint, "claim-url", "", "private HTTPS claim endpoint ending in /v1/claim")
+	flag.StringVar(&claims.caFile, "claim-ca", "", "PEM trust roots for the private claim service")
+	flag.StringVar(&claims.certFile, "claim-cert", "", "PEM workload client certificate")
+	flag.StringVar(&claims.keyFile, "claim-key", "", "PEM workload client private key")
 	flag.Parse()
+	if err := claims.validate(*listen != "", *withAgones, *admissionPublicKey != "", *insecurePlaintext, *mintObserver != 0); err != nil {
+		fatalf("%v", err)
+	}
 
 	durationSet := false
 	flag.Visit(func(f *flag.Flag) {
@@ -101,7 +111,7 @@ func main() {
 		if durationSet {
 			d = *duration
 		}
-		if err := runListen(w, *listen, *tlsCert, *tlsKey, *secretEnv, *allocation, *insecurePlaintext, *interest, d, *withAgones, *healthInterval, *admissionPublicKey); err != nil {
+		if err := runListen(w, *listen, *tlsCert, *tlsKey, *secretEnv, *allocation, *insecurePlaintext, *interest, d, *withAgones, *healthInterval, *admissionPublicKey, claims); err != nil {
 			fatalf("%v", err)
 		}
 	case *realtime:
@@ -151,12 +161,24 @@ func runMint(secretEnv, allocation string, observer sim.EntityID, ttl time.Durat
 // is signalled. It returns errors instead of exiting so every exit path runs
 // the deferred cleanup — with -agones that includes telling the sidecar to
 // recycle the GameServer, which os.Exit would silently skip.
-func runListen(w *sim.World, addr, certFile, keyFile, secretEnv, allocation string, insecurePlaintext bool, interestMM int64, d time.Duration, withAgones bool, healthInterval time.Duration, admissionPublicKeyFile string) (result error) {
+func runListen(w *sim.World, addr, certFile, keyFile, secretEnv, allocation string, insecurePlaintext bool, interestMM int64, d time.Duration, withAgones bool, healthInterval time.Duration, admissionPublicKeyFile string, claims claimOptions) (result error) {
+	if err := claims.validate(true, withAgones, admissionPublicKeyFile != "", insecurePlaintext, false); err != nil {
+		return err
+	}
 	if insecurePlaintext && (certFile != "" || keyFile != "") {
 		return fmt.Errorf("-insecure-plaintext contradicts -tls-cert/-tls-key: choose one")
 	}
 	if !insecurePlaintext && (certFile == "" || keyFile == "") {
 		return fmt.Errorf("-listen requires -tls-cert and -tls-key (or the explicit -insecure-plaintext local-development opt-in)")
+	}
+	privateClient, err := claims.client()
+	if err != nil {
+		return err
+	}
+	if privateClient != nil {
+		// Registered before the hub drain, so LIFO cleanup retires idle private
+		// connections only after all admitted handlers have been canceled.
+		defer privateClient.Close()
 	}
 
 	boundAllocation := allocation
@@ -245,7 +267,16 @@ func runListen(w *sim.World, addr, certFile, keyFile, secretEnv, allocation stri
 		if err != nil {
 			return err
 		}
-		hub, err = zonesock.NewHub(zonesock.Config{Verifier: verifier, InterestMM: interestMM})
+		cfg := zonesock.Config{Verifier: verifier, InterestMM: interestMM}
+		if privateClient != nil {
+			gate, gateErr := zoneclaim.New(prepared, privateClient)
+			if gateErr != nil {
+				return gateErr
+			}
+			hub, err = zonesock.NewClaimedHub(cfg, gate, 5*time.Second)
+		} else {
+			hub, err = zonesock.NewHub(cfg)
+		}
 		if err != nil {
 			return err
 		}

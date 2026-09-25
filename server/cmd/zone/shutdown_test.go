@@ -50,7 +50,7 @@ func TestListenDrainsBeforeAgonesShutdown(t *testing.T) {
 	world := sim.NewDemoWorld()
 	done := make(chan error, 1)
 	go func() {
-		done <- runListen(world, addr, "", "", "WAR_ZONE_ADMISSION_SECRET", "allocation-a", true, 12000, 500*time.Millisecond, true, 50*time.Millisecond, "")
+		done <- runListen(world, addr, "", "", "WAR_ZONE_ADMISSION_SECRET", "allocation-a", true, 12000, 500*time.Millisecond, true, 50*time.Millisecond, "", claimOptions{})
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()

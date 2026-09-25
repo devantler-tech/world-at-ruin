@@ -629,8 +629,10 @@ everything shipped afterwards is held to.
   canonical token verification precede a conditional claim in the existing schema; no-show cleanup
   races on that same version, replay reads durable state, and ambiguous admission retains the claim;
   strict bounded requests, generic refusals and a verified client with no redirects; attested
-  workload certificate issuance, private listener deployment, session-end recovery and production
-  command wiring remain separate work),
+  workload certificate issuance, private listener deployment and session-end recovery remain
+  separate work; the command composes the gate only through default-off `-private-claims`,
+  requiring sealed Agones admission and separate verified mTLS credentials, loading bounded
+  material before readiness and retiring transport after admission drains, per ADR 0008),
   the inert **session-end storage boundary** (`nakamalease.Store.EndSession`, ADR 0006 —
   original claimed version, claim stamp, opaque key, attempt digest, allocation and pinned UID
   must all agree before atomically entering the existing release barrier; exact-UID resource
