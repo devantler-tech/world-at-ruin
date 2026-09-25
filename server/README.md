@@ -177,6 +177,18 @@ zone/dungeon server:
   adapter. Workload attestation/issuance, isolated keys, rotation, private listener
   deployment, production composition and fenced session recovery remain required
   before activation (#12, #569, #567).
+- **`nakamalease.Store.EndSession`** — the inert, system-owned completion
+  boundary ([ADR 0006](../docs/adr/0006-fence-ended-zone-sessions-before-cleanup.md)).
+  A trusted caller must independently prove that the session ended and supply
+  its original claimed version, claim stamp, opaque key, attempt digest,
+  allocation and GameServer UID. The store atomically replaces the claim with
+  the existing release barrier, verifies it durably, invokes exact-UID cleanup,
+  then conditionally deletes only that barrier version. Lost acknowledgements
+  get one readback; failures retain recovery state. `ReclaimExpired` resumes
+  releasing records after restart without waiting for their old admission
+  expiry. A session spans an allocation lifetime, not a socket connection.
+  There is no endpoint, death detector or automatic caller; authenticated
+  completion and production lifecycle integration remain #567/#569 work.
 - **`agones/`** — the **Agones GameServer lifecycle**: what makes the zone
   binary deployable on the fleet. Agones's contract is hard — a GameServer that
   never calls `Ready` is never allocated, and one that stops calling `Health`
