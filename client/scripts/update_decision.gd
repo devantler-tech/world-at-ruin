@@ -14,6 +14,11 @@ extends RefCounted
 ##     no-op (`up_to_date`).
 ##   * A content pack is applied ONLY if the shell it needs is already installed;
 ##     otherwise the shell must update first (a pack can't run on too-old a shell).
+##     When the manifest publishes the pack's own artifact (`pack.full`), that
+##     artifact must also run on the installed shell, speak a protocol the live tier
+##     accepts, and read both the save it finds and the save it will write — judged
+##     with [RollbackSelection]'s own predicates, so this never offers a pack that
+##     recovery would refuse to run.
 ##   * If the running build is incompatible with the live world (its protocol is
 ##     below the server's accepted range, or its save schema is too old) and NO
 ##     available update resolves it, it says so LOUDLY (`blocked_incompatible`) —
@@ -302,6 +307,19 @@ static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 		return _shell_or_block(save_schema, save_capability, m_shell, "content pack %s needs shell >= %s but %s is installed" % [
 			str(m_pack["version"]), str(m_pack["min_shell"]), shell])
 	if pack_newer:
+		# The candidate pack's OWN artifact, when the manifest publishes one. The
+		# numbers above describe the release as a whole; once shell and pack ship
+		# separately only the artifact says whether THIS pack runs on the installed
+		# shell and reads this save (#901).
+		var artifact := _pack_artifact_verdict(m_pack, shell, save_schema, save_capability, m_save, m_protocol)
+		if bool(artifact["malformed"]):
+			return _result(INVALID_MANIFEST, "content pack %s: %s" % [str(m_pack["version"]), str(artifact["reason"])])
+		if not bool(artifact["ok"]):
+			if shell_newer:
+				return _shell_or_block(save_schema, save_capability, m_shell, "content pack %s cannot be applied to the installed build: %s — routing to the newer shell %s" % [
+					str(m_pack["version"]), str(artifact["reason"]), str(m_shell["current"])])
+			return _result(INVALID_MANIFEST, "content pack %s cannot be applied to the installed build: %s, and the manifest offers no newer shell — refusing (no safe route)" % [
+				str(m_pack["version"]), str(artifact["reason"])])
 		# Rollback safety: a pack update is offered only when the rollback target
 		# (the installed build) could still READ what the candidate WRITES. If the
 		# candidate's write-schema (`save_schema.writes`) exceeds how high the
@@ -353,6 +371,55 @@ static func decide(installed: Dictionary, manifest: Dictionary) -> Dictionary:
 
 	# Nothing newer, and (per the guard above) not incompatible: current.
 	return _result(UP_TO_DATE, "on the latest build for channel %s" % str(manifest.get("channel", "?")))
+
+
+## Whether the candidate pack's own artifact can be applied to the installed build.
+## Returns `{ ok: bool, malformed: bool, reason: String }`.
+##
+## A manifest with no `pack.full` publishes no pack artifact to judge — every
+## manifest the release pipeline emits today withholds it, because there is no
+## pack yet (see [UpdateManifest]) — so its absence is `ok` and the decision is
+## exactly what it was before this check existed.
+##
+## When it is present it is judged with RECOVERY'S OWN predicates: well-formed as
+## [method RollbackSelection.is_wellformed] requires, and runnable as
+## [method RollbackSelection.is_runnable] requires (its `shell_compat` holds the
+## installed shell and its `speaks_protocol` overlaps what the live tier accepts).
+## Sharing them is the point: a pack offered forward that recovery would skip is a
+## pack the player is sent to and cannot be sent back from. On top of that it must
+## READ, on the same axes recovery calls reachability: the save it finds when it
+## first boots, and the save it leaves once it has written — a build that cannot
+## read its own writes strands the player on its next launch.
+static func _pack_artifact_verdict(m_pack: Dictionary, shell: String, save_schema: int, save_capability: int,
+		m_save: Dictionary, m_protocol: Dictionary) -> Dictionary:
+	if not m_pack.has("full"):
+		return {"ok": true, "malformed": false, "reason": ""}
+	var full: Variant = m_pack["full"]
+	if full is not Dictionary:
+		return {"ok": false, "malformed": true, "reason": "'pack.full' is not an object"}
+	var artifact: Dictionary = (full as Dictionary).duplicate()
+	artifact["version"] = m_pack["version"]
+	if not RollbackSelection.is_wellformed(artifact):
+		return {"ok": false, "malformed": true,
+			"reason": "'pack.full' is missing or mistypes a field eligibility is decided from (read_ceiling, save_capability, speaks_protocol, shell_compat, url, sha256, size)"}
+	var speaks: Dictionary = artifact["speaks_protocol"]
+	var compat: Dictionary = artifact["shell_compat"]
+	if not RollbackSelection.is_runnable(artifact, int(m_protocol["min"]), int(m_protocol["max"]), shell):
+		return {"ok": false, "malformed": false,
+			"reason": "it runs on shells %s–%s and speaks protocol %d–%d, but the installed shell is %s and the live tier accepts %d–%d" % [
+				str(compat["min"]), str(compat["max"]), int(speaks["min"]), int(speaks["max"]),
+				shell, int(m_protocol["min"]), int(m_protocol["max"])]}
+	var ceiling := int(artifact["read_ceiling"])
+	var capability := int(artifact["save_capability"])
+	if ceiling < save_schema or capability < save_capability:
+		return {"ok": false, "malformed": false,
+			"reason": "it reads saves up to schema %d and capability %d, but the installed save is schema %d, capability %d" % [
+				ceiling, capability, save_schema, save_capability]}
+	if ceiling < int(m_save["writes"]) or capability < int(m_save["capability"]):
+		return {"ok": false, "malformed": false,
+			"reason": "it reads saves up to schema %d and capability %d, but it writes schema %d, capability %d — it could not read its own save on the next launch" % [
+				ceiling, capability, int(m_save["writes"]), int(m_save["capability"])]}
+	return {"ok": true, "malformed": false, "reason": ""}
 
 
 ## True when the manifest retains at least one rollback target that could still

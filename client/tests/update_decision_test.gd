@@ -67,6 +67,24 @@ func _target(version: String, capability: int, read_ceiling: int) -> Dictionary:
 	}
 
 
+# A WELL-FORMED `pack.full` artifact that runs on the installed 0.1.14 shell and
+# speaks protocol 1, reading saves up to the given schema and capability. It is
+# `_target` without the version, which is exactly the relation the ADR gives
+# them: the same per-artifact fields, the version living on `pack` itself.
+func _pack_artifact(read_ceiling: int, capability: int) -> Dictionary:
+	var artifact := _target("0.1.15", capability, read_ceiling)
+	artifact.erase("version")
+	return artifact
+
+
+# A manifest offering the newer pack 0.1.15 with `artifact` as its `pack.full`.
+func _manifest_with_pack_artifact(artifact: Variant) -> Dictionary:
+	var m := _base_manifest()
+	m["pack"]["version"] = "0.1.15"
+	m["pack"]["full"] = artifact
+	return m
+
+
 func _installed_current() -> Dictionary:
 	return {
 		"shell_version": "0.1.14",
@@ -128,6 +146,13 @@ func _ready() -> void:
 	_test_pack_update_requires_write_schema()
 	_test_pack_update_requires_capability()
 	_test_capability_raise_needs_a_readable_rollback_target()
+	_test_pack_artifact_absent_keeps_the_decision()
+	_test_pack_artifact_eligible_updates()
+	_test_pack_artifact_must_run_on_the_installed_shell()
+	_test_pack_artifact_must_speak_an_accepted_protocol()
+	_test_pack_artifact_must_read_the_installed_save()
+	_test_pack_artifact_must_read_its_own_writes()
+	_test_malformed_pack_artifact_refused()
 	_test_incoherent_shell_floor_refused()
 	_test_fractional_identifiers_refused()
 	_test_malformed_manifests_refuse_cleanly()
@@ -1067,6 +1092,97 @@ func _with(base: Dictionary, key: String, value: Variant) -> Dictionary:
 	var m := base.duplicate(true)
 	m[key] = value
 	return m
+
+
+# --- The candidate pack's own artifact (#901) ---
+# Each refusal is matched on its REASON as well as its action: several earlier
+# pack-safety branches also answer `invalid_manifest` or `shell_update`, and a case
+# that one of them answered would prove nothing about this check.
+
+func _test_pack_artifact_absent_keeps_the_decision() -> void:
+	# Every manifest the release pipeline emits today withholds `pack.full`, so its
+	# absence must decide exactly as before: a plain pack update.
+	var m := _base_manifest()
+	m["pack"]["version"] = "0.1.15"
+	_expect(_installed_current(), m, UpdateDecision.PACK_UPDATE, "a newer pack with no published artifact")
+
+
+func _test_pack_artifact_eligible_updates() -> void:
+	_expect(_installed_current(), _manifest_with_pack_artifact(_pack_artifact(1, 1)), UpdateDecision.PACK_UPDATE,
+		"a newer pack whose artifact runs here and reads the save")
+
+
+func _test_pack_artifact_must_run_on_the_installed_shell() -> void:
+	var artifact := _pack_artifact(1, 1)
+	artifact["shell_compat"] = {"min": "0.2.0", "max": "0.2.999"}
+	var m := _manifest_with_pack_artifact(artifact)
+	_expect_reason(_installed_current(), m, UpdateDecision.INVALID_MANIFEST, "runs on shells 0.2.0",
+		"a pack built for another shell, with no newer shell offered, is refused")
+	var routed := _manifest_with_pack_artifact(artifact.duplicate(true))
+	routed["shell"]["current"] = "0.2.0"
+	_expect_reason(_installed_current(), routed, UpdateDecision.SHELL_UPDATE, "runs on shells 0.2.0",
+		"a pack built for a newer shell rides that shell")
+
+
+func _test_pack_artifact_must_speak_an_accepted_protocol() -> void:
+	var artifact := _pack_artifact(1, 1)
+	artifact["speaks_protocol"] = {"min": 2, "max": 2}
+	_expect_reason(_installed_current(), _manifest_with_pack_artifact(artifact), UpdateDecision.INVALID_MANIFEST,
+		"speaks protocol 2–2", "a pack that speaks no protocol the live tier accepts is refused")
+
+
+func _test_pack_artifact_must_read_the_installed_save() -> void:
+	# The release writes schema 2 at capability 3, which the save already holds, so
+	# every earlier forward-only and rollback check passes; only the artifact's own
+	# read ceiling is wrong.
+	var inst := _installed_current()
+	inst["save_schema"] = 2
+	inst["save_capability"] = 3
+	var m := _manifest_with_pack_artifact(_pack_artifact(1, 3))
+	m["save_schema"] = {"min": 1, "writes": 2, "capability": 3}
+	_expect_reason(inst, m, UpdateDecision.INVALID_MANIFEST, "the installed save is schema 2",
+		"a pack that cannot read the save's schema is refused")
+	var short_capability := _manifest_with_pack_artifact(_pack_artifact(2, 2))
+	short_capability["save_schema"] = {"min": 1, "writes": 2, "capability": 3}
+	_expect_reason(inst, short_capability, UpdateDecision.INVALID_MANIFEST, "capability 3",
+		"a pack that cannot read the save's capability is refused")
+	var readable := _manifest_with_pack_artifact(_pack_artifact(2, 3))
+	readable["save_schema"] = {"min": 1, "writes": 2, "capability": 3}
+	_expect(inst, readable, UpdateDecision.PACK_UPDATE, "a pack that reads exactly what the save holds updates")
+
+
+func _test_pack_artifact_must_read_its_own_writes() -> void:
+	# It reads the save it finds (schema 1) but writes schema 2, which it cannot
+	# read back. The installed build could read it, so the rollback check alone
+	# would not object.
+	var inst := _installed_current()
+	inst["save_reads_max"] = 5
+	var m := _manifest_with_pack_artifact(_pack_artifact(1, 1))
+	m["save_schema"] = {"min": 1, "writes": 2, "capability": 1}
+	_expect_reason(inst, m, UpdateDecision.INVALID_MANIFEST, "could not read its own save",
+		"a pack that cannot read the schema it writes is refused")
+	var reads_back := _manifest_with_pack_artifact(_pack_artifact(2, 1))
+	reads_back["save_schema"] = {"min": 1, "writes": 2, "capability": 1}
+	_expect(inst, reads_back, UpdateDecision.PACK_UPDATE, "a pack that reads what it writes updates")
+
+
+func _test_malformed_pack_artifact_refused() -> void:
+	# Malformed is refused outright, never routed: a newer shell is offered here,
+	# and following an unprovable artifact anywhere would be trusting it.
+	for bad: Variant in ["x", {}, _pack_artifact(1, 1).merged({"speaks_protocol": {"min": 2, "max": 1}}, true)]:
+		var m := _manifest_with_pack_artifact(bad)
+		m["shell"]["current"] = "0.2.0"
+		_expect_reason(_installed_current(), m, UpdateDecision.INVALID_MANIFEST, "'pack.full'",
+			"a malformed pack artifact (%s) is refused, not routed" % [str(bad).left(40)])
+
+
+func _expect_reason(installed: Dictionary, manifest: Dictionary, want_action: String, needle: String, label: String) -> void:
+	if _failed:
+		return
+	var got: Dictionary = UpdateDecision.decide(installed, manifest)
+	if got.get("action") != want_action or not str(got.get("reason", "")).contains(needle):
+		_fail("%s — expected %s mentioning '%s', got %s (reason: %s)" % [
+			label, want_action, needle, got.get("action"), got.get("reason")])
 
 
 func _expect(installed: Dictionary, manifest: Dictionary, want_action: String, label: String) -> void:

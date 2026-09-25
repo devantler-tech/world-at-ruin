@@ -129,6 +129,13 @@ A client-side **update manager** that, at boot and periodically:
      state the candidate build can write** (else the step is shell-tier or an expand-contract migration
      where the old pack already reads the new data). The flow never downgrades below the save's schema
      and never deletes the save.
+   - **The candidate pack is judged by its own signed artifact.** When the manifest publishes
+     `pack.full`, `pack_update` is offered only if that artifact passes the same eligibility recovery
+     applies to a rollback target — it runs on the installed shell and speaks a protocol the live tier
+     accepts — and reads both the save it finds and the save it will write. Otherwise the step rides a
+     newer shell or is refused; a malformed artifact is always refused. A manifest that withholds
+     `pack.full`, as every manifest does until child 3 produces a pack, is decided on the release-wide
+     numbers alone (#901).
 
 This decision core is **pure, deterministic, and unit-testable** with no network or art — exactly like
 `Telegraph`/`Interactable`. It is the **first implementation increment**, because every correctness
