@@ -493,26 +493,23 @@ func _check_run_stride_is_longer() -> bool:
 		return false
 	# Same distance travelled, different gait: the run must have turned through
 	# LESS of its cycle, because each of its cycles covers more ground.
-	#
-	# 0.3 m is a quarter of the walk's cycle only by accident of arithmetic —
-	# what matters is that it lands the walk at 45 deg of phase, on the STEEP
-	# part of the sine. Sampling at the 90 deg peak instead makes this assertion
-	# vacuous: both gaits saturate at a normalised swing of 1.0, so equalising
-	# the strides changes nothing and the ablation passes. (It did.)
 	(walking["animator"] as Node).call("advance_motion", 6.0, true, false, 0.05)
 	(running["animator"] as Node).call("advance_motion", 6.0, true, true, 0.05)
-	var walk_swing := absf((_offset_angles(walking["skeleton"]))["thigh_l"] /
-		WalkLocomotion.THIGH_SWING_DEG)
-	var run_swing := absf((_offset_angles(running["skeleton"]))["thigh_l"] /
-		WalkLocomotion.RUN_THIGH_SWING_DEG)
+	# The phase itself, read from the driver. A thigh angle only says how far the
+	# gait has turned while the pose is a sine of phase, and even then it
+	# saturates at the swing's peak, where equal strides read as equal.
+	var walk_phase := float((walking["animator"] as Node).get("_phase"))
+	var run_phase := float((running["animator"] as Node).get("_phase"))
 	_free_subject(walking)
 	_free_subject(running)
-	# A margin, not `>=`: equal strides land both on the same normalised swing,
-	# and float dust alone would otherwise let that tie slip through as a pass.
-	if run_swing > walk_swing * MAX_RUN_PHASE_SHARE:
+	if walk_phase <= 0.0:
+		return _fail("the walk did not advance its phase over 0.3 m (%.4f rad)" % walk_phase)
+	# A margin, not `>=`: equal strides land both on the same phase, and float
+	# dust alone would otherwise let that tie slip through as a pass.
+	if run_phase > walk_phase * MAX_RUN_PHASE_SHARE:
 		return _fail(("the run advanced its phase nearly as fast as the walk over the same 0.3 m " +
-			"(normalised swing %.4f vs %.4f, over the %.2f share) — its stride is not longer") %
-			[run_swing, walk_swing, MAX_RUN_PHASE_SHARE])
+			"(%.4f vs %.4f rad, over the %.2f share) — its stride is not longer") %
+			[run_phase, walk_phase, MAX_RUN_PHASE_SHARE])
 	return true
 
 
@@ -613,10 +610,22 @@ func _same_pose(
 	for bone_name: String in DRIVEN_BONES:
 		var qa: Quaternion = a[bone_name]
 		var qb: Quaternion = b[bone_name]
-		if qa.angle_to(qb) > epsilon:
+		var apart := _angle_between(qa, qb)
+		if apart > epsilon:
 			return _fail("%s (%s differs by %.6f rad)" %
-				[message, bone_name, qa.angle_to(qb)]) if not message.is_empty() else false
+				[message, bone_name, apart]) if not message.is_empty() else false
 	return true
+
+
+## The angle between two rotations, exact near zero. `Quaternion.angle_to` works
+## from a dot product through `acos`, which cannot resolve an angle below about
+## 0.001 rad in single precision: a rotation whose length is one float step off
+## unit reads 0.001 rad from ITSELF. That floor sits a hundred times above
+## [constant POSE_EPSILON], so a comparison built on it can fail for a pose that
+## is bit-for-bit identical.
+func _angle_between(a: Quaternion, b: Quaternion) -> float:
+	var delta := a.inverse() * b
+	return 2.0 * atan2(Vector3(delta.x, delta.y, delta.z).length(), absf(delta.w))
 
 
 func _max_pose_delta_deg(a: Dictionary, b: Dictionary) -> float:
