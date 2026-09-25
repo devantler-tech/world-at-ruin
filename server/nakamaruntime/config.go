@@ -82,6 +82,7 @@ func readConfig(env map[string]string) (config, error) {
 		}
 	}
 	cfg.claims, err = readPrivateConfig(env)
+	cfg.claims.allocatorCA, cfg.claims.allocatorCert = cfg.allocatorCA, cfg.allocatorCert
 	return cfg, err
 }
 

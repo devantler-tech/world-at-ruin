@@ -3,15 +3,21 @@ package nakamaruntime
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
+	"encoding/pem"
 	"errors"
 	"maps"
+	"math/big"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -162,6 +168,97 @@ func TestPrivateListenerFailureStopsPublicAdmission(t *testing.T) {
 	}
 }
 
+// TestPrivateListenerRejectsUnusableOrSharedTrust catches a listener starting
+// with a trust root that cannot verify any workload, or with trust or a key it
+// shares with the allocator PKI.
+func TestPrivateListenerRejectsUnusableOrSharedTrust(t *testing.T) {
+	f := newListenerFixture(t)
+	serverCfg, _, _ := certificateFixture(t, t.TempDir())
+	for name, mutate := range map[string]func(map[string]string){
+		"valid": func(map[string]string) {},
+		"expired root": func(env map[string]string) {
+			env["WAR_HANDOFF_CLAIMS_CA_FILE"] = rootFixture(t, time.Now().Add(-2*time.Hour), time.Now().Add(-time.Hour), true)
+		},
+		"future root": func(env map[string]string) {
+			env["WAR_HANDOFF_CLAIMS_CA_FILE"] = rootFixture(t, time.Now().Add(time.Hour), time.Now().Add(2*time.Hour), true)
+		},
+		"non-CA root": func(env map[string]string) {
+			env["WAR_HANDOFF_CLAIMS_CA_FILE"] = rootFixture(t, time.Now().Add(-time.Hour), time.Now().Add(time.Hour), false)
+		},
+		"expired root in bundle": func(env map[string]string) {
+			valid, err := os.ReadFile(env["WAR_HANDOFF_CLAIMS_CA_FILE"])
+			if err != nil {
+				t.Fatal(err)
+			}
+			expired, err := os.ReadFile(rootFixture(t, time.Now().Add(-2*time.Hour), time.Now().Add(-time.Hour), true))
+			if err != nil {
+				t.Fatal(err)
+			}
+			env["WAR_HANDOFF_CLAIMS_CA_FILE"] = writeMaterial(t, t.TempDir(), "bundle.pem", append(valid, expired...))
+		},
+		"allocator root": func(env map[string]string) {
+			env["WAR_HANDOFF_CLAIMS_CA_FILE"] = env["WAR_HANDOFF_ALLOCATOR_CA_FILE"]
+		},
+		"allocator root in bundle": func(env map[string]string) {
+			workload, err := os.ReadFile(env["WAR_HANDOFF_CLAIMS_CA_FILE"])
+			if err != nil {
+				t.Fatal(err)
+			}
+			allocator, err := os.ReadFile(env["WAR_HANDOFF_ALLOCATOR_CA_FILE"])
+			if err != nil {
+				t.Fatal(err)
+			}
+			env["WAR_HANDOFF_CLAIMS_CA_FILE"] = writeMaterial(t, t.TempDir(), "bundle.pem", append(workload, allocator...))
+		},
+		"allocator key": func(env map[string]string) {
+			env["WAR_HANDOFF_ALLOCATOR_CERT_FILE"] = env["WAR_HANDOFF_CLAIMS_CERT_FILE"]
+			env["WAR_HANDOFF_ALLOCATOR_KEY_FILE"] = env["WAR_HANDOFF_CLAIMS_KEY_FILE"]
+			env["WAR_HANDOFF_ALLOCATOR_CA_FILE"] = serverCfg.allocatorCA
+		},
+		"unreadable allocator root": func(env map[string]string) {
+			env["WAR_HANDOFF_ALLOCATOR_CA_FILE"] = "/private-missing-allocator-root"
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			env := maps.Clone(f.env)
+			mutate(env)
+			cfg, err := readConfig(env)
+			if err != nil {
+				t.Fatal(err)
+			}
+			private, err := preparePrivateListener(cfg.claims, t.Context(), &handlerGate{}, http.NotFoundHandler())
+			if name == "valid" {
+				if err != nil {
+					t.Fatalf("valid separate trust rejected: %v", err)
+				}
+				_ = private.listener.Close()
+				return
+			}
+			if !errors.Is(err, errMaterial) {
+				if private != nil {
+					_ = private.listener.Close()
+				}
+				t.Fatalf("listener accepted %s: %v", name, err)
+			}
+		})
+	}
+}
+
+// rootFixture writes a self-signed root with the given validity window.
+func rootFixture(t *testing.T, notBefore, notAfter time.Time, isCA bool) string {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := &x509.Certificate{SerialNumber: big.NewInt(1), NotBefore: notBefore, NotAfter: notAfter, IsCA: isCA, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign}
+	der, err := x509.CreateCertificate(rand.Reader, root, root, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return writeMaterial(t, t.TempDir(), "root.pem", pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+}
+
 // TestPrivateListenerBoundsConnections catches unbounded TLS admission; releasing
 // one admitted connection must permit the next verified workload to connect.
 func TestPrivateListenerBoundsConnections(t *testing.T) {
@@ -235,6 +332,11 @@ func newListenerFixture(t *testing.T) listenerFixture {
 	env["WAR_HANDOFF_CLAIMS_KEY_FILE"] = serverCfg.allocatorKey
 	env["WAR_HANDOFF_CLAIMS_CA_FILE"] = workloadCfg.allocatorCA
 	env["WAR_HANDOFF_CLAIMS_TRUST_DOMAIN"] = "claims.example"
+	// The listener checks separation from real allocator credentials.
+	allocatorCfg, _, _ := certificateFixture(t, t.TempDir())
+	env["WAR_HANDOFF_ALLOCATOR_CA_FILE"] = allocatorCfg.allocatorCA
+	env["WAR_HANDOFF_ALLOCATOR_CERT_FILE"] = allocatorCfg.allocatorCert
+	env["WAR_HANDOFF_ALLOCATOR_KEY_FILE"] = allocatorCfg.allocatorKey
 	key, err := rsa.GenerateKey(rand.Reader, 3072)
 	if err != nil {
 		t.Fatal(err)

@@ -1,9 +1,11 @@
 package nakamaruntime
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"io"
 	"log"
@@ -20,6 +22,9 @@ import (
 type privateConfig struct {
 	enabled                             bool
 	address, ca, cert, key, trustDomain string
+	// allocatorCA and allocatorCert are the allocator credentials the claim
+	// listener must never share trust or keys with.
+	allocatorCA, allocatorCert string
 }
 
 // readPrivateConfig requires a deliberate address and dedicated credentials.
@@ -60,12 +65,30 @@ func readPrivateConfig(env map[string]string) (privateConfig, error) {
 // privateTLS loads bounded projected files before binding any socket. The roots
 // authorize workload clients only; allocator trust and credentials stay separate.
 func privateTLS(cfg privateConfig) (*tls.Config, error) {
+	now := time.Now()
 	ca, err := readMaterial(cfg.ca)
 	if err != nil {
 		return nil, errMaterial
 	}
+	roots, err := parseCertificates(ca)
+	if err != nil {
+		return nil, errMaterial
+	}
 	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(ca) {
+	for _, root := range roots {
+		// A stale or not-yet-valid root would start a listener that rejects every
+		// workload, so it fails startup and the module rolls back instead.
+		if !root.IsCA || now.Before(root.NotBefore) || !now.Before(root.NotAfter) {
+			return nil, errMaterial
+		}
+		pool.AddCert(root)
+	}
+	allocatorCA, err := readMaterial(cfg.allocatorCA)
+	if err != nil {
+		return nil, errMaterial
+	}
+	allocatorRoots, err := parseCertificates(allocatorCA)
+	if err != nil || sharesKey(roots, allocatorRoots) {
 		return nil, errMaterial
 	}
 	cert, err := readMaterial(cfg.cert)
@@ -81,13 +104,60 @@ func privateTLS(cfg privateConfig) (*tls.Config, error) {
 		return nil, errMaterial
 	}
 	leaf, err := x509.ParseCertificate(pair.Certificate[0])
-	if err != nil || time.Now().Before(leaf.NotBefore) || !time.Now().Before(leaf.NotAfter) {
+	if err != nil || now.Before(leaf.NotBefore) || !now.Before(leaf.NotAfter) {
+		return nil, errMaterial
+	}
+	allocatorCert, err := readMaterial(cfg.allocatorCert)
+	if err != nil {
+		return nil, errMaterial
+	}
+	allocatorLeaves, err := parseCertificates(allocatorCert)
+	if err != nil || sharesKey([]*x509.Certificate{leaf}, allocatorLeaves[:1]) {
 		return nil, errMaterial
 	}
 	if len(leaf.DNSNames)+len(leaf.IPAddresses) == 0 || len(leaf.ExtKeyUsage) > 0 && !slices.Contains(leaf.ExtKeyUsage, x509.ExtKeyUsageServerAuth) && !slices.Contains(leaf.ExtKeyUsage, x509.ExtKeyUsageAny) {
 		return nil, errMaterial
 	}
 	return &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{pair}, ClientCAs: pool, ClientAuth: tls.RequireAndVerifyClientCert, NextProtos: []string{"http/1.1"}}, nil
+}
+
+// parseCertificates decodes every certificate in a PEM bundle. Unlike a cert
+// pool it rejects a bundle holding an unparsable certificate or none at all.
+func parseCertificates(bundle []byte) ([]*x509.Certificate, error) {
+	var certificates []*x509.Certificate
+	for rest := bundle; ; {
+		var block *pem.Block
+		block, rest = pem.Decode(rest)
+		if block == nil {
+			break
+		}
+		if block.Type != "CERTIFICATE" {
+			continue
+		}
+		certificate, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return nil, errMaterial
+		}
+		certificates = append(certificates, certificate)
+	}
+	if len(certificates) == 0 {
+		return nil, errMaterial
+	}
+	return certificates, nil
+}
+
+// sharesKey reports whether any certificate in a uses a public key from b. The
+// claim listener keeps its own trust anchors and key, so allocator PKI
+// misissuance can never authenticate to durable lease ownership.
+func sharesKey(a, b []*x509.Certificate) bool {
+	for _, left := range a {
+		for _, right := range b {
+			if bytes.Equal(left.RawSubjectPublicKeyInfo, right.RawSubjectPublicKeyInfo) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 type privateListener struct {
