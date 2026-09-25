@@ -15,6 +15,7 @@ import (
 	"encoding/base64"
 	"encoding/pem"
 	"errors"
+	"io"
 	"maps"
 	"math/big"
 	"net"
@@ -233,28 +234,51 @@ func TestPrivateListenerRejectsUnusableOrSharedTrust(t *testing.T) {
 		"root restricted to an unknown purpose": func(env map[string]string) {
 			env["WAR_HANDOFF_CLAIMS_CA_FILE"] = rootFixtureWithUsages(t, nil, []asn1.ObjectIdentifier{{1, 3, 6, 1, 4, 1, 99999, 1}})
 		},
-		// Zone clients reject a served chain carrying an expired certificate.
-		"expired certificate in server chain": func(env map[string]string) {
-			chain, err := os.ReadFile(env["WAR_HANDOFF_CLAIMS_CERT_FILE"])
+		// Zone clients verify the served chain as a path, so an expired issuer, the
+		// wrong issuer, or an issuer that may not sign certificates breaks it.
+		"expired issuer in server chain": func(env map[string]string) {
+			env["WAR_HANDOFF_CLAIMS_CERT_FILE"], env["WAR_HANDOFF_CLAIMS_KEY_FILE"] = servedChainFixture(t, chainOptions{issuerNotAfter: time.Now().Add(-time.Hour), issuerIsCA: true})
+		},
+		"server chain serving the wrong issuer": func(env map[string]string) {
+			env["WAR_HANDOFF_CLAIMS_CERT_FILE"], env["WAR_HANDOFF_CLAIMS_KEY_FILE"] = servedChainFixture(t, chainOptions{issuerNotAfter: time.Now().Add(time.Hour), issuerIsCA: true, serveOther: true})
+		},
+		"server chain issued by a non-CA": func(env map[string]string) {
+			env["WAR_HANDOFF_CLAIMS_CERT_FILE"], env["WAR_HANDOFF_CLAIMS_KEY_FILE"] = servedChainFixture(t, chainOptions{issuerNotAfter: time.Now().Add(time.Hour)})
+		},
+		// A truncated root must not silently drop out of workload trust.
+		"truncated root after a valid one": func(env map[string]string) {
+			valid, err := os.ReadFile(env["WAR_HANDOFF_CLAIMS_CA_FILE"])
 			if err != nil {
 				t.Fatal(err)
 			}
-			expired, err := os.ReadFile(rootFixture(t, time.Now().Add(-2*time.Hour), time.Now().Add(-time.Hour), true))
+			truncated := []byte("-----BEGIN CERTIFICATE-----\nMIIBkTCCATegAwIBAgIBATAKBggqhkjOPQQDAjAAMB4XDTI2\n")
+			env["WAR_HANDOFF_CLAIMS_CA_FILE"] = writeMaterial(t, t.TempDir(), "bundle.pem", append(valid, truncated...))
+		},
+		// Neither role's key may appear in the other role's material.
+		"server key shared with an allocator root": func(env map[string]string) {
+			env["WAR_HANDOFF_ALLOCATOR_CA_FILE"] = rootFixtureWithKey(t, pairSigner(t, env["WAR_HANDOFF_CLAIMS_CERT_FILE"], env["WAR_HANDOFF_CLAIMS_KEY_FILE"]), x509.KeyUsageCertSign)
+		},
+		"claims root shared with an allocator certificate key": func(env map[string]string) {
+			key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 			if err != nil {
 				t.Fatal(err)
 			}
-			env["WAR_HANDOFF_CLAIMS_CERT_FILE"] = writeMaterial(t, t.TempDir(), "chain.pem", append(chain, expired...))
+			// The fixture allocator certificate shares its root's key, so it is
+			// replaced by one with a distinct key; only the cross-role reuse remains.
+			env["WAR_HANDOFF_ALLOCATOR_CERT_FILE"] = rootFixtureWithKey(t, key, x509.KeyUsageDigitalSignature)
+			workload, err := os.ReadFile(env["WAR_HANDOFF_CLAIMS_CA_FILE"])
+			if err != nil {
+				t.Fatal(err)
+			}
+			shared, err := os.ReadFile(rootFixtureWithKey(t, key, x509.KeyUsageCertSign))
+			if err != nil {
+				t.Fatal(err)
+			}
+			env["WAR_HANDOFF_CLAIMS_CA_FILE"] = writeMaterial(t, t.TempDir(), "bundle.pem", append(workload, shared...))
 		},
 		// A leaked HTTPS key must not also be able to issue workload certificates.
 		"server key shared with a claims root": func(env map[string]string) {
-			pair, err := tls.LoadX509KeyPair(env["WAR_HANDOFF_CLAIMS_CERT_FILE"], env["WAR_HANDOFF_CLAIMS_KEY_FILE"])
-			if err != nil {
-				t.Fatal(err)
-			}
-			signer, ok := pair.PrivateKey.(crypto.Signer)
-			if !ok {
-				t.Fatal("server key cannot sign")
-			}
+			signer := pairSigner(t, env["WAR_HANDOFF_CLAIMS_CERT_FILE"], env["WAR_HANDOFF_CLAIMS_KEY_FILE"])
 			workload, err := os.ReadFile(env["WAR_HANDOFF_CLAIMS_CA_FILE"])
 			if err != nil {
 				t.Fatal(err)
@@ -382,6 +406,106 @@ func rootFixtureWithUsages(t *testing.T, usages []x509.ExtKeyUsage, unknown []as
 	return writeMaterial(t, t.TempDir(), "root.pem", pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
 }
 
+// TestPrivateListenerAcceptsUsableMaterial pins the stricter startup checks to
+// their failure cases: an ordered chain and harmless trailing whitespace start.
+func TestPrivateListenerAcceptsUsableMaterial(t *testing.T) {
+	f := newListenerFixture(t)
+	for name, mutate := range map[string]func(map[string]string){
+		"server leaf served with the intermediate that issued it": func(env map[string]string) {
+			env["WAR_HANDOFF_CLAIMS_CERT_FILE"], env["WAR_HANDOFF_CLAIMS_KEY_FILE"] = servedChainFixture(t, chainOptions{issuerNotAfter: time.Now().Add(time.Hour), issuerIsCA: true})
+		},
+		"root bundle ending in blank lines": func(env map[string]string) {
+			valid, err := os.ReadFile(env["WAR_HANDOFF_CLAIMS_CA_FILE"])
+			if err != nil {
+				t.Fatal(err)
+			}
+			env["WAR_HANDOFF_CLAIMS_CA_FILE"] = writeMaterial(t, t.TempDir(), "bundle.pem", append(valid, "\n \n\t\n"...))
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			env := maps.Clone(f.env)
+			mutate(env)
+			cfg, err := readConfig(env)
+			if err != nil {
+				t.Fatal(err)
+			}
+			private, err := preparePrivateListener(cfg.claims, t.Context(), &handlerGate{}, http.NotFoundHandler())
+			if err != nil {
+				t.Fatalf("usable material rejected: %v", err)
+			}
+			_ = private.listener.Close()
+		})
+	}
+}
+
+// pairSigner returns the private key of a certificate and key file pair.
+func pairSigner(t *testing.T, certFile, keyFile string) crypto.Signer {
+	t.Helper()
+	pair, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, ok := pair.PrivateKey.(crypto.Signer)
+	if !ok {
+		t.Fatal("key cannot sign")
+	}
+	return signer
+}
+
+type chainOptions struct {
+	issuerNotAfter time.Time
+	issuerIsCA     bool
+	// serveOther serves an unrelated, valid CA in place of the real issuer.
+	serveOther bool
+}
+
+// servedChainFixture writes a server leaf and its key, served as a two-certificate
+// chain with the intermediate that issued it or, with serveOther, a different one.
+func servedChainFixture(t *testing.T, opts chainOptions) (certFile, keyFile string) {
+	t.Helper()
+	issuer := func(isCA bool, notAfter time.Time) (*x509.Certificate, *ecdsa.PrivateKey) {
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		template := &x509.Certificate{SerialNumber: big.NewInt(4), NotBefore: notAfter.Add(-2 * time.Hour), NotAfter: notAfter, IsCA: isCA, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign}
+		if !isCA {
+			template.KeyUsage = x509.KeyUsageDigitalSignature
+		}
+		der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parsed, err := x509.ParseCertificate(der)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return parsed, key
+	}
+	parent, parentKey := issuer(opts.issuerIsCA, opts.issuerNotAfter)
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaf := &x509.Certificate{SerialNumber: big.NewInt(5), DNSNames: []string{"localhost"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
+		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+	leafDER, err := x509.CreateCertificate(rand.Reader, leaf, parent, &key.PublicKey, parentKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	served := parent
+	if opts.serveOther {
+		served, _ = issuer(true, time.Now().Add(time.Hour))
+	}
+	chain := append(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leafDER}), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: served.Raw})...)
+	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	return writeMaterial(t, dir, "chain.pem", chain), writeMaterial(t, dir, "chain-key.pem", pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}))
+}
+
 // rootFixtureWithKey writes a currently valid self-signed CA with the given key
 // usage, signed by signer, or by a fresh key when signer is nil.
 func rootFixtureWithKey(t *testing.T, signer crypto.Signer, usage x509.KeyUsage) string {
@@ -441,6 +565,38 @@ func TestPrivateListenerBoundsConnections(t *testing.T) {
 		t.Fatalf("released connection did not restore capacity: %v", err)
 	}
 	_ = replacement.Close()
+}
+
+// TestPrivateListenerIdleClientsDoNotHoldTheBudget catches kept-alive idle
+// connections occupying the connection budget: every zone process keeps its own
+// client, so more zones than slots must still each complete a request promptly.
+func TestPrivateListenerIdleClientsDoNotHoldTheBudget(t *testing.T) {
+	f := newListenerFixture(t)
+	r := &registration{}
+	if err := initialize(environmentContext(f.env), f.storage, r, func(config) (dependencies, error) { return f.deps, nil }); err != nil {
+		t.Fatal(err)
+	}
+	defer r.shutdown(context.Background(), nil, nil, f.storage)
+	url := "https://" + f.env["WAR_HANDOFF_CLAIMS_ADDRESS"] + "/v1/claim"
+	var transports []*http.Transport
+	defer func() {
+		for _, transport := range transports {
+			transport.CloseIdleConnections()
+		}
+	}()
+	for zone := range 65 {
+		// A default transport keeps its connection idle for reuse, as a zone's
+		// long-lived claim client does.
+		transport := &http.Transport{TLSClientConfig: f.tls.Clone()}
+		transports = append(transports, transport)
+		client := &http.Client{Transport: transport, Timeout: 2 * time.Second}
+		response, err := client.Post(url, "application/json", strings.NewReader("{}"))
+		if err != nil {
+			t.Fatalf("zone %d could not reach the listener: %v", zone+1, err)
+		}
+		_, _ = io.Copy(io.Discard, response.Body)
+		_ = response.Body.Close()
+	}
 }
 
 type listenerFixture struct {

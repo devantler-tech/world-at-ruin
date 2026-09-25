@@ -14,8 +14,9 @@ store and pinned Agones resource resolver as allocation. No claim RPC is public.
 Initialization validates bounded credential material and reserves the explicit
 bind address before registering public handoff admission. Serving starts only
 after all runtime registrations succeed; every startup failure releases the
-socket and dependency transports. Connections, headers, reads, writes and idle
-time are bounded independently of the claim handler's body and storage deadline.
+socket and dependency transports. Connections, headers, reads and writes are
+bounded independently of the claim handler's body and storage deadline, and each
+connection closes after its response, so idle clients never hold the budget.
 
 The module lifetime owns both private and public admission. Shutdown closes new
 admission, cancels active claims and drains handlers before retiring dependencies,

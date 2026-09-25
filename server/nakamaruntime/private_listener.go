@@ -90,7 +90,7 @@ func privateTLS(cfg privateConfig) (*tls.Config, error) {
 		return nil, errMaterial
 	}
 	allocatorRoots, err := parseCertificates(allocatorCA)
-	if err != nil || sharesKey(roots, allocatorRoots) {
+	if err != nil {
 		return nil, errMaterial
 	}
 	cert, err := readMaterial(cfg.cert)
@@ -105,12 +105,17 @@ func privateTLS(cfg privateConfig) (*tls.Config, error) {
 	if err != nil {
 		return nil, errMaterial
 	}
-	// Zone clients reject the whole served chain if any certificate in it is
-	// unusable, so every one is checked, not only the leaf.
+	// The served chain must be the path zone clients verify: each certificate is
+	// issued by the one after it, and every one is currently valid. A chain that
+	// serves the wrong intermediate or an expired one would start a listener that
+	// no zone can reach.
 	chain := make([]*x509.Certificate, 0, len(pair.Certificate))
 	for _, der := range pair.Certificate {
 		certificate, err := x509.ParseCertificate(der)
 		if err != nil || !currentlyValid(certificate, now) {
+			return nil, errMaterial
+		}
+		if len(chain) > 0 && chain[len(chain)-1].CheckSignatureFrom(certificate) != nil {
 			return nil, errMaterial
 		}
 		chain = append(chain, certificate)
@@ -121,9 +126,12 @@ func privateTLS(cfg privateConfig) (*tls.Config, error) {
 		return nil, errMaterial
 	}
 	allocatorLeaves, err := parseCertificates(allocatorCert)
-	// The server key is ordinary HTTPS material, so it may belong to neither the
-	// allocator nor any root that authorizes workload identities.
-	if err != nil || sharesKey([]*x509.Certificate{leaf}, allocatorLeaves[:1]) || sharesKey([]*x509.Certificate{leaf}, roots) {
+	// Claims material and allocator material share no key in either direction: a
+	// leaked server key must not mint allocator credentials or workload identities,
+	// and a leaked allocator key must not mint workload identities. The server key
+	// is also no workload root, so it cannot issue the identities it admits.
+	claimsKeys := append(slices.Clone(roots), leaf)
+	if err != nil || sharesKey(claimsKeys, slices.Concat(allocatorRoots, allocatorLeaves)) || sharesKey([]*x509.Certificate{leaf}, roots) {
 		return nil, errMaterial
 	}
 	if len(leaf.DNSNames)+len(leaf.IPAddresses) == 0 || len(leaf.ExtKeyUsage) > 0 && !slices.Contains(leaf.ExtKeyUsage, x509.ExtKeyUsageServerAuth) && !slices.Contains(leaf.ExtKeyUsage, x509.ExtKeyUsageAny) {
@@ -133,13 +141,18 @@ func privateTLS(cfg privateConfig) (*tls.Config, error) {
 }
 
 // parseCertificates decodes every certificate in a PEM bundle. Unlike a cert
-// pool it rejects a bundle holding an unparsable certificate or none at all.
+// pool it rejects a bundle holding an unparsable certificate, none at all, or a
+// remainder that is not whitespace, such as a truncated block, so a corrupt root
+// cannot silently drop out of trust.
 func parseCertificates(bundle []byte) ([]*x509.Certificate, error) {
 	var certificates []*x509.Certificate
 	for rest := bundle; ; {
 		var block *pem.Block
 		block, rest = pem.Decode(rest)
 		if block == nil {
+			if len(bytes.TrimSpace(rest)) > 0 {
+				return nil, errMaterial
+			}
 			break
 		}
 		if block.Type != "CERTIFICATE" {
@@ -209,7 +222,7 @@ func preparePrivateListener(cfg privateConfig, life context.Context, gate *handl
 		return nil, errors.New("nakama handoff: private listener unavailable")
 	}
 	server := &http.Server{
-		TLSConfig: config, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 8 * 1024,
+		TLSConfig: config, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second, MaxHeaderBytes: 8 * 1024,
 		// Keep one active request per bounded connection rather than enabling an
 		// independently multiplexed HTTP/2 stream budget on this private surface.
 		TLSNextProto: map[string]func(*http.Server, *tls.Conn, http.Handler){},
@@ -224,6 +237,11 @@ func preparePrivateListener(cfg privateConfig, life context.Context, gate *handl
 			handler.ServeHTTP(w, r)
 		}),
 	}
+	// Each zone process keeps its own claim client, so an idle kept-alive
+	// connection could never be reused by another zone and would hold one of the
+	// 64 slots until it timed out. Closing every connection after its response
+	// makes the budget count handshakes and active claims, never idle sockets.
+	server.SetKeepAlivesEnabled(false)
 	return &privateListener{listener: netutil.LimitListener(listener, 64), server: server, done: make(chan struct{})}, nil
 }
 

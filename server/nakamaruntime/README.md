@@ -88,7 +88,11 @@ bound. The enclosing module's disabled state ignores these settings entirely.
 | `WAR_HANDOFF_CLAIMS_CA_FILE` | Absolute PEM path to dedicated workload client trust roots. These are separate from allocator trust. |
 | `WAR_HANDOFF_CLAIMS_TRUST_DOMAIN` | Trust domain for the existing exact `spiffe://<domain>/zone/<namespace>/<uid>` workload identity. |
 
-Each material file is capped at 1 MiB. The certificate must be currently valid.
+Each material file is capped at 1 MiB, and a PEM bundle whose remainder is not
+whitespace, such as a truncated block, is refused. The server chain must be served
+in order, each certificate issued by the next, and every certificate must be
+currently valid. Claims material shares no key with allocator roots or
+certificates in either direction, and the server key is not a workload root.
 Initialization reserves the socket before registering `war_handoff` and begins
 serving only after shutdown registration succeeds. Every initialization failure
 releases the listener and acquired transports. The listener is HTTPS only,
@@ -97,8 +101,9 @@ contract. Claim and session-end operations are never registered as public RPCs.
 
 The listener permits at most 64 connected clients, uses HTTP/1.1 without stream
 multiplexing, sets an 8 KiB header limit (plus the HTTP server's framing allowance),
-five-second header/read/write and claim deadlines, and a thirty-second idle
-timeout. Claim bodies remain capped at 4096 bytes. The same lease store and pinned
+and five-second header/read/write and claim deadlines. It closes each connection
+after its response, so idle zone clients never hold one of the 64 slots. Claim
+bodies remain capped at 4096 bytes. The same lease store and pinned
 Agones resolver used by allocation independently verify the claim and persist
 ownership before success. Lost responses retain the claim for an exact replay.
 
