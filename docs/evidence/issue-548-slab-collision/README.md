@@ -52,7 +52,7 @@ walking and sprinting — 262 walks per setting, headless:
 | Step | Stalled | 90° | 45° | 25° |
 |---|---|---|---|---|
 | none | 110 of 262 (42.0%) | 43/88 | 37/94 | 30/80 |
-| the world's 0.24 m | 12 of 262 (4.6%) | 0/88 | 6/94 | 6/80 |
+| the world's 0.24 m | 13 of 262 (5.0%) | 0/88 | 6/94 | 7/80 |
 
 Every head-on approach now steps up. The remaining stalls are all angled (45° and 25°), and the
 cases traced were up a grade: the lifted stride lands on the lip edge steeper than the floor limit,
