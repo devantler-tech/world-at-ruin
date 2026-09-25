@@ -63,14 +63,14 @@ func _ready() -> void:
 		return
 
 	# NOTE — deliberately NOT asserted: that `DevLog.VERSION` equals the newest
-	# entry. They are meant to differ. `AGENTS.md` has an entry carry "the version
-	# the change will ship in (the next semantic-release bump implied by your
-	# commit type)" and says **do NOT hand-edit `DevLog.VERSION`**, because
-	# `cd.yaml` stamps it from the release tag at build time — the in-tree value is
-	# only a dev placeholder. So the top entry legitimately runs AHEAD of it, and a
-	# guard demanding equality would pass today by coincidence and then fail the
-	# next player-visible PR that follows the documented workflow, pushing authors
-	# to hand-edit exactly the constant the contract forbids touching.
+	# entry. They are meant to differ. `AGENTS.md` has a new entry carry "next"
+	# until the release build stamps it, and says **do NOT hand-edit
+	# `DevLog.VERSION`**, because `cd.yaml` stamps that from the release tag at
+	# build time — the in-tree value is only a dev placeholder. So the top entry
+	# legitimately runs AHEAD of it, and a guard demanding equality would pass
+	# today by coincidence and then fail the next player-visible PR that follows
+	# the documented workflow, pushing authors to hand-edit exactly the constant
+	# the contract forbids touching.
 
 	var newest: String = entries[0]["version"]
 	print("TEST PASS — dev log holds (%d entries, %s down to %s: unique versions, strictly newest-first by numeric compare, all well-formed; placeholder entries order and validate)"

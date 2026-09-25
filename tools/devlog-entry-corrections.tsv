@@ -1,18 +1,16 @@
-# Dev-log entries whose version is verified by CONTAINMENT rather than by being
-# ahead of every release.
+# Dev-log entries a change may add with a released version, each verified by
+# CONTAINMENT.
 #
-# tools/devlog-entry-version-guard.sh checks that a newly added entry names a
-# build that has not shipped yet. That is the right rule for an authored entry,
-# whose version is a prediction. It is the wrong rule for CORRECTING an entry
-# that is already on main and already carries the wrong number: the fix gives it
-# the number of a release that has necessarily already happened, which the
-# forward-looking rule refuses.
+# tools/devlog-entry-version-guard.sh requires a newly added entry to carry
+# "next", which the release build stamps. That is the rule for an authored
+# entry. CORRECTING an entry that is already on main and carries the wrong
+# number is the exception: the fix names a release that has necessarily already
+# happened.
 #
-# An entry listed here is measured against the stronger property instead — the
-# release it names must be the FIRST release containing the commit the entry
+# An entry listed here is measured against the property the stamp itself uses —
+# the release it names must be the FIRST release containing the commit the entry
 # describes. That is proven from the tags, not asserted, so a listing cannot
-# wave a wrong number through; it can only substitute one machine-checked proof
-# for another. Anything not listed here keeps the forward-looking rule untouched.
+# wave a wrong number through. Anything not listed here must carry "next".
 #
 # The anchor is the commit whose change the entry describes, NOT the commit that
 # added the entry file: every entry file's add-commit is the one-file-per-entry

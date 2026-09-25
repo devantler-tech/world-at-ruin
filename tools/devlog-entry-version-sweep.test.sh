@@ -25,6 +25,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SWEEP="$ROOT/tools/devlog-entry-version-sweep.sh"
 GUARD="$ROOT/tools/devlog-entry-version-guard.sh"
 RESOLVER="$ROOT/tools/pr-diff-base.sh"
+STAMP="$ROOT/tools/devlog-stamp.sh"
 WORKFLOW="$ROOT/.github/workflows/ci.yaml"
 
 failures=0
@@ -371,6 +372,74 @@ entry 0.1.0 >"$d/client/devlog/0.1.0.json"
 step "$d" 'the same correction, unlisted' v0.2.0
 expect_gate_fail 'the same entry without its listing' "$d" \
 	'The SHIPPED column above'
+
+# --- Placeholder entries --------------------------------------------------
+# An entry authored as "next" names no release: the release build stamps it from
+# the commit that added its FILE (tools/devlog-stamp.sh). Every placeholder
+# carries the same version string, so the string anchor above would date them all
+# by whichever was added first; each has to be anchored by its own file.
+
+# GREEN, and the case that pins per-file anchoring. Two placeholders reach
+# players in different releases, one of them behind a pre-release tag and a tag
+# that is not a version, and the first is later renamed without an edit — the
+# one move the stamp follows back. Each row must carry its own anchor and its own
+# release; a string anchor would give the second the first's v0.2.0.
+d="$(new_repo)"
+cp "$STAMP" "$d/tools/"
+printf 'x\n' >"$d/base.txt"
+step "$d" base v0.1.0
+entry next >"$d/client/devlog/ash-settles.json"
+step "$d" 'the first placeholder' v0.2.0
+first_anchor="$(git -C "$d" rev-parse --short HEAD)"
+entry next | sed 's/catch the light/catch the evening light/' >"$d/client/devlog/stone-holds.json"
+step "$d" 'the second placeholder' v0.3.0-rc.1
+second_anchor="$(git -C "$d" rev-parse --short HEAD)"
+git -C "$d" tag vendor-snapshot
+printf 'y\n' >"$d/release.txt"
+step "$d" 'the release that carries the second' v0.3.0
+git -C "$d" mv client/devlog/ash-settles.json client/devlog/ash-drifts.json
+step "$d" 'rename the first, bytes untouched' v0.4.0
+out="$(run_sweep "$d" --gate)" && rc=0 || rc=$?
+[ "$rc" -eq 0 ] || t_fail "placeholders failed the gate (rc=$rc): $out"
+expect_row 'a renamed placeholder keeps its original add and release' "$out" \
+	"^ash-drifts +${first_anchor} +0\\.2\\.0 +PLACEHOLDER\$"
+expect_row 'a later placeholder is dated by its own file, past a pre-release tag' "$out" \
+	"^stone-holds +${second_anchor} +0\\.3\\.0 +PLACEHOLDER\$"
+expect_output_matching 'placeholders are not counted as naming a release' "$out" \
+	'0 of 0 entries name a release that does not contain them.'
+expect_output_matching 'placeholders are counted' "$out" '2 "next" placeholder(s) name no release'
+
+# EQUIVALENCE: the sweep's SHIPPED column is what the release build will stamp.
+# Two copies of the question — the stamp standalone, the sweep through the
+# guard's containment index — held together here on the same history.
+(cd "$d" && bash tools/devlog-stamp.sh >/dev/null 2>&1) ||
+	t_fail 'the stamp could not run on the placeholder fixture'
+for name in ash-drifts stone-holds; do
+	stamped="$(jq -r '.version' "$d/client/devlog/$name.json")"
+	shipped="$(awk -v n="$name" '$1 == n && $4 == "PLACEHOLDER" { print $3 }' <<<"$out")"
+	if [ -z "$shipped" ] || [ "$stamped" != "$shipped" ]; then
+		t_fail "the sweep says $name ships in '${shipped}' but the release build stamps '${stamped}'"
+	fi
+done
+
+# GREEN: a placeholder no release contains yet is every open PR's own entry.
+d="$(new_repo)"
+printf 'x\n' >"$d/base.txt"
+step "$d" base v0.1.0
+entry next >"$d/client/devlog/ash-settles.json"
+step "$d" 'a placeholder after the last release'
+unreleased_anchor="$(git -C "$d" rev-parse --short HEAD)"
+expect_gate_pass 'an unreleased placeholder' "$d"
+expect_row 'an unreleased placeholder has no SHIPPED release' "$(run_sweep "$d")" \
+	"^ash-settles +${unreleased_anchor} +- +PLACEHOLDER\$"
+
+# RED: a placeholder with no commit behind it has no release to be stamped with,
+# and "could not evaluate" must not read as "passed".
+d="$(new_repo)"
+printf 'x\n' >"$d/base.txt"
+step "$d" base v0.1.0
+entry next >"$d/client/devlog/ash-settles.json"
+expect_gate_fail 'a placeholder that was never committed' "$d" 'could not be anchored'
 
 # --- Mode separation ------------------------------------------------------
 # The survey must stay a survey. It is run by hand to read the whole picture,
