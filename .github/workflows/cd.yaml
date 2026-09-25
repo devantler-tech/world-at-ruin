@@ -88,6 +88,10 @@ jobs:
           # CD would build the BRANCH while attaching the asset to the tag's
           # release.
           ref: refs/tags/${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+          # Full history and every tag: stamping a dev-log entry's version asks
+          # which release first contained the commit that added it, and a
+          # single-commit checkout has neither the commit nor the older tags.
+          fetch-depth: 0
           # This job publishes an artifact — never let the checkout token ride
           # along in it (zizmor artipacked).
           persist-credentials: false
@@ -126,6 +130,24 @@ jobs:
             || { echo "::error::failed to stamp config/version in client/project.godot"; exit 1; }
           grep -qxF "const VERSION := \"${VERSION}\"" client/scripts/devlog.gd \
             || { echo "::error::failed to stamp VERSION in client/scripts/devlog.gd"; exit 1; }
+
+      - name: 📜 Stamp dev-log entries from the release that contains them
+        # #518. An entry may carry "next" rather than a guessed version, because
+        # the release it ships in is only known here: the first plain vX.Y.Z tag
+        # containing the commit that added it. Stamped into the build like the
+        # version above, never committed back. A stable release requires every
+        # entry to resolve — each one is in this very tag, so a leftover means
+        # the lookup failed — while a pre-release leaves an entry that is in no
+        # stable release yet reading "next", which is the truth about it.
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          if printf '%s' "${VERSION}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            ./tools/devlog-stamp.sh --require-all
+          else
+            ./tools/devlog-stamp.sh
+          fi
 
       - name: ⬇️ Install Godot (pinned, checksum-verified)
         run: |

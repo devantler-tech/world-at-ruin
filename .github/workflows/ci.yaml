@@ -99,6 +99,12 @@ jobs:
         # tags it is answered from. The gate fails closed on that rather than
         # passing vacuously.
         run: ./tools/devlog-entry-version-sweep.sh --gate
+      - name: Release builds stamp a placeholder dev-log entry from its release
+        # #518: an entry may carry "next" instead of a predicted version, and
+        # cd.yaml stamps it with the first release containing the commit that
+        # added it. Proven here against real tagged histories, including the
+        # cases a simpler lookup gets wrong.
+        run: ./tools/devlog-stamp.test.sh
       - name: Version ledger is append-only (no-resets law)
         # The in-game guard anchors the required fixture range to
         # tests/data/shipped_recipe_versions.txt, but a checkout-local file
