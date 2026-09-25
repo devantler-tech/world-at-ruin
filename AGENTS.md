@@ -633,6 +633,12 @@ everything shipped afterwards is held to.
   separate work; the command composes the gate only through default-off `-private-claims`,
   requiring sealed Agones admission and separate verified mTLS credentials, loading bounded
   material before readiness and retiring transport after admission drains, per ADR 0008),
+  the inert **session-end storage boundary** (`nakamalease.Store.EndSession`, ADR 0006 —
+  original claimed version, claim stamp, opaque key, attempt digest, allocation and pinned UID
+  must all agree before atomically entering the existing release barrier; exact-UID resource
+  cleanup precedes conditional reservation deletion; failures retain restart recovery state;
+  no new schema, endpoint, death detector or runtime activation; trusted end-of-session proof
+  and production lifecycle composition remain #567/#569 work),
   the first **Nakama identity boundary**
   (`server/nakamaauth/` — locally validates audience-bound Google ID tokens, derives a
   server-keyed opaque email/password pair whose logged identifier is not replayable alone,
