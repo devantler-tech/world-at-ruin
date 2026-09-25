@@ -21,6 +21,9 @@ extends Node
 ##  5. OFF IS OFF — hiding the overlay removes its collision and the query falls
 ##     back to the base ground, and a player that was never given a step moves
 ##     with the engine's own floor snap.
+##  6. A STEP KEEPS THE STRIDE'S RAMP — no tick of any crossing raises the
+##     body's horizontal speed faster than the controller accelerates, and one
+##     crossing starts at rest beside the lip so the step lands mid-ramp.
 
 const HALF_WORLD := 100.0
 const RAY_TOLERANCE := 0.002
@@ -34,6 +37,10 @@ const TIME_FACTOR := 1.6
 ## How many of the thickest head-on lips to try unaided before concluding none
 ## is in the snag regime.
 const LIP_CANDIDATES := 20
+## How far outside the lip edge the from-rest crossing starts: clear of the
+## 0.4 m capsule, and closer than the 0.43 m a walker needs to reach full speed,
+## so the step happens while the stride is still accelerating.
+const BESIDE_LIP := 0.42
 
 var _failed := false
 ## Everything solid in the world except the terrain and the raised stone: the
@@ -163,6 +170,9 @@ func _check_crossings(world: WorldGen, tops: Array[Dictionary]) -> bool:
 		return false
 	if not await _cross(world, "down a %.3f m lip" % lip[&"thickness"], lip[&"inside"], lip[&"outside"], true):
 		return false
+	if not await _cross(world, "up a %.3f m lip from a standstill beside it" % lip[&"thickness"],
+			lip[&"beside"], lip[&"inside"], false):
+		return false
 	var seam := _find_seam(world, tops)
 	if seam.is_empty():
 		return _fail("no two neighbouring slabs of different thickness were found")
@@ -199,8 +209,14 @@ func _cross(world: WorldGen, what: String, from: Vector2, to: Vector2, descendin
 	if descending and airborne > 2:
 		return _fail("walking %s the body left the ground for %d ticks — it drops into the airborne pose" %
 			[what, airborne])
+	var max_gain: float = result[&"max_gain"]
+	var ramp := Player.ACCEL / float(Engine.physics_ticks_per_second)
+	if max_gain > ramp * 1.02:
+		return _fail(("walking %s the body's speed jumped %.3f m/s in one tick, above the %.3f m/s the "
+			+ "stride accelerates — the step snaps to full speed") % [what, max_gain, ramp])
 	print(("crossing %s: arrived, rests %+.3f m outside its footprint's surfaces, lowest %+.3f m "
-		+ "above base, %d airborne ticks") % [what, settled, lowest, airborne])
+		+ "above base, %d airborne ticks, fastest speed-up %.3f m/s per tick") %
+		[what, settled, lowest, airborne, max_gain])
 	return true
 
 
@@ -221,9 +237,14 @@ func _walk(world: WorldGen, from: Vector2, to: Vector2, step: float) -> Dictiona
 	var lowest := INF
 	var airborne := 0
 	var arrived := false
+	var speed := Vector2(player.velocity.x, player.velocity.z).length()
+	var max_gain := 0.0
 	Input.action_press("move_forward")
 	for _tick in budget:
 		await get_tree().physics_frame
+		var now := Vector2(player.velocity.x, player.velocity.z).length()
+		max_gain = maxf(max_gain, now - speed)
+		speed = now
 		var p := player.global_position
 		lowest = minf(lowest, p.y - world.surface_height_at(p.x, p.z))
 		# What the gait sees: a body rolling off a lip edge is still standing.
@@ -238,7 +259,8 @@ func _walk(world: WorldGen, from: Vector2, to: Vector2, step: float) -> Dictiona
 	var end := player.global_position
 	player.queue_free()
 	await get_tree().physics_frame
-	return {&"arrived": arrived, &"end": end, &"lowest": lowest, &"airborne": airborne, &"budget": budget}
+	return {&"arrived": arrived, &"end": end, &"lowest": lowest, &"airborne": airborne, &"budget": budget,
+		&"max_gain": max_gain}
 
 
 ## Lowest and highest walkable surface under the capsule's footprint, as
@@ -277,7 +299,8 @@ func _lip_candidates(world: WorldGen, tops: Array[Dictionary]) -> Array[Dictiona
 			var outside := mid + outward * 2.0
 			if not _open_and_gentle(world, mid + outward * 0.1, outside):
 				continue
-			found.append({&"thickness": thickness, &"outside": outside, &"inside": centre})
+			found.append({&"thickness": thickness, &"outside": outside, &"inside": centre,
+				&"beside": mid + outward * BESIDE_LIP})
 			break
 	found.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 		return float(a[&"thickness"]) > float(b[&"thickness"]))

@@ -306,7 +306,7 @@ func _physics_process(delta: float) -> void:
 	var stepping := step_height > 0.0 and is_on_floor() and velocity.y <= 0.0
 	move_and_slide()
 	if stepping:
-		_step_up(slide_from, intended)
+		_step_up(slide_from, intended, horizontal)
 	if _walk_locomotion != null:
 		_walk_locomotion.advance_motion(
 			Vector2(velocity.x, velocity.z).length(),
@@ -342,7 +342,10 @@ func enable_step(height: float) -> void:
 ## stopped?" trigger would never fire. A landing that is not floor, or a lifted
 ## path that gets no further than the slide, leaves the slide's result alone,
 ## so level ground and ordinary slopes move exactly as without a step.
-func _step_up(from: Transform3D, intended: Vector3) -> void:
+## [param ramped] is this tick's accelerated velocity from before the slide: an
+## accepted step keeps it, so the stride goes on ramping instead of snapping to
+## full speed.
+func _step_up(from: Transform3D, intended: Vector3, ramped: Vector3) -> void:
 	var motion := intended * get_physics_process_delta_time()
 	var along := Vector2(motion.x, motion.z)
 	if along.length() <= 0.0001:
@@ -365,9 +368,9 @@ func _step_up(from: Transform3D, intended: Vector3) -> void:
 		return
 	global_transform = landed
 	# The slide spent this tick's speed against the lip; the step carried the
-	# body over it, so the stride continues at the speed asked for.
-	velocity.x = intended.x
-	velocity.z = intended.z
+	# body over it, so the stride continues at the speed it had built up.
+	velocity.x = ramped.x
+	velocity.z = ramped.z
 	velocity.y = 0.0
 
 
