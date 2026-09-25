@@ -110,7 +110,9 @@ static func scatter_spots(world: Node, count: int, inner: float, outer: float,
 			var z := sin(angle) * radius
 			if not _spot_ok(world, x, z, spots):
 				continue
-			spots.append(Vector3(x, world.surface_height_at(x, z), z))
+			# Stood on the walkable surface: on a raised exposed-stone top where one
+			# is built (#548), so nobody is sunk to the ankles in stone.
+			spots.append(Vector3(x, world.walkable_height_at(x, z), z))
 			break
 	return spots
 

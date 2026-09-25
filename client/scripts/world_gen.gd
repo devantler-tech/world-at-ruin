@@ -72,10 +72,21 @@ const COL_EMBER := Color(1.0, 0.55, 0.18)
 ## Returned by surface_height_at outside the terrain grid: "no ground here".
 const NO_GROUND := -1.0e6
 
-## The opt-in raised exposed-stone overlay (#547, ADR 0001): one batched render-only
+## The opt-in raised exposed-stone overlay (#547, ADR 0001): one batched
 ## `MeshInstance3D` sharing the terrain material, present only under
-## `WAR_GROUND_PLATES=1`. Collision for its tops is #548.
+## `WAR_GROUND_PLATES=1`.
 const GROUND_PLATES_NODE := "GroundPlates"
+## The overlay's collision (#548): one static body whose trimesh is built from the
+## very mesh the player sees, so the walked surface and the visible one cannot
+## disagree anywhere — not on a top, a lip, or a seam between two slabs.
+const GROUND_PLATES_BODY := "GroundPlatesBody"
+## Side of the square cells the raised tops are indexed by for
+## [method walkable_height_at], metres. A slab is about 1.2 m across, so a cell
+## this size holds a handful of footprints and a query tests only those.
+const GROUND_PLATE_INDEX_CELL := 2.0
+## Ground rise allowed for above the thickest lip when stepping onto it; see
+## [method ground_plates_step_height].
+const GROUND_PLATES_STEP_ALLOWANCE := 0.10
 
 var _noise := FastNoiseLite.new()
 var _detail := FastNoiseLite.new()
@@ -86,6 +97,10 @@ var _heights := PackedFloat32Array()
 var _terrain_material: ShaderMaterial
 var _ground_plates_enabled := false
 var _ground_plates_stats := {}
+## Every built slab's `{"polygon", "thickness"}`, from [ExposedSlabGeometry], and
+## the cell index over them. Empty when the overlay was never built.
+var _ground_plate_tops: Array[Dictionary] = []
+var _ground_plate_index := {}
 ## The ground regions this world was dealt, built once at generation and read
 ## for every terrain vertex. See [GroundRegions].
 var _region_sites: Array[GroundRegions.Site] = []
@@ -388,12 +403,13 @@ func _add_tri(st: SurfaceTool, a: Vector3, b: Vector3, c: Vector3) -> void:
 		st.set_color(_ground_color(centre, v))
 		st.add_vertex(v)
 
-## The raised exposed-stone overlay (#547): one batched, render-only mesh built
-## from the same deterministic slab field the terrain shader paints, sharing the
-## terrain's ShaderMaterial so every lifted top renders as the slab beneath it.
-## Nothing here touches the base terrain, its collision or any height query —
-## the overlay only ADDS geometry above the ground, which is what keeps every
-## plates-off golden byte-identical. Tops gain collision in #548.
+## The raised exposed-stone overlay (#547): one batched mesh built from the same
+## deterministic slab field the terrain shader paints, sharing the terrain's
+## ShaderMaterial so every lifted top renders as the slab beneath it, and one
+## static body over exactly that mesh (#548). Nothing here touches the base
+## terrain, its collision or [method surface_height_at] — the overlay only ADDS
+## geometry above the ground, which is what keeps every plates-off golden
+## byte-identical; [method walkable_height_at] is where the raised tops are read.
 func _build_ground_plates() -> void:
 	var geometry := ExposedSlabGeometry.new()
 	var result := geometry.build(
@@ -403,6 +419,7 @@ func _build_ground_plates() -> void:
 	var mesh := result[&"mesh"] as ArrayMesh
 	if mesh == null:
 		return
+	_index_ground_plate_tops(result[&"tops"] as Array)
 	mesh.surface_set_material(0, _terrain_material)
 	var mi := MeshInstance3D.new()
 	mi.name = GROUND_PLATES_NODE
@@ -416,6 +433,21 @@ func _build_ground_plates() -> void:
 	# recorded remaining gap, not an accident.
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(mi)
+	# Collision from the render mesh itself rather than a second derivation of
+	# it: a lifted top, its lip and the step between two neighbouring slabs are
+	# solid exactly where they are drawn, and nowhere they are not. The lip
+	# faces are included, so a body meets a slab edge as the stone it is; the
+	# player climbs it with Player.enable_step, which main turns on with the
+	# overlay. Solid from both sides, as the terrain is, so a tunnelling slip
+	# cannot fall through a top from above.
+	var shape := mesh.create_trimesh_shape() as ConcavePolygonShape3D
+	shape.backface_collision = true
+	var body := StaticBody3D.new()
+	body.name = GROUND_PLATES_BODY
+	var collider := CollisionShape3D.new()
+	collider.shape = shape
+	body.add_child(collider)
+	add_child(body)
 
 
 ## Flip the plate treatment in a RUNNING world — the shader uniform and the
@@ -438,6 +470,90 @@ func set_ground_plates_enabled(on: bool) -> void:
 			_build_ground_plates()
 		return
 	overlay.visible = on
+	# The stone is solid only while it is drawn: a hidden top a body still
+	# stood on would be the render/physics disagreement #548 exists to remove.
+	var body := get_node_or_null(GROUND_PLATES_BODY)
+	if body != null:
+		for collider in body.get_children():
+			if collider is CollisionShape3D:
+				(collider as CollisionShape3D).set_deferred(&"disabled", not on)
+
+
+## Height of the surface a body walks on at world (x, z): the top of a raised
+## exposed-stone slab where one is built and shown (#548), otherwise exactly
+## [method surface_height_at]. A top conforms to the ground triangle by
+## triangle at one thickness per slab, so its height is the ground's plus that
+## thickness at every point of its footprint — the same numbers the mesh and its
+## collision were built from. Anything that stands on or meets the ground (the
+## player's anti-embed net, where people and hounds are placed) should ask this;
+## anything about the terrain itself keeps asking [method surface_height_at].
+## With the overlay off or never built the two are the same function.
+func walkable_height_at(x: float, z: float) -> float:
+	var ground := surface_height_at(x, z)
+	if not _ground_plates_enabled or _ground_plate_tops.is_empty() or ground <= NO_GROUND:
+		return ground
+	return ground + ground_plate_thickness_at(x, z)
+
+
+## Lift of the raised slab over world (x, z), metres, or 0.0 where none is built
+## or the overlay is hidden. Exposed so a caller (and the physics test) can tell
+## "on the ground" from "on stone" without comparing floats.
+func ground_plate_thickness_at(x: float, z: float) -> float:
+	var index := ground_plate_at(x, z)
+	return 0.0 if index < 0 else float(_ground_plate_tops[index][&"thickness"])
+
+
+## Index into [method ground_plate_tops] of the raised top over world (x, z), or
+## -1 where none is built or the overlay is hidden.
+func ground_plate_at(x: float, z: float) -> int:
+	if not _ground_plates_enabled:
+		return -1
+	var cell := Vector2i(floori(x / GROUND_PLATE_INDEX_CELL), floori(z / GROUND_PLATE_INDEX_CELL))
+	var at := Vector2(x, z)
+	for index: int in _ground_plate_index.get(cell, PackedInt32Array()):
+		if Geometry2D.is_point_in_polygon(at, _ground_plate_tops[index][&"polygon"] as PackedVector2Array):
+			return index
+	return -1
+
+
+## The tallest ledge the raised overlay puts in a walker's way, metres, or 0.0
+## when it is not built or hidden. A lip is at most
+## [constant ExposedSlabGeometry.MAX_THICKNESS] tall where it meets the ground,
+## but a capsule touches it from up to ~0.3 m back, and on the sloped ground
+## stone is exposed on the ground has risen by then — the allowance covers that
+## rise on the grades slabs are built on.
+func ground_plates_step_height() -> float:
+	if not _ground_plates_enabled or _ground_plate_tops.is_empty():
+		return 0.0
+	return ExposedSlabGeometry.MAX_THICKNESS + GROUND_PLATES_STEP_ALLOWANCE
+
+
+## Every built slab's `{"polygon", "thickness"}` record, for tools and tests that
+## need to find a representative lip or junction. A copy.
+func ground_plate_tops() -> Array[Dictionary]:
+	var tops: Array[Dictionary] = _ground_plate_tops.duplicate(true)
+	return tops
+
+
+## Index each built top by every cell its bounding box touches.
+func _index_ground_plate_tops(tops: Array) -> void:
+	_ground_plate_tops.clear()
+	_ground_plate_index.clear()
+	for top: Dictionary in tops:
+		var polygon := top[&"polygon"] as PackedVector2Array
+		var index := _ground_plate_tops.size()
+		_ground_plate_tops.append(top)
+		var lo := polygon[0]
+		var hi := polygon[0]
+		for p in polygon:
+			lo = Vector2(minf(lo.x, p.x), minf(lo.y, p.y))
+			hi = Vector2(maxf(hi.x, p.x), maxf(hi.y, p.y))
+		for cz in range(floori(lo.y / GROUND_PLATE_INDEX_CELL), floori(hi.y / GROUND_PLATE_INDEX_CELL) + 1):
+			for cx in range(floori(lo.x / GROUND_PLATE_INDEX_CELL), floori(hi.x / GROUND_PLATE_INDEX_CELL) + 1):
+				var cell := Vector2i(cx, cz)
+				var list: PackedInt32Array = _ground_plate_index.get(cell, PackedInt32Array())
+				list.append(index)
+				_ground_plate_index[cell] = list
 
 
 ## What the overlay build counted — candidates, slabs, exposed, built, vertices,
