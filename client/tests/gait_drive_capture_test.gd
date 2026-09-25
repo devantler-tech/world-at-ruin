@@ -192,12 +192,39 @@ func _check_contact() -> bool:
 		return _fail("a gait that never touches down read %.0f%% contact and %.2f slip" %
 			[float(floating["contact_share"]) * 100.0, floating["contact_slip_ratio"]])
 	var floating_line: String = _capture.gait_drive_contact_line("run", floating)
-	if not floating_line.contains("no foot comes within 1 cm"):
+	if not floating_line.contains("no foot comes down to within 1 cm"):
 		return _fail("a gait that never touches down is not named as such: %s" % floating_line)
+
+	# A foot that brushes the ground on single samples was down, but never held
+	# it across an interval: that is unmeasured slip, not a gait that floats.
+	var brushing := _synthetic(6.0, 0.2, 1.2, 1.0, 0.05, 0.0)
+	var brushing_lift: Array = brushing["lift_l"]
+	for i in range(0, brushing_lift.size(), 3):
+		brushing_lift[i] = 0.0
+	var brushed := _metrics(brushing)
+	var brushed_line: String = _capture.gait_drive_contact_line("run", brushed)
+	if float(brushed["contact_share"]) <= 0.0 or float(brushed["contact_slip_ratio"]) != -1.0 \
+			or not brushed_line.contains("never for two samples in a row"):
+		return _fail("a foot down on isolated samples is not reported as unmeasured slip: %s" % brushed_line)
+
+	# Sinking is still contact: a planted foot below its standing height is on
+	# the ground, so it counts as down rather than escaping the slip figure.
+	var sinking := _synthetic(6.0, 0.2, 1.2, 0.5, 0.0, 0.0)
+	for key: String in ["lift_l", "lift_r"]:
+		var lifts: Array = sinking[key]
+		for i in lifts.size():
+			if float(lifts[i]) == 0.0:
+				lifts[i] = -0.05
+	var sunk := _metrics(sinking)
+	if absf(float(sunk["contact_share"]) - 1.0) > 0.0001 or absf(float(sunk["contact_slip_ratio"]) - 0.5) > 0.001:
+		return _fail("a foot sunk 5 cm below its standing height escaped the contact figures (%.0f%% down, %.2f slip)" %
+			[float(sunk["contact_share"]) * 100.0, sunk["contact_slip_ratio"]])
 
 	# A run with airtime: the planted foot leaves the ground for the last 40% of
 	# each step. While down it still holds perfectly, which the contact slip
 	# must show — and which the nearest-foot slide, charging the airtime, does not.
+	# That slide comes from the end of each flight, where the swinging foot sinks
+	# below the lifted one and so becomes the nearest foot while it still moves.
 	var trace := _synthetic(6.0, 0.2, 1.2, 1.0, 0.0, 0.0)
 	var lift_l: Array = trace["lift_l"]
 	var lift_r: Array = trace["lift_r"]
