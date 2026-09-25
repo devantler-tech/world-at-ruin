@@ -56,8 +56,8 @@ Host: Apple M2 Pro, Metal 4.0 Forward+, Godot 4.7.1, `client/recipes/wanderer.js
 
 | Gait | Cadence | Speed | Per stride cycle | Foot nearest the ground | Its height off standing (mean, range) |
 |---|---|---|---|---|---|
-| walk | 300 steps/min | 6.00 m/s | 2.40 m | moves at **111%** of body speed | 4.0 cm (−1.4 to 9.5) |
-| run | 350 steps/min | 10.49 m/s | 3.60 m | moves at **117%** of body speed | 6.7 cm (−2.7 to 17.1) |
+| walk | 300 steps/min | 6.00 m/s | 2.40 m | moves at **109%** of body speed | 4.0 cm (−1.4 to 9.5) |
+| run | 350 steps/min | 10.49 m/s | 3.60 m | moves at **111%** of body speed | 6.7 cm (−2.7 to 17.1) |
 
 Both cadences are exactly what the authored constants produce
 (`WALK_SPEED / STRIDE_LENGTH_M` and `SPRINT_SPEED / RUN_STRIDE_LENGTH_M`, two
@@ -67,11 +67,14 @@ the ground travels slightly faster than the body rather than staying put, and
 both gaits lift both feet together at the ends of each stride — the body rides
 several centimetres above its standing height instead of setting a foot down.
 
-Three separate processes produced the same trace fingerprint,
+Three separate processes on this host and CI's hosted macOS runner all
+produced the same trace fingerprint,
 `550cd878d150921a10b6ef586c152e04d95bf92ac3666811de5a9607b868db23`, and each
-reproduced its own rehearsal exactly. The fingerprint is a property of one
-Godot build on one CPU class; compare it between runs of one commit on one
-runner, never across machines.
+reproduced its own rehearsal exactly. That the two machines agree is an
+observation, not a promise: a different Godot build or CPU class may compute a
+different trace, so a mismatch across machines is a question to investigate
+rather than proof of a regression. Between runs of one commit on one machine it
+must match.
 
 ## Ablations — deliberate wrong builds the instrument must tell apart
 
