@@ -181,7 +181,9 @@ with an exact time range, following the citation contract in
 capture scenarios pose `WalkLocomotion` with the body pinned, so they evidence the pose and nothing
 downstream of it. `WAR_SCENARIO=gait_drive` drives the shipped controller with real input at the
 fixed physics step and reports the cadence, foot slide and foot lift measured over every controller
-step in `gait_drive_summary.txt` — so a change to stride constants, controller wiring, sprint speed
+step in `gait_drive_summary.txt`, plus how much of the stretch a foot is down and how far a down foot
+moves over the ground (its contact line — the one to judge a planted foot by, because the nearest-foot
+slide also charges a gait's airtime) — so a change to stride constants, controller wiring, sprint speed
 or the follow camera is judged there, not on the fixed-phase frames, which read a stride regression
 the same as a correct build. It fails itself if its photographed drive does not reproduce its
 rehearsal exactly. The measurements and ablations behind it are in

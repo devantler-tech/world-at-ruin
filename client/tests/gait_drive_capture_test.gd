@@ -34,6 +34,7 @@ func _ready() -> void:
 		"gait_drive_length",
 		"gait_drive_metrics",
 		"gait_drive_report_line",
+		"gait_drive_contact_line",
 		"gait_drive_replay_mismatch",
 		"gait_drive_fingerprint",
 		"gait_drive_path_problems",
@@ -51,6 +52,8 @@ func _ready() -> void:
 		return
 	if not _check_floating_gait():
 		return
+	if not _check_contact():
+		return
 	if not _check_uneven_crossings():
 		return
 	if not _check_sub_step_timing():
@@ -66,7 +69,7 @@ func _ready() -> void:
 	if not _check_ci():
 		return
 	print("TEST PASS — gait_drive covers both gaits and the sprint press, measures known " +
-		"cadence, slide and lift, refuses a non-identical replay, and its line is clear")
+		"cadence, slide, lift and contact, refuses a non-identical replay, and its lines are clear")
 	get_tree().quit(0)
 
 
@@ -164,6 +167,58 @@ func _check_floating_gait() -> bool:
 		return _fail("a floating gait was refused: %s" % m["reason"])
 	if absf(float(m["lift_mean_m"]) - 0.05) > 0.0001:
 		return _fail("a body held 5 cm up read %.4f m of lift" % m["lift_mean_m"])
+	return true
+
+
+## Contact (#903): whether a foot holds the ground WHILE it is down, apart from
+## how much of the stride it is down at all.
+func _check_contact() -> bool:
+	var planted := _metrics(_synthetic(6.0, 0.2, 1.2, 1.0, 0.0, 0.0))
+	if absf(float(planted["contact_share"]) - 1.0) > 0.0001:
+		return _fail("a gait with a foot always down read %.0f%% contact" % (float(planted["contact_share"]) * 100.0))
+	if absf(float(planted["contact_slip_ratio"])) > 0.001:
+		return _fail("a planted foot read %.1f%% contact slip" % (float(planted["contact_slip_ratio"]) * 100.0))
+	var planted_line: String = _capture.gait_drive_contact_line("walk", planted)
+	if not (planted_line.contains("for 100% of the stretch") and planted_line.contains("at 0% of body speed")):
+		return _fail("the contact line does not state share and slip: %s" % planted_line)
+
+	var half := _metrics(_synthetic(6.0, 0.2, 1.2, 0.5, 0.0, 0.0))
+	if absf(float(half["contact_slip_ratio"]) - 0.5) > 0.001:
+		return _fail("a down foot moving at half body speed read %.0f%% contact slip" %
+			(float(half["contact_slip_ratio"]) * 100.0))
+
+	var floating := _metrics(_synthetic(6.0, 0.2, 1.2, 1.0, 0.05, 0.0))
+	if float(floating["contact_share"]) != 0.0 or float(floating["contact_slip_ratio"]) != -1.0:
+		return _fail("a gait that never touches down read %.0f%% contact and %.2f slip" %
+			[float(floating["contact_share"]) * 100.0, floating["contact_slip_ratio"]])
+	var floating_line: String = _capture.gait_drive_contact_line("run", floating)
+	if not floating_line.contains("no foot comes within 1 cm"):
+		return _fail("a gait that never touches down is not named as such: %s" % floating_line)
+
+	# A run with airtime: the planted foot leaves the ground for the last 40% of
+	# each step. While down it still holds perfectly, which the contact slip
+	# must show — and which the nearest-foot slide, charging the airtime, does not.
+	var trace := _synthetic(6.0, 0.2, 1.2, 1.0, 0.0, 0.0)
+	var lift_l: Array = trace["lift_l"]
+	var lift_r: Array = trace["lift_r"]
+	for i in lift_l.size():
+		var f := fposmod((0.03 * 0.2 + float(i) * DT) / 0.2, 1.0)
+		if f > 0.6:
+			if float(lift_l[i]) == 0.0:
+				lift_l[i] = 0.05
+			if float(lift_r[i]) == 0.0:
+				lift_r[i] = 0.05
+	var flight := _metrics(trace)
+	if not flight["ok"]:
+		return _fail("a gait with airtime was refused: %s" % flight["reason"])
+	if absf(float(flight["contact_slip_ratio"])) > 0.001:
+		return _fail("a foot that holds the ground while down, with airtime between, read %.1f%% contact slip" %
+			(float(flight["contact_slip_ratio"]) * 100.0))
+	if float(flight["contact_share"]) > 0.65 or float(flight["contact_share"]) < 0.55:
+		return _fail("a foot down for 60%% of each step read %.0f%% contact" % (float(flight["contact_share"]) * 100.0))
+	if float(flight["slide_ratio"]) < 0.05:
+		return _fail(("the nearest-foot slide no longer charges airtime (%.0f%%) — this case no longer shows why " +
+			"the contact figures exist") % (float(flight["slide_ratio"]) * 100.0))
 	return true
 
 
