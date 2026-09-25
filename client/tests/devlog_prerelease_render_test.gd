@@ -35,6 +35,12 @@ extends Node
 ## this test rather than a silent loss of the correction.
 const SHIPPED_NOTE := "never released; first shipped in v%s"
 
+## What a placeholder entry may be headed. #893 renames the heading, because in
+## a development build a placeholder that has already shipped is not the next
+## release; both are accepted, and only these two, so that change can land
+## against this test. #893 then keeps one.
+const PLACEHOLDER_HEADINGS: Array[String] = ["Next release", "Numbered at release"]
+
 ## The pre-release block, by exact membership. A CLOSED set: these are the
 ## entries written before the repo's first tag, nothing can join them later
 ## (`devlog-entry-version-guard.sh` refuses `shipped_in` on an entry that has not
@@ -69,21 +75,24 @@ func _ready() -> void:
 	for case: Array in [
 		[{"version": "0.98.0"}, "v0.98.0"],
 		[{"version": "0.1.14", "shipped_in": "0.1.15"}, "0.1.14"],
-		[{"version": DevLog.NEXT_VERSION}, "Next release"],
 	]:
 		if DevLog.heading(case[0]) != String(case[1]):
 			_fail("an entry declaring %s is headed '%s', not '%s'" % [
 				case[0], DevLog.heading(case[0]), case[1]])
 			return
+	var placeholder_heading := DevLog.heading({"version": DevLog.NEXT_VERSION})
+	if not PLACEHOLDER_HEADINGS.has(placeholder_heading):
+		_fail("a placeholder entry is headed '%s', not one of %s" % [placeholder_heading, PLACEHOLDER_HEADINGS])
+		return
 
 	for entry: Dictionary in DevLog.ENTRIES:
 		var version := String(entry["version"])
 		# Not yet stamped by a release build (#518): it names no build at all,
 		# so it must neither read as `vnext` nor claim a version.
 		if DevLog.is_next(entry):
-			if not rendered.contains("[b]Next release — %s" % entry["title"]) \
+			if not rendered.contains("[b]%s — %s" % [placeholder_heading, entry["title"]]) \
 					or rendered.contains("[b]v%s — " % version):
-				_fail("unreleased entry '%s' does not render as the next release" % entry["title"])
+				_fail("unreleased entry '%s' does not render under its placeholder heading" % entry["title"])
 				return
 			continue
 		var shipped_in := String(entry.get("shipped_in", ""))
