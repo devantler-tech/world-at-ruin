@@ -48,6 +48,23 @@ var underground_provider: Callable
 ## Emitted when the world reclaims the wanderer (for HUD flavour text).
 signal respawned
 
+## Tallest ledge the body climbs in its stride, metres; 0 (the default) never
+## steps. Only the raised exposed-stone preview turns it on (#548, through
+## [method enable_step]): its slab lips stand 6–14 cm proud of the ash, and this
+## capsule meets anything taller than about 12 cm as a WALL — its rounded base
+## touches the lip beyond the 45° floor limit — so without a step 42% of the
+## approaches `plate_crossing_sweep` measures stall at the lip. Off by default,
+## so the ordinary game moves exactly as it always has (product law 2).
+var step_height := 0.0
+## A lifted path must rise at least this much, and get at least this much further
+## than the plain slide, before it is taken — metres, so float noise on level
+## ground can never turn an ordinary stride into a step.
+const STEP_MIN_RISE := 0.001
+const STEP_MIN_GAIN := 0.001
+## Set by a jump and cleared on landing, so a body falling from a jump is never
+## mistaken for one walking off a ledge.
+var _jumped := false
+
 var _cam_yaw: Node3D
 var _spring: SpringArm3D
 var _camera: Camera3D
@@ -256,10 +273,13 @@ func _unhandled_input(event: InputEvent) -> void:
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 func _physics_process(delta: float) -> void:
+	if is_on_floor() and velocity.y <= 0.0:
+		_jumped = false
 	if not is_on_floor():
 		velocity.y = maxf(velocity.y - GRAVITY * delta, -MAX_FALL_SPEED)
 	elif control_enabled and Input.is_action_just_pressed("jump"):
 		velocity.y = JUMP_VELOCITY
+		_jumped = true
 
 	var input_dir := Input.get_vector("move_left", "move_right", "move_forward", "move_back") \
 		if control_enabled else Vector2.ZERO
@@ -278,11 +298,19 @@ func _physics_process(delta: float) -> void:
 	velocity.x = horizontal.x
 	velocity.z = horizontal.z
 
+	var slide_from := global_transform
+	# The stride the player is ASKING for, not the velocity left after the last
+	# slide: a lip that stopped the body dead has zeroed that, and a step tried
+	# with it would inch forward and never clear the edge.
+	var intended := wish * target_speed
+	var stepping := step_height > 0.0 and is_on_floor() and velocity.y <= 0.0
 	move_and_slide()
+	if stepping:
+		_step_up(slide_from, intended)
 	if _walk_locomotion != null:
 		_walk_locomotion.advance_motion(
 			Vector2(velocity.x, velocity.z).length(),
-			is_on_floor(),
+			is_grounded(),
 			sprinting,
 			delta,
 			velocity.y)
@@ -299,6 +327,80 @@ func _physics_process(delta: float) -> void:
 
 	if global_position.y < FALL_LIMIT_Y:
 		respawn()
+
+## Climb ledges up to `height` metres in stride; 0 turns stepping off.
+func enable_step(height: float) -> void:
+	step_height = maxf(height, 0.0)
+
+
+## Try this tick's travel a second way — lifted by [member step_height], moved
+## as far as it goes, settled back down onto whatever is there — and keep that
+## instead of the plain slide when it ends up HIGHER and FURTHER along the
+## intended direction. That is what walking up a ledge looks like, and it holds
+## however the body meets the lip: head-on, where the slide stops dead, or at an
+## angle, where the slide glides along the edge at full speed and a "was I
+## stopped?" trigger would never fire. A landing that is not floor, or a lifted
+## path that gets no further than the slide, leaves the slide's result alone,
+## so level ground and ordinary slopes move exactly as without a step.
+func _step_up(from: Transform3D, intended: Vector3) -> void:
+	var motion := intended * get_physics_process_delta_time()
+	var along := Vector2(motion.x, motion.z)
+	if along.length() <= 0.0001:
+		return
+	along = along.normalized()
+	var slid := global_position - from.origin
+	var slid_progress := Vector2(slid.x, slid.z).dot(along)
+	var lift := _test_motion(from, Vector3.UP * step_height)
+	var raised := from.translated(lift[&"travel"])
+	var over := raised.translated(_test_motion(raised, motion)[&"travel"])
+	var drop := _test_motion(over, Vector3.DOWN * (step_height * 2.0))
+	if not drop[&"hit"] or (drop[&"normal"] as Vector3).angle_to(Vector3.UP) > floor_max_angle:
+		return
+	var landed := over.translated(drop[&"travel"])
+	var rise := landed.origin.y - from.origin.y
+	if rise <= STEP_MIN_RISE or rise > step_height:
+		return
+	var stepped := landed.origin - from.origin
+	if Vector2(stepped.x, stepped.z).dot(along) <= slid_progress + STEP_MIN_GAIN:
+		return
+	global_transform = landed
+	# The slide spent this tick's speed against the lip; the step carried the
+	# body over it, so the stride continues at the speed asked for.
+	velocity.x = intended.x
+	velocity.z = intended.z
+	velocity.y = 0.0
+
+
+## Whether the body is standing rather than in the air, for the gait. On the
+## floor, or — only while stepping is on, and never after a jump — within a step
+## of something solid below. Walking OFF a lip, the capsule's rounded base rolls
+## over the edge for a few ticks; the engine files that contact as a wall and
+## reports the body airborne, which would flip the gait into the jump pose for a
+## drop of a few centimetres. With stepping off this is exactly
+## `is_on_floor()`, so the ordinary game animates exactly as it always has.
+func is_grounded() -> bool:
+	if is_on_floor():
+		return true
+	if step_height <= 0.0 or _jumped or velocity.y > 0.0:
+		return false
+	return _test_motion(global_transform, Vector3.DOWN * step_height)[&"hit"]
+
+
+## One sweep of this body's shape from `from` along `motion`: whether it hit,
+## how far it got, and the surface it met.
+func _test_motion(from: Transform3D, motion: Vector3) -> Dictionary:
+	var params := PhysicsTestMotionParameters3D.new()
+	params.from = from
+	params.motion = motion
+	params.margin = safe_margin
+	var result := PhysicsTestMotionResult3D.new()
+	var hit := PhysicsServer3D.body_test_motion(get_rid(), params, result)
+	return {
+		&"hit": hit,
+		&"travel": result.get_travel() if hit else motion,
+		&"normal": result.get_collision_normal() if hit else Vector3.UP,
+	}
+
 
 ## How far below the vertical surface height the origin must sit before we
 ## call it embedded. On a slope of angle θ the capsule's bottom tip

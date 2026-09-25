@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tests/ground_plates_physics_test.gd" id="1_plates_physics"]
+
+[node name="GroundPlatesPhysicsTest" type="Node"]
+script = ExtResource("1_plates_physics")

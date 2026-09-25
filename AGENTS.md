@@ -722,7 +722,7 @@ everything shipped afterwards is held to.
   platform deployment of the default-off Nakama RPC plugin and broader persistence remain later children of the server-foundation
   epic (#4);
   `deploy/` (platform manifests) arrives later per the roadmap.
-- **Raised exposed-stone overlay (#547, ADR 0001) — render-only, default-off, one batch.** Under
+- **Raised exposed-stone overlay (#547, ADR 0001) — default-off, one batch, solid where drawn.** Under
   `WAR_GROUND_PLATES=1` `WorldGen` adds one `GroundPlates` `MeshInstance3D` after the rest of the
   world is built: `ExposedSlabGeometry` walks the deterministic `ExposedSlabField`, lifts every slab
   whose site and enough of whose corners the field decides are exposed (`MIN_EXPOSED_CORNER_SHARE`)
@@ -736,10 +736,23 @@ everything shipped afterwards is held to.
   piece lies in one terrain triangle, and the side strips split at the same crossings.
   `exposed_slab_geometry_test` holds that law on a hand-built creased ground and on the real world,
   proves two fresh builds agree, and proves the flag-off world's terrain mesh, collision, heights and
-  foliage are byte-identical with the flag on — the flag-on node tree is the flag-off tree plus that one
-  overlay node. **Nothing walks on the lifted tops yet:**
-  collision and surface queries are #548, so with the flag on a player's feet still stand on the base
-  ground beneath a raised top, and the treatment stays opt-in until that lands. The overlay keeps out
+  foliage are byte-identical with the flag on — the flag-on node tree is the flag-off tree plus the
+  overlay node and its collision body. **The tops are solid exactly where drawn (#548):** one
+  `GroundPlatesBody` carries a trimesh built from the overlay mesh itself, lips included, so render and
+  collision cannot disagree; `WorldGen.walkable_height_at()` answers the raised top inside a built
+  slab (its ground plus that slab's thickness) and exactly `surface_height_at()` everywhere else, and it
+  is what the player's anti-embed net and people and hound placement stand on — anything about the
+  terrain itself keeps asking `surface_height_at()`. A capsule meets a lip taller than ~12 cm as a wall,
+  so `main.gd` gives the wanderer a step (`Player.enable_step`) sized by
+  `WorldGen.ground_plates_step_height()`, and while stepping is on `Player.is_grounded()` keeps the gait
+  out of the airborne pose as the capsule rolls off a lip edge — both 0/off with the flag off, so
+  ordinary movement and animation are untouched. `ground_plates_physics_test` holds all of it on the real
+  seed: collision equals the query at every top and just past every edge (and is the terrain where no
+  other top is), a player climbs and descends the thickest lip, crosses a seam and a three-slab
+  junction, two fresh builds agree bit for bit, and hiding the overlay removes both. The treatment
+  stays opt-in until it clears the art gate; foliage still stands on the base ground inside a slab (#895), and a glancing
+  approach up a slope can still glide along a lip (#896, measured by `client/tools/plate_crossing_sweep.gd`).
+  The overlay keeps out
   of `cave_protects`. `WorldGen.set_ground_plates_enabled()` flips the terrain uniform, the cave's terrain-contact
   uniform and the overlay together in a running world so a measurement tool can compare both
   states of one build; the ordinary game reads the flag once at generation. The cost instrument is

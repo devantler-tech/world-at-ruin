@@ -1,0 +1,10 @@
+{
+	"date": "2026-09-25",
+	"notes": [
+		"The opt-in raised stone is solid now. With WAR_GROUND_PLATES=1 set before launch, the wanderer steps up onto a slab's lip instead of wading through it, stands on the stone rather than sunk to the ankles in it, and walks off the far edge without stumbling into a jump.",
+		"People and hounds that stand where a slab is raised stand on top of it too, and the stone is solid exactly where it is drawn — nowhere between it and the ash around it.",
+		"Still short of the mark: a glancing approach up a slope can slide along a slab's edge instead of stepping onto it, and a shrub can still grow up through a slab. The ordinary game, with the flag unset, is unchanged."
+	],
+	"title": "Raised stone can be stood on",
+	"version": "0.106.0"
+}
