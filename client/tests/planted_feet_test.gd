@@ -69,12 +69,16 @@ func _ready() -> void:
 	var subject := _bound_subject()
 	if subject.is_empty():
 		return
-	var checks_passed: bool = (_check_planted_ankle(subject, false)
-		and _check_planted_ankle(subject, true)
+	var checks_passed: bool = (_check_planted_ankle(subject, false, "l")
+		and _check_planted_ankle(subject, false, "r")
+		and _check_planted_ankle(subject, true, "l")
+		and _check_planted_ankle(subject, true, "r")
 		and _check_contact_share(subject, false)
 		and _check_contact_share(subject, true)
-		and _check_toe_holds(subject, false)
-		and _check_toe_holds(subject, true)
+		and _check_toe_holds(subject, false, "l")
+		and _check_toe_holds(subject, false, "r")
+		and _check_toe_holds(subject, true, "l")
+		and _check_toe_holds(subject, true, "r")
 		and _check_idle_roll(subject)
 		and _check_blend_holds(subject)
 		and _check_no_sideways_step(subject)
@@ -160,10 +164,10 @@ func _check_solver() -> bool:
 
 ## 4. A planted ankle in skeleton space moves back by the distance the body
 ## travels and stays at its standing height; the world sees it stand still.
-func _check_planted_ankle(subject: Dictionary, running: bool) -> bool:
+func _check_planted_ankle(subject: Dictionary, running: bool, side: String = "l") -> bool:
 	var animator: WalkLocomotion = subject["animator"]
 	var skeleton: Skeleton3D = subject["skeleton"]
-	var foot := skeleton.find_bone("foot_l")
+	var foot := skeleton.find_bone("foot_" + side)
 	var rest_height := skeleton.get_bone_global_rest(foot).origin.y
 	var forward: Vector3 = animator.get("_forward")
 	var stride := WalkLocomotion.RUN_STRIDE_LENGTH_M if running else WalkLocomotion.STRIDE_LENGTH_M
@@ -171,31 +175,31 @@ func _check_planted_ankle(subject: Dictionary, running: bool) -> bool:
 		float(animator.get("_run_reach" if running else "_walk_reach")), stride)
 	var gait := "run" if running else "walk"
 	var ground_position := NAN
-	# The left foot is down from (0.25 - stance) to 0.25 of the cycle.
+	# The left foot is down from (0.25 - stance) to 0.25 of the cycle; right foot is offset by half a cycle.
 	for i in 9:
-		var cycle := 0.25 - stance + stance * (0.05 + 0.9 * float(i) / 8.0)
+		var cycle := 0.25 + (0.5 if side == "r" else 0.0) - stance + stance * (0.05 + 0.9 * float(i) / 8.0)
 		animator.apply_phase(TAU * cycle, running)
 		var ankle := skeleton.get_bone_global_pose(foot).origin
 		if absf(ankle.y - rest_height) > POSITION_EPSILON_M:
-			return _fail("the %s's planted ankle sits %.4f m off its standing height at %.3f of the cycle" %
-				[gait, ankle.y - rest_height, cycle])
+			return _fail("the %s's planted ankle (%s) sits %.4f m off its standing height at %.3f of the cycle" %
+				[gait, side, ankle.y - rest_height, cycle])
 		var over_ground := ankle.dot(forward) + cycle * stride
 		if is_nan(ground_position):
 			ground_position = over_ground
 		elif absf(over_ground - ground_position) > POSITION_EPSILON_M:
-			return _fail("the %s's planted foot slides %.4f m over the ground at %.3f of the cycle" %
-				[gait, over_ground - ground_position, cycle])
+			return _fail("the %s's planted foot (%s) slides %.4f m over the ground at %.3f of the cycle" %
+				[gait, side, over_ground - ground_position, cycle])
 	return true
 
 
 ## 4c. The foot keeps its standing orientation, so the toe holds the ground
 ## with the ankle. A foot left on the shin's rotation pitches about the ankle as
 ## the knee flexes, sweeping its heel or toe through the ground.
-func _check_toe_holds(subject: Dictionary, running: bool) -> bool:
+func _check_toe_holds(subject: Dictionary, running: bool, side: String = "l") -> bool:
 	var animator: WalkLocomotion = subject["animator"]
 	var skeleton: Skeleton3D = subject["skeleton"]
-	var foot := skeleton.find_bone("foot_l")
-	var toe := skeleton.find_bone("ball_l")
+	var foot := skeleton.find_bone("foot_" + side)
+	var toe := skeleton.find_bone("ball_" + side)
 	var foot_rest := skeleton.get_bone_global_rest(foot).basis.get_rotation_quaternion()
 	var toe_rest_height := skeleton.get_bone_global_rest(toe).origin.y
 	var forward: Vector3 = animator.get("_forward")
@@ -205,22 +209,22 @@ func _check_toe_holds(subject: Dictionary, running: bool) -> bool:
 	var gait := "run" if running else "walk"
 	var ground_position := NAN
 	for i in 9:
-		var cycle := 0.25 - stance + stance * (0.05 + 0.9 * float(i) / 8.0)
+		var cycle := 0.25 + (0.5 if side == "r" else 0.0) - stance + stance * (0.05 + 0.9 * float(i) / 8.0)
 		animator.apply_phase(TAU * cycle, running)
 		var turned := _angle_between(skeleton.get_bone_global_pose(foot).basis.get_rotation_quaternion(), foot_rest)
 		if turned > 0.001:
-			return _fail("the %s's planted foot pitches %.2f° off its standing orientation at %.3f of the cycle" %
-				[gait, rad_to_deg(turned), cycle])
+			return _fail("the %s's planted foot (%s) pitches %.2f° off its standing orientation at %.3f of the cycle" %
+				[gait, side, rad_to_deg(turned), cycle])
 		var tip := skeleton.get_bone_global_pose(toe).origin
 		if absf(tip.y - toe_rest_height) > POSITION_EPSILON_M:
-			return _fail("the %s's planted toe sits %.4f m off its standing height at %.3f of the cycle" %
-				[gait, tip.y - toe_rest_height, cycle])
+			return _fail("the %s's planted toe (%s) sits %.4f m off its standing height at %.3f of the cycle" %
+				[gait, side, tip.y - toe_rest_height, cycle])
 		var over_ground := tip.dot(forward) + cycle * stride
 		if is_nan(ground_position):
 			ground_position = over_ground
 		elif absf(over_ground - ground_position) > POSITION_EPSILON_M:
-			return _fail("the %s's planted toe slides %.4f m over the ground at %.3f of the cycle" %
-				[gait, over_ground - ground_position, cycle])
+			return _fail("the %s's planted toe (%s) slides %.4f m over the ground at %.3f of the cycle" %
+				[gait, side, over_ground - ground_position, cycle])
 	return true
 
 
