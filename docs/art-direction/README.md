@@ -474,11 +474,14 @@ snaps between the two authored poses. The controller's real airborne arc is perm
 velocity drives push-off, a bilateral apex tuck and a landing-ready descent, then grounded play
 returns the body to rest. The ordinary game keeps the standing body during grounded travel while the
 walk and run previews remain default-off. Authored starts and stops, landing anticipation/impact,
-directional lean and turning remain unauthored, and neither gait invents a flight phase of its own.
-Neither gait plants a foot yet: driven through the real controller, both hold their authored cadence
-(300 and 350 steps a minute) while the foot nearest the ground travels slightly faster than the body,
-and both feet lift together at the ends of each stride so the body rides on average 4–7 cm above
-its standing height ([`gait_drive` evidence](../evidence/issue-516-gait-drive/README.md)).
+directional lean and turning remain unauthored. Both gaits plant their feet: a foot that is down stays
+where it landed while the body passes over it, and in swing it is carried forward, over a pelvis
+lowered a few centimetres. At 6 and 10.5 m/s with these strides a leg can stay down for only about a
+quarter (walk) and a fifth (run) of each cycle, so both gaits have a flight phase between steps.
+Driven through the real controller they hold 300 and 350 steps a minute, and a foot that is down
+moves at 6% and 5% of body speed ([planted-feet evidence](../evidence/issue-904-planted-feet/README.md)).
+The feet plant on the body's own ground plane rather than the terrain under them, so on a slope a
+planted foot sits a little above or below the ground.
 
 **Motion reference.** The [Kingmakers announcement trailer from
 1:06–1:10](https://www.youtube.com/watch?v=OvezgDni8z4&t=66s) anchors a readable full-body sprint and

@@ -68,6 +68,10 @@ the ground travels slightly faster than the body rather than staying put, and
 both gaits lift both feet together at the ends of each stride — the body rides
 several centimetres above its standing height instead of setting a foot down.
 
+> **Superseded 2026-09-25 (#904):** both gaits now plant their feet. The table
+> above is kept as the measurement it was; the current figures are in the
+> [planted-feet evidence](../issue-904-planted-feet/README.md).
+
 Three separate processes on this host and CI's hosted macOS runner all
 produced the same trace fingerprint,
 `550cd878d150921a10b6ef586c152e04d95bf92ac3666811de5a9607b868db23`, and each
