@@ -1010,7 +1010,8 @@ func TestEveryShippedAuditSchemaStaysReadable(t *testing.T) {
 	if len(lines) != len(wantDocuments) {
 		t.Fatalf("audit ledger has %d versions, but preservation is checked for %d", len(lines), len(wantDocuments))
 	}
-	for index, line := range lines {
+	for index, wantDocument := range wantDocuments {
+		line := lines[index]
 		version, err := strconv.Atoi(line)
 		if err != nil {
 			t.Fatalf("audit schema ledger line %q: %v", line, err)
@@ -1036,12 +1037,12 @@ func TestEveryShippedAuditSchemaStaysReadable(t *testing.T) {
 		if err != nil {
 			t.Fatalf("decode audit schema %d golden: %v", version, err)
 		}
-		if !reflect.DeepEqual(document, wantDocuments[index]) {
+		if !reflect.DeepEqual(document, wantDocument) {
 			t.Fatalf(
 				"audit schema %d lost historical semantics: got %+v, want %+v",
 				version,
 				document,
-				wantDocuments[index],
+				wantDocument,
 			)
 		}
 	}

@@ -48,7 +48,7 @@ func TestSnapshotInsertionOrderIndependent(t *testing.T) {
 	w := NewWorld(DemoBounds)
 	w.Add(Entity{ID: 5, Pos: Vec3{X: 1_000}, InterestRadius: 50_000})
 	for _, id := range []EntityID{9, 2, 7, 1, 4} {
-		w.Add(Entity{ID: id, Pos: Vec3{X: int64(id) * 100}, Radius: int64(id)})
+		w.Add(Entity{ID: id, Pos: Vec3{X: idCoord(t, id) * 100}, Radius: idCoord(t, id)})
 	}
 	snap := w.Snapshot(5)
 	var gotIDs []EntityID

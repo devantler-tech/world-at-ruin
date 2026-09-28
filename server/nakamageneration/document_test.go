@@ -45,7 +45,8 @@ func TestEveryShippedGenerationSchemaStaysReadable(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = fixtures.Close() })
-	for index, version := range versions {
+	for index, wantDocument := range want {
+		version := versions[index]
 		if version != strconv.Itoa(index+1) {
 			t.Fatalf("noncontiguous ledger: %q", versions)
 		}
@@ -54,7 +55,7 @@ func TestEveryShippedGenerationSchemaStaysReadable(t *testing.T) {
 			t.Fatal(readErr)
 		}
 		got, decodeErr := decodeDocument(string(raw))
-		if decodeErr != nil || !reflect.DeepEqual(got, want[index]) {
+		if decodeErr != nil || !reflect.DeepEqual(got, wantDocument) {
 			t.Fatalf("schema %s lost historical fields: %+v, %v", version, got, decodeErr)
 		}
 		storage := nakamastoragetest.New()
