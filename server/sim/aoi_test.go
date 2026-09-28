@@ -8,6 +8,18 @@ import (
 	"testing"
 )
 
+// idCoord converts a small test entity ID to a coordinate scalar. Test IDs are
+// tiny literals, so the guard documents the conversion's range rather than
+// ever firing.
+func idCoord(t *testing.T, id EntityID) int64 {
+	t.Helper()
+	if id <= math.MaxInt32 {
+		return int64(id)
+	}
+	t.Fatalf("test entity id %d is too large to use as a coordinate", id)
+	return 0
+}
+
 // newObserverWorld returns a fresh demo-bounded world with a single observer,
 // entity 1, at the origin whose interest radius is r, ready for other entities
 // to be added.
@@ -80,7 +92,7 @@ func TestInterestAscendingOrderInsertionIndependent(t *testing.T) {
 	w.Add(Entity{ID: 5, Pos: Vec3{X: 1_000}, InterestRadius: 50_000})
 	// Add the neighbours in deliberately non-ascending order.
 	for _, id := range []EntityID{9, 2, 7, 1, 4} {
-		w.Add(Entity{ID: id, Pos: Vec3{X: int64(id) * 100}})
+		w.Add(Entity{ID: id, Pos: Vec3{X: idCoord(t, id) * 100}})
 	}
 	got := w.Interest(5)
 	want := []EntityID{1, 2, 4, 7, 9}

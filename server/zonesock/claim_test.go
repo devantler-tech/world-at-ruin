@@ -123,7 +123,7 @@ func TestClaimedHubRefusesCanceledExpiredAndRejectedClaims(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			request := httptest.NewRequest(http.MethodGet, "https://zone.invalid/zone", nil).WithContext(ctx)
+			request := httptest.NewRequestWithContext(ctx, http.MethodGet, "https://zone.invalid/zone", nil)
 			request.Header.Set("Authorization", "Bearer "+token)
 			validHandshake(request)
 			response := httptest.NewRecorder()
@@ -173,7 +173,7 @@ func TestClaimedHubDoesNotConsumeClaimOnInvalidHandshake(t *testing.T) {
 		func(r *http.Request) { r.Header.Set("Origin", "https://sibling.invalid") },
 		func(r *http.Request) { r.ProtoMajor, r.ProtoMinor = 1, 0 },
 	} {
-		r := httptest.NewRequest(http.MethodGet, "https://zone.invalid/zone", nil)
+		r := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "https://zone.invalid/zone", nil)
 		r.Header.Set("Authorization", "Bearer "+token)
 		validHandshake(r)
 		mutate(r)
@@ -209,7 +209,7 @@ func TestClaimedHubDoesNotCallBackendForInvalidAdmission(t *testing.T) {
 	for _, tc := range []struct{ authorization, version string }{
 		{"", ""}, {"Bearer forged", ""}, {"Bearer " + token, "999"},
 	} {
-		request := httptest.NewRequest(http.MethodGet, "https://zone.invalid/zone", nil)
+		request := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "https://zone.invalid/zone", nil)
 		request.Header.Set("Authorization", tc.authorization)
 		request.Header.Set(WireVersionHeader, tc.version)
 		hub.Handler().ServeHTTP(httptest.NewRecorder(), request)

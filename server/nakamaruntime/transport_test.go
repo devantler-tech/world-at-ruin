@@ -33,11 +33,16 @@ func (*tlsAllocationServer) Allocate(context.Context, *allocationpb.AllocationRe
 
 func writeMaterial(t *testing.T, dir, name string, data []byte) string {
 	t.Helper()
-	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, data, 0600); err != nil {
+	// Writing through a Root keeps the file inside dir whatever name holds.
+	root, err := os.OpenRoot(dir)
+	if err != nil {
 		t.Fatal(err)
 	}
-	return path
+	defer func() { _ = root.Close() }()
+	if err := root.WriteFile(name, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	return filepath.Join(dir, name)
 }
 
 func certificateFixture(t *testing.T, dir string, identities ...string) (config, tls.Certificate, *x509.CertPool) {

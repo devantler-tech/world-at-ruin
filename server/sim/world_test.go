@@ -57,7 +57,7 @@ func TestInsertionOrderIndependent(t *testing.T) {
 	build := func(ids []EntityID) *World {
 		w := NewWorld(DemoBounds)
 		for _, id := range ids {
-			w.Add(Entity{ID: id, Pos: Vec3{X: int64(id) * 1000}, MaxSpeed: 5000})
+			w.Add(Entity{ID: id, Pos: Vec3{X: idCoord(t, id) * 1000}, MaxSpeed: 5000})
 		}
 		return w
 	}
