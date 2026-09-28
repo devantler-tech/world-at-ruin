@@ -64,7 +64,7 @@ func TestShutdownDeadlineNeverReportsAnUndrainedClaim(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequest(http.MethodGet, "https://zone.invalid/zone", nil)
+	request := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "https://zone.invalid/zone", nil)
 	token, err := MintToken(testSecret(1), "allocation-a", 1, time.Now().Add(time.Minute))
 	if err != nil {
 		t.Fatal(err)
@@ -146,7 +146,7 @@ func TestShutdownCancelsClaimAndRejectsLateSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequest(http.MethodGet, "https://zone.invalid/zone", nil)
+	request := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "https://zone.invalid/zone", nil)
 	token, err := MintToken(testSecret(1), "allocation-a", 1, time.Now().Add(time.Minute))
 	if err != nil {
 		t.Fatal(err)
@@ -184,7 +184,7 @@ func TestCanceledShutdownStillFencesAdmission(t *testing.T) {
 		t.Fatalf("canceled drain result: %v", err)
 	}
 	response := httptest.NewRecorder()
-	hub.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "https://zone.invalid/zone", nil))
+	hub.Handler().ServeHTTP(response, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "https://zone.invalid/zone", nil))
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatal("canceled shutdown left admission open")
 	}

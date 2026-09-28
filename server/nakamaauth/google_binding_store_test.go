@@ -428,7 +428,8 @@ func TestEveryShippedGoogleBindingSchemaStaysReadable(t *testing.T) {
 			len(wantDocuments),
 		)
 	}
-	for index, entry := range versions {
+	for index, wantDocument := range wantDocuments {
+		entry := versions[index]
 		version, err := strconv.Atoi(entry)
 		if err != nil {
 			t.Fatalf("Google binding schema ledger entry %q: %v", entry, err)
@@ -454,12 +455,12 @@ func TestEveryShippedGoogleBindingSchemaStaysReadable(t *testing.T) {
 		if err != nil {
 			t.Fatalf("decode Google binding schema %d golden: %v", version, err)
 		}
-		if document != wantDocuments[index] {
+		if document != wantDocument {
 			t.Fatalf(
 				"Google binding schema %d golden = %+v, want historical document %+v",
 				version,
 				document,
-				wantDocuments[index],
+				wantDocument,
 			)
 		}
 	}
