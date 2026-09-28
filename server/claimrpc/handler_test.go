@@ -233,7 +233,7 @@ func TestPrivateHandlerRejectsPlainHTTPBeforeStorage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequest(http.MethodPost, "http://claim.example/v1/claim", strings.NewReader(requestBody(t, f)))
+	request := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "http://claim.example/v1/claim", strings.NewReader(requestBody(t, f)))
 	request.Header.Set("Content-Type", "application/json")
 	response := &deadlineRecorder{httptest.NewRecorder()}
 	handler.ServeHTTP(response, request)
