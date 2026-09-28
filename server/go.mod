@@ -1,12 +1,12 @@
 module github.com/devantler-tech/world-at-ruin/server
 
-go 1.26.6
+go 1.27.1
 
 require (
 	agones.dev/agones v1.60.0
 	github.com/coder/websocket v1.8.15
 	github.com/gofrs/uuid/v5 v5.5.1
-	github.com/heroiclabs/nakama-common v1.47.0
+	github.com/heroiclabs/nakama-common v1.48.0
 	github.com/heroiclabs/nakama/v3 v3.40.0
 	golang.org/x/net v0.59.0
 	google.golang.org/api v0.298.0
