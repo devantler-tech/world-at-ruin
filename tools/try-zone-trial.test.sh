@@ -73,4 +73,19 @@ done
 for trial_port in 0 1023 65536 12x; do
   if run_trial --port "${trial_port}" >"${trial_tmp}/invalid.log" 2>&1; then exit 1; fi
 done
+mkdir "${trial_tmp}/selected"
+cp "${trial_tmp}/bin/client" "${trial_tmp}/selected/selected-client"
+cat >"${trial_tmp}/bin/selected-client" <<'DECOY'
+#!/usr/bin/env bash
+printf '%s\n' path-decoy >"${TRIAL_TEST_ROOT}/decoy-started"
+exit 66
+DECOY
+chmod +x "${trial_tmp}/bin/selected-client"
+(
+  cd "${trial_tmp}/selected"
+  bash "${launcher}" --client selected-client --tls-server-name trial.example.test
+) >"${trial_tmp}/selected.log" 2>&1
+grep -q client-started "${trial_tmp}/selected.log"
+[ ! -f "${trial_tmp}/decoy-started" ]
+if kill -0 "$(cat "${trial_tmp}/tunnel-pid")" 2>/dev/null; then exit 1; fi
 printf '%s\n' 'TEST PASS — private trial launcher scopes credentials, isolates saves and cleans up'
