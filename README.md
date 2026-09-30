@@ -64,6 +64,10 @@ To build your own `.app` instead, export with the `macOS` preset in `client/expo
 **Watch the world grow:** press `L` in-game. Every player-visible change is a dev-log entry,
 newest first — replaying after each build shows exactly what the agents grew.
 
+**Private server trial:** the owner can observe the developing server through the
+[verified localhost tunnel](docs/zone-tunnel.md). It shows scripted replicas with a
+separate temporary character; shared controls and online progression remain in development.
+
 ## What this is (and isn't)
 
 - **Everything is text-authored** — scenes, world generation, materials, and characters are code,

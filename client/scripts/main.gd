@@ -92,6 +92,9 @@ var _zone_failure_reported := false
 ## once it has: before that, the close IS the failure and is already reported
 ## under its own error class.
 var _zone_was_live := false
+## One sanitized acceptance marker per trial connection, only after a real
+## snapshot was applied. An open socket alone cannot prove world replication.
+var _zone_trial_live_reported := false
 ## Draws the replicated entity table (#248), or null when no zone was named.
 ## Parented under THIS node and never under WorldGen: that subtree is
 ## fingerprinted by `world_gen_determinism_test` and additionally scanned for
@@ -520,6 +523,7 @@ func _connect_zone() -> void:
 	if not ZoneConnection.is_enabled():
 		return
 	_zone = ZoneConnection.new()
+	_zone_trial_live_reported = false
 	# The view is built for any named zone, including one whose connection is
 	# refused below: it draws whatever the store holds, and a store that never
 	# received a frame is empty, so an unreachable zone shows nothing rather
@@ -527,7 +531,9 @@ func _connect_zone() -> void:
 	_replicas = ReplicaView.new()
 	_replicas.name = "Replicas"
 	add_child(_replicas)
-	if not _zone.connect_to(ZoneConnection.zone_url()):
+	var opened := _zone.connect_to(ZoneConnection.zone_url())
+	_update_zone_trial_status()
+	if not opened:
 		# error_detail() names a misconfigured variable, never its value.
 		push_warning("zone connection refused (%s): %s" % [_zone.error(), _zone.error_detail()])
 		# This failure is now reported. Without claiming it, _process() sees
@@ -535,6 +541,22 @@ func _connect_zone() -> void:
 		# "lost" — and a connection that never opened cannot be lost. Observed
 		# on a real boot with a missing token and with a ws:// url.
 		_zone_failure_reported = true
+
+
+## Keep the operator's visible status tied to the applied world data. This also
+## supplies a once-only, privacy-safe verdict through the ordinary exported
+## launch path, which cannot run an external evaluation script.
+func _update_zone_trial_status() -> void:
+	if _zone == null or _hud == null:
+		return
+	var store := _zone.store()
+	var has_data := _zone.is_live() and _zone.frames_applied() > 0 and store.has_base()
+	_hud.update_zone_trial_status(_zone.state(), store.tick() if has_data else -1,
+		store.count() if has_data else 0)
+	if has_data and not _zone_trial_live_reported:
+		_zone_trial_live_reported = true
+		print("ZONE_TRIAL_LIVE frames=%d tick=%d entities=%d" % [
+			_zone.frames_applied(), store.tick(), store.count()])
 
 
 ## Per-frame world upkeep: drift the ash, then drive the connection.
@@ -572,6 +594,7 @@ func _process(delta: float) -> void:
 	# table it delivered — the fold is atomic, so that table is never a
 	# half-applied one.
 	_replicas.sync(_zone.store())
+	_update_zone_trial_status()
 	if _zone.is_live():
 		_zone_was_live = true
 	if _zone_failure_reported:
