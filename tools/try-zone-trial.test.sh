@@ -114,6 +114,7 @@ cat >"${trial_tmp}/signal-check.go" <<'GO'
 package main
 
 import (
+  "bufio"
   "fmt"
   "os"
   "os/exec"
@@ -176,10 +177,16 @@ func run(root, launcher, mode string, signal syscall.Signal, expected int) error
   if !waitFile(filepath.Join(root, "client-pid")) {
     return fmt.Errorf("the long-lived client never reached its launch boundary")
   }
-  canary := exec.Command("sleep", "30")
+  canary := exec.Command(os.Args[0], "--canary")
   canary.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pgid: command.Process.Pid}
+  canaryInput, err := canary.StdinPipe()
+  if err != nil { return fmt.Errorf("could not create process-scope input") }
+  canaryOutput, err := canary.StdoutPipe()
+  if err != nil { return fmt.Errorf("could not create process-scope response") }
   if err := canary.Start(); err != nil { return fmt.Errorf("could not start process-scope control") }
-  defer func() { _ = canary.Process.Kill(); _ = canary.Wait() }()
+  canaryDone := make(chan struct{})
+  go func() { _ = canary.Wait(); close(canaryDone) }()
+  defer func() { _ = canaryInput.Close(); _ = canary.Process.Kill(); <-canaryDone }()
   if err := command.Process.Signal(signal); err != nil { return fmt.Errorf("could not deliver signal to launcher") }
   status, exited := waitExit(done, 4*time.Second)
   if !exited { return fmt.Errorf("launcher deferred %s while its client remained alive", mode) }
@@ -187,7 +194,27 @@ func run(root, launcher, mode string, signal syscall.Signal, expected int) error
   if processAlive(filepath.Join(root, "client-pid")) || processAlive(filepath.Join(root, "tunnel-pid")) {
     return fmt.Errorf("%s left an owned client or tunnel alive", mode)
   }
-  if syscall.Kill(canary.Process.Pid, 0) != nil { return fmt.Errorf("cleanup stopped a process it did not own") }
+  // Reap immediately: kill(pid, 0) can succeed for an unreaped dead child.
+  select {
+  case <-canaryDone:
+    return fmt.Errorf("cleanup stopped a process it did not own")
+  default:
+  }
+  // A response after cleanup proves the process still executes, even if its
+  // Wait goroutine has not yet delivered an exit notification.
+  if _, err := fmt.Fprintln(canaryInput, "alive"); err != nil {
+    return fmt.Errorf("cleanup stopped a process it did not own")
+  }
+  response := make(chan string, 1)
+  go func() { line, _ := bufio.NewReader(canaryOutput).ReadString('\n'); response <- line }()
+  select {
+  case <-canaryDone:
+    return fmt.Errorf("cleanup stopped a process it did not own")
+  case line := <-response:
+    if line != "ALIVE\n" { return fmt.Errorf("cleanup stopped a process it did not own") }
+  case <-time.After(time.Second):
+    return fmt.Errorf("the unrelated process did not respond after cleanup")
+  }
   profile, err := os.ReadFile(filepath.Join(root, "save-dir"))
   if err != nil { return fmt.Errorf("fixture profile location was not recorded") }
   if _, err := os.Stat(strings.TrimSpace(string(profile))); !os.IsNotExist(err) {
@@ -202,6 +229,7 @@ func run(root, launcher, mode string, signal syscall.Signal, expected int) error
 
 func probeSIGINT(root string) error {
   ready := filepath.Join(root, "signal-ready")
+  _ = os.Remove(ready)
   command := exec.Command("bash", "-c", `trap 'exit 130' INT; : > "$1"; while :; do sleep 0.05; done`, "signal-probe", ready)
   command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
   if err := command.Start(); err != nil { return fmt.Errorf("could not start SIGINT disposition control") }
@@ -216,6 +244,13 @@ func probeSIGINT(root string) error {
 }
 
 func main() {
+  if len(os.Args) == 2 && os.Args[1] == "--canary" {
+    input := bufio.NewScanner(os.Stdin)
+    for input.Scan() {
+      if input.Text() == "alive" { fmt.Println("ALIVE") }
+    }
+    return
+  }
   if len(os.Args) != 3 { fail("invalid fixture arguments") }
   root, launcher := os.Args[1], os.Args[2]
   if err := probeSIGINT(root); err != nil { fail(err.Error()) }
@@ -233,4 +268,17 @@ func main() {
 GO
 GOTOOLCHAIN=local GOCACHE="${GOCACHE:-${trial_tmp}/go-cache}" go build -o "${trial_tmp}/signal-check" "${trial_tmp}/signal-check.go"
 "${trial_tmp}/signal-check" "${trial_tmp}" "${launcher}"
+
+# Negative control: a private copy broadcasts TERM to its entire process group
+# during cleanup. It must fail specifically because the unrelated canary died,
+# while the real launcher above passes independently with identical fixtures.
+awk '{ print } $0 == "  trap \047\047 INT TERM" { print "  kill -TERM -- -$$" }' \
+  "${launcher}" >"${trial_tmp}/broad-cleanup-launcher.sh"
+if "${trial_tmp}/signal-check" "${trial_tmp}" "${trial_tmp}/broad-cleanup-launcher.sh" \
+  >"${trial_tmp}/scope-ablation.log" 2>&1; then
+  printf '%s\n' 'TEST FAIL — broad process-group cleanup passed the unrelated-process control' >&2
+  exit 1
+fi
+grep -q 'cleanup stopped a process it did not own' "${trial_tmp}/scope-ablation.log"
+printf '%s\n' 'SCOPE ABLATION PASS — broad process-group cleanup is refused by the unrelated-process control'
 printf '%s\n' 'TEST PASS — private trial launcher scopes credentials, isolates saves and cleans up'
