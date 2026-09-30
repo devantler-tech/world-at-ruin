@@ -79,6 +79,12 @@ func (t boundedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	response, err := t.next.RoundTrip(req)
 	if err != nil {
+		// A timed-out connection can return a transport error that does not
+		// wrap the request's deadline. Preserve it before the API client
+		// converts the failure into an invalid observation.
+		if canceled := req.Context().Err(); canceled != nil {
+			return nil, canceled
+		}
 		return nil, err
 	}
 	if response == nil || response.Body == nil {
@@ -94,6 +100,11 @@ func (t boundedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, budget.remaining+1))
 	budget.remaining -= int64(len(body))
+	// Deadline cancellation can surface as an ordinary read error or EOF.
+	// Do not pass a partial timed-out body to the generated JSON decoder.
+	if canceled := req.Context().Err(); canceled != nil {
+		return nil, canceled
+	}
 	if err != nil {
 		return nil, err
 	}
