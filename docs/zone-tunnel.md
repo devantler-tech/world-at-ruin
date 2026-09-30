@@ -37,6 +37,14 @@ the launcher's credential and removes the trial's temporary files. Relaunch the
 script for a fresh token and trial character. The trial character is deliberately
 temporary; it is not an online player account.
 
+A small status below the build number says whether the trial is connecting,
+waiting for world data, or live with its last applied tick and nearby entity
+count. An open socket alone does not show live: that state requires an applied
+world snapshot. A stopped connection asks you to relaunch the trial. The ordinary
+client has no trial status. For private operator evaluation, the client writes
+one `ZONE_TRIAL_LIVE` log line after its first applied snapshot; it contains only
+frame, tick and entity counts, with no address, certificate name or credential.
+
 To see the live scripted actors, follow the lit passage out of the starting cave
 and head toward the Wardens' Shrine in the center of the Reach. The cave begins
 west of that center; the server's demo actors move within roughly twenty metres

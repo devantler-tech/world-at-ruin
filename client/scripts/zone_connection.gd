@@ -168,8 +168,8 @@ var _state: State = State.DISCONNECTED
 var _error := ""
 var _error_detail := ""
 var _frames_applied := 0
-## True from the moment we call `close()` on the transport until its close
-## handshake reaches `STATE_CLOSED`. Tracked separately from `_state` because
+## True while a requested or observed close handshake is still in flight,
+## until the transport reaches `STATE_CLOSED`. Tracked separately from `_state` because
 ## the two are orthogonal: a FAILED connection's socket is still closing, and
 ## it still has to be polled for that to finish.
 var _transport_closing := false
@@ -365,7 +365,7 @@ static func _valid_tls_server_name(name: String) -> bool:
 
 ## Advance the connection: pump the transport, track its ready state, and fold
 ## every frame it has delivered. Safe and cheap to call every frame; a no-op
-## unless the connection is CONNECTING or LIVE.
+## unless the connection is CONNECTING, LIVE or pumping a close handshake.
 func poll() -> void:
 	# A transport we have closed still owes us a close handshake, and it only
 	# makes progress while it is polled. This runs whatever the wrapper state
@@ -392,7 +392,9 @@ func poll() -> void:
 		WebSocketPeer.STATE_CLOSING:
 			# Draining here would fold frames sent after the peer began
 			# closing; the close handshake is not a delivery guarantee.
-			pass
+			if _state == State.LIVE:
+				_state = State.CLOSING
+				_transport_closing = true
 		_:
 			# The peer is closed, but what that MEANS depends on whether it
 			# ever opened. From LIVE it is an ordinary hang-up. From

@@ -218,6 +218,8 @@ func _ready() -> void:
 		return
 	if not _check_close_of_an_already_gone_peer_completes():
 		return
+	if not _check_peer_close_after_live_stops_stream(stream):
+		return
 	if not _check_reconnect_is_not_wedged(stream):
 		return
 	if not _check_default_off():
@@ -829,6 +831,62 @@ func _check_close_of_an_already_gone_peer_completes() -> bool:
 	conn.poll()
 	if conn.state() != ZoneConnection.State.CLOSED:
 		_fail("state drifted to %d after polling a fully closed peer, expected CLOSED" % conn.state())
+		return false
+	return true
+
+
+## A peer may begin closing before it becomes CLOSED. Report that stop
+## immediately, stop folding, and continue polling its native handshake.
+func _check_peer_close_after_live_stops_stream(stream: Dictionary) -> bool:
+	var frames := _frame_bytes(stream)
+	var transport := FakeTransport.new()
+	transport.closing_polls = 3
+	var conn := ZoneConnection.new(transport)
+	conn.connect_to(URL)
+	transport.ready_state = WebSocketPeer.STATE_OPEN
+	transport.packets = [frames[0]]
+	conn.poll()
+	if not conn.is_live() or not conn.store().has_base():
+		_fail("the peer-close control never received a live base snapshot")
+		return false
+	transport.close()
+	transport.packets = [frames[1]]
+	conn.poll()
+	if conn.state() != ZoneConnection.State.CLOSING or conn.is_live():
+		_fail("a peer closing after live world data still reports LIVE — trial status must stop claiming live data immediately")
+		return false
+	if conn.frames_applied() != 1 or conn.store().tick() != 0:
+		_fail("the peer's closing handshake folded a frame whose delivery is no longer guaranteed")
+		return false
+	if conn.connect_to(URL) or conn.state() != ZoneConnection.State.CLOSING:
+		_fail("a peer close allowed reconnect before its native handshake finished")
+		return false
+	conn.poll()
+	if conn.state() != ZoneConnection.State.CLOSING:
+		_fail("the peer-close handshake stopped being pumped before its last native poll")
+		return false
+	conn.poll()
+	if conn.state() != ZoneConnection.State.CLOSED or conn.frames_applied() != 1:
+		_fail("a peer close never settled to CLOSED or folded its queued post-close frame")
+		return false
+	transport.packets.clear()
+	transport.ready_state = WebSocketPeer.STATE_CONNECTING
+	if not conn.connect_to(URL) or conn.store().has_base() or conn.frames_applied() != 0:
+		_fail("the settled peer close prevented a fresh reconnect or retained its stale world base")
+		return false
+	var pending := FakeTransport.new()
+	pending.closing_polls = 3
+	var handshake := ZoneConnection.new(pending)
+	handshake.connect_to(URL)
+	pending.close()
+	handshake.poll()
+	if handshake.state() != ZoneConnection.State.CONNECTING:
+		_fail("closing before any native OPEN lost the pending handshake classification")
+		return false
+	pending.ready_state = WebSocketPeer.STATE_CLOSED
+	handshake.poll()
+	if handshake.state() != ZoneConnection.State.FAILED or handshake.error() != ZoneConnection.ERR_HANDSHAKE:
+		_fail("a peer close before native OPEN was laundered into a clean close")
 		return false
 	return true
 

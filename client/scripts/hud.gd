@@ -52,6 +52,8 @@ var _toast_tween: Tween
 var _hints_tween: Tween
 var _device: InputDevice
 var _contextual_hints := false
+## Built only when Main opens an explicitly configured private server trial.
+var _zone_trial: Label
 ## Set by the player through `toggle_hints`: the bar stays up until they say
 ## otherwise, so anyone who wants the old permanent bar can simply have it.
 var _hints_pinned := false
@@ -113,6 +115,27 @@ func toast(message: String) -> void:
 	_toast_tween = create_tween()
 	_toast_tween.tween_interval(2.8)
 	_toast_tween.tween_property(_toast, "modulate:a", 0.0, 1.4)
+
+
+## A socket opening is provisional until Main supplies an applied snapshot's
+## tick. The status receives only lifecycle and counters, never connection
+## details or credentials. Ordinary boots never call this or allocate a label.
+func update_zone_trial_status(state: ZoneConnection.State, tick: int = -1, entities: int = 0) -> void:
+	if _zone_trial == null:
+		_zone_trial = Label.new()
+		_zone_trial.name = "ZoneTrialStatus"
+		_zone_trial.position = Vector2(18, 62)
+		_zone_trial.add_theme_font_size_override("font_size", UiTheme.FONT_BODY)
+		_zone_trial.add_theme_color_override("font_color", UiTheme.BONE)
+		add_child(_zone_trial)
+	match state:
+		ZoneConnection.State.CONNECTING:
+			_zone_trial.text = "Private server trial · connecting…"
+		ZoneConnection.State.LIVE:
+			_zone_trial.text = ("Private server trial · live · tick %d · %d entities" % [tick, entities]
+				if tick >= 0 else "Private server trial · waiting for world data")
+		_:
+			_zone_trial.text = "Private server trial · disconnected · relaunch to connect"
 
 func _build_title() -> void:
 	var title := Label.new()
