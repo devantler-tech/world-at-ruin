@@ -47,6 +47,7 @@ func _ready() -> void:
 	_check(_stored() == _snapshot(300, 35, {}), "stale owner retried over the newer mastery")
 	_check_transient_failure(ledger, writer)
 	_check_conflict_after_retry(ledger, writer, persistence)
+	_check_retry_ceiling(ledger, writer)
 	_check(_save.real_save_untouched(), "persistence test touched real player state")
 	_save = null
 	if _failed:
@@ -102,6 +103,53 @@ func _check_conflict_after_retry(ledger: Mastery, writer: RefCounted, persistenc
 	stale.call("tick", 1.0)
 	_check(notices == [false, true], "transient warning hid the later permanent session conflict")
 	_check(_stored() == _snapshot(300, 52, {}), "conflict after a retry overwrote newer mastery")
+	stale.call("flush")
+	_check(_stored() == _snapshot(300, 52, {}), "logout flush revived a conflicted writer")
+	# Restoring older disk bytes must not reopen this session's permission to
+	# write. Otherwise a missing permanent fence hides behind another CAS refusal.
+	var winning := SaveVault.load_saved() as Dictionary
+	var restored := winning.duplicate(true)
+	restored["mastery"] = _snapshot(300, 50, {})
+	_check(SaveVault.save_to(SaveVault.vault_path(), restored), "could not seed restored disk history")
+	stale.call("flush")
+	other.accrue("sword", 10)
+	stale.call("tick", 1000.0)
+	stale.call("flush")
+	_check(SaveVault.load_saved() == restored,
+		"restored disk history or later awards revived a permanently conflicted writer")
+	_check(SaveVault.save_to(SaveVault.vault_path(), winning), "could not restore the winning session")
+
+
+## Drive real storage refusals across every backoff boundary, including two
+## capped intervals. Temporarily available storage exposes premature retries.
+func _check_retry_ceiling(ledger: Mastery, writer: RefCounted) -> void:
+	var path := SaveVault.vault_path()
+	var blocked_path := path + ".missing-parent/vault.json"
+	var before := _stored()
+	OS.set_environment("WAR_VAULT_PATH", blocked_path)
+	ledger.accrue("sword", 1)
+	var intervals := [1.0, 2.0, 4.0, 8.0, 16.0, 30.0, 30.0]
+	for index in intervals.size():
+		OS.set_environment("WAR_VAULT_PATH", path)
+		writer.call("tick", intervals[index] - 0.125)
+		_check(_stored() == before, "mastery retried before its backoff boundary")
+		if index < intervals.size() - 1:
+			OS.set_environment("WAR_VAULT_PATH", blocked_path)
+		writer.call("tick", 0.125)
+		if index < intervals.size() - 1:
+			# Coalesce a new award without resetting the outstanding delay.
+			ledger.accrue("sword", 1)
+	OS.set_environment("WAR_VAULT_PATH", path)
+	_check(_stored() == _snapshot(300, 59, {}),
+		"retry exceeded the 30-second ceiling or lost coalesced awards")
+	# Success resets the next refusal to one second, even after reaching the cap.
+	OS.set_environment("WAR_VAULT_PATH", blocked_path)
+	ledger.accrue("sword", 1)
+	OS.set_environment("WAR_VAULT_PATH", path)
+	writer.call("tick", 0.875)
+	_check(_stored() == _snapshot(300, 59, {}), "new refusal skipped its initial retry delay")
+	writer.call("tick", 0.125)
+	_check(_stored() == _snapshot(300, 60, {}), "successful retry did not reset the delay")
 
 
 func _stored() -> Dictionary:

@@ -8,6 +8,7 @@ const MAIN_SCENE_PATH := "res://scenes/main.tscn"
 var _save: SaveIsolation
 var _main: Node
 var _failed := false
+var _expected_vault: Dictionary
 
 
 func _ready() -> void:
@@ -20,9 +21,14 @@ func _ready() -> void:
 		return
 	SaveVault.clear_refusals_for_test()
 	var previous := {
-		"version": 5, "attuned": [], "discoveries": [], "reward_claims": [], "quests": {},
+		"version": 5, "comment": "progress from before mastery activation",
+		"attuned": ["wardens_shrine", "future_shrine"],
+		"discoveries": ["starter_cave", "wardens_shrine", "future_place"],
+		"reward_claims": ["wardens_shrine", "future_reward"],
+		"quests": {"future_quest": {"future_objective": 9007199254740991}},
 		"mastery": {"weapons": {"sword": {"banked": 200.0, "unbanked": 50.0}}, "bloodstain": {}},
 	}
+	_expected_vault = previous.duplicate(true)
 	if not SaveVault.save_to(SaveVault.vault_path(), previous):
 		_fail("could not persist the previous waking")
 		return
@@ -39,9 +45,8 @@ func _ready() -> void:
 		ledger.accrue("sword", 7)
 		_main.free()
 		_main = null
-		var carried = SaveVault.load_saved()
-		if carried is not Dictionary or carried.get("mastery") != previous["mastery"]:
-			_fail("the retained reader wrote new mastery while advertising capability 6")
+		if not _vault_equals(previous):
+			_fail("the retained reader changed seeded progression while advertising capability 6")
 			return
 		if not _save.real_save_untouched():
 			_fail("retained reader boot touched real player state")
@@ -55,21 +60,19 @@ func _ready() -> void:
 	ledger.reclaim()
 	ledger.die(50)
 	ledger.die(100)
-	var vault = SaveVault.load_saved()
-	if vault["mastery"] != {
+	if not _has_snapshot({
 		"weapons": {"sword": {"banked": 300.0, "unbanked": 0.0}},
 		"bloodstain": {"sword": 15.0},
-	}:
-		_fail("real death replacement did not discard only the previous standing stain")
+	}):
+		_fail("real death replacement lost existing progression or the expected mastery")
 		return
 	if ledger.reclaim() != 15 or ledger.reclaim() != 0:
 		_fail("real boot duplicated the standing stain")
 		return
-	vault = SaveVault.load_saved()
-	if vault["mastery"] != {
+	if not _has_snapshot({
 		"weapons": {"sword": {"banked": 300.0, "unbanked": 15.0}}, "bloodstain": {},
-	}:
-		_fail("real boot's reclaim was not durable")
+	}):
+		_fail("real boot's reclaim lost existing progression or was not durable")
 		return
 	# A temporary failure must recover through Main's ordinary frame processing,
 	# without this harness constructing the owner or calling its retry method.
@@ -96,11 +99,11 @@ func _ready() -> void:
 	await get_tree().process_frame
 	var restored: Mastery = _main.get("_mastery")
 	if restored.banked("sword") != 300 or restored.unbanked("sword") != 27 \
-			or not restored.bloodstain().is_empty():
-		_fail("reboot lost or duplicated the mastery committed by Main")
+			or not restored.bloodstain().is_empty() or not _has_saved_points(27):
+		_fail("reboot lost existing progression or the mastery committed by Main")
 		return
-	_main.free()
-	_main = null
+	if not await _check_visible_conflict(restored):
+		return
 	if not _save.real_save_untouched():
 		_fail("boot persistence touched real player state")
 		return
@@ -112,12 +115,63 @@ func _ready() -> void:
 
 
 func _has_saved_points(unbanked: int) -> bool:
-	var vault = SaveVault.load_saved()
-	if vault is not Dictionary:
-		return false
-	return vault.get("mastery") == {
+	return _has_snapshot({
 		"weapons": {"sword": {"banked": 300.0, "unbanked": float(unbanked)}}, "bloodstain": {},
-	}
+	})
+
+
+## Compare the whole independent seed, including rollback-only names and exact
+## quest counters, so a mastery-only replacement cannot pass this launch proof.
+func _has_snapshot(mastery: Dictionary) -> bool:
+	var expected := _expected_vault.duplicate(true)
+	expected["mastery"] = mastery
+	return _vault_equals(expected)
+
+
+## Parsed JSON numbers are floats; compare exact canonical values instead of
+## treating an in-memory integer and its parsed representation as different.
+func _vault_equals(expected: Dictionary) -> bool:
+	var actual := JCS.canonicalize(SaveVault.load_saved())
+	var wanted := JCS.canonicalize(expected)
+	return actual["error"].is_empty() and wanted["error"].is_empty() \
+		and actual["text"] == wanted["text"]
+
+
+## Observe the real HUD after a second session wins. A test-local signal
+## listener cannot prove that Main tells the player how to recover.
+func _check_visible_conflict(ledger: Mastery) -> bool:
+	var hud: Node = _main.get("_hud")
+	var toast: Label = hud.get("_toast")
+	if toast.text.contains("Another session changed your mastery"):
+		_fail("healthy boot showed a permanent mastery conflict")
+		return false
+	var path := SaveVault.vault_path()
+	OS.set_environment("WAR_VAULT_PATH", path + ".missing-parent/vault.json")
+	ledger.accrue("sword", 10)
+	OS.set_environment("WAR_VAULT_PATH", path)
+	if not toast.is_visible_in_tree() or toast.modulate.a <= 0.01 \
+			or not toast.text.contains("may not remember next waking"):
+		_fail("Main did not show the temporary mastery save failure")
+		return false
+	var newer := SaveVault.load_saved() as Dictionary
+	newer["mastery"]["weapons"]["sword"]["unbanked"] = 28.0
+	if not SaveVault.save_to(SaveVault.vault_path(), newer):
+		_fail("could not seed the second session's committed award")
+		return false
+	await get_tree().create_timer(1.25).timeout
+	await get_tree().process_frame
+	if not toast.is_visible_in_tree() or toast.modulate.a <= 0.01 \
+			or not toast.text.contains("Another session changed your mastery") \
+			or not toast.text.contains("cannot save further mastery") \
+			or not toast.text.contains("reopen the game"):
+		_fail("Main did not show the permanent save conflict and recovery action on its HUD")
+		return false
+	_main.free()
+	_main = null
+	if not _vault_equals(newer):
+		_fail("exiting the conflicted Main overwrote the second session's progression")
+		return false
+	return true
 
 
 func _fail(message: String) -> void:
