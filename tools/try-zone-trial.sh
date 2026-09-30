@@ -6,9 +6,11 @@ client_path=""
 server_name=""
 trial_context="oidc@prod"
 trial_port=18443
+# Print the supported arguments to stdout; take no parameters and return zero.
 usage() {
   printf '%s\n' 'Usage: try-zone-trial.sh --client <released executable> --tls-server-name <certificate DNS name> [--context <context>] [--port <1024..65535>]'
 }
+# Print the supplied sanitized operator message to stderr and exit with status 1.
 die() { printf 'Private zone trial: %s\n' "$1" >&2; exit 1; }
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -41,11 +43,41 @@ done
 command -v kubectl >/dev/null || die 'kubectl and the platform OIDC login are required'
 trial_dir="$(mktemp -d)"
 tunnel_pid=""
-cleanup() {
-  if [ -n "${tunnel_pid}" ]; then
-    kill "${tunnel_pid}" 2>/dev/null || true
-    wait "${tunnel_pid}" 2>/dev/null || true
+client_pid=""
+
+# Return zero only when $1 is a running or stopped job owned by this shell.
+# Completed/reaped PIDs must not be signalled if the OS has since reused them.
+is_owned_child() {
+  local child_pid="$1" candidate
+  for candidate in $(jobs -pr) $(jobs -ps); do
+    [ "${candidate}" != "${child_pid}" ] || return 0
+  done
+  return 1
+}
+
+# Stop and reap the owned child PID in $1; return zero even after a signal exit.
+# Allow at most one second for TERM, then KILL so an ignored TERM cannot hang
+# cleanup. A finished child is only waited, never signalled by its stale PID.
+stop_owned_child() {
+  local child_pid="$1" attempt
+  [ -n "${child_pid}" ] || return 0
+  if is_owned_child "${child_pid}"; then
+    kill -TERM "${child_pid}" 2>/dev/null || true
+    for ((attempt = 0; attempt < 20; attempt++)); do
+      is_owned_child "${child_pid}" || break
+      sleep 0.05
+    done
+    if is_owned_child "${child_pid}"; then kill -KILL "${child_pid}" 2>/dev/null || true; fi
   fi
+  wait "${child_pid}" 2>/dev/null || true
+}
+
+# EXIT trap with no parameters: retire this launcher's children and private
+# profile, clear its bearer, and retain the original normal or signal exit code.
+cleanup() {
+  trap '' INT TERM
+  stop_owned_child "${client_pid}"
+  stop_owned_child "${tunnel_pid}"
   unset WAR_ZONE_TOKEN
   rm -rf "${trial_dir}"
 }
@@ -70,9 +102,21 @@ done
 [ "${tunnel_ready}" = true ] || die 'the localhost tunnel did not become ready'
 printf '%s\n' 'Starting the private scripted zone trial with a separate temporary character. Close the client to close the tunnel.'
 export WAR_ZONE_TOKEN
-WAR_ZONE_URL="wss://127.0.0.1:${trial_port}/zone" \
-  WAR_ZONE_TLS_SERVER_NAME="${server_name}" \
-  WAR_SAVE_PATH="${trial_dir}/character.json" \
-  WAR_VAULT_PATH="${trial_dir}/vault.json" \
-  WAR_BOOT_RECOVERY_PATH="${trial_dir}/recovery.json" \
-  "${client_path}"
+
+# Launch the configured client with private environment settings; no arguments.
+# Wait in a Bash builtin so INT/TERM traps run promptly (130/143), while a normal
+# client exit is returned unchanged and a reaped client PID is never signalled.
+run_trial() {
+  local client_status=0
+  WAR_ZONE_URL="wss://127.0.0.1:${trial_port}/zone" \
+    WAR_ZONE_TLS_SERVER_NAME="${server_name}" \
+    WAR_SAVE_PATH="${trial_dir}/character.json" \
+    WAR_VAULT_PATH="${trial_dir}/vault.json" \
+    WAR_BOOT_RECOVERY_PATH="${trial_dir}/recovery.json" \
+    "${client_path}" &
+  client_pid=$!
+  wait "${client_pid}" || client_status=$?
+  client_pid=""
+  return "${client_status}"
+}
+run_trial

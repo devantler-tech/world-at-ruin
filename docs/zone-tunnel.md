@@ -32,10 +32,10 @@ default local port `18443` is already occupied.
 The launcher creates a private temporary directory and redirects all three game
 state files there: the character, progression vault and boot-recovery ledger. This
 trial starts with a separate character and leaves your usual saves in place. Make
-a character in the first-run screen. Closing the client closes the tunnel, clears
-the launcher's credential and removes the trial's temporary files. Relaunch the
-script for a fresh token and trial character. The trial character is deliberately
-temporary; it is not an online player account.
+a character in the first-run screen. Closing the client or stopping the launcher
+closes both processes, clears the launcher's credential and removes the trial's
+temporary files. Relaunch the script for a fresh token and trial character. The
+trial character is deliberately temporary; it is not an online player account.
 
 A small status below the build number says whether the trial is connecting,
 waiting for world data, or live with its last applied tick and nearby entity

@@ -20,6 +20,7 @@ case " $* " in
   [ "${TRIAL_TEST_MODE:-}" != tunnel-failure ] || exit 1
   printf '%s\n' "$$" >"${TRIAL_TEST_ROOT}/tunnel-pid"
   trap 'exit 0' TERM
+  if [ "${TRIAL_TEST_MODE:-}" = ignore-term ]; then trap '' TERM; fi
   printf '%s\n' 'Forwarding from 127.0.0.1:18443 -> 8443'
   while :; do sleep 0.05; done
   ;;
@@ -39,10 +40,20 @@ done
 printf '%s\n' "${WAR_SAVE_PATH%/*}" >"${TRIAL_TEST_ROOT}/save-dir"
 printf '%s\n' client-started
 [ "${TRIAL_TEST_MODE:-}" != client-failure ] || exit 7
+case "${TRIAL_TEST_MODE:-}" in
+  signal-int|signal-term|ignore-term)
+    trap 'exit 0' TERM
+    if [ "${TRIAL_TEST_MODE:-}" = ignore-term ]; then trap '' TERM; fi
+    printf '%s\n' "$$" >"${TRIAL_TEST_ROOT}/client-pid"
+    while :; do sleep 0.05; done
+    ;;
+esac
 CLIENT
 chmod +x "${trial_tmp}/bin/kubectl" "${trial_tmp}/bin/client"
 export PATH="${trial_tmp}/bin:${PATH}"
 launcher="${repo_root}/tools/try-zone-trial.sh"
+# Run the actual launcher with fixture boundaries and optional extra arguments;
+# return its exit status unchanged so normal client failure remains observable.
 run_trial() {
   bash "${launcher}" --client "${trial_tmp}/bin/client" --tls-server-name trial.example.test "$@"
 }
@@ -95,4 +106,131 @@ if kill -0 "$(cat "${trial_tmp}/tunnel-pid")" 2>/dev/null; then exit 1; fi
 ) >"${trial_tmp}/cdpath.log" 2>&1
 grep -q client-started "${trial_tmp}/cdpath.log"
 if kill -0 "$(cat "${trial_tmp}/tunnel-pid")" 2>/dev/null; then exit 1; fi
+
+# Go starts the shell directly, rather than through Bash's asynchronous list:
+# background Bash commands can inherit ignored SIGINT and make that control
+# meaningless. The preflight proves this exact spawn path handles SIGINT.
+cat >"${trial_tmp}/signal-check.go" <<'GO'
+package main
+
+import (
+  "fmt"
+  "os"
+  "os/exec"
+  "path/filepath"
+  "strconv"
+  "strings"
+  "syscall"
+  "time"
+)
+
+func fail(reason string) {
+  fmt.Fprintf(os.Stderr, "TEST FAIL — trial signal cleanup: %s\n", reason)
+  os.Exit(1)
+}
+
+func waitFile(path string) bool {
+  deadline := time.Now().Add(3 * time.Second)
+  for time.Now().Before(deadline) {
+    if _, err := os.Stat(path); err == nil { return true }
+    time.Sleep(10 * time.Millisecond)
+  }
+  return false
+}
+
+func waitExit(done <-chan error, duration time.Duration) (int, bool) {
+  select {
+  case err := <-done:
+    if err == nil { return 0, true }
+    if exit, ok := err.(*exec.ExitError); ok { return exit.ExitCode(), true }
+    return -1, true
+  case <-time.After(duration):
+    return 0, false
+  }
+}
+
+func processAlive(path string) bool {
+  raw, err := os.ReadFile(path)
+  if err != nil { return false }
+  pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+  return err == nil && pid > 0 && syscall.Kill(pid, 0) == nil
+}
+
+func run(root, launcher, mode string, signal syscall.Signal, expected int) error {
+  for _, name := range []string{"client-pid", "tunnel-pid", "save-dir"} {
+    _ = os.Remove(filepath.Join(root, name))
+  }
+  log, err := os.Create(filepath.Join(root, mode+".log"))
+  if err != nil { return fmt.Errorf("could not create private fixture log") }
+  defer log.Close()
+  command := exec.Command("bash", launcher, "--client", filepath.Join(root, "bin/client"), "--tls-server-name", "trial.example.test")
+  command.Env = append(os.Environ(), "TRIAL_TEST_MODE="+mode)
+  command.Stdout, command.Stderr = log, log
+  command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+  if err := command.Start(); err != nil { return fmt.Errorf("could not start launcher") }
+  // This group was created by the helper and contains only its test fixtures.
+  // Even a deliberately failing old launcher cannot strand those fixtures.
+  defer syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
+  done := make(chan error, 1)
+  go func() { done <- command.Wait() }()
+  if !waitFile(filepath.Join(root, "client-pid")) {
+    return fmt.Errorf("the long-lived client never reached its launch boundary")
+  }
+  canary := exec.Command("sleep", "30")
+  canary.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pgid: command.Process.Pid}
+  if err := canary.Start(); err != nil { return fmt.Errorf("could not start process-scope control") }
+  defer func() { _ = canary.Process.Kill(); _ = canary.Wait() }()
+  if err := command.Process.Signal(signal); err != nil { return fmt.Errorf("could not deliver signal to launcher") }
+  status, exited := waitExit(done, 4*time.Second)
+  if !exited { return fmt.Errorf("launcher deferred %s while its client remained alive", mode) }
+  if status != expected { return fmt.Errorf("%s returned %d, expected %d", mode, status, expected) }
+  if processAlive(filepath.Join(root, "client-pid")) || processAlive(filepath.Join(root, "tunnel-pid")) {
+    return fmt.Errorf("%s left an owned client or tunnel alive", mode)
+  }
+  if syscall.Kill(canary.Process.Pid, 0) != nil { return fmt.Errorf("cleanup stopped a process it did not own") }
+  profile, err := os.ReadFile(filepath.Join(root, "save-dir"))
+  if err != nil { return fmt.Errorf("fixture profile location was not recorded") }
+  if _, err := os.Stat(strings.TrimSpace(string(profile))); !os.IsNotExist(err) {
+    return fmt.Errorf("%s retained the temporary profile", mode)
+  }
+  output, err := os.ReadFile(filepath.Join(root, mode+".log"))
+  if err != nil || strings.Contains(string(output), "private-test-bearer") {
+    return fmt.Errorf("%s did not keep the fixture bearer private", mode)
+  }
+  return nil
+}
+
+func probeSIGINT(root string) error {
+  ready := filepath.Join(root, "signal-ready")
+  command := exec.Command("bash", "-c", `trap 'exit 130' INT; : > "$1"; while :; do sleep 0.05; done`, "signal-probe", ready)
+  command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+  if err := command.Start(); err != nil { return fmt.Errorf("could not start SIGINT disposition control") }
+  defer syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
+  done := make(chan error, 1)
+  go func() { done <- command.Wait() }()
+  if !waitFile(ready) { return fmt.Errorf("SIGINT disposition control did not become ready") }
+  if err := command.Process.Signal(syscall.SIGINT); err != nil { return fmt.Errorf("could not send SIGINT disposition control") }
+  status, exited := waitExit(done, time.Second)
+  if !exited || status != 130 { return fmt.Errorf("spawn path inherited ignored SIGINT; the control would be invalid") }
+  return nil
+}
+
+func main() {
+  if len(os.Args) != 3 { fail("invalid fixture arguments") }
+  root, launcher := os.Args[1], os.Args[2]
+  if err := probeSIGINT(root); err != nil { fail(err.Error()) }
+  fmt.Println("SIGNAL CONTROL PASS — directly spawned Bash handles SIGINT")
+  cases := []struct{mode string; signal syscall.Signal; expected int}{
+    {"signal-int", syscall.SIGINT, 130},
+    {"signal-term", syscall.SIGTERM, 143},
+    {"ignore-term", syscall.SIGTERM, 143},
+  }
+  for _, control := range cases {
+    if err := run(root, launcher, control.mode, control.signal, control.expected); err != nil { fail(err.Error()) }
+    fmt.Printf("SIGNAL CLEANUP PASS — %s client+tunnel+profile cleaned, unrelated process retained\n", control.mode)
+  }
+}
+GO
+GOTOOLCHAIN=local GOCACHE="${GOCACHE:-${trial_tmp}/go-cache}" go build -o "${trial_tmp}/signal-check" "${trial_tmp}/signal-check.go"
+"${trial_tmp}/signal-check" "${trial_tmp}" "${launcher}"
 printf '%s\n' 'TEST PASS — private trial launcher scopes credentials, isolates saves and cleans up'
