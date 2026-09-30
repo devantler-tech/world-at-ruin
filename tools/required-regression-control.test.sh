@@ -146,6 +146,7 @@ fi
 # cannot change trusted history or hide that its writer has advanced.
 ledger="${candidate}/client/tests/data/shipped_save_capability.txt"
 base_ledger="${trusted}/client/tests/data/shipped_save_capability.txt"
+# Check declaration acceptance, the installed capability, and refusal before import.
 run_capability_case() {
 	local label="$1" want="$2" capability="$3"
 	: >"${run_log}"

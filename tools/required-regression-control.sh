@@ -53,6 +53,7 @@ fi
 
 scratch_root="$(mktemp -d "${TMPDIR:-/tmp}/required-regression-control.XXXXXX")"
 evaluation_root="${scratch_root}/candidate"
+# Remove this invocation's private evaluation tree and reconstructed ledger on exit.
 cleanup() {
 	rm -rf "${scratch_root}"
 }
