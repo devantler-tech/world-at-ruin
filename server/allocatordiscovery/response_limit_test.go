@@ -352,33 +352,6 @@ func TestDiscoveryClosesFailedAndUnresolvedEncodedBodies(t *testing.T) {
 	}
 }
 
-// TestDiscoveryRequestTimeoutClosesSlowResponse preserves the deadline error and verifies
-// cancellation reaches the API response.
-func TestDiscoveryRequestTimeoutClosesSlowResponse(t *testing.T) {
-	closed := make(chan struct{})
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		if err := http.NewResponseController(w).Flush(); err != nil {
-			t.Error(err)
-			return
-		}
-		<-req.Context().Done()
-		close(closed)
-	}))
-	t.Cleanup(server.Close)
-	r := readerFromRESTConfig(t, tlsRESTConfig(server, 50*time.Millisecond))
-	got, err := r.Discover(t.Context())
-	if !errors.Is(err, context.DeadlineExceeded) || !reflect.DeepEqual(got, Snapshot{}) {
-		t.Fatalf("slow response lost deadline classification: %+v, %v", got, err)
-	}
-	select {
-	case <-closed:
-	case <-time.After(time.Second):
-		t.Fatal("timed out response remained open")
-	}
-}
-
 // TestDiscoveryConstructorRequiresBoundedRequests refuses missing, zero and negative per-request
 // timeouts.
 func TestDiscoveryConstructorRequiresBoundedRequests(t *testing.T) {

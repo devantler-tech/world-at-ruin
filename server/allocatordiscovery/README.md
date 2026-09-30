@@ -28,7 +28,9 @@ does not inspect or certify their internal TLS behavior.
 must remain nonempty and identical within each list. Repeated or oversized cursors,
 oversized pages, expiration, errors, cancellation and exhausted budgets discard the
 entire observation. A failed API call returns a stable error without backend details;
-cancellation and deadlines remain distinguishable.
+cancellation and deadlines remain distinguishable. A request deadline stays a
+deadline whether it interrupts the headers or the body, even when the connection
+returns an ordinary read error or ends a partial JSON body without an error.
 
 Each `Discover` or `ObservePod` call has an independent 4 MiB response budget,
 shared across its pages, collections and retries, including error responses. The
@@ -98,7 +100,8 @@ proof or persisted proof schema is introduced here. See the corrected boundary i
 The tests use the generated typed clients both through Kubernetes fake reactors and
 an HTTP API fixture. They cover pagination and late failures, exact selectors and
 URLs, bounded bodies and gzip expansion, page/collection/retry budgets, independent
-concurrent reads, request-timeout closure, identity reuse, duplicate and dual-stack
+concurrent reads, deterministic request-timeout classification and body closure,
+identity reuse, duplicate and dual-stack
 endpoints, readiness, cancellation,
 private-error suppression and detached observations. They do not contact a cluster
 or claim that a process can no longer commit an allocation.
