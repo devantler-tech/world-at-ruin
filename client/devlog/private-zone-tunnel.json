@@ -1,0 +1,11 @@
+{
+  "version": "next",
+  "date": "2026-09-30",
+  "title": "Watching the private server grow",
+  "notes": [
+    "An owner-only trial can now connect through a private tunnel while still checking the server's identity.",
+    "A small status below the build number tells you when server world data arrives, and when to relaunch after a lost connection.",
+    "The trial shows scripted walkers as simple blue markers. Your own movement stays local; shared characters and online combat are still in development.",
+    "The trial launcher uses a separate temporary character and leaves your usual progress in place. Ordinary launches remain unchanged."
+  ]
+}

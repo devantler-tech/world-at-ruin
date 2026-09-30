@@ -68,6 +68,8 @@ jobs:
         run: ./tools/lavapipe-capture-guard.test.sh
       - name: Client test runner is portable and verdicts are non-vacuous
         run: ./tools/run-client-test.test.sh
+      - name: Private trial launcher scopes credentials and cleans up
+        run: ./tools/try-zone-trial.test.sh
       - name: Required regression control is candidate-independent and fail-closed
         run: ./tools/required-regression-control.test.sh
       - name: A new dev-log entry carries "next" rather than a predicted release
