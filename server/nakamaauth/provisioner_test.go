@@ -31,6 +31,8 @@ const (
 	testNakamaIdentityKey = "nakama-identity-key-with-at-least-32-bytes"
 	testNakamaServerKey   = "nakama-server-key"
 	testNakamaSession     = "nakama-session"
+	// Stable RPC path checked by the test server's authentication interceptor.
+	testAuthenticateEmailMethod = "/nakama.api.Nakama/AuthenticateEmail"
 )
 
 type emailAuthentication struct {
@@ -424,7 +426,7 @@ func provisionerAgainstWithBindings(
 			info *grpc.UnaryServerInfo,
 			handler grpc.UnaryHandler,
 		) (any, error) {
-			if info.FullMethod == apigrpc.Nakama_AuthenticateEmail_FullMethodName {
+			if info.FullMethod == testAuthenticateEmailMethod {
 				md, _ := metadata.FromIncomingContext(ctx)
 				if gatewayAuthorization := md.Get("grpcgateway-authorization"); len(
 					gatewayAuthorization,
@@ -1262,6 +1264,18 @@ func TestProvisionGoogleFailsClosed(t *testing.T) {
 			},
 			wantCode:  codes.Unknown,
 			wantError: "server key is empty",
+		},
+		{
+			name:       "wrong Nakama server key",
+			credential: testIdentityProof,
+			config: ProvisionerConfig{
+				GoogleProvisioningEnabled: true,
+				GoogleClientID:            testGoogleClientID,
+				NakamaIdentityKey:         []byte(testNakamaIdentityKey),
+				NakamaServerKey:           "wrong-server-key",
+			},
+			wantCode:  codes.Unauthenticated,
+			wantError: "AuthenticateEmail rejected identity",
 		},
 		{
 			name:       "empty Google client ID",
