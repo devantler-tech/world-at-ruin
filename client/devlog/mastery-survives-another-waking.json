@@ -1,0 +1,10 @@
+{
+  "version": "next",
+  "date": "2026-09-30",
+  "title": "Preparing mastery that survives another waking",
+  "notes": [
+    "Mastery changes can now be remembered together with a standing bloodstain, without losing other progress or counting a reclaim twice.",
+    "Temporary trouble saving keeps retrying. If another session changes the saved mastery, the game explains that you need to reopen it.",
+    "This prepares lasting progression. Earning mastery in combat and returning to a bloodstain remain in development."
+  ]
+}

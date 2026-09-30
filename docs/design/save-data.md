@@ -194,8 +194,8 @@ The current character writer vocabulary is capability 5. The reader registry and
 contain `ashen_bindings` at `hands/armor`, backed by the retained v0.69.0 capability-5 reader.
 The shipped default creator keeps this below-bar hand piece hidden, while
 `WAR_LAYERED_OUTFIT_PICKERS=1` exposes the raw armour-layer control that may originate, save and
-reload it. The project-wide write capability remains 6 because the independent vault-v4
-quest-progress contract is active; the read ceiling is 7 for the vault-v5 mastery expansion. That
+reload it. The project-wide read and write capability is 7 for the active vault-v5 mastery
+contract. That
 does not change which character vocabulary capability 5 permits the creator to originate.
 
 ### Progression vault
@@ -265,11 +265,11 @@ silently and can never be announced or granted again. The retained v0.70.0 reade
 whole-app rollback target for the writer. Every real objective advance queues the complete snapshot;
 the locked compare-and-swap writer merges each objective by maximum progress, preserves opaque IDs
 and older sections, and retries transient failures without replaying completion. A refused newer or
-unreadable vault remains session-only and byte-intact. The project-wide manifest advertises read and
-write capability 6, while conditional schema stamping keeps reward-only state on v3, discovery-only
+unreadable vault remains session-only and byte-intact. Quest-only state requires capability 6,
+while conditional schema stamping keeps reward-only state on v3, discovery-only
 state on v2, and empty or attunement-only state on v1.
 
-Capability 7 is the reader-only vault-v5 weapon-mastery expansion. Its required `mastery` object
+Capability 7 reads and writes vault-v5 weapon mastery. Its required `mastery` object
 contains exactly `weapons` and `bloodstain`: each stable weapon ID maps to exact JSON-safe integer
 `banked` and `unbanked` points, while the standing bloodstain maps tracked weapon IDs to the points
 that can still be reclaimed. Vault-v5 freezes its persisted bar unit at 100 points: banked values are
@@ -281,10 +281,24 @@ unbanked points that already complete a smaller current live bar before the deat
 them. Unknown future weapon IDs are valid because rollback must preserve and apply
 them without reinterpreting their meaning. `Main` restores the complete snapshot atomically into its
 boot-owned `Mastery`, and the real boot guard proves both the live tracks and bloodstain are present.
-The manifest advertises read capability 7, while `SaveVault.VAULT_VERSION` and
-`SAVE_CAPABILITY_WRITES` stay at v4/capability 6. Existing older writers preserve an already-present
-v5 snapshot but never originate one; writer activation waits for a retained whole-app capability-7
-reader release.
+The manifest advertises read and write capability 7. The retained immutable v0.93.1 whole app
+boots and applies this shape while preserving the exact integer boundaries; reproduction is in
+[`issue-658-mastery-retention`](../evidence/issue-658-mastery-retention/README.md).
+Only actual ledger mutations originate v5; restore and no-op mutations write nothing. Unrelated
+old-state writes retain their historical schema versions.
+
+`MasteryPersistence` writes each complete award, death, or reclaim synchronously. Its transaction
+holds the existing vault lock, compares the current mastery with this session's acknowledged
+snapshot, and merges into the latest document without changing unrelated progression. It captures
+that document's byte identity before load and passes it to guarded replacement. Mastery cannot
+use the quest writer's maximum merge: a bloodstain consumed by reclaim must not be restored or
+counted twice. Temporary refusal coalesces pending changes and retries after 1, 2, 4, 8, 16, then
+at most 30 seconds; success resets the delay. A competing snapshot permanently stops the session's
+writer, including exit flush, and asks the player to reopen. A clean exit attempts a pending write
+once; abrupt process loss preserves completed synchronous writes.
+
+Combat award sources and interactive death/reclaim paths are separate work. Current production
+gameplay does not call those ledger operations. See [ADR 0010](../adr/0010-persist-complete-mastery-under-a-conditional-vault-write.md).
 
 ### Boot recovery
 
