@@ -88,4 +88,11 @@ chmod +x "${trial_tmp}/bin/selected-client"
 grep -q client-started "${trial_tmp}/selected.log"
 [ ! -f "${trial_tmp}/decoy-started" ]
 if kill -0 "$(cat "${trial_tmp}/tunnel-pid")" 2>/dev/null; then exit 1; fi
+(
+  cd "${trial_tmp}"
+  export CDPATH="${trial_tmp}"
+  bash "${launcher}" --client selected/selected-client --tls-server-name trial.example.test
+) >"${trial_tmp}/cdpath.log" 2>&1
+grep -q client-started "${trial_tmp}/cdpath.log"
+if kill -0 "$(cat "${trial_tmp}/tunnel-pid")" 2>/dev/null; then exit 1; fi
 printf '%s\n' 'TEST PASS — private trial launcher scopes credentials, isolates saves and cleans up'

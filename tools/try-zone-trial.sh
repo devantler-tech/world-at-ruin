@@ -26,7 +26,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 [ -f "${client_path}" ] && [ -x "${client_path}" ] || die 'supply an executable from the released client app'
-client_dir="$(cd -- "$(dirname -- "${client_path}")" && pwd -P)" || die 'the selected client directory is unavailable'
+client_dir="$(CDPATH='' cd -- "$(dirname -- "${client_path}")" && pwd -P)" || die 'the selected client directory is unavailable'
 client_path="${client_dir}/$(basename -- "${client_path}")"
 [ -n "${trial_context}" ] || die 'the Kubernetes context must not be empty'
 [[ "${trial_port}" =~ ^[0-9]{4,5}$ ]] || die 'choose a port from 1024 through 65535'
