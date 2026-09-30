@@ -39,6 +39,7 @@ printf '8\n' >"${candidate}/validated-capability.txt"
 cat >"${bin_dir}/godot" <<'GODOT'
 #!/bin/bash
 set -euo pipefail
+printf '%s\n' imported >>"${REQUIRED_REGRESSION_RUN_LOG}.import"
 printf '%s\n' 'trusted import completed'
 GODOT
 chmod +x "${bin_dir}/godot"
@@ -148,6 +149,7 @@ base_ledger="${trusted}/client/tests/data/shipped_save_capability.txt"
 run_capability_case() {
 	local label="$1" want="$2" capability="$3"
 	: >"${run_log}"
+	: >"${run_log}.import"
 	if PATH="${bin_dir}:${PATH}" REQUIRED_REGRESSION_RUN_LOG="${run_log}" \
 		REQUIRED_REGRESSION_CAPABILITY="${capability}" \
 		/bin/bash "${control}" "${trusted}" "${candidate}" >"${control_output}" 2>&1; then
@@ -159,7 +161,7 @@ run_capability_case() {
 			fail "${label}: refused for an unrelated reason: $(<"${control_output}")"
 		fi
 	fi
-	if [ "${want}" = fail ] && [ -s "${run_log}" ]; then
+	if [ "${want}" = fail ] && { [ -s "${run_log}" ] || [ -s "${run_log}.import" ]; }; then
 		fail "${label}: candidate ran before declaration validation"
 	fi
 }
