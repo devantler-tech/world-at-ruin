@@ -42,15 +42,14 @@ func _ready() -> void:
 	if not _resource_boundaries():
 		return
 
-	# 2. The writer remains on its retained v4 quest contract while the reader
-	# expands through v5 mastery. Empty state remains v1: a schema version
+	# 2. Both supported writer stages keep empty state at v1: a schema version
 	# describes fields actually present; it is not a "latest client" marker.
 	var empty := SaveVault.empty()
 	if SaveVault.validate(empty) != "":
 		_fail("the empty vault does not validate: %s" % SaveVault.validate(empty))
 		return
-	if SaveVault.VAULT_VERSION != 4:
-		_fail("the quest-progress writer is capped at vault v%d; expected the retained v4 contract" % SaveVault.VAULT_VERSION)
+	if not SaveContractStage.refusal_reason().is_empty():
+		_fail(SaveContractStage.refusal_reason())
 		return
 	if int(empty["version"]) != 1:
 		_fail("an empty vault was churned to v%d even though it carries no v2 discovery state" % int(empty["version"]))
@@ -78,7 +77,7 @@ func _ready() -> void:
 
 	# 4. A field this build does not use survives attune(). Simulates a vault
 	# written by a client that shipped a field we then have to carry forward.
-	var carried := { "version": SaveVault.VAULT_VERSION, "comment": "keep me", "attuned": ["some_future_shrine"] }
+	var carried := { "version": 1, "comment": "keep me", "attuned": ["some_future_shrine"] }
 	var after := SaveVault.attune(carried, SaveVault.SHRINE_WARDENS)
 	if String(after.get("comment", "")) != "keep me":
 		_fail("attune() dropped a field it does not use")

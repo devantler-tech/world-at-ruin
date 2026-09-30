@@ -824,7 +824,8 @@ everything shipped afterwards is held to.
   `refs/heads/main`. The external workflow checks out the proposed product bytes as the candidate and
   the GitHub-supplied pull-request or merge-group base SHA as trusted World at Ruin bytes. It copies
   only the candidate's product tree into a throwaway evaluation root, replaces `client/tests/` with
-  the trusted base's snapshot, and invokes the trusted base's `tools/run-client-test.sh` over every
+  the trusted base's snapshot (apart from the narrowly validated capability declaration described
+  under CI below), and invokes the trusted base's `tools/run-client-test.sh` over every
   trusted `*_test.tscn`. A pull request can add, edit, delete or skip a checkout-local scene without
   changing which trusted scenes execute or how their verdict is judged; the external workflow is the
   aggregate required gate for both `pull_request` and `merge_group`.
@@ -974,6 +975,12 @@ everything shipped afterwards is held to.
     Ruin base SHA, not from the candidate checkout. `tools/required-regression-control.test.sh`
     proves candidate deletion/skip content cannot remove a trusted scene, runner failure reaches the
     aggregate, an empty trusted suite fails closed, and the obsolete local workflow cannot return.
+    The sole candidate test-data exception is the save-capability declaration: the controller
+    reconstructs unchanged historical bytes or the exact planned capability-7 append, rejecting
+    every other change and symlinked path. Trusted tests support only writer stages 6/v4 and 7/v5
+    with reader 7/v5. The later writer must pass trusted mastery mutation, retry, stale-session,
+    real-boot and exit-flush probes. This preparation does not activate mastery writes or replace
+    the retained-reader release proof required by #658; see ADR 0003.
   - `go-vulnerability-scan.yaml` (`push` to `main`) scans both Go modules under their own declared
     toolchains. It is the post-merge liveness signal for newly published advisories against code
     already on the default branch.

@@ -31,7 +31,7 @@ The workflow checks out two trees:
 
 1. the candidate merge or merge-group commit, which supplies product code;
 2. the GitHub-supplied pull-request or merge-group base SHA, which supplies
-   every trusted `client/tests/*_test.tscn` scene and fixture,
+   every trusted `client/tests/*_test.tscn` scene and historical fixture,
    `tools/required-regression-control.sh`, and `tools/run-client-test.sh`.
 
 The ruleset workflow and its trusted-base resolver come from the reviewed
@@ -46,11 +46,30 @@ workflow job is the aggregate verdict. It has read-only repository permission,
 uses a checksum-verified Godot binary, persists no checkout credentials, and
 runs under the hardened runner's egress audit.
 
+The save-capability ledger has one narrowly validated candidate-data exception
+(#923). The controller accepts either the exact trusted ledger bytes or, while
+the trusted ceiling is 6, those bytes followed by exactly `7` and a newline.
+It reconstructs these permitted bytes outside the candidate copy, rejects
+missing or symlinked declaration paths, and installs only the validated
+declaration after restoring the trusted harness. No other fixture comes from
+the candidate. Once capability 7 ships, only an unchanged declaration is
+accepted until another transition is explicitly prepared.
+
+The trusted harness accepts only capability-6/vault-v4 and capability-7/vault-v5
+writers, both with the retained capability-7/vault-v5 reader. Historical reader
+and ordinary-write checks run in both stages; the writer stage additionally
+must demonstrate durable mastery, stale-owner refusal, bounded retries and the
+real game's mutation, retry, exit and reboot wiring. This prepares the required
+gate for #658; it does not activate the writer or replace retained-release proof.
+
 `tools/required-regression-control.test.sh` is the local contract proof. Its
 candidate deletes one trusted scene, weakens another and lists the deleted
 scene in `ci-skip.txt`; both trusted scenes must still execute with trusted
 harness bytes against candidate product bytes. Separate arms require a runner
 failure to fail the aggregate and an empty trusted suite to fail closed.
+Additional cases reject changed or missing capability history, malformed and
+unsupported appends, rollback, symlink substitutions and candidate attempts to
+overwrite the controller's validated declaration.
 
 provider-upjet-github v0.19.1 exposes the required workflow's repository, path
 and branch/tag `ref`, but not GitHub's immutable workflow SHA selector. The
