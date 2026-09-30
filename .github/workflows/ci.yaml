@@ -1173,6 +1173,30 @@ jobs:
         working-directory: ${{ matrix.module.directory }}
         run: govulncheck ./...
 
+  zone-container:
+    name: Zone container (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build the native runtime image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: server
+          load: true
+          tags: world-at-ruin-zone:ci
+      - name: Exercise packaged defaults and real TLS admission
+        run: bash tools/smoke-zone-container.sh world-at-ruin-zone:ci
+
   server-ci:
     name: Server CI (Go)
     runs-on: ubuntu-latest
@@ -2926,6 +2950,7 @@ jobs:
         gdscript-lint,
         go-vulnerability-scan,
         server-ci,
+        zone-container,
         detect-visual-changes,
         frame-capture,
         frame-capture-exported,
@@ -2950,6 +2975,7 @@ jobs:
             ${{ needs.gdscript-lint.result }}
             ${{ needs.go-vulnerability-scan.result }}
             ${{ needs.server-ci.result }}
+            ${{ needs.zone-container.result }}
             ${{ needs.detect-visual-changes.result }}
             ${{ needs.frame-capture.result }}
             ${{ needs.frame-capture-exported.result }}

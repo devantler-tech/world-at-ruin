@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: world-at-ruin-zone
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: world-at-ruin-zone
+  ports:
+    - name: zone-tls
+      port: 8443
+      targetPort: zone-tls

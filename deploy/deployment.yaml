@@ -1,0 +1,89 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: world-at-ruin-zone
+  labels:
+    app.kubernetes.io/name: world-at-ruin-zone
+    platform.devantler.tech/replica-floor: exempt
+spec:
+  replicas: 1
+  revisionHistoryLimit: 2
+  # One demonstration authority at a time; it owns no player persistence.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: world-at-ruin-zone
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: world-at-ruin-zone
+    spec:
+      serviceAccountName: world-at-ruin
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: world-at-ruin
+          # Server CD replaces this marker with the exact built digest before signing.
+          image: ghcr.io/devantler-tech/world-at-ruin/zone:unpublished
+          args:
+            - -listen
+            - :8443
+            - -allocation-id
+            - operator-trial
+            - -tls-cert
+            - /credentials/tls.crt
+            - -tls-key
+            - /credentials/tls.key
+            # Bound loaded certificate lifetime; the demonstration may restart.
+            - -duration
+            - 1h
+          env:
+            - name: WAR_ZONE_ADMISSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: world-at-ruin-zone-admission
+                  key: secret
+          ports:
+            - name: zone-tls
+              containerPort: 8443
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+            seccompProfile:
+              type: RuntimeDefault
+          readinessProbe:
+            tcpSocket:
+              port: zone-tls
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: zone-tls
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          volumeMounts:
+            - name: tls
+              mountPath: /credentials
+              readOnly: true
+      volumes:
+        - name: tls
+          secret:
+            secretName: world-at-ruin-zone-tls
+            defaultMode: 0440
