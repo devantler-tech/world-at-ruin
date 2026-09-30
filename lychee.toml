@@ -2,12 +2,18 @@
 # (verified: an invalid value here fails the lint job). The timeout in .mega-linter.yml is
 # passed on the command line alongside it and still applies.
 
+# Brief rate limits can outlast the default three retries even with host pacing.
+# Allow five retries (six attempts total), retaining lychee's exponential backoff.
+# A persistent 429 or a dead link still fails; no unsuccessful status is accepted.
+# tools/lychee-retry/lychee_test.go exercises this policy with the CI binary.
+max_retries = 5
+
 # docs.godotengine.org rate-limits bursts. Several Godot class pages are cited from the same
 # documents, and lychee fetches URLs concurrently, so the host answers the first request and
 # returns 429 Too Many Requests for the next. A 429 describes our request rate, not the link,
 # so the answer is to pace requests to that host, not a .lycheeignore entry that would stop
-# checking valid links for good. Both links are still checked on every run; only the rate
-# changes, and only for this host.
+# checking valid links for good. Both links are still checked on every run; the pacing
+# below applies only to this host, while the bounded retry budget above is global.
 [hosts."docs.godotengine.org"]
 concurrency = 1
 request_interval = "1s"

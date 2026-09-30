@@ -11,6 +11,15 @@ IGNORE_GITIGNORED_FILES: true
 REPORTERS_MARKDOWN_SUMMARY_TYPE: sections
 LINTER_RULES_PATH: .
 
+# Exercise the installed lychee and production policy before checking real links.
+# The pinned Go flavour already includes Go; the harness uses only its standard library.
+# Missing tools, a broken test or a policy regression must fail the required lint job.
+PRE_COMMANDS:
+  - command: go test -v -count=1 -timeout=3m tools/lychee-retry/lychee_test.go
+    cwd: workspace
+    run_before_linters: true
+    continue_if_failed: false
+
 DISABLE_LINTERS:
   # This repo already runs zizmor as its own dedicated CI check, with GitHub API auth and
   # its own configuration. MegaLinter's bundled copy has no auth, so its online audits fail
@@ -111,16 +120,14 @@ SPELL_LYCHEE_FILTER_REGEX_EXCLUDE: (\.github/workflows/.*)
 # a .lycheeignore entry: an entry would permanently stop checking a link that is genuinely
 # checkable, and would hide it if that link later died.
 #
-# Retries are NOT the lever, which is worth stating because reaching for --max-retries is the
-# obvious move and it does nothing here. lychee already retries a timed-out request
-# --max-retries times (default 3), so a host that is slow on one attempt already passes
-# untouched. The failure shape that reaches CI is a host slow on EVERY attempt, and retrying
-# it more times just times out more times. Measured against a local server stalling past the
-# timeout on every request: at the default retry count the check failed, adding an explicit
-# --max-retries 3 failed identically, and only a longer timeout passed.
+# A host that exceeds the timeout on EVERY attempt needs a longer timeout, not more retries.
+# Measured against a local server stalling past the timeout on every request: at the default
+# retry count the check failed, adding an explicit --max-retries 3 failed identically, and
+# only a longer timeout passed. Temporary HTTP 429 responses are a separate case: the
+# bounded retry budget in lychee.toml gives that host time to recover between requests.
 #
 # Genuine failures stay blocking and stay fast: a 404, a DNS failure and a refused connection
 # are answered immediately, so none of them wait for this timeout or benefit from it. The cost
-# is bounded and paid only when something really is hanging — worst case per URL is
-# (1 + --max-retries) × 45s, and lychee checks URLs concurrently.
+# of requests is bounded by lychee.toml: at most six attempts, each with this 45-second
+# timeout, plus retry backoff. Lychee checks URLs concurrently.
 SPELL_LYCHEE_ARGUMENTS: "--timeout 45"

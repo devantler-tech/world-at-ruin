@@ -963,6 +963,13 @@ everything shipped afterwards is held to.
   `tools/devlog-entry-version-sweep.sh` reports a verified declaration as `PRE-RELEASE` rather than
   `NEVER-CUT`.
 - **CI, CD and releases:**
+  - **Link checking remains blocking under rate limits.** `lychee.toml` permits five retries
+    with exponential backoff while retaining Godot-specific request pacing. A fatal MegaLinter
+    pre-command runs `go test -v -count=1 -timeout=3m tools/lychee-retry/lychee_test.go` against
+    its own lychee binary and the production config: temporary 429 responses recover, a 404
+    fails, and a persistent 429 exhausts the budget. Run that command locally from the repo root;
+    it requires Go and lychee and uses a local HTTP fixture. Never accept 429 as success or
+    exclude a rate-limited host to make lint pass.
   - `ci.yaml` (`pull_request` + `merge_group`) lints, tests and analyses. It is the gate on a
     change. Its required aggregate includes a reachable-vulnerability scan for both Go modules.
     Its macOS export job is **build verification** — proof the project still exports and the
