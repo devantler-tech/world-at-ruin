@@ -55,12 +55,8 @@ func _ready() -> void:
 		_fail("the contract build did not expose distinct enabled clothing and armour controls")
 		return
 
-	if UpdateManifest.SAVE_CAPABILITY_READS != 7 \
-			or UpdateManifest.SAVE_CAPABILITY_WRITES != 6:
-		_fail("the active contracts advertise capabilities %d/%d instead of 7/6" % [
-			UpdateManifest.SAVE_CAPABILITY_READS,
-			UpdateManifest.SAVE_CAPABILITY_WRITES,
-		])
+	if not SaveContractStage.refusal_reason().is_empty():
+		_fail(SaveContractStage.refusal_reason())
 		return
 
 	var feet_layers := CharacterCreator.pickable_layers(

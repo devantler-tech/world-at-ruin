@@ -242,43 +242,26 @@ func _test_ashen_bindings_writer_activation_is_advertised() -> void:
 
 
 ## Capability 6 is vault-v4 quest-objective progress. Its retained reader has a
-## production writer; later reader expansions may raise reads but writes stay 6.
+## production writer in both supported stages.
 func _test_quest_writer_activation_is_advertised() -> void:
 	if UpdateManifest.SAVE_CAPABILITY_READS < 6:
 		_fail("the quest-progress reader advertises capability %d, expected at least 6"
 			% UpdateManifest.SAVE_CAPABILITY_READS)
 		return
-	if UpdateManifest.SAVE_CAPABILITY_WRITES != 6:
-		_fail("the quest-progress writer advertises capability %d, expected 6"
-			% UpdateManifest.SAVE_CAPABILITY_WRITES)
+	if not SaveContractStage.refusal_reason().is_empty():
+		_fail(SaveContractStage.refusal_reason())
 		return
 	if SaveVault.VAULT_READ_VERSION < 4:
 		_fail("the manifest advertises quest reads but SaveVault stops before v4 at v%d"
 			% SaveVault.VAULT_READ_VERSION)
 		return
-	if SaveVault.VAULT_VERSION != 4:
-		_fail("the capability-6 manifest advertises vault-v%d writes; expected v4"
-			% SaveVault.VAULT_VERSION)
 
 
-## Capability 7 is the reader-only vault-v5 mastery snapshot. The manifest must
-## publish that read ceiling without claiming the production writer is active.
+## Capability 7 reads vault-v5 mastery before the separate writer activation.
+## Both explicitly supported stages retain that same reader contract.
 func _test_mastery_reader_expansion_is_advertised() -> void:
-	if UpdateManifest.SAVE_CAPABILITY_READS != 7:
-		_fail("the mastery expansion advertises read capability %d, expected 7"
-			% UpdateManifest.SAVE_CAPABILITY_READS)
-		return
-	if UpdateManifest.SAVE_CAPABILITY_WRITES != 6:
-		_fail("the mastery expansion advanced write capability to %d; expected 6"
-			% UpdateManifest.SAVE_CAPABILITY_WRITES)
-		return
-	if SaveVault.VAULT_READ_VERSION != 5:
-		_fail("the mastery expansion advertises reads but SaveVault stops at v%d"
-			% SaveVault.VAULT_READ_VERSION)
-		return
-	if SaveVault.VAULT_VERSION != 4:
-		_fail("the reader-only mastery expansion writes vault v%d; expected v4"
-			% SaveVault.VAULT_VERSION)
+	if not SaveContractStage.refusal_reason().is_empty():
+		_fail(SaveContractStage.refusal_reason())
 
 
 ## The declared save floor must be the OLDEST SCHEMA THAT EVER SHIPPED — not
