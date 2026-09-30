@@ -23,6 +23,8 @@ metadata:
   name: ordinary-tenant-resource
 `
 
+// TestRenderedDocuments accepts complete ordinary output and rejects host policies
+// or malformed, incomplete and empty documents anywhere in the stream.
 func TestRenderedDocuments(t *testing.T) {
 	for _, tc := range []struct {
 		name, manifest string
@@ -44,6 +46,8 @@ func TestRenderedDocuments(t *testing.T) {
 	}
 }
 
+// TestNestedPolicyIsRejectedAfterRealRender exercises Kustomize's expansion of
+// nested resources and Lists before applying the host-ownership boundary.
 func TestNestedPolicyIsRejectedAfterRealRender(t *testing.T) {
 	for _, tc := range []struct {
 		name, resource string
@@ -63,6 +67,8 @@ func TestNestedPolicyIsRejectedAfterRealRender(t *testing.T) {
 	}
 }
 
+// TestBrokenRenderIsRejected proves missing resources and empty output cannot
+// produce a successful ownership check.
 func TestBrokenRenderIsRejected(t *testing.T) {
 	dir := t.TempDir()
 	writeFixture(t, filepath.Join(dir, "kustomization.yaml"), "resources: [missing.yaml]\n")
@@ -71,6 +77,8 @@ func TestBrokenRenderIsRejected(t *testing.T) {
 	assertError(t, validateDirectory(t.Context(), dir), "empty")
 }
 
+// TestPublishedDeploymentUsesHostOwnedNetworkIsolation checks this repository's
+// actual publishable bundle rather than a copied deployment fixture.
 func TestPublishedDeploymentUsesHostOwnedNetworkIsolation(t *testing.T) {
 	_, source, _, ok := runtime.Caller(0)
 	if !ok {
@@ -80,6 +88,8 @@ func TestPublishedDeploymentUsesHostOwnedNetworkIsolation(t *testing.T) {
 	assertError(t, validateDirectory(t.Context(), deployment), "")
 }
 
+// assertError requires success for an empty expectation, or a real error
+// containing the expected diagnostic for a negative control.
 func assertError(t *testing.T, err error, want string) {
 	t.Helper()
 	if want == "" {
@@ -93,6 +103,8 @@ func assertError(t *testing.T, err error, want string) {
 	}
 }
 
+// writeFixture creates private nested test inputs and fails the test on any
+// filesystem error instead of validating a partial fixture.
 func writeFixture(t *testing.T, path, contents string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
