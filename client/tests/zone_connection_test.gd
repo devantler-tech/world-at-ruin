@@ -51,6 +51,8 @@ const URL := "wss://zone.example/replicate"
 ## A stand-in allocation token. Not a credential — no server verifies it; it
 ## exists so the header the real hub demands can be asserted.
 const TOKEN := "test-allocation-token"
+const TLS_NAME_ENV := "WAR_ZONE_TLS_SERVER_NAME"
+const TLS_NAME := "trial.example.test"
 
 var _failed := false
 
@@ -130,6 +132,19 @@ class FakeTransport:
 		_closing_left = closing_polls
 
 
+## The original fake above deliberately accepts ONE argument. Ordinary boots
+## must keep working with it; only an explicitly configured tunnel uses two.
+class TLSFakeTransport:
+	extends FakeTransport
+
+	var client_tls_options: TLSOptions = null
+
+	func connect_to_url(url: String, tls_options: TLSOptions = null) -> int:
+		connected_url = url
+		client_tls_options = tls_options
+		return open_result
+
+
 ## A transport missing get_packet — every other method present, so the control
 ## is isolated to the contract check and cannot fail for another reason.
 class IncompleteTransport:
@@ -164,7 +179,9 @@ func _ready() -> void:
 	# Admission is mandatory, so every connect below needs a token; the token
 	# law itself clears it deliberately and restores it.
 	var original_token := OS.get_environment(ZoneConnection.ZONE_TOKEN_ENV)
+	var original_tls_name := OS.get_environment(TLS_NAME_ENV)
 	OS.set_environment(ZoneConnection.ZONE_TOKEN_ENV, TOKEN)
+	OS.set_environment(TLS_NAME_ENV, "")
 
 	var stream := _load_stream()
 	if _failed:
@@ -205,8 +222,17 @@ func _ready() -> void:
 		return
 	if not _check_default_off():
 		return
+	if not _check_tls_tunnel_configuration():
+		return
+	if not _check_tls_tunnel_refusals():
+		return
+	if not _check_tls_busy_transport_law():
+		return
+	if not _check_native_tls_engine_contract():
+		return
 
 	OS.set_environment(ZoneConnection.ZONE_TOKEN_ENV, original_token)
+	OS.set_environment(TLS_NAME_ENV, original_tls_name)
 	print("TEST PASS — zone connection pumps the cross-tier stream golden to the server's authoritative end state, presents its admission token over TLS, completes its close handshake before reconnecting, and every stream refusal is terminal, classified and fail-closed")
 	get_tree().quit(0)
 
@@ -877,4 +903,122 @@ func _check_default_off() -> bool:
 		return false
 
 	OS.set_environment(ZoneConnection.ZONE_URL_ENV, original)
+	return true
+
+
+func _check_tls_tunnel_configuration() -> bool:
+	# Empty is the default: a legacy one-argument transport must still open.
+	OS.set_environment(TLS_NAME_ENV, "")
+	var ordinary := FakeTransport.new()
+	if not ZoneConnection.new(ordinary).connect_to(URL) or ordinary.connected_url != URL:
+		_fail("an unconfigured tunnel changed the original transport call")
+		return false
+	OS.set_environment(TLS_NAME_ENV, TLS_NAME)
+	for url: String in [
+		"wss://localhost:18443/zone", "wss://LOCALHOST/zone",
+		"wss://127.0.0.1:18443/zone", "wss://127.0.0.2/zone", "wss://127.255.255.254/zone",
+		"wss://[::1]:18443/zone", "wss://[0:0:0:0:0:0:0:1]/zone", "wss://[0::0001]/zone",
+	]:
+		var transport := TLSFakeTransport.new()
+		var conn := ZoneConnection.new(transport)
+		if not conn.connect_to(url):
+			_fail("a canonical loopback tunnel was refused")
+			return false
+		var options := transport.client_tls_options
+		if options == null or options.is_unsafe_client() or options.is_server():
+			_fail("the tunnel did not pass verified native TLS client options")
+			return false
+		if options.get_common_name_override() != TLS_NAME or options.get_trusted_ca_chain() != null:
+			_fail("the tunnel changed the expected identity or system trust roots")
+			return false
+		if transport.connected_url != url or transport.inbound_buffer_size != ZoneConnection.MAX_FRAME_BYTES:
+			_fail("the tunnel changed the zone URL or receive-buffer contract")
+			return false
+		if not Array(transport.handshake_headers).has("Authorization: Bearer %s" % TOKEN):
+			_fail("the verified tunnel omitted its admission bearer")
+			return false
+	OS.set_environment(TLS_NAME_ENV, "")
+	return true
+
+
+func _check_tls_tunnel_refusals() -> bool:
+	for name: String in [
+		"localhost", "127.0.0.1", "2130706433", "1.2.3", "host.123", "*.example.test",
+		"https://example.test", "example.test:443", "user@example.test", "example..test",
+		"-example.test", "example-.test", "example_test.test", "example.test.",
+		"example.test\nprivate", "ex ample.test", "éxample.test", "x".repeat(64) + ".test",
+	]:
+		OS.set_environment(TLS_NAME_ENV, name)
+		if not _check_tls_refused_without_mutation("wss://localhost:18443/zone", name):
+			return false
+	OS.set_environment(TLS_NAME_ENV, TLS_NAME)
+	for url: String in [
+		URL, "wss://localhost.example/zone", "wss://127.0.0.1.example/zone", "wss://192.0.2.1/zone",
+		"wss://[2001:db8::1]/zone", "wss://[1::]/zone", "wss://[::]/zone", "wss://::1/zone",
+		"wss://127.1/zone", "wss://2130706433/zone", "wss://0x7f000001/zone", "wss://0177.0.0.1/zone",
+		"wss://localhost@remote.example/zone", "wss://user@localhost/zone",
+		"wss://localhost%40remote.example/zone", "wss://127%2e0%2e0%2e1/zone",
+		"wss://localhost/zone?host=remote.example", "wss://localhost/zone#private",
+		"wss://localhost\\@remote.example/zone", "wss://[::1]remote.example/zone",
+		"wss://localhost:0/zone", "wss://localhost:65536/zone", "wss://localhost:abc/zone",
+		"wss://localhost:/zone", "wss://localhost:18443:443/zone", "wss://[::1%lo0]/zone",
+	]:
+		if not _check_tls_refused_without_mutation(url, url):
+			return false
+	OS.set_environment(TLS_NAME_ENV, "")
+	return true
+
+
+func _check_tls_refused_without_mutation(url: String, private_value: String) -> bool:
+	var transport := TLSFakeTransport.new()
+	var conn := ZoneConnection.new(transport)
+	if conn.connect_to(url) or conn.error() != "tls" or conn.state() != ZoneConnection.State.FAILED:
+		_fail("an unsafe tunnel configuration was not classified as a TLS refusal")
+		return false
+	if transport.connected_url != "" or not transport.handshake_headers.is_empty() or transport.inbound_buffer_size != 0 or transport.client_tls_options != null:
+		_fail("an unsafe tunnel configuration mutated the transport before refusal")
+		return false
+	if conn.error_detail().contains(private_value) or conn.error_detail().contains(TOKEN) or conn.error_detail().contains(TLS_NAME):
+		_fail("a TLS refusal exposed connection material")
+		return false
+	return true
+
+
+func _check_tls_busy_transport_law() -> bool:
+	OS.set_environment(TLS_NAME_ENV, "")
+	var transport := FakeTransport.new()
+	var conn := ZoneConnection.new(transport)
+	if not conn.connect_to(URL):
+		_fail("busy-transport control could not open its ordinary connection")
+		return false
+	transport.ready_state = WebSocketPeer.STATE_OPEN
+	conn.poll()
+	OS.set_environment(TLS_NAME_ENV, "unsafe-local-name")
+	if conn.connect_to("wss://localhost/zone") or conn.error() != ZoneConnection.ERR_STATE or transport.closes != 1:
+		_fail("TLS validation bypassed the existing live-socket close/refusal law")
+		return false
+	if conn.connect_to("wss://localhost/zone") or conn.error() != ZoneConnection.ERR_STATE or transport.closes != 1:
+		_fail("TLS validation reopened a still-closing transport")
+		return false
+	conn.poll()
+	if conn.connect_to("wss://localhost/zone") or conn.error() != "tls":
+		_fail("an invalid tunnel identity reopened after the close completed")
+		return false
+	OS.set_environment(TLS_NAME_ENV, "")
+	return true
+
+
+func _check_native_tls_engine_contract() -> bool:
+	var options := TLSOptions.client(null, TLS_NAME)
+	if options.is_unsafe_client() or options.is_server() or options.get_trusted_ca_chain() != null or options.get_common_name_override() != TLS_NAME:
+		_fail("the engine's verified TLS client API does not match the tunnel contract")
+		return false
+	var supports_options := false
+	for method: Dictionary in ClassDB.class_get_method_list("WebSocketPeer"):
+		if method["name"] == "connect_to_url":
+			var args: Array = method["args"]
+			supports_options = args.size() == 2 and String(args[1]["class_name"]) == "TLSOptions"
+	if not supports_options:
+		_fail("the native WebSocket API no longer accepts TLS client options")
+		return false
 	return true

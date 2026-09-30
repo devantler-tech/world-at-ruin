@@ -97,6 +97,10 @@ const ZONE_URL_ENV := "WAR_ZONE_URL"
 ## a credential: it is never echoed into an error detail or a log.
 const ZONE_TOKEN_ENV := "WAR_ZONE_TOKEN"
 
+## Explicit operator-only loopback tunnel: the certificate still authenticates
+## this DNS name using system trust. Empty preserves the ordinary URL identity.
+const ZONE_TLS_SERVER_NAME_ENV := "WAR_ZONE_TLS_SERVER_NAME"
+
 ## Negotiates the newest protocol with zonesock. Older clients omit this
 ## header and are deliberately retained on wire v1 during expansion.
 const WIRE_VERSION_HEADER := "X-WAR-Wire-Version"
@@ -126,6 +130,7 @@ const ERR_STATE := "state"          # connect_to while already busy or still clo
 const ERR_OPEN := "open"            # transport refused to open the url
 const ERR_HANDSHAKE := "handshake"  # peer closed before the socket ever opened
 const ERR_TEXT := "text"            # a TEXT message; the ADR settles binary
+const ERR_TLS := "tls"              # invalid explicit loopback TLS identity
 
 ## Worst-case size of one frame the decoder would ACCEPT, derived from the
 ## codec's own caps so the two cannot drift apart. A delta carries three
@@ -242,6 +247,15 @@ func connect_to(url: String) -> bool:
 		# Deliberately does NOT echo the url: it may carry userinfo.
 		_enter_failed(ERR_SCHEME, "zone url must use %s — the transport ADR settles TLS" % URL_SCHEME)
 		return false
+	var tls_options: TLSOptions = null
+	var tls_name := OS.get_environment(ZONE_TLS_SERVER_NAME_ENV)
+	if not tls_name.is_empty():
+		if not _valid_tls_server_name(tls_name) or not _valid_loopback_target(target):
+			_enter_failed(ERR_TLS, "explicit TLS identity requires a canonical loopback zone URL and a valid DNS name")
+			return false
+		# Verified client options retain the system CA chain. The tunnel changes
+		# only which DNS identity the peer must prove, never whether it proves it.
+		tls_options = TLSOptions.client(null, tls_name)
 	var token := zone_token()
 	if token.is_empty():
 		_enter_failed(ERR_TOKEN, "no allocation token — set %s (zone admission answers 401 without it)" % ZONE_TOKEN_ENV)
@@ -265,11 +279,87 @@ func connect_to(url: String) -> bool:
 	# becomes a second, stricter and undocumented limit on the wire contract.
 	_transport.call("set_inbound_buffer_size", MAX_FRAME_BYTES)
 
-	var result: int = _transport.call("connect_to_url", target)
+	var result: int
+	if tls_options == null:
+		result = _transport.call("connect_to_url", target)
+	else:
+		result = _transport.call("connect_to_url", target, tls_options)
 	if result != OK:
 		_enter_failed(ERR_OPEN, "transport refused the zone url (error %d)" % result)
 		return false
 	_state = State.CONNECTING
+	return true
+
+
+## The override is deliberately narrower than an ordinary WebSocket URL. No
+## userinfo, escaped authority, proxy-shaped query, fragment or backslash may
+## turn an apparently local URL into a different destination.
+static func _valid_loopback_target(target: String) -> bool:
+	for forbidden: String in ["@", "%", "?", "#", "\\"]:
+		if target.contains(forbidden):
+			return false
+	for index: int in range(target.length()):
+		if target.unicode_at(index) <= 32 or target.unicode_at(index) == 127:
+			return false
+	var remainder := target.substr(URL_SCHEME.length())
+	var slash := remainder.find("/")
+	var authority := remainder if slash < 0 else remainder.substr(0, slash)
+	if authority.begins_with("["):
+		var closing := authority.find("]")
+		if closing < 0 or not _ipv6_loopback(authority.substr(1, closing - 1)):
+			return false
+		var suffix := authority.substr(closing + 1)
+		return suffix.is_empty() or (suffix.begins_with(":") and _valid_tunnel_port(suffix.substr(1)))
+	var parts := authority.split(":")
+	if parts.is_empty() or parts.size() > 2:
+		return false
+	if parts[0].to_lower() != "localhost" and not _ipv4_loopback(parts[0]):
+		return false
+	return parts.size() == 1 or _valid_tunnel_port(parts[1])
+
+
+static func _valid_tunnel_port(port: String) -> bool:
+	if port.is_empty() or port.length() > 5:
+		return false
+	for index: int in range(port.length()):
+		if port.unicode_at(index) < 48 or port.unicode_at(index) > 57:
+			return false
+	return port.to_int() > 0 and port.to_int() <= 65535
+
+
+static func _ipv4_loopback(host: String) -> bool:
+	var octets := host.split(".")
+	if octets.size() != 4 or octets[0] != "127":
+		return false
+	for octet: String in octets:
+		if octet.is_empty() or octet.length() > 3 or not octet.is_valid_int():
+			return false
+		var value := octet.to_int()
+		if value < 0 or value > 255 or octet != str(value):
+			return false
+	return true
+
+
+static func _ipv6_loopback(host: String) -> bool:
+	# Validate the address before inspecting its spelling: only a final 16-bit
+	# group equal to one with every preceding group zero denotes IPv6 loopback.
+	return host.is_valid_ip_address() and host.contains(":") and host.ends_with("1") and host.replace(":", "").replace("0", "") == "1"
+
+
+static func _valid_tls_server_name(name: String) -> bool:
+	if name.length() > 253 or name.is_valid_ip_address():
+		return false
+	var labels := name.split(".")
+	if labels.size() < 2 or labels[-1].is_valid_int():
+		return false
+	for label: String in labels:
+		if label.is_empty() or label.length() > 63 or label.begins_with("-") or label.ends_with("-"):
+			return false
+		for index: int in range(label.length()):
+			var code := label.unicode_at(index)
+			var valid := (code >= 65 and code <= 90) or (code >= 97 and code <= 122) or (code >= 48 and code <= 57) or code == 45
+			if not valid:
+				return false
 	return true
 
 
