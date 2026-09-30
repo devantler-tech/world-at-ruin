@@ -42,6 +42,8 @@ func TestPersistentRateLimitStillFails(t *testing.T) {
 	checkLink(t, "limited.html", 0, http.StatusTooManyRequests, []int{429, 429, 429, 429, 429, 429}, false)
 }
 
+// checkLink verifies the production policy against a controlled HTTP response
+// sequence and requires both the request trace and lychee's exit status to agree.
 func checkLink(t *testing.T, page string, rateLimitedAttempts, terminalStatus int, wantStatuses []int, wantSuccess bool) {
 	t.Helper()
 	lychee, err := exec.LookPath("lychee")
