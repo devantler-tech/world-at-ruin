@@ -30,6 +30,8 @@ Temporary storage refusal coalesces pending transitions and retries after 1, 2,
 different mastery snapshot permanently fences this session's writer and tells
 the player to reopen the client. A clean exit makes one final attempt; completed
 transitions must survive abrupt process termination without relying on exit.
+An encoded document above the vault's read ceiling is a permanent refusal,
+not temporary storage trouble; it leaves the accepted save readable and intact.
 
 Only a real mastery mutation originates vault v5. Older unrelated writes keep
 their historical schema until their document actually carries newer state.
@@ -46,4 +48,7 @@ rename syscall.
 
 Combat award sources and interactive death/reclaim flows remain separate work.
 This decision delivers persistence for ledger mutations, not a playable combat
-progression loop.
+progression loop. No production gameplay caller invokes these economic mutations.
+Before one does, authoritative source identities and atomic state-plus-audit
+writes must satisfy [#926](https://github.com/devantler-tech/world-at-ruin/issues/926).
+The local snapshot writer does not provide that economic audit trail.

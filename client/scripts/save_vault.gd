@@ -596,7 +596,7 @@ static func _save_to_locked(
 	# over-limit mutation leaves the accepted vault already on disk untouched.
 	# Loaded counters are floats. The default JSON precision can round a valid
 	# 2^53-1 counter when this transaction preserves an unrelated section.
-	var encoded := JSON.stringify(doc, "  ", true, true).to_utf8_buffer()
+	var encoded := _encode_document(doc)
 	if encoded.size() > MAX_VAULT_BYTES:
 		push_error(
 			"SaveVault: refusing to write %s — encoded vault exceeds the %d-byte read limit"
@@ -1234,12 +1234,18 @@ static func _persist_quests_locked(path: String, progress: Dictionary) -> bool:
 	return replace_if_unchanged(path, next, expected)
 
 
+## Encode identically for prospective-size checks and the guarded replacement.
+static func _encode_document(doc: Dictionary) -> PackedByteArray:
+	return JSON.stringify(doc, "  ", true, true).to_utf8_buffer()
+
+
 ## Replace complete economic state only if its prior snapshot still matches.
 ## Unlike append-only progress, a bloodstain cannot be merged by union or maximum:
 ## reclaim transfers its points and consumes it in the SAME write. Null means
 ## the caller observed no mastery section, not permission to overwrite one.
 ## OK acknowledges persistence; ERR_BUSY is retryable; ERR_ALREADY_IN_USE means
 ## a different mastery snapshot won and must never be overwritten by a retry.
+## ERR_PARAMETER_RANGE_ERROR means the prospective bytes exceed the read ceiling.
 static func persist_mastery(snapshot: Dictionary, expected_mastery: Variant) -> Error:
 	if not Mastery.snapshot_refusal_reason(snapshot).is_empty():
 		return ERR_INVALID_DATA
@@ -1273,6 +1279,11 @@ static func _persist_mastery_locked(
 	var next: Dictionary = current.duplicate(true)
 	next["version"] = MASTERY_VAULT_VERSION
 	next["mastery"] = snapshot.duplicate(true)
+	# The accepted file can still be readable when this mutation cannot fit.
+	# Retrying identical oversized bytes never fixes that refusal; stop this
+	# owner without latching the accepted document itself as unreadable.
+	if _encode_document(next).size() > MAX_VAULT_BYTES:
+		return ERR_PARAMETER_RANGE_ERROR
 	if replace_if_unchanged(path, next, identity):
 		return OK
 	return ERR_BUSY if can_write(path) else ERR_FILE_UNRECOGNIZED

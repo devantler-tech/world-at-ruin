@@ -62,6 +62,7 @@ func _ready() -> void:
 	_check(_persist(foreign, first) == OK, "future weapon seed failed")
 	_check(_persist(died, first) == ERR_ALREADY_IN_USE, "a stale snapshot dropped future weapon state")
 	_check_large_quest_progress()
+	_check_oversized_writes()
 	var file := FileAccess.open(SaveVault.vault_path(), FileAccess.WRITE)
 	file.store_string('{"version":999,"mastery":{"future":true}}')
 	file.close()
@@ -88,6 +89,67 @@ func _check_large_quest_progress() -> void:
 	var after: Dictionary = SaveVault.load_saved()
 	_check(int(after["quests"]["future_quest"]["arrive"]) == 9007199254740991,
 		"mastery serialization rounded unrelated progression")
+
+
+func _check_oversized_writes() -> void:
+	var old := {
+		"version": 4, "attuned": [], "discoveries": [], "reward_claims": [], "quests": {},
+	}
+	_seed_near_limit(old)
+	var path := SaveVault.vault_path()
+	var before := FileAccess.get_sha256(path)
+	_check(_persist(_snapshot(1, {}), null) == ERR_PARAMETER_RANGE_ERROR,
+		"oversized mastery was classified as retryable storage trouble")
+	_check(FileAccess.get_sha256(path) == before, "oversized mastery changed accepted bytes")
+	_check(SaveVault.load_saved() is Dictionary, "size refusal made the accepted vault unreadable")
+	var ledger := Mastery.new()
+	var writer := MasteryPersistence.new(ledger, null)
+	var notices: Array[bool] = []
+	writer.saving_failed.connect(func(conflict: bool) -> void: notices.append(conflict))
+	ledger.accrue("sword", 1)
+	_check(notices == [false], "size refusal did not report session-only mastery")
+	_check(FileAccess.get_sha256(path) == before, "size refusal changed the prior vault")
+	# Free space in the same accepted document. A permanent refusal must still
+	# fence this owner through ticks, later mutations and a clean-exit flush.
+	_check(SaveVault.save_to(path, old), "could not restore a smaller accepted vault")
+	before = FileAccess.get_sha256(path)
+	writer.tick(1000.0)
+	writer.flush()
+	ledger.accrue("sword", 1)
+	writer.tick(1000.0)
+	writer.flush()
+	_check(FileAccess.get_sha256(path) == before, "oversized owner resumed writing after its refusal")
+	# A new waking can save once the prospective document fits again.
+	var reopened := Mastery.new()
+	var reopened_writer := MasteryPersistence.new(reopened, null)
+	reopened.accrue("sword", 2)
+	reopened_writer.flush()
+	_check(SaveVault.load_saved().get("mastery") == _json(reopened.snapshot()),
+		"a new owner could not save after size pressure cleared")
+	# Same-width totals fit in the original compact representation; the normal
+	# pretty encoding alone can exceed the limit and is permanent trouble too.
+	var prior := _snapshot(20, {})
+	var compact := old.duplicate(true)
+	compact["version"] = 5
+	compact["mastery"] = prior
+	_seed_near_limit(compact)
+	before = FileAccess.get_sha256(path)
+	_check(_persist(_snapshot(21, {}), prior) == ERR_PARAMETER_RANGE_ERROR,
+		"pretty-encoding growth was classified as retryable storage trouble")
+	_check(FileAccess.get_sha256(path) == before, "pretty-encoding refusal changed accepted bytes")
+
+
+func _seed_near_limit(doc: Dictionary) -> void:
+	var seed := doc.duplicate(true)
+	seed["comment"] = ""
+	var overhead := JSON.stringify(seed, "", true, true).to_utf8_buffer().size()
+	seed["comment"] = "x".repeat(SaveVault.MAX_VAULT_BYTES - overhead - 1)
+	var bytes := JSON.stringify(seed, "", true, true).to_utf8_buffer()
+	_check(bytes.size() == SaveVault.MAX_VAULT_BYTES - 1, "near-limit fixture has the wrong byte size")
+	var file := FileAccess.open(SaveVault.vault_path(), FileAccess.WRITE)
+	file.store_buffer(bytes)
+	file.close()
+	_check(SaveVault.load_saved() is Dictionary, "near-limit historical fixture was not accepted")
 
 
 func _snapshot(points: int, stain: Dictionary) -> Dictionary:

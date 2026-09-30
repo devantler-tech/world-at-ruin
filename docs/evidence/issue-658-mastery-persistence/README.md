@@ -58,3 +58,12 @@ The production owner persists real ledger transitions and exposes failures. No
 current gameplay caller awards mastery or initiates death/reclaim operations;
 those interactions remain separate work. This evaluation does not claim a
 playable combat progression loop.
+Authoritative event identities and an atomic economic audit trail are required
+before those gameplay callers ship; [#926](https://github.com/devantler-tech/world-at-ruin/issues/926)
+tracks that prerequisite. The current snapshot writer does not supply that audit.
+
+The near-limit vault regression uses accepted v4 and v5 documents below the
+1 MiB read ceiling. A mastery mutation whose actual encoded bytes exceed that
+ceiling returns a permanent refusal, preserves the accepted bytes and readable
+state, and stops the current owner through later ticks, mutations and exit flush.
+Reopening with a document that fits allows a new owner to save.
