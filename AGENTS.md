@@ -744,7 +744,11 @@ everything shipped afterwards is held to.
   `zone -agones -agones-admission-public-key <path>`; orphan supervision, session-end recovery,
   platform deployment of the default-off Nakama RPC plugin and broader persistence remain later children of the server-foundation
   epic (#4);
-  `deploy/` (platform manifests) arrives later per the roadmap.
+  `deploy/` contains the opt-in private zone trial's tenant manifests. The host
+  owns namespace-wide default-deny ingress and egress; standard Kubernetes
+  NetworkPolicy resources must stay out of the tenant artifact. Run
+  `go -C server test -count=1 ../tools/deploy-manifests/main.go ../tools/deploy-manifests/main_test.go`
+  (Go and `kubectl` required) to check the actual rendered bundle and nested-resource refusals.
 - **Raised exposed-stone overlay (#547, ADR 0001) — default-off, one batch, solid where drawn.** Under
   `WAR_GROUND_PLATES=1` `WorldGen` adds one `GroundPlates` `MeshInstance3D` after the rest of the
   world is built: `ExposedSlabGeometry` walks the deterministic `ExposedSlabField`, lifts every slab

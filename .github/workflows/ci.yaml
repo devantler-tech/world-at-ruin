@@ -1234,13 +1234,18 @@ jobs:
       - name: Format check (gofmt)
         working-directory: server
         run: |
-          unformatted="$(gofmt -l .)"
+          unformatted="$(gofmt -l . ../tools/deploy-manifests)"
           if [ -n "${unformatted}" ]; then
             echo "::error::gofmt found unformatted files:"; echo "${unformatted}"; exit 1
           fi
       - name: Vet
         working-directory: server
-        run: go vet ./...
+        run: |
+          go vet ./...
+          go vet ../tools/deploy-manifests/*.go
+      - name: Rendered trial manifests respect host-owned network isolation
+        working-directory: server
+        run: go test -race -count=1 -timeout=2m ../tools/deploy-manifests/*.go
       - name: Every shipped server save schema and fixture is permanent
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         env:

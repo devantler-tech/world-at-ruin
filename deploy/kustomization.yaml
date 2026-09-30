@@ -4,7 +4,6 @@ resources:
   - deployment.yaml
   - service.yaml
   - pod-disruption-budget.yaml
-  - network-policy.yaml
   - password.yaml
   - push-secret.yaml
   - external-secret.yaml
