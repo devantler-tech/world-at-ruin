@@ -549,7 +549,7 @@ everything shipped afterwards is held to.
   base-compares complete rows. The retained v0.61.0 capability-4 reader is the rollback target that
   permits the reward writer. The vault reader accepts optional v4 `quests` as
   `quest_id → objective_id → progress in the exact JSON integer range 0..2^53-1`, and the manifest
-  advertises save-capability writes 6. The retained v0.70.0 capability-6 reader is the
+  requires save capability 6. The retained v0.70.0 capability-6 reader is the
   whole-app rollback target that permits this writer. `Main` restores that data
   into its boot-owned `QuestLog` before definitions register; the tracker preserves opaque future
   IDs and raw progress, clamps only its live known view, and latches restored completion without
@@ -560,9 +560,17 @@ everything shipped afterwards is held to.
   backwards. The vault-v5 reader additionally accepts a complete `mastery` snapshot whose stable
   weapon IDs map to exact banked and unbanked points and whose standing bloodstain is restored as
   part of the same ledger. `Main` applies that snapshot to its boot-owned `Mastery` before content
-  registration; unknown future weapon IDs stay live. The manifest advertises read capability 7 while
-  the production vault and project-wide writers remain capped at v4/capability 6, so an ordinary boot
-  cannot originate mastery until this whole-app reader is retained. **The lock lives in
+  registration; unknown future weapon IDs stay live. The manifest advertises read and write
+  capability 7, backed by the retained precision-safe v0.93.1 whole-app reader. Only real mastery
+  transitions originate vault v5: `MasteryPersistence` saves complete snapshots synchronously,
+  coalesces transient refusals with backoff capped at 30 seconds, and flushes once on clean exit.
+  The whole transaction holds `FileLock`, compares this session's acknowledged mastery, and passes
+  the vault identity captured before load to guarded replacement. A competing mastery snapshot
+  permanently fences the session's writer, including exit flush; unrelated progression is preserved.
+  `mastery_vault_writer_test` directly asserts the original byte identity, and
+  `mastery_lock_process_test` exercises real foreign-process contention and recovery.
+  Combat award sources and interactive death/reclaim remain separately scoped; production gameplay
+  does not yet call those ledger operations. **The lock lives in
   `FileLock`, not in the vault, and `BootRecovery` persistence takes it too**
   (`tests/boot_recovery_lock_test`) — that file's two writers, the updater and the game, both exist
   today, and a lost update there discards the evidence deciding whether a client rolls back. One
@@ -985,8 +993,8 @@ everything shipped afterwards is held to.
     The sole candidate test-data exception is the save-capability declaration: the controller
     reconstructs unchanged historical bytes or the exact planned capability-7 append, rejecting
     every other change and symlinked path. Trusted tests support only writer stages 6/v4 and 7/v5
-    with reader 7/v5. The later writer must pass trusted mastery mutation, retry, stale-session,
-    real-boot and exit-flush probes. This preparation does not activate mastery writes or replace
+    with reader 7/v5. The active writer passes trusted mastery mutation, retry, stale-session,
+    real-boot and exit-flush probes. The stage selector does not replace
     the retained-reader release proof required by #658; see ADR 0003.
   - `go-vulnerability-scan.yaml` (`push` to `main`) scans both Go modules under their own declared
     toolchains. It is the post-merge liveness signal for newly published advisories against code

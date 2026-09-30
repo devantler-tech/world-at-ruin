@@ -47,8 +47,12 @@ extends RefCounted
 ## child of #76): meaningful-combat **source gating** and diminishing
 ## returns (server-authoritative — the anti-AFK-grind guard, so `accrue` here
 ## trusts its already-gated award and never judges where a point came from);
-## serialization + persistence (gated on the save schema); and the sidegrade
+## and the sidegrade
 ## "no strict dominance" arsenal rule (that lives with the ability schema).
+
+## Emitted once after a complete award, death, or reclaim; never during restore
+## or for a no-op. Persistence observes the final state, including the stain.
+signal changed
 
 ## Vault-v5 shipped with 100-point mastery bars. Historical readers validate
 ## against this frozen unit so later combat-pacing changes cannot reinterpret
@@ -191,8 +195,21 @@ static func _persisted_points_refusal_reason(value: Variant, label: String) -> S
 ## diminishing returns) by the server-authoritative caller; this ledger does not
 ## re-judge the source.
 func accrue(weapon: String, amount: int) -> int:
-	if weapon.is_empty() or amount <= 0:
+	if not _can_accrue(weapon, amount):
 		return 0
+	var bars := _accrue(weapon, amount)
+	changed.emit()
+	return bars
+
+
+func _can_accrue(weapon: String, amount: int) -> bool:
+	if weapon.is_empty() or amount <= 0 or amount > MAX_PERSISTED_POINTS - unbanked(weapon):
+		return false
+	var bars: int = (unbanked(weapon) + amount) / BANK_STEP
+	return bars <= (MAX_PERSISTED_POINTS - banked(weapon)) / BANK_STEP
+
+
+func _accrue(weapon: String, amount: int) -> int:
 	var track: Dictionary = _tracks.get(weapon, {"banked": 0, "unbanked": 0})
 	var unbanked: int = track["unbanked"] + amount
 	# Integer division banks whole bars in one step (no per-bar loop, so a large
@@ -285,6 +302,7 @@ func die(percent: int = DEATH_LOSS_PERCENT) -> Dictionary:
 	# Only a death that actually drops a stain replaces (and thereby destroys)
 	# the one still standing.
 	_bloodstain = stain
+	changed.emit()
 	return stain.duplicate()
 
 
@@ -298,13 +316,25 @@ func die(percent: int = DEATH_LOSS_PERCENT) -> Dictionary:
 ## (`accrue` documents that awards are gated by a server-authoritative caller;
 ## these points need no such gate — they are the player's own, being returned.)
 func reclaim() -> int:
+	# Validate the whole transfer before moving anything: a retained snapshot
+	# can already be near JSON's precision ceiling for one of its weapons.
+	for weapon: String in _bloodstain:
+		if not _can_accrue(weapon, int(_bloodstain[weapon])):
+			return 0
 	var recovered := 0
 	for weapon: String in _bloodstain:
 		var amount: int = _bloodstain[weapon]
 		recovered += amount
-		accrue(weapon, amount)
+		_accrue(weapon, amount)
 	_bloodstain = {}
+	if recovered > 0:
+		changed.emit()
 	return recovered
+
+
+## A fully owned vault-v5 snapshot, including opaque future weapon ids.
+func snapshot() -> Dictionary:
+	return {"weapons": _tracks.duplicate(true), "bloodstain": _bloodstain.duplicate()}
 
 
 ## A copy of the standing bloodstain ({weapon: points}), empty when none stands.
