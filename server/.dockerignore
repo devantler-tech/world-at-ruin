@@ -1,0 +1,9 @@
+.git
+*.log
+*.pem
+*.key
+*.crt
+Dockerfile
+README.md
+**/*_test.go
+**/testdata
