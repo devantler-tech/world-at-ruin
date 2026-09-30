@@ -21,7 +21,7 @@ func _ready() -> void:
 	SaveVault.clear_refusals_for_test()
 	var previous := {
 		"version": 5, "attuned": [], "discoveries": [], "reward_claims": [], "quests": {},
-		"mastery": {"weapons": {"sword": {"banked": 200, "unbanked": 50}}, "bloodstain": {}},
+		"mastery": {"weapons": {"sword": {"banked": 200.0, "unbanked": 50.0}}, "bloodstain": {}},
 	}
 	if not SaveVault.save_to(SaveVault.vault_path(), previous):
 		_fail("could not persist the previous waking")
@@ -34,8 +34,15 @@ func _ready() -> void:
 		_fail("real boot did not restore the previous waking")
 		return
 	if UpdateManifest.SAVE_CAPABILITY_WRITES == 6:
+		# A writer may not hide behind reader-only metadata to avoid the
+		# activation probes. The retained reader must carry, not mutate, v5 state.
+		ledger.accrue("sword", 7)
 		_main.free()
 		_main = null
+		var carried = SaveVault.load_saved()
+		if carried is not Dictionary or carried.get("mastery") != previous["mastery"]:
+			_fail("the retained reader wrote new mastery while advertising capability 6")
+			return
 		if not _save.real_save_untouched():
 			_fail("retained reader boot touched real player state")
 			return
