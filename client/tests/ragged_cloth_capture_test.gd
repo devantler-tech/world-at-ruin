@@ -8,11 +8,16 @@ extends Node
 func _ready() -> void:
 	var script := load("res://tools/frame_capture.gd") as GDScript
 	var capture := script.new() as Node
-	if not capture.has_method("ragged_cloth_capture_plan"):
+	if not capture.has_method("ragged_cloth_capture_plan") or not capture.has_method("ragged_drape_capture_plan"):
 		_fail("actual capture tool has no ragged-cloth inspection plan")
 		capture.free()
 		return
-	var plan: Array = capture.call("ragged_cloth_capture_plan")
+	var material_plan: Array = capture.call("ragged_cloth_capture_plan")
+	if material_plan.size() != 3 or material_plan[0][0] != "cloth_front" or material_plan[1][0] != "cloth_rear" or material_plan[2][0] != "cloth_gameplay":
+		_fail("the established material plan must retain front, rear and gameplay range")
+		capture.free()
+		return
+	var plan: Array = capture.call("ragged_drape_capture_plan")
 	if plan.size() != 4 or plan[0][0] != "cloth_front" or plan[1][0] != "cloth_rear" or plan[2][0] != "cloth_profile" or plan[3][0] != "cloth_gameplay":
 		_fail("fixed inspection plan must include both panels, a silhouette profile and gameplay range")
 	elif Vector3(plan[0][1]).z * Vector3(plan[1][1]).z >= 0.0:

@@ -1666,9 +1666,16 @@ static func ragged_cloth_capture_plan() -> Array:
 	return [
 		["cloth_front", Vector3(0.10, 0.03, 0.82), Vector3.ZERO],
 		["cloth_rear", Vector3(-0.10, 0.03, -0.82), Vector3.ZERO],
-		["cloth_profile", Vector3(0.82, 0.03, 0.06), Vector3.ZERO],
 		["cloth_gameplay", Vector3.ZERO, Vector3.ZERO],
 	]
+
+
+## Extend the established material plan without changing its three-view
+## contract. Geometry evidence also needs a hanging-profile inspection.
+static func ragged_drape_capture_plan() -> Array:
+	var plan := ragged_cloth_capture_plan()
+	plan.insert(2, ["cloth_profile", Vector3(0.82, 0.03, 0.06), Vector3.ZERO])
+	return plan
 
 
 ## Keep the normal follow-camera projection and spring-arm distance for the
@@ -1724,7 +1731,7 @@ func _capture_ragged_cloth(dir: String, main: Node) -> void:
 	inspection.fov = 36.0
 	get_tree().root.add_child(inspection)
 	var centre := garment.global_transform * flat_mesh.get_aabb().get_center()
-	for vantage: Array in ragged_cloth_capture_plan():
+	for vantage: Array in ragged_drape_capture_plan():
 		var name: String = vantage[0]
 		var camera := ragged_cloth_camera(name, inspection, player)
 		if camera == null:
