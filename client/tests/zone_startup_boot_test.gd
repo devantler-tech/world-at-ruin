@@ -6,6 +6,8 @@ var _boot: IsolatedBoot
 var _main: Node
 var _environment: Dictionary = {}
 var _failed := false
+var _first_draw_seen := false
+var _connected_before_first_draw := false
 
 
 func _ready() -> void:
@@ -18,6 +20,11 @@ func _ready() -> void:
 	if _main == null:
 		await _fail("save isolation did not take")
 		return
+	# A deferred callback may outlive tree membership. Calling before parenting
+	# must be harmless, including in headless mode where get_tree() is null.
+	_main.call("_start_zone_after_boot")
+	if DisplayServer.get_name() != "headless":
+		RenderingServer.frame_pre_draw.connect(_record_first_draw, CONNECT_ONE_SHOT)
 	add_child(_main)
 	if _main.get("_zone") != null:
 		await _fail("the zone connection started inside synchronous boot")
@@ -26,6 +33,9 @@ func _ready() -> void:
 	# configured connection after boot and refuse its missing admission token.
 	for frame: int in range(3):
 		await get_tree().process_frame
+	if DisplayServer.get_name() != "headless" and (not _first_draw_seen or _connected_before_first_draw):
+		await _fail("native startup opened its zone before the first rendered frame")
+		return
 	var zone := _main.get("_zone") as ZoneConnection
 	if zone == null or zone.state() != ZoneConnection.State.FAILED:
 		await _fail("headless startup never attempted the configured zone")
@@ -35,6 +45,11 @@ func _ready() -> void:
 		await _fail("startup can replace an already created zone connection")
 		return
 	await _finish()
+
+
+func _record_first_draw() -> void:
+	_first_draw_seen = true
+	_connected_before_first_draw = _main != null and _main.get("_zone") != null
 
 
 func _fail(problem: String) -> void:

@@ -523,6 +523,8 @@ func _reconcile_boot_recovery_locked(path: String) -> void:
 ## single-player, so failing to reach a zone must never cost a player their
 ## session.
 func _start_zone_after_boot() -> void:
+	if not is_inside_tree() or is_queued_for_deletion():
+		return
 	# First-frame pipeline compilation can block native polling longer than
 	# the server's TLS deadline. Open the socket only after that work ends.
 	# Headless runs have no rendered-frame signal, but still defer past boot.
