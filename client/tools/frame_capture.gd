@@ -1660,14 +1660,20 @@ func _capture_first_run(dir: String, main: Node) -> void:
 	get_tree().quit(0)
 
 
-## Fixed offsets in the kit body's coordinate frame, relative to the garment
-## centre. Kept separate from every established world and creator vantage.
+## Fixed inspection offsets relative to the garment centre in the kit body
+## frame. The gameplay entry selects the untouched production follow rig.
 static func ragged_cloth_capture_plan() -> Array:
 	return [
 		["cloth_front", Vector3(0.10, 0.03, 0.82), Vector3.ZERO],
 		["cloth_rear", Vector3(-0.10, 0.03, -0.82), Vector3.ZERO],
-		["cloth_gameplay", Vector3(0.3, 0.65, -3.0), Vector3.ZERO],
+		["cloth_gameplay", Vector3.ZERO, Vector3.ZERO],
 	]
+
+
+## Keep the normal follow-camera projection and spring-arm distance for the
+## gameplay read, rather than magnifying distant fibres through a close lens.
+static func ragged_cloth_camera(view: String, inspection: Camera3D, player: Player) -> Camera3D:
+	return player.get("_camera") as Camera3D if view == "cloth_gameplay" else inspection
 
 
 ## Actual empty-wardrobe player, with garment-only pixel evidence. A magenta
@@ -1711,15 +1717,20 @@ func _capture_ragged_cloth(dir: String, main: Node) -> void:
 	var mask_material := flat.duplicate() as StandardMaterial3D
 	mask_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	mask_material.albedo_color = Color(1.0, 0.0, 1.0)
-	var camera := Camera3D.new()
-	camera.fov = 36.0
-	get_tree().root.add_child(camera)
-	camera.make_current()
+	var inspection := Camera3D.new()
+	inspection.fov = 36.0
+	get_tree().root.add_child(inspection)
 	var centre := garment.global_transform * garment.mesh.get_aabb().get_center()
 	for vantage: Array in ragged_cloth_capture_plan():
 		var name: String = vantage[0]
-		camera.global_position = centre + body.global_basis * Vector3(vantage[1])
-		camera.look_at(centre + body.global_basis * Vector3(vantage[2]))
+		var camera := ragged_cloth_camera(name, inspection, player)
+		if camera == null:
+			_fail("the actual player has no gameplay follow camera")
+			return
+		if camera == inspection:
+			camera.global_position = centre + body.global_basis * Vector3(vantage[1])
+			camera.look_at(centre + body.global_basis * Vector3(vantage[2]))
+		camera.make_current()
 		var drawn := await _settled_cloth_frame()
 		var repeated := await _settled_cloth_frame()
 		garment.set_surface_override_material(0, flat)
@@ -1727,7 +1738,7 @@ func _capture_ragged_cloth(dir: String, main: Node) -> void:
 		garment.set_surface_override_material(0, mask_material)
 		var mask := await _settled_cloth_frame()
 		garment.set_surface_override_material(0, original_override)
-		var points := ragged_cloth_pixels(mask)
+		var points := ragged_cloth_pixels(mask, 1 if name == "cloth_gameplay" else 2)
 		if points.size() < 200:
 			_fail("%s: only %d garment pixels are visible — cannot evidence the cloth" % [name, points.size()])
 			return
@@ -1756,12 +1767,12 @@ func _settled_cloth_frame() -> Image:
 	return get_viewport().get_texture().get_image()
 
 
-## The marker arm is deliberately high-saturation and unlit. Sampling every
-## other pixel bounds the comparison cost without including background pixels.
-static func ragged_cloth_pixels(mask: Image) -> Array[Vector2i]:
+## The marker arm is deliberately high-saturation and unlit. Close views sample
+## every other pixel to bound cost; minified gameplay reads every garment pixel.
+static func ragged_cloth_pixels(mask: Image, stride: int = 2) -> Array[Vector2i]:
 	var points: Array[Vector2i] = []
-	for y in range(0, mask.get_height(), 2):
-		for x in range(0, mask.get_width(), 2):
+	for y in range(0, mask.get_height(), stride):
+		for x in range(0, mask.get_width(), stride):
 			var pixel := mask.get_pixel(x, y)
 			if pixel.r > 0.8 and pixel.b > 0.8 and pixel.g < 0.2:
 				points.append(Vector2i(x, y))

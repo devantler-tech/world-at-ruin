@@ -17,15 +17,45 @@ func _ready() -> void:
 		_fail("fixed inspection plan must include front, rear and gameplay range")
 	elif Vector3(plan[0][1]).z * Vector3(plan[1][1]).z >= 0.0:
 		_fail("front and rear cameras must face opposite garment panels")
-	elif Vector3(plan[2][1]).distance_to(plan[2][2]) < 2.5:
-		_fail("gameplay camera must inspect minified threads from beyond close range")
 	else:
+		if not _camera_controls(capture):
+			capture.free()
+			return
 		if not _pixel_controls(capture):
 			capture.free()
 			return
 		print("TEST PASS — ragged-cloth evidence frames both panels and gameplay range")
 		get_tree().quit(0)
 	capture.free()
+
+
+## Gameplay evidence must use the production follow rig without moving it or
+## replacing its projection; only the two inspection views use the close lens.
+func _camera_controls(capture: Node) -> bool:
+	if not capture.has_method("ragged_cloth_camera"):
+		_fail("cloth gameplay evidence cannot select the production follow camera")
+		return false
+	var player := Player.new()
+	add_child(player)
+	player.set_physics_process(false)
+	player.set_process(false)
+	var follow := player.get("_camera") as Camera3D
+	var spring := player.get("_spring") as SpringArm3D
+	var original := follow.transform
+	var inspection := Camera3D.new()
+	inspection.fov = 36.0
+	add_child(inspection)
+	var gameplay := capture.call("ragged_cloth_camera", "cloth_gameplay", inspection, player) as Camera3D
+	var valid := gameplay == follow and is_equal_approx(gameplay.fov, 70.0) and is_equal_approx(spring.spring_length, 4.6)
+	valid = valid and gameplay.projection == Camera3D.PROJECTION_PERSPECTIVE and follow.transform == original
+	for view: String in ["cloth_front", "cloth_rear"]:
+		valid = valid and capture.call("ragged_cloth_camera", view, inspection, player) == inspection
+	valid = valid and inspection.fov == 36.0
+	inspection.free()
+	player.free()
+	if not valid:
+		_fail("cloth gameplay must retain the actual 70-degree, 4.6-metre follow rig")
+	return valid
 
 
 ## Only actual garment marker pixels may contribute to the read. An unrelated
@@ -40,6 +70,11 @@ func _pixel_controls(capture: Node) -> bool:
 	var points: Array[Vector2i] = capture.call("ragged_cloth_pixels", mask)
 	if points != [Vector2i(2, 2)]:
 		_fail("mask sampling must name only the drawn garment pixel")
+		return false
+	for point: Vector2i in [Vector2i(2, 3), Vector2i(3, 2), Vector2i(3, 3)]:
+		mask.set_pixelv(point, Color.MAGENTA)
+	if capture.call("ragged_cloth_pixels", mask, 1).size() != 4:
+		_fail("minified gameplay must inspect every garment pixel without background samples")
 		return false
 	var a := Image.create(8, 8, false, Image.FORMAT_RGB8)
 	a.fill(Color.BLACK)

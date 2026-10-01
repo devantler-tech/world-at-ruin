@@ -14,10 +14,13 @@ garment mask.
 
 ## Actual frames
 
-Godot 4.7.1, Apple M2 Pro, Metal Forward+, 1600×900, native source client,
-2026-10-01. The real first-run creator selected Wanderer and emptied the wardrobe
+Godot 4.7.1, Apple M2 Pro, Metal Forward+, 1600×900, 2026-10-01. Ordinary
+frames use the native source client; opted-in frames use the rebuilt native
+macOS export. The real first-run creator selected Wanderer and emptied the wardrobe
 through its production mutation path. Player/scenery clocks and idle were held
-fixed; only the evidence camera moved. The local GPU supports volumetric fog.
+fixed. Front/rear inspection uses a 36° lens; gameplay selects the player's
+actual 70° follow camera and its unchanged 4.6 m spring arm. The local GPU
+supports volumetric fog.
 
 | Ordinary material | Opted-in preview |
 |---|---|
@@ -36,15 +39,16 @@ under existing cave light. These whole captured frames were not retouched.
 
 Each view renders the actual material twice, a flat-material ablation, and an
 unlit magenta visibility mask. The comparison samples **only pixels the garment
-draws**, avoiding scenery changes. The flat arm preserves opacity/culling and
+draws**, avoiding scenery changes. Close views sample every other pixel;
+minified gameplay samples every garment pixel. The flat arm preserves opacity/culling and
 mean cloth colour, removing albedo, normal and roughness maps. Each close view
 must separate from repeat-frame noise before the scenario reports success.
 
 | Preview view | Sampled garment pixels | Flat-arm mean maximum-channel difference | Repeat-frame noise |
 |---|---:|---:|---:|
 | Front | 34,033 | 0.01746 | 0.00000 |
-| Rear | 41,935 | 0.00831 | 0.00000 |
-| Gameplay | 2,563 | 0.00609 | 0.00000 |
+| Rear | 41,935 | 0.00816 | 0.00000 |
+| Gameplay | 982 | 0.00539 | 0.00001 |
 
 These describe this run on one machine, not an across-machine quality or
 performance score. CI captures both flag states with the same controls and
