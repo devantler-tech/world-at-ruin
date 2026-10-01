@@ -34,6 +34,10 @@ static func material(source: StandardMaterial3D) -> StandardMaterial3D:
 	result.normal_scale = 0.45
 	result.metallic_specular = 0.2
 	result.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+	# The kit UVs fit 0..1. Repeating anisotropy selects sampler 17 in Godot's
+	# Metal shader, beyond the 16 slots on older/virtual Apple GPUs. Clamp keeps
+	# the same filtering quality without an unnecessary repeat sampler.
+	result.texture_repeat = false
 	return result
 
 

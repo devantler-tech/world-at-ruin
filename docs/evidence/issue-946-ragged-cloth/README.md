@@ -5,6 +5,13 @@ deterministic woven surface: uneven warp/weft relief, seeded stains and varying
 matte roughness. The kit's colour family and geometry remain intact. Ordinary
 launches retain the baked material.
 
+The material clamps its normalized 0–1 garment UVs while retaining anisotropic
+mipmap filtering. Repeating anisotropy exceeded the sampler range on the hosted
+Apple5 Metal device and made the preview fail to render; the garment does not
+need a repeat sampler. The compositor regression checks both the clamp setting
+and the actual UV bounds. The capture still rejects shader errors or a missing
+garment mask.
+
 ## Actual frames
 
 Godot 4.7.1, Apple M2 Pro, Metal Forward+, 1600×900, native source client,

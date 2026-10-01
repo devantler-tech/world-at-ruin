@@ -51,6 +51,11 @@ func _ready() -> void:
 			"ragged cloth has a restrained non-metallic light response")
 		_check(material.texture_filter == BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC,
 			"fine threads use mipmaps and anisotropic filtering at distance")
+		_check(not material.texture_repeat,
+			"normalized garment UVs use the clamp sampler supported by older Metal GPUs")
+		for uv: Vector2 in garment.mesh.surface_get_arrays(0)[Mesh.ARRAY_TEX_UV]:
+			_check(uv.x >= 0.0 and uv.x <= 1.0 and uv.y >= 0.0 and uv.y <= 1.0,
+				"the immutable garment UVs fit the authored texture without repeating")
 		for texture: Texture2D in [material.albedo_texture, material.normal_texture, material.roughness_texture]:
 			_check(texture != null, "all three cloth maps reach the actual material")
 			if texture != null:
