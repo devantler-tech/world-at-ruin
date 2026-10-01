@@ -26,6 +26,7 @@ type healthProbe struct {
 	TimeoutSeconds int64     `yaml:"timeoutSeconds"`
 }
 
+// validateHealthProbe requires verified listener health inside the kubelet deadline.
 func validateHealthProbe(probe healthProbe) error {
 	expected := []string{
 		"/zoneprobe", "-tls-only", "-url", "wss://127.0.0.1:8443/zone",
@@ -48,6 +49,7 @@ func validateDocuments(input io.Reader) error {
 	return validateBundle(input, false)
 }
 
+// validateBundle enforces host policy ownership and, for publication, one healthy zone Deployment.
 func validateBundle(input io.Reader, requireZone bool) error {
 	decoder := yaml.NewDecoder(input)
 	count := 0
@@ -130,6 +132,7 @@ func validateDirectory(ctx context.Context, directory string) error {
 	return validateBundle(bytes.NewReader(rendered), true)
 }
 
+// renderDirectory expands the actual Kustomization with bounded process cleanup.
 func renderDirectory(ctx context.Context, directory string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()

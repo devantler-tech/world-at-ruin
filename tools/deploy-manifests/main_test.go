@@ -87,6 +87,7 @@ func TestBrokenRenderIsRejected(t *testing.T) {
 	assertError(t, validateDirectory(t.Context(), dir), "empty")
 }
 
+// TestPublishedZoneCannotOmitRenameOrDuplicateItsDeployment prevents unchecked publication.
 func TestPublishedZoneCannotOmitRenameOrDuplicateItsDeployment(t *testing.T) {
 	_, source, _, ok := runtime.Caller(0)
 	if !ok {

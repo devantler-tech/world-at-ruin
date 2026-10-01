@@ -33,10 +33,12 @@ const (
 	maxFrameBytes = wire.MaxEntities*(2*(8+3*8+8)+8) + wire.MaxCasts*((8+1+3*8+3*8+4*8+2*8)+8) + 96
 )
 
+// main exposes the probe verdict as a process exit code.
 func main() {
 	os.Exit(run(context.Background(), os.Args[1:], os.Getenv, os.Stdout, os.Stderr))
 }
 
+// run selects listener or authenticated-stream verification with sanitized output.
 func run(parent context.Context, args []string, getenv func(string) string, out, errOut io.Writer) int {
 	flags := flag.NewFlagSet("zoneprobe", flag.ContinueOnError)
 	// flag errors include supplied values. None may reach shared CI logs.
@@ -124,6 +126,7 @@ func run(parent context.Context, args []string, getenv func(string) string, out,
 	return outputResult(out, fmt.Sprintf("ZONEPROBE PASS denied=2 protocols=%d,%d frames=%d state=advancing", wire.LegacyVersion, wire.Version, frames))
 }
 
+// verifyTLSHealth connects directly to the target and verifies its configured identity.
 func verifyTLSHealth(ctx context.Context, target *url.URL, config *tls.Config) error {
 	port := target.Port()
 	if port == "" {
@@ -140,6 +143,7 @@ func verifyTLSHealth(ctx context.Context, target *url.URL, config *tls.Config) e
 	return completeTLSHealth(ctx, raw, config)
 }
 
+// completeTLSHealth owns handshake and clean shutdown within the same deadline.
 func completeTLSHealth(ctx context.Context, raw net.Conn, config *tls.Config) error {
 	// On success TLS Close checks socket cleanup; failed handshakes already
 	// fail the proof and still need their underlying connection released.
@@ -158,11 +162,13 @@ func completeTLSHealth(ctx context.Context, raw net.Conn, config *tls.Config) er
 	return ctx.Err()
 }
 
+// validTarget limits probes to the zone endpoint without embedded credentials.
 func validTarget(target *url.URL) bool {
 	return target != nil && target.Scheme == "wss" && target.Hostname() != "" && target.Path == "/zone" &&
 		target.User == nil && target.RawQuery == "" && !target.ForceQuery && target.Fragment == "" && target.Opaque == ""
 }
 
+// loopbackHost permits identity overrides only for local tunnel destinations.
 func loopbackHost(host string) bool {
 	if strings.EqualFold(host, "localhost") {
 		return true
@@ -171,6 +177,7 @@ func loopbackHost(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
+// validDNSName rejects ambiguous wildcard, IP and malformed DNS overrides.
 func validDNSName(name string) bool {
 	if len(name) > 253 || !strings.Contains(name, ".") || net.ParseIP(name) != nil {
 		return false
@@ -189,6 +196,7 @@ func validDNSName(name string) bool {
 	return true
 }
 
+// roots retains system trust unless the operator explicitly supplies fixture roots.
 func roots(path string) (*x509.CertPool, error) {
 	if path == "" {
 		return nil, nil // net/http uses the system trust roots.
@@ -204,6 +212,7 @@ func roots(path string) (*x509.CertPool, error) {
 	return pool, nil
 }
 
+// certificateDNSName selects one DNS identity from the configured leaf, without adding trust.
 func certificateDNSName(path string) (string, error) {
 	certs, err := certificates(path)
 	if err != nil {
@@ -215,6 +224,7 @@ func certificateDNSName(path string) (string, error) {
 	return certs[0].DNSNames[0], nil
 }
 
+// certificates parses bounded PEM blocks in order and refuses all malformed material.
 func certificates(path string) ([]*x509.Certificate, error) {
 	cleanPath := filepath.Clean(path)
 	file, err := os.DirFS(filepath.Dir(cleanPath)).Open(filepath.Base(cleanPath))
@@ -274,6 +284,7 @@ func certificates(path string) ([]*x509.Certificate, error) {
 	return certs, nil
 }
 
+// wrongToken supplies a fixed admission negative control distinct from the real token.
 func wrongToken(token string) string {
 	const rejected = "zoneprobe-invalid-bearer"
 	if token == rejected {
@@ -282,6 +293,7 @@ func wrongToken(token string) string {
 	return rejected
 }
 
+// dial requests one wire protocol through the verified HTTP transport.
 func dial(ctx context.Context, client *http.Client, target, token string, version uint16) (*websocket.Conn, *http.Response, error) {
 	headers := http.Header{}
 	if token != "" {
@@ -293,6 +305,7 @@ func dial(ctx context.Context, client *http.Client, target, token string, versio
 	return websocket.Dial(ctx, target, &websocket.DialOptions{HTTPClient: client, HTTPHeader: headers})
 }
 
+// closeResponse releases any HTTP response retained by a WebSocket attempt.
 func closeResponse(response *http.Response) error {
 	if response != nil && response.Body != nil {
 		return response.Body.Close()
@@ -300,6 +313,7 @@ func closeResponse(response *http.Response) error {
 	return nil
 }
 
+// denied requires HTTP refusal and releases any unexpectedly admitted socket.
 func denied(ctx context.Context, client *http.Client, target, token string) error {
 	conn, response, err := dial(ctx, client, target, token, wire.LegacyVersion)
 	closeErr := closeResponse(response)
@@ -313,6 +327,7 @@ func denied(ctx context.Context, client *http.Client, target, token string) erro
 	return nil
 }
 
+// verifyStream proves advancing replicated state without gameplay writes or observer eviction.
 func verifyStream(ctx context.Context, client *http.Client, target, token string, version uint16) (frames int, result error) {
 	conn, response, err := dial(ctx, client, target, token, version)
 	if closeErr := closeResponse(response); closeErr != nil || err != nil {
@@ -382,6 +397,7 @@ func verifyStream(ctx context.Context, client *http.Client, target, token string
 	}
 }
 
+// applyCasts folds a bounded delta only when caster and lifecycle references remain valid.
 func applyCasts(casts map[sim.EntityID]sim.ActiveCast, entities map[sim.EntityID]sim.EntityState, delta sim.SnapshotDelta) error {
 	ended := make(map[sim.EntityID]bool, len(delta.EndedCasts))
 	for _, id := range delta.EndedCasts {
@@ -414,6 +430,7 @@ func applyCasts(casts map[sim.EntityID]sim.ActiveCast, entities map[sim.EntityID
 	return nil
 }
 
+// applyEntities rejects inconsistent replication and reports observable movement.
 func applyEntities(entities map[sim.EntityID]sim.EntityState, observer sim.EntityID, delta sim.SnapshotDelta) (bool, error) {
 	changed := false
 	for _, entity := range delta.Entered {
@@ -443,6 +460,7 @@ func applyEntities(entities map[sim.EntityID]sim.EntityState, observer sim.Entit
 	return changed, nil
 }
 
+// failure emits only a fixed category and treats failed output as a failed proof.
 func failure(out io.Writer, reason string, code int) int {
 	if _, err := fmt.Fprintln(out, "zoneprobe: "+reason); err != nil {
 		return 1
@@ -450,6 +468,7 @@ func failure(out io.Writer, reason string, code int) int {
 	return code
 }
 
+// outputResult reports success only after its affirmative verdict is written.
 func outputResult(out io.Writer, message string) int {
 	if _, err := fmt.Fprintln(out, message); err != nil {
 		return 1

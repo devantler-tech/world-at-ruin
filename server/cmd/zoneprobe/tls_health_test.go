@@ -70,12 +70,14 @@ type lockedProbeLog struct {
 	buffer bytes.Buffer
 }
 
+// Write records concurrent server diagnostics for the quiet-handshake assertion.
 func (l *lockedProbeLog) Write(data []byte) (int, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.buffer.Write(data)
 }
 
+// String returns diagnostics without racing the server's log writer.
 func (l *lockedProbeLog) String() string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -98,6 +100,7 @@ func TestTLSOnlyCancelledParentFails(t *testing.T) {
 	}
 }
 
+// TestTLSOnlyRejectsUnverifiedPeers requires trust, identity, expiry and TLS itself.
 func TestTLSOnlyRejectsUnverifiedPeers(t *testing.T) {
 	for _, kind := range []string{"untrusted", "wrong identity", "expired", "plaintext"} {
 		t.Run(kind, func(t *testing.T) {
@@ -139,6 +142,7 @@ func TestTLSOnlyRejectsUnverifiedPeers(t *testing.T) {
 	}
 }
 
+// TestTLSOnlyIdentityFileDoesNotTrustOrAdoptThePeer keeps identity and trust independent.
 func TestTLSOnlyIdentityFileDoesNotTrustOrAdoptThePeer(t *testing.T) {
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		t.Error("TLS health entered HTTP")
@@ -170,6 +174,7 @@ func TestTLSOnlyIdentityFileDoesNotTrustOrAdoptThePeer(t *testing.T) {
 	}
 }
 
+// TestTLSOnlyStalledPeerIsBoundedAndConnectionCloses checks timeout and socket release.
 func TestTLSOnlyStalledPeerIsBoundedAndConnectionCloses(t *testing.T) {
 	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
@@ -203,6 +208,7 @@ func TestTLSOnlyStalledPeerIsBoundedAndConnectionCloses(t *testing.T) {
 	}
 }
 
+// TestTLSOnlyDeadlineIncludesBlockedCloseNotify covers a peer that stops reading after handshake.
 func TestTLSOnlyDeadlineIncludesBlockedCloseNotify(t *testing.T) {
 	serverRaw, clientRaw := net.Pipe()
 	defer func() { _ = serverRaw.Close() }()
@@ -239,6 +245,7 @@ func TestTLSOnlyDeadlineIncludesBlockedCloseNotify(t *testing.T) {
 	}
 }
 
+// changedProbeCertificate signs controlled identity or lifetime variations with a fixture key.
 func changedProbeCertificate(t *testing.T, server *httptest.Server, change func(*x509.Certificate)) tls.Certificate {
 	t.Helper()
 	certificate := server.TLS.Certificates[0]
@@ -254,6 +261,7 @@ func changedProbeCertificate(t *testing.T, server *httptest.Server, change func(
 	return certificate
 }
 
+// healthTLSConfig supplies the single-DNS leaf required by configured-identity probes.
 func healthTLSConfig(t *testing.T) *tls.Config {
 	t.Helper()
 	fixture := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
@@ -264,6 +272,7 @@ func healthTLSConfig(t *testing.T) *tls.Config {
 	return &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate}}
 }
 
+// writeIdentityCertificate stores only a fixture public certificate with private file permissions.
 func writeIdentityCertificate(t *testing.T, encoded []byte) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "declared-identity.pem")
@@ -273,6 +282,7 @@ func writeIdentityCertificate(t *testing.T, encoded []byte) string {
 	return path
 }
 
+// TestCertificateInputsRejectMalformedBlocksBeforeValidMaterial prevents PEM scan-ahead.
 func TestCertificateInputsRejectMalformedBlocksBeforeValidMaterial(t *testing.T) {
 	config := healthTLSConfig(t)
 	valid := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: config.Certificates[0].Certificate[0]})
@@ -298,6 +308,7 @@ func TestCertificateInputsRejectMalformedBlocksBeforeValidMaterial(t *testing.T)
 	}
 }
 
+// TestTLSOnlyInvalidIdentityConfigurationFailsBeforeEnvironmentOrNetwork refuses ambiguous overrides.
 func TestTLSOnlyInvalidIdentityConfigurationFailsBeforeEnvironmentOrNetwork(t *testing.T) {
 	config := healthTLSConfig(t)
 	leaf, err := x509.ParseCertificate(config.Certificates[0].Certificate[0])
@@ -339,6 +350,7 @@ func TestTLSOnlyInvalidIdentityConfigurationFailsBeforeEnvironmentOrNetwork(t *t
 	}
 }
 
+// TestTLSOnlyCertificateInputBoundsAndValidChain requires bounded strict PEM while accepting chains.
 func TestTLSOnlyCertificateInputBoundsAndValidChain(t *testing.T) {
 	config := healthTLSConfig(t)
 	valid := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: config.Certificates[0].Certificate[0]})
@@ -364,10 +376,12 @@ func TestTLSOnlyCertificateInputBoundsAndValidChain(t *testing.T) {
 
 type refusedProbeOutput struct{}
 
+// Write simulates a failed verdict destination after successful TLS verification.
 func (refusedProbeOutput) Write([]byte) (int, error) {
 	return 0, errors.New("output unavailable")
 }
 
+// TestTLSOnlyFailedOutputCannotReportSuccess makes output failure part of the exit verdict.
 func TestTLSOnlyFailedOutputCannotReportSuccess(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		t.Error("TLS health entered HTTP")
