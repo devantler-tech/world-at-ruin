@@ -64,6 +64,15 @@ To build your own `.app` instead, export with the `macOS` preset in `client/expo
 **Watch the world grow:** press `L` in-game. Every player-visible change is a dev-log entry,
 newest first — replaying after each build shows exactly what the agents grew.
 
+**Ragged-cloth material preview:** launch from source with
+`WAR_RAGGED_CLOTH_DETAIL=1 godot --path client`, or prefix the installed app's
+executable with the same environment setting. In the creator, leave the wardrobe
+bare to inspect the immutable base cloth. This opt-in previews woven fibres and
+matte wear; the garment's rigid shape and missing drape remain unfinished.
+[Before/after frames and inspection controls](docs/evidence/issue-946-ragged-cloth/README.md)
+show the current gap. Ordinary launches keep the shipped material and all saved
+characters retain their existing equipment and shapes.
+
 **Private server trial:** the owner can observe the developing server through the
 [verified localhost tunnel](docs/zone-tunnel.md). It shows scripted replicas with a
 separate temporary character; shared controls and online progression remain in development.

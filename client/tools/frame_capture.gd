@@ -62,6 +62,7 @@ const FrameDiff := preload("res://tools/frame_diff.gd")
 const SCENARIOS: Array[String] = [
 	"world",
 	"first_run",
+	"ragged_cloth",
 	"breath",
 	"walk",
 	"run",
@@ -558,6 +559,9 @@ func _ready() -> void:
 
 	if scenario == "first_run":
 		await _capture_first_run(dir, main)
+		return
+	if scenario == "ragged_cloth":
+		await _capture_ragged_cloth(dir, main)
 		return
 	if scenario == "breath":
 		await _capture_breath(dir, main)
@@ -1656,6 +1660,139 @@ func _capture_first_run(dir: String, main: Node) -> void:
 	get_tree().quit(0)
 
 
+## Fixed inspection offsets relative to the garment centre in the kit body
+## frame. The gameplay entry selects the untouched production follow rig.
+static func ragged_cloth_capture_plan() -> Array:
+	return [
+		["cloth_front", Vector3(0.10, 0.03, 0.82), Vector3.ZERO],
+		["cloth_rear", Vector3(-0.10, 0.03, -0.82), Vector3.ZERO],
+		["cloth_gameplay", Vector3.ZERO, Vector3.ZERO],
+	]
+
+
+## Keep the normal follow-camera projection and spring-arm distance for the
+## gameplay read, rather than magnifying distant fibres through a close lens.
+static func ragged_cloth_camera(view: String, inspection: Camera3D, player: Player) -> Camera3D:
+	return player.get("_camera") as Camera3D if view == "cloth_gameplay" else inspection
+
+
+## Actual empty-wardrobe player, with garment-only pixel evidence. A magenta
+## visibility arm names the pixels the garment really draws; comparing the whole
+## frame would let scenery motion pretend a flat or hidden cloth had detail.
+func _capture_ragged_cloth(dir: String, main: Node) -> void:
+	for i in UI_WARMUP_FRAMES:
+		await get_tree().process_frame
+	var creator := _find_creator(main) as CharacterCreator
+	if creator == null or not creator.first_run:
+		_fail("ragged cloth requires a real first-run creator and an absent temporary save")
+		return
+	if not main.call("freeze_first_run_backdrop_animation"):
+		_fail("ragged cloth backdrop could not be fixed")
+		return
+	creator.call("_on_preset", "wanderer")
+	for slot: String in CharacterCreator.pickable_regions(CharacterFactory.equipment_registry()):
+		for layer: String in CharacterCreator.pickable_layers(CharacterFactory.equipment_registry(), slot):
+			creator.call("_set_recipe_equipment", slot, layer, "")
+	var player := creator.get("_player") as Player
+	player.set_character(creator.get("_recipe"))
+	player.set_physics_process(false)
+	player.set_process(false)
+	player.set_process_unhandled_input(false)
+	creator.visible = false
+	creator.set_process(false)
+	var body := player.get("_character_body") as Node3D
+	var skeleton := CharacterFactory.find_skeleton(body)
+	var garment := skeleton.get_node_or_null("Equip_loincloth_ragged") as MeshInstance3D
+	if garment == null or not garment.is_visible_in_tree() or _pin_idles() == 0:
+		_fail("the actual player has no visible immutable ragged garment or pinned pose")
+		return
+	var material := garment.get_active_material(0) as StandardMaterial3D
+	var original_override := garment.get_surface_override_material(0)
+	var flat := material.duplicate() as StandardMaterial3D
+	flat.albedo_color *= RaggedCloth._palette(material.albedo_texture)
+	flat.albedo_texture = null
+	flat.normal_enabled = false
+	flat.roughness_texture = null
+	flat.roughness = 0.9
+	var mask_material := flat.duplicate() as StandardMaterial3D
+	mask_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mask_material.albedo_color = Color(1.0, 0.0, 1.0)
+	var inspection := Camera3D.new()
+	inspection.fov = 36.0
+	get_tree().root.add_child(inspection)
+	var centre := garment.global_transform * garment.mesh.get_aabb().get_center()
+	for vantage: Array in ragged_cloth_capture_plan():
+		var name: String = vantage[0]
+		var camera := ragged_cloth_camera(name, inspection, player)
+		if camera == null:
+			_fail("the actual player has no gameplay follow camera")
+			return
+		if camera == inspection:
+			camera.global_position = centre + body.global_basis * Vector3(vantage[1])
+			camera.look_at(centre + body.global_basis * Vector3(vantage[2]))
+		camera.make_current()
+		var drawn := await _settled_cloth_frame()
+		var repeated := await _settled_cloth_frame()
+		garment.set_surface_override_material(0, flat)
+		var flattened := await _settled_cloth_frame()
+		garment.set_surface_override_material(0, mask_material)
+		var mask := await _settled_cloth_frame()
+		garment.set_surface_override_material(0, original_override)
+		var points := ragged_cloth_pixels(mask, 1 if name == "cloth_gameplay" else 2)
+		if points.size() < 200:
+			_fail("%s: only %d garment pixels are visible — cannot evidence the cloth" % [name, points.size()])
+			return
+		var noise := ragged_cloth_difference(drawn, repeated, points)
+		var contribution := ragged_cloth_difference(drawn, flattened, points)
+		# Require discrimination only at inspection range: the gameplay arm
+		# records what the mip chain deliberately averages away at distance.
+		if name != "cloth_gameplay" and contribution <= noise * 3.0 + 0.004:
+			_fail("%s: flat-material signal %.5f does not separate from repeated-frame noise %.5f" % [name, contribution, noise])
+			return
+		for arm: Array in [[name, drawn], [name + "_repeat", repeated],
+				[name + "_flat", flattened], [name + "_mask", mask]]:
+			if not _write_frame(dir, arm[0], arm[1]):
+				return
+		print("CLOTH READ %s — visible %d px, flat signal %.5f, repeat noise %.5f" % [name, points.size(), contribution, noise])
+	print("CAPTURE PASS — ragged cloth: front, rear and gameplay range; detail=%s" % RaggedCloth.enabled())
+	get_tree().quit(0)
+
+
+## Let temporal rendering settle after a camera or material change before
+## comparing garment pixels; otherwise rendering noise can look like detail.
+func _settled_cloth_frame() -> Image:
+	for i in SETTLE_FRAMES:
+		await get_tree().process_frame
+	await RenderingServer.frame_post_draw
+	return get_viewport().get_texture().get_image()
+
+
+## The marker arm is deliberately high-saturation and unlit. Close views sample
+## every other pixel to bound cost; minified gameplay reads every garment pixel.
+static func ragged_cloth_pixels(mask: Image, stride: int = 2) -> Array[Vector2i]:
+	var points: Array[Vector2i] = []
+	for y in range(0, mask.get_height(), stride):
+		for x in range(0, mask.get_width(), stride):
+			var pixel := mask.get_pixel(x, y)
+			if pixel.r > 0.8 and pixel.b > 0.8 and pixel.g < 0.2:
+				points.append(Vector2i(x, y))
+	return points
+
+
+## Measure the largest colour-channel difference only inside the visible
+## garment mask, so background changes cannot improve the material verdict.
+static func ragged_cloth_difference(a: Image, b: Image, points: Array[Vector2i]) -> float:
+	if points.is_empty():
+		return 0.0
+	var total := 0.0
+	for point: Vector2i in points:
+		var p := a.get_pixelv(point)
+		var q := b.get_pixelv(point)
+		total += maxf(absf(p.r - q.r), maxf(absf(p.g - q.g), absf(p.b - q.b)))
+	return total / points.size()
+
+
+
 ## The `breath` scenario: a phase sequence of one standing body, because a
 ## STILL CANNOT SHOW AN IDLE (#243).
 ##
@@ -1673,6 +1810,9 @@ func _capture_first_run(dir: String, main: Node) -> void:
 ##
 ## A NPC by the shrine is framed rather than the wanderer, who wakes in the
 ## cave where torchlight and deep shadow would hide millimetre movement.
+
+
+
 func _capture_breath(dir: String, main: Node) -> void:
 	for i in WARMUP_FRAMES:
 		await get_tree().process_frame
