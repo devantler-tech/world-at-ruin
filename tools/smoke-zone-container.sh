@@ -33,7 +33,8 @@ cleanup() {
 trap cleanup EXIT
 openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 1 \
   -keyout "$credentials/key.pem" -out "$credentials/cert.pem" \
-  -subj /CN=localhost -addext subjectAltName=DNS:localhost >/dev/null 2>&1
+  -subj /CN=zoneprobe.example \
+  -addext subjectAltName=DNS:zoneprobe.example,IP:127.0.0.1 >/dev/null 2>&1
 # UID 65532 must be able to read the bind mount. These are test-only credentials.
 chmod 755 "$credentials"
 chmod 644 "$credentials/key.pem" "$credentials/cert.pem"
@@ -50,10 +51,46 @@ server_id="$(docker run -d --rm --network host --read-only --cap-drop ALL \
   -tls-cert /credentials/cert.pem -tls-key /credentials/key.pem -duration 90s)"
 passed=false
 for ((attempt=1; attempt<=10; attempt++)); do
+  # The kubelet mode receives no admission token and must not enter HTTP.
+  if docker run --rm --network host --read-only --cap-drop ALL \
+    --security-opt no-new-privileges:true --pids-limit 32 --memory 128m --cpus 1 \
+    -v "$credentials:/credentials:ro" --entrypoint /zoneprobe \
+    "$image" -tls-only -url wss://127.0.0.1:18443/zone \
+    -tls-server-name-file /credentials/cert.pem -ca-file /credentials/cert.pem \
+    -timeout 1500ms > "$credentials/health.log" 2>&1; then
+    passed=true
+    break
+  fi
+  sleep 1
+done
+if [[ "$passed" != true ]] || [[ "$(cat "$credentials/health.log")" != 'ZONEPROBE TLS PASS' ]]; then
+  echo 'zone container verified TLS-only health smoke failed' >&2
+  exit 1
+fi
+for ((attempt=1; attempt<=20; attempt++)); do
+  docker run --rm --network host --read-only --cap-drop ALL \
+    --security-opt no-new-privileges:true --pids-limit 32 --memory 128m --cpus 1 \
+    -v "$credentials:/credentials:ro" --entrypoint /zoneprobe \
+    "$image" -tls-only -url wss://127.0.0.1:18443/zone \
+    -tls-server-name-file /credentials/cert.pem -ca-file /credentials/cert.pem \
+    -timeout 1500ms > "$credentials/health.log" 2>&1
+  if [[ "$(cat "$credentials/health.log")" != 'ZONEPROBE TLS PASS' ]]; then
+    echo 'zone container repeated health check lacked a verdict' >&2
+    exit 1
+  fi
+done
+docker logs "$server_id" > "$credentials/server.log" 2>&1
+if grep -q 'TLS handshake error' "$credentials/server.log"; then
+  echo 'zone container health checks caused TLS handshake errors' >&2
+  exit 1
+fi
+cat "$credentials/health.log"
+passed=false
+for ((attempt=1; attempt<=10; attempt++)); do
   if docker run --rm --network host --read-only --cap-drop ALL \
     --security-opt no-new-privileges:true --pids-limit 32 --memory 128m --cpus 1 \
     -v "$credentials:/credentials:ro" -e WAR_ZONE_TOKEN --entrypoint /zoneprobe \
-    "$image" -url wss://localhost:18443/zone -ca-file /credentials/cert.pem \
+    "$image" -url wss://127.0.0.1:18443/zone -ca-file /credentials/cert.pem \
     -timeout 3s > "$credentials/probe.log" 2>&1; then
     passed=true
     break

@@ -37,11 +37,19 @@ reconciliation identity has read access only. The trial needs no application
 network allowance: access uses the authenticated operator tunnel. Removing a
 tenant policy does not remove the host's isolation requirement.
 
+Readiness and liveness complete a verified TLS handshake using the public trust
+roots bundled in the image. They derive the expected DNS identity from the
+mounted leaf certificate, without treating that certificate as a trust root.
+The 1.5 second internal deadline includes clean TLS shutdown and stays within
+the two second kubelet timeout. These token-free checks assess the listener;
+the authenticated stream probe separately proves advancing simulation state.
+
 Validate the complete rendered bundle, including nested Kustomizations, with
 `go -C server run ../tools/deploy-manifests/main.go ../deploy` (requires Go and
 `kubectl`). CI checks the shipped bundle and exercises injected nested policies,
 List expansion, and malformed or empty output through the same validator.
-This checks the host-owned network boundary; the hosting platform separately
+This checks the host-owned network boundary and both TLS-only health commands
+with their deadline ordering; the hosting platform separately
 verifies the full set of permissions needed to reconcile every rendered kind.
 
 The server publisher is independent of the client asset release. A failed server
