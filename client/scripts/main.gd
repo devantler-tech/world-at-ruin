@@ -95,6 +95,8 @@ var _zone_was_live := false
 ## One sanitized acceptance marker per trial connection, only after a real
 ## snapshot was applied. An open socket alone cannot prove world replication.
 var _zone_trial_live_reported := false
+var _zone_trial_visible_reported := false
+var _zone_trial_first_tick := -1
 ## Draws the replicated entity table (#248), or null when no zone was named.
 ## Parented under THIS node and never under WorldGen: that subtree is
 ## fingerprinted by `world_gen_determinism_test` and additionally scanned for
@@ -395,7 +397,8 @@ func _ready() -> void:
 
 	# The live replication link, when a zone was named (#244). Default-off, so
 	# the shipped single-player boot is unchanged.
-	_connect_zone()
+	if ZoneConnection.is_enabled():
+		_start_zone_after_boot.call_deferred()
 
 	# The smoke boot's POSITIVE marker: CI greps for this line, not merely
 	# for the absence of errors — a boot that never mounted the project must
@@ -519,11 +522,26 @@ func _reconcile_boot_recovery_locked(path: String) -> void:
 ## A refusal is reported and then left alone. The Reach is playable
 ## single-player, so failing to reach a zone must never cost a player their
 ## session.
+func _start_zone_after_boot() -> void:
+	# First-frame pipeline compilation can block native polling longer than
+	# the server's TLS deadline. Open the socket only after that work ends.
+	# Headless runs have no rendered-frame signal, but still defer past boot.
+	if DisplayServer.get_name() == "headless":
+		await get_tree().process_frame
+	else:
+		await RenderingServer.frame_post_draw
+	if not is_inside_tree() or is_queued_for_deletion():
+		return
+	_connect_zone()
+
+
 func _connect_zone() -> void:
-	if not ZoneConnection.is_enabled():
+	if _zone != null or not ZoneConnection.is_enabled():
 		return
 	_zone = ZoneConnection.new()
 	_zone_trial_live_reported = false
+	_zone_trial_visible_reported = false
+	_zone_trial_first_tick = -1
 	# The view is built for any named zone, including one whose connection is
 	# refused below: it draws whatever the store holds, and a store that never
 	# received a frame is empty, so an unreachable zone shows nothing rather
@@ -555,8 +573,16 @@ func _update_zone_trial_status() -> void:
 		store.count() if has_data else 0)
 	if has_data and not _zone_trial_live_reported:
 		_zone_trial_live_reported = true
+		_zone_trial_first_tick = store.tick()
 		print("ZONE_TRIAL_LIVE frames=%d tick=%d entities=%d" % [
 			_zone.frames_applied(), store.tick(), store.count()])
+	# An empty initial AOI snapshot is valid. Report visible, advancing data
+	# separately when the real view has synchronized a later populated frame.
+	if has_data and not _zone_trial_visible_reported and store.tick() > _zone_trial_first_tick \
+			and store.count() > 0 and _replicas != null and _replicas.count() == store.count():
+		_zone_trial_visible_reported = true
+		print("ZONE_TRIAL_VISIBLE frames=%d tick=%d entities=%d" % [
+			_zone.frames_applied(), store.tick(), _replicas.count()])
 
 
 ## Per-frame world upkeep: drift the ash, then drive the connection.

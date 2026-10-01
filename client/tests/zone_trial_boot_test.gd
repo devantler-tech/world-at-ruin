@@ -59,16 +59,37 @@ func _ready() -> void:
 		_fail("the cross-tier stream fixture could not be read")
 		return
 	var frames: Array = (golden["stream"] as Dictionary)["frames"]
-	transport.packets.append((frames[0]["hex"] as String).hex_decode())
+	# A real trial can join while every other actor is outside its AOI. That
+	# empty base proves connection, but cannot prove visible advancing replicas.
+	transport.packets.append("0100010000000000000000010000000000000000000000".hex_decode())
 	_main.call("_process", 0.0)
-	if label.text != "Private server trial · live · tick 0 · 2 entities" or not bool(_main.get("_zone_trial_live_reported")):
-		_fail("the first applied snapshot must activate the live status and its marker, including tick zero")
+	if label.text != "Private server trial · live · tick 0 · 0 entities" \
+			or not bool(_main.get("_zone_trial_live_reported")) \
+			or _main.get("_zone_trial_visible_reported") == true:
+		_fail("an empty applied base must report LIVE without claiming visible replicas")
 		return
-	transport.packets.append((frames[1]["hex"] as String).hex_decode())
-	transport.packets.append((frames[2]["hex"] as String).hex_decode())
+	var populated := (frames[0]["hex"] as String).hex_decode()
+	populated[3] = 1
+	transport.packets.append(populated)
 	_main.call("_process", 0.0)
-	if label.text != "Private server trial · live · tick 2 · 1 entities":
+	if label.text != "Private server trial · live · tick 1 · 2 entities" or not bool(_main.get("_zone_trial_live_reported")):
+		_fail("a later populated resync must retain live status")
+		return
+	if _main.get("_zone_trial_visible_reported") != true:
+		_fail("a later populated frame must report the synchronized visible replicas")
+		return
+	var moved := (frames[1]["hex"] as String).hex_decode()
+	moved[3] = 2
+	var left := (frames[2]["hex"] as String).hex_decode()
+	left[3] = 3
+	transport.packets.append(moved)
+	transport.packets.append(left)
+	_main.call("_process", 0.0)
+	if label.text != "Private server trial · live · tick 3 · 1 entities":
 		_fail("Main must update the applied tick and actual replica count as the stream changes")
+		return
+	if _main.get("_zone_trial_visible_reported") != true:
+		_fail("later populated advancing frames must report the real synchronized replica view")
 		return
 	_main.call("_process", 0.0)
 	if not bool(_main.get("_zone_trial_live_reported")):

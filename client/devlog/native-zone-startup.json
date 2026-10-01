@@ -1,0 +1,10 @@
+{
+  "version": "next",
+  "date": "2026-10-01",
+  "title": "Let the world appear before joining the trial",
+  "notes": [
+    "The private server trial waits for the first rendered frame before connecting, so initial graphics setup cannot consume its connection deadline.",
+    "An empty first server snapshot is still a valid connection. Trial diagnostics now separately confirm when later world updates populate visible markers.",
+    "Ordinary launches, certificate checks and your saved character remain unchanged."
+  ]
+}
