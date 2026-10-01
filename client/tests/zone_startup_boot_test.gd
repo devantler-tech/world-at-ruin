@@ -24,7 +24,7 @@ func _ready() -> void:
 	# must be harmless, including in headless mode where get_tree() is null.
 	_main.call("_start_zone_after_boot")
 	if DisplayServer.get_name() != "headless":
-		RenderingServer.frame_pre_draw.connect(_record_first_draw, CONNECT_ONE_SHOT)
+		RenderingServer.frame_post_draw.connect(_record_first_draw, CONNECT_ONE_SHOT)
 	add_child(_main)
 	if _main.get("_zone") != null:
 		await _fail("the zone connection started inside synchronous boot")
