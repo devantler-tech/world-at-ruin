@@ -1,11 +1,17 @@
 package main
 
 import (
+	"bytes"
+	"errors"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+
+	"go.yaml.in/yaml/v3"
 )
 
 const standardPolicy = `apiVersion: networking.k8s.io/v1
@@ -62,7 +68,11 @@ func TestNestedPolicyIsRejectedAfterRealRender(t *testing.T) {
 			writeFixture(t, filepath.Join(dir, "kustomization.yaml"), "resources: [nested]\n")
 			writeFixture(t, filepath.Join(dir, "nested", "kustomization.yaml"), "resources: [resource.yaml]\n")
 			writeFixture(t, filepath.Join(dir, "nested", "resource.yaml"), tc.resource)
-			assertError(t, validateDirectory(t.Context(), dir), tc.wantError)
+			rendered, err := renderDirectory(t.Context(), dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertError(t, validateDocuments(bytes.NewReader(rendered)), tc.wantError)
 		})
 	}
 }
@@ -77,6 +87,36 @@ func TestBrokenRenderIsRejected(t *testing.T) {
 	assertError(t, validateDirectory(t.Context(), dir), "empty")
 }
 
+func TestPublishedZoneCannotOmitRenameOrDuplicateItsDeployment(t *testing.T) {
+	_, source, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot locate the actual deployment bundle")
+	}
+	command := exec.CommandContext(t.Context(), "kubectl", "kustomize", filepath.Join(filepath.Dir(source), "..", "..", "deploy"))
+	rendered, err := command.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateBundle(strings.NewReader(string(rendered)+"\n---\n"+string(rendered)), true); err == nil {
+		t.Fatal("published checker accepted duplicate zone Deployments")
+	}
+	for _, contents := range []string{
+		configMap,
+		strings.ReplaceAll(string(rendered), "name: world-at-ruin-zone\n", "name: renamed-zone\n"),
+		string(rendered) + "\n---\n" + string(rendered),
+	} {
+		dir := t.TempDir()
+		writeFixture(t, filepath.Join(dir, "kustomization.yaml"), "resources: [bundle.yaml]\n")
+		writeFixture(t, filepath.Join(dir, "bundle.yaml"), contents)
+		err := validateDirectory(t.Context(), dir)
+		// Kustomize itself refuses duplicate resource identities; a successful
+		// render must still contain exactly one intended zone Deployment.
+		if err == nil {
+			t.Fatal("published bundle passed without exactly one zone Deployment")
+		}
+	}
+}
+
 // TestPublishedDeploymentUsesHostOwnedNetworkIsolation checks this repository's
 // actual publishable bundle rather than a copied deployment fixture.
 func TestPublishedDeploymentUsesHostOwnedNetworkIsolation(t *testing.T) {
@@ -86,6 +126,101 @@ func TestPublishedDeploymentUsesHostOwnedNetworkIsolation(t *testing.T) {
 	}
 	deployment := filepath.Join(filepath.Dir(source), "..", "..", "deploy")
 	assertError(t, validateDirectory(t.Context(), deployment), "")
+}
+
+// Render the actual bundle, then mutate the rendered probe contract. This
+// catches drift after Kustomize transformations rather than matching source.
+func TestRenderedZoneHealthProbesRejectUnsafeDrift(t *testing.T) {
+	_, source, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot locate the actual deployment bundle")
+	}
+	deployment := filepath.Join(filepath.Dir(source), "..", "..", "deploy")
+	command := exec.CommandContext(t.Context(), "kubectl", "kustomize", deployment)
+	rendered, err := command.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var documents []map[string]any
+	decoder := yaml.NewDecoder(bytes.NewReader(rendered))
+	for {
+		var document map[string]any
+		err := decoder.Decode(&document)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		documents = append(documents, document)
+	}
+	var container map[string]any
+	for _, document := range documents {
+		if document["kind"] == "Deployment" {
+			spec := document["spec"].(map[string]any)
+			template := spec["template"].(map[string]any)
+			pod := template["spec"].(map[string]any)
+			container = pod["containers"].([]any)[0].(map[string]any)
+		}
+	}
+	if container == nil {
+		t.Fatal("published bundle has no zone Deployment")
+	}
+	// The positive fixture uses the intended command, independently of the
+	// checker. The published-bundle test separately validates the actual probes.
+	valid := func() map[string]any {
+		return map[string]any{
+			"exec": map[string]any{"command": []string{
+				"/zoneprobe", "-tls-only", "-url", "wss://127.0.0.1:8443/zone",
+				"-tls-server-name-file", "/credentials/tls.crt", "-timeout", "1500ms",
+			}},
+			"timeoutSeconds": 2,
+		}
+	}
+	for _, field := range []string{"readinessProbe", "livenessProbe"} {
+		for _, kind := range []string{"valid", "TCP", "HTTP", "missing", "wrong command", "extra handler", "equal deadline", "shorter kubelet deadline", "missing kubelet deadline"} {
+			t.Run(field+"/"+kind, func(t *testing.T) {
+				container["readinessProbe"], container["livenessProbe"] = valid(), valid()
+				probe := container[field].(map[string]any)
+				switch kind {
+				case "valid":
+				case "TCP":
+					delete(probe, "exec")
+					probe["tcpSocket"] = map[string]any{"port": "zone-tls"}
+				case "HTTP":
+					delete(probe, "exec")
+					probe["httpGet"] = map[string]any{"path": "/zone", "port": "zone-tls"}
+				case "missing":
+					delete(container, field)
+				case "wrong command":
+					probe["exec"] = map[string]any{"command": []string{"/zoneprobe", "-url", "wss://127.0.0.1:8443/zone"}}
+				case "extra handler":
+					probe["tcpSocket"] = map[string]any{"port": "zone-tls"}
+				case "equal deadline":
+					probe["exec"].(map[string]any)["command"].([]string)[7] = "2s"
+				case "shorter kubelet deadline":
+					probe["timeoutSeconds"] = 1
+				case "missing kubelet deadline":
+					delete(probe, "timeoutSeconds")
+				}
+				var output bytes.Buffer
+				encoder := yaml.NewEncoder(&output)
+				for _, document := range documents {
+					if err := encoder.Encode(document); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := encoder.Close(); err != nil {
+					t.Fatal(err)
+				}
+				want := "TLS health"
+				if kind == "valid" {
+					want = ""
+				}
+				assertError(t, validateDocuments(&output), want)
+			})
+		}
+	}
 }
 
 // assertError requires success for an empty expectation, or a real error

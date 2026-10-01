@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -43,10 +44,12 @@ func run(parent context.Context, args []string, getenv func(string) string, out,
 	target := flags.String("url", "", "verified wss zone endpoint")
 	caFile := flags.String("ca-file", "", "optional PEM trust roots")
 	serverName := flags.String("tls-server-name", "", "certificate DNS identity for a loopback tunnel")
+	tlsOnly := flags.Bool("tls-only", false, "verify TLS listener health without admission or HTTP")
+	identityFile := flags.String("tls-server-name-file", "", "TLS-only loopback identity from the configured leaf certificate")
 	timeout := flags.Duration("timeout", 10*time.Second, "total probe deadline, at most one minute")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			return outputResult(out, "zoneprobe -url <wss endpoint> [-ca-file <PEM>] [-tls-server-name <DNS name>] [-timeout 10s]")
+			return outputResult(out, "zoneprobe -url <wss endpoint> [-tls-only] [-ca-file <PEM>] [-tls-server-name <DNS name> | -tls-server-name-file <PEM>] [-timeout 10s]")
 		}
 		return failure(errOut, "invalid arguments", 2)
 	}
@@ -57,23 +60,43 @@ func run(parent context.Context, args []string, getenv func(string) string, out,
 	if *serverName != "" && (!loopbackHost(parsed.Hostname()) || !validDNSName(*serverName)) {
 		return failure(errOut, "invalid TLS identity override", 2)
 	}
-	token := getenv("WAR_ZONE_TOKEN")
-	if token == "" || len(token) > 8192 || strings.ContainsAny(token, "\r\n\x00") {
-		return failure(errOut, "WAR_ZONE_TOKEN is missing or invalid", 2)
+	if *identityFile != "" {
+		if !*tlsOnly || *serverName != "" || !loopbackHost(parsed.Hostname()) {
+			return failure(errOut, "invalid TLS identity override", 2)
+		}
+		name, err := certificateDNSName(*identityFile)
+		if err != nil {
+			return failure(errOut, "invalid TLS identity material", 2)
+		}
+		*serverName = name
+	}
+	var token string
+	if !*tlsOnly {
+		token = getenv("WAR_ZONE_TOKEN")
+		if token == "" || len(token) > 8192 || strings.ContainsAny(token, "\r\n\x00") {
+			return failure(errOut, "WAR_ZONE_TOKEN is missing or invalid", 2)
+		}
 	}
 	trust, err := roots(*caFile)
 	if err != nil {
 		return failure(errOut, "invalid CA material", 2)
 	}
-	transport := &http.Transport{TLSClientConfig: &tls.Config{
+	tlsConfig := &tls.Config{
 		MinVersion: tls.VersionTLS12, RootCAs: trust, ServerName: *serverName,
-	}}
+	}
+	ctx, cancel := context.WithTimeout(parent, *timeout)
+	defer cancel()
+	if *tlsOnly {
+		if err := verifyTLSHealth(ctx, parsed, tlsConfig); err != nil {
+			return failure(errOut, "TLS health verification failed", 1)
+		}
+		return outputResult(out, "ZONEPROBE TLS PASS")
+	}
+	transport := &http.Transport{TLSClientConfig: tlsConfig}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 		return http.ErrUseLastResponse
 	}}
-	ctx, cancel := context.WithTimeout(parent, *timeout)
-	defer cancel()
 	for _, rejected := range []string{"", wrongToken(token)} {
 		if err := denied(ctx, client, *target, rejected); err != nil {
 			return failure(errOut, "TLS or admission refusal verification failed", 1)
@@ -99,6 +122,40 @@ func run(parent context.Context, args []string, getenv func(string) string, out,
 		}
 	}
 	return outputResult(out, fmt.Sprintf("ZONEPROBE PASS denied=2 protocols=%d,%d frames=%d state=advancing", wire.LegacyVersion, wire.Version, frames))
+}
+
+func verifyTLSHealth(ctx context.Context, target *url.URL, config *tls.Config) error {
+	port := target.Port()
+	if port == "" {
+		port = "443"
+	}
+	raw, err := (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort(target.Hostname(), port))
+	if err != nil {
+		return err
+	}
+	if config.ServerName == "" {
+		config = config.Clone()
+		config.ServerName = target.Hostname()
+	}
+	return completeTLSHealth(ctx, raw, config)
+}
+
+func completeTLSHealth(ctx context.Context, raw net.Conn, config *tls.Config) error {
+	// On success TLS Close checks socket cleanup; failed handshakes already
+	// fail the proof and still need their underlying connection released.
+	defer func() { _ = raw.Close() }()
+	// TLS Close uses its own write deadline. Close the underlying socket on
+	// cancellation so close_notify cannot outlive the total probe deadline.
+	stop := context.AfterFunc(ctx, func() { _ = raw.Close() })
+	defer stop()
+	conn := tls.Client(raw, config)
+	if err := conn.HandshakeContext(ctx); err != nil {
+		return err
+	}
+	if err := conn.Close(); err != nil {
+		return err
+	}
+	return ctx.Err()
 }
 
 func validTarget(target *url.URL) bool {
@@ -136,6 +193,29 @@ func roots(path string) (*x509.CertPool, error) {
 	if path == "" {
 		return nil, nil // net/http uses the system trust roots.
 	}
+	certs, err := certificates(path)
+	if err != nil {
+		return nil, err
+	}
+	pool := x509.NewCertPool()
+	for _, cert := range certs {
+		pool.AddCert(cert)
+	}
+	return pool, nil
+}
+
+func certificateDNSName(path string) (string, error) {
+	certs, err := certificates(path)
+	if err != nil {
+		return "", err
+	}
+	if len(certs[0].DNSNames) != 1 || !validDNSName(certs[0].DNSNames[0]) {
+		return "", errors.New("ambiguous certificate identity")
+	}
+	return certs[0].DNSNames[0], nil
+}
+
+func certificates(path string) ([]*x509.Certificate, error) {
 	cleanPath := filepath.Clean(path)
 	file, err := os.DirFS(filepath.Dir(cleanPath)).Open(filepath.Base(cleanPath))
 	if err != nil {
@@ -146,25 +226,52 @@ func roots(path string) (*x509.CertPool, error) {
 	if readErr != nil || closeErr != nil || len(data) > maxCABytes {
 		return nil, errors.New("CA read refused")
 	}
-	pool := x509.NewCertPool()
-	count := 0
-	for len(strings.TrimSpace(string(data))) > 0 {
-		block, rest := pem.Decode(data)
-		if block == nil || block.Type != "CERTIFICATE" || len(block.Headers) != 0 {
+	var certs []*x509.Certificate
+	for len(bytes.TrimSpace(data)) > 0 {
+		data = bytes.TrimSpace(data)
+		if !bytes.HasPrefix(data, []byte("-----BEGIN CERTIFICATE-----")) {
+			return nil, errors.New("CA PEM refused")
+		}
+		const endMarker = "-----END CERTIFICATE-----"
+		end := bytes.Index(data, []byte(endMarker))
+		if end < 0 {
+			return nil, errors.New("CA PEM refused")
+		}
+		end += len(endMarker)
+		if end < len(data) {
+			lineEnd := bytes.IndexByte(data[end:], '\n')
+			if lineEnd < 0 {
+				lineEnd = len(data) - end
+			}
+			if len(bytes.TrimSpace(data[end:end+lineEnd])) != 0 {
+				return nil, errors.New("CA PEM refused")
+			}
+			end += lineEnd
+			if end < len(data) {
+				end++
+			}
+		}
+		encoded := data[:end]
+		// pem.Decode scans past malformed blocks. Isolate the first block and
+		// reject nested BEGIN markers so it cannot select a later certificate.
+		if bytes.Count(encoded, []byte("-----BEGIN")) != 1 {
+			return nil, errors.New("CA PEM refused")
+		}
+		block, rest := pem.Decode(encoded)
+		if block == nil || len(rest) != 0 || block.Type != "CERTIFICATE" || len(block.Headers) != 0 {
 			return nil, errors.New("CA PEM refused")
 		}
 		cert, err := x509.ParseCertificate(block.Bytes)
 		if err != nil {
 			return nil, errors.New("CA certificate refused")
 		}
-		pool.AddCert(cert)
-		count++
-		data = rest
+		certs = append(certs, cert)
+		data = data[end:]
 	}
-	if count == 0 {
+	if len(certs) == 0 {
 		return nil, errors.New("CA is empty")
 	}
-	return pool, nil
+	return certs, nil
 }
 
 func wrongToken(token string) string {
