@@ -8,13 +8,18 @@ extends Node
 func _ready() -> void:
 	var script := load("res://tools/frame_capture.gd") as GDScript
 	var capture := script.new() as Node
-	if not capture.has_method("ragged_cloth_capture_plan"):
+	if not capture.has_method("ragged_cloth_capture_plan") or not capture.has_method("ragged_drape_capture_plan"):
 		_fail("actual capture tool has no ragged-cloth inspection plan")
 		capture.free()
 		return
-	var plan: Array = capture.call("ragged_cloth_capture_plan")
-	if plan.size() != 3 or plan[0][0] != "cloth_front" or plan[1][0] != "cloth_rear" or plan[2][0] != "cloth_gameplay":
-		_fail("fixed inspection plan must include front, rear and gameplay range")
+	var material_plan: Array = capture.call("ragged_cloth_capture_plan")
+	if material_plan.size() != 3 or material_plan[0][0] != "cloth_front" or material_plan[1][0] != "cloth_rear" or material_plan[2][0] != "cloth_gameplay":
+		_fail("the established material plan must retain front, rear and gameplay range")
+		capture.free()
+		return
+	var plan: Array = capture.call("ragged_drape_capture_plan")
+	if plan.size() != 4 or plan[0][0] != "cloth_front" or plan[1][0] != "cloth_rear" or plan[2][0] != "cloth_profile" or plan[3][0] != "cloth_gameplay":
+		_fail("fixed inspection plan must include both panels, a silhouette profile and gameplay range")
 	elif Vector3(plan[0][1]).z * Vector3(plan[1][1]).z >= 0.0:
 		_fail("front and rear cameras must face opposite garment panels")
 	else:
@@ -22,6 +27,9 @@ func _ready() -> void:
 			capture.free()
 			return
 		if not _pixel_controls(capture):
+			capture.free()
+			return
+		if not _geometry_controls(capture):
 			capture.free()
 			return
 		print("TEST PASS — ragged-cloth evidence frames both panels and gameplay range")
@@ -48,7 +56,7 @@ func _camera_controls(capture: Node) -> bool:
 	var gameplay := capture.call("ragged_cloth_camera", "cloth_gameplay", inspection, player) as Camera3D
 	var valid := gameplay == follow and is_equal_approx(gameplay.fov, 70.0) and is_equal_approx(spring.spring_length, 4.6)
 	valid = valid and gameplay.projection == Camera3D.PROJECTION_PERSPECTIVE and follow.transform == original
-	for view: String in ["cloth_front", "cloth_rear"]:
+	for view: String in ["cloth_front", "cloth_rear", "cloth_profile"]:
 		valid = valid and capture.call("ragged_cloth_camera", view, inspection, player) == inspection
 	valid = valid and inspection.fov == 36.0
 	inspection.free()
@@ -95,3 +103,30 @@ func _fail(message: String) -> void:
 	push_error(message)
 	print("TEST FAIL — " + message)
 	get_tree().quit(1)
+
+
+## Swapping the ablation mesh must not reset the player's actual morphs;
+## evidence with a different body shape would confound geometry with recipes.
+func _geometry_controls(capture: Node) -> bool:
+	if not capture.has_method("ragged_cloth_swap_mesh") or not capture.has_method("ragged_cloth_union_pixels"):
+		_fail("geometry evidence needs morph-preserving swapping and both silhouettes")
+		return false
+	var character := CharacterFactory.build({"version": 1, "shapes": {"hips_wide": 0.8}})
+	var garment := CharacterFactory.find_skeleton(character).get_node("Equip_loincloth_ragged") as MeshInstance3D
+	var index := garment.find_blend_shape_by_name("hips_wide")
+	var source := garment.mesh
+	capture.call("ragged_cloth_swap_mesh", garment, source.duplicate())
+	var valid := is_equal_approx(garment.get_blend_shape_value(index), 0.8)
+	capture.call("ragged_cloth_swap_mesh", garment, source)
+	valid = valid and is_equal_approx(garment.get_blend_shape_value(index), 0.8)
+	character.free()
+	var a := Image.create(8, 8, false, Image.FORMAT_RGB8)
+	a.fill(Color.BLACK)
+	var b := a.duplicate() as Image
+	a.set_pixel(2, 2, Color.MAGENTA)
+	b.set_pixel(3, 3, Color.MAGENTA)
+	var union: Array = capture.call("ragged_cloth_union_pixels", a, b, 1)
+	valid = valid and union.size() == 2 and Vector2i(2, 2) in union and Vector2i(3, 3) in union
+	if not valid:
+		_fail("the geometry arm must preserve actual morphs and inspect both silhouettes")
+	return valid

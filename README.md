@@ -73,6 +73,13 @@ matte wear; the garment's rigid shape and missing drape remain unfinished.
 show the current gap. Ordinary launches keep the shipped material and all saved
 characters retain their existing equipment and shapes.
 
+**Ragged-wrap geometry preview:** independently opt into
+`WAR_RAGGED_CLOTH_DRAPE=1` for static outward folds and a softer hanging outline.
+Combine it with the material setting above to inspect both. Ordinary launches
+keep the shipped mesh. [Front, rear, profile and gameplay comparisons](docs/evidence/issue-949-ragged-drape/README.md)
+show the remaining rigid-panel, waist-band and rear-opening gaps. This is an
+unfinished preview, with a separate accept-or-retire decision due 2026-11-01.
+
 **Private server trial:** the owner can observe the developing server through the
 [verified localhost tunnel](docs/zone-tunnel.md). It shows scripted replicas with a
 separate temporary character; shared controls and online progression remain in development.
