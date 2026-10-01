@@ -91,6 +91,7 @@ func _ready() -> void:
 	malformed.free()
 	on.free()
 	after.free()
+	_historical_recipes()
 	if had_flag:
 		OS.set_environment(FLAG, prior)
 	else:
@@ -98,6 +99,33 @@ func _ready() -> void:
 	if not _failed:
 		print("TEST PASS — ragged cloth is opt-in, isolated, opaque and mip-filtered without changing recipes")
 		get_tree().quit(0)
+
+
+## Read each shipped recipe format through the actual compositor in both
+## material states, including grandfathered finite deformation beyond bounds
+## for new writes. Rendering the preview may never upgrade or rewrite a save.
+func _historical_recipes() -> void:
+	for legacy: Dictionary in [
+		{"version": 1, "shapes": {"torso_vshape": CharacterFactory.SHAPE_WEIGHT_MAX + 0.01}},
+		{"version": 2, "equipment": {"torso": "shirt_ragged"}},
+		{"version": 3, "skin": "skin_male_light", "equipment": {"feet": "shoes_cloth"}},
+		{"version": 4, "equipment": {"feet": ["shoes_cloth", "boots_worn"]}},
+	]:
+		var stored := legacy.duplicate(true)
+		for state: String in ["0", "1"]:
+			OS.set_environment(FLAG, state)
+			var character := CharacterFactory.build(legacy)
+			_check(character != null, "historical v%d recipe still builds with cloth=%s" % [legacy["version"], state])
+			if character == null:
+				continue
+			var garment := _piece(character, GARMENT)
+			_check(garment != null, "historical recipes retain their implicit ragged base")
+			if garment != null:
+				_check((garment.get_surface_override_material(0) != null) == (state == "1"),
+					"the explicit preview changes the historical garment's material only")
+			_check(legacy == stored and CharacterFactory.refusal_reason(legacy) == "",
+				"historical fields, versions and values are retained exactly")
+			character.free()
 
 
 ## Inspect the actual equipped mesh under the compositor's skeleton.
