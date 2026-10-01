@@ -3,7 +3,7 @@ module github.com/devantler-tech/world-at-ruin/server
 go 1.27.1
 
 require (
-	agones.dev/agones v1.60.0
+	agones.dev/agones v1.61.0
 	github.com/coder/websocket v1.8.15
 	github.com/gofrs/uuid/v5 v5.5.1
 	github.com/heroiclabs/nakama-common v1.48.0
@@ -58,7 +58,6 @@ require (
 	github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/pelletier/go-toml v1.2.0 // indirect
-	github.com/pkg/errors v0.9.1 // indirect
 	github.com/robfig/cron/v3 v3.0.1 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/spf13/afero v1.9.2 // indirect
