@@ -1666,6 +1666,7 @@ static func ragged_cloth_capture_plan() -> Array:
 	return [
 		["cloth_front", Vector3(0.10, 0.03, 0.82), Vector3.ZERO],
 		["cloth_rear", Vector3(-0.10, 0.03, -0.82), Vector3.ZERO],
+		["cloth_profile", Vector3(0.82, 0.03, 0.06), Vector3.ZERO],
 		["cloth_gameplay", Vector3.ZERO, Vector3.ZERO],
 	]
 
@@ -1708,6 +1709,8 @@ func _capture_ragged_cloth(dir: String, main: Node) -> void:
 		return
 	var material := garment.get_active_material(0) as StandardMaterial3D
 	var original_override := garment.get_surface_override_material(0)
+	var original_mesh := garment.mesh
+	var flat_mesh := garment.get_meta(RaggedDrape.SOURCE_META, original_mesh) as Mesh
 	var flat := material.duplicate() as StandardMaterial3D
 	flat.albedo_color *= RaggedCloth._palette(material.albedo_texture)
 	flat.albedo_texture = null
@@ -1720,7 +1723,7 @@ func _capture_ragged_cloth(dir: String, main: Node) -> void:
 	var inspection := Camera3D.new()
 	inspection.fov = 36.0
 	get_tree().root.add_child(inspection)
-	var centre := garment.global_transform * garment.mesh.get_aabb().get_center()
+	var centre := garment.global_transform * flat_mesh.get_aabb().get_center()
 	for vantage: Array in ragged_cloth_capture_plan():
 		var name: String = vantage[0]
 		var camera := ragged_cloth_camera(name, inspection, player)
@@ -1738,23 +1741,37 @@ func _capture_ragged_cloth(dir: String, main: Node) -> void:
 		garment.set_surface_override_material(0, mask_material)
 		var mask := await _settled_cloth_frame()
 		garment.set_surface_override_material(0, original_override)
+		ragged_cloth_swap_mesh(garment, flat_mesh)
+		var geometry_flat := await _settled_cloth_frame()
+		garment.set_surface_override_material(0, mask_material)
+		var geometry_mask := await _settled_cloth_frame()
+		ragged_cloth_swap_mesh(garment, original_mesh)
+		garment.set_surface_override_material(0, original_override)
 		var points := ragged_cloth_pixels(mask, 1 if name == "cloth_gameplay" else 2)
 		if points.size() < 200:
 			_fail("%s: only %d garment pixels are visible — cannot evidence the cloth" % [name, points.size()])
 			return
 		var noise := ragged_cloth_difference(drawn, repeated, points)
 		var contribution := ragged_cloth_difference(drawn, flattened, points)
+		var geometry_points := ragged_cloth_union_pixels(mask, geometry_mask, 1 if name == "cloth_gameplay" else 2)
+		var geometry_noise := ragged_cloth_difference(drawn, repeated, geometry_points)
+		var geometry_signal := ragged_cloth_difference(drawn, geometry_flat, geometry_points)
+		if RaggedDrape.enabled() and name != "cloth_gameplay" and geometry_signal <= geometry_noise * 3.0 + 0.004:
+			_fail("%s: geometric signal %.5f does not separate from repeat noise %.5f" % [name, geometry_signal, geometry_noise])
+			return
 		# Require discrimination only at inspection range: the gameplay arm
 		# records what the mip chain deliberately averages away at distance.
 		if name != "cloth_gameplay" and contribution <= noise * 3.0 + 0.004:
 			_fail("%s: flat-material signal %.5f does not separate from repeated-frame noise %.5f" % [name, contribution, noise])
 			return
 		for arm: Array in [[name, drawn], [name + "_repeat", repeated],
-				[name + "_flat", flattened], [name + "_mask", mask]]:
+				[name + "_flat", flattened], [name + "_mask", mask],
+				[name + "_geometry_flat", geometry_flat], [name + "_geometry_mask", geometry_mask]]:
 			if not _write_frame(dir, arm[0], arm[1]):
 				return
 		print("CLOTH READ %s — visible %d px, flat signal %.5f, repeat noise %.5f" % [name, points.size(), contribution, noise])
-	print("CAPTURE PASS — ragged cloth: front, rear and gameplay range; detail=%s" % RaggedCloth.enabled())
+		print("DRAPE READ %s — union %d px, geometry signal %.5f, repeat noise %.5f" % [name, geometry_points.size(), geometry_signal, geometry_noise])
+	print("CAPTURE PASS — ragged cloth: front, rear, profile and gameplay; detail=%s drape=%s" % [RaggedCloth.enabled(), RaggedDrape.enabled()])
 	get_tree().quit(0)
 
 
@@ -1777,6 +1794,29 @@ static func ragged_cloth_pixels(mask: Image, stride: int = 2) -> Array[Vector2i]
 			if pixel.r > 0.8 and pixel.b > 0.8 and pixel.g < 0.2:
 				points.append(Vector2i(x, y))
 	return points
+
+
+## Inspect both actual silhouettes so a changed edge contributes even when
+## the preview no longer draws the same pixels as its original geometry.
+static func ragged_cloth_union_pixels(a: Image, b: Image, stride: int = 2) -> Array[Vector2i]:
+	var union := {}
+	for mask: Image in [a, b]:
+		for point: Vector2i in ragged_cloth_pixels(mask, stride):
+			union[point] = true
+	var points: Array[Vector2i] = []
+	points.assign(union.keys())
+	return points
+
+
+## Mesh replacement can reset per-instance morph weights. Hold those fixed
+## through each ablation, including returning to the real preview mesh.
+static func ragged_cloth_swap_mesh(garment: MeshInstance3D, mesh: Mesh) -> void:
+	var values: Array[float] = []
+	for shape in garment.mesh.get_blend_shape_count():
+		values.append(garment.get_blend_shape_value(shape))
+	garment.mesh = mesh
+	for shape in values.size():
+		garment.set_blend_shape_value(shape, values[shape])
 
 
 ## Measure the largest colour-channel difference only inside the visible

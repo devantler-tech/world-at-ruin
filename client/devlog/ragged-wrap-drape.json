@@ -1,0 +1,10 @@
+{
+  "version": "next",
+  "date": "2026-10-01",
+  "title": "Preview the ragged wrap's drape",
+  "notes": [
+    "Opt into WAR_RAGGED_CLOTH_DRAPE=1 to preview outward folds and a softer hanging outline on the permanent ragged wrap. The woven-material preview remains independently selectable.",
+    "A new profile capture and geometry-only comparison keep the same material, saved body shape and gameplay camera, making the silhouette change visible without disguising it as texture detail.",
+    "The angular panels, thick waist band, rear opening and missing seams, fraying and cloth motion remain unfinished. Ordinary launches keep the shipped geometry; this preview does not clear the clothing or Phase 0 art gate."
+  ]
+}

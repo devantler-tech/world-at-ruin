@@ -1716,31 +1716,32 @@ jobs:
             grep -nE "SCRIPT ERROR|^ERROR" capture.filtered.log | head -20
             exit 1
           fi
-      - name: Capture ragged cloth in both preview states
+      - name: Capture ragged cloth in all material and geometry states
         # Dedicated garment cameras: ordinary world frames hide the base
         # under trousers and cannot evidence its fibre detail.
         run: |
           set -o pipefail
-          for mode in off on; do
-            value=0; verdict=false
-            if [ "$mode" = on ]; then value=1; verdict=true; fi
+          for mode in off on drape both; do
+            value=0; verdict=false; drape=0; drape_verdict=false
+            if [ "$mode" = on ] || [ "$mode" = both ]; then value=1; verdict=true; fi
+            if [ "$mode" = drape ] || [ "$mode" = both ]; then drape=1; drape_verdict=true; fi
             dir="${RUNNER_TEMP}/shots/ragged-cloth/$mode"
             mkdir -p "$dir"
-            WAR_RAGGED_CLOTH_DETAIL="$value" WAR_SCENARIO=ragged_cloth \
+            WAR_RAGGED_CLOTH_DETAIL="$value" WAR_RAGGED_CLOTH_DRAPE="$drape" WAR_SCENARIO=ragged_cloth \
             WAR_SHOT_DIR="$dir" \
             WAR_SAVE_PATH="${RUNNER_TEMP}/cloth_${mode}_absent.json" \
             WAR_VAULT_PATH="${RUNNER_TEMP}/cloth_${mode}_vault.json" \
             WAR_BOOT_RECOVERY_PATH="${RUNNER_TEMP}/cloth_${mode}_recovery.json" \
               godot --path client res://tools/frame_capture.tscn 2>&1 | tee "cloth-$mode.log"
-            grep -Fxq "CAPTURE PASS — ragged cloth: front, rear and gameplay range; detail=$verdict" "cloth-$mode.log"
+            grep -Fxq "CAPTURE PASS — ragged cloth: front, rear, profile and gameplay; detail=$verdict drape=$drape_verdict" "cloth-$mode.log"
             grep -q 'BOOT_OK' "cloth-$mode.log"
             grep -vE 'timeout waiting for fence|drivers/metal/rendering_device_driver_metal' \
               "cloth-$mode.log" > "cloth-$mode.filtered.log" || true
             if grep -qE 'SCRIPT ERROR|^ERROR|SHADER ERROR|Shader compilation failed' "cloth-$mode.filtered.log"; then
               echo "::error::ragged cloth $mode capture encountered rendering errors"; exit 1
             fi
-            for view in cloth_front cloth_rear cloth_gameplay; do
-              for arm in '' _repeat _flat _mask; do
+            for view in cloth_front cloth_rear cloth_profile cloth_gameplay; do
+              for arm in '' _repeat _flat _mask _geometry_flat _geometry_mask; do
                 test -s "$dir/$view$arm.png"
                 test -s "$dir/$view$arm.txt"
               done
@@ -2631,8 +2632,14 @@ jobs:
             ${{ runner.temp }}/shots/ragged-cloth/off/*.txt
             ${{ runner.temp }}/shots/ragged-cloth/on/*.png
             ${{ runner.temp }}/shots/ragged-cloth/on/*.txt
+            ${{ runner.temp }}/shots/ragged-cloth/drape/*.png
+            ${{ runner.temp }}/shots/ragged-cloth/drape/*.txt
+            ${{ runner.temp }}/shots/ragged-cloth/both/*.png
+            ${{ runner.temp }}/shots/ragged-cloth/both/*.txt
             cloth-off.log
             cloth-on.log
+            cloth-drape.log
+            cloth-both.log
           if-no-files-found: error
 
   frame-capture-exported:
