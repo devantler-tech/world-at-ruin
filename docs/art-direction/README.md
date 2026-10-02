@@ -521,7 +521,7 @@ is visible in the material rather than in a tooltip. That is what makes layered 
 worth having. Take the knights, not the protagonist: he is a modern military operator, which is not
 this game's look.
 
-Supporting analogues: [Elden Ring](https://en.bandainamcoent.eu/elden-ring/elden-ring)'s
+Supporting analogues: [Elden Ring](https://www.bandainamcoent.com/games/elden-ring)'s
 **starting-class loadouts** (Wretch through Vagabond) for the ragged end of the range and how armour
 layers over it — the maintainer named From Software directly for the near-naked start; WoW's
 **playable race roster** for identity and silhouette exaggeration across bodies;

@@ -44,7 +44,7 @@ static func material(source: StandardMaterial3D) -> StandardMaterial3D:
 ## Independent rebakes expose determinism to the regression without clearing a
 ## production cache. Uneven warp/weft yarns alternate which strand rises at a
 ## crossing; low-frequency wear and fine fibres vary colour and roughness.
-static func make_maps(palette: Color) -> Array[Texture2D]:
+static func make_maps(palette: Color, tailoring: bool = true) -> Array[Texture2D]:
 	var albedo := Image.create(MAP_SIZE, MAP_SIZE, false, Image.FORMAT_RGB8)
 	var normal := Image.create(MAP_SIZE, MAP_SIZE, false, Image.FORMAT_RGB8)
 	var roughness := Image.create(MAP_SIZE, MAP_SIZE, false, Image.FORMAT_R8)
@@ -67,17 +67,61 @@ static func make_maps(palette: Color) -> Array[Texture2D]:
 			# Yarn tone is deliberately restrained: broad dark grid lines read
 			# as a plaid print instead of the tiny relief of woven cloth.
 			tone += (warp_wave + weft_wave) * 0.015
-			albedo.set_pixel(x, y, Color(palette.r * tone, palette.g * tone, palette.b * tone))
-			var slope := Vector3(warp_wave * (0.42 if raised_warp else 0.12),
-				weft_wave * (0.12 if raised_warp else 0.42), 1.0).normalized()
+			var sewn := _sewn_edge(u, v) if tailoring else Vector3.ZERO
+			var cloth := Color(palette.r * tone, palette.g * tone, palette.b * tone)
+			# Undyed, worn thread belongs to the kit's brown colour family.
+			# Rounded thread relief is separate from its colour, so light can
+			# pick out the seam instead of reading it as a printed stripe.
+			var thread := Color(0.56, 0.40, 0.25)
+			albedo.set_pixel(x, y, cloth.lerp(thread, sewn.x * 0.85))
+			var slope := Vector3(warp_wave * (0.42 if raised_warp else 0.12) + sewn.y,
+				weft_wave * (0.12 if raised_warp else 0.42) + sewn.z, 1.0).normalized()
 			normal.set_pixel(x, y, Color(slope.x * 0.5 + 0.5, slope.y * 0.5 + 0.5, slope.z * 0.5 + 0.5))
-			var matte := clampf(0.9 + stain * 0.1 + fibre * 0.045, 0.82, 0.98)
+			var matte := clampf(0.9 + stain * 0.1 + fibre * 0.045 + sewn.x * 0.025, 0.82, 0.98)
 			roughness.set_pixel(x, y, Color(matte, matte, matte))
 	albedo.generate_mipmaps()
 	normal.generate_mipmaps(true)
 	roughness.generate_mipmaps()
 	return [ImageTexture.create_from_image(albedo), ImageTexture.create_from_image(normal),
 		ImageTexture.create_from_image(roughness)]
+
+
+## Two original running-stitch rows reinforce the folded waist. The immutable
+## planar UVs map 0.4 metres across the wrap: each short thread is about 6 mm
+## long, with small, deterministic changes in slant and spacing. Front and rear
+## share this atlas, so these rows do not pretend to follow both ragged hems.
+## The seam-off capture keeps the weave and removes only these thread fields.
+static func _sewn_edge(u: float, v: float) -> Vector3:
+	var row := 0.18 if v < 0.23 else 0.278
+	if absf(v - row) <= 0.007:
+		var offset := 0.013 if row > 0.23 else 0.0
+		return _thread(u + offset, v - row)
+	# Inset side reinforcement tapers with the hanging panels. Their shared
+	# UVs have different hems: stop above both instead of printing a false
+	# seam across the rear's empty atlas area. No alpha or coverage changes.
+	if v < 0.30 or v > 0.70:
+		return Vector3.ZERO
+	var edge := 0.22 + (v - 0.25) * 0.20
+	var side := u - edge if u < 0.5 else u - (1.0 - edge)
+	if absf(side) > 0.007:
+		return Vector3.ZERO
+	var thread := _thread(v, side)
+	return Vector3(thread.x, thread.z, thread.y)
+
+
+## Short capsules give thread rounded tips and a cross-section that changes
+## normals. Slightly rubbed, unequal lengths break up machine-perfect rows.
+static func _thread(along: float, across: float) -> Vector3:
+	var stitch := floorf(along / 0.026)
+	var centre := (stitch + 0.5) * 0.026
+	var slant := 0.20 + sin(stitch * 2.3) * 0.06
+	var length := 0.007 + sin(stitch * 1.7) * 0.0006
+	var end := clampf(along - centre, -length, length)
+	var dx := along - centre - end
+	var dy := across - end * slant
+	var width := 0.0017
+	var profile := exp(-(dx * dx + dy * dy) / (width * width)) * (0.85 + sin(stitch * 3.1) * 0.15)
+	return Vector3(profile, dx / width * profile * 3.0, dy / width * profile * 3.0)
 
 
 ## Keep the existing kit's colour family, without magnifying its coarse grid.
