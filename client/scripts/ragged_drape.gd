@@ -50,9 +50,13 @@ static func _drape(point: Vector3) -> Vector3:
 	var u := point.x / 0.14
 	var side := 1.0 if point.z > 0.0 else -1.0
 	var fold := 0.5 + 0.5 * cos(u * PI * 2.0 + t * 0.55)
+	# The upper rear panel needs clearance from the standing body's curvature.
+	# A smooth onset leaves both the closed belt and its lighting frame pinned;
+	# the identical offset on every target preserves saved positional morphs.
+	var rear_allowance := 0.008 * smoothstep(0.0, 0.15, t) if point.z < 0.0 else 0.0
 	return point + Vector3(point.x * 0.10 * t,
 		-0.009 * t * (0.65 + 0.35 * cos(u * PI)),
-		side * t * (0.012 + 0.018 * fold + 0.005 * t))
+		side * (t * (0.012 + 0.018 * fold + 0.005 * t) + rear_allowance))
 
 
 ## Transform authored smooth normals and tangents by the deformation's

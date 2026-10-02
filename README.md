@@ -77,7 +77,9 @@ characters retain their existing equipment and shapes.
 `WAR_RAGGED_CLOTH_DRAPE=1` for static outward folds and a softer hanging outline.
 Combine it with the material setting above to inspect both. Ordinary launches
 keep the shipped mesh. [Front, rear, profile and gameplay comparisons](docs/evidence/issue-949-ragged-drape/README.md)
-show the remaining rigid-panel, waist-band and rear-opening gaps. This is an
+show the remaining rigid-panel and waist-band gaps. The
+[rear coverage repair](docs/evidence/issue-952-rear-coverage/README.md) closes the
+preview's small body opening below the belt. This is an
 unfinished preview, with a separate accept-or-retire decision due 2026-11-01.
 
 **Private server trial:** the owner can observe the developing server through the
