@@ -309,8 +309,7 @@ func _check_blend_holds(subject: Dictionary) -> bool:
 
 ## The angle between two rotations, exact near zero where `angle_to` is not.
 func _angle_between(a: Quaternion, b: Quaternion) -> float:
-	var delta := a.inverse() * b
-	return 2.0 * atan2(Vector3(delta.x, delta.y, delta.z).length(), absf(delta.w))
+	return LocomotionTestSupport.rotation_distance(a, b)
 
 
 ## 4b. On the body's own ground plane each gait keeps a foot down for its whole

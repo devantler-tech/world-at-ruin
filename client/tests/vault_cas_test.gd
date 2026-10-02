@@ -347,43 +347,24 @@ func _abs(path: String) -> String:
 ## document is valid and same-version on purpose: an unreadable one would be
 ## caught by the readability re-check, and would prove nothing about CAS.
 func _foreign_write(path: String, doc: Dictionary) -> bool:
-	var file := FileAccess.open(path, FileAccess.WRITE)
-	if file == null:
-		return false
-	file.store_string(JSON.stringify(doc, "  "))
-	file.close()
-	return true
+	return PersistenceTestSupport.write_text(path, JSON.stringify(doc, "  "))
 
 
 ## The vault's bytes, or "" when absent. Byte comparison is deliberate: a refused
 ## write must leave the file untouched, and comparing parsed documents would hide
 ## a rewrite that happened to round-trip to the same state.
 func _read(path: String) -> String:
-	if not FileAccess.file_exists(path):
-		return ""
-	var file := FileAccess.open(path, FileAccess.READ)
-	if file == null:
-		return ""
-	var text := file.get_as_text()
-	file.close()
-	return text
+	return PersistenceTestSupport.read_text(path)
 
 
 func _remove(path: String) -> void:
-	if FileAccess.file_exists(path):
-		DirAccess.remove_absolute(_abs(path))
+	PersistenceTestSupport.remove_file(path)
 
 
 ## Every staging file beside the probe. Staging paths carry a per-attempt stamp,
 ## so they cannot be reconstructed by name — scan the directory for the prefix.
 func _staging_leftovers() -> Array:
-	var parent := PROBE.get_base_dir()
-	var prefix := PROBE.get_file() + SaveVault.WRITE_TMP_SUFFIX
-	var found: Array = []
-	for entry: String in DirAccess.get_files_at(parent):
-		if entry.begins_with(prefix):
-			found.append(parent.path_join(entry))
-	return found
+	return PersistenceTestSupport.staging_paths(PROBE, SaveVault.WRITE_TMP_SUFFIX)
 
 
 func _cleanup() -> void:

@@ -204,30 +204,11 @@ func _jump_subject() -> Dictionary:
 func _bound_subject() -> Dictionary:
 	OS.unset_environment(WALK_FLAG)
 	OS.unset_environment(RUN_FLAG)
-	var player := Player.new()
-	add_child(player)
-	player.set_physics_process(false)
-	player.set_character(_recipe)
-	var skeleton := CharacterFactory.find_skeleton(player.get_node("Visual"))
-	if skeleton == null:
-		player.free()
-		_fail("real Player path built no recipe skeleton")
+	var subject := LocomotionTestSupport.build_subject(self, _recipe, DRIVEN_BONES, "jump")
+	if not String(subject["problem"]).is_empty():
+		_fail(subject["problem"])
 		return {}
-	for bone_name: String in DRIVEN_BONES:
-		if skeleton.find_bone(bone_name) < 0:
-			player.free()
-			_fail("the shipped rig has no required jump bone %s" % bone_name)
-			return {}
-	var animator := player.get_node_or_null("WalkLocomotion")
-	if animator == null:
-		player.free()
-		_fail("real Player path has no shipping locomotion driver")
-		return {}
-	return {
-		"player": player,
-		"skeleton": skeleton,
-		"animator": animator,
-	}
+	return subject
 
 
 func _build_floor() -> StaticBody3D:
@@ -243,13 +224,11 @@ func _build_floor() -> StaticBody3D:
 
 
 func _snapshot(skeleton: Skeleton3D) -> Dictionary:
-	var result := {}
-	for bone_name: String in DRIVEN_BONES:
-		var bone := skeleton.find_bone(bone_name)
-		var rest := skeleton.get_bone_rest(bone).basis.get_rotation_quaternion()
-		var pose := skeleton.get_bone_pose_rotation(bone)
-		result[bone_name] = rest.inverse() * pose
-	return result
+	return LocomotionTestSupport.snapshot(skeleton, DRIVEN_BONES)
+
+
+func _angle_between(a: Quaternion, b: Quaternion) -> float:
+	return a.angle_to(b)
 
 
 func _same_pose(
@@ -257,12 +236,10 @@ func _same_pose(
 		b: Dictionary,
 		message: String,
 		epsilon: float = POSE_EPSILON) -> bool:
-	for bone_name: String in DRIVEN_BONES:
-		var qa: Quaternion = a[bone_name]
-		var qb: Quaternion = b[bone_name]
-		if qa.angle_to(qb) > epsilon:
-			return _fail("%s (%s differs by %.6f rad)" %
-				[message, bone_name, qa.angle_to(qb)]) if not message.is_empty() else false
+	var difference := LocomotionTestSupport.pose_difference(a, b, DRIVEN_BONES, epsilon, _angle_between)
+	if not difference.is_empty():
+		return _fail("%s (%s differs by %.6f rad)" %
+			[message, difference["bone"], difference["angle"]]) if not message.is_empty() else false
 	return true
 
 

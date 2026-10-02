@@ -333,14 +333,7 @@ func _pending_attempt(version: String) -> Dictionary:
 ## refused write must leave the file untouched, and comparing parsed documents
 ## would hide a rewrite that happened to round-trip to the same state.
 func _read(path: String) -> String:
-	if not FileAccess.file_exists(path):
-		return ""
-	var file := FileAccess.open(path, FileAccess.READ)
-	if file == null:
-		return ""
-	var text := file.get_as_text()
-	file.close()
-	return text
+	return PersistenceTestSupport.read_text(path)
 
 
 func _cleanup() -> void:
@@ -350,11 +343,6 @@ func _cleanup() -> void:
 	FileLock.remove_dir(lock)
 	# Reclaim copies carry a per-ATTEMPT suffix, so they cannot be reconstructed by
 	# name — scan the directory for the prefix instead.
-	var parent := lock.get_base_dir()
-	var reclaim_prefix := lock.get_file() + FileLock.RECLAIM_SUFFIX
-	for entry: String in DirAccess.get_directories_at(parent):
-		if entry.begins_with(reclaim_prefix):
-			FileLock.remove_dir(parent.path_join(entry))
+	PersistenceTestSupport.remove_lock_copies(lock, [FileLock.RECLAIM_SUFFIX])
 	for path: String in [PROBE, PROBE + ".tmp"]:
-		if FileAccess.file_exists(path):
-			DirAccess.remove_absolute(_abs(path))
+		PersistenceTestSupport.remove_file(path)
