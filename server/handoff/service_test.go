@@ -4,12 +4,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"github.com/devantler-tech/world-at-ruin/server/internal/nakamaaccounttest"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/devantler-tech/world-at-ruin/server/internal/nakamaaccounttest"
 	"github.com/devantler-tech/world-at-ruin/server/nakamaauth"
 	"github.com/devantler-tech/world-at-ruin/server/sim"
 	"github.com/devantler-tech/world-at-ruin/server/zonesock"
@@ -684,9 +684,11 @@ func mustService(t *testing.T, verifier SessionVerifier, allocator Allocator, cf
 	}
 	return service
 }
+
 func validAccountServer() *accountServer {
 	return &accountServer{Account: &api.Account{User: &api.User{Id: "player-42"}}}
 }
+
 func requireFailedHandoff(t *testing.T, got Handoff, err error) {
 	t.Helper()
 	if err == nil {
@@ -701,6 +703,7 @@ func serviceAgainst(t *testing.T, account *accountServer, allocator Allocator, c
 	t.Helper()
 	return mustService(t, verifierAgainst(t, account), allocator, cfg)
 }
+
 func mustHandoff(t *testing.T, service *Service) Handoff {
 	t.Helper()
 	got, err := service.CreateHandoff(context.Background(), validRequest())
@@ -709,6 +712,7 @@ func mustHandoff(t *testing.T, service *Service) Handoff {
 	}
 	return got
 }
+
 func requireReleasedAllocation(t *testing.T, allocator *recordingAllocator) {
 	t.Helper()
 	if len(allocator.releases) != 1 || allocator.releases[0] != validAllocationRequest() {
@@ -718,8 +722,13 @@ func requireReleasedAllocation(t *testing.T, allocator *recordingAllocator) {
 
 func timedService(t *testing.T, now time.Time, ttl time.Duration) *Service {
 	t.Helper()
-	return serviceAgainst(t, validAccountServer(), &recordingAllocator{allocation: validAllocation()}, Config{ZoneDomain: "edge.example", TokenTTL: ttl, Now: func() time.Time { return now }})
+	return serviceAgainst(t, validAccountServer(), &recordingAllocator{allocation: validAllocation()}, Config{
+		ZoneDomain: "edge.example",
+		TokenTTL:   ttl,
+		Now:        func() time.Time { return now },
+	})
 }
+
 func requireCancelledHandoff(t *testing.T, service *Service, ctx context.Context, allocator *recordingAllocator) {
 	t.Helper()
 	got, err := service.CreateHandoff(ctx, validRequest())

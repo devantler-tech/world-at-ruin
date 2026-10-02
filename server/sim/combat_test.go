@@ -449,8 +449,16 @@ func TestAddMobPanicsOnDuplicate(t *testing.T) {
 }
 
 func newChaseWorld() *World {
-	return chaseWorldWith(MobParams{AggroRadiusMM: 10000, CastRangeMM: 2000, ChaseSpeedMM: 3000, CastTicks: 4, CooldownTicks: 600, CircleRadiusMM: 1500})
+	return chaseWorldWith(MobParams{
+		AggroRadiusMM:  10_000,
+		CastRangeMM:    2_000,
+		ChaseSpeedMM:   3_000,
+		CastTicks:      4,
+		CooldownTicks:  600,
+		CircleRadiusMM: 1_500,
+	})
 }
+
 func chaseWorldWith(params MobParams) *World {
 	w := NewWorld(combatBounds)
 	w.Add(Entity{ID: 100, Pos: Vec3{}, MaxSpeed: 3_000})
@@ -496,7 +504,13 @@ func TestRegisteredMobChasesToCastRangeByDefault(t *testing.T) {
 }
 
 func TestMobWithZeroChaseSpeedRemainsAStationaryCaster(t *testing.T) {
-	w := chaseWorldWith(MobParams{AggroRadiusMM: 10000, ChaseSpeedMM: 0, CastTicks: 4, CooldownTicks: 600, CircleRadiusMM: 1500})
+	w := chaseWorldWith(MobParams{
+		AggroRadiusMM:  10_000,
+		ChaseSpeedMM:   0,
+		CastTicks:      4,
+		CooldownTicks:  600,
+		CircleRadiusMM: 1_500,
+	})
 
 	w.Step()
 	if got := w.Get(100).Pos; got != (Vec3{}) {

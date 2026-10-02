@@ -429,6 +429,7 @@ func startSidecar(t *testing.T) *agonestest.Sidecar {
 	t.Cleanup(sidecar.Stop)
 	return sidecar
 }
+
 func sidecarEnvironment(sidecar *agonestest.Sidecar, extra ...string) []string {
 	env := append(os.Environ(), "AGONES_SDK_GRPC_HOST=127.0.0.1", "AGONES_SDK_GRPC_PORT="+sidecar.PortString())
 	return append(env, extra...)

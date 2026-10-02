@@ -2,10 +2,10 @@ package nakamaauth
 
 import (
 	"context"
-	"github.com/devantler-tech/world-at-ruin/server/internal/nakamaaccounttest"
 	"strings"
 	"testing"
 
+	"github.com/devantler-tech/world-at-ruin/server/internal/nakamaaccounttest"
 	"github.com/heroiclabs/nakama-common/api"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"

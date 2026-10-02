@@ -3,12 +3,12 @@ package zonesock
 import (
 	"context"
 	"errors"
-	"github.com/coder/websocket"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/devantler-tech/world-at-ruin/server/sim"
 )
 
@@ -159,7 +159,10 @@ func joinedShutdownSocket(t *testing.T, capacity int) (*Hub, []byte, *httptest.S
 	t.Helper()
 	hub, secret := newTestHub(t, Config{})
 	served := make(chan struct{}, capacity)
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hub.Handler().ServeHTTP(w, r); served <- struct{}{} }))
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hub.Handler().ServeHTTP(w, r)
+		served <- struct{}{}
+	}))
 	t.Cleanup(server.Close)
 	client, err := dial(t, server, secret, 1)
 	if err != nil {
@@ -177,6 +180,7 @@ func claimedTestVerifier(t *testing.T) *HMACVerifier {
 	}
 	return verifier
 }
+
 func startClaimHandshake(t *testing.T, hub *Hub) (*httptest.ResponseRecorder, <-chan struct{}) {
 	t.Helper()
 	request := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "https://zone.invalid/zone", nil)
@@ -188,6 +192,9 @@ func startClaimHandshake(t *testing.T, hub *Hub) (*httptest.ResponseRecorder, <-
 	validHandshake(request)
 	response := httptest.NewRecorder()
 	done := make(chan struct{})
-	go func() { defer close(done); hub.Handler().ServeHTTP(response, request) }()
+	go func() {
+		defer close(done)
+		hub.Handler().ServeHTTP(response, request)
+	}()
 	return response, done
 }

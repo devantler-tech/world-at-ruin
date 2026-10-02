@@ -3,6 +3,10 @@ package nakamaaccounttest
 
 import (
 	"context"
+	"net"
+	"sync"
+	"testing"
+
 	"github.com/heroiclabs/nakama-common/api"
 	"github.com/heroiclabs/nakama/v3/apigrpc"
 	"google.golang.org/grpc"
@@ -10,9 +14,6 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/test/bufconn"
 	"google.golang.org/protobuf/types/known/emptypb"
-	"net"
-	"sync"
-	"testing"
 )
 
 type Server struct {

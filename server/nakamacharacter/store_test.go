@@ -739,17 +739,37 @@ func mustCharacterStore(t *testing.T, storage *fakeStorage) *Store {
 	}
 	return store
 }
+
 func canonicalCharacter() Character {
-	return Character{ID: "warden-1", DisplayName: "Asha", Recipe: json.RawMessage(`{"version":3}`)}
+	return Character{
+		ID:          "warden-1",
+		DisplayName: "Asha",
+		Recipe:      json.RawMessage(`{"version":3}`),
+	}
 }
+
 func createCharacter(t *testing.T, store *Store, character Character, key string) {
 	t.Helper()
-	if err := store.Save(authenticatedContext(testSubjectID), SaveRequest{SubjectID: testSubjectID, IdempotencyKey: key, ExpectedVersion: "*", Character: character}); err != nil {
+	if err := store.Save(authenticatedContext(testSubjectID), SaveRequest{
+		SubjectID:       testSubjectID,
+		IdempotencyKey:  key,
+		ExpectedVersion: "*",
+		Character:       character,
+	}); err != nil {
 		t.Fatalf("initial Save() error = %v", err)
 	}
 }
+
 func seedUntrustedCharacter(storage *fakeStorage, key string) {
-	storage.seed(storedObject{collection: Collection, key: key, userID: testSubjectID, value: `{"schema":1,"character_id":"attacker-seeded","display_name":"Mallory","recipe":{"gold":999999}}`, version: "client-created-version", permissionRead: 0, permissionWrite: 0})
+	storage.seed(storedObject{
+		collection:      Collection,
+		key:             key,
+		userID:          testSubjectID,
+		value:           `{"schema":1,"character_id":"attacker-seeded","display_name":"Mallory","recipe":{"gold":999999}}`,
+		version:         "client-created-version",
+		permissionRead:  0,
+		permissionWrite: 0,
+	})
 }
 
 func requireSaveRejectedBeforeStorage(t *testing.T, storage *fakeStorage, err error) {

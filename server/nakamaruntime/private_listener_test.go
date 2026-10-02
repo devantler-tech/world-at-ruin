@@ -805,6 +805,7 @@ func (f listenerFixture) start(t *testing.T) *registration {
 	}
 	return r
 }
+
 func (f listenerFixture) shutdown(r *registration) {
 	r.shutdown(context.Background(), nil, nil, f.storage)
 }
