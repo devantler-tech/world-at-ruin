@@ -142,6 +142,26 @@ else
 	fi
 fi
 
+# Missing inputs and import failures refuse before any trusted scene can run.
+for broken in project runner import; do
+	: >"${run_log}"
+	case "$broken" in
+	project) mv "${candidate}/client/project.godot" "${tmp_dir}/project.godot" ;;
+	runner) chmod -x "${trusted}/tools/run-client-test.sh" ;;
+	import) printf '#!/bin/bash\necho "ERROR: deliberate import failure"\nexit 1\n' >"${bin_dir}/godot" ;;
+	esac
+	if PATH="${bin_dir}:${PATH}" REQUIRED_REGRESSION_RUN_LOG="${run_log}" \
+		/bin/bash "${control}" "${trusted}" "${candidate}" >"${control_output}" 2>&1; then
+		fail "missing $broken input or failed import was accepted"
+	fi
+	[ ! -s "${run_log}" ] || fail "$broken refusal executed a regression scene"
+	case "$broken" in
+	project) mv "${tmp_dir}/project.godot" "${candidate}/client/project.godot" ;;
+	runner) chmod +x "${trusted}/tools/run-client-test.sh" ;;
+	import) printf '#!/bin/bash\necho "trusted import completed"\n' >"${bin_dir}/godot" ;;
+	esac
+done
+
 # Only the planned capability declaration is candidate input. A candidate
 # cannot change trusted history or hide that its writer has advanced.
 ledger="${candidate}/client/tests/data/shipped_save_capability.txt"
@@ -234,8 +254,10 @@ if ! find_local_controller_workflows "${workflow_fixture_dir}" |
 fi
 
 local_workflows="$(find_local_controller_workflows "${repo_root}/.github/workflows")"
-if [ -n "${local_workflows}" ]; then
-	fail "candidate-repository workflows invoke the required-regression controller: ${local_workflows}"
+if [ "${local_workflows}" != trusted-regressions.yaml ]; then
+	fail "only the base-owned product workflow may invoke the controller: ${local_workflows}"
+elif ! bash "${repo_root}/tools/trusted-regression-workflow-guard.sh"; then
+	fail "the product workflow does not preserve the base-owned controller boundary"
 fi
 
 external_workflow='.github/workflows/world-at-ruin-required-regressions.yaml'

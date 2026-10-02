@@ -846,7 +846,12 @@ everything shipped afterwards is held to.
   an exact-head-reviewed Actions PR; preserve compatibility with the World base controller and
   harness, pass `tools/required-regression-control.test.sh`, and run live positive and missing-input
   controls. Change the rule itself only through the declarative `.github` release path, then read the
-  live ruleset back. The World repository must not carry a second copy of the ruleset workflow.
+  live ruleset back. The product-owned `.github/workflows/trusted-regressions.yaml` is an additive
+  base-controlled `pull_request_target` workflow. It resolves the canonical main-base and exact
+  PR-head SHAs, verifies the three checkout identities and invokes the base controller with read-only
+  permissions and no persisted credentials. Candidate workflow edits cannot choose its definition.
+  The external required workflow remains the aggregate gate for PR and merge-group integration;
+  no ruleset cutover is implied by the product-owned check.
 - **Boot tests go through `IsolatedBoot` — booting and isolating are ONE act:** a test that
   instantiates `main.tscn` runs the real launch path, which reads — and on the first-run path
   writes — every file the player's state lives in: `user://character.json` and the progression
@@ -1000,7 +1005,7 @@ everything shipped afterwards is held to.
     reviewed Actions source and its scenes, harness and runner come from the GitHub-supplied World at
     Ruin base SHA, not from the candidate checkout. `tools/required-regression-control.test.sh`
     proves candidate deletion/skip content cannot remove a trusted scene, runner failure reaches the
-    aggregate, an empty trusted suite fails closed, and the obsolete local workflow cannot return.
+    aggregate, an empty trusted suite fails closed, and only the structurally pinned base-controlled local workflow may invoke the controller.
     The sole candidate test-data exception is the save-capability declaration: the controller
     reconstructs unchanged historical bytes or the exact planned capability-7 append, rejecting
     every other change and symlinked path. Trusted tests support only writer stages 6/v4 and 7/v5

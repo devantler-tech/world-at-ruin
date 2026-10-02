@@ -72,6 +72,11 @@ jobs:
         run: ./tools/try-zone-trial.test.sh
       - name: Required regression control is candidate-independent and fail-closed
         run: ./tools/required-regression-control.test.sh
+      - name: Product-owned trusted event inputs and workflow boundary are fail-closed
+        run: |
+          bash tools/resolve-trusted-regression-event.test.sh
+          bash tools/verify-trusted-regression-checkouts.test.sh
+          bash tools/trusted-regression-workflow-guard.test.sh
       - name: A new dev-log entry carries "next" rather than a predicted release
         # #518: a number written on a branch is a prediction a sibling release
         # can overtake before it merges, so a new entry carries "next" and the
