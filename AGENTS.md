@@ -849,7 +849,10 @@ everything shipped afterwards is held to.
   live ruleset back. The product-owned `.github/workflows/trusted-regressions.yaml` is an additive
   base-controlled `pull_request_target` workflow. It resolves the canonical main-base and exact
   PR-head SHAs, verifies the three checkout identities and invokes the base controller with read-only
-  permissions and no persisted credentials. Candidate workflow edits cannot choose its definition.
+  permissions and no persisted credentials. Candidate Godot runs in a digest-bound, non-root container
+  with no network, capabilities or host credentials; its project and harness are read-only. Only the
+  disposable import cache is writable during the editor scan. Candidate workflow edits cannot choose
+  the definition, runtime or harness. The real-container refusal test pins this execution boundary.
   The external required workflow remains the aggregate gate for PR and merge-group integration;
   no ruleset cutover is implied by the product-owned check.
 - **Boot tests go through `IsolatedBoot` — booting and isolating are ONE act:** a test that

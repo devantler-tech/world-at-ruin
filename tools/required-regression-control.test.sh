@@ -94,7 +94,7 @@ find_local_controller_workflows() {
 	local workflow_file
 	for workflow_file in "${workflows_dir}"/*.yaml "${workflows_dir}"/*.yml; do
 		[ -f "${workflow_file}" ] || continue
-		if grep -Fq 'tools/required-regression-control.sh' "${workflow_file}"; then
+		if grep -Eq 'tools/(required-regression-control|run-sandboxed-trusted-regressions)[.]sh' "${workflow_file}"; then
 			basename "${workflow_file}"
 		fi
 	done

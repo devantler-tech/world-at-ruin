@@ -68,4 +68,4 @@ jobs:
           sudo mv "Godot_v${GODOT_VERSION}-stable_linux.x86_64" /usr/local/bin/godot
 
       - name: Run base-owned regressions against the candidate
-        run: trusted/tools/required-regression-control.sh trusted candidate
+        run: bash workflow-source/tools/run-sandboxed-trusted-regressions.sh trusted candidate

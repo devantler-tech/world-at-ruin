@@ -44,7 +44,7 @@ if ! yq -o=json '.' "$workflow" | jq -e --arg installer "$installer" '
     and (.steps[6]|keys) == ["name","run"]
     and (.steps[6].run | rtrimstr("\n")) == $installer
     and (.steps[7]|keys) == ["name","run"]
-    and .steps[7].run == "trusted/tools/required-regression-control.sh trusted candidate")
+    and .steps[7].run == "bash workflow-source/tools/run-sandboxed-trusted-regressions.sh trusted candidate")
 ' >/dev/null; then
   echo '::error::restore the base-owned trusted regression workflow event, paths, pinned actions and read-only permissions' >&2
   exit 1
