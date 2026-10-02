@@ -851,7 +851,7 @@ everything shipped afterwards is held to.
   PR-head SHAs, verifies the three checkout identities and invokes the base controller with read-only
   permissions and no persisted credentials. Candidate Godot runs in a digest-bound, non-root container
   with no network, capabilities or host credentials; its project and harness are read-only. Only the
-  disposable import cache is writable during the editor scan. Candidate workflow edits cannot choose
+  disposable import cache and generated asset sidecars are writable during the editor scan. Candidate workflow edits cannot choose
   the definition, runtime or harness. The real-container refusal test pins this execution boundary.
   The external required workflow remains the aggregate gate for PR and merge-group integration;
   no ruleset cutover is implied by the product-owned check.

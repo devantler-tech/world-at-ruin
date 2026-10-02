@@ -21,6 +21,8 @@ extends SceneTree
 
 func _initialize() -> void:
 	var failures := []
+	if load("res://icon.svg") == null:
+		failures.append("generated asset metadata unavailable")
 	for source in ["res://../server/wire/wire.go", "res://../.github/workflows/ci.yaml"]:
 		if FileAccess.get_file_as_string(source) != "source data\n":
 			failures.append("readonly source data unavailable")
@@ -68,6 +70,9 @@ sed -i "s|HOST_SENTINEL|$tmp/host-only|" "$tmp/work/client/tests/probe.gd"
 original="$(sha256sum "$tmp/work/client/tests/probe.gd" | cut -d' ' -f1)"
 GOTOOLCHAIN=local GOWORK=off go build -o "$tmp/cache-guard" "$root/tools/trusted-regression-cache.go"
 export GODOT_SANDBOX_CACHE_GUARD="$tmp/cache-guard"
+mkdir "$tmp/import-metadata"
+export GODOT_SANDBOX_METADATA="$tmp/import-metadata"
+printf '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"><rect width="2" height="2"/></svg>\n' >"$tmp/work/client/icon.svg"
 image="$(bash "$root/tools/build-trusted-regression-runtime.sh")"
 cd "$tmp/work"
 probe_failure() {

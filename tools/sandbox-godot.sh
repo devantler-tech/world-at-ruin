@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Candidate code sees a read-only project and private temporary state.
+# Candidate code sees immutable source and private generated import state.
 # The controller and verdict runner stay outside the process/network boundary.
 set -euo pipefail
 image="$GODOT_SANDBOX_IMAGE"
@@ -8,8 +8,10 @@ image="$GODOT_SANDBOX_IMAGE"
   exit 1
 }
 project="$PWD/client"
-if [ ! -d "$project" ] || [ -L "$project" ] || [ -L "$project/.godot" ]; then
-  echo '::error::sandbox project and import-cache paths must be real directories' >&2
+metadata="$GODOT_SANDBOX_METADATA"
+if [ ! -d "$project" ] || [ -L "$project" ] || [ -L "$project/.godot" ] ||
+  [ ! -d "$metadata" ] || [ -L "$metadata" ]; then
+  echo '::error::sandbox project and generated-state paths must be real directories' >&2
   exit 1
 fi
 # Only the two source data files used by existing frozen regressions are exposed.
@@ -30,23 +32,49 @@ cache_mount="type=bind,source=$project/.godot,target=/project/client/.godot,read
 for arg in "$@"; do
   if [ "$arg" = --editor ]; then
     editor=true
-    # Only disposable candidate-derived import data is writable.
     rm -rf -- "$project/.godot"
     mkdir "$project/.godot"
     cache_mount="type=bind,source=$project/.godot,target=/project/client/.godot"
     break
   fi
 done
+extra_mounts=(--mount "$cache_mount")
+# Godot writes sidecars next to assets. Only those generated files may change;
+# their host parents are never exposed, so candidate code cannot replace a bind
+# source with a symlink before a later container starts.
+while IFS= read -r -d '' file; do
+  relative="${file#"$project/"}"
+  if [[ ! "$relative" =~ ^(assets/[A-Za-z0-9_./-]+|icon[.]svg)$ ]] || [ -L "$file.import" ] ||
+    { [ -e "$file.import" ] && [ ! -f "$file.import" ]; }; then
+    echo '::error::unsafe asset import metadata path' >&2
+    exit 1
+  fi
+  sidecar="$metadata/$relative.import"
+  if [ "$editor" = true ]; then
+    mkdir -p "$(dirname "$sidecar")"
+    if [ -f "$file.import" ]; then
+      cp "$file.import" "$sidecar"
+    else
+      : >"$sidecar"
+      : >"$file.import"
+    fi
+  fi
+  if [ ! -f "$sidecar" ] || [ -L "$sidecar" ]; then
+    echo '::error::generated asset metadata is missing or symlinked' >&2
+    exit 1
+  fi
+  mount="type=bind,source=$sidecar,target=/project/client/$relative.import"
+  if [ "$editor" = false ]; then mount="$mount,readonly"; fi
+  extra_mounts+=(--mount "$mount")
+done < <(find "$project" -type d -name .godot -prune -o -type f \( -name '*.png' -o -name '*.glb' -o -name '*.svg' \) -print0)
 cache_guard="$GODOT_SANDBOX_CACHE_GUARD"
 if [ ! -x "$cache_guard" ] || [ -L "$cache_guard" ]; then
-  echo "::error::trusted import-cache validator is missing" >&2
+  echo '::error::trusted import-cache validator is missing' >&2
   exit 1
 fi
-if [ "$editor" = false ]; then
-  "$cache_guard" "$project"
-fi
-# Candidate workflow commands stay log data. The private nonce is never
-# passed into the sandbox or written beneath the mounted project.
+if [ "$editor" = false ]; then "$cache_guard" "$project"; fi
+# Candidate workflow commands stay log data. The private nonce is never passed
+# into the sandbox or written beneath the mounted project.
 nonce="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
 printf '::stop-commands::%s\n' "$nonce"
 status=0
@@ -58,9 +86,7 @@ docker run --rm --network none --cap-drop ALL \
   --mount "type=bind,source=$project,target=/project/client,readonly" \
   --mount "type=bind,source=$PWD/server/wire/wire.go,target=/project/server/wire/wire.go,readonly" \
   --mount "type=bind,source=$PWD/.github/workflows/ci.yaml,target=/project/.github/workflows/ci.yaml,readonly" \
-  --workdir /project --mount "$cache_mount" "$image" "$@" || status=$?
-if [ "$status" -eq 0 ] && [ "$editor" = true ]; then
-  "$cache_guard" "$project" || status=$?
-fi
+  --workdir /project "${extra_mounts[@]}" "$image" "$@" || status=$?
+if [ "$status" -eq 0 ] && [ "$editor" = true ]; then "$cache_guard" "$project" || status=$?; fi
 printf '::%s::\n' "$nonce"
 exit "$status"
