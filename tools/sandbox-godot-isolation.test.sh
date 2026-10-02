@@ -37,9 +37,15 @@ func _initialize() -> void:
 	var output := []
 	if OS.execute("/bin/sh", ["-c", "printf rewritten > /project/client/tests/probe.gd"], output, true) == 0:
 		failures.append("child process rewrote trusted harness")
-	for address in IP.get_local_addresses():
-		if address != "127.0.0.1" and address != "::1":
-			failures.append("external network interface")
+	# Inspect kernel interfaces; Godot can list alternate loopback spellings.
+	var interfaces := []
+	OS.execute("/bin/sh", ["-c", "ls /sys/class/net"], interfaces)
+	if interfaces.size() != 1 or str(interfaces[0]).strip_edges() != "lo":
+		failures.append("external network interface")
+	var routes := []
+	OS.execute("/bin/cat", ["/proc/net/route"], routes)
+	if routes.size() != 1 or str(routes[0]).strip_edges().split("\n").size() != 1:
+		failures.append("external network route")
 	output.clear()
 	OS.execute("/usr/bin/id", ["-u"], output)
 	if str(output[0]).strip_edges() == "0":
