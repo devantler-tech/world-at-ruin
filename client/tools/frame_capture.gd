@@ -1684,6 +1684,22 @@ static func ragged_cloth_camera(view: String, inspection: Camera3D, player: Play
 	return player.get("_camera") as Camera3D if view == "cloth_gameplay" else inspection
 
 
+## Remove only sewing from the actual preview. Rebake from the imported kit's
+## palette, not the sewn map's mean, so unrelated weave texels remain identical.
+## The caller swaps this material only; camera, mesh, pose and light stay fixed.
+static func ragged_tailoring_material(garment: MeshInstance3D) -> StandardMaterial3D:
+	var result := garment.get_active_material(0).duplicate() as StandardMaterial3D
+	if not RaggedCloth.enabled():
+		return result
+	var source_mesh := garment.get_meta(RaggedDrape.SOURCE_META, garment.mesh) as Mesh
+	var source := source_mesh.surface_get_material(0) as StandardMaterial3D
+	var maps := RaggedCloth.make_maps(RaggedCloth._palette(source.albedo_texture), false)
+	result.albedo_texture = maps[0]
+	result.normal_texture = maps[1]
+	result.roughness_texture = maps[2]
+	return result
+
+
 ## Actual empty-wardrobe player, with garment-only pixel evidence. A magenta
 ## visibility arm names the pixels the garment really draws; comparing the whole
 ## frame would let scenery motion pretend a flat or hidden cloth had detail.
@@ -1717,6 +1733,7 @@ func _capture_ragged_cloth(dir: String, main: Node) -> void:
 	var material := garment.get_active_material(0) as StandardMaterial3D
 	var original_override := garment.get_surface_override_material(0)
 	var original_mesh := garment.mesh
+	var seam_off := ragged_tailoring_material(garment)
 	var flat_mesh := garment.get_meta(RaggedDrape.SOURCE_META, original_mesh) as Mesh
 	var flat := material.duplicate() as StandardMaterial3D
 	flat.albedo_color *= RaggedCloth._palette(material.albedo_texture)
@@ -1743,6 +1760,8 @@ func _capture_ragged_cloth(dir: String, main: Node) -> void:
 		camera.make_current()
 		var drawn := await _settled_cloth_frame()
 		var repeated := await _settled_cloth_frame()
+		garment.set_surface_override_material(0, seam_off)
+		var unsewn := await _settled_cloth_frame()
 		garment.set_surface_override_material(0, flat)
 		var flattened := await _settled_cloth_frame()
 		garment.set_surface_override_material(0, mask_material)
@@ -1760,6 +1779,8 @@ func _capture_ragged_cloth(dir: String, main: Node) -> void:
 			return
 		var noise := ragged_cloth_difference(drawn, repeated, points)
 		var contribution := ragged_cloth_difference(drawn, flattened, points)
+		var tailoring_signal := ragged_tailoring_difference(drawn, unsewn, points)
+		var tailoring_noise := ragged_tailoring_difference(drawn, repeated, points)
 		var geometry_points := ragged_cloth_union_pixels(mask, geometry_mask, 1 if name == "cloth_gameplay" else 2)
 		var geometry_noise := ragged_cloth_difference(drawn, repeated, geometry_points)
 		var geometry_signal := ragged_cloth_difference(drawn, geometry_flat, geometry_points)
@@ -1771,13 +1792,18 @@ func _capture_ragged_cloth(dir: String, main: Node) -> void:
 		if name != "cloth_gameplay" and contribution <= noise * 3.0 + 0.004:
 			_fail("%s: flat-material signal %.5f does not separate from repeated-frame noise %.5f" % [name, contribution, noise])
 			return
+		if RaggedCloth.enabled() and name != "cloth_gameplay" and tailoring_signal <= tailoring_noise * 3.0 + 0.004:
+			_fail("%s: tailoring signal %.5f does not separate from repeat noise %.5f" % [name, tailoring_signal, tailoring_noise])
+			return
 		for arm: Array in [[name, drawn], [name + "_repeat", repeated],
+				[name + "_seam_off", unsewn],
 				[name + "_flat", flattened], [name + "_mask", mask],
 				[name + "_geometry_flat", geometry_flat], [name + "_geometry_mask", geometry_mask]]:
 			if not _write_frame(dir, arm[0], arm[1]):
 				return
 		print("CLOTH READ %s — visible %d px, flat signal %.5f, repeat noise %.5f" % [name, points.size(), contribution, noise])
 		print("DRAPE READ %s — union %d px, geometry signal %.5f, repeat noise %.5f" % [name, geometry_points.size(), geometry_signal, geometry_noise])
+		print("TAILORING READ %s — visible %d px, upper-decile sewing signal %.5f, repeat noise %.5f" % [name, points.size(), tailoring_signal, tailoring_noise])
 	print("CAPTURE PASS — ragged cloth: front, rear, profile and gameplay; detail=%s drape=%s" % [RaggedCloth.enabled(), RaggedDrape.enabled()])
 	get_tree().quit(0)
 
@@ -1837,6 +1863,26 @@ static func ragged_cloth_difference(a: Image, b: Image, points: Array[Vector2i])
 		var q := b.get_pixelv(point)
 		total += maxf(absf(p.r - q.r), maxf(absf(p.g - q.g), absf(p.b - q.b)))
 	return total / points.size()
+
+
+## Sparse construction occupies only part of the cloth. Average the strongest
+## tenth of garment differences, rather than diluting stitches with unchanged
+## panel interiors or selecting a single noisy pixel. Use this same statistic
+## on the repeated frame; background pixels never enter either comparison.
+static func ragged_tailoring_difference(a: Image, b: Image, points: Array[Vector2i]) -> float:
+	if points.is_empty():
+		return 0.0
+	var differences: Array[float] = []
+	for point: Vector2i in points:
+		var p := a.get_pixelv(point)
+		var q := b.get_pixelv(point)
+		differences.append(maxf(absf(p.r - q.r), maxf(absf(p.g - q.g), absf(p.b - q.b))))
+	differences.sort()
+	var count := maxi(1, ceili(points.size() * 0.1))
+	var total := 0.0
+	for i in range(differences.size() - count, differences.size()):
+		total += differences[i]
+	return total / count
 
 
 

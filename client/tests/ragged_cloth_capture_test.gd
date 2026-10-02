@@ -32,6 +32,9 @@ func _ready() -> void:
 		if not _geometry_controls(capture):
 			capture.free()
 			return
+		if not _tailoring_controls(capture):
+			capture.free()
+			return
 		print("TEST PASS — ragged-cloth evidence frames both panels and gameplay range")
 		get_tree().quit(0)
 	capture.free()
@@ -66,6 +69,43 @@ func _camera_controls(capture: Node) -> bool:
 	return valid
 
 
+## A tailoring ablation must retain the actual cloth colour, weave, geometry
+## and render settings. A generic flat material cannot isolate sewn threads.
+func _tailoring_controls(capture: Node) -> bool:
+	if not capture.has_method("ragged_tailoring_material"):
+		_fail("tailoring evidence needs an independent weave-only ablation")
+		return false
+	var prior := OS.get_environment(RaggedCloth.FLAG_ENV)
+	var had_flag := OS.has_environment(RaggedCloth.FLAG_ENV)
+	OS.set_environment(RaggedCloth.FLAG_ENV, "1")
+	var character := CharacterFactory.build(CharacterFactory.load_recipe("res://recipes/wanderer.json"))
+	var garment := CharacterFactory.find_skeleton(character).get_node("Equip_loincloth_ragged") as MeshInstance3D
+	var mesh := garment.mesh
+	var preview := garment.get_active_material(0) as StandardMaterial3D
+	var ablation := capture.call("ragged_tailoring_material", garment) as StandardMaterial3D
+	var valid := ablation != preview and garment.get_active_material(0) == preview and garment.mesh == mesh
+	valid = valid and ablation.albedo_color == preview.albedo_color and ablation.normal_scale == preview.normal_scale
+	valid = valid and ablation.cull_mode == preview.cull_mode and ablation.transparency == preview.transparency
+	valid = valid and ablation.texture_filter == preview.texture_filter and ablation.normal_enabled
+	var drawn := preview.albedo_texture.get_image()
+	var plain := ablation.albedo_texture.get_image()
+	for point: Vector2i in [Vector2i(400, 400), Vector2i(600, 620), Vector2i(500, 500)]:
+		valid = valid and drawn.get_pixelv(point) == plain.get_pixelv(point)
+	var changed := 0
+	for x in range(205, 820):
+		if drawn.get_pixel(x, 184).r - plain.get_pixel(x, 184).r > 0.04:
+			changed += 1
+	valid = valid and changed > 200 and plain.get_mipmap_count() > 0
+	character.free()
+	if had_flag:
+		OS.set_environment(RaggedCloth.FLAG_ENV, prior)
+	else:
+		OS.unset_environment(RaggedCloth.FLAG_ENV)
+	if not valid:
+		_fail("seam-off must remove visible threads while retaining actual weave and render settings")
+	return valid
+
+
 ## Only actual garment marker pixels may contribute to the read. An unrelated
 ## background change must measure zero, while a changed garment must not.
 func _pixel_controls(capture: Node) -> bool:
@@ -94,6 +134,26 @@ func _pixel_controls(capture: Node) -> bool:
 	b.set_pixel(2, 2, Color.WHITE)
 	if capture.call("ragged_cloth_difference", a, b, points) < 0.9:
 		_fail("the evidence metric must detect a changed garment")
+		return false
+	if not capture.has_method("ragged_tailoring_difference"):
+		_fail("sparse tailoring needs a localized garment-only metric")
+		return false
+	var local_points: Array[Vector2i] = []
+	for y in range(2, 6):
+		for x in range(2, 6):
+			local_points.append(Vector2i(x, y))
+	b.fill(Color.BLACK)
+	b.set_pixel(0, 0, Color.WHITE)
+	if capture.call("ragged_tailoring_difference", a, b, local_points) != 0.0:
+		_fail("sparse tailoring metric must reject scenery changes")
+		return false
+	b.set_pixel(2, 2, Color.WHITE)
+	b.set_pixel(3, 3, Color.WHITE)
+	if capture.call("ragged_tailoring_difference", a, b, local_points) < 0.9:
+		_fail("localized garment construction must not disappear into unchanged cloth")
+		return false
+	if capture.call("ragged_tailoring_difference", a, a, local_points) != 0.0:
+		_fail("identical cloth must not produce a tailoring signal")
 		return false
 	return true
 
