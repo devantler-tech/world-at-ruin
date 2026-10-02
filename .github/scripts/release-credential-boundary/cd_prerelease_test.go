@@ -81,7 +81,7 @@ func TestCDStableAndPrereleasePublication(t *testing.T) {
 					selected := id == "version" || id == "manifest" || id == "push" || manifestTransfer ||
 						strings.Contains(name, "Confirm the build matches") || strings.Contains(name, "manifest crossed") ||
 						strings.Contains(name, "Sign the artifact by digest") || strings.Contains(name, "Verify signature and byte-identity") ||
-						strings.Contains(name, "Advance the verified latest digest")
+						strings.Contains(name, "Advance the verified latest digest") || strings.Contains(name, "Attest completed release verification")
 					if !selected {
 						continue
 					}
@@ -125,7 +125,7 @@ func TestCDStableAndPrereleasePublication(t *testing.T) {
 					}
 					env := []string{"RAW_TAG=v" + tc.version, "FIXTURE_ROOT=" + root, "CORRUPT=" + fmt.Sprint(tc.corrupt),
 						"GITHUB_OUTPUT=" + filepath.Join(root, "output"), "GITHUB_REPOSITORY=devantler-tech/world-at-ruin",
-						"GITHUB_SERVER_URL=https://github.com", "GITHUB_SHA=" + strings.Repeat("a", 40)}
+						"ARTIFACT=" + artifact, "DIGEST=" + digest, "GITHUB_SERVER_URL=https://github.com", "GITHUB_SHA=" + strings.Repeat("a", 40)}
 					if values, ok := step["env"].(map[string]any); ok {
 						for key, value := range values {
 							v, ok := value.(string)
@@ -219,6 +219,45 @@ func TestCDStableAndPrereleasePublication(t *testing.T) {
 	}
 }
 
+func TestCDChannelPublishersSerializeAcrossReleaseTags(t *testing.T) {
+	doc := loadRepositoryWorkflow(t)
+	job, err := doc.job("publish-ghcr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	concurrency, ok := job["concurrency"].(map[string]any)
+	if !ok || concurrency["group"] != "world-at-ruin-client-channel" || concurrency["cancel-in-progress"] != false || concurrency["queue"] != "max" {
+		t.Fatalf("channel publishers must queue across tags without cancelling verification: %#v", job["concurrency"])
+	}
+	// A tag or run-specific lock admits two writers; this literal one excludes
+	// both, including a resumed older publisher after a newer release finishes.
+	group := concurrency["group"].(string)
+	if strings.Contains(group, "${{") {
+		t.Fatal("channel lock depends on the release event")
+	}
+	steps, ok := job["steps"].([]any)
+	if !ok {
+		t.Fatal("missing steps")
+	}
+	verified, completed, promoted := -1, -1, -1
+	for i, raw := range steps {
+		step := raw.(map[string]any)
+		name, _ := step["name"].(string)
+		if strings.Contains(name, "Verify signature and byte-identity") {
+			verified = i
+		}
+		if strings.Contains(name, "Attest completed release verification") {
+			completed = i
+		}
+		if strings.Contains(name, "Advance the verified latest digest") {
+			promoted = i
+		}
+	}
+	if verified < 0 || completed <= verified || promoted <= completed {
+		t.Fatalf("verification/completion/promotion order %d/%d/%d", verified, completed, promoted)
+	}
+}
+
 func TestCDRunsStampedDevLogScenesBeforeExport(t *testing.T) {
 	doc := loadRepositoryWorkflow(t)
 	job, err := doc.job("publish-macos")
@@ -294,6 +333,12 @@ date() {
 }
 godot() { printf '{"fixture":"emitted contract"}\n' > "$WAR_MANIFEST_OUT"; echo 'MANIFEST OK'; }
 cosign() {
+  if [ "$1" = attest ]; then cp release-completion.json "$FIXTURE_ROOT/registry/completion.json"; fi
+  if [ "$1" = verify-attestation ]; then
+    local statement
+    statement=$(jq -n --arg artifact "$ARTIFACT" --arg digest "$DIGEST" --slurpfile predicate "$FIXTURE_ROOT/registry/completion.json" '{predicateType:"https://devantler.tech/world-at-ruin/release-completion/v1",subject:[{name:$artifact,digest:{sha256:($digest|ltrimstr("sha256:"))}}],predicate:$predicate[0]}')
+    jq -n --arg payload "$(printf '%s' "$statement" | base64 | tr -d '\n')" '{payload:$payload}'
+  fi
   if [ "$1" = sign ]; then printf '%s\n' "$3" > "$FIXTURE_ROOT/registry/signed"; fi
 }
 oras() {
@@ -304,7 +349,7 @@ oras() {
       if [ "$3" = --descriptor ]; then
         printf '{"digest":"sha256:%064d"}\n' 1
       elif [[ "$3" == *@sha256:* ]]; then
-        printf '{"annotations":{"org.opencontainers.image.version":"%s"}}\n' "$(cat "$registry/pushed-version")"
+        jq -n --arg version "$(cat "$registry/pushed-version")" --arg archive "$(sha256sum "$registry"/*.zip | cut -d' ' -f1)" --arg manifest "$(sha256sum "$registry/update-manifest.json" | cut -d' ' -f1)" '{annotations:{"org.opencontainers.image.version":$version,"org.opencontainers.image.revision":("a"*40)},layers:[{mediaType:"application/zip",digest:("sha256:"+$archive),annotations:{"org.opencontainers.image.title":("WorldAtRuin-"+$version+"-macOS-universal.zip")}},{mediaType:"application/vnd.devantler.worldatruin.client.manifest.v1+json",digest:("sha256:"+$manifest),annotations:{"org.opencontainers.image.title":"update-manifest.json"}}]}'
       else
         printf '{"annotations":{"org.opencontainers.image.version":"%s"}}\n' "$(cat "$registry/latest")"
       fi ;;
@@ -321,7 +366,9 @@ oras() {
               *) layer="${1%%:*}"; cp "$layer" "$registry/$(basename "$layer")"; shift ;;
             esac
           done ;;
-        tag) cat "$registry/pushed-version" > "$registry/latest" ;;
+        tag)
+          if [[ "$3" == completed-* ]]; then printf '%s\n' "$3" >> "$registry/tags";
+          else cat "$registry/pushed-version" > "$registry/latest"; fi ;;
         pull)
           cp "$registry"/*.zip .
           if [ -f "$registry/update-manifest.json" ]; then

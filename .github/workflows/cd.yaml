@@ -447,6 +447,11 @@ jobs:
 
   publish-ghcr:
     name: 📦 Publish OCI artifact to GHCR
+    # Every writer of completion markers and latest shares this cross-tag lock.
+    concurrency:
+      group: world-at-ruin-client-channel
+      cancel-in-progress: false
+      queue: max
     # The ORIGIN OF RECORD for the in-client updater (docs/design/
     # distribution-and-self-update.md, #62). The GitHub Release asset is a plain
     # HTTP download with no content addressing; the updater pins a DIGEST, which
@@ -648,6 +653,32 @@ jobs:
             echo "pulled manifest is byte-identical to the one emitted from the build"
           fi
 
+      - name: 🧾 Attest completed release verification
+        if: ${{ !contains(steps.version.outputs.version, '-') }}
+        env:
+          ARTIFACT: ${{ steps.push.outputs.artifact }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          ARCHIVE_SHA=$(cut -d' ' -f1 release-asset.sha256)
+          MANIFEST_SHA=$(cut -d' ' -f1 manifest.sha256)
+          [[ "${ARCHIVE_SHA}" =~ ^[0-9a-f]{64}$ && "${MANIFEST_SHA}" =~ ^[0-9a-f]{64}$ ]]
+          jq -n --arg version "${VERSION}" --arg digest "${DIGEST}" \
+            --arg archive "${ARCHIVE_SHA}" --arg manifest "${MANIFEST_SHA}" \
+            --arg revision "${GITHUB_SHA}" \
+            '{schema:1,version:$version,artifact_digest:$digest,archive_sha256:$archive,manifest_sha256:$manifest,revision:$revision}' \
+            > release-completion.json
+          cosign attest --yes --type https://devantler.tech/world-at-ruin/release-completion/v1 \
+            --predicate release-completion.json "${ARTIFACT}@${DIGEST}"
+          cosign verify-attestation "${ARTIFACT}@${DIGEST}" \
+            --type https://devantler.tech/world-at-ruin/release-completion/v1 \
+            --certificate-identity-regexp '^https://github\.com/devantler-tech/world-at-ruin/\.github/workflows/cd\.yaml@(refs/tags/v[0-9]+\.[0-9]+\.[0-9]+|refs/heads/main)$' \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com > /dev/null
+          # The marker is discovery only; consumers authenticate the attestation
+          # and its subject, version, revision and both layer digests again.
+          oras tag "${ARTIFACT}@${DIGEST}" "completed-${VERSION}"
+
       - name: 🏷️ Advance the verified latest digest
         # Signing and both byte-readback checks must finish before promotion.
         # Other catalogue candidates also require a verified, version-bound digest.
@@ -683,7 +714,7 @@ jobs:
           read_release_catalog() {
             local artifact="$1"
             local published="$2"
-            local tags tag key newest_key
+            local tags tag key newest_key published_completed=false
 
             if ! newest_key="$(release_version_key "${published}")"; then
               echo "::error::published version '${published}' is outside the stable release contract"
@@ -695,9 +726,9 @@ jobs:
               return 1
             fi
             while IFS= read -r tag; do
-              if [ "${tag}" = "latest" ]; then
-                continue
-              fi
+              [[ "${tag}" == completed-* ]] || continue
+              tag="${tag#completed-}"
+              [ "${tag}" != "${published}" ] || published_completed=true
               if ! key="$(release_version_key "${tag}")"; then
                 continue
               fi
@@ -706,6 +737,10 @@ jobs:
                 newest_key="${key}"
               fi
             done <<<"${tags}"
+            if [ "${published_completed}" != true ]; then
+              echo "::error::published release has no completion marker" >&2
+              return 1
+            fi
           }
 
           latest_release_version() {
@@ -743,9 +778,9 @@ jobs:
           verified_release_digest() {
             local artifact="$1"
             local release="$2"
-            local descriptor digest manifest version
+            local descriptor digest manifest version attestations
 
-            if ! descriptor="$(oras manifest fetch --descriptor "${artifact}:${release}")"; then
+            if ! descriptor="$(oras manifest fetch --descriptor "${artifact}:completed-${release}")"; then
               echo "::error::could not resolve the selected release digest" >&2
               return 1
             fi
@@ -764,6 +799,34 @@ jobs:
               ! version="$(jq -er '.annotations["org.opencontainers.image.version"] | select(type == "string")' <<<"${manifest}")" ||
               [ "${version}" != "${release}" ]; then
               echo "::error::verified digest does not identify the selected release version" >&2
+              return 1
+            fi
+            if ! attestations="$(cosign verify-attestation "${artifact}@${digest}" \
+              --type https://devantler.tech/world-at-ruin/release-completion/v1 \
+              --certificate-identity-regexp '^https://github\.com/devantler-tech/world-at-ruin/\.github/workflows/cd\.yaml@(refs/tags/v[0-9]+\.[0-9]+\.[0-9]+|refs/heads/main)$' \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com)" ||
+              ! jq -es --arg artifact "${artifact}" --arg digest "${digest}" --arg version "${release}" \
+                --argjson manifest "${manifest}" '
+                  map(.payload | @base64d | fromjson) | unique | select(length == 1) | .[0] |
+                  select(.predicateType == "https://devantler.tech/world-at-ruin/release-completion/v1") |
+                  select(.subject == [{name:$artifact,digest:{sha256:($digest|ltrimstr("sha256:"))}}]) |
+                  .predicate | select(type == "object") |
+                  select(keys == ["archive_sha256","artifact_digest","manifest_sha256","revision","schema","version"]) |
+                  select(.schema == 1 and .version == $version and .artifact_digest == $digest) |
+                  select(.revision == $manifest.annotations["org.opencontainers.image.revision"]) |
+                  select(.revision | type == "string" and test("^[0-9a-f]{40}$")) |
+                  select(.archive_sha256 | type == "string" and test("^[0-9a-f]{64}$")) |
+                  select(.manifest_sha256 | type == "string" and test("^[0-9a-f]{64}$")) |
+                  . as $record |
+                  select($manifest.layers | length == 2) |
+                  select([$manifest.layers[] | select(.mediaType == "application/zip" and
+                    .annotations["org.opencontainers.image.title"] == ("WorldAtRuin-"+$version+"-macOS-universal.zip") and
+                    .digest == ("sha256:"+$record.archive_sha256))] | length == 1) |
+                  select([$manifest.layers[] | select(.mediaType == "application/vnd.devantler.worldatruin.client.manifest.v1+json" and
+                    .annotations["org.opencontainers.image.title"] == "update-manifest.json" and
+                    .digest == ("sha256:"+$record.manifest_sha256))] | length == 1)
+                ' <<<"${attestations}" > /dev/null; then
+              echo "::error::selected release has no unambiguous authenticated completion record" >&2
               return 1
             fi
             printf '%s\n' "${digest}"
