@@ -576,6 +576,87 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Registry paths must be lowercase. `tr` rather than bash's ${VAR@L}
+          # so this does not silently depend on bash >= 4.4.
+          ARTIFACT="$(printf 'ghcr.io/%s/client' "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
+          cd oci
+          # Push the bare version first. The stable channel is promoted only
+          # after signing, signature verification and both byte-readback checks.
+          # The manifest is a SECOND LAYER of this artifact, not a second tag:
+          # one digest then covers the build and the contract describing it, so
+          # `cosign verify` attests to both at once and there is no second thing
+          # to keep in sync. A separate tag could be updated independently, which
+          # is precisely how a manifest comes to describe a build it does not ship
+          # with.
+          LAYERS=("WorldAtRuin-${VERSION}-macOS-universal.zip:application/zip")
+          if [[ "${VERSION}" != *-* ]]; then
+            LAYERS+=("update-manifest.json:application/vnd.devantler.worldatruin.client.manifest.v1+json")
+          fi
+          oras push "${ARTIFACT}:${VERSION}" \
+            --artifact-type application/vnd.devantler.worldatruin.client.v1+zip \
+            --annotation "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --annotation "org.opencontainers.image.version=${VERSION}" \
+            --annotation "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            "${LAYERS[@]}"
+          # `oras manifest fetch --descriptor` rather than `oras resolve`: the
+          # latter is marked [Preview] and `--format` is [Experimental], so both
+          # can change under us. This form is stable.
+          DIGEST=$(oras manifest fetch --descriptor "${ARTIFACT}:${VERSION}" | jq -r '.digest')
+          if ! printf '%s' "${DIGEST}" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+            echo "::error::could not resolve a digest for ${ARTIFACT}:${VERSION} (got '${DIGEST}')"
+            exit 1
+          fi
+          echo "artifact=${ARTIFACT}" >> "$GITHUB_OUTPUT"
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "pushed ${ARTIFACT}:${VERSION} @ ${DIGEST}"
+
+      - name: 🔏 Sign the artifact by digest
+        env:
+          ARTIFACT: ${{ steps.push.outputs.artifact }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          # Sign the DIGEST, never the mutable tag — the digest is what the
+          # updater pins, so it is what the signature must cover.
+          cosign sign --yes "${ARTIFACT}@${DIGEST}"
+
+      - name: ✅ Verify signature and byte-identity
+        env:
+          ARTIFACT: ${{ steps.push.outputs.artifact }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          cosign verify "${ARTIFACT}@${DIGEST}" \
+            --certificate-identity-regexp "^${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            > /dev/null
+          echo "signature verified for ${ARTIFACT}@${DIGEST}"
+          # Pull the artifact back and prove the stored bytes match the release
+          # asset exactly. A push that silently truncated or re-encoded would
+          # otherwise ship a build nobody had checked.
+          mkdir -p pulled && cd pulled
+          oras pull "${ARTIFACT}@${DIGEST}"
+          sha256sum -c <(sed "s#  .*#  WorldAtRuin-${VERSION}-macOS-universal.zip#" ../release-asset.sha256)
+          echo "pulled bytes are identical to the release asset"
+          # The manifest gets the same pull-back proof. Checked against the sha
+          # the BUILD job emitted rather than the copy in this workspace, so a
+          # push that re-encoded the JSON fails here instead of shipping a
+          # contract whose signed bytes nobody can reproduce.
+          if [[ "${VERSION}" != *-* ]]; then
+            sha256sum -c ../manifest.sha256
+            echo "pulled manifest is byte-identical to the one emitted from the build"
+          fi
+
+      - name: 🏷️ Advance the verified latest digest
+        # Signing and both byte-readback checks must finish before promotion.
+        # Other catalogue candidates also require a verified, version-bound digest.
+        env:
+          RELEASE_ARTIFACT: ${{ steps.push.outputs.artifact }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+
           # BEGIN ghcr-latest-forward-helper
           release_version_key() {
             local release="$1"
@@ -659,11 +740,40 @@ jobs:
             printf '%s\n' "${manifest_version}"
           }
 
+          verified_release_digest() {
+            local artifact="$1"
+            local release="$2"
+            local descriptor digest manifest version
+
+            if ! descriptor="$(oras manifest fetch --descriptor "${artifact}:${release}")"; then
+              echo "::error::could not resolve the selected release digest" >&2
+              return 1
+            fi
+            if ! digest="$(jq -er '.digest | select(type == "string")' <<<"${descriptor}")" ||
+              [[ ! "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "::error::selected release descriptor has no valid SHA-256 digest" >&2
+              return 1
+            fi
+            if ! cosign verify "${artifact}@${digest}" \
+              --certificate-identity-regexp "^${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com > /dev/null; then
+              echo "::error::selected release signature could not be verified" >&2
+              return 1
+            fi
+            if ! manifest="$(oras manifest fetch "${artifact}@${digest}")" ||
+              ! version="$(jq -er '.annotations["org.opencontainers.image.version"] | select(type == "string")' <<<"${manifest}")" ||
+              [ "${version}" != "${release}" ]; then
+              echo "::error::verified digest does not identify the selected release version" >&2
+              return 1
+            fi
+            printf '%s\n' "${digest}"
+          }
+
           advance_latest_tag() {
             local artifact="$1"
             local published="$2"
             local attempts=0
-            local newest current newest_key current_key current_status
+            local newest current newest_key current_key current_status verified_digest
 
             # Re-read after every write. If a newer immutable version appears
             # while this run is tagging, the next pass repairs latest to that
@@ -699,7 +809,12 @@ jobs:
                 fi
                 return 0
               fi
-              oras tag "${artifact}:${newest}" latest
+              verified_digest="$(verified_release_digest "${artifact}" "${newest}")" || return 1
+              # Promote exactly the signed digest whose version was checked.
+              if ! oras tag "${artifact}@${verified_digest}" latest; then
+                echo "::error::could not advance latest to the verified digest" >&2
+                return 1
+              fi
               echo "advanced latest to ${newest}"
             done
 
@@ -727,82 +842,13 @@ jobs:
           }
           # END ghcr-latest-forward-helper
 
-          # Registry paths must be lowercase. `tr` rather than bash's ${VAR@L}
-          # so this does not silently depend on bash >= 4.4.
-          ARTIFACT="$(printf 'ghcr.io/%s/client' "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
-          cd oci
-          # Push the immutable bare version first. `latest` is advanced only
-          # after the registry's complete stable-version set can be compared.
-          # The manifest is a SECOND LAYER of this artifact, not a second tag:
-          # one digest then covers the build and the contract describing it, so
-          # `cosign verify` attests to both at once and there is no second thing
-          # to keep in sync. A separate tag could be updated independently, which
-          # is precisely how a manifest comes to describe a build it does not ship
-          # with.
-          LAYERS=("WorldAtRuin-${VERSION}-macOS-universal.zip:application/zip")
-          if [[ "${VERSION}" != *-* ]]; then
-            LAYERS+=("update-manifest.json:application/vnd.devantler.worldatruin.client.manifest.v1+json")
+          # Prereleases keep their versioned artifact and signature, but do
+          # not advertise a live update contract or displace the stable channel.
+          if [[ "${RELEASE_VERSION}" == *-* ]]; then
+            echo "prerelease ${RELEASE_VERSION} leaves the stable latest channel unchanged"
+            exit 0
           fi
-          oras push "${ARTIFACT}:${VERSION}" \
-            --artifact-type application/vnd.devantler.worldatruin.client.v1+zip \
-            --annotation "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
-            --annotation "org.opencontainers.image.version=${VERSION}" \
-            --annotation "org.opencontainers.image.revision=${GITHUB_SHA}" \
-            "${LAYERS[@]}"
-          # Prereleases retain their immutable tag and signature, but do not
-          # advertise a live update contract or displace the stable channel.
-          if [[ "${VERSION}" != *-* ]]; then
-            advance_latest_tag "${ARTIFACT}" "${VERSION}"
-          fi
-          # `oras manifest fetch --descriptor` rather than `oras resolve`: the
-          # latter is marked [Preview] and `--format` is [Experimental], so both
-          # can change under us. This form is stable.
-          DIGEST=$(oras manifest fetch --descriptor "${ARTIFACT}:${VERSION}" | jq -r '.digest')
-          if ! printf '%s' "${DIGEST}" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
-            echo "::error::could not resolve a digest for ${ARTIFACT}:${VERSION} (got '${DIGEST}')"
-            exit 1
-          fi
-          echo "artifact=${ARTIFACT}" >> "$GITHUB_OUTPUT"
-          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
-          echo "pushed ${ARTIFACT}:${VERSION} @ ${DIGEST}"
-
-      - name: 🔏 Sign the artifact by digest
-        env:
-          ARTIFACT: ${{ steps.push.outputs.artifact }}
-          DIGEST: ${{ steps.push.outputs.digest }}
-        run: |
-          set -euo pipefail
-          # Sign the DIGEST, never the mutable tag — the digest is what the
-          # updater pins, so it is what the signature must cover.
-          cosign sign --yes "${ARTIFACT}@${DIGEST}"
-
-      - name: ✅ Verify signature and byte-identity
-        env:
-          ARTIFACT: ${{ steps.push.outputs.artifact }}
-          DIGEST: ${{ steps.push.outputs.digest }}
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          set -euo pipefail
-          cosign verify "${ARTIFACT}@${DIGEST}" \
-            --certificate-identity-regexp "^${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/" \
-            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-            > /dev/null
-          echo "signature verified for ${ARTIFACT}@${DIGEST}"
-          # Pull the artifact back and prove the stored bytes match the release
-          # asset exactly. A push that silently truncated or re-encoded would
-          # otherwise ship a build nobody had checked.
-          mkdir -p pulled && cd pulled
-          oras pull "${ARTIFACT}@${DIGEST}"
-          sha256sum -c <(sed "s#  .*#  WorldAtRuin-${VERSION}-macOS-universal.zip#" ../release-asset.sha256)
-          echo "pulled bytes are identical to the release asset"
-          # The manifest gets the same pull-back proof. Checked against the sha
-          # the BUILD job emitted rather than the copy in this workspace, so a
-          # push that re-encoded the JSON fails here instead of shipping a
-          # contract whose signed bytes nobody can reproduce.
-          if [[ "${VERSION}" != *-* ]]; then
-            sha256sum -c ../manifest.sha256
-            echo "pulled manifest is byte-identical to the one emitted from the build"
-          fi
+          advance_latest_tag "${RELEASE_ARTIFACT}" "${RELEASE_VERSION}"
 
     outputs:
       artifact: ${{ steps.push.outputs.artifact }}

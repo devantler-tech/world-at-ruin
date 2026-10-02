@@ -80,7 +80,8 @@ func TestCDStableAndPrereleasePublication(t *testing.T) {
 					manifestTransfer := with["name"] == "client-update-manifest"
 					selected := id == "version" || id == "manifest" || id == "push" || manifestTransfer ||
 						strings.Contains(name, "Confirm the build matches") || strings.Contains(name, "manifest crossed") ||
-						strings.Contains(name, "Sign the artifact by digest") || strings.Contains(name, "Verify signature and byte-identity")
+						strings.Contains(name, "Sign the artifact by digest") || strings.Contains(name, "Verify signature and byte-identity") ||
+						strings.Contains(name, "Advance the verified latest digest")
 					if !selected {
 						continue
 					}
@@ -159,7 +160,7 @@ func TestCDStableAndPrereleasePublication(t *testing.T) {
 							t.Fatalf("wrong corruption refusal: %s", out)
 						}
 						verified = true
-						continue
+						break
 					}
 					if err != nil {
 						t.Fatalf("%s: %v\n%s", name, err, out)
@@ -201,7 +202,7 @@ func TestCDStableAndPrereleasePublication(t *testing.T) {
 				t.Fatal(err)
 			}
 			wantLatest := "1.2.2"
-			if tc.manifest {
+			if tc.manifest && !tc.corrupt {
 				wantLatest = tc.version
 			}
 			if strings.TrimSpace(string(latest)) != wantLatest {
@@ -302,6 +303,8 @@ oras() {
     'manifest fetch')
       if [ "$3" = --descriptor ]; then
         printf '{"digest":"sha256:%064d"}\n' 1
+      elif [[ "$3" == *@sha256:* ]]; then
+        printf '{"annotations":{"org.opencontainers.image.version":"%s"}}\n' "$(cat "$registry/pushed-version")"
       else
         printf '{"annotations":{"org.opencontainers.image.version":"%s"}}\n' "$(cat "$registry/latest")"
       fi ;;
@@ -310,6 +313,7 @@ oras() {
         push)
           local reference="$2" layer
           printf '%s\n' "${reference##*:}" >> "$registry/tags"
+          printf '%s\n' "${reference##*:}" > "$registry/pushed-version"
           shift 2
           while [ "$#" -gt 0 ]; do
             case "$1" in
@@ -317,7 +321,7 @@ oras() {
               *) layer="${1%%:*}"; cp "$layer" "$registry/$(basename "$layer")"; shift ;;
             esac
           done ;;
-        tag) printf '%s\n' "${2##*:}" > "$registry/latest" ;;
+        tag) cat "$registry/pushed-version" > "$registry/latest" ;;
         pull)
           cp "$registry"/*.zip .
           if [ -f "$registry/update-manifest.json" ]; then
