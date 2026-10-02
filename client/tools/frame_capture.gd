@@ -1700,6 +1700,21 @@ static func ragged_tailoring_material(garment: MeshInstance3D) -> StandardMateri
 	return result
 
 
+## Keep actual weave and sewing while removing only broad fold/rolled-edge
+## relief. This isolates the new construction at the same pose and camera.
+static func ragged_unfolded_material(garment: MeshInstance3D) -> StandardMaterial3D:
+	var result := garment.get_active_material(0).duplicate() as StandardMaterial3D
+	if not RaggedCloth.enabled():
+		return result
+	var source_mesh := garment.get_meta(RaggedDrape.SOURCE_META, garment.mesh) as Mesh
+	var source := source_mesh.surface_get_material(0) as StandardMaterial3D
+	var maps := RaggedCloth.make_maps(RaggedCloth._palette(source.albedo_texture), true, false)
+	result.albedo_texture = maps[0]
+	result.normal_texture = maps[1]
+	result.roughness_texture = maps[2]
+	return result
+
+
 ## Actual empty-wardrobe player, with garment-only pixel evidence. A magenta
 ## visibility arm names the pixels the garment really draws; comparing the whole
 ## frame would let scenery motion pretend a flat or hidden cloth had detail.
@@ -1734,6 +1749,7 @@ func _capture_ragged_cloth(dir: String, main: Node) -> void:
 	var original_override := garment.get_surface_override_material(0)
 	var original_mesh := garment.mesh
 	var seam_off := ragged_tailoring_material(garment)
+	var fold_off := ragged_unfolded_material(garment)
 	var flat_mesh := garment.get_meta(RaggedDrape.SOURCE_META, original_mesh) as Mesh
 	var flat := material.duplicate() as StandardMaterial3D
 	flat.albedo_color *= RaggedCloth._palette(material.albedo_texture)
@@ -1760,6 +1776,8 @@ func _capture_ragged_cloth(dir: String, main: Node) -> void:
 		camera.make_current()
 		var drawn := await _settled_cloth_frame()
 		var repeated := await _settled_cloth_frame()
+		garment.set_surface_override_material(0, fold_off)
+		var unfolded := await _settled_cloth_frame()
 		garment.set_surface_override_material(0, seam_off)
 		var unsewn := await _settled_cloth_frame()
 		garment.set_surface_override_material(0, flat)
@@ -1781,6 +1799,7 @@ func _capture_ragged_cloth(dir: String, main: Node) -> void:
 		var contribution := ragged_cloth_difference(drawn, flattened, points)
 		var tailoring_signal := ragged_tailoring_difference(drawn, unsewn, points)
 		var tailoring_noise := ragged_tailoring_difference(drawn, repeated, points)
+		var fold_signal := ragged_cloth_difference(drawn, unfolded, points)
 		var geometry_points := ragged_cloth_union_pixels(mask, geometry_mask, 1 if name == "cloth_gameplay" else 2)
 		var geometry_noise := ragged_cloth_difference(drawn, repeated, geometry_points)
 		var geometry_signal := ragged_cloth_difference(drawn, geometry_flat, geometry_points)
@@ -1795,7 +1814,11 @@ func _capture_ragged_cloth(dir: String, main: Node) -> void:
 		if RaggedCloth.enabled() and name != "cloth_gameplay" and tailoring_signal <= tailoring_noise * 3.0 + 0.004:
 			_fail("%s: tailoring signal %.5f does not separate from repeat noise %.5f" % [name, tailoring_signal, tailoring_noise])
 			return
+		if RaggedCloth.enabled() and name != "cloth_gameplay" and fold_signal <= noise * 3.0 + 0.0015:
+			_fail("%s: fold-only signal %.5f does not separate from repeat noise %.5f" % [name, fold_signal, noise])
+			return
 		for arm: Array in [[name, drawn], [name + "_repeat", repeated],
+				[name + "_fold_off", unfolded],
 				[name + "_seam_off", unsewn],
 				[name + "_flat", flattened], [name + "_mask", mask],
 				[name + "_geometry_flat", geometry_flat], [name + "_geometry_mask", geometry_mask]]:
@@ -1804,6 +1827,7 @@ func _capture_ragged_cloth(dir: String, main: Node) -> void:
 		print("CLOTH READ %s — visible %d px, flat signal %.5f, repeat noise %.5f" % [name, points.size(), contribution, noise])
 		print("DRAPE READ %s — union %d px, geometry signal %.5f, repeat noise %.5f" % [name, geometry_points.size(), geometry_signal, geometry_noise])
 		print("TAILORING READ %s — visible %d px, upper-decile sewing signal %.5f, repeat noise %.5f" % [name, points.size(), tailoring_signal, tailoring_noise])
+		print("FOLD READ %s — visible %d px, fold-only signal %.5f, repeat noise %.5f" % [name, points.size(), fold_signal, noise])
 	print("CAPTURE PASS — ragged cloth: front, rear, profile and gameplay; detail=%s drape=%s" % [RaggedCloth.enabled(), RaggedDrape.enabled()])
 	get_tree().quit(0)
 

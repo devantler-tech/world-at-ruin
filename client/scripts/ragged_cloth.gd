@@ -3,7 +3,8 @@ extends RefCounted
 ## Opt-in surface preview for the immutable ragged base (#946).
 ## All maps are authored here from arithmetic and seeded noise; no reference
 ## image or generated asset is changed. Planar kit UVs stay the same, including
-## their shared front/back mapping. This does not author folds or cloth motion.
+## their shared front/back mapping. Broad relief suggests folded fabric;
+## silhouette and cloth motion remain independent of these surface maps.
 ## The three immutable textures are built once, shared across characters, and
 ## mip-filtered; each character keeps its own material settings.
 ## The activation/removal decision is tracked by #947, due 2026-11-01.
@@ -44,7 +45,7 @@ static func material(source: StandardMaterial3D) -> StandardMaterial3D:
 ## Independent rebakes expose determinism to the regression without clearing a
 ## production cache. Uneven warp/weft yarns alternate which strand rises at a
 ## crossing; low-frequency wear and fine fibres vary colour and roughness.
-static func make_maps(palette: Color, tailoring: bool = true) -> Array[Texture2D]:
+static func make_maps(palette: Color, tailoring: bool = true, folds: bool = true) -> Array[Texture2D]:
 	var albedo := Image.create(MAP_SIZE, MAP_SIZE, false, Image.FORMAT_RGB8)
 	var normal := Image.create(MAP_SIZE, MAP_SIZE, false, Image.FORMAT_RGB8)
 	var roughness := Image.create(MAP_SIZE, MAP_SIZE, false, Image.FORMAT_R8)
@@ -68,14 +69,16 @@ static func make_maps(palette: Color, tailoring: bool = true) -> Array[Texture2D
 			# as a plaid print instead of the tiny relief of woven cloth.
 			tone += (warp_wave + weft_wave) * 0.015
 			var sewn := _sewn_edge(u, v) if tailoring else Vector3.ZERO
+			var folded := _fold_relief(u, v) if folds else Vector3.ZERO
+			tone *= 1.0 + folded.x
 			var cloth := Color(palette.r * tone, palette.g * tone, palette.b * tone)
 			# Undyed, worn thread belongs to the kit's brown colour family.
 			# Rounded thread relief is separate from its colour, so light can
 			# pick out the seam instead of reading it as a printed stripe.
 			var thread := Color(0.56, 0.40, 0.25)
 			albedo.set_pixel(x, y, cloth.lerp(thread, sewn.x * 0.85))
-			var slope := Vector3(warp_wave * (0.42 if raised_warp else 0.12) + sewn.y,
-				weft_wave * (0.12 if raised_warp else 0.42) + sewn.z, 1.0).normalized()
+			var slope := Vector3(warp_wave * (0.42 if raised_warp else 0.12) + sewn.y + folded.y,
+				weft_wave * (0.12 if raised_warp else 0.42) + sewn.z + folded.z, 1.0).normalized()
 			normal.set_pixel(x, y, Color(slope.x * 0.5 + 0.5, slope.y * 0.5 + 0.5, slope.z * 0.5 + 0.5))
 			var matte := clampf(0.9 + stain * 0.1 + fibre * 0.045 + sewn.x * 0.025, 0.82, 0.98)
 			roughness.set_pixel(x, y, Color(matte, matte, matte))
@@ -84,6 +87,39 @@ static func make_maps(palette: Color, tailoring: bool = true) -> Array[Texture2D
 	roughness.generate_mipmaps()
 	return [ImageTexture.create_from_image(albedo), ImageTexture.create_from_image(normal),
 		ImageTexture.create_from_image(roughness)]
+
+
+## Original shallow gathers fan out below the waist. Rounded ridges and their
+## slopes are centimetre-scale beside the tiny weave; irregular centres and
+## widths avoid a printed stripe grid. The shared atlas does not pretend to
+## follow either ragged hem. Folded waist lips have a separate crosswise roll.
+## Return colour modulation and authored tangent-space slopes.
+static func _fold_relief(u: float, v: float) -> Vector3:
+	var depth := clampf((v - 0.29) / 0.43, 0.0, 1.0)
+	var onset := smoothstep(0.29, 0.36, v)
+	var relief := Vector3.ZERO
+	for index in 4:
+		var centre := 0.31 + float(index) * 0.126 + sin(float(index) * 2.1) * 0.016
+		var fan := (centre - 0.5) * depth * 0.22
+		var width := 0.019 + depth * 0.014 + float(index % 2) * 0.004
+		var distance := u - centre - fan
+		var ridge := exp(-distance * distance / (width * width))
+		var height := 0.017 * onset * (1.0 - depth * 0.30)
+		var lateral := -2.0 * distance / (width * width) * ridge * height
+		relief.x += (ridge - 0.25) * 0.11 * onset
+		relief.y += lateral
+		# The lean of each gather contributes to the crosswise normal as
+		# well; onset stays below the waist's independent sewn rows.
+		relief.z -= lateral * (centre - 0.5) * 0.22 / 0.43
+	# Keep the roll beyond the narrow sewn rows, so the sewing-only control
+	# still measures actual thread rather than crediting broad fold lighting.
+	for row: float in [0.145, 0.32]:
+		var distance := v - row
+		var width := 0.006
+		var roll := exp(-distance * distance / (width * width))
+		relief.x -= roll * 0.10
+		relief.z += -2.0 * distance / (width * width) * roll * 0.004
+	return relief
 
 
 ## Two original running-stitch rows reinforce the folded waist. The immutable

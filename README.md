@@ -67,15 +67,17 @@ newest first — replaying after each build shows exactly what the agents grew.
 **Ragged-cloth material preview:** launch from source with
 `WAR_RAGGED_CLOTH_DETAIL=1 godot --path client`, or prefix the installed app's
 executable with the same environment setting. In the creator, leave the wardrobe
-bare to inspect the immutable base cloth. This opt-in previews woven fibres and
-matte wear; the garment's rigid shape and missing drape remain unfinished.
-[Before/after frames and inspection controls](docs/evidence/issue-946-ragged-cloth/README.md)
+bare to inspect the immutable base cloth. This opt-in previews woven fibres,
+worn sewing, broad gathered folds and rounded folded-edge lighting. The angular
+cut, thick waist silhouette, fraying and cloth motion remain unfinished.
+[Before/after frames and fold-only controls](docs/evidence/issue-958-gathered-wrap/README.md)
 show the current gap. Ordinary launches keep the shipped material and all saved
 characters retain their existing equipment and shapes.
 
 **Ragged-wrap geometry preview:** independently opt into
 `WAR_RAGGED_CLOTH_DRAPE=1` for static outward folds and a softer hanging outline.
-Combine it with the material setting above to inspect both. Ordinary launches
+The hanging panels join the fixed waist gradually. Combine it with the material
+setting above to inspect both. Ordinary launches
 keep the shipped mesh. [Front, rear, profile and gameplay comparisons](docs/evidence/issue-949-ragged-drape/README.md)
 show the remaining rigid-panel and waist-band gaps. The
 [rear coverage repair](docs/evidence/issue-952-rear-coverage/README.md) closes the
