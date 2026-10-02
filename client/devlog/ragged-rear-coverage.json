@@ -1,0 +1,10 @@
+{
+  "version": "next",
+  "date": "2026-10-02",
+  "title": "Close the rear wrap's preview opening",
+  "notes": [
+    "The optional ragged-wrap drape now clears the rear body below its waist attachment, closing the small skin opening seen in the previous preview.",
+    "The new coverage check uses drawn character shapes and triangle interiors, and challenges the result with a deliberately buried panel. Existing saved characters retain their shapes and equipment.",
+    "The preview still needs better tailoring, seams, fraying and cloth motion. Its angular panels and thick waist band remain unfinished; ordinary launches keep the shipped geometry."
+  ]
+}
