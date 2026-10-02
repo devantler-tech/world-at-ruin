@@ -174,6 +174,13 @@ jobs:
           set -o pipefail
           godot --headless --editor --quit --path client 2>&1 | tee import.log
 
+      - name: 📜 Validate the stamped development log
+        # Check the release tree rather than only the branch's placeholders.
+        run: |
+          set -euo pipefail
+          ./tools/run-client-test.sh devlog_storage_test
+          ./tools/run-client-test.sh devlog_entries_test
+
       - name: 🏗️ Export .app (release, ad-hoc signed)
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -220,6 +227,7 @@ jobs:
 
       - name: 🧾 Emit the update manifest
         id: manifest
+        if: ${{ !contains(steps.version.outputs.version, '-') }}
         # What this build reads, writes and speaks — derived from the constants
         # the build actually runs on, never restated by hand here. A manifest
         # written in this script would drift silently from the client, and every
@@ -312,6 +320,7 @@ jobs:
           retention-days: 1
 
       - name: 📎 Hand the update manifest to the GHCR job
+        if: ${{ !contains(steps.version.outputs.version, '-') }}
         # ITS OWN ARTIFACT, deliberately, rather than a second path on the one
         # above. `release-credential-boundary` pins that artifact's path to the
         # canonical zip EXACTLY, because that pin is what proves the build job
@@ -489,6 +498,7 @@ jobs:
           path: oci
 
       - name: ⬇️ Fetch the update manifest from the macOS job
+        if: ${{ !contains(steps.version.outputs.version, '-') }}
         # Into the SAME directory, because `oras push` takes its layer paths
         # relative to one working directory — the build and the contract
         # describing it are pushed as one artifact.
@@ -520,6 +530,7 @@ jobs:
           echo "checksum matches the build attached to the release: ${ACTUAL}"
 
       - name: 🧾 Confirm the update manifest crossed the job boundary intact
+        if: ${{ !contains(steps.version.outputs.version, '-') }}
         # The manifest is signed by the same digest as the build, so it gets the
         # same proof the build gets. Signing a manifest this job cannot show is
         # the one it was handed would attest to bytes nobody checked.
@@ -726,14 +737,21 @@ jobs:
           # to keep in sync. A separate tag could be updated independently, which
           # is precisely how a manifest comes to describe a build it does not ship
           # with.
+          LAYERS=("WorldAtRuin-${VERSION}-macOS-universal.zip:application/zip")
+          if [[ "${VERSION}" != *-* ]]; then
+            LAYERS+=("update-manifest.json:application/vnd.devantler.worldatruin.client.manifest.v1+json")
+          fi
           oras push "${ARTIFACT}:${VERSION}" \
             --artifact-type application/vnd.devantler.worldatruin.client.v1+zip \
             --annotation "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
             --annotation "org.opencontainers.image.version=${VERSION}" \
             --annotation "org.opencontainers.image.revision=${GITHUB_SHA}" \
-            "WorldAtRuin-${VERSION}-macOS-universal.zip:application/zip" \
-            "update-manifest.json:application/vnd.devantler.worldatruin.client.manifest.v1+json"
-          advance_latest_tag "${ARTIFACT}" "${VERSION}"
+            "${LAYERS[@]}"
+          # Prereleases retain their immutable tag and signature, but do not
+          # advertise a live update contract or displace the stable channel.
+          if [[ "${VERSION}" != *-* ]]; then
+            advance_latest_tag "${ARTIFACT}" "${VERSION}"
+          fi
           # `oras manifest fetch --descriptor` rather than `oras resolve`: the
           # latter is marked [Preview] and `--format` is [Experimental], so both
           # can change under us. This form is stable.
@@ -779,8 +797,10 @@ jobs:
           # the BUILD job emitted rather than the copy in this workspace, so a
           # push that re-encoded the JSON fails here instead of shipping a
           # contract whose signed bytes nobody can reproduce.
-          sha256sum -c ../manifest.sha256
-          echo "pulled manifest is byte-identical to the one emitted from the build"
+          if [[ "${VERSION}" != *-* ]]; then
+            sha256sum -c ../manifest.sha256
+            echo "pulled manifest is byte-identical to the one emitted from the build"
+          fi
 
     outputs:
       artifact: ${{ steps.push.outputs.artifact }}

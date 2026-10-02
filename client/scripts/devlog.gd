@@ -8,8 +8,8 @@ class_name DevLog
 const VERSION := "0.1.17"
 const CODENAME := "Ashfall Reach"
 
-## One file per entry, named by the version the change ships in — or, for an
-## entry still carrying [constant NEXT_VERSION], by a slug.
+## One file per entry. Authored slugs stay unchanged when their release version
+## is stamped; historical numbered files retain their version as their name.
 ##
 ## Every player-visible change adds an entry, and roughly seven agent sessions
 ## work in parallel, so a single shared list put every concurrent change on the
@@ -115,10 +115,10 @@ static func heading(entry: Dictionary) -> String:
 	return "v" + version
 
 
-## Empty when an entry file's name fits what it declares, otherwise why not. A
-## released entry is named for its version, which is how an author finds it and
-## what keeps two releases on disjoint paths; a [constant NEXT_VERSION] entry has
-## no version yet, so it is named by a slug matching [constant NEXT_ENTRY_NAME].
+## Authored slugs retain their identity after stamping a stable version. A
+## numbered filename must still match its own version, so swapping two old
+## entries cannot pass as a valid directory. The authoring guard separately
+## refuses a newly authored entry that predicts its release number.
 static func name_problem(stem: String, entry: Dictionary) -> String:
 	if is_next(entry):
 		if RegEx.create_from_string(NEXT_ENTRY_NAME).search(stem) == null:
@@ -126,6 +126,9 @@ static func name_problem(stem: String, entry: Dictionary) -> String:
 				+ "not '%s'") % [NEXT_VERSION, stem]
 		return ""
 	var declared := String(entry.get("version", "<missing>"))
+	if RegEx.create_from_string(NEXT_ENTRY_NAME).search(stem) != null \
+		and RegEx.create_from_string("^[0-9]+\\.[0-9]+\\.[0-9]+$").search(declared) != null:
+		return ""
 	if declared != stem:
 		return "declares version '%s' but is named '%s'" % [declared, stem]
 	return ""

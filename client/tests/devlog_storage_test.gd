@@ -14,14 +14,10 @@ extends Node
 ##  1. EVERY FILE IS AN ENTRY — the count of `.json` files under the entry
 ##     directory equals `DevLog.ENTRIES.size()`. A silently dropped entry fails
 ##     here.
-##  2. THE NAME IS THE VERSION — each file is named for the version it carries.
-##     The filename is how an author finds the entry to edit and how two
-##     concurrent PRs are guaranteed disjoint paths, so a file whose name and
-##     content disagree breaks the very property this storage exists for. An
-##     entry still carrying `DevLog.NEXT_VERSION` has no version to be named
-##     for (#518), so it is named by a slug that can never look like one — the
-##     rule is `DevLog.name_problem`, proven below against constructed names
-##     too, since no real entry is a placeholder yet.
+##  2. THE NAME RETAINS ITS IDENTITY — historical numbered names match their
+##     version, while authored slugs survive stable release stamping. Slugs
+##     remain disjoint from numbered paths. `DevLog.name_problem` decides both
+##     forms against their own entry, including malformed names and versions.
 ##
 ## Plus non-vacuity: the directory must actually hold entries. A guard that
 ## inspects an empty directory would pass while the in-game log renders blank —
@@ -59,7 +55,7 @@ func _ready() -> void:
 			% [entry_files.size(), DevLog.ENTRY_DIR, entries.size()])
 		return
 
-	# --- 2. THE NAME IS THE VERSION ---
+	# --- 2. THE NAME RETAINS ITS IDENTITY ---
 	# Each file is compared against its OWN declared version. Asking instead
 	# whether the filename appears somewhere among the loaded versions would be a
 	# membership test, not a mapping one: swap the contents of two entry files and
@@ -72,14 +68,18 @@ func _ready() -> void:
 				% [DevLog.ENTRY_DIR, file_name, problem])
 			return
 
-	# The same rule against names no real entry uses yet. Each must decide both
-	# ways, or it could never fail.
+	# Both authoring and release-build forms, plus refusals for damaged names.
 	var next := {"version": DevLog.NEXT_VERSION}
 	var released := {"version": "0.98.0"}
 	for case: Array in [
 		["0.98.0", released, true],
 		["0.98.1", released, false],
-		["ash-settles", released, false],
+		["ash-settles", released, true],
+		["Ash_Settles", released, false],
+		["ash--settles", released, false],
+		["ash-settles", {"version": "0.98"}, false],
+		["ash-settles", {"version": "0.98.0-rc.1"}, false],
+		["ash-settles", {}, false],
 		["ash-settles", next, true],
 		["ash", next, true],
 		["0.99.0", next, false],
@@ -92,7 +92,7 @@ func _ready() -> void:
 				case[0], case[1]["version"], "refused" if case[2] else "accepted"])
 			return
 
-	print("TEST PASS — dev log is %d file(s) under %s, each named for the version it carries, all loaded"
+	print("TEST PASS — dev log is %d file(s) under %s, each with a valid stable identity, all loaded"
 		% [entries.size(), DevLog.ENTRY_DIR])
 	get_tree().quit(0)
 
