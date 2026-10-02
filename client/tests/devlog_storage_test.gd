@@ -61,7 +61,8 @@ func _ready() -> void:
 	# membership test, not a mapping one: swap the contents of two entry files and
 	# every name would still be found, so both violations would pass.
 	for file_name: String in entry_files:
-		var problem := DevLog.name_problem(file_name.trim_suffix(".json"), _entry_in(file_name))
+		var problem := DevLog.name_problem(file_name.trim_suffix(".json"), _entry_in(file_name),
+			OS.get_environment("WAR_DEVLOG_RELEASE_TREE") == "1")
 		if not problem.is_empty():
 			_fail(("%s%s %s — the filename is how an author finds an entry and how two "
 				+ "concurrent PRs stay on disjoint paths, so it must fit what the entry declares")
@@ -86,11 +87,17 @@ func _ready() -> void:
 		["Ash_Settles", next, false],
 		["ash--settles", next, false],
 	]:
-		var fits: bool = DevLog.name_problem(case[0], case[1]).is_empty()
+		var fits: bool = DevLog.name_problem(case[0], case[1], true).is_empty()
 		if fits != bool(case[2]):
 			_fail("%s.json declaring '%s' was %s" % [
-				case[0], case[1]["version"], "refused" if case[2] else "accepted"])
+				case[0], case[1].get("version", "<missing>"), "refused" if case[2] else "accepted"])
 			return
+
+	# The default source-tree contract stays strict even though CD's stamped
+	# validation accepts the same slug with its observed release number.
+	if DevLog.name_problem("ash-settles", released).is_empty():
+		_fail("source-tree validation accepted a predicted release on a slug")
+		return
 
 	print("TEST PASS — dev log is %d file(s) under %s, each with a valid stable identity, all loaded"
 		% [entries.size(), DevLog.ENTRY_DIR])

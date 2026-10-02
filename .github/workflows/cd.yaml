@@ -176,6 +176,8 @@ jobs:
 
       - name: 📜 Validate the stamped development log
         # Check the release tree rather than only the branch's placeholders.
+        env:
+          WAR_DEVLOG_RELEASE_TREE: "1"
         run: |
           set -euo pipefail
           ./tools/run-client-test.sh devlog_storage_test

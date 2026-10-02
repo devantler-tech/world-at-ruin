@@ -231,6 +231,7 @@ func TestCDRunsStampedDevLogScenesBeforeExport(t *testing.T) {
 	stamp, imported, validation, exported := -1, -1, -1, -1
 	root := t.TempDir()
 	var run string
+	var environment map[string]any
 	for index, raw := range steps {
 		step, ok := raw.(map[string]any)
 		if !ok {
@@ -246,6 +247,7 @@ func TestCDRunsStampedDevLogScenesBeforeExport(t *testing.T) {
 		}
 		if strings.Contains(name, "Validate the stamped development log") {
 			validation, run = index, body
+			environment, _ = step["env"].(map[string]any)
 		}
 		if strings.Contains(name, "Export .app") {
 			exported = index
@@ -259,12 +261,20 @@ func TestCDRunsStampedDevLogScenesBeforeExport(t *testing.T) {
 	}
 	// The workflow owns selecting the two runtime scenes; their actual client
 	// behavior is separately exercised on a fully stamped release tree.
-	probe := "#!/usr/bin/env bash\nset -euo pipefail\nprintf '%s\\n' \"$1\" >> invocations\n"
+	probe := "#!/usr/bin/env bash\nset -euo pipefail\nprintf '%s:%s\\n' \"$1\" \"${WAR_DEVLOG_RELEASE_TREE:-missing}\" >> invocations\n"
 	if err := os.WriteFile(filepath.Join(root, "tools/run-client-test.sh"), []byte(probe), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	cmd := exec.Command("bash", "-c", run)
 	cmd.Dir = root
+	cmd.Env = os.Environ()
+	for key, value := range environment {
+		literal, ok := value.(string)
+		if !ok || strings.Contains(literal, "${{") {
+			t.Fatalf("unsupported validation environment %s", key)
+		}
+		cmd.Env = append(cmd.Env, key+"="+literal)
+	}
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("stamped validation: %v\n%s", err, out)
 	}
@@ -272,7 +282,7 @@ func TestCDRunsStampedDevLogScenesBeforeExport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(got) != "devlog_storage_test\ndevlog_entries_test\n" {
+	if string(got) != "devlog_storage_test:1\ndevlog_entries_test:1\n" {
 		t.Fatalf("executed scenes=%q", got)
 	}
 }

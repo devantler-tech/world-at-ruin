@@ -115,18 +115,17 @@ static func heading(entry: Dictionary) -> String:
 	return "v" + version
 
 
-## Authored slugs retain their identity after stamping a stable version. A
-## numbered filename must still match its own version, so swapping two old
-## entries cannot pass as a valid directory. The authoring guard separately
-## refuses a newly authored entry that predicts its release number.
-static func name_problem(stem: String, entry: Dictionary) -> String:
+## Source entries use next; release-tree validation explicitly permits their
+## unchanged slugs after stamping. Numbered historical filenames must still
+## match their own version in either context.
+static func name_problem(stem: String, entry: Dictionary, release_tree: bool = false) -> String:
 	if is_next(entry):
 		if RegEx.create_from_string(NEXT_ENTRY_NAME).search(stem) == null:
 			return ("a \"%s\" entry is named by a lowercase-hyphen slug such as 'ash-settles', "
 				+ "not '%s'") % [NEXT_VERSION, stem]
 		return ""
 	var declared := String(entry.get("version", "<missing>"))
-	if RegEx.create_from_string(NEXT_ENTRY_NAME).search(stem) != null \
+	if release_tree and RegEx.create_from_string(NEXT_ENTRY_NAME).search(stem) != null \
 		and RegEx.create_from_string("^[0-9]+\\.[0-9]+\\.[0-9]+$").search(declared) != null:
 		return ""
 	if declared != stem:
