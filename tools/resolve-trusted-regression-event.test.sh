@@ -4,11 +4,10 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
-base=1111111111111111111111111111111111111111
-head=2222222222222222222222222222222222222222
-merge=3333333333333333333333333333333333333333
+base="$(printf 'trusted base' | git hash-object --stdin)"
+head="$(printf 'candidate head' | git hash-object --stdin)"
 workflow='devantler-tech/world-at-ruin/.github/workflows/trusted-regressions.yaml@refs/heads/main'
-jq -n --arg base "$base" --arg head "$head" --arg merge "$merge" '{repository:{full_name:"devantler-tech/world-at-ruin",default_branch:"main"},pull_request:{base:{ref:"main",sha:$base,repo:{full_name:"devantler-tech/world-at-ruin"}},head:{sha:$head},merge_commit_sha:$merge}}' >"$tmp/good.json"
+jq -n --arg base "$base" --arg head "$head" '{repository:{full_name:"devantler-tech/world-at-ruin",default_branch:"main"},pull_request:{base:{ref:"main",sha:$base,repo:{full_name:"devantler-tech/world-at-ruin"}},head:{sha:$head},merge_commit_sha:null}}' >"$tmp/good.json"
 run() {
   GITHUB_EVENT_NAME="${1:-pull_request_target}" GITHUB_REPOSITORY=devantler-tech/world-at-ruin \
     GITHUB_WORKFLOW_REF="${2:-$workflow}" GITHUB_EVENT_PATH="$tmp/event.json" GITHUB_OUTPUT="$tmp/outputs" \
