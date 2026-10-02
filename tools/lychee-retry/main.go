@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"html"
 	"net/url"
 	"os"
 	"os/exec"
@@ -29,6 +30,7 @@ type report struct {
 	Successful  *int              `json:"successful"`
 	Errors      *int              `json:"errors"`
 	Unknown     *int              `json:"unknown"`
+	Unsupported *int              `json:"unsupported"`
 	Timeouts    *int              `json:"timeouts"`
 	Excludes    *int              `json:"excludes"`
 	Detailed    *bool             `json:"detailed_stats"`
@@ -47,7 +49,8 @@ func main() {
 
 func run(args []string) error {
 	for _, arg := range args {
-		if arg == "--help" || arg == "-h" || arg == "--version" || arg == "-V" || arg == "--dump" {
+		switch arg {
+		case "--help", "-h", "--version", "-V", "--dump":
 			cmd := exec.Command("lychee", args...)
 			cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 			return cmd.Run()
@@ -106,7 +109,7 @@ func run(args []string) error {
 					os.Remove(input)
 					return err
 				}
-				if *next.Total != 1 || *next.Unique != 1 || *next.Unknown != 0 || *next.Timeouts != 0 || *next.Excludes != 0 {
+				if *next.Total != 1 || *next.Unique != 1 || *next.Unknown != 0 || *next.Unsupported != 0 || *next.Timeouts != 0 || *next.Excludes != 0 {
 					os.Remove(input)
 					return fmt.Errorf("incomplete retry observation for %s", entry.URL)
 				}
@@ -150,6 +153,7 @@ func run(args []string) error {
 		return fmt.Errorf("inconsistent error accounting")
 	}
 	fmt.Printf("Errors............%d\n", remaining+*result.Timeouts+*result.Unknown)
+	fmt.Printf("Unsupported.......%d\n", *result.Unsupported)
 	if remaining != 0 || *result.Timeouts != 0 || *result.Unknown != 0 {
 		fmt.Printf("Documentation inputs: %s\n", strings.Join(inputs, ", "))
 	}
@@ -197,7 +201,7 @@ func extract(options, inputs []string) (string, error) {
 			return "", fmt.Errorf("invalid extracted URL")
 		}
 		seen[target] = true
-		fmt.Fprintf(&content, "[Documentation link](<%s>)\n", target)
+		fmt.Fprintf(&content, "[Documentation link](<%s>)\n", html.EscapeString(target))
 	}
 	file, err := os.CreateTemp("", "war-lychee-inputs-*.md")
 	if err != nil {
@@ -213,21 +217,34 @@ func extract(options, inputs []string) (string, error) {
 }
 
 func retryable(status int) bool {
-	return status == 429 || status == 503 || status == 504
+	switch status {
+	case 429, 503, 504:
+		return true
+	default:
+		return false
+	}
 }
 
 // A URL CLI input tells lychee to fetch that document and extract its links.
 // A local Markdown citation instead rechecks the failed URL itself, once.
 func retryInput(target string) (string, error) {
 	u, err := url.Parse(target)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || strings.ContainsAny(target, "\r\n<>") {
+	if err != nil {
+		return "", fmt.Errorf("invalid retry URL")
+	}
+	switch u.Scheme {
+	case "http", "https":
+	default:
+		return "", fmt.Errorf("invalid retry URL")
+	}
+	if u.Host == "" || strings.ContainsAny(target, "\r\n<>") {
 		return "", fmt.Errorf("invalid retry URL")
 	}
 	file, err := os.CreateTemp("", "war-lychee-retry-*.md")
 	if err != nil {
 		return "", err
 	}
-	_, writeErr := fmt.Fprintf(file, "[Retry](<%s>)\n", target)
+	_, writeErr := fmt.Fprintf(file, "[Retry](<%s>)\n", html.EscapeString(target))
 	closeErr := file.Close()
 	if writeErr != nil || closeErr != nil {
 		os.Remove(file.Name())
@@ -260,21 +277,21 @@ func arguments(args []string) (options, inputs []string, config string, err erro
 				}
 				value = args[i]
 			}
-			if name == "--format" || name == "-f" {
+			switch name {
+			case "--format", "-f":
 				if value != "detailed" {
 					return nil, nil, "", fmt.Errorf("the MegaLinter adapter requires detailed format")
 				}
 				continue
-			}
-			if name == "--config" || name == "-c" {
+			case "--config", "-c":
 				config = value
-			}
-			if name == "--max-retries" || name == "--retry-wait-time" || name == "-r" {
+			case "--max-retries", "--retry-wait-time", "-r":
 				return nil, nil, "", fmt.Errorf("retry policy must come from lychee.toml")
 			}
 			options = append(options, name, value)
 		} else {
-			if name == "--output" || name == "-o" {
+			switch name {
+			case "--output", "-o":
 				return nil, nil, "", fmt.Errorf("file output is unsupported by the MegaLinter adapter")
 			}
 			options = append(options, arg)
@@ -318,10 +335,10 @@ func check(options, inputs []string) (report, error) {
 		}
 	}
 	var result report
-	if json.Unmarshal(output, &result) != nil || result.Total == nil || result.Unique == nil || result.Successful == nil || result.Errors == nil || result.Unknown == nil || result.Timeouts == nil || result.Excludes == nil || result.ErrorMap == nil || result.SuccessMap == nil || result.TimeoutMap == nil || result.ExcludedMap == nil || result.Detailed == nil || !*result.Detailed {
+	if json.Unmarshal(output, &result) != nil || result.Total == nil || result.Unique == nil || result.Successful == nil || result.Errors == nil || result.Unknown == nil || result.Unsupported == nil || result.Timeouts == nil || result.Excludes == nil || result.ErrorMap == nil || result.SuccessMap == nil || result.TimeoutMap == nil || result.ExcludedMap == nil || result.Detailed == nil || !*result.Detailed {
 		return report{}, fmt.Errorf("lychee returned a malformed or incomplete report")
 	}
-	for _, value := range []*int{result.Total, result.Unique, result.Successful, result.Errors, result.Unknown, result.Timeouts, result.Excludes} {
+	for _, value := range []*int{result.Total, result.Unique, result.Successful, result.Errors, result.Unknown, result.Unsupported, result.Timeouts, result.Excludes} {
 		if *value < 0 {
 			return report{}, fmt.Errorf("negative observation count")
 		}
@@ -338,7 +355,7 @@ func check(options, inputs []string) (report, error) {
 		}
 		return total
 	}
-	if *result.Total < *result.Unique || *result.Total != *result.Successful+*result.Errors+*result.Unknown+*result.Timeouts+*result.Excludes || count(result.ErrorMap) != *result.Errors || count(result.SuccessMap) != *result.Successful || count(result.TimeoutMap) != *result.Timeouts || count(result.ExcludedMap) != *result.Excludes {
+	if *result.Total < *result.Unique || *result.Total != *result.Successful+*result.Errors+*result.Unknown+*result.Unsupported+*result.Timeouts+*result.Excludes || count(result.ErrorMap) != *result.Errors || count(result.SuccessMap) != *result.Successful || count(result.TimeoutMap) != *result.Timeouts || count(result.ExcludedMap) != *result.Excludes {
 		return report{}, fmt.Errorf("incomplete observation accounting")
 	}
 	if (err == nil) != (*result.Errors == 0 && *result.Unknown == 0 && *result.Timeouts == 0) {

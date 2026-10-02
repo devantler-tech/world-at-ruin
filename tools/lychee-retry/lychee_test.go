@@ -75,6 +75,85 @@ func TestHealthyLinkPassesWithoutRetry(t *testing.T) {
 	checkLink(t, "healthy.html", 200, 0, http.StatusOK, []int{200}, true)
 }
 
+// Lychee reports game WebSocket examples as unsupported protocols, not dead web pages.
+func TestUnsupportedProtocolRetainsNativeResult(t *testing.T) {
+	t.Parallel()
+	input := filepath.Join(t.TempDir(), "protocol.md")
+	if err := os.WriteFile(input, []byte("[Zone connection](wss://127.0.0.1:8443/zone)\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	validator := os.Getenv("LYCHEE_VALIDATOR")
+	if validator == "" {
+		validator = "lychee"
+	}
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, validator, "--config", filepath.Join(root, "lychee.toml"), "--format", "detailed", "--", input)
+	cmd.Dir = root
+	output, err := cmd.CombinedOutput()
+	if err != nil || !regexp.MustCompile(`Unsupported\.+1`).Match(output) {
+		t.Fatalf("native protocol result changed: %v\n%s", err, output)
+	}
+}
+
+// Flattening and retrying must preserve literal entities in the requested query.
+func TestEntitiesInURLAreNotDecodedTwice(t *testing.T) {
+	t.Parallel()
+	for _, failures := range []int{0, 2} {
+		t.Run(fmt.Sprint(failures), func(t *testing.T) {
+			t.Parallel()
+			var mu sync.Mutex
+			var queries []string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				defer mu.Unlock()
+				queries = append(queries, r.URL.RawQuery)
+				status := 200
+				if len(queries) <= failures {
+					status = 503
+				}
+				w.WriteHeader(status)
+			}))
+			defer server.Close()
+			input := filepath.Join(t.TempDir(), "entity.md")
+			// One Markdown parse turns &amp;amp; into the literal URL text &amp;.
+			if err := os.WriteFile(input, []byte("[Literal entity](<"+server.URL+"/?first=1&amp;amp;second=2>)\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			validator := os.Getenv("LYCHEE_VALIDATOR")
+			if validator == "" {
+				validator = "lychee"
+			}
+			root, err := filepath.Abs("../..")
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, validator, "--config", filepath.Join(root, "lychee.toml"), "--format", "detailed", "--", input)
+			cmd.Dir = root
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("entity link check failed: %v\n%s", err, output)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if len(queries) != failures+1 {
+				t.Fatalf("requests = %v, want %d", queries, failures+1)
+			}
+			for _, query := range queries {
+				if query != "first=1&amp;second=2" {
+					t.Errorf("checked a different query: %q", query)
+				}
+			}
+		})
+	}
+}
+
 // Duplicate citations share one budget; healthy and dead links are never rechecked.
 func TestMixedDocumentsRetryOnlyAffectedLinks(t *testing.T) {
 	t.Parallel()

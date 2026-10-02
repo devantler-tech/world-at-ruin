@@ -2,14 +2,45 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
+// Rebuilding citations must preserve the URI returned by native extraction,
+// including entity-looking query values and numeric references in fragments.
+func TestCitationRoundTripPreservesEntities(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "links.md")
+	if err := os.WriteFile(source, []byte("[Literal entity](<http://127.0.0.1:9876/?first=1&amp;amp;second=2#part&amp;#38;tail>)\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const want = "http://127.0.0.1:9876/?first=1&amp;second=2#part&#38;tail"
+	verify := func(path string) {
+		t.Helper()
+		output, err := exec.Command("lychee", "--dump", "--", path).CombinedOutput()
+		if err != nil || strings.TrimSpace(string(output)) != want {
+			t.Fatalf("URI round trip = %q, want %q: %v", output, want, err)
+		}
+	}
+	verify(source)
+	for _, makeInput := range []func() (string, error){
+		func() (string, error) { return extract(nil, []string{source}) },
+		func() (string, error) { return retryInput(want) },
+	} {
+		path, err := makeInput()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer os.Remove(path)
+		verify(path)
+	}
+}
+
 // A corrupt vendor report must not turn unchecked links into a successful gate.
 func TestValidatorReportsFailClosed(t *testing.T) {
-	valid := `{"total":1,"unique":1,"successful":1,"errors":0,"unknown":0,"timeouts":0,"excludes":0,"error_map":{},"success_map":{"README.md":[{"url":"https://example.com/","status":{"text":"200 OK","code":200}}]},"timeout_map":{},"excluded_map":{},"detailed_stats":true}`
+	valid := `{"total":1,"unique":1,"successful":1,"errors":0,"unknown":0,"unsupported":0,"timeouts":0,"excludes":0,"error_map":{},"success_map":{"README.md":[{"url":"https://example.com/","status":{"text":"200 OK","code":200}}]},"timeout_map":{},"excluded_map":{},"detailed_stats":true}`
 	for _, test := range []struct {
 		name, body string
 		wantError  bool
@@ -65,8 +96,8 @@ func TestRetrySuccessMustNameRequestedURL(t *testing.T) {
 			if err := os.WriteFile(config, []byte("max_retries = 1\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			first := `{"total":1,"unique":1,"successful":0,"errors":1,"unknown":0,"timeouts":0,"excludes":0,"error_map":{"links.md":[{"url":"https://example.com/","status":{"text":"503 Service Unavailable","code":503}}]},"success_map":{},"timeout_map":{},"excluded_map":{},"detailed_stats":true}`
-			second := `{"total":1,"unique":1,"successful":1,"errors":0,"unknown":0,"timeouts":0,"excludes":0,"error_map":{},"success_map":{"links.md":[{"url":"` + target + `","status":{"text":"200 OK","code":200}}]},"timeout_map":{},"excluded_map":{},"detailed_stats":true}`
+			first := `{"total":1,"unique":1,"successful":0,"errors":1,"unknown":0,"unsupported":0,"timeouts":0,"excludes":0,"error_map":{"links.md":[{"url":"https://example.com/","status":{"text":"503 Service Unavailable","code":503}}]},"success_map":{},"timeout_map":{},"excluded_map":{},"detailed_stats":true}`
+			second := `{"total":1,"unique":1,"successful":1,"errors":0,"unknown":0,"unsupported":0,"timeouts":0,"excludes":0,"error_map":{},"success_map":{"links.md":[{"url":"` + target + `","status":{"text":"200 OK","code":200}}]},"timeout_map":{},"excluded_map":{},"detailed_stats":true}`
 			marker := filepath.Join(dir, "first-pass")
 			script := "#!/bin/sh\ncase \" $* \" in *' --dump '*) printf '%s\\n' 'https://example.com/'; exit 0;; esac\nif [ -f '" + marker + "' ]; then\ncat <<'REPORT'\n" + second + "\nREPORT\nelse\ntouch '" + marker + "'\ncat <<'REPORT'\n" + first + "\nREPORT\nexit 2\nfi\n"
 			if err := os.WriteFile(filepath.Join(dir, "lychee"), []byte(script), 0o700); err != nil {
