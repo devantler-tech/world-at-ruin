@@ -23,13 +23,14 @@ func _initialize() -> void:
 	var failures := []
 	if load("res://icon.svg") == null:
 		failures.append("generated asset metadata unavailable")
-	for source in ["res://../server/wire/wire.go", "res://../.github/workflows/ci.yaml"]:
+	for source in ["res://../server/wire/wire.go", "res://../.github/workflows/ci.yaml", "res://../docs/phase-0/cave-chamber.png"]:
 		if FileAccess.get_file_as_string(source) != "source data\n":
 			failures.append("readonly source data unavailable")
 		if FileAccess.open(source, FileAccess.WRITE) != null:
 			failures.append("source data writable")
-	if OS.get_environment("GITHUB_TOKEN") != "":
-		failures.append("inherited host credential environment")
+	for key in ["GITHUB_TOKEN", "ACTIONS_RUNTIME_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_TOKEN", "GITHUB_OUTPUT", "GITHUB_ENV"]:
+		if OS.get_environment(key) != "":
+			failures.append("inherited host credential environment: " + key)
 	if FileAccess.file_exists("HOST_SENTINEL"):
 		failures.append("host workspace exposed")
 	if FileAccess.file_exists("/var/run/docker.sock"):
@@ -72,6 +73,8 @@ GOTOOLCHAIN=local GOWORK=off go build -o "$tmp/cache-guard" "$root/tools/trusted
 export GODOT_SANDBOX_CACHE_GUARD="$tmp/cache-guard"
 mkdir "$tmp/import-metadata"
 export GODOT_SANDBOX_METADATA="$tmp/import-metadata"
+printf 'source data\n' >"$tmp/frozen-frame.png"
+export GODOT_SANDBOX_FRAME="$tmp/frozen-frame.png"
 cp "$root/client/icon.svg" "$tmp/work/client/icon.svg"
 image="$(bash "$root/tools/build-trusted-regression-runtime.sh")"
 cd "$tmp/work"
@@ -79,9 +82,11 @@ probe_failure() {
   cat "$tmp/import.log" "$tmp/run.log" 2>/dev/null || true
   exit 1
 }
-GODOT_SANDBOX_IMAGE="$image" GITHUB_TOKEN=host-only-sentinel \
+GODOT_SANDBOX_IMAGE="$image" GITHUB_TOKEN=host-only-sentinel ACTIONS_RUNTIME_TOKEN=host-only-sentinel \
+  ACTIONS_ID_TOKEN_REQUEST_TOKEN=host-only-sentinel GITHUB_OUTPUT=host-only-sentinel GITHUB_ENV=host-only-sentinel \
   bash "$root/tools/sandbox-godot.sh" --headless --editor --quit --path client >"$tmp/import.log" 2>&1 || probe_failure
-GODOT_SANDBOX_IMAGE="$image" GITHUB_TOKEN=host-only-sentinel \
+GODOT_SANDBOX_IMAGE="$image" GITHUB_TOKEN=host-only-sentinel ACTIONS_RUNTIME_TOKEN=host-only-sentinel \
+  ACTIONS_ID_TOKEN_REQUEST_TOKEN=host-only-sentinel GITHUB_OUTPUT=host-only-sentinel GITHUB_ENV=host-only-sentinel \
   bash "$root/tools/sandbox-godot.sh" --headless --path client --script res://tests/probe.gd >"$tmp/run.log" 2>&1 || probe_failure
 grep -q 'TEST PASS -- real sandbox refuses' "$tmp/run.log" || probe_failure
 if grep -Eq 'TEST FAIL|SCRIPT ERROR|^ERROR' "$tmp/import.log" "$tmp/run.log"; then

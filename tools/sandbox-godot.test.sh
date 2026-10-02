@@ -19,6 +19,8 @@ chmod +x "$tmp/bin/docker" "$tmp/bin/cache-guard"
 export GODOT_SANDBOX_CACHE_GUARD="$tmp/bin/cache-guard"
 mkdir "$tmp/import-metadata"
 export GODOT_SANDBOX_METADATA="$tmp/import-metadata"
+printf 'source data\n' >"$tmp/frozen-frame.png"
+export GODOT_SANDBOX_FRAME="$tmp/frozen-frame.png"
 printf 'asset bytes\n' >"$tmp/work/client/icon.svg"
 image="sha256:$(printf 'image identity' | sha256sum | cut -d' ' -f1)"
 cd "$tmp/work"
@@ -34,9 +36,10 @@ done
 grep -Fxq "type=bind,source=$PWD/client,target=/project/client,readonly" "$tmp/args"
 grep -Fxq "type=bind,source=$PWD/server/wire/wire.go,target=/project/server/wire/wire.go,readonly" "$tmp/args"
 grep -Fxq "type=bind,source=$PWD/.github/workflows/ci.yaml,target=/project/.github/workflows/ci.yaml,readonly" "$tmp/args"
-test "$(grep -Fxc -- '--mount' "$tmp/args")" -eq 5
+test "$(grep -Fxc -- '--mount' "$tmp/args")" -eq 6
 grep -Fxq "type=bind,source=$PWD/client/.godot,target=/project/client/.godot" "$tmp/args"
 grep -Fxq "type=bind,source=$tmp/import-metadata/icon.svg.import,target=/project/client/icon.svg.import" "$tmp/args"
+grep -Fxq "type=bind,source=$tmp/frozen-frame.png,target=/project/docs/phase-0/cave-chamber.png,readonly" "$tmp/args"
 test "$(cat client/tests/alpha_test.gd)" = 'immutable trusted harness'
 grep -Eq '^::stop-commands::[0-9a-f-]+$' "$tmp/log"
 PATH="$tmp/bin:$PATH" bash "$root/tools/sandbox-godot.sh" --headless --path client >"$tmp/log"

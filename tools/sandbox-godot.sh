@@ -9,6 +9,11 @@ image="$GODOT_SANDBOX_IMAGE"
 }
 project="$PWD/client"
 metadata="$GODOT_SANDBOX_METADATA"
+frame="$GODOT_SANDBOX_FRAME"
+if [ ! -f "$frame" ] || [ -L "$frame" ]; then
+  echo '::error::trusted frame fixture is missing or symlinked' >&2
+  exit 1
+fi
 if [ ! -d "$project" ] || [ -L "$project" ] || [ -L "$project/.godot" ] ||
   [ ! -d "$metadata" ] || [ -L "$metadata" ]; then
   echo '::error::sandbox project and generated-state paths must be real directories' >&2
@@ -87,6 +92,7 @@ docker run --rm --network none --cap-drop ALL \
   --mount "type=bind,source=$project,target=/project/client,readonly" \
   --mount "type=bind,source=$PWD/server/wire/wire.go,target=/project/server/wire/wire.go,readonly" \
   --mount "type=bind,source=$PWD/.github/workflows/ci.yaml,target=/project/.github/workflows/ci.yaml,readonly" \
+  --mount "type=bind,source=$frame,target=/project/docs/phase-0/cave-chamber.png,readonly" \
   --workdir /project --entrypoint /bin/sh "${extra_mounts[@]}" "$image" -c '
     set -eu
     mkdir -p /tmp/config/godot
