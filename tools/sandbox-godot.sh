@@ -56,6 +56,8 @@ docker run --rm --network none --cap-drop ALL \
   --tmpfs /tmp:rw,exec,nosuid,nodev,size=2g,mode=1777 \
   --env HOME=/tmp --env XDG_CACHE_HOME=/tmp/cache \
   --mount "type=bind,source=$project,target=/project/client,readonly" \
+  --mount "type=bind,source=$PWD/server/wire/wire.go,target=/project/server/wire/wire.go,readonly" \
+  --mount "type=bind,source=$PWD/.github/workflows/ci.yaml,target=/project/.github/workflows/ci.yaml,readonly" \
   --workdir /project --mount "$cache_mount" "$image" "$@" || status=$?
 if [ "$status" -eq 0 ] && [ "$editor" = true ]; then
   "$cache_guard" "$project" || status=$?

@@ -29,6 +29,9 @@ for flag in --rm --network none --cap-drop ALL --security-opt no-new-privileges 
   grep -Fxq -- "$flag" "$tmp/args"
 done
 grep -Fxq "type=bind,source=$PWD/client,target=/project/client,readonly" "$tmp/args"
+grep -Fxq "type=bind,source=$PWD/server/wire/wire.go,target=/project/server/wire/wire.go,readonly" "$tmp/args"
+grep -Fxq "type=bind,source=$PWD/.github/workflows/ci.yaml,target=/project/.github/workflows/ci.yaml,readonly" "$tmp/args"
+test "$(grep -Fxc -- '--mount' "$tmp/args")" -eq 4
 grep -Fxq "type=bind,source=$PWD/client/.godot,target=/project/client/.godot" "$tmp/args"
 test "$(cat client/tests/alpha_test.gd)" = 'immutable trusted harness'
 grep -Eq '^::stop-commands::[0-9a-f-]+$' "$tmp/log"

@@ -21,6 +21,11 @@ extends SceneTree
 
 func _initialize() -> void:
 	var failures := []
+	for source in ["res://../server/wire/wire.go", "res://../.github/workflows/ci.yaml"]:
+		if FileAccess.get_file_as_string(source) != "source data\n":
+			failures.append("readonly source data unavailable")
+		if FileAccess.open(source, FileAccess.WRITE) != null:
+			failures.append("source data writable")
 	if OS.get_environment("GITHUB_TOKEN") != "":
 		failures.append("inherited host credential environment")
 	if FileAccess.file_exists("HOST_SENTINEL"):
