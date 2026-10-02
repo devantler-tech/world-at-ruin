@@ -28,6 +28,12 @@ repo_tags_rc=0
 publish_newer_after_first_tag=""
 manifest_json_override=""
 manifest_fetch_error=""
+descriptor_rc=0
+descriptor_override=""
+signature_verify_rc=0
+selected_annotation_override=""
+tag_rc=0
+alias_changes_after_resolve=0
 
 fail() {
 	echo "FAIL: $*" >&2
@@ -42,6 +48,12 @@ reset_registry() {
 	publish_newer_after_first_tag=""
 	manifest_json_override=""
 	manifest_fetch_error=""
+	descriptor_rc=0
+	descriptor_override=""
+	signature_verify_rc=0
+	selected_annotation_override=""
+	tag_rc=0
+	alias_changes_after_resolve=0
 }
 
 set_tags() {
@@ -69,13 +81,35 @@ tag_calls() {
 # real tag operation.
 oras() {
 	printf '%s\n' "$*" >>"${calls_file}"
-
-	if [ "$1" = "repo" ] && [ "$2" = "tags" ]; then
+	if [ "$1" = repo ] && [ "$2" = tags ]; then
 		cat "${tags_file}"
 		return "${repo_tags_rc}"
 	fi
-
-	if [ "$1" = "manifest" ] && [ "$2" = "fetch" ]; then
+	if [ "$1" = manifest ] && [ "$2" = fetch ]; then
+		if [ "${3:-}" = --descriptor ]; then
+			if [ -n "${descriptor_override}" ]; then
+				printf '%s\n' "${descriptor_override}"
+			else
+				case "${4##*:}" in
+				0.79.0) printf '{"digest":"sha256:%064d"}\n' 79 ;;
+				0.80.0) printf '{"digest":"sha256:%064d"}\n' 80 ;;
+				*) return 2 ;;
+				esac
+			fi
+			return "${descriptor_rc}"
+		fi
+		if [[ "${3:-}" == *@sha256:* ]]; then
+			local release
+			case "${3##*@sha256:}" in
+			0000000000000000000000000000000000000000000000000000000000000079) release=0.79.0 ;;
+			0000000000000000000000000000000000000000000000000000000000000080) release=0.80.0 ;;
+			*) return 2 ;;
+			esac
+			[ -z "${selected_annotation_override}" ] || release="${selected_annotation_override}"
+			printf '{"annotations":{"org.opencontainers.image.version":"%s"}}\n' "${release}"
+			return 0
+		fi
+		[[ "${3:-}" == *:latest ]] || return 2
 		if [ -n "${manifest_fetch_error}" ]; then
 			printf '%s\n' "${manifest_fetch_error}" >&2
 			return 1
@@ -93,12 +127,20 @@ oras() {
 		printf '{"annotations":{"org.opencontainers.image.version":"%s"}}\n' "${current}"
 		return 0
 	fi
-
-	if [ "$1" = "tag" ]; then
-		local source="$2"
-		local destination="$3"
-		local version="${source##*:}"
-		[ "${destination}" = "latest" ] || return 2
+	if [ "$1" = tag ]; then
+		[ "${tag_rc}" -eq 0 ] || return "${tag_rc}"
+		local source="$2" version
+		case "${source}" in
+		*@sha256:0000000000000000000000000000000000000000000000000000000000000079) version=0.79.0 ;;
+		*@sha256:0000000000000000000000000000000000000000000000000000000000000080) version=0.80.0 ;;
+		*:0.80.0)
+			version=0.80.0
+			[ "${alias_changes_after_resolve}" -eq 0 ] || version=0.79.0
+			;;
+		*:0.79.0) version=0.79.0 ;;
+		*) return 2 ;;
+		esac
+		[ "$3" = latest ] || return 2
 		set_latest "${version}"
 		if [ -n "${publish_newer_after_first_tag}" ]; then
 			printf '%s\n' "${publish_newer_after_first_tag}" >>"${tags_file}"
@@ -106,10 +148,15 @@ oras() {
 		fi
 		return 0
 	fi
-
 	return 2
 }
 
+cosign() {
+	printf 'cosign %s\n' "$*" >>"${calls_file}"
+	return "${signature_verify_rc}"
+}
+
+export GITHUB_SERVER_URL=https://github.com GITHUB_REPOSITORY=devantler-tech/world-at-ruin
 artifact="ghcr.io/devantler-tech/world-at-ruin/client"
 
 # A first publication establishes latest.
@@ -195,7 +242,7 @@ out="$(advance_latest_tag "${artifact}" "0.80.0")" ||
 	fail "newer publication did not advance latest"
 [ "$(latest)" = "0.80.0" ] || fail "newer publication exposed $(latest), want 0.80.0"
 [ "$(tag_calls)" -eq 1 ] || fail "newer publication should tag exactly once"
-grep -qF "tag ${artifact}:0.80.0 latest" "${calls_file}" ||
+grep -qF "tag ${artifact}@sha256:0000000000000000000000000000000000000000000000000000000000000080 latest" "${calls_file}" ||
 	fail "the newer publication did not tag the newest immutable version"
 
 # A newer immutable version that appears while an older run is tagging must be
@@ -209,7 +256,7 @@ out="$(advance_latest_tag "${artifact}" "0.79.0")" ||
 	fail "overlap convergence left latest at $(latest), want 0.80.0"
 [ "$(tag_calls)" -eq 2 ] ||
 	fail "overlap convergence should write the old candidate then repair to the new one"
-grep -qF "tag ${artifact}:0.80.0 latest" "${calls_file}" ||
+grep -qF "tag ${artifact}@sha256:0000000000000000000000000000000000000000000000000000000000000080 latest" "${calls_file}" ||
 	fail "overlap convergence never repaired latest to the newly visible version"
 
 # An unreadable tag catalogue is unknown state, never permission to retag.
@@ -221,5 +268,58 @@ if advance_latest_tag "${artifact}" "0.80.0" >/dev/null 2>&1; then
 fi
 [ "$(tag_calls)" -eq 0 ] || fail "catalogue failure still issued a tag write"
 [ -z "$(latest)" ] || fail "catalogue failure changed latest"
+
+# An unsigned newer catalogue artifact must never replace the checked latest.
+reset_registry
+set_tags "0.79.0" "0.80.0"
+set_latest "0.79.0"
+signature_verify_rc=1
+if advance_latest_tag "${artifact}" "0.79.0" >/dev/null 2>&1; then
+	fail "unverified catalogue artifact was promoted"
+fi
+[ "$(tag_calls)" -eq 0 ] || fail "unverified catalogue artifact issued a latest write"
+[ "$(latest)" = 0.79.0 ] || fail "unverified catalogue artifact changed latest"
+
+# Unreadable/malformed descriptors and a signed object whose version differs
+# from the catalogue name are all refusals, not permission to publish.
+for failure in descriptor malformed annotation; do
+	reset_registry
+	set_tags "0.79.0" "0.80.0"
+	set_latest "0.79.0"
+	case "${failure}" in
+	descriptor) descriptor_rc=1 ;;
+	malformed) descriptor_override='{"digest":"not-a-digest"}' ;;
+	annotation) selected_annotation_override=0.79.0 ;;
+	esac
+	if advance_latest_tag "${artifact}" "0.80.0" >/dev/null 2>&1; then
+		fail "${failure} failure still promoted the catalogue artifact"
+	fi
+	[ "$(tag_calls)" -eq 0 ] || fail "${failure} failure issued a latest write"
+	[ "$(latest)" = 0.79.0 ] || fail "${failure} failure changed latest"
+done
+
+# A version alias can move after resolution; only its verified digest may be
+# promoted, so the replacement alias cannot become latest.
+reset_registry
+set_tags "0.79.0" "0.80.0"
+set_latest "0.79.0"
+alias_changes_after_resolve=1
+advance_latest_tag "${artifact}" 0.80.0 >/dev/null ||
+	fail "a version-alias change defeated digest promotion"
+[ "$(latest)" = 0.80.0 ] || fail "replacement version alias became latest"
+grep -qF "cosign verify ${artifact}@sha256:0000000000000000000000000000000000000000000000000000000000000080" "${calls_file}" ||
+	fail "the selected digest was not signature-verified"
+if grep '^tag ' "${calls_file}" | grep -qv '@sha256:'; then
+	fail "promotion re-resolved a mutable version alias"
+fi
+
+reset_registry
+set_tags "0.80.0"
+set_latest "0.79.0"
+tag_rc=1
+if advance_latest_tag "${artifact}" 0.80.0 >/dev/null 2>&1; then
+	fail "a rejected registry write reported successful convergence"
+fi
+[ "$(latest)" = 0.79.0 ] || fail "rejected registry write changed latest"
 
 echo "ok"
