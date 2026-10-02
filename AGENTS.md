@@ -1046,7 +1046,9 @@ everything shipped afterwards is held to.
     version** into `config/version` and `DevLog.VERSION` at build time — and, on a full-history
     checkout, rewrites any dev-log entry still carrying the placeholder version `"next"` to the
     first release containing the commit that added it (`tools/devlog-stamp.sh`, #518; a stable
-    release fails if one is left unstamped). None of these stamps is committed back. It verifies the exported app
+    release fails if one is left unstamped). Authored slug filenames retain their identity after
+    stamping; the release tree passes both dev-log storage and entry validation. None of these
+    stamps is committed back. It verifies the exported app
     boots reporting `BOOT_OK v<version>` (the proof the stamp reached the shipped binary), and
     hands the zip to a checkout-free attachment job. The build job is read-only; only the
     checkout-free attachment and final publication jobs receive `contents: write`, and the
@@ -1065,7 +1067,9 @@ everything shipped afterwards is held to.
     write, leaving the older contract live while the job goes red. Promotion therefore has to be
     **serialized or a genuine compare-and-swap** once anything depends on `latest` being the
     greatest verified release ([ADR 0004](docs/adr/0004-serve-delivery-bytes-from-a-plain-https-origin.md), #788). The
-    **digest** is what the updater pins — never the mutable tag. OCI is required rather than merely
+    Prereleases publish their build and a digest-signed immutable version tag without an update
+    manifest, and leave the stable `latest` tag unchanged. Their version cannot be represented by
+    the stable update contract. The **digest** is what the updater pins — never the mutable tag. OCI is required rather than merely
     preferred: GitHub Packages has no generic/raw-file registry, so an OCI artifact is the only way
     a `.app` zip enters it. The GitHub Release asset remains the *install* download and, once delivery
     fields exist, the *delivery* origin for pack and shell bytes (ADR 0004); GHCR is the *contract*
