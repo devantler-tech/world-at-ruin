@@ -6,7 +6,7 @@ attention and love as every other product and sits in the normal selection rotat
 direction 2026-07-17, superseding the bootstrap-day "lowest priority" note); expect the game to
 accrete over years all the same. The maintainer redirects via
 the **PR workflow**; ship draft PRs as usual. Shared cross-repo rules live in the monorepo
-[`AGENTS.md`](https://github.com/devantler-tech/monorepo/blob/main/AGENTS.md) (trust gate, draft-PR
+[`AGENTS.md`](https://raw.githubusercontent.com/devantler-tech/monorepo/refs/heads/main/AGENTS.md) (trust gate, draft-PR
 discipline, issue-driven work, guardrails); this file adds the product's settled design and
 repo-specific conventions.
 
