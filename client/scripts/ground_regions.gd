@@ -453,22 +453,20 @@ static func foliage_for(region_sites: Array[Site], x: float, z: float) -> Dictio
 	if at[&"blend"] >= 1.0:
 		var only: Dictionary = REGIONS[owner]
 		return {
-			&"density": float(only[&"foliage_density"]),
+			&"density": _scalar_profile(at, &"foliage_density"),
 			&"kinds": (only[&"foliage_kinds"] as Array).duplicate(),
 		}
 	var shares: PackedFloat32Array = at[&"shares"]
-	var density := 0.0
 	var kinds := [0.0, 0.0, 0.0, 0.0]
 	for r in REGIONS.size():
 		var w := shares[r]
 		if w <= 0.0:
 			continue
 		var region: Dictionary = REGIONS[r]
-		density += float(region[&"foliage_density"]) * w
 		var region_kinds: Array = region[&"foliage_kinds"]
 		for kind in kinds.size():
 			kinds[kind] += float(region_kinds[kind]) * w
-	return {&"density": density, &"kinds": kinds}
+	return {&"density": _scalar_profile(at, &"foliage_density"), &"kinds": kinds}
 
 
 ## The landform at a place: `{ amp, ridged }`, cross-faded across every region
@@ -488,21 +486,21 @@ static func foliage_for(region_sites: Array[Site], x: float, z: float) -> Dictio
 ## none is needed — including where three regions meet.
 static func landform_for(region_sites: Array[Site], x: float, z: float) -> Dictionary:
 	var at := region_for(region_sites, x, z)
-	var owner: int = at[&"region"]
+	return {&"amp": _scalar_profile(at, &"amp"), &"ridged": _scalar_profile(at, &"ridged")}
+
+
+## Preserve the decided-interior fast path and the ordered region shares.
+static func _scalar_profile(at: Dictionary, key: StringName) -> float:
 	if at[&"blend"] >= 1.0:
-		var only: Dictionary = REGIONS[owner]
-		return {&"amp": float(only[&"amp"]), &"ridged": float(only[&"ridged"])}
+		return float((REGIONS[int(at[&"region"])] as Dictionary)[key])
 	var shares: PackedFloat32Array = at[&"shares"]
-	var amp := 0.0
-	var ridged := 0.0
+	var value := 0.0
 	for r in REGIONS.size():
 		var w := shares[r]
 		if w <= 0.0:
 			continue
-		var reg: Dictionary = REGIONS[r]
-		amp += float(reg[&"amp"]) * w
-		ridged += float(reg[&"ridged"]) * w
-	return {&"amp": amp, &"ridged": ridged}
+		value += float((REGIONS[r] as Dictionary)[key]) * w
+	return value
 
 
 ## How much the ridge operator is lifted so it does not raise the ground it is
