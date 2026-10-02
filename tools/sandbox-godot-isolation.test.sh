@@ -64,11 +64,15 @@ GOTOOLCHAIN=local GOWORK=off go build -o "$tmp/cache-guard" "$root/tools/trusted
 export GODOT_SANDBOX_CACHE_GUARD="$tmp/cache-guard"
 image="$(bash "$root/tools/build-trusted-regression-runtime.sh")"
 cd "$tmp/work"
+probe_failure() {
+  cat "$tmp/import.log" "$tmp/run.log" 2>/dev/null || true
+  exit 1
+}
 GODOT_SANDBOX_IMAGE="$image" GITHUB_TOKEN=host-only-sentinel \
-  bash "$root/tools/sandbox-godot.sh" --headless --editor --quit --path client >"$tmp/import.log" 2>&1
+  bash "$root/tools/sandbox-godot.sh" --headless --editor --quit --path client >"$tmp/import.log" 2>&1 || probe_failure
 GODOT_SANDBOX_IMAGE="$image" GITHUB_TOKEN=host-only-sentinel \
-  bash "$root/tools/sandbox-godot.sh" --headless --path client --script res://tests/probe.gd >"$tmp/run.log" 2>&1
-grep -q 'TEST PASS -- real sandbox refuses' "$tmp/run.log"
+  bash "$root/tools/sandbox-godot.sh" --headless --path client --script res://tests/probe.gd >"$tmp/run.log" 2>&1 || probe_failure
+grep -q 'TEST PASS -- real sandbox refuses' "$tmp/run.log" || probe_failure
 if grep -Eq 'TEST FAIL|SCRIPT ERROR|^ERROR' "$tmp/import.log" "$tmp/run.log"; then
   cat "$tmp/import.log" "$tmp/run.log"
   exit 1
