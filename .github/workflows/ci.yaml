@@ -40,6 +40,8 @@ jobs:
         run: tools/test-cd-cask-rest-delivery.sh
       - name: Cask disarm survives an exhausted GraphQL budget
         run: tools/test-cd-cask-disarm-budget.sh
+      - name: GHCR publication failures preserve the verified latest
+        run: tools/test-cd-ghcr-verification-order.sh
       - name: GHCR latest converges to the newest immutable release
         run: tools/test-cd-ghcr-latest-forward.sh
       - name: CLA comment concurrency collapses pending runs
