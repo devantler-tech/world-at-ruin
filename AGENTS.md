@@ -978,11 +978,18 @@ everything shipped afterwards is held to.
 - **CI, CD and releases:**
   - **Link checking remains blocking under rate limits.** `lychee.toml` permits five retries
     with exponential backoff while retaining Godot-specific request pacing. A fatal MegaLinter
-    pre-command runs `go test -v -count=1 -timeout=3m tools/lychee-retry/lychee_test.go` against
-    its own lychee binary and the production config: temporary 429 responses recover, a 404
-    fails, and a persistent 429 exhausts the budget. Run that command locally from the repo root;
-    it requires Go and lychee and uses a local HTTP fixture. Never accept 429 as success or
-    exclude a rate-limited host to make lint pass.
+    pre-command tests and builds `tools/lychee-retry/main.go` as its executable adapter, then
+    runs the real HTTP controls against that adapter, its own lychee binary and the production
+    config. Native 0.24.2 does not retry rejected 503/504 responses. The adapter uses native
+    extraction, refuses extraction warnings, deduplicates citations and owns one bounded budget
+    across 429/503/504, with no nested native retries. Temporary errors recover; persistent errors
+    exhaust six attempts; healthy pages and 404s receive one request. It rejects malformed,
+    incomplete or inconsistent reports. Local validation: run the two Go tests named in
+    `.mega-linter.yml`, build the adapter, and set `LYCHEE_VALIDATOR` to that binary for the HTTP
+    tests. Go and lychee are required; requests use a local fixture. Never accept an error status
+    or exclude a valid host to make lint pass. Remove the adapter only after a released native
+    validator passes these same real HTTP controls. CLI remaps are applied once; configuration
+    remaps are refused until supported without replaying them.
   - `ci.yaml` (`pull_request` + `merge_group`) lints, tests and analyses. It is the gate on a
     change. Its required aggregate includes a reachable-vulnerability scan for both Go modules.
     Its macOS export job is **build verification** — proof the project still exports and the
