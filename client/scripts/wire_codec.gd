@@ -112,29 +112,27 @@ static func decode(bytes: PackedByteArray) -> Dictionary:
 
 	if kind == KIND_SNAPSHOT:
 		var snapshot := r.read_snapshot(version)
-		if not r.error.is_empty():
-			return _reader_fail(r)
-		var verr := _validate_snapshot(snapshot)
-		if not verr.is_empty():
-			return {"ok": false, "error": verr["error"], "detail": verr["detail"]}
-		var trailing := _check_no_trailing(r)
-		if not trailing.is_empty():
-			return trailing
-		return {"ok": true, "version": version, "kind": KIND_SNAPSHOT, "snapshot": snapshot}
+		return _complete_message(r, snapshot, version, KIND_SNAPSHOT)
 
 	if kind == KIND_SNAPSHOT_DELTA:
 		var delta := r.read_delta(version)
-		if not r.error.is_empty():
-			return _reader_fail(r)
-		var verr := _validate_delta(delta)
-		if not verr.is_empty():
-			return {"ok": false, "error": verr["error"], "detail": verr["detail"]}
-		var trailing := _check_no_trailing(r)
-		if not trailing.is_empty():
-			return trailing
-		return {"ok": true, "version": version, "kind": KIND_SNAPSHOT_DELTA, "delta": delta}
+		return _complete_message(r, delta, version, KIND_SNAPSHOT_DELTA)
 
 	return {"ok": false, "error": ERR_KIND, "detail": "unknown message kind %d" % kind}
+
+
+## Read errors precede payload validation, which precedes trailing bytes.
+static func _complete_message(r: _Reader, payload: Dictionary, version: int, kind: int) -> Dictionary:
+	if not r.error.is_empty():
+		return _reader_fail(r)
+	var verr := _validate_snapshot(payload) if kind == KIND_SNAPSHOT else _validate_delta(payload)
+	if not verr.is_empty():
+		return {"ok": false, "error": verr["error"], "detail": verr["detail"]}
+	var trailing := _check_no_trailing(r)
+	if not trailing.is_empty():
+		return trailing
+	var key := "snapshot" if kind == KIND_SNAPSHOT else "delta"
+	return {"ok": true, "version": version, "kind": kind, key: payload}
 
 
 # --- shared validity predicate (one source, mirrored from the server) --------
@@ -404,14 +402,21 @@ class _Reader:
 		var ended_casts: Array = read_ids("ended casts") if version >= 2 else []
 		return {"tick": tick, "entered": entered, "moved": moved, "left": left, "started_casts": started_casts, "ended_casts": ended_casts}
 
-	func read_casts(list_name: String) -> Array:
+	## Validate before allocation; -1 distinguishes failure from an empty list.
+	func read_count(list_name: String, cap: int, entry_size: int) -> int:
 		var n := u32()
 		if not error.is_empty():
-			return []
-		if n > WireCodec.MAX_CASTS:
+			return -1
+		if n > cap:
 			record_fail(WireCodec.ERR_COUNT, "%s claims %d entries" % [list_name, n])
-			return []
-		if not need(n * WireCodec.ACTIVE_CAST_SIZE):
+			return -1
+		if not need(n * entry_size):
+			return -1
+		return n
+
+	func read_casts(list_name: String) -> Array:
+		var n := read_count(list_name, WireCodec.MAX_CASTS, WireCodec.ACTIVE_CAST_SIZE)
+		if n < 0:
 			return []
 		var out: Array = []
 		for _i in n:
@@ -448,13 +453,8 @@ class _Reader:
 	## reported as ERR_COUNT and can never size a buffer — the same order the
 	## server enforces.
 	func read_states(list_name: String) -> Array:
-		var n := u32()
-		if not error.is_empty():
-			return []
-		if n > WireCodec.MAX_ENTITIES:
-			record_fail(WireCodec.ERR_COUNT, "%s claims %d entries" % [list_name, n])
-			return []
-		if not need(n * WireCodec.ENTITY_STATE_SIZE):
+		var n := read_count(list_name, WireCodec.MAX_ENTITIES, WireCodec.ENTITY_STATE_SIZE)
+		if n < 0:
 			return []
 		var out: Array = []
 		for _i in n:
@@ -470,13 +470,8 @@ class _Reader:
 
 	## Read a count-prefixed ID list, under the same cap-first rule.
 	func read_ids(list_name: String) -> Array:
-		var n := u32()
-		if not error.is_empty():
-			return []
-		if n > WireCodec.MAX_ENTITIES:
-			record_fail(WireCodec.ERR_COUNT, "%s claims %d entries" % [list_name, n])
-			return []
-		if not need(n * 8):
+		var n := read_count(list_name, WireCodec.MAX_ENTITIES, 8)
+		if n < 0:
 			return []
 		var out: Array = []
 		for _i in n:

@@ -29,8 +29,7 @@ const NAME_TAILS := [
 
 
 static func forge_name(rng: RandomNumberGenerator) -> String:
-	return NAME_HEADS[rng.randi_range(0, NAME_HEADS.size() - 1)] \
-		+ NAME_TAILS[rng.randi_range(0, NAME_TAILS.size() - 1)]
+	return RecipeGeneration.forge_name(rng, NAME_HEADS, NAME_TAILS)
 
 
 ## The whole hound, from a name: build, proportions, snout/ears/tail, tint.
@@ -72,10 +71,8 @@ static func recipe_for(creature_name: String) -> Dictionary:
 ## Quantized store: near-zero weights are omitted (creator convention), the
 ## rest rounded to 0.01.
 static func _put(shapes: Dictionary, shape_name: String, value: float) -> void:
-	if absf(value) < 0.03:
-		return
-	shapes[shape_name] = _q(value)
+	RecipeGeneration.put_shape(shapes, shape_name, value)
 
 
 static func _q(value: float) -> float:
-	return snappedf(value, 0.01)
+	return RecipeGeneration.quantize(value)
