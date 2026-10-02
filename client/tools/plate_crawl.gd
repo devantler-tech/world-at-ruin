@@ -290,28 +290,7 @@ func _walk(mat: ShaderMaterial, plates: bool) -> float:
 ## Luma of every pixel in the crop, row-major. Read out of the raw buffer rather
 ## than through get_pixel(): the crop is ~200k pixels and this runs eight times.
 func _crop_luma() -> PackedFloat32Array:
-	var img := get_viewport().get_texture().get_image()
-	img.convert(Image.FORMAT_RGB8)
-	var w := img.get_width()
-	var h := img.get_height()
-	var x0 := int(CROP.position.x * float(w))
-	var y0 := int(CROP.position.y * float(h))
-	var x1 := mini(int((CROP.position.x + CROP.size.x) * float(w)), w)
-	var y1 := mini(int((CROP.position.y + CROP.size.y) * float(h)), h)
-	var out := PackedFloat32Array()
-	if x1 <= x0 or y1 <= y0:
-		return out
-	var data := img.get_data()
-	out.resize((x1 - x0) * (y1 - y0))
-	var n := 0
-	for y in range(y0, y1):
-		var row := y * w
-		for x in range(x0, x1):
-			var o := (row + x) * 3
-			out[n] = (float(data[o]) * 0.2126 + float(data[o + 1]) * 0.7152
-				+ float(data[o + 2]) * 0.0722) / 255.0
-			n += 1
-	return out
+	return FrameMetrics.crop_luma(get_viewport().get_texture().get_image(), CROP)
 
 
 ## What FRACTION of the crop moved more than FLICKER_STEP between two frames.
@@ -329,14 +308,7 @@ func _crop_luma() -> PackedFloat32Array:
 ## local artifact away against the calm ground around it and reports serenity
 ## while the contacts shimmer.
 func _flicker_fraction(a: PackedFloat32Array, b: PackedFloat32Array) -> float:
-	var n := mini(a.size(), b.size())
-	if n == 0:
-		return 0.0
-	var moved := 0
-	for i in n:
-		if absf(a[i] - b[i]) > FLICKER_STEP:
-			moved += 1
-	return float(moved) / float(n)
+	return FrameMetrics.changed_fraction(a, b, FLICKER_STEP)
 
 
 ## The worst single-pixel move, kept as a reported diagnostic only. It is not the
@@ -381,10 +353,11 @@ func _save_frame(plates: bool, step: int) -> void:
 	var img := get_viewport().get_texture().get_image()
 	var w := img.get_width()
 	var h := img.get_height()
-	var x0 := int(CROP.position.x * float(w))
-	var y0 := int(CROP.position.y * float(h))
-	var x1 := mini(int((CROP.position.x + CROP.size.x) * float(w)), w) - 1
-	var y1 := mini(int((CROP.position.y + CROP.size.y) * float(h)), h) - 1
+	var bounds := FrameMetrics.crop_bounds(Vector2i(w, h), CROP)
+	var x0 := bounds.position.x
+	var y0 := bounds.position.y
+	var x1 := bounds.end.x - 1
+	var y1 := bounds.end.y - 1
 	for x in range(x0, x1 + 1):
 		img.set_pixel(x, y0, Color.RED)
 		img.set_pixel(x, y1, Color.RED)
@@ -442,46 +415,13 @@ func _requested_budget() -> float:
 ## cleaner signal would be measuring a frame no player will ever see, and would
 ## flatter the result.
 func _quiet_the_world() -> void:
-	# set() rather than a typed branch: these are a Node3D, a CanvasLayer and
-	# plain Nodes, and `visible` lives on no common base class of the three. A
-	# branch on CanvasItem/Node3D silently skips the HUD, which is a CanvasLayer
-	# and draws OVER the whole frame.
-	var hidden: Array[String] = []
-	for node_name in ["Wanderer", "Npcs", "Creatures", "Hud", "Replicas", "HollowFog"]:
-		var node := _main.get_node_or_null(NodePath(node_name))
-		if node != null and "visible" in node:
-			node.set("visible", false)
-			hidden.append(node_name)
-	# Hiding is enough and pausing the tree is NOT used: a hidden mover draws
-	# nothing however far it walks, while `SceneTree.paused` stalled this tool's
-	# own frame await and it never reached its first capture.
-
-	# Everything in the world except the ground itself, for the same reason and
-	# a sharper one. The metric is the WORST move any pixel makes, and a scrub
-	# bush or a boulder is an opaque silhouette against the ground: slide the
-	# camera a quarter pixel and its outline pixels swap between plant and
-	# ground, which is a larger move than the shading artifact could ever be and
-	# has nothing to do with the terrain shader. Measured with them in frame the
-	# floor was 0.3555 — nine parts silhouette, and the non-vacuity check
-	# correctly refused every reading taken that way.
-	#
-	# What remains is the terrain mesh, lit by the same sun and seen through the
-	# same atmosphere. That is the surface this change is about, and its
-	# stability is what the number now describes.
-	var world := _main.get_node_or_null("World")
-	if world != null:
-		for child in world.get_children():
-			if child.name != "Terrain" and "visible" in child:
-				child.set("visible", false)
-				hidden.append(String(child.name))
+	var hidden := FrameMetrics.quiet_terrain(_main,
+		["Wanderer", "Npcs", "Creatures", "Hud", "Replicas", "HollowFog"], false)
 	print("  quieted: %s" % ", ".join(hidden))
 
 
 func _terrain_material() -> ShaderMaterial:
-	var terrain := _main.get_node_or_null("World/Terrain") as MeshInstance3D
-	if terrain == null or terrain.mesh == null:
-		return null
-	return terrain.mesh.surface_get_material(0) as ShaderMaterial
+	return FrameMetrics.terrain_material(_main)
 
 
 func _fail(message: String) -> void:

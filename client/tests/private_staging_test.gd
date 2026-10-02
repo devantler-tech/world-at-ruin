@@ -93,12 +93,8 @@ func _is_eligible(candidate: String) -> bool:
 
 
 func _write_text(path: String, text: String) -> void:
-	var file := FileAccess.open(path, FileAccess.WRITE)
-	if file == null:
+	if not PersistenceTestSupport.write_text(path, text):
 		_fail("could not seed %s" % path)
-		return
-	file.store_string(text)
-	file.close()
 
 
 func _finish() -> void:
@@ -119,15 +115,13 @@ func _cleanup() -> void:
 	if _probe.is_empty():
 		return
 	var parent := _probe.get_base_dir()
-	var prefix := _probe.get_file() + ".tmp-"
-	for entry: String in DirAccess.get_files_at(parent):
-		if entry.begins_with(prefix):
-			_remove(parent.path_join(entry))
+	for entry in PersistenceTestSupport.staging_names(_probe, ".tmp-"):
+		_remove(parent.path_join(entry))
 
 
 func _remove(path: String) -> void:
-	if not path.is_empty() and FileAccess.file_exists(path):
-		DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	if not path.is_empty():
+		PersistenceTestSupport.remove_file(path)
 
 
 func _fail(message: String) -> void:

@@ -66,14 +66,9 @@ func _ready() -> void:
 func _check_name_is_private() -> void:
 	var first := BootRecovery._write_tmp_path(_probe)
 	var second := BootRecovery._write_tmp_path(_probe)
-	if first == _probe + ".tmp":
-		_fail("staging name is the derivable <path>.tmp")
-	if first == second:
-		_fail("two staging attempts share one name (%s)" % first)
-	if not first.begins_with(_probe + BootRecovery.WRITE_TMP_SUFFIX):
-		_fail("staging name does not carry the sweepable prefix (%s)" % first)
-	if not first.contains(str(OS.get_process_id())):
-		_fail("staging name does not carry this process id (%s)" % first)
+	for problem in PersistenceTestSupport.private_name_errors(
+		first, second, _probe, BootRecovery.WRITE_TMP_SUFFIX):
+		_fail(problem)
 
 
 ## 2. A foreign writer's derivable stage survives a save untouched.
@@ -178,36 +173,20 @@ func _state() -> Dictionary:
 
 ## Every staging file for the probe, matched by prefix.
 func _stages() -> Array[String]:
-	var found: Array[String] = []
-	var parent := _probe.get_base_dir()
-	var prefix := _probe.get_file() + BootRecovery.WRITE_TMP_SUFFIX
-	for entry: String in DirAccess.get_files_at(parent):
-		if entry.begins_with(prefix):
-			found.append(entry)
-	return found
+	return PersistenceTestSupport.staging_names(_probe, BootRecovery.WRITE_TMP_SUFFIX)
 
 
 func _write_text(path: String, text: String) -> void:
-	var file := FileAccess.open(path, FileAccess.WRITE)
-	if file == null:
+	if not PersistenceTestSupport.write_text(path, text):
 		_fail("could not seed %s" % path)
-		return
-	file.store_string(text)
-	file.close()
 
 
 func _read_text(path: String) -> String:
-	var file := FileAccess.open(path, FileAccess.READ)
-	if file == null:
-		return ""
-	var text := file.get_as_text()
-	file.close()
-	return text
+	return PersistenceTestSupport.read_text(path, false)
 
 
 func _remove(path: String) -> void:
-	if FileAccess.file_exists(path):
-		DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	PersistenceTestSupport.remove_file(path)
 
 
 func _fail(message: String) -> void:
