@@ -3,6 +3,7 @@ package zonesock
 import (
 	"context"
 	"errors"
+	"github.com/coder/websocket"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -14,19 +15,9 @@ import (
 // TestShutdownClosesHijackedSockets reproduces the zone command's assumption
 // that HTTP server Close drains WebSockets, then requires the hub to own it.
 func TestShutdownClosesHijackedSockets(t *testing.T) {
-	hub, secret := newTestHub(t, Config{})
-	served := make(chan struct{}, 1)
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hub.Handler().ServeHTTP(w, r)
-		served <- struct{}{}
-	}))
+	hub, _, server, client := joinedShutdownSocket(t, 1)
 	defer server.Close()
-	client, err := dial(t, server, secret, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
 	defer closeConnection(t, client)
-	<-served
 	world := sim.NewDemoWorld()
 	hub.Tick(world)
 	readMessage(t, client)
@@ -42,7 +33,7 @@ func TestShutdownClosesHijackedSockets(t *testing.T) {
 	if world.Get(1).InterestRadius != 0 {
 		t.Error("shutdown retained observer interest")
 	}
-	_, _, err = client.Read(ctx)
+	_, _, err := client.Read(ctx)
 	if err == nil || errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("upgraded socket survived shutdown: %v", err)
 	}
@@ -52,10 +43,7 @@ func TestShutdownClosesHijackedSockets(t *testing.T) {
 // backend ignoring cancellation cannot be mistaken for completed shutdown.
 func TestShutdownDeadlineNeverReportsAnUndrainedClaim(t *testing.T) {
 	entered, release := make(chan struct{}), make(chan struct{})
-	verifier, err := NewHMACVerifier(testSecret(1), "allocation-a")
-	if err != nil {
-		t.Fatal(err)
-	}
+	verifier := claimedTestVerifier(t)
 	hub, err := NewClaimedHub(Config{Verifier: verifier}, claimFunc(func(context.Context, string, sim.EntityID) error {
 		close(entered)
 		<-release
@@ -64,16 +52,7 @@ func TestShutdownDeadlineNeverReportsAnUndrainedClaim(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "https://zone.invalid/zone", nil)
-	token, err := MintToken(testSecret(1), "allocation-a", 1, time.Now().Add(time.Minute))
-	if err != nil {
-		t.Fatal(err)
-	}
-	request.Header.Set("Authorization", "Bearer "+token)
-	validHandshake(request)
-	response := httptest.NewRecorder()
-	done := make(chan struct{})
-	go func() { defer close(done); hub.Handler().ServeHTTP(response, request) }()
+	response, done := startClaimHandshake(t, hub)
 	<-entered
 	world := sim.NewDemoWorld()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
@@ -97,16 +76,9 @@ func TestShutdownDeadlineNeverReportsAnUndrainedClaim(t *testing.T) {
 // TestShutdownRejectsPendingAndFutureAdmission makes a late pending attachment
 // cross the shutdown boundary and verifies it cannot restore observer ownership.
 func TestShutdownRejectsPendingAndFutureAdmission(t *testing.T) {
-	hub, secret := newTestHub(t, Config{})
-	served := make(chan struct{}, 2)
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hub.Handler().ServeHTTP(w, r); served <- struct{}{} }))
+	hub, secret, server, client := joinedShutdownSocket(t, 2)
 	defer server.Close()
-	client, err := dial(t, server, secret, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
 	defer closeConnection(t, client)
-	<-served
 	world := sim.NewDemoWorld()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -133,10 +105,7 @@ func TestShutdownRejectsPendingAndFutureAdmission(t *testing.T) {
 // ownership while proving that no late private response can authorize a socket.
 func TestShutdownCancelsClaimAndRejectsLateSuccess(t *testing.T) {
 	entered, exited := make(chan struct{}), make(chan struct{})
-	verifier, err := NewHMACVerifier(testSecret(1), "allocation-a")
-	if err != nil {
-		t.Fatal(err)
-	}
+	verifier := claimedTestVerifier(t)
 	hub, err := NewClaimedHub(Config{Verifier: verifier}, claimFunc(func(ctx context.Context, _ string, _ sim.EntityID) error {
 		close(entered)
 		<-ctx.Done()
@@ -146,16 +115,7 @@ func TestShutdownCancelsClaimAndRejectsLateSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "https://zone.invalid/zone", nil)
-	token, err := MintToken(testSecret(1), "allocation-a", 1, time.Now().Add(time.Minute))
-	if err != nil {
-		t.Fatal(err)
-	}
-	request.Header.Set("Authorization", "Bearer "+token)
-	validHandshake(request)
-	response := httptest.NewRecorder()
-	done := make(chan struct{})
-	go func() { defer close(done); hub.Handler().ServeHTTP(response, request) }()
+	response, done := startClaimHandshake(t, hub)
 	<-entered
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -193,4 +153,41 @@ func TestCanceledShutdownStillFencesAdmission(t *testing.T) {
 	if err := hub.Shutdown(ctx, world); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func joinedShutdownSocket(t *testing.T, capacity int) (*Hub, []byte, *httptest.Server, *websocket.Conn) {
+	t.Helper()
+	hub, secret := newTestHub(t, Config{})
+	served := make(chan struct{}, capacity)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hub.Handler().ServeHTTP(w, r); served <- struct{}{} }))
+	t.Cleanup(server.Close)
+	client, err := dial(t, server, secret, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-served
+	return hub, secret, server, client
+}
+
+func claimedTestVerifier(t *testing.T) *HMACVerifier {
+	t.Helper()
+	verifier, err := NewHMACVerifier(testSecret(1), "allocation-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return verifier
+}
+func startClaimHandshake(t *testing.T, hub *Hub) (*httptest.ResponseRecorder, <-chan struct{}) {
+	t.Helper()
+	request := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "https://zone.invalid/zone", nil)
+	token, err := MintToken(testSecret(1), "allocation-a", 1, time.Now().Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer "+token)
+	validHandshake(request)
+	response := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() { defer close(done); hub.Handler().ServeHTTP(response, request) }()
+	return response, done
 }

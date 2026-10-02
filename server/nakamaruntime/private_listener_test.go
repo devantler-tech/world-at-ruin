@@ -108,7 +108,7 @@ func TestPrivateListenerConfigurationAndStartupRollback(t *testing.T) {
 				if err != nil {
 					t.Fatalf("disabled private path touched dependencies: %v", err)
 				}
-				r.shutdown(context.Background(), nil, nil, f.storage)
+				f.shutdown(r)
 			} else {
 				if err == nil || strings.Contains(err.Error(), "private-missing-credential") || strings.Contains(err.Error(), "private registration error") {
 					t.Fatalf("startup error absent or leaked: %v", err)
@@ -529,11 +529,8 @@ func rootFixtureWithKey(t *testing.T, signer crypto.Signer, usage x509.KeyUsage)
 // one admitted connection must permit the next verified workload to connect.
 func TestPrivateListenerBoundsConnections(t *testing.T) {
 	f := newListenerFixture(t)
-	r := &registration{}
-	if err := initialize(environmentContext(f.env), f.storage, r, func(config) (dependencies, error) { return f.deps, nil }); err != nil {
-		t.Fatal(err)
-	}
-	defer r.shutdown(context.Background(), nil, nil, f.storage)
+	r := f.start(t)
+	defer f.shutdown(r)
 	dialer := &tls.Dialer{Config: f.tls}
 	var connections []net.Conn
 	defer func() {
@@ -572,11 +569,8 @@ func TestPrivateListenerBoundsConnections(t *testing.T) {
 // client, so more zones than slots must still each complete a request promptly.
 func TestPrivateListenerIdleClientsDoNotHoldTheBudget(t *testing.T) {
 	f := newListenerFixture(t)
-	r := &registration{}
-	if err := initialize(environmentContext(f.env), f.storage, r, func(config) (dependencies, error) { return f.deps, nil }); err != nil {
-		t.Fatal(err)
-	}
-	defer r.shutdown(context.Background(), nil, nil, f.storage)
+	r := f.start(t)
+	defer f.shutdown(r)
 	url := "https://" + f.env["WAR_HANDOFF_CLAIMS_ADDRESS"] + "/v1/claim"
 	var transports []*http.Transport
 	defer func() {
@@ -704,11 +698,8 @@ func (f listenerFixture) client(t *testing.T, config *tls.Config) *claimrpc.Clie
 // composition, permissive TLS and transport success without durable ownership.
 func TestPrivateListenerClaimsOnlyWithVerifiedWorkload(t *testing.T) {
 	f := newListenerFixture(t)
-	r := &registration{}
-	if err := initialize(environmentContext(f.env), f.storage, r, func(config) (dependencies, error) { return f.deps, nil }); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { r.shutdown(context.Background(), nil, nil, f.storage) })
+	r := f.start(t)
+	t.Cleanup(func() { f.shutdown(r) })
 	// An untrusted workload must fail at TLS before it can claim this valid lease.
 	_, stranger, _ := certificateFixture(t, t.TempDir(), "spiffe://claims.example/zone/world-at-ruin/uid-one")
 	bad := f.tls.Clone()
@@ -745,7 +736,7 @@ func TestPrivateListenerClaimsOnlyWithVerifiedWorkload(t *testing.T) {
 	if _, err := f.store.BeginRelease(t.Context(), before, "attempt-one"); !errors.Is(err, nakamalease.ErrClaimed) {
 		t.Fatalf("no-show cleanup stole admitted lease: %v", err)
 	}
-	r.shutdown(context.Background(), nil, nil, f.storage)
+	f.shutdown(r)
 	if err := client.Claim(t.Context(), f.binding, f.token, 1); err == nil {
 		t.Fatal("shutdown listener admitted another claim")
 	}
@@ -804,4 +795,16 @@ func TestPrivateListenerShutdownCancelsClaimsBeforeClosingDependencies(t *testin
 	if closed.Load() != 1 {
 		t.Fatal("shutdown did not retire dependencies once")
 	}
+}
+
+func (f listenerFixture) start(t *testing.T) *registration {
+	t.Helper()
+	r := &registration{}
+	if err := initialize(environmentContext(f.env), f.storage, r, func(config) (dependencies, error) { return f.deps, nil }); err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+func (f listenerFixture) shutdown(r *registration) {
+	r.shutdown(context.Background(), nil, nil, f.storage)
 }
