@@ -1741,7 +1741,7 @@ jobs:
               echo "::error::ragged cloth $mode capture encountered rendering errors"; exit 1
             fi
             for view in cloth_front cloth_rear cloth_profile cloth_gameplay; do
-              for arm in '' _repeat _seam_off _flat _mask _geometry_flat _geometry_mask; do
+              for arm in '' _repeat _fold_off _seam_off _flat _mask _geometry_flat _geometry_mask; do
                 test -s "$dir/$view$arm.png"
                 test -s "$dir/$view$arm.txt"
               done

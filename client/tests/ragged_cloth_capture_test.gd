@@ -35,6 +35,9 @@ func _ready() -> void:
 		if not _tailoring_controls(capture):
 			capture.free()
 			return
+		if not _fold_controls(capture):
+			capture.free()
+			return
 		print("TEST PASS — ragged-cloth evidence frames both panels and gameplay range")
 		get_tree().quit(0)
 	capture.free()
@@ -66,6 +69,46 @@ func _camera_controls(capture: Node) -> bool:
 	player.free()
 	if not valid:
 		_fail("cloth gameplay must retain the actual 70-degree, 4.6-metre follow rig")
+	return valid
+
+
+## A flat generic material or a swapped mesh cannot isolate broad folds.
+## Sewing bands stay byte-identical, while broad hanging normals must change.
+func _fold_controls(capture: Node) -> bool:
+	var prior := OS.get_environment(RaggedCloth.FLAG_ENV)
+	var had_flag := OS.has_environment(RaggedCloth.FLAG_ENV)
+	OS.set_environment(RaggedCloth.FLAG_ENV, "1")
+	var character := CharacterFactory.build(CharacterFactory.load_recipe("res://recipes/wanderer.json"))
+	var garment := CharacterFactory.find_skeleton(character).get_node("Equip_loincloth_ragged") as MeshInstance3D
+	var mesh := garment.mesh
+	var preview := garment.get_active_material(0) as StandardMaterial3D
+	var ablation := capture.call("ragged_unfolded_material", garment) as StandardMaterial3D
+	var valid := ablation != preview and garment.get_active_material(0) == preview and garment.mesh == mesh
+	valid = valid and ablation.albedo_color == preview.albedo_color and ablation.normal_scale == preview.normal_scale
+	valid = valid and ablation.cull_mode == preview.cull_mode and ablation.transparency == preview.transparency
+	valid = valid and ablation.texture_filter == preview.texture_filter and ablation.texture_repeat == preview.texture_repeat
+	valid = valid and ablation.normal_enabled and ablation.roughness == preview.roughness
+	valid = valid and ablation.roughness_texture.get_image().get_data() == preview.roughness_texture.get_image().get_data()
+	var drawn := preview.albedo_texture.get_image()
+	var unfolded := ablation.albedo_texture.get_image()
+	for y: int in [184, 285]:
+		for x in range(205, 820):
+			valid = valid and drawn.get_pixel(x, y) == unfolded.get_pixel(x, y)
+	var normal := preview.normal_texture.get_image()
+	var flat := ablation.normal_texture.get_image()
+	var changed := 0
+	for y in range(380, 650, 4):
+		for x in range(365, 662, 4):
+			if absf(normal.get_pixel(x, y).r - flat.get_pixel(x, y).r) > 0.10:
+				changed += 1
+	valid = valid and changed > 500 and flat.get_mipmap_count() > 0
+	character.free()
+	if had_flag:
+		OS.set_environment(RaggedCloth.FLAG_ENV, prior)
+	else:
+		OS.unset_environment(RaggedCloth.FLAG_ENV)
+	if not valid:
+		_fail("fold-off must remove broad relief while retaining sewing, weave, mesh and render settings")
 	return valid
 
 
