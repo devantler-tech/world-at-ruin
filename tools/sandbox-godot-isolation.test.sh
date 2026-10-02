@@ -72,7 +72,7 @@ GOTOOLCHAIN=local GOWORK=off go build -o "$tmp/cache-guard" "$root/tools/trusted
 export GODOT_SANDBOX_CACHE_GUARD="$tmp/cache-guard"
 mkdir "$tmp/import-metadata"
 export GODOT_SANDBOX_METADATA="$tmp/import-metadata"
-printf '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"><rect width="2" height="2"/></svg>\n' >"$tmp/work/client/icon.svg"
+cp "$root/client/icon.svg" "$tmp/work/client/icon.svg"
 image="$(bash "$root/tools/build-trusted-regression-runtime.sh")"
 cd "$tmp/work"
 probe_failure() {

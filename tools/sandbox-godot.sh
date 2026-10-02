@@ -39,7 +39,8 @@ for arg in "$@"; do
   fi
 done
 extra_mounts=(--mount "$cache_mount")
-# Godot writes sidecars next to assets. Only those generated files may change;
+# Godot writes sidecars next to assets. Private editor settings use direct writes
+# because an atomic rename needs a writable source directory. Only generated files may change;
 # their host parents are never exposed, so candidate code cannot replace a bind
 # source with a symlink before a later container starts.
 while IFS= read -r -d '' file; do
@@ -82,11 +83,19 @@ docker run --rm --network none --cap-drop ALL \
   --security-opt no-new-privileges --read-only --user "$(id -u):$(id -g)" \
   --pids-limit 256 --memory 4g --cpus 2 \
   --tmpfs /tmp:rw,exec,nosuid,nodev,size=2g,mode=1777 \
-  --env HOME=/tmp --env XDG_CACHE_HOME=/tmp/cache \
+  --env HOME=/tmp --env XDG_CACHE_HOME=/tmp/cache --env XDG_CONFIG_HOME=/tmp/config \
   --mount "type=bind,source=$project,target=/project/client,readonly" \
   --mount "type=bind,source=$PWD/server/wire/wire.go,target=/project/server/wire/wire.go,readonly" \
   --mount "type=bind,source=$PWD/.github/workflows/ci.yaml,target=/project/.github/workflows/ci.yaml,readonly" \
-  --workdir /project "${extra_mounts[@]}" "$image" "$@" || status=$?
+  --workdir /project --entrypoint /bin/sh "${extra_mounts[@]}" "$image" -c '
+    set -eu
+    mkdir -p /tmp/config/godot
+    printf "%s\n" \
+      "[gd_resource type=\"EditorSettings\" format=3]" "[resource]" \
+      "filesystem/on_save/safe_save_on_backup_then_rename = false" \
+      > /tmp/config/godot/editor_settings-4.7.tres
+    exec /usr/local/bin/godot "$@"
+  ' sandbox "$@" || status=$?
 if [ "$status" -eq 0 ] && [ "$editor" = true ]; then "$cache_guard" "$project" || status=$?; fi
 printf '::%s::\n' "$nonce"
 exit "$status"
