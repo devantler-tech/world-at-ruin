@@ -17,7 +17,8 @@ static func retained_settings(garment: MeshInstance3D, mesh: Mesh, preview: Stan
 	return ablation != preview and garment.get_active_material(0) == preview and garment.mesh == mesh \
 		and ablation.albedo_color == preview.albedo_color and ablation.normal_scale == preview.normal_scale \
 		and ablation.cull_mode == preview.cull_mode and ablation.transparency == preview.transparency \
-		and ablation.texture_filter == preview.texture_filter
+		and ablation.texture_filter == preview.texture_filter and ablation.texture_repeat == preview.texture_repeat \
+		and ablation.roughness == preview.roughness
 
 
 static func release_fixture(fixture: Dictionary) -> void:

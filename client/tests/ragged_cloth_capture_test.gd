@@ -81,8 +81,7 @@ func _fold_controls(capture: Node) -> bool:
 	var preview: StandardMaterial3D = fixture["preview"]
 	var ablation := capture.call("ragged_unfolded_material", garment) as StandardMaterial3D
 	var valid := RaggedTestSupport.retained_settings(garment, mesh, preview, ablation)
-	valid = valid and ablation.texture_repeat == preview.texture_repeat
-	valid = valid and ablation.normal_enabled and ablation.roughness == preview.roughness
+	valid = valid and ablation.normal_enabled
 	valid = valid and ablation.roughness_texture.get_image().get_data() == preview.roughness_texture.get_image().get_data()
 	var drawn := preview.albedo_texture.get_image()
 	var unfolded := ablation.albedo_texture.get_image()
@@ -118,8 +117,12 @@ func _tailoring_controls(capture: Node) -> bool:
 	valid = valid and ablation.normal_enabled
 	var drawn := preview.albedo_texture.get_image()
 	var plain := ablation.albedo_texture.get_image()
+	var drawn_roughness := preview.roughness_texture.get_image()
+	var plain_roughness := ablation.roughness_texture.get_image()
+	# Sewing changes seam roughness; untouched weave texels must stay identical.
 	for point: Vector2i in [Vector2i(400, 400), Vector2i(600, 620), Vector2i(500, 500)]:
 		valid = valid and drawn.get_pixelv(point) == plain.get_pixelv(point)
+		valid = valid and drawn_roughness.get_pixelv(point) == plain_roughness.get_pixelv(point)
 	var changed := 0
 	for x in range(205, 820):
 		if drawn.get_pixel(x, 184).r - plain.get_pixel(x, 184).r > 0.04:
