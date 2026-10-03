@@ -162,6 +162,27 @@ for broken in project runner import; do
 	esac
 done
 
+# Unsupported startup configuration is refused before importing candidate code.
+for setting in autoload editor_plugins override symlink; do
+  cp "${candidate}/client/project.godot" "${tmp_dir}/clean-project"
+  case "$setting" in
+    autoload) printf '\n[autoload]\n' >>"${candidate}/client/project.godot" ;;
+    editor_plugins) printf '\n[editor_plugins]\n' >>"${candidate}/client/project.godot" ;;
+    override) printf '[application]\n' >"${candidate}/client/override.cfg" ;;
+    symlink) rm "${candidate}/client/project.godot"; ln -s "${tmp_dir}/clean-project" "${candidate}/client/project.godot" ;;
+  esac
+  : >"${run_log}.import"
+  if PATH="${bin_dir}:${PATH}" REQUIRED_REGRESSION_RUN_LOG="${run_log}" \
+    /bin/bash "${control}" "${trusted}" "${candidate}" >"${control_output}" 2>&1; then
+    fail "accepted unsupported startup configuration: $setting"
+  elif ! grep -q 'startup configuration' "${control_output}"; then
+    fail "startup refusal was not explicit: $setting"
+  fi
+  [ ! -s "${run_log}.import" ] || fail "imported unsupported configuration: $setting"
+  rm -f "${candidate}/client/project.godot" "${candidate}/client/override.cfg"
+  cp "${tmp_dir}/clean-project" "${candidate}/client/project.godot"
+done
+
 # Only the planned capability declaration is candidate input. A candidate
 # cannot change trusted history or hide that its writer has advanced.
 ledger="${candidate}/client/tests/data/shipped_save_capability.txt"

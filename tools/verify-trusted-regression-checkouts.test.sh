@@ -14,7 +14,8 @@ run() {
   GITHUB_WORKFLOW_SHA="$1" TRUSTED_SHA="$2" CANDIDATE_SHA="$3" \
     bash "$root/tools/verify-trusted-regression-checkouts.sh" "$tmp/workflow" "$tmp/trusted" "$tmp/candidate"
 }
-run "$workflow" "$trusted" "$candidate"
+run "$workflow" "$trusted" "$candidate" >"$tmp/success"
+grep -Fq "source=$workflow trusted-base=$trusted candidate-integration=$candidate" "$tmp/success"
 for input in workflow trusted candidate missing malformed; do
   a="$workflow" b="$trusted" c="$candidate"
   case "$input" in
@@ -26,6 +27,10 @@ for input in workflow trusted candidate missing malformed; do
   esac
   if run "$a" "$b" "$c" >"$tmp/log" 2>&1; then
     echo "TEST FAIL -- accepted wrong $input identity" >&2
+    exit 1
+  fi
+  if grep -q '^Verified ' "$tmp/log"; then
+    echo "TEST FAIL -- wrong $input identity emitted a success record" >&2
     exit 1
   fi
 done

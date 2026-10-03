@@ -37,6 +37,13 @@ if [ ! -f "${candidate_root}/client/project.godot" ]; then
 	echo "::error::candidate client/project.godot is missing" >&2
 	exit 2
 fi
+# Tests run as explicit scenes; candidate startup hooks cannot select that surface.
+if [ -L "${candidate_root}/client/project.godot" ] ||
+  [ -e "${candidate_root}/client/override.cfg" ] || [ -L "${candidate_root}/client/override.cfg" ] ||
+  grep -Eq '^[[:space:]]*\[(autoload|editor_plugins)\][[:space:]]*(;.*)?$' "${candidate_root}/client/project.godot"; then
+  echo '::error::unsupported candidate startup configuration for explicit trusted scenes' >&2
+  exit 1
+fi
 if ! command -v godot >/dev/null 2>&1; then
 	echo "::error::trusted regressions could not execute: godot was not found in PATH" >&2
 	exit 2

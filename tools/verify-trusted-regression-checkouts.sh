@@ -16,3 +16,5 @@ verify() {
 verify "$1" "${GITHUB_WORKFLOW_SHA:-}"
 verify "$2" "${TRUSTED_SHA:-}"
 verify "$3" "${CANDIDATE_SHA:-}"
+printf 'Verified workflow=%s source=%s trusted-base=%s candidate-integration=%s\n' \
+  "${GITHUB_WORKFLOW_REF:-}" "$GITHUB_WORKFLOW_SHA" "$TRUSTED_SHA" "$CANDIDATE_SHA"
