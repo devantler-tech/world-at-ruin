@@ -655,15 +655,7 @@ static func _preserves_deformation_value(
 
 ## Loads a recipe JSON from disk; null on parse failure (with an error).
 static func load_recipe(path: String) -> Variant:
-	var file := FileAccess.open(path, FileAccess.READ)
-	if file == null:
-		push_error("CharacterFactory: cannot open recipe %s" % path)
-		return null
-	var parsed = JSON.parse_string(file.get_as_text())
-	if parsed is not Dictionary:
-		push_error("CharacterFactory: recipe %s is not a JSON object" % path)
-		return null
-	return parsed
+	return KitAssembly.load_recipe_object(path, "CharacterFactory")
 
 
 ## Order-stable fingerprint of a built character: skeleton global rests plus

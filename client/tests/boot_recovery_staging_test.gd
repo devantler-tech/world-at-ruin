@@ -80,32 +80,36 @@ func _check_name_is_private() -> void:
 func _check_foreign_stage_survives() -> void:
 	var foreign := _probe + ".tmp"
 	var foreign_bytes := "a second client's half-written recovery document"
-	_write_text(foreign, foreign_bytes)
+	var observation := PersistenceTestSupport.foreign_stage(_probe, foreign_bytes,
+		func() -> Dictionary: return BootRecovery.save_state(_probe, _state()))
+	if not observation["seeded"]:
+		_fail("could not seed a foreign stage")
+		return
 
-	var saved := BootRecovery.save_state(_probe, _state())
+	var saved: Dictionary = observation["result"]
 	if not (saved["ok"] as bool):
 		_fail("save failed while a foreign stage was present: %s" % str(saved["reason"]))
-		_remove(foreign)
 		return
-	if not FileAccess.file_exists(foreign):
+	if not observation["exists"]:
 		_fail("the save consumed a foreign writer's %s" % foreign)
-	elif _read_text(foreign) != foreign_bytes:
+	elif observation["bytes"] != foreign_bytes:
 		_fail("the save overwrote a foreign writer's staged bytes")
 	if not (BootRecovery.load_state(_probe)["ok"] as bool):
 		_fail("the recovery state did not land while a foreign stage was present")
 
-	_remove(foreign)
 	_remove(_probe)
 
 
 ## 3. A completed save leaves no staging file — matched BY PREFIX, never by the
 ## fixed name (the vacuity trap #424 measured).
 func _check_no_stage_left_behind() -> void:
-	var saved := BootRecovery.save_state(_probe, _state())
+	var observation := PersistenceTestSupport.completed_write(_probe, BootRecovery.WRITE_TMP_SUFFIX,
+		func() -> Dictionary: return BootRecovery.save_state(_probe, _state()))
+	var saved: Dictionary = observation["result"]
 	if not (saved["ok"] as bool):
 		_fail("save failed on a clean path: %s" % str(saved["reason"]))
 		return
-	var leftovers := _stages()
+	var leftovers: Array[String] = observation["stages"]
 	if not leftovers.is_empty():
 		_fail("save left staging files behind: %s" % ", ".join(leftovers))
 	_remove(_probe)

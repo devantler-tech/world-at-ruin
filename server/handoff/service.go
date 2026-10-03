@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/devantler-tech/world-at-ruin/server/dnsname"
 	"github.com/devantler-tech/world-at-ruin/server/sim"
 	"github.com/devantler-tech/world-at-ruin/server/zonesock"
 	"google.golang.org/grpc/codes"
@@ -363,23 +364,5 @@ func validDNSName(name string) bool {
 }
 
 func validDNSSubdomain(name string) bool {
-	if name == "" || len(name) > 253 {
-		return false
-	}
-
-	for _, label := range strings.Split(name, ".") {
-		if label == "" || len(label) > 63 ||
-			label[0] == '-' || label[len(label)-1] == '-' {
-			return false
-		}
-		for _, char := range label {
-			if (char < 'a' || char > 'z') &&
-				(char < 'A' || char > 'Z') &&
-				(char < '0' || char > '9') &&
-				char != '-' {
-				return false
-			}
-		}
-	}
-	return true
+	return dnsname.Valid(name)
 }

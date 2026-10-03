@@ -1,10 +1,6 @@
-extends Node
+extends PersistenceScenario
 ## Kill each writer process after its real mutation returns, without running
 ## shutdown callbacks. A new process must observe committed value exactly once.
-
-var _failed := false
-var _save: SaveIsolation
-
 
 func _ready() -> void:
 	var args := OS.get_cmdline_user_args()
@@ -14,9 +10,7 @@ func _ready() -> void:
 	if not ResourceLoader.exists("res://scripts/mastery_persistence.gd"):
 		_fail("mastery has no durable mutation owner")
 		return
-	_save = SaveIsolation.new("user://mastery_process_loss_probe.json")
-	if not _save.begin():
-		_fail("save isolation failed")
+	if not _begin("user://mastery_process_loss_probe.json"):
 		return
 	OS.set_environment("WAR_MASTERY_CRASH_PROBE", SaveVault.vault_path())
 	for stage: String in ["award", "death", "reclaim", "repeat"]:
@@ -41,12 +35,8 @@ func _ready() -> void:
 		_check(ledger.bloodstain() == ({"sword": 25} if stage == "death" else {}),
 			"process loss left a stale or missing stain")
 	OS.unset_environment("WAR_MASTERY_CRASH_PROBE")
-	_check(_save.real_save_untouched(), "process test touched real player state")
-	_save = null
-	if _failed:
-		return
-	print("TEST PASS — abrupt process loss preserves committed mastery and consumes reclaim once")
-	get_tree().quit(0)
+	_finish("abrupt process loss preserves committed mastery and consumes reclaim once",
+		"process test touched real player state")
 
 
 func _child(stage: String) -> void:
@@ -82,20 +72,3 @@ func _child(stage: String) -> void:
 		return
 	print("MASTERY_COMMITTED " + stage)
 	OS.kill(OS.get_process_id())
-
-
-func _check(condition: bool, message: String) -> void:
-	if not condition:
-		_fail(message)
-
-
-func _fail(message: String) -> void:
-	_failed = true
-	push_error("TEST FAIL — " + message)
-	get_tree().quit(1)
-
-
-func _exit_tree() -> void:
-	if _save != null:
-		if not _save.real_save_untouched():
-			push_error("TEST FAIL — mastery process teardown detected real player-state changes")

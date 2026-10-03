@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/devantler-tech/world-at-ruin/server/dnsname"
 	"github.com/devantler-tech/world-at-ruin/server/sim"
 	"github.com/devantler-tech/world-at-ruin/server/wire"
 	"github.com/devantler-tech/world-at-ruin/server/zonesock"
@@ -179,21 +180,7 @@ func loopbackHost(host string) bool {
 
 // validDNSName rejects ambiguous wildcard, IP and malformed DNS overrides.
 func validDNSName(name string) bool {
-	if len(name) > 253 || !strings.Contains(name, ".") || net.ParseIP(name) != nil {
-		return false
-	}
-	for _, label := range strings.Split(name, ".") {
-		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
-			return false
-		}
-		for _, char := range label {
-			valid := char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || char >= '0' && char <= '9' || char == '-'
-			if !valid {
-				return false
-			}
-		}
-	}
-	return true
+	return strings.Contains(name, ".") && net.ParseIP(name) == nil && dnsname.Valid(name)
 }
 
 // roots retains system trust unless the operator explicitly supplies fixture roots.

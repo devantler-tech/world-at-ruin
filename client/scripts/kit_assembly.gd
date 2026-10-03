@@ -129,3 +129,16 @@ static func rest_hash_context(skeleton: Skeleton3D) -> HashingContext:
 	for i in skeleton.get_bone_count():
 		ctx.update(var_to_bytes(skeleton.get_bone_global_rest(i)))
 	return ctx
+
+
+## Loads only a JSON object; each factory retains its diagnostic owner.
+static func load_recipe_object(path: String, owner: String) -> Variant:
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		push_error("%s: cannot open recipe %s" % [owner, path])
+		return null
+	var parsed = JSON.parse_string(file.get_as_text())
+	if parsed is not Dictionary:
+		push_error("%s: recipe %s is not a JSON object" % [owner, path])
+		return null
+	return parsed

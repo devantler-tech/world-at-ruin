@@ -10,7 +10,6 @@ import (
 
 	"github.com/devantler-tech/world-at-ruin/server/nakamastorage"
 	"github.com/devantler-tech/world-at-ruin/server/playerstate"
-	"github.com/heroiclabs/nakama-common/runtime"
 )
 
 const (
@@ -85,31 +84,14 @@ func (s *Store) Load(ctx context.Context, subjectID string) (Record, error) {
 	if err != nil {
 		return Record{}, err
 	}
-	objects, err := s.storage.StorageRead(ctx, []*runtime.StorageRead{
-		{
-			Collection: Collection,
-			Key:        characterRecordKey(subjectID),
-			UserID:     "",
-		},
-	})
-	if err != nil {
-		return Record{}, nakamastorage.SanitizeError(ctx, err, ErrStorage)
-	}
-	if len(objects) == 0 {
+	object, err := nakamastorage.ReadSystemOwned(ctx, s.storage, Collection, characterRecordKey(subjectID))
+	switch {
+	case errors.Is(err, nakamastorage.ErrObjectMissing):
 		return Record{}, ErrNotFound
-	}
-	if len(objects) != 1 {
+	case errors.Is(err, nakamastorage.ErrObjectInvalid):
 		return Record{}, ErrStorage
-	}
-	object := objects[0]
-	if object == nil ||
-		object.GetCollection() != Collection ||
-		object.GetKey() != characterRecordKey(subjectID) ||
-		object.GetUserId() != systemOwnerID ||
-		object.GetVersion() == "" ||
-		object.GetPermissionRead() != 0 ||
-		object.GetPermissionWrite() != 0 {
-		return Record{}, ErrStorage
+	case err != nil:
+		return Record{}, err
 	}
 	character, err := decodeCharacterDocument(object.GetValue())
 	if err != nil {

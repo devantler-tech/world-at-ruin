@@ -1,4 +1,4 @@
-extends Node
+extends DelayedBootScenario
 ## Regression test for the seeded creature pack (creature system pilot, #24):
 ## the first non-humanoid life stands in the wild, deterministically, on real
 ## ground and out of the way.
@@ -19,9 +19,6 @@ extends Node
 
 const ASSERT_TICK := 30
 
-var _ticks := 0
-var _main: Node
-var _save: IsolatedBoot
 
 
 func _ready() -> void:
@@ -76,26 +73,15 @@ func _ready() -> void:
 			return
 		built.free()
 
-	# Booting main.tscn with no save exercises the first-run creator — point the
-	# game at a throwaway probe so it never touches the player's real character
-	# (no-resets law). Fail closed if the redirect does not take hold.
-	_save = IsolatedBoot.new("user://creature_population_boot_probe.json")
-	_main = _save.boot()
-	if _main == null:
-		_fail("save isolation did not take — refusing to boot into the real save")
-		return
-	add_child(_main)
+	_boot("user://creature_population_boot_probe.json")
 
 
 func _physics_process(_delta: float) -> void:
-	if _main == null:
+	if not _advance():
 		return
-	_ticks += 1
 	var world := _main.get_node_or_null("World") as WorldGen
 	var creatures := _main.get_node_or_null("Creatures") as CreatureSpawner
-	if world == null or creatures == null:
-		if _ticks > 10:
-			_fail("main scene did not build World and Creatures")
+	if not _nodes_ready(world != null and creatures != null, "main scene did not build World and Creatures"):
 		return
 	if _ticks != ASSERT_TICK:
 		return
@@ -138,27 +124,4 @@ func _physics_process(_delta: float) -> void:
 			_fail("%s has no body — build failed" % hound.name)
 			return
 
-	if not _save.real_save_untouched():
-		_fail("the boot test touched the player's real save")
-		return
-	print("TEST PASS — %d hounds placed lawfully and deterministically" % roots.size())
-	get_tree().quit(0)
-
-
-func _fail(message: String) -> void:
-	# real_save_untouched() clears the seams itself, so it REPLACES the bare
-	# end() rather than adding a second teardown (#326).
-	if _save != null and not _save.real_save_untouched():
-		message += (" — AND the run touched the player's real save, vault or recovery ledger; "
-			+ "the isolation breach outranks the failure above")
-	push_error(message)
-	print("TEST FAIL — %s" % message)
-	get_tree().quit(1)
-
-
-## Clearing the seam on teardown covers the process being killed after the scene
-## loaded but before an exit path ran — the redirect never outlives the test.
-## Idempotent with the end() the exit paths already call.
-func _exit_tree() -> void:
-	if _save != null:
-		_save.end()
+	_finish("%d hounds placed lawfully and deterministically" % roots.size())

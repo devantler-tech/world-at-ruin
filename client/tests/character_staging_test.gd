@@ -81,30 +81,34 @@ func _check_name_is_private() -> void:
 func _check_foreign_stage_survives(recipe: Dictionary) -> void:
 	var foreign := _probe + ".tmp"
 	var foreign_bytes := "a second client's half-written recipe"
-	_write_text(foreign, foreign_bytes)
-
-	if not CharacterStore.save_to(_probe, recipe):
-		_fail("save failed while a foreign stage was present")
-		_remove(foreign)
+	var observation := PersistenceTestSupport.foreign_stage(_probe, foreign_bytes,
+		func() -> bool: return CharacterStore.save_to(_probe, recipe))
+	if not observation["seeded"]:
+		_fail("could not seed a foreign stage")
 		return
-	if not FileAccess.file_exists(foreign):
+
+	if not observation["result"]:
+		_fail("save failed while a foreign stage was present")
+		return
+	if not observation["exists"]:
 		_fail("the save consumed a foreign writer's %s" % foreign)
-	elif _read_text(foreign) != foreign_bytes:
+	elif observation["bytes"] != foreign_bytes:
 		_fail("the save overwrote a foreign writer's staged bytes")
 	if CharacterStore.load_from(_probe) == null:
 		_fail("the character did not land while a foreign stage was present")
 
-	_remove(foreign)
 	_remove(_probe)
 
 
 ## 3. A completed save leaves no staging file — matched BY PREFIX, never by the
 ## fixed name (the vacuity trap #424 measured).
 func _check_no_stage_left_behind(recipe: Dictionary) -> void:
-	if not CharacterStore.save_to(_probe, recipe):
+	var observation := PersistenceTestSupport.completed_write(_probe, CharacterStore.WRITE_TMP_SUFFIX,
+		func() -> bool: return CharacterStore.save_to(_probe, recipe))
+	if not observation["result"]:
 		_fail("save failed on a clean path")
 		return
-	var leftovers := _stages()
+	var leftovers: Array[String] = observation["stages"]
 	if not leftovers.is_empty():
 		_fail("save left staging files behind: %s" % ", ".join(leftovers))
 	_remove(_probe)
