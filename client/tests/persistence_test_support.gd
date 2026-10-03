@@ -64,3 +64,19 @@ static func private_name_errors(first: String, second: String, path: String, suf
 	if not first.contains(str(OS.get_process_id())):
 		errors.append("staging name does not carry this process id (%s)" % first)
 	return errors
+
+## Read a test-owned historical object without reserializing its original bytes.
+## The filename's version remains independent of the production reader.
+static func historical_fixture(path: String, version: int) -> Dictionary:
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		return {"problem": "unreadable"}
+	var raw := file.get_as_text()
+	file.close()
+	var expected = JSON.parse_string(raw)
+	if expected is not Dictionary:
+		return {"problem": "not a JSON object"}
+	if int(expected.get("version", -1)) != version:
+		return {"problem": "declares version %s but its filename says v%d — a stale copy cannot stand in for v%d coverage" % [
+			str(expected.get("version", "none")), version, version]}
+	return {"problem": "", "raw": raw, "expected": expected}

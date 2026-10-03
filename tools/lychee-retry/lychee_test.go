@@ -82,18 +82,9 @@ func TestUnsupportedProtocolRetainsNativeResult(t *testing.T) {
 	if err := os.WriteFile(input, []byte("[Zone connection](wss://127.0.0.1:8443/zone)\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	validator := os.Getenv("LYCHEE_VALIDATOR")
-	if validator == "" {
-		validator = "lychee"
-	}
-	root, err := filepath.Abs("../..")
-	if err != nil {
-		t.Fatal(err)
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, validator, "--config", filepath.Join(root, "lychee.toml"), "--format", "detailed", "--", input)
-	cmd.Dir = root
+	cmd := lycheeCommand(t, ctx, "--format", "detailed", "--", input)
 	output, err := cmd.CombinedOutput()
 	if err != nil || !regexp.MustCompile(`Unsupported\.+1`).Match(output) {
 		t.Fatalf("native protocol result changed: %v\n%s", err, output)
@@ -124,18 +115,9 @@ func TestEntitiesInURLAreNotDecodedTwice(t *testing.T) {
 			if err := os.WriteFile(input, []byte("[Literal entity](<"+server.URL+"/?first=1&amp;amp;second=2>)\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			validator := os.Getenv("LYCHEE_VALIDATOR")
-			if validator == "" {
-				validator = "lychee"
-			}
-			root, err := filepath.Abs("../..")
-			if err != nil {
-				t.Fatal(err)
-			}
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
-			cmd := exec.CommandContext(ctx, validator, "--config", filepath.Join(root, "lychee.toml"), "--format", "detailed", "--", input)
-			cmd.Dir = root
+			cmd := lycheeCommand(t, ctx, "--format", "detailed", "--", input)
 			output, err := cmd.CombinedOutput()
 			if err != nil {
 				t.Fatalf("entity link check failed: %v\n%s", err, output)
@@ -181,18 +163,9 @@ func TestMixedDocumentsRetryOnlyAffectedLinks(t *testing.T) {
 	if err := os.WriteFile(second, []byte(fmt.Sprintf("[Same persistent page](%s/persistent)\n", server.URL)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	validator := os.Getenv("LYCHEE_VALIDATOR")
-	if validator == "" {
-		validator = "lychee"
-	}
-	root, err := filepath.Abs("../..")
-	if err != nil {
-		t.Fatal(err)
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, validator, "--config", filepath.Join(root, "lychee.toml"), "--format", "detailed", "--no-progress", "--", first, second)
-	cmd.Dir = root
+	cmd := lycheeCommand(t, ctx, "--format", "detailed", "--no-progress", "--", first, second)
 	output, commandErr := cmd.CombinedOutput()
 	if ctx.Err() != nil || commandErr == nil {
 		t.Fatalf("permanent failures must fail within the deadline: %v\n%s", commandErr, output)
@@ -282,4 +255,22 @@ func checkLink(t *testing.T, page string, retryStatus, transientAttempts, termin
 		t.Errorf("link failed without the expected HTTP status; another error cannot satisfy this test:\n%s", output)
 	}
 	t.Logf("%s: HTTP responses %v; lychee success=%t", page, gotStatuses, commandErr == nil)
+}
+
+// lycheeCommand selects the real validator and production configuration while
+// callers own deadlines, input files and native result assertions.
+func lycheeCommand(t *testing.T, ctx context.Context, args ...string) *exec.Cmd {
+	t.Helper()
+	validator := os.Getenv("LYCHEE_VALIDATOR")
+	if validator == "" {
+		validator = "lychee"
+	}
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	options := append([]string{"--config", filepath.Join(root, "lychee.toml")}, args...)
+	cmd := exec.CommandContext(ctx, validator, options...)
+	cmd.Dir = root
+	return cmd
 }

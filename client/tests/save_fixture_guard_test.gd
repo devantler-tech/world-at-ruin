@@ -95,16 +95,11 @@ func _cleanup_probe() -> void:
 
 ## "" when the fixture survives the full write→load→build path, else why not.
 func _check_fixture(version: int, path: String) -> String:
-	var file := FileAccess.open(path, FileAccess.READ)
-	if file == null:
-		return "unreadable"
-	var raw := file.get_as_text()
-	var expected = JSON.parse_string(raw)
-	if expected is not Dictionary:
-		return "not a JSON object"
-	if int(expected.get("version", -1)) != version:
-		return "declares version %s but its filename says v%d — a stale copy cannot stand in for v%d coverage" % [
-			str(expected.get("version", "none")), version, version]
+	var fixture := PersistenceTestSupport.historical_fixture(path, version)
+	if not String(fixture["problem"]).is_empty():
+		return fixture["problem"]
+	var raw: String = fixture["raw"]
+	var expected: Dictionary = fixture["expected"]
 
 	# The fixture's raw bytes ARE the save a historical client wrote — placed
 	# at the throwaway probe, never the player's own save.
