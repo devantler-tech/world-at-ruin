@@ -5,6 +5,7 @@ import (
 	"testing"
 )
 
+// TestEnvelopeCanonicalBytes keeps wire-alias refusal and short references explicit.
 func TestEnvelopeCanonicalBytes(t *testing.T) {
 	for _, value := range []string{"v1.", "v2.AAE", "v1.AAE=", "v1.AAE\n", "v1.\rAAE", "v1.AAF"} {
 		if _, ok := decodeEnvelope(value); ok {

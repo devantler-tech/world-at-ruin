@@ -9,18 +9,22 @@ workflow="$scratch/workflow"
 cat > "$workflow" <<'BLOCKS'
 outside must not be extracted
     # BEGIN first-helper
+    # first emits the first fixture marker without depending on another block.
     first() { printf 'first\n'; }
     # END first-helper
 unrelated bytes
     # BEGIN second-helper
+    # second emits the second marker so requested extraction order is observable.
     second() { printf 'second\n'; }
     # END second-helper
 BLOCKS
 cat > "$scratch/expected" <<'BLOCKS'
     # BEGIN second-helper
+    # second emits the second marker so requested extraction order is observable.
     second() { printf 'second\n'; }
     # END second-helper
     # BEGIN first-helper
+    # first emits the first fixture marker without depending on another block.
     first() { printf 'first\n'; }
     # END first-helper
 BLOCKS

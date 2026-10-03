@@ -249,6 +249,7 @@ func validLeaseObjectID(value string) bool {
 	return handoffidentity.SHA256Hex(value)
 }
 
+// validAdmissionEnvelope applies allocator ciphertext bounds to canonical bytes.
 func validAdmissionEnvelope(value string) bool {
 	ciphertext, ok := admissionformat.DecodeEnvelope(value)
 	return ok && len(ciphertext) >= minAdmissionEnvelopeBytes &&

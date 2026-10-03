@@ -3,7 +3,7 @@ extends Node
 
 func _ready() -> void:
 	var script := load("res://scripts/cosmetic_instances.gd") as GDScript
-	if script == null or not script.has_method("transforms"):
+	if script == null or not ScriptTestSupport.catalog_has_method(script, "transforms"):
 		_fail("cosmetic transforms need an inspectable ordered builder")
 		return
 	var mesh := BoxMesh.new()
@@ -38,5 +38,6 @@ func _ready() -> void:
 	get_tree().quit(0)
 
 func _fail(reason: String) -> void:
+	print("TEST FAIL — " + reason)
 	push_error("TEST FAIL — " + reason)
 	get_tree().quit(1)

@@ -209,6 +209,7 @@ func startingIdentity(gs *sdkproto.GameServer) (gameServerIdentity, error) {
 	return identity, nil
 }
 
+// parseWrappingPublicKey validates PKIX RSA material and fingerprints canonical DER.
 func parseWrappingPublicKey(data []byte) (*rsa.PublicKey, string, error) {
 	block, rest := pem.Decode(data)
 	if block == nil ||
@@ -233,6 +234,7 @@ func parseWrappingPublicKey(data []byte) (*rsa.PublicKey, string, error) {
 	return publicKey, fingerprint, nil
 }
 
+// admissionOAEPLabel binds the sealed secret to the exact observed GameServer.
 func admissionOAEPLabel(identity gameServerIdentity, fingerprint string) []byte {
 	return admissionformat.OAEPLabel(identity.namespace, identity.name, identity.uid, fingerprint)
 }

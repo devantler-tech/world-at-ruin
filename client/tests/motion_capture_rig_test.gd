@@ -11,7 +11,7 @@ class Ground:
 
 func _ready() -> void:
 	var capture := load("res://tools/frame_capture.gd") as GDScript
-	if not capture.has_method("prepare_motion_capture"):
+	if not ScriptTestSupport.catalog_has_method(capture, "prepare_motion_capture"):
 		_fail("actual capture tool lacks the shared motion rig seam")
 		return
 	var world := Ground.new()
@@ -72,5 +72,6 @@ func _ready() -> void:
 	get_tree().quit(0)
 
 func _fail(reason: String) -> void:
+	print("TEST FAIL — " + reason)
 	push_error("TEST FAIL — " + reason)
 	get_tree().quit(1)

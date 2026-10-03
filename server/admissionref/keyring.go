@@ -233,14 +233,17 @@ func reference(material Material, ciphertext []byte) string {
 	}, ".")
 }
 
+// decodeEnvelope accepts canonical wire bytes without imposing a key-size policy.
 func decodeEnvelope(value string) ([]byte, bool) {
 	return admissionformat.DecodeEnvelope(value)
 }
 
+// admissionOAEPLabel binds decryption to the material's exact resource identity.
 func admissionOAEPLabel(material Material) []byte {
 	return admissionformat.OAEPLabel(material.Namespace, material.GameServerName, material.GameServerUID, material.WrappingKeyFingerprint)
 }
 
+// base32Digest preserves the full canonical digest used by durable references.
 func base32Digest(value []byte) string {
 	return handoffidentity.SHA256Base32(value)
 }

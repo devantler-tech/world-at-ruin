@@ -12,6 +12,7 @@ mkdir -p "$scratch/real/child"
 printf 'ordinary\n' > "$scratch/real/child/data"
 ln -s "$scratch/real" "$scratch/linked"
 ln -s "$scratch/real/child/data" "$scratch/leaf"
+# check compares literal expected path states without normalizing the input.
 check() {
  local expected="$1" path="$2" got
  got="$(inspect_regular_file "$path")"

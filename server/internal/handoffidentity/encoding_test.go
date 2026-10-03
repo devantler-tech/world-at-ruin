@@ -5,12 +5,14 @@ import (
 	"testing"
 )
 
+// TestSHA256Base32LiteralDigest pins the complete digest against a literal value.
 func TestSHA256Base32LiteralDigest(t *testing.T) {
 	const want = "4oymiquy7qobjgx36tejs35zeqt24qpemsnzgtfeswmrw6csxbkq"
 	if got := SHA256Base32(nil); got != want {
 		t.Fatalf("digest = %q", got)
 	}
 }
+// TestOpaqueUTF8PreservesSpellingAndByteBounds distinguishes bytes from rune count.
 func TestOpaqueUTF8PreservesSpellingAndByteBounds(t *testing.T) {
 	for _, value := range []string{"opaque:identity", "é", "漢字", "escaped\\name"} {
 		if !OpaqueUTF8(value, len(value)) {
