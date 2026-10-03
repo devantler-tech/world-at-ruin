@@ -69,6 +69,7 @@ jobs:
     outputs:
       sha256: ${{ steps.sha.outputs.sha256 }}
       manifest_sha256: ${{ steps.manifest.outputs.sha256 }}
+      revision: ${{ steps.version.outputs.revision }}
     steps:
       - name: 🛡️ Harden runner
         uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
@@ -109,8 +110,17 @@ jobs:
             echo "::error::'${RAW_TAG}' is not a vX.Y.Z release tag"
             exit 1
           fi
-          echo "tag=${RAW_TAG}" >> "$GITHUB_OUTPUT"
-          echo "version=${RAW_TAG#v}" >> "$GITHUB_OUTPUT"
+          RELEASE_REVISION=$(git rev-parse --verify "refs/tags/${RAW_TAG}^{commit}")
+          [[ "${RELEASE_REVISION}" =~ ^[0-9a-f]{40}$ ]]
+          if [ "$(git rev-parse HEAD)" != "${RELEASE_REVISION}" ]; then
+            echo "::error::build checkout does not identify the released tag commit"
+            exit 1
+          fi
+          {
+            echo "revision=${RELEASE_REVISION}"
+            echo "tag=${RAW_TAG}"
+            echo "version=${RAW_TAG#v}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: ✍️ Stamp the release version into the build
         # The version is derived from the release tag, never hand-maintained.
@@ -447,6 +457,11 @@ jobs:
 
   publish-ghcr:
     name: 📦 Publish OCI artifact to GHCR
+    # Every writer of completion markers and latest shares this cross-tag lock.
+    concurrency:
+      group: world-at-ruin-client-channel
+      cancel-in-progress: false
+      queue: max
     # The ORIGIN OF RECORD for the in-client updater (docs/design/
     # distribution-and-self-update.md, #62). The GitHub Release asset is a plain
     # HTTP download with no content addressing; the updater pins a DIGEST, which
@@ -573,11 +588,13 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
           TAG: ${{ steps.version.outputs.tag }}
+          REVISION: ${{ needs.publish-macos.outputs.revision }}
         run: |
           set -euo pipefail
 
           # Registry paths must be lowercase. `tr` rather than bash's ${VAR@L}
           # so this does not silently depend on bash >= 4.4.
+          [[ "${REVISION}" =~ ^[0-9a-f]{40}$ ]]
           ARTIFACT="$(printf 'ghcr.io/%s/client' "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
           cd oci
           # Push the bare version first. The stable channel is promoted only
@@ -596,7 +613,7 @@ jobs:
             --artifact-type application/vnd.devantler.worldatruin.client.v1+zip \
             --annotation "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
             --annotation "org.opencontainers.image.version=${VERSION}" \
-            --annotation "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --annotation "org.opencontainers.image.revision=${REVISION}" \
             "${LAYERS[@]}"
           # `oras manifest fetch --descriptor` rather than `oras resolve`: the
           # latter is marked [Preview] and `--format` is [Experimental], so both
@@ -648,6 +665,34 @@ jobs:
             echo "pulled manifest is byte-identical to the one emitted from the build"
           fi
 
+      - name: 🧾 Attest completed release verification
+        if: ${{ !contains(steps.version.outputs.version, '-') }}
+        env:
+          ARTIFACT: ${{ steps.push.outputs.artifact }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+          VERSION: ${{ steps.version.outputs.version }}
+          REVISION: ${{ needs.publish-macos.outputs.revision }}
+        run: |
+          set -euo pipefail
+          [[ "${REVISION}" =~ ^[0-9a-f]{40}$ ]]
+          ARCHIVE_SHA=$(cut -d' ' -f1 release-asset.sha256)
+          MANIFEST_SHA=$(cut -d' ' -f1 manifest.sha256)
+          [[ "${ARCHIVE_SHA}" =~ ^[0-9a-f]{64}$ && "${MANIFEST_SHA}" =~ ^[0-9a-f]{64}$ ]]
+          jq -n --arg version "${VERSION}" --arg digest "${DIGEST}" \
+            --arg archive "${ARCHIVE_SHA}" --arg manifest "${MANIFEST_SHA}" \
+            --arg revision "${REVISION}" \
+            '{schema:1,version:$version,artifact_digest:$digest,archive_sha256:$archive,manifest_sha256:$manifest,revision:$revision}' \
+            > release-completion.json
+          cosign attest --yes --type https://devantler.tech/world-at-ruin/release-completion/v1 \
+            --predicate release-completion.json "${ARTIFACT}@${DIGEST}"
+          cosign verify-attestation "${ARTIFACT}@${DIGEST}" \
+            --type https://devantler.tech/world-at-ruin/release-completion/v1 \
+            --certificate-identity-regexp '^https://github\.com/devantler-tech/world-at-ruin/\.github/workflows/cd\.yaml@(refs/tags/v[0-9]+\.[0-9]+\.[0-9]+|refs/heads/main)$' \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com > /dev/null
+          # The marker is discovery only; consumers authenticate the attestation
+          # and its subject, version, revision and both layer digests again.
+          oras tag "${ARTIFACT}@${DIGEST}" "completed-${VERSION}"
+
       - name: 🏷️ Advance the verified latest digest
         # Signing and both byte-readback checks must finish before promotion.
         # Other catalogue candidates also require a verified, version-bound digest.
@@ -683,7 +728,7 @@ jobs:
           read_release_catalog() {
             local artifact="$1"
             local published="$2"
-            local tags tag key newest_key
+            local tags tag key newest_key published_completed=false
 
             if ! newest_key="$(release_version_key "${published}")"; then
               echo "::error::published version '${published}' is outside the stable release contract"
@@ -695,9 +740,9 @@ jobs:
               return 1
             fi
             while IFS= read -r tag; do
-              if [ "${tag}" = "latest" ]; then
-                continue
-              fi
+              [[ "${tag}" == completed-* ]] || continue
+              tag="${tag#completed-}"
+              [ "${tag}" != "${published}" ] || published_completed=true
               if ! key="$(release_version_key "${tag}")"; then
                 continue
               fi
@@ -706,46 +751,51 @@ jobs:
                 newest_key="${key}"
               fi
             done <<<"${tags}"
+            if [ "${published_completed}" != true ]; then
+              echo "::error::published release has no completion marker" >&2
+              return 1
+            fi
           }
 
-          latest_release_version() {
+          latest_release_state() {
             local artifact="$1"
-            local manifest_file error_file manifest_version
+            local descriptor_file error_file digest manifest manifest_version
 
-            manifest_file="$(mktemp)"
+            descriptor_file="$(mktemp)"
             error_file="$(mktemp)"
-            if ! oras manifest fetch "${artifact}:latest" >"${manifest_file}" 2>"${error_file}"; then
-              # MANIFEST_UNKNOWN is the registry's positive absence signal.
-              # Every transport, authentication and server failure remains
-              # unknown and must never be normalized into first publication.
-              if grep -qiE '(^|[^[:alnum:]_])(MANIFEST_UNKNOWN|manifest unknown)([^[:alnum:]_]|$)' \
-                "${error_file}"; then
-                rm -f "${manifest_file}" "${error_file}"
+            if ! oras manifest fetch --descriptor "${artifact}:latest" >"${descriptor_file}" 2>"${error_file}"; then
+              # Only a positive absence of the mutable tag permits first publication.
+              if grep -qiE '(^|[^[:alnum:]_])(MANIFEST_UNKNOWN|manifest unknown)([^[:alnum:]_]|$)' "${error_file}"; then
+                rm -f "${descriptor_file}" "${error_file}"
                 return 2
               fi
-              echo "::error::could not read ${artifact}:latest; refusing to infer absence"
-              sed 's/^/  /' "${error_file}" >&2
-              rm -f "${manifest_file}" "${error_file}"
+              echo "::error::could not resolve latest; refusing to infer absence" >&2
+              rm -f "${descriptor_file}" "${error_file}"
               return 1
             fi
-            if ! manifest_version="$(
-              jq -er '.annotations["org.opencontainers.image.version"] // empty' \
-                <"${manifest_file}"
-            )"; then
-              echo "::error::latest manifest has no readable release-version annotation"
-              rm -f "${manifest_file}" "${error_file}"
+            if ! digest="$(jq -er '.digest | select(type == "string")' <"${descriptor_file}")" ||
+              [[ ! "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "::error::latest descriptor has no valid SHA-256 digest" >&2
+              rm -f "${descriptor_file}" "${error_file}"
               return 1
             fi
-            rm -f "${manifest_file}" "${error_file}"
-            printf '%s\n' "${manifest_version}"
+            rm -f "${descriptor_file}" "${error_file}"
+            # Read the version by the resolved immutable digest, never by re-reading latest.
+            if ! manifest="$(oras manifest fetch "${artifact}@${digest}")" ||
+              ! manifest_version="$(jq -er '.annotations["org.opencontainers.image.version"] | select(type == "string")' <<<"${manifest}")" ||
+              ! release_version_key "${manifest_version}" >/dev/null; then
+              echo "::error::latest digest has no readable stable release version" >&2
+              return 1
+            fi
+            printf '%s %s\n' "${manifest_version}" "${digest}"
           }
 
           verified_release_digest() {
             local artifact="$1"
             local release="$2"
-            local descriptor digest manifest version
+            local descriptor digest manifest version attestations
 
-            if ! descriptor="$(oras manifest fetch --descriptor "${artifact}:${release}")"; then
+            if ! descriptor="$(oras manifest fetch --descriptor "${artifact}:completed-${release}")"; then
               echo "::error::could not resolve the selected release digest" >&2
               return 1
             fi
@@ -766,6 +816,34 @@ jobs:
               echo "::error::verified digest does not identify the selected release version" >&2
               return 1
             fi
+            if ! attestations="$(cosign verify-attestation "${artifact}@${digest}" \
+              --type https://devantler.tech/world-at-ruin/release-completion/v1 \
+              --certificate-identity-regexp '^https://github\.com/devantler-tech/world-at-ruin/\.github/workflows/cd\.yaml@(refs/tags/v[0-9]+\.[0-9]+\.[0-9]+|refs/heads/main)$' \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com)" ||
+              ! jq -es --arg artifact "${artifact}" --arg digest "${digest}" --arg version "${release}" \
+                --argjson manifest "${manifest}" '
+                  map(.payload | @base64d | fromjson) | unique | select(length == 1) | .[0] |
+                  select(.predicateType == "https://devantler.tech/world-at-ruin/release-completion/v1") |
+                  select(.subject == [{name:$artifact,digest:{sha256:($digest|ltrimstr("sha256:"))}}]) |
+                  .predicate | select(type == "object") |
+                  select(keys == ["archive_sha256","artifact_digest","manifest_sha256","revision","schema","version"]) |
+                  select(.schema == 1 and .version == $version and .artifact_digest == $digest) |
+                  select(.revision == $manifest.annotations["org.opencontainers.image.revision"]) |
+                  select(.revision | type == "string" and test("^[0-9a-f]{40}$")) |
+                  select(.archive_sha256 | type == "string" and test("^[0-9a-f]{64}$")) |
+                  select(.manifest_sha256 | type == "string" and test("^[0-9a-f]{64}$")) |
+                  . as $record |
+                  select($manifest.layers | length == 2) |
+                  select([$manifest.layers[] | select(.mediaType == "application/zip" and
+                    .annotations["org.opencontainers.image.title"] == ("WorldAtRuin-"+$version+"-macOS-universal.zip") and
+                    .digest == ("sha256:"+$record.archive_sha256))] | length == 1) |
+                  select([$manifest.layers[] | select(.mediaType == "application/vnd.devantler.worldatruin.client.manifest.v1+json" and
+                    .annotations["org.opencontainers.image.title"] == "update-manifest.json" and
+                    .digest == ("sha256:"+$record.manifest_sha256))] | length == 1)
+                ' <<<"${attestations}" > /dev/null; then
+              echo "::error::selected release has no unambiguous authenticated completion record" >&2
+              return 1
+            fi
             printf '%s\n' "${digest}"
           }
 
@@ -773,7 +851,7 @@ jobs:
             local artifact="$1"
             local published="$2"
             local attempts=0
-            local newest current newest_key current_key current_status verified_digest
+            local newest current current_digest current_state newest_key current_key current_status verified_digest
 
             # Re-read after every write. If a newer immutable version appears
             # while this run is tagging, the next pass repairs latest to that
@@ -784,11 +862,11 @@ jobs:
               newest="${RELEASE_CATALOG_NEWEST}"
               current=""
               current_status=0
-              current="$(latest_release_version "${artifact}")" ||
+              current_state="$(latest_release_state "${artifact}")" ||
                 current_status=$?
               case "${current_status}" in
-                0) ;;
-                2) current="" ;;
+                0) read -r current current_digest <<<"${current_state}" ;;
+                2) current=""; current_digest="" ;;
                 *) return 1 ;;
               esac
               if [ -n "${current}" ]; then
@@ -801,7 +879,8 @@ jobs:
                   newest="${current}"
                 fi
               fi
-              if [ "${current}" = "${newest}" ]; then
+              verified_digest="$(verified_release_digest "${artifact}" "${newest}")" || return 1
+              if [ "${current}" = "${newest}" ] && [ "${current_digest}" = "${verified_digest}" ]; then
                 if [ "${published}" = "${newest}" ]; then
                   echo "latest already exposes ${newest}"
                 else
@@ -809,7 +888,6 @@ jobs:
                 fi
                 return 0
               fi
-              verified_digest="$(verified_release_digest "${artifact}" "${newest}")" || return 1
               # Promote exactly the signed digest whose version was checked.
               if ! oras tag "${artifact}@${verified_digest}" latest; then
                 echo "::error::could not advance latest to the verified digest" >&2
@@ -821,10 +899,11 @@ jobs:
             read_release_catalog "${artifact}" "${published}" || return 1
             newest="${RELEASE_CATALOG_NEWEST}"
             current=""
-            if ! current="$(latest_release_version "${artifact}")"; then
+            if ! current_state="$(latest_release_state "${artifact}")"; then
               echo "::error::latest could not be verified after ${attempts} attempts"
               return 1
             fi
+            read -r current current_digest <<<"${current_state}"
             if [ -n "${current}" ]; then
               if ! current_key="$(release_version_key "${current}")"; then
                 echo "::error::latest exposes unorderable version '${current}'; refusing to replace it"
@@ -835,7 +914,8 @@ jobs:
                 newest="${current}"
               fi
             fi
-            if [ "${current}" != "${newest}" ]; then
+            verified_digest="$(verified_release_digest "${artifact}" "${newest}")" || return 1
+            if [ "${current}" != "${newest}" ] || [ "${current_digest}" != "${verified_digest}" ]; then
               echo "::error::latest did not converge to newest release ${newest} (found '${current}')"
               return 1
             fi

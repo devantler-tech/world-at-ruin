@@ -81,7 +81,7 @@ func TestCDStableAndPrereleasePublication(t *testing.T) {
 					selected := id == "version" || id == "manifest" || id == "push" || manifestTransfer ||
 						strings.Contains(name, "Confirm the build matches") || strings.Contains(name, "manifest crossed") ||
 						strings.Contains(name, "Sign the artifact by digest") || strings.Contains(name, "Verify signature and byte-identity") ||
-						strings.Contains(name, "Advance the verified latest digest")
+						strings.Contains(name, "Advance the verified latest digest") || strings.Contains(name, "Attest completed release verification")
 					if !selected {
 						continue
 					}
@@ -125,7 +125,7 @@ func TestCDStableAndPrereleasePublication(t *testing.T) {
 					}
 					env := []string{"RAW_TAG=v" + tc.version, "FIXTURE_ROOT=" + root, "CORRUPT=" + fmt.Sprint(tc.corrupt),
 						"GITHUB_OUTPUT=" + filepath.Join(root, "output"), "GITHUB_REPOSITORY=devantler-tech/world-at-ruin",
-						"GITHUB_SERVER_URL=https://github.com", "GITHUB_SHA=" + strings.Repeat("a", 40)}
+						"ARTIFACT=" + artifact, "DIGEST=" + digest, "GITHUB_SERVER_URL=https://github.com", "GITHUB_SHA=" + strings.Repeat("e", 40)}
 					if values, ok := step["env"].(map[string]any); ok {
 						for key, value := range values {
 							v, ok := value.(string)
@@ -136,6 +136,7 @@ func TestCDStableAndPrereleasePublication(t *testing.T) {
 								"${{ steps.version.outputs.version }}", tc.version,
 								"${{ steps.version.outputs.tag }}", "v"+tc.version,
 								"${{ needs.publish-macos.outputs.sha256 }}", zipSHA,
+								"${{ needs.publish-macos.outputs.revision }}", outputs["revision"],
 								"${{ needs.publish-macos.outputs.manifest_sha256 }}", manifestSHA,
 								"${{ steps.push.outputs.artifact }}", artifact,
 								"${{ steps.push.outputs.digest }}", digest,
@@ -219,6 +220,49 @@ func TestCDStableAndPrereleasePublication(t *testing.T) {
 	}
 }
 
+// TestCDChannelPublishersSerializeAcrossReleaseTags pins the single writer and
+// verification boundaries for the shared client channel.
+func TestCDChannelPublishersSerializeAcrossReleaseTags(t *testing.T) {
+	doc := loadRepositoryWorkflow(t)
+	job, err := doc.job("publish-ghcr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	concurrency, ok := job["concurrency"].(map[string]any)
+	if !ok || concurrency["group"] != "world-at-ruin-client-channel" || concurrency["cancel-in-progress"] != false || concurrency["queue"] != "max" {
+		t.Fatalf("channel publishers must queue across tags without cancelling verification: %#v", job["concurrency"])
+	}
+	// A tag or run-specific lock admits two writers; this literal one excludes
+	// both, including a resumed older publisher after a newer release finishes.
+	group := concurrency["group"].(string)
+	if strings.Contains(group, "${{") {
+		t.Fatal("channel lock depends on the release event")
+	}
+	steps, ok := job["steps"].([]any)
+	if !ok {
+		t.Fatal("missing steps")
+	}
+	verified, completed, promoted := -1, -1, -1
+	for i, raw := range steps {
+		step := raw.(map[string]any)
+		name, _ := step["name"].(string)
+		if strings.Contains(name, "Verify signature and byte-identity") {
+			verified = i
+		}
+		if strings.Contains(name, "Attest completed release verification") {
+			completed = i
+		}
+		if strings.Contains(name, "Advance the verified latest digest") {
+			promoted = i
+		}
+	}
+	if verified < 0 || completed <= verified || promoted <= completed {
+		t.Fatalf("verification/completion/promotion order %d/%d/%d", verified, completed, promoted)
+	}
+}
+
+// TestCDRunsStampedDevLogScenesBeforeExport executes the release-tree validation
+// selected by the workflow before exporting the distributable client.
 func TestCDRunsStampedDevLogScenesBeforeExport(t *testing.T) {
 	doc := loadRepositoryWorkflow(t)
 	job, err := doc.job("publish-macos")
@@ -289,22 +333,38 @@ func TestCDRunsStampedDevLogScenesBeforeExport(t *testing.T) {
 }
 
 const publicationBoundaryDouble = `
+# git — Return the tagged source revision for the publication boundary fixture.
+git() { printf "%s\n" aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; }
+# date — Fix wall-clock values so generated release metadata is reproducible.
 date() {
   if [ "$*" = '-u +%s' ]; then printf '1790953136\n'; else printf '2026-10-03T00:00:00Z\n'; fi
 }
+# godot — Emit the fixture manifest through the same exported-file boundary.
 godot() { printf '{"fixture":"emitted contract"}\n' > "$WAR_MANIFEST_OUT"; echo 'MANIFEST OK'; }
+# cosign — Record signing and return a completion statement for the stored bytes.
 cosign() {
+  if [ "$1" = attest ]; then cp release-completion.json "$FIXTURE_ROOT/registry/completion.json"; fi
+  if [ "$1" = verify-attestation ]; then
+    local statement
+    statement=$(jq -n --arg artifact "$ARTIFACT" --arg digest "$DIGEST" --slurpfile predicate "$FIXTURE_ROOT/registry/completion.json" '{predicateType:"https://devantler.tech/world-at-ruin/release-completion/v1",subject:[{name:$artifact,digest:{sha256:($digest|ltrimstr("sha256:"))}}],predicate:$predicate[0]}')
+    jq -n --arg payload "$(printf '%s' "$statement" | base64 | tr -d '\n')" '{payload:$payload}'
+  fi
   if [ "$1" = sign ]; then printf '%s\n' "$3" > "$FIXTURE_ROOT/registry/signed"; fi
 }
+# oras — Persist registry manifests, layers and tags across real publication steps.
 oras() {
   local registry="$FIXTURE_ROOT/registry"
   case "$1 $2" in
     'repo tags') cat "$registry/tags" ;;
     'manifest fetch')
       if [ "$3" = --descriptor ]; then
-        printf '{"digest":"sha256:%064d"}\n' 1
+        if [[ "$4" == *:latest ]] && [ "$(cat "$registry/latest")" != "$(cat "$registry/pushed-version")" ]; then
+          printf '{"digest":"sha256:%064d"}\n' 2
+        else printf '{"digest":"sha256:%064d"}\n' 1; fi
+      elif [[ "$3" == *@sha256:*2 ]]; then
+        printf '{"annotations":{"org.opencontainers.image.version":"%s"}}\n' "$(cat "$registry/latest")"
       elif [[ "$3" == *@sha256:* ]]; then
-        printf '{"annotations":{"org.opencontainers.image.version":"%s"}}\n' "$(cat "$registry/pushed-version")"
+        jq -n --arg version "$(cat "$registry/pushed-version")" --arg revision "$(cat "$registry/pushed-revision")" --arg archive "$(sha256sum "$registry"/*.zip | cut -d' ' -f1)" --arg manifest "$(sha256sum "$registry/update-manifest.json" | cut -d' ' -f1)" '{annotations:{"org.opencontainers.image.version":$version,"org.opencontainers.image.revision":$revision},layers:[{mediaType:"application/zip",digest:("sha256:"+$archive),annotations:{"org.opencontainers.image.title":("WorldAtRuin-"+$version+"-macOS-universal.zip")}},{mediaType:"application/vnd.devantler.worldatruin.client.manifest.v1+json",digest:("sha256:"+$manifest),annotations:{"org.opencontainers.image.title":"update-manifest.json"}}]}'
       else
         printf '{"annotations":{"org.opencontainers.image.version":"%s"}}\n' "$(cat "$registry/latest")"
       fi ;;
@@ -317,11 +377,17 @@ oras() {
           shift 2
           while [ "$#" -gt 0 ]; do
             case "$1" in
-              --artifact-type|--annotation) shift 2 ;;
+              --artifact-type) shift 2 ;;
+              --annotation)
+                if [[ "$2" == org.opencontainers.image.revision=* ]]; then printf '%s\n' "${2#*=}" > "$registry/pushed-revision"; fi
+                shift 2 ;;
+
               *) layer="${1%%:*}"; cp "$layer" "$registry/$(basename "$layer")"; shift ;;
             esac
           done ;;
-        tag) cat "$registry/pushed-version" > "$registry/latest" ;;
+        tag)
+          if [[ "$3" == completed-* ]]; then printf '%s\n' "$3" >> "$registry/tags";
+          else cat "$registry/pushed-version" > "$registry/latest"; fi ;;
         pull)
           cp "$registry"/*.zip .
           if [ -f "$registry/update-manifest.json" ]; then
@@ -333,3 +399,90 @@ oras() {
   esac
 }
 `
+
+// TestCDRevisionIdentifiesTheCheckedOutTagInsteadOfDispatchHead authenticates the
+// peeled release commit for both tag forms, including dispatches from newer main.
+func TestCDRevisionIdentifiesTheCheckedOutTagInsteadOfDispatchHead(t *testing.T) {
+	doc := loadRepositoryWorkflow(t)
+	job, err := doc.job("publish-macos")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var resolver string
+	for _, raw := range job["steps"].([]any) {
+		step := raw.(map[string]any)
+		if step["id"] == "version" {
+			resolver = step["run"].(string)
+		}
+	}
+	if resolver == "" {
+		t.Fatal("missing build version resolver")
+	}
+	root := t.TempDir()
+	git := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = root
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git("init", "--initial-branch=main")
+	git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "tagged build")
+	revision := git("rev-parse", "HEAD")
+	git("-c", "tag.gpgsign=false", "tag", "v1.2.3")
+	git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "tag.gpgsign=false", "tag", "-a", "v1.2.4", "-m", "annotated release")
+	tagObject := git("rev-parse", "refs/tags/v1.2.4")
+	if tagObject == revision {
+		t.Fatal("annotated fixture must have a distinct tag object")
+	}
+	git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "later dispatch head")
+	dispatch := git("rev-parse", "HEAD")
+	output := filepath.Join(root, "output")
+	script := filepath.Join(root, "resolve-version.sh")
+	if err := os.WriteFile(script, []byte(resolver), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run := func(tag string) ([]byte, error) {
+		t.Helper()
+		if err := os.WriteFile(output, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command("bash", script)
+		cmd.Dir = root
+		cmd.Env = append(os.Environ(), "RAW_TAG="+tag, "GITHUB_SHA="+dispatch, "GITHUB_OUTPUT="+output)
+		log, err := cmd.CombinedOutput()
+		if err != nil {
+			return log, err
+		}
+		contents, readErr := os.ReadFile(output)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		return contents, nil
+	}
+	for _, tag := range []string{"v1.2.3", "v1.2.4"} {
+		t.Run(tag, func(t *testing.T) {
+			git("checkout", "refs/tags/"+tag)
+			contents, err := run(tag)
+			if err != nil {
+				t.Fatalf("tagged build: %v: %s", err, contents)
+			}
+			if !strings.Contains(string(contents), "revision="+revision+"\n") ||
+				strings.Contains(string(contents), "revision="+dispatch) ||
+				strings.Contains(string(contents), "revision="+tagObject) {
+				t.Fatalf("build did not identify peeled commit %s: %s", revision, contents)
+			}
+			git("checkout", "main")
+			if log, err := run(tag); err == nil {
+				t.Fatalf("untagged checkout accepted: %s", log)
+			}
+		})
+	}
+	outputs := job["outputs"].(map[string]any)
+	if outputs["revision"] != "${{ steps.version.outputs.revision }}" {
+		t.Fatal("build revision not transferred to publisher")
+	}
+}
