@@ -91,10 +91,9 @@ func _cases() -> Array[Dictionary]:
 			var b := polygon[(corner + 1) % polygon.size()]
 			if a.distance_to(b) < 0.6:
 				continue
-			var mid := (a + b) * 0.5
-			var outward := Vector2(b.y - a.y, a.x - b.x).normalized()
-			if outward.dot(mid - centre) < 0.0:
-				outward = -outward
+			var edge := PlateProbeSupport.edge(a, b, centre)
+			var mid: Vector2 = edge[&"mid"]
+			var outward: Vector2 = edge[&"outward"]
 			var probe := mid + outward * 0.15
 			if _world.ground_plate_thickness_at(probe.x, probe.y) != 0.0:
 				continue
@@ -102,7 +101,7 @@ func _cases() -> Array[Dictionary]:
 				&"thickness": thickness,
 				&"mid": mid,
 				&"outward": outward,
-				&"along": (b - a).normalized(),
+				&"along": edge[&"along"],
 			})
 			break
 		if cases.size() >= MAX_CASES:

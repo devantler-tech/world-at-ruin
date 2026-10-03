@@ -80,8 +80,7 @@ func _exit_tree() -> void:
 
 
 func _cleanup_probe() -> void:
-	if FileAccess.file_exists(PROBE):
-		DirAccess.remove_absolute(ProjectSettings.globalize_path(PROBE))
+	PersistenceTestSupport.remove_file(PROBE)
 
 
 func _write_text(path: String, text: String) -> bool:
