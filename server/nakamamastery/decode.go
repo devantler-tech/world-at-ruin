@@ -2,18 +2,20 @@ package nakamamastery
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/devantler-tech/world-at-ruin/server/nakamastorage"
 )
 
 func validID(value string) bool {
-	if value == "" || len(value) > 128 || strings.TrimSpace(value) != value {
+	if !utf8.ValidString(value) || value == "" || len(value) > 128 || strings.TrimSpace(value) != value {
 		return false
 	}
 	for _, r := range value {
-		if unicode.IsControl(r) {
+		if unicode.IsControl(r) || r == utf8.RuneError {
 			return false
 		}
 	}
@@ -43,7 +45,7 @@ func validateState(state State) error {
 // fields refuses duplicate, missing and unknown members before typed decoding.
 // A nil vocabulary accepts dynamic keys, still bounded and duplicate-free.
 func fields(value string, vocabulary []string) (map[string]json.RawMessage, error) {
-	if len(value) > 65536 {
+	if !utf8.ValidString(value) || len(value) > 65536 {
 		return nil, ErrInvalid
 	}
 	decoder, err := nakamastorage.BeginObject(value)
@@ -159,6 +161,12 @@ func decodeOutcome(value string) (Outcome, error) {
 		}
 	}
 	if out.Kind != "death" && out.Credited == 0 {
+		return Outcome{}, ErrInvalid
+	}
+	if out.Kind == "reclaim" && state.Stain.ID != "" {
+		return Outcome{}, ErrInvalid
+	}
+	if out.Kind == "death" && len(out.Dropped) > 0 && !reflect.DeepEqual(out.Dropped, state.Stain.Points) {
 		return Outcome{}, ErrInvalid
 	}
 	out.State = state

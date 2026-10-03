@@ -1,1 +1,110 @@
-{"schema":1,"kind":"death","credited":0,"dropped":{"axe":37,"future:weapon":24},"destroyed":{"axe":7,"future:weapon":3},"state":{"schema":1,"weapons":{"axe":{"banked":200,"unbanked":38},"future:weapon":{"banked":100,"unbanked":25}},"stain":{"id":"death-event-identity","points":{"axe":37,"future:weapon":24}}}}
+[
+  {
+    "schema": 1,
+    "kind": "award",
+    "credited": 8,
+    "dropped": {},
+    "destroyed": {},
+    "state": {
+      "schema": 1,
+      "weapons": {
+        "axe": {
+          "banked": 300,
+          "unbanked": 3
+        },
+        "future:weapon": {
+          "banked": 100,
+          "unbanked": 49
+        }
+      },
+      "stain": {
+        "id": "",
+        "points": {}
+      }
+    }
+  },
+  {
+    "schema": 1,
+    "kind": "death",
+    "credited": 0,
+    "dropped": {
+      "axe": 37,
+      "future:weapon": 24
+    },
+    "destroyed": {
+      "axe": 7,
+      "future:weapon": 3
+    },
+    "state": {
+      "schema": 1,
+      "weapons": {
+        "axe": {
+          "banked": 200,
+          "unbanked": 38
+        },
+        "future:weapon": {
+          "banked": 100,
+          "unbanked": 25
+        }
+      },
+      "stain": {
+        "id": "death-event-identity",
+        "points": {
+          "axe": 37,
+          "future:weapon": 24
+        }
+      }
+    }
+  },
+  {
+    "schema": 1,
+    "kind": "death",
+    "credited": 0,
+    "dropped": {},
+    "destroyed": {},
+    "state": {
+      "schema": 1,
+      "weapons": {
+        "axe": {
+          "banked": 200,
+          "unbanked": 75
+        },
+        "future:weapon": {
+          "banked": 100,
+          "unbanked": 49
+        }
+      },
+      "stain": {
+        "id": "death-original",
+        "points": {
+          "axe": 7,
+          "future:weapon": 3
+        }
+      }
+    }
+  },
+  {
+    "schema": 1,
+    "kind": "reclaim",
+    "credited": 10,
+    "dropped": {},
+    "destroyed": {},
+    "state": {
+      "schema": 1,
+      "weapons": {
+        "axe": {
+          "banked": 200,
+          "unbanked": 82
+        },
+        "future:weapon": {
+          "banked": 100,
+          "unbanked": 52
+        }
+      },
+      "stain": {
+        "id": "",
+        "points": {}
+      }
+    }
+  }
+]

@@ -77,6 +77,13 @@ func (s *Store) Apply(ctx context.Context, event Event) (Outcome, error) {
 	}
 	next, out, err := transition(state, event.payload, event.identity)
 	if err != nil {
+		original, found, replayErr := s.mutations.Lookup(ctx, lookup(event))
+		if replayErr != nil {
+			return Outcome{}, replayErr
+		}
+		if found {
+			return historical(original, event)
+		}
 		return Outcome{}, err
 	}
 	value, err := json.Marshal(next)
@@ -85,6 +92,14 @@ func (s *Store) Apply(ctx context.Context, event Event) (Outcome, error) {
 	}
 	outcome, err := json.Marshal(out)
 	if err != nil {
+		return Outcome{}, ErrInvalid
+	}
+	// Encoding may expand identifiers. Refuse any document the retained reader
+	// cannot read BEFORE dispatching the atomic write.
+	if _, err := decodeMasteryDocument(string(value)); err != nil {
+		return Outcome{}, ErrInvalid
+	}
+	if _, err := decodeOutcome(string(outcome)); err != nil {
 		return Outcome{}, ErrInvalid
 	}
 	result, err = s.mutations.Apply(ctx, playerstate.Mutation{
@@ -138,6 +153,9 @@ func lookup(event Event) playerstate.LookupRequest {
 func historical(result playerstate.Result, event Event) (Outcome, error) {
 	out, err := decodeOutcome(string(result.Outcome))
 	if err != nil || out.Kind != event.payload.Kind || (out.Kind == "award" && out.Credited != event.payload.Amount) {
+		return Outcome{}, ErrStorage
+	}
+	if out.Kind == "death" && len(out.Dropped) > 0 && out.State.Stain.ID != event.identity {
 		return Outcome{}, ErrStorage
 	}
 	return out, nil
