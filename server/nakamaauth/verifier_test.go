@@ -16,11 +16,14 @@ const testSession = "signed-session-token"
 
 type accountServer = nakamaaccounttest.Server
 
+// verifierAgainst connects the real session verifier to the in-memory Nakama account RPC transport.
 func verifierAgainst(t *testing.T, server *accountServer) *Verifier {
 	t.Helper()
 	return NewVerifier(nakamaaccounttest.Client(t, server))
 }
 
+// TestVerifySessionForwardsBearerAndReturnsUserID checks that real account RPC verification
+// forwards the session and returns the verified player.
 func TestVerifySessionForwardsBearerAndReturnsUserID(t *testing.T) {
 	server := &accountServer{
 		Account: &api.Account{User: &api.User{Id: "player-42"}},
@@ -44,6 +47,8 @@ func TestVerifySessionForwardsBearerAndReturnsUserID(t *testing.T) {
 	}
 }
 
+// TestVerifySessionReplacesInheritedAuthorizationMetadata prevents caller-supplied metadata from
+// overriding the explicit session credential.
 func TestVerifySessionReplacesInheritedAuthorizationMetadata(t *testing.T) {
 	server := &accountServer{
 		Account: &api.Account{User: &api.User{Id: "player-42"}},
@@ -79,6 +84,8 @@ func TestVerifySessionReplacesInheritedAuthorizationMetadata(t *testing.T) {
 	}
 }
 
+// TestVerifySessionPreservesSanitizedGRPCCode keeps the upstream RPC status code while removing the
+// session and private error text.
 func TestVerifySessionPreservesSanitizedGRPCCode(t *testing.T) {
 	server := &accountServer{
 		AccountErr: status.Error(codes.Unavailable, "upstream unavailable for "+testSession),
@@ -97,6 +104,8 @@ func TestVerifySessionPreservesSanitizedGRPCCode(t *testing.T) {
 	}
 }
 
+// TestVerifySessionFailsClosed rejects unavailable or malformed account responses and preserves
+// cancellation.
 func TestVerifySessionFailsClosed(t *testing.T) {
 	tests := []struct {
 		name       string

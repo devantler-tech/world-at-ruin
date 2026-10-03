@@ -558,6 +558,7 @@ func (r *reader) delta(version uint16) (sim.SnapshotDelta, error) {
 	return d, nil
 }
 
+// casts reads a bounded cast list only after validating the entire encoded byte span.
 func (r *reader) casts(list string) ([]sim.ActiveCast, error) {
 	n, err := r.listCount(list, MaxCasts, activeCastSize)
 	if err != nil {

@@ -292,6 +292,8 @@ func TestSavePersistsPrivateVersionedCharacterForVerifiedAccount(t *testing.T) {
 	}
 }
 
+// TestSaveRejectsAnOwnerDifferentFromAuthenticatedCallerBeforeStorage prevents an authenticated
+// player from writing another player's character.
 func TestSaveRejectsAnOwnerDifferentFromAuthenticatedCallerBeforeStorage(
 	t *testing.T,
 ) {
@@ -308,6 +310,8 @@ func TestSaveRejectsAnOwnerDifferentFromAuthenticatedCallerBeforeStorage(
 	requireSaveRejectedBeforeStorage(t, storage, err)
 }
 
+// TestSaveRejectsAnEmptyObservedVersionBeforeStorage rejects a write without an observed version
+// before reading or mutating storage.
 func TestSaveRejectsAnEmptyObservedVersionBeforeStorage(t *testing.T) {
 	t.Parallel()
 
@@ -321,6 +325,8 @@ func TestSaveRejectsAnEmptyObservedVersionBeforeStorage(t *testing.T) {
 	requireSaveRejectedBeforeStorage(t, storage, err)
 }
 
+// TestSaveRefusesAStaleObservedVersion preserves the stored character when a replacement uses an
+// obsolete version.
 func TestSaveRefusesAStaleObservedVersion(t *testing.T) {
 	t.Parallel()
 
@@ -354,6 +360,8 @@ func TestSaveRefusesAStaleObservedVersion(t *testing.T) {
 	}
 }
 
+// TestSaveRejectsIdempotencyKeyReuseForDifferentCharacterState prevents one committed operation key
+// from authorizing a different replacement.
 func TestSaveRejectsIdempotencyKeyReuseForDifferentCharacterState(t *testing.T) {
 	t.Parallel()
 
@@ -389,6 +397,8 @@ func TestSaveRejectsIdempotencyKeyReuseForDifferentCharacterState(t *testing.T) 
 	}
 }
 
+// TestSaveReplaysACommittedReplacementWithItsStaleObservedVersion allows an exact retry to recover
+// its prior success without rewriting the character.
 func TestSaveReplaysACommittedReplacementWithItsStaleObservedVersion(
 	t *testing.T,
 ) {
@@ -424,6 +434,8 @@ func TestSaveReplaysACommittedReplacementWithItsStaleObservedVersion(
 	}
 }
 
+// TestSaveCannotOverwriteMalformedDurableCharacterWithItsVersion prevents an observed version from
+// laundering invalid stored character data.
 func TestSaveCannotOverwriteMalformedDurableCharacterWithItsVersion(t *testing.T) {
 	t.Parallel()
 
@@ -455,6 +467,8 @@ func TestSaveCannotOverwriteMalformedDurableCharacterWithItsVersion(t *testing.T
 	}
 }
 
+// TestClientOwnedCharacterPreseedCannotBecomeAuthoritative rejects forged records in the
+// player-owned storage namespace.
 func TestClientOwnedCharacterPreseedCannotBecomeAuthoritative(t *testing.T) {
 	t.Parallel()
 
@@ -507,6 +521,8 @@ func TestClientOwnedCharacterPreseedCannotBecomeAuthoritative(t *testing.T) {
 	}
 }
 
+// TestLegacyPlayerOwnedCharacterCannotBecomeAuthoritative keeps legacy player-owned records outside
+// the authoritative character path.
 func TestLegacyPlayerOwnedCharacterCannotBecomeAuthoritative(t *testing.T) {
 	t.Parallel()
 
@@ -524,6 +540,8 @@ func TestLegacyPlayerOwnedCharacterCannotBecomeAuthoritative(t *testing.T) {
 	}
 }
 
+// TestLoadKeepsEveryShippedCharacterSchemaReadable uses independent historical fixtures to preserve
+// all shipped character readers.
 func TestLoadKeepsEveryShippedCharacterSchemaReadable(t *testing.T) {
 	t.Parallel()
 
@@ -589,6 +607,8 @@ func TestLoadKeepsEveryShippedCharacterSchemaReadable(t *testing.T) {
 	}
 }
 
+// TestLoadRejectsMalformedOrPublicCharacterRecords rejects invalid character data and records with
+// public storage permissions.
 func TestLoadRejectsMalformedOrPublicCharacterRecords(t *testing.T) {
 	t.Parallel()
 
@@ -667,6 +687,8 @@ func TestLoadRejectsMalformedOrPublicCharacterRecords(t *testing.T) {
 	}
 }
 
+// TestLoadRejectsAnOwnerDifferentFromAuthenticatedCallerBeforeStorage prevents a player from
+// loading another player's character before storage access.
 func TestLoadRejectsAnOwnerDifferentFromAuthenticatedCallerBeforeStorage(
 	t *testing.T,
 ) {
@@ -685,6 +707,8 @@ func TestLoadRejectsAnOwnerDifferentFromAuthenticatedCallerBeforeStorage(
 	}
 }
 
+// TestLoadSanitizesStorageFailuresAndPreservesCancellation keeps backend details private while
+// preserving cancellation and stable error codes.
 func TestLoadSanitizesStorageFailuresAndPreservesCancellation(t *testing.T) {
 	t.Parallel()
 
@@ -731,6 +755,7 @@ func TestLoadSanitizesStorageFailuresAndPreservesCancellation(t *testing.T) {
 	}
 }
 
+// mustCharacterStore constructs the real character store around the requested storage fixture.
 func mustCharacterStore(t *testing.T, storage *fakeStorage) *Store {
 	t.Helper()
 	store, err := NewStore(storage)
@@ -740,6 +765,8 @@ func mustCharacterStore(t *testing.T, storage *fakeStorage) *Store {
 	return store
 }
 
+// canonicalCharacter returns a fresh canonical character, including independently owned recipe
+// bytes.
 func canonicalCharacter() Character {
 	return Character{
 		ID:          "warden-1",
@@ -748,6 +775,8 @@ func canonicalCharacter() Character {
 	}
 }
 
+// createCharacter saves the initial character through the real create-only, authenticated store
+// path.
 func createCharacter(t *testing.T, store *Store, character Character, key string) {
 	t.Helper()
 	if err := store.Save(authenticatedContext(testSubjectID), SaveRequest{
@@ -760,6 +789,8 @@ func createCharacter(t *testing.T, store *Store, character Character, key string
 	}
 }
 
+// seedUntrustedCharacter inserts a forged player-owned record to test the authoritative ownership
+// boundary.
 func seedUntrustedCharacter(storage *fakeStorage, key string) {
 	storage.seed(storedObject{
 		collection:      Collection,
@@ -772,6 +803,7 @@ func seedUntrustedCharacter(storage *fakeStorage, key string) {
 	})
 }
 
+// requireSaveRejectedBeforeStorage requires an error with no storage reads or writes.
 func requireSaveRejectedBeforeStorage(t *testing.T, storage *fakeStorage, err error) {
 	t.Helper()
 	if err == nil {

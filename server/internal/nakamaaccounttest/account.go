@@ -28,6 +28,8 @@ type Server struct {
 	AccountErr  error
 }
 
+// GetAccount records detached request metadata and returns the account or error configured before
+// the RPC starts.
 func (s *Server) GetAccount(ctx context.Context, _ *emptypb.Empty) (*api.Account, error) {
 	md, _ := metadata.FromIncomingContext(ctx)
 
@@ -40,24 +42,30 @@ func (s *Server) GetAccount(ctx context.Context, _ *emptypb.Empty) (*api.Account
 	return s.Account, s.AccountErr
 }
 
+// Observed returns the call count and a detached authorization snapshot under the metadata lock.
 func (s *Server) Observed() (int, []string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.calls, append([]string(nil), s.auth...)
 }
 
+// ObservedTrace returns a detached trace metadata snapshot under the metadata lock.
 func (s *Server) ObservedTrace() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]string(nil), s.trace...)
 }
 
+// ObservedGatewayAuthorization returns a detached gateway authorization snapshot under the metadata
+// lock.
 func (s *Server) ObservedGatewayAuthorization() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]string(nil), s.gatewayAuth...)
 }
 
+// Client connects to the in-memory account RPC server and registers connection, listener and server
+// cleanup.
 func Client(tb testing.TB, server *Server) apigrpc.NakamaClient {
 	tb.Helper()
 
@@ -89,4 +97,6 @@ func Client(tb testing.TB, server *Server) apigrpc.NakamaClient {
 	return apigrpc.NewNakamaClient(conn)
 }
 
+// ObservedAuthorization returns the detached authorization snapshot without exposing mutable
+// fixture storage.
 func (s *Server) ObservedAuthorization() []string { _, auth := s.Observed(); return auth }

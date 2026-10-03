@@ -26,6 +26,7 @@ const (
 
 type accountServer = nakamaaccounttest.Server
 
+// verifierAgainst connects the real session verifier to the in-memory Nakama account RPC transport.
 func verifierAgainst(t *testing.T, server *accountServer) *nakamaauth.Verifier {
 	t.Helper()
 	return nakamaauth.NewVerifier(nakamaaccounttest.Client(t, server))
@@ -96,6 +97,8 @@ func validAllocationRequest() AllocationRequest {
 	}
 }
 
+// TestServiceCreatesAllocationScopedHandoffThroughRealNakama checks verified account identity,
+// allocation ownership and the scoped token through a real RPC transport.
 func TestServiceCreatesAllocationScopedHandoffThroughRealNakama(t *testing.T) {
 	nakama := validAccountServer()
 	allocator := &recordingAllocator{allocation: validAllocation()}
@@ -154,6 +157,8 @@ func TestServiceCreatesAllocationScopedHandoffThroughRealNakama(t *testing.T) {
 	}
 }
 
+// TestKubernetesDNSSubdomainAllocationCreatesHandoff keeps valid Kubernetes DNS subdomain names
+// usable as allocation identities.
 func TestKubernetesDNSSubdomainAllocationCreatesHandoff(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -185,6 +190,8 @@ func TestKubernetesDNSSubdomainAllocationCreatesHandoff(t *testing.T) {
 	}
 }
 
+// TestRetriesUseDistinctAttemptOwnership prevents repeated handoff requests from sharing one
+// allocation attempt identity.
 func TestRetriesUseDistinctAttemptOwnership(t *testing.T) {
 	nakama := validAccountServer()
 	allocator := &recordingAllocator{allocation: validAllocation()}
@@ -215,6 +222,8 @@ func TestRetriesUseDistinctAttemptOwnership(t *testing.T) {
 	}
 }
 
+// TestAttemptIDFailureNeverAllocates requires attempt identity failure to stop before an external
+// allocation is requested.
 func TestAttemptIDFailureNeverAllocates(t *testing.T) {
 	nakama := validAccountServer()
 	allocator := &recordingAllocator{allocation: validAllocation()}
@@ -243,6 +252,8 @@ func TestAttemptIDFailureNeverAllocates(t *testing.T) {
 	}
 }
 
+// TestAuthenticationFailureNeverAllocates keeps rejected sessions from creating GameServer
+// resources.
 func TestAuthenticationFailureNeverAllocates(t *testing.T) {
 	nakama := &accountServer{
 		AccountErr: status.Error(codes.Unauthenticated, "rejected "+testSession),
@@ -266,6 +277,8 @@ func TestAuthenticationFailureNeverAllocates(t *testing.T) {
 	}
 }
 
+// TestInvalidReservationNeverAuthenticates requires malformed reservation input to fail before
+// account verification.
 func TestInvalidReservationNeverAuthenticates(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -300,6 +313,8 @@ func TestInvalidReservationNeverAuthenticates(t *testing.T) {
 	}
 }
 
+// TestReportedExpiryMatchesTokenNanosecondPrecision keeps the returned expiry equal to the token's
+// encoded expiry.
 func TestReportedExpiryMatchesTokenNanosecondPrecision(t *testing.T) {
 	now := time.Unix(2_000_000_000, 900_000_000)
 	service := timedService(t, now, 45*time.Second)
@@ -322,6 +337,8 @@ func TestReportedExpiryMatchesTokenNanosecondPrecision(t *testing.T) {
 	}
 }
 
+// TestMinimumTokenLifetimeSurvivesSecondPrecision preserves a usable token at the minimum supported
+// lifetime.
 func TestMinimumTokenLifetimeSurvivesSecondPrecision(t *testing.T) {
 	now := time.Unix(2_000_000_000, 900_000_000)
 	service := timedService(t, now, time.Second)
@@ -332,6 +349,8 @@ func TestMinimumTokenLifetimeSurvivesSecondPrecision(t *testing.T) {
 	}
 }
 
+// TestTokenNeverOutlivesUnclaimedAllocationLease caps token validity at the allocation's unclaimed
+// ownership lease.
 func TestTokenNeverOutlivesUnclaimedAllocationLease(t *testing.T) {
 	nakama := validAccountServer()
 	now := time.Unix(2_000_000_000, 123_456_789)
@@ -359,6 +378,8 @@ func TestTokenNeverOutlivesUnclaimedAllocationLease(t *testing.T) {
 	}
 }
 
+// TestCancellationAfterAllocationReleasesReservation requires cancellation after provisioning to
+// release the exact reservation.
 func TestCancellationAfterAllocationReleasesReservation(t *testing.T) {
 	nakama := validAccountServer()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -371,6 +392,8 @@ func TestCancellationAfterAllocationReleasesReservation(t *testing.T) {
 	requireCancelledHandoff(t, service, ctx, allocator)
 }
 
+// TestCancellationDuringTokenMintReleasesReservation requires cancellation while minting
+// credentials to release the exact reservation.
 func TestCancellationDuringTokenMintReleasesReservation(t *testing.T) {
 	nakama := validAccountServer()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -396,6 +419,8 @@ func TestCancellationDuringTokenMintReleasesReservation(t *testing.T) {
 	requireCancelledHandoff(t, service, ctx, allocator)
 }
 
+// TestEachAllocationUsesItsOwnAdmissionSecret prevents a token issued for one allocation from
+// authorizing another allocation.
 func TestEachAllocationUsesItsOwnAdmissionSecret(t *testing.T) {
 	nakama := validAccountServer()
 	allocation := validAllocation()
@@ -423,6 +448,8 @@ func TestEachAllocationUsesItsOwnAdmissionSecret(t *testing.T) {
 	}
 }
 
+// TestAbsoluteGameServerDNSNameIsNormalized accepts an absolute GameServer DNS name without
+// duplicating its trailing separator.
 func TestAbsoluteGameServerDNSNameIsNormalized(t *testing.T) {
 	nakama := validAccountServer()
 	allocation := validAllocation()
@@ -439,6 +466,8 @@ func TestAbsoluteGameServerDNSNameIsNormalized(t *testing.T) {
 	}
 }
 
+// TestAllocationFailureReturnsNoHandoff keeps allocator failures from exposing partial connection
+// material.
 func TestAllocationFailureReturnsNoHandoff(t *testing.T) {
 	nakama := validAccountServer()
 	allocator := &recordingAllocator{
@@ -473,6 +502,8 @@ func TestAllocationFailureReturnsNoHandoff(t *testing.T) {
 	}
 }
 
+// TestRetainedAllocationFailureSkipsOuterRelease preserves ambiguous durable ownership for
+// reconciliation instead of releasing it twice.
 func TestRetainedAllocationFailureSkipsOuterRelease(t *testing.T) {
 	tests := []struct {
 		name string
@@ -513,6 +544,8 @@ func TestRetainedAllocationFailureSkipsOuterRelease(t *testing.T) {
 	}
 }
 
+// TestMalformedAllocationReturnsNoHandoff rejects unusable allocation responses and checks
+// ownership-sensitive cleanup.
 func TestMalformedAllocationReturnsNoHandoff(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -579,6 +612,8 @@ func TestMalformedAllocationReturnsNoHandoff(t *testing.T) {
 	}
 }
 
+// TestReleaseFailureRemainsClosedAndSanitized preserves the release error code while withholding
+// credentials and backend details.
 func TestReleaseFailureRemainsClosedAndSanitized(t *testing.T) {
 	nakama := validAccountServer()
 	allocation := validAllocation()
@@ -600,6 +635,8 @@ func TestReleaseFailureRemainsClosedAndSanitized(t *testing.T) {
 	}
 }
 
+// TestNewServiceRejectsUnsafeConfiguration checks service construction rejects missing dependencies
+// and unsafe token or domain settings.
 func TestNewServiceRejectsUnsafeConfiguration(t *testing.T) {
 	verifier := verifierAgainst(t, validAccountServer())
 	allocator := &recordingAllocator{allocation: validAllocation()}
@@ -676,6 +713,8 @@ func TestNewServiceRejectsUnsafeConfiguration(t *testing.T) {
 	}
 }
 
+// mustService constructs the real handoff service and fails the caller when configuration is
+// invalid.
 func mustService(t *testing.T, verifier SessionVerifier, allocator Allocator, cfg Config) *Service {
 	t.Helper()
 	service, err := NewService(verifier, allocator, cfg)
@@ -685,10 +724,13 @@ func mustService(t *testing.T, verifier SessionVerifier, allocator Allocator, cf
 	return service
 }
 
+// validAccountServer returns a fresh configured account fixture for the authenticated test player.
 func validAccountServer() *accountServer {
 	return &accountServer{Account: &api.Account{User: &api.User{Id: "player-42"}}}
 }
 
+// requireFailedHandoff requires an error and an empty handoff so failure cannot expose partial
+// credentials.
 func requireFailedHandoff(t *testing.T, got Handoff, err error) {
 	t.Helper()
 	if err == nil {
@@ -699,11 +741,14 @@ func requireFailedHandoff(t *testing.T, got Handoff, err error) {
 	}
 }
 
+// serviceAgainst composes the real handoff service with the fixture account transport and the
+// requested allocator.
 func serviceAgainst(t *testing.T, account *accountServer, allocator Allocator, cfg Config) *Service {
 	t.Helper()
 	return mustService(t, verifierAgainst(t, account), allocator, cfg)
 }
 
+// mustHandoff creates the canonical handoff and fails the caller on any unexpected service error.
 func mustHandoff(t *testing.T, service *Service) Handoff {
 	t.Helper()
 	got, err := service.CreateHandoff(context.Background(), validRequest())
@@ -713,6 +758,7 @@ func mustHandoff(t *testing.T, service *Service) Handoff {
 	return got
 }
 
+// requireReleasedAllocation requires exactly one release for the canonical reservation and attempt.
 func requireReleasedAllocation(t *testing.T, allocator *recordingAllocator) {
 	t.Helper()
 	if len(allocator.releases) != 1 || allocator.releases[0] != validAllocationRequest() {
@@ -720,6 +766,8 @@ func requireReleasedAllocation(t *testing.T, allocator *recordingAllocator) {
 	}
 }
 
+// timedService uses a fixed clock and token lifetime while retaining the real verification and
+// allocation path.
 func timedService(t *testing.T, now time.Time, ttl time.Duration) *Service {
 	t.Helper()
 	return serviceAgainst(t, validAccountServer(), &recordingAllocator{allocation: validAllocation()}, Config{
@@ -729,6 +777,8 @@ func timedService(t *testing.T, now time.Time, ttl time.Duration) *Service {
 	})
 }
 
+// requireCancelledHandoff requires cancellation, an empty handoff and release of the exact
+// reservation.
 func requireCancelledHandoff(t *testing.T, service *Service, ctx context.Context, allocator *recordingAllocator) {
 	t.Helper()
 	got, err := service.CreateHandoff(ctx, validRequest())

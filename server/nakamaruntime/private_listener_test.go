@@ -797,6 +797,8 @@ func TestPrivateListenerShutdownCancelsClaimsBeforeClosingDependencies(t *testin
 	}
 }
 
+// start initializes the private listener using the fixture's real storage and injected transport
+// dependencies.
 func (f listenerFixture) start(t *testing.T) *registration {
 	t.Helper()
 	r := &registration{}
@@ -806,6 +808,8 @@ func (f listenerFixture) start(t *testing.T) *registration {
 	return r
 }
 
+// shutdown runs the registration's real shutdown path while preserving each caller's cleanup
+// ordering.
 func (f listenerFixture) shutdown(r *registration) {
 	r.shutdown(context.Background(), nil, nil, f.storage)
 }

@@ -448,6 +448,7 @@ func TestAddMobPanicsOnDuplicate(t *testing.T) {
 	w.AddMob(1, MobParams{})
 }
 
+// newChaseWorld uses the default chase parameters for a world with the canonical caster and target.
 func newChaseWorld() *World {
 	return chaseWorldWith(MobParams{
 		AggroRadiusMM:  10_000,
@@ -459,6 +460,8 @@ func newChaseWorld() *World {
 	})
 }
 
+// chaseWorldWith builds the deterministic caster and target world with the requested mob
+// parameters.
 func chaseWorldWith(params MobParams) *World {
 	w := NewWorld(combatBounds)
 	w.Add(Entity{ID: 100, Pos: Vec3{}, MaxSpeed: 3_000})
@@ -467,6 +470,8 @@ func chaseWorldWith(params MobParams) *World {
 	return w
 }
 
+// TestRegisteredMobChasesToCastRangeByDefault checks that default chase movement reaches cast range
+// using authoritative integer state.
 func TestRegisteredMobChasesToCastRangeByDefault(t *testing.T) {
 	w := newChaseWorld()
 
@@ -503,6 +508,8 @@ func TestRegisteredMobChasesToCastRangeByDefault(t *testing.T) {
 	}
 }
 
+// TestMobWithZeroChaseSpeedRemainsAStationaryCaster preserves zero-speed movement and casting
+// behavior.
 func TestMobWithZeroChaseSpeedRemainsAStationaryCaster(t *testing.T) {
 	w := chaseWorldWith(MobParams{
 		AggroRadiusMM:  10_000,

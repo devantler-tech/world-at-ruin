@@ -618,6 +618,8 @@ func TestOverflowResync(t *testing.T) {
 	}
 }
 
+// streamingTestHub starts the real simulation and TLS WebSocket server with test-owned transport
+// cleanup.
 func streamingTestHub(t *testing.T, cfg Config) (*Hub, []byte, *httptest.Server) {
 	t.Helper()
 	hub, secret := newTestHub(t, cfg)
@@ -627,6 +629,8 @@ func streamingTestHub(t *testing.T, cfg Config) (*Hub, []byte, *httptest.Server)
 	return hub, secret, server
 }
 
+// joinedTestClient requires a successful authenticated socket join and closes the connection if
+// setup fails.
 func joinedTestClient(t *testing.T, server *httptest.Server, secret []byte, observer sim.EntityID) *websocket.Conn {
 	t.Helper()
 	client, err := dial(t, server, secret, observer)
@@ -647,6 +651,8 @@ func joinedTestClient(t *testing.T, server *httptest.Server, secret []byte, obse
 	return client
 }
 
+// requireRejectedMessage writes the supplied inbound payload and requires the expected WebSocket
+// refusal status.
 func requireRejectedMessage(t *testing.T, client *websocket.Conn, payload []byte, want websocket.StatusCode) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

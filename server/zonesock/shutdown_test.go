@@ -155,6 +155,8 @@ func TestCanceledShutdownStillFencesAdmission(t *testing.T) {
 	}
 }
 
+// joinedShutdownSocket joins the canonical observer to the real hub for shutdown ownership
+// assertions.
 func joinedShutdownSocket(t *testing.T, capacity int) (*Hub, []byte, *httptest.Server, *websocket.Conn) {
 	t.Helper()
 	hub, secret := newTestHub(t, Config{})
@@ -172,6 +174,8 @@ func joinedShutdownSocket(t *testing.T, capacity int) (*Hub, []byte, *httptest.S
 	return hub, secret, server, client
 }
 
+// claimedTestVerifier creates the signed-token verifier with the deterministic durable claim
+// backend.
 func claimedTestVerifier(t *testing.T) *HMACVerifier {
 	t.Helper()
 	verifier, err := NewHMACVerifier(testSecret(1), "allocation-a")
@@ -181,6 +185,7 @@ func claimedTestVerifier(t *testing.T) *HMACVerifier {
 	return verifier
 }
 
+// startClaimHandshake starts a real claim request and exposes its response and completion barrier.
 func startClaimHandshake(t *testing.T, hub *Hub) (*httptest.ResponseRecorder, <-chan struct{}) {
 	t.Helper()
 	request := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "https://zone.invalid/zone", nil)

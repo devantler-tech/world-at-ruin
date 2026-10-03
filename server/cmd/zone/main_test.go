@@ -160,6 +160,8 @@ func writeWrappingPublicKey(t *testing.T, bits int) string {
 	return path
 }
 
+// TestAgonesSealedAdmissionUsesObservedGameServerIdentity checks that admission material is
+// published for the observed Starting GameServer before readiness.
 func TestAgonesSealedAdmissionUsesObservedGameServerIdentity(t *testing.T) {
 	f := startSidecar(t)
 	f.SetGameServer("games", "zone-17", "uid-17", "Starting")
@@ -197,6 +199,8 @@ func TestAgonesSealedAdmissionUsesObservedGameServerIdentity(t *testing.T) {
 	}
 }
 
+// TestAgonesSealedAdmissionRefusesAllocatableRestart prevents a restart from replacing admission
+// material on an already allocated GameServer.
 func TestAgonesSealedAdmissionRefusesAllocatableRestart(t *testing.T) {
 	f := startSidecar(t)
 	f.SetGameServer("games", "zone-17", "uid-17", "Allocated")
@@ -226,6 +230,8 @@ func TestAgonesSealedAdmissionRefusesAllocatableRestart(t *testing.T) {
 	}
 }
 
+// TestAgonesSealedAdmissionRefusesUndersizedWrappingKey requires rejection before readiness when
+// the RSA wrapping key is below the minimum size.
 func TestAgonesSealedAdmissionRefusesUndersizedWrappingKey(t *testing.T) {
 	f := startSidecar(t)
 	f.SetGameServer("games", "zone-17", "uid-17", "Starting")
@@ -420,6 +426,7 @@ func TestAgonesComposesWithListen(t *testing.T) {
 	}
 }
 
+// startSidecar starts the hermetic Agones RPC sidecar and registers its shutdown with the test.
 func startSidecar(t *testing.T) *agonestest.Sidecar {
 	t.Helper()
 	sidecar, err := agonestest.Start(nil)
@@ -430,6 +437,8 @@ func startSidecar(t *testing.T) *agonestest.Sidecar {
 	return sidecar
 }
 
+// sidecarEnvironment preserves the process environment while directing the real zone binary to the
+// fixture sidecar.
 func sidecarEnvironment(sidecar *agonestest.Sidecar, extra ...string) []string {
 	env := append(os.Environ(), "AGONES_SDK_GRPC_HOST=127.0.0.1", "AGONES_SDK_GRPC_PORT="+sidecar.PortString())
 	return append(env, extra...)
