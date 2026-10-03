@@ -81,6 +81,13 @@ func (f *Fake) Get(collection, key, userID string) (Object, bool) {
 	return object, ok
 }
 
+// NextVersion returns the actual version cursor for atomic-refusal assertions.
+func (f *Fake) NextVersion() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.next
+}
+
 // Objects returns an independent snapshot for assertions about durable state.
 func (f *Fake) Objects() []Object {
 	f.mu.Lock()

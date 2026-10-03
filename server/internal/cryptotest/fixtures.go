@@ -6,13 +6,11 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
-	"crypto/sha256"
 	"crypto/x509"
-	"encoding/base64"
-	"strings"
 	"testing"
 
 	"github.com/devantler-tech/world-at-ruin/server/admissionref"
+	"github.com/devantler-tech/world-at-ruin/server/internal/envelopetest"
 )
 
 // Seal builds an RSA admission envelope without using the production sealer.
@@ -27,12 +25,8 @@ func Seal(tb testing.TB, namespace, name, uid string, secret []byte) (*rsa.Priva
 	if err != nil {
 		tb.Fatal(err)
 	}
-	label := []byte(strings.Join([]string{"world-at-ruin/zone-admission/v1", namespace, name, uid, fingerprint}, "\x00"))
-	sealed, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, &key.PublicKey, secret, label)
-	if err != nil {
-		tb.Fatal(err)
-	}
-	return key, fingerprint, "v1." + base64.RawURLEncoding.EncodeToString(sealed)
+	return key, fingerprint, envelopetest.Seal(tb, &key.PublicKey, namespace, name, uid, fingerprint, secret)
+
 }
 
 // NewKey generates the P-256 key used by certificate fixtures.

@@ -4,13 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"math"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/devantler-tech/world-at-ruin/server/internal/savefixturetest"
+	"github.com/devantler-tech/world-at-ruin/server/nakamastorage/nakamastoragetest"
 	"github.com/heroiclabs/nakama-common/api"
 	"github.com/heroiclabs/nakama-common/runtime"
 )
@@ -39,157 +39,29 @@ func authenticatedContext(userID string) context.Context {
 	}
 }
 
-type storedObject struct {
-	collection      string
-	key             string
-	userID          string
-	value           string
-	version         string
-	permissionRead  int32
-	permissionWrite int32
-}
+type storedObject = nakamastoragetest.Object
 
 type fakeStorage struct {
-	objects                  map[string]storedObject
-	readCalls                int
-	readErr                  error
-	writeCalls               [][]*runtime.StorageWrite
-	next                     int
+	*nakamastoragetest.Fake
 	systemReadOverride       []*api.StorageObject
 	systemReadOverrideActive bool
 }
 
 func newFakeStorage() *fakeStorage {
-	return &fakeStorage{
-		objects: make(map[string]storedObject),
-		next:    1,
-	}
+	return &fakeStorage{Fake: nakamastoragetest.New()}
 }
 
-func (f *fakeStorage) seed(object storedObject) {
-	f.objects[storageObjectID(object.collection, object.key, object.userID)] = object
-}
+func (f *fakeStorage) seed(object storedObject) { f.Seed(object) }
 
-func (f *fakeStorage) StorageRead(
-	_ context.Context,
-	reads []*runtime.StorageRead,
-) ([]*api.StorageObject, error) {
-	f.readCalls++
-	if f.readErr != nil {
-		return nil, f.readErr
-	}
-	if f.systemReadOverrideActive && len(reads) == 1 &&
-		reads[0].Collection == Collection &&
-		reads[0].Key == characterRecordKey(testSubjectID) &&
-		reads[0].UserID == "" {
+// Malformed raw replies stay injectable without passing through the fake's
+// normal object projection. A configured storage error retains precedence.
+func (f *fakeStorage) StorageRead(ctx context.Context, reads []*runtime.StorageRead) ([]*api.StorageObject, error) {
+	if f.ReadErr == nil && f.systemReadOverrideActive && len(reads) == 1 &&
+		reads[0].Collection == Collection && reads[0].Key == characterRecordKey(testSubjectID) && reads[0].UserID == "" {
+		f.ReadCalls++
 		return f.systemReadOverride, nil
 	}
-	objects := make([]*api.StorageObject, 0, len(reads))
-	for _, read := range reads {
-		ownerID := read.UserID
-		if ownerID == "" {
-			ownerID = systemOwnerID
-		}
-		object, ok := f.objects[storageObjectID(
-			read.Collection,
-			read.Key,
-			ownerID,
-		)]
-		if !ok {
-			continue
-		}
-		objects = append(objects, &api.StorageObject{
-			Collection:      object.collection,
-			Key:             object.key,
-			UserId:          object.userID,
-			Value:           object.value,
-			Version:         object.version,
-			PermissionRead:  object.permissionRead,
-			PermissionWrite: object.permissionWrite,
-		})
-	}
-	return objects, nil
-}
-
-func (f *fakeStorage) StorageWrite(
-	_ context.Context,
-	writes []*runtime.StorageWrite,
-) ([]*api.StorageObjectAck, error) {
-	call := make([]*runtime.StorageWrite, len(writes))
-	copy(call, writes)
-	f.writeCalls = append(f.writeCalls, call)
-
-	for _, write := range writes {
-		ownerID := write.UserID
-		if ownerID == "" {
-			ownerID = systemOwnerID
-		}
-		current, exists := f.objects[storageObjectID(
-			write.Collection,
-			write.Key,
-			ownerID,
-		)]
-		switch {
-		case write.Version == "*" && exists:
-			return nil, runtime.ErrStorageRejectedVersion
-		case write.Version != "" &&
-			write.Version != "*" &&
-			(!exists || write.Version != current.version):
-			return nil, runtime.ErrStorageRejectedVersion
-		}
-	}
-
-	type permissions struct {
-		read  int32
-		write int32
-	}
-	validatedPermissions := make([]permissions, len(writes))
-	for index, write := range writes {
-		if write.PermissionRead < math.MinInt32 ||
-			write.PermissionRead > math.MaxInt32 ||
-			write.PermissionWrite < math.MinInt32 ||
-			write.PermissionWrite > math.MaxInt32 {
-			return nil, errors.New("invalid permission")
-		}
-		validatedPermissions[index] = permissions{
-			read:  int32(write.PermissionRead),
-			write: int32(write.PermissionWrite),
-		}
-	}
-
-	acks := make([]*api.StorageObjectAck, 0, len(writes))
-	for index, write := range writes {
-		ownerID := write.UserID
-		if ownerID == "" {
-			ownerID = systemOwnerID
-		}
-		version := fmt.Sprintf("v%d", f.next)
-		f.next++
-		f.objects[storageObjectID(
-			write.Collection,
-			write.Key,
-			ownerID,
-		)] = storedObject{
-			collection:      write.Collection,
-			key:             write.Key,
-			userID:          ownerID,
-			value:           write.Value,
-			version:         version,
-			permissionRead:  validatedPermissions[index].read,
-			permissionWrite: validatedPermissions[index].write,
-		}
-		acks = append(acks, &api.StorageObjectAck{
-			Collection: write.Collection,
-			Key:        write.Key,
-			UserId:     ownerID,
-			Version:    version,
-		})
-	}
-	return acks, nil
-}
-
-func storageObjectID(collection, key, userID string) string {
-	return collection + "\x00" + key + "\x00" + userID
+	return f.Fake.StorageRead(ctx, reads)
 }
 
 func TestFakeStorageRejectsAnInvalidBatchBeforeAnyMutation(t *testing.T) {
@@ -218,11 +90,11 @@ func TestFakeStorageRejectsAnInvalidBatchBeforeAnyMutation(t *testing.T) {
 	if err == nil {
 		t.Fatal("StorageWrite() error = nil")
 	}
-	if len(storage.objects) != 0 || storage.next != 1 {
+	if len(storage.Objects()) != 0 || storage.NextVersion() != 1 {
 		t.Fatalf(
 			"failed batch mutated storage: objects %d, next %d",
-			len(storage.objects),
-			storage.next,
+			len(storage.Objects()),
+			storage.NextVersion(),
 		)
 	}
 }
@@ -252,14 +124,14 @@ func TestSavePersistsPrivateVersionedCharacterForVerifiedAccount(t *testing.T) {
 		t.Fatalf("Save() error = %v", err)
 	}
 
-	if len(storage.writeCalls) != 1 ||
-		len(storage.writeCalls[0]) != 2 {
+	if len(storage.WriteCalls) != 1 ||
+		len(storage.WriteCalls[0]) != 2 {
 		t.Fatalf(
 			"atomic StorageWrite() calls = %#v, want one record+audit write",
-			storage.writeCalls,
+			storage.WriteCalls,
 		)
 	}
-	recordWrite := storage.writeCalls[0][0]
+	recordWrite := storage.WriteCalls[0][0]
 	if recordWrite.Collection != Collection ||
 		recordWrite.Key != "character:"+testSubjectID ||
 		recordWrite.UserID != "" ||
@@ -343,8 +215,8 @@ func TestSaveRefusesAStaleObservedVersion(t *testing.T) {
 	if !errors.Is(err, ErrConflict) {
 		t.Fatalf("stale Save() error = %v, want %v", err, ErrConflict)
 	}
-	if len(storage.writeCalls) != 2 {
-		t.Fatalf("StorageWrite() calls = %d, want 2", len(storage.writeCalls))
+	if len(storage.WriteCalls) != 2 {
+		t.Fatalf("StorageWrite() calls = %d, want 2", len(storage.WriteCalls))
 	}
 	record, err := store.Load(authenticatedContext(testSubjectID), testSubjectID)
 	if err != nil {
@@ -387,10 +259,10 @@ func TestSaveRejectsIdempotencyKeyReuseForDifferentCharacterState(t *testing.T) 
 			ErrKeyConflict,
 		)
 	}
-	if len(storage.writeCalls) != 1 {
+	if len(storage.WriteCalls) != 1 {
 		t.Fatalf(
 			"StorageWrite() calls after rejected reuse = %d, want 1",
-			len(storage.writeCalls),
+			len(storage.WriteCalls),
 		)
 	}
 }
@@ -424,10 +296,10 @@ func TestSaveReplaysACommittedReplacementWithItsStaleObservedVersion(
 	if err := store.Save(authenticatedContext(testSubjectID), request); err != nil {
 		t.Fatalf("replayed Save() error = %v, want nil", err)
 	}
-	if len(storage.writeCalls) != 2 {
+	if len(storage.WriteCalls) != 2 {
 		t.Fatalf(
 			"StorageWrite() calls after replay = %d, want 2",
-			len(storage.writeCalls),
+			len(storage.WriteCalls),
 		)
 	}
 }
@@ -439,13 +311,13 @@ func TestSaveCannotOverwriteMalformedDurableCharacterWithItsVersion(t *testing.T
 
 	storage := newFakeStorage()
 	storage.seed(storedObject{
-		collection:      Collection,
-		key:             characterRecordKey(testSubjectID),
-		userID:          systemOwnerID,
-		value:           `{"schema":1,"character_id":"warden-1"}`,
-		version:         "observed-version",
-		permissionRead:  0,
-		permissionWrite: 0,
+		Collection:      Collection,
+		Key:             characterRecordKey(testSubjectID),
+		UserID:          systemOwnerID,
+		Value:           `{"schema":1,"character_id":"warden-1"}`,
+		Version:         "observed-version",
+		PermissionRead:  0,
+		PermissionWrite: 0,
 	})
 	store := mustCharacterStore(t, storage)
 	err := store.Save(authenticatedContext(testSubjectID), SaveRequest{
@@ -457,10 +329,10 @@ func TestSaveCannotOverwriteMalformedDurableCharacterWithItsVersion(t *testing.T
 	if !errors.Is(err, ErrStorage) {
 		t.Fatalf("Save() error = %v, want %v", err, ErrStorage)
 	}
-	if len(storage.writeCalls) != 0 {
+	if len(storage.WriteCalls) != 0 {
 		t.Fatalf(
 			"StorageWrite() calls after quarantine = %d, want 0",
-			len(storage.writeCalls),
+			len(storage.WriteCalls),
 		)
 	}
 }
@@ -480,16 +352,13 @@ func TestClientOwnedCharacterPreseedCannotBecomeAuthoritative(t *testing.T) {
 		t.Fatalf("Load() error = %v, want %v", err, ErrNotFound)
 	}
 	storage.systemReadOverrideActive = true
+	seeded, _ := storage.Get(Collection, "character:"+testSubjectID, testSubjectID)
 	storage.systemReadOverride = []*api.StorageObject{
 		{
-			Collection: Collection,
-			Key:        "character:" + testSubjectID,
-			UserId:     testSubjectID,
-			Value: storage.objects[storageObjectID(
-				Collection,
-				"character:"+testSubjectID,
-				testSubjectID,
-			)].value,
+			Collection:      Collection,
+			Key:             "character:" + testSubjectID,
+			UserId:          testSubjectID,
+			Value:           seeded.Value,
 			Version:         "wrong-owner-version",
 			PermissionRead:  0,
 			PermissionWrite: 0,
@@ -533,8 +402,8 @@ func TestLegacyPlayerOwnedCharacterCannotBecomeAuthoritative(t *testing.T) {
 	); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("Load() error = %v, want %v", err, ErrNotFound)
 	}
-	if len(storage.writeCalls) != 0 {
-		t.Fatalf("legacy object triggered writes: %#v", storage.writeCalls)
+	if len(storage.WriteCalls) != 0 {
+		t.Fatalf("legacy object triggered writes: %#v", storage.WriteCalls)
 	}
 }
 
@@ -547,13 +416,13 @@ func TestLoadKeepsEveryShippedCharacterSchemaReadable(t *testing.T) {
 		version, goldenBytes := fixture.Version, fixture.Bytes
 		storage := newFakeStorage()
 		storage.seed(storedObject{
-			collection:      Collection,
-			key:             characterRecordKey(testSubjectID),
-			userID:          systemOwnerID,
-			value:           strings.TrimSpace(string(goldenBytes)),
-			version:         "durable-version",
-			permissionRead:  0,
-			permissionWrite: 0,
+			Collection:      Collection,
+			Key:             characterRecordKey(testSubjectID),
+			UserID:          systemOwnerID,
+			Value:           strings.TrimSpace(string(goldenBytes)),
+			Version:         "durable-version",
+			PermissionRead:  0,
+			PermissionWrite: 0,
 		})
 		store := mustCharacterStore(t, storage)
 		record, err := store.Load(
@@ -641,13 +510,13 @@ func TestLoadRejectsMalformedOrPublicCharacterRecords(t *testing.T) {
 
 			storage := newFakeStorage()
 			storage.seed(storedObject{
-				collection:      Collection,
-				key:             characterRecordKey(testSubjectID),
-				userID:          systemOwnerID,
-				value:           test.value,
-				version:         "durable-version",
-				permissionRead:  test.permissionRead,
-				permissionWrite: test.permissionWrite,
+				Collection:      Collection,
+				Key:             characterRecordKey(testSubjectID),
+				UserID:          systemOwnerID,
+				Value:           test.value,
+				Version:         "durable-version",
+				PermissionRead:  test.permissionRead,
+				PermissionWrite: test.permissionWrite,
 			})
 			store := mustCharacterStore(t, storage)
 			_, err := store.Load(
@@ -676,8 +545,8 @@ func TestLoadRejectsAnOwnerDifferentFromAuthenticatedCallerBeforeStorage(
 	); err == nil {
 		t.Fatal("Load() error = nil")
 	}
-	if storage.readCalls != 0 {
-		t.Fatalf("StorageRead() calls = %d, want 0", storage.readCalls)
+	if storage.ReadCalls != 0 {
+		t.Fatalf("StorageRead() calls = %d, want 0", storage.ReadCalls)
 	}
 }
 
@@ -713,7 +582,7 @@ func TestLoadSanitizesStorageFailuresAndPreservesCancellation(t *testing.T) {
 
 			storage := newFakeStorage()
 			store := mustCharacterStore(t, storage)
-			storage.readErr = test.readErr
+			storage.ReadErr = test.readErr
 			_, err := store.Load(
 				authenticatedContext(testSubjectID),
 				testSubjectID,
@@ -767,13 +636,13 @@ func createCharacter(t *testing.T, store *Store, character Character, key string
 // boundary.
 func seedUntrustedCharacter(storage *fakeStorage, key string) {
 	storage.seed(storedObject{
-		collection:      Collection,
-		key:             key,
-		userID:          testSubjectID,
-		value:           `{"schema":1,"character_id":"attacker-seeded","display_name":"Mallory","recipe":{"gold":999999}}`,
-		version:         "client-created-version",
-		permissionRead:  0,
-		permissionWrite: 0,
+		Collection:      Collection,
+		Key:             key,
+		UserID:          testSubjectID,
+		Value:           `{"schema":1,"character_id":"attacker-seeded","display_name":"Mallory","recipe":{"gold":999999}}`,
+		Version:         "client-created-version",
+		PermissionRead:  0,
+		PermissionWrite: 0,
 	})
 }
 
@@ -783,7 +652,7 @@ func requireSaveRejectedBeforeStorage(t *testing.T, storage *fakeStorage, err er
 	if err == nil {
 		t.Fatal("Save() error = nil")
 	}
-	if storage.readCalls != 0 || len(storage.writeCalls) != 0 {
-		t.Fatalf("storage calls before rejection = reads %d, writes %d", storage.readCalls, len(storage.writeCalls))
+	if storage.ReadCalls != 0 || len(storage.WriteCalls) != 0 {
+		t.Fatalf("storage calls before rejection = reads %d, writes %d", storage.ReadCalls, len(storage.WriteCalls))
 	}
 }
