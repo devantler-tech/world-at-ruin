@@ -392,11 +392,7 @@ func validAcks(
 	}
 	for index, ack := range acks {
 		expectedOwner := expectedStorageOwner(writes[index].UserID)
-		if ack == nil ||
-			ack.GetCollection() != writes[index].Collection ||
-			ack.GetKey() != writes[index].Key ||
-			ack.GetUserId() != expectedOwner ||
-			ack.GetVersion() == "" {
+		if !nakamastorage.ValidAcknowledgement(ack, writes[index].Collection, writes[index].Key, expectedOwner) {
 			return false
 		}
 	}

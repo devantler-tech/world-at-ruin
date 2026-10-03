@@ -65,7 +65,6 @@ const (
 	reservationLabel = "world-at-ruin.dev/handoff-reservation"
 	attemptLabel     = agones.AttemptLabel
 
-	leaseObjectIDLength       = 64
 	admissionEnvelopePrefix   = "v1."
 	claimLocatorPrefix        = "v1."
 	minAdmissionEnvelopeBytes = 384
@@ -249,15 +248,7 @@ func validWrappingKeyFingerprint(value string) bool {
 }
 
 func validLeaseObjectID(value string) bool {
-	if len(value) != leaseObjectIDLength {
-		return false
-	}
-	for _, char := range value {
-		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
-			return false
-		}
-	}
-	return true
+	return handoffidentity.SHA256Hex(value)
 }
 
 func validAdmissionEnvelope(value string) bool {

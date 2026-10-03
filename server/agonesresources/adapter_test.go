@@ -25,6 +25,7 @@ import (
 	"github.com/devantler-tech/world-at-ruin/server/gameserverapi"
 	"github.com/devantler-tech/world-at-ruin/server/handoff"
 	"github.com/devantler-tech/world-at-ruin/server/handoffalloc"
+	"github.com/devantler-tech/world-at-ruin/server/internal/envelopetest"
 	"github.com/devantler-tech/world-at-ruin/server/internal/grpctest"
 	"github.com/devantler-tech/world-at-ruin/server/nakamalease"
 	"github.com/devantler-tech/world-at-ruin/server/sim"
@@ -112,18 +113,8 @@ func sealedEnvelope(
 	secret []byte,
 ) string {
 	t.Helper()
-	label := []byte(strings.Join([]string{
-		"world-at-ruin/zone-admission/v1",
-		testNamespace,
-		name,
-		string(uid),
-		fingerprint,
-	}, "\x00"))
-	ciphertext, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, &key.PublicKey, secret, label)
-	if err != nil {
-		t.Fatalf("seal test envelope: %v", err)
-	}
-	return "v1." + base64.RawURLEncoding.EncodeToString(ciphertext)
+	return envelopetest.Seal(t, &key.PublicKey, testNamespace, name, string(uid), fingerprint, secret)
+
 }
 
 type allocationHandler func(

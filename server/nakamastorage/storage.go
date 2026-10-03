@@ -16,6 +16,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/devantler-tech/world-at-ruin/server/internal/handoffidentity"
 	"github.com/heroiclabs/nakama-common/api"
 	"github.com/heroiclabs/nakama-common/runtime"
 )
@@ -63,28 +64,7 @@ func CanonicalObject(raw json.RawMessage) (json.RawMessage, error) {
 // ValidSubjectID reports whether subjectID is a hyphenated UUID, in either
 // case, that is not the system owner.
 func ValidSubjectID(subjectID string) bool {
-	if len(subjectID) != 36 || subjectID == SystemOwnerID {
-		return false
-	}
-	for index, char := range subjectID {
-		switch index {
-		case 8, 13, 18, 23:
-			if char != '-' {
-				return false
-			}
-		default:
-			if !isHexDigit(char) {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-func isHexDigit(char rune) bool {
-	return (char >= '0' && char <= '9') ||
-		(char >= 'a' && char <= 'f') ||
-		(char >= 'A' && char <= 'F')
+	return subjectID != SystemOwnerID && handoffidentity.UUID(subjectID)
 }
 
 // InvalidIdentityPart reports whether value cannot take part in a stored

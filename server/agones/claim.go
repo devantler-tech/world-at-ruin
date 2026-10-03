@@ -2,13 +2,12 @@ package agones
 
 import (
 	"context"
-	"encoding/base32"
-	"encoding/hex"
 	"errors"
 	"strings"
 	"sync"
 
 	sdkproto "agones.dev/agones/pkg/sdk"
+	"github.com/devantler-tech/world-at-ruin/server/internal/handoffidentity"
 )
 
 // ErrClaimBinding refuses admission without revealing allocation metadata.
@@ -124,13 +123,7 @@ func parseClaimLocator(locator string) (string, string, bool) {
 	if len(parts) != 3 || parts[0] != "v1" || len(parts[1]) != 64 || len(parts[2]) != 52 {
 		return "", "", false
 	}
-	key, err := hex.DecodeString(parts[1])
-	if err != nil || hex.EncodeToString(key) != parts[1] {
-		return "", "", false
-	}
-	encoding := base32.StdEncoding.WithPadding(base32.NoPadding)
-	digest, err := encoding.DecodeString(strings.ToUpper(parts[2]))
-	if err != nil || len(digest) != 32 || strings.ToLower(encoding.EncodeToString(digest)) != parts[2] {
+	if !handoffidentity.SHA256Hex(parts[1]) || !handoffidentity.Fingerprint(parts[2]) {
 		return "", "", false
 	}
 	return parts[1], parts[2], true
