@@ -80,3 +80,30 @@ static func historical_fixture(path: String, version: int) -> Dictionary:
 		return {"problem": "declares version %s but its filename says v%d — a stale copy cannot stand in for v%d coverage" % [
 			str(expected.get("version", "none")), version, version]}
 	return {"problem": "", "raw": raw, "expected": expected}
+
+
+## Interpose caller-owned bytes without a production writer or serializer.
+## Results are observations; each scene states its own success/refusal oracle.
+static func interposed_write(path: String, foreign_bytes: String, write: Callable) -> Dictionary:
+	if not write_text(path, foreign_bytes):
+		return {"seeded": false}
+	var before := read_text(path)
+	var result: Variant = write.call()
+	return {"seeded": true, "before": before, "after": read_text(path), "result": result}
+
+
+## Preserve a test-owned squatter observation even when the attempted save fails.
+static func foreign_stage(path: String, bytes: String, write: Callable) -> Dictionary:
+	var foreign := path + ".tmp"
+	if not write_text(foreign, bytes):
+		return {"seeded": false}
+	var result: Variant = write.call()
+	var observation := {"seeded": true, "result": result,
+		"exists": FileAccess.file_exists(foreign), "bytes": read_text(foreign)}
+	remove_file(foreign)
+	return observation
+
+
+static func completed_write(path: String, suffix: String, write: Callable) -> Dictionary:
+	var result: Variant = write.call()
+	return {"result": result, "stages": staging_names(path, suffix)}

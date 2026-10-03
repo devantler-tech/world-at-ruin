@@ -58,8 +58,7 @@ func _scatter(world: Node, count: int, inner: float, outer: float,
 		var npc_name := NpcGen.forge_name(name_rng)
 		# Forged names can collide; suffix until unique so the name-keyed
 		# recipe stays 1:1 with the person standing there.
-		while npc_name in npc_names:
-			npc_name += NpcGen.NAME_TAILS[name_rng.randi_range(0, NpcGen.NAME_TAILS.size() - 1)]
+		npc_name = RecipeGeneration.ensure_unique(npc_name, NpcGen.NAME_TAILS, name_rng, npc_names)
 		npc_names.append(npc_name)
 		var body := CharacterFactory.build(NpcGen.recipe_for(npc_name, archetype))
 		if body == null:

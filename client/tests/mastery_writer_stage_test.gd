@@ -1,10 +1,6 @@
-extends Node
+extends PersistenceScenario
 ## Uses the real ledger, vault and filesystem. A directory standing where the
 ## vault's parent should be makes writes fail without mocking persistence.
-
-var _failed := false
-var _save: SaveIsolation
-
 
 func _ready() -> void:
 	if not SaveContractStage.refusal_reason().is_empty():
@@ -19,9 +15,7 @@ func _ready() -> void:
 	if not ResourceLoader.exists("res://scripts/mastery_persistence.gd"):
 		_fail("no runtime owner persists and retries mastery changes")
 		return
-	_save = SaveIsolation.new("user://mastery_persistence_probe.json")
-	if not _save.begin():
-		_fail("save isolation failed")
+	if not _begin("user://mastery_persistence_probe.json"):
 		return
 	SaveVault.clear_refusals_for_test()
 	var ledger := Mastery.new()
@@ -48,12 +42,8 @@ func _ready() -> void:
 	_check_transient_failure(ledger, writer)
 	_check_conflict_after_retry(ledger, writer, persistence)
 	_check_retry_ceiling(ledger, writer)
-	_check(_save.real_save_untouched(), "persistence test touched real player state")
-	_save = null
-	if _failed:
-		return
-	print("TEST PASS — mastery persists synchronously, retries boundedly, and fences stale owners")
-	get_tree().quit(0)
+	_finish("mastery persists synchronously, retries boundedly, and fences stale owners",
+		"persistence test touched real player state")
 
 
 func _check_transient_failure(ledger: Mastery, writer: RefCounted) -> void:
@@ -160,20 +150,3 @@ func _stored() -> Dictionary:
 func _snapshot(banked: int, unbanked: int, stain: Dictionary) -> Dictionary:
 	return JSON.parse_string(JSON.stringify({
 		"weapons": {"sword": {"banked": banked, "unbanked": unbanked}}, "bloodstain": stain}))
-
-
-func _check(condition: bool, message: String) -> void:
-	if not condition:
-		_fail(message)
-
-
-func _fail(message: String) -> void:
-	_failed = true
-	push_error("TEST FAIL — " + message)
-	get_tree().quit(1)
-
-
-func _exit_tree() -> void:
-	if _save != null:
-		if not _save.real_save_untouched():
-			push_error("TEST FAIL — mastery persistence teardown detected real player-state changes")

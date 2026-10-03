@@ -153,18 +153,7 @@ static func last_refusal() -> String:
 ## filesystem-dependent granularity, sync tools routinely preserve it, and a
 ## same-size edit is exactly the shape an edited recipe has.
 static func document_identity(path: String) -> String:
-	if not FileAccess.file_exists(path):
-		return IDENTITY_ABSENT
-	var sha := FileAccess.get_sha256(path)
-	# get_sha256() returns an EMPTY string on failure, and empty is exactly
-	# IDENTITY_ABSENT. Collapsing the two would be a lost update rather than a
-	# refusal: a writer that read no recipe expects absence, and a recipe that has
-	# appeared since but cannot be hashed would compare EQUAL to that expectation
-	# and be replaced. A file that is there but unreadable is its own answer, and
-	# one that never matches anything.
-	if sha.is_empty():
-		return IDENTITY_UNREADABLE
-	return sha
+	return DocumentIdentity.for_path(path, IDENTITY_ABSENT, IDENTITY_UNREADABLE)
 
 
 ## The active save path: the WAR_SAVE_PATH override when set, else the shipped

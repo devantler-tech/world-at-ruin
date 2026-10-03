@@ -15,3 +15,12 @@ static func put_shape(shapes: Dictionary, shape_name: String, value: float) -> v
 
 static func quantize(value: float) -> float:
 	return snappedf(value, 0.01)
+
+
+## Consume exactly one suffix draw per collision, preserving the caller's forge
+## schedule. The caller records the accepted name before attempting body build.
+static func ensure_unique(forged: String, tails: Array, rng: RandomNumberGenerator,
+		taken: PackedStringArray) -> String:
+	while forged in taken:
+		forged += tails[rng.randi_range(0, tails.size() - 1)]
+	return forged
