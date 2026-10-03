@@ -633,11 +633,17 @@ func joinedTestClient(t *testing.T, server *httptest.Server, secret []byte, obse
 	if err != nil {
 		t.Fatalf("Dial: %v", err)
 	}
+	joined := false
+	defer func() {
+		if !joined {
+			closeConnection(t, client)
+		}
+	}()
 	client.SetReadLimit(4 << 20)
 	if message := readMessage(t, client); message.Kind != wire.KindSnapshot {
-		closeConnection(t, client)
 		t.Fatalf("join kind = %d, want KindSnapshot", message.Kind)
 	}
+	joined = true
 	return client
 }
 
