@@ -65,24 +65,9 @@ func _physics_process(_delta: float) -> void:
 
 	for i in roots.size():
 		var npc := roots[i] as Node3D
-		var pos := npc.position
-		if pos.distance_to(expected[i]) > 0.001:
-			_fail("%s stands at %s, recomputed layout says %s — placement is not deterministic" % [npc.name, pos, expected[i]])
-			return
-		if Vector2(pos.x, pos.z).length() < WorldGen.SHRINE_CLEAR_RADIUS:
-			_fail("%s stands inside the shrine clearing" % npc.name)
-			return
-		if world.cave_protects(pos.x, pos.z):
-			_fail("%s stands in a cave footprint" % npc.name)
-			return
-		var walkout := Geometry2D.get_closest_point_to_segment(
-			Vector2(pos.x, pos.z), WorldGen.CAVE_SITE, Vector2.ZERO)
-		if Vector2(pos.x, pos.z).distance_to(walkout) < NpcSpawner.WALKOUT_CLEARANCE - 0.001:
-			_fail("%s blocks the cave walk-out line" % npc.name)
-			return
-		var ground: float = world.surface_height_at(pos.x, pos.z)
-		if absf(pos.y - ground) > 0.001:
-			_fail("%s floats: y=%f, ground=%f" % [npc.name, pos.y, ground])
+		var problem := PopulationTestSupport.placement_problem(npc, expected[i], world)
+		if not problem.is_empty():
+			_fail(problem)
 			return
 		if CharacterFactory.find_skeleton(npc) == null:
 			_fail("%s has no body — build failed" % npc.name)

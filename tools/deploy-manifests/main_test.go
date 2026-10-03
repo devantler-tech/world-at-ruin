@@ -89,15 +89,7 @@ func TestBrokenRenderIsRejected(t *testing.T) {
 
 // TestPublishedZoneCannotOmitRenameOrDuplicateItsDeployment prevents unchecked publication.
 func TestPublishedZoneCannotOmitRenameOrDuplicateItsDeployment(t *testing.T) {
-	_, source, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("cannot locate the actual deployment bundle")
-	}
-	command := exec.CommandContext(t.Context(), "kubectl", "kustomize", filepath.Join(filepath.Dir(source), "..", "..", "deploy"))
-	rendered, err := command.Output()
-	if err != nil {
-		t.Fatal(err)
-	}
+	rendered := renderPublishedBundle(t)
 	if err := validateBundle(strings.NewReader(string(rendered)+"\n---\n"+string(rendered)), true); err == nil {
 		t.Fatal("published checker accepted duplicate zone Deployments")
 	}
@@ -121,27 +113,14 @@ func TestPublishedZoneCannotOmitRenameOrDuplicateItsDeployment(t *testing.T) {
 // TestPublishedDeploymentUsesHostOwnedNetworkIsolation checks this repository's
 // actual publishable bundle rather than a copied deployment fixture.
 func TestPublishedDeploymentUsesHostOwnedNetworkIsolation(t *testing.T) {
-	_, source, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("cannot locate the actual deployment bundle")
-	}
-	deployment := filepath.Join(filepath.Dir(source), "..", "..", "deploy")
+	deployment := publishedBundlePath(t)
 	assertError(t, validateDirectory(t.Context(), deployment), "")
 }
 
 // Render the actual bundle, then mutate the rendered probe contract. This
 // catches drift after Kustomize transformations rather than matching source.
 func TestRenderedZoneHealthProbesRejectUnsafeDrift(t *testing.T) {
-	_, source, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("cannot locate the actual deployment bundle")
-	}
-	deployment := filepath.Join(filepath.Dir(source), "..", "..", "deploy")
-	command := exec.CommandContext(t.Context(), "kubectl", "kustomize", deployment)
-	rendered, err := command.Output()
-	if err != nil {
-		t.Fatal(err)
-	}
+	rendered := renderPublishedBundle(t)
 	var documents []map[string]any
 	decoder := yaml.NewDecoder(bytes.NewReader(rendered))
 	for {
@@ -249,4 +228,25 @@ func writeFixture(t *testing.T, path, contents string) {
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// publishedBundlePath locates the actual committed bundle beside this test source.
+func publishedBundlePath(t *testing.T) string {
+	t.Helper()
+	_, source, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot locate the actual deployment bundle")
+	}
+	return filepath.Join(filepath.Dir(source), "..", "..", "deploy")
+}
+
+// renderPublishedBundle exercises real Kustomize transformations for each caller.
+func renderPublishedBundle(t *testing.T) []byte {
+	t.Helper()
+	command := exec.CommandContext(t.Context(), "kubectl", "kustomize", publishedBundlePath(t))
+	rendered, err := command.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rendered
 }

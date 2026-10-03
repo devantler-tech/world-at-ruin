@@ -42,18 +42,12 @@ const BLEND_WINDOW_S := 0.36
 ## The same 15% of body speed the gait is held to on the drive.
 const MAX_BLEND_SLIP := 0.15
 
-var _had_flag := false
-var _original_flag := ""
-var _had_run_flag := false
-var _original_run_flag := ""
+var _flag_state: Dictionary = {}
 var _recipe: Dictionary = {}
 
 
 func _ready() -> void:
-	_had_flag = OS.has_environment(FLAG)
-	_original_flag = OS.get_environment(FLAG)
-	_had_run_flag = OS.has_environment(RUN_FLAG)
-	_original_run_flag = OS.get_environment(RUN_FLAG)
+	_flag_state = TestEnvironment.snapshot([FLAG, RUN_FLAG])
 	var loaded = CharacterFactory.load_recipe(RECIPE_PATH)
 	if not (loaded is Dictionary):
 		_fail("could not load %s" % RECIPE_PATH)
@@ -451,11 +445,7 @@ func _set_flags() -> void:
 
 
 func _restore_flags() -> void:
-	for pair: Array in [[FLAG, _had_flag, _original_flag], [RUN_FLAG, _had_run_flag, _original_run_flag]]:
-		if pair[1]:
-			OS.set_environment(pair[0], pair[2])
-		else:
-			OS.unset_environment(pair[0])
+	TestEnvironment.restore(_flag_state)
 
 
 func _fail(message: String) -> bool:
