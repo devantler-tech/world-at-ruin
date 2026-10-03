@@ -38,6 +38,7 @@ func _ready() -> void:
 			for i in mini(rows.size(), golden.size()):
 				_check(rows[i]["name"] == golden[i]["name"] and rows[i]["recipe"] == golden[i]["recipe"],
 					family + " name/recipe draw schedule changed at " + str(i))
+				_check(rows[i]["body"] == golden[i]["body"], family + " built body changed at " + str(i))
 				var pos: Array = golden[i]["position"]
 				var observed: Array = rows[i]["position"]
 				_check(Vector3(observed[0], observed[1], observed[2]).distance_to(Vector3(pos[0], pos[1], pos[2])) < 0.001,
@@ -50,13 +51,19 @@ func _ready() -> void:
 		print("TEST PASS — ordered names, recipes, positions and rotations retain baseline and collision draws")
 		get_tree().quit(0)
 
+## The recipe hash pins generation; the body fingerprint observes the actual
+## spawned skeleton, meshes and skin/tint against unchanged-base observations.
 func _records(spawner: Node, creature: bool) -> Array:
 	var rows: Array = []
 	for root: Node3D in spawner.get_children():
 		var name_key := String(root.name).trim_prefix("Hound_" if creature else "Npc_")
 		var archetype := NpcGen.ARCHETYPE_VILLAGER if rows.size() < NpcSpawner.SETTLEMENT_COUNT else NpcGen.ARCHETYPE_DRIFTER
 		var recipe := CreatureGen.recipe_for(name_key) if creature else NpcGen.recipe_for(name_key, archetype)
-		rows.append({"name": name_key, "recipe": JSON.stringify(recipe).sha256_text(),
+		var body := root.get_child(0) as Node3D
+		var observed_body := "missing-body"
+		if body != null:
+			observed_body = CreatureFactory.fingerprint(body) if creature else CharacterFactory.fingerprint(body)
+		rows.append({"body": observed_body, "name": name_key, "recipe": JSON.stringify(recipe).sha256_text(),
 			"position": [root.position.x, root.position.y, root.position.z], "yaw": root.rotation.y})
 	return rows
 
