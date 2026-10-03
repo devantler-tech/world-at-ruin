@@ -13,10 +13,9 @@ test_dir="$(mktemp -d)"
 trap 'rm -rf "${test_dir}"' EXIT
 
 helper_file="${test_dir}/cask-rest-delivery-helpers.sh"
-sed -n '/# BEGIN cask-pr-create-helper/,/# END cask-pr-create-helper/p' \
-	"${workflow}" >"${helper_file}"
-sed -n '/# BEGIN cask-rest-merge-helper/,/# END cask-rest-merge-helper/p' \
-	"${workflow}" >>"${helper_file}"
+# shellcheck source=tools/workflow-helper-extraction.sh
+source "${repo_root}/tools/workflow-helper-extraction.sh"
+extract_marked_workflow_helpers "${workflow}" "${helper_file}" cask-pr-create-helper cask-rest-merge-helper
 # shellcheck source=/dev/null
 source "${helper_file}"
 

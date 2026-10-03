@@ -11,9 +11,9 @@ test_dir="$(mktemp -d)"
 trap 'rm -rf "${test_dir}"' EXIT
 
 helper_file="${test_dir}/ghcr-latest-forward-helper.sh"
-sed -n \
-  '/# BEGIN ghcr-latest-forward-helper/,/# END ghcr-latest-forward-helper/p' \
-  "${workflow}" >"${helper_file}"
+# shellcheck source=tools/workflow-helper-extraction.sh
+source "${repo_root}/tools/workflow-helper-extraction.sh"
+extract_marked_workflow_helpers "${workflow}" "${helper_file}" ghcr-latest-forward-helper
 # shellcheck source=/dev/null
 source "${helper_file}"
 if ! declare -F advance_latest_tag >/dev/null; then

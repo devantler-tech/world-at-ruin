@@ -6,9 +6,9 @@ import (
 	"encoding/json"
 	"slices"
 	"strconv"
-	"unicode"
 	"unicode/utf8"
 
+	"github.com/devantler-tech/world-at-ruin/server/internal/handoffidentity"
 	"github.com/devantler-tech/world-at-ruin/server/nakamastorage"
 )
 
@@ -54,15 +54,7 @@ func openDocument(generationID string, members []string) (document, error) {
 
 // validIdentity preserves opaque UTF-8 spelling within the documented bounds.
 func validIdentity(value string, maxBytes int) bool {
-	if len(value) == 0 || len(value) > maxBytes || !utf8.ValidString(value) {
-		return false
-	}
-	for _, char := range value {
-		if unicode.IsControl(char) || unicode.IsSpace(char) {
-			return false
-		}
-	}
-	return true
+	return handoffidentity.OpaqueUTF8(value, maxBytes)
 }
 
 // decodeDocument accepts exactly the shipped schema and refuses ambiguous JSON.

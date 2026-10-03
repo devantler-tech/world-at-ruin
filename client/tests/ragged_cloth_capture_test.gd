@@ -38,9 +38,35 @@ func _ready() -> void:
 		if not _fold_controls(capture):
 			capture.free()
 			return
+		if not _disabled_material_controls(capture):
+			capture.free()
+			return
 		print("TEST PASS — ragged-cloth evidence frames both panels and gameplay range")
 		get_tree().quit(0)
 	capture.free()
+
+## Disabled detail must copy the active material without consulting source
+## metadata. A stale source is irrelevant when the experiment is off.
+func _disabled_material_controls(capture: Node) -> bool:
+	var state := TestEnvironment.snapshot([RaggedCloth.FLAG_ENV])
+	OS.set_environment(RaggedCloth.FLAG_ENV, "")
+	var garment := MeshInstance3D.new()
+	garment.mesh = BoxMesh.new()
+	var original := StandardMaterial3D.new()
+	original.albedo_color = Color(0.3, 0.4, 0.5)
+	original.roughness = 0.37
+	garment.set_surface_override_material(0, original)
+	garment.set_meta(RaggedDrape.SOURCE_META, "unused stale metadata")
+	var valid := true
+	for method: String in ["ragged_tailoring_material", "ragged_unfolded_material"]:
+		var copied := capture.call(method, garment) as StandardMaterial3D
+		valid = valid and copied != original and copied.albedo_color == original.albedo_color
+		valid = valid and copied.roughness == original.roughness and garment.get_active_material(0) == original
+	garment.free()
+	TestEnvironment.restore(state)
+	if not valid:
+		_fail("disabled cloth must copy the active material without mutating it")
+	return valid
 
 
 ## Gameplay evidence must use the production follow rig without moving it or
