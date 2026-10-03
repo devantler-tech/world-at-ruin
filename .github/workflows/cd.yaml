@@ -41,7 +41,7 @@ on:
         type: string
 
 concurrency:
-  group: "CD-${{ github.ref_name || inputs.tag }}"
+  group: "CD-${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}"
   cancel-in-progress: false
   queue: max # pending runs wait FIFO; the default replaces them
 
