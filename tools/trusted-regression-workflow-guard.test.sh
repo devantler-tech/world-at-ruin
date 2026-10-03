@@ -7,6 +7,7 @@ workflow="$root/.github/workflows/trusted-regressions.yaml"
 bash "$root/tools/trusted-regression-workflow-guard.sh"
 for mutation in \
   '.on={"pull_request":{}}' \
+  '.on={"pull_request_target":{}}' \
   '.permissions={"contents":"write"}' \
   '.jobs."trusted-client-regressions".permissions={"contents":"write"}' \
   '.jobs."trusted-client-regressions".steps[1].with.ref="candidate"' \

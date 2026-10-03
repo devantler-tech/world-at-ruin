@@ -1,11 +1,11 @@
 name: World owned trusted regressions
 
-# The event loads this definition from main. Candidate workflow deletion or
-# duplicate status names cannot choose this controller or its trusted harness.
+# GitHub's organization ruleset selects the reviewed main definition.
+# Ordinary candidate-owned runs are skipped; the existing Actions gate remains
+# required until this source is deployed and its ruleset invocation is proven.
 on:
-  pull_request_target:
-    types: [opened, synchronize, reopened, ready_for_review]
-    branches: [main]
+  pull_request: {}
+  merge_group: {}
 
 permissions: {}
 
@@ -15,6 +15,7 @@ env:
 
 jobs:
   trusted-client-regressions:
+    if: github.workflow_ref == 'devantler-tech/world-at-ruin/.github/workflows/trusted-regressions.yaml@refs/heads/main'
     name: World owned client regressions
     runs-on: ubuntu-latest
     timeout-minutes: 90

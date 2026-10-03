@@ -12,15 +12,16 @@ unzip -q godot.zip
 sudo mv "Godot_v${GODOT_VERSION}-stable_linux.x86_64" /usr/local/bin/godot
 INSTALL
 )"
-if ! yq -o=json '.' "$workflow" | jq -e --arg installer "$installer" '
+if ! yq -o=json '.' "$workflow" | jq -e --arg installer "$installer" --arg selector "github.workflow_ref == 'devantler-tech/world-at-ruin/.github/workflows/trusted-regressions.yaml@refs/heads/main'" '
   keys == ["env","jobs","name","on","permissions"]
   and .name == "World owned trusted regressions"
-  and .on == {pull_request_target:{branches:["main"],types:["opened","synchronize","reopened","ready_for_review"]}}
+  and .on == {pull_request:{},merge_group:{}}
   and .permissions == {}
   and .env == {GODOT_VERSION:"4.7.1",GODOT_SHA512:"4ccdab7a48eeccbe8819a2fc1f6262f8d72065d98601bcb3743fcbd7ebd39f373758a788ee3293a05ec5b2c48538266c437404312e372225cd2df273945a2de9"}
   and (.jobs | keys) == ["trusted-client-regressions"]
   and (.jobs["trusted-client-regressions"] |
-    keys == ["name","permissions","runs-on","steps","timeout-minutes"]
+    keys == ["if","name","permissions","runs-on","steps","timeout-minutes"]
+    and .if == $selector
     and .name == "World owned client regressions"
     and .permissions == {contents:"read"} and ."runs-on" == "ubuntu-latest"
     and ."timeout-minutes" == 90 and (.steps | length) == 8

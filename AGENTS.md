@@ -846,15 +846,19 @@ everything shipped afterwards is held to.
   an exact-head-reviewed Actions PR; preserve compatibility with the World base controller and
   harness, pass `tools/required-regression-control.test.sh`, and run live positive and missing-input
   controls. Change the rule itself only through the declarative `.github` release path, then read the
-  live ruleset back. The product-owned `.github/workflows/trusted-regressions.yaml` is an additive
-  base-controlled `pull_request_target` workflow. It resolves the canonical main-base and exact
-  PR-head SHAs, verifies the three checkout identities and invokes the base controller with read-only
-  permissions and no persisted credentials. Candidate Godot runs in a digest-bound, non-root container
-  with no network, capabilities or host credentials; its project and harness are read-only. Only the
-  disposable import cache and generated asset sidecars are writable during the editor scan. Candidate workflow edits cannot choose
-  the definition, runtime or harness. The real-container refusal test pins this execution boundary.
-  The external required workflow remains the aggregate gate for PR and merge-group integration;
-  no ruleset cutover is implied by the product-owned check.
+  live ruleset back. The product-owned `.github/workflows/trusted-regressions.yaml` is a latent
+  required-workflow source for unprivileged `pull_request` and `merge_group` events. It runs
+  only when GitHub selects its canonical `refs/heads/main` workflow reference; ordinary
+  candidate-owned invocations skip the job. The resolver binds the GitHub integration SHA to the
+  event's merge commit, verifies the main-base and all three checkout identities, and invokes the
+  base controller with read-only permissions and no persisted credentials. Candidate Godot runs
+  in a digest-bound, non-root container with no network, capabilities or host credentials; its
+  project and harness are read-only. Only disposable import state is writable during the editor scan.
+  The real-container refusal test pins that execution boundary. Activation requires an additive
+  organization ruleset binding to this reviewed main source, live readback, actual nonzero trusted
+  scene execution and tamper canaries. A skipped ordinary job is preparation, never enforcement proof.
+  The external Actions required workflow remains active throughout activation; no ruleset cutover
+  is implied by these source bytes.
 - **Boot tests go through `IsolatedBoot` — booting and isolating are ONE act:** a test that
   instantiates `main.tscn` runs the real launch path, which reads — and on the first-run path
   writes — every file the player's state lives in: `user://character.json` and the progression
