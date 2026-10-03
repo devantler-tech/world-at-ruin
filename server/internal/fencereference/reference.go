@@ -146,6 +146,7 @@ func New(cfg Config) (*Reference, error) {
 	}}, nil
 }
 
+// opaque applies the shared identity grammar and this protocol's byte bound.
 func opaque(value string) bool { return handoffidentity.OpaqueUTF8(value, 128) }
 
 // Binding returns identity data detached from the caller's original config.
@@ -179,6 +180,7 @@ func (r *Reference) Admit(actorUID, attemptID string) (Ticket, error) {
 	return ticket, nil
 }
 
+// admittedLocked requires r.mu and binds the capability to this authority.
 func (r *Reference) admittedLocked(ticket Ticket) (admitted, error) {
 	operation, exists := r.tickets[ticket.id]
 	if ticket.owner != r.authority || !exists || operation.ticket != ticket {
@@ -248,6 +250,7 @@ func (r *Reference) Fence() (Receipt, error) {
 	return Receipt{owner: r.authority, binding: r.binding, revision: r.revision, members: slices.Clone(r.members)}, nil
 }
 
+// acceptLocked requires r.mu and checks the complete terminal proof atomically.
 func (r *Reference) acceptLocked(receipt Receipt, pinned Binding) error {
 	if r.state != "fenced" || receipt.owner != r.authority || receipt.binding != r.binding || pinned != r.binding ||
 		receipt.revision != r.revision || !slices.Equal(receipt.members, r.members) {
@@ -303,6 +306,8 @@ func (r *Reference) Snapshot() []Allocation {
 // allocator SERVER public key. The coordinator's client cert is a separate
 // identity. Bindings must come from a trusted issuer, never Pod/address metadata.
 func (r *Reference) TLSConfig(actorUID string, base *tls.Config) (*tls.Config, error) {
+	// New owns this map and it is immutable for the authority's lifetime.
+	// Concurrent reads do not need the lock used for mutable ledger state.
 	key, exists := r.actorKeys[actorUID]
 	if !exists || base == nil || base.InsecureSkipVerify || base.ServerName == "" {
 		return nil, ErrIdentity

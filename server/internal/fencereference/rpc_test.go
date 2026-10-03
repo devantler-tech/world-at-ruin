@@ -9,11 +9,13 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"go/parser"
 	"go/token"
 	"io/fs"
 	"math/big"
 	"net"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -400,22 +402,72 @@ func TestWrongAllocatorIdentityNeverReachesCommit(t *testing.T) {
 
 func TestReferenceIsNotComposedIntoProduction(t *testing.T) {
 	t.Parallel()
-	examined := 0
-	err := filepath.WalkDir(filepath.Join("..", ".."), func(path string, entry fs.DirEntry, walkErr error) error {
+	if err := checkProductionComposition(filepath.Join("..", "..")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func checkProductionComposition(root string) error {
+	entrypoints := map[string]bool{
+		filepath.Join("cmd", "zone", "main.go"):        false,
+		filepath.Join("cmd", "nakama", "main.go"):      false,
+		filepath.Join("nakamaruntime", "module.go"):    false,
+		filepath.Join("agonesresources", "adapter.go"): false,
+	}
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
 		if entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
-		examined++
+		relative, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		if _, expected := entrypoints[relative]; expected {
+			entrypoints[relative] = true
+		}
 		return rejectReferenceImport(path, nil)
 	})
 	if err != nil {
-		t.Fatal(err)
+		return err
 	}
-	if examined < 77 {
-		t.Fatalf("production composition guard examined only %d files", examined)
+	for path, seen := range entrypoints {
+		if !seen {
+			return fmt.Errorf("production composition guard did not examine %s", path)
+		}
+	}
+	return nil
+}
+
+func TestCompositionGuardRequiresTheActualProductionEntrypoints(t *testing.T) {
+	t.Parallel()
+	paths := []string{"cmd/zone/main.go", "cmd/nakama/main.go", "nakamaruntime/module.go", "agonesresources/adapter.go"}
+	for _, missing := range append([]string{""}, paths...) {
+		t.Run(missing, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			for _, path := range paths {
+				if path == missing {
+					continue
+				}
+				target := filepath.Join(root, filepath.FromSlash(path))
+				if err := os.MkdirAll(filepath.Dir(target), 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(target, []byte("package fixture\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			err := checkProductionComposition(root)
+			if missing == "" && err != nil {
+				t.Fatalf("complete production walk refused: %v", err)
+			}
+			if missing != "" && (err == nil || !strings.Contains(err.Error(), filepath.FromSlash(missing))) {
+				t.Fatalf("missing production entrypoint %s was not detected: %v", missing, err)
+			}
+		})
 	}
 }
 
