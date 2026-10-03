@@ -11,6 +11,7 @@ mkdir -p "${test_dir}/bin" "${test_dir}/fixture"
 printf 'checked release zip\n' >"${test_dir}/fixture/WorldAtRuin-0.80.0-macOS-universal.zip"
 printf '{"version":"0.80.0"}\n' >"${test_dir}/fixture/update-manifest.json"
 
+# extract_step — Extract the named production step without replacing its shell logic.
 extract_step() {
   awk -v title="      - name: $1" '
 		$0 == title { inside = 1; next }
@@ -109,6 +110,7 @@ export WAR_LATEST="${test_dir}/latest"
 export WAR_FIXTURE="${test_dir}/fixture"
 export GITHUB_OUTPUT="${test_dir}/output"
 
+# prepare_case — Reset artifact bytes and registry state for one publication scenario.
 prepare_case() {
   rm -rf "${test_dir}/run"
   mkdir -p "${test_dir}/run/oci"
@@ -121,6 +123,7 @@ prepare_case() {
   : >"${GITHUB_OUTPUT}"
 }
 
+# run_publication — Execute production publication steps against isolated boundary doubles.
 run_publication() {
   (
     cd "${test_dir}/run"
@@ -138,6 +141,7 @@ run_publication() {
   )
 }
 
+# fail — Report an ordering or readback contract violation.
 fail() {
   echo "FAIL: $*" >&2
   exit 1

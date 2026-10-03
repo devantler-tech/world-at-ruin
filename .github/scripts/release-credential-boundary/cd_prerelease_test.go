@@ -220,6 +220,8 @@ func TestCDStableAndPrereleasePublication(t *testing.T) {
 	}
 }
 
+// TestCDChannelPublishersSerializeAcrossReleaseTags pins the single writer and
+// verification boundaries for the shared client channel.
 func TestCDChannelPublishersSerializeAcrossReleaseTags(t *testing.T) {
 	doc := loadRepositoryWorkflow(t)
 	job, err := doc.job("publish-ghcr")
@@ -259,6 +261,8 @@ func TestCDChannelPublishersSerializeAcrossReleaseTags(t *testing.T) {
 	}
 }
 
+// TestCDRunsStampedDevLogScenesBeforeExport executes the release-tree validation
+// selected by the workflow before exporting the distributable client.
 func TestCDRunsStampedDevLogScenesBeforeExport(t *testing.T) {
 	doc := loadRepositoryWorkflow(t)
 	job, err := doc.job("publish-macos")
@@ -329,11 +333,15 @@ func TestCDRunsStampedDevLogScenesBeforeExport(t *testing.T) {
 }
 
 const publicationBoundaryDouble = `
+# git — Return the tagged source revision for the publication boundary fixture.
 git() { printf "%s\n" aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; }
+# date — Fix wall-clock values so generated release metadata is reproducible.
 date() {
   if [ "$*" = '-u +%s' ]; then printf '1790953136\n'; else printf '2026-10-03T00:00:00Z\n'; fi
 }
+# godot — Emit the fixture manifest through the same exported-file boundary.
 godot() { printf '{"fixture":"emitted contract"}\n' > "$WAR_MANIFEST_OUT"; echo 'MANIFEST OK'; }
+# cosign — Record signing and return a completion statement for the stored bytes.
 cosign() {
   if [ "$1" = attest ]; then cp release-completion.json "$FIXTURE_ROOT/registry/completion.json"; fi
   if [ "$1" = verify-attestation ]; then
@@ -343,6 +351,7 @@ cosign() {
   fi
   if [ "$1" = sign ]; then printf '%s\n' "$3" > "$FIXTURE_ROOT/registry/signed"; fi
 }
+# oras — Persist registry manifests, layers and tags across real publication steps.
 oras() {
   local registry="$FIXTURE_ROOT/registry"
   case "$1 $2" in
@@ -391,7 +400,8 @@ oras() {
 }
 `
 
-// A dispatch can execute on main while building a different, fully qualified tag.
+// TestCDRevisionIdentifiesTheCheckedOutTagInsteadOfDispatchHead authenticates the
+// peeled release commit for both tag forms, including dispatches from newer main.
 func TestCDRevisionIdentifiesTheCheckedOutTagInsteadOfDispatchHead(t *testing.T) {
 	doc := loadRepositoryWorkflow(t)
 	job, err := doc.job("publish-macos")
@@ -422,19 +432,27 @@ func TestCDRevisionIdentifiesTheCheckedOutTagInsteadOfDispatchHead(t *testing.T)
 	git("init", "--initial-branch=main")
 	git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "tagged build")
 	revision := git("rev-parse", "HEAD")
-	git("tag", "v1.2.3")
+	git("-c", "tag.gpgsign=false", "tag", "v1.2.3")
+	git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "tag.gpgsign=false", "tag", "-a", "v1.2.4", "-m", "annotated release")
+	tagObject := git("rev-parse", "refs/tags/v1.2.4")
+	if tagObject == revision {
+		t.Fatal("annotated fixture must have a distinct tag object")
+	}
 	git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "later dispatch head")
 	dispatch := git("rev-parse", "HEAD")
-	git("checkout", "refs/tags/v1.2.3")
 	output := filepath.Join(root, "output")
-	run := func() ([]byte, error) {
+	script := filepath.Join(root, "resolve-version.sh")
+	if err := os.WriteFile(script, []byte(resolver), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run := func(tag string) ([]byte, error) {
 		t.Helper()
 		if err := os.WriteFile(output, nil, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		cmd := exec.Command("bash", "-c", resolver)
+		cmd := exec.Command("bash", script)
 		cmd.Dir = root
-		cmd.Env = append(os.Environ(), "RAW_TAG=v1.2.3", "GITHUB_SHA="+dispatch, "GITHUB_OUTPUT="+output)
+		cmd.Env = append(os.Environ(), "RAW_TAG="+tag, "GITHUB_SHA="+dispatch, "GITHUB_OUTPUT="+output)
 		log, err := cmd.CombinedOutput()
 		if err != nil {
 			return log, err
@@ -445,16 +463,23 @@ func TestCDRevisionIdentifiesTheCheckedOutTagInsteadOfDispatchHead(t *testing.T)
 		}
 		return contents, nil
 	}
-	contents, err := run()
-	if err != nil {
-		t.Fatalf("tagged build: %v: %s", err, contents)
-	}
-	if !strings.Contains(string(contents), "revision="+revision+"\n") || strings.Contains(string(contents), "revision="+dispatch) {
-		t.Fatalf("build did not identify tagged revision %s instead of dispatch %s: %s", revision, dispatch, contents)
-	}
-	git("checkout", "main")
-	if log, err := run(); err == nil {
-		t.Fatalf("untagged checkout accepted: %s", log)
+	for _, tag := range []string{"v1.2.3", "v1.2.4"} {
+		t.Run(tag, func(t *testing.T) {
+			git("checkout", "refs/tags/"+tag)
+			contents, err := run(tag)
+			if err != nil {
+				t.Fatalf("tagged build: %v: %s", err, contents)
+			}
+			if !strings.Contains(string(contents), "revision="+revision+"\n") ||
+				strings.Contains(string(contents), "revision="+dispatch) ||
+				strings.Contains(string(contents), "revision="+tagObject) {
+				t.Fatalf("build did not identify peeled commit %s: %s", revision, contents)
+			}
+			git("checkout", "main")
+			if log, err := run(tag); err == nil {
+				t.Fatalf("untagged checkout accepted: %s", log)
+			}
+		})
 	}
 	outputs := job["outputs"].(map[string]any)
 	if outputs["revision"] != "${{ steps.version.outputs.revision }}" {

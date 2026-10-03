@@ -39,11 +39,13 @@ completion_fault=""
 latest_digest_override=""
 preserve_latest_digest_override_on_tag=0
 
+# fail — Report an observable contract violation with the fixture log.
 fail() {
   echo "FAIL: $*" >&2
   exit 1
 }
 
+# reset_registry — Start each scenario with independent registry state and fault controls.
 reset_registry() {
   : >"${tags_file}"
   : >"${latest_file}"
@@ -64,14 +66,17 @@ reset_registry() {
   preserve_latest_digest_override_on_tag=0
 }
 
+# set_tags — Set the catalogue visible to the next production read.
 set_tags() {
   printf '%s\n' "$@" >"${tags_file}"
 }
 
+# set_latest — Set the channel version independently of its completion catalogue.
 set_latest() {
   printf '%s\n' "$1" >"${latest_file}"
 }
 
+# latest — Read the resulting channel version from the registry state.
 latest() {
   local value=""
   if [ -s "${latest_file}" ]; then
@@ -80,6 +85,7 @@ latest() {
   printf '%s\n' "${value}"
 }
 
+# tag_calls — Count channel writes separately from completion-marker writes.
 tag_calls() {
   grep -c '^tag ' "${calls_file}" || true
 }
@@ -185,6 +191,7 @@ oras() {
   return 2
 }
 
+# cosign — Return authenticated fixture statements while allowing independent failures.
 cosign() {
   printf 'cosign %s\n' "$*" >>"${calls_file}"
   [ "${signature_verify_rc}" -eq 0 ] || return "${signature_verify_rc}"
