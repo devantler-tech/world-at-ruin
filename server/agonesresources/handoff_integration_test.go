@@ -40,6 +40,25 @@ func handoffCoordinator(
 	return coordinator, store
 }
 
+// allocateFixtureHandoff requires successful allocation of the package's canonical request.
+func allocateFixtureHandoff(t *testing.T, coordinator *handoffalloc.Coordinator) handoff.Allocation {
+	t.Helper()
+	got, err := coordinator.Allocate(context.Background(), request())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got
+}
+
+// handoffStores prepares shared durable storage around the caller-owned, mutable test clock.
+func handoffStores(t *testing.T, f *fixture, now *time.Time) (*nakamastoragetest.Fake, *handoffalloc.Coordinator, *nakamalease.Store) {
+	t.Helper()
+	storage := nakamastoragetest.New()
+	coordinator, store := handoffCoordinator(t, f, storage, now)
+	return storage, coordinator, store
+}
+
+// assertHandoffAllocation checks the returned endpoint, observer, expiry and independently expected admission secret.
 func assertHandoffAllocation(t *testing.T, got handoff.Allocation, name string, expiry time.Time) {
 	t.Helper()
 	if got.ID != name || got.ServerName != "node-a.zones.example" || got.Port != 8443 ||
@@ -104,13 +123,9 @@ func TestHandoffSecretAssertionRejectsEveryBase64Variant(t *testing.T) {
 func TestHandoffIntegrationPersistsBeforeReturningAndResolvesAfterRestart(t *testing.T) {
 	f := newFixture(t, nil)
 	f.seed(f.readyGameServer("zone-one", "uid-one"))
-	storage := nakamastoragetest.New()
 	now := testExpiry.Add(-time.Minute)
-	coordinator, store := handoffCoordinator(t, f, storage, &now)
-	got, err := coordinator.Allocate(context.Background(), request())
-	if err != nil {
-		t.Fatal(err)
-	}
+	storage, coordinator, store := handoffStores(t, f, &now)
+	got := allocateFixtureHandoff(t, coordinator)
 	assertHandoffAllocation(t, got, "zone-one", testExpiry)
 	record, err := store.Load(context.Background(), testUserID, testReservationID)
 	if err != nil || record.Lease.Staging || record.Lease.Dispatched || record.Lease.Releasing ||
@@ -141,9 +156,7 @@ func TestHandoffIntegrationExpiredRetryReleasesAndAllocatesANewAttempt(t *testin
 	storage := nakamastoragetest.New()
 	now := testExpiry.Add(-time.Minute)
 	coordinator, _ := handoffCoordinator(t, f, storage, &now)
-	if _, err := coordinator.Allocate(context.Background(), request()); err != nil {
-		t.Fatal(err)
-	}
+	_ = allocateFixtureHandoff(t, coordinator)
 	now = testExpiry.Add(time.Second)
 	f.seed(f.readyGameServer("zone-new", "uid-new"))
 	restarted, store := handoffCoordinator(t, f, storage, &now)
@@ -175,9 +188,8 @@ func TestHandoffIntegrationRecoversAnAmbiguousCommittedDispatch(t *testing.T) {
 		}
 		return nil, status.Error(codes.Unavailable, "response lost after commit")
 	})
-	storage := nakamastoragetest.New()
 	now := testExpiry.Add(-time.Minute)
-	coordinator, store := handoffCoordinator(t, f, storage, &now)
+	storage, coordinator, store := handoffStores(t, f, &now)
 	got, err := coordinator.Allocate(context.Background(), request())
 	if status.Code(err) != codes.Unavailable || !isZeroAllocation(got) {
 		t.Fatalf("ambiguous dispatch = %v, want unavailable without connection material", err)
@@ -234,12 +246,9 @@ func TestHandoffIntegrationExpirySweepTraversesEveryPage(t *testing.T) {
 func TestHandoffIntegrationExpiryPreservesARecreatedGameServer(t *testing.T) {
 	f := newFixture(t, nil)
 	f.seed(f.readyGameServer("zone-reused", "uid-original"))
-	storage := nakamastoragetest.New()
 	now := testExpiry.Add(-time.Minute)
-	coordinator, store := handoffCoordinator(t, f, storage, &now)
-	if _, err := coordinator.Allocate(context.Background(), request()); err != nil {
-		t.Fatal(err)
-	}
+	_, coordinator, store := handoffStores(t, f, &now)
+	_ = allocateFixtureHandoff(t, coordinator)
 	f.replace(f.allocatedGameServer("zone-reused", "uid-recreated", testAttemptID))
 	now = testExpiry.Add(time.Second)
 	if err := coordinator.ReconcileExpired(context.Background()); err != nil {
@@ -257,9 +266,8 @@ func TestHandoffIntegrationExpiryPreservesARecreatedGameServer(t *testing.T) {
 // and the next attempt allocates once capacity returns.
 func TestHandoffIntegrationEmptyPoolReleasesTheAttemptAndPermitsTheNext(t *testing.T) {
 	f := newFixture(t, nil)
-	storage := nakamastoragetest.New()
 	now := testExpiry.Add(-time.Minute)
-	coordinator, store := handoffCoordinator(t, f, storage, &now)
+	storage, coordinator, store := handoffStores(t, f, &now)
 	got, err := coordinator.Allocate(context.Background(), request())
 	if !errors.Is(err, handoffalloc.ErrUnallocated) || status.Code(err) != codes.ResourceExhausted ||
 		!isZeroAllocation(got) {
@@ -292,9 +300,8 @@ func TestHandoffIntegrationEmptyPoolReleasesTheAttemptAndPermitsTheNext(t *testi
 func TestHandoffIntegrationUnallocatedAnswerDeletesAHiddenCommit(t *testing.T) {
 	f := newFixture(t, nil)
 	f.seed(f.readyGameServer("zone-hidden", "uid-hidden"))
-	storage := nakamastoragetest.New()
 	now := testExpiry.Add(-time.Minute)
-	coordinator, store := handoffCoordinator(t, f, storage, &now)
+	storage, coordinator, store := handoffStores(t, f, &now)
 	f.allocations.setHandler(func(req *allocationpb.AllocationRequest) (*allocationpb.AllocationResponse, error) {
 		if _, err := f.commitAllocation(req); err != nil {
 			return nil, err

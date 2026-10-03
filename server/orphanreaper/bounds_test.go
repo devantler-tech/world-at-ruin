@@ -16,15 +16,22 @@ import (
 	clienttesting "k8s.io/client-go/testing"
 )
 
+// fixtureListOptions requires the generated client's real paginated-list action shape.
+func fixtureListOptions(t *testing.T, action clienttesting.Action) metav1.ListOptions {
+	t.Helper()
+	list, ok := action.(interface{ GetListOptions() metav1.ListOptions })
+	if !ok {
+		t.Fatal("unexpected list action")
+	}
+	return list.GetListOptions()
+}
+
+// TestSweepExhaustsConsistentPagesBeforeLeaseScan requires a complete bounded resource snapshot before reading lease protection.
 func TestSweepExhaustsConsistentPagesBeforeLeaseScan(t *testing.T) {
 	f := newFixture(t, gameServer("one", "attempt-1"), gameServer("two", "attempt-2"))
 	calls := 0
 	f.api.PrependReactor("list", "gameservers", func(action clienttesting.Action) (bool, runtime.Object, error) {
-		list, ok := action.(interface{ GetListOptions() metav1.ListOptions })
-		if !ok {
-			t.Fatal("unexpected list action")
-		}
-		options := list.GetListOptions()
+		options := fixtureListOptions(t, action)
 		if options.Limit != 100 || options.ResourceVersion != "" {
 			t.Fatal("list must use bounded, current consistent reads")
 		}
@@ -59,18 +66,16 @@ func TestSweepExhaustsConsistentPagesBeforeLeaseScan(t *testing.T) {
 	}
 }
 
+// TestSweepRejectsBrokenPaginationWithoutPreservingEvidence ensures incomplete or inconsistent scans cannot delete servers or count as consecutive absence.
 func TestSweepRejectsBrokenPaginationWithoutPreservingEvidence(t *testing.T) {
 	for _, scenario := range []string{"late failure", "revision change", "empty revision", "cycle", "budget", "oversized", "duplicate name", "invalid digest", "noncanonical digest", "missing uid", "foreign namespace", "wildcard revision"} {
 		t.Run(scenario, func(t *testing.T) {
 			f := newFixture(t, gameServer("one", "attempt-1"))
 			f.mustSweep(0)
 			f.api.PrependReactor("list", "gameservers", func(action clienttesting.Action) (bool, runtime.Object, error) {
-				list, ok := action.(interface{ GetListOptions() metav1.ListOptions })
-				if !ok {
-					t.Fatal("unexpected list action")
-				}
+				options := fixtureListOptions(t, action)
 				page := &agonesv1.GameServerList{ListMeta: metav1.ListMeta{ResourceVersion: "20", Continue: "next"}, Items: []agonesv1.GameServer{*gameServer("one", "attempt-1")}}
-				if list.GetListOptions().Continue != "" {
+				if options.Continue != "" {
 					page.Items = nil
 					page.Continue = ""
 					switch scenario {

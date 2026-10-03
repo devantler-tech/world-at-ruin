@@ -45,6 +45,7 @@ type fixture struct {
 	deleted []metav1.DeleteOptions
 }
 
+// gameServer seeds allocated capacity with a correlation digest, immutable UID and resource revision.
 func gameServer(name, attempt string) *agonesv1.GameServer {
 	digest, _ := agones.CorrelationLabel(attempt)
 	return &agonesv1.GameServer{ObjectMeta: metav1.ObjectMeta{
@@ -53,6 +54,17 @@ func gameServer(name, attempt string) *agonesv1.GameServer {
 	}, Status: agonesv1.GameServerStatus{State: agonesv1.GameServerStateAllocated}}
 }
 
+// fixtureDeleteAction retains the fake's requirement for a typed generated-client delete.
+func fixtureDeleteAction(t *testing.T, action clienttesting.Action) clienttesting.DeleteAction {
+	t.Helper()
+	deletion, ok := action.(clienttesting.DeleteAction)
+	if !ok {
+		t.Fatal("unexpected delete type")
+	}
+	return deletion
+}
+
+// newFixture uses the generated client with consistent list revisions and enforced delete preconditions.
 func newFixture(t *testing.T, objects ...*agonesv1.GameServer) *fixture {
 	t.Helper()
 	seed := make([]runtime.Object, len(objects))
@@ -75,10 +87,7 @@ func newFixture(t *testing.T, objects ...*agonesv1.GameServer) *fixture {
 		return true, servers, nil
 	})
 	f.api.PrependReactor("delete", "gameservers", func(action clienttesting.Action) (bool, runtime.Object, error) {
-		deletion, ok := action.(clienttesting.DeleteAction)
-		if !ok {
-			t.Fatal("unexpected delete type")
-		}
+		deletion := fixtureDeleteAction(t, action)
 		options := deletion.GetDeleteOptions()
 		f.deleted = append(f.deleted, options)
 		object, err := f.api.Tracker().Get(agonesv1.SchemeGroupVersion.WithResource("gameservers"), "world", deletion.GetName())
@@ -263,6 +272,7 @@ func TestSweepRevalidatesIdentityStateAndMetadataBeforeDelete(t *testing.T) {
 	}
 }
 
+// TestSweepReconcilesAmbiguousDeletionAndContinuesOtherOrphans checks deletion uncertainty without preventing independently eligible orphan cleanup.
 func TestSweepReconcilesAmbiguousDeletionAndContinuesOtherOrphans(t *testing.T) {
 	for _, outcome := range []string{"absent", "replacement", "same", "read failure"} {
 		t.Run(outcome, func(t *testing.T) {
@@ -276,10 +286,7 @@ func TestSweepReconcilesAmbiguousDeletionAndContinuesOtherOrphans(t *testing.T) 
 				return false, nil, nil
 			})
 			f.api.PrependReactor("delete", "gameservers", func(action clienttesting.Action) (bool, runtime.Object, error) {
-				deletion, ok := action.(clienttesting.DeleteAction)
-				if !ok {
-					t.Fatal("unexpected delete")
-				}
+				deletion := fixtureDeleteAction(t, action)
 				if deletion.GetName() != "one" {
 					return false, nil, nil
 				}

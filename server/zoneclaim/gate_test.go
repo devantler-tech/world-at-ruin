@@ -18,6 +18,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/devantler-tech/world-at-ruin/server/agones"
 	"github.com/devantler-tech/world-at-ruin/server/agones/agonestest"
+	"github.com/devantler-tech/world-at-ruin/server/internal/zonesockettest"
 	"github.com/devantler-tech/world-at-ruin/server/sim"
 	"github.com/devantler-tech/world-at-ruin/server/wire"
 	"github.com/devantler-tech/world-at-ruin/server/zonesock"
@@ -29,6 +30,7 @@ func (f privateClaimFunc) Claim(ctx context.Context, binding agones.ClaimBinding
 	return f(ctx, binding, token, observer)
 }
 
+// TestObservedClaimGatesRealSocketAndRejectsInFlightBindingChange checks socket admission against observed lease identity, including a concurrent binding change.
 func TestObservedClaimGatesRealSocketAndRejectsInFlightBindingChange(t *testing.T) {
 	sidecar, err := agonestest.Start(nil)
 	if err != nil {
@@ -88,34 +90,14 @@ func TestObservedClaimGatesRealSocketAndRejectsInFlightBindingChange(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	hub, err := zonesock.NewClaimedHub(zonesock.Config{Verifier: verifier}, gate, time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		world := sim.NewDemoWorld()
-		ticker := time.NewTicker(time.Millisecond)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				hub.Tick(world)
-			}
-		}
-	}()
+	hub, done := zonesockettest.NewTickingHub(t, ctx, verifier, gate, time.Second)
 	t.Cleanup(func() { cancel(); <-done })
 	server := httptest.NewTLSServer(hub.Handler())
 	t.Cleanup(server.Close)
 	dial := func() (*websocket.Conn, *http.Response, error) {
 		dialCtx, stop := context.WithTimeout(ctx, 5*time.Second)
 		defer stop()
-		return websocket.Dial(dialCtx, server.URL, &websocket.DialOptions{
-			HTTPClient: server.Client(), HTTPHeader: http.Header{"Authorization": {"Bearer " + token}},
-		})
+		return zonesockettest.Dial(dialCtx, server, token)
 	}
 	refused := func() {
 		t.Helper()

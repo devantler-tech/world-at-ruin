@@ -1,8 +1,6 @@
 package sim
 
 import (
-	"encoding/binary"
-	"hash/fnv"
 	"reflect"
 	"testing"
 )
@@ -158,12 +156,7 @@ func runSnapshotDemo(radius int64, n int) (uint64, int) {
 	w.SetInterestRadius(1, radius)
 	tr := NewSnapshotTracker(1)
 
-	h := fnv.New64a()
-	var buf [8]byte
-	put := func(v uint64) {
-		binary.LittleEndian.PutUint64(buf[:], v)
-		_, _ = h.Write(buf[:])
-	}
+	h, put := newDemoHashWriter()
 	putState := func(es EntityState) {
 		put(uint64(es.ID))
 		put(twosComplementBits(es.Pos.X))

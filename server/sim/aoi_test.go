@@ -1,8 +1,6 @@
 package sim
 
 import (
-	"encoding/binary"
-	"hash/fnv"
 	"math"
 	"reflect"
 	"testing"
@@ -223,12 +221,7 @@ func runAoIDemo(radius int64, n int) (uint64, int) {
 	w.SetInterestRadius(1, radius)
 	tr := NewInterestTracker(1)
 
-	h := fnv.New64a()
-	var buf [8]byte
-	put := func(v uint64) {
-		binary.LittleEndian.PutUint64(buf[:], v)
-		_, _ = h.Write(buf[:])
-	}
+	h, put := newDemoHashWriter()
 
 	eventfulTicks := 0
 	for i := range n {

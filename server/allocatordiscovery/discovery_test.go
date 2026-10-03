@@ -181,11 +181,7 @@ func TestDiscoveryRefusesUnsafeEndpointJoins(t *testing.T) {
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			p := pod("allocator-a", "uid-a", "10.0.0.1")
-			s := endpointSlice("slice", p)
-			mutate(&p, &s)
-			r, _ := fixture(t, []corev1.Pod{p}, []discoveryv1.EndpointSlice{s})
-			got, err := r.Discover(t.Context())
+			got, err := discoverMutatedFixture(t, mutate)
 			if !errors.Is(err, ErrObservation) || !reflect.DeepEqual(got, Snapshot{}) {
 				t.Fatalf("unsafe partial result: %+v, %v", got, err)
 			}
