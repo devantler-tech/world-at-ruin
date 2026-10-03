@@ -4,6 +4,13 @@ extends RefCounted
 ## flags and may re-enable physics for its runtime-hook scenario.
 
 
+static func recipe_fixture(path: String) -> Dictionary:
+	var loaded = CharacterFactory.load_recipe(path)
+	if loaded is not Dictionary:
+		return {"problem": "could not load %s" % path}
+	return {"problem": "", "recipe": loaded}
+
+
 static func build_subject(parent: Node, recipe: Dictionary, bones: Array, motion: String) -> Dictionary:
 	var player := Player.new()
 	parent.add_child(player)

@@ -174,38 +174,17 @@ func storageOwnerID(ownerID string) string {
 func TestApplyCommitsPlayerRecordAndAuditInOneAtomicWrite(t *testing.T) {
 	t.Parallel()
 
-	storage := newFakeStorage()
-	storage.seed(storedObject{
-		collection:      "world_at_ruin_inventory",
-		key:             "carried",
-		userID:          testSubjectID,
-		value:           `{"items":[],"schema":1}`,
-		version:         "observed",
-		permissionRead:  0,
-		permissionWrite: 0,
-	})
+	storage := seededInventoryStorage()
 	store, err := NewStore(storage)
 	if err != nil {
 		t.Fatalf("NewStore() error = %v", err)
 	}
 
-	result, err := store.Apply(context.Background(), Mutation{
-		SubjectID:      testSubjectID,
-		IdempotencyKey: "quest:ember:reward",
-		Operation:      "grant_item",
-		Payload: json.RawMessage(
-			`{"quantity":1,"item_id":"ash-blade"}`,
-		),
-		Record: RecordWrite{
-			Collection:      "world_at_ruin_inventory",
-			Key:             "carried",
-			ExpectedVersion: "observed",
-			Value: json.RawMessage(
-				`{"schema":1,"items":["ash-blade"]}`,
-			),
-		},
-		Outcome: json.RawMessage(`{"item_count":1}`),
-	})
+	mutation := inventoryMutation(testSubjectID, "quest:ember:reward")
+	// Retain unsorted input: this assertion also proves canonical serialization.
+	mutation.Payload = json.RawMessage(`{"quantity":1,"item_id":"ash-blade"}`)
+	mutation.Record.Value = json.RawMessage(`{"schema":1,"items":["ash-blade"]}`)
+	result, err := store.Apply(context.Background(), mutation)
 	if err != nil {
 		t.Fatalf("Apply() error = %v", err)
 	}
@@ -311,37 +290,15 @@ func TestClientOwnedAuditPreseedCannotReplayASystemMutation(t *testing.T) {
 func TestApplyReplaysTheOriginalOutcomeWithoutWritingAgain(t *testing.T) {
 	t.Parallel()
 
-	storage := newFakeStorage()
-	storage.seed(storedObject{
-		collection:      "world_at_ruin_inventory",
-		key:             "carried",
-		userID:          testSubjectID,
-		value:           `{"items":[],"schema":1}`,
-		version:         "observed",
-		permissionRead:  0,
-		permissionWrite: 0,
-	})
+	storage := seededInventoryStorage()
 	store, err := NewStore(storage)
 	if err != nil {
 		t.Fatalf("NewStore() error = %v", err)
 	}
-	mutation := Mutation{
-		SubjectID:      testSubjectID,
-		IdempotencyKey: "quest:ember:reward",
-		Operation:      "grant_item",
-		Payload: json.RawMessage(
-			`{"quantity":1,"item_id":"ash-blade"}`,
-		),
-		Record: RecordWrite{
-			Collection:      "world_at_ruin_inventory",
-			Key:             "carried",
-			ExpectedVersion: "observed",
-			Value: json.RawMessage(
-				`{"schema":1,"items":["ash-blade"]}`,
-			),
-		},
-		Outcome: json.RawMessage(`{"item_count":1}`),
-	}
+	mutation := inventoryMutation(testSubjectID, "quest:ember:reward")
+	// Retain unsorted input: this assertion also proves canonical serialization.
+	mutation.Payload = json.RawMessage(`{"quantity":1,"item_id":"ash-blade"}`)
+	mutation.Record.Value = json.RawMessage(`{"schema":1,"items":["ash-blade"]}`)
 	if _, err := store.Apply(context.Background(), mutation); err != nil {
 		t.Fatalf("first Apply() error = %v", err)
 	}

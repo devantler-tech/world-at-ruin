@@ -48,11 +48,11 @@ var _recipe: Dictionary = {}
 
 func _ready() -> void:
 	_flag_state = TestEnvironment.snapshot([FLAG, RUN_FLAG])
-	var loaded = CharacterFactory.load_recipe(RECIPE_PATH)
-	if not (loaded is Dictionary):
-		_fail("could not load %s" % RECIPE_PATH)
+	var fixture := LocomotionTestSupport.recipe_fixture(RECIPE_PATH)
+	if not fixture["problem"].is_empty():
+		_fail(fixture["problem"])
 		return
-	_recipe = loaded
+	_recipe = fixture["recipe"]
 
 	if not _check_foot_path():
 		return

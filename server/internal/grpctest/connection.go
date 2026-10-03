@@ -14,10 +14,10 @@ import (
 // Connect registers the caller's services on a private server and retains normal
 // RPC metadata, cancellation and serialization. Cleanup closes the connection,
 // listener and server in that order.
-func Connect(tb testing.TB, target string, register func(*grpc.Server)) *grpc.ClientConn {
+func Connect(tb testing.TB, target string, register func(*grpc.Server), options ...grpc.ServerOption) *grpc.ClientConn {
 	tb.Helper()
 	listener := bufconn.Listen(1024 * 1024)
-	server := grpc.NewServer()
+	server := grpc.NewServer(options...)
 	register(server)
 	go func() { _ = server.Serve(listener) }()
 	tb.Cleanup(server.Stop)
