@@ -117,6 +117,53 @@ func TestPublishedDeploymentUsesHostOwnedNetworkIsolation(t *testing.T) {
 	assertError(t, validateDirectory(t.Context(), deployment), "")
 }
 
+// Certificate refresh belongs to new TLS handshakes, not a timer that regularly
+// terminates a healthy Deployment. Check the actual publishable render.
+func TestPublishedZoneRunsUntilSignalled(t *testing.T) {
+	decoder := yaml.NewDecoder(bytes.NewReader(renderPublishedBundle(t)))
+	found := false
+	for {
+		var resource struct {
+			Kind string `yaml:"kind"`
+			Spec struct {
+				Template struct {
+					Spec struct {
+						Containers []struct {
+							Name string   `yaml:"name"`
+							Args []string `yaml:"args"`
+						} `yaml:"containers"`
+					} `yaml:"spec"`
+				} `yaml:"template"`
+			} `yaml:"spec"`
+		}
+		if err := decoder.Decode(&resource); errors.Is(err, io.EOF) {
+			break
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		if resource.Kind != "Deployment" {
+			continue
+		}
+		for _, container := range resource.Spec.Template.Spec.Containers {
+			if container.Name != "world-at-ruin" {
+				continue
+			}
+			found = true
+			if len(container.Args) == 0 {
+				t.Fatal("published zone is missing its listener arguments")
+			}
+			for _, arg := range container.Args {
+				if arg == "-duration" || arg == "--duration" || strings.HasPrefix(arg, "-duration=") || strings.HasPrefix(arg, "--duration=") {
+					t.Fatal("published zone still recycles a healthy listener on a duration timer")
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatal("published zone container is missing")
+	}
+}
+
 // Render the actual bundle, then mutate the rendered probe contract. This
 // catches drift after Kustomize transformations rather than matching source.
 func TestRenderedZoneHealthProbesRejectUnsafeDrift(t *testing.T) {
