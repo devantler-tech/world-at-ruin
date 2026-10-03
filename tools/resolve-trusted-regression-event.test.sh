@@ -9,12 +9,14 @@ merge="$(printf 'integration candidate' | git hash-object --stdin)"
 workflow='devantler-tech/world-at-ruin/.github/workflows/trusted-regressions.yaml@refs/heads/main'
 jq -n --arg base "$base" --arg head "$head" --arg merge "$merge" '{repository:{full_name:"devantler-tech/world-at-ruin",default_branch:"main"},pull_request:{base:{ref:"main",sha:$base,repo:{full_name:"devantler-tech/world-at-ruin"}},head:{sha:$head},merge_commit_sha:$merge}}' >"$tmp/pr.json"
 jq -n --arg base "$base" --arg merge "$merge" '{repository:{full_name:"devantler-tech/world-at-ruin",default_branch:"main"},merge_group:{base_ref:"refs/heads/main",base_sha:$base,head_sha:$merge}}' >"$tmp/group.json"
+# Resolve one fixture event with explicit canonical GitHub metadata.
 run() {
   GITHUB_EVENT_NAME="${1:-pull_request}" GITHUB_REPOSITORY=devantler-tech/world-at-ruin \
     GITHUB_WORKFLOW_REF="${2:-$workflow}" GITHUB_SHA="${3:-$merge}" \
     GITHUB_EVENT_PATH="$tmp/event.json" GITHUB_OUTPUT="$tmp/outputs" \
     bash "$root/tools/resolve-trusted-regression-event.sh" >"$tmp/log" 2>&1
 }
+# Require rejection of a changed event identity instead of partial outputs.
 refuse() {
   : >"$tmp/outputs"
   if run "$@"; then echo 'TEST FAIL -- invalid event identity accepted' >&2; exit 1; fi

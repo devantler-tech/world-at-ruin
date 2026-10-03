@@ -100,7 +100,7 @@ docker run --rm --network none --cap-drop ALL \
       "[gd_resource type=\"EditorSettings\" format=3]" "[resource]" \
       "filesystem/on_save/safe_save_on_backup_then_rename = false" \
       > /tmp/config/godot/editor_settings-4.7.tres
-    exec /usr/local/bin/godot "$@"
+    exec /usr/local/bin/godot --main-loop SceneTree "$@"
   ' sandbox "$@" || status=$?
 if [ "$status" -eq 0 ] && [ "$editor" = true ]; then "$cache_guard" "$project" || status=$?; fi
 printf '::%s::\n' "$nonce"

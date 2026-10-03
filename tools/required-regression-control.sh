@@ -20,6 +20,7 @@ candidate_root="$(cd "$2" 2>/dev/null && pwd -P)" || {
 }
 trusted_tests="${trusted_root}/client/tests"
 trusted_runner="${trusted_root}/tools/run-client-test.sh"
+trusted_project="${trusted_root}/client/project.godot"
 
 if [ ! -d "${trusted_tests}" ] || [ -L "${trusted_tests}" ]; then
 	echo "::error::trusted regression directory is missing or symlinked: ${trusted_tests}" >&2
@@ -27,6 +28,11 @@ if [ ! -d "${trusted_tests}" ] || [ -L "${trusted_tests}" ]; then
 fi
 if [ ! -x "${trusted_runner}" ] || [ -L "${trusted_runner}" ]; then
 	echo "::error::trusted client-test runner is missing, non-executable, or symlinked" >&2
+	exit 2
+fi
+if [ ! -d "${trusted_root}/client" ] || [ -L "${trusted_root}/client" ] ||
+	[ ! -f "${trusted_project}" ] || [ ! -r "${trusted_project}" ] || [ -L "${trusted_project}" ]; then
+	echo '::error::trusted project configuration is missing, unreadable, or symlinked' >&2
 	exit 2
 fi
 if [ ! -d "${candidate_root}/client" ] || [ -L "${candidate_root}/client" ]; then
@@ -40,6 +46,7 @@ fi
 # Tests run as explicit scenes; candidate startup hooks cannot select that surface.
 if [ -L "${candidate_root}/client/project.godot" ] ||
   [ -e "${candidate_root}/client/override.cfg" ] || [ -L "${candidate_root}/client/override.cfg" ] ||
+  [ -e "${candidate_root}/client/project.binary" ] || [ -L "${candidate_root}/client/project.binary" ] ||
   grep -Eq '^[[:space:]]*\[(autoload|editor_plugins)\][[:space:]]*(;.*)?$' "${candidate_root}/client/project.godot"; then
   echo '::error::unsupported candidate startup configuration for explicit trusted scenes' >&2
   exit 1
@@ -60,7 +67,7 @@ fi
 
 scratch_root="$(mktemp -d "${TMPDIR:-/tmp}/required-regression-control.XXXXXX")"
 evaluation_root="${scratch_root}/candidate"
-# Remove this invocation's private evaluation tree and reconstructed ledger on exit.
+# Remove only this invocation's private evaluation tree and reconstructed ledger.
 cleanup() {
 	rm -rf "${scratch_root}"
 }
@@ -129,6 +136,9 @@ fi
 
 rm -rf -- "${evaluation_root}/client/tests"
 cp -R "${trusted_tests}" "${evaluation_root}/client/tests"
+# Frozen scenes also require base-owned engine settings. Candidate startup
+# settings remain covered by ordinary CI, not this protected baseline suite.
+cp "${trusted_project}" "${evaluation_root}/client/project.godot"
 cp "${validated_ledger}" "${evaluation_root}/${ledger_path}"
 rm "${validated_ledger}"
 

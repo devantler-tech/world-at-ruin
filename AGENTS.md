@@ -853,7 +853,12 @@ everything shipped afterwards is held to.
   event's merge commit, verifies the main-base and all three checkout identities, and invokes the
   base controller with read-only permissions and no persisted credentials. Candidate Godot runs
   in a digest-bound, non-root container with no network, capabilities or host credentials; its
-  project and harness are read-only. Only disposable import state is writable during the editor scan.
+  project and harness are read-only. The protected suite uses reviewed-base project settings and
+  the standard SceneTree loop; alternate binary configuration is refused before import. This
+  tests candidate code under base-owned engine settings. Candidate configuration changes remain
+  covered by ordinary CI; configuration-dependent features may be absent or fail in the frozen suite.
+  Autoloads and editor plugins are unsupported until the controller contract is reviewed.
+  Only disposable import state is writable during the editor scan.
   The real-container refusal test pins that execution boundary. Activation requires an additive
   organization ruleset binding to this reviewed main source, live readback, actual nonzero trusted
   scene execution and tamper canaries. A skipped ordinary job is preparation, never enforcement proof.

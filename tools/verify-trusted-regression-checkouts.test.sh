@@ -10,6 +10,7 @@ done
 workflow="$(git -C "$tmp/workflow" rev-parse HEAD)"
 trusted="$(git -C "$tmp/trusted" rev-parse HEAD)"
 candidate="$(git -C "$tmp/candidate" rev-parse HEAD)"
+# Invoke the verifier with the fixture checkout identities and capture its result.
 run() {
   GITHUB_WORKFLOW_SHA="$1" TRUSTED_SHA="$2" CANDIDATE_SHA="$3" \
     bash "$root/tools/verify-trusted-regression-checkouts.sh" "$tmp/workflow" "$tmp/trusted" "$tmp/candidate"

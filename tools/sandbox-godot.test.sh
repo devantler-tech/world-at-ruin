@@ -33,6 +33,8 @@ for flag in --rm --network none --cap-drop ALL --security-opt no-new-privileges 
   --workdir /project "$image" --headless --editor --quit --path client; do
   grep -Fxq -- "$flag" "$tmp/args"
 done
+# The engine command is inside the trusted container launcher, not candidate args.
+grep -Fq 'exec /usr/local/bin/godot --main-loop SceneTree "$@"' "$tmp/args"
 grep -Fxq "type=bind,source=$PWD/client,target=/project/client,readonly" "$tmp/args"
 grep -Fxq "type=bind,source=$PWD/server/wire/wire.go,target=/project/server/wire/wire.go,readonly" "$tmp/args"
 grep -Fxq "type=bind,source=$PWD/.github/workflows/ci.yaml,target=/project/.github/workflows/ci.yaml,readonly" "$tmp/args"

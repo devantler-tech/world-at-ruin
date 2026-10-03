@@ -5,6 +5,7 @@ if [ "$#" -ne 3 ]; then
   echo '::error::usage: verify-trusted-regression-checkouts.sh <workflow-root> <trusted-root> <candidate-root>' >&2
   exit 1
 fi
+# Verify one checkout against its independently supplied exact commit identity.
 verify() {
   local path="$1" expected="$2" actual
   if [[ ! "$expected" =~ ^[0-9a-f]{40}$ ]] ||

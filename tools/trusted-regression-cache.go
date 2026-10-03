@@ -25,6 +25,7 @@ type classEntry struct {
 var declaration = regexp.MustCompile(`(?m)^class_name[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]*(?:#[^\n]*)?$`)
 var baseDeclaration = regexp.MustCompile(`(?m)^extends[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]*(?:#[^\n]*)?$`)
 
+// regularBytes reads a bounded regular file without following a symlink.
 func regularBytes(path string) ([]byte, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
@@ -38,6 +39,7 @@ func regularBytes(path string) ([]byte, error) {
 
 // ConfigFile's StringName prefix is the only non-JSON syntax admitted.
 // Object constructors, resources, trailing fields and ambiguous variants fail.
+// decodeCache admits only the complete inert class-cache vocabulary.
 func decodeCache(data []byte) ([]classEntry, error) {
 	data = bytes.TrimSpace(data)
 	if !bytes.HasPrefix(data, []byte("list=")) {
@@ -116,6 +118,7 @@ func decodeCache(data []byte) ([]classEntry, error) {
 	return entries, nil
 }
 
+// validateCache binds imported classes to immutable sources and trusted helpers.
 func validateCache(project string) error {
 	entries, err := decodeCacheFile(filepath.Join(project, ".godot", "global_script_class_cache.cfg"))
 	if err != nil {
@@ -199,6 +202,7 @@ func validateCache(project string) error {
 	return nil
 }
 
+// decodeCacheFile reads and decodes one bounded import metadata file.
 func decodeCacheFile(path string) ([]classEntry, error) {
 	data, err := regularBytes(path)
 	if err != nil {
@@ -207,6 +211,7 @@ func decodeCacheFile(path string) ([]classEntry, error) {
 	return decodeCache(data)
 }
 
+// main reports a refusal whenever the isolated import cache lacks valid evidence.
 func main() {
 	if len(os.Args) != 2 {
 		fmt.Fprintln(os.Stderr, "usage: trusted-regression-cache <immutable-client>")

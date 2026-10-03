@@ -28,6 +28,8 @@ printf '%s\n' 'candidate-weakened alpha harness' >"${candidate}/client/tests/alp
 printf '%s\n' 'beta_test' >"${candidate}/client/tests/ci-skip.txt"
 printf '%s\n' 'candidate product bytes' >"${candidate}/client/product.marker"
 printf '%s\n' '[application]' >"${candidate}/client/project.godot"
+printf '%s\n' '[application]' 'config/name="trusted suite"' >"${trusted}/client/project.godot"
+cp "${trusted}/client/project.godot" "${empty_trusted}/client/project.godot"
 mkdir -p "${trusted}/client/tests/data" "${candidate}/client/tests/data"
 printf '# historical declaration\n1\n2\n3\n4\n5\n6\n' >"${trusted}/client/tests/data/shipped_save_capability.txt"
 cp "${trusted}/client/tests/data/shipped_save_capability.txt" "${candidate}/client/tests/data/shipped_save_capability.txt"
@@ -43,6 +45,7 @@ printf '%s\n' imported >>"${REQUIRED_REGRESSION_RUN_LOG}.import"
 printf '%s\n' 'trusted import completed'
 GODOT
 chmod +x "${bin_dir}/godot"
+cp "${bin_dir}/godot" "${tmp_dir}/godot-import-stub"
 
 cat >"${trusted}/tools/run-client-test.sh" <<'RUNNER'
 #!/bin/bash
@@ -56,6 +59,10 @@ if [ ! -f client/product.marker ]; then
 	exit 91
 fi
 
+if [ "$(cat client/project.godot)" != $'[application]\nconfig/name="trusted suite"' ]; then
+	echo 'candidate selected protected-suite project settings' >&2
+	exit 96
+fi
 expected="trusted ${name%_test} harness"
 actual="$(cat "client/tests/${name}.tscn")"
 if [ "${actual}" != "${expected}" ]; then
@@ -84,11 +91,13 @@ cp "${trusted}/tools/run-client-test.sh" "${empty_trusted}/tools/run-client-test
 
 failures=0
 
+# Accumulate every independently observed control failure before reporting.
 fail() {
 	printf 'required-regression-control regression: FAIL -- %s\n' "$1" >&2
 	failures=$((failures + 1))
 }
 
+# Locate every local workflow caller, including renamed definitions.
 find_local_controller_workflows() {
 	local workflows_dir="$1"
 	local workflow_file
@@ -143,10 +152,12 @@ else
 fi
 
 # Missing inputs and import failures refuse before any trusted scene can run.
-for broken in project runner import; do
+for broken in project trusted_project trusted_project_link runner import; do
 	: >"${run_log}"
 	case "$broken" in
 	project) mv "${candidate}/client/project.godot" "${tmp_dir}/project.godot" ;;
+	trusted_project) mv "${trusted}/client/project.godot" "${tmp_dir}/trusted-project.godot" ;;
+	trusted_project_link) mv "${trusted}/client/project.godot" "${tmp_dir}/trusted-project.godot"; ln -s "${tmp_dir}/trusted-project.godot" "${trusted}/client/project.godot" ;;
 	runner) chmod -x "${trusted}/tools/run-client-test.sh" ;;
 	import) printf '#!/bin/bash\necho "ERROR: deliberate import failure"\nexit 1\n' >"${bin_dir}/godot" ;;
 	esac
@@ -157,19 +168,23 @@ for broken in project runner import; do
 	[ ! -s "${run_log}" ] || fail "$broken refusal executed a regression scene"
 	case "$broken" in
 	project) mv "${tmp_dir}/project.godot" "${candidate}/client/project.godot" ;;
+	trusted_project) mv "${tmp_dir}/trusted-project.godot" "${trusted}/client/project.godot" ;;
+	trusted_project_link) rm "${trusted}/client/project.godot"; mv "${tmp_dir}/trusted-project.godot" "${trusted}/client/project.godot" ;;
 	runner) chmod +x "${trusted}/tools/run-client-test.sh" ;;
-	import) printf '#!/bin/bash\necho "trusted import completed"\n' >"${bin_dir}/godot" ;;
+	import) cp "${tmp_dir}/godot-import-stub" "${bin_dir}/godot" ;;
 	esac
 done
 
 # Unsupported startup configuration is refused before importing candidate code.
-for setting in autoload editor_plugins override symlink; do
+for setting in autoload editor_plugins override symlink binary binary_link; do
   cp "${candidate}/client/project.godot" "${tmp_dir}/clean-project"
   case "$setting" in
     autoload) printf '\n[autoload]\n' >>"${candidate}/client/project.godot" ;;
     editor_plugins) printf '\n[editor_plugins]\n' >>"${candidate}/client/project.godot" ;;
     override) printf '[application]\n' >"${candidate}/client/override.cfg" ;;
     symlink) rm "${candidate}/client/project.godot"; ln -s "${tmp_dir}/clean-project" "${candidate}/client/project.godot" ;;
+    binary) printf 'unsupported binary configuration\n' >"${candidate}/client/project.binary" ;;
+    binary_link) ln -s nonexistent "${candidate}/client/project.binary" ;;
   esac
   : >"${run_log}.import"
   if PATH="${bin_dir}:${PATH}" REQUIRED_REGRESSION_RUN_LOG="${run_log}" \
@@ -179,7 +194,7 @@ for setting in autoload editor_plugins override symlink; do
     fail "startup refusal was not explicit: $setting"
   fi
   [ ! -s "${run_log}.import" ] || fail "imported unsupported configuration: $setting"
-  rm -f "${candidate}/client/project.godot" "${candidate}/client/override.cfg"
+  rm -f "${candidate}/client/project.godot" "${candidate}/client/override.cfg" "${candidate}/client/project.binary"
   cp "${tmp_dir}/clean-project" "${candidate}/client/project.godot"
 done
 
@@ -202,6 +217,9 @@ run_capability_case() {
 		elif ! grep -q 'save-capability declaration' "${control_output}"; then
 			fail "${label}: refused for an unrelated reason: $(<"${control_output}")"
 		fi
+	fi
+	if [ "${want}" = pass ] && [ ! -s "${run_log}.import" ]; then
+		fail "${label}: passing candidate did not record its import"
 	fi
 	if [ "${want}" = fail ] && { [ -s "${run_log}" ] || [ -s "${run_log}.import" ]; }; then
 		fail "${label}: candidate ran before declaration validation"

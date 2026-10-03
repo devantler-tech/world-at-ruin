@@ -19,6 +19,7 @@ PROJECT
 cat >"$tmp/work/client/tests/probe.gd" <<'GODOT'
 extends SceneTree
 
+# Observe containment controls from inside the real non-root runtime.
 func _initialize() -> void:
 	var failures := []
 	if load("res://icon.svg") == null:
@@ -78,6 +79,7 @@ export GODOT_SANDBOX_FRAME="$tmp/frozen-frame.png"
 cp "$root/client/icon.svg" "$tmp/work/client/icon.svg"
 image="$(bash "$root/tools/build-trusted-regression-runtime.sh")"
 cd "$tmp/work"
+# Require a concrete refusal from one real containment control.
 probe_failure() {
   cat "$tmp/import.log" "$tmp/run.log" 2>/dev/null || true
   exit 1

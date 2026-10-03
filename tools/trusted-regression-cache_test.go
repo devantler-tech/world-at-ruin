@@ -7,6 +7,7 @@ import (
 	"testing"
 )
 
+// TestTrustedCacheRejectsRedirection checks missing, ambiguous and redirected metadata.
 func TestTrustedCacheRejectsRedirection(t *testing.T) {
 	project := t.TempDir()
 	for _, dir := range []string{"tests", "scripts", ".godot"} {
