@@ -65,6 +65,14 @@ func TestProbeRejectsBadOrStalledStreams(t *testing.T) {
 	}
 }
 
+// tlsProbeTarget starts a real TLS endpoint and installs only its own CA for the probe.
+func tlsProbeTarget(t *testing.T, handler http.Handler) (string, string) {
+	t.Helper()
+	server := httptest.NewTLSServer(handler)
+	t.Cleanup(server.Close)
+	return probeTarget(t, server)
+}
+
 func TestProbeFailsClosedOnTLSAndAdmission(t *testing.T) {
 	t.Run("untrusted certificate", func(t *testing.T) {
 		server := newProbeServer(t, func(ctx context.Context, conn *websocket.Conn, version uint16) {
@@ -79,15 +87,13 @@ func TestProbeFailsClosedOnTLSAndAdmission(t *testing.T) {
 	})
 	for _, status := range []int{http.StatusForbidden, http.StatusServiceUnavailable, http.StatusTemporaryRedirect} {
 		t.Run(strconv.Itoa(status), func(t *testing.T) {
-			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			url, ca := tlsProbeTarget(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Location", "https://must-not-follow.invalid/private")
 				w.WriteHeader(status)
 				if _, err := w.Write([]byte(fixtureToken)); err != nil {
 					t.Errorf("write response: %v", err)
 				}
 			}))
-			t.Cleanup(server.Close)
-			url, ca := probeTarget(t, server)
 			var out, errOut bytes.Buffer
 			if run(context.Background(), []string{"-url", url, "-ca-file", ca, "-timeout", "1s"}, fixtureEnvironment, &out, &errOut) == 0 {
 				t.Fatal("non-admission failure was mistaken for verified refusal")
@@ -96,7 +102,7 @@ func TestProbeFailsClosedOnTLSAndAdmission(t *testing.T) {
 		})
 	}
 	t.Run("anonymous upgrade", func(t *testing.T) {
-		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		url, ca := tlsProbeTarget(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			conn, err := websocket.Accept(w, r, nil)
 			if err != nil {
 				t.Errorf("accept: %v", err)
@@ -106,8 +112,6 @@ func TestProbeFailsClosedOnTLSAndAdmission(t *testing.T) {
 				t.Errorf("close: %v", err)
 			}
 		}))
-		t.Cleanup(server.Close)
-		url, ca := probeTarget(t, server)
 		var out, errOut bytes.Buffer
 		if run(context.Background(), []string{"-url", url, "-ca-file", ca}, fixtureEnvironment, &out, &errOut) == 0 {
 			t.Fatal("anonymous admission was accepted")

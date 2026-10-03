@@ -6,13 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"os"
-	"path/filepath"
 	"reflect"
-	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/devantler-tech/world-at-ruin/server/internal/savefixturetest"
 	"github.com/heroiclabs/nakama-common/api"
 	"github.com/heroiclabs/nakama-common/runtime"
 )
@@ -545,32 +543,8 @@ func TestLegacyPlayerOwnedCharacterCannotBecomeAuthoritative(t *testing.T) {
 func TestLoadKeepsEveryShippedCharacterSchemaReadable(t *testing.T) {
 	t.Parallel()
 
-	ledgerBytes, err := os.ReadFile(filepath.Join(
-		"testdata",
-		"shipped_character_versions.txt",
-	))
-	if err != nil {
-		t.Fatalf("read character schema ledger: %v", err)
-	}
-	versions := strings.Fields(string(ledgerBytes))
-	if len(versions) == 0 {
-		t.Fatal("character schema ledger is empty")
-	}
-	for index, rawVersion := range versions {
-		version, err := strconv.Atoi(rawVersion)
-		if err != nil {
-			t.Fatalf("schema ledger entry %q: %v", rawVersion, err)
-		}
-		if version != index+1 {
-			t.Fatalf("schema ledger[%d] = %d, want %d", index, version, index+1)
-		}
-		goldenBytes, err := os.ReadFile(filepath.Join(
-			"testdata",
-			fmt.Sprintf("golden_character_v%d.json", version),
-		))
-		if err != nil {
-			t.Fatalf("read character schema %d golden: %v", version, err)
-		}
+	for _, fixture := range savefixturetest.Read(t, "character") {
+		version, goldenBytes := fixture.Version, fixture.Bytes
 		storage := newFakeStorage()
 		storage.seed(storedObject{
 			collection:      Collection,

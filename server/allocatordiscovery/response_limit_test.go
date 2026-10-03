@@ -67,31 +67,56 @@ func listJSON(kind, cursor string, padding int) string {
 	return "{\"apiVersion\":\"" + apiVersion + "\",\"kind\":\"" + kind + "\",\"metadata\":{\"resourceVersion\":\"" + version + "\",\"continue\":\"" + cursor + "\"},\"items\":[],\"padding\":\"" + strings.Repeat("x", padding) + "\"}"
 }
 
+type listResponseFixture struct {
+	reader *Reader
+	bodies []*trackingBody
+}
+
+// newListResponseFixture keeps one reader and a live accounting record of every returned body.
+func newListResponseFixture(t *testing.T, padding int, knownLength bool) *listResponseFixture {
+	t.Helper()
+	f := &listResponseFixture{}
+	transport := transportFunc(func(req *http.Request) (*http.Response, error) {
+		response, body := trackedListResponse(req, padding, knownLength)
+		f.bodies = append(f.bodies, body)
+		return response, nil
+	})
+	f.reader = readerFromRESTConfig(t, &rest.Config{Host: "https://api.example", Transport: transport, Timeout: time.Second})
+	return f
+}
+
+// assertEmptyDiscovery preserves the independent no-partial-evidence invariant after refusal.
+func assertEmptyDiscovery(t *testing.T, got Snapshot, err error, reason string) {
+	t.Helper()
+	if !errors.Is(err, ErrObservation) || !reflect.DeepEqual(got, Snapshot{}) {
+		t.Fatalf("%s response returned evidence: %+v, %v", reason, got, err)
+	}
+}
+
+// trackedListResponse keeps body accounting independent of the production byte-budget logic.
+func trackedListResponse(req *http.Request, padding int, knownLength bool) (*http.Response, *trackingBody) {
+	kind := "PodList"
+	if strings.Contains(req.URL.Path, "endpointslices") {
+		kind = "EndpointSliceList"
+	}
+	raw := listJSON(kind, "", padding)
+	body := &trackingBody{Reader: strings.NewReader(raw)}
+	length := int64(-1)
+	if knownLength {
+		length = int64(len(raw))
+	}
+	return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: body, ContentLength: length, Request: req}, body
+}
+
 // TestDiscoveryLimitsResponseBytesBeforeDecode checks the byte cap and body closure for both
 // declared and unknown response lengths.
 func TestDiscoveryLimitsResponseBytesBeforeDecode(t *testing.T) {
 	for _, knownLength := range []bool{false, true} {
 		t.Run(map[bool]string{false: "unknown-length", true: "declared-length"}[knownLength], func(t *testing.T) {
-			var bodies []*trackingBody
-			transport := transportFunc(func(req *http.Request) (*http.Response, error) {
-				kind := "PodList"
-				if strings.Contains(req.URL.Path, "endpointslices") {
-					kind = "EndpointSliceList"
-				}
-				raw := listJSON(kind, "", responseLimitForTest)
-				body := &trackingBody{Reader: strings.NewReader(raw)}
-				bodies = append(bodies, body)
-				length := int64(-1)
-				if knownLength {
-					length = int64(len(raw))
-				}
-				return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: body, ContentLength: length, Request: req}, nil
-			})
-			r := readerFromRESTConfig(t, &rest.Config{Host: "https://api.example", Transport: transport, Timeout: time.Second})
-			got, err := r.Discover(t.Context())
-			if !errors.Is(err, ErrObservation) || !reflect.DeepEqual(got, Snapshot{}) {
-				t.Fatalf("oversized response returned evidence: %+v, %v", got, err)
-			}
+			f := newListResponseFixture(t, responseLimitForTest, knownLength)
+			got, err := f.reader.Discover(t.Context())
+			assertEmptyDiscovery(t, got, err, "oversized")
+			bodies := f.bodies
 			if len(bodies) != 1 || bodies[0].read > responseLimitForTest+1 || !bodies[0].closed {
 				t.Fatalf("response not bounded/closed: %+v", bodies)
 			}
@@ -102,22 +127,10 @@ func TestDiscoveryLimitsResponseBytesBeforeDecode(t *testing.T) {
 // TestDiscoverySharesResponseBudgetAcrossCollections charges Pod and EndpointSlice bodies against
 // one operation allowance.
 func TestDiscoverySharesResponseBudgetAcrossCollections(t *testing.T) {
-	var bodies []*trackingBody
-	transport := transportFunc(func(req *http.Request) (*http.Response, error) {
-		kind := "PodList"
-		if strings.Contains(req.URL.Path, "endpointslices") {
-			kind = "EndpointSliceList"
-		}
-		raw := listJSON(kind, "", responseLimitForTest/2)
-		body := &trackingBody{Reader: strings.NewReader(raw)}
-		bodies = append(bodies, body)
-		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: body, ContentLength: -1, Request: req}, nil
-	})
-	r := readerFromRESTConfig(t, &rest.Config{Host: "https://api.example", Transport: transport, Timeout: time.Second})
-	got, err := r.Discover(t.Context())
-	if !errors.Is(err, ErrObservation) || !reflect.DeepEqual(got, Snapshot{}) {
-		t.Fatalf("cumulative response returned evidence: %+v, %v", got, err)
-	}
+	f := newListResponseFixture(t, responseLimitForTest/2, false)
+	got, err := f.reader.Discover(t.Context())
+	assertEmptyDiscovery(t, got, err, "cumulative")
+	bodies := f.bodies
 	total := 0
 	for _, body := range bodies {
 		total += body.read

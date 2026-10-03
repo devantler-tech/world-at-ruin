@@ -107,6 +107,15 @@ func (f *Fake) WrittenValues() []string {
 	return values
 }
 
+// storageObject returns a detached view without changing stored permissions or versions.
+func storageObject(object Object) *api.StorageObject {
+	return &api.StorageObject{
+		Collection: object.Collection, Key: object.Key, UserId: object.UserID,
+		Value: object.Value, Version: object.Version,
+		PermissionRead: object.PermissionRead, PermissionWrite: object.PermissionWrite,
+	}
+}
+
 // StorageRead returns the objects that exist among reads, in request order.
 func (f *Fake) StorageRead(
 	ctx context.Context,
@@ -127,15 +136,7 @@ func (f *Fake) StorageRead(
 		if !ok {
 			continue
 		}
-		objects = append(objects, &api.StorageObject{
-			Collection:      object.Collection,
-			Key:             object.Key,
-			UserId:          object.UserID,
-			Value:           object.Value,
-			Version:         object.Version,
-			PermissionRead:  object.PermissionRead,
-			PermissionWrite: object.PermissionWrite,
-		})
+		objects = append(objects, storageObject(object))
 	}
 	return objects, nil
 }
@@ -283,11 +284,7 @@ func (f *Fake) StorageList(
 	objects := make([]*api.StorageObject, 0, len(keys))
 	for _, key := range keys {
 		object := f.objects[key]
-		objects = append(objects, &api.StorageObject{
-			Collection: object.Collection, Key: object.Key, UserId: object.UserID,
-			Value: object.Value, Version: object.Version,
-			PermissionRead: object.PermissionRead, PermissionWrite: object.PermissionWrite,
-		})
+		objects = append(objects, storageObject(object))
 	}
 	return objects, next, nil
 }

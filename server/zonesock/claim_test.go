@@ -145,7 +145,24 @@ func validHandshake(r *http.Request) {
 	r.Header.Set("Sec-WebSocket-Key", "AAAAAAAAAAAAAAAAAAAAAA==")
 }
 
-func TestClaimedHubDoesNotConsumeClaimOnInvalidHandshake(t *testing.T) {
+// countingClaimFixture tracks backend calls while each scenario chooses its result and timeout.
+func countingClaimFixture(t *testing.T, claimErr error, timeout time.Duration) (*Hub, *int, string) {
+	t.Helper()
+	verifier, token := claimedAdmissionFixture(t)
+	calls := 0
+	hub, err := NewClaimedHub(Config{Verifier: verifier}, claimFunc(func(context.Context, string, sim.EntityID) error {
+		calls++
+		return claimErr
+	}), timeout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return hub, &calls, token
+}
+
+// claimedAdmissionFixture constructs a real verifier and token for the local rejection scenarios.
+func claimedAdmissionFixture(t *testing.T) (*HMACVerifier, string) {
+	t.Helper()
 	secret := testSecret(1)
 	verifier, err := NewHMACVerifier(secret, "allocation-a")
 	if err != nil {
@@ -155,14 +172,11 @@ func TestClaimedHubDoesNotConsumeClaimOnInvalidHandshake(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	calls := 0
-	hub, err := NewClaimedHub(Config{Verifier: verifier}, claimFunc(func(context.Context, string, sim.EntityID) error {
-		calls++
-		return errors.New("backend reached")
-	}), time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
+	return verifier, token
+}
+
+func TestClaimedHubDoesNotConsumeClaimOnInvalidHandshake(t *testing.T) {
+	hub, calls, token := countingClaimFixture(t, errors.New("backend reached"), time.Second)
 	for _, mutate := range []func(*http.Request){
 		func(r *http.Request) { r.Method = http.MethodPost },
 		func(r *http.Request) { r.Header.Del("Connection") },
@@ -183,29 +197,13 @@ func TestClaimedHubDoesNotConsumeClaimOnInvalidHandshake(t *testing.T) {
 			t.Fatal("invalid handshake accepted")
 		}
 	}
-	if calls != 0 {
-		t.Fatalf("invalid handshakes consumed %d claims", calls)
+	if *calls != 0 {
+		t.Fatalf("invalid handshakes consumed %d claims", *calls)
 	}
 }
 
 func TestClaimedHubDoesNotCallBackendForInvalidAdmission(t *testing.T) {
-	secret := testSecret(1)
-	verifier, err := NewHMACVerifier(secret, "allocation-a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	token, err := MintToken(secret, "allocation-a", 1, time.Now().Add(time.Minute))
-	if err != nil {
-		t.Fatal(err)
-	}
-	calls := 0
-	hub, err := NewClaimedHub(Config{Verifier: verifier}, claimFunc(func(context.Context, string, sim.EntityID) error {
-		calls++
-		return nil
-	}), 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	hub, calls, token := countingClaimFixture(t, nil, 0)
 	for _, tc := range []struct{ authorization, version string }{
 		{"", ""}, {"Bearer forged", ""}, {"Bearer " + token, "999"},
 	} {
@@ -214,7 +212,7 @@ func TestClaimedHubDoesNotCallBackendForInvalidAdmission(t *testing.T) {
 		request.Header.Set(WireVersionHeader, tc.version)
 		hub.Handler().ServeHTTP(httptest.NewRecorder(), request)
 	}
-	if calls != 0 {
+	if *calls != 0 {
 		t.Fatal("invalid local admission reached private claim backend")
 	}
 }

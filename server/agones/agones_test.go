@@ -41,18 +41,40 @@ func waitFor(t *testing.T, d time.Duration, cond func() bool, what string) {
 	t.Fatalf("timed out waiting for %s", what)
 }
 
-func TestStartMarksReadyOnceAndBeatsHealth(t *testing.T) {
-	f := startFake(t, nil)
+// assertRefusedAdmissionStopped keeps readiness and shutdown checks loud for every failure source.
+func assertRefusedAdmissionStopped(t *testing.T, f *agonestest.Sidecar) {
+	t.Helper()
+	if got := f.ReadyCalls(); got != 0 {
+		t.Fatalf("Ready calls = %d, want 0", got)
+	}
+	if got := f.ShutdownCalls(); got != 1 {
+		t.Fatalf("Shutdown calls = %d, want exactly 1", got)
+	}
+}
 
-	l, err := Start(context.Background(), Config{HealthInterval: 20 * time.Millisecond, Logf: t.Logf})
+// startHealthLifecycle starts the real SDK conversation with the test's health cadence.
+func startHealthLifecycle(t *testing.T, ctx context.Context) *Lifecycle {
+	t.Helper()
+	lifecycle, err := Start(ctx, Config{HealthInterval: 20 * time.Millisecond, Logf: t.Logf})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	defer func() {
-		if err := l.Shutdown(); err != nil {
-			t.Errorf("Shutdown: %v", err)
-		}
-	}()
+	return lifecycle
+}
+
+// reportShutdown preserves nonfatal deferred shutdown reporting.
+func reportShutdown(t *testing.T, lifecycle *Lifecycle) {
+	t.Helper()
+	if err := lifecycle.Shutdown(); err != nil {
+		t.Errorf("Shutdown: %v", err)
+	}
+}
+
+func TestStartMarksReadyOnceAndBeatsHealth(t *testing.T) {
+	f := startFake(t, nil)
+
+	l := startHealthLifecycle(t, context.Background())
+	defer reportShutdown(t, l)
 
 	if got := f.ReadyCalls(); got != 1 {
 		t.Fatalf("Ready calls after Start = %d, want exactly 1", got)
@@ -68,10 +90,7 @@ func TestStartMarksReadyOnceAndBeatsHealth(t *testing.T) {
 func TestShutdownStopsHeartbeatsAndInformsSidecar(t *testing.T) {
 	f := startFake(t, nil)
 
-	l, err := Start(context.Background(), Config{HealthInterval: 20 * time.Millisecond, Logf: t.Logf})
-	if err != nil {
-		t.Fatalf("Start: %v", err)
-	}
+	l := startHealthLifecycle(t, context.Background())
 	waitFor(t, 5*time.Second, func() bool { return f.HealthBeats() >= 1 }, "first health beat")
 
 	if err := l.Shutdown(); err != nil {
@@ -93,10 +112,7 @@ func TestContextCancelStopsHeartbeatsButShutdownStillWorks(t *testing.T) {
 	f := startFake(t, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	l, err := Start(ctx, Config{HealthInterval: 20 * time.Millisecond, Logf: t.Logf})
-	if err != nil {
-		t.Fatalf("Start: %v", err)
-	}
+	l := startHealthLifecycle(t, ctx)
 	waitFor(t, 5*time.Second, func() bool { return f.HealthBeats() >= 1 }, "first health beat")
 
 	cancel()
@@ -119,15 +135,8 @@ func TestHealthBeatsSurviveSidecarStreamLoss(t *testing.T) {
 	f := startFake(t, nil)
 	f.KillHealthStreamAt(2)
 
-	l, err := Start(context.Background(), Config{HealthInterval: 20 * time.Millisecond, Logf: t.Logf})
-	if err != nil {
-		t.Fatalf("Start: %v", err)
-	}
-	defer func() {
-		if err := l.Shutdown(); err != nil {
-			t.Errorf("Shutdown: %v", err)
-		}
-	}()
+	l := startHealthLifecycle(t, context.Background())
+	defer reportShutdown(t, l)
 
 	// Beats 1–2 arrive on the first stream, which the fake then kills; any
 	// count beyond 2 can only come from a re-established conversation.
@@ -172,10 +181,7 @@ func TestShutdownNotBlockedByHungRedial(t *testing.T) {
 	}
 	t.Cleanup(func() { dial = orig })
 
-	l, err := Start(context.Background(), Config{HealthInterval: 20 * time.Millisecond, Logf: t.Logf})
-	if err != nil {
-		t.Fatalf("Start: %v", err)
-	}
+	l := startHealthLifecycle(t, context.Background())
 	// One beat lands, the fake kills the stream, the next beat fails and
 	// the loop enters the hung re-dial.
 	waitFor(t, 5*time.Second, func() bool { return dials.Load() >= 2 }, "the health loop to enter the recovery dial")

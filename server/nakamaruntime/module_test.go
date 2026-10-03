@@ -3,9 +3,7 @@ package nakamaruntime
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"crypto/rsa"
-	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
@@ -18,9 +16,9 @@ import (
 	allocationpb "agones.dev/agones/pkg/allocation/go"
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 	agonesfake "agones.dev/agones/pkg/client/clientset/versioned/fake"
-	"github.com/devantler-tech/world-at-ruin/server/admissionref"
 	"github.com/devantler-tech/world-at-ruin/server/agones"
 	"github.com/devantler-tech/world-at-ruin/server/handoff"
+	"github.com/devantler-tech/world-at-ruin/server/internal/cryptotest"
 	"github.com/devantler-tech/world-at-ruin/server/internal/handoffidentity"
 	"github.com/devantler-tech/world-at-ruin/server/nakamalease"
 	"github.com/devantler-tech/world-at-ruin/server/nakamastorage/nakamastoragetest"
@@ -98,22 +96,10 @@ func environmentContext(env map[string]string) context.Context {
 }
 
 func TestModuleHandoffPersistsReplaysAndReclaimsNoShow(t *testing.T) {
-	key, err := rsa.GenerateKey(rand.Reader, 3072)
-	if err != nil {
-		t.Fatal(err)
-	}
-	fingerprint, err := admissionref.Fingerprint(&key.PublicKey)
-	if err != nil {
-		t.Fatal(err)
-	}
 	secret := bytes.Repeat([]byte{0xab}, 32)
-	label := []byte(strings.Join([]string{"world-at-ruin/zone-admission/v1", "world-at-ruin", "zone-one", "uid-one", fingerprint}, "\x00"))
-	sealed, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, &key.PublicKey, secret, label)
-	if err != nil {
-		t.Fatal(err)
-	}
+	key, fingerprint, envelope := cryptotest.Seal(t, "world-at-ruin", "zone-one", "uid-one", secret)
 	gs := &agonesv1.GameServer{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "world-at-ruin", Name: "zone-one", UID: "uid-one", ResourceVersion: "1", Labels: map[string]string{agones.FleetLabel: "cave", agones.AdmissionReadyLabel: agones.AdmissionReadyValue(fingerprint)}, Annotations: map[string]string{agones.AdmissionKeyAnnotation: fingerprint, agones.AdmissionEnvelopeAnnotation: "v1." + base64.RawURLEncoding.EncodeToString(sealed)}},
+		ObjectMeta: metav1.ObjectMeta{Namespace: "world-at-ruin", Name: "zone-one", UID: "uid-one", ResourceVersion: "1", Labels: map[string]string{agones.FleetLabel: "cave", agones.AdmissionReadyLabel: agones.AdmissionReadyValue(fingerprint)}, Annotations: map[string]string{agones.AdmissionKeyAnnotation: fingerprint, agones.AdmissionEnvelopeAnnotation: envelope}},
 		Status:     agonesv1.GameServerStatus{State: agonesv1.GameServerStateReady, NodeName: "node-a", Ports: []agonesv1.GameServerStatusPort{{Name: "tls", Port: 8443}}},
 	}
 	kube := agonesfake.NewSimpleClientset(gs)
@@ -140,7 +126,7 @@ func TestModuleHandoffPersistsReplaysAndReclaimsNoShow(t *testing.T) {
 	env := validEnvironment()
 	env["WAR_HANDOFF_LEASE_TTL"] = "2s"
 	initCtx, cancelInit := context.WithCancel(environmentContext(env))
-	err = initialize(initCtx, storage, r, func(config) (dependencies, error) {
+	err := initialize(initCtx, storage, r, func(config) (dependencies, error) {
 		return dependencies{allocator: allocator, resources: kube.AgonesV1().GameServers(gs.Namespace), keys: []*rsa.PrivateKey{key}, close: func() { closed.Add(1) }}, nil
 	})
 	if err != nil {

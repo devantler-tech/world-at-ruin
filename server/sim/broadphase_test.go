@@ -143,6 +143,20 @@ func packedGrid5x10() []Entity {
 	return out
 }
 
+// assertSeparationHashes checks every tick; the scenarios still choose their own seed order.
+func assertSeparationHashes(t *testing.T, a, b *World, ticks int, failure string) {
+	t.Helper()
+	for tick := range ticks {
+		a.separate()
+		a.Tick++
+		b.separate()
+		b.Tick++
+		if ha, hb := a.Hash(), b.Hash(); ha != hb {
+			t.Fatalf("dense separation %s at tick %d: %#016x != %#016x", failure, tick+1, ha, hb)
+		}
+	}
+}
+
 // TestBroadPhaseDeterministic is the reproducibility half of the determinism
 // law under the broad phase: the same dense seed stepped twice must produce a
 // bit-identical hash at every tick. (Host-independence follows from the
@@ -152,15 +166,7 @@ func TestBroadPhaseDeterministic(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			a := buildFrom(bigBounds, cfg.seed)
 			b := buildFrom(bigBounds, cfg.seed)
-			for tick := 0; tick < cfg.ticks; tick++ {
-				a.separate()
-				a.Tick++
-				b.separate()
-				b.Tick++
-				if ha, hb := a.Hash(), b.Hash(); ha != hb {
-					t.Fatalf("dense separation not reproducible at tick %d: %#016x != %#016x", tick+1, ha, hb)
-				}
-			}
+			assertSeparationHashes(t, a, b, cfg.ticks, "not reproducible")
 		})
 	}
 }
@@ -180,15 +186,7 @@ func TestBroadPhaseInsertionOrderIndependent(t *testing.T) {
 			}
 			a := buildFrom(bigBounds, fwd)
 			b := buildFrom(bigBounds, rev)
-			for tick := 0; tick < cfg.ticks; tick++ {
-				a.separate()
-				a.Tick++
-				b.separate()
-				b.Tick++
-				if ha, hb := a.Hash(), b.Hash(); ha != hb {
-					t.Fatalf("dense separation broke insertion-order independence at tick %d: %#016x != %#016x", tick+1, ha, hb)
-				}
-			}
+			assertSeparationHashes(t, a, b, cfg.ticks, "broke insertion-order independence")
 		})
 	}
 }

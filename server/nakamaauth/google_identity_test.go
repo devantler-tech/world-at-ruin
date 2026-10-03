@@ -223,21 +223,7 @@ func TestGoogleIDTokenVerifierClassifiesValidationFailures(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			verifier := googleIDTokenVerifier{
-				validate: func(
-					context.Context,
-					string,
-					string,
-				) (*idtoken.Payload, error) {
-					return nil, test.err
-				},
-			}
-
-			_, err := verifier.VerifyGoogleIDToken(
-				context.Background(),
-				testIdentityProof,
-				testGoogleClientID,
-			)
+			_, err := verifyFixturePayload(nil, test.err)
 			if code := status.Code(err); code != test.wantCode {
 				t.Fatalf(
 					"VerifyGoogleIDToken status code = %s, want %s (error %v)",
@@ -251,6 +237,14 @@ func TestGoogleIDTokenVerifierClassifiesValidationFailures(t *testing.T) {
 			}
 		})
 	}
+}
+
+// verifyFixturePayload exercises the real verifier with a controlled provider outcome.
+func verifyFixturePayload(payload *idtoken.Payload, providerErr error) (string, error) {
+	verifier := googleIDTokenVerifier{
+		validate: func(context.Context, string, string) (*idtoken.Payload, error) { return payload, providerErr },
+	}
+	return verifier.VerifyGoogleIDToken(context.Background(), testIdentityProof, testGoogleClientID)
 }
 
 func TestGoogleIDTokenVerifierRejectsInvalidClaims(t *testing.T) {
@@ -278,21 +272,7 @@ func TestGoogleIDTokenVerifierRejectsInvalidClaims(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			verifier := googleIDTokenVerifier{
-				validate: func(
-					context.Context,
-					string,
-					string,
-				) (*idtoken.Payload, error) {
-					return test.payload, nil
-				},
-			}
-
-			subject, err := verifier.VerifyGoogleIDToken(
-				context.Background(),
-				testIdentityProof,
-				testGoogleClientID,
-			)
+			subject, err := verifyFixturePayload(test.payload, nil)
 			if err == nil {
 				t.Fatal("VerifyGoogleIDToken returned nil error")
 			}

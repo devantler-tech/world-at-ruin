@@ -5,14 +5,10 @@ import (
 	"context"
 	"crypto"
 	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/rsa"
-	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/asn1"
-	"encoding/base64"
 	"encoding/pem"
 	"errors"
 	"io"
@@ -32,6 +28,7 @@ import (
 	"github.com/devantler-tech/world-at-ruin/server/admissionref"
 	"github.com/devantler-tech/world-at-ruin/server/agones"
 	"github.com/devantler-tech/world-at-ruin/server/claimrpc"
+	"github.com/devantler-tech/world-at-ruin/server/internal/cryptotest"
 	"github.com/devantler-tech/world-at-ruin/server/nakamalease"
 	"github.com/devantler-tech/world-at-ruin/server/nakamastorage/nakamastoragetest"
 	"github.com/devantler-tech/world-at-ruin/server/zonesock"
@@ -259,10 +256,7 @@ func TestPrivateListenerRejectsUnusableOrSharedTrust(t *testing.T) {
 			env["WAR_HANDOFF_ALLOCATOR_CA_FILE"] = rootFixtureWithKey(t, pairSigner(t, env["WAR_HANDOFF_CLAIMS_CERT_FILE"], env["WAR_HANDOFF_CLAIMS_KEY_FILE"]), x509.KeyUsageCertSign)
 		},
 		"claims root shared with an allocator certificate key": func(env map[string]string) {
-			key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-			if err != nil {
-				t.Fatal(err)
-			}
+			key := cryptotest.NewKey(t)
 			// The fixture allocator certificate shares its root's key, so it is
 			// replaced by one with a distinct key; only the cross-role reuse remains.
 			env["WAR_HANDOFF_ALLOCATOR_CERT_FILE"] = rootFixtureWithKey(t, key, x509.KeyUsageDigitalSignature)
@@ -293,11 +287,7 @@ func TestPrivateListenerRejectsUnusableOrSharedTrust(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			env := maps.Clone(f.env)
 			mutate(env)
-			cfg, err := readConfig(env)
-			if err != nil {
-				t.Fatal(err)
-			}
-			private, err := preparePrivateListener(cfg.claims, t.Context(), &handlerGate{}, http.NotFoundHandler())
+			private, err := prepareFixtureListener(t, env)
 			if name == "valid" {
 				if err != nil {
 					t.Fatalf("valid separate trust rejected: %v", err)
@@ -315,19 +305,29 @@ func TestPrivateListenerRejectsUnusableOrSharedTrust(t *testing.T) {
 	}
 }
 
+// prepareFixtureListener retains production configuration and listener setup.
+func prepareFixtureListener(t *testing.T, env map[string]string) (*privateListener, error) {
+	t.Helper()
+	cfg, err := readConfig(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return preparePrivateListener(cfg.claims, t.Context(), &handlerGate{}, http.NotFoundHandler())
+}
+
+// writeSignedRootFixture signs and writes the caller's explicit trust-root properties.
+func writeSignedRootFixture(t *testing.T, root *x509.Certificate, signer crypto.Signer) string {
+	t.Helper()
+	der := cryptotest.Issue(t, root, root, signer.Public(), signer)
+	return writeMaterial(t, t.TempDir(), "root.pem", pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+}
+
 // rootFixture writes a self-signed root with the given validity window.
 func rootFixture(t *testing.T, notBefore, notAfter time.Time, isCA bool) string {
 	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
+	key := cryptotest.NewKey(t)
 	root := &x509.Certificate{SerialNumber: big.NewInt(1), NotBefore: notBefore, NotAfter: notAfter, IsCA: isCA, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign}
-	der, err := x509.CreateCertificate(rand.Reader, root, root, &key.PublicKey, key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return writeMaterial(t, t.TempDir(), "root.pem", pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+	return writeSignedRootFixture(t, root, key)
 }
 
 // TestPrivateListenerAcceptsRootsThatAllowClientAuth keeps the extended key
@@ -344,11 +344,7 @@ func TestPrivateListenerAcceptsRootsThatAllowClientAuth(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			env := maps.Clone(f.env)
 			env["WAR_HANDOFF_CLAIMS_CA_FILE"] = rootFixtureWithUsages(t, usages, nil)
-			cfg, err := readConfig(env)
-			if err != nil {
-				t.Fatal(err)
-			}
-			private, err := preparePrivateListener(cfg.claims, t.Context(), &handlerGate{}, http.NotFoundHandler())
+			private, err := prepareFixtureListener(t, env)
 			if err != nil {
 				t.Fatalf("root allowing client authentication rejected: %v", err)
 			}
@@ -357,30 +353,15 @@ func TestPrivateListenerAcceptsRootsThatAllowClientAuth(t *testing.T) {
 	}
 
 	t.Run("premise: a server-auth-only root verifies no client", func(t *testing.T) {
-		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-		if err != nil {
-			t.Fatal(err)
-		}
+		key := cryptotest.NewKey(t)
 		root := &x509.Certificate{SerialNumber: big.NewInt(1), NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
 			IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
-		rootDER, err := x509.CreateCertificate(rand.Reader, root, root, &key.PublicKey, key)
-		if err != nil {
-			t.Fatal(err)
-		}
-		parsedRoot, err := x509.ParseCertificate(rootDER)
-		if err != nil {
-			t.Fatal(err)
-		}
+		rootDER := cryptotest.Issue(t, root, root, &key.PublicKey, key)
+		parsedRoot := cryptotest.Parse(t, rootDER)
 		leaf := &x509.Certificate{SerialNumber: big.NewInt(2), NotBefore: root.NotBefore, NotAfter: root.NotAfter,
 			KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}
-		leafDER, err := x509.CreateCertificate(rand.Reader, leaf, parsedRoot, &key.PublicKey, key)
-		if err != nil {
-			t.Fatal(err)
-		}
-		parsedLeaf, err := x509.ParseCertificate(leafDER)
-		if err != nil {
-			t.Fatal(err)
-		}
+		leafDER := cryptotest.Issue(t, leaf, parsedRoot, &key.PublicKey, key)
+		parsedLeaf := cryptotest.Parse(t, leafDER)
 		pool := x509.NewCertPool()
 		pool.AddCert(parsedRoot)
 		if _, err := parsedLeaf.Verify(x509.VerifyOptions{Roots: pool, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}); err == nil {
@@ -393,17 +374,10 @@ func TestPrivateListenerAcceptsRootsThatAllowClientAuth(t *testing.T) {
 // certificates, restricted to the given extended key usages.
 func rootFixtureWithUsages(t *testing.T, usages []x509.ExtKeyUsage, unknown []asn1.ObjectIdentifier) string {
 	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
+	key := cryptotest.NewKey(t)
 	root := &x509.Certificate{SerialNumber: big.NewInt(3), NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
 		IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign, ExtKeyUsage: usages, UnknownExtKeyUsage: unknown}
-	der, err := x509.CreateCertificate(rand.Reader, root, root, &key.PublicKey, key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return writeMaterial(t, t.TempDir(), "root.pem", pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+	return writeSignedRootFixture(t, root, key)
 }
 
 // TestPrivateListenerAcceptsUsableMaterial pins the stricter startup checks to
@@ -425,11 +399,7 @@ func TestPrivateListenerAcceptsUsableMaterial(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			env := maps.Clone(f.env)
 			mutate(env)
-			cfg, err := readConfig(env)
-			if err != nil {
-				t.Fatal(err)
-			}
-			private, err := preparePrivateListener(cfg.claims, t.Context(), &handlerGate{}, http.NotFoundHandler())
+			private, err := prepareFixtureListener(t, env)
 			if err != nil {
 				t.Fatalf("usable material rejected: %v", err)
 			}
@@ -464,35 +434,20 @@ type chainOptions struct {
 func servedChainFixture(t *testing.T, opts chainOptions) (certFile, keyFile string) {
 	t.Helper()
 	issuer := func(isCA bool, notAfter time.Time) (*x509.Certificate, *ecdsa.PrivateKey) {
-		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-		if err != nil {
-			t.Fatal(err)
-		}
+		key := cryptotest.NewKey(t)
 		template := &x509.Certificate{SerialNumber: big.NewInt(4), NotBefore: notAfter.Add(-2 * time.Hour), NotAfter: notAfter, IsCA: isCA, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign}
 		if !isCA {
 			template.KeyUsage = x509.KeyUsageDigitalSignature
 		}
-		der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
-		if err != nil {
-			t.Fatal(err)
-		}
-		parsed, err := x509.ParseCertificate(der)
-		if err != nil {
-			t.Fatal(err)
-		}
+		der := cryptotest.Issue(t, template, template, &key.PublicKey, key)
+		parsed := cryptotest.Parse(t, der)
 		return parsed, key
 	}
 	parent, parentKey := issuer(opts.issuerIsCA, opts.issuerNotAfter)
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
+	key := cryptotest.NewKey(t)
 	leaf := &x509.Certificate{SerialNumber: big.NewInt(5), DNSNames: []string{"localhost"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
 		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
-	leafDER, err := x509.CreateCertificate(rand.Reader, leaf, parent, &key.PublicKey, parentKey)
-	if err != nil {
-		t.Fatal(err)
-	}
+	leafDER := cryptotest.Issue(t, leaf, parent, &key.PublicKey, parentKey)
 	served := parent
 	if opts.serveOther {
 		served, _ = issuer(true, time.Now().Add(time.Hour))
@@ -511,18 +466,11 @@ func servedChainFixture(t *testing.T, opts chainOptions) (certFile, keyFile stri
 func rootFixtureWithKey(t *testing.T, signer crypto.Signer, usage x509.KeyUsage) string {
 	t.Helper()
 	if signer == nil {
-		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-		if err != nil {
-			t.Fatal(err)
-		}
+		key := cryptotest.NewKey(t)
 		signer = key
 	}
 	root := &x509.Certificate{SerialNumber: big.NewInt(2), NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), IsCA: true, BasicConstraintsValid: true, KeyUsage: usage}
-	der, err := x509.CreateCertificate(rand.Reader, root, root, signer.Public(), signer)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return writeMaterial(t, t.TempDir(), "root.pem", pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+	return writeSignedRootFixture(t, root, signer)
 }
 
 // TestPrivateListenerBoundsConnections catches unbounded TLS admission; releasing
@@ -634,21 +582,8 @@ func newListenerFixture(t *testing.T) listenerFixture {
 	env["WAR_HANDOFF_ALLOCATOR_CA_FILE"] = allocatorCfg.allocatorCA
 	env["WAR_HANDOFF_ALLOCATOR_CERT_FILE"] = allocatorCfg.allocatorCert
 	env["WAR_HANDOFF_ALLOCATOR_KEY_FILE"] = allocatorCfg.allocatorKey
-	key, err := rsa.GenerateKey(rand.Reader, 3072)
-	if err != nil {
-		t.Fatal(err)
-	}
-	fingerprint, err := admissionref.Fingerprint(&key.PublicKey)
-	if err != nil {
-		t.Fatal(err)
-	}
 	secret := bytes.Repeat([]byte{0xab}, 32)
-	label := []byte(strings.Join([]string{"world-at-ruin/zone-admission/v1", "world-at-ruin", "zone-one", "uid-one", fingerprint}, "\x00"))
-	sealed, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, &key.PublicKey, secret, label)
-	if err != nil {
-		t.Fatal(err)
-	}
-	envelope := "v1." + base64.RawURLEncoding.EncodeToString(sealed)
+	key, fingerprint, envelope := cryptotest.Seal(t, "world-at-ruin", "zone-one", "uid-one", secret)
 	attempt, err := agones.CorrelationLabel("attempt-one")
 	if err != nil {
 		t.Fatal(err)
