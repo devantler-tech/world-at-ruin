@@ -37,6 +37,7 @@ alias_changes_after_resolve=0
 incomplete_version=""
 completion_fault=""
 latest_digest_override=""
+preserve_latest_digest_override_on_tag=0
 
 fail() {
   echo "FAIL: $*" >&2
@@ -60,6 +61,7 @@ reset_registry() {
   incomplete_version=""
   completion_fault=""
   latest_digest_override=""
+  preserve_latest_digest_override_on_tag=0
 }
 
 set_tags() {
@@ -173,7 +175,7 @@ oras() {
     esac
     [ "$3" = latest ] || return 2
     set_latest "${version}"
-    latest_digest_override=""
+    if [ "$preserve_latest_digest_override_on_tag" -eq 0 ]; then latest_digest_override=""; fi
     if [ -n "${publish_newer_after_first_tag}" ]; then
       printf '%s\n' "${publish_newer_after_first_tag}" >>"${tags_file}"
       publish_newer_after_first_tag=""
@@ -408,3 +410,13 @@ completion_fault=forged
 if advance_latest_tag "$artifact" 0.80.0 >/dev/null 2>&1; then fail "same-version forged completion was accepted"; fi
 [ "$(tag_calls)" -eq 0 ] || fail "same-version invalid completion mutated latest"
 echo 'ok -- same-version recovery authenticates and compares digests'
+
+# A registry that never exposes the written digest must exhaust retries as a failure.
+reset_registry
+set_tags "0.80.0"
+set_latest "0.80.0"
+latest_digest_override="sha256:0000000000000000000000000000000000000000000000000000000000000081"
+preserve_latest_digest_override_on_tag=1
+if advance_latest_tag "$artifact" 0.80.0 >/dev/null 2>&1; then fail "retry exhaustion falsely reported digest convergence"; fi
+[ "$(tag_calls)" -eq 5 ] || fail "nonconverging digest did not honor the bounded retry limit"
+echo "ok -- bounded retry exhaustion rejects an unchecked same-version digest"
