@@ -38,8 +38,7 @@ func populate(world: Node) -> void:
 		var creature_name := CreatureGen.forge_name(name_rng)
 		# Forged names can collide; suffix until unique so the name-keyed
 		# recipe stays 1:1 with the hound standing there.
-		while creature_name in creature_names:
-			creature_name += CreatureGen.NAME_TAILS[name_rng.randi_range(0, CreatureGen.NAME_TAILS.size() - 1)]
+		creature_name = RecipeGeneration.ensure_unique(creature_name, CreatureGen.NAME_TAILS, name_rng, creature_names)
 		creature_names.append(creature_name)
 		var body := CreatureFactory.build(CreatureGen.recipe_for(creature_name))
 		if body == null:

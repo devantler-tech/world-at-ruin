@@ -199,29 +199,17 @@ func runListen(w *sim.World, addr, certFile, keyFile, secretEnv, allocation stri
 		}
 	}
 
-	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, SessionTicketsDisabled: true}
 	if !insecurePlaintext {
-		// Load and validate the key pair BEFORE listening or declaring any
-		// readiness: ServeTLS would otherwise discover a broken cert inside
-		// the serve goroutine, after Agones was already told Ready — and the
-		// fleet would allocate a GameServer whose endpoint never came up.
-		cert, err := tls.LoadX509KeyPair(certFile, keyFile)
-		if err != nil {
-			return fmt.Errorf("load TLS key pair: %w", err)
+		// Preserve the readiness gate, then re-read projected material for
+		// every new handshake. Never cache a stale pair or fall back when a
+		// rotation is incomplete. Session resumption must not bypass this gate.
+		if _, err := currentTLSCertificate(certFile, keyFile); err != nil {
+			return err
 		}
-		// A parseable pair can still be unusable: outside its validity
-		// window every client rejects the handshake, which to the fleet is
-		// indistinguishable from a dead endpoint. (Identity/DNS-name checks
-		// stay with the deployment side, which knows the served name; the
-		// process only knows the files it was handed.)
-		leaf, err := x509.ParseCertificate(cert.Certificate[0])
-		if err != nil {
-			return fmt.Errorf("parse TLS leaf certificate: %w", err)
+		tlsConfig.GetCertificate = func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+			return currentTLSCertificate(certFile, keyFile)
 		}
-		if now := time.Now(); now.Before(leaf.NotBefore) || now.After(leaf.NotAfter) {
-			return fmt.Errorf("TLS certificate is outside its validity window (NotBefore %s, NotAfter %s): no client would accept the handshake", leaf.NotBefore.Format(time.RFC3339), leaf.NotAfter.Format(time.RFC3339))
-		}
-		tlsConfig.Certificates = []tls.Certificate{cert}
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -307,8 +295,8 @@ func runListen(w *sim.World, addr, certFile, keyFile, secretEnv, allocation stri
 		if insecurePlaintext {
 			err = srv.Serve(ln)
 		} else {
-			// The key pair is already loaded into TLSConfig.Certificates,
-			// so the file arguments stay empty.
+			// GetCertificate owns validated certificate refresh; keep the
+			// file arguments empty so ServeTLS cannot cache a startup pair.
 			err = srv.ServeTLS(ln, "", "")
 		}
 		serveFailed(err)
@@ -357,6 +345,24 @@ func runListen(w *sim.World, addr, certFile, keyFile, secretEnv, allocation stri
 		return fmt.Errorf("serve: %w", err)
 	}
 	return nil
+}
+
+// currentTLSCertificate loads the current projected pair and refuses unusable
+// material both before readiness and on later handshakes. Identity remains the
+// client's responsibility, since the command knows file paths, not served names.
+func currentTLSCertificate(certFile, keyFile string) (*tls.Certificate, error) {
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		return nil, fmt.Errorf("load TLS key pair: %w", err)
+	}
+	leaf, err := x509.ParseCertificate(cert.Certificate[0])
+	if err != nil {
+		return nil, fmt.Errorf("parse TLS leaf certificate: %w", err)
+	}
+	if now := time.Now(); now.Before(leaf.NotBefore) || !now.Before(leaf.NotAfter) {
+		return nil, fmt.Errorf("TLS certificate is outside its validity window (NotBefore %s, NotAfter %s): no client would accept the handshake", leaf.NotBefore.Format(time.RFC3339), leaf.NotAfter.Format(time.RFC3339))
+	}
+	return &cert, nil
 }
 
 // runReplicate drives the fixed demo ticks while tracking one observer's

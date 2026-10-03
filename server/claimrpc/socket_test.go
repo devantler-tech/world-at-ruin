@@ -2,10 +2,6 @@ package claimrpc
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/sha256"
-	"encoding/base64"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -16,13 +12,14 @@ import (
 	allocationpb "agones.dev/agones/pkg/allocation/go"
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 	agonesfake "agones.dev/agones/pkg/client/clientset/versioned/fake"
-	"github.com/coder/websocket"
 	"github.com/devantler-tech/world-at-ruin/server/admissionref"
 	"github.com/devantler-tech/world-at-ruin/server/agones"
 	"github.com/devantler-tech/world-at-ruin/server/agonesalloc"
 	"github.com/devantler-tech/world-at-ruin/server/agonesresources"
 	"github.com/devantler-tech/world-at-ruin/server/gameserverapi"
 	"github.com/devantler-tech/world-at-ruin/server/handoff"
+	"github.com/devantler-tech/world-at-ruin/server/internal/cryptotest"
+	"github.com/devantler-tech/world-at-ruin/server/internal/zonesockettest"
 	"github.com/devantler-tech/world-at-ruin/server/nakamalease"
 	"github.com/devantler-tech/world-at-ruin/server/sim"
 	"github.com/devantler-tech/world-at-ruin/server/wire"
@@ -53,20 +50,7 @@ func (forbiddenAllocator) Allocate(context.Context, *allocationpb.AllocationRequ
 // the real resource checks, sealed envelope decryption and pinned reference.
 func (f *fixture) resourceResolver(t *testing.T) (*agonesresources.Adapter, *agonesfake.Clientset, *agonesv1.GameServer) {
 	t.Helper()
-	key, err := rsa.GenerateKey(rand.Reader, 3072)
-	if err != nil {
-		t.Fatal(err)
-	}
-	fingerprint, err := admissionref.Fingerprint(&key.PublicKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	label := []byte(strings.Join([]string{"world-at-ruin/zone-admission/v1", "world", "zone-1", "uid-1", fingerprint}, "\x00"))
-	sealed, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, &key.PublicKey, f.allocation.AdmissionSecret, label)
-	if err != nil {
-		t.Fatal(err)
-	}
-	envelope := "v1." + base64.RawURLEncoding.EncodeToString(sealed)
+	key, fingerprint, envelope := cryptotest.Seal(t, "world", "zone-1", "uid-1", f.allocation.AdmissionSecret)
 	ref, err := admissionref.Reference(admissionref.Material{Namespace: "world", GameServerName: "zone-1", GameServerUID: "uid-1", WrappingKeyFingerprint: fingerprint, AdmissionEnvelope: envelope, TLSPort: 443})
 	if err != nil {
 		t.Fatal(err)
@@ -132,31 +116,13 @@ func TestPrivateClaimControlsRealSocketWithPinnedResource(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			hub, err := zonesock.NewClaimedHub(zonesock.Config{Verifier: verifier}, gate, time.Second)
-			if err != nil {
-				t.Fatal(err)
-			}
-			done := make(chan struct{})
-			go func() {
-				defer close(done)
-				world := sim.NewDemoWorld()
-				ticker := time.NewTicker(time.Millisecond)
-				defer ticker.Stop()
-				for {
-					select {
-					case <-ctx.Done():
-						return
-					case <-ticker.C:
-						hub.Tick(world)
-					}
-				}
-			}()
+			hub, done := zonesockettest.NewTickingHub(t, ctx, verifier, gate, time.Second)
 			defer func() { cancel(); <-done }()
 			server := httptest.NewTLSServer(hub.Handler())
 			defer server.Close()
 			dialCtx, stop := context.WithTimeout(ctx, 5*time.Second)
 			defer stop()
-			conn, response, err := websocket.Dial(dialCtx, server.URL, &websocket.DialOptions{HTTPClient: server.Client(), HTTPHeader: http.Header{"Authorization": {"Bearer " + f.token}}})
+			conn, response, err := zonesockettest.Dial(dialCtx, server, f.token)
 			if response != nil && response.Body != nil {
 				_ = response.Body.Close()
 			}

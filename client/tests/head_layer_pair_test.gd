@@ -123,20 +123,12 @@ func _ready() -> void:
 
 
 func _picker_with(creator: CharacterCreator, item_name: String) -> OptionButton:
-	for node: Node in creator.find_children("*", "OptionButton", true, false):
-		var picker := node as OptionButton
-		for index in picker.item_count:
-			if picker.get_item_text(index) == item_name:
-				return picker
-	return null
+	return WardrobeTestSupport.picker_with(creator, item_name)
 
 
 func _select(picker: OptionButton, item_name: String) -> bool:
-	for index in picker.item_count:
-		if picker.get_item_text(index) == item_name:
-			picker.select(index)
-			picker.item_selected.emit(index)
-			return true
+	if WardrobeTestSupport.select_item(picker, item_name):
+		return true
 	_fail("picker does not offer '%s'" % item_name)
 	return false
 

@@ -1,4 +1,4 @@
-extends Node
+extends "res://tests/boolean_verdict.gd"
 ## Regression test for the ExplorationRewards layer (issue #75).
 ##
 ## Exploration must pay off in BREADTH, never bigger numbers (Phase 6: "the
@@ -16,7 +16,6 @@ extends Node
 ##
 ## Run: godot --headless --path client res://tests/exploration_rewards_test.tscn
 
-var _failed := false
 var _apply_attempts: Array[String] = []
 var _rejected_apply := ""
 
@@ -253,17 +252,3 @@ func _apply_reward_for_test(poi_id: String, reward: Dictionary) -> bool:
 
 func _eq_list(actual: Array[String], expected: String, label: String) -> void:
 	_check(",".join(actual) == expected, true, "%s (got \"%s\")" % [label, ",".join(actual)])
-
-
-func _check(actual: bool, expected: bool, label: String) -> void:
-	if _failed:
-		return
-	if actual != expected:
-		_fail("%s — expected %s, got %s" % [label, expected, actual])
-
-
-func _fail(message: String) -> void:
-	_failed = true
-	push_error(message)
-	print("TEST FAIL — %s" % message)
-	get_tree().quit(1)

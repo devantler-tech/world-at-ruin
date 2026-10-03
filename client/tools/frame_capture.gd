@@ -62,6 +62,7 @@ const FrameDiff := preload("res://tools/frame_diff.gd")
 const SCENARIOS: Array[String] = [
 	"world",
 	"first_run",
+	"ragged_cloth",
 	"breath",
 	"walk",
 	"run",
@@ -558,6 +559,9 @@ func _ready() -> void:
 
 	if scenario == "first_run":
 		await _capture_first_run(dir, main)
+		return
+	if scenario == "ragged_cloth":
+		await _capture_ragged_cloth(dir, main)
 		return
 	if scenario == "breath":
 		await _capture_breath(dir, main)
@@ -1656,6 +1660,295 @@ func _capture_first_run(dir: String, main: Node) -> void:
 	get_tree().quit(0)
 
 
+## Fixed inspection offsets relative to the garment centre in the kit body
+## frame. The gameplay entry selects the untouched production follow rig.
+static func ragged_cloth_capture_plan() -> Array:
+	return [
+		["cloth_front", Vector3(0.10, 0.03, 0.82), Vector3.ZERO],
+		["cloth_rear", Vector3(-0.10, 0.03, -0.82), Vector3.ZERO],
+		["cloth_gameplay", Vector3.ZERO, Vector3.ZERO],
+	]
+
+
+## Extend the established material plan without changing its three-view
+## contract. Geometry evidence also needs a hanging-profile inspection.
+static func ragged_drape_capture_plan() -> Array:
+	var plan := ragged_cloth_capture_plan()
+	plan.insert(2, ["cloth_profile", Vector3(0.82, 0.03, 0.06), Vector3.ZERO])
+	return plan
+
+
+## Keep the normal follow-camera projection and spring-arm distance for the
+## gameplay read, rather than magnifying distant fibres through a close lens.
+static func ragged_cloth_camera(view: String, inspection: Camera3D, player: Player) -> Camera3D:
+	return player.get("_camera") as Camera3D if view == "cloth_gameplay" else inspection
+
+
+## Remove only sewing from the actual preview. Rebake from the imported kit's
+## palette, not the sewn map's mean, so unrelated weave texels remain identical.
+## The caller swaps this material only; camera, mesh, pose and light stay fixed.
+static func ragged_tailoring_material(garment: MeshInstance3D) -> StandardMaterial3D:
+	return _ragged_ablation_material(garment, false, true)
+
+
+## Keep actual weave and sewing while removing only broad fold/rolled-edge
+## relief. This isolates the new construction at the same pose and camera.
+static func ragged_unfolded_material(garment: MeshInstance3D) -> StandardMaterial3D:
+	return _ragged_ablation_material(garment, true, false)
+
+
+## Only the selected ablation switches differ; the active material and source
+## palette remain identical, and disabled detail never consults source metadata.
+static func _ragged_ablation_material(
+		garment: MeshInstance3D, tailoring: bool, folds: bool) -> StandardMaterial3D:
+	var result := garment.get_active_material(0).duplicate() as StandardMaterial3D
+	if not RaggedCloth.enabled():
+		return result
+	var source_mesh := garment.get_meta(RaggedDrape.SOURCE_META, garment.mesh) as Mesh
+	var source := source_mesh.surface_get_material(0) as StandardMaterial3D
+	var maps := RaggedCloth.make_maps(RaggedCloth._palette(source.albedo_texture), tailoring, folds)
+	result.albedo_texture = maps[0]
+	result.normal_texture = maps[1]
+	result.roughness_texture = maps[2]
+	return result
+
+
+## Shared fixed-phase evidence setup. Scenario flags, drivers and thresholds
+## remain with their capture paths; this only seats and pins the actual rig.
+static func prepare_motion_capture(
+		player: Player, world: WorldGen, camera_parent: Node, vantage: String) -> Dictionary:
+	player.set_physics_process(false)
+	player.control_enabled = false
+	var ground := world.surface_height_at(0.0, WALK_VANTAGE_Z)
+	if ground <= WorldGen.NO_GROUND + 1.0:
+		return {"problem": "the committed %s vantage has no terrain under it" % vantage}
+	player.global_position = Vector3(0.0, ground + 0.1, WALK_VANTAGE_Z)
+	player.face_toward(Vector3.ZERO)
+	var skeleton := CharacterFactory.find_skeleton(player.get_node("Visual"))
+	if skeleton == null:
+		return {"problem": "the shipped Wanderer has no recipe skeleton"}
+	var body := skeleton.get_parent()
+	var idle: Node = null
+	# Imported rigs may sit below wrapper nodes. The idle belongs to the
+	# character body, so walk ancestors only within this player's subtree.
+	while body != null and body != player:
+		idle = body.get_node_or_null("BreathingIdle")
+		if idle != null:
+			break
+		body = body.get_parent()
+	if idle != null:
+		idle.set_process(false)
+		BreathingIdle.apply_at(skeleton, 0.0)
+	skeleton.force_update_all_bone_transforms()
+	var chest := skeleton.find_bone("spine_03")
+	var left_foot := skeleton.find_bone("foot_l")
+	if chest < 0 or left_foot < 0:
+		return {"problem": "the %s evidence rig lacks spine_03 or foot_l" % vantage}
+	var focus: Vector3 = skeleton.global_transform * skeleton.get_bone_global_pose(chest).origin
+	var camera := Camera3D.new()
+	camera.far = 400.0
+	camera.fov = 42.0
+	camera_parent.add_child(camera)
+	camera.global_position = focus + Vector3(WALK_CAM_SIDE, WALK_CAM_RISE, -WALK_CAM_FRONT)
+	camera.look_at(focus - Vector3(0.0, 0.45, 0.0), Vector3.UP)
+	return {"problem": "", "skeleton": skeleton, "left_foot": left_foot, "camera": camera}
+
+
+## Actual empty-wardrobe player, with garment-only pixel evidence. A magenta
+## visibility arm names the pixels the garment really draws; comparing the whole
+## frame would let scenery motion pretend a flat or hidden cloth had detail.
+func _capture_ragged_cloth(dir: String, main: Node) -> void:
+	for i in UI_WARMUP_FRAMES:
+		await get_tree().process_frame
+	var creator := _find_creator(main) as CharacterCreator
+	if creator == null or not creator.first_run:
+		_fail("ragged cloth requires a real first-run creator and an absent temporary save")
+		return
+	if not main.call("freeze_first_run_backdrop_animation"):
+		_fail("ragged cloth backdrop could not be fixed")
+		return
+	creator.call("_on_preset", "wanderer")
+	for slot: String in CharacterCreator.pickable_regions(CharacterFactory.equipment_registry()):
+		for layer: String in CharacterCreator.pickable_layers(CharacterFactory.equipment_registry(), slot):
+			creator.call("_set_recipe_equipment", slot, layer, "")
+	var player := creator.get("_player") as Player
+	player.set_character(creator.get("_recipe"))
+	player.set_physics_process(false)
+	player.set_process(false)
+	player.set_process_unhandled_input(false)
+	creator.visible = false
+	creator.set_process(false)
+	var body := player.get("_character_body") as Node3D
+	var skeleton := CharacterFactory.find_skeleton(body)
+	var garment := skeleton.get_node_or_null("Equip_loincloth_ragged") as MeshInstance3D
+	if garment == null or not garment.is_visible_in_tree() or _pin_idles() == 0:
+		_fail("the actual player has no visible immutable ragged garment or pinned pose")
+		return
+	var material := garment.get_active_material(0) as StandardMaterial3D
+	var original_override := garment.get_surface_override_material(0)
+	var original_mesh := garment.mesh
+	var seam_off := ragged_tailoring_material(garment)
+	var fold_off := ragged_unfolded_material(garment)
+	var flat_mesh := garment.get_meta(RaggedDrape.SOURCE_META, original_mesh) as Mesh
+	var flat := material.duplicate() as StandardMaterial3D
+	flat.albedo_color *= RaggedCloth._palette(material.albedo_texture)
+	flat.albedo_texture = null
+	flat.normal_enabled = false
+	flat.roughness_texture = null
+	flat.roughness = 0.9
+	var mask_material := flat.duplicate() as StandardMaterial3D
+	mask_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mask_material.albedo_color = Color(1.0, 0.0, 1.0)
+	var inspection := Camera3D.new()
+	inspection.fov = 36.0
+	get_tree().root.add_child(inspection)
+	var centre := garment.global_transform * flat_mesh.get_aabb().get_center()
+	for vantage: Array in ragged_drape_capture_plan():
+		var name: String = vantage[0]
+		var camera := ragged_cloth_camera(name, inspection, player)
+		if camera == null:
+			_fail("the actual player has no gameplay follow camera")
+			return
+		if camera == inspection:
+			camera.global_position = centre + body.global_basis * Vector3(vantage[1])
+			camera.look_at(centre + body.global_basis * Vector3(vantage[2]))
+		camera.make_current()
+		var drawn := await _settled_cloth_frame()
+		var repeated := await _settled_cloth_frame()
+		garment.set_surface_override_material(0, fold_off)
+		var unfolded := await _settled_cloth_frame()
+		garment.set_surface_override_material(0, seam_off)
+		var unsewn := await _settled_cloth_frame()
+		garment.set_surface_override_material(0, flat)
+		var flattened := await _settled_cloth_frame()
+		garment.set_surface_override_material(0, mask_material)
+		var mask := await _settled_cloth_frame()
+		garment.set_surface_override_material(0, original_override)
+		ragged_cloth_swap_mesh(garment, flat_mesh)
+		var geometry_flat := await _settled_cloth_frame()
+		garment.set_surface_override_material(0, mask_material)
+		var geometry_mask := await _settled_cloth_frame()
+		ragged_cloth_swap_mesh(garment, original_mesh)
+		garment.set_surface_override_material(0, original_override)
+		var points := ragged_cloth_pixels(mask, 1 if name == "cloth_gameplay" else 2)
+		if points.size() < 200:
+			_fail("%s: only %d garment pixels are visible — cannot evidence the cloth" % [name, points.size()])
+			return
+		var noise := ragged_cloth_difference(drawn, repeated, points)
+		var contribution := ragged_cloth_difference(drawn, flattened, points)
+		var tailoring_signal := ragged_tailoring_difference(drawn, unsewn, points)
+		var tailoring_noise := ragged_tailoring_difference(drawn, repeated, points)
+		var fold_signal := ragged_cloth_difference(drawn, unfolded, points)
+		var geometry_points := ragged_cloth_union_pixels(mask, geometry_mask, 1 if name == "cloth_gameplay" else 2)
+		var geometry_noise := ragged_cloth_difference(drawn, repeated, geometry_points)
+		var geometry_signal := ragged_cloth_difference(drawn, geometry_flat, geometry_points)
+		if RaggedDrape.enabled() and name != "cloth_gameplay" and geometry_signal <= geometry_noise * 3.0 + 0.004:
+			_fail("%s: geometric signal %.5f does not separate from repeat noise %.5f" % [name, geometry_signal, geometry_noise])
+			return
+		# Require discrimination only at inspection range: the gameplay arm
+		# records what the mip chain deliberately averages away at distance.
+		if name != "cloth_gameplay" and contribution <= noise * 3.0 + 0.004:
+			_fail("%s: flat-material signal %.5f does not separate from repeated-frame noise %.5f" % [name, contribution, noise])
+			return
+		if RaggedCloth.enabled() and name != "cloth_gameplay" and tailoring_signal <= tailoring_noise * 3.0 + 0.004:
+			_fail("%s: tailoring signal %.5f does not separate from repeat noise %.5f" % [name, tailoring_signal, tailoring_noise])
+			return
+		if RaggedCloth.enabled() and name != "cloth_gameplay" and fold_signal <= noise * 3.0 + 0.0015:
+			_fail("%s: fold-only signal %.5f does not separate from repeat noise %.5f" % [name, fold_signal, noise])
+			return
+		for arm: Array in [[name, drawn], [name + "_repeat", repeated],
+				[name + "_fold_off", unfolded],
+				[name + "_seam_off", unsewn],
+				[name + "_flat", flattened], [name + "_mask", mask],
+				[name + "_geometry_flat", geometry_flat], [name + "_geometry_mask", geometry_mask]]:
+			if not _write_frame(dir, arm[0], arm[1]):
+				return
+		print("CLOTH READ %s — visible %d px, flat signal %.5f, repeat noise %.5f" % [name, points.size(), contribution, noise])
+		print("DRAPE READ %s — union %d px, geometry signal %.5f, repeat noise %.5f" % [name, geometry_points.size(), geometry_signal, geometry_noise])
+		print("TAILORING READ %s — visible %d px, upper-decile sewing signal %.5f, repeat noise %.5f" % [name, points.size(), tailoring_signal, tailoring_noise])
+		print("FOLD READ %s — visible %d px, fold-only signal %.5f, repeat noise %.5f" % [name, points.size(), fold_signal, noise])
+	print("CAPTURE PASS — ragged cloth: front, rear, profile and gameplay; detail=%s drape=%s" % [RaggedCloth.enabled(), RaggedDrape.enabled()])
+	get_tree().quit(0)
+
+
+## Let temporal rendering settle after a camera or material change before
+## comparing garment pixels; otherwise rendering noise can look like detail.
+func _settled_cloth_frame() -> Image:
+	for i in SETTLE_FRAMES:
+		await get_tree().process_frame
+	await RenderingServer.frame_post_draw
+	return get_viewport().get_texture().get_image()
+
+
+## The marker arm is deliberately high-saturation and unlit. Close views sample
+## every other pixel to bound cost; minified gameplay reads every garment pixel.
+static func ragged_cloth_pixels(mask: Image, stride: int = 2) -> Array[Vector2i]:
+	var points: Array[Vector2i] = []
+	for y in range(0, mask.get_height(), stride):
+		for x in range(0, mask.get_width(), stride):
+			var pixel := mask.get_pixel(x, y)
+			if pixel.r > 0.8 and pixel.b > 0.8 and pixel.g < 0.2:
+				points.append(Vector2i(x, y))
+	return points
+
+
+## Inspect both actual silhouettes so a changed edge contributes even when
+## the preview no longer draws the same pixels as its original geometry.
+static func ragged_cloth_union_pixels(a: Image, b: Image, stride: int = 2) -> Array[Vector2i]:
+	var union := {}
+	for mask: Image in [a, b]:
+		for point: Vector2i in ragged_cloth_pixels(mask, stride):
+			union[point] = true
+	var points: Array[Vector2i] = []
+	points.assign(union.keys())
+	return points
+
+
+## Mesh replacement can reset per-instance morph weights. Hold those fixed
+## through each ablation, including returning to the real preview mesh.
+static func ragged_cloth_swap_mesh(garment: MeshInstance3D, mesh: Mesh) -> void:
+	var values: Array[float] = []
+	for shape in garment.mesh.get_blend_shape_count():
+		values.append(garment.get_blend_shape_value(shape))
+	garment.mesh = mesh
+	for shape in values.size():
+		garment.set_blend_shape_value(shape, values[shape])
+
+
+## Measure the largest colour-channel difference only inside the visible
+## garment mask, so background changes cannot improve the material verdict.
+static func ragged_cloth_difference(a: Image, b: Image, points: Array[Vector2i]) -> float:
+	if points.is_empty():
+		return 0.0
+	var total := 0.0
+	for point: Vector2i in points:
+		var p := a.get_pixelv(point)
+		var q := b.get_pixelv(point)
+		total += maxf(absf(p.r - q.r), maxf(absf(p.g - q.g), absf(p.b - q.b)))
+	return total / points.size()
+
+
+## Sparse construction occupies only part of the cloth. Average the strongest
+## tenth of garment differences, rather than diluting stitches with unchanged
+## panel interiors or selecting a single noisy pixel. Use this same statistic
+## on the repeated frame; background pixels never enter either comparison.
+static func ragged_tailoring_difference(a: Image, b: Image, points: Array[Vector2i]) -> float:
+	if points.is_empty():
+		return 0.0
+	var differences: Array[float] = []
+	for point: Vector2i in points:
+		var p := a.get_pixelv(point)
+		var q := b.get_pixelv(point)
+		differences.append(maxf(absf(p.r - q.r), maxf(absf(p.g - q.g), absf(p.b - q.b))))
+	differences.sort()
+	var count := maxi(1, ceili(points.size() * 0.1))
+	var total := 0.0
+	for i in range(differences.size() - count, differences.size()):
+		total += differences[i]
+	return total / count
+
+
+
 ## The `breath` scenario: a phase sequence of one standing body, because a
 ## STILL CANNOT SHOW AN IDLE (#243).
 ##
@@ -1673,6 +1966,9 @@ func _capture_first_run(dir: String, main: Node) -> void:
 ##
 ## A NPC by the shrine is framed rather than the wanderer, who wakes in the
 ## cave where torchlight and deep shadow would hide millimetre movement.
+
+
+
 func _capture_breath(dir: String, main: Node) -> void:
 	for i in WARMUP_FRAMES:
 		await get_tree().process_frame
@@ -1854,41 +2150,13 @@ func _capture_gait(dir: String, main: Node, running: bool) -> void:
 	# body stands on open ground south of the shrine rather than in the
 	# starter cave, so daylight reaches it without the shrine pillar occluding
 	# the full silhouette.
-	player.set_physics_process(false)
-	player.control_enabled = false
-	var walk_ground := world.surface_height_at(0.0, WALK_VANTAGE_Z)
-	if walk_ground <= WorldGen.NO_GROUND + 1.0:
-		_fail("the committed walk vantage has no terrain under it")
+	var rig := prepare_motion_capture(player, world, get_tree().root, "walk")
+	if not rig["problem"].is_empty():
+		_fail(rig["problem"])
 		return
-	player.global_position = Vector3(0.0, walk_ground + 0.1, WALK_VANTAGE_Z)
-	player.face_toward(Vector3.ZERO)
-	var skeleton := CharacterFactory.find_skeleton(player.get_node("Visual"))
-	if skeleton == null:
-		_fail("the shipped Wanderer has no recipe skeleton")
-		return
-
-	# Keep the independently-running breath on one deterministic phase. Without
-	# this, frame-to-frame chest motion is legitimate but makes the walk
-	# sequence depend on runner speed.
-	var body := skeleton.get_parent()
-	var idle := body.get_node_or_null("BreathingIdle") if body != null else null
-	if idle != null:
-		idle.set_process(false)
-		BreathingIdle.apply_at(skeleton, 0.0)
-
-	skeleton.force_update_all_bone_transforms()
-	var chest := skeleton.find_bone("spine_03")
-	var left_foot := skeleton.find_bone("foot_l")
-	if chest < 0 or left_foot < 0:
-		_fail("the walk evidence rig lacks spine_03 or foot_l")
-		return
-	var focus: Vector3 = skeleton.global_transform * skeleton.get_bone_global_pose(chest).origin
-	var cam := Camera3D.new()
-	cam.far = 400.0
-	cam.fov = 42.0
-	get_tree().root.add_child(cam)
-	cam.global_position = focus + Vector3(WALK_CAM_SIDE, WALK_CAM_RISE, -WALK_CAM_FRONT)
-	cam.look_at(focus - Vector3(0.0, 0.45, 0.0), Vector3.UP)
+	var skeleton: Skeleton3D = rig["skeleton"]
+	var left_foot: int = rig["left_foot"]
+	var cam: Camera3D = rig["camera"]
 
 	var foot_positions: Array[Vector3] = []
 	for i in WALK_PHASES:
@@ -1962,42 +2230,13 @@ func _capture_gait_transition(dir: String, main: Node) -> void:
 		_fail("the shipped scene has no WorldGen for the gait-transition vantage")
 		return
 
-	player.set_physics_process(false)
-	player.control_enabled = false
-	var ground := world.surface_height_at(0.0, WALK_VANTAGE_Z)
-	if ground <= WorldGen.NO_GROUND + 1.0:
-		_fail("the committed gait-transition vantage has no terrain under it")
+	var rig := prepare_motion_capture(player, world, get_tree().root, "gait-transition")
+	if not rig["problem"].is_empty():
+		_fail(rig["problem"])
 		return
-	player.global_position = Vector3(0.0, ground + 0.1, WALK_VANTAGE_Z)
-	player.face_toward(Vector3.ZERO)
-	var skeleton := CharacterFactory.find_skeleton(player.get_node("Visual"))
-	if skeleton == null:
-		_fail("the shipped Wanderer has no recipe skeleton")
-		return
-
-	var body := skeleton.get_parent()
-	var idle := body.get_node_or_null("BreathingIdle") if body != null else null
-	if idle != null:
-		idle.set_process(false)
-		BreathingIdle.apply_at(skeleton, 0.0)
-
-	skeleton.force_update_all_bone_transforms()
-	var chest := skeleton.find_bone("spine_03")
-	var left_foot := skeleton.find_bone("foot_l")
-	if chest < 0 or left_foot < 0:
-		_fail("the gait-transition evidence rig lacks spine_03 or foot_l")
-		return
-	var focus: Vector3 = (
-		skeleton.global_transform * skeleton.get_bone_global_pose(chest).origin
-	)
-	var cam := Camera3D.new()
-	cam.far = 400.0
-	cam.fov = 42.0
-	get_tree().root.add_child(cam)
-	cam.global_position = (
-		focus + Vector3(WALK_CAM_SIDE, WALK_CAM_RISE, -WALK_CAM_FRONT)
-	)
-	cam.look_at(focus - Vector3(0.0, 0.45, 0.0), Vector3.UP)
+	var skeleton: Skeleton3D = rig["skeleton"]
+	var left_foot: int = rig["left_foot"]
+	var cam: Camera3D = rig["camera"]
 
 	var samples: Array[Dictionary] = [{
 		"event": "walk",
@@ -2795,38 +3034,13 @@ func _capture_jump(dir: String, main: Node) -> void:
 		_fail("the shipped scene has no WorldGen for the daylight jump vantage")
 		return
 
-	player.set_physics_process(false)
-	player.control_enabled = false
-	var ground := world.surface_height_at(0.0, WALK_VANTAGE_Z)
-	if ground <= WorldGen.NO_GROUND + 1.0:
-		_fail("the committed jump vantage has no terrain under it")
+	var rig := prepare_motion_capture(player, world, get_tree().root, "jump")
+	if not rig["problem"].is_empty():
+		_fail(rig["problem"])
 		return
-	player.global_position = Vector3(0.0, ground + 0.1, WALK_VANTAGE_Z)
-	player.face_toward(Vector3.ZERO)
-	var skeleton := CharacterFactory.find_skeleton(player.get_node("Visual"))
-	if skeleton == null:
-		_fail("the shipped Wanderer has no recipe skeleton")
-		return
-
-	var body := skeleton.get_parent()
-	var idle := body.get_node_or_null("BreathingIdle") if body != null else null
-	if idle != null:
-		idle.set_process(false)
-		BreathingIdle.apply_at(skeleton, 0.0)
-
-	skeleton.force_update_all_bone_transforms()
-	var chest := skeleton.find_bone("spine_03")
-	var left_foot := skeleton.find_bone("foot_l")
-	if chest < 0 or left_foot < 0:
-		_fail("the jump evidence rig lacks spine_03 or foot_l")
-		return
-	var focus: Vector3 = skeleton.global_transform * skeleton.get_bone_global_pose(chest).origin
-	var cam := Camera3D.new()
-	cam.far = 400.0
-	cam.fov = 42.0
-	get_tree().root.add_child(cam)
-	cam.global_position = focus + Vector3(WALK_CAM_SIDE, WALK_CAM_RISE, -WALK_CAM_FRONT)
-	cam.look_at(focus - Vector3(0.0, 0.45, 0.0), Vector3.UP)
+	var skeleton: Skeleton3D = rig["skeleton"]
+	var left_foot: int = rig["left_foot"]
+	var cam: Camera3D = rig["camera"]
 
 	var foot_positions: Array[Vector3] = []
 	for i in JUMP_SPEEDS.size():

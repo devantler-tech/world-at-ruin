@@ -166,15 +166,7 @@ func _shipped_versions() -> PackedInt32Array:
 
 
 func _shipped_tints() -> PackedStringArray:
-	var out := PackedStringArray()
-	var f := FileAccess.open(SHIPPED_TINTS, FileAccess.READ)
-	if f == null:
-		return out
-	while not f.eof_reached():
-		var line := f.get_line().strip_edges()
-		if line != "" and not line.begins_with("#"):
-			out.append(line)
-	return out
+	return LedgerTestSupport.names(SHIPPED_TINTS)
 
 
 func _fail(message: String) -> void:

@@ -1078,24 +1078,7 @@ func _shipped_attunements() -> Array:
 
 
 func _shipped_discoveries() -> Dictionary:
-	var file := FileAccess.open(SHIPPED_DISCOVERIES, FileAccess.READ)
-	if file == null:
-		return {}
-	var mappings := {}
-	while not file.eof_reached():
-		var line := file.get_line().strip_edges()
-		if line.is_empty() or line.begins_with("#"):
-			continue
-		var parts := line.split("=", false, 1)
-		if parts.size() != 2:
-			return {}
-		var name := String(parts[0]).strip_edges()
-		var landmark := String(parts[1]).strip_edges()
-		if name.is_empty() or landmark.is_empty() or mappings.has(name):
-			return {}
-		mappings[name] = landmark
-	file.close()
-	return mappings
+	return LedgerTestSupport.mappings(SHIPPED_DISCOVERIES)
 
 
 ## Every production reward registration must equal its immutable ledger payload,

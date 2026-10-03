@@ -1,4 +1,4 @@
-// Package handoffidentity defines the shared ASCII identity grammars used by
+// Package handoffidentity defines the shared identity encodings and grammars used by
 // allocation correlation, sealed admission material and durable handoff leases.
 package handoffidentity
 
@@ -6,7 +6,29 @@ import (
 	"crypto/sha256"
 	"encoding/base32"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
+
+// SHA256Base32 emits the complete lowercase, unpadded SHA-256 digest.
+func SHA256Base32(value []byte) string {
+	digest := sha256.Sum256(value)
+	return strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(digest[:]))
+}
+
+// OpaqueUTF8 preserves spelling and bounds bytes, refusing whitespace and controls.
+// It is intentionally distinct from the narrower ASCII identity grammars.
+func OpaqueUTF8(value string, maximumBytes int) bool {
+	if value == "" || len(value) > maximumBytes || !utf8.ValidString(value) {
+		return false
+	}
+	for _, char := range value {
+		if unicode.IsSpace(char) || unicode.IsControl(char) {
+			return false
+		}
+	}
+	return true
+}
 
 // Fingerprint requires the canonical lowercase, unpadded base32 encoding of a
 // SHA-256 digest. Re-encoding rejects aliases with nonzero unused padding bits.

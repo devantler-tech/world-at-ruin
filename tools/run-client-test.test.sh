@@ -33,6 +33,18 @@ fail)
 	printf '%s\n' "fake Godot assertion failed"
 	exit 7
 	;;
+script-error)
+	printf '%s\n' 'SCRIPT ERROR: Invalid access on a null instance' >&2
+	printf '%s\n' 'TEST PASS — caller continued after the exception'
+	;;
+script-error-after-pass)
+	printf '%s\n' 'TEST PASS — caller reported success before the exception'
+	printf '%s\n' 'SCRIPT ERROR: Invalid access on a null instance' >&2
+	;;
+warning)
+	printf '%s\n' 'WARNING: deliberately refused invalid admission' >&2
+	printf '%s\n' 'TEST PASS — the refusal was expected'
+	;;
 hang)
 	trap 'exit 143' TERM
 	while :; do
@@ -123,6 +135,19 @@ elif [[ "${case_output}" != *"failed (exit 7)"* ]]; then
 	fail "a genuine failure did not preserve its exit status: ${case_output}"
 elif [[ "${case_output}" == *"could not execute"* ]]; then
 	fail "a genuine test failure was misreported as an infrastructure failure"
+fi
+
+for mode in script-error script-error-after-pass; do
+	run_case "${mode}" "${mode}" 2
+	if [ "${case_status}" -eq 0 ]; then
+		fail "${mode} was hidden by a zero exit and PASS marker"
+	elif [[ "${case_output}" != *"reported SCRIPT ERROR"* ]]; then
+		fail "${mode} did not name its engine failure: ${case_output}"
+	fi
+done
+run_case warning warning 2
+if [ "${case_status}" -ne 0 ]; then
+	fail "an expected warning was confused with a script exception: ${case_output}"
 fi
 
 run_case timeout hang 1

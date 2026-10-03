@@ -4,13 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"reflect"
-	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/devantler-tech/world-at-ruin/server/internal/savefixturetest"
 	"github.com/devantler-tech/world-at-ruin/server/nakamastorage"
 	"github.com/devantler-tech/world-at-ruin/server/nakamastorage/nakamastoragetest"
 	"github.com/devantler-tech/world-at-ruin/server/playerstate"
@@ -30,6 +28,7 @@ func newStore(t *testing.T, storage *nakamastoragetest.Fake) *Store {
 	return store
 }
 
+// carried provides deliberately unsorted stacks so readback sorting has an independent oracle.
 func carried() Inventory {
 	return Inventory{Stacks: []Stack{
 		{ItemID: "iron-sword", Count: 1},
@@ -37,6 +36,15 @@ func carried() Inventory {
 	}}
 }
 
+// expectedCarried pins the independent sorted inventory oracle.
+func expectedCarried() Inventory {
+	return Inventory{Stacks: []Stack{
+		{ItemID: "ash-hound-pelt", Count: 3},
+		{ItemID: "iron-sword", Count: 1},
+	}}
+}
+
+// TestNewStoreRequiresStorage rejects construction without the storage client needed for durable inventory.
 func TestNewStoreRequiresStorage(t *testing.T) {
 	t.Parallel()
 	if _, err := NewStore(nil); err == nil {
@@ -44,6 +52,7 @@ func TestNewStoreRequiresStorage(t *testing.T) {
 	}
 }
 
+// TestSaveCreatesAPrivateVersionedContainerAndLoadReturnsItSorted checks sorted readback and an atomic private inventory-and-audit write.
 func TestSaveCreatesAPrivateVersionedContainerAndLoadReturnsItSorted(t *testing.T) {
 	t.Parallel()
 	storage := nakamastoragetest.New()
@@ -67,10 +76,7 @@ func TestSaveCreatesAPrivateVersionedContainerAndLoadReturnsItSorted(t *testing.
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	want := Inventory{Stacks: []Stack{
-		{ItemID: "ash-hound-pelt", Count: 3},
-		{ItemID: "iron-sword", Count: 1},
-	}}
+	want := expectedCarried()
 	if !reflect.DeepEqual(record.Inventory, want) {
 		t.Fatalf("Load() = %#v, want %#v (sorted by item id)", record.Inventory, want)
 	}
@@ -413,26 +419,8 @@ func TestLoadSanitizesStorageFailuresAndPreservesCancellation(t *testing.T) {
 // ledger is append-only and each version has a golden this test loads.
 func TestLoadKeepsEveryShippedInventorySchemaReadable(t *testing.T) {
 	t.Parallel()
-	ledgerBytes, err := os.ReadFile(filepath.Join("testdata", "shipped_inventory_versions.txt"))
-	if err != nil {
-		t.Fatalf("read inventory schema ledger: %v", err)
-	}
-	versions := strings.Fields(string(ledgerBytes))
-	if len(versions) == 0 {
-		t.Fatal("inventory schema ledger is empty")
-	}
-	for index, rawVersion := range versions {
-		version, err := strconv.Atoi(rawVersion)
-		if err != nil {
-			t.Fatalf("schema ledger entry %q: %v", rawVersion, err)
-		}
-		if version != index+1 {
-			t.Fatalf("schema ledger[%d] = %d, want %d", index, version, index+1)
-		}
-		goldenBytes, err := os.ReadFile(filepath.Join("testdata", fmt.Sprintf("golden_inventory_v%d.json", version)))
-		if err != nil {
-			t.Fatalf("read inventory schema %d golden: %v", version, err)
-		}
+	for _, fixture := range savefixturetest.Read(t, "inventory") {
+		version, goldenBytes := fixture.Version, fixture.Bytes
 		storage := nakamastoragetest.New()
 		storage.Seed(nakamastoragetest.Object{
 			Collection: Collection,
@@ -445,10 +433,7 @@ func TestLoadKeepsEveryShippedInventorySchemaReadable(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Load(schema %d) error = %v", version, err)
 		}
-		want := Inventory{Stacks: []Stack{
-			{ItemID: "ash-hound-pelt", Count: 3},
-			{ItemID: "iron-sword", Count: 1},
-		}}
+		want := expectedCarried()
 		if !reflect.DeepEqual(record.Inventory, want) {
 			t.Fatalf("Load(schema %d) = %#v, want %#v", version, record.Inventory, want)
 		}

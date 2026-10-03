@@ -40,6 +40,8 @@ jobs:
         run: tools/test-cd-cask-rest-delivery.sh
       - name: Cask disarm survives an exhausted GraphQL budget
         run: tools/test-cd-cask-disarm-budget.sh
+      - name: GHCR publication failures preserve the verified latest
+        run: tools/test-cd-ghcr-verification-order.sh
       - name: GHCR latest converges to the newest immutable release
         run: tools/test-cd-ghcr-latest-forward.sh
       - name: CLA comment concurrency collapses pending runs
@@ -68,6 +70,8 @@ jobs:
         run: ./tools/lavapipe-capture-guard.test.sh
       - name: Client test runner is portable and verdicts are non-vacuous
         run: ./tools/run-client-test.test.sh
+      - name: Private trial launcher scopes credentials and cleans up
+        run: ./tools/try-zone-trial.test.sh
       - name: Required regression control is candidate-independent and fail-closed
         run: ./tools/required-regression-control.test.sh
       - name: A new dev-log entry carries "next" rather than a predicted release
@@ -1173,6 +1177,30 @@ jobs:
         working-directory: ${{ matrix.module.directory }}
         run: govulncheck ./...
 
+  zone-container:
+    name: Zone container (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build the native runtime image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: server
+          load: true
+          tags: world-at-ruin-zone:ci
+      - name: Exercise packaged defaults and real TLS admission
+        run: bash tools/smoke-zone-container.sh world-at-ruin-zone:ci
+
   server-ci:
     name: Server CI (Go)
     runs-on: ubuntu-latest
@@ -1210,13 +1238,18 @@ jobs:
       - name: Format check (gofmt)
         working-directory: server
         run: |
-          unformatted="$(gofmt -l .)"
+          unformatted="$(gofmt -l . ../tools/deploy-manifests)"
           if [ -n "${unformatted}" ]; then
             echo "::error::gofmt found unformatted files:"; echo "${unformatted}"; exit 1
           fi
       - name: Vet
         working-directory: server
-        run: go vet ./...
+        run: |
+          go vet ./...
+          go vet ../tools/deploy-manifests/*.go
+      - name: Rendered trial manifests respect host-owned network isolation
+        working-directory: server
+        run: go test -race -count=1 -timeout=2m ../tools/deploy-manifests/*.go
       - name: Every shipped server save schema and fixture is permanent
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         env:
@@ -1685,6 +1718,37 @@ jobs:
             grep -nE "SCRIPT ERROR|^ERROR" capture.filtered.log | head -20
             exit 1
           fi
+      - name: Capture ragged cloth in all material and geometry states
+        # Dedicated garment cameras: ordinary world frames hide the base
+        # under trousers and cannot evidence its fibre detail.
+        run: |
+          set -o pipefail
+          for mode in off on drape both; do
+            value=0; verdict=false; drape=0; drape_verdict=false
+            if [ "$mode" = on ] || [ "$mode" = both ]; then value=1; verdict=true; fi
+            if [ "$mode" = drape ] || [ "$mode" = both ]; then drape=1; drape_verdict=true; fi
+            dir="${RUNNER_TEMP}/shots/ragged-cloth/$mode"
+            mkdir -p "$dir"
+            WAR_RAGGED_CLOTH_DETAIL="$value" WAR_RAGGED_CLOTH_DRAPE="$drape" WAR_SCENARIO=ragged_cloth \
+            WAR_SHOT_DIR="$dir" \
+            WAR_SAVE_PATH="${RUNNER_TEMP}/cloth_${mode}_absent.json" \
+            WAR_VAULT_PATH="${RUNNER_TEMP}/cloth_${mode}_vault.json" \
+            WAR_BOOT_RECOVERY_PATH="${RUNNER_TEMP}/cloth_${mode}_recovery.json" \
+              godot --path client res://tools/frame_capture.tscn 2>&1 | tee "cloth-$mode.log"
+            grep -Fxq "CAPTURE PASS — ragged cloth: front, rear, profile and gameplay; detail=$verdict drape=$drape_verdict" "cloth-$mode.log"
+            grep -q 'BOOT_OK' "cloth-$mode.log"
+            grep -vE 'timeout waiting for fence|drivers/metal/rendering_device_driver_metal' \
+              "cloth-$mode.log" > "cloth-$mode.filtered.log" || true
+            if grep -qE 'SCRIPT ERROR|^ERROR|SHADER ERROR|Shader compilation failed' "cloth-$mode.filtered.log"; then
+              echo "::error::ragged cloth $mode capture encountered rendering errors"; exit 1
+            fi
+            for view in cloth_front cloth_rear cloth_profile cloth_gameplay; do
+              for arm in '' _repeat _fold_off _seam_off _flat _mask _geometry_flat _geometry_mask; do
+                test -s "$dir/$view$arm.png"
+                test -s "$dir/$view$arm.txt"
+              done
+            done
+          done
       - name: Capture the moving-key material response
         # #346. Ordinary evidence holds the SUN fixed and moves the camera,
         # which cannot prove a material follows a moving light. This scenario
@@ -2566,6 +2630,18 @@ jobs:
             ${{ runner.temp }}/shots/replication/*.txt
             ${{ runner.temp }}/shots/mob-chase/*.png
             ${{ runner.temp }}/shots/mob-chase/*.txt
+            ${{ runner.temp }}/shots/ragged-cloth/off/*.png
+            ${{ runner.temp }}/shots/ragged-cloth/off/*.txt
+            ${{ runner.temp }}/shots/ragged-cloth/on/*.png
+            ${{ runner.temp }}/shots/ragged-cloth/on/*.txt
+            ${{ runner.temp }}/shots/ragged-cloth/drape/*.png
+            ${{ runner.temp }}/shots/ragged-cloth/drape/*.txt
+            ${{ runner.temp }}/shots/ragged-cloth/both/*.png
+            ${{ runner.temp }}/shots/ragged-cloth/both/*.txt
+            cloth-off.log
+            cloth-on.log
+            cloth-drape.log
+            cloth-both.log
           if-no-files-found: error
 
   frame-capture-exported:
@@ -2926,6 +3002,7 @@ jobs:
         gdscript-lint,
         go-vulnerability-scan,
         server-ci,
+        zone-container,
         detect-visual-changes,
         frame-capture,
         frame-capture-exported,
@@ -2950,6 +3027,7 @@ jobs:
             ${{ needs.gdscript-lint.result }}
             ${{ needs.go-vulnerability-scan.result }}
             ${{ needs.server-ci.result }}
+            ${{ needs.zone-container.result }}
             ${{ needs.detect-visual-changes.result }}
             ${{ needs.frame-capture.result }}
             ${{ needs.frame-capture-exported.result }}

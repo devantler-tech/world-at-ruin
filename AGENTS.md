@@ -6,7 +6,7 @@ attention and love as every other product and sits in the normal selection rotat
 direction 2026-07-17, superseding the bootstrap-day "lowest priority" note); expect the game to
 accrete over years all the same. The maintainer redirects via
 the **PR workflow**; ship draft PRs as usual. Shared cross-repo rules live in the monorepo
-[`AGENTS.md`](https://github.com/devantler-tech/monorepo/blob/main/AGENTS.md) (trust gate, draft-PR
+[`AGENTS.md`](https://raw.githubusercontent.com/devantler-tech/monorepo/refs/heads/main/AGENTS.md) (trust gate, draft-PR
 discipline, issue-driven work, guardrails); this file adds the product's settled design and
 repo-specific conventions.
 
@@ -549,7 +549,7 @@ everything shipped afterwards is held to.
   base-compares complete rows. The retained v0.61.0 capability-4 reader is the rollback target that
   permits the reward writer. The vault reader accepts optional v4 `quests` as
   `quest_id → objective_id → progress in the exact JSON integer range 0..2^53-1`, and the manifest
-  advertises save-capability writes 6. The retained v0.70.0 capability-6 reader is the
+  requires save capability 6. The retained v0.70.0 capability-6 reader is the
   whole-app rollback target that permits this writer. `Main` restores that data
   into its boot-owned `QuestLog` before definitions register; the tracker preserves opaque future
   IDs and raw progress, clamps only its live known view, and latches restored completion without
@@ -560,9 +560,17 @@ everything shipped afterwards is held to.
   backwards. The vault-v5 reader additionally accepts a complete `mastery` snapshot whose stable
   weapon IDs map to exact banked and unbanked points and whose standing bloodstain is restored as
   part of the same ledger. `Main` applies that snapshot to its boot-owned `Mastery` before content
-  registration; unknown future weapon IDs stay live. The manifest advertises read capability 7 while
-  the production vault and project-wide writers remain capped at v4/capability 6, so an ordinary boot
-  cannot originate mastery until this whole-app reader is retained. **The lock lives in
+  registration; unknown future weapon IDs stay live. The manifest advertises read and write
+  capability 7, backed by the retained precision-safe v0.93.1 whole-app reader. Only real mastery
+  transitions originate vault v5: `MasteryPersistence` saves complete snapshots synchronously,
+  coalesces transient refusals with backoff capped at 30 seconds, and flushes once on clean exit.
+  The whole transaction holds `FileLock`, compares this session's acknowledged mastery, and passes
+  the vault identity captured before load to guarded replacement. A competing mastery snapshot
+  permanently fences the session's writer, including exit flush; unrelated progression is preserved.
+  `mastery_vault_writer_test` directly asserts the original byte identity, and
+  `mastery_lock_process_test` exercises real foreign-process contention and recovery.
+  Combat award sources and interactive death/reclaim remain separately scoped; production gameplay
+  does not yet call those ledger operations. **The lock lives in
   `FileLock`, not in the vault, and `BootRecovery` persistence takes it too**
   (`tests/boot_recovery_lock_test`) — that file's two writers, the updater and the game, both exist
   today, and a lost update there discards the evidence deciding whether a client rolls back. One
@@ -736,7 +744,11 @@ everything shipped afterwards is held to.
   `zone -agones -agones-admission-public-key <path>`; orphan supervision, session-end recovery,
   platform deployment of the default-off Nakama RPC plugin and broader persistence remain later children of the server-foundation
   epic (#4);
-  `deploy/` (platform manifests) arrives later per the roadmap.
+  `deploy/` contains the opt-in private zone trial's tenant manifests. The host
+  owns namespace-wide default-deny ingress and egress; standard Kubernetes
+  NetworkPolicy resources must stay out of the tenant artifact. Run
+  `go -C server test -count=1 ../tools/deploy-manifests/main.go ../tools/deploy-manifests/main_test.go`
+  (Go and `kubectl` required) to check the actual rendered bundle and nested-resource refusals.
 - **Raised exposed-stone overlay (#547, ADR 0001) — default-off, one batch, solid where drawn.** Under
   `WAR_GROUND_PLATES=1` `WorldGen` adds one `GroundPlates` `MeshInstance3D` after the rest of the
   world is built: `ExposedSlabGeometry` walks the deterministic `ExposedSlabField`, lifts every slab
@@ -824,7 +836,8 @@ everything shipped afterwards is held to.
   `refs/heads/main`. The external workflow checks out the proposed product bytes as the candidate and
   the GitHub-supplied pull-request or merge-group base SHA as trusted World at Ruin bytes. It copies
   only the candidate's product tree into a throwaway evaluation root, replaces `client/tests/` with
-  the trusted base's snapshot, and invokes the trusted base's `tools/run-client-test.sh` over every
+  the trusted base's snapshot (apart from the narrowly validated capability declaration described
+  under CI below), and invokes the trusted base's `tools/run-client-test.sh` over every
   trusted `*_test.tscn`. A pull request can add, edit, delete or skip a checkout-local scene without
   changing which trusted scenes execute or how their verdict is judged; the external workflow is the
   aggregate required gate for both `pull_request` and `merge_group`.
@@ -963,6 +976,20 @@ everything shipped afterwards is held to.
   `tools/devlog-entry-version-sweep.sh` reports a verified declaration as `PRE-RELEASE` rather than
   `NEVER-CUT`.
 - **CI, CD and releases:**
+  - **Link checking remains blocking under rate limits.** `lychee.toml` permits five retries
+    with exponential backoff while retaining Godot-specific request pacing. A fatal MegaLinter
+    pre-command tests and builds `tools/lychee-retry/main.go` as its executable adapter, then
+    runs the real HTTP controls against that adapter, its own lychee binary and the production
+    config. Native 0.24.2 does not retry rejected 503/504 responses. The adapter uses native
+    extraction, refuses extraction warnings, deduplicates citations and owns one bounded budget
+    across 429/503/504, with no nested native retries. Temporary errors recover; persistent errors
+    exhaust six attempts; healthy pages and 404s receive one request. It rejects malformed,
+    incomplete or inconsistent reports. Local validation: run the two Go tests named in
+    `.mega-linter.yml`, build the adapter, and set `LYCHEE_VALIDATOR` to that binary for the HTTP
+    tests. Go and lychee are required; requests use a local fixture. Never accept an error status
+    or exclude a valid host to make lint pass. Remove the adapter only after a released native
+    validator passes these same real HTTP controls. CLI remaps are applied once; configuration
+    remaps are refused until supported without replaying them.
   - `ci.yaml` (`pull_request` + `merge_group`) lints, tests and analyses. It is the gate on a
     change. Its required aggregate includes a reachable-vulnerability scan for both Go modules.
     Its macOS export job is **build verification** — proof the project still exports and the
@@ -974,6 +1001,12 @@ everything shipped afterwards is held to.
     Ruin base SHA, not from the candidate checkout. `tools/required-regression-control.test.sh`
     proves candidate deletion/skip content cannot remove a trusted scene, runner failure reaches the
     aggregate, an empty trusted suite fails closed, and the obsolete local workflow cannot return.
+    The sole candidate test-data exception is the save-capability declaration: the controller
+    reconstructs unchanged historical bytes or the exact planned capability-7 append, rejecting
+    every other change and symlinked path. Trusted tests support only writer stages 6/v4 and 7/v5
+    with reader 7/v5. The active writer passes trusted mastery mutation, retry, stale-session,
+    real-boot and exit-flush probes. The stage selector does not replace
+    the retained-reader release proof required by #658; see ADR 0003.
   - `go-vulnerability-scan.yaml` (`push` to `main`) scans both Go modules under their own declared
     toolchains. It is the post-merge liveness signal for newly published advisories against code
     already on the default branch.
@@ -1013,7 +1046,9 @@ everything shipped afterwards is held to.
     version** into `config/version` and `DevLog.VERSION` at build time — and, on a full-history
     checkout, rewrites any dev-log entry still carrying the placeholder version `"next"` to the
     first release containing the commit that added it (`tools/devlog-stamp.sh`, #518; a stable
-    release fails if one is left unstamped). None of these stamps is committed back. It verifies the exported app
+    release fails if one is left unstamped). Authored slug filenames retain their identity after
+    stamping; the release tree passes both dev-log storage and entry validation. None of these
+    stamps is committed back. It verifies the exported app
     boots reporting `BOOT_OK v<version>` (the proof the stamp reached the shipped binary), and
     hands the zip to a checkout-free attachment job. The build job is read-only; only the
     checkout-free attachment and final publication jobs receive `contents: write`, and the
@@ -1032,7 +1067,9 @@ everything shipped afterwards is held to.
     write, leaving the older contract live while the job goes red. Promotion therefore has to be
     **serialized or a genuine compare-and-swap** once anything depends on `latest` being the
     greatest verified release ([ADR 0004](docs/adr/0004-serve-delivery-bytes-from-a-plain-https-origin.md), #788). The
-    **digest** is what the updater pins — never the mutable tag. OCI is required rather than merely
+    Prereleases publish their build and a digest-signed immutable version tag without an update
+    manifest, and leave the stable `latest` tag unchanged. Their version cannot be represented by
+    the stable update contract. The **digest** is what the updater pins — never the mutable tag. OCI is required rather than merely
     preferred: GitHub Packages has no generic/raw-file registry, so an OCI artifact is the only way
     a `.app` zip enters it. The GitHub Release asset remains the *install* download and, once delivery
     fields exist, the *delivery* origin for pack and shell bytes (ADR 0004); GHCR is the *contract*

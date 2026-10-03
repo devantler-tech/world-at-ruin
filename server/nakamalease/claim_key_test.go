@@ -26,15 +26,23 @@ func claimFixture(t *testing.T) (*Store, *nakamastoragetest.Fake, Record, string
 	return store, fake, record, ReservationKey(record.Lease.UserID, record.Lease.ReservationID)
 }
 
+// observedClaimFixture reads the opaque lease through the real store before a
+// scenario changes it. Lookup failures remain fatal at the caller's test line.
+func observedClaimFixture(t *testing.T, store *Store, ctx context.Context, key string) Record {
+	t.Helper()
+	located, err := store.LoadForClaim(ctx, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return located
+}
+
 // TestClaimByKeyPersistsAndWinsAgainstCleanup proves admission ownership is
 // durable, replay writes nothing, and no-show cleanup loses after the claim.
 func TestClaimByKeyPersistsAndWinsAgainstCleanup(t *testing.T) {
 	store, fake, original, key := claimFixture(t)
 	ctx := context.Background()
-	located, err := store.LoadForClaim(ctx, key)
-	if err != nil {
-		t.Fatal(err)
-	}
+	located := observedClaimFixture(t, store, ctx, key)
 	if located.Lease.UserID != "" || located.Lease.ReservationID != "" {
 		t.Fatal("opaque lookup exposed raw identity")
 	}
@@ -67,11 +75,9 @@ func TestClaimByKeyRefusesReleaseAndStaleIdentity(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			store, fake, original, key := claimFixture(t)
 			ctx := context.Background()
-			located, err := store.LoadForClaim(ctx, key)
-			if err != nil {
-				t.Fatal(err)
-			}
+			located := observedClaimFixture(t, store, ctx, key)
 			at := time.Now()
+			var err error
 			switch name {
 			case "release wins":
 				_, err = store.BeginRelease(ctx, original, original.Lease.AttemptID)
@@ -106,10 +112,7 @@ func TestClaimByKeyRefusesReleaseAndStaleIdentity(t *testing.T) {
 // committed claim from its missing response by one readback, never another write.
 func TestClaimByKeyRecoversLostAcknowledgementWithoutRewriting(t *testing.T) {
 	store, fake, _, key := claimFixture(t)
-	located, err := store.LoadForClaim(context.Background(), key)
-	if err != nil {
-		t.Fatal(err)
-	}
+	located := observedClaimFixture(t, store, context.Background(), key)
 	fake.AfterWrite = func(int) error { return errors.New("private storage failure") }
 	claimed, err := store.ClaimByKey(context.Background(), key, located, time.Now())
 	if err != nil || claimed.Lease.ClaimedAt.IsZero() {
@@ -155,10 +158,7 @@ func TestClaimByKeyAndCleanupHaveOneConcurrentWinner(t *testing.T) {
 	for range 32 {
 		store, _, original, key := claimFixture(t)
 		ctx := context.Background()
-		located, err := store.LoadForClaim(ctx, key)
-		if err != nil {
-			t.Fatal(err)
-		}
+		located := observedClaimFixture(t, store, ctx, key)
 		start := make(chan struct{})
 		claimed, released := make(chan error, 1), make(chan error, 1)
 		go func() {
@@ -194,10 +194,7 @@ func TestClaimByKeyRetainsUncertainCommittedClaim(t *testing.T) {
 			store, fake, original, key := claimFixture(t)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			located, err := store.LoadForClaim(ctx, key)
-			if err != nil {
-				t.Fatal(err)
-			}
+			located := observedClaimFixture(t, store, ctx, key)
 			fake.AfterWrite = func(int) error {
 				if scenario == "canceled after write" {
 					cancel()

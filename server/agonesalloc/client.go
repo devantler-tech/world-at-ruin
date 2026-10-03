@@ -4,12 +4,11 @@ package agonesalloc
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
-	"strings"
 
 	allocationpb "agones.dev/agones/pkg/allocation/go"
 	"github.com/devantler-tech/world-at-ruin/server/agones"
+	"github.com/devantler-tech/world-at-ruin/server/internal/admissionformat"
 	"github.com/devantler-tech/world-at-ruin/server/internal/handoffidentity"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -65,8 +64,6 @@ const (
 	reservationLabel = "world-at-ruin.dev/handoff-reservation"
 	attemptLabel     = agones.AttemptLabel
 
-	leaseObjectIDLength       = 64
-	admissionEnvelopePrefix   = "v1."
 	claimLocatorPrefix        = "v1."
 	minAdmissionEnvelopeBytes = 384
 	maxAdmissionEnvelopeBytes = 4096
@@ -249,29 +246,14 @@ func validWrappingKeyFingerprint(value string) bool {
 }
 
 func validLeaseObjectID(value string) bool {
-	if len(value) != leaseObjectIDLength {
-		return false
-	}
-	for _, char := range value {
-		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
-			return false
-		}
-	}
-	return true
+	return handoffidentity.SHA256Hex(value)
 }
 
+// validAdmissionEnvelope applies allocator ciphertext bounds to canonical bytes.
 func validAdmissionEnvelope(value string) bool {
-	if !strings.HasPrefix(value, admissionEnvelopePrefix) {
-		return false
-	}
-	encoded := strings.TrimPrefix(value, admissionEnvelopePrefix)
-	ciphertext, err := base64.RawURLEncoding.Strict().DecodeString(encoded)
-	if err != nil ||
-		len(ciphertext) < minAdmissionEnvelopeBytes ||
-		len(ciphertext) > maxAdmissionEnvelopeBytes {
-		return false
-	}
-	return base64.RawURLEncoding.EncodeToString(ciphertext) == encoded
+	ciphertext, ok := admissionformat.DecodeEnvelope(value)
+	return ok && len(ciphertext) >= minAdmissionEnvelopeBytes &&
+		len(ciphertext) <= maxAdmissionEnvelopeBytes
 }
 
 func validDNSSubdomain(value string) bool {

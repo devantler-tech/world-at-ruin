@@ -6,20 +6,17 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
-	"encoding/base32"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 
+	"github.com/devantler-tech/world-at-ruin/server/internal/admissionformat"
 	"github.com/devantler-tech/world-at-ruin/server/internal/handoffidentity"
 )
 
 const (
-	envelopePrefix      = "v1."
 	referencePrefix     = "v1"
-	oaepDomain          = "world-at-ruin/zone-admission/v1"
 	admissionSecretSize = 32
 	minimumRSAKeyBits   = 3072
 )
@@ -236,37 +233,19 @@ func reference(material Material, ciphertext []byte) string {
 	}, ".")
 }
 
+// decodeEnvelope accepts canonical wire bytes without imposing a key-size policy.
 func decodeEnvelope(value string) ([]byte, bool) {
-	if !strings.HasPrefix(value, envelopePrefix) {
-		return nil, false
-	}
-	encoded := strings.TrimPrefix(value, envelopePrefix)
-	if encoded == "" {
-		return nil, false
-	}
-	ciphertext, err := base64.RawURLEncoding.Strict().DecodeString(encoded)
-	if err != nil ||
-		base64.RawURLEncoding.EncodeToString(ciphertext) != encoded {
-		return nil, false
-	}
-	return ciphertext, true
+	return admissionformat.DecodeEnvelope(value)
 }
 
+// admissionOAEPLabel binds decryption to the material's exact resource identity.
 func admissionOAEPLabel(material Material) []byte {
-	return []byte(strings.Join([]string{
-		oaepDomain,
-		material.Namespace,
-		material.GameServerName,
-		material.GameServerUID,
-		material.WrappingKeyFingerprint,
-	}, "\x00"))
+	return admissionformat.OAEPLabel(material.Namespace, material.GameServerName, material.GameServerUID, material.WrappingKeyFingerprint)
 }
 
+// base32Digest preserves the full canonical digest used by durable references.
 func base32Digest(value []byte) string {
-	digest := sha256.Sum256(value)
-	return strings.ToLower(
-		base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(digest[:]),
-	)
+	return handoffidentity.SHA256Base32(value)
 }
 
 func validFingerprint(value string) bool {

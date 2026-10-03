@@ -341,13 +341,7 @@ func _check_delete_revalidates_under_the_lock(recipe: Dictionary) -> void:
 ## Every staging file for the probe, matched by prefix — never by a fixed name
 ## (the vacuity trap #424 measured, since staging is per-attempt).
 func _stages() -> Array[String]:
-	var found: Array[String] = []
-	var parent := _probe.get_base_dir()
-	var prefix := _probe.get_file() + CharacterStore.WRITE_TMP_SUFFIX
-	for entry: String in DirAccess.get_files_at(parent):
-		if entry.begins_with(prefix):
-			found.append(entry)
-	return found
+	return PersistenceTestSupport.staging_names(_probe, CharacterStore.WRITE_TMP_SUFFIX)
 
 
 func _remove_stages() -> void:
@@ -361,28 +355,16 @@ func _abs(path: String) -> String:
 
 
 func _write_text(path: String, text: String) -> void:
-	var file := FileAccess.open(path, FileAccess.WRITE)
-	if file == null:
+	if not PersistenceTestSupport.write_text(path, text):
 		_fail("could not seed %s" % path)
-		return
-	file.store_string(text)
-	file.close()
 
 
 func _read_text(path: String) -> String:
-	if not FileAccess.file_exists(path):
-		return ""
-	var file := FileAccess.open(path, FileAccess.READ)
-	if file == null:
-		return ""
-	var text := file.get_as_text()
-	file.close()
-	return text
+	return PersistenceTestSupport.read_text(path)
 
 
 func _remove(path: String) -> void:
-	if FileAccess.file_exists(path):
-		DirAccess.remove_absolute(_abs(path))
+	PersistenceTestSupport.remove_file(path)
 
 
 func _fail(message: String) -> void:
@@ -398,11 +380,7 @@ func _cleanup() -> void:
 	FileLock.remove_dir(lock)
 	# Reclaim copies carry a per-ATTEMPT suffix, so they cannot be reconstructed
 	# by name — scan the directory for the prefix instead.
-	var parent := lock.get_base_dir()
-	var reclaim_prefix := lock.get_file() + FileLock.RECLAIM_SUFFIX
-	for entry: String in DirAccess.get_directories_at(parent):
-		if entry.begins_with(reclaim_prefix):
-			FileLock.remove_dir(parent.path_join(entry))
+	PersistenceTestSupport.remove_lock_copies(lock, [FileLock.RECLAIM_SUFFIX])
 	_remove_stages()
 	_remove(_probe)
 

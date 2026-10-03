@@ -154,15 +154,17 @@ func _ready() -> void:
 	# 2. Another writer lands between this client's read and its rename. `second`
 	# is the identity this client read; the foreign bytes are what is on disk now.
 	var foreign := _with_shape(wanderer, 0.77)
-	if not _foreign_write(PROBE, foreign):
+	var observation := PersistenceTestSupport.interposed_write(PROBE, JSON.stringify(foreign),
+		func() -> bool: return CharacterStore.save_to(PROBE, _with_shape(wanderer, 0.15), second))
+	if not observation["seeded"]:
 		_fail("could not simulate a foreign writer")
 		return
-	var foreign_bytes := _read(PROBE)
-	var stale_ok := CharacterStore.save_to(PROBE, _with_shape(wanderer, 0.15), second)
+	var foreign_bytes: String = observation["before"]
+	var stale_ok: bool = observation["result"]
 	if stale_ok:
 		_fail("a write presenting a STALE identity overwrote another writer's recipe — the character is lost permanently")
 		return
-	if _read(PROBE) != foreign_bytes:
+	if observation["after"] != foreign_bytes:
 		_fail("the refused write still modified the recipe — the bytes must be left exactly as the other writer left them")
 		return
 
@@ -226,14 +228,16 @@ func _ready() -> void:
 	if CharacterStore.document_identity(PROBE) != CharacterStore.IDENTITY_ABSENT:
 		_fail("a removed recipe did not report the absent identity")
 		return
-	if not _foreign_write(PROBE, foreign):
+	var appeared := PersistenceTestSupport.interposed_write(PROBE, JSON.stringify(foreign),
+		func() -> bool: return CharacterStore.save_to(PROBE, wanderer, CharacterStore.IDENTITY_ABSENT))
+	if not appeared["seeded"]:
 		_fail("could not simulate a writer creating the recipe after a first-run read")
 		return
-	var appeared_bytes := _read(PROBE)
-	if CharacterStore.save_to(PROBE, wanderer, CharacterStore.IDENTITY_ABSENT):
+	var appeared_bytes: String = appeared["before"]
+	if appeared["result"]:
 		_fail("a first-run write overwrote a recipe that appeared after its read")
 		return
-	if _read(PROBE) != appeared_bytes:
+	if appeared["after"] != appeared_bytes:
 		_fail("the refused first-run write still modified the recipe that had appeared")
 		return
 
@@ -302,43 +306,24 @@ func _with_shape(recipe: Dictionary, value: float) -> Dictionary:
 ## backup agent or a hand edit. Serialised exactly as the store would, so the
 ## result is a document the store accepts on every check except the identity.
 func _foreign_write(path: String, recipe: Dictionary) -> bool:
-	var file := FileAccess.open(path, FileAccess.WRITE)
-	if file == null:
-		return false
-	file.store_string(JSON.stringify(recipe, "  "))
-	file.close()
-	return true
+	return PersistenceTestSupport.write_text(path, JSON.stringify(recipe, "  "))
 
 
 ## The recipe's bytes, or "" when absent. Byte comparison is deliberate: a refused
 ## write must leave the file untouched, and comparing parsed documents would hide
 ## a rewrite that happened to round-trip to the same state.
 func _read(path: String) -> String:
-	if not FileAccess.file_exists(path):
-		return ""
-	var file := FileAccess.open(path, FileAccess.READ)
-	if file == null:
-		return ""
-	var text := file.get_as_text()
-	file.close()
-	return text
+	return PersistenceTestSupport.read_text(path)
 
 
 func _remove(path: String) -> void:
-	if FileAccess.file_exists(path):
-		DirAccess.remove_absolute(_abs(path))
+	PersistenceTestSupport.remove_file(path)
 
 
 ## Every staging file beside the probe. Staging paths carry a per-attempt stamp,
 ## so they cannot be reconstructed by name — scan the directory for the prefix.
 func _staging_leftovers() -> Array:
-	var parent := PROBE.get_base_dir()
-	var prefix := PROBE.get_file() + CharacterStore.WRITE_TMP_SUFFIX
-	var found: Array = []
-	for entry: String in DirAccess.get_files_at(parent):
-		if entry.begins_with(prefix):
-			found.append(parent.path_join(entry))
-	return found
+	return PersistenceTestSupport.staging_paths(PROBE, CharacterStore.WRITE_TMP_SUFFIX)
 
 
 func _cleanup() -> void:

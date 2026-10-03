@@ -11,15 +11,8 @@ const MAX_PLACEMENTS := 72
 
 
 func _ready() -> void:
-	var flat_ground := func(_x: float, _z: float) -> float:
-		return 0.0
-	var material := func(_x: float, _z: float) -> Dictionary:
-		return {
-			&"color": Color(0.30, 0.27, 0.23),
-			&"roughness": 0.88,
-			&"normal": Vector3.UP,
-			&"height": 0.0,
-		}
+	var flat_ground := CaveTestSupport.flat_ground
+	var material := CaveTestSupport.flat_material
 
 	OS.unset_environment(FLAG_ENV)
 	var off := _build_cave(flat_ground, material)

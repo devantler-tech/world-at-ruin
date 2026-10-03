@@ -181,6 +181,15 @@ if [ "${test_status}" -ne 0 ]; then
 	exit 1
 fi
 
+# Godot can abort one script call, resume its caller and exit zero after PASS.
+# A script exception means the regression did not complete reliably, whatever
+# markers the remaining code prints. Warnings remain valid test output.
+if grep -q 'SCRIPT ERROR:' "${log}"; then
+	echo "::error::${name} reported SCRIPT ERROR${context:+ — ${context}}"
+	tail -40 "${log}"
+	exit 1
+fi
+
 if grep -q "TEST FAIL" "${log}"; then
 	echo "::error::${name} reported TEST FAIL${context:+ — ${context}}"
 	tail -40 "${log}"

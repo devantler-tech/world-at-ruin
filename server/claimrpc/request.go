@@ -1,10 +1,8 @@
 package claimrpc
 
 import (
-	"encoding/hex"
 	"encoding/json"
 	"io"
-	"strings"
 
 	"github.com/devantler-tech/world-at-ruin/server/internal/handoffidentity"
 	"github.com/devantler-tech/world-at-ruin/server/sim"
@@ -63,8 +61,7 @@ func decodeRequest(reader io.Reader) (claimRequest, error) {
 // validRequest rejects malformed routing and identity material before resource
 // lookup; valid syntax never establishes authority to claim an allocation.
 func validRequest(request claimRequest) bool {
-	key, err := hex.DecodeString(request.LeaseObjectID)
-	return err == nil && len(key) == 32 && strings.ToLower(request.LeaseObjectID) == request.LeaseObjectID &&
+	return handoffidentity.SHA256Hex(request.LeaseObjectID) &&
 		handoffidentity.DNSLabel(request.Namespace) && handoffidentity.CorrelationID(request.AllocationID) &&
 		handoffidentity.GameServerUID(request.GameServerUID) && request.GameServerUID != "." && request.GameServerUID != ".." &&
 		handoffidentity.Fingerprint(request.AttemptDigest) && request.Observer != 0 && len(request.Token) > 0 && len(request.Token) <= 256

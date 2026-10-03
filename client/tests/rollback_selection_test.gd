@@ -1,4 +1,4 @@
-extends Node
+extends "res://tests/boolean_verdict.gd"
 ## Regression test for RollbackSelection (issue #95).
 ##
 ## This is the recovery half of self-update, and the ADR is explicit about why it
@@ -25,7 +25,6 @@ extends Node
 ##
 ## Run: godot --headless --path client res://tests/rollback_selection_test.tscn
 
-var _failed := false
 
 
 func _ready() -> void:
@@ -508,17 +507,3 @@ func _state() -> Dictionary:
 		"shell_version": "0.1.14",
 		"quarantined": [],
 	}
-
-
-func _check(actual: bool, expected: bool, label: String) -> void:
-	if _failed:
-		return
-	if actual != expected:
-		_fail("%s — expected %s, got %s" % [label, expected, actual])
-
-
-func _fail(message: String) -> void:
-	_failed = true
-	push_error(message)
-	print("TEST FAIL — %s" % message)
-	get_tree().quit(1)

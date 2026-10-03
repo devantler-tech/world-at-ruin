@@ -106,15 +106,17 @@ func _ready() -> void:
 		return
 	var foreign := SaveVault.record_discoveries(
 		SaveVault.empty(), [SaveVault.DISCOVERY_WARDENS_SHRINE])
-	if not _foreign_write(PROBE, foreign):
+	var observation := PersistenceTestSupport.interposed_write(PROBE, JSON.stringify(foreign),
+		func() -> bool: return SaveVault.replace_if_unchanged(
+			PROBE, SaveVault.attune(current, SaveVault.SHRINE_WARDENS), expected))
+	if not observation["seeded"]:
 		_fail("could not simulate a foreign writer")
 		return
-	var foreign_bytes := _read(PROBE)
-	if SaveVault.replace_if_unchanged(
-			PROBE, SaveVault.attune(current, SaveVault.SHRINE_WARDENS), expected):
+	var foreign_bytes: String = observation["before"]
+	if observation["result"]:
 		_fail("a write over a FOREIGN writer's vault SUCCEEDED — its progression is silently lost")
 		return
-	if _read(PROBE) != foreign_bytes:
+	if observation["after"] != foreign_bytes:
 		_fail("a refused write still modified the foreign writer's vault — it must be byte-intact")
 		return
 
@@ -156,14 +158,16 @@ func _ready() -> void:
 	if absent != SaveVault.IDENTITY_ABSENT:
 		_fail("a removed vault did not report the absent identity")
 		return
-	if not _foreign_write(PROBE, foreign):
+	var appeared := PersistenceTestSupport.interposed_write(PROBE, JSON.stringify(foreign),
+		func() -> bool: return SaveVault.replace_if_unchanged(PROBE, SaveVault.empty(), absent))
+	if not appeared["seeded"]:
 		_fail("could not simulate a vault appearing under an absent expectation")
 		return
-	var appeared_bytes := _read(PROBE)
-	if SaveVault.replace_if_unchanged(PROBE, SaveVault.empty(), absent):
+	var appeared_bytes: String = appeared["before"]
+	if appeared["result"]:
 		_fail("a write expecting NO vault replaced one that had appeared — its progression is lost")
 		return
-	if _read(PROBE) != appeared_bytes:
+	if appeared["after"] != appeared_bytes:
 		_fail("the refused absent-expectation write still modified the vault")
 		return
 
@@ -347,43 +351,24 @@ func _abs(path: String) -> String:
 ## document is valid and same-version on purpose: an unreadable one would be
 ## caught by the readability re-check, and would prove nothing about CAS.
 func _foreign_write(path: String, doc: Dictionary) -> bool:
-	var file := FileAccess.open(path, FileAccess.WRITE)
-	if file == null:
-		return false
-	file.store_string(JSON.stringify(doc, "  "))
-	file.close()
-	return true
+	return PersistenceTestSupport.write_text(path, JSON.stringify(doc, "  "))
 
 
 ## The vault's bytes, or "" when absent. Byte comparison is deliberate: a refused
 ## write must leave the file untouched, and comparing parsed documents would hide
 ## a rewrite that happened to round-trip to the same state.
 func _read(path: String) -> String:
-	if not FileAccess.file_exists(path):
-		return ""
-	var file := FileAccess.open(path, FileAccess.READ)
-	if file == null:
-		return ""
-	var text := file.get_as_text()
-	file.close()
-	return text
+	return PersistenceTestSupport.read_text(path)
 
 
 func _remove(path: String) -> void:
-	if FileAccess.file_exists(path):
-		DirAccess.remove_absolute(_abs(path))
+	PersistenceTestSupport.remove_file(path)
 
 
 ## Every staging file beside the probe. Staging paths carry a per-attempt stamp,
 ## so they cannot be reconstructed by name — scan the directory for the prefix.
 func _staging_leftovers() -> Array:
-	var parent := PROBE.get_base_dir()
-	var prefix := PROBE.get_file() + SaveVault.WRITE_TMP_SUFFIX
-	var found: Array = []
-	for entry: String in DirAccess.get_files_at(parent):
-		if entry.begins_with(prefix):
-			found.append(parent.path_join(entry))
-	return found
+	return PersistenceTestSupport.staging_paths(PROBE, SaveVault.WRITE_TMP_SUFFIX)
 
 
 func _cleanup() -> void:

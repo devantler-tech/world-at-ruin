@@ -32,6 +32,7 @@ func deterministicAdmissionRandom(secret []byte) io.Reader {
 	)
 }
 
+// wrappingKey generates an independent RSA wrapping key and its public admission material.
 func wrappingKey(t *testing.T) (*rsa.PrivateKey, []byte) {
 	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 3072)
@@ -45,6 +46,15 @@ func wrappingKey(t *testing.T) (*rsa.PrivateKey, []byte) {
 	return key, pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})
 }
 
+// prepareFixtureAdmission supplies only shared defaults; callers retain result assertions.
+func prepareFixtureAdmission(t *testing.T, publicPEM []byte, randomSource io.Reader, timeout time.Duration) (*PreparedAdmission, error) {
+	t.Helper()
+	return PrepareAdmission(context.Background(), Config{Logf: t.Logf}, AdmissionConfig{
+		WrappingPublicKeyPEM: publicPEM, Random: randomSource, ObservationTimeout: timeout,
+	})
+}
+
+// TestPrepareAdmissionObservesIdentityBoundEnvelopeBeforeReady holds sidecar observations to prove readiness waits for the exact identity-bound envelope.
 func TestPrepareAdmissionObservesIdentityBoundEnvelopeBeforeReady(t *testing.T) {
 	f := startFake(t, nil)
 	f.SetGameServer("games", "zone-17", "uid-17", "Starting")
@@ -152,20 +162,13 @@ func TestPrepareAdmissionObservesIdentityBoundEnvelopeBeforeReady(t *testing.T) 
 	}
 }
 
+// TestPrepareAdmissionAcceptsDNSSubdomainGameServerName preserves the complete dotted GameServer name as the allocation identity.
 func TestPrepareAdmissionAcceptsDNSSubdomainGameServerName(t *testing.T) {
 	f := startFake(t, nil)
 	f.SetGameServer("games", "zone-17.games", "uid-17", "Starting")
 	_, publicPEM := wrappingKey(t)
 
-	prepared, err := PrepareAdmission(
-		context.Background(),
-		Config{Logf: t.Logf},
-		AdmissionConfig{
-			WrappingPublicKeyPEM: publicPEM,
-			Random:               deterministicAdmissionRandom(bytes.Repeat([]byte{0x42}, 32)),
-			ObservationTimeout:   time.Second,
-		},
-	)
+	prepared, err := prepareFixtureAdmission(t, publicPEM, deterministicAdmissionRandom(bytes.Repeat([]byte{0x42}, 32)), time.Second)
 	if err != nil {
 		t.Fatalf("PrepareAdmission with DNS-subdomain GameServer name: %v", err)
 	}
@@ -177,6 +180,7 @@ func TestPrepareAdmissionAcceptsDNSSubdomainGameServerName(t *testing.T) {
 	}
 }
 
+// TestPrepareAdmissionShutsDownInsteadOfRotatingAnAllocatableGameServer refuses ready, reserved and allocated capacity without replacing its admission metadata.
 func TestPrepareAdmissionShutsDownInsteadOfRotatingAnAllocatableGameServer(t *testing.T) {
 	for _, state := range []string{"Ready", "Reserved", "Allocated"} {
 		t.Run(state, func(t *testing.T) {
@@ -184,15 +188,7 @@ func TestPrepareAdmissionShutsDownInsteadOfRotatingAnAllocatableGameServer(t *te
 			f.SetGameServer("games", "zone-17", "uid-17", state)
 			_, publicPEM := wrappingKey(t)
 
-			prepared, err := PrepareAdmission(
-				context.Background(),
-				Config{Logf: t.Logf},
-				AdmissionConfig{
-					WrappingPublicKeyPEM: publicPEM,
-					Random:               deterministicAdmissionRandom(bytes.Repeat([]byte{0x42}, 32)),
-					ObservationTimeout:   time.Second,
-				},
-			)
+			prepared, err := prepareFixtureAdmission(t, publicPEM, deterministicAdmissionRandom(bytes.Repeat([]byte{0x42}, 32)), time.Second)
 			if err == nil {
 				t.Fatalf("PrepareAdmission succeeded for %s GameServer: %+v", state, prepared)
 			}
@@ -209,35 +205,24 @@ func TestPrepareAdmissionShutsDownInsteadOfRotatingAnAllocatableGameServer(t *te
 	}
 }
 
+// TestPrepareAdmissionDoesNotEchoSecretGenerationFailure checks that a failed random source stops admission without exposing its error's secret marker.
 func TestPrepareAdmissionDoesNotEchoSecretGenerationFailure(t *testing.T) {
 	f := startFake(t, nil)
 	f.SetGameServer("games", "zone-17", "uid-17", "Starting")
 	_, publicPEM := wrappingKey(t)
 	leakMarker := strings.Repeat("42", 32)
 
-	_, err := PrepareAdmission(
-		context.Background(),
-		Config{Logf: t.Logf},
-		AdmissionConfig{
-			WrappingPublicKeyPEM: publicPEM,
-			Random:               failingReader{err: errors.New("random source echoed " + leakMarker)},
-			ObservationTimeout:   time.Second,
-		},
-	)
+	_, err := prepareFixtureAdmission(t, publicPEM, failingReader{err: errors.New("random source echoed " + leakMarker)}, time.Second)
 	if err == nil {
 		t.Fatal("PrepareAdmission succeeded after the random source failed")
 	}
 	if strings.Contains(err.Error(), leakMarker) {
 		t.Fatalf("secret-generation error echoed admission material: %v", err)
 	}
-	if got := f.ReadyCalls(); got != 0 {
-		t.Fatalf("Ready calls = %d, want 0", got)
-	}
-	if got := f.ShutdownCalls(); got != 1 {
-		t.Fatalf("Shutdown calls = %d, want exactly 1", got)
-	}
+	assertRefusedAdmissionStopped(t, f)
 }
 
+// TestPrepareAdmissionDoesNotEchoEnvelopeRandomFailure checks the same refusal and redaction after secret generation succeeds but envelope randomness fails.
 func TestPrepareAdmissionDoesNotEchoEnvelopeRandomFailure(t *testing.T) {
 	f := startFake(t, nil)
 	f.SetGameServer("games", "zone-17", "uid-17", "Starting")
@@ -248,15 +233,7 @@ func TestPrepareAdmissionDoesNotEchoEnvelopeRandomFailure(t *testing.T) {
 		failingReader{err: errors.New("OAEP random source echoed " + leakMarker)},
 	)
 
-	prepared, err := PrepareAdmission(
-		context.Background(),
-		Config{Logf: t.Logf},
-		AdmissionConfig{
-			WrappingPublicKeyPEM: publicPEM,
-			Random:               randomSource,
-			ObservationTimeout:   time.Second,
-		},
-	)
+	prepared, err := prepareFixtureAdmission(t, publicPEM, randomSource, time.Second)
 	if prepared != nil {
 		t.Cleanup(func() { _ = prepared.Shutdown() })
 	}
@@ -266,14 +243,10 @@ func TestPrepareAdmissionDoesNotEchoEnvelopeRandomFailure(t *testing.T) {
 	if strings.Contains(err.Error(), leakMarker) {
 		t.Fatalf("envelope-randomness error echoed admission material: %v", err)
 	}
-	if got := f.ReadyCalls(); got != 0 {
-		t.Fatalf("Ready calls = %d, want 0", got)
-	}
-	if got := f.ShutdownCalls(); got != 1 {
-		t.Fatalf("Shutdown calls = %d, want exactly 1", got)
-	}
+	assertRefusedAdmissionStopped(t, f)
 }
 
+// TestPrepareAdmissionDoesNotEchoMetadataFailure checks that publication failure stops admission and hides sidecar error material.
 func TestPrepareAdmissionDoesNotEchoMetadataFailure(t *testing.T) {
 	f := startFake(t, nil)
 	f.SetGameServer("games", "zone-17", "uid-17", "Starting")
@@ -281,51 +254,26 @@ func TestPrepareAdmissionDoesNotEchoMetadataFailure(t *testing.T) {
 	leakMarker := strings.Repeat("42", 32)
 	f.FailSetAnnotation(errors.New("sidecar echoed " + leakMarker))
 
-	_, err := PrepareAdmission(
-		context.Background(),
-		Config{Logf: t.Logf},
-		AdmissionConfig{
-			WrappingPublicKeyPEM: publicPEM,
-			Random:               deterministicAdmissionRandom(bytes.Repeat([]byte{0x42}, 32)),
-			ObservationTimeout:   time.Second,
-		},
-	)
+	_, err := prepareFixtureAdmission(t, publicPEM, deterministicAdmissionRandom(bytes.Repeat([]byte{0x42}, 32)), time.Second)
 	if err == nil {
 		t.Fatal("PrepareAdmission succeeded after metadata publication failed")
 	}
 	if strings.Contains(err.Error(), leakMarker) {
 		t.Fatalf("metadata error echoed admission material: %v", err)
 	}
-	if got := f.ReadyCalls(); got != 0 {
-		t.Fatalf("Ready calls = %d, want 0", got)
-	}
-	if got := f.ShutdownCalls(); got != 1 {
-		t.Fatalf("Shutdown calls = %d, want exactly 1", got)
-	}
+	assertRefusedAdmissionStopped(t, f)
 }
 
+// TestPrepareAdmissionTimesOutWithoutObservedMetadata refuses admission when publication is never confirmed by the sidecar watch.
 func TestPrepareAdmissionTimesOutWithoutObservedMetadata(t *testing.T) {
 	f := startFake(t, nil)
 	f.SetGameServer("games", "zone-17", "uid-17", "Starting")
 	f.HoldWatchEvents()
 	_, publicPEM := wrappingKey(t)
 
-	_, err := PrepareAdmission(
-		context.Background(),
-		Config{Logf: t.Logf},
-		AdmissionConfig{
-			WrappingPublicKeyPEM: publicPEM,
-			Random:               deterministicAdmissionRandom(bytes.Repeat([]byte{0x42}, 32)),
-			ObservationTimeout:   25 * time.Millisecond,
-		},
-	)
+	_, err := prepareFixtureAdmission(t, publicPEM, deterministicAdmissionRandom(bytes.Repeat([]byte{0x42}, 32)), 25*time.Millisecond)
 	if err == nil || !strings.Contains(err.Error(), "timed out") {
 		t.Fatalf("PrepareAdmission error = %v, want observation timeout", err)
 	}
-	if got := f.ReadyCalls(); got != 0 {
-		t.Fatalf("Ready calls = %d, want 0", got)
-	}
-	if got := f.ShutdownCalls(); got != 1 {
-		t.Fatalf("Shutdown calls = %d, want exactly 1", got)
-	}
+	assertRefusedAdmissionStopped(t, f)
 }

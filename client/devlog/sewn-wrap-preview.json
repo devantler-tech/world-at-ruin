@@ -1,0 +1,10 @@
+{
+  "version": "next",
+  "date": "2026-10-02",
+  "title": "Hand-sewn wrap preview",
+  "notes": [
+    "The optional cloth-detail preview now has worn running stitches around the waist and inset reinforcement down the hanging panels.",
+    "Short, uneven threads catch the light without changing the wrap's coverage or saved characters.",
+    "This remains an opt-in preview. The thick waist band, loose fraying and moving cloth still need work."
+  ]
+}

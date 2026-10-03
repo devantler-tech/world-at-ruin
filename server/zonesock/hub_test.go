@@ -272,10 +272,8 @@ func TestDeltaProjectionKeepsLegacyConnectedAcrossCastOnlyTicks(t *testing.T) {
 // whole stream decode-verifies against an independent replay of the
 // deterministic demo world — with no delta skipped and no tick repeated.
 func TestJoinAndDeltaStreamOverTLS(t *testing.T) {
-	hub, secret := newTestHub(t, Config{})
-	ts := httptest.NewTLSServer(hub.Handler())
+	_, secret, ts := streamingTestHub(t, Config{})
 	defer ts.Close()
-	startSim(t, hub)
 
 	c, err := dial(t, ts, secret, 1)
 	if err != nil {
@@ -342,10 +340,8 @@ func TestJoinAndDeltaStreamOverTLS(t *testing.T) {
 // server still admits a valid one (the positive control that the gate is a
 // gate, not a wall).
 func TestAdmissionFailClosed(t *testing.T) {
-	hub, secret := newTestHub(t, Config{})
-	ts := httptest.NewTLSServer(hub.Handler())
+	hub, secret, ts := streamingTestHub(t, Config{})
 	defer ts.Close()
-	startSim(t, hub)
 
 	expired, err := MintToken(secret, "allocation-a", 1, time.Now().Add(-time.Minute))
 	if err != nil {
@@ -402,10 +398,8 @@ func TestAdmissionFailClosed(t *testing.T) {
 // does not hold admits the upgrade but is closed at attach, before any state
 // is replicated.
 func TestUnknownObserverRefused(t *testing.T) {
-	hub, secret := newTestHub(t, Config{})
-	ts := httptest.NewTLSServer(hub.Handler())
+	hub, secret, ts := streamingTestHub(t, Config{})
 	defer ts.Close()
-	startSim(t, hub)
 
 	c, err := dial(t, ts, secret, 99)
 	if err != nil {
@@ -425,10 +419,8 @@ func TestUnknownObserverRefused(t *testing.T) {
 // TestDuplicateObserverRefused: a second connection for an already-attached
 // observer is refused, and its refusal must not disturb the live connection.
 func TestDuplicateObserverRefused(t *testing.T) {
-	hub, secret := newTestHub(t, Config{})
-	ts := httptest.NewTLSServer(hub.Handler())
+	hub, secret, ts := streamingTestHub(t, Config{})
 	defer ts.Close()
-	startSim(t, hub)
 
 	first, err := dial(t, ts, secret, 2)
 	if err != nil {
@@ -464,29 +456,13 @@ func TestDuplicateObserverRefused(t *testing.T) {
 // TestClientDataMessageRefused: wire v1 defines no client→server kinds, so a
 // small, well-formed-looking inbound message is a policy violation.
 func TestClientDataMessageRefused(t *testing.T) {
-	hub, secret := newTestHub(t, Config{})
-	ts := httptest.NewTLSServer(hub.Handler())
+	_, secret, ts := streamingTestHub(t, Config{})
 	defer ts.Close()
-	startSim(t, hub)
 
-	c, err := dial(t, ts, secret, 3)
-	if err != nil {
-		t.Fatalf("Dial: %v", err)
-	}
+	c := joinedTestClient(t, ts, secret, 3)
 	defer closeConnection(t, c)
-	c.SetReadLimit(4 << 20)
-	if m := readMessage(t, c); m.Kind != wire.KindSnapshot {
-		t.Fatalf("join kind = %d, want KindSnapshot", m.Kind)
-	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := c.Write(ctx, websocket.MessageBinary, []byte{1, 2, 3}); err != nil {
-		t.Fatalf("Write: %v", err)
-	}
-	if got := awaitCloseStatus(ctx, c); got != websocket.StatusPolicyViolation {
-		t.Fatalf("close status = %v, want StatusPolicyViolation", got)
-	}
+	requireRejectedMessage(t, c, []byte{1, 2, 3}, websocket.StatusPolicyViolation)
 }
 
 // TestInboundOversizeDisconnects: the hard read limit at the socket layer
@@ -494,29 +470,13 @@ func TestClientDataMessageRefused(t *testing.T) {
 // StatusMessageTooBig — the size path, distinct from the policy path above
 // (each is the other's control).
 func TestInboundOversizeDisconnects(t *testing.T) {
-	hub, secret := newTestHub(t, Config{MaxInboundBytes: 256})
-	ts := httptest.NewTLSServer(hub.Handler())
+	_, secret, ts := streamingTestHub(t, Config{MaxInboundBytes: 256})
 	defer ts.Close()
-	startSim(t, hub)
 
-	c, err := dial(t, ts, secret, 3)
-	if err != nil {
-		t.Fatalf("Dial: %v", err)
-	}
+	c := joinedTestClient(t, ts, secret, 3)
 	defer closeConnection(t, c)
-	c.SetReadLimit(4 << 20)
-	if m := readMessage(t, c); m.Kind != wire.KindSnapshot {
-		t.Fatalf("join kind = %d, want KindSnapshot", m.Kind)
-	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := c.Write(ctx, websocket.MessageBinary, make([]byte, 1024)); err != nil {
-		t.Fatalf("Write: %v", err)
-	}
-	if got := awaitCloseStatus(ctx, c); got != websocket.StatusMessageTooBig {
-		t.Fatalf("close status = %v, want StatusMessageTooBig", got)
-	}
+	requireRejectedMessage(t, c, make([]byte, 1024), websocket.StatusMessageTooBig)
 }
 
 // awaitCloseStatus reads (draining any still-queued replication frames) until
@@ -655,5 +615,52 @@ func TestOverflowResync(t *testing.T) {
 	}
 	if len(m.Delta.Entered) != 0 {
 		t.Fatalf("post-resync delta re-introduces %d entities; tracker was not re-primed", len(m.Delta.Entered))
+	}
+}
+
+// streamingTestHub starts the real simulation and TLS WebSocket server with test-owned transport
+// cleanup.
+func streamingTestHub(t *testing.T, cfg Config) (*Hub, []byte, *httptest.Server) {
+	t.Helper()
+	hub, secret := newTestHub(t, cfg)
+	server := httptest.NewTLSServer(hub.Handler())
+	t.Cleanup(server.Close)
+	startSim(t, hub)
+	return hub, secret, server
+}
+
+// joinedTestClient requires a successful authenticated socket join and closes the connection if
+// setup fails.
+func joinedTestClient(t *testing.T, server *httptest.Server, secret []byte, observer sim.EntityID) *websocket.Conn {
+	t.Helper()
+	client, err := dial(t, server, secret, observer)
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	joined := false
+	defer func() {
+		if !joined {
+			closeConnection(t, client)
+		}
+	}()
+	client.SetReadLimit(4 << 20)
+	if message := readMessage(t, client); message.Kind != wire.KindSnapshot {
+		t.Fatalf("join kind = %d, want KindSnapshot", message.Kind)
+	}
+	joined = true
+	return client
+}
+
+// requireRejectedMessage writes the supplied inbound payload and requires the expected WebSocket
+// refusal status.
+func requireRejectedMessage(t *testing.T, client *websocket.Conn, payload []byte, want websocket.StatusCode) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := client.Write(ctx, websocket.MessageBinary, payload); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if got := awaitCloseStatus(ctx, client); got != want {
+		t.Fatalf("close status = %v, want %v", got, want)
 	}
 }

@@ -4,7 +4,7 @@ extends Node
 ## Capability 5 has a retained reader and an explicitly guarded writer:
 ##  1. the real reader registry and CharacterFactory can render `ashen_bindings`;
 ##  2. the stable update envelope advertises project-wide capability 7 reads
-##     and capability 6 writes without removing capability-5 vocabulary;
+##     and the supported write stage without removing capability-5 vocabulary;
 ##  3. the shipped default creator cannot originate the preview-only hand piece;
 ##  4. the explicit layered-outfit preview can select, apply, save and reload it.
 ##
@@ -68,8 +68,11 @@ func _ready() -> void:
 	if not String(built_manifest.get("error", "")).is_empty() or manifest.is_empty():
 		_fail("the reader build could not produce its stable update envelope")
 		return
+	if not SaveContractStage.refusal_reason().is_empty():
+		_fail(SaveContractStage.refusal_reason())
+		return
 	if int((manifest["shell"] as Dictionary).get("reads_capability_max", -1)) != 7 \
-			or int((manifest["save_schema"] as Dictionary).get("capability", -1)) != 6:
+			or int((manifest["save_schema"] as Dictionary).get("capability", -1)) != UpdateManifest.SAVE_CAPABILITY_WRITES:
 		_fail("active contracts advertise the wrong read/write capabilities: %s/%s" % [
 			(manifest["shell"] as Dictionary).get("reads_capability_max"),
 			(manifest["save_schema"] as Dictionary).get("capability"),
@@ -245,20 +248,12 @@ func _cleanup_io_path(path: String) -> void:
 
 
 func _picker_with(creator: CharacterCreator, item_name: String) -> OptionButton:
-	for node: Node in creator.find_children("*", "OptionButton", true, false):
-		var picker := node as OptionButton
-		for index in picker.item_count:
-			if picker.get_item_text(index) == item_name:
-				return picker
-	return null
+	return WardrobeTestSupport.picker_with(creator, item_name)
 
 
 func _select_item(picker: OptionButton, item_name: String) -> bool:
-	for index in picker.item_count:
-		if picker.get_item_text(index) == item_name:
-			picker.select(index)
-			picker.item_selected.emit(index)
-			return true
+	if WardrobeTestSupport.select_item(picker, item_name):
+		return true
 	_fail("the picker does not offer '%s'" % item_name)
 	return false
 

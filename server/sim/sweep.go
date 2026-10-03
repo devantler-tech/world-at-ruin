@@ -86,10 +86,7 @@ func (w *World) integrateSwept() {
 	for _, id := range w.order {
 		e := w.ents[id]
 		starts[id] = e.Pos
-		v := clampSpeed(e.Intent, e.MaxSpeed)
-		// mm/s / (ticks/s) = mm/tick.
-		disp := Vec3{X: v.X / TickHz, Y: v.Y / TickHz, Z: v.Z / TickHz}
-		full[id] = w.bounds.clamp(e.Pos.Add(disp))
+		full[id] = w.integratedTarget(e)
 	}
 
 	// stopAt[id] is the instant in the tick at which the actor stops; 1 means it

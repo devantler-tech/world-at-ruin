@@ -64,6 +64,30 @@ To build your own `.app` instead, export with the `macOS` preset in `client/expo
 **Watch the world grow:** press `L` in-game. Every player-visible change is a dev-log entry,
 newest first — replaying after each build shows exactly what the agents grew.
 
+**Ragged-cloth material preview:** launch from source with
+`WAR_RAGGED_CLOTH_DETAIL=1 godot --path client`, or prefix the installed app's
+executable with the same environment setting. In the creator, leave the wardrobe
+bare to inspect the immutable base cloth. This opt-in previews woven fibres,
+worn sewing, broad gathered folds and rounded folded-edge lighting. The angular
+cut, thick waist silhouette, fraying and cloth motion remain unfinished.
+[Before/after frames and fold-only controls](docs/evidence/issue-958-gathered-wrap/README.md)
+show the current gap. Ordinary launches keep the shipped material and all saved
+characters retain their existing equipment and shapes.
+
+**Ragged-wrap geometry preview:** independently opt into
+`WAR_RAGGED_CLOTH_DRAPE=1` for static outward folds and a softer hanging outline.
+The hanging panels join the fixed waist gradually. Combine it with the material
+setting above to inspect both. Ordinary launches
+keep the shipped mesh. [Front, rear, profile and gameplay comparisons](docs/evidence/issue-949-ragged-drape/README.md)
+show the remaining rigid-panel and waist-band gaps. The
+[rear coverage repair](docs/evidence/issue-952-rear-coverage/README.md) closes the
+preview's small body opening below the belt. This is an
+unfinished preview, with a separate accept-or-retire decision due 2026-11-01.
+
+**Private server trial:** the owner can observe the developing server through the
+[verified localhost tunnel](docs/zone-tunnel.md). It shows scripted replicas with a
+separate temporary character; shared controls and online progression remain in development.
+
 ## What this is (and isn't)
 
 - **Everything is text-authored** — scenes, world generation, materials, and characters are code,

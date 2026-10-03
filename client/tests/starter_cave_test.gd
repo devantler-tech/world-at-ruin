@@ -1,4 +1,4 @@
-extends Node
+extends DelayedBootScenario
 ## Regression test for the starter cave system in the open world (issue #24,
 ## WoW-style redirect): the wanderer wakes UNDERGROUND in a real system.
 ##  1. The spawn is inside the system's protected footprint (the anti-embed
@@ -12,31 +12,19 @@ extends Node
 
 const ASSERT_TICK := 40
 
-var _ticks := 0
-var _main: Node
 var _spawn := Vector3.ZERO
-var _save: SaveIsolation
 
 
 func _ready() -> void:
-	# Booting main.tscn with no save exercises the first-run creator — point the
-	# game at a throwaway probe so it never touches the player's real character
-	# (no-resets law). Fail closed if the redirect does not take hold.
-	_save = SaveIsolation.new("user://starter_cave_boot_probe.json")
-	if not _save.begin():
-		_fail("save isolation did not take — refusing to boot into the real save")
-		return
-	_main = (load("res://scenes/main.tscn") as PackedScene).instantiate()
-	add_child(_main)
+	_boot("user://starter_cave_boot_probe.json")
 
 
 func _physics_process(_delta: float) -> void:
-	_ticks += 1
+	if not _advance():
+		return
 	var world := _main.get_node_or_null("World") as WorldGen
 	var player := _main.get_node_or_null("Wanderer") as Player
-	if world == null or player == null:
-		if _ticks > 10:
-			_fail("main scene did not build a World and Wanderer")
+	if not _nodes_ready(world != null and player != null, "main scene did not build a World and Wanderer"):
 		return
 	if _ticks == 1:
 		_spawn = player.global_position
@@ -96,31 +84,8 @@ func _physics_process(_delta: float) -> void:
 		_fail("mouth is a %.2f m cliff above the ground outside" % step)
 		return
 
-	if not _save.real_save_untouched():
-		_fail("the boot test touched the player's real save")
-		return
-	print("TEST PASS — spawn %s, mouth %s, outside step %.2f" % [spawn, mouth_world, step])
-	get_tree().quit(0)
+	_finish("spawn %s, mouth %s, outside step %.2f" % [spawn, mouth_world, step])
 
 
 func _ray(space: PhysicsDirectSpaceState3D, from: Vector3, to: Vector3) -> Dictionary:
 	return space.intersect_ray(PhysicsRayQueryParameters3D.create(from, to))
-
-
-func _fail(message: String) -> void:
-	# real_save_untouched() clears the seams itself, so it REPLACES the bare
-	# end() rather than adding a second teardown (#326).
-	if _save != null and not _save.real_save_untouched():
-		message += (" — AND the run touched the player's real save, vault or recovery ledger; "
-			+ "the isolation breach outranks the failure above")
-	push_error(message)
-	print("TEST FAIL — %s" % message)
-	get_tree().quit(1)
-
-
-## Clearing the seam on teardown covers the process being killed after the scene
-## loaded but before an exit path ran — the redirect never outlives the test.
-## Idempotent with the end() the exit paths already call.
-func _exit_tree() -> void:
-	if _save != null:
-		_save.end()

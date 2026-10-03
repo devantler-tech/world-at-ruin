@@ -2,11 +2,10 @@ package nakamalease
 
 import (
 	"context"
-	"encoding/hex"
 	"errors"
-	"strings"
 	"time"
 
+	"github.com/devantler-tech/world-at-ruin/server/internal/handoffidentity"
 	"github.com/devantler-tech/world-at-ruin/server/nakamastorage"
 	"github.com/heroiclabs/nakama-common/runtime"
 )
@@ -15,8 +14,7 @@ import (
 // Raw player and reservation IDs are neither needed nor returned. This lookup
 // is routing only; the private claim service must independently authenticate it.
 func (s *Store) LoadForClaim(ctx context.Context, key string) (Record, error) {
-	decoded, err := hex.DecodeString(key)
-	if err != nil || len(decoded) != 32 || strings.ToLower(key) != key {
+	if !handoffidentity.SHA256Hex(key) {
 		return Record{}, ErrStorage
 	}
 	if err := ctx.Err(); err != nil {

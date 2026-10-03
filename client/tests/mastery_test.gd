@@ -1,4 +1,4 @@
-extends Node
+extends "res://tests/boolean_verdict.gd"
 ## Regression test for the Mastery weapon-mastery ledger (issue #76).
 ##
 ## Mastery is the progression pillar, and every part of it is a product law: the
@@ -22,7 +22,6 @@ extends Node
 ##
 ## Run: godot --headless --path client res://tests/mastery_test.tscn
 
-var _failed := false
 
 
 func _ready() -> void:
@@ -317,17 +316,3 @@ func _scripted_ledger() -> String:
 	for weapon: String in m.weapons():
 		parts.append("%s:%d/%d" % [weapon, m.banked(weapon), m.unbanked(weapon)])
 	return "|".join(parts)
-
-
-func _check(actual: bool, expected: bool, label: String) -> void:
-	if _failed:
-		return
-	if actual != expected:
-		_fail("%s — expected %s, got %s" % [label, expected, actual])
-
-
-func _fail(message: String) -> void:
-	_failed = true
-	push_error(message)
-	print("TEST FAIL — %s" % message)
-	get_tree().quit(1)

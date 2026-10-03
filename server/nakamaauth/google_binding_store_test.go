@@ -4,14 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"os"
-	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/devantler-tech/world-at-ruin/server/internal/savefixturetest"
 	"github.com/heroiclabs/nakama-common/api"
 	"github.com/heroiclabs/nakama-common/runtime"
 	"google.golang.org/grpc/codes"
@@ -410,45 +407,18 @@ func TestEveryShippedGoogleBindingSchemaStaysReadable(t *testing.T) {
 		Schema: 1,
 		UserID: testBoundUserID,
 	}}
-	ledgerBytes, err := os.ReadFile(filepath.Join(
-		"testdata",
-		"shipped_google_binding_versions.txt",
-	))
-	if err != nil {
-		t.Fatalf("read Google binding schema ledger: %v", err)
-	}
-	versions := strings.Fields(string(ledgerBytes))
-	if len(versions) == 0 {
-		t.Fatal("Google binding schema ledger is empty")
-	}
-	if len(versions) != len(wantDocuments) {
+	fixtures := savefixturetest.Read(t, "google_binding")
+	if len(fixtures) != len(wantDocuments) {
 		t.Fatalf(
 			"Google binding schema ledger has %d version(s), but historical semantics pin %d document(s)",
-			len(versions),
+			len(fixtures),
 			len(wantDocuments),
 		)
 	}
 	for index, wantDocument := range wantDocuments {
-		entry := versions[index]
-		version, err := strconv.Atoi(entry)
-		if err != nil {
-			t.Fatalf("Google binding schema ledger entry %q: %v", entry, err)
-		}
-		if version != index+1 {
-			t.Fatalf(
-				"Google binding schema ledger[%d] = %d, want %d",
-				index,
-				version,
-				index+1,
-			)
-		}
-		golden, err := os.ReadFile(filepath.Join(
-			"testdata",
-			fmt.Sprintf("golden_google_binding_v%d.json", version),
-		))
-		if err != nil {
-			t.Fatalf("read Google binding schema %d golden: %v", version, err)
-		}
+		fixture := fixtures[index]
+		version := fixture.Version
+		golden := fixture.Bytes
 		document, err := decodeGoogleBindingDocument(
 			strings.TrimSpace(string(golden)),
 		)
@@ -464,12 +434,7 @@ func TestEveryShippedGoogleBindingSchemaStaysReadable(t *testing.T) {
 			)
 		}
 	}
-	head, err := strconv.Atoi(versions[len(versions)-1])
-	if err != nil || head != googleBindingSchema {
-		t.Fatalf(
-			"Google binding schema ledger head = %q, writer = %d",
-			versions[len(versions)-1],
-			googleBindingSchema,
-		)
+	if head := fixtures[len(fixtures)-1].Version; head != googleBindingSchema {
+		t.Fatalf("google_binding schema ledger head = %d, writer = %d", head, googleBindingSchema)
 	}
 }

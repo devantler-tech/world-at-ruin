@@ -440,6 +440,13 @@ static func _equip_piece(skeleton: Skeleton3D, body_mesh: MeshInstance3D, piece_
 	piece_mesh.get_parent().remove_child(piece_mesh)
 	piece_mesh.owner = null
 	piece_mesh.name = EQUIP_PREFIX + piece_name
+	if piece_name == "loincloth_ragged" and RaggedDrape.enabled():
+		piece_mesh.set_meta(RaggedDrape.SOURCE_META, piece_mesh.mesh)
+		piece_mesh.mesh = RaggedDrape.mesh(piece_mesh.mesh as ArrayMesh)
+	if piece_name == "loincloth_ragged" and RaggedCloth.enabled():
+		var source := piece_mesh.get_active_material(0) as StandardMaterial3D
+		if source != null:
+			piece_mesh.set_surface_override_material(0, RaggedCloth.material(source))
 	skeleton.add_child(piece_mesh)
 	scene.free()
 	for shape_name: String in shapes:
@@ -648,15 +655,7 @@ static func _preserves_deformation_value(
 
 ## Loads a recipe JSON from disk; null on parse failure (with an error).
 static func load_recipe(path: String) -> Variant:
-	var file := FileAccess.open(path, FileAccess.READ)
-	if file == null:
-		push_error("CharacterFactory: cannot open recipe %s" % path)
-		return null
-	var parsed = JSON.parse_string(file.get_as_text())
-	if parsed is not Dictionary:
-		push_error("CharacterFactory: recipe %s is not a JSON object" % path)
-		return null
-	return parsed
+	return KitAssembly.load_recipe_object(path, "CharacterFactory")
 
 
 ## Order-stable fingerprint of a built character: skeleton global rests plus

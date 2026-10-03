@@ -92,6 +92,11 @@ var _zone_failure_reported := false
 ## once it has: before that, the close IS the failure and is already reported
 ## under its own error class.
 var _zone_was_live := false
+## One sanitized acceptance marker per trial connection, only after a real
+## snapshot was applied. An open socket alone cannot prove world replication.
+var _zone_trial_live_reported := false
+var _zone_trial_visible_reported := false
+var _zone_trial_first_tick := -1
 ## Draws the replicated entity table (#248), or null when no zone was named.
 ## Parented under THIS node and never under WorldGen: that subtree is
 ## fingerprinted by `world_gen_determinism_test` and additionally scanned for
@@ -110,10 +115,10 @@ var _exploration_rewards := ExplorationRewards.new()
 ## Boot-owned quest progress. The retained v4 reader restores this state and
 ## every later monotonic advance queues the complete forward-only snapshot.
 var _quest_log := QuestLog.new()
-## Boot-owned weapon mastery. The retained v5 reader applies the complete
-## ledger, including unknown future weapon ids and its standing bloodstain.
-## This release remains reader-only: no production path originates a snapshot.
+## Boot-owned mastery and its conditional save owner. Restore is silent; only
+## real ledger transitions can originate the v5 section.
 var _mastery := Mastery.new()
+var _mastery_persistence: MasteryPersistence
 ## A discovery enters the live tracker before persistence is attempted. Keep
 ## the locally observed IDs themselves so a transient filesystem failure can
 ## retry them without also re-originating rollback-only names restored into the
@@ -337,6 +342,14 @@ func _ready() -> void:
 		var preferred_attunement: Variant = _preferred_attuned_respawn(vault, world)
 		if preferred_attunement != null:
 			_player.set_respawn_point(preferred_attunement)
+	# Bind to the SAME snapshot that populated the live ledger, not a fresh
+	# observation that could silently authorize overwriting another session.
+	_mastery_persistence = MasteryPersistence.new(
+		_mastery, vault.get("mastery") if vault is Dictionary else null)
+	_mastery_persistence.saving_failed.connect(func(conflict: bool) -> void:
+		_notify("Another session changed your mastery.\nThis waking cannot save further mastery; reopen the game."
+			if conflict else
+			"Your mastery holds for now — though the Reach may not remember next waking."))
 	# Observe only after restore. A persisted place then stays idempotent, while
 	# the cave under a new wanderer's feet becomes the first v2 write.
 	_observe_discoveries()
@@ -384,7 +397,8 @@ func _ready() -> void:
 
 	# The live replication link, when a zone was named (#244). Default-off, so
 	# the shipped single-player boot is unchanged.
-	_connect_zone()
+	if ZoneConnection.is_enabled():
+		_start_zone_after_boot.call_deferred()
 
 	# The smoke boot's POSITIVE marker: CI greps for this line, not merely
 	# for the absence of errors — a boot that never mounted the project must
@@ -508,10 +522,28 @@ func _reconcile_boot_recovery_locked(path: String) -> void:
 ## A refusal is reported and then left alone. The Reach is playable
 ## single-player, so failing to reach a zone must never cost a player their
 ## session.
+func _start_zone_after_boot() -> void:
+	if not is_inside_tree() or is_queued_for_deletion():
+		return
+	# First-frame pipeline compilation can block native polling longer than
+	# the server's TLS deadline. Open the socket only after that work ends.
+	# Headless runs have no rendered-frame signal, but still defer past boot.
+	if DisplayServer.get_name() == "headless":
+		await get_tree().process_frame
+	else:
+		await RenderingServer.frame_post_draw
+	if not is_inside_tree() or is_queued_for_deletion():
+		return
+	_connect_zone()
+
+
 func _connect_zone() -> void:
-	if not ZoneConnection.is_enabled():
+	if _zone != null or not ZoneConnection.is_enabled():
 		return
 	_zone = ZoneConnection.new()
+	_zone_trial_live_reported = false
+	_zone_trial_visible_reported = false
+	_zone_trial_first_tick = -1
 	# The view is built for any named zone, including one whose connection is
 	# refused below: it draws whatever the store holds, and a store that never
 	# received a frame is empty, so an unreachable zone shows nothing rather
@@ -519,7 +551,9 @@ func _connect_zone() -> void:
 	_replicas = ReplicaView.new()
 	_replicas.name = "Replicas"
 	add_child(_replicas)
-	if not _zone.connect_to(ZoneConnection.zone_url()):
+	var opened := _zone.connect_to(ZoneConnection.zone_url())
+	_update_zone_trial_status()
+	if not opened:
 		# error_detail() names a misconfigured variable, never its value.
 		push_warning("zone connection refused (%s): %s" % [_zone.error(), _zone.error_detail()])
 		# This failure is now reported. Without claiming it, _process() sees
@@ -527,6 +561,30 @@ func _connect_zone() -> void:
 		# "lost" — and a connection that never opened cannot be lost. Observed
 		# on a real boot with a missing token and with a ws:// url.
 		_zone_failure_reported = true
+
+
+## Keep the operator's visible status tied to the applied world data. This also
+## supplies a once-only, privacy-safe verdict through the ordinary exported
+## launch path, which cannot run an external evaluation script.
+func _update_zone_trial_status() -> void:
+	if _zone == null or _hud == null:
+		return
+	var store := _zone.store()
+	var has_data := _zone.is_live() and _zone.frames_applied() > 0 and store.has_base()
+	_hud.update_zone_trial_status(_zone.state(), store.tick() if has_data else -1,
+		store.count() if has_data else 0)
+	if has_data and not _zone_trial_live_reported:
+		_zone_trial_live_reported = true
+		_zone_trial_first_tick = store.tick()
+		print("ZONE_TRIAL_LIVE frames=%d tick=%d entities=%d" % [
+			_zone.frames_applied(), store.tick(), store.count()])
+	# An empty initial AOI snapshot is valid. Report visible, advancing data
+	# separately when the real view has synchronized a later populated frame.
+	if has_data and not _zone_trial_visible_reported and store.tick() > _zone_trial_first_tick \
+			and store.count() > 0 and _replicas != null and _replicas.count() == store.count():
+		_zone_trial_visible_reported = true
+		print("ZONE_TRIAL_VISIBLE frames=%d tick=%d entities=%d" % [
+			_zone.frames_applied(), store.tick(), _replicas.count()])
 
 
 ## Per-frame world upkeep: drift the ash, then drive the connection.
@@ -554,6 +612,8 @@ func _process(delta: float) -> void:
 	_track_cave_atmosphere()
 	_observe_discoveries(delta)
 	_persist_pending_quest_progress(delta)
+	if _mastery_persistence != null:
+		_mastery_persistence.tick(delta)
 	if _zone == null:
 		return
 	_zone.poll()
@@ -562,6 +622,7 @@ func _process(delta: float) -> void:
 	# table it delivered — the fold is atomic, so that table is never a
 	# half-applied one.
 	_replicas.sync(_zone.store())
+	_update_zone_trial_status()
 	if _zone.is_live():
 		_zone_was_live = true
 	if _zone_failure_reported:
@@ -759,6 +820,13 @@ func _persist_pending_quest_progress(delta: float) -> void:
 	if not _quest_persistence_warning_shown:
 		_quest_persistence_warning_shown = true
 		_notify("Your quest progress holds for now — though the Reach may not remember next waking.")
+
+
+func _exit_tree() -> void:
+	if _mastery_persistence != null:
+		# Child HUD nodes have already exited; a final refusal cannot show a toast.
+		_mastery_persistence.set_block_signals(true)
+		_mastery_persistence.flush()
 
 
 func _unhandled_input(event: InputEvent) -> void:

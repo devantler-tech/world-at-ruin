@@ -2,9 +2,6 @@ package claimrpc
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
@@ -21,6 +18,7 @@ import (
 
 	"github.com/devantler-tech/world-at-ruin/server/agones"
 	"github.com/devantler-tech/world-at-ruin/server/handoff"
+	"github.com/devantler-tech/world-at-ruin/server/internal/cryptotest"
 	"github.com/devantler-tech/world-at-ruin/server/nakamalease"
 	"github.com/devantler-tech/world-at-ruin/server/nakamastorage/nakamastoragetest"
 	"github.com/devantler-tech/world-at-ruin/server/zonesock"
@@ -78,26 +76,14 @@ func newFixture(t *testing.T, identity string) *fixture {
 // the client URI is the identity the claim handler must independently authorize.
 func certificates(t *testing.T, identity string) (*tls.Config, *tls.Config) {
 	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
+	key := cryptotest.NewKey(t)
 	ca := &x509.Certificate{SerialNumber: big.NewInt(1), NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign}
-	der, err := x509.CreateCertificate(rand.Reader, ca, ca, &key.PublicKey, key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	root, err := x509.ParseCertificate(der)
-	if err != nil {
-		t.Fatal(err)
-	}
+	der := cryptotest.Issue(t, ca, ca, &key.PublicKey, key)
+	root := cryptotest.Parse(t, der)
 	pool := x509.NewCertPool()
 	pool.AddCert(root)
 	issue := func(serial int64, client bool) tls.Certificate {
-		leafKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-		if err != nil {
-			t.Fatal(err)
-		}
+		leafKey := cryptotest.NewKey(t)
 		leaf := &x509.Certificate{SerialNumber: big.NewInt(serial), NotBefore: ca.NotBefore, NotAfter: ca.NotAfter, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, DNSNames: []string{"localhost"}, IPAddresses: []net.IP{net.ParseIP("127.0.0.1")}}
 		if client {
 			leaf.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
@@ -109,10 +95,7 @@ func certificates(t *testing.T, identity string) (*tls.Config, *tls.Config) {
 				leaf.URIs = []*url.URL{uri}
 			}
 		}
-		encoded, err := x509.CreateCertificate(rand.Reader, leaf, ca, &leafKey.PublicKey, key)
-		if err != nil {
-			t.Fatal(err)
-		}
+		encoded := cryptotest.Issue(t, leaf, ca, &leafKey.PublicKey, key)
 		return tls.Certificate{Certificate: [][]byte{encoded}, PrivateKey: leafKey}
 	}
 	return &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{issue(2, false)}, ClientCAs: pool, ClientAuth: tls.RequireAndVerifyClientCert}, &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: pool, Certificates: []tls.Certificate{issue(3, true)}}

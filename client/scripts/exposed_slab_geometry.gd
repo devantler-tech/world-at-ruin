@@ -213,6 +213,16 @@ static func slab_triangles(polygon: PackedVector2Array, thickness: float, half: 
 	}
 
 
+## Exact extrema of a nonempty polygon, without reconstructing the maximum.
+static func polygon_bounds(polygon: PackedVector2Array) -> Array[Vector2]:
+	var lo := polygon[0]
+	var hi := polygon[0]
+	for p in polygon:
+		lo = Vector2(minf(lo.x, p.x), minf(lo.y, p.y))
+		hi = Vector2(maxf(hi.x, p.x), maxf(hi.y, p.y))
+	return [lo, hi]
+
+
 ## Split a convex XZ polygon along the terrain's grid lines and quad diagonals so
 ## every returned piece lies inside one terrain triangle. Exposed for the test.
 static func split_by_terrain_grid(polygon: PackedVector2Array, half: float, step: float) \
@@ -220,11 +230,9 @@ static func split_by_terrain_grid(polygon: PackedVector2Array, half: float, step
 	var pieces: Array[PackedVector2Array] = []
 	if polygon.size() < 3 or step <= 0.0:
 		return pieces
-	var lo := polygon[0]
-	var hi := polygon[0]
-	for p in polygon:
-		lo = Vector2(minf(lo.x, p.x), minf(lo.y, p.y))
-		hi = Vector2(maxf(hi.x, p.x), maxf(hi.y, p.y))
+	var bounds := polygon_bounds(polygon)
+	var lo := bounds[0]
+	var hi := bounds[1]
 	var ix0 := floori((lo.x + half) / step)
 	var ix1 := floori((hi.x + half) / step)
 	var iz0 := floori((lo.y + half) / step)

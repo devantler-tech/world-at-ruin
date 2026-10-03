@@ -150,15 +150,7 @@ func _ready() -> void:
 
 
 func _shipped_pieces() -> PackedStringArray:
-	var out := PackedStringArray()
-	var f := FileAccess.open(SHIPPED, FileAccess.READ)
-	if f == null:
-		return out
-	while not f.eof_reached():
-		var line := f.get_line().strip_edges()
-		if line != "" and not line.begins_with("#"):
-			out.append(line)
-	return out
+	return LedgerTestSupport.names(SHIPPED)
 
 
 func _equipped_mesh(instance: Node3D, piece_name: String) -> MeshInstance3D:

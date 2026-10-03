@@ -200,8 +200,7 @@ static func bone_cluster(rng_seed: int) -> ArrayMesh:
 ## occlusion a real canopy has and the main reason the card reads as a volume
 ## rather than as a decal.
 static func leaf_texture(rng_seed: int, leaves: int) -> ImageTexture:
-	var img := Image.create_empty(TEX_SIZE, TEX_SIZE, true, Image.FORMAT_RGBA8)
-	img.fill(Color(0.0, 0.0, 0.0, 0.0))
+	var img := _cutout_canvas()
 	var rng := RandomNumberGenerator.new()
 	rng.seed = rng_seed
 	# Ash-bleached scrub, NOT dark green. The first render of this pass had the
@@ -222,16 +221,13 @@ static func leaf_texture(rng_seed: int, leaves: int) -> ImageTexture:
 		# floor keeps even the shaded interior off black.
 		var lit := clampf(0.38 + (1.0 - cy) * 0.62, 0.0, 1.0) * rng.randf_range(0.78, 1.0)
 		_stamp_ellipse(img, cx, cy, ra, rb, angle, deep.lerp(pale, lit))
-	_bleed_alpha(img)
-	img.generate_mipmaps()
-	return ImageTexture.create_from_image(img)
+	return _finish_cutout(img)
 
 
 ## A tuft of tapered blades rising from the base of the card, each leaning and
 ## thinning toward its tip. Same base-darkening as the leaf mask.
 static func blade_texture(rng_seed: int, blades: int) -> ImageTexture:
-	var img := Image.create_empty(TEX_SIZE, TEX_SIZE, true, Image.FORMAT_RGBA8)
-	img.fill(Color(0.0, 0.0, 0.0, 0.0))
+	var img := _cutout_canvas()
 	var rng := RandomNumberGenerator.new()
 	rng.seed = rng_seed
 	# Same value correction as the leaf mask: dead grass is straw, not charcoal.
@@ -244,6 +240,16 @@ static func blade_texture(rng_seed: int, blades: int) -> ImageTexture:
 		var half_w := rng.randf_range(0.010, 0.026)
 		var bright := rng.randf_range(0.55, 1.0)
 		_stamp_blade(img, root, lean, tip_v, half_w, deep, pale, bright)
+	return _finish_cutout(img)
+
+
+static func _cutout_canvas() -> Image:
+	var img := Image.create_empty(TEX_SIZE, TEX_SIZE, true, Image.FORMAT_RGBA8)
+	img.fill(Color(0.0, 0.0, 0.0, 0.0))
+	return img
+
+
+static func _finish_cutout(img: Image) -> ImageTexture:
 	_bleed_alpha(img)
 	img.generate_mipmaps()
 	return ImageTexture.create_from_image(img)

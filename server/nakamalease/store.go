@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/devantler-tech/world-at-ruin/server/internal/handoffidentity"
+	"github.com/devantler-tech/world-at-ruin/server/nakamastorage"
 	"github.com/devantler-tech/world-at-ruin/server/sim"
 	"github.com/heroiclabs/nakama-common/api"
 	"github.com/heroiclabs/nakama-common/runtime"
@@ -715,11 +716,7 @@ func (s *Store) writeKey(
 	if err != nil {
 		return Record{}, sanitizeStorageError(err)
 	}
-	if len(acks) != 1 ||
-		acks[0].GetCollection() != Collection ||
-		acks[0].GetKey() != key ||
-		acks[0].GetUserId() != systemOwnerID ||
-		acks[0].GetVersion() == "" {
+	if len(acks) != 1 || !nakamastorage.ValidAcknowledgement(acks[0], Collection, key, systemOwnerID) {
 		return Record{}, ErrStorage
 	}
 	return Record{
@@ -968,22 +965,7 @@ func storageCancellation(err error) error {
 }
 
 func validUserID(value string) bool {
-	if len(value) != 36 {
-		return false
-	}
-	for index, char := range value {
-		switch index {
-		case 8, 13, 18, 23:
-			if char != '-' {
-				return false
-			}
-		default:
-			if !strings.ContainsRune("0123456789abcdefABCDEF", char) {
-				return false
-			}
-		}
-	}
-	return true
+	return handoffidentity.UUID(value)
 }
 
 func validOpaqueID(value string) bool {

@@ -2,12 +2,12 @@ package nakamaauth
 
 import (
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"strings"
 
+	"github.com/devantler-tech/world-at-ruin/server/internal/handoffidentity"
 	"github.com/devantler-tech/world-at-ruin/server/nakamastorage"
 	"github.com/heroiclabs/nakama-common/api"
 	"github.com/heroiclabs/nakama-common/runtime"
@@ -60,29 +60,12 @@ func (s *NakamaGoogleBindingStore) ResolveGoogleBinding(
 	if !validGoogleBindingKey(key) {
 		return "", false, errors.New("nakama auth: invalid Google binding key")
 	}
-	objects, err := s.storage.StorageRead(ctx, []*runtime.StorageRead{{
-		Collection: googleBindingCollection,
-		Key:        key,
-		UserID:     "",
-	}})
-	if err != nil {
-		return "", false, nakamastorage.SanitizeError(ctx, err, ErrGoogleBindingStorage)
-	}
-	if len(objects) == 0 {
+	object, err := nakamastorage.ReadSystemOwned(ctx, s.storage, googleBindingCollection, key)
+	if errors.Is(err, nakamastorage.ErrObjectMissing) {
 		return "", false, nil
 	}
-	if len(objects) != 1 {
-		return "", false, ErrGoogleBindingStorage
-	}
-	object := objects[0]
-	if object == nil ||
-		object.GetCollection() != googleBindingCollection ||
-		object.GetKey() != key ||
-		object.GetUserId() != googleBindingSystemOwnerID ||
-		object.GetVersion() == "" ||
-		object.GetPermissionRead() != 0 ||
-		object.GetPermissionWrite() != 0 {
-		return "", false, ErrGoogleBindingStorage
+	if err != nil {
+		return "", false, nakamastorage.ReadError(err, nil, ErrGoogleBindingStorage)
 	}
 	document, err := decodeGoogleBindingDocument(object.GetValue())
 	if err != nil {
@@ -128,11 +111,7 @@ func (s *NakamaGoogleBindingStore) BindGoogleIdentity(
 	}})
 	if writeErr == nil &&
 		len(acks) == 1 &&
-		acks[0] != nil &&
-		acks[0].GetCollection() == googleBindingCollection &&
-		acks[0].GetKey() == key &&
-		acks[0].GetUserId() == googleBindingSystemOwnerID &&
-		acks[0].GetVersion() != "" {
+		nakamastorage.ValidAcknowledgement(acks[0], googleBindingCollection, key, googleBindingSystemOwnerID) {
 		return userID, nil
 	}
 
@@ -239,9 +218,5 @@ func rejectDuplicateGoogleBindingMembers(value string) error {
 }
 
 func validGoogleBindingKey(value string) bool {
-	if len(value) != 64 || value != strings.ToLower(value) {
-		return false
-	}
-	decoded, err := hex.DecodeString(value)
-	return err == nil && len(decoded) == 32
+	return handoffidentity.SHA256Hex(value)
 }

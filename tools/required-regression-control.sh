@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Execute the regression suite from a trusted workflow snapshot against a
 # candidate checkout. The candidate supplies product code; it never supplies
-# the selector, test harness, fixtures, or verdict runner.
+# the selector, test harness, historical fixtures, or verdict runner. The one
+# candidate data declaration is validated against the trusted capability ledger.
 set -euo pipefail
 
 if [ "$#" -ne 2 ]; then
@@ -50,11 +51,60 @@ if [ "${#trusted_scenes[@]}" -eq 0 ]; then
 	exit 1
 fi
 
-evaluation_root="$(mktemp -d "${TMPDIR:-/tmp}/required-regression-control.XXXXXX")"
+scratch_root="$(mktemp -d "${TMPDIR:-/tmp}/required-regression-control.XXXXXX")"
+evaluation_root="${scratch_root}/candidate"
+# Remove this invocation's private evaluation tree and reconstructed ledger on exit.
 cleanup() {
-	rm -rf "${evaluation_root}"
+	rm -rf "${scratch_root}"
 }
 trap cleanup EXIT
+mkdir "${evaluation_root}"
+
+# Accept only the already shipped declaration or the one planned mastery
+# activation. Construct the permitted bytes ourselves: candidate comments,
+# rewritten history and future capabilities cannot redefine the contract.
+ledger_path='client/tests/data/shipped_save_capability.txt'
+for root in "${trusted_root}" "${candidate_root}"; do
+	for path in client/tests client/tests/data "${ledger_path}"; do
+		if [ -L "${root}/${path}" ]; then
+			echo "::error::save-capability declaration has a symlinked path" >&2
+			exit 1
+		fi
+	done
+	if [ ! -f "${root}/${ledger_path}" ]; then
+		echo "::error::save-capability declaration is missing" >&2
+		exit 1
+	fi
+done
+# A later append must start a new record, never concatenate onto the old ceiling.
+if [ "$(tail -c 1 "${trusted_root}/${ledger_path}" | wc -l)" -ne 1 ]; then
+	echo "::error::trusted save-capability declaration lacks its final newline" >&2
+	exit 1
+fi
+trusted_capability="$(awk '
+	/^#/ || /^$/ { next }
+	!/^[1-9][0-9]*$/ || $0 != ++capability { invalid = 1; exit }
+	END {
+		if (invalid || (capability != 6 && capability != 7)) exit 1
+		print capability
+	}
+' "${trusted_root}/${ledger_path}")" || {
+	echo "::error::trusted save-capability declaration is malformed or unsupported" >&2
+	exit 1
+}
+validated_ledger="${scratch_root}/validated-capability.txt"
+cp "${trusted_root}/${ledger_path}" "${validated_ledger}"
+if ! cmp -s "${candidate_root}/${ledger_path}" "${validated_ledger}"; then
+	if [ "${trusted_capability}" != 6 ]; then
+		echo "::error::save-capability declaration differs from shipped history" >&2
+		exit 1
+	fi
+	printf '7\n' >>"${validated_ledger}"
+	if ! cmp -s "${candidate_root}/${ledger_path}" "${validated_ledger}"; then
+		echo "::error::save-capability declaration must preserve history and append only capability 7" >&2
+		exit 1
+	fi
+fi
 
 # Do not mutate the checkout Actions produced. Copy only tracked-worktree
 # content (never its .git directory), then replace the candidate-controlled
@@ -72,6 +122,8 @@ fi
 
 rm -rf -- "${evaluation_root}/client/tests"
 cp -R "${trusted_tests}" "${evaluation_root}/client/tests"
+cp "${validated_ledger}" "${evaluation_root}/${ledger_path}"
+rm "${validated_ledger}"
 
 if ! (
 	cd "${evaluation_root}"

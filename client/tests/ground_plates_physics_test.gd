@@ -111,10 +111,9 @@ func _check_collision_is_the_surface(world: WorldGen, tops: Array[Dictionary]) -
 			var b := polygon[(index + 1) % polygon.size()]
 			if a.distance_to(b) < 0.2:
 				continue
-			var mid := (a + b) * 0.5
-			var outward := Vector2(b.y - a.y, a.x - b.x).normalized()
-			if outward.dot(mid - centre) < 0.0:
-				outward = -outward
+			var edge := PlateProbeSupport.edge(a, b, centre)
+			var mid: Vector2 = edge[&"mid"]
+			var outward: Vector2 = edge[&"outward"]
 			var past := mid + outward * 0.05
 			if absf(past.x) > HALF_WORLD or absf(past.y) > HALF_WORLD or world.cave_protects(past.x, past.y):
 				continue
