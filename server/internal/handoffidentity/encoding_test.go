@@ -12,6 +12,7 @@ func TestSHA256Base32LiteralDigest(t *testing.T) {
 		t.Fatalf("digest = %q", got)
 	}
 }
+
 // TestOpaqueUTF8PreservesSpellingAndByteBounds distinguishes bytes from rune count.
 func TestOpaqueUTF8PreservesSpellingAndByteBounds(t *testing.T) {
 	for _, value := range []string{"opaque:identity", "é", "漢字", "escaped\\name"} {

@@ -12,6 +12,7 @@ func TestLabelPreservesLiteralDomainAndIdentityOrder(t *testing.T) {
 		t.Fatalf("label = %q", got)
 	}
 }
+
 // TestEnvelopeCanonicalBytes rejects alias spellings while retaining payload bytes.
 func TestEnvelopeCanonicalBytes(t *testing.T) {
 	for _, value := range []string{"v1.", "v2.AAE", "v1.AAE=", "v1.AAE\n", "v1.\rAAE", "v1.AAF"} {
