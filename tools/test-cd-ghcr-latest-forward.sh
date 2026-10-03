@@ -36,6 +36,7 @@ tag_rc=0
 alias_changes_after_resolve=0
 incomplete_version=""
 completion_fault=""
+latest_digest_override=""
 
 fail() {
   echo "FAIL: $*" >&2
@@ -58,6 +59,7 @@ reset_registry() {
   alias_changes_after_resolve=0
   incomplete_version=""
   completion_fault=""
+  latest_digest_override=""
 }
 
 set_tags() {
@@ -99,6 +101,22 @@ oras() {
         printf '%s\n' "${descriptor_override}"
       else
         case "${4##*:}" in
+        latest)
+          if [ -n "${manifest_fetch_error}" ]; then
+            printf "%s\n" "${manifest_fetch_error}" >&2
+            return 1
+          fi
+          if [ -n "${latest_digest_override}" ]; then
+            printf '{"digest":"%s"}\n' "${latest_digest_override}"
+          elif [ "$(latest)" = 0.79.0 ]; then
+            printf '{"digest":"sha256:%064d"}\n' 79
+          elif [ "$(latest)" = 0.80.0 ]; then
+            printf '{"digest":"sha256:%064d"}\n' 80
+          elif [ -z "$(latest)" ]; then
+            echo 'manifest unknown' >&2
+            return 1
+          else printf '{"digest":"sha256:%064d"}\n' 81; fi
+          ;;
         completed-0.79.0) printf '{"digest":"sha256:%064d"}\n' 79 ;;
         completed-0.80.0) printf '{"digest":"sha256:%064d"}\n' 80 ;;
         *) return 2 ;;
@@ -107,10 +125,15 @@ oras() {
       return "${descriptor_rc}"
     fi
     if [[ "${3:-}" == *@sha256:* ]]; then
+      if [ -n "${manifest_json_override}" ]; then
+        printf "%s\n" "${manifest_json_override}"
+        return 0
+      fi
       local release
       case "${3##*@sha256:}" in
       0000000000000000000000000000000000000000000000000000000000000079) release=0.79.0 ;;
       0000000000000000000000000000000000000000000000000000000000000080) release=0.80.0 ;;
+      0000000000000000000000000000000000000000000000000000000000000081) release="$(latest)" ;;
       *) return 2 ;;
       esac
       [ -z "${selected_annotation_override}" ] || release="${selected_annotation_override}"
@@ -150,6 +173,7 @@ oras() {
     esac
     [ "$3" = latest ] || return 2
     set_latest "${version}"
+    latest_digest_override=""
     if [ -n "${publish_newer_after_first_tag}" ]; then
       printf '%s\n' "${publish_newer_after_first_tag}" >>"${tags_file}"
       publish_newer_after_first_tag=""
@@ -367,3 +391,20 @@ for fault in forged subject archive manifest version revision type unknown ambig
   [ "$(tag_calls)" -eq 0 ] || fail "$fault completion changed latest"
 done
 echo 'ok -- staging, forged and mismatched completion records preserve latest'
+
+# Equal version strings do not authenticate an incomplete prior digest.
+reset_registry
+set_tags "0.80.0"
+set_latest "0.80.0"
+latest_digest_override="sha256:0000000000000000000000000000000000000000000000000000000000000081"
+advance_latest_tag "$artifact" 0.80.0 >/dev/null || fail "same-version recovery failed"
+[ "$(tag_calls)" -eq 1 ] || fail "same-version unchecked digest survived recovery"
+[ -z "$latest_digest_override" ] || fail "same-version recovery did not replace the prior digest"
+
+reset_registry
+set_tags "0.80.0"
+set_latest "0.80.0"
+completion_fault=forged
+if advance_latest_tag "$artifact" 0.80.0 >/dev/null 2>&1; then fail "same-version forged completion was accepted"; fi
+[ "$(tag_calls)" -eq 0 ] || fail "same-version invalid completion mutated latest"
+echo 'ok -- same-version recovery authenticates and compares digests'

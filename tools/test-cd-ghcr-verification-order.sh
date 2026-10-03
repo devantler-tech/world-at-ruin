@@ -57,9 +57,13 @@ case "$1 $2" in
 	"repo tags") printf '0.79.0\n0.80.0\nlatest\n'; [ ! -f "$WAR_COMPLETION" ] || printf 'completed-0.80.0\n' ;;
 	"manifest fetch")
 		if [ "${3:-}" = "--descriptor" ]; then
-			printf '{"digest":"sha256:%064d"}\n' 1
-		elif [[ "${3:-}" == *@sha256:* ]]; then
-			jq -n --arg version "$VERSION" --arg archive "$(sha256sum "$WAR_FIXTURE/WorldAtRuin-0.80.0-macOS-universal.zip" | cut -d' ' -f1)" --arg manifest "$(sha256sum "$WAR_FIXTURE/update-manifest.json" | cut -d' ' -f1)" '{annotations:{"org.opencontainers.image.version":$version,"org.opencontainers.image.revision":("a"*40)},layers:[{mediaType:"application/zip",digest:("sha256:"+$archive),annotations:{"org.opencontainers.image.title":("WorldAtRuin-"+$version+"-macOS-universal.zip")}},{mediaType:"application/vnd.devantler.worldatruin.client.manifest.v1+json",digest:("sha256:"+$manifest),annotations:{"org.opencontainers.image.title":"update-manifest.json"}}]}'
+			if [[ "$4" == *:latest ]] && [ "$(cat "$WAR_LATEST")" != "$VERSION" ]; then
+        printf '{"digest":"sha256:%064d"}\n' 2
+      else printf '{"digest":"sha256:%064d"}\n' 1; fi
+		elif [[ "${3:-}" == *@sha256:*2 ]]; then
+      printf '{"annotations":{"org.opencontainers.image.version":"%s"}}\n' "$(cat "$WAR_LATEST")"
+    elif [[ "${3:-}" == *@sha256:* ]]; then
+			jq -n --arg version "$VERSION" --arg revision "$(cat "$WAR_FIXTURE/pushed-revision")" --arg archive "$(sha256sum "$WAR_FIXTURE/WorldAtRuin-0.80.0-macOS-universal.zip" | cut -d' ' -f1)" --arg manifest "$(sha256sum "$WAR_FIXTURE/update-manifest.json" | cut -d' ' -f1)" '{annotations:{"org.opencontainers.image.version":$version,"org.opencontainers.image.revision":$revision},layers:[{mediaType:"application/zip",digest:("sha256:"+$archive),annotations:{"org.opencontainers.image.title":("WorldAtRuin-"+$version+"-macOS-universal.zip")}},{mediaType:"application/vnd.devantler.worldatruin.client.manifest.v1+json",digest:("sha256:"+$manifest),annotations:{"org.opencontainers.image.title":"update-manifest.json"}}]}'
 		else
 			printf '{"annotations":{"org.opencontainers.image.version":"%s"}}\n' "$(cat "${WAR_LATEST}")"
 		fi
@@ -69,7 +73,15 @@ case "$1 $2" in
 		[ "$3" = latest ] || exit 2
 		printf '0.80.0\n' >"${WAR_LATEST}"
 		;;
-	"push "*) ;;
+	"push "*)
+    shift 2
+    while [ "$#" -gt 0 ]; do
+      if [ "$1" = --annotation ] && [[ "$2" == org.opencontainers.image.revision=* ]]; then
+        printf '%s\n' "${2#*=}" > "$WAR_FIXTURE/pushed-revision"
+      fi
+      shift
+    done ;;
+
 	"pull "*)
 		cp "${WAR_FIXTURE}/WorldAtRuin-0.80.0-macOS-universal.zip" .
 		cp "${WAR_FIXTURE}/update-manifest.json" .
@@ -88,7 +100,8 @@ chmod +x "${test_dir}/bin/"*
 export PATH="${test_dir}/bin:${PATH}"
 export GITHUB_SERVER_URL=https://github.com
 export GITHUB_REPOSITORY=devantler-tech/world-at-ruin
-export GITHUB_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+export GITHUB_SHA=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+export REVISION=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 export VERSION=0.80.0 TAG=v0.80.0
 export WAR_COMPLETION="${test_dir}/completion.json"
 export WAR_REGISTRY_CALLS="${test_dir}/calls"
@@ -153,8 +166,14 @@ run_publication >"${test_dir}/log" 2>&1 || {
   fail "verified publication failed"
 }
 [ "$(cat "${WAR_LATEST}")" = 0.80.0 ] || fail "verified candidate did not become latest"
-verify_line="$(awk '/^cosign verify(-attestation)? / { last = NR } END { print last }' "${WAR_REGISTRY_CALLS}")"
-tag_line="$(awk '/^oras tag .* latest$/ { print NR; exit }' "${WAR_REGISTRY_CALLS}")"
-[ -n "${verify_line}" ] && [ -n "${tag_line}" ] && [ "${verify_line}" -lt "${tag_line}" ] ||
-  fail "latest write preceded signature verification"
+# Every latest write needs prior signature and completion verification for its digest.
+awk '
+  /^cosign verify / { signatures[$3] = 1 }
+  /^cosign verify-attestation / { completed[$3] = 1 }
+  /^oras tag / && $NF == "latest" {
+    if (!signatures[$3] || !completed[$3]) { invalid = 1; exit 1 }
+    writes++
+  }
+  END { if (invalid || writes < 1) exit 1 }
+' "${WAR_REGISTRY_CALLS}" || fail "latest write preceded verification of its digest"
 echo "ok -- failed signing and readback preserve latest"

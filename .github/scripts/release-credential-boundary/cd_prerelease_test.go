@@ -125,7 +125,7 @@ func TestCDStableAndPrereleasePublication(t *testing.T) {
 					}
 					env := []string{"RAW_TAG=v" + tc.version, "FIXTURE_ROOT=" + root, "CORRUPT=" + fmt.Sprint(tc.corrupt),
 						"GITHUB_OUTPUT=" + filepath.Join(root, "output"), "GITHUB_REPOSITORY=devantler-tech/world-at-ruin",
-						"ARTIFACT=" + artifact, "DIGEST=" + digest, "GITHUB_SERVER_URL=https://github.com", "GITHUB_SHA=" + strings.Repeat("a", 40)}
+						"ARTIFACT=" + artifact, "DIGEST=" + digest, "GITHUB_SERVER_URL=https://github.com", "GITHUB_SHA=" + strings.Repeat("e", 40)}
 					if values, ok := step["env"].(map[string]any); ok {
 						for key, value := range values {
 							v, ok := value.(string)
@@ -136,6 +136,7 @@ func TestCDStableAndPrereleasePublication(t *testing.T) {
 								"${{ steps.version.outputs.version }}", tc.version,
 								"${{ steps.version.outputs.tag }}", "v"+tc.version,
 								"${{ needs.publish-macos.outputs.sha256 }}", zipSHA,
+								"${{ needs.publish-macos.outputs.revision }}", outputs["revision"],
 								"${{ needs.publish-macos.outputs.manifest_sha256 }}", manifestSHA,
 								"${{ steps.push.outputs.artifact }}", artifact,
 								"${{ steps.push.outputs.digest }}", digest,
@@ -328,6 +329,7 @@ func TestCDRunsStampedDevLogScenesBeforeExport(t *testing.T) {
 }
 
 const publicationBoundaryDouble = `
+git() { printf "%s\n" aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; }
 date() {
   if [ "$*" = '-u +%s' ]; then printf '1790953136\n'; else printf '2026-10-03T00:00:00Z\n'; fi
 }
@@ -347,9 +349,13 @@ oras() {
     'repo tags') cat "$registry/tags" ;;
     'manifest fetch')
       if [ "$3" = --descriptor ]; then
-        printf '{"digest":"sha256:%064d"}\n' 1
+        if [[ "$4" == *:latest ]] && [ "$(cat "$registry/latest")" != "$(cat "$registry/pushed-version")" ]; then
+          printf '{"digest":"sha256:%064d"}\n' 2
+        else printf '{"digest":"sha256:%064d"}\n' 1; fi
+      elif [[ "$3" == *@sha256:*2 ]]; then
+        printf '{"annotations":{"org.opencontainers.image.version":"%s"}}\n' "$(cat "$registry/latest")"
       elif [[ "$3" == *@sha256:* ]]; then
-        jq -n --arg version "$(cat "$registry/pushed-version")" --arg archive "$(sha256sum "$registry"/*.zip | cut -d' ' -f1)" --arg manifest "$(sha256sum "$registry/update-manifest.json" | cut -d' ' -f1)" '{annotations:{"org.opencontainers.image.version":$version,"org.opencontainers.image.revision":("a"*40)},layers:[{mediaType:"application/zip",digest:("sha256:"+$archive),annotations:{"org.opencontainers.image.title":("WorldAtRuin-"+$version+"-macOS-universal.zip")}},{mediaType:"application/vnd.devantler.worldatruin.client.manifest.v1+json",digest:("sha256:"+$manifest),annotations:{"org.opencontainers.image.title":"update-manifest.json"}}]}'
+        jq -n --arg version "$(cat "$registry/pushed-version")" --arg revision "$(cat "$registry/pushed-revision")" --arg archive "$(sha256sum "$registry"/*.zip | cut -d' ' -f1)" --arg manifest "$(sha256sum "$registry/update-manifest.json" | cut -d' ' -f1)" '{annotations:{"org.opencontainers.image.version":$version,"org.opencontainers.image.revision":$revision},layers:[{mediaType:"application/zip",digest:("sha256:"+$archive),annotations:{"org.opencontainers.image.title":("WorldAtRuin-"+$version+"-macOS-universal.zip")}},{mediaType:"application/vnd.devantler.worldatruin.client.manifest.v1+json",digest:("sha256:"+$manifest),annotations:{"org.opencontainers.image.title":"update-manifest.json"}}]}'
       else
         printf '{"annotations":{"org.opencontainers.image.version":"%s"}}\n' "$(cat "$registry/latest")"
       fi ;;
@@ -362,7 +368,11 @@ oras() {
           shift 2
           while [ "$#" -gt 0 ]; do
             case "$1" in
-              --artifact-type|--annotation) shift 2 ;;
+              --artifact-type) shift 2 ;;
+              --annotation)
+                if [[ "$2" == org.opencontainers.image.revision=* ]]; then printf '%s\n' "${2#*=}" > "$registry/pushed-revision"; fi
+                shift 2 ;;
+
               *) layer="${1%%:*}"; cp "$layer" "$registry/$(basename "$layer")"; shift ;;
             esac
           done ;;
@@ -380,3 +390,74 @@ oras() {
   esac
 }
 `
+
+// A dispatch can execute on main while building a different, fully qualified tag.
+func TestCDRevisionIdentifiesTheCheckedOutTagInsteadOfDispatchHead(t *testing.T) {
+	doc := loadRepositoryWorkflow(t)
+	job, err := doc.job("publish-macos")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var resolver string
+	for _, raw := range job["steps"].([]any) {
+		step := raw.(map[string]any)
+		if step["id"] == "version" {
+			resolver = step["run"].(string)
+		}
+	}
+	if resolver == "" {
+		t.Fatal("missing build version resolver")
+	}
+	root := t.TempDir()
+	git := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = root
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git("init", "--initial-branch=main")
+	git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "tagged build")
+	revision := git("rev-parse", "HEAD")
+	git("tag", "v1.2.3")
+	git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "later dispatch head")
+	dispatch := git("rev-parse", "HEAD")
+	git("checkout", "refs/tags/v1.2.3")
+	output := filepath.Join(root, "output")
+	run := func() ([]byte, error) {
+		t.Helper()
+		if err := os.WriteFile(output, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command("bash", "-c", resolver)
+		cmd.Dir = root
+		cmd.Env = append(os.Environ(), "RAW_TAG=v1.2.3", "GITHUB_SHA="+dispatch, "GITHUB_OUTPUT="+output)
+		log, err := cmd.CombinedOutput()
+		if err != nil {
+			return log, err
+		}
+		contents, readErr := os.ReadFile(output)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		return contents, nil
+	}
+	contents, err := run()
+	if err != nil {
+		t.Fatalf("tagged build: %v: %s", err, contents)
+	}
+	if !strings.Contains(string(contents), "revision="+revision+"\n") || strings.Contains(string(contents), "revision="+dispatch) {
+		t.Fatalf("build did not identify tagged revision %s instead of dispatch %s: %s", revision, dispatch, contents)
+	}
+	git("checkout", "main")
+	if log, err := run(); err == nil {
+		t.Fatalf("untagged checkout accepted: %s", log)
+	}
+	outputs := job["outputs"].(map[string]any)
+	if outputs["revision"] != "${{ steps.version.outputs.revision }}" {
+		t.Fatal("build revision not transferred to publisher")
+	}
+}
