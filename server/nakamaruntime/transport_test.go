@@ -2,8 +2,6 @@ package nakamaruntime
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -19,6 +17,7 @@ import (
 	"time"
 
 	allocationpb "agones.dev/agones/pkg/allocation/go"
+	"github.com/devantler-tech/world-at-ruin/server/internal/cryptotest"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 )
@@ -45,17 +44,12 @@ func writeMaterial(t *testing.T, dir, name string, data []byte) string {
 	return filepath.Join(dir, name)
 }
 
+// certificateFixture creates a private trust root and mutually usable leaf certificate with caller-selected URI identities.
 func certificateFixture(t *testing.T, dir string, identities ...string) (config, tls.Certificate, *x509.CertPool) {
 	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
+	key := cryptotest.NewKey(t)
 	ca := &x509.Certificate{SerialNumber: big.NewInt(1), NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign}
-	caDER, err := x509.CreateCertificate(rand.Reader, ca, ca, &key.PublicKey, key)
-	if err != nil {
-		t.Fatal(err)
-	}
+	caDER := cryptotest.Issue(t, ca, ca, &key.PublicKey, key)
 	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})
 	pool := x509.NewCertPool()
 	pool.AppendCertsFromPEM(caPEM)
@@ -67,10 +61,7 @@ func certificateFixture(t *testing.T, dir string, identities ...string) (config,
 		}
 		leaf.URIs = append(leaf.URIs, uri)
 	}
-	der, err := x509.CreateCertificate(rand.Reader, leaf, ca, &key.PublicKey, key)
-	if err != nil {
-		t.Fatal(err)
-	}
+	der := cryptotest.Issue(t, leaf, ca, &key.PublicKey, key)
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
 	if err != nil {
@@ -85,6 +76,16 @@ func certificateFixture(t *testing.T, dir string, identities ...string) (config,
 	return cfg, certificate, pool
 }
 
+// allocationTLSServer keeps mutual authentication on the actual gRPC server.
+func allocationTLSServer(t *testing.T, certificate tls.Certificate, pool *x509.CertPool) *grpc.Server {
+	t.Helper()
+	server := grpc.NewServer(grpc.Creds(credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate}, ClientCAs: pool, ClientAuth: tls.RequireAndVerifyClientCert})))
+	allocationpb.RegisterAllocationServiceServer(server, &tlsAllocationServer{})
+	t.Cleanup(server.Stop)
+	return server
+}
+
+// TestAllocatorConnectionUsesVerifiedMutualTLS requires both peers to trust the presented certificates before allocation can start.
 func TestAllocatorConnectionUsesVerifiedMutualTLS(t *testing.T) {
 	cfg, certificate, pool := certificateFixture(t, t.TempDir())
 	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
@@ -96,10 +97,8 @@ func TestAllocatorConnectionUsesVerifiedMutualTLS(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg.allocatorAddress = net.JoinHostPort("localhost", port)
-	server := grpc.NewServer(grpc.Creds(credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate}, ClientCAs: pool, ClientAuth: tls.RequireAndVerifyClientCert})))
-	allocationpb.RegisterAllocationServiceServer(server, &tlsAllocationServer{})
+	server := allocationTLSServer(t, certificate, pool)
 	go func() { _ = server.Serve(listener) }()
-	t.Cleanup(server.Stop)
 	t.Cleanup(func() { _ = listener.Close() })
 	client, closeClient, err := connectAllocator(cfg)
 	if err != nil {
@@ -127,6 +126,7 @@ func TestAllocatorConnectionUsesVerifiedMutualTLS(t *testing.T) {
 	}
 }
 
+// TestAllocatorConnectionRidesOutTransientStartupFailures allows a delayed allocator startup while retaining verified mutual TLS.
 func TestAllocatorConnectionRidesOutTransientStartupFailures(t *testing.T) {
 	cfg, certificate, pool := certificateFixture(t, t.TempDir())
 	// Reserve a port, release it, and start the allocator only after the first
@@ -142,9 +142,7 @@ func TestAllocatorConnectionRidesOutTransientStartupFailures(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg.allocatorAddress = net.JoinHostPort("localhost", port)
-	server := grpc.NewServer(grpc.Creds(credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate}, ClientCAs: pool, ClientAuth: tls.RequireAndVerifyClientCert})))
-	allocationpb.RegisterAllocationServiceServer(server, &tlsAllocationServer{})
-	t.Cleanup(server.Stop)
+	server := allocationTLSServer(t, certificate, pool)
 	go func() {
 		time.Sleep(500 * time.Millisecond)
 		listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", address)

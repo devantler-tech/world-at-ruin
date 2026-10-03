@@ -10,6 +10,16 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// discoverMutatedFixture exercises a fresh real reader after one scenario-specific mutation.
+func discoverMutatedFixture(t *testing.T, mutate func(*corev1.Pod, *discoveryv1.EndpointSlice)) (Snapshot, error) {
+	t.Helper()
+	p := pod("allocator-a", "uid-a", "10.0.0.1")
+	s := endpointSlice("slice", p)
+	mutate(&p, &s)
+	r, _ := fixture(t, []corev1.Pod{p}, []discoveryv1.EndpointSlice{s})
+	return r.Discover(t.Context())
+}
+
 // TestIneligibleEndpointsRetainMembershipAndConditions keeps observed members and endpoints
 // visible while excluding unsafe connection candidates.
 func TestIneligibleEndpointsRetainMembershipAndConditions(t *testing.T) {
@@ -29,11 +39,7 @@ func TestIneligibleEndpointsRetainMembershipAndConditions(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			p := pod("allocator-a", "uid-a", "10.0.0.1")
-			s := endpointSlice("slice", p)
-			mutate(&p, &s)
-			r, _ := fixture(t, []corev1.Pod{p}, []discoveryv1.EndpointSlice{s})
-			got, err := r.Discover(t.Context())
+			got, err := discoverMutatedFixture(t, mutate)
 			if err != nil || len(got.Members) != 1 || len(got.Members[0].Endpoints) != 1 || len(got.Members[0].EligibleEndpoints()) != 0 {
 				t.Fatalf("ineligible observation lost or became eligible: %+v, %v", got, err)
 			}

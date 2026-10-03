@@ -4,6 +4,13 @@ extends RefCounted
 ## flags and may re-enable physics for its runtime-hook scenario.
 
 
+static func recipe_fixture(path: String) -> Dictionary:
+	var loaded = CharacterFactory.load_recipe(path)
+	if loaded is not Dictionary:
+		return {"problem": "could not load %s" % path}
+	return {"problem": "", "recipe": loaded}
+
+
 static func build_subject(parent: Node, recipe: Dictionary, bones: Array, motion: String) -> Dictionary:
 	var player := Player.new()
 	parent.add_child(player)
@@ -49,3 +56,14 @@ static func pose_difference(a: Dictionary, b: Dictionary, bones: Array, epsilon:
 		if apart > epsilon:
 			return {"bone": bone_name, "angle": apart}
 	return {}
+
+
+## Report the first difference through the caller's existing failure method.
+## Empty messages still return false without emitting a failure, and the caller
+## retains its bone list, epsilon and distinct rotation-distance definition.
+static func same_pose(a: Dictionary, b: Dictionary, bones: Array, epsilon: float, distance: Callable, message: String, fail: Callable) -> bool:
+	var difference := pose_difference(a, b, bones, epsilon, distance)
+	if not difference.is_empty():
+		return fail.call("%s (%s differs by %.6f rad)" %
+			[message, difference["bone"], difference["angle"]]) if not message.is_empty() else false
+	return true

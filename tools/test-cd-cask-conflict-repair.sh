@@ -10,9 +10,9 @@ trap 'rm -rf "${test_dir}"' EXIT
 # Exercise the exact function embedded in the CD run block rather than a
 # test-only copy that could drift from production.
 helper_file="${test_dir}/cask-conflict-repair-helper.sh"
-sed -n \
-	'/# BEGIN cask-conflict-repair-helper/,/# END cask-conflict-repair-helper/p' \
-	"${workflow}" >"${helper_file}"
+# shellcheck source=tools/workflow-helper-extraction.sh
+source "${repo_root}/tools/workflow-helper-extraction.sh"
+extract_marked_workflow_helpers "${workflow}" "${helper_file}" cask-conflict-repair-helper
 # shellcheck source=/dev/null
 source "${helper_file}"
 if ! declare -F cask_pr_conflicts >/dev/null; then

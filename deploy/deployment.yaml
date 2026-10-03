@@ -42,9 +42,8 @@ spec:
             - /credentials/tls.crt
             - -tls-key
             - /credentials/tls.key
-            # Bound loaded certificate lifetime; the demonstration may restart.
-            - -duration
-            - 1h
+            # New TLS handshakes load current projected material; keep the
+            # demonstration serving until normal pod termination.
           env:
             - name: WAR_ZONE_ADMISSION_SECRET
               valueFrom:

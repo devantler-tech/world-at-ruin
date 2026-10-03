@@ -26,9 +26,14 @@ real running service and released client; image tests alone do not prove a
 platform trial is reachable.
 
 The signed `zone-manifests` artifact contains the private trial's restricted
-Deployment, service and tenant-owned admission-secret seed/readback. The trial
-restarts its scripted process hourly to reload mounted TLS material. Token
-minting remains short-lived, and a restart never affects player saves.
+Deployment, service and tenant-owned admission-secret seed/readback. The listener
+validates its certificate before startup and loads current mounted TLS material
+for each new handshake. Missing, mismatched or out-of-window certificates fail
+closed without falling back to an old pair; session resumption cannot bypass
+that check. The trial runs until normal pod termination instead of interrupting
+connections on an hourly certificate-refresh timer. Explicit `-duration` still
+bounds command-line exercises. Token minting remains short-lived, and normal
+deployment restarts never affect player saves.
 
 The host must install a namespace-wide default-deny policy for both ingress and
 egress before enabling the trial. Standard Kubernetes NetworkPolicy resources

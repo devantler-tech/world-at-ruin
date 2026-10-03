@@ -38,9 +38,35 @@ func _ready() -> void:
 		if not _fold_controls(capture):
 			capture.free()
 			return
+		if not _disabled_material_controls(capture):
+			capture.free()
+			return
 		print("TEST PASS — ragged-cloth evidence frames both panels and gameplay range")
 		get_tree().quit(0)
 	capture.free()
+
+## Disabled detail must copy the active material without consulting source
+## metadata. A stale source is irrelevant when the experiment is off.
+func _disabled_material_controls(capture: Node) -> bool:
+	var state := TestEnvironment.snapshot([RaggedCloth.FLAG_ENV])
+	OS.set_environment(RaggedCloth.FLAG_ENV, "")
+	var garment := MeshInstance3D.new()
+	garment.mesh = BoxMesh.new()
+	var original := StandardMaterial3D.new()
+	original.albedo_color = Color(0.3, 0.4, 0.5)
+	original.roughness = 0.37
+	garment.set_surface_override_material(0, original)
+	garment.set_meta(RaggedDrape.SOURCE_META, "unused stale metadata")
+	var valid := true
+	for method: String in ["ragged_tailoring_material", "ragged_unfolded_material"]:
+		var copied := capture.call(method, garment) as StandardMaterial3D
+		valid = valid and copied != original and copied.albedo_color == original.albedo_color
+		valid = valid and copied.roughness == original.roughness and garment.get_active_material(0) == original
+	garment.free()
+	TestEnvironment.restore(state)
+	if not valid:
+		_fail("disabled cloth must copy the active material without mutating it")
+	return valid
 
 
 ## Gameplay evidence must use the production follow rig without moving it or
@@ -75,19 +101,13 @@ func _camera_controls(capture: Node) -> bool:
 ## A flat generic material or a swapped mesh cannot isolate broad folds.
 ## Sewing bands stay byte-identical, while broad hanging normals must change.
 func _fold_controls(capture: Node) -> bool:
-	var prior := OS.get_environment(RaggedCloth.FLAG_ENV)
-	var had_flag := OS.has_environment(RaggedCloth.FLAG_ENV)
-	OS.set_environment(RaggedCloth.FLAG_ENV, "1")
-	var character := CharacterFactory.build(CharacterFactory.load_recipe("res://recipes/wanderer.json"))
-	var garment := CharacterFactory.find_skeleton(character).get_node("Equip_loincloth_ragged") as MeshInstance3D
-	var mesh := garment.mesh
-	var preview := garment.get_active_material(0) as StandardMaterial3D
+	var fixture := RaggedTestSupport.preview_fixture()
+	var garment: MeshInstance3D = fixture["garment"]
+	var mesh: Mesh = fixture["mesh"]
+	var preview: StandardMaterial3D = fixture["preview"]
 	var ablation := capture.call("ragged_unfolded_material", garment) as StandardMaterial3D
-	var valid := ablation != preview and garment.get_active_material(0) == preview and garment.mesh == mesh
-	valid = valid and ablation.albedo_color == preview.albedo_color and ablation.normal_scale == preview.normal_scale
-	valid = valid and ablation.cull_mode == preview.cull_mode and ablation.transparency == preview.transparency
-	valid = valid and ablation.texture_filter == preview.texture_filter and ablation.texture_repeat == preview.texture_repeat
-	valid = valid and ablation.normal_enabled and ablation.roughness == preview.roughness
+	var valid := RaggedTestSupport.retained_settings(garment, mesh, preview, ablation)
+	valid = valid and ablation.normal_enabled
 	valid = valid and ablation.roughness_texture.get_image().get_data() == preview.roughness_texture.get_image().get_data()
 	var drawn := preview.albedo_texture.get_image()
 	var unfolded := ablation.albedo_texture.get_image()
@@ -102,11 +122,7 @@ func _fold_controls(capture: Node) -> bool:
 			if absf(normal.get_pixel(x, y).r - flat.get_pixel(x, y).r) > 0.10:
 				changed += 1
 	valid = valid and changed > 500 and flat.get_mipmap_count() > 0
-	character.free()
-	if had_flag:
-		OS.set_environment(RaggedCloth.FLAG_ENV, prior)
-	else:
-		OS.unset_environment(RaggedCloth.FLAG_ENV)
+	RaggedTestSupport.release_fixture(fixture)
 	if not valid:
 		_fail("fold-off must remove broad relief while retaining sewing, weave, mesh and render settings")
 	return valid
@@ -118,32 +134,27 @@ func _tailoring_controls(capture: Node) -> bool:
 	if not capture.has_method("ragged_tailoring_material"):
 		_fail("tailoring evidence needs an independent weave-only ablation")
 		return false
-	var prior := OS.get_environment(RaggedCloth.FLAG_ENV)
-	var had_flag := OS.has_environment(RaggedCloth.FLAG_ENV)
-	OS.set_environment(RaggedCloth.FLAG_ENV, "1")
-	var character := CharacterFactory.build(CharacterFactory.load_recipe("res://recipes/wanderer.json"))
-	var garment := CharacterFactory.find_skeleton(character).get_node("Equip_loincloth_ragged") as MeshInstance3D
-	var mesh := garment.mesh
-	var preview := garment.get_active_material(0) as StandardMaterial3D
+	var fixture := RaggedTestSupport.preview_fixture()
+	var garment: MeshInstance3D = fixture["garment"]
+	var mesh: Mesh = fixture["mesh"]
+	var preview: StandardMaterial3D = fixture["preview"]
 	var ablation := capture.call("ragged_tailoring_material", garment) as StandardMaterial3D
-	var valid := ablation != preview and garment.get_active_material(0) == preview and garment.mesh == mesh
-	valid = valid and ablation.albedo_color == preview.albedo_color and ablation.normal_scale == preview.normal_scale
-	valid = valid and ablation.cull_mode == preview.cull_mode and ablation.transparency == preview.transparency
-	valid = valid and ablation.texture_filter == preview.texture_filter and ablation.normal_enabled
+	var valid := RaggedTestSupport.retained_settings(garment, mesh, preview, ablation)
+	valid = valid and ablation.normal_enabled
 	var drawn := preview.albedo_texture.get_image()
 	var plain := ablation.albedo_texture.get_image()
+	var drawn_roughness := preview.roughness_texture.get_image()
+	var plain_roughness := ablation.roughness_texture.get_image()
+	# Sewing changes seam roughness; untouched weave texels must stay identical.
 	for point: Vector2i in [Vector2i(400, 400), Vector2i(600, 620), Vector2i(500, 500)]:
 		valid = valid and drawn.get_pixelv(point) == plain.get_pixelv(point)
+		valid = valid and drawn_roughness.get_pixelv(point) == plain_roughness.get_pixelv(point)
 	var changed := 0
 	for x in range(205, 820):
 		if drawn.get_pixel(x, 184).r - plain.get_pixel(x, 184).r > 0.04:
 			changed += 1
 	valid = valid and changed > 200 and plain.get_mipmap_count() > 0
-	character.free()
-	if had_flag:
-		OS.set_environment(RaggedCloth.FLAG_ENV, prior)
-	else:
-		OS.unset_environment(RaggedCloth.FLAG_ENV)
+	RaggedTestSupport.release_fixture(fixture)
 	if not valid:
 		_fail("seam-off must remove visible threads while retaining actual weave and render settings")
 	return valid

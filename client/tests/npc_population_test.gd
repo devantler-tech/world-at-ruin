@@ -1,4 +1,4 @@
-extends Node
+extends DelayedBootScenario
 ## Regression test for the seeded NPC population (character system stage 6,
 ## #24): the Reach is inhabited, deterministically, by people standing on
 ## the ground and out of the way.
@@ -14,30 +14,18 @@ extends Node
 
 const ASSERT_TICK := 30
 
-var _ticks := 0
-var _main: Node
-var _save: SaveIsolation
 
 
 func _ready() -> void:
-	# Booting main.tscn with no save exercises the first-run creator — point the
-	# game at a throwaway probe so it never touches the player's real character
-	# (no-resets law). Fail closed if the redirect does not take hold.
-	_save = SaveIsolation.new("user://npc_population_boot_probe.json")
-	if not _save.begin():
-		_fail("save isolation did not take — refusing to boot into the real save")
-		return
-	_main = (load("res://scenes/main.tscn") as PackedScene).instantiate()
-	add_child(_main)
+	_boot("user://npc_population_boot_probe.json")
 
 
 func _physics_process(_delta: float) -> void:
-	_ticks += 1
+	if not _advance():
+		return
 	var world := _main.get_node_or_null("World") as WorldGen
 	var npcs := _main.get_node_or_null("Npcs") as NpcSpawner
-	if world == null or npcs == null:
-		if _ticks > 10:
-			_fail("main scene did not build World and Npcs")
+	if not _nodes_ready(world != null and npcs != null, "main scene did not build World and Npcs"):
 		return
 	if _ticks != ASSERT_TICK:
 		return
@@ -65,24 +53,9 @@ func _physics_process(_delta: float) -> void:
 
 	for i in roots.size():
 		var npc := roots[i] as Node3D
-		var pos := npc.position
-		if pos.distance_to(expected[i]) > 0.001:
-			_fail("%s stands at %s, recomputed layout says %s — placement is not deterministic" % [npc.name, pos, expected[i]])
-			return
-		if Vector2(pos.x, pos.z).length() < WorldGen.SHRINE_CLEAR_RADIUS:
-			_fail("%s stands inside the shrine clearing" % npc.name)
-			return
-		if world.cave_protects(pos.x, pos.z):
-			_fail("%s stands in a cave footprint" % npc.name)
-			return
-		var walkout := Geometry2D.get_closest_point_to_segment(
-			Vector2(pos.x, pos.z), WorldGen.CAVE_SITE, Vector2.ZERO)
-		if Vector2(pos.x, pos.z).distance_to(walkout) < NpcSpawner.WALKOUT_CLEARANCE - 0.001:
-			_fail("%s blocks the cave walk-out line" % npc.name)
-			return
-		var ground: float = world.surface_height_at(pos.x, pos.z)
-		if absf(pos.y - ground) > 0.001:
-			_fail("%s floats: y=%f, ground=%f" % [npc.name, pos.y, ground])
+		var problem := PopulationTestSupport.placement_problem(npc, expected[i], world)
+		if not problem.is_empty():
+			_fail(problem)
 			return
 		if CharacterFactory.find_skeleton(npc) == null:
 			_fail("%s has no body — build failed" % npc.name)
@@ -95,27 +68,4 @@ func _physics_process(_delta: float) -> void:
 			_fail("%s has no nameplate" % npc.name)
 			return
 
-	if not _save.real_save_untouched():
-		_fail("the boot test touched the player's real save")
-		return
-	print("TEST PASS — %d NPCs placed lawfully and deterministically" % roots.size())
-	get_tree().quit(0)
-
-
-func _fail(message: String) -> void:
-	# real_save_untouched() clears the seams itself, so it REPLACES the bare
-	# end() rather than adding a second teardown (#326).
-	if _save != null and not _save.real_save_untouched():
-		message += (" — AND the run touched the player's real save, vault or recovery ledger; "
-			+ "the isolation breach outranks the failure above")
-	push_error(message)
-	print("TEST FAIL — %s" % message)
-	get_tree().quit(1)
-
-
-## Clearing the seam on teardown covers the process being killed after the scene
-## loaded but before an exit path ran — the redirect never outlives the test.
-## Idempotent with the end() the exit paths already call.
-func _exit_tree() -> void:
-	if _save != null:
-		_save.end()
+	_finish("%d NPCs placed lawfully and deterministically" % roots.size())

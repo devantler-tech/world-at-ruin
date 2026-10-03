@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/devantler-tech/world-at-ruin/server/internal/envelopetest"
 )
 
 const (
@@ -352,24 +354,8 @@ func envelopeFor(
 	secret []byte,
 ) string {
 	t.Helper()
-	label := []byte(strings.Join([]string{
-		"world-at-ruin/zone-admission/v1",
-		namespace,
-		name,
-		uid,
-		fingerprint,
-	}, "\x00"))
-	ciphertext, err := rsa.EncryptOAEP(
-		sha256.New(),
-		rand.Reader,
-		&key.PublicKey,
-		secret,
-		label,
-	)
-	if err != nil {
-		t.Fatalf("encrypt test envelope: %v", err)
-	}
-	return "v1." + base64.RawURLEncoding.EncodeToString(ciphertext)
+	return envelopetest.Seal(t, &key.PublicKey, namespace, name, uid, fingerprint, secret)
+
 }
 
 func expectedReference(t *testing.T, material Material) string {

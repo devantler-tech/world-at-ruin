@@ -1688,31 +1688,70 @@ static func ragged_cloth_camera(view: String, inspection: Camera3D, player: Play
 ## palette, not the sewn map's mean, so unrelated weave texels remain identical.
 ## The caller swaps this material only; camera, mesh, pose and light stay fixed.
 static func ragged_tailoring_material(garment: MeshInstance3D) -> StandardMaterial3D:
-	var result := garment.get_active_material(0).duplicate() as StandardMaterial3D
-	if not RaggedCloth.enabled():
-		return result
-	var source_mesh := garment.get_meta(RaggedDrape.SOURCE_META, garment.mesh) as Mesh
-	var source := source_mesh.surface_get_material(0) as StandardMaterial3D
-	var maps := RaggedCloth.make_maps(RaggedCloth._palette(source.albedo_texture), false)
-	result.albedo_texture = maps[0]
-	result.normal_texture = maps[1]
-	result.roughness_texture = maps[2]
-	return result
+	return _ragged_ablation_material(garment, false, true)
 
 
 ## Keep actual weave and sewing while removing only broad fold/rolled-edge
 ## relief. This isolates the new construction at the same pose and camera.
 static func ragged_unfolded_material(garment: MeshInstance3D) -> StandardMaterial3D:
+	return _ragged_ablation_material(garment, true, false)
+
+
+## Only the selected ablation switches differ; the active material and source
+## palette remain identical, and disabled detail never consults source metadata.
+static func _ragged_ablation_material(
+		garment: MeshInstance3D, tailoring: bool, folds: bool) -> StandardMaterial3D:
 	var result := garment.get_active_material(0).duplicate() as StandardMaterial3D
 	if not RaggedCloth.enabled():
 		return result
 	var source_mesh := garment.get_meta(RaggedDrape.SOURCE_META, garment.mesh) as Mesh
 	var source := source_mesh.surface_get_material(0) as StandardMaterial3D
-	var maps := RaggedCloth.make_maps(RaggedCloth._palette(source.albedo_texture), true, false)
+	var maps := RaggedCloth.make_maps(RaggedCloth._palette(source.albedo_texture), tailoring, folds)
 	result.albedo_texture = maps[0]
 	result.normal_texture = maps[1]
 	result.roughness_texture = maps[2]
 	return result
+
+
+## Shared fixed-phase evidence setup. Scenario flags, drivers and thresholds
+## remain with their capture paths; this only seats and pins the actual rig.
+static func prepare_motion_capture(
+		player: Player, world: WorldGen, camera_parent: Node, vantage: String) -> Dictionary:
+	player.set_physics_process(false)
+	player.control_enabled = false
+	var ground := world.surface_height_at(0.0, WALK_VANTAGE_Z)
+	if ground <= WorldGen.NO_GROUND + 1.0:
+		return {"problem": "the committed %s vantage has no terrain under it" % vantage}
+	player.global_position = Vector3(0.0, ground + 0.1, WALK_VANTAGE_Z)
+	player.face_toward(Vector3.ZERO)
+	var skeleton := CharacterFactory.find_skeleton(player.get_node("Visual"))
+	if skeleton == null:
+		return {"problem": "the shipped Wanderer has no recipe skeleton"}
+	var body := skeleton.get_parent()
+	var idle: Node = null
+	# Imported rigs may sit below wrapper nodes. The idle belongs to the
+	# character body, so walk ancestors only within this player's subtree.
+	while body != null and body != player:
+		idle = body.get_node_or_null("BreathingIdle")
+		if idle != null:
+			break
+		body = body.get_parent()
+	if idle != null:
+		idle.set_process(false)
+		BreathingIdle.apply_at(skeleton, 0.0)
+	skeleton.force_update_all_bone_transforms()
+	var chest := skeleton.find_bone("spine_03")
+	var left_foot := skeleton.find_bone("foot_l")
+	if chest < 0 or left_foot < 0:
+		return {"problem": "the %s evidence rig lacks spine_03 or foot_l" % vantage}
+	var focus: Vector3 = skeleton.global_transform * skeleton.get_bone_global_pose(chest).origin
+	var camera := Camera3D.new()
+	camera.far = 400.0
+	camera.fov = 42.0
+	camera_parent.add_child(camera)
+	camera.global_position = focus + Vector3(WALK_CAM_SIDE, WALK_CAM_RISE, -WALK_CAM_FRONT)
+	camera.look_at(focus - Vector3(0.0, 0.45, 0.0), Vector3.UP)
+	return {"problem": "", "skeleton": skeleton, "left_foot": left_foot, "camera": camera}
 
 
 ## Actual empty-wardrobe player, with garment-only pixel evidence. A magenta
@@ -2111,41 +2150,13 @@ func _capture_gait(dir: String, main: Node, running: bool) -> void:
 	# body stands on open ground south of the shrine rather than in the
 	# starter cave, so daylight reaches it without the shrine pillar occluding
 	# the full silhouette.
-	player.set_physics_process(false)
-	player.control_enabled = false
-	var walk_ground := world.surface_height_at(0.0, WALK_VANTAGE_Z)
-	if walk_ground <= WorldGen.NO_GROUND + 1.0:
-		_fail("the committed walk vantage has no terrain under it")
+	var rig := prepare_motion_capture(player, world, get_tree().root, "walk")
+	if not rig["problem"].is_empty():
+		_fail(rig["problem"])
 		return
-	player.global_position = Vector3(0.0, walk_ground + 0.1, WALK_VANTAGE_Z)
-	player.face_toward(Vector3.ZERO)
-	var skeleton := CharacterFactory.find_skeleton(player.get_node("Visual"))
-	if skeleton == null:
-		_fail("the shipped Wanderer has no recipe skeleton")
-		return
-
-	# Keep the independently-running breath on one deterministic phase. Without
-	# this, frame-to-frame chest motion is legitimate but makes the walk
-	# sequence depend on runner speed.
-	var body := skeleton.get_parent()
-	var idle := body.get_node_or_null("BreathingIdle") if body != null else null
-	if idle != null:
-		idle.set_process(false)
-		BreathingIdle.apply_at(skeleton, 0.0)
-
-	skeleton.force_update_all_bone_transforms()
-	var chest := skeleton.find_bone("spine_03")
-	var left_foot := skeleton.find_bone("foot_l")
-	if chest < 0 or left_foot < 0:
-		_fail("the walk evidence rig lacks spine_03 or foot_l")
-		return
-	var focus: Vector3 = skeleton.global_transform * skeleton.get_bone_global_pose(chest).origin
-	var cam := Camera3D.new()
-	cam.far = 400.0
-	cam.fov = 42.0
-	get_tree().root.add_child(cam)
-	cam.global_position = focus + Vector3(WALK_CAM_SIDE, WALK_CAM_RISE, -WALK_CAM_FRONT)
-	cam.look_at(focus - Vector3(0.0, 0.45, 0.0), Vector3.UP)
+	var skeleton: Skeleton3D = rig["skeleton"]
+	var left_foot: int = rig["left_foot"]
+	var cam: Camera3D = rig["camera"]
 
 	var foot_positions: Array[Vector3] = []
 	for i in WALK_PHASES:
@@ -2219,42 +2230,13 @@ func _capture_gait_transition(dir: String, main: Node) -> void:
 		_fail("the shipped scene has no WorldGen for the gait-transition vantage")
 		return
 
-	player.set_physics_process(false)
-	player.control_enabled = false
-	var ground := world.surface_height_at(0.0, WALK_VANTAGE_Z)
-	if ground <= WorldGen.NO_GROUND + 1.0:
-		_fail("the committed gait-transition vantage has no terrain under it")
+	var rig := prepare_motion_capture(player, world, get_tree().root, "gait-transition")
+	if not rig["problem"].is_empty():
+		_fail(rig["problem"])
 		return
-	player.global_position = Vector3(0.0, ground + 0.1, WALK_VANTAGE_Z)
-	player.face_toward(Vector3.ZERO)
-	var skeleton := CharacterFactory.find_skeleton(player.get_node("Visual"))
-	if skeleton == null:
-		_fail("the shipped Wanderer has no recipe skeleton")
-		return
-
-	var body := skeleton.get_parent()
-	var idle := body.get_node_or_null("BreathingIdle") if body != null else null
-	if idle != null:
-		idle.set_process(false)
-		BreathingIdle.apply_at(skeleton, 0.0)
-
-	skeleton.force_update_all_bone_transforms()
-	var chest := skeleton.find_bone("spine_03")
-	var left_foot := skeleton.find_bone("foot_l")
-	if chest < 0 or left_foot < 0:
-		_fail("the gait-transition evidence rig lacks spine_03 or foot_l")
-		return
-	var focus: Vector3 = (
-		skeleton.global_transform * skeleton.get_bone_global_pose(chest).origin
-	)
-	var cam := Camera3D.new()
-	cam.far = 400.0
-	cam.fov = 42.0
-	get_tree().root.add_child(cam)
-	cam.global_position = (
-		focus + Vector3(WALK_CAM_SIDE, WALK_CAM_RISE, -WALK_CAM_FRONT)
-	)
-	cam.look_at(focus - Vector3(0.0, 0.45, 0.0), Vector3.UP)
+	var skeleton: Skeleton3D = rig["skeleton"]
+	var left_foot: int = rig["left_foot"]
+	var cam: Camera3D = rig["camera"]
 
 	var samples: Array[Dictionary] = [{
 		"event": "walk",
@@ -3052,38 +3034,13 @@ func _capture_jump(dir: String, main: Node) -> void:
 		_fail("the shipped scene has no WorldGen for the daylight jump vantage")
 		return
 
-	player.set_physics_process(false)
-	player.control_enabled = false
-	var ground := world.surface_height_at(0.0, WALK_VANTAGE_Z)
-	if ground <= WorldGen.NO_GROUND + 1.0:
-		_fail("the committed jump vantage has no terrain under it")
+	var rig := prepare_motion_capture(player, world, get_tree().root, "jump")
+	if not rig["problem"].is_empty():
+		_fail(rig["problem"])
 		return
-	player.global_position = Vector3(0.0, ground + 0.1, WALK_VANTAGE_Z)
-	player.face_toward(Vector3.ZERO)
-	var skeleton := CharacterFactory.find_skeleton(player.get_node("Visual"))
-	if skeleton == null:
-		_fail("the shipped Wanderer has no recipe skeleton")
-		return
-
-	var body := skeleton.get_parent()
-	var idle := body.get_node_or_null("BreathingIdle") if body != null else null
-	if idle != null:
-		idle.set_process(false)
-		BreathingIdle.apply_at(skeleton, 0.0)
-
-	skeleton.force_update_all_bone_transforms()
-	var chest := skeleton.find_bone("spine_03")
-	var left_foot := skeleton.find_bone("foot_l")
-	if chest < 0 or left_foot < 0:
-		_fail("the jump evidence rig lacks spine_03 or foot_l")
-		return
-	var focus: Vector3 = skeleton.global_transform * skeleton.get_bone_global_pose(chest).origin
-	var cam := Camera3D.new()
-	cam.far = 400.0
-	cam.fov = 42.0
-	get_tree().root.add_child(cam)
-	cam.global_position = focus + Vector3(WALK_CAM_SIDE, WALK_CAM_RISE, -WALK_CAM_FRONT)
-	cam.look_at(focus - Vector3(0.0, 0.45, 0.0), Vector3.UP)
+	var skeleton: Skeleton3D = rig["skeleton"]
+	var left_foot: int = rig["left_foot"]
+	var cam: Camera3D = rig["camera"]
 
 	var foot_positions: Array[Vector3] = []
 	for i in JUMP_SPEEDS.size():

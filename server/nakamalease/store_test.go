@@ -5,16 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"reflect"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/devantler-tech/world-at-ruin/server/internal/savefixturetest"
 	"github.com/devantler-tech/world-at-ruin/server/sim"
 	"github.com/heroiclabs/nakama-common/api"
 	"github.com/heroiclabs/nakama-common/runtime"
@@ -1593,38 +1591,14 @@ func TestEveryShippedLeaseSchemaShapeStaysReadable(t *testing.T) {
 		{staging, dispatched, unclaimed, claimed, releasing, stagingReleasing, dispatchedReleasing},
 	}
 
-	ledgerBytes, err := os.ReadFile(filepath.Join(
-		"testdata",
-		"shipped_lease_versions.txt",
-	))
-	if err != nil {
-		t.Fatalf("read lease schema ledger: %v", err)
-	}
-	versions := strings.Fields(string(ledgerBytes))
-	if len(versions) != len(wantSchemas) {
+	fixtures := savefixturetest.Read(t, "lease")
+	if len(fixtures) != len(wantSchemas) {
 		t.Fatalf("lease schema ledger has %d versions, want %d independent expectation sets",
-			len(versions), len(wantSchemas))
+			len(fixtures), len(wantSchemas))
 	}
-	for index, rawVersion := range versions {
-		version, err := strconv.Atoi(rawVersion)
-		if err != nil {
-			t.Fatalf("lease schema ledger entry %q: %v", rawVersion, err)
-		}
-		if version != index+1 {
-			t.Fatalf(
-				"lease schema ledger[%d] = %d, want %d",
-				index,
-				version,
-				index+1,
-			)
-		}
-		goldenBytes, err := os.ReadFile(filepath.Join(
-			"testdata",
-			fmt.Sprintf("golden_lease_v%d.json", version),
-		))
-		if err != nil {
-			t.Fatalf("read lease schema %d goldens: %v", version, err)
-		}
+	for index, fixture := range fixtures {
+		version := fixture.Version
+		goldenBytes := fixture.Bytes
 		var goldens []json.RawMessage
 		if err := json.Unmarshal(goldenBytes, &goldens); err != nil {
 			t.Fatalf("decode lease schema %d golden set: %v", version, err)
@@ -1680,13 +1654,8 @@ func TestEveryShippedLeaseSchemaShapeStaysReadable(t *testing.T) {
 			})
 		}
 	}
-	lastVersion, err := strconv.Atoi(versions[len(versions)-1])
-	if err != nil || lastVersion != schemaVersion {
-		t.Fatalf(
-			"lease schema ledger head = %q, writer = %d",
-			versions[len(versions)-1],
-			schemaVersion,
-		)
+	if head := fixtures[len(fixtures)-1].Version; head != schemaVersion {
+		t.Fatalf("lease schema ledger head = %d, writer = %d", head, schemaVersion)
 	}
 }
 

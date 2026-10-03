@@ -10,7 +10,6 @@ import (
 
 	"github.com/devantler-tech/world-at-ruin/server/nakamastorage"
 	"github.com/devantler-tech/world-at-ruin/server/playerstate"
-	"github.com/heroiclabs/nakama-common/runtime"
 )
 
 const (
@@ -85,31 +84,9 @@ func (s *Store) Load(ctx context.Context, subjectID string) (Record, error) {
 	if err != nil {
 		return Record{}, err
 	}
-	objects, err := s.storage.StorageRead(ctx, []*runtime.StorageRead{
-		{
-			Collection: Collection,
-			Key:        characterRecordKey(subjectID),
-			UserID:     "",
-		},
-	})
-	if err != nil {
-		return Record{}, nakamastorage.SanitizeError(ctx, err, ErrStorage)
-	}
-	if len(objects) == 0 {
-		return Record{}, ErrNotFound
-	}
-	if len(objects) != 1 {
-		return Record{}, ErrStorage
-	}
-	object := objects[0]
-	if object == nil ||
-		object.GetCollection() != Collection ||
-		object.GetKey() != characterRecordKey(subjectID) ||
-		object.GetUserId() != systemOwnerID ||
-		object.GetVersion() == "" ||
-		object.GetPermissionRead() != 0 ||
-		object.GetPermissionWrite() != 0 {
-		return Record{}, ErrStorage
+	object, err := nakamastorage.ReadSystemOwned(ctx, s.storage, Collection, characterRecordKey(subjectID))
+	if err := nakamastorage.ReadError(err, ErrNotFound, ErrStorage); err != nil {
+		return Record{}, err
 	}
 	character, err := decodeCharacterDocument(object.GetValue())
 	if err != nil {
@@ -131,11 +108,8 @@ func (s *Store) Save(ctx context.Context, request SaveRequest) error {
 	if request.ExpectedVersion == "" {
 		return errors.New("nakama character: observed version is required")
 	}
-	if request.ExpectedVersion != "*" {
-		_, err := s.Load(ctx, subjectID)
-		if err != nil && !errors.Is(err, ErrNotFound) {
-			return err
-		}
+	if err := nakamastorage.LoadBeforeReplace(ctx, subjectID, request.ExpectedVersion, ErrNotFound, s.Load); err != nil {
+		return err
 	}
 	value, err := encodeCharacterDocument(request.Character)
 	if err != nil {

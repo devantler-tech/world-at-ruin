@@ -1,0 +1,10 @@
+{
+  "version": "next",
+  "date": "2026-10-03",
+  "title": "Keeping the private server connected",
+  "notes": [
+    "The owner-only server trial can refresh its certificate without ending an otherwise healthy connection every hour.",
+    "New connections still check the server's identity, and unusable replacement certificates are refused.",
+    "The trial still shows scripted walkers; shared characters and online progression remain in development. Ordinary launches and saved progress are unchanged."
+  ]
+}

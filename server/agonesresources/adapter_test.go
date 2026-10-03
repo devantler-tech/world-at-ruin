@@ -9,7 +9,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"net"
 	"strings"
 	"sync"
 	"testing"
@@ -26,13 +25,13 @@ import (
 	"github.com/devantler-tech/world-at-ruin/server/gameserverapi"
 	"github.com/devantler-tech/world-at-ruin/server/handoff"
 	"github.com/devantler-tech/world-at-ruin/server/handoffalloc"
+	"github.com/devantler-tech/world-at-ruin/server/internal/envelopetest"
+	"github.com/devantler-tech/world-at-ruin/server/internal/grpctest"
 	"github.com/devantler-tech/world-at-ruin/server/nakamalease"
 	"github.com/devantler-tech/world-at-ruin/server/sim"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
-	"google.golang.org/grpc/test/bufconn"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -114,18 +113,8 @@ func sealedEnvelope(
 	secret []byte,
 ) string {
 	t.Helper()
-	label := []byte(strings.Join([]string{
-		"world-at-ruin/zone-admission/v1",
-		testNamespace,
-		name,
-		string(uid),
-		fingerprint,
-	}, "\x00"))
-	ciphertext, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, &key.PublicKey, secret, label)
-	if err != nil {
-		t.Fatalf("seal test envelope: %v", err)
-	}
-	return "v1." + base64.RawURLEncoding.EncodeToString(ciphertext)
+	return envelopetest.Seal(t, &key.PublicKey, testNamespace, name, string(uid), fingerprint, secret)
+
 }
 
 type allocationHandler func(
@@ -190,29 +179,9 @@ func newFixture(t *testing.T, mutate func(*Config)) *fixture {
 	}
 	f.allocations.handle = f.commitAllocation
 
-	listener := bufconn.Listen(1024 * 1024)
-	grpcServer := grpc.NewServer()
-	allocationpb.RegisterAllocationServiceServer(grpcServer, f.allocations)
-	go func() {
-		_ = grpcServer.Serve(listener)
-	}()
-	t.Cleanup(grpcServer.Stop)
-	t.Cleanup(func() {
-		_ = listener.Close()
-	})
-	conn, err := grpc.NewClient(
-		"passthrough:///agones-resources-test",
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
-			return listener.DialContext(ctx)
-		}),
+	conn := grpctest.Connect(t, "passthrough:///agones-resources-test",
+		func(server *grpc.Server) { allocationpb.RegisterAllocationServiceServer(server, f.allocations) },
 	)
-	if err != nil {
-		t.Fatalf("create allocation test client: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = conn.Close()
-	})
 
 	allocator, err := agonesalloc.NewClient(
 		allocationpb.NewAllocationServiceClient(conn),
@@ -1057,8 +1026,7 @@ func TestResolveRefusesAnyChangedComponent(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			f := newFixture(t, nil)
-			f.seed(f.readyGameServer("zone-1", "uid-1"))
-			lease, _ := provisionedLease(t, f)
+			lease := f.pinnedGameServer()
 			test.mutate(f, &lease)
 
 			got, err := f.adapter.Resolve(context.Background(), lease)
@@ -1079,8 +1047,7 @@ func TestResolveRefusesAnyChangedComponent(t *testing.T) {
 func TestReleaseDeletesOnlyTheExactPinnedObject(t *testing.T) {
 	t.Run("pinned lease deletes with its UID precondition", func(t *testing.T) {
 		f := newFixture(t, nil)
-		f.seed(f.readyGameServer("zone-1", "uid-1"))
-		lease, _ := provisionedLease(t, f)
+		lease := f.pinnedGameServer()
 
 		if err := f.adapter.Release(context.Background(), lease); err != nil {
 			t.Fatalf("Release returned an error: %v", err)
@@ -1097,8 +1064,7 @@ func TestReleaseDeletesOnlyTheExactPinnedObject(t *testing.T) {
 	})
 	t.Run("any state is releasable", func(t *testing.T) {
 		f := newFixture(t, nil)
-		f.seed(f.readyGameServer("zone-1", "uid-1"))
-		lease, _ := provisionedLease(t, f)
+		lease := f.pinnedGameServer()
 		gs := f.stored("zone-1").DeepCopy()
 		gs.Status.State = agonesv1.GameServerStateShutdown
 		f.replace(gs)
@@ -1112,8 +1078,7 @@ func TestReleaseDeletesOnlyTheExactPinnedObject(t *testing.T) {
 	})
 	t.Run("a newer incarnation under the same name is untouched", func(t *testing.T) {
 		f := newFixture(t, nil)
-		f.seed(f.readyGameServer("zone-1", "uid-1"))
-		lease, _ := provisionedLease(t, f)
+		lease := f.pinnedGameServer()
 		f.replace(f.allocatedGameServer("zone-1", "uid-recreated", testAttemptID))
 
 		if err := f.adapter.Release(context.Background(), lease); err != nil {
@@ -1125,8 +1090,7 @@ func TestReleaseDeletesOnlyTheExactPinnedObject(t *testing.T) {
 	})
 	t.Run("another attempt's object is untouched", func(t *testing.T) {
 		f := newFixture(t, nil)
-		f.seed(f.readyGameServer("zone-1", "uid-1"))
-		lease, _ := provisionedLease(t, f)
+		lease := f.pinnedGameServer()
 		gs := f.stored("zone-1").DeepCopy()
 		gs.Labels[agones.AttemptLabel] = attemptDigest(f.t, "attempt-8")
 		f.replace(gs)
@@ -1173,8 +1137,7 @@ func TestReleaseDeletesOnlyTheExactPinnedObject(t *testing.T) {
 		} {
 			t.Run(refusal.name, func(t *testing.T) {
 				f := newFixture(t, nil)
-				f.seed(f.readyGameServer("zone-1", "uid-1"))
-				lease, _ := provisionedLease(t, f)
+				lease := f.pinnedGameServer()
 				f.clientset.PrependReactor("delete", "gameservers", func(clienttesting.Action) (bool, runtime.Object, error) {
 					return true, nil, refusal.err
 				})
@@ -1187,8 +1150,7 @@ func TestReleaseDeletesOnlyTheExactPinnedObject(t *testing.T) {
 	})
 	t.Run("another failure is reported", func(t *testing.T) {
 		f := newFixture(t, nil)
-		f.seed(f.readyGameServer("zone-1", "uid-1"))
-		lease, _ := provisionedLease(t, f)
+		lease := f.pinnedGameServer()
 		f.clientset.PrependReactor("delete", "gameservers", func(clienttesting.Action) (bool, runtime.Object, error) {
 			return true, nil, apierrors.NewServiceUnavailable("etcd is down")
 		})
@@ -1475,8 +1437,7 @@ func TestAKeyTheKeyringNoLongerHoldsIsRefusedButStillReleasable(t *testing.T) {
 func TestReleaseProvesOwnershipByUIDAlone(t *testing.T) {
 	t.Run("port-less object is still deleted", func(t *testing.T) {
 		f := newFixture(t, nil)
-		f.seed(f.readyGameServer("zone-1", "uid-1"))
-		lease, _ := provisionedLease(t, f)
+		lease := f.pinnedGameServer()
 		gs := f.stored("zone-1").DeepCopy()
 		gs.Status.State = agonesv1.GameServerStateShutdown
 		gs.Status.Ports = nil
@@ -1524,8 +1485,7 @@ func TestReleaseProvesOwnershipByUIDAlone(t *testing.T) {
 	})
 	t.Run("re-sealed object under the same UID is still deleted", func(t *testing.T) {
 		f := newFixture(t, nil)
-		f.seed(f.readyGameServer("zone-1", "uid-1"))
-		lease, _ := provisionedLease(t, f)
+		lease := f.pinnedGameServer()
 		gs := f.stored("zone-1").DeepCopy()
 		gs.Annotations[agones.AdmissionEnvelopeAnnotation] = sealedEnvelope(
 			f.t, f.key, "zone-1", "uid-1", f.fingerprint, secretFor("re-sealed"),
@@ -1544,8 +1504,7 @@ func TestReleaseProvesOwnershipByUIDAlone(t *testing.T) {
 	})
 	t.Run("object with no envelope at all is still deleted", func(t *testing.T) {
 		f := newFixture(t, nil)
-		f.seed(f.readyGameServer("zone-1", "uid-1"))
-		lease, _ := provisionedLease(t, f)
+		lease := f.pinnedGameServer()
 		gs := f.stored("zone-1").DeepCopy()
 		delete(gs.Annotations, agones.AdmissionEnvelopeAnnotation)
 		f.replace(gs)
@@ -1559,8 +1518,7 @@ func TestReleaseProvesOwnershipByUIDAlone(t *testing.T) {
 	})
 	t.Run("a lease naming an allocation with no reference fails closed", func(t *testing.T) {
 		f := newFixture(t, nil)
-		f.seed(f.readyGameServer("zone-1", "uid-1"))
-		lease, _ := provisionedLease(t, f)
+		lease := f.pinnedGameServer()
 		lease.SecretRef = ""
 
 		if err := f.adapter.Release(context.Background(), lease); !errors.Is(err, ErrInvalidResource) {
@@ -1635,8 +1593,7 @@ func TestATransientAPIFailureStaysRetryable(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			f := newFixture(t, nil)
-			f.seed(f.readyGameServer("zone-1", "uid-1"))
-			lease, _ := provisionedLease(t, f)
+			lease := f.pinnedGameServer()
 			f.clientset.PrependReactor("get", "gameservers", func(clienttesting.Action) (bool, runtime.Object, error) {
 				return true, nil, test.err
 			})
@@ -1693,4 +1650,12 @@ func TestNewAdapterRefusesClientsNamingDifferentPools(t *testing.T) {
 	if adapter, err := NewAdapter(f.adapter.allocator, other, f.keyring, f.config()); err == nil || adapter != nil {
 		t.Fatalf("NewAdapter accepted clients naming different Fleets: %+v, %v", adapter, err)
 	}
+}
+
+// pinnedGameServer observes a real successful allocation before ownership tests.
+func (f *fixture) pinnedGameServer() nakamalease.Lease {
+	f.t.Helper()
+	f.seed(f.readyGameServer("zone-1", "uid-1"))
+	lease, _ := provisionedLease(f.t, f)
+	return lease
 }

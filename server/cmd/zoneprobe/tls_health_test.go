@@ -208,11 +208,14 @@ func TestTLSOnlyStalledPeerIsBoundedAndConnectionCloses(t *testing.T) {
 	}
 }
 
-// TestTLSOnlyDeadlineIncludesBlockedCloseNotify covers a peer that stops reading after handshake.
+// TestTLSOnlyDeadlineIncludesBlockedCloseNotify covers cancellation of a peer
+// that has completed its handshake but refuses to read the shutdown record.
 func TestTLSOnlyDeadlineIncludesBlockedCloseNotify(t *testing.T) {
 	serverRaw, clientRaw := net.Pipe()
 	defer func() { _ = serverRaw.Close() }()
+	defer func() { _ = clientRaw.Close() }()
 	serverConfig := healthTLSConfig(t)
+	serverConfig.MinVersion = tls.VersionTLS13
 	leaf, err := x509.ParseCertificate(serverConfig.Certificates[0].Certificate[0])
 	if err != nil {
 		t.Fatal(err)
@@ -223,26 +226,74 @@ func TestTLSOnlyDeadlineIncludesBlockedCloseNotify(t *testing.T) {
 	handshake := make(chan error, 1)
 	go func() {
 		handshake <- server.HandshakeContext(t.Context())
-		// Deliberately do not read: the peer's close_notify must be bounded
-		// by the health deadline, even after a successful handshake.
+		// Deliberately do not read after handshake.
 	}()
-	ctx, cancel := context.WithTimeout(t.Context(), 80*time.Millisecond)
+	// Setup has its own safety bound. Cancellation starts only after observing
+	// the real close-notify write, so a slow handshake cannot satisfy this test.
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	started := time.Now()
-	err = completeTLSHealth(ctx, clientRaw, &tls.Config{
-		MinVersion: tls.VersionTLS12, RootCAs: trust, ServerName: "zoneprobe.example",
-	})
-	if err == nil || time.Since(started) > time.Second {
-		t.Fatalf("TLS close escaped the total deadline: elapsed=%s err=%v", time.Since(started), err)
+	shutdown := &closeNotifyProbeConn{Conn: clientRaw, started: make(chan struct{})}
+	result := make(chan error, 1)
+	go func() {
+		result <- completeTLSHealth(ctx, shutdown, &tls.Config{
+			MinVersion: tls.VersionTLS13,
+			RootCAs:    trust, ServerName: "zoneprobe.example",
+		})
+	}()
+	select {
+	case <-shutdown.started:
+	case err := <-result:
+		t.Fatalf("probe ended before reaching blocked TLS shutdown: %v", err)
+	case <-ctx.Done():
+		t.Fatal("test did not reach the shutdown record")
 	}
 	select {
 	case err := <-handshake:
 		if err != nil {
 			t.Fatalf("test did not reach a successful handshake: %v", err)
 		}
-	case <-time.After(time.Second):
+	case <-ctx.Done():
 		t.Fatal("server handshake remained blocked")
 	}
+	started := time.Now()
+	cancel()
+	select {
+	case err := <-result:
+		if err == nil || time.Since(started) > time.Second {
+			t.Fatalf("TLS close escaped cancellation: elapsed=%s err=%v", time.Since(started), err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("TLS close remained blocked after cancellation")
+	}
+}
+
+// closeNotifyProbeConn observes the second encrypted record from this TLS 1.3
+// client: Finished completes its unauthenticated-client handshake, then Close
+// writes the alert. net.Pipe still blocks that write until production releases it.
+type closeNotifyProbeConn struct {
+	net.Conn
+	started          chan struct{}
+	once             sync.Once
+	encryptedRecords int
+}
+
+func (conn *closeNotifyProbeConn) Write(payload []byte) (int, error) {
+	// A write can contain several complete TLS records (including the
+	// compatibility ChangeCipherSpec); count encrypted records by framing.
+	for remaining := payload; len(remaining) >= 5; {
+		size := 5 + (int(remaining[3]) << 8) + int(remaining[4])
+		if size > len(remaining) {
+			break
+		}
+		if remaining[0] == 23 { // TLS 1.3 encrypted record.
+			conn.encryptedRecords++
+			if conn.encryptedRecords == 2 {
+				conn.once.Do(func() { close(conn.started) })
+			}
+		}
+		remaining = remaining[size:]
+	}
+	return conn.Conn.Write(payload)
 }
 
 // changedProbeCertificate signs controlled identity or lifetime variations with a fixture key.

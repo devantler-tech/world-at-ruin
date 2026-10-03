@@ -293,15 +293,7 @@ func _ledger_keys(path: String) -> Array:
 
 
 func _shipped_ids() -> PackedStringArray:
-	var out := PackedStringArray()
-	var f := FileAccess.open(SHIPPED, FileAccess.READ)
-	if f == null:
-		return out
-	while not f.eof_reached():
-		var line := f.get_line().strip_edges()
-		if line != "" and not line.begins_with("#"):
-			out.append(line)
-	return out
+	return LedgerTestSupport.names(SHIPPED)
 
 
 func _with(base: Dictionary, key: String, value: Variant) -> Dictionary:

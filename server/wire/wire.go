@@ -558,15 +558,10 @@ func (r *reader) delta(version uint16) (sim.SnapshotDelta, error) {
 	return d, nil
 }
 
+// casts reads a bounded cast list only after validating the entire encoded byte span.
 func (r *reader) casts(list string) ([]sim.ActiveCast, error) {
-	n, err := r.u32()
+	n, err := r.listCount(list, MaxCasts, activeCastSize)
 	if err != nil {
-		return nil, err
-	}
-	if n > MaxCasts {
-		return nil, fmt.Errorf("%w: %s claims %d entries", ErrCount, list, n)
-	}
-	if err := r.need(int(n) * activeCastSize); err != nil {
 		return nil, err
 	}
 	if n == 0 {
@@ -607,14 +602,8 @@ func (r *reader) vec3Unchecked() sim.Vec3 {
 // the length check and BEFORE any allocation, so a hostile count is reported
 // as ErrCount and can never size a buffer.
 func (r *reader) states(list string) ([]sim.EntityState, error) {
-	n, err := r.u32()
+	n, err := r.listCount(list, MaxEntities, entityStateSize)
 	if err != nil {
-		return nil, err
-	}
-	if n > MaxEntities {
-		return nil, fmt.Errorf("%w: %s claims %d entries", ErrCount, list, n)
-	}
-	if err := r.need(int(n) * entityStateSize); err != nil {
 		return nil, err
 	}
 	if n == 0 {
@@ -638,14 +627,8 @@ func (r *reader) states(list string) ([]sim.EntityState, error) {
 
 // ids reads a count-prefixed EntityID list, under the same cap-first rule.
 func (r *reader) ids(list string) ([]sim.EntityID, error) {
-	n, err := r.u32()
+	n, err := r.listCount(list, MaxEntities, idSize)
 	if err != nil {
-		return nil, err
-	}
-	if n > MaxEntities {
-		return nil, fmt.Errorf("%w: %s claims %d entries", ErrCount, list, n)
-	}
-	if err := r.need(int(n) * idSize); err != nil {
 		return nil, err
 	}
 	if n == 0 {
@@ -657,4 +640,19 @@ func (r *reader) ids(list string) ([]sim.EntityID, error) {
 		ids[i] = sim.EntityID(v)
 	}
 	return ids, nil
+}
+
+// listCount enforces the count cap before byte-length checks and allocation.
+func (r *reader) listCount(list string, maximum uint32, width int) (uint32, error) {
+	n, err := r.u32()
+	if err != nil {
+		return 0, err
+	}
+	if n > maximum {
+		return 0, fmt.Errorf("%w: %s claims %d entries", ErrCount, list, n)
+	}
+	if err := r.need(int(n) * width); err != nil {
+		return 0, err
+	}
+	return n, nil
 }

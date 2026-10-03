@@ -4,15 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"math"
-	"os"
-	"path/filepath"
 	"reflect"
-	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/devantler-tech/world-at-ruin/server/internal/savefixturetest"
+	"github.com/devantler-tech/world-at-ruin/server/nakamastorage/nakamastoragetest"
 	"github.com/heroiclabs/nakama-common/api"
 	"github.com/heroiclabs/nakama-common/runtime"
 )
@@ -24,198 +21,75 @@ const (
 		`"record_key":"carried",`
 )
 
-type storedObject struct {
-	collection      string
-	key             string
-	userID          string
-	value           string
-	version         string
-	permissionRead  int32
-	permissionWrite int32
-}
+type storedObject = nakamastoragetest.Object
 
 type fakeStorage struct {
-	objects             map[string]storedObject
-	readCalls           int
-	readErr             error
-	writeCalls          [][]*runtime.StorageWrite
-	next                int
+	*nakamastoragetest.Fake
 	writeErrBeforeApply error
 	writeErrAfterApply  error
 	panicAfterApply     bool
 }
 
 func newFakeStorage() *fakeStorage {
-	return &fakeStorage{
-		objects: make(map[string]storedObject),
-		next:    1,
-	}
+	return &fakeStorage{Fake: nakamastoragetest.New()}
 }
 
-func (f *fakeStorage) seed(object storedObject) {
-	f.objects[storageObjectID(object.collection, object.key, object.userID)] = object
-}
+func (f *fakeStorage) seed(object storedObject) { f.Seed(object) }
 
-func (f *fakeStorage) StorageRead(
-	_ context.Context,
-	reads []*runtime.StorageRead,
-) ([]*api.StorageObject, error) {
-	f.readCalls++
-	if f.readErr != nil {
-		return nil, f.readErr
-	}
-	objects := make([]*api.StorageObject, 0, len(reads))
-	for _, read := range reads {
-		ownerID := storageOwnerID(read.UserID)
-		object, ok := f.objects[storageObjectID(
-			read.Collection,
-			read.Key,
-			ownerID,
-		)]
-		if !ok {
-			continue
+// Keep this suite's conditional-write and one-shot process-fault policy local.
+func (f *fakeStorage) StorageWrite(ctx context.Context, writes []*runtime.StorageWrite) ([]*api.StorageObjectAck, error) {
+	f.BeforeWrite = func(_ int) error {
+		if f.writeErrBeforeApply != nil {
+			err := f.writeErrBeforeApply
+			f.writeErrBeforeApply = nil
+			return err
 		}
-		objects = append(objects, &api.StorageObject{
-			Collection:      object.collection,
-			Key:             object.key,
-			UserId:          object.userID,
-			Value:           object.value,
-			Version:         object.version,
-			PermissionRead:  object.permissionRead,
-			PermissionWrite: object.permissionWrite,
-		})
-	}
-	return objects, nil
-}
-
-func (f *fakeStorage) StorageWrite(
-	_ context.Context,
-	writes []*runtime.StorageWrite,
-) ([]*api.StorageObjectAck, error) {
-	call := make([]*runtime.StorageWrite, len(writes))
-	copy(call, writes)
-	f.writeCalls = append(f.writeCalls, call)
-	if f.writeErrBeforeApply != nil {
-		err := f.writeErrBeforeApply
-		f.writeErrBeforeApply = nil
-		return nil, err
-	}
-
-	for _, write := range writes {
-		ownerID := storageOwnerID(write.UserID)
-		current, exists := f.objects[storageObjectID(
-			write.Collection,
-			write.Key,
-			ownerID,
-		)]
-		switch {
-		case write.Version == "*" && exists:
-			return nil, runtime.ErrStorageRejectedVersion
-		case write.Version != "*" &&
-			(!exists || write.Version != current.version):
-			return nil, runtime.ErrStorageRejectedVersion
+		for _, write := range writes {
+			if write.Version == "" {
+				return runtime.ErrStorageRejectedVersion
+			}
 		}
+		return nil
 	}
-
-	acks := make([]*api.StorageObjectAck, 0, len(writes))
-	for _, write := range writes {
-		ownerID := storageOwnerID(write.UserID)
-		if write.PermissionRead < math.MinInt32 ||
-			write.PermissionRead > math.MaxInt32 ||
-			write.PermissionWrite < math.MinInt32 ||
-			write.PermissionWrite > math.MaxInt32 {
-			return nil, errors.New("invalid permission")
+	f.AfterWrite = func(_ int) error {
+		if f.writeErrAfterApply != nil {
+			err := f.writeErrAfterApply
+			f.writeErrAfterApply = nil
+			return err
 		}
-		version := fmt.Sprintf("v%d", f.next)
-		f.next++
-		f.objects[storageObjectID(
-			write.Collection,
-			write.Key,
-			ownerID,
-		)] = storedObject{
-			collection:      write.Collection,
-			key:             write.Key,
-			userID:          ownerID,
-			value:           write.Value,
-			version:         version,
-			permissionRead:  int32(write.PermissionRead),
-			permissionWrite: int32(write.PermissionWrite),
+		if f.panicAfterApply {
+			f.panicAfterApply = false
+			panic("simulated process crash after storage commit")
 		}
-		acks = append(acks, &api.StorageObjectAck{
-			Collection: write.Collection,
-			Key:        write.Key,
-			UserId:     ownerID,
-			Version:    version,
-		})
+		return nil
 	}
-	if f.writeErrAfterApply != nil {
-		err := f.writeErrAfterApply
-		f.writeErrAfterApply = nil
-		return nil, err
-	}
-	if f.panicAfterApply {
-		f.panicAfterApply = false
-		panic("simulated process crash after storage commit")
-	}
-	return acks, nil
-}
-
-func storageObjectID(collection, key, userID string) string {
-	return collection + "\x00" + key + "\x00" + userID
-}
-
-func storageOwnerID(ownerID string) string {
-	if ownerID == "" {
-		return systemOwnerID
-	}
-	return ownerID
+	return f.Fake.StorageWrite(ctx, writes)
 }
 
 func TestApplyCommitsPlayerRecordAndAuditInOneAtomicWrite(t *testing.T) {
 	t.Parallel()
 
-	storage := newFakeStorage()
-	storage.seed(storedObject{
-		collection:      "world_at_ruin_inventory",
-		key:             "carried",
-		userID:          testSubjectID,
-		value:           `{"items":[],"schema":1}`,
-		version:         "observed",
-		permissionRead:  0,
-		permissionWrite: 0,
-	})
+	storage := seededInventoryStorage()
 	store, err := NewStore(storage)
 	if err != nil {
 		t.Fatalf("NewStore() error = %v", err)
 	}
 
-	result, err := store.Apply(context.Background(), Mutation{
-		SubjectID:      testSubjectID,
-		IdempotencyKey: "quest:ember:reward",
-		Operation:      "grant_item",
-		Payload: json.RawMessage(
-			`{"quantity":1,"item_id":"ash-blade"}`,
-		),
-		Record: RecordWrite{
-			Collection:      "world_at_ruin_inventory",
-			Key:             "carried",
-			ExpectedVersion: "observed",
-			Value: json.RawMessage(
-				`{"schema":1,"items":["ash-blade"]}`,
-			),
-		},
-		Outcome: json.RawMessage(`{"item_count":1}`),
-	})
+	mutation := inventoryMutation(testSubjectID, "quest:ember:reward")
+	// Retain unsorted input: this assertion also proves canonical serialization.
+	mutation.Payload = json.RawMessage(`{"quantity":1,"item_id":"ash-blade"}`)
+	mutation.Record.Value = json.RawMessage(`{"schema":1,"items":["ash-blade"]}`)
+	result, err := store.Apply(context.Background(), mutation)
 	if err != nil {
 		t.Fatalf("Apply() error = %v", err)
 	}
 	if string(result.Outcome) != `{"item_count":1}` {
 		t.Fatalf("Apply() outcome = %s", result.Outcome)
 	}
-	if len(storage.writeCalls) != 1 {
-		t.Fatalf("StorageWrite() calls = %d, want 1", len(storage.writeCalls))
+	if len(storage.WriteCalls) != 1 {
+		t.Fatalf("StorageWrite() calls = %d, want 1", len(storage.WriteCalls))
 	}
-	writes := storage.writeCalls[0]
+	writes := storage.WriteCalls[0]
 	if len(writes) != 2 {
 		t.Fatalf("atomic StorageWrite() batch size = %d, want 2", len(writes))
 	}
@@ -270,21 +144,21 @@ func TestClientOwnedAuditPreseedCannotReplayASystemMutation(t *testing.T) {
 	mutation.Record.ExpectedVersion = "*"
 	mutation.Record.SystemOwned = true
 	storage.seed(storedObject{
-		collection: AuditCollection,
-		key: auditKey(
+		Collection: AuditCollection,
+		Key: auditKey(
 			testSubjectID,
 			mutation.Record.Collection,
 			mutation.Record.Key,
 			mutation.IdempotencyKey,
 		),
-		userID: testSubjectID,
-		value: `{"schema":1,` + testAuditIdentityFields +
+		UserID: testSubjectID,
+		Value: `{"schema":1,` + testAuditIdentityFields +
 			`"operation":"grant_item",` +
 			`"payload":{"item_id":"ash-blade","quantity":1},` +
 			`"outcome":{"item_count":999}}`,
-		version:         "attacker-version",
-		permissionRead:  0,
-		permissionWrite: 0,
+		Version:         "attacker-version",
+		PermissionRead:  0,
+		PermissionWrite: 0,
 	})
 
 	store, err := NewStore(storage)
@@ -298,10 +172,10 @@ func TestClientOwnedAuditPreseedCannotReplayASystemMutation(t *testing.T) {
 	if string(result.Outcome) != `{"item_count":1}` {
 		t.Fatalf("Apply() outcome = %s", result.Outcome)
 	}
-	if len(storage.writeCalls) != 1 {
-		t.Fatalf("StorageWrite() calls = %d, want 1", len(storage.writeCalls))
+	if len(storage.WriteCalls) != 1 {
+		t.Fatalf("StorageWrite() calls = %d, want 1", len(storage.WriteCalls))
 	}
-	writes := storage.writeCalls[0]
+	writes := storage.WriteCalls[0]
 	if len(writes) != 2 || writes[1].Collection != AuditCollection ||
 		writes[1].UserID != "" {
 		t.Fatalf("system mutation writes = %#v", writes)
@@ -311,37 +185,15 @@ func TestClientOwnedAuditPreseedCannotReplayASystemMutation(t *testing.T) {
 func TestApplyReplaysTheOriginalOutcomeWithoutWritingAgain(t *testing.T) {
 	t.Parallel()
 
-	storage := newFakeStorage()
-	storage.seed(storedObject{
-		collection:      "world_at_ruin_inventory",
-		key:             "carried",
-		userID:          testSubjectID,
-		value:           `{"items":[],"schema":1}`,
-		version:         "observed",
-		permissionRead:  0,
-		permissionWrite: 0,
-	})
+	storage := seededInventoryStorage()
 	store, err := NewStore(storage)
 	if err != nil {
 		t.Fatalf("NewStore() error = %v", err)
 	}
-	mutation := Mutation{
-		SubjectID:      testSubjectID,
-		IdempotencyKey: "quest:ember:reward",
-		Operation:      "grant_item",
-		Payload: json.RawMessage(
-			`{"quantity":1,"item_id":"ash-blade"}`,
-		),
-		Record: RecordWrite{
-			Collection:      "world_at_ruin_inventory",
-			Key:             "carried",
-			ExpectedVersion: "observed",
-			Value: json.RawMessage(
-				`{"schema":1,"items":["ash-blade"]}`,
-			),
-		},
-		Outcome: json.RawMessage(`{"item_count":1}`),
-	}
+	mutation := inventoryMutation(testSubjectID, "quest:ember:reward")
+	// Retain unsorted input: this assertion also proves canonical serialization.
+	mutation.Payload = json.RawMessage(`{"quantity":1,"item_id":"ash-blade"}`)
+	mutation.Record.Value = json.RawMessage(`{"schema":1,"items":["ash-blade"]}`)
 	if _, err := store.Apply(context.Background(), mutation); err != nil {
 		t.Fatalf("first Apply() error = %v", err)
 	}
@@ -358,10 +210,10 @@ func TestApplyReplaysTheOriginalOutcomeWithoutWritingAgain(t *testing.T) {
 	if string(result.Outcome) != `{"item_count":1}` {
 		t.Fatalf("replayed Apply() outcome = %s", result.Outcome)
 	}
-	if len(storage.writeCalls) != 1 {
+	if len(storage.WriteCalls) != 1 {
 		t.Fatalf(
 			"StorageWrite() calls after replay = %d, want 1",
-			len(storage.writeCalls),
+			len(storage.WriteCalls),
 		)
 	}
 }
@@ -378,18 +230,18 @@ func TestApplyIgnoresClientOwnedAuditAtDerivedKey(t *testing.T) {
 		mutation.IdempotencyKey,
 	)
 	storage.seed(storedObject{
-		collection: AuditCollection,
-		key:        auditObjectKey,
-		userID:     testSubjectID,
-		value: `{"schema":1,` +
+		Collection: AuditCollection,
+		Key:        auditObjectKey,
+		UserID:     testSubjectID,
+		Value: `{"schema":1,` +
 			`"idempotency_key":"quest:ember:reward",` +
 			`"record_collection":"world_at_ruin_inventory",` +
 			`"record_key":"carried","operation":"grant_item",` +
 			`"payload":{"item_id":"ash-blade","quantity":1},` +
 			`"outcome":{"item_count":999}}`,
-		version:         "client-owned",
-		permissionRead:  0,
-		permissionWrite: 0,
+		Version:         "client-owned",
+		PermissionRead:  0,
+		PermissionWrite: 0,
 	})
 	store, err := NewStore(storage)
 	if err != nil {
@@ -403,14 +255,10 @@ func TestApplyIgnoresClientOwnedAuditAtDerivedKey(t *testing.T) {
 	if string(result.Outcome) != `{"item_count":1}` {
 		t.Fatalf("Apply() outcome = %s, want authoritative outcome", result.Outcome)
 	}
-	if len(storage.writeCalls) != 1 {
-		t.Fatalf("StorageWrite() calls = %d, want 1", len(storage.writeCalls))
+	if len(storage.WriteCalls) != 1 {
+		t.Fatalf("StorageWrite() calls = %d, want 1", len(storage.WriteCalls))
 	}
-	if _, ok := storage.objects[storageObjectID(
-		AuditCollection,
-		auditObjectKey,
-		systemOwnerID,
-	)]; !ok {
+	if _, ok := storage.Get(AuditCollection, auditObjectKey, systemOwnerID); !ok {
 		t.Fatal("Apply() did not create server-owned audit evidence")
 	}
 }
@@ -422,13 +270,13 @@ func TestApplyReconcilesACommittedMutationWhoseResponseWasLost(
 
 	storage := newFakeStorage()
 	storage.seed(storedObject{
-		collection:      "world_at_ruin_inventory",
-		key:             "carried",
-		userID:          testSubjectID,
-		value:           `{"items":[],"schema":1}`,
-		version:         "observed",
-		permissionRead:  0,
-		permissionWrite: 0,
+		Collection:      "world_at_ruin_inventory",
+		Key:             "carried",
+		UserID:          testSubjectID,
+		Value:           `{"items":[],"schema":1}`,
+		Version:         "observed",
+		PermissionRead:  0,
+		PermissionWrite: 0,
 	})
 	storage.writeErrAfterApply = errors.New("connection reset after commit")
 	store, err := NewStore(storage)
@@ -460,17 +308,17 @@ func TestApplyReconcilesACommittedMutationWhoseResponseWasLost(
 	if string(result.Outcome) != `{"item_count":1}` {
 		t.Fatalf("reconciled Apply() outcome = %s", result.Outcome)
 	}
-	if len(storage.writeCalls) != 1 {
-		t.Fatalf("StorageWrite() calls = %d, want 1", len(storage.writeCalls))
+	if len(storage.WriteCalls) != 1 {
+		t.Fatalf("StorageWrite() calls = %d, want 1", len(storage.WriteCalls))
 	}
 
 	if _, err := store.Apply(context.Background(), mutation); err != nil {
 		t.Fatalf("later replay Apply() error = %v", err)
 	}
-	if len(storage.writeCalls) != 1 {
+	if len(storage.WriteCalls) != 1 {
 		t.Fatalf(
 			"StorageWrite() calls after later replay = %d, want 1",
-			len(storage.writeCalls),
+			len(storage.WriteCalls),
 		)
 	}
 }
@@ -514,10 +362,10 @@ func TestApplyReplayAfterProcessCrashDoesNotWriteAgain(t *testing.T) {
 	if string(result.Outcome) != `{"item_count":1}` {
 		t.Fatalf("Apply() after process crash outcome = %s", result.Outcome)
 	}
-	if len(storage.writeCalls) != 1 {
+	if len(storage.WriteCalls) != 1 {
 		t.Fatalf(
 			"StorageWrite() calls after process crash replay = %d, want 1",
-			len(storage.writeCalls),
+			len(storage.WriteCalls),
 		)
 	}
 }
@@ -534,7 +382,7 @@ func TestApplySanitizesStorageFailures(t *testing.T) {
 		{
 			name: "read",
 			configure: func(storage *fakeStorage) {
-				storage.readErr = errors.New(sensitiveMessage)
+				storage.ReadErr = errors.New(sensitiveMessage)
 			},
 			want: ErrStorage,
 		},
@@ -648,10 +496,10 @@ func TestApplyRejectsKeyReuseForADifferentMutation(t *testing.T) {
 					ErrKeyConflict,
 				)
 			}
-			if len(storage.writeCalls) != 1 {
+			if len(storage.WriteCalls) != 1 {
 				t.Fatalf(
 					"StorageWrite() calls after conflict = %d, want 1",
-					len(storage.writeCalls),
+					len(storage.WriteCalls),
 				)
 			}
 		})
@@ -676,13 +524,13 @@ func TestApplyKeepsDistinctKeysForTheSameEffectDistinct(t *testing.T) {
 	if _, err := store.Apply(context.Background(), second); err != nil {
 		t.Fatalf("second Apply() error = %v", err)
 	}
-	if len(storage.writeCalls) != 2 {
-		t.Fatalf("StorageWrite() calls = %d, want 2", len(storage.writeCalls))
+	if len(storage.WriteCalls) != 2 {
+		t.Fatalf("StorageWrite() calls = %d, want 2", len(storage.WriteCalls))
 	}
 
 	auditCount := 0
-	for _, object := range storage.objects {
-		if object.collection == AuditCollection {
+	for _, object := range storage.Objects() {
+		if object.Collection == AuditCollection {
 			auditCount++
 		}
 	}
@@ -706,13 +554,13 @@ func TestApplyScopesTheSameRawKeyBySubjectAndRecord(t *testing.T) {
 			subjectID: secondSubjectID,
 			recordKey: "carried",
 			recordSeed: storedObject{
-				collection:      "world_at_ruin_inventory",
-				key:             "carried",
-				userID:          secondSubjectID,
-				value:           `{"items":[],"schema":1}`,
-				version:         "second-observed",
-				permissionRead:  0,
-				permissionWrite: 0,
+				Collection:      "world_at_ruin_inventory",
+				Key:             "carried",
+				UserID:          secondSubjectID,
+				Value:           `{"items":[],"schema":1}`,
+				Version:         "second-observed",
+				PermissionRead:  0,
+				PermissionWrite: 0,
 			},
 		},
 		{
@@ -720,13 +568,13 @@ func TestApplyScopesTheSameRawKeyBySubjectAndRecord(t *testing.T) {
 			subjectID: testSubjectID,
 			recordKey: "stash",
 			recordSeed: storedObject{
-				collection:      "world_at_ruin_inventory",
-				key:             "stash",
-				userID:          testSubjectID,
-				value:           `{"items":[],"schema":1}`,
-				version:         "second-observed",
-				permissionRead:  0,
-				permissionWrite: 0,
+				Collection:      "world_at_ruin_inventory",
+				Key:             "stash",
+				UserID:          testSubjectID,
+				Value:           `{"items":[],"schema":1}`,
+				Version:         "second-observed",
+				PermissionRead:  0,
+				PermissionWrite: 0,
 			},
 		},
 	}
@@ -759,9 +607,9 @@ func TestApplyScopesTheSameRawKeyBySubjectAndRecord(t *testing.T) {
 			}
 
 			auditKeys := make(map[string]struct{})
-			for _, object := range storage.objects {
-				if object.collection == AuditCollection {
-					auditKeys[object.key] = struct{}{}
+			for _, object := range storage.Objects() {
+				if object.Collection == AuditCollection {
+					auditKeys[object.Key] = struct{}{}
 				}
 			}
 			if len(auditKeys) != 2 {
@@ -831,18 +679,18 @@ func TestApplyRejectsMalformedAuditDocuments(t *testing.T) {
 
 			storage := seededInventoryStorage()
 			storage.seed(storedObject{
-				collection: AuditCollection,
-				key: auditKey(
+				Collection: AuditCollection,
+				Key: auditKey(
 					testSubjectID,
 					"world_at_ruin_inventory",
 					"carried",
 					"quest:ember:reward",
 				),
-				userID:          systemOwnerID,
-				value:           test.value,
-				version:         "audit-version",
-				permissionRead:  0,
-				permissionWrite: 0,
+				UserID:          systemOwnerID,
+				Value:           test.value,
+				Version:         "audit-version",
+				PermissionRead:  0,
+				PermissionWrite: 0,
 			})
 			store, err := NewStore(storage)
 			if err != nil {
@@ -856,10 +704,10 @@ func TestApplyRejectsMalformedAuditDocuments(t *testing.T) {
 			if !errors.Is(err, ErrStorage) {
 				t.Fatalf("Apply() error = %v, want %v", err, ErrStorage)
 			}
-			if len(storage.writeCalls) != 0 {
+			if len(storage.WriteCalls) != 0 {
 				t.Fatalf(
 					"StorageWrite() calls = %d, want 0",
-					len(storage.writeCalls),
+					len(storage.WriteCalls),
 				)
 			}
 		})
@@ -942,11 +790,11 @@ func TestApplyRejectsInvalidMutationBeforeStorage(t *testing.T) {
 			); err == nil {
 				t.Fatal("Apply() error = nil")
 			}
-			if storage.readCalls != 0 || len(storage.writeCalls) != 0 {
+			if storage.ReadCalls != 0 || len(storage.WriteCalls) != 0 {
 				t.Fatalf(
 					"storage calls before rejection = reads %d, writes %d",
-					storage.readCalls,
-					len(storage.writeCalls),
+					storage.ReadCalls,
+					len(storage.WriteCalls),
 				)
 			}
 		})
@@ -967,14 +815,14 @@ func TestApplyCreatesAPlayerRecordConditionallyWithItsAudit(t *testing.T) {
 	if _, err := store.Apply(context.Background(), mutation); err != nil {
 		t.Fatalf("Apply() create error = %v", err)
 	}
-	if len(storage.writeCalls) != 1 ||
-		len(storage.writeCalls[0]) != 2 {
+	if len(storage.WriteCalls) != 1 ||
+		len(storage.WriteCalls[0]) != 2 {
 		t.Fatalf(
 			"atomic StorageWrite() calls = %#v",
-			storage.writeCalls,
+			storage.WriteCalls,
 		)
 	}
-	recordWrite := storage.writeCalls[0][0]
+	recordWrite := storage.WriteCalls[0][0]
 	if recordWrite.Version != "*" {
 		t.Fatalf("record create version = %q, want *", recordWrite.Version)
 	}
@@ -985,17 +833,7 @@ func TestApplyCreatesAPlayerRecordConditionallyWithItsAudit(t *testing.T) {
 func TestEveryShippedAuditSchemaStaysReadable(t *testing.T) {
 	t.Parallel()
 
-	ledgerBytes, err := os.ReadFile(filepath.Join(
-		"testdata",
-		"shipped_audit_versions.txt",
-	))
-	if err != nil {
-		t.Fatalf("read audit schema ledger: %v", err)
-	}
-	lines := strings.Fields(string(ledgerBytes))
-	if len(lines) == 0 {
-		t.Fatal("audit schema ledger is empty")
-	}
+	fixtures := savefixturetest.Read(t, "audit")
 	wantDocuments := []auditDocument{
 		{
 			Schema:           1,
@@ -1007,30 +845,13 @@ func TestEveryShippedAuditSchemaStaysReadable(t *testing.T) {
 			Outcome:          json.RawMessage(`{"item_count":1}`),
 		},
 	}
-	if len(lines) != len(wantDocuments) {
-		t.Fatalf("audit ledger has %d versions, but preservation is checked for %d", len(lines), len(wantDocuments))
+	if len(fixtures) != len(wantDocuments) {
+		t.Fatalf("audit ledger has %d versions, but preservation is checked for %d", len(fixtures), len(wantDocuments))
 	}
 	for index, wantDocument := range wantDocuments {
-		line := lines[index]
-		version, err := strconv.Atoi(line)
-		if err != nil {
-			t.Fatalf("audit schema ledger line %q: %v", line, err)
-		}
-		if version != index+1 {
-			t.Fatalf(
-				"audit schema ledger[%d] = %d, want %d",
-				index,
-				version,
-				index+1,
-			)
-		}
-		goldenBytes, err := os.ReadFile(filepath.Join(
-			"testdata",
-			fmt.Sprintf("golden_audit_v%d.json", version),
-		))
-		if err != nil {
-			t.Fatalf("read audit schema %d golden: %v", version, err)
-		}
+		fixture := fixtures[index]
+		version := fixture.Version
+		goldenBytes := fixture.Bytes
 		document, err := decodeAuditDocument(
 			strings.TrimSpace(string(goldenBytes)),
 		)
@@ -1046,26 +867,21 @@ func TestEveryShippedAuditSchemaStaysReadable(t *testing.T) {
 			)
 		}
 	}
-	lastVersion, err := strconv.Atoi(lines[len(lines)-1])
-	if err != nil || lastVersion != auditSchema {
-		t.Fatalf(
-			"audit schema ledger head = %q, writer = %d",
-			lines[len(lines)-1],
-			auditSchema,
-		)
+	if head := fixtures[len(fixtures)-1].Version; head != auditSchema {
+		t.Fatalf("audit schema ledger head = %d, writer = %d", head, auditSchema)
 	}
 }
 
 func seededInventoryStorage() *fakeStorage {
 	storage := newFakeStorage()
 	storage.seed(storedObject{
-		collection:      "world_at_ruin_inventory",
-		key:             "carried",
-		userID:          testSubjectID,
-		value:           `{"items":[],"schema":1}`,
-		version:         "observed",
-		permissionRead:  0,
-		permissionWrite: 0,
+		Collection:      "world_at_ruin_inventory",
+		Key:             "carried",
+		UserID:          testSubjectID,
+		Value:           `{"items":[],"schema":1}`,
+		Version:         "observed",
+		PermissionRead:  0,
+		PermissionWrite: 0,
 	})
 	return storage
 }

@@ -448,11 +448,9 @@ func TestAddMobPanicsOnDuplicate(t *testing.T) {
 	w.AddMob(1, MobParams{})
 }
 
+// newChaseWorld uses the default chase parameters for a world with the canonical caster and target.
 func newChaseWorld() *World {
-	w := NewWorld(combatBounds)
-	w.Add(Entity{ID: 100, Pos: Vec3{}, MaxSpeed: 3_000})
-	w.Add(Entity{ID: 1, Pos: Vec3{X: 6_000}})
-	w.AddMob(100, MobParams{
+	return chaseWorldWith(MobParams{
 		AggroRadiusMM:  10_000,
 		CastRangeMM:    2_000,
 		ChaseSpeedMM:   3_000,
@@ -460,21 +458,22 @@ func newChaseWorld() *World {
 		CooldownTicks:  600,
 		CircleRadiusMM: 1_500,
 	})
+}
+
+// chaseWorldWith builds the deterministic caster and target world with the requested mob
+// parameters.
+func chaseWorldWith(params MobParams) *World {
+	w := NewWorld(combatBounds)
+	w.Add(Entity{ID: 100, Pos: Vec3{}, MaxSpeed: 3_000})
+	w.Add(Entity{ID: 1, Pos: Vec3{X: 6_000}})
+	w.AddMob(100, params)
 	return w
 }
 
+// TestRegisteredMobChasesToCastRangeByDefault checks that default chase movement reaches cast range
+// using authoritative integer state.
 func TestRegisteredMobChasesToCastRangeByDefault(t *testing.T) {
-	w := NewWorld(combatBounds)
-	w.Add(Entity{ID: 100, Pos: Vec3{}, MaxSpeed: 3_000})
-	w.Add(Entity{ID: 1, Pos: Vec3{X: 6_000}})
-	w.AddMob(100, MobParams{
-		AggroRadiusMM:  10_000,
-		CastRangeMM:    2_000,
-		ChaseSpeedMM:   3_000,
-		CastTicks:      4,
-		CooldownTicks:  600,
-		CircleRadiusMM: 1_500,
-	})
+	w := newChaseWorld()
 
 	w.Step()
 	if casts := w.ActiveCasts(); len(casts) != 0 {
@@ -509,11 +508,10 @@ func TestRegisteredMobChasesToCastRangeByDefault(t *testing.T) {
 	}
 }
 
+// TestMobWithZeroChaseSpeedRemainsAStationaryCaster preserves zero-speed movement and casting
+// behavior.
 func TestMobWithZeroChaseSpeedRemainsAStationaryCaster(t *testing.T) {
-	w := NewWorld(combatBounds)
-	w.Add(Entity{ID: 100, Pos: Vec3{}, MaxSpeed: 3_000})
-	w.Add(Entity{ID: 1, Pos: Vec3{X: 6_000}})
-	w.AddMob(100, MobParams{
+	w := chaseWorldWith(MobParams{
 		AggroRadiusMM:  10_000,
 		ChaseSpeedMM:   0,
 		CastTicks:      4,

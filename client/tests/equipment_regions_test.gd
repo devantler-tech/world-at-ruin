@@ -1,4 +1,4 @@
-extends Node
+extends "res://tests/boolean_verdict.gd"
 ## Regression test for the wardrobe REGION vocabulary (#251, under epic #222).
 ##
 ## #222 specifies the wardrobe the game's visual progression is built on — you
@@ -58,7 +58,6 @@ const WARDROBE := {
 ## written so far, so they may never be renamed or dropped — only added to.
 const INCUMBENT_REGIONS := ["torso", "legs", "feet"]
 
-var _failed := false
 
 
 func _ready() -> void:
@@ -174,14 +173,3 @@ func _piece_count(registry: Dictionary, region: String) -> int:
 	# is baked in the pelvis region but deliberately cannot be selected or
 	# removed, so counting raw registry pieces would expose a dead picker.
 	return CharacterCreator._pieces_in_slot(registry, region).size()
-
-
-func _check(actual: bool, expected: bool, label: String) -> void:
-	if _failed:
-		return
-	if actual != expected:
-		_failed = true
-		var message := "%s — expected %s, got %s" % [label, expected, actual]
-		push_error(message)
-		print("TEST FAIL — %s" % message)
-		get_tree().quit(1)

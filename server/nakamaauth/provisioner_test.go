@@ -6,21 +6,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"os"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/devantler-tech/world-at-ruin/server/internal/grpctest"
 	"github.com/heroiclabs/nakama-common/api"
 	"github.com/heroiclabs/nakama/v3/apigrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
-	"google.golang.org/grpc/test/bufconn"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
@@ -416,60 +414,40 @@ func provisionerAgainstWithBindings(
 ) *Provisioner {
 	t.Helper()
 
-	listener := bufconn.Listen(1024 * 1024)
-	grpcServer := grpc.NewServer(grpc.UnaryInterceptor(
-		func(
-			ctx context.Context,
-			request any,
-			info *grpc.UnaryServerInfo,
-			handler grpc.UnaryHandler,
-		) (any, error) {
-			if info.FullMethod == apigrpc.Nakama_AuthenticateEmail_FullMethodName {
-				md, _ := metadata.FromIncomingContext(ctx)
-				if gatewayAuthorization := md.Get("grpcgateway-authorization"); len(
-					gatewayAuthorization,
-				) != 0 {
-					return nil, status.Error(
-						codes.Unauthenticated,
-						"inherited gRPC-Gateway authorization",
+	conn := grpctest.Connect(t, "passthrough:///nakama-provisioning-test",
+		func(grpcServer *grpc.Server) { apigrpc.RegisterNakamaServer(grpcServer, server) },
+		grpc.UnaryInterceptor(
+			func(
+				ctx context.Context,
+				request any,
+				info *grpc.UnaryServerInfo,
+				handler grpc.UnaryHandler,
+			) (any, error) {
+				if info.FullMethod == apigrpc.Nakama_AuthenticateEmail_FullMethodName {
+					md, _ := metadata.FromIncomingContext(ctx)
+					if gatewayAuthorization := md.Get("grpcgateway-authorization"); len(
+						gatewayAuthorization,
+					) != 0 {
+						return nil, status.Error(
+							codes.Unauthenticated,
+							"inherited gRPC-Gateway authorization",
+						)
+					}
+					authorization := md.Get("authorization")
+					wantAuthorization := "Basic " + base64.StdEncoding.EncodeToString(
+						[]byte(testNakamaServerKey+":"),
 					)
+					if len(authorization) != 1 || authorization[0] != wantAuthorization {
+						return nil, status.Error(
+							codes.Unauthenticated,
+							"invalid Nakama server-key authorization",
+						)
+					}
 				}
-				authorization := md.Get("authorization")
-				wantAuthorization := "Basic " + base64.StdEncoding.EncodeToString(
-					[]byte(testNakamaServerKey+":"),
-				)
-				if len(authorization) != 1 || authorization[0] != wantAuthorization {
-					return nil, status.Error(
-						codes.Unauthenticated,
-						"invalid Nakama server-key authorization",
-					)
-				}
-			}
-			return handler(ctx, request)
-		},
-	))
-	apigrpc.RegisterNakamaServer(grpcServer, server)
-	go func() {
-		_ = grpcServer.Serve(listener)
-	}()
-	t.Cleanup(grpcServer.Stop)
-	t.Cleanup(func() {
-		_ = listener.Close()
-	})
-
-	conn, err := grpc.NewClient(
-		"passthrough:///nakama-provisioning-test",
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
-			return listener.DialContext(ctx)
-		}),
+				return handler(ctx, request)
+			},
+		),
 	)
-	if err != nil {
-		t.Fatalf("create Nakama test client: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = conn.Close()
-	})
 
 	return newProvisioner(
 		apigrpc.NewNakamaClient(conn),

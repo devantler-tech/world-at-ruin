@@ -106,15 +106,17 @@ func _ready() -> void:
 		return
 	var foreign := SaveVault.record_discoveries(
 		SaveVault.empty(), [SaveVault.DISCOVERY_WARDENS_SHRINE])
-	if not _foreign_write(PROBE, foreign):
+	var observation := PersistenceTestSupport.interposed_write(PROBE, JSON.stringify(foreign),
+		func() -> bool: return SaveVault.replace_if_unchanged(
+			PROBE, SaveVault.attune(current, SaveVault.SHRINE_WARDENS), expected))
+	if not observation["seeded"]:
 		_fail("could not simulate a foreign writer")
 		return
-	var foreign_bytes := _read(PROBE)
-	if SaveVault.replace_if_unchanged(
-			PROBE, SaveVault.attune(current, SaveVault.SHRINE_WARDENS), expected):
+	var foreign_bytes: String = observation["before"]
+	if observation["result"]:
 		_fail("a write over a FOREIGN writer's vault SUCCEEDED — its progression is silently lost")
 		return
-	if _read(PROBE) != foreign_bytes:
+	if observation["after"] != foreign_bytes:
 		_fail("a refused write still modified the foreign writer's vault — it must be byte-intact")
 		return
 
@@ -156,14 +158,16 @@ func _ready() -> void:
 	if absent != SaveVault.IDENTITY_ABSENT:
 		_fail("a removed vault did not report the absent identity")
 		return
-	if not _foreign_write(PROBE, foreign):
+	var appeared := PersistenceTestSupport.interposed_write(PROBE, JSON.stringify(foreign),
+		func() -> bool: return SaveVault.replace_if_unchanged(PROBE, SaveVault.empty(), absent))
+	if not appeared["seeded"]:
 		_fail("could not simulate a vault appearing under an absent expectation")
 		return
-	var appeared_bytes := _read(PROBE)
-	if SaveVault.replace_if_unchanged(PROBE, SaveVault.empty(), absent):
+	var appeared_bytes: String = appeared["before"]
+	if appeared["result"]:
 		_fail("a write expecting NO vault replaced one that had appeared — its progression is lost")
 		return
-	if _read(PROBE) != appeared_bytes:
+	if appeared["after"] != appeared_bytes:
 		_fail("the refused absent-expectation write still modified the vault")
 		return
 

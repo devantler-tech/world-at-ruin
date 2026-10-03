@@ -132,8 +132,7 @@ func adopt(existing Record, want document) (Record, error) {
 
 // validAcknowledgement requires the exact private write identity and a usable version.
 func validAcknowledgement(acks []*api.StorageObjectAck, generationID string) bool {
-	return len(acks) == 1 && acks[0] != nil && acks[0].GetCollection() == Collection &&
-		acks[0].GetKey() == generationID && acks[0].GetUserId() == nakamastorage.SystemOwnerID &&
+	return len(acks) == 1 && nakamastorage.ValidAcknowledgement(acks[0], Collection, generationID, nakamastorage.SystemOwnerID) &&
 		validVersion(acks[0].GetVersion())
 }
 

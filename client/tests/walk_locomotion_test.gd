@@ -68,23 +68,17 @@ const SETTLE_DELTA := 0.02
 ## at the tie where float dust decides.
 const MAX_RUN_PHASE_SHARE := 0.85
 
-var _had_flag := false
-var _original_flag := ""
-var _had_run_flag := false
-var _original_run_flag := ""
+var _flag_state: Dictionary = {}
 var _recipe: Dictionary = {}
 
 
 func _ready() -> void:
-	_had_flag = OS.has_environment(FLAG)
-	_original_flag = OS.get_environment(FLAG)
-	_had_run_flag = OS.has_environment(RUN_FLAG)
-	_original_run_flag = OS.get_environment(RUN_FLAG)
-	var loaded = CharacterFactory.load_recipe(RECIPE_PATH)
-	if not (loaded is Dictionary):
-		_fail("could not load %s" % RECIPE_PATH)
+	_flag_state = TestEnvironment.snapshot([FLAG, RUN_FLAG])
+	var fixture := LocomotionTestSupport.recipe_fixture(RECIPE_PATH)
+	if not fixture["problem"].is_empty():
+		_fail(fixture["problem"])
 		return
-	_recipe = loaded
+	_recipe = fixture["recipe"]
 
 	if not _check_default_off():
 		return
@@ -581,11 +575,7 @@ func _same_pose(
 		b: Dictionary,
 		message: String,
 		epsilon: float = POSE_EPSILON) -> bool:
-	var difference := LocomotionTestSupport.pose_difference(a, b, DRIVEN_BONES, epsilon, _angle_between)
-	if not difference.is_empty():
-		return _fail("%s (%s differs by %.6f rad)" %
-			[message, difference["bone"], difference["angle"]]) if not message.is_empty() else false
-	return true
+	return LocomotionTestSupport.same_pose(a, b, DRIVEN_BONES, epsilon, _angle_between, message, _fail)
 
 
 ## The angle between two rotations, exact near zero. `Quaternion.angle_to` works
@@ -613,14 +603,7 @@ func _free_subject(subject: Dictionary) -> void:
 
 
 func _restore_flag() -> void:
-	if _had_flag:
-		OS.set_environment(FLAG, _original_flag)
-	else:
-		OS.unset_environment(FLAG)
-	if _had_run_flag:
-		OS.set_environment(RUN_FLAG, _original_run_flag)
-	else:
-		OS.unset_environment(RUN_FLAG)
+	TestEnvironment.restore(_flag_state)
 func _fail(message: String) -> bool:
 	Input.action_release("move_forward")
 	Input.action_release("sprint")

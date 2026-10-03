@@ -75,26 +75,13 @@ func _fail(message: String) -> void:
 
 
 func _load_stream() -> Dictionary:
-	var text := FileAccess.get_file_as_string(FIXTURE)
-	if text.is_empty():
-		_fail("fixture %s is missing or empty — the cross-tier contract has no anchor" % FIXTURE)
+	var fixture := StreamFixtureSupport.load_stream(FIXTURE,
+		"fixture %s is missing or empty — the cross-tier contract has no anchor" % FIXTURE,
+		"fixture has no 'stream' section — regenerate with WAR_RECORD_STREAM=1 (see server/wire/crosstier_stream_test.go)")
+	if not fixture["problem"].is_empty():
+		_fail(fixture["problem"])
 		return {}
-	var parsed: Variant = JSON.parse_string(text)
-	if parsed is not Dictionary:
-		_fail("fixture %s did not parse as a JSON object" % FIXTURE)
-		return {}
-	var root: Dictionary = parsed
-	if root.get("stream") is not Dictionary:
-		_fail("fixture has no 'stream' section — regenerate with WAR_RECORD_STREAM=1 (see server/wire/crosstier_stream_test.go)")
-		return {}
-	var stream: Dictionary = root["stream"]
-	if stream.get("frames") is not Array or (stream["frames"] as Array).is_empty():
-		_fail("fixture stream has no frames")
-		return {}
-	if stream.get("end_state") is not Dictionary:
-		_fail("fixture stream has no end_state")
-		return {}
-	return stream
+	return fixture["stream"]
 
 
 ## Decode every fixture frame and fold it into one store; the result must be

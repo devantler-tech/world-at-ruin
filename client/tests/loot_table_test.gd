@@ -1,4 +1,4 @@
-extends Node
+extends "res://tests/boolean_verdict.gd"
 ## Regression test for the LootTable drop layer (issue #87).
 ##
 ## Two product laws meet in a drop table, and this pins both. FIRST, the roll is
@@ -17,7 +17,6 @@ extends Node
 ##
 ## Run: godot --headless --path client res://tests/loot_table_test.tscn
 
-var _failed := false
 
 
 func _ready() -> void:
@@ -174,17 +173,3 @@ func _sweep_trace(table: LootTable) -> String:
 	for roll: int in range(-2, table.total_weight() + 2):
 		ids.append(_id_at(table, roll))
 	return ",".join(ids)
-
-
-func _check(actual: bool, expected: bool, label: String) -> void:
-	if _failed:
-		return
-	if actual != expected:
-		_fail("%s — expected %s, got %s" % [label, expected, actual])
-
-
-func _fail(message: String) -> void:
-	_failed = true
-	push_error(message)
-	print("TEST FAIL — %s" % message)
-	get_tree().quit(1)

@@ -447,11 +447,19 @@ func TestGetAllocatedValidatesExactObservedIdentity(t *testing.T) {
 	}
 }
 
-func TestGetAllocatedReturnsDetachedMetadataSnapshot(t *testing.T) {
-	seed := validGameServer("zone-1", "uid-1")
-	clientset := agonesfake.NewSimpleClientset(seed)
-	client := clientAgainst(t, clientset, validConfig())
+// allocatedFixture binds the client and seeded object to one exact identity.
+// Scenario-owned assertions still inspect the detached result or API actions.
+func allocatedFixture(t *testing.T) (*Client, *agonesfake.Clientset, Identity) {
+	t.Helper()
 	identity := Identity{Namespace: testNamespace, Name: "zone-1", UID: "uid-1"}
+	clientset := agonesfake.NewSimpleClientset(validGameServer(identity.Name, identity.UID))
+	return clientAgainst(t, clientset, validConfig()), clientset, identity
+}
+
+// TestGetAllocatedReturnsDetachedMetadataSnapshot verifies caller mutations never
+// change the API object's labels or annotations on a subsequent read.
+func TestGetAllocatedReturnsDetachedMetadataSnapshot(t *testing.T) {
+	client, _, identity := allocatedFixture(t)
 
 	got, err := client.GetAllocated(context.Background(), identity, testAttemptID)
 	if err != nil {
@@ -485,11 +493,9 @@ func isZeroGameServer(gameServer GameServer) bool {
 		gameServer.Annotations == nil
 }
 
+// TestDeleteUsesExactUIDPrecondition pins one API delete to the observed UID.
 func TestDeleteUsesExactUIDPrecondition(t *testing.T) {
-	seed := validGameServer("zone-1", "uid-1")
-	clientset := agonesfake.NewSimpleClientset(seed)
-	client := clientAgainst(t, clientset, validConfig())
-	identity := Identity{Namespace: testNamespace, Name: "zone-1", UID: "uid-1"}
+	client, clientset, identity := allocatedFixture(t)
 
 	if err := client.Delete(context.Background(), identity); err != nil {
 		t.Fatalf("Delete returned an error: %v", err)

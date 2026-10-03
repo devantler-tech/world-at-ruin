@@ -140,16 +140,11 @@ func _ready() -> void:
 
 ## "" when the fixture survives the full write→load→re-save path, else why not.
 func _check_fixture(version: int, path: String) -> String:
-	var file := FileAccess.open(path, FileAccess.READ)
-	if file == null:
-		return "unreadable"
-	var raw := file.get_as_text()
-	var expected = JSON.parse_string(raw)
-	if expected is not Dictionary:
-		return "not a JSON object"
-	if int(expected.get("version", -1)) != version:
-		return "declares version %s but its filename says v%d — a stale copy cannot stand in for v%d coverage" % [
-			str(expected.get("version", "none")), version, version]
+	var fixture := PersistenceTestSupport.historical_fixture(path, version)
+	if not String(fixture["problem"]).is_empty():
+		return fixture["problem"]
+	var raw: String = fixture["raw"]
+	var expected: Dictionary = fixture["expected"]
 
 	# The fixture's raw bytes ARE the vault a historical client wrote — placed
 	# at the throwaway probe, never the player's own vault.
@@ -321,24 +316,7 @@ func _check_discovery_names() -> String:
 
 
 func _shipped_discoveries() -> Dictionary:
-	var file := FileAccess.open(SHIPPED_DISCOVERIES, FileAccess.READ)
-	if file == null:
-		return {}
-	var mappings := {}
-	while not file.eof_reached():
-		var line := file.get_line().strip_edges()
-		if line.is_empty() or line.begins_with("#"):
-			continue
-		var parts := line.split("=", false, 1)
-		if parts.size() != 2:
-			return {}
-		var name := String(parts[0]).strip_edges()
-		var landmark := String(parts[1]).strip_edges()
-		if name.is_empty() or landmark.is_empty() or mappings.has(name):
-			return {}
-		mappings[name] = landmark
-	file.close()
-	return mappings
+	return LedgerTestSupport.mappings(SHIPPED_DISCOVERIES)
 
 
 ## The refusal laws, exercised against a real fixture's bytes.
@@ -508,5 +486,4 @@ func _exit_tree() -> void:
 
 
 func _cleanup_probe() -> void:
-	if FileAccess.file_exists(PROBE):
-		DirAccess.remove_absolute(ProjectSettings.globalize_path(PROBE))
+	PersistenceTestSupport.remove_file(PROBE)

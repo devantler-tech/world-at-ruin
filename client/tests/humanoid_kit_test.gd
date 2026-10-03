@@ -29,29 +29,16 @@ func _ready() -> void:
 	var mesh: Mesh = fixture["mesh"]
 
 	var contracted: PackedStringArray = report["shapes"].split(",")
-	if mesh.get_blend_shape_count() != contracted.size():
-		_fail("blend shape count %d != contracted %d" % [mesh.get_blend_shape_count(), contracted.size()])
+	var shape_problem := KitTestSupport.shape_contract_problem(mesh, contracted, "blend shape")
+	if not shape_problem.is_empty():
+		_fail(shape_problem)
 		return
-	for i in contracted.size():
-		var actual := String(mesh.get_blend_shape_name(i))
-		if actual != contracted[i]:
-			_fail("blend shape %d is '%s', contract says '%s' — shipped shape names may never change" % [i, actual, contracted[i]])
-			return
 
-	var fp_a1 := KitTestSupport.mix_fingerprint(mesh, WEIGHTS_A)
-	var fp_a2 := KitTestSupport.mix_fingerprint(mesh, WEIGHTS_A)
-	var fp_b := KitTestSupport.mix_fingerprint(mesh, WEIGHTS_B)
-	var fp_zero := KitTestSupport.mix_fingerprint(mesh, {})
-	var fp_base := KitTestSupport.hash_bytes(KitTestSupport.base_vertices(mesh).to_byte_array())
-	if fp_a1 != fp_a2:
-		_fail("same weights produced different mixes:\n  %s\n  %s" % [fp_a1, fp_a2])
+	var mix := KitTestSupport.mix_contract(mesh, WEIGHTS_A, WEIGHTS_B)
+	if not String(mix["problem"]).is_empty():
+		_fail(mix["problem"])
 		return
-	if fp_a1 == fp_b:
-		_fail("different weights produced identical mixes: %s" % fp_a1)
-		return
-	if fp_zero != fp_base:
-		_fail("zero-weight mix differs from base geometry")
-		return
+	var fp_a1: String = mix["fingerprint"]
 
 	kit.free()
 	print("TEST PASS — kit v%s, %s bones, %d shapes, mix=%s" % [report["kit_version"], report["bones"], contracted.size(), fp_a1])

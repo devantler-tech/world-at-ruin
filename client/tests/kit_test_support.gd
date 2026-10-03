@@ -41,6 +41,18 @@ static func read_report(report_path: String) -> Dictionary:
 	return out
 
 
+## Compare imported shape count and order with the caller's historical contract.
+## Vocabulary is diagnostic only; creature and humanoid suites retain their labels.
+static func shape_contract_problem(mesh: Mesh, names: PackedStringArray, label: String) -> String:
+	if mesh.get_blend_shape_count() != names.size():
+		return "%s count %d != contracted %d" % [label, mesh.get_blend_shape_count(), names.size()]
+	for index in names.size():
+		var actual := String(mesh.get_blend_shape_name(index))
+		if actual != names[index]:
+			return "%s %d is '%s', contract says '%s' — shipped shape names may never change" % [label, index, actual, names[index]]
+	return ""
+
+
 static func find_skeleton(node: Node) -> Skeleton3D:
 	if node is Skeleton3D:
 		return node
@@ -91,3 +103,23 @@ static func hash_bytes(bytes: PackedByteArray) -> String:
 	ctx.start(HashingContext.HASH_SHA256)
 	ctx.update(bytes)
 	return ctx.finish().hex_encode()
+
+## Compare repeated, different and empty weight sets through the independent oracle.
+static func mix_contract(mesh: Mesh, weights_a: Dictionary, weights_b: Dictionary) -> Dictionary:
+	var first := mix_fingerprint(mesh, weights_a)
+	var second := mix_fingerprint(mesh, weights_a)
+	var different := mix_fingerprint(mesh, weights_b)
+	var zero := mix_fingerprint(mesh, {})
+	var base := hash_bytes(base_vertices(mesh).to_byte_array())
+	return {"problem": mix_problem(first, second, different, zero, base), "fingerprint": first}
+
+
+## Keep each failed comparison's diagnostic independent of the generator.
+static func mix_problem(first: String, second: String, different: String, zero: String, base: String) -> String:
+	if first != second:
+		return "same weights produced different mixes:\n  %s\n  %s" % [first, second]
+	if first == different:
+		return "different weights produced identical mixes: %s" % first
+	if zero != base:
+		return "zero-weight mix differs from base geometry"
+	return ""

@@ -31,14 +31,10 @@ func _ready() -> void:
 	var mesh: Mesh = fixture["mesh"]
 
 	var contracted: PackedStringArray = report["shapes"].split(",")
-	if mesh.get_blend_shape_count() != contracted.size():
-		_fail("morph count %d != contracted %d" % [mesh.get_blend_shape_count(), contracted.size()])
+	var shape_problem := KitTestSupport.shape_contract_problem(mesh, contracted, "morph")
+	if not shape_problem.is_empty():
+		_fail(shape_problem)
 		return
-	for i in contracted.size():
-		var actual := String(mesh.get_blend_shape_name(i))
-		if actual != contracted[i]:
-			_fail("morph %d is '%s', contract says '%s' — shipped shape names may never change" % [i, actual, contracted[i]])
-			return
 
 	# Forward-only: every shape that ever shipped is still present.
 	var present := {}
@@ -49,20 +45,11 @@ func _ready() -> void:
 			_fail("SHIPPED SHAPE '%s' VANISHED from the kit (no-resets law)" % shipped_shape)
 			return
 
-	var fp_a1 := KitTestSupport.mix_fingerprint(mesh, WEIGHTS_A)
-	var fp_a2 := KitTestSupport.mix_fingerprint(mesh, WEIGHTS_A)
-	var fp_b := KitTestSupport.mix_fingerprint(mesh, WEIGHTS_B)
-	var fp_zero := KitTestSupport.mix_fingerprint(mesh, {})
-	var fp_base := KitTestSupport.hash_bytes(KitTestSupport.base_vertices(mesh).to_byte_array())
-	if fp_a1 != fp_a2:
-		_fail("same weights produced different mixes:\n  %s\n  %s" % [fp_a1, fp_a2])
+	var mix := KitTestSupport.mix_contract(mesh, WEIGHTS_A, WEIGHTS_B)
+	if not String(mix["problem"]).is_empty():
+		_fail(mix["problem"])
 		return
-	if fp_a1 == fp_b:
-		_fail("different weights produced identical mixes: %s" % fp_a1)
-		return
-	if fp_zero != fp_base:
-		_fail("zero-weight mix differs from base geometry")
-		return
+	var fp_a1: String = mix["fingerprint"]
 
 	kit.free()
 	print("TEST PASS — ash hound kit v%s, %s bones, %d morphs, mix=%s" % [
@@ -71,15 +58,7 @@ func _ready() -> void:
 
 
 func _shipped_shapes() -> PackedStringArray:
-	var out := PackedStringArray()
-	var f := FileAccess.open(SHIPPED_SHAPES, FileAccess.READ)
-	if f == null:
-		return out
-	while not f.eof_reached():
-		var line := f.get_line().strip_edges()
-		if line != "" and not line.begins_with("#"):
-			out.append(line)
-	return out
+	return LedgerTestSupport.names(SHIPPED_SHAPES)
 
 
 func _fail(message: String) -> void:
