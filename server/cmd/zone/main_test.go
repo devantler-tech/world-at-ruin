@@ -160,12 +160,10 @@ func writeWrappingPublicKey(t *testing.T, bits int) string {
 	return path
 }
 
+// TestAgonesSealedAdmissionUsesObservedGameServerIdentity checks that admission material is
+// published for the observed Starting GameServer before readiness.
 func TestAgonesSealedAdmissionUsesObservedGameServerIdentity(t *testing.T) {
-	f, err := agonestest.Start(nil)
-	if err != nil {
-		t.Fatalf("start fake sidecar: %v", err)
-	}
-	t.Cleanup(f.Stop)
+	f := startSidecar(t)
 	f.SetGameServer("games", "zone-17", "uid-17", "Starting")
 	publicKeyFile := writeWrappingPublicKey(t, 3072)
 
@@ -175,11 +173,7 @@ func TestAgonesSealedAdmissionUsesObservedGameServerIdentity(t *testing.T) {
 		"-agones", "-agones-health-interval", "50ms",
 		"-agones-admission-public-key", publicKeyFile,
 	)
-	cmd.Env = append(os.Environ(),
-		"AGONES_SDK_GRPC_HOST=127.0.0.1",
-		"AGONES_SDK_GRPC_PORT="+f.PortString(),
-		"WAR_ZONE_ADMISSION_SECRET=",
-	)
+	cmd.Env = sidecarEnvironment(f, "WAR_ZONE_ADMISSION_SECRET=")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("sealed-admission run failed: %v\n%s", err, out)
@@ -205,12 +199,10 @@ func TestAgonesSealedAdmissionUsesObservedGameServerIdentity(t *testing.T) {
 	}
 }
 
+// TestAgonesSealedAdmissionRefusesAllocatableRestart prevents a restart from replacing admission
+// material on an already allocated GameServer.
 func TestAgonesSealedAdmissionRefusesAllocatableRestart(t *testing.T) {
-	f, err := agonestest.Start(nil)
-	if err != nil {
-		t.Fatalf("start fake sidecar: %v", err)
-	}
-	t.Cleanup(f.Stop)
+	f := startSidecar(t)
 	f.SetGameServer("games", "zone-17", "uid-17", "Allocated")
 
 	cmd := zoneCommand(t,
@@ -219,10 +211,7 @@ func TestAgonesSealedAdmissionRefusesAllocatableRestart(t *testing.T) {
 		"-agones",
 		"-agones-admission-public-key", writeWrappingPublicKey(t, 3072),
 	)
-	cmd.Env = append(os.Environ(),
-		"AGONES_SDK_GRPC_HOST=127.0.0.1",
-		"AGONES_SDK_GRPC_PORT="+f.PortString(),
-	)
+	cmd.Env = sidecarEnvironment(f)
 	out, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Fatalf("Allocated restart succeeded; want a loud refusal\n%s", out)
@@ -241,12 +230,10 @@ func TestAgonesSealedAdmissionRefusesAllocatableRestart(t *testing.T) {
 	}
 }
 
+// TestAgonesSealedAdmissionRefusesUndersizedWrappingKey requires rejection before readiness when
+// the RSA wrapping key is below the minimum size.
 func TestAgonesSealedAdmissionRefusesUndersizedWrappingKey(t *testing.T) {
-	f, err := agonestest.Start(nil)
-	if err != nil {
-		t.Fatalf("start fake sidecar: %v", err)
-	}
-	t.Cleanup(f.Stop)
+	f := startSidecar(t)
 	f.SetGameServer("games", "zone-17", "uid-17", "Starting")
 
 	cmd := zoneCommand(t,
@@ -255,10 +242,7 @@ func TestAgonesSealedAdmissionRefusesUndersizedWrappingKey(t *testing.T) {
 		"-agones",
 		"-agones-admission-public-key", writeWrappingPublicKey(t, 2048),
 	)
-	cmd.Env = append(os.Environ(),
-		"AGONES_SDK_GRPC_HOST=127.0.0.1",
-		"AGONES_SDK_GRPC_PORT="+f.PortString(),
-	)
+	cmd.Env = sidecarEnvironment(f)
 	out, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Fatalf("undersized wrapping key succeeded; want a loud refusal\n%s", out)
@@ -275,11 +259,7 @@ func TestAgonesSealedAdmissionRefusesUndersizedWrappingKey(t *testing.T) {
 // nothing faked but the sidecar: a valid certificate, the real wss listener,
 // Ready exactly once, live heartbeats, and a Shutdown on the deadline exit.
 func TestAgonesServesRealTLSWhenCertValid(t *testing.T) {
-	f, err := agonestest.Start(nil)
-	if err != nil {
-		t.Fatalf("start fake sidecar: %v", err)
-	}
-	t.Cleanup(f.Stop)
+	f := startSidecar(t)
 	certFile, keyFile := writeSelfSignedCert(t, time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
 
 	cmd := zoneCommand(t,
@@ -287,11 +267,7 @@ func TestAgonesServesRealTLSWhenCertValid(t *testing.T) {
 		"-duration", "400ms",
 		"-agones", "-agones-health-interval", "50ms",
 	)
-	cmd.Env = append(os.Environ(),
-		"AGONES_SDK_GRPC_HOST=127.0.0.1",
-		"AGONES_SDK_GRPC_PORT="+f.PortString(),
-		"WAR_ZONE_ADMISSION_SECRET="+strings.Repeat("ab", 32),
-	)
+	cmd.Env = sidecarEnvironment(f, "WAR_ZONE_ADMISSION_SECRET="+strings.Repeat("ab", 32))
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("valid-cert wss run failed: %v\n%s", err, out)
@@ -316,11 +292,7 @@ func TestAgonesServesRealTLSWhenCertValid(t *testing.T) {
 // parseable but expired certificate is an endpoint no client will accept, so
 // the process must die loudly with Ready never sent.
 func TestAgonesRefusesReadyWhenCertExpired(t *testing.T) {
-	f, err := agonestest.Start(nil)
-	if err != nil {
-		t.Fatalf("start fake sidecar: %v", err)
-	}
-	t.Cleanup(f.Stop)
+	f := startSidecar(t)
 	certFile, keyFile := writeSelfSignedCert(t, time.Now().Add(-2*time.Hour), time.Now().Add(-time.Hour))
 
 	cmd := zoneCommand(t,
@@ -331,11 +303,7 @@ func TestAgonesRefusesReadyWhenCertExpired(t *testing.T) {
 		"-duration", "300ms",
 		"-agones",
 	)
-	cmd.Env = append(os.Environ(),
-		"AGONES_SDK_GRPC_HOST=127.0.0.1",
-		"AGONES_SDK_GRPC_PORT="+f.PortString(),
-		"WAR_ZONE_ADMISSION_SECRET="+strings.Repeat("ab", 32),
-	)
+	cmd.Env = sidecarEnvironment(f, "WAR_ZONE_ADMISSION_SECRET="+strings.Repeat("ab", 32))
 	out, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Fatalf("expired-cert run succeeded; want a loud failure\n%s", out)
@@ -352,22 +320,14 @@ func TestAgonesRefusesReadyWhenCertExpired(t *testing.T) {
 // (SIGTERM) mid-run and requires a clean exit that still informed the
 // sidecar — the drain path an operator's fleet depends on.
 func TestAgonesSigtermShutsDownCleanly(t *testing.T) {
-	f, err := agonestest.Start(nil)
-	if err != nil {
-		t.Fatalf("start fake sidecar: %v", err)
-	}
-	t.Cleanup(f.Stop)
+	f := startSidecar(t)
 
 	cmd := zoneCommand(t,
 		"-allocation-id", "allocation-a", "-listen", "127.0.0.1:0", "-insecure-plaintext",
 		"-duration", "30s",
 		"-agones", "-agones-health-interval", "50ms",
 	)
-	cmd.Env = append(os.Environ(),
-		"AGONES_SDK_GRPC_HOST=127.0.0.1",
-		"AGONES_SDK_GRPC_PORT="+f.PortString(),
-		"WAR_ZONE_ADMISSION_SECRET="+strings.Repeat("ab", 32),
-	)
+	cmd.Env = sidecarEnvironment(f, "WAR_ZONE_ADMISSION_SECRET="+strings.Repeat("ab", 32))
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start zone: %v", err)
 	}
@@ -397,11 +357,7 @@ func TestAgonesSigtermShutsDownCleanly(t *testing.T) {
 // Agones it is Ready — otherwise the fleet allocates a GameServer whose TLS
 // endpoint never came up.
 func TestAgonesRefusesReadyWhenTLSBroken(t *testing.T) {
-	f, err := agonestest.Start(nil)
-	if err != nil {
-		t.Fatalf("start fake sidecar: %v", err)
-	}
-	t.Cleanup(f.Stop)
+	f := startSidecar(t)
 
 	cmd := zoneCommand(t,
 		"-allocation-id", "allocation-a", "-listen", "127.0.0.1:0",
@@ -409,11 +365,7 @@ func TestAgonesRefusesReadyWhenTLSBroken(t *testing.T) {
 		"-tls-key", filepath.Join(t.TempDir(), "missing-key.pem"),
 		"-agones",
 	)
-	cmd.Env = append(os.Environ(),
-		"AGONES_SDK_GRPC_HOST=127.0.0.1",
-		"AGONES_SDK_GRPC_PORT="+f.PortString(),
-		"WAR_ZONE_ADMISSION_SECRET="+strings.Repeat("ab", 32),
-	)
+	cmd.Env = sidecarEnvironment(f, "WAR_ZONE_ADMISSION_SECRET="+strings.Repeat("ab", 32))
 	out, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Fatalf("broken-TLS run succeeded; want a loud failure\n%s", out)
@@ -448,22 +400,14 @@ func TestAgonesRequiresListen(t *testing.T) {
 // is the test that makes silently ignoring -agones in -listen mode
 // impossible: with the wiring absent, ReadyCalls stays 0 and this fails.
 func TestAgonesComposesWithListen(t *testing.T) {
-	f, err := agonestest.Start(nil)
-	if err != nil {
-		t.Fatalf("start fake sidecar: %v", err)
-	}
-	t.Cleanup(f.Stop)
+	f := startSidecar(t)
 
 	cmd := zoneCommand(t,
 		"-allocation-id", "allocation-a", "-listen", "127.0.0.1:0", "-insecure-plaintext",
 		"-duration", "400ms",
 		"-agones", "-agones-health-interval", "50ms",
 	)
-	cmd.Env = append(os.Environ(),
-		"AGONES_SDK_GRPC_HOST=127.0.0.1",
-		"AGONES_SDK_GRPC_PORT="+f.PortString(),
-		"WAR_ZONE_ADMISSION_SECRET="+strings.Repeat("ab", 32),
-	)
+	cmd.Env = sidecarEnvironment(f, "WAR_ZONE_ADMISSION_SECRET="+strings.Repeat("ab", 32))
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("listen+agones run failed: %v\n%s", err, out)
@@ -480,4 +424,22 @@ func TestAgonesComposesWithListen(t *testing.T) {
 	if got := f.ShutdownCalls(); got != 1 {
 		t.Fatalf("Shutdown calls = %d, want exactly 1", got)
 	}
+}
+
+// startSidecar starts the hermetic Agones RPC sidecar and registers its shutdown with the test.
+func startSidecar(t *testing.T) *agonestest.Sidecar {
+	t.Helper()
+	sidecar, err := agonestest.Start(nil)
+	if err != nil {
+		t.Fatalf("start fake sidecar: %v", err)
+	}
+	t.Cleanup(sidecar.Stop)
+	return sidecar
+}
+
+// sidecarEnvironment preserves the process environment while directing the real zone binary to the
+// fixture sidecar.
+func sidecarEnvironment(sidecar *agonestest.Sidecar, extra ...string) []string {
+	env := append(os.Environ(), "AGONES_SDK_GRPC_HOST=127.0.0.1", "AGONES_SDK_GRPC_PORT="+sidecar.PortString())
+	return append(env, extra...)
 }

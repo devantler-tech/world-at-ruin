@@ -292,91 +292,51 @@ func TestSavePersistsPrivateVersionedCharacterForVerifiedAccount(t *testing.T) {
 	}
 }
 
+// TestSaveRejectsAnOwnerDifferentFromAuthenticatedCallerBeforeStorage prevents an authenticated
+// player from writing another player's character.
 func TestSaveRejectsAnOwnerDifferentFromAuthenticatedCallerBeforeStorage(
 	t *testing.T,
 ) {
 	t.Parallel()
 
 	storage := newFakeStorage()
-	store, err := NewStore(storage)
-	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
-	}
-	err = store.Save(authenticatedContext(testOtherSubjectID), SaveRequest{
+	store := mustCharacterStore(t, storage)
+	err := store.Save(authenticatedContext(testOtherSubjectID), SaveRequest{
 		SubjectID:       testSubjectID,
 		IdempotencyKey:  "character:create:warden-1",
 		ExpectedVersion: "*",
-		Character: Character{
-			ID:          "warden-1",
-			DisplayName: "Asha",
-			Recipe:      json.RawMessage(`{"version":3}`),
-		},
+		Character:       canonicalCharacter(),
 	})
-	if err == nil {
-		t.Fatal("Save() error = nil")
-	}
-	if storage.readCalls != 0 || len(storage.writeCalls) != 0 {
-		t.Fatalf(
-			"storage calls before rejection = reads %d, writes %d",
-			storage.readCalls,
-			len(storage.writeCalls),
-		)
-	}
+	requireSaveRejectedBeforeStorage(t, storage, err)
 }
 
+// TestSaveRejectsAnEmptyObservedVersionBeforeStorage rejects a write without an observed version
+// before reading or mutating storage.
 func TestSaveRejectsAnEmptyObservedVersionBeforeStorage(t *testing.T) {
 	t.Parallel()
 
 	storage := newFakeStorage()
-	store, err := NewStore(storage)
-	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
-	}
-	err = store.Save(authenticatedContext(testSubjectID), SaveRequest{
+	store := mustCharacterStore(t, storage)
+	err := store.Save(authenticatedContext(testSubjectID), SaveRequest{
 		SubjectID:      testSubjectID,
 		IdempotencyKey: "character:create:warden-1",
-		Character: Character{
-			ID:          "warden-1",
-			DisplayName: "Asha",
-			Recipe:      json.RawMessage(`{"version":3}`),
-		},
+		Character:      canonicalCharacter(),
 	})
-	if err == nil {
-		t.Fatal("Save() error = nil")
-	}
-	if storage.readCalls != 0 || len(storage.writeCalls) != 0 {
-		t.Fatalf(
-			"storage calls before rejection = reads %d, writes %d",
-			storage.readCalls,
-			len(storage.writeCalls),
-		)
-	}
+	requireSaveRejectedBeforeStorage(t, storage, err)
 }
 
+// TestSaveRefusesAStaleObservedVersion preserves the stored character when a replacement uses an
+// obsolete version.
 func TestSaveRefusesAStaleObservedVersion(t *testing.T) {
 	t.Parallel()
 
 	storage := newFakeStorage()
-	store, err := NewStore(storage)
-	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
-	}
-	character := Character{
-		ID:          "warden-1",
-		DisplayName: "Asha",
-		Recipe:      json.RawMessage(`{"version":3}`),
-	}
-	if err := store.Save(authenticatedContext(testSubjectID), SaveRequest{
-		SubjectID:       testSubjectID,
-		IdempotencyKey:  "character:create:warden-1",
-		ExpectedVersion: "*",
-		Character:       character,
-	}); err != nil {
-		t.Fatalf("initial Save() error = %v", err)
-	}
+	store := mustCharacterStore(t, storage)
+	character := canonicalCharacter()
+	createCharacter(t, store, character, "character:create:warden-1")
 
 	character.DisplayName = "Asha the Restorer"
-	err = store.Save(authenticatedContext(testSubjectID), SaveRequest{
+	err := store.Save(authenticatedContext(testSubjectID), SaveRequest{
 		SubjectID:       testSubjectID,
 		IdempotencyKey:  "character:rename:warden-1",
 		ExpectedVersion: "stale-version",
@@ -400,28 +360,16 @@ func TestSaveRefusesAStaleObservedVersion(t *testing.T) {
 	}
 }
 
+// TestSaveRejectsIdempotencyKeyReuseForDifferentCharacterState prevents one committed operation key
+// from authorizing a different replacement.
 func TestSaveRejectsIdempotencyKeyReuseForDifferentCharacterState(t *testing.T) {
 	t.Parallel()
 
 	storage := newFakeStorage()
-	store, err := NewStore(storage)
-	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
-	}
-	character := Character{
-		ID:          "warden-1",
-		DisplayName: "Asha",
-		Recipe:      json.RawMessage(`{"version":3}`),
-	}
+	store := mustCharacterStore(t, storage)
+	character := canonicalCharacter()
 	const idempotencyKey = "character:create:warden-1"
-	if err := store.Save(authenticatedContext(testSubjectID), SaveRequest{
-		SubjectID:       testSubjectID,
-		IdempotencyKey:  idempotencyKey,
-		ExpectedVersion: "*",
-		Character:       character,
-	}); err != nil {
-		t.Fatalf("initial Save() error = %v", err)
-	}
+	createCharacter(t, store, character, idempotencyKey)
 	record, err := store.Load(authenticatedContext(testSubjectID), testSubjectID)
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
@@ -449,29 +397,17 @@ func TestSaveRejectsIdempotencyKeyReuseForDifferentCharacterState(t *testing.T) 
 	}
 }
 
+// TestSaveReplaysACommittedReplacementWithItsStaleObservedVersion allows an exact retry to recover
+// its prior success without rewriting the character.
 func TestSaveReplaysACommittedReplacementWithItsStaleObservedVersion(
 	t *testing.T,
 ) {
 	t.Parallel()
 
 	storage := newFakeStorage()
-	store, err := NewStore(storage)
-	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
-	}
-	character := Character{
-		ID:          "warden-1",
-		DisplayName: "Asha",
-		Recipe:      json.RawMessage(`{"version":3}`),
-	}
-	if err := store.Save(authenticatedContext(testSubjectID), SaveRequest{
-		SubjectID:       testSubjectID,
-		IdempotencyKey:  "character:create:warden-1",
-		ExpectedVersion: "*",
-		Character:       character,
-	}); err != nil {
-		t.Fatalf("initial Save() error = %v", err)
-	}
+	store := mustCharacterStore(t, storage)
+	character := canonicalCharacter()
+	createCharacter(t, store, character, "character:create:warden-1")
 	record, err := store.Load(authenticatedContext(testSubjectID), testSubjectID)
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
@@ -498,6 +434,8 @@ func TestSaveReplaysACommittedReplacementWithItsStaleObservedVersion(
 	}
 }
 
+// TestSaveCannotOverwriteMalformedDurableCharacterWithItsVersion prevents an observed version from
+// laundering invalid stored character data.
 func TestSaveCannotOverwriteMalformedDurableCharacterWithItsVersion(t *testing.T) {
 	t.Parallel()
 
@@ -511,19 +449,12 @@ func TestSaveCannotOverwriteMalformedDurableCharacterWithItsVersion(t *testing.T
 		permissionRead:  0,
 		permissionWrite: 0,
 	})
-	store, err := NewStore(storage)
-	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
-	}
-	err = store.Save(authenticatedContext(testSubjectID), SaveRequest{
+	store := mustCharacterStore(t, storage)
+	err := store.Save(authenticatedContext(testSubjectID), SaveRequest{
 		SubjectID:       testSubjectID,
 		IdempotencyKey:  "character:repair:warden-1",
 		ExpectedVersion: "observed-version",
-		Character: Character{
-			ID:          "warden-1",
-			DisplayName: "Asha",
-			Recipe:      json.RawMessage(`{"version":3}`),
-		},
+		Character:       canonicalCharacter(),
 	})
 	if !errors.Is(err, ErrStorage) {
 		t.Fatalf("Save() error = %v, want %v", err, ErrStorage)
@@ -536,24 +467,14 @@ func TestSaveCannotOverwriteMalformedDurableCharacterWithItsVersion(t *testing.T
 	}
 }
 
+// TestClientOwnedCharacterPreseedCannotBecomeAuthoritative rejects forged records in the
+// player-owned storage namespace.
 func TestClientOwnedCharacterPreseedCannotBecomeAuthoritative(t *testing.T) {
 	t.Parallel()
 
 	storage := newFakeStorage()
-	storage.seed(storedObject{
-		collection: Collection,
-		key:        "character:" + testSubjectID,
-		userID:     testSubjectID,
-		value: `{"schema":1,"character_id":"attacker-seeded",` +
-			`"display_name":"Mallory","recipe":{"gold":999999}}`,
-		version:         "client-created-version",
-		permissionRead:  0,
-		permissionWrite: 0,
-	})
-	store, err := NewStore(storage)
-	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
-	}
+	seedUntrustedCharacter(storage, "character:"+testSubjectID)
+	store := mustCharacterStore(t, storage)
 	if _, err := store.Load(
 		authenticatedContext(testSubjectID),
 		testSubjectID,
@@ -587,11 +508,7 @@ func TestClientOwnedCharacterPreseedCannotBecomeAuthoritative(t *testing.T) {
 		SubjectID:       testSubjectID,
 		IdempotencyKey:  "character:create:warden-1",
 		ExpectedVersion: "*",
-		Character: Character{
-			ID:          "warden-1",
-			DisplayName: "Asha",
-			Recipe:      json.RawMessage(`{"version":3}`),
-		},
+		Character:       canonicalCharacter(),
 	}); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
@@ -604,24 +521,14 @@ func TestClientOwnedCharacterPreseedCannotBecomeAuthoritative(t *testing.T) {
 	}
 }
 
+// TestLegacyPlayerOwnedCharacterCannotBecomeAuthoritative keeps legacy player-owned records outside
+// the authoritative character path.
 func TestLegacyPlayerOwnedCharacterCannotBecomeAuthoritative(t *testing.T) {
 	t.Parallel()
 
 	storage := newFakeStorage()
-	storage.seed(storedObject{
-		collection: Collection,
-		key:        RecordKey,
-		userID:     testSubjectID,
-		value: `{"schema":1,"character_id":"attacker-seeded",` +
-			`"display_name":"Mallory","recipe":{"gold":999999}}`,
-		version:         "client-created-version",
-		permissionRead:  0,
-		permissionWrite: 0,
-	})
-	store, err := NewStore(storage)
-	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
-	}
+	seedUntrustedCharacter(storage, RecordKey)
+	store := mustCharacterStore(t, storage)
 	if _, err := store.Load(
 		authenticatedContext(testSubjectID),
 		testSubjectID,
@@ -633,6 +540,8 @@ func TestLegacyPlayerOwnedCharacterCannotBecomeAuthoritative(t *testing.T) {
 	}
 }
 
+// TestLoadKeepsEveryShippedCharacterSchemaReadable uses independent historical fixtures to preserve
+// all shipped character readers.
 func TestLoadKeepsEveryShippedCharacterSchemaReadable(t *testing.T) {
 	t.Parallel()
 
@@ -672,10 +581,7 @@ func TestLoadKeepsEveryShippedCharacterSchemaReadable(t *testing.T) {
 			permissionRead:  0,
 			permissionWrite: 0,
 		})
-		store, err := NewStore(storage)
-		if err != nil {
-			t.Fatalf("NewStore() error = %v", err)
-		}
+		store := mustCharacterStore(t, storage)
 		record, err := store.Load(
 			authenticatedContext(testSubjectID),
 			testSubjectID,
@@ -701,6 +607,8 @@ func TestLoadKeepsEveryShippedCharacterSchemaReadable(t *testing.T) {
 	}
 }
 
+// TestLoadRejectsMalformedOrPublicCharacterRecords rejects invalid character data and records with
+// public storage permissions.
 func TestLoadRejectsMalformedOrPublicCharacterRecords(t *testing.T) {
 	t.Parallel()
 
@@ -767,11 +675,8 @@ func TestLoadRejectsMalformedOrPublicCharacterRecords(t *testing.T) {
 				permissionRead:  test.permissionRead,
 				permissionWrite: test.permissionWrite,
 			})
-			store, err := NewStore(storage)
-			if err != nil {
-				t.Fatalf("NewStore() error = %v", err)
-			}
-			_, err = store.Load(
+			store := mustCharacterStore(t, storage)
+			_, err := store.Load(
 				authenticatedContext(testSubjectID),
 				testSubjectID,
 			)
@@ -782,16 +687,15 @@ func TestLoadRejectsMalformedOrPublicCharacterRecords(t *testing.T) {
 	}
 }
 
+// TestLoadRejectsAnOwnerDifferentFromAuthenticatedCallerBeforeStorage prevents a player from
+// loading another player's character before storage access.
 func TestLoadRejectsAnOwnerDifferentFromAuthenticatedCallerBeforeStorage(
 	t *testing.T,
 ) {
 	t.Parallel()
 
 	storage := newFakeStorage()
-	store, err := NewStore(storage)
-	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
-	}
+	store := mustCharacterStore(t, storage)
 	if _, err := store.Load(
 		authenticatedContext(testOtherSubjectID),
 		testSubjectID,
@@ -803,6 +707,8 @@ func TestLoadRejectsAnOwnerDifferentFromAuthenticatedCallerBeforeStorage(
 	}
 }
 
+// TestLoadSanitizesStorageFailuresAndPreservesCancellation keeps backend details private while
+// preserving cancellation and stable error codes.
 func TestLoadSanitizesStorageFailuresAndPreservesCancellation(t *testing.T) {
 	t.Parallel()
 
@@ -832,12 +738,9 @@ func TestLoadSanitizesStorageFailuresAndPreservesCancellation(t *testing.T) {
 			t.Parallel()
 
 			storage := newFakeStorage()
-			store, err := NewStore(storage)
-			if err != nil {
-				t.Fatalf("NewStore() error = %v", err)
-			}
+			store := mustCharacterStore(t, storage)
 			storage.readErr = test.readErr
-			_, err = store.Load(
+			_, err := store.Load(
 				authenticatedContext(testSubjectID),
 				testSubjectID,
 			)
@@ -849,5 +752,64 @@ func TestLoadSanitizesStorageFailuresAndPreservesCancellation(t *testing.T) {
 				t.Fatalf("Load() leaked storage detail: %v", err)
 			}
 		})
+	}
+}
+
+// mustCharacterStore constructs the real character store around the requested storage fixture.
+func mustCharacterStore(t *testing.T, storage *fakeStorage) *Store {
+	t.Helper()
+	store, err := NewStore(storage)
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	return store
+}
+
+// canonicalCharacter returns a fresh canonical character, including independently owned recipe
+// bytes.
+func canonicalCharacter() Character {
+	return Character{
+		ID:          "warden-1",
+		DisplayName: "Asha",
+		Recipe:      json.RawMessage(`{"version":3}`),
+	}
+}
+
+// createCharacter saves the initial character through the real create-only, authenticated store
+// path.
+func createCharacter(t *testing.T, store *Store, character Character, key string) {
+	t.Helper()
+	if err := store.Save(authenticatedContext(testSubjectID), SaveRequest{
+		SubjectID:       testSubjectID,
+		IdempotencyKey:  key,
+		ExpectedVersion: "*",
+		Character:       character,
+	}); err != nil {
+		t.Fatalf("initial Save() error = %v", err)
+	}
+}
+
+// seedUntrustedCharacter inserts a forged player-owned record to test the authoritative ownership
+// boundary.
+func seedUntrustedCharacter(storage *fakeStorage, key string) {
+	storage.seed(storedObject{
+		collection:      Collection,
+		key:             key,
+		userID:          testSubjectID,
+		value:           `{"schema":1,"character_id":"attacker-seeded","display_name":"Mallory","recipe":{"gold":999999}}`,
+		version:         "client-created-version",
+		permissionRead:  0,
+		permissionWrite: 0,
+	})
+}
+
+// requireSaveRejectedBeforeStorage requires an error with no storage reads or writes.
+func requireSaveRejectedBeforeStorage(t *testing.T, storage *fakeStorage, err error) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("Save() error = nil")
+	}
+	if storage.readCalls != 0 || len(storage.writeCalls) != 0 {
+		t.Fatalf("storage calls before rejection = reads %d, writes %d", storage.readCalls, len(storage.writeCalls))
 	}
 }

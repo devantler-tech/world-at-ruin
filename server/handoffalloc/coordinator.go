@@ -293,16 +293,8 @@ func (c *Coordinator) Allocate(
 				return handoff.Allocation{}, settleErr
 			}
 		}
-		if winner, progressed, winnerErr := c.resolveProgressedAttempt(
-			progressCtx,
-			request,
-		); progressed {
-			if winnerErr != nil {
-				return handoff.Allocation{}, handoff.RetainAllocationOutcome(winnerErr)
-			}
+		if winner, settled, winnerErr := c.progressedAllocationOutcome(progressCtx, request); settled {
 			return winner, winnerErr
-		} else if winnerErr != nil {
-			return handoff.Allocation{}, handoff.RetainAllocationOutcome(winnerErr)
 		}
 		return handoff.Allocation{}, handoff.RetainAllocationOutcome(
 			sanitizedResourceError(err, resourceOperation),
@@ -330,16 +322,8 @@ func (c *Coordinator) Allocate(
 			StagedCleanupTimeout,
 		)
 		defer cancel()
-		if winner, progressed, winnerErr := c.resolveProgressedAttempt(
-			progressCtx,
-			request,
-		); progressed {
-			if winnerErr != nil {
-				return handoff.Allocation{}, handoff.RetainAllocationOutcome(winnerErr)
-			}
+		if winner, settled, winnerErr := c.progressedAllocationOutcome(progressCtx, request); settled {
 			return winner, winnerErr
-		} else if winnerErr != nil {
-			return handoff.Allocation{}, handoff.RetainAllocationOutcome(winnerErr)
 		}
 		if releaseErr := c.reconcileAttempt(progressCtx, request, &next); releaseErr != nil {
 			return handoff.Allocation{}, ErrReconciliation
@@ -625,4 +609,14 @@ func (c *Coordinator) Release(
 		return ErrReconciliation
 	}
 	return nil
+}
+
+// progressedAllocationOutcome retains ownership whenever resolving a durable
+// winner is ambiguous, and distinguishes that from an attempt still staging.
+func (c *Coordinator) progressedAllocationOutcome(ctx context.Context, request handoff.AllocationRequest) (handoff.Allocation, bool, error) {
+	winner, progressed, err := c.resolveProgressedAttempt(ctx, request)
+	if err != nil {
+		return handoff.Allocation{}, true, handoff.RetainAllocationOutcome(err)
+	}
+	return winner, progressed, nil
 }
