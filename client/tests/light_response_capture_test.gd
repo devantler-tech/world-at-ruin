@@ -237,10 +237,7 @@ func _ready() -> void:
 
 
 func _has_method(script: Script, wanted: String) -> bool:
-	for method: Dictionary in script.get_script_method_list():
-		if String(method.get("name", "")) == wanted:
-			return true
-	return false
+	return ScriptTestSupport.catalog_has_method(script, wanted)
 
 
 func _fail(message: String) -> void:

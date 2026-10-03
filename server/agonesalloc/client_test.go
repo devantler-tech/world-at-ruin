@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
-	"net"
 	"strings"
 	"sync"
 	"testing"
@@ -14,11 +13,10 @@ import (
 	allocationpb "agones.dev/agones/pkg/allocation/go"
 	allocationv1 "agones.dev/agones/pkg/apis/allocation/v1"
 	"github.com/devantler-tech/world-at-ruin/server/agones"
+	"github.com/devantler-tech/world-at-ruin/server/internal/grpctest"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
-	"google.golang.org/grpc/test/bufconn"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -87,6 +85,8 @@ func (s *allocationServer) observedRequests() []*allocationpb.AllocationRequest 
 	return requests
 }
 
+// clientAgainst connects the real allocation adapter to the scenario's private
+// service over gRPC, preserving RPC serialization and context cancellation.
 func clientAgainst(
 	t *testing.T,
 	server *allocationServer,
@@ -94,29 +94,8 @@ func clientAgainst(
 ) *Client {
 	t.Helper()
 
-	listener := bufconn.Listen(1024 * 1024)
-	grpcServer := grpc.NewServer()
-	allocationpb.RegisterAllocationServiceServer(grpcServer, server)
-	go func() {
-		_ = grpcServer.Serve(listener)
-	}()
-	t.Cleanup(grpcServer.Stop)
-	t.Cleanup(func() {
-		_ = listener.Close()
-	})
-
-	conn, err := grpc.NewClient(
-		"passthrough:///agones-allocation-test",
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
-			return listener.DialContext(ctx)
-		}),
-	)
-	if err != nil {
-		t.Fatalf("create Agones allocation test client: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = conn.Close()
+	conn := grpctest.Connect(t, "passthrough:///agones-allocation-test", func(serverTransport *grpc.Server) {
+		allocationpb.RegisterAllocationServiceServer(serverTransport, server)
 	})
 
 	client, err := NewClient(allocationpb.NewAllocationServiceClient(conn), cfg)

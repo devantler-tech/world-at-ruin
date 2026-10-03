@@ -1,4 +1,4 @@
-extends Node
+extends "res://tests/boolean_verdict.gd"
 ## Regression test for cave-system CONNECTIVITY (issues #84, #107) — the
 ## traversability guard the determinism test does not cover.
 ##
@@ -47,7 +47,6 @@ extends Node
 ##
 ## Run: godot --headless --path client res://tests/cave_connectivity_test.tscn
 
-var _failed := false
 
 ## Synthetic-fixture dimensions. The rock margin matters: out-of-range reads as
 ## VOID by design (the real audit pads its box into open air), so a fixture
@@ -504,17 +503,3 @@ func _count(seen: PackedByteArray) -> int:
 
 func _put(f: PackedFloat32Array, c: Vector3i, v: float) -> void:
 	f[CaveSystemGen._fi(c, _FX.y, _FX.z)] = v
-
-
-func _check(actual: bool, expected: bool, label: String) -> void:
-	if _failed:
-		return
-	if actual != expected:
-		_fail("%s — expected %s, got %s" % [label, expected, actual])
-
-
-func _fail(message: String) -> void:
-	_failed = true
-	push_error(message)
-	print("TEST FAIL — %s" % message)
-	get_tree().quit(1)

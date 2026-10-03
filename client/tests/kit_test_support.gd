@@ -41,6 +41,18 @@ static func read_report(report_path: String) -> Dictionary:
 	return out
 
 
+## Compare imported shape count and order with the caller's historical contract.
+## Vocabulary is diagnostic only; creature and humanoid suites retain their labels.
+static func shape_contract_problem(mesh: Mesh, names: PackedStringArray, label: String) -> String:
+	if mesh.get_blend_shape_count() != names.size():
+		return "%s count %d != contracted %d" % [label, mesh.get_blend_shape_count(), names.size()]
+	for index in names.size():
+		var actual := String(mesh.get_blend_shape_name(index))
+		if actual != names[index]:
+			return "%s %d is '%s', contract says '%s' — shipped shape names may never change" % [label, index, actual, names[index]]
+	return ""
+
+
 static func find_skeleton(node: Node) -> Skeleton3D:
 	if node is Skeleton3D:
 		return node

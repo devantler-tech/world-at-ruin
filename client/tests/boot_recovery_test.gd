@@ -1,4 +1,4 @@
-extends Node
+extends "res://tests/boolean_verdict.gd"
 ## Regression test for BootRecovery (issue #186): the bootstrap's recovery memory —
 ## boot-attempt marker, health checkpoint, persisted quarantine ledger.
 ##
@@ -25,7 +25,6 @@ extends Node
 
 const PROBE := "user://boot_recovery_probe.json"
 
-var _failed := false
 
 
 func _ready() -> void:
@@ -233,17 +232,3 @@ func _cleanup_probe() -> void:
 	for leftover: String in leftovers:
 		if FileAccess.file_exists(leftover):
 			DirAccess.remove_absolute(ProjectSettings.globalize_path(leftover))
-
-
-func _check(actual: bool, expected: bool, label: String) -> void:
-	if _failed:
-		return
-	if actual != expected:
-		_fail("%s — expected %s, got %s" % [label, expected, actual])
-
-
-func _fail(message: String) -> void:
-	_failed = true
-	push_error(message)
-	print("TEST FAIL — %s" % message)
-	get_tree().quit(1)
