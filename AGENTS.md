@@ -868,6 +868,15 @@ everything shipped afterwards is held to.
   suite on a machine with a played save can also `export WAR_SAVE_PATH=/tmp/probe.json
   WAR_VAULT_PATH=/tmp/probe_vault.json WAR_BOOT_RECOVERY_PATH=/tmp/probe_recovery.json` to keep all
   three fully out of reach.
+- **Allocator fence reference:** `server/internal/fencereference/` is default-off,
+  owns only an in-memory ledger and is not imported by production composition.
+  Its generation check and owned mutation share one authority lock; its real TLS
+  generated Allocate RPC tests must show an unfenced late commit and a fenced
+  refusal, including canceled/deadline-expired requests. Run
+  `go -C server test -race -count=1 -timeout 2m ./internal/fencereference`.
+  Follow [ADR 0012](docs/adr/0012-keep-allocator-fence-authority-at-the-commit-boundary.md):
+  process-local receipts cannot authorize native Agones writes, durable recovery
+  or production quarantine release. Production fencing remains #793 work.
 - **Server save history:** every persisted server schema uses
   `server/<package>/testdata/shipped_<family>_versions.txt` and
   `golden_<family>_v<N>.json`. The server durability check discovers ledgers in both the reviewed base
