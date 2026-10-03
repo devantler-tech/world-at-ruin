@@ -117,17 +117,11 @@ func _ready() -> void:
 
 
 func _has_method(script: Script, wanted: String) -> bool:
-	for method: Dictionary in script.get_script_method_list():
-		if String(method.get("name", "")) == wanted:
-			return true
-	return false
+	return ScriptTestSupport.catalog_has_method(script, wanted)
 
 
 func _method_arg_count(script: Script, wanted: String) -> int:
-	for method: Dictionary in script.get_script_method_list():
-		if String(method.get("name", "")) == wanted:
-			return (method.get("args", []) as Array).size()
-	return -1
+	return ScriptTestSupport.argument_count(script, wanted)
 
 
 func _fail(message: String) -> void:

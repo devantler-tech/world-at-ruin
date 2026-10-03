@@ -21,7 +21,7 @@ const ASSERT_TICK := 30
 
 var _ticks := 0
 var _main: Node
-var _save: SaveIsolation
+var _save: IsolatedBoot
 
 
 func _ready() -> void:
@@ -79,11 +79,11 @@ func _ready() -> void:
 	# Booting main.tscn with no save exercises the first-run creator — point the
 	# game at a throwaway probe so it never touches the player's real character
 	# (no-resets law). Fail closed if the redirect does not take hold.
-	_save = SaveIsolation.new("user://creature_population_boot_probe.json")
-	if not _save.begin():
+	_save = IsolatedBoot.new("user://creature_population_boot_probe.json")
+	_main = _save.boot()
+	if _main == null:
 		_fail("save isolation did not take — refusing to boot into the real save")
 		return
-	_main = (load("res://scenes/main.tscn") as PackedScene).instantiate()
 	add_child(_main)
 
 

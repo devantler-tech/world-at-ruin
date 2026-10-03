@@ -236,11 +236,7 @@ func _same_pose(
 		b: Dictionary,
 		message: String,
 		epsilon: float = POSE_EPSILON) -> bool:
-	var difference := LocomotionTestSupport.pose_difference(a, b, DRIVEN_BONES, epsilon, _angle_between)
-	if not difference.is_empty():
-		return _fail("%s (%s differs by %.6f rad)" %
-			[message, difference["bone"], difference["angle"]]) if not message.is_empty() else false
-	return true
+	return LocomotionTestSupport.same_pose(a, b, DRIVEN_BONES, epsilon, _angle_between, message, _fail)
 
 
 func _pose_distance(a: Dictionary, b: Dictionary) -> float:

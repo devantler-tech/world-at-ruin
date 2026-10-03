@@ -31,14 +31,10 @@ func _ready() -> void:
 	var mesh: Mesh = fixture["mesh"]
 
 	var contracted: PackedStringArray = report["shapes"].split(",")
-	if mesh.get_blend_shape_count() != contracted.size():
-		_fail("morph count %d != contracted %d" % [mesh.get_blend_shape_count(), contracted.size()])
+	var shape_problem := KitTestSupport.shape_contract_problem(mesh, contracted, "morph")
+	if not shape_problem.is_empty():
+		_fail(shape_problem)
 		return
-	for i in contracted.size():
-		var actual := String(mesh.get_blend_shape_name(i))
-		if actual != contracted[i]:
-			_fail("morph %d is '%s', contract says '%s' — shipped shape names may never change" % [i, actual, contracted[i]])
-			return
 
 	# Forward-only: every shape that ever shipped is still present.
 	var present := {}
@@ -71,15 +67,7 @@ func _ready() -> void:
 
 
 func _shipped_shapes() -> PackedStringArray:
-	var out := PackedStringArray()
-	var f := FileAccess.open(SHIPPED_SHAPES, FileAccess.READ)
-	if f == null:
-		return out
-	while not f.eof_reached():
-		var line := f.get_line().strip_edges()
-		if line != "" and not line.begins_with("#"):
-			out.append(line)
-	return out
+	return LedgerTestSupport.names(SHIPPED_SHAPES)
 
 
 func _fail(message: String) -> void:

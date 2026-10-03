@@ -29,14 +29,10 @@ func _ready() -> void:
 	var mesh: Mesh = fixture["mesh"]
 
 	var contracted: PackedStringArray = report["shapes"].split(",")
-	if mesh.get_blend_shape_count() != contracted.size():
-		_fail("blend shape count %d != contracted %d" % [mesh.get_blend_shape_count(), contracted.size()])
+	var shape_problem := KitTestSupport.shape_contract_problem(mesh, contracted, "blend shape")
+	if not shape_problem.is_empty():
+		_fail(shape_problem)
 		return
-	for i in contracted.size():
-		var actual := String(mesh.get_blend_shape_name(i))
-		if actual != contracted[i]:
-			_fail("blend shape %d is '%s', contract says '%s' — shipped shape names may never change" % [i, actual, contracted[i]])
-			return
 
 	var fp_a1 := KitTestSupport.mix_fingerprint(mesh, WEIGHTS_A)
 	var fp_a2 := KitTestSupport.mix_fingerprint(mesh, WEIGHTS_A)

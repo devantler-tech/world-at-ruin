@@ -1,4 +1,4 @@
-extends Node
+extends "res://tests/boolean_verdict.gd"
 ## Regression test for the armour axis guards (issues #86, #96).
 ##
 ## Armour is the ONE place the design lets power grow ("Armour = your role/
@@ -36,7 +36,6 @@ extends Node
 ##
 ## Run: godot --headless --path client res://tests/armor_axis_test.tscn
 
-var _failed := false
 
 
 func _ready() -> void:
@@ -317,17 +316,3 @@ func _flags(problems: Array[String], label: String) -> void:
 		return
 	if problems.is_empty():
 		_fail("%s — expected a violation, got none (the guard has no teeth)" % label)
-
-
-func _check(actual: bool, expected: bool, label: String) -> void:
-	if _failed:
-		return
-	if actual != expected:
-		_fail("%s — expected %s, got %s" % [label, expected, actual])
-
-
-func _fail(message: String) -> void:
-	_failed = true
-	push_error(message)
-	print("TEST FAIL — %s" % message)
-	get_tree().quit(1)
