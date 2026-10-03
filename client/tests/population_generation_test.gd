@@ -38,7 +38,8 @@ func _ready() -> void:
 			for i in mini(rows.size(), golden.size()):
 				_check(rows[i]["name"] == golden[i]["name"] and rows[i]["recipe"] == golden[i]["recipe"],
 					family + " name/recipe draw schedule changed at " + str(i))
-				_check(rows[i]["body"] == golden[i]["body"], family + " built body changed at " + str(i))
+				var reference := _reference_body(golden[i], family.begins_with("creature"))
+				_check(rows[i]["body"] == reference, family + " built body changed at " + str(i))
 				var pos: Array = golden[i]["position"]
 				var observed: Array = rows[i]["position"]
 				_check(Vector3(observed[0], observed[1], observed[2]).distance_to(Vector3(pos[0], pos[1], pos[2])) < 0.001,
@@ -52,7 +53,7 @@ func _ready() -> void:
 		get_tree().quit(0)
 
 ## The recipe hash pins generation; the body fingerprint observes the actual
-## spawned skeleton, meshes and skin/tint against unchanged-base observations.
+## spawned skeleton, meshes and skin/tint independently of that regeneration.
 func _records(spawner: Node, creature: bool) -> Array:
 	var rows: Array = []
 	for root: Node3D in spawner.get_children():
@@ -66,6 +67,26 @@ func _records(spawner: Node, creature: bool) -> Array:
 		rows.append({"body": observed_body, "name": name_key, "recipe": JSON.stringify(recipe).sha256_text(),
 			"position": [root.position.x, root.position.y, root.position.z], "yaw": root.rotation.y})
 	return rows
+
+## Frozen base recipes preserve float precision and dictionary insertion order.
+## Build the reference on this platform: raw skeletal byte hashes vary between
+## architectures. Existing factory goldens independently cover factory behavior.
+func _reference_body(golden: Dictionary, creature: bool) -> String:
+	var recipe = JSON.parse_string(golden["body_recipe"])
+	_check(recipe is Dictionary, "baseline factory recipe missing")
+	if recipe is not Dictionary:
+		return "invalid-reference"
+	# Godot parses every JSON number as float; generation uses an integer version.
+	recipe["version"] = int(recipe["version"])
+	_check(JSON.stringify(recipe).sha256_text() == golden["recipe"], "baseline factory recipe identity changed")
+	var body := CreatureFactory.build(recipe) if creature else CharacterFactory.build(recipe)
+	_check(body != null, "baseline factory recipe did not build")
+	if body == null:
+		return "unbuildable-reference"
+	var fingerprint := CreatureFactory.fingerprint(body) if creature else CharacterFactory.fingerprint(body)
+	body.free()
+	_check(fingerprint.begins_with(golden["body_shape"] + " sha256="), "baseline body structure changed")
+	return fingerprint
 
 func _check(ok: bool, message: String) -> void:
 	if not ok:

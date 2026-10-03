@@ -1,7 +1,8 @@
 {
 	"creature_collisions": [
 		{
-			"body": "bones=20 verts=2466 sha256=0b47708449d80f62242fd7cdece6cdf6303cf5b565910a9c4c1b19f437363f7c",
+			"body_recipe": "{\"version\":1,\"shapes\":{\"body_gaunt\":0.33,\"ears_alert\":0.4},\"bone_scale\":{\"root\":1.06},\"tint\":\"char\"}",
+			"body_shape": "bones=20 verts=2466",
 			"name": "Drerendgnash",
 			"position": [
 				-30.8679351806641,
@@ -12,7 +13,8 @@
 			"yaw": -0.923333168029785
 		},
 		{
-			"body": "bones=20 verts=2466 sha256=cc1b2592ee4e56b304c334637ee723eaf459e26a25185e211c20d2c96f689d42",
+			"body_recipe": "{\"version\":1,\"shapes\":{\"body_gaunt\":0.52,\"legs_long\":0.27,\"ears_alert\":0.99},\"bone_scale\":{\"root\":1.08,\"head\":0.9500000000000001},\"tint\":\"ash\"}",
+			"body_shape": "bones=20 verts=2466",
 			"name": "Fengrowl",
 			"position": [
 				54.7722053527832,
@@ -23,7 +25,8 @@
 			"yaw": 0.228102922439575
 		},
 		{
-			"body": "bones=20 verts=2466 sha256=66a19de42a13fa6f82d5a2be70b92b2481a31588f1291888b25dda17c81f0316",
+			"body_recipe": "{\"version\":1,\"shapes\":{\"legs_long\":0.72,\"ears_alert\":0.74},\"bone_scale\":{\"root\":0.89,\"head\":1.09},\"tint\":\"bone\"}",
+			"body_shape": "bones=20 verts=2466",
 			"name": "Dreshard",
 			"position": [
 				-3.64823079109192,
@@ -34,7 +37,8 @@
 			"yaw": 2.34889149665833
 		},
 		{
-			"body": "bones=20 verts=2466 sha256=15a615865cb8c2cd59106a1ba171460fa686059445ca1934f1179b2450a37b33",
+			"body_recipe": "{\"version\":1,\"shapes\":{\"body_heavy\":0.89,\"snout_long\":0.39,\"ears_alert\":0.37},\"bone_scale\":{\"root\":0.9400000000000001,\"head\":1.0,\"tail_01\":1.3},\"tint\":\"ash\"}",
+			"body_shape": "bones=20 verts=2466",
 			"name": "Dreshardmaw",
 			"position": [
 				-39.5203628540039,
@@ -45,7 +49,8 @@
 			"yaw": 1.42216992378235
 		},
 		{
-			"body": "bones=20 verts=2466 sha256=a416e13c785e91bb27b8f7e352d38efaa2603fccd7cf4c965a9fcc7340fb14b1",
+			"body_recipe": "{\"version\":1,\"shapes\":{\"body_heavy\":0.76,\"legs_long\":0.75,\"snout_long\":0.86,\"ears_alert\":0.54,\"tail_high\":0.31},\"bone_scale\":{\"root\":1.02,\"head\":0.98},\"tint\":\"dust\"}",
+			"body_shape": "bones=20 verts=2466",
 			"name": "Hrugrowlgnash",
 			"position": [
 				-16.050895690918,
@@ -56,7 +61,8 @@
 			"yaw": 2.76560187339783
 		},
 		{
-			"body": "bones=20 verts=2466 sha256=3b2804667f6fa0107ec6f9af82b11b655cb755cb339bddf23aeffcf40865b694",
+			"body_recipe": "{\"version\":1,\"shapes\":{\"body_heavy\":0.62,\"legs_long\":0.67,\"snout_long\":0.58,\"ears_alert\":0.8},\"bone_scale\":{\"root\":1.02,\"head\":1.08},\"tint\":\"bone\"}",
+			"body_shape": "bones=20 verts=2466",
 			"name": "Hrumane",
 			"position": [
 				-85.471061706543,
@@ -67,7 +73,8 @@
 			"yaw": 0.607865333557129
 		},
 		{
-			"body": "bones=20 verts=2466 sha256=9dbe0a1dcf2ba3e70635b2b9479584465c0e8e80629c5f64c5a5847c237e282a",
+			"body_recipe": "{\"version\":1,\"shapes\":{\"legs_long\":0.44,\"snout_long\":0.78,\"ears_alert\":0.44},\"bone_scale\":{\"root\":0.87,\"head\":0.93},\"tint\":\"bone\"}",
+			"body_shape": "bones=20 verts=2466",
 			"name": "Morgnash",
 			"position": [
 				34.5096435546875,
@@ -78,7 +85,8 @@
 			"yaw": -0.642732620239258
 		},
 		{
-			"body": "bones=20 verts=2466 sha256=af46cd28c2e07c4050eb2e706a966156c345c7643bc726c59c4886a681ea09b2",
+			"body_recipe": "{\"version\":1,\"shapes\":{\"body_gaunt\":0.47000000000000003,\"legs_long\":0.5},\"bone_scale\":{\"root\":0.91,\"head\":0.96},\"tint\":\"char\"}",
+			"body_shape": "bones=20 verts=2466",
 			"name": "Morrot",
 			"position": [
 				-30.250904083252,
@@ -91,7 +99,8 @@
 	],
 	"creatures": [
 		{
-			"body": "bones=20 verts=2466 sha256=2a47e3b26cfda4e9d2157c5f83a3a1dc53caa196b2c0d2c9d5bc765c8bfde3e2",
+			"body_recipe": "{\"version\":1,\"shapes\":{\"body_gaunt\":0.6},\"bone_scale\":{\"root\":1.0,\"head\":1.07},\"tint\":\"dust\"}",
+			"body_shape": "bones=20 verts=2466",
 			"name": "Drerend",
 			"position": [
 				-30.8679351806641,
@@ -102,7 +111,8 @@
 			"yaw": -0.923333168029785
 		},
 		{
-			"body": "bones=20 verts=2466 sha256=5d13dc1c3fc324dbb9fc6b37740b1a9b9fb835396642f0b0eedd497c64b4cf54",
+			"body_recipe": "{\"version\":1,\"shapes\":{\"body_heavy\":0.52,\"snout_long\":0.35000000000000003,\"ears_alert\":0.5700000000000001},\"bone_scale\":{\"root\":1.08},\"tint\":\"ash\"}",
+			"body_shape": "bones=20 verts=2466",
 			"name": "Ozkhusk",
 			"position": [
 				54.7722053527832,
@@ -113,7 +123,8 @@
 			"yaw": 0.228102922439575
 		},
 		{
-			"body": "bones=20 verts=2466 sha256=1534af79e0315f8ae7f3d9758737250749d67225880f04d613d23a63929e0c67",
+			"body_recipe": "{\"version\":1,\"shapes\":{\"body_gaunt\":0.36,\"legs_long\":0.56,\"ears_alert\":0.59},\"bone_scale\":{\"root\":0.99,\"head\":0.92,\"tail_01\":1.04},\"tint\":\"char\"}",
+			"body_shape": "bones=20 verts=2466",
 			"name": "Kursnout",
 			"position": [
 				-3.64823079109192,
@@ -124,7 +135,8 @@
 			"yaw": 2.34889149665833
 		},
 		{
-			"body": "bones=20 verts=2466 sha256=eeba140b045348b27074a49209963bc244d56ab46fee2239286c72615651d171",
+			"body_recipe": "{\"version\":1,\"shapes\":{\"body_gaunt\":0.53,\"ears_alert\":0.67,\"tail_high\":0.73},\"bone_scale\":{\"root\":0.91,\"head\":0.99},\"tint\":\"bone\"}",
+			"body_shape": "bones=20 verts=2466",
 			"name": "Gnasnout",
 			"position": [
 				-39.5203628540039,
@@ -135,7 +147,8 @@
 			"yaw": 1.42216992378235
 		},
 		{
-			"body": "bones=20 verts=2466 sha256=8e504e09e8c4dc2fefc9ee3c51410099f1dbe18df16c24bdae506add41d5ce2a",
+			"body_recipe": "{\"version\":1,\"shapes\":{\"body_heavy\":0.39,\"legs_long\":0.29,\"snout_long\":0.9400000000000001,\"tail_high\":0.34},\"bone_scale\":{\"root\":0.84},\"tint\":\"dust\"}",
+			"body_shape": "bones=20 verts=2466",
 			"name": "Gnamaw",
 			"position": [
 				-16.050895690918,
@@ -146,7 +159,8 @@
 			"yaw": 2.76560187339783
 		},
 		{
-			"body": "bones=20 verts=2466 sha256=63940be679754fd5d77f043ab00aa5d1a26c03509871571a64a47b2a74b0d454",
+			"body_recipe": "{\"version\":1,\"shapes\":{\"body_heavy\":0.36,\"snout_long\":0.89,\"ears_alert\":0.62,\"tail_high\":0.9500000000000001},\"bone_scale\":{\"root\":0.92,\"head\":0.9400000000000001,\"tail_01\":1.1300000000000001},\"tint\":\"char\"}",
+			"body_shape": "bones=20 verts=2466",
 			"name": "Hrugrowl",
 			"position": [
 				-85.471061706543,
@@ -157,7 +171,8 @@
 			"yaw": 0.607865333557129
 		},
 		{
-			"body": "bones=20 verts=2466 sha256=a07db26825099f02fda1db3e723fd919a2c0fb71b471b082d04f0562c2400a78",
+			"body_recipe": "{\"version\":1,\"shapes\":{\"body_heavy\":0.61,\"snout_long\":0.31},\"bone_scale\":{\"root\":1.05},\"tint\":\"bone\"}",
+			"body_shape": "bones=20 verts=2466",
 			"name": "Ozkfell",
 			"position": [
 				34.5096435546875,
@@ -168,7 +183,8 @@
 			"yaw": -0.642732620239258
 		},
 		{
-			"body": "bones=20 verts=2466 sha256=5904fcc0b3d5dab335a857d98fc81e7292b1f528bdf48f8d7605408429f8d34c",
+			"body_recipe": "{\"version\":1,\"shapes\":{\"body_gaunt\":0.4,\"snout_long\":0.75},\"bone_scale\":{\"root\":1.03},\"tint\":\"bone\"}",
+			"body_shape": "bones=20 verts=2466",
 			"name": "Vexrend",
 			"position": [
 				-30.250904083252,
@@ -181,7 +197,8 @@
 	],
 	"npc_collisions": [
 		{
-			"body": "bones=53 meshes=5 verts=33576 sha256=1e37abd9384815dd93a6ba59014ad8eb341c5eda3db3f17a1fb6eadda04ae5c5",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_female\":0.9,\"phenotype_asian\":0.7000000000000001,\"body_slim\":0.26,\"jaw_wide\":0.24,\"nose_strong\":0.54,\"head_round\":0.38},\"bone_scale\":{\"hand\":1.05,\"foot\":1.1},\"equipment\":{\"torso\":\"shirt_ragged\",\"legs\":\"pants_wool\",\"feet\":\"boots_worn\"},\"skin\":\"skin_female_mid\"}",
+			"body_shape": "bones=53 meshes=5 verts=33576",
 			"name": "Marinmaric",
 			"position": [
 				-0.609465181827545,
@@ -192,7 +209,8 @@
 			"yaw": 0.325895577669144
 		},
 		{
-			"body": "bones=53 meshes=5 verts=33576 sha256=70814b8ff558261dc98767d70eda81308e1019bff200046fd94cdef4636cac4b",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_male\":0.13,\"phenotype_asian\":0.9,\"body_slim\":0.3,\"head_heavy\":0.34,\"nose_strong\":0.44,\"head_square\":0.46},\"equipment\":{\"torso\":\"shirt_ragged\",\"legs\":\"pants_wool\",\"feet\":\"boots_worn\"},\"skin\":\"skin_male_light\"}",
+			"body_shape": "bones=53 meshes=5 verts=33576",
 			"name": "Halethila",
 			"position": [
 				20.5974102020264,
@@ -203,7 +221,8 @@
 			"yaw": 1.70613861083984
 		},
 		{
-			"body": "bones=53 meshes=5 verts=18752 sha256=60cdc5f654715e73bd21fb609facb169dc0c9459c2bdb5e9a71504acdeb6d074",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_female\":0.9500000000000001,\"phenotype_asian\":0.88,\"body_aged\":0.77,\"head_aged\":0.62,\"head_round\":0.24,\"jaw_wide\":0.3,\"chin_prominent\":0.35000000000000003},\"bone_scale\":{\"hand\":1.07,\"foot\":1.07},\"bone_girth\":{\"lowerarm\":1.06,\"calf\":1.03},\"equipment\":{\"torso\":\"shirt_ragged\",\"legs\":\"pants_wool\",\"feet\":\"shoes_cloth\"},\"skin\":\"skin_female_aged\"}",
+			"body_shape": "bones=53 meshes=5 verts=18752",
 			"name": "Iseila",
 			"position": [
 				22.4921016693115,
@@ -214,7 +233,8 @@
 			"yaw": 1.61107206344604
 		},
 		{
-			"body": "bones=53 meshes=5 verts=18752 sha256=75b9151f6d76839362f1ba3047751abff15a2f04c02f56f71a9dde6bbc332122",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_female\":0.98,\"phenotype_african\":0.65,\"body_aged\":0.59,\"head_aged\":0.58,\"body_slim\":0.25,\"head_round\":0.31,\"chin_prominent\":0.49,\"nose_hump\":0.38},\"bone_girth\":{\"lowerarm\":1.02,\"calf\":0.98},\"equipment\":{\"torso\":\"shirt_ragged\",\"legs\":\"pants_wool\",\"feet\":\"shoes_cloth\"},\"skin\":\"skin_female_aged\"}",
+			"body_shape": "bones=53 meshes=5 verts=18752",
 			"name": "Ruin",
 			"position": [
 				11.6126327514648,
@@ -225,7 +245,8 @@
 			"yaw": 0.648806631565094
 		},
 		{
-			"body": "bones=53 meshes=5 verts=33576 sha256=c44c9d8c129e5b6a86ca4e0dabe99202987ddb002aaf4481086926ccd1e998b7",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_female\":0.9400000000000001,\"phenotype_caucasian\":0.85,\"head_round\":0.58,\"nose_hump\":0.45,\"nose_strong\":0.44},\"equipment\":{\"torso\":\"shirt_ragged\",\"legs\":\"pants_wool\",\"feet\":\"boots_worn\"},\"skin\":\"skin_female_mid\"}",
+			"body_shape": "bones=53 meshes=5 verts=33576",
 			"name": "Isema",
 			"position": [
 				-1.69087815284729,
@@ -236,7 +257,8 @@
 			"yaw": 0.423202008008957
 		},
 		{
-			"body": "bones=53 meshes=5 verts=33576 sha256=8e1c35446a62e6a59401ae58e923aab43e8782ca0ea272b1e21c22911cb0e22b",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_male\":0.27,\"phenotype_african\":0.91,\"body_heavy\":0.26,\"belly\":0.36,\"jaw_wide\":0.27,\"head_round\":0.3,\"nose_hump\":0.24},\"bone_scale\":{\"hand\":1.12,\"foot\":0.99},\"bone_girth\":{\"lowerarm\":0.97,\"calf\":1.01},\"equipment\":{\"torso\":\"shirt_ragged\",\"legs\":\"pants_wool\",\"feet\":\"boots_worn\"},\"skin\":\"skin_male_light\"}",
+			"body_shape": "bones=53 meshes=5 verts=33576",
 			"name": "Isewyn",
 			"position": [
 				17.3750591278076,
@@ -247,7 +269,8 @@
 			"yaw": 1.42466771602631
 		},
 		{
-			"body": "bones=53 meshes=5 verts=18752 sha256=c48b418914f705db4797af68c43ecb89ec1c5d6dc0e287e003cf69754dc4ff8f",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_female\":0.91,\"phenotype_caucasian\":0.78,\"jaw_wide\":0.22,\"head_square\":0.23,\"chin_prominent\":0.5},\"bone_girth\":{\"lowerarm\":1.03,\"calf\":1.0},\"equipment\":{\"torso\":\"shirt_ragged\",\"legs\":\"pants_wool\",\"feet\":\"shoes_cloth\"},\"skin\":\"skin_female_mid\"}",
+			"body_shape": "bones=53 meshes=5 verts=18752",
 			"name": "Marric",
 			"position": [
 				10.1844654083252,
@@ -258,7 +281,8 @@
 			"yaw": 2.33089971542358
 		},
 		{
-			"body": "bones=53 meshes=5 verts=33576 sha256=f159bcf93da7fc77c95e5f6bde5830395ee71e519b04ca5be93f96ffc6c1cd7c",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_female\":0.89,\"phenotype_african\":0.85,\"jaw_wide\":0.44,\"nose_strong\":0.28,\"head_heavy\":0.36},\"bone_scale\":{\"hand\":1.09,\"foot\":1.05},\"bone_girth\":{\"lowerarm\":1.08,\"calf\":0.9500000000000001},\"equipment\":{\"torso\":\"shirt_ragged\",\"legs\":\"pants_wool\",\"feet\":\"boots_worn\"},\"skin\":\"skin_female_light\"}",
+			"body_shape": "bones=53 meshes=5 verts=33576",
 			"name": "Yora",
 			"position": [
 				-7.51701211929321,
@@ -269,7 +293,8 @@
 			"yaw": -3.08402872085571
 		},
 		{
-			"body": "bones=53 meshes=5 verts=18752 sha256=6018832b2634e2c880e74b06ed051d6501a992223b62fd423f8351ccc4356a7a",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_male\":0.18,\"phenotype_african\":0.81,\"body_slim\":0.26,\"nose_strong\":0.51,\"head_round\":0.4,\"chin_prominent\":0.15},\"equipment\":{\"torso\":\"shirt_ragged\",\"legs\":\"pants_wool\",\"feet\":\"shoes_cloth\"},\"skin\":\"skin_male_light\"}",
+			"body_shape": "bones=53 meshes=5 verts=18752",
 			"name": "Orette",
 			"position": [
 				5.04724454879761,
@@ -280,7 +305,8 @@
 			"yaw": 0.651843667030334
 		},
 		{
-			"body": "bones=53 meshes=5 verts=33576 sha256=0a1548d5f160211a123ace76dc03f308484aa42b04b45081bc5e5b1411b311a6",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_female\":0.86,\"phenotype_caucasian\":0.66,\"body_aged\":0.81,\"head_aged\":0.38,\"body_slim\":0.15,\"nose_strong\":0.56,\"head_round\":0.17,\"head_heavy\":0.32},\"bone_girth\":{\"lowerarm\":1.01,\"calf\":1.0},\"equipment\":{\"torso\":\"shirt_ragged\",\"legs\":\"pants_wool\",\"feet\":\"boots_worn\"},\"skin\":\"skin_female_aged\"}",
+			"body_shape": "bones=53 meshes=5 verts=33576",
 			"name": "Brenila",
 			"position": [
 				-12.8857021331787,
@@ -291,7 +317,8 @@
 			"yaw": -2.65034508705139
 		},
 		{
-			"body": "bones=53 meshes=5 verts=18752 sha256=e22cd8fdfeeca6041fa7596e943935ca005e0f68754092e180448eb58e8c82d4",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_male\":0.32,\"phenotype_caucasian\":0.74,\"body_aged\":0.56,\"head_aged\":0.35000000000000003,\"body_slim\":0.23,\"head_heavy\":0.43,\"head_round\":0.32,\"head_square\":0.42},\"bone_scale\":{\"hand\":1.09,\"foot\":1.0},\"equipment\":{\"torso\":\"shirt_ragged\",\"legs\":\"pants_wool\",\"feet\":\"shoes_cloth\"},\"skin\":\"skin_male_aged\"}",
+			"body_shape": "bones=53 meshes=5 verts=18752",
 			"name": "Wrenen",
 			"position": [
 				18.0101127624512,
@@ -302,7 +329,8 @@
 			"yaw": 2.31353569030762
 		},
 		{
-			"body": "bones=53 meshes=5 verts=18752 sha256=da2bdbd0ea15f058ec6d216d2aab6bf66b1c68abf431c87da8f9df6443b23d3d",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_female\":0.87,\"phenotype_caucasian\":0.99,\"body_aged\":0.5700000000000001,\"head_aged\":0.42,\"body_heavy\":0.46,\"belly\":0.22,\"head_square\":0.23,\"nose_strong\":0.28,\"head_heavy\":0.34},\"bone_scale\":{\"hand\":1.06,\"foot\":1.09},\"bone_girth\":{\"lowerarm\":1.01,\"calf\":1.04},\"equipment\":{\"torso\":\"shirt_ragged\",\"legs\":\"pants_wool\",\"feet\":\"shoes_cloth\"},\"skin\":\"skin_female_aged\"}",
+			"body_shape": "bones=53 meshes=5 verts=18752",
 			"name": "Yorin",
 			"position": [
 				17.0795631408691,
@@ -313,7 +341,8 @@
 			"yaw": 2.16455483436584
 		},
 		{
-			"body": "bones=53 meshes=5 verts=33576 sha256=61c6142865d56c0b18e5b3fb06c93bdccf747aa2fbf1cdd75bd4e7e78205f7c1",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_female\":0.92,\"phenotype_caucasian\":0.75,\"body_heavy\":0.49,\"belly\":0.23,\"jaw_wide\":0.46,\"head_round\":0.36,\"chin_prominent\":0.37},\"equipment\":{\"torso\":\"shirt_ragged\",\"legs\":\"pants_wool\",\"feet\":\"boots_worn\"},\"skin\":\"skin_female_light\"}",
+			"body_shape": "bones=53 meshes=5 verts=33576",
 			"name": "Dagila",
 			"position": [
 				17.6724090576172,
@@ -324,7 +353,8 @@
 			"yaw": 2.70383739471436
 		},
 		{
-			"body": "bones=53 meshes=5 verts=33576 sha256=576c8a33b8792d78b9229df06bc7db476f9349aa221119260bd7d82fb4e1717d",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_female\":0.88,\"phenotype_asian\":0.89,\"head_heavy\":0.17,\"head_round\":0.37,\"jaw_wide\":0.24},\"equipment\":{\"torso\":\"shirt_ragged\",\"legs\":\"pants_wool\",\"feet\":\"boots_worn\"},\"skin\":\"skin_female_mid\"}",
+			"body_shape": "bones=53 meshes=5 verts=33576",
 			"name": "Velei",
 			"position": [
 				-9.39424133300781,
@@ -335,7 +365,8 @@
 			"yaw": -0.251748651266098
 		},
 		{
-			"body": "bones=53 meshes=5 verts=33576 sha256=13a4f2957efb83d671f82ccecbe72badc4f6d9674188bf101b66bbd182faa080",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_female\":0.9400000000000001,\"phenotype_caucasian\":0.73,\"body_slim\":0.16,\"torso_muscle\":0.37,\"arms_muscle\":0.45,\"legs_muscle\":0.15,\"nose_hump\":0.5700000000000001,\"chin_prominent\":0.58,\"head_square\":0.19},\"bone_scale\":{\"hand\":0.98,\"foot\":0.97},\"bone_girth\":{\"lowerarm\":1.03,\"calf\":1.02},\"equipment\":{\"torso\":\"shirt_ragged\",\"legs\":\"pants_wool\",\"feet\":\"boots_worn\"},\"skin\":\"skin_female_mid\"}",
+			"body_shape": "bones=53 meshes=5 verts=33576",
 			"name": "Enaosund",
 			"position": [
 				28.298282623291,
@@ -346,7 +377,8 @@
 			"yaw": -2.45033717155457
 		},
 		{
-			"body": "bones=53 meshes=5 verts=18752 sha256=f42e62fd67eedbedd05306c6c6da634e144414312af551064da234b9c2935abc",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_male\":0.06,\"phenotype_african\":0.65,\"torso_muscle\":0.51,\"arms_muscle\":0.44,\"legs_muscle\":0.19,\"head_square\":0.28,\"nose_strong\":0.35000000000000003,\"head_heavy\":0.55},\"equipment\":{\"torso\":\"shirt_ragged\",\"legs\":\"pants_wool\",\"feet\":\"shoes_cloth\"},\"skin\":\"skin_male_deep\"}",
+			"body_shape": "bones=53 meshes=5 verts=18752",
 			"name": "Sevei",
 			"position": [
 				-77.640983581543,
@@ -357,7 +389,8 @@
 			"yaw": 2.01801180839539
 		},
 		{
-			"body": "bones=53 meshes=5 verts=33576 sha256=a57c3d49994485b5981d5828f82af0e27ae7dc28d33ff7e0f7a7dea068b74617",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_male\":0.27,\"phenotype_caucasian\":0.91,\"body_slim\":0.21,\"torso_muscle\":0.52,\"arms_muscle\":0.59,\"legs_muscle\":0.47000000000000003,\"head_square\":0.2,\"jaw_wide\":0.23,\"head_round\":0.53},\"equipment\":{\"torso\":\"shirt_ragged\",\"legs\":\"pants_wool\",\"feet\":\"boots_worn\"},\"skin\":\"skin_male_light\"}",
+			"body_shape": "bones=53 meshes=5 verts=33576",
 			"name": "Kelokma",
 			"position": [
 				14.34765625,
@@ -368,7 +401,8 @@
 			"yaw": -0.340797424316406
 		},
 		{
-			"body": "bones=53 meshes=5 verts=33576 sha256=4b42338bf8abee07ba973147e6aeb6371b5cd5fdc9e835f42dc6743ccbff9cf4",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_female\":0.88,\"phenotype_caucasian\":0.91,\"torso_muscle\":0.27,\"arms_muscle\":0.31,\"legs_muscle\":0.28,\"jaw_wide\":0.49,\"nose_strong\":0.2,\"chin_prominent\":0.26},\"bone_scale\":{\"hand\":1.1,\"foot\":1.0},\"bone_girth\":{\"lowerarm\":0.96,\"calf\":1.04},\"equipment\":{\"torso\":\"shirt_ragged\",\"legs\":\"pants_wool\",\"feet\":\"boots_worn\"},\"skin\":\"skin_female_light\"}",
+			"body_shape": "bones=53 meshes=5 verts=33576",
 			"name": "Marmauran",
 			"position": [
 				-5.53100872039795,
@@ -379,7 +413,8 @@
 			"yaw": 1.66058897972107
 		},
 		{
-			"body": "bones=53 meshes=4 verts=17948 sha256=816190fc3fb1126c72b4d35a6d7801713ea232fa3374609387e064b2312e33fa",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_female\":1.0,\"phenotype_african\":0.68,\"body_slim\":0.19,\"torso_muscle\":0.3,\"arms_muscle\":0.53,\"legs_muscle\":0.33,\"head_heavy\":0.3,\"nose_strong\":0.2,\"chin_prominent\":0.31},\"bone_scale\":{\"hand\":1.06,\"foot\":1.09},\"bone_girth\":{\"lowerarm\":0.99,\"calf\":1.1},\"equipment\":{\"torso\":\"shirt_ragged\",\"legs\":\"pants_wool\"},\"skin\":\"skin_female_light\"}",
+			"body_shape": "bones=53 meshes=4 verts=17948",
 			"name": "Enaila",
 			"position": [
 				-38.106372833252,
@@ -390,7 +425,8 @@
 			"yaw": -0.727502822875977
 		},
 		{
-			"body": "bones=53 meshes=5 verts=18752 sha256=ae124a38829fcea50222f0857fb6436a19d2503fc7954b3f2ab9d7e3f2acd271",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_male\":0.04,\"phenotype_caucasian\":0.85,\"torso_muscle\":0.32,\"arms_muscle\":0.59,\"legs_muscle\":0.32,\"head_square\":0.31,\"chin_prominent\":0.49,\"nose_hump\":0.6},\"equipment\":{\"torso\":\"shirt_ragged\",\"legs\":\"pants_wool\",\"feet\":\"shoes_cloth\"},\"skin\":\"skin_male_light\"}",
+			"body_shape": "bones=53 meshes=5 verts=18752",
 			"name": "Ruund",
 			"position": [
 				-29.5491752624512,
@@ -401,7 +437,8 @@
 			"yaw": -1.50548052787781
 		},
 		{
-			"body": "bones=53 meshes=5 verts=33576 sha256=48bbf3a42bfa6d70aabec5f343bee05632678f18b7d6ace272fa2e1349b75f24",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_female\":0.88,\"phenotype_caucasian\":0.6900000000000001,\"body_aged\":0.85,\"head_aged\":0.6900000000000001,\"body_slim\":0.28,\"torso_muscle\":0.34,\"arms_muscle\":0.54,\"legs_muscle\":0.28,\"head_heavy\":0.4,\"nose_hump\":0.5,\"head_square\":0.34},\"bone_scale\":{\"hand\":1.05,\"foot\":1.09},\"bone_girth\":{\"lowerarm\":0.97,\"calf\":1.08},\"equipment\":{\"torso\":\"shirt_ragged\",\"legs\":\"pants_wool\",\"feet\":\"boots_worn\"},\"skin\":\"skin_female_aged\"}",
+			"body_shape": "bones=53 meshes=5 verts=33576",
 			"name": "Halilaund",
 			"position": [
 				-3.3296070098877,
@@ -412,7 +449,8 @@
 			"yaw": 0.813849210739136
 		},
 		{
-			"body": "bones=53 meshes=5 verts=33576 sha256=461283cc41288f315ef1b10a455a7096eb798aeae2d1d4abdfa01a9926be97c7",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_female\":0.92,\"phenotype_african\":0.98,\"torso_muscle\":0.35000000000000003,\"arms_muscle\":0.31,\"legs_muscle\":0.4,\"chin_prominent\":0.47000000000000003,\"jaw_wide\":0.47000000000000003,\"head_square\":0.5700000000000001},\"bone_scale\":{\"hand\":1.09,\"foot\":1.06},\"bone_girth\":{\"lowerarm\":1.04,\"calf\":1.05},\"equipment\":{\"torso\":\"shirt_ragged\",\"legs\":\"pants_wool\",\"feet\":\"boots_worn\"},\"skin\":\"skin_female_light\"}",
+			"body_shape": "bones=53 meshes=5 verts=33576",
 			"name": "Marineth",
 			"position": [
 				-1.340855717659,
@@ -423,7 +461,8 @@
 			"yaw": 1.41398310661316
 		},
 		{
-			"body": "bones=53 meshes=4 verts=32427 sha256=6b95659c5df076184c940834f35d05aec2e3aac005acff5d8cb7b9c063e9b6b7",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_female\":0.96,\"phenotype_african\":0.65,\"torso_muscle\":0.28,\"arms_muscle\":0.24,\"legs_muscle\":0.25,\"chin_prominent\":0.35000000000000003,\"head_square\":0.18,\"nose_hump\":0.25},\"bone_girth\":{\"lowerarm\":1.06,\"calf\":0.98},\"equipment\":{\"legs\":\"pants_wool\",\"feet\":\"boots_worn\"},\"skin\":\"skin_female_mid\"}",
+			"body_shape": "bones=53 meshes=4 verts=32427",
 			"name": "Sevwyn",
 			"position": [
 				51.4377861022949,
@@ -434,7 +473,8 @@
 			"yaw": -1.30320584774017
 		},
 		{
-			"body": "bones=53 meshes=3 verts=16799 sha256=c47051cda88a1d06be2328ea996051842138b85f47391cf865edd359ccaba757",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_female\":0.9400000000000001,\"phenotype_caucasian\":0.61,\"torso_muscle\":0.25,\"arms_muscle\":0.34,\"legs_muscle\":0.33,\"head_heavy\":0.24,\"nose_hump\":0.21,\"head_round\":0.17},\"equipment\":{\"legs\":\"pants_wool\"},\"skin\":\"skin_female_light\"}",
+			"body_shape": "bones=53 meshes=3 verts=16799",
 			"name": "Halos",
 			"position": [
 				-24.4231472015381,
@@ -447,7 +487,8 @@
 	],
 	"npcs": [
 		{
-			"body": "bones=53 meshes=5 verts=18752 sha256=920fd5fa36f4957723d09ff232932cb6ecc5ccabe98acf2ba124ab421ea0a870",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_male\":0.23,\"phenotype_caucasian\":0.87,\"body_aged\":0.62,\"head_aged\":0.62,\"head_heavy\":0.16,\"nose_hump\":0.32,\"jaw_wide\":0.31},\"equipment\":{\"torso\":\"shirt_ragged\",\"legs\":\"pants_wool\",\"feet\":\"shoes_cloth\"},\"skin\":\"skin_male_aged\"}",
+			"body_shape": "bones=53 meshes=5 verts=18752",
 			"name": "Marin",
 			"position": [
 				-0.609465181827545,
@@ -458,7 +499,8 @@
 			"yaw": 0.325895577669144
 		},
 		{
-			"body": "bones=53 meshes=5 verts=18752 sha256=06fc1b45408f0f37a520e9072161b069b31d00f6673fd25e74dcd407632d397e",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_female\":0.93,\"phenotype_caucasian\":0.8200000000000001,\"body_aged\":0.8200000000000001,\"head_aged\":0.33,\"body_slim\":0.2,\"nose_hump\":0.25,\"chin_prominent\":0.21,\"nose_strong\":0.45},\"equipment\":{\"torso\":\"shirt_ragged\",\"legs\":\"pants_wool\",\"feet\":\"shoes_cloth\"},\"skin\":\"skin_female_aged\"}",
+			"body_shape": "bones=53 meshes=5 verts=18752",
 			"name": "Orric",
 			"position": [
 				20.5974102020264,
@@ -469,7 +511,8 @@
 			"yaw": 1.70613861083984
 		},
 		{
-			"body": "bones=53 meshes=5 verts=18752 sha256=b6c4e2af28868aa36dbee534c0893010af4366ce76ba2911dd786826b6e1816e",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_female\":0.88,\"phenotype_caucasian\":0.74,\"head_round\":0.17,\"nose_strong\":0.16,\"chin_prominent\":0.43},\"bone_girth\":{\"lowerarm\":1.0,\"calf\":1.08},\"equipment\":{\"torso\":\"shirt_ragged\",\"legs\":\"pants_wool\",\"feet\":\"shoes_cloth\"},\"skin\":\"skin_female_mid\"}",
+			"body_shape": "bones=53 meshes=5 verts=18752",
 			"name": "Haleth",
 			"position": [
 				22.4921016693115,
@@ -480,7 +523,8 @@
 			"yaw": 1.61107206344604
 		},
 		{
-			"body": "bones=53 meshes=5 verts=33576 sha256=91db8611843996e6e36e6620153c765ef3e48e6eee58964cad7268719d657b8c",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_female\":0.86,\"phenotype_african\":0.68,\"nose_hump\":0.39,\"head_square\":0.42,\"head_heavy\":0.19},\"bone_scale\":{\"hand\":1.03,\"foot\":1.06},\"bone_girth\":{\"lowerarm\":1.04,\"calf\":1.06},\"equipment\":{\"torso\":\"shirt_ragged\",\"legs\":\"pants_wool\",\"feet\":\"boots_worn\"},\"skin\":\"skin_female_light\"}",
+			"body_shape": "bones=53 meshes=5 verts=33576",
 			"name": "Kelis",
 			"position": [
 				11.6126327514648,
@@ -491,7 +535,8 @@
 			"yaw": 0.648806631565094
 		},
 		{
-			"body": "bones=53 meshes=5 verts=33576 sha256=d3addcf20746f07d0a93a128bf391f415f3d606a53a0733d716f9d650847101e",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_male\":0.17,\"phenotype_asian\":0.76,\"body_aged\":0.74,\"head_aged\":0.39,\"head_round\":0.41000000000000003,\"jaw_wide\":0.27,\"chin_prominent\":0.27},\"equipment\":{\"torso\":\"shirt_ragged\",\"legs\":\"pants_wool\",\"feet\":\"boots_worn\"},\"skin\":\"skin_male_aged\"}",
+			"body_shape": "bones=53 meshes=5 verts=33576",
 			"name": "Kelok",
 			"position": [
 				-1.69087815284729,
@@ -502,7 +547,8 @@
 			"yaw": 0.423202008008957
 		},
 		{
-			"body": "bones=53 meshes=5 verts=18752 sha256=988075156a89c50a6f9d4eeb9679d06b21dc0c90bfa6aa0737d158774b941ef2",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_female\":0.91,\"phenotype_caucasian\":0.7000000000000001,\"head_heavy\":0.4,\"chin_prominent\":0.2,\"nose_strong\":0.59},\"bone_scale\":{\"hand\":1.01,\"foot\":1.06},\"bone_girth\":{\"lowerarm\":1.01,\"calf\":1.1},\"equipment\":{\"torso\":\"shirt_ragged\",\"legs\":\"pants_wool\",\"feet\":\"shoes_cloth\"},\"skin\":\"skin_female_mid\"}",
+			"body_shape": "bones=53 meshes=5 verts=18752",
 			"name": "Wrenis",
 			"position": [
 				17.3750591278076,
@@ -513,7 +559,8 @@
 			"yaw": 1.42466771602631
 		},
 		{
-			"body": "bones=53 meshes=5 verts=33576 sha256=b7289e1df9f92098c312b31809284ad40f2585f4751aac0fa5d9183cc7fb1fc5",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_female\":0.9500000000000001,\"phenotype_african\":0.71,\"jaw_wide\":0.15,\"head_square\":0.4,\"head_round\":0.19},\"bone_scale\":{\"hand\":0.98,\"foot\":0.98},\"equipment\":{\"torso\":\"shirt_ragged\",\"legs\":\"pants_wool\",\"feet\":\"boots_worn\"},\"skin\":\"skin_female_light\"}",
+			"body_shape": "bones=53 meshes=5 verts=33576",
 			"name": "Oris",
 			"position": [
 				10.1844654083252,
@@ -524,7 +571,8 @@
 			"yaw": 2.33089971542358
 		},
 		{
-			"body": "bones=53 meshes=5 verts=33576 sha256=0a61971e2a99534bd9f28a1d7e5328efacd6c3fb365c7f4150842288888731df",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_female\":0.91,\"phenotype_asian\":0.98,\"body_aged\":0.72,\"head_aged\":0.59,\"body_slim\":0.27,\"nose_strong\":0.26,\"head_heavy\":0.49,\"head_square\":0.35000000000000003},\"bone_scale\":{\"hand\":1.04,\"foot\":1.05},\"bone_girth\":{\"lowerarm\":1.02,\"calf\":1.09},\"equipment\":{\"torso\":\"shirt_ragged\",\"legs\":\"pants_wool\",\"feet\":\"boots_worn\"},\"skin\":\"skin_female_aged\"}",
+			"body_shape": "bones=53 meshes=5 verts=33576",
 			"name": "Asha",
 			"position": [
 				-7.51701211929321,
@@ -535,7 +583,8 @@
 			"yaw": -3.08402872085571
 		},
 		{
-			"body": "bones=53 meshes=5 verts=33576 sha256=4972e56930d1190e79ac8af87376ea141188d11fae3b4181b634a0cd4a402e5c",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_male\":0.31,\"phenotype_asian\":0.72,\"body_slim\":0.37,\"nose_strong\":0.5700000000000001,\"nose_hump\":0.24,\"head_square\":0.52},\"bone_scale\":{\"hand\":1.1,\"foot\":1.09},\"equipment\":{\"torso\":\"shirt_ragged\",\"legs\":\"pants_wool\",\"feet\":\"boots_worn\"},\"skin\":\"skin_male_light\"}",
+			"body_shape": "bones=53 meshes=5 verts=33576",
 			"name": "Toros",
 			"position": [
 				5.04724454879761,
@@ -546,7 +595,8 @@
 			"yaw": 0.651843667030334
 		},
 		{
-			"body": "bones=53 meshes=5 verts=18752 sha256=37d96803bcd1c89d065853fdf70e2479ff3d440f03bebffa8225a35c37a6235f",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_female\":0.9400000000000001,\"phenotype_asian\":0.84,\"nose_strong\":0.43,\"head_round\":0.34,\"head_square\":0.6},\"bone_girth\":{\"lowerarm\":1.1,\"calf\":1.09},\"equipment\":{\"torso\":\"shirt_ragged\",\"legs\":\"pants_wool\",\"feet\":\"shoes_cloth\"},\"skin\":\"skin_female_mid\"}",
+			"body_shape": "bones=53 meshes=5 verts=18752",
 			"name": "Marma",
 			"position": [
 				-12.8857021331787,
@@ -557,7 +607,8 @@
 			"yaw": -2.65034508705139
 		},
 		{
-			"body": "bones=53 meshes=5 verts=33576 sha256=e33c99adeacfbfca6aa5a30e6d6f61c7400a1e5c85a6c9286509ea80c4ca0c39",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_female\":0.98,\"phenotype_african\":0.9500000000000001,\"head_square\":0.29,\"jaw_wide\":0.33,\"nose_strong\":0.17},\"bone_girth\":{\"lowerarm\":1.05,\"calf\":1.08},\"equipment\":{\"torso\":\"shirt_ragged\",\"legs\":\"pants_wool\",\"feet\":\"boots_worn\"},\"skin\":\"skin_female_mid\"}",
+			"body_shape": "bones=53 meshes=5 verts=33576",
 			"name": "Enaen",
 			"position": [
 				18.0101127624512,
@@ -568,7 +619,8 @@
 			"yaw": 2.31353569030762
 		},
 		{
-			"body": "bones=53 meshes=5 verts=18752 sha256=9dae68424569d4d05d5189a53289e46dd294e91c77fe37538255fe0433bb70c5",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"phenotype_caucasian\":0.93,\"body_heavy\":0.35000000000000003,\"belly\":0.18,\"chin_prominent\":0.53,\"head_round\":0.29,\"nose_hump\":0.19},\"bone_scale\":{\"hand\":0.97,\"foot\":1.1},\"equipment\":{\"torso\":\"shirt_ragged\",\"legs\":\"pants_wool\",\"feet\":\"shoes_cloth\"},\"skin\":\"skin_male_light\"}",
+			"body_shape": "bones=53 meshes=5 verts=18752",
 			"name": "Kelin",
 			"position": [
 				17.0795631408691,
@@ -579,7 +631,8 @@
 			"yaw": 2.16455483436584
 		},
 		{
-			"body": "bones=53 meshes=5 verts=18752 sha256=143268c0d54efc1827dc88027689650c50e21b3e65e8c10e3d3b82fe88b36f1a",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_male\":0.04,\"phenotype_african\":0.84,\"body_heavy\":0.21,\"belly\":0.39,\"nose_strong\":0.49,\"head_round\":0.5700000000000001,\"chin_prominent\":0.22},\"bone_scale\":{\"hand\":1.09,\"foot\":0.96},\"bone_girth\":{\"lowerarm\":1.08,\"calf\":1.09},\"equipment\":{\"torso\":\"shirt_ragged\",\"legs\":\"pants_wool\",\"feet\":\"shoes_cloth\"},\"skin\":\"skin_male_deep\"}",
+			"body_shape": "bones=53 meshes=5 verts=18752",
 			"name": "Brenos",
 			"position": [
 				17.6724090576172,
@@ -590,7 +643,8 @@
 			"yaw": 2.70383739471436
 		},
 		{
-			"body": "bones=53 meshes=5 verts=33576 sha256=ff5159e53c05d335cc8a6e482e7a6efa06370b0485fb775d90640772c2a5274b",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_female\":0.96,\"phenotype_caucasian\":0.63,\"body_heavy\":0.29,\"belly\":0.34,\"jaw_wide\":0.31,\"head_square\":0.34,\"chin_prominent\":0.24},\"equipment\":{\"torso\":\"shirt_ragged\",\"legs\":\"pants_wool\",\"feet\":\"boots_worn\"},\"skin\":\"skin_female_light\"}",
+			"body_shape": "bones=53 meshes=5 verts=33576",
 			"name": "Wrenan",
 			"position": [
 				-9.39424133300781,
@@ -601,7 +655,8 @@
 			"yaw": -0.251748651266098
 		},
 		{
-			"body": "bones=53 meshes=5 verts=33576 sha256=b4db48037b357dce1801f05aa2c55e56f3b37769740fbd961afcd198e7aff296",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_male\":0.17,\"phenotype_caucasian\":0.8300000000000001,\"torso_muscle\":0.24,\"arms_muscle\":0.43,\"legs_muscle\":0.23,\"head_heavy\":0.53,\"head_square\":0.44,\"jaw_wide\":0.5700000000000001},\"equipment\":{\"torso\":\"shirt_ragged\",\"legs\":\"pants_wool\",\"feet\":\"boots_worn\"},\"skin\":\"skin_male_light\"}",
+			"body_shape": "bones=53 meshes=5 verts=33576",
 			"name": "Enaos",
 			"position": [
 				28.298282623291,
@@ -612,7 +667,8 @@
 			"yaw": -2.45033717155457
 		},
 		{
-			"body": "bones=53 meshes=5 verts=33576 sha256=cefcb1fac20d1ece06d649beed8a4dd5df548e92ca5a57e240676c701a154a9f",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_female\":1.0,\"phenotype_african\":1.0,\"body_heavy\":0.42,\"belly\":0.27,\"torso_muscle\":0.49,\"arms_muscle\":0.2,\"legs_muscle\":0.33,\"chin_prominent\":0.4,\"jaw_wide\":0.26,\"head_square\":0.28},\"bone_scale\":{\"hand\":1.1,\"foot\":1.01},\"equipment\":{\"torso\":\"shirt_ragged\",\"legs\":\"pants_wool\",\"feet\":\"boots_worn\"},\"skin\":\"skin_female_light\"}",
+			"body_shape": "bones=53 meshes=5 verts=33576",
 			"name": "Halei",
 			"position": [
 				-77.640983581543,
@@ -623,7 +679,8 @@
 			"yaw": 2.01801180839539
 		},
 		{
-			"body": "bones=53 meshes=4 verts=17948 sha256=334113d0fea54eb5186b92e028d4d6285cd0d1d039d51c1498ed5f2d7b40c295",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_female\":0.96,\"phenotype_asian\":0.99,\"body_heavy\":0.41000000000000003,\"belly\":0.38,\"torso_muscle\":0.4,\"arms_muscle\":0.59,\"legs_muscle\":0.39,\"jaw_wide\":0.56,\"head_square\":0.45,\"nose_strong\":0.27},\"bone_girth\":{\"lowerarm\":1.09,\"calf\":1.04},\"equipment\":{\"torso\":\"shirt_ragged\",\"legs\":\"pants_wool\"},\"skin\":\"skin_female_mid\"}",
+			"body_shape": "bones=53 meshes=4 verts=17948",
 			"name": "Sevila",
 			"position": [
 				14.34765625,
@@ -634,7 +691,8 @@
 			"yaw": -0.340797424316406
 		},
 		{
-			"body": "bones=53 meshes=4 verts=17948 sha256=96927495a056f9ee872d34ee8bd1a6562e7eeae080c28e42023ef382b88fa783",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_female\":0.85,\"phenotype_caucasian\":0.71,\"torso_muscle\":0.37,\"arms_muscle\":0.39,\"legs_muscle\":0.3,\"nose_strong\":0.4,\"nose_hump\":0.41000000000000003,\"head_round\":0.32},\"bone_scale\":{\"hand\":1.09,\"foot\":0.97},\"equipment\":{\"torso\":\"shirt_ragged\",\"legs\":\"pants_wool\"},\"skin\":\"skin_female_light\"}",
+			"body_shape": "bones=53 meshes=4 verts=17948",
 			"name": "Ruma",
 			"position": [
 				-5.53100872039795,
@@ -645,7 +703,8 @@
 			"yaw": 1.66058897972107
 		},
 		{
-			"body": "bones=53 meshes=5 verts=18752 sha256=ca53dbf66fca38a58d1801244668444d08eb7d87b0ac087dccb7fda40352fda8",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_male\":0.08,\"phenotype_african\":0.75,\"torso_muscle\":0.42,\"arms_muscle\":0.44,\"legs_muscle\":0.34,\"head_heavy\":0.17,\"jaw_wide\":0.54,\"head_round\":0.56},\"bone_girth\":{\"lowerarm\":1.01,\"calf\":1.01},\"equipment\":{\"torso\":\"shirt_ragged\",\"legs\":\"pants_wool\",\"feet\":\"shoes_cloth\"},\"skin\":\"skin_male_light\"}",
+			"body_shape": "bones=53 meshes=5 verts=18752",
 			"name": "Marmaur",
 			"position": [
 				-38.106372833252,
@@ -656,7 +715,8 @@
 			"yaw": -0.727502822875977
 		},
 		{
-			"body": "bones=53 meshes=5 verts=18752 sha256=8111fd928937ff653e79a91495dbf6a8abc23495ddb18f9afafde4aae64b28e9",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_female\":0.98,\"phenotype_caucasian\":0.96,\"body_heavy\":0.43,\"belly\":0.09,\"torso_muscle\":0.23,\"arms_muscle\":0.41000000000000003,\"legs_muscle\":0.17,\"nose_strong\":0.3,\"nose_hump\":0.51,\"jaw_wide\":0.59},\"bone_scale\":{\"hand\":1.09,\"foot\":1.09},\"bone_girth\":{\"lowerarm\":1.03,\"calf\":1.07},\"equipment\":{\"torso\":\"shirt_ragged\",\"legs\":\"pants_wool\",\"feet\":\"shoes_cloth\"},\"skin\":\"skin_female_light\"}",
+			"body_shape": "bones=53 meshes=5 verts=18752",
 			"name": "Dagette",
 			"position": [
 				-29.5491752624512,
@@ -667,7 +727,8 @@
 			"yaw": -1.50548052787781
 		},
 		{
-			"body": "bones=53 meshes=5 verts=33576 sha256=a2df6240e3d853a9b3860cd78b763ec9f314560a59e79020b939a599c5a80ccc",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_female\":0.9400000000000001,\"phenotype_asian\":0.61,\"body_heavy\":0.38,\"belly\":0.16,\"torso_muscle\":0.34,\"arms_muscle\":0.51,\"legs_muscle\":0.41000000000000003,\"nose_hump\":0.59,\"nose_strong\":0.48,\"head_square\":0.38},\"bone_scale\":{\"hand\":0.99,\"foot\":0.99},\"bone_girth\":{\"lowerarm\":1.05,\"calf\":0.98},\"equipment\":{\"torso\":\"shirt_ragged\",\"legs\":\"pants_wool\",\"feet\":\"boots_worn\"},\"skin\":\"skin_female_mid\"}",
+			"body_shape": "bones=53 meshes=5 verts=33576",
 			"name": "Kelokund",
 			"position": [
 				-3.3296070098877,
@@ -678,7 +739,8 @@
 			"yaw": 0.813849210739136
 		},
 		{
-			"body": "bones=53 meshes=5 verts=33576 sha256=eef8094ada8ba86031bf00642490f97ab5989f64369e84c7a99de69b72c0e7cb",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_female\":0.9,\"phenotype_caucasian\":0.96,\"torso_muscle\":0.59,\"arms_muscle\":0.45,\"legs_muscle\":0.35000000000000003,\"nose_hump\":0.4,\"head_square\":0.37,\"head_heavy\":0.43},\"equipment\":{\"torso\":\"shirt_ragged\",\"legs\":\"pants_wool\",\"feet\":\"boots_worn\"},\"skin\":\"skin_female_mid\"}",
+			"body_shape": "bones=53 meshes=5 verts=33576",
 			"name": "Halila",
 			"position": [
 				-1.340855717659,
@@ -689,7 +751,8 @@
 			"yaw": 1.41398310661316
 		},
 		{
-			"body": "bones=53 meshes=4 verts=17948 sha256=5384530f8ddb0d15116bf70049f7673fae2c5b7f67d01e9182239dcc8fa1cbda",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_male\":0.2,\"phenotype_asian\":0.81,\"body_heavy\":0.38,\"belly\":0.11,\"torso_muscle\":0.37,\"arms_muscle\":0.34,\"legs_muscle\":0.19,\"head_round\":0.6,\"nose_hump\":0.54,\"nose_strong\":0.17},\"bone_scale\":{\"hand\":0.97,\"foot\":0.96},\"equipment\":{\"torso\":\"shirt_ragged\",\"legs\":\"pants_wool\"},\"skin\":\"skin_male_deep\"}",
+			"body_shape": "bones=53 meshes=4 verts=17948",
 			"name": "Hala",
 			"position": [
 				51.4377861022949,
@@ -700,7 +763,8 @@
 			"yaw": -1.30320584774017
 		},
 		{
-			"body": "bones=53 meshes=5 verts=18752 sha256=3c6a37ec7b1f2229d25f1e123607316e45cd21d4d3c36bd8b63101ed4f1385d1",
+			"body_recipe": "{\"version\":3,\"shapes\":{\"body_female\":0.92,\"phenotype_african\":0.71,\"torso_muscle\":0.31,\"arms_muscle\":0.47000000000000003,\"legs_muscle\":0.3,\"head_square\":0.46,\"jaw_wide\":0.25,\"head_round\":0.21},\"bone_scale\":{\"hand\":1.1,\"foot\":1.06},\"equipment\":{\"torso\":\"shirt_ragged\",\"legs\":\"pants_wool\",\"feet\":\"shoes_cloth\"},\"skin\":\"skin_female_light\"}",
+			"body_shape": "bones=53 meshes=5 verts=18752",
 			"name": "Wreneth",
 			"position": [
 				-24.4231472015381,
