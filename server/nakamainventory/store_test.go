@@ -28,6 +28,7 @@ func newStore(t *testing.T, storage *nakamastoragetest.Fake) *Store {
 	return store
 }
 
+// carried provides deliberately unsorted stacks so readback sorting has an independent oracle.
 func carried() Inventory {
 	return Inventory{Stacks: []Stack{
 		{ItemID: "iron-sword", Count: 1},
@@ -43,6 +44,7 @@ func expectedCarried() Inventory {
 	}}
 }
 
+// TestNewStoreRequiresStorage rejects construction without the storage client needed for durable inventory.
 func TestNewStoreRequiresStorage(t *testing.T) {
 	t.Parallel()
 	if _, err := NewStore(nil); err == nil {
@@ -50,6 +52,7 @@ func TestNewStoreRequiresStorage(t *testing.T) {
 	}
 }
 
+// TestSaveCreatesAPrivateVersionedContainerAndLoadReturnsItSorted checks sorted readback and an atomic private inventory-and-audit write.
 func TestSaveCreatesAPrivateVersionedContainerAndLoadReturnsItSorted(t *testing.T) {
 	t.Parallel()
 	storage := nakamastoragetest.New()

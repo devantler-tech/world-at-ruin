@@ -58,6 +58,7 @@ func handoffStores(t *testing.T, f *fixture, now *time.Time) (*nakamastoragetest
 	return storage, coordinator, store
 }
 
+// assertHandoffAllocation checks the returned endpoint, observer, expiry and independently expected admission secret.
 func assertHandoffAllocation(t *testing.T, got handoff.Allocation, name string, expiry time.Time) {
 	t.Helper()
 	if got.ID != name || got.ServerName != "node-a.zones.example" || got.Port != 8443 ||

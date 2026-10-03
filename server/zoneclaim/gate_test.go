@@ -30,6 +30,7 @@ func (f privateClaimFunc) Claim(ctx context.Context, binding agones.ClaimBinding
 	return f(ctx, binding, token, observer)
 }
 
+// TestObservedClaimGatesRealSocketAndRejectsInFlightBindingChange checks socket admission against observed lease identity, including a concurrent binding change.
 func TestObservedClaimGatesRealSocketAndRejectsInFlightBindingChange(t *testing.T) {
 	sidecar, err := agonestest.Start(nil)
 	if err != nil {

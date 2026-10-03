@@ -45,6 +45,7 @@ type fixture struct {
 	deleted []metav1.DeleteOptions
 }
 
+// gameServer seeds allocated capacity with a correlation digest, immutable UID and resource revision.
 func gameServer(name, attempt string) *agonesv1.GameServer {
 	digest, _ := agones.CorrelationLabel(attempt)
 	return &agonesv1.GameServer{ObjectMeta: metav1.ObjectMeta{
@@ -63,6 +64,7 @@ func fixtureDeleteAction(t *testing.T, action clienttesting.Action) clienttestin
 	return deletion
 }
 
+// newFixture uses the generated client with consistent list revisions and enforced delete preconditions.
 func newFixture(t *testing.T, objects ...*agonesv1.GameServer) *fixture {
 	t.Helper()
 	seed := make([]runtime.Object, len(objects))
@@ -270,6 +272,7 @@ func TestSweepRevalidatesIdentityStateAndMetadataBeforeDelete(t *testing.T) {
 	}
 }
 
+// TestSweepReconcilesAmbiguousDeletionAndContinuesOtherOrphans checks deletion uncertainty without preventing independently eligible orphan cleanup.
 func TestSweepReconcilesAmbiguousDeletionAndContinuesOtherOrphans(t *testing.T) {
 	for _, outcome := range []string{"absent", "replacement", "same", "read failure"} {
 		t.Run(outcome, func(t *testing.T) {

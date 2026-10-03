@@ -70,6 +70,7 @@ func reportShutdown(t *testing.T, lifecycle *Lifecycle) {
 	}
 }
 
+// TestStartMarksReadyOnceAndBeatsHealth requires a single readiness transition followed by recurring health reports.
 func TestStartMarksReadyOnceAndBeatsHealth(t *testing.T) {
 	f := startFake(t, nil)
 
@@ -87,6 +88,7 @@ func TestStartMarksReadyOnceAndBeatsHealth(t *testing.T) {
 	}
 }
 
+// TestShutdownStopsHeartbeatsAndInformsSidecar checks that explicit shutdown stops reporting health and notifies the sidecar.
 func TestShutdownStopsHeartbeatsAndInformsSidecar(t *testing.T) {
 	f := startFake(t, nil)
 
@@ -108,6 +110,7 @@ func TestShutdownStopsHeartbeatsAndInformsSidecar(t *testing.T) {
 	}
 }
 
+// TestContextCancelStopsHeartbeatsButShutdownStillWorks keeps explicit sidecar shutdown available after the caller's lifecycle is cancelled.
 func TestContextCancelStopsHeartbeatsButShutdownStillWorks(t *testing.T) {
 	f := startFake(t, nil)
 

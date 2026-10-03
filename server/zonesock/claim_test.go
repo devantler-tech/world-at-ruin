@@ -138,6 +138,7 @@ func TestClaimedHubRefusesCanceledExpiredAndRejectedClaims(t *testing.T) {
 	}
 }
 
+// validHandshake supplies the HTTP upgrade headers that each refusal scenario can mutate independently.
 func validHandshake(r *http.Request) {
 	r.Header.Set("Connection", "Upgrade")
 	r.Header.Set("Upgrade", "websocket")
@@ -175,6 +176,7 @@ func claimedAdmissionFixture(t *testing.T) (*HMACVerifier, string) {
 	return verifier, token
 }
 
+// TestClaimedHubDoesNotConsumeClaimOnInvalidHandshake requires malformed upgrades to fail before the claim backend is invoked.
 func TestClaimedHubDoesNotConsumeClaimOnInvalidHandshake(t *testing.T) {
 	hub, calls, token := countingClaimFixture(t, errors.New("backend reached"), time.Second)
 	for _, mutate := range []func(*http.Request){
@@ -202,6 +204,7 @@ func TestClaimedHubDoesNotConsumeClaimOnInvalidHandshake(t *testing.T) {
 	}
 }
 
+// TestClaimedHubDoesNotCallBackendForInvalidAdmission keeps missing or forged credentials and unsupported wire versions outside the claim backend.
 func TestClaimedHubDoesNotCallBackendForInvalidAdmission(t *testing.T) {
 	hub, calls, token := countingClaimFixture(t, nil, 0)
 	for _, tc := range []struct{ authorization, version string }{

@@ -174,6 +174,7 @@ func TestGoogleIDTokenVerifierRejectsUnsafeTokenShapeBeforeValidation(t *testing
 	}
 }
 
+// TestGoogleIDTokenVerifierClassifiesValidationFailures preserves distinct authentication, cancellation and provider-availability errors while redacting credentials.
 func TestGoogleIDTokenVerifierClassifiesValidationFailures(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -247,6 +248,7 @@ func verifyFixturePayload(payload *idtoken.Payload, providerErr error) (string, 
 	return verifier.VerifyGoogleIDToken(context.Background(), testIdentityProof, testGoogleClientID)
 }
 
+// TestGoogleIDTokenVerifierRejectsInvalidClaims rejects a foreign issuer or missing subject without returning an authenticated identity.
 func TestGoogleIDTokenVerifierRejectsInvalidClaims(t *testing.T) {
 	tests := []struct {
 		name      string

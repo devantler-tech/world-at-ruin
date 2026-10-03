@@ -44,6 +44,7 @@ func writeMaterial(t *testing.T, dir, name string, data []byte) string {
 	return filepath.Join(dir, name)
 }
 
+// certificateFixture creates a private trust root and mutually usable leaf certificate with caller-selected URI identities.
 func certificateFixture(t *testing.T, dir string, identities ...string) (config, tls.Certificate, *x509.CertPool) {
 	t.Helper()
 	key := cryptotest.NewKey(t)
@@ -84,6 +85,7 @@ func allocationTLSServer(t *testing.T, certificate tls.Certificate, pool *x509.C
 	return server
 }
 
+// TestAllocatorConnectionUsesVerifiedMutualTLS requires both peers to trust the presented certificates before allocation can start.
 func TestAllocatorConnectionUsesVerifiedMutualTLS(t *testing.T) {
 	cfg, certificate, pool := certificateFixture(t, t.TempDir())
 	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
@@ -124,6 +126,7 @@ func TestAllocatorConnectionUsesVerifiedMutualTLS(t *testing.T) {
 	}
 }
 
+// TestAllocatorConnectionRidesOutTransientStartupFailures allows a delayed allocator startup while retaining verified mutual TLS.
 func TestAllocatorConnectionRidesOutTransientStartupFailures(t *testing.T) {
 	cfg, certificate, pool := certificateFixture(t, t.TempDir())
 	// Reserve a port, release it, and start the allocator only after the first

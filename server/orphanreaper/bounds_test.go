@@ -26,6 +26,7 @@ func fixtureListOptions(t *testing.T, action clienttesting.Action) metav1.ListOp
 	return list.GetListOptions()
 }
 
+// TestSweepExhaustsConsistentPagesBeforeLeaseScan requires a complete bounded resource snapshot before reading lease protection.
 func TestSweepExhaustsConsistentPagesBeforeLeaseScan(t *testing.T) {
 	f := newFixture(t, gameServer("one", "attempt-1"), gameServer("two", "attempt-2"))
 	calls := 0
@@ -65,6 +66,7 @@ func TestSweepExhaustsConsistentPagesBeforeLeaseScan(t *testing.T) {
 	}
 }
 
+// TestSweepRejectsBrokenPaginationWithoutPreservingEvidence ensures incomplete or inconsistent scans cannot delete servers or count as consecutive absence.
 func TestSweepRejectsBrokenPaginationWithoutPreservingEvidence(t *testing.T) {
 	for _, scenario := range []string{"late failure", "revision change", "empty revision", "cycle", "budget", "oversized", "duplicate name", "invalid digest", "noncanonical digest", "missing uid", "foreign namespace", "wildcard revision"} {
 		t.Run(scenario, func(t *testing.T) {

@@ -32,6 +32,7 @@ func deterministicAdmissionRandom(secret []byte) io.Reader {
 	)
 }
 
+// wrappingKey generates an independent RSA wrapping key and its public admission material.
 func wrappingKey(t *testing.T) (*rsa.PrivateKey, []byte) {
 	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 3072)
@@ -53,6 +54,7 @@ func prepareFixtureAdmission(t *testing.T, publicPEM []byte, randomSource io.Rea
 	})
 }
 
+// TestPrepareAdmissionObservesIdentityBoundEnvelopeBeforeReady holds sidecar observations to prove readiness waits for the exact identity-bound envelope.
 func TestPrepareAdmissionObservesIdentityBoundEnvelopeBeforeReady(t *testing.T) {
 	f := startFake(t, nil)
 	f.SetGameServer("games", "zone-17", "uid-17", "Starting")
@@ -160,6 +162,7 @@ func TestPrepareAdmissionObservesIdentityBoundEnvelopeBeforeReady(t *testing.T) 
 	}
 }
 
+// TestPrepareAdmissionAcceptsDNSSubdomainGameServerName preserves the complete dotted GameServer name as the allocation identity.
 func TestPrepareAdmissionAcceptsDNSSubdomainGameServerName(t *testing.T) {
 	f := startFake(t, nil)
 	f.SetGameServer("games", "zone-17.games", "uid-17", "Starting")
@@ -177,6 +180,7 @@ func TestPrepareAdmissionAcceptsDNSSubdomainGameServerName(t *testing.T) {
 	}
 }
 
+// TestPrepareAdmissionShutsDownInsteadOfRotatingAnAllocatableGameServer refuses ready, reserved and allocated capacity without replacing its admission metadata.
 func TestPrepareAdmissionShutsDownInsteadOfRotatingAnAllocatableGameServer(t *testing.T) {
 	for _, state := range []string{"Ready", "Reserved", "Allocated"} {
 		t.Run(state, func(t *testing.T) {
@@ -201,6 +205,7 @@ func TestPrepareAdmissionShutsDownInsteadOfRotatingAnAllocatableGameServer(t *te
 	}
 }
 
+// TestPrepareAdmissionDoesNotEchoSecretGenerationFailure checks that a failed random source stops admission without exposing its error's secret marker.
 func TestPrepareAdmissionDoesNotEchoSecretGenerationFailure(t *testing.T) {
 	f := startFake(t, nil)
 	f.SetGameServer("games", "zone-17", "uid-17", "Starting")
@@ -217,6 +222,7 @@ func TestPrepareAdmissionDoesNotEchoSecretGenerationFailure(t *testing.T) {
 	assertRefusedAdmissionStopped(t, f)
 }
 
+// TestPrepareAdmissionDoesNotEchoEnvelopeRandomFailure checks the same refusal and redaction after secret generation succeeds but envelope randomness fails.
 func TestPrepareAdmissionDoesNotEchoEnvelopeRandomFailure(t *testing.T) {
 	f := startFake(t, nil)
 	f.SetGameServer("games", "zone-17", "uid-17", "Starting")
@@ -240,6 +246,7 @@ func TestPrepareAdmissionDoesNotEchoEnvelopeRandomFailure(t *testing.T) {
 	assertRefusedAdmissionStopped(t, f)
 }
 
+// TestPrepareAdmissionDoesNotEchoMetadataFailure checks that publication failure stops admission and hides sidecar error material.
 func TestPrepareAdmissionDoesNotEchoMetadataFailure(t *testing.T) {
 	f := startFake(t, nil)
 	f.SetGameServer("games", "zone-17", "uid-17", "Starting")
@@ -257,6 +264,7 @@ func TestPrepareAdmissionDoesNotEchoMetadataFailure(t *testing.T) {
 	assertRefusedAdmissionStopped(t, f)
 }
 
+// TestPrepareAdmissionTimesOutWithoutObservedMetadata refuses admission when publication is never confirmed by the sidecar watch.
 func TestPrepareAdmissionTimesOutWithoutObservedMetadata(t *testing.T) {
 	f := startFake(t, nil)
 	f.SetGameServer("games", "zone-17", "uid-17", "Starting")

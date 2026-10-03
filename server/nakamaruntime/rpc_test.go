@@ -16,11 +16,14 @@ import (
 
 type blockingAllocator struct{ started chan struct{} }
 
+// Allocate waits for cancellation so the RPC's timeout and shutdown behavior are observable.
 func (a blockingAllocator) Allocate(ctx context.Context, _ handoff.AllocationRequest) (handoff.Allocation, error) {
 	close(a.started)
 	<-ctx.Done()
 	return handoff.Allocation{}, handoff.RetainAllocationOutcome(ctx.Err())
 }
+
+// Release is inert because this fixture retains an uncertain allocation outcome on cancellation.
 func (blockingAllocator) Release(context.Context, handoff.AllocationRequest) error { return nil }
 
 // rpcServiceFixture preserves the real session verifier and handoff service.
@@ -34,6 +37,7 @@ func rpcServiceFixture(t *testing.T, allocator handoff.Allocator) (*moduleStorag
 	return storage, service
 }
 
+// TestRPCBoundsCallsAndCancelsOnShutdown requires allocator calls to preserve deadline and lifecycle cancellation status codes.
 func TestRPCBoundsCallsAndCancelsOnShutdown(t *testing.T) {
 	for _, shutdown := range []bool{false, true} {
 		t.Run(map[bool]string{false: "deadline", true: "shutdown"}[shutdown], func(t *testing.T) {
@@ -74,6 +78,7 @@ func TestRPCBoundsCallsAndCancelsOnShutdown(t *testing.T) {
 	}
 }
 
+// TestRPCCannotAllocateWithoutAuthenticatedSession rejects anonymous and expired sessions before any allocator work begins.
 func TestRPCCannotAllocateWithoutAuthenticatedSession(t *testing.T) {
 	allocator := blockingAllocator{started: make(chan struct{})}
 	storage, service := rpcServiceFixture(t, allocator)
@@ -108,6 +113,7 @@ func (a *cleanupAllocator) Allocate(ctx context.Context, _ handoff.AllocationReq
 }
 func (*cleanupAllocator) Release(context.Context, handoff.AllocationRequest) error { return nil }
 
+// TestShutdownWaitsForInFlightHandlersAndRefusesNewOnes waits for cancelled handlers' cleanup before refusing subsequent requests.
 func TestShutdownWaitsForInFlightHandlersAndRefusesNewOnes(t *testing.T) {
 	allocator := &cleanupAllocator{started: make(chan struct{})}
 	storage, service := rpcServiceFixture(t, allocator)

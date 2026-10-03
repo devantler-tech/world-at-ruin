@@ -131,6 +131,7 @@ func denseSeeds() map[string]struct {
 	}
 }
 
+// packedGrid5x10 seeds fifty tightly overlapping actors for repeatability and insertion-order checks.
 func packedGrid5x10() []Entity {
 	out := make([]Entity, 0, 50)
 	id := EntityID(1)

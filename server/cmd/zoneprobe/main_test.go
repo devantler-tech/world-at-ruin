@@ -48,6 +48,7 @@ func TestProbeVerifiedTLSBothProtocolsAndPrivateOutput(t *testing.T) {
 	}
 }
 
+// TestProbeRejectsBadOrStalledStreams rejects malformed, inconsistent, oversized and non-progressing wire streams without leaking private output.
 func TestProbeRejectsBadOrStalledStreams(t *testing.T) {
 	for _, kind := range []string{"text", "malformed", "wrong-version", "delta-first", "stale-tick", "unchanged", "unknown-move", "observer-change", "stalled", "oversized", "unknown-cast-end"} {
 		t.Run(kind, func(t *testing.T) {
@@ -73,6 +74,7 @@ func tlsProbeTarget(t *testing.T, handler http.Handler) (string, string) {
 	return probeTarget(t, server)
 }
 
+// TestProbeFailsClosedOnTLSAndAdmission rejects unverifiable peers, unexpected HTTP responses and anonymous upgrades.
 func TestProbeFailsClosedOnTLSAndAdmission(t *testing.T) {
 	t.Run("untrusted certificate", func(t *testing.T) {
 		server := newProbeServer(t, func(ctx context.Context, conn *websocket.Conn, version uint16) {

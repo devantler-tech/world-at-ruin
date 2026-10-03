@@ -91,10 +91,13 @@ func signedContext() context.Context {
 	ctx := context.WithValue(context.Background(), runtime.RUNTIME_CTX_USER_ID, moduleUser)
 	return context.WithValue(ctx, runtime.RUNTIME_CTX_USER_SESSION_EXP, time.Now().Add(time.Minute).Unix())
 }
+
+// environmentContext supplies the initialization environment through Nakama's runtime context key.
 func environmentContext(env map[string]string) context.Context {
 	return context.WithValue(context.Background(), runtime.RUNTIME_CTX_ENV, env)
 }
 
+// TestModuleHandoffPersistsReplaysAndReclaimsNoShow exercises module registration, durable allocation replay and cleanup of an unclaimed handoff.
 func TestModuleHandoffPersistsReplaysAndReclaimsNoShow(t *testing.T) {
 	secret := bytes.Repeat([]byte{0xab}, 32)
 	key, fingerprint, envelope := cryptotest.Seal(t, "world-at-ruin", "zone-one", "uid-one", secret)
