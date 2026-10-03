@@ -3,6 +3,8 @@
 # run only in a private copy; the checkout and historical data are never edited.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=tools/file-inspection.sh
+source "$SCRIPT_DIR/file-inspection.sh"
 ledger="$1"
 scratch="$2"
 dir="${ledger%/testdata/*}"
@@ -18,13 +20,13 @@ fail() {
 
 # Refuse symlinks before reading a contract or its named production source.
 require_file() {
-	local path="$1" part="$1"
-	[ -f "$path" ] || fail "$path is missing"
-	while :; do
-		[ ! -L "$part" ] || fail "$path must not depend on a symbolic link"
-		[ "$part" != "${part%/*}" ] || break
-		part="${part%/*}"
-	done
+	local path="$1"
+	case "$(inspect_regular_file "$path")" in
+		ok) return ;;
+		missing) fail "$path is missing" ;;
+		symlink) fail "$path must not depend on a symbolic link" ;;
+		*) fail "$path could not be inspected" ;;
+	esac
 }
 
 require_file "$contract"

@@ -310,11 +310,17 @@ func (w *World) Step() {
 func (w *World) integrate() {
 	for _, id := range w.order {
 		e := w.ents[id]
-		v := clampSpeed(e.Intent, e.MaxSpeed)
-		// mm/s / (ticks/s) = mm/tick.
-		disp := Vec3{X: v.X / TickHz, Y: v.Y / TickHz, Z: v.Z / TickHz}
-		e.Pos = w.bounds.clamp(e.Pos.Add(disp))
+		e.Pos = w.integratedTarget(e)
 	}
+}
+
+// integratedTarget is the immutable full-tick target shared by both collision
+// paths. The swept solver snapshots it before resolving any actor's motion.
+func (w *World) integratedTarget(e *Entity) Vec3 {
+	v := clampSpeed(e.Intent, e.MaxSpeed)
+	// mm/s / (ticks/s) = mm/tick; integer division truncates toward zero.
+	disp := Vec3{X: v.X / TickHz, Y: v.Y / TickHz, Z: v.Z / TickHz}
+	return w.bounds.clamp(e.Pos.Add(disp))
 }
 
 // clampSpeed limits the horizontal (ground-plane) speed of v to maxSpeed mm/s,

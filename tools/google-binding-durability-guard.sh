@@ -8,6 +8,8 @@ export LC_ALL=C
 ADDRESS_CONTRACT='server/nakamaauth/testdata/golden_google_identity_address_v1.json'
 SCRATCH_DIR=''
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=tools/file-inspection.sh
+source "$SCRIPT_DIR/file-inspection.sh"
 
 # fail prints the supplied refusal reason to stderr and exits unsuccessfully.
 fail() {
@@ -24,13 +26,13 @@ cleanup() {
 
 # require_file refuses missing paths and symbolic links in any path component.
 require_file() {
-	local path="$1" part="$1"
-	[ -f "$path" ] || fail "$path was deleted or is missing"
-	while [ "$part" != "${part%/*}" ]; do
-		[ ! -L "$part" ] || fail "$path must not depend on a symbolic link"
-		part="${part%/*}"
-	done
-	[ ! -L "$part" ] || fail "$path must not depend on a symbolic link"
+	local path="$1"
+	case "$(inspect_regular_file "$path")" in
+		ok) return ;;
+		missing) fail "$path was deleted or is missing" ;;
+		symlink) fail "$path must not depend on a symbolic link" ;;
+		*) fail "$path could not be inspected" ;;
+	esac
 }
 
 # read_versions emits a ledger's consecutive versions or refuses it by label.

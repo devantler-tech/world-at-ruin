@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 workflow="${repo_root}/.github/workflows/cd.yaml"
+bash "${repo_root}/tools/workflow-helper-extraction.test.sh"
 
 test_dir="$(mktemp -d)"
 trap 'rm -rf "${test_dir}"' EXIT
@@ -10,9 +11,9 @@ trap 'rm -rf "${test_dir}"' EXIT
 # Exercise the exact function embedded in the CD run block rather than a
 # test-only copy that could drift from production.
 helper_file="${test_dir}/cask-ref-visibility-helper.sh"
-sed -n \
-	'/# BEGIN cask-ref-visibility-helper/,/# END cask-ref-visibility-helper/p' \
-	"${workflow}" >"${helper_file}"
+# shellcheck source=tools/workflow-helper-extraction.sh
+source "${repo_root}/tools/workflow-helper-extraction.sh"
+extract_marked_workflow_helpers "${workflow}" "${helper_file}" cask-ref-visibility-helper
 # shellcheck source=/dev/null
 source "${helper_file}"
 if ! declare -F wait_for_cask_ref >/dev/null; then

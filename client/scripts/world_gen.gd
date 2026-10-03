@@ -1357,23 +1357,12 @@ func _build_foliage_batch(kind: int, items: Array) -> void:
 	if items.is_empty():
 		return
 	var mesh := _foliage_mesh(kind)
-	# Props are modelled centred on their own origin, so lift each one to rest ON
-	# the sampled ground — slightly sunk, so nothing appears to hover.
-	var lift := mesh.get_aabb().size.y * 0.4
-	var mm := MultiMesh.new()
-	mm.transform_format = MultiMesh.TRANSFORM_3D
-	mm.mesh = mesh
-	mm.instance_count = items.size()
+	var poses := CosmeticInstances.transforms(mesh, items)
+	var mm := CosmeticInstances.batch(mesh, poses)
 	for i in items.size():
-		var placement: Dictionary = items[i]
-		var pos: Vector3 = placement["pos"]
-		var prop_scale := float(placement["scale"])
-		var basis := Basis(Vector3.UP, float(placement["yaw"])).scaled(Vector3.ONE * prop_scale)
-		var rendered := Vector3(pos.x, pos.y + lift * prop_scale, pos.z)
-		mm.set_instance_transform(i, Transform3D(basis, rendered))
-		# Keep the record in step with what was actually rendered — the MultiMesh
-		# itself cannot be read back headlessly (see _foliage).
-		placement["pos"] = rendered
+		# Keep the record in step with rendered placement; headless MultiMesh
+		# readback cannot supply these positions.
+		items[i]["pos"] = poses[i].origin
 	var mmi := MultiMeshInstance3D.new()
 	mmi.name = "Foliage_%d" % kind
 	mmi.multimesh = mm

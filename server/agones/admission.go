@@ -7,7 +7,6 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
-	"encoding/base32"
 	"encoding/base64"
 	"encoding/pem"
 	"errors"
@@ -18,6 +17,8 @@ import (
 	"time"
 
 	sdkproto "agones.dev/agones/pkg/sdk"
+	"github.com/devantler-tech/world-at-ruin/server/internal/admissionformat"
+	"github.com/devantler-tech/world-at-ruin/server/internal/handoffidentity"
 )
 
 const (
@@ -228,21 +229,12 @@ func parseWrappingPublicKey(data []byte) (*rsa.PublicKey, string, error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("agones: canonicalize wrapping public key: %w", err)
 	}
-	digest := sha256.Sum256(der)
-	fingerprint := strings.ToLower(
-		base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(digest[:]),
-	)
+	fingerprint := handoffidentity.SHA256Base32(der)
 	return publicKey, fingerprint, nil
 }
 
 func admissionOAEPLabel(identity gameServerIdentity, fingerprint string) []byte {
-	return []byte(strings.Join([]string{
-		"world-at-ruin/zone-admission/v1",
-		identity.namespace,
-		identity.name,
-		identity.uid,
-		fingerprint,
-	}, "\x00"))
+	return admissionformat.OAEPLabel(identity.namespace, identity.name, identity.uid, fingerprint)
 }
 
 func admissionMetadataMatches(

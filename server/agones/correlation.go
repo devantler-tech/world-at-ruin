@@ -1,10 +1,7 @@
 package agones
 
 import (
-	"crypto/sha256"
-	"encoding/base32"
 	"errors"
-	"strings"
 
 	"github.com/devantler-tech/world-at-ruin/server/internal/handoffidentity"
 )
@@ -23,10 +20,7 @@ func CorrelationLabel(value string) (string, error) {
 	if !validCorrelationID(value) {
 		return "", errors.New("agones: correlation identity is invalid")
 	}
-	digest := sha256.Sum256([]byte(value))
-	return strings.ToLower(
-		base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(digest[:]),
-	), nil
+	return handoffidentity.SHA256Base32([]byte(value)), nil
 }
 
 func validCorrelationID(value string) bool {
