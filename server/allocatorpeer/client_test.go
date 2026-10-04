@@ -21,6 +21,7 @@ import (
 	"github.com/devantler-tech/world-at-ruin/server/agonesalloc"
 	"github.com/devantler-tech/world-at-ruin/server/allocatordiscovery"
 	"github.com/devantler-tech/world-at-ruin/server/nakamageneration"
+	"github.com/devantler-tech/world-at-ruin/server/nakamastorage/nakamastoragetest"
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -241,5 +242,45 @@ func TestGenerationRefusalPrecedesDiscovery(t *testing.T) {
 	_, err = c.Reserve(context.Background(), agonesalloc.Request{})
 	if !errors.Is(err, ErrObservation) || d.reads != 0 {
 		t.Fatalf("changed generation allowed discovery: %v reads=%d", err, d.reads)
+	}
+}
+
+// Readable expanded membership cannot authorize discovery or active peer configuration.
+func TestExpandedGenerationCannotAuthorizeLegacyPeerDispatch(t *testing.T) {
+	t.Parallel()
+	for _, state := range []string{"open", "draining"} {
+		t.Run(state, func(t *testing.T) {
+			t.Parallel()
+			cfg := baseConfig(t)
+			raw, err := json.Marshal(map[string]any{
+				"schema": 2, "generation_id": cfg.Record.GenerationID,
+				"member_pod_uids": cfg.Record.MemberPodUIDs, "member_set_digest": cfg.Record.MemberSetDigest, "state": state,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			storage := nakamastoragetest.New()
+			storage.Seed(nakamastoragetest.Object{Collection: nakamageneration.Collection, Key: cfg.Record.GenerationID, Value: string(raw), Version: cfg.Record.Version})
+			generations, err := nakamageneration.NewStore(storage)
+			if err != nil {
+				t.Fatal(err)
+			}
+			d := &discoverySource{snapshot: snapshotFor(member("uid-a", "allocator-a", "192.0.2.1", 443), member("uid-b", "allocator-b", "192.0.2.2", 443))}
+			client, err := NewClient(Sources{Generations: generations, Discovery: d}, cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := client.observe(t.Context()); !errors.Is(err, ErrObservation) || d.reads != 0 {
+				t.Fatalf("expanded generation reached peer selection: %v, discovery=%d", err, d.reads)
+			}
+			expanded, err := generations.Load(t.Context(), cfg.Record.GenerationID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg.Record = expanded
+			if _, err := NewClient(Sources{Generations: generations, Discovery: d}, cfg); !errors.Is(err, ErrInvalidArgument) {
+				t.Fatalf("expanded record accepted as active client configuration: %v", err)
+			}
+		})
 	}
 }

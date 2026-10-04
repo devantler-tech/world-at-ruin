@@ -43,6 +43,9 @@ func (s *Store) EndSession(ctx context.Context, fence SessionFence, reclaim func
 	if err != nil {
 		return err
 	}
+	if current.Lease.ReaderOnly() {
+		return ErrReaderOnly
+	}
 	if current.Lease.Releasing {
 		return ErrReleasing
 	}
@@ -61,6 +64,9 @@ func (s *Store) EndSession(ctx context.Context, fence SessionFence, reclaim func
 	barrier, err := s.LoadForClaim(ctx, fence.LeaseObjectID)
 	if err != nil {
 		return nakamastorage.SanitizeError(ctx, err, ErrStorage)
+	}
+	if barrier.Lease.ReaderOnly() {
+		return ErrReaderOnly
 	}
 	if barrier.Lease != ending {
 		if writeErr != nil {
@@ -101,6 +107,12 @@ func sessionMatches(current Record, fence SessionFence) bool {
 // deleteEndedSession removes only the barrier whose resources were cleaned up,
 // resolving an uncertain response by readback without adopting a newer version.
 func (s *Store) deleteEndedSession(ctx context.Context, key string, barrier Record) error {
+	if err := s.requireWriterKey(ctx, key, barrier.Version); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return nil
+		}
+		return err
+	}
 	err := s.storage.StorageDelete(ctx, []*runtime.StorageDelete{{
 		Collection: Collection, Key: key, UserID: "", Version: barrier.Version,
 	}})

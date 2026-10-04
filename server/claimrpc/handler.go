@@ -88,6 +88,9 @@ func (h *handler) claim(ctx context.Context, request claimRequest) error {
 		return err
 	}
 	lease := record.Lease
+	if lease.ReaderOnly() {
+		return ErrRefused
+	}
 	digest, err := agones.CorrelationLabel(lease.AttemptID)
 	if err != nil || digest != request.AttemptDigest || lease.AllocationID != request.AllocationID || lease.Observer != request.Observer || lease.Staging || lease.Releasing || !time.Now().Before(lease.ExpiresAt) || !admissionref.ReferenceBinds(lease.SecretRef, request.GameServerUID) {
 		return ErrRefused
