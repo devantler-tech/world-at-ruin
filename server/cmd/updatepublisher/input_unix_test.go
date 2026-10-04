@@ -9,6 +9,7 @@ import (
 	"testing"
 )
 
+// TestInputsRejectLinksPipesAndPublicPrivateKeys exercises real descriptor refusal controls.
 func TestInputsRejectLinksPipesAndPublicPrivateKeys(t *testing.T) {
 	dir := t.TempDir()
 	key := filepath.Join(dir, "key")

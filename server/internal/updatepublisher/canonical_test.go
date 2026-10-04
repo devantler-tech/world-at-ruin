@@ -7,6 +7,7 @@ import (
 	"testing"
 )
 
+// TestSharedClientCanonicalVectors requires positive and refusal observation floors.
 func TestSharedClientCanonicalVectors(t *testing.T) {
 	raw, err := os.ReadFile("../../../client/tests/data/jcs_vectors.json")
 	if err != nil {
@@ -26,6 +27,9 @@ func TestSharedClientCanonicalVectors(t *testing.T) {
 	if err := json.Unmarshal(raw, &vectors); err != nil {
 		t.Fatal(err)
 	}
+	if len(vectors.Vectors) == 0 || len(vectors.Refusals) == 0 {
+		t.Fatal("shared canonicalization proof needs nonempty positive and refusal vectors")
+	}
 	for _, v := range vectors.Vectors {
 		t.Run(v.Name, func(t *testing.T) {
 			got, err := Canonicalize(v.Input)
@@ -43,6 +47,7 @@ func TestSharedClientCanonicalVectors(t *testing.T) {
 	}
 }
 
+// TestAmbiguousSigningInputIsRefused prevents lossy parsing from changing signed facts.
 func TestAmbiguousSigningInputIsRefused(t *testing.T) {
 	for _, raw := range []string{`{"x":1,"x":2}`, `{"a":{"x":1,"x":1}}`, `{"s":"\ud800"}`, `{"s":"\udc00"}`, `{"v":9007199254740993}`, `{} {}`, `{"x":1.1}`, strings.Repeat("[", 66) + "0" + strings.Repeat("]", 66), "{\"s\":\"\xff\"}"} {
 		if _, err := Canonicalize([]byte(raw)); err == nil {

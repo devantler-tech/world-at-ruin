@@ -14,12 +14,15 @@ import (
 	"github.com/devantler-tech/world-at-ruin/server/internal/updatepublisher"
 )
 
+// main reports sanitized operator errors without printing input or key contents.
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "updatepublisher:", err)
 		os.Exit(1)
 	}
 }
+
+// run refuses disabled execution before any read, then performs one offline operation.
 func run(args []string) error {
 	flags := flag.NewFlagSet("updatepublisher", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
@@ -111,6 +114,8 @@ func run(args []string) error {
 	}
 	return publishNew(*output, result)
 }
+
+// readFile validates the opened no-follow descriptor and bounds its bytes.
 func readFile(path string, private bool) ([]byte, error) {
 	file, err := openInput(path)
 	if err != nil {
@@ -128,6 +133,8 @@ func readFile(path string, private bool) ([]byte, error) {
 	}
 	return raw, nil
 }
+
+// publishNew atomically links staged public bytes without replacing caller files.
 func publishNew(path string, raw []byte) error {
 	if path == "" {
 		return errors.New("a new output path is required")

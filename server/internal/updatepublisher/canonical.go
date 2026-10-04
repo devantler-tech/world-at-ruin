@@ -30,6 +30,8 @@ func Canonicalize(raw []byte) ([]byte, error) {
 	}
 	return []byte(out.String()), nil
 }
+
+// parseJSON rejects lossy Unicode, duplicate members and unsupported numeric input.
 func parseJSON(raw []byte) (any, error) {
 	if len(raw) > MaxDocumentBytes || !utf8.Valid(raw) {
 		return nil, errors.New("JSON size or UTF-8 is invalid")
@@ -48,6 +50,8 @@ func parseJSON(raw []byte) (any, error) {
 	}
 	return v, nil
 }
+
+// readValue bounds recursion and preserves exact integer spelling until validation.
 func readValue(d *json.Decoder, depth int) (any, error) {
 	if depth > 64 {
 		return nil, errors.New("JSON nesting exceeds 64 levels")
@@ -165,6 +169,8 @@ func checkEscapedUnicode(raw []byte) error {
 	}
 	return nil
 }
+
+// writeCanonical orders object names by UTF-16 and emits the shared domain.
 func writeCanonical(out *strings.Builder, v any) error {
 	switch value := v.(type) {
 	case nil:
@@ -209,6 +215,8 @@ func writeCanonical(out *strings.Builder, v any) error {
 	}
 	return nil
 }
+
+// quote escapes JSON controls while retaining valid literal Unicode.
 func quote(out *strings.Builder, v string) {
 	out.WriteByte('"')
 	for _, r := range v {
@@ -240,6 +248,8 @@ func quote(out *strings.Builder, v string) {
 	}
 	out.WriteByte('"')
 }
+
+// object requires a document object after applying the signing parser's refusals.
 func object(raw []byte) (map[string]any, error) {
 	v, err := parseJSON(raw)
 	if err != nil {
@@ -251,6 +261,8 @@ func object(raw []byte) (map[string]any, error) {
 	}
 	return obj, nil
 }
+
+// encode routes structured documents through the same canonical byte contract.
 func encode(v any) ([]byte, error) {
 	raw, err := json.Marshal(v)
 	if err != nil {

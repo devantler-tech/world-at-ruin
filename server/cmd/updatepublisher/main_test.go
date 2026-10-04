@@ -7,6 +7,7 @@ import (
 	"testing"
 )
 
+// TestOptInPrecedesAnyReadOrWrite proves disabled tooling leaves caller paths untouched.
 func TestOptInPrecedesAnyReadOrWrite(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "untouched.json")
 	if err := run([]string{"-operation", "canonicalize", "-input", "missing", "-output", out}); err == nil || !strings.Contains(err.Error(), "experimental") {
@@ -16,6 +17,8 @@ func TestOptInPrecedesAnyReadOrWrite(t *testing.T) {
 		t.Fatal("default-off command touched output")
 	}
 }
+
+// TestCanonicalCommandPublishesAtomicallyWithoutReplacing preserves existing output.
 func TestCanonicalCommandPublishesAtomicallyWithoutReplacing(t *testing.T) {
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)

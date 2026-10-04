@@ -19,8 +19,10 @@ done
 "$probe/publisher" -experimental -operation assemble -input "$probe/build-facts.json" -certificate "$probe/certificate.json" -revocation "$probe/revocation.json" -head "$probe/head.json" -root-public-key "$probe/root-public.pem" -private-key "$probe/leaf-private.pem" -observed-at "$at" -output "$probe/manifest.json"
 "$probe/publisher" -experimental -operation verify -input "$probe/manifest.json" -head "$probe/head.json" -root-public-key "$probe/root-public.pem" -observed-at "$at"
 jq --slurpfile manifest "$probe/manifest.json" --slurpfile head "$probe/head.json" --slurpfile raised "$probe/raised-head.json" '.manifest=$manifest[0] | .head=$head[0] | .raised_head=$raised[0]' "$probe/chain.json" > "$probe/command-chain.json"
-"$godot_bin" --headless --path "$root/client" --script "$root/tools/updatepublisher-client-probe.gd" -- "$probe/command-chain.json" > "$probe/godot.log" 2>&1
+godot_status=0
+"$godot_bin" --headless --path "$root/client" --script "$root/tools/updatepublisher-client-probe.gd" -- "$probe/command-chain.json" > "$probe/godot.log" 2>&1 || godot_status=$?
 cat "$probe/godot.log"
+if [ "$godot_status" -ne 0 ]; then exit "$godot_status"; fi
 grep -q 'TEST PASS' "$probe/godot.log"
 if grep -qE 'SCRIPT ERROR|^ERROR' "$probe/godot.log"; then
  echo 'native publisher interoperability emitted an engine error' >&2; exit 1

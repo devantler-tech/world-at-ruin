@@ -19,6 +19,7 @@ import (
 
 const Algorithm = "ecdsa-p256-sha256"
 
+// ParsePrivateKey accepts one unencrypted P-256 key without echoing private bytes.
 func ParsePrivateKey(raw []byte) (*ecdsa.PrivateKey, error) {
 	block, rest := pem.Decode(raw)
 	if block == nil || len(bytes.TrimSpace(rest)) != 0 || len(block.Headers) != 0 {
@@ -50,6 +51,8 @@ func ParsePrivateKey(raw []byte) (*ecdsa.PrivateKey, error) {
 	}
 	return k, nil
 }
+
+// ParsePublicKey requires a single P-256 SubjectPublicKeyInfo PEM block.
 func ParsePublicKey(raw []byte) (*ecdsa.PublicKey, error) {
 	block, rest := pem.Decode(raw)
 	if block == nil || block.Type != "PUBLIC KEY" || len(block.Headers) != 0 || len(bytes.TrimSpace(rest)) != 0 || !bytes.HasPrefix(bytes.TrimSpace(raw), []byte("-----BEGIN PUBLIC KEY-----")) {
@@ -65,6 +68,8 @@ func ParsePublicKey(raw []byte) (*ecdsa.PublicKey, error) {
 	}
 	return k, nil
 }
+
+// SignDocument root-signs a validated certificate, revocation list or fresh head.
 func SignDocument(kind string, raw []byte, key *ecdsa.PrivateKey, at time.Time) ([]byte, error) {
 	if key == nil || key.Curve != elliptic.P256() {
 		return nil, errors.New("signer must be P-256")
@@ -84,6 +89,8 @@ func SignDocument(kind string, raw []byte, key *ecdsa.PrivateKey, at time.Time) 
 	}
 	return signObject(doc, "root_signature", key)
 }
+
+// signObject signs canonical unsigned fields using standard DER P-256 signatures.
 func signObject(doc map[string]any, field string, key *ecdsa.PrivateKey) ([]byte, error) {
 	payload, err := encode(doc)
 	if err != nil {
@@ -97,6 +104,8 @@ func signObject(doc map[string]any, field string, key *ecdsa.PrivateKey) ([]byte
 	doc[field] = base64.StdEncoding.EncodeToString(sig)
 	return encode(doc)
 }
+
+// VerifyDocument independently authenticates root-signed fields and their validity.
 func VerifyDocument(kind string, raw []byte, key *ecdsa.PublicKey, at time.Time) error {
 	doc, err := object(raw)
 	if err != nil {
@@ -107,6 +116,8 @@ func VerifyDocument(kind string, raw []byte, key *ecdsa.PublicKey, at time.Time)
 	}
 	return validateDocument(kind, doc, at)
 }
+
+// validateDocument enforces each public document's supported field shape.
 func validateDocument(kind string, d map[string]any, at time.Time) error {
 	if at.IsZero() {
 		return errors.New("explicit observation time is required")
@@ -172,6 +183,8 @@ func validateDocument(kind string, d map[string]any, at time.Time) error {
 	}
 	return nil
 }
+
+// fields refuses missing or unsupported members before they can be root-signed.
 func fields(d map[string]any, names ...string) error {
 	allowed := map[string]bool{"root_signature": true}
 	for _, name := range names {
@@ -187,10 +200,14 @@ func fields(d map[string]any, names ...string) error {
 	}
 	return nil
 }
+
+// identifier restricts key identifiers to bounded, unambiguous strings.
 func identifier(v any) bool {
 	s, ok := v.(string)
 	return ok && s != "" && len(s) <= 128 && strings.TrimSpace(s) == s
 }
+
+// integerAtLeast checks parsed integers without converting through floats.
 func integerAtLeast(v any, min int64) bool {
 	n, ok := v.(json.Number)
 	if !ok {
@@ -199,6 +216,8 @@ func integerAtLeast(v any, min int64) bool {
 	i, err := strconv.ParseInt(string(n), 10, 64)
 	return err == nil && i >= min
 }
+
+// endpoint requires explicit HTTPS resources without credentials or query state.
 func endpoint(v any) bool {
 	s, ok := v.(string)
 	if !ok {
@@ -207,6 +226,8 @@ func endpoint(v any) bool {
 	u, err := url.Parse(s)
 	return err == nil && u.Scheme == "https" && u.Hostname() != "" && u.User == nil && u.RawQuery == "" && u.Fragment == "" && u.Path != ""
 }
+
+// timestamp accepts real calendar timestamps in canonical whole-second UTC.
 func timestamp(v any) (time.Time, error) {
 	s, ok := v.(string)
 	if !ok || len(s) != 20 {
@@ -218,6 +239,8 @@ func timestamp(v any) (time.Time, error) {
 	}
 	return t, nil
 }
+
+// verifyObject authenticates unsigned members with canonical signature encoding.
 func verifyObject(doc map[string]any, field string, key *ecdsa.PublicKey) error {
 	if key == nil || key.Curve != elliptic.P256() {
 		return errors.New("trusted root must be P-256")
@@ -246,6 +269,8 @@ func verifyObject(doc map[string]any, field string, key *ecdsa.PublicKey) error 
 	}
 	return nil
 }
+
+// checkChain binds a certified leaf to authenticated revocation and independent freshness.
 func checkChain(cert, rev, h map[string]any, root *ecdsa.PublicKey, at time.Time) (*ecdsa.PublicKey, error) {
 	for _, part := range []struct {
 		kind string
@@ -292,6 +317,8 @@ func checkChain(cert, rev, h map[string]any, root *ecdsa.PublicKey, at time.Time
 	}
 	return ParsePublicKey([]byte(pub))
 }
+
+// Assemble issues a bounded-lived manifest for a valid, unrevoked certified leaf.
 func Assemble(facts, certificate, revocation, headRaw []byte, root *ecdsa.PublicKey, leaf *ecdsa.PrivateKey, at time.Time) ([]byte, error) {
 	m, err := object(facts)
 	if err != nil {
@@ -339,6 +366,8 @@ func Assemble(facts, certificate, revocation, headRaw []byte, root *ecdsa.Public
 	}
 	return out, nil
 }
+
+// VerifyBundle rechecks exact signed bytes against a separately obtained trusted head.
 func VerifyBundle(raw, headRaw []byte, root *ecdsa.PublicKey, at time.Time) error {
 	m, err := object(raw)
 	if err != nil {
@@ -365,6 +394,8 @@ func VerifyBundle(raw, headRaw []byte, root *ecdsa.PublicKey, at time.Time) erro
 	}
 	return validateManifest(m, at)
 }
+
+// validateManifest checks authenticity facts; the client decides install eligibility.
 func validateManifest(m map[string]any, at time.Time) error {
 	if m["channel"] != "live" || m["schema"] != json.Number("1") || !integerAtLeast(m["sequence"], 0) {
 		return errors.New("manifest channel, schema or sequence is invalid")

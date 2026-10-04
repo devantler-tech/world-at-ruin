@@ -17,6 +17,7 @@ var proofTime = time.Date(2030, 1, 15, 0, 0, 0, 0, time.UTC)
 
 const proofURL = "https://updates.worldatruin.example/live/revocation-head.json"
 
+// newKey creates ephemeral test keys without borrowing operator credentials.
 func newKey(t *testing.T) *ecdsa.PrivateKey {
 	t.Helper()
 	k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -25,6 +26,8 @@ func newKey(t *testing.T) *ecdsa.PrivateKey {
 	}
 	return k
 }
+
+// publicPEM exposes only a fixture key's public half for independent verifier tests.
 func publicPEM(t *testing.T, k *ecdsa.PublicKey) string {
 	t.Helper()
 	b, err := x509.MarshalPKIXPublicKey(k)
@@ -33,6 +36,8 @@ func publicPEM(t *testing.T, k *ecdsa.PublicKey) string {
 	}
 	return string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: b}))
 }
+
+// rawJSON serializes fixture facts before the production parser examines them.
 func rawJSON(t *testing.T, v any) []byte {
 	t.Helper()
 	b, err := json.Marshal(v)
@@ -41,6 +46,8 @@ func rawJSON(t *testing.T, v any) []byte {
 	}
 	return b
 }
+
+// parsed lets tests alter signed facts and prove independent readback refusal.
 func parsed(t *testing.T, b []byte) map[string]any {
 	t.Helper()
 	var v map[string]any
@@ -49,19 +56,27 @@ func parsed(t *testing.T, b []byte) map[string]any {
 	}
 	return v
 }
+
+// certificate creates a public leaf fixture with an explicit rotation epoch.
 func certificate(t *testing.T, k *ecdsa.PublicKey, epoch int) map[string]any {
 	t.Helper()
 	return map[string]any{"algorithm": "ecdsa-p256-sha256", "public_key": publicPEM(t, k), "id": "leaf-2030", "epoch": epoch, "not_before": "2030-01-01T00:00:00Z", "not_after": "2030-02-01T00:00:00Z"}
 }
+
+// revocation builds endpoint-bound test lists, including empty lists.
 func revocation(ids ...string) map[string]any {
 	if ids == nil {
 		ids = []string{}
 	}
 	return map[string]any{"version": 4, "head_url": proofURL, "revoked_ids": ids}
 }
+
+// head models an independently retained floor with a short validity budget.
 func head() map[string]any {
 	return map[string]any{"head_url": proofURL, "version_floor": 4, "not_after": "2030-01-15T00:30:00Z"}
 }
+
+// signOK requires the real issuer to accept fixtures before downstream tests use them.
 func signOK(t *testing.T, kind string, v any, k *ecdsa.PrivateKey) []byte {
 	t.Helper()
 	got, err := SignDocument(kind, rawJSON(t, v), k, proofTime)
@@ -70,6 +85,8 @@ func signOK(t *testing.T, kind string, v any, k *ecdsa.PrivateKey) []byte {
 	}
 	return got
 }
+
+// buildFacts retains client metadata while issuing a fresh bounded expiry.
 func buildFacts(t *testing.T) ([]byte, json.RawMessage) {
 	t.Helper()
 	b, err := os.ReadFile("../../../client/tests/data/update_trust_chain_vector.json")
@@ -91,6 +108,7 @@ func buildFacts(t *testing.T) ([]byte, json.RawMessage) {
 	return rawJSON(t, v.Manifest), v.Installed
 }
 
+// TestIssuedCertificateValidatesAndRejectsUnsupportedInputs refuses malformed certified leaves.
 func TestIssuedCertificateValidatesAndRejectsUnsupportedInputs(t *testing.T) {
 	root, leaf := newKey(t), newKey(t)
 	valid := signOK(t, "certificate", certificate(t, &leaf.PublicKey, 7), root)
@@ -113,6 +131,7 @@ func TestIssuedCertificateValidatesAndRejectsUnsupportedInputs(t *testing.T) {
 	}
 }
 
+// TestRevocationAndFreshHeadProduction exercises signed freshness and endpoint controls.
 func TestRevocationAndFreshHeadProduction(t *testing.T) {
 	root := newKey(t)
 	for _, kind := range []string{"revocation", "head"} {
@@ -146,6 +165,7 @@ func TestRevocationAndFreshHeadProduction(t *testing.T) {
 	}
 }
 
+// TestBundleAssemblyAndIndependentReadback emits authentic native-client controls.
 func TestBundleAssemblyAndIndependentReadback(t *testing.T) {
 	root, leaf := newKey(t), newKey(t)
 	cert := signOK(t, "certificate", certificate(t, &leaf.PublicKey, 7), root)
@@ -241,6 +261,7 @@ func TestBundleAssemblyAndIndependentReadback(t *testing.T) {
 	}
 }
 
+// TestExistingClientTrustVectorVerifies preserves historical verification windows.
 func TestExistingClientTrustVectorVerifies(t *testing.T) {
 	b, err := os.ReadFile("../../../client/tests/data/update_trust_chain_vector.json")
 	if err != nil {
@@ -263,6 +284,7 @@ func TestExistingClientTrustVectorVerifies(t *testing.T) {
 	}
 }
 
+// TestNewManifestExpiryIsBoundedAndLeafRotationWorks bounds lifetime across rotation.
 func TestNewManifestExpiryIsBoundedAndLeafRotationWorks(t *testing.T) {
 	root, leaf := newKey(t), newKey(t)
 	cert := signOK(t, "certificate", certificate(t, &leaf.PublicKey, 8), root)
@@ -279,6 +301,7 @@ func TestNewManifestExpiryIsBoundedAndLeafRotationWorks(t *testing.T) {
 	}
 }
 
+// TestPrivateKeyParsingNeverEchoesMaterial protects private diagnostic contents.
 func TestPrivateKeyParsingNeverEchoesMaterial(t *testing.T) {
 	if _, err := ParsePrivateKey([]byte("PRIVATE_SENTINEL_SECRET")); err == nil || strings.Contains(err.Error(), "PRIVATE_SENTINEL_SECRET") {
 		t.Fatal("private-key parse leaked or accepted material")
