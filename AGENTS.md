@@ -911,6 +911,11 @@ everything shipped afterwards is held to.
   Follow [ADR 0012](docs/adr/0012-keep-allocator-fence-authority-at-the-commit-boundary.md):
   process-local receipts cannot authorize native Agones writes, durable recovery
   or production quarantine release. Production fencing remains #793 work.
+- **Allocator peer transport:** `server/allocatorpeer/` is opt-in and has no production caller.
+  Run `go -C server test -race -count=1 -timeout 2m ./allocatorpeer` for native mutual-TLS
+  allocation, source/readiness changes, lost responses and the production-import guard.
+  [ADR 0018](docs/adr/0018-observe-pinned-generations-before-authenticated-allocator-calls.md)
+  keeps bindings observational: no allocator error or discovery result grants quarantine release.
 - **Server save history:** every persisted server schema uses
   `server/<package>/testdata/shipped_<family>_versions.txt` and
   `golden_<family>_v<N>.json`. The server durability check discovers ledgers in both the reviewed base

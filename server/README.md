@@ -559,6 +559,34 @@ store, concrete Agones resource adapter, durable handoff coordinator and fail-cl
 handoff core are in place; later slices build on those tested seams instead of
 creating a parallel meta service.
 
+## Pinned allocator peer transport
+
+`allocatorpeer` is an opt-in library with no production caller. It binds a
+complete private generation to one selected Pod UID, independently trusted
+server name and server key. Complete discovery chooses a deterministic literal
+socket, and the generation and discovery are checked again after TLS readiness.
+Only that socket is dialed. The generated allocation API still passes through
+the existing pool, correlation and admission-response validation.
+
+The constructor accepts bounded static root/certificate/key DER bytes and owns
+their parsed copies. Normal TLS 1.3 chain and hostname verification precedes
+the selected server SPKI check. Caller callbacks, DNS routing, proxies,
+service-config changes and alternate endpoint/member fallback are absent.
+
+Run `go -C server test -race -count=1 -timeout 2m ./allocatorpeer` from the
+repository root. The native proof composes the generation store, namespaced
+HTTPS discovery and a real mutual-TLS generated Allocate service. The API
+server and storage backend are hermetic fixtures; no deployed provider is
+claimed. Every post-invocation failure remains uncertain, including an
+empty-pool answer, malformed response, cancellation or lost response.
+
+Bindings are observations. They do not authorize native commit fencing,
+quarantine release or durable incarnation recovery. Configured retries are
+disabled, but gRPC's pre-commit transparent retries remain possible; this is
+not an at-most-once guarantee. See [ADR 0018](../docs/adr/0018-observe-pinned-generations-before-authenticated-allocator-calls.md).
+Production commit-boundary work in #793 and provider evaluation in #569 remain
+open. No persisted schema, collection, writer or runtime activation changes.
+
 ## Validate
 
 ```sh
