@@ -9,8 +9,12 @@ func _ready() -> void:
 		_fail("installed-client update checker is missing")
 		return
 	var checker: Script = load(CHECK_PATH)
-	var vector: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(
 		"res://tests/data/update_trust_chain_vector.json"))
+	if not (parsed is Dictionary):
+		_fail("update-trust fixture is not a readable object")
+		return
+	var vector: Dictionary = parsed
 	var config := {
 		"channel": "live",
 		"manifest_url": "https://updates.worldatruin.example/live/manifest.json",

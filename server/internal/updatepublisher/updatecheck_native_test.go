@@ -27,6 +27,21 @@ func TestNativeUpdateCheck(t *testing.T) {
 	if os.Getenv("WAR_UPDATE_CHECK_PROOF") != "1" {
 		t.Skip("native HTTPS proof requires WAR_UPDATE_CHECK_PROOF=1")
 	}
+	t.Run("malformed_fixture", func(t *testing.T) {
+		fixturePath := filepath.Join(t.TempDir(), "malformed.json")
+		if err := os.WriteFile(fixturePath, []byte("[]"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "godot", "--headless", "--path", "client", "--script", "res://tests/update_check_network_probe.gd")
+		cmd.Dir = "../../.."
+		cmd.Env = append(os.Environ(), "WAR_UPDATE_CHECK_PROBE_FILE="+fixturePath)
+		out, err := cmd.CombinedOutput()
+		if err == nil || ctx.Err() != nil || !bytes.Contains(out, []byte("TEST FAIL: native update fixture")) || bytes.Contains(out, []byte("SCRIPT ERROR")) {
+			t.Fatalf("malformed fixture did not terminate with an explicit refusal: %v\n%s", err, out)
+		}
+	})
 	rootKey, leaf := newKey(t), newKey(t)
 	tlsCert, ca := nativeTLS(t)
 	type response struct {

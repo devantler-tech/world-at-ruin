@@ -13,7 +13,11 @@ func _run() -> void:
 	if path.is_empty():
 		_fail("one public fixture path is required")
 		return
-	var fixture: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(path))
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+	if not (parsed is Dictionary):
+		_fail("native update fixture is not a readable object")
+		return
+	var fixture: Dictionary = parsed
 	OS.set_environment("WAR_UPDATE_CHECK", "1")
 	_checker = UpdateCheck.new()
 	root.add_child(_checker)

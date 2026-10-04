@@ -432,8 +432,12 @@ func _check_updates_after_boot() -> void:
 			"save_capability": UpdateManifest.SAVE_CAPABILITY_READS,
 			"protocol": WireCodec.VERSION,
 		}
-		_update_check_result = await checker.check(installed, loaded["document"])
-		checker.queue_free()
+		var result: Dictionary = await checker.check(installed, loaded["document"])
+		if is_instance_valid(checker):
+			checker.queue_free()
+		if not is_inside_tree() or is_queued_for_deletion():
+			return
+		_update_check_result = result
 		if not _update_save_requirements_known():
 			_update_check_result = {"trusted": false, "error": "installed save requirements are unknown", "decision": {}}
 	print("UPDATE_CHECK_FINISHED — %s" % (
