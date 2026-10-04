@@ -5,8 +5,9 @@ FROM ubuntu:24.04@sha256:a853f94d226358a79c740cfc7bce0c289748f3fe3488d921d038ccd
 # Minimal Ubuntu has no CA store: preserve HTTPS and package signature checks.
 COPY --from=certificates /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 # Retain exact package versions after live update pockets advance.
-RUN apt-get update --snapshot 20261003T000000Z \
-    && apt-get install --snapshot 20261003T000000Z -y --no-install-recommends \
+RUN printf 'APT::Snapshot "20261003T000000Z";\n' > /etc/apt/apt.conf.d/50snapshot \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
     libfontconfig1=2.15.0-1.1ubuntu2 libx11-6=2:1.8.7-1build1 \
     libxcursor1=1:1.2.1-1build1 libxinerama1=2:1.1.4-3build1 \
     libgl1=1.7.0-1build1 libxi6=2:1.8.1-1build1 libxrandr2=2:1.5.2-2build1 \
