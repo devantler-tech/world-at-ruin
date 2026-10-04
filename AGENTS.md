@@ -851,7 +851,9 @@ everything shipped afterwards is held to.
   only when GitHub selects its canonical `refs/heads/main` workflow reference; ordinary
   candidate-owned invocations skip the job. The resolver binds the GitHub integration SHA to the
   event's merge commit, verifies the main-base and all three checkout identities, and invokes the
-  base controller with read-only permissions and no persisted credentials. Harness and candidate data
+  verified workflow-source controller and its sibling verdict runner with read-only permissions and
+  no persisted credentials. The event base supplies test scenes, settings, fixtures and ledgers,
+  never host helper selection. Harness and candidate data
   are fetched anonymously into fresh repositories without credential variables or inherited Git
   configuration; their exact event identities are independently verified. Candidate Godot runs
   in a digest-bound, non-root container with no network, capabilities or host credentials; its

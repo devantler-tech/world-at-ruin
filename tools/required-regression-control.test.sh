@@ -4,10 +4,12 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-control="${repo_root}/tools/required-regression-control.sh"
+control_source="${repo_root}/tools/required-regression-control.sh"
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "${tmp_dir}"' EXIT
 
+workflow_source="${tmp_dir}/workflow-source"
+control="${workflow_source}/tools/required-regression-control.sh"
 trusted="${tmp_dir}/trusted"
 candidate="${tmp_dir}/candidate"
 empty_trusted="${tmp_dir}/empty-trusted"
@@ -15,6 +17,7 @@ bin_dir="${tmp_dir}/bin"
 run_log="${tmp_dir}/runs.log"
 
 mkdir -p \
+	"${workflow_source}/tools" \
 	"${trusted}/client/tests" \
 	"${trusted}/tools" \
 	"${candidate}/client/tests" \
@@ -22,6 +25,7 @@ mkdir -p \
 	"${empty_trusted}/tools" \
 	"${bin_dir}"
 
+cp "${control_source}" "${control}"
 printf '%s\n' 'trusted alpha harness' >"${trusted}/client/tests/alpha_test.tscn"
 printf '%s\n' 'trusted beta harness' >"${trusted}/client/tests/beta_test.tscn"
 printf '%s\n' 'candidate-weakened alpha harness' >"${candidate}/client/tests/alpha_test.tscn"
@@ -47,7 +51,7 @@ GODOT
 chmod +x "${bin_dir}/godot"
 cp "${bin_dir}/godot" "${tmp_dir}/godot-import-stub"
 
-cat >"${trusted}/tools/run-client-test.sh" <<'RUNNER'
+cat >"${workflow_source}/tools/run-client-test.sh" <<'RUNNER'
 #!/bin/bash
 set -euo pipefail
 
@@ -86,8 +90,19 @@ fi
 
 printf '%s\n' "TEST PASS -- ${name}"
 RUNNER
-chmod +x "${trusted}/tools/run-client-test.sh"
-cp "${trusted}/tools/run-client-test.sh" "${empty_trusted}/tools/run-client-test.sh"
+chmod +x "${workflow_source}/tools/run-client-test.sh"
+cp "${workflow_source}/tools/run-client-test.sh" "${empty_trusted}/tools/run-client-test.sh"
+
+# Historical base helpers are inert sentinels, never host control inputs.
+export REQUIRED_REGRESSION_LEGACY_LOG="${tmp_dir}/historical-host.log"
+for helper in required-regression-control run-client-test; do
+  cat >"${trusted}/tools/${helper}.sh" <<'HISTORICAL'
+#!/bin/bash
+printf '%s\n' 'historical helper executed' >>"${REQUIRED_REGRESSION_LEGACY_LOG}"
+exit 0
+HISTORICAL
+  chmod +x "${trusted}/tools/${helper}.sh"
+done
 
 failures=0
 
@@ -152,8 +167,8 @@ else
 fi
 
 # Candidate log links must never redirect host capture into unrelated files.
-cp "${trusted}/tools/run-client-test.sh" "${tmp_dir}/fixture-runner"
-cp "${repo_root}/tools/run-client-test.sh" "${trusted}/tools/run-client-test.sh"
+cp "${workflow_source}/tools/run-client-test.sh" "${tmp_dir}/fixture-runner"
+cp "${repo_root}/tools/run-client-test.sh" "${workflow_source}/tools/run-client-test.sh"
 cat >"${bin_dir}/godot" <<'GODOT'
 #!/bin/bash
 set -euo pipefail
@@ -178,8 +193,72 @@ for sink in trusted-import alpha_test beta_test; do
 done
 [ "$(grep -c 'TEST PASS -- benign fixture scene' "${control_output}")" -eq 2 ] ||
   fail 'real verdict runner did not capture both benign scene outcomes'
-cp "${tmp_dir}/fixture-runner" "${trusted}/tools/run-client-test.sh"
+cp "${tmp_dir}/fixture-runner" "${workflow_source}/tools/run-client-test.sh"
 cp "${tmp_dir}/godot-import-stub" "${bin_dir}/godot"
+
+# Execute the real launcher/controller with a divergent event-base helper pair.
+# Only the external compiler/container runtime are stubs in this ownership test.
+cp "${repo_root}/tools/run-client-test.sh" "${workflow_source}/tools/run-client-test.sh"
+for helper in run-sandboxed-trusted-regressions build-trusted-regression-runtime sandbox-godot; do
+  cp "${repo_root}/tools/${helper}.sh" "${workflow_source}/tools/${helper}.sh"
+done
+cp "${repo_root}/tools/trusted-regression-cache.go" "${workflow_source}/tools/"
+mkdir -p "${workflow_source}/.github/containers" "${trusted}/docs/phase-0" \
+  "${candidate}/server/wire" "${candidate}/.github/workflows"
+cp "${repo_root}/.github/containers/trusted-regressions.Dockerfile" "${workflow_source}/.github/containers/"
+printf 'historical frame fixture\n' >"${trusted}/docs/phase-0/cave-chamber.png"
+printf 'candidate source data\n' >"${candidate}/server/wire/wire.go"
+printf 'candidate source data\n' >"${candidate}/.github/workflows/ci.yaml"
+cat >"${bin_dir}/go" <<'COMPILER'
+#!/bin/bash
+set -euo pipefail
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = -o ]; then
+    printf '#!/bin/bash\nexit 0\n' >"$2"
+    chmod +x "$2"
+    exit 0
+  fi
+  shift
+done
+exit 2
+COMPILER
+cat >"${bin_dir}/docker" <<'CONTAINER'
+#!/bin/bash
+set -euo pipefail
+case "$1" in
+  build) exit 0 ;;
+  image) printf 'sha256:%064d\n' 0 ;;
+  run)
+    for arg in "$@"; do
+      case "$arg" in
+        res://tests/*_test.tscn)
+          name="${arg##*/}"
+          printf '%s\n' "${name%.tscn}" >>"${REQUIRED_REGRESSION_RUN_LOG}"
+          ;;
+      esac
+    done
+    printf 'TEST PASS -- benign contained fixture\n'
+    ;;
+
+  *) exit 2 ;;
+esac
+CONTAINER
+chmod +x "${bin_dir}/go" "${bin_dir}/docker"
+: >"${run_log}"
+: >"${REQUIRED_REGRESSION_LEGACY_LOG}"
+if ! PATH="${bin_dir}:${PATH}" REQUIRED_REGRESSION_RUN_LOG="${run_log}" \
+  /bin/bash "${workflow_source}/tools/run-sandboxed-trusted-regressions.sh" "${trusted}" "${candidate}" \
+  >"${control_output}" 2>&1; then
+  fail "workflow-source launcher did not evaluate base-owned data: $(<"${control_output}")"
+fi
+if [ "$(<"${run_log}")" != $'alpha_test\nbeta_test' ]; then
+  fail 'launcher did not execute both scenes through workflow-source host helpers'
+fi
+if [ -s "${REQUIRED_REGRESSION_LEGACY_LOG}" ]; then
+  fail 'launcher executed a historical base host helper'
+fi
+rm "${bin_dir}/go" "${bin_dir}/docker"
+cp "${tmp_dir}/fixture-runner" "${workflow_source}/tools/run-client-test.sh"
 
 # Missing inputs and import failures refuse before any trusted scene can run.
 for broken in project trusted_project trusted_project_link runner import; do
@@ -188,7 +267,7 @@ for broken in project trusted_project trusted_project_link runner import; do
 	project) mv "${candidate}/client/project.godot" "${tmp_dir}/project.godot" ;;
 	trusted_project) mv "${trusted}/client/project.godot" "${tmp_dir}/trusted-project.godot" ;;
 	trusted_project_link) mv "${trusted}/client/project.godot" "${tmp_dir}/trusted-project.godot"; ln -s "${tmp_dir}/trusted-project.godot" "${trusted}/client/project.godot" ;;
-	runner) chmod -x "${trusted}/tools/run-client-test.sh" ;;
+	runner) chmod -x "${workflow_source}/tools/run-client-test.sh" ;;
 	import) printf '#!/bin/bash\necho "ERROR: deliberate import failure"\nexit 1\n' >"${bin_dir}/godot" ;;
 	esac
 	if PATH="${bin_dir}:${PATH}" REQUIRED_REGRESSION_RUN_LOG="${run_log}" \
@@ -200,7 +279,7 @@ for broken in project trusted_project trusted_project_link runner import; do
 	project) mv "${tmp_dir}/project.godot" "${candidate}/client/project.godot" ;;
 	trusted_project) mv "${tmp_dir}/trusted-project.godot" "${trusted}/client/project.godot" ;;
 	trusted_project_link) rm "${trusted}/client/project.godot"; mv "${tmp_dir}/trusted-project.godot" "${trusted}/client/project.godot" ;;
-	runner) chmod +x "${trusted}/tools/run-client-test.sh" ;;
+	runner) chmod +x "${workflow_source}/tools/run-client-test.sh" ;;
 	import) cp "${tmp_dir}/godot-import-stub" "${bin_dir}/godot" ;;
 	esac
 done

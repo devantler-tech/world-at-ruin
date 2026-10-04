@@ -19,7 +19,9 @@ candidate_root="$(cd "$2" 2>/dev/null && pwd -P)" || {
 	exit 2
 }
 trusted_tests="${trusted_root}/client/tests"
-trusted_runner="${trusted_root}/tools/run-client-test.sh"
+# Host helpers belong to this reviewed controller snapshot; the base owns data.
+control_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+trusted_runner="${control_dir}/run-client-test.sh"
 trusted_project="${trusted_root}/client/project.godot"
 
 if [ ! -d "${trusted_tests}" ] || [ -L "${trusted_tests}" ]; then

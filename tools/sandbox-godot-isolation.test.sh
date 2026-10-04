@@ -101,4 +101,18 @@ echo 'TEST PASS -- real runtime containment and immutable harness readback'
 
 # Exercise the production controller and every real scene under that same boundary.
 # This candidate-controlled CI trial is evidence, not the base-owned required verdict.
-bash "$root/tools/run-sandboxed-trusted-regressions.sh" "$root" "$root"
+trusted_data="$root"
+# Hosted evaluation keeps actual historical data distinct from workflow control.
+if [ -n "${GITHUB_EVENT_PATH:-}" ]; then
+  base="$(jq -er '.pull_request.base.sha // .merge_group.base_sha' "$GITHUB_EVENT_PATH")"
+  [[ "$base" =~ ^[0-9a-f]{40}$ ]] || {
+    echo '::error::integration probe requires an exact event base' >&2
+    exit 1
+  }
+  trusted_data="$tmp/historical-base"
+  mkdir "$trusted_data"
+  git -C "$root" --no-replace-objects archive --format=tar --output="$tmp/base.tar" "$base"
+  tar -xf "$tmp/base.tar" -C "$trusted_data"
+  printf 'Historical regression data pinned to %s; host helpers stay workflow-owned.\n' "$base"
+fi
+bash "$root/tools/run-sandboxed-trusted-regressions.sh" "$trusted_data" "$root"
