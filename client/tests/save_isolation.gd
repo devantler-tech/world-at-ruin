@@ -47,6 +47,9 @@ var _vault_before_exists: bool
 var _vault_before_sha: String
 var _recovery_before_exists: bool
 var _recovery_before_sha: String
+var _update_enable_before := ""
+var _update_config_before := ""
+var _update_isolated := false
 
 
 func _init(probe_path: String) -> void:
@@ -69,6 +72,12 @@ func recovery_probe() -> String:
 ## probe so the boot exercises the first-run creator. Returns false (fail
 ## closed) if the redirect did not take — the caller must not boot then.
 func begin() -> bool:
+	if not _update_isolated:
+		_update_enable_before = OS.get_environment("WAR_UPDATE_CHECK")
+		_update_config_before = OS.get_environment("WAR_UPDATE_CHECK_CONFIG")
+		_update_isolated = true
+	OS.set_environment("WAR_UPDATE_CHECK", "0")
+	OS.set_environment("WAR_UPDATE_CHECK_CONFIG", "")
 	for path in [_probe, _vault_probe, _recovery_probe]:
 		if FileAccess.file_exists(path):
 			DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
@@ -109,6 +118,10 @@ func real_save_untouched() -> bool:
 ## Remove the throwaway probes and clear the seams (idempotent, safe to call
 ## more than once — e.g. from both a fail path and tree teardown).
 func end() -> void:
+	if _update_isolated:
+		OS.set_environment("WAR_UPDATE_CHECK", _update_enable_before)
+		OS.set_environment("WAR_UPDATE_CHECK_CONFIG", _update_config_before)
+		_update_isolated = false
 	OS.set_environment(CharacterStore.SAVE_PATH_ENV, "")
 	OS.set_environment(SaveVault.VAULT_PATH_ENV, "")
 	OS.set_environment(BootRecovery.RECOVERY_PATH_ENV, "")

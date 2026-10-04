@@ -293,6 +293,16 @@ static func verify_signature(algorithm: Variant, public_key_pem: Variant,
 
 ## Validate and pin the PEM/DER public-key representation before handing it to
 ## Godot's parser.
+static func public_key_error(public_key_pem: Variant) -> String:
+	if not public_key_pem is String:
+		return "update-signature public key is not a string"
+	var shape := _p256_public_key_shape(public_key_pem)
+	if not str(shape["error"]).is_empty():
+		return str(shape["error"])
+	var key := CryptoKey.new()
+	return "" if key.load_from_string(public_key_pem, true) == OK else "P-256 public key cannot be loaded"
+
+
 static func _p256_public_key_shape(public_key_pem: String) -> Dictionary:
 	var normalized := public_key_pem.replace("\r\n", "\n").strip_edges()
 	var lines := normalized.split("\n", false)

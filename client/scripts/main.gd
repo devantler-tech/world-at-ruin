@@ -48,6 +48,7 @@ const QUEST_PERSIST_RETRY_INITIAL_SECONDS := 1.0
 const QUEST_PERSIST_RETRY_MAX_SECONDS := 30.0
 
 var _player: Player
+var _update_check_result: Dictionary = {}
 var _hud: Hud
 var _creator: CharacterCreator
 var _interaction: InteractionController
@@ -405,6 +406,43 @@ func _ready() -> void:
 	# fail the check, not slip past it (the silent-no-op incident, 0.1.12).
 	print("BOOT_OK v%s — world built, %d people and %d hounds in the Reach" % [
 		DevLog.VERSION, npcs.npc_names.size(), hounds.creature_names.size()])
+	if UpdateCheck.is_enabled():
+		_check_updates_after_boot.call_deferred()
+
+
+## Advisory experimental checks begin after the installed world is playable.
+## No pack is downloaded, staged, mounted or promoted by this path.
+func _check_updates_after_boot() -> void:
+	# Conservative reader ceilings are safe only after both installed documents
+	# are readable. Future/corrupt state remains playable, but cannot authorize
+	# an update against silently lowered save requirements.
+	if not _update_save_requirements_known():
+		_update_check_result = {"trusted": false, "error": "installed save requirements are unknown", "decision": {}}
+		print("UPDATE_CHECK_FINISHED — refused")
+		return
+	var loaded := UpdateCheck.read_configuration(OS.get_environment(UpdateCheck.CONFIG_ENV))
+	if not str(loaded["error"]).is_empty():
+		_update_check_result = {"trusted": false, "error": loaded["error"], "decision": {}}
+	else:
+		var checker := UpdateCheck.new()
+		add_child(checker)
+		var installed := {
+			"shell_version": DevLog.VERSION, "pack_version": DevLog.VERSION,
+			"save_schema": CharacterFactory.RECIPE_VERSION,
+			"save_capability": UpdateManifest.SAVE_CAPABILITY_READS,
+			"protocol": WireCodec.VERSION,
+		}
+		_update_check_result = await checker.check(installed, loaded["document"])
+		checker.queue_free()
+		if not _update_save_requirements_known():
+			_update_check_result = {"trusted": false, "error": "installed save requirements are unknown", "decision": {}}
+	print("UPDATE_CHECK_FINISHED — %s" % (
+		str(_update_check_result.get("decision", {}).get("action", "refused"))))
+
+
+func _update_save_requirements_known() -> bool:
+	return (not _save_blocked and CharacterStore.can_write(CharacterStore.save_path())
+		and SaveVault.can_write(SaveVault.vault_path()))
 
 
 ## The RECONCILE half of the boot-recovery lifecycle (#301), and the call that
