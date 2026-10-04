@@ -46,6 +46,9 @@ func _run() -> void:
 				OS.delay_msec(2100)
 			return fixture["observed_at"])
 	var elapsed := Time.get_ticks_msec() - before
+	if result["trusted"]:
+		result = UpdateHistory.accept(fixture["history_path"], fixture["installed"], fixture["config"],
+			result["manifest"], result["head"], fixture["observed_at"])
 	if result["trusted"] != fixture["accepted"]:
 		_fail("unexpected authentication result: " + str(result["error"]))
 		return

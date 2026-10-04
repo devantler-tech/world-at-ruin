@@ -10,3 +10,4 @@ scripts/update_manifest.gd
 scripts/save_vault.gd
 scripts/character_store.gd
 scripts/shell/update_check.gd
+scripts/shell/update_history.gd

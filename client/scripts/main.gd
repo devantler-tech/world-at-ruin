@@ -440,6 +440,10 @@ func _check_updates_after_boot() -> void:
 		_update_check_result = result
 		if not _update_save_requirements_known():
 			_update_check_result = {"trusted": false, "error": "installed save requirements are unknown", "decision": {}}
+		elif _update_check_result.get("trusted", false):
+			_update_check_result = UpdateHistory.accept(UpdateHistory.history_path(), installed,
+				loaded["document"], _update_check_result["manifest"], _update_check_result["head"],
+				Time.get_datetime_string_from_system(true) + "Z")
 	print("UPDATE_CHECK_FINISHED — %s" % (
 		str(_update_check_result.get("decision", {}).get("action", "refused"))))
 
