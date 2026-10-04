@@ -24,6 +24,17 @@ func _ready() -> void:
 	_manifest = vector["manifest"]
 	_head = vector["revocation_head"]
 	_clean()
+	for malformed: String in ["01", "+1", "-1", "0", "1 0", "1\n02", "1\n+2", "2", "1\n1"]:
+		if not _reader_versions(malformed).is_empty():
+			_fail("noncanonical or noncontiguous history ledger was accepted: " + malformed)
+			return
+	if _reader_versions(" # reader versions\n \t1\t \n") != [1]:
+		_fail("canonical history version with surrounding whitespace was refused")
+		return
+	for alias: String in ["01", "+1", "-1", "0", " 1", "1 "]:
+		if _registered_fixture_number(alias, [1]):
+			_fail("noncanonical history fixture alias was accepted: " + alias)
+			return
 	var fixture_error := _historical_fixtures_error()
 	if not fixture_error.is_empty():
 		_fail(fixture_error)
@@ -192,21 +203,14 @@ func _historical_fixtures_error() -> String:
 	var ledger_path := "res://tests/data/shipped_update_history_versions.txt"
 	if not FileAccess.file_exists(ledger_path):
 		return "update-history reader ledger is missing"
-	var versions: Array[int] = []
-	for line: String in FileAccess.get_file_as_string(ledger_path).split("\n"):
-		var value := line.strip_edges()
-		if value.is_empty() or value.begins_with("#"):
-			continue
-		if not value.is_valid_int() or int(value) != versions.size() + 1:
-			return "update-history reader ledger is not contiguous from version 1"
-		versions.append(int(value))
+	var versions := _reader_versions(FileAccess.get_file_as_string(ledger_path))
 	if versions.is_empty() or versions[-1] != _history.VERSION:
 		return "update-history reader and ledger disagree"
 	var directory := DirAccess.open("res://tests/data")
 	for name: String in directory.get_files():
 		if name.begins_with("golden_update_history_v") and name.ends_with(".json"):
 			var number := name.trim_prefix("golden_update_history_v").trim_suffix(".json")
-			if not number.is_valid_int() or int(number) not in versions:
+			if not _registered_fixture_number(number, versions):
 				return "unregistered historical update-history fixture"
 	for version: int in versions:
 		var fixture := "res://tests/data/golden_update_history_v%d.json" % version
@@ -220,6 +224,22 @@ func _historical_fixtures_error() -> String:
 			return "historical update history became unreadable or churned on load: " + str(loaded["error"])
 	_clean()
 	return ""
+
+
+func _reader_versions(text: String) -> Array[int]:
+	var versions: Array[int] = []
+	for line: String in text.split("\n"):
+		var value := line.strip_edges()
+		if value.is_empty() or value.begins_with("#"):
+			continue
+		if not value.is_valid_int() or value != str(int(value)) or int(value) != versions.size() + 1:
+			return []
+		versions.append(int(value))
+	return versions
+
+
+func _registered_fixture_number(number: String, versions: Array[int]) -> bool:
+	return number.is_valid_int() and number == str(int(number)) and int(number) in versions
 
 
 func _accept() -> Dictionary:

@@ -335,16 +335,37 @@ jobs:
         run: |
           LEDGER=client/tests/data/shipped_update_history_versions.txt
           test -f "$LEDGER" && git cat-file -e "$BASE_SHA"
-          extract='s/^[[:space:]]*\([0-9][0-9]*\)[[:space:]]*$/\1/p'
+          export LC_ALL=C
+          read_versions() {
+            awk '
+              {
+                value = $0
+                sub(/^[[:space:]]*/, "", value)
+                sub(/[[:space:]]*$/, "", value)
+                if (value == "" || value ~ /^#/) next
+                if (value !~ /^[1-9][0-9]*$/ || value != ++expected) {
+                  print "::error::Update-history ledger must contain canonical, contiguous versions from 1" > "/dev/stderr"
+                  invalid = 1
+                  exit 1
+                }
+                print value
+              }
+              END {
+                if (invalid || expected == 0) exit 1
+              }
+            ' "$1"
+          }
           base_raw=$(mktemp)
           base_versions=$(mktemp)
           head_versions=$(mktemp)
           trap 'rm -f "$base_raw" "$base_versions" "$head_versions"' EXIT
           if git cat-file -e "$BASE_SHA:$LEDGER" 2>/dev/null; then
             git show "$BASE_SHA:$LEDGER" > "$base_raw"
+            read_versions "$base_raw" > "$base_versions"
           fi
-          sed -n "$extract" "$base_raw" | sort -un > "$base_versions"
-          sed -n "$extract" "$LEDGER" | sort -un > "$head_versions"
+          sort -u "$base_versions" -o "$base_versions"
+          read_versions "$LEDGER" > "$head_versions"
+          sort -u "$head_versions" -o "$head_versions"
           removed=$(comm -23 "$base_versions" "$head_versions")
           if [ -n "$removed" ]; then
             echo "::error::Authenticated update-history versions were removed"
