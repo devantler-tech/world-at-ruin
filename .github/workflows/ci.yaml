@@ -77,6 +77,7 @@ jobs:
       - name: Product-owned trusted event inputs and workflow boundary are fail-closed
         run: |
           bash tools/resolve-trusted-regression-event.test.sh
+          bash tools/fetch-trusted-regression-data.test.sh
           bash tools/verify-trusted-regression-checkouts.test.sh
           bash tools/trusted-regression-workflow-guard.test.sh
           bash tools/sandbox-godot.test.sh

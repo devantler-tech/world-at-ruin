@@ -39,21 +39,15 @@ jobs:
         id: resolve
         run: bash workflow-source/tools/resolve-trusted-regression-event.sh
 
-      - name: Check out the trusted base harness
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: devantler-tech/world-at-ruin
-          ref: ${{ steps.resolve.outputs.trusted-sha }}
-          path: trusted
-          persist-credentials: false
+      - name: Fetch the trusted base harness anonymously
+        env:
+          DATA_SHA: ${{ steps.resolve.outputs.trusted-sha }}
+        run: bash workflow-source/tools/fetch-trusted-regression-data.sh trusted "$DATA_SHA"
 
-      - name: Check out candidate product bytes
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: devantler-tech/world-at-ruin
-          ref: ${{ steps.resolve.outputs.candidate-sha }}
-          path: candidate
-          persist-credentials: false
+      - name: Fetch candidate product bytes anonymously
+        env:
+          DATA_SHA: ${{ steps.resolve.outputs.candidate-sha }}
+        run: bash workflow-source/tools/fetch-trusted-regression-data.sh candidate "$DATA_SHA"
 
       - name: Verify independent checkout identities
         env:

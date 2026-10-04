@@ -34,11 +34,12 @@ if ! yq -o=json '.' "$workflow" | jq -e --arg installer "$installer" --arg selec
     and (.steps[2]|keys) == ["id","name","run"]
     and .steps[2].id == "resolve"
     and .steps[2].run == "bash workflow-source/tools/resolve-trusted-regression-event.sh"
-    and (.steps[3]|keys) == ["name","uses","with"]
-    and (.steps[4]|keys) == ["name","uses","with"]
-    and .steps[3].uses == .steps[1].uses and .steps[4].uses == .steps[1].uses
-    and .steps[3].with == {repository:"devantler-tech/world-at-ruin",ref:"${{ steps.resolve.outputs.trusted-sha }}",path:"trusted","persist-credentials":false}
-    and .steps[4].with == {repository:"devantler-tech/world-at-ruin",ref:"${{ steps.resolve.outputs.candidate-sha }}",path:"candidate","persist-credentials":false}
+    and (.steps[3]|keys) == ["env","name","run"]
+    and (.steps[4]|keys) == ["env","name","run"]
+    and .steps[3].env == {DATA_SHA:"${{ steps.resolve.outputs.trusted-sha }}"}
+    and .steps[4].env == {DATA_SHA:"${{ steps.resolve.outputs.candidate-sha }}"}
+    and .steps[3].run == "bash workflow-source/tools/fetch-trusted-regression-data.sh trusted \"$DATA_SHA\""
+    and .steps[4].run == "bash workflow-source/tools/fetch-trusted-regression-data.sh candidate \"$DATA_SHA\""
     and (.steps[5]|keys) == ["env","name","run"]
     and .steps[5].env == {TRUSTED_SHA:"${{ steps.resolve.outputs.trusted-sha }}",CANDIDATE_SHA:"${{ steps.resolve.outputs.candidate-sha }}"}
     and .steps[5].run == "bash workflow-source/tools/verify-trusted-regression-checkouts.sh workflow-source trusted candidate"
