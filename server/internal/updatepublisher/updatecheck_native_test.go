@@ -153,7 +153,7 @@ func TestNativeUpdateCheck(t *testing.T) {
 				t.Fatalf("native %s: %v\n%s", mode, err, out)
 			}
 			// Godot emits a native TLS diagnostic for deliberately invalid chains.
-			// Only those three transport controls may emit that exact error class.
+			// Only those two transport controls may emit that exact error class.
 			for line := range strings.SplitSeq(string(out), "\n") {
 				expectedTLS := (mode == "system_ca" || mode == "wrong_hostname") && strings.TrimSpace(line) == "ERROR: TLS handshake error: -9984"
 				if strings.Contains(line, "ERROR:") && !expectedTLS {
