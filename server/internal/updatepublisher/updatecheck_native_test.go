@@ -205,6 +205,7 @@ func TestNativeUpdateCheck(t *testing.T) {
 				runNativeProbe(t, fixturePath, mode)
 				fixtures[mode]["accepted"] = false
 				fixtures[mode]["mode"] = "retained_floor"
+				fixtures[mode]["expected_error"] = "authenticated revocation list regressed below retained history"
 				nativeFixtureConfig(t, fixtures[mode])["manifest_url"] = origin + "/replay/manifest.json"
 				if err := os.WriteFile(fixturePath, rawJSON(t, fixtures[mode]), 0600); err != nil {
 					t.Fatal(err)
@@ -222,6 +223,21 @@ func TestNativeUpdateCheck(t *testing.T) {
 			}
 		})
 	}
+	t.Run("refusal_reason_guard", func(t *testing.T) {
+		fixture := parsed(t, rawJSON(t, fixtures["expired_head"]))
+		fixture["expected_error"] = "deliberately incorrect refusal reason"
+		fixturePath := filepath.Join(t.TempDir(), "wrong-reason.json")
+		fixture["history_path"] = fixturePath + ".history.json"
+		if err := os.WriteFile(fixturePath, rawJSON(t, fixture), 0600); err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+		defer cancel()
+		out, err := nativeProbeOutput(ctx, fixturePath)
+		if err == nil || ctx.Err() != nil || !bytes.Contains(out, []byte("TEST FAIL: unexpected refusal reason")) || bytes.Contains(out, []byte("SCRIPT ERROR")) {
+			t.Fatalf("incorrect expected refusal reason did not fail the native proof: %v\n%s", err, out)
+		}
+	})
 	t.Run("late_response_after_foreign_process_admission", func(t *testing.T) {
 		physical, err := filepath.EvalSymlinks(t.TempDir())
 		if err != nil {
@@ -229,12 +245,14 @@ func TestNativeUpdateCheck(t *testing.T) {
 		}
 		historyPath := filepath.Join(physical, "shared-history.json")
 		lateFixture := parsed(t, rawJSON(t, fixtures["positive"]))
-		lateFixture["mode"], lateFixture["accepted"], lateFixture["timeout"] = "late_floor", false, 8.0
+		lateFixture["mode"], lateFixture["accepted"], lateFixture["timeout"] = "late_floor", false, 10.0
+		lateFixture["expected_error"] = "authenticated revocation list regressed below retained history"
 		lateFixture["history_path"] = historyPath
 		nativeFixtureConfig(t, lateFixture)["manifest_url"] = origin + "/late/manifest.json"
 		latePath := filepath.Join(physical, "late.json")
 		freshFixture := parsed(t, rawJSON(t, lateFixture))
 		freshFixture["mode"], freshFixture["accepted"] = "positive", true
+		delete(freshFixture, "expected_error")
 		nativeFixtureConfig(t, freshFixture)["manifest_url"] = origin + "/positive/manifest.json"
 		freshPath := filepath.Join(physical, "fresh.json")
 		for path, fixture := range map[string]map[string]any{latePath: lateFixture, freshPath: freshFixture} {
@@ -280,6 +298,7 @@ func TestNativeUpdateCheck(t *testing.T) {
 	})
 }
 
+// nativeFixtureConfig refuses malformed owned configuration before a test mutates it.
 func nativeFixtureConfig(t *testing.T, fixture map[string]any) map[string]any {
 	t.Helper()
 	config, ok := fixture["config"].(map[string]any)
@@ -289,6 +308,7 @@ func nativeFixtureConfig(t *testing.T, fixture map[string]any) map[string]any {
 	return config
 }
 
+// nativeHistoryBytes independently reads retained history through its owned directory root.
 func nativeHistoryBytes(t *testing.T, directory, name string) []byte {
 	t.Helper()
 	root, err := os.OpenRoot(directory)
@@ -317,6 +337,7 @@ func runNativeProbe(t *testing.T, fixturePath, mode string) {
 	assertNativeProbe(t, out, err, mode)
 }
 
+// nativeProbeOutput bounds one native process and captures its explicit test verdict.
 func nativeProbeOutput(ctx context.Context, fixturePath string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "godot", "--headless", "--path", "client", "--script", "res://tests/update_check_network_probe.gd")
 	cmd.Dir = "../../.."
@@ -324,6 +345,7 @@ func nativeProbeOutput(ctx context.Context, fixturePath string) ([]byte, error) 
 	return cmd.CombinedOutput()
 }
 
+// assertNativeProbe requires a successful verdict with no hidden GDScript error.
 func assertNativeProbe(t *testing.T, out []byte, err error, mode string) {
 	t.Helper()
 	if err != nil || !bytes.Contains(out, []byte("TEST PASS")) || bytes.Contains(out, []byte("SCRIPT ERROR")) {

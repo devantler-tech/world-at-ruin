@@ -52,6 +52,9 @@ func _run() -> void:
 	if result["trusted"] != fixture["accepted"]:
 		_fail("unexpected authentication result: " + str(result["error"]))
 		return
+	if fixture.has("expected_error") and result["error"] != fixture["expected_error"]:
+		_fail("unexpected refusal reason: " + str(result["error"]))
+		return
 	if fixture["accepted"] and result["decision"].get("action") != UpdateDecision.UP_TO_DATE:
 		_fail("accepted fixture did not reach the decision core")
 		return
