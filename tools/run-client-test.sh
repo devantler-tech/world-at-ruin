@@ -171,9 +171,10 @@ if [ "${tee_status}" -ne 0 ]; then
 fi
 
 # The sandbox has restored workflow commands by the time failures are displayed.
-# Preserve the captured bytes, but render both command syntaxes as ordinary data.
+# Preserve captured bytes; trailing spaces keep adjacent escaped pairs apart.
+# Render both command syntaxes as ordinary data.
 display_log_excerpt() {
-	tail -40 "${log}" | sed -e 's/::/: :/g' -e 's/##\[/# #[/g'
+	tail -40 "${log}" | sed -e 's/::/: : /g' -e 's/##\[/# #[/g'
 }
 
 if [ "${timed_out}" = true ]; then

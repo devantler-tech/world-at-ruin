@@ -30,7 +30,7 @@ success)
 	printf '%s\n' "TEST PASS — fake Godot completed"
 	;;
 workflow-log)
-	printf '%s\n' '::notice::benign fixture data' '##[notice]benign fixture data' 'TEST FAIL -- benign fixture failure'
+	printf '%s\n' '::notice::benign fixture data' '##[notice]benign fixture data' '::::notice::::benign repeated-colon fixture' 'TEST FAIL -- benign fixture failure'
 	;;
 fail)
 	printf '%s\n' "fake Godot assertion failed"
@@ -159,14 +159,15 @@ if [ "${case_status}" -eq 0 ] || [[ "${case_output}" != *'reported TEST FAIL'* ]
   fail 'workflow-like log fixture did not preserve its failing verdict'
 fi
 excerpt="$(printf '%s\n' "${case_output}" | awk '/^::error::ability_registry_test reported TEST FAIL/ {seen=1;next} seen {print}')"
-if [[ "${excerpt}" == *'::notice::'* || "${excerpt}" == *'##[notice]'* ]]; then
+if [[ "${excerpt}" == *'::'* || "${excerpt}" == *'##[notice]'* ]]; then
   fail 'failure excerpt replayed workflow command delimiters'
 fi
-if [[ "${excerpt}" != *': :notice: :benign fixture data'* || "${excerpt}" != *'# #[notice]benign fixture data'* ]]; then
+if [[ "${excerpt}" != *': : notice: : benign fixture data'* || "${excerpt}" != *'# #[notice]benign fixture data'* ]]; then
   fail 'failure excerpt lost its safely displayed diagnostic'
 fi
 if ! grep -Fq '::notice::benign fixture data' "${fixture_root}/ability_registry_test.log" ||
-  ! grep -Fq '##[notice]benign fixture data' "${fixture_root}/ability_registry_test.log"; then
+  ! grep -Fq '##[notice]benign fixture data' "${fixture_root}/ability_registry_test.log" ||
+  ! grep -Fq '::::notice::::benign repeated-colon fixture' "${fixture_root}/ability_registry_test.log"; then
   fail 'display escaping changed the original verdict log'
 fi
 
