@@ -32,9 +32,17 @@ Every failure after invoking Allocate is uncertain. Even an empty-pool answer
 cannot prove that a native write will never land. Errors expose no terminal
 unallocated sentinel or upstream text; cancellation, deadline and status code remain
 available. No positive result or binding accompanies a failed operation.
+Canceled and DeadlineExceeded RPC statuses retain the corresponding standard
+context error identity even when they arrive before the caller's own timer.
+That identity describes the interrupted RPC; it does not prove the caller
+context itself is done or that no allocation effect occurred.
 
-Configured RPC retries are disabled and the retry buffer is zero. gRPC may still
-perform transparent retries before committing a stream. This library does **not**
+Configured RPC retries are disabled and the retry buffer is zero. In the pinned
+gRPC unary implementation, sending the nonempty request commits the attempt before
+the response is read, so response loss cannot replay that dispatched payload.
+Native controls close the authenticated connection after an effect while leaving
+the listener available and observe exactly one handler and effect. Transparent
+retries may still occur during stream creation before request DATA. This library does **not**
 provide at-most-once execution across operations or restarts. The coordinator must
 retain its durable dispatched-attempt barrier and quarantine on ambiguity.
 
