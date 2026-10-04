@@ -804,6 +804,12 @@ everything shipped afterwards is held to.
   `client/registries/character_writer_vocabulary.json` subset, whose equipment-slot, skin,
   blend-shape and bone-key additions require the contract-stage save-capability advance.
 - **Run:** `godot client` (macOS: `/Applications/Godot.app/Contents/MacOS/Godot client`).
+  - **Experimental content-pack builds:** `bash tools/build-contentpack.sh --experimental
+    client <new-output-directory>` stages a trusted local project privately, imports it natively and
+    produces a cumulative PCK plus exact-byte build evidence. Recovery owners and their remaps stay
+    outside the pack. Run `bash tools/test-contentpack.sh` for the exported-base precedence, receipt
+    and no-mount controls. This tooling grants no installation or production publication authority;
+    see `docs/adr/0014-build-experimental-cumulative-content-packs.md`.
 - **Validate before every PR:**
   `godot --headless --editor --quit --path client && godot --headless --quit-after 120 --path client` —
   the editor pass imports AND writes the global class-name cache (`--import` alone never writes

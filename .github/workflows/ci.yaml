@@ -885,6 +885,10 @@ jobs:
           go-version-file: server/go.mod
       - name: Offline update publisher interoperates with the real client
         run: bash tools/test-updatepublisher.sh
+      - name: Experimental native cumulative content packs
+        run: |
+          bash tools/test-contentpack.sh
+          bash tools/test-game-contentpack.sh
       - name: Smoke boot (120 frames)
         run: |
           set -o pipefail
